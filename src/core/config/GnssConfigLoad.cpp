@@ -286,15 +286,7 @@ namespace GnssProcessor {
                 log->warn("Unknown processing mode '{}', defaulting to PPP", mode);
                 processing_mode_ = ProcessingMode::PPP;
             }
-            const char* mode_label =
-                processing_mode_ == ProcessingMode::PPP              ? "PPP"             :
-                processing_mode_ == ProcessingMode::PPP_RTK          ? "PPP-RTK"         :
-                processing_mode_ == ProcessingMode::BaselineSingle   ? "Baseline-Single" :
-                processing_mode_ == ProcessingMode::BaselineMulti    ? "Baseline-Multi"  :
-                processing_mode_ == ProcessingMode::PPP_RTK_Network  ? "PPP-RTK-Network" :
-                processing_mode_ == ProcessingMode::PPP_RTK_User     ? "PPP-RTK-User"    :
-                                                                       "Baseline-Multi";
-            log->info("Processing mode: {}", mode_label);
+            log->info("Processing mode: {}", processingModeLabel(processing_mode_));
         }
         // The legacy key "signal_mode: all" means both "all bands" and "every
         // tracking-mode channel per band"; the current keys split those into
@@ -767,6 +759,76 @@ namespace GnssProcessor {
                       "spanning a product step can never trip.",
                       amb_level_check_mode_, amb_level_check_window_ep_, amb_level_check_k_);
         }
+        // Pre-update innovation screen.  Default false measures and writes nothing
+        // (byte-identical).  The closed-loop harness derives it from
+        // network.closed_loop.innovation_screen (deriveClosedLoopConsumerConfig); a
+        // standalone consumer sets it here.
+        innovation_screen_ = jval<bool>(json,
+            "processing.innovation_screen", "innovation_screen", false);
+        innovation_screen_k_ = jval<double>(json,
+            "processing.innovation_screen_k", "innovation_screen_k", 6.0);
+        innovation_screen_mode_ = jval<std::string>(json,
+            "processing.innovation_screen_mode", "innovation_screen_mode", std::string("act"));
+        innovation_screen_rows_ = jval<std::string>(json,
+            "processing.innovation_screen_rows", "innovation_screen_rows", std::string("all"));
+        innovation_screen_max_fraction_ = jval<double>(json,
+            "processing.innovation_screen_max_fraction", "innovation_screen_max_fraction", 0.25);
+        innovation_screen_refloat_ep_ = jval<int>(json,
+            "processing.innovation_screen_refloat_ep", "innovation_screen_refloat_ep", 3);
+        innovation_screen_phase_floor_m_ = jval<double>(json,
+            "processing.innovation_screen_phase_floor_m", "innovation_screen_phase_floor_m", 0.3);
+        innovation_screen_code_floor_m_ = jval<double>(json,
+            "processing.innovation_screen_code_floor_m", "innovation_screen_code_floor_m", 1.0);
+        if (!(innovation_screen_k_ > 0.0)) {
+            log->warn("Non-positive innovation_screen_k ({:.3f}) ignored; using 6.0",
+                      innovation_screen_k_);
+            innovation_screen_k_ = 6.0;
+        }
+        if (innovation_screen_mode_ != "act" && innovation_screen_mode_ != "observe") {
+            log->warn("Unknown innovation_screen_mode '{}' (expected \"act\" or \"observe\"); "
+                      "using \"act\"", innovation_screen_mode_);
+            innovation_screen_mode_ = "act";
+        }
+        if (innovation_screen_rows_ != "all" && innovation_screen_rows_ != "phase"
+            && innovation_screen_rows_ != "code") {
+            log->warn("Unknown innovation_screen_rows '{}' (expected \"all\", \"phase\" or "
+                      "\"code\"); using \"all\"", innovation_screen_rows_);
+            innovation_screen_rows_ = "all";
+        }
+        if (!(innovation_screen_max_fraction_ > 0.0 && innovation_screen_max_fraction_ <= 1.0)) {
+            log->warn("innovation_screen_max_fraction ({:.3f}) is outside (0, 1]; using 0.25",
+                      innovation_screen_max_fraction_);
+            innovation_screen_max_fraction_ = 0.25;
+        }
+        if (innovation_screen_refloat_ep_ < 1) {
+            log->warn("innovation_screen_refloat_ep ({}) is below 1; using 3",
+                      innovation_screen_refloat_ep_);
+            innovation_screen_refloat_ep_ = 3;
+        }
+        if (!(innovation_screen_phase_floor_m_ >= 0.0)) {
+            log->warn("Negative innovation_screen_phase_floor_m ({:.3f}) ignored; using 0.3",
+                      innovation_screen_phase_floor_m_);
+            innovation_screen_phase_floor_m_ = 0.3;
+        }
+        if (!(innovation_screen_code_floor_m_ >= 0.0)) {
+            log->warn("Negative innovation_screen_code_floor_m ({:.3f}) ignored; using 1.0",
+                      innovation_screen_code_floor_m_);
+            innovation_screen_code_floor_m_ = 1.0;
+        }
+        if (innovation_screen_) {
+            log->info("Consumer INNOVATION SCREEN ON (mode '{}', rows '{}'): before each "
+                      "measurement update every undifferenced row's innovation is tested "
+                      "against the predicted state (conditional normalized innovation, flag "
+                      "above {:.2f}); a flagged row is held out of that epoch's update and "
+                      "re-tested every epoch, and a phase row flagged on {} consecutive "
+                      "epochs has its ambiguity re-floated.  The screen abstains when more "
+                      "than {:.0f} % of an epoch's rows are flagged.  The test's innovation "
+                      "covariance carries a model-error floor of {:.2f} m on phase rows and "
+                      "{:.2f} m on code rows.",
+                      innovation_screen_mode_, innovation_screen_rows_, innovation_screen_k_,
+                      innovation_screen_refloat_ep_, 100.0 * innovation_screen_max_fraction_,
+                      innovation_screen_phase_floor_m_, innovation_screen_code_floor_m_);
+        }
         // Clock stale-hold rung (RTA-9(b)).  0 (default) is off: the two-state gate
         // (fresh / rejected) is byte-identical.  A factor above 1 opens a middle
         // rung: a clock aged in (ssr_max_age, factor x ssr_max_age] is still applied
@@ -903,6 +965,9 @@ namespace GnssProcessor {
         // default off and are byte-identical to the legacy path when disabled.
         enable_trig_sp3_interp_ = jval<bool>(json, "processing.enable_trig_sp3_interp", "enable_trig_sp3_interp", false);
         enable_orbit_normal_attitude_ = jval<bool>(json, "processing.enable_orbit_normal_attitude", "enable_orbit_normal_attitude", false);
+        // GPS Block IIF/IIR noon-turn attitude for the satellite PCO and the phase
+        // wind-up.  Default off: nominal yaw, byte-identical to the legacy path.
+        enable_noon_turn_attitude_ = jval<bool>(json, "processing.enable_noon_turn_attitude", "enable_noon_turn_attitude", false);
 
         // Non-causal cycle-slip bridge (runs before the smoother; requires
         // run_smoother_; forced off in real-time mode by
@@ -1272,6 +1337,20 @@ namespace GnssProcessor {
                         "cycle_slip_graphic_sigma_multiplier",    cycle_slip_.graphic_sigma_multiplier);
         load_sigma_mult("estimation.cycle_slip.ewl_sigma_multiplier",
                         "cycle_slip_ewl_sigma_multiplier",        cycle_slip_.ewl_sigma_multiplier);
+        // GRAPHIC tested statistic: |dG| (default) or the trend-centred second
+        // difference.  Logged only when set, so a run that leaves it off prints the
+        // same lines as before the key existed.
+        cycle_slip_.graphic_trend_centred =
+            jval<bool>(json, "estimation.cycle_slip.graphic_trend_centred",
+                       "cycle_slip_graphic_trend_centred", false);
+        if (cycle_slip_.graphic_trend_centred) {
+            if (cycle_slip_.graphic)
+                log->info("GRAPHIC detector tests the trend-centred second difference "
+                          "(estimation.cycle_slip.graphic_trend_centred)");
+            else
+                log->warn("estimation.cycle_slip.graphic_trend_centred is set but "
+                          "estimation.cycle_slip.graphic is off; the key has no effect");
+        }
         log->info("Cycle-slip σ multipliers (kσ gate): mw={:.1f}, turbo_edit={:.1f}, graphic={:.1f}, ewl={:.1f}",
                   cycle_slip_.mw_sigma_multiplier, cycle_slip_.turbo_edit_sigma_multiplier,
                   cycle_slip_.graphic_sigma_multiplier, cycle_slip_.ewl_sigma_multiplier);
@@ -1346,6 +1425,41 @@ namespace GnssProcessor {
         }
         trace_windup_census_      = jval<bool>(json, "estimation.trace_windup_census",
                                                "trace_windup_census", false);
+
+        // Wind-up gap bridge: carry the accumulated angle across a short data gap
+        // by walking it through virtual epochs, instead of restarting the
+        // accumulator.  Default off.  The restart it replaces exists only in
+        // accumulated mode, so on a fractional lineage the knob would be armed and
+        // inert, and is switched off here with a warning.
+        phase_windup_gap_bridge_ = jval<bool>(json, "estimation.phase_windup_gap_bridge",
+                                              "phase_windup_gap_bridge", false);
+        phase_windup_bridge_max_gap_s_ = jval<double>(json, "estimation.phase_windup_bridge_max_gap_s",
+                                                      "phase_windup_bridge_max_gap_s", 900.0);
+        phase_windup_bridge_step_s_ = jval<double>(json, "estimation.phase_windup_bridge_step_s",
+                                                   "phase_windup_bridge_step_s", 30.0);
+        if (!(phase_windup_bridge_max_gap_s_ > 0.0)) {
+            log->warn("estimation.phase_windup_bridge_max_gap_s must be > 0, reset to 900.0 s.");
+            phase_windup_bridge_max_gap_s_ = 900.0;
+        }
+        if (!(phase_windup_bridge_step_s_ > 0.0) || phase_windup_bridge_step_s_ > 120.0) {
+            log->warn("estimation.phase_windup_bridge_step_s must be in (0, 120] s (a longer "
+                      "step lets the wind-up move too far between virtual epochs to unwrap); "
+                      "reset to 30.0 s.");
+            phase_windup_bridge_step_s_ = 30.0;
+        }
+        if (phase_windup_gap_bridge_ && !accumulate_phase_windup_) {
+            log->warn("estimation.phase_windup_gap_bridge needs "
+                      "estimation.accumulate_phase_windup (the restart it replaces exists "
+                      "only in accumulated mode; fractional wind-up wraps instead of "
+                      "restarting); disabled.");
+            phase_windup_gap_bridge_ = false;
+        }
+        if (phase_windup_gap_bridge_ && phase_windup_bridge_max_gap_s_ <= phase_windup_max_gap_s_) {
+            log->warn("estimation.phase_windup_bridge_max_gap_s ({:.0f} s) is not above "
+                      "estimation.phase_windup_max_gap_s ({:.0f} s): no gap lies in the bridged "
+                      "range, so the bridge is inert.",
+                      phase_windup_bridge_max_gap_s_, phase_windup_max_gap_s_);
+        }
 
         // Between-satellite single differencing
         enable_between_satellite_sd_ = jval<bool>(json, "estimation.between_satellite_sd.enabled",
@@ -2248,6 +2362,9 @@ namespace GnssProcessor {
             model_corrections_.enable_shapiro_delay             = mc.value("enable_shapiro_delay", true);
             model_corrections_.enable_solid_earth_tide          = mc.value("enable_solid_earth_tide", true);
             model_corrections_.enable_ocean_tide_loading        = mc.value("enable_ocean_tide_loading", true);
+            model_corrections_.otl_from_sif                     = mc.value("otl_from_sif", false);
+            model_corrections_.otl_nodal_corrections            = mc.value("otl_nodal_corrections", false);
+            model_corrections_.otl_remove_diurnal_translation   = mc.value("otl_remove_diurnal_translation", false);
             model_corrections_.enable_pole_tide                 = mc.value("enable_pole_tide", true);
             model_corrections_.enable_ocean_pole_tide           = mc.value("enable_ocean_pole_tide", false);
             model_corrections_.enable_atmospheric_loading       = mc.value("enable_atmospheric_loading", false);
@@ -2291,6 +2408,20 @@ namespace GnssProcessor {
             model_corrections_.enable_phase_windup            ? "on" : "off",
             model_corrections_.enable_code_phase_bias        ? "on" : "off",
             model_corrections_.enable_atx_frequency_fallback  ? "on" : "off");
+        if (model_corrections_.otl_from_sif || model_corrections_.otl_nodal_corrections
+            || model_corrections_.otl_remove_diurnal_translation) {
+            log->info("Ocean tide loading options: otl_from_sif={}, otl_nodal_corrections={}, "
+                "otl_remove_diurnal_translation={}",
+                model_corrections_.otl_from_sif                   ? "on" : "off",
+                model_corrections_.otl_nodal_corrections          ? "on" : "off",
+                model_corrections_.otl_remove_diurnal_translation ? "on" : "off");
+            if (!model_corrections_.enable_ocean_tide_loading)
+                log->warn("model_corrections.otl_from_sif / otl_nodal_corrections / "
+                    "otl_remove_diurnal_translation have no effect: enable_ocean_tide_loading is off.");
+            if (model_corrections_.otl_remove_diurnal_translation && !model_corrections_.otl_from_sif)
+                log->warn("model_corrections.otl_remove_diurnal_translation has no effect without "
+                    "otl_from_sif: the translation table belongs to the SIF coefficients.");
+        }
         log->info("Emission-time refinement: {} (second-pass slant-ZHD + IF-ATX subtraction in geometry pipeline)",
             model_corrections_.refine_emission_time ? "ENABLED" : "disabled");
         // With the wind-up correction modeled but not accumulated, the raw atan2
@@ -2641,7 +2772,12 @@ namespace GnssProcessor {
                 jval<std::string>(json, "files.station_info_path", "station_info_path", "");
             if (!single.empty()) station_info_paths_.emplace_back(single);
 
-            if (enable_station_info_) {
+            // The registry is also loaded for model_corrections.otl_from_sif (while
+            // ocean tide loading is on), which takes the ocean tide loading block from
+            // it without arming the rest of the station-info subsystem (a-priori
+            // position, ocean pole tide).
+            if (enable_station_info_
+                || (model_corrections_.otl_from_sif && model_corrections_.enable_ocean_tide_loading)) {
                 // Auto-discovery: glob <internal_data_root>/static/sif/*.json.
                 // SIFs are date-independent static assets (like the ATX and
                 // opole grid), so they don't go through PathResolver's
@@ -2670,8 +2806,9 @@ namespace GnssProcessor {
                     log->info("Station info: loaded {} stations from {} SIF file(s)",
                               total, station_info_paths_.size());
                 } else {
-                    log->warn("enable_station_info=true but no SIF stations were loaded "
+                    log->warn("{}=true but no SIF stations were loaded "
                               "(checked {} path(s) under {})",
+                              enable_station_info_ ? "enable_station_info" : "otl_from_sif",
                               station_info_paths_.size(),
                               (internal_data_root_ / "static" / "sif").string());
                 }
@@ -2862,6 +2999,18 @@ namespace GnssProcessor {
             realtime_config_.input_path         = rt.value("input_path", "");
             realtime_config_.tcp_host           = rt.value("tcp_host", "");
             realtime_config_.tcp_port           = rt.value("tcp_port", 28784);
+            // Silent-peer limit of a TCP stream, one per stream block: seconds without a
+            // received byte before the connection is redialed.  0 (default) is off and
+            // byte-identical; a negative value is refused and read as off.
+            auto readTcpSilentTimeout = [&log](const auto& block, const char* where) {
+                double v = block.value("tcp_silent_timeout_s", 0.0);
+                if (!(v >= 0.0)) {
+                    log->warn("{}tcp_silent_timeout_s {} must be >= 0; using 0 (off).", where, v);
+                    v = 0.0;
+                }
+                return v;
+            };
+            realtime_config_.tcp_silent_timeout_s = readTcpSilentTimeout(rt, "realtime.");
             realtime_config_.output_type        = rt.value("output_type", "console");
             realtime_config_.output_path        = rt.value("output_path", "");
             realtime_config_.max_epoch_buffer   = rt.value("max_epoch_buffer", 100U);
@@ -2969,6 +3118,7 @@ namespace GnssProcessor {
                 c.input_path         = cc.value("input_path", std::string{});
                 c.tcp_host           = cc.value("tcp_host", std::string{});
                 c.tcp_port           = cc.value("tcp_port", 28784);
+                c.tcp_silent_timeout_s = readTcpSilentTimeout(cc, "realtime.corrections.");
                 // Per-stream SSR ingest accept policy (RTA-8(b)).  "all" (default)
                 // is the byte-identical unfiltered push; "orbit_only" drops this
                 // stream's clock/bias content and decomposes combined records so
@@ -3003,6 +3153,7 @@ namespace GnssProcessor {
                 e.input_path         = ec.value("input_path", std::string{});
                 e.tcp_host           = ec.value("tcp_host", std::string{});
                 e.tcp_port           = ec.value("tcp_port", 28784);
+                e.tcp_silent_timeout_s = readTcpSilentTimeout(ec, "realtime.ephemeris.");
                 // Same per-stream ingest policy as the corrections block
                 // (RTA-8(b)); the two streams share the transport descriptor.  A
                 // nav stream normally carries no SSR, so this guards against a
@@ -3401,11 +3552,7 @@ namespace GnssProcessor {
     //  Summary
     // =================================================================
     void GnssConfig::logConfigurationSummary_(LogManager& log_manager) const {
-        const char* mode_str =
-            processing_mode_ == ProcessingMode::PPP              ? "PPP"             :
-            processing_mode_ == ProcessingMode::PPP_RTK          ? "PPP-RTK"         :
-            processing_mode_ == ProcessingMode::BaselineSingle   ? "Baseline-Single" :
-                                                                   "Baseline-Multi";
+        const char* mode_str = processingModeLabel(processing_mode_);
         log_manager.getLogger()->info("Loaded configuration: mode={}, uncombined_enabled={}, elevation_mask={} deg, "
             "observation_path={}, navigation_path={}, {} products, leap_seconds={}",
             mode_str,
@@ -3422,7 +3569,7 @@ namespace GnssProcessor {
         const char* basis_label =
             state_ambiguity_basis_ == StateAmbiguityBasis::NlWl ? "nl_wl" : "per_band";
 
-        log_manager.getLogger("gnss_config")->info("Toggles: tropo_grad={}, relin_geom={}, smoother={}, phase_clk={}, if_slip={}, accum_windup={}, wu_gap={:.0f}s, wu_census={}, bssd={}, velocity={}, iono_rate={}, ifb={}, glonass_ifb={}, lock_clkref={}, req_bia={}, sat_bias={}, no_bia_dw={:.0f}, imu={}, amb_basis={}, adaptive_iono_q={}, eclipse_excl={}, cio_frame={}, sun_frame_fix={}, auto_report={}, nc_bridge={}, var_factor={}, data_snoop={}, full_r={}, neq_export={}, trig_sp3={}, orbit_normal_att={}",
+        log_manager.getLogger("gnss_config")->info("Toggles: tropo_grad={}, relin_geom={}, smoother={}, phase_clk={}, if_slip={}, accum_windup={}, wu_gap={:.0f}s, wu_census={}, bssd={}, velocity={}, iono_rate={}, ifb={}, glonass_ifb={}, lock_clkref={}, req_bia={}, sat_bias={}, no_bia_dw={:.0f}, imu={}, amb_basis={}, adaptive_iono_q={}, eclipse_excl={}, cio_frame={}, sun_frame_fix={}, auto_report={}, nc_bridge={}, var_factor={}, data_snoop={}, full_r={}, neq_export={}, trig_sp3={}, orbit_normal_att={}, noon_turn_att={}, wu_bridge={}",
             estimate_tropo_gradients_ ? "on" : "off",
             relinearize_geometry_     ? "on" : "off",
             run_smoother_             ? "on" : "off",
@@ -3454,7 +3601,9 @@ namespace GnssProcessor {
             enable_full_r_kernel_ ? "on" : "off",
             enable_neq_export_ ? "on" : "off",
             enable_trig_sp3_interp_ ? "on" : "off",
-            enable_orbit_normal_attitude_ ? "on" : "off");
+            enable_orbit_normal_attitude_ ? "on" : "off",
+            enable_noon_turn_attitude_ ? "on" : "off",
+            phase_windup_gap_bridge_ ? "on" : "off");
     }
 
 } // namespace GnssProcessor

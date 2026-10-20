@@ -7,8 +7,9 @@ Layers of check:
   1. ORACLE  - full resolved ECEF + propagated 3x3 covariance for 12 (station,
                epoch) cases, captured from the C++ resolveStationCoordinate itself
                (tests/test_station_info.cpp temp oracle). Exercises periodic (CIT),
-               heavy post-seismic (ANTC ~0.5 m), multi-occupation + zero-cross-cov
-               (AB02 @ 2024.36), and a no-nonlinear-term epoch (AMC4 @ 2018.5).
+               post-seismic (ANTC, 29 to 69 mm), multi-occupation + zero-cross-cov
+               (AB02 @ 2024.36), and an epoch before the first periodic window
+               (AMC4 @ 2018.5: the first block's seasonal term continued).
   2. ANCHORS - the exact numbers asserted in tests/test_station_info.cpp
                (parsing / unit normalisation / PSD & periodic coefficients).
   3. SELFCHK - internal identities (find() keys, dt=0 -> Cxx, covariance symmetry,
@@ -24,9 +25,20 @@ Layers of check:
                re-log, firmware-only, before-first-segment), 'latest' mode.
   8. CLI     - stderr warnings and the appended output columns.
   9. REAL    - the defects on the shipped SIFs (GAMB00PYF, STHL00GBR, AZAZ00USA,
-               NIUM00NIU, CHUR00CAN); each check skips when its station is absent.
+               NIUM00NIU, CHUR00CAN) and the 8 stations of the 2024-129 field
+               roster whose periodic block is extrapolated; each check skips when
+               its station is absent.
+ 10. PERIODIC - synthetic SIF: the seasonal term outside its block windows (the
+               NGS M-PAGES v1.2 rule): covering block, before the first, after the
+               last, inside a gap, file order, overlap, continuity.
+ 11. PSD    - synthetic SIF: the post-seismic term is the change since the
+               occupation's reference epoch (zero there, negative before it, the
+               full relaxation for an event after it, the occupation's own epoch).
+ 12. SINEX  - the eight roster stations with an active post-seismic term against
+               the IGS weekly SINEX of 2024-05-08 (horizontal tolerance stated at
+               the table); ANTC00CHL and MIZU00JPN term sizes.
 
-Sections 5 to 8 need no fixtures.  Exit code 0 iff every check passes; 2 when no
+Sections 5 to 8, 10 and 11 need no fixtures.  Exit code 0 iff every check passes; 2 when no
 SIF fixtures are found (the fixture-free sections still run first).
 """
 from __future__ import annotations
@@ -64,9 +76,17 @@ EXTRAPOLATION_CSV_COLUMNS = [
     "extrapolated", "extrapolation_years", "segment_start_year", "segment_end_year",
     "antenna_change_in_gap", "receiver_change_in_gap",
 ]
+PERIODIC_CSV_COLUMNS = [
+    "periodic_reach", "periodic_extrapolation_years",
+    "periodic_block_start_year", "periodic_block_end_year",
+]
 
 # --- oracle captured from the C++ engine (tests/test_station_info.cpp) --------- #
 # (station, epoch, full_xyz, lin_xyz, cov3x3_or_None)
+# The ANTC00CHL full_xyz rows were regenerated when the post-seismic term became the
+# change since the reference epoch (they had carried the displacement accumulated by
+# 2020.0 a second time, 0.66 m); tests/test_station_info_psd.cpp pins the same numbers on
+# the C++ side.  Every other column is as captured.
 ORACLE = [
     ("CIT100USA", 2022.0,
      (-2491490.660528890, -4660802.908887121, 3559129.153035940),
@@ -87,19 +107,19 @@ ORACLE = [
       [0.000000706660, 0.000001478590, -0.000000934420],
       [-0.000000494565, -0.000000934420, 0.000000843825]]),
     ("ANTC00CHL", 2022.0,
-     (1608538.009691408, -4816370.970016915, -3847798.256277910),
+     (1608538.527130818, -4816370.562133572, -3847798.263421474),
      (1608538.551865682, -4816370.539438507, -3847798.265112284),
      [[0.000002614535, -0.000000530337, 0.000000598358],
       [-0.000000530337, 0.000004042173, -0.000001791438],
       [0.000000598358, -0.000001791438, 0.000005151836]]),
     ("ANTC00CHL", 2024.36,
-     (1608538.012558494, -4816371.011391849, -3847798.245259961),
+     (1608538.529997902, -4816370.603508504, -3847798.252403526),
      (1608538.577416177, -4816370.553907000, -3847798.251747113),
      [[0.000002852809, -0.000000818781, 0.000000386973],
       [-0.000000818781, 0.000005073534, -0.000001131949],
       [0.000000386973, -0.000001131949, 0.000005811371]]),
     ("ANTC00CHL", 2018.5,
-     (1608538.017930656, -4816370.906463088, -3847798.278665302),
+     (1608538.535370068, -4816370.498579748, -3847798.285808865),
      (1608538.513972999, -4816370.517980994, -3847798.284933512),
      [[0.000002476099, -0.000000386366, 0.000000704476],
       [-0.000000386366, 0.000003517970, -0.000002109380],
@@ -134,8 +154,12 @@ ORACLE = [
      [[0.000000236918, 0.000000273158, -0.000000201682],
       [0.000000273158, 0.000001292601, -0.000000827206],
       [-0.000000201682, -0.000000827206, 0.000000813083]]),
+    # 2.63 yr before the first periodic window (2021.13): the first block's seasonal
+    # term is continued, so FULL differs from LIN by 0.68 mm.  Before the block
+    # selection rule the engine applied no term here (FULL == LIN); the FULL value
+    # is the one tests/test_station_info_seasonal.cpp pins on the C++ side.
     ("AMC400USA", 2018.5,
-     (-1248596.393444710, -4819428.201899112, 3976505.924241956),
+     (-1248596.393551557, -4819428.201226350, 3976505.924238630),
      (-1248596.393444710, -4819428.201899112, 3976505.924241956),
      [[0.000000247937, 0.000000313064, -0.000000229829],
       [0.000000313064, 0.000001442945, -0.000000932929],
@@ -340,8 +364,10 @@ def test_occupation_mode(reg):
     check(sp._CSV_COLUMNS[:25] == HISTORICAL_CSV_COLUMNS,
           "historical CSV column order unchanged")
     check(sp._CSV_COLUMNS[24] == "occupation_mode", "occupation_mode at its historical index")
-    check(sp._CSV_COLUMNS[25:] == EXTRAPOLATION_CSV_COLUMNS,
+    check(sp._CSV_COLUMNS[25:31] == EXTRAPOLATION_CSV_COLUMNS,
           "extrapolation columns appended after occupation_mode")
+    check(sp._CSV_COLUMNS[31:] == PERIODIC_CSV_COLUMNS,
+          "periodic columns appended after the extrapolation columns")
     try:
         sp.resolve_station_coordinate(cit, 2024.36, occupation="bogus")
         check(False, "bogus occupation mode should raise")
@@ -386,7 +412,7 @@ def _rec(start, end, typ, firmware="1.0", serial="R1"):
 
 
 def _station(sid, occupations, domes="", approx=None, antennas=None, receivers=None,
-             periodic=None):
+             periodic=None, psd=None):
     s = {"ID": sid, "DOMES": domes, "OCCUPATION": occupations}
     if approx is not None:
         s["APPROXIMATE_COORDINATES"] = list(approx)
@@ -394,8 +420,12 @@ def _station(sid, occupations, domes="", approx=None, antennas=None, receivers=N
         s["ANTENNA"] = antennas
     if receivers is not None:
         s["RECEIVER"] = receivers
-    if periodic is not None:
-        s["NONLINEAR_TERMS"] = {"PERIODIC_TERMS": periodic}
+    if periodic is not None or psd is not None:
+        s["NONLINEAR_TERMS"] = {}
+        if periodic is not None:
+            s["NONLINEAR_TERMS"]["PERIODIC_TERMS"] = periodic
+        if psd is not None:
+            s["NONLINEAR_TERMS"]["POST_SEISMIC"] = psd
     return s
 
 
@@ -853,6 +883,120 @@ def test_extrapolation_synthetic():
               f"a flagged window covering t does not count as covered {flags(r)}")
 
 
+def test_periodic_synthetic():
+    print("[10] PERIODIC seasonal term outside its block windows (synthetic SIF)")
+    P = (4000000.0, 1000000.0, 4800000.0)
+
+    def blk(start, end, k):
+        """A periodic block whose amplitudes are k mm, so the block is identifiable."""
+        return {"START": _ts(*start), "END": OPEN if end is None else _ts(*end),
+                "FREQUENCIES": [{"PERIOD": 1.0, "X_COS": 1.0 * k, "X_SIN": -0.75 * k,
+                                 "Y_COS": -0.5 * k, "Y_SIN": 1.5 * k,
+                                 "Z_COS": 0.25 * k, "Z_SIN": 2.0 * k}]}
+
+    b1, b2, b3 = (blk((2010,), (2014,), 1.0), blk((2015,), (2019,), 2.0),
+                  blk((2019,), (2022,), 3.0))
+    mk = lambda sid, blocks: _station(sid, [_occ(_ts(1990), OPEN, P)], periodic=blocks)
+    stations = [
+        mk("PER100USA", [b1, b2, b3]),
+        mk("PER200USA", [b2, b3, b1]),                       # file order: not chronological
+        mk("PER300USA", [b3, b1, b2]),
+        mk("PER400USA", [blk((2010,), (2014,), 1.0), blk((2012,), (2018,), 2.0)]),  # overlap
+        mk("PER500USA", [blk((2010,), None, 1.0)]),          # open-ended
+        mk("PER600USA", []),                                 # no block
+    ]
+    expect = lambda block, t: _block_term(block, t)
+    with _synthetic_registry((2020.0, stations)) as (reg, _paths):
+        for sid in ("PER100USA", "PER200USA", "PER300USA"):
+            st = reg.find(sid)
+            for t, want_blk, want_reach in (
+                    (2008.5, b1, "before_first"), (2012.0, b1, "covered"),
+                    (2014.0, b1, "in_gap"), (2014.6, b1, "in_gap"), (2015.0, b2, "covered"),
+                    (2019.0, b3, "covered"), (2021.5, b3, "covered"),
+                    (2022.0, b3, "after_last"), (2023.25, b3, "after_last")):
+                r = sp.resolve_station_coordinate(st, t, True, False)
+                nop = sp.resolve_station_coordinate(st, t, False, False)
+                got = tuple(r.ecef[k] - nop.ecef[k] for k in range(3))
+                check(r.periodic_reach == want_reach,
+                      f"{sid}@{t}: reach {r.periodic_reach} (want {want_reach})")
+                check(math.dist(got, expect(want_blk, t)) < 5e-9,
+                      f"{sid}@{t}: the {want_reach} case evaluates the right block")
+        st = reg.find("PER100USA")
+        r = sp.resolve_station_coordinate(st, 2008.5, True, False)
+        check(abs(r.periodic_extrapolation_years - (2008.5 - 2010.0)) < 1e-12
+              and r.periodic_block_start_year == 2010.0, "before_first: signed years, first block")
+        r = sp.resolve_station_coordinate(st, 2023.25, True, False)
+        check(abs(r.periodic_extrapolation_years - 1.25) < 1e-12
+              and r.periodic_block_end_year == 2022.0, "after_last: years past the end, last block")
+        r = sp.resolve_station_coordinate(st, 2014.6, True, False)
+        check(abs(r.periodic_extrapolation_years - 0.6) < 1e-12
+              and r.periodic_block_start_year == 2010.0, "in_gap: years past the earlier block's end")
+        r = sp.resolve_station_coordinate(st, 2014.0, True, False)
+        check(r.periodic_reach == "in_gap" and r.periodic_extrapolation_years == 0.0,
+              "the window end is exclusive: in the gap, 0.0 yr")
+        r = sp.resolve_station_coordinate(st, 2012.0, True, False)
+        check(r.periodic_extrapolation_years == 0.0 and r.periodic_block_end_year == 2014.0,
+              "covered: 0.0 yr, bounds of the covering block")
+
+        # The term is continuous where the last window ends (the old rule dropped it).
+        eps = 1e-6
+        a = sp.resolve_station_coordinate(st, 2022.0 - eps, True, False).ecef
+        z = sp.resolve_station_coordinate(st, 2022.0 + eps, True, False).ecef
+        n = sp.resolve_station_coordinate(st, 2022.0, False, False).ecef
+        step = math.dist(a, z)
+        size = math.dist(a, n)
+        check(size > 1e-3 and step < 5e-7,
+              f"no step where the last window ends: term {size * 1e3:.2f} mm, step {step * 1e3:.5f} mm")
+
+        # Overlapping windows are not summed: the first in start order only.
+        r = sp.resolve_station_coordinate(reg.find("PER400USA"), 2013.0, True, False)
+        nop = sp.resolve_station_coordinate(reg.find("PER400USA"), 2013.0, False, False)
+        got = tuple(r.ecef[k] - nop.ecef[k] for k in range(3))
+        check(r.periodic_reach == "covered" and r.periodic_block_start_year == 2010.0
+              and math.dist(got, expect(blk((2010,), (2014,), 1.0), 2013.0)) < 5e-9,
+              "overlap: only the first block, not the sum")
+
+        r = sp.resolve_station_coordinate(reg.find("PER500USA"), 2060.0, True, False)
+        check(r.periodic_reach == "covered" and r.periodic_block_end_year == 9999.0,
+              "an open-ended last block covers every later epoch")
+
+        for sid, flag in (("PER100USA", False), ("PER600USA", True)):
+            r = sp.resolve_station_coordinate(reg.find(sid), 2023.0, flag, False)
+            check(r.periodic_reach == "not_evaluated" and r.periodic_extrapolation_years == 0.0,
+                  f"{sid}: switched off or without blocks -> not_evaluated")
+        check(sp.format_periodic_warning("PER100USA",
+                                         sp.resolve_station_coordinate(reg.find("PER100USA"), 2012.0),
+                                         2012.0) == "",
+              "a covered epoch has no periodic warning text")
+        w = sp.format_periodic_warning("PER100USA",
+                                       sp.resolve_station_coordinate(reg.find("PER100USA"), 2023.25),
+                                       2023.25)
+        check("1.250 yr after the last periodic block [2019.0000, 2022.0000)" in w
+              and w.startswith("PER100USA: periodic term at 2023.250000"), f"after_last warning: {w!r}")
+        w = sp.format_periodic_warning("PER100USA",
+                                       sp.resolve_station_coordinate(reg.find("PER100USA"), 2008.5),
+                                       2008.5)
+        check("1.500 yr before the first periodic block [2010.0000, 2014.0000)" in w,
+              f"before_first warning: {w!r}")
+        w = sp.format_periodic_warning("PER100USA",
+                                       sp.resolve_station_coordinate(reg.find("PER100USA"), 2014.6),
+                                       2014.6)
+        check("0.600 yr after the periodic block [2010.0000, 2014.0000) and before the next one" in w,
+              f"in_gap warning: {w!r}")
+
+
+def _block_term(block, t, ref=2020.0):
+    """Seasonal ECEF displacement of one raw SIF periodic block (mm -> m) at ``t``."""
+    out = [0.0, 0.0, 0.0]
+    for f in block["FREQUENCIES"]:
+        w = 2.0 * sp._PI / f["PERIOD"]
+        c, s = math.cos(w * (t - ref)), math.sin(w * (t - ref))
+        out[0] += 1e-3 * (f["X_COS"] * c + f["X_SIN"] * s)
+        out[1] += 1e-3 * (f["Y_COS"] * c + f["Y_SIN"] * s)
+        out[2] += 1e-3 * (f["Z_COS"] * c + f["Z_SIN"] * s)
+    return tuple(out)
+
+
 def test_cli_synthetic():
     print("[8] CLI warnings and appended columns (synthetic SIF)")
     P_A = (-2491490.0, -4660803.0, 3559129.0)
@@ -863,6 +1007,10 @@ def test_cli_synthetic():
                            _ant(_ts(2019), OPEN, "T2              NONE", "2")],
                  receivers=[_rec(_ts(2005), OPEN, "RX")]),
         _station("EXB100USA", [_occ(_ts(2005), _ts(2015), P_A), _occ(_ts(2016), OPEN, P_A)]),
+        # Covered occupation, closed periodic block: only the seasonal term is extrapolated.
+        _station("PER100USA", [_occ(_ts(2000), OPEN, P_A)],
+                 periodic=[{"START": _ts(2005), "END": _ts(2018),
+                            "FREQUENCIES": [{"PERIOD": 1.0, "X_COS": 2.0}]}]),
     ]
     with _synthetic_registry((2020.0, stations)) as (_reg, paths):
         def run(*extra, epoch="2020.0", keys=("EXA100USA", "ABCD00XYZ", "abcd")):
@@ -884,8 +1032,8 @@ def test_cli_synthetic():
               "CLI removes its stderr handler on return")
 
         rows = list(csv.reader(io.StringIO(out)))
-        check(rows[0] == HISTORICAL_CSV_COLUMNS + EXTRAPOLATION_CSV_COLUMNS,
-              "CSV header: historical columns, then the extrapolation columns")
+        check(rows[0] == HISTORICAL_CSV_COLUMNS + EXTRAPOLATION_CSV_COLUMNS + PERIODIC_CSV_COLUMNS,
+              "CSV header: historical columns, then the extrapolation and periodic columns")
         byreq = {row[0]: dict(zip(rows[0], row)) for row in rows[1:]}
         e = byreq.get("EXA100USA", {})
         check((e.get("extrapolated"), e.get("extrapolation_years"), e.get("segment_start_year"),
@@ -897,6 +1045,32 @@ def test_cli_synthetic():
         a = byreq.get("abcd", {})
         check(a.get("found") == "True" and a.get("extrapolated") == "False"
               and a.get("segment_end_year") == "", "bare code row: covered, open segment blank")
+
+        # Periodic block diagnostics: the warning, the appended cells, the switch.
+        rc, out, err = run(keys=("PER100USA", "ABCD00USA"))
+        check("# WARNING: PER100USA: periodic term at 2020.000000: epoch is 2.000 yr after the "
+              "last periodic block [2005.0000, 2018.0000)" in err,
+              f"extrapolated periodic block warned on stderr: {err!r}")
+        check("PER100USA: epoch" not in err, "the occupation is covered: no occupation warning")
+        check("ABCD00USA: periodic" not in err, "a station without blocks is not warned")
+        rows = list(csv.reader(io.StringIO(out)))
+        byreq = {row[0]: dict(zip(rows[0], row)) for row in rows[1:]}
+        p = byreq.get("PER100USA", {})
+        check((p.get("periodic_reach"), p.get("periodic_extrapolation_years"),
+               p.get("periodic_block_start_year"), p.get("periodic_block_end_year"),
+               p.get("extrapolated"))
+              == ("after_last", "2.000000", "2005.000000", "2018.000000", "False"),
+              f"CSV periodic cells: {p}")
+        a = byreq.get("ABCD00USA", {})
+        check((a.get("periodic_reach"), a.get("periodic_block_start_year"),
+               a.get("periodic_block_end_year")) == ("not_evaluated", "", ""),
+              f"no-block row: not_evaluated, blank bounds: {a}")
+        rc, out, err = run("--no-periodic", keys=("PER100USA",))
+        check("periodic term" not in err, f"--no-periodic draws no periodic warning: {err!r}")
+        rc, out, err = run("--format", "json", keys=("PER100USA",))
+        pj = {r["requested"]: r for r in json.loads(out)["stations"]}.get("PER100USA", {})
+        check(pj.get("periodic_reach") == "after_last" and pj.get("periodic_extrapolation_years") == 2.0
+              and pj.get("periodic_block_end_year") == 2018.0, f"JSON periodic fields: {pj}")
 
         rc, out, err = run("--format", "json")
         recs = {r["requested"]: r for r in json.loads(out)["stations"]}
@@ -1003,6 +1177,216 @@ def test_real_files(reg):
         check(r.valid and not r.extrapolated and r.segment_end_year == 9999.0,
               "CIT100USA @2024.35 covered by its open segment")
 
+    # Seasonal term past the last periodic window: the 8 stations of the 2024-129
+    # field golden roster (epoch 2024 + 128.5 / 366).  Offsets are the term now
+    # applied; the summing rule applied none of it (every epoch is past all windows).
+    golden = 2024.0 + (129.0 - 0.5) / 366.0
+    roster = (  # id, seasonal XYZ [m], years past the last window end, block window
+        ("BSHM00ISR", (0.000390350, -0.000331744, 0.000834791), 0.359312, 2023.101370, 2023.991781),
+        ("PALM00ATA", (-0.000266316, -0.001007491, -0.000626162), 0.331968, 2020.568306, 2024.019125),
+        ("NIUM00NIU", (-0.000479490, -0.000263441, 0.000028151), 0.331968, 2022.950685, 2024.019125),
+        ("CHUR00CAN", (-0.001482611, 0.004894193, -0.003925403), 0.230875, 2010.671233, 2024.120218),
+        ("MAJU00MHL", (-0.001004803, -0.000469438, 0.000000759), 3.353826, 2015.441096, 2020.997267),
+        ("CPVG00CPV", (0.000651877, -0.001013427, -0.000729831), 0.214481, 2023.635616, 2024.136612),
+        ("URUM00CHN", (0.000981005, 0.000920497, 0.002439989), 0.211749, 2018.767123, 2024.139344),
+        ("WROC00POL", (0.000022002, -0.000243837, 0.000364945), 0.225411, 2012.808743, 2024.125682),
+    )
+    if have(*[row[0] for row in roster]):
+        for sid, xyz, yrs, b0, b1 in roster:
+            st = reg.find(sid)
+            r = sp.resolve_station_coordinate(st, golden, True, False)
+            nop = sp.resolve_station_coordinate(st, golden, False, False)
+            got = tuple(r.ecef[k] - nop.ecef[k] for k in range(3))
+            check(all(golden < b.start_year or golden >= b.end_year for b in st.periodic),
+                  f"{sid}: no periodic window covers the golden epoch (the old rule applied nothing)")
+            check(r.periodic_reach == "after_last" and abs(r.periodic_extrapolation_years - yrs) < 5e-7
+                  and abs(r.periodic_block_start_year - b0) < 5e-7
+                  and abs(r.periodic_block_end_year - b1) < 5e-7,
+                  f"{sid}: after_last, {r.periodic_extrapolation_years:.6f} yr past the last block")
+            check(math.dist(got, xyz) < 5e-9, f"{sid}: seasonal term {got} vs {xyz}")
+        chur = reg.find("CHUR00CAN")
+        mm = lambda sid: 1e3 * math.dist(
+            sp.resolve_station_coordinate(reg.find(sid), golden, True, False).ecef,
+            sp.resolve_station_coordinate(reg.find(sid), golden, False, False).ecef)
+        check(abs(mm("CHUR00CAN") - 6.447) < 0.005 and abs(mm("URUM00CHN") - 2.786) < 0.005,
+              f"CHUR00CAN {mm('CHUR00CAN'):.3f} mm, URUM00CHN {mm('URUM00CHN'):.3f} mm")
+
+
+def _psd_block(event, east=None, north=None, up=None):
+    """One raw POST_SEISMIC record; each component is a dict of AEXP/TEXP/ALOG/TLOG lists."""
+    pj = {"EVENT_EPOCH": event}
+    for key, comp in (("EAST", east), ("NORTH", north), ("UP", up)):
+        if comp is not None:
+            pj[key] = comp
+    return pj
+
+
+def _psd_ref(comp, dT):
+    """One component's relaxation since an event, from the definition (metres)."""
+    if comp is None or dT <= 0.0:
+        return 0.0
+    d = 0.0
+    for a, t in zip(comp.get("ALOG", []), comp.get("TLOG", [])):
+        d += a * math.log(1.0 + dT / t)
+    for a, t in zip(comp.get("AEXP", []), comp.get("TEXP", [])):
+        d += a * (1.0 - math.exp(-dT / t))
+    return d
+
+
+def _psd_enu_ref(blocks, year):
+    """Accumulated post-seismic (E, N, U) at ``year`` for raw blocks, from the definition."""
+    out = [0.0, 0.0, 0.0]
+    for pj in blocks:
+        dT = year - sp.decimal_year_from_sif(pj["EVENT_EPOCH"])
+        for k, key in enumerate(("EAST", "NORTH", "UP")):
+            out[k] += _psd_ref(pj.get(key), dT)
+    return out
+
+
+def _enu_of(ecef, base, ref):
+    """Local (E, N, U) at ``ref`` of the displacement ``ecef - base``."""
+    lat, lon, _h = sp.ecef_to_llh(*ref)
+    R = sp.enu_to_ecef_matrix(lat, lon)
+    return sp._mat3_vec(sp._mat3_transpose(R), tuple(ecef[k] - base[k] for k in range(3)))
+
+
+def test_psd_synthetic():
+    print("[11] PSD post-seismic term relative to the reference epoch (synthetic SIF)")
+    P = (4000000.0, 1000000.0, 4800000.0)
+    quake_a = _psd_block(
+        "2010-01-01T00:00:00 UTC",
+        east={"AEXP": [0.020, 0.005], "TEXP": [4.0, 0.2], "ALOG": [0.010], "TLOG": [0.5]},
+        north={"ALOG": [-0.030], "TLOG": [1.0]},
+        up={"AEXP": [0.004], "TEXP": [2.0]})
+    quake_b = _psd_block("2021-01-01T00:00:00 UTC", east={"AEXP": [0.050], "TEXP": [1.5]})
+    quake_c = _psd_block("2005-01-01T00:00:00 UTC", north={"AEXP": [0.040], "TEXP": [3.0]})
+    stations = [
+        _station("PSD100USA", [_occ(_ts(1990), OPEN, P)], psd=[quake_a]),
+        _station("PSD200USA", [_occ(_ts(1990), OPEN, P)], psd=[quake_a, quake_b]),
+        _station("PSD300USA", [_occ(_ts(1990), OPEN, P, ref=2010.0)], psd=[quake_c]),
+    ]
+    tol = 1e-7   # ECEF round trip of a 6e6 m position
+    with _synthetic_registry((2020.0, stations)) as (reg, _paths):
+        s1 = reg.find("PSD100USA")
+        lin = sp.resolve_station_coordinate(s1, 2024.0, False, False).ecef
+
+        def term(st, t):
+            full = sp.resolve_station_coordinate(st, t, False, True).ecef
+            base = sp.resolve_station_coordinate(st, t, False, False).ecef
+            return _enu_of(full, base, base)
+
+        # At the reference epoch the term vanishes: the reference coordinate holds
+        # everything accumulated by then.
+        at_ref = sp.resolve_station_coordinate(s1, 2020.0, False, True).ecef
+        check(at_ref == sp.resolve_station_coordinate(s1, 2020.0, False, False).ecef,
+              "the post-seismic term is exactly zero at the reference epoch")
+        check(sp.resolve_station_coordinate(s1, 2024.0, False, False).ecef == lin,
+              "with_psd=False leaves the linear coordinate")
+
+        # After the reference epoch: the change since the reference epoch, not the
+        # relaxation since the event.
+        for t in (2022.0, 2024.0, 2030.0):
+            got = term(s1, t)
+            want = [a - b for a, b in zip(_psd_enu_ref([quake_a], t), _psd_enu_ref([quake_a], 2020.0))]
+            check(max(abs(got[k] - want[k]) for k in range(3)) < tol,
+                  f"PSD100USA@{t}: change since t_ref {tuple(round(v, 6) for v in got)} "
+                  f"vs {tuple(round(v, 6) for v in want)}")
+        full_now = _psd_enu_ref([quake_a], 2024.0)
+        got = term(s1, 2024.0)
+        check(abs(got[0] - full_now[0]) > 1e-3,
+              "the old rule (full relaxation since the event) differs by more than a millimetre here")
+
+        # Before the reference epoch the change is negative.
+        got = term(s1, 2015.0)
+        want = [a - b for a, b in zip(_psd_enu_ref([quake_a], 2015.0), _psd_enu_ref([quake_a], 2020.0))]
+        check(max(abs(got[k] - want[k]) for k in range(3)) < tol and got[1] > 0.0,
+              f"PSD100USA@2015: negative change (north {got[1] * 1e3:.2f} mm)")
+
+        # Before the event: the term is minus the displacement accumulated by t_ref
+        # (the position is the pre-event linear one), a reference coordinate that
+        # also precedes the event is handled by the same rule.
+        got = term(s1, 2005.0)
+        want = [-v for v in _psd_enu_ref([quake_a], 2020.0)]
+        check(max(abs(got[k] - want[k]) for k in range(3)) < tol,
+              f"PSD100USA@2005 (before the event): {tuple(round(v, 6) for v in got)}")
+
+        # An earthquake after the reference epoch has nothing to subtract: the term
+        # is its full relaxation, zero until it happens.
+        s2 = reg.find("PSD200USA")
+        got = term(s2, 2020.5)
+        want = [a - b for a, b in zip(_psd_enu_ref([quake_a, quake_b], 2020.5),
+                                      _psd_enu_ref([quake_a, quake_b], 2020.0))]
+        check(max(abs(got[k] - want[k]) for k in range(3)) < tol,
+              "PSD200USA@2020.5: the later event has not happened, the earlier one relaxes on")
+        got = term(s2, 2023.0)
+        want = [a - b for a, b in zip(_psd_enu_ref([quake_a, quake_b], 2023.0),
+                                      _psd_enu_ref([quake_a, quake_b], 2020.0))]
+        later = _psd_enu_ref([quake_b], 2023.0)
+        check(max(abs(got[k] - want[k]) for k in range(3)) < tol and later[0] > 0.03,
+              f"PSD200USA@2023: the later event enters in full ({later[0] * 1e3:.2f} mm east)")
+
+        # The reference epoch is the occupation's own.
+        s3 = reg.find("PSD300USA")
+        got = term(s3, 2024.0)
+        want = [a - b for a, b in zip(_psd_enu_ref([quake_c], 2024.0), _psd_enu_ref([quake_c], 2010.0))]
+        check(max(abs(got[k] - want[k]) for k in range(3)) < tol,
+              f"PSD300USA@2024 (REFERENCE_EPOCH 2010.0): {tuple(round(v, 6) for v in got)}")
+        check(sp.resolve_station_coordinate(s3, 2010.0, False, True).ecef
+              == sp.resolve_station_coordinate(s3, 2010.0, False, False).ecef,
+              "zero at the occupation's own reference epoch, not at the file epoch")
+
+
+# The IGS weekly combined SINEX of GPS week 2313 (IGS0OPSSNX_20241260000_07D_07D_SOL.SNX): a
+# mean position at 2024-05-08 12:00 (the epoch below), with formal 3D sigmas of 0.3 to 1.9 mm.
+# The eight stations are those of the 2024-129 field golden roster that carry a post-seismic
+# term at that epoch; the last column is the per-component horizontal tolerance in mm.  The
+# tolerance is twice the 95th percentile (4.1 mm) of the same horizontal difference over 264
+# stations without a post-seismic block, so it stands for weekly noise and unmodelled
+# motion, not for the post-seismic term; NIUM00NIU is extrapolated 0.33 yr past its occupation
+# across an antenna change and gets 12 mm.
+SINEX_PSD_STATIONS = [
+    ("GCGO00USA", (-2281621.77483, -1453585.12678, 5756964.86859), 8.0),
+    ("SOLO00SLB", (-5911340.08837, 2156887.93540, -1038663.46655), 8.0),
+    ("CUSV00THA", (-1132915.09704, 6092528.52228, 1504633.12884), 8.0),
+    ("MAC100AUS", (-3464038.98262, 1334173.29737, -5169223.81332), 8.0),
+    ("NIUM00NIU", (-5937161.02270, -1054674.91356, -2071385.86297), 12.0),
+    ("COCO00AUS", (-741951.26822, 6190961.73679, -1337767.15664), 8.0),
+    ("REYK00ISL", (2587383.90543, -1043033.59986, 5716564.19577), 8.0),
+    ("MIZU00JPN", (-3857171.22964, 3108692.78119, 4004040.11358), 8.0),
+]
+
+
+def test_psd_sinex(reg):
+    print("[12] PSD eight stations against the IGS weekly SINEX of 2024-05-08")
+    t = dy(2024, 5, 8, 12, 0, 0)
+    worst = 0.0
+    for sid, snx, tol_mm in SINEX_PSD_STATIONS:
+        st = reg.find(sid)
+        if not check(st is not None and st.psd, f"{sid} found with a post-seismic block"):
+            continue
+        rc = sp.resolve_station_coordinate(st, t, True, True)
+        nop = sp.resolve_station_coordinate(st, t, True, False)
+        e, n, _u = (v * 1e3 for v in _enu_of(rc.ecef, snx, snx))
+        worst = max(worst, abs(e), abs(n))
+        check(abs(e) <= tol_mm and abs(n) <= tol_mm,
+              f"{sid}: east {e:+.1f} mm, north {n:+.1f} mm against the SINEX (tolerance {tol_mm:.0f} mm)")
+        # The term is the change since the reference epoch, millimetres to decimetres here.
+        shift = math.dist(rc.ecef, nop.ecef)
+        check(shift < 0.2, f"{sid}: post-seismic term {shift * 1e3:.1f} mm")
+    print(f"    worst horizontal component {worst:.1f} mm")
+    miz = reg.find("MIZU00JPN")
+    if miz is not None:
+        full = sp.resolve_station_coordinate(miz, t, True, True).ecef
+        nop = sp.resolve_station_coordinate(miz, t, True, False).ecef
+        check(0.10 < math.dist(full, nop) < 0.20,
+              f"MIZU00JPN term {math.dist(full, nop) * 1e3:.0f} mm (the full relaxation is 1.64 m)")
+    antc = reg.find("ANTC00CHL")
+    if antc is not None:
+        a = sp.resolve_station_coordinate(antc, 2024.36, True, True).ecef
+        b = sp.resolve_station_coordinate(antc, 2024.36, True, False).ecef
+        check(0.05 < math.dist(a, b) < 0.09,
+              f"ANTC00CHL term {math.dist(a, b) * 1e3:.0f} mm at 2024.36 (0.66 m accumulated by 2020.0)")
+
 
 def main():
     reg = load_registry()
@@ -1017,13 +1401,17 @@ def main():
     test_cli_synthetic()
     if reg is not None:
         test_real_files(reg)
+    test_periodic_synthetic()
+    test_psd_synthetic()
+    if reg is not None:
+        test_psd_sinex(reg)
     print()
     if _fail:
         print(f"RESULT: FAIL ({_fail} of {_checks} check(s) failed)")
         return 1
     if reg is None:
         print(f"RESULT: INCOMPLETE ({_checks} fixture-free check(s) passed; "
-              "sections 1-4 and 9 need the SIF fixtures)")
+              "sections 1-4, 9 and 12 need the SIF fixtures)")
         return 2
     print(f"RESULT: PASS (all {_checks} checks)")
     return 0

@@ -132,6 +132,10 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.readmit_seed_horizon_s = config_.networkReadmitSeedHorizonS();     // seed-first re-admission (E2)
     k.readmit_marg_ep        = config_.networkReadmitCouplingMargEp();   // block/row re-coupling edge
     k.readmit_seed_cb        = config_.networkReadmitSeedCodeBias();     // seed the code biases too (or clock only)
+    k.readmit_seed_mirrors   = config_.networkReadmitSeedMirrors();      // monitor and census take a folded seed
+    k.second_band_admission  = config_.networkSecondBandAdmission();     // a constellation enters a station on two modelled bands only
+    k.second_band_scope      = config_.networkSecondBandScope();         // what the rule tests: the constellation or each satellite
+    k.second_band_min_sats   = config_.networkSecondBandMinSats();       // station scope threshold
     // Z-row capture is unconditional (SPEC_synthetic_minimum_network §17 finding 3): a run
     // with a snapshot path records and harvests the per-station ZWD posterior, so every
     // snapshot carries Z rows.  The capture is read-only with respect to the solve (no
@@ -253,6 +257,10 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.cta_gauge_free     = config_.networkClockAnchorGaugeFree();
     // Broadcast satellite health on the network path.
     k.sat_health         = config_.networkSatHealth();
+    // Clock pivot election by predicted station coverage.
+    k.pivot_election           = config_.networkPivotElection();
+    k.pivot_election_horizon_s = config_.networkPivotElectionHorizonS();
+    k.pivot_election_step_s    = config_.networkPivotElectionStepS();
     // Gauge-free carry downdate: one resolved predicate that every fold, withdraw and
     // replay site reads.  It removes the datum's own direction from the carried
     // information, and is armed through `clock_anchor_gauge_free` with the Q3 anchor on.
@@ -505,6 +513,10 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     {
         k.bb_on     = nc.block_baarda && k.redun_census_on;
         k.bb_corrob = k.bb_on && nc.block_baarda_corroborate;
+        k.bb_estimable = k.bb_on && nc.block_baarda_estimable;
+        k.bb_estimable_eps = (nc.block_baarda_estimable_eps > 0.0
+                              && nc.block_baarda_estimable_eps < 1.0)
+                                 ? nc.block_baarda_estimable_eps : 0.05;
         k.bb_report_sigma = (nc.block_baarda_report_sigma > 0.0)
                             ? nc.block_baarda_report_sigma : 4.0;
         k.bb_event_holdoff =

@@ -48,10 +48,64 @@ records derived from site logs (AZAZ00USA, AZOR00USA, AZPL00USA, FLSI00USA) at
 selection rule below gives them no coordinate; the per-occupation epoch applies
 as soon as such a record is usable.
 
-The periodic phase reference stays the METADATA reference epoch of the block;
-post-seismic terms are summed in the local ENU frame for events before `t`, then
-rotated to ECEF. Toggle the nonlinear terms with `--no-periodic` / `--no-psd`
+The periodic phase reference stays the METADATA reference epoch of the block.
+The post-seismic term is the change since `t_ref`, summed in the local ENU frame
+over the earthquakes and rotated to ECEF:
+
+```
+psd(t) - psd(t_ref),    psd(t) = Σ_events [ Σ A_log·ln(1 + Δ/τ_log) + Σ A_exp·(1 − exp(−Δ/τ_exp)) ],  Δ = t − t_event
+```
+
+with a term that is zero before its event (`Δ ≤ 0`). The reference coordinate of
+an occupation is the model position at `t_ref` with the post-seismic displacement
+already included, so it differs from the secular position of the ITRF2020 IGS SSC
+by `psd(t_ref)` (MIZU00JPN 1.37 m east and 0.56 m south, GCGO00USA 30 mm east and
+46 mm south at 2020.0), for occupations before an event as well. Adding `psd(t)`
+in full counted that displacement twice. Against the IGS weekly combined SINEX of
+2024-05-08, the change since `t_ref` agrees to 3.1 mm per horizontal component at
+seven of the eight roster stations with an active term (GCGO00USA, SOLO00SLB,
+CUSV00THA, MAC100AUS, COCO00AUS, REYK00ISL, MIZU00JPN) and to 8.8 mm at NIUM00NIU
+(extrapolated 0.33 yr across an antenna change); the full term was off by 9 mm to
+1.37 m. Over the 43 stations with a block that the SINEX holds, the horizontal
+difference has a median of 2.3 mm (32.5 mm before), a 90th percentile of 5.1 mm
+(340 mm) and a largest value of 16.9 mm (1.48 m).
+
+The vertical component follows the same rule for the occupations derived from the
+IGb20 epoch-2020 solution (ANTC00CHL, TSKB00JPN, USUD00JPN, ASPA00ASM and others:
+Up errors of 23 to 178 mm before, below 10 mm after). Five stations whose occupation
+derives from the `ITRF2020-u2023-wo-IGb20` solution (IQQE00CHL, MTKA00JPN,
+SAMO00WSM, TSK200JPN, WGTT00NZL) have a reference Up coordinate without the
+post-seismic Up displacement, and their Up now differs from the SINEX by 35 to 96 mm
+where the full term agreed to below 10 mm; their horizontal components improved the
+same way as the others. Toggle the nonlinear terms with `--no-periodic` / `--no-psd`
 (both on by default, matching the C++ network-roster path).
+
+### Seasonal term outside its block windows
+
+The seasonal term is **one** periodic block, chosen by the epoch alone (not by the
+occupation), with the rule of NGS M-PAGES v1.2 (`PeriodicMotion::computeDisplacement`)
+that the C++ `selectPeriodicBlock` ports:
+
+| epoch relative to the blocks (taken in start order) | block evaluated | `periodic_reach` |
+|---|---|---|
+| inside a window (`start <= t < end`; the first such block) | that block | `covered` |
+| before the first window | the first block | `before_first` |
+| at or after the end of the last window | the last block | `after_last` |
+| between two windows | the block that ended last | `in_gap` |
+| seasonal term off, or the station has no block | none | `not_evaluated` |
+
+Outside its window the block's sinusoids continue on the phase of its own reference
+epoch, so the seasonal term does not fall to zero where the linear term goes on (the
+earlier rule summed only the covering blocks, and the closed last segment of a
+station that stopped, or changed equipment, lost up to several millimetres at once:
+CHUR00CAN 6.4 mm at 2024.35). Overlapping windows are not summed: only the first block,
+in start order, applies. The file order of the blocks is irrelevant (MARA00VEN and
+RIOB00BRA list an old block last). The CLI prints one `# WARNING:` line per station
+whose block is evaluated outside its window; the result carries `periodic_reach`,
+`periodic_extrapolation_years` (signed like `extrapolation_years`) and the evaluated
+block's window. At 2024.35, 8 stations of the 2024-129 field roster are in this case,
+all `after_last` (BSHM00ISR 1.0 mm, PALM00ATA 1.2, NIUM00NIU 0.5, CHUR00CAN 6.4,
+MAJU00MHL 1.1, CPVG00CPV 1.4, URUM00CHN 2.8, WROC00POL 0.4).
 
 ### Occupation selection
 
@@ -233,10 +287,13 @@ CSV columns (JSON carries the same fields plus the full 3×3 `covariance_ecef`):
 | `extrapolation_years` | signed years outside the selected segment (0.0 when covered) |
 | `segment_start_year` / `segment_end_year` | the selected occupation's window (blank / JSON null end = open-ended, as `window_end`) |
 | `antenna_change_in_gap` / `receiver_change_in_gap` | equipment change between the segment and the epoch |
+| `periodic_reach` | which periodic-block case applied: `covered`, `before_first`, `after_last`, `in_gap` or `not_evaluated` (see [Seasonal term outside its block windows](#seasonal-term-outside-its-block-windows)) |
+| `periodic_extrapolation_years` | signed years outside the evaluated block's window: `t − end` (>= 0) for `after_last` and `in_gap`, `t − start` (< 0) for `before_first`, 0.0 otherwise |
+| `periodic_block_start_year` / `periodic_block_end_year` | the evaluated block's window (blank when no block, blank end = open-ended) |
 
 The columns through `occupation_mode` keep their historical order; the six
-extrapolation columns are **appended after it**, so positional consumers of the
-earlier layout are unaffected.
+extrapolation columns are **appended after it** and the four periodic columns after
+those, so positional consumers of the earlier layout are unaffected.
 
 **Precision.** CSV floats are written with per-column precision so nothing
 meaningful is truncated: angular columns (`lat_deg`, `lon_deg`) get 11 decimal
@@ -272,6 +329,10 @@ st = reg.find("STHL00GBR", approx_ecef=(6104817.262, -605827.807, -1740738.684))
 rc = resolve_station_coordinate(reg.find("NIUM00NIU"), 2024.35)
 print(rc.extrapolated, rc.extrapolation_years, rc.antenna_change_in_gap)
 
+# seasonal term outside its block window (CHUR00CAN, last block ends 2024.12)
+rc = resolve_station_coordinate(reg.find("CHUR00CAN"), 2024.35)
+print(rc.periodic_reach, rc.periodic_extrapolation_years)   # after_last 0.2309
+
 # NGS datasheet recipe: current occupation, linear only
 ds = resolve_station_coordinate(reg.find("CORV00USA"), 2010.0,
                                 with_periodic=False, occupation="latest")
@@ -281,20 +342,24 @@ print(ds.ecef, ds.window, ds.in_window, ds.occupation_mode)
 `in_window` / `window` always describe the occupation **actually used**, so a
 `latest` result at an old epoch correctly reports `in_window=False`.
 `format_extrapolation_warning()` renders the CLI's one-line warning for any
-extrapolated result.
+extrapolated result, and `format_periodic_warning()` the one for a seasonal block
+evaluated outside its window.
 
 ## Validation
 
-`test_sif_propagate.py` checks the port in nine sections and exits non-zero on
+`test_sif_propagate.py` checks the port in twelve sections and exits non-zero on
 any failure:
 
 1. **Oracle**: full resolved ECEF + propagated 3×3 covariance for 12
    (station, epoch) cases captured directly from the C++
    `resolveStationCoordinate`. Covers seasonal-only (CIT100USA), heavy
-   post-seismic (ANTC00CHL, ~0.5 m nonlinear term), multi-occupation with a
-   zero-cross-covariance window (AB0200USA), and a no-nonlinear-term epoch
-   (AMC400USA). **Realised agreement: ≤ 1e-9 m on position, ≤ 5e-13 m² on
-   covariance.**
+   post-seismic (ANTC00CHL, 29 to 69 mm change since 2020.0; its rows were
+   regenerated with the reference-epoch rule and are pinned by
+   `tests/test_station_info_psd.cpp`), multi-occupation with a
+   zero-cross-covariance window (AB0200USA), and an epoch before the first
+   periodic window (AMC400USA at 2018.5, where the first block's seasonal term is
+   continued; `tests/test_station_info_seasonal.cpp` pins the same numbers).
+   **Realised agreement: ≤ 1e-9 m on position, ≤ 5e-13 m² on covariance.**
 2. **Anchors**: the exact parsing/unit-normalisation numbers asserted in
    `tests/test_station_info.cpp`.
 3. **Self-checks**: `find()` key resolution, `dt=0 ⇒ Cxx`, covariance symmetry,
@@ -323,10 +388,26 @@ any failure:
 9. **Real files** (each check skipped when its station is absent): GAMB00PYF,
    STHL00GBR, P389, `cit1`, the four 2010.0 records (AZAZ00USA with its flag
    cleared reproduces `coords + v·(2024.35 − 2010.0)` exactly), NIUM00NIU and
-   CHUR00CAN at 2024.35.
+   CHUR00CAN at 2024.35, and the 8 stations of the 2024-129 field roster whose
+   epoch is past their last periodic window (the seasonal offset each now gains,
+   to 5 nm, with the C++ pinning the same table).
+10. **Periodic** (synthetic SIF): the seasonal term outside its block windows:
+   the covering block, before the first, after the last, inside a gap, the
+   exclusive window end, any file order, overlap not summed, an open last block,
+   no block or the term off, continuity where the last window ends, the warning
+   text; the CLI warning, the appended CSV / JSON cells and `--no-periodic`
+   (section 8).
+11. **Post-seismic** (synthetic SIF): the term is exactly zero at the reference
+    epoch, the change since it after and before it, minus the carried
+    displacement before the event, the full relaxation of an event after the
+    reference epoch, the occupation's own reference epoch, and the term off.
+12. **SINEX** (real files): the eight roster stations with an active term
+    against the IGS weekly SINEX of 2024-05-08 (8 mm per horizontal component,
+    12 mm for the extrapolated NIUM00NIU), the MIZU00JPN term (0.10 to 0.20 m)
+    and the ANTC00CHL term (0.05 to 0.09 m at 2024.36).
 
 ```bash
-python test_sif_propagate.py     # sections 1-4 and 9 need data/static/sif/*.json (or $SIF_PATHS)
+python test_sif_propagate.py     # sections 1-4, 9 and 12 need data/static/sif/*.json (or $SIF_PATHS)
 ```
 
 ## Source of truth

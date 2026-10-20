@@ -175,6 +175,32 @@ namespace GnssProcessor {
             const std::string& satellite, const GnssTime& time) const;
 
         /**
+         * @brief Satellite state and Sun at an epoch other than the one being processed.
+         *
+         * For callers that walk the geometry back or forward in time (the phase
+         * wind-up gap bridge).  It returns what computeSatelliteGeometry() would
+         * give a receiver at @p rx_pos at reception epoch @p time: the satellite
+         * position at emission time rotated into the reception frame (one
+         * light-time iteration, no satellite clock term), the ECEF velocity at
+         * emission, and the Sun position from this instance's own model and ERP.
+         *
+         * It leaves the epoch being processed undisturbed: the Sun and Moon cache
+         * and the per-satellite APC-overlay record that @ref ssrOrbitApcApplied
+         * reads are not changed.
+         *
+         * @param[in]  satellite Satellite identifier.
+         * @param[in]  time      Reception epoch.
+         * @param[in]  rx_pos    Receiver ECEF position (meters).
+         * @param[out] sat_pos   Satellite ECEF position at reception (meters).
+         * @param[out] sat_vel   Satellite ECEF velocity at emission (m/s).
+         * @param[out] sun_pos   Sun ECEF position (meters).
+         * @return False when the orbit products cannot describe @p time.
+         */
+        bool getLookBackState(const std::string& satellite, const GnssTime& time,
+            const Eigen::Vector3d& rx_pos, Eigen::Vector3d& sat_pos,
+            Eigen::Vector3d& sat_vel, Eigen::Vector3d& sun_pos) const;
+
+        /**
          * @brief Compute geometric range (meters) between receiver and satellite.
          * @param rx_pos Receiver ECEF position (meters).
          * @param sat_pos Satellite ECEF position (meters).

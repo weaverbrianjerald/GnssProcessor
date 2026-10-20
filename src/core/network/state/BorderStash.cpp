@@ -161,6 +161,17 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
     // byte-identical when the monitor is off (nothing flagged → inflate=false → the
     // ordinary stiff-carry stash).
     const bool full_refloat = !(clk_mon_reinit_sig > 0.0);   // reinit_sigma ≤ 0 → hard skip-stash
+    // Counts an entry the hard refloat leaves out of the stash, in the response table, when
+    // the stash would otherwise have kept it (a datum-pinned column, or one without a
+    // positive variance, is never stashed, so nothing is left out).  The column is looked
+    // up here only for a flagged key, and a failed lookup counts nothing.
+    const auto hard_refloat_left_out = [&](ResponseSite site, const auto& column_of) {
+        Eigen::Index col = -1;
+        try { col = column_of(); } catch (...) { return; }
+        if (col < 0 || col >= cov.rows() || pinned_cols.count(col)) return;
+        if (!(cov(col, col) > 0.0)) return;
+        prmRespond(ctx.counters.prm_resp, site);
+    };
     // Carry this stash epoch's clock-monitor flags across to the next inject (hard-refloat
     // mode skip-stashes the flagged satellite entirely, so the flag cannot travel on
     // prev_carry.inflate_q).  Gated, so off runs are unchanged.  The reinit-sources route reads the same
@@ -175,7 +186,11 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
     if (!clk_model_on)
         for (const std::string& sat : registered_clock_sats) {
             const bool flagged = clock_refloat_sats.count(sat) > 0;
-            if (flagged && full_refloat) continue;
+            if (flagged && full_refloat) {
+                hard_refloat_left_out(ResponseSite::ClkHardRefloat,
+                                      [&] { return est.clockColumn(sat); });
+                continue;
+            }
             stash(SharedParamKind::Clock, sat, "", est.clockColumn(sat), flagged);
         }
     // eq34 reattach hygiene (INC-2): refresh the bridge's value source from this kept
@@ -224,7 +239,11 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
         // D2 / dense fold).  Clock / code / SH / ZWD carries are unaffected.
         if (carry_invariant) continue;
         const bool flagged = clock_refloat_sats.count(sat) > 0;
-        if (flagged && full_refloat) continue;
+        if (flagged && full_refloat) {
+            hard_refloat_left_out(ResponseSite::PbHardRefloat,
+                                  [&] { return est.phaseBiasColumn(sat, sig); });
+            continue;
+        }
         const Eigen::Index col = est.phaseBiasColumn(sat, sig);
         stash(SharedParamKind::PhaseBias, sat, sig, col, flagged);
     }
@@ -253,7 +272,11 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
     }
     for (const auto& kv : registered_code_keys) {  // satellite code bias, OSB (W6)
         const bool flagged = clock_refloat_sats.count(kv.first) > 0;
-        if (flagged && full_refloat) continue;
+        if (flagged && full_refloat) {
+            hard_refloat_left_out(ResponseSite::CbHardRefloat,
+                                  [&] { return est.codeBiasColumn(kv.first, kv.second); });
+            continue;
+        }
         const Eigen::Index col = est.codeBiasColumn(kv.first, kv.second);
         // CB-excursion guard (SPEC_day129_frame_guards phase 2.1): a network-wide
         // common-mode clock excursion this epoch marks the affected satellite's code-bias

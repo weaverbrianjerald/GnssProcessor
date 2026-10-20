@@ -119,6 +119,10 @@ bool Application::initializePosition() {
                             rc.segment_start_year, rc.segment_end_year,
                             rc.antenna_change_in_gap ? "yes" : "no",
                             rc.receiver_change_in_gap ? "yes" : "no");
+                    if (rc.periodic.extrapolated())
+                        log_manager_.getLogger("main_log")->warn(
+                            "SIF a-priori for marker '{}' (matched {}) @ {:.3f}: {}",
+                            marker, si->id, year, describePeriodicExtrapolation(rc.periodic));
                     const Eigen::Vector3d rinex_hen = rinex_parser_->getAntennaDeltaHen();
                     const SifArpReduction red = reduceSifCoordinateToArp(
                         *si, rc.ecef, year,
@@ -242,10 +246,9 @@ void Application::buildGlobalIonosphereMap_() {
                 need_gim_for_higher_order ? "higher_order_ionosphere" : "");
         } else if (need_gim_for_higher_order) {
             // PppModel needs the pointer to evaluate the I₂+I₃ correction
-            // each epoch.  The pointer is non-owning.  gim_ is declared after
-            // ppp_model_ in Application.hpp, so it is destroyed first: during
-            // Application teardown PppModel's pointer dangles until ppp_model_
-            // is destroyed, and must not be dereferenced in that window.
+            // each epoch.  The pointer is non-owning.  gim_ is declared before
+            // ppp_model_ in Application.hpp, so it is destroyed after the model
+            // and the pointer never dangles during Application teardown.
             ppp_model_->setGim(gim_.get());
         }
     }

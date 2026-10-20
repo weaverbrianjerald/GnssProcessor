@@ -6,6 +6,7 @@
 #include "products/StationInfoFile.hpp"
 #include "math/Coordinates.hpp"
 
+#include <fmt/format.h>
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
@@ -14,6 +15,7 @@
 #include <cstdio>
 #include <fstream>
 #include <utility>
+#include <vector>
 
 namespace GnssProcessor {
 
@@ -424,7 +426,107 @@ namespace {
         return false;
     }
 
+    /// The periodic block that supplies the seasonal term at one epoch, and the
+    /// selection case that chose it.  @c block is null (and @c reach
+    /// NotEvaluated) when the station has no periodic block.
+    struct PeriodicChoice {
+        const SifPeriodicBlock* block{ nullptr };
+        SifPeriodicReach reach{ SifPeriodicReach::NotEvaluated };
+    };
+
+    /// Choose the periodic block for @p year, following NGS M-PAGES v1.2
+    /// (PeriodicMotion::computeDisplacement).  The blocks are taken in start
+    /// order (file order for equal starts; the file order itself is not
+    /// chronological for every station).  The first block whose window covers
+    /// the year (start <= year < end) wins, so overlapping windows are not
+    /// summed.  With none covering: before the first window the first block,
+    /// at or after the end of the last window the last block, and inside a gap
+    /// the last block, in start order, that ended at or before the year.
+    PeriodicChoice selectPeriodicBlock(const StationInfo& s, double year) {
+        PeriodicChoice out;
+        if (s.periodic.empty()) return out;
+
+        std::vector<const SifPeriodicBlock*> by_start;
+        by_start.reserve(s.periodic.size());
+        for (const auto& b : s.periodic) by_start.push_back(&b);
+        std::stable_sort(by_start.begin(), by_start.end(),
+                         [](const SifPeriodicBlock* a, const SifPeriodicBlock* b) {
+                             return a->start_year < b->start_year;
+                         });
+
+        const SifPeriodicBlock* last_ended = nullptr;  // last block, in start order, with end <= year
+        for (const SifPeriodicBlock* b : by_start) {
+            if (year >= b->start_year && year < b->end_year) {
+                out.block = b;
+                out.reach = SifPeriodicReach::Covered;
+                return out;
+            }
+            if (b->end_year <= year) last_ended = b;
+        }
+
+        if (year < by_start.front()->start_year) {
+            out.block = by_start.front();
+            out.reach = SifPeriodicReach::BeforeFirst;
+        } else if (year >= by_start.back()->end_year) {
+            out.block = by_start.back();
+            out.reach = SifPeriodicReach::AfterLast;
+        } else {
+            // Past the first start and covered by nothing: the first block has
+            // ended, so last_ended is set.
+            out.block = last_ended;
+            out.reach = SifPeriodicReach::InGap;
+        }
+        return out;
+    }
+
+    /// Post-seismic displacement (E, N, U) [m] accumulated by @p year: the sum
+    /// over the station's earthquakes of the log/exp relaxation since each event,
+    /// d = sum A_log*log(1 + dT/T_log) + sum A_exp*(1 - exp(-dT/T_exp)) with
+    /// dT = year - event.  An event at or after @p year contributes nothing.
+    Eigen::Vector3d accumulatedPostSeismicEnu(const StationInfo& s, double year) {
+        const auto evalComp = [](const SifPsdComponent& comp, double dT) {
+            double d = 0.0;
+            const std::size_t nlog = std::min(comp.alog.size(), comp.tlog.size());
+            for (std::size_t i = 0; i < nlog; ++i)
+                if (comp.tlog[i] > 0.0) d += comp.alog[i] * std::log(1.0 + dT / comp.tlog[i]);
+            const std::size_t nexp = std::min(comp.aexp.size(), comp.texp.size());
+            for (std::size_t i = 0; i < nexp; ++i)
+                if (comp.texp[i] > 0.0) d += comp.aexp[i] * (1.0 - std::exp(-dT / comp.texp[i]));
+            return d;
+        };
+        Eigen::Vector3d enu = Eigen::Vector3d::Zero();  // (E, N, U)
+        for (const auto& pb : s.psd) {
+            const double dT = year - pb.event_year;
+            if (dT <= 0.0) continue;  // event has not happened yet at this epoch
+            enu.x() += evalComp(pb.east, dT);
+            enu.y() += evalComp(pb.north, dT);
+            enu.z() += evalComp(pb.up, dT);
+        }
+        return enu;
+    }
+
 } // namespace
+
+std::string describePeriodicExtrapolation(const SifPeriodicEvaluation& p) {
+    if (!p.extrapolated()) return {};
+    const double yrs = std::abs(p.extrapolation_years);
+    switch (p.reach) {
+    case SifPeriodicReach::BeforeFirst:
+        return fmt::format("epoch is {:.3f} yr before the first periodic block [{:.4f}, {:.4f}); "
+                           "that block's seasonal term is applied",
+                           yrs, p.block_start_year, p.block_end_year);
+    case SifPeriodicReach::AfterLast:
+        return fmt::format("epoch is {:.3f} yr after the last periodic block [{:.4f}, {:.4f}); "
+                           "that block's seasonal term is applied",
+                           yrs, p.block_start_year, p.block_end_year);
+    case SifPeriodicReach::InGap:
+        return fmt::format("epoch is {:.3f} yr after the periodic block [{:.4f}, {:.4f}) and "
+                           "before the next one; the earlier block's seasonal term is applied",
+                           yrs, p.block_start_year, p.block_end_year);
+    default:
+        return {};
+    }
+}
 
 ResolvedStationCoord resolveStationCoordinate(const StationInfo& s,
                                               double decimal_year,
@@ -473,12 +575,23 @@ ResolvedStationCoord resolveStationCoordinate(const StationInfo& s,
     const double dt = decimal_year - occ->reference_epoch_year;
     out.ecef = occ->coordinates + occ->velocity * dt;
 
-    // Periodic (seasonal) terms: sum over every block whose window covers the
-    // epoch.  d = A_cos*cos(w*dT) + A_sin*sin(w*dT), w = 2*pi/period,
+    // Periodic (seasonal) term: one block, chosen by the epoch (the covering
+    // block, else the nearest by the M-PAGES rule; see selectPeriodicBlock), so
+    // the term does not vanish where the linear term goes on.
+    // d = A_cos*cos(w*dT) + A_sin*sin(w*dT), w = 2*pi/period,
     // dT = (t - block ref epoch) in years (NGS / M-PAGES convention).
     if (with_periodic) {
-        for (const auto& b : s.periodic) {
-            if (decimal_year < b.start_year || decimal_year >= b.end_year) continue;
+        const PeriodicChoice pc = selectPeriodicBlock(s, decimal_year);
+        if (pc.block != nullptr) {
+            const SifPeriodicBlock& b = *pc.block;
+            out.periodic.reach            = pc.reach;
+            out.periodic.block_start_year = b.start_year;
+            out.periodic.block_end_year   = b.end_year;
+            if (pc.reach == SifPeriodicReach::BeforeFirst)
+                out.periodic.extrapolation_years = decimal_year - b.start_year;  // negative
+            else if (pc.reach == SifPeriodicReach::AfterLast || pc.reach == SifPeriodicReach::InGap)
+                out.periodic.extrapolation_years = decimal_year - b.end_year;
+
             const double dT = decimal_year - b.reference_epoch_year;
             for (const auto& f : b.freqs) {
                 if (f.period_yr == 0.0) continue;
@@ -491,28 +604,17 @@ ResolvedStationCoord resolveStationCoordinate(const StationInfo& s,
         }
     }
 
-    // Post-seismic deformation: sum of log/exp relaxation per ENU component,
-    // for events before the epoch.  d = sum A_log*log(1 + dT/T_log)
-    //                                 + sum A_exp*(1 - exp(-dT/T_exp)).
+    // Post-seismic deformation: the change of the log/exp relaxation since the
+    // occupation's reference epoch, per ENU component.  The reference coordinate
+    // is the model position at t_ref with the displacement accumulated by then
+    // already in it (it differs from the secular position of the ITRF2020 SSC by
+    // psd(t_ref)), so psd(t) alone would count that displacement twice.  The term
+    // is zero at t_ref, negative back in time, and an event after t_ref enters in
+    // full.
     if (with_psd && !s.psd.empty()) {
-        const auto evalComp = [](const SifPsdComponent& comp, double dT) {
-            double d = 0.0;
-            const std::size_t nlog = std::min(comp.alog.size(), comp.tlog.size());
-            for (std::size_t i = 0; i < nlog; ++i)
-                if (comp.tlog[i] > 0.0) d += comp.alog[i] * std::log(1.0 + dT / comp.tlog[i]);
-            const std::size_t nexp = std::min(comp.aexp.size(), comp.texp.size());
-            for (std::size_t i = 0; i < nexp; ++i)
-                if (comp.texp[i] > 0.0) d += comp.aexp[i] * (1.0 - std::exp(-dT / comp.texp[i]));
-            return d;
-        };
-        Eigen::Vector3d enu = Eigen::Vector3d::Zero();  // (E, N, U)
-        for (const auto& pb : s.psd) {
-            const double dT = decimal_year - pb.event_year;
-            if (dT <= 0.0) continue;  // event has not happened yet at this epoch
-            enu.x() += evalComp(pb.east, dT);
-            enu.y() += evalComp(pb.north, dT);
-            enu.z() += evalComp(pb.up, dT);
-        }
+        const Eigen::Vector3d enu =
+            accumulatedPostSeismicEnu(s, decimal_year)
+            - accumulatedPostSeismicEnu(s, occ->reference_epoch_year);
         if (enu.squaredNorm() > 0.0) {
             const Coordinates::Llh llh = Coordinates::ecefToLlh(out.ecef);
             out.ecef += Coordinates::enuToEcef(enu, llh);
@@ -545,7 +647,8 @@ std::optional<SifRosterCoordinate> resolveRosterCoordinate(const StationInfoFile
     const StationInfo* s = registry.find(station_name);
     if (s == nullptr) return std::nullopt;
     // Full SIF coordinate function at the run date (see resolveStationCoordinate):
-    //   x(t) = x_ref + v * (t - t_ref) + periodic(t) + post-seismic(t)
+    //   x(t) = x_ref + v * (t - t_ref) + periodic(t)
+    //          + [post-seismic(t) - post-seismic(t_ref)]
     // with x_ref/v the occupation solution at that occupation's own reference
     // epoch (typically ITRF2020 at 2020.0), so the returned ECEF is the
     // survey-grade coordinate propagated to decimal_year, as a fixed-coordinate
@@ -563,6 +666,7 @@ std::optional<SifRosterCoordinate> resolveRosterCoordinate(const StationInfoFile
     out.segment_end_year       = rc.segment_end_year;
     out.antenna_change_in_gap  = rc.antenna_change_in_gap;
     out.receiver_change_in_gap = rc.receiver_change_in_gap;
+    out.periodic               = rc.periodic;
     return out;
 }
 

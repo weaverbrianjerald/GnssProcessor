@@ -147,8 +147,10 @@ bool RealTimeEngine::gateMaxDuration(RtEpochContext& ctx) {
 /**
  * @brief Time step / gap detection + the aiding-predict capture. False on a non-advancing TOW (duplicate epoch).
  *
- * Relocated verbatim from the pre-cut RealTimeEngine::processEpoch
- * (frozen lines 940-978); see scripts/rt_seam_verify.py.
+ * Relocated from the pre-cut RealTimeEngine::processEpoch (frozen lines
+ * 940-978). The gap threshold no longer matches the frozen text: a tolerance of
+ * 0 now means 1.5 measured epoch intervals instead of a fixed 1 s, so
+ * scripts/rt_seam_verify.py reports this seam as changed.
  */
 bool RealTimeEngine::stepTimeAndDetectGap(RtEpochContext& ctx) {
     auto log = log_manager_.getLogger("rt_engine");
@@ -181,10 +183,16 @@ bool RealTimeEngine::stepTimeAndDetectGap(RtEpochContext& ctx) {
                        epoch_prefix, current_time.tow);
             return false;
         }
-        const double gap_tol = config_.getDataGapTolerance() > 0.0
-                             ? config_.getDataGapTolerance()
-                             : 1.0;  // default: 1 s (typical RT rate)
+        // A configured tolerance is used as given.  Left at 0 the threshold is 1.5
+        // times the measured epoch spacing, the default the post-processing path
+        // applies, so a 30 s stream is not a gap at every epoch.  It is never below
+        // 1 s, the fixed value used before: a stream of 1.5 Hz or faster keeps it,
+        // and before a spacing has been measured it is 1 s, which also flags the first
+        // spacing after a warm resume (it spans the outage).  The spacing is judged
+        // before it joins the window.
+        const double gap_tol = epoch_cadence_.gapToleranceS(config_.getDataGapTolerance());
         gap_detected = dt > gap_tol;
+        epoch_cadence_.observe(dt);
     }
     // Capture the pre-update epoch boundary and first-epoch flag for aiding-source
     // prediction: prev_epoch_time_ and first_epoch_ are both overwritten before

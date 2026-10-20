@@ -231,6 +231,7 @@ std::unique_ptr<RealtimeStream> openPrimary(const RealTimeConfig& rt,
         cfg.host              = rt.tcp_host;
         cfg.port              = rt.tcp_port;
         cfg.reconnect_delay_s = rt.reconnect_delay_s;
+        cfg.silent_timeout_s  = rt.tcp_silent_timeout_s;
         log->info("Realtime primary: TCP {}:{}", cfg.host, cfg.port);
         auto s = RealtimeStream::openTcp("primary", cfg, lm);
         if (!s) log->error("Failed to start primary TCP client");
@@ -277,6 +278,7 @@ std::unique_ptr<RealtimeStream> openAuxRtcmStream(
         cfg.host              = cc.tcp_host;
         cfg.port              = cc.tcp_port;
         cfg.reconnect_delay_s = cc.reconnect_delay_s;
+        cfg.silent_timeout_s  = cc.tcp_silent_timeout_s;
         log->info("Realtime {}: TCP {}:{}", label, cfg.host, cfg.port);
         auto s = RealtimeStream::openTcp(label, cfg, lm);
         if (!s) log->error("Failed to start {} TCP client", label);
@@ -498,7 +500,10 @@ int Application::runRealTime() {
         // The identity fields (frame/cepoch/atx/oref) are part of the key, so a
         // producer restart with a different frame or ATX counts as a contract
         // change and re-runs the check.  (RTA-12)
-        return fmt::format("{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
+        // The code-jump and set-change channel flags and the wind-up mode are compared
+        // by checkContract, so a receipt that changes only one of them must count as a
+        // contract change as well.
+        return fmt::format("{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
                            c.decl.reference_receiver_id, c.decl.bias_sign,
                            c.decl.windup_yaw_model_id,
                            static_cast<int>(c.decl.amb_datum),
@@ -508,7 +513,9 @@ int Application::runRealTime() {
                            c.disc_threshold_m, c.emit_clock_disc,
                            c.apriori_product_id, c.staleness_horizon_s,
                            c.generation_id,
-                           c.frame_id, c.coord_epoch, c.atx_id, c.orbit_ref);
+                           c.frame_id, c.coord_epoch, c.atx_id, c.orbit_ref,
+                           c.code_bias_jump_test, c.clock_disc_on_set_change,
+                           c.windup_mode);
     };
     auto checkConsumerContract = [&](const SbasisContract& file_contract) {
         const std::string fp = contractFp(file_contract);
@@ -542,15 +549,26 @@ int Application::runRealTime() {
             // check that reports it.  See docs/SPEC_phase_windup_sign.md section 8
             // item 2.
             contract_expectation.decl.windup_yaw_model_id = kWindUpYawModelId;
+            // The wind-up mode is pinned the same way, to the mode this consumer runs:
+            // the construction id above says which formula, the mode says how it is
+            // applied (off, wrapped per epoch, or accumulated), and a consumer on
+            // another mode than the producer is in a different phase frame by whole
+            // cycles, which its ambiguities absorb without a trace.  A producer that
+            // does not declare a mode is accepted, since it cannot be verified.
+            contract_expectation.windup_mode = windUpModeOf(config_);
             have_contract_expectation = true;
         }
         std::vector<std::string> mismatches;
         if (NetworkProductReader::checkContract(file_contract, contract_expectation,
                                                 &mismatches)) {
             log->info("Network products: S-basis contract verified (ref rx '{}', "
-                      "a-priori '{}', gid {}).",
+                      "a-priori '{}', gid {}, wind-up mode {}).",
                       file_contract.decl.reference_receiver_id,
-                      file_contract.apriori_product_id, file_contract.generation_id);
+                      file_contract.apriori_product_id, file_contract.generation_id,
+                      file_contract.windup_mode.empty()
+                          ? "undeclared by the producer, unverified; this consumer runs '" +
+                                contract_expectation.windup_mode + "'"
+                          : "'" + file_contract.windup_mode + "'");
         } else {
             std::string joined;
             for (const auto& m : mismatches) {

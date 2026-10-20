@@ -583,6 +583,162 @@ def test_sif_periodic_terms_keep_the_file_epoch(tmp_path):
     assert abs(expected_x - wrong_x) > 1e-3
 
 
+def _periodic_block(start, end, mm):
+    """One annual periodic block, X_COS = ``mm`` millimetres, ``end`` None = open."""
+    return {"START": f"{start}-01-01T00:00:00 GPS",
+            "END": "9999-12-31T00:00:00 GPS" if end is None else f"{end}-01-01T00:00:00 GPS",
+            "FREQUENCIES": [{"PERIOD": 1.0, "X_COS": mm, "X_SIN": 0.0, "Y_COS": 0.0,
+                             "Y_SIN": 0.0, "Z_COS": 0.0, "Z_SIN": 0.0}]}
+
+
+@pytest.mark.parametrize("t, block_mm, warns", [
+    (2008.5, 1.0, True),    # before the first window: the first block
+    (2012.0, 1.0, False),   # covered
+    (2014.6, 1.0, True),    # in the gap: the block that ended last
+    (2016.0, 2.0, False),   # covered by the second block
+    (2023.25, 3.0, True),   # past the last window: the last block
+])
+def test_sif_periodic_block_outside_its_window_follows_the_mpages_rule(tmp_path, t, block_mm, warns):
+    """The seasonal term is one block chosen by the epoch (NGS M-PAGES v1.2): it does
+    not fall to zero outside the windows while the linear term goes on.  The blocks are
+    listed out of start order to show that the file order is irrelevant."""
+    blocks = [_periodic_block(2015, 2019, 2.0), _periodic_block(2019, 2022, 3.0),
+              _periodic_block(2010, 2014, 1.0)]
+    sif = SifTruth(_sif_file(tmp_path, [_station(
+        occupations=[_occ(ref_epoch=2020.0)], NONLINEAR_TERMS={"PERIODIC_TERMS": blocks})],
+        meta_epoch=2020.0), with_periodic=True, with_psd=False)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        tc = sif.resolve("TEST00DEU", t)
+    periodic_warned = any("periodic window" in str(w.message) for w in caught)
+    assert periodic_warned is warns
+    expected_x = _REF[0] + 1e-3 * block_mm * math.cos(2.0 * math.pi * (t - 2020.0))
+    assert tc.ecef[0] == pytest.approx(expected_x, abs=1e-9)
+
+
+def test_sif_periodic_overlapping_windows_are_not_summed(tmp_path):
+    blocks = [_periodic_block(2010, 2014, 1.0), _periodic_block(2012, 2018, 2.0)]
+    sif = SifTruth(_sif_file(tmp_path, [_station(
+        occupations=[_occ(ref_epoch=2020.0)], NONLINEAR_TERMS={"PERIODIC_TERMS": blocks})],
+        meta_epoch=2020.0), with_periodic=True, with_psd=False)
+    t = 2013.0
+    tc = sif.resolve("TEST00DEU", t)
+    assert tc.ecef[0] == pytest.approx(
+        _REF[0] + 1e-3 * 1.0 * math.cos(2.0 * math.pi * (t - 2020.0)), abs=1e-9)
+
+
+# -- S4: post-seismic term relative to the reference epoch --------------------
+
+_QUAKE_A = {"EVENT_EPOCH": "2010-01-01T00:00:00 UTC",
+            "EAST": {"AEXP": [0.020, 0.005], "TEXP": [4.0, 0.2], "ALOG": [0.010], "TLOG": [0.5]},
+            "NORTH": {"ALOG": [-0.030], "TLOG": [1.0]},
+            "UP": {"AEXP": [0.004], "TEXP": [2.0]}}
+_QUAKE_B = {"EVENT_EPOCH": "2021-01-01T00:00:00 UTC",
+            "EAST": {"AEXP": [0.050], "TEXP": [1.5]}}
+_QUAKE_C = {"EVENT_EPOCH": "2005-01-01T00:00:00 UTC",
+            "NORTH": {"AEXP": [0.040], "TEXP": [3.0]}}
+
+
+def _quake_year(quake):
+    return float(quake["EVENT_EPOCH"][:4])        # every synthetic event is on 1 January
+
+
+def _psd_enu_def(quakes, year):
+    """Accumulated post-seismic (E, N, U) in metres at ``year``, from the definition."""
+    out = np.zeros(3)
+    for q in quakes:
+        dT = year - _quake_year(q)
+        if dT <= 0.0:
+            continue
+        for k, key in enumerate(("EAST", "NORTH", "UP")):
+            c = q.get(key, {})
+            for a, t in zip(c.get("ALOG", []), c.get("TLOG", [])):
+                out[k] += a * math.log(1.0 + dT / t)
+            for a, t in zip(c.get("AEXP", []), c.get("TEXP", [])):
+                out[k] += a * (1.0 - math.exp(-dT / t))
+    return out
+
+
+def _geodetic_rad(ref):
+    """Latitude and longitude [rad] of an ECEF point on WGS84 (fixed-point iteration)."""
+    e2 = (1.0 / 298.257223563) * (2.0 - 1.0 / 298.257223563)
+    lon = math.atan2(ref[1], ref[0])
+    p = math.hypot(ref[0], ref[1])
+    lat = math.atan2(ref[2], p * (1.0 - e2))
+    for _ in range(8):
+        n = 6378137.0 / math.sqrt(1.0 - e2 * math.sin(lat) ** 2)
+        lat = math.atan2(ref[2] + e2 * n * math.sin(lat), p)
+    return lat, lon
+
+
+def _enu_of(delta, ref):
+    """Local (E, N, U) at ECEF point ``ref`` of the ECEF vector ``delta``."""
+    lat, lon = _geodetic_rad(ref)
+    sl, cl, so, co = math.sin(lat), math.cos(lat), math.sin(lon), math.cos(lon)
+    d = np.asarray(delta, dtype=float)
+    return np.array([-so * d[0] + co * d[1],
+                     -sl * co * d[0] - sl * so * d[1] + cl * d[2],
+                     cl * co * d[0] + cl * so * d[1] + sl * d[2]])
+
+
+def _psd_term(tmp_path, quakes, t, ref_epoch=2020.0, meta_epoch=2020.0):
+    """The post-seismic term the evaluator applies at ``t``: local ENU metres, and the
+    coordinate with and without it."""
+    with_psd = SifTruth(_sif_file(tmp_path, [_station(
+        occupations=[_occ(ref_epoch=ref_epoch)],
+        NONLINEAR_TERMS={"POST_SEISMIC": list(quakes)})], meta_epoch=meta_epoch, name="psd.json"),
+        with_periodic=False, with_psd=True)
+    linear = SifTruth(_sif_file(tmp_path, [_station(
+        occupations=[_occ(ref_epoch=ref_epoch)])], meta_epoch=meta_epoch, name="lin.json"),
+        with_periodic=False, with_psd=False)
+    full = with_psd.resolve("TEST00DEU", t).ecef
+    lin = linear.resolve("TEST00DEU", t).ecef
+    return _enu_of(full - lin, lin), full, lin
+
+
+def test_sif_psd_vanishes_at_the_reference_epoch(tmp_path):
+    """The reference coordinate is the model position at the reference epoch, the
+    post-seismic displacement accumulated by then included, so the term is zero there."""
+    enu, full, lin = _psd_term(tmp_path, [_QUAKE_A], 2020.0)
+    assert np.array_equal(full, lin)
+
+
+@pytest.mark.parametrize("t", [2015.0, 2022.0, 2024.0, 2030.0])
+def test_sif_psd_is_the_change_since_the_reference_epoch(tmp_path, t):
+    enu, _full, _lin = _psd_term(tmp_path, [_QUAKE_A], t)
+    want = _psd_enu_def([_QUAKE_A], t) - _psd_enu_def([_QUAKE_A], 2020.0)
+    assert np.allclose(enu, want, atol=1e-7), (enu, want)
+    # The relaxation since the event (the term before this was corrected) differs by
+    # decimetres here, so the two rules are distinguishable.
+    assert np.linalg.norm(_psd_enu_def([_QUAKE_A], t) - want) > 0.02
+
+
+def test_sif_psd_before_the_event_removes_the_accumulated_displacement(tmp_path):
+    """Before the event the term is minus what the reference coordinate carries: the
+    position is the pre-event linear one."""
+    enu, _full, _lin = _psd_term(tmp_path, [_QUAKE_A], 2005.0)
+    assert np.allclose(enu, -_psd_enu_def([_QUAKE_A], 2020.0), atol=1e-7)
+
+
+def test_sif_psd_event_after_the_reference_epoch_enters_in_full(tmp_path):
+    quakes = [_QUAKE_A, _QUAKE_B]
+    for t in (2020.5, 2023.0):
+        enu, _full, _lin = _psd_term(tmp_path, quakes, t)
+        want = _psd_enu_def(quakes, t) - _psd_enu_def(quakes, 2020.0)
+        assert np.allclose(enu, want, atol=1e-7), (t, enu, want)
+    # At 2020.5 the later event has not happened; at 2023.0 it adds its whole relaxation.
+    assert _psd_enu_def([_QUAKE_B], 2020.5)[0] == 0.0
+    assert _psd_enu_def([_QUAKE_B], 2023.0)[0] > 0.03
+
+
+def test_sif_psd_uses_the_occupations_own_reference_epoch(tmp_path):
+    enu, _full, _lin = _psd_term(tmp_path, [_QUAKE_C], 2024.0, ref_epoch=2010.0)
+    want = _psd_enu_def([_QUAKE_C], 2024.0) - _psd_enu_def([_QUAKE_C], 2010.0)
+    assert np.allclose(enu, want, atol=1e-7)
+    _enu0, full0, lin0 = _psd_term(tmp_path, [_QUAKE_C], 2010.0, ref_epoch=2010.0)
+    assert np.array_equal(full0, lin0)
+
+
 # -- real-file checks (skipped when data/static/sif is not populated) --------
 
 _SIF_DIR = Path(__file__).resolve().parents[2] / "data" / "static" / "sif"
@@ -644,8 +800,13 @@ def test_real_sif_azaz00usa_uses_its_2010_epoch(real_sif, tmp_path):
 
 @_needs_real_sif
 def test_real_sif_nium00niu_extrapolated_across_an_antenna_change(real_sif):
-    with pytest.warns(SifExtrapolationWarning, match="NIUM00NIU.*antenna change in gap: yes"):
+    # Two warnings: the occupation segment (antenna change in the gap) and, because
+    # the last periodic window ended 0.33 yr earlier, the seasonal block continued.
+    with pytest.warns(SifExtrapolationWarning) as rec:
         tc = real_sif.resolve("NIUM00NIU", 2024.35)
+    texts = [str(w.message) for w in rec]
+    assert any("NIUM00NIU" in t and "antenna change in gap: yes" in t for t in texts)
+    assert any("NIUM00NIU" in t and "periodic window (after last)" in t for t in texts)
     assert tc.extrapolated is True and tc.extrapolation_years > 0.3
     assert tc.segment_end_year < 2024.35
     assert tc.antenna_change_in_gap is True and tc.receiver_change_in_gap is False
@@ -663,6 +824,56 @@ def test_real_sif_chur00can_receiver_change_and_palm00ata_relog(real_sif):
     # PALM00ATA re-logs the same antenna (type and serial) inside its gap.
     assert palm.extrapolated is True
     assert palm.antenna_change_in_gap is False and palm.receiver_change_in_gap is False
+
+# The IGS weekly combined SINEX of GPS week 2313 (IGS0OPSSNX_20241260000_07D_07D_SOL.SNX): a
+# mean position at 2024-05-08 12:00 (formal 3D sigma 0.3 to 1.9 mm).  The eight stations are
+# those of the 2024-129 field golden roster that carry a post-seismic term at that epoch; the
+# last item is the per-component horizontal tolerance in mm.  It is twice the 95th percentile
+# (4.1 mm) of the same horizontal difference over 264 stations without a post-seismic block, so
+# it stands for weekly noise and unmodelled motion, not for the post-seismic term.  NIUM00NIU is
+# extrapolated 0.33 yr past its occupation across an antenna change and gets 12 mm.
+_SINEX_PSD_STATIONS = [
+    ("GCGO00USA", (-2281621.77483, -1453585.12678, 5756964.86859), 8.0),
+    ("SOLO00SLB", (-5911340.08837, 2156887.93540, -1038663.46655), 8.0),
+    ("CUSV00THA", (-1132915.09704, 6092528.52228, 1504633.12884), 8.0),
+    ("MAC100AUS", (-3464038.98262, 1334173.29737, -5169223.81332), 8.0),
+    ("NIUM00NIU", (-5937161.02270, -1054674.91356, -2071385.86297), 12.0),
+    ("COCO00AUS", (-741951.26822, 6190961.73679, -1337767.15664), 8.0),
+    ("REYK00ISL", (2587383.90543, -1043033.59986, 5716564.19577), 8.0),
+    ("MIZU00JPN", (-3857171.22964, 3108692.78119, 4004040.11358), 8.0),
+]
+_GOLDEN_EPOCH = 2024.0 + (129.0 - 0.5) / 366.0     # 2024-05-08 12:00, the SINEX reference epoch
+
+
+@pytest.fixture(scope="module")
+def real_sif_no_psd():
+    return SifTruth([_IGS_SIF, _NCN_SIF], with_periodic=True, with_psd=False)
+
+
+@_needs_real_sif
+@pytest.mark.parametrize("sid, snx, tol_mm", _SINEX_PSD_STATIONS)
+def test_real_sif_psd_station_matches_the_igs_weekly_sinex(real_sif, real_sif_no_psd, sid, snx, tol_mm):
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", SifExtrapolationWarning)
+        tc = real_sif.resolve(sid, _GOLDEN_EPOCH)
+    assert tc is not None and tc.source == f"sif:{sid}"
+    e, n, _u = 1e3 * _enu_of(tc.ecef - np.array(snx), np.array(snx))
+    assert abs(e) <= tol_mm and abs(n) <= tol_mm, (sid, round(e, 1), round(n, 1))
+    # The term itself is millimetres to decimetres; the full relaxation since the event
+    # (the rule before this one) was up to 1.6 m (MIZU00JPN).
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", SifExtrapolationWarning)
+        shift = np.linalg.norm(tc.ecef - real_sif_no_psd.resolve(sid, _GOLDEN_EPOCH).ecef)
+    assert shift < 0.2, (sid, shift)
+
+
+@_needs_real_sif
+def test_real_sif_antc00chl_psd_term_is_the_change_since_2020(real_sif, real_sif_no_psd):
+    """ANTC00CHL carries 0.66 m of post-seismic displacement (Maule 2010) at 2020.0; the
+    term at 2024.36 is the 69 mm accumulated since."""
+    full = real_sif.resolve("ANTC00CHL", 2024.36).ecef
+    lin = real_sif_no_psd.resolve("ANTC00CHL", 2024.36).ecef
+    assert 0.05 < np.linalg.norm(full - lin) < 0.09
 
 
 # ---------------------------------------------------------------------------

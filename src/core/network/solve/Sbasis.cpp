@@ -282,13 +282,55 @@ NetworkSbasis::SatHealth NetworkSbasis::satHealthSeries(const std::vector<Broadc
 NetworkSbasis::PivotPick NetworkSbasis::electClockPivot(const std::vector<std::string>& sats,
                                                         const std::string& declared,
                                                         const std::string& incumbent,
-                                                        const std::set<std::string>* ineligible) {
+                                                        const std::set<std::string>* ineligible,
+                                                        const PivotRanker* ranker,
+                                                        const std::string& standby) {
     const auto present = [&sats](const std::string& s) {
         return !s.empty() && std::find(sats.begin(), sats.end(), s) != sats.end();
     };
     PivotPick out;
     if (present(declared)) {   // an explicit choice is kept, healthy or not
         out.sat = declared;
+        return out;
+    }
+    if (ranker) {
+        // The coverage election.  An incumbent that is registered and healthy stays; so does
+        // the earlier election's pick that no product has adopted yet.  Only when neither
+        // holds is a satellite elected, from the healthy registered ones (all of them when
+        // none is healthy, as the lexical rule falls back).
+        const auto eligible = [ineligible](const std::string& s) {
+            return !ineligible || ineligible->count(s) == 0;
+        };
+        if (present(incumbent) && eligible(incumbent)) {
+            out.sat = incumbent;
+            return out;
+        }
+        if (present(standby) && eligible(standby)) {
+            out.sat          = standby;
+            out.standby_kept = true;
+            return out;
+        }
+        std::vector<std::string> pool;
+        for (const std::string& s : sats)
+            if (eligible(s)) pool.push_back(s);
+        const bool none_eligible = pool.empty();
+        if (none_eligible) pool = sats;
+        if (ineligible) {
+            if (none_eligible) {
+                out.health_fallback = true;
+            } else {
+                for (const std::string& s : sats)
+                    if (!eligible(s)) { out.health_skipped = true; break; }
+            }
+        }
+        const std::string pick = (*ranker)(pool);
+        if (!pick.empty() && std::find(pool.begin(), pool.end(), pick) != pool.end()) {
+            out.sat    = pick;
+            out.ranked = true;
+        } else {
+            out.sat         = pool.front();
+            out.rank_failed = true;
+        }
         return out;
     }
     const std::string& base = present(incumbent) ? incumbent : sats.front();
@@ -365,7 +407,8 @@ NetworkSbasis::Plan NetworkSbasis::buildSharedDatum(
     const std::vector<std::string>& registered_clock_sats,
     const SbasisDeclaration& decl,
     const std::map<std::string, std::string>* sticky_prev_pivot,
-    const std::set<std::string>* pivot_ineligible) const {
+    const std::set<std::string>* pivot_ineligible,
+    const PivotElection* election) const {
     Plan plan;
 
     // Group the registered clock satellites by constellation in a stable (lexical)
@@ -445,7 +488,9 @@ NetworkSbasis::Plan NetworkSbasis::buildSharedDatum(
     // from sticky_prev_pivot, kept while it is still registered; (3) the first
     // registered satellite of that constellation.
     // With pivot_ineligible, rules 2 and 3 pass over a satellite the
-    // broadcast flags unhealthy (electClockPivot).
+    // broadcast flags unhealthy (electClockPivot).  With an election, rule 3 is an
+    // election by predicted coverage that runs only when no incumbent holds
+    // (network.pivot_election).
     for (const auto& [c, sats] : by_const) {
         std::string declared, incumbent;
         const auto it = decl.clock_pivot_sat.find(c);
@@ -458,9 +503,24 @@ NetworkSbasis::Plan NetworkSbasis::buildSharedDatum(
             const auto pit = sticky_prev_pivot->find(c);
             if (pit != sticky_prev_pivot->end()) incumbent = pit->second;
         }
-        const PivotPick pick = electClockPivot(sats, declared, incumbent, pivot_ineligible);
+        PivotRanker ranker;
+        std::string standby;
+        if (election && election->rank) {
+            ranker = [&](const std::vector<std::string>& candidates) {
+                return election->rank(c, candidates);
+            };
+            if (election->standby) {
+                const auto sit = election->standby->find(c);
+                if (sit != election->standby->end()) standby = sit->second;
+            }
+        }
+        const PivotPick pick = electClockPivot(sats, declared, incumbent, pivot_ineligible,
+                                               ranker ? &ranker : nullptr, standby);
         if (pick.health_skipped)  ++plan.pivot_health_skips;
         if (pick.health_fallback) ++plan.pivot_health_fallbacks;
+        if (pick.ranked)       { ++plan.pivot_ranked;       plan.pivot_ranked_consts.insert(c); }
+        if (pick.rank_failed)  { ++plan.pivot_rank_failures; plan.pivot_rank_failed_consts.insert(c); }
+        if (pick.standby_kept) ++plan.pivot_standby_kept;
         const std::string& pivot = pick.sat;
         plan.clock_pivot[c] = pivot;
         plan.shared_datum.push_back(

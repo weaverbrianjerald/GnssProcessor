@@ -64,12 +64,17 @@ Moving a coordinate between epochs requires information about the site:
 \begin{equation}
 \bm{x}(\epo) \;=\; \bm{x}(\refep) \;+\; \stavel\,(\epo-\refep)
               \;+\; \bm{d}_{\mathrm{per}}(\epo)
-              \;+\; \bm{d}_{\mathrm{PSD}}(\epo),
+              \;+\; \bigl[\bm{d}_{\mathrm{PSD}}(\epo)-\bm{d}_{\mathrm{PSD}}(\refep)\bigr],
 \label{eq:trf-propagate}
 \end{equation}
 with $\stavel$ a station velocity, $\bm{d}_{\mathrm{per}}$ the periodic
 (annual $+$ semiannual) terms, and $\bm{d}_{\mathrm{PSD}}$ the
-post-seismic deformation.  \texttt{resolveStationCoordinate} and
+post-seismic deformation accumulated since the earthquakes.  The reference
+coordinate $\bm{x}(\refep)$ is the model position with
+$\bm{d}_{\mathrm{PSD}}(\refep)$ already in it (the SIF coordinates at
+$2020.0$ exceed the ITRF2020 secular positions by that amount), so only the
+change since the reference epoch is added.
+\texttt{resolveStationCoordinate} and
 \texttt{tools/sif\_propagate} implement this form.  The three site terms
 are observed or modelled.  A transformation parameter set does not
 contain them, so a transformation that appears to handle an epoch

@@ -24,6 +24,8 @@ runs under a ``__main__`` guard, so importing this module costs nothing.
 """
 import glob, math, os, sys, statistics as st
 from collections import defaultdict
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from rinex_ids import norm_sat  # noqa: E402
 
 C = 299792458.0
 
@@ -121,7 +123,7 @@ def parse_station_tow(path, sod_lo=None, sod_hi=None, n_epochs=None):
             s = line[0]
             if s not in sides or not sides[s]:
                 continue
-            sat = line[0:3]
+            sat = norm_sat(line[0:3])
             vals = {}
             for band, ch, ic, il, fq in sides[s]:
                 def field(i):

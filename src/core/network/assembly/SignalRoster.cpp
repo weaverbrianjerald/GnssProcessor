@@ -280,7 +280,7 @@ namespace GnssProcessor {
         std::map<char, std::string> out;
         // The tracker keeps a phase only when its matching code is reported too, and
         // then takes the lexically lowest such phase of the band, which is what the
-        // band-digit-only comparator under std::sort produces on this toolchain.
+        // band-digit-only comparator under std::stable_sort produces.
         // std::set iterates ascending, so the first hit per band is that signal.
         for (const std::string& k : keys) {
             if (!isObsKey(k, ObsType::Phase)) continue;

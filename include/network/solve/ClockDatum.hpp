@@ -7,6 +7,8 @@
  */
 
 #include "network/solve/Sbasis.hpp"     // SbasisDeclaration
+#include <map>
+#include <string>
 #include "network/driver/RunTypes.hpp"   // EpochAction
 
 namespace GnssProcessor {
@@ -16,6 +18,8 @@ struct NetworkRunContext;
 struct NetworkRun;
 struct NetworkEpoch;
 struct SolveDatum;   // network/solve/SolveGlue.hpp
+struct GnssTime;
+struct NetworkSetupResult;
 
 /**
  * @brief The clock datum's declaration the epoch's election reads
@@ -36,6 +40,38 @@ SbasisDeclaration networkClockDatumDeclaration(const NetworkRunContext& ctx,
                                                double clk_anchor_sigma);
 
 /**
+ * @brief The coverage election of one epoch, bound for @ref NetworkSbasis::buildSharedDatum
+ *        (@c network.pivot_election).
+ *
+ * Built by each caller of the election at the top of its epoch: the ranker is bound to the
+ * epoch time and to the run's predictor (@c setup.pivot_coverage), and the standby map is
+ * the constellations' @c elected_pivot rows as they stand before the epoch. Two callers in
+ * one epoch (the preview before PASS B and the solve glue) therefore elect from the same
+ * inputs, and the predictor's memo gives them the same ranking at the cost of one.
+ * Not copyable: the election points into the standby map of this object.
+ */
+class NetworkPivotElectionEpoch {
+public:
+    /**
+     * @param ctx   The run context (the knob, the entity tables).
+     * @param setup The setup result (the predictor).
+     * @param t     The epoch time.
+     */
+    NetworkPivotElectionEpoch(const NetworkRunContext& ctx, const NetworkSetupResult& setup,
+                              const GnssTime& t);
+    NetworkPivotElectionEpoch(const NetworkPivotElectionEpoch&) = delete;
+    NetworkPivotElectionEpoch& operator=(const NetworkPivotElectionEpoch&) = delete;
+
+    /// @return The election for @ref NetworkSbasis::buildSharedDatum, or null when the knob is off.
+    const NetworkSbasis::PivotElection* get() const { return active_ ? &election_ : nullptr; }
+
+private:
+    bool                               active_;
+    std::map<std::string, std::string> standby_;
+    NetworkSbasis::PivotElection       election_;
+};
+
+/**
  * @brief Stage 3: elects the clock datum (HLT-aware, sticky), folds the constraint-realized
  *        clock rows and decides the pivot-handover verdict.
  * @param run   The run: the estimator is folded; ctx counters (hlt_*) are written.
@@ -51,6 +87,10 @@ struct ClockDatumCounters {
     long long hlt_unhealthy_registered = 0; ///< (sat,epoch) registered clock satellites the broadcast flags unhealthy (processed in "pivot" mode, absent in "exclude")
     long long hlt_pivot_skips = 0;          ///< (constellation,epoch) pivot picks that passed over an unhealthy satellite
     long long hlt_pivot_fallbacks = 0;      ///< (constellation,epoch) with no healthy registered satellite, where the lexical first stood
+    // The coverage election on the network path.  All zero unless network.pivot_election.
+    long long piv_ranked = 0;               ///< (constellation,epoch) picks a fresh election by the coverage rule made
+    long long piv_rank_failures = 0;        ///< (constellation,epoch) elections where no candidate could be ranked and the first candidate stood
+    long long piv_standby_kept = 0;         ///< (constellation,epoch) picks that kept an earlier election's satellite that no emitted product had adopted yet
 };
 
 } // namespace GnssProcessor

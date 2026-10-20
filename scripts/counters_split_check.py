@@ -270,8 +270,9 @@ def header_paths():
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     ap.add_argument('--base-rev', default=BASE_REV_DEFAULT)
+    ap.add_argument('--strict', action='store_true', help='fail on members added after the base revision')
     a = ap.parse_args()
-    fails = []
+    fails, notes = [], []
 
     old_items, _, _ = parse_struct(git_show(a.base_rev, RUN_CTX), STRUCT)
     new_text = read_tree(RUN_CTX)
@@ -297,8 +298,11 @@ def main():
     new_m = Counter(m for b in bases for it in base_items.get(b, []) if it.kind == 'member' for m in it.members)
     for k, v in (old_m - new_m).items():
         fails.append(f'missing from the bases: {k} x{v}')
-    for k, v in (new_m - old_m).items():
-        fails.append(f'not in the old struct: {k} x{v}')
+    # Members added after the base are new counters, not a defect of the split; --strict (the proof at the
+    # split commit itself) still fails on them.
+    added = sorted((new_m - old_m).items())
+    for k, v in added:
+        (fails if a.strict else notes).append(f'not in the old struct: {k} x{v}')
 
     names = Counter(n for b in bases for it in base_items.get(b, []) if it.kind == 'member' for n in it.names)
     for n, v in names.items():
@@ -327,12 +331,14 @@ def main():
     for b in bases:
         cnt = sum(len(it.members) for it in base_items.get(b, []) if it.kind == 'member')
         print(f'  {b:44s} {cnt:4d}  {home.get(b, "?")}')
+    for n in notes:
+        print('  added since the base: ' + n.split(': ', 1)[1])
     if fails:
         print('FAIL')
         for f in fails:
             print('  ' + f)
         return 1
-    print(f'PASS: multiset of (name, type, initializer) equal ({sum(old_m.values())}), '
+    print(f'PASS: every member of the base struct kept ({sum(old_m.values())}; {len(notes)} added since), '
           f'no duplicate names, nested types and order preserved')
     return 0
 

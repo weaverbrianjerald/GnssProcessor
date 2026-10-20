@@ -1144,6 +1144,7 @@ private:
     LoopSignal networkProcessEpoch_(NetworkRun& run, const SyncedEpoch& se_raw);
 
     friend struct NetworkEpochContractProbe;   // tests/network/test_network_epoch_contract.cpp reads the five private seam types
+    friend struct ApplicationMemberOrderProbe;  // tests/test_application_member_order.cpp compares member addresses (destruction order)
 
     /**
      * @brief Consumer-only replay (Q5): drive the held-out PPP-RTK consumer from
@@ -1464,6 +1465,10 @@ private:
     std::unique_ptr<ProductParser>       product_parser_;
     std::unique_ptr<RinexParser>         rinex_parser_;
     std::unique_ptr<StateManager>        state_manager_;
+    // Declared above ppp_model_ and ref_ppp_model_: members are destroyed in reverse
+    // declaration order, and both models keep a non-owning pointer to the map
+    // (PppModel::setGim), so the map has to outlive them.
+    std::unique_ptr<GlobalIonosphereMap> gim_;  /**< IONEX global ionosphere map for PPP-RTK ionosphere weighting (post-processing), the STEC source of PppModel's higher-order ionosphere correction, and the network producer's GIM rows.  Null unless one of them requested it; check isLoaded() before use.  Destroyed after the models that point to it. */
     std::unique_ptr<PppModel>            ppp_model_;
     std::unique_ptr<MeasurementModel>    meas_model_;
     std::unique_ptr<KalmanFilter>        kalman_filter_;
@@ -1473,7 +1478,6 @@ private:
     std::unique_ptr<TraceLogger>         trace_logger_;
     std::unique_ptr<AidingSourceManager> aiding_manager_;   //!< Owns the config-selected aiding sources (IMU first client); there is no separate ImuIntegrator member.
     std::unique_ptr<AmbiguityResolver>   ambiguity_resolver_;
-    std::unique_ptr<GlobalIonosphereMap> gim_;  /**< IONEX global ionosphere map for PPP-RTK ionosphere weighting (post-processing), the STEC source of PppModel's higher-order ionosphere correction, and the network producer's GIM rows.  Null unless one of them requested it; check isLoaded() before use. */
     std::unique_ptr<NeqAccumulator>      neq_accumulator_;  /**< Cross-session normal-equation accumulator (item #13B); non-null only when processing.enable_neq_export. */
 
     PppState ppp_state_;                      /**< Current PPP state (synced with filter).  In baseline mode this is the rover state. */

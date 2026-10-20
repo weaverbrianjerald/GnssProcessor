@@ -78,6 +78,7 @@ add_library(gnss_core STATIC
 	src/core/logging/TraceLogger.cpp
     src/core/corrections/GnssCorrections.cpp
     src/core/corrections/OceanTideModel.cpp
+    src/core/corrections/WindUpGapBridge.cpp
     src/core/filter/KalmanFilter.cpp
     src/core/filter/KalmanKernels.cpp
     src/core/filter/KalmanResidualQc.cpp
@@ -236,6 +237,8 @@ add_library(gnss_core STATIC
     src/core/realtime/PbDiscCarryLedger.cpp
     src/core/realtime/PbStepTranslateLedger.cpp
     src/core/realtime/AmbLevelCheck.cpp
+    src/core/realtime/InnovationScreen.cpp
+    src/core/realtime/RealTimeEngineScreen.cpp
     src/core/realtime/ConsumerSatTrace.cpp
     src/core/filter/PivotManager.cpp
     src/core/filter/DdPivotManager.cpp
@@ -245,6 +248,7 @@ add_library(gnss_core STATIC
     src/core/network/solve/Estimator.cpp
     src/core/network/carry/InvariantCarryDriver.cpp
     src/core/network/solve/Sbasis.cpp
+    src/core/network/solve/PivotElection.cpp
     src/core/network/assembly/ExtraBandScope.cpp
     src/core/network/assembly/SecondCodeScope.cpp
     src/core/network/assembly/SecondPhaseScope.cpp
@@ -340,6 +344,7 @@ add_library(gnss_core STATIC
     src/core/network/driver/EpochObservers.cpp
     src/core/network/carry/Inject.cpp
     src/core/network/assembly/CanonicalPairAdmission.cpp
+    src/core/network/assembly/SecondBandAdmission.cpp
     src/core/network/state/ArcLedger.cpp
     src/core/network/state/StationParams.cpp
     src/core/network/solve/AnchorReentry.cpp
@@ -378,6 +383,9 @@ if(MSVC)
     # run-context headers it includes (card CTU section 14 added a few template members
     # there and tipped it over, C1128).
     set_source_files_properties(tests/network/test_block_baarda.cpp
+        PROPERTIES COMPILE_FLAGS "/bigobj")
+    # tests/network/test_block_baarda_estimable.cpp includes the same run-context headers.
+    set_source_files_properties(tests/network/test_block_baarda_estimable.cpp
         PROPERTIES COMPILE_FLAGS "/bigobj")
     # tests/network/test_coupling_exact_update.cpp: card WSX's generalized eigen-solve of the border
     # covariance against the batch tipped it over the Debug section limit (C1128).
@@ -462,6 +470,11 @@ target_link_libraries(gnss_meas3_xcheck PRIVATE gnss_core)
 add_executable(gnss_atx_diag src/tools/atx_diag.cpp)
 target_link_libraries(gnss_atx_diag PRIVATE gnss_core)
 
+# Ocean tide loading inspector - SIF lookup, coefficient table and ENU displacement
+# series from the production OceanTideModel (input of scripts/otl_compare/otl_gate.py).
+add_executable(gnss_otl_diag src/tools/otl_diag.cpp)
+target_link_libraries(gnss_otl_diag PRIVATE gnss_core)
+
 # GNSS exam dataset simulator — synthesizes a multi-GNSS RINEX-3.04 observation
 # file (+ truth answer key, in later milestones) for the GNSS/Geodesy qualifying
 # exam, then verifies the processor recovers the injected truth.  Links
@@ -484,7 +497,10 @@ target_link_libraries(gnss_simulator PRIVATE gnss_core)
 enable_testing()
 add_executable(gnss_tests
     tests/test_math_core.cpp
+    tests/test_epoch_seek.cpp
+    tests/test_leap_second_scale.cpp
     tests/test_atmosphere_models.cpp
+    tests/test_gpt3_load_path.cpp
     tests/test_site_displacement.cpp
     tests/test_phase_windup_sign.cpp
     tests/test_antenna_model.cpp
@@ -502,6 +518,7 @@ add_executable(gnss_tests
     tests/network/test_network_normal_equations.cpp
     tests/network/test_network_detached_fold.cpp
     tests/network/test_neq_station_prior_before_pd.cpp
+    tests/network/test_neq_sparse_station_normals.cpp
     tests/network/test_pd_safe_fold.cpp
     tests/network/test_carry_aware_covariance.cpp
     tests/test_w6_iono_constraint.cpp
@@ -532,6 +549,7 @@ add_executable(gnss_tests
     tests/network/test_signal_roster_plan.cpp
     tests/network/test_signal_roster_always_on.cpp
     tests/network/test_n3c_switches.cpp
+    tests/network/test_net_small_defects.cpp
     tests/network/test_signal_roster_sites.cpp
     tests/network/test_arc_ledger.cpp
     tests/network/test_ledger_anchor.cpp
@@ -555,6 +573,7 @@ add_executable(gnss_tests
     tests/network/test_redundancy_census.cpp
     tests/network/test_network_mdb.cpp
     tests/network/test_block_baarda.cpp
+    tests/network/test_block_baarda_estimable.cpp
     tests/network/test_network_gross_los.cpp
     tests/network/test_network_gross_los_cold_bound.cpp
     tests/network/test_station_congruence.cpp
@@ -564,6 +583,7 @@ add_executable(gnss_tests
     tests/network/test_network_bias_admission.cpp
     tests/network/test_network_rank_gate.cpp
     tests/network/test_network_sbasis_complete.cpp
+    tests/network/test_pivot_election.cpp
     tests/test_datum_graph_census.cpp
     tests/network/test_station_block_audit.cpp
     tests/test_card4_emit_rebase.cpp
@@ -605,11 +625,17 @@ add_executable(gnss_tests
     tests/test_amb_level_arc.cpp
     tests/test_amb_level_statistics.cpp
     tests/test_amb_level_band_scope.cpp
+    tests/test_innovation_screen.cpp
+    tests/test_innovation_screen_engine.cpp
     tests/test_disc_mark_scope.cpp
     tests/test_consumer_sat_trace.cpp
     tests/test_transforms.cpp
     tests/test_filter_core.cpp
     tests/test_rtcm.cpp
+    tests/test_rtcm_stream_dating.cpp
+    tests/test_epoch_cadence.cpp
+    tests/test_realtime_defects.cpp
+    tests/test_tcp_client_silence.cpp
     tests/network/test_network_streaming.cpp
     tests/test_rtcm_logger_lifetime.cpp
     tests/test_safe_logger.cpp
@@ -619,6 +645,7 @@ add_executable(gnss_tests
     tests/test_ils_decorrelated_partial.cpp
     tests/test_wl_only_ffr.cpp
     tests/test_nl_search_row.cpp
+    tests/test_fix_and_hold.cpp
     tests/test_signal_math.cpp
     tests/test_geometry.cpp
     tests/test_stochastic_model.cpp
@@ -634,9 +661,14 @@ add_executable(gnss_tests
     tests/test_planetary_cio.cpp
     tests/test_planetary_sun_frame.cpp
     tests/test_orbit_enhancements.cpp
+    tests/test_noon_turn_attitude.cpp
     tests/test_neq_accumulator.cpp
     tests/test_station_info.cpp
     tests/test_station_info_guards.cpp
+    tests/test_station_info_psd.cpp
+    tests/test_station_info_seasonal.cpp
+    tests/test_otl_sif_source.cpp
+    tests/test_otl_translation.cpp
     tests/test_antenna_radome_fallback.cpp
     tests/test_antenna_eccentricity.cpp
     tests/test_station_marker_to_arp.cpp
@@ -644,6 +676,7 @@ add_executable(gnss_tests
     tests/test_log_manager_init.cpp
     tests/test_product_cache_load_failure.cpp
     tests/test_windup_census_config.cpp
+    tests/test_windup_gap_bridge.cpp
     tests/test_windup_restart_response_config.cpp
     tests/test_windup_restart_targets.cpp
     tests/network/test_network_param_registry.cpp
@@ -691,6 +724,8 @@ add_executable(gnss_tests
     tests/test_state_family.cpp
     tests/test_state_manager_process_noise.cpp
     tests/test_state_manager_families.cpp
+    tests/test_slant_ionosphere_presence.cpp
+    tests/test_kalman_complete_reset.cpp
     tests/test_kalman_pivot_detectors.cpp
     tests/test_kalman_qc_counters.cpp
     tests/test_ppp_epoch_work.cpp
@@ -702,6 +737,7 @@ add_executable(gnss_tests
     tests/network/test_network_we_choice.cpp
     tests/network/test_network_within_epoch_culprits.cpp
     tests/network/test_canonical_pair_admission.cpp
+    tests/network/test_second_band_admission.cpp
     tests/network/test_oracle_pin.cpp
     tests/test_warm_resume_require.cpp
     tests/test_anchor_slip_handover.cpp
@@ -741,12 +777,16 @@ add_executable(gnss_tests
     tests/network/test_network_column_family.cpp
     tests/network/test_ctu_level_guard.cpp
     tests/test_owd_wire_contract.cpp
+    tests/test_product_contract_gaps.cpp
+    tests/test_data_downloader_content.cpp
     tests/test_reinflate_never_shrinks.cpp
     tests/test_active_system_admission.cpp
     tests/test_group_delay_latch.cpp
     tests/test_residual_history_tracker.cpp
     tests/test_sat_health.cpp
     tests/test_clock_level_batch2.cpp
+    tests/test_graphic_slip_detector.cpp
+    tests/test_minor_defect_fixes.cpp
     "src/core/math/Coordinates.cpp"
     "src/core/math/Interpolate.cpp")
 target_link_libraries(gnss_tests PRIVATE GTest::GTest GTest::Main gnss_core)

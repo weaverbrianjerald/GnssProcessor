@@ -157,6 +157,27 @@ bool pbHoldCommonClockStep(const NetworkSolutionEpoch& sol,
                            const std::map<std::string, double>& prev_clock_m,
                            char constellation, double& median_m);
 
+/**
+ * @brief The epoch's de-commoned emitted-clock step of every satellite, in metres.
+ *
+ * For a satellite @c s of constellation @c k with a finite emitted clock at this and the
+ * previous emission, @c d_s = (c_s(k) - c_s(k-1)) - M_k, where @c M_k is the median of
+ * the steps of the satellites of constellation @c k alone (an even count takes the mean of
+ * the two middle values). The median is per constellation, as in @ref pbHoldCommonClockStep:
+ * each constellation's clock common mode (its pivot handover, its frame-hold re-anchor) moves
+ * on its own, so one median across constellations leaves the difference of the two modes in
+ * every satellite's step. What remains is the satellite-specific step, the quantity a coupled
+ * frame move would have to transfer. A satellite without a previous clock, or a step that
+ * is not finite, is absent from the result.
+ *
+ * @param sol            The epoch about to be emitted.
+ * @param prev_clock_m   Satellite -> emitted clock (m) at the previous emission.
+ * @return Satellite -> de-commoned step (m).
+ */
+std::map<std::string, double> pbHoldDecommonedClockStep(
+    const NetworkSolutionEpoch& sol,
+    const std::map<std::string, double>& prev_clock_m);
+
 /// @brief Run-scope counters of PbHold, a base of NetworkServiceCounters (network/state/RunContext.hpp).
 struct PbHoldCounters {
     // --- The emit-side phase-bias hold (network.emit_pb_hold) ---

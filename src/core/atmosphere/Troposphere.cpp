@@ -91,7 +91,8 @@ namespace GnssProcessor {
             }
             gpt3_ = std::make_unique<Gpt3>();
             if (!gpt3_->load(grid_path, log_manager_)) {
-                logger->warn("GPT3 grid load failed ('{}'); falling back to GMF/stdatm", grid_path.string());
+                logger->warn("GPT3 grid load failed ('{}'); falling back to the GMF mapping and the standard-atmosphere pressure",
+                             grid_path.string());
                 gpt3_.reset();
             }
         }
@@ -328,10 +329,14 @@ namespace GnssProcessor {
         double P = pressureFromHeightStdAtm(config_.getZhdPressure(), config_.getZhdTemp(), h_m);
         const char* source = "stdatm";
 
-        // GPT3 path, taken whenever the grid is loaded (a priori source Gpt3 or
-        // mapping function Vmf3): query the grid at this lat/lon/h/doy.  On failure
-        // the standard-atmosphere value already in P is kept, with no log line.
-        if (gpt3_ && gpt3_->isLoaded()) {
+        // GPT3 path, taken only when the configured a priori source is Gpt3 and the
+        // grid loaded: query the grid at this lat/lon/h/doy.  The VMF3 mapping
+        // function also loads the grid, for its "a" coefficients, but it does not
+        // choose the a priori source: with standard_atmosphere the configured
+        // sea-level pair stays in force.  On a failed query the
+        // standard-atmosphere value already in P is kept, with no log line.
+        if (gpt3_ && gpt3_->isLoaded() &&
+            config_.getTroposphereAprioriSource() == TroposphereAprioriSource::Gpt3) {
             const double lat_deg = lat_rad * 180.0 / Constants::PI;
             const double lon_deg = llh.lon_rad * 180.0 / Constants::PI;
             const double doy = getDayOfYear(time);

@@ -226,7 +226,8 @@ GnssConfig loadConfig(const std::string& json, const std::string& tag) {
     return cfg;
 }
 
-/// The WARNING lines of a table.
+/// The WARNING lines of a table (the table states none: a family that is born gets the
+/// process-noise rule its configuration declares).
 std::vector<std::string> warnings(const std::vector<std::string>& lines) {
     std::vector<std::string> out;
     for (const auto& l : lines) if (l.rfind("WARNING: ", 0) == 0) out.push_back(l);
@@ -235,21 +236,21 @@ std::vector<std::string> warnings(const std::vector<std::string>& lines) {
 
 }  // namespace
 
-TEST(StateManagerFamiliesTest, ArmedTableWarnsWhenABornFamilyGetsNoProcessNoise) {
-    // PPP with uncombined processing: the slant ionosphere is born and observed, but its
-    // Q applies in PPP_RTK mode only.  The table states it.
+TEST(StateManagerFamiliesTest, ArmedTableAppliesTheIonosphereQOnEveryRunThatCarriesTheStates) {
+    // PPP with uncombined processing carries the slant ionosphere like PPP-RTK does, so
+    // the Q rule applies and the table flags nothing.
     LogManager lm;
     const GnssConfig ppp = loadConfig(
         R"({"processing": {"mode": "PPP", "uncombined_enabled": true}})", "ppp_unc");
     StateManager sm_ppp{ 5, lm, ppp };
     const auto lines = sm_ppp.familiesAsArmed();
-    const auto warn = warnings(lines);
-    ASSERT_EQ(warn.size(), 1u);
-    EXPECT_NE(warn[0].find("slant ionosphere"), std::string::npos) << warn[0];
-    EXPECT_NE(lines[1 + static_cast<std::size_t>(StateFamily::Ionosphere)].find("NOT applied on this run"),
-              std::string::npos);
+    EXPECT_TRUE(warnings(lines).empty());
+    const std::string& iono_ppp = lines[1 + static_cast<std::size_t>(StateFamily::Ionosphere)];
+    EXPECT_NE(iono_ppp.find("born yes"), std::string::npos) << iono_ppp;
+    EXPECT_NE(iono_ppp.find(", applied on this run"), std::string::npos) << iono_ppp;
+    EXPECT_EQ(iono_ppp.find("NOT applied"), std::string::npos) << iono_ppp;
 
-    // The same in PPP_RTK mode: the Q applies and nothing is flagged.
+    // The same in PPP_RTK mode.
     const GnssConfig rtk = loadConfig(
         R"({"processing": {"mode": "PPP-RTK", "uncombined_enabled": true}})", "rtk_unc");
     StateManager sm_rtk{ 5, lm, rtk };
@@ -257,6 +258,16 @@ TEST(StateManagerFamiliesTest, ArmedTableWarnsWhenABornFamilyGetsNoProcessNoise)
     EXPECT_TRUE(warnings(rtk_lines).empty());
     EXPECT_NE(rtk_lines[1 + static_cast<std::size_t>(StateFamily::Ionosphere)].find(", applied on this run"),
               std::string::npos);
+
+    // Ionosphere-free PPP: the family is not born and the table says its rule is not
+    // applied, with nothing flagged.
+    const GnssConfig iflc = loadConfig(R"({"processing": {"mode": "PPP"}})", "ppp_if");
+    StateManager sm_if{ 5, lm, iflc };
+    const auto if_lines = sm_if.familiesAsArmed();
+    EXPECT_TRUE(warnings(if_lines).empty());
+    const std::string& iono_if = if_lines[1 + static_cast<std::size_t>(StateFamily::Ionosphere)];
+    EXPECT_NE(iono_if.find("born no"), std::string::npos) << iono_if;
+    EXPECT_NE(iono_if.find(", NOT applied on this run"), std::string::npos) << iono_if;
 
     // Baseline: the DD layout never creates ionosphere states, so nothing is flagged and
     // the ionosphere family is reported as not born, whatever uncombined_enabled says.

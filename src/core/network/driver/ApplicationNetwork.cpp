@@ -94,6 +94,7 @@
 #include "filter/IlsCore.hpp"                 // producer-side network AR (Phase 2+): ils::ilsFix
 #include "network/solve/Sbasis.hpp"
 #include "network/solve/PivotHandover.hpp"   // pivot-handover datum-change detector (A1/A2)
+#include "network/solve/PivotElection.hpp"   // the coverage predictor of the clock pivot election
 #include "network/carry/CarryVce.hpp"        // LS-VCE variance-component monitor for carry rows (M2)
 #include "network/qc/PriorResidual.hpp"   // prior-residual census (SPEC_prior_residual_census)
 #include "network/carry/InvariantCarryDriver.hpp"  // DD cycle-basis invariant carry
@@ -288,6 +289,7 @@ int Application::runNetwork() {
     networkPriorResidualArm(run);
     networkBlockBaardaArm(run);
     networkCongruenceArm(run);
+    networkPivotCoverageArm(run, log_manager_);
 
     networkRunManifestStartup(run, config_path_);
 

@@ -76,11 +76,13 @@ struct KeplerianEphemeris {
  *
  * @note The broadcast @c toe (DF109 tb) is a GLONASS time of day with no
  *       date; the 1020 decoder promotes it to a full GPS time by anchoring
- *       on the host's current GPS time (TimeUtils::glonassTodToGpsTime, the
- *       same converter the MSM observation path uses).
+ *       on the RTCM stream time of the parser that decoded it
+ *       (TimeUtils::glonassTodToGpsTime, the same converter and anchor the MSM
+ *       observation path uses), so a replay of historical data keeps the
+ *       ephemeris on the day of its observations.
  */
 struct GlonassEphemeris {
-    GnssTime        toe{0, 0.0};                       ///< Reference epoch (GPS scale, day anchored on the host clock).
+    GnssTime        toe{0, 0.0};                       ///< Reference epoch (GPS scale, day anchored on the RTCM stream time).
     Eigen::Vector3d pos{Eigen::Vector3d::Zero()};      ///< PZ-90 ECEF position [m].
     Eigen::Vector3d vel{Eigen::Vector3d::Zero()};      ///< PZ-90 ECEF velocity [m/s].
     Eigen::Vector3d acc{Eigen::Vector3d::Zero()};      ///< Luni-solar acceleration [m/s^2].

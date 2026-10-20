@@ -40,6 +40,9 @@ Exit status 0 when every compared file is identical.
 """
 import argparse, glob, hashlib, io, os, subprocess, sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import loader_keys  # noqa: E402
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__))).replace(os.sep, '/')
 RUNS = ROOT + '/runs'
 GOLDEN = {'f': ROOT + '/config/golden/golden_field_refound.json',
@@ -118,20 +121,10 @@ def arms(tag):
                   for p in glob.glob(f'{RUNS}/_rap_prm_{tag}_[{letters}][fs]'))
 
 
-def loader_reads(key):
-    """Whether the config loader reads `key` (a quoted literal in src/core/config): the loader
-    ignores an unknown key without a word, so an arm that sets one is silently the base."""
-    src = ''.join(io.open(f, encoding='utf-8', errors='replace').read()
-                  for f in glob.glob(ROOT + '/src/core/config/*.cpp'))
-    return f'"{key}"' in src
-
-
 def make(a):
     postures = a.postures.split(',')
-    unread = sorted({k.split('=')[0] for post in postures for k in POSTURES[post][1]
-                     if not loader_reads(k.split('=')[0])})
-    if unread:
-        sys.exit('refusing knobs the loader does not read: ' + ', '.join(unread))
+    # The loader ignores an unknown key without a word, so an arm that sets one is silently the base.
+    loader_keys.refuse_unread([k.split('=')[0] for post in postures for k in POSTURES[post][1]])
     for post in postures:
         for bed in ('f', 's'):
             letter, knobs = POSTURES[post]

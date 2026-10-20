@@ -47,6 +47,7 @@
  */
 
 #include "config/GnssConfig.hpp"
+#include "common/GnssIdentity.hpp"   // systemName, timeReferenceSystem (second-band admission)
 #include "network/qc/PrefitCensus.hpp"   // parseFuseClassMask / fuseClassMaskName (SPEC_prefit_census_observability INC-2)
 #include "network/carry/CarryVce.hpp"       // parseComponents (prior-residual census family list)
 #include "network/carry/CarryVceApply.hpp"  // familySlot (M2 v2 apply-family validation)
@@ -1151,6 +1152,9 @@ namespace GnssProcessor {
                               rc->segment_start_year, rc->segment_end_year,
                               rc->antenna_change_in_gap ? "yes" : "no",
                               rc->receiver_change_in_gap ? "yes" : "no");
+                if (rc->periodic.extrapolated())
+                    log->warn("Network roster: station '{}' SIF coordinate at {:.4f}: {}",
+                              s.name, *run_year, describePeriodicExtrapolation(rc->periodic));
                 s.position_ecef     = { rc->ecef.x(), rc->ecef.y(), rc->ecef.z() };
                 s.has_position      = true;
                 s.position_from_sif = true;
@@ -1759,6 +1763,8 @@ namespace GnssProcessor {
             jval<int>(json, "network.parallel_max_threads", "parallel_max_threads", 0);
         network_config_.parallel_seam =
             jval<bool>(json, "network.parallel_seam", "parallel_seam", false);
+        network_config_.sparse_station_normals =
+            jval<bool>(json, "network.sparse_station_normals", "sparse_station_normals", true);
         network_config_.parallel_carry =
             jval<bool>(json, "network.parallel_carry", "parallel_carry", false);
 
@@ -4830,6 +4836,11 @@ namespace GnssProcessor {
         // the third-frequency C5Q seed at 43 σ while the IF-pair seeds held).
         network_readmit_seed_code_bias_ =
             jval<bool>(json, "network.readmit_seed_code_bias", "readmit_seed_code_bias", true);
+        // Sub-knob of the seed horizon: the epoch-tail monitor and census snapshots take a
+        // parked seed the fold applied (default off = they skip every parked entry).  Not
+        // fingerprinted: neither accumulator is part of a state snapshot.
+        network_readmit_seed_mirrors_ =
+            jval<bool>(json, "network.readmit_seed_mirrors", "readmit_seed_mirrors", false);
         // Canonical-pair admission (
         // docs/refound/CPA_canonical_pair_admission_2026-09-20.md).  Default off =
         // byte-identical; not fingerprinted.  The tolerance is clamped rather than
@@ -4846,6 +4857,32 @@ namespace GnssProcessor {
                       "negative, clamped to 0 (admit only the epochs that hold the "
                       "canonical pair).", network_canonical_pair_keep_epochs_);
             network_canonical_pair_keep_epochs_ = 0;
+        }
+        // Second-band admission.  Default off = byte-identical; not fingerprinted (a
+        // forward-only admission policy).  An unknown scope falls back to the default
+        // with a warning, and a threshold below 1 is clamped (0 satellites on two bands
+        // would admit every constellation, so it has no reading but 1).
+        network_second_band_admission_ =
+            jval<bool>(json, "network.second_band_admission", "second_band_admission", false);
+        {
+            const std::string raw = jval<std::string>(json, "network.second_band_scope",
+                                                      "second_band_scope",
+                                                      std::string{"station"});
+            const std::string low = detail::toLower(raw);
+            if      (low == "station")   network_second_band_scope_ = SecondBandScope::Station;
+            else if (low == "satellite") network_second_band_scope_ = SecondBandScope::Satellite;
+            else {
+                log->warn("Network: network.second_band_scope '{}' is not 'station' or "
+                          "'satellite', using 'station'.", raw);
+                network_second_band_scope_ = SecondBandScope::Station;
+            }
+        }
+        network_second_band_min_sats_ =
+            jval<int>(json, "network.second_band_min_sats", "second_band_min_sats", 1);
+        if (network_second_band_min_sats_ < 1) {
+            log->warn("Network: network.second_band_min_sats = {} is below 1, clamped to 1.",
+                      network_second_band_min_sats_);
+            network_second_band_min_sats_ = 1;
         }
         if (network_resume_frame_restore_ || network_resume_slip_warmup_ep_ > 0) {
             if (network_config_.state_snapshot_path.empty())
@@ -6809,6 +6846,12 @@ namespace GnssProcessor {
             bnc.block_baarda_corroborate =
                 jval<bool>(json, "network.block_baarda_corroborate",
                            "block_baarda_corroborate", false);
+            bnc.block_baarda_estimable =
+                jval<bool>(json, "network.block_baarda_estimable",
+                           "block_baarda_estimable", false);
+            bnc.block_baarda_estimable_eps =
+                jval<double>(json, "network.block_baarda_estimable_eps",
+                             "block_baarda_estimable_eps", 0.05);
 
             // Invariant #4 tripwire: a corroboration arm without the census produces
             // nothing.  A hard error rather than a silent disarm, as in the
@@ -6818,6 +6861,11 @@ namespace GnssProcessor {
                     "network.block_baarda_corroborate requires network.block_baarda = true "
                     "(the corroboration join runs inside the block sweep; arming it alone "
                     "produces no blocks, no contingency table and no warning at run time).");
+            if (bnc.block_baarda_estimable && !bnc.block_baarda)
+                throw std::runtime_error(
+                    "network.block_baarda_estimable requires network.block_baarda = true "
+                    "(it changes how the block sweep forms its statistic; armed alone it "
+                    "changes nothing and says nothing).");
 
             if (bnc.block_baarda) {
                 // A hard error, not a silent disarm.  SPEC §6: the block sweep has no
@@ -6875,6 +6923,16 @@ namespace GnssProcessor {
                     bnc.block_baarda_report_sigma = 4.0;
                 }
                 if (bnc.block_baarda_min_blocks < 0) bnc.block_baarda_min_blocks = 0;
+                if (bnc.block_baarda_estimable
+                    && (!(bnc.block_baarda_estimable_eps > 0.0)
+                        || bnc.block_baarda_estimable_eps >= 1.0)) {
+                    log->warn("Network (block-Baarda census): "
+                              "network.block_baarda_estimable_eps = {:g} is outside (0, 1): a "
+                              "redundancy number cannot pass it, so every block would be "
+                              "refused or every direction kept.  Restoring the 0.05 default.",
+                              bnc.block_baarda_estimable_eps);
+                    bnc.block_baarda_estimable_eps = 0.05;
+                }
                 if (bnc.block_baarda_event_holdoff_ep < 0)
                     bnc.block_baarda_event_holdoff_ep = 0;
 
@@ -6938,6 +6996,18 @@ namespace GnssProcessor {
                           bnc.block_baarda_families, bnc.block_baarda_window_epochs,
                           bnc.block_baarda_min_blocks, bnc.block_baarda_report_sigma,
                           bnc.block_baarda_corroborate ? "on" : "off");
+                if (bnc.block_baarda_estimable)
+                    log->info("Network producer (block-Baarda census, estimable form): each "
+                              "block is tested over the directions of its whitened residual "
+                              "cofactor whose redundancy number is at least {:g}, with their "
+                              "count as the degrees of freedom, instead of being refused "
+                              "whole when the cofactor is rank-deficient.  A free slant "
+                              "ionosphere absorbs one direction per line of sight; a fault "
+                              "that lies wholly in an absorbed direction cannot be seen by "
+                              "any test of the block.  The row tier of the block-only "
+                              "comparison reads only the rows whose own redundancy number "
+                              "passes the same floor.  MEASURE-ONLY.",
+                              bnc.block_baarda_estimable_eps);
             }
         }
 
@@ -8637,6 +8707,53 @@ namespace GnssProcessor {
                               : "the observations of a satellite the broadcast flags unhealthy "
                                 "at an epoch are removed from the synced epochs");
         }
+        {
+            // Clock pivot election by predicted station coverage.
+            const std::string election =
+                jval<std::string>(json, "network.pivot_election", "network_pivot_election",
+                                  std::string("off"));
+            if (election == "off") {
+                network_pivot_election_ = 0;
+            } else if (election == "coverage") {
+                network_pivot_election_ = 1;
+            } else {
+                throw std::runtime_error(
+                    "network.pivot_election = '" + election + "' is not one of off, coverage.");
+            }
+            network_pivot_election_horizon_s_ =
+                jval<double>(json, "network.pivot_election_horizon_s",
+                             "network_pivot_election_horizon_s", 7200.0);
+            network_pivot_election_step_s_ =
+                jval<double>(json, "network.pivot_election_step_s",
+                             "network_pivot_election_step_s", 300.0);
+            if (network_pivot_election_ != 0) {
+                if (!std::isfinite(network_pivot_election_horizon_s_) ||
+                    !std::isfinite(network_pivot_election_step_s_) ||
+                    !(network_pivot_election_step_s_ > 0.0) ||
+                    !(network_pivot_election_horizon_s_ >= network_pivot_election_step_s_))
+                    throw std::runtime_error(
+                        "network.pivot_election needs finite network.pivot_election_step_s > 0 "
+                        "and network.pivot_election_horizon_s >= the step.");
+                log->info("Network producer: clock pivot election by coverage ON: at a "
+                          "constellation's first epoch and at a forced handover the pivot is the "
+                          "registered, healthy satellite the orbit product predicts at the most "
+                          "roster stations over {:.0f} s (samples every {:.0f} s), passing over "
+                          "one that enters the Earth's umbra in that time; an incumbent that "
+                          "stays registered and healthy is kept.  SOLVE-AFFECTING + "
+                          "FINGERPRINTED: fresh convergence only.",
+                          network_pivot_election_horizon_s_, network_pivot_election_step_s_);
+                if (network_clock_datum_sum_to_zero_ || network_clock_datum_broadcast_anchored_)
+                    log->warn("Network: network.pivot_election is INERT under "
+                              "network.clock_datum_sum_to_zero and "
+                              "network.clock_datum_broadcast_anchored (neither datum has a pivot "
+                              "satellite).");
+                if (!network_config_.clock_datum_satellite.empty())
+                    log->warn("Network: network.clock_datum_satellite '{}' is kept ahead of "
+                              "network.pivot_election for its constellation (a declared pin "
+                              "is an explicit choice).",
+                              network_config_.clock_datum_satellite);
+            }
+        }
         network_phase_datum_pref_elev_deg_ =
             jval<double>(json, "network.phase_datum_pref_elev_deg",
                          "network_phase_datum_pref_elev_deg", 15.0);
@@ -9990,6 +10107,50 @@ namespace GnssProcessor {
                             "epochs below a decimetre), where a satellite without its band-2 "
                             "phase is still a two-band satellite."
                           : "");
+        // Armed line for the second-band admission.  The rule has no prerequisite knob; it
+        // is inert when no non-reference constellation is active, which the line says.
+        if (network_second_band_admission_) {
+            log->info("Network producer (SECOND-BAND ADMISSION): ON, scope {}: a "
+                      "constellation other than the time reference enters the network path "
+                      "at a station only while {}.  A withheld record is absent for "
+                      "everything downstream exactly as if the RINEX record were missing "
+                      "(the row-level gap re-entry tier reads its return as a re-entry), and "
+                      "a band counts as modelled for a satellite when the epoch carries an "
+                      "admitted phase and an admitted code on it.  Both edges are "
+                      "ADMISSION/second_band events and log lines; the held-out closed-loop "
+                      "consumer is never screened.",
+                      network_second_band_scope_ == SecondBandScope::Station ? "station"
+                                                                              : "satellite",
+                      network_second_band_scope_ == SecondBandScope::Station
+                          ? fmt::format("at least {} of its satellites are on two modelled "
+                                        "bands at that station", network_second_band_min_sats_)
+                          : std::string("the satellite is on two modelled bands"));
+            bool non_reference_active = false;
+            for (const std::string& sys : active_systems_)
+                if (sys != systemName(timeReferenceSystem()) && signal_priorities_.count(sys) != 0)
+                    non_reference_active = true;
+            if (!non_reference_active)
+                log->warn("Network producer: network.second_band_admission is armed with no "
+                          "constellation other than {} that is both in processing.active_systems "
+                          "and has a processing.signal_priorities list, so the rule has nothing "
+                          "to screen: the switch is INERT here.",
+                          systemName(timeReferenceSystem()));
+        }
+        if (network_readmit_seed_mirrors_) {
+            log->info("Network producer (READMIT seed mirrors): the carry LS-VCE monitor and "
+                      "the prior-residual census take a parked seed the D2 fold applied as a "
+                      "row, at the seed gap and the variance the fold used.  Where "
+                      "network.carry_vce_apply is armed the monitor's rows feed the fold, so "
+                      "this is graded as a behaviour change.");
+            if (!(network_readmit_seed_horizon_s_ > 0.0))
+                log->warn("Network producer: network.readmit_seed_mirrors is armed without "
+                          "network.readmit_seed_horizon_s, so no entry is ever parked or "
+                          "seeded: the switch is INERT here.");
+            if (!network_carry_vce_ && !network_config_.prior_residual_census)
+                log->warn("Network producer: network.readmit_seed_mirrors is armed with "
+                          "neither network.carry_vce nor network.prior_residual_census, so "
+                          "no snapshot reads it: the switch is INERT here.");
+        }
         if (network_readmit_coupling_marg_ep_ > 0)
             log->info("Network producer (READMIT re-coupling edge): for {} epoch(s) after a "
                       "satellite's clock column returns from a >= 3-epoch absence, every "
@@ -10598,6 +10759,14 @@ namespace GnssProcessor {
      */
     bool GnssConfig::validateNetworkCarryPosture_(const nlohmann::json& json,
                                                   const std::shared_ptr<spdlog::logger>& log) {
+        // The pivot election runs at ignition and at a forced handover only; without the sticky
+        // incumbent it would run again every epoch.  Checked here, after the service profile
+        // has had its chance to arm the sticky pivot.
+        if (network_pivot_election_ != 0 && !network_sticky_pivot_)
+            throw std::runtime_error(
+                "network.pivot_election requires network.sticky_pivot = true (the election "
+                "applies at ignition and at a forced handover only; without the sticky "
+                "incumbent it would run again every epoch).");
         if (network_emitter_staleness_horizon_s_ > 0.0)
             log->info("Network producer (RTA-11): emitter staleness horizon {:.0f} s ON — a "
                       "(sat[,signal]) key returning after a longer product-time gap reseeds its "
@@ -11760,6 +11929,18 @@ namespace GnssProcessor {
             clc.amb_level_check_window_ep = cl.value("amb_level_check_window_ep", 20);
             clc.amb_level_check_k         = cl.value("amb_level_check_k", 4.0);
             clc.amb_level_check_mode      = cl.value("amb_level_check_mode", std::string("act"));
+            // The consumer's pre-update innovation screen (derived into the consumer
+            // engine as processing.innovation_screen).  Same contract as
+            // amb_level_check: default false, byte-identical, and it never reaches the
+            // producer's solve or its resume fingerprint.
+            clc.innovation_screen              = cl.value("innovation_screen", false);
+            clc.innovation_screen_k            = cl.value("innovation_screen_k", 6.0);
+            clc.innovation_screen_mode         = cl.value("innovation_screen_mode", std::string("act"));
+            clc.innovation_screen_rows         = cl.value("innovation_screen_rows", std::string("all"));
+            clc.innovation_screen_max_fraction = cl.value("innovation_screen_max_fraction", 0.25);
+            clc.innovation_screen_refloat_ep   = cl.value("innovation_screen_refloat_ep", 3);
+            clc.innovation_screen_phase_floor_m = cl.value("innovation_screen_phase_floor_m", 0.3);
+            clc.innovation_screen_code_floor_m  = cl.value("innovation_screen_code_floor_m", 1.0);
             clc.state_snapshot           = cl.value("state_snapshot", false);
             // Replay (Q5): consumes an already-written product file instead of the
             // live producer.  Presence alone arms the replay driver (the enable flag
@@ -12080,6 +12261,29 @@ namespace GnssProcessor {
             c.amb_level_check_k_ = (cl.amb_level_check_k > 0.0) ? cl.amb_level_check_k : 4.0;
             c.amb_level_check_mode_ =
                 (cl.amb_level_check_mode == "observe") ? "observe" : "act";
+        }
+        // The same derivation for the pre-update innovation screen.  Never cleared
+        // here: an explicit processing.innovation_screen on the base config is kept.  The
+        // seven parameters are carried along so the harness key is self-contained and are
+        // read only when the screen is armed; out-of-range values fall back to the
+        // defaults, as the base config's parse does.
+        if (cl.innovation_screen) {
+            c.innovation_screen_ = true;
+            c.innovation_screen_k_ = (cl.innovation_screen_k > 0.0) ? cl.innovation_screen_k : 6.0;
+            c.innovation_screen_mode_ =
+                (cl.innovation_screen_mode == "observe") ? "observe" : "act";
+            c.innovation_screen_rows_ =
+                (cl.innovation_screen_rows == "phase" || cl.innovation_screen_rows == "code")
+                    ? cl.innovation_screen_rows : "all";
+            c.innovation_screen_max_fraction_ =
+                (cl.innovation_screen_max_fraction > 0.0 && cl.innovation_screen_max_fraction <= 1.0)
+                    ? cl.innovation_screen_max_fraction : 0.25;
+            c.innovation_screen_refloat_ep_ =
+                (cl.innovation_screen_refloat_ep >= 1) ? cl.innovation_screen_refloat_ep : 3;
+            c.innovation_screen_phase_floor_m_ =
+                (cl.innovation_screen_phase_floor_m >= 0.0) ? cl.innovation_screen_phase_floor_m : 0.3;
+            c.innovation_screen_code_floor_m_ =
+                (cl.innovation_screen_code_floor_m >= 0.0) ? cl.innovation_screen_code_floor_m : 1.0;
         }
         // The canonical-signal rule is a network-side lever.  The derived
         // consumer is a full copy of the producer config and runs its own PppModel, so

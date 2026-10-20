@@ -3,7 +3,9 @@
  * @brief Implementation of the GPT3 5° empirical pressure/temperature model.
  *
  * Implements:
- *  - ASCII grid load (1 header line + 2592 data rows, 64 columns each).
+ *  - ASCII grid load (1 header line + 2592 data rows, 64 columns each).  The VMF3
+ *    "a" coefficients are stored x1000 in the file and are returned unscaled.  A
+ *    failed load leaves the instance empty and unloaded.
  *  - Annual + semi-annual harmonic evaluation per cell.
  *  - Bilinear lat/lon interpolation with longitude wrap-around.
  *  - Standard barometric pressure reduction (exponent 5.225) and linear
@@ -37,6 +39,18 @@ namespace GnssProcessor {
         constexpr double EXP_PRES = 5.225;
         // Temperature lapse uses dT [K/km] applied to dh [m] × 1e-3.
         constexpr double KM_PER_M = 1.0e-3;
+        // The grid file stores the VMF3 hydrostatic and wet "a" coefficients
+        // multiplied by 1000 (a_h a0 of about 1.2 for a physical 1.2e-3).  load()
+        // converts them to the physical, dimensionless values.
+        constexpr double A_COEFF_SCALE = 1.0e-3;
+        // Plausible range of the stored (x1000) a0 values.  The shipped grid spans
+        // 1.136 to 1.280 for a_h and 0.383 to 0.657 for a_w.  A cell outside these
+        // ranges means the file is in other units, so the load is refused rather than
+        // returning mapping coefficients that are off by orders of magnitude.
+        constexpr double A_H_STORED_MIN = 0.8;
+        constexpr double A_H_STORED_MAX = 1.8;
+        constexpr double A_W_STORED_MIN = 0.2;
+        constexpr double A_W_STORED_MAX = 1.2;
     } // namespace
 
     double Gpt3::harmonic(const double coeffs[5], double doy) {
@@ -50,6 +64,12 @@ namespace GnssProcessor {
 
     bool Gpt3::load(const std::filesystem::path& grid_file, LogManager& log_mgr) {
         auto logger = log_mgr.getLogger("gpt3");
+
+        // A failed load leaves the instance empty and unloaded, including an instance
+        // that held a grid before: every return below leaves cells_ empty and
+        // loaded_ false until the final success.
+        loaded_ = false;
+        cells_.clear();
 
         std::ifstream f(grid_file);
         if (!f.is_open()) {
@@ -87,14 +107,26 @@ namespace GnssProcessor {
                 return false;
             }
 
+            // The a0 of the two mapping coefficients is checked in the file's units
+            // before scaling.
+            if (!(v[24] >= A_H_STORED_MIN && v[24] <= A_H_STORED_MAX) ||
+                !(v[29] >= A_W_STORED_MIN && v[29] <= A_W_STORED_MAX)) {
+                logger->error("GPT3: row {} has a_h a0 {} and a_w a0 {}, outside the expected "
+                              "[{}, {}] and [{}, {}] of a grid storing the coefficients x1000",
+                              row, v[24], v[29], A_H_STORED_MIN, A_H_STORED_MAX,
+                              A_W_STORED_MIN, A_W_STORED_MAX);
+                cells_.clear();
+                return false;
+            }
+
             Cell c;
             for (int i = 0; i < 5; ++i) c.p[i]   = v[2  + i];  // pressure (Pa)
             for (int i = 0; i < 5; ++i) c.T[i]   = v[7  + i];  // temperature (K)
             for (int i = 0; i < 5; ++i) c.dT[i]  = v[17 + i];  // lapse (K/km)
             c.undu = v[22];
             c.Hs   = v[23];
-            for (int i = 0; i < 5; ++i) c.a_h[i] = v[24 + i];  // VMF hydrostatic a
-            for (int i = 0; i < 5; ++i) c.a_w[i] = v[29 + i];  // VMF wet a
+            for (int i = 0; i < 5; ++i) c.a_h[i] = v[24 + i] * A_COEFF_SCALE;  // VMF hydrostatic a
+            for (int i = 0; i < 5; ++i) c.a_w[i] = v[29 + i] * A_COEFF_SCALE;  // VMF wet a
             cells_.push_back(c);
             ++row;
         }

@@ -49,6 +49,7 @@
 
 #include "rtcm/RtcmMsmDecoder.hpp"
 #include "rtcm/RtcmBitReader.hpp"
+#include "rtcm/RtcmSatId.hpp"
 #include "rtcm/RtcmSignalMap.hpp"
 #include "common/Constants.hpp"
 #include "math/TimeUtils.hpp"
@@ -86,16 +87,15 @@ struct SystemDesc {
                               ///< interpretation only, not bitstream consumption.
                               ///< The decode body does not read it; it keys the
                               ///< GLONASS channel on the system.
-    int    sbas_prn_offset;   ///< 119 for SBAS (PRN = 0-based mask bit + 1 + 119), 0 otherwise.
     double bdt_to_gps_offset_s; ///< 14 for BDS (GPS time = BDT + 14 s), 0 otherwise.
 };
 
-constexpr SystemDesc kGps     {System::GPS,     'G', 30, false, false,   0,  0.0};
-constexpr SystemDesc kGlonass {System::GLONASS, 'R', 30, true,  true,    0,  0.0};
-constexpr SystemDesc kGalileo {System::Galileo, 'E', 30, false, false,   0,  0.0};
-constexpr SystemDesc kSbas    {System::SBAS,    'S', 30, false, false, 119,  0.0};
-constexpr SystemDesc kQzss    {System::QZSS,    'J', 30, false, false,   0,  0.0};
-constexpr SystemDesc kBeidou  {System::BeiDou,  'C', 30, false, false,   0, 14.0};
+constexpr SystemDesc kGps     {System::GPS,     'G', 30, false, false,  0.0};
+constexpr SystemDesc kGlonass {System::GLONASS, 'R', 30, true,  true,   0.0};
+constexpr SystemDesc kGalileo {System::Galileo, 'E', 30, false, false,  0.0};
+constexpr SystemDesc kSbas    {System::SBAS,    'S', 30, false, false,  0.0};
+constexpr SystemDesc kQzss    {System::QZSS,    'J', 30, false, false,  0.0};
+constexpr SystemDesc kBeidou  {System::BeiDou,  'C', 30, false, false, 14.0};
 
 // ---------------------------------------------------------------------------
 // MSM variant (field widths and feature flags).  MSM4/MSM5/MSM7 share the
@@ -315,16 +315,15 @@ double glonassWavelength(const std::string& suffix, int fcn) {
 }
 
 // ---------------------------------------------------------------------------
-// Sat ID formatting from the 0-based satellite mask bit (PRN = bit + 1; SBAS
-// adds sbas_prn_offset, so the first SBAS bit formats as "S120").
+// Sat ID formatting from the 0-based satellite mask bit (identifier = bit + 1).
+// Most systems use the identifier as the PRN or slot ("G05").  SBAS identifier 1
+// is PRN 120, which RINEX and the rest of the project name "S20" (PRN - 100), so
+// the first SBAS bit formats as "S20" (see rtcm/RtcmSatId.hpp).
 // ---------------------------------------------------------------------------
 std::string formatSat(const SystemDesc& sys, int bit_index) {
+    if (sys.system == System::SBAS) return RtcmSatId::sbas(bit_index + 1);
     char buf[8];
-    if (sys.system == System::SBAS) {
-        std::snprintf(buf, sizeof(buf), "S%02d", bit_index + 1 + sys.sbas_prn_offset);
-    } else {
-        std::snprintf(buf, sizeof(buf), "%c%02d", sys.sat_prefix, bit_index + 1);
-    }
+    std::snprintf(buf, sizeof(buf), "%c%02d", sys.sat_prefix, bit_index + 1);
     return std::string(buf);
 }
 

@@ -91,10 +91,14 @@ def exam_fixture(tmp_path):
             _write(truth / "truth_visibility.csv", "\n".join(vis) + "\n")
 
         # --- truth_atmo.csv (per sat x epoch) ---
+        # The header is the simulator's own (src/sim/main.cpp, truth_atmo.csv):
+        # the 15 columns through in_storm_window, then the 6 appended ones.
         if atmo:
             at = ["week,tow_s,satellite,elev_deg,az_deg,ipp_lat_deg,ipp_lon_deg,"
-                  "stec_quiet_tecu,dstec_sed_tecu,dstec_tid_tecu,stec_total_tecu,"
-                  "I_L1_m,dI_L1_m,in_storm_window"]
+                  "stec_quiet_tecu,dstec_sed_tecu,dstec_tid_tecu,dstec_turb_tecu,"
+                  "stec_total_tecu,I_L1_m,dI_L1_m,in_storm_window,"
+                  "obliquity,I_klob_L1_m,sf_iono_resid_m,"
+                  "gim_ipp_lat_deg,gim_ipp_lon_deg,gim_stec_std_tecu"]
             for i, tw in enumerate(tows):
                 in_storm = 1 if s0 <= tw <= s1 else 0
                 for j, s in enumerate(_SATS):
@@ -102,7 +106,8 @@ def exam_fixture(tmp_path):
                     az = 30.0 + 40 * j + 5 * i
                     di = (2.0 + j) * in_storm
                     at.append(f"{_WEEK},{tw:.3f},{s},{el:.4f},{az:.4f},"
-                              f"-11.6,179.3,20.5,0.0,{di:.4f},20.5,3.3,{di:.4f},{in_storm}")
+                              f"-11.6,179.3,20.5,0.0,{di:.4f},0.0,20.5,3.3,{di:.4f},{in_storm},"
+                              f"1.5,3.3,0.0,-11.6,179.3,0.0")
             _write(truth / "truth_atmo.csv", "\n".join(at) + "\n")
 
         # --- truth_slips.csv (flagged / unflagged / scripted classes) ---

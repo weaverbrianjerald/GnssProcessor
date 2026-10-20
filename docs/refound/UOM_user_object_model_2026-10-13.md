@@ -323,39 +323,53 @@ T1 to T7 still hold on `ff7766a`. `docs/onboarding/README.md` names the tour's n
 
 Not in this landing: wave C's identity migration (`uom/u8-helpers` built and gated; `uom/u8-c1`, `uom/u8-c2`, `uom/u8-c3` part-built on the pre-merge base) and the five behaviour fixes of section 11 (separate branches; adoption is the author's).
 
-## 16. 2026-10-17: card NOM step N6a edits these user-side files (branch `nom/n6`)
+## 16. 2026-10-18: step UB2 built (branch `fix/ppp-iono-q`, `f3b8f2c`)
 
-Card NOM step N6 (`scripts/nom3_designs/N6_design.md`) gives the network its own local parameter set and one observation equation that the producer, the consumer and the seeds read. Its decision D4 takes the "later one observation equation" item of this card into N6. Step N6a is the first of the user-side edits, and the list below is the announcement the design asks for. All of N6a is identical output with the check key off; with `processing.obs_equation_check` on, every code and phase row is built twice and compared bit for bit.
+Defect S1 of section 3 is fixed: PPP with uncombined processing created the slant-ionosphere states and gave them no process noise (the Q gate tested `ProcessingMode::PPP_RTK`; the states exist whenever uncombined processing is on outside the baseline modes). One predicate, `GnssConfig::carriesSlantIonosphere()`, now answers for the Q block, the `PppState` export and write-back, the complete reset (ionosphere and rate variances, pivot freeze) and the run-start table. In PPP mode the complete reset had left every ionosphere variance at zero, the value read as a frozen pivot. `PPP_RTK_User` is covered with the rest (no shipped config uses it); baseline modes create no ionosphere states and the network producer never reaches the filter's predict, export or reset. No knob: one behaviour is right. The warning of section 13 is removed with its premise; the Q column of the two ionosphere rows of the table drops "(PPP_RTK mode only)". The reading of section 13 stays as the record of how the defect was made visible.
 
-| file | change |
+**Declaration** (effective mode and uncombined flag as the loader leaves them; 1,332 files under `config/` read, `extends` followed):
+
+| class | configs | what moves |
+| --- | --- | --- |
+| PPP, uncombined true | `test_suite/_pppar_algo_static_gps_l1l2`, `_nlwl_guarded`, `_nlwl_unguarded`; archived `_nlwl_guarded2`, `_nlwl_unguarded2`; arms `u_ppp_unc_ar`, `u_nlwl` (quick), `UA3` (full) | the numbers |
+| PPP-RTK-User | none | would move alike |
+| PPP-RTK (12), PPP ionosphere-free (8, among them `ppp_internal.json` and `_rtseam_sbf*.json`), baselines (7); the other 14 quick and 15 full arms | no number moves | two table rows (log text) |
+| PPP-RTK-Network (1,234, both goldens) | unchanged | nothing |
+
+| gate (control `gnss_processor_algo.exe`, main `30ca49e`; candidate `gnss_processor_ub2.exe`; Release) | result |
 | --- | --- |
-| `src/core/measurement/MeasurementModelRow.cpp` | `buildJacobianRow` builds the term list of the equation (`observationEquation`), sums it (`evaluate`) and scatters the partials (`scatterDense`); the Doppler branch is the member `buildDopplerRow`, the decomposition traces are the member `traceRowDecomposition`; the file banner |
-| `include/measurement/MeasurementModel.hpp` | declarations of `obsInput`, `buildDopplerRow`, `wantsRowDecomposition`, `traceRowDecomposition`, `buildJacobianRowReference`, `checkRowAgainstReference`; the `buildJacobianRow` Doxygen; the file banner |
-| `src/core/measurement/MeasurementModel.cpp` | the banner only |
-| `include/measurement/StateInitializer.hpp`, `src/core/measurement/StateInitializer.cpp` | `ReceiverBiasEntry` also carries the receiver code-bias state as a typed `RxCbKey` (`key`, `has_key`); the text key is rendered from it by `userCodeBiasKey` and is unchanged |
-| `include/filter/StateManager.hpp`, `src/core/filter/StateManager.cpp` | the read-only static `ambiguitySeedFrequencyHz`, the seed's own frequency table, for the check's frequency report |
-| `include/config/GnssConfig.hpp`, `src/core/config/GnssConfigLoad.cpp` | the key `processing.obs_equation_check` (default off; a TRACE row of the ledger) |
-| `include/common/ParamRef.hpp`, `src/core/common/ParamRef.cpp` | `ParamRef`, `UserCore` and the factory functions that name a parameter without its station |
+| G-UEP user arms, quick (16) and full (16) | quick: 14 IDENTICAL once the two table rows are masked (unmasked: all 16 differ in exactly those rows of `state_manager.log` and `stdout.txt`, in no CSV); `u_ppp_unc_ar` and `u_nlwl` DIFFERENT, as declared. Full: 15 IDENTICAL, `UA3` DIFFERENT, as declared |
+| G-UEP network, both 2 h goldens (`prm_ab.py cmp --all-csv`) | IDENTICAL on every file |
+| G-US, Debug | 3,345 run, 3,315 passed, 30 skipped (fixture data), 0 failed; the new cases fail on the base |
+| ALGO00CAN 24 h as shipped, 3D RMS hours 2 to 6 / 7 to 24 (m), control then fixed | `_pppar_algo_static_gps_l1l2` 2.7225 / 2.8899 then 0.0134 / 0.0093; `_nlwl_guarded` 14.96 / 10.37 then 0.0665 / 0.0254; `_nlwl_unguarded` 2,906 / 2,241 then 0.141 / 0.052 |
 
-New files: `include/measurement/ObservationEquation.hpp` and `src/core/measurement/ObservationEquation.cpp` (the term list, its sum and its Jacobian row), `include/measurement/UserParamView.hpp` and `src/core/measurement/UserParamView.cpp` (where a parameter sits in a `StateManager`, and the one function that renders a typed identity as a user-side key), `include/measurement/ObservationEquationCheck.hpp`, `src/core/measurement/ObservationEquationCheck.cpp` and `src/core/measurement/MeasurementModelRowReference.cpp` (the comparator and the row builder it compares against; both are deleted by step N6e), the run-end row `src/core/network/runend/ObsEquationCheckRunEnd.cpp`, and `tests/test_observation_equation.cpp`.
+The fixed exe reproduces the one-line proof of the defect row byte for byte in `state_trace.csv` (ALGO00CAN 24 h, GCGO00USA 6 h) and matches the PPP-RTK-mode run of the same arm. The tests are `SlantIonospherePresenceTest` (every mode agrees across Q, table and export), `KalmanCompleteResetTest` (through a friend shim) and the rewritten family-table case. Evidence and run directories: the defect row in `docs/status/OPEN_ITEMS_CODE_DEFECTS.md`.
 
-Rules the edits keep. The summation order of the predicted observable is unchanged: the terms are added left to right in the order `modeled`, range correction, receiver clock, phase clock, wet troposphere, gradients, inter-system bias, slant ionosphere, receiver code bias, satellite code bias, satellite phase bias, satellite clock, SSR bias, ambiguity, phase colour, and a term with a factor keeps the factor outside the sum of its parts. A satellite or signal text that is not a canonical RINEX id (`SatId::str` and `SignalId::obsCode` would not give the text back) makes a row that needs a state key from it unusable; every parser and decoder of the tree produces canonical ids, and the check counts any such row. N6b (the seeds: `StateInitializer.*`, `StateManager.cpp`, `MeasurementModelStates.cpp`, the 14 seed call sites) edits further files of this list; edits to them by this card should merge with `nom/n6`.
+Owed: section 11's UB7 line said the `_nlwl` configs were to be graded again after UB2; the figures above are a first reading, not that grade. The fix-and-hold tables of 2026-10-17 were taken on the displaced vehicle. Adoption is the author's, as for every shipped-config move.
 
-## 17. 2026-10-17: card NOM step N6b edits these user-side files (branch `nom/n6`)
+## 17. 2026-10-18: step UB2 gated against the main control and graded (branch `fix/ppp-iono-q`, `da97f3b`)
 
-Step N6b puts the seeds on the observation equation of section 16. `StateInitializer::computeRawResidual` and `StateManager::computeAmbiguitySeed` are deleted: both seeds read the term list, built with the effects of one of two masks (`kLegacySeedMask`, `include/measurement/Seeds.hpp`), and subtract in the order the copies did, so the numbers are the same bit for bit (`tests/test_seeds.cpp` keeps the old code as the reference). The first-epoch seeds (inter-system bias, cold clock, phase clock, receiver code bias, slant ionosphere) are pure functions that return values; `MeasurementModel` applies them in the order they have always run in.
+Control `gnss_processor_w3base.exe` (main `30ca49e`), candidate `gnss_processor_w3ionoq.exe`, both Release. The candidate is the Release build of the committed tree: a second build from `da97f3b` matches it in `.text`, `.data`, `.pdata` and `.reloc` byte for byte and in all but 13 bytes of the file (link timestamp and debug directory).
 
-| file | change |
+| gate | result |
 | --- | --- |
-| `StateInitializer.hpp/.cpp` | keeps the latches, `resolveReceiverBias`, the code-bias restore and `frequencyHelper`; loses its `StateManager` reference and the seed functions |
-| `StateManager.hpp/.cpp` | `computeAmbiguitySeed`, `ambiguitySeedFrequencyHz` and the file-local tables deleted |
-| `MeasurementModel.hpp/.cpp`, `MeasurementModelStates.cpp` | `ambiguitySeed`, `ambiguitySeedInput`, `residualSeedInput`; `initializeInterSystemBiases`, `initializePhaseClockOffset`, `initializeCodeBiases` (bodies from `StateInitializer`); the 7 seed sites; the table rows |
-| `KalmanOutlierResponse.cpp` (3 sites), `CycleSlipRepair.cpp` (2) | call `MeasurementModel::ambiguitySeed` |
-| `PivotManager.hpp/.cpp`, `CycleSlipPivot.cpp` | `handlePivotHandover` takes `ambiguitySeedInput()` for its 2 sites |
-| `ObservationEquation.hpp/.cpp`, `ObservationEquationCheck.hpp/.cpp` | the set of effects to build; `findTerm`, `termValue`; `ObsInput::fdma`; the frequency audit loses the seed's own table |
+| G-EP network (the G5 arm set against side w3base: 23 arms and the snapshot bytes) | all 23 arms and the snapshot bytes IDENTICAL, every CSV included |
+| G-UEP user, full set (16 arms) | 15 IDENTICAL with the two table rows masked; `UA3` DIFFERENT, as declared; all exit 0 |
+| G-UEP user, quick set (16 arms) | 14 IDENTICAL with the two table rows masked; `u_ppp_unc_ar` and `u_nlwl` DIFFERENT, as declared; all exit 0. Unmasked, the arms without an ionosphere row (`UA15` to `UA17`, `u_sbf`, `u_sbf_te`) are IDENTICAL and every other arm differs in the two table rows alone |
+| real time, SBF replay (3 arms, 99 artifacts) and network closed loop (1 arm, 39 artifacts) | every CSV and log IDENTICAL except wall-clock figures in `console.log` and `main_log.log`, which a second run of the control also moves |
 
-New: `Seeds.hpp/.cpp`, `MeasurementModelSeeds.cpp`, `tests/test_seeds.cpp`, `tests/support/ModelStack.hpp`.
+The declaration of section 16 holds: only the PPP uncombined arms move; no other arm or replay moves in a number.
 
-The slant ionosphere's carrier frequency is the one place the copies disagreed, on GLONASS FDMA bands (G1, G2) only: the row builder takes each satellite's channel, the ambiguity seed took channel 0, and the other seeds the default channel table of the initializer's own helper. Every other band is one number in all three, bit for bit (tested over every classified signal). N6b keeps each seed's number, so no output moves (`ObsInput::fdma` is `Zero` for the ambiguity seed; the residual seeds take the initializer's helper). One rule for the three is decided with the full-equation seeds (step N6g).
+Grade of every moved config against the SSC marker (3D RMS in m, control then fixed; DELTA H removed from up; ALGO00CAN unless stated; 24 h):
 
-The seeds read no process-wide cache. The .BIA clock-reference observables are `ObsInput::clock_refs` and a parameter of `StateInitializer::resolveReceiverBias`; the presence of a .BIA entry is a predicate argument of `seedIonosphere`; whether a present entry counts is `biaEntryApplies` (`RowRules.hpp`), the half of `biaCoversSignal` that reads the configuration. `MeasurementModel` supplies the product cache's map (`setClockRefs` replaces it in a unit test). Further files edited: `RowRules.hpp`, `MeasurementModelRow.cpp`, `MeasurementModelRowReference.cpp`.
+| config (ALGO00CAN unless stated), 24 h | hour 1 | hours 2 to 6 | hours 7 to 24 | mean east / north / up, hours 7 to 24 |
+| --- | --- | --- | --- | --- |
+| `_pppar_algo_static_gps_l1l2` (AR mode 1) | 2.701 then 0.395 | 2.722 then 0.0134 | 2.890 then 0.0093 | -0.681 / -0.215 / -2.800 then +0.004 / +0.005 / +0.004 |
+| `_nlwl_guarded` | 6.088 then 0.473 | 14.965 then 0.0665 | 10.365 then 0.0254 | -1.927 / -0.041 / +1.063 then -0.020 / +0.002 / +0.011 |
+| `_nlwl_unguarded` | 5.213 then 0.557 | 2,906 then 0.141 | 2,241 then 0.0522 | +93.6 / +91.9 / -1,992.7 then +0.051 / +0.001 / +0.007 |
+| `_nlwl_guarded2`, `_nlwl_unguarded2` (archived) | as `_nlwl_guarded`, `_nlwl_unguarded` | the same | the same | the same (`state_trace.csv` byte-identical to the unarchived pair, both exes) |
+| `_pppar_algo_static_gps_l1l2` at AR mode 0 | 2.701 then 0.395 | 2.755 then 0.0133 | 2.881 then 0.0092 | -0.437 / -0.291 / -2.833 then +0.004 / +0.005 / +0.004 |
+| GCGO00USA, same config at AR mode 0 | 7.046 then 0.248 | 6.731 then 0.0568 | 6.483 then 0.0658 | +0.973 / -0.322 / -6.375 then +0.032 / -0.048 / -0.011 |
+| GCGO00USA, same config at AR mode 1 | 7.046 then 0.248 | 6.691 then 0.0565 | 6.558 then 0.0657 | +0.908 / -0.293 / -6.467 then +0.032 / -0.048 / -0.011 |
+
+Every moved config improves in each of the 24 hours. After hour 1 the worst hour of a fixed run is 0.025 m (`_pppar_algo_static_gps_l1l2`), 0.100 m (`_nlwl_guarded`), 0.262 m (`_nlwl_unguarded`) and 0.093 m (GCGO00USA). Hourly rows: `D:/GnssProcessorSupport/gates/algo/w3/grade_tables.txt`. This is the grade that section 16's last paragraph owed for the `_nlwl` configs on the corrected vehicle; the fix-and-hold hour tables of 2026-10-17 remain to be repeated on it. Adoption is the author's.

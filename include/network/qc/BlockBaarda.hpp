@@ -98,6 +98,36 @@
  *          because of data quality.  SPEC §8's converged-warm-window rule
  *          addresses this.
  *
+ * ## The estimable form (network.block_baarda_estimable)
+ *
+ * The whole-block test also refuses every block on a converged run of the float
+ * vehicle, for a different reason.  A line of sight's slant ionosphere is a free
+ * column that no row outside the block touches, so it absorbs one direction of the
+ * block exactly: the cofactor has a null direction however well the data are
+ * conditioned, and all of the block's other directions stay testable.  Refusing
+ * the block throws those away.
+ *
+ * The estimable form tests what the data can test.  Whiten the cofactor with the
+ * row weights, @f$\tilde Q=W^{1/2}Q_{\tilde e,B}W^{1/2}=I-H_{BB}@f$, whose
+ * eigenvalues are redundancy numbers in @f$[0,1]@f$ (the row census's @f$r_i@f$ for
+ * a single row).  Keep the directions with eigenvalue at least @c eps, the row
+ * census's own floor, and read the quadratic form on them:
+ * @f[
+ *   \tilde e^\top Q^{+}\tilde e=\sum_{\lambda_k\ge\varepsilon}
+ *   \frac{(v_k^\top W^{1/2}\tilde e)^2}{\lambda_k},\qquad
+ *   T_B=\frac{\tilde e^\top Q^{+}\tilde e}{m},\quad m=\#\{\lambda_k\ge\varepsilon\}.
+ * @f]
+ * Under the null this is @f$\sigma_0^2\chi^2_m@f$ with the kept count @f$m@f$ as its
+ * degrees of freedom, which is what a plain pseudo-inverse lacks.  The scale
+ * correction of @ref blockChi2GeoMean is then taken at @f$m@f$.  When nothing is
+ * dropped the statistic is the whole-block one.  A fault that lies wholly in a
+ * dropped direction (an additive slant-ionosphere change is the example) is
+ * absorbed by the column that makes the direction null; no test of the block can
+ * see it, and this one does not claim to.
+ *
+ * The row tier of the @c block_only comparison reads only the rows whose own
+ * redundancy number is at least @c eps, which are the rows a row test can test.
+ *
  * ## Isolation and testing
  *
  * A pure numeric leaf, like @ref NetworkCarryVce and @ref NetworkPriorResidual:
@@ -257,12 +287,17 @@ public:
         int              station = -1;    ///< station index (identity only).
         std::string_view sat;             ///< satellite, e.g. "G07": the second half of the block key and the source of the family.
         int              b = 0;           ///< block size (rows in the block).
-        double           T = 0.0;         ///< @f$T_B = \tilde e_B^\top Q^{-1}\tilde e_B / b@f$.
+        int              dof = 0;         ///< degrees of freedom of @ref T when fewer than @ref b directions were tested (the estimable form); 0 means all @ref b.
+        double           T = 0.0;         ///< @f$T_B = \tilde e_B^\top Q^{-1}\tilde e_B / \mathrm{dof}@f$ (@c dof = @c b for the whole-block form).
         double           max_row_T = 0.0; ///< @f$\max_i \tilde e_i^2/Q_{ii}@f$ over the block's rows: the row tier's statistic on the same rows, in the same units as @ref T (the @f$b=1@f$ case), so the INC-3 comparison uses one scale.
         bool             uncheckable = false;  ///< @f$Q_{\tilde e,B}@f$ was singular or non-finite: count it, never invert it.
         int              n_code = 0;      ///< code rows in the block (composition, for the run-end readout).
         int              n_phase = 0;     ///< phase rows in the block.
         PriorResidualLabel label = PriorResidualLabel::Clean;  ///< assigned at the feed site; this class never labels.
+        /// The whitened cofactor's eigenvalues, ascending, for the rank statistics of the
+        /// estimable form (the first @ref n_lambda entries; 0 entries for the whole-block form).
+        std::array<double, kBlockBaardaMaxB> lambda{};
+        int              n_lambda = 0;    ///< entries of @ref lambda that are set.
     };
 
     /// Outcome of @ref addBlock, for the caller's per-epoch counters and events.
@@ -294,10 +329,13 @@ public:
      * @param report_sigma  @c network.block_baarda_report_sigma: the trace and event
      *                      threshold on @f$t_B@f$.  Affects reporting only.
      * @param corroborate   Join the slip-QC raw-observable verdict (INC-2).
+     * @param estimable_eps Floor on the redundancy number of a kept direction when the
+     *                      sweep tests the estimable part of each block (see the file
+     *                      banner); 0 selects the whole-block form.
      */
     NetworkBlockBaarda(std::vector<std::string> families, double window_epochs,
                        double min_rows = kWarmupRows, double report_sigma = 4.0,
-                       bool corroborate = false)
+                       bool corroborate = false, double estimable_eps = 0.0)
         : families_(std::move(families)),
           // >= 0, not > 0: min_rows = 0 is a valid request for no warm-up bar
           // (calibrate from the first block), and the loader clamps the knob to
@@ -306,6 +344,7 @@ public:
           min_rows_(min_rows >= 0.0 ? min_rows : kWarmupRows),
           report_sigma_(report_sigma > 0.0 ? report_sigma : 4.0),
           corroborate_(corroborate),
+          estimable_eps_(estimable_eps > 0.0 ? estimable_eps : 0.0),
           // The sigma0 accumulator.  split_by_const = false because the family
           // already is the constellation; a second split in NetworkCarryVce would
           // key every bucket "G|G" and change only the name.
@@ -320,6 +359,10 @@ public:
     const std::vector<std::string>& families() const { return families_; }
     double reportSigma() const { return report_sigma_; }
     bool   corroborating() const { return corroborate_; }
+    /// @return Whether the sweep tests the estimable part of each block (the file banner).
+    bool   estimable() const { return estimable_eps_ > 0.0; }
+    /// @return The floor on a kept direction's redundancy number; 0 when not estimable.
+    double estimableEps() const { return estimable_eps_; }
 
     /// @return Family index for @p sat, or -1 when its constellation was not
     ///         requested.  A family is named by its constellation's one-letter key
@@ -403,6 +446,7 @@ public:
             if (in.n_code > 0 && in.n_phase > 0) ++n_mixed_;
             else if (in.n_code > 0)              ++n_code_only_;
             else if (in.n_phase > 0)             ++n_phase_only_;
+            if (estimable()) noteRank(in);
         }
 
         Ladder& L = st.epoch[static_cast<std::size_t>(in.label)];
@@ -422,8 +466,9 @@ public:
         // The calibration is fed before any threshold is consulted, with a
         // chi-square-b to chi-square-1 rescaling so a mixed-b population is not
         // mis-scaled (file banner, correction 1).
-        const double u2 = in.T * static_cast<double>(in.b)
-                        * (kBlockChi2GeoMean1 / blockChi2GeoMean(in.b));
+        const int dof = (in.dof > 0) ? in.dof : in.b;   // the tested directions, all b rows unless the estimable form dropped some
+        const double u2 = in.T * static_cast<double>(dof)
+                        * (kBlockChi2GeoMean1 / blockChi2GeoMean(dof));
         if (u2 > 0.0 && std::isfinite(u2))
             inflation_.addRow(families_[static_cast<std::size_t>(f)], std::string(),
                               std::sqrt(u2), /*gap_s=*/0.0, /*post_var=*/0.0,
@@ -520,6 +565,28 @@ public:
     long long runCodeOnlyBlocks() const  { return n_code_only_; }
     long long runPhaseOnlyBlocks() const { return n_phase_only_; }
 
+    /// Run-cumulative count of blocks of @p b rows (the overflow cell for @p b above
+    /// @ref kBlockBaardaMaxB) that kept @p dof directions.  Filled only by the estimable
+    /// form; 0 for a whole-block run and for any index out of range.
+    long long rankHistogram(int b, int dof) const {
+        if (b < 1 || dof < 0 || dof > kBlockBaardaMaxB) return 0;
+        return rank_hist_[static_cast<std::size_t>(std::min(b, kBlockBaardaMaxB + 1) - 1)]
+                         [static_cast<std::size_t>(dof)];
+    }
+    /// Blocks of @p b rows whose whitened-cofactor spectrum was recorded.
+    long long spectrumCount(int b) const {
+        if (b < 1) return 0;
+        return spectrum_n_[static_cast<std::size_t>(std::min(b, kBlockBaardaMaxB + 1) - 1)];
+    }
+    /// Mean of the @p k-th smallest redundancy number (0-based) over the blocks of @p b
+    /// rows: the typical shape of the cofactor's spectrum, absorbed directions first.
+    double spectrumMean(int b, int k) const {
+        const long long n = spectrumCount(b);
+        if (n <= 0 || k < 0 || k >= kBlockBaardaMaxB) return 0.0;
+        return spectrum_sum_[static_cast<std::size_t>(std::min(b, kBlockBaardaMaxB + 1) - 1)]
+                            [static_cast<std::size_t>(k)] / static_cast<double>(n);
+    }
+
     /// Blocks over the whole run in one family, all labels.
     long long runBlocks(int f) const {
         long long n = 0;
@@ -546,6 +613,7 @@ private:
     double                   min_rows_;
     double                   report_sigma_;
     bool                     corroborate_;
+    double                   estimable_eps_;   ///< floor on a kept direction's redundancy number; 0 = whole-block form.
     NetworkCarryVce          inflation_;
     std::vector<FamilyState> state_;
     std::function<PriorResidualCorrob(int, std::string_view)> corroborator_;
@@ -556,6 +624,24 @@ private:
     double    ep_max_t_ = 0.0;
     std::array<long long, kBlockBaardaMaxB + 1> b_hist_{};
     long long n_mixed_ = 0, n_code_only_ = 0, n_phase_only_ = 0;
+
+    /// Rank statistics of the estimable form: blocks by (row count, kept directions) and the
+    /// summed eigenvalue spectrum by row count.  Same row-count cells as @c b_hist_.
+    std::array<std::array<long long, kBlockBaardaMaxB + 1>, kBlockBaardaMaxB + 1> rank_hist_{};
+    std::array<std::array<double, kBlockBaardaMaxB>, kBlockBaardaMaxB + 1> spectrum_sum_{};
+    std::array<long long, kBlockBaardaMaxB + 1> spectrum_n_{};
+
+    /// Record one block's kept directions and spectrum (estimable form only).
+    void noteRank(const Input& in) {
+        const std::size_t bi = static_cast<std::size_t>(
+            std::min(in.b, kBlockBaardaMaxB + 1) - 1);
+        ++rank_hist_[bi][static_cast<std::size_t>(std::clamp(in.dof, 0, kBlockBaardaMaxB))];
+        if (in.n_lambda <= 0) return;
+        const int n = std::min(in.n_lambda, kBlockBaardaMaxB);
+        for (int k = 0; k < n; ++k)
+            spectrum_sum_[bi][static_cast<std::size_t>(k)] += in.lambda[static_cast<std::size_t>(k)];
+        ++spectrum_n_[bi];
+    }
 };
 
 // ===========================================================================
@@ -569,6 +655,7 @@ struct BlockBaardaHit {
     int                 station = -1;
     std::string         sat;
     int                 b = 0;
+    int                 dof = 0;       ///< directions tested when the estimable form dropped some; 0 = all @ref b.
     double              t = 0.0;       ///< @f$t_B@f$.
     double              row_t = 0.0;   ///< the loudest single row's @f$t_i@f$ (the row tier's view).
     double              T = 0.0;       ///< raw @f$T_B@f$ (before @f$\hat\sigma_0@f$).
@@ -605,6 +692,35 @@ struct NetworkBlockBaardaTallies {
     double    max_t          = 0.0;///< worst @f$t_B@f$ of the run.
     std::string max_id;            ///< its identity, "#STATION_INDEX/SAT b=… @tow …" (roster index, not name).
 };
+
+/// The part of one LOS block the data can test: the output of @ref blockEstimableForm.
+struct BlockEstimableForm {
+    int    dof = 0;            ///< Directions kept: whitened-cofactor eigenvalues at or above the floor.
+    int    rows_testable = 0;  ///< Rows whose own redundancy number @f$w_iQ_{ii}@f$ is at or above the floor.
+    double quad = 0.0;         ///< @f$\tilde e^\top Q^{+}\tilde e@f$ over the kept directions (a sum of squares; @f$\sigma_0^2\chi^2_{dof}@f$ under the null).
+    double max_row_T = 0.0;    ///< @f$\max_i \tilde e_i^2/Q_{ii}@f$ over the testable rows; 0 when there are none.
+    bool   nonfinite = false;  ///< A non-finite entry, a non-positive weight or a shape mismatch: no statistic.
+    int    n_lambda = 0;       ///< Entries of @ref lambda that are set (the block size, capped at @ref kBlockBaardaMaxB).
+    std::array<double, kBlockBaardaMaxB> lambda{};  ///< The whitened cofactor's eigenvalues, ascending.
+};
+
+/**
+ * @brief The estimable form of one LOS block's quadratic form (see the file banner).
+ *
+ * Whitens the cofactor with the row weights, eigen-decomposes it, keeps the directions
+ * whose eigenvalue (a redundancy number in [0,1]) is at least @p eps and sums their
+ * squared standardized components.  A pure function of its arguments, so the unit
+ * tests drive it with cofactors of known spectrum.
+ *
+ * @param Q    The @f$b\times b@f$ residual cofactor (@ref NetworkNormalEquations::blockResidualCofactor).
+ * @param w    The block's row information weights, @f$1/\sigma_i^2@f$.
+ * @param e    The block's post-fit residuals.
+ * @param eps  Floor on a kept direction's redundancy number; use the row census's.
+ * @return The form; @c nonfinite when the inputs cannot give one.  @c dof = 0 means the
+ *         block has no direction above the floor and is uncheckable.
+ */
+BlockEstimableForm blockEstimableForm(const Eigen::MatrixXd& Q, const Eigen::VectorXd& w,
+                                      const Eigen::VectorXd& e, double eps);
 
 struct NetworkRunContext;   // network/state/RunContext.hpp, included in the .cpp only
 struct NetworkRunTraces;    // network/diag/RunTraces.hpp, included in the .cpp only

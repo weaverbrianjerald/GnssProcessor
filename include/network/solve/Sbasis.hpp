@@ -265,6 +265,11 @@ public:
         double          clock_constraint_weight{ 0.0 };  ///< Row information weight (@ref kClockGaugeWeight for sum-to-zero; 1/σ² for broadcast-anchored); 0 in pin mode.
         int pivot_health_skips{ 0 };                     ///< Constellations whose pick passed over a satellite the broadcast flags unhealthy (the sticky incumbent or the lexical first).  0 without an ineligible set.
         int pivot_health_fallbacks{ 0 };                 ///< Constellations with no healthy registered satellite, where the lexical first stands.  0 without an ineligible set.
+        int pivot_ranked{ 0 };                           ///< Constellations whose pivot a fresh election by the coverage rule made.  0 without a PivotElection.
+        int pivot_rank_failures{ 0 };                    ///< Constellations where the coverage rule named none of the candidates, so the first candidate stands.  0 without a PivotElection.
+        int pivot_standby_kept{ 0 };                     ///< Constellations that kept the pick of an earlier election no product has adopted yet.  0 without a PivotElection.
+        std::set<std::string> pivot_ranked_consts;       ///< The constellation keys counted in @ref pivot_ranked.
+        std::set<std::string> pivot_rank_failed_consts;  ///< The constellation keys counted in @ref pivot_rank_failures.
     };
 
     /// Tight gauge-row information weight (= 1/σ²) for the sum-to-zero clock
@@ -1011,6 +1016,29 @@ public:
         std::string sat;              ///< the elected pivot
         bool health_skipped{false};   ///< the pick passed over an unhealthy incumbent or lexical first
         bool health_fallback{false};  ///< no registered satellite was healthy, so the lexical first stands
+        bool ranked{false};           ///< a fresh election by the ranker made the pick (coverage rule)
+        bool rank_failed{false};      ///< the ranker named none of the candidates, so the first candidate stands (coverage rule)
+        bool standby_kept{false};     ///< the pick is the earlier election's, not yet adopted by any product (coverage rule)
+    };
+
+    /// Ranks one constellation's candidate pivots: returns the best, or an empty string when it cannot rank them.
+    using PivotRanker = std::function<std::string(const std::vector<std::string>& candidates)>;
+
+    /**
+     * @brief The coverage election of one epoch (@c network.pivot_election), as
+     *        @ref buildSharedDatum reads it.
+     *
+     * Plain inputs, so the datum builder needs no geometry: the ranker is bound to the epoch
+     * by the caller (it predicts coverage from the orbit product) and the standby map holds
+     * the pick of the earlier election that no emitted product has adopted yet.
+     */
+    struct PivotElection {
+        /// Constellation key and its candidate pivots -> the best candidate, or empty.
+        std::function<std::string(const std::string& constellation,
+                                  const std::vector<std::string>& candidates)> rank;
+        /// Constellation key -> the satellite elected at an earlier epoch and not yet adopted
+        /// by an emitted product; null for none.  Kept while it stays registered and healthy.
+        const std::map<std::string, std::string>* standby{nullptr};
     };
 
     /**
@@ -1024,17 +1052,28 @@ public:
      * even when ineligible (an explicit choice).  With @p ineligible null the pick is
      * the rule as it was before this option.
      *
+     * With @p ranker (@c network.pivot_election) the lexical fallback is replaced by a
+     * ranking. In order: the declared pin; the incumbent, when registered and eligible; the
+     * @p standby satellite of an earlier election, when registered and eligible; otherwise a
+     * fresh election, in which @p ranker picks among the eligible satellites (all of them
+     * when none is eligible, counted as @c health_fallback). A ranker that names none of its
+     * candidates leaves the first candidate in force (@c rank_failed).
+     *
      * @param sats       The constellation's registered clock satellites, lexically sorted,
      *                   not empty.
      * @param declared   The declared pin (@c network.clock_datum_satellite), or empty.
      * @param incumbent  The sticky incumbent (@c network.sticky_pivot), or empty.
      * @param ineligible Satellites the broadcast flags unhealthy now, or null.
-     * @return The pick and whether health changed it.
+     * @param ranker     The coverage ranking, or null for the rule without it.
+     * @param standby    The earlier election's pick, or empty; read only with @p ranker.
+     * @return The pick and whether health or the ranking changed it.
      */
     static PivotPick electClockPivot(const std::vector<std::string>& sats,
                                      const std::string& declared,
                                      const std::string& incumbent,
-                                     const std::set<std::string>* ineligible);
+                                     const std::set<std::string>* ineligible,
+                                     const PivotRanker* ranker = nullptr,
+                                     const std::string& standby = std::string());
 
     /**
      * @brief The channel family of a code signal (FAMILY-GF): @c Secondary for the
@@ -1414,6 +1453,10 @@ public:
      *                              broadcast flags unhealthy at this epoch, which rules 2
      *                              and 3 pass over (@ref electClockPivot).  Pass
      *                              @c nullptr for the rule without health (byte-identical).
+     * @param election              The coverage election (@c network.pivot_election): rule 3
+     *                              becomes a fresh election by predicted coverage, held
+     *                              through epochs no product has adopted (@ref PivotElection).
+     *                              Pass @c nullptr for the lexical rule (byte-identical).
      * @return the datum plan (shared pins or constraint rows, and the declared
      *         residual dimension).
      */
@@ -1422,7 +1465,8 @@ public:
                           const SbasisDeclaration& decl,
                           const std::map<std::string, std::string>* sticky_prev_pivot
                               = nullptr,
-                          const std::set<std::string>* pivot_ineligible = nullptr) const;
+                          const std::set<std::string>* pivot_ineligible = nullptr,
+                          const PivotElection* election = nullptr) const;
 
     /**
      * @brief The structural per-constellation clock null direction @f$v_c@f$

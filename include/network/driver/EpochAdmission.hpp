@@ -38,7 +38,10 @@ enum class EpochAdmission {
  * @brief The start-offset fast-forward (network.start_offset_hours).
  *
  * Anchors on the first synced epoch and skips every epoch until the elapsed data span reaches
- * the offset; the solve then cold-starts.  Writes NetworkCarryState::start_anchor_s once.
+ * the offset; the solve then cold-starts.  Writes NetworkCarryState::start_anchor_s once.  The
+ * span and the offset are compared on the millisecond grid (TimeUtils::offsetReached), so an
+ * offset that lies on an epoch starts the run on that epoch, and an offset between two epochs
+ * (a half-epoch back-off) starts it on the next one.
  *
  * @param run    The run (network/driver/Run.hpp): reads ctx.knobs.start_offset_s, writes
  *               ctx.carry.start_anchor_s.

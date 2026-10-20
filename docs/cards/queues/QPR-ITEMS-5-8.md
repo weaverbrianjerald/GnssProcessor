@@ -5,14 +5,14 @@
 - **id:** QPR 5–8
 - **topic:** queues
 - **status:** superseded
-- **summary:** Item 8's ionosphere error PERSISTS with SH on and 8(b) is FALSIFIED; items 5, 7 and 8 SUPERSEDED or moot under the re-founding (GF pin at broadcast T_GD, no SH, float vehicle); item 6 re-filed as owed.
-- **dates in the text:** 2026-08-14 → 2026-08-21
-- **knobs / posture:** `network.level_authority_csgf`, `network.raim_withhold_adapt_escalate`, `network.estimate_iono_sh`, `network.carry_iono`
-- **hashes named in the text** (commit / exe / byte-cert): `65ba362`, `a4b3eee9`
-- **run dirs named in the text:** `runs/t3iono`, `runs/q8a_ctl`, `runs/q8a_sh`, `runs/camp60_refprod`, `runs/camp60_f4`
+- **summary:** Item 8's ionosphere error PERSISTS with SH on and 8(b) is FALSIFIED; items 5, 7 and 8 SUPERSEDED or moot under the re-founding (GF pin at broadcast T_GD, no SH, float vehicle); item 6 built 2026-10-16 (start-offset seek on a millisecond grid, leap table fixed).
+- **dates in the text:** 2026-08-14 → 2026-10-17
+- **knobs / posture:** `network.level_authority_csgf`, `network.raim_withhold_adapt_escalate`, `network.estimate_iono_sh`, `network.carry_iono`, `network.start_offset_hours`
+- **hashes named in the text** (commit / exe / byte-cert): `65ba362`, `a4b3eee9`, `e7a65b2`
+- **run dirs named in the text:** `runs/t3iono`, `runs/q8a_ctl`, `runs/q8a_sh`, `runs/camp60_refprod`, `runs/camp60_f4`, `D:/GnssProcessorSupport/runs_nom/_rap_seekb_*`, `_rap_seekn_*`, `_rap_sk2c_*` and `_rap_sk2n_*`
 - **source:** `docs/archive/QUEUE_principled_replacements.md`, items 5, 6, 7, 8
 
-**Outcome.** Item 8(a) found the per-LOS ionosphere error PERSISTS with SH on (0.7061 to 0.6691 m); 8(b)'s carry family FALSIFIED at all four arms; item 5's LV-6 census failed both gates; item 7's A4 escalation passed its mechanism but failed the σ̂₀ gate (2.42). The [re-founding](../../refound/NETWORK_REFOUNDING_2026-09-14.md) replaced all three: the level is the per-signal GF pin at broadcast T_GD ([RF-0c](../../refound/RF-0c_gf_pin_2026-09-15.md)), SH left the producer, the float vehicle has no zero-q level, and the goldens withhold no epochs ([EXL](../../refound/EXL_exact_update_lah_promotion_2026-10-01.md)). Item 6, the start-offset seek, is filed in [OPEN_ITEMS](../../status/OPEN_ITEMS.md). Status reviewed 2026-10-13.
+**Outcome.** Item 8(a) found the per-LOS ionosphere error PERSISTS with SH on (0.7061 to 0.6691 m); 8(b)'s carry family FALSIFIED at all four arms; item 5's LV-6 census failed both gates; item 7's A4 escalation passed its mechanism but failed the σ̂₀ gate (2.42). The [re-founding](../../refound/NETWORK_REFOUNDING_2026-09-14.md) replaced all three: the level is the per-signal GF pin at broadcast T_GD ([RF-0c](../../refound/RF-0c_gf_pin_2026-09-15.md)), SH left the producer, the float vehicle has no zero-q level, and the goldens withhold no epochs ([EXL](../../refound/EXL_exact_update_lah_promotion_2026-10-01.md)). Item 6, the start-offset seek, was built on 2026-10-16 (branch `fix/seek`; result section at the end of this file): the seek compares on a millisecond grid, the half-epoch back-off keeps its epoch, and a bare offset lands on the epoch it names. Checked on 2026-10-17 against a same-build control: the 2 h field and sim golden arms are byte-identical, and the bare-hour arms move by the one declared epoch. Status reviewed 2026-10-17.
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 
@@ -231,3 +231,86 @@ stays as instrumentation; quiet-twin CS-GF arm dropped as moot; the plateau keep
 
 ---
 
+
+## 2026-10-16: item 6 built (branch `fix/seek`, commit `e7a65b2`)
+
+**Question.** Can the start-offset seek select the epoch an offset names without the half-epoch back-off, while every offset that carries the back-off keeps selecting the epoch it selects today?
+
+**Defect.** The seek compared the elapsed span between two floating GPS second counts with the offset. The calendar to GPS conversion leaves up to 2.0e-5 s of residue on an epoch time (2,880 epochs of DOY 129 at 30 s: 1,408 negative), so an offset that lies on an epoch started the run on that epoch or one epoch later, by the sign of the residue. From a 00:00:00 anchor the bare hours 1, 4, 7, 10, 13, 16, 19 and 22 landed one epoch late and the other 15 landed on the hour. An offset a half epoch off the grid has no epoch within 15 s of it, so the back-off hid the residue.
+
+**Rule.** `TimeUtils::offsetReached` compares on a whole-millisecond grid: an epoch has reached the offset when its elapsed time and the offset, each rounded to the nearest millisecond, satisfy elapsed >= offset. The residue (2e-5 s) is far below the grid and the grid is below any real epoch schedule. One function serves the four sites that had their own copy of the comparison: the producer fast-forward (`networkFastForward`), the start of the code-bias admission census, the age reference of the warm-resume gate, and the consumer replay. The replay's hour banding reads the same `TimeUtils::elapsedMs`. No knob: the seek has one correct behaviour, and an offset moves its first epoch only when it lies within half a millisecond of an epoch, where the old result was the residue's sign.
+
+**Same first epoch with the back-off.** Unit tests (`tests/test_epoch_seek.cpp`) build a day of 30 s epochs with the production conversion, from a 00:00:00 and a 00:00:30 anchor:
+
+- every on-grid offset (k times 30 s, k = 1 to 2,879) starts on epoch k; the old comparison misses 8 of the 23 bare hours (the test counts them, so it fails if the residue ever leaves the conversion);
+- every half-epoch back-off offset (k times 30 s minus 15 s, every epoch of the day) selects the epoch the old comparison selects;
+- the 16 half-epoch values written in the shipped configs select the old epoch; the 9 on-grid values select the epoch they name;
+- `networkFastForward` skips 120 epochs and processes the 121st for a 1 h offset (the old comparison: the 122nd).
+
+Release smoke, 10 epochs (`max_duration_s` 300, 11 epochs processed), one control exe built from the branch base `4318fe3` and one from the branch, same arm file, `RAPID_RUNS_ROOT` `D:/GnssProcessorSupport/runs_nom` (`_rap_seekb_*` control, `_rap_seekn_*` branch):
+
+| arm | `start_offset_hours` | first epoch tow, control | first epoch tow, branch | `products.txt` |
+|---|---|---|---|---|
+| field golden | none | 259200 | 259200 | byte-identical |
+| field golden | 5.9958333 (back-off) | 280800 | 280800 | byte-identical |
+| sim golden | 0.504167 (back-off) | 261060 | 261060 | byte-identical |
+| field golden | 1.0 (bare hour) | 262830 | 262800 | differs (control one epoch late) |
+| sim golden | 1.0 (bare hour) | 262860 | 262830 | differs (control one epoch late) |
+
+The datum station of the field bed starts at 00:00:00 and that of the sim bed at 00:00:30, so a 1 h offset names tow 262800 and 262830. The 2 h golden arms (byte-identity of the products and the traces) belong to the check stage.
+
+**Shipped configs.** 107 files under `config/` set the offset. Replaying each on its datum station's real epoch schedule with an IEEE-double replica of the conversion (102 replayed; 5 have no RINEX on disk and carry half-epoch values): 93 select the same first epoch (75 carry the half-epoch back-off, 18 are on-grid offsets the residue happened to land correctly) and 9 select the epoch one step earlier, the epoch they name: `config/test_suite/` `_dcb305_cold`, `_dcb305_resume`, `_rs305_B2off`, `_rs305_B2on` (0.0916667 h), `_dcmp_50sta_10ep_snap_resume` (0.0833333 h), `_gg305_cold`, `_gg305_resume` (1.0083333 h), `_night305_resume`, `_night50_resume` (6.0083333 h). Their offsets were bare, so the old exe started them one epoch late. The files are not edited.
+
+**Leap table (bundled).** Two defects, neither reached by a 2024 run (GPS-UTC is 18 s there and unchanged):
+
+- the lookup keyed by a GPS-scale JD compared it with UTC dates, so each new offset applied from 0 h on the GPS clock instead of when UTC reaches the date, early by the new offset (18 s at 2017-01-01). `leapSecondsGpsUtc` now moves the GPS instant onto UTC first; the calendar UTC to GPS conversion, whose input is already UTC, uses the new `leapSecondsAtUtcJd`;
+- the 2012-07-01 row carried the JD of 2012-01-01 (2455927.5), so GPS-UTC read 16 s for six months it was 15 s. Corrected to 2456109.5. Found by `LeapSecondScaleTest`, which walks the seconds around every insertion (UTC to GPS to UTC returns the calendar time); every other row was checked against its stated date.
+
+**Can the back-off be retired?** Yes, for any exe containing this change: an offset on an epoch starts on that epoch, and an offset between epochs starts on the next one. The back-off is still written in the `CLAUDE.md` network-run rule, `scripts/event_leg.py` and `scripts/chain_make_leg.py` (the `+15 s` of the resume offset), the shipped configs and archived arms, and an exe built before this commit still needs it. Removing it from those is left to the author.
+
+**Not changed.** The `processing.max_duration_s` cutoff compares the same way (`now - anchor >= max_duration`) and has the same class of defect: replaying the 2024-129 epochs, a 7,200 s window runs 240 or 241 epochs depending on the anchor (877 of 2,638 anchors run the extra one), a 300 s window 10 or 11 (1,589 of 2,868 anchors; the smoke arms above all processed 11). Moving it would change the last epoch of existing arms, so it is filed in [OPEN_ITEMS](../../status/OPEN_ITEMS.md).
+
+**Verdict.** Built; the back-off keeps its epoch in every smoke and unit check; bare offsets land on the epoch they name. Standing: `TimeUtils::offsetReached` (`include/math/TimeUtils.hpp`).
+
+## 2026-10-17: item 6 checked (branch `fix/seek`, commit `f24367f`)
+
+**Question.** Does the corrected seek leave every arm that carries the half-epoch back-off byte-identical to a same-build control, and does a bare-hour offset start on the epoch it names?
+
+**Builds.** Control: `main` at `4318fe3` in a detached worktree (`seek_ctl`), Release, built with `scripts/wt_build.ps1`, copied to `gnss_processor_seek_ctl.exe`. Candidate: `f24367f` (the last code change is `e7a65b2`; the build was current, md5 `81c4eb4a0f0dea522c47b81603c5a3e8`), `gnss_processor_seek.exe`. Both with `RAPID_RUNS_ROOT` `D:/GnssProcessorSupport/runs_nom`, one arm file per pair (`scripts/rapid_arm.py make`, tags `sk2c_*` control and `sk2n_*` candidate), five arms per exe run three at a time.
+
+**Golden arms, 2 h (30 s epochs).** `NOM_GATE_DROP_POSTURE=1 python scripts/nom_td_gate.py --whole <control> <candidate>`: RESULT IDENTICAL on all three pairs. Compared: the arm configs (run directory masked), every `logs/*.csv` in row order, `products.txt` in full, the 12 run-manifest records, `stdout.txt` and the whole `main_log`, `rt_engine.log`, the exit code.
+
+| arm | `start_offset_hours` | epochs, first to last tow | `products.txt` lines | `stdout.txt` / `main_log` lines | gate |
+|---|---|---|---|---|---|
+| field golden | none | 240, 259200 to 266370 | 113,902 | 3,185 / 2,422 | IDENTICAL |
+| field golden | 5.9958333 (back-off) | 240, 280800 to 287970 | 116,312 | 3,117 / 2,369 | IDENTICAL |
+| sim golden | 0.504167 (back-off) | 241, 261060 to 268260 | 80,704 | 2,923 / 2,159 | IDENTICAL |
+
+The sim arm runs 241 epochs on both exes: the `max_duration_s` residue filed in [OPEN_ITEMS](../../status/OPEN_ITEMS.md) is unchanged by this fix. The two back-off arms start on the same first epoch on both exes (`network_epoch_status.csv`), which is the claim of the item.
+
+**Bare-hour arms, 10 epochs (11 processed), `start_offset_hours` 1.0.** The gate reads DIFFERENT on both pairs, as declared: the control starts one epoch late and the candidate on the epoch the offset names.
+
+| bed | first epoch tow, control | first epoch tow, candidate | epoch the hour names |
+|---|---|---|---|
+| field | 262830 | 262800 | 262800 (00:00:00 anchor + 1 h) |
+| sim | 262860 | 262830 | 262830 (00:00:30 anchor + 1 h) |
+
+What differs in these pairs is the window itself: both runs process 11 epochs, the candidate's starting one epoch earlier; the exit code is identical. The unit tests in `tests/test_epoch_seek.cpp` carry the all-hours statement: 23 bare hours on both fixture anchors, each selecting the epoch of its backed-off twin, and the old comparison missing 8 of the 23 from the 00:00:00 anchor.
+
+**Grade.** The held-out consumer's 3D error by hour (median / RMS, m), the same on both exes to the printed digits:
+
+| arm | hour 1 | hour 2 | hour 3 |
+|---|---|---|---|
+| field golden, none | 0.0581 / 0.2812 | 0.0113 / 0.0126 | |
+| field golden, 5.9958333 h | 0.0577 / 0.2127 | 0.0284 / 0.0335 | |
+| sim golden, 0.504167 h | 0.0994 / 0.3144 | 0.0326 / 0.0416 | 0.0549 / 0.0549 (1 epoch) |
+
+The census over the 16 sites reads the same wire, so a byte-identical `products.txt` fixes every census value; no separate census was run. The grade ran to completion on all six runs (exit 0, wall 2,604 to 3,845 s under a loaded machine, not a timing comparison).
+
+**Other checks on the final tree.**
+
+- Debug `gnss_tests.exe --gtest_brief=1`: 3,163 ran, 3,139 passed, 24 skipped (fixture-gated, `data/` not bootstrapped in the worktree), 0 failed.
+- `python scripts/docs_index_check.py`, `python scripts/make_golden_config.py --verify` (PASS) and `python scripts/config_posture_check.py --verify-loader` (0 coverage gaps) pass; `python scripts/ledger_render.py` leaves the rendered ledger unchanged apart from line endings.
+- The shipped-config sweep was re-run independently (`D:/GnssProcessorSupport/gates/seek/tools/config_sweep.py`) and reproduces the table above line for line: 107 configs with an offset, 93 select the same first epoch (75 with the back-off, 18 on-grid), 9 bare offsets select the epoch one step earlier, 5 have no RINEX on disk.
+
+**Verdict.** Pass. The corrected seek is byte-identical to the control on both golden beds with the back-off, and the only output movement is the declared one for offsets that lay on an epoch. The back-off can be retired for exes built from `e7a65b2` or later; the `CLAUDE.md` rule, `scripts/event_leg.py`, `scripts/chain_make_leg.py` and the shipped configs still carry it and are not edited here.

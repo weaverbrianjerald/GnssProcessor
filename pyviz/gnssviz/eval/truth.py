@@ -486,6 +486,14 @@ class SifTruth(TruthSource):
     (11-15 cm).  The periodic terms keep the file-level epoch as their phase
     reference.
 
+    The post-seismic term is the change of the log/exp relaxation since the
+    occupation's reference epoch, ``psd(t) - psd(ref_epoch)``, summed over the
+    station's earthquakes.  The reference coordinate is the model position at
+    ``ref_epoch`` with the post-seismic displacement already in it (it exceeds the
+    secular SSC position by ``psd(ref_epoch)``), so adding ``psd(t)`` in full
+    counted the deformation accumulated before ``ref_epoch`` twice: 1.48 m at
+    ``MIZU00JPN`` and about 5 cm at ``GCGO00USA`` and ``MAC100AUS`` in 2024.
+
     Lookup (:meth:`_find`) tries the full 9-char ID, then the DOMES number, then
     the 4-char station prefix.  An exact ID or DOMES match is returned as is.  A
     prefix match is only a *candidate*: with an approximate position it must lie
@@ -503,6 +511,14 @@ class SifTruth(TruthSource):
     ``extrapolated=True``, the years outside the segment and whether an antenna
     or receiver change starts in that gap, and :meth:`resolve` warns
     (:class:`SifExtrapolationWarning`).
+
+    The periodic (seasonal) term is one block's displacement chosen by the epoch
+    alone (:meth:`_select_periodic`, the NGS M-PAGES v1.2 rule): the block whose
+    window covers the epoch, else the first block before the first window, the last
+    block after the last, and the block that ended last inside a gap.  The sinusoids
+    continue past the window on the block's own phase reference, so the term does
+    not drop to zero where the linear term goes on; the other cases warn with
+    :class:`SifExtrapolationWarning`.
     """
 
     def __init__(self, paths, with_periodic: bool = True, with_psd: bool = True):
@@ -756,6 +772,62 @@ class SifTruth(TruthSource):
                 cls._change_in_gap(st.antennas, lo, hi, compare_serial=True),
                 cls._change_in_gap(st.receivers, lo, hi, compare_serial=False))
 
+    @staticmethod
+    def _select_periodic(st: "_SifStation", year: float
+                         ) -> Tuple[Optional["_SifPeriodicBlock"], str]:
+        """The periodic block that supplies the seasonal term at ``year``, and the case.
+
+        Port of ``selectPeriodicBlock`` in ``StationInfoFile.cpp`` (the NGS M-PAGES
+        v1.2 rule).  Blocks are taken in start order (file order for equal starts).
+        The first block whose window covers ``year`` (start <= year < end) wins, so
+        overlapping windows are not summed.  With none covering: before the first
+        window the first block (``"before_first"``), at or after the end of the last
+        window the last block (``"after_last"``), inside a gap the last block, in
+        start order, that ended at or before ``year`` (``"in_gap"``).  A station
+        without a periodic block returns ``(None, "not_evaluated")``.
+        """
+        if not st.periodic:
+            return None, "not_evaluated"
+        ordered = sorted(st.periodic, key=lambda b: b.start_year)  # stable
+        last_ended = None
+        for b in ordered:
+            if b.start_year <= year < b.end_year:
+                return b, "covered"
+            if b.end_year <= year:
+                last_ended = b
+        if year < ordered[0].start_year:
+            return ordered[0], "before_first"
+        if year >= ordered[-1].end_year:
+            return ordered[-1], "after_last"
+        return last_ended, "in_gap"
+
+    @staticmethod
+    def _psd_enu(st: "_SifStation", year: float) -> np.ndarray:
+        """Post-seismic displacement (E, N, U) in metres accumulated by ``year``.
+
+        The sum over the station's earthquakes of the log/exp relaxation since
+        each event; an event at or after ``year`` contributes nothing.
+        """
+        def eval_comp(c: _SifPsdComp, dT: float) -> float:
+            d = 0.0
+            for a, t in zip(c.alog, c.tlog):
+                if t > 0.0:
+                    d += a * math.log(1.0 + dT / t)
+            for a, t in zip(c.aexp, c.texp):
+                if t > 0.0:
+                    d += a * (1.0 - math.exp(-dT / t))
+            return d
+
+        enu = np.zeros(3, dtype=float)
+        for pb in st.psd:
+            dT = year - pb.event_year
+            if dT <= 0.0:
+                continue  # event has not happened yet at this epoch
+            enu[0] += eval_comp(pb.east, dT)
+            enu[1] += eval_comp(pb.north, dT)
+            enu[2] += eval_comp(pb.up, dT)
+        return enu
+
     def resolve(self, station: str, decimal_year: float, *,
                 approx_ecef: Optional[Sequence[float]] = None) -> Optional[TruthCoord]:
         """Return the SIF coordinate of ``station`` at ``decimal_year``.
@@ -787,35 +859,25 @@ class SifTruth(TruthSource):
         ecef = occ.coords + occ.velocity * dt
 
         if self.with_periodic:
-            for b in st.periodic:
-                if decimal_year < b.start_year or decimal_year >= b.end_year:
-                    continue
-                dT = decimal_year - b.ref_epoch
-                for f in b.freqs:
+            blk, reach = self._select_periodic(st, decimal_year)
+            if blk is not None:
+                if reach != "covered":
+                    warnings.warn(
+                        f"SIF: {st.sid} at {decimal_year:.4f} is outside every periodic "
+                        f"window ({reach.replace('_', ' ')}); continuing the seasonal term "
+                        f"of block [{blk.start_year:.4f}, {blk.end_year:.4f})",
+                        SifExtrapolationWarning, stacklevel=2)
+                dT = decimal_year - blk.ref_epoch
+                for f in blk.freqs:
                     if f.period_yr == 0.0:
                         continue
                     w = 2.0 * math.pi / f.period_yr
                     ecef = ecef + f.cos * math.cos(w * dT) + f.sin * math.sin(w * dT)
 
         if self.with_psd and st.psd:
-            def eval_comp(c: _SifPsdComp, dT: float) -> float:
-                d = 0.0
-                for a, t in zip(c.alog, c.tlog):
-                    if t > 0.0:
-                        d += a * math.log(1.0 + dT / t)
-                for a, t in zip(c.aexp, c.texp):
-                    if t > 0.0:
-                        d += a * (1.0 - math.exp(-dT / t))
-                return d
-
-            enu = np.zeros(3, dtype=float)
-            for pb in st.psd:
-                dT = decimal_year - pb.event_year
-                if dT <= 0.0:
-                    continue
-                enu[0] += eval_comp(pb.east, dT)
-                enu[1] += eval_comp(pb.north, dT)
-                enu[2] += eval_comp(pb.up, dT)
+            # The change since the occupation's reference epoch: the reference
+            # coordinate already holds the displacement accumulated by then.
+            enu = self._psd_enu(st, decimal_year) - self._psd_enu(st, occ.ref_epoch)
             if float(enu @ enu) > 0.0:
                 lat, lon = _ecef_to_llh_rad(ecef)
                 ecef = ecef + _enu_delta_to_ecef(enu[0], enu[1], enu[2], lat, lon)

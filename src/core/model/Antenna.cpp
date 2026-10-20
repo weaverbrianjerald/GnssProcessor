@@ -494,7 +494,10 @@ namespace GnssProcessor {
      * - Maps the RINEX signal code to the ATX frequency key for the GNSS system.
      * - Computes the satellite body frame with SatAttitude::compute (yaw-steering,
      *   orbit-normal for BeiDou-2 GEO PRNs, beta-driven modes when orbit-normal
-     *   attitude is enabled).
+     *   attitude is enabled).  With enableNoonTurnAttitude() a GPS Block IIF or
+     *   IIR satellite near its orbit noon at small |beta| gets the yaw-rate-limited
+     *   noon-turn frame instead (SatAttitude::applyNoonTurn), for the PCO and for
+     *   the wind-up alike.
      * - Matches antenna models by satellite identifier (with validity window) and by
      *   receiver type (normalization, radome→NONE fallback, optional TYPE remap).
      * - Returns 0 for invalid inputs and skips missing terms, logging warnings/traces
@@ -608,13 +611,8 @@ namespace GnssProcessor {
         // below); with it true the helper applies beta-driven mode selection to every
         // other BeiDou and QZSS satellite and still forces the GEO PRNs to
         // orbit-normal, whatever beta is.
-        int sat_prn = 0;
-        if (satellite.size() >= 2) {
-            try { sat_prn = std::stoi(satellite.substr(1)); } catch (...) { sat_prn = 0; }
-        }
-        const bool legacy_geo =
-            (system == System::BeiDou) &&
-            ((sat_prn >= 1 && sat_prn <= 5) || sat_prn == 59 || sat_prn == 60);
+        const int sat_prn = SatAttitude::prnOf(satellite);
+        const bool legacy_geo = SatAttitude::usesLegacyOrbitNormal(system, sat_prn);
 
         // BeiDou-2 GEO degenerate-orbit-normal warning and orbit-normal trace, emitted
         // here because the stateless SatAttitude helper cannot log.  They are emitted
@@ -632,12 +630,13 @@ namespace GnssProcessor {
                 "BeiDou GEO {} using orbit-normal attitude", satellite);
         }
 
-        const SatAttitude::Frame att = SatAttitude::compute(
+        SatAttitude::Frame att = SatAttitude::compute(
             system, sat_prn, sat_pos, sat_vel, sun_pos,
             config_.enableOrbitNormalAttitude(),
             config_.enableSunFrameCorrection());
         // att is a function-scope local that outlives every use below, so the
-        // const-ref bindings are safe and copy nothing.
+        // const-ref bindings are safe and copy nothing.  They follow att if the
+        // noon-turn step below replaces it.
         const Eigen::Vector3d& k_s = att.k_s;  // +Z axis: toward Earth (nadir/boresight)
         const Eigen::Vector3d& i_s = att.i_s;  // +X axis: toward Sun (in sat-Sun-Earth plane)
         const Eigen::Vector3d& j_s = att.j_s;  // +Y axis: completes the right-handed frame
@@ -709,6 +708,25 @@ namespace GnssProcessor {
                 log_manager_.getLogger("antenna")->debug(
                     "Matched satellite antenna for {} (no validity): type='{}'",
                     satellite, a.type);
+            }
+        }
+
+        // Noon-turn attitude (default off).  The block, and with it the yaw-rate
+        // limit, comes from the satellite's ATX type, so this follows the selection.
+        // The wind-up below takes the same law, keeping PCO and wind-up on one
+        // attitude.  Off, or a satellite without a law: the nominal frame stands.
+        std::optional<SatAttitude::NoonTurnLaw> noon_law;
+        if (config_.enableNoonTurnAttitude() && sat_entry) {
+            noon_law = SatAttitude::noonTurnLaw(system, sat_entry->type);
+        }
+        if (noon_law) {
+            att = SatAttitude::applyNoonTurn(att, *noon_law, sat_pos, sat_vel, sun_pos);
+            sat_frame.row(0) = i_s.transpose();
+            sat_frame.row(1) = j_s.transpose();
+            if (att.mode == SatAttitude::Mode::NoonTurn) {
+                log_manager_.getLogger("antenna")->trace(
+                    "{} noon turn: beta={:.2f} deg, yaw {:+.1f} deg from nominal",
+                    satellite, att.beta, att.yaw_offset_deg);
             }
         }
 
@@ -994,7 +1012,17 @@ namespace GnssProcessor {
 
         double wind_up_corr = 0.0;
         if (config_.getModelCorrections().enable_phase_windup && is_phase && wavelength > 0.0) {
-            double wind_up = gnss_corrections_.computePhaseWindUp(satellite, system, rx_pos, sat_pos, wavelength, time, sun_pos, sat_vel, config_.accumulatePhaseWindUp(), config_.phaseWindUpMaxGapS(), config_.enableSunFrameCorrection());
+            // Gap bridge (default off): a null pointer leaves the accumulator exactly as it was.
+            WindUpBridge::Options bridge_opt;
+            const WindUpBridge::Options* bridge = nullptr;
+            if (config_.phaseWindUpGapBridge()) {
+                bridge_opt.max_gap_s = config_.phaseWindUpBridgeMaxGapS();
+                bridge_opt.step_s = config_.phaseWindUpBridgeStepS();
+                bridge_opt.shadow_scale = config_.getEclipseShadowScale();
+                bridge = &bridge_opt;
+            }
+            double wind_up = gnss_corrections_.computePhaseWindUp(satellite, system, rx_pos, sat_pos, wavelength, time, sun_pos, sat_vel, config_.accumulatePhaseWindUp(), config_.phaseWindUpMaxGapS(), config_.enableSunFrameCorrection(),
+                noon_law ? &*noon_law : nullptr, bridge);
             if (std::isfinite(wind_up)) {
                 wind_up_corr = wind_up;
                 correction += wind_up_corr;
@@ -1355,6 +1383,18 @@ namespace GnssProcessor {
 
     const std::map<std::string, GnssCorrections::WuRestart>& Antenna::wuRestarts() const {
         return gnss_corrections_.wuRestarts();
+    }
+
+    void Antenna::setWindUpSatStateProvider(GnssCorrections::SatStateProvider provider) {
+        gnss_corrections_.setSatStateProvider(std::move(provider));
+    }
+
+    const WindUpBridge::Counters& Antenna::windUpBridgeCounters() const {
+        return gnss_corrections_.windUpBridgeCounters();
+    }
+
+    const std::vector<WindUpBridge::Event>& Antenna::windUpBridgeEvents() const {
+        return gnss_corrections_.windUpBridgeEvents();
     }
 
     void Antenna::clearWuRestarts() {

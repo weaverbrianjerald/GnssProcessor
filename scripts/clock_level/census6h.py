@@ -2,7 +2,7 @@
 """The 16-site census on a 6 h wire, graded per hour (1..6).
 
 make : python scripts/clock_level/census6h.py make <key> <wire run dir, bare> <exe> [key.path=value ...]
-       Consumer-only replays (runs/_msc/site_list.json sites plus WTZZ), tags msc6_<site>_<key>,
+       Consumer-only replays (site_list.json sites plus WTZZ), tags msc6_<site>_<key>,
        6 h, base arm runs/_rf0hv10_field6/arm.json; PBF (closed_loop.pb_hold_presence_flip) is ON
        by default, as on the goldens.  The base's consumers wrap their phase wind-up (fractional
        mode); since card WUP (2026-10-01) the golden's consumer accumulates, so a census of the
@@ -17,9 +17,11 @@ grade: python scripts/clock_level/census6h.py grade <refkey> <key> [<key> ...]
 """
 import csv, json, os, statistics as st, subprocess, sys
 
+import msc_sites
+
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))).replace(os.sep, '/')
 RUNS = ROOT + '/runs'; T0 = 259200.0; NH = 6
-SL = json.load(open(RUNS + '/_msc/site_list.json'))['sites']
+SL = msc_sites.load()
 if os.environ.get('CENSUS_SITES'):
     SL = [s for s in SL if s['name'][:4].lower() in os.environ['CENSUS_SITES'].split(',')]
 NO_WTZZ = bool(os.environ.get('CENSUS_SITES'))

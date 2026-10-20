@@ -104,10 +104,13 @@ void networkComputeRawObservables(const std::vector<std::vector<PppObservation>>
                     ph.push_back({kv.first, phase->signal, std::move(code)});
             }
             if (ph.empty()) continue;
-            std::sort(ph.begin(), ph.end(),
-                      [](const PhaseSignal& a, const PhaseSignal& b) {
-                          return a.signal.digit < b.signal.digit;   // band digit only
-                      });
+            // Stable: the signals arrive in ascending key order (raw_observed is a
+            // std::map), and a band's lexically lowest phase has to stay first within
+            // the band.  std::sort leaves equal band digits in unspecified order.
+            std::stable_sort(ph.begin(), ph.end(),
+                             [](const PhaseSignal& a, const PhaseSignal& b) {
+                                 return a.signal.digit < b.signal.digit;   // band digit only
+                             });
             // The two lowest distinct bands: the first signal, and the first signal after
             // it on another band (none when every signal shares one band).
             const PhaseSignal* p1 = &ph.front();

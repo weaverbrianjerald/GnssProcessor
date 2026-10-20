@@ -1,7 +1,7 @@
 """The 16-site consumer census per day of the multi-day replay (a day-aware census6h.py).
 
 make  : python scripts/clock_level/mday_census.py make <doy> <wire run dir name> <exe> <obs root of the day's census sites>
-        Consumer-only replays of the day's wire: the 16 held-out sites of runs/_msc/site_list.json (their
+        Consumer-only replays of the day's wire: the 16 held-out sites of site_list.json (their
         RINEX for the day under the given root) plus the wire's own WTZZ consumer, 6 h, base arm = the
         wire's own arm.json (so every knob, the accumulating wind-up and PBF included, is the wire's).
 grade : python scripts/clock_level/mday_census.py grade <doy> [<doy> ...]
@@ -10,10 +10,12 @@ grade : python scripts/clock_level/mday_census.py grade <doy> [<doy> ...]
 """
 import csv, json, os, statistics as st, subprocess, sys
 
+import msc_sites
+
 ROOT = 'C:/GnssProcessor'
 RUNS = ROOT + '/runs'
 NH = 6
-SL = json.load(open(RUNS + '/_msc/site_list.json'))['sites']
+SL = msc_sites.load()
 DOW = {128: 2, 129: 3, 130: 4, 131: 5, 132: 6}   # GPS week 2313 day of week
 
 

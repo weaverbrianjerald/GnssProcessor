@@ -447,6 +447,28 @@ namespace GnssProcessor {
         bool isUncombinedEnabled() const { return uncombined_enabled_; }
 
         /**
+         * @brief Whether this run carries per-satellite slant-ionosphere states.
+         *
+         * The one answer to "do slant-ionosphere states exist on this run". The
+         * measurement model creates them (and the companion rate states under
+         * @c enable_iono_rate) for every run with uncombined processing, in every mode
+         * except the baseline modes, whose state vector holds only the position, the
+         * optional differential troposphere and the double-difference ambiguities. The
+         * loader forces uncombined processing on in the PPP-RTK family and in the
+         * baseline modes, so the PPP-RTK modes always carry the states, @c ProcessingMode::PPP
+         * carries them when @c processing.uncombined_enabled is set, and the baseline
+         * modes never do.
+         *
+         * The slant-ionosphere process noise, the export of the states into
+         * @c PppState, the complete reset of the filter covariance and the run-start
+         * state-family table all ask this predicate, so the mode and the flag cannot
+         * disagree between them.
+         *
+         * @return True when uncombined processing is on and the mode is not a baseline mode.
+         */
+        bool carriesSlantIonosphere() const { return uncombined_enabled_ && !isBaselineMode(); }
+
+        /**
          * @brief Gets the elevation mask in degrees.
          * @return Elevation mask value.
          */
@@ -493,11 +515,17 @@ namespace GnssProcessor {
          * threshold the filter treats the gap as a data outage and
          * re-seeds the receiver clock from WLS.
          *
-         * A value of 0 (the default) means "use the measurement rate",
-         * i.e. any epoch spacing larger than the nominal interval is
-         * treated as a gap.
+         * A value of 0 (the default) means 1.5 times the nominal epoch
+         * interval.  Post-processing takes the interval from the RINEX
+         * header (the decimated rate when @c processing.gnss_rate_s is
+         * larger).  The real-time engine has no header, so it takes the
+         * median spacing of the epochs it has accepted; its threshold never
+         * falls below 1 s (the fixed value it used before the spacing was
+         * measured), and is 1 s until the first spacing has been measured.
+         * Baseline mode ignores the nominal interval and uses 60 s.
          *
-         * @return Gap tolerance in seconds (0 = measurement-rate default).
+         * @return Gap tolerance in seconds (0 = 1.5 nominal intervals; see
+         *         above for the real-time floor and the baseline default).
          */
         double getDataGapTolerance() const { return data_gap_tolerance_s_; }
 
@@ -775,6 +803,62 @@ namespace GnssProcessor {
         ///        of the satellite's ambiguities) or @c "observe" (count only,
         ///        nothing written).  @c processing.amb_level_check_mode, default @c "act".
         const std::string& getAmbLevelCheckMode() const { return amb_level_check_mode_; }
+
+        /// @brief Screen the consumer's innovations against the predicted state before
+        ///        the measurement update
+        ///        (@c processing.innovation_screen, default false = nothing is measured
+        ///        and nothing is written, byte-identical).
+        ///
+        /// One gross row (a 92 m phase step on one satellite) moves the first update pass
+        /// by hundreds of metres, and the post-fit peel then resets innocent satellites,
+        /// because the post-fit residuals are computed after the state absorbed the error.
+        /// Armed, each undifferenced code and phase row is tested before the update with
+        /// the conditional normalized innovation (the row's innovation against what the
+        /// other rows imply for it, in units of its predicted standard deviation); a row
+        /// above @ref getInnovationScreenK is held out of that epoch's update as an event
+        /// with counters.  Every epoch re-tests the excluded rows; a phase row flagged on
+        /// @ref getInnovationScreenRefloatEp consecutive epochs has its ambiguity
+        /// re-floated.  The closed-loop harness derives it from
+        /// @c network.closed_loop.innovation_screen.
+        /// See @c RealTimeEngine::screenInnovations_ and @ref InnovationScreen.
+        bool innovationScreen() const { return innovation_screen_; }
+
+        /// @brief Flag threshold on the conditional normalized innovation |w|
+        ///        (@c processing.innovation_screen_k, default 6.0; non-positive reads as 6.0).
+        double getInnovationScreenK() const { return innovation_screen_k_; }
+
+        /// @brief Action on a flagged row: @c "act" (hold the row out of the update,
+        ///        re-float a persistent phase row) or @c "observe" (count only, nothing
+        ///        written).  @c processing.innovation_screen_mode, default @c "act".
+        const std::string& getInnovationScreenMode() const { return innovation_screen_mode_; }
+
+        /// @brief Which rows may be excluded: @c "all", @c "phase" or @c "code"
+        ///        (@c processing.innovation_screen_rows, default @c "all").  Rows of the
+        ///        other kind take no part in the screen.
+        const std::string& getInnovationScreenRows() const { return innovation_screen_rows_; }
+
+        /// @brief Abstain when more than this fraction of an epoch's rows is flagged
+        ///        (@c processing.innovation_screen_max_fraction, default 0.25): a screen
+        ///        that excludes most of an epoch has found the prior wrong, not the rows.
+        double getInnovationScreenMaxFraction() const { return innovation_screen_max_fraction_; }
+
+        /// @brief Consecutive flagged epochs after which a phase row's ambiguity is
+        ///        re-floated (@c processing.innovation_screen_refloat_ep, default 3;
+        ///        values below 1 read as 3).
+        int getInnovationScreenRefloatEp() const { return innovation_screen_refloat_ep_; }
+
+        /// @brief Model-error floor added to the carrier-phase rows' noise in the screen's
+        ///        innovation covariance (m; @c processing.innovation_screen_phase_floor_m,
+        ///        default 0.3; negative reads as 0.3, 0 turns the floor off).  The filter's
+        ///        formal phase noise is millimetres, while the epoch-to-epoch innovations of
+        ///        a healthy consumer spread over decimetres (product clock and orbit error,
+        ///        ionosphere, multipath), so the formal statistic flags ordinary rows; the
+        ///        floor puts the unmodelled error budget into S for the screen only.
+        double getInnovationScreenPhaseFloorM() const { return innovation_screen_phase_floor_m_; }
+
+        /// @brief The same floor for the code rows (m;
+        ///        @c processing.innovation_screen_code_floor_m, default 1.0).
+        double getInnovationScreenCodeFloorM() const { return innovation_screen_code_floor_m_; }
 
         /**
          * @brief obs↔SSR sync master toggle (real-time, live-SSR source only).
@@ -1298,6 +1382,27 @@ namespace GnssProcessor {
         bool enableOrbitNormalAttitude() const { return enable_orbit_normal_attitude_; }
 
         /**
+         * @brief Whether GPS Block IIF and IIR satellites follow the noon-turn attitude.
+         *
+         * When false (default) every satellite keeps its nominal Sun-tracking yaw
+         * and the satellite PCO and the phase wind-up are byte-identical to the
+         * nominal-attitude result.  When true, a GPS Block IIF or IIR satellite
+         * near its orbit noon at small |beta| (IIF below 4.35 deg, IIR below
+         * 2.39 deg) yaws at its maximum rate instead of tracking the Sun
+         * (Kouba 2009), and the PCO and the wind-up both use that attitude
+         * (SatAttitude::applyNoonTurn).  The block comes from the ATX satellite
+         * type, so a run without a satellite ATX entry is unaffected.  Galileo,
+         * GLONASS, BeiDou and the other GPS blocks keep the nominal yaw.
+         *
+         * Not part of any snapshot fingerprint: a snapshot written with one setting
+         * must not be resumed with the other.
+         *
+         * Configured via @c processing.enable_noon_turn_attitude.  Default false.
+         * @return True if the noon-turn attitude is enabled.
+         */
+        bool enableNoonTurnAttitude() const { return enable_noon_turn_attitude_; }
+
+        /**
          * @brief Half-window size (epochs) used per side by the bridge fit.
          * @return Number of epochs sampled on each side of a reset boundary.
          */
@@ -1511,6 +1616,52 @@ namespace GnssProcessor {
          * @return True if the wind-up census is armed.
          */
         bool traceWindUpCensus() const { return trace_windup_census_; }
+
+        /**
+         * @brief Whether the wind-up accumulator bridges short data gaps.
+         *
+         * Default false: a gap of @ref phaseWindUpMaxGapS or more restarts the
+         * accumulator from the raw angle, as before.  When true (and accumulated
+         * wind-up is on), a gap shorter than @ref phaseWindUpBridgeMaxGapS is
+         * walked through virtual epochs at most @ref phaseWindUpBridgeStepS apart,
+         * with the satellite state from the orbit products, unwrapping each step,
+         * so the accumulated angle stays continuous and no restart is recorded.
+         * The walk gives up, and the restart happens as before, in the Earth's
+         * umbra, in a GPS noon-turn window, when the angle moves a quarter of a
+         * cycle or more over half a step, and when the walk disagrees with the
+         * epoch's own angle by a quarter of a cycle or more.  Configured via
+         * @c estimation.phase_windup_gap_bridge.  Needs
+         * @c estimation.accumulate_phase_windup: the loader switches it off, with
+         * a warning, otherwise.
+         *
+         * @return True if the gap bridge is on.
+         */
+        bool phaseWindUpGapBridge() const { return phase_windup_gap_bridge_; }
+
+        /**
+         * @brief Longest gap the wind-up gap bridge walks across (seconds).
+         *
+         * Default 900.0, the phase-leveling carry horizon of the goldens: beyond
+         * it the carried ambiguity is dropped too, so a restart costs nothing
+         * more.  Configured via @c estimation.phase_windup_bridge_max_gap_s.
+         * Only gaps from @ref phaseWindUpMaxGapS up to this value are bridged.
+         *
+         * @return Bridge horizon in seconds (> 0).
+         */
+        double phaseWindUpBridgeMaxGapS() const { return phase_windup_bridge_max_gap_s_; }
+
+        /**
+         * @brief Largest spacing of the virtual epochs of the wind-up gap bridge (seconds).
+         *
+         * Default 30.0.  Each step is also evaluated at its middle, and the walk is
+         * refused when the angle moves a quarter of a cycle or more over either half
+         * step (a bridged step therefore moves less than half a cycle), so a larger
+         * spacing refuses the walk at a lower angle rate.  Configured via
+         * @c estimation.phase_windup_bridge_step_s; accepted in (0, 120].
+         *
+         * @return Virtual epoch spacing in seconds.
+         */
+        double phaseWindUpBridgeStepS() const { return phase_windup_bridge_step_s_; }
 
         /**
          * @brief Check if receiver velocity estimation from Doppler is enabled.
@@ -3077,6 +3228,26 @@ namespace GnssProcessor {
          */
         bool networkReadmitSeedCodeBias() const { return network_readmit_seed_code_bias_; }
         /**
+         * @brief Re-admission continuity (READMIT): the carry LS-VCE monitor and the
+         *        prior-residual census take a parked seed the D2 fold folded
+         *        (@c network.readmit_seed_mirrors; inert without
+         *        @ref networkReadmitSeedHorizonS).
+         *
+         * The epoch-tail snapshots that pair each folded border prior with its re-stashed
+         * solved value skip every parked entry, a seed included, although the fold applies a
+         * seed (a parked code bias or clock whose column returned inside the horizon) at its
+         * variance plus q over the gap since the park. Armed, a seed that the fold applied is
+         * a row of the monitor (code-bias family) and of the census (code-bias and clock
+         * families) like any other folded prior, with the seed gap as its interval and the
+         * variance the fold used. The run-end READMIT report counts the seeds either way.
+         *
+         * Default false = byte-identical. Solution-affecting only where the monitor's output
+         * feeds the fold (@c network.carry_vce_apply); the census is a trace and a
+         * calibration, not a fold input. Not fingerprinted: neither accumulator is part of a
+         * state snapshot. Network mode only.
+         */
+        bool networkReadmitSeedMirrors() const { return network_readmit_seed_mirrors_; }
+        /**
          * @brief Canonical-pair admission (@c network.canonical_pair_admission,
          *        network producer only).
          *
@@ -3116,6 +3287,40 @@ namespace GnssProcessor {
          * it costs information; on the dual field bed the two were equal.
          */
         int networkCanonicalPairKeepEpochs() const { return network_canonical_pair_keep_epochs_; }
+        /**
+         * @brief Second-band admission (@c network.second_band_admission, network
+         *        producer only).
+         *
+         * A constellation other than the time reference enters the network path at a
+         * station only while the station holds it on two modelled bands (a band is
+         * modelled for a satellite when the epoch carries an admitted phase and an
+         * admitted code on it).  A station that tracks the constellation on one band
+         * leaves the inter-system bias, the slant ionosphere and the ambiguities of
+         * that constellation collinear in its local block, and the addStation
+         * positive-definiteness guard then rejects the whole station, its other
+         * constellations included.  With the rule on, only the constellation's rows
+         * leave the station. A withheld record is absent downstream exactly as if the
+         * RINEX record were missing, and the constellation returns when a second band
+         * appears. See @ref networkSecondBandScope and @ref networkSecondBandMinSats.
+         *
+         * Default false = byte-identical (the epoch is returned as it came, no copy and
+         * no walk). Not fingerprinted: a forward-only admission policy. The held-out
+         * closed-loop consumer is never screened.
+         */
+        bool networkSecondBandAdmission() const { return network_second_band_admission_; }
+        /**
+         * @brief What the second-band admission tests (@c network.second_band_scope:
+         *        "station" or "satellite"; inert without @ref networkSecondBandAdmission).
+         */
+        SecondBandScope networkSecondBandScope() const { return network_second_band_scope_; }
+        /**
+         * @brief Station scope threshold (@c network.second_band_min_sats; inert without
+         *        @ref networkSecondBandAdmission and under satellite scope): the number of
+         *        satellites of a constellation that must be on two modelled bands at a
+         *        station for the constellation to be admitted there. Clamped at 1 by the
+         *        loader.
+         */
+        int networkSecondBandMinSats() const { return network_second_band_min_sats_; }
         /**
          * @brief Post-resume MW/LLI slip-drain warm-up (@c network.resume_slip_warmup_ep,
          *        epochs, SPEC_synthetic_minimum_network §18.10).
@@ -4910,6 +5115,32 @@ namespace GnssProcessor {
          * @return 0 off, 1 "pivot", 2 "exclude".
          */
         int    networkSatHealth() const { return network_sat_health_; }
+
+        /**
+         * @brief Clock pivot election by predicted station coverage
+         *        (@c network.pivot_election).
+         *
+         * "off" (the default): the pivot is the declared satellite, else the sticky incumbent,
+         * else the lexically first registered satellite. "coverage": at a constellation's first
+         * epoch and at a forced handover (the incumbent left the registered set or is flagged
+         * unhealthy) the pivot is the registered, healthy satellite that the orbit product
+         * predicts above the elevation mask at the most roster stations over
+         * @ref networkPivotElectionHorizonS, passing over a satellite that enters the Earth's
+         * umbra inside that horizon; an incumbent that stays registered and healthy is kept.
+         * Needs @c network.sticky_pivot, the pinned-pivot clock datum, a broadcast navigation
+         * file (the health series) and precise orbit nodes in the product cache. SOLVE-AFFECTING
+         * and FINGERPRINTED.
+         * @return 0 off, 1 "coverage".
+         */
+        int    networkPivotElection() const { return network_pivot_election_; }
+
+        /// @brief Look-ahead (s) of the coverage election's station count and umbra test
+        ///        (@c network.pivot_election_horizon_s). Inert unless @ref networkPivotElection.
+        double networkPivotElectionHorizonS() const { return network_pivot_election_horizon_s_; }
+
+        /// @brief Sample step (s) inside that horizon (@c network.pivot_election_step_s).
+        ///        Inert unless @ref networkPivotElection.
+        double networkPivotElectionStepS() const { return network_pivot_election_step_s_; }
 
         /**
          * @brief Coverage-ranking elevation preference (deg) for the prioritized
@@ -7000,6 +7231,12 @@ namespace GnssProcessor {
          * handful of warm-up epochs instead of hours of processing.  Because the carry restarts
          * cold, this reproduces an externally driven event (eclipse / product anomaly after a
          * fresh warm-up) rather than the exact accumulated history.  Default 0 ⇒ process from the start.
+         *
+         * The elapsed span is compared with the offset on the millisecond grid
+         * (@c TimeUtils::offsetReached): the first epoch processed is the first one whose elapsed
+         * time, to the millisecond, is at least the offset.  An offset that lies on an epoch
+         * (1.0 on a 30 s schedule) starts the run on that epoch; an offset between two epochs
+         * starts it on the later one.
          */
         double networkStartOffsetHours() const { return network_start_offset_hours_; }
 
@@ -8246,7 +8483,7 @@ namespace GnssProcessor {
         double elevation_mask_deg_;                    ///< Elevation mask in degrees.
         bool exclude_eclipsing_satellites_;           ///< Drop satellites in Earth's umbral shadow at the geometry stage. Default off (legacy behavior); enable to avoid unmodelled yaw manoeuvres during eclipse and recovery.
         double eclipse_shadow_scale_;                   ///< Multiplier on Earth's radius for the cylindrical shadow test. 1.0 = pure geometric umbra; >1.0 widens the exclusion margin.
-        double data_gap_tolerance_s_;                     ///< Data gap tolerance (s); 0 = use measurement rate.
+        double data_gap_tolerance_s_;                     ///< Data gap tolerance (s); 0 = 1.5 nominal epoch intervals.
         double long_gap_tolerance_s_;                   ///< Long-gap threshold (s); separates short vs long gap policy in handleGap.
         double gnss_rate_s_;                              ///< Effective processing rate (s); 0 = process every RINEX epoch.
         double max_duration_s_;                           ///< Max data-time span to process (s); 0 = unlimited. Measured as epoch GPS time relative to the first processed obs.
@@ -8268,6 +8505,14 @@ namespace GnssProcessor {
         int    amb_level_check_window_ep_{ 20 };          ///< Samples per satellite before the level test may run (20 = 10 min at 30 s).  processing.amb_level_check_window_ep.
         double amb_level_check_k_{ 4.0 };                 ///< Level-test trip at |state − level| > k · σ_level.  processing.amb_level_check_k.
         std::string amb_level_check_mode_{ "act" };       ///< Level-test action: "act" (refloat both bands) or "observe" (count only).  processing.amb_level_check_mode.
+        bool   innovation_screen_{ false };               ///< Screen each undifferenced row's innovation against the predicted state before the measurement update and hold flagged rows out of that epoch's update; off = nothing measured, nothing written (byte-identical).  processing.innovation_screen / network.closed_loop.innovation_screen.
+        double innovation_screen_k_{ 6.0 };               ///< Flag threshold on the conditional normalized innovation |w|.  processing.innovation_screen_k.
+        std::string innovation_screen_mode_{ "act" };     ///< "act" (exclude, re-float) or "observe" (count only).  processing.innovation_screen_mode.
+        std::string innovation_screen_rows_{ "all" };     ///< Rows that may be excluded: "all", "phase" or "code".  processing.innovation_screen_rows.
+        double innovation_screen_max_fraction_{ 0.25 };   ///< The screen abstains when more than this fraction of an epoch's rows is flagged.  processing.innovation_screen_max_fraction.
+        int    innovation_screen_refloat_ep_{ 3 };        ///< Consecutive flagged epochs after which a phase row's ambiguity is re-floated.  processing.innovation_screen_refloat_ep.
+        double innovation_screen_phase_floor_m_{ 0.3 };   ///< Model-error floor added to the carrier-phase rows' noise in the screen's S (m); 0 = formal noise only.  processing.innovation_screen_phase_floor_m.
+        double innovation_screen_code_floor_m_{ 1.0 };    ///< The same floor for the code rows (m).  processing.innovation_screen_code_floor_m.
         double ssr_clock_stale_hold_factor_{ 0.0 };       ///< Clock stale-hold rung (RTA-9(b)): a clock aged in (ssr_max_age, factor × ssr_max_age] is still applied with URA-staleness R inflation; 0 (default) = off (byte-identical two-state gate); (0,1] clamps to 1.
         bool   ssr_bias_band_fallback_{ false };          ///< Code-domain band-wise bias fallback (RTA-13, opt-in): an exact-attribute miss consumes the same-band sibling code bias; phase never falls back.  Default off = store lookups byte-identical.
         bool   enable_obs_ssr_sync_{ false };             ///< RT-only: hold obs ahead of the SSR coverage horizon (obs↔SSR sync) instead of processing against absent SSR.
@@ -8326,6 +8571,7 @@ namespace GnssProcessor {
         bool run_smoother_;                    ///< Run backward RTS smoother after forward Kalman pass (post-processing only).
         bool enable_neq_export_{ false };      ///< Accumulate & export cross-session normal equations (.neq/.asc); post-processing only.
         bool enable_trig_sp3_interp_{ false }; ///< Use sidereal-trig (sin/cos) SP3 position interpolation instead of the default polynomial (Neville) path. Default off (byte-identical legacy).
+        bool enable_noon_turn_attitude_{ false }; ///< GPS Block IIF/IIR yaw-rate-limited noon turn for the satellite PCO and the phase wind-up (Kouba 2009); else nominal yaw everywhere. Default off.
         bool enable_orbit_normal_attitude_{ false }; ///< Use beta-driven orbit-normal yaw attitude for satellite PCO/PCV; else nominal yaw-steering + legacy BeiDou-2 GEO orbit-normal. Default off.
         bool enable_noncausal_slip_bridge_;    ///< Non-causal cycle-slip bridge before the smoother (post-processing only).
         int  slip_bridge_half_window_epochs_;  ///< Half-window (epochs) per side for the bridge GF/MW fit.
@@ -8341,6 +8587,9 @@ namespace GnssProcessor {
         bool accumulate_phase_windup_;                ///< Accumulated (unwrapped) phase wind-up for IAR readiness.
         double phase_windup_max_gap_s_{300.0};        ///< Wind-up accumulator continuity horizon (s); see @ref phaseWindUpMaxGapS.
         bool trace_windup_census_{false};             ///< Read-only wind-up step/gap census; see @ref traceWindUpCensus.
+        bool phase_windup_gap_bridge_{false};         ///< Bridge short data gaps in the wind-up accumulator; see @ref phaseWindUpGapBridge.
+        double phase_windup_bridge_max_gap_s_{900.0}; ///< Longest bridged gap (s); see @ref phaseWindUpBridgeMaxGapS.
+        double phase_windup_bridge_step_s_{30.0};     ///< Largest virtual epoch spacing (s); see @ref phaseWindUpBridgeStepS.
         bool enable_between_satellite_sd_;                ///< Between-satellite single-difference operator in measurement model.
         bool enable_glonass_bssd_;                        ///< Allow GLONASS satellites in BSSD (FDMA ICB → off by default).
         bool enable_glonass_ifb_;                         ///< Estimate per-FCN-slot GLONASS receiver code IFB (requires estimate_ifb + uncombined).
@@ -8406,7 +8655,11 @@ namespace GnssProcessor {
         double network_readmit_seed_horizon_s_{0.0};       ///< Re-admission continuity (READMIT, E2 seed-first re-admission): park a departed satellite's D2 clock + code-bias carry for this many seconds and seed its re-registered columns at var + q·gap (the Q3 anchor folds anchored over the true gap up to this bound; its guard is the mark-if-moved).  0 = off (byte-identical).  Not fingerprinted.
         int    network_readmit_coupling_marg_ep_{0};       ///< Re-admission re-coupling edge (READMIT): epochs after a satellite's re-admission during which every coupling term on its shared columns takes the departed route (block/row edge).  0 = off.
         bool   network_readmit_seed_code_bias_{true};      ///< Re-admission seed sub-knob (READMIT): also park + seed the departing satellite's per-signal code-bias columns (true) or the clock alone (false; FALSIFIED as an improvement).  Inert without readmit_seed_horizon_s.
+        bool   network_readmit_seed_mirrors_{false};       ///< The carry LS-VCE monitor and the prior-residual census take a parked seed the D2 fold folded, as a row at the seed gap (network.readmit_seed_mirrors); off = they skip every parked entry (byte-identical).  Inert without readmit_seed_horizon_s.  Not fingerprinted.  Network mode only.
         bool   network_canonical_pair_admission_{false};   ///< Canonical-pair admission (docs/refound/CPA_canonical_pair_admission_2026-09-20.md; ledger KEEP_OFF): a (station, satellite) record enters the network path only while the station holds its canonical phase and code on band digits 1 and 2 (its own PppModel latch decides them), or the last good processed epoch is within canonical_pair_keep_epochs; a withheld record is absent downstream exactly as if the RINEX record were missing, so the row-level gap re-entry tier sees the return as a re-entry.  A constellation with no canonical pair decided on those digits is left untouched.  Off = byte-identical (no copy of the epoch is taken).  Not fingerprinted.
+        bool   network_second_band_admission_{false};      ///< Second-band admission (network.second_band_admission): a non-reference constellation enters the network path at a station only while the station holds it on two modelled bands; a withheld record is absent downstream as if the RINEX record were missing.  Off = byte-identical (no copy of the epoch is taken).  Not fingerprinted.
+        SecondBandScope network_second_band_scope_{SecondBandScope::Station}; ///< What the second-band admission tests: the constellation at the station (default) or each satellite (network.second_band_scope).  Inert without second_band_admission.
+        int    network_second_band_min_sats_{1};           ///< Station scope: satellites of a constellation that must be on two modelled bands at a station for the constellation to be admitted there (network.second_band_min_sats, clamped at 1).  Inert without second_band_admission and under satellite scope.
         int    network_canonical_pair_keep_epochs_{3};     ///< Canonical-pair admission tolerance, in processed epochs: a record without its canonical pair is still admitted while the last good epoch is at most this many epochs back.  Clamped at 0 (0 admits only the epochs that hold the pair).  Inert without canonical_pair_admission.
         int    network_resume_d5_warmup_ep_{0};            ///< Epochs after a warm resume during which the D5 innovation gate is diagnostic-only (RS-2b, SPEC_event_harness §21.6): a tripping chord is counted (d5_warmup_suppressed and the epoch's n_d5_flags) but not re-tapped, not marked slipped, and its block is not refolded, so "branch correct / cold station layer wrong" can be told from "branch inconsistent".  The σ̂₀ feed, the v3 corroboration gate and the MW/LLI/IF-TD drains are untouched.  Counted in processed epochs at the install seam.  0 = off (byte-identical).  Not fingerprinted.
         int    network_resume_slip_warmup_ep_{0};          ///< Epochs after a warm resume during which the MW/LLI (T0) slip drain is diagnostic-only (its cold reference fires on many arcs at the second warm epoch); T1 IF-TD and wind-up drains stay live.  0 = off.  Not fingerprinted.
@@ -8576,6 +8829,9 @@ namespace GnssProcessor {
         bool   network_clock_level_restore_raise_{false};    ///< Raise the restored border along each satellite's level to its code-only variance at the first leg epoch.
         int    network_clock_level_restore_credit_ep_{0};     ///< Epochs of code information the restored level is credited with; 0 = all.
         int    network_sat_health_{0};                     ///< Broadcast satellite health on the network path: 0 off, 1 "pivot" (the clock-pivot election passes over an unhealthy satellite), 2 "exclude" (an unhealthy satellite's observations are removed at the synced-epoch door). OFF = byte-identical.
+        int    network_pivot_election_{0};                 ///< Clock pivot election: 0 off, 1 "coverage" (at ignition and a forced handover the registered healthy satellite with the most predicted roster coverage over the horizon that stays out of the umbra). OFF = byte-identical.
+        double network_pivot_election_horizon_s_{7200.0};  ///< Look-ahead (s) of the coverage count and the umbra test. Inert unless network_pivot_election_.
+        double network_pivot_election_step_s_{300.0};      ///< Sample step (s) inside the horizon. Inert unless network_pivot_election_.
         NetworkClockAnchorStat network_clock_anchor_gauge_free_stat_{NetworkClockAnchorStat::Auto};  ///< Bisection knob: which denominator the guard (and the census's clk family) standardizes by, independently of which prior the fold applied. The gauge-free arm moves the fold and the denominator together, so without this knob its 65 → 3 trip collapse cannot be apportioned. `Auto` = follow the fold (byte-identical to runs made before the knob); `Raw`/`Post`/`Proj` force one. Solve-affecting through the trip population; appended to the fingerprint only when it is not `Auto`. Inert unless network_clock_temporal_anchor_.
         bool   network_clock_anchor_resolve_{true};        ///< Adapt-and-emit: on a trip, withdraw the offending clock prior from the shared system and re-solve the epoch before emission, so the trip epoch publishes the data's value instead of the stale anchor's. Cheap: a shared-border information delta carries through the Schur reduction unchanged, so the re-solve is one datum + factorization of the reduced K×K system (no re-reduction, no re-assembly). Deliberately placed before the within-epoch RAIM adaptation: a prior fault must be resolved before the measurement-fault machinery attributes it to a satellite's or a station's data. Off degrades to detect+mark+decouple-next-epoch. Inert unless network_clock_temporal_anchor_.
         double network_phase_datum_pref_elev_deg_{15.0};   ///< Elevation (deg) above which a satellite counts toward a receiver's per-constellation coverage rank when ordering prioritized anchor candidates; does not mask the pin. Inert unless network_phase_datum_prioritized_.

@@ -151,19 +151,22 @@ namespace GnssProcessor {
      * @brief Compute Klobuchar ionospheric delay for a single observation.
      *
      * Implements the standard Klobuchar model to estimate ionospheric delay
-     * for a single-frequency observation. Precondition: `klobuchar_coeffs_`
-     * holds 8 values (alpha[4], beta[4]); the size is not checked here.
+     * for a single-frequency observation. Without 8 coefficients (alpha[4],
+     * beta[4]) there is no model to evaluate, and the delay is 0 m, the same
+     * answer @c PppModel gives when it has none.
      *
      * @param time GNSS epoch (GPS week/tow).
      * @param rx_pos Receiver ECEF position in meters.
      * @param sat_pos Satellite ECEF position in meters.
      * @param frequency Signal frequency in Hz (used for frequency scaling).
-     * @return Estimated ionospheric delay in meters.
+     * @return Estimated ionospheric delay in meters; 0 when the 8 coefficients are not loaded.
      */
     double Ionosphere::computeKlobucharDelay(const GnssTime& time,
         const Eigen::Vector3d& rx_pos,
         const Eigen::Vector3d& sat_pos,
         double frequency) const {
+        if (klobuchar_coeffs_.size() != 8) return 0.0;
+
         double a0 = klobuchar_coeffs_[0], a1 = klobuchar_coeffs_[1], a2 = klobuchar_coeffs_[2], a3 = klobuchar_coeffs_[3];
         double b0 = klobuchar_coeffs_[4], b1 = klobuchar_coeffs_[5], b2 = klobuchar_coeffs_[6], b3 = klobuchar_coeffs_[7];
 

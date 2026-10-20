@@ -201,12 +201,11 @@ namespace GnssProcessor {
     }
 
     void StateManager::addIonosphereQ_(Eigen::MatrixXd& Q, const ProcessNoise& pn, double dt) const {
-        // Per-satellite ionospheric noise, applied only when the processing mode
-        // is PPP_RTK.  The states are born whenever uncombined processing is on
-        // (in any mode), so a PPP run with uncombined processing gives them no
-        // process noise.
+        // Per-satellite ionospheric noise, applied on every run that carries the
+        // states (GnssConfig::carriesSlantIonosphere): without it the state is a
+        // constant that cannot follow a slant delay moving by metres per pass.
         // Scale zenith spectral density by obliquity factor: q_slant = q_zenith / sin²(el)
-        if (config_.getProcessingMode() == ProcessingMode::PPP_RTK) {
+        if (config_.carriesSlantIonosphere()) {
             const double q_zenith_default = pn.ionosphere;
             const bool   iono_cv          = config_.enableIonoRate();
             const double q_rate_zenith    = pn.iono_rate_psd; // accel PSD (m^2/s^3)

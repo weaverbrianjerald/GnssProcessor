@@ -25,9 +25,26 @@ free NASA Earthdata Login account, plus a ``.netrc`` entry::
     machine urs.earthdata.nasa.gov login YOUR_USER password YOUR_PASS
 
 (On Windows the file is ``%USERPROFILE%\\_netrc``; on Unix it is
-``~/.netrc``.)  Without it, downloads from ``cddis.nasa.gov`` return
-HTTP 401.  Note that ``download_file`` below opens URLs with plain
-urllib, which does not read ``.netrc`` itself (see its docstring).
+``~/.netrc``.)  Without it, downloads from ``cddis.nasa.gov`` come back as
+the Earthdata login page and are refused.
+
+urllib does not read ``.netrc`` itself, so the script does: ``--netrc`` (or
+``~/.netrc``, then ``~/_netrc``) is parsed with the standard ``netrc``
+module.  CDDIS answers a request with a redirect to
+``urs.earthdata.nasa.gov``.  That host does not challenge with a 401 that a
+stock urllib handler could answer: an unauthenticated request gets its HTML
+login page with status 200.  The Basic credentials of its netrc entry are
+therefore sent up front, to that host only (never to ``cddis.nasa.gov`` or to
+any other server the script contacts, and not carried along a redirect to
+another host); it redirects back with a session cookie, which a cookie jar in
+the same opener carries.  An entry for ``cddis.nasa.gov`` is not used.
+
+Every download is checked before it is kept.  A response that is an HTML
+page, or that is not gzip data when the file is a ``.gz``, is never saved:
+``download_file`` raises ``DownloadContentError`` (the usual cause is a
+missing or wrong Earthdata entry) and the script stops with that message.  A
+file already in the cache that fails the same check is discarded and fetched
+again.
 
 The IGS file server (``files.igs.org``) and DGFI-TUM (``oceantide.dgfi.tum.de``)
 do not require authentication.
@@ -48,6 +65,9 @@ Usage
     # Override the repo root (default: parent of this script's dir)
     python scripts/bootstrap_internal_data.py --repo /path/to/GnssProcessor
 
+    # Read the Earthdata credentials from a particular netrc file
+    python scripts/bootstrap_internal_data.py --netrc /path/to/netrc
+
 ============================================================
 Adding more fixtures
 ============================================================
@@ -64,11 +84,16 @@ prints a message at the end asking for the file to be supplied manually.
 from __future__ import annotations
 
 import argparse
+import base64
 import gzip
+import http.cookiejar
+import netrc
 import os
+import re
 import shutil
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from datetime import date, timedelta
@@ -175,31 +200,225 @@ def shifted_doy(year: int, doy: int, shift: int) -> tuple[int, int]:
 # Download primitives
 # ---------------------------------------------------------------------
 
-def download_file(url: str, dest: Path, *, log_prefix: str = "") -> bool:
+#: Hosts of the NASA Earthdata single sign-on that CDDIS redirects to, and of CDDIS itself.
+EARTHDATA_HOST = "urs.earthdata.nasa.gov"
+CDDIS_HOST = "cddis.nasa.gov"
+CDDIS_NETRC_GUIDE = "https://cddis.nasa.gov/Data_and_Derived_Products/CreateNetrcFile.html"
+
+#: The opener ``download_file`` uses when none is passed; set by ``install_cddis_auth``.
+_OPENER: urllib.request.OpenerDirector | None = None
+
+
+def resolve_netrc_path(explicit: Path | None = None, home: Path | None = None) -> Path | None:
+    """The netrc file to read: ``explicit`` when given and present, else ``~/.netrc``, else
+    ``~/_netrc`` (the Windows convention), else None.  The same order as the C++
+    ``DataDownloader``.  ``home`` replaces the user's home directory (for tests)."""
+    if explicit is not None:
+        return explicit if explicit.is_file() else None
+    home = home if home is not None else Path.home()
+    for name in (".netrc", "_netrc"):
+        if (home / name).is_file():
+            return home / name
+    return None
+
+
+def netrc_logins(path: Path, hosts: Iterable[str]) -> dict[str, tuple[str, str]]:
+    """``{host: (login, password)}`` for the ``hosts`` that the netrc file at ``path`` has an
+    entry of their own for.  The file's ``default`` entry is ignored on purpose: it would
+    hand one credential to every host.  An unreadable or malformed file gives ``{}``."""
+    try:
+        entries = netrc.netrc(str(path))
+    except (OSError, netrc.NetrcParseError) as e:
+        print(f"  auth: cannot read {path}: {e}", file=sys.stderr)
+        return {}
+    out: dict[str, tuple[str, str]] = {}
+    for host in hosts:
+        if host in entries.hosts:
+            login, _account, password = entries.hosts[host]
+            if login and password:
+                out[host] = (login, password)
+    return out
+
+
+class PreemptiveBasicAuth(urllib.request.BaseHandler):
+    """Adds a Basic ``Authorization`` header to every request addressed to a host of the
+    login table, before the server asks.
+
+    The Earthdata login answers an unauthenticated request with its HTML login page and
+    status 200, so ``HTTPBasicAuthHandler`` (which waits for a 401) never sends anything.
+    The header is attached as an unredirected header: urllib does not copy it to the
+    request it builds for a redirect, and this handler adds it again only when the
+    redirect target is itself a host of the table.  A request whose scheme differs from
+    ``scheme`` (a downgrade to plain http) gets nothing.
+    """
+
+    _DEFAULT_PORTS = {"http": "80", "https": "443"}
+
+    def __init__(self, logins: dict[str, tuple[str, str]], scheme: str = "https"):
+        self._scheme = scheme
+        self._values = {
+            self._key(host, scheme):
+                "Basic " + base64.b64encode(f"{login}:{password}".encode("utf-8")).decode("ascii")
+            for host, (login, password) in logins.items()
+        }
+
+    @classmethod
+    def _key(cls, host: str, scheme: str) -> str:
+        """``host`` or ``host:port`` in lower case, without the default port of the scheme."""
+        host = host.lower()
+        name, colon, port = host.rpartition(":")
+        return name if colon and port == cls._DEFAULT_PORTS.get(scheme) else host
+
+    def _add_credentials(self, req: urllib.request.Request) -> urllib.request.Request:
+        if req.type == self._scheme and not req.has_header("Authorization"):
+            value = self._values.get(self._key(req.host, req.type))
+            if value is not None:
+                req.add_unredirected_header("Authorization", value)
+        return req
+
+    http_request = https_request = _add_credentials
+
+
+def build_auth_opener(logins: dict[str, tuple[str, str]],
+                      scheme: str = "https") -> urllib.request.OpenerDirector:
+    """An opener that sends the credentials of a host in ``logins`` to that host up front,
+    follows redirects, and keeps cookies (the Earthdata login hands CDDIS a session cookie).
+
+    ``logins`` maps a host (``host`` or ``host:port``) to ``(login, password)``.  Only
+    requests to those hosts carry credentials; they are not carried along a redirect to
+    another host, and a host not in ``logins`` is never offered any.  See
+    ``PreemptiveBasicAuth``.
+    """
+    return urllib.request.build_opener(
+        PreemptiveBasicAuth(logins, scheme),
+        urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()),
+    )
+
+
+def install_cddis_auth(explicit: Path | None = None) -> None:
+    """Make ``download_file`` authenticate to CDDIS from the netrc file.  Prints the file used
+    (never the credentials), or a warning when there is none or it holds no Earthdata entry.
+    Only the Earthdata entry is used, and only the Earthdata host is sent its credentials."""
+    global _OPENER
+    path = resolve_netrc_path(explicit)
+    if path is None:
+        where = f"{explicit}" if explicit is not None else "~/.netrc or ~/_netrc"
+        print(f"  auth: no netrc file found ({where}); CDDIS downloads will be refused "
+              f"(the Earthdata login page comes back in place of the file).  "
+              f"See {CDDIS_NETRC_GUIDE}", file=sys.stderr)
+        return
+    logins = netrc_logins(path, (EARTHDATA_HOST,))
+    if not logins:
+        print(f"  auth: {path} has no entry for {EARTHDATA_HOST} (an entry for {CDDIS_HOST} is "
+              f"not used); CDDIS downloads will be refused.  See {CDDIS_NETRC_GUIDE}",
+              file=sys.stderr)
+        return
+    print(f"  auth: using {path} for {EARTHDATA_HOST}")
+    _OPENER = build_auth_opener(logins)
+
+
+class DownloadContentError(RuntimeError):
+    """A download answered with something other than the file it names: an HTML page (the
+    Earthdata login page comes back this way, with status 200) or, for a ``.gz``, a body
+    that is not gzip data.  Raised by ``download_file`` after it has removed the partial file."""
+
+
+#: Bytes of a response (or cached file) that the content check reads.
+_SNIFF_BYTES = 4096
+_GZIP_MAGIC = b"\x1f\x8b"
+_HTML_MEDIA_TYPES = ("text/html", "application/xhtml+xml")
+_HTML_MARKERS = (b"<!doctype html", b"<html", b"<head", b"<body", b"<title")
+
+
+def looks_like_html(head: bytes, content_type: str = "") -> bool:
+    """True when ``head`` (the first bytes of a body) is an HTML page.  A body is taken for
+    HTML when its first non-blank character is ``<`` and it either names an HTML media type
+    in ``content_type`` or carries an HTML marker in these bytes.  None of the files the
+    script fetches (gzip, SP3, CLK, BIA, ERP, RINEX, ATX, netCDF, the GPT3 grid) starts with
+    ``<``, and a body that does not is never refused on its Content-Type alone."""
+    text = head.lstrip(b"\xef\xbb\xbf \t\r\n\x0b\x0c").lower()
+    if not text.startswith(b"<"):
+        return False
+    if content_type.split(";")[0].strip().lower() in _HTML_MEDIA_TYPES:
+        return True
+    return any(marker in text for marker in _HTML_MARKERS)
+
+
+def refusal_reason(name: str, head: bytes, content_type: str = "") -> str | None:
+    """Why a body that begins with ``head`` is not the file ``name``, or None when it may be.
+    A body is refused when it is an HTML page, or when ``name`` ends in ``.gz`` and the body
+    does not start with the gzip magic bytes."""
+    if looks_like_html(head, content_type):
+        match = re.search(rb"<title[^>]*>(.*?)</title>", head, re.IGNORECASE | re.DOTALL)
+        title = " ".join(match.group(1).decode("utf-8", "replace").split())[:80] if match else ""
+        return "the response is an HTML page" + (f' titled "{title}"' if title else "")
+    if name.lower().endswith(".gz") and not head.startswith(_GZIP_MAGIC):
+        begins = f"it begins with bytes {head[:4].hex(' ')}" if head else "the body is empty"
+        return f"the file is a .gz but the response is not gzip data ({begins})"
+    return None
+
+
+def _address(url: str) -> str:
+    """``url`` without a query, a fragment or user information, for messages."""
+    parts = urllib.parse.urlsplit(url)
+    return f"{parts.scheme}://{parts.netloc.rpartition('@')[2]}{parts.path}"
+
+
+def download_file(url: str, dest: Path, *, log_prefix: str = "",
+                  opener: urllib.request.OpenerDirector | None = None) -> bool:
     """Download ``url`` to ``dest``; skip if dest already exists and is non-empty.
 
-    Uses plain ``urllib.request.urlopen`` with no authentication handler;
-    urllib does not read ``.netrc``, so a server that requires Basic auth
-    (CDDIS) answers with an HTTP error and the call returns False.
-    Returns True on success or when already cached, False on any
-    network/HTTP error, after removing a partial ``dest`` (the caller
-    decides whether to fail).
+    Opens the URL with ``opener``, else with the one ``install_cddis_auth`` set up
+    (Basic credentials from the netrc file, redirects and cookies for the Earthdata
+    login), else with plain urllib.  Returns True on success or when already
+    cached, False on any network/HTTP error, after removing a partial ``dest``
+    (the caller decides whether to fail).
+
+    The first bytes of the response are checked before anything is written
+    (``refusal_reason``).  A response that is an HTML page, or not gzip data for a ``.gz``
+    ``dest``, raises ``DownloadContentError`` with ``dest`` removed.  A cached ``dest`` that
+    fails the same check is removed and fetched again.
     """
+    opener = opener if opener is not None else _OPENER
     if dest.exists() and dest.stat().st_size > 0:
-        print(f"  {log_prefix}cached  {dest.relative_to(dest.parents[3]) if len(dest.parents) >= 4 else dest}")
-        return True
+        with open(dest, "rb") as cached:
+            reason = refusal_reason(dest.name, cached.read(_SNIFF_BYTES))
+        if reason is None:
+            print(f"  {log_prefix}cached  {dest.relative_to(dest.parents[3]) if len(dest.parents) >= 4 else dest}")
+            return True
+        print(f"  {log_prefix}discard {dest} ({reason}); fetching it again", file=sys.stderr)
+        dest.unlink()
     dest.parent.mkdir(parents=True, exist_ok=True)
     print(f"  {log_prefix}fetch   {url}")
     try:
-        # urllib uses .netrc credentials only if they are passed in as
-        # Authorization headers or through an opener with
-        # HTTPBasicAuthHandler.  Neither is set up here: the request is
-        # sent without credentials.
-        with urllib.request.urlopen(url, timeout=120) as resp, open(dest, "wb") as out:
-            shutil.copyfileobj(resp, out)
+        opened = (opener.open(url, timeout=120) if opener is not None
+                  else urllib.request.urlopen(url, timeout=120))
+        with opened as resp:
+            head = resp.read(_SNIFF_BYTES)
+            reason = refusal_reason(dest.name, head, resp.headers.get("Content-Type", ""))
+            if reason is not None:
+                final = resp.geturl()
+                message = f"refused {_address(url)}: {reason}"
+                if _address(final) != _address(url):
+                    message += f" (final address {_address(final)})"
+                if CDDIS_HOST in url or EARTHDATA_HOST in final:
+                    message += (f".  Check the {EARTHDATA_HOST} entry of the netrc file (--netrc).  "
+                                f"See {CDDIS_NETRC_GUIDE}")
+                raise DownloadContentError(message)
+            with open(dest, "wb") as out:
+                out.write(head)
+                shutil.copyfileobj(resp, out)
         return True
+    except DownloadContentError:
+        if dest.exists():
+            dest.unlink()
+        raise
     except urllib.error.HTTPError as e:
         print(f"  {log_prefix}HTTP {e.code} {url}", file=sys.stderr)
+        if e.code in (401, 403) and CDDIS_HOST in url:
+            print(f"  {log_prefix}hint: check the Earthdata entry of the netrc file "
+                  f"(--netrc).  See {CDDIS_NETRC_GUIDE}", file=sys.stderr)
+        e.close()
     except urllib.error.URLError as e:
         print(f"  {log_prefix}network error: {e.reason} for {url}", file=sys.stderr)
     except Exception as e:
@@ -636,6 +855,34 @@ def fetch_static_assets(data_root: Path, *, want_eot20: bool) -> None:
 # Entry point
 # ---------------------------------------------------------------------
 
+def fetch_all(data_root: Path, crx2rnx: Path | None,
+              want_eot20: bool) -> tuple[list[str], list[str]]:
+    """The three fetch steps (products, observations, static assets).  Returns
+    ``(manual_supply_list, crx_pending_list)`` as ``fetch_observations`` does.  Raises
+    ``DownloadContentError`` when a server answers with something other than the file."""
+    print("\n[1/3] IGS products (SP3, CLK, BIA, ERP, BRDC) per fixture date")
+    for (year, doy) in FIXTURE_DATES:
+        print(f"  date {year}-{doy:03d}")
+        fetch_products_for_date(year, doy, data_root)
+
+    print("\n[2/3] Observation RINEX fixtures")
+    crx2rnx_exe = find_crx2rnx(crx2rnx)
+    if HAVE_HATANAKA:
+        print(f"  decompressor: hatanaka (bundled RNXCMP {hatanaka.rnxcmp_version})")
+    elif crx2rnx_exe is None:
+        print("  (no decompressor located — Hatanaka .crx files will be staged "
+              "but not converted.  Install the hatanaka package "
+              "(pip install hatanaka) — it bundles a RINEX-4-capable RNXCMP — "
+              "or place a recent crx2rnx on PATH and re-run.)")
+    else:
+        print(f"  crx2rnx: {crx2rnx_exe} (legacy fallback — prefer 'pip install hatanaka' for RINEX 4)")
+    manual, crx_pending = fetch_observations(data_root, crx2rnx_exe)
+
+    print("\n[3/3] Static assets (igs20.atx, EOT20_load.nc, gpt3_5.grd)")
+    fetch_static_assets(data_root, want_eot20=want_eot20)
+    return manual, crx_pending
+
+
 def main(argv: Iterable[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     parser.add_argument(
@@ -658,6 +905,13 @@ def main(argv: Iterable[str] | None = None) -> int:
              "lookup and the well-known fallback locations.  Used to "
              "convert CDDIS-downloaded Hatanaka files to standard RINEX.",
     )
+    parser.add_argument(
+        "--netrc",
+        type=Path,
+        default=None,
+        help="netrc file holding the NASA Earthdata login (machine "
+             "urs.earthdata.nasa.gov).  Default: ~/.netrc, then ~/_netrc.",
+    )
     args = parser.parse_args(argv)
 
     repo = args.repo.resolve()
@@ -668,27 +922,15 @@ def main(argv: Iterable[str] | None = None) -> int:
     data_root = repo / "data"
 
     print(f"Bootstrap target: {data_root} (date-first layout)")
+    install_cddis_auth(args.netrc)
 
-    print("\n[1/3] IGS products (SP3, CLK, BIA, ERP, BRDC) per fixture date")
-    for (year, doy) in FIXTURE_DATES:
-        print(f"  date {year}-{doy:03d}")
-        fetch_products_for_date(year, doy, data_root)
-
-    print("\n[2/3] Observation RINEX fixtures")
-    crx2rnx_exe = find_crx2rnx(args.crx2rnx)
-    if HAVE_HATANAKA:
-        print(f"  decompressor: hatanaka (bundled RNXCMP {hatanaka.rnxcmp_version})")
-    elif crx2rnx_exe is None:
-        print("  (no decompressor located — Hatanaka .crx files will be staged "
-              "but not converted.  Install the hatanaka package "
-              "(pip install hatanaka) — it bundles a RINEX-4-capable RNXCMP — "
-              "or place a recent crx2rnx on PATH and re-run.)")
-    else:
-        print(f"  crx2rnx: {crx2rnx_exe} (legacy fallback — prefer 'pip install hatanaka' for RINEX 4)")
-    manual, crx_pending = fetch_observations(data_root, crx2rnx_exe)
-
-    print("\n[3/3] Static assets (igs20.atx, EOT20_load.nc, gpt3_5.grd)")
-    fetch_static_assets(data_root, want_eot20=not args.no_eot20)
+    try:
+        manual, crx_pending = fetch_all(data_root, args.crx2rnx, want_eot20=not args.no_eot20)
+    except DownloadContentError as e:
+        print(f"\n!! {e}", file=sys.stderr)
+        print("!! Stopped: nothing from that response was saved.  Files fetched before it are "
+              "kept; re-run after fixing the cause.", file=sys.stderr)
+        return 1
 
     if manual:
         print(

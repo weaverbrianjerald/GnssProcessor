@@ -24,6 +24,7 @@
 #include "rinex/MultiRinexSync.hpp"
 #include "network/driver/RunTypes.hpp"               // NetStation
 #include "network/solve/Sbasis.hpp"                 // SatHealth
+#include "network/solve/PivotElection.hpp"          // NetworkPivotCoverage
 #include "atmosphere/SphericalHarmonicIonosphere.hpp"
 #include "products/BroadcastEphemerisTypes.hpp"     // BroadcastEphemeris (brdc_rts nav staging)
 #include "products/BrdcClockApriori.hpp"            // native broadcast clock a priori
@@ -107,6 +108,12 @@ namespace GnssProcessor {
         /// window, per satellite.  (The door also clears the synced epochs outside the
         /// window, which no reader processes.)
         std::map<std::string, long long> sat_health_removed;
+        /// Under @c network.pivot_election: the predictor of the coverage election (the
+        /// roster, the orbit product nodes and the Sun), built once per run by
+        /// @ref networkPivotCoverageArm after the stations exist.  Null when the knob is off.
+        /// Holds the memo of the latest rankings and the list of elections made, so the
+        /// preview before the rows and the solve glue share one ranking per epoch.
+        std::unique_ptr<NetworkPivotCoverage> pivot_coverage;
         /// Phase 3b: the co-estimated SH-VTEC field model (estimate_iono_sh), or
         /// null (external-GIM / no-iono paths).
         std::unique_ptr<SphericalHarmonicIonosphere> sh_model;

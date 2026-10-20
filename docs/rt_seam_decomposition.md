@@ -132,3 +132,23 @@ Traps that fired during this cut, recorded so they are not re-paid:
    plain replace.  Treating them as identifier renames (`\b`-anchored regex) silently fails to invert
    whole-statement subs.
 3. The frozen-source directory under the golden root gets picked up as a run arm unless excluded.
+
+
+## Gate 1 retired (2026-10-17)
+
+`scripts/rt_seam_verify.py` no longer verifies. It passed 30 of 30 at the cut. Eight of the
+bodies have been extended since by later cards (`reactToGenerationChange`,
+`resetOnPhaseBiasDisc`, `reinflateOnCodeBiasDisc`, `reinflateOnClockDisc`,
+`detectAndRepairSlips`, `resolveAmbiguities`, `initStateManagerAndApriori`,
+`initAmbiguityResolver`): a comparison of the current bodies with the line ranges of the frozen
+pre-cut source (1 to 27 code lines longer per body, no frozen line dropped outright, existing
+lines reshaped in four) reports 8 FAILED and 22 verbatim. The
+verdict could not separate an intended edit from a relocation error, the frozen input existed only
+on the D: drive, and a re-base on the current bodies would only duplicate `git diff`.
+
+Decision: retired, not re-based. The cut was certified by this gate and by gate 2; the
+relocation is finished. The script keeps a note and the comment lexer its siblings share moved
+to `scripts/cpp_lex.py`. `docs/rt_seam_manifest.json` and `scripts/rt_seamcut.py` stay as the
+record of the cut and are not to be re-run. The debt named under gate 2 stands: an edit to a
+seam body is covered by the unit suite, the byte-identity A/B and, where the arms do not drive
+the reaction, a test of its own.

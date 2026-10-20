@@ -232,6 +232,18 @@ std::vector<std::string> activeFrequencyBands(
         // pointer Geometry stores is valid for the lifetime of *this.
         geometry_.setAntennaModel(antenna_);
 
+        // Wind-up gap bridge (default off): the accumulator walks across a short data
+        // gap through virtual epochs, and reads the satellite there from this model's
+        // own orbit products.  geometry_ is a member, so the pointer stays valid for
+        // the lifetime of *this, as for the antenna pointer above.
+        if (config.phaseWindUpGapBridge()) {
+            antenna_.setWindUpSatStateProvider(
+                [g = &geometry_](const std::string& sat, const GnssTime& t, const Eigen::Vector3d& rx,
+                                 Eigen::Vector3d& pos, Eigen::Vector3d& vel, Eigen::Vector3d& sun) {
+                    return g->getLookBackState(sat, t, rx, pos, vel, sun);
+                });
+        }
+
         // Optional Klobuchar ionospheric-delay model.  Skipped (along with
         // its inner Geometry construction and coefficient parse) for the
         // common configs where it would be a no-op anyway: iono-free

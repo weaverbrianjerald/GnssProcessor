@@ -99,7 +99,7 @@ import sys
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from nom_cpp import (FileIndex, Ref, Resolver, Scopes, Tokens, calls_in, match_angle, reading_problems,  # noqa: E402
                      statements, strip_parens)
-from rt_seam_verify import strip_comments  # noqa: E402
+from cpp_lex import strip_comments  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 EPOCH_CPP = "src/core/network/driver/ApplicationNetworkEpoch.cpp"
@@ -653,7 +653,7 @@ def _column(T, i):
 
 def render(T, s, e, subs=()):
     """The code lines of tokens [s, e): a list of [indent column, text, source line].  Comments
-    and blank lines are dropped (as in scripts/rt_seam_verify.py); the spacing between two
+    and blank lines are dropped (as in scripts/cpp_lex.py); the spacing between two
     tokens on one line is kept verbatim; each line's indentation is its first token's column.
     @p subs replace token ranges by text (see Sub)."""
     by_start = {x.a: x for x in subs}

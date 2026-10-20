@@ -1,7 +1,9 @@
 """Estimator-free WL integer census: MW combination from raw RINEX, first N epochs.
 Median MW per (station,sat) arc -> star-basis DD within same band-2 channel group -> fractional stats."""
-import glob, math, statistics as st
+import glob, math, os, sys, statistics as st
 from collections import defaultdict
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from rinex_ids import norm_sat  # noqa: E402
 
 C = 299792458.0
 F1, F2 = 1575.42e6, 1227.60e6
@@ -43,7 +45,7 @@ def parse_station(path):
                 if ep_count > N_EP: break
                 continue
             if ep_count == 0 or not line.startswith('G'): continue
-            sat = line[0:3]
+            sat = norm_sat(line[0:3])
             def field(i):
                 s = line[3+16*i : 3+16*i+14].strip()
                 try: return float(s)

@@ -50,7 +50,9 @@ The run directory is `runs\_rap_my_first_f2\`: `products.txt` (the product),
 Release build only: Debug is 50 to 100 times slower. A 2 h field arm takes about two
 minutes on an idle machine. Simulated arms start at 00:30:15
 (`--set network.start_offset_hours=0.504167`), because the simulated data's first minutes
-are an artifact.
+are an artifact. `make` refuses a `--set` key that the config loader does not read: the loader
+ignores an unknown key without a word, so the arm would run as its base. A key the loader reads
+by a route the check cannot see is let through by naming it with `--allow-unread KEY`.
 
 ## Start with the tables
 

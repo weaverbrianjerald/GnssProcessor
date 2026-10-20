@@ -8,8 +8,10 @@ Per LOS (29 stations x ~10 sats x 5 epochs, el>20):
            field-GIM per station -> where/how much the network field is low
   raw-GIM per station (instrument sanity)
 """
-import csv, glob, math, statistics as st
+import csv, glob, math, os, sys, statistics as st
 from math import lgamma, sin, cos, asin, radians, degrees, pi, sqrt, exp
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from rinex_ids import norm_sat  # noqa: E402
 
 C = 299792458.0
 OMEGA_E = 7.2921151467e-5
@@ -189,7 +191,7 @@ def read_rnx(path, want_sods):
                 if s.strip():
                     try: rec[ot] = float(s)
                     except ValueError: pass
-            data[(cur, line[0:3])] = rec
+            data[(cur, norm_sat(line[0:3]))] = rec
     return data
 
 def unit(v):

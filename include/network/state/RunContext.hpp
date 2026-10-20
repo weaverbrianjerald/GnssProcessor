@@ -64,6 +64,7 @@
 #include "network/assembly/BiasAdmission.hpp" // latched W6 code-bias admission census, ctx.admission (CB-ADM)
 #include "network/carry/Inject.hpp"        // NetworkInjectState: the event-harness fault schedule and ledger
 #include "network/assembly/CanonicalPairAdmission.hpp" // canonical-pair admission state and counters
+#include "network/assembly/SecondBandAdmission.hpp"    // SecondBandAdmissionCounters
 #include "network/assembly/SignalRoster.hpp"            // SignalRoster and its counters
 #include "network/assembly/ChannelAll.hpp"  // the all-channel census
 #include "network/assembly/MultiGnss.hpp"   // the second-constellation telemetry
@@ -534,6 +535,21 @@ namespace GnssProcessor {
         /// too (true, the default) or the clock alone (false).  Inert without
         /// readmit_seed_horizon_s.
         bool   readmit_seed_cb{};
+        /// network.readmit_seed_mirrors: the carry LS-VCE monitor and the prior-residual
+        /// census snapshots take a parked seed the D2 fold applied, instead of skipping
+        /// every parked entry.  Read by networkStashStatus.  Inert without
+        /// readmit_seed_horizon_s.
+        bool   readmit_seed_mirrors{};
+        /// network.second_band_admission: a constellation other than the time reference
+        /// enters the network path at a station only while the station holds it on two
+        /// modelled bands.  Read by networkSecondBandAdmission.
+        bool   second_band_admission{};
+        /// network.second_band_scope: what the rule tests, the constellation at the station
+        /// or each satellite.  Inert without second_band_admission.
+        SecondBandScope second_band_scope{ SecondBandScope::Station };
+        /// network.second_band_min_sats: station scope, the satellites of a constellation
+        /// that must be on two modelled bands for the constellation to be admitted.
+        int    second_band_min_sats{ 1 };
         /// network.resume_d5_warmup_ep (RS-2b, SPEC_event_harness §21.6): processed epochs
         /// after a warm resume during which the D5 innovation gate is diagnostic
         /// only: a tripping chord is counted but not re-tapped, not marked slipped, and its
@@ -747,6 +763,11 @@ namespace GnssProcessor {
         // --- Broadcast satellite health on the network path.  SOLVE-AFFECTING and
         // FINGERPRINTED.
         int    sat_health{};         ///< network.sat_health: 0 off, 1 "pivot" (the election passes over an unhealthy satellite), 2 "exclude" (the setup door removed its observations)
+        // --- Clock pivot election by predicted station coverage.  SOLVE-AFFECTING and
+        // FINGERPRINTED.
+        int    pivot_election{};              ///< network.pivot_election: 0 off, 1 "coverage" (ignition and forced handovers elect by predicted roster coverage)
+        double pivot_election_horizon_s{};    ///< network.pivot_election_horizon_s: look-ahead of the coverage count and the umbra test (s)
+        double pivot_election_step_s{};       ///< network.pivot_election_step_s: sample step inside the horizon (s)
         /// network.clock_model: the two-state (offset and drift) oscillator clock model.  When
         /// on, the satellite clock is carried through the Allan-derived Q model in
         /// NetworkCarryState::clock_osc instead of the scalar prev_carry random walk, and a
@@ -932,6 +953,8 @@ namespace GnssProcessor {
         // (ctx.knobs is const thereafter).
         bool   bb_on{};               ///< Master: network.block_baarda and a live redundancy-census sweep.
         bool   bb_corrob{};           ///< Raw-observable corroboration join armed (implies @ref bb_on; INC-2).
+        bool   bb_estimable{};        ///< The sweep tests the estimable part of each block (implies @ref bb_on); network.block_baarda_estimable.
+        double bb_estimable_eps{};    ///< Floor on a kept direction's redundancy number; read only with @ref bb_estimable.
         double bb_report_sigma{};     ///< Trace/event threshold on t_B.  A variance ratio (E = 1 under H0), not σ units; see BlockBaarda.hpp.
         long long bb_event_holdoff{}; ///< Per-(station, satellite) BLOCKBAARDA event rate limit, in census epochs.
         // --- Station congruence screen ---
@@ -2293,6 +2316,7 @@ namespace GnssProcessor {
     ///   ArLatticeRunCounters               network/ar/ArLattice.hpp
     ///   FixedCyclesCounters                network/ar/FixedCycles.hpp
     ///   CanonicalPairAdmissionCounters     network/assembly/CanonicalPairAdmission.hpp
+    ///   SecondBandAdmissionCounters        network/assembly/SecondBandAdmission.hpp
     ///   SignalRosterCounters               network/assembly/SignalRoster.hpp
     ///   LedgerEmitCounters                 network/emit/LedgerEmit.hpp
     ///   DdPriorBuildCounters               network/carry/DdPriorBuild.hpp
@@ -2377,6 +2401,7 @@ namespace GnssProcessor {
           ArLatticeRunCounters,
           FixedCyclesCounters,
           CanonicalPairAdmissionCounters,
+          SecondBandAdmissionCounters,
           SignalRosterCounters,
           LedgerEmitCounters,
           DdPriorBuildCounters,

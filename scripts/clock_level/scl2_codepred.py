@@ -45,6 +45,8 @@ import numpy as np
 import pandas as pd
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))).replace(os.sep, '/')
+sys.path.insert(0, ROOT + '/scripts')
+from rinex_ids import norm_sat  # noqa: E402
 F1, F2 = 1575.42, 1227.60
 A = F1 * F1 / (F1 * F1 - F2 * F2)
 B = F2 * F2 / (F1 * F1 - F2 * F2)
@@ -115,7 +117,7 @@ def noise_station(job):
                 continue
             if tow is None or tow < t0 or tow > t1 or line[0] != 'G':
                 continue
-            sat = line[0:3]
+            sat = norm_sat(line[0:3])
             try:
                 c1, l1, c2, l2 = (float(line[3 + 16 * i: 3 + 16 * i + 14]) for i in (ic1, il1, ic2, il2))
             except ValueError:

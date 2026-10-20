@@ -290,6 +290,48 @@ namespace GnssProcessor {
         /// path) or @c "observe" (count only, no state written).
         std::string   amb_level_check_mode{ "act" };
         /**
+         * @brief Screen the consumer's innovations against the predicted state before
+         *        each measurement update.
+         *
+         * Key @c network.closed_loop.innovation_screen, default false (byte-identical).
+         * Each undifferenced code and phase row is tested before the update by its
+         * conditional normalized innovation (the row's innovation against what the other
+         * rows imply for it, in units of its predicted standard deviation); a row above
+         * the threshold is held out of that epoch's update as an event with counters,
+         * every epoch re-tests the excluded rows, and a phase row flagged on several
+         * consecutive epochs has its ambiguity re-floated.  A single gross row (a 92 m
+         * phase step) otherwise moves the first update pass by hundreds of metres and the
+         * post-fit peel resets innocent satellites.
+         * @c deriveClosedLoopConsumerConfig copies it and the seven parameters below into
+         * the consumer engine's config as @c processing.innovation_screen*
+         * (@c GnssConfig::innovationScreen); a standalone real-time consumer sets those
+         * @c processing keys directly.  It never reaches the producer's solve or its
+         * resume fingerprint.  See @c RealTimeEngine::screenInnovations_
+         * (RealTimeEngineScreen.cpp) and @ref InnovationScreen.
+         */
+        bool          innovation_screen{ false };
+        /// Flag threshold on the conditional normalized innovation |w|
+        /// (@c innovation_screen_k, default 6.0).
+        double        innovation_screen_k{ 6.0 };
+        /// Action on a flagged row: @c "act" (exclude, re-float a persistent phase row)
+        /// or @c "observe" (count only, nothing written) (@c innovation_screen_mode).
+        std::string   innovation_screen_mode{ "act" };
+        /// Rows that may be excluded: @c "all", @c "phase" or @c "code"
+        /// (@c innovation_screen_rows, default @c "all").
+        std::string   innovation_screen_rows{ "all" };
+        /// The screen abstains when more than this fraction of an epoch's rows is flagged
+        /// (@c innovation_screen_max_fraction, default 0.25).
+        double        innovation_screen_max_fraction{ 0.25 };
+        /// Consecutive flagged epochs after which a phase row's ambiguity is re-floated
+        /// (@c innovation_screen_refloat_ep, default 3).
+        int           innovation_screen_refloat_ep{ 3 };
+        /// Model-error floor added to the carrier-phase rows' noise in the screen's
+        /// innovation covariance, metres (@c innovation_screen_phase_floor_m, default 0.3).
+        double        innovation_screen_phase_floor_m{ 0.3 };
+        /// The same floor for the code rows, metres (@c innovation_screen_code_floor_m,
+        /// default 1.0).
+        double        innovation_screen_code_floor_m{ 1.0 };
+        /**
          * @brief Warm start of the closed-loop consumer in the event harness
          *        (@c network.closed_loop.state_snapshot, default false; false is
          *        byte-identical and writes no file) (part B).
@@ -1700,6 +1742,15 @@ namespace GnssProcessor {
         // deterministic-parallel region reuses that pin).  Default off: the seam runs
         // its original serial path, with no new code on the off path.
         bool parallel_seam{ false };      ///< Run the post-solve carry-fold / D5-readout seam deterministically in parallel (byte-identical, opt-in; needs @ref parallel_stations).
+        // Form each station's normal blocks (A_sᵀWA_s, A_sᵀWA_r, A_rᵀWA_r) from the nonzero
+        // entries of its rows instead of dense products over the whole shared border, and add
+        // the shared block to the border entry by entry.  The sum of every element is the one
+        // Eigen's dense product makes, so the output is bit-identical (see
+        // @ref NetworkNormalEquations::formStationNormalsSparse); a shape the proof does not
+        // cover takes the dense path for that station.  The dense work grows with the square
+        // of the shared columns (about 420 for GPS + Galileo on the field golden) and is the
+        // largest part of the serial scatter.  Default off: the dense products.
+        bool sparse_station_normals{ true };   ///< Form each station's normal blocks from the nonzero entries of its rows, bit-identical to the dense products (default on; false gives the dense products).
         // Thread the dense per-block linear algebra of the invariant carry across all
         // cores.  @ref parallel_seam parallelizes the carry only over the few
         // (const,signal) blocks (byte-identical) and leaves each block's O(K²–K³) dense
@@ -2514,6 +2565,8 @@ namespace GnssProcessor {
         double block_baarda_report_sigma{ 4.0 }; ///< Trace/event threshold on @f$t_B@f$.  Reporting only: nothing in the solve reads it back.  Note the unit: @f$t_B@f$ carries the @f$1/b@f$, so it is a variance ratio with @f$E=1@f$ under @f$H_0@f$ for every block size; 4.0 means four times the variance the model allows, not four sigma.  The ladder, not this knob, is the deliverable (SPEC 2.1: empirical critical values, never tabular).
         int    block_baarda_event_holdoff_ep{ 20 };///< Per-(station, satellite) BLOCKBAARDA event rate limit in census epochs, so a persistently large LOS keeps logging its identity, but not 120 times per hour.  The ladder is never rate-limited; only the individual identities are.
         bool   block_baarda_corroborate{ false };///< Join every reported block to the raw-observable verdict the slip-QC pass already computes, and emit the per-family contingency table whose b-cell (large and raw-flat) is the number SPEC 8.3 grades (INC-2).  Auto-arms @c network.cycle_slip.gap_instrument with a warning, as @ref prior_residual_corroborate does.  Requires @ref block_baarda (hard error otherwise).
+        bool   block_baarda_estimable{ false };  ///< Test the estimable part of each block instead of refusing a block whose cofactor is rank-deficient.  On the float vehicle a line of sight's free slant ionosphere absorbs one direction of the block exactly, so the whole-block test refuses every block; this form whitens the cofactor, keeps the directions whose redundancy number is at least @ref block_baarda_estimable_eps and reads the quadratic form on them with their count as the degrees of freedom.  Measure-only, like the census.  Requires @ref block_baarda (hard error otherwise).
+        double block_baarda_estimable_eps{ 0.05 };///< Floor on the redundancy number of a direction the estimable form keeps; same unit and default as @ref redundancy_eps, whose uncheckable-row floor it extends to block directions.  Values outside (0, 1) are replaced by 0.05 with a warning.  Read only with @ref block_baarda_estimable.
         // --- Station congruence screen: coordinate-fault detection in position
         //     space, a second rider on the redundancy census's swept stations ----
         // The tier above the block census, and the one fault class no other armed
@@ -3323,6 +3376,11 @@ namespace GnssProcessor {
         std::string input_path;                   ///< Path for "file" input.
         std::string tcp_host;                     ///< Host for "tcp" input (e.g. receiver IP).
         int         tcp_port{ 28784 };            ///< Port for "tcp" input.
+        /// Seconds without a received byte after which the primary "tcp" connection is
+        /// treated as lost and redialed (@c realtime.tcp_silent_timeout_s); see
+        /// @c TcpConfig::silent_timeout_s.  0 (default) is off and keeps the socket
+        /// open for as long as the peer does, byte-identical to earlier releases.
+        double      tcp_silent_timeout_s{ 0.0 };
         std::string output_type{ "console" };     ///< Output destination: "console", "file", "nmea".
         std::string output_path;                  ///< Path for file-based output.
         size_t      max_epoch_buffer{ 100 };      ///< Max epochs to buffer before dropping oldest.
@@ -3363,6 +3421,11 @@ namespace GnssProcessor {
             std::string input_path;               ///< Path for "file" input_type.
             std::string tcp_host;                 ///< Host for "tcp" input.
             int         tcp_port{ 28784 };        ///< Port for "tcp" input.
+            /// Seconds without a received byte after which this stream's "tcp" connection
+            /// is treated as lost and redialed (@c tcp_silent_timeout_s key inside this
+            /// stream's block); see @c TcpConfig::silent_timeout_s.  0 (default) is off.
+            /// An ephemeris stream can be quiet for a minute or more between messages.
+            double      tcp_silent_timeout_s{ 0.0 };
 
             /**
              * @brief Per-stream SSR ingest accept policy (@c corrections_accept key
@@ -3696,6 +3759,28 @@ namespace GnssProcessor {
     };
 
     /**
+     * @brief Human-readable name of a processing mode, as printed in the log.
+     *
+     * One label per enumerator, in the spelling @c processing.mode accepts
+     * (hyphenated, any case).  The loader's "Processing mode" line and the
+     * configuration summary both print it, so the two cannot disagree.
+     *
+     * @param mode Processing mode.
+     * @return Static NUL-terminated name, e.g. "PPP-RTK-Network".
+     */
+    inline const char* processingModeLabel(ProcessingMode mode) {
+        switch (mode) {
+            case ProcessingMode::PPP:             return "PPP";
+            case ProcessingMode::PPP_RTK:         return "PPP-RTK";
+            case ProcessingMode::BaselineSingle:  return "Baseline-Single";
+            case ProcessingMode::BaselineMulti:   return "Baseline-Multi";
+            case ProcessingMode::PPP_RTK_Network: return "PPP-RTK-Network";
+            case ProcessingMode::PPP_RTK_User:    return "PPP-RTK-User";
+        }
+        return "unknown";
+    }
+
+    /**
      * @brief Frequency bands the Kalman filter estimates.
      *
      * Formerly @c SignalMode.  "Frequency" names what this enum controls (band
@@ -3757,6 +3842,27 @@ namespace GnssProcessor {
     enum class CanonicalSignalRule {
         Count,   ///< Highest satellite count wins, ties to priority order (default, the original rule).
         Priority ///< Priority-list order wins above a coverage floor; code follows the phase attribute.
+    };
+
+    /**
+     * @brief What the second-band admission tests before it admits a constellation's
+     *        rows at a station (@c network.second_band_scope).
+     *
+     *  - @c Station   : the constellation is admitted at a station while at least
+     *    @c network.second_band_min_sats of its satellites are on two modelled bands at
+     *    that station in the epoch.  Every satellite of the constellation is then
+     *    admitted, on one band or two, so single-band satellites among dual-band peers
+     *    keep their rows.  The default.
+     *  - @c Satellite : each satellite is admitted on its own, while it is on two
+     *    modelled bands in the epoch.  A satellite that loses its second band for a few
+     *    epochs leaves the solve at that station for them.
+     *
+     * Selected by @c network.second_band_scope; inert unless
+     * @c network.second_band_admission is armed.
+     */
+    enum class SecondBandScope {
+        Station,   ///< Test the constellation at the station (default).
+        Satellite  ///< Test each satellite at the station.
     };
 
     /**
@@ -4273,6 +4379,17 @@ namespace GnssProcessor {
         double turbo_edit_sigma_multiplier = 6.0;  ///< TurboEdit GF-only (MW blind-spot) gate.
         double graphic_sigma_multiplier    = 6.0;  ///< GRAPHIC code+phase gate.
         double ewl_sigma_multiplier        = 5.0;  ///< Extra-wide-lane gate.
+
+        /// Statistic the GRAPHIC detector tests (effective only with @c graphic).
+        /// False (default): |dG|, the between-epoch GRAPHIC difference, which holds
+        /// the range rate times the epoch spacing, so for a moving satellite it
+        /// exceeds the threshold at the first epoch the window gives one (arc epoch 6)
+        /// and the arc is reset there.  True: the change of dG from one epoch to the
+        /// next minus its median over the arc's recent window, which a constant range
+        /// rate does not move; the first possible detection is one epoch later.  The
+        /// GRAPHIC trace gains a trailing @c resid_m column.  Via
+        /// @c estimation.cycle_slip.graphic_trend_centred.
+        bool graphic_trend_centred = false;
 
         // --- MW detection-reference selection (see MwDetectReference doc) ---
         /// Reference the MW slip deviation is measured against.
@@ -5082,6 +5199,9 @@ namespace GnssProcessor {
         // --- Geophysical site displacements ---
         bool enable_solid_earth_tide{ true };          ///< IERS 2010 solid Earth tide displacement.
         bool enable_ocean_tide_loading{ true };        ///< Ocean tidal loading displacement (BLQ).
+        bool otl_from_sif{ false };                    ///< Take the ocean tidal loading coefficients from the Station Information File registry (three components, FES2014b) without arming @c processing.enable_station_info, which would also replace the a-priori position and the ocean pole tide source. The registry is loaded from @c files.station_info_path(s) or <data>/static/sif/. A station the registry does not resolve falls back to BLQ, then EOT20 (radial only), then zero, exactly as before. The SIF east and north columns are read as the BLQ west and south rows (the M-PAGES reading, checked against HARDISP), not as true east and north. Only used when @c enable_ocean_tide_loading is on. Default off keeps runs byte-identical.
+        bool otl_nodal_corrections{ false };           ///< Apply the 18.6-year nodal amplitude factors f and phase corrections u to the 11 loading constituents, and take the Greenwich argument from UTC instead of GPS time (a 0.15 degree shift on M2). Sub-millimetre to about 1 mm at ocean sites; the IERS HARDISP reference gets the same effect from its admittance side lines. Only used when @c enable_ocean_tide_loading is on. Default off keeps runs byte-identical.
+        bool otl_remove_diurnal_translation{ false };  ///< Remove the net translation (a uniform ECEF displacement) of the SIF diurnal loading field, K1 O1 P1 Q1, from the coefficients of each station served by @c otl_from_sif. The SIF loading is relative to the centre of mass; on consumer replays of CODE-based network products the translation is not seen in the data (north-component scale -0.11, 95 % interval -0.75 to +0.27, against 1.19 for the rest of the model, 13 sites in 11 six-hour windows), and it carries 5.7 of the 8.0 mm of north loading at WTZZ00DEU in the 01 to 06 UT window of 2024-129. The table holds for the IGS20 SIF registry (scripts/otl_compare/net_translation.py). Only used with @c otl_from_sif and @c enable_ocean_tide_loading. Default off keeps runs byte-identical.
         bool enable_pole_tide{ true };                 ///< Pole tide displacement (from ERP): IERS 2010 Sec. 7.1.4 rotational deformation.
         bool enable_ocean_pole_tide{ false };          ///< Ocean pole tide load displacement (IERS 2010 Sec. 7.1.5 / Desai 2002), added on top of @c enable_pole_tide.  Requires the opole load grid (files.opt_grid_path or <data>/static/opole/).  ~0.1-2 mm; default off keeps runs byte-identical.
         bool enable_atmospheric_loading{ false };      ///< Atmospheric pressure loading (S1/S2 thermal-tide site displacement). Requires per-station S1/S2 load coefficients (files.atm_tide_grid_path or <data>/static/apl/). Sun-synchronous, so it does not average out in static daily PPP. Default off keeps runs byte-identical.

@@ -168,6 +168,34 @@ Standing documents (not split this pass):
 - [SPEC_pd_safe_dd_fold.md](SPEC_pd_safe_dd_fold.md)
 - [network_ambiguity_resolution_design.md](network_ambiguity_resolution_design.md)
 
+Program card on this topic (indexed in [refound/CARDS.md](refound/CARDS.md)):
+[OTL](refound/OTL_ocean_tide_loading_source_2026-10-16.md), ocean tide loading from the SIF registry alone and the
+nodal corrections, gated against IERS HARDISP (open, 2026-10-17: built default off and checked, identical off, consumer +6.5 mm, census median -2.0 mm; diagnosed, no sign defect, diurnal net translation removable behind a default-off key, consumer +2.0 mm; arming open).
+
+Program card on this topic, also indexed in [refound/CARDS.md](refound/CARDS.md):
+[NSD](refound/NSD_network_small_defects_2026-10-17.md), three small network defects (open, 2026-10-17: the hard clock refloat counted by three response sites; the stash-status mirrors' skipped readmit seeds confirmed, counted and taken behind the default-off `network.readmit_seed_mirrors`; the coupled-mark census median per constellation; same-build check 2026-10-18: declared lines only; the 6 h seed counts owed).
+
+[WGB](refound/WGB_windup_gap_bridge_2026-10-17.md), the phase wind-up accumulator through data gaps inside the leveling-carry horizon (open, 2026-10-18: built default off, UNVALIDATED, never armed; the simulator cannot grade it; checked: knob off identical to main, field golden 6 h restarts 139 to 91 and arcs refloated 116 to 23, consumer and census within 0.3 mm, no benefit shown).
+
+[PIV](refound/PIV_pivot_election_coverage_2026-10-17.md), the clock pivot elected by predicted station coverage, broadcast
+health and shadow, at ignition and at a forced handover (open, 2026-10-18: built default off, never armed; unit gate and
+Release smoke in; checked 2026-10-18 against same-exe controls on the field and sim goldens: knob absent identical except the declared lines, no handover in 6 h against two in each control, field hour-2 common drift 0.051 against 0.192 m/h, consumer and census unchanged at the median, clock product within 2.4 mm).
+
+[BDS](refound/BDS_beidou_third_constellation_2026-10-18.md), BeiDou on B1I and B3I as the third constellation of the field
+golden, against GPS only and GPS + Galileo on one exe (open, 2026-10-18: read, healthy, no failure mode A or B, no piece needed;
+single-band stations dropped whole, removed in arm GEC-s; census hours 2 to 6 -0.0038 m against GPS + Galileo, -0.0267 m against
+GPS only; nothing armed; the single-band rule is built behind `network.second_band_admission`, UNVALIDATED; 2026-10-19: key off identical,
+key on at 6 h it reproduces GEC-s).
+[BDSB](refound/BDSB_beidou_continued_2026-10-19.md), the BDS card's continuation (open, 2026-10-19: the identity gate and the 6 h grade repeated
+from fresh arms, key off 24 IDENTICAL, key on reproduces GEC-s, census median change against GEC-s 0.0000 m).
+[SNX](refound/SNX_sinex_station_coordinates_2026-10-19.md), the IGS weekly SINEX of week 2313 against the coordinates the field runs hold (open, 2026-10-19: median 3D 6.0 mm over 71 stations, 20 above 1 cm, 4 above 5 cm, MIZU00JPN 1.68 m, WTZZ00DEU 4.5 mm; frame and marker reduction not the cause; the Asian Up bias, MAJU00MHL and POHN00FSM not explained by it; a default-off coordinate source planned, nothing built; addendum: the NGS SIF post-seismic term double counted the displacement accumulated by 2020.0, fixed on branch fix/sif-psd, the SIF then within 3.1 mm per horizontal component of the SINEX at seven of eight roster stations; phase 1 arms of 2026-10-19 (continued in SNXB, section 10): the roster at its SINEX values moves the satellite clocks 5 to 7 mm RMS and no consumer by more than 2.4 mm, the SINEX truth moves the census median -1.35 mm, CEDU00AUS -11.5 mm).
+[SNXB](refound/SNXB_sinex_roster_arms_2026-10-19.md), the SNX card's continuation (open, 2026-10-19: phase 1 arms on the field golden, 6 h; the roster at its SINEX values moves the satellite clocks 5 to 7 mm RMS, a per-satellite level, and no consumer by more than 2.4 mm; the SINEX as grading truth moves the census median -1.35 mm, CEDU00AUS -11.5 mm; nothing armed, phase 2 not built).
+[PLANT](refound/PLANT_planted_coordinate_offsets_2026-10-19.md), the held coordinate of one sim station planted wrong by 1 cm to 1 km, East and Up (closed, 2026-10-19: measurement only; up to 10 m the wire moves 28.5 mm of satellite-clock RMS per metre East and 6.2 per metre Up and the consumer up to 3.4 mm per metre, no tier acts below 1 km; the congruence screen names the station at 10 m from the first sweep and at 1 m only after hours; at 1 km Up the gross-LOS screen declares the station alone at epoch 1, at 1 km East it declares 47 other stations and the consumer ends 335 m off; the existing station tier clears it only after the 120-epoch horizon; nothing built, nothing armed).
+[MDAY](refound/MDAY_multiday_candidate_2026-10-19.md), the field golden and the BeiDou candidate on five 24 h days, DOY 128 to 132 of 2024
+(closed, 2026-10-20: both postures run healthy and accurate on every day, WTZZ00DEU at most 0.060 m per hour after ignition, census median
+site 0.02 to 0.07 m, no consumer above 1 m after hour 1 except the golden's ARHT00ATA for 26 min on DOY 130; candidate against golden: census
+paired median -0.8 to -3.8 mm, no site worse than +2.9 mm, ARHT00ATA -0.08 to -0.13 m on four days; nothing armed).
+
 ### `resume-seam` — [topics/resume-seam.md](topics/resume-seam.md)
 
 | card | one line | status | last dated |
@@ -324,6 +352,10 @@ Standing documents (not split this pass):
 | [DEC-day129-gate-policy](decisions/DEC-day129-gate-policy.md) | gate rulings (degrade, 120-epoch cap, rms_ho ratio) unbuilt; superseded, SH and seams out of the re-founding | superseded | — |
 | [T3 mechanism](cards/raim-qc/T3-IONO-MECHANISM.md) | per-LOS ionosphere error drives the T3 heterogeneity (corr +0.926) and the DD integers | closed | — |
 
+Program card on this topic (indexed in [refound/CARDS.md](refound/CARDS.md)):
+
+- [BBE](refound/BBE_block_baarda_estimable_2026-10-18.md), the block Baarda test on the float vehicle (open, 2026-10-18: the whole-block test refused every block because a line of sight's free slant ionosphere absorbs one direction exactly; `network.block_baarda_estimable` built default off and never armed; knob off identical on the smokes, the 2 h arms and the same-build gates; the 2 h check found no flagged block block-only; a positive control is owed).
+
 Standing documents (not split this pass):
 
 - [SPEC_flicker_gap_integrity.md](SPEC_flicker_gap_integrity.md)
@@ -349,6 +381,13 @@ Standing documents (not split this pass):
 | [CI](cards/consumer/CI-consumer-instrument.md) | consumer sound (0.25 m on CODE), old wire 6 to 8 m; suspended bars moot; closed, re-founding grades cold 6 h | closed | 2026-09-14 |
 | [CI census](cards/consumer/CI-census-wire-vs-code.md) | wire-vs-CODE census: W1 and W3 FAIL; the clock carries a metre-level code-model error | closed | 2026-09-14 |
 | [consumer AR](cards/consumer/CONSUMER-AR-BLUNDER.md) | consumer WL-only blunder: a frame mismatch FFR misses, caught by the innovation screen | closed | — |
+
+Program cards on this topic (indexed in [refound/CARDS.md](refound/CARDS.md)):
+
+- [SEA](refound/SEA_seasonal_term_outside_window_2026-10-16.md), the seasonal term of a SIF coordinate
+  outside its block windows (open, 2026-10-17: built without a knob; the same-build golden identity
+  check passed; the merge is owed).
+- [NIS](refound/NIS_consumer_innovation_screen_2026-10-17.md), the consumer's pre-update innovation screen (open, 2026-10-17: built default off, never armed; checked 2026-10-17: key absent identical on every gate, armed no output moved, no benefit shown).
 
 ### `sim-bed` — [topics/sim-bed.md](topics/sim-bed.md)
 
@@ -378,6 +417,11 @@ Standing documents (not split this pass):
 - [SPEC_dev_tier_perf_cards.md](SPEC_dev_tier_perf_cards.md)
 - [SPEC_inc8b_election_split.md](SPEC_inc8b_election_split.md)
 - [network_decomposition_plan.md](network_decomposition_plan.md)
+
+Program card on this topic (indexed in [refound/CARDS.md](refound/CARDS.md)):
+[NETCOST](refound/NETCOST_gps_galileo_cost_attribution_2026-10-18.md), where the GPS + Galileo epoch time goes and the exact sparse station
+normals (open, 2026-10-18: loop 5.3 and 3.7 times the GPS-only loop; the sparse formation behind a default-off key
+shortens the field loop 13.3 % and the sim loop 10.6 % at identical output; arming and two further optimizations owed).
 
 ### `realtime` — [topics/realtime.md](topics/realtime.md)
 
@@ -409,7 +453,7 @@ their code (closed, 2026-10-14: landed; the same-build golden comparison passed)
 | [QPR](cards/queues/QPR-00-CHARTER.md) | queue charter: SUPERSEDED by the 2026-09-14 re-founding; two leftovers re-filed to OPEN_ITEMS | superseded | 2026-08-21 |
 | [QPR 0–3](cards/queues/QPR-ITEMS-0-3.md) | items 0–3: 1(a), 1(b), 1(d), 1f, 1g, clock marking armed in goldens; item 2 tooling; rest moot | closed | 2026-08-21 |
 | [QPR 4](cards/queues/QPR-ITEM-4-T3-NULLS.md) | T3 null: excess is per-LOS iono error; R2/R4 built measure-only; rest superseded by RF-3 code-row QC | superseded | 2026-08-21 |
-| [QPR 5–8](cards/queues/QPR-ITEMS-5-8.md) | items 5–8: 8(b) falsified; 5, 7, 8 superseded by RF-0c, RF-1, no SH; item 6 re-filed as owed | superseded | 2026-08-21 |
+| [QPR 5–8](cards/queues/QPR-ITEMS-5-8.md) | items 5–8: 8(b) falsified; 5, 7, 8 superseded by RF-0c, RF-1, no SH; item 6 built and checked (millisecond-grid start-offset seek, leap table; 2 h golden arms byte-identical) | superseded | 2026-10-17 |
 | [CAF](cards/queues/CAF-COMMENT-AUDIT-FINDINGS.md) | comment audit: 5 defects fixed; Card-4, lane and stand-down rows moot; 20 owed lines re-filed to OPEN_ITEMS | closed | 2026-09-28 |
 
 Standing documents (not split this pass):
@@ -456,6 +500,8 @@ posture call stays in the verdict section of the card that reached it.
 
 - [status/OPEN_ITEMS.md](status/OPEN_ITEMS.md) — every owed / open item the corpus
   names, each with the card and section that is its evidence.
+- [status/OPEN_ITEMS_CODE_DEFECTS.md](status/OPEN_ITEMS_CODE_DEFECTS.md) — the code-defect
+  section of the register (verified defects, their fixes, the gate records), split out for size.
 
 ---
 
