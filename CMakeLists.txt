@@ -652,6 +652,7 @@ add_executable(gnss_tests
     tests/test_seeds.cpp
     tests/network/test_network_param_inventory.cpp
     tests/network/test_station_params.cpp
+    tests/network/test_station_births.cpp
     tests/network/test_network_rx_extra_band_delay.cpp
     tests/network/test_network_contributions.cpp
     tests/network/test_service_mode_clock_refusals.cpp

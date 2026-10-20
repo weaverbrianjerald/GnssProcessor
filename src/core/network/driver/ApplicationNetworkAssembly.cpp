@@ -202,7 +202,7 @@ EpochAction Application::networkPassAHead_(NetworkRun& run, const NetworkEpoch& 
             emitEpochStatus("sync_skip", {});   // only week/tow available
             return EpochAction::SkipEpoch;
         }
-        // allow all pivot phase signals (minus CB-ADM quarantined)
+        // allow all pivot phase signals (minus those the code-bias admission census quarantined)
         networkAdmitSharedStates(rowContextOf(config_, piv), piv.params, modeled.front(), {}, cbadm_admit);
         present.front() = true;
         for (const auto& [sat, why] : piv_drops) {

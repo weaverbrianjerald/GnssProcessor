@@ -555,7 +555,7 @@ StationStep networkCongruenceRowGeometry(StationBuild& build) {
     // R_{ENU→ECEF} δp_ENU and the columns of enuToEcefMatrix are the E/N/U
     // unit vectors in ECEF.  The partial is copied as is rather than rebuilt
     // from obs.los: `em.H` and `em.innovations` come from one linearization,
-    // so y ≈ H δx holds row by row for every observable the measurement model
+    // so y ≈ H δx holds row by row for every observable the observation equation
     // can produce, and a sign convention re-derived per row type would be a
     // second source of truth that could disagree.
     //

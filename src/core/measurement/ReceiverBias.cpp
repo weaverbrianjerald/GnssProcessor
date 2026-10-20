@@ -60,8 +60,7 @@ ReceiverBiasResolver::resolveReceiverBias(const std::string& obs_signal,
     if (sys_char == '\0') return result;
 
     // -----------------------------------------------------------------------
-    // Receiver inter-signal code bias of a second band-1 code (
-    // docs/refound/SCC_second_code_channel_2026-09-21.md).
+    // Receiver inter-signal code bias of a second band-1 code.
     //
     // With `network.second_code_channel` a station contributes every allow-listed
     // band-1 code it tracks, not only the one its canonical latch selected.  The
@@ -76,10 +75,10 @@ ReceiverBiasResolver::resolveReceiverBias(const std::string& obs_signal,
     // leave free, not the ionosphere-referenced difference the DCB state carries.
     // The null direction this opens (every receiver inter-signal bias against
     // every satellite one) is closed by the satellite family's own time-linked
-    // sum-to-zero row, so this mechanism changes no datum row (R3).
+    // sum-to-zero row, so this mechanism changes no datum row.
     //
-    // Rows covered: both the R1 companions and a fallback code that arrives
-    // without its canonical code beside it.  The test compares the signal with the
+    // Rows covered: both a second code that arrives beside the canonical one and a
+    // fallback code that arrives without its canonical code.  The test compares the signal with the
     // latch, not the way the row entered, so the two cases cannot disagree about
     // which state a row belongs to.  An undecided latch (empty: before the
     // constellation's first observed epoch, or for a band this station never
@@ -99,8 +98,8 @@ ReceiverBiasResolver::resolveReceiverBias(const std::string& obs_signal,
     // `processing.channel_mode: all` on the network path a station contributes
     // every admitted code attribute of every selected band, not an allow-listed
     // band-1 pair, and the per-band keying below would assert a zero receiver
-    // inter-signal bias on each of them.  On band 2 and above the RF-0d
-    // geometry-free pin also asserts the satellite side to zero, which repeats
+    // inter-signal bias on each of them.  On band 2 and above the geometry-free
+    // datum pin also asserts the satellite side to zero, which repeats
     // the same defect on both sides.  Under the widening the test therefore
     // drops the allow-list and the band-1 restriction and keeps only what makes a
     // row a second one: an admitted code that is not that band's latched canonical

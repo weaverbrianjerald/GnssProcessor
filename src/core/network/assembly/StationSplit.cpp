@@ -195,7 +195,7 @@ void networkSplitStation(const GnssConfig& config_, NetStation& st, const Networ
     // different form, not governed by the rule) is untouched.
     //
     //  - Dropped (network.estimate_sat_code_bias on, the knob below off): the column is
-    //    left out of the local block and held at the value the state initializer seeded
+    //    left out of the local block and held at the value its birth seed gave it
     //    on the station's first epoch, so it enters every extra-band code row as a
     //    constant.  The station's geometry-free level direction (slant ionosphere level,
     //    receiver DCB and ambiguities moving together, which leaves every pair-band row
@@ -431,7 +431,7 @@ void networkSplitStation(const GnssConfig& config_, NetStation& st, const Networ
     // here, so the solve, the pre-fit census and every post-fit screen read the
     // same number: they all read R.w, which is this vector.
     //
-    // Why code only, and why here rather than in the measurement model: this step
+    // Why code only, and why here rather than in the station's row builder: this step
     // separates two effects that the band-5-code-removed emulation removed
     // together, the band-5 pairs of the wide-lane detector (the mw_detect_pairs
     // knob) and the pull the band-5 code rows have on the shared states.  With B5D

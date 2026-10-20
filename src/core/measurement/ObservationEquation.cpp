@@ -355,11 +355,11 @@ bool addNlWlAmbiguity(Row& r) {
     return true;
 }
 
-/// The ambiguity of a phase row, by the configured basis.
+/// The ambiguity of a phase row, by the input's basis.
 bool addAmbiguity(Row& r) {
     if (!r.is_phase) return true;
-    return r.cfg.getStateAmbiguityBasis() == StateAmbiguityBasis::NlWl ? addNlWlAmbiguity(r)
-                                                                       : addPerBandAmbiguity(r);
+    return r.in.ambiguity_basis == StateAmbiguityBasis::NlWl ? addNlWlAmbiguity(r)
+                                                             : addPerBandAmbiguity(r);
 }
 
 } // namespace

@@ -30,6 +30,39 @@ inline GnssProcessor::SignalId signalOf(GnssProcessor::System sys, const std::st
     return sig.value_or(GnssProcessor::SignalId{});
 }
 
+/// The receiver code-bias keys a test names.
+inline GnssProcessor::RxCbKey dcbKey(GnssProcessor::System sys) {
+    GnssProcessor::RxCbKey k;
+    k.form = GnssProcessor::ParamForm::Dcb;
+    k.sys  = sys;
+    return k;
+}
+/// The inter-frequency bias of the band with RINEX digit @p digit.
+inline GnssProcessor::RxCbKey ifbKey(GnssProcessor::System sys, char digit) {
+    GnssProcessor::RxCbKey k;
+    k.form = GnssProcessor::ParamForm::Ifb;
+    k.sys  = sys;
+    k.band = GnssProcessor::bandOfDigit(sys, digit);
+    return k;
+}
+/// The GLONASS inter-frequency bias of one band and frequency channel.
+inline GnssProcessor::RxCbKey slotIfbKey(GnssProcessor::System sys, char digit, int slot) {
+    GnssProcessor::RxCbKey k;
+    k.form     = GnssProcessor::ParamForm::GloSlotIfb;
+    k.sys      = sys;
+    k.band     = GnssProcessor::bandOfDigit(sys, digit);
+    k.glo_slot = slot;
+    return k;
+}
+/// The inter-signal code bias of one code ("C1W").
+inline GnssProcessor::RxCbKey iscKey(GnssProcessor::System sys, const char* code) {
+    GnssProcessor::RxCbKey k;
+    k.form   = GnssProcessor::ParamForm::Isc;
+    k.sys    = sys;
+    k.signal = signalOf(sys, code);
+    return k;
+}
+
 /// Appends a parameter at value @p x.
 /// @return Its slot index, or -1 when the set did not take it.
 inline int bornParam(GnssProcessor::StationParams& set, const GnssProcessor::ParamRef& ref,

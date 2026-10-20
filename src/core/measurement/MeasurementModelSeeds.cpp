@@ -27,12 +27,12 @@ namespace GnssProcessor {
 
     ObsInput MeasurementModel::residualSeedInput() const {
         return ObsInput{rowProducts(), state_initializer_.frequencyHelper(), &state_initializer_.resolver(),
-                        nlwl_ref_band_, clockRefs()};
+                        nlwl_ref_band_, config_.getStateAmbiguityBasis(), clockRefs()};
     }
 
     ObsInput MeasurementModel::ambiguitySeedInput() const {
         return ObsInput{rowProducts(), ppp_utils_, &state_initializer_.resolver(), nlwl_ref_band_,
-                        clockRefs(), FdmaChannel::Zero};
+                        config_.getStateAmbiguityBasis(), clockRefs(), FdmaChannel::Zero};
     }
 
     double MeasurementModel::ambiguitySeed(const PppObservation& obs, const std::string& ref_type,

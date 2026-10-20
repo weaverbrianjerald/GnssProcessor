@@ -194,7 +194,7 @@ const char* paramDispositionName(ParamDisposition d) {
 namespace {
 
 /// What takes up a withheld satellite phase bias, at every gate: the phase row is still
-/// built (buildJacobianRow writes the phase-bias column only when the state exists), so
+/// built (the observation equation writes the phase-bias column only when the state exists), so
 /// the station's float ambiguity of that satellite and signal carries the bias.
 constexpr const char* kByAmbiguity = "the station's float ambiguity of the same satellite and signal";
 

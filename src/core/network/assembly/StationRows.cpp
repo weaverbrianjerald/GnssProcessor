@@ -19,8 +19,8 @@ namespace GnssProcessor {
 
 namespace {
 
-/// The NL/WL reference bands of a satellite: none, the network estimates one ambiguity per
-/// band.
+/// The NL/WL reference bands of a satellite: none.  A network station estimates one ambiguity
+/// per band, so its inputs name the per-band basis and read no reference band.
 const std::map<std::string, char>& noNlWlReferenceBands() {
     static const std::map<std::string, char> none;
     return none;
@@ -46,23 +46,24 @@ StationRowInputs::StationRowInputs(const GnssConfig& config, const PppModel& mod
     : freq(log_manager),
       rx_bias(config, model, log_manager),
       phase_bias_allowlist(std::move(allowlist)),
-      log_manager(&log_manager) {
+      log_manager(&log_manager),
+      clock_refs(&ProductCache::getInstance().getClockRefSignals()) {
     freq.setGlonassSlots(glonass_slots);
 }
 
 ObsInput rowObsInput(const StationRowContext& c) {
     return ObsInput{productsOf(c), c.inputs.freq, &c.inputs.rx_bias, noNlWlReferenceBands(),
-                    ProductCache::getInstance().getClockRefSignals()};
+                    kNetworkAmbiguityBasis, *c.inputs.clock_refs};
 }
 
 ObsInput residualSeedObsInput(const StationRowContext& c) {
     return ObsInput{productsOf(c), c.inputs.rx_bias.frequencyHelper(), &c.inputs.rx_bias,
-                    noNlWlReferenceBands(), ProductCache::getInstance().getClockRefSignals()};
+                    noNlWlReferenceBands(), kNetworkAmbiguityBasis, *c.inputs.clock_refs};
 }
 
 ObsInput ambiguitySeedObsInput(const StationRowContext& c) {
     return ObsInput{productsOf(c), c.inputs.freq, &c.inputs.rx_bias, noNlWlReferenceBands(),
-                    ProductCache::getInstance().getClockRefSignals(), FdmaChannel::Zero};
+                    kNetworkAmbiguityBasis, *c.inputs.clock_refs, FdmaChannel::Zero};
 }
 
 EpochMeasurement networkStationRows(const StationRowContext& c, const StationParams& set,
@@ -131,6 +132,9 @@ EpochMeasurement networkStationRows(const StationRowContext& c, const StationPar
                     update.innovations(r) = 0.0;
                     update.R_v(r)         = 1e6;
                 }
+                log->trace("Meas {}/{}: obs={:.3f}, mod={:.3f}, pred={:.3f}, innov={:.3f}",
+                           obs.satellite, ref_type, entry.second, obs.modeled.at(ref_type), predicted,
+                           update.innovations(r));
                 ++row;
             } catch (const std::exception&) {
                 continue;
@@ -156,6 +160,8 @@ EpochMeasurement networkStationRows(const StationRowContext& c, const StationPar
         update.signal_types.resize(row);
     }
     update.bad_residual_count = 0;
+    log->info("Computed measurement update: {} valid innovations, H ({}x{}), mode=PPP-RTK", row,
+              update.H.rows(), update.H.cols());
     return update;
 }
 

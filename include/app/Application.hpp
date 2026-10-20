@@ -1231,7 +1231,7 @@ private:
 
     /**
      * @brief PASS-A parallel tail and slip scans: per-station geometry
-     *        (computeModels / ensureNetworkSharedStates) in an OpenMP loop that
+     *        (computeModels / networkAdmitSharedStates) in an OpenMP loop that
      *        also runs the T0 / MW / IF-TD slip detection into PassABuffers slots,
      *        the serial fold of present[], the raw slip observables into @p qc, and
      *        the serial slip-QC drains declared in network/slip/SlipQc.hpp: T0

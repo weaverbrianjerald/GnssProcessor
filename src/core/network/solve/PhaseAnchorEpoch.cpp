@@ -626,7 +626,7 @@ void networkReceiverPhaseBiasAllocation(NetworkRun& run, const NetworkEpoch& ep)
     // shared_phase_keys), that is, if it is a vertex of the D2 graph.  A station whose
     // σ-keys are all gated allocates no RPB and keeps the legacy lumping.  The set is
     // re-derived each epoch (allocate what is needed, prune the rest), before
-    // est.reset() and PASS B, so buildJacobianRow's +1 RPB coefficient sees the column
+    // est.reset() and PASS B, so the observation equation's +1 RPB coefficient sees the column
     // and splitStation routes it into the local block A_r.  A spanning tree touches
     // every vertex, so every RPB-carrying station carries ≥1 tree-edge pin ⇒ its N_rr
     // stays PD.  Inert (no allocation) when eq34 is off.

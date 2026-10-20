@@ -17,7 +17,6 @@
 #include "measurement/RowRules.hpp"
 #include "measurement/Seeds.hpp"
 #include "model/PppModel.hpp"
-#include "products/ProductCache.hpp"
 #include "products/SsrCorrectionStore.hpp"
 
 #include <cmath>
@@ -113,7 +112,11 @@ void birthSlantIonosphere(const StationRowContext& c, StationParams& set,
                 "alpha1={:.4f}, alpha2={:.4f}, seed={:.3f} m",
                 obs.satellite, seed->code_a, seed->code_b, seed->range_a_m, seed->range_b_m,
                 seed->alpha_a, seed->alpha_b, seed->value_m);
-        addParam(set, bornSlot(slantIonoRef(*sat), seed ? seed->value_m : 0.0));
+        const double value = seed ? seed->value_m : 0.0;
+        addParam(set, bornSlot(slantIonoRef(*sat), value));
+        c.log.getLogger("measurement_model")->debug(
+            "Added ionosphere state for satellite {} with seed={:.3f} m{}", obs.satellite, value,
+            seed.has_value() ? "" : " (no BIA-covered pair)");
     }
     pruneSlantIonoExcept(set, need.iono_sats);
 }
@@ -179,8 +182,16 @@ void birthAmbiguities(const StationRowContext& c, StationParams& set,
 
             const NetView view(set);
             const double seed = seedAmbiguity(seed_input, ParamLookup(view), obs, ref_type);
-            if (held == set.amb.end()) addParam(set, bornSlot(ambiguityRef(*sat, *phase), seed));
-            else                       set.slots[static_cast<std::size_t>(held->second)].x_lin = seed;
+            const std::string key = obs.satellite + "_" + ref_type;
+            if (held == set.amb.end()) {
+                addParam(set, bornSlot(ambiguityRef(*sat, *phase), seed));
+                c.log.getLogger("measurement_model")->debug(
+                    "Added missing ambiguity state for {} (key={}), seed={:.3f} m", obs.satellite, key, seed);
+            } else {
+                set.slots[static_cast<std::size_t>(held->second)].x_lin = seed;
+                c.log.getLogger("measurement_model")->debug(
+                    "Re-seeded reset ambiguity for {} (key={}), seed={:.3f} m", obs.satellite, key, seed);
+            }
             clearPendingReseed(set, id);
         }
     }
@@ -248,7 +259,7 @@ void birthReceiverCodeBiases(const StationRowContext& c, StationParams& set,
                              const std::vector<PppObservation>& observations) {
     std::set<RxCbKey> required;
     if (c.config.estimateIfb() && c.config.isUncombinedEnabled()) {
-        const ClockRefMap& clock_refs = ProductCache::getInstance().getClockRefSignals();
+        const ClockRefMap& clock_refs = *c.inputs.clock_refs;
         for (const PppObservation& obs : observations) {
             for (const auto& entry : obs.observed) {
                 const std::string& ref_type = entry.first;
@@ -258,7 +269,10 @@ void birthReceiverCodeBiases(const StationRowContext& c, StationParams& set,
                 if (!std::isfinite(bias.coefficient) || !bias.has_key) continue;
                 if (c.config.enableGlonassNetwork() && bias.key.form != ParamForm::GloSlotIfb) continue;
                 if (!required.insert(bias.key).second) continue;
-                if (set.rx_cb.count(bias.key) == 0) addParam(set, bornSlot(rxCodeBiasRef(bias.key), 0.0));
+                if (set.rx_cb.count(bias.key) != 0) continue;
+                addParam(set, bornSlot(rxCodeBiasRef(bias.key), 0.0));
+                c.log.getLogger("measurement_model")->debug(
+                    "Added receiver bias state for {}", keyText(rxCodeBiasRef(bias.key)));
             }
         }
     }
@@ -280,14 +294,15 @@ void seedReceiverCodeBiases(const StationRowContext& c, StationParams& set,
     auto log = c.log.getLogger("state_initializer");
     for (std::size_t i = 0; i < result.refused; ++i) note(false);
     for (const CodeBiasSeed& seed : result.seeds) {
-        setValue(set, rxCodeBiasRef(seed.key), seed.value_m);
+        const ParamRef ref = rxCodeBiasRef(seed.key);
+        setValue(set, ref, seed.value_m);
         if (seed.restored) {
             note(true);
-            log->info("Receiver code bias seeded from the restored linearization point: {:.6f} m "
-                      "(the one-epoch code median is not used)", seed.value_m);
+            log->info("code bias {} seeded from the RESTORED linearization point: {:.6f} m "
+                      "(the one-epoch code median is NOT used)", keyText(ref), seed.value_m);
         } else {
-            log->info("Initialized receiver code bias: {:.3f} m from {} satellites", seed.value_m,
-                      seed.n_sats);
+            log->info("Initialized code bias {}: {:.3f} m from {} satellites", keyText(ref),
+                      seed.value_m, seed.n_sats);
         }
     }
 }

@@ -703,7 +703,7 @@ TEST_F(SeedsTest, TheAmbiguitySeedFrequencyIsTheHelpersOutsideGlonassFdmaBands) 
 
             for (const FdmaChannel rule : {FdmaChannel::Satellite, FdmaChannel::Zero}) {
                 const ObsInput in{RowProducts{stack.config, *stack.ppp, stack.store}, utils, nullptr,
-                                  no_nlwl, clock_refs, rule};
+                                  no_nlwl, StateAmbiguityBasis::PerBand, clock_refs, rule};
                 const ObservationEquation eq =
                     observationEquation(in, obs, text, ParamLookup(IonosphereOnly{}),
                                         effectsOf({ObsEffect::Modeled, ObsEffect::Ionosphere}));
@@ -728,7 +728,7 @@ TEST_F(SeedsTest, AGlonassFdmaBandOnAnotherChannelDiffersFromChannelZero) {
     const PppObservation obs = observation("R05", System::GLONASS, {"L1C", "L3I"});
     const RowProducts products{stack.config, *stack.ppp, stack.store};
     const auto partial = [&](const char* signal, FdmaChannel rule) {
-        const ObsInput in{products, utils, nullptr, no_nlwl, clock_refs, rule};
+        const ObsInput in{products, utils, nullptr, no_nlwl, StateAmbiguityBasis::PerBand, clock_refs, rule};
         return findTerm(observationEquation(in, obs, signal, ParamLookup(IonosphereOnly{}),
                                             effectsOf({ObsEffect::Modeled, ObsEffect::Ionosphere})),
                         ObsEffect::Ionosphere)->part[0].partial;

@@ -160,7 +160,7 @@ struct NetworkEpoch;            // network/driver/Epoch.hpp
  *   - @p log = run.log: Main run logger (one-shot degradation warnings).
  *   - @p traces = run.traces: Run traces (the `network_events.csv` sink).
  *   - @p se = ep.se: This synced epoch (week/tow stamp).
- *   - @p stations = run.setup.stations: Network station roster (names and StateManagers for
+ *   - @p stations = run.setup.stations: Network station roster (names and parameter sets for
  *     labels).
  *   - @p est = run.engines.est: The solved estimator (covariance and kernel accessors).
  *   - @p plan_datum = ep.solve.plan.shared_datum: This epoch's minimum-constraint datum pins:

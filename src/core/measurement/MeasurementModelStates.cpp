@@ -985,14 +985,15 @@ namespace GnssProcessor {
             }
         };
 
-        // In the PPP-RTK network producer, ensureNetworkSharedStates owns the
-        // satellite code-bias states (a shared border column, allocated and pruned
-        // together with the satellite clock and phase bias), as it owns the
-        // satellite clock and phase bias.  This single-receiver fallback path skips
-        // them, so the two paths never manage the same per-(sat,signal) states.  The
-        // network admits every GPS/Galileo raw code signal regardless of .BIA
-        // coverage; the .BIA/SSR gate below is a user-side concern that does not
-        // apply when the network estimates its own OSB.
+        // In the PPP-RTK network producer, the network's shared admission
+        // (networkAdmitSharedStates) owns the satellite code-bias states (a shared
+        // border column, allocated and pruned together with the satellite clock and
+        // phase bias), as it owns the satellite clock and phase bias.  This
+        // single-receiver fallback path skips them, so the two paths never manage
+        // the same per-(sat,signal) states.  The network admits every GPS/Galileo
+        // raw code signal regardless of .BIA coverage; the .BIA/SSR gate below is a
+        // user-side concern that does not apply when the network estimates its own
+        // OSB.
         const bool network_owns_sat_bias =
             config_.getProcessingMode() == ProcessingMode::PPP_RTK_Network;
         std::set<std::string> required_sat_biases;

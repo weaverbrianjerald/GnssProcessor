@@ -1472,7 +1472,7 @@ struct StationAssembly {
     /// It is the Jacobian, not a raw line-of-sight vector, by design: it is copied from
     /// @c em.H (whose position partial is @f$-\hat u@f$ per
     /// the observation equation) and rotated by the ENU→ECEF matrix at the
-    /// station's held coordinate.  Taking the partial the measurement model built,
+    /// station's held coordinate.  Taking the partial the observation equation built,
     /// rather than re-deriving a sign per row type, makes the screen's convention
     /// correct by construction for every current and future row class:
     /// @c em.innovations and @c em.H are one linearization, so @f$y \approx H\,\delta x@f$

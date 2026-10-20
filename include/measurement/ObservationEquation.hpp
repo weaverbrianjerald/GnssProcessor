@@ -54,6 +54,7 @@
 
 #include "common/ParamRef.hpp"
 #include "common/PppObservation.hpp"
+#include "config/GnssConfigTypes.hpp"   // StateAmbiguityBasis
 #include "measurement/RowRules.hpp"
 #include "products/ProductTypes.hpp"   // ClockRefMap
 
@@ -308,7 +309,8 @@ struct ObsInput {
     RowProducts                       products;       ///< The configuration, the model's tables and the SSR store.
     const PppUtils&                   ppp_utils;      ///< Frequencies and wavelengths (GLONASS slots seeded).
     const ReceiverBiasResolver*       receiver_bias;  ///< Resolver of the receiver code-bias parameter of a code signal; null: none.
-    const std::map<std::string, char>& nlwl_ref_band; ///< Per satellite, the NL/WL basis' reference band digit.
+    const std::map<std::string, char>& nlwl_ref_band; ///< Per satellite, the NL/WL basis' reference band digit (read only on that basis).
+    StateAmbiguityBasis               ambiguity_basis; ///< How the phase ambiguity is parameterized: one per band, or the NL/WL pair.  The single-receiver model passes its configuration's choice; a network station has one ambiguity per band whatever the configuration says.
     const ClockRefMap&                clock_refs;     ///< The .BIA product's clock-reference observables per constellation letter: the bands the receiver code biases are referenced to (empty: none).
     FdmaChannel                       fdma{FdmaChannel::Satellite};  ///< Channel of the FDMA bands' frequency.
 };

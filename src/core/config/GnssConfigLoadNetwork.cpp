@@ -2500,7 +2500,7 @@ namespace GnssProcessor {
                       "station-epoch carrying the smallest eigenvalue of the rejected local "
                       "block, the near-zero eigenvalue COUNT, the pivot triple "
                       "(d_min/d_ref/d_max) the decision used, and the top-5 |weight| columns "
-                      "of the null eigenvector as StateManager labels.  One symmetric "
+                      "of the null eigenvector as parameter labels.  One symmetric "
                       "eigen-decomposition per REJECTED block only; the rejection and the "
                       "station drop are unchanged (measure-only, solve byte-identical).");
         }

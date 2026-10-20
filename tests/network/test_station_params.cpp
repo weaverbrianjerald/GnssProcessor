@@ -51,6 +51,7 @@
 #include "network/state/StationParams.hpp"
 #include "../support/ModelStack.hpp"
 #include "../support/NetworkTestRun.hpp"
+#include "../support/StationBirthFixture.hpp"
 #include "../support/StationParamsBuilder.hpp"
 #include "../support/TestTempDir.hpp"
 
@@ -71,6 +72,7 @@
 using namespace GnssProcessor;
 namespace K  = GnssProcessor::StateKeys;
 namespace fs = std::filesystem;
+using gnss_test::BirthFixture;
 using gnss_test::bornAmbiguity;
 using gnss_test::bornPhaseColour;
 using gnss_test::bornRxCodeBias;
@@ -79,6 +81,10 @@ using gnss_test::bornSatClock;
 using gnss_test::bornSatCodeBias;
 using gnss_test::bornSatPhaseBias;
 using gnss_test::bornSlantIono;
+using gnss_test::dcbKey;
+using gnss_test::ifbKey;
+using gnss_test::iscKey;
+using gnss_test::slotIfbKey;
 
 namespace {
 
@@ -111,36 +117,6 @@ void loadThreeSystemConfig(GnssConfig& cfg, LogManager& log) {
     EXPECT_TRUE(cfg.loadFromJson(p, log));
     std::error_code ec;
     fs::remove(p, ec);
-}
-
-/// The receiver code-bias keys of the fixture.
-RxCbKey dcbKey(System sys) {
-    RxCbKey k;
-    k.form = ParamForm::Dcb;
-    k.sys  = sys;
-    return k;
-}
-RxCbKey ifbKey(System sys, char digit) {
-    RxCbKey k;
-    k.form = ParamForm::Ifb;
-    k.sys  = sys;
-    k.band = bandOfDigit(sys, digit);
-    return k;
-}
-RxCbKey slotIfbKey(System sys, char digit, int slot) {
-    RxCbKey k;
-    k.form     = ParamForm::GloSlotIfb;
-    k.sys      = sys;
-    k.band     = bandOfDigit(sys, digit);
-    k.glo_slot = slot;
-    return k;
-}
-RxCbKey iscKey(System sys, const char* code) {
-    RxCbKey k;
-    k.form   = ParamForm::Isc;
-    k.sys    = sys;
-    k.signal = gnss_test::signalOf(sys, code);
-    return k;
 }
 
 /// A station-shaped set and the split's dispositions for it.
@@ -793,47 +769,6 @@ TEST(StationParamsTest, TheSharedKeyConvertersReadWhatTheKeyParsersRead) {
 // ---------------------------------------------------------------------------
 // The births and the admission
 // ---------------------------------------------------------------------------
-
-namespace {
-
-/// A network config over GPS and Galileo with the options a birth test arms, and the model stack
-/// around it.
-struct BirthFixture {
-    LogManager            log;
-    gnss_test::ModelStack stack;
-    std::unique_ptr<StationRowInputs> inputs;
-    StationParams         set;
-
-    explicit BirthFixture(const std::string& network_extra = "", const std::string& estimation_extra = "") {
-        const std::string text = std::string(R"({
-            "processing": {"mode": "ppp-rtk-network", "active_systems": ["GPS", "Galileo"],
-                           "signal_priorities": {"GPS": "WC", "Galileo": "QX"}},
-            "estimation": {"estimate_ifb": false)") + estimation_extra + R"(},
-            "network": {"clock_datum_station": "AAAA",
-                        "stations": [{"name": "AAAA", "position_ecef": [6378137.0, 0.0, 0.0]},
-                                     {"name": "BBBB", "position_ecef": [0.0, 6378137.0, 0.0]}])" + network_extra + R"(}
-        })";
-        EXPECT_TRUE(stack.loadText(log, "births", text));
-        inputs = std::make_unique<StationRowInputs>(stack.config, *stack.ppp, log,
-                                                    std::map<std::string, int>{},
-                                                    std::map<std::string, std::set<std::string>>{});
-        set = startStationParams(stack.config, Eigen::Vector3d(6378137.0, 0.0, 0.0));
-    }
-
-    StationRowContext context() { return StationRowContext(stack.config, *stack.ppp, *inputs); }
-
-    /// One epoch of observations: GPS satellites with L1C and L2W, one Galileo satellite.
-    std::vector<PppObservation> epoch(int k, bool with_g12 = true) const {
-        std::vector<PppObservation> obs;
-        obs.push_back(gnss_test::syntheticObservation("G05", System::GPS, {"C1C", "L1C", "C2W", "L2W"}, k, 40.0, 50.0));
-        if (with_g12)
-            obs.push_back(gnss_test::syntheticObservation("G12", System::GPS, {"C1C", "L1C", "C2W", "L2W"}, k, 130.0, 35.0));
-        obs.push_back(gnss_test::syntheticObservation("E24", System::Galileo, {"C1C", "L1C", "C5Q", "L5Q"}, k, 220.0, 25.0));
-        return obs;
-    }
-};
-
-}  // namespace
 
 TEST(StationParamsTest, TheBirthsGiveAStationTheParametersItsObservationsImply) {
     BirthFixture f;

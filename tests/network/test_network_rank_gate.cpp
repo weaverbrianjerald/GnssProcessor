@@ -423,7 +423,7 @@ TEST(NetworkRankGateTest, HealAttributionChannelIsObservational) {
 // the transform leaves the counter at zero forever, which reads as "no orphans"
 // (invariant #4).  The transform is L<band><attr> -> C<band><attr>, and it
 // matches the one the state-allocation co-gate applies in
-// MeasurementModel::ensureNetworkSharedStates; otherwise the two would disagree
+// networkAdmitSharedStates; otherwise the two would disagree
 // about which phase column belongs to which code column.
 // ---------------------------------------------------------------------------
 TEST(NetworkRankGateTest, PhaseToCodeCompanionKeyTransformMatchesTheCoGate) {

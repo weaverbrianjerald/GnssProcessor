@@ -1339,7 +1339,7 @@ void networkRestoreCanonicalSignals(NetworkRunContext& ctx, const GnssConfig& co
 
 // ---------------------------------------------------------------------------
 // Install the resume's stashed code-bias linearization points on the station
-// parameter sets (RS-9, SPEC_event_harness §21.18).
+// parameter sets.
 //
 // This is a separate seam rather than a block inside networkTryWarmResume because
 // the two need different inputs: the resume function owns the snapshot and stashes

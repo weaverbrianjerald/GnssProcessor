@@ -96,9 +96,9 @@
  * held coordinate sits @f$\hat\delta_E@f$ metres East of where the data puts the
  * antenna.  Subtract it to correct the station.
  *
- * Derivation.  The measurement model linearizes about the held position and writes
+ * Derivation.  The observation equation linearizes about the held position and writes
  * @f$y \approx H_{pos}\,\Delta@f$ with @f$\Delta = p_{true}-p_{held}@f$ the
- * correction to the linearization point (the observation equation
+ * correction to the linearization point (it
  * sets that partial to @f$-\hat u@f$ for every code and phase row, and
  * @c StationAssembly::row_pos_enu carries it unchanged).  The reported quantity is
  * @f$d = -\Delta = p_{held}-p_{true}@f$, so this class uses

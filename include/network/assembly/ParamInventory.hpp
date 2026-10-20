@@ -45,7 +45,7 @@
  *     run in an epoch:
  *      - PASS A, per station, @c networkAdmitSharedStates (network/assembly/SharedAdmission.cpp,
  *        which clears the list at its start): the GLONASS code-only scope, the coverage
- *        allowlist, the legacy pivot allowlist and the CB-ADM code-census co-gate;
+ *        allowlist, the legacy pivot allowlist and the code-bias admission census co-gate;
  *      - serial, after the screens that remove observations: the anchored-union coverage
  *        gate (@c networkBuildPhaseDatumCandidates) and the eq34 hygiene block
  *        (@c networkAnchorHygiene), through @c noteWithheldPhaseBias.
@@ -183,7 +183,7 @@ namespace GnssProcessor {
         GlonassCodeOnlyScope = 0,  ///< GLONASS on the network's code-only scope: no satellite phase or code bias under FDMA.
         CoverageGate,              ///< The signal is outside the coverage allowlist (network.phase_bias_min_station_fraction).
         Allowlist,                 ///< Legacy single-pivot datum: the key is not among the pivot station's phase-bias keys.
-        CodeCensusCogate,          ///< The CB-ADM census quarantined the signal's companion code pair (network.cb_admission).
+        CodeCensusCogate,          ///< The code-bias admission census quarantined the signal's companion code pair (network.cb_admission).
         AnchoredUnionCoverage,     ///< Fewer than network.phase_datum_min_stations stations hold the key this epoch.
         AnchorHygieneBlock,        ///< eq34 hygiene: every candidate host arc is younger than network.eq34_anchor_min_arc_ep.
     };
@@ -246,7 +246,7 @@ namespace GnssProcessor {
      * bands outside each constellation's clock-reference pair are left out of the
      * station's local block: kept, a non-primary receiver IFB absorbs the code
      * information that separates that band's satellite clock from its phase bias.  The
-     * column stays in the station's model at the value the state initializer seeded on
+     * column stays in the station's parameter set at the value its birth seed gave it on
      * its first epoch.  The drop rests on a premise: the GIM ionosphere weighting leaves
      * each station's ionosphere level free, so the band's receiver delay folds into it.
      * Without the weighting (or with the W6 ionosphere constraint @c none) nothing takes
@@ -334,7 +334,7 @@ namespace GnssProcessor {
      * A constellation counts when it is not FDMA (GLONASS never has a per-band receiver
      * IFB: @c ReceiverBiasResolver::resolveReceiverBias gives it the per-slot form) and the
      * mode admits more than two of its bands (@c getAllowedBandDigits, the band map the
-     * measurement model reads).  It rests on the two bands of @c FrequencyMode::Dual being
+     * station rows read).  It rests on the two bands of @c FrequencyMode::Dual being
      * the constellation's clock-reference pair (GPS L1/L2, Galileo E1/E5a, BeiDou B1I/B3,
      * QZSS L1/L2), which is what the BIA products declare; a product whose clock
      * reference is another pair would leave an IFB column on a dual-band run, and the knob

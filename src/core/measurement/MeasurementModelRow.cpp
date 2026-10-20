@@ -223,7 +223,7 @@ namespace GnssProcessor {
 
     ObsInput MeasurementModel::obsInput() const {
         return ObsInput{rowProducts(), ppp_utils_, &state_initializer_.resolver(), nlwl_ref_band_,
-                        clockRefs()};
+                        config_.getStateAmbiguityBasis(), clockRefs()};
     }
 
     bool MeasurementModel::buildJacobianRow(const PppObservation& obs,

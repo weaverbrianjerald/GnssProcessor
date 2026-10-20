@@ -426,7 +426,7 @@ void networkDatumGraphCensus(NetworkRun& run, const NetworkEpoch& ep) {
             for (const auto& kv : ob.observed) {
                 const std::string& code = kv.first;
                 // An observable with no modeled counterpart produces no row; the
-                // measurement model would have nothing to difference against.
+                // row builder would have no modeled value to difference against.
                 if (!ob.modeled.count(code)) continue;
                 supported = true;
                 if (obsTypeOf(code) != ObsType::Code) continue;

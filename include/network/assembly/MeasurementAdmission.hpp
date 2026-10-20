@@ -16,8 +16,8 @@
  *
  * Because the offset is common to the code and the phase of the channel, every
  * differential check passes it: TD smoothness, phase-minus-code, GF and MW all
- * cancel it by construction.  Its path into the solution: the state initializer
- * seeds the corrupt value; on a single-band channel the local redundancy is r ≈ 0,
+ * cancel it by construction.  Its path into the solution: the birth seeds
+ * take the corrupt value; on a single-band channel the local redundancy is r ≈ 0,
  * so the error moves into the free slant state where no residual test reaches it
  * (single-band tracking amplifies the error but does not cause it); the parked
  * value is then released when a topology valve opens (the 25° tie admission),

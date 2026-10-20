@@ -91,6 +91,11 @@ struct StationRowInputs {
     std::map<std::string, std::set<std::string>> phase_bias_allowlist;
     /// Logging, for the rules that report (the stored-geometry check, the seeds).
     LogManager*          log_manager;
+    /// The bias product's clock-reference observables per constellation letter: the bands the
+    /// receiver code biases are referenced to.  Points at the process-wide product cache's map,
+    /// which is read when used (a product loaded after the station was built is seen); a test
+    /// points it at its own.  Never null.
+    const ClockRefMap*   clock_refs;
 
     /**
      * @brief Builds the inputs of one station.
@@ -128,9 +133,20 @@ struct StationRowContext {
 };
 
 /**
+ * @brief The ambiguity parameterization of every network station: one ambiguity per (satellite,
+ *        signal) or per iono-free pair.
+ *
+ * The producer's local block, its ambiguity carries and its integer searches are all per band.
+ * The equation's inputs therefore name this basis, whatever @c estimation.state_ambiguity_basis
+ * says: that key chooses the single-receiver filter's layout and has no network meaning.
+ */
+inline constexpr StateAmbiguityBasis kNetworkAmbiguityBasis = StateAmbiguityBasis::PerBand;
+
+/**
  * @brief The equation inputs of the data rows.
  * @param c The station's references.
- * @return Inputs whose frequency helper is the station's own.
+ * @return Inputs whose frequency helper is the station's own, on the per-band ambiguity basis
+ *         (@ref kNetworkAmbiguityBasis).
  */
 ObsInput rowObsInput(const StationRowContext& c);
 

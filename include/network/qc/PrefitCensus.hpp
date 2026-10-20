@@ -46,8 +46,8 @@
  *
  * Centring removes a station-wide level such as an unabsorbed receiver-clock
  * offset on the phase rows.  It does not handle a cell born this epoch inside
- * such a station: the state initializer seeds a fresh ambiguity so that the
- * cell's own innovation is about 0, which against an established station level
+ * such a station: the birth seed gives a fresh ambiguity the value that makes the
+ * cell's own innovation about 0, which against an established station level
  * of 10⁵ m reads as s ≈ 10⁷.  Counted as exceedances, healthy births would
  * dominate the event stream.
  *

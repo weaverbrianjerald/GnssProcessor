@@ -261,7 +261,9 @@ station has the layout of its own set (`startStationParams`): the position, the 
 the wet delay and one inter-system bias per active non-GPS constellation. The single-receiver
 filter's optional columns (velocity, phase clock, gradients, IMU, NL/WL ambiguities,
 between-satellite differencing) are not part of it, and a network run that enables one warns at
-start that it is ignored.
+start that it is ignored. The equation's inputs for a station name the per-band ambiguity basis
+(`kNetworkAmbiguityBasis`, `include\network\assembly\StationRows.hpp`), so
+`estimation.state_ambiguity_basis` has no effect on a network run.
 
 The columns are born in the network's own functions. `networkAdmitSharedStates`
 (`network\assembly\SharedAdmission.cpp`) takes up the shared columns (satellite clock, phase
