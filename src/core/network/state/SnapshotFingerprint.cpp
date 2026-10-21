@@ -1,11 +1,11 @@
 /**
  * @file SnapshotFingerprint.cpp
- * @brief @internal networkSnapshotFingerprint: the configuration fingerprint (RTB-7) that a
+ * @brief @internal networkSnapshotFingerprint: the configuration fingerprint that a
  *        state snapshot carries and a warm resume checks.
  *
- * One function, called once by the driver (network/driver/ApplicationNetwork.cpp) before the warm
+ * One function, called once by the driver (network/driver/Run.cpp) before the warm
  * resume, and directly by unit tests.  With a snapshot path it sets
- * ctx.carry.live_fingerprint and, under network.ctu_switch_on_resume, the CTU twin
+ * ctx.carry.live_fingerprint and, under network.ctu_switch_on_resume, its twin
  * ctx.carry.live_fingerprint_ctu_off; without one it does nothing.  The comments in the
  * body record why each knob is or is not a term.
  *
@@ -13,12 +13,10 @@
  * the fingerprint here, to the restore in WarmResume.cpp and to the write in
  * StateSnapshotWrite.cpp.
  *
- * The body opens with an alias block (decomposition INC-4) that binds the driver's former
- * local names to members of the context, so the relocated code keeps those names.
+ * The body opens with an alias block that binds short local names to members of the context.
  *
  * One of the seven files that define the network run context's functions, split
- * out of the former app/NetworkRunContext.cpp by concern, each body
- * unchanged.  The declarations, each naming its file, and the map of the seven files are
+ * by concern.  The declarations, each naming its file, and the map of the seven files are
  * in include/network/state/RunContext.hpp.
  */
 
@@ -34,8 +32,7 @@ namespace GnssProcessor {
 
 void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config_,
                                 const std::vector<NetStation>& stations) {
-    // Alias block (INC-4): the relocated body reads the former runNetwork() locals under
-    // their original names.
+    // Alias block: short local names for the context's members.
     const auto& nc = config_.getNetworkConfig();
     const GlobalVtecShConfig& shc = config_.getGlobalVtecShConfig();
     auto& snap_path = ctx.carry.snap_path;
@@ -49,7 +46,7 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
     const int    pl_warmup = ctx.knobs.pl_warmup;
     const double pl_max_gap_s = ctx.knobs.pl_max_gap_s;
     const double pl_var_floor = ctx.knobs.pl_var_floor;
-    const bool   pl_local_block = ctx.knobs.pl_local_block; // station-wide whitened local block at inject (F3)
+    const bool   pl_local_block = ctx.knobs.pl_local_block; // station-wide whitened local block at inject
     const double pb_var_floor = ctx.knobs.pb_var_floor;
     const double cb_var_floor = ctx.knobs.cb_var_floor;
     const bool   zwd_on = ctx.knobs.zwd_on;
@@ -101,12 +98,10 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // observation (about 0.4 cycles of ZD arc range), which the carried ambiguities,
         // the phase-leveling zero-q level and the shared PB/CB carry absorbed.  Resuming a
         // snapshot written under the old convention into a corrected binary would
-        // re-reference stiff carries levelled in the superseded frame (standing
-        // invariant #1, a stale zero-q value carried past a jump, and invariant #7, a
-        // re-coupling edge with nothing re-validating what it reconnects).  The rest of
+        // re-reference stiff carries levelled in the superseded frame, with nothing
+        // re-validating what it reconnects.  The rest of
         // the fingerprint hashes config knobs only, with no code version or binary hash,
-        // so this token is what forces a cold start across the fix.  See
-        // docs/SPEC_phase_windup_sign.md.
+        // so this token is what forces a cold start across the fix.
         add(kWindUpYawModelId);
         // The phase-bias gauge realization (single-pivot vs prioritized anchor)
         // defines which station's ambiguities carry the datum; a resume across a
@@ -129,8 +124,8 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // arithmetics inside a single lineage, which is the mid-chain flip the fingerprint
         // exists to prevent.  Appended only when armed, so the fingerprint of a snapshot
         // written with it off is unchanged.  (A snapshot from an off run restored into a
-        // pd_safe run is handled separately: the INC-2c restore guard rebirths any non-PD
-        // block it finds in the blob.)
+        // pd_safe run is handled separately: the restore guard in InvariantCarryDriver.cpp
+        // rebirths any non-PD block it finds in the blob.)
         if (carry_invariant_pd_safe) add("carry:pdsafe");
         // network.carry_aware_covariance is left out of the fingerprint on purpose.  It is
         // a read-back knob: its two consumers (dd_sigma_cyc, the log-only AR probe) feed
@@ -143,26 +138,26 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // and has to be fingerprinted.
         add(fmt::format("{}", pl_on));           add(fmt::format("{}", pl_q_amb));
         add(fmt::format("{}", pl_warmup));       add(fmt::format("{}", pl_max_gap_s));
-        // Local block (F3, network.phase_leveling_local_block).  The carried levels were
+        // Local block (network.phase_leveling_local_block).  The carried levels were
         // accumulated under a different prior (joint against independent rows), and the
         // harvest block itself is not in the snapshot, so a resume across the flip has to
         // cold-start, as for pl_var_floor.  Appended only when armed, so the fingerprint
         // of a snapshot written with it off is unchanged.
         if (pl_local_block) add("pl:losblock");
-        // ZWD in the local block (B9-in-block, network.carry_zwd_in_block) affects the
-        // solve for the same reason F3 does: the carried ZWD and the carried levels were
+        // ZWD in the local block (network.carry_zwd_in_block) affects the
+        // solve for the same reason: the carried ZWD and the carried levels were
         // accumulated under a different prior geometry (one joint Σ over {ambiguities,
         // ZWD} against a block plus an independent diagonal row), so a warm resume cannot
         // cross the flip.  The harvest block is not snapshotted either way.  Appended only
-        // when armed, beside the F3 tag, so a snapshot written with it off keeps its
-        // fingerprint.
+        // when armed, beside the pl:losblock tag, so a snapshot written with it off keeps
+        // its fingerprint.
         if (config_.networkCarryZwdInBlock()) add("zwd:blk");
         // Iono in the local block (network.carry_iono_in_block) affects the solve for the
         // same reason: the carried levels were accumulated against a prior geometry that
         // did or did not include the station's iono columns in the joint Σ, so a warm
         // resume cannot cross the flip.  The in-block iono carry itself is not snapshotted
         // (it cold-starts), but the levels that resume were shaped by it.  Appended only
-        // when armed, beside the F3/ZWD tags, so a snapshot written with it off keeps
+        // when armed, beside the tags above, so a snapshot written with it off keeps
         // its fingerprint.  q and the gap bound are included because both change the
         // prior's weight.
         if (config_.networkCarryIonoInBlock()) {
@@ -176,7 +171,7 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // joint Σ, so a warm resume cannot cross the flip.  The clock carry itself is not
         // snapshotted (it cold-starts, which gives one epoch of white-clock behaviour), but
         // the levels that resume were shaped by it.  Appended only when armed, beside the
-        // F3/ZWD/iono tags, so a snapshot written with it off keeps its fingerprint.
+        // tags above, so a snapshot written with it off keeps its fingerprint.
         // The whole variance ladder is included: q, rate_q, rate_var0 and the ISB flag
         // each change the prior's weight, and jump_k changes which epochs carried anything.
         if (config_.networkCarryRxClockInBlock()) {
@@ -188,23 +183,23 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
             add(fmt::format("{}", config_.networkCarryRxClockJumpK()));
             add(fmt::format("{}", config_.networkCarryRxClockIsb()));
         }
+        // All-channel mode decides which columns exist: a receiver
+        // inter-signal code state per extra code and per band, a float ambiguity per extra
+        // phase, and the shared satellite families those rows feed.  A resume across the
+        // flip would restore a carry whose column set the other side does not have, the
+        // same argument as for the second code and phase channels below.  Appended only
+        // when armed, so a snapshot written with it off keeps its fingerprint.
+        if (config_.networkChannelModeAll()) add("chanmode:all");
         // Second code channel: adds a receiver inter-signal state per
         // station and band-1 companion, carried by the receiver code-bias carry whose
         // stash is in the snapshot.  A resume across the flip would restore (or fail to
         // restore) receiver code-bias columns that the other side does not have, and the
         // companion code rows that determine them change the local block every epoch, so
         // the knob affects the solve on both counts.  Appended only when armed, beside the
-        // F3/ZWD/iono/rxclk tags, so a snapshot written with it off keeps its
+        // tags above, so a snapshot written with it off keeps its
         // fingerprint.  The allow-list and the sigma scale are included: the list decides
         // which columns exist, and the scale sets the weight at which their rows were
         // accumulated.
-        // All-channel mode decides which columns exist: a receiver
-        // inter-signal code state per extra code and per band, a float ambiguity per extra
-        // phase, and the shared satellite families those rows feed.  A resume across the
-        // flip would restore a carry whose column set the other side does not have, the
-        // same argument as for SCC and SID phase 6a.  Appended only when armed, so a
-        // snapshot written with it off keeps its fingerprint.
-        if (config_.networkChannelModeAll()) add("chanmode:all");
         if (config_.networkSecondCodeChannel()) {
             add("scc:2ndcode");
             for (const auto& sig : config_.networkSecondCodeSignals()) add(sig);
@@ -213,7 +208,7 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // Second phase channel: adds a float ambiguity per extra
         // arc and feeds an existing satellite phase-bias family from stations that did not
         // support it before, so the carried levels and the shared border in a snapshot
-        // mean different things across the flip.  Appended only when armed, as for SCC,
+        // mean different things across the flip.  Appended only when armed, as above,
         // so a snapshot written with it off keeps its fingerprint.  The allow-list and the
         // sigma scale are included: the list decides which arcs exist, and the scale sets
         // the weight at which their rows were accumulated.
@@ -226,8 +221,8 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // on the arc ledger's admitted lifecycle, which decides which carried levels
         // survive a break.  A resume across the flip would restore levels that the other
         // side would have refloated, and the ledger is not snapshotted (by design), so the
-        // two sides cannot be reconciled afterwards.  Appended only when armed, as for
-        // SCC, so a snapshot written with it off keeps its fingerprint.  The no-verdict
+        // two sides cannot be reconciled afterwards.  Appended only when armed, as above,
+        // so a snapshot written with it off keeps its fingerprint.  The no-verdict
         // policy is included because it decides the disposition of the arcs the raw
         // tiers never saw.
         if (config_.networkLedgerReentry()) {
@@ -241,7 +236,7 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // the carried ambiguities a resumed run restores were accumulated against a
         // different realization of that family's datum.  The drop memo that decides it is
         // not snapshotted (by design), so the two sides cannot be reconciled afterwards.
-        // Appended only when armed, as for SCC, so a snapshot written with it off keeps
+        // Appended only when armed, as above, so a snapshot written with it off keeps
         // its fingerprint.  network.ledger_screens is not appended: it is an observatory
         // and changes no byte of the solve, the same trace-knob rule the loader's
         // fingerprint-safe list applies.
@@ -279,7 +274,7 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         add(fmt::format("{}", emit_clock_disc));
         add(fmt::format("{}", config_.networkEmitterStalenessHorizonS()));
         add(fmt::format("{}", sticky_pivot));    add(fmt::format("{}", scoped_handover));
-        // Handover S-transform (queue 1(b)): it changes which carried priors fold at a
+        // Handover S-transform: it changes which carried priors fold at a
         // pivot switch, so a resume across a toggle change would read a carry that was
         // (or was not) re-expressed in the wrong datum.  Appended only when armed, as for
         // phase_datum_eq34, so the off path keeps its fingerprint.  When armed, the
@@ -300,7 +295,7 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         add(fmt::format("{}", emit_gen_id));
         add(fmt::format("{}", config_.estimateNetworkSatCodeBias()));
         add(fmt::format("{}", config_.estimateNetworkIonoSh()));
-        // The receiver code-bias datum (RXCB-DATUM) changes which receiver-DCB combination
+        // The receiver code-bias datum changes which receiver-DCB combination
         // is realized, so the carried rx-CB levels mean something different with it armed.
         // Appended only when armed, like the others.
         if (config_.networkRxCodeBiasDatum())
@@ -319,7 +314,7 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         if (nc.phase_colour_state)
             add(fmt::format("pcol:{}:{}:{}:{}", nc.phase_colour_sigma_zen_m, nc.phase_colour_tau_s,
                             nc.phase_colour_elev_floor_deg, nc.phase_colour_max_gap_s));
-        // rx-CB carry: appended only when armed (the shl2/iono2 pattern), so a snapshot
+        // rx-CB carry: appended only when armed, so a snapshot
         // written with it off keeps its fingerprint.
         if (rx_cb_on) {
             add("rxcb:1"); add(fmt::format("{}", rx_cb_q));
@@ -327,7 +322,7 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // The clock anchor changes the temporal model of the carried satellite clock: a
         // snapshot written by an anchored run carries variances produced by a different
         // process, and its per-satellite anchored/loose state is not carried across on
-        // purpose (a warm resume is an invariant #1 event, so every satellite re-earns the
+        // purpose (a warm resume is a jump event for it, so every satellite re-earns the
         // anchor).  Mixing the two inside one lineage would fold a stiffness without the
         // evidence behind it.  Appended only when armed, so a snapshot written with it off
         // keeps its fingerprint.
@@ -337,11 +332,11 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
                             ctx.knobs.cta_k, ctx.knobs.cta_abs_m,
                             ctx.knobs.cta_sigma_floor_m, ctx.knobs.cta_recouple_ep,
                             ctx.knobs.cta_resolve));
-        // Gauge-free fold (§2.1): a snapshot written by a gauge-free run holds a carry whose
+        // Gauge-free fold: a snapshot written by a gauge-free run holds a carry whose
         // clock information is in a different subspace, so a resume cannot cross the
         // flip.  Appended only when armed, so a plain-anchor lineage keeps its fingerprint.
         if (ctx.knobs.carry_gauge_free) add("cta:gf");
-        // Guard statistic (§2.1 bisection): the denominator decides which epochs trip, and a
+        // Guard statistic: the denominator decides which epochs trip, and a
         // trip withdraws a prior and re-solves the epoch, so two runs that differ only here
         // produce different carried state and cannot resume across each other.  Appended
         // only when the resolved pair differs from what `auto` would choose, so a lineage
@@ -366,14 +361,13 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         if (ctx.knobs.pivot_election != 0)
             add(fmt::format("piv:{}:{:.0f}:{:.0f}", ctx.knobs.pivot_election,
                             ctx.knobs.pivot_election_horizon_s, ctx.knobs.pivot_election_step_s));
-        // Carry VCE apply (M2 v2): the variance factor multiplies every carry fold
+        // Carry VCE (variance component estimation) apply: the variance factor multiplies every carry fold
         // variance, so a carried (value, var) pair means a different prior with it armed
         // than without.  That makes it a fingerprinted knob, unlike the carry_vce monitor,
         // which is fingerprint-free.  The fingerprint is necessary but not sufficient here:
         // both legs of an apply-on chain fingerprint identically while α² itself is not
-        // snapshotted, so networkTryWarmResume refuses the resume outright (spec §8, the
-        // one blocking deferral).  Appended only when armed, so a snapshot written with it
-        // off keeps its fingerprint.
+        // snapshotted, so networkTryWarmResume refuses the resume outright.  Appended
+        // only when armed, so a snapshot written with it off keeps its fingerprint.
         if (config_.networkCarryVceApply()) {
             add("vceapply:1");
             add(config_.networkCarryVceApplyFamilies());
@@ -416,18 +410,18 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // only when armed, so a snapshot written with it off keeps its fingerprint.
         if (config_.getNetworkConfig().disc_mark_scope == "channel")
             add("discscope=channel");
-        // Epoch decimation changes the carried-state cadence, so a resume has to match it
-        // (T2e).  Appended only when != 1, so a config without decimation keeps its
+        // Epoch decimation changes the carried-state cadence, so a resume has to match it.
+        // Appended only when != 1, so a config without decimation keeps its
         // fingerprint.  The DD-trace stride is trace-only and left out on purpose: arming
         // a trace on resume does not invalidate an untraced snapshot.
         if (nc.epoch_decimation_n != 1)
             add(fmt::format("edecim={}", nc.epoch_decimation_n));
-        // The GM deviation (T5) changes the estimation (it is not trace-only), and its
+        // The Gauss-Markov deviation changes the estimation (it is not trace-only), and its
         // carry is not persisted in the snapshot, so a resume across a tau change has to
         // cold-start.
         if (shc.rep_error_tau_s > 0.0)
             add(fmt::format("shdevtau={}", shc.rep_error_tau_s));
-        // Dual-layer ionosphere (Iono-2): the second shell adds carried SH coefficients
+        // Dual-layer ionosphere: the second shell adds carried SH coefficients
         // whose meaning depends on its degree and height (a resume across a re-layering
         // would fold layer-fitted coefficients into a different shell geometry).  Appended
         // only when armed, so a single-layer config keeps its fingerprint.
@@ -439,7 +433,7 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // reason for the token.  The per-column coupling data (M_r rows, ŝ_prev, P_prev) is
         // persisted, but only into a format-v3 snapshot written under
         // network.state_snapshot_coupling_capture, and only a reader that arms
-        // network.resume_coupling_restore rebuilds it (§18.12); a v1/v2 file carries none
+        // network.resume_coupling_restore rebuilds it; a v1/v2 file carries none
         // of it, and a restored row degrades to a plain diagonal.  The token stays in
         // either case (removing it would strand every stored seed).  Appended only when
         // armed, so a snapshot written with it off keeps its fingerprint.
@@ -498,8 +492,9 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // trace class and stays out of the fingerprint.
         if (ctx.knobs.clm_raise)
             add(fmt::format("clmraise={}", ctx.knobs.clm_raise));
-        // RXCB-IN-BLOCK changes what a carried receiver code-bias entry is (a block row with
-        // a border regression instead of a diagonal prior); appended only when armed.
+        // The in-block receiver code bias changes what a carried receiver code-bias entry is
+        // (a block row with a border regression instead of a diagonal prior); appended only
+        // when armed.
         if (ctx.knobs.rxcb_blk)
             add(fmt::format("rxcbblk={}", ctx.knobs.rxcb_blk));
         // A drop that decouples at birth strength changes the carried state; appended
@@ -515,7 +510,7 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
             add(fmt::format("carrycplgauge={}", ctx.knobs.carry_cpl_gauge));
         if (ctx.knobs.carry_cpl_reinit)
             add(fmt::format("carrycplreinit={}", ctx.knobs.carry_cpl_reinit));
-        // The CB-excursion guard (SPEC_day129_frame_guards phase 2.1) changes what a
+        // The code-bias excursion guard (network.cb_excursion_reinit) changes what a
         // carried code bias means across an excursion (a reinit-decorrelated state against
         // a stiff continuation), and its pending-bump queue is not snapshotted, so a resume
         // that flips it would fold a carry of the wrong kind and could drop a queued
@@ -558,13 +553,13 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         //   resume response         zwd_seam_reseed, resume_frame_restore,
         //                           resume_slip_warmup_ep, resume_coupling_restore,
         //                           resume_d5_warmup_ep,
-        //                           resume_datum_restore (RS-3, §21.7),
-        //                           resume_emit_restore (RS-5, §21.10),
-        //                           resume_station_restore{,_rxcb} (RS-6, §21.13),
-        //                           resume_signal_canon_restore (RS-8, §21.16),
-        //                           resume_border_restore (RS-7, §21.14),
-        //                           resume_rxcb_lin_restore (RS-9, §21.18),
-        //                           zwd_seam_reseed_q (RS-10b, §21.21)
+        //                           resume_datum_restore,
+        //                           resume_emit_restore,
+        //                           resume_station_restore{,_rxcb},
+        //                           resume_signal_canon_restore,
+        //                           resume_border_restore,
+        //                           resume_rxcb_lin_restore,
+        //                           zwd_seam_reseed_q
         //
         // Notes on individual entries:
         //
@@ -575,13 +570,13 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         //   (`resume.adm` makes the first restored epoch a screened restore rather
         //   than a birth, the one case the seed-birth tripwire cannot see.)
         //
-        //   state_snapshot_datum_capture (RS-3) is a representation question like the
+        //   state_snapshot_datum_capture is a representation question like the
         //   coupling capture below, with one difference: its rows use the existing header
         //   (as the optional var_first field does), so a binary that predates it rejects
         //   the file on the unknown record tag rather than on the header literal.  Both are
         //   this format's documented cold-start signal and both throw under
         //   state_snapshot_require, so the safety is the same; keeping the header stable
-        //   lets an RS-3 A/B diff two snapshots and see only the new rows.  The datum
+        //   lets an A/B diff two snapshots and see only the new rows.  The datum
         //   quantities themselves are fingerprinted by the knobs that create them
         //   (phase_datum_eq34, code_datum_time_linked), so a writer/reader mismatch on
         //   their meaning cannot occur.
@@ -594,7 +589,7 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         //   `snap`.  The coupling arithmetic tokens those rows depend on are already in fp
         //   above, so a writer/reader mismatch on the coupling arithmetic cannot occur.
         //   The same reasoning covers the unconditional Z-row and frame-row captures and
-        //   the RS-5 emit-layer (state_snapshot_emit_capture) and RS-6 station-layer
+        //   the emit-layer (state_snapshot_emit_capture) and station-layer
         //   (state_snapshot_station_capture) captures: both add rows under the existing
         //   header and leave the writer's products and traces byte-identical, and the
         //   quantities themselves are fingerprinted by the knobs that create them
@@ -602,7 +597,7 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         //   carry_rx_code_bias and global_vtec_sh.rep_error_tau_s for the two station
         //   carries), so a writer/reader mismatch on their meaning cannot occur.
         //
-        //   state_snapshot_signal_capture (RS-8, §21.16) is the same representation
+        //   state_snapshot_signal_capture is the same representation
         //   question: CN rows under the existing header, read from the station models after
         //   the emit, with the writer's products and traces byte-identical.  The station
         //   roster (which defines what the row's index means) is already in fp above, so an
@@ -619,13 +614,13 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // on.  (zwd_on / zwd_q above stay fingerprinted, because the continuous carry
         // affects the solve on both sides of a seam.)
         live_fingerprint = NetworkStateSnapshotIO::fnv1a64(fp);
-        // CTU G5: the same fingerprint with the CTU tokens removed, so a run
-        // that switches the exact update, the bound raise, the in-block rx-CB carry or the
-        // phase-space guard ON can resume from a snapshot written without them (the
-        // switch-on seam that G5 grades).  The reverse direction is not accepted:
+        // The same fingerprint with the tokens of the exact update, the bound raise, the
+        // in-block rx-CB carry, the drop decouple and the phase-space guard removed, so a run
+        // that switches them ON can resume from a snapshot written without them (the
+        // switch-on seam).  The reverse direction is not accepted:
         // a snapshot written with them holds their state, which a run without them
         // would read under the old rules.  Only under network.ctu_switch_on_resume: the
-        // seam failed G5, and the ledger rows (the knobs armed on the goldens) are
+        // seam failed its grading, and those knobs are
         // fresh convergence only.  Off, the twin is 0 and the resume gate compares the
         // live fingerprint alone.
         ctx.carry.live_fingerprint_ctu_off = 0;

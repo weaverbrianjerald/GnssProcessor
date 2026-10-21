@@ -2,27 +2,21 @@
 /**
  * @file RowClassify.hpp
  * @brief The shared row classifier for every assembled network row, read from the row's
- *        declared contribution kind, and the shared-column family pass
- *        (INC-0 of docs/SPEC_prefit_census_observability.md;
- *        docs/refound/NOM2_network_object_model_rows_2026-10-09.md).
+ *        declared contribution kind, and the shared-column family pass.
  *
  * `classifyRow` and the shared-column family/label pass live here so that the
- * attribution (`src/core/network/qc/RhsAttrib.cpp`), the prefit census
- * (INC-1), the structural fuse (INC-2), the seed-birth tripwire (INC-3), the
- * topology ledger (INC-4), the redundancy census and its riders all use one verdict
+ * attribution (`src/core/network/qc/RhsAttrib.cpp`), the prefit instrument
+ * (`network/qc/PrefitCensus.hpp`: census, structural fuse, seed-birth tripwire,
+ * topology ledger), the redundancy census and the other row readers all use one verdict
  * about what a row is.
  *
  * ## Where a row's class comes from
  *
  * Every row of a station block carries a @ref RowTag, appended by the site that built
  * the row (network/assembly/Contributions.hpp).  The class is a function
- * of the tag's kind (@ref rowClassOfKind), read in one place.  Before this step the
- * class was inferred: phase from a satellite phase-bias partial or a touch above 0.5 on
- * an ambiguity column listed in @c R.pl_amb, code from a satellite code-bias partial,
- * coupling from the row's position after @c R.cpl_row_start.  That inference filed the
- * phase rows of a station-unique (satellite, signal) as @c obs_other until the carry was
- * warm (no phase-bias column, an empty @c pl_amb) and the code rows of a station-unique
- * code signal as @c obs_other (no code-bias column); docs/refound/NOM_network_object_model_2026-10-08.md section 16, suspect 3.
+ * of the tag's kind (@ref rowClassOfKind), read in one place.  It is not inferred from
+ * the row's coefficients, which filed the phase and code rows of a station-unique
+ * (satellite, signal) as @c obs_other.
  *
  * ## What a class means
  *
@@ -37,10 +31,9 @@
  *  - @c iono_sh_row: the SH-VTEC to slant-ionosphere tie rows.  A data class, but it
  *    carries no receiver clock, so the census does not common-mode-centre it.
  *  - @c pivot_pin / @c local_pin_row: the station constraint rows (ambiguity and eq34
- *    pins, GLONASS anchors, GIM ionosphere rows, SD-EWL rows) and the phase-colour prior
+ *    pins, GLONASS anchors, GIM and zero-ionosphere rows, SD-EWL rows) and the phase-colour prior
  *    rows: a hard gauge pin when the row's weight is at least
- *    @ref kNetPivotPinWeight, a soft local prior or anchor row otherwise (the weight
- *    rule the inference used for a row with no shared partial).
+ *    @ref kNetPivotPinWeight, a soft local prior or anchor row otherwise.
  *  - @c cpl_row: the coupling rows and the whitened carried-prior block rows
  *    (@ref contributionInCouplingRegion); they are statements about the carry, not data.
  *
@@ -51,12 +44,11 @@
  * ## The RAIM pool's admission rule
  *
  * The carried-phase RAIM pools (the post-fit pass, Raim.cpp, and the within-epoch
- * assess, SolveGlue.cpp) admit a row to the pool of an ambiguity column when its
+ * assess, RaimWithinEpoch.cpp) admit a row to the pool of an ambiguity column when its
  * coefficient on the column exceeds 0.5 and its kind is one @ref raimPoolAdmitsKind
  * declares: the observation phase rows, the coupling and block carried-prior rows, and the
  * SD-EWL constraint rows.
- * That is today's population stated as a rule (suspect 1): the
- * prior rows are in it on purpose until a later science decision changes that.  Every
+ * The prior rows are in it on purpose until a later science decision changes that.  Every
  * admission is counted per kind (@c RaimPoolAdmissionTally, network/qc/Raim.hpp), and a
  * row of any other kind that clears 0.5 is counted as refused (expected 0).
  *
@@ -96,8 +88,8 @@ enum class NetColFam : char { Sh, Pb, Cb, Clk, Other };
  * (@c Sh, either shell) unless it is a clone (a clock clone, or a phase- or
  * code-bias clone) or a shared-history column, which are
  * @c Other, as is a column out of range.  A bias clone is not a bias of its family: its
- * label ("PBC:", "CBC:") never matched the "PB:" and "CB:" prefixes this function
- * replaced, and its column identity is withheld (@c sharedColumnIdentity is false).
+ * label ("PBC:", "CBC:") does not match the "PB:" and "CB:" prefixes, and its column
+ * identity is withheld (@c sharedColumnIdentity is false).
  *
  * @param est The estimator whose current epoch layout is being classified.
  * @param col The shared column.
@@ -128,8 +120,8 @@ inline constexpr int kNetDataClasses = 4;
 /// and eq34 pins fold at 1e10.
 inline constexpr double kNetPivotPinWeight = 1e9;
 
-/// @return Whether @p c is a data class: an observation equation or an
-///         SH↔slant tie row.  Pins and coupling rows are excluded.
+/// @return Whether @p c is a data class: an observation equation, an unclassified row
+///         or an SH↔slant tie row.  Pins and coupling rows are excluded.
 inline constexpr bool isDataRowClass(NetRowClass c) {
     return static_cast<unsigned char>(c) < static_cast<unsigned char>(kNetDataClasses);
 }
@@ -168,7 +160,7 @@ bool isPhaseObservationKind(ContributionKind k);
  * | @c DataCode, @c DataCodeCompanion | @c obs_code |
  * | @c DataPhase, @c DataPhaseSecond | @c obs_phase |
  * | @c ShIonoTie | @c iono_sh_row |
- * | @c AmbiguityPin, the three eq34 rows, both GLONASS anchors, @c GimIono, @c SdEwl, @c PhaseColourBirth, @c PhaseColourBackstop | @c pivot_pin when @p w >= @ref kNetPivotPinWeight, else @c local_pin_row |
+ * | @c AmbiguityPin, the three eq34 rows, both GLONASS anchors, @c SimZeroIono, @c GimIono, @c SdEwl, @c PhaseColourBirth, @c PhaseColourBackstop | @c pivot_pin when @p w >= @ref kNetPivotPinWeight, else @c local_pin_row |
  * | @c CouplingScalar, the six @c Block*Carry kinds | @c cpl_row |
  * | every other kind (a diagonal prior or a shared kind, which no row should carry), and @c Unset | @c obs_other (unclassified) |
  *
@@ -219,13 +211,12 @@ NetRowClass classifyRow(const StationAssembly& R, Eigen::Index row, std::string*
  * (@c CouplingScalar and the six @c Block*Carry kinds: a whitened block
  * row is one row of L⁻¹ and touches the ambiguity columns pushed before its own), and the
  * SD-EWL constraint rows (@c SdEwl: whitened between-satellite rows on the ambiguity
- * columns, which the SD-EWL smoke measured clearing 0.5).  The rule
- * reproduces the population the coefficient test alone admitted before this change;
- * the prior and constraint rows are kept on purpose (suspect
- * 1, and the science question of whether they stay).
+ * columns, which were measured clearing 0.5).  The rule
+ * reproduces the population the coefficient test alone admits; the prior and constraint
+ * rows are kept on purpose, pending the science question of whether they stay.
  *
  * @param k The row's kind.
- * @return True for the eleven admitted kinds.
+ * @return True for the ten admitted kinds.
  */
 bool raimPoolAdmitsKind(ContributionKind k);
 
@@ -254,8 +245,7 @@ bool rowTagNamesColumn(const RowTag& row, const RowTag& column);
 
 /**
  * @brief The carried-phase RAIM pools' admission of one row to the pool of one ambiguity
- *        column, under both settings of @c network.raim_pool_data_rows_only (
- *        docs/refound/RPA_raim_pool_data_rows_2026-10-08.md).
+ *        column, under both settings of @c network.raim_pool_data_rows_only.
  *
  *  - **Off** (today's declared rule): the row's coefficient on the column exceeds 0.5 and
  *    @ref raimPoolAdmitsKind admits its kind, so a whitened carried-prior row enters the
@@ -285,9 +275,9 @@ bool raimPoolAdmitsRow(const RowTag& row, bool clears, const RowTag& column,
  *        the topology ledger's column events).
  *
  * The shared layout is rebuilt every epoch, so this map is not valid across
- * epochs.  A label lookup that throws falls back to @c "col<index>" (family
- * @c Other) instead of aborting the walk, so a diagnostic degrades instead of
- * stopping the run.  A row's class does not read it (@ref classifyRow reads the tag).
+ * epochs.  A label lookup that throws falls back to @c "col<index>" instead of aborting
+ * the walk, so a diagnostic degrades instead of stopping the run.  A row's class does
+ * not read it (@ref classifyRow reads the tag).
  */
 struct SharedColumnMap {
     Eigen::Index             n{0};        ///< number of shared columns.

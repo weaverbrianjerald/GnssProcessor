@@ -19,7 +19,7 @@
  *
  * Scope `all` is therefore the upper bound on what integer information buys on this
  * bed, and a direct test of the root-cause claim that the non-integer error is
- * 99.3 % ionosphere (memory `project_why_non_integer_rootcause`).  Slant ionosphere
+ * 99.3 % ionosphere.  Slant ionosphere
  * that drops to the phase noise floor confirms the claim; ionosphere that stays wrong
  * refutes it, and the other parameters show where the error went instead.
  *
@@ -30,12 +30,12 @@
  * `oracle_pin` event is armed, and `network.cycle_slip.oracle_truth_root` is empty or
  * does not exist; @ref networkOraclePinLoad throws when any roster station lacks
  * `truth_ambiguities.csv` or `truth_slips.csv`.  The pin is a diagnostic: it is never
- * promoted, never appears in a golden, and never enters the config promotion ledger.
+ * promoted and never appears in a golden config.
  *
  * With no `oracle_pin` event in `network.inject.events[]` (or with network.inject
  * disabled) the object is never constructed and every call site tests a null pointer
  * first, so no branch below is reachable and the output is structurally
- * byte-identical (standing invariant #6).
+ * byte-identical.
  *
  * ## The gauge: why the pin is a two-way fit and not `lambda * N_true`
  *
@@ -100,8 +100,8 @@
  *
  *     Λ = 1 / σ², η = Λ · (pin.value_m − x_lin(amb_idx)).
  *
- * Shifting `x_lin` alone is an exact solve no-op (docs/SPEC_lane_slip_response.md
- * §7.2), because the carried prior's RHS absorbs the shift.  The row above is a real
+ * Shifting `x_lin` alone is an exact solve no-op, because the carried prior's RHS
+ * absorbs the shift.  The row above is a real
  * (Λ, η) pair and therefore actuates; the pin does not also write
  * @ref LocalCarry::value_abs.
  *
@@ -110,7 +110,8 @@
  *
  * The row is independent of the leveling carry: it is applied whether or not the arc
  * has a @ref LocalCarry entry, whether or not the slip response freed the arc this
- * epoch, and regardless of the F3 local block.
+ * epoch, and regardless of the whitened local block (`network.phase_leveling_local_block`).
+ * The step runs only where `legacy_local_inject` holds (phase leveling warm).
  */
 
 #include "network/state/Entities.hpp"      // net::ArcTable
@@ -195,15 +196,15 @@ struct NetworkOraclePin {
     };
     std::map<std::tuple<int, std::string, std::string>, Pin> table;
 
-    // ---- counters (standing invariant #4) ----------------------------------
+    // ---- counters ----------------------------------------------------------
     long long epochs_active{0};        ///< Epochs where >= 1 event had started (table rebuilt).
     long long rows_injected{0};        ///< Arc-epochs folded as a prior row.
     long long arcs_first_pinned{0};    ///< Distinct arcs entering the table for the first time.
     long long arcs_released{0};        ///< Arcs pinned last epoch that are absent this epoch.
     long long no_anchor{0};            ///< In scope, but the family had no usable anchor this epoch (arc-epochs).
     long long no_truth{0};             ///< In scope, but the arc's truth wavelength is not positive (arc-epochs); arcs with no truth row are never visited.
-    long long no_station_term{0};      ///< In scope, but station r's band-j offset u could not be fitted (< 3 arcs).
-    long long no_column{0};            ///< Table hit at PASS B, but the ambiguity column was not in this epoch's A_r.
+    long long no_station_term{0};      ///< In scope, but the band-j offset u of station r or of the family's anchor station could not be fitted (< 3 arcs).
+    long long no_column{0};            ///< Table hit at PASS B, but no row was built (column not in this epoch's A_r, or non-finite).
     long long gauge_pinned_skipped{0}; ///< Table hit at PASS B on a gauge-pinned (anchor) arc; never folded.
     long long fit_iters_total{0};      ///< Sum of determination rounds over active epochs.
     long long fit_iters_last{0};       ///< Determination rounds of the last active epoch (1 = every station resolved directly from the root anchor).
@@ -213,7 +214,7 @@ struct NetworkOraclePin {
 
     /// Arcs ever in the table; drives @ref arcs_first_pinned.
     std::set<std::tuple<int, std::string, std::string>> ever_pinned;
-    /// The previous epoch's table keys.  Both edges of invariant #7 are taken against
+    /// The previous epoch's table keys.  The entry and exit edges are taken against
     /// it, and both emit a per-arc `network_events.csv` row (action `pinned` /
     /// `released`), so the pinned set at any epoch is (entries − exits) up to that
     /// epoch.  The counters alone are not enough: membership reconstructed from the
@@ -239,7 +240,7 @@ networkOraclePinParseAmbCsv(const std::string& path);
 /**
  * @brief The true integer of an arc at continuous-GPS second @p now_s.
  *
- * `N(t) = N_int + Σ delta_cycles over every truth slip with s <= t`.  The bound is
+ * `N(t) = N_int + Σ delta_cyc over every truth slip with s <= t`.  The bound is
  * inclusive, so a slip stamped exactly at @p now_s counts (the observation at that
  * epoch already carries it).
  */
@@ -308,30 +309,19 @@ struct NetworkEpoch;            // network/driver/Epoch.hpp
  * registration, and before PASS B.  While no event is due, the table and the
  * previous-epoch keys are cleared and no counter moves.
  *
- * Epoch form (generated by scripts/nom_ep1_cut.py): the run and the epoch
- * replace the explicit parameters; the definition binds each former parameter in its preamble,
- * under its former name.
- *
  * @param run The run (network/driver/Run.hpp). Written through non-const bindings: run.ctx (ctx),
  *            run.traces (traces). Read: run.config (config_), run.setup.stations (stations),
  *            run.log (log).
- * @param ep The epoch (network/driver/Epoch.hpp), read only. Bindings: ep.se.time (t).
- *
- * The former parameters, by binding:
- *   - @p ctx = run.ctx.
- *   - @p config_ = run.config.
- *   - @p stations = run.setup.stations.
- *   - @p t = ep.se.time.
- *   - @p log = run.log.
- *   - @p traces = run.traces.
+ * @param ep The epoch (network/driver/Epoch.hpp), read only. Bindings: ep.se.time (t),
+ *            ep.events.phase_datum.this_epoch_anchor.
  */
 void networkOraclePinEpoch(NetworkRun& run, const NetworkEpoch& ep);
 
 /**
  * @brief Run-end clause (one log line, every counter of @ref NetworkOraclePin).
  *
- * Standing invariant #4: a run with `rows_injected == 0` has measured nothing, and
- * the line states that in-band.
+ * A run with `rows_injected == 0` has measured nothing, and the line states that
+ * in-band.
  *
  * @return 0 always.  An event that never fired is reported by the injector's own
  *         run-end check, in which this kind participates unchanged.
@@ -339,7 +329,7 @@ void networkOraclePinEpoch(NetworkRun& run, const NetworkEpoch& ep);
 int networkOraclePinRunEnd(const NetworkOraclePin* pin,
                            const std::shared_ptr<spdlog::logger>& log);
 
-// ---- Run-end reports (generated by scripts/nom_td_cut.py) ----
+// ---- Run-end reports ----
 
 struct NetworkRunEndView;
 
@@ -348,8 +338,8 @@ struct NetworkRunEndView;
  *
  * The table's row for the sim-only oracle ambiguity pin; it returns the report's result.
  *
- * Gate: none of its own: the row calls the report above on every run, as the teardown
- * did, and that report applies its own.
+ * Gate: none of its own: the row calls the report above on every run, and that
+ * report applies its own.
  *
  * @param v The run at its end (network/runend/RunEnd.hpp).
  * @return the oracle pin report's result, 0 always (it enters the exit-code combination
@@ -359,7 +349,7 @@ int networkOraclePinRunEnd(const NetworkRunEndView& v);
 
 // ---- End of the run-end reports ----
 
-// ---- PASS B station steps, declarations (generated by scripts/nom_pb1b_cut.py) ----
+// ---- PASS B station steps, declarations ----
 
 struct StationBuild;                       // network/assembly/StationBuild.hpp
 struct StationCarryFrame;                  // network/assembly/StationBuild.hpp
@@ -369,9 +359,8 @@ enum class StationStep : std::uint8_t;     // network/assembly/StationBuild.hpp
  * @brief The simulation-only oracle ambiguity pin's diagonal prior rows.
  *
  * Step `oracle_pin` of kStationCarrySteps (network/assembly/StationBuild.hpp); its kinds:
- * PriorAmbiguityOraclePin. It returns at once unless the frozen enclosing conditions
- * legacy_local_inject and `opin_on`. Records: opin_*. The frozen text of networkPassB_'s
- * produce loop below its bindings.
+ * PriorAmbiguityOraclePin. It returns at once unless `legacy_local_inject` holds and the
+ * pin table is non-empty (`opin_on`). Records: the opin_* counters of StationAssembly.
  * @param carry The station's carry frame (the build, the priors, the coupling builder, the
  *              block columns).
  */

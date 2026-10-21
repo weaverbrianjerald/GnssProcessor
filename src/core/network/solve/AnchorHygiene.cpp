@@ -1,7 +1,7 @@
 /**
  * @file AnchorHygiene.cpp
- * @brief eq34 reattach hygiene: arc ageing, eligibility verdicts and the INC-2
- *        bridge lifecycle.  The header describes the problem, the design and the
+ * @brief eq34 reattach hygiene: arc ageing, eligibility verdicts and the pin-bridge
+ *        lifecycle.  The header describes the problem, the design and the
  *        ordering contract.
  */
 
@@ -55,7 +55,7 @@ void networkAnchorHygiene(NetworkRunContext& ctx,
     const int    bridge_max  = ctx.knobs.pin_bridge_max_ep;
     if (!on) return;   // off: no map, no bridge, no counter (structurally inert)
 
-    net::SatSignalTable& sigs = ctx.entities.sat_signals;   // pin_bridge, pb_level_prev, anchor_incumbent (N4d)
+    net::SatSignalTable& sigs = ctx.entities.sat_signals;   // pin_bridge, pb_level_prev, anchor_incumbent
     net::NetworkEntities& entities = ctx.entities;   // written: arcs sat_signals
     using SG = net::SatSignalState;
     auto& ctr      = ctx.counters;
@@ -88,15 +88,13 @@ void networkAnchorHygiene(NetworkRunContext& ctx,
     // The two slip feeds are unioned because their gates are disjoint:
     // carry_slipped_ambs is the DD slip funnel (carry_invariant), and the
     // pending-reseed flag is the phase-leveling refloat (carry_warm).  Reading only
-    // one would leave a configuration running the other with no invariant-#1 response
-    // (the loader warns when neither is live).
+    // one would leave a configuration running the other with no slip response.
     const bool resume_seed = ctx.carry.anchor_age_resume_seed;
     ctx.carry.anchor_age_resume_seed = false;   // one-shot: the first live epoch only
     const int seed_age = resume_seed ? std::max(min_arc_ep, 1) : 1;
-    // The arc ledger's admitted age is the quantity this map counts, and the audit
-    // assigns this container the reader role
-    // (`runs/_msc/sid_audit_report_2026-09-22.md` E.2: "age is ep - ep_state_changed").
-    // S2 compares the two and counts disagreements; B2 takes the ledger's answer
+    // The arc ledger's admitted age is the quantity this map counts.  With
+    // network.ledger_screens on, the two are compared and disagreements counted; with
+    // network.ledger_anchor also on, the container takes the ledger's answer.
     // Both are reachable only while this seam runs, which needs
     // network.eq34_anchor_min_arc_ep, the pin bridge or the fresh-pin ramp armed.
     // On a posture with none of them the class has a zero denominator, and the
@@ -134,7 +132,7 @@ void networkAnchorHygiene(NetworkRunContext& ctx,
                 std::min<long long>(led_age, kArcAgeCap));
             if (led_clamped != counted) ++sid_ctr.age_disagree;
             // With the ledger anchor switch on, the container takes the ledger's age
-            // where the ledger has one (B2).  An arc the ledger has never admitted
+            // where the ledger has one.  An arc the ledger has never admitted
             // keeps the counted value; the alternative would seed a fresh age on an
             // arc the estimator has carried since before the ledger started observing it.
             if (sid_age_use) {
@@ -163,7 +161,7 @@ void networkAnchorHygiene(NetworkRunContext& ctx,
     //                      and no frame to protect.
     //   eligible_exists  - at least one tracking arc has reached min_arc_ep.
     const bool datum_retired = ctx.carry.last_datum_changed;
-    // Warm conditioning (spec addendum).  A cold pin does harm in proportion to the
+    // Warm conditioning.  A cold pin does harm in proportion to the
     // warm memory it contradicts, for example a realization the network emitted
     // seconds earlier.  A full cold start, a restart, or a return from an outage
     // longer than the horizon has no such memory; there the ungated behaviour (pin
@@ -220,8 +218,8 @@ void networkAnchorHygiene(NetworkRunContext& ctx,
         const bool handover_pending =
             (has_incumbent || was_bridged || was_blocked || prior_fresh) && !incumbent_live;
 
-        // (2a) An open bridge: apply the invariant-#1 event responses (slip, datum,
-        // stale) first, then the eligible-host test ("healed").  A slip on a key that has
+        // (2a) An open bridge: apply the event responses (slip, datum, stale) first,
+        // then the eligible-host test ("healed").  A slip on a key that has
         // also regained an eligible host is counted as a slip drop; the held level is
         // invalid either way, and the run-end counters then record the cause.
         bool reopen_barred = false;
@@ -247,8 +245,8 @@ void networkAnchorHygiene(NetworkRunContext& ctx,
                 // On slip, datum or stale, the held value is invalid while the key may
                 // still lack an eligible host.  Re-opening a bridge on the same
                 // (slipped, retired or expired) level would bypass the staleness bound
-                // and the invariant-#1 response, so reopening is barred this epoch and
-                // the key goes to the INC-1 eligibility verdict instead.
+                // and the event response, so reopening is barred this epoch and
+                // the key goes to the eligibility verdict instead.
                 reopen_barred = std::string(drop) != "healed";
             } else {
                 hyg.bridged.insert(amb);
@@ -268,10 +266,10 @@ void networkAnchorHygiene(NetworkRunContext& ctx,
         }
 
         // (2b) A reattach is required.  Bridge if armed and applicable; else block if
-        // INC-1 says no host has converged; else let the election pick (it prefers an
-        // eligible host by construction).  The bridge is also warm-conditioned: with no
-        // fresh realization there is no level worth holding, and pb_level_prev would be
-        // stale or absent.
+        // the eligibility gate says no host has converged; else let the election pick
+        // (it prefers an eligible host by construction).  The bridge is also
+        // warm-conditioned: with no fresh realization there is no level worth holding,
+        // and pb_level_prev would be stale or absent.
         const bool want_bridge = bridge_on && !reopen_barred && prior_fresh
                                  && (min_arc_ep <= 0 || !eligible_exists);
         if (want_bridge) {
@@ -293,7 +291,8 @@ void networkAnchorHygiene(NetworkRunContext& ctx,
             }
             // No harvested level (the key has never been solved, or the last kept
             // epoch did not carry it).  There is nothing to hold, so fall through:
-            // block if INC-1 demands it, otherwise let the election proceed.
+            // block if the eligibility gate demands it, otherwise let the election
+            // proceed.
             log->debug("Network (eq34 hygiene): {} wants a bridge but has no solved "
                        "level yet — falling back to the eligibility verdict.", amb);
         }
@@ -324,9 +323,10 @@ void networkAnchorHygiene(NetworkRunContext& ctx,
                      amb + " from " + (has_incumbent ? *inc : std::string("-")));
             }
         } else if (ctx.carry.anchor_blocked.erase(amb)) {
-            // A converged host appeared (or INC-1 is off): the hold releases and the
-            // election re-hosts normally.  The release is traced so the hold's duration
-            // can be read from network_events.csv without differencing counters.
+            // A converged host appeared (or the eligibility gate is off): the hold
+            // releases and the election re-hosts normally.  The release is traced so the
+            // hold's duration can be read from network_events.csv without differencing
+            // counters.
             ++ctr.hyg.blocks_released;
             emit("reattach_unblocked", satOf(amb),
                  best_i == static_cast<std::size_t>(-1) ? std::string{}
@@ -353,8 +353,8 @@ void networkAnchorHygiene(NetworkRunContext& ctx,
     });
 
     // --- (3) Realize the block: the key leaves the anchored union ---------
-    // The same disposition as the coverage gate (NetworkPhaseDatum
-    // networkBuildPhaseDatumCandidates): erase from union_keys so no shared column is
+    // The same disposition as the coverage gate in
+    // networkBuildPhaseDatumCandidates: erase from union_keys so no shared column is
     // registered and no election can pin it, then prune each tracking station's
     // phase-bias state so the per-station column sets stay consistent with the gated
     // union.  The key's phase rows still serve the satellite clock (each station's
@@ -384,7 +384,7 @@ void networkAnchorHygiene(NetworkRunContext& ctx,
     }
 }
 
-// ---- Run-end reports (generated by scripts/nom_td_cut.py) ----
+// ---- Run-end reports ----
 
 // Run-end report: phase-anchor hygiene: handover, cold fallback, PHASE_ANCHOR re-reference, eq34.
 int networkAnchorHygieneRunEnd(const NetworkRunEndView& v) {
@@ -392,10 +392,9 @@ int networkAnchorHygieneRunEnd(const NetworkRunEndView& v) {
     const std::shared_ptr<spdlog::logger>& log = v.log;
 
     // --- Two-edge continuous handover run-end telemetry --------------------------
-    // (docs/SPEC_pivot_visibility_gauge_defect.md §5.1).  The denominator is
-    // `reattaches`, the number of gauge changes the run made at all, which is counted
-    // whether or not the fix is armed: a run with zero handovers says nothing about the
-    // mechanism (invariant #4).  The two edges are then split: `handover_continuous`
+    // The denominator is `reattaches`, the number of gauge changes the run made at all,
+    // which is counted whether or not the fix is armed: a run with zero handovers says
+    // nothing about the mechanism.  The two edges are then split: `handover_continuous`
     // counts the frame-preserving handovers and `handover_cold` the unavoidable
     // re-realizations.  A cold handover is not a failure; it reports a frame step the
     // consumer has to be told about.
@@ -438,8 +437,8 @@ int networkAnchorHygieneRunEnd(const NetworkRunEndView& v) {
                       "That is a quiet window, not evidence the fix works.");
     }
 
-    // --- Cold anchor-fallback run-end telemetry (docs/SPEC_event_harness.md §15) --
-    // Three populations together describe what the pass did (invariant #4):
+    // --- Cold anchor-fallback run-end telemetry ----------------------------------
+    // Three populations together describe what the pass did:
     // usable_elected (the pass elects a usable candidate), rank_changed (that candidate
     // is not the station the coverage sweep takes first; the population the pass
     // targets), and no_usable_fallback (no candidate is usable, so the sweeps' cold path
@@ -473,11 +472,10 @@ int networkAnchorHygieneRunEnd(const NetworkRunEndView& v) {
                       "station today's coverage sweep takes first.  Byte-identical to OFF "
                       "on this window by construction, not by luck.",
                       entered);
-        // Satellite clause, iteration 2 (docs/SPEC_event_harness.md §15.8).  Rule (c):
-        // the distinct-anchor census is not recomputed here; it is read from the
-        // always-on counters the storm grade also reads (networkSplitReferencedSats, run
-        // every epoch whatever the knobs), so the clause and the grade agree by
-        // construction.
+        // Satellite clause: the distinct-anchor census is not recomputed here; it is
+        // read from the always-on counters (networkSplitReferencedSats, run every epoch
+        // whatever the knobs) that the common-band scope report also prints, so the two
+        // agree by construction.
         if (ctx.knobs.pd_candidacy_satellite) {
             const auto& C = ctx.counters;
             const double ep = C.n_cb_split_epochs > 0
@@ -516,9 +514,8 @@ int networkAnchorHygieneRunEnd(const NetworkRunEndView& v) {
         }
     }
 
-    // --- PHASE_ANCHOR carry re-reference run-end telemetry (queue item 1(d)) ------
-    // (docs/SPEC_pivot_visibility_gauge_defect.md §5.07.5 R1).  As in the handover
-    // block above, `reattaches` is the denominator (invariant #4), and an armed run
+    // --- PHASE_ANCHOR carry re-reference run-end telemetry -----------------------
+    // As in the handover block above, `reattaches` is the denominator, and an armed run
     // whose elections handed over while the re-reference set never populated is
     // reported as dead wiring.
     if (ctx.knobs.pa_carry_reref) {
@@ -545,10 +542,9 @@ int networkAnchorHygieneRunEnd(const NetworkRunEndView& v) {
     }
 
     // --- eq34 reattach hygiene run-end telemetry -------------------------------
-    // (docs/SPEC_eq34_reattach_hygiene.md).  An armed run whose gate never ran is a
-    // different failure from one that ran and found nothing to block (invariant #4), so
-    // the denominators (`epochs`, `arcs_tracked`) are reported first and an all-zero
-    // feed gets a warning rather than looking quiet.
+    // An armed run whose gate never ran is a different failure from one that ran and
+    // found nothing to block, so the denominators (`epochs`, `arcs_tracked`) are
+    // reported first and an all-zero feed gets a warning rather than looking quiet.
     if (ctx.knobs.anchor_hygiene_on) {
         const auto& h = ctx.counters.hyg;
         log->info("Network (eq34 hygiene): {} election pass(es), {} arc-epoch(s) aged; "

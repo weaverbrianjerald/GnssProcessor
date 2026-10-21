@@ -2,22 +2,21 @@
 /**
  * @file RedundancyCensus.hpp
  * @brief Redundancy and testability census: a statistical monitor for rows whose
- *        misfit no residual test can see (docs/SPEC_redundancy_census.md).
+ *        misfit no residual test can see.
  *
  * Measure-only and off by default.  It is not fingerprinted: it is a forward-only
  * readout and does not change the meaning of stored state (the same treatment as
  * rhs_attrib), so a shared-snapshot replay leg with only this
  * armed stays A/B-comparable against an unarmed control.  It changes no weight,
- * state or decision (standing invariant #6), and §7 of the spec assigns any
- * automatic response to the cross-flag to a separate change.
+ * state or decision, and the cross-flag has no automatic response.
  *
  * ## Why redundancy and not magnitude
  *
  * Magnitude alone cannot separate a fault from an extreme, and the two obvious
  * hard responses are both wrong.  A large raw innovation can be legitimate: a 1 ms
  * receiver clock step is 3·10⁵ m on every row of a station at once.  Excluding
- * single-frequency cells as a class violates the standing prefer-fallback
- * directive; single-frequency lines of sight are valuable data, and their problem
+ * single-frequency cells as a class discards valuable data; single-frequency
+ * lines of sight are valuable, and their problem
  * is not their band count but that some topologies leave them uncheckable.
  *
  * The discriminator used here is testability.  Per row, the local redundancy
@@ -40,7 +39,7 @@
  *   uncheckable (@f$r_i < \varepsilon@f$)  ×  large centred innovation (@f$s_i > S@f$)
  *
  * Neither half alone suffices.  Healthy single-frequency risers are uncheckable
- * with small @f$s@f$ and are kept, per the fallback directive.  Storm extremes
+ * with small @f$s@f$ and are kept.  Storm extremes
  * carry large @f$s@f$ on healthy @f$r@f$, and the redundant network absorbs and
  * localizes them.  The intersection identifies a parked error with a very small
  * false-positive surface, and it fires for as long as the cell stays parked,
@@ -48,14 +47,14 @@
  *
  * ## The two censuses
  *
- *  - **Row redundancy (INC-1):** per station and data class, the row count, the
+ *  - **Row redundancy:** per station and data class, the row count, the
  *    redundancy mass @f$\sum r_i@f$, the uncheckable count, and among uncheckable
  *    rows the largest centred @f$s_i@f$ with its (station, satellite, class)
  *    identity.  The cross-flag emits a `REDUNDANCY` / `uncheckable_hot_cell`
  *    event, rate-limited per cell.
- *  - **Unobservable locals (INC-2):** the state-side complement.  Local columns
+ *  - **Unobservable locals:** the state-side complement.  Local columns
  *    whose @f$N_{rr}@f$ LDLᵀ pivot is below a relative floor carry no information
- *    this epoch.  The one-observation-one-state case appears in INC-1 instead, as
+ *    this epoch.  The one-observation-one-state case appears in the row census instead, as
  *    @f$r \approx 0@f$, so the two censuses are complementary.  Emits
  *    `REDUNDANCY` / `unobservable_local` when a column enters the set (the
  *    decoupling edge) and counts the exit (the re-coupling edge).
@@ -63,8 +62,8 @@
  * ## Cost and the two-tier escalation
  *
  * A full sweep is a per-station GEMM against the datum-frame shared covariance,
- * measured at 100–300 ms/epoch on the 63-station FT63 tier (5–20 % of its
- * 1.6–1.8 s epoch).  The cost is controlled by two tiers:
+ * measured at 100 to 300 ms/epoch on a 63-station network (5 to 20 % of its
+ * 1.6 to 1.8 s epoch).  The cost is controlled by two tiers:
  *
  *  - `network.redundancy_census_stride` (recommended 10, one sweep per 5 min at
  *    30 s cadence).  A park persists for many epochs, so a detection latency of
@@ -72,7 +71,7 @@
  *  - `network.redundancy_escalate_sigma`, the cheap tier.  The centred prefit
  *    census is O(rows) and runs every epoch when this is armed; any station whose
  *    largest centred @f$s@f$ exceeds it gets a targeted single-station sweep at
- *    the next epoch (about 2–5 ms).  The cheap tier detects a large deviation;
+ *    the next epoch (about 2 to 5 ms).  The cheap tier detects a large deviation;
  *    the redundancy sweep then tests whether that row is checkable.
  *  - A flight-recorder trip epoch (an armed `network.rhs_attrib_tow` window)
  *    always forces a full sweep, so the attribution dump and the redundancy
@@ -83,7 +82,7 @@
  * Both halves of the cross-flag are structurally inflated during convergence, so
  * a healthy cold start can look like a network full of parked errors:
  *
- *  - **Many data rows read uncheckable.**  A 10-epoch FT63 cold start measured
+ *  - **Many data rows read uncheckable.**  A 10-epoch cold start on 63 stations measured
  *    43 % (mean r = 0.35).  A free ambiguity absorbs its own arc's phase misfit
  *    exactly, the same property that makes the post-fit phase pool identically
  *    zero.  The fraction falls as the ambiguities tighten.
@@ -100,12 +99,11 @@
  * thresholds are calibrated for, and the field gates run on, a converged warm
  * leg; a cold smoke exercises the wiring, not the alarm.
  *
- * ## Deviation from the spec
+ * ## Relation to the prefit census
  *
- * §4 has the redundancy census consume the INC-1 metric of the prefit census and warn
- * when armed without `network.trace_prefit_census`.  The centred metric is
- * computed here instead (identical definition, same hoisted classifier, one
- * extra O(rows) pass when both are armed), so no inert-guard is needed and the
+ * The centred metric is computed here rather than consumed from the prefit census
+ * (identical definition, same classifier, one extra O(rows) pass when both are
+ * armed), so no `network.trace_prefit_census` guard is needed and the
  * escalation channel works without the prefit census.
  */
 
@@ -137,46 +135,43 @@ struct NetworkEpoch;            // network/driver/Epoch.hpp
  * @brief Post-solve redundancy and unobservable-local census for this epoch.
  *
  * Call after the epoch's solve (the kernel's per-station LDLᵀ factors and the
- * shared covariance must be current), from the driver's SB_FRAMEDIAG block and
+ * shared covariance must be current), from the driver's FrameDiag observer slot and
  * before @c networkRhsAttribution, so the trip predicate is still unconsumed.
- * The driver gates the call on @c ctx.knobs.redun_census_on, so an unarmed run
- * never enters this translation unit.
- *
- * Epoch form (generated by scripts/nom_ep1_cut.py): the run and the epoch
- * replace the explicit parameters; the definition binds each former parameter in its preamble,
- * under its former name.
+ * The seam returns at once unless @c ctx.knobs.redun_census_on, so an unarmed run
+ * does no census work.
  *
  * @param run The run (network/driver/Run.hpp). Written through non-const bindings: run.ctx (ctx),
  *            run.traces (traces). Read: run.config (config_), run.log (log),
  *            run.setup.stations (stations), run.engines.est (est).
  * @param ep The epoch (network/driver/Epoch.hpp), read only. Bindings: ep.se (se),
  *           ep.solve.plan.shared_datum (plan_datum), ep.assembly.asm_res (asm_res),
- *           ep.assembly.est_index_of (est_index_of), ep.solve.x_s (x_s).
+ *           ep.assembly.est_index_of (est_index_of), ep.solve.x_s (x_s),
+ *           ep.events.qc.rhs_trip_pending (rhs_trip_pending).
  *
- * The former parameters, by binding:
- *   - @p ctx = run.ctx: Run context: holds the stride phase, the escalation latch, the event
+ * The bindings:
+ *   - @c ctx = run.ctx: Run context: holds the stride phase, the escalation latch, the event
  *     rate-limit memory and every counter.
- *   - @p config_ = run.config: Full configuration (reads @c network.redundancy_*).
- *   - @p log = run.log: Main run logger (one-shot degradation warnings).
- *   - @p traces = run.traces: Run traces (the `network_events.csv` sink).
- *   - @p se = ep.se: This synced epoch (week/tow stamp).
- *   - @p stations = run.setup.stations: Network station roster (names and parameter sets for
+ *   - @c config_ = run.config: Full configuration (reads @c network.redundancy_*).
+ *   - @c log = run.log: Main run logger (one-shot degradation warnings).
+ *   - @c traces = run.traces: Run traces (the `network_events.csv` sink).
+ *   - @c se = ep.se: This synced epoch (week/tow stamp).
+ *   - @c stations = run.setup.stations: Network station roster (names and parameter sets for
  *     labels).
- *   - @p est = run.engines.est: The solved estimator (covariance and kernel accessors).
- *   - @p plan_datum = ep.solve.plan.shared_datum: This epoch's minimum-constraint datum pins:
+ *   - @c est = run.engines.est: The solved estimator (covariance and kernel accessors).
+ *   - @c plan_datum = ep.solve.plan.shared_datum: This epoch's minimum-constraint datum pins:
  *     the exact gauges, zeroed out of the covariance before any leverage is computed.
- *   - @p asm_res = ep.assembly.asm_res: PASS A/B station assemblies (the row stacks).
- *   - @p est_index_of = ep.assembly.est_index_of: Station → kernel slot map (−1 = not folded
+ *   - @c asm_res = ep.assembly.asm_res: PASS A/B station assemblies (the row stacks).
+ *   - @c est_index_of = ep.assembly.est_index_of: Station → kernel slot map (−1 = not folded
  *     this epoch).
- *   - @p x_s = ep.solve.x_s: The epoch's accepted post-fit shared solution. The census itself
+ *   - @c x_s = ep.solve.x_s: The epoch's accepted post-fit shared solution. The census itself
  *     does not read it (@f$r_i@f$ depends on the geometry alone), but the block-Baarda
- *     (BlockFormal) and congruence riders on this sweep (docs/SPEC_redundancy_census.md) need
+ *     (BlockFormal) and congruence riders on this sweep need
  *     the post-fit residual @f$y - A_s x_s - A_r x_r@f$. The census forms it once per swept
  *     station and passes it to both, and the riders inherit the census's stride and escalation
- *     schedule instead of adding their own. Pass @c sg_.x_s (the final accepted solution,
- *     after any within-epoch re-solve); an empty vector disarms both riders.  (sg_ was
- *     the driver's solve result until the epoch object took it over; the binding above reads it as
- *     ep.solve.x_s.)
+ *     schedule instead of adding their own. The binding is the final accepted solution,
+ *     after any within-epoch re-solve; an empty vector disarms both riders.
+ *   - @c rhs_trip_pending = ep.events.qc.rhs_trip_pending: A trip reason raised earlier this
+ *     epoch (non-empty forces a full sweep).
  * @param events The epoch's events; writes census (the epoch-status scalars and the hits).
  */
 void networkRedundancyCensus(NetworkRun& run, const NetworkEpoch& ep, EpochEvents& events);
@@ -222,7 +217,7 @@ struct StationPrefitCensus {
  * Cost: O(rows) plus one `nth_element` per non-empty pool, small enough to run
  * alongside any existing row walk.
  *
- * @param cls            Per-row classes from the hoisted classifier (INC-0);
+ * @param cls            Per-row classes from @c classifyRow;
  *                       must be sized to @c R.y.size().
  * @param R              The station assembly.
  * @param min_pool_rows  Minimum population for a pool's median to be used.
@@ -243,7 +238,7 @@ StationPrefitCensus stationPrefitCensus(const std::vector<NetRowClass>& cls,
  * @brief The cross-flag: the census's single decision.
  *
  * Neither half alone is a finding.  A healthy single-frequency riser is
- * uncheckable with a small @p s (kept, per the prefer-fallback directive); a
+ * uncheckable with a small @p s (kept); a
  * storm extreme carries a large @p s on a healthy @p r (the redundant network
  * absorbs and localizes it).  Only the intersection marks a parked error.
  *
@@ -282,10 +277,10 @@ inline bool censusSweepsThisEpoch(long long ep, int stride, bool trip) {
  * @note The kernel bounds the window in which this can fire from below.
  *       `NetworkNormalEquations::addStation` rejects a station whose smallest
  *       pivot falls below @f$10^{-12}@f$ times the block's reference scale, so a
- *       truly singular local block never reaches a solve or this census.  INC-2
+ *       truly singular local block never reaches a solve or this census.  This census
  *       can therefore fire only in @f$[10^{-12},\ \varepsilon_\text{pivot})\times@f$
  *       median: four decades wide at the 1e-8 default, and empty if the knob is
- *       set at or below 1e-12.  The loader warns in that case; a zero INC-2 count
+ *       set at or below 1e-12.  The loader warns in that case; a zero count here
  *       means "no orphaned states" only when the knob is above 1e-12.
  *
  * @param pivots  Per-local-column LDLᵀ pivots in original column order
@@ -313,7 +308,7 @@ std::vector<Eigen::Index> unobservableLocalColumns(const Eigen::VectorXd& pivots
 std::map<Eigen::Index, std::string> localColumnLabels(const StationAssembly& R,
                                                       const StationParams& set);
 
-// ---- Run-end reports (generated by scripts/nom_td_cut.py) ----
+// ---- Run-end reports ----
 
 struct NetworkRunEndView;
 
@@ -321,7 +316,7 @@ struct NetworkRunEndView;
  * @brief Run-end report: the redundancy and testability census.
  *
  * The redundancy and testability census: sweeps, data rows, uncheckable rows and the
- * cross-flag, the INC-2 pivot floor, the closure bound and the escalation path.
+ * cross-flag, the unobservable-local pivot floor, the closure bound and the escalation path.
  *
  * Gate: returns 0 at once unless `ctx.knobs.redun_census_on`.
  *
@@ -336,11 +331,11 @@ int networkRedundancyCensusRunEnd(const NetworkRunEndView& v);
 struct RedundancyCensusCounters {
 
     // --- redundancy / testability census ---
-    // Standing invariant #4 in its statistical form.  The failure mode this census
+    // The failure mode this census
     // must be able to disprove is "the sweep ran and found nothing", which cannot be
     // told apart from "the sweep never ran" without denominators, so the passes, the
     // sweeps and the rows are reported before any finding.  `redun_max_cold_*` exists
-    // for the opposite reason: the prefer-fallback directive says uncheckable but quiet
+    // for the opposite reason: uncheckable but quiet
     // rows (for example single-frequency rising satellites) must be counted and never
     // evented, and keeping the worst one makes that a checkable claim rather than an
     // assertion.
@@ -361,7 +356,7 @@ struct RedundancyCensusCounters {
     long long redun_pool_skips = 0;         ///< (station, epoch, pool) centring pools skipped for population < 4.
     long long redun_r_clamped = 0;          ///< rows whose r_i hit the kernel's [0,1] clamp at 0 (leverage >= 1/w).
     double    redun_mass = 0.0;             ///< sum of r_i over data rows: the redundancy mass of what was swept.
-    long long redun_pivot_cols = 0;         ///< local columns examined by the INC-2 pivot census.
+    long long redun_pivot_cols = 0;         ///< local columns examined by the unobservable-local pivot census.
     long long redun_pivot_flagged = 0;      ///< of those, columns below the relative pivot floor (column-epochs).
     long long redun_unobs_entered = 0;      ///< decoupling edges: (station, key) first appearances, each evented.
     long long redun_unobs_cleared = 0;      ///< re-coupling edges: (station, key) that regained information.

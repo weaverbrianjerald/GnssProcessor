@@ -11,39 +11,39 @@
  * integer combination across the whole component, including satellites r1 does not
  * see, because each chain hop contributes only an integer: the hop receiver's
  * fractional bias is its own estimable RPB state δ_{r,σ} and is not part of the pin.
- * With full visibility (the regional case) the chain reduces to the Odijk Eq-34 star
- * (CC-R).
+ * With full visibility (the regional case) the chain reduces to the Odijk Eq-34 star.
  *
- * Gauge bookkeeping, cross-checked every epoch (the rank invariant D3c rests on it):
+ * Gauge bookkeeping, cross-checked every epoch (the RPB allocation rests on it):
  * a component with n_c stations and m_c satellites gets (n_c + m_c − 1) tree-edge
  * ambiguity pins plus 1 RPB pin, n_c + m_c in total, which equals the gauge
  * dimension.  Every RPB-carrying station is a tree vertex, so it gets at least one
  * pin and its local normal block N_rr stays positive-definite.
  *
- * Split out of Application::runNetwork at decomposition INC-8b (see
- * docs/SPEC_inc8b_election_split.md).  Sibling of @ref NetworkPhaseDatum, which owns
+ * Sibling of network/solve/PhaseDatum.hpp, which owns
  * the candidate census consumed here, the non-chain realization (the anchor
  * election) and the drop-and-heal.  Owns no state: every carry object
  * is a reference into the caller's NetworkRunContext.
  *
  * Ordering contract: this function mutates persistent carries before the solve.  It
- * erases local_carry entries for re-referenced (sat,σ), erases and shifts rpb_carry,
- * shifts prev_carry PhaseBias entries, and fills ctx.carry.eq34_reref (read
- * downstream by networkInjectD2CarryPrior, networkStashCarry and the M2 VCE
- * shared-prior snapshot).  It therefore runs:
+ * erases the arcs' leveling carries (ArcState::amb) for re-referenced (sat,σ), erases
+ * and shifts the receiver phase-bias carries (StationSignalState::rpb), shifts
+ * prev_carry PhaseBias entries, and fills events.phase_datum.eq34_reref (read
+ * downstream by networkInjectD2CarryPrior, networkStashCarry and the carry
+ * variance-component monitor's shared-prior snapshot).  It therefore runs:
  *   - after networkAssemblyPrefilter_ (its phase-bias prune is a precondition);
- *   - before the D3c RPB allocation, which stays in the run TU.  This
- *     function is the only writer of shared_phase_keys on the eq34 path, and D3c
- *     derives this epoch's need_rpb set from it.  If D3c ran first it would allocate
- *     and prune RPB states against the previous epoch's shared set: this epoch's
- *     pinned_rpb_keys could name just-pruned states, and stations newly entering the
- *     D2 graph would get no δ_{r,σ} column.  The rank cross-check counts recorded
- *     pins, not allocated columns, so it would not report this; the defect would show
- *     only as null-space-gate withholds and non-PD local blocks;
+ *   - before networkReceiverPhaseBiasAllocation.  This
+ *     function is the only writer of shared_phase_keys on the eq34 path, and the
+ *     allocation derives this epoch's need_rpb set from it.  If the allocation ran
+ *     first it would allocate and prune RPB states against the previous epoch's shared
+ *     set: this epoch's pinned_rpb_keys could name just-pruned states, and stations
+ *     newly entering the observation graph would get no δ_{r,σ} column.  The rank
+ *     cross-check counts recorded pins, not allocated columns, so it would not report
+ *     this; the defect would show only as null-space-gate withholds and non-PD local
+ *     blocks;
  *   - and hence before est.reset() / est.beginEpoch() (inside
  *     networkAssemblyRegisterColumns_), networkPassB_ and networkStashCarry.
- * Inside the function, the I2 extend-only merge runs before the sticky baseline
- * advance `anchor_incumbent = this_epoch_anchor;`.
+ * Inside the function, the extend-only merge runs before the sticky baselines are
+ * replaced (the assignment of `anchor_incumbent` from `this_epoch_anchor`).
  */
 
 #include "network/driver/RunTypes.hpp"   // NetStation / PhaseDatumCandidates
@@ -69,10 +69,10 @@ class GnssConfig;
 struct NetworkRunContext;   // network/state/RunContext.hpp, included in the .cpp only
 
 /**
- * @brief The eq34 chain datum's D4 carry shift through the traversal of carried references
+ * @brief The eq34 chain datum's carry shift through the traversal of carried references
  *        (@c CarryMechanism::Eq34Shift).
  *
- * The rule of the D4 apply: a carried ambiguity moves by
+ * The rule of the apply: a carried ambiguity moves by
  * @f$-\Delta b_s - \Delta\delta_r@f$ (its satellite's and its receiver's chain steps, formed in
  * that order and added once), a carried receiver phase bias by its own
  * @f$\Delta\delta_r@f$, a carried satellite phase bias by @f$\Delta b_s@f$, and the s_prev of
@@ -99,7 +99,7 @@ struct NetworkRunContext;   // network/state/RunContext.hpp, included in the .cp
  *                  @p complete are counted in @p counts only).
  * @param n_terms   out: coupling terms moved.
  * @param counts    optional out: per-site tallies (accumulated).
- * @param complete  also move the owed sites (false = the original walk, without them).
+ * @param complete  also move the owed sites (false = the walk without them).
  */
 void eq34ShiftCarry(NetworkCarryState& carry, net::NetworkEntities& entities,
                     const std::map<std::pair<std::string, std::string>, double>& shift_sat,
@@ -114,10 +114,10 @@ void eq34ShiftCarry(NetworkCarryState& carry, net::NetworkEntities& entities,
  * Resets every station's pins, seeds the shared set from the (post-gate) union,
  * builds the per-(constellation,signal) bipartite graph, elects r1 and grows a
  * sticky spanning tree per connected component, then runs the carry hygiene
- * (re-reference erase + S-transformation apply + I2 extend-only merge-back) and
+ * (re-reference erase + S-transformation apply + extend-only merge-back) and
  * advances the sticky baselines.
  *
- * The graph, its components and the tree are those of filter/NetworkArcGraph:
+ * The graph, its components and the tree are those of network/ar/ArcGraph.hpp:
  * arcgraph::buildArcGraph per group (stations in roster order,
  * satellites in string order, arcs in usable_keys order), arcgraph::arcComponents in
  * the legacy order (arcgraph::legacyChainVertexRank) and arcgraph::growChainForest per
@@ -127,13 +127,13 @@ void eq34ShiftCarry(NetworkCarryState& carry, net::NetworkEntities& entities,
  *
  * @param ctx           [in/out] carry + counters.  The whole context is passed
  *                      instead of about twenty individual references because the
- *                      body value-mutates local_carry / rpb_carry / prev_carry, all
- *                      of which are copyable: a single missing `&` in an enumerated
- *                      parameter list would compile and silently drop the
- *                      S-transform.  The body opens with an alias preamble that
- *                      reproduces the former run-TU local names.
+ *                      body value-mutates the leveling carries, the receiver
+ *                      phase-bias carries and prev_carry, all of which are copyable:
+ *                      a single missing `&` in an enumerated parameter list would
+ *                      compile and silently drop the S-transform.
  * @param config_       networkPhaseDatumEq34Receiver / Eq34PinRound.
- * @param log           "main_log": the pin/gauge-mismatch warning + 2 debug lines.
+ * @param log           "main_log": the pin/gauge-mismatch and non-canonical-name
+ *                      warnings + 2 debug lines.
  * @param stations      [in/out] pinned_amb_targets / pinned_rpb_keys.
  * @param present       This epoch's presence mask.
  * @param cnd           Candidate census (sat_el / usable_keys / cover / union_keys).
@@ -145,7 +145,7 @@ void eq34ShiftCarry(NetworkCarryState& carry, net::NetworkEntities& entities,
  *                      arcs may become new tree edges, (b) adds spanning-forest
  *                      roots (a bridged satellite is grounded by its shared
  *                      pseudo-obs row instead of a parent edge) and (c) supplies the
- *                      INC-3 σ multiplier for pins the eligible pass could not avoid.
+ *                      σ multiplier for pins the eligible pass could not avoid.
  * @param shared_phase_keys [out] the post-gate union's phase-bias keys.
  * @param events The epoch's events; writes phase_datum.
  */
@@ -156,19 +156,19 @@ void networkElectChainDatum(NetworkRunContext& ctx,
                             const std::vector<bool>& present,
                             const PhaseDatumCandidates& cnd,
                             const AnchorHygiene& hyg,
-                            /// This epoch's complete C3c slip funnel as (station index,
+                            /// This epoch's complete slip funnel as (station index,
                             /// ambiguity key).  Read only under
                             /// network.phase_datum_eq34_slip_aware_election, to keep a slipped
                             /// arc out of the spanning tree where the graph allows it (a
                             /// slipped tree edge refloats every fundamental cycle through it; a
                             /// slipped chord costs one DD).  The caller must not insert into
-                            /// the funnel after this call (see the ordering contract above);
-                            /// the election already runs after every PASS-A drain, signal
-                            /// integrity and measurement admission.
+                            /// the funnel after this call; the election already runs after
+                            /// every PASS-A drain, signal integrity and measurement
+                            /// admission.
                             const std::set<std::pair<int, std::string>>& carry_slipped_ambs,
                             std::set<std::string>& shared_phase_keys, EpochEvents& events);
 
-// ---- Run-end reports (generated by scripts/nom_td_cut.py) ----
+// ---- Run-end reports ----
 
 struct NetworkRunEndView;
 
@@ -178,7 +178,7 @@ struct NetworkRunEndView;
  * The eq34 chain datum: the re-reference totals, the pin audit, the seed round
  * and the slip-aware election.
  *
- * Gate: each section under its own condition, as in the teardown:
+ * Gate: each section under its own condition:
  * `config_.networkPhaseDatumEq34()`; `config_.networkPhaseDatumEq34SeedRound()`;
  * `config_.networkPhaseDatumEq34SlipAwareElection()`.
  *
@@ -194,7 +194,7 @@ struct NetworkEpoch;            // network/driver/Epoch.hpp
 struct EpochPassA;              // network/driver/Epoch.hpp
 struct EpochAssembly;           // network/driver/Epoch.hpp
 
-// ---- PASS B serial stages, declarations (generated by scripts/nom_pb1_cut.py) ----
+// ---- PASS B serial stages, declarations ----
 
 /**
  * @brief The eq34 chain-pin audit: declared, folded, landed and short pins per group, and the
@@ -203,13 +203,9 @@ struct EpochAssembly;           // network/driver/Epoch.hpp
  * No-op unless NetworkKnobs::phase_datum_eq34 and the epoch was not aborted. Called by
  * networkPassB_ after the consume.
  *
- * Epoch form (generated by scripts/nom_pb1_cut.py): a serial stage of
- * Application::networkPassB_, cut with the alias lines of networkPassB_ it reads.  Below its
- * bindings is the frozen text; a piece wholly inside one `if` returns early instead
- * (scripts/nom_pb1/declared.py).
- *
  * @param run The run (network/driver/Run.hpp). Bindings: run.ctx (ctx), run.setup (setup).
- * @param ep The epoch (network/driver/Epoch.hpp), read only. Bindings: none.
+ * @param ep The epoch (network/driver/Epoch.hpp), read only. Bindings: ep.events.phase_datum
+ *           (phase_datum_ev).
  * @param assembly The station blocks, read (pin_audit, pin_seed_targets, est_index_of), passed
  *                 because networkPassB_ still writes the group. Bindings: assembly.asm_res
  *                 (asm_res), assembly.est_index_of (est_index_of).
@@ -220,7 +216,7 @@ void networkEq34PinAudit(NetworkRun& run, const NetworkEpoch& ep, const EpochAss
 
 // ---- End of the PASS B serial stages, declarations ----
 
-// ---- Harvest half, declarations (generated by scripts/nom_hv1_cut.py) ----
+// ---- Harvest half, declarations ----
 
 struct NetworkRun;                          // network/driver/Run.hpp
 struct NetworkEpoch;                        // network/driver/Epoch.hpp
@@ -229,7 +225,8 @@ struct StationHarvestBlock;                 // network/carry/LocalCarryHarvest.h
 
 /**
  * @brief Eq34: each receiver phase bias with its diagonal conditional variance (no
- *        coupling, by design), then the prune. No-op unless network.eq34_rpb_q > 0.
+ *        coupling, by design), then the prune. No-op unless NetworkKnobs::eq34_rpb_q > 0
+ *        (network.phase_datum_eq34_rpb_q_m2s; forced to 0 when eq34 is off or carry_invariant is on).
  *
  * @param run The run: its context (carry, counters, knobs), setup (stations) and engines.
  * @param ep This epoch after the solve (the solution, the assembly, the columns and the clock are
@@ -248,19 +245,16 @@ struct ChainDatumCounters {
     //   * deseeded:   slipped incumbents denied their sticky tree seat;
     //   * demoted:    slipped arcs whose arcLife ranking was pushed below the clean
     //                 band (inert unless the longevity election is armed); each slipped
-    //                 arc counts once per epoch (it counted the
-    //                 sort's comparator calls before);
+    //                 arc counts once per epoch;
     //   * readmitted: slipped arcs that became tree edges anyway, because the
     //                 component had no other route to the vertex.  Those still
     //                 mass-refloat, and a large share here means the topology, not the
-    //                 election, is the binding constraint (standing invariant #4:
-    //                 report the failure mode, and do not let "deseeded > 0" read as
-    //                 "no tree edge slipped").
+    //                 election, is the binding constraint (so "deseeded > 0" does not
+    //                 mean "no tree edge slipped").
     long long eq34_slip_deseeded   = 0;
     long long eq34_slip_demoted    = 0;
     long long eq34_slip_readmitted = 0;
-    // Run tallies of the chain-pin audit (docs/SPEC_synthetic_minimum_network.md
-    // §14 T1; measured record §12.8), keyed "<cons>|<signal>" (the election's dr_key).
+    // Run tallies of the chain-pin audit, keyed "<cons>|<signal>" (the election's dr_key).
     // A pin can leak silently from a three-stage pipeline: declared (the election's
     // per-group Σ (n_c + m_c) gauge dimension), folded (foldAmb/foldRpb built the 1e10
     // row; the lambdas return early on a missing state index or a missing live phase
@@ -268,13 +262,12 @@ struct ChainDatumCounters {
     // a rejected or dropped station takes every folded pin down with it, the loss mode
     // network.station_pd_pin_aware exists to prevent).  A group whose landed <
     // declared − bridged in any epoch ran with an under-constrained datum that reads
-    // like a working one (standing invariant #4); the W6+SH n-invariant L2W near-null
-    // is the suspect that motivated the audit.  Accumulated serially after PASS B's
+    // like a working one.  Accumulated serially after PASS B's
     // consume; logged once by networkChainDatumRunEnd.  All zero unless
     // network.phase_datum_eq34.
     struct Eq34PinAudit {
         std::map<std::string, long long> declared;         ///< Σ per-epoch gauge dim (n_c+m_c)
-        std::map<std::string, long long> bridged;          ///< Σ hygiene INC-2 bridge pins (shared-side)
+        std::map<std::string, long long> bridged;          ///< Σ hygiene bridge pins (shared-side)
         std::map<std::string, long long> folded;           ///< pins foldAmb/foldRpb built (all producing stations)
         std::map<std::string, long long> landed;           ///< folded pins on accepted stations
         std::map<std::string, long long> miss_state;       ///< fold refused: state index absent
@@ -293,13 +286,13 @@ struct ChainDatumCounters {
     // unless network.phase_datum_eq34_seed_round.
     long long seed_round_pins         = 0;
     long long seed_round_deferred     = 0;
-    long long seed_round_frozen       = 0;   ///< targets reused verbatim from eq34_prev_target, so the frame is realized once (INC-1)
+    long long seed_round_frozen       = 0;   ///< targets reused verbatim from eq34_prev_target, so the frame is realized once
     long long seed_round_target_steps = 0;
     double    seed_round_max_abs_y_m  = 0.0;
-    // Re-host tallies (INC-2).  `framed` = re-hosts whose frame step was computed
+    // Re-host tallies.  `framed` = re-hosts whose frame step was computed
     // from the new host's own state and therefore stayed shiftable (the carried PB
-    // prior is S-transformed, not marginalized); `cold` = re-hosts that INC-2 could
-    // not frame (no allocated state: the fold-deferred path), which keep the legacy
+    // prior is S-transformed, not marginalized); `cold` = re-hosts that could
+    // not be framed (no allocated state: the fold-deferred path), which keep the legacy
     // unknown-step reref.  `max_step_m` is the largest |frame step| any framed re-host
     // applied.  It is bounded by λ/2 only when the new host's float is
     // frame-consistent, so a large value signals that the solution at the new host had
@@ -309,24 +302,24 @@ struct ChainDatumCounters {
     long long seed_round_rehost_cold    = 0;
     double    seed_round_rehost_max_step_m = 0.0;
 
-    // (D) One-solve frame skips: the frame stepped, so the carried value is stale in the
-    //     old gauge; the same epoch's harvest re-stashes any still-tracked arc, so the
-    //     cost is one solve of continuity.
-    long long n_cr_eq34_reref         = 0;  ///< eq34 D4 chain-datum re-reference
+    // One-solve frame skips: the frame stepped, so the carried value is stale in the
+    // old gauge; the same epoch's harvest re-stashes any still-tracked arc, so the
+    // cost is one solve of continuity.
+    long long n_cr_eq34_reref         = 0;  ///< eq34 chain-datum re-reference
     long long n_cr_rpb_gap_prune      = 0;  ///< receiver-PB carry entries dropped by the pl_max_gap_s prune
     long long n_resume_datum_first_reref    = 0; ///< PHASE_DATUM/eq34_reref (sat,σ) at the first post-resume epoch
     // Held phase-bias emissions (pb_hold) of a (satellite,
-    // signal) family that a phase-bias shift moved (the eq34 D4 shift, the declared anchor
+    // signal) family that a phase-bias shift moved (the eq34 shift, the declared anchor
     // handover) and that stayed in the old frame: PbHold is exempt from both shifts with or
-    // without network.carry_rebase_complete (its own design is owed).  Measure-only.
+    // without network.carry_rebase_complete.  Measure-only.
     long long prm_pbhold_unmoved_at_shift = 0;
     // Run-scope observability counters of the eq34 datum, logged once in the run-end producer
     // summary (the per-epoch reref/erase lines are debug-only, so these totals are the
     // only non-debug record of the reref volume).  Untouched on non-eq34 runs.
     long long eq34_reref_total = 0, eq34_erase_total = 0;
-    long long eq34_shift_total = 0;   // carry values S-transformed (v2 shift) over the run
-    long long eq34_cpl_sprev_total = 0;   // coupling s_prev references re-based with those shifts; structurally 0 with coupling off, since the stashes are empty (SPEC_card1_coupling_carry §14)
-    long long eq34_gap_repin_total = 0;   // tree edges resumed from a carry-alive gap, re-pinned to their pre-gap integer instead of re-leveling from 0 (I2)
+    long long eq34_shift_total = 0;   // carry values S-transformed over the run
+    long long eq34_cpl_sprev_total = 0;   // coupling s_prev references re-based with those shifts; structurally 0 with coupling off, since the stashes are empty
+    long long eq34_gap_repin_total = 0;   // tree edges resumed from a carry-alive gap, re-pinned to their pre-gap integer instead of re-leveling from 0
     int eq34_mismatch_epochs = 0;
 };
 

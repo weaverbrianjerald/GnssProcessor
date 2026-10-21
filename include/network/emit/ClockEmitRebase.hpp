@@ -3,21 +3,20 @@
  * @file ClockEmitRebase.hpp
  * @brief Emission-frame re-base of the network's per-satellite clocks (the common-mode
  *        frame hold), plus the census-aligned per-satellite step test that gives the
- *        remaining re-realization class its wire marks (
- *        docs/SPEC_clock_emit_rebase.md).
+ *        remaining re-realization class its wire marks.
  *
- * ## Motivation (the internal 12 h forensics, SPEC §1)
+ * ## Motivation (the internal 12 h forensics)
  *
- * The clock channel has no magnitude jump test by design (RTA-11: its counter carries
+ * The clock channel has no magnitude jump test by design (its counter carries
  * datum-change components only), so a re-realization of the emitted satellite clocks
- * reaches the consumer without a wire mark.  On the internal (self-contained golden63)
+ * reaches the consumer without a wire mark.  On the internal (self-contained)
  * lineage the emitted satellite clock re-realized on **613 of 1440** census epochs
  * (per-epoch common-mode steps > 0.1 m, max 17.7 m; 273 epochs also carry per-satellite
- * outliers > 0.5 m) under a single wire mark.  The FC-1 shadow measurement is the
- * design input: about 98 % of the emitted clock's epoch-to-epoch motion is producer frame
+ * outliers > 0.5 m) under a single wire mark.  The design input is a shadow
+ * measurement: about 98 % of the emitted clock's epoch-to-epoch motion is producer frame
  * churn (the physical change is about 2 cm per 30 s, correlation ≈ 0), so nearly all of
  * that wire motion carries no information.  The phase-bias channel has an
- * emission-frame re-base (@ref NetworkEmitRebase), which keeps the P channel
+ * emission-frame re-base (@ref NetworkEmitRebase), which keeps it
  * quasi-static on the same wire; this class supplies the equivalent for the clock
  * channel.
  *
@@ -41,22 +40,22 @@
  * @ref NetworkProductEmitter::markSatDiscontinuity retro-bump, the existing R-record
  * chain (the per-satellite phase, code and clock counters step; the consumer resets
  * that satellite's ambiguities at the event epoch).  The emitter itself is unchanged,
- * and RTA-11's rule of no magnitude test inside the clock counter still holds: the test
+ * and the rule of no magnitude test inside the clock counter still holds: the test
  * lives at the emission-prep tier and drives the forced path, which a replay reproduces
  * from the serialized R/E records without a re-run.  Stage 2b
  * (`network.clock_disc_gap_jump_m`, requires stage 2) extends the test to a satellite
  * returning after a gap; see Config::gap_jump_m.
  *
- * ## Rejected design: per-key value smoothing (falsified at design time, SPEC §2)
+ * ## Rejected design: per-key value smoothing (falsified at design time)
  *
- * The per-satellite channel is a random walk (robust step σ 0.09–0.16 m per 30 s, about
+ * The per-satellite channel is a random walk (robust step σ 0.09 to 0.16 m per 30 s, about
  * 8× the physical change; 97 % of steps > 0.5 m are persistent level shifts), so a
  * per-key hold and gate either produces a flood of marks (per-satellite reset spacing
  * of about 4 min at k=4) or walks metres away from the solve's self-consistent frame
- * (30.8 m measured with a loose v2 gate).  Per-satellite temporal stiffness is estimator
- * work (the guarded temporal anchor of Q3), not emission work.
+ * (30.8 m measured with a loose gate).  Per-satellite temporal stiffness is estimator
+ * work (the guarded temporal anchor, `network.clock_temporal_anchor`), not emission work.
  *
- * ## Guards (standing invariants #1 and #7)
+ * ## Guards
  *
  * - **Leash**: when @f$|A_c|@f$ exceeds `network.clock_frame_leash_m` (default 50 m;
  *   measured 12 h wander 23 m), the constellation re-anchors to the solve frame.  The
@@ -96,15 +95,15 @@ namespace GnssProcessor {
  */
 class NetworkClockEmitRebase {
 public:
-    /// Tunables (from `network.emit_clock_frame_hold` / `network.clock_disc_jump_*`;
-    /// see GnssConfigLoadNetwork).
+    /// Tunables (from `network.emit_clock_frame_hold`, `network.clock_frame_leash_m` and
+    /// the `network.clock_disc_*` jump knobs; see GnssConfigLoadNetwork).
     struct Config {
         bool   frame_hold{false}; ///< Stage 1: hold the per-constellation common mode (emit in the held frame).
         double leash_m{50.0};     ///< Stage 1: |A_c| re-anchor bound (m).  Measured 12 h wander on the reference lineage: 23 m.
         bool   jump_test{false};  ///< Stage 2: mark per-satellite common-removed steps.  Independent of stage 1; alone it marks the raw wire.
-        double jump_m{1.5};       ///< Stage 2: flat step threshold (m).  Empirical: about 16 σ of the per-epoch walk step (SPEC §1); the census outlier floor (0.5 m) would mark 10× as often.
+        double jump_m{1.5};       ///< Stage 2: flat step threshold (m).  Empirical: about 16 σ of the per-epoch walk step; the census outlier floor (0.5 m) would mark 10× as often.
         double max_gap_s{600.0};  ///< Key gap (s) beyond which a returning satellite is a first sighting (re-init, no step test).
-        double gap_jump_m{0.0};   ///< Stage 2b (E1, `network.clock_disc_gap_jump_m`): on a return after more than max_gap_s, test the common-removed step against the retained pre-gap baseline with this threshold (m).  Requires jump_test.  0 = off: a stale return stays an untested first sighting, which leaves the steps of eclipse re-admissions (gaps of about 55 min) unmarked, see SPEC_synthetic_minimum_network §18.1; on non-Q3 postures nothing else marks those steps.  Designed for frame_hold lineages: with the hold off, the common wander over the gap is not drained, contaminates the statistic, and must be absorbed by this threshold.
+        double gap_jump_m{0.0};   ///< Stage 2b (`network.clock_disc_gap_jump_m`): on a return after more than max_gap_s, test the common-removed step against the retained pre-gap baseline with this threshold (m).  Requires jump_test.  0 = off: a stale return stays an untested first sighting, which leaves the steps of eclipse re-admissions (gaps of about 55 min) unmarked; without `network.clock_temporal_anchor` and `network.clock_anchor_mark` nothing else marks those steps.  Designed for frame_hold lineages: with the hold off, the common wander over the gap is not drained, contaminates the statistic, and must be absorbed by this threshold.
         int    min_common{4};     ///< Minimum fresh unforced keys for a valid μ vote; below it the frame does not move this epoch.
     };
 
@@ -117,7 +116,7 @@ public:
         double      step_m{0.0};   ///< OUT: the common-removed step (m) when @ref marked, the event-row statistic; 0 otherwise.
     };
 
-    /// Running tallies for the run-end telemetry line (invariant #4).
+    /// Running tallies for the run-end telemetry line.
     struct Counters {
         long long epochs{0};      ///< rebaseEpoch invocations with ≥1 entry.
         long long rows{0};        ///< entries processed.
@@ -133,18 +132,18 @@ public:
     explicit NetworkClockEmitRebase(Config cfg) : cfg_(cfg) {}
     NetworkClockEmitRebase() = default;
 
-    /// (Re)configure.  The run context owns a default-constructed engine and
-    /// configures it once from the loaded knobs before the epoch loop.
+    /// (Re)configure.  The run constructs the engine from the loaded knobs
+    /// (NetworkEngineSpec::clk_rebase_cfg).
     void configure(const Config& cfg) { cfg_ = cfg; }
 
     /**
-     * @brief The engine's cross-epoch frame state, exportable for the RTB-7
-     *        snapshot (SPEC_synthetic_minimum_network §18.10 resume frame
-     *        restore): the per-constellation accumulator A_c, the per-satellite
-     *        previous held value and last-seen stamp, and the epoch count.
+     * @brief The engine's cross-epoch frame state, exportable for the state
+     *        snapshot (the warm-resume frame restore): the per-constellation
+     *        accumulator A_c, the per-satellite previous held value and
+     *        last-seen stamp, and the epoch count.
      *
      * Without it every resume restarts the held frame at zero, so the emitted
-     * common mode steps by A_c and the F1 seam rule (keyed on
+     * common mode steps by A_c and the resume-seam rule (keyed on
      * `counters().epochs == 0`) marks a datum change that the consumer must
      * re-absorb.  On a resume whose solve frame is otherwise continuous, that
      * mark would be the only re-realization on the wire.
@@ -192,8 +191,8 @@ public:
      *                      per-key gap clock (deterministic on replay).
      * @param reanchored    OUT: constellation letters that re-anchored this
      *                      epoch (leash).  The caller must mark each
-     *                      (markDatumChange); an unmarked re-anchor is the
-     *                      unmediated re-coupling edge that the clock emission frame hold closes.
+     *                      (markDatumChange); an unmarked re-anchor is an
+     *                      unsignalled re-coupling edge.
      */
     void rebaseEpoch(std::vector<Entry>& entries, double epoch_time_s,
                      std::set<char>& reanchored);
@@ -204,7 +203,7 @@ public:
     /// construction (the accumulator, the μ vote and the leash are all keyed on the
     /// constellation letter), split by that letter for the multi-constellation
     /// run-end line.  Filled on the same branches as @ref Counters, so the
-    /// sums over letters equal the global values.
+    /// sums over letters (the maximum, for max_abs_acc) equal the global values.
     struct ConstCounters {
         long long rows{0};         ///< entries processed.
         long long marks{0};        ///< stage-2 step marks.
@@ -242,7 +241,7 @@ private:
     std::map<std::string, KeyState> prev_;  ///< sat -> previous emitted (held-frame) value.
 };
 
-// ---- Run-end reports (generated by scripts/nom_td_cut.py) ----
+// ---- Run-end reports ----
 
 struct NetworkRunEndView;
 

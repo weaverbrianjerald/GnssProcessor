@@ -7,10 +7,8 @@
  * (include/network/state/RunContext.hpp) and directly by unit tests.  Many assignments
  * combine knobs assigned above them, so the order of the lines matters.
  *
- * One of the seven files that define the network run context's functions, split
- * out of the former app/NetworkRunContext.cpp by concern, each body
- * unchanged.  The declarations, each naming its file, and the map of the seven files are
- * in include/network/state/RunContext.hpp.
+ * The run context's other functions are in sibling files; each declaration names its
+ * file, and the map of the files is in include/network/state/RunContext.hpp.
  */
 
 #include "network/state/RunContext.hpp"
@@ -38,26 +36,25 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.pl_var_floor = config_.networkPhaseLevelingVarFloorM2();
     // Under the float_kf vehicle the station-wide jointly whitened local block is part of
     // the vehicle, not a knob: `buildLocalBlock` is the vehicle's definition of the fold.
-    // pl_local_block is therefore the resolved predicate (F3 knob or vehicle), and every
-    // downstream consumer (the PASS-B inject, the harvest's cross-covariance stash, the
+    // pl_local_block is therefore the resolved predicate (local-block knob or vehicle), and
+    // every downstream consumer (the PASS-B inject, the harvest's cross-covariance stash, the
     // run-end readout, the trace's `route`) follows the vehicle with no further branch.
-    // The loader forces the F3 knob itself off under float_kf, so one switch controls the
-    // fold.  The vehicle is read from the config, not from `k`: the amb_float_* members
-    // are filled below, and reading them here would leave the block disarmed without a
-    // warning.  See docs/refound/RF-1_float_ambiguities_design.md §3.2, §7.2 (RF-1 step 3).
+    // The loader forces the local-block knob itself off under float_kf, so one switch
+    // controls the fold.  The vehicle is read from the config, not from `k`: the amb_float_*
+    // members are filled below, and reading them here would leave the block disarmed without
+    // a warning.
     k.pl_blk_from_vehicle = config_.getNetworkConfig().ambiguity_vehicle
                             == NetworkAmbiguityVehicle::FloatKf;
     k.pl_local_block = config_.networkPhaseLevelingLocalBlock() || k.pl_blk_from_vehicle;
-    // Ambiguity vehicle and its supporting knobs (RF-1 §7.1,
-    // docs/refound/RF-1_float_ambiguities_design.md).  The joint block (step 3) follows the
-    // vehicle (above); the birth variance and the drop (step 4) and the declared anchor
-    // S-transform (step 5) each have their own knob below.
+    // Ambiguity vehicle and its supporting knobs.  The joint block follows the vehicle
+    // (above); the birth variance, the drop and the declared anchor S-transform each have
+    // their own knob below.
     k.amb_float_kf = config_.getNetworkConfig().ambiguity_vehicle
                      == NetworkAmbiguityVehicle::FloatKf;
     k.amb_birth_var_floor = config_.getNetworkConfig().amb_float_birth_var_m2;
-    // Variance floor applied at the drop only (RF-3a).  It is gated on the vehicle here, so
-    // every downstream site reads one number and a floor configured without float_kf
-    // resolves to 0 instead of acting at some sites and not at others.
+    // Drop decoupling at birth strength.  Gated on the vehicle here, so every downstream
+    // site reads one bool and a knob set without float_kf resolves to false instead of
+    // acting at some sites and not at others.
     k.amb_drop_decouple_always = k.amb_float_kf && config_.networkAmbFloatDropDecoupleAlways();
     // The loader has validated the phase-colour posture, so the knob is read as is.
     k.pc_on        = nc.phase_colour_state;
@@ -67,15 +64,16 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.pc_max_gap_s = nc.phase_colour_max_gap_s;
     k.pc_trace     = nc.phase_colour_state && nc.trace_phase_colour;
     k.amb_if_trace = nc.trace_amb_if;
+    // Variance floor applied at the drop only; resolves to 0 off the vehicle.
     k.amb_drop_var_floor  = k.amb_float_kf
                                 ? config_.getNetworkConfig().amb_float_drop_var_m2 : 0.0;
-    // The drop floor's warm-up gate (RF-3c) has no meaning without the floor, so it
+    // The drop floor's warm-up gate has no meaning without the floor, so it
     // resolves to 0 when the floor is off; a site reads the pair as "floor, from epoch N".
     k.amb_drop_floor_after_ep =
         (k.amb_drop_var_floor > 0.0)
             ? config_.getNetworkConfig().amb_float_drop_floor_after_ep : 0;
     k.amb_float_declared_handover = config_.getNetworkConfig().amb_float_declared_handover;
-    // Held S-basis (RF-2 item 1).  The loader already interlocks it with float_kf and
+    // Held S-basis.  The loader already interlocks it with float_kf and
     // phase_datum_prioritized; the vehicle test is repeated here so that a later loader
     // edit cannot arm it on the level vehicle through this path.
     k.pd_held_basis = config_.networkPhaseDatumHeldBasis()
@@ -97,10 +95,10 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.carry_cpl_exact_cross = config_.networkCarryCouplingExactCross();   // loader guarantees exact
     k.pfq_on = config_.networkClockPivotFrameQ();   // loader guarantees fullcov + the pin datum
     k.carry_cpl_clone = config_.networkCarryCouplingClockClone();   // loader guarantees exact + fullcov
-    k.carry_cpl_shx   = config_.networkCarryCouplingSharedHistory();       // loader guarantees B1
+    k.carry_cpl_shx   = config_.networkCarryCouplingSharedHistory();       // loader guarantees carry_cpl_clone
     k.shx_rank        = config_.networkCarryCouplingSharedHistoryRank();   // loader guarantees [1, 8]
-    k.carry_cpl_bclone = config_.networkCarryCouplingBiasClone();       // loader guarantees B1
-    k.carry_cpl_dclone = config_.networkCarryCouplingDepartedClone();   // loader guarantees B1
+    k.carry_cpl_bclone = config_.networkCarryCouplingBiasClone();       // loader guarantees carry_cpl_clone
+    k.carry_cpl_dclone = config_.networkCarryCouplingDepartedClone();   // loader guarantees carry_cpl_clone
     k.clm_on    = config_.networkClockLevelMonitor();      // clock-level monitor (trace class)
     k.clm_raise = config_.networkClockLevelBoundRaise();   // clock-level raise; loader guarantees clm_on
     k.clm_innov_window_ep = config_.networkClockLevelInnovWindowEp();
@@ -112,41 +110,40 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.carry_cpl_gauge  = config_.networkCarryCouplingGaugeProject();
     k.carry_cpl_reinit = config_.networkCarryCouplingReinitSources();
     k.zwd_on = config_.networkCarryZwd();
-    k.zwd_in_block = config_.networkCarryZwdInBlock();  // B9-in-block; loader guarantees zwd_on + pl_local_block
+    k.zwd_in_block = config_.networkCarryZwdInBlock();  // ZWD in the local block; loader guarantees zwd_on + pl_local_block
     k.zwd_q = config_.networkZwdCarryQ();
     k.zwd_seam_on = config_.networkZwdSeamReseed();
     k.zwd_seam_epochs = config_.networkZwdSeamReseedEpochs();
     k.zwd_seam_q = config_.networkZwdSeamReseedQ();
-    k.resume_frame_restore   = config_.networkResumeFrameRestore();      // frame state (§18.10)
-    k.resume_coupling_restore = config_.networkResumeCouplingRestore();  // coupling rows (§18.12)
-    k.resume_datum_restore   = config_.networkResumeDatumRestore();      // datum tree (RS-3, §21.7)
-    k.resume_emit_restore    = config_.networkResumeEmitRestore();       // emit engines (RS-5, §21.10)
-    k.resume_station_restore = config_.networkResumeStationRestore();    // station layer (RS-6, §21.13)
+    k.resume_frame_restore   = config_.networkResumeFrameRestore();      // frame state
+    k.resume_coupling_restore = config_.networkResumeCouplingRestore();  // coupling rows
+    k.resume_datum_restore   = config_.networkResumeDatumRestore();      // datum tree
+    k.resume_emit_restore    = config_.networkResumeEmitRestore();       // emit engines
+    k.resume_station_restore = config_.networkResumeStationRestore();    // station layer
     k.resume_station_rxcb    = config_.networkResumeStationRestoreRxCb();
-    k.resume_signal_canon_restore = config_.networkResumeSignalCanonRestore();  // signal latch (RS-8, §21.16)
-    k.resume_border_restore  = config_.networkResumeBorderRestore();     // border covariance (RS-7, §21.14)
-    k.resume_rxcb_lin_restore = config_.networkResumeRxCbLinRestore();   // rx-CB x_lin (RS-9, §21.18)
-    k.resume_pb_seam_mark    = config_.networkResumePbSeamMark();       // PB seam mark (RS-4, §21.9)
-    k.resume_slip_warmup_ep  = config_.networkResumeSlipWarmupEp();      // MW/LLI warm-up (§18.10)
-    k.resume_d5_warmup_ep    = config_.networkResumeD5WarmupEp();        // warm-up of the D5 gate (RS-2b, §21.6)
-    k.readmit_seed_horizon_s = config_.networkReadmitSeedHorizonS();     // seed-first re-admission (E2)
+    k.resume_signal_canon_restore = config_.networkResumeSignalCanonRestore();  // signal latch
+    k.resume_border_restore  = config_.networkResumeBorderRestore();     // border covariance
+    k.resume_rxcb_lin_restore = config_.networkResumeRxCbLinRestore();   // rx-CB x_lin
+    k.resume_pb_seam_mark    = config_.networkResumePbSeamMark();       // PB seam mark
+    k.resume_slip_warmup_ep  = config_.networkResumeSlipWarmupEp();      // MW/LLI warm-up
+    k.resume_d5_warmup_ep    = config_.networkResumeD5WarmupEp();        // warm-up of the fine-slip innovation gate
+    k.readmit_seed_horizon_s = config_.networkReadmitSeedHorizonS();     // seed-first re-admission
     k.readmit_marg_ep        = config_.networkReadmitCouplingMargEp();   // block/row re-coupling edge
     k.readmit_seed_cb        = config_.networkReadmitSeedCodeBias();     // seed the code biases too (or clock only)
     k.readmit_seed_mirrors   = config_.networkReadmitSeedMirrors();      // monitor and census take a folded seed
     k.second_band_admission  = config_.networkSecondBandAdmission();     // a constellation enters a station on two modelled bands only
     k.second_band_scope      = config_.networkSecondBandScope();         // what the rule tests: the constellation or each satellite
     k.second_band_min_sats   = config_.networkSecondBandMinSats();       // station scope threshold
-    // Z-row capture is unconditional (SPEC_synthetic_minimum_network §17 finding 3): a run
-    // with a snapshot path records and harvests the per-station ZWD posterior, so every
-    // snapshot carries Z rows.  The capture is read-only with respect to the solve (no
-    // inject).
+    // Z-row capture is unconditional: a run with a snapshot path records and harvests the
+    // per-station ZWD posterior, so every snapshot carries Z rows.  The capture is read-only
+    // with respect to the solve (no inject).
     k.zwd_capture = !nc.state_snapshot_path.empty();
-    // I-in-block; loader guarantees phase_leveling + pl_local_block + carry_cpl_cond and
-    // !carry_invariant.
+    // Slant iono in the local block; loader guarantees phase_leveling + pl_local_block +
+    // carry_cpl_cond and !carry_invariant.
     k.iono_blk = config_.networkCarryIonoInBlock();
     k.iono_blk_q_m2 = config_.networkCarryIonoInBlockQM2();
     k.iono_blk_max_gap_s = config_.networkCarryIonoInBlockMaxGapS();
-    // RX-CLK-in-block; loader guarantees phase_leveling + pl_local_block +
+    // Receiver clock in the local block; loader guarantees phase_leveling + pl_local_block +
     // carry_cpl_cond, !carry_invariant, and a non-negative variance ladder.
     k.rxclk_blk        = config_.networkCarryRxClockInBlock();
     k.rxclk_q_m2       = config_.networkCarryRxClockQM2();
@@ -156,9 +153,9 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.rxclk_jump_k     = config_.networkCarryRxClockJumpK();
     k.rxclk_isb        = config_.networkCarryRxClockIsb();
     k.rx_cb_on = config_.networkCarryRxCodeBias();   // loader guarantees code_datum_time_linked
-    k.rxcb_blk = config_.networkCarryRxCodeBiasInBlock();   // RXCB-IN-BLOCK; loader guarantees rx_cb_on + coupling + a local block
-    // The live block predicates and the free-epoch consult, resolved once here:
-    // networkPassB_ derived them per epoch and the harvest a second time.
+    k.rxcb_blk = config_.networkCarryRxCodeBiasInBlock();   // rx-CB in the local block; loader guarantees rx_cb_on + coupling + a local block
+    // The live block predicates and the free-epoch consult, resolved once here for
+    // networkPassB_ and the harvest.
     k.pl_blk_on       = k.pl_local_block && k.carry_cpl_cond;
     k.zwd_blk_on      = k.zwd_in_block && k.pl_blk_on;
     k.iono_blk_on     = k.iono_blk && k.pl_blk_on;
@@ -170,13 +167,13 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.sta_prior_pre_pd = config_.getNetworkConfig().station_prior_before_pd;
     k.rx_cb_q = config_.networkRxCbCarryQ();
     k.carry_vce = config_.networkCarryVce();
-    k.vce_apply_on = config_.networkCarryVceApply();   // VCE apply (M2 v2); loader guarantees carry_vce
+    k.vce_apply_on = config_.networkCarryVceApply();   // VCE apply; loader guarantees carry_vce
     k.ura_on = config_.networkEmitUra();
     k.ura_alpha = config_.networkUraEwmaAlpha();
     k.ura_retro = config_.networkUraRetroBump();
     k.mark_refsat_reset_disc = config_.networkMarkRefsatResetDisc();
     k.ura_refloat_inflate = config_.networkUraRefloatInflate();
-    k.retro_feed = k.ura_retro || k.ura_refloat_inflate > 1.0;   // the retro-bump / URA-inflate feed (B1, P0-2)
+    k.retro_feed = k.ura_retro || k.ura_refloat_inflate > 1.0;   // the retro-bump / URA-inflate feed
     k.raim_on = config_.networkRaim();
     k.raim_k = config_.networkRaimKSigma();
     k.raim_s0_floor = config_.networkRaimSigma0Floor();
@@ -224,21 +221,21 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.perconst_on = config_.networkPerConstWithhold();
     k.perconst_min_rows = config_.networkPerConstWithholdMinRows();
     k.emit_epoch_status = config_.networkEmitEpochStatusRecord();
-    // Clock emission re-base knobs.  The engine lives in NetworkCarryState,
-    // because its per-satellite baselines and frame accumulators outlive the epoch, and
-    // the driver configures it next to the emit re-base setup.
+    // Clock emission re-base knobs.  The engine (NetworkEmitEngines::clk_rebase) holds
+    // per-satellite baselines and frame accumulators that outlive the epoch, and the run
+    // setup configures it from these knobs (Run.cpp).
     k.clk_frame_hold = config_.networkEmitClockFrameHold();
     k.clk_jump_test  = config_.networkClockDiscJumpTest();
-    // Emit-side phase-bias hold.  The held values and generations live in
-    // NetworkCarryState because they outlive the epoch; these are the knobs the
-    // NetworkPbHold seam reads.
+    // Emit-side phase-bias hold.  The held values and generations live in the entity
+    // tables (ctx.entities) because they outlive the epoch; these are the knobs the
+    // networkPbHold seam reads.
     k.emit_pb_hold           = config_.getNetworkConfig().emit_pb_hold;
     k.emit_pb_hold_max_gap_s = config_.getNetworkConfig().emit_pb_hold_max_gap_s;
     k.emit_pb_hold_phase_clock = config_.getNetworkConfig().emit_pb_hold_phase_clock;
     k.emit_pb_hold_smoothed    = config_.getNetworkConfig().emit_pb_hold_smoothed;
     // Guarded temporal clock anchor.  `cta_on` is resolved against the clock_model
     // interlock here, so every downstream site reads one predicate.  Under the two-state
-    // oscillator the clock is never stashed to the D2 carry, so the anchor has nothing to
+    // oscillator the clock is never stashed to the shared-parameter carry, so the anchor has nothing to
     // fold and reads as off (the loader reports an error on the combination).
     k.clk_model_on = config_.networkClockModel();
     k.cta_on             = config_.networkClockTemporalAnchor() && !k.clk_model_on;
@@ -263,7 +260,8 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.pivot_election_step_s    = config_.networkPivotElectionStepS();
     // Gauge-free carry downdate: one resolved predicate that every fold, withdraw and
     // replay site reads.  It removes the datum's own direction from the carried
-    // information, and is armed through `clock_anchor_gauge_free` with the Q3 anchor on.
+    // information, and is armed through `clock_anchor_gauge_free` with the temporal clock
+    // anchor on.
     //
     // It is a single resolved field, not a predicate re-derived per site, because fold and
     // withdraw have to agree: the withdraw subtracts what the fold added, and a fold that
@@ -315,17 +313,18 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     // carry_invariant_pd_safe and carry_aware_covariance resolve, and it stays correct if
     // that requirement is relaxed.
     k.raim_ci_on = k.raim_on && k.carry_invariant && config_.networkRaimCarryInvariant();
-    // Gross line-of-sight screen (docs/SPEC_event_harness.md §24.18).  Resolved
+    // Gross line-of-sight screen.  Resolved
     // once here so the driver, the assembly, the seam and the teardown read one bool.  It
     // has no interlock: the screen owns its residual walk and its state, so it runs with no
     // other tier armed, which matters because every other post-fit tier is phase-only.
     k.gl_on      = config_.getNetworkConfig().gross_los_screen;
     k.gl_deweight = k.gl_on ? config_.getNetworkConfig().gross_los_deweight : 1.0;
-    // Satellite stand-down (GL-2, §24.19), gated on gl_on here so every downstream site
+    // Satellite stand-down, gated on gl_on here so every downstream site
     // reads one bool.  The satellite rule sets the scope of the gross-LOS rule (it tallies
     // the same over-bar verdicts), so it has no meaning without the screen.
     k.gl2_on = k.gl_on && config_.getNetworkConfig().gross_los_sat_standdown;
-    // The four sub-rules of RF-3b, each gated on the screen for the same reason as GL-2.
+    // The four sub-rules, each gated on the screen for the same reason as the satellite
+    // stand-down.
     k.gl_min_rows_available = k.gl_on
         && config_.getNetworkConfig().gross_los_min_rows_rule
                == NetworkGrossLosMinRowsRule::Available;
@@ -351,7 +350,7 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.eq34_seed_round_rehost = k.eq34_seed_round
                             && config_.networkPhaseDatumEq34SeedRoundRehostFrame();
     k.phase_datum_prioritized = config_.networkPhaseDatumPrioritized() || k.phase_datum_eq34;
-    // Resolved once for the run (§9.7.10): the datum-station slip path exists only under
+    // Resolved once for the run: the datum-station slip path exists only under
     // the legacy pivot datum.  Every no-pivot datum already runs the slip loops from
     // i_lo = 0, so station 0 has ordinary coverage there.
     k.datum_station_detect = config_.networkCycleSlipDatumStationDetect()
@@ -387,13 +386,13 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
                                 ? config_.networkPhaseDatumHandoverMaxVarM2() : 0.0;
         k.pd_handover_max_var_ratio = k.pd_handover_continuous
                                 ? config_.networkPhaseDatumHandoverMaxVarRatio() : 0.0;
-        // PHASE_ANCHOR carry re-reference (queue item 1(d)), with the same placement and
+        // PHASE_ANCHOR carry re-reference, with the same placement and
         // the same second guard as the handover knob above: it applies only where an
         // anchor pin exists to hand over, and the eq34 chain has its own eq34_reref carry
         // hygiene.
         k.pa_carry_reref = anchored && !k.phase_datum_eq34
                            && config_.networkPhaseAnchorCarryReref();
-        // Cold anchor fallback (SPEC_event_harness §15).  Resolved against
+        // Cold anchor fallback.  Resolved against
         // pd_handover_continuous, not against `anchored`, because the pass screens
         // candidates with the handover ledger's usability predicate; without the ledger
         // it has nothing to read and would elect by coverage rank, as it does when off.
@@ -403,12 +402,12 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
                                 && config_.networkPhaseDatumCandidacyUsable();
         k.pd_candidacy_min_age_ep = k.pd_candidacy_usable
                                 ? config_.networkPhaseDatumCandidacyMinAgeEp() : 0;
-        // Satellite clause (iteration 2), resolved with its parent so every site reads one
-        // bool and an A/B against iteration 1 changes a single knob.
+        // Satellite clause, resolved with its parent so every site reads one
+        // bool and an A/B against the parent alone changes a single knob.
         k.pd_candidacy_satellite = k.pd_candidacy_usable
                                 && config_.networkPhaseDatumCandidacySatellite();
     }
-    // S-basis completion (network.sbasis_complete, SBC).  Resolved here so that the
+    // S-basis completion (network.sbasis_complete).  Resolved here so that the
     // pb_level_prev harvest and the solve-glue block read one predicate.  The completion's
     // continuity targets reuse that harvest, because under carry_invariant the shared
     // PhaseBias carry is not in prev_carry.
@@ -418,7 +417,7 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     // census master is off; resolving them here as well is a second guard, so a
     // hand-built NetworkConfig (tests) cannot arm a demotion behind a classifier that
     // never runs.  `sig_withhold` covers both spellings of the withhold disposition (the
-    // explicit bool and the spec's "scale <= 0"), so downstream sites read one field.
+    // explicit bool and "scale <= 0"), so downstream sites read one field.
     {
         const auto& si = nc.signal_integrity;
         k.sig_integrity_on    = si.census;
@@ -435,16 +434,16 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
                                 && (k.sig_withhold || k.sig_unvetted_scale > 1.0);
     }
     // The SH-deviation carry: live when a co-estimated SH field
-    // (network.estimate_iono_sh) has a positive correlation time.  The epoch driver
-    // tested the SH model (setup.sh_model) where this reads the flag: setup builds
-    // the model exactly when the flag is set, and a run whose setup fails never reaches the
-    // epoch loop or the run end.
+    // (network.estimate_iono_sh) has a positive correlation time.  Reading the flag stands
+    // in for testing the SH model (setup.sh_model): setup builds the model exactly when
+    // the flag is set, and a run whose setup fails never reaches the epoch loop or the run
+    // end.
     {
         const GlobalVtecShConfig& shc = config_.getGlobalVtecShConfig();
         k.sh_dev_tau     = config_.estimateNetworkIonoSh() ? shc.rep_error_tau_s : 0.0;
         k.sh_dev_on      = k.sh_dev_tau > 0.0;
-        k.sh_dev_demean  = k.sh_dev_on && shc.rep_error_demean;    // anti-ratchet de-mean (Iono-2 v3)
-        k.sh_dev_d5_keep = k.sh_dev_on && shc.rep_error_d5_keep;   // erase-policy split (v3k)
+        k.sh_dev_demean  = k.sh_dev_on && shc.rep_error_demean;    // anti-ratchet de-mean
+        k.sh_dev_d5_keep = k.sh_dev_on && shc.rep_error_d5_keep;   // erase-policy split
     }
     // Redundancy / testability census.  Nothing to resolve against the estimation
     // configuration: the census reads the solved system and writes counters, so the two
@@ -456,7 +455,7 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     // hold and writes counters), but the two source flags are resolved here rather than
     // at the feed sites, for two reasons.  (1) The RAIM source needs its host tier live:
     // raim_redundancy_normalize alone computes no r_i, because networkPostFitRaim is not
-    // called without network.raim.  (2) The run-end lines for invariant #4 report which
+    // called without network.raim.  (2) The run-end lines report which
     // feed was armed when a source contributed zero rows, since "the RAIM pool never ran
     // warm" and "no sweep completed" need different fixes.  Requiring a live source is a
     // second guard behind the loader's error, so a hand-built NetworkConfig (tests)
@@ -525,7 +524,7 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     // Station congruence screen.  Same host predicate and the same second guard as the
     // block census, for the same reason: a hand-built NetworkConfig (tests) cannot
     // arm a sweep behind a redundancy census that never runs.  `cg_on` also gates the
-    // assembly's geometry retention (INC-0), so resolving it here, once, before ctx.knobs
+    // assembly's geometry retention, so resolving it here, once, before ctx.knobs
     // becomes const, keeps the producer and the assembly in agreement about whether
     // row_pos_enu exists.
     {
@@ -539,8 +538,8 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     // recorder.  Nothing to resolve against the estimation configuration either: these
     // read the assembled row stacks and (the fuse) cap a weight, so the arming knobs are
     // the predicate, and the loader already clamps them.  `pc_walk_on` is the union of the
-    // three increments that ride the walk: INC-3 and INC-4 need the classification pass
-    // whether or not the INC-1 columns are requested.
+    // three mechanisms that ride the walk: the seed-birth tripwire and the topology ledger
+    // need the classification pass whether or not the census columns are requested.
     k.pc_census_on     = nc.trace_prefit_census;
     k.pc_event_sigma   = std::max(0.0, nc.prefit_event_sigma);
     k.pc_event_mask    = parseDataClassMask(nc.prefit_event_classes);
@@ -550,7 +549,7 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.pc_birth_sigma   = std::max(0.0, nc.seed_birth_check_sigma);
     k.pc_topo_on       = nc.trace_topology;
     k.pc_walk_on       = k.pc_census_on || k.pc_birth_sigma > 0.0 || k.pc_topo_on;
-    // H-rider (edge-queue §1.6 item 3a): the census-fed H σ̂₀.  The loader has
+    // Census-fed H σ̂₀ (the epoch-status H record's σ̂₀ from the prefit census).  The loader has
     // already forced it off without trace_prefit_census (the born-cell deferral
     // reads the census walk's presence map) and without emit_epoch_status_record
     // (no H records to feed).
@@ -560,7 +559,7 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     // Datum graph census.  Nothing to resolve against the estimation configuration: the
     // census reads the epoch's registration sets and the admitted support and writes
     // nothing back, so the master arm is the predicate.  It is not gated on
-    // `sbasis_complete`: without SBC the spectral side still supplies the
+    // `sbasis_complete`: without it the spectral side still supplies the
     // observed-vs-declared count, the reconciliation drops to count level and the trace
     // records it (`obs_src=count`).  Disarming the census there would hide the tier-1
     // fragmentation reading, which needs no spectrum.
@@ -583,7 +582,7 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.adm_heal_ep  = std::max(1, nc.adm_heal_ep);
     k.adm_max_frac = (nc.adm_max_frac > 0.0 && nc.adm_max_frac < 1.0)
                      ? nc.adm_max_frac : 0.5;
-    // Re-entry vet (INC-4).  The `&& adm_screen` repeats the loader's inert guard at the
+    // Re-entry vet.  The `&& adm_screen` repeats the loader's inert guard at the
     // predicate instead of relying on load order: a vet is an admission verdict and the
     // measure-only arm makes none, so a census-only run that reaches here with
     // `adm_revet` set does not rewrite arc records.  Same second-guard reason as the
@@ -606,20 +605,16 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
         k.adm_revet_bound_m = k.adm_bound_m * s;
     }
     // --- Invariant-carry gate and emit layers ---
-    // Moved from runNetwork with their conjunctions unchanged.
     {
         // Estimation-side fine-slip innovation gate: the invariant-carry-native replacement
         // for the RAIM fine-slip layer that the invariant bypass empties.  Requires
         // carry_invariant (rejected at config load otherwise).
         k.carry_innov_gate = k.carry_invariant && config_.networkCarryInvariantInnovGate();
         // Emit-layer frame re-base, on by default when carry_invariant is
-        // armed (spec D7).
+        // armed.
         k.emit_rebase_on = k.carry_invariant && config_.networkCarryInvariantEmitRebase();
     }
     // --- The epoch driver's configuration-derived values ---
-    // Moved from runNetwork with each expression unchanged (the SH-deviation switches are
-    // resolved above).  The rest is read from `nc`, which is the driver's own
-    // configuration in a run.
     {
         k.sec_timers_on = nc.trace_section_timers;
         k.clk_anchor_sigma = config_.resolveNetworkAprioriClockAnchorSigmaM();

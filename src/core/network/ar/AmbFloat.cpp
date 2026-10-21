@@ -1,8 +1,9 @@
 /**
  * @file AmbFloat.cpp
  * @brief Float ambiguity vehicle: the floored birth prior, the bounded drop, and the
- *        declared anchor S-transform (RF-1 steps 4 and 5).
- *        @see include/network/ar/AmbFloat.hpp
+ *        declared anchor S-transform (an exact change of reference basis when the
+ *        phase-datum anchor station of a satellite signal changes).
+ * @see include/network/ar/AmbFloat.hpp
  */
 #include "network/ar/AmbFloat.hpp"
 #include "network/driver/Epoch.hpp"          // NetworkEpoch
@@ -36,10 +37,10 @@ namespace GnssProcessor {
 
 double ambFloatBirthFloor(double base_m2, double elev_deg, double elev_power) {
     if (!(base_m2 > 0.0)) return 0.0;
-    if (!std::isfinite(elev_deg) || elev_deg <= 0.0) return base_m2;   // unavailable ⇒ zenith
-    // sigma^2(e) = sigma^2_zen / sin^{2p}(e), the code row weight's mapping.  The sine is
-    // clamped at sin(5 deg) so a grazing elevation cannot produce an unbounded floor;
-    // 5 degrees is well below every mask this producer runs.
+    if (!std::isfinite(elev_deg) || elev_deg <= 0.0) return base_m2;   // elevation unavailable: use the zenith value
+    // sigma^2(e) = sigma^2_zen / sin^{2p}(e), the mapping of the code row weights.
+    // The sine is clamped at sin(5 deg) so a grazing elevation cannot give an unbounded
+    // floor. 5 degrees is well below every elevation mask this producer runs.
     const double s = std::max(std::sin(elev_deg * 3.14159265358979323846 / 180.0),
                               std::sin(5.0 * 3.14159265358979323846 / 180.0));
     const double scaled = base_m2 / std::pow(s, 2.0 * elev_power);
@@ -49,31 +50,33 @@ double ambFloatBirthFloor(double base_m2, double elev_deg, double elev_power) {
 bool ambFloatDrop(LocalCarry& lc, double floor_m2, double now_s, long long now_ep,
                   bool decouple_always, bool* decoupled_idem) {
     if (decoupled_idem) *decoupled_idem = false;
-    // The restored prior: what the arc was worth at birth, never tighter than the
-    // posture's floor.  max() over all three, so a drop can only loosen; an arc whose
-    // var_birth was recorded before the floor was armed (or a warm-resume-restored
-    // entry, where var_birth is 0 = unknown) still gets the floor.
+    // Variance to restore: the arc's birth variance, never tighter than the floor.
+    // Taking the max of all three means a drop can only loosen the prior. An arc whose
+    // var_birth was recorded before the floor was armed, or a warm-resume entry
+    // (var_birth = 0 means unknown), still gets the floor.
     const double target = std::max({lc.var_birth, lc.var_first, floor_m2});
     if (!(target > 0.0)) return false;          // nothing usable to restore
     if (lc.var >= target) {
-        // Already at or below birth strength: an idempotent re-drop inside one epoch
-        // (two detectors on the same arc), or an arc that never converged.  The age
-        // clock still restarts, because the level is doubted even if the variance is not.
+        // Already at or below birth strength: a repeated drop within one epoch (two
+        // detectors on the same arc), or an arc that never converged. The age clock
+        // still restarts, because the level is doubted even if the variance is not.
         lc.relevel_s  = now_s;
         lc.dropped_ep = now_ep;
-        // The walk metric's population is every drop that doubted the level, including
-        // this one: the level is re-determined either way, and an OFF run reports the
-        // walk it suffers whether or not the variance moved (RF-3a A2).
+        // Walk metric: how far the level moves in the first folds after a drop
+        // (measure-only). It counts every drop that doubted the level, including this
+        // one. The level is re-determined either way, and a run with the drop floor off
+        // still reports the walk it suffers.
         lc.drop_walk_ph = 1;
-        // The regression and the block row belong to the doubted
-        // value whether or not the variance moved.  An arc that slips one epoch after its
-        // birth is already at birth strength, and without this it keeps folding its
-        // pre-slip value with full cross terms and a full border regression; under a
-        // consistent time update the station's ionosphere-free ties are then phase-tight
-        // and the stale value is pushed into the satellite clocks (the field's first-fold
-        // jump, BSHM00ISR G07 L2W).  Resetting blk leaves the siblings the principal
-        // submatrix of their harvest, their exact marginal.  Opt-in (default false keeps
-        // the previous behaviour byte for byte).
+        // The regression and the block row belong to the doubted value whether or not
+        // the variance moved. An arc that slips one epoch after its birth is already at
+        // birth strength. Without this it keeps folding its pre-slip value with full
+        // cross terms and a full border regression. Under a consistent time update the
+        // station's ionosphere-free ties are then phase-tight, and the stale value is
+        // pushed into the satellite clocks (seen as a jump at the first fold, field
+        // station BSHM00ISR, G07 L2W). Resetting blk leaves the siblings the principal
+        // submatrix of their harvest, which is their exact marginal. Opt-in
+        // (network.amb_float_drop_decouple_always); false keeps the previous behaviour
+        // byte for byte.
         if (decouple_always && (!lc.coupling.empty() || lc.blk)) {
             lc.coupling.clear();
             lc.blk.reset();
@@ -83,28 +86,31 @@ bool ambFloatDrop(LocalCarry& lc, double floor_m2, double now_s, long long now_e
         return false;
     }
     lc.var = target;
-    // The border regression and the block cross terms belong to the old value: a
+    // The border regression and the block cross terms belong to the old value. A
     // regression harvested against a level the response has just doubted would keep
     // injecting that level's relationship to the shared border at full strength.
-    // Clearing blk also makes every pair with a sibling read as a pair-miss this epoch,
-    // which is counted, so the decoupling edge is visible (invariant #7).
+    // Clearing blk also means the arc's pairs with its siblings (the other arcs of the
+    // joint block) find no cross term this epoch. That is counted as a pair miss, so the
+    // decoupling is visible.
     lc.coupling.clear();
     lc.blk.reset();
     lc.blk_idx = -1;
     lc.relevel_s  = now_s;
     lc.dropped_ep = now_ep;
-    // Arm the walk metric (RF-3a A2).  The next harvest of this arc reads the phase,
-    // records |value_abs(after) - value_abs(before)| and advances it; the fold after
-    // that records the residual walk.  Measure-only.
+    // Arm the walk metric (drop_walk_ph = 1). The next harvest of this arc records
+    // |value_abs(after) - value_abs(before)| and advances the phase. The harvest after
+    // that records the residual walk.
     lc.drop_walk_ph = 1;
-    // value_abs, var_first, var_birth, birth_s, birth_ep, last_seen_s and n_folds are
-    // kept by construction (design decision of 2026-09-14, question 2).
+    // Kept on purpose: value_abs, var_first, var_birth, birth_s, birth_ep, last_seen_s
+    // and n_folds. The drop lowers confidence in the level, not the identity of the arc.
+    // Keeping value_abs costs little, because a prior at birth variance is dominated by
+    // the epoch's data, and birth_s and birth_ep keep the age gates meaningful.
     return true;
 }
 
 double ambFloatDropFloorNow(double drop_floor_m2, long long now_ep, int after_ep) {
     if (!(drop_floor_m2 > 0.0)) return 0.0;      // nothing to gate
-    if (after_ep <= 0)          return drop_floor_m2;   // no gate (RF-3a behaviour)
+    if (after_ep <= 0)          return drop_floor_m2;   // no gate: the floor applies from the first epoch
     return (now_ep >= static_cast<long long>(after_ep)) ? drop_floor_m2 : 0.0;
 }
 
@@ -112,14 +118,14 @@ AmbDropOutcome ambFloatDropFloored(LocalCarry& lc, double birth_floor_m2,
                                    double drop_floor_m2, double now_s,
                                    long long now_ep, bool decouple_always) {
     AmbDropOutcome out;
-    // What the arc would have been restored to without the drop-only floor.  Computed
-    // before the call, because the call overwrites lc.var.
+    // What the arc would be restored to without the drop-only floor. Computed before
+    // the call, because the call overwrites lc.var.
     const double without_drop = std::max({lc.var_birth, lc.var_first, birth_floor_m2});
     out.from_drop_floor = (drop_floor_m2 > 0.0) && (drop_floor_m2 > without_drop);
     out.acted = ambFloatDrop(lc, std::max(birth_floor_m2, drop_floor_m2), now_s, now_ep,
                              decouple_always, &out.decoupled_idem);
-    // An arc already looser than every floor is not evidence that the drop floor acted:
-    // report the floor as the source only when the variance actually moved to it, so an
+    // An arc already looser than every floor is no evidence that the drop floor acted.
+    // Report the floor as the source only when the variance actually moved to it, so an
     // idempotent re-drop does not inflate the counter.
     if (!out.acted) out.from_drop_floor = false;
     return out;
@@ -132,13 +138,12 @@ void networkAmbFloatApplyDrops(
     const std::vector<std::map<std::string, double>>& elev_of,
     long long week, double tow, double pl_now_s, EpochEvents& events) {
     net::NetworkEntities& entities = ctx.entities;   // written: stations
-    // --- alias preamble (the seam contract) -------------------------------------
-    if (!ctx.knobs.amb_float_kf) return;            // the vehicle owns this response
+    if (!ctx.knobs.amb_float_kf) return;            // the drop is the float vehicle's response
     auto& relevel     = events.slip.relevel;
     auto& counters    = ctx.counters;
     const double floor_base = ctx.knobs.amb_birth_var_floor;
-    // The drop-only floor, elevation-mapped with the same mapping as the birth floor
-    // (@ref ambFloatBirthFloor is the mapping, not the knob) (RF-3a A1).
+    // The drop-only floor (network.amb_float_drop_var_m2). It is elevation-mapped like
+    // the birth floor: ambFloatBirthFloor supplies the mapping, not the knob value.
     const double drop_base_knob = ctx.knobs.amb_drop_var_floor;
     const double elev_power = config_.getCodeElevationPower();
     const double max_gap_s  = ctx.knobs.pl_max_gap_s;
@@ -160,19 +165,21 @@ void networkAmbFloatApplyDrops(
     };
 
     long long n_free = 0, n_stale = 0, n_idem = 0, n_dropfloor = 0, n_pregate = 0;
-    // The drop floor in force this epoch: 0 while the warm-up gate is closed, which gives
-    // the restored variance without the RF-3a floor.  Resolved once per pass because the
-    // gate's abscissa is the epoch, not the line of sight (RF-3c).
+    // Drop floor in force this epoch: 0 while the warm-up gate
+    // (network.amb_float_drop_floor_after_ep) is closed, so the restored variance
+    // excludes the drop-only floor. Resolved once per pass because the gate depends on
+    // the epoch, not on the line of sight.
     const double drop_base = ambFloatDropFloorNow(drop_base_knob, now_ep,
                                                   ctx.knobs.amb_drop_floor_after_ep);
     const bool   pre_gate  = (drop_base_knob > 0.0) && !(drop_base > 0.0);
-    // Whether the last dropAt call's idempotent drop cleared the arc's
-    // regression and block row (network.amb_float_drop_decouple_always), the second way a
-    // drop changes the carried prior.  Count-only: the loops below read it beside the
-    // value dropAt returns, which is unchanged.
+    // Set by dropAt: true when an idempotent drop (variance already at birth strength)
+    // still cleared the arc's regression and block row
+    // (network.amb_float_drop_decouple_always). That is the second way a drop changes
+    // the carried prior. Count-only: the loops below read it next to dropAt's return
+    // value, which it does not change.
     bool last_decoupled_idem = false;
     // One lambda, so the two populations below cannot take the drop at different
-    // floors.  Both floors are mapped at this line of sight's elevation (RF-3a A1).
+    // floors. Both floors are mapped at this line of sight's elevation.
     const auto dropAt = [&](LocalCarry& lc, int sta, const std::string& sat) {
         const double e = elevOf(sta, sat);
         const AmbDropOutcome o = ambFloatDropFloored(
@@ -185,35 +192,38 @@ void networkAmbFloatApplyDrops(
         if (pre_gate)          ++n_pregate;
         return o.acted;
     };
-    // The latch causes of the re-entry responses (gap re-entry, wind-up
-    // restart).  A latch is a re-entry only when its recorded cause is non-zero and has no
-    // bit outside these two; a slip detector's bit, a T4 bit (the event harness tags its
-    // free_epoch response with one), an unknown bit or no recorded cause is the slip row.
+    // Cause bits of the two re-entry responses (gap re-entry and wind-up restart). A
+    // latch counts as a re-entry only when its recorded cause is non-zero and has no
+    // other bit. A slip detector's bit, a RAIM (receiver autonomous integrity
+    // monitoring) attribution bit, an unknown bit, or no recorded cause counts as the
+    // slip row. A slip injected for testing is tagged with the RAIM attribution bit
+    // (kCauseT4Attrib), so it also counts as a slip.
     constexpr unsigned kReentryBits =
         RelevelEpochState::kCauseGap | RelevelEpochState::kCauseWindup;
-    // (1) The latched free-epoch set.  The set itself is not consumed, per §4.1: the
-    //     phase-datum candidacy screen, the anchor-slip handover staging and the harvest's
-    //     own statistics guards all read it, and re-pointing them is a separate change.
-    //     Only the response the set invokes changes here.
+    // (1) Free-epoch latch: the arcs the slip detectors flagged this epoch. The set is
+    //     left in place because the phase-datum candidacy screen, the anchor-slip
+    //     handover staging and the harvest's statistics guards also read it. Only the
+    //     response to a flag changes here: a bounded drop instead of skipping the inject.
     for (const auto& [sta, amb_key] : relevel.free_ambs) {
         const std::optional<ArcId> arc = net::arcKey(sta, amb_key);
         if (!arc) continue;
-        // Under the held S-basis (network.phase_datum_held_basis), every screen flag
-        // stamps the arc, whether or not it has a carry to drop.  The election's quiet
-        // window reads the stamp to refuse the S-basis to a recently flagged candidate,
-        // and the sticky branch reads it to depose a flagged basis holder; the stamp
-        // lands even without a carry because a flagged arc with no carry is still not a
-        // datum (RF-2 items 3 and 4).
+        // With network.phase_datum_held_basis (the held S-basis, the reference basis of
+        // the phase datum), every flag stamps the arc with this epoch, whether or not it
+        // has a carry to drop. The datum election reads the stamp: its quiet window
+        // refuses the S-basis to a recently flagged candidate, and its sticky branch
+        // deposes a flagged basis holder. The stamp is written even without a carry,
+        // because a flagged arc with no carry is still not a usable datum.
         if (ctx.knobs.pd_held_basis)
             net::putAmbFlagEp(entities, sta, amb_key) = now_ep;
         const auto it = net::get(ctx.entities.arcs, *arc, &net::ArcState::amb);
-        if (it == nullptr) continue;      // nothing carried ⇒ nothing to drop
+        if (it == nullptr) continue;      // nothing carried, nothing to drop
         const bool acted = dropAt((*it), sta, net::satKey(arc->sat));
         if (acted) ++n_free;
         else       ++n_idem;
-        // A drop that changed the carried prior (the variance moved,
-        // or the idempotent drop decoupled it), by what latched the arc (kReentryBits).
-        // The two rows sum to n_free plus this loop's idempotent decouples.
+        // Tally a drop that changed the carried prior (the variance moved, or the
+        // idempotent drop decoupled the arc), split by what latched the arc
+        // (kReentryBits). The two rows sum to n_free plus this loop's idempotent
+        // decouples.
         if (acted || last_decoupled_idem) {
             const auto cz = relevel.free_cause.find({sta, amb_key});
             const unsigned cbits = (cz == relevel.free_cause.end()) ? 0u : cz->second;
@@ -223,21 +233,20 @@ void networkAmbFloatApplyDrops(
         }
         note(net::arcTuple(*arc), (*it), AmbDropCause::kReLevelFree);
     }
-    // (2) The gap cliff.  An arc present this epoch whose sighting gap already exceeds the
-    //     horizon: on the leveling vehicle the inject skips it and the harvest re-stashes
-    //     a level drawn from one epoch of code (SPEC_withhold_era_release §8, "the
-    //     cliff").  The post-harvest prune cannot see these, because the harvest refreshes
-    //     last_seen_s first; the prune's own population (arcs that are gone) stays an
-    //     erase, §3.4's one remaining erase case.  The loop does not test presence, so an
-    //     absent arc past the horizon is also dropped and counted here before the prune
-    //     erases it.
+    // (2) Gap cliff: an arc whose sighting gap already exceeds the horizon
+    //     (phase_leveling_max_gap_s). On the leveling vehicle the inject skips such an
+    //     arc and the harvest re-stashes a level drawn from one epoch of code. The
+    //     post-harvest prune cannot see these arcs, because the harvest refreshes
+    //     last_seen_s first. The prune keeps its own population (arcs that are gone),
+    //     which is still erased. This loop does not test presence, so an absent arc past
+    //     the horizon is also dropped and counted here before the prune erases it.
     net::forEach(ctx.entities.arcs, &net::ArcState::amb, [&](const ArcId& id, LocalCarry& lc) {
         const double gap = pl_now_s - lc.last_seen_s;
         if (!(gap > max_gap_s)) return;
         const bool acted = dropAt(lc, id.station.index, net::satKey(id.sat));
         if (acted) ++n_stale;
         else       ++n_idem;
-        // A drop that changed the carried prior (as in loop (1)).
+        // Tally a drop that changed the carried prior (as in loop (1)).
         if (acted || last_decoupled_idem)
             prmRespond(counters.prm_resp, ResponseSite::AmbDropStaleGap);
         note(net::arcTuple(id), lc, AmbDropCause::kStaleGap);
@@ -266,12 +275,13 @@ void declaredHandoverShiftCarry(NetworkCarryState& carry, net::NetworkEntities& 
                                 long long& n_shift, long long& n_pb, long long& n_cpl,
                                 CarrySiteCounts* counts, bool complete) {
     n_shift = n_pb = n_cpl = 0;
-    // The phase-bias shift of the family, under the one rule of a phase-bias shift
-    // (phaseBiasShiftOf), as the eq34 D4 shift applies it.
+    // Phase-bias shift of this (satellite, signal) family, from the shared rule
+    // phaseBiasShiftOf (the rule eq34ShiftCarry in ChainDatum.cpp also applies).
     const std::map<std::pair<std::string, std::string>, double> shift_sat{{{sat, sig}, +delta}};
-    // With network.carry_rebase_complete the owed sites join: the gross
-    // screen's held ambiguity as the ambiguity, the last solved phase bias and an open pin
-    // bridge as the carried phase bias, and every other coupling map's terms on the family.
+    // With network.carry_rebase_complete, the remaining carried references join the
+    // shift: the gross line-of-sight screen's held ambiguity (shifted like the ambiguity), the
+    // last solved phase bias and an open pin bridge (shifted like the carried phase
+    // bias), and the terms of every other coupling map on the family.
     forEachCarriedReference(
         carry, entities, carryMechanismSiteMask(CarryMechanism::DeclaredHandover, complete),
         [&](const CarriedRef& r) -> bool {
@@ -286,12 +296,12 @@ void declaredHandoverShiftCarry(NetworkCarryState& carry, net::NetworkEntities& 
                     *r.value -= delta;             // the held ambiguity, as the ambiguity
                     return true;
                 case CarrySite::PrevCarry:
-                    *r.value += delta;             // pinning N_{r_in} = 0 means b'_s = b_s + Δ
+                    *r.value += delta;             // pinning N_{r_in} = 0 (r_in: incoming anchor) means b'_s = b_s + Δ
                     ++n_pb;
                     return true;
                 case CarrySite::PbLevelPrev:          // network.carry_rebase_complete
                 case CarrySite::PinBridge:
-                    *r.value += delta;             // the baseline and the bridge, as the phase bias
+                    *r.value += delta;             // the last solved phase bias and the bridge, as the phase bias
                     return true;
                 default: {                         // a coupling term on the family's phase bias
                     const double s = phaseBiasShiftOf(shift_sat, r.sat, r.signal);
@@ -314,7 +324,6 @@ long long networkAmbFloatDeclaredHandover(
     long long week, double tow,
     std::set<std::pair<std::string, std::string>>& handled_out) {
     net::NetworkEntities& entities = ctx.entities;   // written
-    // --- alias preamble (the seam contract) -------------------------------------
     if (!ctx.knobs.amb_float_kf || !ctx.knobs.amb_float_declared_handover) return 0;
     if (handovers.empty()) return 0;
     auto& counters    = ctx.counters;
@@ -325,11 +334,12 @@ long long networkAmbFloatDeclaredHandover(
         if (!family) continue;
         const std::string sat = net::satKey(family->sat);
         const std::string sig = net::signalKey(family->signal);
-        // Only a continuous handover has a Δ.  A cold re-realization elected a successor
-        // with no usable carried level, so there is no new basis to express the family
-        // in: its erase stands, and it is counted as refused rather than transformed
-        // with Δ = 0, which would leave every carry in the retired frame without an erase.
-        // An incoming station missing from the roster is counted the same way.
+        // Only a continuous handover (the successor was elected with a carried level)
+        // has a Δ. A cold re-realization has no usable carried level, so there is no new
+        // basis to express the family in. Its erase stands, and it is counted as refused
+        // rather than transformed with Δ = 0, which would leave every carry in the
+        // retired frame without an erase. An incoming station missing from the roster is
+        // counted the same way.
         if (!h.continuous) { ++counters.n_amb_sts_refused_cold; continue; }
         int to_idx = -1;
         for (std::size_t s = 0; s < stations.size(); ++s)
@@ -337,41 +347,43 @@ long long networkAmbFloatDeclaredHandover(
         if (to_idx < 0) { ++counters.n_amb_sts_refused_cold; continue; }
         const auto in_it = net::getArc(ctx.entities.arcs, std::make_tuple(to_idx, sat, sig), &net::ArcState::amb);
         if (in_it == nullptr || !std::isfinite(in_it->value_abs)) {
-            // The ledger says continuous but the incoming anchor holds no live carry
-            // this epoch: the same "no Δ" case, counted separately because it is a
-            // ledger/carry disagreement rather than a cold election.
+            // The handover record says continuous, but the incoming anchor holds no live
+            // carry this epoch. This is the same "no Δ" case, counted separately because
+            // the record and the carry disagree, which is not a cold election.
             ++counters.n_amb_sts_refused_no_level;
             continue;
         }
         const double delta = in_it->value_abs;
         if (!(std::abs(delta) > 0.0)) {
-            // Already in the new basis (Δ = 0): the transform is the identity, so take
-            // ownership of the family (no erase) and continue.  This is the common case
-            // when the same station re-pins itself.
+            // Already in the new basis (Δ = 0): the transform is the identity. Mark the
+            // family handled (the caller does not erase it) and continue. This is the
+            // common case when the same station re-pins itself.
             handled_out.insert({sat, sig});
             ++counters.n_amb_sts_identity;
             continue;
         }
-        // ---- The transform.  All three references on this identity move together, through
-        //      the traversal of carried references: every carried ambiguity
-        //      of the family by -Δ, and the satellite phase bias by the opposite shift
-        //      (pinning N_{r_in} = 0 means b'_s = b_s + Δ), its carried prior and every
-        //      coupling s_prev that references it, or the frame step is injected as row bias
-        //      (the filed latent defect at the D4 carry S-transformation in
-        //      ChainDatum.cpp, SPEC_card1_coupling_carry §14).
+        // ---- The transform.  Three references on this (satellite, signal) family move
+        //      together: every carried ambiguity of the family by -Δ, and the satellite
+        //      phase bias by the opposite shift (pinning N_{r_in} = 0 means
+        //      b'_s = b_s + Δ), along with its carried prior and every coupling s_prev
+        //      that references it. Moving only some of them injects the frame step into
+        //      the rows as bias. eq34ShiftCarry in ChainDatum.cpp moves the ambiguity and
+        //      the coupling terms together for the same reason.
         CarrySiteCounts prm_cc;
         long long n_shift = 0, n_pb = 0, n_cpl = 0;
         declaredHandoverShiftCarry(ctx.carry, entities, sat, sig, delta, n_shift, n_pb, n_cpl, &prm_cc,
                                    ctx.knobs.rebase_complete);
         ++counters.prm_ref_calls[static_cast<int>(CarryMechanism::DeclaredHandover)];
         carryTallyMoved(counters.prm_ref_moved, CarryMechanism::DeclaredHandover, prm_cc);
-        // The family's held emission, left in the old frame (PbHold
-        // is exempt from the shift).  Measure-only.
+        // Count a held emission of the family that stays in the old frame (the phase-bias
+        // hold is exempt from the shift). Measure-only.
         if (delta != 0.0
             && net::getSig(ctx.entities.sat_signals, net::holdKey(*family), &net::SatSignalState::pb_hold))
             ++counters.prm_pbhold_unmoved_at_shift;
-        // ---- Exactness self-check (the sts_selfcheck_ok pattern).  The incoming
-        //      anchor's column now reads 0, which is what its w = 1e10 pin asserts.
+        // ---- Exactness self-check (the same test networkHandoverStransform makes with
+        //      selfcheck_ok).
+        //      The incoming anchor's column now reads 0, which is what its w = 1e10 pin
+        //      asserts.
         const double x_post = in_it->value_abs;
         const bool ok = std::abs(x_post) <= kStsExactTolM;
         if (!ok) ++counters.n_amb_sts_selfcheck_fail;
@@ -379,9 +391,9 @@ long long networkAmbFloatDeclaredHandover(
         ++counters.n_amb_stransform;
         counters.n_amb_stransform_cols += n_shift;
         handled_out.insert({sat, sig});
-        // ---- One event row per family, with identities (invariant #7).  A transform
-        //      logged only as a total would be a silent re-referencing, which the
-        //      topology ledger (network.trace_topology) would have to recover.
+        // ---- One event row per family, with identities. A transform reported only as a
+        //      total would be a silent re-referencing that the topology trace
+        //      (network.trace_topology) would have to reconstruct.
         traces.emitEvent(GnssTime{static_cast<int>(week), tow}, "STRANSFORM",
                          ok ? "sts_applied" : "sts_selfcheck_fail",
                          h.amb, h.to, delta, std::nullopt, "s_transform",
@@ -402,12 +414,9 @@ long long networkAmbFloatDeclaredHandover(
     return n_shift_total;
 }
 
-// ---- The epoch form (frozen text of Application::networkProcessEpoch_,
-//      moved by scripts/nom_ep2_cut.py) ----
+// ---- Epoch entry point: the bounded drop for one epoch ----
 void networkAmbFloatDropEpoch(NetworkRun& run, const NetworkEpoch& ep, EpochEvents& events) {
-    // ---- From the run and the epoch (generated by scripts/nom_ep2_cut.py,
-    //      each line checked by scripts/nom_ep2_verify.py). Reads bind through `ep`; writes bind
-    //      through the output parameters and are marked `// written`. ----
+    // ---- From the run and the epoch (reads bind through `ep`; writes are marked `// written`) ----
     const std::shared_ptr<spdlog::logger>& log = run.log;
     NetworkSetupResult& setup = run.setup;
     auto& stations = setup.stations;
@@ -417,13 +426,13 @@ void networkAmbFloatDropEpoch(NetworkRun& run, const NetworkEpoch& ep, EpochEven
     const std::vector<std::vector<PppObservation>>& modeled = ep.pass_a.modeled;
     const double pl_now_s = ep.clock.pl_now_s;
     // ---- End of the bindings ----
-    // The bounded drop (RF-1 step 4, docs/refound/RF-1_float_ambiguities_design.md
-    // §3.4), applied serially here: after PASS A's slip scans have latched
-    // relevel.free_ambs and before the parallel PASS-B inject reads the carry.  By the
-    // time a station's produce sees an arc, the drop has happened, and the inject folds
-    // the arc at birth strength instead of skipping it.  A no-op unless the vehicle is
-    // float_kf.  `modeled` carries this epoch's LOS elevations, with which the birth
-    // floor is mapped; the map is built only when the floor is armed.
+    // Bounded drop, applied serially: after PASS A's slip scans (the per-station scan
+    // pass) have latched relevel.free_ambs, and before the parallel PASS B inject (the
+    // per-station assembly) reads the carry. By the time a station's produce step sees an
+    // arc, the drop has happened, so the inject folds the arc at birth strength instead
+    // of skipping it. No-op unless the vehicle is float_kf. `modeled` carries this
+    // epoch's line-of-sight elevations, which map the birth floor; the map is built only
+    // when the floor is armed.
     std::vector<std::map<std::string, double>> amb_elev_of;
     if (ctx.knobs.amb_birth_floor_on) {
         amb_elev_of.resize(modeled.size());
@@ -431,27 +440,27 @@ void networkAmbFloatDropEpoch(NetworkRun& run, const NetworkEpoch& ep, EpochEven
             for (const auto& mo : modeled[mi])
                 amb_elev_of[mi][mo.satellite] = mo.elevation;
     }
-    // The latch per cause, before the response reads it.
+    // Tally the latch per cause before the drop reads it.
     networkResponseLatchTally(ctx, events);
     networkAmbFloatApplyDrops(ctx, config_, log, stations, amb_elev_of,
                               se.time.week, se.time.tow, pl_now_s, events);
 }
 
-// ---- Run-end reports (generated by scripts/nom_td_cut.py) ----
+// ---- Run-end reports ----
 
-// Run-end report: the ambiguity vehicle and the joint-block PD-fallback bar.
+// Run-end report: the ambiguity vehicle and the joint-block fallback bar. PD means
+// positive definite: a joint block that is not PD falls back to per-column rows.
 int networkAmbVehicleRunEnd(const NetworkRunEndView& v) {
     const NetworkRunContext& ctx = v.ctx;
     const GnssConfig& config_ = v.config;
     const std::shared_ptr<spdlog::logger>& log = v.log;
-    int amb_block_rc = 0;   // the joint-block PD-fallback bar's verdict, this report's return value
+    int amb_block_rc = 0;   // verdict of the joint-block fallback bar, this report's return value
 
-    // Ambiguity-vehicle run-end readout (docs/refound/RF-1_float_ambiguities_design.md
-    // §7.2, RF-1).  Emitted only when the vehicle is non-default or the trace is armed,
-    // so an unarmed run's stdout is unchanged (structural byte-identity, invariant #6).
-    // The mechanism counters (drops, declared S-transforms and the columns they move,
-    // joint-block fallbacks) are printed even at 0: a float_kf run with 0 drops is a
-    // miswire, not a quiet run (design §7.4 D3; invariant #4).
+    // Ambiguity-vehicle readout. Printed only when the vehicle is non-default or the
+    // amb-state trace is armed, so the output of a run with neither is unchanged. The
+    // mechanism counters (drops, declared S-transforms and the columns they move,
+    // joint-block fallbacks) are printed even at 0: a float_kf run with 0 drops means
+    // the wiring is broken, not that the run was quiet.
     if (ctx.knobs.amb_float_kf || config_.getNetworkConfig().trace_amb_state)
         log->info("Network (RF-1 ambiguity vehicle): vehicle=\"{}\"{}, birth_var_floor={} "
                   "m^2, declared_handover={}.  Mechanism counters: {} drop(s) "
@@ -466,10 +475,9 @@ int networkAmbVehicleRunEnd(const NetworkRunEndView& v) {
                   ctx.counters.n_amb_drop, ctx.counters.n_amb_drop_epochs,
                   ctx.counters.n_amb_stransform, ctx.counters.n_amb_stransform_cols,
                   ctx.counters.n_amb_block_fallback);
-    // Drop inventory by cause, and the ON-path evidence of the birth floor (RF-1 step 4,
-    // §3.4 and §7.4 D3).  A float_kf run with 0 drops is a miswire, not a quiet run
-    // (design §7.4; invariant #4), so 0 logs at warn level, with the population that
-    // would have been dropped named beside it.
+    // Drop inventory by cause, and the evidence that the birth floor acted. A float_kf
+    // run with 0 drops means the wiring is broken, not that the run was quiet, so 0 logs
+    // at warn level, with the population that would have been dropped named beside it.
     if (ctx.knobs.amb_float_kf && ctx.knobs.amb_birth_var_floor > 0.0) {
         const auto& C = ctx.counters;
         log->log(C.n_amb_drop > 0 ? spdlog::level::info : spdlog::level::warn,
@@ -488,19 +496,18 @@ int networkAmbVehicleRunEnd(const NetworkRunEndView& v) {
                  C.n_amb_birth_floored, C.n_cr_gap_prune,
                  C.n_relevel_free_skips, C.n_cr_inject_stale);
     }
-    // Drops at birth strength that decoupled the arc anyway.
+    // Drops that found the arc at birth strength and still decoupled it.
     if (ctx.knobs.amb_drop_decouple_always)
         log->info("Network (drop decouple): {} drop(s) found the arc already at "
                   "birth strength and still cleared its border regression and block row "
                   "(network.amb_float_drop_decouple_always).",
                   ctx.counters.n_amb_drop_decoupled_idem);
-    // Inventory of the drop-only floor and the walk it targets
-    // (docs/refound/RF-3_code_row_qc_2026-09-22.md §4 A2, RF-3a).  Emitted in both knob
-    // states: a run with the knob off reports the walk it has, which is what gives the
-    // armed run's number a meaning (invariant #4).  The two fold buckets separate the
-    // correction absorbed by the first fold after a drop from the walk that follows it:
-    // a stiff restored prior lets a 40 m level error through a few metres per epoch for
-    // tens of epochs, while a floored one takes it in at once.
+    // Inventory of the drop-only floor and the walk it targets. Printed with the floor
+    // on or off: a run with the floor off reports the walk it has, which gives the armed
+    // run's number its meaning. The two fold buckets separate the correction absorbed by
+    // the first fold after a drop from the walk that follows it. A stiff restored prior
+    // lets a 40 m level error through at a few metres per epoch for tens of epochs,
+    // while a floored one takes it in at once.
     if (ctx.knobs.amb_float_kf) {
         const auto& C = ctx.counters;
         auto stat = [](std::vector<double> v) {
@@ -514,8 +521,8 @@ int networkAmbVehicleRunEnd(const NetworkRunEndView& v) {
         };
         const auto w1 = stat(C.amb_walk_fold1_m);
         const auto w2 = stat(C.amb_walk_fold2_m);
-        // The two populations of the warm-up gate (RF-3c), printed in both knob states so a
-        // run with no gate says so rather than leaving it to be inferred.
+        // The two populations of the drop-floor warm-up gate, printed with the gate on or
+        // off so that a run with no gate says so.
         log->info("Network (RF-3c drop-floor warm-up gate): "
                   "network.amb_float_drop_floor_after_ep = {} ({}).  {} drop(s) were taken "
                   "BEFORE the gate opened and restored max(var_birth, var_first, birth "
@@ -540,10 +547,10 @@ int networkAmbVehicleRunEnd(const NetworkRunEndView& v) {
                   ctx.knobs.amb_birth_var_floor, C.n_amb_drop_floored, C.n_amb_drop,
                   w1.max, w1.med, w1.n, w2.max, w2.med, w2.n);
     }
-    // Inventory of the declared anchor S-transform, with the refused population beside it
-    // (RF-1 step 5, §3.6).  The split marks the limit of the step: a cold handover has no
-    // Δ, so its family keeps the erase, and how often that happens is a question for the
-    // election policy (RF-2).
+    // Inventory of the declared anchor S-transform, with the refused population beside
+    // it. The split shows the limit of the transform: a cold handover has no Δ, so its
+    // family keeps the erase. How often that happens depends on the datum election
+    // policy.
     if (ctx.knobs.amb_float_kf && ctx.knobs.amb_float_declared_handover) {
         const auto& C = ctx.counters;
         log->log(C.n_amb_stransform > 0 ? spdlog::level::info : spdlog::level::warn,
@@ -560,12 +567,12 @@ int networkAmbVehicleRunEnd(const NetworkRunEndView& v) {
                  C.n_amb_sts_refused_cold, C.n_amb_sts_refused_no_level,
                  ctx.counters.pa_reref_erase_total, C.n_amb_sts_selfcheck_fail);
     }
-    // Joint-block fallback bar (RF-1 step 3, design risk #3): a fallback rate above a
-    // small threshold is a run-end failure, not a note.  Under float_kf a non-SPD block
-    // returns those station-epochs to the per-column route the vehicle replaces, so a run
-    // that fell back on more than 1 % of its attempted station-epochs did not run the
-    // vehicle its manifest claims and is not to be graded as if it had.  A failure sets
-    // amb_block_rc, which the tail folds into the run's return code.
+    // Joint-block fallback bar. A fallback rate above 1 % is a run-end failure, not a
+    // note. Under float_kf a block that is not symmetric positive definite (SPD) sends
+    // those station-epochs back to the per-column route the vehicle replaces. A run that
+    // fell back on more than 1 % of its attempted station-epochs therefore did not run
+    // the vehicle its manifest claims, and must not be graded as if it had. A failure
+    // sets amb_block_rc, which the run-end walk folds into the run's return code.
     if (ctx.knobs.pl_blk_from_vehicle) {
         const long long attempted = ctx.counters.n_pl_blk_blocks
                                   + ctx.counters.n_pl_blk_fallback;

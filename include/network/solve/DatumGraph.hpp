@@ -2,14 +2,12 @@
 /**
  * @file DatumGraph.hpp
  * @brief Datum graph census: the structural S-basis dimension, predicted from the
- *        epoch's support topology and reconciled against the spectral observation
- *        (docs/SPEC_datum_graph_census.md).
+ *        epoch's support topology and reconciled against the spectral observation.
  *
  * Measure-only, off by default, fingerprint-safe.  This translation unit writes no
  * weight, state, datum row or decision.  It does not move
  * @c NetworkSbasis::Plan::declared_dimension and does not feed the null-space gate or
- * SBC.  Acting on a prediction is a later step (spec §8); v1
- * measures how good the prediction is before anything depends on it.
+ * SBC.  The census measures how good the prediction is before anything depends on it.
  *
  * ## Why a structural census when the dimension is already measured
  *
@@ -30,17 +28,17 @@
  * A structural predictor provides three things the spectral path does not:
  *  - early warning by identity (which family, which stations, which satellite)
  *    instead of an eigenvalue count;
- *  - a `predicted-vs-observed` contingency (standing invariant #4) that turns a
- *    gate failure into a diagnosis;
+ *  - a `predicted-vs-observed` contingency that turns a gate failure into a
+ *    diagnosis;
  *  - on the SBC+KP recipe, where the spectral extras are suppressed by design, a
  *    live map of where @c network.cb_kaula_prior is load-bearing (the
- *    `predicted only` cell): the population that KP's own K2-margin warning refers
- *    to but cannot name.
+ *    `predicted only` cell): the population that KP's own anti-fragility margin
+ *    log refers to but cannot name.
  *
  * ## The two tiers
  *
  * **Tier 1: component multiplicity (LASER 5-63).**  Per constellation, union-find
- * over the station–satellite bipartite graph of admitted observation support.  With
+ * over the station-satellite bipartite graph of admitted observation support.  With
  * @f$k@f$ components, each datum gauge of that constellation is needed @f$k@f$
  * times while the declared plan assumes @f$k = 1@f$, so @f$k > 1@f$ predicts
  * @f$(k-1)\cdot d@f$ undeclared extra deficiencies: the disjoint-network case
@@ -63,17 +61,16 @@
  * the spectral path already has.  The census therefore under-claims by
  * construction, and the `observed only` cell measures the cost of that choice.
  *
- * ## Deviation from the spec: a second tier-2 predicate
+ * ## A second tier-2 predicate
  *
- * Spec §2 defines tier 2 on registered code keys.  A registered key is a column,
+ * Tier 2 is defined on registered code keys.  A registered key is a column,
  * and the deficient directions of the Galileo split carried live CB components
  * (`PB:E03:L5X:0.35 CB:E03:C5X:0.35 …`): the columns existed and their row support
- * thinned.  The strict key predicate can therefore be empty on the run §6.3 grades,
- * as the spec anticipates (a low number falsifies the family-partition definition,
- * not the census).
+ * thinned.  The strict key predicate can therefore be empty on a run with such a
+ * split (a low number falsifies the family-partition definition, not the census).
  *
- * This implementation evaluates both predicates in one pass over the same partition:
- *  - `zero_keys`: the spec's strict predicate.  It alone drives the contingency
+ * The census evaluates both predicates in one pass over the same partition:
+ *  - `zero_keys`: the strict predicate.  It alone drives the contingency
  *    cells, the events and the headline coverage number.
  *  - `zero_support`: a weaker companion.  The family's registered code columns
  *    carry zero admitted observables anywhere in the network this epoch.  It has
@@ -81,8 +78,8 @@
  *    primary cells.
  * The support count includes only observables that have a registered code-bias
  * column, so `zero_keys ⇒ zero_support` holds exactly (no column ⇒ no supported
- * observable).  The two predicates are nested, and the pair answers §6.3's
- * falsification question from a single run.
+ * observable).  The two predicates are nested, and the pair tests the
+ * family-partition definition from a single run.
  *
  * ## Precondition for both predicates: a code-bias layer
  *
@@ -139,8 +136,8 @@ struct NetworkRunTraces;    // network/diag/RunTraces.hpp; included in the .cpp 
 // ---------------------------------------------------------------------------
 
 /// Number of components listed individually in a `network_datum_graph.csv` row
-/// before the remainder collapses to a `+N more` token (spec §3 INC-2: "≤ 4 listed +
-/// count").  The count `k` is never truncated; only the roster is.
+/// before the remainder collapses to a `+N more` token.  The count `k` is never
+/// truncated; only the roster is.
 inline constexpr int kDatumGraphCompsListed = 4;
 
 /// Rendering of a signal code that carries no RINEX-3 tracking attribute (a
@@ -250,7 +247,7 @@ std::string netDatumGraphFamilyOf(std::string_view sat, std::string_view signal,
 /// One tier-2 (satellite × channel-family) cell and its two predicates.
 struct NetDatumGraphPrediction {
     std::string sat;               ///< satellite id.
-    std::string family;            ///< tracking attribute, or @ref kDatumGraphNoFamily.
+    std::string family;            ///< channel family (@ref netDatumGraphFamilyOf), or @ref kDatumGraphNoFamily.
     int  n_pb{0};                  ///< registered satellite phase-bias columns in this cell.
     int  n_cb{0};                  ///< registered satellite code-bias columns in this cell.
     /// Admitted code observables in this cell, summed over stations, counting
@@ -259,7 +256,7 @@ struct NetDatumGraphPrediction {
     /// exactly.
     int  n_code_support{0};
     bool cb_layer{false};          ///< this constellation registered ≥1 satellite code-bias column this epoch, the precondition of both predicates (see the file banner).  False ⇒ both are held off and the cell is counted in cells_no_cb_layer.
-    bool zero_keys{false};         ///< spec §2 predicate: @c cb_layer, @c n_pb > 0 and @c n_cb == 0.
+    bool zero_keys{false};         ///< strict predicate: @c cb_layer, @c n_pb > 0 and @c n_cb == 0.
     bool zero_support{false};      ///< companion predicate: @c cb_layer, @c n_pb > 0 and @c n_code_support == 0 (implied by @ref zero_keys).
     /// "SAT/FAMILY": the join key, the event identity and the CSV token, spelled
     /// the same way everywhere.
@@ -371,7 +368,7 @@ struct NetDatumGraphSpectral {
 std::vector<std::string> netDatumGraphDetailIds(std::string_view detail, bool x_rule = false);
 
 // ---------------------------------------------------------------------------
-//  Reconciliation, the main deliverable (INC-1)
+//  Reconciliation, the main deliverable
 // ---------------------------------------------------------------------------
 
 /**
@@ -384,8 +381,7 @@ std::vector<std::string> netDatumGraphDetailIds(std::string_view detail, bool x_
  *  - over predictions: @ref pred_observed + @ref pred_only = every prediction;
  *  - over directions:  @ref obs_only + @ref n_obs_matched = every direction.
  *
- * Collapsing them into a single 2×2 table would double-count one side, the
- * accounting error spec §5.4 describes.
+ * Collapsing them into a single 2×2 table would double-count one side.
  */
 struct NetDatumGraphContingency {
     std::vector<std::string> pred_observed; ///< predicted identities named by ≥1 observed direction; the census explains these.
@@ -396,7 +392,7 @@ struct NetDatumGraphContingency {
 
 /// Event name for a `predicted only` identity.  With KP armed the direction
 /// exists structurally and @c network.cb_kaula_prior holds it above the rank
-/// cutoff, so the cell is the KP-load-bearing map spec §3 asks for; without KP
+/// cutoff, so the cell is the KP-load-bearing map; without KP
 /// nothing lifts it and the same cell is a finding about the predictor.  One
 /// function supplies the label so that it always matches the arming it describes.
 inline const char* netDatumGraphPredOnlyEvent(bool kp_armed) {
@@ -420,13 +416,13 @@ NetDatumGraphContingency netDatumGraphReconcile(
     const std::vector<NetDatumGraphDir>& dirs);
 
 // ---------------------------------------------------------------------------
-//  Run-end telemetry (standing invariant #4)
+//  Run-end telemetry
 // ---------------------------------------------------------------------------
 
 /**
  * @brief Cumulative census counters.
  *
- * Invariant #4 applied to a predictor: the expected tier-1 reading on a fault-free
+ * The expected tier-1 reading on a fault-free
  * global roster is @f$k = 1@f$ everywhere with zero predictions, which cannot be
  * told apart from a seam that never ran unless the run reports it.  Both
  * @ref epochs and @ref epochs_quiet are therefore reported, and the teardown line
@@ -456,7 +452,7 @@ struct NetworkDatumGraphTallies {
     long long events_held = 0;       ///< events suppressed by the per-identity holdoff.
     long long edges = 0;             ///< admitted support edges walked (cost and wiring evidence).
     double    ms = 0.0;              ///< cumulative census cost (ms).
-    double    ms_max = 0.0;          ///< worst single pass (ms), checked against the §7 budget.
+    double    ms_max = 0.0;          ///< worst single pass (ms), checked against the 0.5 ms budget.
 };
 
 // ---------------------------------------------------------------------------
@@ -469,15 +465,11 @@ struct NetworkEpoch;            // network/driver/Epoch.hpp
 /**
  * @brief One epoch's datum-graph census: predict, reconcile, emit.
  *
- * Call from the driver's SB_FRAMEDIAG block after the solve: registration is
- * final by then, the admission screen has finished removing observables, and
- * @c ctx.carry.dg_spec holds this epoch's spectral observation.  The driver
- * gates the call on @c ctx.knobs.dg_on, so an unarmed run never enters this
- * translation unit.
- *
- * Epoch form (generated by scripts/nom_ep1_cut.py): the run and the epoch
- * replace the explicit parameters; the definition binds each former parameter in its preamble,
- * under its former name.
+ * An epoch observer (@c kNetworkEpochObservers, slot FrameDiag, inside SB_FRAMEDIAG
+ * after the solve): registration is final by then, the admission screen has finished
+ * removing observables, and @c ctx.carry.dg_spec holds this epoch's spectral
+ * observation.  The seam returns at once unless @c ctx.knobs.dg_on, so an unarmed run
+ * does no census work.
  *
  * @param run The run (network/driver/Run.hpp). Written through non-const bindings: run.ctx (ctx),
  *            run.traces (traces). Read: run.config (config_), run.log (log),
@@ -489,37 +481,37 @@ struct NetworkEpoch;            // network/driver/Epoch.hpp
  *           ep.columns.registered_clock_sats (registered_clock_sats), ep.solve.datum_changed
  *           (datum_changed).
  *
- * The former parameters, by binding:
- *   - @p ctx = run.ctx: Run context: knobs, the spectral hand-off, the event-holdoff clock,
+ * The names bound in the preamble:
+ *   - @c ctx = run.ctx: Run context: knobs, the spectral hand-off, the event-holdoff clock,
  *     the per-era identity memory and every counter live here.
- *   - @p config_ = run.config: Full configuration. Reads @c network.cb_kaula_prior (for the
+ *   - @c config_ = run.config: Full configuration. Reads @c network.cb_kaula_prior (for the
  *     KP-load-bearing label) and @c network.clock_datum_broadcast_anchored (the tier-1 datum
  *     mode); the @c network.datum_graph_* knobs arrive through @c ctx.knobs.
- *   - @p log = run.log: Main run logger (one-shot arming line).
- *   - @p traces = run.traces: Run traces (`network_datum_graph.csv` + `network_events.csv`).
- *   - @p se = ep.se: This synced epoch (week/tow stamp).
- *   - @p stations = run.setup.stations: Station roster; names only, for component identities.
- *   - @p modeled = ep.pass_a.modeled: Per-station modeled observations: the admitted support
+ *   - @c log = run.log: Main run logger (one-shot arming line).
+ *   - @c traces = run.traces: Run traces (`network_datum_graph.csv` + `network_events.csv`).
+ *   - @c se = ep.se: This synced epoch (week/tow stamp).
+ *   - @c stations = run.setup.stations: Station roster; names only, for component identities.
+ *   - @c modeled = ep.pass_a.modeled: Per-station modeled observations: the admitted support
  *     source (see the file banner).
- *   - @p est_index_of = ep.assembly.est_index_of: Station → kernel slot map (−1 = not folded
+ *   - @c est_index_of = ep.assembly.est_index_of: Station → kernel slot map (−1 = not folded
  *     this epoch ⇒ contributes no edge).
- *   - @p plan = ep.solve.plan: This epoch's datum plan: supplies the declared dimension and,
+ *   - @c plan = ep.solve.plan: This epoch's datum plan: supplies the declared dimension and,
  *     through @c plan.clock_pivot, the per-constellation gauge count d in pin mode.
- *   - @p shared_phase_keys = ep.pass_a.shared_phase_keys: Registered satellite phase-bias
+ *   - @c shared_phase_keys = ep.pass_a.shared_phase_keys: Registered satellite phase-bias
  *     state keys.
- *   - @p registered_code_keys = ep.columns.registered_code_keys: Registered (satellite,
+ *   - @c registered_code_keys = ep.columns.registered_code_keys: Registered (satellite,
  *     signal) code columns.
- *   - @p registered_clock_sats = ep.columns.registered_clock_sats: Registered satellite clock
+ *   - @c registered_clock_sats = ep.columns.registered_clock_sats: Registered satellite clock
  *     columns. They set the tier-1 gauge count d under the sum-to-zero clock datum, where
  *     @c plan.clock_pivot is empty; under the broadcast-anchored datum d = 0 and they are
  *     unused.
- *   - @p datum_changed = ep.solve.datum_changed: This epoch re-referenced the datum: the era
+ *   - @c datum_changed = ep.solve.datum_changed: This epoch re-referenced the datum: the era
  *     boundary at which the `predicted only` identity memory resets (the boundary at which SBC
  *     also re-seeds its continuity targets).
  */
 void networkDatumGraphCensus(NetworkRun& run, const NetworkEpoch& ep);
 
-// ---- Run-end reports (generated by scripts/nom_td_cut.py) ----
+// ---- Run-end reports ----
 
 struct NetworkRunEndView;
 
@@ -543,7 +535,7 @@ int networkDatumGraphRunEnd(const NetworkRunEndView& v);
 /**
  * @brief The datum graph census's spectral hand-off from S-basis completion: the realized
  *        near-null count before completion, with each direction's identities (constrained and
- *        skipped).  Measure-only; armed-only (network.trace_datum_graph).
+ *        skipped).  Measure-only; armed-only (network.datum_graph_census).
  * @param ctx  The run context: carry (dg_spec) is written.
  * @param sbc  The completion's result (read).
  * @param plan The epoch's datum plan (read: declared_dimension).
@@ -554,8 +546,7 @@ void networkDatumGraphSpectralHandoff(NetworkRunContext& ctx, const NetworkSbasi
 /// @brief Run-scope counters of DatumGraph, a base of NetworkServiceCounters (network/state/RunContext.hpp).
 struct DatumGraphCounters {
 
-    /// Run tallies of the datum graph census.  Standing invariant #4, with a twist
-    /// specific to this census: the expected reading of tier 1 on a sound global roster
+    /// Run tallies of the datum graph census.  The expected reading of tier 1 on a sound global roster
     /// is k = 1 everywhere with zero predictions, which is byte for byte what a seam
     /// that never ran produces; only `epochs` against `epochs_quiet` tells the two
     /// apart, and the teardown line prints both.
