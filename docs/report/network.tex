@@ -6,17 +6,18 @@
 %  per-station Schur reduction, explicit satellite phase-bias
 %  state.
 %
-%  Sources: filter/NetworkEstimator + NetworkNormalEquations
-%  (the arrowhead Schur kernel), filter/StateManager (explicit
-%  sat-phase-bias block), measurement/MeasurementBuilder
-%  (DifferencingMode::None), app/ApplicationNetwork.cpp (the thin
-%  epoch-loop orchestrator) + app/ApplicationNetworkSetup.cpp /
-%  ApplicationNetworkAssembly.cpp + include/app/NetworkRunContext.hpp
-%  and the seven files that define its functions (app/NetworkKnobs,
-%  NetworkSnapshotFingerprint, NetworkWarmResume,
-%  NetworkStateSnapshotWrite, NetworkBorderPrior, NetworkBorderStash,
-%  NetworkLocalCarryHarvest) + the
-%  filter/Network* epoch seams, and the S-system theory in
+%  Sources: network/solve/Estimator (NetworkEstimator, with the
+%  explicit sat-phase-bias block; keys from filter/StateKeySchema) +
+%  network/solve/NormalEquations (NetworkNormalEquations, the arrowhead
+%  Schur kernel), measurement/MeasurementBuilder
+%  (DifferencingMode::None), network/driver/ApplicationNetwork.cpp
+%  (setup and the epoch source) + network/driver/ApplicationNetworkEpoch.cpp
+%  (one epoch: the seam spine) + network/driver/ApplicationNetworkSetup.cpp /
+%  ApplicationNetworkAssembly.cpp + include/network/state/RunContext.hpp
+%  and the seven files that define its functions (network/driver/Knobs,
+%  network/state/SnapshotFingerprint, WarmResume, StateSnapshotWrite,
+%  BorderPrior, BorderStash, network/carry/LocalCarryHarvest) + the
+%  network/<concern>/ epoch seams, and the S-system theory in
 %  foundations (\Cref{sec:diff}).
 % ============================================================
 \documentclass[main.tex]{subfiles}
@@ -32,18 +33,21 @@
 \newcommand{\redus}{\tilde{\bm{u}}_s}   % Schur-reduced shared RHS
 \newcommand{\xshared}{\bm{x}_s}         % shared satellite-parameter estimate
 \newcommand{\xlocal}[1]{\bm{x}_{#1}}    % station r's private nuisance block
-\newcommand{\satbiasPB}{\bar b}         % satellite phase bias (estimable); matches \bar b in gnssreport.sty
+\newcommand{\satbiasPB}{\bar b}         % satellite phase bias (estimable); same symbol as $\bar b$ in notation.tex
 \newcommand{\satbiasCB}{B}              % satellite code bias (estimable)
 
 This section documents the multi-station network estimator
 (\texttt{ProcessingMode::PPP\_RTK\_Network}), which \emph{produces} the
 satellite-side corrections that the single-receiver user modes consume.
 The other modes in this reference either difference away the satellite
-clock and hardware biases (\dcref{sec:diff}{the differencing section})
+clock and hardware biases (\dcref{sec:diff}{the differencing section}),
+take them as known inputs from precise orbit, clock and bias products,
 or import them as known SSR quantities
 (\dcref{sec:ssr}{the SSR-corrections section}). The network producer
 inverts that relationship. It estimates the satellite clock and the
-satellite \emph{phase} and \emph{code} biases as explicit states,
+satellite \emph{phase} bias as explicit states, and the satellite
+\emph{code} bias as well when \texttt{network.estimate\_sat\_code\_bias}
+is set (armed by both goldens; the loader default is off),
 jointly across a network of stations with known coordinates, and emits
 them in IGS-SSR convention for a downstream consumer. The loop is closed
 by design: the single-receiver PPP-RTK engine documented elsewhere is
@@ -51,21 +55,27 @@ the product test, run on a station \emph{held out} of the network solve.
 
 \paragraph{Scope and status.}
 The numerical core consists of the arrowhead normal-equation kernel
-(\texttt{filter/NetworkNormalEquations}) and the semantic estimator
-that drives it (\texttt{filter/NetworkEstimator}). It is validated on a
+(\texttt{network/solve/NormalEquations}) and the semantic estimator
+that drives it (\texttt{network/solve/Estimator}). It is validated on a
 synthetic noise-free network, where it recovers the truth up to the
 declared S-transform. The surrounding pipeline is complete: the
-\texttt{PPP\_RTK\_Network} enum, its forced-uncombined
+\texttt{PPP\_RTK\_Network} enum, its forced undifferenced
 \texttt{DifferencingMode::None}
-(\texttt{measurement/MeasurementBuilder}), the explicit satellite
-phase-bias state in \texttt{filter/StateManager}, and the mode dispatch
-in \texttt{Application::run}. \texttt{Application::runNetwork} is a thin
-epoch-loop orchestrator that calls a fixed, ordered sequence of
-single-concern seams (\Cref{sec:net-arch}). Every step derived in this
-chapter runs inside one of those seams: per-station design-row assembly
-from each station's \texttt{MeasurementModel}
-(\texttt{networkPassAHead\_} / \texttt{networkPassB\_}), the S-basis
-datum with its null-space rank gate (\Cref{sec:net-sbasis}, in
+(\texttt{measurement/MeasurementBuilder}) with the forced uncombined
+configuration of the PPP-RTK family, the explicit satellite
+phase-bias state, owned by the network estimator
+(\texttt{network/solve/Estimator}; the key schema is
+\texttt{filter/StateKeySchema}), and the mode dispatch
+in \texttt{Application::run}. \texttt{Application::runNetwork} holds the
+setup calls and the epoch source; one epoch is
+\texttt{Application::networkProcessEpoch\_}, which calls a fixed,
+ordered sequence of single-concern seams (\Cref{sec:net-arch}). Every
+step derived in this chapter runs inside one of those seams: per-station
+design-row assembly from each station's parameter set
+(\texttt{networkStationRows}) through the shared observation equation
+(\texttt{networkPassB\_}, after the PASS~A layout pass
+\texttt{networkPassAHead\_}), the S-basis
+datum with its null-space rank gate (\Cref{sec:net-sbasis}, sequenced by
 \texttt{networkSolveGlue}), the between-epoch time update, and the
 product emitter (\texttt{NetworkProductEmitter}, driven from
 \texttt{networkEmitStore}). The mathematics below describes that
@@ -75,26 +85,42 @@ This chapter treats the single-epoch solve. The between-epoch carry is
 layered. The base layer is the \emph{diagonal} D2 shared carry: each
 shared parameter's posterior value and variance are re-injected as a
 diagonal prior on the next epoch's shared border, inflated by $q\,\dt$
+(a satellite clock takes the increment of the temporal clock anchor
+instead when \texttt{network.clock\_temporal\_anchor} is on, as in both
+goldens, and a phase or code bias variance is floored)
 and dropped on a datum change (\texttt{networkInjectD2CarryPrior},
-\texttt{app/NetworkBorderPrior}), except where the clock-pivot handover
-S-transform (\texttt{network.handover\_stransform}, default off, armed
-by the goldens) has re-expressed it in the incoming datum. This layer
-has no enable flag, so the producer is always a filtered solve, never a
-snapshot solve. The layers built on it are each a large subsystem,
-default off in the loader, and are referenced here without derivation:
-the C1 full-covariance shared carry
-(\texttt{network.shared\_carry\_full\_cov}, folded through
+\texttt{network/state/BorderPrior}). The drop covers every key, or with
+\texttt{network.scoped\_handover\_response} (default off, armed by the
+goldens) only the keys of the constellation whose datum changed. The
+exception is the clock-pivot handover S-transform
+(\texttt{network.handover\_stransform}, default off, armed by the
+goldens), which re-expresses the clock levels of the changed
+constellation in the incoming datum; its code-bias and phase-bias
+carries are released to fold unchanged. The D2 shared carry has no
+enable flag, so the shared border is always carried as a filtered
+solve. The station-local ambiguity states are carried only with
+\texttt{network.phase\_leveling}; without it they are re-solved each
+epoch, a per-epoch snapshot solve for those states. The other carries
+are each a large subsystem, default off in the loader, and are referenced
+here without derivation: the C1 full-covariance shared carry
+(\texttt{network.shared\_carry\_full\_cov}, an alternative to the
+diagonal fold for the keys that have a dense row, folded through
 \texttt{addSharedPriorDense}), the Card-4 invariant DD carry
-(\texttt{network.carry\_invariant}, \texttt{setDdPriors}), the
-station-local phase-leveling, ZWD and receiver-code-bias carries folded
-through \texttt{addStationPrior}, and the MW-WL, EWL and
-lane-coordinate widelane layers. The golden configurations
+(\texttt{network.carry\_invariant}, \texttt{setDdPriors}), and the
+station-local phase-leveling, ZWD and receiver-code-bias carries, which
+are folded through \texttt{addStationPrior} on the legacy diagonal route
+(\texttt{network.carry\_conditional\_coupling} off, the loader default).
+The MW-WL, EWL and lane-coordinate widelane layers that once belonged to
+this list were deleted by card RKD (2026-10-14); the single-difference
+extra-widelane constraint \texttt{network.sd\_ewl}, a PASS~B row set
+that is not a layer on the D2 carry, is default off. The golden configurations
 (\texttt{config/golden/golden\_field\_refound.json},
-\texttt{config/golden/golden\_sim\_refound.json}) arm the C1 carry and
+\texttt{config/golden/golden\_sim\_refound.json}) arm the C1 carry,
+conditional coupling and
 phase leveling (\texttt{network.phase\_leveling}) with the float
 ambiguity vehicle (\texttt{network.ambiguity\_vehicle} set to
 \texttt{float\_kf}; the loader default is \texttt{level}). They leave
-the invariant DD carry and every widelane layer off. Under the vehicle
+the invariant DD carry and \texttt{network.sd\_ewl} off. Under the vehicle
 the carried ambiguities, and with
 \texttt{network.carry\_rx\_code\_bias\_in\_block} the receiver code
 biases, enter as whitened coupling rows of each station's design
@@ -124,11 +150,15 @@ and each increment was gated on a matrix of golden runs required to be
 \emph{byte-identical} to the pre-cut binary's output. That gate supports
 the claim that the equations below still describe the code. The driver
 shrank by roughly a factor of eight, to under $1{,}800$ lines of
-epoch-loop orchestration, with no change in the numbers. Later cards
+epoch-loop orchestration, with no change in the gated numbers. Later cards
 have added seams to the call sequence: the file
-(\texttt{src/core/app/ApplicationNetwork.cpp}) exceeded $2{,}250$ lines
-by 2026-08-15 and measures 3,139 lines on 2026-10-07. The placement
-rules of this section exist to bound that growth. The gate's coverage
+(then \texttt{src/core/app/ApplicationNetwork.cpp}) exceeded $2{,}250$ lines
+by 2026-08-15 and measured 3,139 lines on 2026-10-07. Card NOM3 then cut
+it into the driver (\texttt{network/driver/ApplicationNetwork.cpp}, the
+setup calls and the epoch source, 360 lines on 2026-10-21) and the
+per-epoch spine (\texttt{network/driver/ApplicationNetworkEpoch.cpp},
+633 lines). The placement rules for new network code (the anti-regrowth
+decision tree in \texttt{CLAUDE.md}) exist to bound that growth. The gate's coverage
 is incomplete. \texttt{docs/network\_decomposition\_plan.md} records
 per-increment byte gates through increment~8 (with increment~7b) only.
 Increment~8b has its own specification, and the later cuts (solve glue,
@@ -139,59 +169,79 @@ teardown) have no gate record in that document.
 A network run has four stages: three translation units and the seam
 sequence between them.
 \begin{itemize}[leftmargin=*, itemsep=1pt]
-\item \textbf{Setup} (\texttt{app/ApplicationNetworkSetup}).
-      \texttt{networkValidateInputs\_} rejects an unrunnable
-      configuration before anything is allocated.
+\item \textbf{Setup} (\texttt{network/driver/ApplicationNetworkSetup}).
+      \texttt{networkValidateInputs\_} rejects a station with no
+      observation \texttt{rinex\_path} before anything is allocated.
       \texttt{networkSetup\_} then builds the station roster and its
       synchroniser, the product sink and its declared S-basis contract,
       and, when the closed loop is armed, the consumer engine
       (\Cref{sec:net-closedloop}). Its output is one
       \texttt{NetworkSetupResult}, filled in place and neither copyable
       nor movable: three run-long references pin its member addresses,
-      so the member declaration order in that header is normative.
-\item \textbf{Assembly} (\texttt{app/ApplicationNetworkAssembly}), two
+      so the member declaration order in that header
+      (\texttt{network/driver/SetupResult.hpp}) is normative.
+\item \textbf{Assembly} (\texttt{network/driver/ApplicationNetworkAssembly}), two
       passes per epoch. PASS~A is \emph{layout}. It runs each present
       station's geometry models and pre-allocates the shared satellite
-      states, taking the datum (pivot) station \emph{first}, so that the
+      states. On the legacy single-pivot datum
+      (\texttt{network.phase\_datum\_prioritized} off, the loader default)
+      it takes the datum (pivot) station \emph{first}, so that the
       phase-bias columns admitted to the shared block are those backed
-      by a pivot-receiver ambiguity pin. The local half of the datum
+      by a pivot-receiver ambiguity pin, and the local half of the datum
       (\Cref{sec:net-sbasis}) therefore constrains the column layout as
-      well as the solve. PASS~B is \emph{assembly}. Each station's
+      well as the solve. Under the prioritized datum that the goldens arm,
+      the pivot is not taken first and the shared set is the union
+      elected by the phase-anchor epoch
+      (\texttt{network/solve/PhaseAnchorEpoch}). PASS~B is \emph{assembly}. Each station's
       undifferenced design block is computed with no receiver-side
       differencing and then \emph{split}: the satellite clock and
       phase-bias columns scatter into the shared border
-      $\bm{A}_{s,\rx}$, and the remainder becomes the private block
+      $\bm{A}_{s,\rx}$, and the remainder, less any held receiver
+      inter-frequency-bias columns and the structurally unobservable
+      columns, becomes the private block
       $\bm{A}_{r,\rx}$ of \Cref{eq:net-station-rows}. The three
       receiver-position columns are dropped, because network station
       coordinates are held fixed. \Cref{eq:net-blocks} is formed from
       these two pieces.
 \item \textbf{The epoch seams}: the ordered sequence tabulated
       below, which is the body of the loop.
-\item \textbf{Teardown} (\texttt{filter/NetworkTeardown}). The run-end
-      readout, the service counters and the summary writers live in
-      \texttt{networkTeardown}, which also returns the process exit
-      code. The driver ends with a \texttt{return} of that call.
+\item \textbf{Teardown} (\texttt{network/runend/Teardown}). The run-end
+      readout is one report per subsystem, each a row of
+      \texttt{kNetworkRunEndReports} (\texttt{network/runend/RunEnd}).
+      \texttt{networkTeardown} walks that table and returns the process
+      exit code; the driver ends with a \texttt{return} of that call.
+      The service counters (\texttt{NetworkServiceCounters},
+      \texttt{network/state/RunContext}) and the summary writers
+      (\texttt{NetworkRunTraces}, \texttt{network/diag/RunTraces}) are
+      held outside the teardown, which reads them.
 \end{itemize}
 
 \paragraph{The seam contract.}
-A seam is a free function over the run context, the configuration, the
-logger and the trace bundle. It opens with an alias preamble that
+A seam is a free function (or one of five \texttt{Application} members)
+over the run, \texttt{NetworkRun\&}, and the epoch,
+\texttt{const NetworkEpoch\&}, with any outputs as further parameters.
+The run holds the context, the configuration, the logger and the trace
+bundle. A seam opens with an alias preamble that
 reconstructs the driver's former local names, so the relocated body
-reads as it did before the cut. Each seam header states that the seam
-\emph{owns no state}: every carried object is a reference into the
-context. Pure relocation required two structural adaptations. A
+reads as it did before the cut. The seam contract (card NOM3, step EP1)
+is that a seam \emph{owns no state}, although not every seam header
+repeats it: every carried object is a reference into the run, that is,
+into its context for the carry, the knobs and the counters, and into its
+engines, setup, traces and timing for the rest. Pure relocation required two structural adaptations. A
 relocated block that used to \texttt{continue} the epoch loop returns an
 \texttt{EpochAction} of \texttt{Proceed}, \texttt{SkipEpoch} or
-\texttt{StopRun} (\texttt{filter/NetworkRunTypes}) instead. The
+\texttt{StopRun} (\texttt{network/driver/RunTypes}) instead. The
 per-skip bookkeeping stays verbatim inside the seam, and the caller's
-\texttt{continue} preserves the original bypass of the timing bracket.
+early return of \texttt{LoopSignal::Next} preserves the original bypass of
+the timing bracket.
 A block whose locals are read further down the loop returns a result
-struct (\texttt{NetworkSolveGlueResult} and its siblings) that the call
-site re-aliases.
+struct (\texttt{NetworkSolveGlueResult} and its siblings,
+\texttt{network/solve/SolveGlue}) that the spine stores in a group of the
+epoch (\texttt{ep.solve}); later seams read the values there.
 
 \paragraph{The run context.}
 Carried state, configuration snapshots and counters live in one object,
-\texttt{NetworkRunContext} (\texttt{app/NetworkRunContext}). It holds a
+\texttt{NetworkRunContext} (\texttt{network/state/RunContext}). It holds a
 \texttt{const} \texttt{NetworkKnobs} snapshot of the configuration,
 taken in the original getter read order, the cross-epoch
 \texttt{NetworkCarryState}, and \texttt{NetworkServiceCounters}. A seam
@@ -200,27 +250,29 @@ local behind \emph{forks} the carry with no diagnostic, and increment~12
 deleted 191 dead aliases that this pattern had left. Persistence follows
 the \emph{three-place rule}: a carry field that is a snapshot member
 appears in the warm-resume fingerprint, in the restore and in the
-snapshot write, in \texttt{app/NetworkSnapshotFingerprint},
-\texttt{app/NetworkWarmResume} and \texttt{app/NetworkStateSnapshotWrite}
+snapshot write, in \texttt{network/state/SnapshotFingerprint},
+\texttt{network/state/WarmResume} and \texttt{network/state/StateSnapshotWrite}
 respectively (the context's functions are defined in seven files by
-concern, each declaration in \texttt{app/NetworkRunContext} naming its
+concern, each declaration in \texttt{network/state/RunContext} naming its
 file). A field present
 in only two of the three yields a warm resume that disagrees with the
 run that wrote it, with no error raised.
 
 \paragraph{The ordered epoch seams.}
-The table below lists the per-epoch call sequence in driver order. The
-driver's section timers bracket the calls. Rows marked \emph{default
+The table below lists the per-epoch call sequence in spine order
+(\texttt{networkProcessEpoch\_}, \texttt{network/driver/ApplicationNetworkEpoch}).
+The spine's section timers bracket groups of the calls. Rows marked \emph{default
 off} are inert unless armed; most of the newer machinery in this
-producer is in that state. The table omits smaller calls in the same
+producer is in that state. Rows that name a frame-diagnostic or census
+instrument are measure-only observers: the spine walks them by slot
+through \texttt{networkObserveEpoch}, and each is a row of
+\texttt{kNetworkEpochObservers} (\texttt{network/driver/EpochObservers}).
+The table omits smaller calls in the same
 loop, among them the signal roster (\texttt{networkBuildSignalRoster}),
-the float-vehicle drop step with the latch-cause tally before it
-(\texttt{networkAmbFloatApplyDrops}, \texttt{networkResponseLatchTally}),
+the float-vehicle drop step, which applies the drops and tallies the
+latch causes (\texttt{networkAmbFloatDropEpoch}), and
 the gross line-of-sight screen (\texttt{networkGrossLosScreen}, loader
-default off, armed by the goldens), and the code-only clock-level
-re-base of card CLV (\texttt{networkClockLevelRebase}, after
-\texttt{networkStashStatus}; inert unless
-\texttt{network.clock\_level\_carry}, default off). Further small calls
+default off, armed by the goldens). Further small calls
 are inert on the goldens (loader default off, not armed): ahead of the
 fold decision, card CTU's one-time level raise after a warm resume
 (\texttt{networkClockLevelRestoreRaise}) and the clock-pivot handover
@@ -230,8 +282,9 @@ smoothed-hold clock clones of card SMH (\texttt{networkPbHoldCloneUpdate}
 before \texttt{networkEmitStore}, \texttt{networkPbHoldCloneHarvest}
 after \texttt{networkStashStatus}); after \texttt{networkClockQc}, the
 phase-visible consistency instrument of card PVN
-(\texttt{networkPhaseVisibleMonitor}); and after the CLV re-base, card
-CTU's level monitor and bound raise (\texttt{networkClockLevelMonitor}).
+(\texttt{networkPhaseVisibleMonitor}); and after
+\texttt{networkPbHoldCloneHarvest}, card CTU's level monitor and bound
+raise (\texttt{networkClockLevelMonitor}, \texttt{network.clock\_level\_monitor}).
 The gross screen runs its response half after post-fit RAIM; under
 \texttt{network.gross\_los\_emit\_exclude} its decision half runs
 earlier, before \texttt{networkSolPrep}, so that a declaration reaches
@@ -244,40 +297,37 @@ positive \texttt{network.seed\_birth\_check\_sigma}.
 \footnotesize
 \begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.335\linewidth}>{\raggedright\arraybackslash}p{0.595\linewidth}@{}}
 \toprule
-seam call (driver order) & concern (translation unit) \\
+seam call (spine order) & concern (translation unit) \\
 \midrule
-\texttt{networkFastClockTick} & sub-epoch fast-clock tick between solution epochs; \emph{default off} (\texttt{filter/NetworkFastClock}) \\
-\texttt{networkPassAHead\_} & PASS~A head: per-station geometry and shared-state pre-allocation, datum station first (\texttt{app/ApplicationNetworkAssembly}) \\
-\texttt{networkPassASlipScan\_} & PASS~A tail and the slip scans that fill the slip funnel (\texttt{app/ApplicationNetworkAssembly}, \texttt{slip/NetworkSlipQc}) \\
-\texttt{networkAssemblyPrefilter\_} & raw slip observables; cross-station observability prune (\texttt{app/ApplicationNetworkAssembly}) \\
-\texttt{networkSignalIntegrity} & per-LOS band-state classifier: degraded/unvetted phase demotion and regain refloat; \emph{default off} (\texttt{filter/NetworkSignalIntegrity}) \\
-\texttt{networkMeasurementAdmission} & product-referenced corrupt-channel screen, the one admission test a differential screen cannot see; \emph{default off} (\texttt{filter/NetworkMeasurementAdmission}) \\
-\texttt{networkBuildPhaseDatum\-Candidates}, then \texttt{networkAnchorHygiene} and \texttt{networkElect\-PhaseAnchors} / \texttt{networkElect\-EnsembleDatum} / \texttt{networkElect\-ChainDatum} & election of the \emph{local} half of the datum: the candidate census and coverage gate, the eq34 reattach hygiene that governs anchor-host eligibility and the fresh-pin deweight ramp, then whichever realisation is armed (\texttt{filter/NetworkPhaseDatum}, \texttt{filter/NetworkAnchorHygiene}, \texttt{filter/NetworkChainDatum}) \\
-\texttt{networkAssembly\-RegisterColumns\_} & clear the layout, register this epoch's shared columns, open the arrowhead system (\texttt{app/ApplicationNetworkAssembly}) \\
-\texttt{networkSdEwlAr} & single-difference extra-widelane integer decision; \emph{default off} (\texttt{filter/NetworkSdEwlAr}) \\
-\texttt{networkRxCbDemeanPrepass} & receiver code-bias carry de-mean before assembly reads the map; \emph{default off} (\texttt{app/NetworkLocalCarryHarvest}) \\
-\texttt{networkCarryDecide}, \texttt{networkCoupling\-ExactPrepare} & the fold decision for every carried border entry, made once per epoch and read by both the coupling rows and the D2 fold (\texttt{filter/NetworkCarryDisposition}); the inputs of the exact coupling time update, \emph{default off}, armed by the goldens (\texttt{app/NetworkBorderPrior}) \\
-\texttt{networkPassB\_} & PASS~B produce/consume: the split design blocks handed to \texttt{addStation} (\texttt{app/ApplicationNetworkAssembly}, \texttt{filter/NetworkCoupling}) \\
-\texttt{networkBuildEnsembleGauges}, \texttt{networkBuildCarryDdPriors} & sum-to-zero phase gauges; Card-4 DD carry priors (\texttt{filter/NetworkDdPriorBuild}) \\
-\texttt{networkSolveGlue} & shared datum build, rank gate and drop-and-heal, D2 carry injection, the constrained solve, within-epoch RAIM re-solve, withhold gates (\texttt{filter/NetworkSolveGlue}, calling \texttt{NetworkSbasis}, \texttt{NetworkPhaseDatum}, \texttt{NetworkRelevel}) \\
-\texttt{networkInstallCarry} & DD posterior read-back into the invariant carry; \emph{default off} (\texttt{filter/NetworkInstallCarry}) \\
-\texttt{networkProducerAr} & producer-side AR diagnostic and normal-equation export; read-only and log-only, \emph{default off} (\texttt{filter/NetworkProducerAr}) \\
-\texttt{networkSolPrep} & map to the solution epoch; per-satellite discontinuity signalling (\texttt{filter/NetworkSolPrep}) \\
-\texttt{networkEmitStore} & emit re-base, phase-bias continuity filter, phase-bias hold, store push, product write, closed-loop consume (\texttt{filter/NetworkEmitStore}, calling \texttt{NetworkPbHold}) \\
-\texttt{networkFastClockHarvest} & fast-clock harvest off the accepted solution; \emph{default off} (\texttt{filter/NetworkFastClock}) \\
-\texttt{networkIonoDiag}, \texttt{networkDdFrac}, \texttt{networkShDevVtec}, \texttt{networkShHealth}, \texttt{networkIonoDwRelease}, \texttt{networkLeveling} & diagnostic sweeps, the iono-deweight release hygiene that reseeds slant states a zero-weight era left unvalidated, and the SH-deviation and phase-leveling carry harvests (\texttt{filter/NetworkIonoDiag}, \texttt{NetworkDdFrac}, \texttt{NetworkShDevVtec}, \texttt{NetworkShHealth}, \texttt{NetworkIonoDwRelease}, \texttt{NetworkLeveling}) \\
-\texttt{networkPostFitRaim} & post-fit network RAIM and its attribution pass (\texttt{filter/NetworkRaim}) \\
-\texttt{networkClockQc} & two-state clock update and clock fault QC (\texttt{filter/NetworkClockQc}) \\
-\texttt{networkPostfitSigma0}, \texttt{networkShSpectrum} & post-fit variance factor and reduced-normal spectrum; \emph{default off} (\texttt{filter/NetworkFrameDiag}) \\
-\texttt{networkPrefitCensus} & the only always-on \emph{pre}-solve screen: prefit innovation census, structural fuse, seed-birth tripwire and estimation-topology ledger (\texttt{filter/NetworkPrefitCensus}) \\
-\texttt{networkRedundancyCensus} & row redundancy and testability, the statistical parked-garbage monitor; measure-only, \emph{default off} (\texttt{filter/NetworkRedundancyCensus}) \\
-\texttt{networkBlockBaardaEmit} & (station, satellite) LOS block outlier census; measure-only, \emph{default off} (\texttt{filter/NetworkBlockBaarda}) \\
-\texttt{networkCongruenceEmit} & station-congruence screen: coordinate-fault detection in position space; measure-only, \emph{default off} (\texttt{filter/NetworkCongruence}) \\
-\texttt{networkMdbFlush} & Baarda reliability numbers and minimal detectable bias on the network path; measure-only, \emph{default off} (\texttt{filter/NetworkMdb}) \\
-\texttt{networkDatumGraphCensus} & structural S-basis dimension predicted from the epoch's support topology and reconciled against the spectral observation; \emph{default off} (\texttt{filter/NetworkDatumGraph}) \\
-\texttt{networkRhsAttribution}, \texttt{networkRhsAttribTrip} & reduced-RHS class attribution, so a discharge attributes itself without an armed epoch; diagnostics-only, \emph{default off} (\texttt{filter/NetworkRhsAttrib}) \\
-\texttt{networkStashStatus} & carry re-stash and the epoch-status record (\texttt{filter/NetworkStashStatus}) \\
-\texttt{networkWriteStateSnapshot} & warm-resume state snapshot (\texttt{app/NetworkStateSnapshotWrite}) \\
+\texttt{networkPassAHead\_} & PASS~A head: per-station geometry and shared-state pre-allocation; on the legacy single-pivot datum the datum station first (\texttt{network/driver/ApplicationNetworkAssembly}) \\
+\texttt{networkPassASlipScan\_} & PASS~A tail and the slip scans that fill the slip funnel (\texttt{network/driver/ApplicationNetworkAssembly}, \texttt{network/slip/PassASlipScan}, \texttt{network/slip/SlipQc}) \\
+\texttt{networkAssemblyPrefilter\_} & raw slip observables; cross-station observability prune (\texttt{network/driver/ApplicationNetworkAssembly}) \\
+\texttt{networkSignalIntegrity} & per-LOS band-state classifier: degraded/unvetted phase demotion and regain refloat; \emph{default off} (\texttt{network/assembly/SignalIntegrity}) \\
+\texttt{networkMeasurementAdmission} & product-referenced corrupt-channel screen, the one admission test a differential screen cannot see; \emph{default off} (\texttt{network/assembly/MeasurementAdmission}) \\
+\texttt{networkPhaseAnchorEpoch}, which runs \texttt{networkBuildPhaseDatum\-Candidates}, then \texttt{networkAnchorHygiene} and whichever of \texttt{networkElect\-PhaseAnchors} / \texttt{networkElect\-ChainDatum} is armed & election of the \emph{local} half of the datum: the candidate census and coverage gate, the eq34 reattach hygiene that governs anchor-host eligibility and the fresh-pin deweight ramp, then the armed realisation (\texttt{network/solve/PhaseAnchorEpoch}, \texttt{network/solve/PhaseDatum}, \texttt{network/solve/AnchorHygiene}, \texttt{network/solve/ChainDatum}) \\
+\texttt{networkAssembly\-RegisterColumns\_} & clear the layout, register this epoch's shared columns, open the arrowhead system (\texttt{network/driver/ApplicationNetworkAssembly}) \\
+\texttt{networkSdEwlAr} & single-difference extra-widelane integer decision; \emph{default off} (\texttt{network/ar/SdEwlAr}) \\
+\texttt{networkCarryDecide}, \texttt{networkCoupling\-ExactPrepare} & the fold decision for every carried border entry, made once per epoch and read by both the coupling rows and the D2 fold (\texttt{network/state/CarryDisposition}); the inputs of the exact coupling time update, \emph{default off}, armed by the goldens (\texttt{network/state/BorderPrior}) \\
+\texttt{networkPassB\_} & PASS~B produce/consume: the split design blocks handed to \texttt{addStation} (\texttt{network/driver/ApplicationNetworkAssembly}, \texttt{network/assembly/StationBuild}, \texttt{network/carry/Coupling}) \\
+\texttt{networkBuildCarryDdPriors} & Card-4 DD carry priors; \emph{default off} (\texttt{network/carry/DdPriorBuild}) \\
+\texttt{networkSolveGlue} & shared datum build, rank gate and drop-and-heal, D2 carry injection, the constrained solve, within-epoch RAIM re-solve, withhold gates, as the fixed list of stages in the banner of \texttt{network/solve/SolveGlue.hpp} (\texttt{network/solve/SolveGlue}, calling \texttt{network/solve/Sbasis}, \texttt{network/solve/ClockDatum}, \texttt{network/solve/RankGate}, \texttt{network/qc/RaimWithinEpoch}) \\
+\texttt{networkInstallCarry} & DD posterior read-back into the invariant carry; \emph{default off} (\texttt{network/carry/InstallCarry}) \\
+\texttt{networkProducerAr} & producer-side AR diagnostic and normal-equation export; read-only and log-only, \emph{default off} (\texttt{network/ar/ProducerAr}) \\
+\texttt{networkSolPrep} & map to the solution epoch; per-satellite discontinuity signalling (\texttt{network/emit/SolPrep}) \\
+\texttt{networkEmitStore} & emit re-base, phase-bias hold, store push, product write, closed-loop consume (\texttt{network/emit/EmitStore}, calling \texttt{network/emit/PbHold}) \\
+\texttt{networkIonoDiag}, \texttt{networkDdFrac}, \texttt{networkShDevVtec}, \texttt{networkShHealth}, \texttt{networkLeveling} & diagnostic sweeps, and the SH-deviation and phase-leveling carry harvests (\texttt{network/diag/IonoDiag}, \texttt{DdFrac}, \texttt{ShDevVtec}, \texttt{ShHealth}, \texttt{Leveling}) \\
+\texttt{networkPostFitRaim} & post-fit network RAIM and its attribution pass (\texttt{network/qc/Raim}) \\
+\texttt{networkClockQc} & two-state clock update and clock fault QC (\texttt{network/qc/ClockQc}) \\
+\texttt{networkPostfitSigma0}, \texttt{networkShSpectrum} & post-fit variance factor and reduced-normal spectrum; observers, \emph{default off} (\texttt{network/diag/FrameDiag}) \\
+\texttt{networkPrefitCensus} & prefit innovation census, structural fuse (not armed on the goldens), seed-birth tripwire and estimation-topology ledger; observer, runs only when one of its instruments is armed (\texttt{network/qc/PrefitCensus}) \\
+\texttt{networkRedundancyCensus} & row redundancy and testability, the statistical parked-garbage monitor; measure-only, \emph{default off} (\texttt{network/qc/RedundancyCensus}) \\
+\texttt{networkBlockBaardaEmit} & (station, satellite) LOS block outlier census; measure-only, \emph{default off} (\texttt{network/qc/BlockBaarda}) \\
+\texttt{networkCongruenceEmit} & station-congruence screen: coordinate-fault detection in position space; measure-only, \emph{default off} (\texttt{network/qc/Congruence}) \\
+\texttt{networkMdbFlush} & Baarda reliability numbers and minimal detectable bias on the network path; measure-only, \emph{default off} (\texttt{network/qc/Mdb}) \\
+\texttt{networkDatumGraphCensus} & structural S-basis dimension predicted from the epoch's support topology and reconciled against the spectral observation; \emph{default off} (\texttt{network/solve/DatumGraph}) \\
+\texttt{networkRhsAttribution}, \texttt{networkRhsAttribTrip} & reduced-RHS class attribution, so a discharge attributes itself without an armed epoch; diagnostics-only, \emph{default off} (\texttt{network/qc/RhsAttrib}) \\
+\texttt{networkStashStatus} & carry re-stash and the epoch-status record (\texttt{network/diag/StashStatus}) \\
+\texttt{networkWriteStateSnapshot} & warm-resume state snapshot (\texttt{network/state/StateSnapshotWrite}) \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -291,8 +341,9 @@ sequence. The rank deficiency and its minimum-constraint datum
 on normals accumulated station by station during PASS~B. The closed
 loop (\Cref{sec:net-closedloop}), meaning emission, product write and,
 when armed, the held-out consumer step, runs in
-\texttt{networkEmitStore}. The rest of the table is quality control,
-diagnostics and carry bookkeeping around those three.
+\texttt{networkEmitStore}. The rest of the table is assembly, datum
+election, ambiguity resolution and solution preparation, with quality
+control, diagnostics and carry bookkeeping, around those three.
 
 \subsection{Joint multi-station observation model}\label{sec:net-model}
 
