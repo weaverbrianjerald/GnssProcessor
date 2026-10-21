@@ -18,13 +18,9 @@
  * (carry_coupling_gauge_project) extends the same re-projection to the truncated
  * columns, whose deletion breaks the row's gauge invariance.
  *
- * The coupling code was moved unchanged out of Application::networkPassB_
- * (ApplicationNetworkAssembly.cpp) at decomposition step INC-7b; see
- * docs/network_decomposition_plan.md.  @ref CouplingRowBuilder is constructed fresh
- * per station inside the PASS-B OpenMP produce loop.  It holds the per-station
- * scratch (the pending-row container @c crows) and exposes the former @c [&] lambdas
- * as member functions over explicit const references, so the function bodies are
- * unchanged; it owns no cross-epoch state.  The coupling type vocabulary
+ * @ref CouplingRowBuilder is constructed fresh per station inside the PASS-B OpenMP
+ * produce loop.  It holds the per-station scratch (the pending-row container
+ * @c crows) and owns no cross-epoch state.  The coupling type vocabulary
  * (@ref CoupledShared, @ref CplRowRaw, @ref kCouplingSparsifyRelThresh) and the
  * per-station slot @ref StationAssembly are defined in network/driver/RunTypes.hpp,
  * which this header @c \#includes.
@@ -61,7 +57,7 @@ struct PendCplRow {
     std::vector<std::pair<Eigen::Index, double>> shared;  ///< (present free shared col, M_rj)
     double y{0.0};
     double w{0.0};
-    /// Local coefficients of a whitened block row (F3, network.phase_leveling_local_block).
+    /// Local coefficients of a whitened block row (network.phase_leveling_local_block).
     /// When non-empty, these (A_r column, coefficient) pairs replace the scalar path's
     /// single +1 at @c local_col, and @c local_col then names the row's primary column
     /// for the refloat bookkeeping (@c StationAssembly::cpl_row_local_cols).  A whitened
@@ -78,7 +74,7 @@ struct PendCplRow {
 };
 
 /// One injectable carried column of a station as collected by the PASS-B inject
-/// pre-pass (F3, network.phase_leveling_local_block); the input of
+/// pre-pass (network.phase_leveling_local_block); the input of
 /// @ref CouplingRowBuilder::buildLocalBlock.  Every admission predicate (gauge pin,
 /// pending reseed, relevel free-epoch latch, finite x_lin, live carry, gap ≤ max) has
 /// already run, so a column absent from this list is marginalized out of the block.
@@ -88,23 +84,23 @@ struct LocalBlockCol {
     const LocalCarry* lc;       ///< the carry entry (value_abs, regression, harvest block + index)
     double            var_eff;  ///< final per-column prior variance: var + q·gap, floored, times the VCE factor (m²)
     double            gap;      ///< clamped inter-epoch gap (s); the Δt of the κ time update
-    double            vce_fac;  ///< the M2 v2 VCE factor α² already in @c var_eff (1 when off); the cross terms scale by √(α_i²·α_j²)
+    double            vce_fac;  ///< the carry variance-component (VCE) factor α² already in @c var_eff (1 when off); the cross terms scale by √(α_i²·α_j²)
     /// The entry is the station's carried tropospheric ZWD column, not an ambiguity
-    /// (B9-in-block, @c network.carry_zwd_in_block).  The builder treats it like any
+    /// (@c network.carry_zwd_in_block).  The builder treats it like any
     /// other carried local column; the flag only splits its telemetry
     /// (@c pl_blk_zwd_cols, @c pl_blk_zwd_missing_cross) out of the ambiguity
     /// population.  Default false, so an existing 6-element brace-init keeps its meaning.
     bool              is_zwd{false};
     /// The entry is one of the station's carried per-LOS slant-iono columns, not an
-    /// ambiguity (I-in-block, @c network.carry_iono_in_block).  Like @c is_zwd it is
+    /// ambiguity (@c network.carry_iono_in_block).  Like @c is_zwd it is
     /// telemetry only (the builder's algebra never reads it); it splits
     /// @c pl_blk_iono_cols / @c pl_blk_iono_missing_cross out of the ambiguity
     /// population.  Default false, so an existing 6- or 7-element brace-init keeps its
     /// meaning.
     bool              is_iono{false};
     /// The entry is one of the station's carried receiver-clock-family columns: the
-    /// primary clock, or an ISB under @c network.carry_rx_clock_isb (RX-CLK-in-block,
-    /// @c network.carry_rx_clock_in_block).  Like @c is_zwd / @c is_iono it is telemetry
+    /// primary clock, or an ISB under @c network.carry_rx_clock_isb
+    /// (@c network.carry_rx_clock_in_block).  Like @c is_zwd / @c is_iono it is telemetry
     /// only (the builder's algebra never reads it); it splits @c pl_blk_rxclk_cols /
     /// @c pl_blk_rxclk_missing_cross out of the ambiguity population.  The clock's
     /// carried mean is the drift-extrapolated prediction; the injector supplies it by
@@ -112,13 +108,13 @@ struct LocalBlockCol {
     /// special case.  Default false, so an existing brace-init keeps its meaning.
     bool              is_rx_clk{false};
     /// With @c is_rx_clk set: the clock-family entry is one of the station's per-system
-    /// ISB columns rather than its primary receiver clock (RX-CLK-in-block).  Telemetry
+    /// ISB columns rather than its primary receiver clock.  Telemetry
     /// only (read by @c pl_blk_rxclk_isb_cols alone).  The algebraic difference lives in
     /// the injector (an ISB is carried as a pure random walk, the clock about a carried
     /// drift), not here.
     bool              is_rx_isb{false};
     /// The entry is one of the station's carried receiver code-bias columns
-    /// (RXCB-IN-BLOCK, @c network.carry_rx_code_bias_in_block).  Telemetry only, like
+    /// (@c network.carry_rx_code_bias_in_block).  Telemetry only, like
     /// @c is_rx_clk: it splits @c pl_blk_rxcb_cols / @c pl_blk_rxcb_missing_cross out of
     /// the ambiguity population.  Default false, so an existing brace-init keeps its
     /// meaning.
@@ -175,14 +171,15 @@ struct TuEnt {
 ///
 /// An aggregate (no user-declared constructor): the 10 leading const, value and
 /// reference members (@c est through @c R) are set by brace-init at the construction
-/// site; the scratch container @c crows default-initializes empty, and @c readmit_marg /
-/// @c loop_ep are assigned after construction when the re-admission window is armed.
-/// Owns no cross-epoch state: the carry map it reads (@c tu_reinit_hist) lives in
-/// NetworkRunContext and is passed by const reference.
+/// site; the scratch container @c crows default-initializes empty, and @c sats / @c loop_ep
+/// (re-admission window) and @c cxu / @c cxu_cross / @c shx (exact update) are assigned
+/// after construction when armed.
+/// Owns no cross-epoch state: the reinit history it reads (@c sat_signals) lives in
+/// the run's entity tables and is passed by const reference.
 struct CouplingRowBuilder {
     const NetworkEstimator&    est;               ///< column layout (const queries only)
     const GlobalVtecShConfig&  shc;               ///< SH q ladder (couplingQ)
-    double                     q_clock;           ///< Clock per-epoch process noise (m²/s)
+    double                     q_clock;           ///< Clock process noise (m²/s)
     double                     q_cb;              ///< CodeBias process noise
     double                     q_pb;              ///< PhaseBias process noise
     bool                       carry_cpl_tu;      ///< border time update, κ shrink
@@ -210,9 +207,8 @@ struct CouplingRowBuilder {
     /// the departed route (σ² += M²·P_prev, coefficient dropped), so no station block or
     /// row is conditioned on a column whose realization is still settling from its cold
     /// re-registration.  This edge is the source of the network-wide DD episodes after
-    /// eclipse re-admission clusters; see SPEC_amb_iono_split_overcount §6.9 for the
-    /// measurement.  The windows are @c net::SatelliteState::readmit_marg of this table
-    /// (uncounted lookups, safe in the parallel produce).  Null = off.
+    /// eclipse re-admission clusters.  The windows are @c net::SatelliteState::readmit_marg
+    /// of this table (uncounted lookups, safe in the parallel produce).  Null = off.
     const net::SatTable* sats{nullptr};
     long long                                loop_ep{0};   ///< this epoch's n_loop_epochs (the expiry basis)
     /// The exact conditional time update (network.carry_coupling_exact_update):
@@ -225,7 +221,7 @@ struct CouplingRowBuilder {
     /// = the per-row form (byte-identical).
     bool                                     cxu_cross{false};
     /// network.carry_coupling_shared_history: the held compression and this
-    /// epoch's history columns (filter/NetworkSharedHistory), read-only here.  A row on the
+    /// epoch's history columns (network/carry/SharedHistory.hpp), read-only here.  A row on the
     /// exact route emits its history terms on the registered columns; every other row
     /// (the time-update route, a stale generation) marginalizes them into its variance.  Null =
     /// off (byte-identical).
@@ -244,7 +240,7 @@ struct CouplingRowBuilder {
     ///
     /// The harvest identity is @f$M^{\mathsf T}g_s=-g_r(c)@f$, not @f$M^{\mathsf T}g_s=0@f$
     /// (a Galileo ambiguity row measures @f$\Sigma_E=-1@f$ exactly, because the E gauge
-    /// moves E ambiguities by +1; `docs/SPEC_card1_coupling_carry.md` §1).  The target is
+    /// moves E ambiguities by +1).  The target is
     /// therefore the harvested sum; forcing the sum to zero would itself inject a gauge
     /// observation on every row whose local carries gauge weight.
     ///
@@ -277,7 +273,7 @@ struct CouplingRowBuilder {
                      const LocalCarry& lc, double var_eff, double gap,
                      const SatId& sat = SatId{}, const SignalId& signal = SignalId{});
     /// Scalar-path ingredients of one coupling row: the loop body of
-    /// @ref buildCplRow's scalar path, factored out so that the F3 block path shares the
+    /// @ref buildCplRow's scalar path, factored out so that the local-block path shares the
     /// same predicate chain.  Fills @p row's @c local_col / @c shared / @c y and returns
     /// through @p sigma2 the row's σ² = var_eff + Σ_departed M²P_prev + Σ_present M²κqΔt.
     /// Returns false when σ² ≤ 0 or the RHS is non-finite (the row is not emitted).
@@ -307,15 +303,15 @@ struct CouplingRowBuilder {
                              double var_eff, double gap, PendCplRow& row, double& sigma2,
                              CouplingExactRow* xr_keep = nullptr);
     /// Build this station's injectable carried columns as one jointly whitened local
-    /// block instead of independent rows (F3, network.phase_leveling_local_block,
-    /// SPEC_amb_iono_split_overcount).  Per column, the scalar-path ingredients
+    /// block instead of independent rows (network.phase_leveling_local_block).
+    /// Per column, the scalar-path ingredients
     /// (@ref scalarRowIngredients) supply the +1 local, the present-shared regressor
     /// row, the RHS and σ² (the diagonal of Σ).  The off-diagonals are the harvested
     /// conditional cross covariances (N_rr⁻¹)_{c_i c_j}, read from the two entries'
     /// shared @ref PlHarvestBlock and scaled by the VCE factor; a pair harvested at
     /// different epochs gets 0 and is counted.  With Σ = LLᵀ, the n rows
     /// L⁻¹·[I | M | y] are buffered as unit-weight multi-local @ref PendCplRow entries
-    /// (appended by the scalar branch of @ref appendCouplingRows), and the
+    /// (appended by @ref appendCouplingRows), and the
     /// pre-whitening ingredients are retained in @c R.pl_blk for the within-epoch RAIM
     /// refloat re-whiten.  The result is exact in every local-local direction given the
     /// border: the per-LOS iono direction, and also the station-common rx clock, ZWD
@@ -358,8 +354,8 @@ void foldAndDumpCouplingRows(bool carry_cpl_cond,
                                  cpl_orphan_fam_total = nullptr);
 
 /// The step a satellite phase-bias shift applies to one carried reference of the column
-/// (sat, signal): its carried value or a coupling term's @c s_prev (SPEC_card1_coupling_carry
-/// §14; the eq34 chain datum, combined with the coupling carry; and the float vehicle's declared anchor
+/// (sat, signal): its carried value or a coupling term's @c s_prev (the eq34 chain datum,
+/// combined with the coupling carry, and the float vehicle's declared anchor
 /// handover).  @c CoupledShared::s_prev and @c CarryPrior::value are the same number for the
 /// same identity (both are @f$x_s(j)@f$ at harvest), so a shift that moves the carried value
 /// must move the matching coupling @c s_prev by the same amount; otherwise the row's two
@@ -375,7 +371,7 @@ void foldAndDumpCouplingRows(bool carry_cpl_cond,
 double phaseBiasShiftOf(const std::map<std::pair<std::string, std::string>, double>& shift_sat,
                         const std::string& sat, const std::string& sig);
 
-// ---- Run-end reports (generated by scripts/nom_td_cut.py) ----
+// ---- Run-end reports ----
 
 struct NetworkRunEndView;
 
@@ -399,44 +395,39 @@ struct NetworkEpoch;            // network/driver/Epoch.hpp
 struct EpochPassA;              // network/driver/Epoch.hpp
 struct EpochAssembly;           // network/driver/Epoch.hpp
 
-// ---- PASS B serial stages, declarations (generated by scripts/nom_pb1_cut.py) ----
+// ---- PASS B serial stages, declarations ----
 
 /**
  * @brief Records this epoch's reinit-history entries the coupling rows marginalize on.
  *
- * The inflate-q stash flags and the clock refloats (under 1d or 1g), and under 1g the anchor
- * handovers, eq34 re-references and datum-slip re-realizations. Serial, before PASS B's
- * parallel produce reads the history; called by networkPassB_.
- *
- * Epoch form (generated by scripts/nom_pb1_cut.py): a serial stage of
- * Application::networkPassB_, cut with the alias lines of networkPassB_ it reads.  Below its
- * bindings is the frozen text; a piece wholly inside one `if` returns early instead
- * (scripts/nom_pb1/declared.py).
+ * The inflate-q stash flags and the clock refloats (with the border time update or the reinit
+ * sources armed), and with network.carry_coupling_reinit_sources the anchor handovers, eq34
+ * re-references and datum-slip re-realizations. Serial, before PASS B's parallel produce
+ * reads the history; called by networkPassB_.
  *
  * @param run The run (network/driver/Run.hpp). Bindings: run.ctx (ctx).
  * @param ep The epoch (network/driver/Epoch.hpp), read only. Bindings: ep.clock.pl_now_s
- *           (pl_now_s).
+ *           (pl_now_s), ep.events.phase_datum.eq34_reref (eq34_reref).
  */
 void networkCouplingReinitHistory(NetworkRun& run, const NetworkEpoch& ep);
 
 // ---- End of the PASS B serial stages, declarations ----
 
-// ---- PASS B station steps, declarations (generated by scripts/nom_pb1b_cut.py) ----
+// ---- PASS B station steps, declarations ----
 
 struct StationBuild;                       // network/assembly/StationBuild.hpp
 struct StationCarryFrame;                  // network/assembly/StationBuild.hpp
 enum class StationStep : std::uint8_t;     // network/assembly/StationBuild.hpp
 
 /**
- * @brief F3: the station's local carry block over the collected columns, or its per-column
+ * @brief The station's local carry block over the collected columns, or its per-column
  *        fallback.
  *
  * Step `local_block` of kStationCarrySteps (network/assembly/StationBuild.hpp); its kinds:
  * BlockAmbiguityCarry, BlockZwdCarry, BlockIonoCarry, BlockRxClockCarry, BlockRxCbCarry,
- * BlockPhaseColourCarry, CouplingScalar. It returns at once unless the frozen enclosing
- * conditions legacy_local_inject && do_amb_carry. Records: pl_blk_*, pl_zwd*, pl_cb_injected,
- * pc_folded, pc_*_folds; st.l5b.blk_folds. The frozen text of networkPassB_'s produce loop
- * below its bindings.
+ * BlockPhaseColourCarry, CouplingScalar. It returns at once unless
+ * legacy_local_inject && do_amb_carry. Records: pl_blk_*, pl_zwd*, pl_cb_injected,
+ * pc_folded, pc_*_folds; st.l5b.blk_folds.
  * @param carry The station's carry frame (the build, the priors, the coupling builder, the
  *              block columns).
  */
@@ -448,8 +439,7 @@ void networkStationLocalBlock(StationCarryFrame& carry);
  * Step `coupling_region` of kStationCarrySteps (network/assembly/StationBuild.hpp); its kinds:
  * CouplingScalar, BlockAmbiguityCarry, BlockZwdCarry, BlockIonoCarry, BlockRxClockCarry,
  * BlockRxCbCarry, BlockPhaseColourCarry. It returns at once unless `carry_cpl_cond`. Records:
- * cpl_row_start, the coupling census. The frozen text of networkPassB_'s produce loop below its
- * bindings.
+ * cpl_row_start.
  * @param carry The station's carry frame (the build, the priors, the coupling builder, the
  *              block columns).
  */
@@ -464,7 +454,7 @@ struct CouplingCounters {
     // (constellation, kind) families whose coefficient sum was restored to its harvest
     // value against a truncated column; `orphan` counts families whose truncated mass
     // had no present recipient, i.e. the rows the projection could not make
-    // gauge-invariant.  Standing invariant #4: armed with both at 0 means no row was
+    // gauge-invariant.  Armed with both at 0 means no row was
     // ever truncated, so the projection is inert, not clean.
     long long n_cpl_gauge_held = 0, n_cpl_gauge_orphan = 0;
     /// Orphan attribution: run totals per (constellation, SharedParamKind), as the

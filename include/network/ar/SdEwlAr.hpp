@@ -2,21 +2,19 @@
 /**
  * @file SdEwlAr.hpp
  * @brief Network producer epoch block: the SD extra-wide-lane integer decision, Route B
- *        (between-station DD of the SD EWL) with the A2 DD-to-SD datum propagation
- *        (docs/SPEC_sd_ewl_prereduce.md §8.2 (increment 2a), as amended by
- *        docs/SPEC_sd_ewl_prereduce.md §10).
+ *        (between-station DD of the SD EWL) with the DD-to-SD datum propagation.
  *
  * ## What it decides, and why Route B
  *
- * Increment 1 folds a float pseudo-observation row per (station, satellite != pivot)
+ * The float rows fold a pseudo-observation row per (station, satellite != pivot)
  * on the constellation's EWL band pair:
  *
  *     z_SD = MW(r,s) - MW(r,p) = lambda_EWL * grad_N_EWL + [B_EWL^s - B_EWL^p]
  *
- * and gains only +0.51 % of ev1 at a realistic row sigma, because `MW = phi_WL - P_NL`
+ * and gain only +0.51 % of ev1 at a realistic row sigma, because `MW = phi_WL - P_NL`
  * is a linear combination of observables the epoch's normal equations already hold, so
- * a float MW row adds no rank.  The new information is integrality, which increment 1
- * discards and this seam recovers.
+ * a float MW row adds no rank.  The new information is integrality, which the float rows
+ * discard and this seam recovers.
  *
  * Rounding `z_SD / lambda_EWL` directly requires `B^s - B^p` to be removed first, and
  * that is what the network is solving for.  Route B avoids the circularity with the
@@ -33,7 +31,7 @@
  * satellite bias.  Route A is also unavailable on the 50-station fixture: all 4138 EWL
  * arcs there report `bia_corrected = false`.
  *
- * ## Exactness precondition not stated in the SPEC: channel identity
+ * ## Exactness precondition: channel identity
  *
  * `B_EWL^s` is a per-signal combination of the satellite phase and code biases, so the
  * cancellation above holds only if both stations' MW arcs sit on the same two tracking
@@ -48,7 +46,7 @@
  * ascending pair name for determinism) and admits only stations holding that pair.
  * Excluded stations are counted (@c sdewl_dd_skip_channel).
  *
- * ## A2: the DD-to-SD integer datum
+ * ## The DD-to-SD integer datum
  *
  * Route B yields DD integers; the row needs an SD integer per (station, satellite).  Per
  * constellation (the station graph is measured to form one connected component), a
@@ -69,8 +67,8 @@
  * combination the network then observes is the true `B^s - B^p` plus
  * `lambda * N_SD_true(r0)`, which is the classical WL-FCB modulo-lambda definition.  This
  * is harmless within the run and to any consumer integer decision.  Production arming
- * must route fix onset through the per-lambda disc contract (PB gate v2); otherwise the
- * consumer wire sees a phase-bias step.
+ * must announce fix onset to the consumer as a discontinuity; otherwise the consumer
+ * wire sees a phase-bias step.
  *
  * Two structural consequences:
  *  - `a_r`, and with it the spanning tree and any tree churn, cancels in the SD at use.
@@ -79,39 +77,39 @@
  *  - r0's own true SD integers are absorbed into that constant, so this is a datum
  *    choice, not a measurement: the link satellite s* is not gated.
  *
- * ## Standing invariant #1: why a per-epoch re-decision still needs an event response
+ * ## Why a per-epoch re-decision still needs an event response
  *
- * Increment 2c (the zero-q hold) is not built here.  The decision is re-derived from
- * scratch every epoch, and nothing is carried forward except for flip detection.  That
- * alone does not satisfy invariant #1: the fixed row writes a lambda-quantized value
- * (5.861 / 9.768 m) into the satellite PB/CB columns, which run at
+ * The decision is re-derived from scratch every epoch, and nothing is carried forward
+ * except for flip detection.  That alone is not a safe response to a jump: the fixed row
+ * writes a lambda-quantized value (5.861 / 9.768 m) into the satellite PB/CB columns, which run at
  * `sat_phase_bias_q = 1e-12` / `sat_code_bias_q = 1e-10`, a carry whose measured
  * response to a step has tau ~ 3.8 h with the discontinuity counter silent throughout.
- * An integer that changes between epochs therefore injects the failure mode the
- * invariant describes.
+ * An integer that changes between epochs therefore injects a step the carry absorbs
+ * slowly and silently.
  *
- * The wired response, in this same increment: when this epoch's integer disagrees with
+ * The response: when this epoch's integer disagrees with
  * the previous epoch's for the same (station, constellation, satellite) on a continuous
  * arc, the disagreement is counted (@c sdewl_dd_flip) and the fix is withheld for that
  * arc this epoch (reset over repair: on a flip epoch neither value is known to be
  * right).  A restarted arc (the detector's lagged sample count went down: slip, gap or
  * re-acquisition) replaces the memory without charging a flip, since the true integer
  * may legitimately have changed.  The memory is used only to veto; the decision itself is
- * never reused, which keeps this separate from 2c's zero-q hold.
+ * never reused.
  *
  * ## Ordering contract
  *
  * Runs serially inside the caller's SB_PREASM bracket, after
  * `networkAssemblyPrefilter_` (satellites seen by < 2 stations are erased there, and an
  * integer decided for a satellite that then vanishes is wasted work), after the
- * phase-datum election and the eq34 RPB allocation (both mutate the station's
- * state layout), after `networkAssemblyRegisterColumns_` (which can still skip the epoch), and
+ * phase-datum election and the eq34 RPB allocation (both mutate the stations'
+ * parameter sets), after `networkAssemblyRegisterColumns_` (which can still skip the epoch), and
  * before `networkPassB_`, whose parallel produce loop reads the published result.  The
  * published map is therefore written once per epoch and read-only during produce; a lazy
  * fill or a memo written inside produce would race.
  *
- * Owns no state: `ctx.carry.sd_ewl_*` and `ctx.counters.sdewl_*` are the storage, per
- * the anti-regrowth rule that carried state never lives in a function-local.
+ * Owns no state: the published integers (`StationState::sd_ewl_fix`), the sticky r0
+ * (`ConstellationState::sd_ewl_r0`) and the flip memory (`LosState::sd_ewl_prev`) are entity
+ * fields in `ctx.entities`, and the tallies are `ctx.counters.sdewl_*`.
  *
  * Off by default (`network.sd_ewl.fix_enable`): the function clears the published map
  * and returns, so the output is byte-identical.
@@ -165,17 +163,17 @@ struct SdEwlPropagateTally {
 };
 
 /// How this epoch's integer relates to the previous epoch's for the same arc: the
-/// standing-invariant-#1 event classification.
+/// flip event classification.
 enum class SdEwlFlipVerdict {
     Fresh,    ///< no previous decision (first epoch, after a warm resume, or after the arc's memory was dropped): fold.
     Stable,   ///< same integer on a continuous arc: fold.
     Restart,  ///< the arc restarted (the detector's lagged count fell: slip, gap or re-acquisition), so the true integer may legitimately have changed.  Replace the memory, charge no flip, fold.
-    Flip      ///< a different integer on a continuous arc.  Count it and fold neither value: a lambda-quantized step into a tau ~ 3.8 h PB/CB carry is the failure the invariant names, and on a flip epoch neither value is known to be right.
+    Flip      ///< a different integer on a continuous arc.  Count it and fold neither value: a lambda-quantized step into a tau ~ 3.8 h PB/CB carry is absorbed slowly and silently, and on a flip epoch neither value is known to be right.
 };
 
 /**
  * @brief Classify this epoch's integer against the previous epoch's for one arc.
- *        Pure, so the invariant-#1 response is unit-testable rather than reachable only
+ *        Pure, so the flip response is unit-testable rather than reachable only
  *        through a multi-epoch field run.
  *
  * The restart test is on the sample count, not on a slip flag: the MW accumulator resets
@@ -195,7 +193,7 @@ SdEwlFlipVerdict sdEwlFlipCheck(bool have_prev, long long n_prev, std::size_t co
 double sdEwlRoundingFfr(double sigma_cyc);
 
 /**
- * @brief Route-B DD rounding plus the A2 DD-to-SD datum propagation, as pure algebra over
+ * @brief Route-B DD rounding plus the DD-to-SD datum propagation, as pure algebra over
  *        a name-keyed graph.  Kept separate from the seam so that the property that
  *        matters is unit-testable without a detector, a station roster or a solver.
  *
@@ -228,8 +226,8 @@ std::map<std::string, std::map<std::string, SdEwlDecision>> sdEwlPropagate(
 
 /**
  * @brief The extra-wide-lane band pair of a constellation, with its two nominal
- *        frequencies: the single definition shared by the integer decision (2a) and
- *        the row builder (`Application::networkAppendSdEwlRows_`, 2b).
+ *        frequencies: the single definition shared by the integer decision
+ *        (@ref networkSdEwlAr) and the row builder (@ref networkAppendSdEwlRows).
  *
  * GPS uses (L2, L5) with lambda_EWL = c/(f2-f5) = 5.861 m; Galileo uses (E5b, E5a)
  * with 9.768 m.  BeiDou is deferred (clock divergence) and GLONASS is excluded (FDMA:
@@ -255,13 +253,9 @@ struct NetworkEpoch;            // network/driver/Epoch.hpp
 
 /**
  * @brief Decide this epoch's SD EWL integers by Route B and publish them for the
- *        PASS-B row builder.  Serial; mutates only `ctx.carry.sd_ewl_*` and
- *        `ctx.counters.sdewl_*`.  No-op (and clears the published map) unless
+ *        PASS-B row builder.  Serial; mutates only the `sd_ewl_*` entity fields of
+ *        `ctx.entities` and `ctx.counters.sdewl_*`.  No-op (and clears the published map) unless
  *        `network.sd_ewl.enable && network.sd_ewl.fix_enable`.
- *
- * Epoch form (generated by scripts/nom_ep1_cut.py): the run and the epoch
- * replace the explicit parameters; the definition binds each former parameter in its preamble,
- * under its former name.
  *
  * @param run The run (network/driver/Run.hpp). Written through non-const bindings: run.ctx (ctx),
  *            run.traces (traces), run.setup (setup). Read: run.config (config_), run.log
@@ -270,7 +264,7 @@ struct NetworkEpoch;            // network/driver/Epoch.hpp
  *           ep.clock.pl_now_s (now_s), ep.pass_a.modeled (modeled), ep.pass_a.present
  *           (present).
  *
- * The former parameters, by binding:
+ * The names the definition binds:
  *   - @p ctx = run.ctx: Run context: owns the published fix map, the sticky r0, the
  *     previous-epoch integers used for flip detection, and the counters.
  *   - @p config_ = run.config: Run configuration (reads `network.sd_ewl`).
@@ -289,14 +283,14 @@ struct NetworkEpoch;            // network/driver/Epoch.hpp
  */
 void networkSdEwlAr(NetworkRun& run, const NetworkEpoch& ep);
 
-// ---- Run-end reports (generated by scripts/nom_td_cut.py) ----
+// ---- Run-end reports ----
 
 struct NetworkRunEndView;
 
 /**
  * @brief Run-end report: the SD pre-reduce EWL rows and integer fix.
  *
- * The SD pre-reduce EWL constraint rows and their integer fix (2a/2b), summed over the
+ * The SD pre-reduce EWL constraint rows and their integer fix, summed over the
  * stations, with the dominant skip cause when nothing was built.
  *
  * Gate: returns 0 at once unless `config_.getNetworkConfig().sd_ewl.enable`.
@@ -308,7 +302,7 @@ int networkSdEwlRunEnd(const NetworkRunEndView& v);
 
 // ---- End of the run-end reports ----
 
-// ---- PASS B station steps, declarations (generated by scripts/nom_pb1b_cut.py) ----
+// ---- PASS B station steps, declarations ----
 
 struct StationBuild;                       // network/assembly/StationBuild.hpp
 struct StationCarryFrame;                  // network/assembly/StationBuild.hpp
@@ -320,12 +314,11 @@ class GlobalIonosphereMap;
 struct GlobalVtecShConfig;
 
 /**
- * @brief The SD pre-reduce EWL constraint rows (docs/SPEC_sd_ewl_prereduce.md).
+ * @brief The SD pre-reduce EWL constraint rows of one station.
  *
  * Step `sd_ewl` of kStationBuildSteps (network/assembly/StationBuild.hpp); its kinds: SdEwl. It
  * returns at once unless `config_.getNetworkConfig().sd_ewl.enable`. Records: sd_ewl_trace,
- * sd_ewl_rows; st.sd_ewl_ctr. The frozen text of networkPassB_'s produce loop below its
- * bindings.
+ * sd_ewl_rows; st.sd_ewl_ctr.
  * @param build One station's build: the station and its slot writable, the run read only.
  * @return StationStep::Next.
  */
@@ -333,7 +326,6 @@ StationStep networkSdEwlStationRows(StationBuild& build);
 
 /**
  * @brief Append the SD pre-reduce EWL constraint rows to one station's own block.
- *        See docs/SPEC_sd_ewl_prereduce.md.
  *
  * For each satellite @f$s@f$ paired against a pivot satellite @f$p@f$ on the
  * constellation's extra-wide-lane band pair @f$(b_1,b_2)@f$ (GPS 2/5, Galileo 7/5),
@@ -357,12 +349,12 @@ StationStep networkSdEwlStationRows(StationBuild& build);
  * @f$-f_2/(f_1-f_2)@f$ on @c PB|s|b2, @f$-f_1/(f_1+f_2)@f$ on @c CB|s|b1,
  * @f$-f_2/(f_1+f_2)@f$ on @c CB|s|b2, negated for @f$p@f$.
  *
- * All rows of a group (one constellation at this station, split in two under
- * increment 2b below) share the pivot arc's noise, so
+ * All rows of a group (one constellation at this station, split in two when integers
+ * are fixed, see below) share the pivot arc's noise, so
  * @f$R=\mathrm{diag}(\mathrm{var}_s)+\mathrm{var}_p\mathbf{1}\mathbf{1}^\top@f$,
  * structurally the GIM common-mode R.  R is whitened by @f$L^{-1}@f$
  * (@f$LL^\top=R@f$) into unit-information rows, as
- * @ref networkAppendGimIonoRows_ does.
+ * @ref networkAppendGimIonoRows does.
  *
  * @par Why pre-reduce
  * These rows enter the station block that reaches @c addStationObservations, so they
@@ -394,7 +386,7 @@ StationStep networkSdEwlStationRows(StationBuild& build);
  * @param st        This station (provides @c mw_slip, @c params, @c name, the counters).
  * @param est       Shared-column lookup only (const).
  * @param sta_obs   This station's modeled observations this epoch.
- * @param h2local   Global state index → local column within @p A_r.
+ * @param h2local   Global state index to local column within @p A_r.
  * @param t         Epoch time (trace stamp only).
  * @param[in,out] A_s,A_r,w,y  The station's design blocks, extended in place.
  * @param[in,out] tags  The station's row tags: one @c SdEwl tag per
@@ -403,15 +395,15 @@ StationStep networkSdEwlStationRows(StationBuild& build);
  *                  station-epoch, drained by PASS B's serial consume.  Untouched
  *                  unless @c network.sd_ewl.trace.
  *
- * @par Increment 2b: folding the fixed integer
+ * @par Folding the fixed integer
  * When @c network.sd_ewl.fix_enable published an integer for an arc (@p fix, decided
  * serially before assembly by @ref networkSdEwlAr and read-only here), the row folds
  * @f$\lambda_{EWL}\nabla N^{fixed}@f$ out of the RHS and drops its four local
  * ambiguity coefficients: the local degree of freedom is removed, not constrained.
  * A tight prior on a gauge-adjacent local column would be a stiff prior, not a rank
- * reduction; increment 2 exists so that the local nuisance stops absorbing the row's
- * information and the shared satellite bias receives it.  @c pred_m loses its
- * ambiguity terms in step with the design, because a row whose H changed while its
+ * reduction; the point is that the local nuisance stops absorbing the row's
+ * information and the shared satellite bias receives it.  @c pred_bias_m replaces
+ * @c pred_m in step with the design, because a row whose H changed while its
  * linearization point did not would be folded in a mixed frame.
  *
  * Fixed and float rows coexist at one station, but in separate whitened groups, each
@@ -426,11 +418,10 @@ StationStep networkSdEwlStationRows(StationBuild& build);
  * @param fix  The station table holding the published integers for this epoch
  *             (@c StationState::sd_ewl_fix: constellation, then satellite); this
  *             station's row is read at @p station_index.  @c nullptr, @c network.sd_ewl.fix_enable off, or no
- *             usable entry for an arc => that row takes the increment-1 float path.
+ *             usable entry for an arc => that row takes the float path.
  * @param station_index  This station's index into @p fix.
  *
- * A free function (formerly Application::networkAppendSdEwlRows_), so the station
- * steps in the family files can call it; @p config_ is the run's configuration.
+ * @p config_ is the run's configuration.
  */
 void networkAppendSdEwlRows(const GnssConfig& config_, NetStation& st, const NetworkEstimator& est,
                             const std::vector<PppObservation>& sta_obs,
@@ -446,26 +437,26 @@ void networkAppendSdEwlRows(const GnssConfig& config_, NetStation& st, const Net
 /// @brief Run-scope counters of SdEwlAr, a base of NetworkServiceCounters (network/state/RunContext.hpp).
 struct SdEwlArCounters {
 
-    // --- Run tallies of the SD EWL Route-B integer decision (increment 2a).  Standing
-    // invariant #4: on an armed run, `sdewl_dd_fixed == 0` means the decision never
+    // --- Run tallies of the SD EWL Route-B integer decision.  On an armed run,
+    // `sdewl_dd_fixed == 0` means the decision never
     // fired, which is not the same as "the integers had no effect", so every rejection
-    // path below is counted against a denominator.  The 2b row tallies live per
+    // path below is counted against a denominator.  The row tallies live per
     // station in NetStation::SdEwlCounters (the row build is parallel).
     long long sdewl_epochs = 0;             ///< epochs the decision seam ran (the denominator for everything else).
     long long sdewl_components = 0;         ///< (constellation, connected component) instances processed.
     long long sdewl_dd_pairs_seen = 0;      ///< (station, satellite) arcs admitted to the integer graph.
     long long sdewl_dd_fix_attempts = 0;    ///< DD roundings attempted along spanning-tree / closure edges.
-    long long sdewl_dd_fixed = 0;           ///< integers published usable this epoch: measured plus datum values (see sdewl_dd_datum; both are legitimately foldable, but only the measured ones went through a rounding gate).
-    long long sdewl_dd_datum = 0;           ///< of those, values assigned as a datum rather than measured: the reference station's own satellites, each station's link satellite, and a satellite framed on first sighting.  A datum value carries no rounding decision, so it cannot be wrong: it defines the frame.
+    long long sdewl_dd_fixed = 0;           ///< integers published usable (not flip-vetoed): measured plus datum values (see sdewl_dd_datum; both are legitimately foldable, but only the measured ones went through a rounding gate).
+    long long sdewl_dd_datum = 0;           ///< values assigned as a datum rather than measured: the reference station's own satellites, each station's link satellite, and a satellite framed on first sighting.  A datum value carries no rounding decision, so it cannot be wrong: it defines the frame.
     long long sdewl_dd_reject_frac = 0;     ///< rejected: |fractional residue| over sd_ewl.fix_max_frac_cyc.
     long long sdewl_dd_reject_ffr = 0;      ///< rejected: rounding success probability under sd_ewl.fix_min_ffr.
-    long long sdewl_dd_flip = 0;            ///< integer disagreed with the previous epoch on a continuous arc: counted and vetoed (the invariant #1 response).
+    long long sdewl_dd_flip = 0;            ///< integer disagreed with the previous epoch on a continuous arc: counted and vetoed.
     long long sdewl_dd_restart = 0;         ///< arc restarted (lagged count fell): memory replaced, no flip charged.
     long long sdewl_sd_ref_reelected = 0;   ///< the sticky component reference station r0 changed (re-datums the whole component's SD frame).
     long long sdewl_dd_skip_channel = 0;    ///< (station, satellite) excluded: its MW arc is on a different tracking-channel pair than the network-common election, so B^s would not cancel in the DD.
-    long long sdewl_dd_skip_frame = 0;      ///< (station, satellite) excluded: BIA frame disagrees with the constellation majority.
+    long long sdewl_dd_skip_frame = 0;      ///< (station, satellite) excluded: BIA frame disagrees with the majority at that satellite.
     long long sdewl_dd_no_link = 0;         ///< (station, satellite) left unfixed: no admissible link satellite reached it from the tree/closure.
-    long long sdewl_dd_no_graph = 0;        ///< stations isolated: fewer than two co-visible satellites with any neighbour, so no DD can be formed.
+    long long sdewl_dd_no_graph = 0;        ///< stations dropped: fewer than two stations hold an admitted arc on the constellation, so no DD can be formed.
 };
 
 /**
