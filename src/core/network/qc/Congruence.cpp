@@ -1,27 +1,27 @@
 /**
  * @file Congruence.cpp
  * @brief Station congruence screen: the per-station coordinate sweep and its
- *        emission (docs/SPEC_redundancy_census.md CG-INC-1..3).  See
- *        Congruence.hpp for the design argument, the sign convention and
- *        the two @f$\hat\sigma_0@f$ corrections taken from the block census.
+ *        emission.  See Congruence.hpp for the design argument, the sign
+ *        convention and the two @f$\hat\sigma_0@f$ corrections taken from the
+ *        block census.
  *
  * Measure-only.  Nothing here writes a weight, a state, a coordinate or a
  * decision; this translation unit reads the solved system and emits counters,
- * ladders, a per-station MDB table and events.  SPEC §8 row 1 assigns any
- * response (a deweight, an exclusion, a re-coordination) to a separate mechanism,
- * because re-coordinating a station is a datum act with two edges to bound under
- * standing invariant #7.
+ * ladders, a per-station MDB table and events.  Any response (a deweight, an
+ * exclusion, a re-coordination) belongs to a separate mechanism, because
+ * re-coordinating a station is a datum act with two edges (decoupling and
+ * re-coupling) to bound.
  *
  * ## Cost
  *
  * The sweep runs inside the redundancy census's swept branch, so it inherits that
- * census's stride, targeted-escalation and trip schedule and adds no scheduler
- * (SPEC §3).  Per swept station it forms one @f$b\times b@f$ residual cofactor
+ * census's stride, targeted-escalation and trip schedule and adds no scheduler.
+ * Per swept station it forms one @f$b\times b@f$ residual cofactor
  * over the station's data rows, one @f$b\times 3@f$ contraction and one
  * @f$3\times 3@f$ eigensolve.  The cofactor and the @c rowRedundancy call the
  * census already made for the same station are dominated by the same two terms
  * (@f$N_{rr}^{-1}N_{sr}^\top@f$ and an @f$n_{shared}^2@f$ Gram), which keeps
- * SPEC §4's budget ("≤ 2× the redundancy sweep it rides") within reach.  The
+ * the budget ("≤ 2× the redundancy sweep it rides") within reach.  The
  * budget is checked, not assumed: @c tallies.wall_ms is measured here.
  *
  * The post-fit residual is not recomputed here: the census's rider block forms it
@@ -42,7 +42,7 @@
 #include "network/solve/NormalEquations.hpp"
 #include "network/diag/RunTraces.hpp"
 
-// The run-end reports at the end of this file:
+// Used by the seams, the run-end report and the station step below:
 #include "network/driver/SetupResult.hpp"
 #include "config/GnssConfig.hpp"
 #include "network/runend/RunEnd.hpp"
@@ -68,7 +68,7 @@
 namespace GnssProcessor {
 
 // ===========================================================================
-//  The per-station congruence sweep (INC-1)
+//  The per-station congruence sweep
 // ===========================================================================
 
 void networkCongruenceSweepStation(NetworkCongruence& acc,
@@ -142,9 +142,9 @@ void networkCongruenceSweepStation(NetworkCongruence& acc,
         // Sign: row_pos_enu is dy/d(Delta) with Delta = p_true - p_held (em.H's
         // own position partial).  The reported quantity is the held coordinate's
         // error d = p_held - p_true = -Delta, so H_B = -row_pos_enu, and a +5 cm
-        // East perturbation of a held coordinate reads delta_E = +5 cm (SPEC 6.1 /
-        // 7.2).  M, T and every MDB are invariant to this sign; only delta depends
-        // on it.  See the sign section of Congruence.hpp.
+        // East perturbation of a held coordinate reads delta_E = +5 cm.  M, T and
+        // every MDB are invariant to this sign; only delta depends on it.  See the
+        // sign section of Congruence.hpp.
         Hd.row(i) = -R.row_pos_enu.row(row);
     }
 
@@ -218,7 +218,7 @@ void networkCongruenceSweepStation(NetworkCongruence& acc,
 
 namespace {
 
-/// Station name for an identity string, or a positional fallback ("#<idx>", or
+/// Station name for a station index, or a positional fallback ("#<idx>", or
 /// "(network)" for a negative index), so a finding without a name is still reported.
 std::string stationName(const std::vector<NetStation>& stations, int idx) {
     if (idx < 0 || idx >= static_cast<int>(stations.size()))
@@ -232,7 +232,7 @@ std::string stationName(const std::vector<NetStation>& stations, int idx) {
 ///     consumer could act on (@ref BaardaReliability.hpp's convention);
 ///   * `n/a` (NaN input): there was no sample to summarize.
 /// The last two stay separate: "the screen never had a usable epoch here" and
-/// "this direction is unobservable" are different findings (invariant #4).
+/// "this direction is unobservable" are different findings.
 std::string mCell(double v) {
     if (std::isnan(v)) return std::string("n/a");
     return std::isfinite(v) ? fmt::format("{:.6g}", v) : std::string("inf");
@@ -241,8 +241,7 @@ std::string mCell(double v) {
 }  // namespace
 
 void networkCongruenceEmit(NetworkRun& run, const NetworkEpoch& ep) {
-    // ---- From the run and the epoch (generated by scripts/nom_ep1_cut.py,
-    //      each line checked by scripts/nom_ep1_verify.py). Reads bind through `ep`; writes bind
+    // ---- From the run and the epoch.  Reads bind through `ep`; writes bind
     //      through the output parameters and are marked `// written`. ----
     NetworkRunContext& ctx = run.ctx;
     const GnssConfig& config_ = run.config;
@@ -253,7 +252,7 @@ void networkCongruenceEmit(NetworkRun& run, const NetworkEpoch& ep) {
     const std::vector<CongruenceHit>& cg_hits = ep.events.census.cg_hits;
     // ---- End of the bindings ----
     net::StationTable& sta_rows = ctx.entities.stations;   // written
-    if (!ctx.knobs.cg_on) return;   // the driver's gate
+    if (!ctx.knobs.cg_on) return;   // arming gate
     (void)config_;
     (void)log;
     NetworkCongruence& acc = ctx.carry.cg;
@@ -266,9 +265,9 @@ void networkCongruenceEmit(NetworkRun& run, const NetworkEpoch& ep) {
 
     // ---- one row per swept station ----------------------------------------
     // The block census writes per-epoch rows per (family x label) ladder; this
-    // screen's primary product is the per-station record instead: SPEC §7.2
-    // grades a per-station run-median of delta_E, and §7.3's MDB table is a
-    // per-station, per-direction quantity.  Neither survives aggregation, so the
+    // screen's primary product is the per-station record instead: the run-median
+    // of delta_E is per station, and the MDB table is a per-station,
+    // per-direction quantity.  Neither survives aggregation, so the
     // trace carries each station-epoch, and the ladders are a run-end readout.
     if (traces.congruence_trace.is_open()) {
         for (const CongruenceHit& h : cg_hits) {
@@ -308,7 +307,7 @@ void networkCongruenceEmit(NetworkRun& run, const NetworkEpoch& ep) {
     for (const CongruenceHit& h : cg_hits) {
         if (!h.reported) continue;
         const std::string sname = stationName(stations, h.station);
-        // The station's holdoff clock (by NAME, O3).
+        // The station's holdoff clock (by name).
         const std::optional<StationId> sid = net::stationOfName(ctx.entities, sname);
         const long long* last =
             sid ? net::get(ctx.entities.stations, *sid, &net::StationState::cg_event_last) : nullptr;
@@ -339,7 +338,7 @@ void networkCongruenceEmit(NetworkRun& run, const NetworkEpoch& ep) {
 }
 
 // ===========================================================================
-//  Run-end readout (standing invariant #4)
+//  Run-end readout
 // ===========================================================================
 
 void networkCongruenceRunEnd(const NetworkRunContext& ctx,
@@ -384,11 +383,11 @@ void networkCongruenceRunEnd(const NetworkRunContext& ctx,
               "QUIETER than the model says and every t below is inflated accordingly.",
               acc.sigma0(), acc.sigma0Warm() ? "warm" : "WARM-UP", acc.sigma0Neff());
 
-    // ---- the MDB table (SPEC §7.3's service deliverable) -------------------
+    // ---- the MDB table ------------------------------------------------------
     // The smallest coordinate fault this network can see, per station and per
-    // direction, next to the run-median offset it measured.  On a carry_invariant
-    // lineage the Up column is expected to be large or infinite; SPEC §10 rules
-    // out tuning that away, so it is printed as measured.
+    // direction, next to the run-median offset it measured.  The Up column is
+    // expected to be large or infinite where the clock and ZWD absorb the
+    // vertical; that is not tuned away, so it is printed as measured.
     log->info("Network (station congruence) MDB TABLE (SPEC 7.3) — per station: "
               "run-median delta (cm, ENU) +- MAD, and the FORMAL coordinate MDB (m) "
               "with its unobservable-epoch count.  delta is the HELD COORDINATE'S "
@@ -419,8 +418,7 @@ void networkCongruenceRunEnd(const NetworkRunContext& ctx,
             // The worst-epoch identity line is written only where there is a
             // finding to name.  On a 305-station roster an unconditional second
             // line would double a 600-line table; the ladder above already carries
-            // the occupancy, and invariant #4 asks for a name on a finding, not on
-            // every denominator.
+            // the occupancy, and a finding needs a name, not every denominator.
             if (L.n_reported > 0)
                 log->info("Network (station congruence) {}/{}: worst station-epoch "
                           "t = {:.4g} (T = {:.4g}, q = {}) with delta = "
@@ -447,7 +445,7 @@ void networkCongruenceRunEnd(const NetworkRunContext& ctx,
                   "a lineage that estimates a per-epoch station clock and a ZWD this is "
                   "worth a second look at the eigenvalue columns before it is believed.");
 
-    // ---- the separability 2x2 (INC-3) -------------------------------------
+    // ---- the separability 2x2 ---------------------------------------------
     // A coordinate fault is coherent across all lines of sight and should not
     // excite the per-LOS block tier; a single-LOS fault should excite that tier and
     // not this one.  Mass off the diagonal is the evidence that the two tiers
@@ -489,11 +487,9 @@ void networkCongruenceRunEnd(const NetworkRunContext& ctx,
               "edges) and belongs to its own change.");
 }
 
-// ---- The predict half (frozen text of Application::networkProcessEpoch_,
-//      moved by scripts/nom_ep2_cut.py) ----
+// ---- The predict half ----
 void networkCongruencePredict(NetworkRun& run, const NetworkEpoch& ep) {
-    // ---- From the run and the epoch (generated by scripts/nom_ep2_cut.py,
-    //      each line checked by scripts/nom_ep2_verify.py). Reads bind through `ep`; writes bind
+    // ---- From the run and the epoch.  Reads bind through `ep`; writes bind
     //      through the output parameters and are marked `// written`. ----
     NetworkRunContext& ctx = run.ctx;
     const SyncedEpoch& se = ep.se;
@@ -502,7 +498,7 @@ void networkCongruencePredict(NetworkRun& run, const NetworkEpoch& ep) {
     if (ctx.knobs.cg_on) ctx.carry.cg.beginEpoch(pl_now_s, se.time.tow);
 }
 
-// ---- Run-end reports (generated by scripts/nom_td_cut.py) ----
+// ---- Run-end reports ----
 
 // Run-end report: the station congruence screen.
 int networkCongruenceRunEnd(const NetworkRunEndView& v) {
@@ -511,12 +507,12 @@ int networkCongruenceRunEnd(const NetworkRunEndView& v) {
     const NetworkSetupResult& setup = v.setup;
 
     // --- Station congruence run-end telemetry --------------------------------
-    // (docs/SPEC_redundancy_census.md §13.7.3).  "Every held coordinate on this
-    // network is right" and "the screen never swept a station" produce identical
-    // silence (invariant #4), so the denominators come first.  Then comes the MDB
-    // table, a service deliverable rather than a diagnostic: the smallest coordinate
-    // fault this network can detect, per station and per direction.  The body is in
-    // network/qc/Congruence.cpp, next to the sweep that produces the numbers.
+    // "Every held coordinate on this network is right" and "the screen never
+    // swept a station" produce identical silence, so the denominators come
+    // first.  Then comes the MDB table, a service deliverable rather than a
+    // diagnostic: the smallest coordinate fault this network can detect, per
+    // station and per direction.  The body is in network/qc/Congruence.cpp, next
+    // to the sweep that produces the numbers.
     if (ctx.knobs.cg_on)
         networkCongruenceRunEnd(ctx, log, setup.stations);
     return 0;
@@ -524,30 +520,27 @@ int networkCongruenceRunEnd(const NetworkRunEndView& v) {
 
 // ---- End of the run-end reports ----
 
-// ---- PASS B station steps (generated by scripts/nom_pb1b_cut.py) ----
+// ---- PASS B station steps ----
 
 StationStep networkCongruenceRowGeometry(StationBuild& build) {
-    // ---- From the station build (generated by scripts/nom_pb1b_cut.py,
-    //      each line checked by scripts/nom_pb1b_verify.py). ----
+    // ---- From the station build ----
     const NetworkRunContext& ctx = build.ctx;
     NetStation& st = build.st;
     StationAssembly& R = build.R;
     const EpochMeasurement& em = build.em;
-    // The alias lines of networkPassB_ this function reads, verbatim.
-    // Station congruence screen (docs/SPEC_redundancy_census.md, CG-INC-0).  The one
-    // thing the assembly owes it: retain each data row's position partial,
-    // which networkSplitStation_ drops because the network holds every coordinate
-    // fixed.  Off: the block below never runs and StationAssembly::row_pos_enu stays
-    // empty (byte-identical, no allocation).
+    // Station congruence screen.  The one thing the assembly owes it: retain each
+    // data row's position partial, which networkSplitStation drops because the
+    // network holds every coordinate fixed.  Off: the block below never runs and
+    // StationAssembly::row_pos_enu stays empty (byte-identical, no allocation).
     const bool congruence_rows         = ctx.knobs.cg_on;
     // ---- End of the bindings ----
 
-    // --- Station congruence screen (docs/SPEC_redundancy_census.md, CG-INC-0)
-    // Retain the per-row position partial that networkSplitStation_ just
+    // --- Station congruence screen
+    // Retain the per-row position partial that networkSplitStation just
     // discarded, rotated into the station's local ENU frame.  This is the one
     // place in the run where the row geometry still exists: three columns of
-    // `em.H` that the fixed-coordinate network drops by design (the A6
-    // linearity guard in networkSplitStation_ throws if one reaches A_r), so
+    // `em.H` that the fixed-coordinate network drops by design (the linearity
+    // guard in networkSplitStation throws if one reaches A_r), so
     // without this block a wrong held coordinate leaves no observable
     // footprint anywhere downstream.
     //

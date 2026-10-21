@@ -11,48 +11,46 @@
  * ApplicationBaseline.cpp and ApplicationRealtime.cpp.
  *
  * runNetwork is a thin orchestrator: the epoch loop is glue around calls into
- * single-concern seams, which hold the bodies relocated verbatim from the former
- * monolith.  New network code goes in the matching seam, not here; CLAUDE.md
- * carries the placement decision tree:
- *   Setup / run end     network/driver/ApplicationNetworkSetup.cpp · filter/NetworkTeardown (the
- *                       run-end table, filter/NetworkRunEnd)
+ * single-concern seams.  New network code goes in the matching seam, not here:
+ *   Setup / run end     network/driver/ApplicationNetworkSetup.cpp · network/runend/Teardown (walks
+ *                       the run-end table of network/runend/RunEnd)
  *   Setup builders      one per concern, in that concern's file, called in order from
  *                       runNetwork
  *   Assembly (PASS A/B) network/driver/ApplicationNetworkAssembly.cpp
- *   Datum / solve       filter/NetworkSbasis · NetworkChainDatum · NetworkPhaseDatum ·
- *                       NetworkSolveGlue · NetworkInstallCarry · NetworkDdPriorBuild ·
- *                       NetworkProducerAr
- *   Per-epoch QC        filter/NetworkRaim · NetworkClockQc · NetworkRelevel ·
- *                       slip/NetworkSlipQc · filter/NetworkCoupling
- *   Emit / store        filter/NetworkSolPrep · NetworkEmitStore
- *   Diag / stash        filter/NetworkIonoDiag · NetworkDdFrac · NetworkShDevVtec ·
- *                       NetworkShHealth · NetworkLeveling · NetworkStashStatus
- *   Context / logging   app/NetworkRunContext · logging/NetworkRunTraces
- *   Run-loop types      filter/NetworkRunTypes · NetworkWlRunTypes
+ *   Datum / solve       network/solve/Sbasis · ChainDatum · PhaseDatum · SolveGlue ·
+ *                       network/carry/InstallCarry · DdPriorBuild · network/ar/ProducerAr
+ *   Per-epoch QC        network/qc/Raim · ClockQc · Relevel · network/slip/SlipQc ·
+ *                       network/carry/Coupling
+ *   Emit / store        network/emit/SolPrep · EmitStore
+ *   Diag / stash        network/diag/IonoDiag · DdFrac · ShDevVtec · ShHealth · Leveling ·
+ *                       StashStatus
+ *   Context / logging   network/state/RunContext · network/diag/RunTraces
+ *   Run-loop types      network/driver/RunTypes · WlRunTypes
  *
  * Each solution epoch runs the arrowhead estimator end to end:
  *
  *   PASS A (layout)  Per station, PppModel::computeModels, then
  *       networkAdmitSharedStates pre-allocates the shared
  *       satellite states (per-satellite clock, per-(sat, signal) phase bias)
- *       behind the same usability gate the measurement build uses.  The datum
- *       (pivot) station goes first, so its usable phase-signal set restricts the
- *       phase-bias columns to those backed by a pivot-receiver ambiguity pin.  The
- *       shared column layout is then registered: a clock for every satellite any
- *       station sees, and a phase bias for each signal in the pivot's set.
+ *       behind the same usability gate the measurement build uses.  In the default
+ *       pin datum the datum (pivot) station goes first, so its usable phase-signal
+ *       set restricts the phase-bias columns to those backed by a pivot-receiver
+ *       ambiguity pin.  The shared column layout is then registered: a clock for
+ *       every satellite any station sees, and a phase bias for each signal in the
+ *       pivot's set.
  *
  *   PASS B (assembly)  networkStationRows produces an
  *       undifferenced H / innovation / R block per station
  *       (DifferencingMode::None).  Its columns split three ways: satellite clock
  *       (−1) and phase bias (+1) scatter into the shared border A_s; the three
  *       receiver-position columns are dropped (coordinates are fixed); the rest
- *       form the station's private nuisance block A_r.  The pivot also folds
- *       tight-prior pins on its own ambiguities.  These pins are the local half of
- *       the S-basis, so the emitted phase bias carries that pivot-receiver
- *       ambiguity lump (Odijk Eq. 4).
+ *       form the station's private nuisance block A_r.  In the pin datum the pivot
+ *       also folds tight-prior pins on its own ambiguities.  These pins are the
+ *       local half of the S-basis, so the emitted phase bias carries that
+ *       pivot-receiver ambiguity lump (Odijk Eq. 4).
  *
- *   Solve  NetworkSbasis builds the shared minimum-constraint datum (one
- *       satellite-clock pin per constellation); the null-space rank gate checks
+ *   Solve  NetworkSbasis builds the shared minimum-constraint datum (in the pin
+ *       datum, one satellite-clock pin per constellation); the null-space rank gate checks
  *       that the reduced shared system has exactly that deficiency; then
  *       NetworkEstimator::solve produces the shared estimate.
  *       NetworkProductEmitter serializes it into an owned SsrCorrectionStore, not
@@ -65,12 +63,13 @@
  *       network.shared_carry_full_cov the carried prior is dense instead.
  *
  * Base scope: estimable satellite clock and phase bias, station coordinates and
- * orbits fixed, GPS and Galileo, per-band uncombined, float product.  Added since:
+ * orbits fixed, GPS and Galileo, per-band uncombined, float product.  Optional:
  * satellite code bias (network.estimate_sat_code_bias), post-fit network QC (RAIM,
  * satellite-clock QC), a streaming epoch source (network.streaming.enable) and a
- * log-only producer-side AR (network.ambiguity_resolution) that leaves the product
- * float.  Atmosphere products and the GLONASS FCN bias are not produced; GLONASS
- * (FDMA) is excluded.  Every station's coordinates must be known and its observation
+ * producer-side AR (network.ambiguity_resolution) that is log-only unless its
+ * fixed-cycle fold is set to emit.  Atmosphere products and the GLONASS FCN bias
+ * are not produced; GLONASS is admitted only code-only (network.estimate_glonass),
+ * with no FDMA phase bias.  Every station's coordinates must be known and its observation
  * RINEX path must be set explicitly in the config: the PathResolver network gate is
  * deferred, so resolveData() here serves only products and broadcast navigation.
  */
@@ -93,42 +92,42 @@
 #include "network/solve/ClockLevel.hpp"         // satellite-clock level monitor and restore raise
 #include "filter/IlsCore.hpp"                 // producer-side network AR (Phase 2+): ils::ilsFix
 #include "network/solve/Sbasis.hpp"
-#include "network/solve/PivotHandover.hpp"   // pivot-handover datum-change detector (A1/A2)
+#include "network/solve/PivotHandover.hpp"   // pivot-handover datum-change detector
 #include "network/solve/PivotElection.hpp"   // the coverage predictor of the clock pivot election
-#include "network/carry/CarryVce.hpp"        // LS-VCE variance-component monitor for carry rows (M2)
-#include "network/qc/PriorResidual.hpp"   // prior-residual census (SPEC_prior_residual_census)
+#include "network/carry/CarryVce.hpp"        // LS-VCE variance-component monitor for carry rows
+#include "network/qc/PriorResidual.hpp"   // prior-residual census
 #include "network/carry/InvariantCarryDriver.hpp"  // DD cycle-basis invariant carry
 #include "filter/StateKeySchema.hpp"
 #include "common/GnssIdentity.hpp"         // systemOfSat, letterOfSat, rinexLetter, systemName
-#include "network/driver/RunTypes.hpp"      // run-loop record types: NetStation, StationAssembly, carry PODs (INC-2)
-#include "network/driver/WlRunTypes.hpp" // RAII and section-timer types hoisted out of runNetwork() (INC-9b)
+#include "network/driver/RunTypes.hpp"      // run-loop record types: NetStation, StationAssembly, carry PODs
+#include "network/driver/WlRunTypes.hpp" // RAII and section-timer types
 #include "network/driver/RunGroups.hpp"  // the driver-owned run groups: engines, emit engines, timing, closed-loop tally
-#include "network/qc/RobustStats.hpp"   // median / MAD helpers for robust attribution (INC-2)
-#include "network/solve/PhaseDatum.hpp"    // census, anchor election, drop-and-heal (INC-8b)
-#include "network/diag/AmbStateTrace.hpp" // per-arc carry-state trace: drain and erase capture (RF-1 §7.4)
-#include "network/ar/AmbFloat.hpp"      // floored birth prior and bounded drop (RF-1 step 4)
-#include "network/solve/HandoverStransform.hpp" // kStsExactTolM (RF-2b: the declaration step test)
+#include "network/qc/RobustStats.hpp"   // median / MAD helpers for robust attribution
+#include "network/solve/PhaseDatum.hpp"    // census, anchor election, drop-and-heal
+#include "network/diag/AmbStateTrace.hpp" // per-arc carry-state trace: drain and erase capture
+#include "network/ar/AmbFloat.hpp"      // floored birth prior and bounded drop
+#include "network/solve/HandoverStransform.hpp" // kStsExactTolM (the declaration step test)
 #include "network/solve/ChainDatum.hpp"    // eq34 single-receiver-chain datum
 #include "network/solve/AnchorHygiene.hpp" // eq34 reattach hygiene: anchor-host eligibility + pin bridge
 #include "network/assembly/SignalIntegrity.hpp" // flicker/gap: band-state classifier + unvetted phase demotion
 #include "network/assembly/MeasurementAdmission.hpp" // product-referenced admission: the corrupt-channel screen
-#include "network/qc/GrossLos.hpp"    // gross line-of-sight screen (§24.18)
-#include "network/qc/Raim.hpp"        // post-fit network RAIM (INC-9)
-#include "network/qc/ClockQc.hpp"     // post-solve satellite-clock QC (INC-10)
-#include "network/diag/FrameDiag.hpp"   // frame-guard trigger instrumentation (P1-3/P1-4, SPEC_day129_frame_guards)
-#include "network/diag/StationBlock.hpp"  // per-station local-block audit, measure-only (§24.10)
+#include "network/qc/GrossLos.hpp"    // gross line-of-sight screen
+#include "network/qc/Raim.hpp"        // post-fit network RAIM
+#include "network/qc/ClockQc.hpp"     // post-solve satellite-clock QC
+#include "network/diag/FrameDiag.hpp"   // frame-guard trigger instrumentation
+#include "network/diag/StationBlock.hpp"  // per-station local-block audit, measure-only
 #include "network/qc/RhsAttrib.hpp"   // reduced-RHS class attribution (era-2 injector probe)
-#include "network/qc/Mdb.hpp"               // Baarda reliability numbers / MDB (SPEC_redundancy_census)
-#include "network/qc/RedundancyCensus.hpp"  // redundancy / testability census (SPEC_redundancy_census)
-#include "network/qc/PrefitCensus.hpp"      // prefit census / fuse / birth check / topology (SPEC_prefit_census_observability)
-#include "network/solve/DatumGraph.hpp"        // structural S-basis dimension census (SPEC_datum_graph_census)
-#include "network/emit/SolPrep.hpp"    // emit-side solution prep and discontinuity signalling (INC-11pre)
-#include "network/emit/EmitStore.hpp"    // emit, store, product write and closed loop (INC-11)
+#include "network/qc/Mdb.hpp"               // Baarda reliability numbers / MDB
+#include "network/qc/RedundancyCensus.hpp"  // redundancy / testability census
+#include "network/qc/PrefitCensus.hpp"      // prefit census / fuse / birth check / topology
+#include "network/solve/DatumGraph.hpp"        // structural S-basis dimension census
+#include "network/emit/SolPrep.hpp"    // emit-side solution prep and discontinuity signalling
+#include "network/emit/EmitStore.hpp"    // emit, store, product write and closed loop
 #include "network/runend/Teardown.hpp"
 #include "network/diag/PhaseVisibleDiag.hpp"  // phase-visible consistency instrument
 #include "network/emit/PbHoldClone.hpp"       // the smoothed hold's clock clones
 #include "network/state/CarryDisposition.hpp"  // the decided-once fold disposition
-#include "network/ar/ProducerAr.hpp" // log-only producer AR and NEQ export (INC-9b)
+#include "network/ar/ProducerAr.hpp" // log-only producer AR and NEQ export
 #include "network/ar/FixedCycles.hpp" // the fixed-cycle fold and its ledger of fixed cycles: a detached held solve only the emission reads
 #include "network/carry/Inject.hpp"
 #include "network/assembly/CanonicalPairAdmission.hpp" // canonical-pair admission seam
@@ -136,31 +135,31 @@
 #include "network/assembly/SecondPhaseScope.hpp"  // second phase channel, epoch tail
 #include "network/assembly/ChannelAll.hpp"      // all-channel census
 #include "network/emit/LedgerEmit.hpp"  // emitter read against the ledger, declared roster
-#include "network/carry/InstallCarry.hpp" // installPosterior and the WL zone-4 fold / inject (INC-9b)
-#include "network/carry/DdPriorBuild.hpp" // buildCarryDdPriors free function (INC-9b)
-#include "network/solve/SolveGlue.hpp" // datum, solve and within-epoch RAIM (INC-9b)
-#include "network/diag/IonoDiag.hpp"    // iono / ZWD / anchor-info viz traces (INC-11b)
-#include "network/diag/DdFrac.hpp"    // cross-station DD fractional-residual trace (INC-11b)
-#include "network/ar/SdEwlAr.hpp"   // SD EWL Route-B integer decision (increment 2a)
-#include "network/diag/ShDevVtec.hpp"    // SH-deviation carry KF and VTEC-coefficient trace (INC-11b)
-#include "network/diag/ShHealth.hpp"    // SH-field health probe, carry LS-VCE (INC-11b)
-#include "network/carry/LevelAuthority.hpp"  // per-epoch level-authority census (LV-6)
-#include "network/diag/Leveling.hpp"    // phase-leveling carry harvest, D2/C1 stash (INC-11b)
-#include "network/diag/StashStatus.hpp"    // carry re-stash, LS-VCE fold, epoch-status QC row (INC-11b)
-#include "logging/CsvRotator.hpp"     // size-based rotation of the unbounded service CSVs (P1)
-#include "network/diag/RunTraces.hpp" // trace-stream ownership, open logic, roster, FlagRate (INC-3)
-#include "network/state/RunContext.hpp"    // knobs, tier-1 carry state and service counters, as ctx (INC-4)
-#include "network/driver/SetupResult.hpp"   // setup-phase handoff (setup) and navAvailabilityGpsSeconds (INC-5)
-#include "slip/MwSlipDetector.hpp"      // phase-leveling slip repair (T0, increment 2)
-#include "slip/TurboEditResolver.hpp"   // MW+GF per-signal integer repair (Increment 2)
+#include "network/carry/InstallCarry.hpp" // installPosterior, the fold telemetry and the innovation-flag drain
+#include "network/carry/DdPriorBuild.hpp" // buildCarryDdPriors free function
+#include "network/solve/SolveGlue.hpp" // datum, solve and within-epoch RAIM
+#include "network/diag/IonoDiag.hpp"    // iono / ZWD / anchor-info viz traces
+#include "network/diag/DdFrac.hpp"    // cross-station DD fractional-residual trace
+#include "network/ar/SdEwlAr.hpp"   // SD EWL Route-B integer decision
+#include "network/diag/ShDevVtec.hpp"    // SH-deviation carry KF and VTEC-coefficient trace
+#include "network/diag/ShHealth.hpp"    // SH-field health probe, carry LS-VCE
+#include "network/carry/LevelAuthority.hpp"  // per-epoch level-authority census
+#include "network/diag/Leveling.hpp"    // phase-leveling carry harvest and stash
+#include "network/diag/StashStatus.hpp"    // carry re-stash, LS-VCE fold, epoch-status QC row
+#include "logging/CsvRotator.hpp"     // size-based rotation of the unbounded service CSVs
+#include "network/diag/RunTraces.hpp" // trace-stream ownership, open logic, roster, FlagRate
+#include "network/state/RunContext.hpp"    // knobs, carry state and service counters, as ctx
+#include "network/driver/SetupResult.hpp"   // setup-phase handoff (setup) and navAvailabilityGpsSeconds
+#include "slip/MwSlipDetector.hpp"      // phase-leveling slip repair
+#include "slip/TurboEditResolver.hpp"   // MW+GF per-signal integer repair
 #include "slip/IfPhaseSlipDetector.hpp" // IF-phase between-sat/between-epoch slip detection
-#include "network/slip/SlipQc.hpp"       // pure slip-QC helpers: ifElevMap, parseIfPairResetKey (INC-2)
+#include "network/slip/SlipQc.hpp"       // pure slip-QC helpers: ifElevMap, parseIfPairResetKey
 #include "network/slip/SlipOracle.hpp"   // simulation-only oracle slip response (level-preserving ceiling)
 #include "atmosphere/SphericalHarmonicIonosphere.hpp"
 #include "common/Constants.hpp"
 #include "common/PppUtils.hpp"        // the slip-QC wavelength provider (GLONASS slots)
 #include "realtime/RealTimeEngine.hpp"
-#include "network/driver/StreamFrontEnd.hpp"  // multi-station streaming epoch source (RTF-3)
+#include "network/driver/StreamFrontEnd.hpp"  // multi-station streaming epoch source
 #include "math/TimeUtils.hpp"
 #include "math/Coordinates.hpp"
 
@@ -199,7 +198,7 @@ int Application::runNetwork() {
     auto log = log_manager_.getLogger("main_log");
     const auto& nc = config_.getNetworkConfig();
 
-    // Consumer-only replay (Q5): an already-written product file replaces the
+    // Consumer-only replay: an already-written product file replaces the
     // producer entirely.  The branch comes before input validation and setup, so
     // none of the producer machinery (roster, station build, emitter, snapshot
     // fingerprint) is touched and a replay run cannot perturb a producer artifact.
@@ -232,8 +231,7 @@ int Application::runNetwork() {
     // GnssConfig& to setup.consumer_config (see SetupResult.hpp).
     NetworkSetupResult setup;
     if (const int rc = networkSetup_(setup); rc != 0) return rc;
-    // Alias block (INC-3/4/5 migration mechanic): the run loop reads the setup
-    // outputs under these local names.
+    // Local names for the setup outputs this function uses.
     MultiRinexSync& sync = *setup.sync;
     const auto& synced = sync.getSyncedEpochs();
     const bool closed_loop_on = setup.closed_loop_on;
@@ -244,12 +242,9 @@ int Application::runNetwork() {
 
 
     // ------------------------------------------------------------------
-    // The network run context (INC-4).  ctx.knobs holds the const config
-    // snapshots (NetworkKnobs::snapshot keeps the original getter read order);
-    // ctx.carry holds the tier-1 cross-epoch run state (a superset of the RTB-7
-    // snapshot); ctx.counters holds the service counters and anchors.  The alias
-    // blocks below keep the downstream use-sites under their former local names
-    // (the INC-3 migration mechanic).
+    // The network run context.  ctx.knobs holds the const config snapshots
+    // (NetworkKnobs::snapshot); ctx.carry holds the cross-epoch run state;
+    // ctx.counters holds the service counters and anchors.
     NetworkRunContext ctx(config_, nc);
     // The station names the entity tables convert name keys through.
     {
@@ -263,10 +258,9 @@ int Application::runNetwork() {
 
     // --- Trace ----------------------------------------------------------------
     // Stream and path ownership and the startup open logic live in
-    // logging/NetworkRunTraces; each stream's documentation (column semantics,
-    // arming toggle, P1 rotation policy) is on its member in that header.  The
-    // per-epoch writers live in the seams, which receive `traces`; the reference
-    // below keeps the former local name for the use left in this file.
+    // network/diag/RunTraces; each stream's documentation (column semantics,
+    // arming toggle, rotation policy) is on its member in that header.  The
+    // per-epoch writers live in the seams, which receive `traces`.
     NetworkRunTraces traces(log_dir_);
     // The run (network/driver/Run.hpp): the references every epoch reads
     // and the engines and groups the run owns, each built here in place from the engines'
@@ -275,16 +269,16 @@ int Application::runNetwork() {
     const NetworkEngineSpec engine_spec = networkEngineSpec(config_, nc, ctx);
     NetworkRun run(ctx, config_, nc, log, traces, setup, log_dir_, engine_spec);
     // Setup builders: each in its concern's file, filling the run member
-    // its name says, called in this order (scripts/nom3_designs/EP4_design.md section 2 states
-    // the constraints).  The two simulation oracles throw on a bad fixture before any trace
-    // file opens; the wavelength provider follows openAll, which opens one of its consumers.
+    // its name says, called in this order.  The two simulation oracles throw on a bad
+    // fixture before any trace file opens; the wavelength provider follows openAll,
+    // which opens one of its consumers.
     networkSlipQcConfigure(run);
     networkSlipOracleArm(run, log_manager_);
     networkOraclePinArm(run, log_manager_);
     traces.openAll(config_, nc, shc, sh_model.get(), closed_loop_on && consumer, log);
     networkSlipQcArmWavelengthProvider(run, log_manager_);
-    // The census arms (the carry-VCE apply step, the prior-residual corroborator, the
-    // block-Baarda and congruence censuses).
+    // The arms of the carry-VCE apply step, the prior-residual corroborator, the
+    // block-Baarda and congruence censuses, and the pivot coverage predictor.
     networkCarryVceApplyArm(run);
     networkPriorResidualArm(run);
     networkBlockBaardaArm(run);
@@ -308,8 +302,8 @@ int Application::runNetwork() {
     // cache load and per-station RINEX parse).  It isolates the per-epoch compute that
     // scales with station count, which is the scaling metric, and counts only epochs
     // that entered processing (past the max-duration cutoff).  The run's timing record
-    // (network/driver/RunGroups.hpp) also holds the D0 assembly wall, the profiled-epoch
-    // count and the D0b sub-block totals below; the run end reports all of them.
+    // (network/driver/RunGroups.hpp) also holds the assembly wall, the profiled-epoch
+    // count and the sub-block totals; the run end reports all of them.
     NetworkRunTiming& timing = run.timing;
     timing.loop_begin = std::chrono::steady_clock::now();
 
@@ -326,7 +320,7 @@ int Application::runNetwork() {
 
     // === Epoch source =======================================================
     // Batch (default): iterates the pre-built synced vector.  Streaming
-    // (network.streaming.enable, RTF-3): per-station live lanes → wait-budget aligner →
+    // (network.streaming.enable): per-station live lanes → wait-budget aligner →
     // bounded epoch queue, popped here on the solve thread.  Only the iteration differs:
     // same per-epoch body, same order, same teardown.
     if (ctx.knobs.streaming_on) {
