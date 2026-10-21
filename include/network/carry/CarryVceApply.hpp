@@ -2,19 +2,19 @@
 /**
  * @file CarryVceApply.hpp
  * @brief LASER's variance-factor iteration applied to the network carry-row
- *        stochastic model (@c network.carry_vce_apply, M2 v2).
+ *        stochastic model (@c network.carry_vce_apply).
  *
- * The M2 monitor (@ref NetworkCarryVce) measures the carry residuals against the
+ * The monitor (@ref NetworkCarryVce) measures the carry residuals against the
  * hand carry floors, and on quiet epochs finds those floors optimistic by more than
- * an order of magnitude.  The M3 floor ladder showed that the formal DD sigma then
+ * an order of magnitude.  Varying the floor showed that the formal DD sigma then
  * follows the floor rather than the data (a 40× floor change moved the formal dd_σ
  * by 14 % with identical actual behaviour), so the formal covariance in the
  * products, the URA channel included, is set by the floor at the carry level.
  * This class feeds the monitor's estimate back into the fold variances by the
  * standard positivity-guaranteed method:
  *
- *   NGS LASER Guide v2.7 slides 5-93..5-95 (PDF pp. 405–407): variance-component
- *   estimation "by use of factors" (Koch 1999 §§3.6.1–3.6.2; Lucas 1985).  Each
+ *   NGS LASER Guide v2.7 slides 5-93..5-95 (PDF pages 405 to 407): variance-component
+ *   estimation "by use of factors" (Koch 1999 sections 3.6.1 to 3.6.2; Lucas 1985).  Each
  *   observation group @f$i@f$ carries a multiplicative variance factor
  *   @f$\alpha_i^2@f$; the factor is updated from the group's estimated variance
  *   of unit weight as
@@ -28,9 +28,9 @@
  * ## Streaming form, per (family × constellation) group @c g
  *
  * ```
- *   target_g       = robust_var_r_g / hand_fold_var_r_g     both from the M2 monitor
+ *   target_g       = robust_var_r_g / hand_fold_var_r_g     both from the monitor
  *   step           = clamp( target_g / α²_g , [1/slew, slew] )
- *   α²_g          <- clamp( α²_g · step , [1, apply_max] )
+ *   α²_g          <- clamp( α²_g · step , [1, carry_vce_apply_max] )
  *   fold_var       = hand model evaluated as before, then × α²_g   at every fold site
  *   sigma_hat_post = target_g / α²_g                        -> 1 at convergence
  * ```
@@ -48,12 +48,12 @@
  * geometric mean of @f$\hat e^2/r@f$) over @c hand_fold_var_r is
  * @f$\hat\sigma^2\alpha^2@f$, the next factor of the iteration.
  *
- * Until 2026-10-07 the target was @c robust_floor / @c hand_fold_var, without the
- * division.  For a scalar carry with true prior variance @f$a\,p@f$ (p the hand fold
+ * A target without the division, @c robust_floor / @c hand_fold_var, under-inflates.
+ * For a scalar carry with true prior variance @f$a\,p@f$ (p the hand fold
  * variance) and data variance d, @f$E\{\hat e^2\} = r^2(a p + d)@f$, and that target's
  * fixed point solves @f$\alpha^4 p^2 + \alpha^2 p d + d^2 = \alpha^2 a p^2@f$: below
  * a always, and with no solution above 1 once d exceeds about a·p/4, where the factor
- * stays pinned at 1.  The under-inflation was largest exactly where the carry is
+ * stays pinned at 1.  The under-inflation is largest exactly where the carry is
  * stiff against its data (small r), the case the factor exists for.
  *
  * ## Why the loop is stable
@@ -84,32 +84,30 @@
  * harvested conditional variance, so it is an approximation there; read @c rbar and
  * @c n_eff_r against @c n_eff before trusting a @c pl factor.
  *
- * ## Guards (each follows a standing invariant; none is a tuning choice)
+ * ## Guards (none is a tuning choice)
  *
  * - **Inflate-only**: @f$\alpha^2 \ge 1@f$ relative to the hand floor, enforced by
  *   the clamp.  Deflation is the dangerous direction: a prior stiffer than the
- *   truth locks in a stale value (standing invariant #1; the DOY-129 pivot-CB
- *   ratchet), while a looser prior only converges more slowly.  The clamp bounds
+ *   truth locks in a stale value, while a looser prior only converges more slowly.  The clamp bounds
  *   α² below at 1 but does not make it monotone: the factor falls back toward 1
- *   as the window forgets an event era (the anti-ratchet property, as in the
- *   iono-2 v3 demean).
- * - **Slew limiter** (@c apply_slew, default 1.05 per epoch, both directions).
- *   A ramp at the configured rate limit can still discharge (era-2), so the slew
+ *   as the window forgets an event era (the anti-ratchet property).
+ * - **Slew limiter** (@c carry_vce_apply_slew, default 1.05 per epoch, both directions).
+ *   A ramp at the configured rate limit can still discharge, so the slew
  *   is not the safety argument; the inflate-only clamp is.  The slew keeps the
  *   solve's conditioning smooth.
  * - **Freeze on a contaminated epoch** (the monitor's own @c clean gate) and below
- *   @c apply_min_rows effective rows per group.  A frozen group is flagged in the
- *   trace and counted (census convention).
- * - **Every clamp and freeze edge is an event with an identity** (standing
- *   invariant #7).  This class changes how much information a carried prior
+ *   @c carry_vce_apply_min_rows effective rows per group.  A frozen group is flagged in the
+ *   trace and counted.
+ * - **Every clamp and freeze edge is an event with an identity**.
+ *   This class changes how much information a carried prior
  *   injects, so it is a coupling mechanism and is instrumented at both edges.
  *
  * ## Out of scope
  *
  * No deflation below the hand floors.  No measurement-side R adaptation: adaptive
- * q on the measurement side was falsified in era-2, and this class acts on the
+ * q on the measurement side was falsified, and this class acts on the
  * prediction side only.  No per-satellite factors: factors are pooled per
- * constellation (the D5 population precedent).  No Rate component: the field is
+ * constellation.  No Rate component: the field is
  * always rate-frozen by constant-gap collinearity, so only the Floor is scaled.
  * No BIQUUE.
  *
@@ -136,7 +134,7 @@
 namespace GnssProcessor {
 
 /**
- * @brief LASER 5-95 variance-factor iteration over the carry families (M2 v2).
+ * @brief LASER 5-95 variance-factor iteration over the carry families.
  *
  * One instance per producer run, held in @c NetworkRunContext::carry (the α²
  * state persists across epochs).  A default-constructed instance is inert:
@@ -158,7 +156,7 @@ public:
     enum class Freeze : int {
         kNone = 0,
         kEpochDirty,   ///< the epoch was contaminated (datum handover / reref storm).
-        kWarmup,       ///< the group is below @c apply_min_rows effective rows with redundancy (@c n_eff_r).
+        kWarmup,       ///< the group is below @c carry_vce_apply_min_rows effective rows with redundancy (@c n_eff_r).
         kNoTarget      ///< the monitor could not form a positive, finite target.
     };
 
@@ -177,19 +175,19 @@ public:
         double      n_eff  = 0.0;     ///< monitor's forgetting-weighted row count at the last step.
         double      n_eff_r = 0.0;    ///< the same count over the target's rows (the warm-up gate).
         Freeze      freeze = Freeze::kWarmup;  ///< this epoch's freeze state.
-        bool        at_ceiling = false;        ///< α² is pinned at @c apply_max.
+        bool        at_ceiling = false;        ///< α² is pinned at @c carry_vce_apply_max.
         bool        at_unit    = false;        ///< α² is pinned at the inflate-only floor of 1.
-        // --- run tallies (standing invariant #4: an active path must be countable) ---
+        // --- run tallies (an active path must be countable) ---
         long long   n_steps      = 0; ///< epochs the factor was allowed to move.
         long long   n_frozen     = 0; ///< epochs frozen (any reason).
         long long   n_slew_up    = 0; ///< steps clipped by the slew limiter, inflating.
         long long   n_slew_down  = 0; ///< steps clipped by the slew limiter, deflating.
-        long long   n_ceiling_ep = 0; ///< epochs spent pinned at @c apply_max.
+        long long   n_ceiling_ep = 0; ///< epochs spent pinned at @c carry_vce_apply_max.
         long long   n_unit_ep    = 0; ///< epochs spent pinned at 1 (target below the hand floor).
         double      alpha2_max   = 1.0; ///< largest α² reached over the run.
     };
 
-    /// One clamp / freeze edge (standing invariant #7: both edges, with identity).
+    /// One clamp / freeze edge (both edges are reported, with identity).
     struct Edge {
         int         family = -1;
         char        sys    = '\0';
@@ -213,7 +211,7 @@ public:
      *                   treated as "no limit", i.e. 1 step to target).
      * @param alpha2_max ceiling on α² (≥ 1; a smaller value is raised to 1).
      * @param min_rows   freeze a group below this many effective (forgetting-
-     *                   weighted) monitor rows.
+     *                   weighted) monitor rows with redundancy.
      */
     void configure(const std::vector<std::string>& families,
                    double slew, double alpha2_max, long long min_rows) {
@@ -272,7 +270,7 @@ public:
      * and no row can calibrate against its own fold; no other ordering gives
      * both.
      *
-     * @param mon    the M2 monitor (read-only).
+     * @param mon    the carry-row monitor (read-only).
      * @param clean  false on a contaminated epoch ⇒ every group freezes.  Mirrors
      *               @c NetworkCarryVce::beginEpoch's gate: a datum handover's
      *               re-levels are not carry noise, and a factor fed with them
@@ -345,7 +343,7 @@ public:
             if (!std::isfinite(a2) || !(a2 > 0.0)) a2 = g.alpha2;
 
             // Inflate-only.  Deflation below the hand floor is the lock-in
-            // direction (standing invariant #1); the clamp makes it unreachable.
+            // direction; the clamp makes it unreachable.
             const bool was_unit    = g.at_unit;
             const bool was_ceiling = g.at_ceiling;
             if (a2 < 1.0)          a2 = 1.0;
@@ -430,11 +428,10 @@ private:
 struct NetworkRun;
 
 /**
- * @brief Configures the carry-VCE apply step (M2 v2) when it is armed.
+ * @brief Configures the carry-VCE apply step when it is armed.
  *
- * A census arm: the monitor itself is an engine the run owns (run.engines.carry_vce).  Setup
- * builder: called once from Application::runNetwork, in the order
- * scripts/nom3_designs/EP4_design.md section 2 states.
+ * The monitor itself is an engine the run owns (run.engines.carry_vce).  Setup
+ * builder: called once from Application::runNetwork.
  *
  * @param run The network run; fills run.ctx.carry.vce_apply.
  */

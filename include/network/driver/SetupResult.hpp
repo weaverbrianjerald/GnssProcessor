@@ -1,9 +1,9 @@
 #pragma once
 /**
  * @file SetupResult.hpp
- * @brief @internal Handoff aggregate of Application::runNetwork's setup phases
- *        (decomposition INC-5): everything Phases 2-4 and the product sink /
- *        contract / closed-loop-consumer setup produce for the run loop.
+ * @brief @internal Handoff aggregate of Application::runNetwork's setup phases:
+ *        everything Phases 2-4 and the product sink / contract /
+ *        closed-loop-consumer setup produce for the run loop.
  *
  * Application::networkSetup_() fills it in place as an out-parameter.  It is
  * non-copyable and non-movable because three run-long references pin member
@@ -16,8 +16,7 @@
  *     (so @ref stations is declared after @ref sync and destroyed first).
  * The member declaration order below is normative: it encodes the construction
  * prerequisites and, reversed, the destruction-order dependencies.  The run loop
- * binds `auto& X = setup.X;` aliases under the former local names (the INC-3/4
- * migration pattern), so every downstream use site is textually unchanged.
+ * binds `auto& X = setup.X;` aliases for the members it uses.
  */
 
 #include "config/GnssConfig.hpp"                    // GnssConfig (consumer_config), BaselineConfig via GnssConfigTypes
@@ -53,8 +52,7 @@ namespace GnssProcessor {
         return brdcTocGpsSeconds(e);   // one definition, shared with the group-delay latch
     }
 
-    /// @internal See the file banner.  Plain aggregate; members carry the former
-    /// runNetwork() local names and initializers verbatim.
+    /// @internal See the file banner.  Plain aggregate.
     struct NetworkSetupResult {
         NetworkSetupResult() = default;
         NetworkSetupResult(const NetworkSetupResult&) = delete;
@@ -83,11 +81,10 @@ namespace GnssProcessor {
         /// with it.  Null in every other mode.
         std::unique_ptr<BrdcClockApriori> brdc_apriori;
         /// Per-satellite geometry-free pin target in metres, `c * T_GD` from the
-        /// navigation message, for `network.sat_gf_datum: "broadcast_tgd"` (RF-0c).
+        /// navigation message, for `network.sat_gf_datum: "broadcast_tgd"`.
         /// Latched for the run: read once at setup and never updated, because a
         /// datum that changed mid-run would step the emitted code biases and the
-        /// estimable ionosphere together with nothing on the wire declaring it
-        /// (the decoupling edge of standing invariant #7, with no response wired).
+        /// estimable ionosphere together with nothing on the wire declaring it.
         /// Empty in every other mode, so the row builder falls back to a zero
         /// target instead of guessing.
         std::map<std::string, double> sat_gf_target_m;
@@ -100,9 +97,10 @@ namespace GnssProcessor {
         /// during the run).
         double window_t0_s = 0.0;
         double window_t1_s = 0.0;
-        /// Under @c network.sat_health: every satellite's broadcast health over time,
-        /// built at setup from the navigation file.  Read by the synced-epoch door
-        /// ("exclude") and by the clock-pivot election ("pivot").  Empty when the knob is off.
+        /// Under @c network.sat_health or @c network.pivot_election: every satellite's
+        /// broadcast health over time, built at setup from the navigation file.  Read by
+        /// the synced-epoch door ("exclude") and by the clock-pivot election ("pivot" and
+        /// the coverage election).  Empty when both knobs are off.
         NetworkSbasis::SatHealth sat_health;
         /// Under "exclude": the observations the door removed inside the processing
         /// window, per satellite.  (The door also clears the synced epochs outside the
@@ -119,7 +117,6 @@ namespace GnssProcessor {
         std::unique_ptr<SphericalHarmonicIonosphere> sh_model;
         /// The dual-layer field's second-shell basis (layer2_max_degree > 0), or
         /// null (single-layer path).  Non-null only when sh_model is non-null.
-        /// (Iono-2 mechanism A)
         std::unique_ptr<SphericalHarmonicIonosphere> sh_model2;
         /// Phase 4: per-station Kalman resources, pivot at index 0.  Elements
         /// hold references into sync's parsers, so this is declared after sync.
@@ -138,7 +135,7 @@ namespace GnssProcessor {
         SsrCorrectionStore network_store;
         /// Product emitter.  Its ctor takes the disc-threshold and channel toggles,
         /// so it is an optional emplaced at the former construction point.  It is
-        /// handed off rather than re-derived because the RTB-7 warm resume mutates
+        /// handed off rather than re-derived because the warm resume restores
         /// its counters.
         std::optional<NetworkProductEmitter> emitter;
         /// Optional on-disk product serialization + deferred v2 S-basis contract.
@@ -146,11 +143,11 @@ namespace GnssProcessor {
         std::filesystem::path prod_path;
         SbasisContract pending_contract;
         bool           contract_pending = false;
-        /// H heartbeats for withheld epochs that precede the deferred writer's open
-        /// (RTA-10 gap fix).  Without them, a leg that opens inside a withhold era
+        /// H heartbeats for withheld epochs that precede the deferred writer's open.
+        /// Without them, a leg that opens inside a withhold era
         /// writes nothing for the whole era, which leaves "withheld" and "producer
         /// stopped" indistinguishable, the ambiguity the H line exists to resolve.
-        /// The two withhold sites (rank gate, A4 σ̂0 ceiling)
+        /// The two withhold sites (rank gate, σ̂0 ceiling)
         /// append here while product_writer is null and a deferred v2 open is
         /// pending (contract_pending); the buffer is flushed in tow order right after
         /// the writer opens at the first emit.  A run that never emits logs a warning
@@ -177,9 +174,9 @@ namespace GnssProcessor {
 
         /// @name Marker-to-antenna-reference-point roster census
         /// Filled at station build whether @c network.station_marker_to_arp is on
-        /// or off, so an off run reports the size of the class it does not correct
-        /// (standing invariant #4).  Read by the run-end readout and the run
-        /// manifest.
+        /// or off, so an off run reports the size of the class it does not correct.
+        /// Copied into the service counters by @ref networkMarkerArpCensusCopy,
+        /// which the run-end readout and the run manifest read.
         /// @{
         /// Loaded roster stations whose header carries a nonzero eccentricity.
         int n_marker_arp_ecc       = 0;
@@ -197,12 +194,12 @@ namespace GnssProcessor {
         /// @}
     };
 
-// ---- Run-end reports (generated by scripts/nom_td_cut.py) ----
+// ---- Run-end reports ----
 
 struct NetworkRunEndView;
 
 /**
- * @brief Run-end report: the marker to ARP roster reduction (UPO).
+ * @brief Run-end report: the marker to ARP roster reduction.
  *
  * The marker to antenna-reference-point roster reduction, in both knob
  * states.
@@ -223,8 +220,7 @@ struct NetworkRunContext;
  * @brief Copies the marker -> ARP roster census measured by networkSetup_ into the run's service counters.
  *
  * The run-end readout and the run manifest read the counters, and both report the census in
- * either knob state.  Setup builder: called once from
- * Application::runNetwork, in the order scripts/nom3_designs/EP4_design.md section 2 states.
+ * either knob state.  Setup builder: called once from Application::runNetwork.
  *
  * @param ctx The run context; its service counters are filled.
  * @param config_ The configuration (the marker -> ARP knob's arming state).

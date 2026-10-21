@@ -2,11 +2,10 @@
 /**
  * @file EmitRebase.hpp
  * @brief Emit-layer frame re-basing of the network's per-(satellite,signal) phase
- *        biases onto the previous emission frame (M1 phase D).
+ *        biases onto the previous emission frame.
  *
- * Under the invariant DD carry (`network.carry_invariant`,
- * docs/SPEC_card4_invariant_carry.md §D4 = its §6) the per-epoch eq34 datum is
- * re-realized freely: the spanning tree and the datum receiver r1 are re-elected
+ * Under the invariant DD carry (`network.carry_invariant`) the per-epoch eq34
+ * datum is re-realized freely: the spanning tree and the datum receiver r1 are re-elected
  * every epoch and the realized frame has no cross-epoch meaning (continuity lives
  * entirely in the carried double differences, which are S-system invariants).
  * That is correct for the filter, but the emitted product stream is a
@@ -36,9 +35,8 @@
  * Aligning each key to its last emitted value would drive
  * @f$|b_s^{\text{emit}} - b_s^{\text{last}}|\to 0@f$ for every cause, including a
  * real cycle slip on the emission-reference (spanning-tree) path, which is the
- * quantity the jump test measures.  That would hide the slip (standing
- * invariant #1: a stale or blindly continued time-linked quantity past a slip
- * warps the whole solution).  This re-base therefore:
+ * quantity the jump test measures.  That would hide the slip (a stale
+ * time-linked quantity carried past a slip warps the whole solution).  This re-base therefore:
  *
  *   1. removes only the common per-component fractional @f$\delta@f$
  *      (estimated robustly by a median coordinate descent over the clean,
@@ -59,18 +57,18 @@
  * carries the re-based values.  A `NetworkProductIO` replay therefore reproduces
  * the emitter's discontinuity counters byte-for-byte without rerunning the
  * re-base: the transform is part of the product, as the eq34 anchor-handover
- * step is (ApplicationNetwork's "disc handled by the emitter bias-jump test" seam).
+ * step in network/emit/SolPrep.cpp is.
  *
  * ## Scope / conventions
  *
  * Pure numeric leaf; no dependency on the estimator or ApplicationNetwork.  The
  * caller resolves each emitted (sat,signal) to its connected-component id (a
  * union-find over the epoch's (receiver,satellite) graph in production; hand-
- * assigned in the gate) and its reference-path slip flag (from the network's
+ * assigned in tests) and its reference-path slip flag (from the network's
  * authoritative slip funnel), and supplies the signal wavelength.  The caller
  * must exclude GLONASS (FDMA, so no common integer @f$\lambda@f$): it is not
  * passed in and keeps its raw emitted bias.  With the feature off the output is
- * byte-identical by construction: the object is only constructed and called under
+ * byte-identical by construction: the engine is only called under
  * `network.carry_invariant && network.carry_invariant_emit_rebase`.
  */
 
@@ -94,13 +92,13 @@ public:
     struct Entry {
         std::string sat;           ///< RINEX satellite id ("G01", "E11").
         std::string signal;        ///< RINEX phase obs code ("L1C").
-        int         component{0};  ///< Connected-component id of the (const,signal) (rx,sat) graph.  Entries sharing a component share one common fractional @f$\delta@f$.  Caller-assigned (@ref networkEmitRebaseComponents in production; by hand in the gate).
+        int         component{0};  ///< Connected-component id of the (const,signal) (rx,sat) graph.  Entries sharing a component share one common fractional @f$\delta@f$.  Caller-assigned (@ref networkEmitRebaseComponents in production; by hand in tests).
         double      lambda_m{0.0}; ///< Carrier wavelength for @c signal (m), the integer re-base quantum.  The component uses the first positive @c lambda_m among its entries; when none is positive, the component is not re-based (@f$k_s=0@f$ and @f$\delta=0@f$).
         double      bias_m{0.0};   ///< In: raw emitted satellite phase bias (m).  Out: the re-based value the emitter/product must carry.
         bool        slipped{false};///< The emission-reference (spanning-tree) arc of this (sat,signal) slipped this epoch (from the slip funnel).  Its integer step is a genuine event and is left intact (@f$k_s=0@f$) so the emitter jump test fires.
     };
 
-    /// Running tallies for the phase-D run-end telemetry line (spec §3).
+    /// Running tallies for the run-end telemetry line.
     struct Counters {
         long long epochs{0};              ///< @ref rebaseEpoch invocations with at least one entry.
         long long components{0};          ///< components re-based, summed over epochs.
@@ -130,18 +128,16 @@ public:
     const Counters& counters() const { return counters_; }
 
     /**
-     * @brief The engine's cross-epoch emission frame, exportable for the RTB-7
-     *        snapshot (RS-5 emit-layer continuity, docs/SPEC_event_harness.md
-     *        §21.10): the previous emitted value of every "sat|signal" key.
+     * @brief The engine's cross-epoch emission frame, exportable for the state
+     *        snapshot: the previous emitted value of every "sat|signal" key.
      *
      * The engine is a run-local object, so without the export every warm resume
      * cold-starts it: the first post-resume epoch finds no baseline for any key,
      * re-bases nothing (@f$k_s=0@f$, @f$\delta=0@f$) and emits the raw solve-frame
      * value, while the continuous run's wire at the same epoch carries the whole
      * accumulated re-base.  The emitted product then steps by that accumulation,
-     * which the emit layer alone accounts for (measurement in §21.10).  The CLK-R
-     * engine has the same structure and the same fix,
-     * @c NetworkClockEmitRebase::exportFrameState.
+     * which the emit layer alone accounts for.  @c NetworkClockEmitRebase has the
+     * same structure and the same fix, @c NetworkClockEmitRebase::exportFrameState.
      *
      * @return "sat|signal" -> previous re-based emitted bias (m).  Counters are
      *         run telemetry, not frame state, and are not carried.
@@ -161,8 +157,8 @@ public:
      */
     void restoreState(const std::map<std::string, double>& st) { last_emit_ = st; }
 
-    /// Drop the emission-frame memory (a `carry_invariant` toggle-flip cold start;
-    /// next epoch every key re-bases against nothing, a one-time first sighting).
+    /// Drop the emission-frame memory (the counters are kept; next epoch every key
+    /// has no baseline, a first sighting).
     void reset();
 
     /// The last re-based emitted value for (sat,signal) (test seam); false if the
@@ -202,14 +198,14 @@ using EmitRebaseArcs =
  */
 std::map<std::string, int> networkEmitRebaseComponents(const EmitRebaseArcs& arcs);
 
-// ---- Run-end reports (generated by scripts/nom_td_cut.py) ----
+// ---- Run-end reports ----
 
 struct NetworkRunEndView;
 
 /**
  * @brief Run-end report: the emit-layer frame re-base.
  *
- * The emit-layer frame re-base of the emitted phase biases (M1 phase D).
+ * The emit-layer frame re-base of the emitted phase biases.
  *
  * Gate: returns 0 at once unless `emit_rebase_on`.
  *

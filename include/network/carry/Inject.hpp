@@ -5,7 +5,8 @@
  * ### Purpose
  *
  * Grading a mechanism by running the network for hours until the data supply an
- * event makes one question (for example the re-level cost of a single T4 erase)
+ * event makes one question (for example the re-level cost of a single RAIM
+ * attribution erase)
  * take a day, and mixes the event's effect with its neighbours and the run's own
  * ignition.  The harness instead converges once into a state snapshot
  * (@c network.state_snapshot_*), resumes for a few tens of epochs with exactly
@@ -18,7 +19,7 @@
  * Eight kinds exist.  Four are corruptions of the producer's input (@c slip,
  * @c outage, @c sat_clock_step, @c rx_clock_step) and are applied to a per-epoch
  * mutable copy of the @c SyncedEpoch at the top of the epoch body: before
- * @c computeModels, every T0 detector, the raw-observable pass and assembly.  One
+ * @c computeModels, every slip detector, the raw-observable pass and assembly.  One
  * site suffices because everything downstream derives from it:
  * @c PppModel::computeModels builds both
  * @c PppObservation::observed (phase in metres, via the wavelength) and
@@ -49,14 +50,14 @@
  * would otherwise make on the data, or plant a state the producer would otherwise
  * hold, so they are staged here and consumed by the seam that owns it:
  *
- *   * @c anchor_handover   -> @c networkElectPhaseAnchors (filter/NetworkPhaseDatum)
- *   * @c arc_erase         -> the T4 attribution refloat (filter/NetworkRaim), or the
+ *   * @c anchor_handover   -> @c networkElectPhaseAnchors (network/solve/PhaseDatum.hpp)
+ *   * @c arc_erase         -> the RAIM attribution refloat (network/qc/Raim.hpp), or the
  *                             PASS-A slip drain for mode @c free_epoch
- *   * @c fixed_cycle_plant -> the fixed-cycle seam's ledger (filter/NetworkFixedCycles):
+ *   * @c fixed_cycle_plant -> the fixed-cycle seam's ledger (network/ar/FixedCycles.hpp):
  *                             a wrong integer planted on one arc
  *
  * The eighth, @c oracle_pin (simulation only), is not handled by this seam
- * beyond the arming summary: filter/NetworkOraclePin reads it from the config
+ * beyond the arming summary: network/slip/OraclePin.hpp reads it from the config
  * and feeds @c NetworkInjectState::n_applied itself.
  *
  * ### Byte-identity
@@ -125,18 +126,16 @@ namespace GnssProcessor {
         mutable int n_forced_cold{ 0 };            ///< Families whose continuous branch was refused.
         /// Families that took the cold pin although the directive did not ask for
         /// it: the successor had no ledger entry, or one too poorly determined to
-        /// serve as a datum.  A cold outcome is a real gauge re-realization (the
-        /// re-coupling edge of invariant #7), so it is counted here and never added
-        /// to the continuous total (docs/SPEC_event_harness.md §12.7).
+        /// serve as a datum.  A cold outcome is a real gauge re-realization, so it
+        /// is counted here and never added to the continuous total.
         mutable int n_cold_fallback{ 0 };
         /// Families for which the ban left no usable candidate, so the election
         /// pinned no station this epoch.  This is a decoupling edge with no
         /// re-coupling, and it is counted.
         mutable int n_no_successor{ 0 };
-        /// Cold anchor-fallback readback (network.phase_datum_candidacy_usable,
-        /// docs/SPEC_event_harness.md §15): higher-ranked candidates the
-        /// usable-first pass skipped across this directive's families, and the first
-        /// station it skipped.  Both stay 0 / empty with the knob off (the pass is
+        /// Cold anchor-fallback readback (network.phase_datum_candidacy_usable):
+        /// higher-ranked candidates the usable-first pass skipped across this
+        /// directive's families, and the first station it skipped.  Both stay 0 / empty with the knob off (the pass is
         /// not entered), so the PHASE_ANCHOR handover row is unchanged on an
         /// unarmed run.
         mutable int n_cand_skipped{ 0 };
@@ -144,27 +143,23 @@ namespace GnssProcessor {
     };
 
     /**
-     * @brief A staged @c arc_erase directive, consumed by the T4 attribution
+     * @brief A staged @c arc_erase directive, consumed by the RAIM attribution
      *        block (erase modes) or by the PASS-A slip drains (@c free_epoch).
      *
-     * @c mode is the diagnostic sub-knob of Study 1 (docs/SPEC_event_harness.md
-     * §9).  The erase path performs four actions the detector refloat does not,
-     * and the study asks which of them causes the persistent level floor that an
-     * unnecessary erase leaves behind:
+     * @c mode is a diagnostic sub-knob.  The erase path performs actions the
+     * detector refloat does not, and the modes ask which of them causes the
+     * persistent level floor that an unnecessary erase leaves behind:
      *
-     *   | mode              | LocalCarry entry | LOS iono carry | pending-reseed | C3c queue | free-epoch latch |
-     *   |-------------------|------------------|----------------|----------------|-----------|------------------|
-     *   | @c erase (default)| erased           | co-erased      | marked         | queued    | no               |
-     *   | @c erase_keep_iono| erased           | kept           | marked         | queued    | no               |
-     *   | @c erase_no_reseed| erased           | co-erased      | not marked     | queued    | no               |
-     *   | @c erase_no_funnel| erased           | co-erased      | marked         | not queued| no               |
-     *   | @c free_epoch     | kept             | kept           | marked         | (detector)| yes              |
+     *   | mode              | LocalCarry entry  | LOS iono carry | pending-reseed | free-epoch latch |
+     *   |-------------------|-------------------|----------------|----------------|------------------|
+     *   | @c erase (default)| erased or dropped | co-erased      | marked         | no               |
+     *   | @c erase_no_reseed| erased or dropped | co-erased      | not marked     | no               |
+     *   | @c free_epoch     | kept              | kept           | marked         | yes              |
      *
-     * The C3c queue column was the queue of the RAIM carry-invariant refloat actuator,
-     * which was retired; nothing is queued now, so @c erase_no_funnel acts as @c erase.
-     * The LOS iono carry that @c erase_keep_iono kept was the retired diagonal slant
-     * ionosphere carry (@c network.carry_iono); the in-block carry, when armed, is
-     * co-erased in every erase mode, so @c erase_keep_iono acts as @c erase too.
+     * @c erase_keep_iono and @c erase_no_funnel are still accepted but act as
+     * @c erase: the diagonal slant ionosphere carry the first kept and the refloat
+     * queue the second withheld no longer exist, and the in-block iono carry, when
+     * armed, is co-erased in every erase mode.
      *
      * Harness only: the mode changes what the injected erase does.  A real
      * attribution is unchanged on every path, and an unarmed run cannot reach
@@ -174,7 +169,7 @@ namespace GnssProcessor {
         std::string station;          ///< Station name (roster-matched at the RAIM/drain site).
         std::string sat;              ///< Satellite id.
         std::string mode{ "erase" };  ///< See the table above; loader-defaulted to "erase".
-        /// Band scope (Study 1 rung 2): the phase signals the erase or free acts on.
+        /// Band scope: the phase signals the erase or free acts on.
         /// Empty means every signal of that satellite, which is what both production
         /// paths do.  A non-empty set restricts the action, so a healthy arc can be
         /// freed on the same 2-of-3 scope a real IF-TD detector refloat uses.
@@ -184,12 +179,12 @@ namespace GnssProcessor {
         bool coversSignal(const std::string& sig) const {
             return signals.empty() || signals.count(sig) != 0;
         }
-        /// @brief True for every mode that runs the T4 erase path (i.e. not @c free_epoch).
+        /// @brief True for every mode that runs the RAIM attribution erase path (i.e. not @c free_epoch).
         bool isErase() const { return mode != "free_epoch"; }
     };
 
     /**
-     * @brief A staged @c fixed_cycle_plant directive (step FCF-3), consumed by the
+     * @brief A staged @c fixed_cycle_plant directive, consumed by the
      *        fixed-cycle seam (network/ar/FixedCycles.hpp).
      *
      * Staged at every epoch from its @c tow until it fires: it fires at the first epoch at which
@@ -210,8 +205,7 @@ namespace GnssProcessor {
      * @brief Run-scope state of the injector: the schedule, its firing ledger and
      *        the one-epoch directives other seams consume.
      *
-     * Lives in @c NetworkRunContext (the anti-regrowth rule for carried state).
-     * It is not part of the warm-resume fingerprint or the snapshot: a leg resumes
+     * Lives in @c NetworkRunContext.  It is not part of the warm-resume fingerprint or the snapshot: a leg resumes
      * a converged state and then applies its own schedule, so two legs off one
      * snapshot differ only in this object.
      */
@@ -227,8 +221,8 @@ namespace GnssProcessor {
 
         /// This epoch's staged directives (cleared at the top of every epoch).
         std::vector<InjectAnchorDirective> anchor_now;
-        /// Production anchor-slip handovers (network.cycle_slip.anchor_slip_handover,
-        /// docs/SPEC_event_harness.md §12.7), staged by
+        /// Production anchor-slip handovers (network.cycle_slip.anchor_slip_handover),
+        /// staged by
         /// @ref networkStageAnchorSlipHandovers for every family whose anchor arc a
         /// slip response freed this epoch.  Kept in a second vector rather than
         /// pushed into @c anchor_now because the injector's firing ledger, its
@@ -242,9 +236,9 @@ namespace GnssProcessor {
         /// This epoch's staged fixed-cycle plants, re-staged until they fire.
         std::vector<InjectFixedCyclePlant> fixed_cycle_plant_now;
         long long n_arc_erase_acted{ 0 };  ///< Chords actually refloated by injected erases.
-        /// Study-1 path census: mode -> chords the injected event actually acted on.
-        /// A zero here on an armed leg means the wiring is inert (invariant #4),
-        /// which is the confound the sub-knobs exist to rule out.
+        /// Path census: mode -> chords the injected event actually acted on.
+        /// A zero here on an armed leg means the wiring is inert, which is the
+        /// confound the sub-knobs exist to rule out.
         std::map<std::string, long long> arc_erase_mode_acted;
 
         /// @brief Directive covering @p amb, or @c nullptr.  Cheap on the empty path.
@@ -314,7 +308,7 @@ namespace GnssProcessor {
     int networkInjectRunEnd(const NetworkRunContext& ctx,
                             const std::shared_ptr<spdlog::logger>& log);
 
-    // ---- Run-end reports (generated by scripts/nom_td_cut.py) ----
+    // ---- Run-end reports ----
 
     struct NetworkRunEndView;
 
@@ -322,10 +316,10 @@ namespace GnssProcessor {
      * @brief Run-end report: the event harness (fault injection).
      *
      * The table's row for the event harness: its clause, and the hard error for a schedule
-     * that never fired; the report is the overload above, which a unit test calls directly.
+     * that never fired; it calls the overload above, which a unit test calls directly.
      *
-     * Gate: none of its own: the row calls the report above on every run, as the teardown
-     * did, and that report applies its own.
+     * Gate: none of its own: the row calls the report above on every run, and that report
+     * applies its own.
      *
      * @param v The run at its end (network/runend/RunEnd.hpp).
      * @return the injection verdict: non-zero when an armed schedule never fired, else 0.

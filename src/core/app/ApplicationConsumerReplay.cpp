@@ -1,10 +1,10 @@
 /**
  * @file ApplicationConsumerReplay.cpp
- * @brief Consumer-only replay driver (Q5): position-domain grading of a network
+ * @brief Consumer-only replay driver: position-domain grading of a network
  *        product stream that is already written to disk, with no producer solve.
  *
  * The in-process closed-loop harness (`ApplicationNetworkSetup` +
- * `NetworkEmitStore`) measures whether the user engine recovers integers from
+ * `networkEmitStore`) measures whether the user engine recovers integers from
  * the network products, but only while the producer runs, at producer cost.
  * This driver grades the position-domain consequence of an existing product
  * file, per hour, at the cost of a single-station consumer run.
@@ -19,12 +19,12 @@
  *   per-epoch observations          | MultiRinexSync over a one-station roster       (same class)
  *   per-epoch store fill            | NetworkProductReader::replay from the file     (vs emitter.emitToStore)
  *   trace                           | closed_loop_trace.csv, identical columns       (same schema)
- *   per-satellite trace  | closed_loop_sat_trace.csv, same formatter      (network.trace_consumer_sat)
+ *   per-satellite trace             | closed_loop_sat_trace.csv, same formatter      (network.trace_consumer_sat)
  *
  * Because the store is filled through `NetworkProductReader::replay`, the
  * consumer sees the recorded stream's discontinuity counters reconstructed
  * exactly (the replay's deterministic recompute plus adoption of the serialized
- * counters, RTA-4), i.e. a byte-faithful reconstruction of what a live tail
+ * counters), i.e. a byte-faithful reconstruction of what a live tail
  * consumer would have received.
  *
  * Out of scope: running the joint estimator, touching the producer's snapshot or
@@ -77,13 +77,13 @@ namespace {
 
 /// One hour-band accumulator for the position-domain grading.  The series is
 /// reported as level bands per hour, not as a fitted slope, because refits over
-/// different windows of this series give slopes of both signs (handoff §4.1).
+/// different windows of this series give slopes of both signs.
 struct HourBand {
     std::size_t n{0};
     double sum{0.0};
     double min{std::numeric_limits<double>::max()};
     double max{-std::numeric_limits<double>::max()};
-    std::vector<double> vals;   ///< kept for the median / p95 (hours are ≤120 rows)
+    std::vector<double> vals;   ///< kept for the median / p95 (about 120 rows per hour at 30 s)
 
     void add(double v) {
         ++n; sum += v;
@@ -154,9 +154,8 @@ int Application::runConsumerReplay() {
     // from-the-start read is what makes every discontinuity counter exact.
     SbasisContract file_contract{};
     bool products_ok = false;
-    // Collect the H heartbeats as well (H-rider, edge-queue §1.6 item 3b).  The
-    // batch read otherwise skips every H record, and the consumer's
-    // producer-status channel (logProducerStatus, and any future RTF-9 gating)
+    // Collect the H heartbeats as well.  The batch read otherwise skips every H
+    // record, and the consumer's producer-status channel (logProducerStatus)
     // would receive nothing in replay; only the live tail surfaces them on its
     // own.
     std::vector<NetworkProducerStatus> statuses;
@@ -201,7 +200,7 @@ int Application::runConsumerReplay() {
     // phase-frame mismatch that degrades integer recovery and would be
     // misattributed to product quality unless it is named here.  A mismatch
     // warns and does not abort, so a legacy leg can still be graded on purpose,
-    // but not silently.  See docs/SPEC_phase_windup_sign.md §8 item 2.
+    // but not silently.
     //
     // The wind-up mode (off, fractional, accumulated) is a second, independent
     // convention: the same construction applied in another mode is another phase
@@ -242,11 +241,11 @@ int Application::runConsumerReplay() {
         }
     } else {
         // A wire without the S line is refused unless
-        // network.replay_allow_undeclared_wire is set (item O1).  Without the
+        // network.replay_allow_undeclared_wire is set.  Without the
         // contract the replay emitter falls back to the defaults, which include no
         // clock-discontinuity channel, so the replay cannot reproduce the producer's
-        // declarations and diverges from the in-process consumer (seen at every site of
-        // the Galileo census).  A legacy leg can still be graded, with a warning.
+        // declarations and diverges from the in-process consumer.  A legacy leg can
+        // still be graded, with a warning.
         std::string why;
         if (!NetworkProductReader::admitsWire(file_contract, nc.replay_allow_undeclared_wire,
                                               &why)) {
@@ -321,7 +320,7 @@ int Application::runConsumerReplay() {
         log->error("Consumer replay: failed to build the synced epoch schedule.");
         return 1;
     }
-    // The same admission door as the live harness (item O4).  The harness
+    // The same admission door as the live harness.  The harness
     // strips the synced epochs of every system outside processing.active_systems right
     // after its sync (ApplicationNetworkSetup) and feeds the closed-loop consumer from
     // them.  Without this step the replay's observation vector would differ from the one
@@ -452,7 +451,7 @@ int Application::runConsumerReplay() {
     const double max_duration_s = config_.getMaxDuration();
 
     std::size_t rec_cursor = 0;
-    std::size_t h_cursor = 0, n_h_pushed = 0;   // H-rider: heartbeat stream cursor + forwarded count
+    std::size_t h_cursor = 0, n_h_pushed = 0;   // heartbeat stream cursor + forwarded count
     double      last_status_pushed_s = -1.0;   // content-epoch dedup key (mirrors ApplicationRealtime)
     std::size_t n_processed = 0, n_no_products = 0, n_ar_ran = 0, n_ar_fixed = 0;
     long long   sum_fixed = 0;
@@ -501,7 +500,7 @@ int Application::runConsumerReplay() {
             ++replayed_here;
         }
         // Advance the heartbeat stream in step and forward each H into the owned
-        // store (H-rider), the batch analogue of the RTA-6 tail wiring in
+        // store, the batch analogue of the live tail wiring in
         // ApplicationRealtime: keyed on the content epoch, pushed once.  This
         // includes the standalone H records of fully withheld epochs, which
         // complete no product record and are the epochs where the consumer most
@@ -526,7 +525,7 @@ int Application::runConsumerReplay() {
         // of every replayed C record is held (the producer fed the store the same way).
         if (nbp_feed) nbp_feed->feedStore(LiveEphemerisStore::getInstance(), now_s);
         // The engine buffers observations that arrived ahead of their corrections;
-        // a fresh product epoch must wake that buffer exactly as the RTA-6 tail
+        // a fresh product epoch must wake that buffer exactly as the live tail
         // path does.
         consumer.notifyProductsAdvanced();
 
@@ -553,7 +552,7 @@ int Application::runConsumerReplay() {
         recent_err3d.push_back(err3d);
         if (recent_err3d.size() > kRecentWindow) recent_err3d.pop_front();
 
-        // Hour bands anchored on the first processed epoch (handoff §4.1).
+        // Hour bands anchored on the first processed epoch.
         //
         // Banded in integer milliseconds, not by truncating a floating divide.
         // `now_s` is week·604800 + tow, about 1.4e9 s, where one ulp is about
@@ -610,7 +609,7 @@ int Application::runConsumerReplay() {
                       enu.x(), enu.y(), enu.z(), rec_cursor, records.size());
     }
     cl_trace.flush();
-    // The readout's on-path counter (invariant #4): 0 rows on an armed replay means the
+    // The readout's on-path counter: 0 rows on an armed replay means the
     // consumer deferred every epoch.  Printed only when armed.
     if (nc.trace_consumer_sat) {
         cl_sat_trace.flush();
@@ -620,7 +619,7 @@ int Application::runConsumerReplay() {
     }
 
     // --- Phase 7: run-end telemetry ------------------------------------------
-    // Counters, not the absence of crashes (standing invariant #4): a replay that
+    // Counters, not the absence of crashes: a replay that
     // processed epochs but never advanced the product cursor is inert and returns
     // a failure rather than reading as a clean run.
     if (n_processed == 0) {
@@ -628,7 +627,7 @@ int Application::runConsumerReplay() {
                    "the product stream.  Check the station's date and the config window.");
         return 1;
     }
-    // H-rider (invariant #4): the heartbeat channel's own counter.  "0 of N
+    // The heartbeat channel's own counter.  "0 of N
     // forwarded" with H records on the wire means the interleave is mis-wired;
     // "0 on the wire" means the producer ran without emit_epoch_status_record.
     log->info("Consumer replay: H heartbeats — {} on the wire, {} forwarded to the "
@@ -658,13 +657,14 @@ int Application::runConsumerReplay() {
     // The consumer's declared-roster census: the latch against the declaration and
     // the attributed freshness flips.  Printed here because this
     // driver never calls RealTimeEngine::flush().  Silent on a wire that carries no
-    // declaration and with the 5b knob off, so a legacy replay's log is unchanged.
+    // declaration and with network.closed_loop.roster_latch off, so a legacy replay's
+    // log is unchanged.
     consumer.logRosterConsumerSummary("end of replay");
     consumer.logPbHoldPresenceSummary("end of replay");   // held-key presence edges, silent unless armed
     consumer.logInnovationScreenSummary("end of replay");   // pre-update innovation screen, silent unless armed
     consumer.logReinflateSummary("end of replay");   // re-inflation summary
 
-    // Hourly level bands, the summary this series supports (handoff §4.1: a single
+    // Hourly level bands, the summary this series supports (a single
     // Theil-Sen slope over it is invalid).
     log->info("Consumer replay hourly bands (hour from first processed epoch):");
     log->info("  hour  n     3D mean   3D med    3D p95    3D max    up mean   up min    up max");

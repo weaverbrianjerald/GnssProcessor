@@ -1,8 +1,7 @@
 #pragma once
 /**
  * @file ClockAnchor.hpp
- * @brief Guarded temporal clock anchor for the network satellite clocks (
- *        docs/SPEC_clock_temporal_anchor.md).
+ * @brief Guarded temporal clock anchor for the network satellite clocks.
  *
  * ## Problem addressed
  *
@@ -13,7 +12,7 @@
  * satellites of three clock technologies, which matches per-epoch estimator noise and
  * no physical process.
  *
- * The cause is one line of the D2 carry fold.  The satellite clock's carried prior
+ * The cause is one line of the satellite-clock carry fold.  The clock's carried prior
  * variance is `cp.var + sat_clock_q · dt`; with `sat_clock_q = 1e-3 m²/s` that is
  * √(1e-3·30) = 17.3 cm, above the data's own per-epoch spread.  A random-walk prior
  * constrains only when its spread is below the data's; above it the prior has no
@@ -21,7 +20,7 @@
  * walk.
  *
  * The anchor makes that prior bind, and supplies the event response without which a
- * binding prior would violate standing invariant #1.
+ * binding prior carried past a clock jump would warp the solution.
  *
  * ## The two exact identities it rests on
  *
@@ -30,9 +29,9 @@
  *
  *  1. `Var(x̂ − μ) = P⁻ − P⁺` exactly.  This is the guard's denominator, the
  *     prior-residual census's own `disp`, and Teunissen's generalized predicted
- *     residual for a predictable function (the GKF form).  `NetworkClockQc` applies
- *     the same identity to its two-state clock model (the B3 data-incest fix); only
- *     the identity is shared here, not that model (NO-GO).
+ *     residual for a predictable function.  `networkClockQc` applies the same
+ *     identity to its two-state clock model; only the identity is shared here, not
+ *     that model.
  *  2. Once the carry binds, `Var(x̂_k − x̂_{k−1}) → q·Δt`.  The emitted walk is then
  *     √(q·Δt), so @c network.clock_anchor_q sets the walk target.
  *
@@ -41,7 +40,8 @@
  * `w = (x̂ − μ − median_const) / √max(P⁻ − P⁺, σ_floor²)`, tripping when |w| exceeds
  * @c network.clock_anchor_k or when the median-removed residual exceeds the absolute
  * backstop (`clock_anchor_abs_m`).  The per-constellation median removal is required:
- * the clock common mode is a free per-epoch gauge (standing invariant #5).
+ * the clock common mode is a free per-epoch gauge.  With @c network.clock_anchor_guard_space
+ * `phase`, the |w| test reads the statistic of @ref clockAnchorPhaseStatistic instead.
  *
  * A trip decouples the satellite and, when it can, withdraws the offending prior and
  * re-solves the epoch before emission (adapt and emit; never a withhold, never a
@@ -58,11 +58,11 @@
  * path), so the re-solve is one datum plus a factorization of the reduced K×K system,
  * with no re-reduction and no re-assembly.
  *
- * ## Both edges (standing invariant #7)
+ * ## Both edges
  *
  * Per satellite the anchor is a two-state machine, ANCHORED or LOOSE:
  *
- *  - Decoupling (trip, stale carry, resume seam, datum change, or a refloat by an
+ *  - Decoupling (trip, stale carry, datum change, or a refloat by an
  *    external QC tier) moves the satellite to LOOSE, which folds at the legacy
  *    `sat_clock_q`, the behaviour without the anchor.  That bounds what the
  *    decoupled state can accumulate: it is not unconstrained, it is on the carry that
@@ -79,21 +79,21 @@
  * ## Per-satellite elapsed time
  *
  * The driver's `dt` is the inter-epoch gap, and every skip path advances it while the
- * D2 carry survives untouched (a gate can withhold hundreds of consecutive epochs).
+ * carry survives untouched (a gate can withhold hundreds of consecutive epochs).
  * A binding prior folded over `dt` would treat a clock that is many minutes old as
- * 30 s old, the invariant-#1 failure.  The anchor stamps a per-satellite `t_last` at
+ * 30 s old.  The anchor stamps a per-satellite `t_last` at
  * every fold, inflates over `pl_now_s − t_last`, and decouples beyond
- * @c network.clock_anchor_max_gap_s (0 disables that bound).  This is the same defect
- * class as the clock model's P0-3 / R11 fix.
+ * @c network.clock_anchor_max_gap_s (0 disables that bound).
  *
  * ## Covariance treatment
  *
- * The anchor uses the existing D2 fold instead of adding a second prior, so under
- * `network.shared_carry_full_cov` the clock stays inside the C1 dense block and its
- * off-diagonals are retained: the independence assumption that C1 removed is not
- * re-created on the state the anchor makes stiffest.  The residual inconsistency of
- * any stiff carry is bounded by @c network.clock_anchor_var_floor_m2, the clock
- * analogue of the B4 phase-bias and code-bias floors (which exclude the clock).  A
+ * The anchor uses the existing carry fold instead of adding a second prior, so under
+ * `network.shared_carry_full_cov` the clock stays inside the dense carried block and its
+ * off-diagonals are retained: the independence assumption that the dense block removes
+ * is not re-created on the state the anchor makes stiffest.  The residual inconsistency
+ * of any stiff carry is bounded by @c network.clock_anchor_var_floor_m2, the clock
+ * analogue of the phase-bias and code-bias floors (@c network.shared_carry_var_floor_pb_m2
+ * and @c network.shared_carry_var_floor_cb_m2, which exclude the clock).  A
  * refloat marginalizes the key out of the carried block and never conditions on it,
  * the treatment that @ref NetworkEstimator::addSharedPriorDense documents as exact
  * for a departed key.
@@ -230,9 +230,9 @@ struct ClockAnchorFold {
 ///        advance the per-satellite anchor bookkeeping: @ref clockAnchorFoldDecide
 ///        followed by @ref clockAnchorFoldCommit.
 ///
-/// The D2 fold no longer calls it: the decision is made before
+/// The carry fold does not call it: the decision is made before
 /// PASS B (@ref networkCarryDecide), read by the coupling rows and by both fold branches
-/// (the diagonal one and the C1 dense block's `cov_eff` diagonal, so the marginal prior on
+/// (the diagonal one and the dense block's `cov_eff` diagonal, so the marginal prior on
 /// the clock is the same either way, which makes the guard statistic independent of the
 /// fold path), and committed at the fold.  This call is the two halves together, for a
 /// caller that decides and folds at one point.
@@ -252,7 +252,7 @@ struct ClockAnchorFold {
 ///        max(clock_anchor_max_gap_s, this), so an anchored satellite folds anchored over
 ///        its true per-satellite gap instead of decoupling to a code-only LOOSE re-draw,
 ///        and a LOOSE one inflates over the true gap instead of the driver's dt.
-///        0 (default) keeps the unchanged Q3 rule.
+///        0 (default) keeps the unchanged rule.
 ClockAnchorFold clockAnchorFoldVariance(NetworkRunContext& ctx,
                                         const std::string& sat,
                                         double prev_var, double dt_epoch,
@@ -263,7 +263,7 @@ ClockAnchorFold clockAnchorFoldVariance(NetworkRunContext& ctx,
 ///        without advancing it: the decision half of
 ///        @ref clockAnchorFoldVariance.
 ///
-/// The coupling rows are built in PASS B, before the D2 fold runs, and the exact time update
+/// The coupling rows are built in PASS B, before the carry fold runs, and the exact time update
 /// (network.carry_coupling_exact_update) has to use the fold's own inflation, so the decision
 /// is made there and committed at the fold.  Evaluates the anchor's rule on a copy of the
 /// per-satellite state with `stale_pending` taken as cleared (@ref clockAnchorBeginEpoch
@@ -307,14 +307,14 @@ void clockAnchorFoldCommit(NetworkRunContext& ctx, const std::string& sat,
 /// @brief Mark every satellite as not yet folded for a new epoch, and clear the
 ///        previous epoch's trip set.
 ///
-/// Call once per epoch before the D2 fold.  Separate from the fold call because a
+/// Call once per epoch before the carry fold.  Separate from the fold call because a
 /// satellite absent from `prev_carry` folds nothing and must not be tested by the
 /// guard.
 void clockAnchorBeginEpoch(NetworkRunContext& ctx);
 
 /// @brief The guard: test every folded satellite's generalized predicted
 ///        residual, decouple and mark anchored trips, withdraw their priors and
-///        re-solve, and run the LOOSE→ANCHORED re-validation.
+///        re-solve, and run the LOOSE to ANCHORED re-validation.
 ///
 /// Call immediately after the primary `est.solve()` and before the within-epoch RAIM
 /// adaptation (see the file comment).  No-op unless `ctx.knobs.cta_on`.
@@ -352,15 +352,15 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
                              bool datum_changed,
                              const std::set<char>& changed_consts, const EpochEvents& events);
 
-// ---- Run-end reports (generated by scripts/nom_td_cut.py) ----
+// ---- Run-end reports ----
 
 struct NetworkRunEndView;
 
 /**
- * @brief Run-end report: the Q3 guarded temporal clock anchor.
+ * @brief Run-end report: the guarded temporal clock anchor.
  *
- * The Q3 guarded temporal clock anchor: epochs, carried clocks, trips, re-solves,
- * re-coupling edges, wire marks and the guard ladder.
+ * Epochs, carried clocks, trips, re-solves, re-coupling edges, wire marks and the
+ * guard ladder.
  *
  * Gate: returns 0 at once unless `ctx.knobs.cta_on`.
  *
@@ -389,8 +389,8 @@ struct SolveDatum;              // network/solve/SolveGlue.hpp
 void networkFoldColdClockAnchor(NetworkRun& run, const NetworkEpoch& ep, EpochWorkspace& ws);
 
 /**
- * @brief Stage 12 of the network solve: the Q3 guard between the primary solve and the
- *        within-epoch tier, one call to @ref networkClockAnchorGuard.
+ * @brief Stage 12 of the network solve: the clock anchor guard between the primary solve and
+ *        the within-epoch tier, one call to @ref networkClockAnchorGuard.
  * @param run     The run: the estimator may re-solve; ctx carry and the traces are written.
  * @param ep      The epoch, read: se, columns (registered_clock_sats).
  * @param datum   The clock datum (read: plan, datum_changed, changed_consts).
@@ -405,16 +405,16 @@ void networkClockAnchorGuardEpoch(NetworkRun& run, const NetworkEpoch& ep, const
 /// @brief Run-scope counters of ClockAnchor, a base of NetworkServiceCounters (network/state/RunContext.hpp).
 struct ClockAnchorCounters {
     // --- Guarded temporal clock anchor.
-    // Standing invariant #4: `cta_folded_anchored == 0` on an armed run means the
+    // `cta_folded_anchored == 0` on an armed run means the
     // mechanism is inert however clean the log reads, so every disposition is counted
     // against a denominator.  Trips are split by reason because the reasons are not
     // interchangeable evidence: a `gap` trip shows the staleness guard works, an `nis`
-    // trip shows the detector works, and a run that only ever shows `resume` has
-    // tested neither.
+    // trip shows the detector works, and a run that only ever shows `datum` or `ext`
+    // has tested neither.
     long long cta_epochs = 0;            ///< epochs the anchor seam ran (denominator)
     long long cta_folded_anchored = 0;   ///< (sat,epoch) clock priors folded at the anchor variance
     long long cta_folded_loose = 0;      ///< (sat,epoch) clock priors folded at the legacy variance (loose)
-    long long cta_floor_hits = 0;        ///< folds where the variance floor bound (the deviation-#1 cap binding)
+    long long cta_floor_hits = 0;        ///< folds where the variance floor bound
     long long cta_trip_nis = 0;          ///< decouples: |w| over network.clock_anchor_k
     long long cta_trip_abs = 0;          ///< decouples: |ê| over network.clock_anchor_abs_m
     long long cta_trip_gap = 0;          ///< decouples: per-sat elapsed time over network.clock_anchor_max_gap_s
@@ -430,7 +430,7 @@ struct ClockAnchorCounters {
     double    cta_max_w_tow = 0.0;       ///< …its epoch
     std::string cta_max_w_sat;           ///< …its satellite
     // --- The guard's own realized distribution (the k derivation).
-    // `k` is read off a measured |t| ladder, and the ladder moves with q: the
+    // `k` is read off a measured |w| ladder, and the ladder moves with q: the
     // denominator √(P⁻ − P⁺) shrinks as the anchor tightens, so a fixed k means a
     // different number of metres at every rung.  Without these, re-deriving k per
     // rung would need a second, disarmed run per rung.  Accumulated over anchored rows
@@ -440,9 +440,8 @@ struct ClockAnchorCounters {
     // The population is truncated across epochs, not within one: a tripped satellite
     // goes loose and stops contributing until it re-couples, so the guard's own action
     // suppresses the upper tail.  For the untruncated null, run an arm with
-    // `clock_anchor_k` beyond the top rung and `clock_anchor_abs_m: 0`; that is what
-    // §3 means by "with the guard disarmed", and it is the only reading that
-    // calibrates k without the truncation.
+    // `clock_anchor_k` beyond the top rung and `clock_anchor_abs_m: 0` (the guard
+    // disarmed), the only reading that calibrates k without the truncation.
     long long cta_w_rows = 0;            ///< anchored rows contributing to the two ladders below (denominator)
     std::array<long long, 8> cta_w_ge{}; ///< |w| ≥ @ref kCtaWLadder[i]: the dimensionless ladder k is read off
     std::array<long long, 8> cta_e_ge{}; ///< |ê| ≥ @ref kCtaELadder[i] (m): the ladder the absolute backstop's rail is read off
@@ -460,7 +459,7 @@ struct ClockAnchorCounters {
     long long cta_x_phi_only = 0;        ///< …on the phase statistic only
     long long cta_trip_phi = 0;          ///< decouples decided by the phase statistic (phase mode)
     double    cta_sum_w2 = 0.0;          ///< Σ w², so √(Σw²/n) is the guard's own σ̂₀, a same-statistic cross-check on the census's σ̂₀_clk
-    long long n_readmit_seed_moved    = 0;  ///< nis/abs trips of the Q3 guard within kReadmitVerifyWindowS of a clock seed: the data rejected the seed
+    long long n_readmit_seed_moved    = 0;  ///< nis/abs trips of the anchor guard within kReadmitVerifyWindowS of a clock seed: the data rejected the seed
 };
 
 }  // namespace GnssProcessor
