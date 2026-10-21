@@ -29,10 +29,10 @@ struct PassASlipScanCounters {
     /// Detector rows the network did not form under `primary`, summed over stations
     /// (network.cycle_slip.mw_detect_pairs).  Zero under the default `all` and
     /// on a two-band lineage; a `primary` run reporting zero on a three-band lineage is
-    /// dead wiring (standing invariant #4).
+    /// dead wiring.
     long long n_mw_pair_scope_skipped = 0;
-    /// Common-band scope census (network.cycle_slip.common_band_scope,
-    /// SPEC_event_harness §14).  Reduced per epoch from CommonBandEpoch and, like the MW
+    /// Common-band scope census (network.cycle_slip.common_band_scope).
+    /// Reduced per epoch from CommonBandEpoch and, like the MW
     /// admission census above, collected independently of the knob, on purpose.
     /// verdicts: (station, satellite) pairs that had at least one MW pair fire, i.e. the
     /// population a band scope could act on.  narrowed: of those, the ones positive
@@ -57,22 +57,22 @@ struct PassASlipScanCounters {
     /// Silent pairs refused as exonerators because one of their bands carried a receiver
     /// LLI at the previous epoch, so the detector withheld that pair's sample and kept
     /// the arc (the count runs straight through the flagged epoch while the lane saw
-    /// nothing); §14.11 rule F2.  Its own counter, not folded into n_cb_immature_pairs:
+    /// nothing).  Its own counter, not folded into n_cb_immature_pairs:
     /// the two refusals have different causes, and this one sizes the population the
-    /// spurious `keep` verdicts measured in §14.11 came from.
+    /// spurious `keep` verdicts came from.
     long long n_cb_lli_shadow = 0;
     /// Verdicts formed from the receiver's LLI bits alone, at an epoch where every MW
     /// sample of the satellite was withheld so the normal rule could not run, and how
-    /// many of those restrict a drain (§14.12 rule F3).  Independent of the knob
-    /// (invariant #4): an off run reports what arming would scope.  A run whose LLI drain
+    /// many of those restrict a drain.  Independent of the knob: an off run reports
+    /// what arming would scope.  A run whose LLI drain
     /// fires with lli_verdicts 0 is dead wiring.
     long long n_cb_lli_verdicts = 0, n_cb_lli_narrowed = 0;
-    /// Of those, the ones the §14.5 anchor clause refused (also counted in
-    /// @ref n_cb_anchor_colocate); §14.12.5.  Its own counter because the co-locates of
-    /// the two paths must be distinguishable: attributing the split-reference
-    /// regression to the F3 path relies on this split.
+    /// Of those, the ones refused because the station anchors the satellite (also
+    /// counted in @ref n_cb_anchor_colocate).  Its own counter because the co-locates of
+    /// the two paths must be distinguishable: attributing a split-reference
+    /// regression to the LLI path relies on this split.
     long long n_cb_lli_anchor_colocate = 0;
-    /// The reference-arc clause (§22, network.cycle_slip.common_band_ref_arc): silent MW
+    /// The reference-arc clause (network.cycle_slip.common_band_ref_arc): silent MW
     /// pairs refused as exonerators because their IF-TD sample sits on the chain's
     /// reference arc, whose double difference is identically 0, so the pooled test could
     /// not have flagged it and the silence is the absence of a test, not evidence of
@@ -80,9 +80,8 @@ struct PassASlipScanCounters {
     /// positive evidence the pair moved, this is a structural dead zone, and only the
     /// second carries the clause's named cost (a real single-band slip on a reference
     /// arc also stops narrowing).  Nonzero only with the clause armed, so an armed leg
-    /// whose event sits on a known reference arc and reports 0 here is dead wiring
-    /// (invariant #4); the by-pair map attributes the refusals to the chains whose
-    /// reference the arc is.
+    /// whose event sits on a known reference arc and reports 0 here is dead wiring;
+    /// the by-pair map attributes the refusals to the chains whose reference the arc is.
     long long n_cb_iftd_ref_arc = 0;
     std::map<std::string, long long> n_cb_iftd_ref_arc_by_pair;
 };

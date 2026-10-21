@@ -13,13 +13,11 @@
  *                                 directly by unit tests.
  * The fold that reads the stash is networkInjectD2CarryPrior (BorderPrior.cpp).
  *
- * networkRetroUraBookkeeping and networkStashCarry open with an alias block (decomposition
- * INC-4) that binds the driver's former local names to members of the context, so the
- * relocated code keeps those names.
+ * networkRetroUraBookkeeping and networkStashCarry open with an alias block that binds
+ * local names to members of the context.
  *
- * One of the seven files that define the network run context's functions, split
- * out of the former app/NetworkRunContext.cpp by concern, each body
- * unchanged.  The declarations, each naming its file, and the map of the seven files are
+ * One of the seven files that define the network run context's functions, one per
+ * concern.  The declarations, each naming its file, and the map of the seven files are
  * in include/network/state/RunContext.hpp.
  */
 
@@ -49,16 +47,15 @@ void networkRetroUraBookkeeping(NetworkRunContext& ctx,
                                 const std::set<std::string>& retro_flag_sats,
                                 bool retro_feed) {
     net::NetworkEntities& entities = ctx.entities;   // written: sats
-    // Alias block (INC-4): the relocated body reads the former runNetwork() locals under
-    // their original names.
+    // Alias block: local names for members of the context.
     const double ura_refloat_inflate = ctx.knobs.ura_refloat_inflate;
     const int    pl_warmup = ctx.knobs.pl_warmup;
     const bool   ura_retro = ctx.knobs.ura_retro;
 
     // After all post-emit QC tiers, record the flagged satellites for the next emit's
-    // retro-bump (per-satellite disc bump) and post-refloat URA inflation horizon (B1).
+    // retro-bump (per-satellite disc bump) and post-refloat URA inflation horizon.
     // The flag set is the union of clock_refloat_sats (clock model / clock monitor, plus
-    // the coupled RAIM tiers) and retro_flag_sats (the tier-independent P0-2
+    // the coupled RAIM tiers) and retro_flag_sats (the tier-independent
     // accumulator), so the retro-bump covers every QC tier regardless of the
     // clock_monitor_couple_raim opt-in.
     if (retro_feed) {
@@ -71,7 +68,7 @@ void networkRetroUraBookkeeping(NetworkRunContext& ctx,
         if (ura_refloat_inflate > 1.0 && pl_warmup > 0)
             for (const std::string& sat : flagged_now) net::putSat(entities, sat, &net::SatelliteState::ura_refloat_horizon) = pl_warmup;
 
-        // The retro-bump is edge-triggered (P1-3): queue only a satellite that just
+        // The retro-bump is edge-triggered: queue only a satellite that just
         // became flagged (not already in retro_active), so a satellite that stays
         // flagged through several recovery epochs is reset once at the consumer, not at
         // every emit.  A satellite that clears drops out of retro_active, so a later
@@ -105,8 +102,7 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
     // the handover preview applied before PASS B is no longer a pending record (empty with
     // network.handover_stransform_before_rows off).
     ctx.carry.sts_carry_pivot.clear();
-    // Alias block (INC-4): the relocated body reads the former runNetwork() locals under
-    // their original names.
+    // Alias block: local names for members of the context.
     auto& prev_carry = ctx.carry.prev_carry;
     auto& prev_carry_cov = ctx.carry.prev_carry_cov;
     net::ConstellationTable& cons_rows = ctx.entities.constellations;
@@ -119,15 +115,15 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
     const bool   cb_time_linked = ctx.knobs.cb_time_linked;
     const bool   fullcov_on = ctx.knobs.fullcov_on;
 
-    // --- Stash of the D2 carry for the next epoch ------------------------
-    // READMIT (E2): keep the outgoing stash, so departures can be parked after the
+    // --- Stash of the border carry for the next epoch ------------------------
+    // READMIT: keep the outgoing stash, so departures can be parked after the
     // rebuild.
     const double readmit_h = ctx.knobs.readmit_seed_horizon_s;
     std::vector<CarryPrior> old_carry;
     if (readmit_h > 0.0) old_carry = prev_carry;
     prev_carry.clear();
-    prev_carry_cov.clear();   // rebuilt below when the dense carry (C1) is on
-    std::vector<Eigen::Index> fc_cols;  // shared-border column per dense row (C1)
+    prev_carry_cov.clear();   // rebuilt below when the dense carry is on
+    std::vector<Eigen::Index> fc_cols;  // shared-border column per dense row
     const Eigen::MatrixXd& cov = est.sharedCovariance();
     std::set<Eigen::Index> pinned_cols;
     for (const auto& p : plan.shared_datum) pinned_cols.insert(p.column);
@@ -145,20 +141,20 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
         cp.kind = kind; cp.sat = sat; cp.signal = signal;
         cp.value = x_s(col); cp.var = var; cp.inflate_q = inflate;
         prev_carry.push_back(cp);
-        if (fullcov_on) {   // register this entry's dense row, same skip rules (C1)
+        if (fullcov_on) {   // register this entry's dense row, same skip rules
             prev_carry_cov.row.emplace(sharedCarryKey(kind, sat, signal),
                                        fc_cols.size());
             fc_cols.push_back(col);
         }
     };
-    // A satellite flagged by the clock monitor (or, opt-in, by the within-epoch / post-fit
-    // RAIM) has its carried shared state reinitialized rather than frozen.  Two modes: with
+    // A satellite flagged by the clock monitor or the clock model (or, opt-in, by the
+    // within-epoch / post-fit RAIM) has its carried shared state reinitialized rather than frozen.  Two modes: with
     // clk_mon_reinit_sig > 0 (default) it is still stashed but marked inflate_q, so next
     // epoch folds it with the loose reinit variance (a weak anchor that lets a frozen clock
     // move back toward truth while limiting the datum drift a hard refloat causes); with
     // clk_mon_reinit_sig ≤ 0 it is withheld entirely (hard skip-stash refloat, no prior).
-    // clock_refloat_sats is empty unless network.clock_monitor is on, so the stash is
-    // byte-identical when the monitor is off (nothing flagged → inflate=false → the
+    // clock_refloat_sats is empty unless network.clock_monitor or network.clock_model is on,
+    // so the stash is byte-identical when both are off (nothing flagged → inflate=false → the
     // ordinary stiff-carry stash).
     const bool full_refloat = !(clk_mon_reinit_sig > 0.0);   // reinit_sigma ≤ 0 → hard skip-stash
     // Counts an entry the hard refloat leaves out of the stash, in the response table, when
@@ -193,14 +189,14 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
             }
             stash(SharedParamKind::Clock, sat, "", est.clockColumn(sat), flagged);
         }
-    // eq34 reattach hygiene (INC-2): refresh the bridge's value source from this kept
-    // epoch's solved shared phase biases.  Rebuilt wholesale in lock-step with the D2
+    // eq34 reattach hygiene: refresh the bridge's value source from this kept
+    // epoch's solved shared phase biases.  Rebuilt wholesale in lock-step with the border
     // carry (a departed key drops out, so a bridge cannot be opened on a level from before
     // an absence), and harvested here, at the stash, which every whole-epoch withhold path
     // skips with `continue`, so a withheld epoch's transient solve never becomes a held
     // level.  Not read from prev_carry, on purpose: under carry_invariant the shared
     // PhaseBias carry is not stashed at all, and that is the configuration the bridge
-    // targets.  The S-basis completion (network.sbasis_complete, SBC) reuses this harvest
+    // targets.  The S-basis completion (network.sbasis_complete) reuses this harvest
     // for the same reason: its continuity targets need the last solved phase-bias levels
     // on the carry_invariant configurations.  Empty and untouched when neither consumer
     // is armed.
@@ -212,8 +208,8 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
         if (!border) continue;
         const std::string sat = net::satKey(border->sat);
         const std::string sig = net::signalKey(border->signal);
-        // Datum-station slip re-reference (§9.7.10,
-        // network.cycle_slip.datum_station_detect): a slip at the gauge-pinned datum
+        // Datum-station slip re-reference (network.cycle_slip.datum_station_detect): a
+        // slip at the gauge-pinned datum
         // receiver moved the level that every phase bias of this satellite references.
         // Skip the stash entirely for one kept epoch, before the pb_level_prev harvest (a
         // bridge must not re-open on the stale level) and before the phase-bias stash,
@@ -236,7 +232,7 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
         }
         // The DD invariant carry is the phase time-link, so the S-dependent shared
         // PhaseBias carry is not stashed as well (it would double-count in next epoch's
-        // D2 / dense fold).  Clock / code / SH / ZWD carries are unaffected.
+        // diagonal or dense fold).  Clock / code / SH / ZWD carries are unaffected.
         if (carry_invariant) continue;
         const bool flagged = clock_refloat_sats.count(sat) > 0;
         if (flagged && full_refloat) {
@@ -247,7 +243,7 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
         const Eigen::Index col = est.phaseBiasColumn(sat, sig);
         stash(SharedParamKind::PhaseBias, sat, sig, col, flagged);
     }
-    // The datum re-reference skip-stash queue (§9.7.10) is consumed exactly once per
+    // The datum re-reference skip-stash queue is consumed exactly once per
     // kept epoch (a withheld epoch never reaches this stash, so the queue, and the
     // deferred ambiguity reseed keyed on its consumption, survive the withhold intact).
     // Cleared wholesale: a queued satellite with no phase-bias key this epoch had nothing
@@ -257,10 +253,10 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
         net::assignSatFlags(entities, &net::SatelliteState::datum_reref_pb, {});
     // Refresh the time-linked previous-value map from this kept epoch's solved code
     // biases.  Cleared and rebuilt (a departed satellite drops out, so its return
-    // re-seeds that satellite alone) in lock-step with the D2 carry, with the same
+    // re-seeds that satellite alone) in lock-step with the border carry, with the same
     // disposition rules (a hard-refloated satellite is skipped from both, so it re-seeds
     // next epoch, with its re-reference signalled as a disc).  Written to the snapshot
-    // only under network.state_snapshot_datum_capture (RS-3).  Empty and untouched when
+    // only under network.state_snapshot_datum_capture.  Empty and untouched when
     // off.
     if (cb_time_linked) {
         net::dropAll(cons_rows, &net::ConstellationState::channels,
@@ -270,7 +266,7 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
         // baseline tracks emitted / kept datum realizations only).
         net::assignSat(entities, &net::SatelliteState::code_bias_ifpin_pair, this_epoch_cb_ifpin);
     }
-    for (const auto& kv : registered_code_keys) {  // satellite code bias, OSB (W6)
+    for (const auto& kv : registered_code_keys) {  // satellite code bias, OSB
         const bool flagged = clock_refloat_sats.count(kv.first) > 0;
         if (flagged && full_refloat) {
             hard_refloat_left_out(ResponseSite::CbHardRefloat,
@@ -278,11 +274,11 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
             continue;
         }
         const Eigen::Index col = est.codeBiasColumn(kv.first, kv.second);
-        // CB-excursion guard (SPEC_day129_frame_guards phase 2.1): a network-wide
+        // CB-excursion guard: a network-wide
         // common-mode clock excursion this epoch marks the affected satellite's code-bias
         // carry for reinit, and only the code-bias carry.  The clock and phase-bias
         // carries are left untouched on purpose: the clock is soft (q = 0.3 m²/ep; it
-        // recovers on its own in 2–4 epochs), and the phase biases did not move
+        // recovers on its own in 2 to 4 epochs), and the phase biases did not move
         // measurably (≤ 4 mm at the DOY-129 event).  The near-static code bias is the
         // state that ratchets, so it is the state the guard resets.  The set is empty
         // unless network.cb_excursion_reinit is on ⇒ byte-identical when off.
@@ -298,7 +294,7 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
             }
         }
     }
-    // Dense carry (C1): stash the dense covariance block over the clock/phase/code
+    // Dense carry: stash the dense covariance block over the clock/phase/code
     // entries just recorded (the SH block below keeps its own diagonal stash; its carry
     // is the separate fold before the gate).  One O(k²) copy from the solve's
     // posterior.  A single non-finite entry clears the whole block, and the next fold
@@ -370,17 +366,15 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
         }
     }
 
-    // ---- READMIT continuity (E2 seed-first re-admission and the block re-coupling edge) ----
-    // (SPEC_synthetic_minimum_network §18.4; SPEC_amb_iono_split_overcount §7 FIRST.)  Runs
-    // after the wholesale rebuild above, so "absent from the new stash" is exact, and on
+    // ---- READMIT continuity (seed-first re-admission and the block re-coupling edge) ----
+    // Runs after the wholesale rebuild above, so "absent from the new stash" is exact, and on
     // kept epochs only: a withheld epoch never reaches here, which is why the detector
     // needs >= kReadmitMinGapEp loop epochs of absence rather than one.
     if (readmit_h > 0.0 || ctx.knobs.readmit_marg_ep > 0) {
         const long long ep = static_cast<long long>(ctx.counters.n_loop_epochs);
         // (1) The re-admission detector and the coupling marginalization window (the
-        //     block's decoupling edge, standing invariant #7): a satellite whose clock
-        //     column is registered now but was last stashed >= kReadmitMinGapEp loop
-        //     epochs ago.
+        //     block's decoupling edge): a satellite whose clock column is registered now
+        //     but was last stashed >= kReadmitMinGapEp loop epochs ago.
         for (const std::string& sat : registered_clock_sats) {
             long long& last = net::putSat(entities, sat, &net::SatelliteState::readmit_last_seen_ep);   // 0 on first sight
             const long long gap_ep = (last > 0) ? ep - last : 0;
@@ -479,7 +473,7 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
                                 kArcReasonReadmit);
             }
             // (3) Seed-vs-solve check: mark-if-moved telemetry for every seeded kind (the
-            //     clock's authoritative mark is the Q3 guard's own trip, counted separately).
+            //     clock's authoritative mark is the clock-anchor guard's own trip, counted separately).
             for (const auto& sd : events.solve.readmit_seed_check) {
                 Eigen::Index col = -1;
                 try {

@@ -7,18 +7,18 @@
  * ## Purpose
  *
  * In the producer's ordinary slip response a detector fires, the arc is freed,
- * and the PASS-B leveling inject re-levels it from that one epoch's states, which
+ * and the next harvest re-levels it from that one epoch's states, which
  * the slip has already corrupted.  The truth-graded slip census on the slipped
- * 60-station sim bed (fixture `runs/simnet60_campaign_wu93`, 2 452 truth slips in
+ * 60-station sim bed (2 452 truth slips in
  * 6 h) attributes a level error to this re-level of about 2.5x the bed's ambient
- * DD error (|e| 5.6 -> 6.7 cyc), decaying over about 20 min.  The T4 attribution
+ * DD error (|e| 5.6 -> 6.7 cyc), decaying over about 20 min.  The RAIM attribution
  * tier then erases the affected arcs again, and the injections drain into a
  * metre-class ZWD plateau (truth rms 2.10 m against 7 mm on the quiet twin).
- * This is the re-coupling edge of standing invariant #1: the response's own
+ * This is the response's re-coupling edge: its own
  * re-level is the defect.
  *
- * The engineering answer (EWL / WL-MW integer estimation of the jump,
- * SPEC_lane_slip_response) is expensive to build, so this oracle measures its
+ * The engineering answer (extra-wide-lane / Melbourne-Wubbena wide-lane integer
+ * estimation of the jump) is expensive to build, so this oracle measures its
  * ceiling first.  When a detector actuates a refloat on a carried arc, the oracle
  * looks up the true integer jump(s) in the fixture's `truth_slips.csv` and shifts
  * the carried level by the sum d*lambda (plus the optional injected noise)
@@ -44,7 +44,7 @@
  *   - `refloat_pair`   (the IF-phase triple-difference driver, both bands),
  *   - `networkSlipDrainWindupRestart` (whole satellite, every signal).
  * `networkSlipDrainGapReentry` is a different response (a break the detectors
- * cannot cover) and is left alone, as is the T4 RAIM-attribution erase path in
+ * cannot cover) and is left alone, as is the RAIM-attribution erase path in
  * network/qc/Raim.cpp: the census question is what a perfect detector
  * response would buy with every other mechanism held fixed.
  *
@@ -66,7 +66,7 @@
  * - `now_s − window_s` (@ref NetworkSlipOracle::window_s,
  *   `network.cycle_slip.oracle_window_s`, default 90 s = three 30 s epochs) is
  *   the detector-latency bound, and the one that normally binds.  Detectors fire
- *   1–3 epochs after the slip (MW needs its window to fill, IF-TD needs the
+ *   1 to 3 epochs after the slip (MW needs its window to fill, IF-TD needs the
  *   triple difference), which is the 90 s within which the truth census counts a
  *   slip as detected.  @ref LocalCarry::last_seen_s is not usable as the lower
  *   bound, although it looks like an "already absorbed" mark: it is the previous
@@ -76,7 +76,7 @@
  *   population reads as false alarms (701 kept against 88 repaired on a 60-epoch
  *   smoke), and the measured ceiling would be biased low.
  * - `carry.birth_s` (@ref LocalCarry::birth_s) is the hard floor: the
- *   continuous-GPS second at which the current carry entry was created.  A T4
+ *   continuous-GPS second at which the current carry entry was created.  A RAIM
  *   attribution erase deletes the entry, and the next harvest re-creates it from
  *   a fresh solve whose level already contains any earlier jump, so a truth slip
  *   stamped before the entry's birth is already absorbed, and re-applying it
@@ -84,10 +84,10 @@
  *   creation and kept across re-stashes, like @ref LocalCarry::birth_ep (which is
  *   not usable here: it is a loop-epoch index, not seconds).  It is not
  *   snapshotted, so a warm-resume-restored entry carries
- *   @ref LocalCarry::kBirthSRestored (−1, SPEC_event_harness §15.4) and the
+ *   @ref LocalCarry::kBirthSRestored (−1) and the
  *   window falls back to the latency bound alone for the arc's whole restored
  *   life, the conservative direction for a sim-only diagnostic.
- * - `last_applied_s` (@ref ArcState) keeps one arc from being handled twice
+ * - `last_applied_s` (@ref NetworkSlipOracle::ArcState) keeps one arc from being handled twice
  *   before a re-harvest: two detectors firing in one epoch, or on consecutive
  *   epochs, apply the jump once.  It advances on every repair.
  *
@@ -152,7 +152,7 @@ enum class OracleOutcome {
  * and the run-end counters.  Constructed only when the knob is armed
  * (@ref networkSlipOracleLoad); the drains receive a `NetworkSlipOracle*` that
  * is null on every other run, so with the knob off no call is reached and the
- * output is byte-identical by construction (standing invariant #6).
+ * output is byte-identical by construction.
  *
  * Non-copyable: a value copy would reset the per-arc ledger and let the same
  * jump be applied twice.
@@ -200,16 +200,15 @@ struct NetworkSlipOracle {
     /// A bare pointer because the map is a sibling member of the same
     /// @ref NetworkRunContext that owns this object, so it outlives the oracle
     /// and is never reallocated.  The oracle writes @ref LocalCarry::value_abs
-    /// and nothing else: an `x_lin` shift is an exact solve no-op
-    /// (docs/SPEC_lane_slip_response.md §7.2).
-    net::ArcTable* carry{nullptr};   ///< The arc table (its @c ArcState::amb).
+    /// and nothing else: an `x_lin` shift is an exact solve no-op.
+    net::ArcTable* carry{nullptr};   ///< The arc table (its @c net::ArcState::amb).
 
     /// Wavelength provider for the cycles->metres conversion (FDMA-correct via
     /// the satellite id).  Owned here so the oracle does not depend on whether
     /// another mechanism armed the shared raw-observable provider.
     std::unique_ptr<PppUtils> utils;
 
-    // ---- run-end counters (standing invariant #4) --------------------------
+    // ---- run-end counters --------------------------------------------------
     /// Closure:
     /// `seen == applied + true_slip_freed + fa_kept + fa_freed + no_carry + no_lambda`.
     long long seen{0};          ///< (station, sat, signal) actuations offered to the hook.
@@ -320,7 +319,7 @@ std::map<std::pair<std::string, std::string>,
          std::vector<NetworkSlipOracle::TruthSlip>>
 networkSlipOracleParseCsv(const std::string& path);
 
-// ---- Run-end reports (generated by scripts/nom_td_cut.py) ----
+// ---- Run-end reports ----
 
 struct NetworkRunEndView;
 
@@ -346,8 +345,7 @@ class LogManager;
  * @brief Loads the oracle slip response (simulation only) when network.cycle_slip.oracle_relevel is armed.
  *
  * Throws on a missing or mis-pointed fixture, before any trace file opens.  Setup builder:
- * called once from Application::runNetwork, in the order
- * scripts/nom3_designs/EP4_design.md section 2 states.
+ * called once from Application::runNetwork.
  *
  * @param run The network run; fills run.ctx.carry.slip_oracle.
  * @param log_manager_ The application's logging manager (Application::log_manager_).

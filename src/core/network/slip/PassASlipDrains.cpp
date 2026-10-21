@@ -1,9 +1,6 @@
 /**
  * @file PassASlipDrains.cpp
  * @brief The PASS A response drain stages declared in PassASlipDrains.hpp.
- *
- * The bodies were cut verbatim from `Application::networkPassASlipScan_`; only the
- * bindings at the head of each stage and the calls between stages are new.
  */
 
 #include "network/slip/PassASlipDrains.hpp"
@@ -54,7 +51,7 @@ std::map<net::ArcTuple, RelevelPend> passAMwRefloatStage(const PassAView& v, boo
         net::satSet(ctx.entities.sats, &net::SatelliteState::datum_reref_pb);
     std::set<std::string> datum_reref_amb_sats =
         net::satSet(ctx.entities.sats, &net::SatelliteState::datum_reref_amb);
-    // The bridge v2 pends as the drains below take them: copied in from
+    // The bridge pends as the drains below take them: copied in from
     // the lines of sight here and written back after the last drain.
     std::map<net::ArcTuple, RelevelPend> relevel_pend = net::relevelPendMap(ctx.entities.los);
     networkSlipDrainMwRefloat(pa, config_, stations, present, modeled, i_lo,
@@ -71,7 +68,7 @@ std::map<net::ArcTuple, RelevelPend> passAMwRefloatStage(const PassAView& v, boo
                               // Simulation-only oracle slip response: null unless
                               // network.cycle_slip.oracle_relevel armed the run,
                               // so the off path never reaches a hook call
-                              // (structurally byte-identical, invariant #6).
+                              // (structurally byte-identical).
                               ctx.carry.slip_oracle.get(),
                               common_band_ptr);
     if (datum_detect_on) {
@@ -104,8 +101,8 @@ void passAIfTdStage(const PassAView& v, RelevelEpochState* relevel_ptr,
     const int i_lo = v.i_lo;
     PassABuffers& pa = v.pa;
 
-    // The mark sink is passed only when armed (Edge-1 piece 2), so the off path
-    // passes nullptr and the driver's insert is never reached (byte-identical).
+    // The mark sink is passed only when network.mark_refsat_reset_disc is armed, so
+    // the off path passes nullptr and the driver's insert is never reached (byte-identical).
     networkSlipIfTdDriver(pa, config_, stations, present, i_lo, n_sta_total,
                           carry_invariant, carry_warm, carry_slipped_ambs,
                           trace_flag_rates, fr_if_slip, se, traces, log,
@@ -116,16 +113,18 @@ void passAIfTdStage(const PassAView& v, RelevelEpochState* relevel_ptr,
                           relevel_ptr ? &qc.counters : nullptr,
                           relevel_ptr ? &relevel_pend : nullptr,
                           // The qualified raw verdicts (d_gf) and per-station
-                          // empirical step scales (bridge v3 E4), only when the
-                          // GF row is armed (nullptr keeps the off path inert).
+                          // empirical step scales of the GF bridge, only when
+                          // network.cycle_slip.relevel_bridge_gf is armed (nullptr
+                          // keeps the off path inert).
                           config_.networkCycleSlipRelevelBridgeGf() ? &qc.epoch : nullptr,
                           config_.networkCycleSlipRelevelBridgeGf() ? &qc.hist : nullptr,
                           ctx.carry.slip_oracle.get(),    // simulation-only oracle
-                          common_band_ptr,                // common-band scope (§14)
-                          // Pair width (§14.10): always passed, because the
+                          common_band_ptr,                // common-band scope
+                          // Pair-width tally: always passed, because the
                           // per-pair-kind tally is knob-independent telemetry
-                          // (invariant #4), so a `first` run's run-end clause
-                          // already sizes what the one watched pair sees.
+                          // (network.cycle_slip.if_phase_td_pairs), so a `first`
+                          // run's run-end clause already sizes what the one
+                          // watched pair sees.
                           // Counters only; the solve, the products and the event
                           // rows are untouched while the knob is `first`.
                           &ctx.counters.n_iftd_pair);
@@ -150,8 +149,9 @@ void passAGfArcJumpStage(const PassAView& v, RelevelEpochState* relevel_ptr,
 
     // ---- Arc-scoped GF jump trigger ---------------------------------
     // (include/network/slip/GfArcJump.hpp.)  The pre-solve witness of the slips the MW
-    // drain and the IF-TD driver above both miss: the equal count (1,1), the 60/77
-    // family, and a slip repeated in the epoch after an IF-TD flag.  Sited after the
+    // drain and the IF-TD driver above both miss: the equal count (1,1) on both
+    // bands, the 60/77 family (one or two wide-lane cycles), and a slip repeated in
+    // the epoch after an IF-TD flag.  Sited after the
     // IF-TD driver, so a band that driver already freed takes only the cause bit (its
     // response and bridge pend stay as they were), and before the wind-up, gap
     // re-entry and injected-free drains, like every freeing
@@ -162,9 +162,9 @@ void passAGfArcJumpStage(const PassAView& v, RelevelEpochState* relevel_ptr,
                               se, traces, log, relevel_ptr,
                               relevel_ptr ? &relevel_pend : nullptr,
                               common_band_ptr);
-    // The producer AR search's suspect-corner mask (
-    // network/ar/ArSuspect.hpp): every GF flag stamps its corner, whatever the drain
-    // did with it (a cold, pinned or common-band-kept flag still names a doubtful arc).
+    // The producer AR search's suspect-corner mask (network/ar/ArSuspect.hpp):
+    // every GF flag stamps its corner, whatever the drain did with it (a cold,
+    // pinned or common-band-kept flag still names a doubtful arc).
     if (ar_suspect_armed)
         for (const LosId& los : qc.epoch.gf_jump_flagged)
             arSuspectNote(ctx.carry.ar_suspect, los,
@@ -190,10 +190,10 @@ void passAWindupRestartStage(const PassAView& v, RelevelEpochState* relevel_ptr,
     net::ArcTable& arc_rows = v.arc_rows;
     const int i_lo = v.i_lo;
 
-    // ---- Wind-up accumulator-restart response (§10.4) ------------------------
-    // (SPEC_phase_windup_sign §10.4.)  Drains the per-station restart ledgers that
+    // ---- Wind-up accumulator-restart response -----------------------------
+    // Drains the per-station restart ledgers that
     // the model evaluations above just filled and refloats the stepped arcs: the
-    // wired invariant-#1 response that any accumulate_phase_windup arm requires.
+    // wired slip response that any accumulate_phase_windup arm requires.
     // A restart-freed pair enters this epoch's freed set like every other.  No-op unless
     // network.cycle_slip.windup_restart_refloat (disarmed by the loader outside
     // accumulated mode).  It receives the leveling carry for the reason the gap
@@ -231,12 +231,12 @@ void passAGapReentryStage(const PassAView& v, RelevelEpochState* relevel_ptr,
     const int i_lo = v.i_lo;
 
     // ---- Gap re-entry refloat (gap response) ------------------------------
-    // (docs/SPEC_slip_qc_hardening.md §G3/W1.)  An arc that re-appears within
+    // An arc that re-appears within
     // network.phase_leveling_max_gap_s has no detector covering its return epoch
     // (MW needs an adjacent predecessor and IF-TD three consecutive epochs), so its
     // pre-gap zero-q leveling level would be re-injected across a break that the raw
     // MW/GF evidence (or the receiver's own LLI) says it did not survive.  This drain
-    // is the wired invariant-#1 response: it marks both bands of a slipped re-entry
+    // is the wired slip response: it marks both bands of a slipped re-entry
     // exactly as a detected slip.
     //
     // Sited here because it must run in the same epoch as the re-entry (the PASS-B
@@ -244,8 +244,8 @@ void passAGapReentryStage(const PassAView& v, RelevelEpochState* relevel_ptr,
     // `relevel.free_ambs`), so a gap-freed pair enters this epoch's freed set like
     // every other response.
     //
-    // It receives `local_carry` and (pl_now_s, pl_max_gap_s), not only the
-    // parameter set, because at this point in the epoch a re-entering arc has no
+    // It receives the leveling carry (`arc_rows`) and (pl_now_s, pl_max_gap_s),
+    // not only the parameter set, because at this point in the epoch a re-entering arc has no
     // ambiguity column (PASS B's networkBirthLocalStates re-creates it later).  The
     // carry entry is what survives the gap and what the inject would bridge, so the
     // carry is the drain's target and its oracle; the ambiguity key is synthesised
@@ -273,7 +273,7 @@ void passAGapReentryStage(const PassAView& v, RelevelEpochState* relevel_ptr,
                                    ctx.arc_ledger.epochIndex(), pl_now_s,
                                    ctx.knobs.pl_max_gap_s, sid);
     }
-    // The per-arc outcome sink of the unified "answered" census (R4) is written
+    // The per-arc outcome sink of the unified "answered" census is written
     // in both states of network.ledger_reentry on every run (the roster is built
     // on every run), so the four-way split is comparable
     // across the flip.  A record only: nothing in the solve reads it.
@@ -290,7 +290,7 @@ void passAGapReentryStage(const PassAView& v, RelevelEpochState* relevel_ptr,
                                ctx.roster.active ? &ctx.arc_ledger : nullptr);
 
     // ---- The same response, keyed on the signal ------------------
-    // (docs/refound/GRS_gap_reentry_per_signal_2026-09-20.md.)  The drain above
+    // The drain above
     // answers a raw row that went absent.  A satellite that keeps one tracking
     // signal through a primary-pair loss of lock keeps its row, so that tier does
     // not see it, and the returning phases' carried ambiguities would fold across
@@ -321,13 +321,13 @@ void passAInjectedFreeStage(const PassAView& v, RelevelEpochState* relevel_ptr,
     const int n_sta_total = v.n_sta_total;
     const bool carry_invariant = v.carry_invariant;
 
-    // ---- Injected free_epoch arc response (event harness, Study 1) ----------
-    // (docs/SPEC_event_harness.md §9.)  An `arc_erase` event carrying
+    // ---- Injected free_epoch arc response (event harness) -------------------
+    // An `arc_erase` event carrying
     // "mode": "free_epoch" is answered here, as a detector refloat, instead of by
-    // the T4 attribution block: the A/B that prices the erase path's four extra
-    // actions.  Sited with the other PASS-A drains so that this epoch's PASS-B
-    // leveling inject reads the free-epoch latch it fills (post-fit RAIM is too
-    // late: relevel.clear() above would run first, in the next epoch).
+    // the post-fit RAIM attribution block, so the A/B can price the extra actions of
+    // the erase path.  Sited with the other PASS-A drains so that this epoch's PASS-B
+    // leveling inject reads the free-epoch latch it fills (post-fit RAIM runs after
+    // that inject, and the latch does not outlive the epoch).
     // Unreachable unless the injector staged a free_epoch directive.
     if (ctx.inject.armed && !ctx.inject.arc_erase_now.empty())
         networkSlipDrainInjectedFree(ctx.inject.arc_erase_now, stations, present,

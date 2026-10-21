@@ -1,15 +1,15 @@
 /**
  * @file AmbLevelCheck.hpp
  * @brief Consumer-side re-validation of float ambiguities against their own
- *        code level at the re-coupling edge of invariant #7: windowed levels,
- *        the two tests, the trip decision and its counters.
+ *        code level: windowed levels, the two tests, the trip decision and
+ *        its counters.
  *
- * The CC and PBT results establish that a preserved ambiguity is continuous; neither
- * establishes that it is correct.  On the RF-0hv field bed, mass resets
- * re-levelled accumulated ambiguity error from code as a side effect and left
- * the ambiguities nearer the truth than the arm that preserved them (PBT §7).
- * This check performs that re-levelling deliberately, with both edges of
- * invariant #7 instrumented.
+ * The declared-step carry and the phase-bias translation keep a preserved
+ * ambiguity continuous; neither establishes that it is correct.  In a field test,
+ * mass resets re-levelled accumulated ambiguity error from code as a side effect
+ * and left the ambiguities nearer the truth than an arm that preserved them.
+ * This check performs that re-levelling deliberately, with both the trip and the
+ * refloat recorded.
  *
  * ## The statistic
  *
@@ -57,9 +57,8 @@
  * Temporal correlation, changing state estimates, shared WL/IF measurements,
  * overlapping checks and data-dependent restarts need separate calibration.
  * The floors bound the rejection bar; they do not model these uncertainties.
- * See docs/refound/ALC-STAT_statistics_audit_2026-09-17.md for the audit.
  *
- * ## The window restart (invariant #7, and why a translated epoch cannot trip)
+ * ## The window restart (and why a translated epoch cannot trip)
  *
  * This class restarts a window only when told to (@ref restart).  The engine
  * owns the restart rule, and the guarantee lives there: see
@@ -75,7 +74,7 @@
  * counters record distinct trip events instead of one trip per epoch until the
  * drift ages out of the window.
  *
- * Counter closure (standing invariant #4): every full-window evaluation is
+ * Counter closure: every full-window evaluation is
  * exactly one of {no trip, WL trip, IF trip}, so
  * @c trips_wl + trips_if <= checks, and in @c act mode @c refloats equals the
  * number of trips (one refloat per tripped satellite, both bands).
@@ -89,7 +88,7 @@
 
 namespace GnssProcessor {
 
-/// One AMB_LEVEL row for `network_events.csv`, at either edge of invariant #7.
+/// One AMB_LEVEL row for `network_events.csv`.
 struct AmbLevelEvent {
     std::string sat;                  ///< Satellite the event is about.
     const char* kind{ "trip" };       ///< "trip" (the decoupling test fired) or "refloat" (the response).
@@ -126,13 +125,13 @@ public:
         double diff{ 0.0 };            ///< |mean| of the tripping statistic.
         double sigma{ 0.0 };           ///< sigma_level of the tripping statistic.
         int    n{ 0 };                 ///< Samples behind it.
-        double wl_mean{ 0.0 };         ///< Both statistics, always reported (the trace carries the non-tripping one too).
+        double wl_mean{ 0.0 };         ///< Both statistics, set whenever @c tested (the trace carries the non-tripping one too).
         double wl_sigma{ 0.0 };
         double if_mean{ 0.0 };
         double if_sigma{ 0.0 };
     };
 
-    /// Run-end counters (the ON-path telemetry of invariant #4).
+    /// Run-end counters.
     struct Counters {
         uint64_t samples{ 0 };    ///< (satellite, epoch) samples pushed into a window.
         uint64_t checks{ 0 };     ///< n_amb_level_checks: full-window evaluations.
