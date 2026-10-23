@@ -5,11 +5,11 @@
 - **id:** L5B
 - **topic:** network-vehicle
 - **status:** open
-- **summary:** L5 SEQUENCED. R-1b (the receiver band-5 code delay estimated, `network.estimate_rx_extra_band_code_delay`) removes the station-constant band-5 offsets (18 to 3 stations); R-1c (`network.cycle_slip.gap_reentry_coresumed_share`) is built; both default off. The field network contamination is one code fault at MAJU00MHL at ignition, which moves MAJU's station level direction whenever band-5 code and phase are both present (whatever the code weight or the delay's treatment); the mechanism is not established and no existing screen catches it. The triple consumer's own cost is the Block IIF L5 phase. The station-local attribution (section 9) shows that MAJU's own rows do not move its states: the move arrives through the shared solution, from the other stations, at the epoch's operator. Next: R-1d, robust ignition of the receiver code states (a design decision for the author), with two owed diagnostics (section 9).
+- **summary:** L5 SEQUENCED. R-1b (the receiver band-5 code delay estimated, `network.estimate_rx_extra_band_code_delay`) removes the station-constant band-5 offsets (18 to 3 stations); R-1c (`network.cycle_slip.gap_reentry_coresumed_share`) is built; both default off. The field network contamination is one code fault at MAJU00MHL at ignition, which moves MAJU's station level direction whenever band-5 code and phase are both present (whatever the code weight or the delay's treatment); the mechanism is not established and no existing screen catches it. The triple consumer's own cost is the Block IIF L5 phase. The station-local attribution (section 9) shows that MAJU's own rows do not move its states: the move arrives through the shared solution, from the other stations, at the epoch's operator. Next: R-1d, robust ignition of the receiver code states (a design decision for the author), with two owed diagnostics (section 9). On the GPS + Galileo golden (section 10, 2026-10-23) GPS L5 runs stable on the sim at 2 h with B5D and the estimated delay; the assertion posture still leaves band-5 and band-2 offsets. With Galileo E5b added (section 11, every channel the sim tracks) it stays stable with no code change.
 - **source:** [L5R](L5R_l5_return_on_the_exact_update_2026-10-08.md) section 4 (the root and step R-1b); [L5P](L5P_l5_phase_posture_2026-09-21.md) section 4 (the return plan); [B5D](B5D_band5_code_datum_2026-09-20.md) (the band-5 satellite code datum); [NOM](NOM_network_object_model_2026-10-08.md) step N1 (the receiver IFB drop as a declared rule, treatment `HeldAtSeed`); the author's directive that L5 is never closed
 - **knobs / posture:** new `network.estimate_rx_extra_band_code_delay` (default false); the goldens of 2026-10-09 (`03461e4`, card ICF's cold-start bound armed) plus `processing.frequency_mode` triple, the GPS band-5 types appended to `processing.signal_priorities.GPS` (the list of `runs/_rap_l5r_t0_f6`), and per arm `network.sat_gf_extra_band_free`
-- **dates in the text:** 2026-10-10, 2026-10-13
-- **hashes / run dirs:** controls `runs/_rap_l5g_ctl_{f6,s6}` and census key `l5c_ctl` (exe `gnss_processor_l5g0.exe`, main `47fb634`, sha256 `31081ec3b36875a1`; 2 h identity to `runs/_rap_g15_{f2,s2}` verified); arms `runs/_rap_l5b_*`; census keys `l5c_b*`; section 9 smoke `runs/_l5b_loc_smoke` (the `loc_` files in `logs/rhs_attrib/`, station-net tables in `tables/`)
+- **dates in the text:** 2026-10-10, 2026-10-13, 2026-10-23
+- **hashes / run dirs:** controls `runs/_rap_l5g_ctl_{f6,s6}` and census key `l5c_ctl` (exe `gnss_processor_l5g0.exe`, main `47fb634`, sha256 `31081ec3b36875a1`; 2 h identity to `runs/_rap_g15_{f2,s2}` verified); arms `runs/_rap_l5b_*`; census keys `l5c_b*`; section 9 smoke `runs/_l5b_loc_smoke` (the `loc_` files in `logs/rhs_attrib/`, station-net tables in `tables/`); sections 10 and 11 (GPS + Galileo sim golden) `runs/_rap_l5s_{ctl,t0,t1,t1on,all}_{sm,s2}` (exe `gnss_processor_l5s0.exe`, main `04517ca`, sha256 `1f41efd915d4aaf0`)
 - **gates (frozen at pre-registration):** section 4
 
 **Outcome.** Question: with the receiver band-5 code delay estimated, do the station-constant band-5 offsets vanish and is the three-band wire clean? The offsets vanish (P3 band 5: 3 stations against 18) and the sim passes, but bands 1 and 2 stay contaminated, the clock wire is six times the dual control's and the census fails (section 5). Section 6 traces it to one event: MAJU00MHL re-acquires G08 at ignition, the per-signal re-entry bridges a signal that jumped with its partner, and the weakly held station level absorbs it; without that event the network is clean. R-1c (section 8) answers the re-entry rule and changes nothing; section 9's attribution shows MAJU's own rows carry centimetres and the move comes through the shared solution. L5 SEQUENCED: R-1d is the author's design call.
@@ -171,3 +171,56 @@ No existing screen sees the fault: it is absorbed into the station states before
 **Owed, both diagnostics-only extensions of the same readout:** (a) a dump of the anchored solve before the guard's withdrawal, which says whether MAJU's states have moved before the 20 satellites decouple; (b) the 260040 right-hand side evaluated under the 260010 operator, which separates the data change from the operator change.
 
 **Standing.** L5 SEQUENCED. The instrument narrows R-1d: a rule acting on MAJU's own code rows (a code screen, a code weight, a GFIF jump test) would not act on this event, since those rows carry centimetres; the firmer prior on the station level was probed already (section 8, 1 m: no change). What moves the station is the shared solution's response at the epoch. R-1d stays the author's design decision, with (a) and (b) as its next measurements.
+
+## 10. 2026-10-23: GPS L5 on the GPS + Galileo sim golden (2 h development check)
+
+The goldens moved after section 9: Galileo E1/E5a armed (card GAD, 2026-10-13) and the station parameter set owned by the network (card NOM step N6, merged 2026-10-20). This section re-runs the three-band postures of section 3 on the current sim golden, sim only, 2 h from 00:30:15, before any field arm.
+
+Exe `gnss_processor_l5s0.exe` (main `04517ca`, sha256 `1f41efd915d4aaf0`). Arms `runs/_rap_l5s_<arm>_s2`, made from `config/golden/golden_sim_refound.json` with `network.start_offset_hours` 0.504167; the three-band keys are those of section 3 (`processing.frequency_mode` triple, the GPS band-5 types C5Q, C5X, C5I, L5Q, L5X, L5I and their D and S types appended to `processing.signal_priorities.GPS`). Galileo stays on E1/E5a: its priority list has no E5b type, so the triple-mode target E5b is never formed. The fixture tracks C1C, L1C, C2W, L2W, C5Q and L5Q on every GPS satellite. A 12-epoch smoke of each arm (`runs/_rap_l5s_<arm>_sm`) preceded the 2 h runs.
+
+| arm | change against the golden | emitted / withheld | S-basis completions | GPS_IFB5 rows | SZZ000SIM 3D p50, hours 1 and 2 (m) | stations above 0.10 m, bands 1 / 2 / 5 | median abs mean, bands 1 / 2 / 5 (m) | wall (s) |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `ctl` | none | 241 / 0 | 0 | 0 | 0.099 0.033 | 0 / 1 / - | 0.023 / 0.018 / - | 262 |
+| `t0` | triple (the assertion stays) | 241 / 0 | 0 | 0 | 0.089 0.028 | 11 / 44 / 42 | 0.046 / 0.203 / 0.152 | 411 |
+| `t1` | triple + `network.sat_gf_extra_band_free` (B5D) | 241 / 0 | 0 | 0 | 0.099 0.037 | 0 / 0 / 1 | 0.023 / 0.022 / 0.023 | 415 |
+| `t1on` | `t1` + `network.estimate_rx_extra_band_code_delay` | 241 / 0 | 0 | 14 460 | 0.099 0.035 | 0 / 0 / 1 | 0.022 / 0.021 / 0.023 | 417 |
+
+Band offsets: `scripts/clock_level/band5_offsets.py`, GPS code rows, hour 2. The clock-datum dimension is 2, declared and realized, on every arm. Post-fit phase median per band (`scripts/rapid_arm.py score --pf`, both constellations pooled): control L1 2.1, L2 1.2, L5 1.2 mm; every three-band arm L1 2.4, L2 0.8, L5 1.2 mm. Warning types new against the control: the estimability listing of the weak GPS L5Q phase-bias directions (above the cutoff) on every three-band arm, and the held-seed warning of the receiver band-5 delay (60 stations) on `t0` and `t1`, where the knob is off.
+
+**Reading.**
+
+- The current golden carries GPS L5 on the sim at every posture: 241 of 241 epochs emitted, none withheld, no S-basis completion. Wall time is 1.6 times the dual control's.
+- The assertion posture (`t0`) is wrong on this bed as on the field (cards L5R, B5D): the band-5 satellite code bias pinned at T_GD leaves station-level band-5 offsets at 42 stations and moves them into band 2 (44 stations). Freeing it (`t1`) removes them: bands 1, 2 and 5 sit at the dual control's level.
+- The estimated receiver band-5 delay (`t1on`) is neutral on the sim, as section 1 predicts: L5 is tracked on every satellite at every station, so the held seed is never pruned and re-born. Its telemetry is live (GPS_IFB5 at 60 stations, every epoch).
+- The consumer moves by at most 0.010 m in either hour on any arm; at 2 h that is inside the ignition spread, not a verdict.
+
+**Standing.** On the sim, GPS L5 is stable on the current golden at posture `t1on` (this card's build). The sim certifies the algebra only (a quiet fixture: no slips, no gaps, L5 on every satellite), so the field event of sections 6 to 9 is not tested here, and R-1d stays the author's design decision. L5 SEQUENCED. Next step named by the author: all tracking channels on the sim (on this fixture, Galileo E5b as a third Galileo band).
+
+## 11. 2026-10-23: all tracking channels on the sim (GPS L1/L2/L5, Galileo E1/E5a/E5b; 2 h development check)
+
+The author's next step after section 10: posture `t1on` plus Galileo E5b, so each constellation tracks three bands under `processing.frequency_mode` triple (its targets: GPS L1, L2, L5; Galileo E1, E5a, E5b). On this fixture that is every tracked channel: C1C, L1C, C2W, L2W, C5Q, L5Q on GPS and C1C, L1C, C5Q, L5Q, C7Q, L7Q on Galileo, one channel per band. The arm `runs/_rap_l5s_all_s2` is `t1on` with C7Q, C7X, L7Q and L7X appended to `processing.signal_priorities.Galileo` (the Q and X pattern of the golden's E1 and E5a entries); same exe as section 10. A 12-epoch smoke (`runs/_rap_l5s_all_sm`) preceded it. The code paths of both knobs are generic over constellation and band (the receiver key `Galileo_IFB7`, the extra-band datum keyed by band digits), and no code changed.
+
+| arm | emitted / withheld | S-basis completions | receiver code-bias keys (rows each) | SZZ000SIM 3D p50, hours 1 and 2 (m) | median sigma0_pf by hour |
+| --- | --- | --- | --- | --- | --- |
+| `ctl` | 241 / 0 | 0 | GPS_DCB, Galileo_DCB (14 460) | 0.099 0.033 | 0.379 0.429 0.449 |
+| `t1on` | 241 / 0 | 0 | + GPS_IFB5 | 0.099 0.035 | 0.368 0.412 0.446 |
+| `all` | 241 / 0 | 0 | + GPS_IFB5, Galileo_IFB7 | 0.096 0.034 | 0.354 0.402 0.434 |
+
+Code offsets, hour 2 (stations with |mean| above 0.10 m, median |mean| in m; GPS by `scripts/clock_level/band5_offsets.py`, Galileo by the same computation on Galileo rows):
+
+| arm | GPS band 1 / 2 / 5 | Galileo band 1 / 5 / 7 |
+| --- | --- | --- |
+| `ctl` | 0 / 1 / -; 0.023 / 0.018 / - | 1 / 2 / -; 0.024 / 0.020 / - |
+| `t1on` | 0 / 0 / 1; 0.022 / 0.021 / 0.023 | 1 / 2 / -; 0.024 / 0.021 / - |
+| `all` | 0 / 0 / 1; 0.022 / 0.021 / 0.023 | 2 / 2 / 0; 0.026 / 0.025 / 0.017 |
+
+Post-fit phase median per band, both constellations pooled (`scripts/rapid_arm.py score --pf`): `ctl` L1 2.1, L2 1.2, L5 1.2 mm; `t1on` 2.4, 0.8, 1.2 mm; `all` 2.6, 0.8, 1.2 mm and L7 0.9 mm. The clock-datum dimension is 2, declared and realized. The phase-basis S-transform events grow with the number of phase signals (55, 71, 86), one per (satellite, signal), and are otherwise the same events. Warning types new against `t1on`: none at 2 h (the smoke's extra types, the prior-residual census's dispersion-branch note and an estimability listing, also appear on the 2 h `ctl` and `t1on` runs). The prior-residual census (a measurement only, wired to nothing) puts its worst |t| on a satellite code-bias row of the newest extra band on each arm (`t1on` G18 C5Q, `all` E13 C7Q, both at TOW 261150). Wall time is not compared: the section 10 arms ran four at a time and this one ran alone (409 s).
+
+**Reading.**
+
+- All tracking channels on the sim run stable on the current golden: every epoch emitted, none withheld, no completion, `Galileo_IFB7` estimated at 60 stations every epoch.
+- Galileo E5b's code rows are clean (no station above 0.10 m, median 0.017 m). The GPS bands are unchanged from `t1on` to the millimetre. Galileo E1 and E5a medians rise by 2 to 4 mm against the control, with 2 stations above 0.10 m on each band (control 1 and 2): within the spread of a 2 h arm, recorded rather than read.
+- The pooled band-1 phase residual grows with each added band (2.1, 2.4, 2.6 mm) while sigma0_pf falls; a third band adds redundancy per line of sight, so less of the band-1 phase noise is absorbed by the slant ionosphere and the ambiguities. A reading, not a measurement.
+- The consumer moves by at most 0.003 m against `t1on`; at 2 h that is no verdict.
+
+**Standing.** On the sim, the current golden carries every tracked channel (three bands on GPS and on Galileo) at posture `t1on` with no code change. What the sim does not test: the field's band-5 ignition event (sections 6 to 9; R-1d is the author's design decision), several channels per band (C1C with C1W, L2W with L2L, C5Q with C5X: the field's `channel_mode` question, absent from this fixture) and Galileo E5b on real receivers. L5 SEQUENCED.
