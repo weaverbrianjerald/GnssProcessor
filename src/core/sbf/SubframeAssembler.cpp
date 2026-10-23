@@ -166,18 +166,27 @@ std::optional<BroadcastEphemeris> SubframeAssembler::consumeGps(const RawNavMess
 std::optional<BroadcastEphemeris> SubframeAssembler::consumeGal(const RawNavMessage& msg, PerSat& sat) {
     if (msg.words.size() < 8) return std::nullopt;
 
-    // Pack the 256-bit page (even half 120 bits, odd half 120 bits, padding) and
-    // rebuild the 128-bit word: even-page data (page bits 2..113) followed by
-    // odd-page data (page bits 122..137).
+    // Pack the 234-bit page held in the eight NAVBits words and rebuild the
+    // 128-bit word.  Septentrio drops the 6 tail bits of the even page part, so
+    // the even part is page bits 0..113 (even/odd, page type, 112 data bits) and
+    // the odd part starts at bit 114 (even/odd, page type, then its 16 data bits
+    // at 116..131).  The CRC-24Q of the 196 protected bits (0..113 and 114..195)
+    // equals page bits 196..219 on every page of a real capture under this
+    // layout; with the odd part at 120 it matches none.  The word is the
+    // even-page data (page bits 2..113) followed by the odd-page data (116..131).
+    // Those last 16 bits carry the low bits of sqrt(A), IDOT, Crs, af1 and af2,
+    // so a wrong offset leaves the record self-consistent (IODnav lives in the
+    // even part) while its orbit is wrong by up to about 300 m.
     uint8_t page[32] = {0};
     for (int k = 0; k < 8; ++k) setbitu(page, 32 * k, 32, msg.words[k]);
     if (getbitu(page, 1, 1) != 0) return std::nullopt;       // alert page: skip
     const int wt = static_cast<int>(getbitu(page, 2, 6));
     if (wt > 5) return std::nullopt;                          // only word types 0..5 wanted
 
+    constexpr int kOddDataBit = 116;                          // 114 (odd part) + even/odd + page type
     uint8_t word[16] = {0};
-    for (int j = 0; j < 112; ++j) setbitu(word, j,        1, getbitu(page, 2 + j,   1));
-    for (int j = 0; j < 16;  ++j) setbitu(word, 112 + j,  1, getbitu(page, 122 + j, 1));
+    for (int j = 0; j < 112; ++j) setbitu(word, j,        1, getbitu(page, 2 + j,           1));
+    for (int j = 0; j < 16;  ++j) setbitu(word, 112 + j,  1, getbitu(page, kOddDataBit + j, 1));
     sat.slots[wt].assign(word, word + 16);
 
     if (!sat.slots.count(1) || !sat.slots.count(2) || !sat.slots.count(3) || !sat.slots.count(4))

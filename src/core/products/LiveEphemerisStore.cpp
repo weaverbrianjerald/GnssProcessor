@@ -109,7 +109,7 @@ double maxEphAgeForSystem(System s) {
 
 // Diagnostic: a receiver-assembled ephemeris and an IGS-stream ephemeris for the
 // same satellite at the same IODnav decode the same on-air data set, so every
-// orbital element is expected to be bit-identical.  When the source-priority gate
+// orbital and clock element is expected to be bit-identical.  When the source-priority gate
 // is about to ignore a receiver record that collides at the same IODnav with the
 // held IGS record, each element that differs beyond its tolerance is logged at
 // debug level, which localises a receiver-vs-network divergence to a specific
@@ -143,6 +143,10 @@ void logSameIodeEphDiff(const std::string& sat,
     cmp("cis",   a.cis,    b.cis,    1e-9);
     cmp("toe",   a.toe.tow,b.toe.tow,1.0);
     cmp("week",  static_cast<double>(a.toe.week), static_cast<double>(b.toe.week), 0.5);
+    cmp("toc",   a.toc.tow,b.toc.tow,1.0);
+    cmp("af0",   a.af0,    b.af0,    1e-12);
+    cmp("af1",   a.af1,    b.af1,    1e-15);
+    cmp("af2",   a.af2,    b.af2,    1e-20);
     const std::string s = d.str();
     if (!s.empty())
         lg->debug("EPH-SAME-IODE-DIFF {} iode {}: IGS vs receiver differ:{}", sat, igs.iode, s);

@@ -425,7 +425,9 @@ shortens the field loop 13.3 % and the sim loop 10.6 % at identical output; armi
 
 ### `realtime` — [topics/realtime.md](topics/realtime.md)
 
-_No split cards yet — the topic page and the standing documents below are the whole of it._
+| card | one line | status | last dated |
+| --- | --- | --- | --- |
+| [INAV-ODD](cards/realtime/INAV-ODD-PAGE.md) | live E23 poisoning: SBF I/NAV odd-page data read 6 bits late (orbit off up to ~300 m); fixed, tested on the receiver's GALNav | closed | 2026-10-23 |
 
 Standing documents (not split this pass):
 
