@@ -49,6 +49,7 @@
 #include "realtime/InnovationScreen.hpp"     // Consumer pre-update innovation screen
 #include "realtime/PbStepTranslateLedger.hpp"  // Every-step ambiguity translation ledger
 #include "realtime/PbHoldLedger.hpp"         // Held phase-bias generation ledger
+#include "realtime/EphemerisJumpLedger.hpp"  // Last-used broadcast record per satellite, range-jump test
 #include "realtime/ConsumerSatTrace.hpp"     // Per-satellite consumer readout row
 #include "realtime/EpochCadence.hpp"         // Measured epoch spacing, source of the default data-gap threshold
 #include <Eigen/Dense>
@@ -620,6 +621,7 @@ private:
     friend struct PbHoldPresenceTestAccess;  ///< Drives the phase-bias reactions across a held key's presence edges.
     friend struct RealtimeDefectTestAccess;  ///< Drives the gap detection and the staged snapshot restore.
     friend struct InnovationScreenTestAccess;  ///< Drives the innovation screen on a hand-built measurement.
+    friend struct EphemerisJumpTestAccess;  ///< Drives the broadcast-baseline jump response over a real StateManager.
     /// Convert GPS-scale time to UTC-scale time.
     static GnssTime gpsToUtcTime(const GnssTime& gps_time);
 
@@ -929,6 +931,52 @@ private:
      * rows stay as they were.  No-op when unarmed.
      */
     void reactToDeclaredLevelSteps_(RtEpochContext& ctx);
+    /**
+     * @brief Answer a broadcast-baseline jump (processing.ephemeris_jump_reseed).
+     *
+     * For each satellite of this epoch whose orbit came from the live broadcast store
+     * (@c PppObservation::live_orbit; an SP3-modelled satellite is not tested), the
+     * broadcast record its geometry uses (the selection @c Geometry makes: the version
+     * matching the SSR orbit IOD when held) is handed to @ref eph_jump_.  A change of the record's orbit or clock content is
+     * logged with both sources and the modelled-range change Δρ.  When |Δρ| exceeds
+     * the threshold, the states that absorbed the old record's range are re-seeded
+     * (@ref reseedAfterEphemerisJump_): the satellite itself, or, when it is a
+     * between-satellite pivot, every other satellite of its constellation, whose
+     * single-differenced states all carry the pivot's range.  Runs before the
+     * measurement update, so this epoch's rows re-determine the states.  No-op when
+     * unarmed.
+     */
+    void reactToEphemerisJumps_(RtEpochContext& ctx);
+    /**
+     * @brief Re-seed one satellite's states after a broadcast-baseline jump.
+     *
+     * Ionosphere (and its rate) and satellite-bias variances are raised to at least
+     * the jump's square, and every ambiguity of the satellite is reset at a standard
+     * deviation of at least the jump (pending a geometry seed).  The state values are
+     * kept: with the raised variance the next update moves them to what the new record
+     * explains.  States that do not exist are skipped by the primitives.
+     *
+     * @param sat    Satellite id.
+     * @param jump_m |Δρ| of the jump (m).
+     * @return The number of ambiguities reset.
+     */
+    int reseedAfterEphemerisJump_(const std::string& sat, double jump_m);
+    /**
+     * @brief The satellites whose states a jump of @p sat re-seeds.
+     *
+     * @p sat alone, unless it is its constellation's between-satellite pivot: then
+     * every satellite of that constellation in @p state_sats except the pivot.
+     *
+     * @param sat        The satellite whose record jumped.
+     * @param is_pivot   @p sat is the pivot of its constellation.
+     * @param state_sats Satellites holding any state (ionosphere, satellite bias or
+     *                   ambiguity) this epoch.
+     * @return The satellites to re-seed.
+     */
+    static std::set<std::string> ephemerisJumpTargets(const std::string& sat, bool is_pivot,
+                                                      const std::set<std::string>& state_sats);
+    /// The broadcast-baseline jump counters at run end (silent unless armed).
+    void logEphemerisJumpSummary_(const char* tag) const;
 public:
     /**
      * @brief The inter-system biases to re-inflate on a clock re-reference.
@@ -1143,6 +1191,14 @@ private:
     long long level_step_refused_{ 0 };    ///< …refused: no ionosphere state, a frozen row, or no ambiguity
     double    level_step_sigma_sum_{ 0.0 };///< sum of the answered sigmas (m)
     double    level_step_sigma_max_{ 0.0 };///< largest answered sigma (m)
+
+    /// The broadcast record each satellite used last and the range-jump test
+    /// (@ref reactToEphemerisJumps_), with its response counters.  Not part of the RT
+    /// snapshot: after a restore, each satellite's first record is a first sighting.
+    EphemerisJumpLedger eph_jump_;
+    long long eph_jump_pivot_{ 0 };        ///< jumps of a between-satellite pivot
+    long long eph_jump_reseeded_sats_{ 0 };///< satellites re-seeded (a pivot jump counts each)
+    long long eph_jump_amb_resets_{ 0 };   ///< ambiguities reset by those re-seeds
 
     /// When true, AR ignores the MW WL feed and runs pure MLAMBDA on the KF float
     /// (closed-loop network-phase-bias validation; see setArIgnoreMwWl).

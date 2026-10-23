@@ -208,6 +208,57 @@ public:
      */
     static int ssrIode(const BroadcastEphemeris& eph);
 
+    /// A held record together with the stream it came from.
+    struct SelectedRecord {
+        BroadcastEphemeris eph;            ///< The record, copied out of the store.
+        bool               from_igs{true}; ///< True: a dedicated IGS broadcast-nav stream; false: the receiver's own nav.
+    };
+
+    /**
+     * @brief The record @ref computeSatellitePV uses for @p sat at @p time, with its source.
+     *
+     * The same selection (the version matching @p ssr_iode when held, otherwise the
+     * record whose toe is closest to @p time) and the same fit-window guard, so a
+     * record the orbit query would reject is not reported.  No logging.
+     *
+     * @param sat      Satellite identifier (e.g. "E23").
+     * @param time     Query epoch (GPS time scale).
+     * @param ssr_iode SSR-convention IODE of the orbit correction to be applied, or -1.
+     * @return The record and its source, or @c std::nullopt when none is held or the
+     *         selected one is beyond its fit window.
+     */
+    std::optional<SelectedRecord> selectedRecord(const std::string& sat, const GnssTime& time,
+                                                 int ssr_iode = -1) const;
+
+    /// A record's satellite state at one epoch.
+    struct RecordState {
+        Eigen::Vector3d position{Eigen::Vector3d::Zero()};  ///< ECEF position [m].
+        double          clock_bias_s{0.0};                  ///< Broadcast SV clock bias [s], as @ref computeSatelliteClock reports it.
+    };
+
+    /**
+     * @brief Evaluate one record at @p time: position and broadcast clock bias.
+     *
+     * The orbit and clock models of @ref computeSatellitePV and
+     * @ref computeSatelliteClock applied to a record the caller holds, with no store
+     * access and no fit-window guard (see @ref withinFitWindow).
+     *
+     * @param eph  The record.
+     * @param time Evaluation epoch (GPS time scale).
+     * @return The state, or @c std::nullopt when the orbit model yields no usable position.
+     */
+    static std::optional<RecordState> evaluateRecord(const BroadcastEphemeris& eph,
+                                                     const GnssTime& time);
+
+    /**
+     * @brief Whether @p time lies within the record's usable fit window, the limit the
+     *        store's queries apply (|time − toe| at most the per-system maximum age).
+     * @param eph  The record.
+     * @param time Query epoch (GPS time scale).
+     * @return True when the record may be evaluated at @p time.
+     */
+    static bool withinFitWindow(const BroadcastEphemeris& eph, const GnssTime& time);
+
     /// True iff no ephemeris has been inserted.
     bool isEmpty() const;
 
@@ -237,7 +288,13 @@ private:
         /// by insert() so a receiver record replaces an IGS one only when its toe
         /// is at least 1800 s newer.
         bool                              current_from_igs{true};
+        /// The source of @c previous, carried over from @c current_from_igs when the
+        /// current record is demoted.
+        bool                              previous_from_igs{true};
     };
+
+    /// Broadcast SV clock bias of a Keplerian or GLONASS record at @p time [s].
+    static double clockBias(const BroadcastEphemeris& eph, const GnssTime& time);
 
     /// Pick current vs previous by reference-epoch proximity to @p time.
     static const BroadcastEphemeris& pick(const SatRecord& rec, const GnssTime& time);

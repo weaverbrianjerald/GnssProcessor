@@ -10,6 +10,9 @@
  *     Doppler, CN0 with the +10 offset rule).
  *   - SbfParser GPSNav (5891): Keplerian decode (semicircle→radian) and an
  *     end-to-end circular-orbit position via LiveEphemerisStore.
+ *   - SubframeAssembler Galileo I/NAV (GALRawINAV 4023): the page layout (the
+ *     CRC-24Q places the odd part at bit 114) and a real-capture word set
+ *     assembled to the receiver's own GALNav (4002) values.
  *
  * Synthetic blocks are built with correct CRCs by buildSbfBlock().  As with
  * the RTCM tests these validate the decoder against the SBF spec, not against
@@ -26,8 +29,11 @@
 #include "products/LiveEphemerisStore.hpp"
 #include "common/Constants.hpp"
 
+#include <cmath>
 #include <cstring>
 #include <cstdint>
+#include <iterator>
+#include <optional>
 #include <vector>
 
 namespace GnssProcessor {
@@ -409,6 +415,117 @@ TEST(SubframeAssemblerTest, IncompleteSetReturnsNullopt) {
     // A message whose CRC failed is ignored entirely.
     m.crc_passed = false;
     EXPECT_FALSE(a.consume(m).has_value());
+}
+
+// ============================================================================
+// Galileo I/NAV assembly (GALRawINAV 4023): real capture pages.
+//
+// The four pages below are word types 1..4 of E04, IODnav 51, from the rooftop
+// SBF capture data/sbf/covl1452.26_ (2026 DOY 145, WNc 2420), alternating
+// E1-B (source 17) and E5b-I (source 21) pages as the receiver logged them.
+// The expected values are the receiver's own GALNav (4002, I/NAV source) block
+// for the same IODnav, so the test checks the assembler against the receiver,
+// not against the assembler's own reading of the layout.
+// ============================================================================
+namespace {
+struct InavPage { uint32_t tow_ms; uint32_t words[8]; };
+const InavPage kE04Iod51[4] = {
+    {108002000u, {0x010CC6F4u, 0x569862B7u, 0x003590B1u, 0xAA04E713u,
+                  0xF0000000u, 0x000AAAAAu, 0xA605900Fu, 0xD0000000u}},   // word type 1
+    {108003000u, {0x020CE724u, 0x39DE09DCu, 0xF1ED3A57u, 0xC3062046u,
+                  0x992C8CFBu, 0x46AAAAAAu, 0x9A473E70u, 0x40000000u}},   // word type 2
+    {108004000u, {0x030CFFEFu, 0xFF8939FEu, 0xD9427247u, 0x777EA466u,
+                  0xB0000000u, 0x000AAAAAu, 0xA154A4BFu, 0xD0000000u}},   // word type 3
+    {108005000u, {0x040CC4FFu, 0xF100231Bu, 0xD3FEB850u, 0x5FFF68C0u,
+                  0x1428CF0Cu, 0xF74AAAAAu, 0x94FE30B2u, 0xB0000000u}},   // word type 4
+};
+
+// Bit k (MSB first) of the 256-bit page held in eight words.
+int pageBit(const uint32_t (&w)[8], int k) { return (w[k / 32] >> (31 - k % 32)) & 1; }
+
+// CRC-24Q (poly 0x1864CFB, init 0) over page bits [first, first + n).
+uint32_t crc24qBits(const uint32_t (&w)[8], int first, int n) {
+    uint32_t crc = 0;
+    for (int k = first; k < first + n; ++k) {
+        const uint32_t top = (crc >> 23) & 1u;
+        crc = (crc << 1) & 0xFFFFFFu;
+        if (top ^ static_cast<uint32_t>(pageBit(w, k))) crc ^= 0x864CFBu;
+    }
+    return crc;
+}
+uint32_t pageField(const uint32_t (&w)[8], int first, int n) {
+    uint32_t v = 0;
+    for (int k = first; k < first + n; ++k) v = (v << 1) | static_cast<uint32_t>(pageBit(w, k));
+    return v;
+}
+} // namespace
+
+TEST(SubframeAssemblerTest, GalileoInavCrcPlacesOddPartAtBit114) {
+    // The NAVBits page is 234 bits: the even part without its 6 tail bits
+    // (0..113), then the odd part (114..233).  The CRC-24Q protects the 196 bits
+    // 0..195 and sits at 196..219; the layout with the odd part at bit 120
+    // (tail bits kept) does not reproduce it.
+    for (const auto& p : kE04Iod51) {
+        EXPECT_EQ(crc24qBits(p.words, 0, 196), pageField(p.words, 196, 24));
+        const uint32_t crc_if_120 = [&] {
+            uint32_t w2[8] = {};   // bits 0..113 then 120..201, packed contiguously
+            for (int k = 0; k < 196; ++k) {
+                const int src = (k < 114) ? k : k + 6;
+                if (pageBit(p.words, src)) w2[k / 32] |= 1u << (31 - k % 32);
+            }
+            return crc24qBits(w2, 0, 196);
+        }();
+        EXPECT_NE(crc_if_120, pageField(p.words, 202, 24));
+    }
+}
+
+TEST(SubframeAssemblerTest, GalileoInavMatchesReceiverGalNav) {
+    SubframeAssembler a;
+    std::optional<BroadcastEphemeris> eph;
+    for (const auto& p : kE04Iod51) {
+        RawNavMessage m;
+        m.sat = "E04";
+        m.system = System::Galileo;
+        m.crc_passed = true;
+        m.wnc = 2420;
+        m.tow_s = p.tow_ms * 1e-3;
+        m.words.assign(std::begin(p.words), std::end(p.words));
+        ASSERT_FALSE(eph.has_value()) << "set completed before word type 4";
+        eph = a.consume(m);
+    }
+    ASSERT_TRUE(eph.has_value());
+    EXPECT_EQ(eph->satellite, "E04");
+    EXPECT_EQ(eph->iode, 51);
+
+    // GALNav values (angles in semicircles, as the receiver writes them).  Every
+    // field is an exact multiple of its broadcast LSB, so agreement is exact up
+    // to the semicircle-to-radian product.
+    const double pi = Constants::PI;
+    const KeplerianEphemeris& k = eph->kepler;
+    auto same = [](const char* name, double got, double want) {
+        EXPECT_NEAR(got, want, 1e-12 * std::abs(want) + 1e-30) << name;
+    };
+    same("sqrtA",    k.sqrt_a,    5440.607572555542);
+    same("e",        k.e,         0.00040867005009204149);
+    same("m0",       k.m0,        0.67652543960139155 * pi);
+    same("i0",       k.i0,        0.30822082795202732 * pi);
+    same("omega",    k.omega,     -0.1767868883907795 * pi);
+    same("omega0",   k.omega0,    -0.77682787552475929 * pi);
+    same("omegadot", k.omega_dot, -1.8628725229064003e-09 * pi);
+    same("idot",     k.idot,      3.205968823749572e-11 * pi);
+    same("dn",       k.delta_n,   1.0739995559561066e-09 * pi);
+    same("cuc",      k.cuc,       -2.1960586309432983e-06);
+    same("cus",      k.cus,       4.6659260988235474e-06);
+    same("crc",      k.crc,       238.90625);
+    same("crs",      k.crs,       -45.8125);
+    same("cic",      k.cic,       -2.7939677238464355e-08);
+    same("cis",      k.cis,       6.5192580223083496e-08);
+    same("af0",      k.af0,       -0.00015625293599441648);
+    same("af1",      k.af1,       -8.9244167611468583e-12);
+    same("af2",      k.af2,       0.0);
+    EXPECT_EQ(k.toe.week, 2420);
+    EXPECT_DOUBLE_EQ(k.toe.tow, 106800.0);
+    EXPECT_DOUBLE_EQ(k.toc.tow, 106800.0);
 }
 
 } // namespace

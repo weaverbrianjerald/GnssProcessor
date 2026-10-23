@@ -760,6 +760,26 @@ namespace GnssProcessor {
         ///        (@c processing.ssr_level_step_inflate_k, default 1).
         /// @return the scale (positive).
         double ssrLevelStepInflateK() const { return ssr_level_step_inflate_k_; }
+        /**
+         * @brief Re-seed a satellite whose broadcast baseline jumps
+         *        (@c processing.ephemeris_jump_reseed, real-time engine).
+         *
+         * When the broadcast record a satellite's geometry uses changes and the two
+         * records disagree on the modelled range by more than
+         * @ref ephemerisJumpThresholdM, the satellite's ionosphere and satellite-bias
+         * variances are raised to cover the jump and its ambiguities are reset, so the
+         * next update re-determines what the states absorbed under the old record.  A
+         * jump of a between-satellite pivot re-seeds every other satellite of its
+         * constellation.  Every record change and source switch is logged and counted.
+         * See @c RealTimeEngine::reactToEphemerisJumps_.  Default false: nothing is
+         * measured or written (byte-identical).
+         * @return true when armed.
+         */
+        bool ephemerisJumpReseed() const { return ephemeris_jump_reseed_; }
+        /// @brief The modelled-range change above which a record change is a jump
+        ///        (@c processing.ephemeris_jump_threshold_m, default 10 m).
+        /// @return the threshold in metres (positive).
+        double ephemerisJumpThresholdM() const { return ephemeris_jump_threshold_m_; }
 
         /// @brief Dead band of @ref ssrPhaseBiasStepTranslate: a
         ///        step at or below this magnitude (m) is left for the filter to
@@ -8498,6 +8518,8 @@ namespace GnssProcessor {
         bool   ssr_phase_bias_disc_carry_{ false };       ///< Carry the float ambiguity across a declared phase-bias step (amb − Δ, value-only) instead of resetting it; off = the existing reset path (byte-identical).  Set directly (processing.ssr_phase_bias_disc_carry) or derived from network.closed_loop.pb_disc_carry.
         bool   ssr_level_step_inflate_{ false };      ///< Raise the variance along a stepped satellite's phase-blind ionosphere-ambiguity direction by its declared code-level step (C and B record lvl=). OFF = byte-identical.  Set directly (processing.ssr_level_step_inflate) or derived from network.closed_loop.level_step_inflate.
         double ssr_level_step_inflate_k_{ 1.0 };      ///< The inflation's standard deviation over the declared code step.
+        bool   ephemeris_jump_reseed_{ false };       ///< Re-seed a satellite whose broadcast record change moves its modelled range by more than the threshold (processing.ephemeris_jump_reseed). OFF = byte-identical.
+        double ephemeris_jump_threshold_m_{ 10.0 };   ///< That threshold (m, processing.ephemeris_jump_threshold_m).
         bool   ssr_phase_bias_step_translate_{ false };   ///< Translate the float ambiguity by −Δ on every change in the applied phase bias, declared or not (covers undeclared steps and empty declarations in one rule, see EV6 and CST §7.1); off = the existing reset / declared-step carry path (byte-identical).  Set directly (processing.ssr_phase_bias_step_translate) or derived from network.closed_loop.pb_step_translate.  When on it replaces both reactions ⇒ a declared step is translated exactly once.
         double ssr_phase_bias_step_translate_eps_m_{ 0.005 }; ///< Dead band of the step translation (m): at or below it nothing is written and the filter absorbs the move as noise.  processing.ssr_phase_bias_step_translate_eps_m / network.closed_loop.pb_step_translate_eps_m.
         bool   ssr_pb_hold_presence_flip_{ false };        ///< A held phase bias's presence edge (it appears on, or leaves, a row already in use) takes the A5 reaction of an unheld key instead of none; off = the phase-bias-hold dispatch, byte-identical.  processing.ssr_pb_hold_presence_flip / network.closed_loop.pb_hold_presence_flip.
