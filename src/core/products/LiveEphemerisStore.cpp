@@ -260,6 +260,7 @@ void LiveEphemerisStore::insert(const BroadcastEphemeris& eph, bool from_igs) {
                       eph.satellite, it->second.current.iode, eph.iode,
                       it->second.current.kepler.toe.tow, eph.kepler.toe.tow);
         it->second.previous = it->second.current;
+        it->second.previous_from_igs = it->second.current_from_igs;
     }
     it->second.current = eph;
     it->second.current_from_igs = from_igs;
@@ -275,7 +276,10 @@ void LiveEphemerisStore::insertTransmitted(const BroadcastEphemeris& eph) {
     }
     // Transmission order is authoritative: no freshest-toe test, and the
     // replaced record is kept as "previous" on an IODE change, as insert() does.
-    if (it->second.current.iode != eph.iode) it->second.previous = it->second.current;
+    if (it->second.current.iode != eph.iode) {
+        it->second.previous = it->second.current;
+        it->second.previous_from_igs = it->second.current_from_igs;
+    }
     it->second.current = eph;
     it->second.current_from_igs = true;
 }
@@ -528,7 +532,11 @@ LiveEphemerisStore::computeSatelliteClock(const std::string& sat, const GnssTime
 
     SatelliteClock out;
     out.iode = ssrMatchIode(eph);   // IGS-SSR matching convention (see helper)
+    out.bias = clockBias(eph, time);
+    return out;
+}
 
+double LiveEphemerisStore::clockBias(const BroadcastEphemeris& eph, const GnssTime& time) {
     if (eph.system == System::GLONASS) {
         // GLONASS broadcast clock: Δt = −τ_n + γ_n·(t − t_b), with the raw RTCM
         // 1020 τ_n (DF123) / γ_n (DF120) and t_b = toe.  (GLONASS is currently
@@ -536,8 +544,7 @@ LiveEphemerisStore::computeSatelliteClock(const std::string& sat, const GnssTime
         // completeness but not exercised by the live replay.)
         const double tk = normalizeTk(continuousSeconds(time)
                                     - continuousSeconds(eph.glonass.toe));
-        out.bias = -eph.glonass.tau_n + eph.glonass.gamma_n * tk;
-        return out;
+        return -eph.glonass.tau_n + eph.glonass.gamma_n * tk;
     }
 
     // Keplerian (GPS / Galileo / BeiDou / QZSS): af0 + af1·dt + af2·dt², with
@@ -548,8 +555,43 @@ LiveEphemerisStore::computeSatelliteClock(const std::string& sat, const GnssTime
     double q = continuousSeconds(time);
     if (eph.system == System::BeiDou) q -= kBdtToGpsOffsetSec;
     const double dt = normalizeTk(q - continuousSeconds(k.toc));
-    out.bias = k.af0 + k.af1 * dt + k.af2 * dt * dt;
+    return k.af0 + k.af1 * dt + k.af2 * dt * dt;
+}
+
+// ---------------------------------------------------------------------------
+// One record, held by the caller
+// ---------------------------------------------------------------------------
+
+std::optional<LiveEphemerisStore::SelectedRecord>
+LiveEphemerisStore::selectedRecord(const std::string& sat, const GnssTime& time,
+                                   int ssr_iode) const {
+    SelectedRecord out;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto it = by_sat_.find(sat);
+        if (it == by_sat_.end()) return std::nullopt;
+        const BroadcastEphemeris& picked = pickForSsr(it->second, time, ssr_iode);
+        out.eph      = picked;
+        out.from_igs = (&picked == &it->second.current) ? it->second.current_from_igs
+                                                        : it->second.previous_from_igs;
+    }
+    if (!withinFitWindow(out.eph, time)) return std::nullopt;
     return out;
+}
+
+std::optional<LiveEphemerisStore::RecordState>
+LiveEphemerisStore::evaluateRecord(const BroadcastEphemeris& eph, const GnssTime& time) {
+    RecordState out;
+    out.position = (eph.system == System::GLONASS) ? glonassState(eph, time).position
+                                                   : keplerPosition(eph, time);
+    if (out.position.squaredNorm() < 1.0) return std::nullopt;
+    out.clock_bias_s = clockBias(eph, time);
+    return out;
+}
+
+bool LiveEphemerisStore::withinFitWindow(const BroadcastEphemeris& eph, const GnssTime& time) {
+    const double age = continuousSeconds(time) - toeGpsContinuous(eph);
+    return std::isfinite(age) && std::abs(age) <= maxEphAgeForSystem(eph.system);
 }
 
 std::optional<double>

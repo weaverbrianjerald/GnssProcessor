@@ -1097,6 +1097,9 @@ std::vector<std::string> activeFrequencyBands(
             // the broadcast extrapolation magnitude.
             if (auto age = LiveEphemerisStore::getInstance().toeAgeSeconds(obs.satellite, obs.time))
                 ppp_obs.eph_toe_age_s = *age;
+            // Whether the orbit came from the live broadcast store, for the real-time
+            // broadcast-baseline jump response (recorded only while it is armed).
+            ppp_obs.live_orbit = geometry_.liveOrbitUsed(obs.satellite);
             if (geom.broadcast_only && !broadcast_phase_gate_suppressed_) {
                 for (std::map<std::string, double>* m :
                          { &ppp_obs.observed, &ppp_obs.modeled,

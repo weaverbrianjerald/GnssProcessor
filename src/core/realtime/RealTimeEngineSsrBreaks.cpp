@@ -6,7 +6,9 @@
  * (reactToGenerationChange, logProducerStatus, resetOnPhaseBiasDisc,
  * reinflateOnCodeBiasDisc, reinflateOnClockDisc); the file also holds the
  * declared-roster consumer and the hold, carry and translate variants that
- * resetOnPhaseBiasDisc dispatches.
+ * resetOnPhaseBiasDisc dispatches.  The broadcast-baseline jump response
+ * (reactToEphemerisJumps_) sits here too: it answers a change of the broadcast
+ * record under the SSR rather than a step of the SSR itself.
  *
  * Order matters: reactToGenerationChange applies the union of the
  * finer-grained reactions globally (a producer restart re-realizes every
@@ -1044,6 +1046,133 @@ void RealTimeEngine::reactToDeclaredLevelSteps_(RtEpochContext& ctx) {
         for (const auto& [i, ci] : v)
             for (const auto& [j, cj] : v) P(i, j) += var * ci * cj;
     state_manager_->setCovariance(P);
+}
+
+// ---------------------------------------------------------------------------
+// Broadcast-baseline jumps
+// ---------------------------------------------------------------------------
+
+void RealTimeEngine::reactToEphemerisJumps_(RtEpochContext& ctx) {
+    if (!config_.ephemerisJumpReseed() || !state_manager_) return;
+    const auto& store = LiveEphemerisStore::getInstance();
+    if (store.isEmpty()) return;
+    auto log = log_manager_.getLogger("rt_engine");
+    eph_jump_.setThreshold(config_.ephemerisJumpThresholdM());
+
+    // The pivot of each constellation under between-satellite differencing.
+    const std::map<std::string, std::string> no_pivots;
+    const auto& pivots = (config_.enableBetweenSatelliteSd() && meas_model_)
+                       ? meas_model_->getBssdPivotSatellites() : no_pivots;
+    auto source = [](bool from_igs) { return from_igs ? "IGS stream" : "receiver"; };
+
+    const double ssr_max_age = config_.getSsrMaxAge();
+    std::vector<EphemerisJumpLedger::Event> jumps;
+    for (const auto& obs : ctx.modeled_obs) {
+        // A broadcast record moves the modelled range only when the orbit came from
+        // it; a satellite modelled from an SP3 this epoch is not tested.
+        if (!obs.live_orbit) continue;
+        // The record Geometry's broadcast fallback selects: the version the SSR orbit
+        // correction names when one is held, otherwise the closest toe.
+        const auto ssr = ssrStore().getOrbitClock(obs.satellite, ctx.current_time, ssr_max_age);
+        const int ssr_iode = (ssr && ssr->has_orbit) ? ssr->iode : -1;
+        const auto rec = store.selectedRecord(obs.satellite, ctx.current_time, ssr_iode);
+        if (!rec) continue;
+        const auto ev = eph_jump_.observe(obs.satellite, *rec, ctx.current_time,
+                                          ppp_state_.position);
+        if (!ev) continue;
+        if (ev->jump) {
+            jumps.push_back(*ev);
+        } else if (!ev->decided) {
+            log->info("{}EPH-CHANGE {}: {} record iode {} -> {} record iode {}: the old record "
+                      "is not evaluable at this epoch, so the change is not tested",
+                      ctx.epoch_prefix, ev->satellite, source(ev->old_from_igs), ev->old_iode,
+                      source(ev->new_from_igs), ev->new_iode);
+        } else if (ev->sourceSwitched()) {
+            log->info("{}EPH-SOURCE-SWITCH {}: {} record iode {} -> {} record iode {}, "
+                      "modelled range {:+.3f} m",
+                      ctx.epoch_prefix, ev->satellite, source(ev->old_from_igs), ev->old_iode,
+                      source(ev->new_from_igs), ev->new_iode, ev->range_jump_m);
+        } else {
+            log->debug("{}EPH-CHANGE {}: iode {} -> {}, modelled range {:+.3f} m",
+                       ctx.epoch_prefix, ev->satellite, ev->old_iode, ev->new_iode,
+                       ev->range_jump_m);
+        }
+    }
+    if (jumps.empty()) return;
+
+    // Every satellite holding a state this epoch, for the pivot case.
+    std::set<std::string> state_sats;
+    for (const auto& kv : state_manager_->getIonosphereStates()) state_sats.insert(kv.first);
+    for (const auto& kv : state_manager_->getSatBiasStates())
+        state_sats.insert(kv.first.substr(0, kv.first.find('|')));
+    for (const auto& kv : state_manager_->getAmbiguities())
+        state_sats.insert(kv.first.substr(0, kv.first.find('_')));
+
+    for (const auto& ev : jumps) {
+        const std::string cons = PppUtils::getSystemString(ev.satellite);
+        const auto pit = pivots.find(cons);
+        const bool is_pivot = pit != pivots.end() && pit->second == ev.satellite;
+        if (is_pivot) ++eph_jump_pivot_;
+        const std::set<std::string> targets =
+            ephemerisJumpTargets(ev.satellite, is_pivot, state_sats);
+        int n_amb = 0;
+        std::string names;
+        for (const std::string& sat : targets) {
+            n_amb += reseedAfterEphemerisJump_(sat, std::abs(ev.range_jump_m));
+            noteConsumerSatEvent_(sat + "|EPH", "eph_jump_reseed");
+            if (!names.empty()) names += ",";
+            names += sat;
+        }
+        log->warn("{}EPH-JUMP {}: {} record iode {} -> {} record iode {} moves the modelled "
+                  "range by {:+.3f} m (threshold {:.1f} m): re-seeded {}{} ({} ambiguities "
+                  "reset)",
+                  ctx.epoch_prefix, ev.satellite, source(ev.old_from_igs), ev.old_iode,
+                  source(ev.new_from_igs), ev.new_iode, ev.range_jump_m, eph_jump_.threshold(),
+                  is_pivot ? fmt::format("the {} pivot's partners ", cons) : std::string(),
+                  names.empty() ? std::string("nothing (no state)") : names, n_amb);
+    }
+}
+
+int RealTimeEngine::reseedAfterEphemerisJump_(const std::string& sat, double jump_m) {
+    const double var = jump_m * jump_m;
+    state_manager_->reinflateIonosphereVariance(sat, var);
+    // Constant-velocity model: decorrelate the companion rate too (no-op unless the
+    // ionosphere rate is estimated; 0.0 selects its initial variance).
+    state_manager_->reinflateIonosphereRateVariance(sat, 0.0);
+    state_manager_->reinflateSatBiasVariancesForSat(sat, var);
+    std::vector<std::string> amb_keys;   // copy: resetAmbiguity may touch the map
+    for (const auto& kv : state_manager_->getAmbiguities())
+        if (kv.first.substr(0, kv.first.find('_')) == sat) amb_keys.push_back(kv.first);
+    const double amb_std = std::max(config_.getAmbiguityStd(), jump_m);
+    int n = 0;
+    for (const auto& k : amb_keys)
+        if (state_manager_->resetAmbiguity(k, amb_std)) ++n;
+    ++eph_jump_reseeded_sats_;
+    eph_jump_amb_resets_ += n;
+    return n;
+}
+
+std::set<std::string> RealTimeEngine::ephemerisJumpTargets(
+        const std::string& sat, bool is_pivot, const std::set<std::string>& state_sats) {
+    if (!is_pivot) return { sat };
+    const std::string cons = PppUtils::getSystemString(sat);
+    std::set<std::string> out;
+    for (const std::string& s : state_sats)
+        if (s != sat && PppUtils::getSystemString(s) == cons) out.insert(s);
+    return out;
+}
+
+void RealTimeEngine::logEphemerisJumpSummary_(const char* tag) const {
+    if (!config_.ephemerisJumpReseed()) return;
+    const auto& c = eph_jump_.counters();
+    log_manager_.getLogger("rt_engine")->info(
+        "[RT] broadcast-baseline jumps ({}): {} record change(s), {} source switch(es); "
+        "{} below {:.1f} m, {} undecided, {} jump(s) ({} of a pivot); {} satellite re-seed(s), "
+        "{} ambiguity reset(s); largest |range change| {:.3f} m{}{}; closure {}.",
+        tag, c.record_changes, c.source_switches, c.below_threshold, eph_jump_.threshold(),
+        c.undecided, c.jumps, eph_jump_pivot_, eph_jump_reseeded_sats_, eph_jump_amb_resets_,
+        c.max_abs_jump_m, c.max_jump_satellite.empty() ? "" : " on ",
+        c.max_jump_satellite, c.closureHolds() ? "holds" : "BROKEN");
 }
 
 std::set<std::string> RealTimeEngine::isbReinflationSet(

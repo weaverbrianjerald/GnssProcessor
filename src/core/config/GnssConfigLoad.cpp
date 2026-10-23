@@ -717,6 +717,23 @@ namespace GnssProcessor {
                       ssr_level_step_inflate_k_);
             ssr_level_step_inflate_k_ = 1.0;
         }
+        // The real-time engine's response to a broadcast-baseline jump.  Default
+        // false measures and writes nothing (byte-identical).
+        ephemeris_jump_reseed_ = jval<bool>(json, "processing.ephemeris_jump_reseed",
+                                            "ephemeris_jump_reseed", false);
+        ephemeris_jump_threshold_m_ = jval<double>(json, "processing.ephemeris_jump_threshold_m",
+                                                   "ephemeris_jump_threshold_m", 10.0);
+        if (!(ephemeris_jump_threshold_m_ > 0.0)) {
+            log->warn("processing.ephemeris_jump_threshold_m = {} is not positive; using 10",
+                      ephemeris_jump_threshold_m_);
+            ephemeris_jump_threshold_m_ = 10.0;
+        }
+        if (ephemeris_jump_reseed_)
+            log->info("Broadcast-baseline jump response ON: a satellite whose broadcast "
+                      "record change moves its modelled range by more than {:.1f} m is "
+                      "re-seeded (ionosphere and satellite-bias variance raised to the jump, "
+                      "ambiguities reset); every record change and source switch is logged.",
+                      ephemeris_jump_threshold_m_);
         // Consumer ambiguity level re-validation: the re-coupling edge (invariant #7)
         // of the declared-step carry and the step translation.  Default
         // false measures and writes nothing (byte-identical).  The closed-loop

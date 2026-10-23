@@ -236,6 +236,7 @@ add_library(gnss_core STATIC
     src/core/realtime/RtStateSnapshot.cpp
     src/core/realtime/PbDiscCarryLedger.cpp
     src/core/realtime/PbStepTranslateLedger.cpp
+    src/core/realtime/EphemerisJumpLedger.cpp
     src/core/realtime/AmbLevelCheck.cpp
     src/core/realtime/InnovationScreen.cpp
     src/core/realtime/RealTimeEngineScreen.cpp
@@ -613,6 +614,7 @@ add_executable(gnss_tests
     tests/test_realtime_seams.cpp
     tests/test_consumer_disc_carry.cpp
     tests/test_pb_step_translate.cpp
+    tests/test_ephemeris_jump.cpp
     tests/test_pb_emit_hold.cpp
     tests/test_pb_hold_phase_clock.cpp
     tests/test_pb_hold_smoothed.cpp

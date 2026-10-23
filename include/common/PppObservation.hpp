@@ -58,6 +58,7 @@ namespace GnssProcessor {
         double mf_d;                                 /**< Dry (hydrostatic) tropospheric mapping function (dimensionless); slant dry delay = ZHD × mf_d */
         bool broadcast_only = false;                 /**< True when the range model is broadcast-grade (metre level): phase observables have been dropped and only code is used for this satellite. */
         double eph_toe_age_s = 0.0;                   /**< Signed age (s, obs epoch − ephemeris toe) of the broadcast ephemeris used for this satellite; |value| is the extrapolation magnitude. Real-time BSSD pivot selection avoids a pivot whose ephemeris is much staler than its peers'. 0 when there is no live ephemeris (post-processing / SP3). */
+        bool live_orbit = false;                     /**< True when this epoch's orbit came from the live broadcast store rather than an SP3 (Geometry::liveOrbitUsed).  Set only while processing.ephemeris_jump_reseed is on, whose response reads it; false otherwise. */
         /**
          * @brief The band-1 code keys this observation carries as companions of the
          *        station's latched canonical code.

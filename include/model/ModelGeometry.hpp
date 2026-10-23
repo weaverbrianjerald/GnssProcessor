@@ -359,6 +359,25 @@ namespace GnssProcessor {
             return it != ssr_orbit_apc_applied_.end() && it->second;
         }
 
+        /**
+         * @brief Whether the most recent orbit query for @p satellite evaluated the
+         *        live broadcast store (the fallback when the loaded SP3 cannot describe
+         *        the query epoch) rather than the SP3.
+         *
+         * The real-time broadcast-baseline jump response reads it (through
+         * @c PppObservation::live_orbit): a change of the broadcast record moves the
+         * modelled range only when the orbit came from that record.  Maintained only
+         * while @c processing.ephemeris_jump_reseed is on; off, nothing is recorded and
+         * this returns false.
+         *
+         * @param satellite Satellite id.
+         * @return True when the last query used the live broadcast store.
+         */
+        bool liveOrbitUsed(const std::string& satellite) const {
+            const auto it = live_orbit_used_.find(satellite);
+            return it != live_orbit_used_.end() && it->second;
+        }
+
         std::unordered_map<std::string, std::vector<const OrbitData*>> orbit_index_;
 
     private:
@@ -474,6 +493,11 @@ namespace GnssProcessor {
         /// realtime.honor_ssr_reference_point is on; mutable because
         /// getSatellitePV is const (same pattern as the Sun/Moon cache).
         mutable std::unordered_map<std::string, bool> ssr_orbit_apc_applied_;
+
+        /// Per-satellite record of whether the most recent getSatellitePV query used
+        /// the live broadcast store (see liveOrbitUsed).  Written only while
+        /// processing.ephemeris_jump_reseed is on; mutable for the same reason.
+        mutable std::unordered_map<std::string, bool> live_orbit_used_;
     };
 
     } // namespace Model

@@ -13,7 +13,7 @@
 - **capture:** `data/sbf/covl1452.26_` (rooftop SBF, 2026 DOY 145: 238,342 GALRawINAV pages, 595 GALNav records)
 - **source:** this card (diagnosis requested after the 2026-10-22 deck refresh sessions)
 
-**Outcome.** Why did Galileo E23 alone degrade the 2026-10-23 live sessions? The IGS nav stream held only a day-old E23 record, so the stall fallback ran E23 on the receiver's raw I/NAV assembly, which read the 16 odd-page bits 6 bits late. sqrt(A), IDOT, Crs and af1 were corrupted with IODnav intact, so the SSR applied and E23 entered cm-grade, hundreds of metres off. FIXED: assembly now matches GALNav on 246 of 246 records (0 before); live, 0 of 12 Galileo records differ from IGS (11 of 11 before). Owed: the event re-run (recorder) and the no-recovery response (section 4).
+**Outcome.** Why did Galileo E23 alone degrade the 2026-10-23 live sessions? The IGS nav stream held only a day-old E23 record, so the stall fallback ran E23 on the receiver's raw I/NAV assembly, which read the 16 odd-page bits 6 bits late. sqrt(A), IDOT, Crs and af1 were corrupted with IODnav intact, so the SSR applied and E23 entered cm-grade, hundreds of metres off. FIXED: assembly now matches GALNav on 246 of 246 records (0 before); live, 0 of 12 Galileo records differ from IGS (11 of 11 before). Owed: the event re-run (recorder). The no-recovery response (section 4) is built, default off, in card [EPH-JUMP](EPH-JUMP-RESEED.md).
 
 > Results are appended TO THIS FILE, below the text.
 
@@ -179,3 +179,9 @@ IGS stream's record; its size is that of an I/NAV against F/NAV clock (follow-up
 - **Replay.** A paced obs / SSR / nav recorder remains the prerequisite for replaying the
   E23 event itself as an A/B; the live probes here compare the decoder, not the event.
 - Cosmetic: the log time stamp prints `15:22:60.000` (seconds rounded to 60).
+
+## 2026-10-23: the first follow-up
+
+The missing response to a broadcast-baseline jump (section 4, first bullet) is card
+[EPH-JUMP](EPH-JUMP-RESEED.md): `processing.ephemeris_jump_reseed`, default off, which also logs every
+source switch of a used record at info (the second bullet, when armed).

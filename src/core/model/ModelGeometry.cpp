@@ -1013,6 +1013,12 @@ namespace GnssProcessor {
                 return zero_result;
             }
 
+            // Which source this query evaluates (see liveOrbitUsed): reset here, set
+            // by the broadcast fallback below.  Recorded only while the real-time
+            // broadcast-baseline jump response is armed.
+            const bool record_source = config_.ephemerisJumpReseed();
+            if (record_source) live_orbit_used_[satellite] = false;
+
             // Broadcast (live) ephemeris fallback: decode the satellite PV from
             // the receiver's RTCM/SBF nav stream and overlay the IODE-gated SSR
             // orbit correction, as the SP3 branch below does.  The lambda
@@ -1054,6 +1060,7 @@ namespace GnssProcessor {
                 if (config_.getRealTimeConfig().honor_ssr_reference_point) {
                     ssr_orbit_apc_applied_[satellite] = applied_apc;
                 }
+                if (record_source) live_orbit_used_[satellite] = true;
                 return std::make_pair(pos, vel);
             };
 

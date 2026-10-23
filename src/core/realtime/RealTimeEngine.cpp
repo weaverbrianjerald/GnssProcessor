@@ -378,6 +378,8 @@ void RealTimeEngine::flush() {
     logAmbLevelCheckSummary_("end of run");
     // The innovation screen's counters, silent unless armed.
     logInnovationScreenSummary("end of run");
+    // The broadcast-baseline jump counters, silent unless armed.
+    logEphemerisJumpSummary_("end of run");
     // The declared-roster census, silent unless a declaration was seen or the
     // 5b knob is armed.  The closed-loop harness and the
     // replay driver never call flush(), so both call this directly at their
@@ -546,6 +548,7 @@ bool RealTimeEngine::processEpoch(const std::vector<RinexObservation>& epoch_obs
     reinflateOnCodeBiasDisc(ctx);
     reinflateOnClockDisc(ctx);
     reactToDeclaredLevelSteps_(ctx);   // no-op unarmed
+    reactToEphemerisJumps_(ctx);       // no-op unarmed
 
     // --- Estimation tail ---------------------------------------------------
     runMeasurementUpdate(ctx);

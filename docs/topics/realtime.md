@@ -29,6 +29,7 @@ Status is one of `open`, `closed`, `parked`, `superseded`, `reference`; the verd
 | card | one line | status | last dated |
 | --- | --- | --- | --- |
 | [INAV-ODD](../cards/realtime/INAV-ODD-PAGE.md) | live E23 poisoning: SBF I/NAV odd-page data read 6 bits late (orbit off up to ~300 m); fixed, tested on the receiver's GALNav | closed | 2026-10-23 |
+| [EPH-JUMP](../cards/realtime/EPH-JUMP-RESEED.md) | re-seed a satellite whose broadcast record change moves its range > 10 m: BUILT default OFF; 6 h armed replay byte-identical, healthy changes <= 0.83 m; ungraded on a real jump | closed | 2026-10-23 |
 
 **Standing documents** (still at their original paths, indexed not moved):
 
