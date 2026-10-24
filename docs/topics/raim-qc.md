@@ -50,6 +50,7 @@ Status is one of `open`, `closed`, `parked`, `superseded`, `reference`; the verd
 | [GL-2 + R8](../cards/raim-qc/GL-2-whole-satellite-standdown.md) | stand-down FAILED (consumer 22.25 m in hour 4), left OFF; rx-CB carry exonerated | closed | 2026-09-14 |
 | [DEC-day129-gate-policy](../decisions/DEC-day129-gate-policy.md) | gate rulings (degrade, 120-epoch cap, rms_ho ratio) unbuilt; superseded, SH and seams out of the re-founding | superseded | — |
 | [T3 mechanism](../cards/raim-qc/T3-IONO-MECHANISM.md) | per-LOS ionosphere error drives the T3 heterogeneity (corr +0.926) and the DD integers | closed | — |
+| [LASER](../cards/raim-qc/LASER-THEORY-STUDY.md) | NGS LASER theory mapped onto the QC instruments: one-way IF-TD test, carry_vce_apply amplification, two LASER defects | reference | 2026-10-24 |
 
 **Standing documents** (still at their original paths, indexed not moved):
 

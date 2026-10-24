@@ -316,3 +316,37 @@ floor **+** `carry_vce` calib staying ~1 (the v1-incest watchdog). **Tuning axes
 
 **Bench hygiene**: validation configs derive from `_wlver_50sta_{10,60}ep_d10_gps_tri_sh8.json` (diff: +
 `rep_error_tau_s 900`, + the layer2 block deg-4 @ 1300 km). **Do NOT mutate the `_wlver` bench files.**
+
+## 2026-10-24: Iono-2 verdicts: the ratchet attribution, the v3 de-mean and the v3k erase split (2026-07-31)
+
+These results were recorded only in the agent memory note `project_iono2_card` until 2026-10-24, and are copied here before the note was shortened to a pointer. The text is the note's; the dates inside it are the original dates.
+
+Card Iono-2, default OFF: mechanism A = dual-layer SH (`estimation.global_vtec_sh.layer2_max_degree > 0`),
+mechanism B = the exact per-LOS deviation carry (`rep_error_tau_s > 0`). **SUPERSEDED** by the re-founding
+(2026-09-14): the producer runs free slant iono with no SH, and the loader refuses `estimate_iono_sh` with
+`w6_iono_constraint: none` and any live iono constraint with `sat_gf_datum` (card AB1, 2026-09-20), so neither
+mechanism can return in-solve on the current posture.
+
+Verdicts (2026-07-31, 3 h / 50 sta GPS-triple DOY-129; runs under `D:\GnssProcessor_archive\2026-08-12\runs\`, pre-wu93):
+- Attribution matrix: B alone is the ratchet (a00 SUM peak 104 TECU); A is clean alone (47) but amplifies B
+  about 2.2x (A+B 207 to 255). Slip hardening and elevation powers exonerated in both directions.
+- Mechanism: a vertical-TECU deviation common across LOS has exactly the a00 row signature, so (common dev,
+  a00) is a quasi-null pair and the harvest/age/re-assert alternation ratchets it. It ran as a self-sustaining
+  churn loop (D5 flags 4x at onset, 24,366 refloats, 8,033 deviation erases, lifetime ~17 ep, about τ/2).
+- v3 `rep_error_demean`: peak 104 to 36 (B) and 207-255 to 38 (A+B), accumulation volume preserved. (Only here.)
+- v3k `rep_error_d5_keep` (raw-confirmed slip ERASE, D5-only re-tap KEEP + inflate): cold seeds 7700 to 533;
+  87 raw erases vs 9389 D5-only keeps, the ~100:1 ratio the slip audit predicted. (Only here.) The mechBonly
+  v3k arm had no detectors armed, so its raw-erase path is unexercised.
+- NL circR stayed floor-class at 3 h (best 0.043): carry maturity was necessary, not sufficient. Tau or
+  degree tuning was NOT the lever.
+
+Cross-card lessons:
+- A calibrated gate can pass while the field diverges: the D5 LS-VCE sigma0 read exactly 1.00 throughout, and
+  the M2 carry-VCE watchdog reported EMPTY because `phase_leveling` was off in that lineage.
+- Residual-space RAIM walks WITH a coherent field-state drift; state-space health bands are the guard class.
+- The ratchet quintupled a real ~43 to 47 TECU excursion at 80 to 90 min; it did not invent one.
+- `sh_health_gate` engaged once and RELEASED (62 epochs) on a quiet-morning excursion; the "no release" record
+  in OPEN_ITEMS describes the DOY-129 evening era.
+
+Record: `docs/SPEC_iono2_mechB_v3.md` (matrix §1, mechanism §2, fix §3/§3b, gates §5/§9 incl. the FP-associativity
+lesson, falsifier §10).

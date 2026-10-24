@@ -382,3 +382,129 @@ the recorded baselines.
 4. GLO-P2 recorded: closed-loop consumer with R clocks, no AR/position regression.
 5. All new toggles default-off documented in headers; startup summary lists constellation gates;
    memory files updated per card (results, not just "done").
+
+## 2026-10-24: per-slot GLONASS receiver IFB (user and network layers): the 305-station collapse and its refutations
+
+These results were recorded only in the agent memory note `project_glonass_ifb_network` until 2026-10-24, and are copied here before the note was shortened. The text is the note's; the dates inside it are the original dates.
+
+Status note, 2026-10-24: `StateInitializer`'s `ppp_utils_` is now `frequencyHelper()` (same latent behaviour).
+
+Per-FCN-slot GLONASS receiver IFB, two layers sharing one key family
+(`StateKeys::makeGlonassPerSlotIfbKey` -> `"GLONASS_IFB<band>_k<+-slot>"`, predicate
+`isGlonassPerSlotIfbKey`): (A) user/BSSD (`estimation.glonass_ifb.enable`, needs `estimate_ifb` +
+uncombined), (B) network producer (`network.estimate_glonass`). Both built, default off. The live
+execution plan is `docs/glonass_enablement_plan.md` (cards GLO-*; its blocking first card GLO-0.1 is
+the memory note `project_multignss_signal_priorities_drop` trap). The plan cites THIS memory for the failure
+forensics. ⚠ Its file:line anchors date from 2026-07-02; re-grep by symbol.
+
+**VERDICT: BLOCKED at scale; no GLONASS in the proven network posture.**
+- 305-station network (2024-129, GPS+Gal+GLO, Release): an 11-epoch smoke looked clean; the 1 h run
+  diverged at tow 261510 (~38 min): all 21 Galileo clocks blew up together (E14 ~ -12.4 km) while
+  GLONASS and GPS stayed clean. The same network GPS+Gal only (`estimate_ifb=false`) is stable
+  through that window, so `estimate_glonass` (which forces `estimate_ifb`) is the trigger.
+- Conclusion (medium-high confidence): the per-slot IFB columns leave the Galileo clock block
+  marginally conditioned; evolving geometry crosses a near-singular threshold that sits above
+  `kNullSpaceTol`, so the rank gate stays clean (gate_ok=1, declared_dim 3) and never sees it.
+- REFUTED, do not re-litigate (each cost an A/B): a Galileo IFB allocation gap (Galileo gets zero
+  IFB states), GLONASS band-3 sparsity (FDMA-only diverges identically, same onset), E24's eclipse, a
+  satellite or station dropout, the 1 ms gate, Galileo-intrinsic behaviour, data scale alone.
+- Next: dump the Galileo block's smallest SV / condition number per epoch at 261420 vs 261510 (the
+  estimability one-shot fires only at epoch 1). Fix direction: a per-constellation soft sum-to-zero
+  gauge row on the Galileo clock block, or hold an excluded satellite's clock by prior.
+- Lesson: the common-sky 3-station fixture and the 11-epoch smoke both passed; a conditioning cliff
+  needs the staged cadence (memory note `feedback_test_cadence_smoke_first`).
+- ⚠ As of 2026-10-07 the loader refuses `network.estimate_glonass` with
+  `network.estimate_sat_code_bias` (GLONASS admission skips the GPS/Gal receiver DCB that satellite
+  code-bias estimation needs). Both goldens arm `estimate_sat_code_bias`, so GLONASS cannot ride the
+  golden posture.
+
+**A. User/BSSD facts.** The naive design is dead twice: COD `.BIA` has a blank `R` clock-reference
+line, so GLONASS code gets no receiver code-bias state; BSSD zeros every `code_bias_indices_`
+column. Per-slot IFB survives SD (different slots differ). Datum: the k=0 central channel held (no
+state, no handover); only FDMA bands 1 and 2 are per-slot, CDMA G3/G4/G6 stay per-band. Review fixes:
+skip the system-agnostic satellite bias when a per-slot key resolves (collinear on single-sat
+slots); slot lookup routed via `PppModel::getGlonassChannel`. ⚠ Latent, NOT fixed:
+`StateInitializer`'s private `ppp_utils_` is never seeded with GLONASS slots, so the GLONASS
+frequency (iono alpha) is mis-resolved in `computeRawResidual` / `initializeCodeBiases` (card
+GLO-0.2). Code-bias states have no per-epoch trace column.
+
+**B. Network producer.** CODE-ONLY by design: a per-satellite GLONASS clock; the per-slot receiver
+IFB as a local Schur-eliminated nuisance; NO GLONASS satellite phase bias (non-portable for FDMA).
+Fail-loud guards: GLONASS must be in `active_systems`, have a `signal_priorities` entry, and run
+uncombined; admission forces `estimate_ifb` + `enable_glonass_ifb`.
+Rank-deficiency root cause (after two wrong attempts): the per-station block `N_rr` must be PD on
+its own (`NetworkNormalEquations::addStation`); ⚠ a singular station is DROPPED ENTIRELY, good
+GPS/Gal rows included. Two nulls: (1) forcing `estimate_ifb` also created GPS/Gal non-reference-band
+IFB, confounding iono, IFB and ambiguity (~40-dim null); fix: in network mode allocate ONLY the
+GLONASS per-slot IFB. (2) GLONASS carries a per-slot IFB on every band, so there is no IFB-free
+reference; fix: loose zero-mean prior rows (sigma 1 m) on each GLONASS per-slot IFB and per-sat iono
+column in PASS B. Product-safe: the emitted clock depends only on the data-determined IFB + alpha*I
+sum. `MeasurementModel::setGlonassSlots()` must be seeded per station.
+- 3-station PASS (JPLM/P389/GCGO): 121/121 emitted, datum dim 3, smallest local eigenvalue
+  -2.8e-11 to 1.26e-2, zero GLONASS phase/code-bias records, closed-loop CIT1 consumer unchanged
+  (0.112 to 0.126 m).
+- Not done: GLONASS satellite phase bias V2; consumer-side GLONASS product ingestion. Both wait on
+  the 305-station fix.
+  memory note `project_beidou_network_clock_divergence`.
+
+## 2026-10-24: real-time GLONASS: the time-system fix and the validation extras
+
+These results were recorded only in the agent memory note `project_realtime_glonass` until 2026-10-24, and are copied here before the note was shortened. The text is the note's; the dates inside it are the original dates.
+
+Status note, 2026-10-24: since commit ff1c464 (2026-10-17) the 1020 toe is dated from the parser's stream-time tracker (`RtcmNavDecoder.cpp`), so the statement below that the anchor is `nowContinuousGpsSeconds()` is outdated; a 1020 record before any time-bearing frame is held (at most 48).
+
+DONE + committed. The "time system incompatibility" was narrow: only the RTCM-MSM GLONASS epoch lacked GPS-week
+promotion; the estimator already had PZ-90 RK4 orbits, per-system ISB and FDMA wavelengths.
+
+- Keystone: `TimeUtils::glonassTodToGpsTime(tod_s, anchor_gps_s)` (RTKLIB `adjday_glot`: UTC(SU)+3 h day, ±12 h
+  wrap from the wall-clock anchor, UTC to GPS via `leapSecondsGpsUtc`), wired into `RtcmMsmDecoder::promoteEpoch`,
+  `RtcmNavDecoder` 1020 toe, `RtcmSsrDecoder::promoteGloTod`. Anchor = `nowContinuousGpsSeconds()`, so stale
+  replays get the wrong day (same wall-clock limit as MSM weeks).
+- FCN: DF419 to k only when `honour_ext_sat_info` (MSM4 defaults ext_sat_info=0, bogus k=-7 otherwise), then
+  `RinexObservation.glonass_freq_channel` to `PppModel::setGlonassSlots()`.
+- Float only: GLONASS excluded from MW / TurboEdit / AR; StateInitializer refuses the unphysical single per-band
+  FDMA IFB state.
+
+⚠ Config gotcha (cost an hour): in a PPP-RTK/BSSD config, GLONASS in `active_systems` is NOT enough;
+`between_satellite_sd.enable_glonass=true` is REQUIRED, else GLONASS is decoded, modelled and counted but skipped
+at the measurement stage. `false` means EXCLUDED, not float. With it true GLONASS runs SD with float ambiguities
+(the intent). Replay configs also need a `GLONASS` entry under `signal_priorities` ("No valid observation types
+for system GLONASS"; memory note `project_multignss_signal_priorities_drop`).
+
+Validation: SBF replay of `data/sbf/covl1452.26_` (Corvallis AsteRx, week 2420): R04-R25 contributing, phase
+L1C/L2C residuals 1-4 mm (proves wavelength/FCN), code SD residual mean 0.18 m, stable 23-sat sub-metre solution.
+The RTCM path is unit-tested only (TOD converter tests in `tests/test_rtcm.cpp`), never live-validated.
+
+`docs/glonass_enablement_plan.md` cites this memory by name as the authority for the 1-4 mm covl1452 result
+(the doc does not hold the numbers): keep them here.
+
+OPEN: PZ-90 to ITRF transform (~0.5 m, latent in post too). GLONASS AR + per-slot IFB:
+memory note `project_glonass_ifb_network`.
+
+## 2026-10-24: a constellation missing from signal_priorities is silently dropped (trap re-verified 2026-10-07)
+
+These results were recorded only in the agent memory note `project_multignss_signal_priorities_drop` until 2026-10-24, and are copied here before the note was shortened. The text is the note's; the dates inside it are the original dates.
+
+**Active trap (re-verified 2026-10-07).** In `PppModel::decideConstellationCanonicals` a
+constellation absent from `signal_priorities_` is skipped (`if (pit == signal_priorities_.end())
+continue;`); no observations are built, and at most a per-satellite `selectSignals` WARN appears.
+The loader (`GnssConfigLoad.cpp`) has no per-constellation default. Bundled bases
+(`config/test_suite/ppp_static.jsonc`, `ppp_rtk_static.jsonc`) list only GPS + Galileo. Until fixed,
+every user config beyond GPS+Galileo must hand-list `signal_priorities`.
+
+Evidence (2026-06-28 constellation x dynamics grid): adding R or C to `active_systems` changed the
+solution by EXACTLY zero (GR = GC = G, GREC = GE at JPLM and GCGO, PPP and PPP-RTK). Not a product
+gap: COD0MGXFIN SP3/CLK/BIA carry G/R/E/C/J. Adding `signal_priorities.GLONASS="CPQ"`: 3D-RMS
+4.4 to 3.0 cm, convergence 2580 to 1740 s, U +2.9 to +1.9 cm, runtime 22 to 30 s.
+
+Fix direction (memory note `feedback_prefer_fallback_over_drop`): default `signal_priorities` per
+constellation when omitted, mirroring the default frequency-band map in `GnssConfigLoad.cpp`; minimum
+bar a loud warning at the skip. Seeds from JPLM: GLONASS C/P/Q (C1C C1P C2P C2C C3Q), BeiDou I/P
+(C1P C2I C7I C6I). This is card GLO-0.1, the blocking first card of `docs/glonass_enablement_plan.md`
+(its `PppModel.cpp:456` anchor has drifted).
+
+Network producer guards (as of 2026-10-07, `GnssConfigLoadNetwork.cpp`): `network.estimate_glonass`
+fails loud without a GLONASS entry; Galileo active without a list WARNS (card GAL); a list for a
+system not in `active_systems` is ignored with a warning (card OWD). There is still no GPS guard
+(W6 residual M2: a network config without a GPS list emits an empty product). The other surviving
+W6 / OSB residuals of the 2026-06-29 review (M1, L2) are kept in memory note `project_network_code_bias_scope`.

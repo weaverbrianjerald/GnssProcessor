@@ -64,6 +64,7 @@ product). These items are its replacement and the level's open edges.
 - **One carry-response vocabulary.** Unify the clock refloat set, CarryPrior inflate_q, local_carry erase and markAmbiguityPendingReseed into drop, inflate, repair with declared dominance, not code-order dispatch. [RunContext.hpp](../../include/network/state/RunContext.hpp)
 - **GF arc-jump trigger on the field.** A 6 h field arm (k 6, 0.04 m floor) is owed before any promotion; the field's real-slip share is unknown. [ARL](../refound/ARL_integer_ambiguity_ladder_2026-10-09.md)
 - **Gap re-entry GF test.** It differences raw phases, so the wind-up change over the gap (5.4 cm per cycle on L1/L2) and multipath meet a 4 cm floor. [CAF](../cards/queues/CAF-COMMENT-AUDIT-FINDINGS.md)
+- **MW reset at an SD pivot change (user side).** The reset erases the SD pivot entry; a coincident election change then steps every surviving SD arc by N_WL(old) - N_WL(new). Pinned by `tests/test_mw_pivot_reset.cpp`; the fix prototype was lost; landing it awaits the author. [BSSD-PIVOT](../cards/slip/BSSD-PIVOT-USER-SIDE.md)
 
 ## Integers
 

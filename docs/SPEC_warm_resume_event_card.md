@@ -157,3 +157,71 @@ BR-3's anchor (B2-warm's first post-restore blob vs B1's final) was expected ≈
 ## 7. Artifacts
 
 Knobs (all default-OFF/0, committed in `dee2824`): `network.state_snapshot_carry` (blob v2 + `S` line), `state_snapshot_resume_shock_m`, `state_snapshot_require`, `state_snapshot_keep_history`, `state_snapshot_carry_diagonal` (v3, RTB-7e). Code: `NetworkCarryVce::seedRobustFloor`; `NetworkInvariantCarryDriver::{serializeCarry,restoreCarry,applyResumeShock,validateCarryBinding}` + resume telemetry; the RE-4 run-end line. Tooling: `scripts/{run_warm_resume_arm.sh, warm_resume_sd_metric.py, diff_carry_blobs.py}` + `scripts/README.md`. Configs: `config/test_suite/_rs_*.json`, `_warm_*.json` (all carry `parallel_carry: true / parallel_reduce: false`). Run matrix, 50-station GPS smokes at 60 ep: A-60 (`_warm_inline.json` @ 1830 s), B1 (`_warm_conv.json`, 450 s, converge + snapshot), B2-OFF-60 (`_warm_resume_nocarry.json`), B2-ON-60 (`_warm_resume.json`), B2-RS-60 × {0.05, 0.10, 0.20, 0.50}.
+
+## 2026-10-24: warm resume of the producer: shock FAILS, diagonal blob v3 and the GPS + Galileo re-grade (includes the former carry-blob-diagonal note)
+
+These results were recorded only in the agent memory note `project_warm_resume_card` until 2026-10-24, and are copied here before the note was shortened. The text is the note's; the dates inside it are the original dates.
+
+Status note, 2026-10-24: `state_snapshot_resume_shock_m` was deleted (commit 98df220, card RKD row C24); the posture string no longer says NEGATIVE, and the config ledger now reads the carry as negative and the diagonal as never adjudicated. The diagonal-blob report is recoverable at `a8f044f^:docs/REPORT_carry_blob_diagonal.md`.
+
+**Status 2026-10-07: CLOSED, default OFF, outside the current posture.** Knobs committed in
+`dee2824`: `network.state_snapshot_{carry, resume_shock_m, require, keep_history,
+carry_diagonal}`. The carry blob serializes the invariant-carry z-store, so the loader disables
+`state_snapshot_carry` (and the diagonal) without `carry_invariant`, the vehicle RF-1 retired.
+The re-founding cut seams, snapshots and warm resume (golden exception for
+`serialize_disc_counters`): add back only with seam work on a re-validated posture. The later
+field-seam cards RS-2..RS-10b are memory note `archive_lessons_validation_events`.
+
+Record: `docs/SPEC_warm_resume_event_card.md` (§1 outcome, §2 resume shock, §4 branch metric,
+§5 shipping posture, HB-3 envelope, FT63 note); ledger rows `network.state_snapshot_carry`,
+`_carry_diagonal`, `state_snapshot_path`. The SPEC's header note says the diagonal-blob record
+"survives in memory `project_carry_blob_diagonal`": merged into this file 2026-10-07.
+
+## Verdicts (full evidence in the SPEC; do not repeat)
+- Shipping posture on the old vehicle: carry ON, `resume_shock_m` 0, `state_snapshot_require`
+  true, discard the first ~5 post-resume epochs.
+- "Partial restoration is counterproductive" RETIRED (graded inside its own 15-epoch transient);
+  resume shock FAILS at every σ (best 1.40× cold vs a ≤1.1× bar), do not re-propose; the z
+  branch-fidelity metric is INVALID across runs (correction-frame DD); HB-3 envelope: no shared-
+  snapshot A/B of a fingerprinted knob, deltas never magnitudes, a resume OVERWRITES its snapshot
+  (re-seed from the immutable converge artifact before every launch). Any future branch claim
+  needs a frame-invariant functional first (SPEC §4: same-integer ceiling 68.1 %).
+- FT63 (2026-08-02, `ft63_warm12` vs `ft63_cold12`): the benefit window is ~3 epochs (1491 births
+  saved, all in ep1-2; both arms end at exactly 775 carried DDs; branch half-life 4.3 epochs,
+  memory note `project_why_non_integer_rootcause`). At the first post-resume epoch warm is FURTHER from
+  inline than cold (a00 |Δ| 20.6 vs 14.9 TECU), gone by ep3.
+- The D5 σ̂₀ restore is inert unless converged σ̂₀² > 1 (the [1, cap] clamp); live at GPS+Gal (2.17).
+
+## Diagonal blob v3 (`state_snapshot_carry_diagonal`)
+- GPS-only: the resumed branch lives in means and variances, not correlations. Cross-covariance is
+  worth ≤3 % of the benefit at 50 sta and negative at 305, while costing 99.8 % of the bytes
+  (305 sta 270,878,552 → 566,982 B, 477.8×; ~72 % of the diagonal blob is irreducible Z/A/H
+  structure). Dense at 305 means ~186 GB of temp+rename churn per 6 h. After a 305-sta resume the
+  first epoch flags disc on ~93 % of products (+401), back to +2 within two epochs: the emitter
+  honestly reporting the 90 s gap, NOT a cold start.
+- ⚠ A diagonal prior is NOT a conservative inflation: it TIGHTENS the common-mode direction of
+  correlated chords. The risk shows in σ̂₀ (diagonal highest: 1.91 vs 1.88 at 50, 1.56 vs 1.48 at
+  305), not in D5 flags, whose (k·σ̂₀)² threshold normalizes uniform tightening away. σ̂₀ measures
+  consistency, not accuracy (cold-305 had the lowest σ̂₀, 1.10, at the highest error).
+- Format invariants: the READ side dispatches on the row tag (`P` vs `PD`), never the header
+  version, so one converge state seeds both A/B arms; the knob is NOT in the fingerprint; a
+  zero-chord component writes NO `PD` row or the reader desynchronizes onto the `H` row.
+
+## Grading traps (GPS+Gal 305 chain `_gg305_*`, re-graded 2026-07-30)
+- ⚠ The "warm is WORSE than cold" verdict was WITHDRAWN: it graded raw CLK, which is not
+  datum-invariant (CLK stuck ~6 m while CB decayed = a clock/code-bias gauge trade). On `total_IF`
+  the warm/cold gap (3.14 m GPS, 4.22 m Gal) sits inside the product's between-satellite spread
+  (7.08 / 7.32 m); the 91 m re-entry spike dies in 2 to 3 epochs; non-circular arbiters favour
+  warm (`sigma0_pf_code` 4.218 vs 4.295). As of 2026-10-07 the ledger rows
+  `network.state_snapshot_carry{,_diagonal}` still quote the in-window NEGATIVE / INVERTS reading
+  and the posture string in `GnssConfigNetworkPosture.cpp` says "NEGATIVE, unresolved".
+- Grade only `total_IF` deviation from the per-epoch median over ALL satellites including the
+  pivot; `warm_resume_sd_metric.py`'s CLK panel and `rms_clock_m` are datum-dependent.
+- A restored P is diagonal, so the filter is briefly overconfident (ep20 a local minimum ~30 %
+  below the floor): judge hourly LEVEL bands, never slopes. At 305 sta a 31-epoch window cannot
+  resolve slopes; magnitude claims need ≥60 post-resume epochs.
+- `n_emitted` is RESTORED on resume: the zero-emit guard is unreachable and exit 0 proves nothing.
+- D5 flag counts inverted between the two gradings (circular gate): do not bank them.
+
+Tooling: `scripts/{run_warm_resume_arm.sh, warm_resume_sd_metric.py, diff_carry_blobs.py}`
+(the last handles v3 unchanged); configs `config/test_suite/_rs_*`, `_warm_*`, `_dcb*`, `_gg305_*`.

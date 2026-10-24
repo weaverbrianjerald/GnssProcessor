@@ -324,3 +324,48 @@ arm" is closed as EXECUTED-and-measured, not as a second decisive proof.
 
 ---
 
+## 2026-10-24: PPP vertical instability: the solid-tide audit, the model-removal decomposition and the ranked suspects
+
+These results were recorded only in the agent memory note `project_vertical_instability_solidtide` until 2026-10-24, and are copied here before the note was shortened. The text is the note's; the dates inside it are the original dates.
+
+Status note, 2026-10-24: the suspect that the OTL nodal correction is missing is built default off (`model_corrections.otl_nodal_corrections`, card OTL, open); the kinematic sinusoid (A) remains open with no card and no register entry, and the effect of the wind-up fix on it was never re-graded.
+
+Two DISTINCT vertical problems; keep them apart. (A) A sub-daily sinusoid in daily KINEMATIC
+PPP-RTK+BSSD (inland AMC4 / GCGO / P389, clean residuals: a receiver-common displacement absorbed
+by the height state). (B) A DC +5.7 cm Up bias in STATIC PPP (`position_q=0`), which cannot show a
+diurnal. As of 2026-10-07: fixes in tree, (A) open, (B) out of scope.
+
+**FIXED (each a real coded bug; re-verified in tree 2026-10-07):**
+- Solid Earth tide: the Step-2 diurnal table was corrupt (K1 +0.10 mm vs IERS +12.00; P1 -13.20 vs
+  -1.23; O1 a byte copy of K1), a ~24 h sinusoid beating 0 to 2 cm p-p. Replaced by a port of IERS
+  `dehanttideinel` (a cos/sin swap and a spurious +pi in tau also fixed). Pinned by
+  `SolidEarthTideTest.MatchesIersOfficialVector` (agreement 6.07e-5 m). ⚠ The old test was blind:
+  `scripts/solid_tide_reference.py` parsed the table out of the C++ source. A self-parsing reference
+  is not a test; use an external oracle.
+- OTL diurnal +-90 deg: `CONSTITUENT_PHASE_BIAS_CYCLES` (the HARDISP quarter-cycle term) added to chi
+  in `computeTidalArguments`; one change fixes both the EOT20 and the BLQ path.
+- Pole tide was ~0 (m1/m2 in radians against metre coefficients, ~2e5x too small, and the norm guard
+  never tripped). Now arcsec with the IERS2018 secular pole (xp 55.0 + 1.677 dt, yp 320.5 + 3.460 dt
+  mas); north sign follows RTKLIB `tide_pole`; the rot-def EAST term cos(phi) became sin(phi).
+
+**(B) static DC: out of scope.** Author ruling 2026-07-29 in
+memory note `project_antenna_eccentricity_arp_frame`: JPLM's DELTA H +0.0610 m predicts the whole DC to
+4 mm; do not chase it. Decomposition kept for reference (dUp cm when a model is REMOVED): solid tide
+-13.93, ZHD +10.97, sat-PCO +5.52, rx-PCO +1.69, rx-PCV -0.86, OTL -0.74, pole -0.15. Levers:
+Galileo ~ +2.8 cm (memory note `project_galileo_c5c7_code_bias`); low elevation ~ +2.5 cm (mask 10 to 15 deg
+at JPLM: U +5.7 to +3.2, 3D-RMS 6.4 to 4.4); they may overlap (low-elevation Galileo), and an
+elevation-mask x system grid separates them. ZWD-q is not a contributor (<1 mm at x100); rx/sat PCO
+are correctly signed. OTL was inert in the bundled configs at decomposition time (`otl_off`
+identical to `ppp_static`; not re-checked); VMF3 read +0.00 because it was broken (memory note `project_vmf3_gpt3_pathbug`). Grid lesson: AR without BSSD degrades
+U +0.9 cm, AR with BSSD is neutral; a one-factor sweep would have missed the interaction.
+
+**(A) sinusoid: OPEN.** Solid tide re-verified term for term against POINT; not the source. Ranked
+suspects: ZWD process noise too tight (`troposphere_q 1e-9` in `config/ppp_internal.json` and
+`ppp_rtk_internal.json`, 2 to 4 orders below cssrlib ~6.9e-7 and POINT ~1e-5; an over-stiff ZWD
+dumps wet delay into height at the 23h56m geometry-repeat period; A/B at ~5e-7); tropo gradients
+off; rx-PCV frequency fallback under `frequency_mode=all`; OTL nodal correction missing (sub-mm
+inland). The wind-up satellite-dipole sign was FIXED 2026-08-21 (`4f49fa2`, `nominal-wu93`,
+memory note `project_phase_windup_sign_defect`); whether it moved the sinusoid was never re-graded.
+Exonerated: PCO/PCV, the GMST/nutation chain, relativity/Shapiro/Sagnac. Fastest discriminator: FFT
+the daily vertical; 24 h (+ sidereal alias) means OTL, pure 23h56m means ZWD-into-height; then
+overlay OTL Up against HARDISP at a station with a BLQ.

@@ -115,6 +115,7 @@ author's memory files, so relocating them is a later pass.
 | [harness seeds](cards/harness/HARNESS-SEEDS.md) | seed hygiene: legs arm zwd_seam_reseed; fingerprinted promotions force _v2, then _v3 seeds | reference | 2026-09-12 |
 | [FIELD harness](cards/harness/FIELD-HARNESS.md) | field harness: evidence refloat FIELD PIN; scope + pairs all stay exceptions, twin FAILS | closed | 2026-09-13 |
 | [DEC-field-vehicle](decisions/DEC-field-vehicle-posture.md) | field posture c8b: 6 h twin DRIFTS, G4 INCONCLUSIVE; superseded by the float vehicle | superseded | 2026-09-14 |
+| [OBJ-IDENTITY](cards/harness/OBJECT-CODE-IDENTITY.md) | object-code identity proof for pure moves; concurrent runs from one working directory share the logs directory | reference | 2026-10-24 |
 
 Standing documents (not split this pass):
 
@@ -312,6 +313,8 @@ Standing documents (not split this pass):
 | [REF-FAN](cards/slip/REF-FAN.md) | reference-slip fan-out: collateral refloats 6 to 0; armed on both goldens, inert at dual frequency; closed | closed | 2026-09-13 |
 | [RULE F2](cards/slip/IFTD-F2-lli-shadow.md) | the LLI shadow: a pair holding a band flagged last epoch cannot exonerate; S1 storm closed | closed | — |
 | [RULE F3](cards/slip/IFTD-F3-lli-epoch.md) | the LLI-epoch verdict: S3 residual 0.335 to 0.005 cyc; its anchor clause keeps references | closed | — |
+| [BSSD pivot](cards/slip/BSSD-PIVOT-USER-SIDE.md) | user-side SD pivot defects: the MW reset strands SD arcs (fix NOT landed, awaiting the author); six code-only BSSD root causes fixed, unvalidated | open | 2026-10-24 |
+| [slip audit](cards/slip/SLIP-AUDIT-2026-06.md) | TurboEdit MW+GF audit of June 2026: fixes committed; open register and the thresholds the fixes rest on | reference | 2026-10-24 |
 
 Standing documents (not split this pass):
 
@@ -351,6 +354,7 @@ Standing documents (not split this pass):
 | [GL-2 + R8](cards/raim-qc/GL-2-whole-satellite-standdown.md) | stand-down FAILED (consumer 22.25 m in hour 4), left OFF; rx-CB carry exonerated | closed | 2026-09-14 |
 | [DEC-day129-gate-policy](decisions/DEC-day129-gate-policy.md) | gate rulings (degrade, 120-epoch cap, rms_ho ratio) unbuilt; superseded, SH and seams out of the re-founding | superseded | — |
 | [T3 mechanism](cards/raim-qc/T3-IONO-MECHANISM.md) | per-LOS ionosphere error drives the T3 heterogeneity (corr +0.926) and the DD integers | closed | — |
+| [LASER](cards/raim-qc/LASER-THEORY-STUDY.md) | NGS LASER theory mapped onto the QC instruments: one-way IF-TD test, carry_vce_apply amplification, two LASER defects | reference | 2026-10-24 |
 
 Program card on this topic (indexed in [refound/CARDS.md](refound/CARDS.md)):
 
@@ -429,6 +433,8 @@ shortens the field loop 13.3 % and the sim loop 10.6 % at identical output; armi
 | --- | --- | --- | --- |
 | [INAV-ODD](cards/realtime/INAV-ODD-PAGE.md) | live E23 poisoning: SBF I/NAV odd-page data read 6 bits late (orbit off up to ~300 m); fixed, tested on the receiver's GALNav | closed | 2026-10-23 |
 | [EPH-JUMP](cards/realtime/EPH-JUMP-RESEED.md) | re-seed a satellite whose broadcast record change moves its range > 10 m: BUILT default OFF; 6 h armed replay byte-identical, healthy changes <= 0.83 m; ungraded on a real jump | closed | 2026-10-23 |
+| [RT-STREAM](cards/realtime/RT-STREAM-RECORDS.md) | real-time bring-up records: AsteRx-U SBF rover path, IGS RTCM stream recipe, BSSD blow-up chain, RT model degradation, Galileo C5Q/C7Q code bias | reference | 2026-10-24 |
+| [RT-SERVICE](cards/realtime/RT-SERVICE-RECORDS.md) | real-time service work queue (RTF-3 remainder, RTF-4 to RTF-9 open), constant-velocity slant ionosphere, RT scorecard decisions | reference | 2026-10-24 |
 
 Standing documents (not split this pass):
 
@@ -458,6 +464,9 @@ their code (closed, 2026-10-14: landed; the same-build golden comparison passed)
 | [QPR 4](cards/queues/QPR-ITEM-4-T3-NULLS.md) | T3 null: excess is per-LOS iono error; R2/R4 built measure-only; rest superseded by RF-3 code-row QC | superseded | 2026-08-21 |
 | [QPR 5–8](cards/queues/QPR-ITEMS-5-8.md) | items 5–8: 8(b) falsified; 5, 7, 8 superseded by RF-0c, RF-1, no SH; item 6 built and checked (millisecond-grid start-offset seek, leap table; 2 h golden arms byte-identical) | superseded | 2026-10-17 |
 | [CAF](cards/queues/CAF-COMMENT-AUDIT-FINDINGS.md) | comment audit: 5 defects fixed; Card-4, lane and stand-down rows moot; 20 owed lines re-filed to OPEN_ITEMS | closed | 2026-09-28 |
+| [ARCH](cards/queues/ARCH-BACKLOG-2026-06.md) | architecture audit of 2026-06-15 (33 candidates, 8 killed) and the Apr-Jun 2026 PPP optimization record | reference | 2026-10-24 |
+| [MPAGES](cards/queues/MPAGES-BACKLOG-2026-06.md) | enhancement backlog harvested from NGS M-PAGES v1.1 and v1.2: landed, built since, still open | reference | 2026-10-24 |
+| [BASELINE](cards/queues/BASELINE-MODE-TRAPS.md) | baseline modes: SP3-only orbits, inert gnss_rate_s, coordinates taken as ARP, static DD review register | reference | 2026-10-24 |
 
 Standing documents (not split this pass):
 
@@ -510,6 +519,8 @@ posture call stays in the verdict section of the card that reached it.
   on 2026-10-24.
 - [status/RECORD_COMPRESSION_2026-10.md](status/RECORD_COMPRESSION_2026-10.md) — the 2026-10
   compression of `CLAUDE.md`, the register and the agent memories: what moved where, with sizes.
+- [status/RECORD_COMPRESSION_2026-10_memories.md](status/RECORD_COMPRESSION_2026-10_memories.md) — pass 3 of
+  that register, per file: the size of every agent memory before and after, and where each merged memory went.
 
 ---
 

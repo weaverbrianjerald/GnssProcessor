@@ -240,3 +240,38 @@ decomposition) and the B / receiver channels in `scripts/simnet_grade.py`.
 
 ---
 
+## 2026-10-24: posture C (triple frequency, slant ionosphere, GF code-bias datum): sim verdicts and the 303-station field ladder
+
+These results were recorded only in the agent memory note `project_slant_triple_handoff` until 2026-10-24, and are copied here before the note was shortened to a pointer. The text is the note's; the dates inside it are the original dates.
+
+Status note, 2026-10-24: the three open findings of the field ladder (the steady-state rx-CB gate withhold, the eq34 G-chain shorts under a silent rank gate, the degenerate prefit-census phase sigma) are statuses of 2026-10-07; later closure was not checked.
+
+State (2026-10-07): the sim work is closed (cards SIMNET-W6SH-ARM, SIMNET-SLANT-TRIPLE, CHAIN-PIN-AUDIT, CHAIN-SLANT-ODIJK). The re-founding dropped SH; L5 is a re-founding add-back, open and SEQUENCED, not adopted (AB2 open, its first field KEEP_OFF superseded by its section 7; L5P built and not armed; memory note `feedback_l5_never_abandoned_sequence_not_close`). The FIELD ladder below exists nowhere else; `docs/cards/raim-qc/T3-FIELD-AND-COLLATERALS.md` cites this memory by name.
+
+Sim verdicts (detail in the cards; do not re-litigate):
+- The two-band W6+SH wall is an n-INVARIANT gauge (the L2W satellite phase-bias common mode, near-null 9.78e-06 at 50 sta, 8.97e-06 at 300): a bigger roster is FALSIFIED as the lever (the earlier "at low station count" reading, now corrected in memory note `project_global_sh_iono`). Remedies: a cold `sbasis_complete` passes the gate and destroys the ionosphere (a00 −6292 TECU); `rank_gate_tol` 1e-12 placed per config from that config's own dump (never globally) emitted healthy; eq34 + `carry_invariant` cannot bootstrap while the gate withholds. The field ladder's withholds were SH-gate, never rank-gate; the discharge was a sim-only legacy-N artifact (fixed by the field-N regime, memory note `project_sim_injection_bench`).
+- The third band closes the wall at default tolerance; the POSTURE, not the frequency, is the ~16x cb-calibration lever (s0-corrected vf: dual+SH 541k ≈ triple+SH 571k ≫ triple+slant 34.9k: improves, does NOT calibrate). Consumer: triple 3.9x better than dual (1.126 → 0.290 m); slant gives 1.8x back yet stays 2.2x better than the field posture (the 2026-08-04 "slant 2.2x worse" was dual/30 ep). The third band HURTS clock and ZWD in both postures (per-band noise sweep blocked on a sim change, §13.8.4 OWED).
+- The clock / rx-DCB / iono exchange lives in the LEVEL, not the first difference (level correlations −0.94/−0.85/+0.85, every first-difference correlation about 0; +7.69 TECU per metre of fleet-mean rx-DCB error).
+- 1 h integer grade: EWL(2,5) 98.2 % at true integer, WL 60.2 %, per-band ~5 cyc off; a uniform med|frac| 0.25 can hide a ±20-cycle error. Bounds, does not overturn, "MW/WL do NOT arm".
+- The settled TRIO DIVERGES (EWL 74.7 → 5.0 %, per-band ~1720 cyc; D5 rejected 2026-08-21; root unknown): do NOT arm it, FLOAT stays the track; a frac-only instrument reads the runaway as normal. A dedicated `tests/test_eq34_seed_round.cpp` is still absent (re-host cases sit in `tests/test_network_estimator.cpp`; 2026-10-07).
+- Grading: 120 epochs is inside ignition for every level/calibration channel (cb vf 1.886 at 20 ep, 8756 settled; the LEGAL / NOT-LEGAL-at-1-h list is §13.8.1); never pool raw vf across arms (s0 1.16/1.91/2.00); slant needs `simnet_grade.py --gf-datum` (a datum change is a grader change); never assert a bias sign verbally (IF lump in C is −d_IF, exchange sign +), read it off the model or measure the slope; legacy-N is km-scale, difference in Python ints. ⚠ COD0MGXFIN OSB has NO GPS band-5 rows: a sim third band's code-bias truth is the injected `synth_osb_amp_m` alone.
+
+FIELD ladder, 303 sta, DOY-129 (2026-08-12/13), all PASS:
+- `_pc305_tri_slant_10ep` (GPS): 10/10 at default tolerance, 0 errors; datum 32 IF + 32 GF + 4 s2z; C5Q and C5X both admitted (n_cb 98 = 64 + 17x2; roster 187 C5Q / 114 C5X-only / 9 no-L5; 15/32 sats without a third band); eq34 pin audit complete on all four chains; consumer 13.7 m all +Up (slant ignition; sim 1 h was +2.6 m); code sigma0 3.07; 16.9 s/ep plus ~7.6 s/ep of selected-inverse diag riders.
+- `_pc305_ggq_tri_slant_20m` (GPS + Galileo Q): 40/40, cold start; all seven eq34 chains declared = folded = landed, 0 refusals; Galileo UWL (E5b,E5a, λ 9.768 m) 16 883 rows, 96.4 % FFR-fixed (GPS EWL 973/975); the admission screen caught real corruption (BSHM|G17 |z| 162 460 m, 15 channel-epochs withheld); consumer +13 m Up resolves to −0.27 m by ep 40 (final 4.22 m 3D); 18.5 s/ep.
+- `_1h`: 120/120, 17.66 s/ep; births 5645 → ~30/ep; consumer 3.9 to 4.1 m; Galileo UWL 98.5 %. `_4h`: 480/480, 0 QC trips (T3 to T6), T1 slip rate 1.05e-03 stable; consumer float ~2.97 m median (final 2.54 m); GPS EWL 41 351/41 369, Galileo UWL 99.2 %.
+- ⚠ Every pc305 arm also ran `code_datum_time_linked` (inherited from `_ft63_24h_conv.json`) with `code_bias_gf_datum`, so the GF pin fought inconsistent s2z targets; magnitude unquantified (`docs/SPEC_family_gf_datum.md` §2.1 correction).
+
+Open findings from that ladder (no repo card as of 2026-10-07):
+1. The rx-CB innovation-gate withhold is a STEADY STATE, not ignition: 650/2708 folds at 10 ep, 16 016/57 285 at 1 h, 61 436/230 502 = 26.7 % flat over 4 h. The 10 sigma + 0.5 m gate fights the posture-C rx-DCB definition: recalibration card needed before graded work.
+2. eq34 G-chain single-pin SHORTS grow to 20/15/25 epochs (L1C/L2W/L5X) over 4 h with the rank gate SILENT, more than the 28 admission events, so other station-drop paths race the election: invariant-#7 ordering card owed.
+3. The prefit-census PHASE tier sigma degenerates with cell age (p99 844 → 1856 → 5778 → 3.1e6 sigma by ep 120, max 3.8e7): column unusable, operationally inert (the event domain excludes phase); phase-sigma floor card owed.
+Also ungraded: the worst clock a-priori deviation rotates (E36 → G19/G27, final G27 30.9 m, clk_std 5.6 → 10.8 m) with no runaway trip; a datum-free grade needs the sim arm.
+
+Sim 300-sta posture C (`runs/simnet300_tri_slant`, 2026-08-13): 476/480 at default tolerance (4 A4 skips); consumer float 0.462 m (0.514 at 60: improves with n); clock residual/contrast 0.860/1.209 m; cb vf 17 983 raw (~82k s0-corrected: slant does not calibrate, reproduced at 300); Table-8 rx level lump +0.958 m is absorbed, NOT error; ZWD 0.828 m flat vs 0.872 at 60 (third-band harm persists); EWL 89.7 % (85.5 % last quarter), WL 44.8/33.1 % (settling degradation confirmed); post-fit RAIM fires hot on a truth-quiet fixture (T3 cells 5.4 %, consensus 83.4 %): the leveling-armed post-fit tier is miscalibrated on posture C.
+
+Galileo X-family is not runnable in posture C (every epoch withheld, n_below 22 vs declared 2): `docs/SPEC_family_gf_datum.md`, `docs/refound/GAL_gps_galileo_dual_2026-09-22.md`; interim Galileo Q only; GPS X is immune (bridged via C1C/C2W). The cbpin fill was once gated on `emit_clock_disc`, so field arms could not declare it (source corrected 2026-08-13, `docs/SPEC_product_cbpin_contract.md` §6): never gate a DECLARATION on a trace knob.
+
+Run-tree traps: the grader reads `<run>/logs/`, so stage archived traces there first; `runs/simnet300_tri_slant/` carried stale traces from the pc305 field runs, so confirm provenance (mtime, row count) before grading (a stale header-only file reads as "the tier emitted nothing"); do not reason from source alone on the belief the evidence is gone.
+
+Record: `docs/cards/sim-bed/SIMNET-W6SH-ARM.md`, `SIMNET-SLANT-TRIPLE.md`, `docs/cards/network-vehicle/CHAIN-PIN-AUDIT.md`, `CHAIN-SLANT-ODIJK.md`, `docs/refound/AB2_l5_third_frequency_2026-09-20.md`.

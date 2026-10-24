@@ -610,3 +610,31 @@ legend itself is deliberately unchanged); and `kMinStationsPerSat = 2` —
 
 ---
 
+## 2026-10-24: synthetic minimum network: verdicts, grader conventions and the unexplained A4-withhold episode
+
+These results were recorded only in the agent memory note `project_synthetic_minimum_network` until 2026-10-24, and are copied here before the note was shortened. The text is the note's; the dates inside it are the original dates.
+
+Status note, 2026-10-24: `network.serialize_sbasis_contract` no longer exists (deleted in commit 4c0e731; the S contract line is on every wire since card OWD); the tests named below moved to `tests/network/test_network_estimator.cpp`, where the `assertNullSpaceRank` calls still omit `tol`; `NetworkSolPrep.cpp` is `src/core/network/emit/SolPrep.cpp`. The A4-withhold episode of 2026-08-15 is pre-refound, unexplained and never closed.
+
+The synthetic network (3/5/50/60/300 stations, first built 2026-08-11) is the producer's only ABSOLUTE grade and today one of the two golden beds: `runs/simnet60_quiet_col_24h` (card SFR, 2026-10-01; grade from 00:30:15, memory note `project_sim_fixture_start_artifact`). Pipeline: `gnss_simulator synth-network` → producer → `scripts/simnet_grade.py`. Trust (author, 2026-08-11): the synthetic RINEX "works very well even in an outside engine, the CSRS-PPP results are great", so the bed tests OUR estimator, not the sim.
+
+Verdicts not to re-litigate:
+- n = 3 is ESTIMABLE but NOT DETERMINABLE (ZWD +4.31 m against 0.12 m truth; two more stations remove it).
+- The formal sigma COLLAPSES while the true error GROWS, with every internal instrument clean (sigma0 0.0419, zero RAIM flags on six tiers, zero withholds, rank gate passing): internal grades cannot detect a confidently wrong estimator. See memory note `archive_lessons_datum_estimation`.
+- Grade by transforming TRUTH INTO the producer's realized basis (read the datum off the S line, `network.serialize_sbasis_contract`); never difference the estimate into contrasts (correlated, biases vf downward).
+- Slips are ORTHOGONAL to the level problem: 465 slips inflate per-sat error 0.608 → 4.606 m and leave the common direction untouched (0.920 → 0.466 m). The pivot-relative level wander is NOT slip contamination.
+- The wire common-level wander follows the DATUM STATION (wander 8x polar vs equatorial; consumer 1.42 vs 0.32 m 3D): pivot election is a product-quality decision (card DATUM-WANDER). The 3/5/50-sta trend arms all used a first-roster polar datum, so their "vf ~455 plateau at every n" is contaminated. Since then `scripts/simnet_make_producer_config.py` ELECTS the datum station when `--datum-station` is omitted (fewest mid-arc satellite losses, then most equatorial; an explicit station missing from the roster is a hard error; verified 2026-10-07). `--stride` is the only correct subset of a Fibonacci roster (a prefix is a latitude band).
+- The N-child-process architecture is FORCED: a second in-process `EphemerisProvider` re-registers the spdlog name, and a shared provider has three station-dependent quantities with no setter.
+
+Fixture traps (closed and unit-tested; invisible to any run gate): shared RNG seeds across stations (`tropo_rng`, drawn outside the satellite loop, gives bit-identical ZWD); station-blind `ambN` makes every between-station SD/DD ambiguity exactly zero (AR reports 100 % fix); the station salt must stay below 2^53 because it round-trips through a JSON child config.
+
+⚠ The error class this bed named (SIMNET-REF §0): a conclusion drawn from an instrument that does not record the thing looked for, its silence read as a negative. Before reading absence as evidence, verify the instrument was ARMED, had OPPORTUNITIES and RECORDS THAT OUTCOME (`network_events.csv` does not record RAIM refloats; 0 flags with 0 opportunities is inert; an unarmed marker emits nothing). A 2026-08-11 review falsified three headline readings on exactly this ground (corrected in the cards).
+
+Grader conventions not in the cards:
+- vf denominator `clock_ura_m = s0*sqrt(var)` with `s0 = max(1, ura_sigma0_ewma)` (`NetworkSolPrep.cpp`): exactly 1.0 unless `phase_leveling` is armed. Both refound goldens arm `phase_leveling: true` (2026-10-07), so s0 moves there. Never pool raw vf across arms.
+- Two further grader-invisible movers, inert at defaults: `ura_refloat_inflate` (1.0) and `warmup_ura_floor_m` (0). `network_zwd.csv` `std_m` carries NO s0.
+- No small-network vf extrapolates: any "sigma is off by X" names its station count.
+
+Open as of 2026-08-15: full G-B matrices and G-C. The 8 A4 withholds were one two-cluster episode 15 epochs after an eclipse-exclusion re-admission (TOW 306660 to 306750 at sigma0 1.6 to 1.8k with re-solves; 307110 to 307200 at sigma0 about 1e4 with 0 re-solves, unexplained); leading hypothesis an invariant-#7 re-coupling edge with nothing re-seeded. SIMNET-REF §5.1 item 2 (datum-row inventory) unbuilt. ⚠ The `assertNullSpaceRank` calls in `tests/test_network_estimator.cpp` still omit `tol` (signature default 1e-6, production `kNullSpaceTol` 1e-9), the SPEC's own named trap; `tests/test_network_rank_gate.cpp` passes it explicitly (2026-10-07).
+
+Record: `docs/cards/sim-bed/SIMNET-REF.md` (design, trap register), `SIMNET-GA-NULL-TEST.md`, `SIMNET-50STA-QC-TIERS.md`, `docs/cards/network-vehicle/DATUM-WANDER.md`, topic page `docs/topics/sim-bed.md`.

@@ -496,3 +496,53 @@ The F1 arm: derive from `config/test_suite/_camp60wu_quiet24h_sticky.json` with
 `processing.max_duration_s` 10800 and `network.phase_leveling_los_scale: true` — single
 knob, fresh convergence (the knob touches the carried prior, so treat it as fingerprinted:
 never flip it on a warm resume).  Release only; renamed exe when another session may build.
+
+## 2026-10-24: why the ambiguities are non-integer (user side 2026-07-30/31, network side 2026-08-02)
+
+These results were recorded only in the agent memory note `project_why_non_integer_rootcause` until 2026-10-24, and are copied here before the note was shortened to a pointer. The text is the note's; the dates inside it are the original dates.
+
+Status note, 2026-10-24: `harvestCoupling`, named below, is now `networkHarvestColumn` (`include/network/carry/LocalCarryHarvest.hpp`).
+
+Primary source: the geometry derivation, arc-age table, hold control and WL census are not in `docs/` (cards such as `docs/cards/slip/LANE-SLIP-RESPONSE.md` and the AMB-IONO / raim-qc cards cite this memory). User side measured on 24 h ALGO kinematic (`AmbiguityResolver`) 2026-07-30/31; network side 2026-08-02.
+
+**Geometry (arithmetic, not a bug).** In the (A1,A2) plane the common-cycle direction (λ1,λ2) = (0.190294, 0.244210) sits 6.66 deg from the iono direction (1, α2), α2 = (f1/f2)² = 1.646944 (cos 0.99318, sin 0.1160). A narrow-lane integer is 99.3 % ionosphere: iono-free effective wavelength |(λ1,λ2)|·sinθ = 3.59 cm (unconditioned lattice; λ_NL 10.70 cm holds only after conditioning on a fixed WL). L1/L2/L5 gives 6.10 deg, L2/L5 alone 1.22 deg (why EWL integers come from MW code).
+- A temporal (random-walk) iono constraint contributes exactly zero to an ambiguity (A1 cancels in I_k − I_{k−1}): every `ionosphere_q` sweep was structurally inert.
+- Only an absolute iono constraint helps; instantaneous resolution needs 0.117 TECU (0.1 L1 cyc). GIM gives 2-5 TECU, code 3-6, which is why the S/G/B arms of memory note `project_extproduct_ar_probe` tied. Formal DD σ 4.94 cyc = 0.94 m = 2.90 TECU per LOS.
+- MW EWL (0.0175 cyc = 0.103 m), MW WL (0.1635 cyc = 0.141 m) and per-band L1 DD (≥0.458 cyc = 0.940 m) are one code error at three wavelengths.
+
+**Superseding result: the worst σ is the YOUNGEST ARC, not a floor.** σ_k median (cyc) by arc age: 10-30 ep 0.770, 30-60 0.545, 60-120 0.311, 120-240 0.159, 240-480 0.086, 480-960 0.050. Worst candidate = youngest arc in 85.7 % of epochs (random 18.5 %); median youngest arc 79 ep; max σ over arcs ≥240 ep 0.106 cyc (under ~0.15). Arcs converge in 2 to 4 h; 0.117 TECU is the instantaneous requirement, not a blocker.
+- Hold control (`hold_variance` 1e6; a hold injects 3.4556·√R cyc into NL space, so holds tighten σ artificially): contamination real only ≥240 ep (σ ×1.27 to 1.43), 1-3 % below; youngest-is-worst 85.5 %; max σ ≥240 ep 0.122 cyc. Fix count ROSE with inert holds (1129 vs 668).
+- Log-log slope of σ_k vs age is −0.816, not the −0.5 of white averaging (elevation weighting on a rising limb predicts about −0.70); the right axis is S_k = Σ_arc sin²(el). Open.
+- Arc gate BUILT 2026-07-31: `estimation.ambiguity_resolution.min_arc_info` (Σ sin²el in zenith-epoch units, default 0 = off, WL-constrained N1 search only). Its doc: it guards against wrong fixes, it does not speed convergence. No config arms it and it has never been field-run (as of 2026-10-07); whether it makes fixes CORRECT is the separate wrong-integer question (memory note `project_pppar_user_control`). `min_epochs` is a global counter; `enable_partial_ar` was an accidental substitute (655 of 668 fixes partial; full set fails 98 %).
+- Probe defect FIXED (verified 2026-10-07): `refreshArcAges_` now restarts an arc on `isAmbiguityPendingReseed`, so a refloat no longer inherits its age.
+
+**Network side (2026-08-02, FT63 `ft63_24h_conv`, archived run).** med|f| 0.242-0.254 every hour, circR 0.009: no integer information. 544 225 chord births against 811 standing DDs = lifetime 4.3 ep; ~113 chords refloated per raw slip (vertex fan-out). "Chord survival is the lever" was SUPERSEDED that evening: lifetimes 8 to 43-56 ep moved nothing (and the σ that argument leaned on was carry-blind); the DD walk is a common-cycle spillway of slant-iono representation drift (λ2/λ1 = 1.283 signature, 30-60 min correlation knee, so K_eff ≈ 2 per 30 min is set by error correlation, not churn; memory note `archive_lessons_carry_fold`); six hours flat at 0.25 on a working PD-safe fold (`docs/RUNQUEUE_pdfix_reask.md` P6(b)). Every iono-family network result before that fix ran on a DD basis rebuilt 647× per day. Successor (2026-09-04, card AMB-IONO): on the sim the per-band non-integers were the leveling carry re-asserting each LOS iono direction once per band (K_eff = 2); the joint local block, now the float_kf vehicle itself, is the fix (memory note `project_amb_iono_split_overcount`). Field wide-lane integers do exist under float_kf (card AB3, 2026-09-20, `docs/refound/AB3_lanes_2026-09-20.md`).
+
+**Three AR defects.**
+- D1: no cross-epoch accumulation on the network producer: σ 6.11 to 4.94 over 10 to 30 ep = K^−0.19, K_eff(30) = 2.01 (β 0.0348).
+- D2: the NL search used the iono-COUPLED narrowlane row (0.959 cyc/TECU; the 0.15-cycle `nl_max_per_pair_frac` gate then demands 0.156 TECU, while arc-mean multipath of 5-15 cm is 0.3-0.9 TECU). The algebra is correct; the defect is statistical. The iono-free row c_IF = (2.5457, −1.5457) has c_IF·α = 0 and targets the same integer but is 8.06× more WL-sensitive (N1 = B_IF/λ_NL − 3.529·WL vs y_red + 0.438·WL). BUILT 2026-07-31, default OFF, never field-validated: `estimation.ambiguity_resolution.nl_iono_free_row` (`AmbiguityResolver::nlRowCoefficients`, `tests/test_nl_search_row.cpp`). shift_coef = f2/(f1+f2) [NL] or −f2/(f1−f2) [IF]; bt_coef_2 = shift_coef − 1 always; pairs over 20× amplification are dropped (intra E5a/E5b 77.7×). Still gated on WL hardening plus D1: arming it alone turns an iono bias into deterministic wrong integers.
+- D3: ratio, bootstrap P_s and frac cap are all functions of one Qb; the ratio is invariant under Qb → cQb (mean ratio 3533 means δ = 0.0166 cyc). The battery asks "near AN integer", never "THE integer".
+
+**Engine WL vs estimator-free census** (`scripts/compare_wl_vs_census.py`): 7.8 % disagree by ≥0.5 cyc vs a 4.4 % noise null, 0 flips within an arc: a contributor, not the root. Its ZD half is diagnostic only: the absolute ZD WL is unobservable and the engine's wl_i is arc-relative, so ±40 cyc ZD offsets are not errors.
+
+**Instrumentation** (needs `logging.enable_ambiguity_resolver: true`): `QBCOND`, `WLDUMP`, `ARCAGE` info lines in `AmbiguityResolver.cpp`; WLDUMP runs per NL candidate per epoch (not free). Traps: `holdAmbiguities` returns unless `ar_mode == 3` (and is a no-op on the NlWl basis); the live user path is `resolveWlConstrained`, not `resolve()`.
+
+## 2026-10-24: external-product ambiguity-resolution probe: the DD of absolute float ambiguities does not depend on any product (CLOSED 2026-07-30)
+
+These results were recorded only in the agent memory note `project_extproduct_ar_probe` until 2026-10-24, and are copied here before the note was shortened. The text is the note's; the dates inside it are the original dates.
+
+Status note, 2026-10-24: `NetworkDdFrac.cpp` named below is now `src/core/network/diag/DdFrac.cpp`, and the `_extar_50sta_*` arm configs are under `config/archive/test_suite/`.
+
+Status: CLOSED 2026-07-30, do not re-run. No repo document holds it: configs `config/test_suite/_extar_50sta_{10ep_smoke,30ep}_gps_tri_{s_self,g_extgim,b_extosb}.json`, generator `scripts/extprod_ar_make_configs.py`, runs `runs/extar/`.
+
+Verdict: `NetworkDdFrac.cpp` forms a between-satellite, between-station DD of the absolute float ambiguities, in which satellite clock, code bias and phase bias cancel IDENTICALLY. Swapping in COD products cannot move `grade_ddfrac.py`; only orbit (COD SP3 in every arm), ionosphere, troposphere and multipath survive a DD. Measured (50 GPS triple-frequency sta, DOY-129, 30 epochs), mean|f| / circR: own SH + own OSB 0.252 / 0.016; COD GIM 0.247 / 0.020; COD .BIA with free iono 0.250 / 0.007; uniform null 0.250 / 0.
+
+Estimator-free ceiling (`scripts/mw_census_allpairs.py`, same data, raw RINEX): GPS EWL L2/L5 (λ 5.861 m) circR 0.979-0.994; WL L1/L2 (λ 0.862 m) 0.55-0.59; L1/L5 mixed. Not apples-to-apples with `grade_ddfrac` (per-band λ 0.19 m); the estimator's own EWL lane layer does fix (778 FFR fixes, 2026-07-17, memory note `archive_lessons_field_grading`). Integer accessibility is a wavelength question; the useful question is at what λ the estimator stops preserving the integer content the data has, graded per λ against the census.
+
+Loader facts (re-verified 2026-10-07):
+- ⚠ COD .BIA and COD GIM are mutually exclusive: W6 (`network.estimate_sat_code_bias`) force-sets `model_corrections.enable_code_phase_bias = false`, and the GIM loads only on the legacy W6 path with `estimate_iono_sh` false. Reachable states: own SH + own OSB, external GIM + own OSB, external OSB + no iono constraint.
+- Holding COD .CLK was impossible in July; it is now possible as the external-clock hold (`network.clock_datum_broadcast_anchored` under `apriori_source: sp3` with an explicit `apriori_clock_anchor_sigma_m > 0`; the loader refuses sp3 without it). Satellite clocks are always estimated on the network path.
+- W6 OFF makes the post-fit σ̂₀ code pool read 0 rows: a classification artifact (the discriminator needs a satellite code-bias column), not dropped observations.
+- 30 epochs is deep in the cold-start transient (formal DD σ 6.11 → 4.94 cyc for 10 → 30 epochs, ~10× above the 0.5 cyc threshold): no per-band integer statement is possible there.
+
+This probe was a sanctioned, scoped exception to memory note `feedback_no_external_data_dependence`. Context: memory note `project_network_ddfrac_rootcause_shvtec`.

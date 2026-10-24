@@ -269,3 +269,54 @@ merge carefully"); that doc was deleted in `a8f044f` and the surviving record is
 `project_pb_gate_v2.md` plus CLAUDE.md's verdict — **do NOT arm `emit_pb_filter_gate_v2`** (tested
 Aug-4 on `runs/agu63_pbv2`, 12 h: solve byte-identical, effect null-to-negative). The leaf collision is
 therefore moot; only this card will touch it.
+
+## 2026-10-24: decimated 300 s development tier: NO-GO at 300 s, 60 s legitimate
+
+These results were recorded only in the agent memory note `project_dev300s_tier` until 2026-10-24, and are copied here before the note was shortened. The text is the note's; the dates inside it are the original dates.
+
+Status note, 2026-10-24: `emit_pb_filter_gate_v2`, `emit_pb_filter_window_epochs` and `iono_constraint_deweight_window_epochs`, named below, were deleted by card RKD (rows C12 and C15). The windows still denominated in epochs are `carry_invariant_innov_calibrate_window`, `carry_vce_window_epochs`, `prior_residual_window_epochs` and `block_baarda_window_epochs`; no `_window_s` twin exists.
+
+Rides `network.epoch_decimation_n` (warm-resume fingerprint `edecim=`); the duration endpoint is inclusive (N dt gives N+1 epochs). Not used by the current program (2 h arms at 30 s, memory note `feedback_rapid_mode_2h_checks`); the rules apply if a decimated tier is revived. The tier verdicts are in no repo doc; `docs/SPEC_dev_tier_perf_cards.md` holds the perf card and, in section 8, the window design.
+
+Tier rules (measured 2026-07-14/15, pre-refound postures):
+- 300 s (`n=10`) measures emission / event / datum mechanics per wall-hour, NOT arc survival or convergence: q_z 1e-4 predicts ~0.9 cyc drift over 300 s against ~15 cyc actual steps, so the carry prediction itself is invalid. 6 h d15/em10: refloats 33 %/ep, arc life ~15 min, dd-frac uniform every hour. DECISIVE NO-GO for convergence work.
+  - Raising `carry_invariant_innov_k` for 300 s was FALSIFIED (k=8 gave more D5 flags, 2616/ep vs 2161, sigma0 6.54x): the D5 storm is steady state, not a threshold problem.
+  - At 300 s + deg-15 SH the hour-4 cliff is outright SH runaway (a00 66 to 2620 TECU); at 30 s it is churn only.
+- 60 s (`n=2`) IS a legitimate fast tier for convergence and arc questions: refloat 2.7 %/ep (arc ~37 min, matching 30 s per unit time), D5 184/ep at k=4 with sigma0 1.00, inside the 30/60 s relaxed-MW slip envelope (memory note `feedback_slip_detectors_by_rate`); 6 h takes ~2.8 h wall.
+- Never cross-compare per-epoch metrics with a 30 s golden. Gate tuning transfers; decisive PB, convergence and sigma-floor grading stays at 30 s. Counters from a different build or thread count are indicative only: verdicts come from in-pair comparisons.
+
+⚠ Landmines when deriving a tier config: the seconds gap guards `phase_leveling_max_gap_s` (loader default 120; goldens 900) and `clock_model_max_gap_s` (defaults to it) kill the carry at 300 s; epoch-denominated windows must be rescaled ~10x; per-second q's self-scale.
+
+Rate-transferable windows: STILL UNBUILT (checked 2026-10-07). `carry_invariant_innov_calibrate_window`, `emit_pb_filter_window_epochs` and `iono_constraint_deweight_window_epochs` remain epoch-denominated (60.0) with no `_s` twin. Design: Class A forgetting half-lives go to seconds (`<name>_s`, default 0 = inert, phi = 0.5^(dt/window_s) from the measured gap); ⚠ Class B sample-count guards (min_epochs, warmup_epochs, kPriorRows) stay in epochs, converting them is a regression.
+
+`emit_pb_filter_gate_v2` (k=4) transferred between 300 s and 30 s and retired the hand-tuned tier overrides (30 s: PB disc 2.6/ep vs 85.5, innovation resets 5707 to 32; memory note `project_pb_gate_v2`); armed on both refound goldens (2026-10-07).
+
+Q-theory notes (author Q&A, July 2026): `q_z` prices the nuisance on the float DD (SH representation residual, DD multipath, sub-threshold slips), not the integer; measured hand floors ran 30 to 1000x optimistic; the true zero-q object is the FIXED integer. `clock_model_q2` 1e-8 was field-tested WORSE. Stale-fix 2026-10-07: the sat-clock q is no longer 1e-2; the goldens run `filter.process_noise.sat_clock_q` 1e-3 (Hadamard sweep, adopted on FT63 2026-07-31) plus the Q3 clock anchor at `network.clock_anchor_q` 2.9e-8 m^2/s, about the physical walk (memory note `project_clock_temporal_anchor_q3`).
+
+Adverse trend (input to memory note `project_network_ar_producer_scope`): 6 h em25d15 at 30 s, DD-step churn accelerated with recency (whole run 3.888, last 30 min 4.595 cyc/ep) while the PB wire stayed clean; D5 re-taps grew from 392/ep at 3 h to 719/ep at 6 h. Perf attribution of the 300 s tier: memory note `project_timing305_allon_baseline`.
+
+## 2026-10-24: deterministic parallel seam: byte-identity rules, OpenMP constraints and the parallel-ingest result
+
+These results were recorded only in the agent memory note `project_perf_deterministic_parallel_seam` until 2026-10-24, and are copied here before the note was shortened. The text is the note's; the dates inside it are the original dates.
+
+Status note, 2026-10-24: `parallel_reduce` and its mutual exclusion with `parallel_carry` were deleted by card RKD (row C25, 2026-10-14); `parallel_carry` is the realized win.
+
+Goldens as of 2026-10-07: `parallel_stations`, `parallel_seam`, `parallel_carry` true; `parallel_reduce` false; `parallel_max_threads` 20; `parallel_min_stations` 8. The author's all-parallel directive: memory note `feedback_allparallel_release_runs`.
+
+What each knob costs:
+- `network.parallel_stations` (default true above `parallel_min_stations` 10; `parallel_max_threads` 0 = all cores): byte-identical. ⚠ The gate is a strict `>` with no warning: a roster at or below `parallel_min_stations` silently runs seam, carry and ingest serially. Gates both epoch-loop geometry and RINEX ingest; only the `RINEX ingestion: parsed N stations in X s (parallel|serial)` line separates them.
+- `network.parallel_seam` (default off): BYTE-IDENTICAL by construction (per-block compute into slots, serial merge in (block, chord) order, because the sigma0 feed, D5 decisions and counters gate the next epoch). 305 A/B 1.64x (76.1 to 46.5 s/ep cold), `scripts/compare_network_run.py compare` PASS at 50 and 305; commit `bb0a7ab`. The emit stays serial on purpose: `disc_counter` is the sharpest FP-drift detector, i.e. the byte-identity oracle.
+- `network.parallel_carry` (default off): 2.13x to 2.45x. Per-thread partials over contiguous station ranges: reproducible per thread COUNT, ULP-different from serial (~1e-4 at the solution in general; measured equal on run-end counters and grade_ddfrac for the 300 s dev-tier family). Compare only same exe, same thread count (`parallel_max_threads` 0 makes a hash reference machine-bound). It threads the Card-4 (`carry_invariant`) DD carry algebra; the goldens run `carry_invariant: false`, so its effect there is unmeasured (2026-10-07), and the doxygen's "graded verdicts from off runs only" predates the goldens arming it.
+- `network.parallel_reduce` (default off): not byte-identical (ULP 1e-15 grows to 1e-5 over 121 carried epochs), not thread-count reproducible; as a numeric-perturbation twin on the 2026-09-11 storm bed it reproduced the consumer's settled p50/rms to 0.1 mm with every event count identical (`docs/cards/slip/STUDY-6-common-band-scope.md` section 14.7). ⚠ MUTEX with `parallel_carry`: arming both makes the loader force parallel_carry OFF with one warning, and the run costs ~2x (48.6 vs 22.8 s/ep at 20 threads; caught 2026-07-15 as a 56.9 s/ep smoke). They thread different stages (Schur `reduce()` vs the carry's dense algebra), and reduce is ~2 % of a 305 epoch, so preduce's Amdahl ceiling is ~1.018x. After any run meant to be pcarry-on, grep its log for `forcing parallel_carry OFF` (source: the `parallel_reduce AND parallel_carry both set` warn in `GnssConfigLoadNetwork.cpp`).
+
+⚠ GMG^T trap (paid in a real-data A/B): the fold's `N += G M G^T` cannot become "parallel `dN = (G*M*G^T).eval()`, then serial `+= dN`". Eigen's beta=0 product-then-add rounds differently from the beta=1 fused accumulate; at n_shared 1141 that drifted 1e-4 cyc in dd_fractional and amplified through the stiff carry, and a 5-column unit test does not catch it. Keep the product in the serial merge with the identical fused expression; parallelize block-local solves, the M inverse and readouts. Diagnostic: OFF==OFF and ON==ON but OFF!=ON means deterministic FP re-association, not a race; selfcheck both arms before hunting concurrency.
+
+Determinism preconditions (audit before moving code into an OMP region):
+- No `omp critical/atomic/ordered/barrier`. Produce loops write per-index slots only; every log line and disposition happens in the serial drain. Never `push_back` or `std::vector<bool>` in the region (use `vector<char>`). Per-iteration try/catch (an escaping exception is UB). MSVC OpenMP 2.0: index `for` loops only.
+- `/fp:precise` (no `/fp:fast`). `Eigen::setNbThreads(1)` inside the region, restored after, and only on the parallel path.
+- Logger prewarm is THE guard: `LogManager::getLogger(name)` has a lock-free `find` fast path that races a concurrent first-touch insert. Prewarm every reachable logger single-threaded (`rinex_parser` bit once).
+- `compare_network_run.py selfcheck` on two independent parallel runs must be clean.
+
+Parallel RINEX ingest (`MultiRinexSync::load()`, done): 305 sta, 3 h window, 86.67 to 10.87 s (7.97x, memory-bandwidth bound), observation counts equal to serial. Re-audit if any shared mutable state enters the parse path; `load()` has no unit test (as of 2026-10-07). Open follow-up: derive the `ObsValueMap` variances channel on read.
+
+⚠ Latent: `enableWindUpTracing` (an `Application::run` diagnostic) on a parallel network run would point every station's trace at one path. Do not wire it into the network path without per-station paths.

@@ -30,6 +30,8 @@ Status is one of `open`, `closed`, `parked`, `superseded`, `reference`; the verd
 | --- | --- | --- | --- |
 | [INAV-ODD](../cards/realtime/INAV-ODD-PAGE.md) | live E23 poisoning: SBF I/NAV odd-page data read 6 bits late (orbit off up to ~300 m); fixed, tested on the receiver's GALNav | closed | 2026-10-23 |
 | [EPH-JUMP](../cards/realtime/EPH-JUMP-RESEED.md) | re-seed a satellite whose broadcast record change moves its range > 10 m: BUILT default OFF; 6 h armed replay byte-identical, healthy changes <= 0.83 m; ungraded on a real jump | closed | 2026-10-23 |
+| [RT-STREAM](../cards/realtime/RT-STREAM-RECORDS.md) | real-time bring-up records: AsteRx-U SBF rover path, IGS RTCM stream recipe, BSSD blow-up chain, RT model degradation, Galileo C5Q/C7Q code bias | reference | 2026-10-24 |
+| [RT-SERVICE](../cards/realtime/RT-SERVICE-RECORDS.md) | real-time service work queue (RTF-3 remainder, RTF-4 to RTF-9 open), constant-velocity slant ionosphere, RT scorecard decisions | reference | 2026-10-24 |
 
 **Standing documents** (still at their original paths, indexed not moved):
 

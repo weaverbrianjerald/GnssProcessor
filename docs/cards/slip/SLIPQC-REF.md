@@ -301,3 +301,93 @@ station-local hand-off candidate is structurally unimplementable at this seam** 
 
 ---
 
+## 2026-10-24: IF-TD, MW/LLI and RAIM lessons of the June and July 2026 build
+
+These results were recorded only in the agent memory note `project_network_if_td_slip` until 2026-10-24, and are copied here before the note was shortened to a pointer. The text is the note's; the dates inside it are the original dates.
+
+Status note, 2026-10-24: the lane responses named below (`relevel_retap_*`, corroboration, the observatory `relevel_lane_snap`) were deleted on 2026-10-14 (commit f48868c) and the study-3 band-scope knobs by commit dab7d80; `cardsArmed()` is not in src (`SlipQcParams::anyConsumer()` exists). The 305-station clock-monitor validation and the MW/LLI drain open item (section 11 item 4 of this card) are statuses of 2026-10-07 and were not re-checked.
+
+**Status 2026-10-07.** Armed on both re-founding goldens: `cycle_slip.if_phase_td` with
+`_ref_gate`, `_pairs: all`, `_ref_arm_all`; `mw_detect`, `mw_lli_corroborate`, `gap_instrument`,
+`gap_reentry_relevel` (+ `_per_signal`); `raim`, `raim_attribution`, `raim_within_epoch`
+(the loader auto-arms the first two with it), `raim_withhold_sigma0: 6.0`, `trace_slip_events`.
+NOT armed: `clock_monitor` (+ `clock_monitor_couple_raim`, opt-in on purpose).
+Code: `src/core/slip/NetworkSlipQc.cpp`, `src/core/filter/NetworkRaim.cpp`, `NetworkClockQc.cpp`.
+Record: `docs/cards/slip/` (SLIPQC-REF §11 = knob table + still-owed list; SLIPQC-IMPL, D5A,
+IFTD-REF-GATE + FOLLOWUP, IFTD-PAIRS, REF-FAN), `docs/topics/slip.md`, ledger rows. The IF-TD/RAIM
+lessons below (June/July 2026 build) are recorded nowhere else except as ledger quotes.
+Merged 2026-10-07 with the slip-QC hardening memory (`project_ifphase_mw_slip_agreement`).
+
+**Defaults (verified in the loader 2026-10-07).** `if_phase_td_{k_mad 8, floor_frac 1.0,
+min_pool 30, ewma_alpha 0.15, shrink_kappa 20}`; `if_phase_td_ref_max_consecutive 1`;
+`mw_lli_min_epochs 1`; `raim_k_sigma 6`, `raim_min_stations 3`, `raim_sigma0_trigger 3.0`,
+`raim_surgical_station true`, `raim_station_drop_bias 1.5`; `clock_monitor_{abs_max_m 20,
+jump_max_m 10, reinit_sigma_m 30}`; Card L floors `mw_lli_mw_floor_cyc` 0.5 / `mw_lli_gf_floor_m`
+0.04. `ref_max_consecutive` 1 was set by measurement (false JPLM/MKEA G10 family 14 → 4; the
+`RefGateParams` header default is 2, drift-guard-tested).
+
+## IF-TD and RAIM lessons
+1. A slip corrupts the carried PRIOR, not the measurement: REFLOAT at full weight, never
+   de-weight. De-weighting a freshly refloated (no-prior) ambiguity made it unobservable
+   (`N_rr_r is not positive-definite`) and locked the network 47 m wrong at σ̂0 ≈ 1. A whole-STATION
+   culprit is the one case for EXCLUDE. RF-1 (2026-09-14) made refloat ("drop the prior") the
+   vehicle's slip response.
+2. A satellite culprit reinits ALL its arcs: a keep-some/free-some mix is worse than either
+   (50 sta 1 h last-10 rms 5.59 vs 3.68). Only an isolated `kind==Arc` refloats one arc.
+3. ⚠ `rms_clock_m` misleads: RMS about zero of the raw clock, not de-meaned, outlier-dominated. A
+   "diverged" epoch at RMS 51.4 m had median −1.22 m (54 healthy satellites + one at 330 m).
+   Report median-over-sats + std + worst satellite; grade de-meaned `total_IF`.
+4. Bad-STATION wholesale refloat is DISABLED: one bad satellite inflated ~78 station effects and
+   wiped 3977 carries in one epoch (MIB separability failure). Bad-SAT wholesale is gated on
+   σ̂0 > `raim_sigma0_trigger`; isolated-arc refloat runs at any σ̂0. 50 sta last-10 rms
+   3.684 → 1.689. The older "de-weight beats refloat on clock-vs-CODE" reading was an artifact of
+   this mass refloat.
+5. A single-satellite clock lock-in sits below the network σ̂0 trigger, so RAIM cannot see it; the
+   carried clock (then `sat_clock_q` 0.01, ~0.5 m/epoch walk; no clock model or anchor) froze a
+   330 m jump (~600 epochs to walk back). Hence the clock monitor's own bounds and skip-stash (withhold the flagged satellite's
+   Clock/PhaseBias/CodeBias from `prev_carry`; `reinit_sigma_m` 30 now makes it a soft large-q
+   reinit, ≤ 0 restores the hard skip-stash) plus a binding `initial_std.sat_clock` (< 100).
+   `couple_raim` stays opt-in: it churns clock carries on a clean net and breaks byte-identity.
+6. IF-TD threshold `thr = max(k·1.4826·MAD, floor_frac·λ_IF)`, λ_IF ≈ 10.7 cm (GPS L1/L2): the
+   physical floor binds, k is dormant (k 8 and 12 identical). Floor sweep 0.5 → 45 flags,
+   1.0 → 26, 1.5 → 24. Never the old `|v| > k·MAD OR |v| > λ_IF` form.
+7. Over-fire was a SCALE mismatch, not a centre one: elevation-normalize (`z = dev·sin el`, clamp
+   5°, the floor stays RAW) and a per-(station, pair) EWMA shrunk to the pool prior
+   `w = count/(count+κ)`, fed by clean survivors only. 42 % of flags on one station → 0.077 %.
+8. About 81 % of RAIM events are ONE (station, sat) arc. Blame on EFFECT/σ̂0 in residual units;
+   within-dimension robust-z inflates the ARC dimension.
+9. RAIM standardization needs the robust variance factor `σ̂0 = max(1, 1.4826·median|v·√w|)`
+   per epoch (refloats 45 satellites → 16).
+
+## Slip-QC hardening (cards E/R/L/G, D5-A, H; July 2026): record in the slip cards
+Falsified as defects (do not re-derive):
+- "JPN LLI chatter" was RINEX LLI bit 2 (antispoofing), not bit 0; the MW drain tests `lli & 1`.
+- IF-TD structural misses are gap-coincident (per-pair TD chain broken; caught at ~70× thr once a
+  pair survives two epochs); 2 to 4 cyc MW-only steps with flat IF-TD are code multipath, correctly
+  unflagged. Card G's "clean gap-bridged arcs" were UNMEASURABLE (the ledger is now three-way).
+
+State of the hardening cards:
+- Card R's scale-aware ref gate needs ~7 to 10 epochs to warm, so cold runs still show a few
+  physical-floor refsat fires; `if_phase_td_ref_warmup_abstain` / `_ref_elev_norm` are built,
+  default OFF, UNVALIDATED (need a fault arm on a slipped bed). Card R's invariants (cold prior =
+  physical floor, never this epoch's dispersion; no `prev_grad` rebase by a mixture median) are in
+  SLIPQC-IMPL §8.3.
+- Card E closed the cold diagnosability gap (MW/LLI rows with `action=diagnostic` while cold).
+- Superseded: the "97 % of D5 re-taps have no raw step" lead was answered (95.3 % of D5 flags on
+  chords born that epoch, `docs/SPEC_d5_churn_limit_cycle.md` §2b) and D5 retired with
+  `carry_invariant` (RF-1). Card W never launched; moot.
+
+## Open (as of 2026-10-07)
+- The MW/LLI drain still matches against `StateManager::getAmbiguities()`, where a re-entering
+  arc is already pruned (SLIPQC-REF §11 item 4); only the gap re-entry drain was fixed
+  (synthesized key, reads the carry).
+- The 305-station clock-monitor validation (`start_offset_hours` ≈ 3.9, the 330 m G15 lock-in)
+  was specified and never run.
+- REF-FAN: `ref_arm_all` rides the golden bases, but the card's formal field pin is still owed
+  (OPEN_ITEMS §D: the 6 h FP-2 twin refused it on the refloat response cost, +107 declared PB
+  re-realizations). AB2: the (L1, L5) IF-TD pairs were the largest destabilizer of the triple wire.
+- July 2026 gap "code-bias and phase-bias carries have no detection-to-reinit path" (invariant #1)
+  was later partly answered (`cb_excursion_reinit`, default OFF; card PBF's presence edges); not
+  re-audited.
+
+memory note `feedback_raim_always_on`, memory note `project_network_phase_leveling`.

@@ -292,3 +292,148 @@ every time**, and three of those readings reached a SPEC before they were caught
 
 ---
 
+## 2026-10-24: user-side PPP-AR control campaign (ALGO, DOY 129, 2026-07-30)
+
+These results were recorded only in the agent memory note `project_pppar_user_control` until 2026-10-24, and are copied here before the note was shortened to a pointer. The text is the note's; the dates inside it are the original dates.
+
+Status note, 2026-10-24: the `mode: PPP` + `uncombined_enabled` posture named below as BROKEN was fixed on 2026-10-18 (commit f3b8f2c, step UB2 of card UOM; see OPEN_ITEMS_CODE_DEFECTS.md).
+
+Ran 2026-07-30: ALGO00CAN, DOY-129, COD MGX FIN clock + OSB, GPS L1/L2, 24 h, graded against
+ITRF2020 reduced to the ARP. The question: does user AR deliver anything with an external
+satellite clock and phase bias (the control the network cannot run: it forces
+`estimate_sat_clocks` + `estimate_sat_phase_biases`)? This memory is the campaign's only record;
+`docs/network_ambiguity_resolution_design.md` and `docs/cards/ionosphere/AMB-IONO-OPEN-QUESTIONS.md`
+cite it by name. Runs archived at `D:\GnssProcessor_archive\2026-08-12\runs\pppar\`.
+
+**Recipe that fires:** `mode: PPP-RTK` (base `config/ppp_rtk_internal.json`), GPS-only,
+`frequency_mode: dual` + `channel_mode: single` (⚠ the enabler: stock all/all builds IF-combo keys
+and AR never fires, 0 fixes / 2880 ep), `between_satellite_sd.enabled`, `enable_partial_ar`,
+`ratio_threshold: 3.0`, `estimate_sat_biases: false`, `enable_code_phase_bias: true`,
+`position_q: 0.0`.
+
+Verdicts:
+- **Static: AR changes nothing.** AR 1.0 cm 3D vs float 0.9 cm, identical convergence at every
+  threshold, 1064 fixes. COD OSB doubles the fix count (1064 vs 544), not the solution.
+- **Kinematic (`position_q 1e2`), hold_variance sweep, 3D p50/p95 cm:** float 5.4/25.3; 1e-3
+  (default, 668 fix epochs) 5.2/23.8; 1e-5 7.4/21.2; 1e-7 (125 fixes) **294/550**. The integers are
+  WRONG. The default hold (sigma 3.2 cm = 0.17 L1 cyc) is 17x looser than the float's tightest NL
+  direction (0.0097 cyc), so it injects nothing (siglo_ratio 0.9955). FAIL-UNSAFE: mean ratio 3533
+  (up to 9540) is the tell of a degenerate search, not confidence; fix rate 12.7 % (1064/8348
+  candidates). ⚠ Never take an AR fix count from this engine as evidence of integer recovery.
+- **Qb collapse is NOT the mechanism:** the `QBCOND` probe (`AmbiguityResolver.cpp`) shows
+  cond_ratio ~1 across a fix (the Joseph-form cure of memory note `project_ppp_ar_standard` holds). Tight
+  holds degrade conditioning over time (pre_cond 1.6e3 to 1.8e5), hence the falling fix count.
+- Reject path (76 % of attempts): NL float sigma 0.053 to 0.359 cyc; rounding at 0.36 is a coin flip.
+- **WL anchor tested, not the cause:** `resolveWlConstrained` takes the MW DD widelane as a hard
+  integer (1 WL cyc error shifts the NL target 0.438 cyc), but the engine's WL integers scored only
+  +3.4 pts over noise (raw GPS WL circR 0.590), too little to explain the wrong-NL rate.
+- **Arc-maturity gate `estimation.ambiguity_resolution.min_arc_info` BUILT and FALSIFIED** (default
+  0, still in tree 2026-10-07): first fix at 236 min in every arm (candidates from 53 min); gate 60
+  equals off; gate 120 drops 43 % of fixes, reads slightly worse, and with hold 1e-7 still diverges
+  (89/175 cm H/U). Immaturity is not why the integers are wrong; do not pursue maturity gating (the
+  knob stays a diagnostic). Landed with it: `refreshArcAges_` restarts on `isAmbiguityPendingReseed`,
+  because `resetAmbiguity` re-inflates the variance but KEEPS the key, so presence counting called a
+  freshly refloated arc mature.
+- Author, 2026-07-30: "the entire reason to use AR is to help in the earlier epochs; after
+  ambiguities converge there should not be any difference in float vs fixed." AR as built is absent
+  when needed and wrong when present. Open: what makes the integers wrong.
+
+Gotchas:
+- ⚠ The live user path is `resolveWlConstrained` (WL/NL), not `resolve()`; `holdAmbiguities`
+  early-returns unless `ar_mode == 3`; the `ambiguity_resolver` logger is a null sink unless
+  `logging.enable_ambiguity_resolver: true`.
+- ⚠ `mode: PPP` + `processing.uncombined_enabled: true` is BROKEN (6.1 to 6.4 m 3D, ZWD -0.46 to
+  -0.81 m, where IF-PPP gets 10 cm); PPP-RTK modes force uncombined, so standalone uncombined PPP
+  was never exercised. Reproducer `config/test_suite/_pppar_algo_static_gps_l1l2.json` (later the
+  NlWl vehicle of `docs/cards/consumer/CONSUMER-AR-BLUNDER.md` §8.11.8).
+- Grading frame: the engine estimates the ARP; an SSC truth is the monument, so an unreduced
+  comparison shows DELTA H as pure Up (ALGO 0.100 m read as U +10.5 cm). Grading ruling in
+  memory note `project_antenna_eccentricity_arp_frame`.
+- COD MGX OSB: GPS phase biases on L1C/L1L/L1W/L1X/L2L/L2S/L2W/L2X, code C1C/C1W/C2W (32 sats) and
+  C2L/C2S/C2X (25); **no GPS L5 bias**, so L1/L2 is the honest best case. With `channel_mode:
+  single` + priority W, `require_bia_for_signals` drops nothing.
+
+Later (2026-08-10, `0bee520`, card CONSUMER-AR-BLUNDER): the WL-only and NlWl paths gained an FFR
+gate and an innovation screen (default ON). The FFR gate is structurally blind to systematic
+mis-framing; the unguarded NlWl path reached a 1026.71 m median on this vehicle (guarded 5.46 m:
+safe, not a working AR posture). The user-side NL integer question above was not re-graded.
+
+For the network: even this best case shows no integer benefit, so the AR stack is unproven
+end-to-end.
+memory note `project_why_non_integer_rootcause`.
+
+## 2026-10-24: 38-finding review of the user-side iono and AR features (2026-06-15)
+
+These results were recorded only in the agent memory note `project_iono_ar_review_jun2026` until 2026-10-24, and are copied here before the note was shortened. The text is the note's; the dates inside it are the original dates.
+
+Status note, 2026-10-24: grepped and still true: `IonoVariabilityMonitor::resetSatellite` has no callers, the IPP latitude clamp, the `kMaxIter` 10000 cap, the AR mode 2 branches and the config modes. Not re-run: the GIM leakage and `floor_m` advice, and the `resolveWlOnly` reference-column behaviour.
+
+38-finding adversarial review of the user-side iono and AR features (2026-06-15). No repo doc holds it; this memory is the record. Re-verify the code before acting (items re-checked 2026-10-07 unless noted).
+
+**HOI physics verified CORRECT, do not touch:** I2/I3 coefficients (`7527*c`, `2437=3A²/8`, η=0.66), code/phase signs (phase I2 = -½ code, I3 = -⅓ code), units, `B·k̂` sign, IPP reconstruction, `cos(el)=sin(zenith)` GIM mapping, all residual-equivalent to POINT (memory note `reference_point_codebase`). The engine's I3 is MORE correct than POINT's literal code (POINT feeds TECU where SI el/m² is required, ~1e32 error): never "fix" toward POINT. HOI applies per band before the IF combination, no double count with GIM weighting.
+
+**P0s closed and committed:** frozen-BSSD-pivot skip in `Application::applyGimIonoUpdate` (`frozen_pivots.count(...) || variance<=0`); `wl_max_frac` threaded into `resolveWlOnly` (`wl_fractions`). Lesson: a frozen-pivot state with a live index still leaks its innovation through a common-mode R block; skip by satellite AND by zero variance.
+
+**P1, open:**
+- GIM weighting biases per-(sat,signal) sat-bias states: the iono/sat-bias leakage is per satellite, in the between-sat subspace the GIM pins (floor 0.05 m), while the common-mode block frees only the per-constellation offset; POINT uses the GIM only for Q/initial-covariance shaping, never as an absolute-STEC pseudo-obs.
+- GIM error becomes wrong AR integers: `applyGimIonoUpdate` runs BEFORE AR, so per-sat GIM error leaks via `P(amb,iono)` into the NL float. Mitigate: `floor_m` 0.3 to 0.5 m with AR on, or skip GIM rows for sats MW-locked this epoch.
+- `IonoVariabilityMonitor::resetSatellite` is DEAD CODE (zero callers, 2026-10-07): after a slip the iono-Q GF arc straddles the discontinuity. Wire it beside `cycle_slip_manager_->resetSatellite`.
+- IPP longitude uses an `asin` form that saturates (not wraps) above ~69° IPP latitude: silent wrong longitude for polar stations. ⚠ Moved (2026-10-07): now `computeIppGeometry` in `src/core/atmosphere/SphericalHarmonicIonosphere.cpp`, shared by the GIM and the SH field. Use `atan2`.
+- IF-combo ambiguity keys fix a non-integer with the L1 wavelength (fail-unsafe with `ar_mode != 0` in combined IF-PPP); canonical entry in memory note `project_ppp_ar_standard`.
+- `resolveWlOnly` never inflates the AR-pivot reference columns on a WL re-lock (the comment now says so correctly; behaviour unchanged): a slip on the reference side snaps over several epochs. Inflate any ref column with P>0. The AR pivot is a THIRD pivot (memory note `project_pivot_handover_flipflop_fix` Rule 0).
+- WL-only (`wl_only: true`) ignores `ratio_threshold`, `ratio_upper_bound`, `nl_max_per_pair_frac` (no LAMBDA). ⚠ Corrected 2026-10-07: `min_success_rate` DOES gate WL-only since 2026-08-10 (bootstrap over distinct arcs), plus the innovation screen `wl_only_max_innov_cyc` (default 0.5 cyc), card `docs/cards/consumer/CONSUMER-AR-BLUNDER.md`.
+- AR mode 2 ("instantaneous") silently behaves as mode 1 (only `==0` and `!=3` branches; no warn at load).
+
+**P2, trace-watch:** adaptive-Q is a CHANGE detector (baseline window contains the recent one, so a sustained storm self-cancels after ~`baseline_window`, about 2 h at 30 s); GIM re-tightening every epoch blunts adaptive-Q (worse with no IONEX RMS maps, 3 TECU fallback); adaptive-Q and slip detection double-react on the same GF TD2 statistic; MLAMBDA has a silent 10000-iteration cap (`IlsCore.cpp`), so a possibly suboptimal best/second pair with no log; PerBand WL re-lock covariance reset is ~5x looser than NlWl (~67 vs 12 cyc 1σ: confirm the DD residual collapses below 0.1 cyc in one epoch); the KF post-fit forced pivot handover skips the ex-pivot SD re-seed (`was_disturbed=false`) and relies on the next pass's per-row outlier dispatch.
+
+**AR config gotchas:**
+- Both `*_AR.json` configs (`ppp_rtk_internal_AR.json`, `realtime_ppp_rtk_AR.json`) have `"mode": 0`, so AR does not run. `ppp_rtk_internal.json` has mode 1 but `channel_mode: all`, where AR never fires. The recipe that fires (`mode: PPP-RTK` on `ppp_rtk_internal.json`, AR mode 1, `frequency_mode: dual`, `channel_mode: single`) is not committed; it lives in memory note `project_pppar_user_control`, whose integers were found WRONG. ⚠ `config/test_suite/_pppar_algo_static_gps_l1l2.json` sets AR mode 1 + single channel but on `mode: PPP` + `uncombined_enabled`, the posture that memory found BROKEN (metre-level): not a working recipe.
+- `ionosphere_weighting`, `adaptive_iono_process_noise`, `enable_higher_order_ionosphere` default OFF; HOI also needs `data_download.download_gim=true` (memory note `project_config_toggle_gotchas`).
+- Mode-3 fix-and-hold is effectively a no-op: `holdAmbiguities` calls `buildDdPairs(state_manager, {})` with empty observations, the elevation filter drops every pair.
+
+## 2026-10-24: antenna eccentricity and the ARP frame: the author's rulings of 2026-07-29 and 2026-10-23
+
+These results were recorded only in the agent memory note `project_antenna_eccentricity_arp_frame` until 2026-10-24, and are copied here before the note was shortened. The text is the note's; the dates inside it are the original dates.
+
+**Frame rule.** Published coordinates (IGS SINEX/SSC, NGS SIF, a surveyed `APPROX POSITION XYZ`)
+are MONUMENT-referenced; every engine position state is the ARP (igs20.atx PCO/PCV are
+ARP-relative). The bridge is RINEX `ANTENNA: DELTA H/E/N`. ⚠ RINEX order is (Up, East, North), not
+ENU.
+
+**Landed 2026-07-29 (always on; geometry, not a lever).** `Coordinates::markerToArp` /
+`arpToMarker` own the convention (exact no-op at zero eccentricity; `arpToMarker` needs one
+fixed-point step, since a single-shot inverse leaves 4 um on a 6 m tower);
+`RinexParser::getArpPositionXyz` pairs the header fields. Wired at the RT / closed-loop consumer
+seed, the baseline rover a priori (header fallback only), the closed-loop consumer truth
+(`NetworkSetupResult::cl_truth_arp`), `Application.cpp` and `PppModel.cpp`. Tests:
+`tests/test_antenna_eccentricity.cpp` (6 cases). The OTL/APL/pole GRID lookups are deliberately
+not reduced (0.5 deg cells; eccentricity is noise there).
+
+**Ruling (author, 2026-07-29): "Skip eccentricity. We only care about the repeatable ARP."** Do not
+re-propose grader-side eccentricity, an emitted-frame reduction or a manifest eccentricity field.
+The engine emits the ARP; `pyviz/gnssviz/eval/truth.py` grades against the SSC monument as-is;
+absolute monument-frame accuracy is not a project metric. Refinement (author, 2026-10-23): when
+PPP results are set beside the closed-loop consumer (whose truth is `cl_truth_arp`), grade them
+against SSC reduced by DELTA H/E/N (ARP frame) as primary, with the monument numbers as a side
+note (memory note `project-status-update-2026-10-29`); the harness default itself is unchanged. A constant ARP-vs-monument offset is
+therefore EXPECTED in absolute vertical numbers (JPLM00USA H = +0.0610 m against the harness
+U +5.7 cm, matched to 4 mm): a reason NOT to chase that DC, not a card to open. Pose vertical work
+as repeatability or differential (memory note `project_vertical_instability_solidtide`).
+
+**Network roster: a modelling defect, fixed (card UPO, closed 2026-09-22).** The roster was held at
+MONUMENT coordinates while the observations refer to the antenna (48 of 59 field stations,
+GRAZ00AUT 1.964 m). Each station's ZWD absorbed ~0.26 x H and the rest reached the satellite clocks
+regionally: the WTZZ00DEU consumer's whole standing Up offset (-0.085 m to 0). Knob
+`network.station_marker_to_arp` reduces the roster at setup; armed at the author's instruction
+("use the arp (I thought we were already)", 2026-09-22) and pinned in both goldens since the GRB
+re-base that day (re-verified 2026-10-07). The grading ruling above is unchanged. A
+second roster defect: the coordinate resolver applies no post-seismic model (MIZU00JPN 1.6 m);
+card SCU parked, MIZU00JPN dropped from the field roster.
+
+Fixture facts (2024-129, 305-station set): 184 stations have |H| > 1 cm (NVSK 6.166, HARB 3.052,
+MAYG 3.036, AGGO 0.410, ALBH/ALGO 0.100, JPLM 0.061 m). ⚠ The header `APPROX POSITION XYZ` is not an
+audit reference (~0.45 m off at JPLM, 433 m at WUHN); settle roster provenance against SINEX/SIF.
+Keep `apply_phase_shifts` OFF (memory note `project_rinex_phase_shift_convention`).
+
+Record: `docs/refound/UPO_consumer_up_offset_2026-09-22.md`,
+`docs/refound/SCU_station_coordinates_unknowns_2026-09-22.md`.

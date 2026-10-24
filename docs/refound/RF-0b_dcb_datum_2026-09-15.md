@@ -76,3 +76,72 @@ separately (the GIM-as-truth confound).  **Frozen reading:** the gate sees decla
 ⇒ the datum is real; the field consumer per-hour p50 within ± 0.5 m of RF-0 and the field wire within ± 20 % (D_phase, D_code) ⇒ RF-0c IS the
 baseline and the GIM leaves the producer; `broadcast_tgd` beats `zero` on the field consumer by > 0.3 m in ≥ 4 hours ⇒ the physical datum is
 the posture; the L2X tail persists at > 50 m rms ⇒ the sparse channel needs its own pin per signal and the read is the per-signal roster.
+
+## 2026-10-24: network satellite code bias scope: estimability traps, per-signal datum ruling and the open residuals of the 2026-06-29 review
+
+These results were recorded only in the agent memory note `project_network_code_bias_scope` until 2026-10-24, and are copied here before the note was shortened. The text is the note's; the dates inside it are the original dates.
+
+Status note, 2026-10-24: the `gim_valid` floor of residual M1 has no such symbol in the tree (GIM branch only, inert on the goldens).
+
+Status (verified 2026-10-07): `network.estimate_sat_code_bias` is armed on both RF goldens in the
+self-contained form: `network.w6_iono_constraint: "none"` (no GIM or SH constraint, card RF-0b) and
+`network.sat_gf_datum: "broadcast_tgd"` (one hard GF pin per satellite at c*T_GD, card RF-0c). The knob
+forces one coupled slice: `estimate_sat_biases` + `promote_sat_code_bias` + `estimate_ifb` (rx DCB) +
+iono weighting (off under "none") + `enable_code_phase_bias = false` (.BIA skipped on the producer AND
+the derived consumer) + `estimate_phase_clock = false`. Datum: full per-signal OSB, sum-to-zero per
+(constellation, SIGNAL), per-satellite IF pin. (Corrected 2026-10-07: the 2026-07-29 text described a
+default-off feature constrained by SH-VTEC or GIM.)
+
+Estimability traps (each cost a debug iteration):
+- The gap is estimability, not I/O: the satellite DCB's GF part is confounded with free slant iono.
+  Diagnose in `reduced_N_ss`, never `N_rr` (the confound is Schur-eliminated first and lands in the
+  shared block, tripping `assertNullSpaceRank`, a whole-epoch withhold).
+- Non-primary rx IFB columns must be dropped in splitStation (an L5 IFB drained the L5Q clock/phase
+  separation and withheld every epoch).
+- Datum rows are SOFT info (`addSharedConstraintRows`, w = 1e3) added before the gate: a gauge only has
+  to be COVERED, and redundant coverage is harmless (Weyl). Per-signal over-pinning is safe, per-band
+  under-pinning is not.
+- GIM branch only: >= 2 GIM-valid dual-band satellites per constellation per station, else that DCB
+  stays confounded.
+- Undifferenced rows: the rx DCB (`estimate_ifb`) must land with the satellite column; either alone trips
+  the rank gate. "Disable receiver code bias" is BSSD-only guidance.
+- Closed-loop validation must keep .BIA off on the consumer (`ssr_bias_term` is ungated: silent double
+  correction).
+
+Per-SIGNAL vs per-BAND sum-to-zero: RULED, keep per-signal. Per-band zero-emits at 305 sta (Galileo
+C5Q/C5X on disjoint receivers leave C5Q unpinned); per-signal forces same-band inter-channel means to 0,
+which IS the COD .BIA convention (G18 C1W-C1C 0.1714 vs .BIA 0.1736 m). A connected-components datum
+was designed but never built (no `network.code_bias_datum` knob exists, checked 2026-10-07 with two
+tools): its gain (<= 0.14 m on ~6 GPS L1C Block-III satellites) cancels at the gauge-invariant consumer.
+If built it needs a partition-change `markDatumChange()` trigger (a component split changes no emitted
+sat-set or band tuple, so the emitter cannot see it); edge rule same rx, same band, ANY satellite.
+
+Deterministic IF pin: `NetworkSbasis::selectIfPinPair` sorts by a strict total order (band digit, then
+signal name); a non-stable sort once let a silent C1C/C1W swap step the clock/code-bias split.
+⚠ The discontinuity baseline must be the last EMITTED pair, advanced only at the emit site: advancing it
+on withheld epochs fires spurious bumps that reset converged ambiguities (same rule as the pivot/anchor
+emitted state); the bump is guarded by `emit_clock_disc` (armed on the goldens). The consumer answers a
+code-bias disc by reinflating both the per-band IFB and the reference DCB (`code_bias_reinflate_std`
+0.5 m). The lexical pick is C1C/C2L, not the IGS C1W/C2W reference; it matters only when mixing with
+external clocks.
+
+Validation ceilings (2026-07): 3-sta closed loop 0.508 m vs .BIA 0.489 m; 3 h / 150 sta vs COD MGX,
+within-satellite DCB correlation 0.62 to 0.67, stalled from hour ~1.2 (systematic deg-8 SH leak: a richer
+iono field is the lever, not horizon). C1C-C1W is unobservable when `channel_mode` is single (disjoint
+station subsets); GPS C5 has no COD MGX OSB truth.
+
+Open residuals of the 2026-06-29 review (re-checked 2026-10-07): M1 no `gim_valid` floor (no such symbol;
+GIM branch only, inert on the goldens and on GPS+Gal): a constellation with one GIM-valid satellite leaves
+its DCB near-null and the epoch is withheld. M2 no guard for a missing GPS `signal_priorities` list
+(GLONASS errors; Galileo-active-without-list warns since card GAL, 2026-09-22), so such a config emits an
+empty product (memory note `project_multignss_signal_priorities_drop`). L2 the common-mode whitening LLT is unchecked:
+cond(R) ~ 1e16 at config-reachable `common_mode_sigma_m >= 1e4`; the default 50 is safe to ~7 digits;
+Sherman-Morrison removes the cliff. GLONASS with code bias is a hard error.
+
+User side: receiver code bias needs no new code (`config/ppp_rtk_user_rxcb.json`, undifferenced; it
+cancels under BSSD).
+
+Record: `docs/refound/RF-0b_dcb_datum_2026-09-15.md`, `RF-0c_gf_pin_2026-09-15.md`,
+`RF-0d_per_signal_pin_2026-09-15.md`; `docs/cards/network-vehicle/SBASIS-CONTRACT.md` (IF pin).
+
+memory note `project_beidou_network_clock_divergence` (W6 under BeiDou: the zero-emit chain).

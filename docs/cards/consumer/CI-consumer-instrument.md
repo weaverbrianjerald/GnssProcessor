@@ -89,3 +89,81 @@ and the network is not implicated — a consumer-side card before anything else.
 consumer posture of the field golden's `closed_loop` block for grading (a consumer knob is not a producer knob: the goldens
 pin it in the manifest, no ledger row, no fingerprint).
 
+## 2026-10-24: closed-loop consumer vertical bias at 305 stations: the elimination table and the gotchas
+
+These results were recorded only in the agent memory note `project_closedloop_consumer_vertical_bug` until 2026-10-24, and are copied here before the note was shortened. The text is the note's; the dates inside it are the original dates.
+
+Status note, 2026-10-24: `network.closed_loop.consume_network_iono` is dead on the goldens, and the `NetworkEmitStore.cpp` anchor named below is `src/core/network/emit/EmitStore.cpp`.
+
+Status (2026-10-07): historical. The failure: 305-sta em25 wire, held-out ZIM200CHE consumer at U -5.2 m
+after 30 min, median 3D 3.45 m, 0/60 fixes, while an external PPP-RTK user on the same data settled in
+5 min and standalone float PPP on the products sat at +9 mm. On 2026-09-14 the CI census put the defect
+in the WIRE: the satellite clock wanders 2.8 to 5.0 m within arcs because it inherits a network code
+model inconsistent with the data by metres; plain PPP on CODE products converges to 0.25 m, so the
+consumer's own modeling was fine. That finding opened the network re-founding; on the RF goldens the cold
+consumer converges (field WTZZ00DEU 0.108 m in hour 1, 0.026 m in hour 6, `runs/_rf0hv14_field6`). The s24
+attribution, the census numbers and card CI's still-unlifted bar suspension are in
+memory note `project_consumer_instrument_card`. The brdc_rts Card-8 read of the same failure (criterion 4: ~2.8 m
+vertical-dominant float, 0 % fix, mode-independent, 3-station reproducer) is `docs/rt_service_conventions.md` §8.4.
+
+Elimination table (each cost a graded run; none is a consumer-vertical lever):
+1. `kSsrPhaseBiasSign` flip: dead. The CLFRAC dump (`AmbiguityResolver.cpp`, before the sigma gate) shows
+   wandering fractions (mean |frac| 0.269, R <= 0.63), no static offset.
+2. BSSD vs undifferenced consumer frame: both fail identically.
+3. Slip detection off, mask 25 vs 10 deg, truth ECEF, product quality, horizon: all null.
+4. `model_corrections.bias_coverage_requires_apply` (6fa0cd1, default false): a real phantom-.BIA
+   coverage defect (3-sta U +5.11 to +0.009 m), byte-identical at 305 sta.
+5. Signalling re-realizations (`code_bias_disc_jump_test`, `clock_disc_on_set_change`, ISB reinflate):
+   U slightly worse; telling the consumer buys more resets.
+6. Clock datum/gauge class: s2z, `clock_datum_broadcast_anchored`, `clock_signal_basis_hold` all null.
+7. `filter.sat_clock_q` is a silent no-op under `network.clock_model` (the live pair is
+   `clock_model_q1/q2`); tightening q2 over-tightens.
+8. Code-to-clock leak inverted: loosening `code_std_m` worsens the clock (pseudoranges hold it together);
+   tightening to 0.1 m buys -27 % e3d but +1.4 m vertical bias (diagnostic, not a production value).
+9. `network.raim_arc_persist_epochs` backfires (K 2/3 halved refloats, PB churn and clock wander rose):
+   refloats are damage control, not the disease.
+10. Producer null-space leak: none in the shared normals (`trace_estimability`); the consumer's own
+    ambiguity / rx-clock / height matrix was never tested.
+
+Levers that moved it all traded AC (oscillation) for DC (bias): `phase_std_m` 2 to 3 mm (U -5.22 to
+-2.20 m, plateau ~2.5 m 3D, 0 fixes); `phase_bias_min_station_fraction` (float50: clock tstd -70 %,
+U-osc 2.43 to 0.67 m, but a -2.3 m DC height bias; FLOAT beats DROP, `signal_min_station_fraction` e3d
+9.93 m); consumer `ionosphere_q` 1e-3 to 1e-4 (U-osc -33 %, +2.7 m DC); `closed_loop.consume_network_iono`
+(a9301c6, a common-mode-free per-satellite slant pseudo-obs, network solve byte-identical), the only lever
+that zeroed the vertical median (up -1.09 to +0.04 m at the honest sigma; std_scale 0.1 over-corrects to
++2.14 m, still 0 fixes: AR was not iono-limited). ⚠ Corrected 2026-10-07: `consume_network_iono` is armed on the RF goldens but
+dead, since the producer emits slant iono only with an SH model (`NetworkEmitStore.cpp` ~:699); card AB1
+(2026-09-20) parked the consumer iono constraint KEEP_OFF.
+
+Gotchas:
+- `network.raim_sigma0_floor` 1.0 is load-bearing: unclamped sigma0 collapses to ~0 because most pooled
+  carried-phase residuals are ~0 (pinned), so RAIM gates at the fixed a-priori scale (6 sigma_phase).
+  The structural fix, if ever wanted: pool sigma0 over active (non-pinned, non-zero) residuals only.
+- The closed-loop consumer inherits the producer's filter block (`position_q` 100, `troposphere_q` 1e-9;
+  current state in memory note `project_consumer_instrument_card`).
+- The W6 slice (`estimate_sat_code_bias`, also force-armed by `estimate_iono_sh`) forces
+  `model_corrections.enable_code_phase_bias = false` at load whatever the JSON says (how phantom .BIA
+  coverage slipped in).
+- At 305 sta the per-component loggers are off (`rt_engine.log` empty): grade consumer reactions from
+  traces.
+- A run's effective config is its `gnss_config.log`, not a same-named .json edited later.
+- Reruns of one binary are byte-identical: every A/B delta is signal.
+- Broadcast-anchored clock eigenvalue is 1/sigma^2, independent of N: the loader warns above 30 m and
+  errors at >= 100 m.
+- The Odijk diagnosis (moving PB datum, reset-not-repair) and its Fix A/B were overtaken: an ensemble PB
+  reference cannot be integer (eq34 theorem), the carry-side step was fixed by `phase_anchor_carry_reref`
+  and the held basis (memory note `project_pivot_visibility_gauge_defect`), and the RAIM premise was inert on
+  carry_invariant (memory note `project_raim_pool_rehost`).
+- NOT refuted: the split-anchor AR poison (Odijk 2016 Table 11). A user DD is integer only if one pivot
+  receiver (or a chain) anchors every satellite; per-(sat,signal) anchors on different receivers leave a
+  fractional term in the user's between-satellite difference. The eq34 chain datum answered it
+  (`docs/cards/network-vehicle/CHAIN-SLANT-ODIJK.md` section 14.2) and is off on the RF goldens
+  (prioritized per-(sat,signal) datum, float vehicle); re-read before any consumer AR work.
+
+Record: `docs/cards/consumer/` CI-consumer-instrument.md, CI-census-wire-vs-code.md,
+CC-declared-step-carry.md; `docs/refound/NETWORK_REFOUNDING_2026-09-14.md`,
+`docs/refound/AB1_sh_consumer_product_2026-09-20.md`. Evidence runs `card8_brdc_rts/`,
+`net_matrix_2024-129/` are under `D:/GnssProcessor_archive/2026-08-12/runs/` (pre-refound, untrusted);
+grader `scripts/grade_codeloose.py`.
+
+memory note `project_ssystem_theory_reference`.

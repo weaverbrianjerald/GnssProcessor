@@ -406,3 +406,18 @@ as the drafting pass reported them.
   (2026-10-07).
 - [ ] The re-admission clock-only falsification was measured on the triple-frequency sim
   bed (card READMIT); no dual-frequency re-measurement was found.
+
+## 2026-10-24: RINEX SYS / PHASE SHIFT records are already applied: keep apply_phase_shifts off
+
+These results were recorded only in the agent memory note `project_rinex_phase_shift_convention` until 2026-10-24, and are copied here before the note was shortened. The text is the note's; the dates inside it are the original dates.
+
+`SYS / PHASE SHIFT` header records document a shift the receiver ALREADY applied to the phases in the file. `model_corrections.apply_phase_shifts` (default false) therefore SUBTRACTS it at parse time (L observations only, `RinexParser.cpp`). Keep it OFF, especially on the network. Not recorded in any repo doc.
+
+Why (2024-129 fixture, 310 station headers): the recorded value for the same (sys, code) varies BY STATION (G L2X −0.25 at 55 / +0.25 at 44 / blank at 7; G L1W −0.25 at 48 / 0 at 14; E L1C +0.50 at 33 / 0 at 143; E L6C −0.50 at 22), so the files as recorded are already cycle-harmonized across the network and subtracting re-introduces per-station ¼ and ½-cycle offsets. A/B `runs/aps_on` vs `runs/clfrac_probe` (305 sta, 25 epochs; the OFF leg exited truncated, so mechanism confirmation only): per-(sat, signal) PB SD moved by exactly ±¼ cycle (p95 0.2498-0.2512) on the mixed-convention signals L1X, L2S, L2X, L5X, L7X and ~0.001 cyc on uniform ones; CLK and CB unchanged (< 1 mm). The anchor station's own shift propagates straight into the emitted phase bias.
+
+Traps if anyone arms it:
+- The convention is NOT in the product frame: the S contract carries no phase-shift field (only `gnss_config.log` states it; re-checked 2026-10-07), so producer-ON / consumer-OFF is an undetectable ¼-cycle frame mismatch. See memory note `project_product_legend_schema_fix`.
+- `MultiRinexSync` copies `base_config` per station, so the toggle reaches every network station parser.
+- Fixed 2026-09-28 (`ae53603`, comment-audit card CAF): records with a satellite list (747 of 7000 on the fixture) had their count read one column left, so per-satellite shifts were applied system-wide. They now go to `phase_shifts_by_sat` and override the system-wide entry when the toggle is on.
+
+Sibling header-convention item: memory note `project_antenna_eccentricity_arp_frame`.

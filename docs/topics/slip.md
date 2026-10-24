@@ -51,6 +51,8 @@ Status is one of `open`, `closed`, `parked`, `superseded`, `reference`; the verd
 | [REF-FAN](../cards/slip/REF-FAN.md) | reference-slip fan-out: collateral refloats 6 to 0; armed on both goldens, inert at dual frequency; closed | closed | 2026-09-13 |
 | [RULE F2](../cards/slip/IFTD-F2-lli-shadow.md) | the LLI shadow: a pair holding a band flagged last epoch cannot exonerate; S1 storm closed | closed | — |
 | [RULE F3](../cards/slip/IFTD-F3-lli-epoch.md) | the LLI-epoch verdict: S3 residual 0.335 to 0.005 cyc; its anchor clause keeps references | closed | — |
+| [BSSD pivot](../cards/slip/BSSD-PIVOT-USER-SIDE.md) | user-side SD pivot defects: the MW reset strands SD arcs (fix NOT landed, awaiting the author); six code-only BSSD root causes fixed, unvalidated | open | 2026-10-24 |
+| [slip audit](../cards/slip/SLIP-AUDIT-2026-06.md) | TurboEdit MW+GF audit of June 2026: fixes committed; open register and the thresholds the fixes rest on | reference | 2026-10-24 |
 
 **Standing documents** (still at their original paths, indexed not moved):
 

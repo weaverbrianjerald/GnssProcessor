@@ -389,3 +389,29 @@ needs 0.117 TECU); this card is the independent estimation-side confirmation.
 | 1 | ~~The slip-aware election has no field grading~~ — **CLOSED, NET-HARMFUL** (§7): works mechanically (102 de-seeded / 9 re-admitted), costs `total_IF` spread +15.7 %. Keep OFF. The open question it leaves is real: **a de-seed is a datum handover and currently has no datum-side response.** If tree-edge mass kills ever become worth removing, that response — not the election policy — is the thing to build. Cross onto `SPEC_deweight_release_hygiene.md`, the same shape of problem. |
 | 2 | Neither of the two remaining `carry_slipped_ambs` consumers was re-examined for whether it WANTS the D5-only entries it currently gets (the v3k erase classifier already splits them out; anchor hygiene and the PB emit filter do not). |
 | 3 | **The chronic-flagger roster is still unexplained and is now the interesting object.** URUM / CAS1 / MRO1 / ULAB / WIND at duty up to 0.99, overlapping the iono-deweight gate's chronic >3σ SH-misfit roster. With the churn removed, whatever those stations are doing is no longer hidden behind 33 628 flags/leg — `runs/churn_v5b`'s 1 725 informative-prior flags are a clean population to study. Cross onto `project_network_ddfrac_rootcause_shvtec`. |
+
+## 2026-10-24: 305-station all-on attribution rerun (2026-06-28 to 2026-07-14): the negative verdict was confounded
+
+These results were recorded only in the agent memory note `project_net305_attribution_rerun` until 2026-10-24, and are copied here before the note was shortened. The text is the note's; the dates inside it are the original dates.
+
+Status note, 2026-10-24: `network.phase_bias_exclude_unmatched_antenna` was deleted by card RKD (row C28); the live path is `network.exclude_unmodeled_antenna_stations` (armed, excluding no station on the baselines).
+
+Closed work (2026-06-28 to 2026-07-14, pre-refound postures, 50 to 305 sta). The 305 all-on run CONVERGED (3 h tail 1.97, 6 h tail 2.06, 12 h GPS-only full day PASS with self-heal after the hour-4 event); the 2026-07-13 NEGATIVE was confounded. Only quotes in `docs/CONFIG_promotion_ledger.md` record any of this.
+
+Grading confounds:
+1. Never verdict inside ignition (50-sta ignition ~2 to 3 h; now a CLAUDE.md rule).
+2. A config without the Card-1 coupling trio (`shared_carry_full_cov` + `carry_conditional_coupling` + `carry_coupling_time_update`) is not comparable to the stable references. All three are armed on the refound goldens (checked 2026-10-07). Do not add `carry_coupling_joint_whiten` (FALSIFIED, ledger).
+3. ⚠ Carry-pool size confounds every cross-run DD comparison: read the carry-counter block first. A 17x pool collapse (8,325 to 505 chords) was `phase_bias_exclude_unmatched_antenna` x 12 unmatched-ATX stations, not `phase_datum_min_stations`; the ATX radome fallback has since emptied that set on the 305 roster (memory note `project_atx_radome_fallback_card`), but the knob is still armed on both goldens (checked 2026-10-07): a station whose antenna TYPE stays unmatched after that fallback is cut from every satellite phase-bias state, which shrinks the pool. The 505-pool arms converged while 8.3k-pool arms churned 5 to 9 at ignition (`phase_datum_min_stations` >= 2: 4 %/ep slip vs 10 %, 3x faster): evidence for an unbuilt curated-carry-pool card.
+4. The ignition poison was Galileo-borne: UFPR00BRA + POAL00BRA churned through Galileo processing (amputated: ignition 1.97 to 0.88; GPS-only with them in: equally clean). ~98 % of the 305 carry pool was Galileo-group cycles, and a ~210/ep Galileo disc floor exists independently. GPS-only 305 needed zero exclusions.
+
+Other reads:
+- Churn is not divergence at scale (~30 %/ep chord turnover, yet convergence on per-epoch geometry). a00 hit 8430 TECU transiently at hour 4 while the DD frame recovered.
+- Chronic backgrounds, do not rediscover: slant residual > 3 sigma on 70 to 90 % of LOS at every scale; discs ~200/ep flat; deg-15 SH as an hour-4 cure NEGATIVE; a 10 deg mask inflates clock-delta rms ~77x against 25 deg.
+- Loader couplings: `estimate_iono_sh` forces `estimate_sat_code_bias` (unless external), and GLONASS admission is exclusive with that slice; zero-q `phase_leveling` needs a slip detector (mw_detect + if_phase_td).
+
+Scaling findings (50 to 305, 2026-06-29, fixes landed):
+- Phantom border pin: `NetworkNormalEquations::addStation` committed N_ss before the local PD check, so a dropped station (singular N_rr from a structurally zero ISB column) pinned the clock common mode. Fixed: commit after the check, drop zero local columns rather than the station. ⚠ Reusable diagnostic: by the Schur identity the dropped stations' b^T W b must sum to the spurious kernel u^T N u (2.203e6 + 3.229e6 = 5.432e6 exactly). Pin weight and equilibration were not it.
+- ProductCache duplication: 466 MB/station (every model copied orbits, clocks, antennas, biases, ERPs); now `shared_ptr<const vector>` handles (`getXShared()`), 41 MB/station (305 sta ~8 to 13 GB, was 146 GB committed), bit-identical. Found by a construction-time `GetProcessMemoryInfo` probe after four wrong hypotheses; the apparent in-loop growth was the 59 s startup.
+- More stations does NOT improve the user: held-out JPLM float position flat at ~8.6 cm 3D from 50 to 305 sta (the consumer's atmosphere-free modelling floor; atmosphere is the lever). Conditioning improves; compute ~3.7 ms/station/epoch.
+- Stale-fix 2026-10-07: `active_systems` alone used to leave a constellation's satellites in (zero solution epochs on a half-scrubbed config). Since card OWD O4 (2026-09-23) `MultiRinexSync::retainSystems` strips inactive systems on the network sync and the consumer replay, and a stray signal priority list only warns.
+- Tools: `scripts/select_global_stations.py` then `fetch_global_obs.py` then `gen_network_config.py`; ⚠ `--keep` takes 4-char codes (`--keep JPLM00USA` silently no-ops).

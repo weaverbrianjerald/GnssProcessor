@@ -203,3 +203,43 @@ what the re-coupling edge moved.
 **"Transform > delete" remains UNMEASURED** (§5.07.6 / §5.08.5) — build the transform when a
 bigger fixture shows the one-epoch refloat cost, or for §8's own clock-pivot edge.
 
+## 2026-10-24: AGU-26 campaign: product churn, not accuracy, blocked the held-out user (2026-08-05)
+
+These results were recorded only in the agent memory note `project_agu26_abstract_campaign` until 2026-10-24, and are copied here before the note was shortened to a pointer. The text is the note's; the dates inside it are the original dates.
+
+Concluded 2026-08-05. DOY-129, GPS-only, pre-re-founding posture (`_ft63_pdfix_v3`): `runs/agu63` (12 h, 61
+sta), `runs/agu305_gps_1h` (303 sta), replays `runs/agu63_rp_*`, all now under
+`D:/GnssProcessor_archive/2026-08-12/runs/`. Held-out consumers WTZZ00DEU (siblings WTZR/WTZS left in, so
+atmospheric representation error is removed by construction) and OBE400DEU (~167 km, the operational case). Tools `scripts/make_agu*_configs.py`, `grade_agu_arms.py`, `grade_total_if.py`, `agu_figure.py`,
+`sh_vtec.py`. The churn result is recorded only here; CLAUDE.md's AGU-26 amendments hold the lane-perf and
+pbv2 parts. The consumer numbers are superseded by the re-founding (field WTZZ00DEU 0.108 m in hour 1,
+`runs/_rf0hv14_field6`); this memory keeps the motivation and the grading rules.
+
+Results (as of 2026-08-05):
+- CHURN blocks the user: with live products the held-out consumer fixed 0 % over 12 h at 3.9 to 5.1 m median
+  3D; once the products were exhausted (frozen set) it fixed ~100 % at 0.10 m within ~1.5 h. Same with an
+  external precise clock, so neither the clock nor convergence time was the blocker.
+- Mechanism: a phase-bias re-realization every ~104 min per channel against ~120 min arc maturity; code bias
+  every ~28 min; clock 0. 91 % of PB discontinuities were reference-path slip re-referencing, which no
+  emission filter touches (`emit_pb_filter_gate_v2` NULL, see memory note `project_pb_gate_v2`).
+- Product-wide jumps: phase bias 0 (its gauge is per-(sat,signal) local pivot pins), code bias 2, clock 7.
+  The code-bias datum was sum-to-zero over the satellite SET: one channel leaving moved 91.4 % of 128 CB series.
+  A set change is a re-solve over a different parameter set, not an S-transformation: median-referenced
+  total_IF went 4.81 -> 12.56 m in the next 20-min window and ended +69 % above its minimum. A datum manager
+  must carry handovers by an S-transformation that preserves between-satellite structure.
+- DENSITY BEATS DURATION: 303 sta reach total_IF 4.36 m at 40 min and hold (+3 %); 61 sta reach 4.81 m at
+  4.5 h and degrade (+166 % by 12 h). Run length is a coverage budget at 63 stations, not at 305: grade
+  convergence, never assume it. Density did not fix the consumer (303 sta: 8.01 m final hour, 0 % fixed):
+  churn is a datum problem, not an information problem.
+
+Grading rules (binding):
+- Grade total_IF at windows of 20 min or less, report the run MINIMUM and the drift from it; `grade_total_if.py`
+  refuses a run more than 20 % above its best. IF coefficients per constellation (GPS 2.5457/1.5457, Galileo
+  E1/E5a 2.2606/1.2610); never pool constellations.
+- Never grade a replay past product coverage (`grade_agu_arms.py --products`; the `cut` column must be 0).
+- A short run CENSORS disc-interval statistics; `agu_figure.py` stamps CENSORED unless the window is at least
+  twice the threshold.
+- Degree-15 single-layer SH RINGS at 303 sta (-114/+116 TECU over oceans); use degree 8 + layer-2 degree 4 for
+  anything that shows the ionosphere, and plot from `network_vtec_sh.csv`, never `network_ionosphere.csv`.
+- Read 305-sta costs from epoch 4 onward; epoch 1 is the unrepresentative pre-carry epoch.
+- KIT300UZB is a chronic `addStation` reject on DOY-129 (local-normals LDL failure, outside the admission screen).

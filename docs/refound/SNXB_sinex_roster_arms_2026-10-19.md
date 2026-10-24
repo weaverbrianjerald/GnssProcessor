@@ -181,3 +181,97 @@ python -I scripts/clock_level/snx_roster_grade.py consumer|census|sites|truth-ch
 ```
 
 `gcensus.py` runs without `-I` (it imports `msc_sites`); `ftc_step_attrib.py` and `refound_grade.py` need numpy and pandas (the Python 3.14 install has both) and run without `-I`.
+
+## 2026-10-24: NGS SIF integration: one loader, many consumers (record of 2026-10-06 and 2026-10-07)
+
+These results were recorded only in the agent memory note `project_sif_integration` until 2026-10-24, and are copied here before the note was shortened. The text is the note's; the dates inside it are the original dates.
+
+Status note, 2026-10-24: the OTL conversion below (east to west and north to south, each with +180) is wrong for the SIF columns, which are BLQ rows (radial, west+, south+); the +180 survives only in the legacy `enable_station_info` path (card OTL, sections 3 and 9). The post-seismic term is psd(t) - psd(t_ref) (commit 4800a92; the old rule double counted 1.48 m at MIZU00JPN). Cards SNX, SNXB, SEA and OTL now exist and the a priori fix is committed (c7e0a9a).
+
+NGS SIF (`data/static/sif/{igs20,ncn20}_SIF.json`, 597 + 2640 stations, ITRF2020 at 2020.0): one loader,
+many consumers. COMMITTED `35fa883`; lookup guards + per-occupation epoch COMMITTED `a41f39e`
+(2026-10-07: Debug suite 2856 pass / 1 skip, sif_propagate 551/551, 2 h goldens byte-identical with SIF
+off). No repo card: this memory and the two commit messages are the record.
+
+**Model.** POD `include/common/StationInfo.hpp` (SI-normalized at load), `include/products/StationInfoFile.hpp`.
+`resolveStationCoordinate(station, decimal_year, with_periodic, with_psd)` -> `ResolvedStationCoord{ecef,
+covariance 3x3}` + `extrapolated`, `extrapolation_years`, segment bounds, `antenna/receiver_change_in_gap`
+(2 d tol). Gate `processing.enable_station_info` (default false, byte-identical off) +
+`files.station_info_paths` / `files.station_info_path` (else auto-globs `<internal_data_root>/static/sif/*.json`); roster use behind
+`network.use_sif_coordinates`. Only `config/ppp_rtk_internal_AR.json` loads it (2026-10-07); the field
+golden writes `position_ecef` (24 of 58 match a SIF propagation within 2 mm, rest up to 11 cm; 6 roster
+sites absent). Tests: `tests/test_station_info.cpp`, `tests/test_station_info_guards.cpp` (18).
+
+**⚠ OTL conversion, easy to get backwards.** SIF Up/East/North -> model Up/West/South (from the
+`cos(chi - phi)` evaluator in `OceanTideModel.cpp`): `amp_up=UP, phase_up=UP_PHASE`;
+`amp_west=EAST, phase_west=EAST_PHASE+180`; `amp_south=NORTH, phase_south=NORTH_PHASE+180` (East = -West, North = -South, Up passthrough).
+
+**Conventions (match M-PAGES).** Cov diagonal from SIGMAS (coords m, velocities x1e-3), off-diagonals
+from `6X6_COVARIANCE_MATRIX` x1e-6. Linear term and covariance: each OCCUPATION's own `REFERENCE_EPOCH`
+(METADATA fallback). Periodic terms: METADATA `REFERENCE_EPOCH` 2020.0 (integer year, phase-immaterial
+for annual/semiannual).
+PSD = sum alog*log(1+dT/tlog) + sum aexp*(1-exp(-dT/texp)), dT > 0. OPT: SIF Desai coefficients over the
+grid, field order = `opt_coeffs_` `[N_R,N_I,E_R,E_I,U_R,U_I]` (ALGO matches grid to 2e-6). OTL priority
+SIF FES2014b > BLQ > EOT20. ⚠ SIF coordinates are at the MONUMENT (GRP), not the ARP: GRAZ SIF minus
+golden monument 0.6 mm with H = 1.964 m, KRGG 1.6 mm; RINEX DELTA H/E/N = SIF `ARP_MINUS_GRP_ENU`
+(E,N,U order) at every resolved station. On the network roster `network.station_marker_to_arp` reduces a
+SIF coordinate; never skip it for SIF.
+**PPP a-priori (single-receiver path), FIXED 2026-10-07 (working tree; commit pending at time of writing):**
+`reduceSifCoordinateToArp` (StationInfoFile) reduces the SIF coordinate by the RINEX H/E/N, else the
+covering SIF window; warns on RINEX-vs-SIF disagreement > 1 mm. ⚠ The seed was ALSO DEAD WIRING:
+`Application::run` calls `PppModel::initializeState` + `syncPppStateToStateVector` after
+`initializePosition`, which re-derived the position from RINEX and overwrote the SIF seed, so the
+monument-seed defect was latent (only the degenerate-position reversion read it) and the logged "shift vs
+RINEX" never reached the filter (pre-fix SIF-on vs SIF-off-seed solutions byte-identical). Now re-applied
+after initializeState (`sif_apriori_seeded_`); a configured `reference_position` keeps precedence. Effect
+on a GRAZ 10-epoch PPP smoke: epoch-0 ~9 cm, < 2 mm by epoch 10 (loose prior). Tests:
+`tests/test_sif_apriori_arp.cpp` (7). QC: DO_NOT_USE gating + antenna-type mismatch warnings.
+
+**⚠ Network roster trap: arming SIF on a golden is a NO-OP.** `network.use_sif_coordinates` fills only
+stations WITHOUT `position_ecef` (`GnssConfigLoadNetwork.cpp:1018`); every golden station is explicit,
+OTL is off on the goldens and the network skips the SIF a priori, so the two knobs only load the
+registry. A SIF roster arm must delete `position_ecef` for the resolvable stations and KEEP it for the
+8 unresolvable ones (GAMB00PYF, STHL00GBR, NYA200NOR, WARK00NZL, WTZS00DEU, GOP600CZE, LEIJ00DEU,
+FFMJ00DEU), else the load hard-fails; keep NIUM00NIU explicit too (extrapolated across an antenna
+change). Check the log: 49 "SIF-propagated" roster lines, `cepoch=2024.3511` on the product S line.
+Builder: `runs/_sif_bases/{g,g0,c,c0,n}.json`. Census consumers never read SIF (truth = site_list.json).
+
+**SIF roster A/B, DOY 129, 6 h + 16-site census (2026-10-07; arms `runs/_rap_sif_{g,g0,c,c0,n}_f6`,
+census keys `sif_*`, exe `gnss_processor_sifon.exe` d7d25f85).** 49 stations moved, median 4 mm, max
+11 cm (MAC1, GCGO). Station-congruence sigma0 fell on all five postures (-2.4 to -4.3 %): the SIF
+coordinates fit the data better. Census vs each posture's SIF-off key: golden 0.0000 (neutral), g0
+0.0000, c -0.0007 (ARHT -12.6 cm), c0 -0.0014, native n +0.0019. Head to head with SIF on (vs golden):
+g0 +0.0001, c0 +0.0004 (was +0.0029), c +0.0019 (was +0.0064), n +0.0030 (was +0.0059). Not graded
+multi-day; no card yet.
+
+**Lookup and selection.** `find(key, approx_ecef, 10 km)`: exact ID / DOMES wins; a 4-char prefix only
+within 10 km of a supplied position, else only for a bare 4-char key (fixed GAMB00PYF -> GAMB00USA
+7,688 km and MELI00ESP -> MELI00USA 5,356 km; STHL00GBR -> STHL00SHN still resolves). By design a bare "GAMB" with
+no position resolves to the US station (M-PAGES too). Selection (unchanged): the window covering t,
+skipping do_not_use, else nearest midpoint (M-PAGES instead keeps flagged occupations with a sentinel
+sigma). Past a CLOSED last segment it extrapolates, now flagged and warned: 8 roster stations at 2024
+DOY 129 (BSHM CHUR CPVG MAJU NIUM PALM URUM WROC; NIUM antenna 2024-02-27, CHUR receiver 2024-02-13).
+The 2010.0-epoch NCN records (AZAZ AZOR AZPL FLSI) are DO_NOT_USE, so that defect was latent. Old vs new
+rules: 0 coordinate changes over 15,395 resolves.
+
+**Seismic content (2026-10-06).** 43 quakes carry POST_SEISMIC (IGS 41 events / 96 blocks / 72 sta;
+NCN 3/3/3; Denali 2002 in both; the files share no station). No discontinuity-reason field: a jump is an
+unlabeled OCCUPATION boundary (6,034: antenna 1,770, step median 1.0 / p90 2.6 cm; receiver-only 302;
+PSD quake 93, median 2.5 / p90 42 cm; nothing logged 3,869). PSD is zero at the event; the step sits in
+the segment change (CONZ 3.08 m, MIZU 2.52 m), so "PSD off" makes no jump. MIZU00JPN: 1.64 m PSD at 2024
+DOY 129, about 3 cm/yr; the other 7 roster PSD stations at most 6 cm, static. NCN boundaries sit 2 to
+14 d AFTER the logged change (use the log time); 1,539 of 2,367 NCN antenna model changes have no segment.
+
+**STILL OPEN.**
+- `ResolvedStationCoord.covariance` (the minimum-constraint S-basis prior) is NOT wired into the network
+  estimator (re-verified 2026-10-07). Undone work, not blocked
+  (memory note `project_ppp_rtk_network`).
+- `scripts/windup_ab_linearity.py` builds a prefix-only key (`station+'00USA'`) with no position, now
+  rejected for a non-US station.
+
+**Python twin** `tools/sif_propagate/` (stdlib only), bit-for-bit with C++; pyviz `SifTruth` follows the
+same rules. Oracle recipe: append a dump `TEST_F` to `tests/test_station_info.cpp`, Debug-build and run
+`gnss_tests`, `git checkout` the file. **Gotcha:** `ppp_model` / `geometry` loggers do not file-write under
+the default PPP logging config, so the OTL/OPT source decision is also on `main_log`.
+
+memory note `reference_datum_transformations`, memory note `project_ngs_laser_lcf`.

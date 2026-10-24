@@ -649,3 +649,24 @@ de-saturated **0.97×**.  The post-fix arms live in `runs/fc1_*_v2` with configs
 `_fc1_split_n2_3h_v2.json` (same posture, **fresh output dirs** — append-mode service CSVs
 make reusing a run dir unsafe); grading those reports the honest post-fix **1.00×**.  Both
 families resolve under `D:\GnssProcessor_archive\2026-08-12\runs\`.
+
+## 2026-10-24: consumer product gap: the 30 s horizon, the silent datum swap and the status contract
+
+These results were recorded only in the agent memory note `project_consumer_gap_integrity` until 2026-10-24, and are copied here before the note was shortened. The text is the note's; the dates inside it are the original dates.
+
+Status note, 2026-10-24: checked on 2026-10-24 by defaults and identifiers only (30 s, 0.0, 2.0, the auto-arm, `getProducerStatus` read only by `logProducerStatus`); no runs. The 30-to-60 s window magnitude is unmeasured. The statements about the SH gate are moot (`sh_health_gate` deleted) and `emit_clock_rate` is retired. The pruned dossier is recoverable at `a8f044f^:docs/REPORT_consumer_gap_dossier.md`.
+
+Audit of 2026-07-27 (occasion: the SH health gate withheld 278 of 507 epochs, one 1.99 h era). Nothing below is recorded in the docs and none of it has been fixed (re-checked 2026-10-07). The refound goldens run no SH, so the SH-gate era no longer arises there, but every withhold kind and every gap hits the same consumer logic.
+
+- Staleness horizon is 30 s (`processing.ssr_max_age_s`); `ssr_clock_stale_hold_factor` 0.0, so the clock is fresh or rejected. Nothing extrapolates across a long era.
+- ⚠ The 30 to 60 s frame-mismatch window: clock/orbit expire at 30 s, biases at `ssr_bias_max_age_s x ssr_bias_stale_hold_factor` = 60 s. In between, network phase and code biases apply at full weight on top of an a-priori CLK clock, with no R inflation, and the consumer's state-allocation predicates keep suppressing its own satellite-bias states. `enable_ssr_bias_max_age` (default false) is auto-armed under network bias consumption, both the closed-loop harness and the standalone network-consumer profile (an explicit `false` opts out); unarmed, the window is unbounded. Magnitude (common-mode vs per-satellite) is UNMEASURED: the cheapest next measurement.
+- Expiry has three outcomes: (1) precise CLK present: phase kept at full weight and the satellite silently swaps clock datum to the CLK frame (the "falling back to broadcast-grade" warn is misleading); (2) no CLK: `clock_corr` 0.0 is the drop signal (`DropReason::NoProduct`); (3) RT broadcast baseline: phase stripped.
+- Producer status (`withheld_sh` etc.) parses into `NetworkProducerStatus::State` and is read only by `RealTimeEngine::logProducerStatus` (`RealTimeEngineSsrBreaks.cpp`): one log line per transition, no gating, no R, no reset. Correction 2026-10-07: replay DOES receive the status (second `setProducerStatus` call site in `ApplicationConsumerReplay.cpp`, since `fc34a14`, 2026-08-07); it is observability only.
+- The RTA-9(b) StaleHeld R-brake (fallback q2 1.5e-7 m^2/s^3) gives sigma about 170 m at a 2 h hold: annihilation, not deweighting. Inert at defaults (`network.consume_ura` false).
+
+Grading traps across a withheld era:
+- Replay fast-forwards past epochs before the first product record: a leading era is skipped, not graded. Internal eras land unlabelled: join `closed_loop_trace.csv` to `network_epoch_status.csv` on `tow`.
+- ⚠ The in-process closed loop skips the consumer on every withheld epoch (SH gate: early return in `NetworkEmitStore`; sigma0 and rank-gate withholds: `SkipEpoch` in `NetworkSolveGlue`) while replay runs it on expired corrections: cross-harness A/B over an era is INVALID.
+- An empty store degrades in total silence (the stale warn sits inside `if (getSsrEpoch(sat))`).
+- SH-gate state and counters do not cross a chain-leg boundary (no `sh_gate` in `NetworkStateSnapshot.cpp`).
+- `service_mode` + `emit_clock_rate` misreports the active mechanism in the load log (memory note `project_network_clock_rate_c1`).

@@ -59,3 +59,36 @@ Built and field-validated the same day it was specced. Where the code is (re-gre
 2. ⚠ **The loader parse-order trap** (§3): the datum guard in the parse block force-disarmed the knob silently on the first smoke, because `code_datum_time_linked` had not been parsed yet.
 
 Per the no-promotion directive the knob stays **default-OFF** with a SCOPED ledger row.
+
+## 2026-10-24: review of the rx-DCB datum fold-gate fix (CLOSED 2026-08-14)
+
+These results were recorded only in the agent memory note `project_rxcb_datum_gate_review` until 2026-10-24, and are copied here before the note was shortened. The text is the note's; the dates inside it are the original dates.
+
+Status note, 2026-10-24: the `prior_rxcb` conflation listed as open is resolved: `ContributionKind` has separate `prior_rx_cb_datum`, `prior_rx_cb_carry` and `prior_rx_cb_datum_pre_pd` (`include/network/assembly/ContributionKind.hpp`, card NOM steps N2a and N2b); the knob `network.phase_leveling_warmup_on_convergence` was deleted (commit 09e3151).
+
+Review of the rx-DCB datum fold-gate fix, CLOSED 2026-08-14. The fix is commit `8e31c0c` (its message records
+the fix and the t3ri A/B); the originally cited `f9af549` is a dangling commit, on no branch.
+
+Verdicts (do not re-raise):
+- `R.carry_cols` is the right vehicle: every reader treats it as "A_r columns receiving a diagonal (Λ,η) prior
+  THIS epoch via addStationPrior", which the datum rows satisfy. `carry_dur` is η = Λ·(value − x_lin), with no
+  age semantics despite the name.
+- `NetworkRhsAttrib` has no carry_warm gate by design; adding one would hide folded warmup rows from trip dumps.
+  Its closure row (rel > 1e-4 warns) self-detects any build/install divergence.
+- Refuted: a rank-gate withhold deadlock as a pre-fix live posture; RhsAttrib frame-drop of prior-only stations.
+- Confirmed safe: `warmup_ura_floor` / RTB-7, `cold_clock_seed` ordering, A4 withhold cold, `loadFromJson`
+  early returns (77 reject sites, all genuine).
+
+Open (checked 2026-10-07):
+- `prior_rxcb` conflates datum and carry mass (`NetworkRhsAttrib.cpp`, class still `prior_rxcb`). The goldens arm
+  `rx_code_bias_datum`, `carry_rx_code_bias` and `rhs_attrib_on_trip` together, so every trip dump mixes the two.
+  The build coalesce sums both η into one entry before attribution: a fix must TAG BEFORE THE COALESCE (a new
+  `prior_rxcb_datum` class).
+- T1d `network.phase_leveling_warmup_on_convergence` (code `pl_warmup_on_conv`, default off) makes carry_warm a
+  value-fed latch; never exercised with the datum, and SH-only (inert on the current posture).
+- Doc drift (comment-only): `docs/SPEC_rx_cb_carry.md` omits the datum's fold-on-cold semantics and the
+  fingerprint-straddle note (both live only in the 8e31c0c message); in `NetworkRunTypes.hpp` the `carry_cols`
+  doc says "carried prior" and the `pl_cb` doc says "filled only under carry_rx_code_bias" (it is filled under
+  either knob, the mistake shape behind the gauge bug); `NetworkCoupling.cpp` says `R.carry_cols` "stays empty /
+  is left empty" (true of the coupling path only). The `GnssConfig.hpp` SumZeroGauge claim is corrected.
+- The cold-window a00 item is moot on the current posture (no SH).

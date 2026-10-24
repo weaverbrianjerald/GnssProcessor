@@ -265,3 +265,64 @@ nothing.** That delta is worth one replay each — Phase 0.
 *The card body, unchanged. **Every label below is frozen** — ~30 source sites cite `Phase 0` /
 `Phase 1` / `P1-1`…`P1-5` / `Phase 2.1` / `Phase 2.2` / `D1`/`D2`/`D3` by name.*
 
+## 2026-10-24: DOY-129 pivot CB ratchet: Q5 and Q1 verdicts, guard chain, gate policy and grading traps
+
+These results were recorded only in the agent memory note `project_day129_pivot_cb_ratchet` until 2026-10-24, and are copied here before the note was shortened to a pointer. The text is the note's; the dates inside it are the original dates.
+
+Status note, 2026-10-24: the gate-policy decision shown below as formally open is superseded (DEC-day129-gate-policy has STATUS superseded, none of it built); `sh_health_gate` was deleted by card RKD and `sh_gate_engaged` is no longer in src; `cb_excursion_reinit` still exists and is KEEP_OFF in the ledger.
+
+DOY-129 is the field bed of the current goldens. This investigation ran on the old SH + carry_invariant posture
+(2026-07-28 to 08-15). Guards built, default OFF; the gate-policy decision is formally open (OPEN_ITEMS:
+DEC-day129-gate-policy, grace-floor magnitude un-derived) but the SH gate it governs is inert on the re-founding
+posture (no SH: the loader auto-disables `sh_health_gate` without `estimate_iono_sh`; no seams).
+
+Fixture facts:
+- DOY-129 = 2024-05-08, the flare-active run-up to the Gannon storm: REPEATED network-wide iono events at 03:55,
+  07:32, 19:21, 20:47. Judge a gate against several events. The 305-sta roster exists for DOY 129 only.
+- Event expression depends on ACCUMULATED FILTER STATE: events did not transfer from the 00:00 lineage to a
+  13:00-seeded seam chain.
+
+Verdicts:
+- Q2: the pinned pivot's near-static CB (q_cb 1e-10 vs q_clock 1e-2) absorbed a one-sided excursion;
+  K = sqrt(q_cb/R_eff) reproduces the 49 m step and tau = 3.79 h decay. Sum-to-zero taxed every non-pivot
+  -Δ_pivot/31, invisible to pairwise spans. Invariant #1 one level below Card 4: the CB carry had no event
+  response, so it recurs on ANY one-sided excursion. Q3: quiet-hour wander is satellite-clock wander (led to the
+  Q3 anchor). Q4: the CB disc counter is a DATUM channel (5126 bumps in 128 ep; the pivot bumped 0 at the step).
+- Q5 (only here; the Phase 0/1 report is lost): consumer-pair median 3D 41 to 46 m after 20:47, un-decayed;
+  the pinned pair attenuates ~3x, does not immunize. The fault is INVISIBLE to consumer RAIM (damaged arm's
+  post-fit median lower, 0.94 vs 1.14 m: under BSSD the pivot bias is common to every SD and projects onto
+  position + tropo): consumer RAIM is FALSIFIED as the mitigation. A MIXED CB pair is worse than either
+  consistent pair (the `cbpin=` contract).
+- Q1 trigger OPEN (only here): at onset slant_resid mean 10 to 297 m, all 303 stations above 3σ at once, no
+  precursor at t-1 in any channel: this rules out the one-bad-observation trigger family. λ_min is smooth through
+  onset (the reduced normals are built before any observation value enters) and jumps only two epochs later:
+  conditioning is EXONERATED (do not re-instrument the spectrum), the trigger is on the RHS. σ̂₀_code separated
+  the collapse epoch 3.5x (z = 219). The free per-LOS iono arm also collapsed. Unrun discriminator: withhold the
+  satellite swapped into the PB set at 03:46 for the whole run. The 19:21 keyed RHS localizes to one region.
+- Guard chain (`runs/day129_guards`): mechanics pass; pivot-only CB reinit FALSIFIED (130 non-pivot cases); the
+  19:00 warm-resume seam IS the event (D5 re-tapped 92 % of restored DDs, a00 to +1411 TECU). Gate (iii) FAIL: the
+  wire took the Q2 disease from the seam (pivot -5.3 to +117.4 m after release; G07 decay τ ≈ 3.7 h = the q_cb
+  bleed). Emission-only gating protects the wire during the era but keeps the poisoned carry after. A warm
+  resume IS an invariant-#1 event. User ruling (ledger rows `cb_excursion_reinit`, `sh_health_gate`): "All guard
+  knobs stay default-OFF."
+- The A4 σ̂₀ (`sigma0_adapt`) is blind to CB-class faults: it sat at its 1.0 floor while σ̂₀_pf_code ran 33 to 90
+  (quiet 2.9). CB-excursion threshold (default 50 m on median |Δclock|): quiet 0.12, 07:32 5.0 (two-sided),
+  19:21 77, 20:47 4582 m; only the magnitude survives a gauge change (anything 20 to 500 m isolates the era),
+  the one/two-sided median shape is realization-coupled.
+- Gate policy: DEGRADE, do not withhold; gate on field SHAPE (degrees ≥ 1) as a ratio frozen from a converged
+  window, never trailing and never an absolute a00 band (realizations differ ~25 TECU). Degrade-instead-of-
+  withhold DEADLOCKS as wired: SolPrep returns early on `sh_gate_engaged` before the URA-ramp lift and
+  `++n_emitted`. Zero-code mitigation: seed so the first event is at least 400 ep after a seam.
+
+Grading traps:
+- Grade `total_IF = CLK + 2.545728·CB(C1W) − 1.545728·CB(C2W)` against the all-satellite median INCLUDING the
+  pivot. Read `sigma0_pf_code`, never the pooled `sigma0_pf` or `sigma0_adapt` (0 without within-epoch RAIM).
+- Warm resume: the restored P is diagonal, so ep20 is a local minimum ~30 % below the floor; judge hourly LEVEL
+  bands, never slopes. `n_emitted` is restored, so exit 0 does not prove work.
+- `NetworkSbasis::selectIfPinPair` pins the first pair by (band digit, signal name), e.g. (C1C, C2L) when tracked,
+  not the consumer pair (C1W, C2W); re-pointing it is fingerprint-breaking.
+- D-G5 relies on the driver order SolveGlue, InstallCarry, SolPrep, EmitStore, ClockQc, StashStatus (2026-10-07).
+
+Record: `docs/cards/raim-qc/` DAY129-FRAME-ANATOMY.md (Part A), DAY129-PHASES.md, DAY129-DEFECTS-ABC.md (Part C);
+`docs/decisions/DEC-day129-gate-policy.md` (Parts D/E); Part F + traps appendix in
+`docs/archive/SPEC_day129_frame_guards.md`.

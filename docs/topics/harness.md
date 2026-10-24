@@ -36,6 +36,7 @@ Status is one of `open`, `closed`, `parked`, `superseded`, `reference`; the verd
 | [harness seeds](../cards/harness/HARNESS-SEEDS.md) | seed hygiene: legs arm zwd_seam_reseed; fingerprinted promotions force _v2, then _v3 seeds | reference | 2026-09-12 |
 | [FIELD harness](../cards/harness/FIELD-HARNESS.md) | field harness: evidence refloat FIELD PIN; scope + pairs all stay exceptions, twin FAILS | closed | 2026-09-13 |
 | [DEC-field-vehicle](../decisions/DEC-field-vehicle-posture.md) | field posture c8b: 6 h twin DRIFTS, G4 INCONCLUSIVE; superseded by the float vehicle | superseded | 2026-09-14 |
+| [OBJ-IDENTITY](../cards/harness/OBJECT-CODE-IDENTITY.md) | object-code identity proof for pure moves; concurrent runs from one working directory share the logs directory | reference | 2026-10-24 |
 
 **Standing documents** (still at their original paths, indexed not moved):
 
