@@ -161,7 +161,7 @@ fail with `Cannot open include file: 'memory'`, and the file moved to `…\Micro
 `18` is the install *major-version* dir, not a year); **two CMakes are on PATH** and vcvars does not override the standalone 3.18.3,
 so the wrapper pins VS 2026's bundled 4.3.1 by absolute path; and `set "PATH=…;%PATH%"` inside a `cmd /c "vcvars && …"` chain
 silently destroys the compiler entries, because `cmd` expands `%PATH%` before vcvars runs. Build trees `build/x64-Debug` and
-`build/x64-Release` are git-ignored and disposable. Full migration notes: [`CLAUDE.md`](../CLAUDE.md).
+`build/x64-Release` are git-ignored and disposable. Full migration notes: [`onboarding/build_toolchain.md`](onboarding/build_toolchain.md).
 
 **Targets** (explicit source lists in [`CMakeLists.txt`](../CMakeLists.txt), no globbing except vendored SOFA; add `--target gnss_core`
 for fast library-only iteration; `--target docs` builds Doxygen when Doxygen and, optionally, Graphviz `dot` are on `PATH`):

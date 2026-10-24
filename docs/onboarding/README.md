@@ -18,6 +18,17 @@ Afterwards, [CONTRIBUTING.md](../../CONTRIBUTING.md) is the one-page reference: 
 rules, the merge-request checklist, and a table that maps each kind of change to its
 code, test and reference files.
 
+## Reference pages
+
+These pages are looked up, not read in order.
+
+| Page | Content |
+| --- | --- |
+| [Build toolchain](build_toolchain.md) | The Visual Studio 2026 migration record, the traps behind the build wrapper, the disk placement background |
+| [Data files](data_files.md) | How RINEX files and products are located, downloaded and bootstrapped |
+| [Where new code goes](where_new_code_goes.md) | The decision trees of the network producer and the real-time engine, at full length |
+| [CLAUDE.md history](claude_md_history.md) | Descriptive and historical text cut from `CLAUDE.md` |
+
 ## Suggested schedule
 
 | When | Task |
