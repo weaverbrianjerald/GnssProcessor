@@ -5,11 +5,11 @@
 - **id:** L5B
 - **topic:** network-vehicle
 - **status:** open
-- **summary:** L5 SEQUENCED. R-1b (the receiver band-5 code delay estimated, `network.estimate_rx_extra_band_code_delay`) removes the station-constant band-5 offsets (18 to 3 stations); R-1c (`network.cycle_slip.gap_reentry_coresumed_share`) is built; both default off. The field network contamination is one code fault at MAJU00MHL at ignition, which moves MAJU's station level direction whenever band-5 code and phase are both present (whatever the code weight or the delay's treatment); the mechanism is not established and no existing screen catches it. The triple consumer's own cost is the Block IIF L5 phase. The station-local attribution (section 9) shows that MAJU's own rows do not move its states: the move arrives through the shared solution, from the other stations, at the epoch's operator. Next: R-1d, robust ignition of the receiver code states (a design decision for the author), with two owed diagnostics (section 9). On the GPS + Galileo golden (section 10, 2026-10-23) GPS L5 runs stable on the sim at 2 h with B5D and the estimated delay; the assertion posture still leaves band-5 and band-2 offsets. With Galileo E5b added (section 11, every channel the sim tracks) it stays stable with no code change.
+- **summary:** L5 SEQUENCED. R-1b (the receiver band-5 code delay estimated, `network.estimate_rx_extra_band_code_delay`) removes the station-constant band-5 offsets (18 to 3 stations); R-1c (`network.cycle_slip.gap_reentry_coresumed_share`) is built; both default off. The field network contamination is one code fault at MAJU00MHL at ignition, which moves MAJU's station level direction whenever band-5 code and phase are both present (whatever the code weight or the delay's treatment); the mechanism is not established and no existing screen catches it. The triple consumer's own cost is the Block IIF L5 phase. The station-local attribution (section 9) shows that MAJU's own rows do not move its states: the move arrives through the shared solution, from the other stations, at the epoch's operator. Next: R-1d, robust ignition of the receiver code states (a design decision for the author), with two owed diagnostics (section 9). On the GPS + Galileo golden (section 10, 2026-10-23) GPS L5 runs stable on the sim at 2 h with B5D and the estimated delay; the assertion posture still leaves band-5 and band-2 offsets. With Galileo E5b added (section 11, every channel the sim tracks) it stays stable with no code change. On the field (section 12, 2 h) Galileo E5b alone is clean, and GPS L5 still brings the MAJU00MHL event unchanged. Section 13: the jump is in the anchored solve (the withdrawal is a consequence); the only real slip is L2W's, correctly refloated; with the per-signal re-entry off the station's jump shrinks tenfold while the 21-satellite anchor burst stays; five R-1d options are laid out.
 - **source:** [L5R](L5R_l5_return_on_the_exact_update_2026-10-08.md) section 4 (the root and step R-1b); [L5P](L5P_l5_phase_posture_2026-09-21.md) section 4 (the return plan); [B5D](B5D_band5_code_datum_2026-09-20.md) (the band-5 satellite code datum); [NOM](NOM_network_object_model_2026-10-08.md) step N1 (the receiver IFB drop as a declared rule, treatment `HeldAtSeed`); the author's directive that L5 is never closed
 - **knobs / posture:** new `network.estimate_rx_extra_band_code_delay` (default false); the goldens of 2026-10-09 (`03461e4`, card ICF's cold-start bound armed) plus `processing.frequency_mode` triple, the GPS band-5 types appended to `processing.signal_priorities.GPS` (the list of `runs/_rap_l5r_t0_f6`), and per arm `network.sat_gf_extra_band_free`
 - **dates in the text:** 2026-10-10, 2026-10-13, 2026-10-23
-- **hashes / run dirs:** controls `runs/_rap_l5g_ctl_{f6,s6}` and census key `l5c_ctl` (exe `gnss_processor_l5g0.exe`, main `47fb634`, sha256 `31081ec3b36875a1`; 2 h identity to `runs/_rap_g15_{f2,s2}` verified); arms `runs/_rap_l5b_*`; census keys `l5c_b*`; section 9 smoke `runs/_l5b_loc_smoke` (the `loc_` files in `logs/rhs_attrib/`, station-net tables in `tables/`); sections 10 and 11 (GPS + Galileo sim golden) `runs/_rap_l5s_{ctl,t0,t1,t1on,all}_{sm,s2}` (exe `gnss_processor_l5s0.exe`, main `04517ca`, sha256 `1f41efd915d4aaf0`)
+- **hashes / run dirs:** controls `runs/_rap_l5g_ctl_{f6,s6}` and census key `l5c_ctl` (exe `gnss_processor_l5g0.exe`, main `47fb634`, sha256 `31081ec3b36875a1`; 2 h identity to `runs/_rap_g15_{f2,s2}` verified); arms `runs/_rap_l5b_*`; census keys `l5c_b*`; section 9 smoke `runs/_l5b_loc_smoke` (the `loc_` files in `logs/rhs_attrib/`, station-net tables in `tables/`); sections 10 and 11 (GPS + Galileo sim golden) `runs/_rap_l5s_{ctl,t0,t1,t1on,all}_{sm,s2}`; section 12 (field) `runs/_rap_l5f_{ctl,t1on,e5b,all}_{fsm,f2}`; section 13 branch `card/l5b-diag` (`b75094d`, exe `gnss_processor_l5diag.exe`), event-window arms `runs/_rap_l5d_*_{fsm,dg}` (exe `gnss_processor_l5s0.exe`, main `04517ca`, sha256 `1f41efd915d4aaf0`)
 - **gates (frozen at pre-registration):** section 4
 
 **Outcome.** Question: with the receiver band-5 code delay estimated, do the station-constant band-5 offsets vanish and is the three-band wire clean? The offsets vanish (P3 band 5: 3 stations against 18) and the sim passes, but bands 1 and 2 stay contaminated, the clock wire is six times the dual control's and the census fails (section 5). Section 6 traces it to one event: MAJU00MHL re-acquires G08 at ignition, the per-signal re-entry bridges a signal that jumped with its partner, and the weakly held station level absorbs it; without that event the network is clean. R-1c (section 8) answers the re-entry rule and changes nothing; section 9's attribution shows MAJU's own rows carry centimetres and the move comes through the shared solution. L5 SEQUENCED: R-1d is the author's design call.
@@ -224,3 +224,106 @@ Post-fit phase median per band, both constellations pooled (`scripts/rapid_arm.p
 - The consumer moves by at most 0.003 m against `t1on`; at 2 h that is no verdict.
 
 **Standing.** On the sim, the current golden carries every tracked channel (three bands on GPS and on Galileo) at posture `t1on` with no code change. What the sim does not test: the field's band-5 ignition event (sections 6 to 9; R-1d is the author's design decision), several channels per band (C1C with C1W, L2W with L2L, C5Q with C5X: the field's `channel_mode` question, absent from this fixture) and Galileo E5b on real receivers. L5 SEQUENCED.
+
+## 12. 2026-10-23: the field, 2 h (GPS L5, Galileo E5b, and both)
+
+Section 11's posture on `config/golden/golden_field_refound.json`, with one-change arms that separate the two added bands; same exe as sections 10 and 11; a 12-epoch smoke of each (`runs/_rap_l5f_<arm>_fsm`) preceded the 2 h arms `runs/_rap_l5f_<arm>_f2`, run four at a time. Every three-band arm carries `processing.frequency_mode` triple, `network.sat_gf_extra_band_free` and `network.estimate_rx_extra_band_code_delay`.
+
+| arm | added band | emitted / withheld | WTZZ00DEU 3D p50, hours 1 and 2 (m) | GPS clock wire, hour 2, all / tracked (m) | decouples at TOW 260040 | MAJU00MHL GPS_DCB, GPS_IFB5 at 260010 and 260040 (m) | wall (s) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `ctl` | none | 240 / 0 | 0.058 0.011 | 0.0235 / 0.0208 | 1 | -1.03, -1.19; none | 463 |
+| `t1on` | GPS L5 | 240 / 0 | 0.076 0.042 | 0.0929 / 0.0558 | 21 | -2.14, -9.21; +8.09, +25.88 | 627 |
+| `e5b` | Galileo E5b | 240 / 0 | 0.056 0.011 | 0.0243 / 0.0197 | 1 | -0.99, -1.15; none | 691 |
+| `all` | both | 240 / 0 | 0.071 0.038 | 0.0910 / 0.0555 | 21 | -2.03, -9.08; +7.80, +25.52 | 873 |
+
+Clock wire: `scripts/ftc_step_attrib.py <run> --r3 --systems G,E`, row `e_clk`, within-arc RMS p50 (it grades the GPS pair L1W/L2W); the Galileo wire, `--systems E` (pair L1X/L5X), hour 2 p50 / p90: `ctl` 0.0210 / 0.0290 m, `e5b` 0.0215 / 0.0519 m, `all` 0.0249 / 0.0492 m; consumer-tracked p50 0.0127, 0.0106, 0.0083 m. Code offsets, hour 2 (stations with |mean| above 0.10 m; median |mean| in m):
+
+| arm | GPS band 1 / 2 / 5 | Galileo band 1 / 5 / 7 |
+| --- | --- | --- |
+| `ctl` | 1 / 0 / -; 0.015 / 0.015 / - | 0 / 1 / -; 0.012 / 0.016 / - |
+| `t1on` | 8 / 5 / 5; 0.049 / 0.029 / 0.032 | 0 / 1 / -; 0.015 / 0.015 / - |
+| `e5b` | 1 / 0 / -; 0.015 / 0.014 / - | 0 / 4 / 3; 0.015 / 0.017 / 0.012 |
+| `all` | 8 / 5 / 5; 0.048 / 0.030 / 0.033 | 0 / 4 / 3; 0.015 / 0.018 / 0.013 |
+
+Every arm: clock-datum dimension 2, declared and realized; no S-basis completion. `Galileo_IFB7` is estimated at 57 of 58 stations (13 679 station-epochs), `GPS_IFB5` at 58. The IF time-difference slip tier refloats more with a third band, because it tests every band pair of a line of sight: 69 refloats on `ctl`, 114 on `t1on` (GPS pairs with band 5), 147 on `e5b` (the Galileo pairs with E5b: L1C+L7Q 26, L5Q+L7Q 23, L1X+L7X 12, L5X+L7X 11), 202 on `all`. Whether the added refloats are real slips is not graded here.
+
+**Reading.**
+
+- The section 6 event reproduces on the GPS + Galileo golden, unchanged: wherever GPS L5 enters the network, MAJU00MHL's receiver code states move along the station level direction at the G08 re-acquisition (DCB -2.1 to -9.2 m, band-5 delay +8.1 to +25.9 m, against -2.2 to -9.3 and +8.4 to +26.1 m on the GPS-only golden of section 5), 21 satellites decouple from the clock anchor, GPS bands 1, 2 and 5 carry station offsets (8, 5 and 5 stations), the GPS clock wire is four times the control's and WTZZ00DEU loses 0.018 and 0.031 m. Galileo does not move: its offsets, its wire and its receiver states are those of `ctl` on `t1on`.
+- Galileo E5b alone is clean on the field at 2 h: WTZZ00DEU, the GPS wire and the GPS offsets equal the control's; the Galileo wire's median is unchanged (0.0215 against 0.0210 m) and its consumer-tracked median falls (0.0106 against 0.0127 m), with a wider upper tail (p90 0.052 against 0.029 m) and 3 to 4 stations with an E5a or E5b code offset above 0.10 m (control 1). MAJU00MHL's E5b receiver delay sits at -4.10 m, constant, with no event.
+- `all` is the sum of the two: the GPS L5 event plus E5b's Galileo pattern.
+
+**Standing.** On the field, Galileo E5b is a candidate (2 h only: its 6 h arm and the 16-site census with three-band Galileo consumers are owed before any ledger row), and GPS L5 is held by the event of sections 6 to 9 exactly as before the Galileo adoption. L5 SEQUENCED: R-1d remains the author's design decision, with section 9's two diagnostics as its first measurements. Several channels per band (`processing.channel_mode`) stay untested.
+
+## 13. 2026-10-23: section 9's two diagnostics, a bisection of the event, and the R-1d options
+
+**The build** (branch `card/l5b-diag`, commit `b75094d`, on main `8302fa1`; not merged; exe `gnss_processor_l5diag.exe`). (a) At an armed attribution epoch where the clock-anchor guard is about to withdraw, the anchored solve is captured and dumped with the existing readout to `logs/rhs_attrib/anchored/`. (b) `xop_<tow>.csv` applies the first armed epoch's operator to a later epoch's right-hand sides (and the reverse), mapped by column identity, with self-checks and per-station parts. Gates: products, consumer, epoch status and every existing `rhs_attrib` file byte-identical to the pre-change exe on the event window (`runs/_rap_l5d_{base,loc}_{fsm,dg}`); the anchored dump fires at TOW 260040 only, closures at most 1.9e-13; the operator self-checks at most 2.75e-8 relative; `nom_epoch_lint`, `nom_n4_verify --whole` and the Debug suite pass (3563 passed, 33 skipped for absent fixtures, 0 failed).
+
+**(a) The anchored solve.** MAJU00MHL's states, TOW 260010, then 260040 anchored (before the withdrawal), then 260040 as emitted:
+
+| state | 260010 | 260040 anchored | 260040 emitted |
+| --- | --- | --- | --- |
+| GPS_DCB | -4.234 | -12.189 | -11.298 |
+| GPS_IFB5 | +8.093 | +27.915 | +25.878 |
+| GPS_ISC_C1W | +1.166 | +16.031 | +14.373 |
+
+The jump is in the anchored solve; the withdrawal is a consequence and takes back about a tenth of it. Without the withdrawal's fold (which nearly cancels the dense border carry's in section 9's frame), the change of MAJU00MHL's DCB from 260010 to the anchored 260040 (-7.95 m) splits into the dense border carry fold -4.81 m, MAJU00MHL's own net -2.43 m and the other 57 stations -0.72 m (IFB5 +12.24, +5.91, +1.66 m; ISC_C1W +9.52, +3.84, +1.51 m). These are differences of two decompositions at two operators: they locate the move, they do not separate data from operator.
+
+**(b) The cross-epoch operator readout** computes what it states (self-checks above) but is not interpretable on this window: the 260040 right-hand sides under the 260010 operator give +3652, -8794 and -10285 m, the mirror about 1e8 m, spread over stations whose columns all map (MRO100AUS +2181 m). Each epoch's right-hand side is taken about its own linearization point and carries stiff carried-prior terms of order 1e7 to 1e8 that cancel only under their own operator, so a swap of operators does not isolate a data change.
+
+**The raw data at MAJU00MHL / G08** (`MAJU00MHL_R_20241290000_01D_30S_MO.rnx`, code minus phase per band): L2W and C2W are absent at 259980, L1C and C1C at 259890 and 260010, C5Q and L5Q track throughout. L2W returns at 260040 with a step of about -11 m in code minus phase (a slip of about 45 cycles, LLI 0); code minus phase is continuous on L1C and L5Q across the gap, which excludes a dispersive slip on them but not a step common to their code and phase (see section 14, the IF-TD flag at 259980). The per-signal re-entry's verdicts (L2W shifted and refloated, L1C bridged, L5Q carried) agree with that, and section 6's reading of a common phase jump of L1C and L5Q is not supported. The +5 to +8 m code residuals of every G08 code at MAJU00MHL after 260040 are made by the solution, not by the data. A first, slower move precedes the gap: MAJU00MHL's DCB goes from -0.08 to -2.20 m and IFB5 from +2.40 to +8.25 m between 259650 and 259890 (G08 at 18 to 19 degrees, code residuals within about 1 m).
+
+**The bisection** (16 min event window on the field `t1on` posture, exe `gnss_processor_l5s0.exe`; RINEX edits at MAJU00MHL / G08 only; first-epoch rows unchanged at every station except where the edit removes them):
+
+| arm | the one change | decouples at 260040 | MAJU00MHL DCB, 260010 to 260040 (m) | IFB5 (m) |
+| --- | --- | --- | --- | --- |
+| `l5d_base_fsm` | none | 21 | -2.14 to -9.21 | +8.09 to +25.88 |
+| `l5d_nob5only_fsm`, `_b5phonly_`, `_b5conly_` | band 5, its code or its phase cut at 260010 | 20 | -2.14 to -8.94 | +8.09 to +25.12 |
+| `l5d_gapall_fsm` | every G08 signal cut at 259980 and 260010 | 19 | -2.14 to -8.75 | +8.08 to +24.59 |
+| `l5d_fresh40_fsm` | G08 cut from the start to 260010 (first seen at 260040) | 0 | 0.00 to 0.00 | +2.15 to +2.14 |
+| `l5d_losreentry_fsm` | `network.cycle_slip.gap_reentry_per_signal` false | 21 | -1.48 to -2.32 | +6.27 to +8.15 |
+
+Readings: the band-5-only epoch is not the trigger (a single-band line of sight is not used; the three cuts at 260010 are identical to each other). A common gap of every signal keeps the event. Without G08's earlier arc at MAJU00MHL neither move happens and G08's birth at 260040 is clean (that arm also removes the pre-gap move, so it is not a one-change arm on the re-entry). With the per-signal re-entry off (no gap response; the wide-lane detector refloats L2W and L5Q, the post-fit tier the arc) MAJU00MHL's jump shrinks about tenfold, but the 21-satellite clock-anchor burst stays: the burst and the station's level jump are separable, and the decouple count alone is not the event's grade.
+
+**The R-1d options (the author's decision).**
+
+1. **Find the defect in the per-signal refloat under three bands.** A correct refloat of L2W alone, with L1C and L5Q carried, should leave the line of sight determined; a metres-sized move of the station level points at the refloat's re-coupling edge (standing invariant 1: a re-seed from one epoch of low-elevation code made stiff). First read: MAJU00MHL's local fold and row parts for G08 in the anchored dump, 260040 against 260010. A fix, if found, keeps every carry the raw data say is good.
+2. **Restart the whole line of sight at a shifted re-entry when it has three bands** (what the dual posture does by construction). Supported by `l5d_losreentry_fsm`; costs the continuous carries of L1C and L5Q; must keep card GRS's per-signal gain on dual.
+3. **A station-level event response** (standing invariant 7): a receiver code state that moves far beyond its formal sigma in one epoch is an event; the epoch is re-solved with the line of sight that changed state refloated whole or held out, and the move is not carried. Generic; does not address the slower pre-gap move.
+4. **Band-5 admission maturity:** a line of sight's band-5 rows enter only after N epochs of continuous three-band tracking and once the station's level states are determined. Blunt; costs band 5 during ignition and after every gap.
+5. **Sequencing:** Galileo E5b's 6 h arm and census proceed (section 12) while R-1d is designed; GPS L5 stays SEQUENCED.
+
+Owed whatever the choice: the 21-satellite clock-anchor burst at 260040 needs its own read (which satellites, which tension), since it survives option 2's emulation; and any option is graded at 2 h on bands 1 and 2 offsets, the clock wire and WTZZ00DEU, not on the decouple count. The cross-epoch readout (b) is not recommended for merging; the anchored dump (a) is.
+
+## 14. 2026-10-23: option 1, the read of MAJU00MHL's parts and the per-signal-off arm at 2 h
+
+The author chose option 1. Reads of the anchored dump (`runs/_rap_l5d_loc_dg/logs/rhs_attrib/`), the run traces and the code; one 2 h arm.
+
+**What re-enters at 260040.** All three G08 phase rows at MAJU00MHL have a zero prefit at 260040 (the anchored and the emitted solve alike): every G08 phase ambiguity there is re-seeded and the line of sight is code-only at that epoch. L2W is refloated by the gap tier (the real slip). L5Q is refloated by the wide-lane pair detector (`mw_wl_slip`, pair L2W+L5Q), which frees both members of a flagged pair (`SlipQc.cpp`, the `refloat_signal` calls of the pair loop) unless the common-band scope has a narrowed verdict; that verdict (L2W implicated, L1C and L5Q exonerated) is first written at 260070. L5Q's code minus phase is continuous, so its refloat at 260040 is collateral on the wide-lane evidence. L1C is bridged at its prefit. "Refloating L2W alone" is therefore not what happens on this posture.
+
+**Where MAJU00MHL's states come from.** The station's own rows and folds hardly carry its receiver code states, before or during the event; the shared-solution feedback does:
+
+| target, record | 260010 | 260040 anchored |
+| --- | --- | --- |
+| GPS_DCB: own rows / own folds / feedback / solved | -0.09 / -2.80 / -1.34 / -4.23 | -0.09 / -2.85 / -9.25 / -12.19 |
+| GPS_IFB5: own rows / own folds / feedback / solved | -0.01 / +0.43 / +7.67 / +8.09 | -0.02 / +0.21 / +27.73 / +27.91 |
+
+Within MAJU00MHL's net, the G08 line of sight goes from -1.05 to -15.07 m on GPS_DCB (+3.56 to +37.95 m on GPS_IFB5), offset by its other satellites (G26 +4.24, E26 +2.65, G31 +2.56 m on GPS_DCB). The station's data-only block has a null space of dimension 2 (eigenvalues -1.9e-11 and -4.0e-12 of 1.0e7), and the run log names the receiver code-bias datum as the only closure of the station's geometry-free level once the band-5 delay is estimated. That datum's zero-mean prior is built for the DCB form only (`RxCodeBiasCarry.cpp`, `cb.form == ParamForm::Dcb`): the estimated band-5 delay and the second code channel's offset get no datum row. A level direction that loads mainly on GPS_IFB5 is then held by the shared feedback and the in-block carry alone, which is consistent with section 8's probe (the DCB prior tightened to 1 m left the event in place). Not yet established: the loadings of the two null directions, and whether a datum row on the band-5 delay holds the event.
+
+**Excluded.** G08's band-5 satellite code bias is not the path: 12 to 13 stations hold G08 on three bands at every epoch from 259800 to 260130 (MAJU00MHL drops out at 259890, 259980 and 260010 only), and its formal sigma stays at 0.07 m; no extra-band datum switch occurs.
+
+**The per-signal re-entry off at 2 h** (`runs/_rap_l5f_t1onps0_f2`, `t1on` plus `network.cycle_slip.gap_reentry_per_signal` false, same exe):
+
+| arm | WTZZ00DEU, hours 1 and 2 (m) | GPS clock wire, hour 2, all / tracked (m) | GPS stations above 0.10 m, bands 1 / 2 / 5 | decouples (at 260040) |
+| --- | --- | --- | --- | --- |
+| `ctl` | 0.058 0.011 | 0.0235 / 0.0208 | 1 / 0 / - | 2 (1) |
+| `t1on` | 0.076 0.042 | 0.0929 / 0.0558 | 8 / 5 / 5 | 25 (21) |
+| `t1onps0` | 0.063 0.020 | 0.0741 / 0.0675 | 5 / 3 / 4 | 37 (21; 12 more at 261030) |
+
+It halves the consumer's hour-2 loss and some of the offsets, not the wire, and adds a second burst; it is not the fix.
+
+**The clock-anchor burst.** At 260040 the dual control decouples G08 alone (phase statistic, e_phi 1.99 m): MAJU00MHL was G08's phase-datum anchor (on `t1on` the G08 L5Q anchor is handed to NYA200NOR at 259980). On `t1on` 21 GPS satellites trip together with a median clock move of 3.73 m against their anchors, on `t1onps0` the same 21 with 0.24 m: a constellation-common GPS clock move that scales with the size of MAJU00MHL's level jump.
+
+**Reading.** On this posture a three-band station's receiver code states are set by the network, not by its own data, along directions only the DCB part of the datum touches; when the operator changes at a re-entry (here a line of sight turned code-only, with a collateral refloat), the feedback moves those states by metres and the network's GPS clock level follows. Two defects are named for the build: (1) the receiver code-bias datum covers the DCB only, so the band-5 delay (and the second channel's offset) has no datum row; (2) the wide-lane pair detector refloats both members of a flagged pair before the common-band scope can exonerate one. Next measurements: the loadings of MAJU00MHL's two null directions; then one default-off build of a datum row on the estimated extra-band delay, graded at 2 h like this section.
+
+**Addendum (same day): the common-band scope at the event.** The wide-lane detector forms every band pair and the common-band scope (`network.cycle_slip.common_band_scope`, armed) frees only the implicated band. On G08 at MAJU00MHL it forms no verdict at TOW 260040 (no `T0_band_scope` row; the scope writes one per verdict), so the L2W+L5Q drain frees both bands; its first verdict is at 260070: L2W implicated, L1C and L5Q exonerated by a silent, mature L1C+L5Q pair (23 samples), which was mature at 260040 as well. Why no verdict was formed at the re-acquisition epoch is not yet read in the code. Earlier, at TOW 259980, with L2W already absent, the IF time-difference test flagged the L1C+L5Q pair by 6.37 m and refloated both (one pair, no isolation possible); code minus phase on both is continuous there, so the step, if real, is common to code and phase. These are two slip-layer findings beside the network's fragility; the bisection's common-gap arm (section 13), where every G08 signal re-enters together and is refloated, keeps the event, so neither is its whole cause.

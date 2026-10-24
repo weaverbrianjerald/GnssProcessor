@@ -122,6 +122,9 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   the field contamination is one event at MAJU00MHL moving its station level direction; consumer cost = Block IIF L5
   phase. 2026-10-13: a station-local attribution (section 9) shows MAJU's own rows carry centimetres; the move
   comes through the shared solution. L5 SEQUENCED: R-1d (robust ignition of receiver code states) is the author's design call.
+  2026-10-23 (sections 10 to 14): GPS L5 and every sim channel stable on the GPS + Galileo sim golden; on the field
+  Galileo E5b clean at 2 h and GPS L5 still the MAJU00MHL event; the jump is in the anchored solve, the station's
+  receiver code states are set by the shared feedback, and the DCB-only datum barely holds the GPS level. Successor: R1D.
 - [GFC](GFC_galileo_family_clock_datum_2026-10-10.md): closed, 2026-10-10: Galileo clock datum across the two code
   families, two default-off steps: the family-difference datum (clock wire 0.105 to 0.035 m) and the first-sighting
   family prior (truth 0.83 to 0.05 m, clock wire 0.022 m); census -0.020 m against GPS only. Pair continuity KEEP_OFF.
@@ -218,3 +221,12 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   ignition, census median site 0.02 to 0.07 m, no consumer above 1 m after hour 1 except the golden's ARHT00ATA for 26 min on DOY 130
   (2.2 m). Candidate against golden: census paired median -0.8 to -3.8 mm, none worse than +2.9 mm, ARHT00ATA -0.08 to -0.13 m on four
   days, hour 1 better in the median; cost about twice. One wire difference read (G03 on DOY 130). Not armed.
+- [R1D](R1D_station_level_datum_2026-10-23.md): open, 2026-10-23: L5 step R-1d, the station level under three bands.
+  First build, a datum row on the receiver band-5 delay and second-channel offset: 10 m changes nothing, 1 m forces
+  0.95 m into the C1W rows; every bar missed, as predicted; not the fix. The coupling read and an anchor-bar
+  discriminator name the transmission: the phase-datum anchor loop (MAJU00MHL barred from anchoring: no event, clock
+  wire 0.91 times dual). The station-level projection of the coupling is set aside (gauge break, then a 40 % dual
+  clock-wire cost); a re-seed handover moves the role but not the event. Next: the anchor's level held in the datum. L5 SEQUENCED.
+- [ALD](ALD_anchor_level_datum_2026-10-23.md): open, 2026-10-23: L5 step R-1d continued (successor of R1D): an
+  anchor station's level directions held as part of the phase datum. Derived and checked offline on MAJU00MHL's
+  dumps (the anchor's level is transported exactly into the phase biases its pins define); not built. L5 SEQUENCED.
