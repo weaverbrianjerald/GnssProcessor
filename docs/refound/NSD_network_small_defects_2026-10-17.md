@@ -183,3 +183,25 @@ IDENTICAL, all exit 0. These arms do not run the network producer, so they certi
 **Verdict.** Pass: with the key off, every difference from main `30ca49e` is a declared line of section 4, and no
 CSV, product or wire file moved on any of the 23 network arms, the 16 user arms or the four real-time arms. Owed, unchanged:
 the 6 h seed counts; arming `network.readmit_seed_mirrors` is not proposed.
+
+## 2026-10-24: register text moved from OPEN_ITEMS.md
+
+Moved verbatim from `docs/status/OPEN_ITEMS.md` by the record compression ([RECORD_COMPRESSION_2026-10](../status/RECORD_COMPRESSION_2026-10.md)); the register keeps a one-line row for each item.
+
+### Open-cards table row (network producer)
+
+```
+| network producer | [NSD](../refound/NSD_network_small_defects_2026-10-17.md) | Three small defects built on `fix/netsmall` (hard clock refloat counted, readmit seeds in the stash-status mirrors counted and taken behind a default-off key, coupled-mark clock step per constellation); the same-build check of 2026-10-18 found only the declared lines (section 7); the 6 h seed counts are owed. |
+```
+
+### Stash-status mirrors (suspected)
+
+- **Stash-status mirrors (suspected).** StashStatus's VCE and census mirrors skip parked readmit seeds that the D2 inject folds; confirm the coverage gap and count those seeds. Confirmed in code and counted (new READMIT run-end line); the seeds are taken as rows behind the default-off `network.readmit_seed_mirrors`. Same-build check passed 2026-10-18 (only the declared lines differ; the 6 h seed counts stay owed). [NSD](../refound/NSD_network_small_defects_2026-10-17.md), [CAF](../cards/queues/CAF-COMMENT-AUDIT-FINDINGS.md)
+
+### Hard clock refloat uncounted
+
+- **Hard clock refloat uncounted.** `clock_monitor_reinit_sigma_m` <= 0 skips the stash and erases the border entry; count it in the PRM response registry. Counted by three response sites (`clk_hard_refloat`, `pb_hard_refloat`, `cb_hard_refloat`). Same-build check passed 2026-10-18 (only the declared lines differ; no gate arm arms the hard refloat, so the per-site counts rest on the unit cases). [NSD](../refound/NSD_network_small_defects_2026-10-17.md), [PRM3](../refound/PRM3_responses_2026-10-02.md)
+
+### Mixed-system clock step
+
+- **Mixed-system clock step.** decommonedClockStep takes one median across GPS and Galileo while the hold's M_k is per constellation, so the coupled-mark run-end census mixes systems. Now one median per constellation (`pbHoldDecommonedClockStep`). Same-build check passed 2026-10-18 (only the declared lines differ; the GPS-only arm bcl reads the same 4 samples, the two-constellation beds read 0 samples). [NSD](../refound/NSD_network_small_defects_2026-10-17.md), [CAF](../cards/queues/CAF-COMMENT-AUDIT-FINDINGS.md)

@@ -505,6 +505,9 @@ posture call stays in the verdict section of the card that reached it.
   names, each with the card and section that is its evidence.
 - [status/OPEN_ITEMS_CODE_DEFECTS.md](status/OPEN_ITEMS_CODE_DEFECTS.md) — the code-defect
   section of the register (verified defects, their fixes, the gate records), split out for size.
+- [status/OPEN_ITEMS_CODE_DEFECTS_GATES.md](status/OPEN_ITEMS_CODE_DEFECTS_GATES.md) — the gate
+  records of the fix branches fix/contract, fix/realtime and hyg/scripts, split out of the register
+  on 2026-10-24.
 - [status/RECORD_COMPRESSION_2026-10.md](status/RECORD_COMPRESSION_2026-10.md) — the 2026-10
   compression of `CLAUDE.md`, the register and the agent memories: what moved where, with sizes.
 

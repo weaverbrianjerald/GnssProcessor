@@ -221,3 +221,11 @@ Time structure of G25 (2 min bins, rms off to on): 08:40 12.0 to 3.3 mm, 08:42 1
 ### 8.8 Verdict of the check
 
 Pass. The beta sign is validated against two independent computations; the wind-up consumes `SatAttitude`; the knob off is identical to main on both golden 2 h arms (one declared log line) and on the noon windows; the goldens contain no noon turn and the knob on is inert there; the graded windows ran to completion and the turning satellites move in the expected direction; the full Debug suite on the branch (the existing `build/x64-Debug` exe, source unchanged apart from a header comment) ran 3167 cases in 422 suites, 3143 passed, 24 skipped (fixture-gated), none failed. UNVALIDATED, not armed, `config/golden/` untouched.
+
+## 2026-10-24: register text moved from OPEN_ITEMS.md
+
+Moved verbatim from `docs/status/OPEN_ITEMS.md` by the record compression ([RECORD_COMPRESSION_2026-10](../status/RECORD_COMPRESSION_2026-10.md)); the register keeps a one-line row for each item.
+
+### Build 3: noon-turn attitude
+
+- **Build 3: noon-turn attitude.** BUILT 2026-10-16, CHECKED 2026-10-17 (branch `mpg/attitude`, default off, not armed): one SatAttitude model for PCO and wind-up, computeBeta's sign validated against two independent computations, GPS Block IIF/IIR noon turns behind `processing.enable_noon_turn_attitude`; knob off identical to main, goldens see no turn, graded 2 h windows knob on against off: G25 phase residual 7.09 to 4.86 mm and consumer hour-2 p50 17.8 to 15.6 mm, G26 and G01 within 0.2 mm. Owed: the 16-site census and a consumer that does not share the producer's attitude model before any arming decision; the G25 residual structure; the simulator truth path carrying the law; the Galileo yaw law (E21, E27, E31 transients to 5 cm, card OWD O7); Block IIA and III laws; midnight turns outside the umbra exclusion; wind-up honouring `processing.enable_orbit_normal_attitude`; the knob in the snapshot fingerprints before any resumed run. [NTA](../refound/NTA_noon_turn_attitude_2026-10-16.md), [GAD §4](../refound/GAD_galileo_adoption_2026-10-13.md)

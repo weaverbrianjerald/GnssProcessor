@@ -325,3 +325,11 @@ paired median is -1.4 mm. G5 holds (`gates/pivot/chk/census_grade_ctl_on.txt`).
   posture and through the receiver clocks); a near-tie pick (G22 against G14) that another start time can reverse.
 - **Owed before any adoption (the author's decision):** a run long enough for a pick to set (a 24 h arm), at least one
   more day, and the clone-trace read of the common drift on the armed hold when the interim hold is retired.
+
+## 2026-10-24: register text moved from OPEN_ITEMS.md
+
+Moved verbatim from `docs/status/OPEN_ITEMS.md` by the record compression ([RECORD_COMPRESSION_2026-10](../status/RECORD_COMPRESSION_2026-10.md)); the register keeps a one-line row for each item.
+
+### Build 1: clock pivot election
+
+- **Build 1: clock pivot election.** BUILT 2026-10-18 on branch `mpg/pivot`, default off, never armed: `network.pivot_election: coverage` (card PIV). CHECKED 2026-10-18 (card PIV section 8): knob absent identical to main except the declared run-end lines (G5 gate 23 arms, user side 16 arms, real time); 6 h field and sim against same-exe controls elect G22 and E04 (field) and G32 and E36 (sim) with no handover against two in each control, field hour-2 common drift 0.051 against 0.192 m/h, held-out consumer and 16-site census unchanged at the median, clock product within 2.4 mm (marginally not "no worse"); sum-to-zero competitor graded for the record (consumer +3.9 mm, ARHT00ATA +59 mm). Owed before any adoption: a 24 h arm so that a pick sets (the forced-handover branch ran on neither bed), another day, and the clone-trace read of the common drift on the armed hold. [PIV](../refound/PIV_pivot_election_coverage_2026-10-17.md), [PAC](../refound/PAC_common_drift_pivot_clock_2026-10-01.md)

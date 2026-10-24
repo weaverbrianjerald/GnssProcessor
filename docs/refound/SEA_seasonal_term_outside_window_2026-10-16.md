@@ -341,3 +341,11 @@ MARA00VEN and RIOB00BRA, outside the roster.
 Verdict: the knob-off identity holds (there is no knob; the goldens are unchanged to the byte), the
 declared intent of the fix reaches runs only through the SIF path, and there it moves exactly the 8
 stations of section 3 by the amounts of that table. Open: the merge.
+
+## 2026-10-24: register text moved from OPEN_ITEMS.md
+
+Moved verbatim from `docs/status/OPEN_ITEMS.md` by the record compression ([RECORD_COMPRESSION_2026-10](../status/RECORD_COMPRESSION_2026-10.md)); the register keeps a one-line row for each item.
+
+### Build 5: SIF outside its window
+
+- **Build 5: SIF outside its window.** BUILT 2026-10-16 on branch `mpg/seasonal` (no knob; unit gates pass). The periodic coordinate term is one block chosen by the epoch with the M-PAGES v1.2 rule (the covering block; the first block before all windows, the last after all, the block that ended last inside a gap), with warnings at both callers; tools/sif_propagate and pyviz `SifTruth` moved in step. 8 field-roster stations gain 0.4 to 6.4 mm. The same-build golden comparison (field and sim, 2 h) passed 2026-10-17: identical to a main `4318fe3` control in every product, trace and log. Owed: the merge. [SEA](../refound/SEA_seasonal_term_outside_window_2026-10-16.md), [StationInfoFile.cpp](../../src/core/products/StationInfoFile.cpp)

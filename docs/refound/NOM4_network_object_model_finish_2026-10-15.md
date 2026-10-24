@@ -118,3 +118,19 @@ everse.sed`). Decisions D1 to D11 at their defaults; the estimator is const in e
 **Identifiers** (`e267fde`): `SlipQcState::cardsArmed()` is `decisionInstrumentArmed()`, the `card1d` fixture namespace `conditional_carry_fixture`, `kCard4` `kInvariantCarryPosture`, `kCard1` `kConditionalCouplingKnobs`; 34 test messages and 28 test names (suites `Card4EmitRebase` to `EmitRebaseIntegerGate`, `Card7ConsumerTest` to `SsrConsumerSeamTest`) lose the work-item names. Eight printed strings the earlier pass missed ("Network[Card4]", upper-case "CARD", the old identifier) are rewritten, with exact reverse-map rows (`5e4e257`). **The N3b declarations** (`c6f290c`): GPS is the declared time and inter-system reference (`ConstellationTraits::time_reference`, read by six sites); BeiDou digit 1 is B1C (1 575.42 MHz) and digit 2 B1I (1 561.098 MHz), explicit in the traits and read by the chain-datum rounding; two tests. **D9** (`b3bcbc2`): `LosState::iono` and `gl_hold_iono` (each one's only writer the other) are deleted with the gross-LOS branches that served them and the carry sites `iono_coupling` and `hold_iono_coupling` (`kCarrySites` 26 to 24; field rows 366 to 364).
 
 **Gates.** Suite (Debug, run alone) 3 126 run, 3 102 passed, 24 fixture-gated skips; lint, the whole-struct check and the N5 verifier pass. G-EP in order against wave 5's outputs, the reverse map applied to the candidate and D9's declared change applied to the reference (the two site lines dropped, the four mechanism lines without the two names) with a JSON check of the manifest (`param_sites` equals the reference minus the two sites and their exempt entries; every other record equal apart from the wall-clock `loop_ms`): identical on all 23 arms and the snapshot. Concurrent suite runs collided on fixed-name temp files during the builds (each failure passed alone); the test-hygiene fix is under way.
+
+## 2026-10-24: register text moved from OPEN_ITEMS.md
+
+Moved verbatim from `docs/status/OPEN_ITEMS.md` by the record compression ([RECORD_COMPRESSION_2026-10](../status/RECORD_COMPRESSION_2026-10.md)); the register keeps a one-line row for each item.
+
+### N3c: the signal decisions, graded
+
+- **N3c: the signal decisions, graded (switches landed 2026-10-16, default off).** Field 6 h at the held-out consumer: D1 -0.2 mm, D6 0.0, D7 0.0 (neutral), D3 +0.6 mm (KEEP_OFF); D2 and D4 inert; the sim golden unmoved. 16-site census (2026-10-16): no site worse at 1 cm for D1, D6 or D7; D6 recovers ARHT00ATA by 0.21 m. Owed: the author's arming decision for D1, D6 and D7 (a golden re-base) (`scripts/nom3_designs/N3b_decisions.md` section 10). [NOM4](../refound/NOM4_network_object_model_finish_2026-10-15.md)
+
+### Network object model remainder
+
+- **Network object model remainder.** Done 2026-10-16 (NOM4 wave 5): the entity-write bindings, the counters by owner, PB2, the SD-EWL resolve loop. Left (the dead ionosphere carry was deleted 2026-10-16): PB2's five kept-apart candidates (`scripts/pb2_check.py`); the sim golden 3.3 % slower than EP1 (field 0.7 %), a timing ladder over the kept step builds on an idle machine. A loaded concurrent pair of EP1 and N5 read +0.5 % ([NETCOST](../refound/NETCOST_gps_galileo_cost_attribution_2026-10-18.md) section 10). [NOM4](../refound/NOM4_network_object_model_finish_2026-10-15.md)
+
+### Onboarding: adding a network parameter
+
+- **Onboarding: adding a network parameter.** Written 2026-10-15 (`docs/onboarding/08_adding_a_network_parameter.md`, ZWD as the worked example); revisit with a real second parameter (a horizontal tropospheric gradient: the user-side columns exist behind `estimation.estimate_tropo_gradients`). [NOM4](../refound/NOM4_network_object_model_finish_2026-10-15.md)

@@ -223,3 +223,11 @@ change 2 is a field figure.
 ## Armed (2026-10-19)
 
 By the author's decision, `network.sparse_station_normals` is default on: the loader default is true, the ledger verdict is ARMED, and both goldens pin it through `config/golden/golden_manifest.json`. The products are bit-identical to the dense formation (24 of 24 gate comparisons and four 2 h golden pairs), so the baseline pair and every graded result stand. `false` restores the dense products.
+
+## 2026-10-24: register text moved from OPEN_ITEMS.md
+
+Moved verbatim from `docs/status/OPEN_ITEMS.md` by the record compression ([RECORD_COMPRESSION_2026-10](../status/RECORD_COMPRESSION_2026-10.md)); the register keeps a one-line row for each item.
+
+### GPS + Galileo cost
+
+- **GPS + Galileo cost.** Measured 2026-10-18 ([NETCOST](../refound/NETCOST_gps_galileo_cost_attribution_2026-10-18.md)): the golden loop is 5.3 (field) and 3.7 (sim) times the GPS-only loop on the loaded machine, 73 % of the field excess in four sections doing dense algebra on the shared border. Built: `network.sparse_station_normals` (default off, unarmed; field loop -13.3 %, sim -10.6 %, identical). Owed: the arming decision; optimization 2 (conditional variance and covariance copies, 12 to 13 %); optimization 3 (reduce subtract, redundancy census, joint covariance, 8 to 12 %); a quiet-machine sim pair. Checked 2026-10-18 (sections 11 and 12): identity, gain (field -13.8 %, sim -10.6 %) and section shares reproduce; the field wall ratio is 4.2 at 2 foreign logical processors and 5.1 at 17, the GPS + Galileo loop being the one that moves with the load ([NETCOSTB](../refound/NETCOSTB_gps_galileo_cost_continued_2026-10-18.md) corrects the earlier cause), so the sim pair at a quiet machine stays owed. Checked again 2026-10-18 ([NETCOSTB](../refound/NETCOSTB_gps_galileo_cost_continued_2026-10-18.md) section 5, a fourth build): identity (G5 24 of 24, user side 16 of 16, real time up to wall-clock text; knob on on 24 of 24 arms), gain (field -13.4 %, sim -10.5 %), section shares (four sections 73.2 % of the field excess) and sub-section estimates (changes 1, 2 and 3 address 20.5, 12.9 and 19.9 % of the field loop) reproduce; the card GAD ratios 2.9 and 2.0 trace to a GPS-only loop of 712.7 ms against 327 to 406 ms in every round measured (a heavier load than those rounds).

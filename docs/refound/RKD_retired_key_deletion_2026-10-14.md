@@ -176,3 +176,11 @@ The final candidate (`08fe7f2`, rebased onto `4bdd693`) differs from the pre-reb
 (`82f0015` before the rebase) on `f2` and `s2` only in the posture table, which now prints the
 reference's rows and tallies (ON 23/23, SCOPED 53/55). Debug `gnss_tests` 2975 passed, 0 failed,
 24 skipped (fixture-gated); `gnss_simulator_selftest` 99 of 99. Verdict: PASS; landed.
+
+## 2026-10-24: register text moved from OPEN_ITEMS.md
+
+Moved verbatim from `docs/status/OPEN_ITEMS.md` by the record compression ([RECORD_COMPRESSION_2026-10](../status/RECORD_COMPRESSION_2026-10.md)); the register keeps a one-line row for each item.
+
+### Retired-key deletion: documentation notes and follow-ons
+
+- **Retired-key deletion: documentation notes and follow-ons.** Landed 2026-10-14 (149 keys with their code, ledger 784 to 635 rows; the same-build golden comparison passed). Owed: the dated notes (one appended note each, below the verbatim body, never a rewrite) on the owning cards and SPECs (AB3, AB1, CLV, CLV2, PBH, SMD, JT, LAH, OWD, RF-IGN, RF-0c, RF-0e, the RF-1 design, GFC, NETWORK_REFOUNDING; S2H-HARVEST, LV-1, LV-2, LV-4, LV-5, LV-EXTCB-CAMPAIGN, CARD-1B-JOINT-WHITENING, CARD-1F-1G-TRUNCATED-ROW-GAUGE, READMIT-EDGE, RESUME-FRAME-RESTORE, RS-2-writer-frame-rebase, RS-6a-station-layer-memories, LANE-SLIP-RESPONSE, LANE-SNAP-RUNG3, STUDY-3-band-scoped-responses, CAF-COMMENT-AUDIT-FINDINGS; SPEC_mw_wl_card, SPEC_ewl_wl_cascade_card, SPEC_lane_carry_card, SPEC_uwl_card, SPEC_lane_spectrometer, SPEC_lane_slip_response, SPEC_slip_relevel_walk, SPEC_fast_clock_split_cadence, SPEC_c1_clock_rate_validation, SPEC_iono_carry_8b, SPEC_deweight_release_hygiene, SPEC_prefit_census_observability, SPEC_raim_pool_rehost, SPEC_warm_resume_event_card); the current-posture sentences of the topic pages slip, clock, perf, ionosphere, code-bias, network-vehicle, resume-seam and config-ledger; the onboarding tour (`07_network_tour.md`: the ensemble election, the run-end report count 105); `rt_service_operations.md` section 3.2 (the SH gate disposition); a dated line on the NOM3 card (the deletion landed, arms `cil` and `fcs2` retired). Follow-ons F1 (the empty diagonal iono_carry map), F2 (the erase_keep_iono mode), F3 (renames), F4 (a warn-once retired-key tombstone). [RKD](../refound/RKD_retired_key_deletion_2026-10-14.md)

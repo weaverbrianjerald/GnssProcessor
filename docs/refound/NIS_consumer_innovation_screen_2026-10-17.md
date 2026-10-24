@@ -159,3 +159,17 @@ The key-absent gate is clean on every surface (G5 24 of 24, user side 16 of 16, 
 ### 9.7 Run directories
 
 Under `D:/GnssProcessorSupport/runs_nom/`: golden `_rap_isc_g_{ctl,off,act,k9}`; census `_rap_isc6_{ctl0,off,act,k9,obs}_<site4>` (17 each); case `_rap_isc_n2_{ctl,off,act}`; cost `_rap_isc_cost_{ctl,act}{1,2,3}`; G5 `_rap_g5_w2innoscreen_*` (gate summary `gates/g7/summary_w2innoscreen.txt`). User-side arms `runs/_uom_w2innoscreen`; real-time captures `runs/rtseam_goldens/w2innoscreen_{dr,cl}`. Scratch (logs, compare outputs, the counter reader): `D:/GnssProcessorSupport/gates/innoscreen/chk/`.
+
+## 2026-10-24: register text moved from OPEN_ITEMS.md
+
+Moved verbatim from `docs/status/OPEN_ITEMS.md` by the record compression ([RECORD_COMPRESSION_2026-10](../status/RECORD_COMPRESSION_2026-10.md)); the register keeps a one-line row for each item.
+
+### Open-cards table row (consumer)
+
+```
+| consumer | [NIS](../refound/NIS_consumer_innovation_screen_2026-10-17.md) | Pre-update innovation screen built default off; checked 2026-10-17: key absent identical on every gate, armed no output moved (golden 0 flagged; census 462 flagged, one E11 C5Q code row the update already leaves out), 92 m case within 1.5 cm; no benefit shown, not armed. |
+```
+
+### Consumer innovation screen
+
+- **Consumer innovation screen.** Built default off (`network.closed_loop.innovation_screen`): a conditional normalized innovation test before the update holds a flagged row out as an event with counters, re-tests it every epoch and re-floats a persistent phase row; checked 2026-10-17: the key-absent gate is identical (G5 24 of 24, user side 16 of 16, real time, the golden, 17 of 17 census consumers), armed no output moved on the golden or in the census (462 flags, all one E11 C5Q code row the update already leaves out, closure HOLDS everywhere), the ARHT00ATA case on the CLV wire is within 1.5 cm, no benefit is shown because no data holds the edge the screen answers (an undeclared product step on several satellites at once), and it is never armed unasked. [NIS](../refound/NIS_consumer_innovation_screen_2026-10-17.md)

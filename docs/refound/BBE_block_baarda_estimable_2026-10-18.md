@@ -176,3 +176,11 @@ Sim, hour 2: 112 events, none with a companion in the RAIM, slip, resume, census
 - It does not change the solve, the wire or any other product (B0, B1, the G5 side, the user side and the real-time arms above).
 - On this evidence the block tier is not a source of new detections: nothing it flags is block-only, 77 % of the field flags have no companion tier, 98 % are raw-flat, and the flagged lines of sight cluster by station. Whether the goldens keep the census armed (2.4 to 4.1 % of the run wall, in its refusing form a sweep that tests nothing) or arm the estimable form is the author's decision; no golden is edited by this card.
 - Still owed: the positive control (section 7) and the guard for the unwarmed first sweep.
+
+## 2026-10-24: register text moved from OPEN_ITEMS.md
+
+Moved verbatim from `docs/status/OPEN_ITEMS.md` by the record compression ([RECORD_COMPRESSION_2026-10](../status/RECORD_COMPRESSION_2026-10.md)); the register keeps a one-line row for each item.
+
+### block_baarda is blind on the float vehicle
+
+- **block_baarda is blind on the float vehicle.** Armed in both goldens, it finds every LOS block singular (field 60279 of 60302, sim all) at 5 % of loop wall: each line of sight's free slant ionosphere absorbs one direction of the block exactly. `network.block_baarda_estimable` (default off, UNVALIDATED) tests the other directions; checked 2026-10-18 on both beds (4 of 9984 field and 0 of 10584 sim blocks refused in hour 2; 7.1 % and 1.2 % flagged, none block-only), and whether the goldens arm it or disarm the census is the author's. [BBE](../refound/BBE_block_baarda_estimable_2026-10-18.md)
