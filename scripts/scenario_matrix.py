@@ -665,6 +665,9 @@ def grade_cell(m, cell, legs):
     out["channels"] = ch
     out["pass"] = ok
     out["worst"] = worst[0]
+    # Report-only: an event with no effect on any channel may have hit nothing the producer
+    # used (a target arc already out of the solve); the cell then tests nothing.
+    out["no_effect"] = all(c["E"] == 0.0 for c in ch.values())
     return out
 
 
@@ -741,7 +744,7 @@ def cell_text(r):
     tag = "PASS" if r["pass"] else "FAIL"
     if r.get("exit_event") not in (None, "0"):
         tag = f"FAIL(exit {r['exit_event']})"
-    note = " UNREAD" if r.get("unread") else ""
+    note = " UNREAD" if r.get("unread") else (" NO-EFFECT" if r.get("no_effect") else "")
     return f"{tag}{note} {k} {c['E']:.1f}/{c['bar']:.1f}"
 
 
@@ -784,6 +787,10 @@ def cmd_report(a):
                 notes.append(f"zwd {r['zwd_worst_station']}")
             if r.get("unread"):
                 notes.append("unread")
+            if r.get("no_effect"):
+                notes.append("NO EFFECT on any channel: the target may be out of the solve")
+            if r.get("iono_worst_los") and not r["channels"]["iono"]["pass"]:
+                notes.append(f"iono {r['iono_worst_los']}")
             L.append(f"| {rid} | {p} | " + " | ".join(vals) + " | " + "; ".join(notes) + " |")
     if a.control:
         C = json.load(open(gate_dir(a.control) + "/grades.json"))
