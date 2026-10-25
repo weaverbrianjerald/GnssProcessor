@@ -1,0 +1,13 @@
+# latexmkrc -- the network estimation workbook.
+#
+# The preamble (gnssreport.sty) and the bibliography (references.bib) are shared
+# with the Mathematical Reference in docs/report, so the notation is the same.
+#
+# Build:   latexmk            (from this folder)
+# Clean:   latexmk -c
+
+$pdf_mode   = 1;
+$bibtex_use = 2;
+@default_files = ('workbook.tex');
+ensure_path('TEXINPUTS', '../../report//');
+ensure_path('BIBINPUTS', '../../report//');

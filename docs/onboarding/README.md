@@ -13,7 +13,7 @@ Each page ends with a working result.
 | 6 | [First tasks](06_first_tasks.md) | A list of small open tasks, each with its files and a definition of done | as needed |
 | 7 | [Network tour](07_network_tour.md) | One network run read from its tables: what it estimates, its eight stages, where a quantity lives | 1 day, when a task touches the network |
 | 8 | [Adding a network parameter](08_adding_a_network_parameter.md) | The recipe for a new per-station state of the network producer, with the wet delay as the worked example | ½ day, when a task adds a station state |
-| 9 | [Workbook: network theory](workbook/README.md) | 35 questions with an answer key on the network's estimation theory and reference (S-basis) choices, each answer checked against a card, a line of code or a run | 5 to 6 hours, after page 7 |
+| 9 | [Workbook: network theory](workbook/workbook.pdf) | A course of 41 progressive questions with an answer key, from one receiver to the real network: the estimation theory and reference (S-basis) choices of the network, each answer checked against a card, a line of code or a run (LaTeX source `workbook/workbook.tex`) | about 7 hours, after page 7 |
 
 Afterwards, [CONTRIBUTING.md](../../CONTRIBUTING.md) is the one-page reference: the five
 rules, the merge-request checklist, and a table that maps each kind of change to its
