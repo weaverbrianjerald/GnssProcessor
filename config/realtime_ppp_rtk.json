@@ -60,6 +60,9 @@
     "ntrip_host":      "10.214.154.211",
     "ntrip_port":      2101,
     "ntrip_mountpoint":"rtcm3_restricted",
+    // No password is kept in this file.  With ntrip_password empty, the login for the caster
+    // host is read from the netrc file (the same for the two streams below).  Setup:
+    // docs/onboarding/02_code_tour.md, section "NTRIP logins".
     "ntrip_user":      "weaverb",
     "ntrip_password":  "",
 
@@ -77,7 +80,7 @@
 	  //"ntrip_mountpoint": "SSRA00CNE0",
 	  "ntrip_mountpoint": "SSRC01CAS1",
       "ntrip_user":       "weaverb",
-      "ntrip_password":   "OsuGeomatics26!",
+      "ntrip_password":   "",
       "reconnect_delay_s": 5,
       "input_path":       "",
       "tcp_host":         "",
@@ -92,7 +95,7 @@
       "ntrip_port":       2101,
       "ntrip_mountpoint": "BCEP00BKG0",
       "ntrip_user":       "weaverb",
-      "ntrip_password":   "OsuGeomatics26!",
+      "ntrip_password":   "",
       "reconnect_delay_s": 5,
 
       // For replay testing: dump a few minutes of a nav feed to a binary file
