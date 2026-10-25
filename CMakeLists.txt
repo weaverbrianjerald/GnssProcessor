@@ -206,6 +206,7 @@ add_library(gnss_core STATIC
     src/core/aiding/ZuptAidingSource.cpp
     src/core/aiding/AidingSourceManager.cpp
     src/core/products/DataDownloader.cpp
+    src/core/products/NetrcFile.cpp
     src/core/products/ProductResolver.cpp
     src/core/products/PathResolver.cpp
     src/core/products/StationInfoFile.cpp
@@ -219,6 +220,7 @@ add_library(gnss_core STATIC
     src/core/products/LiveEphemerisStore.cpp
     src/core/products/BrdcClockApriori.cpp
     src/core/realtime/NtripClient.cpp
+    src/core/realtime/NtripCredentials.cpp
     src/core/realtime/TcpClient.cpp
     src/core/realtime/RtcmStreamReader.cpp
     src/core/network/driver/StreamAligner.cpp
@@ -638,6 +640,7 @@ add_executable(gnss_tests
     tests/test_epoch_cadence.cpp
     tests/test_realtime_defects.cpp
     tests/test_tcp_client_silence.cpp
+    tests/test_ntrip_credentials.cpp
     tests/network/test_network_streaming.cpp
     tests/test_rtcm_logger_lifetime.cpp
     tests/test_safe_logger.cpp

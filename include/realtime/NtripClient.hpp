@@ -12,6 +12,7 @@
 #include <atomic>
 #include <condition_variable>
 #include <cstdint>
+#include <filesystem>
 #include <mutex>
 #include <random>
 #include <string>
@@ -28,7 +29,12 @@ struct NtripConfig {
     int         port{ 2101 };           ///< Caster port.
     std::string mountpoint;             ///< Mountpoint name (e.g. "RTCM3").
     std::string username;               ///< NTRIP username (empty for anonymous).
-    std::string password;               ///< NTRIP password.
+    /// NTRIP password.  Empty: the netrc entry of @c host supplies the login and password
+    /// (see @c NtripCredentials.hpp for the order); committed configs leave it empty.
+    std::string password;
+    /// Netrc file read when @c password is empty (@c data_download.netrc_path).  Empty:
+    /// @c ~/.netrc, then @c ~/_netrc.
+    std::filesystem::path netrc_path;
     /// Optional NMEA GGA sentence for VRS / nearest-station mountpoints.
     /// Sent as the NTRIP rev2 @c "Ntrip-GGA:" request header on the GET
     /// (RTB-2(e)).  It is not sent through @c CURLOPT_POSTFIELDS, which would turn

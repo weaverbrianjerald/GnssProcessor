@@ -5,10 +5,12 @@
 
 #include "realtime/NtripClient.hpp"
 #include "common/CurlGlobalGuard.hpp"
+#include "realtime/NtripCredentials.hpp"
 #include <curl/curl.h>
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <chrono>
+#include <optional>
 
 namespace GnssProcessor {
 
@@ -136,6 +138,8 @@ void NtripClient::receiveLoop() {
         }
     }
 
+    std::optional<NtripCredentialOrigin> reported_origin;   // origin of the login last written to the log
+
     while (running_.load()) {
         const char* scheme = config_.use_tls ? "https" : "http";
         log->info("Connecting to NTRIP caster {}://{}:{}/{}", scheme, config_.host,
@@ -181,10 +185,25 @@ void NtripClient::receiveLoop() {
         }
         curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
 
-        // Authentication (if provided).
-        if (!config_.username.empty()) {
-            curl_easy_setopt(curl, CURLOPT_USERNAME, config_.username.c_str());
-            curl_easy_setopt(curl, CURLOPT_PASSWORD, config_.password.c_str());
+        // Authentication (if provided).  The login is the config's, or the netrc entry of
+        // the caster host when the config has no password.  It is resolved on every
+        // attempt, so a password changed in the netrc file is used at the next reconnect.
+        // The log names the source, never the login or the password.
+        const NtripCredentials auth = resolveNtripCredentials(
+            config_.host, config_.username, config_.password, config_.netrc_path);
+        const std::string auth_note = describeNtripCredentials(auth);
+        if (reported_origin != auth.origin) {
+            reported_origin = auth.origin;
+            if (auth.origin == NtripCredentialOrigin::Netrc) {
+                log->info("NTRIP {}: {}", config_.host, auth_note);
+            } else if (!auth_note.empty() && !auth.username.empty()) {
+                log->warn("NTRIP {}: {}; connecting with the configured login and an empty password",
+                          config_.host, auth_note);
+            }
+        }
+        if (!auth.username.empty()) {
+            curl_easy_setopt(curl, CURLOPT_USERNAME, auth.username.c_str());
+            curl_easy_setopt(curl, CURLOPT_PASSWORD, auth.password.c_str());
             curl_easy_setopt(curl, CURLOPT_HTTPAUTH, CURLAUTH_BASIC);
         }
 
@@ -220,10 +239,11 @@ void NtripClient::receiveLoop() {
         } else if (http_code != 200 && http_code != 0) {
             // NTRIP v1 casters may answer "ICY 200 OK" (reported as 0); only a
             // genuine non-200 HTTP status is an error here.
-            const char* hint = (http_code == 401) ? " — check NTRIP user/password"
+            std::string hint = (http_code == 401) ? " — check NTRIP user/password"
                              : (http_code == 403) ? " — credentials valid but mountpoint access denied"
                              : (http_code == 404) ? " — unknown mountpoint name"
                              : "";
+            if (http_code == 401 && !auth_note.empty()) hint += "; " + auth_note;
             log->error("NTRIP caster returned HTTP {}{}; retrying in {} s",
                        http_code, hint, config_.reconnect_delay_s);
         } else if (bytes_this == 0) {

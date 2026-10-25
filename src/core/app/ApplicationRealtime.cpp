@@ -33,6 +33,7 @@
 #include "slip/MwSlipDetector.hpp"
 #include <atomic>
 #include <chrono>
+#include <filesystem>
 #include <fstream>
 #include <memory>
 #include <thread>
@@ -199,8 +200,11 @@ private:
     std::unique_ptr<TcpClient>    tcp_;
 };
 
-/// Build the primary observation stream from RealTimeConfig.
+/// Build the primary observation stream from RealTimeConfig.  @p netrc_path is the
+/// configured netrc file (@c data_download.netrc_path) that supplies the NTRIP login when
+/// the config has no password.
 std::unique_ptr<RealtimeStream> openPrimary(const RealTimeConfig& rt,
+                                            const std::filesystem::path& netrc_path,
                                             LogManager& lm) {
     auto log = lm.getLogger("main_log");
     if (rt.input_type == "file") {
@@ -216,6 +220,7 @@ std::unique_ptr<RealtimeStream> openPrimary(const RealTimeConfig& rt,
         cfg.mountpoint        = rt.ntrip_mountpoint;
         cfg.username          = rt.ntrip_user;
         cfg.password          = rt.ntrip_password;
+        cfg.netrc_path        = netrc_path;
         cfg.nmea_gga          = rt.nmea_gga;
         cfg.reconnect_delay_s = rt.reconnect_delay_s;
         cfg.use_tls           = rt.ntrip_use_tls;
@@ -245,10 +250,12 @@ std::unique_ptr<RealtimeStream> openPrimary(const RealTimeConfig& rt,
 /// ephemeris).  Both share the @c RealTimeConfig::Corrections transport
 /// descriptor and route to @c feedRtcmFrame; only the @p label (used for the
 /// stream tag and log lines) distinguishes them.  Templated on the config so
-/// the @c Ephemeris alias resolves without an extra overload.
+/// the @c Ephemeris alias resolves without an extra overload.  @p netrc_path is as for
+/// @c openPrimary.
 template <typename AuxCfg>
 std::unique_ptr<RealtimeStream> openAuxRtcmStream(
-    const char* label, const AuxCfg& cc, LogManager& lm) {
+    const char* label, const AuxCfg& cc, const std::filesystem::path& netrc_path,
+    LogManager& lm) {
     auto log = lm.getLogger("main_log");
     if (cc.input_type == "file") {
         log->info("Realtime {}: file replay from {}", label, cc.input_path);
@@ -263,6 +270,7 @@ std::unique_ptr<RealtimeStream> openAuxRtcmStream(
         cfg.mountpoint        = cc.ntrip_mountpoint;
         cfg.username          = cc.ntrip_user;
         cfg.password          = cc.ntrip_password;
+        cfg.netrc_path        = netrc_path;
         cfg.nmea_gga          = cc.nmea_gga;
         cfg.reconnect_delay_s = cc.reconnect_delay_s;
         cfg.use_tls           = cc.ntrip_use_tls;
@@ -433,12 +441,17 @@ int Application::runRealTime() {
     engine.setArIgnoreMwWl(consumer_profile_on ? config_.networkConsumerArIgnoreMwWl()
                                                : config_.arIgnoreMwWl());
 
-    auto primary = openPrimary(rt_config, log_manager_);
+    // An NTRIP stream with no password in the config reads its login from this netrc file
+    // (empty: ~/.netrc, then ~/_netrc), the file the CDDIS downloads use.
+    const std::filesystem::path& netrc_path = config_.getDownloadConfig().netrc_path;
+
+    auto primary = openPrimary(rt_config, netrc_path, log_manager_);
     if (!primary) return 1;
 
     std::unique_ptr<RealtimeStream> corrections;
     if (rt_config.corrections.enabled) {
-        corrections = openAuxRtcmStream("corrections", rt_config.corrections, log_manager_);
+        corrections = openAuxRtcmStream("corrections", rt_config.corrections, netrc_path,
+                                        log_manager_);
         if (!corrections) {
             log->warn("Corrections stream failed to start; continuing with obs-only mode");
         }
@@ -451,7 +464,8 @@ int Application::runRealTime() {
     // for SSR).
     std::unique_ptr<RealtimeStream> ephemeris;
     if (rt_config.ephemeris.enabled) {
-        ephemeris = openAuxRtcmStream("ephemeris", rt_config.ephemeris, log_manager_);
+        ephemeris = openAuxRtcmStream("ephemeris", rt_config.ephemeris, netrc_path,
+                                      log_manager_);
         if (!ephemeris) {
             log->warn("Ephemeris stream failed to start; broadcast orbits/clocks "
                       "will be unavailable unless the primary carries nav");

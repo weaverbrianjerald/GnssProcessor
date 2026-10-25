@@ -11,6 +11,7 @@
 
 #include "products/DataDownloader.hpp"
 #include "common/CurlGlobalGuard.hpp"
+#include "products/NetrcFile.hpp"
 #include <curl/curl.h>
 #include <zlib.h>
 #include <algorithm>
@@ -130,14 +131,6 @@ namespace {
         return out;
     }
 
-    /// Resolve the user's home directory using the OS-appropriate env var.
-    /// Returns empty path if neither HOME nor USERPROFILE is set.
-    std::filesystem::path getHomeDir() {
-        if (const char* h = std::getenv("HOME"); h && *h) return std::filesystem::path(h);
-        if (const char* u = std::getenv("USERPROFILE"); u && *u) return std::filesystem::path(u);
-        return {};
-    }
-
 } // anonymous namespace
 
 // ---------------------------------------------------------------------------
@@ -172,39 +165,34 @@ void DataDownloader::resolveNetrcPath() {
 
     auto log = log_manager_.getLogger("downloader");
 
-    // Honor an explicit config-supplied path first.
-    if (!netrc_path_.empty()) {
-        if (std::filesystem::exists(netrc_path_)) {
+    // The search order (configured path, ~/.netrc, ~/_netrc) is NetrcFile's, shared with
+    // the NTRIP streams; only the wording of the log lines is this class's.
+    const NetrcLocation found = locateNetrcFile(netrc_path_);
+    if (found.configured_missing)
+        log->warn("auth: configured netrc_path does not exist: {}", netrc_path_.string());
+    netrc_path_ = found.path;
+
+    switch (found.origin) {
+        case NetrcLocation::Origin::Configured:
             log->info("auth: using configured .netrc at {}", netrc_path_.string());
             return;
-        }
-        log->warn("auth: configured netrc_path does not exist: {}", netrc_path_.string());
-        netrc_path_.clear();
+        case NetrcLocation::Origin::DotNetrc:
+            log->info("auth: using .netrc at {}", netrc_path_.string());
+            return;
+        case NetrcLocation::Origin::UnderscoreNetrc:
+            log->info("auth: using _netrc at {}", netrc_path_.string());
+            return;
+        case NetrcLocation::Origin::None:
+            break;
     }
-
-    // Auto-discovery.  The Unix convention is tried first because it is the
-    // common setup on either OS; the Windows convention is the fallback.
-    const auto home = getHomeDir();
-    if (home.empty()) {
+    if (found.no_home) {
         log->warn("auth: HOME / USERPROFILE not set; cannot locate .netrc — "
                   "CDDIS downloads will fail authentication");
         return;
     }
-    const auto dot   = home / ".netrc";
-    const auto under = home / "_netrc";
-    if (std::filesystem::exists(dot)) {
-        netrc_path_ = dot;
-        log->info("auth: using .netrc at {}", netrc_path_.string());
-        return;
-    }
-    if (std::filesystem::exists(under)) {
-        netrc_path_ = under;
-        log->info("auth: using _netrc at {}", netrc_path_.string());
-        return;
-    }
     log->warn("auth: no .netrc found (looked at {} and {}); "
               "CDDIS / EarthScope authenticated downloads will fail",
-              dot.string(), under.string());
+              found.dot_netrc.string(), found.underscore_netrc.string());
 }
 
 // ---------------------------------------------------------------------------

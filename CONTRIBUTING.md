@@ -64,6 +64,9 @@ The first row is carried out step by step in
   mode. They are guarded on `AppMode::RealTime`.
 - **One test suite name per file.** A new test file is preferred over extending an
   existing one.
+- **No credentials in tracked files.** A config under `config/` keeps `ntrip_password`
+  (and the `password` of a station `transport`) empty; the login lives in the netrc file
+  ([NTRIP logins](docs/onboarding/02_code_tour.md#ntrip-logins)).
 
 ## Documentation style
 

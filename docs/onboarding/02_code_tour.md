@@ -378,6 +378,43 @@ corrections) and `src\core\sbf\` (Septentrio). `sbf_replay.json` is the recommen
 starting point: it runs the complete real-time engine from a file, so runs are
 repeatable and can be debugged.
 
+### NTRIP logins
+
+A config file never holds a password. Each NTRIP stream (the primary stream,
+`realtime.corrections`, `realtime.ephemeris`, and the `transport` block of a network
+station) resolves its login in this order
+(`include\realtime\NtripCredentials.hpp`):
+
+1. A non-empty `ntrip_password` is used as written, with `ntrip_user`. No file is read.
+2. Otherwise the netrc entry of the caster host (`ntrip_host`). With `ntrip_user` set, the
+   entry with that login is used. With `ntrip_user` empty, the entry supplies both login
+   and password.
+3. Otherwise `ntrip_user` is sent with an empty password, or the stream is anonymous when
+   `ntrip_user` is empty.
+
+A station `transport` block uses the same order with its own key names (`host`,
+`username`, `password`).
+
+The netrc file is the one the CDDIS downloads use (`include\products\NetrcFile.hpp`):
+`data_download.netrc_path` when set, otherwise `.netrc`, then `_netrc`, in the home
+directory (`HOME`, else `USERPROFILE`). It holds one `machine` line per caster host, next
+to the `urs.earthdata.nasa.gov` line of [setup, step 6](01_setup.md):
+
+```
+machine igs-ip.net login YOUR_USER password YOUR_PASSWORD
+machine products.igs-ip.net login YOUR_USER password YOUR_PASSWORD
+```
+
+The file is read again at every connection attempt, so a changed password applies at the
+next reconnect without a restart. A `default` entry is never used. The file must be UTF-8
+or ANSI text: the `>` redirect of Windows PowerShell 5 writes UTF-16, which is reported
+and not read. The log says where the login came from (once at the first connection when
+the netrc is involved, and with every HTTP 401) and never shows the login or the
+password. On a shared machine the file is kept readable by its owner only.
+
+`realtime_igs_ntrip.json` and `realtime_ppp_rtk.json` therefore carry `ntrip_user` and an
+empty `ntrip_password`.
+
 ### Where real time differs
 
 | Concern | Post-processing (`runPpp`) | Real time (`processEpoch`) |
