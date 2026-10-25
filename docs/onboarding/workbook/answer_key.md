@@ -5,7 +5,9 @@ One entry per question. **Source** names the card and lines, the file and lines,
 the development machine (commands run from `C:\GnssProcessor` in Git Bash; `D:` connected).
 Numbers marked *checked* were reproduced on 2026-10-24 for this key; the verification log in
 [README.md](README.md) lists the main checks. Paths in `results/` are under
-`D:\GnssProcessorSupport\presentation\status_update_2026-10-29\`.
+`D:\GnssProcessorSupport\presentation\status_update_2026-10-29\`. "Status report lines" are
+lines of the draft saved before the qualifications were applied,
+`backup_2026-10-24\status_update_2026-10-29.tex` in that folder.
 
 Cards named by their short name are files under `docs/refound/`: ALD
 `ALD_anchor_level_datum_2026-10-23.md`, ARL `ARL_integer_ambiguity_ladder_2026-10-09.md`, CTU

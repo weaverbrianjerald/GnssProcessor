@@ -7,7 +7,9 @@ written for the status update of 29 October 2026
 each module bounds one part of that report, and each ends with a claim question, what the
 presentation may say on that part and what it may not. Every answer in
 [answer_key.md](answer_key.md) names its source (card and lines, file and lines, or run and
-command) and, where one exists, the command that reproduces it.
+command) and, where one exists, the command that reproduces it. Report line numbers and quotes
+refer to the draft of 2026-10-24 before the qualifications below were applied, kept as
+`D:\GnssProcessorSupport\presentation\status_update_2026-10-29\backup_2026-10-24\status_update_2026-10-29.tex`.
 
 ## How to work it
 
@@ -91,6 +93,9 @@ Both pages are private to the author's claude.ai account. Pages from before the 
 not used.
 
 ## Report statements the answers qualify
+
+These qualifications were applied to the report's wording on 2026-10-24 and its PDF rebuilt;
+the line numbers are those of the saved draft.
 
 | Report statement (line of the .tex) | What the evidence supports | Answers |
 | --- | --- | --- |
