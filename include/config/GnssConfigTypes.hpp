@@ -1603,18 +1603,35 @@ namespace GnssProcessor {
         /// | @c rx_clock_step | @c oracle_pin | @c fixed_cycle_plant (at the first
         /// epoch from @ref tow at which the ledger of fixed cycles holds the arc (@ref station,
         /// @ref sat, @ref signal), every row's integer is shifted by @ref delta_cycles times
-        /// the row's coefficient on that arc, a planted wrong integer for the re-validation).
+        /// the row's coefficient on that arc, a planted wrong integer for the re-validation)
+        /// | @c sat_health (the broadcast health of @ref sat flagged unhealthy from @ref tow,
+        /// for @ref duration_s or to the run end, for the readers of @c network.sat_health)
+        /// | @c station_step (the held coordinate of @ref station moved by @ref east_m,
+        /// @ref north_m, @ref up_m from @ref tow, for @ref duration_s or to the run end).
         std::string kind;
         /// GPS seconds-of-week at which the event starts.  The run's week is implied
         /// (a leg never spans a rollover); matched with a +/-0.25 s half-epoch guard.
         double      tow{ -1.0 };
-        std::string station;        ///< Station name (slip, outage, arc_erase, rx_clock_step, fixed_cycle_plant).
-        std::string sat;            ///< Satellite id, e.g. "G05" (every kind but a station-wide one).
-        /// RINEX-3 phase code, e.g. "L1C" (slip, fixed_cycle_plant); "all" or a code (anchor_handover).
+        std::string station;        ///< Station name (slip, outage, arc_erase, rx_clock_step, fixed_cycle_plant, station_step).
+        /// Satellite id, e.g. "G05" (every kind but a station-wide one); @c outage also
+        /// takes "all", every satellite of the station (a whole-station outage).
+        std::string sat;
+        /// RINEX-3 phase code, e.g. "L1C" (slip, fixed_cycle_plant); "all" or a code
+        /// (anchor_handover); for @c outage an optional ";"-separated list of phase codes, the
+        /// signals that lose lock (each with its code, Doppler and strength observables of the
+        /// same band and tracking attribute) while the satellite's other signals track; empty
+        /// or "all" drops the whole record.
         std::string signal;
-        double      delta_cycles{ 0.0 };  ///< slip: cycles added to the phase observable; fixed_cycle_plant: the integer shift of the arc (a non-zero integer).
-        bool        flag_lli{ false };    ///< slip: also raise LLI bit 0x1 on the onset epoch.
-        double      duration_s{ 0.0 };    ///< outage: window length; the return is a natural re-admission.
+        /// slip: cycles added to the phase observable; fixed_cycle_plant: the integer shift of
+        /// the arc (a non-zero integer); outage: optional cycles added to every dropped phase
+        /// observable from the end of the window on (the re-acquisition's new integer).
+        double      delta_cycles{ 0.0 };
+        /// slip: also raise LLI bit 0x1 on the onset epoch; outage: raise it on every
+        /// dropped phase observable at the first epoch back.
+        bool        flag_lli{ false };
+        /// outage: window length (the return is a natural re-admission); sat_health and
+        /// station_step: how long the flag or the step holds, 0 for the rest of the run.
+        double      duration_s{ 0.0 };
         /// @c anchor_handover: "cold" | "continuous".
         ///
         /// @c arc_erase: the diagnostic sub-knob (§9 study 1): "erase" (the default
@@ -1632,6 +1649,12 @@ namespace GnssProcessor {
         /// adds it to the receiver clock of @ref station (for every satellite), the
         /// exact dual.  In both cases the step persists from @ref tow on.
         double      step_m{ 0.0 };
+        /// @c station_step only: the step of the held coordinate in metres, along the local
+        /// East, North and Up at the station (the observations are unchanged, so a step of
+        /// +d in the held coordinate is the antenna moving by -d).  At least one is non-zero.
+        double      east_m{ 0.0 };
+        double      north_m{ 0.0 };   ///< @c station_step: North component (m).
+        double      up_m{ 0.0 };      ///< @c station_step: Up component (m).
         /// @c oracle_pin only: which arcs are held at the fixture's true integers
         /// (include/network/slip/OraclePin.hpp, docs/SPEC_oracle_pin.md).  One of
         ///   - @c all                        : every carried non-anchor arc;

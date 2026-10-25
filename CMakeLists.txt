@@ -732,6 +732,7 @@ add_executable(gnss_tests
     tests/test_kalman_qc_counters.cpp
     tests/test_ppp_epoch_work.cpp
     tests/network/test_network_inject.cpp
+    tests/network/test_network_inject_scenarios.cpp
     tests/network/test_network_run_end.cpp
     tests/network/test_network_entities_records.cpp
     tests/network/test_network_epoch_observers.cpp

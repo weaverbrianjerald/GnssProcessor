@@ -12451,10 +12451,12 @@ namespace GnssProcessor {
                 if (ev.kind != "slip" && ev.kind != "outage"
                     && ev.kind != "anchor_handover" && ev.kind != "arc_erase"
                     && ev.kind != "sat_clock_step" && ev.kind != "rx_clock_step"
-                    && ev.kind != "oracle_pin" && ev.kind != "fixed_cycle_plant") {
+                    && ev.kind != "oracle_pin" && ev.kind != "fixed_cycle_plant"
+                    && ev.kind != "sat_health" && ev.kind != "station_step") {
                     log->error("Config: {}.kind '{}' is not one of slip | outage | "
                                "anchor_handover | arc_erase | sat_clock_step | "
-                               "rx_clock_step | oracle_pin | fixed_cycle_plant.",
+                               "rx_clock_step | oracle_pin | fixed_cycle_plant | "
+                               "sat_health | station_step.",
                                where, ev.kind);
                     return false;
                 }
@@ -12479,6 +12481,9 @@ namespace GnssProcessor {
                 ev.step_m       = el.value("step_m", 0.0);
                 ev.scope        = el.value("scope", std::string{});
                 ev.sigma_m      = el.value("sigma_m", 1.0e-4);
+                ev.east_m       = el.value("east_m", 0.0);
+                ev.north_m      = el.value("north_m", 0.0);
+                ev.up_m         = el.value("up_m", 0.0);
 
                 auto need = [&](bool ok, const char* what) {
                     if (!ok) log->error("Config: {} (kind '{}') requires {}.",
@@ -12496,9 +12501,54 @@ namespace GnssProcessor {
                               "a non-zero delta_cycles")) return false;
                 } else if (ev.kind == "outage") {
                     if (!need(!ev.station.empty(), "a station")) return false;
-                    if (!need(!ev.sat.empty(), "a sat")) return false;
+                    if (!need(!ev.sat.empty(), "a sat (or \"all\" for the whole station)"))
+                        return false;
                     if (!need(ev.duration_s > 0.0,
                               "a positive duration_s")) return false;
+                    // Optional signal scope: a ";"-separated list of phase codes, the
+                    // signals that lose lock while the satellite's others track.  Every
+                    // element is checked, because a code that silently matched nothing
+                    // would drop nothing and the leg would be graded as a null.
+                    if (!ev.signal.empty() && ev.signal != "all") {
+                        std::string tok;
+                        for (const char c : ev.signal + ";") {
+                            if (c == ';' || c == ',') {
+                                if (!tok.empty() && !need(tok.size() == 3 && tok[0] == 'L',
+                                                          "a signal list of PHASE codes "
+                                                          "(e.g. \"L1C;L2W\"), 'all', or none"))
+                                    return false;
+                                tok.clear();
+                            } else if (!std::isspace(static_cast<unsigned char>(c))) {
+                                tok.push_back(c);
+                            }
+                        }
+                    }
+                    if (!need(std::isfinite(ev.delta_cycles),
+                              "a finite delta_cycles (the re-acquisition shift)")) return false;
+                } else if (ev.kind == "sat_health") {
+                    // A broadcast health flip of one satellite, read by network.sat_health
+                    // (pivot | exclude) and network.pivot_election.  The satellite is the
+                    // whole scope: a station or a signal would read as a narrower scope and
+                    // is not one, so it is refused rather than ignored.
+                    if (!need(!ev.sat.empty() && ev.sat != "all", "one sat")) return false;
+                    if (!need(ev.station.empty() && ev.signal.empty(),
+                              "no 'station' and no 'signal' (the broadcast flag is the "
+                              "satellite's, at every station)")) return false;
+                    if (!need(ev.duration_s >= 0.0 && std::isfinite(ev.duration_s),
+                              "a duration_s >= 0 (0 = to the run end)")) return false;
+                } else if (ev.kind == "station_step") {
+                    // A step of one station's held coordinate (local East, North, Up).
+                    if (!need(!ev.station.empty(), "a station")) return false;
+                    if (!need(ev.sat.empty() && ev.signal.empty(),
+                              "no 'sat' and no 'signal' (the coordinate is the station's)"))
+                        return false;
+                    if (!need(std::isfinite(ev.east_m) && std::isfinite(ev.north_m)
+                                  && std::isfinite(ev.up_m)
+                                  && (ev.east_m != 0.0 || ev.north_m != 0.0 || ev.up_m != 0.0),
+                              "a finite, non-zero east_m / north_m / up_m (metres)"))
+                        return false;
+                    if (!need(ev.duration_s >= 0.0 && std::isfinite(ev.duration_s),
+                              "a duration_s >= 0 (0 = to the run end)")) return false;
                 } else if (ev.kind == "anchor_handover") {
                     if (!need(!ev.sat.empty(), "a sat")) return false;
                     if (ev.signal.empty()) ev.signal = "all";

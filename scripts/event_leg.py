@@ -9,11 +9,18 @@ Four subcommands:
 
 ``write-seed``
     Derive a snapshot-writer config from a golden (default
-    ``config/golden/golden_sim_tri_w6.json``).  The seed run is the only expensive
+    ``config/golden/golden_sim_refound.json``; the sim golden's seeds add
+    ``--extra '{"network":{"start_offset_hours":0.504167}}'``, the 00:30:15 start of
+    card SFR).  The seed run is the only expensive
     step of the harness: it converges the network and writes a snapshot every
     ``--interval-ep`` emitted epochs to
-    ``runs/evseed_<name>/state_snapshot.txt.epNNNN`` (the history suffix is
-    ``n_emitted``; ``networkWriteStateSnapshot`` in ``StateSnapshotWrite.cpp``).
+    ``<runs root>/evseed_<name>/state_snapshot.txt.epNNNN`` (the history suffix is
+    ``n_emitted``; ``networkWriteStateSnapshot`` in ``StateSnapshotWrite.cpp``).  A
+    non-zero ``start_offset_hours`` in the base is kept (the seed starts there).
+
+The runs root is ``--runs-root``, else ``RAPID_RUNS_ROOT`` (the rapid arms' root,
+``D:/GnssProcessorSupport/runs_nom`` by convention), else ``<repo>/runs``.  A relative
+``--seed-run`` resolves under the repo first and then under the runs root.
 
 ``make-leg``
     Copy one ``.epNNNN`` snapshot into the leg dir twice: ``seed.txt``, the
@@ -102,11 +109,17 @@ DAY_ANCHOR_S = 1399161600.0
 EPOCH_INTERVAL_S = 30.0
 HALF_EPOCH_BACKOFF_S = 15.0
 
-DEFAULT_GOLDEN = os.path.join(REPO, "config", "golden", "golden_sim_tri_w6.json")
+DEFAULT_GOLDEN = os.path.join(REPO, "config", "golden", "golden_sim_refound.json")
 DEFAULT_EXE = os.path.join(REPO, "build", "x64-Release", "gnss_processor.exe")
 
 
 # ---------------------------------------------------------------- utilities
+def runs_root(args=None):
+    """--runs-root, else RAPID_RUNS_ROOT, else <repo>/runs."""
+    r = getattr(args, "runs_root", "") or os.environ.get("RAPID_RUNS_ROOT") or os.path.join(REPO, "runs")
+    return os.path.abspath(r)
+
+
 def _fwd(p):
     return os.path.abspath(p).replace("\\", "/")
 
@@ -241,7 +254,7 @@ def _run(exe, cfg_path, rundir):
 # ------------------------------------------------------------- write-seed
 def cmd_write_seed(args):
     name = args.name
-    rundir = os.path.join(REPO, "runs", f"evseed_{name}")
+    rundir = os.path.join(runs_root(args), f"evseed_{name}")
     os.makedirs(rundir, exist_ok=True)
     cfg, chain = _flatten(args.base)
 
@@ -250,7 +263,9 @@ def cmd_write_seed(args):
     proc = cfg.setdefault("processing", {})
 
     proc["max_duration_s"] = args.hours * 3600.0
-    net["start_offset_hours"] = 0.0
+    # The base's start offset is kept (the sim golden's grading start is 00:30:15);
+    # --extra may set it.
+    net["start_offset_hours"] = float(net.get("start_offset_hours", 0.0) or 0.0)
     net["state_snapshot_path"] = _fwd(snap)
     net["state_snapshot_interval_s"] = args.interval_ep * EPOCH_INTERVAL_S
     net["state_snapshot_keep_history"] = True
@@ -346,7 +361,8 @@ def cmd_write_seed(args):
 def _leg_common(args, event_json):
     seed_run = args.seed_run
     if not os.path.isabs(seed_run):
-        seed_run = os.path.join(REPO, seed_run)
+        cand = os.path.join(REPO, seed_run)
+        seed_run = cand if os.path.isdir(cand) else os.path.join(runs_root(args), seed_run)
     seed_cfg_path = os.path.join(seed_run, "seed.json")
     if not os.path.isfile(seed_cfg_path):
         raise SystemExit(f"FATAL: no seed.json in {seed_run} (run write-seed first)")
@@ -356,7 +372,7 @@ def _leg_common(args, event_json):
                        if f.startswith("state_snapshot.txt.ep"))
         raise SystemExit(f"FATAL: {snap_src} missing.  available: {avail}")
 
-    legdir = os.path.join(REPO, "runs", f"evleg_{args.name}")
+    legdir = os.path.join(runs_root(args), f"evleg_{args.name}")
     os.makedirs(os.path.join(legdir, "logs"), exist_ok=True)
     # Two copies, so the exe never reads and writes the same file.  The producer's
     # first snapshot write is unconditional (StateSnapshotWrite.cpp fires it while
@@ -450,7 +466,10 @@ def _leg_common(args, event_json):
     # Restore the rx-CB carry's code-bias linearization point at the seam (withheld
     # share 26 % -> 10 %, against the seed's 11 %).  Inert (logged) against a seed
     # written without RL rows.  (RS-9)
-    net["resume_rxcb_lin_restore"] = True
+    # The loader refuses this restore under network.rx_code_bias_datum (an x_lin shift
+    # moves that datum's target, so the restore would move the solve), and both refound
+    # goldens arm the datum: the restore is armed only where the datum is off.
+    net["resume_rxcb_lin_restore"] = not bool(net.get("rx_code_bias_datum", False))
     # Restore the canonical-signal latch at the seam (chord births at +1: 64 -> 1).
     # Inert (logged) against a seed written without CN rows.  (RS-8)
     net["resume_signal_canon_restore"] = True
@@ -513,9 +532,12 @@ def _leg_common(args, event_json):
     first_tow = tow + EPOCH_INTERVAL_S
     ev_tow = first_tow + args.at_ep * EPOCH_INTERVAL_S
     if event_json is not None:
-        ev = dict(event_json)
-        ev.setdefault("tow", ev_tow)
-        net["inject"] = {"enable": True, "events": [ev]}
+        # One event object, or a list of them (one scenario: e.g. two signals of one
+        # satellite slipping together); each without a tow takes the leg's event tow.
+        evs = [dict(e) for e in (event_json if isinstance(event_json, list) else [event_json])]
+        for ev in evs:
+            ev.setdefault("tow", ev_tow)
+        net["inject"] = {"enable": True, "events": evs}
     else:
         net.pop("inject", None)
 
@@ -545,6 +567,7 @@ def _leg_common(args, event_json):
         "at_ep": args.at_ep,
         "event": (net.get("inject", {}).get("events", [None])[0]
                   if event_json is not None else None),
+        "events": (net.get("inject", {}).get("events", []) if event_json is not None else []),
         "max_duration_s": proc["max_duration_s"],
         "extra": extra,
         # The consumer's warm start (None/False = no consumer snapshot in the seed,
@@ -566,7 +589,7 @@ def _leg_common(args, event_json):
           f"(anchored on the fixture's first obs, +{week * 604800.0 + tow + EPOCH_INTERVAL_S - anchor_s:.0f} s)")
     print(f"  epochs          {args.epochs}   max_duration_s {proc['max_duration_s']}")
     if event_json is not None:
-        print(f"  EVENT           {json.dumps(meta['event'])}")
+        print(f"  EVENT           {json.dumps(meta['events'])}")
         print(f"  event tow       {ev_tow!r}  (= first + {args.at_ep} ep)")
     else:
         print("  EVENT           none (NULL control leg)")
@@ -601,11 +624,16 @@ def _leg_common(args, event_json):
 
 def cmd_make_leg(args):
     try:
-        ev = json.loads(args.event)
+        # "@path" reads the JSON from a file (a storm schedule overflows a command line).
+        text = (open(args.event[1:], encoding="utf-8").read() if args.event.startswith("@")
+                else args.event)
+        ev = json.loads(text)
     except ValueError as e:
         raise SystemExit(f"FATAL: --event is not valid JSON: {e}")
-    if not isinstance(ev, dict) or "kind" not in ev:
-        raise SystemExit("FATAL: --event must be a JSON object with a 'kind' field")
+    evs = ev if isinstance(ev, list) else [ev]
+    if not evs or not all(isinstance(e, dict) and "kind" in e for e in evs):
+        raise SystemExit("FATAL: --event must be a JSON object with a 'kind' field, "
+                         "or a non-empty list of them")
     return _leg_common(args, ev)
 
 
@@ -741,6 +769,8 @@ def main():
     s.add_argument("--extra", default="",
                    help="JSON object deep-merged into seed.json AFTER every "
                         "harness field (arms knobs the base golden predates)")
+    s.add_argument("--runs-root", default="",
+                   help="where evseed_<name> goes (default RAPID_RUNS_ROOT, else <repo>/runs)")
     s.set_defaults(func=cmd_write_seed)
 
     for nm, fn, need_ev in (("make-leg", cmd_make_leg, True), ("null", cmd_null, False)):
@@ -764,10 +794,12 @@ def main():
         p.add_argument("--extra", default="",
                        help="JSON object deep-merged into leg.json AFTER every "
                             "harness field (arms knobs the seed's config predates)")
+        p.add_argument("--runs-root", default="",
+                       help="where evleg_<name> goes (default RAPID_RUNS_ROOT, else <repo>/runs)")
         if need_ev:
             p.add_argument("--event", required=True,
-                           help="one event object as JSON; 'tow' is filled in from "
-                                "the snapshot + --at-ep if absent")
+                           help="one event object (or a list of them) as JSON, or @file holding "
+                                "it; 'tow' is filled in from the snapshot + --at-ep if absent")
         p.set_defaults(func=fn)
 
     r = sub.add_parser("rerun", help="re-seed a leg from its snapshot and run it again")
