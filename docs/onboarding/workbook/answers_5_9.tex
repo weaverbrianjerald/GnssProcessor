@@ -1,37 +1,50 @@
 % ==================================================================
-%  Answers to lessons 5 to 9.
+%  Answers to lessons 5 to 9, written to teach: strategy, worked
+%  solution, why it works, pitfall, takeaway, source and check.
 % ==================================================================
 
 \subsection*{Lesson 5: what a user sees}
 
 \begin{answer}{absorb}
+\strategy{For each change, find the user unknown whose coefficient pattern matches
+it: common to all satellites (receiver clock), constant in one satellite's phase
+rows (that ambiguity), or proportional to $\mu_\sigl$ on code (that slant
+ionosphere). The answer of \cref{q:toy-user} is the first two cases in numbers.}
+\solution
 \begin{enumerate}[leftmargin=*, itemsep=1pt]
-\item $\Delta$ enters every code and phase row of system $g$ identically; the
-      receiver clock (with the inter-system bias for a second system) takes it up,
-      as $\hat a_C$ took up $a_A$ in \cref{q:toy-user}. The geometry, hence the
-      position, is unchanged.
+\item $\Delta$ enters every code and phase row of system $g$ identically, so the
+      receiver clock (with the inter-system bias for a second system) takes it up, as
+      $\hat a_C$ took up $a_A$. The geometry terms, hence the position, see nothing.
 \item A constant $d$ enters only that satellite's phase rows, as a constant: the
-      float ambiguity moves, $N \to N + d/\lambda$. The position is unchanged; only
-      the ambiguity's meaning changes, which matters once a user fixes integers.
+      float ambiguity moves, $N \to N + d/\lambda$. The position is unchanged; only the
+      ambiguity's meaning changes, which matters once a user fixes integers.
 \item $(\delta, \mu_2\delta)$ adds $\mu_\sigl\delta$ to code row $\sigl$, the
-      ionosphere's own signature, so $I^\sat \to I^\sat + \delta$ absorbs it; on
-      phase that shift enters as $-\mu_\sigl\delta$, which the float ambiguities
-      absorb. The position is unchanged; the user's slant ionosphere is biased by
-      $\delta$. The ionosphere-free combination of $(\delta, \mu_2\delta)$ is zero, so
-      an ionosphere-free user sees nothing at all.
+      ionosphere's own signature, so $I^\sat \to I^\sat + \delta$ absorbs it; on phase
+      that shift enters as $-\mu_\sigl\delta$, which the float ambiguities absorb. The
+      position is unchanged, the user's slant ionosphere biased by $\delta$. Its
+      ionosphere-free combination is zero, so an ionosphere-free user sees nothing at
+      all.
 \item The per-system mean at each epoch (case 1, the receiver clock), then each
-      satellite's mean over the session (case 2, the ambiguity). Case 3 does not
-      arise for clocks. The S-system statement: the user uses only the
-      block-diagonal part of the correction covariance, ``the rank-one $[e;e]$
-      (clock/geometry) and $[-\mu;\mu]$ (iono) parts lie in the user's own design
-      range and are absorbed''.
+      satellite's mean over the session (case 2, the ambiguity). Case 3 does not arise
+      for clocks.
 \end{enumerate}
+\why{These are the three null directions of \cref{sec:l1}, now at the user's
+receiver. A change of the corrections along them is a change of the user's own
+unknowns; the S-system version: the rank-one ``$[e;e]$ (clock/geometry) and
+$[-\mu;\mu]$ (iono) parts lie in the user's own design range and are absorbed''.}
+\pitfall{Comparing two sets of corrections satellite by satellite without removing
+these parts; the differences can be large and mean nothing for a user.}
+\takeaway{Grade only datum-invariant or single-difference quantities (standing
+invariant 5); the two means of the clock comparison are that rule applied.}
 \src{\texttt{SBASIS-THEORY-E.md} lines 158 to 182; \texttt{SBASIS-CONTRACT.md}
 lines 98 to 102, 114 to 133; status report, step 5; \texttt{results/t3/results.md}
 lines 64 to 66.}
 \end{answer}
 
 \begin{answer}{sline}
+\strategy{Open the writer and read off, in order, what each comma-separated field
+is; then sort the fields into reference choices and other declarations.}
+\solution
 \begin{center}\footnotesize
 \begin{tabular}{@{}p{4.6cm}p{5.4cm}p{4.8cm}@{}}
 \toprule
@@ -54,11 +67,18 @@ the SP3 and CLK names & the a priori orbit and clock; every C record corrects th
 \end{tabular}
 \end{center}
 The reference choices of \cref{sec:l4} are the two datum ids, the pivots, the
-\texttt{cbpin} pairs and \texttt{sat\_gf\_datum}; \texttt{pbhold} declares how the
-phase biases are held. A current run appends \texttt{wumode=accumulated}. The
-real-data S line declares only \texttt{cbpin=G:C1C-C2W}: the Galileo pairs are
-``NOT declared (per-satellite split)'' (\texttt{runs/\_rf0hv15\_field6/stdout.txt}
-line 686).
+\texttt{cbpin} pairs and \texttt{sat\_gf\_datum}; \texttt{pbhold} declares how the phase
+biases are held. A current run appends \texttt{wumode=accumulated}. The real-data S
+line declares only \texttt{cbpin=G:C1C-C2W}: the Galileo pairs are ``NOT declared
+(per-satellite split)'' (\texttt{runs/\_rf0hv15\_field6/stdout.txt} line 686).
+\why{A user can absorb a reference choice without knowing it (\cref{q:absorb}), but a
+grader, another network or a user that fixes integers must know which choice was
+made. The header line is the network's declaration of the conventions behind every
+number in the file.}
+\pitfall{Assuming every choice is declared because the line exists: on real data the
+Galileo pin pairs and the anchor stations are not named.}
+\takeaway{The declaration is how lesson 2's ``the producer declares its datum''
+looks in a real file.}
 \src{\texttt{src/core/products/NetworkProductIO.cpp} lines 465 to 602 and the lines
 in the table (paths under \texttt{src/core/network/} and \texttt{include/}).}
 \chk
@@ -68,39 +88,60 @@ sed -n '2p' D:/GnssProcessorSupport/runs_nom/_rap_scb_g_q6/products.txt
 \end{answer}
 
 \begin{answer}{step}
+\strategy{Separate the step into the part common to all GPS satellites (the mean)
+and the part left on each satellite (the spread about it); then apply
+\cref{q:absorb} to each part.}
+\solution
 \begin{enumerate}[leftmargin=*, itemsep=1pt]
 \item The awk prints line 134213, \texttt{E,2313,271230.00000715256,400,0,0,1,E}
       (Galileo, 03:20:30), and line 189631, \texttt{E,2313,276149.99999547005,564,0,0,1,G}
       (GPS, 04:42:30). The script prints ``31 satellites, mean step 1.6278 m, sd
-      after the mean 0.0027 m''; an ordinary pair of epochs (276090 to 276120) gives
-      $-0.0001$ and 0.0008~m.
-\item The handover of \cref{q:toy-setchange} (3): the pivot moved from G01 to G02 and
-      every GPS clock stepped by the old pivot-relative value. A user's receiver
-      clock absorbs the common 1.63~m; 3~mm per satellite stays visible.
+      after the mean 0.0027 m''. For comparison, an ordinary pair of epochs (276090 to
+      276120) gives $-0.0001$ and 0.0008~m.
+\item The handover of \cref{q:toy-setchange}, part 3: the pivot moved from G01 to G02
+      and every GPS clock stepped by the old pivot-relative value. A user's receiver
+      clock absorbs the common 1.63~m; 3~mm per satellite stays visible, a few times
+      the ordinary epoch-to-epoch spread.
 \item A raw-step grade sees 31 satellites jump 1.6~m at once; the datum-invariant
       step is 3~mm. On real data the GPS group mean steps by about $+154$~cm at its
       pivot change. \emph{Checked.}
 \end{enumerate}
+\why{A pin moves every clock of its constellation by the same amount when its
+satellite leaves; the common amount is a reference change, the per-satellite
+remainder is what the data actually say.}
+\pitfall{Counting clock steps per satellite in raw corrections and calling a
+declared handover a jump defect.}
+\takeaway{Remove the per-system mean before grading clocks; the toy's $+3$~m
+handover and this 1.63~m step are the same event.}
 \src{\texttt{runs/\_rf0hv15\_sim6/products.txt}; \texttt{results/t3/results.md}
 lines 105 to 107.}
 \end{answer}
 
 \begin{answer}{refsat}
+\strategy{Write each chord as a difference of two independent errors and use
+$\mathrm{Var}(x - y) = \mathrm{Var}(x) + \mathrm{Var}(y)$ and, for two chords sharing
+$y$, $\mathrm{Cov} = \mathrm{Var}(y)$.}
+\solution
 \begin{enumerate}[leftmargin=*, itemsep=1pt]
-\item A chord is $e_\sat = s_\sat - s_{\mathrm{ref}}$: $\mathrm{Var}(e_\sat) =
-      \sigma^2 + \sigma_{\mathrm{ref}}^2$ and $\mathrm{Cov}(e_\sat, e_k) =
-      \sigma_{\mathrm{ref}}^2$, so two chords correlate by
-      $\sigma_{\mathrm{ref}}^2/(\sigma^2 + \sigma_{\mathrm{ref}}^2)$, 0.5 when
-      $\sigma_{\mathrm{ref}} = \sigma$.
-\item L1C over all epochs: as traced, median $|e|$ 0.304 cycle, 65.3\,\% round to
-      the right integer; reference-free 0.122 cycle, 81.6\,\%. Last quarter: 0.260
+\item A chord is $e_\sat = s_\sat - s_{\mathrm{ref}}$: $\mathrm{Var}(e_\sat) = \sigma^2 +
+      \sigma_{\mathrm{ref}}^2$ and $\mathrm{Cov}(e_\sat, e_k) = \sigma_{\mathrm{ref}}^2$,
+      so two chords correlate by $\sigma_{\mathrm{ref}}^2/(\sigma^2 +
+      \sigma_{\mathrm{ref}}^2)$: 0.5 when $\sigma_{\mathrm{ref}} = \sigma$, and more when
+      the reference satellite is the worst one.
+\item L1C over all epochs: as traced, median $|e|$ 0.304 cycle and 65.3\,\% round to
+      the right integer; reference-free 0.122 cycle and 81.6\,\%. Last quarter: 0.260
       cycle and 69.5\,\% against 0.092 cycle and 86.5\,\%.
 \item The reference satellite's error and its returns enter every chord, so a grade
       on the traced chords reports that one element's share: ``Quote DD grades
-      ref-free from now on.'' A second trap of the same card: subtracting a group's
-      own circular median shrinks uniform noise from 0.251 to 0.145 cycle, so a
-      wrapped grade is quoted as a gap to a size-matched null. \emph{Checked.}
+      ref-free from now on.'' \emph{Checked.}
 \end{enumerate}
+\why{Removing the median over a group of chords that share a reference removes the
+reference's error, which is common to the group, and keeps each satellite's own.}
+\pitfall{A related trap of the same card: subtracting a group's own circular median
+shrinks pure noise from 0.251 to 0.145 cycle, so a wrapped grade is quoted as a gap
+to a size-matched null, never as a raw number.}
+\takeaway{Double differences are estimable, but a grade built on one reference
+element inherits that element; grade reference-free.}
 \src{\texttt{docs/cards/sim-bed/DD-TRACE-REF-SAT.md} lines 41 to 48, 107 to 110, 143
 to 159; \texttt{CLAUDE.md}, ``Grading traps that still apply''.}
 \end{answer}
@@ -108,39 +149,55 @@ to 159; \texttt{CLAUDE.md}, ``Grading traps that still apply''.}
 \subsection*{Lesson 6: the satellite clock}
 
 \begin{answer}{qstep}
+\strategy{A random walk with spectral density $q$ has variance $q\,t$ after time
+$t$; a drift of rate $r$ has moved $r\,t$. Compare the two as functions of time.}
+\solution
 \begin{enumerate}[leftmargin=*, itemsep=1pt]
 \item $\sqrt{2.9\times10^{-8}\times30} = 0.933$~mm per epoch;
       $\sqrt{2.9\times10^{-8}\times21{,}600} = 2.50$~cm over 6~h. The value is
-      measured: ``$q_{\mathrm{phys}} \approx 2.9\times10^{-8}$~m$^2$/s $\to$ 0.94~mm
-      per 30~s''.
-\item The drift after $n$ epochs is $0.30n$~mm, the walk's $1\sigma$ $0.933\sqrt n$~mm;
-      they are equal at $n = (0.933/0.30)^2 = 9.7$ epochs, about 5~min. At 6~h the
-      drift is 21.6~cm, 8.6 times the walk. A step standard deviation is being
-      compared with a signed, persistent increment: a drift grows as $n$, a random
-      walk's spread as $\sqrt n$, so a walk of this density cannot follow a sustained
-      rate. Card SCB reads the outcome as partial tracking.
+      measured: ``$q_{\mathrm{phys}} \approx 2.9\times10^{-8}$~m$^2$/s $\to$ 0.94~mm per
+      30~s''.
+\item After $n$ epochs the drift is $0.30n$~mm and the walk's $1\sigma$ $0.933\sqrt
+      n$~mm; they are equal at $n = (0.933/0.30)^2 = 9.7$ epochs, about 5~min. At 6~h
+      the drift is 21.6~cm, 8.6 times the walk.
 \end{enumerate}
+\why{A step standard deviation is being compared with a signed, persistent
+increment. The drift grows as $n$, the walk's spread as $\sqrt n$, so a walk of this
+density cannot follow a sustained rate however small the rate per epoch looks.
+Card SCB reads the outcome as partial tracking.}
+\pitfall{Judging a process-noise value by the size of one epoch's step against one
+epoch's signal.}
+\takeaway{$q$ sets how fast the estimate may follow the truth; the next question
+turns that into a time constant.}
 \src{\texttt{config/golden/golden\_sim\_refound.json} line 323;
 \texttt{include/network/solve/ClockAnchor.hpp} lines 35 to 36;
 \texttt{docs/cards/clock/Q3-PHYSICAL-FLOOR.md} lines 29 to 32; card SCB lines 29 to 35.}
 \end{answer}
 
 \begin{answer}{tau}
+\strategy{A steady-state filter averages about $1/K$ epochs: the time constant is
+$\Delta t/K$, and a ramp leaves an error of rate times time constant.}
+\solution
 \begin{enumerate}[leftmargin=*, itemsep=1pt]
 \item $R = 0.0923^2/2 = 4.26\times10^{-3}$~m$^2$; $K = \sqrt{8.7\times10^{-7}/4.26\times
       10^{-3}} = 0.0143$; $\Delta t/K \approx 2{,}100$~s, about 35~min (the exact
       steady state of the scalar filter gives 2,084~s).
 \item $10^{-5}\times2{,}100 \approx 2.1$~cm. Card SCB measured 2,127~s (2,000~s GPS
-      only): the anchor's $q$ sets the time constant, within about 2\,\%. Two
-      cautions: the argument is scalar and stationary, and the real filter is
-      neither; and the grader's error is estimate minus truth with a positive
-      coefficient, which a pure lag would make negative. The card calls it a lag and
-      does not explain the sign, so the safe wording is ``an error proportional to
-      the drift rate, with a coefficient of about 35~min''.
+      only): the anchor's $q$ sets the time constant, within about 2\,\%.
 \item $K = \sqrt{1.5\times10^{-4}/4.26\times10^{-3}} = 0.19$, about 160~s (exact
       steady state 146~s), the scale of the measured 52~s: the regime's larger $q$
       follows the drift within the epoch noise. \emph{Checked (arithmetic).}
 \end{enumerate}
+\why{The gain balances trust in the model against trust in the data: a small $q$
+against noisy epochs gives a small gain, a long memory and a long lag.}
+\pitfall{Two cautions. The argument is scalar and stationary, and the real filter is
+neither. And the grader's error is estimate minus truth with a positive
+coefficient, which a pure lag would make negative; the card calls it a lag without
+explaining the sign, so the safe wording is ``an error proportional to the drift
+rate, with a coefficient of about 35~min''.}
+\takeaway{A precise clock needs either a precise a priori clock to follow, or a
+larger $q$ that tracks the truth; the self-contained regime takes the second
+route.}
 \src{\texttt{docs/cards/clock/Q3-ANCHOR-DESIGN.md} lines 47 to 56; card SCB lines 124,
 128; \texttt{docs/cards/raim-qc/DAY129-FRAME-ANATOMY.md} lines 139 to 143;
 \texttt{scripts/simnet\_clock\_truth\_grade.py} line 151.}
@@ -157,29 +214,39 @@ EOF
 \end{answer}
 
 \begin{answer}{hold}
+\strategy{Substitute the held $P(t)$ into $C - P$ and simplify; then write what the
+user's phase row contains with the a priori clock $a(t)$ underneath.}
+\solution
 \begin{enumerate}[leftmargin=*, itemsep=1pt]
 \item $C - P = c(t) - p(t_0) - [\tilde c(t) - \tilde c(t_0)] = (c - p)(t_0) + M(t) -
       M(t_0)$: constant per satellite up to the system mean $M$, which the receiver
       clock absorbs. On code the user applies $a(t) + C(t)$, the network's estimate;
-      on phase it sees $a(t) + C(t) - P(t) = a(t)$ plus a constant: the a priori
-      clock's motion. With truth $a(t) + e(t)$, the phase rows are wrong by
-      $-[e(t) - e(t_0)]$ plus a constant; the float ambiguity absorbs the constant,
-      the change passes one to one.
+      on phase it sees $a(t) + C(t) - P(t)$, which is $a(t)$ plus a constant: the a
+      priori clock's motion. With truth $a(t) + e(t)$, the phase rows are wrong by
+      $-[e(t) - e(t_0)]$ plus a constant; the float ambiguity absorbs the constant, the
+      change passes one to one.
 \item Mean square over hour 6 ($t$ from 18,000 to 21,600~s): rate part
       $\sigma_r^2(t_{\mathrm{hi}}^3 - t_{\mathrm{lo}}^3)/(3\times3600) = 10^{-10}\times
-      3.931\times10^8 = 0.0393$~m$^2$; walk part $q(t_{\mathrm{lo}} + t_{\mathrm{hi}})/2
-      = 0.0006$~m$^2$; rms 0.200~m, against the measured 0.201~m (GPS) and 0.206~m
+      3.931\times10^8 = 0.0393$~m$^2$; walk part $q(t_{\mathrm{lo}} + t_{\mathrm{hi}})/2 =
+      0.0006$~m$^2$; rms 0.200~m, against the measured 0.201~m (GPS) and 0.206~m
       (Galileo).
 \item The loader refuses \texttt{network.emit\_pb\_hold\_phase\_clock} with
-      \texttt{network.apriori\_source} \texttt{sp3\_brdc\_clock}: ``the phase-clock hold
-      is valid only with a precise a priori clock product''; with \texttt{brdc\_rts}
-      it only warns (lines 2612 to 2617). Part 1 is the reason: the hold hands the
-      user the a priori clock's motion, so the a priori clock must be precise. The S
-      line declares \texttt{pbhold=2} (3 for the smoothed hold of the self-contained
-      postures). On real data, ignoring the precondition cost the user 1.191 and
-      0.743~m in hours 1 and 2, against 0.108 and 0.024~m with CODE.
-      \emph{Checked.}
+      \texttt{network.apriori\_source} \texttt{sp3\_brdc\_clock}: ``the phase-clock hold is
+      valid only with a precise a priori clock product''; with \texttt{brdc\_rts} it only
+      warns. Part 1 is the reason: the hold hands the user the a priori clock's motion.
+      The S line declares \texttt{pbhold=2} (3 for the smoothed hold of the
+      self-contained postures). \emph{Checked.}
 \end{enumerate}
+\why{Holding $C - P$ makes the phase-visible clock follow the a priori clock and
+cancels the network's own clock motion on the phase rows, where the network's
+correction is noisy (\cref{q:t3}). The price is that the a priori clock's errors pass
+through untouched.}
+\pitfall{Reading ``the phase bias is held constant'' literally: the phase-bias record
+moves with the estimated clock; it is the difference $C - P$ that is held. On real
+data, ignoring the precondition cost the user 1.191 and 0.743~m in hours 1 and 2,
+against 0.108 and 0.024~m with CODE.}
+\takeaway{A user's phase precision is the a priori clock's: this is why the network's
+clock precision is CODE's today.}
 \src{\texttt{include/network/emit/PbHold.hpp} lines 60 to 66; card LAH lines 30 to 36;
 card SCB lines 129 to 145; \texttt{src/core/config/GnssConfigLoadNetwork.cpp} lines 311
 to 319, 2612 to 2617; card SCL lines 22 to 26, 76 to 78.}
@@ -196,47 +263,74 @@ sed -n '311,319p' src/core/config/GnssConfigLoadNetwork.cpp
 \end{answer}
 
 \begin{answer}{postures}
-Reference case \texttt{\_rap\_scb\_g\_k6}: clock level at hour 6 0.0533~m;
-per-satellite mean over hours 2 to 6, rms 0.0426~m over 55 satellites; correlation
-with the drawn rate $+0.524$; user by hour 0.1976, 0.2012, 0.3189, 0.2142, 0.2370,
-0.3376~m. Self-contained regime \texttt{\_rap\_scb\_c\_k6}: 0.0232~m; 0.0205~m over
-31 satellites; $+0.026$; user 0.2287, 0.1296, 0.1003, 0.0211, 0.0311, 0.0260~m. The
-regime follows the drift (no correlation with the rate); the reference case does
-not. Its user error is about ten times its clock error because the hold passes the
-a priori clock's error to the phase rows whatever the estimator tracks
-(\cref{q:hold}). Not shown: one realization of an error with chosen statistics; the
-sign question of \cref{q:tau}; the regime case is GPS only (31 satellites against
-55); neither the regime nor the native posture is armed. Card SCB's text says the
-regime and native users ``do not move'' between the two data sets; its tables show
-the native user up to 2.1~cm higher on the clock data set in hours 1 to 3.
-\emph{Checked.}
+\strategy{Read the two outputs side by side, with \cref{q:tau} (which posture should
+follow a drift) and \cref{q:hold} (what reaches the user) as predictions to check.}
+\solution
+Reference case \texttt{\_rap\_scb\_g\_k6}: clock level at hour 6 0.0533~m; per-satellite
+mean over hours 2 to 6, rms 0.0426~m over 55 satellites; correlation with the drawn
+rate $+0.524$; user by hour 0.1976, 0.2012, 0.3189, 0.2142, 0.2370, 0.3376~m.
+Self-contained regime \texttt{\_rap\_scb\_c\_k6}: 0.0232~m; 0.0205~m over 31
+satellites; $+0.026$; user 0.2287, 0.1296, 0.1003, 0.0211, 0.0311, 0.0260~m. The regime
+follows the drift (no correlation with the rate); the reference case does not, as
+\cref{q:tau} predicts. The reference case's user error is about ten times its clock
+error because the hold passes the a priori clock's error to the phase rows whatever
+the estimator tracks, as \cref{q:hold} predicts. \emph{Checked.}
+\why{The estimate and the corrections are different things: a good clock estimate
+helps a user only through the rows the user actually receives it on.}
+\pitfall{Reading more into one realization than it holds: the error statistics were
+chosen, the regime case is GPS only (31 satellites against 55), the sign question of
+\cref{q:tau} is open, and neither the regime nor the native posture is armed. Card
+SCB's text says the regime and native users ``do not move'' between data sets; its
+tables show the native user up to 2.1~cm higher on the clock data set in hours 1 to
+3.}
+\takeaway{Clock independence is a model change (the regime and its hold), and it is
+measured on simulated error only.}
 \src{the two grader outputs; card SCB lines 8, 10, 122 to 145.}
 \end{answer}
 
 \begin{answer}{nbp}
+\strategy{Ask what a median does to a sum, then check the comparison's conditions:
+which configuration, which days, which hours.}
+\solution
 \begin{enumerate}[leftmargin=*, itemsep=1pt]
 \item $0.0024 - 0.0007 + 0.0099 = 0.0116$~m, not 0.0171~m: the steps add exactly for
       each station-day, but the median of a sum is not the sum of the medians. The
       clock's information is the broadcast-clock step, about 1.0~cm.
 \item The native posture against the GPS-only reference configuration of
-      2026-10-07 (GPS and Galileo since 2026-10-13), days 130 to 132 (9 to 11 May
-      2024), 16 stations, as the median paired change of each station's hours 2 to 6
-      error; 19 of 48 station-days (39.6\,\%) are worse by more than 2~cm; day 129 is
-      its most favourable day ($+0.3$~cm); the first hour adds $+7.65$~cm.
+      2026-10-07 (GPS and Galileo since 2026-10-13), days 130 to 132 (9 to 11 May 2024),
+      16 stations, as the median paired change of each station's hours 2 to 6 error;
+      19 of 48 station-days (39.6\,\%) are worse by more than 2~cm; day 129 is its most
+      favourable day ($+0.3$~cm); the first hour adds $+7.65$~cm.
 \end{enumerate}
+\why{Medians describe the typical station-day; they are robust but not additive, so
+an attribution is read per step, never by adding medians.}
+\pitfall{Quoting ``1.7~cm'' without its conditions, or as the clock's share: the clock
+is about 1.0~cm of it, and the comparison predates Galileo.}
+\takeaway{Leaving CODE's clock costs about a centimetre at the median today; that
+gap is the next step of the program.}
 \src{card NBP lines 170 to 177, 184 to 190, 210 to 219; card GAD.}
 \end{answer}
 
 \subsection*{Lesson 7: ambiguities}
 
 \begin{answer}{nl}
+\strategy{Treat the two phase rows as a 2-vector in metres. A common cycle on both
+bands moves it along $(\lambda_1, \lambda_2)$, the ionosphere along $(1, \mu_2)$; the
+angle between the two directions says how separable they are.}
+\solution
 $\lambda_1 = c/f_1 = 0.190294$~m, $\lambda_2 = 0.244210$~m, $\mu_2 = (77/60)^2 =
-1.646944$. $\cos\theta = (\lambda_1 + \mu_2\lambda_2)/(|(1,\mu_2)|\,|(\lambda_1,
-\lambda_2)|) = 0.592494/(1.926765\times0.309597) = 0.99325$, $\theta = 6.66^\circ$.
-The part orthogonal to the ionosphere is $0.3096\times\sin6.66^\circ = 0.0359$~m of
-the 0.31~m step. ``99.3\,\%'' is the cosine, a share of amplitude; as a share of
-variance ($\cos^2$) it is 98.7\,\%. The metric assumes equal phase noise in metres on
-both bands. \emph{Checked.}
+1.646944$. $\cos\theta = (\lambda_1 + \mu_2\lambda_2)/(|(1,\mu_2)|\,|(\lambda_1, \lambda_2)|)
+= 0.592494/(1.926765\times0.309597) = 0.99325$, $\theta = 6.66^\circ$. The part
+orthogonal to the ionosphere is $0.3096\times\sin6.66^\circ = 0.0359$~m of the 0.31~m
+step. ``99.3\,\%'' is the cosine, a share of amplitude; as a share of variance
+($\cos^2$) it is 98.7\,\%. \emph{Checked.}
+\why{Two directions $6.66^\circ$ apart can be told apart only through the small
+orthogonal part, 3.6~cm per cycle; any ionosphere uncertainty larger than that hides
+the integer.}
+\pitfall{Treating the percentage as a variance share, and forgetting the metric: it
+assumes equal phase noise in metres on both bands.}
+\takeaway{With a free slant ionosphere per line of sight, integers are a question of
+how well the ionosphere is known (\cref{q:cycles}).}
 \src{card ARL line 43 (the statement); the arithmetic.}
 \chk
 \begin{cmd}
@@ -252,110 +346,156 @@ EOF
 \end{answer}
 
 \begin{answer}{cycles}
+\strategy{An ionosphere error of $d$ metres on band $\sigl$ is $\mu_\sigl d$ metres of
+phase, which an ambiguity takes as $\mu_\sigl d/\lambda_\sigl$ cycles; a lane takes
+the difference.}
+\solution
 \begin{enumerate}[leftmargin=*, itemsep=1pt]
-\item Cycles per metre of L1 ionosphere: L1 $1/\lambda_1 = 5.255$, L2 $\mu_2/\lambda_2
-      = 6.744$, wide lane $5.255 - 6.744 = -1.489$ (the card: ``L1C 5.255, L2W
-      6.744''). $d = 0.4233$~m: L1 2.22 cycles, wide lane 0.63 cycle. $d = 0.0419$~m:
-      L1 0.22 cycle, wide lane 0.062 cycle.
+\item Cycles per metre: L1 $1/\lambda_1 = 5.255$, L2 $\mu_2/\lambda_2 = 6.744$, wide lane
+      $5.255 - 6.744 = -1.489$ (the card: ``L1C 5.255, L2W 6.744''). $d = 0.4233$~m:
+      L1 2.22 cycles, wide lane 0.63 cycle. $d = 0.0419$~m: L1 0.22 cycle, wide lane
+      0.062 cycle.
 \item 0.1 L1 cycle $= 0.0190$~m; 1~TECU $= 40.3\times10^{16}/f_1^2 = 0.1624$~m of L1
-      delay, so 0.1 cycle is 0.117~TECU. The no-pin error, 0.4233~m $= 2.61$~TECU, is
-      22 times that: ``2.61 TECU, 22$\times$ the 0.117 TECU that moves a fraction''.
-      The 0.4233~m is a per-line-of-sight rms, so a double difference of several such
-      terms can be larger. \emph{Checked.}
+      delay, so 0.1 cycle is 0.117~TECU. The no-pin error, 0.4233~m $= 2.61$~TECU, is 22
+      times that: ``2.61 TECU, 22$\times$ the 0.117 TECU that moves a fraction''.
+      \emph{Checked.}
 \end{enumerate}
+\why{The wide lane suffers less (1.49 against 5.26 cycles per metre) because the two
+bands' ionosphere terms partly cancel in it; the narrow L1 integer takes the full
+effect.}
+\pitfall{Forgetting that 0.4233~m is a per-line-of-sight rms; a double difference of
+several such terms can be larger.}
+\takeaway{Without integers, the ionosphere is known 22 times too loosely to see L1
+integers; a complete set of integers would close the gap (\cref{q:oracle}).}
 \src{\texttt{docs/cards/raim-qc/T3-IONO-MECHANISM.md} lines 326 to 331;
 \texttt{docs/SPEC\_oracle\_pin.md} lines 514 to 517, 541 to 546.}
 \end{answer}
 
 \begin{answer}{pins}
+\strategy{Redo \cref{q:toy-user} symbolically, keeping every term; then difference two
+satellites and see what cancels.}
+\solution
 \begin{enumerate}[leftmargin=*, itemsep=1pt]
-\item The pins make the network emit $\bar b^\sat = b^\sat + N^\sat_A - \zeta^\sat$
-      (in cycles), and the user then estimates $\tilde N^\sat_C = N^\sat_C - N^\sat_A
-      + \zeta^\sat = (z^\sat_C - z^\sat_A) + (\beta_C - \beta_A) + \zeta^\sat$.
+\item The pins make the network emit $\bar b^\sat = b^\sat + N^\sat_A - \zeta^\sat$ (in
+      cycles), and the user then estimates $\tilde N^\sat_C = N^\sat_C - N^\sat_A +
+      \zeta^\sat = (z^\sat_C - z^\sat_A) + (\beta_C - \beta_A) + \zeta^\sat$.
 \item $\tilde N^\sat_C - \tilde N^k_C = [(z^\sat_C - z^k_C) - (z^\sat_A - z^k_A)] +
-      (\zeta^\sat - \zeta^k)$: the bracket is an integer double difference (the
-      receiver phase biases cancel), so the difference is an integer exactly when
-      $\zeta^\sat - \zeta^k$ is. Integer pins (\cref{q:toy-user}: $\zeta = 0$) give
-      integers; float pins give a fraction.
-\item ``The WIRE's gauge is an arbitrary receiver's FLOAT ambiguity'': the anchors
-      are float targets, re-pinned at the successor's float on every handover, so the
+      (\zeta^\sat - \zeta^k)$: the bracket is an integer double difference (the receiver
+      phase biases cancel), so the difference is an integer exactly when $\zeta^\sat -
+      \zeta^k$ is. Integer pins (\cref{q:toy-user}: $\zeta = 0$) give integers; float pins
+      give a fraction.
+\item ``The WIRE's gauge is an arbitrary receiver's FLOAT ambiguity'': the anchors are
+      float targets, re-pinned at the successor's float on every handover, so the
       user's between-satellite differences carry fractions spread over a whole cycle,
       and the published biases sit at the uniform null (\cref{q:null}). Card IRD: a
       user's single difference is integer if and only if every emitted bias
       difference is; it proposes to pin a spanning tree of each observation graph
-      ($n_c + m_c - 1$ edges) to integers plus one real-valued root receiver
-      phase-bias pin, so that every chord is an integer (after de
-      Jonge~\cite{deJonge1998processing}). Not built (IRD-1 is the next step).
+      ($n_c + m_c - 1$ edges) to integers plus one real-valued root receiver phase-bias
+      pin, so that every chord is an integer (after de Jonge~\cite{deJonge1998processing}).
+      Not built (IRD-1 is the next step).
 \end{enumerate}
+\why{The pins enter the emitted biases and hence every user's ambiguities; only an
+integer pin passes the integer property on.}
+\pitfall{Concluding that an integer property in the network's own float solution
+reaches the user: it reaches the user only through the pins.}
+\takeaway{The integer-recovering datum is a reference choice, so it changes no
+position by itself; its value is that it would make a user's integers fixable.}
 \src{\texttt{docs/network\_ambiguity\_resolution\_design.md} lines 335, 352 to 356; card
 IRD lines 19, 41 to 49.}
 \end{answer}
 
 \begin{answer}{oracle}
-Row 1b, the double-difference-invariant per-line-of-sight L1 slant ionosphere
-error, carries the deficit: 0.4233~m with no pin, 0.0419~m with every ambiguity
-pinned (10.1 times smaller; 2.61 to 0.26~TECU). ``The \texttt{none} column's row 1b
-IS the integer-information deficit''. The raw per-line-of-sight error (2.73~m) is
-about 97\,\% station and satellite lumps, which the reference choice and the user
-absorb, so it cannot measure integer information. Partial pins do not interpolate:
-L5Q alone 0.2793~m (better); L1C with L2W 0.5632~m (worse than no pin, although every
-double difference is then integer); one station 0.4476~m; one satellite 0.4741~m.
-``Integer information is worth having only when it is complete on the LOS.'' The
-proposed cause (the bands of a line of sight share one ionosphere state, so exact
-integers on a subset over-determine it) is called a consistent reading, not a proof.
-The numbers come from a 60-epoch warm resume on \texttt{simnet60\_quiet\_wu93\_24h},
-a data set whose numbers \texttt{CLAUDE.md} marks superseded: the reading stands, the
-values are not comparable with today's simulated data.
+\strategy{Find the row that measures what the data cannot absorb, then compare the
+no-pin, complete-pin and partial-pin columns of that row only.}
+\solution
+Row 1b, the double-difference-invariant per-line-of-sight L1 slant ionosphere error,
+carries the deficit: 0.4233~m with no pin, 0.0419~m with every ambiguity pinned (10.1
+times smaller; 2.61 to 0.26~TECU). ``The \texttt{none} column's row 1b IS the
+integer-information deficit''. The raw per-line-of-sight error (2.73~m) is about
+97\,\% station and satellite lumps, which the reference choice and the user absorb.
+Partial pins do not interpolate: L5Q alone 0.2793~m (better); L1C with L2W 0.5632~m
+(worse than no pin, although every double difference is then integer); one station
+0.4476~m; one satellite 0.4741~m. ``Integer information is worth having only when it
+is complete on the LOS.''
+\why{The bands of a line of sight share one ionosphere state, so exact integers on a
+subset of bands over-determine it; the card calls this a consistent reading, not a
+proof.}
+\pitfall{Using the raw per-line-of-sight error (\cref{q:absorb}: mostly lumps), or
+comparing these values with today's simulations: they come from a 60-epoch warm
+resume on \texttt{simnet60\_quiet\_wu93\_24h}, a data set whose numbers \texttt{CLAUDE.md}
+marks superseded. The reading stands; the values are not comparable.}
+\takeaway{Integers pay off only when they are complete on a line of sight, which
+bounds any partial integer scheme.}
 \src{\texttt{docs/SPEC\_oracle\_pin.md} lines 20 to 29, 193 to 195, 514 to 517, 534 to
 546, 558 to 568, 611 to 627, 654 to 663.}
 \end{answer}
 
 \begin{answer}{null}
-First command (4~s): the published GPS phase biases' wide-lane median $|$fraction$|$
-by hour from 00:30:15 is 0.254, 0.260, 0.259, 0.255, 0.253, 0.252, the narrow lane
-0.264 to 0.266, against a uniform null of 0.250 (band about 0.22 to 0.27). Second (4~s):
+\strategy{Hold the two outputs against \cref{q:pins}: one grades the network's float
+solution, the other the corrections a user receives.}
+\solution
+First command (4~s): the published GPS phase biases' wide-lane median $|$fraction$|$ by
+hour from 00:30:15 is 0.254, 0.260, 0.259, 0.255, 0.253, 0.252, the narrow lane 0.264
+to 0.266, against a uniform null of 0.250 (band about 0.22 to 0.27). Second (4~s):
 ``CORRECT-FIX RATE among kept: 5572/5572 = 100.00\%'', ``WRONG FIXES: none''. The
 integers are in the network's float solution (a search on its float states and
 covariance fixes 5,572 of 13,138 settled double differences of that case, all
 correct), but the published phase biases carry none of it: they sit at the uniform
-null, as \cref{q:pins} predicts for float pins. A user cannot fix integers from these
-corrections. The 42\,\% case is a simpler 2~h simulation without time-correlated phase
-errors or slips; with the time-correlated phase error the share is 18.5\,\%.
-\emph{Checked.}
+null, as \cref{q:pins} predicts for float pins. \emph{Checked.}
+\why{The search reads integers off the network's own states; the corrections carry
+the float pins on to every user.}
+\pitfall{Attaching the 42\,\% to the corrections or to the reference configuration:
+the case is a simpler 2~h simulation without time-correlated phase errors or slips,
+and with the time-correlated phase error the share is 18.5\,\%.}
+\takeaway{The integers exist in the float; publishing them needs the
+integer-recovering datum of \cref{q:pins}.}
 \src{the two outputs; card ARL lines 98 to 102, 142.}
 \end{answer}
 
 \subsection*{Lesson 8: simulated data}
 
 \begin{answer}{quiet}
+\strategy{Ask what the simulator injected and what the network was given as its
+starting point; a test can only detect an error that is present.}
+\solution
 The quiet data set's truth clock is the CODE final clock, and the network takes the
 same product as its a priori clock, so the estimable satellite clock truth is
-identically zero (card SCB, section 1). \texttt{results/t2/results.md} confirms it:
-no \texttt{sat\_clock} key in the generator's configurations, no ARMED line, no
-\texttt{truth\_satclock.csv}. The two \texttt{ls} commands print 0 and 61. The
-0.9~cm agreement therefore ``certifies the algebra and the biases, not the clock'':
-a simulation grades what it injects, plus contrasts in which every reused term
-cancels. \emph{Checked.}
+identically zero (card SCB, section 1). \texttt{results/t2/results.md} confirms it: no
+\texttt{sat\_clock} key in the generator's configurations, no ARMED line, no
+\texttt{truth\_satclock.csv}. The two \texttt{ls} commands print 0 and 61. \emph{Checked.}
+\why{A simulation grades what it injects, plus contrasts in which every reused term
+cancels; with the a priori clock equal to truth, the clock part of the test is
+empty.}
+\pitfall{Reading the 0.9~cm agreement as a test of the clock: it ``certifies the
+algebra and the biases, not the clock''.}
+\takeaway{The clock-error data set of card SCB exists to fill this gap (\cref{q:postures}).}
 \src{card SCB lines 17 to 25; \texttt{results/t2/results.md} lines 123 to 126;
 \texttt{docs/cards/sim-bed/SIMNET-REF.md} lines 269 to 272.}
 \end{answer}
 
 \begin{answer}{start}
+\strategy{Convert the offset to seconds and find the first epoch whose elapsed time
+reaches it; then read the warning log as a count of epochs, keeping in mind which
+epochs it does not log.}
+\solution
 \begin{enumerate}[leftmargin=*, itemsep=1pt]
-\item 0.504167~h $= 1{,}815.0012$~s; epoch $k$ is $30k$~s after the first, and the
-      first $k$ with $30k \geq 1{,}815.001$ is 61 (1,830~s): tow 261060, 00:31:00.
+\item 0.504167~h $= 1{,}815.0012$~s; epoch $k$ is $30k$~s after the first, and the first
+      $k$ with $30k \geq 1{,}815.001$ is 61 (1,830~s): tow 261060, 00:31:00.
       0.4958333333~h $= 1{,}785$~s gives $k = 60$: tow 261030, 00:30:30 (the T2
       restart). Each offset sits 15~s, half an epoch, below the epoch it selects, so
-      rounding cannot move the start by an epoch. The grading origin 00:30:15 (tow
-      261015) is not a start epoch: the reference case starts at 00:00:30 and is
-      graded from 00:30:15; a case with the offset starts at 00:31:00.
+      rounding cannot move the start by an epoch. 00:30:15 (tow 261015) is a grading
+      origin, not a start epoch.
 \item Output: 259230 367, 259260 366, 259290 366, 259320 367, 259350 309 (warnings per
       epoch): 5 epochs logged. A warning needs more than 150~s outside the window,
       which opens at tow 259500, so 259380 to 259470 are extrapolated without one: 9
-      epochs, 00:00:30 to 00:04:30. ``Faulty in the first 30 minutes'' described the
-      grading origin, not the fault; what lasts is the state those epochs leave
-      (\cref{q:basis}). The report now says 9 epochs. \emph{Checked.}
+      epochs, 00:00:30 to 00:04:30. \emph{Checked.}
 \end{enumerate}
+\why{The half-epoch back-off keeps the offset away from any epoch boundary, so a
+tiny rounding difference cannot change which epoch starts the run.}
+\pitfall{Treating ``the first 30 minutes'' as the extent of the fault: 9 epochs are
+faulty; what lasts is the state they leave in the network (\cref{q:basis}).}
+\takeaway{Always say whether a number is graded from a run's start or from a grading
+origin; the two differ (\cref{q:basis}).}
 \src{\texttt{include/math/TimeUtils.hpp} lines 416 to 448;
 \texttt{docs/cards/queues/QPR-ITEMS-5-8.md} lines 239, 256;
 \texttt{src/core/model/ModelGeometry.cpp} line 1204;
@@ -367,51 +507,73 @@ head -2 D:/GnssProcessorSupport/runs_nom/_rap_scb_g_q6/logs/closed_loop_trace.cs
 \end{answer}
 
 \begin{answer}{basis}
-Baseline (from 00:00:30): level by hour 0.7087, 0.3487, 0.3303, 0.3157, 0.3096,
-0.3108~m; per-satellite mean over hours 2 to 6, rms 0.3179~m over 55 satellites
-(G06 $-1.198$, E05 $+0.872$, E36 $-0.846$). Card SCB's quiet case (from 00:31:00):
-level 0.0809, 0.0291, 0.0226, 0.0202, 0.0193, 0.0185~m; rms 0.0186~m. With
-\texttt{--no-ds} the baseline's rms reads 0.7784~m. The datum share is the
-ionosphere-free combination of the truth code biases over the pinned pair: the
-network's clock contains it by construction of the code-bias datum
-(\cref{q:cbdatum}), so it belongs to the truth expressed in the network's basis.
-Truth is transformed; differencing the estimates instead would bias the variance
-factor downward, because the estimates share the datum. The baseline's user does not
-show the 0.32~m: a float user cannot see a per-satellite constant (\cref{q:absorb}).
-\emph{Checked.}
+\strategy{Compare the two runs at the same hours; then ask what the datum share is
+(\cref{q:cbdatum}) and which side of the comparison it belongs to.}
+\solution
+Baseline (from 00:00:30): level by hour 0.7087, 0.3487, 0.3303, 0.3157, 0.3096, 0.3108~m;
+per-satellite mean over hours 2 to 6, rms 0.3179~m over 55 satellites (G06 $-1.198$,
+E05 $+0.872$, E36 $-0.846$). Card SCB's quiet case (from 00:31:00): level 0.0809,
+0.0291, 0.0226, 0.0202, 0.0193, 0.0185~m; rms 0.0186~m. With \texttt{--no-ds} the
+baseline's rms reads 0.7784~m. \emph{Checked.}
+\why{The datum share is the ionosphere-free combination of the truth code biases over
+the pinned pair: the network's clock contains it by construction of the code-bias
+datum, so it belongs to the truth expressed in the network's basis. Truth is
+transformed; differencing the estimates instead would bias the variance factor
+downward, because the estimates share the datum.}
+\pitfall{Grading truth against estimates in different bases, and expecting the user
+to show the 0.32~m: a float user cannot see a per-satellite constant (\cref{q:absorb}).}
+\takeaway{A start inside the extrapolated epochs leaves 0.32~m per-satellite
+constants in the published clock that no float user notices.}
 \src{the grader outputs; card SCB lines 87, 102, 107 to 109;
 \texttt{scripts/simnet\_clock\_truth\_grade.py} lines 138 to 153; \texttt{SIMNET-REF.md}
 lines 276 to 283.}
 \end{answer}
 
 \begin{answer}{floor}
+\strategy{Subtract hour by hour (ours minus perfect) to isolate the network's cost;
+the perfect-corrections column alone is the user's floor.}
+\solution
 Ours minus perfect, in metres: $+0.0030$, $+0.0026$, $+0.0085$, $-0.0007$, $+0.0005$,
 $+0.0002$. The largest cost is 0.85~cm, in hour 3 (the report's ``at most 0.9~cm'');
-hours 4 to 6 show nothing measurable. The floor (perfect corrections, hours 4 to 6)
-is 1.73, 1.81 and 1.76~cm, in the height: median $|U|$ 1.54, 1.54, 1.65~cm against
-$|E| \leq 0.46$~cm and $|N| \leq 0.55$~cm. Hour 6 is 30~min long, because the network
-run ends at 06:00.
+hours 4 to 6 show nothing measurable. The floor (perfect corrections, hours 4 to 6) is
+1.73, 1.81 and 1.76~cm, in the height: median $|U|$ 1.54, 1.54, 1.65~cm against $|E|
+\leq 0.46$~cm and $|N| \leq 0.55$~cm.
+\why{The same user software with perfect corrections is the control: whatever error
+remains with them belongs to the user side.}
+\pitfall{Attributing the 1.7~cm vertical floor to the network, or forgetting that hour
+6 is 30~min long (the network run ends at 06:00).}
+\takeaway{On the quiet simulation the network's corrections are as good as perfect
+ones from hour 4; the remaining error is the user's.}
 \src{\texttt{results/t2/results.md} lines 195 to 206; \texttt{results/t2/metrics.csv}.}
 \end{answer}
 
 \subsection*{Lesson 9: real data}
 
 \begin{answer}{census}
-\texttt{rapid\_arm.py score}: \texttt{\_rf0hv15\_field6} median by hour 0.06, 0.01,
-0.02, 0.01, 0.02, 0.01~m, 688 epochs below 10~cm; \texttt{\_rf0hv15\_sim6} 0.14, 0.07,
-0.03, 0.02, 0.03, 0.02~m, 595. \texttt{gcensus.py}: \texttt{galp} (GPS and Galileo
+\strategy{Read the two grader outputs as two instruments: the test station by hour,
+and the median of 16 stations with the paired change; then check the test station's
+mode and neighbourhood before comparing it with anything.}
+\solution
+\texttt{rapid\_arm.py score}: \texttt{\_rf0hv15\_field6} median by hour 0.06, 0.01, 0.02,
+0.01, 0.02, 0.01~m, 688 epochs below 10~cm; \texttt{\_rf0hv15\_sim6} 0.14, 0.07, 0.03,
+0.02, 0.03, 0.02~m, 595. \texttt{gcensus.py}: \texttt{galp} (GPS and Galileo
 corrections), 16 stations, median by hour 0.136, 0.054, 0.041, 0.036, 0.040, 0.037~m,
-WTZZ 0.058, 0.011, 0.018, 0.010, 0.015, 0.011~m; paired against \texttt{galpc} (GPS
-only), hours 2 to 6 median $-0.0198$~m, 10 better, 2 worse (HARB $+0.0158$, DAV1
-$+0.0605$), hour 1 $-0.2203$~m; \texttt{galpg} (GPS-only users of the GPS and Galileo
-corrections) $-0.0000$~m, ARHT $+0.1958$~m. Better and worse mean a change of more
-than 1~cm. The first hour: WTZZ00DEU 5.8 against a mean of 1.3~cm over hours 2 to 6
-(4.5 times); the median station 13.6 against 4.2~cm (3.3 times). Mode:
-\texttt{position\_q} 100 (moving receiver), \texttt{ar\_mode} 0 (no integer fixing).
-None of the 17 user stations is in the 58-station network; WTZZ00DEU shares its site
-with network stations WTZR00DEU and WTZS00DEU (``the colocated consumer hold-out'';
-its RINEX header position is about 3~m from WTZR00DEU's). Whether that explains its
-rank has not been tested. \emph{Checked.}
+WTZZ 0.058, 0.011, 0.018, 0.010, 0.015, 0.011~m; paired against \texttt{galpc} (GPS only),
+hours 2 to 6 median $-0.0198$~m, 10 better, 2 worse (HARB $+0.0158$, DAV1 $+0.0605$),
+hour 1 $-0.2203$~m; \texttt{galpg} (GPS-only users of the GPS and Galileo corrections)
+$-0.0000$~m, ARHT $+0.1958$~m. Better and worse mean a change of more than 1~cm. The
+first hour: WTZZ00DEU 5.8 against a mean of 1.3~cm over hours 2 to 6 (4.5 times); the
+median station 13.6 against 4.2~cm (3.3 times). Mode: \texttt{position\_q} 100 (moving
+receiver), \texttt{ar\_mode} 0 (no integer fixing). None of the 17 user stations is in
+the 58-station network; WTZZ00DEU shares its site with network stations WTZR00DEU and
+WTZS00DEU (``the colocated consumer hold-out''; its RINEX header position is about 3~m
+from WTZR00DEU's). \emph{Checked.}
+\why{One station can be lucky; the median of 16 stations outside the network is the
+typical user, and the paired change compares each station with itself.}
+\pitfall{Quoting the test station as the typical result, quoting the first hour as a
+settled result, or treating WTZZ00DEU as unrelated to the network; whether its
+co-location explains its rank has not been tested.}
+\takeaway{Settled claims come from hours 2 to 6 and from both instruments together.}
 \src{the outputs; \texttt{runs/\_rf0hv15\_field6/arm.json}; \texttt{scripts/clock\_level/gcensus.py}
 lines 151 to 153; card GAD lines 70 to 75; \texttt{docs/refound/RF-PD\_station\_rejection\_2026-09-15.md}
 line 87.}
@@ -427,12 +589,19 @@ EOF
 \end{answer}
 
 \begin{answer}{fivedays}
-Hours 2 to 6 of days 128 to 132: the 25 sixteen-station medians have a median of
-0.038~m and a mean of 0.0406~m; the 25 WTZZ00DEU values a median of 0.018~m. On day
-130 WTZZ00DEU reads 3.9, 5.9 and 5.3~cm in hours 4 to 6 against the median station's
-3.5, 3.2 and 3.8~cm: ``the best station'' holds on 8 May 2024 (day 129), not on every
-day. The report, which first quoted 3.9~cm for the 16 stations, now quotes 3.8~cm
-(mean 4.1~cm). \emph{Checked.}
+\strategy{Pool the 25 values (5 days, hours 2 to 6) of each series, compute both a
+median and a mean, and check day by day where the test station stands.}
+\solution
+The 25 sixteen-station medians have a median of 0.038~m and a mean of 0.0406~m; the 25
+WTZZ00DEU values a median of 0.018~m. On day 130 WTZZ00DEU reads 3.9, 5.9 and 5.3~cm in
+hours 4 to 6 against the median station's 3.5, 3.2 and 3.8~cm. \emph{Checked.}
+\why{A summary over days needs its statistic named: median and mean differ here by
+3~mm, and a different pooling gives another value again.}
+\pitfall{Generalizing one day's ranking: ``the best station'' holds on 8 May 2024 (day
+129), not on every day. The report, which first quoted 3.9~cm for the 16 stations,
+now quotes 3.8~cm (mean 4.1~cm).}
+\takeaway{Multi-day evidence tests whether one day's result is typical; it bounds the
+wording of the claim.}
 \src{\texttt{D:/GnssProcessorSupport/runs\_nom/mday\_galileo\_grades.txt}.}
 \chk
 \begin{cmd}
@@ -450,23 +619,30 @@ EOF
 \end{answer}
 
 \begin{answer}{t3}
-Against the GFZ final clock, after the per-system epoch mean and each satellite's
-mean are removed (STD): our network (CODE final plus c0) GPS 4.3 and Galileo 7.6~cm
-over 01:00 to 06:00 (6.4 and 11.6~cm including the first hour; Galileo RMS 15.8 and
-25.3~cm because of E12); CODE final 1.4 and 2.6~cm over 00:00 to 06:00, 1.2 and 2.2~cm
-over 01:00 to 06:00, 1.9 and 3.3~cm over 13:24 to 24:00; the IGS real-time service 4.2
-and 3.2~cm over 13:24 to 24:00, the only hours archived. GFZ is the reference because
-the network's a priori clock is CODE's: against CODE the network would be measured
-partly against itself. Over the same hours the corrected clock is about 3.5 times
-noisier than CODE alone for GPS. The correlation of c0 with (GFZ minus CODE) is GPS
-$-0.08$, Galileo $+0.01$, and with (ESA minus CODE) GPS $-0.18$, Galileo $+0.01$: c0
-carries no information about CODE's error; relative to its a priori it behaves as
-added noise of 6.3~cm (GPS). A clock comparison alone does not isolate what a user
-obtains: the user's phase term is phase bias minus clock, which the hold keeps at
-CODE's clock (\cref{q:hold}). \emph{Checked.}
-\src{\texttt{results/t3/table\_clock\_report.tex}; \texttt{results/t3/results.md}
-lines 9 to 14, 100 to 113; \texttt{results/t3/clock\_stats.csv}, rows
-\texttt{COD,GFZ,01-06}.}
+\strategy{List every comparison with its reference and its hours; compare only rows
+with the same hours, and use \cref{q:absorb} for why two means are removed first.}
+\solution
+Against the GFZ final clock, after the per-system epoch mean and each satellite's mean
+are removed (STD): our network (CODE final plus c0) GPS 4.3 and Galileo 7.6~cm over
+01:00 to 06:00 (6.4 and 11.6~cm including the first hour; Galileo RMS 15.8 and 25.3~cm
+because of E12); CODE final 1.4 and 2.6~cm over 00:00 to 06:00, 1.2 and 2.2~cm over
+01:00 to 06:00, 1.9 and 3.3~cm over 13:24 to 24:00; the IGS real-time service 4.2 and
+3.2~cm over 13:24 to 24:00, the only hours archived. Over the same hours the corrected
+clock is about 3.5 times noisier than CODE alone for GPS. The correlation of c0 with
+(GFZ minus CODE) is GPS $-0.08$, Galileo $+0.01$, and with (ESA minus CODE) GPS
+$-0.18$, Galileo $+0.01$. \emph{Checked.}
+\why{GFZ is the reference because the network's a priori clock is CODE's: against
+CODE the network would be measured partly against itself. A correction that carried
+clock information would correlate with CODE's error; c0 does not, and relative to its
+a priori it behaves as added noise of 6.3~cm (GPS).}
+\pitfall{Comparing rows with different hours (01:00 to 06:00 against 00:00 to 06:00,
+or against the real-time service's 13:24 to 24:00), or reading a standalone clock
+comparison as the user's precision: the user's phase term is phase bias minus clock,
+which the hold keeps at CODE's clock (\cref{q:hold}).}
+\takeaway{The network does not yet improve on CODE's clock; its value today lies in
+the phase biases, the declared reference and the measured health.}
+\src{\texttt{results/t3/table\_clock\_report.tex}; \texttt{results/t3/results.md} lines
+9 to 14, 100 to 113; \texttt{results/t3/clock\_stats.csv}, rows \texttt{COD,GFZ,01-06}.}
 \chk
 \begin{cmd}
 T3=D:/GnssProcessorSupport/presentation/status_update_2026-10-29/results/t3
@@ -475,39 +651,46 @@ grep "COD,GFZ,01-06" $T3/clock_stats.csv
 \end{answer}
 
 \begin{answer}{capstone}
+\strategy{For each topic, find the question whose answer gives the evidence, state
+what that evidence shows, then state the nearest claim it does not support.}
+\solution
 \begin{enumerate}[label=(\alph*), leftmargin=*, itemsep=2pt]
-\item \emph{Model and check.} May: user and network use one undifferenced,
-      uncombined observation model, and the user one filter in every step; the rank
-      gate found exactly the declared 2 directions (one clock per constellation) on
-      720 of 720 epochs, none withheld, on both reference cases (\cref{q:rankgate}).
-      May not: that the network uses the user's filter (it has its own
-      information-form solve); that the check proves the choices harmless (it counts
-      null directions only); that it covers each station's level (\cref{q:level}).
+\item \emph{Model and check.} May: user and network use one undifferenced, uncombined
+      observation model, and the user one filter in every step; the rank gate found
+      exactly the declared 2 directions (one clock per constellation) on 720 of 720
+      epochs, none withheld, on both reference cases (\cref{q:rankgate}). May not: that
+      the network uses the user's filter (it has its own information-form solve); that
+      the check proves the choices harmless (it counts null directions,
+      \cref{q:rows}); that it covers each station's level (\cref{q:level}).
 \item \emph{Reference choices.} May: they are declared in the correction file and
-      every change of pivot is marked (\cref{q:sline,q:step}). May not: ``a few''
-      (226 rows and 120 prior entries at the first simulated epoch,
-      \cref{q:rows}); all declared on real data (the Galileo pin pairs are not); that
-      they keep a user's integers (\cref{q:pins}).
+      every change of pivot is marked (\cref{q:sline,q:step}). May not: ``a few'' (226
+      rows and 120 prior entries, \cref{q:rows}); all declared on real data (the
+      Galileo pin pairs are not); that they keep a user's integers (\cref{q:pins}).
 \item \emph{Satellite clock.} May: its precision comes from CODE's final clock; the
-      network's correction adds code noise and no clock information
-      (\cref{q:t3}); on simulated clock error the self-contained postures reach
-      about 2~cm, unarmed (\cref{q:postures}). May not: that it beats real-time
-      clocks; that the network is free of outside clock products; that the quiet
-      simulation tests the clock (\cref{q:quiet}). Without CODE's clock a user was
-      1.7~cm worse at the median, against an older GPS-only configuration
-      (\cref{q:nbp}).
-\item \emph{Integers.} May: on a simplified simulation a log-only search fixed 42\,\%
-      of 13,138 double differences, none wrongly (\cref{q:null}). May not: integers
-      in the corrections; integers on real data; producer-side fixing, whose standing
-      verdict is DO NOT BUILD (\texttt{docs/network\_ambiguity\_resolution\_design.md}
+      correction adds code noise and no clock information (\cref{q:t3}); on simulated
+      clock error the self-contained postures reach about 2~cm, unarmed
+      (\cref{q:postures}). May not: that it beats real-time clocks; that the network is
+      free of outside clock products; that the quiet simulation tests the clock
+      (\cref{q:quiet}). Without CODE's clock a user was 1.7~cm worse at the median,
+      against an older GPS-only configuration (\cref{q:nbp}).
+\item \emph{Integers.} May: on a simplified simulation a log-only search fixed
+      42\,\% of 13,138 double differences, none wrongly (\cref{q:null}). May not:
+      integers in the corrections; integers on real data; producer-side fixing, whose
+      standing verdict is DO NOT BUILD (\texttt{docs/network\_ambiguity\_resolution\_design.md}
       lines 3 to 5).
-\item \emph{Results.} May: on 8 May 2024, WTZZ00DEU 1.0 to 1.8~cm and the median of
-      16 further stations 3.6 to 5.4~cm in hours 2 to 6, without integers; over five
-      days the median station 3.8~cm (mean 4.1~cm); on the quiet simulation within
-      0.9~cm of perfect corrections (\cref{q:census,q:fivedays,q:floor}). May not:
-      the best station on every day; WTZZ00DEU as a user unrelated to the network
-      (it shares its site with two network stations); claims from the first hour.
+\item \emph{Results.} May: on 8 May 2024, WTZZ00DEU 1.0 to 1.8~cm and the median of 16
+      further stations 3.6 to 5.4~cm in hours 2 to 6, without integers; over five days
+      the median station 3.8~cm (mean 4.1~cm); on the quiet simulation within 0.9~cm of
+      perfect corrections (\cref{q:census,q:fivedays,q:floor}). May not: the best
+      station on every day; WTZZ00DEU as a user unrelated to the network; claims from
+      the first hour.
 \end{enumerate}
-These boundaries were applied to the status report's wording on 24~October 2026.
+\why{A claim is bounded by the conditions of its evidence: the data set, the hours,
+the configuration and the instrument. Each ``may not'' is the nearest claim that
+drops one of those conditions.}
+\pitfall{Rounding a scoped result into a general one: one day into every day, one
+simulation into the method, a float-solution search into published integers.}
+\takeaway{These boundaries were applied to the status report's wording on
+24~October 2026.}
 \src{the answers named.}
 \end{answer}

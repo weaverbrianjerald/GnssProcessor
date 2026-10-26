@@ -40,6 +40,13 @@
   \noindent\phantomsection\label{a:#1}{\bfseries Answer \ref*{q:#1}}%
   \quad{\footnotesize(\hyperref[q:#1]{question, p.~\pageref*{q:#1}})}%
   \par\nopagebreak\smallskip}{\par}
+% teaching parts of an answer: try the strategy before reading the solution
+\newcommand{\strategy}[1]{\par\noindent\colorbox{blue!5}{\parbox{\dimexpr\linewidth-2\fboxsep}{%
+  \small\textbf{Strategy.}\ #1}}\par\smallskip}
+\newcommand{\solution}{\par\noindent\textbf{Solution.}\par\nopagebreak}
+\newcommand{\why}[1]{\par\smallskip\noindent\textbf{Why it works.}\ #1\par}
+\newcommand{\pitfall}[1]{\par\smallskip\noindent\textbf{Pitfall.}\ #1\par}
+\newcommand{\takeaway}[1]{\par\smallskip\noindent\textbf{\color{blue!50!black}Takeaway.}\ #1\par}
 \newcommand{\src}[1]{\par\smallskip\noindent{\small\textit{Source.} #1}\par}
 \newcommand{\chk}{\par\smallskip\noindent{\small\textit{Check.}}\par\nopagebreak}
 % verbatim command block (no indentation, small type)
@@ -86,8 +93,12 @@ and interpret the number). The last question of the course,
       question sends there.
 \item Write each answer before turning to the answer key. An answer is complete
       when it names its source.
-\item Compare with the key (each question links to its answer and back). Where
-      an answer differs, rerun the key's check.
+\item Turn to the key in two stages. Read only the answer's \emph{Strategy}
+      first and try again; then read the \emph{Solution}, which explains each
+      step, \emph{Why it works}, the usual \emph{Pitfall} and the
+      \emph{Takeaway} that later lessons build on (each question links to its
+      answer and back).
+\item Where an answer differs, rerun the key's check.
 \end{enumerate}
 
 \begin{center}\footnotesize
@@ -151,8 +162,14 @@ perfect corrections & truth wire & corrections written from the simulator's trut
 \section*{Answers}
 \addcontentsline{toc}{section}{Answers}
 % ==================================================================
-Each answer gives its source: the card and lines, the file and lines, or the
-run. Where a command reproduces the answer, \emph{Check} gives it. Answers
+The key is written to teach. Each answer opens with a \emph{Strategy}: the
+principle to apply and the first move, enough to restart a stalled attempt
+without giving the result away. The \emph{Solution} then works the question
+step by step and says why each step is taken. \emph{Why it works} names the
+idea underneath, \emph{Pitfall} the mistake most often made with it, and
+\emph{Takeaway} the result that later questions use. Each answer gives its
+source: the card and lines, the file and lines, or the run. Where a command
+reproduces the answer, \emph{Check} gives it. Answers
 marked \emph{checked} were reproduced on 24~October 2026 (the list is in the
 last section). Cards named by a short name are files in \texttt{docs/refound/}:
 ALD \texttt{ALD\_anchor\_level\_datum\_2026-10-23.md}, ARL

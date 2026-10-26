@@ -1,87 +1,142 @@
 % ==================================================================
-%  Answers to lessons 1 to 4.
+%  Answers to lessons 1 to 4, written to teach: strategy, worked
+%  solution, why it works, pitfall, takeaway, source and check.
 % ==================================================================
 
 \subsection*{Lesson 1: one receiver}
 
 \begin{answer}{rx-clock}
+\strategy{A null direction is a change of the unknowns that cancels inside every
+row. Look for unknowns that always appear together, with fixed coefficients, and
+move them in opposite senses.}
+\solution
 \begin{enumerate}[leftmargin=*, itemsep=1pt]
-\item Every code row contains $\sLight\,\mathrm{d}t_\rx + B_{\rx,\sigl}$ and every
-      phase row $\sLight\,\mathrm{d}t_\rx + b_{\rx,\sigl}$; each sum gains
-      $\delta - \delta = 0$. One receiver has one such direction.
-\item $B_{\rx,1} = B_{\rx,\mathrm{IF}} + d_\rx$ and
-      $B_{\rx,2} = B_{\rx,\mathrm{IF}} + \mu_2 d_\rx$ give
-      $d_\rx = (B_{\rx,2} - B_{\rx,1})/(\mu_2 - 1)$ and
-      $B_{\rx,\mathrm{IF}} = (\mu_2 B_{\rx,1} - B_{\rx,2})/(\mu_2 - 1)
-      = (f_1^2 B_{\rx,1} - f_2^2 B_{\rx,2})/(f_1^2 - f_2^2)$, the ionosphere-free
-      combination. $d_\rx$ is a scaled receiver DCB.
-\item $\code^\sat_{\rx,\sigl} = \dots + (\sLight\,\mathrm{d}t_\rx + B_{\rx,\mathrm{IF}})
-      + \mu_\sigl (I^\sat_\rx + d_\rx) + \dots$: the clock appears only as
-      $\sLight\,\mathrm{d}t_\rx + B_{\rx,\mathrm{IF}}$. A user's ``receiver clock''
-      is this ionosphere-free clock. The network defines the satellite clock the
-      same way: ``the ionosphere-free clock (clock + IF code bias)''.
+\item Every code row contains the pair $\sLight\,\mathrm{d}t_\rx + B_{\rx,\sigl}$ and
+      every phase row the pair $\sLight\,\mathrm{d}t_\rx + b_{\rx,\sigl}$. Raising the
+      clock by $\delta$ and lowering all four biases by $\delta$ changes each pair by
+      $\delta - \delta = 0$, for every satellite. No observation moves, so the data
+      cannot tell the two solutions apart: one null direction per receiver.
+\item Write the two code biases as $B_{\rx,1} = B_{\rx,\mathrm{IF}} + d_\rx$ and
+      $B_{\rx,2} = B_{\rx,\mathrm{IF}} + \mu_2 d_\rx$. Subtracting the first from the
+      second gives $d_\rx = (B_{\rx,2} - B_{\rx,1})/(\mu_2 - 1)$, a scaled receiver DCB.
+      Substituting back gives $B_{\rx,\mathrm{IF}} = (\mu_2 B_{\rx,1} - B_{\rx,2})/(\mu_2 -
+      1)$, and with $\mu_2 = f_1^2/f_2^2$ this is $(f_1^2 B_{\rx,1} - f_2^2 B_{\rx,2})/(f_1^2
+      - f_2^2)$: the weights of the ionosphere-free combination.
+\item The code row becomes $\dots + (\sLight\,\mathrm{d}t_\rx + B_{\rx,\mathrm{IF}}) +
+      \mu_\sigl(I^\sat_\rx + d_\rx) + \dots$. The clock never appears without
+      $B_{\rx,\mathrm{IF}}$, so the estimated ``receiver clock'' is the ionosphere-free
+      clock $\sLight\,\mathrm{d}t_\rx + B_{\rx,\mathrm{IF}}$.
 \end{enumerate}
+\why{The split sorts a bias by how it behaves across frequencies. The part that
+is the same on both frequencies behaves exactly like a clock and merges with
+it; the part that scales with $\mu_\sigl$ behaves exactly like the ionosphere
+(\cref{q:rx-iono}). Whatever enters every row identically cannot be separated
+from the clock.}
+\pitfall{Treating an estimated receiver clock as the physical clock, or comparing
+receiver clocks from two programs that split the biases differently. Two correct
+programs can disagree by $B_{\rx,\mathrm{IF}}$.}
+\takeaway{The satellite side mirrors this: the network's satellite clock is the
+ionosphere-free clock, clock plus ionosphere-free code bias (\cref{q:cbdatum}).}
 \src{status report, ``One observation model''; \texttt{SBASIS-THEORY-E.md} lines 87
 to 92 (the equations) and 158 to 160 (the ionosphere-free clock).}
 \end{answer}
 
 \begin{answer}{rx-phase}
+\strategy{Repeat the test of \cref{q:rx-clock} between the receiver phase bias and
+the ambiguities. The ambiguity is in cycles, so a shift of $\delta_\sigl$ metres in
+the bias is a shift of $\delta_\sigl/\lambda_\sigl$ cycles in the ambiguity.}
+\solution
 \begin{enumerate}[leftmargin=*, itemsep=1pt]
-\item $\lambda_\sigl (N + \delta_\sigl/\lambda_\sigl) + (b_{\rx,\sigl} - \delta_\sigl)
-      = \lambda_\sigl N + b_{\rx,\sigl}$ for every satellite. One direction per
-      signal: two for a dual-frequency receiver (type 4 of the network table, which
-      counts $f(n-1)$ of them).
-\item It estimates $N^\sat_{\rx,\sigl} + b_{\rx,\sigl}/\lambda_\sigl$ (and, without
+\item $\lambda_\sigl(N^\sat_{\rx,\sigl} + \delta_\sigl/\lambda_\sigl) + (b_{\rx,\sigl} -
+      \delta_\sigl) = \lambda_\sigl N^\sat_{\rx,\sigl} + b_{\rx,\sigl}$, for every
+      satellite at once. Each signal has its own $\delta_\sigl$, so a dual-frequency
+      receiver has two such directions (type 4 of the network table counts
+      $f(n-1)$ of them, \cref{q:toy-biases}).
+\item With no receiver phase-bias state, the float ambiguity takes the bias in:
+      it estimates $N^\sat_{\rx,\sigl} + b_{\rx,\sigl}/\lambda_\sigl$ (and, without
       satellite phase biases, $-\,b^\sat_\sigl/\lambda_\sigl$ as well). The receiver
-      phase bias is a fraction of a cycle common to all satellites, so the float
-      ambiguity is not an integer however exact the satellite biases are. The same
-      absorption makes ``a constant satellite phase bias simply join the
-      ambiguity, so case D matches case C'' (status report, step 3).
-\item The difference between two satellites removes $b_{\rx,\sigl}$, common to both.
-      It is an integer only if both satellites' phase biases are removed exactly:
-      the product must publish them (the observable-specific biases of step 3).
+      phase bias is an arbitrary fraction of a cycle, the same for all satellites, so
+      the float value is no integer however exact the satellite biases are.
+\item The difference between satellites $\sat$ and $k$ cancels $b_{\rx,\sigl}$,
+      which both carry. What is left is $N^\sat - N^k$ plus the difference of the
+      satellite biases, so it is an integer only if the product supplies those
+      biases exactly (the observable-specific biases of the report's step 3).
 \end{enumerate}
+\why{Any constant in all phase rows of one signal at one receiver can be moved
+into that signal's ambiguities, because each ambiguity is itself a constant in its
+row. Only a difference that cancels the constant can carry integer meaning.}
+\pitfall{Rounding a PPP float ambiguity, or expecting the product's satellite
+phase biases alone to restore integers: the receiver's part stays until a
+difference between satellites removes it.}
+\takeaway{This is why ``a constant satellite phase bias simply joins the ambiguity,
+so case D matches case C'' (report, step 3), and why integers appear only in
+differences (\cref{q:toy-phase,q:pins}).}
 \src{\texttt{SBASIS-THEORY-E.md} lines 97 to 104 (type 4); status report, step 3.}
 \end{answer}
 
 \begin{answer}{rx-iono}
+\strategy{Use the split of \cref{q:rx-clock} and look at what multiplies
+$\mu_\sigl$ in the code rows: any two unknowns with the same coefficient pattern
+can trade value.}
+\solution
 \begin{enumerate}[leftmargin=*, itemsep=1pt]
-\item $\mu_\sigl I^\sat_\rx + B_{\rx,\sigl} = B_{\rx,\mathrm{IF}} + \mu_\sigl(I^\sat_\rx + d_\rx)$.
-\item On code, $\mu_\sigl(I + \delta + d - \delta)$ is unchanged. On phase the
-      shifted ionosphere adds $-\mu_\sigl\delta$ to every satellite's row; the float
-      ambiguities absorb it, $N^\sat_{\rx,\sigl} \to N^\sat_{\rx,\sigl} +
-      \mu_\sigl\delta/\lambda_\sigl$ for every satellite. One more direction per
-      receiver.
-\item The estimated slant ionosphere is $I^\sat_\rx + d_\rx$ (and, with satellite
-      terms from a product, minus that product's satellite geometry-free bias). It
-      is the physical ionosphere only if $d_\rx$ is fixed by a convention, such as a
+\item $\mu_\sigl I^\sat_\rx + B_{\rx,\sigl} = B_{\rx,\mathrm{IF}} + \mu_\sigl(I^\sat_\rx +
+      d_\rx)$: on code the ionosphere and $d_\rx$ always appear as one sum.
+\item Raising every slant ionosphere by $\delta$ and lowering $d_\rx$ by $\delta$
+      leaves each code row as it was. On phase the ionosphere enters with the
+      opposite sign, so every phase row gains $-\mu_\sigl\delta$. That is a constant
+      per signal, common to all satellites, so the float ambiguities absorb it
+      ($N^\sat_{\rx,\sigl} \to N^\sat_{\rx,\sigl} + \mu_\sigl\delta/\lambda_\sigl$). One
+      more null direction per receiver.
+\item The estimated slant ionosphere is $I^\sat_\rx + d_\rx$ (and, with a product's
+      satellite terms, minus that product's satellite geometry-free bias). It becomes
+      the physical ionosphere only once $d_\rx$ is fixed by a convention, such as a
       zero-mean condition on the receivers' DCBs, or separated by a vertical
-      ionosphere model. This is Odijk's $\tilde\iota = \iota + d_{\rx,\mathrm{GF}} -
-      d^s_{\mathrm{GF}}$ (types 2b and 3b), and the reason for the network's
-      zero-mean receiver DCB prior (\cref{sec:l4}).
+      ionosphere model.
 \end{enumerate}
+\why{On code the ionosphere and the geometry-free bias have the same signature,
+$\mu_\sigl$; on phase the ionosphere's opposite sign looks like a per-signal
+constant, which float ambiguities soak up. This is Odijk's
+$\tilde\iota = \iota + d_{\rx,\mathrm{GF}} - d^s_{\mathrm{GF}}$ (types 2b and 3b).}
+\pitfall{Comparing a user's or the network's slant ionosphere with a global map
+without removing the receiver and satellite geometry-free biases: the difference
+is a convention, not an ionospheric error.}
+\takeaway{The network's two conventions for this direction are the per-satellite
+geometry-free pin at the broadcast $T_{GD}$ and the zero-mean receiver DCB prior
+(\cref{sec:l4}).}
 \src{\texttt{SBASIS-THEORY-E.md} lines 122 to 128.}
 \end{answer}
 
 \subsection*{Lesson 2: two receivers}
 
 \begin{answer}{toy-normals}
+\strategy{Each code row has $+1$ in its receiver's column and $-1$ in its
+satellite's. An entry $N_{jk}$ of $\bm{A}^\Tr\bm{A}$ sums, over the rows, the product
+of the coefficients of unknowns $j$ and $k$: count co-occurrences and their signs.}
+\solution
 \begin{enumerate}[leftmargin=*, itemsep=1pt]
-\item Each code row has $+1$ in its receiver's column and $-1$ in its satellite's.
-      $\bm{N} = \bm{A}^\Tr\bm{A}$ has 4 on the receiver diagonal (each receiver
-      clock is in four rows), 2 on the satellite diagonal, $-1$ between every
-      receiver and every satellite clock, and 0 elsewhere:
+\item A receiver clock is in four rows ($N_{jj} = 4$); a satellite clock in two
+      ($N_{jj} = 2$); each receiver and satellite share exactly one row with signs
+      $+1$ and $-1$ ($-1$); two receivers, or two satellites, never share a row (0):
 \[
 \bm{N} = \begin{bmatrix} 4\bm{I}_2 & -\bm{J}_{2\times4} \\ -\bm{J}_{4\times2} & 2\bm{I}_4 \end{bmatrix},
 \qquad \bm{J}\ \text{all ones.}
 \]
-\item Every row sums to zero ($4 - 4 = 0$; $-1 - 1 + 2 = 0$), so $\bm{N}\bm{1} =
-      \bm{0}$; the rank is 5.
-\item $\bm{1}$ adds the same $\kappa$ to every clock, receiver and satellite. Each
-      observation is a difference $a_\rx - g^\sat$, so none changes, and no number of
-      such observations fixes the common level: one reference choice is needed
-      (type 1a). \emph{Checked.}
+\item Each row of $\bm{N}$ sums to zero ($4 - 4 = 0$ and $-1 - 1 + 2 = 0$), which is
+      the statement $\bm{N}\bm{1} = \bm{0}$. With one independent null vector the rank
+      is $6 - 1 = 5$.
+\item $\bm{1}$ adds the same $\kappa$ to all six clocks. Each observation is a
+      difference $a_\rx - g^\sat$, so none changes. More epochs or satellites only
+      add rows of the same form, so the common level stays undetermined: one
+      reference choice is needed. \emph{Checked.}
 \end{enumerate}
+\why{A row sum of zero is the algebraic form of ``only differences are
+observed''. Every row of $\bm{A}$ annihilates $\bm{1}$, hence so does $\bm{N}$.}
+\pitfall{Believing that more data cures a rank deficiency. Data of the same kind
+add rows in the same space; only a different kind of information (a pin, a prior,
+an outside clock) fixes the level.}
+\takeaway{This is type 1a. In the real network it survives the elimination of
+the stations as the clock direction the rank gate counts (\cref{q:schur,q:rankgate}).}
 \src{the worked example, eq.~ex-code-normals.}
 \chk
 \begin{cmd}
@@ -97,98 +152,148 @@ EOF
 \end{answer}
 
 \begin{answer}{toy-datums}
+\strategy{With one clock pinned, every observation $\code^\sat_\rx = a_\rx - g^\sat$
+has one unknown left as soon as its neighbour is known: walk through the table
+from the pinned clock.}
+\solution
 \begin{enumerate}[leftmargin=*, itemsep=1pt]
-\item $a_A \equiv 0$: $g^\sat = -\code^\sat_A$, $a_B = a_A - (\code^1_A - \code^1_B)$:
-      $a_B = -2$, $g = (-3, -6, -1, -4.5)$. $g^1 \equiv 0$: $a_A = \code^1_A = 3$,
-      $a_B = \code^1_B = 1$, $g^\sat = a_A - \code^\sat_A = (0, -3, 2, -1.5)$.
-\item The second minus the first is $3$ on every unknown: $3\cdot\bm{1}$, a vector of
-      the null space.
-\item $a_A - a_B = 2$, $g^2 - g^1 = -3$, $g^3 - g^1 = 2$, $a_B - g^4 = 2.5$ in both, and
-      in the truth. Each combination $\bm{f}$ has $\bm{f}^\Tr\bm{1} = 0$, so adding
-      a multiple of $\bm{1}$ cannot change it: the datum-invariance theorem in six
-      unknowns (\cref{q:theorem}).
-\item $\hat g^2 = g^2 - a_A = -1 - 5 = -6$: the true clock shifted by the reference
-      receiver's clock. This lump is why a network declares its choice.
-      \emph{Checked.}
+\item Pin $a_A \equiv 0$: receiver $A$'s rows give $g^\sat = -\code^\sat_A = (-3, -6,
+      -1, -4.5)$; satellite 1 then gives $a_B = \code^1_B + g^1 = -2$. Pin $g^1 \equiv
+      0$: $a_A = \code^1_A = 3$ and $a_B = \code^1_B = 1$; then $g^\sat = a_A -
+      \code^\sat_A = (0, -3, 2, -1.5)$.
+\item The second solution minus the first is $+3$ on every unknown: $3\cdot\bm{1}$.
+      Both solutions satisfy $\bm{A}\bm{x} = \bm{y}$, so their difference satisfies
+      $\bm{A}(\bm{x} - \bm{x}') = \bm{0}$ and must lie in the null space.
+\item $a_A - a_B = 2$, $g^2 - g^1 = -3$, $g^3 - g^1 = 2$ and $a_B - g^4 = 2.5$ in both
+      solutions and in the truth. Each combination has coefficients $\bm{f}$ with
+      $\bm{f}^\Tr\bm{1} = 0$, so adding $\kappa\bm{1}$ cannot change it.
+\item $\hat g^2 = g^2 - a_A = -1 - 5 = -6$: the true clock shifted by the
+      reference receiver's clock. \emph{Checked.}
 \end{enumerate}
+\why{A combination is estimable exactly when it is blind to the null space. The
+reference choice selects one point on the line $\bm{x} + \kappa\bm{1}$; an estimable
+combination has the same value at every point of that line.}
+\pitfall{Comparing satellite clocks from two solutions with different references
+(two networks, or two days with different pivots) and reading the offset as an
+error. The offset is the reference choice.}
+\takeaway{This is the datum-invariance theorem in six unknowns (\cref{q:theorem}),
+and the reason a network declares its pivots (\cref{q:sline}).}
 \src{the worked example, tables ``Two datum choices, same fit'' and ``What is
 invariant''.}
 \end{answer}
 
 \begin{answer}{toy-phase}
+\strategy{Count first: unknowns, observations, null directions, rank. Then use the
+reference choice to read the phase unknowns off the table one satellite at a
+time, using $a_A - g^\sat = \code^\sat_A$ from the code.}
+\solution
 \begin{enumerate}[leftmargin=*, itemsep=1pt]
-\item Unknowns $6 + 4 + 8 = 18$; observations 16; null directions 5: the clock
-      direction of \cref{q:toy-normals} and one per satellite,
-      $(b^\sat + c_\sat,\ N^\sat_A - c_\sat,\ N^\sat_B - c_\sat)$; rank 13;
-      redundancy $16 - 13 = 3$, the three code double differences
-      ($(n-1)(m-1)$), identically zero in this noise-free model.
-\item With $A$ alone each satellite's phase gives one equation in $b^\sat +
-      N^\sat_A$: two unknowns that cannot be separated. With $B$ there are two
-      equations in three unknowns, rank 2; the new estimable quantity is $N^\sat_A -
+\item Unknowns $6 + 4 + 8 = 18$; observations 16. Null directions: the clock
+      direction of \cref{q:toy-normals}, plus one per satellite,
+      $(b^\sat + c_\sat,\ N^\sat_A - c_\sat,\ N^\sat_B - c_\sat)$, which changes no phase
+      row: 5 in all, rank 13, redundancy $16 - 13 = 3$. The redundancy is the three
+      code double differences, $(n-1)(m-1)$, each identically zero here.
+\item With $A$ alone, each satellite's phase is one equation in $b^\sat + N^\sat_A$:
+      the pair cannot be separated and there is no redundancy. With $B$ there are two
+      equations in three unknowns, rank 2: the new estimable quantity is $N^\sat_A -
       N^\sat_B$, the between-receiver single difference.
-\item With $a_A \equiv 0$, $a_A - g^\sat = \code^\sat_A$, so
-      $\bar b^\sat = \phaseo^\sat_A - \code^\sat_A = (10.10, -5.20, 20.05, 8.15)$ and
-      $\hat N^\sat_B = \phaseo^\sat_B - \code^\sat_B - \bar b^\sat = (2, 2, -2, 1)$.
+\item With $a_A \equiv 0$ and $N^\sat_A \equiv 0$: $\bar b^\sat = \phaseo^\sat_A -
+      \code^\sat_A = (10.10, -5.20, 20.05, 8.15)$, then $\hat N^\sat_B = \phaseo^\sat_B -
+      \code^\sat_B - \bar b^\sat = (2, 2, -2, 1)$.
 \item $\bar b^1 = b^1 + N^1_A = 0.10 + 10$: the emitted bias carries the pinned
       receiver's ambiguity, Odijk's $\bar b^\sat = b^\sat + $ (pivot-receiver
-      ambiguity). $\hat N^\sat_B = N^\sat_B - N^\sat_A$, the between-receiver single
-      difference an RTK user fixes. \emph{Checked.}
+      ambiguity). $\hat N^\sat_B = N^\sat_B - N^\sat_A$, the single difference an RTK
+      user fixes. \emph{Checked.}
 \end{enumerate}
+\why{A satellite phase bias is shared by all receivers, an ambiguity by one. Their
+only common freedom is the per-satellite shift; pinning one receiver's ambiguity
+per satellite removes it and leaves differences between receivers.}
+\pitfall{Reading 10.10~m as a physical, implausibly large hardware bias. It is a
+lump: bias plus the pinned ambiguity.}
+\takeaway{What a user's ambiguities become depends on these pins: integer pins
+give integer differences, float pins do not (\cref{q:toy-user,q:pins}).}
 \src{the worked example, ``Adding carrier phase''.}
 \end{answer}
 
 \begin{answer}{toy-biases}
+\strategy{Count the null directions two ways and check that they agree: by the
+type table, and by unknowns minus rank.}
+\solution
 \begin{enumerate}[leftmargin=*, itemsep=1pt]
-\item $1 + 2 + 1 + 4 + 1 + 4 = 13$, which is Eq.~24 with $f = 1$, $n = 2$, $m = 4$:
+\item $1 + 2 + 1 + 4 + 1 + 4 = 13$, Eq.~24 with $f = 1$, $n = 2$, $m = 4$:
       $1 + 2 + 2(1 + 4) = 13$.
-\item The full model has 26 unknowns (clocks 6, receiver and satellite code biases
-      $2 + 4$, receiver phase biases 2, satellite phase biases 4, ambiguities 8);
-      the lumped model 18. The lumps remove 8 unknowns ($B_\rx$, $B^\sat$, $b_\rx$)
-      without changing the column space, so the rank stays 13 and the null space
-      drops from $26 - 13 = 13$ to $18 - 13 = 5$. Gone: types 1b (2), 2a (1), 3a (4)
-      and 4 (1), eight in all. Left: 1a (1) and 5 (4), the five of
-      \cref{q:toy-phase}. A lump is itself a reference choice: defining $a_\rx =
-      \sLight\,\mathrm{d}t_\rx + B_\rx$ fixes the split along the removed
-      directions. \emph{Checked.}
+\item The full model has 26 unknowns (clocks 6; code biases $2 + 4$; receiver phase
+      biases 2; satellite phase biases 4; ambiguities 8). The lumped model has 18: the
+      lumps removed $B_\rx$, $B^\sat$ and $b_\rx$, 8 unknowns. Each removed column was
+      a combination of columns that stay (a code-bias column is a clock column minus
+      phase columns), so the rank stays 13 and the null space shrinks from $26 - 13 =
+      13$ to $18 - 13 = 5$. Gone: types 1b (2), 2a (1), 3a (4) and 4 (1). Left: 1a (1)
+      and 5 (4), the five of \cref{q:toy-phase}. \emph{Checked.}
 \end{enumerate}
+\why{Removing an unknown whose column lies in the span of the others removes one
+null direction and no information: the data determine exactly what they did
+before. A lump is therefore a reference choice made by definition.}
+\pitfall{Fearing that lumping loses information. The rank, which is the
+information, is unchanged; only the bookkeeping of what each number means changes.}
+\takeaway{The project lumps in the same way (the receiver phase bias has no state,
+\cref{q:inventory}); the accounting from Eq.~24's 465 to the gate's 2
+(\cref{q:rankgate}) is this question at scale.}
 \src{\texttt{SBASIS-THEORY-E.md} lines 97 to 114 (the table and Eq.~24).}
 \end{answer}
 
 \begin{answer}{toy-user}
+\strategy{Write $C$'s equations with the truth, substitute the corrections the
+network emits, and collect what is left on each unknown.}
+\solution
 \begin{enumerate}[leftmargin=*, itemsep=1pt]
 \item $\code^\sat_C = a_C - g^\sat = (2, 5, 0, 3.5)$;
       $\phaseo^\sat_C = a_C - g^\sat + b^\sat + N^\sat_C = (13.10, 0.80, 19.05, 13.65)$.
-\item Code: $\hat a_C = \code^\sat_C + \hat g^\sat = -1$ for every satellite. Phase:
-      $\tilde N^\sat_C = \phaseo^\sat_C - \hat a_C + \hat g^\sat - \bar b^\sat = (1, 1,
-      -1, 2)$.
-\item $\hat a_C = a_C - a_A = 4 - 5$, through $\hat g^\sat = g^\sat - a_A$;
-      $\tilde N^\sat_C = N^\sat_C - N^\sat_A$, through $\bar b^\sat = b^\sat +
-      N^\sat_A$. $C$'s solution carries receiver $A$'s clock and ambiguities, and $C$
-      needs no knowledge of $A$: ``the user never needs to know the network
-      pivot'', and PPP-RTK is relative positioning. \emph{Checked.}
+\item Code: $\code^\sat_C = \hat a_C - \hat g^\sat$ gives $\hat a_C = \code^\sat_C + \hat
+      g^\sat = -1$ for every satellite. Phase: $\tilde N^\sat_C = \phaseo^\sat_C - \hat a_C
+      + \hat g^\sat - \bar b^\sat = (1, 1, -1, 2)$.
+\item Since $\hat g^\sat = g^\sat - a_A$, $C$'s clock absorbs $-a_A$: $\hat a_C = a_C -
+      a_A = 4 - 5$. Since $\bar b^\sat = b^\sat + N^\sat_A$, its ambiguities absorb
+      $-N^\sat_A$: $\tilde N^\sat_C = N^\sat_C - N^\sat_A$. $C$'s solution carries
+      receiver $A$'s clock and ambiguities, and $C$ never needs to know $A$: ``the user
+      never needs to know the network pivot''. \emph{Checked.}
 \end{enumerate}
+\why{The offsets the network's reference puts into the corrections are exactly
+the kinds a user's own unknowns can absorb: one common to all satellites (the
+clock) and one per satellite (the ambiguity).}
+\pitfall{Grading a user's clock or float ambiguities against truth: both are
+relative to the network's reference.}
+\takeaway{PPP-RTK is relative positioning. \Cref{sec:l5} generalizes the two
+absorptions; \cref{q:pins} asks when $\tilde N^\sat_C$ is an integer.}
 \src{\texttt{SBASIS-THEORY-E.md} lines 166 to 170.}
 \end{answer}
 
 \begin{answer}{toy-setchange}
+\strategy{Every admissible solution is the pinned solution plus some $\kappa\bm{1}$.
+Each reference rule fixes $\kappa$; compute it before and after the change.}
+\solution
 \begin{enumerate}[leftmargin=*, itemsep=1pt]
-\item $\sum g^\sat = -2.5$ under $g^1 \equiv 0$; adding $\kappa = 0.625$ to every
-      clock gives $g = (0.625,\allowbreak -2.375,\allowbreak 2.625,\allowbreak -0.875)$
+\item Under $g^1 \equiv 0$, $\sum g^\sat = -2.5$. Sum-to-zero needs $\kappa = 2.5/4 =
+      0.625$: $g = (0.625,\allowbreak -2.375,\allowbreak 2.625,\allowbreak -0.875)$
       and $a = (3.625, 1.625)$.
-\item Pin: $g = (0, -3, 2)$, $a = (3, 1)$; nothing moves. Sum-to-zero over
-      satellites 1 to 3: $\kappa = 1/3$, $g = (0.333, -2.667, 2.333)$,
-      $a = (3.333, 1.333)$: every clock moves by $-0.292$~m.
-\item The pin moves to satellite 2: every clock moves by $+3$~m (the old $\hat
-      g^2 = -3$): $g = (\cdot, 0, 5, 1.5)$, $a = (6, 4)$.
-\item None: every move is along $\bm{1}$, so all differences stay. A user absorbs
-      the common step in its receiver clock at that epoch, but any state it carries
-      across the epoch at the old level sees a step, so the step must be declared
-      and the user resets across it. Sum-to-zero ``steps at every
-      constellation-membership change''; a pin moves only when its own satellite
-      leaves, a handover the consumer ``pays for with an ambiguity reset''. The
-      project uses a pin with a sticky pivot and declares each handover
-      (\cref{q:step}). \emph{Checked.}
+\item Pin: with satellites 1 to 3, $g = (0, -3, 2)$ and $a = (3, 1)$; nothing moves.
+      Sum-to-zero: $\sum g^\sat = -1$ over three satellites, $\kappa = 1/3$, so $g = (0.333,
+      -2.667, 2.333)$ and $a = (3.333, 1.333)$: every clock moves by $1/3 - 0.625 =
+      -0.292$~m.
+\item The pin moves to satellite 2, whose clock was $-3$: $\kappa = +3$, so every
+      clock moves by $+3$~m ($g = (\cdot, 0, 5, 1.5)$, $a = (6, 4)$).
+\item No estimable quantity moves: every change is along $\bm{1}$. A user absorbs
+      the common step in its receiver clock at that epoch, but anything it carries
+      across the epoch at the old level sees a step. The epoch must be declared, and
+      the user resets across it. \emph{Checked.}
 \end{enumerate}
+\why{Sum-to-zero defines $\kappa$ from the current satellite set, so it changes at
+every rise and set (``steps at every constellation-membership change''); a pin
+defines $\kappa$ from one satellite, so it changes only when that satellite leaves,
+a handover the user ``pays for with an ambiguity reset''.}
+\pitfall{Reading a declared reference step in the corrections as a defect; it
+vanishes from every estimable quantity (\cref{q:step}).}
+\takeaway{The project pins one clock per constellation with a sticky pivot and
+declares each handover; \cref{q:step} measures one in a real run.}
 \src{\texttt{SBASIS-THEORY-E.md} line 145; \texttt{include/network/solve/Sbasis.hpp}
 lines 162 to 166.}
 \end{answer}
@@ -196,54 +301,83 @@ lines 162 to 166.}
 \subsection*{Lesson 3: the real network}
 
 \begin{answer}{schur}
+\strategy{Partition $\bm{N}$ into receiver and satellite blocks. The receiver block
+is $4\bm{I}$, trivial to invert; the rest is matrix products with $\bm{J}$, whose
+square is a multiple of itself.}
+\solution
 \begin{enumerate}[leftmargin=*, itemsep=1pt]
-\item $\bm{N}_{aa} = 4\bm{I}_2$, $\bm{N}_{ag} = -\bm{J}$, so
-      $\bm{N}_{ga}\bm{N}_{aa}^{-1}\bm{N}_{ag} = \tfrac{2}{4}\bm{J}_4$ and
-      $\bar{\bm{N}}_{gg} = 2\bm{I}_4 - 0.5\,\bm{J}_4$ (1.5 on the diagonal, $-0.5$ off
-      it). With $\bm{u}_a = (14.5, 6.5)$ (the sums of each receiver's pseudoranges)
-      and $\bm{u}_g = -(4, 10, 0, 7)$: $\bar{\bm{u}}_g = \bm{u}_g + (14.5 + 6.5)/4 =
-      (1.25, -4.75, 5.25, -1.75)$. It sums to zero: the data are consistent along
-      the null direction.
-\item $\bm{J}_4$ has eigenvalues 4 (along $\bm{1}$) and 0 (three times), so
-      $\bar{\bm{N}}_{gg}$ has 0 (along $\bm{1}$) and 2 (three times). The null
-      eigenvector is $(0.5, 0.5, 0.5, 0.5)$: weight $1/\sqrt{4}$ on every satellite
-      clock, the clock direction of \cref{q:toy-normals} seen from the satellites.
-\item The rows read $2g^\sat - 0.5\,S = \bar u_\sat$ with $S = \sum g^\sat$. With
-      $g^1 = 0$: $S = -2.5$, $g = (0, -3, 2, -1.5)$. Back-substitution
+\item $\bm{N}_{ga}\bm{N}_{aa}^{-1}\bm{N}_{ag} = \tfrac14(\bm{J}_{4\times2}\bm{J}_{2\times4})
+      = \tfrac24\bm{J}_4$, so $\bar{\bm{N}}_{gg} = 2\bm{I}_4 - 0.5\,\bm{J}_4$ (1.5 on the
+      diagonal, $-0.5$ off it). The right-hand sides are $\bm{u} = \bm{A}^\Tr\bm{y}$:
+      $\bm{u}_a = (14.5, 6.5)$ (each receiver's pseudoranges summed) and $\bm{u}_g =
+      -(4, 10, 0, 7)$; then $\bar{\bm{u}}_g = \bm{u}_g + (14.5 + 6.5)/4 = (1.25,
+      -4.75, 5.25, -1.75)$, which sums to zero.
+\item $\bm{J}_4$ has eigenvalue 4 along $\bm{1}$ and 0 on its complement, so
+      $\bar{\bm{N}}_{gg}$ has $2 - 0.5\times4 = 0$ along $\bm{1}$ and 2 three times. The
+      normalized null eigenvector is $(0.5, 0.5, 0.5, 0.5)$: weight $1/\sqrt4$ on
+      every satellite clock.
+\item Row $\sat$ reads $2g^\sat - 0.5\,S = \bar u_\sat$ with $S = \sum g$. With $g^1 = 0$
+      the first row gives $S = -2.5$, then $g = (0, -3, 2, -1.5)$. Back-substitution
       $a_\rx = (u_{a,\rx} + S)/4$ gives $a = (3, 1)$, the solution of
-      \cref{q:toy-datums}: the elimination is exact. \emph{Checked.}
+      \cref{q:toy-datums}. \emph{Checked.}
 \end{enumerate}
+\why{Elimination projects each station's information onto the shared unknowns
+without losing any: it is exact. It cannot create information either, so the
+shared null direction survives, seen now from the satellites alone.}
+\pitfall{Reducing $\bm{N}$ but not the right-hand side, or solving the reduced
+system without a reference choice: it is still singular. That $\bar{\bm{u}}_g$ sums
+to zero is the consistency condition that makes a solution exist.}
+\takeaway{The real network does this per station every epoch
+(\cref{eq:l3-schur}), and the weight $1/\sqrt m$ is what to look for in its rank
+gate (\cref{q:twosys,q:rankgate}).}
 \src{\cref{eq:l3-schur} (status report, step 6); the worked example's data.}
 \end{answer}
 
 \begin{answer}{twosys}
+\strategy{Try constant shifts on subsets of the unknowns. Each independent family
+that can absorb a common shift gives one null direction.}
+\solution
 \begin{enumerate}[leftmargin=*, itemsep=1pt]
-\item Two. The GPS clock direction: every receiver clock and every satellite clock,
-      GPS and Galileo, $+\kappa$ (each Galileo row holds $a_\rx - g^\sat$ too). The
-      Galileo direction: $d^E_\rx + \kappa_E$ at every receiver and $g^\sat +
-      \kappa_E$ for every Galileo satellite.
-\item Two, spanned by a flat shift of the GPS clocks and a flat shift of the
-      Galileo clocks; the receiver terms are gone. When both eigenvalues are zero an
-      eigensolver may return any rotation of the pair.
+\item Two. The first is the old clock direction: every receiver clock and every
+      satellite clock, GPS and Galileo, $+\kappa$ (each Galileo row still holds $a_\rx -
+      g^\sat$). The second exists because of the inter-system bias: $d^E_\rx + \kappa_E$ at
+      every receiver and $g^\sat + \kappa_E$ for every Galileo satellite leaves every row
+      unchanged.
+\item Two. After the receiver terms are eliminated they are spanned by a flat shift
+      of the GPS clocks and a flat shift of the Galileo clocks. When both eigenvalues
+      are zero an eigensolver may return any rotation of the pair.
 \item $1/\sqrt{32} = 0.1768$ on every GPS clock and $1/\sqrt{24} = 0.2041$ on every
-      Galileo clock. A small check (two receivers, three GPS and two Galileo
-      satellites) has 9 unknowns, rank 7 and a two-dimensional reduced null space
-      constant within each constellation. \emph{Checked.}
+      Galileo clock. A small numerical check (two receivers, three GPS and two
+      Galileo satellites) has 9 unknowns, rank 7, and a two-dimensional reduced null
+      space constant within each constellation. \emph{Checked.}
 \end{enumerate}
+\why{The inter-system bias gives each receiver a separate clock for Galileo, so the
+Galileo clocks get their own common level.}
+\pitfall{Expecting the two near-zero eigenvectors to come out pure per
+constellation on every epoch; a degenerate pair may mix.}
+\takeaway{The declared dimension of the gate is the number of constellations: 2
+for GPS and Galileo (\cref{q:rankgate,q:rows}).}
 \src{the arithmetic; the real run in \cref{q:rankgate}.}
 \end{answer}
 
 \begin{answer}{eq24}
+\strategy{Group the six terms of \cref{q:toy-biases} by $(n-1)$ and by $m$; then
+substitute.}
+\solution
 \begin{enumerate}[leftmargin=*, itemsep=1pt]
-\item $1 + 2f + (n-1) + m + f(n-1) + f\,m = 1 + 2f + (1+f)(n-1+m)$; with the slant
-      ionosphere $+\,(n - 1 + m)$.
-\item $f = 2$, $m = 32$: $5 + 3(n + 31) + (n + 31) = 5 + 4(n + 31)$, which gives 369
-      for $n = 60$, 361 for 58 and 1,349 for 305. The slope 4 per station is the
-      figure's ``slant ionosphere: 4 per station''; without the slant term it is 3.
-\item $1 + 4 + 3 \times 115 = 350$, plus 115: 465. Eq.~24 is a single-system count
-      and the record has no two-system form, so 465 sets the scale only.
-      \emph{Checked.}
+\item $1 + 2f + (n-1) + m + f(n-1) + f\,m = 1 + 2f + (1+f)(n-1+m)$; the slant
+      ionosphere adds $n - 1 + m$.
+\item With $f = 2$ and $m = 32$: $5 + 3(n + 31) + (n + 31) = 5 + 4(n + 31)$, which gives
+      369 for $n = 60$, 361 for 58 and 1,349 for 305.
+\item $1 + 4 + 3\times115 = 350$, plus 115: 465. \emph{Checked.}
 \end{enumerate}
+\why{Each added station brings $1 + f$ directions (its clock against its biases,
+and one per frequency between its phase bias and ambiguities), plus one for its
+slant ionosphere: four at $f = 2$, the slope of the figure.}
+\pitfall{Using the single-system formula as an exact count for two constellations;
+the record has no two-system form, so 465 sets the scale only.}
+\takeaway{Eq.~24 counts every direction; the gate counts what is left after the
+lumps, pins and priors (\cref{q:rankgate}).}
 \src{\texttt{SBASIS-THEORY-E.md} lines 106 to 114; deck slide 6.}
 \chk
 \begin{cmd}
@@ -256,72 +390,104 @@ EOF
 \end{answer}
 
 \begin{answer}{inventory}
+\strategy{Take the terms of \cref{eq:l1-code,eq:l1-phase} one by one and find the
+row that holds each; then look for a term with no row.}
+\solution
 \begin{enumerate}[leftmargin=*, itemsep=1pt]
-\item Shared: satellite clock (GPS, Galileo), satellite phase bias (GPS L1C, L2W;
-      Galileo L1C, L5Q), satellite code bias (GPS C1C, C2W; Galileo C1C, C5Q); the
-      counts (498, 393) are station-held instances, one per line of sight. Local:
-      ambiguity per signal, slant ionosphere per system, zenith wet delay (60),
-      receiver clock (60), Galileo inter-system bias (60), receiver DCB per system;
-      receiver position 180 columns ``pinned: held at the roster coordinate''.
-      $\mathrm{d}t_\rx \to$ receiver clock, $\delta t_\rx$ $\to$ inter-system bias,
-      $T \to$ zenith wet delay, $I \to$ slant ionosphere, $B_{\rx,\sigl} \to$
-      receiver DCB, $N \to$ ambiguity; the satellite terms $\to$ the shared rows.
-      The receiver phase bias has no row (the parameter-model line reads
-      \texttt{rx\_phase\_bias no no}, line 380): the ambiguities absorb it, as in
-      \cref{q:rx-phase}.
-\item Shared $(1 + 2f)\,m = 5 \times 56 = 280$ (line 639, \texttt{nshared=280}).
-      Local: 3 per line of sight (two ambiguities, one slant ionosphere) $\times$
-      891 lines of sight, plus 5 per station $\times$ 60: $2{,}673 + 300 = 2{,}973$.
+\item Shared rows: satellite clock (GPS, Galileo), satellite phase bias (GPS L1C,
+      L2W; Galileo L1C, L5Q), satellite code bias (GPS C1C, C2W; Galileo C1C, C5Q).
+      Local rows: ambiguity per signal, slant ionosphere per system, zenith wet delay,
+      receiver clock, Galileo inter-system bias, receiver DCB per system; receiver
+      position ``pinned: held at the roster coordinate''. The map: $\mathrm{d}t_\rx$
+      to receiver clock, $\delta t_\rx$ to inter-system bias, $T$ to zenith wet
+      delay, $I$ to slant ionosphere, $B_{\rx,\sigl}$ to receiver DCB, $N$ to
+      ambiguity, the satellite terms to the shared rows. The receiver phase bias has
+      no row (\texttt{rx\_phase\_bias no no}, line 380): the ambiguities absorb it, as
+      in \cref{q:rx-phase}.
+\item Shared $(1 + 2f)\,m = 5\times56 = 280$ (line 639, \texttt{nshared=280}).
+      Local: 3 per line of sight (two ambiguities, one slant ionosphere) for 891
+      lines of sight, plus 5 per station for 60 stations: $2{,}673 + 300 = 2{,}973$.
       \emph{Checked.}
 \end{enumerate}
+\why{The table is the network's own statement of the model: every parameter it
+estimates, and where it lives. The missing receiver phase bias is a lump of
+\cref{q:toy-biases} made by design.}
+\pitfall{Reading the border counts (498, 393) as unique columns: they count one
+instance per line of sight. The unique shared columns are 280.}
+\takeaway{Every term of the user's equations has a home in the network, shared or
+local; the arrowhead of \cref{fig:l2-anim} at the scale of 60 stations.}
 \src{\texttt{runs/\_rf0hv15\_sim6/stdout.txt} lines 380, 639, 658 to 686;
 \texttt{src/core/network/assembly/ParamInventory.cpp} lines 645 to 661.}
 \end{answer}
 
 \begin{answer}{rankgate}
+\strategy{Find the sub-cutoff eigenvalues and their eigenvector weights, compare
+the weights with \cref{q:twosys}, then express the gaps around the cutoff in
+powers of ten.}
+\solution
 \begin{enumerate}[leftmargin=*, itemsep=1pt]
-\item At tow 259230: $+4.036\times10^{-11}$ and $-1.803\times10^{-10}$ (a negative
-      value is a rounded zero), with weights 0.2040 on every Galileo clock and
-      0.1767 on every GPS clock: exactly the flat shifts of \cref{q:twosys}.
-\item Cutoff $= 10^{-11}\times1.0459\times10^5 = 1.0459\times10^{-6}$; cutoff$/1.803
-      \times10^{-10} = 5.8\times10^3$ (3.8 decades); the weakest real direction,
-      $1.124\times10^{-4}$ (a GPS L2W phase-bias direction), is 107 times the cutoff
-      (2.0 decades). The rule, ``cutoff $\geq$ 2 decades above the gauge depth and
-      $\geq$ 2 decades below the weakest-real layer'', holds, the upper margin only
-      just. The run end (line 4899) reports 720 epochs at tol $10^{-11}$, 720
-      emitted, none withheld, observed count min 2, max 2.
-\item Lumps and rows remove them before the gate, as in \cref{q:toy-biases}. The
-      record maps the types to rows: 1a to the 2 clock pins (acting after the
-      gate); 3a and 3b to 112 code-bias rows; 5 to 112 ambiguity pins; 1b, 2a, 2b and
-      4 (240) to the receiver side, which is local (free clock, inter-system bias,
-      DCB with 120 prior entries, no receiver phase-bias state). $2 + 112 + 112 +
-      240 = 466 = 465 + 1$, the extra one being the second constellation's clock
-      direction. \emph{Checked.}
+\item At tow 259230: $+4.036\times10^{-11}$ and $-1.803\times10^{-10}$, two zeros up
+      to rounding (one is negative). Their eigenvectors put 0.2040 on every Galileo
+      clock and 0.1767 on every GPS clock: the flat shifts predicted by
+      \cref{q:twosys}.
+\item Cutoff $= 10^{-11}\times1.0459\times10^5 = 1.0459\times10^{-6}$. Cutoff over the
+      larger zero: $1.0459\times10^{-6}/1.803\times10^{-10} = 5.8\times10^3$, 3.8
+      decades. Weakest real direction (a GPS L2W phase-bias direction) over the
+      cutoff: $1.124\times10^{-4}/1.0459\times10^{-6} = 107$, 2.0 decades. The rule,
+      ``cutoff $\geq$ 2 decades above the gauge depth and $\geq$ 2 decades below the
+      weakest-real layer'', holds, the upper margin only just. The run end (line
+      4899) reports 720 epochs at tol $10^{-11}$, all emitted, observed count min 2,
+      max 2.
+\item Lumps and rows removed them before the gate, as in \cref{q:toy-biases}. The
+      record maps types to rows: 1a to the 2 clock pins (which act after the gate);
+      3a and 3b to 112 code-bias rows; 5 to 112 ambiguity pins; 1b, 2a, 2b and 4 (240)
+      to the local receiver side (free clock, inter-system bias, DCB with 120 prior
+      entries, no receiver phase-bias state). $2 + 112 + 112 + 240 = 466 = 465 + 1$, the
+      extra one being the second constellation's clock direction. \emph{Checked.}
 \end{enumerate}
+\why{The gate separates two populations of eigenvalues, true zeros and weak but
+real directions, by a threshold placed in the gap between them. The gap must be
+wide on both sides, or rounding moves an eigenvalue across it.}
+\pitfall{Treating the tolerance as neutral. At the loader default $10^{-9}$ the
+cutoff here would be $1.05\times10^{-4}$, within 7\,\% of the weakest real direction;
+the ledger records that $10^{-9}$ withholds 4 real-data epochs.}
+\takeaway{The rank gate confirms one clock direction per constellation every
+epoch; what it does not see is the subject of \cref{q:level}.}
 \src{\texttt{rf\_null\_space\_read.py} output; \texttt{runs/\_rf0hv15\_sim6/logs/network\_estimability.csv}
 rows 2 to 6; \texttt{runs/\_rf0hv15\_sim6/stdout.txt} lines 640, 4899;
-\texttt{RankGate.cpp} lines 408 to 410; \texttt{SBASIS-CONTRACT.md} lines 59 to 68.}
+\texttt{RankGate.cpp} lines 408 to 410; \texttt{SBASIS-CONTRACT.md} lines 59 to 68;
+\texttt{docs/CONFIG\_promotion\_ledger.json} (row \texttt{rank\_gate\_tol}).}
 \end{answer}
 
 \subsection*{Lesson 4: the project's reference choices}
 
 \begin{answer}{theorem}
+\strategy{Find the box, then translate it into the six-unknown example of
+\cref{q:toy-datums}: what was the same in both solutions, and why?}
+\solution
 \begin{enumerate}[leftmargin=*, itemsep=1pt]
-\item An estimable function $\bm{f}^\Tr\bm{x}$ ($\bm{f}$ in the range of
-      $\bm{A}^\Tr$) ``is invariant in value AND variance under any admissible
-      datum'', that is, under every reference choice that removes exactly the null
-      space. \Cref{q:toy-datums} showed the value half: four differences equal in
-      two choices.
-\item Position, zenith delay and vertical ionosphere are estimable before any choice
-      (their rows of the null-space basis are zero). A satellite clock and a
+\item An estimable function $\bm{f}^\Tr\bm{x}$ ($\bm{f}$ in the range of $\bm{A}^\Tr$)
+      ``is invariant in value AND variance under any admissible datum'': under every
+      reference choice that removes exactly the null space. \Cref{q:toy-datums}
+      showed the value half, four differences equal in two choices.
+\item Position, zenith delay and vertical ionosphere are estimable before any
+      choice (their rows of the null-space basis are zero). A satellite clock and a
       satellite phase bias are not: ``The satellite clock does not exist as an
       estimable number; only a datum-dependent lump does.''
-\item The differential wander was estimable, so no reference choice could move it,
-      and every datum comparison came out negative: ``The cure must alter
+\item The differential wander was itself estimable, so no reference choice could
+      move it; every datum comparison came out negative. ``The cure must alter
       ESTIMATION (weights / dynamics / model / transmitted covariance), not the
       gauge.'' The coverage change that cut the wander from 47 to 14~cm was such a
       change.
 \end{enumerate}
+\why{$\bm{f}$ in the range of $\bm{A}^\Tr$ means $\bm{f}^\Tr\bm{V} = \bm{0}$ for the null
+space $\bm{V}$. Two admissible solutions differ by $\bm{V}\bm{\beta}$, so $\bm{f}^\Tr\bm{x}$
+is the same for both; the variance argument runs the same way through the
+covariance.}
+\pitfall{Hunting for a better datum to cure a problem in an estimable quantity. A
+datum can only relabel; a real problem needs a real change of estimation.}
+\takeaway{A reference choice decides how results are reported, never what the
+data say: the basis for grading only estimable quantities (\cref{sec:l5}).}
 \src{\texttt{SBASIS-THEORY-E.md} lines 40 to 41, 75 to 83, 116 to 120, 223 to 225.}
 \chk
 \begin{cmd}
@@ -330,6 +496,9 @@ sed -n '75,83p;116,120p' docs/cards/network-vehicle/SBASIS-THEORY-E.md
 \end{answer}
 
 \begin{answer}{four}
+\strategy{Run the verify, then grep the configuration for each choice's keys and
+match each to its two-receiver analogue.}
+\solution
 The verify prints, per reference configuration, ``76 recommended knobs armed in
 regime, 2 unarmed (2 documented exceptions), 0 failure(s)'' and ``golden verify:
 PASS''. \emph{Checked.}
@@ -337,25 +506,33 @@ PASS''. \emph{Checked.}
 \item Clock pin: no key (the default), with \texttt{sticky\_pivot} (line 324) and
       \texttt{handover\_stransform} (343). Anchors: \texttt{phase\_datum\_prioritized}
       (297), \texttt{phase\_datum\_held\_basis} (925), \texttt{ambiguity\_vehicle}
-      \texttt{float\_kf} (924). Code-bias datum: \texttt{estimate\_sat\_code\_bias}
-      (293), \texttt{sat\_gf\_datum} \texttt{broadcast\_tgd} (922); the
-      ionosphere-free pin and sum-to-zero rows have no key of their own. Receiver
-      DCB prior: \texttt{rx\_code\_bias\_datum} (292).
-\item The pin is unaffected by satellites rising and setting until the pivot
-      leaves; then the constellation is re-referenced (one handover per
-      constellation in 6~h: E02 to E03, G01 to G02). An anchor is a single point of
+      \texttt{float\_kf} (924). Code-bias datum: \texttt{estimate\_sat\_code\_bias} (293)
+      and \texttt{sat\_gf\_datum} \texttt{broadcast\_tgd} (922); the ionosphere-free pin and
+      the sum-to-zero rows have no key of their own. Receiver DCB prior:
+      \texttt{rx\_code\_bias\_datum} (292).
+\item The pin (analogue $g^1 \equiv 0$) holds until the pivot leaves, then the
+      constellation is re-referenced: one handover per constellation in 6~h (E02 to
+      E03, G01 to G02). The anchors (analogue $N^\sat_A \equiv 0$) are a single point of
       failure: a handover steps the bias by whole cycles unless the successor is
       pinned at its own level (308 basis values elected, 22 of them cold, declared).
       The sum-to-zero rows would move at every rise and set, as in
       \cref{q:toy-setchange}; the simulated case suppresses them because the pins
-      already fix every channel (2,880 suppressed $= 4 \times 720$). The ensemble was
+      already fix every channel (2,880 suppressed $= 4\times720$). The ensemble was
       ``SUPERSEDED BY MEASUREMENT'' and deleted (commit 7914263).
-\item \texttt{clock\_datum\_sum\_to\_zero}, \texttt{clock\_datum\_broadcast\_anchored},
-      \texttt{pivot\_election}; \texttt{phase\_datum\_eq34} is false (line 345).
+\item \texttt{clock\_datum\_sum\_to\_zero}, \texttt{clock\_datum\_broadcast\_anchored} and
+      \texttt{pivot\_election} are absent; \texttt{phase\_datum\_eq34} is false (line 345).
 \end{enumerate}
+\why{Each choice removes one family of null directions from \cref{sec:l3}: the
+clock pin the clock directions, the anchors the per-satellite phase directions,
+the code-bias datum the satellite code-bias directions, the DCB prior the
+receivers' geometry-free direction.}
+\pitfall{Concluding from a missing key that a choice is absent: the clock pin is
+the default and has none.}
+\takeaway{Four choices, each a lesson 2 move at scale; the next question counts
+their rows.}
 \src{\texttt{SBASIS-THEORY-E.md} lines 143 to 150, 239 to 259; \texttt{Sbasis.hpp}
-lines 162 to 166; \texttt{config/golden/golden\_sim\_refound.json}; \texttt{\_rap\_scb\_g\_q6/stdout.txt}
-lines 4385, 4400, 4845.}
+lines 162 to 166; \texttt{config/golden/golden\_sim\_refound.json};
+\texttt{\_rap\_scb\_g\_q6/stdout.txt} lines 4385, 4400, 4845.}
 \chk
 \begin{cmd}
 C:/Python313/python.exe scripts/make_golden_config.py --verify
@@ -365,28 +542,38 @@ grep -n -e '"sticky_pivot"' -e '"phase_datum_held_basis"' -e '"phase_datum_eq34"
 \end{answer}
 
 \begin{answer}{rows}
+\strategy{Count the shared columns per satellite, then ask which columns each
+choice fixes and whether it acts before or after the gate.}
+\solution
 \begin{enumerate}[leftmargin=*, itemsep=1pt]
 \item $56\times(1 + 2 + 2) = 280$ shared columns. Clock pins 2 (E02, G01). Ambiguity
-      pins $112 = 32\times2 + 24\times2$, one per phase-bias column, on 18 stations.
-      Code-bias rows 112: 56 ionosphere-free pins and 56 geometry-free pins at
-      $T_{GD}$ (54 at $c\,T_{GD}$, 2 with a broadcast $T_{GD}$ of 0); sum-to-zero 0.
-      Receiver prior entries $120 = 60\times2$, each of information $1/(10~\mathrm{m})^2
+      pins $112 = 32\times2 + 24\times2$, one per phase-bias column, placed on 18
+      stations. Code-bias rows 112: 56 ionosphere-free pins and 56 geometry-free pins
+      at $T_{GD}$ (54 at $c\,T_{GD}$, 2 with a broadcast $T_{GD}$ of 0); sum-to-zero
+      0. Receiver prior entries $120 = 60\times2$, each of information $1/(10~\mathrm{m})^2
       = 0.01~\mathrm{m}^{-2}$. Total: 226 rows on the shared state plus 120 prior
       entries.
 \item The ambiguity pins and code-bias rows act before the gate and fix the 224
-      phase-bias and code-bias columns; the 56 clocks keep one flat direction per
-      constellation (\cref{q:twosys}); the clock pins act in the solve after the
-      gate, so the gate expects 2 (\texttt{Sbasis.hpp} lines 50 to 55: ``exactly
-      \#constellations residual deficiencies'').
+      phase-bias and code-bias columns. The 56 clocks keep one flat direction per
+      constellation (\cref{q:twosys}); the clock pins act in the solve after the gate,
+      so the gate expects exactly 2 (``exactly \#constellations residual
+      deficiencies'').
 \item On a mismatch the gate throws; the heal soft-anchors near-null phase-bias
       columns ($\sigma$ 1~m) and re-gates once; if the count still differs the epoch is
       withheld and counted as under- or over-specified. Completion would first fold
       one eigenvector row per extra separable near-null direction; it folded none in
-      720 epochs (line 4112). \emph{Checked.}
+      720 epochs. \emph{Checked.}
 \end{enumerate}
+\why{Placing the clock pins after the gate turns the gate into a test: if
+anything other than the two clock directions is free, the count is wrong.}
+\pitfall{Reading the gate as a proof that the reference choices are correct. It
+counts null directions; a row that pins something estimable removes a direction
+that was never null, and the count still matches.}
+\takeaway{The choices are 226 rows and 120 prior entries, not ``a few''; the gate
+checks their number every epoch, not their harmlessness.}
 \src{\texttt{\_rap\_scb\_g\_q6/stdout.txt} lines 631, 679 to 738, 4109, 4112, 4387;
-\texttt{Sbasis.hpp} lines 50 to 55; \texttt{src/core/network/solve/RankGate.cpp}
-lines 193 to 305.}
+\texttt{Sbasis.hpp} lines 50 to 55; \texttt{RankGate.cpp} lines 193 to 305;
+\texttt{SBASIS-CONTRACT.md} lines 87 to 88.}
 \chk
 \begin{cmd}
 sed -n '631p;679,738p;4109,4112p' \
@@ -395,21 +582,33 @@ sed -n '631p;679,738p;4109,4112p' \
 \end{answer}
 
 \begin{answer}{cbdatum}
+\strategy{Use the split of \cref{q:rx-clock} at the satellite: a pair whose ratio is
+$\mu_2$ has a zero ionosphere-free part and only a geometry-free part. Compare that
+part with the broadcast group delay.}
+\solution
 \begin{enumerate}[leftmargin=*, itemsep=1pt]
-\item \texttt{B,G05,C1C,-3.2108400641001413} and \texttt{B,G05,C2W,-5.288075205569585}:
-      the ratio is $1.646944 = \mu_2$, so the ionosphere-free combination is zero.
-      The navigation record gives $T_{GD} = -1.071020960808\times10^{-8}$~s, and
-      $c\,T_{GD} = -3.2108400641$~m, the C1C record. The pinned pair carries no
-      estimate: its ionosphere-free part is pinned to zero and its geometry-free
-      part to the broadcast group delay (54 satellites at $c\,T_{GD}$, 2 with a
-      broadcast value of 0; stdout line 631).
+\item \texttt{B,G05,C1C,-3.2108400641001413} and
+      \texttt{B,G05,C2W,-5.288075205569585}: the ratio is $1.646944 = \mu_2$, so the
+      ionosphere-free combination is zero. The navigation record gives $T_{GD} =
+      -1.071020960808\times10^{-8}$~s, and $c\,T_{GD} = -3.2108400641$~m, the C1C
+      record. The pinned pair carries no estimate: its ionosphere-free part is pinned
+      to zero and its geometry-free part to the broadcast group delay (54 satellites
+      at $c\,T_{GD}$, 2 with a broadcast value of 0; stdout line 631).
 \item With a slant ionosphere the satellite's true geometry-free code bias is not
-      estimable: it merges into the slant ionosphere of every line of sight to that
-      satellite (\cref{q:rx-iono}, mirrored at the satellite). The corrections carry
-      no ionosphere record, so a user estimates its own slant ionosphere, which
-      absorbs the same lump: code biases and ionosphere act as a pair.
-      \emph{Checked.}
+      estimable: it merges into the slant ionosphere of every line of sight to the
+      satellite (\cref{q:rx-iono}, mirrored at the satellite). The corrections carry no
+      ionosphere record, so a user estimates its own slant ionosphere, which absorbs
+      the same lump: code biases and ionosphere act as a pair. \emph{Checked.}
 \end{enumerate}
+\why{The two code biases of the pinned pair are exactly the two directions of
+\cref{q:rx-clock,q:rx-iono} at a satellite, and the datum fixes both: the
+ionosphere-free one to the clock convention, the geometry-free one to $T_{GD}$.}
+\pitfall{Interpreting the published B records of the pinned pair as estimated
+hardware biases, or comparing them with another provider's DCBs as a check of the
+network.}
+\takeaway{The satellite clock is therefore the ionosphere-free clock of
+\cref{q:rx-clock}, and the network's slant ionosphere carries the satellites'
+true geometry-free biases.}
 \src{\texttt{\_rap\_scb\_g\_q6/products.txt} lines 61 to 62;
 \texttt{data/2024-129/products/BRDC00IGS\_R\_20241290000\_01D\_MN.rnx} line 568;
 \texttt{docs/refound/RF-0c\_gf\_pin\_2026-09-15.md} lines 22 to 23;
@@ -425,26 +624,36 @@ EOF
 \end{answer}
 
 \begin{answer}{level}
+\strategy{Information along a unit direction is the sum, over the rows that touch
+it, of (loading$^2$)/$\sigma^2$; the standard deviation is one over its square root.}
+\solution
 \begin{enumerate}[leftmargin=*, itemsep=1pt]
-\item $0.0074/10^2 = 7.4\times10^{-5}~\mathrm{m}^{-2}$ along the unit level;
-      $\sigma = 1/\sqrt{7.4\times10^{-5}} = 116$~m.
-\item $(0.0074 + 0.2392^2 + 0.1334^2)/0.0074 = (0.0074 + 0.0572 + 0.0178)/0.0074 =
-      11.1$, $\sigma$ about 35~m, still useless: card R1D found such a row changes
-      nothing at 10~m, and at 1~m shrinks the move only by a fifth while pushing
-      0.95~m into C1W rows: ``the datum row is not the fix''.
-\item $\sigma = 1/\sqrt{110} = 0.095$~m. The carried ambiguity coupling supplies 109
-      of the 110, the DCB prior $7\times10^{-5}$: the coupling to the shared state
-      holds the level, not the datum.
+\item $0.0074/10^2 = 7.4\times10^{-5}~\mathrm{m}^{-2}$; $\sigma = 1/\sqrt{7.4\times10^{-5}} =
+      116$~m.
+\item $(0.0074 + 0.2392^2 + 0.1334^2)/0.0074 = (0.0074 + 0.0572 + 0.0178)/0.0074 = 11.1$,
+      about eleven times, $\sigma$ about 35~m: still no constraint worth the name. Card
+      R1D found such a row changes nothing at 10~m, and at 1~m shrinks the move only by
+      a fifth while pushing 0.95~m into C1W rows: ``the datum row is not the fix''.
+\item $\sigma = 1/\sqrt{110} = 0.095$~m. The carried ambiguity coupling supplies 109 of
+      the 110 and the DCB prior $7\times10^{-5}$: the coupling to the shared state holds
+      the level.
 \item The direction lives inside one station's block, which is eliminated before the
-      shared matrix is formed (\cref{q:schur}), so the gate never sees it.
-      MAJU00MHL anchored phase biases of five GPS satellites (13 pins). With the
-      pins held, the station's level plus a matching shift of its anchored phase
-      biases is invisible to its data (residual $2.8\times10^{-11}$), so a move of
-      the level reaches the published phase biases. In the GPS L5 event the level
-      moved $-21.92$~m; barring the station from the anchor election removed the
-      event: ``The anchor loop is the transmission''. The hold card ALD derives is
-      not built; GPS L5 stays sequenced.
+      shared matrix is formed (\cref{q:schur}), so the gate never sees it. MAJU00MHL
+      anchored phase biases of five GPS satellites (13 pins). With the pins held, the
+      station's level plus a matching shift of its anchored phase biases is invisible
+      to its data (residual $2.8\times10^{-11}$), so a move of the level reaches the
+      published phase biases. In the GPS L5 event the level moved $-21.92$~m; barring
+      the station from the anchor election removed the event: ``The anchor loop is
+      the transmission''. The hold card ALD derives is not built; GPS L5 stays
+      sequenced.
 \end{enumerate}
+\why{A weak direction is safe only while nothing pushes along it. An anchor
+station couples its local level to the shared phase biases, so a push on the level
+reaches every user.}
+\pitfall{Adding datum rows on components with small loadings: the information
+they add scales with the loading squared.}
+\takeaway{The gate checks the shared null space; local weak directions need their
+own instrument. Lesson 5 turns to what a user receives.}
 \src{card R1D lines 21 to 28, 54, 66 to 89, 99 to 122, 159; card ALD lines 27, 31 to 41,
 54, 58 to 65.}
 \chk
