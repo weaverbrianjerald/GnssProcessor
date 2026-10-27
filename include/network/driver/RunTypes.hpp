@@ -417,7 +417,8 @@ struct CarryFoldDecision {
     double q_applied_m2{0.0};
     double seed_gap_s{0.0};     ///< Seeded: the time since the park (s); 0 otherwise
     bool   anchored{false};     ///< the anchor holds this clock (its floor applies)
-    bool   decoupled{false};    ///< the anchor found an anchored clock's carry stale this epoch
+    bool   decoupled{false};    ///< the anchor found an anchored clock's carry stale this epoch, or took it LOOSE for a satellite clock event (slip_clk)
+    bool   slip_clk{false};     ///< the IF-TD pools read a satellite clock event for this clock this epoch and it was ANCHORED, so it folds LOOSE (the legacy increment), as a stale carry does; the guard decouples it with reason slip_clk
     bool   departed{false};     ///< a foldable entry whose shared column is absent from this epoch's layout
     bool   has_seam{false};     ///< a switch-on seam's level noise applies (dense fold only)
     double seam_q_m2{0.0};      ///< that noise (m^2)
@@ -1620,6 +1621,7 @@ struct ClockAnchorSat {
     bool   folded{false};      ///< a clock prior is folded for this satellite this epoch and is still standing (guard eligibility; cleared when the guard withdraws it)
     bool   folded_anchored{false};  ///< …and it was the ANCHORED variance
     bool   stale_pending{false};    ///< the fold found the carry older than the staleness bound and fell back to the LOOSE variance; the guard owns the state transition, event and mark, so every decoupling edge goes through one path
+    bool   slip_clk_pending{false}; ///< the fold took an ANCHORED satellite LOOSE because the IF-TD pools read a satellite clock event this epoch (network.cycle_slip.if_phase_td_sat_clock_event); the guard owns the state transition, event, wire mark and trip record, as for stale_pending
 };
 
 /// Run state of the guarded temporal clock anchor.  Lives in
@@ -1632,6 +1634,15 @@ struct ClockAnchorState {
     /// Satellites decoupled this epoch (the guard's output for the epoch), consumed by
     /// the wire-mark queue and the event/counter tier.
     std::set<std::string> tripped;
+    /// The satellites whose clock the guard declared moved this epoch: tripped by the test on
+    /// the statistic or the absolute backstop, decoupled because the IF-TD pools read a
+    /// satellite clock event (@c slip_clk, the fold having taken the anchored clock LOOSE), or
+    /// tripped by the test's backstop for such a satellite (@c slip_clk_late).  Never a gap,
+    /// datum or external decoupling, which retire a frame rather than state that the
+    /// satellite's clock moved.  Cleared with @ref tripped
+    /// at the start of every epoch; read by the phase-bias hold, which starts a new
+    /// generation on the satellite's keys under @c network.emit_pb_hold_trip_generation.
+    std::set<std::string> stepped;
 };
 
 /// Per-satellite window sums of the level innovation instrument,

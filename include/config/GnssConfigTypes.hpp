@@ -731,6 +731,47 @@ namespace GnssProcessor {
          */
         bool   if_phase_td_reseed_on_flag{ false };
 
+        // --- IF-TD satellite clock event ---------------------------
+        /**
+         * @brief Arm (@c network.cycle_slip.if_phase_td_sat_clock_event) for reading a
+         *        coherent satellite-wide IF-TD flag set as a satellite clock step
+         *        instead of a cycle slip at every station.
+         *
+         * A satellite clock step enters the between-epoch IF phase difference of the
+         * satellite at every station that does not take it as the chain's reference,
+         * with one magnitude everywhere; a cycle slip is station-local and its IF
+         * magnitude depends on the integers on each band.  Per (signal pair kind,
+         * satellite), the pooled flags are a clock event when at least
+         * @ref if_phase_td_sat_clock_min_stations stations flag, at least
+         * @ref if_phase_td_sat_clock_min_fraction of the stations that track the
+         * satellite flag, and the flagged residuals agree: 1.4826 times their median
+         * absolute deviation is at most @ref if_phase_td_sat_clock_coherence times the
+         * absolute median.  A flagged sample of an event satellite that lies within its
+         * own threshold of the common step keeps its arc (no detector reset, no
+         * refloat, no bridge pend); a sample beyond it is a slip as well and takes the
+         * ordinary path.  The reference gate's reset of an event satellite keeps its
+         * arcs too.  The event satellites and their steps are an epoch event read by
+         * the clock anchor guard, which decouples an anchored event satellite in the
+         * same epoch.
+         *
+         * The rule only removes flags; it never adds one.  Solve-affecting; default
+         * off (no classification runs and every branch is the pre-knob one).  Not
+         * fingerprinted: it acts only on an event.  Inert without
+         * @c network.cycle_slip.if_phase_td.
+         */
+        bool   if_phase_td_sat_clock_event{ false };
+        /// Fewest stations that must flag one satellite for a clock event
+        /// (@c network.cycle_slip.if_phase_td_sat_clock_min_stations; at least 2).
+        int    if_phase_td_sat_clock_min_stations{ 4 };
+        /// Smallest fraction of the stations tracking the satellite that must flag it
+        /// for a clock event (@c network.cycle_slip.if_phase_td_sat_clock_min_fraction;
+        /// in (0, 1]).
+        double if_phase_td_sat_clock_min_fraction{ 0.75 };
+        /// Largest ratio of the flagged residuals' robust spread to the absolute
+        /// median step for a clock event
+        /// (@c network.cycle_slip.if_phase_td_sat_clock_coherence; positive).
+        double if_phase_td_sat_clock_coherence{ 0.25 };
+
         // --- Oracle slip response, simulation only (the level-preserving ceiling) ---
         /**
          * @brief Master arm (@c network.cycle_slip.oracle_relevel) for the
@@ -3008,6 +3049,30 @@ namespace GnssProcessor {
          * Inert unless @ref emit_pb_hold.
          */
         double emit_pb_hold_max_gap_s{ 300.0 };
+        /**
+         * @brief Start a new hold generation on the phase-bias keys of a satellite whose
+         *        clock the anchor guard's test tripped
+         *        (@c network.emit_pb_hold_trip_generation, default false).
+         *
+         * A tripped clock is the producer stating that the satellite's clock moved
+         * apart from its prior.  Without this knob the hold keeps the satellite in its
+         * first generation, so the wire's phase-visible clock never carries the move
+         * and the consumer has no declared event to refloat on.  Armed, every
+         * phase-bias key of a satellite that the guard's test tripped at an epoch
+         * (the statistic, the absolute backstop or a satellite clock event of the
+         * IF-TD pool) opens a new generation at that epoch, the same edge a gap opens:
+         * the estimate becomes the held value, the phase-visible reference is
+         * re-taken, and the consumer refloats the satellite's ambiguities on the
+         * stamped generation.  A frame retirement (gap, datum, external refloat)
+         * does not open one: a datum decoupling acts on every satellite of a
+         * constellation and its common move stays on the clock through the hold's
+         * de-commoning.
+         *
+         * Emit side only.  Not fingerprinted: it acts only on an event.  Inert unless
+         * @ref emit_pb_hold and @c network.clock_temporal_anchor (the guard records the
+         * trip) are armed.
+         */
+        bool emit_pb_hold_trip_generation{ false };
         /**
          * @brief Hold the phase-visible clock instead of the phase bias
          *        (@c network.emit_pb_hold_phase_clock, default false).

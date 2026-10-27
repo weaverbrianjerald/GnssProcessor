@@ -12,7 +12,7 @@ runs on each POSTURE of the clock level where they differ.  The matrix runs on a
 exe, the way the G5 identity gate does, and prints one table per exe.
 
     python scripts/scenario_matrix.py seed   <posture> [--hours 6] [--smoke] [--exe EXE] [--launch]
-    python scripts/scenario_matrix.py make   --label L --exe EXE [--rows r1,r2] [--postures g,c]
+    python scripts/scenario_matrix.py make   --label L --exe EXE [--rows r1,r2] [--postures g,c] [--extra JSON]
     python scripts/scenario_matrix.py run    --label L [--jobs 3]
     python scripts/scenario_matrix.py grade  --label L
     python scripts/scenario_matrix.py report --label L [--control L2]
@@ -20,6 +20,12 @@ exe, the way the G5 identity gate does, and prints one table per exe.
 A control is the same matrix made under a second label with the same exe; ``report
 --control`` compares every measured value of the two and must read IDENTICAL (the producer
 is deterministic; a difference is a defect of the harness or of the exe, never noise).
+
+``make --extra JSON`` (or ``--extra @file``) arms knobs for the whole label: the object is
+deep-merged into the config of every leg of the label, event and null (a leg inherits its
+posture's extra from the seed, so only the new object is applied), and into the fresh arms
+of the drift row over the posture's extra.  It is recorded in plan.json as ``extra``; with
+no ``--extra`` the plan and every leg are exactly what they were before the option existed.
 
 Postures (the clock level of the goldens, card SCB's table):
   g   the sim golden as armed (GPS + Galileo; Q3 anchor on the COD a priori, phase-clock hold)
@@ -295,11 +301,13 @@ def storm_schedule(spec, stations, first_tow, epochs):
 
 
 # ------------------------------------------------------------------------------ make
-def drift_arm(label, posture, fx, fixture, hours, exe):
+def drift_arm(label, posture, fx, fixture, hours, exe, extra=None):
     """A fresh arm of the drift row: the posture on one fixture, from 00:30:15, `hours` long."""
     base, over, _ = POSTURES[posture]
     arm = json.load(open(base, encoding="utf-8"))
     deep_merge(arm, over)
+    if extra:
+        deep_merge(arm, extra)    # the label's --extra, over the posture's
     net = arm["network"]
     n = 0
     for s in net["stations"] + [net["closed_loop"]["station"]]:
@@ -318,12 +326,16 @@ def drift_arm(label, posture, fx, fixture, hours, exe):
     return {"name": os.path.basename(rd), "dir": rd, "config": rd + "/arm.json"}
 
 
-def make_leg(label, posture, row_id, events, epochs, at_ep, exe, snap_ep):
+def make_leg(label, posture, row_id, events, epochs, at_ep, exe, snap_ep, extra=None):
     name = f"smx_{label}_{row_id}_{posture}"
     cmd = [sys.executable, ROOT + "/scripts/event_leg.py", "null" if events is None else "make-leg",
            "--seed-run", seed_dir(posture), "--snapshot-ep", str(snap_ep),
            "--epochs", str(epochs), "--name", name, "--at-ep", str(at_ep), "--exe", exe,
            "--runs-root", RUNS]
+    if extra:
+        # The leg inherits the seed's config (the posture's extra with it); event_leg
+        # deep-merges this object last, so it overrides anything the seed carries.
+        cmd += ["--extra", json.dumps(extra)]
     if events is not None:
         # Through a file: a storm schedule is too long for a Windows command line.
         os.makedirs(f"{RUNS}/smx_events", exist_ok=True)
@@ -337,8 +349,22 @@ def make_leg(label, posture, row_id, events, epochs, at_ep, exe, snap_ep):
     return {"name": name, "dir": d, "config": d + "/leg.json"}
 
 
+def parse_extra(text):
+    """The --extra object of `make`: a JSON object (or @file holding one); {} when absent."""
+    if not text:
+        return {}
+    try:
+        extra = json.loads(open(text[1:], encoding="utf-8").read() if text.startswith("@") else text)
+    except (ValueError, OSError) as e:
+        raise SystemExit(f"FATAL: --extra is not valid JSON: {e}")
+    if not isinstance(extra, dict):
+        raise SystemExit("FATAL: --extra must be a JSON object")
+    return extra
+
+
 def cmd_make(a):
     m = load_matrix()
+    extra = parse_extra(a.extra)
     exe = a.exe.replace("\\", "/")
     assert "x64-Release" in exe and os.path.exists(exe), "a Release exe is required: " + exe
     rows = [r for r in m["rows"] if not a.rows or r["id"] in a.rows.split(",")]
@@ -351,12 +377,16 @@ def cmd_make(a):
     plan = {"label": a.label, "exe": exe, "exe_sha256": sha256(exe), "matrix_version": m["version"],
             "matrix_sha256": sha256(MATRIX), "made": time.strftime("%Y-%m-%d %H:%M:%S"),
             "postures": postures, "targets": {}, "legs": [], "cells": []}
+    if extra:
+        plan["extra"] = extra
     old_plan = gate_dir(a.label) + "/plan.json"
     if a.append and os.path.exists(old_plan):
         # Add postures or rows to a label (a seed that finished later): same exe, same matrix.
         prev = json.load(open(old_plan))
         if prev["exe_sha256"] != plan["exe_sha256"] or prev["matrix_sha256"] != plan["matrix_sha256"]:
             raise SystemExit("FATAL: --append needs the label's exe and matrix unchanged")
+        if prev.get("extra", {}) != extra:
+            raise SystemExit("FATAL: --append needs the label's --extra unchanged")
         plan.update({k: prev[k] for k in ("targets", "legs", "cells", "made")})
         plan["postures"] = sorted(set(prev["postures"]) | set(postures))
     needed = set()
@@ -373,7 +403,7 @@ def cmd_make(a):
         key = (p, row_id)
         if key not in made:
             rec = make_leg(a.label, p, row_id, events, epochs, m["at_ep"], exe,
-                           plan["targets"][p]["snapshot_ep"])
+                           plan["targets"][p]["snapshot_ep"], extra)
             rec.update({"posture": p, "row": row_id, "epochs": epochs,
                         "role": "null" if events is None else "event"})
             plan["legs"].append(rec)
@@ -387,8 +417,8 @@ def cmd_make(a):
             sub = plan["targets"][p]
             if r.get("drift"):
                 d = m["drift"]
-                ev = drift_arm(a.label, p, "k", d["fixture_event"], d["hours"], exe)
-                nu = drift_arm(a.label, p, "q", d["fixture_null"], d["hours"], exe)
+                ev = drift_arm(a.label, p, "k", d["fixture_event"], d["hours"], exe, extra)
+                nu = drift_arm(a.label, p, "q", d["fixture_null"], d["hours"], exe, extra)
                 for rec, role in ((ev, "event"), (nu, "null")):
                     rec.update({"posture": p, "row": r["id"], "epochs": None, "role": role})
                     plan["legs"].append(rec)
@@ -831,6 +861,9 @@ def main():
     k.add_argument("--rows", default="", help="comma list of row ids (default: every row)")
     k.add_argument("--postures", default="", help="comma list (default: the matrix's)")
     k.add_argument("--append", action="store_true", help="add to the label's existing plan")
+    k.add_argument("--extra", default="",
+                   help="JSON object (or @file) deep-merged into every leg of the label, event and "
+                        "null alike (arms knobs the seeds predate); recorded in plan.json")
     k.set_defaults(func=cmd_make)
     r = sub.add_parser("run", help="run the label's legs not yet run")
     r.add_argument("--label", required=True)

@@ -173,8 +173,14 @@ void networkPbHold(NetworkRunContext& ctx,
             const bool first = (it == nullptr);
             const bool gap   = !first && max_gap_s > 0.0
                                && (epoch_s - it->last_emit_s) > max_gap_s;
+            // A tripped clock (the anchor guard's test, not a frame retirement) states that
+            // the satellite's clock moved apart from its prior: its keys start a generation
+            // at this epoch, the edge a gap opens.  The set is empty unless the knob's
+            // guard recorded a trip, and the knob snapshot is false with the knob off.
+            const bool trip_gen = ctx.knobs.emit_pb_hold_trip_gen
+                                  && ctx.carry.clk_anchor.stepped.count(s.sat) > 0;
 
-            if (first || gap) {
+            if (first || gap || trip_gen) {
                 // Re-coupling edge: a generation starts here.  The current estimate
                 // becomes the held value (the one epoch per generation at which the
                 // wire equals the estimate), and the declaration is the stamped
@@ -210,11 +216,19 @@ void networkPbHold(NetworkRunContext& ctx,
                 } else {
                     const double prev_gap = epoch_s - it->last_emit_s;
                     *it = st;
-                    ++ctx.counters.n_pbh_gen_gap;
-                    traces.emitEvent(se.time, "PB_HOLD", "gen_start", s.sat, "",
-                                     prev_gap, max_gap_s, "gap",
-                                     fmt::format("sig={} gen={} held={:.6f} m gap={:.1f} s",
-                                                 signal, st.generation, st.held_m, prev_gap));
+                    if (gap) {
+                        ++ctx.counters.n_pbh_gen_gap;
+                        traces.emitEvent(se.time, "PB_HOLD", "gen_start", s.sat, "",
+                                         prev_gap, max_gap_s, "gap",
+                                         fmt::format("sig={} gen={} held={:.6f} m gap={:.1f} s",
+                                                     signal, st.generation, st.held_m, prev_gap));
+                    } else {
+                        ++ctx.counters.n_pbh_gen_trip;
+                        traces.emitEvent(se.time, "PB_HOLD", "gen_start", s.sat, "",
+                                         std::nullopt, std::nullopt, "trip",
+                                         fmt::format("sig={} gen={} held={:.6f} m",
+                                                     signal, st.generation, st.held_m));
+                    }
                 }
                 if (first)
                     traces.emitEvent(se.time, "PB_HOLD", "gen_start", s.sat, "",

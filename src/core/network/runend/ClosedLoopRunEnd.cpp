@@ -145,11 +145,16 @@ int networkClosedLoopRunEnd(const NetworkRunEndView& v) {
         const double dmax = dev.empty() ? 0.0 : *std::max_element(dev.begin(), dev.end());
         const double c50 = q(cpl, 0.50), c90 = q(cpl, 0.90);
         const double cmax = cpl.empty() ? 0.0 : *std::max_element(cpl.begin(), cpl.end());
-        log->info("  pb hold, emit (PBH)       : keys {} / generations {} (first {} / gap {}, "
+        // The trip generations (network.emit_pb_hold_trip_generation) join the clause only
+        // when armed, so an unarmed run's summary is unchanged.
+        const bool trip_gen = ctx.knobs.emit_pb_hold_trip_gen;
+        log->info("  pb hold, emit (PBH)       : keys {} / generations {} (first {} / gap {}{}, "
                   "max_gap_s {:.1f}) / held emissions {}; |estimate - held| p50 {:.4f} / "
                   "p90 {:.4f} / max {:.4f} m over {} samples (what the hold HIDES)",
-                  k.n_pbh_keys, k.n_pbh_gen_first + k.n_pbh_gen_gap, k.n_pbh_gen_first,
-                  k.n_pbh_gen_gap, config_.getNetworkConfig().emit_pb_hold_max_gap_s,
+                  k.n_pbh_keys, k.n_pbh_gen_first + k.n_pbh_gen_gap + k.n_pbh_gen_trip,
+                  k.n_pbh_gen_first, k.n_pbh_gen_gap,
+                  trip_gen ? fmt::format(" / trip {}", k.n_pbh_gen_trip) : std::string{},
+                  config_.getNetworkConfig().emit_pb_hold_max_gap_s,
                   k.n_pbh_held_emissions, d50, d90, dmax,
                   ctx.carry.pb_hold_dev_abs_m.size());
         log->info("  pb hold, coupled (PBH)    : {} coupled clock+phase-bias mark(s) reached a "

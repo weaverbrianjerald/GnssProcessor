@@ -150,7 +150,7 @@ struct EpochDdBuild {
  *
  *   group        written by
  *   slip         networkSlipFunnelOpen (carry_innov_flat_now); networkPassASlipScan_
- *                (relevel, sid_reentry_outcome); networkAmbFloatDropEpoch (relevel)
+ *                (relevel, sid_reentry_outcome, sat_clock_step); networkAmbFloatDropEpoch (relevel)
  *   admission    networkMeasurementAdmission
  *   phase_datum  networkPhaseAnchorEpoch
  *   handover     networkHandoverStransformBeforeRows (sts_pre); networkSolveGlue (the rest)
@@ -181,6 +181,10 @@ struct EpochEvents {
         RelevelEpochState relevel;
         /// The re-entry response's per-arc record (observatory: the solve does not read it).
         ArcReentryOutcomeMap sid_reentry_outcome;
+        /// The satellites the IF-TD pools read as a satellite clock event this epoch, each with its
+        /// common step (m) (network.cycle_slip.if_phase_td_sat_clock_event); empty with the knob off.
+        /// Read by the clock anchor guard, which decouples an anchored one in the same epoch.
+        std::map<std::string, double> sat_clock_step;
     };
     /// The measurement admission's epoch summary, stamped with the epoch's TOW.
     struct Admission {

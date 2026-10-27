@@ -2568,6 +2568,9 @@ namespace GnssProcessor {
             jval<bool>(json, "network.emit_pb_hold", "emit_pb_hold", false);
         network_config_.emit_pb_hold_max_gap_s =
             jval<double>(json, "network.emit_pb_hold_max_gap_s", "emit_pb_hold_max_gap_s", 300.0);
+        network_config_.emit_pb_hold_trip_generation =
+            jval<bool>(json, "network.emit_pb_hold_trip_generation",
+                       "emit_pb_hold_trip_generation", false);
         if (network_config_.emit_pb_hold) {
             log->info("Network: network.emit_pb_hold = true — the emitted phase bias "
                       "of each (satellite, signal) is HELD at the first value of its generation "
@@ -2587,6 +2590,22 @@ namespace GnssProcessor {
                       "the de-commoned clock step at every coupled clock+phase-bias mark that "
                       "reaches a held key (the cost of not transferring a coupled frame move).",
                       network_config_.emit_pb_hold_max_gap_s);
+        }
+        // A tripped clock opens a hold generation.  Emit-side only, and only on an
+        // event, so it is not in the warm-resume fingerprint either.
+        if (network_config_.emit_pb_hold_trip_generation) {
+            if (!network_config_.emit_pb_hold)
+                log->warn("Network: network.emit_pb_hold_trip_generation is armed without "
+                          "network.emit_pb_hold.  There is no hold to open a generation in: "
+                          "the knob is INERT.");
+            else
+                log->info("Network: network.emit_pb_hold_trip_generation = true: every "
+                          "phase-bias key of a satellite whose clock the anchor guard's test "
+                          "tripped (statistic, absolute backstop or IF-TD satellite clock "
+                          "event) starts a new hold generation at that epoch, the edge a gap "
+                          "opens (PB_HOLD/gen_start, cause 'trip').  Frame retirements (gap, "
+                          "datum, external) do not.  Inert without "
+                          "network.clock_temporal_anchor.");
         }
         // The level-aware hold: the held key keeps the satellite's
         // phase-visible clock, not its phase bias.  Emit-side only, like the hold.
@@ -5766,6 +5785,62 @@ namespace GnssProcessor {
                               "a flag is evaluated and a slip repeated there is seen.  "
                               "SOLVE-AFFECTING through those evaluations; not fingerprinted.");
             }
+            // IF-TD satellite clock event: a coherent satellite-wide flag set is a clock
+            // step, not a slip at every station.  Removes flags only; acts only on an
+            // event, so it is not fingerprinted.  Changes the solve; default off.
+            sq.if_phase_td_sat_clock_event =
+                jval<bool>(json, "network.cycle_slip.if_phase_td_sat_clock_event",
+                           "network_cycle_slip_if_phase_td_sat_clock_event", false);
+            sq.if_phase_td_sat_clock_min_stations =
+                jval<int>(json, "network.cycle_slip.if_phase_td_sat_clock_min_stations",
+                          "network_cycle_slip_if_phase_td_sat_clock_min_stations", 4);
+            sq.if_phase_td_sat_clock_min_fraction =
+                jval<double>(json, "network.cycle_slip.if_phase_td_sat_clock_min_fraction",
+                             "network_cycle_slip_if_phase_td_sat_clock_min_fraction", 0.75);
+            sq.if_phase_td_sat_clock_coherence =
+                jval<double>(json, "network.cycle_slip.if_phase_td_sat_clock_coherence",
+                             "network_cycle_slip_if_phase_td_sat_clock_coherence", 0.25);
+            if (sq.if_phase_td_sat_clock_min_stations < 2) {
+                log->error("Network (IF-TD clock event): "
+                           "network.cycle_slip.if_phase_td_sat_clock_min_stations = {} is below "
+                           "2 (one station cannot show a satellite-wide step); the default 4 is "
+                           "used.", sq.if_phase_td_sat_clock_min_stations);
+                sq.if_phase_td_sat_clock_min_stations = 4;
+            }
+            if (!(sq.if_phase_td_sat_clock_min_fraction > 0.0
+                  && sq.if_phase_td_sat_clock_min_fraction <= 1.0)) {
+                log->error("Network (IF-TD clock event): "
+                           "network.cycle_slip.if_phase_td_sat_clock_min_fraction = {} is outside "
+                           "(0, 1]; the default 0.75 is used.",
+                           sq.if_phase_td_sat_clock_min_fraction);
+                sq.if_phase_td_sat_clock_min_fraction = 0.75;
+            }
+            if (!(sq.if_phase_td_sat_clock_coherence > 0.0)
+                || !std::isfinite(sq.if_phase_td_sat_clock_coherence)) {
+                log->error("Network (IF-TD clock event): "
+                           "network.cycle_slip.if_phase_td_sat_clock_coherence = {} is not a "
+                           "positive finite ratio; the default 0.25 is used.",
+                           sq.if_phase_td_sat_clock_coherence);
+                sq.if_phase_td_sat_clock_coherence = 0.25;
+            }
+            if (sq.if_phase_td_sat_clock_event) {
+                if (!network_cycle_slip_if_phase_td_)
+                    log->warn("Network (IF-TD clock event): "
+                              "network.cycle_slip.if_phase_td_sat_clock_event is armed without "
+                              "network.cycle_slip.if_phase_td.  No IF-TD detector is built, so "
+                              "nothing is flagged or classified: the knob is INERT.");
+                else
+                    log->info("Network (IF-TD clock event): satellite clock event ON "
+                              "(min_stations {}, min_fraction {:.2f}, coherence {:.2f}).  A "
+                              "satellite flagged at that many of its stations with one common "
+                              "magnitude is a clock step: the flags within threshold of the step "
+                              "keep their arcs and the clock anchor guard decouples the "
+                              "satellite in the same epoch.  SOLVE-AFFECTING on an event only; "
+                              "not fingerprinted.",
+                              sq.if_phase_td_sat_clock_min_stations,
+                              sq.if_phase_td_sat_clock_min_fraction,
+                              sq.if_phase_td_sat_clock_coherence);
+            }
             // Sim-only oracle slip response (include/network/slip/SlipOracle.hpp): shifts
             // the carried level by the true integer jump instead of freeing the arc, to
             // measure the ceiling of a level-preserving re-level.  Changes the solve;
@@ -8482,6 +8557,22 @@ namespace GnssProcessor {
         network_clock_anchor_resolve_ =
             jval<bool>(json, "network.clock_anchor_resolve",
                        "network_clock_anchor_resolve", true);
+        network_clock_anchor_defer_coupled_ =
+            jval<bool>(json, "network.clock_anchor_defer_coupled",
+                       "network_clock_anchor_defer_coupled", false);
+        if (network_clock_anchor_defer_coupled_) {
+            if (!network_clock_anchor_resolve_)
+                log->warn("Network (clock anchor): network.clock_anchor_defer_coupled is armed "
+                          "without network.clock_anchor_resolve.  There is no in-epoch re-solve "
+                          "to defer: the knob is INERT.");
+            else
+                log->info("Network (clock anchor): network.clock_anchor_defer_coupled = true: a "
+                          "tripped clock whose own column the exact coupling rows reference is "
+                          "decoupled and marked but NOT withdrawn and re-solved in the trip "
+                          "epoch; it folds LOOSE from the next epoch.  A clock whose rows "
+                          "reference its clone keeps the clone withdrawal.  Acts only on a trip; "
+                          "not fingerprinted.");
+        }
         network_clock_anchor_gauge_free_ =
             jval<bool>(json, "network.clock_anchor_gauge_free",
                        "network_clock_anchor_gauge_free", false);

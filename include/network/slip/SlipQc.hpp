@@ -137,6 +137,73 @@ inline double ifTdShrunkScale(long count, double ewma_scale,
     return s_eff;
 }
 
+/// One station's IF-TD sample of one satellite, as the satellite clock event rule reads it.
+struct IfTdSatClockSample {
+    int    sta{ 0 };           ///< Station index.
+    double r{ 0.0 };           ///< Residual against the pooled centre, dd - med (m).
+    double thr{ 0.0 };         ///< The sample's own flag threshold (m): what the pooled test compares |r| with.
+    bool   flagged{ false };   ///< |r| exceeds @ref thr.
+};
+
+/// The satellite clock event rule's verdict on one satellite of one signal pair kind.
+struct IfTdSatClockVerdict {
+    bool   event{ false };     ///< The flags form a satellite clock event.
+    double step_m{ 0.0 };      ///< Median residual of the flagged samples (m): the common step.
+    int    n_obs{ 0 };         ///< Samples of the satellite (one per station that tracks it).
+    int    n_flag{ 0 };        ///< ...of those, the flagged ones.
+    double disp_m{ 0.0 };      ///< 1.4826 times the median absolute deviation of the flagged residuals (m).
+};
+
+/**
+ * @brief Classify one satellite's pooled IF-TD flags as a satellite clock event or not.
+ *
+ * A satellite clock step enters the between-epoch IF phase difference of the satellite
+ * at every station that does not take it as the chain's reference, with one magnitude
+ * everywhere; a cycle slip is station-local and its IF magnitude depends on the
+ * integers on each band.  With F the flagged samples, m the median of their residuals
+ * and d = 1.4826 times the median absolute deviation of those residuals about m, the
+ * satellite is a clock event iff
+ *
+ *     |F| >= min_stations  and  |F| >= ceil(min_fraction * n_obs)  and  d <= coherence * |m|.
+ *
+ * The ceiling is taken with a 1e-9 tolerance, so a product that is an integer in
+ * exact arithmetic (0.7 times 10) is not pushed one sample up by rounding.  An even
+ * count takes the mean of the two middle values for both medians.  The result does not
+ * depend on the order of @p samples.
+ *
+ * @param samples       Every non-reference sample of the satellite in one pair kind.
+ * @param min_stations  Fewest flagged stations (at least 2).
+ * @param min_fraction  Smallest flagged share of the samples, in (0, 1].
+ * @param coherence     Largest d / |m|.
+ * @return The verdict; @c event is false (and @c step_m, @c disp_m are 0) when nothing is flagged.
+ */
+IfTdSatClockVerdict ifTdSatClockClassify(const std::vector<IfTdSatClockSample>& samples,
+                                         int min_stations, double min_fraction,
+                                         double coherence);
+
+/**
+ * @brief Whether a flagged sample of a clock event satellite keeps its arc.
+ *
+ * True iff the verdict is an event and the sample would not flag once the common step
+ * is removed: |r - step| <= thr.  A flagged sample beyond that is a slip at its station
+ * as well, and takes the ordinary path.
+ *
+ * @param v    The satellite's verdict.
+ * @param r    The sample's residual (m).
+ * @param thr  The sample's flag threshold (m).
+ */
+inline bool ifTdSatClockKeeps(const IfTdSatClockVerdict& v, double r, double thr) {
+    return v.event && std::abs(r - v.step_m) <= thr;
+}
+
+/// Where the IF-TD driver writes the satellite clock event rule's results
+/// (@c network.cycle_slip.if_phase_td_sat_clock_event).  The driver takes a pointer to
+/// this and the rule runs only when the pointer is non-null.
+struct IfTdSatClockSink {
+    std::map<std::string, double>& step_m;   ///< Satellite -> its common step (m), for the clock anchor guard; first pair kind wins.
+    SlipQcCounters&                counters; ///< Run-end counters (@c if_td_clock_*).
+};
+
 /// Parse an IfPhaseSlipDetector reset key ("G01_L1C_L2W") into the satellite and
 /// the two band signals of the IF pair it was formed from.  Returns false on a
 /// malformed key.  The network carries per-band ambiguities and the IF combination
@@ -1064,6 +1131,21 @@ BridgeReplaceOutcome networkSlipBridgeV3Replace(
  *                           reconstructed from the serialized epoch (replay does
  *                           not re-run slip QC), so it travels as an R record
  *                           instead of being recomputed.
+ * @param sat_clock          Satellite clock event sink
+ *                           (@c network.cycle_slip.if_phase_td_sat_clock_event; null,
+ *                           the default, when the knob is off, and then no
+ *                           classification runs and every branch is the pre-knob one).
+ *                           Per pair kind and satellite the pooled flags are
+ *                           classified with @ref ifTdSatClockClassify.  For an event
+ *                           satellite the flagged samples within their threshold of the
+ *                           common step keep their arcs (a @c sat_clock_keep event row;
+ *                           no detector reset, no refloat, no bridge pend, and they stay
+ *                           out of the station-pair scale as any flagged sample does),
+ *                           a @c sat_clock_event row names the satellite, and its step
+ *                           is written to @c sat_clock->step_m.  A reset of an event
+ *                           satellite at a station where it is the chain's reference
+ *                           keeps its arcs too (a @c refsat_clock_keep row).  The rule
+ *                           only removes flags.
  */
 void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                            std::vector<NetStation>& stations,
@@ -1091,7 +1173,10 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                            /// kind (evaluated / flagged / refloated).  Filled whatever
                            /// the knob state (invariant #4); a `first` run reports the
                            /// one watched pair.  Null skips it.
-                           IfTdPairTallies* pair_tally = nullptr);
+                           IfTdPairTallies* pair_tally = nullptr,
+                           /// Satellite clock event sink (see @p sat_clock).  Null (the
+                           /// knob off): no classification, the pre-knob behaviour.
+                           IfTdSatClockSink* sat_clock = nullptr);
 
 /**
  * @brief Injected @c free_epoch arc response (event harness, Study 1).

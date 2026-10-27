@@ -121,3 +121,10 @@ Measurement and attribution are complete for the row. Nothing is armed or change
 4. **The harness consumer (card SMX version 2).** The resumed consumer is 0.7 to 1.2 m off in every leg (section 9); the consumer channels need a converged consumer before their bars mean what card SMX intends.
 
 **Other observation.** The `n` null leg carries 52 IF-TD reference resets in 60 epochs against none on `g` and `c` (most at S05000SIM on G16, S27000SIM on G29, S48000SIM on G12); the broadcast a priori appears to keep the reference gate firing. Not attributed here.
+
+## Annotation (2026-10-26): card SCR
+
+Card [SCR](SCR_sat_clock_step_response_2026-10-26.md) built decisions 1 and 3. Two of its results bear on this card's text, which stands as written:
+
+- The `g` consumer's drift (0.142 m at +49, attributed in sections 4 and 7 to the code-side overshoot) is the same with the wire carrying the step to 0.5 mm (SCR section 5.3: 141 mm at +49 with decision 1 alone). The overshoot is not its cause.
+- The same-epoch withdraw-and-re-solve that emitted -0.500 m exactly on `g` in section 4 moved G25 by -12.19 m when G25's arcs were carried (SCR section 5.1).

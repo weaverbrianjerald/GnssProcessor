@@ -275,8 +275,10 @@ void clockAnchorBeginEpoch(NetworkRunContext& ctx) {
         kv.second.folded          = false;
         kv.second.folded_anchored = false;
         kv.second.stale_pending   = false;
+        kv.second.slip_clk_pending = false;
     }
     ctx.carry.clk_anchor.tripped.clear();
+    ctx.carry.clk_anchor.stepped.clear();
 }
 
 ClockAnchorFold clockAnchorFoldVariance(NetworkRunContext& ctx,
@@ -295,7 +297,7 @@ ClockAnchorFold clockAnchorFoldVariance(NetworkRunContext& ctx,
 
 ClockAnchorFold clockAnchorFoldDecide(const NetworkRunContext& ctx, const std::string& sat,
                                       double prev_var, double dt_epoch, double pl_now_s,
-                                      double seed_horizon_s) {
+                                      double seed_horizon_s, bool slip_clk) {
     // The anchor's rule, on a copy of the state.  The per-satellite elapsed time, not the
     // driver's dt: every skip path advances prev_tow while this carry survives untouched, so
     // dt understates a stale carry's age without bound (a first sighting has no elapsed time
@@ -332,6 +334,13 @@ ClockAnchorFold clockAnchorFoldDecide(const NetworkRunContext& ctx, const std::s
         out.dt_s   = dt_sat;
     }
     if (stale && st.anchored) out.decoupled = true;   // stale_pending, cleared by BeginEpoch
+    // A satellite clock event read by the IF-TD pools before this fold: the stiff prior would
+    // meet a step, so the satellite folds LOOSE exactly as a stale carry does and the guard
+    // decouples it (slip_clk_pending).  Nothing then has to be withdrawn and re-solved.
+    if (slip_clk && st.anchored) {
+        out.decoupled = true;
+        out.slip_clk  = true;
+    }
     if (st.anchored && !out.decoupled) {
         out.inc_m2    = ctx.knobs.cta_q * dt_sat;
         out.dt_s      = dt_sat;
@@ -359,7 +368,8 @@ void clockAnchorFoldCommit(NetworkRunContext& ctx, const std::string& sat,
     ClockAnchorSat& st = ctx.carry.clk_anchor.sat[sat];
     // The decoupling edge is detected by the decision because it decides the variance; the
     // state transition, the event and the wire mark belong to the guard.
-    if (f.decoupled) st.stale_pending = true;
+    if (f.slip_clk)        st.slip_clk_pending = true;
+    else if (f.decoupled)  st.stale_pending    = true;
     if (f.anchored) {
         if (f.floor_hit) ++ctx.counters.cta_floor_hits;
         ++ctx.counters.cta_folded_anchored;
@@ -380,6 +390,32 @@ void clockAnchorFoldCommit(NetworkRunContext& ctx, const std::string& sat,
 // ---------------------------------------------------------------------------
 
 namespace {
+
+/// Whether the epoch's coupling rows reference the clock of @p sat on its own column.
+///
+/// The rows PASS B built are the exact coupling epoch (@c ctx.carry.cxu_epoch), or its copy
+/// with the cloned clocks moved onto their clones when the clock clone is armed
+/// (@c ctx.carry.ccl.rows_epoch, read while @c ccl.rows_on).  The clock is referenced on its own
+/// column when its stashed key has a row of the stashed block (@c p_of_key), that row is in S
+/// (@c s_of_p >= 0: the fold carries it with a finite inflation, so the rows re-express its
+/// coefficient with the fold's Q), and the rows' epoch has not put it on a clone
+/// (@c clone_s).  A clock in D carries no coefficient of its own in the rows; a clock on its
+/// clone is withdrawn through the clone's walk factor.
+bool coupledRowsOnOwnClockColumn(const NetworkRunContext& ctx, const std::string& sat) {
+    if (!ctx.knobs.carry_cpl_exact) return false;
+    const CouplingExactEpoch& xe =
+        ctx.carry.ccl.rows_on ? ctx.carry.ccl.rows_epoch : ctx.carry.cxu_epoch;
+    if (!xe.ok) return false;
+    const auto pk = xe.p_of_key.find(sharedCarryKey(SharedParamKind::Clock, sat, std::string{}));
+    if (pk == xe.p_of_key.end()) return false;
+    const int p = pk->second;
+    if (p < 0 || static_cast<std::size_t>(p) >= xe.s_of_p.size()) return false;
+    const int s = xe.s_of_p[static_cast<std::size_t>(p)];
+    if (s < 0) return false;
+    const bool on_clone = static_cast<std::size_t>(s) < xe.clone_s.size()
+                       && xe.clone_s[static_cast<std::size_t>(s)] != 0;
+    return !on_clone;
+}
 
 /// The decoupling edge: state transition, event and wire mark, in one path.
 /// Returns true when an edge fired (the satellite was ANCHORED).
@@ -433,6 +469,9 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
     if (!ctx.knobs.cta_on) return;
     (void)config_;   // the seam signature is uniform across the run loop
     auto& anchor = ctx.carry.clk_anchor;
+    // The satellites the IF-TD pools read as a clock event this epoch, with their steps
+    // (empty unless network.cycle_slip.if_phase_td_sat_clock_event is armed).
+    const std::map<std::string, double>& sat_clock_step = events.slip.sat_clock_step;
     ++ctx.counters.cta_epochs;
 
     // --- Non-statistical decoupling causes, applied before the test ----------
@@ -445,6 +484,20 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
         decouple(ctx, traces, se_time, sat, "gap", std::nullopt,
                  ctx.knobs.cta_max_gap_s,
                  "carried clock older than the staleness bound");
+    }
+    // A satellite clock event the fold already took LOOSE (clockAnchorFoldDecide): the edge
+    // is declared here, once, with the step as its statistic.  The prior that met the step
+    // was never folded stiff, so there is nothing to withdraw and no re-solve.
+    for (const std::string& sat : registered_clock_sats) {
+        const auto it = anchor.sat.find(sat);
+        if (it == anchor.sat.end() || !it->second.slip_clk_pending) continue;
+        ++ctx.counters.cta_trip_slip_clk;
+        const auto stp = sat_clock_step.find(sat);
+        decouple(ctx, traces, se_time, sat, "slip_clk",
+                 stp != sat_clock_step.end() ? std::optional<double>(std::abs(stp->second))
+                                             : std::optional<double>{},
+                 std::nullopt, "IF-TD satellite clock event; folded LOOSE");
+        anchor.stepped.insert(sat);
     }
     if (datum_changed) {
         for (const std::string& sat : registered_clock_sats) {
@@ -607,6 +660,7 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
                 : std::map<std::string, ClockAnchorPhiRow>{};
         std::set<std::string> trip;          // anchored satellites that failed
         std::set<std::string> trip_resolve;  // …whose prior may also be withdrawn
+        std::set<std::string> trip_backstop; // …tripped by the satellite clock event's backstop
         for (const Row& r : rows) {
             const double eh = r.e - med[systemOfSat(r.sat)];
             const double w  = eh / std::sqrt(r.S);
@@ -626,6 +680,13 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
             const bool bad_nis = (ctx.knobs.cta_space == 2) ? (phi_ok && std::abs(w_phi) > k)
                                                             : bad_clk;
             const bool bad_abs = abs_m > 0.0 && std::abs(eh) > abs_m;
+            // A satellite the slip layer read as a clock event: its fold took it LOOSE and the
+            // loop above declared the edge, so a row here is LOOSE.  A LOOSE row has its
+            // in-band run reset while the event lasts.  An ANCHORED row is a fold path that did
+            // not read the decision: it is tripped on the first pass as a backstop, whatever the
+            // statistic says (a stiff prior can hold the solved clock, and so the statistic, at
+            // the prior).  Later passes re-test the survivors on the statistic alone.
+            const bool forced = pass == 0 && sat_clock_step.count(r.sat) > 0;
             if (ctx.knobs.cta_space != 0 && pass == 0 && r.anchored) {
                 auto& C = ctx.counters;
                 if (phi_ok) {
@@ -652,7 +713,7 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
                     << (phi_ok ? fmt::format("{:.5f},{:.5f},{:.3f},{}", pit->second.e_hat,
                                              std::sqrt(pit->second.S), w_phi, pit->second.n_pb)
                                : std::string(",,,0"))
-                    << ',' << ((bad_nis || bad_abs) ? (r.anchored ? "trip" : "out") : "ok")
+                    << ',' << ((bad_nis || bad_abs || forced) ? (r.anchored ? "trip" : "out") : "ok")
                     << '\n';
             // The k derivation of §3 needs the realized distribution, not only its
             // max: the denominator √S shrinks as q tightens, so a fixed k means a
@@ -673,14 +734,26 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
                     if (std::abs(eh) >= kCtaELadder[b]) ++ctx.counters.cta_e_ge[b];
             }
             if (r.anchored) {
-                if (!bad_nis && !bad_abs) continue;
-                if (bad_nis) ++ctx.counters.cta_trip_nis;
-                else         ++ctx.counters.cta_trip_abs;
-                if (bad_nis && ctx.knobs.cta_space == 2) ++ctx.counters.cta_trip_phi;
-                decouple(ctx, traces, se_time, r.sat,
-                         bad_nis ? (ctx.knobs.cta_space == 2 ? "phi" : "nis") : "abs",
-                         (ctx.knobs.cta_space == 2 && bad_nis) ? std::abs(w_phi) : aw,
-                         bad_nis ? k : abs_m,
+                if (!bad_nis && !bad_abs && !forced) continue;
+                if (forced) {
+                    ++ctx.counters.cta_trip_slip_clk_late;
+                    trip_backstop.insert(r.sat);
+                } else if (bad_nis) ++ctx.counters.cta_trip_nis;
+                else              ++ctx.counters.cta_trip_abs;
+                if (!forced && bad_nis && ctx.knobs.cta_space == 2) ++ctx.counters.cta_trip_phi;
+                // What the decoupling event records.  A backstop trip of a satellite clock
+                // event carries its step as the statistic and has no bar.
+                const char*           why  = bad_nis ? (ctx.knobs.cta_space == 2 ? "phi" : "nis")
+                                                     : "abs";
+                std::optional<double> stat = (ctx.knobs.cta_space == 2 && bad_nis)
+                                                 ? std::abs(w_phi) : aw;
+                std::optional<double> bar  = bad_nis ? k : abs_m;
+                if (forced) {
+                    why  = "slip_clk_late";
+                    stat = std::abs(sat_clock_step.at(r.sat));
+                    bar  = std::nullopt;
+                }
+                decouple(ctx, traces, se_time, r.sat, why, stat, bar,
                          phi_ok ? fmt::format("e={:.4f};med={:.4f};sqrtS={:.4f};pass={};"
                                               "e_phi={:.4f};sqrtS_phi={:.4f}",
                                               r.e, med[systemOfSat(r.sat)], std::sqrt(r.S), pass,
@@ -688,6 +761,7 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
                                 : fmt::format("e={:.4f};med={:.4f};sqrtS={:.4f};pass={}",
                                               r.e, med[systemOfSat(r.sat)], std::sqrt(r.S), pass));
                 trip.insert(r.sat);
+                anchor.stepped.insert(r.sat);
                 // Admission screen for the same-epoch value correction only; the
                 // decouple and the mark are unconditional.
                 const double redun = (r.var_eff > 0.0)
@@ -699,7 +773,7 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
                 // whether the event is over, not whether the clock is quiet at 2 cm
                 // (the re-seed and the next anchored pass answer that).
                 ClockAnchorSat& st = anchor.sat[r.sat];
-                if (bad_nis || bad_abs) { st.in_band = 0; continue; }
+                if (bad_nis || bad_abs || forced) { st.in_band = 0; continue; }
                 ++st.in_band;
                 if (st.in_band >= std::max(1, ctx.knobs.cta_recouple_ep)) {
                     // A re-coupling is a LOOSE -> ANCHORED edge of a
@@ -734,13 +808,40 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
         for (const std::string& s : trip) anchor.sat[s].folded = false;
         if (trip.empty()) break;
         if (!ctx.knobs.cta_resolve) break;
+        // Deferral (network.clock_anchor_defer_coupled): a tripped clock whose own column the
+        // exact coupling rows reference is decoupled and marked, but its prior is not
+        // withdrawn here.  The rows were conditioned on the anchored clock in PASS B; a
+        // withdrawal after they were folded and reduced would leave rows conditioned on an
+        // anchored clock beside a clock with no prior.  It folds LOOSE from the next epoch,
+        // with the rows re-expressed for that decision.  A clock whose rows reference its
+        // clone is not deferred: its withdrawal is the clone's walk factor.
+        std::set<std::string> deferred;
+        if (ctx.knobs.cta_defer_coupled) {
+            for (auto it = trip_resolve.begin(); it != trip_resolve.end();) {
+                if (!coupledRowsOnOwnClockColumn(ctx, *it)) { ++it; continue; }
+                ++ctx.counters.cta_resolve_deferred_coupled;
+                if (!trip_backstop.count(*it)) ++ctx.counters.cta_resolve_deferred_fault;
+                traces.emitEvent(se_time, "CLK_ANCHOR", "cta_resolve_deferred", *it, "",
+                                 std::nullopt, std::nullopt, "defer",
+                                 "exact coupling rows reference the clock's own column; "
+                                 "value correction lands next epoch");
+                deferred.insert(*it);
+                it = trip_resolve.erase(it);
+            }
+        }
         if (trip_resolve.empty()) {
-            log->warn("Network (clock anchor): TOW {:.1f} — {} clock-anchor trip(s) [{}] decoupled "
-                      "and marked, but their carry redundancy (P⁻−P⁺)/P⁻ is below {:.2f}: the "
-                      "column is prior-dominated, so withdrawing the prior would leave it "
-                      "near-unobservable.  The epoch emits the anchored value for those "
-                      "satellites; they fold LOOSE from the next epoch.",
-                      se_time.tow, trip.size(), joinSats(trip), kCtaMinCarryRedundancy);
+            // The trips this warning is about: those not deferred above.
+            std::set<std::string> low_redundancy;
+            for (const std::string& s : trip)
+                if (!deferred.count(s)) low_redundancy.insert(s);
+            if (!low_redundancy.empty())
+                log->warn("Network (clock anchor): TOW {:.1f} — {} clock-anchor trip(s) [{}] decoupled "
+                          "and marked, but their carry redundancy (P⁻−P⁺)/P⁻ is below {:.2f}: the "
+                          "column is prior-dominated, so withdrawing the prior would leave it "
+                          "near-unobservable.  The epoch emits the anchored value for those "
+                          "satellites; they fold LOOSE from the next epoch.",
+                          se_time.tow, low_redundancy.size(), joinSats(low_redundancy),
+                          kCtaMinCarryRedundancy);
             break;
         }
 
@@ -919,18 +1020,31 @@ int networkClockAnchorRunEnd(const NetworkRunEndView& v) {
     const auto& c = ctx.counters;
     const long long folds = c.cta_folded_anchored + c.cta_folded_loose;
     const long long trips = c.cta_trip_nis + c.cta_trip_abs + c.cta_trip_gap
-                          + c.cta_trip_datum + c.cta_trip_ext;
+                          + c.cta_trip_datum + c.cta_trip_ext + c.cta_trip_slip_clk
+                          + c.cta_trip_slip_clk_late;
     log->info("Network (guarded temporal clock anchor): {} epoch(s); {} clock "
               "carry fold(s) — {} ANCHORED at q = {:.3e} m²/s (targets √(q·Δt) = {:.2f} cm "
               "at 30 s), {} LOOSE, {} at the variance floor.  Trips {} = {} nis + {} abs + "
-              "{} gap + {} datum + {} ext; {} in-epoch re-solve(s) ({} failed), {} "
+              "{} gap + {} datum + {} ext{}; {} in-epoch re-solve(s) ({} failed){}, {} "
               "re-coupling edge(s), {} wire mark(s) queued.  Largest |w| {:.2f} (k = {:.2f}) "
               "on {} at TOW {:.1f}.",
               c.cta_epochs, folds, c.cta_folded_anchored, ctx.knobs.cta_q,
               100.0 * std::sqrt(std::max(0.0, ctx.knobs.cta_q) * 30.0),
               c.cta_folded_loose, c.cta_floor_hits, trips, c.cta_trip_nis,
               c.cta_trip_abs, c.cta_trip_gap, c.cta_trip_datum, c.cta_trip_ext,
-              c.cta_resolves, c.cta_resolve_failed, c.cta_recouples, c.cta_marks,
+              // Only when the IF-TD satellite clock event routed a trip here.
+              (c.cta_trip_slip_clk > 0 ? fmt::format(" + {} slip_clk", c.cta_trip_slip_clk)
+                                       : std::string{})
+                  + (c.cta_trip_slip_clk_late > 0
+                         ? fmt::format(" + {} slip_clk_late", c.cta_trip_slip_clk_late)
+                         : std::string{}),
+              c.cta_resolves, c.cta_resolve_failed,
+              // Only when the deferral (network.clock_anchor_defer_coupled) acted.
+              c.cta_resolve_deferred_coupled > 0
+                  ? fmt::format(", {} deferred to the next epoch (exact coupling rows on the "
+                                "clock's own column)", c.cta_resolve_deferred_coupled)
+                  : std::string{},
+              c.cta_recouples, c.cta_marks,
               c.cta_max_w, ctx.knobs.cta_k,
               c.cta_max_w_sat.empty() ? std::string("(none)") : c.cta_max_w_sat,
               c.cta_max_w_tow);
@@ -982,8 +1096,11 @@ int networkClockAnchorRunEnd(const NetworkRunEndView& v) {
     // ext decouple withdraws the prior because the frame or the visibility moved,
     // emits a fresh solve, and has no anchored value to correct.  Counting those here
     // would report warped epochs on a quiet run with zero fault trips: a composite
-    // denominator makes a working run read as a broken one.
-    if (const long long fault_trips = c.cta_trip_nis + c.cta_trip_abs;
+    // denominator makes a working run read as a broken one.  A fault trip the deferral
+    // held (network.clock_anchor_defer_coupled) is left out for the same reason: its
+    // value correction is the next epoch's LOOSE fold, and the summary line counts it.
+    if (const long long fault_trips = c.cta_trip_nis + c.cta_trip_abs
+                                      - c.cta_resolve_deferred_fault;
         ctx.knobs.cta_resolve && c.cta_resolves == 0 && fault_trips > 0)
         log->warn("Network (clock anchor): {} FAULT trip(s) (nis+abs) but ZERO in-epoch "
                   "re-solves — every one was decoupled and marked WITHOUT the same-epoch "

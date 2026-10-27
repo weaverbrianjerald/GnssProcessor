@@ -410,6 +410,11 @@ if(MSVC)
     # translation unit and crosses the Debug section limit (C1128).
     set_source_files_properties(tests/test_pb_hold_block.cpp tests/test_pb_hold_smoothed.cpp
         PROPERTIES COMPILE_FLAGS "/bigobj")
+    # tests/network/test_network_arc_graph_oracles.cpp: the epoch-event and run-context headers it
+    # includes sat at the Debug section limit, and the satellite clock event's two members (a step
+    # map in the slip events, a trip set in the clock anchor state) tipped it over (C1128).
+    set_source_files_properties(tests/network/test_network_arc_graph_oracles.cpp
+        PROPERTIES COMPILE_FLAGS "/bigobj")
 endif()
 target_link_libraries(gnss_core PUBLIC Eigen3::Eigen spdlog::spdlog netCDF::netcdf CURL::libcurl ZLIB::ZLIB)
 if(WIN32)
@@ -590,6 +595,8 @@ add_executable(gnss_tests
     tests/test_card4_emit_rebase.cpp
     tests/network/test_clock_emit_rebase.cpp
     tests/network/test_clock_anchor.cpp
+    tests/network/test_clock_anchor_slip_clk.cpp
+    tests/network/test_clock_anchor_coupled_resolve.cpp
     tests/network/test_network_solprep_disc.cpp
     tests/test_eq34_consumer_integer.cpp
     tests/network/test_glonass_network_config.cpp
@@ -617,6 +624,7 @@ add_executable(gnss_tests
     tests/test_ephemeris_jump.cpp
     tests/test_pb_emit_hold.cpp
     tests/test_pb_hold_phase_clock.cpp
+    tests/network/test_pb_hold_trip_generation.cpp
     tests/test_pb_hold_smoothed.cpp
     tests/test_pb_hold_block.cpp
     tests/network/test_wsx_within_station_cross.cpp
@@ -736,6 +744,7 @@ add_executable(gnss_tests
     tests/network/test_network_run_end.cpp
     tests/network/test_network_entities_records.cpp
     tests/network/test_network_epoch_observers.cpp
+    tests/network/test_network_sat_clock_event.cpp
     tests/network/test_network_solve_skip.cpp
     tests/network/test_network_we_choice.cpp
     tests/network/test_network_within_epoch_culprits.cpp

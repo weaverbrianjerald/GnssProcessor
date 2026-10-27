@@ -4984,6 +4984,17 @@ namespace GnssProcessor {
         /// detect + mark + decouple-next-epoch, which is correct but ships one
         /// anchor-distorted epoch per event.
         bool   networkClockAnchorResolve() const { return network_clock_anchor_resolve_; }
+        /// Defer the value correction of a tripped clock whose own column the exact coupling
+        /// rows reference (@c network.clock_anchor_defer_coupled, default false).  The
+        /// rows were re-expressed in PASS B with the clock's anchored inflation, and the
+        /// same-epoch re-solve withdraws only the shared prior after those rows were folded
+        /// and reduced, so it combines rows conditioned on an anchored clock with a clock that
+        /// has no prior.  Armed, such a satellite is decoupled and marked as before but not
+        /// withdrawn or re-solved in the epoch: it folds LOOSE from the next epoch, with the
+        /// rows re-expressed for that decision.  A clock whose rows reference its clone keeps
+        /// the clone withdrawal.  Acts only on a trip, so it is not fingerprinted; inert
+        /// without @c network.clock_anchor_resolve and the exact coupling update.
+        bool   networkClockAnchorDeferCoupled() const { return network_clock_anchor_defer_coupled_; }
         /// Fold the clock prior gauge-free: marginalize the
         /// per-constellation satellite-clock common direction out of the folded
         /// information (rank-1 downdate Λ ← Λ − Λu(uᵀΛu)⁻¹uᵀΛ), so the anchor
@@ -8855,6 +8866,7 @@ namespace GnssProcessor {
         double network_pivot_election_horizon_s_{7200.0};  ///< Look-ahead (s) of the coverage count and the umbra test. Inert unless network_pivot_election_.
         double network_pivot_election_step_s_{300.0};      ///< Sample step (s) inside the horizon. Inert unless network_pivot_election_.
         NetworkClockAnchorStat network_clock_anchor_gauge_free_stat_{NetworkClockAnchorStat::Auto};  ///< Bisection knob: which denominator the guard (and the census's clk family) standardizes by, independently of which prior the fold applied. The gauge-free arm moves the fold and the denominator together, so without this knob its 65 → 3 trip collapse cannot be apportioned. `Auto` = follow the fold (byte-identical to runs made before the knob); `Raw`/`Post`/`Proj` force one. Solve-affecting through the trip population; appended to the fingerprint only when it is not `Auto`. Inert unless network_clock_temporal_anchor_.
+        bool   network_clock_anchor_defer_coupled_{false}; ///< A tripped clock whose own column the exact coupling rows reference is decoupled and marked but not withdrawn and re-solved in the trip epoch (network.clock_anchor_defer_coupled); it folds LOOSE from the next epoch. Acts only on a trip; not fingerprinted.
         bool   network_clock_anchor_resolve_{true};        ///< Adapt-and-emit: on a trip, withdraw the offending clock prior from the shared system and re-solve the epoch before emission, so the trip epoch publishes the data's value instead of the stale anchor's. Cheap: a shared-border information delta carries through the Schur reduction unchanged, so the re-solve is one datum + factorization of the reduced K×K system (no re-reduction, no re-assembly). Deliberately placed before the within-epoch RAIM adaptation: a prior fault must be resolved before the measurement-fault machinery attributes it to a satellite's or a station's data. Off degrades to detect+mark+decouple-next-epoch. Inert unless network_clock_temporal_anchor_.
         double network_phase_datum_pref_elev_deg_{15.0};   ///< Elevation (deg) above which a satellite counts toward a receiver's per-constellation coverage rank when ordering prioritized anchor candidates; does not mask the pin. Inert unless network_phase_datum_prioritized_.
         bool   network_phase_datum_sticky_{true};          ///< Keep the incumbent per-(sat,signal) anchor while it still tracks a usable ambiguity (re-elect only when it sets) to minimize handover disc. Inert unless network_phase_datum_prioritized_.

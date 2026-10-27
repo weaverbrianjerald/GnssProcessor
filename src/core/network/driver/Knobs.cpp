@@ -231,6 +231,8 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     // networkPbHold seam reads.
     k.emit_pb_hold           = config_.getNetworkConfig().emit_pb_hold;
     k.emit_pb_hold_max_gap_s = config_.getNetworkConfig().emit_pb_hold_max_gap_s;
+    k.emit_pb_hold_trip_gen  = config_.getNetworkConfig().emit_pb_hold_trip_generation
+                               && config_.getNetworkConfig().emit_pb_hold;
     k.emit_pb_hold_phase_clock = config_.getNetworkConfig().emit_pb_hold_phase_clock;
     k.emit_pb_hold_smoothed    = config_.getNetworkConfig().emit_pb_hold_smoothed;
     // Guarded temporal clock anchor.  `cta_on` is resolved against the clock_model
@@ -251,6 +253,7 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.cta_recouple_ep    = config_.networkClockAnchorRecoupleEpochs();
     k.cta_mark           = config_.networkClockAnchorMark();
     k.cta_resolve        = config_.networkClockAnchorResolve();
+    k.cta_defer_coupled  = config_.networkClockAnchorDeferCoupled() && k.cta_resolve;
     k.cta_gauge_free     = config_.networkClockAnchorGaugeFree();
     // Broadcast satellite health on the network path.
     k.sat_health         = config_.networkSatHealth();

@@ -720,6 +720,7 @@ namespace GnssProcessor {
         bool clk_jump_test{};   ///< Mark per-sat common-removed clock steps through the R-record retro-bump (network.clock_disc_jump_test).
         bool   emit_pb_hold{};             ///< Hold each (sat, signal) emitted phase bias at the first value of its generation (network.emit_pb_hold); state in NetworkCarryState::pb_hold.
         double emit_pb_hold_max_gap_s{};   ///< Arc gap (s) beyond which a returning key starts a new generation (network.emit_pb_hold_max_gap_s).  Inert unless emit_pb_hold.
+        bool   emit_pb_hold_trip_gen{};    ///< A satellite the anchor guard's test tripped starts a new hold generation (network.emit_pb_hold_trip_generation && emit_pb_hold).  Acts only on an event.
         bool   emit_pb_hold_phase_clock{}; ///< Hold the phase-visible clock instead of the phase bias (network.emit_pb_hold_phase_clock).  Inert unless emit_pb_hold.
         bool   emit_pb_hold_smoothed{};    ///< The smoothed hold (network.emit_pb_hold_smoothed): the held phase bias follows the clock clone c(t0|t); LAH's transfer after a clone dies.  Inert unless emit_pb_hold.
         // --- Guarded temporal clock anchor ---
@@ -753,6 +754,7 @@ namespace GnssProcessor {
         /// gauge's work, which shows as a reduced drained Σ|μ| at CLK-R.
         bool   cta_gauge_free{};
         bool   cta_resolve{};        ///< network.clock_anchor_resolve: adapt and emit; withdraw the tripped prior and re-solve the epoch before emission
+        bool   cta_defer_coupled{};  ///< network.clock_anchor_defer_coupled && cta_resolve: a tripped clock whose own column the exact coupling rows reference is not withdrawn or re-solved in the trip epoch (it folds LOOSE from the next).  Acts only on a trip.
         // network.clock_anchor_gauge_free_stat, resolved once (auto follows the fold), so
         // the guard and the census read predicates instead of re-deriving the mapping (the
         // same rule as the clock_model interlock on `cta_on` above).  These select only the
