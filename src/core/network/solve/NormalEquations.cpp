@@ -2106,6 +2106,45 @@ Eigen::VectorXd NetworkNormalEquations::reconstructStationCovarianceDiag(
     return out;
 }
 
+Eigen::VectorXd NetworkNormalEquations::stationConditionalVarianceDiag(
+    std::size_t station, const std::vector<Eigen::Index>& local_cols) const {
+    if (station >= n_active_) {
+        throw std::out_of_range("NetworkNormalEquations::stationConditionalVarianceDiag: "
+                                "station index out of range");
+    }
+    const Station& st = stations_[station];
+    const Eigen::Index k = static_cast<Eigen::Index>(local_cols.size());
+    if (st.n_local == 0 || k == 0) {
+        return Eigen::VectorXd();
+    }
+    // reconstructStationCovarianceDiag with Cov_free = 0 adds m_cᵀ (0 · m_c) to
+    // (N_rr⁻¹)_{cc}.  For a finite m_c that term is ±0, which leaves a finite nonzero
+    // variance unchanged, so it is skipped.  The other cases take the product itself,
+    // so the result keeps every bit of the zero-matrix form.
+    Eigen::MatrixXd zero;   // allocated only for those cases
+    Eigen::VectorXd out(k);
+    Eigen::VectorXd e_c = Eigen::VectorXd::Zero(st.n_local);
+    for (Eigen::Index i = 0; i < k; ++i) {
+        const Eigen::Index c = local_cols[i];
+        if (c < 0 || c >= st.n_local) {
+            fail("stationConditionalVarianceDiag: local column out of range");
+        }
+        e_c(c) = 1.0;
+        const Eigen::VectorXd n_c = st.Nrr_ldlt.solve(e_c);  // N_rr⁻¹ e_c (n_local)
+        e_c(c) = 0.0;
+        double var = n_c(c);                                 // (N_rr⁻¹)_{cc}
+        if (n_shared_ > 0) {
+            const Eigen::VectorXd m_c = st.N_sr * n_c;        // N_sr n_c (n_shared)
+            if (var == 0.0 || !std::isfinite(var) || !m_c.allFinite()) {
+                if (zero.size() == 0) zero = Eigen::MatrixXd::Zero(n_shared_, n_shared_);
+                var += m_c.dot(zero * m_c);
+            }
+        }
+        out(i) = var;
+    }
+    return out;
+}
+
 NetworkNormalEquations::StationRegression
 NetworkNormalEquations::stationRegression(std::size_t station,
                                           Eigen::Index local_col,

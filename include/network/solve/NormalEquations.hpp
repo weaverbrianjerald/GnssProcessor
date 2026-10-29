@@ -1146,6 +1146,30 @@ public:
         std::size_t station, const std::vector<Eigen::Index>& local_cols,
         const Eigen::MatrixXd& cov_free_xs, bool carry_aware = false) const;
 
+    /**
+     * @brief The border-known form of @ref reconstructStationCovarianceDiag:
+     *        @f$(N_{rr}^{-1})_{cc}@f$ for each requested local column, the whole
+     *        shared border treated as known.
+     *
+     * Returns, bit for bit, what @ref reconstructStationCovarianceDiag returns for an
+     * all-zero @c cov_free_xs and @c carry_aware false, without forming or
+     * multiplying that @c n_shared × @c n_shared zero matrix.  With
+     * @f$m_c=N_{sr}n_c@f$ finite, @f$m_c^\top\,0\,m_c@f$ is ±0, and adding it leaves a
+     * finite nonzero @f$(N_{rr}^{-1})_{cc}@f$ unchanged, so the product is skipped.
+     * The other cases (a zero or non-finite variance, whose bits the addition can
+     * change, and a non-finite @f$m_c@f$, which turns the sum to NaN) take the
+     * zero-matrix product itself.  Each column costs one local solve and one
+     * @f$N_{sr}n_c@f$ product.
+     *
+     * @param station    Index from @ref addStation.
+     * @param local_cols Local columns whose border-known variance is wanted.
+     * @return One variance per requested column (empty if the station has no locals
+     *         or @p local_cols is empty).
+     * @throws std::out_of_range / std::invalid_argument on a bad index or column.
+     */
+    Eigen::VectorXd stationConditionalVarianceDiag(
+        std::size_t station, const std::vector<Eigen::Index>& local_cols) const;
+
     /// The regression of one local column on the shared border, and that column's
     /// pure conditional variance: the two ingredients of an exact between-epoch
     /// conditional carry (@c network.carry_conditional_coupling).
