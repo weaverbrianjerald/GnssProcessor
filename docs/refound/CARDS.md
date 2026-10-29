@@ -234,3 +234,9 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   response, then the MW detector's re-detection 30 to 420 s later; 11 in the field 6 h). The detector dates each step and
   `mw_reflag_skip` frees no band re-levelled since; off byte-identical, on frees once, user and census within 2 mm. ARMED
   2026-10-28 at the author's decision (ledger, both goldens, the loader's posture row); baseline pair `runs/_rf0hv16_{field,sim}6`.
+- [BOF](BOF_built_off_follow_through_2026-10-28.md): closed, 2026-10-28: the built-but-off register worked through on the
+  golden of main `ef9f75d`: a 24 h day (PIV, OTL, NTA), a second PIV day, the block-Baarda positive control, NSD, the ARL
+  slip fixes, posture C at 305 stations and a 2 h triage of 22 never-graded keys. OTL, NTA, the estimable block test and
+  NSD pass; PIV misses one site clause (ARHT00ATA, DOY 130); the ARL fixes stay off. ARMED at the author's decision:
+  OTL and the noon-turn attitude (field golden), the estimable block test and the seed mirrors (both goldens); the loader
+  warns on the out-of-scope combined sigma; baseline pair `runs/_rf0hv17_{field,sim}6`.

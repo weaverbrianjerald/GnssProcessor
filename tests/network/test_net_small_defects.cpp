@@ -363,17 +363,17 @@ TEST(StashHardRefloatTest, TheSitesAreArmedWhereTheStashCanLeaveAnEntryOut) {
 // The stash-status mirrors and the parked readmit seeds
 // ---------------------------------------------------------------------------------------
 
-// The key defaults to false, neither golden arms it, and the loader reads it from the network
-// block into the knob snapshot.
-TEST(StashStatusSeedMirrorTest, TheKeyDefaultsOffAndNeitherGoldenArmsIt) {
+// The key defaults to false, both goldens arm it (since 2026-10-28), and the loader reads it
+// from the network block into the knob snapshot.
+TEST(StashStatusSeedMirrorTest, TheKeyDefaultsOffAndBothGoldensArmIt) {
     for (const char* bed : {"field", "sim"}) {
         LogManager log;
         GnssConfig cfg;
         const fs::path p = fs::path(GNSS_PROJECT_ROOT) / "config" / "golden" /
                            (std::string("golden_") + bed + "_refound.json");
         ASSERT_TRUE(cfg.loadFromJson(p, log)) << bed;
-        EXPECT_FALSE(cfg.networkReadmitSeedMirrors()) << bed;
-        EXPECT_FALSE(NetworkKnobs::snapshot(cfg, cfg.getNetworkConfig()).readmit_seed_mirrors) << bed;
+        EXPECT_TRUE(cfg.networkReadmitSeedMirrors()) << bed;
+        EXPECT_TRUE(NetworkKnobs::snapshot(cfg, cfg.getNetworkConfig()).readmit_seed_mirrors) << bed;
     }
     LogManager logman;
     GnssConfig absent, armed;

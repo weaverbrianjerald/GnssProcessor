@@ -5,13 +5,13 @@
 - **id:** BBE
 - **topic:** raim-qc
 - **status:** open
-- **summary:** BUILT 2026-10-18, default off, never armed: `network.block_baarda_estimable` tests the part of each (station, satellite) line-of-sight block that the data can test. The whole-block test refused every block on the float vehicle (field 60279 of 60302, sim all) because the line of sight's own slant ionosphere is a free column that absorbs one direction of the block exactly. Knob off is identical to a main control on the 10-epoch smokes (field and sim). Checked 2026-10-18 on both beds with the same-build gates (section 8): knob off identical, knob on moves nothing but the census outputs, no flagged block is block-only.
+- **summary:** ARMED 2026-10-28 at the author's decision (section 10, card BOF). BUILT 2026-10-18, default off, never armed: `network.block_baarda_estimable` tests the part of each (station, satellite) line-of-sight block that the data can test. The whole-block test refused every block on the float vehicle (field 60279 of 60302, sim all) because the line of sight's own slant ionosphere is a free column that absorbs one direction of the block exactly. Knob off is identical to a main control on the 10-epoch smokes (field and sim). Checked 2026-10-18 on both beds with the same-build gates (section 8): knob off identical, knob on moves nothing but the census outputs, no flagged block is block-only. 2026-10-28 (section 9): the positive control passes; the estimable form flags 1.5 m code multipath at 24 times the control's rate, no other armed check reports it, no flag is block-only; arming the estimable form is recommended, the author's decision.
 - **source:** `docs/status/OPEN_ITEMS.md` (block_baarda is blind on the float vehicle); [Rider B](../cards/raim-qc/BLOCK-BAARDA-RIDER-B.md) section 12.3 and deviation 3 (a pseudo-inverse was refused for its unknown degrees of freedom); [REDUNDANCY-CENSUS](../cards/raim-qc/REDUNDANCY-CENSUS.md)
 - **knobs / posture:** `network.block_baarda_estimable` (ledger UNVALIDATED), `network.block_baarda_estimable_eps` (PARAM, 0.05); both goldens keep `block_baarda` armed and do not set either key, so both are unchanged. Measure-only: nothing in the solve reads the census.
 - **dates in the text:** 2026-10-18
 - **hashes / run dirs:** branch `fix/baarda` from main `30ca49e`; control exe `D:/GnssProcessorSupport/gates/exe/x64-Release/gnss_processor_baarda_ctl.exe` (main), exe under test `gnss_processor_baarda.exe` (same directory); arms `D:/GnssProcessorSupport/runs_nom/_rap_baarda_{f,s}10_{ctl,off,on}` (10 epochs) and `_rap_baarda_{f,s}1h_est` (1 h); reference run `runs/_rf0hv15_field6`; dumps and comparisons `D:/GnssProcessorSupport/gates/baarda/`; reader `scripts/block_baarda_join.py`
 
-**Outcome.** Question: why does the armed block test find every line-of-sight block singular on the float vehicle, and can it be made to work? The slant ionosphere of a line of sight is a local column that only that line of sight's rows touch and nothing constrains, so it absorbs one direction of the block exactly: in 8000 of 8000 sampled warm blocks the smallest redundancy number of the whitened block cofactor is below 1e-11 and its eigenvector lies in the span of that column. The estimable form keeps the other directions (3 of 4, 4 of 5) with their count as the degrees of freedom. Sim and field 1 h arms: 0 and 16 of 11562 and 10741 blocks refused. The 2 h grade (section 8): 4 of 9984 field blocks refused in hour 2, 7.1 % flagged, none block-only; sim 0 of 10584 refused, 1.2 % flagged, none block-only; cost within 0.7 to 0.9 times the refusing form.
+**Outcome.** Question: why does the armed block test find every line-of-sight block singular on the float vehicle, and can it be made to work? The slant ionosphere of a line of sight is a local column that only that line of sight's rows touch and nothing constrains, so it absorbs one direction of the block exactly: in 8000 of 8000 sampled warm blocks the smallest redundancy number of the whitened block cofactor is below 1e-11 and its eigenvector lies in the span of that column. The estimable form keeps the other directions (3 of 4, 4 of 5) with their count as the degrees of freedom. Sim and field 1 h arms: 0 and 16 of 11562 and 10741 blocks refused. The 2 h grade (section 8): 4 of 9984 field blocks refused in hour 2, 7.1 % flagged, none block-only; sim 0 of 10584 refused, 1.2 % flagged, none block-only; cost within 0.7 to 0.9 times the refusing form. 2026-10-28 (section 9): the positive control passes; the estimable form flags 1.5 m code multipath at 24 times the control's rate, no other armed check reports it, no flag is block-only; arming the estimable form is recommended, the author's decision.
 
 ## 1. Why every block is singular
 
@@ -176,3 +176,51 @@ Sim, hour 2: 112 events, none with a companion in the RAIM, slip, resume, census
 - It does not change the solve, the wire or any other product (B0, B1, the G5 side, the user side and the real-time arms above).
 - On this evidence the block tier is not a source of new detections: nothing it flags is block-only, 77 % of the field flags have no companion tier, 98 % are raw-flat, and the flagged lines of sight cluster by station. Whether the goldens keep the census armed (2.4 to 4.1 % of the run wall, in its refusing form a sweep that tests nothing) or arm the estimable form is the author's decision; no golden is edited by this card.
 - Still owed: the positive control (section 7) and the guard for the unwarmed first sweep.
+
+## 9. Positive control, 2026-10-28
+
+Gates written before the runs (`D:/GnssProcessorSupport/runs_nom/bof_reports/preregistration.md`, section BBE). Exe
+`build/x64-Release/gnss_processor_bof.exe` (the Release build of main at `ef9f75d`, sha256[:16] 2d84a326fd00fd04), run
+root `D:/GnssProcessorSupport/runs_nom`. Sim golden, 2 h, `network.block_baarda_estimable` true in every arm; the faults
+are `rapid_arm.py` ops on GPS at the first six stations (S01000SIM to S06000SIM): `_rap_bof_bbe_s2_ctl` (none),
+`_mp05` and `_mp15` (`drift;types=C1?,C2?;amp_m=0.5|1.5;period_s=900;per=los;seed=11`, a code sinusoid per line of
+sight), `_slip` (`slip;types=L1?;rate=0.5;max=3;seed=21` and the same on L2? with seed 22, independent integer slips on
+the two bands). Warm sweeps only (from 00:30:15, the start artifact of the fixture). A flag is block-only when the
+largest testable row statistic of the same block (`row_t`) is below the event threshold.
+
+| arm | flagged, injected GPS | flagged, other GPS | flagged, injected Galileo | block-only | blocks tested (G / E) | refused |
+|---|---:|---:|---:|---:|---|---:|
+| ctl | 9 | 68 | 8 | 0 | 8833 / 7114 | 0 |
+| mp05 | 33 | 60 | 8 | 0 | 8833 / 7114 | 0 |
+| mp15 | 218 | 34 | 8 | 0 | 8833 / 7114 | 0 |
+| slip | 10 | 70 | 7 | 0 | 8833 / 7114 | 0 |
+
+Events of every tier at the injected GPS cells, same window:
+
+| arm | BLOCKBAARDA | MDB | PRIORRES | T1_if_slip | T0_band_scope | T0_mw_detect | RAIM, REDUNDANCY |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| ctl | 9 | 44 | 241 | 0 | 2 | 0 | 0 |
+| mp05 | 33 | 44 | 242 | 0 | 1 | 0 | 0 |
+| mp15 | 218 | 44 | 261 | 0 | 4 | 1 | 0 |
+| slip | 10 | 44 | 578 | 80 | 54 | 1 | 0 |
+
+The golden as armed (whole-block form, `runs/_rf0hv16_sim6`, same exe): 16815 blocks in the same window, 16815
+refused, 0 reported, no BLOCKBAARDA event in 6 h.
+
+Reading.
+- B1 passes: the estimable form sees code multipath of 1.5 m (218 flags against 9 at the same stations, ratio 24) and
+  of 0.5 m (ratio 3.7). B3 passes: no block refused. It does not see independent slips (10 against 9); the IF-TD
+  detector takes them (80 flags).
+- B2 is 0 on every arm: no flag is block-only. The pre-registered reading of B2 = 0 was "the tier adds nothing the rows
+  do not; drop the census". That reading assumed a row tier outside the census, and at these cells there is none: RAIM
+  and the census cross-flag emit nothing, MDB is flat (44 in every arm), the prior-residual census moves 241 to 261.
+  The row statistic that sees the multipath is computed inside the block sweep. Dropping the census therefore removes
+  the only instrument that reports this fault, and the pre-registered reading is not followed.
+- Arming the estimable form is the decision the evidence supports: it turns a census that tests nothing into the one
+  tier that reports code multipath at these sizes, measure-only, at 0.7 to 0.9 times the wall of the refusing form
+  (section 8.3). The guard for the unwarmed first sweep stays owed and does not block it (the first sweep is an
+  event-only population). The decision is the author's.
+
+## 10. Armed, 2026-10-28
+
+Armed at the author's decision with card [BOF](BOF_built_off_follow_through_2026-10-28.md) (section 6, the gates and the baseline pair `runs/_rf0hv17_{field,sim}6`): `network.block_baarda_estimable` is pinned in both goldens beside `block_baarda` (ledger TRACE, golden). On the new field baseline the census tests 60209 of 60302 blocks (93 refused) and reports 4155 (6.9 %), none block-only. The guard for the unwarmed first sweep stays owed.

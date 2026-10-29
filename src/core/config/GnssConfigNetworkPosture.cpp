@@ -536,6 +536,32 @@ namespace GnssProcessor {
               "a receiver antenna without Galileo PCO / PCV takes its nearest GPS band (E1 -> "
               "G01, E5a -> G05) instead of dropping the station's Galileo: 6 field stations "
               "; never applied to a satellite antenna" },
+            // --- Station and satellite models adopted 2026-10-28 (card BOF).  Field data
+            //     only: the sim fixture carries neither ocean tide loading nor a noon-turn
+            //     law, so the sim golden lists them as exceptions.  The three OTL rows are in
+            //     regime wherever ocean tide loading is on (its code default is true).
+            { model_corrections_.enable_ocean_tide_loading,
+              model_corrections_.otl_from_sif,
+              Tier::SCOPED, false, "model_corrections.otl_from_sif",
+              "ocean tide loading coefficients from the SIF registry (FES2014b, three components): "
+              "with the nodal terms and the diurnal translation removed, field 24 h census -0.98 mm "
+              "(POHN00FSM -11.4 mm, no site worse), held-out user -0.84 mm" },
+            { model_corrections_.enable_ocean_tide_loading,
+              model_corrections_.otl_nodal_corrections,
+              Tier::SCOPED, false, "model_corrections.otl_nodal_corrections",
+              "18.6-year nodal factors on the 11 loading constituents: radial gap to IERS HARDISP "
+              "4.9 -> 2.5 mm at the worst of three stations" },
+            { model_corrections_.enable_ocean_tide_loading && model_corrections_.otl_from_sif,
+              model_corrections_.otl_remove_diurnal_translation,
+              Tier::SCOPED, false, "model_corrections.otl_remove_diurnal_translation",
+              "remove the net diurnal translation of the SIF loading field, absent from the "
+              "CODE-based wire: held-out user over 6 h +6.5 -> +2.0 mm, over 24 h -0.84 mm" },
+            { gps_gal_only,
+              enable_noon_turn_attitude_,
+              Tier::SCOPED, false, "processing.enable_noon_turn_attitude",
+              "GPS IIF / IIR noon turns for the satellite PCO and the wind-up: G25 phase residual "
+              "7.1 -> 4.9 mm in its turn, 24 h census within 0.01 mm with and without the model "
+              "at the consumer; inert in the goldens' 00-06 UT window" },
             { true,
               network_exclude_unmodeled_antenna_stations_,
               Tier::SCOPED, false, "network.exclude_unmodeled_antenna_stations",
@@ -1085,6 +1111,12 @@ namespace GnssProcessor {
               "readmit seeds cover the code-bias columns too (default true): the clock-only variant "
               "is FALSIFIED — the IF-pair code-bias seeds anchor the clock-vs-code-bias split at the "
               "return, without them the T3 clock tails come back (runs/readmit24h_e2clk)" },
+            { network_readmit_seed_horizon_s_ > 0.0,
+              network_readmit_seed_mirrors_,
+              Tier::SCOPED, false, "network.readmit_seed_mirrors",
+              "the carry LS-VCE monitor and the prior-residual census take an applied readmit seed "
+              "as a row instead of skipping it: field 6 h products identical, 23 code-bias seeds "
+              "taken that both had skipped" },
             // Coupling reinit sources.  Meaningful only where the
             // coupling rows exist: the conditional carry armed and not superseded by the
             // invariant carry (under carry_invariant the whole coupling trio is

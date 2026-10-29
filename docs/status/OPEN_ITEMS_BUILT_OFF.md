@@ -1,0 +1,51 @@
+# Open items: built and switched off
+
+Split from [OPEN_ITEMS.md](OPEN_ITEMS.md) on 2026-10-28, which is near the 60 KB bar: the register of
+work that is built, checked at least for the off path, and not armed, ordered by the evidence that it
+helps. The register rules are those of the main page (one line per item, each with its evidence). The
+numbers are quoted from the card or ledger row named. An item leaves this page when the author arms it
+(a ledger row and `scripts/make_golden_config.py`) or when its card falsifies it. The goldens run 00:00
+to 06:00 UT on DOY 129 of 2024, so a model term that acts elsewhere in the day (a noon turn) is inert
+on them. Not listed: `network.sparse_station_normals`, armed 2026-10-19 (`3e4a53a`);
+`network.cycle_slip.mw_reflag_skip`, armed 2026-10-28 (`ef9f75d`, card MRF); armed 2026-10-28 after the
+checks of card BOF (section 6): `network.block_baarda_estimable` and `network.readmit_seed_mirrors` on both goldens,
+ocean tide loading from the SIF registry (four keys) and `processing.enable_noon_turn_attitude` on the field golden;
+the 95 KEEP_OFF
+rows of the [ledger](../CONFIG_promotion_ledger.md), which are falsified or traded. The owed checks
+were run on 2026-10-28 on the golden of main `ef9f75d` (card
+[BOF](../refound/BOF_built_off_follow_through_2026-10-28.md), whose section 5 lists the arming decisions).
+
+## Measured gain; the arming decision is owed
+
+- **BeiDou as a third constellation (posture C).** `processing.active_systems` with BeiDou B1I + B3I, `network.second_band_admission`, `network.n3c_wire_per_signal`. Five 24 h days (DOY 128 to 132): 16-site census paired median -0.8 to -3.8 mm against the golden, better on four days and equal on one, no site worse than +2.9 mm; ARHT00ATA -0.08 to -0.13 m on four days; hour 1 better on every day; about twice the golden's run time. At 305 stations (2 h, 2026-10-28): runs to the end, withholds nothing, WTZZ00DEU hour 1 -19.7 mm and hour 2 +7.9 mm, loop 2.5 times GE; a 6 h 305-station pair would settle hour 2. The warm resume is field-inert (the goldens do not resume). [MDAY](../refound/MDAY_multiday_candidate_2026-10-19.md), [BDS](../refound/BDS_beidou_third_constellation_2026-10-18.md), [BDSB](../refound/BDSB_beidou_continued_2026-10-19.md)
+- **Clock pivot elected by predicted coverage.** `network.pivot_election: coverage`. Field 6 h: hour-2 common drift 0.051 against 0.192 m/h, no pivot handover against two in the control, held-out consumer and census unchanged at the median; clock product within 2.4 mm. 24 h DOY 129 (2026-10-28): the forced-handover branch runs (G22 to G23), handovers 1 against 2, census -0.13 mm, GPS clock p50 +4.8 mm; DOY 130 6 h: census 0.0 mm but ARHT00ATA +40.6 mm, the one failed clause. Owed: ARHT00ATA's spread under a neutral change. [PIV](../refound/PIV_pivot_election_coverage_2026-10-17.md)
+
+## Less churn or cleaner bookkeeping; no benefit at the user shown
+
+- **Wind-up carried through gaps.** `estimation.phase_windup_gap_bridge`. Field 6 h: restarts 139 to 91, refloated arcs 116 to 23, consumer within 0.3 mm in every hour, census median 0.0 mm. [WGB](../refound/WGB_windup_gap_bridge_2026-10-17.md)
+- **Signal decisions D7 and D1.** `network.n3c_ledger_lifecycle`: census 2 better (ARHT00ATA -3.2 cm, DAV100ATA -1.0 cm), 0 worse; `network.n3c_bia_pin_pair`: median +0.1 mm, ARHT00ATA -6.5 cm, 0 worse. The N3c line of [OPEN_ITEMS](OPEN_ITEMS.md); [ledger](../CONFIG_promotion_ledger.md)
+- **Consumer pre-update innovation screen.** `network.closed_loop.innovation_screen`: armed, no output moved (one E11 C5Q code row held). [NIS](../refound/NIS_consumer_innovation_screen_2026-10-17.md)
+
+## Fault-scenario fixes on an unmerged branch
+
+- **Satellite clock step.** Branch `claude/sck-sat-clock-step` (not merged; cards SCR and ARS live there): `network.cycle_slip.if_phase_td_sat_clock_event` and `network.emit_pb_hold_trip_generation` pass the producer channels of the scenario matrix's clock-step row; `network.clock_anchor_defer_coupled` keeps 22 of 22 clocks in place on the slip-storm leg (16 of 31 pushed away before; GPS clock rms 0.8 to 0.2 m). Quiet days: inert or ppm-level, except the trip generation (+1.4 mm in hour 2 on the field). Owed: the consumer channels of the legs (after card CRS's resume defects), the narrowing of the trip generation to clock-step trips, the sim-start decision.
+
+## Partial signals and research tracks (not ready to arm)
+
+- **Self-contained clock level on COD.** The clock clone (B1), the dense handover (B2), the anchor keep, shared history with the smoothed hold (X2b) and a clock q of 5e-6: census-neutral over four days and no ARHT00ATA divergence, hour 1 +0.016 m, bars G1 and G4 missed; the author's decision. [NBP](../refound/NBP_native_broadcast_clock_posture_2026-10-07.md), [SCL2B](../refound/SCL2B_shared_history_with_the_hold_2026-10-07.md)
+- **Pinned clock pivot.** `network.clock_datum_satellite`: G14 cut the hour-2 drift from -0.180 to -0.063 m/h; the coverage election above automates the choice. [PAC](../refound/PAC_common_drift_pivot_clock_2026-10-01.md)
+- **Slip fixes for the fixed-cycle posture.** `network.cycle_slip.gf_arc_jump`, `if_phase_td_reseed_on_flag`: clean on the sim rungs; 6 h field (2026-10-28): users within 0.2 mm, the arc-jump flag triples the slip re-levels; off unless the fixed-cycle posture returns. [ARL](../refound/ARL_integer_ambiguity_ladder_2026-10-09.md)
+- **Integer-recovering datum.** The eq34 bundle A0: the re-registered negative control passes 44 of 44 cells; IRD-1 next. [IRD](../refound/IRD_integer_recovering_datum_2026-10-13.md)
+- **Broadcast health.** `network.sat_health`: neither mode better at 2 h; E14 and E18 are kept. [HLT](../refound/HLT_broadcast_health_2026-09-25.md)
+- **L5 and lanes.** SEQUENCED add-backs: the anchor's level held in the datum is next ([ALD](../refound/ALD_anchor_level_datum_2026-10-23.md), after [L5B](../refound/L5B_band5_receiver_delay_2026-10-10.md)); the lane design is owed ([AB3](../refound/AB3_lanes_2026-09-20.md)).
+- **Coordinates from SINEX.** The roster at its SINEX values moves the satellite clocks 5 to 7 mm RMS and the consumers 2.4 mm at most; phase 2 is not built. [SNXB](../refound/SNXB_sinex_roster_arms_2026-10-19.md)
+
+## Built and never graded on the current posture
+
+A 2 h field triage of these keys ran on 2026-10-28 ([BOF](../refound/BOF_built_off_follow_through_2026-10-28.md) section 3): 12 identical, 6 change diagnostics or the product file only, `signal_integrity.census` and `raim_refloat_maturity_gate` cut refloats (60 to 30, 60 to 8) with the consumer within 0.5 mm, and `closed_loop.consume_combined_sigma` (with `combined_sigma_agek`) breaks the network-clock consumer by metres when armed outside its bias-only scope (the loader now warns on that pairing). Seven of the identical keys cannot act on a cold golden.
+
+- **QC.** `clock_monitor`, `signal_integrity.census`, `adm_revet`, `raim_withhold_adapt_escalate`, `raim_withhold_free_erase`, `per_const_withhold`, `raim_refloat_maturity_gate`, `gross_los_station_tier`, `signal_min_station_fraction`, `phase_bias_min_station_fraction`. [ledger](../CONFIG_promotion_ledger.md)
+- **Slip.** `cycle_slip.if_phase_td_ref_warmup_abstain`, `if_phase_td_ref_elev_norm`. [ledger](../CONFIG_promotion_ledger.md)
+- **Wire and consumer.** `contract_rebroadcast_s`, `emitter_staleness_horizon_s`, `ura_retro_bump`, `mark_refsat_reset_disc`, `require_signal_integer_for_ar`, `combined_sigma_agek`, `closed_loop.consume_combined_sigma`, `pivot_vanish_return_signal`, `ura_refloat_inflate`, `warmup_ura_floor_m`. [ledger](../CONFIG_promotion_ledger.md)
+- **Service.** `network.streaming.enable`, `realtime.tcp_silent_timeout_s`. [ledger](../CONFIG_promotion_ledger.md)
+- **Seams and warm resume** (a scope-cut add-back). `state_snapshot_*`, `resume_slip_warmup_ep`, `closed_loop.state_snapshot`, `realtime.state_snapshot_path`. [ledger](../CONFIG_promotion_ledger.md)

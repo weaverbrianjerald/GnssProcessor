@@ -11905,6 +11905,16 @@ namespace GnssProcessor {
             clc.consume_network_clock    = cl.value("consume_network_clock", true);
             clc.consume_network_iono     = cl.value("consume_network_iono", false);
             clc.consume_combined_sigma   = cl.value("consume_combined_sigma", false);  // contract v2 (M4)
+            // The combined sigma is scoped to a consumer that takes only the biases: on a
+            // consumer that also takes the network clock it was measured to cost metres
+            // (field and sim goldens, 2 h: hour-1 p50 57 mm -> 1.47 m, 99 mm -> 0.60 m).
+            // Warned, not refused, so existing seam-control configs still load.
+            if (clc.consume_combined_sigma && clc.consume_network_clock)
+                log->warn("Network: network.closed_loop.consume_combined_sigma is on with "
+                          "consume_network_clock (the default): the combined sigma is validated "
+                          "only for a consumer that takes the biases alone, and on a network-clock "
+                          "consumer it measured a metre-level position error on both goldens.  "
+                          "Set consume_network_clock false or leave consume_combined_sigma off.");
             clc.consumer_undifferenced   = cl.value("consumer_undifferenced", false);
             // (A) the declared-step ambiguity carry (derived into the consumer engine
             // as processing.ssr_phase_bias_disc_carry) and (B) the consumer snapshot

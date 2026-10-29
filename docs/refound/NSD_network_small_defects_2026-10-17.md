@@ -5,7 +5,7 @@
 - **id:** NSD
 - **topic:** network-vehicle
 - **status:** open
-- **summary:** BUILT 2026-10-17 on branch `fix/netsmall`. (1) The hard clock refloat (`clock_monitor_reinit_sigma_m` <= 0) is counted in the response registry by three new sites (`clk_hard_refloat`, `pb_hard_refloat`, `cb_hard_refloat`). (2) The stash-status mirrors (the carry LS-VCE monitor snapshot and the prior-residual census snapshot) skip every parked entry, a readmit seed the D2 fold applied included: confirmed in code, counted at run end by a new READMIT line, and taken as rows behind the default-off key `network.readmit_seed_mirrors`. (3) The de-commoned clock step of the coupled-mark census takes one median per constellation. Items 1 and 3 are measure-only and carry no key; item 2's key is unarmed. The same-build check of 2026-10-18 (section 7) found the declared lines and no others.
+- **summary:** ARMED 2026-10-28 at the author's decision (section 9, card BOF). BUILT 2026-10-17 on branch `fix/netsmall`. (1) The hard clock refloat (`clock_monitor_reinit_sigma_m` <= 0) is counted in the response registry by three new sites (`clk_hard_refloat`, `pb_hard_refloat`, `cb_hard_refloat`). (2) The stash-status mirrors (the carry LS-VCE monitor snapshot and the prior-residual census snapshot) skip every parked entry, a readmit seed the D2 fold applied included: confirmed in code, counted at run end by a new READMIT line, and taken as rows behind the default-off key `network.readmit_seed_mirrors`. (3) The de-commoned clock step of the coupled-mark census takes one median per constellation. Items 1 and 3 are measure-only and carry no key; item 2's key is unarmed. The same-build check of 2026-10-18 (section 7) found the declared lines and no others. 2026-10-28 (section 8): on the 6 h field golden the key leaves the products identical and takes 23 code-bias seeds the monitor and the census skipped.
 - **source:** `docs/status/OPEN_ITEMS.md` rows "Hard clock refloat uncounted", "Stash-status mirrors (suspected)" and "Mixed-system clock step"; [PRM3](PRM3_responses_2026-10-02.md) section 5; `docs/cards/queues/CAF-COMMENT-AUDIT-FINDINGS.md` sections 4 and 5
 - **knobs / posture:** `network.readmit_seed_mirrors` (ledger row UNVALIDATED, default false, not fingerprinted, unarmed in both goldens); no key for items 1 and 3
 - **dates in the text:** 2026-10-17
@@ -18,7 +18,7 @@ applies it; a counter states how many, and one default-off key takes them as row
 median across GPS and Galileo where the hold's own transfer is per constellation; it is per constellation now. Every
 output difference with the key off is declared line by line in section 4. The same-build check
 ([section 7](#7-same-build-check-2026-10-18)) found those lines and no others; the 6 h seed counts stay owed
-([section 6](#6-what-remains)).
+([section 6](#6-what-remains)). 2026-10-28 (section 8): on the 6 h field golden the key leaves the products identical and takes 23 code-bias seeds the monitor and the census skipped.
 
 ## 1. Hard clock refloat uncounted
 
@@ -183,3 +183,22 @@ IDENTICAL, all exit 0. These arms do not run the network producer, so they certi
 **Verdict.** Pass: with the key off, every difference from main `30ca49e` is a declared line of section 4, and no
 CSV, product or wire file moved on any of the 23 network arms, the 16 user arms or the four real-time arms. Owed, unchanged:
 the 6 h seed counts; arming `network.readmit_seed_mirrors` is not proposed.
+
+## 8. Seed counts on the 6 h field golden, 2026-10-28
+
+Arm `D:/GnssProcessorSupport/runs_nom/_rap_bof_nsd_f6` (field golden, 6 h, `network.readmit_seed_mirrors` true)
+against `runs/_rf0hv16_field6` (the golden pair of card MRF), both on the Release build of main `ef9f75d`
+(`gnss_processor_bof.exe`, a copy of `gnss_processor_mrf.exe`, sha256[:16] 2d84a326fd00fd04); gates in
+`D:/GnssProcessorSupport/runs_nom/bof_reports/preregistration.md`, grade in `.../bof_reports/grade_6h_nsd_arl_piv130.md`.
+
+- S1 passes: `products.txt` and `closed_loop_trace.csv` have equal sha256 on the two runs.
+- S2: over 6 h the carry LS-VCE monitor meets 23 code-bias readmit seeds and the prior-residual census 23 code-bias
+  seeds and 0 clock seeds. With the key off both skip them; with it on the monitor takes 23 more rows (7 Galileo, 16 GPS)
+  and the census 23 more `cb` rows.
+
+The gap of section 2 is live on the golden at 23 seeds in 6 h, and the key closes it with no product change (the
+monitor feeds the solve only through `network.carry_vce_apply`, which neither golden arms).
+
+## 9. Armed, 2026-10-28
+
+Armed at the author's decision with card [BOF](BOF_built_off_follow_through_2026-10-28.md) (section 6, the gates and the baseline pair `runs/_rf0hv17_{field,sim}6`): `network.readmit_seed_mirrors` is pinned in both goldens (ledger RECOMMEND_SCOPED, regime `readmit_seed_horizon_s > 0`); the sim products are identical to the pair before it, as section 8 predicted for the field.

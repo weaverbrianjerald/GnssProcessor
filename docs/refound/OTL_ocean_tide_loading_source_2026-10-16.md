@@ -5,7 +5,7 @@
 - **id:** OTL
 - **topic:** network-vehicle
 - **status:** open
-- **summary:** BUILT 2026-10-16, default off, never armed: `model_corrections.otl_from_sif` serves ocean tide loading from the SIF registry alone and `model_corrections.otl_nodal_corrections` adds the nodal factors and a UTC Greenwich argument. The gate against IERS HARDISP (NGS M-PAGES v1.2) found the SIF horizontal columns read reversed by `processing.enable_station_info` and closes the radial gap from 4.9 to 2.5 mm at the worst of three stations. CHECKED 2026-10-17 (section 8): knob off is identical to a main `4318fe3` control on the field and sim golden 2 h arms; with the keys on the held-out consumer WTZZ00DEU is 6.5 mm worse over hours 2 to 6 (its estimate shifts by the applied loading) and the 16-site census median is -2.0 mm (KOKB -17.6 mm; SCRZ, BADG, HARB and ARHT worse by 2 to 9 mm). DIAGNOSED 2026-10-17 (section 9): no sign or convention defect in the evaluation (0.2 to 1.9 mm to HARDISP over hours 0 to 6 at four stations, the SIF columns are the BLQ rows, the north scale of the model in consumer data is +1.19); the net translation of the diurnal field is absent from the consumer's data (north scale -0.11) and is 5.7 of the 8.0 mm north loading at WTZZ00DEU; the default-off key `model_corrections.otl_remove_diurnal_translation` cuts the WTZZ00DEU cost over hours 2 to 6 from +6.5 to +2.0 mm and is neutral at the census (median -1.3 mm against -2.0 mm). The arming decision is open.
+- **summary:** ARMED 2026-10-28 at the author's decision (section 11, card BOF). BUILT 2026-10-16, default off, never armed: `model_corrections.otl_from_sif` serves ocean tide loading from the SIF registry alone and `model_corrections.otl_nodal_corrections` adds the nodal factors and a UTC Greenwich argument. The gate against IERS HARDISP (NGS M-PAGES v1.2) found the SIF horizontal columns read reversed by `processing.enable_station_info` and closes the radial gap from 4.9 to 2.5 mm at the worst of three stations. CHECKED 2026-10-17 (section 8): knob off is identical to a main `4318fe3` control on the field and sim golden 2 h arms; with the keys on the held-out consumer WTZZ00DEU is 6.5 mm worse over hours 2 to 6 (its estimate shifts by the applied loading) and the 16-site census median is -2.0 mm (KOKB -17.6 mm; SCRZ, BADG, HARB and ARHT worse by 2 to 9 mm). DIAGNOSED 2026-10-17 (section 9): no sign or convention defect in the evaluation (0.2 to 1.9 mm to HARDISP over hours 0 to 6 at four stations, the SIF columns are the BLQ rows, the north scale of the model in consumer data is +1.19); the net translation of the diurnal field is absent from the consumer's data (north scale -0.11) and is 5.7 of the 8.0 mm north loading at WTZZ00DEU; the default-off key `model_corrections.otl_remove_diurnal_translation` cuts the WTZZ00DEU cost over hours 2 to 6 from +6.5 to +2.0 mm and is neutral at the census (median -1.3 mm against -2.0 mm). The arming decision is open. 2026-10-28 (section 10): over a whole tidal day the census gains 1.0 mm (none worse) and WTZZ00DEU 0.8 mm; both gates pass.
 - **source:** `docs/status/OPEN_ITEMS.md` queued build 2; `docs/cards/queues/CAF-COMMENT-AUDIT-FINDINGS.md` section 4 (no nodal corrections, GMST from GPS time); NGS M-PAGES v1.2 `Lib/IersHardisp`, `Lib/Station/OceanTideLoad.cpp`, `Lib/Station/StationInfoFile.cpp`, `Lib/OtlGrid/get_otl_grid.f`; IERS Conventions (2010) section 7.1.2
 - **knobs / posture:** `model_corrections.otl_from_sif`, `model_corrections.otl_nodal_corrections` (ledger rows UNVALIDATED; both goldens keep `enable_ocean_tide_loading` false, so both are unaffected); the loader default of `enable_ocean_tide_loading` stays true
 - **dates in the text:** 2026-10-16, 2026-10-17
@@ -22,7 +22,7 @@ Nothing is armed ([section 8](#8-check-results-2026-10-17)). Diagnosis of 2026-1
 ([section 9](#9-diagnosis-of-the-consumer-cost-and-the-diurnal-translation-option-2026-10-17)): the evaluation and the
 sign are right (0.2 to 1.9 mm to HARDISP; north scale of the model in consumer data +1.19); the net translation of the
 diurnal field is absent from the data (north -0.11) and is 5.7 of the 8.0 mm north loading at Wettzell; the default-off
-key `otl_remove_diurnal_translation` cuts the consumer cost from +6.5 to +2.0 mm and is census-neutral.
+key `otl_remove_diurnal_translation` cuts the consumer cost from +6.5 to +2.0 mm and is census-neutral. 2026-10-28 (section 10): over a whole tidal day the census gains 1.0 mm (none worse) and WTZZ00DEU 0.8 mm; both gates pass.
 
 ## 1. What was built
 
@@ -569,3 +569,25 @@ the key. The sim fixture has no loading (section 4); its arm shows only that the
   current golden; the loading settings of the product series (a CE-frame set from the loading provider would replace the
   fitted table); the legacy `enable_station_info` mapping (OPEN_ITEMS; the north scale +1.19 excludes the reversed reading
   it uses); the 11 stations without a SIF block.
+
+## 10. A whole tidal day on the current golden, 2026-10-28
+
+Exe `build/x64-Release/gnss_processor_bof.exe` (the Release build of main `ef9f75d`, sha256[:16] 2d84a326fd00fd04), run root `D:/GnssProcessorSupport/runs_nom`, field golden DOY 129, 24 h from 00:00 (2880 epochs), one change per arm against `_rap_bof_ctl_f24`. Gates written before the runs: `D:/GnssProcessorSupport/runs_nom/bof_reports/preregistration.md`; grade `.../bof_reports/grade_24h_piv_otl_nta.md` (16-site census of 24 h consumer-only replays, `gcensus.py --hours 24`; worse = a site worse by more than 1 cm). Arm `_rap_bof_otl_f24`: `enable_ocean_tide_loading`, `otl_from_sif`, `otl_nodal_corrections`,
+`otl_remove_diurnal_translation`, all true; the consumer and the census replays apply the loading.
+
+| gate | result |
+|---|---|
+| O1 WTZZ00DEU, mean hourly p50 change, hours 2 to 24 (bar +1 mm) | -0.84 mm (control 15.9 mm); 4 to 9 mm better between 07:00 and 17:00, 5 to 6 mm worse between 20:00 and 24:00 (worst hour +6.1 mm, hour 23) |
+| O2 census paired median, hours 2 to 24 (bar 0 mm, no site worse) | -0.98 mm; 1 better (POHN00FSM -11.4 mm), 0 worse (largest ARHT00ATA +2.6 mm) |
+| census per site | DAV100ATA -8.3, STPM00SPM -6.5, ASCG00SHN -5.5, HARB00ZAF -4.8, KOKB00USA -4.5, CHTI00NZL -3.5, CEDU00AUS -1.9; QUIN00USA +1.2, SCRZ00BOL +1.1, BAKE00CAN +0.6 mm |
+| hour 1 (ignition) | census +1.1 mm |
+
+Both gates pass. The +2.0 mm of the 6 h arm (section 9.5) was a window effect: over a whole tidal day the held-out
+consumer gains 0.8 mm, with a diurnal pattern in the hourly change. Seven roster stations (GAMB, NYA200NOR, WARK00NZL,
+WTZS, GOP6, LEIJ00DEU, FFMJ00DEU) and four census sites (ANMG, ARHT, UTQI, WUH2) resolve no SIF block and run with
+zero loading. On this evidence arming the four keys is supported; the decision is the author's. Unchanged and open:
+the `enable_station_info` horizontal mapping (section 3), the stations without a block, the minor constituents.
+
+## 11. Armed, 2026-10-28
+
+Armed at the author's decision with card [BOF](BOF_built_off_follow_through_2026-10-28.md) (section 6, the gates and the baseline pair `runs/_rf0hv17_{field,sim}6`): ocean tide loading from the SIF registry (the four keys) is pinned in the field golden; the three `otl_*` ledger rows are RECOMMEND_SCOPED with regime ocean tide loading on. The sim golden leaves loading off (the sim fixture has none).

@@ -417,7 +417,9 @@ GF code bias pinned at broadcast T_GD, no GIM, no Kaula prior); free per-LOS sla
 SH); float vehicle (`ambiguity_vehicle: float_kf` + `phase_datum_held_basis`) on the
 phase-leveling carry with gauge projection, the prioritized phase datum and the exact coupling
 update; Q3 clock anchor and clock step test; phase-bias hold; gross-LOS screen with its 12 m cold
-bound; accumulated wind-up with restart refloat. No lanes, F3, SH constraint or seams.
+bound; accumulated wind-up with restart refloat. Field golden only: ocean tide loading from the SIF
+registry and the GPS IIF / IIR noon-turn attitude (the sim fixture carries neither). No lanes, F3,
+SH constraint or seams.
 
 - **Generated, never hand-edited.** `make_golden_config.py` builds them from
   `config/golden/golden_manifest.json` and `docs/CONFIG_promotion_ledger.json`, and FAILS when an
@@ -445,15 +447,23 @@ bound; accumulated wind-up with restart refloat. No lanes, F3, SH constraint or 
 - **Armed QC and observability** (in both goldens; verdicts in the ledger): RAIM with attribution,
   within-epoch tier and `raim_withhold_sigma0` 6.0, clock runaway check, prefit census, topology,
   RHS attribution on trip, run manifest and epoch status, postfit traces, `emit_ura`,
-  `emit_clock_disc`, the CB jump test with `mw_detect`, `cold_clock_seed`; `parallel_carry` true.
+  `emit_clock_disc`, the CB jump test with `mw_detect`, `cold_clock_seed`, the estimable block-Baarda
+  census (`block_baarda_estimable`, the one check that reports code multipath) and the readmit-seed
+  mirrors; `parallel_carry` true.
   Response doctrine: adapt and EMIT within the detected epoch; a
   withhold is the backstop, graded as an adaptation failure unless the epoch is provably
   unrecoverable. Not armed: `prefit_fuse_sigma`. Deleted from the code on 2026-10-14 (card RKD,
   `docs/refound/RKD_retired_key_deletion_2026-10-14.md`): `sh_health_gate`, the old lane layer
   (`mw_wl.*`, `lane_carry.*`; lanes return only as card AB3's new build) and `emit_pb_filter*`.
 
-**Baseline: card MRF (2026-10-28, `docs/refound/MRF_mw_reflag_skip_2026-10-28.md`) on card GAD's
-Galileo posture (2026-10-13, `docs/refound/GAD_galileo_adoption_2026-10-13.md`).** The
+**Baseline: card BOF (2026-10-28, `docs/refound/BOF_built_off_follow_through_2026-10-28.md`), after
+card MRF, on card GAD's Galileo posture (2026-10-13, `docs/refound/GAD_galileo_adoption_2026-10-13.md`).**
+Card BOF armed ocean tide loading (four keys) and the noon-turn attitude on the field golden, and the
+estimable block-Baarda test and the readmit-seed mirrors on both; pair `runs/_rf0hv17_{field,sim}6` (exe
+`gnss_processor_bofarm.exe`, sha256[:16] 91143c81de9a9547): field WTZZ00DEU 0.059 0.012 0.023 0.012 0.017
+0.012 m by hour (2.0 mm worse than `_rf0hv16` over hours 2 to 6, the loading's 00-06 UT phase: over a
+whole tidal day the same keys gain 0.8 mm and the census 1.0 mm); sim products identical to `_rf0hv16_sim6`.
+The
 Galileo package is armed: `processing.active_systems` `["GPS","Galileo"]` with E1/E5a in both code
 families (`["C1C","C1X","L1C","L1X","C5Q","C5X","L5Q","L5X"]`, `frequency_mode` dual),
 `estimation.clock_disc_isb_reinflate_std` 10 and

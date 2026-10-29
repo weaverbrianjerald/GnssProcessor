@@ -5,7 +5,7 @@
 - **id:** PIV
 - **topic:** network-vehicle
 - **status:** open
-- **summary:** BUILT 2026-10-18, default off, never armed: `network.pivot_election: coverage` elects each constellation's clock pivot at its first epoch and at a forced handover as the registered, healthy satellite that the orbit product predicts at the most roster stations over a look-ahead horizon, passing over one that enters the Earth's umbra inside it; an incumbent that stays registered and healthy is kept. Unit gate, ledger rows and a Release smoke are in (section 6). The check of section 5 ran 2026-10-18 (section 8): knob absent identical to main except the declared lines (G0), picks G22 and E04 on the field and G32 and E36 on the sim with no handover against two in each control (G1), field hour-2 common drift 27 % of the control's (G3), held-out consumer and 16-site census unchanged within 1 mm at the median (G4, G5); the clock product is within 2.4 mm of the control and marginally not "no worse" (G2).
+- **summary:** BUILT 2026-10-18, default off, never armed: `network.pivot_election: coverage` elects each constellation's clock pivot at its first epoch and at a forced handover as the registered, healthy satellite that the orbit product predicts at the most roster stations over a look-ahead horizon, passing over one that enters the Earth's umbra inside it; an incumbent that stays registered and healthy is kept. Unit gate, ledger rows and a Release smoke are in (section 6). The check of section 5 ran 2026-10-18 (section 8): knob absent identical to main except the declared lines (G0), picks G22 and E04 on the field and G32 and E36 on the sim with no handover against two in each control (G1), field hour-2 common drift 27 % of the control's (G3), held-out consumer and 16-site census unchanged within 1 mm at the median (G4, G5); the clock product is within 2.4 mm of the control and marginally not "no worse" (G2). 2026-10-28 (section 9): on a 24 h day the forced-handover branch runs and the census is unchanged; on DOY 130 ARHT00ATA is 40.6 mm worse, the one failed clause; not armed.
 - **source:** [PAC](PAC_common_drift_pivot_clock_2026-10-01.md) sections 3 to 5 (G14 pinned cut the field hour-2 common drift from -0.180 to -0.063 m/h); [HLT](HLT_broadcast_health_2026-09-25.md) (the health latch and the pivot's health skip); `docs/status/OPEN_ITEMS.md` queued build 1
 - **knobs / posture:** `network.pivot_election` (`off` | `coverage`), `network.pivot_election_horizon_s` (7200), `network.pivot_election_step_s` (300); ledger rows UNVALIDATED and PARAM; neither golden changed
 - **dates in the text:** 2026-10-17, 2026-10-18
@@ -18,7 +18,7 @@ smoke pass (10 epochs, field and sim): the field run elects G22 (27.6 of 58 stat
 G14 27.4) and E04 (28.7), with G01 passed over as unhealthy, where the control keeps G01 and E02; with the knob absent
 the output equals a main-built exe's. The 6 h check (section 8) holds on G0, G1, G3, G4 and G5, and G2 within 2.4 mm:
 no handover in 6 h against two in each control, field hour-2 common drift 0.051 against 0.192 m/h, consumer and census
-unchanged at the median. The forced-handover branch was not exercised. Nothing is armed.
+unchanged at the median. The forced-handover branch was not exercised. Nothing is armed. 2026-10-28 (section 9): on a 24 h day the forced-handover branch runs and the census is unchanged; on DOY 130 ARHT00ATA is 40.6 mm worse, the one failed clause; not armed.
 
 ## 1. The rule
 
@@ -325,3 +325,27 @@ paired median is -1.4 mm. G5 holds (`gates/pivot/chk/census_grade_ctl_on.txt`).
   posture and through the receiver clocks); a near-tie pick (G22 against G14) that another start time can reverse.
 - **Owed before any adoption (the author's decision):** a run long enough for a pick to set (a 24 h arm), at least one
   more day, and the clone-trace read of the common drift on the armed hold when the interim hold is retired.
+
+## 9. The 24 h arm and a second day, 2026-10-28
+
+Exe `build/x64-Release/gnss_processor_bof.exe` (the Release build of main `ef9f75d`, sha256[:16] 2d84a326fd00fd04), run root `D:/GnssProcessorSupport/runs_nom`, field golden DOY 129, 24 h from 00:00 (2880 epochs), one change per arm against `_rap_bof_ctl_f24`. Gates written before the runs: `D:/GnssProcessorSupport/runs_nom/bof_reports/preregistration.md`; grade `.../bof_reports/grade_24h_piv_otl_nta.md` (16-site census of 24 h consumer-only replays, `gcensus.py --hours 24`; worse = a site worse by more than 1 cm). Arm `_rap_bof_piv_f24`; second day `_rap_bof_piv130_f6` against `_rap_bof_ctl130_f6` (the golden moved to DOY 130 by
+`scripts/mday_golden_config.py`, 6 h; grade `.../bof_reports/grade_6h_nsd_arl_piv130.md`).
+
+| gate | DOY 129, 24 h | DOY 130, 6 h |
+|---|---|---|
+| P1 forced-handover branch | runs: G22 departs at 10:28:30, the election picks G23 (27.8 stations, runner-up G18 26.8), handover c0 +1.257 m | not exercised (no pick left) |
+| P2 handovers, arm / control | 1 / 2 (control: E02 to E03 at 03:20:30, G01 to G02 at 04:42:30, c0 -1.576 m) | 0 / 1 (control G01 to G02 at 04:39:00) |
+| P3 WTZZ00DEU, mean hourly p50 change, hours 2 to N | -0.34 mm (worst hour +3.3 mm) | -0.04 mm (worst hour +1.0 mm) |
+| P4 census paired median, sites worse | -0.13 mm, none (ARHT00ATA -6.9 mm) | 0.0 mm, ARHT00ATA +40.6 mm |
+| P6 clock product, within-arc RMS p50 (G all / E all) | 93.6 to 98.4 / 27.3 to 25.3 mm | 82.6 to 83.9 / 23.0 to 24.8 mm |
+
+The election runs at a forced handover as built and halves the day's handovers; the held-out consumer and the census
+median are unchanged on both days. The pre-registered bar (P1 to P5 together) is missed on one clause: ARHT00ATA is
+40.6 mm worse over hours 2 to 6 of DOY 130 (hours 4 to 6 by 45 to 73 mm), while on DOY 129 it is 6.9 mm better.
+ARHT00ATA is the census site with the largest error (hourly p50 0.03 to 0.37 m) and moves by centimetres under
+unrelated changes of the wire (-16.8 mm under `network.cycle_slip.gf_arc_jump` on DOY 129, card ARL section 14;
++59 mm under the sum-to-zero competitor, section 8.7); its spread under a neutral perturbation is not measured, so the
+DOY 130 clause cannot be read as noise or as an effect. The GPS clock product is 4.8 mm worse at the all-satellite p50
+on the day (1.3 mm on DOY 130) and Galileo 2.0 mm better (1.8 mm worse on DOY 130). Not ready to arm on the bar as
+written; what would settle it is the ARHT00ATA spread under a neutral change (for example two arms that differ only in
+an inert knob that perturbs the wire at the rounding level).

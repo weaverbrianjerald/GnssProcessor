@@ -5,14 +5,14 @@
 - **id:** MDAY
 - **topic:** network-vehicle
 - **status:** closed
-- **summary:** Read 2026-10-20. Both postures, GE (the field golden, GPS + Galileo) and C (GE plus BeiDou B1I + B3I, `network.second_band_admission`, `network.n3c_wire_per_signal`, `network.sparse_station_normals`), ran 24 h on each of DOY 128 to 132 of 2024 on one Release exe (DOY 132 for 86,100 s, 5.5 minutes short of the day: the DOY 133 products are not on disk). All ten arms exit 0 and emit every epoch (2,880 of 2,880; 2,870 of 2,872). Accurate every day: WTZZ00DEU hourly p50 at most 0.060 m (GE) and 0.047 m (C) in hours 2 to 24, census median site 0.02 to 0.07 m, no consumer above 1 m after hour 1 except ARHT00ATA under GE for 26 min on DOY 130 (2.2 m). C against GE: census paired median -0.8 to -3.8 mm, no site worse than +2.9 mm, ARHT00ATA -0.08 to -0.13 m on four days, hour 1 better in the median on every day. Nothing is armed. Re-graded 2026-10-20 from the run directories (section 9): every table reproduces, five reads of sections 2 and 4 to 6 are corrected, none changes a verdict.
+- **summary:** Read 2026-10-20. Both postures, GE (the field golden, GPS + Galileo) and C (GE plus BeiDou B1I + B3I, `network.second_band_admission`, `network.n3c_wire_per_signal`, `network.sparse_station_normals`), ran 24 h on each of DOY 128 to 132 of 2024 on one Release exe (DOY 132 for 86,100 s, 5.5 minutes short of the day: the DOY 133 products are not on disk). All ten arms exit 0 and emit every epoch (2,880 of 2,880; 2,870 of 2,872). Accurate every day: WTZZ00DEU hourly p50 at most 0.060 m (GE) and 0.047 m (C) in hours 2 to 24, census median site 0.02 to 0.07 m, no consumer above 1 m after hour 1 except ARHT00ATA under GE for 26 min on DOY 130 (2.2 m). C against GE: census paired median -0.8 to -3.8 mm, no site worse than +2.9 mm, ARHT00ATA -0.08 to -0.13 m on four days, hour 1 better in the median on every day. Nothing is armed. Re-graded 2026-10-20 from the run directories (section 9): every table reproduces, five reads of sections 2 and 4 to 6 are corrected, none changes a verdict. 2026-10-28 (section 10): at 305 stations posture C runs to the end and withholds nothing at 2.5 times the GE loop; the held-out consumer is 19.7 mm better in hour 1 and 7.9 mm worse in hour 2 on one 2 h pair.
 - **source:** the request of 2026-10-19 (does the network deliver accurate positions on every day, and does the candidate posture beat the golden there); [MDR](MDR_multiday_replay_2026-10-05.md) (the earlier multi-day replay, GPS-only golden, 6 h); [BDS](BDS_beidou_third_constellation_2026-10-18.md) and [BDSB](BDSB_beidou_continued_2026-10-19.md) (the candidate, graded on DOY 129 in 6 h)
 - **knobs / posture:** none armed. Arm C adds `processing.active_systems` `["GPS","Galileo","BeiDou"]`, `processing.signal_priorities.BeiDou` `["C2I","L2I","C6I","L6I"]`, `network.second_band_admission` true, `network.n3c_wire_per_signal` true, `network.sparse_station_normals` true to the field golden moved to the day
 - **dates in the text:** 2026-10-19, 2026-10-20
 - **hashes / run dirs:** exe `gnss_processor_mday.exe` (copy of the Release build of main `5e95c84`, sha256 `3d6c679e8068a39879c582b4495e069c569a3706049826f96f6123e2267a288e`), run root `D:/GnssProcessorSupport/runs_nom` (`RAPID_RUNS_ROOT`): wires `_rap_mday_ge_<doy>` and `_rap_mday_c_<doy>` (doy 128 to 132), smokes `_rap_mday_sm_<doy>`, census keys `mdyge<doy>` and `mdyc<doy>` (replays `_rap_<key>_<site4>`); scratch, day goldens, tools and tables `D:/GnssProcessorSupport/gates/mday/` (`cfg/`, `tools/`, `out/`, `B0_armdiff.txt`, `queue.log`, `census_chain.log`); branch `card/mday`, commit `9373715` (the census tool's day options) and this card
 - **gates (frozen at pre-registration):** none numeric; the read-outs and the verdict wording are in section 2
 
-**Outcome.** Question: does the network deliver accurate positions on every day, and does the candidate posture (GPS + Galileo + BeiDou with the second-band admission) beat the field golden (GPS + Galileo) there? On five 24 h days both postures run healthy and are accurate: WTZZ00DEU stays under 0.06 m per hour after ignition, the 16-site census median under 0.07 m, and no consumer passes 1 m after hour 1 except the golden's ARHT00ATA for 26 min on DOY 130. The candidate is better on four days and equal on one (census paired median -0.8 to -3.8 mm, never a site worse than +2.9 mm), far better at ARHT00ATA (-0.08 to -0.13 m on four days) and in hour 1, at about twice the golden's cost. Not armed.
+**Outcome.** Question: does the network deliver accurate positions on every day, and does the candidate posture (GPS + Galileo + BeiDou with the second-band admission) beat the field golden (GPS + Galileo) there? On five 24 h days both postures run healthy and are accurate: WTZZ00DEU stays under 0.06 m per hour after ignition, the 16-site census median under 0.07 m, and no consumer passes 1 m after hour 1 except the golden's ARHT00ATA for 26 min on DOY 130. The candidate is better on four days and equal on one (census paired median -0.8 to -3.8 mm, never a site worse than +2.9 mm), far better at ARHT00ATA (-0.08 to -0.13 m on four days) and in hour 1, at about twice the golden's cost. Not armed. 2026-10-28 (section 10): at 305 stations posture C runs to the end and withholds nothing at 2.5 times the GE loop; the held-out consumer is 19.7 mm better in hour 1 and 7.9 mm worse in hour 2 on one 2 h pair.
 
 ## 1. Question and posture
 
@@ -314,3 +314,36 @@ Arm records. On every day C differs from GE in exactly `network.n3c_wire_per_sig
 5. **Base of GE (section 2).** The arms were made on 2026-10-19 at 05:54 from the golden of main `5e95c84` (`base_sha256` `17f596636bb87ee8879d7dbb224f59c54c147655dc27e622fdd126abf7dd2d32` in every `rapid.json`, the working-copy bytes), which does not carry `network.sparse_station_normals` and whose loader default at that commit is off, matching the exe. Commit `3e4a53a` of main (2026-10-19, 10:55, after the arms were made) pins the key in both goldens and makes it the loader default. A GE arm made from the golden now on main is therefore the GE of this card plus the exact sparse normals. The comparison of sections 5.1 to 5.5 is unaffected (C carried the key and the output identity rests on cards NETCOST and NETCOSTB); the cost ratio of section 5.1 (1.8 to 2.0) compares C with a GE that forms its normals dense, and against a GE that also forms them sparse it would read about 2.0 to 2.3 if the 11 to 13 % of NETCOST applies to GE as well (not measured here).
 
 **Standing.** The verdicts of section 7 hold on the recomputed numbers: accurate every day for both postures, C better on DOY 128, 129, 130 and 132 and equal on 131, no site worse than +2.9 mm, ARHT00ATA 0.08 to 0.13 m better on four days. Items 1 to 3 sharpen the reads of sections 6.1 to 6.3 (the G01 departure never reaches the wire, the Galileo latch moves on 15 satellites, the G03 count is in-solve) and add no result. Not re-derived: the source identity and build of the exe, the load on the shared machine, the origin of the G03 and G01 departures.
+
+## 10. The 305-station regime, 2026-10-28 (appended; sections 1 to 9 are unchanged)
+
+One of the regimes section 8 lists as not run. Exe `build/x64-Release/gnss_processor_bof.exe` (the Release build of
+main `ef9f75d`, sha256[:16] 2d84a326fd00fd04), run root `D:/GnssProcessorSupport/runs_nom`. Base
+`bof_bases/golden_field_305.json`: the current field golden with only `network.stations` replaced by 305 producer
+stations (the golden's 58 first, then the rest of the roster of `config/test_suite/_net305_3sys_smoke.json`, the source
+`scripts/gen_net305_sh.py` names; WTZZ00DEU, the held-out consumer, removed; KOKV00USA added). The roster keeps
+INEG00MEX, OAFA00ARG and MIZU00JPN, which the golden's 58 leave out; INEG00MEX is rejected at every epoch in both arms.
+Arms `_rap_bof_ge305_f2` (the golden) and `_rap_bof_c305_f2` (plus the four C keys of section 2:
+`processing.active_systems` with BeiDou, `processing.signal_priorities.BeiDou` `["C2I","L2I","C6I","L6I"]`,
+`network.second_band_admission`, `network.n3c_wire_per_signal`; the fifth, `sparse_station_normals`, is in the golden
+since `3e4a53a`). 2 h, 240 epochs, both run at once on a machine shared with four 24 h arms. Report
+`D:/GnssProcessorSupport/runs_nom/bof_reports/beidou_305.md`; the consumer numbers recomputed from
+`logs/closed_loop_trace.csv`.
+
+| read-out | GE, 305 | C, 305 |
+|---|---:|---:|
+| exit, epochs emitted / withheld | 0, 240 / 0 | 0, 240 / 0 |
+| stations in the solve, min / median / max | 299 / 301 / 301 | 300 / 302 / 302 |
+| epoch-loop wall | 10.37 s per epoch | 25.88 s per epoch (2.5 times) |
+| peak working set | 11.2 GB (a lower bound) | 12.1 GB |
+| BeiDou satellites with an emitted clock | 0 | 38 at every epoch |
+| WTZZ00DEU 3D p50, hour 1 | 55.8 mm | 36.1 mm |
+| WTZZ00DEU 3D p50, hour 2 | 11.1 mm | 19.0 mm |
+| the same by half hour | 92.5, 41.0, 9.0, 12.8 mm | 95.8, 34.5, 26.3, 15.1 mm |
+
+C runs to the end at 305 stations, withholds nothing and emits 38 BeiDou clocks at every epoch; the second-band
+admission withholds BeiDou at 18 stations. The held-out consumer is 19.7 mm better in hour 1 and 7.9 mm worse in hour 2,
+the excess in the half hour 01:00 to 01:30 (26.3 against 9.0 mm). One consumer and one 2 h realization: hour 1 repeats
+the 58-station finding (better on every day), hour 2 is a flag rather than a verdict, and a 6 h pair at 305 stations
+(about 3 h and 7 h of wall on this machine) is the check that would settle it. The cost at 305 stations is 2.5 times
+the GE loop (2.1 times at 58 stations), 25.9 s per 30 s epoch under the shared load.

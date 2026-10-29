@@ -505,6 +505,8 @@ posture call stays in the verdict section of the card that reached it.
   names, each with the card and section that is its evidence.
 - [status/OPEN_ITEMS_CODE_DEFECTS.md](status/OPEN_ITEMS_CODE_DEFECTS.md) — the code-defect
   section of the register (verified defects, their fixes, the gate records), split out for size.
+- [status/OPEN_ITEMS_BUILT_OFF.md](status/OPEN_ITEMS_BUILT_OFF.md): work that is built and
+  checked but not armed, ordered by the evidence that it helps, split out for size.
 
 ---
 
