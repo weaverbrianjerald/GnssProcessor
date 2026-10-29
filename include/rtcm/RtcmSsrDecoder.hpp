@@ -56,6 +56,13 @@ struct DecodeResult {
  * side's @c IODnav&0xFF convention (see @c LiveEphemerisStore::ssrMatchIode;
  * RTB-5(a)).
  *
+ * Phase-bias messages (1265-1270) carry the dispersive-bias and
+ * Melbourne-Wübbena consistency indicators once, in the message header after
+ * the solution id and before the satellite count; they are returned in
+ * @c DecodeResult::header and copied onto every @c SsrPhaseBias record.  The
+ * satellite block starts directly at the satellite id.  The same header layout
+ * applies to the IGS-SSR phase-bias subtypes (@ref decodeIgs4076).
+ *
  * @param payload     Pointer to the message payload (excluding 3-byte header
  *                    and 3-byte CRC).  The first 12 bits are DF002 (message
  *                    type); the decoder skips them.
@@ -114,7 +121,9 @@ DecodeResult decodeLegacy(
  * Format v1.00 sec. 4), matching the SP3 convention, so the user side still
  * applies the satellite PCO (RTB-5(b)).  The IOD field is 8 bits for every
  * system, so no masking is needed (see @c decodeLegacy for the legacy
- * Galileo 10-bit case).
+ * Galileo 10-bit case).  The phase-bias subtypes (IM x6) read the two
+ * consistency indicators in the message header, as @c decodeLegacy does for
+ * 1265-1270.
  *
  * @param payload          Pointer to the message payload (DF002 included).
  * @param len_bytes        Payload length in bytes.

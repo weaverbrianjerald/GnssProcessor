@@ -144,23 +144,32 @@ GnssTime promoteGloTod(double anchor_gps_seconds, uint32_t tod_s) {
 }
 
 // ---------------------------------------------------------------------------
-// Shared SSR header (DF002 already consumed by RtcmParser).
+// Shared SSR header (DF002 already consumed by RtcmParser).  The body type
+// selects the two optional header fields:
+//   - orbit and combined messages carry the 1-bit satellite reference datum
+//     after the multi-message indicator;
+//   - phase-bias messages (legacy 1265-1270, IGS-SSR 4076 IM x6) carry the
+//     dispersive-bias and Melbourne-Wübbena consistency indicators, once per
+//     message, after the solution id and before the satellite count (the
+//     cssrlib reference decoder, rtcm.py decode_head, reads them there for
+//     both dialects).  They are not repeated per satellite.
 // Returns false if the BitReader saturates.
 // ---------------------------------------------------------------------------
 bool decodeSsrHeader(RtcmBitReader& r, const SystemDescriptor& sys,
-                     bool is_orbit_message, double anchor_gps_seconds,
+                     LegacyBody body, double anchor_gps_seconds,
                      SsrHeader& hdr, int& num_sats, int& datum) {
+    const bool has_datum      = (body == LegacyBody::Orbit || body == LegacyBody::Combined);
+    const bool has_pb_indices = (body == LegacyBody::PhaseBias);
+
     const uint32_t epoch_raw   = r.u(sys.epoch_bits);
     const int      upd_idx     = static_cast<int>(r.u(4));
     const bool     multi_msg   = r.boolean();
-    if (is_orbit_message) {
-        datum = static_cast<int>(r.u(1));
-    } else {
-        datum = 0;
-    }
+    datum = has_datum ? static_cast<int>(r.u(1)) : 0;
     const int iod_ssr     = static_cast<int>(r.u(4));
     const int provider_id = static_cast<int>(r.u(16));
     const int sol_id      = static_cast<int>(r.u(4));
+    const int dispersive  = has_pb_indices ? static_cast<int>(r.u(1)) : 0;
+    const int mw          = has_pb_indices ? static_cast<int>(r.u(1)) : 0;
     num_sats              = static_cast<int>(r.u(6));
 
     if (!r.ok()) return false;
@@ -173,6 +182,8 @@ bool decodeSsrHeader(RtcmBitReader& r, const SystemDescriptor& sys,
     hdr.iod_ssr               = iod_ssr;
     hdr.provider_id           = provider_id;
     hdr.solution_id           = sol_id;
+    hdr.dispersive_bias_consistency = dispersive;
+    hdr.mw_consistency              = mw;
     hdr.system                = sys.system;
     return true;
 }
@@ -347,20 +358,21 @@ void decodeHighRateBody(RtcmBitReader& r, const SystemDescriptor& sys,
     out.push_back(std::move(h));
 }
 
+// The satellite block starts at the satellite id: the two consistency
+// indicators belong to the message header (see decodeSsrHeader) and are copied
+// onto every record of the message.
 void decodePhaseBiasBody(RtcmBitReader& r, const SystemDescriptor& sys,
                          const SsrHeader& hdr, const GnssTime& rx,
                          std::vector<SsrPhaseBias>& out) {
     const int sat_raw         = static_cast<int>(r.u(sys.sat_id_bits));
-    const int dispersive_flag = static_cast<int>(r.u(1));
-    const int mw_flag         = static_cast<int>(r.u(1));
     const int n_sigs          = static_cast<int>(r.u(5));
     const double yaw_deg      = r.u(9) * 180.0 / 256.0;        // 180/256 deg/LSB
     const double yaw_rate_dps = r.s(8) * 180.0 / 8192.0;       // 180/8192 deg/s/LSB
 
     SsrPhaseBias pb;
     pb.sat                          = formatSat(sys, sat_raw);
-    pb.dispersive_bias_consistency  = dispersive_flag;
-    pb.mw_consistency               = mw_flag;
+    pb.dispersive_bias_consistency  = hdr.dispersive_bias_consistency;
+    pb.mw_consistency               = hdr.mw_consistency;
     pb.yaw_angle_deg                = yaw_deg;
     pb.yaw_rate_deg_per_s           = yaw_rate_dps;
     pb.received_time                = rx;
@@ -414,11 +426,9 @@ DecodeResult decodeLegacy(
     RtcmBitReader r(payload, len_bytes);
     r.skip(12); // DF002 already extracted by parseHeader.
 
-    const bool is_orbit_msg = (cls.body == LegacyBody::Orbit ||
-                               cls.body == LegacyBody::Combined);
     int num_sats = 0;
     int datum    = 0;
-    if (!decodeSsrHeader(r, cls.sys, is_orbit_msg, anchor_gps_seconds,
+    if (!decodeSsrHeader(r, cls.sys, cls.body, anchor_gps_seconds,
                          result.header, num_sats, datum)) {
         return result;
     }
@@ -539,11 +549,9 @@ DecodeResult decodeIgs4076(
     sys.epoch_bits   = 20;
     sys.uses_glo_tod = false;
 
-    const bool is_orbit_msg = (body == LegacyBody::Orbit ||
-                               body == LegacyBody::Combined);
     int num_sats = 0;
     int datum    = 0;
-    if (!decodeSsrHeader(r, sys, is_orbit_msg, anchor_gps_seconds,
+    if (!decodeSsrHeader(r, sys, body, anchor_gps_seconds,
                          result.header, num_sats, datum)) {
         return result;
     }

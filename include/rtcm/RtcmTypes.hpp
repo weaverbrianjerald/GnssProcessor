@@ -38,6 +38,8 @@ struct SsrHeader {
     int      iod_ssr{0};                ///< 4-bit IOD-SSR (DF413).
     int      provider_id{0};            ///< 16-bit provider identifier (DF414).
     int      solution_id{0};            ///< 4-bit solution identifier (DF415).
+    int      dispersive_bias_consistency{0}; ///< Phase-bias messages only: 1-bit dispersive-bias consistency indicator, read once per message after the solution id (0 for every other body).
+    int      mw_consistency{0};              ///< Phase-bias messages only: 1-bit Melbourne-Wübbena consistency indicator, read once per message after the dispersive-bias indicator (0 for every other body).
     System   system{System::Unknown};   ///< GNSS system this header applies to.
 };
 
@@ -264,8 +266,8 @@ struct SsrPhaseBiasEntry {
 struct SsrPhaseBias {
     std::string sat;
     std::map<std::string, SsrPhaseBiasEntry> bias_per_signal;
-    int      dispersive_bias_consistency{0};  ///< 1 bit (DF490).
-    int      mw_consistency{0};               ///< 1 bit (DF491).
+    int      dispersive_bias_consistency{0};  ///< 1 bit (DF490); a message-header field, copied from SsrHeader onto every record of the message.
+    int      mw_consistency{0};               ///< 1 bit (DF491); a message-header field, copied from SsrHeader onto every record of the message.
     double   yaw_angle_deg{0.0};              ///< Network's modelled satellite yaw (degrees).
     double   yaw_rate_deg_per_s{0.0};         ///< Network's modelled satellite yaw rate.
     GnssTime received_time{0, 0.0};

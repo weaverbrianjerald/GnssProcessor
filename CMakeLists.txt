@@ -635,6 +635,7 @@ add_executable(gnss_tests
     tests/test_transforms.cpp
     tests/test_filter_core.cpp
     tests/test_rtcm.cpp
+    tests/test_rtcm_ssr_phase_bias.cpp
     tests/test_rtcm_stream_dating.cpp
     tests/test_epoch_cadence.cpp
     tests/test_realtime_defects.cpp
