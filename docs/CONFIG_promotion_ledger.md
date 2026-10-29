@@ -131,17 +131,17 @@ The full-prose ledger before 2026-10-13 is in git (`git show 8326da3:docs/CONFIG
 
 | verdict | keys |
 | --- | --- |
-| RECOMMEND_ON | 24 |
+| RECOMMEND_ON | 25 |
 | RECOMMEND_SCOPED | 85 |
 | ARMED | 22 |
-| UNVALIDATED | 68 |
+| UNVALIDATED | 67 |
 | KEEP_OFF | 95 |
 | REMOVE | 0 |
 | TRACE | 61 |
 | PARAM | 288 |
 | CORE | 28 |
 
-## RECOMMEND_ON (24)
+## RECOMMEND_ON (25)
 
 Arm in its regime. Machine-checked: a regime predicate here and a row in the loader's posture table.
 
@@ -171,6 +171,7 @@ Arm in its regime. Machine-checked: a regime predicate here and a row in the loa
 | `network.cycle_slip.if_phase_td_pairs` | first | all | `on("network.phase_leveling") and on("network.cycle_slip.mw_detect") and on("network.cycle_slip.if_phase_td")` | all evaluates every band pair, so the common-band verdict can trust a silent MW lane; pinned all in both goldens (the old field exception belonged to the retired golden). | [IFTD-PAIRS](cards/slip/IFTD-PAIRS.md) |
 | `network.cycle_slip.mw_detect` | false | true | `on("network.phase_leveling") or on("network.carry_invariant")` | Coarse WL+LLI detector needing no a-priori position, the invariant #1 partner of the leveling carry; armed in both goldens and auto-armed by the loader under phase_leveling. | [SLIPQC-REF](cards/slip/SLIPQC-REF.md) |
 | `network.cycle_slip.mw_evidence_refloat` | false | true | `on("network.phase_leveling") and on("network.cycle_slip.mw_detect")` | Admits strong, mature, bias-free-lane MW flags that the 0.15-cycle rounding gate dropped silently; armed in both goldens with the anchor handover. | [STUDY-5-detector-coverage-l5](cards/slip/STUDY-5-detector-coverage-l5.md) |
+| `network.cycle_slip.mw_reflag_skip` | false | true | `on("network.phase_leveling") and on("network.cycle_slip.mw_detect")` | Card MRF, armed 2026-10-28 at the author's decision: an MW flag that re-detects a step another response already answered (LLI, IF-TD, T4, gap re-entry) frees no band re-levelled at or after the step's epoch, so one slip frees a carried arc once; off is byte-identical and the census is counted either way; field 6 h on: 18 of 30 re-flag bands keep their re-convergence, MW refloats 43 to 36, held-out user within 0.35 mm, 16-site census median 0.0 mm. Baseline pair runs/_rf0hv16_{field,sim}6. | [MRF](refound/MRF_mw_reflag_skip_2026-10-28.md) |
 
 ## RECOMMEND_SCOPED (85)
 
@@ -293,7 +294,7 @@ Pinned in both goldens by the card named; the golden manifest is the authority.
 | `network.cycle_slip.relevel_free_epoch` | false | true | Pinned true in both goldens; its free-epoch latch is the slip set read by the anchor handover, the phase-datum candidacy screen and the ARL fold slip set. RF-1 retired only its inject skip. | [RF-1](refound/RF-1_float_ambiguities_design.md) |
 | `processing.exclude_eclipsing_satellites` |  |  | Drops satellites in Earth's umbra at the geometry (nominal yaw only); true in both goldens through the base lineage; its edges force the per-run clock-pivot handovers (E02, G01) the ISB re-inflation answers. | [OWD](refound/OWD_owed_defects_2026-09-22.md) |
 
-## UNVALIDATED (68)
+## UNVALIDATED (67)
 
 Built and plausible, never graded on the current posture.
 
@@ -357,7 +358,6 @@ Built and plausible, never graded on the current posture.
 | `network.cycle_slip.if_phase_td_ref_elev_norm` | false |  | Elevation-normalized reference bar (sigma of the median); more sensitive by design, added 2 fires on a 0-slip sim bed, detection benefit unmeasured; not armed. | [IFTD-REF-GATE-FOLLOWUP](cards/slip/IFTD-REF-GATE-FOLLOWUP.md) |
 | `network.cycle_slip.if_phase_td_ref_warmup_abstain` | false |  | Abstains the cold reference gate until shrink_kappa samples; removed 118 unactionable cold fires on a 0-slip sim bed (retired lineage); detection power never tested on a fault arm. | [IFTD-REF-GATE-FOLLOWUP](cards/slip/IFTD-REF-GATE-FOLLOWUP.md) |
 | `network.cycle_slip.if_phase_td_reseed_on_flag` | false |  | Card ARL slip fix 2: an IF-TD flag re-seeds the gradient so the next epoch is evaluated; default off, required by the fixed-cycle Emit posture; its field cost (10 more refloats per 2 h) is unmeasured. | [ARL](refound/ARL_integer_ambiguity_ladder_2026-10-09.md) |
-| `network.cycle_slip.mw_reflag_skip` | false |  | Card MRF: an MW flag that re-detects a step another response already answered (LLI, IF-TD, T4, gap re-entry) frees no band re-levelled at or after the step's epoch, so one slip frees an arc once; default off and byte-identical off, the census counted either way; field 6 h on: 18 of 30 re-flag bands not freed again, held-out user and 16-site census within 2 mm, no benefit shown. | [MRF](refound/MRF_mw_reflag_skip_2026-10-28.md) |
 | `network.streaming.enable` | false |  | RTF-3 live multi-station epoch source (per-station lanes, wait-budget aligner, bounded queue); 17 unit tests, but the end-to-end ON validation its card makes field-blocking was never run. | [rt_service_conventions](rt_service_conventions.md) |
 | `estimation.cycle_slip.graphic_trend_centred` | off |  | User-path GRAPHIC slip detector (estimation.cycle_slip.graphic, off by default) tests the change of dG from one epoch to the next minus its window median instead of \|dG\|. The default \|dG\| holds the range rate, so on a moving satellite it exceeds its threshold at arc epoch 6 and resets the arc over and over; the centred test moves the output of the user-gate arms that set graphic (u_rtk_te_gr, UA8). Graded only on the 600 s gate arm, never against truth or field data; the network does not read it. | [CAF-COMMENT-AUDIT-FINDINGS](cards/queues/CAF-COMMENT-AUDIT-FINDINGS.md) |
 | `estimation.phase_windup_gap_bridge` | false |  | Carries the accumulated wind-up angle across a data gap of 300 s or more (to the bridge horizon, 900 s) by walking it through virtual epochs at most 30 s apart from the orbit products, unwrapping each step, instead of restarting the accumulator and refloating the stepped arcs. The walk is refused, and the restart happens as before, in the Earth's umbra, in a GPS noon-turn window, when the angle moves a quarter of a cycle or more over half a step, and when it ends a quarter of a cycle or more from the epoch's own angle. Needs estimation.accumulate_phase_windup. Built default off and byte-identical off; the simulator injects wind-up through the same function, so no simulated data can grade it. The 6 h field and census check ran: the held-out consumer is within 0.3 mm of the knob-off arm in every hour, the census median is 0.0 mm, restarts fall from 139 to 91 and refloated arcs from 116 to 23; no benefit is shown, so the verdict stays UNVALIDATED. | [WGB](refound/WGB_windup_gap_bridge_2026-10-17.md) |

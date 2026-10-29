@@ -452,15 +452,21 @@ bound; accumulated wind-up with restart refloat. No lanes, F3, SH constraint or 
   `docs/refound/RKD_retired_key_deletion_2026-10-14.md`): `sh_health_gate`, the old lane layer
   (`mw_wl.*`, `lane_carry.*`; lanes return only as card AB3's new build) and `emit_pb_filter*`.
 
-**Baseline: card GAD (2026-10-13, `docs/refound/GAD_galileo_adoption_2026-10-13.md`).** The
+**Baseline: card MRF (2026-10-28, `docs/refound/MRF_mw_reflag_skip_2026-10-28.md`) on card GAD's
+Galileo posture (2026-10-13, `docs/refound/GAD_galileo_adoption_2026-10-13.md`).** The
 Galileo package is armed: `processing.active_systems` `["GPS","Galileo"]` with E1/E5a in both code
 families (`["C1C","C1X","L1C","L1X","C5Q","C5X","L5Q","L5X"]`, `frequency_mode` dual),
 `estimation.clock_disc_isb_reinflate_std` 10 and
 `model_corrections.enable_receiver_cross_system_atx_fallback` (card GAL2),
 `network.code_datum_family_difference` with `code_family_birth_prior_sigma_m` 0.10 (card GFC;
-`code_datum_pair_continuity` KEEP_OFF). Pair `runs/_rf0hv15_{field,sim}6` (exe
-`gnss_processor_galp2.exe`): field WTZZ00DEU 0.058 0.011 0.018 0.010 0.015 0.011 m by hour; sim
-SZZ000SIM 0.137 0.072 0.031 0.024 0.026 0.018 m from the run start. Census against GPS only,
+`code_datum_pair_continuity` KEEP_OFF), and the MW re-flag skip (`network.cycle_slip.mw_reflag_skip`,
+card MRF: an MW flag that re-detects a step the LLI or IF-TD response already answered frees no band
+re-levelled since, so one slip frees a carried arc once; field 6 h 18 of 30 re-flag bands skipped, the
+sim bed has no receiver flags and skips none). Pair `runs/_rf0hv16_{field,sim}6` (exe
+`gnss_processor_mrf.exe`; the field byte-identical to card MRF's arm `_rap_sdr_on_f6`): field WTZZ00DEU
+0.057 0.012 0.018 0.010 0.015 0.011 m by hour; sim SZZ000SIM 0.137 0.072 0.031 0.024 0.026 0.018 m from
+the run start (card GAD's pair `runs/_rf0hv15_{field,sim}6`, exe `gnss_processor_galp2.exe`: field 0.058
+0.011 0.018 0.010 0.015 0.011, the sim the same medians). Census against GPS only,
 median site in hours 2 to 6: field -0.020 m (10 better, 2 worse: DAV100ATA, HARB00ZAF), sim
 -0.030 m; GPS-only users of the wire unchanged at the median (ARHT00ATA +0.20 m). ⚠ Every golden
 arm is GPS + Galileo and 2 to 6 times slower. Constellation-blind graders pool the systems:

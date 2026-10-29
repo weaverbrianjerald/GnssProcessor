@@ -147,6 +147,15 @@ namespace GnssProcessor {
               "counter, SPEC_event_harness s13); storm bed with the anchor handover ZWD 0.046 -> "
               "0.007 m, consumer p50 0.28 -> 0.17 m, T4 306 -> 78, WL 98.9 %" },
             { network_phase_leveling_ && network_cycle_slip_mw_detect_,
+              nc.cycle_slip_mw_reflag_skip,
+              Tier::ON, false, "network.cycle_slip.mw_reflag_skip",
+              "free a carried arc once per slip: an MW flag that re-detects a step the LLI or "
+              "IF-TD response already answered frees no band re-levelled at or after the epoch "
+              "the step entered the data (a locked arc absorbs the step and re-flags it three to "
+              "four samples on); field golden 6 h: 18 of 30 re-flag bands keep their "
+              "re-convergence, MW refloats 43 -> 36, LLI refloats unchanged, held-out user "
+              "within 0.35 mm by hour, 16-site census median 0.0 mm" },
+            { network_phase_leveling_ && network_cycle_slip_mw_detect_,
               nc.cycle_slip_common_band_scope,
               Tier::ON, false, "network.cycle_slip.common_band_scope",
               "free only the band the MW evidence names: a silent, mature pair exonerates its bands unless "

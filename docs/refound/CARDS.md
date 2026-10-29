@@ -230,6 +230,7 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
 - [ALD](ALD_anchor_level_datum_2026-10-23.md): open, 2026-10-23: L5 step R-1d continued (successor of R1D): an
   anchor station's level directions held as part of the phase datum. Derived and checked offline on MAJU00MHL's
   dumps (the anchor's level is transported exactly into the phase biases its pins define); not built. L5 SEQUENCED.
-- [MRF](MRF_mw_reflag_skip_2026-10-28.md): open, 2026-10-28: MW re-flag: one slip freed a carried arc twice (the LLI or IF-TD
+- [MRF](MRF_mw_reflag_skip_2026-10-28.md): closed, 2026-10-28: MW re-flag: one slip freed a carried arc twice (the LLI or IF-TD
   response, then the MW detector's re-detection 30 to 420 s later; 11 in the field 6 h). The detector dates each step and
-  `mw_reflag_skip` (default off) frees no band re-levelled since; off byte-identical, on frees once, user and census within 2 mm. UNVALIDATED.
+  `mw_reflag_skip` frees no band re-levelled since; off byte-identical, on frees once, user and census within 2 mm. ARMED
+  2026-10-28 at the author's decision (ledger, both goldens, the loader's posture row); baseline pair `runs/_rf0hv16_{field,sim}6`.
