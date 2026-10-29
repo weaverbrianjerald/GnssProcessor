@@ -751,6 +751,7 @@ add_executable(gnss_tests
     tests/network/test_network_gf_arc_jump.cpp
     tests/network/test_network_ar_suspect.cpp
     tests/network/test_common_band_scope.cpp
+    tests/network/test_network_mw_reflag.cpp
     tests/test_candidacy_usable.cpp
     tests/test_restored_arc_age.cpp
     tests/network/test_resume_carry_rebase.cpp

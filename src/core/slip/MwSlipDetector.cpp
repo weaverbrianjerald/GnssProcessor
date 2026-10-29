@@ -110,21 +110,28 @@ namespace GnssProcessor {
         // MwSlipDetectorSample.cpp).  The sample ends at the first step that flags a
         // slip, and the verdict is returned only then.
         MwSampleWork w{ obs, lane, sample, frame };
+        // Every flag reports the epoch its step entered the data (the arc's step epoch,
+        // read from the work value because the flagging step may have erased the arc);
+        // an arc with no open excursion reports this sample's own epoch.
+        const auto flagged = [&w]() {
+            w.verdict.step_epoch_s = (w.step_epoch_s > 0.0) ? w.step_epoch_s : w.epoch_s;
+            return std::optional<MwVerdict>(w.verdict);
+        };
         stampArc_(w);                                    // S1
         if (w.stats->count == 0) {                       // S2 the arc's first sample
-            if (initArc_(w)) return w.verdict;
+            if (initArc_(w)) return flagged();
             return std::nullopt;
         }
-        if (resolveTdConfirm_(w)) return w.verdict;      // S3
+        if (resolveTdConfirm_(w)) return flagged();      // S3
         tryLock_(w);                                     // S4
         tryInhouseCommit_(w);                            // S5
         selectStatistic_(w);                             // S6
         gate_(w);                                        // S7
         recordEpochEvidence_(w);                         // S8
-        if (onFlag_(w)) return w.verdict;                // S9
+        if (onFlag_(w)) return flagged();                // S9
         foldSample_(w);                                  // S10
-        if (checkDriftDemotion_(w)) return w.verdict;    // S11
-        if (checkLevelBackstop_(w)) return w.verdict;    // S12
+        if (checkDriftDemotion_(w)) return flagged();    // S11
+        if (checkLevelBackstop_(w)) return flagged();    // S12
         return std::nullopt;
     }
 

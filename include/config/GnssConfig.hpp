@@ -4050,6 +4050,25 @@ namespace GnssProcessor {
         ///        is therefore always refused.
         /// @return Minimum arc epochs, samples.
         int networkCycleSlipMwEvidenceMinArcEpochs() const { return network_config_.cycle_slip_mw_evidence_min_arc_epochs; }
+        /// @brief MW re-flag skip (`network.cycle_slip.mw_reflag_skip`): an MW flag that
+        ///        re-detects an answered step frees no band re-levelled since the step.
+        ///
+        /// The MW detector reports the epoch each flagged step entered the data
+        /// (@c MwSlipResult::step_epoch_s): the flag's own epoch for a first detection,
+        /// an earlier one when a locked arc absorbed the step and flags it samples later
+        /// (drift demotion, then the unlocked flag), or when the step entered at an LLI
+        /// epoch whose sample the detector withheld.  Armed, the MW drain does not free a
+        /// band whose last re-level (@c LocalCarry::relevel_s) is at or after that epoch
+        /// (@ref networkMwReflagCovers): the band holds no pre-step level, and a second
+        /// free would discard only its re-convergence.  The candidate's other bands are
+        /// freed as before, and the integer still reaches the delta bridge.
+        ///
+        /// Requires @ref networkCycleSlipMwDetect (inert without the detector; the loader
+        /// disarms and warns).  Default off; byte-identical off.  The census counters
+        /// (`mw_reflag_*`) are collected whether or not the knob is armed.
+        /// Fingerprint-exempt (forward-only response policy).
+        /// @return True when armed.
+        bool networkCycleSlipMwReflagSkip() const { return network_config_.cycle_slip_mw_reflag_skip; }
         /// @brief Common-band scope: free only the band the evidence names
         ///        (`network.cycle_slip.common_band_scope`, SPEC_event_harness §14).
         ///

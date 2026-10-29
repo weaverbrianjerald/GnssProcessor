@@ -57,6 +57,9 @@ namespace GnssProcessor {
         // never saw the epoch the receiver declared broken.
         prev_lli_bands_.swap(cur_lli_bands_);
         cur_lli_bands_.clear();
+        // The LLI epoch's own MW samples rotate with the bands (the step epoch, S8).
+        prev_lli_mw_.swap(cur_lli_mw_);
+        cur_lli_mw_.clear();
         // Capture epoch time from first valid observation for tracing
         for (const auto& obs : observations)
             if (!obs.satellite.empty()) { current_epoch_ = obs.time; break; }
@@ -102,7 +105,7 @@ namespace GnssProcessor {
             if (uc_pairs.empty()) return;
 
             if (has_lli) {
-                preserveArcsOnLli_(w, obs);              // the uncombined path's LLI policy
+                preserveArcsOnLli_(w, obs, uc_pairs);    // the uncombined path's LLI policy
                 return;
             }
             collectUncombinedLanes_(w, obs, uc_pairs);
@@ -152,7 +155,8 @@ namespace GnssProcessor {
     // E1   the uncombined path's LLI policy: keep the arcs
     // ===================================================================================
 
-    void MwSlipDetector::preserveArcsOnLli_(MwEpochWork& w, const PppObservation& obs) {
+    void MwSlipDetector::preserveArcsOnLli_(MwEpochWork& w, const PppObservation& obs,
+                                            const std::vector<UncombinedPair>& uc_pairs) {
         std::vector<MwSlipResult>& results = w.results;
         const auto& logger = w.logger;
 
@@ -186,6 +190,19 @@ namespace GnssProcessor {
                           "LLI-shadowed on every pair containing one of them.",
                           station_label_, obs.satellite, obs.time.tow, blist);
         }
+        // Keep each pair's withheld sample (raw, undifferenced) for the next epoch's
+        // step epoch: when the first sample after this epoch sits where this one
+        // already sat, the step had entered by this epoch.  Kept, never folded.
+        {
+            const double epoch_s = TimeUtils::continuousGpsSeconds(obs.time);
+            for (const auto& pair : uc_pairs) {
+                const double mw = computeMwMeters(obs, pair.phase1, pair.phase2,
+                                                  pair.code1, pair.code2);
+                if (std::isfinite(mw))
+                    cur_lli_mw_[obs.satellite + "_" + pair.phase1 + "_" + pair.phase2] =
+                        LliEpochSample{ mw, epoch_s };
+            }
+        }
         // MW stats are preserved across LLI on purpose.  The
         // running MW = (φ_1 − φ_2)/λ_WL − code-NL/λ_WL is a
         // function of raw observations only, independent of
@@ -194,11 +211,17 @@ namespace GnssProcessor {
         // observations resume:
         //  - a real cycle slip jumps MW by ΔN_1 − ΔN_2 cycles
         //    and trips the threshold check in processMwSample
-        //    on the very next sample (which then resets its
-        //    own per-arc stats with full slip-integer info);
-        //    a band-common slip (ΔN_1 = ΔN_2) leaves MW
-        //    unchanged, which is why the next sample is
-        //    marked LLI-shadowed (above);
+        //    on the very next sample.  An unlocked arc flags it
+        //    there and restarts; a locked arc absorbs it as an
+        //    outlier candidate until its mean drifts past the
+        //    lock bound (a demotion with an unknown integer) and
+        //    flags it on the sample after, typically three to
+        //    four samples on.  Either flag re-detects the step
+        //    the receiver reported, so it carries the LLI epoch
+        //    as its step epoch (the withheld sample kept above)
+        //    for the consumer's re-flag test.  A band-common slip
+        //    (ΔN_1 = ΔN_2) leaves MW unchanged, which is why the
+        //    next sample is marked LLI-shadowed (above);
         //  - a spurious / no-slip LLI leaves MW unchanged, so
         //    the running mean keeps its converged precision.
         // Wiping the per-arc statistics here would discard that
@@ -832,7 +855,7 @@ namespace GnssProcessor {
             results.push_back({ amb_key, verdict.slip_cycles, verdict.wl_known, lambda_wl,
                                 lane.sig1, lane.sig2, lane.satellite, verdict.slip_frac,
                                 verdict.slip_wl_float, verdict.evidence_ratio,
-                                verdict.arc_epochs, bia_corrected });
+                                verdict.arc_epochs, bia_corrected, verdict.step_epoch_s });
         };
         if (!lane.if_label.empty()) {             // a combined lane: its IF ambiguity
             emit(lane.satellite + "_" + lane.if_label);

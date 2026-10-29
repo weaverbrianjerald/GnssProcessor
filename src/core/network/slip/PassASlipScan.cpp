@@ -237,7 +237,7 @@ void passAMwAdmit(const PassAView& v, int i, const std::vector<MwSlipResult>& mw
                 r.satellite, r.sig1, r.sig2,
                 r.slip_wl_cycles, r.slip_frac, r.lambda_wl,
                 r.slip_wl_known, r.evidence_ratio, r.arc_epochs,
-                d.via_evidence});
+                d.via_evidence, r.step_epoch_s});
     }
 }
 
@@ -845,7 +845,7 @@ void passADatumStationMwDetect(const PassAView& v, const bool datum_detect_on) {
                         r.satellite, r.sig1, r.sig2,
                         r.slip_wl_cycles, r.slip_frac, r.lambda_wl,
                         r.slip_wl_known, r.evidence_ratio, r.arc_epochs,
-                        d.via_evidence});
+                        d.via_evidence, r.step_epoch_s});
             }
         } catch (...) { /* best-effort: no datum-station MW detection this epoch */ }
     }

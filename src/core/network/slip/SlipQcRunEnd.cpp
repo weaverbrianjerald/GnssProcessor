@@ -111,6 +111,48 @@ static int networkSlipMwRelevelRunEnd(const NetworkRunEndView& v) {
 }
 
 /**
+ * @brief Run-end section: slip QC: the MW re-flag census and skip.
+ *
+ * The admitted MW candidates whose step entered the data at an earlier epoch (a locked
+ * arc's late flag, the first flag after an LLI epoch), their bands, and how many of
+ * those bands had been re-levelled since the step (covered: skipped when
+ * network.cycle_slip.mw_reflag_skip is armed, freed again when it is off).  Printed on
+ * every mw_detect run, so a run with the knob off sizes it; an armed run reporting
+ * zero covered bands while candidates exist is a miswire (invariant #4).
+ *
+ * Gate: `config_.networkCycleSlipMwDetect()`.
+ *
+ * @param v The run at its end (network/runend/RunEnd.hpp).
+ * @return 0 (this report does not set the exit code).
+ */
+static int networkSlipMwReflagRunEnd(const NetworkRunEndView& v) {
+    const GnssConfig& config_ = v.config;
+    const std::shared_ptr<spdlog::logger>& log = v.log;
+    const SlipQcChannel& slip_qc = v.run.engines.slip_qc;
+
+    if (!config_.networkCycleSlipMwDetect()) return 0;
+    const auto& qcc = slip_qc.counters;
+    const bool armed = config_.networkCycleSlipMwReflagSkip();
+    const double mean_delay_s = (qcc.mw_reflag_candidates > 0)
+        ? qcc.mw_reflag_delay_sum_s / static_cast<double>(qcc.mw_reflag_candidates) : 0.0;
+    log->info("Network (MW re-flag): {} admitted candidate(s) re-detected a step that entered "
+              "the data at an earlier epoch (delay mean {:.0f} s, max {:.0f} s); of their {} "
+              "reached band(s), {} had been re-levelled since the step ({}) and {} had not "
+              "(freed as before); {} candidate(s) had every band covered{}.  [knob {}]",
+              qcc.mw_reflag_candidates, mean_delay_s, qcc.mw_reflag_delay_max_s,
+              qcc.mw_reflag_bands, qcc.mw_reflag_bands_covered,
+              armed ? "skipped" : "freed again: the knob is off",
+              qcc.mw_reflag_bands_open, qcc.mw_reflag_all_covered,
+              armed ? " (no free at all; not counted as wide-lane detections above)"
+                    : std::string{},
+              armed ? "on" : "off");
+    if (qcc.mw_reflag_bands != qcc.mw_reflag_bands_covered + qcc.mw_reflag_bands_open)
+        log->error("Network (MW re-flag): closure BROKEN: {} band(s) vs {} covered + {} open.",
+                   qcc.mw_reflag_bands, qcc.mw_reflag_bands_covered, qcc.mw_reflag_bands_open);
+    return 0;
+}
+
+/**
  * @brief Run-end section: slip QC: wind-up census and restart, anchor-slip handover, MW admission and scope.
  *
  * Slip QC: the phase wind-up census, the wind-up restart response, the wind-up gap
@@ -966,6 +1008,7 @@ static int networkSlipGapCoresumedShareRunEnd(const NetworkRunEndView& v) {
 int networkSlipQcRunEnd(const NetworkRunEndView& v) {
     return networkRunEndSections(v, {
         networkSlipMwRelevelRunEnd,
+        networkSlipMwReflagRunEnd,
         networkSlipWindupMwRunEnd,
         networkSlipBandResponsesRunEnd,
         networkIfTdReseedRunEnd,

@@ -25,19 +25,22 @@
  *   emitLaneSlip_ forms the results of every flagged lane.
  *
  *   processMwSample  (MwSlipDetector.cpp; the steps in MwSlipDetectorSample.cpp)
- *     S1  stampArc_             in-house bias, gap reset, code stamps, snapshot, pair status
+ *     S1  stampArc_             in-house bias, gap reset, code stamps, snapshot, pair status,
+ *                               the move since a withheld LLI epoch's sample
  *     S2  initArc_              the arc's first sample (and its init-suspicious check)
  *     S3  resolveTdConfirm_     this sample's TD1; a pending locked-arc TD confirmation
  *     S4  tryLock_              the statistical WL lock
  *     S5  tryInhouseCommit_     the in-house bias commit
  *     S6  selectStatistic_      the deviation and spread the gate tests
  *     S7  gate_                 the threshold, the verdicts, the decision line
- *     S8  recordEpochEvidence_  score cache, clean set, cross-satellite pool, trace row
+ *     S8  recordEpochEvidence_  score cache, clean set, cross-satellite pool, trace row,
+ *                               the arc's step epoch
  *     S9  onFlag_               a flagged sample: absorb, defer, or emit
  *     S10 foldSample_           the Welford/Hatch fold and the windows
  *     S11 checkDriftDemotion_   a locked arc's drift
  *     S12 checkLevelBackstop_   an unlocked arc's level disagreement
- *   The sample ends at the first step that flags a slip; the driver returns the verdict.
+ *   The sample ends at the first step that flags a slip; the driver returns the verdict,
+ *   stamped with the epoch its step entered the data.
  *
  * Each step opens with an alias block binding the names its code had as locals or
  * parameters of the former single function (`const double lambda_wl = w.sample.lambda_wl;`),
@@ -110,6 +113,16 @@ namespace GnssProcessor {
                                           ///< the step that emits a slip and erases the arc.
         double epoch_s = 0.0;        ///< Continuous GPS seconds of the sample.
         bool lli_shadowed = false;   ///< The first sample after an LLI on one of the bands.
+        /// The withheld LLI epoch (continuous GPS seconds) and the raw MW change from its
+        /// own sample to this one (m); NaN unless @ref lli_shadowed and the LLI epoch's
+        /// sample was kept (@c MwSlipDetector::prev_lli_mw_).  Read by the step-epoch
+        /// stamp in S8.
+        double lli_epoch_s = 0.0;
+        double lli_move_m = std::numeric_limits<double>::quiet_NaN();
+        /// The arc's step epoch (@c MwArcStats::step_epoch_s) after this sample: copied
+        /// here at S1 (so a flag at S2 or S3 reads it before an erase) and restamped at
+        /// S8.  Every verdict reports it (@c MwVerdict::step_epoch_s).
+        double step_epoch_s = 0.0;
 
         // --- S3 resolveTdConfirm_ --------------------------------------------------------
         double mw_diff = 0.0;        ///< TD1 = mw - prev_mw (re-based on an outlier excision).

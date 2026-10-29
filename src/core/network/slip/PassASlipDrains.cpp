@@ -70,7 +70,9 @@ std::map<net::ArcTuple, RelevelPend> passAMwRefloatStage(const PassAView& v, boo
                               // so the off path never reaches a hook call
                               // (structurally byte-identical).
                               ctx.carry.slip_oracle.get(),
-                              common_band_ptr);
+                              common_band_ptr,
+                              // The MW re-flag rule reads each band's last re-level.
+                              &arc_rows);
     if (datum_detect_on) {
         net::assignSatFlags(entities, &net::SatelliteState::datum_reref_pb, datum_reref_pb_sats);
         net::assignSatFlags(entities, &net::SatelliteState::datum_reref_amb, datum_reref_amb_sats);

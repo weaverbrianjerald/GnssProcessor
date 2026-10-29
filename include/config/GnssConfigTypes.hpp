@@ -2214,6 +2214,17 @@ namespace GnssProcessor {
         /// Young arcs have no established level, so their "deviation" is measured
         /// against a threshold that is itself still converging.
         int cycle_slip_mw_evidence_min_arc_epochs{ 10 };
+        /// MW re-flag skip: an MW flag that re-detects a step the network has already
+        /// answered does not free a band again when that band was re-levelled at or
+        /// after the epoch the step entered the data (@c MwSlipResult::step_epoch_s).
+        /// Without it, one slip is freed twice: the receiver's LLI frees the arc at its
+        /// epoch, and the MW detector, whose arc statistics the uncombined LLI policy
+        /// keeps, flags the same step one to four epochs later against its pre-slip
+        /// level and frees the arc again, discarding the re-convergence in between.
+        /// Default @c false is byte-identical; the census is collected either way.
+        /// Solve-affecting when armed, fingerprint-exempt (forward-only response knob,
+        /// the relevel_free_epoch / anchor_slip_handover class).
+        bool cycle_slip_mw_reflag_skip{ false };
         /// Common-band scope (SPEC_event_harness.md §14): free only the band the
         /// evidence names.  A single-band slip on a triple-frequency arc moves every
         /// MW pair that contains the band (an L5 slip fires (1,5) and (2,5) and leaves

@@ -91,6 +91,17 @@ namespace GnssProcessor {
         /// Evidence-based admission is therefore restricted to lanes with
         /// bia_corrected false.
         bool   bia_corrected{ false };
+
+        /// The epoch at which the flagged step entered the data (continuous GPS
+        /// seconds): every observation from this epoch on is post-step.  The
+        /// flag's own epoch for a first detection; an earlier epoch when the flag
+        /// re-detects a step the arc has carried for several samples (a locked
+        /// arc's drift demotion, the unlocked flag after it) or one that entered
+        /// at an LLI epoch whose sample the detector withheld.  A consumer that
+        /// re-levelled the arc at or after this epoch has already discarded the
+        /// pre-step level.  0 where the emitting path has none (the LLI resets).
+        /// No detector decision depends on it.
+        double step_epoch_s{ 0.0 };
     };
 
     /**

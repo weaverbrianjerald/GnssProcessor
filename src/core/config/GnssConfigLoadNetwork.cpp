@@ -397,6 +397,23 @@ namespace GnssProcessor {
                       network_config_.cycle_slip_mw_evidence_min_arc_epochs,
                       network_config_.cycle_slip_mw_evidence_ratio_min,
                       network_cycle_slip_turbo_edit_frac_max_);
+        // MW re-flag interlock, placed here for the same reason as the evidence
+        // refloat's: without the detector there is no MW flag to test.
+        if (network_config_.cycle_slip_mw_reflag_skip && !network_cycle_slip_mw_detect_) {
+            log->warn("Network: network.cycle_slip.mw_reflag_skip needs "
+                      "network.cycle_slip.mw_detect — it decides which of that detector's "
+                      "flags free a band again and has nothing to decide without it "
+                      "— disabled.");
+            network_config_.cycle_slip_mw_reflag_skip = false;
+        }
+        if (network_config_.cycle_slip_mw_reflag_skip)
+            log->info("Network (MW re-flag skip): ARMED — an MW flag whose step entered the "
+                      "data at an earlier epoch does not free a band that was re-levelled at "
+                      "or after that epoch (the LLI or IF-TD response already discarded the "
+                      "pre-step level; a second free would discard only the re-convergence).  "
+                      "Its other bands are freed as before.  Each skip is a T0_mw_detect / "
+                      "mw_wl_reflag row; run-end reports candidates, bands covered and open, "
+                      "and the re-flag delay; the census is collected with the knob OFF too.");
         // Common-band scope interlock, placed here for the same reason as the evidence
         // refloat above.  The exoneration evidence is the MW detector's set of
         // affirmatively clean pairs, so without mw_detect there are no silent pairs,
@@ -5463,6 +5480,19 @@ namespace GnssProcessor {
         network_config_.cycle_slip_mw_evidence_min_arc_epochs =
             jval<int>(json, "network.cycle_slip.mw_evidence_min_arc_epochs",
                       "network_cycle_slip_mw_evidence_min_arc_epochs", 10);
+        // --- MW re-flag skip ----------------------------------------------------
+        // One slip freed twice: the LLI response frees the arc at the LLI epoch, and the
+        // MW detector, whose arc statistics the uncombined LLI policy keeps on purpose,
+        // flags the same step one to four epochs later against its pre-slip level (a
+        // locked arc absorbs the step until its mean drifts past the lock bound) and the
+        // drain frees the arc again, discarding the re-convergence in between.  Armed, a
+        // band re-levelled at or after the epoch the step entered the data is not freed
+        // again.  Default off and byte-identical when off; the census is collected
+        // either way.  The interlock on mw_detect sits in the late band of
+        // loadNetworkSection_, beside the evidence refloat's.
+        network_config_.cycle_slip_mw_reflag_skip =
+            jval<bool>(json, "network.cycle_slip.mw_reflag_skip",
+                       "network_cycle_slip_mw_reflag_skip", false);
         // Common-band scope (SPEC_event_harness §14).  Default off is byte-identical:
         // no verdict object is built and no drain consults one.
         network_config_.cycle_slip_common_band_scope =

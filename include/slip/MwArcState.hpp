@@ -345,6 +345,20 @@ namespace GnssProcessor {
             /** Flag-epoch detect_mode code (2 = TD1, 3 = TD2; a TD1-fallback
              *  flag inside TD2 order correctly tags 2). */
             int    td_confirm_mode{ 0 };
+            /** The epoch at which the step behind the arc's open excursion entered
+             *  the data (continuous GPS seconds): every sample from this epoch on is
+             *  post-step.  0 while no excursion is open.  An excursion opens at the
+             *  first sample outside the gate and closes at the first sample back
+             *  inside it; a sample whose own time difference leaves the gate inside
+             *  an open excursion is a new step and moves the epoch to it.  The
+             *  epoch is the sample's own, except at the first sample after an LLI
+             *  epoch whose own MW sample already sat at the new level: there the
+             *  step had entered by the LLI epoch, so the epoch is that one.  Read
+             *  by every verdict of the excursion (@c MwVerdict::step_epoch_s), so
+             *  a locked arc's late drift demotion and the unlocked flag after it
+             *  report the epoch of the step they re-detect.  Bookkeeping only: no
+             *  detector decision reads it. */
+            double step_epoch_s{ 0.0 };
         };
 
         /** Demoted pre-jump level stash for the across-gap WL settle

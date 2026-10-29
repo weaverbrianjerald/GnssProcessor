@@ -107,6 +107,18 @@ namespace GnssProcessor {
             st.lambda_wl       = lambda_wl;
             st.lli_shadow      = lli_shadowed;
         }
+
+        // The step epoch (S8): the arc's open excursion, and, on the first sample after an
+        // LLI epoch, how far the raw MW moved from that epoch's withheld sample.  Read
+        // before any step can erase the arc.  Bookkeeping only.
+        w.step_epoch_s = stats.step_epoch_s;
+        if (lli_shadowed) {
+            const auto it = prev_lli_mw_.find(stats_key);
+            if (it != prev_lli_mw_.end()) {
+                w.lli_epoch_s = it->second.epoch_s;
+                w.lli_move_m  = computeMwMeters(obs, sig1, sig2, code1, code2) - it->second.mw_m;
+            }
+        }
     }
 
     // ===================================================================================
@@ -721,6 +733,11 @@ namespace GnssProcessor {
         const double thresh = w.thresh;
         const double sigma = w.sigma;
         const bool is_slip = w.is_slip;
+        const double mw_diff = w.mw_diff;
+        const double epoch_s = w.epoch_s;
+        const bool lli_shadowed = w.lli_shadowed;
+        const double lli_epoch_s = w.lli_epoch_s;
+        const double lli_move_m = w.lli_move_m;
 
         // Cache for external queries (e.g. outlier tiebreaker).  Active-
         // reference quantities so the |dev|/σ score keeps its meaning in
@@ -823,6 +840,23 @@ namespace GnssProcessor {
                              stats.rounded_wl, stats.wl_locked, pivot_sat,
                              local_ref, local_sigma_scaled,
                              detect_mode_code, /*active_dev_m=*/dev);
+
+        // The arc's step epoch (MwArcStats::step_epoch_s).  A sample inside the gate
+        // closes any open excursion.  A sample outside it opens one, and inside an open
+        // one a sample whose own time difference leaves the gate is a new step.  Either
+        // way the step entered at this sample, or at the LLI epoch just before it when
+        // that epoch's withheld sample already sat at this level (the receiver reported
+        // the break there, and nothing moved after it).  A locked arc absorbs the step
+        // and flags it samples later (drift demotion, then the unlocked flag), so the
+        // epoch lets a consumer tell a re-detection from a new slip.  Bookkeeping only.
+        if (!is_slip) {
+            stats.step_epoch_s = 0.0;
+        } else if (stats.step_epoch_s == 0.0 || std::abs(mw_diff) > thresh) {
+            const bool entered_at_lli_epoch = lli_shadowed && std::isfinite(lli_move_m)
+                                              && std::abs(lli_move_m) <= thresh;
+            stats.step_epoch_s = entered_at_lli_epoch ? lli_epoch_s : epoch_s;
+        }
+        w.step_epoch_s = stats.step_epoch_s;
     }
 
     // ===================================================================================

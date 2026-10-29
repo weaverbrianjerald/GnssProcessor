@@ -679,6 +679,22 @@ struct SlipQcCounters {
     long long lli_detections{0};    ///< (station, satellite) LLI detections that acted (after the credibility qualification).
     long long lli_refloats{0};      ///< …of those, warm epochs that actually refloated.
 
+    // --- MW re-flag (network.cycle_slip.mw_reflag_skip) ---
+    //
+    // An admitted MW candidate whose step entered the data at an earlier epoch
+    // (MwSlipResult::step_epoch_s) re-detects a step the arc has carried since.  A band
+    // re-levelled at or after that epoch holds no pre-step level (networkMwReflagCovers),
+    // and an armed drain does not free it again.  Counted whether or not the knob is
+    // armed, so a run with it off reports what arming it would skip.  Closure, in
+    // bands: mw_reflag_bands == mw_reflag_bands_covered + mw_reflag_bands_open.
+    long long mw_reflag_candidates{0};    ///< (station, satellite, pair) candidates whose step epoch is earlier than this epoch.
+    long long mw_reflag_bands{0};         ///< …their bands that the common-band verdict lets the drain reach.
+    long long mw_reflag_bands_covered{0}; ///< …re-levelled at or after the step epoch: not freed again when armed.
+    long long mw_reflag_bands_open{0};    ///< …not re-levelled since the step: freed as before.
+    long long mw_reflag_all_covered{0};   ///< Candidates with every reached band covered (no free at all when armed).
+    double    mw_reflag_delay_sum_s{0.0}; ///< Sum over the candidates of (this epoch − step epoch), s.
+    double    mw_reflag_delay_max_s{0.0}; ///< …its largest value, s.
+
     // --- Datum-station slip detect (network.cycle_slip.datum_station_detect) ---
     // Kept separate from the populations above: those count non-pivot
     // detections, whose action is a local refloat; these count the gauge-pinned

@@ -20,6 +20,7 @@
 
 #include "common/GnssIdentity.hpp"      // obsTypeOf, systemOfSat, SignalId, LosId
 #include "config/GnssConfig.hpp"        // networkCycleSlip* getters
+#include "math/TimeUtils.hpp"           // continuousGpsSeconds (the MW re-flag's epoch clock)
 #include "network/state/StationParams.hpp"   // the station's parameter set: the ambiguities the drains free
 #include "rinex/MultiRinexSync.hpp"     // SyncedEpoch (se.time in log/event rows)
 
@@ -309,7 +310,8 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
                                         RelevelPend>* relevel_pend,
                                net::ArcTable* bridge_arcs,
                                NetworkSlipOracle* oracle,
-                               const CommonBandEpoch* common_band) {
+                               const CommonBandEpoch* common_band,
+                               const net::ArcTable* reflag_arcs) {
     // Alias block (INC-6 migration mechanic).
     const auto& sta_mw_refloat = pa.sta_mw_refloat;
     // Sim-only oracle: this epoch's continuous GPS seconds, the time frame the
@@ -574,6 +576,74 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
                               const RelevelPend& pd) {
             return bridge_v3_gf ? v3_replace(key, pd) : v2_replace(key, pd);
         };
+        // MW re-flag (network.cycle_slip.mw_reflag_skip).  A candidate whose step entered
+        // the data at an earlier epoch re-detects a step the arc has carried since: a
+        // locked arc absorbs a step and flags it samples later, and the first sample
+        // after an LLI epoch flags the step that epoch's response already freed.  A band
+        // re-levelled at or after the step's epoch holds no pre-step level, so freeing it
+        // again would discard only the re-convergence since (networkMwReflagCovers).  The
+        // census below runs whether or not the knob is armed; armed, a covered band is
+        // not freed again, the candidate's other bands are freed as before, and each
+        // candidate with a covered band gets one `mw_wl_reflag` row naming them.
+        const bool   reflag_on = config_.networkCycleSlipMwReflagSkip();
+        const double now_s     = TimeUtils::continuousGpsSeconds(se.time);
+        // The band's last re-level (LocalCarry::relevel_s), 0 when the band has no live
+        // ambiguity or no carry entry (never covered).
+        auto relevel_of = [&](int i, const std::string& sat, const std::string& signal) {
+            if (!reflag_arcs) return 0.0;
+            for (const auto& [arc, slot] : stations[i].params.amb) {
+                (void)slot;
+                if (net::satKey(arc.sat) != sat || net::signalKey(arc.signal) != signal) continue;
+                const LocalCarry* lc = net::get(*reflag_arcs, ArcId{StationId{i}, arc.sat, arc.signal},
+                                                &net::ArcState::amb);
+                return lc ? lc->relevel_s : 0.0;
+            }
+            return 0.0;
+        };
+        struct ReflagSkip { bool sig1{false}; bool sig2{false}; };
+        // The re-flag test of one candidate over the bands the common-band verdict lets
+        // the drain reach: the census, and the bands an armed drain skips.
+        auto mw_reflag = [&](int i, const PassABuffers::MwRefloatCand& cand,
+                             bool reach1, bool reach2) {
+            ReflagSkip skip;
+            if (!networkMwStepIsEarlier(cand.step_epoch_s, now_s)) return skip;   // a first detection
+            ++qc_cnt.mw_reflag_candidates;
+            const double delay_s = now_s - cand.step_epoch_s;
+            qc_cnt.mw_reflag_delay_sum_s += delay_s;
+            qc_cnt.mw_reflag_delay_max_s = std::max(qc_cnt.mw_reflag_delay_max_s, delay_s);
+            std::string skipped, freed, relevels;
+            auto append = [](std::string& s, const std::string& t) {
+                s += (s.empty() ? "" : "+") + t;
+            };
+            int reached = 0, covered = 0;
+            auto test_band = [&](const std::string& sig, bool reach, bool& band_skip) {
+                if (!reach) return;
+                ++reached;
+                ++qc_cnt.mw_reflag_bands;
+                const double relevel_s = relevel_of(i, cand.sat, sig);
+                if (networkMwReflagCovers(cand.step_epoch_s, now_s, relevel_s)) {
+                    ++covered;
+                    ++qc_cnt.mw_reflag_bands_covered;
+                    band_skip = reflag_on;
+                    append(skipped, sig);
+                    append(relevels, fmt::format("{:.1f}", std::fmod(relevel_s, 604800.0)));
+                } else {
+                    ++qc_cnt.mw_reflag_bands_open;
+                    append(freed, sig);
+                }
+            };
+            test_band(cand.sig1, reach1, skip.sig1);
+            test_band(cand.sig2, reach2, skip.sig2);
+            if (reached > 0 && covered == reached) ++qc_cnt.mw_reflag_all_covered;
+            if (reflag_on && covered > 0)
+                emitEvent("T0_mw_detect", "mw_wl_reflag", cand.sat, stations[i].name,
+                          delay_s, std::nullopt, "skip",
+                          fmt::format("pair={}+{};skip={};free={};step_tow={:.1f};relevel_tow={}",
+                                      cand.sig1, cand.sig2, skipped,
+                                      freed.empty() ? "none" : freed,
+                                      std::fmod(cand.step_epoch_s, 604800.0), relevels));
+            return skip;
+        };
         if (bridge_v2)
             for (auto pit = relevel_pend->begin(); pit != relevel_pend->end();) {
                 if (v2_now_s - pit->second.tow_s > v2_window_s) {
@@ -591,6 +661,9 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
             // can slip on several signal-pairs at once (multi-freq); refloat every
             // band but count, log and emit once per (station, satellite).
             std::set<std::string> mw_done;
+            // The re-flag test, once per (satellite, pair): an uncombined lane reaches the
+            // drain as one candidate per band, both with the same pair and step epoch.
+            std::map<std::tuple<std::string, std::string, std::string>, ReflagSkip> reflag_of;
             for (const auto& cand : sta_mw_refloat[i]) {
                 const auto& sat  = cand.sat;
                 const auto& sig1 = cand.sig1;
@@ -643,10 +716,17 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
                 // satellite), both calls return true and the unscoped path runs.
                 const bool cb1 = commonBandMayFree(common_band, i, sat, sig1);
                 const bool cb2 = commonBandMayFree(common_band, i, sat, sig2);
-                const auto a = !cb1 ? SignalAction{}
+                // MW re-flag: an armed drain does not free again a reached band that was
+                // re-levelled since the step (counted either way).
+                const auto rkey = std::make_tuple(sat, sig1, sig2);
+                auto rit = reflag_of.find(rkey);
+                if (rit == reflag_of.end())
+                    rit = reflag_of.emplace(rkey, mw_reflag(i, cand, cb1, cb2)).first;
+                const ReflagSkip rf = rit->second;
+                const auto a = (!cb1 || rf.sig1) ? SignalAction{}
                              : refloat_signal(i, sat, sig1,
                                               RelevelEpochState::kCauseMw);
-                const auto b = !cb2 ? SignalAction{}
+                const auto b = (!cb2 || rf.sig2) ? SignalAction{}
                              : refloat_signal(i, sat, sig2,
                                               RelevelEpochState::kCauseMw);
                 // Bridge v2: a same-epoch candidate (MW and T1 firing together) is

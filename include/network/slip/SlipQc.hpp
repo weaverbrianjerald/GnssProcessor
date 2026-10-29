@@ -232,6 +232,48 @@ inline MwAdmitDecision networkMwAdmitCandidate(bool slip_wl_known, int slip_wl_c
     return d;
 }
 
+/// Tolerance (s) of the epoch comparisons in @ref networkMwReflagCovers: half the
+/// shortest sampling interval the producer runs (1 s), so two stamps of one epoch
+/// compare equal whatever arithmetic produced them.
+inline constexpr double kMwReflagEpochTolS = 0.5;
+
+/**
+ * @brief Whether an MW flag re-detects a step that entered the data at an earlier epoch
+ *        (pure): the population the MW re-flag rule tests.
+ * @param step_epoch_s  The epoch the step entered the data (@c MwSlipResult::step_epoch_s;
+ *                      0 = unknown).
+ * @param now_s         This epoch (continuous GPS seconds).
+ * @return True when the step epoch is known and earlier than this epoch.
+ */
+inline bool networkMwStepIsEarlier(double step_epoch_s, double now_s) {
+    return step_epoch_s > 0.0 && step_epoch_s < now_s - kMwReflagEpochTolS;
+}
+
+/**
+ * @brief The MW re-flag rule (network.cycle_slip.mw_reflag_skip; pure): whether a band's
+ *        last re-level already discarded the level that a flagged MW step moved.
+ *
+ * An MW flag can re-detect a step the network has already answered.  A locked arc absorbs
+ * a step and flags it samples later (drift demotion, then the unlocked flag), and the
+ * first sample after an LLI epoch flags the step the LLI response freed at that epoch.  A
+ * band re-levelled at or after the epoch the step entered the data holds no pre-step
+ * level, so freeing it again discards only the re-convergence since that re-level.  A
+ * step of this epoch is a first detection and is never covered: this epoch's own
+ * responses are the ones that free it.
+ *
+ * @param step_epoch_s  The epoch the step entered the data (@c MwSlipResult::step_epoch_s;
+ *                      0 = unknown, never covered).
+ * @param now_s         This epoch (continuous GPS seconds).
+ * @param relevel_s     The band's last re-level (@c LocalCarry::relevel_s; 0 = unstamped,
+ *                      for example a warm-resume-restored entry, never covered).
+ * @return True when the step entered at an earlier epoch and the band was re-levelled at
+ *         or after it.
+ */
+inline bool networkMwReflagCovers(double step_epoch_s, double now_s, double relevel_s) {
+    return networkMwStepIsEarlier(step_epoch_s, now_s) && relevel_s > 0.0
+        && relevel_s >= step_epoch_s - kMwReflagEpochTolS;
+}
+
 /**
  * @brief PASS-A slip-scan buffers: filled by the parallel detection loop (one
  *        index-addressed slot per station, so no slot is written by two
@@ -282,6 +324,9 @@ struct PassABuffers {
         /// Admitted by the evidence rule alone (the legacy gate refused it); drives
         /// the `src=evidence` event-row detail.
         bool   via_evidence{ false };
+        /// The epoch the flagged step entered the data (@c MwSlipResult::step_epoch_s),
+        /// which the MW re-flag rule (@ref networkMwReflagCovers) reads.
+        double step_epoch_s{ 0.0 };
     };
     std::vector<std::vector<MwRefloatCand>> sta_mw_refloat;
 
@@ -496,6 +541,22 @@ void networkSlipDrainT0Repairs(const PassABuffers& pa, const GnssConfig& config_
  * @param datum_arcs    Phase-leveling carry (the arc table) (the ctx.entities.arcs
  *                             instance) for the local-carry erase on
  *                             re-reference, counted in datum_slip_carry_erases.
+ *
+ * ### MW re-flag (network.cycle_slip.mw_reflag_skip)
+ *
+ * A candidate whose step entered the data at an earlier epoch re-detects a step the
+ * arc has carried since (@ref networkMwReflagCovers).  Each band the common-band
+ * verdict lets the drain reach is tested against its last re-level, read from
+ * @p reflag_arcs; a covered band holds no pre-step level.  The census counts every
+ * such candidate and band whether or not the knob is armed (SlipQcCounters,
+ * `mw_reflag_*`).  Armed, a covered band is not freed again, and the candidate's
+ * `mw_wl_reflag` event row (action `skip`) names the bands skipped and freed, the
+ * step epoch and the covering re-levels; a band not covered is freed as before.  The
+ * re-flag is tested after the delta-bridge intercept, so the integer still reaches a
+ * waiting bridge pend.
+ *
+ * @param reflag_arcs   The arc table, read for each band's @c LocalCarry::relevel_s;
+ *                      nullptr: no band is covered and the census counts none.
  */
 void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_,
                                std::vector<NetStation>& stations,
@@ -521,7 +582,8 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
                                /// Common-band scope verdicts for this epoch (§14).
                                /// Null (the knob off): @ref commonBandMayFree answers
                                /// true for every signal and the drain is byte-identical.
-                               const CommonBandEpoch* common_band = nullptr);
+                               const CommonBandEpoch* common_band = nullptr,
+                               const net::ArcTable* reflag_arcs = nullptr);
 
 /**
  * @brief The arcs a wind-up accumulator restart of (station @p i, satellite

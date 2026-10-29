@@ -1128,6 +1128,9 @@ namespace GnssProcessor {
                                            ///< |dev|/threshold at the firing gate.
             int    arc_epochs{ 0 };        ///< The arc's sample count before the erase (0 on the
                                            ///< init-suspicious path).
+            double step_epoch_s{ 0.0 };    ///< Epoch the flagged step entered the data
+                                           ///< (@c MwSlipResult::step_epoch_s); set by
+                                           ///< @c processMwSample on every flag.
         };
 
         struct SatMwEntry;    ///< One satellite's BIA-corrected sample of an SD group (slip/MwDetectorWork.hpp).
@@ -1277,12 +1280,15 @@ namespace GnssProcessor {
                              const std::vector<IfPair>& if_pairs);
 
         /**
-         * @brief The uncombined path's LLI policy: schedule every phase ambiguity's reset and
-         *        record the flagged bands for the next epoch's LLI shadow, keeping the arcs.
-         * @param w    The epoch's working value.
-         * @param obs  The satellite's observation.
+         * @brief The uncombined path's LLI policy: schedule every phase ambiguity's reset,
+         *        record the flagged bands for the next epoch's LLI shadow and each pair's
+         *        withheld sample for its step epoch, keeping the arcs.
+         * @param w         The epoch's working value.
+         * @param obs       The satellite's observation.
+         * @param uc_pairs  Its uncombined band pairs.
          */
-        void preserveArcsOnLli_(MwEpochWork& w, const PppObservation& obs);
+        void preserveArcsOnLli_(MwEpochWork& w, const PppObservation& obs,
+                                const std::vector<UncombinedPair>& uc_pairs);
 
         /**
          * @brief The combined path's IF lanes: form each lane's MW; a BIA-corrected lane joins
@@ -1490,6 +1496,22 @@ namespace GnssProcessor {
          *  nothing leaks across stations. */
         std::map<std::string, std::set<std::string>> prev_lli_bands_;
         std::map<std::string, std::set<std::string>> cur_lli_bands_;
+
+        /** One uncombined pair's raw (undifferenced) MW at an LLI epoch whose sample
+         *  the detector withheld. */
+        struct LliEpochSample {
+            double mw_m{ 0.0 };     ///< Raw MW (m), as @c computeMwMeters forms it.
+            double epoch_s{ 0.0 };  ///< The LLI epoch (continuous GPS seconds).
+        };
+        /** The withheld LLI epoch's own MW samples, arc key ("G19_L1C_L2W") → sample,
+         *  for the previous epoch and the one being processed; rotated with the band
+         *  memory above.  The first sample after the LLI epoch compares against it:
+         *  when the level already sat there, the step entered by the LLI epoch, and
+         *  the arc's step epoch (@c MwArcStats::step_epoch_s) is the LLI epoch rather
+         *  than the sample's own.  Uncombined path only (the combined path erases its
+         *  arcs at an LLI).  Bookkeeping only: no detector decision reads it. */
+        std::map<std::string, LliEpochSample> prev_lli_mw_;
+        std::map<std::string, LliEpochSample> cur_lli_mw_;
 
         /** Instance label for the MWDEC / MWSKIP debug lines; see
          *  @ref setStationLabel.  Log text only. */
