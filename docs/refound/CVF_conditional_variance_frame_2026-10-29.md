@@ -4,8 +4,8 @@
 
 - **id:** CVF
 - **topic:** perf
-- **status:** open
-- **summary:** BUILT and GATED 2026-10-29, not merged (branch `perf/cvf`, uncommitted). Second build: G2 24 of 24 IDENTICAL, real time identical apart from wall-clock text; first build: user side 16 of 16, the field golden loop 9.5 and 10.5 % shorter over the whole run (bar 5 %) and 12.8 and 13.5 % shorter while both members of a pair run, the sim loop 4.2 to 6.8 %, products byte-identical in every pair. The first build moved the per-epoch consumer call count of the timing lines (section 5.3); the timer placement was corrected. G5 passes (section 5.8: the untouched sections move inside the spread of a same-executable pair). Owed: the merge. Pre-registered 2026-10-29. Optimization 2 of card NETCOST (section 5), its own card with its own gate as that card's Owed list requires. Two exact changes to the covariance consumers of the network estimator: (1) `pureConditionalLocalVarianceDiag` returns diag(N_rr⁻¹) without the product with an all-zero n_s x n_s matrix (212 ms per field epoch of 2 127 ms in card NETCOST section 3); (2) the datum-frame shared covariance (the last solve's `shared_cov_` with the datum-pinned and phase-gauge columns zeroed) is built once per solve and read by every consumer that passes the solve's datum, in place of one 1.4 MB copy per consumer call (75 ms per field epoch in `conditionalLocalVarianceDiag` alone). No key: the change is exact by construction and is gated as byte-identical; a gate that is not identical sends it behind a default-off key or drops it.
+- **status:** closed
+- **summary:** CLOSED 2026-10-29: merged into main (branch `perf/cvf`, commit `e458b8a`; section 6). BUILT and GATED 2026-10-29. Second build: G2 24 of 24 IDENTICAL, real time identical apart from wall-clock text; first build: user side 16 of 16, the field golden loop 9.5 and 10.5 % shorter over the whole run (bar 5 %) and 12.8 and 13.5 % shorter while both members of a pair run, the sim loop 4.2 to 6.8 %, products byte-identical in every pair. The first build moved the per-epoch consumer call count of the timing lines (section 5.3); the timer placement was corrected. G5 passes (section 5.8: the untouched sections move inside the spread of a same-executable pair). Pre-registered 2026-10-29. Optimization 2 of card NETCOST (section 5), its own card with its own gate as that card's Owed list requires. Two exact changes to the covariance consumers of the network estimator: (1) `pureConditionalLocalVarianceDiag` returns diag(N_rr⁻¹) without the product with an all-zero n_s x n_s matrix (212 ms per field epoch of 2 127 ms in card NETCOST section 3); (2) the datum-frame shared covariance (the last solve's `shared_cov_` with the datum-pinned and phase-gauge columns zeroed) is built once per solve and read by every consumer that passes the solve's datum, in place of one 1.4 MB copy per consumer call (75 ms per field epoch in `conditionalLocalVarianceDiag` alone). No key: the change is exact by construction and is gated as byte-identical; a gate that is not identical sends it behind a default-off key or drops it.
 - **source:** [NETCOST](NETCOST_gps_galileo_cost_attribution_2026-10-18.md) sections 3, 4, 5 and 12.5 (the sub-section timings behind the estimate); [NETCOSTB](NETCOSTB_gps_galileo_cost_continued_2026-10-18.md) section 5 (the attribution reproduced)
 - **knobs / posture:** none; no source change to configuration, goldens or ledger
 - **dates in the text:** 2026-10-29
@@ -17,7 +17,7 @@ all-zero matrix and one shared-covariance copy per call) go without moving an ou
 build is identical on the 23-arm gate (24 of 24) and in real time apart from wall-clock text, and the first build on
 the user side (16 of 16). The field golden loop is 9.5 to 10.5 % shorter over the whole run and 12.8 to 13.5 % while
 both runs of a pair are live (the sim 4.2 to 6.8 %), against a bar of 5 %. The first build moved a timing call count,
-since corrected (section 5.3). Standing: every gate passes; not merged (section 5.8).
+since corrected (section 5.3). Standing: every gate passes; merged into main 2026-10-29 (section 6).
 
 ## 1. Question
 
@@ -257,3 +257,9 @@ Two members of one executable, run together, differ by up to 37 ms in `other` an
 (section 5.5) are inside the repeat spread: **G5's second clause passes.** The loops of these pairs (control 1 594 and
 1 600, second build 1 395 and 1 380 ms per epoch, at slightly different loads) agree with section 5.5. `products.txt`
 with `#` lines stripped hashes to the same value (sha256[:16] `f7bc1445343068d1`) in all four runs and in `cvfA1`.
+
+## 6. Closed, 2026-10-29
+
+The branch commit `e458b8a` (the second build's source, the unit suite and this card) was merged into main at the
+author's decision, with no change to configuration, goldens or ledger. Card NETCOST's optimization 3 stays owed on
+that card.

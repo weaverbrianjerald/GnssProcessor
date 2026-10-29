@@ -240,9 +240,9 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   NSD pass; PIV misses one site clause (ARHT00ATA, DOY 130); the ARL fixes stay off. ARMED at the author's decision:
   OTL and the noon-turn attitude (field golden), the estimable block test and the seed mirrors (both goldens); the loader
   warns on the out-of-scope combined sigma; baseline pair `runs/_rf0hv17_{field,sim}6`.
-- [CVF](CVF_conditional_variance_frame_2026-10-29.md): open, 2026-10-29: card NETCOST's optimization 2, BUILT and GATED,
-  not merged (branch `perf/cvf`). The border-known variance (`pureConditionalLocalVarianceDiag`) read as diag(N_rr⁻¹)
+- [CVF](CVF_conditional_variance_frame_2026-10-29.md): closed, 2026-10-29: card NETCOST's optimization 2, BUILT, GATED and
+  merged into main (branch `perf/cvf`). The border-known variance (`pureConditionalLocalVarianceDiag`) read as diag(N_rr⁻¹)
   without the product with an all-zero n_s x n_s matrix, and the datum-frame shared covariance built once per solve for
   every consumer that passes the solve's datum; no key. 23-arm gate 24 of 24, user side 16 of 16, real time wall-clock
   text only; field golden loop -9.5 to -10.5 % over the whole run and -12.8 to -13.5 % with both runs of a pair live,
-  sim -4.2 to -6.8 %, products byte-identical; every gate passes; owed: the merge.
+  sim -4.2 to -6.8 %, products byte-identical; every gate passes.
