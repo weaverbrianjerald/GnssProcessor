@@ -1,6 +1,7 @@
 /**
  * @file test_rtcm_ssr_phase_bias.cpp
- * @brief Bit layout of the SSR phase-bias messages (IGS-SSR 4076 IM x6, legacy 1265-1270).
+ * @brief Bit layout and signal ids of the SSR bias messages (IGS-SSR 4076 IM x5 and x6,
+ *        legacy 1265-1270).
  *
  * Coverage:
  *   - The dispersive-bias and Melbourne-Wübbena consistency indicators are read
@@ -11,6 +12,8 @@
  *   - Every satellite of a multi-satellite message decodes with its own id, yaw
  *     and per-signal fields, in both dialects, and the message is consumed
  *     exactly (the decode reports ok).
+ *   - Code- and phase-bias signal ids are read in the SSR numbering (GPS L1C is
+ *     id 0, L2W id 11; Galileo L5Q id 6), not in the MSM observation numbering.
  *
  * The synthetic frames carry zero CRC bytes; the parser assumes the framer verified them.
  */
@@ -22,6 +25,7 @@
 
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace GnssProcessor {
@@ -65,7 +69,7 @@ std::vector<uint8_t> buildFrame(const std::vector<uint8_t>& payload) {
 
 // One signal of a phase-bias satellite block.
 struct PbSignal {
-    int  sig_id;        // RTCM signal id (5 bits)
+    int  sig_id;        // SSR signal and tracking mode id (5 bits)
     bool integer;       // signal integer indicator
     int  wl;            // wide-lane integer indicator (2 bits)
     int  disc;          // discontinuity counter (4 bits)
@@ -136,11 +140,11 @@ void expectRecord(const SsrPhaseBias& pb, const PbSat& s,
 }
 
 TEST(RtcmSsrPhaseBiasTest, IgsSsr4076GpsHeaderIndicatorsAndThreeSatellites) {
-    // IM 26 = GPS phase bias.  Signal ids 2 = 1C, 10 = 2W.
+    // IM 26 = GPS phase bias.  SSR signal ids 0 = 1C, 11 = 2W.
     const std::vector<PbSat> sats = {
-        { 2, 128,  -4, {{2, true, 2, 1,  12345}, {10, true, 2, 1, -6789}}},
-        { 7,  64,   3, {{2, true, 2, 3, -40001}, {10, true, 2, 3,  20202}}},
-        {31, 300,   0, {{2, true, 2, 0,      7}, {10, true, 2, 0,  -9999}}},
+        { 2, 128,  -4, {{0, true, 2, 1,  12345}, {11, true, 2, 1, -6789}}},
+        { 7,  64,   3, {{0, true, 2, 3, -40001}, {11, true, 2, 3,  20202}}},
+        {31, 300,   0, {{0, true, 2, 0,      7}, {11, true, 2, 0,  -9999}}},
     };
     BitWriter pw;
     pw.put(12, 4076);              // DF002
@@ -173,10 +177,10 @@ TEST(RtcmSsrPhaseBiasTest, IgsSsr4076GpsHeaderIndicatorsAndThreeSatellites) {
 
 TEST(RtcmSsrPhaseBiasTest, Legacy1267GalileoHeaderIndicatorsAndTwoSatellites) {
     // Legacy Galileo phase bias: 20-bit GPS epoch, 6-bit satellite id.
-    // Signal ids 2 = 1C, 23 = 5Q.
+    // SSR signal ids 2 = 1C, 6 = 5Q.
     const std::vector<PbSat> sats = {
-        { 5, 10,  1, {{2, true, 0, 2,  5000}, {23, true, 0, 2, -5000}}},
-        {24, 20, -1, {{2, true, 0, 9, -1111}, {23, true, 0, 9,  2222}}},
+        { 5, 10,  1, {{2, true, 0, 2,  5000}, {6, true, 0, 2, -5000}}},
+        {24, 20, -1, {{2, true, 0, 9, -1111}, {6, true, 0, 9,  2222}}},
     };
     BitWriter pw;
     pw.put(12, 1267);              // DF002
@@ -203,10 +207,10 @@ TEST(RtcmSsrPhaseBiasTest, Legacy1265GpsCountIsNotShiftedByIndicators) {
     // Both indicators set: a decoder that skipped them would read the count as
     // 0b110000 | (4 >> 2) = 49 instead of 4 and run off the end of the message.
     const std::vector<PbSat> sats = {
-        { 1, 0, 0, {{2, true, 1, 0,  100}}},
-        { 3, 0, 0, {{2, true, 1, 0,  200}}},
-        {12, 0, 0, {{2, true, 1, 0,  300}}},
-        {30, 0, 0, {{2, true, 1, 0, -400}}},
+        { 1, 0, 0, {{0, true, 1, 0,  100}}},
+        { 3, 0, 0, {{0, true, 1, 0,  200}}},
+        {12, 0, 0, {{0, true, 1, 0,  300}}},
+        {30, 0, 0, {{0, true, 1, 0, -400}}},
     };
     BitWriter pw;
     pw.put(12, 1265);              // DF002
@@ -256,6 +260,60 @@ TEST(RtcmSsrPhaseBiasTest, NonPhaseBiasHeadersCarryNoIndicators) {
     const auto& hdr = parser.getLastSsrHeader();
     EXPECT_EQ(hdr.dispersive_bias_consistency, 0);
     EXPECT_EQ(hdr.mw_consistency, 0);
+}
+
+// IGS-SSR code bias (IM x5): header without consistency indicators, then per
+// satellite the id, the signal count and per signal the id and a 14-bit bias (0.01 m).
+std::vector<uint8_t> buildCodeBias4076(int im, int sat_id,
+                                       const std::vector<std::pair<int, int>>& sigs) {
+    BitWriter pw;
+    pw.put(12, 4076);
+    pw.put(3,  1);
+    pw.put(8,  im);
+    pw.put(20, 100);               // epoch
+    pw.put(4,  0);                 // update interval
+    pw.put(1,  0);                 // multi-message indicator
+    pw.put(4,  1);                 // IOD-SSR
+    pw.put(16, 0);                 // provider id
+    pw.put(4,  0);                 // solution id
+    pw.put(6,  1);                 // one satellite
+    pw.put(6,  sat_id);
+    pw.put(5,  sigs.size());
+    for (const auto& [id, raw] : sigs) {
+        pw.put(5, id);
+        pw.putSigned(14, raw);
+    }
+    return buildFrame(pw.finish());
+}
+
+TEST(RtcmSsrSignalIdTest, GpsCodeBiasUsesSsrNumbering) {
+    // SSR ids 0 = 1C, 2 = 1W, 8 = 2L, 11 = 2W.  In the MSM numbering id 0 is reserved,
+    // 2 is 1C and 11 is unassigned, so an MSM read drops C1C and C2W and files the
+    // C1W bias under C1C.
+    RtcmParser parser;
+    ASSERT_TRUE(parser.parseFrame(buildCodeBias4076(25, 5, {{0, 120}, {2, -80}, {8, 45}, {11, 300}})));
+    ASSERT_EQ(parser.getSsrCodeBiases().size(), 1u);
+    const auto& cb = parser.getSsrCodeBiases().front();
+    EXPECT_EQ(cb.sat, "G05");
+    ASSERT_EQ(cb.bias_per_signal.size(), 4u);
+    EXPECT_NEAR(cb.bias_per_signal.at("C1C"),  1.20, 1e-12);
+    EXPECT_NEAR(cb.bias_per_signal.at("C1W"), -0.80, 1e-12);
+    EXPECT_NEAR(cb.bias_per_signal.at("C2L"),  0.45, 1e-12);
+    EXPECT_NEAR(cb.bias_per_signal.at("C2W"),  3.00, 1e-12);
+}
+
+TEST(RtcmSsrSignalIdTest, GalileoCodeBiasUsesSsrNumbering) {
+    // SSR ids 2 = 1C, 6 = 5Q, 9 = 7Q, 16 = 6C (MSM: 1C, 1Z, 6A, 7X).
+    RtcmParser parser;
+    ASSERT_TRUE(parser.parseFrame(buildCodeBias4076(65, 11, {{2, 10}, {6, 20}, {9, 30}, {16, 40}})));
+    ASSERT_EQ(parser.getSsrCodeBiases().size(), 1u);
+    const auto& cb = parser.getSsrCodeBiases().front();
+    EXPECT_EQ(cb.sat, "E11");
+    ASSERT_EQ(cb.bias_per_signal.size(), 4u);
+    EXPECT_NEAR(cb.bias_per_signal.at("C1C"), 0.10, 1e-12);
+    EXPECT_NEAR(cb.bias_per_signal.at("C5Q"), 0.20, 1e-12);
+    EXPECT_NEAR(cb.bias_per_signal.at("C7Q"), 0.30, 1e-12);
+    EXPECT_NEAR(cb.bias_per_signal.at("C6C"), 0.40, 1e-12);
 }
 
 } // namespace

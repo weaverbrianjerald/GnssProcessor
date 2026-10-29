@@ -145,24 +145,64 @@ TEST(RtcmBitReaderTest, U64Wide) {
 // RtcmSignalMap
 // ============================================================================
 TEST(RtcmSignalMapTest, GpsKnownEntries) {
-    EXPECT_EQ(RtcmSignalMap::toRinexSuffix(System::GPS, 2),  "1C");
-    EXPECT_EQ(RtcmSignalMap::toRinexSuffix(System::GPS, 10), "2W");
-    EXPECT_EQ(RtcmSignalMap::toRinexSuffix(System::GPS, 24), "5X");
-    EXPECT_EQ(RtcmSignalMap::toRinexSuffix(System::GPS, 0),  "");   // reserved
+    EXPECT_EQ(RtcmSignalMap::msmToRinexSuffix(System::GPS, 2),  "1C");
+    EXPECT_EQ(RtcmSignalMap::msmToRinexSuffix(System::GPS, 10), "2W");
+    EXPECT_EQ(RtcmSignalMap::msmToRinexSuffix(System::GPS, 24), "5X");
+    EXPECT_EQ(RtcmSignalMap::msmToRinexSuffix(System::GPS, 0),  "");   // reserved
 }
 
 TEST(RtcmSignalMapTest, GalileoKnownEntries) {
-    EXPECT_EQ(RtcmSignalMap::toRinexSuffix(System::Galileo, 2),  "1C");
-    EXPECT_EQ(RtcmSignalMap::toRinexSuffix(System::Galileo, 24), "5X");
-    EXPECT_EQ(RtcmSignalMap::toRinexSuffix(System::Galileo, 14), "7I");
+    EXPECT_EQ(RtcmSignalMap::msmToRinexSuffix(System::Galileo, 2),  "1C");
+    EXPECT_EQ(RtcmSignalMap::msmToRinexSuffix(System::Galileo, 24), "5X");
+    EXPECT_EQ(RtcmSignalMap::msmToRinexSuffix(System::Galileo, 14), "7I");
 }
 
 TEST(RtcmSignalMapTest, RoundTrip) {
     for (int sig = 1; sig < 32; ++sig) {
-        const auto suffix = RtcmSignalMap::toRinexSuffix(System::GPS, sig);
+        const auto suffix = RtcmSignalMap::msmToRinexSuffix(System::GPS, sig);
         if (suffix.empty()) continue;
-        EXPECT_EQ(RtcmSignalMap::fromRinexSuffix(System::GPS, suffix), sig)
+        EXPECT_EQ(RtcmSignalMap::msmFromRinexSuffix(System::GPS, suffix), sig)
             << "round-trip failed for GPS signal " << sig << " -> " << suffix;
+    }
+}
+
+// The SSR bias numbering (cssrlib rtcm.py ssig2rsig), for the signals a GPS + Galileo
+// dual-frequency receiver tracks.
+TEST(RtcmSignalMapTest, SsrGpsAndGalileoEntries) {
+    EXPECT_EQ(RtcmSignalMap::ssrToRinexSuffix(System::GPS, 0),  "1C");
+    EXPECT_EQ(RtcmSignalMap::ssrToRinexSuffix(System::GPS, 2),  "1W");
+    EXPECT_EQ(RtcmSignalMap::ssrToRinexSuffix(System::GPS, 8),  "2L");
+    EXPECT_EQ(RtcmSignalMap::ssrToRinexSuffix(System::GPS, 11), "2W");
+    EXPECT_EQ(RtcmSignalMap::ssrToRinexSuffix(System::GPS, 15), "5Q");
+    EXPECT_EQ(RtcmSignalMap::ssrToRinexSuffix(System::GPS, 3),  "");   // unassigned
+    EXPECT_EQ(RtcmSignalMap::ssrToRinexSuffix(System::Galileo, 2),  "1C");
+    EXPECT_EQ(RtcmSignalMap::ssrToRinexSuffix(System::Galileo, 6),  "5Q");
+    EXPECT_EQ(RtcmSignalMap::ssrToRinexSuffix(System::Galileo, 9),  "7Q");
+    EXPECT_EQ(RtcmSignalMap::ssrToRinexSuffix(System::Galileo, 16), "6C");
+    EXPECT_EQ(RtcmSignalMap::ssrToRinexSuffix(System::Galileo, 19), "");
+}
+
+// The two numberings differ: the same ID names a different signal, so an SSR bias
+// read through the MSM table lands on the wrong signal (GPS L1 Z-tracking as L1C)
+// or on none (GPS L1C, ID 0, is reserved in MSM).
+TEST(RtcmSignalMapTest, SsrNumberingDiffersFromMsm) {
+    EXPECT_EQ(RtcmSignalMap::msmToRinexSuffix(System::GPS, 2), "1C");
+    EXPECT_EQ(RtcmSignalMap::ssrToRinexSuffix(System::GPS, 2), "1W");
+    EXPECT_EQ(RtcmSignalMap::msmToRinexSuffix(System::GPS, 0), "");
+    EXPECT_EQ(RtcmSignalMap::ssrToRinexSuffix(System::GPS, 0), "1C");
+    EXPECT_EQ(RtcmSignalMap::msmFromRinexSuffix(System::Galileo, "5Q"), 23);
+    EXPECT_EQ(RtcmSignalMap::ssrFromRinexSuffix(System::Galileo, "5Q"), 6);
+}
+
+TEST(RtcmSignalMapTest, SsrRoundTripEverySystem) {
+    for (System sys : {System::GPS, System::GLONASS, System::Galileo, System::BeiDou,
+                       System::QZSS, System::SBAS}) {
+        for (int sig = 0; sig < 32; ++sig) {
+            const auto suffix = RtcmSignalMap::ssrToRinexSuffix(sys, sig);
+            if (suffix.empty()) continue;
+            EXPECT_EQ(RtcmSignalMap::ssrFromRinexSuffix(sys, suffix), sig)
+                << "round-trip failed for SSR signal " << sig << " -> " << suffix;
+        }
     }
 }
 

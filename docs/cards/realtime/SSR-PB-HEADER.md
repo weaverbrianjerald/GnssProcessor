@@ -119,3 +119,10 @@ Not graded here:
   111,773 phase lookups). Before the fix the same census named a shifting set. Not examined.
 - Integer fixing was off (`ambiguity_resolution.mode` 0), as in the 2026-10-23 sessions, so fixing on
   the live stream is untested.
+
+## 7. Note, 2026-10-29 (later)
+
+The records counted in section 6 carried wrong signal names: the decoder read every SSR bias signal id
+through the MSM observation table, so only Galileo E1C reached its own signal (card
+[SSR-SIG-ID](SSR-SIGNAL-ID.md)). The per-satellite coverage and the constant discontinuity counters of
+section 6 stand; the stable attribute-census set named there is that defect.
