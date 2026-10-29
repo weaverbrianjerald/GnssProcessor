@@ -423,6 +423,10 @@ Program card on this topic (indexed in [refound/CARDS.md](refound/CARDS.md)):
 normals (open, 2026-10-18: loop 5.3 and 3.7 times the GPS-only loop; the sparse formation behind a default-off key
 shortens the field loop 13.3 % and the sim loop 10.6 % at identical output; arming and two further optimizations owed).
 
+[CVF](refound/CVF_conditional_variance_frame_2026-10-29.md), optimization 2 of card NETCOST: the border-known
+variance read directly and one datum-frame covariance per solve (closed, 2026-10-29: identical on every gate, field golden
+loop 12.8 to 13.5 % shorter, merged into main).
+
 ### `realtime` — [topics/realtime.md](topics/realtime.md)
 
 | card | one line | status | last dated |

@@ -668,7 +668,10 @@ public:
      * column's own uncertainty moves the pin target and the realized frame
      * together, so it is common-mode in the handover step, and a gate on the
      * border-inclusive marginal (@ref conditionalLocalVarianceDiag) measures the
-     * wrong quantity in both directions.  Requires a prior @ref solve.
+     * wrong quantity in both directions.  Forwards to
+     * @ref NetworkNormalEquations::stationConditionalVarianceDiag, which returns the
+     * border-inclusive form's bits for an all-zero shared covariance without that
+     * product.  Requires a prior @ref solve.
      */
     Eigen::VectorXd pureConditionalLocalVarianceDiag(
         std::size_t station, const std::vector<Eigen::Index>& local_cols) const;
@@ -1251,6 +1254,7 @@ public:
         const ContributionKind ck = takeContributionKind_();
         const long long n = static_cast<long long>(gauges.size());
         phase_sumzero_gauges_ = std::move(gauges);
+        datum_frame_valid_ = false;   // the stored datum frame zeroed the old gauges
         if (n > 0) noteFold_(ck, n);
     }
 
@@ -1592,12 +1596,32 @@ private:
                          bool clock_gauge_free = false,
                          std::size_t* gauge_free_keys = nullptr) const;
 
+    /// Zero, in place, the rows and columns of @p cov that the datum-as-known frame
+    /// treats as exact (variance 0): the @p datum-pinned shared columns and the
+    /// ensemble phase-gauge columns (@ref zeroPhaseGaugeColumns).  The one definition
+    /// of that frame, used by @ref solve and @ref datumFrame_.
+    void zeroDatumFrame_(Eigen::MatrixXd& cov, const Datum& datum) const;
+
+    /// The datum-as-known frame of @c shared_cov_ for @p datum: the frame @ref solve
+    /// stored when @p datum pins the same columns in the same order as the solve's
+    /// datum (the same bytes as a fresh build, since zeroing writes +0 in any order),
+    /// otherwise a frame built into @p scratch.  The returned reference is valid while
+    /// @p scratch lives and no non-const member is called.
+    const Eigen::MatrixXd& datumFrame_(const Datum& datum, Eigen::MatrixXd& scratch) const;
+
     std::map<std::string, Eigen::Index> index_;  ///< layout key → column
     std::vector<ColumnDesc> columns_;             ///< column → descriptor
     Eigen::Index n_clones_{0};                    ///< clock clone columns registered this epoch; cleared by reset()
     Eigen::Index n_hist_{0};                      ///< shared-history columns registered this epoch; cleared by reset()
     NetworkNormalEquations neq_{0};               ///< current-epoch arrowhead
     Eigen::MatrixXd shared_cov_;                  ///< covariance of x_s from the last solve() (for the D2 carry-forward prior)
+    /// @c shared_cov_ in the datum-as-known frame of the last solve's datum
+    /// (@ref zeroDatumFrame_), built once per @ref solve and read by every covariance
+    /// consumer whose datum pins the same columns (@ref datumFrame_).  Written only by
+    /// the non-const @ref solve, so concurrent const readers see immutable data.
+    Eigen::MatrixXd datum_frame_cov_;
+    std::vector<Eigen::Index> datum_frame_cols_;  ///< the pinned columns of the datum @c datum_frame_cov_ was built for, in datum order
+    bool datum_frame_valid_{false};               ///< false before a solve, after @ref reset and @ref setPhaseSumZeroGauges, and while a solve runs
     std::vector<NetworkNormalEquations::SumZeroGauge> phase_sumzero_gauges_;  ///< Fix A: anchor-free phase-bias gauges (empty = anchor-pin datum, byte-identical)
     std::vector<NetworkNormalEquations::DdPriorBlock> dd_priors_;             ///< per-component invariant-carry DD priors (M1; empty = off, byte-identical)
     /// Take the kind named by @ref contributionKind for this fold, and clear it:
