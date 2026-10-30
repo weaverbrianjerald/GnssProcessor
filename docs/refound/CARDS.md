@@ -246,7 +246,8 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   every consumer that passes the solve's datum; no key. 23-arm gate 24 of 24, user side 16 of 16, real time wall-clock
   text only; field golden loop -9.5 to -10.5 % over the whole run and -12.8 to -13.5 % with both runs of a pair live,
   sim -4.2 to -6.8 %, products byte-identical; every gate passes.
-- [PES](PES_parallel_epoch_stages_2026-10-29.md): open, 2026-10-29: pre-registered. The GPS + Galileo golden epoch keeps
-  4.2 (field) and 5.8 (sim) of 20 logical processors busy; the sequential stages that are independent per station run in
-  parallel under the deterministic contract (per-index slots, the serial reduction order kept), each behind its own
-  default-off key, gated as byte-identical with the key on against off.
+- [PES](PES_parallel_epoch_stages_2026-10-29.md): open, 2026-10-29: BUILT and GATED, not merged (branch `perf/pes`). The
+  station normal formation, the Schur reduce (split by border columns, not by stations) and the redundancy census run in
+  parallel behind `network.parallel_station_normals`, `parallel_schur_columns` and `parallel_redundancy_census` (default
+  off, UNVALIDATED): key on IDENTICAL to off on both goldens for each key and all three, off IDENTICAL to main; loop
+  -27.9 % (field), -20.3 % (sim), -39.7 % at 305 stations after card CVF. Arming recommended.

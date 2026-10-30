@@ -5,14 +5,19 @@
 - **id:** PES
 - **topic:** perf
 - **status:** open
-- **summary:** Pre-registered 2026-10-29. The GPS + Galileo golden epoch keeps on average 4.2 (field) and 5.8 (sim) of the machine's 20 logical processors busy: most of its wall time is serial work on the main thread. Question: which sequential stages of `networkProcessEpoch_` are independent per station (or per constellation, per satellite), and how much of the loop do they return when they run in parallel under the deterministic contract of `network/assembly/StationBuild.hpp` (per-index slots, no shared write inside a parallel region, every reduction in the serial order it has today)? Each change sits behind its own default-off key, with a ledger row, and is gated as byte-identical with the key on against off in one build.
-- **source:** [NETCOST](NETCOST_gps_galileo_cost_attribution_2026-10-18.md) sections 2 and 3 (the section attribution under load); card CVF (the covariance-consumer overheads; on branch `perf/cvf`, not merged, so not linked here); the auto-memory records of the closed perf doors (`parallel_reduce` deleted by card RKD: per-thread partial sums regroup the Schur subtraction and the network's conditioning amplifies the ULP difference over the carried epochs).
-- **knobs / posture:** new keys, each default false, ledger UNVALIDATED, unarmed in both goldens (section 4 names them as they land).
+- **summary:** BUILT and GATED 2026-10-29, not merged (branch `perf/pes`). Three serial stages of the network epoch run in parallel over stations behind default-off keys (ledger UNVALIDATED): `network.parallel_station_normals` (the station normal blocks formed ahead of the serial scatter, committed in station order), `network.parallel_schur_columns` (the Schur reduce split by border columns, every element summed over the stations in serial order; no per-thread partial sum) and `network.parallel_redundancy_census` (the census's per-station kernels ahead of its serial walk). Key on against off, one build, 2 h: IDENTICAL on both goldens for each key and for the three together; off IDENTICAL to main; full Debug suite 3 591 passed, 0 failed; the lints pass. On main with card CVF the loop is 27.9 % shorter on the field golden, 20.3 % on the sim golden and 39.7 % on a 305-station field arm (30 min), at identical output. Recommended: arm all three (section 4.4).
+- **source:** [NETCOST](NETCOST_gps_galileo_cost_attribution_2026-10-18.md) sections 2 and 3 (the section attribution under load); [CVF](CVF_conditional_variance_frame_2026-10-29.md) (the covariance-consumer overheads; merged into main during this card, section 4.3); the auto-memory records of the closed perf doors (`parallel_reduce` deleted by card RKD: per-thread partial sums regroup the Schur subtraction and the network's conditioning amplifies the ULP difference over the carried epochs).
+- **knobs / posture:** new `network.parallel_station_normals`, `network.parallel_schur_columns`, `network.parallel_redundancy_census`: bool, default false, ledger UNVALIDATED, unarmed in both goldens; nothing else changed.
 - **dates in the text:** 2026-10-29
-- **hashes / run dirs:** branch `perf/pes` from main `a78ba68`; worktree `D:/GnssProcessorSupport/worktrees/pes`; executables under its `build/x64-Release/`; runs `D:/GnssProcessorSupport/runs_pes/`; gate records `D:/GnssProcessorSupport/gates/pes/`.
+- **hashes / run dirs:** branch `perf/pes` from main `a78ba68` (gates G1 to G4), main merged in at `b09c353` (G5); executables `gnss_processor_pes_c3.exe` (`64d24097d86f7bef`), `gnss_processor_pes_c4.exe` (`0845299169e2b0bd`), main `gnss_processor_pes_base.exe` (`66333b5e42827350`); worktree `D:/GnssProcessorSupport/worktrees/pes`; executables under its `build/x64-Release/`; runs `D:/GnssProcessorSupport/runs_pes/`; gate records `D:/GnssProcessorSupport/gates/pes/`.
 - **gates (frozen at pre-registration):** section 3, written before any run of a changed executable.
 
-**Outcome.** Pending.
+**Outcome.** Question: which serial stages of the network epoch split by station, and how much of the loop do they
+return when run in parallel without moving an output bit? Result: the station normal formation, the Schur reduce and
+the redundancy census (37 % of the field epoch) run 2.0 to 4.8 times faster in parallel. Every key-on arm is identical
+to key off, and key off to main. The golden loop is 27.9 % shorter (field) and 20.3 % (sim), and 39.7 % at 305
+stations (bars: identical, a gain on both beds: met). Standing: built default off, not merged, arming recommended
+(section 4.4).
 
 ## 1. Question
 
@@ -103,3 +108,89 @@ declined on every golden epoch (240 of 240), because at about 418 shared columns
 cuts its columns into two panels. Panels cut at tile multiples keep every element in its tile, so the second build
 drops that requirement. The unit test requires the split to run on the network's shape and on every residue
 of the shared size modulo 4.
+
+### 4.2 Identity and the other gates (G1 to G4), on main `a78ba68`
+
+Executables under `D:/GnssProcessorSupport/worktrees/pes/build/x64-Release/`: candidate `gnss_processor_pes_c3.exe`
+(sha256[:16] `64d24097d86f7bef`, branch `perf/pes` before the merge of main); main `a78ba68` built in its own worktree,
+`D:/GnssProcessorSupport/worktrees/pes_base/build/x64-Release/gnss_processor_pes_base.exe` (`66333b5e42827350`). Arms
+`runs_pes/_rap_pes_g3_{f,s}_{off,all,sn,sc,rc}` (2 h; `sn`, `sc`, `rc` one key each, `all` the three) and
+`runs_pes/_rap_pes_g2_{f,s}_off` (main). Comparison: `gates/pes/pes_cmp.py` (`scripts/prm_ab.py`'s `compare_dirs`, all
+CSVs), records `gates/pes/g3_cmp_part{1,2}.log`, `g2_cmp.log`.
+
+| gate | field golden | sim golden |
+| --- | --- | --- |
+| G1, all three keys on against off | IDENTICAL (36 files) | IDENTICAL (36 files) |
+| G1, `parallel_station_normals` alone | IDENTICAL | IDENTICAL |
+| G1, `parallel_schur_columns` alone | IDENTICAL | IDENTICAL |
+| G1, `parallel_redundancy_census` alone | IDENTICAL | IDENTICAL |
+| G2, every key off against main | IDENTICAL | IDENTICAL |
+
+The on-path counters of the `all` arms (invariant 4): station normals 13 919 (field) and 14 460 (sim) formed in parallel,
+0 serially, all committed; Schur reduce 240 of 240 and 241 of 241 split, 0 declined; redundancy census 1 392 of 1 392
+and 1 500 of 1 500 swept station-epochs computed in parallel (the census sweeps every station on its stride epochs, so
+its cost lands on about one epoch in ten). A first candidate (`c2`) declined the Schur split on every epoch (section
+4.1) and its field `all` arm was identical too; it is not counted above.
+
+- **G3.** Full Debug `gnss_tests.exe` on the candidate tree: 3 624 tests, 3 591 passed, 33 skipped (fixture-gated: SIF,
+  GPT3 grid, bundled products), 0 failed (`gates/pes/g3_unit_suite.log`). The 6 new cases of
+  `tests/network/test_neq_parallel_stages.cpp` compare against the serial arithmetic with `memcmp`: form and commit
+  (dense, sparse, with and without a prior), a rejected station (message, null-direction record, no trace in the
+  border, no second commit), and the column-split reduce over every residue of the shared size modulo 4, a border Eigen
+  cuts into two column panels, 3 and 20 threads, with the split required to run on each of those shapes and on the
+  network's own.
+- **G4.** `python scripts/nom_epoch_lint.py` PASS (V12: 94 binding functions, 94 rows, 0 unbound writes);
+  `scripts/counters_split_check.py`, `scripts/nom_n4_verify.py --whole`, `scripts/make_golden_config.py --verify`,
+  `scripts/config_posture_check.py --verify-loader` (0 coverage gaps), `scripts/ledger_render.py --check` and
+  `scripts/docs_index_check.py` pass.
+
+### 4.3 Cost (G5), on main with card CVF
+
+Card CVF merged into main while this card ran (`1527cf9`). The branch merged main (`b09c353`, conflicts only in the
+lists of `CMakeLists.txt`, `INDEX.md` and `CARDS.md`), and the cost was measured on that build, the one the keys would
+be armed on: `gnss_processor_pes_c4.exe` (sha256[:16] `0845299169e2b0bd`). The 184 unit cases of the solve kernel, card
+CVF, the block-Baarda, congruence and redundancy censuses and the estimator pass on it in Debug
+(`gates/pes/m4_unit_targeted.log`). Arms `runs_pes/_rap_pes_m4{a,b}_{f,s}_{off,all}`, run one at a time in the order
+off, all, all, off on each golden, at above-normal priority, with 0.9 to 1.2 logical processors of foreign load; every
+off and all pair is again IDENTICAL (`gates/pes/m4_cmp.log`).
+
+| golden (2 h) | keys off, ms per epoch | all three on | change | busy logical processors |
+| --- | --- | --- | --- | --- |
+| field (58 stations) | 980.1, 989.5 | 705.4, 714.2 | -27.9 % | 5.3 to 8.9 |
+| sim (60 stations, from 00:30:15) | 584.2, 586.4 | 468.5, 464.6 | -20.3 % | 6.6 to 9.5 |
+| field, 305 stations (`runs_nom/bof_bases/golden_field_305.json`, 30 min) | 3 952 | 2 384 | -39.7 % | 2.7 to 5.4 |
+
+The 305-station pair is one pair over the first 30 minutes (ignition, about 40 % of the settled cost card BOF read);
+its key-on arm ran with more foreign load (2.3 against 0.9 logical processors). It is identical too (18 161 station
+forms in parallel, 60 of 60 reduces split, 1 805 census station-epochs).
+
+Per stage (section timers, ms per epoch; field the mean of the two arms of each side, sim one arm each):
+
+| stage | key | field off | field on | sim off | sim on |
+| --- | --- | --- | --- | --- | --- |
+| station normals (`est.addStation`) | `parallel_station_normals` | 198.3 | 47.9 (4.1x) | 116.2 | 24.3 (4.8x) |
+| Schur reduce | `parallel_schur_columns` | 119.1 | 28.9 (4.1x) | 60.6 | 13.3 (4.6x) |
+| frame diagnostics (the census and the other observers of the slot) | `parallel_redundancy_census` | 161.6 | 60.7 (2.7x) | 95.0 | 48.7 (2.0x) |
+
+On the field bed the three stages return 341 ms per epoch and the loop 275 ms: the other sections are together about
+66 ms per epoch longer with the regions on. This is not attributed here; memory traffic and the allocator's kernel time
+(already 26 to 35 % of the process time) are candidates.
+
+### 4.4 Recommendation
+
+All three keys pass G1 to G5 on both goldens. Each is byte-identical to its serial path by construction and at any
+thread count, so, unlike `parallel_carry`, a reference made with them on holds at another thread count. Arming
+changes no output, so no new baseline pair is needed. **Recommended: arm all three on both goldens** (the author's
+decision: the ledger rows go from UNVALIDATED to ARMED with the golden pins). Together they shorten the golden loop
+by 28 % (field) and 20 % (sim) on top of card CVF, and by 40 % at 305 stations, where the serial stages weigh most.
+
+## Owed
+
+- The arming decision (section 4.4) and the merge of `perf/pes`.
+- The next serial stages of section 4.1, each with its own key and the same contract: the ambiguity harvest (84 ms per
+  field epoch; its arc-table writes need a compute and write split), the iono traces' conditional variances (about 30
+  ms after card CVF), the PASS A slip scans (55 ms), the coupling preparation (45 ms) and the RHS attribution trip. The
+  within-epoch re-solve still adds its stations serially (`RaimWithinEpoch`, event epochs only) and can use
+  `formStations`.
+- The 66 ms per field epoch that the other sections grow with the regions on (section 4.3).
+- A settled 305-station pair (2 h or more) for the scaling figure.
