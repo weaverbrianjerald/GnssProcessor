@@ -251,3 +251,9 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   `_rf0hv17_field6`). `raim_refloat_maturity_gate` at 120 epochs PASSES (T4 refloats 107 to 55, slip-class responses
   -6.9 %, users within 0.1 mm, sim identical) but counts nothing it suppresses; at 60 epochs -3.1 %.
   `signal_integrity.census` is harmless, not less churn (-3.3 %). Neither moves a user. Nothing armed: the author decides.
+- [NSP](NSP_census_neutral_spread_2026-10-29.md): closed, 2026-10-29: the 16-site census's spread under a neutral change
+  of the wire, six 6 h arms per day on DOY 130 and DOY 129 on card BOF's exe and posture. The registered thread-count
+  and serial-carry arms do not act on the float-vehicle golden (products byte-identical); amendment A1 re-rounds the
+  roster coordinates (within 0.05 mm per axis). Every consumer's trace changes, yet no census site moves by more than
+  0.19 mm (ARHT00ATA s 0.11 mm) and no arm trips the clause. Card PIV's DOY 130 ARHT00ATA +40.6 mm reads OUTSIDE the
+  spread: a response to the election's wire, not noise (the null does not reach its clock-anchor decisions).
