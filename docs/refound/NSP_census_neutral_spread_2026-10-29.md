@@ -142,3 +142,50 @@ perturbation could spread further. "Inside" needs no such caveat.
   measured, to be the same.
 - It arms nothing and changes no bar. The per-site spread is reported for reading future "no site worse" clauses; a
   site-specific bar, if any, is the author's decision.
+
+## 7. The pre-registered arms, 2026-10-30: neither key acts on this posture
+
+All 13 arms exited 0 (DOY 130 2762 to 2898 s, DOY 129 1527 to 1626 s, seven at a time beside other sessions' runs).
+`python scripts/neutral_spread.py wire` (`nsp_reports/wire_130.txt`, `wire_129.txt`):
+
+| day | arms | products.txt | also identical to the control |
+|---|---|---|---|
+| DOY 130 | `nsp130_id`, `_t16`, `_t12`, `_t10`, `_t8`, `_t6`, `_ser` | 7 of 7 byte-identical to `_rap_bof_ctl130_f6` (sha256[:16] eb02f00f8c87c59c) | `network_events.csv`, `closed_loop_trace.csv`, `network_epoch_status.csv`, `network_solution.csv` in all 7 |
+| DOY 129 | `nsp129_t16`, `_t12`, `_t10`, `_t8`, `_t6`, `_ser` | 6 of 6 byte-identical to `_rf0hv16_field6` (bccf08dfa1d49beb) | the same four traces in all 6 |
+
+The thread cap was applied (the setup lines read "thread cap 16" and "Eigen-THREADED across 16 threads" in `nsp130_t16`).
+It has nothing to act on: the run-start table "contributions as armed" reads `dd_prior_block ... blocks 0`. On the
+float-vehicle posture the carried DD-prior fold that `network.parallel_carry` threads holds no block, and every other
+thread-count path writes per-station or per-block slots in a fixed order. No neutral realization came out of section
+3, and the census of an identical wire is the control's (the 17 replays of two such wires that completed before the
+census was stopped equal the control replays; moved to `nsp_reports/stopped_census_t16/`).
+
+Two findings stand on their own. The identity re-run reproduces card BOF's control byte for byte: the same exe and
+configuration give the same run. And on the float-vehicle goldens the thread count (6 to 20) and the serial carry
+leave the products unchanged; the ledger rows of the two keys ("reassociates ~1e-4", "a pinned N keeps counters and
+hashes comparable") describe the retired invariant carry, not the current goldens.
+
+## 8. Amendment A1, 2026-10-30 (written before any of its arms ran)
+
+No key of the golden re-groups arithmetic on the float vehicle, so the neutral change moves to the inputs.
+
+- **The roster coordinates re-rounded (the neutral family).** The golden writes each station's ECEF coordinate to
+  0.1 mm (four decimals). Each of the 58 roster stations gets an independent offset drawn uniformly in plus or minus
+  0.05 mm on each axis: half the last written digit, so the arm's coordinates are another rounding of the same
+  coordinates (largest 3D shift 0.072 to 0.081 mm per seed). The offsets are seeded files
+  `D:/GnssProcessorSupport/runs_nom/nsp_bases/roster_u<seed>.json` applied by `rapid_arm.py make --roster`; the
+  consumer's coordinate, the truth of the grade, is not touched. A satellite's products take a station's offset only
+  through its projection, averaged over the stations that see the satellite: of order 0.02 mm between satellites and
+  under 0.1 mm at a consumer. The change enters every observation at every epoch; a census move beyond about 0.1 mm is
+  the response of the network's and the consumer's decisions.
+- **A probe at the rounding level of the arithmetic.** Offsets drawn from a normal law of SD 1 nm per axis (143 of
+  the 174 coordinate values change by a few units in the last place; largest 3D shift 3 nm), seeds 101 and 102, DOY
+  130 only. Reported beside the family, not pooled with it.
+
+| day | arms (seed) | base |
+|---|---|---|
+| DOY 130 | `nsp130_u1` to `nsp130_u6` (seeds 1 to 6); probe `nsp130_n101`, `nsp130_n102` | as section 3 |
+| DOY 129 | `nsp129_u11` to `nsp129_u16` (seeds 11 to 16) | as section 3 |
+
+Exe, census (consumer base the day's control), statistics, the reading of section 5 (K = 6 from the re-rounded family
+of DOY 130) and the decorrelation criterion are unchanged.
