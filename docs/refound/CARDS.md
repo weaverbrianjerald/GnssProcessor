@@ -246,3 +246,7 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   every consumer that passes the solve's datum; no key. 23-arm gate 24 of 24, user side 16 of 16, real time wall-clock
   text only; field golden loop -9.5 to -10.5 % over the whole run and -12.8 to -13.5 % with both runs of a pair live,
   sim -4.2 to -6.8 %, products byte-identical; every gate passes.
+- [MGT](MGT_maturity_gate_telemetry_2026-10-30.md): open, 2026-10-30: the telemetry card RCG found owed for
+  `network.raim_refloat_maturity_gate`: a run-scope tally (flags held, arcs and epochs, the lift), one event row per held
+  flag and one at the lift (tier `RAIM_MATURITY`), a run-end section, an arming line, and the `acted` column of the
+  attribution trace read as a refloat taken. Default off, byte-identical when off; nothing armed, ledger verdict unchanged.
