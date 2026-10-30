@@ -36,6 +36,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <functional>
 #include <limits>
 #include <map>
@@ -575,4 +576,50 @@ TEST(StationBirthTest, ANetworkStationIgnoresTheSingleReceiverPhaseClockAndGradi
         R"(, "estimate_phase_clock": true, "estimate_tropo_gradients": true)");
     EXPECT_EQ(flagged.innovations.size(), 12);
     expectSameRows(plain, flagged);
+}
+
+// ---------------------------------------------------------------------------
+// The full-equation seeds (estimation.seed_full_equation)
+// ---------------------------------------------------------------------------
+
+TEST(StationBirthTest, TheSeedInputsFollowTheFullEquationKey) {
+    BirthFixture legacy;
+    const StationRowContext cl = legacy.context();
+    EXPECT_EQ(&residualSeedObsInput(cl).ppp_utils, &cl.inputs.rx_bias.frequencyHelper());
+    EXPECT_EQ(ambiguitySeedObsInput(cl).fdma, FdmaChannel::Zero);
+
+    BirthOptions o;
+    o.estimation_extra = R"(, "seed_full_equation": true)";
+    BirthFixture full(o);
+    ASSERT_TRUE(full.stack.config.seedFullEquation());
+    const StationRowContext cf = full.context();
+    // The rows' helper and the satellite's own channel, as the rows take them.
+    EXPECT_EQ(&residualSeedObsInput(cf).ppp_utils, &cf.inputs.freq);
+    EXPECT_EQ(ambiguitySeedObsInput(cf).fdma, FdmaChannel::Satellite);
+}
+
+TEST(StationBirthTest, AProducersBirthsAreTheSameUnderTheFullEquationSeeds) {
+    // At a producer birth the terms the legacy seeds leave out are zero (shared states at 0,
+    // no SSR term in network mode, range correction 0), so every slot is born at the same
+    // value, bit for bit, with the key on.
+    const auto bornSet = [](const std::string& estimation_extra) {
+        BirthOptions o;
+        o.estimation_extra = estimation_extra;
+        BirthFixture f(o);
+        const StationRowContext c = f.context();
+        const std::vector<PppObservation> obs = f.epoch(0);
+        networkBirthLocalStates(c, f.set, obs);
+        networkAdmitSharedStates(c, f.set, obs, {}, nullptr);
+        networkBirthLocalStates(c, f.set, f.epoch(1));
+        return f.set;
+    };
+    const StationParams legacy = bornSet("");
+    const StationParams full = bornSet(R"(, "seed_full_equation": true)");
+    ASSERT_EQ(legacy.slots.size(), full.slots.size());
+    ASSERT_GT(legacy.amb.size(), 0u);
+    for (std::size_t k = 0; k < legacy.slots.size(); ++k) {
+        EXPECT_EQ(legacy.slots[k].ref.kind, full.slots[k].ref.kind) << k;
+        EXPECT_TRUE(std::memcmp(&legacy.slots[k].x_lin, &full.slots[k].x_lin, sizeof(double)) == 0)
+            << k << " " << legacy.slots[k].x_lin << " " << full.slots[k].x_lin;
+    }
 }

@@ -26,13 +26,20 @@ namespace GnssProcessor {
     // ===================================================================
 
     ObsInput MeasurementModel::residualSeedInput() const {
-        return ObsInput{rowProducts(), state_initializer_.frequencyHelper(), &state_initializer_.resolver(),
+        // The full-equation seeds take the rows' frequency helper (the receiver's own GLONASS
+        // channels); the legacy seeds keep the initializer's default channel table.
+        const PppUtils& freq = config_.seedFullEquation() ? ppp_utils_
+                                                          : state_initializer_.frequencyHelper();
+        return ObsInput{rowProducts(), freq, &state_initializer_.resolver(),
                         nlwl_ref_band_, config_.getStateAmbiguityBasis(), clockRefs()};
     }
 
     ObsInput MeasurementModel::ambiguitySeedInput() const {
+        // The full-equation seeds take the satellite's own channel, as the rows do; the legacy
+        // ambiguity seed keeps channel 0.
+        const FdmaChannel fdma = config_.seedFullEquation() ? FdmaChannel::Satellite : FdmaChannel::Zero;
         return ObsInput{rowProducts(), ppp_utils_, &state_initializer_.resolver(), nlwl_ref_band_,
-                        config_.getStateAmbiguityBasis(), clockRefs(), FdmaChannel::Zero};
+                        config_.getStateAmbiguityBasis(), clockRefs(), fdma};
     }
 
     double MeasurementModel::ambiguitySeed(const PppObservation& obs, const std::string& ref_type,

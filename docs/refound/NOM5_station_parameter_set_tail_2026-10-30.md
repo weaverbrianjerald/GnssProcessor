@@ -123,3 +123,10 @@ explain away; nothing lands with an untraced difference.
   message names the network key where one exists; with a consumer the configuration loads and the setup states the
   flag's scope; outside network mode nothing changes. The configuration scan of section 2.3 lists every file the rule
   refuses.
+
+### 3.1 Amendment A1 (2026-10-30, before any run of an N6g executable)
+
+The configuration toggle convention (`CLAUDE.md`, "Config toggles") puts a user-visible key on the run-start
+`Toggles:` line. `estimation.seed_full_equation` takes the field `seed_full=` at the end of that line, so G0 for N6g
+reads identical apart from that one line of `stdout.txt` and `main_log` (`seed_full=off`) in every arm. No other text
+moves are declared for N6g.

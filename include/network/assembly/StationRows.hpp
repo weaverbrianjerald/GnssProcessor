@@ -228,7 +228,9 @@ ObsInput rowObsInput(const StationRowContext& c);
 
 /**
  * @brief The equation inputs of the residual seeds (inter-system bias, cold clock, receiver
- *        code biases, slant ionosphere): the resolver's default-table frequency helper.
+ *        code biases, slant ionosphere): the resolver's default-table frequency helper, or
+ *        under @c estimation.seed_full_equation the rows' helper (the station's own GLONASS
+ *        channels).
  * @param c The station's references.
  * @return The inputs.
  */
@@ -236,7 +238,8 @@ ObsInput residualSeedObsInput(const StationRowContext& c);
 
 /**
  * @brief The equation inputs of the ambiguity seed: the station's frequency helper with the
- *        GLONASS FDMA bands taken at channel 0.
+ *        GLONASS FDMA bands taken at channel 0, or under @c estimation.seed_full_equation at
+ *        the satellite's own channel, as the rows take them.
  * @param c The station's references.
  * @return The inputs.
  */

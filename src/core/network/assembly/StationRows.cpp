@@ -77,13 +77,20 @@ ObsInput rowObsInput(const StationRowContext& c) {
 }
 
 ObsInput residualSeedObsInput(const StationRowContext& c) {
-    return ObsInput{productsOf(c), c.inputs.rx_bias.frequencyHelper(), &c.inputs.rx_bias,
-                    noNlWlReferenceBands(), kNetworkAmbiguityBasis, *c.inputs.clock_refs};
+    // The full-equation seeds take the rows' frequency helper (the station's own GLONASS
+    // channels); the legacy seeds keep the resolver's default channel table.
+    const PppUtils& freq = c.config.seedFullEquation() ? c.inputs.freq
+                                                       : c.inputs.rx_bias.frequencyHelper();
+    return ObsInput{productsOf(c), freq, &c.inputs.rx_bias, noNlWlReferenceBands(),
+                    kNetworkAmbiguityBasis, *c.inputs.clock_refs};
 }
 
 ObsInput ambiguitySeedObsInput(const StationRowContext& c) {
+    // The full-equation seeds take the satellite's own channel, as the rows do; the legacy
+    // ambiguity seed keeps channel 0.
+    const FdmaChannel fdma = c.config.seedFullEquation() ? FdmaChannel::Satellite : FdmaChannel::Zero;
     return ObsInput{productsOf(c), c.inputs.freq, &c.inputs.rx_bias, noNlWlReferenceBands(),
-                    kNetworkAmbiguityBasis, *c.inputs.clock_refs, FdmaChannel::Zero};
+                    kNetworkAmbiguityBasis, *c.inputs.clock_refs, fdma};
 }
 
 double rowPartial(const StationDataRows& rows, Eigen::Index row, int slot) {
