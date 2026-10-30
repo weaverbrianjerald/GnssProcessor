@@ -34,6 +34,9 @@
  *    @c retro_flag_sats of the post-fit hand-off.
  *  - It folds σ̂0 into @c ctx.carry.ura_sigma0_ewma (read one epoch later at the emit
  *    site) and advances @c net::LosState::arc_spike_streak and @c n_arc_refloat_epoch.
+ *  - With @c network.raim_refloat_maturity_gate on it writes the gate's run-scope telemetry
+ *    (@c ctx.counters.maturity_gate, the RAIM_MATURITY event rows and the lift line), which
+ *    nothing in the solve reads.
  *
  * It therefore runs:
  *  - after the joint solve and the carry harvest: it operates on the post-fit @c x_s
@@ -55,9 +58,13 @@
 #include <Eigen/Core>
 
 #include <array>
+#include <functional>
+#include <map>
 #include <memory>
 #include <set>
 #include <string>
+#include <tuple>
+#include <utility>
 #include <vector>
 #include <cstdint>
 #include <cstddef>
@@ -172,6 +179,132 @@ struct RaimPoolAdmissionTally {
     std::string ownColumnText() const;
 };
 
+/// One isolated-arc flag that the refloat maturity gate held out of the refloat.
+struct RaimHeldArc {
+    int         station{0};      ///< Roster index of the arc's station.
+    std::string sat;             ///< The arc's satellite.
+    double      statistic{0.0};  ///< The flag statistic: the arc's median-polish interaction over sigma0, above @c network.raim_k_sigma.
+};
+
+/**
+ * @brief The isolated-arc scan of the T4 attribution: which flagged arcs the gates let
+ *        through to the refloat, and which the maturity gate held.
+ *
+ * An isolated arc is a (station, satellite) cell of the median-polish table whose
+ * interaction stands above @c network.raim_k_sigma times sigma0 while its satellite is not
+ * caught wholesale (the whole-satellite refloat takes those, ungated).  A flag meets two
+ * gates in this order:
+ *  1. the maturity gate (@c network.raim_refloat_maturity_gate): until the run is mature
+ *     the flag is held, which leaves the arc's stiff carry in the solve.  A held flag also
+ *     resets the arc's persistence streak (it is absent from @c next_streak);
+ *  2. the persistence gate (@c network.raim_arc_persist_epochs, K): with K > 1 an arc is
+ *     refloated only on its K-th consecutive flagged epoch.  K = 1 refloats at once.
+ *
+ * Both gates open by default (@c mature true, K = 1), where every flag is refloated and
+ * @c held and @c next_streak stay empty.
+ */
+struct RaimIsolatedArcs {
+    /// The arcs T4 refloats this epoch, in table order: every flag that passed both gates.
+    std::vector<std::pair<int, std::string>> refloat;
+    /// The flags the maturity gate held, in table order (empty with the gate open or off).
+    std::vector<RaimHeldArc> held;
+    /// The persistence streaks to carry to the next epoch (K > 1 only): the arcs flagged
+    /// this epoch that have not yet persisted K epochs.  An arc absent here restarts at 0.
+    std::map<std::pair<int, std::string>, int> next_streak;
+    /// Flags that reached the maturity gate: over the bar, their satellite not caught
+    /// wholesale.  The gate's denominator: @c held.size() of them were held, the rest passed.
+    std::size_t flagged{0};
+
+    /**
+     * @brief Whether T4 refloats the arc (@p station, @p sat) this epoch.
+     * @return True for an arc in @c refloat; false for an arc held by either gate or not
+     *         flagged.  The `acted` column of an ARC row of network_raim_attrib.csv reads this.
+     */
+    bool refloats(int station, const std::string& sat) const;
+};
+
+/**
+ * @brief Select the isolated arcs T4 refloats from the median-polish interactions.
+ *
+ * A pure function of its arguments: the order of the tests is the T4 attribution block's
+ * order (bar, wholesale satellite, maturity gate, persistence gate), so the unit tests pin
+ * the seam's behaviour.  See @ref RaimIsolatedArcs for the gates.
+ *
+ * @param cells          The (station, satellite, value) table the median polish was taken over.
+ * @param interaction    The polish's interaction per cell (parallel to @p cells).
+ * @param sigma0         The epoch's robust a-posteriori variance factor.
+ * @param k_sigma        The flag bar, in sigma0 (@c network.raim_k_sigma).
+ * @param caught_sats    Satellites already caught wholesale this epoch (no double attribution).
+ * @param mature         Whether the maturity gate is open (true with the gate off).
+ * @param persist_epochs The persistence gate K (@c network.raim_arc_persist_epochs; 1 = off).
+ * @param prior_streak   The arc's consecutive-flag count before this epoch (read for K > 1
+ *                       on an arc that passed the maturity gate only).
+ * @return The arcs to refloat, the flags held, and the persistence streaks to carry.
+ */
+RaimIsolatedArcs raimSelectIsolatedArcs(
+    const std::vector<std::tuple<int, std::string, double>>& cells,
+    const std::vector<double>& interaction, double sigma0, double k_sigma,
+    const std::set<std::string>& caught_sats, bool mature, int persist_epochs,
+    const std::function<int(int, const std::string&)>& prior_streak);
+
+/// Where in the run an isolated-arc scan of the maturity gate happened.
+struct RaimScanStamp {
+    long long epoch{0};          ///< Processed-epoch index (RaimCounters::n_loop_epochs).
+    int       week{0};           ///< GPS week of the epoch.
+    double    tow{0.0};          ///< GPS time of week of the epoch, seconds.
+    long long n_emitted{0};      ///< Epochs emitted before the scan: the horizon's counter.
+    long long ewma_updates{0};   ///< sigma0 EWMA updates received before the scan: the horizon's second term.
+};
+
+/**
+ * @brief Run-scope telemetry of the isolated-arc refloat maturity gate
+ *        (@c network.raim_refloat_maturity_gate).
+ *
+ * The gate keeps a flagged arc's stiff carry in the solve until the run has emitted
+ * max(horizon, carry warm-up) epochs and the sigma0 EWMA has received horizon updates, so it
+ * changes which information reaches the carried ambiguities and has two edges (standing
+ * invariant 7), both counted here:
+ *  - decoupling: each held flag is an arc-epoch on which T4 would have dropped a carry and
+ *    did not (@c held, on @c held_epochs epochs; the identities are the RAIM_MATURITY
+ *    @c arc_held rows of network_events.csv);
+ *  - re-coupling: the lift, the first scan with the gate open (@c lifted and the @c lift_*
+ *    stamp; one RAIM_MATURITY @c lift event row).  From the lift T4 acts on every flag again,
+ *    so a persistent misfit is refloated there and a warm-up transient is not.
+ *
+ * The denominators tell apart the outcomes that otherwise read alike:
+ *  - @c scans == 0: the gate was never consulted (RAIM never ran, attribution does not drive
+ *    the action, or the cell table was empty throughout);
+ *  - @c scans > 0 and @c lifted false: the run ended inside the horizon, so every flag of the
+ *    run (@c flags) was held;
+ *  - @c lifted with @c held == 0 and @c lift_epoch equal to the first scan: the gate was open
+ *    from the start and changed nothing;
+ *  - @c flags == 0: the gate had no opportunity.
+ *
+ * Every member stays at zero unless the gate is armed and the T4 attribution path ran, and
+ * nothing in the solve reads it.
+ */
+struct RaimMaturityGateTally {
+    long long scans{0};              ///< Isolated-arc scans made with the gate armed: the opportunity count.
+    long long flags{0};              ///< Isolated-arc flags that reached the gate, held or passed.
+    long long held{0};               ///< Flags held by the closed gate: arc-epochs whose refloat did not run.
+    long long held_epochs{0};        ///< Scans with at least one held flag.
+    long long first_held_epoch{-1};  ///< Processed-epoch index of the first scan that held a flag (-1: none).
+    long long last_held_epoch{-1};   ///< Processed-epoch index of the last scan that held a flag (-1: none).
+    long long first_scan_epoch{-1};  ///< Processed-epoch index of the first scan (-1: none).
+    bool      lifted{false};         ///< The gate opened during the run.
+    RaimScanStamp lift;              ///< The scan that lifted the gate (meaningful when @c lifted).
+
+    /**
+     * @brief Record one isolated-arc scan made with the gate armed.
+     * @param n_flagged Flags that reached the gate (RaimIsolatedArcs::flagged).
+     * @param n_held    Flags the gate held (RaimIsolatedArcs::held.size()).
+     * @param mature    The gate's verdict this scan.
+     * @param at        Where in the run the scan happened.
+     * @return True on the scan that lifts the gate: the first with @p mature true.
+     */
+    bool noteScan(std::size_t n_flagged, std::size_t n_held, bool mature, const RaimScanStamp& at);
+};
+
 struct NetworkRun;              // network/driver/Run.hpp
 struct NetworkEpoch;            // network/driver/Epoch.hpp
 struct NetworkPostFitHandoff;   // network/solve/SolveGlue.hpp
@@ -226,6 +359,32 @@ struct NetworkPostFitHandoff;   // network/solve/SolveGlue.hpp
  */
 void networkPostFitRaim(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitHandoff& handoff);
 
+/**
+ * @brief Record one isolated-arc scan of the refloat maturity gate: the run-scope tally, the
+ *        lift and one event row per held flag.
+ *
+ * Called by networkPostFitRaim once per scan, after the gates have run, when
+ * @c network.raim_refloat_maturity_gate is on and attribution drives the action.  It
+ * writes only telemetry (nothing in the solve reads it):
+ *  - @c ctx.counters.maturity_gate (RaimMaturityGateTally::noteScan), stamped with the
+ *    processed-epoch index, @c ctx.counters.n_emitted and @c ctx.carry.ura_ewma_updates, the
+ *    values the gate's verdict was formed from;
+ *  - on the scan that lifts the gate, one RAIM_MATURITY @c lift event row and one info line
+ *    (the row carries n_emitted and the sigma0 EWMA update count);
+ *  - one RAIM_MATURITY @c arc_held event row per held flag (station, satellite, the flag
+ *    statistic and bar).
+ *
+ * @param run      The run (network/driver/Run.hpp).
+ *                 Written: @c run.ctx (the tally) and @c run.traces (the events trace).
+ *                 Read: @c run.setup.stations (the station names), @c run.log, the knobs.
+ * @param ep       The epoch (network/driver/Epoch.hpp), read only: @c se.time stamps the rows.
+ * @param isolated The scan's result (raimSelectIsolatedArcs).
+ * @param mature   The gate's verdict this scan.
+ * @param sigma0   The epoch's sigma0, for the rows.
+ */
+void networkRaimMaturityGateNote(NetworkRun& run, const NetworkEpoch& ep,
+                                 const RaimIsolatedArcs& isolated, bool mature, double sigma0);
+
 // ---- Run-end reports ----
 
 struct NetworkRunEndView;
@@ -240,6 +399,9 @@ struct NetworkRunEndView;
  *   - networkRaimWithholdRunEnd: the withhold-era release policy, the per-station
  *     variance factor (@c network.raim_station_factor) and the flag-rate hygiene
  *     (@c network.raim_rate_hygiene).
+ *   - networkRaimMaturityGateRunEnd: the isolated-arc refloat maturity gate
+ *     (@c network.raim_refloat_maturity_gate): the arcs and epochs it held, the lift, and
+ *     the outcomes the denominators tell apart (RaimMaturityGateTally).
  *
  * @param v The run at its end (network/runend/RunEnd.hpp).
  * @return 0, or the last non-zero verdict of its sections.
@@ -284,6 +446,12 @@ struct RaimCounters {
     /// The counters tell "post-fit pass never ran" from "census empty" from "nothing
     /// flagged" (see NetworkRaimCiTallies).
     NetworkRaimCiTallies raim_ci;
+
+    /// Run-end telemetry of the isolated-arc refloat maturity gate
+    /// (network.raim_refloat_maturity_gate): the arcs and epochs it held and the lift.  All
+    /// zero unless the gate is armed and the T4 attribution path ran (see
+    /// RaimMaturityGateTally).
+    RaimMaturityGateTally maturity_gate;
 
     // Ambiguity-vehicle telemetry.  These counters are the on-path evidence for the
     // float ambiguity vehicle (network.ambiguity_vehicle float_kf).  A float_kf run with

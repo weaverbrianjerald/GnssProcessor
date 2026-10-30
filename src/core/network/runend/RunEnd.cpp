@@ -130,7 +130,7 @@ const std::array<NetworkRunEndRow, kNetworkRunEndReportCount> kNetworkRunEndRepo
      "network/assembly/BiasAdmission.cpp", networkBiasAdmissionRunEnd},
     {"phase-anchor hygiene: handover, cold fallback, the anchor re-reference, eq34",
      "network/solve/AnchorHygiene.cpp", networkAnchorHygieneRunEnd},
-    {"RAIM: the carried-phase pools and the re-host, the withhold era, the R2 station factor, the R4 rate hygiene",
+    {"RAIM: the carried-phase pools and the re-host, the withhold era, the R2 station factor, the R4 rate hygiene, the isolated-arc refloat maturity gate",
      "network/qc/Raim.cpp", networkRaimRunEnd},
     {"the gross line-of-sight screen and its cold-start bound",
      "network/qc/GrossLos.cpp", networkGrossLosRunEnd},

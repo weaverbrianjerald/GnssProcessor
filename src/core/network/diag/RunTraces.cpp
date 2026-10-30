@@ -233,8 +233,11 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
             // Prominence attribution, log only (the refloat action is unchanged): a
             // robust two-way median polish of the (station × sat) post-fit residual
             // table at each RAIM epoch gives a per-dimension effect and a robust-z
-            // prominence.  dim ∈ {SAT, STA, SIG, ARC}; acted = whether the per-sat
-            // consensus already refloats that entity (SAT and ARC only).  Only entities
+            // prominence.  dim ∈ {SAT, STA, SIG, ARC}; acted = whether the refloat was taken
+            // for that entity (SAT and ARC only): the per-sat consensus when attribution
+            // is log-only, otherwise the attribution's own refloat.  An ARC row reads 1
+            // only when T4 refloated the arc or its satellite: an arc over the bar that
+            // the maturity gate or the persistence gate held reads 0.  Only entities
             // above the report prominence are written, so quiet epochs add no rows.
             raim_attrib_trace << "week,tow,dim,entity,effect,prominence,n_cells,overall,"
                                  "sigma0,acted\n";
