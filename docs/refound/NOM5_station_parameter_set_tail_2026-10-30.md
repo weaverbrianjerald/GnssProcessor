@@ -130,3 +130,46 @@ The configuration toggle convention (`CLAUDE.md`, "Config toggles") puts a user-
 `Toggles:` line. `estimation.seed_full_equation` takes the field `seed_full=` at the end of that line, so G0 for N6g
 reads identical apart from that one line of `stdout.txt` and `main_log` (`seed_full=off`) in every arm. No other text
 moves are declared for N6g.
+
+## 4. Results
+
+### 4.1 2026-10-30: N6f, direct assembly
+
+**Build.** Control `gnss_processor_n6tctl.exe` (sha256[:16] `7696875ef0d8c41f`), the worktree's Release build of
+`5127429` before any change; candidate `gnss_processor_n6tf.exe` (`1bcd0e640ee44aea`), the Release build of
+`4381a61`. Both hashes were unchanged after every run. An 11-epoch field golden smoke on the two executables read
+IDENTICAL in every part (`nom_td_gate.py --whole`: products, every trace, the manifest, the whole logs, the exit
+code). Gate records: `D:/GnssProcessorSupport/gates/n6t/` (`summary_n6tf.txt`, `uom_cmp_n6tf.log`,
+`rt_cmp_dr.log`, `rt_cmp_cl.log`, `dbg_suite.log`, `check_*.log`, `g2_report.txt`, `nc_table_pair{1..4}.txt`).
+
+**G0, identity: pass.** The 23 G5 arms and the snapshot bytes: 24 of 24 IDENTICAL (arms `a4`, `gate`, `joint` and
+`zero` exit 1 on both sides, as on every earlier side). User side, quick set: 16 of 16 IDENTICAL. Real time: the
+`dr` arms (`sbf`, `sbf_bssd`, `sbf_te`) differ in one line each, the wall-clock "Real-time session ended ... ms
+wall"; the `cl` arm differs in four lines of `console.log` and of `main_log.log`, all wall-clock (RINEX ingestion
+seconds, the epoch-loop wall, the round-trip self-check seconds, the `COST:` tail of the arc-ledger line), the
+manifest in `compiled`, `written_utc` and `loop_ms`, and `network_service_health.csv` in its `ms_per_epoch_window`
+column. Every other file is byte-identical.
+
+**G1, checks: pass.** The full Release build found one more reader of the removed member: the compile-time pin of
+`StationBuild`'s hand-off in `tests/network/test_network_station_build.cpp`, fixed test-only in `f9b4dac` (the
+executable unchanged). The Debug suite of `f9b4dac`: 3652 tests in 497 suites, 3619 passed, 33 skipped (the
+fixture-gated list), 0 failed. `nom_epoch_lint.py`, `nom_n4_verify.py --whole`, `docs_index_check.py`,
+`make_golden_config.py --verify`, `config_posture_check.py --verify-loader` and `ledger_render.py --check` pass.
+
+**G2, cost: pass on the bar; no gain shown.** Concurrent pairs on 2 h goldens (`scripts/cost_attrib/abba.sh`),
+launched only after a quiet check (no build, no foreign processor run):
+
+| pair | bed (launched first) | loop ms/epoch, control / candidate | assembly wall | `est.addStation` | products |
+| --- | --- | --- | --- | --- | --- |
+| 1 | field (control) | 1428.4 / 1427.3 (-0.08 %) | 288.1 / 292.6 | 245.5 / 248.5 | identical, 113889 records |
+| 2 | field (candidate) | 1182.3 / 1182.5 (+0.01 %) | 260.7 / 259.8 | 220.1 / 217.4 | identical |
+| 3 | sim (control) | 838.2 / 838.9 (+0.08 %) | 145.8 / 147.2 | 117.6 / 118.9 | identical, 80691 records |
+| 4 | sim (candidate) | 645.5 / 644.6 (-0.14 %) | 145.6 / 147.2 | 115.8 / 116.9 | identical |
+
+No pair is slower by more than 1 % (largest +0.08 %), so the clause passes. The design's expectation of a lower
+cost is not borne out: the loop is flat within 0.15 %, and the two section rows move within 1.6 % with mixed signs.
+`est.addStation` receives byte-identical blocks on both sides, so its own spread (-1.3 % to +1.2 %) is the noise of
+a section row in these pairs; the removal of the dense matrix's zero fill and column copies lies below it.
+
+**Verdict, N6f.** Identity, checks and the cost bar pass. The network forms no dense matrix of rows by slots, at
+no measurable cost and no measurable gain.
