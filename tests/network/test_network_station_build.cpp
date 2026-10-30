@@ -40,8 +40,8 @@ static_assert(std::is_same_v<decltype(StationBuild::i), const int>,
               "the roster index keeps the frozen loop variable's type (the carry keys are int)");
 static_assert(std::is_same_v<decltype(StationBuild::st), NetStation&>, "the station is writable");
 static_assert(std::is_same_v<decltype(StationBuild::R), StationAssembly&>, "its slot is writable");
-static_assert(std::is_same_v<decltype(StationBuild::em), EpochMeasurement>,
-              "the measurement update is the one value a step hands a later one");
+static_assert(std::is_same_v<decltype(StationBuild::rows), StationDataRows>,
+              "the data rows are the one value a step hands a later one");
 static_assert(std::is_same_v<StationBuildFn, StationStep (*)(StationBuild&)>);
 static_assert(std::is_same_v<StationCarryFn, void (*)(StationCarryFrame&)>);
 static_assert(std::is_same_v<decltype(StationCarryFrame::build), StationBuild&>);
