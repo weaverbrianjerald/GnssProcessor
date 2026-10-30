@@ -5,10 +5,10 @@
 - **id:** PIV
 - **topic:** network-vehicle
 - **status:** open
-- **summary:** BUILT 2026-10-18, default off, never armed: `network.pivot_election: coverage` elects each constellation's clock pivot at its first epoch and at a forced handover as the registered, healthy satellite that the orbit product predicts at the most roster stations over a look-ahead horizon, passing over one that enters the Earth's umbra inside it; an incumbent that stays registered and healthy is kept. Unit gate, ledger rows and a Release smoke are in (section 6). The check of section 5 ran 2026-10-18 (section 8): knob absent identical to main except the declared lines (G0), picks G22 and E04 on the field and G32 and E36 on the sim with no handover against two in each control (G1), field hour-2 common drift 27 % of the control's (G3), held-out consumer and 16-site census unchanged within 1 mm at the median (G4, G5); the clock product is within 2.4 mm of the control and marginally not "no worse" (G2). 2026-10-28 (section 9): on a 24 h day the forced-handover branch runs and the census is unchanged; on DOY 130 ARHT00ATA is 40.6 mm worse, the one failed clause; not armed.
+- **summary:** BUILT 2026-10-18, default off, never armed: `network.pivot_election: coverage` elects each constellation's clock pivot at its first epoch and at a forced handover as the registered, healthy satellite that the orbit product predicts at the most roster stations over a look-ahead horizon, passing over one that enters the Earth's umbra inside it; an incumbent that stays registered and healthy is kept. Unit gate, ledger rows and a Release smoke are in (section 6). The check of section 5 ran 2026-10-18 (section 8): knob absent identical to main except the declared lines (G0), picks G22 and E04 on the field and G32 and E36 on the sim with no handover against two in each control (G1), field hour-2 common drift 27 % of the control's (G3), held-out consumer and 16-site census unchanged within 1 mm at the median (G4, G5); the clock product is within 2.4 mm of the control and marginally not "no worse" (G2). 2026-10-28 (section 9): on a 24 h day the forced-handover branch runs and the census is unchanged; on DOY 130 ARHT00ATA is 40.6 mm worse, the one failed clause; not armed. 2026-10-30 (section 10, card NSP): under six neutral changes of the wire no census site moves by more than 0.19 mm, so ARHT00ATA's +40.6 mm is a response to the election's wire and the clause stands failed; not armed.
 - **source:** [PAC](PAC_common_drift_pivot_clock_2026-10-01.md) sections 3 to 5 (G14 pinned cut the field hour-2 common drift from -0.180 to -0.063 m/h); [HLT](HLT_broadcast_health_2026-09-25.md) (the health latch and the pivot's health skip); `docs/status/OPEN_ITEMS.md` queued build 1
 - **knobs / posture:** `network.pivot_election` (`off` | `coverage`), `network.pivot_election_horizon_s` (7200), `network.pivot_election_step_s` (300); ledger rows UNVALIDATED and PARAM; neither golden changed
-- **dates in the text:** 2026-10-17, 2026-10-18
+- **dates in the text:** 2026-10-17, 2026-10-18, 2026-10-28, 2026-10-30
 - **hashes / run dirs:** branch `mpg/pivot`; scratch `D:/GnssProcessorSupport/gates/pivot/` (`tools/offline_rank.py`, build logs, smoke output); unit gate `tests/network/test_pivot_election.cpp` (suites `CoveragePivot*`)
 
 **Outcome.** Question: can the clock pivot be chosen by what the network can use of it (stations that track it, a
@@ -18,7 +18,7 @@ smoke pass (10 epochs, field and sim): the field run elects G22 (27.6 of 58 stat
 G14 27.4) and E04 (28.7), with G01 passed over as unhealthy, where the control keeps G01 and E02; with the knob absent
 the output equals a main-built exe's. The 6 h check (section 8) holds on G0, G1, G3, G4 and G5, and G2 within 2.4 mm:
 no handover in 6 h against two in each control, field hour-2 common drift 0.051 against 0.192 m/h, consumer and census
-unchanged at the median. The forced-handover branch was not exercised. Nothing is armed. 2026-10-28 (section 9): on a 24 h day the forced-handover branch runs and the census is unchanged; on DOY 130 ARHT00ATA is 40.6 mm worse, the one failed clause; not armed.
+unchanged at the median. The forced-handover branch was not exercised. Nothing is armed. 2026-10-28 (section 9): on a 24 h day the forced-handover branch runs and the census is unchanged; on DOY 130 ARHT00ATA is 40.6 mm worse, the one failed clause; not armed. 2026-10-30 (section 10, card NSP): under six neutral changes of the wire no census site moves by more than 0.19 mm, so ARHT00ATA's +40.6 mm is a response to the election's wire and the clause stands failed; not armed.
 
 ## 1. The rule
 
@@ -349,3 +349,29 @@ DOY 130 clause cannot be read as noise or as an effect. The GPS clock product is
 on the day (1.3 mm on DOY 130) and Galileo 2.0 mm better (1.8 mm worse on DOY 130). Not ready to arm on the bar as
 written; what would settle it is the ARHT00ATA spread under a neutral change (for example two arms that differ only in
 an inert knob that perturbs the wire at the rounding level).
+
+## 10. ARHT00ATA's spread under a neutral change, 2026-10-30
+
+Card [NSP](NSP_census_neutral_spread_2026-10-29.md) measured the census under changes of the wire with no expected
+effect, on the exe and posture of section 9 (the bytes of `gnss_processor_bof.exe`, the `ef9f75d` golden). The inert
+knobs that section 9 suggests (`network.parallel_max_threads`, `network.parallel_carry`) leave the float-vehicle
+golden's products byte-identical, so the neutral arms re-round the roster coordinates instead (an independent offset
+within plus or minus 0.05 mm per axis, six seeds per day). Graded as section 9's census (hours 2 to 6, paired, 1 cm):
+
+| DOY 130 | six neutral arms | the election |
+|---|---|---|
+| ARHT00ATA change | +0.19, 0.00, +0.01, -0.02, +0.18, -0.06 mm (s 0.11 mm) | +40.6 mm |
+| largest change at another census site | 0.18 mm (HARB00ZAF) | -3.6 mm (QUIN00USA) |
+| sites worse by more than 1 cm | none in any arm | ARHT00ATA |
+| decision rows changed (90 to 94 % and 98.7 % of them the measure-only prior-residual census) | 513 to 729 | 11439, among them 100 clock-anchor decouple, recouple and landed-discontinuity events |
+
+On DOY 129 no census site moves by more than 0.02 mm in any of six neutral arms.
+
+Reading, fixed before the runs (card NSP section 5): **outside**. No neutral arm moves ARHT00ATA as far (rank 0 of 6)
+and +40.6 mm is about 90 times the one-sided 99 % prediction bound of a neutral change (+0.44 mm). The failed clause
+is a response of ARHT00ATA to the election's wire on DOY 130, not noise, and it stands. The caveat fixed in advance
+holds as well: the neutral arms flip none of the clock-anchor, gate and re-admission decisions that the election
+changes, so whether another change of that sequence would move ARHT00ATA as far is not measured. ARHT00ATA's response
+to the election is -5.8 mm (DOY 129, 6 h, section 8.6), -6.9 mm (DOY 129, hours 2 to 24) and +40.6 mm (DOY 130, hours
+2 to 6); whether the election harms it is a question of more days (the multi-day observations hold DOY 128, 131 and
+132). Not armed.
