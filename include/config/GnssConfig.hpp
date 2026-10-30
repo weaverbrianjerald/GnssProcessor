@@ -8434,6 +8434,14 @@ namespace GnssProcessor {
         void logNetworkRxExtraBandDelay_(const std::shared_ptr<spdlog::logger>& log) const;
         void loadNetworkClosedLoop_(const nlohmann::json& nw,
                                     const std::shared_ptr<spdlog::logger>& log);
+        /// The single-receiver layout flags in a network run.  A network station's layout is
+        /// its own parameter set; the flags set only the closed-loop or replay consumer's,
+        /// whose configuration is a copy of this one.  With no consumer
+        /// (@c network.closed_loop.enable off) a flag reaches no parameter of the run, so the
+        /// configuration is refused, naming the network key where one exists.  Throws
+        /// std::runtime_error (loadFromJson then returns false).  Called after
+        /// @ref loadNetworkClosedLoop_, which settles whether a consumer runs.
+        void validateNetworkUserLayoutFlags_() const;
         /// Parse @c network.inject (scripted producer-side faults; event harness).
         /// Strict: a malformed event is a load failure, never a silent drop (a test
         /// fixture that silently does not exist would be graded as a null).

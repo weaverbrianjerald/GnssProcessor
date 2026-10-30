@@ -206,6 +206,11 @@ TEST(ParamRefFactories, EachFactorySetsOnlyTheFieldsOfItsKind) {
     EXPECT_NE(amb, ambiguityIfRef(sat, SignalPair{sig, sig}));
     EXPECT_NE(phaseClockRef(), rxClockRef());
     EXPECT_NE(gradientRef(true), gradientRef(false));
+    // The gradients are a network kind, one identity for the producer and the consumer.
+    EXPECT_EQ(gradientRef(true).kind, NetworkParamKind::TropoGradient);
+    EXPECT_EQ(gradientRef(true).form, ParamForm::North);
+    EXPECT_EQ(gradientRef(false).form, ParamForm::East);
+    EXPECT_EQ(gradientRef(true).core, UserCore::None);
     EXPECT_EQ(rxCbKeyOf(rxCodeBiasRef(RxCbKey{System::GPS, ParamForm::Ifb,
                                               FrequencyBand::GpsL2, SignalId{}, 0})),
               (RxCbKey{System::GPS, ParamForm::Ifb, FrequencyBand::GpsL2, SignalId{}, 0}));

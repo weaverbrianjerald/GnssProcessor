@@ -294,6 +294,22 @@ NetworkParamRegistry NetworkParamRegistry::build(const NetworkKnobs& k, const Gn
                    "reduces it to the antenna reference point)";
         set(NetworkParamKind::RxPosition, std::move(s));
     }
+    {
+        // The troposphere gradients: two local columns per station, estimated afresh every
+        // epoch (uncarried, as the golden wet delay is).
+        ParamSpec s;
+        s.estimated = k.tgrad_on;
+        s.carried = false;
+        s.q = 0.0;
+        s.q_rule = ParamQRule::None;
+        s.var_floor_m2 = 0.0;
+        s.birth_var_m2 = kNaN;
+        s.gap_horizon_s = kNaN;
+        s.route = ParamRoute::NotCarried;
+        s.source = "network.estimate_tropo_gradients (uncarried; the single-receiver flag "
+                   "estimation.estimate_tropo_gradients sets the consumer's layout)";
+        set(NetworkParamKind::TropoGradient, std::move(s));
+    }
 
     // Phase 3a: the responses armed per kind and event.  A declared response site
     // (network/assembly/Responses.hpp) whose own gate holds on this snapshot contributes its

@@ -519,11 +519,18 @@ TEST(StationBirthTest, TheAdmissionAndTheRowLoopAgreeOnTheStoredGeometry) {
 
 namespace {
 
+/// A closed-loop consumer the loader accepts.  The single-receiver layout flags set the
+/// consumer's layout, so a network configuration may carry them only with a consumer.
+const std::string kWithConsumer =
+    R"(, "closed_loop": {"enable": true, "station": {"name": "CCCC", "rinex_path": "consumer.rnx",
+                                                    "position_ecef": [0.0, 0.0, 6356752.3]}})";
+
 /// The rows of a station, after its births and its admission, over a configuration with the
-/// given members of the estimation object.
+/// given members of the estimation object, and a consumer.
 StationDataRows rowsUnder(const std::string& estimation_extra, StationParams* set_out = nullptr) {
     BirthOptions o;
     o.estimation_extra = estimation_extra;
+    o.network_extra = kWithConsumer;
     BirthFixture f(o);
     const StationRowContext c = f.context();
     const std::vector<PppObservation> obs = f.epoch(0);
@@ -559,6 +566,7 @@ TEST(StationBirthTest, ANetworkStationHasOneAmbiguityPerBandWhateverTheAmbiguity
 
     BirthOptions o;
     o.estimation_extra = R"(, "state_ambiguity_basis": "nl_wl")";
+    o.network_extra = kWithConsumer;
     BirthFixture probe(o);
     ASSERT_EQ(probe.stack.config.getStateAmbiguityBasis(), StateAmbiguityBasis::NlWl);
 
@@ -570,6 +578,7 @@ TEST(StationBirthTest, ANetworkStationHasOneAmbiguityPerBandWhateverTheAmbiguity
     expectSameRows(per_band, nlwl);
 }
 
+// The flags set the consumer's layout; the stations' rows do not change.
 TEST(StationBirthTest, ANetworkStationIgnoresTheSingleReceiverPhaseClockAndGradients) {
     const StationDataRows plain = rowsUnder("");
     const StationDataRows flagged = rowsUnder(

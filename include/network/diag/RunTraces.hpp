@@ -637,6 +637,11 @@ namespace GnssProcessor {
         /// instrument).
         std::ofstream zwd_trace;
         const std::filesystem::path zwd_trace_path;
+        /// Per-station troposphere gradient trace (network.estimate_tropo_gradients): the
+        /// north and east estimates and their datum-conditioned formal sigma, per present
+        /// station each emitted epoch.  Open exactly when the key is armed.
+        std::ofstream tgrad_trace;
+        const std::filesystem::path tgrad_trace_path;
         /// Per-(satellite, code signal) bias state (L14; network.trace_sat_bias_states):
         /// the emitted satellite code bias with its σ̂0-scaled formal σ from the
         /// gauge-nulled shared posterior covariance.  The B product record carries no σ

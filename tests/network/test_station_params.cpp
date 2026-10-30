@@ -308,15 +308,18 @@ TEST(StationParamsTest, AddParamKeepsEverySlotAndCountsWhatNoMapHolds) {
     // Forms only the single-receiver filter allocates have no typed map.
     EXPECT_FALSE(addParam(set, slot(ambiguityIfRef(g05, SignalPair{l1c, l2w}), 3.0)));
     EXPECT_FALSE(addParam(set, slot(phaseClockRef(), 4.0)));
-    EXPECT_FALSE(addParam(set, slot(gradientRef(true), 5.0)));
+    // The troposphere gradient is a network kind with its own field (north, then east).
+    EXPECT_TRUE(addParam(set, slot(gradientRef(true), 5.0)));
     EXPECT_TRUE(addParam(set, slot(rxClockRef(), 6.0)));
     EXPECT_FALSE(addParam(set, slot(rxClockRef(), 7.0)));
 
     EXPECT_EQ(set.slots.size(), 7u);
-    EXPECT_EQ(set.untyped, 5);
+    EXPECT_EQ(set.untyped, 4);
     EXPECT_EQ(findParam(set, ambiguityRef(g05, l1c)), 0);
     EXPECT_EQ(findParam(set, ambiguityRef(g05, l2w)), -1);
     EXPECT_EQ(findParam(set, ambiguityIfRef(g05, SignalPair{l1c, l2w})), -1);
+    EXPECT_EQ(findParam(set, gradientRef(true)), 4);
+    EXPECT_EQ(findParam(set, gradientRef(false)), -1);
     EXPECT_EQ(findParam(set, rxClockRef()), 5);
     EXPECT_EQ(findParam(set, zwdRef()), -1);
     EXPECT_EQ(findParam(set, rxPositionRef(0)), -1);

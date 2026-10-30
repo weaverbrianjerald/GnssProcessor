@@ -55,10 +55,11 @@ constexpr ParamKindSet bit(PK k) { return ParamKindSet{1} << static_cast<unsigne
 constexpr ParamKindSet kBorder = bit(PK::SatClock) | bit(PK::SatPhaseBias)
                                | bit(PK::SatCodeBias) | bit(PK::VtecSh);
 constexpr ParamKindSet kCodeRow = bit(PK::SatClock) | bit(PK::SatCodeBias) | bit(PK::RxClock)
-                                | bit(PK::RxCodeBias) | bit(PK::SlantIono) | bit(PK::Zwd);
+                                | bit(PK::RxCodeBias) | bit(PK::SlantIono) | bit(PK::Zwd)
+                                | bit(PK::TropoGradient);
 constexpr ParamKindSet kPhaseRow = bit(PK::SatClock) | bit(PK::SatPhaseBias) | bit(PK::Ambiguity)
-                                 | bit(PK::SlantIono) | bit(PK::Zwd) | bit(PK::RxClock)
-                                 | bit(PK::RxPhaseBias) | bit(PK::PhaseColour);
+                                 | bit(PK::SlantIono) | bit(PK::Zwd) | bit(PK::TropoGradient)
+                                 | bit(PK::RxClock) | bit(PK::RxPhaseBias) | bit(PK::PhaseColour);
 // A whitened local block row spans its own column and every block column pushed before it
 // (L⁻¹ is lower triangular); the push order is ambiguity, wet delay, ionosphere, receiver
 // clock, receiver code bias, phase colour (ApplicationNetworkAssembly.cpp, PASS B).

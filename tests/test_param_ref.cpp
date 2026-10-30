@@ -422,7 +422,7 @@ TEST(ParamRefTest, DigitOfBandInvertsBandOfDigit) {
 TEST(ParamRefTest, TheKindsAndFormsKeepTheirTableNames) {
     EXPECT_STREQ(paramKindName(NetworkParamKind::SatClock), "sat_clock");
     EXPECT_STREQ(paramKindName(NetworkParamKind::RxPosition), "rx_position");
-    EXPECT_EQ(static_cast<std::size_t>(NetworkParamKind::RxPosition) + 1, kNetworkParamKindCount);
+    EXPECT_EQ(static_cast<std::size_t>(NetworkParamKind::TropoGradient) + 1, kNetworkParamKindCount);
     EXPECT_STREQ(paramFormName(ParamForm::None), "");
     EXPECT_STREQ(paramFormName(ParamForm::GloSlotIfb), "slot");
 }

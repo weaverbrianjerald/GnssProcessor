@@ -108,10 +108,11 @@ ParamSlot UserParamView::find(const ParamRef& ref) const {
         case NetworkParamKind::RxPosition:
             return fixed(states_.getPositionIndex() + ref.axis);
         case NetworkParamKind::Zwd:
-            if (ref.core == UserCore::None) return fixed(states_.getTropoIndex());
+            return fixed(states_.getTropoIndex());
+        case NetworkParamKind::TropoGradient:
             if (!states_.hasTropoGradients()) return ParamSlot{};
-            return fixed(ref.core == UserCore::GradientNorth ? states_.getTropoGradientNorthIndex()
-                                                             : states_.getTropoGradientEastIndex());
+            return fixed(ref.form == ParamForm::North ? states_.getTropoGradientNorthIndex()
+                                                      : states_.getTropoGradientEastIndex());
         case NetworkParamKind::RxClock:
             if (ref.core == UserCore::PhaseClock)
                 return states_.hasPhaseClock() ? fixed(states_.getPhaseClockIndex()) : ParamSlot{};

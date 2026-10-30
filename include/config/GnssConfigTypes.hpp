@@ -2121,6 +2121,14 @@ namespace GnssProcessor {
         /// coupling; refuses carry_invariant.  Default false is
         /// byte-identical.
         bool phase_colour_state{ false };
+        /// Estimate a north and an east troposphere gradient per station
+        /// (network.estimate_tropo_gradients): two local columns of every station's block,
+        /// born at 0 and estimated afresh every epoch (uncarried), with the partials
+        /// mf_grad * cos(azimuth) and mf_grad * sin(azimuth) of the shared observation
+        /// equation.  The station-side key; estimation.estimate_tropo_gradients sets the
+        /// single-receiver filter's (in a network run, the consumer's) layout.  Default false
+        /// is byte-identical apart from the declared run-start rows of the kind.
+        bool estimate_tropo_gradients{ false };
         /// Zenith sigma of the state's stationary prior (m); the elevation law is
         /// sigma(e) = sigma_zen / sin(max(e, phase_colour_elev_floor_deg)), the sim
         /// fixture's.  Must be > 0.

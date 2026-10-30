@@ -163,6 +163,9 @@ struct StationParams {
     std::array<int, 3> position{-1, -1, -1};   ///< Slots of the receiver position components (x, y, z).
     int clock{-1};                              ///< Slot of the receiver clock.
     int zwd{-1};                                ///< Slot of the zenith wet delay.
+    /// Slots of the troposphere gradients, north and east; -1 unless the network estimates
+    /// them (network.estimate_tropo_gradients).
+    std::array<int, 2> gradient{-1, -1};
 
     /// Inter-system biases, in the order of the constellation names ("GLONASS" < "GPS" < "Galileo").
     std::map<System, int, SystemNameOrder>      isb;
@@ -359,13 +362,14 @@ std::string stateLabel(const LocalSlot& slot, std::size_t index);
  * @brief The set of a station before its first epoch: the fixed layout.
  *
  * Slots 0 to 2 are the receiver position (held at @p position, never estimated), slot 3 the
- * receiver clock, slot 4 the zenith wet delay, and one inter-system bias follows for each
- * active constellation other than the time reference, in the order of the configuration's
- * list.  Every value but the position is 0.  The layout does not follow the single-receiver
- * filter's optional columns (velocity, clock rate, phase clock, gradients, IMU states): a
- * network station has none.
+ * receiver clock, slot 4 the zenith wet delay; under network.estimate_tropo_gradients slots 5
+ * and 6 the north and east troposphere gradients; then one inter-system bias for each active
+ * constellation other than the time reference, in the order of the configuration's list.
+ * Every value but the position is 0.  The layout does not follow the single-receiver filter's
+ * optional columns (velocity, clock rate, phase clock, its own gradient flag, IMU states): a
+ * network station has its own keys.
  *
- * @param config   Processing configuration (the active constellations).
+ * @param config   Processing configuration (the active constellations, the gradient key).
  * @param position The receiver's ECEF position (m).
  * @return The set.
  */
@@ -375,8 +379,8 @@ StationParams startStationParams(const GnssConfig& config, const Eigen::Vector3d
  * @brief Remove slots from the set, keeping the others in order.
  *
  * The typed maps drop the entries that point at a removed slot and renumber the rest, so
- * slot k stays column k of the set that remains.  The core slots (position, clock, wet delay)
- * are never removed.
+ * slot k stays column k of the set that remains.  The core slots (position, clock, wet delay,
+ * gradients) are never removed.
  *
  * @param set     The set (written).
  * @param indices The slots to remove (any order; duplicates and out-of-range indices are

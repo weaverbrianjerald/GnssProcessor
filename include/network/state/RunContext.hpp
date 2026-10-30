@@ -228,6 +228,7 @@ namespace GnssProcessor {
         double pc_floor_deg{};       ///< network.phase_colour_elev_floor_deg (deg)
         double pc_max_gap_s{};       ///< network.phase_colour_max_gap_s (s)
         bool   pc_trace{};           ///< network.trace_phase_colour (and pc_on)
+        bool   tgrad_on{};           ///< network.estimate_tropo_gradients: the stations' gradient columns
         bool   amb_if_trace{};       ///< network.trace_amb_if (trace class)
         /// The state's stationary variance at elevation @p elev_deg:
         /// (sigma_zen / sin(max(e, floor)))^2.  An unknown elevation (NaN) takes the floor.

@@ -524,6 +524,10 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // bias or a phase colour is), so a resume across the key would mix states born under
         // two rules.  Appended only when armed, so every existing fingerprint is unchanged.
         if (config_.seedFullEquation()) add("seed:full");
+        // The stations' troposphere gradient columns change every station block the carried
+        // states were estimated in, so a resume across the key has to cold-start.  Appended
+        // only when armed, so every existing fingerprint is unchanged.
+        if (nc.estimate_tropo_gradients) add("tgrad:1");
         // --- Not fingerprinted: the forward-only policy exemption ---
         //
         // The knobs listed below are left out of the fingerprint for one shared reason,

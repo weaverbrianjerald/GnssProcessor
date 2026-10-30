@@ -62,6 +62,7 @@ void networkIonoDiag(NetworkRun& run, const NetworkEpoch& ep) {
     auto& iono_trace           = traces.iono_trace;
     auto& anchor_info_trace    = traces.anchor_info_trace;
     auto& zwd_trace            = traces.zwd_trace;
+    auto& tgrad_trace          = traces.tgrad_trace;
     auto& rx_states_trace      = traces.rx_states_trace;
     auto& clk_prior_info = ws.clk_prior_info;
 
@@ -148,6 +149,44 @@ void networkIonoDiag(NetworkRun& run, const NetworkEpoch& ep) {
                       << stations[i].name << ',' << fmt::format("{:.6f}", zwd_m) << ','
                       << fmt::format("{:.6e}", std::sqrt(var)) << ','
                       << (asm_res[i].pl_zwd_injected ? 1 : 0) << '\n';
+        }
+    }
+
+    // One row per present station each emitted epoch while the network estimates the
+    // troposphere gradients: the north and east estimates (linearization point plus the
+    // reconstructed correction) and their datum-conditioned formal sigma.  The columns are
+    // found through the station's set and h2local, as the wet delay's are above.
+    if (tgrad_trace.is_open()) {
+        for (size_t i = 0; i < stations.size(); ++i) {
+            if (est_index_of[i] < 0) continue;               // not in this epoch's solve
+            const StationParams& params = stations[i].params;
+            if (params.gradient[0] < 0 || params.gradient[1] < 0) continue;
+            const auto& h2l = asm_res[i].h2local;
+            const auto hn = h2l.find(params.gradient[0]);
+            const auto he = h2l.find(params.gradient[1]);
+            if (hn == h2l.end() || he == h2l.end() || hn->second < 0 || he->second < 0)
+                continue;                                    // left out of A_r this epoch
+            const Eigen::Index cn = static_cast<Eigen::Index>(hn->second);
+            const Eigen::Index ce = static_cast<Eigen::Index>(he->second);
+            Eigen::VectorXd x_r, vard;
+            try {
+                x_r = est.reconstructStation(static_cast<std::size_t>(est_index_of[i]), x_s);
+                vard = est.conditionalLocalVarianceDiag(
+                    static_cast<std::size_t>(est_index_of[i]), {cn, ce}, plan.shared_datum);
+            } catch (...) { continue; }
+            if (cn >= x_r.size() || ce >= x_r.size() || vard.size() < 2) continue;
+            const double north =
+                params.slots[static_cast<std::size_t>(params.gradient[0])].x_lin + x_r(cn);
+            const double east =
+                params.slots[static_cast<std::size_t>(params.gradient[1])].x_lin + x_r(ce);
+            if (!std::isfinite(north) || !std::isfinite(east) || !(vard(0) > 0.0)
+                || !(vard(1) > 0.0))
+                continue;
+            tgrad_trace << se.time.week << ',' << fmt::format("{:.3f}", se.time.tow) << ','
+                        << stations[i].name << ',' << fmt::format("{:.6f}", north) << ','
+                        << fmt::format("{:.6f}", east) << ','
+                        << fmt::format("{:.6e}", std::sqrt(vard(0))) << ','
+                        << fmt::format("{:.6e}", std::sqrt(vard(1))) << '\n';
         }
     }
 

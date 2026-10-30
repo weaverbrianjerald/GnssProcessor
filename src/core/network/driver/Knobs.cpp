@@ -63,6 +63,7 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.pc_floor_deg = nc.phase_colour_elev_floor_deg;
     k.pc_max_gap_s = nc.phase_colour_max_gap_s;
     k.pc_trace     = nc.phase_colour_state && nc.trace_phase_colour;
+    k.tgrad_on     = nc.estimate_tropo_gradients;
     k.amb_if_trace = nc.trace_amb_if;
     // Variance floor applied at the drop only; resolves to 0 off the vehicle.
     k.amb_drop_var_floor  = k.amb_float_kf
