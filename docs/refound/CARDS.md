@@ -264,7 +264,7 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   to 01:30 UT that recurs (also at DAEJ00KOR) and enters through the consumer's BeiDou satellites, not a settled cost; a
   GPS + Galileo user of the C products is unchanged. 1.2 to 1.9 times GE per epoch on a loaded machine. Nothing armed.
 - [MGT](MGT_maturity_gate_telemetry_2026-10-30.md): closed, 2026-10-30: the telemetry card RCG found owed for
-  `network.raim_refloat_maturity_gate`, BUILT and GATED (branch `claude/confident-elgamal-6b01b9`, not merged). A run-scope tally
+  `network.raim_refloat_maturity_gate`, BUILT and GATED (branch `claude/confident-elgamal-6b01b9`, merged into main). A run-scope tally
   (flags, arc-epochs and epochs held, the lift), one event row per held flag and one at the lift (tier `RAIM_MATURITY`), a
   run-end section, an arming line, and the `acted` column of the attribution trace read as a refloat taken (the persistence
   gate had the same defect). Gate off: byte-identical on 2 h field and sim arms. Gate on at 120 epochs, 2 h field: 27 flags
