@@ -4,16 +4,20 @@
 
 - **id:** RCG
 - **topic:** raim-qc
-- **status:** open
-- **summary:** The two never-graded keys that moved the solve in card BOF's 2 h field triage (BOF section 3), graded as BOF section 5 asks: 6 h field arms and the 16-site census against a same-exe control on the current golden, and a 6 h sim arm for a key that acts on the sim. `network.signal_integrity.census` (triage: T4 refloats 60 to 30, held-out consumer hour 2 -0.40 mm) and `network.raim_refloat_maturity_gate` with `raim_refloat_maturity_epochs` 120 (triage: T4 refloats 60 to 8, hour 2 -0.45 mm), plus a second horizon of 60 epochs. Gates in section 3, written and committed before any arm ran. Nothing is armed here: the author decides.
+- **status:** closed
+- **summary:** The two never-graded keys that moved the solve in card BOF's 2 h field triage (BOF section 3), graded as BOF section 5 asks: 6 h field arms and the 16-site census against a same-exe control on the golden of main `1527cf9` (the control byte-identical to `runs/_rf0hv17_field6`), and 6 h sim arms. `network.raim_refloat_maturity_gate` at 120 epochs PASSES every gate: T4 refloats 107 to 55, slip-class ambiguity responses -6.9 %, held-out consumer +0.01 mm over hours 2 to 6, census +0.06 mm with no site worse, byte-identical on the sim; it counts nothing it suppresses, a telemetry change owed before any arming. At 60 epochs the churn cut is -3.1 %. `network.signal_integrity.census` is HARMLESS, NOT LESS CHURN: T4 refloats 107 to 78 but slip-class responses -3.3 % (bar -5 %), consumer +0.10 mm, census +0.05 mm, sim +0.02 mm. Neither key moves a user; the triage's hour-2 gains do not reproduce. Gates in section 3, committed before any arm ran (`68b6a88`); results in section 4. Nothing is armed here: the author decides.
 - **source:** [BOF](BOF_built_off_follow_through_2026-10-28.md) sections 3 and 5; worker report `D:/GnssProcessorSupport/runs_nom/bof_reports/triage_2h.md`; the "never graded" section of [OPEN_ITEMS_BUILT_OFF](../status/OPEN_ITEMS_BUILT_OFF.md); ledger rows of the keys in `docs/CONFIG_promotion_ledger.json`
 - **knobs / posture:** read, not changed: `network.signal_integrity.census` (UNVALIDATED; its PARAM children at their loader defaults: `unvetted_sigma_scale` 10, `revet_ep` 3, `flicker_max_ep` 5, `refloat_on_regain` true, `withhold_instead` false), `network.raim_refloat_maturity_gate` (UNVALIDATED) with `network.raim_refloat_maturity_epochs` (PARAM) 120 and 60. Bases: `config/golden/golden_field_refound.json` and `config/golden/golden_sim_refound.json` of main `1527cf9`.
-- **dates in the text:** 2026-10-29
-- **hashes / run dirs:** exe `D:/GnssProcessorSupport/worktrees/mgsi/build/x64-Release/gnss_processor_rcg.exe` (the Release build of main `1527cf9` in a clean detached worktree, sha256[:16] fab88a924e9189fd); run root `D:/GnssProcessorSupport/runs_nom`: field arms `_rap_rcg_{ctl,sic,mg120,mg60}_f6`, sim arms `_rap_rcg_{ctl,sic,mg120}_s6`, census replays `_rap_rcgc_{ctl,sic,mg120,mg60}_<site4>`
+- **dates in the text:** 2026-10-29 (pre-registration), 2026-10-30 (results)
+- **hashes / run dirs:** exe `D:/GnssProcessorSupport/worktrees/mgsi/build/x64-Release/gnss_processor_rcg.exe` (the Release build of main `1527cf9` in a clean detached worktree, sha256[:16] fab88a924e9189fd); run root `D:/GnssProcessorSupport/runs_nom`: field arms `_rap_rcg_{ctl,sic,mg120,mg60}_f6`, sim arms `_rap_rcg_{ctl,sic,mg120}_s6`, census replays `_rap_rcgc_{ctl,sic,mg120,mg60}_<site4>` (log `rcg_census.log`)
 - **gates (frozen at pre-registration):** section 3
 
-**Outcome.** Question: do the two keys that cut refloats on one 2 h arm keep the held-out consumer, the 16-site census
-and the sim within their bars over 6 h, and do they cut the refloat churn? Pre-registered 2026-10-29; results pending.
+**Outcome.** Question: do the two keys that cut refloats on one 2 h arm keep the users within their bars over 6 h, and
+do they cut the refloat churn? Neither moves a user: the held-out consumer within +0.10 mm over hours 2 to 6, the census
+within +0.06 mm with no site worse, the sim within +0.02 mm; the triage's hour-2 gains do not reproduce. The maturity
+gate at 120 epochs halves the T4 refloats (the cut all in hour 1, no catch-up at the lift) and passes (-6.9 %), but
+counts nothing it suppresses. The census cuts T4 refloats by 27 % and the slip-class responses by 3.3 %: harmless, not
+less churn. Standing: both off, the author's decision ([register](../status/OPEN_ITEMS_BUILT_OFF.md)).
 
 ## 1. What each key changes, and its event edges
 
@@ -149,3 +153,113 @@ Reported, no bar:
   `reentry` events with an ambiguity drop recorded at the same epoch in `logs/network_amb_state.csv`, which tests the
   premise counters' scope (section 1.1).
 - **D3** hour 1 (ignition) for every arm, all ambiguity rows of the run-end response table, and wall time.
+
+## 4. Results (2026-10-30)
+
+### 4.1 Runs
+
+The seven arms ran at once on the exe of the STATUS block (wall 1890 to 1912 s field, 1106 to 1121 s sim, on a shared
+box). Every arm exits 0 and emits 720 epochs with none withheld. D0: the control is byte-identical to
+`runs/_rf0hv17_field6` in `products.txt`, `logs/closed_loop_trace.csv`, `logs/network_solution.csv` and
+`logs/network_epoch_status.csv`, so the arms grade against the baseline pair of card BOF. The 68 census replays exit 0.
+Every number below was recomputed from the run directories by a second script; the consumer numbers agree with
+`scripts/clock_level/p50.py` and the census numbers with `gcensus.py grade`.
+
+### 4.2 Gates
+
+| gate | bar | census (`sic`) | gate at 120 (`mg120`) | gate at 60 (`mg60`) |
+|---|---|---|---|---|
+| G1 WTZZ00DEU, mean change over hours 2 to 6 (worst hour) | +1.0 mm (+10 mm) | +0.10 mm (+0.55, hour 3): pass | +0.01 mm (+0.10): pass | +0.01 mm (+0.05): pass |
+| G2 census, paired median (sites worse) | +1.0 mm (none) | +0.05 mm (0): pass | +0.06 mm (0): pass | +0.04 mm (0): pass |
+| G3 epochs emitted / withheld | as the control, 720 / 0 | 720 / 0: pass | 720 / 0: pass | 720 / 0: pass |
+| G4 slip-class responses (control 577) | -5 % or lower | 558, -3.3 %: miss | 537, -6.9 %: pass | 559, -3.1 %: miss |
+| G5 sim SZZ000SIM, mean change over hours 2 to 6 (worst hour) | +1.0 mm (+10 mm) | +0.02 mm (+0.10): pass | byte-identical: not applicable | not run |
+
+Held-out consumer 3D p50 by hour, hours 1 to 6 (mm):
+
+| run | p50 |
+|---|---|
+| field control, WTZZ00DEU | 58.80 12.30 23.05 12.25 16.50 12.00 |
+| census | 58.80 12.10 23.60 12.60 16.60 11.70 |
+| gate at 120 | 58.65 12.30 23.15 12.25 16.50 11.95 |
+| gate at 60 | 58.65 12.35 23.00 12.25 16.55 12.00 |
+| sim control, SZZ000SIM from 00:30:15 | 99.45 32.60 39.80 16.00 18.00 15.15 |
+| sim census | 99.45 32.60 39.80 16.10 18.05 15.10 |
+
+Run-end ambiguity responses (the G4 rows):
+
+| row | control | census | gate at 120 | gate at 60 |
+|---|---:|---:|---:|---:|
+| `amb_raim_drop` (T4 and T3) | 107 | 78 | 55 | 83 |
+| `amb_drop_latch_slip` | 456 | 466 | 468 | 462 |
+| `amb_gross_erase` | 14 | 14 | 14 | 14 |
+| sum | 577 | 558 | 537 | 559 |
+
+The other ambiguity rows (re-entry drop 222, stale-gap drop 2008, gap prune 2011, anchor re-reference erase 216, the
+two free-epoch rows 0) are identical in the four field arms. Every T4 drop not taken is partly taken later: the slip
+drop counts only an arc whose prior it changed, and an arc a T4 drop had left at birth strength did not count before
+(`amb_drop_latch_slip` +6 to +12).
+
+Census detail: in hours 2 to 6 no site moves by more than 1.2 mm. The largest changes are ARHT00ATA's (+0.48, +1.01,
++1.18 mm for the census, 120 and 60) and DAV100ATA's (+0.58, +0.40, +0.22 mm). Sign counts over the 16 sites: 6 lower and
+10 higher (census), 4, 11 and 1 equal (120), 3, 11 and 2 equal (60). Hour 1 paired median -0.00, +0.30, +0.38 mm.
+
+### 4.3 The maturity gate (D1)
+
+- T4 arc rows by half hour: control 12 14 4 0 3 8 0 4 0 2 2 6 (55); gate at 120: 0 0 4 0 3 8 0 4 0 2 2 6 (29); gate at
+  60: 0 14 4 0 3 8 0 4 0 2 2 6 (43).
+- Suppressed flags (attribution-trace ARC rows `acted=1` with no refloat): 27 at 120, the last at 60.0 min; 12 at 60,
+  all in the first 14 min.
+- The lift: the first refloat comes at 64.0 min (120) and 33.0 min (60), consistent with N emitted epochs plus the
+  6-epoch carry warmup before the sigma0 EWMA, which the RAIM seam feeds, starts counting (the service-health trace
+  reads 126 emitted epochs at 63.0 min).
+- After the last suppressed flag, each arm's T4 refloats equal the control's row for row (29 of 29 at 120, 43 of 43 at
+  60): the lift adds no catch-up. At 120, three arcs flagged before the lift are flagged again at 64.0 min in both runs:
+  HKSL00HKG E04, E13 and E19, which the control refloats two to four times between 51 and 59 min and once more at
+  64.0 min, so its early refloats did not clear the misfit; the arm refloats them once, at 64.0 min. Every other
+  suppressed flag left no trace: a warm-up transient that resolved by itself, the case the gate is designed for (on
+  this day).
+- Dose: T4 refloats 107, 83 and 55 at 0, 60 and 120 epochs. The users do not move at either value.
+
+### 4.4 The census (D2)
+
+- Field: 1608 demoted line-of-sight epochs (2302 phase rows at sigma x 10), a further 7659 exempt as never converged,
+  2189 vet completions; 76 flicker-regain refloats (0 funnel insertions, 132 pending reseeds); SIGNAL events: 238
+  re-entries, 112 band losses, 76 regains.
+- The T4 refloats the census removes are 15 rows of the first two hours (12 in hour 1, 3 in hour 2: HKSL00HKG 8,
+  MAC100AUS 4, YKRO00CIV 3); it adds one in hour 6 (JPLM00USA / G10). The other 40 rows are the control's.
+- Sim: 574 demoted line-of-sight epochs (1148 phase rows) at 144 re-entries; no band loss or flicker, so no regain
+  refloat.
+- The premise counters report 198 of 238 re-entries "NOT already refloated" and 63 of 64 loss-of-lock assertions on a
+  re-entry epoch "did NOT reach a refloat funnel". `logs/network_amb_state.csv` records at the same epoch, for the same
+  station and satellite:
+
+| state at the re-entry epoch | re-entries |
+|---|---:|
+| a `relevel_free` drop (4 with a T4 drop as well, 1 beside a birth) | 72 |
+| a fresh birth only | 82 |
+| a birth and an anchor re-reference erase | 11 |
+| a birth on one band and a carried level on another | 7 |
+| a carried level, no event | 22 |
+| an anchor re-reference erase | 1 |
+| no carried row | 43 |
+
+The counters read the invariant-carry funnel (off on the goldens) and the pending-reseed marks only, so on this posture
+they count the float vehicle's re-entry drops as "not refloated". The hole they measure is at most the 29 re-entries
+that brought a carried level across the gap with no response at the return epoch; the gap re-entry response leaves
+such a level alone unless the raw MW or GF level shifted across the break or LLI was set. Not explained here: the
+census's own warning of 25 re-entries "with a SURVIVING ambiguity state", which it calls structurally impossible.
+
+### 4.5 Verdicts
+
+- **`network.raim_refloat_maturity_gate` at 120 epochs: PASS** (G1 to G4; G5 not applicable). It moves to the "less
+  churn" section of the register. Owed before any arming, a code change not made here: a counter of the suppressed
+  refloats, an event at the lift, and an `acted` column that reflects the gate (section 1.2).
+- **`network.signal_integrity.census`: HARMLESS, NOT LESS CHURN** (G1, G2, G3 and G5 pass; G4 misses at -3.3 %). It moves
+  to the "partial signals" section. Its purpose, keeping an unmonitored phase off full weight across a flicker (the
+  design case is at 19:22 to 19:26 UT, outside the goldens' window), is not what these gates measure. Its premise
+  counters need the float vehicle's re-entry drop before their warnings mean what they say.
+- **60 epochs:** G1 to G3 pass and G4 misses (-3.1 %): the shorter horizon keeps out the first half hour's transients and
+  lets the second half hour's 14 through.
+- Neither key moves a user. The triage's hour-2 gains (-0.40 and -0.45 mm on the golden of `ef9f75d`) do not reproduce
+  on the current golden (hour 2: -0.20 mm for the census, 0.00 mm for the gate at 120).

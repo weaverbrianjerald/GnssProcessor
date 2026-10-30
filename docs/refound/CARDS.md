@@ -246,7 +246,8 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   every consumer that passes the solve's datum; no key. 23-arm gate 24 of 24, user side 16 of 16, real time wall-clock
   text only; field golden loop -9.5 to -10.5 % over the whole run and -12.8 to -13.5 % with both runs of a pair live,
   sim -4.2 to -6.8 %, products byte-identical; every gate passes.
-- [RCG](RCG_refloat_cutting_keys_2026-10-29.md): open, 2026-10-29: the two keys that cut refloats in card BOF's 2 h
-  triage (`signal_integrity.census`; `raim_refloat_maturity_gate` at 120 epochs, plus a 60-epoch dose arm), graded on
-  6 h field arms, the 16-site census and a 6 h sim arm against a same-exe control; gates frozen before any run. Nothing
-  armed here.
+- [RCG](RCG_refloat_cutting_keys_2026-10-29.md): closed, 2026-10-29: the two keys that cut refloats in card BOF's 2 h
+  triage, graded on 6 h field arms, the 16-site census and 6 h sim arms against a same-exe control (byte-identical to
+  `_rf0hv17_field6`). `raim_refloat_maturity_gate` at 120 epochs PASSES (T4 refloats 107 to 55, slip-class responses
+  -6.9 %, users within 0.1 mm, sim identical) but counts nothing it suppresses; at 60 epochs -3.1 %.
+  `signal_integrity.census` is harmless, not less churn (-3.3 %). Neither moves a user. Nothing armed: the author decides.
