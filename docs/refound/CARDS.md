@@ -257,3 +257,9 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   roster coordinates (within 0.05 mm per axis). Every consumer's trace changes, yet no census site moves by more than
   0.19 mm (ARHT00ATA s 0.11 mm) and no arm trips the clause. Card PIV's DOY 130 ARHT00ATA +40.6 mm reads OUTSIDE the
   spread: a response to the election's wire, not noise (the null does not reach its clock-anchor decisions).
+- [BDS305](BDS305_beidou_305_stations_6h_2026-10-29.md): closed, 2026-10-30: BeiDou posture C at 305 producer stations, a
+  6 h pair on the current field golden (the check card BOF named for the hour-2 flag of card MDAY section 10; bars
+  pre-registered 2026-10-29). Both arms emit 720 of 720 epochs and withhold none; WTZZ00DEU hour 2 +6.05 mm under C (the
+  flag reproduces), hours 2 to 6 -2.61 mm, three off-roster consumers -5.5 mm at the median. Verdict: a transient of 01:00
+  to 01:30 UT that recurs (also at DAEJ00KOR) and enters through the consumer's BeiDou satellites, not a settled cost; a
+  GPS + Galileo user of the C products is unchanged. 1.2 to 1.9 times GE per epoch on a loaded machine. Nothing armed.
