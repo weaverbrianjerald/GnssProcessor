@@ -270,3 +270,8 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   gate had the same defect). Gate off: byte-identical on 2 h field and sim arms. Gate on at 120 epochs, 2 h field: 27 flags
   held on 11 epochs (19 arcs), the lift at 62.5 min, 3 of the 4 refloats after it on arcs held before it. Nothing armed;
   ledger verdicts unchanged.
+- [RPC](RPC_raim_prior_channel_2026-10-30.md): open, 2026-10-30: the post-fit RAIM's prior channel (card RPA's first
+  defect), `network.raim_prior_channel` default off: the observation pools keep observation rows, and each carried-prior
+  row is tested once, in the cell of its own column, with the T4 isolated-arc test; a flag answers its carry (the arc
+  refloat or the receiver code-bias reset). Gates frozen before any run: off identity, mechanism, the BSHM00ISR brake
+  with the cold-start bound at 0, the 6 h field and sim users, census and clock wire.
