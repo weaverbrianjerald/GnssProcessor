@@ -5,7 +5,7 @@
 - **id:** PIV
 - **topic:** network-vehicle
 - **status:** open
-- **summary:** BUILT 2026-10-18, default off, never armed: `network.pivot_election: coverage` elects each constellation's clock pivot at its first epoch and at a forced handover as the registered, healthy satellite that the orbit product predicts at the most roster stations over a look-ahead horizon, passing over one that enters the Earth's umbra inside it; an incumbent that stays registered and healthy is kept. Unit gate, ledger rows and a Release smoke are in (section 6). The check of section 5 ran 2026-10-18 (section 8): knob absent identical to main except the declared lines (G0), picks G22 and E04 on the field and G32 and E36 on the sim with no handover against two in each control (G1), field hour-2 common drift 27 % of the control's (G3), held-out consumer and 16-site census unchanged within 1 mm at the median (G4, G5); the clock product is within 2.4 mm of the control and marginally not "no worse" (G2). 2026-10-28 (section 9): on a 24 h day the forced-handover branch runs and the census is unchanged; on DOY 130 ARHT00ATA is 40.6 mm worse, the one failed clause; not armed. 2026-10-30 (section 10, card NSP): under six neutral changes of the wire no census site moves by more than 0.19 mm, so ARHT00ATA's +40.6 mm is a response to the election's wire and the clause stands failed; not armed.
+- **summary:** BUILT 2026-10-18, default off, never armed: `network.pivot_election: coverage` elects each constellation's clock pivot at its first epoch and at a forced handover as the registered, healthy satellite that the orbit product predicts at the most roster stations over a look-ahead horizon, passing over one that enters the Earth's umbra inside it; an incumbent that stays registered and healthy is kept. Unit gate, ledger rows and a Release smoke are in (section 6). The check of section 5 ran 2026-10-18 (section 8): knob absent identical to main except the declared lines (G0), picks G22 and E04 on the field and G32 and E36 on the sim with no handover against two in each control (G1), field hour-2 common drift 27 % of the control's (G3), held-out consumer and 16-site census unchanged within 1 mm at the median (G4, G5); the clock product is within 2.4 mm of the control and marginally not "no worse" (G2). 2026-10-28 (section 9): on a 24 h day the forced-handover branch runs and the census is unchanged; on DOY 130 ARHT00ATA is 40.6 mm worse, the one failed clause; not armed. 2026-10-30 (section 10, card NSP): under six neutral changes of the wire no census site moves by more than 0.19 mm, so ARHT00ATA's +40.6 mm is a response to the election's wire and the clause stands failed; not armed. 2026-10-30 (section 11): ARHT00ATA's response on DOY 128, 131 and 132 pre-registered (6 h pairs, same exe and posture).
 - **source:** [PAC](PAC_common_drift_pivot_clock_2026-10-01.md) sections 3 to 5 (G14 pinned cut the field hour-2 common drift from -0.180 to -0.063 m/h); [HLT](HLT_broadcast_health_2026-09-25.md) (the health latch and the pivot's health skip); `docs/status/OPEN_ITEMS.md` queued build 1
 - **knobs / posture:** `network.pivot_election` (`off` | `coverage`), `network.pivot_election_horizon_s` (7200), `network.pivot_election_step_s` (300); ledger rows UNVALIDATED and PARAM; neither golden changed
 - **dates in the text:** 2026-10-17, 2026-10-18, 2026-10-28, 2026-10-30
@@ -375,3 +375,70 @@ changes, so whether another change of that sequence would move ARHT00ATA as far 
 to the election is -5.8 mm (DOY 129, 6 h, section 8.6), -6.9 mm (DOY 129, hours 2 to 24) and +40.6 mm (DOY 130, hours
 2 to 6); whether the election harms it is a question of more days (the multi-day observations hold DOY 128, 131 and
 132). Not armed.
+
+## 11. ARHT00ATA's response to the election on three more days, 2026-10-30
+
+### 11.1 Pre-registration (written before any of its arms ran)
+
+**Question.** Section 10 reads ARHT00ATA's +40.6 mm on DOY 130 as a response to the election's wire, not noise. Is the
+response systematic (the election makes ARHT00ATA worse on most days) or specific to DOY 130? Read on the three
+remaining days of the multi-day observations, DOY 128, 131 and 132 of 2024.
+
+**Posture.** The posture of sections 9 and 10, for continuity with their numbers: the exe bytes of
+`build/x64-Release/gnss_processor_bof.exe` (sha256[:16] 2d84a326fd00fd04, the Release build of main `ef9f75d`), run as
+the byte copy `build/x64-Release/gnss_processor_pivmd.exe`, and the field golden of `ef9f75d` moved to each day by the
+transform of `scripts/mday_golden_config.py` applied to `git show ef9f75d:config/golden/golden_field_refound.json` (a
+copy of the script whose source path names that file; the script itself reads the current golden). Applied to DOY 130
+the transform reproduces card BOF's base `bof_bases/golden_field_doy130.json` byte for byte (sha256[:16]
+59ed54978019cb16). The current golden is not used: its seven further keys (ocean tide loading, four keys; the noon-turn
+attitude; the estimable block test; the seed mirrors) would mix a posture change into the day-to-day comparison, and
+the DOY 129 and 130 numbers and the neutral spread of section 10 were all measured on the `ef9f75d` posture. Whether the
+election's response is the same on the current golden is not measured here.
+
+Bases, `D:/GnssProcessorSupport/runs_nom/pivmd_bases/golden_field_doy<D>.json`:
+
+| day | date | roster | sha256[:16] | known before the runs (card MDAY) |
+|---|---|---|---|---|
+| DOY 128 | 2024-05-07 | 57 (COCO00AUS has no RINEX) | 313c640ac9aec371 | MAC100AUS logs no satellite before 10:30 UT, so it is absent from this window; from 03:36 the golden's emitted G01 clock sits about 100 m from the a priori product (section 6.2) |
+| DOY 131 | 2024-05-10 | 58 | 0b42b71c4915d04f | MAC100AUS's file ends at 02:01:30; the same G01 departure from 03:22:30 |
+| DOY 132 | 2024-05-11 | 56 (MAC100AUS and LCK400IND have no RINEX) | ccf649d9bdd60e23 | 00 to 06 UT lies in the geomagnetic storm of 10 and 11 May (card MDR section 2) |
+
+G01 is the control's GPS pivot at the start of DOY 129 and 130 (the lexically first registered satellite; the golden
+does not skip an unhealthy one), so a G01 event inside the window can reach the control's clock datum.
+
+**Arms.** Per day a control and an election arm, 6 h from 00:00, made with `scripts/rapid_arm.py make --base <day base>
+--tag <tag> --hours 6` (the election arm adds `--set network.pivot_election=coverage`; horizon and step at their
+defaults) and run with `rapid_arm.py run --exe C:/GnssProcessor/build/x64-Release/gnss_processor_pivmd.exe`, with
+`RAPID_RUNS_ROOT=D:/GnssProcessorSupport/runs_nom`: `pivmd128_ctl_f6`, `pivmd128_piv_f6`, `pivmd131_ctl_f6`,
+`pivmd131_piv_f6`, `pivmd132_ctl_f6`, `pivmd132_piv_f6`.
+
+**Census.** Per wire, `python scripts/clock_level/gcensus.py make <key> <day's control run> <wire run> <exe> --day D
+--obs-root D:/GnssProcessorSupport/data_mday`: consumer-only replays at WTZZ00DEU and the 16 sites; the consumer base of
+both keys of a day is that day's control (as in card NSP); keys `pivmdc<D>_ctl` and `pivmdc<D>_piv`. Graded with
+`gcensus.py grade pivmdc<D>_ctl pivmdc<D>_piv --day D --obs-root D:/GnssProcessorSupport/data_mday`: x = a site's mean
+hourly p50 over hours 2 to 6, d = election minus control, paired by site; a site is worse (better) when d exceeds +1 cm
+(falls below -1 cm). Card NSP's spread (ARHT00ATA s 0.11 mm on DOY 130 and 0.014 mm on DOY 129, no site above 0.19 mm)
+is taken as the noise of these days; it is not measured on them.
+
+Reported beside the census, without a bar: each arm's elected pivots and handovers (`scripts/pivot_election_report.py`),
+WTZZ00DEU's change, the census paired median and its hour 1, ARHT00ATA's hourly change, and the size of the election's
+change of the wire (`scripts/neutral_spread.py wire --day D`: between-satellite move and decision rows in one run only).
+DOY 129 over hours 2 to 6 is read from the first six hours of card BOF's 24 h replays (`bofc24_ctl`, `bofc24_piv`), so
+that all five days share one window; the hours-2-to-24 value of section 9 (-6.9 mm) stands as it is.
+
+**Reading, fixed now.** W = the number of the three new days on which ARHT00ATA is worse by more than 1 cm.
+
+| reading | condition | meaning |
+|---|---|---|
+| systematic | W at least 2 | the clause fails at ARHT00ATA on at least three of the five days DOY 128 to 132: on this posture and window the election makes ARHT00ATA worse on most days |
+| day-specific | W = 0 | the clause fails at ARHT00ATA on DOY 130 alone of the five days: the DOY 130 response does not recur |
+| recurring | W = 1 | the clause fails on two of the five days: the response recurs but not on most days; neither reading above holds on this sample, and the next step (more days, or 24 h windows) is the author's |
+
+- The sign and size of ARHT00ATA's change on every day are reported with the reading, and a day with ARHT00ATA better
+  by more than 1 cm is named.
+- A day whose election wire equals its control's (products byte-identical) has no response to read: it is named and
+  left out of W.
+- An arm that does not exit 0 is re-run once on the same exe; a second failure is reported and the day is left out of W.
+- Another site worse by more than 1 cm on a new day is reported as its own finding; it does not enter W.
+- The reading names how often ARHT00ATA's response recurs; it does not by itself make the election harmful or
+  harmless. Adoption remains the author's decision.
