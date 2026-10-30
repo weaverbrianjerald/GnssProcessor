@@ -179,7 +179,7 @@ Program card on this topic, also indexed in [refound/CARDS.md](refound/CARDS.md)
 
 [PIV](refound/PIV_pivot_election_coverage_2026-10-17.md), the clock pivot elected by predicted station coverage, broadcast
 health and shadow, at ignition and at a forced handover (open, 2026-10-18: built default off, never armed; unit gate and
-Release smoke in; checked 2026-10-18 against same-exe controls on the field and sim goldens: knob absent identical except the declared lines, no handover in 6 h against two in each control, field hour-2 common drift 0.051 against 0.192 m/h, consumer and census unchanged at the median, clock product within 2.4 mm).
+Release smoke in; checked 2026-10-18 against same-exe controls on the field and sim goldens: knob absent identical except the declared lines, no handover in 6 h against two in each control, field hour-2 common drift 0.051 against 0.192 m/h, consumer and census unchanged at the median, clock product within 2.4 mm; 2026-10-28 to 2026-10-30, sections 9 to 11: ARHT00ATA worse by more than 1 cm on two of five 6 h days (DOY 130 +40.6, DOY 132 +25.9 mm), a response and not noise (card NSP), recurring but not systematic; not armed).
 
 [BDS](refound/BDS_beidou_third_constellation_2026-10-18.md), BeiDou on B1I and B3I as the third constellation of the field
 golden, against GPS only and GPS + Galileo on one exe (open, 2026-10-18: read, healthy, no failure mode A or B, no piece needed;
