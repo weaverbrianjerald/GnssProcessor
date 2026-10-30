@@ -741,13 +741,15 @@ namespace GnssProcessor {
             { par,
               nc.parallel_carry,
               Tier::SCOPED, false, "network.parallel_carry",
-              "2.13x wall-clock (48.6 -> 22.8 s/ep at 20 thr); reassociates ~1e-4, so graded "
-              "verdicts still need OFF" },
+              "invariant carry: 2.13x wall-clock (48.6 -> 22.8 s/ep at 20 thr), reassociates "
+              "~1e-4, so graded verdicts there still need OFF; on the float vehicle the DD-prior "
+              "fold holds no block, so the key changes no output" },
             { par && nc.parallel_carry,
               nc.parallel_max_threads > 0,
               Tier::SCOPED, false, "network.parallel_max_threads",
-              "pcarry partials combine in thread-COUNT order; 0 = all cores makes a counter/hash "
-              "ref machine-bound" },
+              "float vehicle: no output change at caps 6 to 20; invariant carry: pcarry partials "
+              "combine in thread-COUNT order, so 0 = all cores makes a counter/hash ref "
+              "machine-bound" },
             { nc.parallel_stations && n_sta >= 4,
               static_cast<int>(n_sta) > nc.parallel_min_stations,
               Tier::SCOPED, false, "network.parallel_min_stations",
