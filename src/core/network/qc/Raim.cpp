@@ -663,7 +663,8 @@ void networkPostFitRaim(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitH
         // sat/station were not already caught (no double attribution).
         std::set<std::string> bad_sats;
         std::set<int>         bad_stations;   // deliberately never populated; see below
-        std::vector<std::pair<int, std::string>> bad_arcs;
+        RaimIsolatedArcs      isolated;       // the isolated-arc scan, filled below
+        auto&                 bad_arcs = isolated.refloat;   // the arcs T4 refloats (staged injections are appended)
         if (attrib_act) {
             // Wholesale satellite refloat happens only when the network as a whole is
             // contaminated (σ̂0 above the within-epoch trigger).  At a robust-clean epoch
@@ -717,28 +718,20 @@ void networkPostFitRaim(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitH
             const bool raim_mature = !raim_maturity_gate || networkWarmupRampLifted(
                 static_cast<long long>(n_emitted), raim_maturity_epochs, pl_warmup,
                 static_cast<long long>(ura_ewma_updates), ura_on && raim_on && pl_on);
-            std::map<std::pair<int, std::string>, int> next_arc_streak;  // K>1 only
-            for (std::size_t k = 0; k < tbl.size(); ++k) {
-                if (mp.interaction[k] / sigma0 <= raim_k) continue;
-                const int sta = std::get<0>(tbl[k]);
-                const std::string& sat = std::get<1>(tbl[k]);
-                if (bad_sats.count(sat)) continue;   // caught wholesale; no double attribution
-                if (!raim_mature) continue;   // no isolated-arc refloat before maturity (T2d)
-                if (raim_arc_persist <= 1) {
-                    bad_arcs.emplace_back(sta, sat);   // byte-identical immediate refloat
-                    continue;
-                }
-                const auto akey = std::make_pair(sta, sat);
-                const int* it = net::getLos(ctx.entities.los, sta, sat, &net::LosState::arc_spike_streak);
-                const int streak = (it != nullptr ? *it : 0) + 1;
-                if (streak >= raim_arc_persist)
-                    bad_arcs.emplace_back(sta, sat);   // persisted K epochs → refloat, drop streak
-                else
-                    next_arc_streak[akey] = streak;    // still building → carry forward
-            }
+            // The two gates run in raimSelectIsolatedArcs (maturity first, then persistence);
+            // a flag it holds for want of maturity is counted and written as an event below.
+            isolated = raimSelectIsolatedArcs(
+                tbl, mp.interaction, sigma0, raim_k, bad_sats, raim_mature, raim_arc_persist,
+                [&](int sta, const std::string& sat) {
+                    const int* it = net::getLos(ctx.entities.los, sta, sat,
+                                                &net::LosState::arc_spike_streak);
+                    return it != nullptr ? *it : 0;
+                });
             if (raim_arc_persist > 1)
-                net::assignLos(entities, &net::LosState::arc_spike_streak, next_arc_streak);
+                net::assignLos(entities, &net::LosState::arc_spike_streak, isolated.next_streak);
             n_arc_refloat_epoch += static_cast<int>(bad_arcs.size());  // heartbeat churn metric (T2d)
+            if (raim_maturity_gate)
+                networkRaimMaturityGateNote(run, ep, isolated, raim_mature, sigma0);
         }
 
         if (attrib_on) {
@@ -776,8 +769,10 @@ void networkPostFitRaim(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitH
                 if (pr <= kAttribReportProm || arc_logged >= 20) break;
                 const int sta = std::get<0>(tbl[k]);
                 const std::string& sat = std::get<1>(tbl[k]);
+                // An arc reads acted when T4 refloated it, or refloated its satellite: an arc
+                // over the bar that the maturity or the persistence gate held reads 0.
                 const int acted = attrib_act
-                    ? ((mp.interaction[k] / sigma0 > raim_k || bad_sats.count(sat)
+                    ? ((isolated.refloats(sta, sat) || bad_sats.count(sat)
                         || bad_stations.count(sta)) ? 1 : 0)
                     : (fset.count(sat) ? 1 : 0);
                 emit("ARC", stations[sta].name + "/" + sat, mp.interaction[k], pr, 1, acted);
@@ -1216,6 +1211,106 @@ std::string RaimPoolAdmissionTally::ownColumnText() const {
                        own_col_agree, own_col_cleared_other, own_col_not_cleared);
 }
 
+// --- The T4 isolated-arc scan and the maturity gate's telemetry (declared in Raim.hpp) ---
+
+bool RaimIsolatedArcs::refloats(int station, const std::string& sat) const {
+    return std::find(refloat.begin(), refloat.end(), std::make_pair(station, sat))
+           != refloat.end();
+}
+
+RaimIsolatedArcs raimSelectIsolatedArcs(
+    const std::vector<std::tuple<int, std::string, double>>& cells,
+    const std::vector<double>& interaction, double sigma0, double k_sigma,
+    const std::set<std::string>& caught_sats, bool mature, int persist_epochs,
+    const std::function<int(int, const std::string&)>& prior_streak) {
+    RaimIsolatedArcs out;
+    for (std::size_t k = 0; k < cells.size(); ++k) {
+        if (interaction[k] / sigma0 <= k_sigma) continue;
+        const int sta = std::get<0>(cells[k]);
+        const std::string& sat = std::get<1>(cells[k]);
+        if (caught_sats.count(sat)) continue;   // caught wholesale; no double attribution
+        ++out.flagged;
+        if (!mature) {   // no isolated-arc refloat before maturity (T2d)
+            out.held.push_back({sta, sat, interaction[k] / sigma0});
+            continue;
+        }
+        if (persist_epochs <= 1) {
+            out.refloat.emplace_back(sta, sat);   // byte-identical immediate refloat
+            continue;
+        }
+        const int streak = prior_streak(sta, sat) + 1;
+        if (streak >= persist_epochs)
+            out.refloat.emplace_back(sta, sat);   // persisted K epochs: refloat, drop the streak
+        else
+            out.next_streak[{sta, sat}] = streak; // still building: carry forward
+    }
+    return out;
+}
+
+bool RaimMaturityGateTally::noteScan(std::size_t n_flagged, std::size_t n_held, bool mature,
+                                     const RaimScanStamp& at) {
+    ++scans;
+    if (first_scan_epoch < 0) first_scan_epoch = at.epoch;
+    flags += static_cast<long long>(n_flagged);
+    if (n_held > 0) {
+        held += static_cast<long long>(n_held);
+        ++held_epochs;
+        if (first_held_epoch < 0) first_held_epoch = at.epoch;
+        last_held_epoch = at.epoch;
+    }
+    if (!mature || lifted) return false;
+    lifted = true;
+    lift = at;
+    return true;
+}
+
+void networkRaimMaturityGateNote(NetworkRun& run, const NetworkEpoch& ep,
+                                 const RaimIsolatedArcs& isolated, bool mature, double sigma0) {
+    NetworkRunContext& ctx = run.ctx;
+    NetworkRunTraces& traces = run.traces;
+    const std::shared_ptr<spdlog::logger>& log = run.log;
+    const std::vector<NetStation>& stations = run.setup.stations;
+    const GnssTime& t = ep.se.time;
+    // ---- End of the bindings ----
+    const NetworkKnobs& knobs = ctx.knobs;
+    // The rule the verdict came from (networkWarmupRampLifted): emitted epochs of at least
+    // max(horizon, carry warm-up), and horizon updates of the sigma0 EWMA when it is fed.
+    const long long need_epochs = std::max(knobs.raim_maturity_epochs, knobs.pl_warmup);
+    const bool      ewma_fed    = knobs.ura_on && knobs.raim_on && knobs.pl_on;
+    const std::string ewma_need = ewma_fed ? std::to_string(knobs.raim_maturity_epochs) : "none";
+    const RaimScanStamp at{static_cast<long long>(ctx.counters.n_loop_epochs), t.week, t.tow,
+                           static_cast<long long>(ctx.counters.n_emitted),
+                           static_cast<long long>(ctx.carry.ura_ewma_updates)};
+
+    RaimMaturityGateTally& tally = ctx.counters.maturity_gate;
+    const bool lifted_now = tally.noteScan(isolated.flagged, isolated.held.size(), mature, at);
+
+    // The re-coupling edge: one row and one line, at the first scan with the gate open.
+    if (lifted_now) {
+        traces.emitEvent(t, "RAIM_MATURITY", "lift", "", "",
+                         static_cast<double>(at.n_emitted), static_cast<double>(need_epochs),
+                         "lift",
+                         fmt::format("n_emitted={};need_epochs={};ewma_updates={};ewma_need={};"
+                                     "held={};held_epochs={}",
+                                     at.n_emitted, need_epochs, at.ewma_updates, ewma_need,
+                                     tally.held, tally.held_epochs));
+        log->info("Network (RAIM refloat maturity gate): LIFTED at TOW {:.1f} (processed epoch {}): "
+                  "{} epoch(s) emitted (need {}), sigma0 EWMA {} update(s) (need {}); {} "
+                  "isolated-arc flag(s) were held on {} epoch(s) before it.  From here T4 "
+                  "refloats every isolated flag again.",
+                  t.tow, at.epoch, at.n_emitted, need_epochs, at.ewma_updates, ewma_need,
+                  tally.held, tally.held_epochs);
+    }
+    // The decoupling edge: one row per held flag, so the identities exist.
+    for (const RaimHeldArc& h : isolated.held)
+        traces.emitEvent(t, "RAIM_MATURITY", "arc_held", h.sat, stations[h.station].name,
+                         h.statistic, knobs.raim_k, "hold",
+                         fmt::format("sigma0={:.2f};n_emitted={};need_epochs={};ewma_updates={};"
+                                     "ewma_need={}",
+                                     sigma0, at.n_emitted, need_epochs, at.ewma_updates,
+                                     ewma_need));
+}
+
 // ---- Run-end reports (generated by scripts/nom_td_cut.py) ----
 
 /**
@@ -1387,12 +1482,85 @@ static int networkRaimWithholdRunEnd(const NetworkRunEndView& v) {
     return 0;
 }
 
+/**
+ * @brief Run-end section: the isolated-arc refloat maturity gate.
+ *
+ * The arcs and epochs the gate held, the lift, and the denominators that tell apart a gate
+ * that held (and then lifted), one that never lifted, one that was open from its first scan
+ * and one that was never consulted (RaimMaturityGateTally).
+ *
+ * Gate: `ctx.knobs.raim_maturity_gate`.
+ *
+ * @param v The run at its end (network/runend/RunEnd.hpp).
+ * @return 0 (this report does not set the exit code).
+ */
+static int networkRaimMaturityGateRunEnd(const NetworkRunEndView& v) {
+    const NetworkRunContext& ctx = v.ctx;
+    const GnssConfig& config_ = v.config;
+    const std::shared_ptr<spdlog::logger>& log = v.log;
+    if (!ctx.knobs.raim_maturity_gate) return 0;
+
+    const RaimMaturityGateTally& g = ctx.counters.maturity_gate;
+    const int       horizon     = ctx.knobs.raim_maturity_epochs;
+    const long long need_epochs = std::max(horizon, ctx.knobs.pl_warmup);
+    const bool      ewma_fed    = ctx.knobs.ura_on && ctx.knobs.raim_on && ctx.knobs.pl_on;
+    const std::string ewma_clause =
+        ewma_fed ? fmt::format("{} sigma0 EWMA updates", horizon)
+                 : std::string("no EWMA term (emit_ura, raim and phase_leveling are not all on)");
+
+    // Denominator #1 (standing invariant #4): a gate that never ran is not a gate that held
+    // nothing.
+    if (g.scans == 0) {
+        log->warn("Network (RAIM refloat maturity gate, horizon {} epochs): ARMED but NEVER "
+                  "CONSULTED - the isolated-arc scan did not run once, so no flag could reach "
+                  "the gate ({}).  The gate changed nothing on this run.",
+                  horizon,
+                  config_.networkRaimAttribution()
+                      ? "post-fit RAIM never ran or its cell table was empty on every pass"
+                      : "network.raim_attribution is off, so the isolated-arc path the gate "
+                        "guards never runs");
+        return 0;
+    }
+
+    log->info("Network (RAIM refloat maturity gate, horizon {} epochs): the gate needs {} emitted "
+              "epochs and {}.  {} isolated-arc scan(s), {} flag(s) reached the gate: {} HELD "
+              "while it was closed ({} epoch(s), processed epochs {} to {}), {} passed.",
+              horizon, need_epochs, ewma_clause, g.scans, g.flags, g.held, g.held_epochs,
+              g.first_held_epoch, g.last_held_epoch, g.flags - g.held);
+
+    if (!g.lifted) {
+        log->warn("Network (RAIM refloat maturity gate): NEVER LIFTED - the run ended inside the "
+                  "horizon, so every isolated-arc flag of the run ({}) was held and none was "
+                  "refloated.  The gate acted as a switch that turned the isolated-arc refloat "
+                  "off for the whole run.",
+                  g.flags);
+        return 0;
+    }
+
+    const int sec_of_day = static_cast<int>(std::fmod(g.lift.tow, 86400.0));
+    log->info("Network (RAIM refloat maturity gate): lifted at GPS week {} TOW {:.1f} ({:02d}:{:02d}:{:02d} "
+              "of the day), processed epoch {} (the first scan was epoch {}): {} epoch(s) "
+              "emitted, sigma0 EWMA {} update(s).  From the lift T4 refloats every isolated "
+              "flag; the held flags' identities are the RAIM_MATURITY arc_held rows of "
+              "network_events.csv.",
+              g.lift.week, g.lift.tow, sec_of_day / 3600, (sec_of_day / 60) % 60,
+              sec_of_day % 60, g.lift.epoch, g.first_scan_epoch, g.lift.n_emitted,
+              g.lift.ewma_updates);
+    if (g.held == 0)
+        log->warn("Network (RAIM refloat maturity gate): held NOTHING - the gate was open at "
+                  "its first scan, so it changed no refloat on this run (horizon {} against a "
+                  "carry warm-up of {} epochs).",
+                  horizon, ctx.knobs.pl_warmup);
+    return 0;
+}
+
 // Run-end report of this subsystem: its sections in print order (
 // declared in network/qc/Raim.hpp).
 int networkRaimRunEnd(const NetworkRunEndView& v) {
     return networkRunEndSections(v, {
         networkRaimPoolRunEnd,
-        networkRaimWithholdRunEnd
+        networkRaimWithholdRunEnd,
+        networkRaimMaturityGateRunEnd
     });
 }
 

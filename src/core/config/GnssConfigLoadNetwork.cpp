@@ -11678,6 +11678,49 @@ namespace GnssProcessor {
                       "column its tag names; the carried-prior and SD-EWL rows are refused.  "
                       "Solve-affecting (T3/T4 and the within-epoch adaptation read observation "
                       "residuals only); fingerprint-safe.");
+        // Isolated-arc refloat maturity gate (T2d).  It is evaluated inside the attribution
+        // path of networkPostFitRaim, so without network.raim and network.raim_attribution
+        // there is no isolated-arc refloat for it to hold; and a horizon that does not exceed
+        // the carry warm-up holds nothing, because post-fit RAIM runs only once the carry is
+        // warm.  Both are reported as inert here rather than left to read as armed (invariant
+        // #4).  The run end reports what the gate held and when it lifted.
+        if (network_raim_refloat_maturity_gate_) {
+            const int  horizon  = network_raim_refloat_maturity_epochs_;
+            const int  warmup   = network_phase_leveling_warmup_epochs_;
+            const bool ewma_fed = network_emit_ura_ && network_raim_ && network_phase_leveling_;
+            if (!network_raim_ || !network_raim_attribution_) {
+                log->warn("Network (RAIM refloat maturity gate): network.raim_refloat_maturity_gate "
+                          "is on but {} is OFF: the isolated-arc refloat it holds is part of the "
+                          "attribution path, so the gate has nothing to act on (INERT; it holds "
+                          "nothing and the run end says so).",
+                          !network_raim_ ? "network.raim" : "network.raim_attribution");
+            } else {
+                log->info("Network (RAIM refloat maturity gate): ARMED, horizon {} epochs.  An "
+                          "isolated-arc T4 refloat (an interaction above {:g} sigma0 on a "
+                          "satellite not caught wholesale) is HELD, counted and written as a "
+                          "RAIM_MATURITY arc_held event until the run has emitted {} epochs "
+                          "(the larger of the horizon and the carry warm-up of {}) and {}; the "
+                          "lift is one RAIM_MATURITY lift event.  Whole-satellite refloats are "
+                          "never held.  Solve-affecting.",
+                          horizon, network_raim_k_sigma_, std::max(horizon, warmup), warmup,
+                          ewma_fed ? std::string("the sigma0 EWMA has received ")
+                                         + std::to_string(horizon) + " updates"
+                                   : std::string("(the sigma0 EWMA is not fed, since emit_ura, "
+                                                 "raim and phase_leveling are not all on, so the "
+                                                 "epoch count alone decides)"));
+                // With the sigma0 EWMA fed, its update count binds (it starts counting at the
+                // first post-fit pass, after the carry warm-up) and the gate holds for about
+                // `horizon` passes whatever the horizon; with it unfed the epoch count alone
+                // decides, and a horizon within the warm-up is open at the first pass.
+                if (!ewma_fed && horizon <= warmup)
+                    log->warn("Network (RAIM refloat maturity gate): the horizon ({}) does not "
+                              "exceed the carry warm-up ({} epochs) and the sigma0 EWMA is not fed, "
+                              "so the epoch count alone decides and the gate is expected to hold "
+                              "nothing: post-fit RAIM runs only once the carry is warm.  Set "
+                              "network.raim_refloat_maturity_epochs above {} for the gate to act.",
+                              horizon, warmup, warmup);
+            }
+        }
         if (network_raim_carry_invariant_ && network_raim_withhold_sigma0_ > 0.0)
             log->warn("Network (RAIM pool re-host): the re-host makes σ̂0 REAL on this lineage "
                       "for the first time (with the pool empty it never left its 1.0 "

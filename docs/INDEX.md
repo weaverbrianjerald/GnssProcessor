@@ -355,6 +355,7 @@ Standing documents (not split this pass):
 Program card on this topic (indexed in [refound/CARDS.md](refound/CARDS.md)):
 
 - [BBE](refound/BBE_block_baarda_estimable_2026-10-18.md), the block Baarda test on the float vehicle (open, 2026-10-18: the whole-block test refused every block because a line of sight's free slant ionosphere absorbs one direction exactly; `network.block_baarda_estimable` built default off and never armed; knob off identical on the smokes, the 2 h arms and the same-build gates; the 2 h check found no flagged block block-only; a positive control is owed).
+- [MGT](refound/MGT_maturity_gate_telemetry_2026-10-30.md), the telemetry of the isolated-arc refloat maturity gate (closed, 2026-10-30: BUILT and GATED, default off; gate off byte-identical on 2 h field and sim arms; gate on at 120 epochs, 2 h field: 27 flags held on 11 epochs, the lift at 62.5 min, 3 of the 4 refloats after it on arcs held before it; the persistence gate's `acted` defect fixed with it; nothing armed).
 
 Standing documents (not split this pass):
 

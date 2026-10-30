@@ -584,6 +584,7 @@ add_executable(gnss_tests
     tests/test_prefit_census.cpp
     tests/network/test_network_bias_admission.cpp
     tests/network/test_network_rank_gate.cpp
+    tests/network/test_network_raim_maturity_gate.cpp
     tests/network/test_network_sbasis_complete.cpp
     tests/network/test_pivot_election.cpp
     tests/test_datum_graph_census.cpp
