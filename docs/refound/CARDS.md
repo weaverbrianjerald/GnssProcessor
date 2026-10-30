@@ -246,3 +246,9 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   every consumer that passes the solve's datum; no key. 23-arm gate 24 of 24, user side 16 of 16, real time wall-clock
   text only; field golden loop -9.5 to -10.5 % over the whole run and -12.8 to -13.5 % with both runs of a pair live,
   sim -4.2 to -6.8 %, products byte-identical; every gate passes.
+- [BDS305](BDS305_beidou_305_stations_6h_2026-10-29.md): closed, 2026-10-30: BeiDou posture C at 305 producer stations, a
+  6 h pair on the current field golden (the check card BOF named for the hour-2 flag of card MDAY section 10; bars
+  pre-registered 2026-10-29). Both arms emit 720 of 720 epochs and withhold none; WTZZ00DEU hour 2 +6.05 mm under C (the
+  flag reproduces), hours 2 to 6 -2.61 mm, three off-roster consumers -5.5 mm at the median. Verdict: a transient of 01:00
+  to 01:30 UT that recurs (also at DAEJ00KOR) and enters through the consumer's BeiDou satellites, not a settled cost; a
+  GPS + Galileo user of the C products is unchanged. 1.2 to 1.9 times GE per epoch on a loaded machine. Nothing armed.
