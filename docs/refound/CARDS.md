@@ -240,3 +240,7 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   NSD pass; PIV misses one site clause (ARHT00ATA, DOY 130); the ARL fixes stay off. ARMED at the author's decision:
   OTL and the noon-turn attitude (field golden), the estimable block test and the seed mirrors (both goldens); the loader
   warns on the out-of-scope combined sigma; baseline pair `runs/_rf0hv17_{field,sim}6`.
+- [PES](PES_parallel_epoch_stages_2026-10-29.md): open, 2026-10-29: pre-registered. The GPS + Galileo golden epoch keeps
+  4.2 (field) and 5.8 (sim) of 20 logical processors busy; the sequential stages that are independent per station run in
+  parallel under the deterministic contract (per-index slots, the serial reduction order kept), each behind its own
+  default-off key, gated as byte-identical with the key on against off.

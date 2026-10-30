@@ -65,6 +65,17 @@ int networkRunTimingRunEnd(const NetworkRunEndView& v) {
     // logic (median polish, standardization, thresholding) is cheap and falls into
     // `other`.  The covariance-bound QC cost is therefore already isolated in cov-consumers,
     // and bracketing the scattered QC blocks would count those covariance calls twice.
+    // The parallel stages of card PES, when armed: how often each one ran (invariant #4).
+    {
+        const NetworkConfig& pnc = v.config.getNetworkConfig();
+        const auto& pc = est.normals().parallelStageCounts();
+        if (pnc.parallel_station_normals)
+            log->info("Network (PES) station normals: {} formed in parallel, {} formed serially, "
+                      "{} committed", pc.forms_parallel, pc.forms_serial, pc.commits);
+        if (pnc.parallel_schur_columns)
+            log->info("Network (PES) Schur reduce by columns: {} reduce(s) split, {} declined "
+                      "(serial loop)", pc.schur_split, pc.schur_declined);
+    }
     if (sec_timers_on) {
         const auto& stmr = est.sectionTimers();
         const double other_ms = loop_ms - sec_asm_wall_ms - stmr.reduce_ms - stmr.solve_ms

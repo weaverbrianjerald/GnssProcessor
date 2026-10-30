@@ -620,6 +620,7 @@ void NetworkNormalEquations::reset(Eigen::Index n_shared) {
     // mark every slot inactive; addStation overwrites pooled slots in place, so there
     // is no per-epoch allocate/free churn.
     n_active_ = 0;
+    n_forms_ = 0;      // the form pool keeps its buffers; no slot is committable after a reset
     reduced_ = false;
     reduce_recompute_count_ = 0;
     sumzero_gauges_.clear();
@@ -673,6 +674,66 @@ std::size_t NetworkNormalEquations::addStationImpl_(const Eigen::MatrixXd* N_ss_
                                                     const Eigen::VectorXd& u_s_r,
                                                     const Eigen::VectorXd& u_r_r,
                                                     const StationPrior& prior) {
+    checkStationBlocks_(N_ss_dense, border, N_sr_r, N_rr_r, u_s_r, u_r_r, prior);
+
+    // Build and validate this station's local block before committing anything to the
+    // shared border.  addStation throws on a non-positive-definite local block (a
+    // station with an unobservable nuisance, e.g. a GPS-only station whose Galileo-ISB
+    // column is structurally zero), and the driver drops such a station.  A station
+    // that throws must leave N_ss_ and u_s_ untouched.  If N_ss_r were accumulated
+    // before the throw, its shared contribution would stay in the border with no
+    // compensating Schur term (the station never enters stations_, so reduce() never
+    // subtracts its N_sr Nrr⁻¹ N_rs).  Its observations would then pin the shared
+    // parameters they touch without the receiver-clock absorption: a GPS-only station
+    // pins the GPS satellite-clock common-mode gauge, the null-space rank gate sees one
+    // fewer free gauge than declared, and every epoch is withheld.  In the global
+    // PPP-RTK network this produced zero emission; the bᵀWb of the dropped GPS-only
+    // stations summed to the spurious GPS-common pin.
+    //
+    // The station is built into a reused pool slot: its dense buffers persist across
+    // epochs, and the Eigen .compute() and assignments below reuse the slot's storage
+    // when the size matches.  The pool grows only on a new high-water station count.
+    // A station that throws below leaves n_active_ unadvanced and N_ss_/u_s_
+    // untouched, so its partially written slot is overwritten by the next addStation
+    // and the singular station leaves no trace.
+    if (n_active_ >= stations_.size()) {
+        stations_.emplace_back();
+    }
+    Station& st = stations_[n_active_];
+    bool pd_rejected = false;   // the serial add records a rejection in last_pd_failure_ itself
+    buildStationLocal_(st, N_sr_r, N_rr_r, u_r_r, prior, last_pd_failure_, pd_rejected);
+
+    // Local block accepted: commit this station's shared-border contribution, kept in
+    // step with the Schur term reduce() will subtract.
+    if (N_ss_dense) {
+        N_ss_ += *N_ss_dense;
+    } else {
+        // The sparse border: add the square of the touched shared columns and put the scratch back to
+        // zero in the same pass.  Every entry outside it is exactly zero, and the dense sum would add
+        // +0 to a value that is never -0, which changes nothing.
+        const Eigen::Index ld = n_shared_;
+        for (const Eigen::Index j : border->active) {
+            double* dst = N_ss_.data() + j * ld;
+            double* src = sparse_nss_.data() + j * ld;
+            for (const Eigen::Index i : border->active) {
+                dst[i] += src[i];
+                src[i] = 0.0;
+            }
+        }
+    }
+    u_s_ += u_s_r;
+
+    reduced_ = false;
+    return n_active_++;
+}
+
+void NetworkNormalEquations::checkStationBlocks_(const Eigen::MatrixXd* N_ss_dense,
+                                                 const SparseBorder* border,
+                                                 const Eigen::MatrixXd& N_sr_r,
+                                                 const Eigen::MatrixXd& N_rr_r,
+                                                 const Eigen::VectorXd& u_s_r,
+                                                 const Eigen::VectorXd& u_r_r,
+                                                 const StationPrior& prior) const {
     const Eigen::Index n_r = N_rr_r.rows();
 
     if (N_ss_dense) requireSquare(*N_ss_dense, n_shared_, "addStation: N_ss_r");
@@ -720,31 +781,16 @@ std::size_t NetworkNormalEquations::addStationImpl_(const Eigen::MatrixXd* N_ss_
             }
         }
     }
+}
 
-    // Build and validate this station's local block before committing anything to the
-    // shared border.  addStation throws on a non-positive-definite local block (a
-    // station with an unobservable nuisance, e.g. a GPS-only station whose Galileo-ISB
-    // column is structurally zero), and the driver drops such a station.  A station
-    // that throws must leave N_ss_ and u_s_ untouched.  If N_ss_r were accumulated
-    // before the throw, its shared contribution would stay in the border with no
-    // compensating Schur term (the station never enters stations_, so reduce() never
-    // subtracts its N_sr Nrr⁻¹ N_rs).  Its observations would then pin the shared
-    // parameters they touch without the receiver-clock absorption: a GPS-only station
-    // pins the GPS satellite-clock common-mode gauge, the null-space rank gate sees one
-    // fewer free gauge than declared, and every epoch is withheld.  In the global
-    // PPP-RTK network this produced zero emission; the bᵀWb of the dropped GPS-only
-    // stations summed to the spurious GPS-common pin.
-    //
-    // The station is built into a reused pool slot: its dense buffers persist across
-    // epochs, and the Eigen .compute() and assignments below reuse the slot's storage
-    // when the size matches.  The pool grows only on a new high-water station count.
-    // A station that throws below leaves n_active_ unadvanced and N_ss_/u_s_
-    // untouched, so its partially written slot is overwritten by the next addStation
-    // and the singular station leaves no trace.
-    if (n_active_ >= stations_.size()) {
-        stations_.emplace_back();
-    }
-    Station& st = stations_[n_active_];
+void NetworkNormalEquations::buildStationLocal_(Station& st, const Eigen::MatrixXd& N_sr_r,
+                                                const Eigen::MatrixXd& N_rr_r,
+                                                const Eigen::VectorXd& u_r_r,
+                                                const StationPrior& prior,
+                                                StationPdFailure& pd_record,
+                                                bool& pd_rejected) const {
+    const Eigen::Index n_r = N_rr_r.rows();
+    const Eigen::Index n_pri = static_cast<Eigen::Index>(prior.cols.size());
     st.n_local = n_r;
 
     // Fold the prior into a local copy, never into the caller's block, which the
@@ -806,7 +852,7 @@ std::size_t NetworkNormalEquations::addStationImpl_(const Eigen::MatrixXd* N_ss_
             // local column k and would name the wrong parameter.  Only a rejected block
             // pays the O(n³) cost, and with the knob off the branch allocates and calls
             // nothing, so the rejection path is byte-identical.
-            last_pd_failure_.valid = false;
+            pd_record.valid = false;
             if (station_pd_null_trace_) {
                 Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(N_rr_use);
                 if (es.info() == Eigen::Success && es.eigenvalues().size() > 0) {
@@ -816,15 +862,15 @@ std::size_t NetworkNormalEquations::addStationImpl_(const Eigen::MatrixXd* N_ss_
                     int n_below = 0;
                     for (Eigen::Index k = 0; k < ev.size(); ++k)
                         if (std::abs(ev(k)) < cut) ++n_below;
-                    last_pd_failure_.valid       = true;
-                    last_pd_failure_.n_local     = n_r;
-                    last_pd_failure_.d_min       = d_min;
-                    last_pd_failure_.d_ref       = d_ref;
-                    last_pd_failure_.d_max       = d_max;
-                    last_pd_failure_.ev_min      = ev(0);
-                    last_pd_failure_.ev_max      = ev_max;
-                    last_pd_failure_.n_eig_below = n_below;
-                    last_pd_failure_.null_vec    = es.eigenvectors().col(0);
+                    pd_record.valid       = true;
+                    pd_record.n_local     = n_r;
+                    pd_record.d_min       = d_min;
+                    pd_record.d_ref       = d_ref;
+                    pd_record.d_max       = d_max;
+                    pd_record.ev_min      = ev(0);
+                    pd_record.ev_max      = ev_max;
+                    pd_record.n_eig_below = n_below;
+                    pd_record.null_vec    = es.eigenvectors().col(0);
                 }
             }
             std::ostringstream os;
@@ -833,12 +879,12 @@ std::size_t NetworkNormalEquations::addStationImpl_(const Eigen::MatrixXd* N_ss_
                << (station_pd_median_scale_
                        ? ", pin-aware median-scale test" : "")
                << ") — station prior too weak or an unobservable local parameter";
+            pd_rejected = true;
             fail(os.str());
         }
     }
 
-    // Local block accepted: record it and commit this station's shared-border
-    // contribution, kept in step with the Schur term reduce() will subtract.
+    // Local block accepted: record it.
     st.N_sr = N_sr_r;
     st.u_r = u_r_r;
     // The prior's RHS half (RF-PD-fix).  N_sr is untouched: a diagonal local prior is
@@ -849,26 +895,6 @@ std::size_t NetworkNormalEquations::addStationImpl_(const Eigen::MatrixXd* N_ss_
     for (Eigen::Index i = 0; i < n_pri; ++i) {
         st.u_r(prior.cols[static_cast<std::size_t>(i)]) += prior.dur(i);
     }
-    if (N_ss_dense) {
-        N_ss_ += *N_ss_dense;
-    } else {
-        // The sparse border: add the square of the touched shared columns and put the scratch back to
-        // zero in the same pass.  Every entry outside it is exactly zero, and the dense sum would add
-        // +0 to a value that is never -0, which changes nothing.
-        const Eigen::Index ld = n_shared_;
-        for (const Eigen::Index j : border->active) {
-            double* dst = N_ss_.data() + j * ld;
-            double* src = sparse_nss_.data() + j * ld;
-            for (const Eigen::Index i : border->active) {
-                dst[i] += src[i];
-                src[i] = 0.0;
-            }
-        }
-    }
-    u_s_ += u_s_r;
-
-    reduced_ = false;
-    return n_active_++;
 }
 
 std::size_t NetworkNormalEquations::addStationObservations(
@@ -954,6 +980,168 @@ std::size_t NetworkNormalEquations::addStationObservations(
     const Eigen::VectorXd u_r_r = WA_r.transpose() * y;
 
     return addStation(N_ss_r, N_sr_r, N_rr_r, u_s_r, u_r_r, prior);
+}
+
+namespace {
+
+/// The calling thread's own scratch for the sparse formation inside formStations: n x n and all
+/// zero on entry and on exit (formStation_ zeroes the square it wrote as it moves it out).
+Eigen::MatrixXd& threadSparseScratch(Eigen::Index n) {
+    thread_local Eigen::MatrixXd scratch;
+    if (scratch.rows() != n || scratch.cols() != n) scratch.setZero(n, n);
+    return scratch;
+}
+
+} // namespace
+
+void NetworkNormalEquations::formStation_(const StationObservations& in, StationForm& f) const {
+    f.sparse = false;
+    f.pd_rejected = false;
+    f.error = nullptr;
+    f.committed = false;
+    f.active.clear();
+    f.nss_active.clear();
+    try {
+        const Eigen::MatrixXd& A_s = *in.A_s;
+        const Eigen::MatrixXd& A_r = *in.A_r;
+        const Eigen::VectorXd& w_diag = *in.w;
+        const Eigen::VectorXd& y = *in.y;
+        const StationPrior no_prior;
+        const StationPrior& prior = in.prior ? *in.prior : no_prior;
+
+        // The diagonal-weight addStationObservations up to its call of addStationImpl_: the same
+        // checks, in the same order, with the same messages, and the same expressions.
+        const Eigen::Index m = A_s.rows();
+        if (A_s.cols() != n_shared_) {
+            fail("addStationObservations: A_s must have n_shared columns");
+        }
+        if (A_r.rows() != m) {
+            fail("addStationObservations: A_s and A_r must have the same row count");
+        }
+        if (w_diag.size() != m) {
+            fail("addStationObservations: w_diag size mismatch");
+        }
+        if (y.size() != m) {
+            fail("addStationObservations: y size mismatch");
+        }
+        const Eigen::MatrixXd WA_s = w_diag.asDiagonal() * A_s;  // m × n_s
+        const Eigen::MatrixXd WA_r = w_diag.asDiagonal() * A_r;  // m × n_r
+
+        if (sparse_station_normals_) {
+            Eigen::MatrixXd& scratch = threadSparseScratch(n_shared_);
+            Eigen::MatrixXd N_sr_s, N_rr_s;
+            SparseBorder border;
+            if (formStationNormalsSparse(A_s, A_r, w_diag, scratch, N_sr_s, N_rr_s, border)) {
+                // Move the touched square into the slot; the scratch is all zero again after it.
+                const std::size_t na = border.active.size();
+                const Eigen::Index ld = n_shared_;
+                f.nss_active.resize(na * na);
+                for (std::size_t tj = 0; tj < na; ++tj) {
+                    double* src = scratch.data() + border.active[tj] * ld;
+                    double* dst = f.nss_active.data() + tj * na;
+                    for (std::size_t ti = 0; ti < na; ++ti) {
+                        dst[ti] = src[border.active[ti]];
+                        src[border.active[ti]] = 0.0;
+                    }
+                }
+                const Eigen::VectorXd u_s_s = WA_s.transpose() * y;
+                const Eigen::VectorXd u_r_s = WA_r.transpose() * y;
+                checkStationBlocks_(nullptr, &border, N_sr_s, N_rr_s, u_s_s, u_r_s, prior);
+                buildStationLocal_(f.st, N_sr_s, N_rr_s, u_r_s, prior, f.pd_record, f.pd_rejected);
+                f.sparse = true;
+                f.active = std::move(border.active);
+                f.u_s = u_s_s;
+                return;
+            }
+        }
+
+        f.N_ss.noalias() = A_s.transpose() * WA_s;
+        const Eigen::MatrixXd N_sr_r = A_s.transpose() * WA_r;
+        const Eigen::MatrixXd N_rr_r = A_r.transpose() * WA_r;
+        const Eigen::VectorXd u_s_r = WA_s.transpose() * y;
+        const Eigen::VectorXd u_r_r = WA_r.transpose() * y;
+        checkStationBlocks_(&f.N_ss, nullptr, N_sr_r, N_rr_r, u_s_r, u_r_r, prior);
+        buildStationLocal_(f.st, N_sr_r, N_rr_r, u_r_r, prior, f.pd_record, f.pd_rejected);
+        f.u_s = u_s_r;
+    } catch (...) {
+        // An exception must not leave a parallel region; the commit rethrows it where the serial
+        // add would have thrown it.
+        f.error = std::current_exception();
+    }
+}
+
+void NetworkNormalEquations::formStations(const std::vector<StationObservations>& in, int n_threads) {
+    ScopedAccum _perf(perf_timing_, &timers_.add_station_ms);  // part of the station-add time (D0)
+    const std::size_t n = in.size();
+    if (forms_.size() < n) forms_.resize(n);
+    n_forms_ = n;
+    bool formed = false;
+#ifdef _OPENMP
+    // Each iteration reads only its station's inputs and this object's configuration and writes only
+    // its own slot (formStation_ is const and catches everything it throws).  Eigen must be pinned to
+    // one thread: the sparse formation and the dense products then take the path the serial add
+    // takes, and no Eigen kernel nests threads inside the region.
+    if (n_threads > 1 && n > 1 && Eigen::nbThreads() == 1 && !omp_in_parallel()) {
+        const int nt = static_cast<int>(std::min<std::size_t>(static_cast<std::size_t>(n_threads), n));
+        #pragma omp parallel for schedule(dynamic) num_threads(nt)
+        for (long long k = 0; k < static_cast<long long>(n); ++k) {
+            const std::size_t kk = static_cast<std::size_t>(k);
+            formStation_(in[kk], forms_[kk]);
+        }
+        formed = true;
+        par_counts_.forms_parallel += static_cast<long long>(n);
+    }
+#endif
+    if (!formed) {
+        for (std::size_t k = 0; k < n; ++k) formStation_(in[k], forms_[k]);
+        par_counts_.forms_serial += static_cast<long long>(n);
+    }
+}
+
+std::size_t NetworkNormalEquations::commitStation(std::size_t k) {
+    ScopedAccum _perf(perf_timing_, &timers_.add_station_ms);  // assembly primitive timer (D0)
+    if (perf_timing_) ++timers_.add_station_calls;
+    if (k >= n_forms_ || forms_[k].committed) {
+        throw std::out_of_range("NetworkNormalEquations::commitStation: slot not formed or already committed");
+    }
+    StationForm& f = forms_[k];
+    f.committed = true;
+    ++par_counts_.commits;
+    if (f.error) {
+        // The serial add writes the rejection's record as it rejects: its validity always, the
+        // spectral fields only when it read them.
+        if (f.pd_rejected) {
+            if (f.pd_record.valid) last_pd_failure_ = f.pd_record;
+            else                   last_pd_failure_.valid = false;
+        }
+        std::rethrow_exception(f.error);
+    }
+    if (n_active_ >= stations_.size()) {
+        stations_.emplace_back();
+    }
+    // The slot's local block becomes the active station; the pool slot's old buffers go back to
+    // the form slot for reuse.
+    std::swap(stations_[n_active_], f.st);
+
+    // The border additions of addStationImpl_: the dense block whole, or the touched square of the
+    // sparse formation (every entry outside it is exactly zero).
+    if (f.sparse) {
+        const Eigen::Index ld = n_shared_;
+        const std::size_t na = f.active.size();
+        for (std::size_t tj = 0; tj < na; ++tj) {
+            double* dst = N_ss_.data() + f.active[tj] * ld;
+            const double* src = f.nss_active.data() + tj * na;
+            for (std::size_t ti = 0; ti < na; ++ti) {
+                dst[f.active[ti]] += src[ti];
+            }
+        }
+    } else {
+        N_ss_ += f.N_ss;
+    }
+    u_s_ += f.u_s;
+
+    reduced_ = false;
+    return n_active_++;
 }
 
 bool NetworkNormalEquations::formStationNormalsSparse(
@@ -1139,6 +1327,122 @@ void NetworkNormalEquations::addStationPrior(
     }
 }
 
+namespace {
+
+/// Whether the fused subtraction dst -= L * R (L: n x k, R: k x n, dst: n x n), taken column block by
+/// column block (blocks of @p width columns, a multiple of 4, then one block of @p last columns that
+/// starts at a multiple of 4), sums every element exactly as the whole product does in Eigen's blocked
+/// kernel on one thread (SSE2 doubles: 4-row and 4-column tiles, then 2-row, 1-row and 1-column
+/// remainders).  An element's arithmetic depends on the tile its row and its column fall in and on
+/// the depth panels; it does not depend on which row or column panel holds it.  Panels are cut at
+/// multiples of the tiles (Eigen rounds mc and nc to the kernel's mr and nr), so every tile but the
+/// global remainder is whole in either product, and the cut keeps each column in the tile it has in
+/// the whole product.  The split is therefore exact when the whole product and both block products
+/// take the blocked kernel (not the matrix-vector or the coefficient-based product), in one depth
+/// panel, with their row and column panels cut at multiples of 4, all read from Eigen's own blocking
+/// heuristic.  tests/network/test_neq_parallel_stages.cpp checks it against the serial reduce.
+bool schurColumnSplitExact(Eigen::Index n, Eigen::Index k, Eigen::Index width, Eigen::Index last) {
+    using Traits = Eigen::internal::gebp_traits<double, double>;
+    if (Traits::mr != 4 || Traits::nr != 4 || width % 4 != 0) return false;
+    auto blocked = [&](Eigen::Index cols) {
+        if (n < 2 || cols < 2 || k < 1) return false;
+        if (k + n + cols < EIGEN_GEMM_TO_COEFFBASED_THRESHOLD) return false;
+        Eigen::Index kc = k, mc = n, nc = cols;
+        Eigen::internal::computeProductBlockingSizes<double, double>(kc, mc, nc, Eigen::Index(1));
+        return kc >= k && (mc >= n || mc % 4 == 0) && (nc >= cols || nc % 4 == 0);
+    };
+    return blocked(n) && blocked(width) && blocked(last);
+}
+
+} // namespace
+
+bool NetworkNormalEquations::reduceByColumns_() {
+#ifdef _OPENMP
+    const int want = schur_column_threads_;
+    const Eigen::Index n = n_shared_;
+    if (want <= 1 || n_active_ == 0 || n < 16 || Eigen::nbThreads() != 1 || omp_in_parallel()) {
+        return false;
+    }
+    // Column blocks: a width that is a multiple of 4 (at least 8) and gives about one block per
+    // thread; a remainder narrower than 8 joins the last block.
+    Eigen::Index width = (n + want - 1) / want;
+    width = std::max<Eigen::Index>(8, (width + 3) & ~Eigen::Index(3));
+    Eigen::Index n_blocks = (n + width - 1) / width;
+    Eigen::Index last = n - (n_blocks - 1) * width;
+    if (last < 8 && n_blocks > 1) {
+        --n_blocks;
+        last += width;
+    }
+    if (n_blocks < 2) return false;
+    for (std::size_t i = 0; i < n_active_; ++i) {
+        const Eigen::Index k = stations_[i].n_local;
+        if (k > 0 && !schurColumnSplitExact(n, k, width, last)) return false;
+    }
+
+    // (1) The local solves N_rr⁻¹ N_rs and N_rr⁻¹ u_r, the serial loop's own expressions, each
+    //     station into its own slot.  Nothing shared is written; a failure declines the split.
+    if (schur_x_.size() < n_active_) {
+        schur_x_.resize(n_active_);
+        schur_v_.resize(n_active_);
+    }
+    std::vector<char> solve_failed(n_active_, 0);
+    const int nt_sta = static_cast<int>(std::min<std::size_t>(static_cast<std::size_t>(want), n_active_));
+    #pragma omp parallel for schedule(dynamic) num_threads(nt_sta)
+    for (long long ii = 0; ii < static_cast<long long>(n_active_); ++ii) {
+        const std::size_t i = static_cast<std::size_t>(ii);
+        const Station& st = stations_[i];
+        if (st.n_local == 0) continue;
+        try {
+            schur_x_[i] = st.Nrr_ldlt.solve(st.N_sr.transpose());
+            schur_v_[i] = st.Nrr_ldlt.solve(st.u_r);
+        } catch (...) {
+            solve_failed[i] = 1;
+        }
+    }
+    for (const char f : solve_failed) {
+        if (f) return false;
+    }
+
+    // (2) The RHS, serially in ascending station order, as in the serial loop.
+    for (std::size_t i = 0; i < n_active_; ++i) {
+        const Station& st = stations_[i];
+        if (st.n_local == 0) continue;
+        reduced_u_s_.noalias() -= st.N_sr * schur_v_[i];
+    }
+
+    // (3) The border, one column block per iteration: every station's fused product-subtraction,
+    //     in ascending station order, on this block's columns only.
+    std::vector<char> block_failed(static_cast<std::size_t>(n_blocks), 0);
+    const int nt_blk = static_cast<int>(std::min<Eigen::Index>(static_cast<Eigen::Index>(want), n_blocks));
+    #pragma omp parallel for schedule(static) num_threads(nt_blk)
+    for (long long b = 0; b < static_cast<long long>(n_blocks); ++b) {
+        const Eigen::Index c0 = static_cast<Eigen::Index>(b) * width;
+        const Eigen::Index w = (static_cast<Eigen::Index>(b) == n_blocks - 1) ? last : width;
+        try {
+            auto dst = reduced_N_ss_.middleCols(c0, w);
+            for (std::size_t i = 0; i < n_active_; ++i) {
+                const Station& st = stations_[i];
+                if (st.n_local == 0) continue;
+                dst.noalias() -= st.N_sr * schur_x_[i].middleCols(c0, w);
+            }
+        } catch (...) {
+            block_failed[static_cast<std::size_t>(b)] = 1;
+        }
+    }
+    for (const char f : block_failed) {
+        if (f) {
+            // Part of the border was written: restore the start of the reduction and decline.
+            reduced_N_ss_ = N_ss_;
+            reduced_u_s_ = u_s_;
+            return false;
+        }
+    }
+    return true;
+#else
+    return false;
+#endif
+}
+
 void NetworkNormalEquations::reduce(int n_threads) {
     // Idempotency guard: the reduced form is recomputed only when a mutation
     // (addStation, addStationPrior, reset) has marked it stale.  addSharedInfo carries
@@ -1240,15 +1544,21 @@ void NetworkNormalEquations::reduce(int n_threads) {
     } else
 #endif
     {
-        // Serial fold over the active pool slots [0, n_active_); slots beyond that
-        // are retained allocations from a previous, larger epoch.  Fused
-        // product-subtract in ascending index, bit-identical to the original serial loop.
-        Eigen::MatrixXd Nrr_inv_Nrs;
-        Eigen::VectorXd Nrr_inv_ur;
-        for (std::size_t i = 0; i < n_active_; ++i) {
-            if (stationSolves(i, Nrr_inv_Nrs, Nrr_inv_ur)) {
-                reduced_N_ss_.noalias() -= stations_[i].N_sr * Nrr_inv_Nrs;
-                reduced_u_s_.noalias()  -= stations_[i].N_sr * Nrr_inv_ur;
+        // The column split (network.parallel_schur_columns) makes the serial loop's
+        // subtractions in the serial loop's order, and declines when it cannot guarantee that.
+        const bool split = reduceByColumns_();
+        if (schur_column_threads_ > 1) ++(split ? par_counts_.schur_split : par_counts_.schur_declined);
+        if (!split) {
+            // Serial fold over the active pool slots [0, n_active_); slots beyond that
+            // are retained allocations from a previous, larger epoch.  Fused
+            // product-subtract in ascending index, bit-identical to the original serial loop.
+            Eigen::MatrixXd Nrr_inv_Nrs;
+            Eigen::VectorXd Nrr_inv_ur;
+            for (std::size_t i = 0; i < n_active_; ++i) {
+                if (stationSolves(i, Nrr_inv_Nrs, Nrr_inv_ur)) {
+                    reduced_N_ss_.noalias() -= stations_[i].N_sr * Nrr_inv_Nrs;
+                    reduced_u_s_.noalias()  -= stations_[i].N_sr * Nrr_inv_ur;
+                }
             }
         }
     }

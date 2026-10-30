@@ -847,6 +847,13 @@ struct NetworkCongruenceTallies {
 struct NetworkRunContext;   // network/state/RunContext.hpp, included in the .cpp only
 struct NetworkRunTraces;    // network/diag/RunTraces.hpp, included in the .cpp only
 
+/// One station's residual cofactor, computed ahead of the sweep (@ref networkCongruenceCofactor).
+struct CongruenceCofactor {
+    bool            formed{false};  ///< the sweep reaches its cofactor call for this station
+    bool            ok{false};      ///< false: the call threw (the sweep counts a failed solve)
+    Eigen::MatrixXd Q;              ///< the cofactor @c blockResidualCofactor returned
+};
+
 /**
  * @brief Sweep one station's coordinate congruence (the costly tier of INC-1).
  *
@@ -881,6 +888,8 @@ struct NetworkRunTraces;    // network/diag/RunTraces.hpp, included in the .cpp 
  *                       this epoch.
  * @param tallies        [in/out] run totals.
  * @param hits           [out] this epoch's station records, appended.
+ * @param cofactor       The station's cofactor from @ref networkCongruenceCofactor, or null (the
+ *                       default) to compute it here.
  */
 void networkCongruenceSweepStation(NetworkCongruence& acc,
                                    const NetworkNormalEquations& kernel,
@@ -892,7 +901,23 @@ void networkCongruenceSweepStation(NetworkCongruence& acc,
                                    double delta_0, bool datum_changed,
                                    bool block_known, bool block_flagged,
                                    NetworkCongruenceTallies& tallies,
-                                   std::vector<CongruenceHit>& hits);
+                                   std::vector<CongruenceHit>& hits,
+                                   const CongruenceCofactor* cofactor = nullptr);
+
+/**
+ * @brief The residual cofactor @ref networkCongruenceSweepStation needs for one station, computed
+ *        ahead of the sweep (@c network.parallel_redundancy_census).
+ *
+ * The same rows and the same @c blockResidualCofactor call the sweep makes.  @c formed is false
+ * when the sweep would stop before its cofactor (the screen off, no rows); @c ok is false when the
+ * call throws.  Reads only its arguments, so the census can compute several stations at once.
+ */
+CongruenceCofactor networkCongruenceCofactor(const NetworkCongruence& acc,
+                                             const NetworkNormalEquations& kernel,
+                                             std::size_t slot, const StationAssembly& R,
+                                             const std::vector<NetRowClass>& cls,
+                                             const Eigen::VectorXd& resid,
+                                             const Eigen::MatrixXd& cov_free);
 
 struct NetworkRun;              // network/driver/Run.hpp
 struct NetworkEpoch;            // network/driver/Epoch.hpp

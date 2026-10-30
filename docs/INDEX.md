@@ -423,6 +423,9 @@ Program card on this topic (indexed in [refound/CARDS.md](refound/CARDS.md)):
 normals (open, 2026-10-18: loop 5.3 and 3.7 times the GPS-only loop; the sparse formation behind a default-off key
 shortens the field loop 13.3 % and the sim loop 10.6 % at identical output; arming and two further optimizations owed).
 
+[PES](refound/PES_parallel_epoch_stages_2026-10-29.md), the sequential stages of the network epoch run in parallel at
+identical output (open, 2026-10-29: pre-registered; each change behind its own default-off key).
+
 ### `realtime` — [topics/realtime.md](topics/realtime.md)
 
 | card | one line | status | last dated |

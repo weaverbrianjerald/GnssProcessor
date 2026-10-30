@@ -345,6 +345,7 @@ struct RedundancyCensusCounters {
     long long redun_sweeps_targeted = 0;    ///< of those, escalation-driven single-station sweeps.
     long long redun_sweeps_trip = 0;        ///< of the full sweeps, those forced by a flight-recorder trip epoch.
     long long redun_station_sweeps = 0;     ///< (station, epoch) pairs swept: the real cost unit.
+    long long redun_pre_stations = 0;       ///< of the swept stations, those whose kernels the parallel pre-pass computed (network.parallel_redundancy_census).
     long long redun_escalate_flagged = 0;   ///< (station, epoch) latches raised by the free tier: the escalation's opportunity count.
     long long redun_escalations = 0;        ///< targeted sweeps taken from those latches.  Necessarily 0 under stride 1 (the scheduled sweep already covered every station), so it must never be read as "the free tier found nothing"; redun_escalate_flagged answers that.
     long long redun_rows = 0;               ///< data rows examined in sweeps.
