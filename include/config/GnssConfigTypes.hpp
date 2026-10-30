@@ -1772,6 +1772,13 @@ namespace GnssProcessor {
         // q_z) carry, the reassociation reached ~1e-4 at the solution level over a run
         // (physically null, sub-mm, but a real graded difference, not round-off).
         //
+        // On the float vehicle (ambiguity_vehicle float_kf with carry_invariant off, as in
+        // both goldens) the fold holds no block: the run-start "contributions as armed" table
+        // reads dd_prior_block ... blocks 0, there is nothing to thread, and a run with this
+        // knob off, or with parallel_max_threads anywhere from 6 to 20, wrote byte-identical
+        // products and traces (measured on the field golden).  The rule below is for the
+        // invariant carry.
+        //
         // Usage rule: a run with parallel_carry on is for wall-clock A/Bs only.  No graded
         // or physics verdict comes from such a run until an on-versus-off dd-frac
         // equivalence grade has passed for that config; every graded conclusion comes
@@ -1784,7 +1791,7 @@ namespace GnssProcessor {
         // Acts only when @ref parallel_stations is active.  Default off: Eigen
         // stays pinned and the carry runs its @ref parallel_seam / serial path, byte for
         // byte as without this knob.
-        bool parallel_carry{ false };     ///< Thread the invariant carry's dense per-block algebra (opt-in; gives up serial≡parallel byte-identity, ~1e-4 at the solution level, so graded verdicts come from off runs only, for ~2.4× wall-clock; needs @ref parallel_stations).
+        bool parallel_carry{ false };     ///< Thread the invariant carry's dense per-block algebra (opt-in; with the invariant carry on it gives up serial≡parallel byte-identity, ~1e-4 at the solution level, so graded verdicts there come from off runs only, for ~2.4× wall-clock; on the float vehicle the fold holds no block and the key changes no output; needs @ref parallel_stations).
 
         // --- Visualization traces (consumed by the pyviz network viewers) ---
         bool trace_stations{ true };      ///< Emit a static @c network_stations.csv roster (station id, role, ECEF) once at startup.  Cheap (one tiny file); drives the worldmap viewer so it reflects the stations that actually loaded.

@@ -77,9 +77,13 @@ armed logs a warning. Members need no RECOMMEND_* row.
 ## Notes
 
 1. Grade datum-invariant quantities on the cold 6 h consumer and the 16-site census against a
-   same-exe control at the same thread count; a `parallel_carry` result reproduces only at the
-   same exe and thread count ([NETWORK_REFOUNDING](refound/NETWORK_REFOUNDING_2026-09-14.md),
-   [MSC](refound/MSC_multi_site_consumer_2026-09-21.md)).
+   same-exe control ([NETWORK_REFOUNDING](refound/NETWORK_REFOUNDING_2026-09-14.md),
+   [MSC](refound/MSC_multi_site_consumer_2026-09-21.md)). With `carry_invariant` on, a
+   `parallel_carry` result also reproduces only at the same thread count (the fold combines
+   per-thread partials in thread-count order). On the float-vehicle goldens the fold holds no
+   block (run-start `dd_prior_block`, blocks 0), and on the field golden `parallel_carry` off and
+   `parallel_max_threads` 6 to 20 left products and traces byte-identical (card NSP section 7),
+   so the thread count is not a grading condition there.
 2. The loader overrides config values, so the run manifest and load log record what ran:
    `raim_within_epoch` arms `raim` + `raim_attribution`, `phase_leveling` without a detector arms
    `cycle_slip.mw_detect`, code-bias estimation turns
