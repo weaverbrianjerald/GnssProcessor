@@ -246,3 +246,7 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   every consumer that passes the solve's datum; no key. 23-arm gate 24 of 24, user side 16 of 16, real time wall-clock
   text only; field golden loop -9.5 to -10.5 % over the whole run and -12.8 to -13.5 % with both runs of a pair live,
   sim -4.2 to -6.8 %, products byte-identical; every gate passes.
+- [NSP](NSP_census_neutral_spread_2026-10-29.md): open, 2026-10-29: the 16-site census's spread under a neutral change
+  of the wire (`network.parallel_max_threads` or `network.parallel_carry`, which re-group the carried-prior fold's sums
+  and nothing else): six 6 h arms per day on DOY 130 and DOY 129, one exe, graded as card BOF graded. Pre-registered:
+  the reading of card PIV's DOY 130 clause (ARHT00ATA +40.6 mm) against the neutral sample (rank and prediction bounds).
