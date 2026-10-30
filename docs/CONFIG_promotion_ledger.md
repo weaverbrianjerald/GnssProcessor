@@ -133,8 +133,8 @@ The full-prose ledger before 2026-10-13 is in git (`git show 8326da3:docs/CONFIG
 | --- | --- |
 | RECOMMEND_ON | 25 |
 | RECOMMEND_SCOPED | 90 |
-| ARMED | 22 |
-| UNVALIDATED | 64 |
+| ARMED | 25 |
+| UNVALIDATED | 61 |
 | KEEP_OFF | 95 |
 | REMOVE | 0 |
 | TRACE | 62 |
@@ -270,7 +270,7 @@ Arm only in the stated regime. Machine-checked like RECOMMEND_ON.
 | `processing.enable_noon_turn_attitude` | false | true | `gps_gal_only` | Armed 2026-10-28 in the field golden at the author's decision (card NTA section 9, card BOF): 24 h census within 0.01 mm with and without the model at the consumer, G25 phase residual 7.1 to 4.9 mm in its turn; the sim golden lists it as an exception (the simulator's truth path has no noon-turn law). GPS Block IIF and IIR satellites yaw at their maximum rate through the noon turn (IIF below 4.35 deg of beta, IIR below 2.39 deg; Kouba 2009) for the satellite PCO and the phase wind-up alike; Galileo and the other blocks keep the nominal yaw. Built default off and byte-identical off; the field and sim goldens (00-06 UT) hold no noon turn, so arming it leaves their baselines unchanged. Not fingerprinted (the goldens do not resume). | [NTA](refound/NTA_noon_turn_attitude_2026-10-16.md) |
 | `processing.signal_priorities.Galileo` |  |  | `val("network.ambiguity_vehicle", "level") == "float_kf" and not tri and n_sys >= 2 and gps_gal_only` | E1 / E5a in both code families (pilot first, combined second), the dual pair the Galileo package was graded on; a missing entry drops the constellation; pinned in both goldens. | [GAD](refound/GAD_galileo_adoption_2026-10-13.md) |
 
-## ARMED (22)
+## ARMED (25)
 
 Pinned in both goldens by the card named; the golden manifest is the authority.
 
@@ -288,6 +288,9 @@ Pinned in both goldens by the card named; the golden manifest is the authority.
 | `network.phase_datum_held_mark_cold` | false | true | Declares a held-basis handover to the consumer iff it is cold, fixing RF-2b's inverted mark (144 of 145 continuous handovers marked); wire-affecting, armed in both goldens since GRB. | [RF-3-read](refound/RF-3-read_handover_frame_2026-09-15.md) |
 | `network.adm_screen` | false | true | Absolute product-referenced code screen refusing corrupt channels at arc birth (BSHM00ISR G07, G16); gates 2 to 4 PASS; solve-affecting and pinned on in both goldens. | [MEAS-ADMISSION](cards/raim-qc/MEAS-ADMISSION.md) |
 | `network.station_prior_before_pd` | false | true | Folds each station's RXCB-DATUM rows before the PD test, curing the amputation (PD rejections to 0); in the RF-0hv posture and both goldens since GRB; replay fixed by RPD. | [RF-PD-fix](refound/RF-PD-fix_station_prior_before_pd_2026-09-15.md) |
+| `network.parallel_redundancy_census` | false | true | Computes the redundancy census's per-station kernels (row redundancies, back-substitution, the block-Baarda and congruence residual cofactors) in parallel ahead of its serial walk, which keeps every counter, ladder, event and trace write; byte-identical by construction (card PES). Acts only with parallel_stations. Pinned true in both goldens by the author's decision of 2026-10-29 (card PES); the loader default stays false. | [PES](refound/PES_parallel_epoch_stages_2026-10-29.md) |
+| `network.parallel_schur_columns` | false | true | Splits the Schur reduce's per-station subtraction over column blocks of the shared border, every element still receiving the stations' fused product-subtractions in ascending order; taken only where Eigen's blocking gives one depth panel and the same row panels, else the serial loop; byte-identical by construction, unlike the deleted parallel_reduce's per-thread partials (card PES). Acts only with parallel_stations. Pinned true in both goldens by the author's decision of 2026-10-29 (card PES); the loader default stays false. | [PES](refound/PES_parallel_epoch_stages_2026-10-29.md) |
+| `network.parallel_station_normals` | false | true | Forms every station's normal blocks (products or the sparse formation, checks, prior fold, LDLT factor and PD test) in parallel ahead of the serial scatter, which commits them in station order with the same border additions; byte-identical to the serial add by construction (card PES). Acts only with parallel_stations. Pinned true in both goldens by the author's decision of 2026-10-29 (card PES); the loader default stays false. | [PES](refound/PES_parallel_epoch_stages_2026-10-29.md) |
 | `network.parallel_stations` | true | true | Per-station OpenMP fan-out of geometry and measurement assembly (default on); pinned true in both goldens and the parent gate of the parallel_seam / parallel_carry family. |  |
 | `network.sparse_station_normals` | true | true | Forms each station's normal blocks from the nonzero entries of its rows; bit-identical to the dense products (24 of 24 gate comparisons and four 2 h golden pairs identical with it on). Default on and pinned true in both goldens by the author's decision of 2026-10-19 (card NETCOST); false gives the dense products. |  |
 | `network.gross_los_emit_exclude` | false | true | Pinned true in both goldens; one of the three terms of the screen's SCOPED posture row: the decision runs before emission so the response lands at the declaring epoch (RF-3). | [RF-3](refound/RF-3_code_row_qc_2026-09-22.md) |
@@ -299,7 +302,7 @@ Pinned in both goldens by the card named; the golden manifest is the authority.
 | `network.cycle_slip.relevel_free_epoch` | false | true | Pinned true in both goldens; its free-epoch latch is the slip set read by the anchor handover, the phase-datum candidacy screen and the ARL fold slip set. RF-1 retired only its inject skip. | [RF-1](refound/RF-1_float_ambiguities_design.md) |
 | `processing.exclude_eclipsing_satellites` |  |  | Drops satellites in Earth's umbra at the geometry (nominal yaw only); true in both goldens through the base lineage; its edges force the per-run clock-pivot handovers (E02, G01) the ISB re-inflation answers. | [OWD](refound/OWD_owed_defects_2026-09-22.md) |
 
-## UNVALIDATED (64)
+## UNVALIDATED (61)
 
 Built and plausible, never graded on the current posture.
 
@@ -336,9 +339,6 @@ Built and plausible, never graded on the current posture.
 | `network.state_snapshot_frame_capture` | false |  | Write half of resume_frame_restore (anchor incumbents, Q3 clock anchor, CLK-R frame rows); products byte-identical; sim-validated only (leg E), never on a field warm resume of the current posture. | [RESUME-DENSE-BORDER-E2](cards/resume-seam/RESUME-DENSE-BORDER-E2.md) |
 | `network.state_snapshot_path` |  |  | Master path of the producer snapshot and warm resume; seams are a re-founding add-back (fresh convergence only today) and the goldens set no path. | [NETWORK_REFOUNDING_2026-09-14](refound/NETWORK_REFOUNDING_2026-09-14.md) |
 | `network.warmup_ura_floor_m` | 0.0 |  | Cold-start URA floor ramp for consumer down-weighting; wired and fingerprinted, set in no config and never graded; at 0 the ramp is inert (RF-IGN). | [RF-IGN](refound/RF-IGN_ignition_born_levels_2026-09-15.md) |
-| `network.parallel_redundancy_census` | false |  | Computes the redundancy census's per-station kernels (row redundancies, back-substitution, the block-Baarda and congruence residual cofactors) in parallel ahead of its serial walk, which keeps every counter, ladder, event and trace write; byte-identical by construction (card PES). Acts only with parallel_stations; not armed. | [PES](refound/PES_parallel_epoch_stages_2026-10-29.md) |
-| `network.parallel_schur_columns` | false |  | Splits the Schur reduce's per-station subtraction over column blocks of the shared border, every element still receiving the stations' fused product-subtractions in ascending order; taken only where Eigen's blocking gives one depth panel and the same row panels, else the serial loop; byte-identical by construction, unlike the deleted parallel_reduce's per-thread partials (card PES). Acts only with parallel_stations; not armed. | [PES](refound/PES_parallel_epoch_stages_2026-10-29.md) |
-| `network.parallel_station_normals` | false |  | Forms every station's normal blocks (products or the sparse formation, checks, prior fold, LDLT factor and PD test) in parallel ahead of the serial scatter, which commits them in station order with the same border additions; byte-identical to the serial add by construction (card PES). Acts only with parallel_stations; not armed. | [PES](refound/PES_parallel_epoch_stages_2026-10-29.md) |
 | `network.clock_monitor` | false |  | Refloats a lone satellite clock locked past the abs/jump bounds (read via networkClockMonitor()); off in both goldens; its specified lock-in validation (305-station h4 run) was never run. |  |
 | `network.gross_los_station_tier` | false |  | Built, exercised once; inert in the RF-3 census arm (0 station declarations, byte-identical). Stays OFF until a posture exercises it beyond one declaration. | [RF-3](refound/RF-3_code_row_qc_2026-09-22.md) |
 | `network.n3c_ledger_lifecycle` | false |  | Arc ledger as arc-lifecycle owner: arms the election's ledger read and restore (ledger_screens, ledger_anchor) and makes the coverage gate count a station with an admitted arc in Gap as tracking (all 11 field gate drops happened while the family had a gapped arc); the third site, gap re-entry, is network.ledger_reentry; the N3b decision D7. Field 6 h census 2026-10-16: hours 2 to 6 median 0.0 mm, 2 better (ARHT -3.2 cm, DAV1 -1.0 cm), 0 worse; neutral. |  |

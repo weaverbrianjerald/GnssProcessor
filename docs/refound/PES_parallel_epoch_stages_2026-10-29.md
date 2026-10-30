@@ -5,9 +5,9 @@
 - **id:** PES
 - **topic:** perf
 - **status:** open
-- **summary:** BUILT and GATED 2026-10-29, not merged (branch `perf/pes`). Three serial stages of the network epoch run in parallel over stations behind default-off keys (ledger UNVALIDATED): `network.parallel_station_normals` (the station normal blocks formed ahead of the serial scatter, committed in station order), `network.parallel_schur_columns` (the Schur reduce split by border columns, every element summed over the stations in serial order; no per-thread partial sum) and `network.parallel_redundancy_census` (the census's per-station kernels ahead of its serial walk). Key on against off, one build, 2 h: IDENTICAL on both goldens for each key and for the three together; off IDENTICAL to main; full Debug suite 3 591 passed, 0 failed; the lints pass. On main with card CVF the loop is 27.9 % shorter on the field golden, 20.3 % on the sim golden and 39.7 % on a 305-station field arm (30 min), at identical output. Recommended: arm all three (section 4.4).
+- **summary:** ARMED 2026-10-29 at the author's decision (section 5), not merged (branch `perf/pes`). Three serial stages of the network epoch run in parallel over stations behind keys the loader leaves off (ledger ARMED, pinned true in both goldens): `network.parallel_station_normals` (the station normal blocks formed ahead of the serial scatter, committed in station order), `network.parallel_schur_columns` (the Schur reduce split by border columns, every element summed over the stations in serial order; no per-thread partial sum) and `network.parallel_redundancy_census` (the census's per-station kernels ahead of its serial walk). Key on against off, one build, 2 h: IDENTICAL on both goldens for each key and for the three together; off IDENTICAL to main; full Debug suite 3 591 passed, 0 failed; the lints pass. On main with card CVF the loop is 27.9 % shorter on the field golden, 20.3 % on the sim golden and 39.7 % on a 305-station field arm (30 min), at identical output. Armed: all three; the baseline pair `runs/_rf0hv17_{field,sim}6` stands (section 5).
 - **source:** [NETCOST](NETCOST_gps_galileo_cost_attribution_2026-10-18.md) sections 2 and 3 (the section attribution under load); [CVF](CVF_conditional_variance_frame_2026-10-29.md) (the covariance-consumer overheads; merged into main during this card, section 4.3); the auto-memory records of the closed perf doors (`parallel_reduce` deleted by card RKD: per-thread partial sums regroup the Schur subtraction and the network's conditioning amplifies the ULP difference over the carried epochs).
-- **knobs / posture:** new `network.parallel_station_normals`, `network.parallel_schur_columns`, `network.parallel_redundancy_census`: bool, default false, ledger UNVALIDATED, unarmed in both goldens; nothing else changed.
+- **knobs / posture:** new `network.parallel_station_normals`, `network.parallel_schur_columns`, `network.parallel_redundancy_census`: bool, loader default false, ledger ARMED and pinned true in both goldens since 2026-10-29 (section 5); nothing else changed.
 - **dates in the text:** 2026-10-29
 - **hashes / run dirs:** branch `perf/pes` from main `a78ba68` (gates G1 to G4), main merged in at `b09c353` (G5); executables `gnss_processor_pes_c3.exe` (`64d24097d86f7bef`), `gnss_processor_pes_c4.exe` (`0845299169e2b0bd`), main `gnss_processor_pes_base.exe` (`66333b5e42827350`); worktree `D:/GnssProcessorSupport/worktrees/pes`; executables under its `build/x64-Release/`; runs `D:/GnssProcessorSupport/runs_pes/`; gate records `D:/GnssProcessorSupport/gates/pes/`.
 - **gates (frozen at pre-registration):** section 3, written before any run of a changed executable.
@@ -16,8 +16,8 @@
 return when run in parallel without moving an output bit? Result: the station normal formation, the Schur reduce and
 the redundancy census (37 % of the field epoch) run 2.0 to 4.8 times faster in parallel. Every key-on arm is identical
 to key off, and key off to main. The golden loop is 27.9 % shorter (field) and 20.3 % (sim), and 39.7 % at 305
-stations (bars: identical, a gain on both beds: met). Standing: built default off, not merged, arming recommended
-(section 4.4).
+stations (bars: identical, a gain on both beds: met). Standing: ARMED on both goldens at the author's decision,
+loader default off, not merged (section 5).
 
 ## 1. Question
 
@@ -184,9 +184,43 @@ changes no output, so no new baseline pair is needed. **Recommended: arm all thr
 decision: the ledger rows go from UNVALIDATED to ARMED with the golden pins). Together they shorten the golden loop
 by 28 % (field) and 20 % (sim) on top of card CVF, and by 40 % at 305 stations, where the serial stages weigh most.
 
+## 5. Arming (2026-10-29)
+
+The author's decision on reading section 4.4, 2026-10-29: arm all three.
+
+- The three ledger rows move from UNVALIDATED to ARMED (`golden` true), as `network.sparse_station_normals` did (card
+  NETCOST). They are not posture rows: a run that leaves them off loses wall time and nothing else.
+- The manifest pins the three keys in both goldens beside `network.sparse_station_normals`, with a dated comment and
+  the armed list of both descriptions extended; `scripts/make_golden_config.py` regenerated both. `--verify` passes
+  (78 recommended knobs armed in regime on the sim golden, 82 on the field golden, the documented exceptions
+  unchanged), the ledger view is re-rendered, and `config_posture_check.py --verify-loader` reports 0 coverage gaps.
+- The loader default stays false (the standing rule: a flipped default invalidates snapshot fingerprints).
+- Each regenerated golden differs from its G5 arm `_rap_pes_m4a_{f,s}_all` only in the run length (6 h against 2 h),
+  the product path and, on the sim, the start offset every sim arm adds, so sections 4.2 and 4.3 hold for the goldens
+  as generated.
+- Provenance hashes. The generator records a sha256 over the bytes of each base and of the ledger. This worktree checks
+  files out with CRLF line endings (`core.autocrlf` true), so a regeneration here moves the recorded base hash with no
+  content change. The goldens were regenerated from the committed LF bytes: both base hashes are unchanged and the
+  ledger hash is that of the committed ledger. The previous goldens' ledger hash, `6edf48e13b59d501`, is that of a
+  CRLF working copy of the ledger blob `e9d27ef12bacc0fa`.
+
+**Smoke.** Each regenerated golden for 0.1 h (12 epochs on the field golden, 13 on the sim golden from 00:30:15)
+against the same golden with the three keys set false, one run at a time on `gnss_processor_pes_c4.exe` (arms
+`runs_pes/_rap_pes_arm_{f,s}_{armed,off}`, record `gates/pes/arm_smoke.log`): both pairs IDENTICAL (`products.txt`
+without comment lines, `closed_loop_trace.csv`, `network_epoch_status.csv` and every other CSV both wrote). The
+run-end counters show each stage active on the goldens as generated: on the field golden 696 station forms in parallel
+and 0 serially over 12 epochs, 12 of 12 reduces split and 116 of 116 census station-epochs ahead of the walk; on the
+sim golden 780, 0, 13 of 13 and 120 of 120 over 13 epochs. The loop over these ignition epochs, keys off to on: field
+1 029 to 700 ms per epoch, sim 597 to 453 (a smoke figure; section 4.3 holds the cost).
+
+**Standing.** ARMED on both goldens on branch `perf/pes`, not merged. Arming moves no output bit (section 4.2), so the
+posture's baseline pair `runs/_rf0hv17_{field,sim}6` stands and no new pair is run; a reference made with the keys on
+holds at any thread count (section 4.4).
+
 ## Owed
 
-- The arming decision (section 4.4) and the merge of `perf/pes`.
+- The arming decision (section 4.4) and the merge of `perf/pes`. The arming: done 2026-10-29 (section 5); the merge
+  remains.
 - The next serial stages of section 4.1, each with its own key and the same contract: the ambiguity harvest (84 ms per
   field epoch; its arc-table writes need a compute and write split), the iono traces' conditional variances (about 30
   ms after card CVF), the PASS A slip scans (55 ms), the coupling preparation (45 ms) and the RHS attribution trip. The

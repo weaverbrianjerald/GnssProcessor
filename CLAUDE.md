@@ -449,7 +449,8 @@ SH constraint or seams.
   RHS attribution on trip, run manifest and epoch status, postfit traces, `emit_ura`,
   `emit_clock_disc`, the CB jump test with `mw_detect`, `cold_clock_seed`, the estimable block-Baarda
   census (`block_baarda_estimable`, the one check that reports code multipath) and the readmit-seed
-  mirrors; `parallel_carry` true.
+  mirrors; `parallel_carry` true, with the three identical-output parallel stages of card PES
+  (`parallel_station_normals`, `parallel_schur_columns`, `parallel_redundancy_census`).
   Response doctrine: adapt and EMIT within the detected epoch; a
   withhold is the backstop, graded as an adaptation failure unless the epoch is provably
   unrecoverable. Not armed: `prefit_fuse_sigma`. Deleted from the code on 2026-10-14 (card RKD,

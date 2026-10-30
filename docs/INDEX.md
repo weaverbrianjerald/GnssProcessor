@@ -428,8 +428,8 @@ variance read directly and one datum-frame covariance per solve (closed, 2026-10
 loop 12.8 to 13.5 % shorter, merged into main).
 
 [PES](refound/PES_parallel_epoch_stages_2026-10-29.md), the sequential stages of the network epoch run in parallel at
-identical output (open, 2026-10-29: three stages built behind default-off keys, identical on every gate; golden loop
-27.9 % (field) and 20.3 % (sim) shorter after card CVF, 39.7 % at 305 stations; arming recommended, not merged).
+identical output (open, 2026-10-29: three stages built behind keys off by default, identical on every gate, ARMED on
+both goldens; golden loop 27.9 % (field) and 20.3 % (sim) shorter after card CVF, 39.7 % at 305 stations; not merged).
 
 ### `realtime` — [topics/realtime.md](topics/realtime.md)
 
