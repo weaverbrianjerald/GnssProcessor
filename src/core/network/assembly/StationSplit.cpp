@@ -108,19 +108,19 @@ StationStep networkStationDataRows(StationBuild& build) {
     // The station's births, then its rows over the set they leave.
     const StationRowContext row_ctx = rowContextOf(config_, st);
     networkBirthLocalStates(row_ctx, st.params, modeled[i]);
-    build.em = networkStationRows(row_ctx, st.params, modeled[i]);
-    EpochMeasurement& em = build.em;
-    if (em.innovations.size() == 0) {
+    build.rows = networkStationRows(row_ctx, st.params, modeled[i]);
+    const StationDataRows& rows = build.rows;
+    if (rows.innovations.size() == 0) {
         R.empty_innov = true;
         return StationStep::Done;
     }
-    if (em.H.cols() != static_cast<Eigen::Index>(st.params.slots.size())) {
+    if (rows.n_slots != st.params.slots.size()) {
         R.state_mismatch = true;
-        R.err = fmt::format("{} vs {}", em.H.cols(), st.params.slots.size());
+        R.err = fmt::format("{} vs {}", rows.n_slots, st.params.slots.size());
         return StationStep::Done;
     }
 
-    // Alias into the assembly slot so the H->A_r column map survives
+    // Alias into the assembly slot so the slot->A_r column map survives
     // for the later steps and the post-solve readers.
     std::map<int, int>& h2local = R.h2local;
     std::vector<ParamDisposition> col_disp;
@@ -128,7 +128,7 @@ StationStep networkStationDataRows(StationBuild& build) {
     // weight passes; every site below that appends rows appends their tags in
     // lockstep (StationAssembly::row_tags).  Every reader that asks what a row is
     // reads its tag (network/assembly/RowClassify).
-    networkSplitStation(config_, st, est, em, ctx.param_inventory.rx_ifb,
+    networkSplitStation(config_, st, est, rows, ctx.param_inventory.rx_ifb,
                          R.A_s, R.A_r, R.w, R.y, h2local, col_disp, R.row_tags);
     R.n_data_rows = R.A_s.rows();
     // The station's parameter set takes the disposition the split just gave each column and
@@ -140,48 +140,55 @@ StationStep networkStationDataRows(StationBuild& build) {
     return StationStep::Next;
 }
 
-// Column-split helper: split a station's H into the shared border A_s
-// (clock, phase-bias and code-bias columns) and the local nuisance block A_r (everything
-// except the 3 fixed-position columns, the shared columns, and the receiver IFB and
-// unobserved columns left out).  Fills the
-// H-column -> A_r-column map (used for the pivot ambiguity pins) and, per state
-// column, the disposition the split gave it (the parameter
-// inventory records it; each branch below sets one).  The receiver
-// IFB drop reads the run's rule, built once in NetworkRunContext.
+// The split of a station's data rows into the shared border A_s (clock, phase-bias and
+// code-bias columns) and the local nuisance block A_r (every slot except the 3 fixed-position
+// slots, the shared slots, and the receiver IFB and unobserved slots left out).  First, per
+// slot of the set, the disposition the split gives it (the parameter inventory records it;
+// each branch below sets one) and the slot -> A_r-column map (used for the pivot ambiguity
+// pins); then every Jacobian entry of the rows goes to its slot's border or local column.
+// No dense matrix of rows by slots is formed.  The receiver IFB drop reads the run's rule,
+// built once in NetworkRunContext.
 void networkSplitStation(const GnssConfig& config_, NetStation& st, const NetworkEstimator& est,
-                         const EpochMeasurement& em, const RxIfbRule& ifb_rule,
+                         const StationDataRows& rows, const RxIfbRule& ifb_rule,
                          Eigen::MatrixXd& A_s, Eigen::MatrixXd& A_r, Eigen::VectorXd& w,
                          Eigen::VectorXd& y, std::map<int, int>& h2local,
                          std::vector<ParamDisposition>& col_disp, std::vector<RowTag>& tags) {
-    const Eigen::Index m       = em.H.rows();
-    const Eigen::Index nstate  = em.H.cols();
+    const Eigen::Index m       = rows.rows();
+    const Eigen::Index nstate  = static_cast<Eigen::Index>(rows.n_slots);
     const Eigen::Index nshared = est.numShared();
     A_s = Eigen::MatrixXd::Zero(m, nshared);
     col_disp.assign(static_cast<std::size_t>(nstate), ParamDisposition::Unobserved);
 
-    std::set<int> shared_cols;  // H-column indices that map to the shared border
+    // The border column of each shared slot (a slot is one parameter, so it has one).  A border
+    // column that two entries name takes the partials of the later entry in the order of the
+    // three loops below, and both slots count as shared.
+    std::set<int> shared_cols;  // slots that map to the shared border
+    std::vector<Eigen::Index> border_of(static_cast<std::size_t>(nstate), -1);
+    std::vector<int> border_owner(static_cast<std::size_t>(nshared), -1);
+    const auto toBorder = [&](int slot, Eigen::Index col) {
+        border_of[static_cast<std::size_t>(slot)]   = col;
+        border_owner[static_cast<std::size_t>(col)] = slot;
+        shared_cols.insert(slot);
+    };
     for (const auto& kv : st.params.shared.sat_clock) {
         Eigen::Index col;
         try { col = est.clockColumn(net::satKey(kv.first)); } catch (...) { continue; }
-        A_s.col(col) = em.H.col(static_cast<Eigen::Index>(kv.second));
-        shared_cols.insert(static_cast<int>(kv.second));
+        toBorder(kv.second, col);
     }
     for (const auto& kv : st.params.shared.sat_phase_bias) {
         Eigen::Index col;
         try { col = est.phaseBiasColumn(net::satKey(kv.first.sat), net::signalKey(kv.first.signal)); }
         catch (...) { continue; }
-        A_s.col(col) = em.H.col(static_cast<Eigen::Index>(kv.second));
-        shared_cols.insert(static_cast<int>(kv.second));
+        toBorder(kv.second, col);
     }
-    // Satellite code bias: scatter each per-(sat,signal) sat-bias column
-    // into the shared border.  The set holds only the network-owned satellite code
-    // biases; GLONASS has none (code-only scope).
+    // Satellite code bias: each per-(sat,signal) satellite-bias slot goes to the shared
+    // border.  The set holds only the network-owned satellite code biases; GLONASS has none
+    // (code-only scope).
     for (const auto& kv : st.params.shared.sat_code_bias) {
         Eigen::Index col;
         try { col = est.codeBiasColumn(net::satKey(kv.first.sat), kv.first.signal.obsCode(ObsType::Code)); }
         catch (...) { continue; }
-        A_s.col(col) = em.H.col(static_cast<Eigen::Index>(kv.second));
-        shared_cols.insert(static_cast<int>(kv.second));
+        toBorder(kv.second, col);
     }
 
     // Receiver inter-frequency-bias (IFB) columns on the bands outside each
@@ -235,16 +242,33 @@ void networkSplitStation(const GnssConfig& config_, NetStation& st, const Networ
     // turned the drop off), as a row mask for the column test below.
     std::vector<char> excluded_row;
     if (ifb_rule.estimated_by_knob) {
-        const std::vector<int> ex = rxIfbExcludedRows(st.l5b, st.params, em, shared_cols);
+        const std::vector<int> ex = rxIfbExcludedRows(st.l5b, st.params, rows, shared_cols);
         if (!ex.empty()) {
             excluded_row.assign(static_cast<std::size_t>(m), 0);
             for (const int r : ex) excluded_row[static_cast<std::size_t>(r)] = 1;
         }
     }
 
+    // Which slots a row reads with a nonzero entry, and which with a nonzero entry on a row
+    // that keeps its weight.  A zero entry (a partial of plus or minus zero) reads nothing,
+    // as a dense column whose largest magnitude is 0 read nothing; a NaN entry reads.
+    std::vector<char> read(static_cast<std::size_t>(nstate), 0);
+    std::vector<char> read_weighted(static_cast<std::size_t>(nstate), 0);
+    for (Eigen::Index r = 0; r < m; ++r) {
+        const auto ru = static_cast<std::size_t>(r);
+        const bool weighted_row = excluded_row.empty() || !excluded_row[ru];
+        for (std::size_t e = rows.row_start[ru]; e < rows.row_start[ru + 1]; ++e) {
+            const RowPartial& p = rows.partials[e];
+            if (p.value == 0.0) continue;
+            read[static_cast<std::size_t>(p.slot)] = 1;
+            if (weighted_row) read_weighted[static_cast<std::size_t>(p.slot)] = 1;
+        }
+    }
+
     const int pos = st.params.position[0];  // 0
     std::vector<int> local_cols;
     local_cols.reserve(static_cast<size_t>(nstate));
+    std::vector<Eigen::Index> local_of(static_cast<std::size_t>(nstate), -1);   // slot -> A_r column
     for (int c = 0; c < static_cast<int>(nstate); ++c) {
         ParamDisposition& disp = col_disp[static_cast<std::size_t>(c)];
         if (c == pos || c == pos + 1 || c == pos + 2) {          // coords fixed
@@ -259,7 +283,7 @@ void networkSplitStation(const GnssConfig& config_, NetStation& st, const Networ
             disp = ifb_rule.disposition;
             continue;
         }
-        // Drop a structurally unobservable local state (all-zero H column this
+        // Drop a structurally unobservable local state (no row reads it this
         // epoch).  The usual case is the Galileo inter-system-bias state of a
         // station that tracks no Galileo this epoch (the station's parameter set holds
         // an ISB per active non-GPS system regardless of per-station, per-epoch
@@ -270,24 +294,20 @@ void networkSplitStation(const GnssConfig& config_, NetStation& st, const Networ
         // the zero column lets the station contribute every observable state it
         // has; its receiver clock absorbs its GPS rows, so the GPS clock
         // common-mode gauge stays intact.
-        if (em.H.col(c).cwiseAbs().maxCoeff() == 0.0) {
+        if (!read[static_cast<std::size_t>(c)]) {
             disp = ParamDisposition::Unobserved;
             continue;
         }
         // The same for a column whose only rows are excluded rows: with zero
         // weight they inform nothing, so the column (a receiver IFB with no shared-column
         // row, a station-local sponge) would make N_rr singular.
-        if (!excluded_row.empty()) {
-            bool weighted = false;
-            for (Eigen::Index r = 0; r < m && !weighted; ++r)
-                weighted = em.H(r, c) != 0.0 && !excluded_row[static_cast<std::size_t>(r)];
-            if (!weighted) {
-                disp = ParamDisposition::Unobserved;
-                continue;
-            }
+        if (!excluded_row.empty() && !read_weighted[static_cast<std::size_t>(c)]) {
+            disp = ParamDisposition::Unobserved;
+            continue;
         }
         disp = ParamDisposition::EstimatedLocal;
         h2local[c] = static_cast<int>(local_cols.size());
+        local_of[static_cast<std::size_t>(c)] = static_cast<Eigen::Index>(local_cols.size());
         local_cols.push_back(c);
     }
     // --- Linearity invariant ------------------------------------------------
@@ -316,9 +336,20 @@ void networkSplitStation(const GnssConfig& config_, NetStation& st, const Networ
                 lc, st.name, st.is_pivot));
         }
     }
-    A_r.resize(m, static_cast<Eigen::Index>(local_cols.size()));
-    for (size_t j = 0; j < local_cols.size(); ++j)
-        A_r.col(static_cast<Eigen::Index>(j)) = em.H.col(local_cols[j]);
+    // Every entry of the rows into its slot's border column and local column.  Both blocks
+    // start at zero, so an entry the rows do not hold is zero, and an entry is written as it
+    // is, a zero with its sign.
+    A_r = Eigen::MatrixXd::Zero(m, static_cast<Eigen::Index>(local_cols.size()));
+    for (Eigen::Index r = 0; r < m; ++r) {
+        const auto ru = static_cast<std::size_t>(r);
+        for (std::size_t e = rows.row_start[ru]; e < rows.row_start[ru + 1]; ++e) {
+            const RowPartial& p = rows.partials[e];
+            const auto s = static_cast<std::size_t>(p.slot);
+            const Eigen::Index bc = border_of[s];
+            if (bc >= 0 && border_owner[static_cast<std::size_t>(bc)] == p.slot) A_s(r, bc) = p.value;
+            if (local_of[s] >= 0) A_r(r, local_of[s]) = p.value;
+        }
+    }
     // A station-epoch with a receiver IFB column in the block counts once.
     if (ifb_rule.estimated_by_knob) {
         bool ifb_estimated = false;
@@ -329,11 +360,11 @@ void networkSplitStation(const GnssConfig& config_, NetStation& st, const Networ
         if (ifb_estimated) ++st.l5b.est_epochs;
     }
 
-    w = em.R_v.cwiseInverse();   // per-obs information = 1/σ²
+    w = rows.R_v.cwiseInverse();   // per-obs information = 1/σ²
     // One contribution tag per data row: code or phase with the row's
     // satellite and signal.  The weight passes below that scale a row as a second-channel
     // row change its kind where they decide it, so a tag and a weight cannot disagree.
-    tagDataRows(tags, m, em.satellite_ids, em.signal_types);
+    tagDataRows(tags, m, rows.satellite_ids, rows.signal_types);
     // The excluded extra-band code rows carry no information (rxIfbExcludedRows).
     // The scalings below keep a zero at zero.
     for (std::size_t r = 0; r < excluded_row.size(); ++r)
@@ -352,14 +383,14 @@ void networkSplitStation(const GnssConfig& config_, NetStation& st, const Networ
     // they re-anchor the float to a bounded error.  The phase row is down-weighted,
     // not excluded (prefer-fallback): it still contributes, at σ × scale.
     //
-    // This is the one site that needs it, and the cheapest: `em.satellite_ids` /
-    // `em.signal_types` are row-aligned with H/R_v by an asserted invariant, so
+    // This is the one site that needs it, and the cheapest: `rows.satellite_ids` /
+    // `rows.signal_types` are row-aligned with the rows and R_v by construction, so
     // phase-vs-code and the satellite are O(1) lookups with no matrix scan, whereas
     // the post-assembly sites (the within-epoch code/ionosphere RAIM screen, the frame
     // diagnostic) re-derive "is this a phase row"
     // from the shared-column labels.  Everything folded later (the datum pins, the
     // GLONASS anchors, the SH/GIM iono rows, the SD-EWL rows, the coupling
-    // rows) is appended, so rows [0, em.H.rows()) are the data rows and nothing
+    // rows) is appended, so rows [0, rows.rows()) are the data rows and nothing
     // else is scaled here.
     //
     // Thread-safety: `st.phase_sigma_scale` is republished serially by
@@ -370,14 +401,14 @@ void networkSplitStation(const GnssConfig& config_, NetStation& st, const Networ
     // operations.
     if (!st.phase_sigma_scale.empty()) {
         const Eigen::Index mr = std::min<Eigen::Index>(
-            m, static_cast<Eigen::Index>(em.signal_types.size()));
+            m, static_cast<Eigen::Index>(rows.signal_types.size()));
         long long n_dem = 0;
         for (Eigen::Index r = 0; r < mr; ++r) {
-            const std::string& sig = em.signal_types[static_cast<std::size_t>(r)];
+            const std::string& sig = rows.signal_types[static_cast<std::size_t>(r)];
             if (obsTypeOf(sig) != ObsType::Phase) continue;      // code untouched
-            if (r >= static_cast<Eigen::Index>(em.satellite_ids.size())) break;
+            if (r >= static_cast<Eigen::Index>(rows.satellite_ids.size())) break;
             const auto sc = st.phase_sigma_scale.find(
-                em.satellite_ids[static_cast<std::size_t>(r)]);
+                rows.satellite_ids[static_cast<std::size_t>(r)]);
             if (sc == st.phase_sigma_scale.end() || !(sc->second > 1.0)) continue;
             w(r) /= sc->second * sc->second;                      // σ × scale
             ++n_dem;
@@ -407,14 +438,14 @@ void networkSplitStation(const GnssConfig& config_, NetStation& st, const Networ
     // with no additional floating-point operations.
     if (!st.gl_code_sigma_scale.empty()) {
         const Eigen::Index mr = std::min<Eigen::Index>(
-            m, static_cast<Eigen::Index>(em.signal_types.size()));
+            m, static_cast<Eigen::Index>(rows.signal_types.size()));
         long long n_dw = 0;
         for (Eigen::Index r = 0; r < mr; ++r) {
-            const std::string& sig = em.signal_types[static_cast<std::size_t>(r)];
+            const std::string& sig = rows.signal_types[static_cast<std::size_t>(r)];
             if (sig.empty() || obsTypeOf(sig) == ObsType::Phase) continue;   // phase untouched
-            if (r >= static_cast<Eigen::Index>(em.satellite_ids.size())) break;
+            if (r >= static_cast<Eigen::Index>(rows.satellite_ids.size())) break;
             const auto sc = st.gl_code_sigma_scale.find(
-                em.satellite_ids[static_cast<std::size_t>(r)]);
+                rows.satellite_ids[static_cast<std::size_t>(r)]);
             if (sc == st.gl_code_sigma_scale.end() || !(sc->second > 1.0)) continue;
             w(r) /= sc->second * sc->second;                      // σ × scale
             ++n_dw;
@@ -449,14 +480,14 @@ void networkSplitStation(const GnssConfig& config_, NetStation& st, const Networ
     const double eb_scale = config_.networkExtraBandCodeSigmaScale();
     if (eb_scale > 1.0) {
         const Eigen::Index mr = std::min<Eigen::Index>(
-            m, static_cast<Eigen::Index>(em.signal_types.size()));
+            m, static_cast<Eigen::Index>(rows.signal_types.size()));
         std::map<char, NetworkPinBands> pin_by_sys;
         long long n_eb = 0, n_nopin = 0;
         for (Eigen::Index r = 0; r < mr; ++r) {
-            const std::string& sig = em.signal_types[static_cast<std::size_t>(r)];
+            const std::string& sig = rows.signal_types[static_cast<std::size_t>(r)];
             if (sig.empty() || obsTypeOf(sig) == ObsType::Phase) continue;   // phase untouched
-            if (r >= static_cast<Eigen::Index>(em.satellite_ids.size())) break;
-            const std::string& sat = em.satellite_ids[static_cast<std::size_t>(r)];
+            if (r >= static_cast<Eigen::Index>(rows.satellite_ids.size())) break;
+            const std::string& sat = rows.satellite_ids[static_cast<std::size_t>(r)];
             if (sat.empty()) continue;
             const char cons = letterOfSat(sat);
             auto pit = pin_by_sys.find(cons);
@@ -502,14 +533,14 @@ void networkSplitStation(const GnssConfig& config_, NetStation& st, const Networ
         if (!isc_sigs.empty()) {
             const double sc_scale = config_.networkSecondCodeSigmaScale();
             const Eigen::Index mr = std::min<Eigen::Index>(
-                m, static_cast<Eigen::Index>(em.signal_types.size()));
+                m, static_cast<Eigen::Index>(rows.signal_types.size()));
             long long n_comp = 0, n_fall = 0;
             for (Eigen::Index r = 0; r < mr; ++r) {
-                const std::string& sig = em.signal_types[static_cast<std::size_t>(r)];
+                const std::string& sig = rows.signal_types[static_cast<std::size_t>(r)];
                 if (sig.empty() || obsTypeOf(sig) == ObsType::Phase) continue;   // phase untouched
                 if (!isc_sigs.count(sig)) continue;
-                if (r >= static_cast<Eigen::Index>(em.satellite_ids.size())) break;
-                const std::string& sat = em.satellite_ids[static_cast<std::size_t>(r)];
+                if (r >= static_cast<Eigen::Index>(rows.satellite_ids.size())) break;
+                const std::string& sat = rows.satellite_ids[static_cast<std::size_t>(r)];
                 if (sat.empty()) continue;
                 // A companion or a fallback row (one kind for both, the rows
                 // routed through the inter-signal state).
@@ -541,13 +572,13 @@ void networkSplitStation(const GnssConfig& config_, NetStation& st, const Networ
     if (!st.spc_cells.empty()) {
         const double sp_scale = config_.networkSecondPhaseSigmaScale();
         const Eigen::Index mr = std::min<Eigen::Index>(
-            m, static_cast<Eigen::Index>(em.signal_types.size()));
+            m, static_cast<Eigen::Index>(rows.signal_types.size()));
         long long n_sp = 0;
         for (Eigen::Index r = 0; r < mr; ++r) {
-            const std::string& sig = em.signal_types[static_cast<std::size_t>(r)];
+            const std::string& sig = rows.signal_types[static_cast<std::size_t>(r)];
             if (obsTypeOf(sig) != ObsType::Phase) continue;      // code untouched
-            if (r >= static_cast<Eigen::Index>(em.satellite_ids.size())) break;
-            const std::string& sat = em.satellite_ids[static_cast<std::size_t>(r)];
+            if (r >= static_cast<Eigen::Index>(rows.satellite_ids.size())) break;
+            const std::string& sat = rows.satellite_ids[static_cast<std::size_t>(r)];
             if (sat.empty()) continue;
             if (!st.spc_cells.count(StateKeys::makeSatPhaseBiasKey(sat, sig))) continue;
             tags[static_cast<std::size_t>(r)].kind = ContributionKind::DataPhaseSecond;
@@ -556,16 +587,16 @@ void networkSplitStation(const GnssConfig& config_, NetStation& st, const Networ
         }
         st.spc_rows += n_sp;
     }
-    y = em.innovations;
+    y = rows.innovations;
 }
 
 std::vector<int> rxIfbExcludedRows(RxIfbStationState& s, const StationParams& set,
-                                   const EpochMeasurement& em, const std::set<int>& shared_cols) {
+                                   const StationDataRows& rows, const std::set<int>& shared_cols) {
     std::set<int> excluded;
-    const Eigen::Index nstate = em.H.cols();
+    const Eigen::Index nstate = static_cast<Eigen::Index>(rows.n_slots);
     const Eigen::Index mr = std::min<Eigen::Index>(
-        em.H.rows(), static_cast<Eigen::Index>(
-            std::min(em.satellite_ids.size(), em.signal_types.size())));
+        rows.rows(), static_cast<Eigen::Index>(
+            std::min(rows.satellite_ids.size(), rows.signal_types.size())));
     std::map<std::string, bool> registered_now;
     for (const auto& [cb_key, sidx] : set.rx_cb) {
         if (!RxIfbRule::governs(paramInstanceOf(rxCodeBiasRef(cb_key)).cls)) continue;
@@ -575,10 +606,10 @@ std::vector<int> rxIfbExcludedRows(RxIfbStationState& s, const StationParams& se
         std::set<std::string> signals;
         long long n_rows = 0, n_excluded = 0;
         for (Eigen::Index r = 0; r < mr; ++r) {
-            if (em.H(r, c) == 0.0) continue;
+            if (rowPartial(rows, r, c) == 0.0) continue;
             ++n_rows;
-            const std::string& sat = em.satellite_ids[static_cast<std::size_t>(r)];
-            const std::string& sig = em.signal_types[static_cast<std::size_t>(r)];
+            const std::string& sat = rows.satellite_ids[static_cast<std::size_t>(r)];
+            const std::string& sig = rows.signal_types[static_cast<std::size_t>(r)];
             signals.insert(sig);
             const std::string row_key = StateKeys::makeSatBiasKey(sat, sig);
             int hc = -1;

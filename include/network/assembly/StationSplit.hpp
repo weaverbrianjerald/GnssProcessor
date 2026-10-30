@@ -12,7 +12,7 @@
 #include "network/driver/RunTypes.hpp"
 #include "network/assembly/ParamInventory.hpp"
 #include "network/assembly/Contributions.hpp"
-#include "common/EpochMeasurement.hpp"
+#include "network/assembly/StationRows.hpp"   // StationDataRows
 #include <Eigen/Dense>
 #include <map>
 #include <set>
@@ -46,17 +46,17 @@ struct GlobalVtecShConfig;
 StationStep networkStationDataRows(StationBuild& build);
 
 /**
- * @brief Column-split helper: split station @p st's H into the shared
- *        border @p A_s (clock/phase-bias/code-bias columns) and the local
- *        nuisance block @p A_r (decomposition INC-7).
+ * @brief The split of station @p st's data rows: each slot's disposition, and the rows'
+ *        Jacobian entries written straight into the shared border @p A_s (clock, phase-bias
+ *        and code-bias columns) and the local nuisance block @p A_r.
  *
- * Fills the H-column → A_r-column map @p h2local and, per state column, the
- * disposition it took (@p col_disp: border, local block, held coordinate,
- * held at its seed by @p ifb_rule, or unobserved), which the parameter
- * inventory records.  Throws (linearity invariant) if a
- * position column ever survives into A_r; the per-station try/catch of the
- * PASS-B produce loop catches the throw.  Implemented in
- * @c ApplicationNetworkAssembly.cpp.
+ * Decides, per slot of the station's set, the disposition it takes (@p col_disp: border,
+ * local block, held coordinate, held at its seed by @p ifb_rule, or unobserved), which the
+ * parameter inventory records, and fills the slot → A_r-column map @p h2local.  A slot that no
+ * row reads with a nonzero entry is unobserved.  Each entry of @p rows then goes to its slot's
+ * border column or local column; no dense matrix of rows by slots is formed.  Throws
+ * (linearity invariant) if a position slot ever survives into A_r; the per-station try/catch
+ * of the PASS-B produce loop catches the throw.
  *
  * @param ifb_rule The run's receiver IFB rule (@c ctx.param_inventory.rx_ifb,
  *                 built once per run by @c networkRxIfbRule): which receiver
@@ -71,7 +71,7 @@ StationStep networkStationDataRows(StationBuild& build);
  * steps in the family files can call it; @p config_ is the run's configuration.
  */
 void networkSplitStation(const GnssConfig& config_, NetStation& st, const NetworkEstimator& est,
-                         const EpochMeasurement& em, const RxIfbRule& ifb_rule,
+                         const StationDataRows& rows, const RxIfbRule& ifb_rule,
                          Eigen::MatrixXd& A_s, Eigen::MatrixXd& A_r, Eigen::VectorXd& w,
                          Eigen::VectorXd& y, std::map<int, int>& h2local,
                          std::vector<ParamDisposition>& col_disp, std::vector<RowTag>& tags);
@@ -96,7 +96,7 @@ void networkSplitStation(const GnssConfig& config_, NetStation& st, const Networ
  * such a block as not checkable; the standardized residuals read zero).
  *
  * Called by @ref networkSplitStation only when @ref RxIfbRule::estimated_by_knob, inside the
- * parallel produce phase: it reads the station's parameter set and measurement update and
+ * parallel produce phase: it reads the station's parameter set and data rows and
  * writes only the station's own @p s (the rows excluded, the governed columns left with no
  * weighted row, the registration edges, and the family signals).  The set holds the columns of
  * this epoch's rows; the split has not yet decided their dispositions.
@@ -104,13 +104,13 @@ void networkSplitStation(const GnssConfig& config_, NetStation& st, const Networ
  * @param s           The station's band-5 receiver-delay state (written).
  * @param set         The station's parameter set (governed columns, satellite code-bias
  *                    columns).
- * @param em          The station's measurement update (H and the row identities
+ * @param rows        The station's data rows (their entries and the row identities
  *                    @c satellite_ids / @c signal_types).
- * @param shared_cols The H columns the split scattered into the shared border.
+ * @param shared_cols The slots the split writes into the shared border.
  * @return The data rows to exclude, ascending.
  */
 std::vector<int> rxIfbExcludedRows(RxIfbStationState& s, const StationParams& set,
-                                   const EpochMeasurement& em, const std::set<int>& shared_cols);
+                                   const StationDataRows& rows, const std::set<int>& shared_cols);
 
 // ---- End of the PASS B station steps, declarations ----
 

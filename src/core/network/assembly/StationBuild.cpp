@@ -36,7 +36,6 @@
 #include "network/assembly/StationCarry.hpp"
 #include "network/assembly/StationSplit.hpp"
 #include "network/carry/ZwdCarry.hpp"
-#include "common/EpochMeasurement.hpp"
 
 namespace GnssProcessor {
 

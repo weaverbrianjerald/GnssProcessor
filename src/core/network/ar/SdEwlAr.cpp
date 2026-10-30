@@ -800,7 +800,7 @@ void networkAppendSdEwlRows(const GnssConfig& config_, NetStation& st, const Net
     // seeding change cannot skew the frame unnoticed.  The shared PB/CB columns are looked
     // up in the station's parameter set (distinct from the estimator's border column
     // indices).  A column may be registered by another station; this station then holds no
-    // state and its x_lin contribution is 0, which matches its real rows (em.H has no such
+    // state and its x_lin contribution is 0, which matches its real rows (the rows have no such
     // column, so the innovations omit it).
 
     // Ambiguity candidates per (satellite, band), then the arcs by constellation and the rows.

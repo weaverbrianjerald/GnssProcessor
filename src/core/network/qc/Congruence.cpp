@@ -139,8 +139,8 @@ void networkCongruenceSweepStation(NetworkCongruence& acc,
         Br.row(i) = R.A_r.row(row);
         bw(i) = R.w(row);
         be(i) = resid(row);
-        // Sign: row_pos_enu is dy/d(Delta) with Delta = p_true - p_held (em.H's
-        // own position partial).  The reported quantity is the held coordinate's
+        // Sign: row_pos_enu is dy/d(Delta) with Delta = p_true - p_held (the data
+        // rows' own position partial).  The reported quantity is the held coordinate's
         // error d = p_held - p_true = -Delta, so H_B = -row_pos_enu, and a +5 cm
         // East perturbation of a held coordinate reads delta_E = +5 cm.  M, T and
         // every MDB are invariant to this sign; only delta depends on it.  See the
@@ -527,7 +527,7 @@ StationStep networkCongruenceRowGeometry(StationBuild& build) {
     const NetworkRunContext& ctx = build.ctx;
     NetStation& st = build.st;
     StationAssembly& R = build.R;
-    const EpochMeasurement& em = build.em;
+    const StationDataRows& rows = build.rows;
     // Station congruence screen.  The one thing the assembly owes it: retain each
     // data row's position partial, which networkSplitStation drops because the
     // network holds every coordinate fixed.  Off: the block below never runs and
@@ -537,28 +537,28 @@ StationStep networkCongruenceRowGeometry(StationBuild& build) {
 
     // --- Station congruence screen
     // Retain the per-row position partial that networkSplitStation just
-    // discarded, rotated into the station's local ENU frame.  This is the one
-    // place in the run where the row geometry still exists: three columns of
-    // `em.H` that the fixed-coordinate network drops by design (the linearity
-    // guard in networkSplitStation throws if one reaches A_r), so
-    // without this block a wrong held coordinate leaves no observable
+    // left out, rotated into the station's local ENU frame.  This is the one
+    // place in the run where the row geometry still exists: the entries of the
+    // rows at the three position slots, which the fixed-coordinate network drops
+    // by design (the linearity guard in networkSplitStation throws if one reaches
+    // A_r), so without this block a wrong held coordinate leaves no observable
     // footprint anywhere downstream.
     //
     // ∂y/∂δp_ENU = ∂y/∂δp_ECEF · R_{ENU→ECEF}, because δp_ECEF =
     // R_{ENU→ECEF} δp_ENU and the columns of enuToEcefMatrix are the E/N/U
     // unit vectors in ECEF.  The partial is copied as is rather than rebuilt
-    // from obs.los: `em.H` and `em.innovations` come from one linearization,
+    // from obs.los: the rows' entries and innovations come from one linearization,
     // so y ≈ H δx holds row by row for every observable the observation equation
     // can produce, and a sign convention re-derived per row type would be a
     // second source of truth that could disagree.
     //
     // Only the data rows exist at this point (every later fold, i.e. the
     // datum pins, the GLONASS anchors, the SH/GIM iono ties, the SD-EWL rows
-    // and the coupling rows, is appended), so sizing to em.H.rows() is
+    // and the coupling rows, is appended), so sizing to rows.rows() is
     // exact and the consumer's `row < row_pos_enu.rows()` test is the
     // structural bound on which rows can carry geometry.
     //
-    // Thread-safety: pure per-station read of st.ecef + em, written into this
+    // Thread-safety: pure per-station read of st.ecef + the rows, written into this
     // station's own slot.  Safe in the parallel produce phase.
     //
     // A station with no usable ECEF would rotate through a meaningless
@@ -566,14 +566,14 @@ StationStep networkCongruenceRowGeometry(StationBuild& build) {
     // rows in `no_geom_rows` and reports the station as having no geometry.
     // A mis-rotated Jacobian would attribute a real offset to the wrong
     // direction.
-    if (!(congruence_rows && em.H.rows() > 0 && st.ecef.norm() > 1.0)) return StationStep::Next;
+    if (!(congruence_rows && rows.rows() > 0 && st.ecef.norm() > 1.0)) return StationStep::Next;
     const Eigen::Index pos_i = static_cast<Eigen::Index>(st.params.position[0]);
-    if (pos_i >= 0 && pos_i + 2 < em.H.cols()) {
+    if (pos_i >= 0 && pos_i + 2 < static_cast<Eigen::Index>(rows.n_slots)) {
         const Coordinates::Llh llh = Coordinates::ecefToLlh(st.ecef);
         const Eigen::Matrix3d R_enu2ecef =
             Coordinates::enuToEcefMatrix(llh.lat_rad, llh.lon_rad);
         R.row_pos_enu.noalias() =
-            em.H.middleCols(pos_i, 3) * R_enu2ecef;
+            slotColumns(rows, static_cast<int>(pos_i), 3) * R_enu2ecef;
     }
     return StationStep::Next;
 }

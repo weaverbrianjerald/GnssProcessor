@@ -16,7 +16,7 @@
 #include <tuple>
 #include <vector>
 #include <Eigen/Core>
-#include "common/EpochMeasurement.hpp"
+#include "network/assembly/StationRows.hpp"   // StationDataRows
 #include "network/assembly/ContributionKind.hpp"
 #include "network/assembly/Contributions.hpp"
 #include "network/carry/Coupling.hpp"
@@ -131,7 +131,7 @@ struct StationBuild {
     NetStation&      st;  ///< Its parameter set and row inputs.
     StationAssembly& R;   ///< Its slot, asm_res[i].
     // ---- what one step hands a later one ----
-    EpochMeasurement em;  ///< The measurement update (data_rows writes, congruence_geometry reads).
+    StationDataRows  rows;  ///< The data rows (data_rows writes; the split and congruence_geometry read).
     Eigen::VectorXd  post_state;                ///< The station's state vector after the update (postUpdateState).
     bool             post_state_ready{false};   ///< True once post_state holds that copy.
 

@@ -501,12 +501,12 @@ TEST(StationBirthTest, TheAdmissionAndTheRowLoopAgreeOnTheStoredGeometry) {
         EXPECT_EQ(f.set.shared.sat_clock.count(satOf("G05")), 1u) << gate.name;
         for (const auto& kv : f.set.shared.sat_phase_bias) EXPECT_NE(kv.first.sat, satOf("G12")) << gate.name;
         // The row loop drops the same satellite, so no admitted column is left without a row.
-        const EpochMeasurement em = networkStationRows(c, f.set, obs);
-        EXPECT_EQ(em.satellite_ids.size(), 8u) << gate.name;   // four signals of each of two satellites
-        EXPECT_EQ(std::count(em.satellite_ids.begin(), em.satellite_ids.end(), std::string("G12")), 0) << gate.name;
+        const StationDataRows rows = networkStationRows(c, f.set, obs);
+        EXPECT_EQ(rows.satellite_ids.size(), 8u) << gate.name;   // four signals of each of two satellites
+        EXPECT_EQ(std::count(rows.satellite_ids.begin(), rows.satellite_ids.end(), std::string("G12")), 0) << gate.name;
         for (const auto& kv : f.set.shared.sat_clock) {
             bool written = false;
-            for (Eigen::Index r = 0; r < em.H.rows(); ++r) written = written || em.H(r, kv.second) != 0.0;
+            for (Eigen::Index r = 0; r < rows.rows(); ++r) written = written || rowPartial(rows, r, kv.second) != 0.0;
             EXPECT_TRUE(written) << gate.name << " " << kv.first.str();
         }
     }
@@ -520,7 +520,7 @@ namespace {
 
 /// The rows of a station, after its births and its admission, over a configuration with the
 /// given members of the estimation object.
-EpochMeasurement rowsUnder(const std::string& estimation_extra, StationParams* set_out = nullptr) {
+StationDataRows rowsUnder(const std::string& estimation_extra, StationParams* set_out = nullptr) {
     BirthOptions o;
     o.estimation_extra = estimation_extra;
     BirthFixture f(o);
@@ -528,20 +528,22 @@ EpochMeasurement rowsUnder(const std::string& estimation_extra, StationParams* s
     const std::vector<PppObservation> obs = f.epoch(0);
     networkBirthLocalStates(c, f.set, obs);
     networkAdmitSharedStates(c, f.set, obs, {}, nullptr);
-    EpochMeasurement em = networkStationRows(c, f.set, obs);
+    StationDataRows rows = networkStationRows(c, f.set, obs);
     if (set_out != nullptr) *set_out = f.set;
-    return em;
+    return rows;
 }
 
 /// Whether two row blocks are the same bit for bit.
-void expectSameRows(const EpochMeasurement& a, const EpochMeasurement& b) {
+void expectSameRows(const StationDataRows& a, const StationDataRows& b) {
     ASSERT_EQ(a.innovations.size(), b.innovations.size());
-    ASSERT_EQ(a.H.rows(), b.H.rows());
-    ASSERT_EQ(a.H.cols(), b.H.cols());
-    for (Eigen::Index r = 0; r < a.H.rows(); ++r) {
+    const Eigen::MatrixXd Ha = denseJacobian(a);
+    const Eigen::MatrixXd Hb = denseJacobian(b);
+    ASSERT_EQ(Ha.rows(), Hb.rows());
+    ASSERT_EQ(Ha.cols(), Hb.cols());
+    for (Eigen::Index r = 0; r < Ha.rows(); ++r) {
         EXPECT_EQ(a.innovations(r), b.innovations(r)) << r;
         EXPECT_EQ(a.R_v(r), b.R_v(r)) << r;
-        for (Eigen::Index k = 0; k < a.H.cols(); ++k) EXPECT_EQ(a.H(r, k), b.H(r, k)) << r << "," << k;
+        for (Eigen::Index k = 0; k < Ha.cols(); ++k) EXPECT_EQ(Ha(r, k), Hb(r, k)) << r << "," << k;
     }
     EXPECT_EQ(a.satellite_ids, b.satellite_ids);
     EXPECT_EQ(a.signal_types, b.signal_types);
@@ -551,8 +553,8 @@ void expectSameRows(const EpochMeasurement& a, const EpochMeasurement& b) {
 
 TEST(StationBirthTest, ANetworkStationHasOneAmbiguityPerBandWhateverTheAmbiguityBasisSays) {
     StationParams per_band_set, nlwl_set;
-    const EpochMeasurement per_band = rowsUnder("", &per_band_set);
-    const EpochMeasurement nlwl = rowsUnder(R"(, "state_ambiguity_basis": "nl_wl")", &nlwl_set);
+    const StationDataRows per_band = rowsUnder("", &per_band_set);
+    const StationDataRows nlwl = rowsUnder(R"(, "state_ambiguity_basis": "nl_wl")", &nlwl_set);
 
     BirthOptions o;
     o.estimation_extra = R"(, "state_ambiguity_basis": "nl_wl")";
@@ -568,8 +570,8 @@ TEST(StationBirthTest, ANetworkStationHasOneAmbiguityPerBandWhateverTheAmbiguity
 }
 
 TEST(StationBirthTest, ANetworkStationIgnoresTheSingleReceiverPhaseClockAndGradients) {
-    const EpochMeasurement plain = rowsUnder("");
-    const EpochMeasurement flagged = rowsUnder(
+    const StationDataRows plain = rowsUnder("");
+    const StationDataRows flagged = rowsUnder(
         R"(, "estimate_phase_clock": true, "estimate_tropo_gradients": true)");
     EXPECT_EQ(flagged.innovations.size(), 12);
     expectSameRows(plain, flagged);

@@ -16,6 +16,7 @@
 
 #include <gtest/gtest.h>
 
+#include "common/EpochMeasurement.hpp"
 #include "common/GnssIdentity.hpp"
 #include "common/ParamRef.hpp"
 #include "logging/LogManager.hpp"
@@ -118,8 +119,10 @@ int decompositionLines(const std::vector<std::string>& lines) {
 }
 
 /// Every row of @p em has its decomposition line in @p lines, ahead of the row's own trace
-/// line, and the line's innovation is the row's.
-void expectLineForEveryRow(const std::vector<std::string>& lines, const EpochMeasurement& em) {
+/// line, and the line's innovation is the row's.  @p em is the single-receiver model's update
+/// or a network station's data rows: both name their rows the same way.
+template <class Rows>
+void expectLineForEveryRow(const std::vector<std::string>& lines, const Rows& em) {
     ASSERT_GT(em.innovations.size(), 0);
     for (Eigen::Index r = 0; r < em.innovations.size(); ++r) {
         const std::string& sat = em.satellite_ids[static_cast<std::size_t>(r)];
@@ -139,7 +142,7 @@ void expectLineForEveryRow(const std::vector<std::string>& lines, const EpochMea
 /// One network station's epoch: births, admission, then the rows, with the receiver clock and
 /// the ionosphere of G05 set to known linearization points.
 struct StationEpochRows {
-    EpochMeasurement rows;
+    StationDataRows  rows;
     StationParams    set;
     std::string      text;
 };
@@ -206,13 +209,15 @@ TEST(RowTraceTest, TheTraceLevelChangesNoRowAndInfoLevelWritesNothing) {
     EXPECT_FALSE(has(quiet.text, "Meas "));
 
     ASSERT_EQ(traced.rows.innovations.size(), quiet.rows.innovations.size());
-    ASSERT_EQ(traced.rows.H.rows(), quiet.rows.H.rows());
-    ASSERT_EQ(traced.rows.H.cols(), quiet.rows.H.cols());
-    for (Eigen::Index r = 0; r < traced.rows.H.rows(); ++r) {
+    const Eigen::MatrixXd Ht = denseJacobian(traced.rows);
+    const Eigen::MatrixXd Hq = denseJacobian(quiet.rows);
+    ASSERT_EQ(Ht.rows(), Hq.rows());
+    ASSERT_EQ(Ht.cols(), Hq.cols());
+    for (Eigen::Index r = 0; r < Ht.rows(); ++r) {
         EXPECT_EQ(traced.rows.innovations(r), quiet.rows.innovations(r)) << r;
         EXPECT_EQ(traced.rows.R_v(r), quiet.rows.R_v(r)) << r;
-        for (Eigen::Index k = 0; k < traced.rows.H.cols(); ++k)
-            EXPECT_EQ(traced.rows.H(r, k), quiet.rows.H(r, k)) << r << "," << k;
+        for (Eigen::Index k = 0; k < Ht.cols(); ++k)
+            EXPECT_EQ(Ht(r, k), Hq(r, k)) << r << "," << k;
     }
     EXPECT_EQ(traced.rows.satellite_ids, quiet.rows.satellite_ids);
     EXPECT_EQ(traced.rows.signal_types, quiet.rows.signal_types);

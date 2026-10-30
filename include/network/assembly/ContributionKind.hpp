@@ -40,7 +40,7 @@ namespace GnssProcessor {
      * line instead of passing as an observation row.
      */
     enum class ContributionKind : std::uint8_t {
-        // --- Station data rows: the split's rows [0, em.H.rows()) ---------------------
+        // --- Station data rows: the split's rows [0, rows.rows()) ---------------------
         DataCode = 0,             ///< Code rows of the latched code signal.
         DataCodeCompanion,        ///< Code rows routed through a receiver inter-signal state: the second code channel's companion rows and its fallback rows (an allow-listed band-1 code that arrived without the canonical code beside it).
         DataPhase,                ///< Phase rows of the latched phase signal.
