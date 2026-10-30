@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Permanent lint of the network producer's epoch function (card NOM3 step EP1, checks V0, V4, V10, V11)
-and of the entity-table writers (check V12).
+"""Permanent lint of the network producer's epoch function (card NOM3 step EP1, checks V0, V4, V10, V11),
+of the entity-table writers (check V12) and of the station parameter set's ownership (check V13).
 
     python scripts/nom_epoch_lint.py [--tree DIR] [--partial] [--presolve-writer {outputs,epoch}]
 
@@ -100,6 +100,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from nom_cpp import (FileIndex, Ref, Resolver, Scopes, Tokens, calls_in, match_angle, reading_problems,  # noqa: E402
                      statements, strip_parens)
 from cpp_lex import strip_comments  # noqa: E402
+import nom_cpp  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 EPOCH_CPP = "src/core/network/driver/ApplicationNetworkEpoch.cpp"
@@ -1806,6 +1807,34 @@ def check_v12(tree):
                       f"{n['parameter']} through a parameter, {n['unbound']} unbound)")
 
 
+# V13: the network owns its station parameter set
+USER_SIDE_NAMES = ("StateManager", "MeasurementModel", "StateInitializer", "EpochMeasurement")
+
+
+def check_v13(tree):
+    """(problems, info): no network file (src/core/network, include/network) names a class of the
+    single-receiver state outside its comments: StateManager, MeasurementModel, StateInitializer,
+    nor the dense EpochMeasurement.  A network station's columns are its own parameter set
+    (network/state/StationParams.hpp, card NOM step N6) and its rows are sparse
+    (StationDataRows, step N6f, card NOM5); a name back in the network tree is the borrowed
+    state or the dense matrix this check keeps out."""
+    problems, n = [], 0
+    for path in tree.files("src/core/network", "include/network"):
+        if not path.endswith((".cpp", ".hpp", ".h")):
+            continue
+        raw = tree.read(path)
+        if raw is None:
+            continue
+        n += 1
+        if not any(name in raw for name in USER_SIDE_NAMES):
+            continue
+        for t in nom_cpp.lex(raw):
+            if t.kind == "id" and t.text in USER_SIDE_NAMES:
+                problems.append(f"{path}:{t.line}: names {t.text}")
+    return problems, (f"{n} network files; none names {', '.join(USER_SIDE_NAMES)} outside comments"
+                      if not problems else f"{n} network files")
+
+
 def run(tree, out=print, partial=False, presolve_writer="outputs"):
     """The three checks on @p tree; 0 pass, 1 a check fails, 2 no epoch function or type.
     @p partial: the tree is part way through the conversion (steps EP1a-1 and EP1b before
@@ -1843,8 +1872,11 @@ def run(tree, out=print, partial=False, presolve_writer="outputs"):
     v12_problems, v12_info = check_v12(tree)
     lint.problems["V12"].extend(v12_problems)
     lint.info["V12"].append(v12_info)
+    v13_problems, v13_info = check_v13(tree)
+    lint.problems["V13"].extend(v13_problems)
+    lint.info["V13"].append(v13_info)
     bad = 0
-    for chk in ("V0", "V4", "V10", "V11", "V12"):
+    for chk in ("V0", "V4", "V10", "V11", "V12", "V13"):
         probs = lint.problems[chk]
         bad += len(probs)
         st = "n/a" if chk == "V11" and card else ("pass" if not probs else "FAIL")

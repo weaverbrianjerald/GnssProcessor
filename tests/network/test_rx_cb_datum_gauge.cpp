@@ -27,7 +27,7 @@
  *
  * The harvest is called through the test run fixture with `carry_warm = false`
  * and no armed carry knobs, so every walk ahead of the census is gated off and neither the NetworkEstimator
- * nor any station's StateManager is dereferenced; the toy fixture below needs
+ * nor any station's parameter set is read; the toy fixture below needs
  * no solvable network.
  */
 
@@ -128,7 +128,7 @@ std::size_t runCensus(const GnssConfig& cfg,
     e.clock = EpochClock{};   // carry_warm false, pl_now_s 0
 
     // carry_warm = false, and no carry knob is armed, so every walk ahead of the
-    // census short-circuits before touching the estimator or any station's StateManager.
+    // census short-circuits before touching the estimator or any station's parameter set.
     networkHarvestLocalCarries(fx.run(), e, e.events);
     return fx.ctx().counters.n_rxcb_gauges;
 }

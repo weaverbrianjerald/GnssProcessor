@@ -1,9 +1,10 @@
 # 8 · Adding a network station parameter
 
-**Goal:** a recipe for a new per-station state of the network producer, for example a
-horizontal tropospheric gradient (north and east components). The per-station zenith wet
-delay (ZWD) is the worked example: each step names the file and the function or table row
-to copy. Page 7 (network tour) comes first.
+**Goal:** a recipe for a new per-station state of the network producer. The horizontal
+troposphere gradient (north and east components, `network.estimate_tropo_gradients`) is the
+worked example: it was added this way (card NOM5 step N6h), and each step names the file and the
+function or table row it took. The per-station zenith wet delay (ZWD) is the template for a
+carried parameter. Page 7 (network tour) comes first.
 
 Marks: **REQUIRED** (every new station parameter needs the step); **WHEN CARRIED** (needed
 once the parameter is carried from one epoch to the next, or adds rows of its own; a first
@@ -12,23 +13,23 @@ same mechanism is needed).
 
 In both golden configurations the ZWD is not carried: it is one column of the station's
 local block, estimated afresh every epoch (`network.carry_zwd` is off, ledger verdict
-KEEP_OFF). A first version of a new parameter follows that posture and needs the REQUIRED
+KEEP_OFF). The gradient follows that posture (two uncarried columns) and needed the REQUIRED
 steps only.
 
-| # | Step | Where | Mark |
+| # | Step | Where (the gradient's edits) | Mark |
 | --- | --- | --- | --- |
-| 1 | State, birth, observation partial | `StationParams`, `LocalBirth.cpp`, `ObservationEquation.cpp` | REQUIRED |
-| 2 | Declared treatment: kind, inventory class | `NetworkParamRegistry`, `NetworkParamInventory` | REQUIRED |
-| 3 | Station split, local block column | `StationSplit.cpp`, `StationBuild.cpp` | REQUIRED, no edit by default |
+| 1 | Identity, state, observation partial | `ParamRef` kind and forms; the `StationParams` field; the equation's term (already there) | REQUIRED |
+| 2 | Declared treatment: registry, inventory, contribution sets, labels | `ParamRegistry.cpp`, `ParamInventory.cpp`, `Contributions.cpp`, `StationBlock.cpp`, `RedundancyCensus.cpp` | REQUIRED |
+| 3 | Station split, local block column | `StationSplit.cpp` | REQUIRED, no edit by default |
 | 4 | Carry: inject, harvest, kind, responses | `ZwdCarry.cpp`, `LocalCarryHarvest.cpp` | WHEN CARRIED |
-| 5 | Cross-epoch state, snapshot, fingerprint | `Entities.*`, snapshot files | WHEN CARRIED |
-| 6 | Configuration and ledger | `GnssConfigLoadNetwork.cpp`, ledger JSON | REQUIRED |
-| 7 | Run-end report | `RunEnd.cpp` | REQUIRED with a knob |
+| 5 | Fingerprint; cross-epoch state and snapshot | `SnapshotFingerprint.cpp`; `Entities.*`, snapshot files | fingerprint REQUIRED with a knob; the rest WHEN CARRIED |
+| 6 | Configuration and ledger | `GnssConfigTypes.hpp`, `GnssConfigLoadNetwork.cpp`, `NetworkKnobs`, ledger JSON | REQUIRED |
+| 7 | Run-end report | the subsystem's report | REQUIRED with a knob |
 | 8 | Checks before a commit | scripts, tests | REQUIRED |
 
 ---
 
-## 1. The station set and the observation equation (REQUIRED)
+## 1. Identity, state and observation partial (REQUIRED)
 
 `buildStation` (`src\core\network\driver\ApplicationNetworkSetup.cpp`) gives each station a
 `StationParams` set (`startStationParams`), a `PppModel` and the row inputs (`StationRowInputs`,
@@ -36,66 +37,73 @@ steps only.
 linearization point from the set. It runs no station Kalman filter and writes no solution back,
 so `filter.process_noise.*` does not apply; time behaviour comes from the network's carry.
 
-**State.** The ZWD is a fixed core column: `startStationParams`
-(`src\core\network\state\StationParams.cpp`) lays it out, `StationParams::zwd` holds its
-slot, and it has no string key. A fixed column needs a field of `StationParams`, a line in
-`startStationParams` and a case in `addParam` and in `findParam`. A keyed state (ambiguity,
-per-satellite ionosphere) instead needs a typed map in the set with the same two cases, a seed
-function in `include\measurement\Seeds.hpp` when it is born from data, and a birth: a local
-column in `networkBirthLocalStates` (`src\core\network\assembly\LocalBirth.cpp`), a shared
-one in `networkAdmitSharedStates` (`SharedAdmission.cpp`). The births fix the order of the
-columns, which the local block factorizes in (page 7). A trace that prints the parameter as
-text takes it from `userKey()` (`UserParamView.cpp`).
+**Identity.** A parameter is named by a `ParamRef` (`include\common\ParamRef.hpp`): a
+`NetworkParamKind`, appended at the end of the enumeration with `kNetworkParamKindCount` raised
+(at most 32 kinds), and a `ParamForm` when the kind has components. The gradient is
+`NetworkParamKind::TropoGradient` with the forms `North` and `East`. In
+`src\core\common\ParamRef.cpp` it has its factory (`gradientRef(bool north)`), its names
+(`paramKindName` gives "tropo_gradient", `paramFormName` "north" and "east") and a case in
+`paramInstanceOf` (no constellation, as the ZWD). The identity is shared with the
+single-receiver filter: `UserParamView::find` (`src\core\measurement\UserParamView.cpp`) answers
+for it from the `StateManager`, so one `ParamRef` names the producer's column and the consumer's
+state.
+
+**State.** The set holds the slot. A fixed column is a field of `StationParams`
+(`include\network\state\StationParams.hpp`; the gradient's `std::array<int, 2> gradient`, as
+`zwd` is) with a case in `addParam` and in `findParam` and a label in `stateLabel`
+(`src\core\network\state\StationParams.cpp`; "TGRAD_N", "TGRAD_E"). `startStationParams` lays
+it out behind its key (the gradient after the wet delay), `isCore` keeps it from removal and
+`removeSlots` renumbers it. A keyed state (ambiguity, per-satellite ionosphere) instead needs a
+typed map in the set with the same cases, a seed function in `include\measurement\Seeds.hpp`
+when it is born from data, and a birth: a local column in `networkBirthLocalStates`
+(`src\core\network\assembly\LocalBirth.cpp`), a shared one in `networkAdmitSharedStates`
+(`SharedAdmission.cpp`). The births fix the order of the columns, which the local block
+factorizes in (page 7).
 
 **Partial.** The observation equation (`observationEquation()` in
-`src\core\measurement\ObservationEquation.cpp`) gives the ZWD term the partial `mapping_wet`
-(`PppObservation::mf_w`) at the ZWD's slot and the product `mapping_wet * zwd` in the
-predicted observable. A new column needs the same two things: a term in that function,
-named by a `ParamRef` (`include\common\ParamRef.hpp`) and found in the set by
-`NetView::find()` (`network\assembly\StationRows.hpp`).
-The gradient has the terms already, with partials `mf_grad * cos_az` and `mf_grad * sin_az`
-(the user-side flag `estimation.estimate_tropo_gradients`, which a network run warns about and
-ignores). The set has no gradient column, so for it the recipe adds the column (above) and then
-continues at step 2.
+`src\core\measurement\ObservationEquation.cpp`) has one function per effect, and each asks the
+caller's lookup for its parameters (`NetView::find`, `network\assembly\StationRows.hpp`, on the
+network). The gradient's function, `addGradients`, writes the term
+`mf_grad * (cos(az) * g_n + sin(az) * g_e)`, so a row's entries at the two slots are
+`mf_grad * cos(az)` and `mf_grad * sin(az)`. A term whose parameter the lookup does not hold is
+left out, so the term needed no edit: it reads whichever set holds the parameter. A new effect
+is an `ObsEffect` enumerator and a function in that file, added in the order of the sum.
 
 **Default off.** Standing invariant 6 (`CLAUDE.md`): with the knob off the output is
-byte-identical, so each step tests its config value at its first line, as every row of
-`kStationBuildSteps` does.
+byte-identical. The gradient's slots exist only behind its key, so with the key off no column,
+row entry or label changes. A new kind adds one row to the run-start "Network (param model)"
+table, which lists every kind; that is a declared text change.
 
 ## 2. The declared treatment (REQUIRED)
 
 Three run-start tables describe a parameter; each needs a row.
 
-- **Registry kind** ("Network (param model)"): an enumerator of `NetworkParamKind` and
-  `kNetworkParamKindCount` in `include\common\ParamRef.hpp` (at most 32 kinds);
-  a case in `paramKindName` (`src\core\common\ParamRef.cpp`) and a block in
-  `NetworkParamRegistry::build` in
-  `src\core\network\assembly\ParamRegistry.cpp`, copied from the `Zwd` block (`estimated`,
-  `carried`, `q_rule`, `gap_horizon_s`, `route`, `source`). Uncarried: `carried` false,
-  route `NotCarried`.
-- **Inventory class** ("Network (parameters as armed)"): `paramInstanceOf`
-  (`src\core\common\ParamRef.cpp`) reads the class from the `ParamRef` (the ZWD's is kind
-  `Zwd`), and `src\core\network\assembly\ParamInventory.cpp` needs a line in
-  `paramClassLabel`. A column that no typed map of the set takes keeps its slot and is counted in
-  `StationParams::untyped`; a withheld satellite parameter whose identity cannot be typed lands on
-  the "unclassified" integrity line, which must read 0. Two components can be two `ParamForm`
-  values of one kind. The set holds the column once `addParam` (`StationParams.cpp`) puts it in
-  the typed map of its kind, and a new kind needs a map there.
+- **Registry kind** ("Network (param model)"): a block in `NetworkParamRegistry::build`
+  (`src\core\network\assembly\ParamRegistry.cpp`). The gradient's block: `estimated` from its
+  knob, `carried` false, `q_rule` None, route `NotCarried`, and the `source` text naming the key.
+  A carried kind copies the `Zwd` block (`q_rule`, `gap_horizon_s`, route).
+- **Inventory class** ("Network (parameters as armed)"): `paramInstanceOf` reads the class from
+  the `ParamRef` (kind and form), and `paramClassLabel` (`src\core\network\assembly\ParamInventory.cpp`)
+  prints it ("troposphere gradient, north"). A column that no field or typed map of the set takes
+  keeps its slot and is counted in `StationParams::untyped`; a withheld satellite parameter whose
+  identity cannot be typed lands on the "unclassified" integrity line, which must read 0.
 - **Contribution sets** ("Network (contributions as armed)"): the kind in `kCodeRow` and
-  `kPhaseRow` of `src\core\network\assembly\Contributions.cpp`, where the ZWD is in both.
+  `kPhaseRow` of `src\core\network\assembly\Contributions.cpp` (the ZWD and the gradient are in
+  both).
 
-Trace labels: `blockLabel` (`StationBlock.cpp`), `censusLabel` (`RedundancyCensus.cpp`) and
-`stateLabel` (`StationParams.cpp`, the single-receiver layout's labels, read by the RHS attribution
-and the station-drop event), each a case per kind; an unlabelled column prints positional names.
+Trace labels: `blockLabel` (`StationBlock.cpp`) and `censusLabel` (`RedundancyCensus.cpp`), a case
+per kind ("tgrad:n", "tgrad:e"); an unlabelled column prints positional names.
 
 ## 3. The station split and the local block column (REQUIRED, no edit by default)
 
-`networkSplitStation` (`src\core\network\assembly\StationSplit.cpp`) gives each column one
-disposition: position `Pinned`, shared satellite columns `EstimatedBorder`, an all-zero H
-column `Unobserved`, every other column `EstimatedLocal` (entered in `h2local`, state index
-to local column). A new core column becomes a local column with no code. Another
-disposition (held at its seed, dropped by a declared rule) is an edit; `RxIfbRule` is the
-template.
+`networkStationRows` keeps each row's Jacobian entries as (slot, value) pairs
+(`StationDataRows`), and `networkSplitStation` (`src\core\network\assembly\StationSplit.cpp`)
+gives each slot one disposition from them: position `Pinned`, shared satellite columns
+`EstimatedBorder`, a slot no row reads with a nonzero entry `Unobserved`, every other slot
+`EstimatedLocal` (entered in `h2local`, slot to local column). It then writes every entry
+straight into the shared border or the local block. A new core column becomes a local column
+with no code, as the gradient did. Another disposition (held at its seed, dropped by a declared
+rule) is an edit; `RxIfbRule` is the template.
 
 A parameter with rows or priors of its own needs a step: a function in the family's file
 and a row in `kStationBuildSteps` or `kStationCarrySteps` (`StationBuild.cpp`) with
@@ -111,7 +119,8 @@ colour; `tests\network\test_network_station_build.cpp` pins it.
 
 ## 4. The carry (WHEN CARRIED)
 
-Template: the diagonal route of `src\core\network\carry\ZwdCarry.cpp`.
+Template: the diagonal route of `src\core\network\carry\ZwdCarry.cpp`. The gradient is not
+carried; a carried gradient would take these steps with its own kind.
 
 **Inject** (PASS B, parallel): `networkZwdCarryPrior`, row `zwd` of `kStationCarrySteps`.
 Copy the gate at the first line; the column's slot from the station's set (`st.params.zwd`, a
@@ -147,9 +156,14 @@ the snapshot capture (`networkZwdRowCapture`); the coupling-row route (`buildCpl
 `Coupling.cpp`); the prior-residual hook (`prires_zwd`); `n_raim_pool_zwd_rows`;
 the shared-history note; `zwdQEff`.
 
-## 5. Cross-epoch state (WHEN CARRIED)
+## 5. Fingerprint; cross-epoch state (fingerprint REQUIRED with a knob; the rest WHEN CARRIED)
 
-A value that survives an epoch is a field of an entity-table row
+**Fingerprint.** A knob that changes what the solve estimates appends a token to the warm-resume
+fingerprint when armed (`networkSnapshotFingerprint`, `src\core\network\state\SnapshotFingerprint.cpp`),
+so a resumed run never crosses it and an unarmed run keeps its fingerprint. The gradient appends
+`tgrad:1`.
+
+**Cross-epoch state.** A value that survives an epoch is a field of an entity-table row
 (`include\network\state\Entities.hpp`, whose header is the guide): the ZWD carry is
 `std::optional<LocalCarry> zwd` in `net::StationState`, with a `FieldDecl` row in
 `kStationFields` (`src\core\network\state\Entities.cpp`) naming its persistence.
@@ -172,37 +186,57 @@ the counter struct of the writing subsystem (its own header), a base of
 
 ## 6. Configuration (REQUIRED)
 
-Pattern of `CLAUDE.md` ("Config toggles"); network keys load in
-`src\core\config\GnssConfigLoadNetwork.cpp`:
-`network_carry_zwd_ = jval<bool>(json, "network.carry_zwd", "carry_zwd", false);`
+Network keys load in `src\core\config\GnssConfigLoadNetwork.cpp`, each in the section helper of
+its kind. The gradient's key is a member of `NetworkConfig` (`estimate_tropo_gradients`,
+`include\config\GnssConfigTypes.hpp`), read in `loadNetworkSharedStateForcings_` beside
+`network.estimate_rx_extra_band_code_delay`:
+`network_config_.estimate_tropo_gradients = jval<bool>(json, "network.estimate_tropo_gradients", "", false);`
+The empty second argument means no top-level legacy spelling: a root `estimate_tropo_gradients`
+is the single-receiver flag's legacy key, and two keys must not share one spelling.
 
-1. Member `network_carry_zwd_{false}` and getter `networkCarryZwd()` with Doxygen in
-   `include\config\GnssConfig.hpp`; the loader line, default off.
+1. The member with its Doxygen and the loader line, default off.
 2. A member of `NetworkKnobs` (`include\network\state\RunContext.hpp`) set in
-   `NetworkKnobs::snapshot` (`src\core\network\driver\Knobs.cpp`); steps and registry read it.
+   `NetworkKnobs::snapshot` (`src\core\network\driver\Knobs.cpp`; the gradient's `tgrad_on`);
+   steps and the registry read it.
 3. A row in `docs\CONFIG_promotion_ledger.json` (`knob`, `verdict`, `area`, `default`,
    `why`; `UNVALIDATED` for a new default-off knob; `fingerprinted` when step 5 added a
-   term), then `python scripts\ledger_render.py`.
+   token), then `python scripts\ledger_render.py`.
 4. The goldens stay untouched: they are generated, and a knob enters them only by the
    author's decision (ledger, then `scripts\make_golden_config.py`).
 
-ZWD-SPECIFIC, skip: the `carry_zwd_in_block` interlocks and `network.trace_zwd`.
+**A parameter with a single-receiver flag.** In a network run the single-receiver layout flags
+(`estimation.estimate_tropo_gradients`, `estimate_velocity`, `estimate_phase_clock`,
+`imu.enabled`, `state_ambiguity_basis` nl_wl, `between_satellite_sd.enabled`) set only the
+closed-loop consumer's layout: the consumer is configured by a copy of the network configuration
+(`GnssConfig::deriveClosedLoopConsumerConfig`). With no consumer a flag reaches no parameter, and
+the loader refuses the configuration (`GnssConfig::validateNetworkUserLayoutFlags_`), naming the
+network key where one exists. A new parameter with such a flag puts its network key in that
+table.
 
 ## 7. The run-end report (REQUIRED with a knob)
 
-An armed knob that acted on nothing must show at run end (standing invariant 4). A report
-is `int networkXxxRunEnd(const NetworkRunEndView& v)` in the subsystem's file, gated on the
-knob; `networkZwdSeamRunEnd` (`ZwdCarry.cpp`) is a short model that warns on an armed
-knob with a zero counter. Add one row to `kNetworkRunEndReports`
-(`src\core\network\runend\RunEnd.cpp`) and raise `kNetworkRunEndReportCount`
-(`RunEnd.hpp` states the order rules). A parameter without a knob needs no row: the
-tables of step 2 print it.
+An armed knob that acted on nothing must show at run end (standing invariant 4). The gradient's
+line is a section of the parameter inventory's report (`networkTropoGradientRunEnd`,
+`src\core\network\assembly\ParamInventory.cpp`, listed in `networkParamInventoryRunEnd`): it
+reads the inventory's own tally (the station-epochs that estimated each component and that left
+it out as unobserved) and warns INERT when the key is armed and no column was estimated. A
+parameter with counters of its own writes a report `int networkXxxRunEnd(const NetworkRunEndView& v)`
+in its subsystem's file, gated on the knob (`networkZwdSeamRunEnd`, `ZwdCarry.cpp`, is a short
+model), with one row in `kNetworkRunEndReports` (`src\core\network\runend\RunEnd.cpp`) and
+`kNetworkRunEndReportCount` raised (`RunEnd.hpp` states the order rules).
+
+An instrument is optional: the gradient writes `network_tropo_gradient.csv` (the estimates and
+their datum-conditioned formal sigma, per station and epoch), a stream of `NetworkRunTraces`
+(`network\diag\RunTraces`) open exactly when the key is on, written by `networkIonoDiag` beside
+the ZWD trace.
 
 ## 8. Checks before a commit
 
 1. `scripts\vs2026_build.ps1 -Config x64-Debug`, then `build\x64-Debug\gnss_tests.exe`,
-   with tests for steps 2 to 5 (`tests\network\test_network_param_registry.cpp` and
-   `tests\network\test_network_param_inventory.cpp` as templates).
+   with tests for the steps taken (the gradient's: `tests\network\test_network_layout_flags.cpp`,
+   the layout, the rows' partials, the prune and the loader rules;
+   `tests\network\test_network_param_registry.cpp` and
+   `tests\network\test_network_param_inventory.cpp` are templates for steps 2 to 5).
 2. `python scripts\nom_epoch_lint.py` after a change to a seam signature or an entity writer.
 3. `python scripts\nom_n4_verify.py --whole` (each field declared once; Record rows complete).
 4. A row in `tests\network\test_network_epoch_contract.cpp` for a new epoch writer.
@@ -211,22 +245,31 @@ tables of step 2 print it.
    `python scripts\ledger_render.py --check`.
 6. Byte identity with the knob off: a 2 h golden arm (`scripts\rapid_arm.py`, page 7) on
    the pre-change executable (kept as a renamed copy) and on the candidate, both Release,
-   then `python scripts\nom_td_gate.py <run A> <run B> --whole`; exit 0 means identical.
+   then `python scripts\nom_td_gate.py <run A> <run B> --whole`; exit 0 means identical (a new
+   kind's run-start row is the declared exception).
 7. With the knob armed in an arm copy, the three run-start tables show the parameter
    (`estimated_local` counts, integrity lines at 0), and the run end shows non-zero counters.
 
 ## Known rough edges
 
-- **The set shares its vocabulary with the user side.** The observation equation, the seeds and
-  the receiver-bias rule are the single-receiver path's, so the network layout is fixed by
-  `startStationParams` and not by user-side flags: a network run that sets one warns at start and
-  ignores it. A parameter is still named by a `ParamRef` and printed in the traces and the
+- **The set shares its vocabulary with the user side on purpose.** The observation equation, the
+  seeds and the receiver-bias rule are one code for the producer and the single-receiver filter,
+  so a term added for one serves the other. A parameter is still printed in the traces and the
   snapshot as the user-side state key (`userKey()`), a naming contract that the trace columns and
   the snapshot records keep.
 - **The ZWD is a noisy template.** Its carry, in-block route, seam window, capture and
-  census hooks are history the golden posture does not use. `NetworkParamKind::PhaseColour`,
-  the last estimated kind in the enum, is a second template for steps 2 to 4.
-- **A gradient needs a graded decision this recipe does not make:** whether an uncarried
-  column keeps the local block well conditioned, or needs a prior.
+  census hooks are history the golden posture does not use. `NetworkParamKind::PhaseColour`
+  is a second template for steps 2 to 4, and `NetworkParamKind::TropoGradient` the template for
+  an uncarried column.
+- **Whether an uncarried column keeps the station blocks well conditioned** is a graded
+  question, not a recipe step: for the gradient it is card NOM5's gate G4, and its verdict is
+  recorded there.
+
+The gradient took edits in 5 files for step 1 (`ParamRef` and `StationParams`, header and source
+each, and `UserParamView.cpp` because the identity is shared; the equation already had the
+term), 5 for step 2, none for step 3, 1 for the fingerprint, 5 for the configuration
+(`GnssConfigTypes.hpp`, `GnssConfigLoadNetwork.cpp`, `RunContext.hpp`, `Knobs.cpp`, the ledger
+JSON) and a section of `ParamInventory.cpp` for the run-end line, plus the optional trace
+(`RunTraces` header and source, `IonoDiag.cpp`) and one test file.
 
 Next: [7 · Network tour](07_network_tour.md), or the network task at hand.
