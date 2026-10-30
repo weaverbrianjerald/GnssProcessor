@@ -456,7 +456,7 @@ MsmDecodeResult decodeMsmImpl(
         if (sig_mask & (1u << (31 - b))) {
             SignalEntry sg;
             sg.signal_id = b + 1;
-            sg.suffix    = RtcmSignalMap::toRinexSuffix(sys->system, sg.signal_id);
+            sg.suffix    = RtcmSignalMap::msmToRinexSuffix(sys->system, sg.signal_id);
             sigs.push_back(std::move(sg));
         }
     }

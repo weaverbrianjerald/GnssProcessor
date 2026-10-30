@@ -320,7 +320,8 @@ void decodeCodeBiasBody(RtcmBitReader& r, const SystemDescriptor& sys,
         const int    sig_id = static_cast<int>(r.u(5));
         const double bias_m = r.s(14) * 0.01;           // 0.01 m
         if (!r.ok()) return;
-        const std::string suffix = RtcmSignalMap::toRinexSuffix(sys.system, sig_id);
+        // SSR bias numbering, which differs from the MSM one (RtcmSignalMap.hpp).
+        const std::string suffix = RtcmSignalMap::ssrToRinexSuffix(sys.system, sig_id);
         if (!suffix.empty()) {
             cb.bias_per_signal["C" + suffix] = bias_m;
         }
@@ -385,7 +386,8 @@ void decodePhaseBiasBody(RtcmBitReader& r, const SystemDescriptor& sys,
         const int    disc        = static_cast<int>(r.u(4));
         const double bias_m      = r.s(20) * 1e-4;             // 0.1 mm
         if (!r.ok()) return;
-        const std::string suffix = RtcmSignalMap::toRinexSuffix(sys.system, sig_id);
+        // SSR bias numbering, which differs from the MSM one (RtcmSignalMap.hpp).
+        const std::string suffix = RtcmSignalMap::ssrToRinexSuffix(sys.system, sig_id);
         if (suffix.empty()) continue;
         SsrPhaseBiasEntry e;
         e.bias_m                = bias_m;

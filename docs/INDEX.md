@@ -423,6 +423,10 @@ Program card on this topic (indexed in [refound/CARDS.md](refound/CARDS.md)):
 normals (open, 2026-10-18: loop 5.3 and 3.7 times the GPS-only loop; the sparse formation behind a default-off key
 shortens the field loop 13.3 % and the sim loop 10.6 % at identical output; arming and two further optimizations owed).
 
+[CVF](refound/CVF_conditional_variance_frame_2026-10-29.md), optimization 2 of card NETCOST: the border-known
+variance read directly and one datum-frame covariance per solve (closed, 2026-10-29: identical on every gate, field golden
+loop 12.8 to 13.5 % shorter, merged into main).
+
 [PES](refound/PES_parallel_epoch_stages_2026-10-29.md), the sequential stages of the network epoch run in parallel at
 identical output (open, 2026-10-29: pre-registered; each change behind its own default-off key).
 
@@ -433,6 +437,7 @@ identical output (open, 2026-10-29: pre-registered; each change behind its own d
 | [INAV-ODD](cards/realtime/INAV-ODD-PAGE.md) | live E23 poisoning: SBF I/NAV odd-page data read 6 bits late (orbit off up to ~300 m); fixed, tested on the receiver's GALNav | closed | 2026-10-23 |
 | [EPH-JUMP](cards/realtime/EPH-JUMP-RESEED.md) | re-seed a satellite whose broadcast record change moves its range > 10 m: BUILT default OFF; 6 h armed replay byte-identical, healthy changes <= 0.83 m; ungraded on a real jump | closed | 2026-10-23 |
 | [SSR-PB-HDR](cards/realtime/SSR-PB-HEADER.md) | SSR phase-bias messages read with the header's two consistency bits per satellite: every block after the first misaligned, the live coverage ramp and resets were artifacts; fixed, unit-tested; live after the fix 99.9 % coverage, 0 resets (28 before) | closed | 2026-10-29 |
+| [SSR-SIG-ID](cards/realtime/SSR-SIGNAL-ID.md) | SSR bias signal ids read through the MSM observation table: only Galileo E1C reached its own signal; fixed, unit-tested; live AR candidates on GPS and Galileo, but 0 fixes in a 30-minute session (floats carry no integer information, cause open) | closed | 2026-10-29 |
 
 Standing documents (not split this pass):
 
