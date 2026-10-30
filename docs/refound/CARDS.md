@@ -270,3 +270,9 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   gate had the same defect). Gate off: byte-identical on 2 h field and sim arms. Gate on at 120 epochs, 2 h field: 27 flags
   held on 11 epochs (19 arcs), the lift at 62.5 min, 3 of the 4 refloats after it on arcs held before it. Nothing armed;
   ledger verdicts unchanged.
+- [NOM5](NOM5_station_parameter_set_tail_2026-10-30.md): open, 2026-10-30: card NOM step N6's remaining steps, pre-registered.
+  N6f direct assembly (no dense Jacobian on the network, byte-identical), N6g the seeds on the whole equation
+  (`estimation.seed_full_equation`, default off), N6h a user layout flag that reaches no parameter refused at load and
+  `network.estimate_tropo_gradients` (default off) as the first station parameter added through the set alone, N6j the
+  close. Finding at pre-registration: the closed-loop consumer's configuration is a copy of the network's, so the
+  four user layout flags still set the consumer's layout; the refusal is narrowed to runs with no consumer.
