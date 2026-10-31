@@ -97,6 +97,12 @@ ARMS = {
             "A0 with both emission holds off"),
     "A0f": (SLIP_SET + SEARCH_LOG + IRD_TRACES + BUNDLE_A0
             + ["network.phase_datum_eq34_rpb_prior_sigma_m=0"], "A0 with the RPB floor off"),
+    # The bisection of the stop (card IRDB section 4): bundle A0 less one group.
+    "A0hb": (SLIP_SET + SEARCH_LOG + IRD_TRACES + CHAIN_ON + FLOAT_REPIN_OFF
+             + ["network.phase_datum_min_stations=1"],
+             "A0 with the held machinery as the golden arms it (min_stations stays 1)"),
+    "R1C": (SLIP_SET + SEARCH_LOG + IRD_TRACES + CHAIN_ON + FLOAT_REPIN_OFF,
+            "R1 + the chain (the golden's held machinery and min_stations 2 kept)"),
     "eq34": (["network.phase_datum_eq34=true", "network.phase_datum_eq34_carry_shift=true"],
              "card PRM's eq34 posture (scripts/prm_ab.py), the census arms"),
     "eq34c": (["network.phase_datum_eq34=true", "network.phase_datum_eq34_carry_shift=true",
@@ -320,6 +326,14 @@ def selftest():
     f = compose("A0f", "microscope", knob="network.phase_datum_eq34_rpb_q_m2s=0")
     chk("network.sim_zero_iono_sigma_m=0.001" in f and f[-1] == "network.phase_datum_eq34_rpb_q_m2s=0",
         "the microscope bed adds the zero-ionosphere rows; the knob under test is last")
+    a0 = set(compose("A0", "microscope"))
+    held = set(HELD_OFF) - {"network.phase_datum_min_stations=1"}
+    chk(a0 - set(compose("A0hb", "microscope")) == held
+        and set(compose("A0hb", "microscope")) <= a0,
+        "A0hb is A0 less the held knobs, min_stations kept at 1")
+    chk(a0 - set(compose("R1C", "microscope")) == set(HELD_OFF)
+        and set(compose("R1C", "microscope")) - set(compose("R1", "microscope"))
+        == set(CHAIN_ON + FLOAT_REPIN_OFF), "R1C is R1 + the chain, A0 less every held knob")
     o = compose("A0", "r2", knob="network.phase_datum_min_stations=2")
     chk(o.count("network.phase_datum_min_stations=2") == 1
         and "network.phase_datum_min_stations=1" not in o, "the knob under test overrides the arm")
