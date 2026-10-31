@@ -5,14 +5,14 @@
 - **id:** IRDB
 - **topic:** network-vehicle
 - **status:** open
-- **summary:** Card IRD's continuation (that file nears the 60 KB bar), from step IRD-1 on; the derivation, the event table, the arms, the knobs, the graders, the bars, the decision rules and the frozen gates stay in card IRD sections 3 to 11, the re-registered control in its section 13. IRD-1 LANDED, measure-only and default off (section 2): the chain's event table, edge and chord traces, CHAIN events, pre-hold and receiver phase-bias traces and the run-end frame census; the consumer's shared AR builder, observe-mode integer search, fix traces and extended gate. Every gate of card IRD section 11 passes, with `rt_seam_verify.py` not run (retired) and the retired lineage graded same-build. The A0 chain on rung 3c sits off the integers: 144 re-hosts in 2 h, 128 of them stepped by a fraction and none certified; chord table 4.1 % determined; receiver phase-bias time-link NEES 2.58. On truth wires the consumer fixes 2 506 settled integers per bed, 0 wrong; the golden wire with the gate off fixes wide lanes 75 % wrong, and the gate admits nothing. IRD-2 may proceed.
+- **summary:** Card IRD's continuation (that file nears the 60 KB bar), from step IRD-1 on; the derivation, the event table, the arms, the knobs, the graders, the bars, the decision rules and the frozen gates stay in card IRD sections 3 to 11, the re-registered control in its section 13. IRD-1 LANDED, measure-only and default off (section 2): the chain's event table, edge and chord traces, CHAIN events, pre-hold and receiver phase-bias traces and the run-end frame census; the consumer's shared AR builder, observe-mode integer search, fix traces and extended gate. Every gate of card IRD section 11 passes, with `rt_seam_verify.py` not run (retired) and the retired lineage graded same-build. The A0 chain on rung 3c sits off the integers: 144 re-hosts in 2 h, 128 of them stepped by a fraction and none certified; chord table 4.1 % determined; receiver phase-bias time-link NEES 2.58. On truth wires the consumer fixes 2 506 settled integers per bed, 0 wrong; the golden wire with the gate off fixes wide lanes 75 % wrong, and the gate admits nothing. IRD-2 RAN (section 3) and the card STOPPED by its static-algebra stop rule: on the microscope, chords event-free for 30 min read p50 0.22 cycle against 0.02, because the producer's double differences under bundle A0 drift off the integers after the first half hour on every bed, where R1's are exact from 20 min; the chain's frame and its event steps are not the cause. The hold is emission-only; D0 keeps the RPB floor (floor-off and birth-only both fail) and records the GF-datum defect (receiver DCB sd 7 to 10 m); seed-round is not adopted; D-N fires (IRD-5b owed); the lattice and would-be certification rules fail (IRD-5 not built; sigma scale 3, still wrong); the W bars are frozen at 1.25 F, above the null; the nine fixtures land on their tree edges. Nothing from IRD-3 on is built until the cause is closed.
 - **source:** [IRD](IRD_integer_recovering_datum_2026-10-13.md) sections 5 (the event table), 7 (the IRD-1 knobs and owners), 8 (the graders), 11 (the IRD-1 gates) and 13 (the re-base onto `a02ccfb`)
-- **knobs / posture:** IRD-1 adds `network.trace_chain_datum`, `network.trace_pb_prehold`, `network.trace_rpb_states` and the consumer's `network.closed_loop.ar_observe`, `.trace_ar_fixes` (TRACE rows), `.ar_search`, `.ar_determined_sigma_cyc` (PARAM rows); extends `network.require_signal_integer_for_ar` in the observe search; every one default off, no golden change
-- **dates in the text:** 2026-10-30
-- **hashes / run dirs:** branch `claude/distracted-germain-d93ac2` (producer `5302bff`, consumer `f703a63` merged at `e35ee4a`, header refactor `a65e4c7`); base exe `D:/GnssProcessorSupport/gates/exe/x64-Release/gnss_processor_ird1base.exe` (local main `5127429`, sha256[:16] `d0b4ee505807102b`), IRD-1 exe `gnss_processor_ird1f.exe` (`a65e4c7`, sha256[:16] `1cc358ebd6bd3a98`, md5 `f87b1e7caa3737dfaccab47fe44b1f65`); arms under `D:/GnssProcessorSupport/runs_nom/`: base `_rap_ird1b_{gs,gf,r3c,gd2}`, final `_rap_ird1g_{gs,gf,r3c,gd2,a0_r3c,a0q_r3c}`, the producer-half pre-checks `_rap_ird1p_{gs,r3c}` and `_rap_ird1_{a0,a0q}_r3c`, observe `_rap_ird1_obs_gs`, replays `_rap_ird1_tw_{r1c,r2,r3c}` and `_rap_ird1_gw_{on,off}`, truth wires `_ird1_truthwire_{r2,r3c}`; real-time captures `runs/rtseam_goldens/{ird1base,ird1f}`
-- **gates (frozen at pre-registration):** card IRD section 11, IRD-1
+- **knobs / posture:** IRD-1 adds `network.trace_chain_datum`, `network.trace_pb_prehold`, `network.trace_rpb_states` and the consumer's `network.closed_loop.ar_observe`, `.trace_ar_fixes` (TRACE rows), `.ar_search`, `.ar_determined_sigma_cyc` (PARAM rows); extends `network.require_signal_integer_for_ar` in the observe search; every one default off, no golden change. IRD-2 adds `network.phase_datum_eq34_rpb_prior_birth_only` (KEEP_OFF after decision D0) and raises the observatory's certification sigma scale to 3 (the frozen certification rule); no golden change
+- **dates in the text:** 2026-10-30, 2026-10-31
+- **hashes / run dirs:** branch `claude/distracted-germain-d93ac2` (producer `5302bff`, consumer `f703a63` merged at `e35ee4a`, header refactor `a65e4c7`); base exe `D:/GnssProcessorSupport/gates/exe/x64-Release/gnss_processor_ird1base.exe` (local main `5127429`, sha256[:16] `d0b4ee505807102b`), IRD-1 exe `gnss_processor_ird1f.exe` (`a65e4c7`, sha256[:16] `1cc358ebd6bd3a98`, md5 `f87b1e7caa3737dfaccab47fe44b1f65`); arms under `D:/GnssProcessorSupport/runs_nom/`: base `_rap_ird1b_{gs,gf,r3c,gd2}`, final `_rap_ird1g_{gs,gf,r3c,gd2,a0_r3c,a0q_r3c}`, the producer-half pre-checks `_rap_ird1p_{gs,r3c}` and `_rap_ird1_{a0,a0q}_r3c`, observe `_rap_ird1_obs_gs`, replays `_rap_ird1_tw_{r1c,r2,r3c}` and `_rap_ird1_gw_{on,off}`, truth wires `_ird1_truthwire_{r2,r3c}`; real-time captures `runs/rtseam_goldens/{ird1base,ird1f}`. IRD-2: graders `2ca527f` and `0658848`, fixtures `7f60555` (merged at `99e27bc`), code `928d0c8`; exes `gnss_processor_ird1f.exe` (section 6's arms, D-S, the fixtures, the attribution arms), `gnss_processor_ird2bo.exe` (birth-only, sha256[:16] `f56dc4e8923e8955`) and `gnss_processor_ird2s3.exe` (sigma scale 3, sha256[:16] `5e3487bd2bdc32fd`); arms `_rap_ird2_*` under the same root (section 3.1); fixture trees `runs_nom/simird_{t1,t2,t3,t4,t5,tr}`
+- **gates (frozen at pre-registration):** card IRD section 11, IRD-1 and IRD-2
 
-**Outcome.** Question: does the IRD-1 observatory measure the chain and the consumer without changing anything off, and what does it show? Yes. Knobs off, the IRD-1 exe is identical to its base on both refound goldens, ARL r3c with the search (`aa6779cc`) and the retired eq34 lineage; traces on change no product or pre-existing CSV; observe mode is bit-identical to `ar_mode` 0; the Debug suite and the real-time seam A/B pass. The as-built chain on rung 3c takes 144 re-hosts in 2 h, 128 stepped by a fraction and none certifiable. On truth wires the consumer fixes 0 wrong among 2 506 integers per bed. Standing: IRD-2 next (section 2.5).
+**Outcome.** Question: is the as-built eq34 chain on the float vehicle integer when no event touches it, and what do its events and decisions measure? IRD-1 built the observatory, identical with its knobs off (section 2). IRD-2 FAILS the static-algebra stop rule: on the microscope, chords event-free for 30 min read 0.22 cycle against 0.02, because the double differences under bundle A0 drift off the integers after half an hour on every bed while R1's are exact. The would-be certification and lattice rules FAIL; D0 keeps the floor (GF-datum defect); seed-round is not adopted; D-N fires. Standing: STOPPED until the cause is closed (section 3.10).
 
 ## 1. What this card continues
 
@@ -94,3 +94,162 @@ In-process, on the golden itself (`_rap_ird1_obs_gs`, gate off), the observe sea
 ### 2.5 Standing
 
 IRD-1 LANDED on branch `claude/distracted-germain-d93ac2` (not merged). Every gate passes with two declared departures (`rt_seam_verify.py` retired; the retired lineage graded same-build). The card proceeds to IRD-2 (section 6's arms on the four sim beds, read with these traces and graders). Two readings bear on it: the RPB time-link NEES of 2.58 on A0 points at decision D-N firing (IRD-5b owed before D1), and the chord table shows the as-built chain far from integer, which the static-algebra stop rule of card IRD section 10 will test on the microscope.
+
+## 3. 2026-10-31: IRD-2, the as-built chain measured (arms only)
+
+### 3.1 What ran
+
+Every arm runs 2 h (240 epochs; the golden sim 241, from 00:30:15) under `D:/GnssProcessorSupport/runs_nom/`, made by `scripts/ird_make_arms.py` on the pinned base `a02ccfb`; GPS L1C/L2W is graded (the golden sim keeps Galileo, unclaimed).
+
+- **Section 6's arms:** R1, A0, A0h and A0f on the microscope (`mic`: `simarl_r1c` with the zero-ionosphere rows), r2, r3c and the golden sim (`gs`), `_rap_ird2_{r1,a0,a0h,a0f}_{mic,r2,r3c,gs}`, exe `gnss_processor_ird1f.exe` (IRD-1). `_rap_ird2_a0_r3b` is the fixtures' parent.
+- **D0's re-measure:** A0b, A0 with `network.phase_datum_eq34_rpb_prior_birth_only` (built here, adaptation 1), `_rap_ird2_a0b_{r3c,gs}`, exe `gnss_processor_ird2bo.exe` (sha256[:16] `f56dc4e8923e8955`); its knob-off twin `_rap_ird2_a0x_r3c`.
+- **D-S:** A0s, the D0 winner (A0) with `network.phase_datum_eq34_seed_round`, `_rap_ird2_a0s_{mic,r2,r3c,gs}`, exe `ird1f`.
+- **The certification rule's re-measure** at sigma scale 3: `_rap_ird2_a0c3_{r2,r3c}`, exe `gnss_processor_ird2s3.exe` (sha256[:16] `5e3487bd2bdc32fd`).
+- **The fixtures:** `config/sim/ird/` (six slip fixtures, each with `_2h` and `_producer`; fixture trees `runs_nom/simird_*`) and three gap beds; A0 on each, `_rap_ird2_a0_{t1,t2,t3,t4,t5,tr,rg,rv6,rv16}`.
+- **Attribution** (outside section 6): A0 on the microscope with one event-handling knob off, `_rap_ird2_bxns_mic` (`phase_datum_eq34_carry_shift` false) and `_rap_ird2_bxnr_mic` (`carry_rebase_complete` false), exe `ird1f`.
+- **Graders:** `scripts/ird_frame_census.py` (new: `stop`, `cert`, `floor`; selftest 59 checks), `scripts/ird_dd_drift.py` (new: `steps`, `drift`; selftest), `scripts/ird_fixture_gate.py` (new: `verify`, `gate`; selftest), `ird_chord_census.py`, `simnet_wire_integer_consistency.py` (`--source prehold` and `products`), `simnet_producer_ar_grade.py`, `simnet_ar_lattice_grade.py` and the chain-frame run end.
+
+### 3.2 Gates (card IRD section 11, IRD-2)
+
+| gate | result |
+| --- | --- |
+| pin audit COMPLETE | COMPLETE in every group of every section 6 arm, A0b, the twin, the certification arms and the fixture arms; SHORT in both groups of A0s on r2 (seed-round, not adopted) |
+| 0 non-integer targets | 0 on every arm; pin identity held in every epoch |
+| every counter printed | the chain-frame run end prints every counter on every arm |
+| hold emission-only | A0h's `network_amb_state.csv` and `network_rx_states.csv` (and its chain edges and chord table) byte-identical to A0's on all four beds: PASS |
+| static-algebra stop | microscope, chords whose tree path saw no event for 30 min (22 908 L1C and 22 744 L2W chord-epochs): p50 \|frac\| 0.223 and 0.217 cycle against 0.02 (A0f 0.210 and 0.215): FAIL. The card stops (section 3.8) |
+| D0 | neither switch passes; the floor stays and the GF-datum defect is recorded (section 3.5) |
+| D-S | seed-round not adopted (section 3.5) |
+| D-N | fires: A0's RPB NEES 2.31 on r2 and 2.58 on r3c; IRD-5b owed before D1 |
+| lattice under eq34 | dimension E - V + C in 230 of 230 builds per band on r3c (lattice dimension p50 397), but 3 695 wrong producer fixes: FAIL. IRD-5 is not built; certification is pair-only |
+| would-be certification on r2 and r3c | wrong against truth at sigma scale 2 and again at 3: FAIL (section 3.4). The scale is 3 by the rule; the defect is owed before IRD-4 |
+| W bars | every bar MISSED, each frozen at 1.25 F (section 3.6) |
+| fixtures on their tree edges | nine of nine: PASS (section 3.7) |
+
+### 3.3 The arms by bed
+
+Held-out float consumer (SZZ000SIM) 3D p50 in the run's first and second hours; receiver DCB sd over 60 stations at the end of each hour; RPB time-link NEES; the producer search over the run against truth (DD float \|e\| p50 in cycles; kept fixes and the wrong ones). No arm in this table withholds an epoch (W5).
+
+| bed | arm | consumer h1 / h2 (m) | DCB sd h1 / h2 (m) | NEES | DD \|e\| p50 | fixes kept / wrong |
+| --- | --- | --- | --- | --- | --- | --- |
+| mic | R1 | 0.121 / 0.043 | 0.492 / 0.494 | | 0.008 | 169 595 / 0 |
+| mic | A0 | 0.149 / 0.024 | 1.084 / 1.132 | 1.35 | 0.190 | 115 014 / 6 056 |
+| mic | A0h | 1.723 / 3.939 | as A0 | 1.35 | as A0 | as A0 |
+| mic | A0f | 0.133 / 0.036 | 0.607 / 0.629 | 1.40 | 0.151 | 121 819 / 5 594 |
+| r2 | R1 | 0.094 / 0.011 | 0.018 / 0.014 | | 0.269 | 57 920 / 0 |
+| r2 | A0 | 0.224 / 0.034 | 9.099 / 10.105 | 2.31 | 5.611 | 5 190 / 3 629 |
+| r2 | A0h | 21.39 / 49.40 | as A0 | 2.31 | as A0 | as A0 |
+| r2 | A0f | 0.088 / 0.011 | 0.671 / 3.200 | 1.45 | 1.034 | 15 988 / 2 040 |
+| r3c | R1 | 0.289 / 0.032 | 0.024 / 0.014 | | 0.280 | 56 626 / 0 |
+| r3c | A0 | 0.417 / 0.042 | 9.454 / 10.135 | 2.58 | 5.561 | 5 056 / 3 695 |
+| r3c | A0h | 26.04 / 59.33 | as A0 | 2.58 | as A0 | as A0 |
+| r3c | A0f | 0.280 / 0.027 | 0.683 / 3.088 | 1.62 | 1.070 | 15 808 / 2 075 |
+| r3c | A0b | 0.369 / 0.042 | 6.740 / 8.265 | 1.51 | 4.734 | 5 894 / 3 821 |
+| gs | R1 | 0.099 / 0.033 | 0.073 / 0.054 | | 0.263 | 140 418 / 0 |
+| gs | A0 | 0.071 / 0.029 | 7.108 / 9.745 | 1.11 | 3.268 | 17 258 / 12 552 |
+| gs | A0h | 3.008 / 1.371 | as A0 | 1.11 | as A0 | as A0 |
+| gs | A0f | 0.093 / 0.034 | 0.587 / 4.241 | 1.01 | 0.809 | 50 590 / 9 597 |
+| gs | A0b | 0.108 / 0.044 | 5.366 / 8.395 | 1.05 | 2.347 | 20 508 / 13 601 |
+
+Chords and wire in the second hour (A0, R1 in brackets; the size-matched null is 0.250): the chord wide-lane p50, its per-arc circular R over 30 min, the carried wide lane's per-epoch jump (p99 and the share above 0.5 cycle), and the pre-hold wire's E1, E2, WL and NL p50.
+
+| bed | chord WL p50 | circular R p50 | WL jump p99, share > 0.5 | wire E1 / E2 / WL / NL |
+| --- | --- | --- | --- | --- |
+| mic | 0.193 (0.276) | 0.680 (0.991) | 10.2, 2.9 % (0.15, 0.1 %) | 0.248 / 0.255 / 0.252 / 0.246 |
+| r2 | 0.251 (0.257) | 0.385 (0.952) | 12.6, 4.9 % (0.26, 0.4 %) | 0.248 / 0.250 / 0.241 / 0.253 |
+| r3c | 0.254 (0.259) | 0.363 (0.948) | 15.3, 4.9 % (0.27, 0.4 %) | 0.248 / 0.252 / 0.252 / 0.249 |
+| gs | 0.247 (0.266) | 0.480 (0.959) | 16.8, 5.4 % (0.27, 0.3 %) | 0.250 / 0.249 / 0.248 / 0.252 |
+
+A0h's emitted wire grades exactly as A0's pre-hold wire on every bed: with the holds off the emitted biases are the pre-hold biases. A0's emitted wire (holds on) takes no step at any event epoch (the hold freezes the biases) and stays at the null in value (r3c, second hour: 0.252 / 0.254 / 0.251 / 0.246). With the holds off the float consumer diverges to metres (A0h above): on this chain the holds are what keep the wire consumable.
+
+### 3.4 Events, certifications and chords
+
+Events by table row (A0, both bands, 2 h). The three ARL beds share one geometry and one tree history: 43 052 kept, 182 births, 4 returning, 144 re-hosts, no root handover, tree-edge slip, merge or split. The golden sim (GPS and Galileo): 83 170 kept, 350 births, 4 returning, 242 re-hosts, 2 tree-edge slips. On r2 and r3c the legacy rule steps 128 of the 144 uncertified re-hosts by a fraction and 16 by an unknown step; the re-host targets step by integers from -232 to +195 against the incumbent frame.
+
+Would-be certifications against truth (`ird_frame_census.py cert`, GPS, the previous epoch's chord table):
+
+| bed | determined chord integers | wrong | re-hosts certified | certified re-hosts wrong |
+| --- | --- | --- | --- | --- |
+| mic (reading) | 109 404 (L1C 48 144, L2W 61 260 of 93 178 rows) | 54 675 | 63 of 144 | 34 of 63 |
+| r2 | 7 282 (3 641 rows, 3.9 %) | 6 965 | 0 of 144 | |
+| r3c | 7 614 (3 807 rows, 4.1 %) | 7 400 | 0 of 144 | |
+| gs (reading) | 16 792 (8 396 of 93 553 rows) | 16 163 | 16 of 242 (12 GPS) | 12 of 12 GPS |
+| r2, scale 3 | 1 516 (758 rows) | 1 286 | 0 | |
+| r3c, scale 3 | 1 662 (831 rows) | 1 526 | 0 | |
+
+The chord floats agree with the producer's double differences through the integer targets (11 384 to 11 840 four-cycle chords matched per bed, largest gap 8e-5 cycle), so the certifications fail on the floats, not on the frame algebra. Settled chords (present 60 min or more) sit p50 0.86 and 0.82 cycle (L1C, L2W) from their frame integers on the microscope, 26.7 and 27.1 on r2 and 22.9 and 23.9 on r3c. Under eq34 the producer's cycle basis keeps its full dimension (rows plus fallbacks equal E - V + C in every build), and its lattice ledger on r3c holds 3 577 wrong integers and adds 96 wrong rows (R1: 0 and 0).
+
+### 3.5 Decisions D0, D-S and D-N
+
+**D0** (bars on r3c and the golden sim: DCB sd at most 0.17 m, three times the golden's; W5 no higher than A0's; float consumer within +10 % of A0's in hours 1 and 2):
+
+| switch | DCB sd, r3c / golden (h1, h2) | W5 | consumer against A0, r3c / golden (h1, h2) | verdict |
+| --- | --- | --- | --- | --- |
+| A0f, floor off | 0.68, 3.09 / 0.59, 4.24 m | 0 | -33 %, -36 % / +30 %, +17 % | FAIL (DCB; golden consumer) |
+| A0b, birth only | 6.74, 8.27 / 5.37, 8.40 m | 0 | -11 %, -2 % / +52 %, +54 % | FAIL (DCB; golden consumer) |
+
+The floor stays (A0 is the D0 winner) and the GF-datum defect is recorded: under the chain the receivers' geometry-free code bias spreads 7 to 10 m by hour 2, with the floor on or off (the golden: 0.05 m). It blocks the ionosphere follow-up (card IRD section 10).
+
+**D-S** (A0s against A0): the unit test the rule names, `test_eq34_seed_round`, does not exist (`docs/SPEC_eq34_seed_round.md` records it as owed): FAIL. Seed target steps after birth: 0 on every bed (204 to 370 targets seed-rounded): pass. Chord census: the carried wide lane jumps above 0.5 cycle on 19 to 22 % of arc-epochs (A0: 4.9 to 5.4 %) and the receiver DCB sd reaches 15 to 29 m: worse, FAIL. Hour-1 float p50 0.107, 0.083, 0.280 and 0.106 m on the microscope, r2, r3c and the golden sim (A0: 0.149, 0.224, 0.417, 0.071), +49 % on the golden sim: FAIL. Beyond the clauses: hour 2 reaches 1.155, 0.987 and 0.974 m on r2, r3c and the golden sim, the microscope withholds 123 of 240 epochs on sigma0, the RPB NEES reaches 299 to 623 (0.015 on the microscope) and r2's pin audit is SHORT. Seed-round is not adopted.
+
+**D-N:** A0's RPB NEES on the microscope, r2, r3c and the golden sim is 1.35, 2.31, 2.58 and 1.11: above 2 on r2 and r3c, so IRD-5b is owed before the D1 verdict.
+
+### 3.6 The bars frozen by the calibration rule
+
+The floor F is read on the D0 winner (A0) over pairs whose tree paths saw no event for 30 min (`ird_frame_census.py floor`, the pre-hold wire; slip, handover, split and merge rows end a run). W-micro is read over the microscope's settled hour (01:30:30 to 02:30:30), the others over the 2 h run; n is at least 17 818 in every cell.
+
+| bar | B | F | frozen bar (1.25 F) |
+| --- | --- | --- | --- |
+| W-micro E1 p50 / p99 (mic) | 0.02 / 0.10 | 0.2445 / 0.4952 | 0.306 / 0.619 |
+| W-micro E2 p50 / p99 | 0.02 / 0.10 | 0.2592 / 0.4949 | 0.324 / 0.619 |
+| W-micro WL p50 / p99 | 0.02 / 0.10 | 0.2561 / 0.4957 | 0.320 / 0.620 |
+| W-WL p50, r2 / r3c / gs | 0.08 | 0.2431 / 0.2464 / 0.2468 | 0.304 / 0.308 / 0.309 |
+| W-WL, 90 % within 0.20 (as p90) | 0.20 | 0.4450 / 0.4486 / 0.4512 | 0.556 / 0.561 / 0.564 |
+| W-NL p50 | 0.10 | 0.2564 / 0.2461 / 0.2509 | 0.321 / 0.308 / 0.314 |
+| W-NL, 85 % within 0.25 (as p85) | 0.25 | 0.4291 / 0.4242 / 0.4254 | 0.536 / 0.530 / 0.532 |
+
+Every B is MISSED (F > 0.8 B) and every bar is frozen at 1.25 F, as the rule says. The floors are the uniform null: the event-free wire of the as-built chain carries no integer information, and the frozen bars lie above what a uniform wire reads, so they would pass noise. They are recorded as the rule fixes them and bind only once the stop is closed; revisiting them is the author's ruling, since the rule says never revised.
+
+### 3.7 The fixtures
+
+The fixtures are built from A0's chain trace on rung 3b (`_rap_ird2_a0_r3b`), where the L1C and L2W trees agree in all 240 epochs, r1 is S13000SIM throughout and no tree event falls in epochs 150 to 165. The slips sit at epoch 158 (TOW 265 740; t5 at 175, TOW 266 250) on arcs that are tree edges in the slipped bands from 10 min before to 20 min after, none at r1 except tr's and none on G01 (the DD trace's reference). `scripts/ird_fixture_gate.py verify` checks each fixture tree against rung 3b and `gate` checks each A0 arm.
+
+| fixture | the change | the edge at k - 1 and k | below the child | at the event epoch | verdict |
+| --- | --- | --- | --- | --- | --- |
+| t1 | S10000SIM G09 L1C +1 | G09 under S10000SIM, depth 3 | 3 satellites, 3 stations | `slip_deseat` in each band, row TreeEdgeSlip | PASS |
+| t2 | S03000SIM G25 L1C +4, L2W +5 (MW-blind) | G25 under S03000SIM, depth 3 | 3, 11 | `slip_deseat`; no `T0_mw_detect` row | PASS |
+| t3 | S23000SIM G02 L2W +1 with LLI | G02 under S23000SIM, depth 3 | 2, 6 | `slip_deseat`, L2W with the LLI cause bit | PASS |
+| t4 | S45000SIM G32 L1C +2, L2W +2 | S45000SIM under G32 (a child of r1), depth 2 | 3, 7 | `slip_deseat` | PASS |
+| t5 | t2's shape and arc at settled TOW 266 250 | as t2 | 3, 11 | `slip_deseat` | PASS |
+| tr | S13000SIM G03 L1C +1, r1's own edge | G03 under r1, depth 1 | 5, 15 | `slip_deseat` | PASS |
+| rg | r1 blanked 10 min (epochs 152 to 171) | the root, 8 child satellites at 151 | | 4 `root_handover` rows (to S30000SIM), 36 re-hosts by handover | PASS |
+| rv6 | S45000SIM blanked 6 min (152 to 163) | under G32, depth 2, children G15 and G24 | | 12 carry re-hosts; the return at 164 is a TreeEdgeSlip, not Returning | PASS |
+| rv16 | the same, 16 min (152 to 183) | as rv6 | | 12 carry re-hosts; the return at 184 writes 2 `returning` rows (gap 990 s) | PASS |
+
+Products equal A0 r3b's up to each event epoch and differ from it on. Each slip fixture differs from rung 3b only in the slipped station's phase fields from the slip epoch on (t3's LLI digit at 158 only), its `truth_slips.csv` and the scenario summary; the gap beds blank exactly 200, 92 and 237 GPS records. On these fixtures Returning is reached by rv16 only and RootHandover by rg only; r1 comes back from its gap as a leaf at depth 4, not as the root.
+
+### 3.8 Attribution of the stop
+
+The frozen rule makes the stop binding: nothing from IRD-3 on is built until its cause is closed. The census attributes it as follows.
+
+1. **The frame is integer.** 0 non-integer targets, pin identity in every epoch, pin audit COMPLETE, and the chord floats equal the producer's double differences through the integer targets (section 3.4).
+2. **The double differences are wrong, and no datum choice moves a double difference.** The producer's DD floats against truth over the run: A0 on the microscope p50 0.190 cycle with 6 056 wrong fixes, where R1 on the same bed reads 0.008 with 0 wrong; r2 5.61, r3c 5.56 and the golden sim 3.27 cycles, where R1 reads 0.27, 0.28 and 0.26 with 0 wrong on every bed.
+3. **They drift; the events do not step them.** On the microscope (`ird_dd_drift.py drift`; wrong is \|e\| > 0.25 cycle) the wrong share by 10 min bin is, for R1, 0.39, 0.01 and then 0 from 20 min; for A0 0.60, 0.30 and 0.20 at 20 to 30 min, then 0.29, 0.39, 0.39, 0.39, 0.44, 0.51, 0.55, 0.60 and 0.62; A0f takes the same course (0.37, 0.05, 0.07, 0.30, then up to 0.63). Of A0's 157 good-to-wrong transitions, 117 coincide with no event, 24 with a RAIM T4 prior drop, 11 with an arc birth and 5 with a re-host. At the 48 chain-event epochs the DD steps of keys whose arcs had no event of their own are no larger than at quiet epochs (L1C p50 0.0062 and p99 0.22 cycle, against 0.0057 and 0.30; `ird_dd_drift.py steps`), but A0's quiet steps are three times R1's (p50 0.0018, p99 0.13).
+4. **The QC reacts to the drift.** On the microscope A0 raises 554 RAIM T4 attributions with 1 108 carried priors dropped (R1: none), 1 531 block-Baarda outliers (R1: 267) and 2 526 prior-residual events (R1: 1 741).
+5. **Neither event-handling knob is the cause.** With `phase_datum_eq34_carry_shift` off the chain takes the legacy re-reference (196 re-references, 2 800 carries erased, none S-transformed) and the DDs go 84 % wrong (\|e\| p50 1.76 cycle), with 33 epochs withheld and RPB NEES 35.6. With `carry_rebase_complete` off the microscope run is byte-identical to A0 (`products.txt` and every carry).
+6. **The RPB floor is not the cause on the microscope:** A0f drifts as A0 does (wrong 0.37 of all rows against 0.43; \|e\| p50 0.151 against 0.190).
+
+Reading: the static chords are off the integers because the float solution under bundle A0 drifts away from integer double differences after its first half hour, on the microscope as on every other bed. The chain's frame and its event steps are not the cause. The candidates are the bundle's remaining differences from R1: the prioritized and held machinery off (`phase_datum_prioritized`, `phase_datum_held_basis`, `phase_datum_held_mark_cold`, `phase_datum_held_cold_release`, `phase_datum_handover_continuous`, `phase_anchor_carry_reref`, `phase_datum_gate_drop_erase`, `phase_datum_min_stations` 1) and the chain's hard pins, re-applied every epoch on a moving tree, with the RPB time link. The cause is closed by a one-change bisection on the microscope graded with `ird_dd_drift.py drift`, with R1, whose double differences are exact from 20 min, as the control.
+
+### 3.9 Declared adaptations
+
+1. **`network.phase_datum_eq34_rpb_prior_birth_only`** (card IRD section 7: "only if D0 needs it") is built here, default off, and KEEP_OFF in the ledger after its D0 result. The floor row is skipped while the bias is time-linked (a carry inside the leveling horizon with q > 0). Off, its exe is identical to the IRD-1 exe on A0 r3c (`_rap_ird2_a0x_r3c`: `products.txt` and every trace; `network_datum_graph`, `network_service_health` and `network_run_summary` after their wall-clock columns).
+2. **Sigma scale 3** is a constant of the observatory (`kChainCertSigmaScale`, 2.0 to 3.0): card IRD section 7's `_sigma_scale` rider belongs to IRD-4's `rehost_cert` knob, which is not built. The rebuilt exe's A0 arms on r2 and r3c are byte-identical to the IRD-1 exe's in `products.txt`, the carries, the receiver states and the chain edges; only the chord table's integers differ.
+3. **Hours.** The hours 1 and 2 of D0 and D-S are the first and second hours of each 2 h arm (the golden sim from 00:30:15). The DCB spread is `ird_chord_census.py`'s receiver DCB sd at the end of each hour.
+4. **Floors.** W-micro's floor is read over the microscope's settled hour, the bar's own window. The share clauses are calibrated in their quantile form (p90, p85), the grader's printed extension, since the rule is stated for magnitudes.
+5. **Fixture generation** (by an agent, with the box at full load): each slip fixture is rung 3b with the slipped station regenerated by `gnss_simulator synth-network` on a 3-station roster. Regenerating all 61 stations of `arl_r3b_2h.json` with the same simulator reproduces `runs/simarl_r3b` (854 of 854 files byte-identical). The simulator copy has its baked project root patched to `C:/GnssProcessor` (both sha256 values in each fixture's `GENERATED.txt`). The three gap fixtures are RINEX strips of rung 3b (beds of `ird_make_arms.py` that pass a windowed strip to `rapid_arm.py make --rinex`), not `_2h` and `_producer` files; their arms set `processing.max_duration_s` and `network.max_duration_s` to 7200 instead of `--hours 2`, which counts from 00:00 and would cut the rewritten files at epoch 186.
+6. **Attribution arms and `scripts/ird_dd_drift.py`** are outside section 6 and change nothing in it.
+
+### 3.10 Standing
+
+IRD-2 RAN on branch `claude/distracted-germain-d93ac2` (not merged), and the card STOPS by its static-algebra stop rule (section 3.8): nothing from IRD-3 on is built until the cause is closed. Owed, in order: the cause, by a one-change bisection of bundle A0 on the microscope against R1, graded on the double differences; then, before the card resumes, the certification defect (wrong at sigma scale 3 on r2 and r3c, owed before IRD-4), IRD-5b (decision D-N, before D1) and the GF-datum defect (decision D0), which blocks the ionosphere follow-up. Also fixed by the rules: IRD-5 is not built and certification is pair-only, seed-round is not adopted, and the W bars are frozen at 1.25 F, above the null.

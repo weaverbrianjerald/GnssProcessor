@@ -177,7 +177,11 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   pre-hold and receiver phase-bias traces, the run-end frame census; the consumer's shared AR builder, observe-mode
   integer search, fix traces and extended gate); every gate passes (`rt_seam_verify.py` retired, the retired lineage
   graded same-build). A0 on rung 3c: 144 re-hosts in 2 h, 128 stepped by a fraction, none certifiable; RPB NEES 2.58.
-  Truth wires: 0 wrong of 2 506 settled integers per bed; the golden wire admits nothing. IRD-2 next.
+  Truth wires: 0 wrong of 2 506 settled integers per bed; the golden wire admits nothing. IRD-2 STOPPED by the
+  static-algebra stop rule (2026-10-31): microscope chords event-free for 30 min at 0.22 cycle (bar 0.02), because the
+  double differences under bundle A0 drift off the integers after half an hour (R1 exact); certification and lattice
+  rules fail, D0 keeps the floor (GF-datum defect), seed-round not adopted, D-N fires; nothing from IRD-3 on until the
+  cause is closed.
 - [RKD](RKD_retired_key_deletion_2026-10-14.md): closed, 2026-10-14: the 144 retired network keys and five lane keys
   they orphan deleted with their code (149 ledger rows, 784 to 635; 30 C++ files); landed after the same-build
   golden comparison passed (only declared text moves on the goldens).
