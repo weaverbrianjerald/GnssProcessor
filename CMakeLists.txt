@@ -610,6 +610,7 @@ add_executable(gnss_tests
     tests/network/test_station_factor_config.cpp
     tests/network/test_level_authority.cpp
     tests/test_config_extends.cpp
+    tests/test_ambiguity_initial_std.cpp
     tests/test_sd_ewl_prereduce.cpp
     tests/network/test_sd_ewl_integer.cpp
     tests/network/test_sd_ewl_station_params.cpp

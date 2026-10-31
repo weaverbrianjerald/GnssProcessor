@@ -116,7 +116,6 @@ namespace GnssProcessor {
         , leap_seconds_tai_{ 37.0 }
         , residual_threshold_{ 6.0 }
         , bad_meas_percent_{ 0.5 }
-        , ambiguity_std_{ 1e3 }
         , code_noise_amplify_{ 1e4 }
         , estimate_tropo_gradients_{ false }
         , relinearize_geometry_{ false }
