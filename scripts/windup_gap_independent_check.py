@@ -24,7 +24,23 @@ off (the control): the run-end lines of the bridge run (the attempts it lists an
 counters), the `wu_restart` events of `logs/network_events.csv` of both runs (the restarts,
 complete; the bridge run's are the origins of its accumulators and its refused attempts,
 the control's are all attempts), the station coordinates and RINEX paths of the arm
-config, and the SP3 of the arm.  Nothing of the project's code is called.
+config, the SP3 of the arm and, for the origin of a pair that never restarted, the first
+carried ambiguity of the bridge run's `logs/network_amb_state.csv` (`--origin-rule births`,
+the default; `registered` takes the first epoch with a phase observation instead).  Nothing
+of the project's code is called, only its output files are read.
+
+Agreement.  N is defined against the epoch's raw angle, so two implementations whose raw
+angles differ by their model difference (median 9e-4 cycle against the project's trace) can
+put an epoch on either side of the +-pi cut and differ by one in N while their bridged angles
+agree.  A count that differs by that flip, with the raw angle within 0.07 rad of the cut, is
+reported as `yes (cut)`, separately from equal counts.  The run-end list holds only the first
+100 attempts of the roster; the others are checked through the run-end count of nonzero
+bridged gaps (the interval the cut allows is printed).
+
+Usage (needs numpy)
+  python scripts/windup_gap_independent_check.py --selftest
+  python scripts/windup_gap_independent_check.py check --bridge-run RUN_ON --control-run RUN_OFF       --sp3 COD0MGXFIN_..._ORB.SP3 --out-csv table.csv --out-md table.md --out-summary summary.txt
+  python scripts/windup_gap_independent_check.py validate-gap-run --trace windup_trace.csv       --ecef X Y Z --sp3 SP3
 
 Modes
   --selftest        analytic and synthetic checks, no data needed
