@@ -280,6 +280,6 @@ The question of section 1 is answered: a zero-mean datum row on the receiver ban
 | `card/r1d-anchorbar` | `6edfff2` | `network.phase_datum_anchor_bar_stations`, the discriminator (also the base of `card/r1d-reseedbar`) | 8, 9 |
 | `card/r1d-levelproj` | `54552c8`, `53941bc` | `network.carry_coupling_level_project`, orthogonal then weighted and gauge-sum-preserving | 10 to 13 |
 | `card/r1d-reseedbar` | `c59fd2f` (on `6edfff2`) | `network.phase_datum_anchor_reseed_handover` | 14, 15 |
-| `card/l5b-diag` | `b7f58ba`, `92785d4` | the multi-dimensional null-space readout and the station local-block dump (diagnostics) | 1, 7 |
+| `card/l5b-diag` | `b75094d`, `b7f58ba`, `92785d4` | the anchored pre-withdraw dump and the cross-epoch operator readout of the RHS attribution (card L5B, `b75094d`), the multi-dimensional null-space readout (`b7f58ba`) and the station local-block dump (`92785d4`), all diagnostics | 1, 6, 7 |
 
 No R1D key is in the config ledger of main (the rows exist on the branches only, section 5); nothing from the five branches is armed or merged.
