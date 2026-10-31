@@ -9,8 +9,8 @@ process, a drift).  This tool turns a one-line spec into a runnable arm, runs a 
 in parallel, and prints one scorecard.
 
   make   --base <arm.json> --tag <name> [--hours H] [--set key.path=value ...]
-         [--drop-station NAME ...] [--rinex "OP;key=val;..." ...] [--allow-unread KEY ...]
-         [--roster <roster.json>]
+         [--drop-station NAME ...] [--add-station NAME RINEX X Y Z ...]
+         [--rinex "OP;key=val;..." ...] [--allow-unread KEY ...] [--roster <roster.json>]
   run    --tags a b c [--jobs 4] [--exe <gnss_processor exe>]      (Release exe only)
   score  <tag or run_dir> ... [--pf]
   draws  --op "OP;..." [--op ...] --ids G01,G02,...                (the constants a bias op draws)
@@ -22,6 +22,13 @@ per station to replace.  Every name must be a station of the arm (or one named b
 and a coordinate more than 1 km from the arm's own is refused.  Stations the file does not name,
 the closed-loop consumer and everything else stay as the base has them; rapid.json records the
 file, its sha256, the stations replaced and the largest shift.
+
+`make --add-station NAME RINEX X Y Z` appends a station to the roster with the three keys a roster
+entry holds (name, rinex_path, position_ecef: the marker coordinate in metres).  It runs after
+--drop-station and before --roster and the RINEX ops, so a roster file or an op can name the
+station.  The name must not already be a station of the arm (--drop-station it first to replace
+it), the RINEX file must exist and the coordinate must lie near the Earth's surface; rapid.json
+records the stations added.
 
 `make` refuses a --set key that the config loader does not read (scripts/loader_keys.py):
 the loader ignores an unknown key without a word, so such an arm would run as its base and
@@ -631,6 +638,24 @@ def set_key(cfg, dotted, value):
         node[keys[-1]] = value
 
 
+EARTH_RADIUS_RANGE_M = (6.2e6, 6.5e6)     # a station coordinate is a point near the surface, in metres
+
+
+def add_station(net, name, rinex_path, x, y, z):
+    """Append a roster station (name, rinex_path, position_ecef: the keys of a roster entry) to `net`
+    (the arm's network section) and return the record for rapid.json.  Refuses a name the roster
+    already has, a RINEX file that does not exist and a coordinate that is not near the Earth's surface."""
+    assert all(s["name"] != name for s in net["stations"]), f"station {name} is already in the roster"
+    assert os.path.isfile(rinex_path), f"RINEX file of {name} does not exist: {rinex_path}"
+    pos = [float(v) for v in (x, y, z)]
+    radius = math.sqrt(sum(v * v for v in pos))
+    assert math.isfinite(radius) and EARTH_RADIUS_RANGE_M[0] <= radius <= EARTH_RADIUS_RANGE_M[1], \
+        f"position of {name} is {radius:.0f} m from the Earth's centre: metres in ECEF are expected"
+    entry = {"name": name, "rinex_path": rinex_path.replace("\\", "/"), "position_ecef": pos}
+    net["stations"].append(entry)
+    return dict(entry)
+
+
 ROSTER_REUSE_LIMIT_M = 1000.0
 
 
@@ -667,6 +692,7 @@ def cmd_make(a):
         n0 = len(net["stations"])
         net["stations"] = [s for s in net["stations"] if s["name"] != name]
         assert len(net["stations"]) == n0 - 1, f"station {name} not in the roster"
+    added = [add_station(net, *spec) for spec in getattr(a, "add_station", None) or []]
     roster_rec = apply_roster(net, a.roster, a.drop_station or []) if getattr(a, "roster", None) else None
     ops = [parse_op(t) for t in (a.rinex or [])]
     for op in ops:
@@ -722,6 +748,8 @@ def cmd_make(a):
             "hours": a.hours, "set": a.set or [], "drop_station": a.drop_station or [], "rinex": a.rinex or [],
             "rinex_touched": touched, "holes_records_deleted": n_holes,
             "ecc_moved": [{"station": s, "hen": list(h)} for s, h in moved]}
+    if added:
+        prov["add_station"] = added
     if roster_rec:
         prov["roster"] = roster_rec
     if allow:
@@ -729,6 +757,7 @@ def cmd_make(a):
     json.dump(prov, open(rd + "/rapid.json", "w"), indent=2)
     print(f"{a.tag}: {len(net['stations'])} stations, {len(touched)} RINEX file(s) rewritten"
           + (f", {n_holes} record(s) deleted by holes" if n_holes else "")
+          + (", added " + " ".join(e["name"] for e in added) if added else "")
           + (", ecc " + " ".join("%s H%.3f/E%.3f/N%.3f" % (s, *h) for s, h in moved) if moved else "")
           + (f", roster {len(roster_rec['replaced'])} coordinate(s) replaced, largest shift "
              f"{roster_rec['max_shift_mm']:.1f} mm" if roster_rec else "")
@@ -1310,6 +1339,56 @@ def cmd_selftest(_):
                 chk(False, why + " must be refused")
             except AssertionError as ex:
                 chk("roster" in str(ex), f"refused: {why}: {ex}")
+        # --add-station appends a station with the keys of a roster entry, after the drops and
+        # before the roster file, so the file can name it.  It refuses a name the roster has, a
+        # RINEX file that does not exist and a point that is not near the Earth's surface, and a
+        # refused arm writes no directory.
+        arinex = (d + "/DDDD00XXX_R.rnx").replace("\\", "/")      # the form the arm stores
+        open(arinex, "w").write("rinex\n")
+        pos_d = [3.0e6, 4.0e6, 3.9e6]
+
+        def amake(tag, adds, drops=None, positions=None):
+            rfile = None
+            if positions is not None:
+                rfile = d + f"/roster_{tag}.json"
+                json.dump({"positions": positions}, open(rfile, "w"))
+            a = argparse.Namespace(base=rbase, tag=tag, hours=None, set=None, drop_station=drops, rinex=None,
+                                   allow_unread=None, roster=rfile, add_station=adds)
+            with contextlib.redirect_stdout(io.StringIO()):
+                cmd_make(a)
+
+        def refused(tag, adds, fragment, why):
+            try:
+                amake(tag, adds)
+            except AssertionError as ex:
+                chk(fragment in str(ex) and not os.path.exists(RUNS + f"/_rap_{tag}"), f"refused: {why}: {ex}")
+            else:
+                chk(False, why + " must be refused")
+        spec_d = ["DDDD00XXX", arinex, "3000000.0", "4000000.0", "3900000.0"]
+        amake("add", [spec_d])
+        arm = json.load(open(RUNS + "/_rap_add/arm.json"))["network"]
+        chk([s["name"] for s in arm["stations"]] == ["AAAA00XXX", "BBBB00XXX", "DDDD00XXX"]
+            and arm["stations"][2] == {"name": "DDDD00XXX", "rinex_path": arinex, "position_ecef": pos_d}
+            and arm["stations"][0]["position_ecef"] == [1.0e6, 2.0e6, 3.0e6]
+            and arm["closed_loop"]["station"]["position_ecef"] == [7.0e6, 8.0e6, 9.0e6],
+            "an added station is appended with the keys of a roster entry and nothing else moves")
+        chk(json.load(open(RUNS + "/_rap_add/rapid.json"))["add_station"]
+            == [{"name": "DDDD00XXX", "rinex_path": arinex, "position_ecef": pos_d}],
+            "the record lists the station added")
+        amake("addros", [spec_d], positions={"DDDD00XXX": [pos_d[0] + 0.05, pos_d[1], pos_d[2]]})
+        arm = json.load(open(RUNS + "/_rap_addros/arm.json"))["network"]
+        chk(arm["stations"][2]["position_ecef"] == [pos_d[0] + 0.05, pos_d[1], pos_d[2]]
+            and json.load(open(RUNS + "/_rap_addros/rapid.json"))["roster"]["replaced"] == ["DDDD00XXX"],
+            "a roster file can name a station added in the same arm")
+        amake("repl", [["BBBB00XXX"] + spec_d[1:]], drops=["BBBB00XXX"])
+        arm = json.load(open(RUNS + "/_rap_repl/arm.json"))["network"]
+        chk([s["name"] for s in arm["stations"]] == ["AAAA00XXX", "BBBB00XXX"]
+            and arm["stations"][1]["position_ecef"] == pos_d and arm["stations"][1]["rinex_path"] == arinex,
+            "a dropped station is replaced by adding it again")
+        refused("adup", [["AAAA00XXX"] + spec_d[1:]], "already in the roster", "a name the roster already has")
+        refused("anofile", [["EEEE00XXX", d + "/none.rnx"] + spec_d[2:]], "does not exist", "a RINEX file that is missing")
+        refused("akm", [["FFFF00XXX", arinex, "3000.0", "4000.0", "3900.0"]], "metres in ECEF",
+                "a coordinate in kilometres")
     finally:
         RUNS = runs0
     print(f"rapid_arm selftest: {n}/{n} PASS")
@@ -1324,6 +1403,9 @@ def main():
     m.add_argument("--hours", type=float)
     m.add_argument("--set", action="append")
     m.add_argument("--drop-station", action="append")
+    m.add_argument("--add-station", action="append", nargs=5, metavar=("NAME", "RINEX", "X", "Y", "Z"),
+                   help="append a roster station: its name, its RINEX file and its marker ECEF coordinate "
+                        "in metres (repeatable)")
     m.add_argument("--rinex", action="append")
     m.add_argument("--roster", metavar="ROSTER.json",
                    help="replace roster coordinates from the `positions` map of a roster file")

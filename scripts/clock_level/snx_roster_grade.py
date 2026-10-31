@@ -7,8 +7,11 @@ SSC extrapolation the configs carry) and the weekly SINEX.  The census replays o
 written by gcensus.py with keys `<key>` (held truth, tracked site list) and `<key>x` (SINEX
 truth, `--sites site_list_sinex.json`).
 
-  consumer <tag> ...        the closed-loop consumer of each wire by hour, against both truths
-                            (the SINEX truth is the trace shifted by the coordinate difference)
+  consumer [--ref TAG] <tag> ...
+                            the closed-loop consumer of each wire by hour, against both truths
+                            (the SINEX truth is the trace shifted by the coordinate difference);
+                            with --ref, the change of each wire from TAG by hour and its largest
+                            absolute value over hours 2 to 6
   census <refkey> <key> ... per census key: the median site p50 by hour, and against <refkey> the paired
                             change of each site's mean hourly p50 over hours 2 to 6 and of hour 1,
                             on the truth the keys were replayed against; `x` keys are paired with `<refkey>x`
@@ -20,13 +23,23 @@ truth, `--sites site_list_sinex.json`).
   clock <ref tag> <tag> ... per epoch RMS over satellites of the clock difference to the reference wire,
                             after removing the per-epoch common mean (per constellation, and over all
                             satellites at once), by hour
+  congruence [--stations A,B] <tag> ...
+                            the station congruence statistic geo(t) of each run (default station MIZU00JPN),
+                            recomputed from logs/network_congruence.csv by the rule of Congruence.hpp and
+                            checked against the run-end line of stdout.txt; the roster median and the
+                            stations above 4
+  r3rows <file> ...         the hours 2 to 6 e_clk p50 rows of saved `ftc_step_attrib.py --r3` outputs, per
+                            system (G, E) and set (all, tracked, each also de-commoned), the first file as
+                            the reference for the change rows
 
 Runs root: RAPID_RUNS_ROOT as for rapid_arm.py.
 """
+import collections
 import csv
 import json
 import math
 import os
+import re
 import statistics as st
 import sys
 
@@ -95,24 +108,36 @@ def mean26(v):
 
 
 # ----------------------------------------------------------------------------- consumer
-def cmd_consumer(tags):
+def cmd_consumer(tags, ref=None):
     sx = json.load(open(SITES_SINEX))['consumer']
     print('closed-loop consumer WTZZ00DEU, p50 of the 3D error by hour (m), hours from 00:00; mean over hours 2 to 6')
-    print(f'{"wire":8s} {"truth":6s} ' + ' '.join(f'h{h + 1:<4d}' for h in range(NH)) + '   mean 2-6')
-    for tag in tags:
+    print(f'{"wire":10s} {"truth":6s} ' + ' '.join(f'h{h + 1:<5d}' for h in range(NH)) + '   mean 2-6')
+    p50 = {}
+    for tag in tags + ([ref] if ref and ref not in tags else []):
         d = rundir(tag)
         arm = json.load(open(f'{d}/arm.json'))
         held = arm['network']['closed_loop']['station']['position_ecef']
         rows = trace(d)
         if not rows:
-            print(f'{tag:8s} no trace')
+            print(f'{tag:10s} no trace')
             continue
         sh = site_shift(held, sx['ecef'])
         for name, r in (('held', rows), ('sinex', shifted(rows, sh))):
             v = p50_by_hour(r)
-            print(f'{tag:8s} {name:6s} ' + fmt(v) + f'   {mean26(v):.4f}')
-    print(f'coordinate difference SINEX minus held at the consumer (E, N, U mm): '
-          + ', '.join(f'{1000 * x:+.1f}' for x in site_shift(json.load(open(f"{rundir(tags[0])}/arm.json"))["network"]["closed_loop"]["station"]["position_ecef"], sx['ecef'])))
+            p50[(tag, name)] = v
+            if tag in tags:
+                print(f'{tag:10s} {name:6s} ' + ' '.join(f'{x:6.4f}' for x in v) + f'   {mean26(v):.4f}')
+    first = json.load(open(f'{rundir(tags[0])}/arm.json'))['network']['closed_loop']['station']['position_ecef']
+    print('coordinate difference SINEX minus held at the consumer (E, N, U mm): '
+          + ', '.join(f'{1000 * x:+.1f}' for x in site_shift(first, sx['ecef'])))
+    if ref:
+        print(f'change from {ref} (m), by hour, and the largest absolute change over hours 2 to 6')
+        for tag in tags:
+            for name in ('held', 'sinex'):
+                if (tag, name) in p50 and (ref, name) in p50 and tag != ref:
+                    d = [a - b for a, b in zip(p50[(tag, name)], p50[(ref, name)])]
+                    print(f'{tag:10s} {name:6s} ' + ' '.join(f'{x:+.4f}' for x in d)
+                          + f'   largest |d| h2-6 {max(abs(x) for x in d[1:]):.4f}')
 
 
 # ----------------------------------------------------------------------------- census
@@ -146,7 +171,7 @@ def cmd_census(ref, keys):
         d26 = [mean26(K[n]) - mean26(R[n]) for n in both]
         d1 = [K[n][0] - R[n][0] for n in both]
         worse10 = [n for n, x in zip(both, d26) if x > 0.010]
-        print(f'   vs {pair(key)} paired, n {len(both)}: hours 2-6 median {st.median(d26):+.4f} m, mean {st.mean(d26):+.4f} m, '
+        print(f'   vs {pair(key)} paired, n {len(both)}: hours 2-6 median {st.median(d26):+.5f} m, mean {st.mean(d26):+.5f} m, '
               f'better {sum(x < -0.01 for x in d26)}, worse {sum(x > 0.01 for x in d26)} at 1 cm, largest |d| {max(abs(x) for x in d26):.4f} m, '
               f'above +0.010 m: {len(worse10)}{" (" + ",".join(n.upper() for n in worse10) + ")" if worse10 else ""}')
         print(f'   hour 1 median {st.median(d1):+.4f} m, largest |d| {max(abs(x) for x in d1):.4f} m; '
@@ -269,9 +294,116 @@ def cmd_clock(ref, tags):
                   + ', '.join(f'{k} {1000 * m:+.1f}' for k, m in top))
 
 
+# ----------------------------------------------------------------------------- congruence
+CHI2_GEO_MEAN_1 = 0.2807297418      # kBlockChi2GeoMean1, include/network/qc/BlockBaarda.hpp
+
+
+def chi2_geo_mean(b):
+    """Geometric mean of a chi-square variate with b degrees of freedom, 2 exp(psi(b/2)) (blockChi2GeoMean)."""
+    if b <= 1:
+        return CHI2_GEO_MEAN_1
+    psi = -1.9635100260214235 if b % 2 == 1 else -0.5772156649015329
+    x = 0.5 if b % 2 == 1 else 1.0
+    while x + 1.0 <= 0.5 * b + 1e-9:
+        psi += 1.0 / x
+        x += 1.0
+    return 2.0 * math.exp(psi)
+
+
+def congruence_geo(d):
+    """{station: (geo(t), station-epochs, epochs above t 4)} of a run, from logs/network_congruence.csv.
+    geo(t) is the geometric mean of the chi-square-1 equivalent of T_raw / sigma0^2 divided by its null
+    value (NetworkCongruence::Ladder::geoT); every row folds in, degenerate ones included."""
+    logs, cnt, over = collections.defaultdict(list), collections.Counter(), collections.Counter()
+    for r in csv.DictReader(open(f'{d}/logs/network_congruence.csv')):
+        q, T, s0 = int(r['q']), float(r['T_raw']), float(r['sigma0'])
+        cnt[r['station']] += 1
+        over[r['station']] += float(r['t']) > 4.0
+        if q < 1 or not (T >= 0.0) or not math.isfinite(T):
+            continue
+        u = T * q * (CHI2_GEO_MEAN_1 / chi2_geo_mean(q)) / (s0 * s0 if s0 > 0 else 1.0)
+        if u > 0.0 and math.isfinite(u):
+            logs[r['station']].append(math.log(u))
+    return {k: (math.exp(sum(v) / len(v)) / CHI2_GEO_MEAN_1, cnt[k], over[k]) for k, v in logs.items()}
+
+
+def congruence_stdout(d):
+    """{station: geo(t)} of the run-end lines of stdout.txt (empty when the run has none)."""
+    out = {}
+    if os.path.exists(f'{d}/stdout.txt'):
+        for line in open(f'{d}/stdout.txt', encoding='utf-8', errors='replace'):
+            m = re.search(r'station congruence\) (\w{9})/CLEAN: n = \d+ .*geo\(t\) = ([0-9.e+-]+), \d+ over', line)
+            if m:
+                out[m.group(1)] = float(m.group(2))
+    return out
+
+
+def cmd_congruence(tags, stations):
+    for tag in tags:
+        d = rundir(tag)
+        g, tab = congruence_geo(d), congruence_stdout(d)
+        vals = [v[0] for v in g.values()]
+        print(f'{tag}: {len(g)} stations; roster median geo(t) {st.median(vals):.3f}; above 4: '
+              + (', '.join(f'{k} {v[0]:.2f}' for k, v in sorted(g.items(), key=lambda kv: -kv[1][0]) if v[0] > 4.0) or 'none'))
+        for name in stations:
+            if name not in g:
+                print(f'   {name}: absent from the run')
+                continue
+            geo, n, over = g[name]
+            ok = name in tab and abs(tab[name] - geo) <= 0.006 * max(1.0, geo)
+            print(f'   {name}: geo(t) {geo:.3f} ({n} station-epochs, {over} above t 4); run-end line of stdout.txt '
+                  + (f'{tab[name]:g}: {"agrees" if ok else "DISAGREES"}' if name in tab else 'not present'))
+
+
+# ----------------------------------------------------------------------------- r3 rows
+R3_SETS = (('all', 'all satellites'), ('trk', 'consumer-tracked'), ('all_dm', 'all, de-commoned'), ('trk_dm', 'tracked, de-commoned'))
+
+
+def r3_rows(path):
+    """{(system, set): (p50 of the hours 2-6 e_clk within-arc RMS, arcs)} of one saved ftc_step_attrib --r3 output."""
+    out, sysl, sec = {}, None, None
+    for line in open(path, encoding='utf-8', errors='replace'):
+        m = re.match(r'R3  TRUTH GRADE AT THE IF LEVEL -- .*\[system (\w)\]', line)
+        if m:
+            sysl, sec = m.group(1), None
+            continue
+        if line.startswith('--- ') and sysl:
+            if 'DIFFMEDIAN' in line:
+                sec = 'all_dm' if 'ALL' in line else 'trk_dm'
+            else:
+                sec = 'trk' if 'TRACKED' in line else 'all' if 'ALL wire' in line else None
+            continue
+        t = line.split()
+        if sysl and sec and t[:3] == ['hours', '2-6', 'e_clk'] and len(t) >= 6:
+            out[(sysl, sec)] = (float(t[5]), int(t[3]))
+    return out
+
+
+def cmd_r3rows(files):
+    rows = [r3_rows(f) for f in files]
+    print('R3 e_clk, hours 2 to 6, p50 of the within-arc RMS against the CODE clock (m); change from the first file')
+    print(f'{"system":6s} {"set":22s} ' + ' '.join(f'{os.path.basename(f)[:18]:>18s}' for f in files))
+    for sysl in 'GE':
+        for key, label in R3_SETS:
+            if not all((sysl, key) in r for r in rows):
+                print(f'{sysl:6s} {label:22s} missing in at least one file')
+                continue
+            v = [r[(sysl, key)][0] for r in rows]
+            print(f'{sysl:6s} {label:22s} ' + ' '.join(f'{x:18.4f}' for x in v))
+            if len(v) > 1:
+                print(f'{"":6s} {"  change from first":22s} ' + ' '.join(f'{x - v[0]:+18.4f}' for x in v))
+
+
 if __name__ == '__main__':
     a = sys.argv[1:]
     if not a:
         sys.exit(__doc__)
-    {'consumer': lambda: cmd_consumer(a[1:]), 'census': lambda: cmd_census(a[1], a[2:]),
+    def consumer_args(x):
+        return cmd_consumer(x[2:], x[1]) if x and x[0] == '--ref' else cmd_consumer(x)
+
+    def congruence_args(x):
+        return cmd_congruence(x[2:], x[1].split(',')) if x and x[0] == '--stations' else cmd_congruence(x, ['MIZU00JPN'])
+
+    {'consumer': lambda: consumer_args(a[1:]), 'census': lambda: cmd_census(a[1], a[2:]),
+     'congruence': lambda: congruence_args(a[1:]), 'r3rows': lambda: cmd_r3rows(a[1:]),
      'sites': lambda: cmd_sites(a[1], a[2:]), 'truth-check': lambda: cmd_truth_check(a[1:]), 'clock': lambda: cmd_clock(a[1], a[2:])}[a[0]]()
