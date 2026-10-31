@@ -62,14 +62,16 @@ namespace GnssProcessor {
                      spdlog::memory_buf_t& dest) override {
             char buf[64];
             if (tls_current_epoch_.has_value()) {
-                int year = 0, month = 0, day = 0, hour = 0, minute = 0;
-                double second = 0.0;
-                TimeUtils::gpsTimeToGpsScaleCalendar(
-                    *tls_current_epoch_, year, month, day, hour, minute, second);
+                // Millisecond fields with the carry: a whole minute prints as
+                // HH:MM:00.000, never as the previous minute's :60.000.
+                int year = 0, month = 0, day = 0, hour = 0, minute = 0, millisecond = 0;
+                TimeUtils::gpsTimeToGpsScaleCalendarMs(
+                    *tls_current_epoch_, year, month, day, hour, minute, millisecond);
                 std::snprintf(buf, sizeof(buf),
-                              "%4d, %9.3f (%04d-%02d-%02d %02d:%02d:%06.3f)",
+                              "%4d, %9.3f (%04d-%02d-%02d %02d:%02d:%02d.%03d)",
                               tls_current_epoch_->week, tls_current_epoch_->tow,
-                              year, month, day, hour, minute, second);
+                              year, month, day, hour, minute,
+                              millisecond / 1000, millisecond % 1000);
             } else {
                 std::snprintf(buf, sizeof(buf),
                               "----, --------- (---------- --:--:------)");

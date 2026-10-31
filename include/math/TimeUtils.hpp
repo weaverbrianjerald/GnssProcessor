@@ -307,7 +307,10 @@ namespace GnssProcessor {
         /**
          * @brief Formats GNSS time as a human-readable string.
          *
-         * Includes GPS week/TOW and the UTC calendar time (from gpsTimeToGregorian).
+         * Includes GPS week/TOW and the UTC calendar time: the epoch shifted by the
+         * GPS-UTC leap-second offset (@c leapSecondsGpsUtc, as @c gpsTimeToGregorian
+         * applies it) and printed through @c gpsTimeToGpsScaleCalendarMs, so a rounding
+         * carry reaches the minute (never "SS = 60.000").
          * @param time The GNSS time to format.
          * @return Formatted string (e.g., "GPS week 1234, TOW 12345.670 (2023-10-01 12:34:56.789 UTC)").
          */
@@ -320,11 +323,37 @@ namespace GnssProcessor {
          * leap-second offset, so the returned wall-clock fields sit on the TOW
          * grid: a 30-second RINEX file gives HH:MM:00.000 and HH:MM:30.000, not
          * times shifted by the leap-second count (HH:MM:42 and HH:MM:12 at 18 s).
-         * Used by log formatters so that every line reads on the same grid as the
-         * data.
+         * The conversion runs through a Julian-day double whose resolution is about
+         * 40 microseconds, so a whole minute can come back as HH:MM:59.99996; a
+         * printed stamp uses @c gpsTimeToGpsScaleCalendarMs instead.
          */
         static void gpsTimeToGpsScaleCalendar(const GnssTime& time, int& year, int& month,
                                               int& day, int& hour, int& minute, double& second);
+
+        /**
+         * @brief Converts (week, tow) to GPS-scale calendar fields rounded to the millisecond.
+         *
+         * The fields of a printed stamp.  The epoch is rounded once, to an integer count of
+         * milliseconds since the GPS epoch, and every field is derived from that count, so a
+         * rounding carry propagates through the second, the minute, the hour and the date:
+         * TOW 259260.0 of week 2313 is 2024-05-08 00:01:00.000.  Printing the second of
+         * @c gpsTimeToGpsScaleCalendar with "%06.3f" instead gave "00:00:60.000" there, the
+         * Julian-day double returning 59.99996 s with no minute carry.
+         * Same scale as @c gpsTimeToGpsScaleCalendar (no leap-second subtraction).
+         *
+         * @param time        The GPS time; a TOW outside [0, 604800) is accepted and carried
+         *                    into the neighbouring week.
+         * @param year        Output year.
+         * @param month       Output month (1-12).
+         * @param day         Output day of month (1-31).
+         * @param hour        Output hour (0-23).
+         * @param minute      Output minute (0-59).
+         * @param millisecond Output millisecond of the minute (0-59999); the printed second
+         *                    is @c millisecond / 1000 and its fraction @c millisecond % 1000.
+         */
+        static void gpsTimeToGpsScaleCalendarMs(const GnssTime& time, int& year, int& month,
+                                                int& day, int& hour, int& minute,
+                                                int& millisecond);
 
         /**
          * @brief Computes the offset from a time system to Terrestrial Time (TT).
