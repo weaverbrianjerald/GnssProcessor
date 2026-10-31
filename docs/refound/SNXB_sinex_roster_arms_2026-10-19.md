@@ -181,3 +181,38 @@ python -I scripts/clock_level/snx_roster_grade.py consumer|census|sites|truth-ch
 ```
 
 `gcensus.py` runs without `-I` (it imports `msc_sites`); `ftc_step_attrib.py` and `refound_grade.py` need numpy and pandas (the Python 3.14 install has both) and run without `-I`.
+
+## 11. 2026-10-31: arm S3 on the current golden (pre-registered)
+
+Section 10.7 left B4 (arm S3, MIZU00JPN restored) not run; card SNX section 8.4 froze it. This section fixes the arms, the readings and the verdict rule before any run of it is read. The engine is unchanged and nothing is armed.
+
+### 11.1 What is run
+
+- Exe `D:/GnssProcessorSupport/gates/exe/x64-Release/gnss_processor_snxclose.exe`, a copy of `C:/GnssProcessor/build/x64-Release/gnss_processor_bofarm.exe` (sha256 `91143c81de9a95479aa08131c08945676d5e542dbd607e9a8ff6d1852d2d73d6` for both), the exe of the baseline pair `runs/_rf0hv17_{field,sim}6`. The eight DLLs beside it equal those of the main build (sha256 compared).
+- Base `config/golden/golden_field_refound.json` at main `e639032` (last changed by `2b9af4a`, card BOF): GPS + Galileo, 58 stations, WTZZ00DEU the held-out consumer, DOY 129 from 00:00, 6 h, cold start.
+- S2 roster regenerated for this golden by `scripts/roster_from_sinex.py` from the weekly SINEX of section 10 (sha256 `74a412dc1d09db48...`): 54 positions, byte-identical to the S2 roster file of section 10.2 (sha256 `0d8fbc025d0bbfae...`) and equal to the coordinates of the S2 arm of 2026-10-19 at all 54 stations. The same generator, run on the roster with MIZU00JPN added at its held coordinate, gives MIZU00JPN as solution 16, formal sigma 0.7 mm, data span 7.0 d, at (-3857171.2296, 3108692.7812, 4004040.1136) m, which is 1679.4 mm from the held (-3857169.9416, 3108693.7043, 4004040.6697) m (E +1527.0, N -698.7, U -22.4 mm). That 55-position file (the 54 and MIZU00JPN) is the roster of S3 (sha256 `25df2a43166cdf08...`).
+- Tooling, committed before the arms: `rapid_arm.py make --add-station NAME RINEX X Y Z` (selftest 105 of 105, commit `18069d1`); `snx_roster_grade.py consumer --ref`, `congruence` and `r3rows` (commit `56a6cea`; they reproduce the tables of sections 10.3 and 10.6, and the run-end congruence table of `runs/_rf0hv17_field6` at 58 of 58 stations).
+- MIZU00JPN observations `C:/GnssProcessor/data/2024-129/obs/MIZU00JPN/MIZU00JPN_R_20241290000_01D_30S_MO.rnx` (Septentrio PolaRx5, SEPCHOKE_B3E6 NONE, antenna height 0.1206 m; GPS L1, L2W, L5Q and Galileo E1, E5a present). The station was in the roster until card SCU dropped it.
+
+| tag | run directory | change from the golden |
+| --- | --- | --- |
+| C | `C:/GnssProcessor/runs/_rf0hv17_field6` | none (the existing run, same exe) |
+| C2c | `_rap_snxc_C2c` | none; a fresh run of the renamed copy beside the others |
+| S2c | `_rap_snxc_S2c` | the S2 roster: 54 stations at their SINEX coordinates |
+| H | `_rap_snxc_H` | S2c plus MIZU00JPN at the held SSC coordinate (59 stations) |
+| S3 | `_rap_snxc_S3` | S2c plus MIZU00JPN at its SINEX coordinate (59 stations) |
+
+S3 differs from H in one coordinate and from S2c in one station. Order: a 10-epoch smoke of S3; a 2 h arm of S3 (development: it exits 0 and the network uses MIZU00JPN; not graded); then the 6 h arms C2c, S2c, H and S3 together under `RAPID_RUNS_ROOT=D:/GnssProcessorSupport/runs_nom`; then the census replays of the four wires with `gcensus.py` (GPS + Galileo; WTZZ00DEU and the 16 sites; keys on the held truth and, with `--sites site_list_sinex.json`, on the SINEX truth). Instruments and outputs: `D:/GnssProcessorSupport/gates/snxclose/`.
+
+### 11.2 Bars and readings (frozen)
+
+- **G0.** C2c reproduces C: the records of `products.txt` (comment lines and the `S` line excluded), `closed_loop_trace.csv` and `network_epoch_status.csv` are equal. If not, C2c is the control of every delta below (same box state) and the difference between C and C2c is reported.
+- **B1** (consumer, the form of section 10.7). WTZZ00DEU, hourly 3D p50 in hours 2 to 6: S3, S2c and H each within 0.003 m of C at every hour. Read on the SINEX truth and on the held truth.
+- **B3** (census, the form of section 10.7). Consumer replays at WTZZ00DEU and the 16 sites, paired per site against C on one truth: the median over the 16 sites of the change in the mean hourly p50 over hours 2 to 6 not positive (a positive value at five decimals is a miss; section 10.7 records three such misses of 0.03 to 0.05 mm, below the resolution of the trace), and no site worse than 0.010 m. Read on both truths.
+- **B4** (S3, as frozen in SNX section 8.4). (a) Clock wire at most 0.0046 / 0.0029 m: the reading of `scripts/ftc_step_attrib.py --r3 --systems G,E` for system G, hours 2 to 6, `e_clk` p50 of the within-arc RMS against the CODE clock, rows "ALL sats, DIFFMEDIAN" and "consumer-TRACKED, DIFFMEDIAN" (`snx_roster_grade.py r3rows`). Caveat: the figure is card SCU's (section 3.1, arm m2: 0.0044 / 0.0028 m), measured on the GPS-only base of 2026-09-22, before the level-aware hold, the exact update and the Galileo package, and that card does not name its rows. The control of section 10.6 reads 0.0230 / 0.0195 m on these rows (0.0814 / 0.0658 m on the raw rows), so the clause is expected to be missed by every arm, C included; it is applied literally and a miss is recorded as a miss. (b) Congruence statistic: geo(t) at MIZU00JPN below 4 in S3 (the run-end station congruence table of `stdout.txt`, recomputed from `logs/network_congruence.csv` by `snx_roster_grade.py congruence`; card SCU: 29.1 at the held coordinate, 1.43 at its leave-out estimate).
+- **Read beside the bars** (no bar). S3 against H (the coordinate alone) and S3 against S2c (adding the station), and each against C: all eight R3 rows (G and E; all, tracked, each also de-commoned); the per-epoch RMS clock difference between wires (`snx_roster_grade.py clock`); geo(t) at MIZU00JPN and the roster median; the run-end counters of `rapid_arm.py score`; B1 and B3 in their paired form for the pairs S3-H and S3-S2c.
+- **Verdict rule.** S3 repairs the station when (i) geo(t) at MIZU00JPN in S3 is below 4 and (ii) the de-commoned R3 rows of S3 lie within 0.0010 m (system G) and 0.0016 m (system E) of those of S2c, the largest changes that replacing the whole roster by SINEX coordinates made on those rows in section 10.6; this tolerance is set here and is not a bar of SNX section 8.4. The test discriminates only if H shows the defect: geo(t) at MIZU00JPN in H not below 4, or a de-commoned G row of H more than 0.0010 m from S2c; otherwise the clock wire is recorded as unable to discriminate in this posture and the verdict rests on (i). A failure of (ii) in which S3 and H move from S2c alike reads as an effect of the station's data and not of its coordinate. If S3 repairs the station, the roster-file route already does what a loader key would and phase 2 (`network.coordinate_source`) is not justified by it. If not, the card states which of (i) and (ii) fails and what remains of the coordinate error, read from MIZU00JPN replayed as a consumer on the S3 and H wires (diagnostic, no bar).
+
+### 11.3 Expected, stated in advance
+
+H reproduces the defect of card SCU: a large geo(t) at MIZU00JPN and a clock wire off S2c. The SINEX coordinate lies (0.06, 0.06, 0.10) m from card SCU's leave-out estimate (+1.4715, -0.6366, -0.1204 m, SNX section 7); the screen's horizontal MDB is 0.02 to 0.03 m and its Up MDB 0.19 to 0.24 m (the run-end table of `runs/_rf0hv17_field6`), so S3 can read above the 1.43 of the leave-out arm and may or may not clear 4. The consumer and the census are expected to follow section 10.4 (a null). Not covered: other days or networks, the sim bed (known positions), the four roster stations absent from the file.
