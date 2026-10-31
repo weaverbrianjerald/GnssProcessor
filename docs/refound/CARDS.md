@@ -270,13 +270,14 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   gate had the same defect). Gate off: byte-identical on 2 h field and sim arms. Gate on at 120 epochs, 2 h field: 27 flags
   held on 11 epochs (19 arcs), the lift at 62.5 min, 3 of the 4 refloats after it on arcs held before it. Nothing armed;
   ledger verdicts unchanged.
-- [NOM5](NOM5_station_parameter_set_tail_2026-10-30.md): open, 2026-10-30: reopened for section 6, the gradient's bound
-  (`network.tropo_gradient_prior_sigma_m`, a zero-mean prior per column and epoch), pre-registered. Card NOM step N6's
-  remaining steps, BUILT and GATED on branch `nom/n6-tail` (not merged). N6f: the producer's rows sparse, every output identical (24 of 24 network
+- [NOM5](NOM5_station_parameter_set_tail_2026-10-30.md): closed, 2026-10-31: card NOM step N6's remaining steps, BUILT and
+  GATED on branch `nom/n6-tail` (not merged). N6f: the producer's rows sparse, every output identical (24 of 24 network
   arms with the snapshot, 16 of 16 user arms, real time), the loop cost flat (no gain shown). N6g:
   `estimation.seed_full_equation` leaves the producer byte-identical and moves the consumer under 1 mm at its births;
   every bar clause passes, a neutral change. N6h: a user layout flag that reaches no parameter is refused at load (the
   closed-loop consumer's configuration is a copy of the network's, so with a consumer the flags set its layout);
-  `network.estimate_tropo_gradients` conditions well, but its unbounded columns fit noise and at HKSL00HKG absorbed part
-  of a station-level step: field-blocking, a bound owed. N6j: the tests, onboarding pages 7 and 8, the routing. Both
-  keys UNVALIDATED; nothing armed.
+  `network.estimate_tropo_gradients` conditions well, but its unbounded columns fit noise and at HKSL00HKG held part of
+  a station-level step for an hour. Its bound (section 6, `network.tropo_gradient_prior_sigma_m`, a 1 mm zero-mean prior
+  per column and epoch) removes both, but in the event's own epoch the gradient still takes up part of the misfit
+  (HKSL00HKG 101 mm; two arcs escaped the attribution refloat): field-blocking. N6j: the tests, onboarding pages 7 and
+  8, the routing. Both keys UNVALIDATED; nothing armed.

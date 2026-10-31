@@ -4,20 +4,22 @@
 
 - **id:** NOM5
 - **topic:** network-vehicle
-- **status:** open
-- **summary:** REOPENED 2026-10-30 for section 6, the gradient's bound: `network.tropo_gradient_prior_sigma_m`, a zero-mean prior row per gradient column and epoch (default 1 mm), pre-registered before any run (section 6.1). Sections 1 to 5, closed 2026-10-30 on branch `nom/n6-tail` (not merged; the merge is the author's decision): BUILT and GATED (section 4). N6f: the producer's data rows are sparse (`StationDataRows`, written straight into the shared border and the local block); every output identical (24 of 24 network arms with the snapshot, 16 of 16 user arms, real time apart from wall-clock text); the loop cost flat within 0.15 % (the bar passes; the expected gain not shown). N6g: with `estimation.seed_full_equation` the producer is byte-identical and the consumer moves by under 1 mm at its births and not at all by hour; every clause of the recommendation bar passes, a neutral change; arming is the author's decision. N6h: a single-receiver layout flag in a network run with no consumer is refused at load (no configuration under `config/` sets one); `network.estimate_tropo_gradients` was added through the set alone and its conditioning clause passes, but its uncarried columns fit noise at their formal sigma on the sim bed (no gradient in the truth) and at HKSL00HKG absorbed part of a station-level step (the gradient reached 390 mm) while other arcs' carried levels moved by metres: field-blocking (standing invariant 3), a bound owed. N6j: the tests, onboarding pages 7 and 8, the `CLAUDE.md` routing and lint check V13. Both keys stay UNVALIDATED and default off. At pre-registration: card NOM's step N6 landed its body (steps N6.0 to N6e, merge `f64f916`, 2026-10-20: the network owns its station parameter set, and one observation equation serves the producer, the consumer and the seeds); the merge named N6f to N6j as remaining. This card builds them on branch `nom/n6-tail`: N6f, direct assembly (no dense Jacobian on the network; byte-identical; cost expected lower); N6g, the seeds on the whole equation behind `estimation.seed_full_equation` (default off, fingerprinted; the consumer moves at births); N6h, a user-side layout flag that reaches no parameter of a network run refused at load, and `network.estimate_tropo_gradients` (default off, fingerprinted) as the first station parameter added through the set alone; N6j, the close (tests, onboarding pages 7 and 8, `CLAUDE.md` routing). N6i (a canonical column order) is not taken (decision D2's default).
+- **status:** closed
+- **summary:** CLOSED 2026-10-31 on branch `nom/n6-tail` (not merged; the merge is the author's decision). Section 6, the gradient's bound (pre-registered 2026-10-30, graded 2026-10-31): `network.tropo_gradient_prior_sigma_m` (PARAM, default 1 mm), a zero-mean prior row per gradient column and epoch, BUILT and GATED. G6a (identity with the key absent) and G6b (sigma 0 reproduces section 4.4) pass. G6c passes five of six clauses: the columns no longer fit noise (spread 0.2 to 0.3 mm, the sim's largest 1.1 mm) or hold a step for an hour, and the consumers move by under 1 mm on the field in hour 2. It fails clause 4: in the epoch of HKSL00HKG's station-level event the gradient still reached 101 mm and two arcs (E26, E33) escaped the attribution refloat. The gradient key stays not field-runnable; a time-linked gradient or a within-epoch response is owed (section 6.3). Sections 1 to 5, closed 2026-10-30: BUILT and GATED (section 4). N6f: the producer's data rows are sparse (`StationDataRows`, written straight into the shared border and the local block); every output identical (24 of 24 network arms with the snapshot, 16 of 16 user arms, real time apart from wall-clock text); the loop cost flat within 0.15 % (the bar passes; the expected gain not shown). N6g: with `estimation.seed_full_equation` the producer is byte-identical and the consumer moves by under 1 mm at its births and not at all by hour; every clause of the recommendation bar passes, a neutral change; arming is the author's decision. N6h: a single-receiver layout flag in a network run with no consumer is refused at load (no configuration under `config/` sets one); `network.estimate_tropo_gradients` was added through the set alone and its conditioning clause passes, but its uncarried columns fit noise at their formal sigma on the sim bed (no gradient in the truth) and at HKSL00HKG absorbed part of a station-level step (the gradient reached 390 mm) while other arcs' carried levels moved by metres: field-blocking (standing invariant 3), a bound owed. N6j: the tests, onboarding pages 7 and 8, the `CLAUDE.md` routing and lint check V13. Both keys stay UNVALIDATED and default off. At pre-registration: card NOM's step N6 landed its body (steps N6.0 to N6e, merge `f64f916`, 2026-10-20: the network owns its station parameter set, and one observation equation serves the producer, the consumer and the seeds); the merge named N6f to N6j as remaining. This card builds them on branch `nom/n6-tail`: N6f, direct assembly (no dense Jacobian on the network; byte-identical; cost expected lower); N6g, the seeds on the whole equation behind `estimation.seed_full_equation` (default off, fingerprinted; the consumer moves at births); N6h, a user-side layout flag that reaches no parameter of a network run refused at load, and `network.estimate_tropo_gradients` (default off, fingerprinted) as the first station parameter added through the set alone; N6j, the close (tests, onboarding pages 7 and 8, `CLAUDE.md` routing). N6i (a canonical column order) is not taken (decision D2's default).
 - **source:** `scripts/nom3_designs/N6_design.md` (sections 3 to 7; decisions D1 to D10, defaults taken); the merge `f64f916` ("N6f to N6j remain"); `docs/onboarding/08_adding_a_network_parameter.md` (the recipe and its open rough edge on gradients); `docs/refound/UOM_n6_user_side_edits_2026-10-17.md` (the user-side notices of N6a and N6b)
 - **knobs / posture:** N6f and N6j: no key. N6g: `estimation.seed_full_equation` (new, default false, fingerprinted, ledger UNVALIDATED). N6h: `network.estimate_tropo_gradients` (new, default false, fingerprinted, ledger UNVALIDATED); the load-time refusal of section 2.3 (no key). Section 6: `network.tropo_gradient_prior_sigma_m` (new, PARAM, default 0.001 m, read only with the gradients). Base: the goldens of main `5127429` (card BOF's posture; baseline pair `runs/_rf0hv17_{field,sim}6`).
-- **dates in the text:** 2026-10-30
-- **hashes / run dirs:** branch `nom/n6-tail` from main `5127429`: pre-registration `6821ea0`, N6f `4381a61` (test pin `f9b4dac`), N6g `3748df0`, N6h `bf32eee`, N6j `1a36c66`, section 4.1 `e28b324`, comment edit `30d5d4b`; worktree `D:/GnssProcessorSupport/worktrees/n6tail`; executables under `D:/GnssProcessorSupport/gates/exe/x64-Release/`: control `gnss_processor_n6tctl.exe` (the worktree's Release build of `5127429`, before any change, sha256[:16] `7696875ef0d8c41f`; its copy `gnss_processor_n6tctl2.exe`), N6f `gnss_processor_n6tf.exe` (`1bcd0e640ee44aea`, build of `4381a61`), final `gnss_processor_n6th.exe` (`bf865f5b79546234`, build of `bf32eee`, the processor of the tip); gate records `D:/GnssProcessorSupport/gates/n6t/` (N6f), `final/` (G0, G4), `g3/` (G3), `g1final/` (the Debug suite at the tip); run root `D:/GnssProcessorSupport/runs_nom`: `_rap_g5_n6tctl2_*` and `_rap_g5_n6th_*` (G0), `_rap_n6t_g3{off,on}_{f2,s2,f6,s6}` and their census replays (G3), `_rap_n6t_g4{off,on}_{f,s}2` (G4)
-- **gates (frozen at pre-registration):** section 3, written before any run of a changed executable, with amendment A1 (section 3.1). G0, G1, G2, G3 and G5 pass; G4's conditioning clause passes and its estimates are field-blocking (section 4.4). Section 6.1 (frozen 2026-10-30, before any run of a bounded executable): G6a to G6c for the bound
+- **dates in the text:** 2026-10-30, 2026-10-31
+- **hashes / run dirs:** branch `nom/n6-tail` from main `5127429`: pre-registration `6821ea0`, N6f `4381a61` (test pin `f9b4dac`), N6g `3748df0`, N6h `bf32eee`, N6j `1a36c66`, section 4.1 `e28b324`, comment edit `30d5d4b`, close of sections 1 to 5 `f507f37`, section 6.1 `906c1d0`, the bound `1769e09`; bound executable `gnss_processor_n6tb.exe` (`9f2c307d5a6a079e`, build of `1769e09`), gate records `D:/GnssProcessorSupport/gates/n6t/bound/`, runs `_rap_n6t_g6{off,on,s0}_{f2,s2}`, `_rap_g5_n6th2_*` and `_rap_g5_n6tb_*` (section 6); worktree `D:/GnssProcessorSupport/worktrees/n6tail`; executables under `D:/GnssProcessorSupport/gates/exe/x64-Release/`: control `gnss_processor_n6tctl.exe` (the worktree's Release build of `5127429`, before any change, sha256[:16] `7696875ef0d8c41f`; its copy `gnss_processor_n6tctl2.exe`), N6f `gnss_processor_n6tf.exe` (`1bcd0e640ee44aea`, build of `4381a61`), final `gnss_processor_n6th.exe` (`bf865f5b79546234`, build of `bf32eee`, the processor of the tip); gate records `D:/GnssProcessorSupport/gates/n6t/` (N6f), `final/` (G0, G4), `g3/` (G3), `g1final/` (the Debug suite at the tip); run root `D:/GnssProcessorSupport/runs_nom`: `_rap_g5_n6tctl2_*` and `_rap_g5_n6th_*` (G0), `_rap_n6t_g3{off,on}_{f2,s2,f6,s6}` and their census replays (G3), `_rap_n6t_g4{off,on}_{f,s}2` (G4)
+- **gates (frozen at pre-registration):** section 3, written before any run of a changed executable, with amendment A1 (section 3.1). G0, G1, G2, G3 and G5 pass; G4's conditioning clause passes and its estimates are field-blocking (section 4.4). Section 6.1 (frozen 2026-10-30, before any run of a bounded executable): G6a and G6b pass; G6c fails clause 4 (section 6.2)
 
 **Outcome.** Question: can card NOM step N6 be finished as designed? Result: yes, one key excepted. The producer's
 rows are assembled sparsely, every output identical, the cost flat (no gain shown). The full-equation seeds leave the
 producer identical and move the consumer under 1 mm at its births only: every bar clause passes, a neutral change. A
-layout flag that reaches no parameter is refused at load. The troposphere gradient conditions well, but its unbounded
-columns fit noise and at HKSL00HKG absorbed part of a station-level step: field-blocking. Standing: branch `nom/n6-tail`, not
-merged; both keys UNVALIDATED; the bound, the arming decision and the merge owed (section 5).
+layout flag that reaches no parameter is refused at load. The troposphere gradient, unbounded, fitted noise and held a
+station-level step for an hour; its 1 mm zero-mean prior (section 6) removes both, but in the step's own epoch the
+gradient still takes up part of the misfit and two arcs escape the attribution test: field-blocking. Standing: branch
+`nom/n6-tail`, not merged; both keys UNVALIDATED; a time-linked gradient or a within-epoch response, the arming
+decision and the merge owed (section 6.3).
 
 ## 1. Question
 
@@ -413,3 +415,110 @@ the key on and sigma 0: the same, the run-end gradient line's clause on the prio
   Verdict: with G6a, G6b and every clause of G6c passed, the field-blocking finding of section 4.4 is answered (triage
   field-inert), the key stays UNVALIDATED, and adoption remains a 6 h grade with the census, not made here. A failed
   clause is traced and reported, and the key stays not field-runnable.
+
+### 6.2 2026-10-31: results
+
+**Build.** Candidate `gnss_processor_n6tb.exe` (sha256[:16] `9f2c307d5a6a079e`), the Release build of `1769e09`;
+control `gnss_processor_n6th.exe` (`bf865f5b79546234`). Both hashes were unchanged after every run. The build was a
+near-full rebuild (521 steps, the commit touches widely included headers); it started below normal priority and made
+no progress for 52 minutes on a machine saturated by other sessions, and ran at Normal from then on. The Release unit
+suite: 3669 tests in 498 suites, 3636 passed, 33 skipped (the fixture-gated list of section 4), 0 failed, among them
+the four new cases of `tests/network/test_network_layout_flags.cpp` (the key's default and refusal, the rows with
+their target and weight, sigma 0 and a column out of the block, the fingerprint) and the step-table and row-class
+pins; `gnss_simulator_selftest` 99 of 99. Records: `D:/GnssProcessorSupport/gates/n6t/bound/` (`build_rel.log`,
+`rel_suite.log`, `rel_suite.json`, `REPORT_BOUND.txt`, `g6c_field.txt`, `g6c_sim.txt`, `g6c_hksl_trace.txt`); runs
+`D:/GnssProcessorSupport/runs_nom/_rap_n6t_g6{off,on,s0}_{f2,s2}`, `_rap_g5_n6th2_*` and `_rap_g5_n6tb_*`. The machine
+carried other sessions' builds and runs throughout (89 to 100 % CPU); no gate of this section reads time.
+
+**G6a, identity with the key absent: pass.** The 23 G5 arms: every product file, every CSV trace (26 to 39 per arm),
+every other log and the exit codes are identical (arms `zero`, `joint`, `a4` and `gate` exit 1 on both sides). The
+text of each arm differs in the two declared classes only, the new kind's row (up to 4 lines in `stdout.txt` and
+`main_log` and 2 manifest records) and the gradient kind's `source` text (up to 4 lines and 1 record), with no line
+outside them. The snapshot bytes are identical apart from the write time of its first record. The 16 user arms are
+identical. Real time: `sbf`, `sbf_bssd` and `sbf_te` are identical; `cl` differs in the two classes and one wall-clock
+line (the cost of the arc-ledger line), with 36 files identical.
+
+**G6b, sigma 0 reproduces section 4.4: pass.** On both beds, `products.txt` (113,912 lines field and 80,784 sim,
+headers included) and all 35 CSV traces are identical to the control's on arms. The text differs in the two classes,
+the run-end clause "no prior (network.tropo_gradient_prior_sigma_m 0: unbounded)", and lines that differ only by the
+run directory, wall-clock values or the order of the canonical-signal latch lines (written by parallel threads). The
+2 h arms write no snapshot, so no run exercises the fingerprint token; the unit test does.
+
+**G6c, the bounded gradient (default sigma, against the key-off arms of the candidate).** All six arms exit 0.
+
+1. *Arming: pass on both beds.* Both columns are estimated at every station (58 field, 60 sim) from the first epoch;
+   the prior rows number 27,838 = 13,919 + 13,919 (field) and 28,800 = 14,400 + 14,400 (sim), the integrity lines 0.
+   The run-end line, field: "Network (troposphere gradients): north estimated in 13919 station-epoch(s) and left out
+   as unobserved in 0; east 13919 and 0; uncarried (estimated afresh every epoch); a zero-mean prior of 1.00 mm on
+   each column, 27838 row(s)."
+2. *Conditioning: pass on both beds.* No station block refused or dropped on either arm; unreached 1 and 1 (field,
+   the station with no observations) and 0 and 0 (sim); 240 of 240 epochs emitted, none withheld.
+3. *Estimates, hours 2 onward.* Per station the median, the robust spread (1.4826 MAD) and the median formal sigma,
+   then the median over stations (mm), and the largest magnitude of any station:
+
+   | bed | median north | median east | spread north | spread east | sigma north | sigma east | largest |
+   | --- | --- | --- | --- | --- | --- | --- | --- |
+   | field, 58 stations | -0.002 | +0.002 | 0.24 | 0.28 | 0.86 | 0.83 | 15.4 (KIT300UZB, 263670) |
+   | sim, 60 stations (truth 0) | -0.002 | +0.028 | 0.18 | 0.21 | 0.93 | 0.90 | 1.1 (S11000SIM, 264270) |
+
+   Section 4.4 read spreads of 2.7 to 4.2 mm, formal sigma of 4.7 to 7.1 mm and a sim largest of 70 mm. Sim clause, no
+   station past 3 mm: pass. Field: 2 of 58 stations pass 3 mm, each at an epoch of a station-level event:
+   KIT300UZB 15.4 mm at 263670, after an IF-TD slip and prior-residual reports on most of its GPS arcs at 263640 (the
+   same events on the key-off arm), and HKSL00HKG 7.5 mm at 263040, an attribution refloat of E04, E13 and E19.
+4. *HKSL00HKG: FAIL.* From 262650 to 266100 the station's gradient reads at most 2.6 mm except at three epochs, each an
+   attribution epoch: 13.1 mm at 262650, 100.9 mm at 262770 (north -54.4, east +84.9) and 7.5 mm at 263040. The
+   unbounded arm's hour-long offset (near 390 mm from 262800 to 263070) is gone (2.0 mm at 262800). At 262770 the
+   key-off arm's attribution refloats E04, E13, E19, E26 and E33; the bounded arm's refloats E04, E13 and E19, and E26
+   and E33 escape. Their carried levels then show the missed misfit: prior-residual reports of 24 to 62 on E26 and
+   E33 at 263190 to 263220 (residuals -0.036 to +0.040 m), against 7 to 15 on the key-off arm in the same minutes;
+   later in the hour both arms report E26 and E33 between 4 and 17.
+5. *Attribution refloats over the run:* field 30 off and 27 on (reported); sim 14 off and 11 on, 78.6 %: pass (bar
+   75 %).
+6. *Effect: pass.* Held-out consumers, p50 of `pos_err_3d_m` by hour (mm):
+
+   | consumer | hour | off | on | change |
+   | --- | --- | --- | --- | --- |
+   | `WTZZ00DEU`, from the first row | 1 | 58.8 | 58.7 | -0.1 |
+   | | 2 | 12.3 | 12.1 | -0.2 |
+   | `SZZ000SIM`, from the first row | 1 | 136.8 | 149.3 | +12.5 |
+   | | 2 | 72.3 | 50.8 | -21.5 |
+   | `SZZ000SIM`, from 00:30:15 | 1 | 100.4 | 108.6 | +8.2 |
+   | | 2 (30 min) | 34.8 | 30.8 | -4.0 |
+
+   No change in hour 2 is worse than +5 mm. The sim's hour 1 moves with its ignition noise, as in section 4.4.
+
+`products.txt` differs nearly everywhere (113,823 of the field's lines and 80,708 of the sim's differ by position): the
+gradient columns change every station block. Walls under shared load: field 1054.7 s off and 1012.9 s on, sim
+612.6 s and 607.3 s.
+
+**Mechanism of the failed clause.** At an epoch with a large station-level misfit (at HKSL00HKG the IF-TD test had
+refloated E04 six times in nine minutes, section 4.4), a per-epoch column with a soft prior still takes up part of
+it: against the 1 mm prior the solve still found a 100 mm gradient cheaper than the misfit, and a 100 mm gradient
+moves an observation at 10 degrees elevation by about 3 m (mf_grad 29.6). The post-fit attribution test reads the
+residuals after that solve, so the arcs whose misfit the gradient took up are no longer seen, and their carried
+levels carry the misfit into the following minutes. The prior bounds the columns between events, not within an
+event's epoch.
+
+**Verdict, section 6.** G6a and G6b pass; G6c passes clauses 1, 2, 3, 5 and 6 and fails clause 4. The prior answers
+the dominant failure of section 4.4: the columns no longer fit noise (spread 0.2 to 0.3 mm against 2.7 to 4.2 mm;
+the sim's largest 1.1 mm against 70 mm) and no longer hold a station-level step for an hour. It does not answer the
+step's own epoch, where the gradient still masks arcs from the attribution test. By the frozen rule,
+`network.estimate_tropo_gradients` stays not field-runnable (triage field-blocking) and UNVALIDATED;
+`network.tropo_gradient_prior_sigma_m` stays PARAM at 1 mm.
+
+### 6.3 Owed at close
+
+1. **The gradient at a station-level event's epoch.** Two structural routes, the author's choice:
+   - *A time-linked gradient*, a carried random walk, the physical model of a gradient and the single-receiver
+     filter's own (`filter.process_noise.tropo_gradient_q` 5e-12 m^2/s, about 0.01 mm per 30 s epoch). A carried
+     gradient cannot take up a misfit within one epoch. On the current vehicle it needs the in-block route, since the
+     diagonal route is the double count of `network.carry_zwd`; the in-block vehicle is out of regime on both
+     goldens.
+   - *A within-epoch response* to a gradient far outside its prior: |G| / sigma reached 100 at HKSL00HKG's 262770,
+     against a quiet-epoch spread near 0.3. The station would be re-solved with the gradient held at zero for that
+     epoch, so the attribution test sees the misfit as with the key off. It would be an event at both edges (standing
+     invariant 7): counters and identities at the hold, and nothing to re-seed at the next epoch, the columns being
+     uncarried.
+2. **The arming decision on `estimation.seed_full_equation`** (section 4.3), unchanged.
+3. **The merge of `nom/n6-tail`**, and the `docs/status/OPEN_ITEMS.md` lines of items 1 and 2, kept off the branch
+   while the main checkout holds another session's uncommitted edits of that file.
