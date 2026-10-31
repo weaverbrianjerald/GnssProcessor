@@ -12,6 +12,7 @@
 #include "app/Application.hpp"
 #include "app/EpochUpdateSupport.hpp"
 #include "app/PppPipelineWork.hpp"
+#include "common/GnssIdentity.hpp"
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -51,7 +52,7 @@ void Application::runFilterUpdateLoop(const std::string& epoch_prefix,
     auto has_phase = [&modeled_obs]() {
         for (const auto& obs : modeled_obs) {
             for (const auto& kv : obs.observed) {
-                if (!kv.first.empty() && kv.first[0] == 'L') return true;
+                if (obsTypeOf(kv.first) == ObsType::Phase) return true;
             }
         }
         return false;
@@ -284,7 +285,7 @@ void Application::runGeometryRelinearization(const std::string& epoch_prefix,
     bool has_phase = false;
     for (const auto& obs : epoch_obs) {
         for (const auto& [code, val] : obs.measurements) {
-            if (!code.empty() && code[0] == 'L') { has_phase = true; break; }
+            if (obsTypeOf(code) == ObsType::Phase) { has_phase = true; break; }
         }
         if (has_phase) break;
     }
@@ -675,13 +676,7 @@ void Application::dropAtxGatedWlEntries_(const std::string& epoch_prefix,
             const std::string sat  = key.substr(0, u1);
             const std::string sig1 = key.substr(u1 + 1, u2 - u1 - 1);
             const std::string sig2 = key.substr(u2 + 1);
-            const System sys = sat.empty() ? System::Unknown :
-                sat[0] == 'G' ? System::GPS :
-                sat[0] == 'E' ? System::Galileo :
-                sat[0] == 'R' ? System::GLONASS :
-                sat[0] == 'C' ? System::BeiDou :
-                sat[0] == 'J' ? System::QZSS :
-                sat[0] == 'S' ? System::SBAS : System::Unknown;
+            const System sys = systemOfSat(sat);
             bool drop = false;
             if (gate_strict) {
                 const bool a1 = ppp_model_->hasFullAtxCoverage(sat, sig1, sys);

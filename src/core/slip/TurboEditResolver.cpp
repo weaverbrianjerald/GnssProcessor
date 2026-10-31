@@ -25,6 +25,7 @@
 
 #include "slip/TurboEditResolver.hpp"
 #include "slip/TurboEditEpochWork.hpp"
+#include "common/GnssIdentity.hpp"
 #include "math/TimeUtils.hpp"
 #include "math/RobustStats.hpp"
 #include <algorithm>
@@ -121,8 +122,8 @@ TurboEditResolver::collectPhasePairs(const PppObservation& obs) const {
     std::vector<std::string> phases;
     for (const auto& [key, val] : obs.raw_observed) {
         (void)val;
-        if (key.size() < 2 || key[0] != 'L') continue;
-        if (key.find('_') != std::string::npos) continue;  // skip combined labels
+        if (key.size() < 2 || obsTypeOf(key) != ObsType::Phase) continue;
+        if (isIonoFreePairLabel(key)) continue;  // skip combined labels
         const char band = key[1];
         if (band < '1' || band > '9') continue;
         phases.push_back(key);
@@ -262,7 +263,7 @@ double TurboEditResolver::xsatSigmaFloor(const std::string& arc_key,
         if (it != xsat_sigma_cons_.end() && std::isfinite(it->second))
             sigma = it->second;
     }
-    if (!std::isfinite(sigma) && arc_key.front() != 'R'   // Tier 3: global
+    if (!std::isfinite(sigma) && systemFromLetter(arc_key.front()) != System::GLONASS  // Tier 3: global
         && std::isfinite(xsat_sigma_global_)) {           // (non-GLONASS, as in MW)
         sigma = xsat_sigma_global_;
     }
@@ -302,7 +303,7 @@ void TurboEditResolver::finalizeXsatSigmas() {
         if (!isNarrowPair(gkey)) {
             auto& cd = cons_devs[std::string(1, gkey.front())];
             cd.insert(cd.end(), devs.begin(), devs.end());
-            if (gkey.front() != 'R')
+            if (systemFromLetter(gkey.front()) != System::GLONASS)
                 global_devs.insert(global_devs.end(), devs.begin(), devs.end());
         }
 

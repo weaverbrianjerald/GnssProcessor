@@ -22,6 +22,8 @@
 #include "slip/IfPhaseSlipDetector.hpp"
 #include "slip/IfPhaseChainWork.hpp"
 #include "common/Constants.hpp"
+#include "common/GnssIdentity.hpp"
+#include "filter/StateKeySchema.hpp"
 #include "math/RobustStats.hpp"
 #include <algorithm>
 #include <cmath>
@@ -70,7 +72,7 @@ namespace GnssProcessor {
     bool IfPhaseSlipDetector::findPhaseIfLabel(const PppObservation& obs, std::string& phase_if_key) const {
         phase_if_key.clear();
         for (const auto& [k, v] : obs.observed)
-            if (k.find('_') != std::string::npos && !k.empty() && k[0] == 'L') {
+            if (isIonoFreePairLabel(k) && obsTypeOf(k) == ObsType::Phase) {
                 phase_if_key = k;
                 return true;
             }
@@ -81,11 +83,11 @@ namespace GnssProcessor {
         std::string& sig1, std::string& sig2) const {
         sig1.clear();
         sig2.clear();
-        const size_t pos = label.find('_');
-        if (pos == std::string::npos || pos == 0 || pos + 1 >= label.size()) return false;
-        sig1 = label.substr(0, pos);
-        sig2 = label.substr(pos + 1);
-        return (!sig1.empty() && !sig2.empty());
+        const auto pair = IonoFreePairLabel::parse(label);
+        if (!pair) return false;
+        sig1 = pair->first;
+        sig2 = pair->second;
+        return true;
     }
 
     double IfPhaseSlipDetector::computeIfWavelengthMeters(const PppObservation& obs,
@@ -145,8 +147,8 @@ namespace GnssProcessor {
         // Find two phase signals on different frequency bands.
         std::vector<std::tuple<std::string, double, double>> phase_signals; // sig, observed, modeled
         for (const auto& [key, val] : obs.observed) {
-            if (key.empty() || key[0] != 'L') continue;
-            if (key.find('_') != std::string::npos) continue; // skip IF combinations
+            if (obsTypeOf(key) != ObsType::Phase) continue;
+            if (isIonoFreePairLabel(key)) continue; // skip IF combinations
             auto mod_it = obs.modeled.find(key);
             if (mod_it == obs.modeled.end()) continue;
             phase_signals.emplace_back(key, val, mod_it->second);
@@ -173,7 +175,7 @@ namespace GnssProcessor {
         // byte-identical, also when (0, 1) passes the frequency guard and then
         // fails a later check, because the flag is set at the frequency guard,
         // where an index test would also have committed.
-        const std::string sys_key = PppUtils::getSystemString(obs.system);
+        const std::string sys_key = systemName(obs.system);
         const std::size_t n_use =
             all_pairs_ ? phase_signals.size() : std::size_t{ 2 };
         bool if_pair_taken = false;
@@ -780,7 +782,7 @@ namespace GnssProcessor {
         auto& rc = ref_arm_chain_counters_[sys_str];
         if (inherited) ++rc.fires_inherited; else ++rc.fires_own;
 
-        const std::string ref_amb_key = cs.ref_satellite + "_" + ref_data->phase_if_key;
+        const std::string ref_amb_key = StateKeys::makeAmbiguityKey(cs.ref_satellite, ref_data->phase_if_key);
         reset_keys.push_back(ref_amb_key);
 
         // An own-arm fire logs the unchanged text; only an inherited fire

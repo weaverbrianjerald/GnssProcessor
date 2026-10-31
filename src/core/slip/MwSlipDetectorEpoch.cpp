@@ -11,6 +11,8 @@
 
 #include "slip/MwSlipDetector.hpp"
 #include "slip/MwDetectorWork.hpp"
+#include "common/GnssIdentity.hpp"
+#include "filter/StateKeySchema.hpp"
 #include "math/TimeUtils.hpp"
 #include <cmath>
 #include <iterator>
@@ -122,7 +124,7 @@ namespace GnssProcessor {
         const auto& logger = w.logger;
 
         for (const auto& ifp : if_pairs) {
-            const std::string amb_key = obs.satellite + "_" + ifp.phase_key;
+            const std::string amb_key = StateKeys::makeAmbiguityKey(obs.satellite, ifp.phase_key);
             results.push_back(MwSlipResult{ amb_key });
             logger->warn("LLI lock loss detected: scheduling ambiguity reset for {}", amb_key);
             std::string s1, s2;
@@ -144,7 +146,7 @@ namespace GnssProcessor {
         {
             auto& bands = cur_lli_bands_[obs.satellite];
             for (const auto& [code, lli] : obs.lli_flags)
-                if (!code.empty() && code[0] == 'L' && lli != 0)
+                if (obsTypeOf(code) == ObsType::Phase && lli != 0)
                     bands.insert(code);
         }
         for (auto it = mw_stats_.begin(); it != mw_stats_.end(); )
@@ -161,8 +163,8 @@ namespace GnssProcessor {
         const auto& logger = w.logger;
 
         for (const auto& [key, val] : obs.raw_observed)
-            if (!key.empty() && key[0] == 'L' && key.find('_') == std::string::npos)
-                results.push_back(MwSlipResult{ obs.satellite + "_" + key });
+            if (obsTypeOf(key) == ObsType::Phase && !isIonoFreePairLabel(key))
+                results.push_back(MwSlipResult{ StateKeys::makeAmbiguityKey(obs.satellite, key) });
         logger->warn("LLI lock loss (uncombined): scheduling all phase ambiguity resets for {}", obs.satellite);
         // Remember which bands the receiver flagged (§14.11), so the
         // next epoch's stamp can mark the pairs that contain one of
@@ -173,8 +175,8 @@ namespace GnssProcessor {
         {
             auto& bands = cur_lli_bands_[obs.satellite];
             for (const auto& [code, lli] : obs.lli_flags)
-                if (!code.empty() && code[0] == 'L'
-                    && code.find('_') == std::string::npos && lli != 0)
+                if (obsTypeOf(code) == ObsType::Phase
+                    && !isIonoFreePairLabel(code) && lli != 0)
                     bands.insert(code);
             // Readout (§14.10): the LLI epoch has no MWDEC line of its
             // own, so log it explicitly; otherwise the gap reads as
@@ -287,7 +289,7 @@ namespace GnssProcessor {
 
             if (has_bia) {
                 // Collect for two-pass BSSD integer processing
-                const char cons = obs.satellite.empty() ? '?' : obs.satellite[0];
+                const char cons = letterOfSat(obs.satellite);
                 const std::string group_key = std::string(1, cons) + "_" + s1 + "_" + s2;
                 sd_groups[group_key][obs.satellite] = {
                     &obs, { s1, s2, c1, c2 }, mw_raw, mw_bia,
@@ -362,7 +364,7 @@ namespace GnssProcessor {
             const double mw_bia = has_bia ? (mw_raw - sat_bias) : mw_raw;
 
             if (has_bia) {
-                const char cons = obs.satellite.empty() ? '?' : obs.satellite[0];
+                const char cons = letterOfSat(obs.satellite);
                 const std::string group_key = std::string(1, cons) + "_" + pair.phase1 + "_" + pair.phase2;
                 sd_groups[group_key][obs.satellite] = {
                     &obs, pair, mw_raw, mw_bia,
@@ -424,11 +426,11 @@ namespace GnssProcessor {
                           obs.satellite, pair.phase1, pair.phase2, lambda_wl, mw_raw,
                           has_bia ? 1 : 0,
                           has_bia ? "BSSD-pass2" : "direct-no-BIA",
-                          has_bia ? (std::string{ obs.satellite[0] } + "_" + pair.phase1 + "_" + pair.phase2) : std::string{ "<none>" });
+                          has_bia ? (std::string{ letterOfSat(obs.satellite) } + "_" + pair.phase1 + "_" + pair.phase2) : std::string{ "<none>" });
 
             if (has_bia) {
                 // Collect for two-pass BSSD integer processing
-                const char cons = obs.satellite.empty() ? '?' : obs.satellite[0];
+                const char cons = letterOfSat(obs.satellite);
                 const std::string group_key = std::string(1, cons) + "_" + pair.phase1 + "_" + pair.phase2;
                 sd_groups[group_key][obs.satellite] = {
                     &obs, pair, mw_raw, mw_bia,
@@ -858,11 +860,11 @@ namespace GnssProcessor {
                                 verdict.arc_epochs, bia_corrected, verdict.step_epoch_s });
         };
         if (!lane.if_label.empty()) {             // a combined lane: its IF ambiguity
-            emit(lane.satellite + "_" + lane.if_label);
+            emit(StateKeys::makeAmbiguityKey(lane.satellite, lane.if_label));
             return;
         }
-        emit(lane.satellite + "_" + lane.sig1);   // an uncombined lane: both signals
-        emit(lane.satellite + "_" + lane.sig2);
+        emit(StateKeys::makeAmbiguityKey(lane.satellite, lane.sig1));   // an uncombined lane: both signals
+        emit(StateKeys::makeAmbiguityKey(lane.satellite, lane.sig2));
     }
 
 } // namespace GnssProcessor

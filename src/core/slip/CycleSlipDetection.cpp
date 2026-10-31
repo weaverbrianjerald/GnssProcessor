@@ -10,6 +10,7 @@
 
 #include "slip/CycleSlipManager.hpp"
 #include "slip/CycleSlipEpochWork.hpp"
+#include "filter/StateKeySchema.hpp"
 #include <iterator>
 
 namespace GnssProcessor {
@@ -252,7 +253,7 @@ void CycleSlipManager::groupMwPairsBySatellite(SlipEpochWork& w) const {
                 continue; // already present (slipped or duplicate)
 
             MwSlipResult clean_entry;
-            clean_entry.amb_key = sat_id + "_" + s1;
+            clean_entry.amb_key = StateKeys::makeAmbiguityKey(sat_id, s1);
             clean_entry.sig1 = s1;
             clean_entry.sig2 = s2;
             clean_entry.satellite = sat_id;

@@ -4,6 +4,8 @@
  */
 
 #include "slip/SoftLliBridge.hpp"
+#include "common/GnssIdentity.hpp"
+#include "filter/StateKeySchema.hpp"
 #include <Eigen/Dense>
 #include <algorithm>
 #include <cmath>
@@ -59,7 +61,7 @@ bool SoftLliBridge::qualifies(const std::string& sat_id, double epoch_now_s) con
     const double dt = (sample_interval_s_ > 0.0) ? sample_interval_s_ : measured_dt;
     if (!(dt > 0.0 && dt <= 1.0 + 1e-3)) return false;
     // AR-capable constellation (exclude GLONASS FDMA).
-    if (sat_id.empty() || sat_id[0] == 'R') return false;
+    if (sat_id.empty() || systemOfSat(sat_id) == System::GLONASS) return false;
     return true;
 }
 
@@ -91,8 +93,8 @@ void SoftLliBridge::registerHold(const std::string& sat_id,
     int n_held = 0;
     for (const auto& amb_key : candidate_keys) {
         const std::string signal = signalOf(amb_key);
-        if (signal.empty() || signal[0] != 'L') continue;        // phase only
-        if (signal.find('_') != std::string::npos) continue;     // raw signal only
+        if (obsTypeOf(signal) != ObsType::Phase) continue;                 // phase only
+        if (isIonoFreePairLabel(signal)) continue;              // raw signal only
         const auto snap = last_good_amb_.find(amb_key);
         if (snap == last_good_amb_.end()) continue;              // no anchor → normal reset
         if (held_pending_bridge_.count(amb_key)) { ++n_held; continue; }  // multi-epoch LLI
@@ -125,17 +127,17 @@ void SoftLliBridge::registerGapHolds(const std::vector<PppObservation>& modeled_
     for (const auto& obs : modeled_obs) {
         for (const auto& [ref_type, observed_val] : obs.observed) {
             (void)observed_val;
-            if (ref_type.empty() || ref_type[0] != 'L') continue;
-            if (ref_type.find('_') != std::string::npos) continue;
-            observed.insert(obs.satellite + "_" + ref_type);
+            if (obsTypeOf(ref_type) != ObsType::Phase) continue;
+            if (isIonoFreePairLabel(ref_type)) continue;
+            observed.insert(StateKeys::makeAmbiguityKey(obs.satellite, ref_type));
         }
     }
 
     for (const auto& [amb_key, idx] : state_manager.getAmbiguities()) {
         (void)idx;
         const std::string signal = signalOf(amb_key);
-        if (signal.empty() || signal[0] != 'L') continue;        // phase only
-        if (signal.find('_') != std::string::npos) continue;     // raw signal only
+        if (obsTypeOf(signal) != ObsType::Phase) continue;                 // phase only
+        if (isIonoFreePairLabel(signal)) continue;              // raw signal only
         if (observed.count(amb_key)) continue;                   // still tracked
         if (held_pending_bridge_.count(amb_key)) continue;       // already held
         const auto snap = last_good_amb_.find(amb_key);
@@ -269,7 +271,7 @@ void SoftLliBridge::resolveHolds(const TurboEditResolver::EpochResolution& te,
             std::set<std::string> actioned_sigs;
             bool any = false;
             for (const auto* r : rit->second) {
-                const std::string rk = r->satellite + "_" + r->signal;
+                const std::string rk = StateKeys::makeAmbiguityKey(r->satellite, r->signal);
                 actioned_sigs.insert(r->signal);
                 if (restoreOrReset(rk, r->signal, r->dN, r->lambda))
                     any = true;

@@ -17,6 +17,7 @@
 #include "math/Coordinates.hpp"
 #include "measurement/StateInitializer.hpp"   // systemToIsbName (clock-disc ISB scoping)
 #include "common/Constants.hpp"
+#include "common/GnssIdentity.hpp"
 #include "common/PppUtils.hpp"
 #include <algorithm>
 #include <cctype>
@@ -30,17 +31,10 @@ namespace GnssProcessor {
 
 namespace {
 
-/// Config-section name for a constellation, or nullptr if not user-selectable.
+/// Config-section name for a constellation (@c systemName), or nullptr for
+/// @c System::Unknown, which no configuration selects (@c systemName gives "Unknown").
 const char* systemConfigName(System sys) {
-    switch (sys) {
-    case System::GPS:     return "GPS";
-    case System::Galileo: return "Galileo";
-    case System::GLONASS: return "GLONASS";
-    case System::BeiDou:  return "BeiDou";
-    case System::QZSS:    return "QZSS";
-    case System::SBAS:    return "SBAS";
-    default:              return nullptr;
-    }
+    return sys == System::Unknown ? nullptr : systemName(sys);
 }
 
 /// True iff @p sys appears in the configured active-systems list.

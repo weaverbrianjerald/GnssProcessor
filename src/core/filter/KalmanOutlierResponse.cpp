@@ -15,7 +15,7 @@
 
 #include "filter/KalmanFilter.hpp"
 #include "filter/KalmanRowIdentity.hpp"   // splitBssdSatId
-#include "common/PppUtils.hpp"
+#include "common/GnssIdentity.hpp"     // systemOfSat, systemName, ddConstellationName
 #include <spdlog/spdlog.h>
 #include <Eigen/Dense>
 #include <cmath>
@@ -154,7 +154,7 @@ namespace GnssProcessor {
         // extracted from the SD pair name (BssdTransform always forms pairs
         // as "non_pivot-pivot", so ref_sat is the pivot when present).
         const auto& bssd_pivots = measurement_model_.getBssdPivotSatellites();
-        const std::string primary_cons = PppUtils::getSystemString(primary_sat);
+        const std::string primary_cons = systemName(systemOfSat(primary_sat));
         auto piv_it = bssd_pivots.find(primary_cons);
         const std::string pivot_sat = (bssd_active && piv_it != bssd_pivots.end())
                                     ? piv_it->second
@@ -295,22 +295,8 @@ namespace GnssProcessor {
             rov_code = rov_code.substr(0, slash);
         }
 
-        // Constellation prefix matches MeasurementModel's ddConstellationOf.
-        // Inlined here to avoid a cross-module dependency for one switch.
-        auto consPrefix = [](char sys) -> std::string {
-            switch (sys) {
-            case 'G': return "GPS";
-            case 'E': return "Galileo";
-            case 'R': return "GLONASS";
-            case 'C': return "BeiDou";
-            case 'J': return "QZSS";
-            case 'S': return "SBAS";
-            case 'I': return "IRNSS";
-            default:  return std::string(1, sys);
-            }
-        };
-        if (primary_sat.empty()) return;
-        const std::string cons = consPrefix(primary_sat[0]);
+        // The constellation field of the DD key, by the rule every DD-key writer shares.
+        const std::string cons = ddConstellationName(primary_sat);
         const std::string amb_key =
             "DD|" + cons + "|" + primary_sat + "|" + rov_code + "|" + ref_sat;
 
@@ -500,7 +486,7 @@ namespace GnssProcessor {
                 const auto us = key.find('_');
                 if (us != std::string::npos) {
                     const std::string sat = key.substr(0, us);
-                    const std::string cons = PppUtils::getSystemString(sat);
+                    const std::string cons = systemName(systemOfSat(sat));
                     auto piv_it = bssd_pivots.find(cons);
                     if (piv_it != bssd_pivots.end() && piv_it->second == sat) {
                         P(idx, idx) = 0.0;  // keep frozen
@@ -516,7 +502,7 @@ namespace GnssProcessor {
         if (bssd_active && config_.carriesSlantIonosphere()) {
             for (const auto& [sat, idx] : state_manager_.getIonosphereStates()) {
                 if (idx >= static_cast<size_t>(P.rows())) continue;
-                const std::string cons = PppUtils::getSystemString(sat);
+                const std::string cons = systemName(systemOfSat(sat));
                 auto piv_it = bssd_pivots.find(cons);
                 if (piv_it != bssd_pivots.end() && piv_it->second == sat)
                     P(idx, idx) = 0.0;  // keep frozen
@@ -525,7 +511,7 @@ namespace GnssProcessor {
             if (config_.enableIonoRate()) {
                 for (const auto& [sat, idx] : state_manager_.getIonosphereRateStates()) {
                     if (idx >= static_cast<size_t>(P.rows())) continue;
-                    const std::string cons = PppUtils::getSystemString(sat);
+                    const std::string cons = systemName(systemOfSat(sat));
                     auto piv_it = bssd_pivots.find(cons);
                     if (piv_it != bssd_pivots.end() && piv_it->second == sat)
                         P(idx, idx) = 0.0;  // keep frozen

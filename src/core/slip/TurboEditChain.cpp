@@ -17,6 +17,7 @@
 
 #include "slip/TurboEditResolver.hpp"
 #include "slip/TurboEditEpochWork.hpp"
+#include "common/GnssIdentity.hpp"
 #include "math/TimeUtils.hpp"
 #include <algorithm>
 #include <cmath>
@@ -79,8 +80,8 @@ void TurboEditResolver::trackSignalContinuity(const PppObservation& obs, double 
     // were excluded above and therefore count as missing, matching the
     // filter's own usage of these observations).
     for (const auto& [sig, val] : obs.raw_observed) {
-        if (sig.size() < 2 || sig[0] != 'L') continue;
-        if (sig.find('_') != std::string::npos) continue;
+        if (sig.size() < 2 || obsTypeOf(sig) != ObsType::Phase) continue;
+        if (isIonoFreePairLabel(sig)) continue;
         if (!std::isfinite(val)) continue;
         const std::string skey = obs.satellite + "_" + sig;
         const auto ls = sig_runs_.find(skey);
@@ -159,7 +160,7 @@ void TurboEditResolver::collectPairRow(EpochWork& w, const PppObservation& obs,
 
     cache.push_back({ &obs, key, pr.phase1, pr.phase2, gf, td2, lam1, lam2,
                       thresh, thresh_unfloored, gf_exceeds });
-    cons_td2[obs.satellite[0]].push_back(td2);
+    cons_td2[letterOfSat(obs.satellite)].push_back(td2);
 
     // Cross-sat TD2 noise pool (source of the warmup floor): samples
     // are zenith-normalized so the pooled MAD is a homoscedastic

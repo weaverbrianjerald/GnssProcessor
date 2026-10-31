@@ -9,6 +9,7 @@
  */
 
 #include "slip/MwSlipDetector.hpp"
+#include "common/GnssIdentity.hpp"
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -62,7 +63,7 @@ namespace GnssProcessor {
         // group pivot's undifferenced mean to recover MW_bia(sat).  The pivot key format
         // matches the pass-2 assignment (sd_pivot_sat_["<cons>_<sig1>_<sig2>"]).
         const std::string group_key =
-            std::string(1, sat.empty() ? '?' : sat.front()) + "_" + sig1 + "_" + sig2;
+            std::string(1, letterOfSat(sat)) + "_" + sig1 + "_" + sig2;
         const auto pit = sd_pivot_sat_.find(group_key);
         if (pit == sd_pivot_sat_.end()) { out.count = s.count; return out; }  // no pivot ⇒ can't reconstruct
         const std::string pivot_key = pit->second + "_" + sig1 + "_" + sig2;

@@ -17,6 +17,7 @@
  */
 
 #include "measurement/RowRules.hpp"
+#include "common/GnssIdentity.hpp"
 #include "config/GnssConfig.hpp"
 #include "products/SsrCorrectionStore.hpp"
 #include "math/TimeUtils.hpp"
@@ -75,7 +76,7 @@ namespace GnssProcessor {
                 }
             }
             double sig_c = 0.0;
-            if (ref_type[0] == 'L') {          // phase row: combined phase σ (sigc)
+            if (obsTypeOf(ref_type) == ObsType::Phase) {        // phase row: combined phase σ (sigc)
                 const bool   pb_gate    = config.enableSsrBiasMaxAge();
                 const double pb_max_age = config.getSsrBiasMaxAge()
                                         * config.getSsrBiasStaleHoldFactor();
@@ -85,7 +86,7 @@ namespace GnssProcessor {
                 if (pb && pb->combined_sigma_m > 0.0
                        && std::isfinite(pb->combined_sigma_m))
                     sig_c = pb->combined_sigma_m;
-            } else if (ref_type[0] == 'C') {   // code row: combined code σ (sigcc, per-sat)
+            } else if (obsTypeOf(ref_type) == ObsType::Code) { // code row: combined code σ (sigcc, per-sat)
                 if (auto oc = ssr.getOrbitClock(obs.satellite, obs.time, window);
                     oc && oc->has_clock && oc->combined_code_sigma_m > 0.0
                        && std::isfinite(oc->combined_code_sigma_m))
@@ -192,7 +193,7 @@ namespace GnssProcessor {
         // for RTCM/IGS-SSR biases and when emit_phase_bias_sigma is off, so with
         // the knob off (or on a non-network stream) R is byte-identical.
         if (config.networkConsumePhaseBiasSigma() && !combined_active
-            && ref_type.size() >= 2 && ref_type[0] == 'L'
+            && ref_type.size() >= 2 && obsTypeOf(ref_type) == ObsType::Phase
             && config.getProcessingMode() != ProcessingMode::PPP_RTK_Network) {
             // Use the same freshness decision as the SSR apply site in
             // buildJacobianRow, so R is inflated by the σ of the bias that was
@@ -220,8 +221,8 @@ namespace GnssProcessor {
         // Downweight code on signals without BIA coverage
         if (!config.estimateSatBiases()
             && config.noBiaCodeDownweight() > 1.0
-            && ref_type.size() >= 2 && ref_type[0] == 'C') {
-            const bool is_if = (ref_type.find('_') != std::string::npos);
+            && ref_type.size() >= 2 && obsTypeOf(ref_type) == ObsType::Code) {
+            const bool is_if = isIonoFreePairLabel(ref_type);
             // A signal the live SSR stream corrects is not missing
             // bias coverage (ssr_bias_term applies to the row), so it
             // is not downweighted as if uncorrected.  (Raw signals

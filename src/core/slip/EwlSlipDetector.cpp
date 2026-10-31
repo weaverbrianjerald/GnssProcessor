@@ -15,6 +15,8 @@
 
 #include "slip/EwlSlipDetector.hpp"
 #include "common/Constants.hpp"
+#include "common/GnssIdentity.hpp"
+#include "filter/StateKeySchema.hpp"
 #include "math/RobustStats.hpp"
 #include "math/TimeUtils.hpp"
 #include <algorithm>
@@ -89,16 +91,16 @@ namespace GnssProcessor {
 
         for (const auto& [key, val] : obs.raw_observed) {
             if (key.size() < 2) continue;
-            const char prefix = key[0];
-            if (prefix != 'C' && prefix != 'L') continue;
+            const ObsType type = obsTypeOf(key);
+            if (type != ObsType::Code && type != ObsType::Phase) continue;
             // Skip combined (IF) labels containing '_'
-            if (key.find('_') != std::string::npos) continue;
+            if (isIonoFreePairLabel(key)) continue;
             const char band = key[1];
             if (band < '2' || band > '9') continue;  // non-L1 only
 
             auto& bs = bands[band];
-            if (prefix == 'C' && bs.code.empty())  bs.code  = key;
-            if (prefix == 'L' && bs.phase.empty()) bs.phase = key;
+            if (type == ObsType::Code && bs.code.empty())  bs.code  = key;
+            if (type == ObsType::Phase && bs.phase.empty()) bs.phase = key;
         }
 
         // Form all pairs of non-L1 bands that have both code and phase
@@ -332,7 +334,7 @@ namespace GnssProcessor {
                         trace_file_ << std::fixed << std::setprecision(3)
                                     << current_epoch_.week << "," << current_epoch_.tow << ","
                                     << obs.satellite << ","
-                                    << PppUtils::getSystemString(obs.system) << ","
+                                    << systemName(obs.system) << ","
                                     << std::setprecision(2) << obs.elevation << ","
                                     << pair.phase1 << "," << pair.phase2 << ","
                                     << std::setprecision(6) << ewl_corrected << "," << ewl_cyc << ","
@@ -377,7 +379,7 @@ namespace GnssProcessor {
                     trace_file_ << std::fixed << std::setprecision(3)
                                 << current_epoch_.week << "," << current_epoch_.tow << ","
                                 << obs.satellite << ","
-                                << PppUtils::getSystemString(obs.system) << ","
+                                << systemName(obs.system) << ","
                                 << std::setprecision(2) << obs.elevation << ","
                                 << pair.phase1 << "," << pair.phase2 << ","
                                 << std::setprecision(6) << ewl_corrected << "," << ewl_cyc << ","
@@ -408,7 +410,7 @@ namespace GnssProcessor {
                     sr.satellite = obs.satellite;
                     sr.sig1 = pair.phase1;
                     sr.sig2 = pair.phase2;
-                    sr.amb_key = obs.satellite + "_" + pair.phase1;
+                    sr.amb_key = StateKeys::makeAmbiguityKey(obs.satellite, pair.phase1);
                     sr.slip_ewl_cycles = slip_cycles;
                     sr.slip_ewl_known = slip_known;
                     sr.lambda_ewl = lambda_ewl;

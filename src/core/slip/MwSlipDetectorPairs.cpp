@@ -13,6 +13,7 @@
 
 #include "slip/MwSlipDetector.hpp"
 #include "common/Constants.hpp"
+#include "common/GnssIdentity.hpp"
 #include "common/SignalBand.hpp"
 #include "model/PppModel.hpp"  // getAllowedBandDigits
 #include <algorithm>
@@ -35,16 +36,15 @@ namespace GnssProcessor {
         std::map<std::string, std::string> phase_by_bands;
         std::map<std::string, std::string> code_by_bands;
         for (const auto& [k, v] : obs.observed) {
-            if (k.size() < 2 || k.find('_') == std::string::npos) continue;
-            const size_t us = k.find('_');
-            if (us < 2 || us + 2 >= k.size()) continue;
+            const auto members = IonoFreePairLabel::parse(k);
+            if (!members || members->first.size() < 2 || members->second.size() < 2) continue;
             // Extract band digits from each half: e.g. "L1W" -> '1', "L5Q" -> '5'.
-            const char b1 = k[1];
-            const char b2 = k[us + 2];
+            const char b1 = members->first[1];
+            const char b2 = members->second[1];
             if (b1 < '1' || b1 > '9' || b2 < '1' || b2 > '9') continue;
             const std::string bkey = std::string(1, b1) + "_" + std::string(1, b2);
-            if (k[0] == 'L') phase_by_bands[bkey] = k;
-            else if (k[0] == 'C') code_by_bands[bkey] = k;
+            if (obsTypeOf(k) == ObsType::Phase) phase_by_bands[bkey] = k;
+            else if (obsTypeOf(k) == ObsType::Code) code_by_bands[bkey] = k;
         }
         std::vector<IfPair> result;
         for (const auto& [bkey, pkey] : phase_by_bands) {
@@ -59,11 +59,11 @@ namespace GnssProcessor {
         std::string& sig1, std::string& sig2) const {
         sig1.clear();
         sig2.clear();
-        const size_t pos = label.find('_');
-        if (pos == std::string::npos || pos == 0 || pos + 1 >= label.size()) return false;
-        sig1 = label.substr(0, pos);
-        sig2 = label.substr(pos + 1);
-        return (!sig1.empty() && !sig2.empty());
+        const auto pair = IonoFreePairLabel::parse(label);
+        if (!pair) return false;
+        sig1 = pair->first;
+        sig2 = pair->second;
+        return true;
     }
 
     double MwSlipDetector::computeWideLaneWavelengthMeters(const PppObservation& obs,
@@ -75,7 +75,7 @@ namespace GnssProcessor {
         if (!(std::isfinite(f1) && std::isfinite(f2) && f1 > 0.0 && f2 > 0.0)) {
             log_manager_.getLogger("mw_slip_detector")->debug(
                 "Invalid frequencies for {} {}: sig1={} f1={:.3f} MHz, sig2={} f2={:.3f} MHz",
-                obs.satellite, PppUtils::getSystemString(obs.system),
+                obs.satellite, systemName(obs.system),
                 sig1, f1 / 1e6, sig2, f2 / 1e6);
             return 0.0;
         }
@@ -89,7 +89,7 @@ namespace GnssProcessor {
 
     bool MwSlipDetector::hasAnyPhaseLockLoss(const PppObservation& obs) const {
         for (const auto& [type, lli] : obs.lli_flags)
-            if (!type.empty() && type[0] == 'L' && lli != 0) return true;
+            if (obsTypeOf(type) == ObsType::Phase && lli != 0) return true;
         return false;
     }
 
@@ -129,19 +129,9 @@ namespace GnssProcessor {
         // unfiltered by definition.  Map the constellation prefix once.
         std::set<char> allowed_digits;  // empty means "no filter"
         if (mw_freq_raw == MwFrequencyMode::Dual || mw_freq_raw == MwFrequencyMode::Triple) {
-            auto consName = [](char c) -> std::string {
-                switch (c) {
-                case 'G': return "GPS";
-                case 'E': return "Galileo";
-                case 'R': return "GLONASS";
-                case 'C': return "BeiDou";
-                case 'J': return "QZSS";
-                case 'S': return "SBAS";
-                case 'I': return "IRNSS";
-                default:  return {};
-                }
-            };
-            const std::string cons = obs.satellite.empty() ? "" : consName(obs.satellite[0]);
+            // A satellite outside the six constellations reads "Unknown", which the band
+            // map does not list, so it gets no filter (as "IRNSS" and "" did before).
+            const std::string cons = systemName(systemOfSat(obs.satellite));
             const FrequencyMode fm =
                 (mw_freq_raw == MwFrequencyMode::Dual) ? FrequencyMode::Dual
                                                        : FrequencyMode::Triple;
@@ -203,9 +193,9 @@ namespace GnssProcessor {
 
         for (const auto& [key, val] : source) {
             if (key.size() < 2) continue;
-            const char prefix = key[0];
-            if (prefix != 'C' && prefix != 'L') continue;
-            if (key.find('_') != std::string::npos) continue;
+            const ObsType type = obsTypeOf(key);
+            if (type != ObsType::Code && type != ObsType::Phase) continue;
+            if (isIonoFreePairLabel(key)) continue;
             // Second half of the companion-code guard.  When `source`
             // is obs.observed (mw_frequency_mode Mirror) a companion key would enter a
             // bucket that did not hold it without the knob; skip it, so Mirror sees the
@@ -236,7 +226,7 @@ namespace GnssProcessor {
                 continue;
 
             auto& bs = bands[band];
-            auto& bucket = (prefix == 'C') ? bs.codes : bs.phases;
+            auto& bucket = (type == ObsType::Code) ? bs.codes : bs.phases;
             if (all_channels) {
                 bucket.push_back(key);
             } else if (bucket.empty()) {
@@ -326,8 +316,8 @@ namespace GnssProcessor {
 
         constexpr double NaN = std::numeric_limits<double>::quiet_NaN();
 
-        if (sig1.empty() || sig2.empty() || sig1[0] != 'L' || sig2[0] != 'L') return NaN;
-        if (code1.empty() || code2.empty() || code1[0] != 'C' || code2[0] != 'C') return NaN;
+        if (obsTypeOf(sig1) != ObsType::Phase || obsTypeOf(sig2) != ObsType::Phase) return NaN;
+        if (obsTypeOf(code1) != ObsType::Code || obsTypeOf(code2) != ObsType::Code) return NaN;
 
         auto itL1 = obs.raw_observed.find(sig1);
         auto itL2 = obs.raw_observed.find(sig2);

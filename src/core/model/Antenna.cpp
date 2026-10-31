@@ -1,5 +1,6 @@
 ﻿#include "model/Antenna.hpp"
 #include "model/SatAttitude.hpp"
+#include "common/GnssIdentity.hpp"
 #include "math/Coordinates.hpp"
 #include "products/ProductCache.hpp"
 #include <Eigen/Dense>
@@ -537,7 +538,7 @@ namespace GnssProcessor {
         bool skip_satellite_pco) const {
 
         double correction = 0.0;
-        bool is_phase = freq_type[0] == 'L';
+        bool is_phase = obsTypeOf(freq_type) == ObsType::Phase;
         double wavelength = is_phase ? ppp_utils_.getWavelength(system, freq_type, satellite) : 0.0;
 
         if (!rx_pos.allFinite() || !sat_pos.allFinite() || !sat_vel.allFinite() || !std::isfinite(elevation) || !std::isfinite(azimuth)) {

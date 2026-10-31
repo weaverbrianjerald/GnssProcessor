@@ -18,6 +18,7 @@
  */
 
 #include "realtime/RealTimeEngine.hpp"
+#include "common/GnssIdentity.hpp"
 #include "filter/StateKeySchema.hpp"    // makeAmbiguityKey
 #include <algorithm>
 #include <cctype>
@@ -41,8 +42,8 @@ bool isScreenableRow(const std::string& sat, const std::string& signal,
         return false;
     if (signal.size() != 3 || !std::isdigit(static_cast<unsigned char>(signal[1])))
         return false;
-    const bool phase = (signal[0] == 'L');
-    const bool code  = (signal[0] == 'C');
+    const bool phase = (obsTypeOf(signal) == ObsType::Phase);
+    const bool code  = (obsTypeOf(signal) == ObsType::Code);
     switch (rows) {
     case InnovationScreenRows::All:   return phase || code;
     case InnovationScreenRows::Phase: return phase;
@@ -138,9 +139,9 @@ InnovationScreen::Outcome RealTimeEngine::evaluateInnovationScreen_(const EpochM
         const double fc = config_.getInnovationScreenCodeFloorM();
         for (Eigen::Index i = 0; i < m && static_cast<size_t>(i) < n_lbl; ++i) {
             const std::string& sig = rows[static_cast<size_t>(i)].signal;
-            if (sig.empty()) continue;
-            if (sig[0] == 'L')      S(i, i) += fp * fp;
-            else if (sig[0] == 'C') S(i, i) += fc * fc;
+            const ObsType type = obsTypeOf(sig);
+            if (type == ObsType::Phase)     S(i, i) += fp * fp;
+            else if (type == ObsType::Code) S(i, i) += fc * fc;
         }
     }
     return innovation_screen_.evaluate(S, mu.innovations, rows);

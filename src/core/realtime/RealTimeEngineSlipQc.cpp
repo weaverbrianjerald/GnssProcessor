@@ -9,6 +9,8 @@
  */
 
 #include "realtime/RealTimeEngine.hpp"
+#include "common/GnssIdentity.hpp"
+#include "filter/StateKeySchema.hpp"
 #include "math/TimeUtils.hpp"
 #include "common/PppUtils.hpp"
 #include <map>
@@ -40,7 +42,7 @@ void RealTimeEngine::detectAndRepairSlips(RtEpochContext& ctx) {
     auto isBssdPivot = [&](const std::string& sat) -> bool {
         if (!config_.enableBetweenSatelliteSd()) return false;
         const auto& pivots = meas_model_->getBssdPivotSatellites();
-        auto it = pivots.find(PppUtils::getSystemString(sat));
+        auto it = pivots.find(systemName(systemOfSat(sat)));
         return it != pivots.end() && it->second == sat;
     };
 
@@ -142,7 +144,7 @@ void RealTimeEngine::detectAndRepairSlips(RtEpochContext& ctx) {
         // re-referencing.
         for (const auto& r : te.repairs) {
             if (soft_lli_repaired.count(r.satellite)) continue;  // restored above
-            const std::string key = r.satellite + "_" + r.signal;
+            const std::string key = StateKeys::makeAmbiguityKey(r.satellite, r.signal);
             const int idx = state_manager_->getAmbiguityIndex(key);
             if (idx < 0) continue;
             if (isBssdPivot(r.satellite)) {
@@ -176,9 +178,9 @@ void RealTimeEngine::detectAndRepairSlips(RtEpochContext& ctx) {
             if (!obs) continue;
             for (const auto& [sig, val] : obs->observed) {
                 (void)val;
-                if (sig.empty() || sig[0] != 'L') continue;
-                if (sig.find('_') != std::string::npos) continue;
-                const std::string key = sat + "_" + sig;
+                if (obsTypeOf(sig) != ObsType::Phase) continue;
+                if (isIonoFreePairLabel(sig)) continue;
+                const std::string key = StateKeys::makeAmbiguityKey(sat, sig);
                 if (state_manager_->getAmbiguityIndex(key) < 0) continue;
                 state_manager_->resetAmbiguity(key, reset_std);
             }

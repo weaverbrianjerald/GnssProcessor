@@ -15,6 +15,7 @@
 
 #include "measurement/MeasurementModel.hpp"
 #include "measurement/BrsdTransform.hpp"
+#include "common/GnssIdentity.hpp"
 #include "common/SignalBand.hpp"
 #include "filter/StateKeySchema.hpp"
 #include <cmath>
@@ -35,46 +36,6 @@ namespace GnssProcessor {
     // and leaves the position-dependent geometry + ambiguity signal the
     // filter needs.
     // =================================================================
-
-    namespace {
-
-        /// Build the DD ambiguity key: "DD|cons|sat_i|code|pivot".
-        std::string makeDdAmbKey(const std::string& cons,
-                                 const std::string& sat_i,
-                                 const std::string& code,
-                                 const std::string& pivot) {
-            return "DD|" + cons + "|" + sat_i + "|" + code + "|" + pivot;
-        }
-
-        /// Map first char of a satellite id to constellation name.
-        std::string ddConstellationOf(const std::string& sat) {
-            if (sat.empty()) return {};
-            switch (sat[0]) {
-                case 'G': return "GPS";
-                case 'E': return "Galileo";
-                case 'R': return "GLONASS";
-                case 'C': return "BeiDou";
-                case 'J': return "QZSS";
-                case 'S': return "SBAS";
-                case 'I': return "IRNSS";
-                default:  return std::string(1, sat[0]);
-            }
-        }
-
-        /// Constellation string -> System enum.  Used by IF row collapse
-        /// to look up frequencies via PppUtils::getFrequency().  Returns
-        /// System::Unknown for unrecognised names so the caller can skip.
-        System ddSystemFromConsName(const std::string& cons) {
-            if (cons == "GPS")     return System::GPS;
-            if (cons == "Galileo") return System::Galileo;
-            if (cons == "GLONASS") return System::GLONASS;
-            if (cons == "BeiDou")  return System::BeiDou;
-            if (cons == "QZSS")    return System::QZSS;
-            if (cons == "SBAS")    return System::SBAS;
-            return System::Unknown;
-        }
-
-    } // anonymous namespace
 
     // ===================================================================
     // The DD build's working types
@@ -338,7 +299,7 @@ namespace GnssProcessor {
         // math run in a single pass.
 
         for (const auto& [sat, rov_ptr] : rov_by_sat) {
-            const std::string cons = ddConstellationOf(sat);
+            const std::string cons = ddConstellationName(sat);
             if (!active_set.empty() && active_set.find(cons) == active_set.end()) continue;
             if (config_.isSatelliteExcluded(sat)) continue;
 
@@ -370,7 +331,7 @@ namespace GnssProcessor {
             // SNR averaging: any 'S*' RINEX code on the rover side.
             double snr_sum = 0.0; size_t snr_cnt = 0;
             for (const auto& [code, val] : rov_ptr->observed) {
-                if (!code.empty() && code[0] == 'S') { snr_sum += val; ++snr_cnt; }
+                if (obsTypeOf(code) == ObsType::Snr) { snr_sum += val; ++snr_cnt; }
             }
             info.num_sigs = info.brsd_signals.size();
             info.avg_snr  = (snr_cnt > 0) ? (snr_sum / snr_cnt) : 0.0;
@@ -576,8 +537,13 @@ namespace GnssProcessor {
                 // staying under the cap.  For dual-frequency receivers
                 // there's only one pair so this reduces to the prior
                 // behavior; for triple-/all-frequency it picks the best
-                // available combination.
-                const System sys = ddSystemFromConsName(rows[idxs.front()].cons);
+                // available combination.  The row's constellation is a
+                // ddConstellationName (a constellation name, "IRNSS", a letter
+                // outside the traits table, or ""), never one of the letters
+                // systemFromName also accepts ("G", "E", ...), so it reads as a
+                // name: Unknown unless it is one of the six names, and the
+                // frequency lookups below then give 0.
+                const System sys = systemFromName(rows[idxs.front()].cons);
                 double best_K = std::numeric_limits<double>::infinity();
                 size_t best_hi = 0, best_lo = 0;
                 bool found = false;
@@ -706,8 +672,8 @@ namespace GnssProcessor {
         // covariance.
         // Build the expected set as parsed (cons, sat_i, code, pivot) tuples
         // so the prune doesn't depend on string-formatting details of
-        // makeDdAmbKey matching exactly what's stored.  Then walk the
-        // ambiguity map, parse each DD-namespaced key, and remove any
+        // StateKeys::makeDdAmbiguityKey matching exactly what's stored.  Then
+        // walk the ambiguity map, parse each DD-namespaced key, and remove any
         // tuple not in the expected set.
         using DdTuple = std::tuple<std::string, std::string, std::string, std::string>;
         std::set<DdTuple> expected;
@@ -735,7 +701,7 @@ namespace GnssProcessor {
             std::string code = ex.substr(us + 1);
             const auto slash = code.find('/');
             if (slash != std::string::npos) code = code.substr(0, slash);  // rover code
-            const std::string cons = ddConstellationOf(sat_i);
+            const std::string cons = ddConstellationName(sat_i);
             auto pit = pivots.find(cons);
             if (pit == pivots.end()) continue;
             expected.emplace(cons, sat_i, code, pit->second);
@@ -773,7 +739,7 @@ namespace GnssProcessor {
             if (r.obs_type != 'L') continue;
             if (r.integer_capable) continue;
             non_integer_capable_dd_ambiguity_keys_.insert(
-                makeDdAmbKey(r.cons, r.sat_i, r.rov_code, r.sat_p));
+                StateKeys::makeDdAmbiguityKey(r.cons, r.sat_i, r.rov_code, r.sat_p));
         }
     }
 
@@ -794,7 +760,7 @@ namespace GnssProcessor {
             // tracking attribute, the float ambiguity will absorb the
             // residual sat-DCB; integer fixing requires DCB
             // harmonization (Phase 2 plan) to be valid.
-            const std::string key = makeDdAmbKey(r.cons, r.sat_i, r.rov_code, r.sat_p);
+            const std::string key = StateKeys::makeDdAmbiguityKey(r.cons, r.sat_i, r.rov_code, r.sat_p);
             int aidx = state_manager_.getAmbiguityIndex(key);
             if (aidx < 0) {
                 state_manager_.addAmbiguity(key, r.innov_pre);
@@ -906,7 +872,7 @@ namespace GnssProcessor {
                 }
                 em.innovations(a) = r.innov;
                 em.R_v(a)         = r.var_brsd_i + r.var_brsd_p;
-                em.satellite_ids.push_back(r.sat_i + "-" + r.sat_p);
+                em.satellite_ids.push_back(SatPairId{r.sat_i, r.sat_p}.str());
                 // Surface the rover code in residual traces.  When aliased
                 // with a different reference attribute, append the ref
                 // code so log readers can spot mixed-attribute rows.

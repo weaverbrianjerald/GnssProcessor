@@ -288,9 +288,19 @@ ionosphere delays and biases) grows and shrinks as satellites rise and set.
 **`StateManager` owns that layout.** No other class keeps its own index into the state;
 all access goes through `StateManager`. State names ("keys") have one format each,
 defined by the helpers in `filter\StateKeySchema.hpp`; new code builds and parses keys
-only through them. Older code on the single-receiver path still formats some keys by
-hand (`sat + "_" + signal`); card UOM step U8 moves those onto the helpers and the typed
-identities of `common\GnssIdentity.hpp`.
+only through them. In the single-receiver code the measurement, slip, application and
+real-time files build their ambiguity, satellite-bias, pivot-seed and double-difference
+ambiguity keys through the helpers. The filter's pivot managers, smoother, ambiguity
+resolver, outlier response and post-fit QC still build or split ambiguity, satellite-bias
+and double-difference keys by hand (`sat + "_" + signal`); the slip detectors' statistics
+and arc keys and the row-exclusion tokens have the same shape but are not state keys.
+Constellation names, observation types and signal-pair labels are read through the typed
+identities and helpers of `common\GnssIdentity.hpp`. Some readers still test the first
+character or call `PppUtils::getSystemString`, among them the corrections, the WLS
+estimator, the antenna model's frequency-name tests, the staged geometry-free detector,
+the innovation-screen kernel header and the group keys of the noise pools in the MW and
+TurboEdit detectors; card UOMB (section 3.1) and the bodies of the wave C commits give the
+list and the reason for each.
 
 ## Run output
 

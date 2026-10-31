@@ -8,6 +8,7 @@
 
 #include "app/EpochUpdateSupport.hpp"
 
+#include "common/GnssIdentity.hpp"
 #include "common/PppUtils.hpp"
 #include "config/GnssConfig.hpp"
 #include "filter/KalmanFilter.hpp"
@@ -186,7 +187,7 @@ void reinflateResetSatStates(const KalmanFilter& kalman_filter,
         if (per_signal_sats.count(sat_id)) continue;   // per-signal reset, not sat-wide
 
         if (pivots) {
-            const auto pit = pivots->find(PppUtils::getSystemString(sat_id));
+            const auto pit = pivots->find(systemName(systemOfSat(sat_id)));
             if (pit != pivots->end() && pit->second == sat_id) continue;
         }
 

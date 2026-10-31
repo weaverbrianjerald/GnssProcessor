@@ -6,6 +6,7 @@
 
 #include "filter/PivotManager.hpp"
 #include "filter/CovarianceReReference.hpp"
+#include "common/GnssIdentity.hpp"
 #include "measurement/Seeds.hpp"
 #include <algorithm>
 #include <cmath>
@@ -41,12 +42,12 @@ void PivotManager::buildEpochMaps(
         // estimate_sat_biases to absorb the ICB).
         if (obs.system == System::GLONASS && !config_.enableGlonassBssd()) continue;
 
-        const std::string cons = PppUtils::getSystemString(obs.satellite);
+        const std::string cons = systemName(systemOfSat(obs.satellite));
 
         // Count distinct phase signal types for this satellite.
         size_t n_phase = 0;
         for (const auto& [sig, val] : obs.observed)
-            if (!sig.empty() && sig[0] == 'L')
+            if (obsTypeOf(sig) == ObsType::Phase)
                 ++n_phase;
 
         SatInfo info{ cons, obs.elevation, n_phase, -1.0 };
@@ -60,7 +61,7 @@ void PivotManager::buildEpochMaps(
         // SD frame.  The worst per-signal variance is therefore the
         // pivot-fitness measure.
         for (const auto& [sig, val] : obs.observed) {
-            if (sig.empty() || sig[0] != 'L') continue;
+            if (obsTypeOf(sig) != ObsType::Phase) continue;
             const int aidx = state_manager.getAmbiguityIndex(obs.satellite + "_" + sig);
             if (aidx < 0) continue;
             const double v = state_manager.getStateVariance(aidx);
@@ -111,7 +112,7 @@ std::set<std::string> PivotManager::collectPhaseSignals(
     std::set<std::string> phase_sigs;
     for (const auto& obs : observations)
         for (const auto& [sig, val] : obs.observed)
-            if (!sig.empty() && sig[0] == 'L')
+            if (obsTypeOf(sig) == ObsType::Phase)
                 phase_sigs.insert(sig);
     return phase_sigs;
 }
@@ -410,7 +411,7 @@ void PivotManager::reReferenceAmbiguities(
             const std::string amb_sat = amb_key.substr(0, us);
             const std::string amb_sig = amb_key.substr(us + 1);
             if (amb_sig != sig) continue;
-            if (PppUtils::getSystemString(amb_sat) != cons) continue;
+            if (systemName(systemOfSat(amb_sat)) != cons) continue;
 
             const auto aidx = static_cast<Eigen::Index>(amb_idx);
             group_indices.push_back(aidx);
@@ -450,7 +451,7 @@ void PivotManager::reReferenceIonosphere(
     // Single pass: collect group and transform state vector.
     std::vector<Eigen::Index> iono_group;
     for (const auto& [sat, idx] : state_manager.getIonosphereStates()) {
-        if (PppUtils::getSystemString(sat) != cons) continue;
+        if (systemName(systemOfSat(sat)) != cons) continue;
         const auto ii = static_cast<Eigen::Index>(idx);
         iono_group.push_back(ii);
 
@@ -476,7 +477,7 @@ void PivotManager::reReferenceIonosphere(
             const double rate_piv = x(rpi);
             std::vector<Eigen::Index> rate_group;
             for (const auto& [sat, idx] : state_manager.getIonosphereRateStates()) {
-                if (PppUtils::getSystemString(sat) != cons) continue;
+                if (systemName(systemOfSat(sat)) != cons) continue;
                 const auto ri = static_cast<Eigen::Index>(idx);
                 rate_group.push_back(ri);
                 const double old_val = x(ri);
@@ -511,7 +512,7 @@ void PivotManager::reReferenceSatBiases(
         const auto bar = sb_key.find('|');
         if (bar == std::string::npos) continue;
         const std::string sat = sb_key.substr(0, bar);
-        if (PppUtils::getSystemString(sat) != cons) continue;
+        if (systemName(systemOfSat(sat)) != cons) continue;
         const std::string sig = sb_key.substr(bar + 1);
         const auto si = static_cast<Eigen::Index>(sb_idx);
         sig_groups[sig].emplace_back(sat, si);
@@ -814,7 +815,7 @@ void PivotManager::handlePivotHandover(
             for (const auto& obs : observations) {
                 if (obs.satellite != pivot) continue;
                 for (const auto& [sig, val] : obs.observed)
-                    if (!sig.empty() && sig[0] == 'L')
+                    if (obsTypeOf(sig) == ObsType::Phase)
                         pivot_phase_sigs.insert(sig);
                 break;
             }
@@ -833,7 +834,7 @@ void PivotManager::handlePivotHandover(
                     const std::string amb_sat = amb_key.substr(0, us);
                     const std::string amb_sig = amb_key.substr(us + 1);
                     if (amb_sig != sig) continue;
-                    if (PppUtils::getSystemString(amb_sat) != cons) continue;
+                    if (systemName(systemOfSat(amb_sat)) != cons) continue;
 
                     const auto aidx = static_cast<Eigen::Index>(amb_idx);
                     log->info("{}  Orphaned ambiguity {} (new pivot {} lacks {}): "
@@ -921,7 +922,7 @@ void PivotManager::freezePivotAmbiguityCovariance(StateManager& state_manager) {
             if (us == std::string::npos) continue;
             if (amb_key.substr(0, us) != piv) continue;
             const std::string amb_sig = amb_key.substr(us + 1);
-            if (amb_sig.empty() || amb_sig[0] != 'L') continue;
+            if (obsTypeOf(amb_sig) != ObsType::Phase) continue;
             const auto aidx = static_cast<Eigen::Index>(amb_idx);
             if (Pf(aidx, aidx) != 0.0) {
                 Pf.row(aidx).setZero();

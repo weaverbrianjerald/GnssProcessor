@@ -178,4 +178,38 @@ namespace GnssProcessor {
         return a.obsCode(type) + "_" + b.obsCode(type);
     }
 
+    // -----------------------------------------------------------------------
+    // User-side helpers
+    // -----------------------------------------------------------------------
+
+    std::optional<IonoFreePairLabel> IonoFreePairLabel::parse(std::string_view label) {
+        const std::size_t us = label.find('_');
+        if (us == std::string_view::npos || us == 0 || us + 1 >= label.size()) return std::nullopt;
+        return IonoFreePairLabel{std::string(label.substr(0, us)), std::string(label.substr(us + 1))};
+    }
+
+    SatPairId SatPairId::parse(std::string_view row_id) {
+        const std::size_t dash = row_id.find('-');
+        if (dash != std::string_view::npos && dash > 0 && dash + 1 < row_id.size())
+            return SatPairId{std::string(row_id.substr(0, dash)), std::string(row_id.substr(dash + 1))};
+        return SatPairId{std::string(row_id), std::string()};
+    }
+
+    SatPairId SatPairId::splitAtFirstDash(std::string_view row_id) {
+        const std::size_t dash = row_id.find('-');
+        if (dash == std::string_view::npos) return SatPairId{std::string(row_id), std::string()};
+        return SatPairId{std::string(row_id.substr(0, dash)), std::string(row_id.substr(dash + 1))};
+    }
+
+    std::string SatPairId::str() const { return primary + "-" + reference; }
+
+    std::string ddConstellationName(std::string_view sat) {
+        if (sat.empty()) return std::string();
+        const char letter = sat.front();
+        if (letter == 'I') return "IRNSS";                        // no System value
+        const System sys = systemFromLetter(letter);
+        if (sys == System::Unknown) return std::string(1, letter); // the letter itself
+        return systemName(sys);
+    }
+
 } // namespace GnssProcessor

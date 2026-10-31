@@ -22,6 +22,7 @@
 
 #include "slip/TurboEditResolver.hpp"
 #include "slip/TurboEditEpochWork.hpp"
+#include "common/GnssIdentity.hpp"
 #include "math/TimeUtils.hpp"
 #include <algorithm>
 #include <cmath>
@@ -60,7 +61,7 @@ void TurboEditResolver::openRow(const EpochWork& w, RowWork& row) const {
     auto& gf_flagged = row.gf_flagged;
     auto& flagged = row.flagged;
 
-    const char cons = sat[0];
+    const char cons = letterOfSat(sat);
     ivi = ivi_by_cons.count(cons) ? ivi_by_cons.at(cons) : 0.0;
     iono_stable_cons = (ivi < kIviThreshold);
 
@@ -323,7 +324,7 @@ void TurboEditResolver::traceRow(const RowWork& row) const {
     if (!trace_file_.is_open()) return;
     trace_file_ << std::fixed << std::setprecision(3)
                 << current_epoch_.week << "," << current_epoch_.tow << ","
-                << sat << "," << PppUtils::getSystemString(pe.obs->system) << ","
+                << sat << "," << systemName(pe.obs->system) << ","
                 << std::setprecision(2) << pe.obs->elevation << ","
                 << pe.sig1 << "," << pe.sig2 << ","
                 << std::setprecision(6) << pe.lambda1 << "," << pe.lambda2 << ","

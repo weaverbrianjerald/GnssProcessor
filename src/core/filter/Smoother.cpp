@@ -13,7 +13,7 @@
 
 #include "filter/Smoother.hpp"
 #include "logging/LogManager.hpp"
-#include "common/PppUtils.hpp"
+#include "common/GnssIdentity.hpp"
 #include <Eigen/Dense>
 #include <algorithm>
 #include <limits>
@@ -195,12 +195,12 @@ namespace GnssProcessor {
             // their re-references are not inverted here, so the k+1 estimate is in
             // the new frame and must fall back to the forward solution.
             for (const auto& [sat, idx] : sk1.ionospheres)
-                if (PppUtils::getSystemString(sat) == cons) exclude_keys.insert(sat);
+                if (systemName(systemOfSat(sat)) == cons) exclude_keys.insert(sat);
             for (const auto& [sb_key, idx] : sk1.sat_biases) {
                 const auto bar = sb_key.find('|');
                 const std::string sat = (bar != std::string::npos)
                                             ? sb_key.substr(0, bar) : sb_key;
-                if (PppUtils::getSystemString(sat) == cons) exclude_keys.insert(sb_key);
+                if (systemName(systemOfSat(sat)) == cons) exclude_keys.insert(sb_key);
             }
 
             // Clean, invertible handover: recorded by PivotManager with matching
@@ -221,7 +221,7 @@ namespace GnssProcessor {
                     const auto us = amb_key.find('_');
                     const std::string sat = (us != std::string::npos)
                                                 ? amb_key.substr(0, us) : amb_key;
-                    if (PppUtils::getSystemString(sat) == cons)
+                    if (systemName(systemOfSat(sat)) == cons)
                         exclude_keys.insert(amb_key);
                 }
                 continue;
@@ -235,7 +235,7 @@ namespace GnssProcessor {
                 const auto us = amb_key.find('_');
                 if (us == std::string::npos) continue;
                 const std::string sat = amb_key.substr(0, us);
-                if (PppUtils::getSystemString(sat) != cons) continue;
+                if (systemName(systemOfSat(sat)) != cons) continue;
                 const std::string sig = amb_key.substr(us + 1);
                 groups[sig].emplace_back(amb_key, static_cast<Eigen::Index>(idx));
             }

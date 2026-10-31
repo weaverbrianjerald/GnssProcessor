@@ -5,6 +5,7 @@
  */
 
 #include "slip/IonoVariabilityMonitor.hpp"
+#include "common/GnssIdentity.hpp"
 #include "math/TimeUtils.hpp"
 #include "math/RobustStats.hpp"
 #include <algorithm>
@@ -77,8 +78,8 @@ namespace GnssProcessor {
         for (const auto& kv : obs.raw_observed) {
             const std::string& key = kv.first;
             if (key.size() < 2) continue;
-            if (key[0] != 'L') continue;
-            if (key.find('_') != std::string::npos) continue; // skip combined labels
+            if (obsTypeOf(key) != ObsType::Phase) continue;
+            if (isIonoFreePairLabel(key)) continue; // skip combined labels
             const char band = key[1];
             if (band < '1' || band > '9') continue;
             if (phase_by_band.find(band) == phase_by_band.end())
@@ -224,7 +225,7 @@ namespace GnssProcessor {
                 trace_file_ << std::fixed << std::setprecision(3)
                             << current_epoch_.week << "," << current_epoch_.tow << ","
                             << obs.satellite << ","
-                            << PppUtils::getSystemString(obs.system) << ","
+                            << systemName(obs.system) << ","
                             << std::setprecision(2) << obs.elevation << ","
                             << sig1 << "," << sig2 << ","
                             << std::setprecision(6) << gf << "," << td2 << ","

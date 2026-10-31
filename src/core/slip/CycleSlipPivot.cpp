@@ -11,6 +11,8 @@
 #include "slip/CycleSlipManager.hpp"
 #include "slip/CycleSlipEpochWork.hpp"
 #include "measurement/ObservationEquation.hpp"
+#include "common/GnssIdentity.hpp"
+#include "filter/StateKeySchema.hpp"
 #include <algorithm>
 #include <cmath>
 #include <iterator>
@@ -63,7 +65,7 @@ void CycleSlipManager::scanPivotCulprits(SlipEpochWork& w) const {
     const auto& pivots = meas_model.getBssdPivotSatellites();
     for (const auto& [sat_id, slips] : slips_by_sat) {
         if (slips.empty()) continue;
-        const std::string cons = PppUtils::getSystemString(sat_id);
+        const std::string cons = systemName(systemOfSat(sat_id));
         auto piv_it = pivots.find(cons);
         if (piv_it == pivots.end()) continue;
         if (piv_it->second != sat_id) continue;  // not the pivot
@@ -208,7 +210,7 @@ void CycleSlipManager::repairAcrossSlippedPivotInPlace(SlipEpochWork& w) {
     if (!handled_cons.empty()) {
         auto consHandled = [&](const std::string& sat) {
             return handled_cons.count(
-                PppUtils::getSystemString(sat)) > 0;
+                systemName(systemOfSat(sat))) > 0;
         };
         deferred_integer_repairs.erase(
             std::remove_if(deferred_integer_repairs.begin(),
@@ -280,7 +282,7 @@ bool CycleSlipManager::repairConstellationInPlace(
     for (const auto& sig : cons_signals) {
         const int dN_pivot = dN_pivot_by_sig[sig];
         for (const auto& dr : deferred_integer_repairs) {
-            if (PppUtils::getSystemString(dr.sat_id) != cons
+            if (systemName(systemOfSat(dr.sat_id)) != cons
                 || dr.signal != sig) continue;
             if (dr.sat_id == pivot) continue;  // SD frozen at 0
 
@@ -309,7 +311,7 @@ bool CycleSlipManager::repairConstellationInPlace(
                 // the relative shift cannot be applied, so reset
                 // in the current (pivot-retained) frame.
                 resetAmbiguityBssdAware(
-                    dr.sat_id + "_" + sig, dr.sat_id, sig,
+                    StateKeys::makeAmbiguityKey(dr.sat_id, sig), dr.sat_id, sig,
                     modeled_obs, state_manager, meas_model, epoch_prefix);
                 log->info("{}MW in-place repair unavailable for {} {}; "
                           "reset in current frame (pivot {} retained)",
@@ -334,21 +336,21 @@ bool CycleSlipManager::repairConstellationInPlace(
         if (dN_pivot != 0) {
             std::set<std::string> handled_this_sig;
             for (const auto& dr : deferred_integer_repairs)
-                if (PppUtils::getSystemString(dr.sat_id) == cons
+                if (systemName(systemOfSat(dr.sat_id)) == cons
                     && dr.signal == sig)
                     handled_this_sig.insert(dr.sat_id);
             for (const auto& pr : deferred_resets)
-                if (PppUtils::getSystemString(pr.first) == cons
+                if (systemName(systemOfSat(pr.first)) == cons
                     && pr.second == sig)
                     handled_this_sig.insert(pr.first);
 
             for (const auto& obs : modeled_obs) {
                 const std::string& sat = obs.satellite;
                 if (sat == pivot) continue;
-                if (PppUtils::getSystemString(sat) != cons) continue;
+                if (systemName(systemOfSat(sat)) != cons) continue;
                 if (!obs.observed.count(sig)) continue;
                 if (handled_this_sig.count(sat)) continue;
-                if (state_manager.getAmbiguityIndex(sat + "_" + sig) < 0)
+                if (state_manager.getAmbiguityIndex(StateKeys::makeAmbiguityKey(sat, sig)) < 0)
                     continue;
                 // Already reset this epoch (full / targeted /
                 // residual): the fresh observation-based seed
@@ -356,7 +358,7 @@ bool CycleSlipManager::repairConstellationInPlace(
                 // with the slipped pivot's carrier; an
                 // additional -dN_pivot shift would put it off
                 // by exactly dN_pivot · λ.
-                if (epoch_reset_amb_keys.count(sat + "_" + sig))
+                if (epoch_reset_amb_keys.count(StateKeys::makeAmbiguityKey(sat, sig)))
                     continue;
 
                 if (confidentlyCleanOnSignal(w, sat, sig)) {
@@ -372,7 +374,7 @@ bool CycleSlipManager::repairConstellationInPlace(
                                   -dN_pivot, pivot);
                     } else {
                         resetAmbiguityBssdAware(
-                            sat + "_" + sig, sat, sig, modeled_obs,
+                            StateKeys::makeAmbiguityKey(sat, sig), sat, sig, modeled_obs,
                             state_manager, meas_model, epoch_prefix);
                         log->info("{}MW in-place repair unavailable for clean "
                                   "peer {} {}; reset in current frame "
@@ -382,7 +384,7 @@ bool CycleSlipManager::repairConstellationInPlace(
                     ++n_handled;
                 } else {
                     resetAmbiguityBssdAware(
-                        sat + "_" + sig, sat, sig, modeled_obs,
+                        StateKeys::makeAmbiguityKey(sat, sig), sat, sig, modeled_obs,
                         state_manager, meas_model, epoch_prefix);
                     log->info("{}MW in-place reset (unverifiable peer) {} {} "
                               "(pivot {} slipped, peer slip status "
@@ -398,10 +400,10 @@ bool CycleSlipManager::repairConstellationInPlace(
     // they are reset in the current (pivot-retained) SD frame
     // instead of sending the whole constellation to handover.
     for (const auto& pr : deferred_resets) {
-        if (PppUtils::getSystemString(pr.first) != cons) continue;
+        if (systemName(systemOfSat(pr.first)) != cons) continue;
         if (pr.first == pivot) continue;
         resetAmbiguityBssdAware(
-            pr.first + "_" + pr.second, pr.first, pr.second,
+            StateKeys::makeAmbiguityKey(pr.first, pr.second), pr.first, pr.second,
             modeled_obs, state_manager, meas_model, epoch_prefix);
         log->info("{}MW in-place reset {} {} (no clean per-pair "
                   "integer; pivot {} retained)",
@@ -534,7 +536,7 @@ void CycleSlipManager::forcePivotHandoverAndApplyDeferred(SlipEpochWork& w) {
         if (handoverFired(cons)) ++counters_.forced_pivot_handovers;
 
     for (const auto& dr : deferred_integer_repairs) {
-        const std::string cons = PppUtils::getSystemString(dr.sat_id);
+        const std::string cons = systemName(systemOfSat(dr.sat_id));
         if (!handoverFired(cons)) {
             log->warn("{}Pivot handover refused for {} (still {}); "
                        "falling back to reset for {} {}",
@@ -542,14 +544,14 @@ void CycleSlipManager::forcePivotHandoverAndApplyDeferred(SlipEpochWork& w) {
                        pivots_after.count(cons) ? pivots_after.at(cons) : "<none>",
                        dr.sat_id, dr.signal);
             resetAmbiguityBssdAware(
-                dr.sat_id + "_" + dr.signal,
+                StateKeys::makeAmbiguityKey(dr.sat_id, dr.signal),
                 dr.sat_id, dr.signal,
                 modeled_obs, state_manager, meas_model, epoch_prefix);
             continue;
         }
 
         const int amb_idx =
-            state_manager.getAmbiguityIndex(dr.sat_id + "_" + dr.signal);
+            state_manager.getAmbiguityIndex(StateKeys::makeAmbiguityKey(dr.sat_id, dr.signal));
         if (amb_idx < 0) {
             log->info("{}Deferred MW repair skipped: no ambiguity state for {} {}",
                        epoch_prefix, dr.sat_id, dr.signal);
@@ -602,7 +604,7 @@ void CycleSlipManager::forcePivotHandoverAndApplyDeferred(SlipEpochWork& w) {
 
     for (const auto& [sat_id, signal] : deferred_resets) {
         resetAmbiguityBssdAware(
-            sat_id + "_" + signal,
+            StateKeys::makeAmbiguityKey(sat_id, signal),
             sat_id, signal,
             modeled_obs, state_manager, meas_model, epoch_prefix);
         log->info("{}Post-handover targeted reset {}_{} (no clean per-pair integer)",

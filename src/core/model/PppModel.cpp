@@ -25,8 +25,10 @@
 #include "products/ProductParser.hpp"
 #include "products/StationInfoFile.hpp"
 #include "common/Constants.hpp"
+#include "common/GnssIdentity.hpp"
 #include "math/Coordinates.hpp"
 #include "measurement/MeasurementModel.hpp"
+#include "measurement/StateInitializer.hpp"    // systemToClockRefChar
 #include "math/TimeUtils.hpp"
 #include "products/ProductCache.hpp"
 #include "products/LiveEphemerisStore.hpp"
@@ -47,15 +49,30 @@ namespace GnssProcessor {
 
 namespace {
 
-/// Map system display name to the single-char key used in ClockRefMap.
+/// Map system display name to the single-char key used in ClockRefMap: the RINEX
+/// letter of systemFromName, with '\0' (not rinexLetter's '?') for a name outside the
+/// traits table.  It differs from the name match it replaced on a one-letter text
+/// ("G" reads as GPS), and only names reach it (the caller passes systemName of an
+/// observation's system).
 char systemNameToClockRefChar(const std::string& sys) {
-    if (sys == "GPS")     return 'G';
-    if (sys == "Galileo") return 'E';
-    if (sys == "GLONASS") return 'R';
-    if (sys == "BeiDou")  return 'C';
-    if (sys == "QZSS")    return 'J';
-    if (sys == "SBAS")    return 'S';
-    return '\0';
+    return StateInitializer::systemToClockRefChar(systemFromName(sys));
+}
+
+/**
+ * @brief True for a raw code or phase observation key ("C1C", "L2W"): at least two
+ *        characters, observation type code or phase (@c obsTypeOf), and not an
+ *        ionosphere-free pair label (@c isIonoFreePairLabel).
+ *
+ * The keys an uncombined observation keeps in @c raw_observed, and the ones the
+ * signal selection may strip from @c observed.
+ *
+ * @param key The observation key.
+ * @return True for a raw code or phase key.
+ */
+bool isRawCodeOrPhaseKey(const std::string& key) {
+    const ObsType type = obsTypeOf(key);
+    return key.size() >= 2 && (type == ObsType::Code || type == ObsType::Phase)
+        && !isIonoFreePairLabel(key);
 }
 
 /// Maps RINEX observation code prefixes to frequency band names per system.
@@ -131,7 +148,7 @@ void pruneRedundantSidebands(const std::string& system_str,
     bool wideband_observed = false;
     for (const auto& kv : measurements) {
         const std::string& sig = kv.first;            // e.g. "L8Q", "L8X"
-        if (sig.size() >= 2 && sig[0] == 'L' && sig[1] == '8') {
+        if (sig.size() >= 2 && obsTypeOf(sig) == ObsType::Phase && sig[1] == '8') {
             wideband_observed = true;
             break;
         }
@@ -533,7 +550,7 @@ std::vector<std::string> activeFrequencyBands(
         // only consider that constellation's satellites.
         std::map<std::string, std::vector<const RinexObservation*>> by_cons;
         for (const auto& obs : observations) {
-            const std::string sys = PppUtils::getSystemString(obs.system);
+            const std::string sys = systemName(obs.system);
             if (sys == "Unknown") continue;
             by_cons[sys].push_back(&obs);
         }
@@ -573,8 +590,9 @@ std::vector<std::string> activeFrequencyBands(
 
             for (const auto& sig : signals) {
                 if (sig.size() < 3) continue;
-                const char obs_type = sig[0];
-                if (obs_type != 'C' && obs_type != 'L') continue;
+                const ObsType sig_type = obsTypeOf(sig);
+                if (sig_type != ObsType::Code && sig_type != ObsType::Phase) continue;
+                const char obs_type = static_cast<char>(sig_type);  // 'C' or 'L', the candidate's key
                 // Network coverage gate: a sparsely tracked code is not a
                 // canonical candidate, so the per-band pick falls through to the
                 // best admitted channel (e.g. L1C when L1W is excluded network-wide).
@@ -967,7 +985,7 @@ std::vector<std::string> activeFrequencyBands(
                 geom.los.x(), geom.los.y(), geom.los.z(), geom.range);
 
             // --- Validate system ---
-            std::string system_str = PppUtils::getSystemString(obs.system);
+            std::string system_str = systemName(obs.system);
             if (system_str == "Unknown") {
                 log_manager_.getLogger("ppp_model")->warn("Unknown system for satellite {} at TOW {:.3f}", obs.satellite, obs.time.tow);
                 note_drop(obs.satellite, DropReason::NoModel);
@@ -1019,8 +1037,7 @@ std::vector<std::string> activeFrequencyBands(
                 // slip detection (e.g. L1/L2/L5) works even when signal_mode
                 // restricts the KF to two frequencies.
                 for (const auto& [key, val] : ppp_obs.observed) {
-                    if (key.size() >= 2 && (key[0] == 'C' || key[0] == 'L') &&
-                        key.find('_') == std::string::npos) {
+                    if (isRawCodeOrPhaseKey(key)) {
                         ppp_obs.raw_observed[key] = val;
                     }
                 }
@@ -1035,9 +1052,7 @@ std::vector<std::string> activeFrequencyBands(
                 // configured signal_mode for positioning.
                 for (auto it = ppp_obs.observed.begin(); it != ppp_obs.observed.end(); ) {
                     const auto& k = it->first;
-                    if (k.size() >= 2 && (k[0] == 'C' || k[0] == 'L') &&
-                        k.find('_') == std::string::npos &&
-                        !selected_keys.count(k)) {
+                    if (isRawCodeOrPhaseKey(k) && !selected_keys.count(k)) {
                         it = ppp_obs.observed.erase(it);
                     } else {
                         ++it;
@@ -1056,7 +1071,7 @@ std::vector<std::string> activeFrequencyBands(
             if (config_.estimateVelocity()) {
                 const double range_rate_sat = geom.los.dot(geom.sat_vel);
                 for (const auto& [key, val] : obs.measurements) {
-                    if (key.empty() || key[0] != 'D') continue;
+                    if (obsTypeOf(key) != ObsType::Doppler) continue;
                     const double wavelength = ppp_utils_.getWavelength(obs.system, key, obs.satellite);
                     if (wavelength <= 0.0) continue;
 
@@ -1105,7 +1120,7 @@ std::vector<std::string> activeFrequencyBands(
                          { &ppp_obs.observed, &ppp_obs.modeled,
                            &ppp_obs.variances, &ppp_obs.zenith_variances }) {
                     for (auto it = m->begin(); it != m->end(); ) {
-                        if (!it->first.empty() && it->first[0] == 'L') it = m->erase(it);
+                        if (obsTypeOf(it->first) == ObsType::Phase) it = m->erase(it);
                         else ++it;
                     }
                 }
@@ -1335,12 +1350,12 @@ std::vector<std::string> activeFrequencyBands(
                         freq_bands.push_back(band);
                     }
                     auto& [best_code, best_phase] = freq_band_to_signal[band];
-                    if (sig[0] == 'C' && (best_code.empty() ||
+                    if (obsTypeOf(sig) == ObsType::Code && (best_code.empty() ||
                         std::find(signals.begin(), signals.end(), sig) <
                         std::find(signals.begin(), signals.end(), best_code))) {
                         best_code = sig;
                     }
-                    if (sig[0] == 'L' && (best_phase.empty() ||
+                    if (obsTypeOf(sig) == ObsType::Phase && (best_phase.empty() ||
                         std::find(signals.begin(), signals.end(), sig) <
                         std::find(signals.begin(), signals.end(), best_phase))) {
                         best_phase = sig;
@@ -1426,8 +1441,8 @@ std::vector<std::string> activeFrequencyBands(
             if (stb_it != system_to_bands.end()) {
                 for (const auto& [sig, val] : obs.measurements) {
                     if (sig.empty()) continue;
-                    const char prefix = sig[0];
-                    if (prefix != 'C' && prefix != 'L') continue;
+                    const ObsType sig_type = obsTypeOf(sig);
+                    if (sig_type != ObsType::Code && sig_type != ObsType::Phase) continue;
                     if (already.count(sig)) continue;
                     // Network coverage gate: never augment with a non-admitted channel.
                     if (!signalAdmitted(system_str, sig)) continue;
@@ -1447,13 +1462,13 @@ std::vector<std::string> activeFrequencyBands(
                             auto bit = freq_band_to_signal.find(band);
                             std::string canon;
                             if (bit != freq_band_to_signal.end())
-                                canon = (prefix == 'C') ? bit->second.first
-                                                        : bit->second.second;
+                                canon = (sig_type == ObsType::Code) ? bit->second.first
+                                                                    : bit->second.second;
                             const bool canon_here =
                                 !canon.empty() && obs.measurements.count(canon) != 0;
-                            if (canon_here && prefix == 'C' && companion_out)
+                            if (canon_here && sig_type == ObsType::Code && companion_out)
                                 companion_out->insert(sig);
-                            if (canon_here && prefix == 'L' && second_phase_out)
+                            if (canon_here && sig_type == ObsType::Phase && second_phase_out)
                                 second_phase_out->insert(sig);
                         }
                         log_manager_.getLogger("ppp_model")->trace(
@@ -1524,7 +1539,7 @@ std::vector<std::string> activeFrequencyBands(
                 std::set<std::string> reported;
                 for (const auto& [sig, val] : obs.measurements) {
                     (void)val;
-                    if (sig.size() != 3 || sig[0] != 'C' || sig[1] != '1') continue;
+                    if (sig.size() != 3 || obsTypeOf(sig) != ObsType::Code || sig[1] != '1') continue;
                     if (!signalAdmitted(system_str, sig)) continue;
                     reported.insert(sig);
                 }
@@ -1600,7 +1615,7 @@ std::vector<std::string> activeFrequencyBands(
                 std::set<std::string> reported;
                 for (const auto& [sig, val] : obs.measurements) {
                     (void)val;
-                    if (sig.size() != 3 || sig[0] != 'L' || sig[1] != '1') continue;
+                    if (sig.size() != 3 || obsTypeOf(sig) != ObsType::Phase || sig[1] != '1') continue;
                     if (!signalAdmitted(system_str, sig)) continue;
                     reported.insert(sig);
                 }
@@ -1763,8 +1778,8 @@ std::vector<std::string> activeFrequencyBands(
 
         std::vector<std::pair<std::string, std::string>> code_cands, phase_cands;
         for (const auto& p : candidate_pairs) {
-            if (!p.first.empty() && p.first[0] == 'C') code_cands.push_back(p);
-            else if (!p.first.empty() && p.first[0] == 'L') phase_cands.push_back(p);
+            if (obsTypeOf(p.first) == ObsType::Code) code_cands.push_back(p);
+            else if (obsTypeOf(p.first) == ObsType::Phase) phase_cands.push_back(p);
         }
 
         // Sort by priority (best first) for deterministic ordering.
@@ -1788,13 +1803,13 @@ std::vector<std::string> activeFrequencyBands(
 
         selected_signals.clear();
         for (const auto& sig : signals) {
-            if (obs.measurements.count(sig) && sig[0] == 'C') {
+            if (obs.measurements.count(sig) && obsTypeOf(sig) == ObsType::Code) {
                 selected_signals.emplace_back(sig, "");
                 break;
             }
         }
         for (const auto& sig : signals) {
-            if (obs.measurements.count(sig) && sig[0] == 'L') {
+            if (obs.measurements.count(sig) && obsTypeOf(sig) == ObsType::Phase) {
                 selected_signals.emplace_back("", sig);
                 break;
             }
@@ -1952,7 +1967,7 @@ std::vector<std::string> activeFrequencyBands(
         double elevation_deg) const {
         const double s = config_.getModelCorrections().atx_substitution_phase_std_m;
         if (s <= 0.0) return 0.0;                                 // feature disabled (default)
-        if (signal.empty() || signal.front() != 'L') return 0.0;  // carrier-phase rows only
+        if (obsTypeOf(signal) != ObsType::Phase) return 0.0;  // carrier-phase rows only
         if (!antenna_.wasAtxSubstituted(satellite, signal, system)) return 0.0;
         // 1/sin² elevation amplification, matching the phase thermal term, so the
         // inflation keeps its weight against the (also 1/sin²-scaled) thermal
@@ -2164,9 +2179,9 @@ std::vector<std::string> activeFrequencyBands(
                     pair.second, obs.measurements.count(pair.second));
                 continue;
             }
-            if (pair.first[0] == 'C' && pair.second[0] == 'C') {
+            if (obsTypeOf(pair.first) == ObsType::Code && obsTypeOf(pair.second) == ObsType::Code) {
                 code_pairs.push_back(pair);
-            } else if (pair.first[0] == 'L' && pair.second[0] == 'L') {
+            } else if (obsTypeOf(pair.first) == ObsType::Phase && obsTypeOf(pair.second) == ObsType::Phase) {
                 phase_pairs.push_back(pair);
             } else {
                 log_manager_.getLogger("ppp_model")->warn(
@@ -2193,7 +2208,7 @@ std::vector<std::string> activeFrequencyBands(
 
         // Move raw RINEX measurements to raw_observed; only combined keys (containing '_') stay.
         for (auto it = ppp_obs.observed.begin(); it != ppp_obs.observed.end(); ) {
-            if (it->first.find('_') == std::string::npos) {
+            if (!isIonoFreePairLabel(it->first)) {
                 ppp_obs.raw_observed[it->first] = it->second;
                 it = ppp_obs.observed.erase(it);
             } else {
@@ -2242,8 +2257,7 @@ std::vector<std::string> activeFrequencyBands(
             // on, code signals are also kept, because a per-satellite bias state
             // absorbs the uncorrected delay.  MW slip detection is unaffected (it
             // uses raw_observed).
-            const char meas_type_pre = type[0];
-            if (meas_type_pre == 'C'
+            if (obsTypeOf(type) == ObsType::Code
                 && config_.requireBiaForSignals()
                 && !config_.estimateSatBiases()
                 && config_.getModelCorrections().enable_code_phase_bias
@@ -2269,8 +2283,9 @@ std::vector<std::string> activeFrequencyBands(
                 continue;
             }
 
-            const char meas_type = type[0];
-            if (meas_type != 'C' && meas_type != 'L') continue;
+            const ObsType sig_type = obsTypeOf(type);
+            if (sig_type != ObsType::Code && sig_type != ObsType::Phase) continue;
+            const char meas_type = static_cast<char>(sig_type);  // 'C' or 'L', as the I2/I3 term takes it
 
             const double freq = ppp_utils_.getFrequency(type, obs.system, obs.satellite);
             if (freq <= 0.0) {
@@ -2292,7 +2307,7 @@ std::vector<std::string> activeFrequencyBands(
                 + pole_tide_corr + i_h_corr;
 
             double observed_value = obs.measurements.at(type);
-            if (meas_type == 'L') {
+            if (sig_type == ObsType::Phase) {
                 const double wavelength = ppp_utils_.getWavelength(obs.system, type, obs.satellite);
                 if (wavelength <= 0.0) {
                     log_manager_.getLogger("ppp_model")->warn(
@@ -2303,7 +2318,7 @@ std::vector<std::string> activeFrequencyBands(
             }
 
             const double fallback_var = obs.variances.count(type) ? obs.variances.at(type)
-                : (meas_type == 'C' ? default_code_var : default_phase_var);
+                : (sig_type == ObsType::Code ? default_code_var : default_phase_var);
             // Zenith pass (elevation_deg=90 → sin²=1 neutralizes elevation amplification,
             // preserving block/band/attribute/SNR scaling).  Consumed by MwSlipDetector
             // as a pair-aware noise floor that doesn't scale with line-of-sight geometry.
@@ -2327,7 +2342,7 @@ std::vector<std::string> activeFrequencyBands(
 
             log_manager_.getLogger("ppp_model")->trace(
                 "Uncombined {} for {} ({}): observed={:.3f} m, modeled={:.3f} m, variance={:.6f}, freq={:.3f} MHz",
-                type, obs.satellite, (meas_type == 'C' ? "CODE" : "PHASE"),
+                type, obs.satellite, (sig_type == ObsType::Code ? "CODE" : "PHASE"),
                 observed_value, modeled_value, variance, freq / 1e6);
 
             success = true;

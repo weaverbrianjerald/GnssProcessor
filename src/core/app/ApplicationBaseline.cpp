@@ -26,6 +26,7 @@
 #include "app/EpochUpdateSupport.hpp"
 #include "filter/StateKeySchema.hpp"
 #include "math/TimeUtils.hpp"
+#include "common/GnssIdentity.hpp"
 #include "model/ModelGeometry.hpp"
 #include "products/ProductCache.hpp"
 #include "rinex/MultiRinexSync.hpp"
@@ -182,7 +183,7 @@ std::vector<PppObservation> toMinimalPppObs(const std::vector<RinexObservation>&
         // active" to preserve legacy behavior when the field is
         // unset.
         if (!active_systems.empty()) {
-            const std::string cons = PppUtils::getSystemString(r.system);
+            const std::string cons = systemName(r.system);
             if (!active_systems.count(cons)) continue;
         }
         PppObservation p{};
@@ -192,8 +193,8 @@ std::vector<PppObservation> toMinimalPppObs(const std::vector<RinexObservation>&
         p.lli_flags  = r.lli_flags.toStdMap();
         for (const auto& [code, val] : r.measurements) {
             if (code.empty()) continue;
-            const char t = code[0];
-            if (t != 'C' && t != 'L') continue;  // MW uses code + phase only
+            const ObsType t = obsTypeOf(code);
+            if (t != ObsType::Code && t != ObsType::Phase) continue;  // MW uses code + phase only
             p.observed[code]     = val;
             p.raw_observed[code] = val;
         }
@@ -209,21 +210,6 @@ std::vector<PppObservation> toMinimalPppObs(const std::vector<RinexObservation>&
         out.push_back(std::move(p));
     }
     return out;
-}
-
-// Constellation lookup used by the post-Applied stats loop.
-std::string constellationOfSatPairId(const std::string& sid) {
-    if (sid.empty()) return {};
-    switch (sid[0]) {
-    case 'G': return "GPS";
-    case 'E': return "Galileo";
-    case 'R': return "GLONASS";
-    case 'C': return "BeiDou";
-    case 'J': return "QZSS";
-    case 'S': return "SBAS";
-    case 'I': return "IRNSS";
-    default:  return std::string(1, sid[0]);
-    }
 }
 
 } // namespace
@@ -1219,14 +1205,13 @@ void Application::recordCommittedBaselineEpoch_(const BaselineRunWork& run, Base
     for (Eigen::Index i = 0; i < em.innovations.size(); ++i) {
         const double r = em.innovations(i);
         if (!std::isfinite(r)) continue;
-        const char t = (i < static_cast<Eigen::Index>(em.signal_types.size())
-            && !em.signal_types[static_cast<size_t>(i)].empty())
-            ? em.signal_types[static_cast<size_t>(i)][0] : '?';
+        const ObsType t = (i < static_cast<Eigen::Index>(em.signal_types.size()))
+            ? obsTypeOf(em.signal_types[static_cast<size_t>(i)]) : ObsType::Unknown;
         ResStats* bucket = nullptr;
         switch (t) {
-        case 'C': bucket = &res_code;    ++total_code_dd;    break;
-        case 'L': bucket = &res_phase;   ++total_phase_dd;   break;
-        case 'D': bucket = &res_doppler; ++total_doppler_dd; break;
+        case ObsType::Code:    bucket = &res_code;    ++total_code_dd;    break;
+        case ObsType::Phase:   bucket = &res_phase;   ++total_phase_dd;   break;
+        case ObsType::Doppler: bucket = &res_doppler; ++total_doppler_dd; break;
         default: continue;
         }
         bucket->sum += r;
@@ -1237,10 +1222,10 @@ void Application::recordCommittedBaselineEpoch_(const BaselineRunWork& run, Base
 
         if (i < static_cast<Eigen::Index>(em.satellite_ids.size())) {
             const std::string& sid = em.satellite_ids[static_cast<size_t>(i)];
-            const auto dash = sid.find('-');
-            if (dash != std::string::npos && dash + 1 < sid.size()) {
-                const std::string pivot = sid.substr(dash + 1);
-                const std::string cons = constellationOfSatPairId(pivot);
+            const SatPairId row = SatPairId::splitAtFirstDash(sid);
+            if (!row.reference.empty()) {
+                const std::string& pivot = row.reference;
+                const std::string cons = ddConstellationName(pivot);
                 pivot_counts[cons + ":" + pivot]++;
                 constellation_dd[cons]++;
             }

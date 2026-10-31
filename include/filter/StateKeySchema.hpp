@@ -900,10 +900,10 @@ inline std::string makeSystemTimeOffsetKey(std::string_view system) {
 //          ambiguity keys)
 //   band : band label; the helper joins whatever string it is given.
 //
-// makePivotSeedKey has no production caller.  MeasurementModel (BSSD apply
-// path) builds its pivot_abs_seeds keys by concatenation, with the full phase
-// signal code rather than a 2-char band ("GPS|L1C"), plus "<cons>|NL" and
-// "<cons>|WL|<a>_<b>" under the NL/WL basis.
+// MeasurementModel (BSSD apply path) and BssdTransform build their pivot_abs_seeds
+// and SD group keys with this helper, passing the full phase signal code rather
+// than a 2-char band ("GPS|L1C"), and "NL" or "WL|<a>_<b>" under the NL/WL
+// basis ("GPS|NL", "GPS|WL|1_2").
 // Used as:         lookup key in the pivot_abs_seeds map (no parse path).
 // ===========================================================================
 

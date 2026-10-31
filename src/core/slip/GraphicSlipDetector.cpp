@@ -13,6 +13,8 @@
 
 #include "slip/GraphicSlipDetector.hpp"
 #include "common/Constants.hpp"
+#include "common/GnssIdentity.hpp"
+#include "filter/StateKeySchema.hpp"
 #include "math/RobustStats.hpp"
 #include "math/TimeUtils.hpp"
 #include <algorithm>
@@ -89,16 +91,16 @@ namespace GnssProcessor {
 
         for (const auto& [key, val] : obs.raw_observed) {
             if (key.size() < 2) continue;
-            const char prefix = key[0];
-            if (prefix != 'C' && prefix != 'L') continue;
+            const ObsType type = obsTypeOf(key);
+            if (type != ObsType::Code && type != ObsType::Phase) continue;
             // Skip combined (IF) labels containing '_'
-            if (key.find('_') != std::string::npos) continue;
+            if (isIonoFreePairLabel(key)) continue;
             const char band = key[1];
             if (band < '1' || band > '9') continue;
 
             auto& bs = bands[band];
-            if (prefix == 'C' && bs.code.empty())  bs.code  = key;
-            if (prefix == 'L' && bs.phase.empty()) bs.phase = key;
+            if (type == ObsType::Code && bs.code.empty())  bs.code  = key;
+            if (type == ObsType::Phase && bs.phase.empty()) bs.phase = key;
         }
 
         std::vector<SignalPair> pairs;
@@ -189,7 +191,7 @@ namespace GnssProcessor {
         trace_file_ << std::fixed << std::setprecision(3)
                     << current_epoch_.week << "," << current_epoch_.tow << ","
                     << obs.satellite << ","
-                    << PppUtils::getSystemString(obs.system) << ","
+                    << systemName(obs.system) << ","
                     << std::setprecision(2) << obs.elevation << ","
                     << phase_sig << ","
                     << std::setprecision(6) << graphic << ","
@@ -319,7 +321,7 @@ namespace GnssProcessor {
                         std::isfinite(sigma) ? sigma : -1.0, stats.count);
 
                     results.push_back({obs.satellite, sp.phase,
-                                       obs.satellite + "_" + sp.phase,
+                                       StateKeys::makeAmbiguityKey(obs.satellite, sp.phase),
                                        slip_cycles, slip_known, fractional});
 
                     // Reset arc

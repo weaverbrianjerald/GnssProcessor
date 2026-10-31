@@ -19,6 +19,7 @@
  */
 
 #include "realtime/RealTimeEngine.hpp"
+#include "common/GnssIdentity.hpp"
 #include "math/TimeUtils.hpp"
 #include "common/PppUtils.hpp"
 #include "measurement/StateInitializer.hpp"
@@ -200,9 +201,9 @@ void RealTimeEngine::reactToGenerationChange(RtEpochContext& ctx) {
             // undeclared one.  No-op unarmed.
             if (consumer_sat_trace_)
                 for (const auto& k : keys) {
-                    const auto sep = k.find('_');
-                    if (sep == std::string::npos || sep == 0 || sep + 1 >= k.size()) continue;
-                    noteConsumerSatEvent_(k.substr(0, sep) + "|" + k.substr(sep + 1),
+                    const auto parts = StateKeys::parseAmbiguityKey(k);
+                    if (!parts) continue;
+                    noteConsumerSatEvent_(parts->satellite + "|" + parts->signal,
                                           "reset_gen");
                 }
             const double cb_var =
@@ -290,8 +291,8 @@ void RealTimeEngine::resetOnPhaseBiasDisc(RtEpochContext& ctx) {
     for (const auto& obs : modeled_obs) {
         for (const auto& kv : obs.modeled) {
             const std::string& code = kv.first;
-            if (code.empty() || code[0] != 'L') continue;       // phase only
-            if (code.find('_') != std::string::npos) continue;   // raw signal only
+            if (obsTypeOf(code) != ObsType::Phase) continue;             // phase only
+            if (isIonoFreePairLabel(code)) continue;           // raw signal only
             const std::string key = obs.satellite + "|" + code;
             // A key the hold seam claimed skips the discontinuity-counter reaction,
             // which the hold owns.  With processing.ssr_pb_hold_presence_flip
@@ -303,7 +304,7 @@ void RealTimeEngine::resetOnPhaseBiasDisc(RtEpochContext& ctx) {
                 if (auto pb = ssr.getPhaseBias(obs.satellite, code)) {
                     if (state_manager_->noteSsrDiscontinuity(
                             key, pb->discontinuity_counter)) {
-                        state_manager_->resetAmbiguity(obs.satellite + "_" + code, reset_std);
+                        state_manager_->resetAmbiguity(StateKeys::makeAmbiguityKey(obs.satellite, code), reset_std);
                         noteConsumerSatEvent_(key, "reset_disc");   // consumer satellite trace (no-op unarmed)
                         noteAmbLevelDisturbed_(obs.satellite);      // ambiguity level check (no-op unarmed)
                         log->info("{}SSR phase-bias discontinuity: reset {} {}",
@@ -334,7 +335,7 @@ void RealTimeEngine::resetOnPhaseBiasDisc(RtEpochContext& ctx) {
                     // network.closed_loop.roster_latch and a declaration, so every
                     // earlier wire keeps the existing reaction unchanged.
                     const bool suppress = noteFreshnessFlip_(
-                        key, obs.satellite, code, PppUtils::getSystemString(obs.system),
+                        key, obs.satellite, code, systemName(obs.system),
                         "phase", it->second, applied_now,
                         static_cast<bool>(ssr.getPhaseBias(obs.satellite, code)),
                         obs.time);
@@ -347,7 +348,7 @@ void RealTimeEngine::resetOnPhaseBiasDisc(RtEpochContext& ctx) {
                                   epoch_prefix, it->second ? "fresh" : "stale",
                                   applied_now ? "fresh" : "stale", obs.satellite, code);
                     } else {
-                        state_manager_->resetAmbiguity(obs.satellite + "_" + code, reset_std);
+                        state_manager_->resetAmbiguity(StateKeys::makeAmbiguityKey(obs.satellite, code), reset_std);
                         noteConsumerSatEvent_(key, "reset_flip");   // consumer satellite trace (no-op unarmed)
                         noteAmbLevelDisturbed_(obs.satellite);      // ambiguity level check (no-op unarmed)
                         log->info("{}SSR phase-bias freshness flip ({} -> {}): reset {} {}",
@@ -397,14 +398,14 @@ void RealTimeEngine::carryOnPhaseBiasDisc_(RtEpochContext& ctx) {
     for (const auto& obs : modeled_obs) {
         for (const auto& kv : obs.modeled) {
             const std::string& code = kv.first;
-            if (code.empty() || code[0] != 'L') continue;       // phase only
-            if (code.find('_') != std::string::npos) continue;   // raw signal only
+            if (obsTypeOf(code) != ObsType::Phase) continue;             // phase only
+            if (isIonoFreePairLabel(code)) continue;           // raw signal only
             const std::string key     = obs.satellite + "|" + code;
             // A claimed key: the hold owns its counter; armed, its A5 edge
             // is carried here as an unheld key's is.
             const bool claimed = ctx.pb_hold_handled.count(key) > 0;
             if (claimed && !presence_on_hold) continue;
-            const std::string amb_key = obs.satellite + "_" + code;
+            const std::string amb_key = StateKeys::makeAmbiguityKey(obs.satellite, code);
 
             // The disc-counter bump: the ungated read, exactly as the reset path.
             bool bump = false;
@@ -511,14 +512,14 @@ void RealTimeEngine::translatePhaseBiasStep_(RtEpochContext& ctx) {
     for (const auto& obs : modeled_obs) {
         for (const auto& kv : obs.modeled) {
             const std::string& code = kv.first;
-            if (code.empty() || code[0] != 'L') continue;       // phase only
-            if (code.find('_') != std::string::npos) continue;   // raw signal only
+            if (obsTypeOf(code) != ObsType::Phase) continue;             // phase only
+            if (isIonoFreePairLabel(code)) continue;           // raw signal only
             const std::string key     = obs.satellite + "|" + code;
             // A claimed key: the hold owns its counter; armed, its A5 edge
             // is translated here as an unheld key's step is.
             const bool claimed = ctx.pb_hold_handled.count(key) > 0;
             if (claimed && !presence_on_hold) continue;
-            const std::string amb_key = obs.satellite + "_" + code;
+            const std::string amb_key = StateKeys::makeAmbiguityKey(obs.satellite, code);
 
             // The disc-counter bump: the ungated read, exactly as the reset path.
             bool bump = false;
@@ -669,8 +670,8 @@ void RealTimeEngine::reactToPbHold_(RtEpochContext& ctx) {
     for (const auto& obs : modeled_obs) {
         for (const auto& kv : obs.modeled) {
             const std::string& code = kv.first;
-            if (code.empty() || code[0] != 'L') continue;       // phase only
-            if (code.find('_') != std::string::npos) continue;   // raw signal only
+            if (obsTypeOf(code) != ObsType::Phase) continue;             // phase only
+            if (isIonoFreePairLabel(code)) continue;           // raw signal only
             // The ungated read, exactly as the three reactions below make it.
             const auto pb = ssr.getPhaseBias(obs.satellite, code);
             if (!pb || pb->hold_generation == 0) continue;        // not held: unchanged path
@@ -683,7 +684,7 @@ void RealTimeEngine::reactToPbHold_(RtEpochContext& ctx) {
                 state_manager_->noteSsrDiscontinuity(key, pb->discontinuity_counter);
             const auto d = pb_hold_.react(key, pb->hold_generation, disc_changed);
             if (d.action == PbHoldLedger::Action::Refloat) {
-                state_manager_->resetAmbiguity(obs.satellite + "_" + code, reset_std);
+                state_manager_->resetAmbiguity(StateKeys::makeAmbiguityKey(obs.satellite, code), reset_std);
                 noteConsumerSatEvent_(key, "reset_hold_gen");   // consumer satellite trace (no-op unarmed)
                 noteAmbLevelDisturbed_(obs.satellite);          // ambiguity level check (no-op unarmed)
                 log->info("{}SSR phase-bias HOLD generation {} -> {}: reset {} {}",
@@ -765,12 +766,12 @@ void RealTimeEngine::reinflateOnCodeBiasDisc(RtEpochContext& ctx) {
         for (const auto& obs : modeled_obs) {
             for (const auto& kv : obs.modeled) {
                 const std::string& code = kv.first;
-                if (code.empty() || code[0] != 'C') continue;          // code obs only
-                if (code.find('_') != std::string::npos) continue;      // raw signal only
+                if (obsTypeOf(code) != ObsType::Code) continue;                // code obs only
+                if (isIonoFreePairLabel(code)) continue;              // raw signal only
                 if (auto c = ssr.getCodeBiasDiscontinuity(obs.satellite, code)) {
                     if (state_manager_->noteSsrDiscontinuity(
                             "CB|" + obs.satellite + "|" + code, *c)) {
-                        reref_systems.insert(PppUtils::getSystemString(obs.system));
+                        reref_systems.insert(systemName(obs.system));
                         // The rx code-bias re-inflation is constellation-scoped, but
                         // the declaration that triggered it belongs to this (sat,
                         // signal), so the event is recorded there (no-op
@@ -801,7 +802,7 @@ void RealTimeEngine::reinflateOnCodeBiasDisc(RtEpochContext& ctx) {
                         // stale, so its disappearance is not a datum re-reference.
                         const bool suppress = noteFreshnessFlip_(
                             fkey, obs.satellite, code,
-                            PppUtils::getSystemString(obs.system), "code",
+                            systemName(obs.system), "code",
                             it->second, applied_now,
                             ssr.hasCodeBias(obs.satellite, code), obs.time);
                         if (suppress) {
@@ -813,7 +814,7 @@ void RealTimeEngine::reinflateOnCodeBiasDisc(RtEpochContext& ctx) {
                                       epoch_prefix, it->second ? "applied" : "absent",
                                       applied_now ? "applied" : "absent", obs.satellite, code);
                         } else {
-                            reref_systems.insert(PppUtils::getSystemString(obs.system));
+                            reref_systems.insert(systemName(obs.system));
                             noteConsumerSatEvent_(obs.satellite + "|" + code,
                                                   "reinflate_flip");   // consumer satellite trace (no-op unarmed)
                             log->info("{}SSR code-bias freshness flip ({} -> {}): {} {} "
@@ -866,7 +867,7 @@ void RealTimeEngine::reinflateOnCodeBiasDisc(RtEpochContext& ctx) {
                 bool hit = false;
                 for (const auto& kv : obs.modeled) {
                     const std::string& code = kv.first;
-                    if (code.empty() || code[0] != 'C' || code.find('_') != std::string::npos) continue;
+                    if (obsTypeOf(code) != ObsType::Code || isIonoFreePairLabel(code)) continue;
                     if (ssr.getCodeBiasDiscontinuity(obs.satellite, code)) { hit = true; break; }
                 }
                 if (hit) {
@@ -988,8 +989,8 @@ void RealTimeEngine::reactToDeclaredLevelSteps_(RtEpochContext& ctx) {
         for (const auto& kv : obs.modeled) {
             const std::string& code = kv.first;
             if (code.size() != 3) continue;
-            if (code[0] == 'C')      sigs[obs.satellite].first.insert(code);
-            else if (code[0] == 'L') sigs[obs.satellite].second.insert(code);
+            if (obsTypeOf(code) == ObsType::Code)       sigs[obs.satellite].first.insert(code);
+            else if (obsTypeOf(code) == ObsType::Phase) sigs[obs.satellite].second.insert(code);
         }
     }
     std::vector<std::pair<std::vector<std::pair<int, double>>, double>> inflations;
@@ -1109,7 +1110,7 @@ void RealTimeEngine::reactToEphemerisJumps_(RtEpochContext& ctx) {
         state_sats.insert(kv.first.substr(0, kv.first.find('_')));
 
     for (const auto& ev : jumps) {
-        const std::string cons = PppUtils::getSystemString(ev.satellite);
+        const std::string cons = systemName(systemOfSat(ev.satellite));
         const auto pit = pivots.find(cons);
         const bool is_pivot = pit != pivots.end() && pit->second == ev.satellite;
         if (is_pivot) ++eph_jump_pivot_;
@@ -1155,10 +1156,10 @@ int RealTimeEngine::reseedAfterEphemerisJump_(const std::string& sat, double jum
 std::set<std::string> RealTimeEngine::ephemerisJumpTargets(
         const std::string& sat, bool is_pivot, const std::set<std::string>& state_sats) {
     if (!is_pivot) return { sat };
-    const std::string cons = PppUtils::getSystemString(sat);
+    const std::string cons = systemName(systemOfSat(sat));
     std::set<std::string> out;
     for (const std::string& s : state_sats)
-        if (s != sat && PppUtils::getSystemString(s) == cons) out.insert(s);
+        if (s != sat && systemName(systemOfSat(s)) == cons) out.insert(s);
     return out;
 }
 

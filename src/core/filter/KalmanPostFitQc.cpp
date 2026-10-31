@@ -23,6 +23,7 @@
 #include "filter/KalmanFilter.hpp"
 #include "filter/KalmanPostFitQc.hpp"     // PostFitQcWork
 #include "filter/KalmanRowIdentity.hpp"   // splitBssdSatId, bandWavelengthForSat
+#include "common/GnssIdentity.hpp"     // systemOfSat, systemName
 #include "common/PppUtils.hpp"
 #include "slip/CycleSlipManager.hpp"      // MW tiebreak
 #include <spdlog/spdlog.h>
@@ -402,8 +403,8 @@ namespace GnssProcessor {
         // pivot explains every outlier.  Grouping reads only the rows and their residuals,
         // which no detector writes, so the code rows are grouped up front with the phase
         // rows.
-        const PivotRowGroups phase_rows = groupPivotRows_(w, 'L');
-        const PivotRowGroups code_rows  = groupPivotRows_(w, 'C');
+        const PivotRowGroups phase_rows = groupPivotRows_(w, ObsType::Phase);
+        const PivotRowGroups code_rows  = groupPivotRows_(w, ObsType::Code);
 
         bool any_pivot_slip = false;
         for (const PivotDetectorSpec& spec : kPivotDetectors) {
@@ -419,7 +420,7 @@ namespace GnssProcessor {
         return any_pivot_slip;
     }
 
-    PivotRowGroups KalmanFilter::groupPivotRows_(const PostFitQcWork& w, char obs_type) const {
+    PivotRowGroups KalmanFilter::groupPivotRows_(const PostFitQcWork& w, ObsType obs_type) const {
         const auto& measurement = w.measurement;
         const double threshold = w.threshold;
         const Eigen::VectorXd& res = w.res;
@@ -435,10 +436,10 @@ namespace GnssProcessor {
         for (size_t i = 0; i < meta_n; ++i) {
             const auto& sat_id = measurement.satellite_ids[i];
             const auto& sig    = measurement.signal_types[i];
-            if (sig.size() < 2 || sig[0] != obs_type) continue;
+            if (sig.size() < 2 || obsTypeOf(sig) != obs_type) continue;
             // Code rows skip combined / iono-free pseudo-signals: their residual is not a
             // clean per-signal bias and the coherence test would mix scales.
-            if (obs_type == 'C' && sig.find('_') != std::string::npos) continue;
+            if (obs_type == ObsType::Code && isIonoFreePairLabel(sig)) continue;
             const auto [prim, pivot] = splitBssdSatId(sat_id);
             if (pivot.empty() || prim == pivot) continue;  // not a non-pivot SD row
             if (rowAtxSubstituted_(prim, pivot, sig)) continue;  // ATX-substituted: bias mimics slip
@@ -474,13 +475,7 @@ namespace GnssProcessor {
         // runs covering bands like GPS L5 flip-flop forever: every new pivot
         // reads as slipped.
         if (sat.empty() || pivot_sat.empty() || signal.empty()) return false;
-        const System sys =
-            sat[0] == 'G' ? System::GPS :
-            sat[0] == 'E' ? System::Galileo :
-            sat[0] == 'R' ? System::GLONASS :
-            sat[0] == 'C' ? System::BeiDou :
-            sat[0] == 'J' ? System::QZSS :
-            sat[0] == 'S' ? System::SBAS : System::Unknown;
+        const System sys = systemOfSat(sat);
         if (sys == System::Unknown) return false;
         if (ppp_model_.wasAtxSubstituted(sat, signal, sys)) return true;
         if (ppp_model_.wasAtxSubstituted(pivot_sat, signal, sys)) return true;
@@ -493,7 +488,7 @@ namespace GnssProcessor {
         // Identify the constellation from the pivot's PRN prefix.  All
         // non-pivot rows in this group share the constellation by
         // construction (BSSD groups SD pairs within a constellation).
-        const std::string cons      = PppUtils::getSystemString(pivot_sat);
+        const std::string cons      = systemName(systemOfSat(pivot_sat));
         // A pooled (cross-band) row skips a constellation whose handover is already
         // requested: its rows include those of the group that fired, and a second
         // warning would report the same physical event again.
@@ -773,7 +768,7 @@ namespace GnssProcessor {
         for (size_t i = 0; i < meta_n; ++i) {
             const auto& sat_id = measurement.satellite_ids[i];
             const auto& sig    = measurement.signal_types[i];
-            if (sig.size() < 2 || sig[0] != 'L') continue;
+            if (sig.size() < 2 || obsTypeOf(sig) != ObsType::Phase) continue;
             const auto [prim, pivot] = splitBssdSatId(sat_id);
             if (pivot.empty() || prim == pivot) continue;
 
@@ -800,19 +795,6 @@ namespace GnssProcessor {
         // tolerance in the integer check below).
         PppUtils ppp_utils_local(log_manager_);
 
-        auto satToSystem = [](const std::string& sat) -> System {
-            if (sat.empty()) return System::Unknown;
-            switch (sat[0]) {
-            case 'G': return System::GPS;
-            case 'E': return System::Galileo;
-            case 'R': return System::GLONASS;
-            case 'C': return System::BeiDou;
-            case 'J': return System::QZSS;
-            case 'S': return System::SBAS;
-            default:  return System::Unknown;
-            }
-        };
-
         const double amb_init_std = config_.getInitialStd().ambiguity;
 
         for (auto& [sat, e] : nonpivot_pools) {
@@ -830,7 +812,7 @@ namespace GnssProcessor {
             // must round to the same non-zero integer with tolerance
             // INT_CYCLE_TOL.  This is what distinguishes a real cycle
             // slip from atmospheric / multipath events.
-            const System sys = satToSystem(sat);
+            const System sys = systemOfSat(sat);
             int   common_cycles    = 0;
             bool  first            = true;
             bool  integer_consistent = true;
@@ -854,7 +836,7 @@ namespace GnssProcessor {
             if (!integer_consistent) continue;
 
             const std::string bands_str = joinBands(e.bands);
-            const std::string cons = PppUtils::getSystemString(sat);
+            const std::string cons = systemName(systemOfSat(sat));
 
             klogger->warn(
                 "{}NON-PIVOT SLIP on {} {} ({} bands [{}], sign={:+d}, "
@@ -949,8 +931,8 @@ namespace GnssProcessor {
         if (huber_on && huber_k > 0.0) {
             for (Eigen::Index i = 0; i < static_cast<Eigen::Index>(num_obs); ++i) {
                 const auto& sig = measurement.signal_types[static_cast<size_t>(i)];
-                if (sig.empty() || sig[0] != 'L') continue;
-                if (sig.find('_') != std::string::npos) continue;  // iono-free combos
+                if (obsTypeOf(sig) != ObsType::Phase) continue;
+                if (isIonoFreePairLabel(sig)) continue;  // iono-free combos
                 if (sig.size() < 2) continue;
 
                 const auto& sat_id = measurement.satellite_ids[static_cast<size_t>(i)];
@@ -1140,7 +1122,7 @@ namespace GnssProcessor {
                 epoch_prefix, outlier_sat, outlier_sig,
                 outlier_sres_abs, outlier_sres, outlier_res, sigma_max, chosen_idx);
 
-            if (!outlier_sig.empty() && outlier_sig[0] == 'L') {
+            if (obsTypeOf(outlier_sig) == ObsType::Phase) {
                 // The sub-cycle floor, the reset and the correlated rows on the
                 // satellite's other phase signals (respondToPhaseOutlier_).
                 respondToPhaseOutlier_(w, chosen_idx, outlier_sat, outlier_sig, outlier_res);
@@ -1186,8 +1168,7 @@ namespace GnssProcessor {
         // reselected via the w-test).  The tiebreaker refines only among rows
         // the σ cut also flags, so a w-test-only hit keeps gate_idx.
         size_t chosen_idx = gate_idx;
-        if (!measurement.signal_types[max_idx].empty()
-            && measurement.signal_types[max_idx][0] == 'L'
+        if (obsTypeOf(measurement.signal_types[max_idx]) == ObsType::Phase
             && cycle_slip_manager_) {
 
             // Ratio threshold: a competitor is "close" if its |sres|
@@ -1196,7 +1177,7 @@ namespace GnssProcessor {
 
             const auto [max_prim, max_ref] = splitBssdSatId(
                 measurement.satellite_ids[max_idx]);
-            const std::string max_cons = PppUtils::getSystemString(max_prim);
+            const std::string max_cons = systemName(systemOfSat(max_prim));
 
             // Collect all phase-outlier indices for the same constellation
             // whose |sres| is close to the maximum.
@@ -1210,14 +1191,14 @@ namespace GnssProcessor {
 
             for (size_t i = 0; i < meta_n; ++i) {
                 const auto& sig = measurement.signal_types[i];
-                if (sig.empty() || sig[0] != 'L') continue;
+                if (obsTypeOf(sig) != ObsType::Phase) continue;
                 const double sa = std::abs(sres(static_cast<Eigen::Index>(i)));
                 if (!std::isfinite(sa) || sa <= threshold) continue;
                 if (sa < max_sres * kRatioThresh) continue;
 
                 const auto [prim, ref] = splitBssdSatId(
                     measurement.satellite_ids[i]);
-                if (PppUtils::getSystemString(prim) != max_cons) continue;
+                if (systemName(systemOfSat(prim)) != max_cons) continue;
 
                 // Deduplicate by satellite: one entry per satellite, the
                 // first qualifying row in row order.
@@ -1295,7 +1276,7 @@ namespace GnssProcessor {
         // those rows still go through the reset.
         const double cyc_floor_fraction = config_.getPivotSlipMinCycles();
         const bool   subcycle_on        = config_.enableSubcycleSlipSuppression();
-        const bool is_iono_free = (outlier_sig.find('_') != std::string::npos);
+        const bool is_iono_free = isIonoFreePairLabel(outlier_sig);
         bool suppressed_by_floor = false;
         if (subcycle_on && cyc_floor_fraction > 0.0 && !is_iono_free && outlier_sig.size() >= 2) {
             const auto [prim_for_lambda, _] = splitBssdSatId(outlier_sat);
@@ -1335,7 +1316,7 @@ namespace GnssProcessor {
         for (size_t i = 0; i < meta_n; ++i) {
             if (i == chosen_idx) continue;
             const auto& co_sig = measurement.signal_types[i];
-            if (co_sig.empty() || co_sig[0] != 'L') continue;
+            if (obsTypeOf(co_sig) != ObsType::Phase) continue;
             if (measurement.satellite_ids[i] != outlier_sat) continue;
             const double co_abs = std::abs(sres(static_cast<Eigen::Index>(i)));
             if (!std::isfinite(co_abs) || co_abs <= threshold) continue;
@@ -1343,7 +1324,7 @@ namespace GnssProcessor {
             const double co_res = res(static_cast<Eigen::Index>(i));
             bool co_suppressed = false;
             if (subcycle_on && cyc_floor_fraction > 0.0
-                && co_sig.find('_') == std::string::npos
+                && !isIonoFreePairLabel(co_sig)
                 && co_sig.size() >= 2) {
                 const std::string co_band = co_sig.substr(0, 2);
                 const double co_lambda = bandWavelengthForSat(prim, co_band);

@@ -11,6 +11,7 @@
  */
 
 #include "realtime/RealTimeEngine.hpp"
+#include "common/GnssIdentity.hpp"
 #include "math/TimeUtils.hpp"
 #include "common/PppUtils.hpp"
 #include "products/SsrCorrectionStore.hpp"
@@ -229,7 +230,7 @@ bool RealTimeEngine::gateCorrectionsReady(RtEpochContext& ctx) {
         size_t n_cm = 0;
         std::vector<std::string> not_ready;
         for (const auto& o : modeled_obs) {
-            const std::string cons = PppUtils::getSystemString(o.satellite);
+            const std::string cons = systemName(systemOfSat(o.satellite));
             ++total_per_cons[cons];
             if (o.broadcast_only) { not_ready.push_back(o.satellite); }
             else { ++n_cm; ++cm_per_cons[cons]; }

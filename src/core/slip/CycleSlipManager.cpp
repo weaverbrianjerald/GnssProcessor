@@ -25,6 +25,7 @@
 #include "slip/CycleSlipManager.hpp"
 #include "slip/CycleSlipEpochWork.hpp"
 #include "slip/SlipDetectorRegistry.hpp"
+#include "common/GnssIdentity.hpp"
 #include "math/TimeUtils.hpp"
 
 namespace GnssProcessor {
@@ -208,7 +209,7 @@ void CycleSlipManager::beginSlipEpoch(SlipEpochWork& w) {
         [&](const std::string& sat) -> bool {
             if (!config_.enableBetweenSatelliteSd()) return false;
             const auto& pivots = meas_model.getBssdPivotSatellites();
-            const auto pit = pivots.find(PppUtils::getSystemString(sat));
+            const auto pit = pivots.find(systemName(systemOfSat(sat)));
             return pit != pivots.end() && pit->second == sat;
         };
 }

@@ -10,6 +10,7 @@
 
 #include "measurement/MeasurementBuilder.hpp"
 #include "measurement/MeasurementModel.hpp"
+#include "common/GnssIdentity.hpp"
 #include "common/PppUtils.hpp"
 
 namespace GnssProcessor {
@@ -56,7 +57,7 @@ void BssdMeasurementBuilder::preparePivots(MeasurementModel& model,
     // undifferenced singleton.
     const auto& pivot_sats = model.pivot_manager_.getPivotSatellites();
     for (const auto& obs : observations) {
-        const std::string cons = PppUtils::getSystemString(obs.satellite);
+        const std::string cons = systemName(systemOfSat(obs.satellite));
         auto piv_it = pivot_sats.find(cons);
         if (piv_it == pivot_sats.end() || piv_it->second != obs.satellite)
             continue;

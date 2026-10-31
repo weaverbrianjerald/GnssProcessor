@@ -12,6 +12,7 @@
 #include "filter/StateKeySchema.hpp"
 #include "filter/KalmanFilter.hpp"
 #include "common/Constants.hpp"
+#include "common/GnssIdentity.hpp"
 #include <cmath>
 #include <algorithm>
 #include <numeric>
@@ -329,7 +330,7 @@ std::vector<AmbiguityResolver::DdPair> AmbiguityResolver::buildDdPairs(
         // They remain in the float Kalman filter; they're just excluded
         // from the LAMBDA candidate set.
         if (!config_.ar_active_systems.empty()) {
-            const std::string sys = PppUtils::getSystemString(info.satellite);
+            const std::string sys = systemName(systemOfSat(info.satellite));
             if (std::find(config_.ar_active_systems.begin(),
                           config_.ar_active_systems.end(),
                           sys) == config_.ar_active_systems.end()) {
@@ -848,24 +849,6 @@ AmbiguityResolution AmbiguityResolver::resolve(
 // already DD.
 // ===========================================================================
 
-namespace {
-
-/// Constellation string ("GPS", "Galileo", ...) → System enum.
-/// Mirrors PppUtils::getSystemString(System) inversely.  Unknown returns
-/// System::Unknown so the caller can skip the row.
-GnssProcessor::System ddStringToSystem(const std::string& cons) {
-    using GnssProcessor::System;
-    if (cons == "GPS")     return System::GPS;
-    if (cons == "Galileo") return System::Galileo;
-    if (cons == "GLONASS") return System::GLONASS;
-    if (cons == "BeiDou")  return System::BeiDou;
-    if (cons == "QZSS")    return System::QZSS;
-    if (cons == "SBAS")    return System::SBAS;
-    return System::Unknown;
-}
-
-} // namespace
-
 AmbiguityResolution AmbiguityResolver::resolveDd(
     const StateManager& state_manager,
     const std::vector<PppObservation>& observations,
@@ -963,7 +946,10 @@ AmbiguityResolution AmbiguityResolver::resolveDd(
             continue;
         }
 
-        const System sys = ddStringToSystem(cons);
+        // The key's constellation field comes from ddConstellationName: a name, or a
+        // one-letter field only for a letter outside the six constellations, which
+        // systemFromName also reads as Unknown.
+        const System sys = systemFromName(cons);
         if (sys == System::Unknown) { ++n_skipped_unknown; continue; }
 
         const double lam = ppp_utils_.getWavelength(sys, rov_code, sat_i);
@@ -2311,7 +2297,7 @@ AmbiguityResolution AmbiguityResolver::applyMwWlConstraintsNlWl_(
         // in the float Kalman filter (its NL/WL state is unaffected);
         // it just doesn't contribute to the AR pseudo-obs update.
         if (!config_.ar_active_systems.empty()) {
-            const std::string sys = PppUtils::getSystemString(sat);
+            const std::string sys = systemName(systemOfSat(sat));
             if (std::find(config_.ar_active_systems.begin(),
                           config_.ar_active_systems.end(),
                           sys) == config_.ar_active_systems.end()) {
@@ -2371,7 +2357,7 @@ AmbiguityResolution AmbiguityResolver::applyMwWlConstraintsNlWl_(
         if (need_hi && !hasWl(c.band_hi)) continue;
         if (need_lo && !hasWl(c.band_lo)) continue;
 
-        const std::string cons = PppUtils::getSystemString(sat);
+        const std::string cons = systemName(systemOfSat(sat));
         const std::string gk =
             cons + "|" + std::string{ c.canon_a } + "_" + std::string{ c.canon_b };
         groups[gk].push_back(std::move(c));

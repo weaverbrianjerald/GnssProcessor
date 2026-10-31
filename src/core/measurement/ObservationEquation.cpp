@@ -12,6 +12,7 @@
 #include "measurement/ObservationEquation.hpp"
 
 #include "common/Constants.hpp"
+#include "common/GnssIdentity.hpp"
 #include "common/GnssTypes.hpp"
 #include "common/PppUtils.hpp"
 #include "config/GnssConfig.hpp"
@@ -192,7 +193,9 @@ bool addIonosphere(Row& r) {
     if (slot.column < 0) return true;
     const double freq = carrierFrequency(r);
     if (!(freq > 0.0)) return true;
-    const double f_ref = Constants::GPS_L1_FREQ;
+    // The slant state is the delay on the reference band's carrier (kIonoReferenceBand,
+    // GPS L1), read on this row's carrier with the coefficient (f_ref / f)^2.
+    const double f_ref = nominalCarrierFrequencyHz(kIonoReferenceBand);
     const double alpha = (f_ref * f_ref) / (freq * freq);
     addPart(open(r.eq, ObsEffect::Ionosphere), ref, (r.is_phase ? -1.0 : 1.0) * alpha, slot);
     return true;
@@ -397,7 +400,7 @@ ObservationEquation observationEquation(const ObsInput& in, const PppObservation
     Row r{in, in.products.config, obs, ref_type, params, eq,
           /*is_phase=*/type == MeasurementType::Phase,
           /*is_uncombined=*/in.products.config.isUncombinedEnabled(),
-          /*is_pair=*/ref_type.find('_') != std::string::npos,
+          /*is_pair=*/isIonoFreePairLabel(ref_type),
           canonicalSat(obs.satellite),
           effects};
     if (type == MeasurementType::Doppler) {

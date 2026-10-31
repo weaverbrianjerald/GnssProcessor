@@ -940,4 +940,186 @@ namespace GnssProcessor {
         return a.signal < b.signal;
     }
 
+    // =======================================================================
+    // User-side helpers
+    // =======================================================================
+    //
+    // The reads the user-side call sites need that the types above do not give in one line.
+    // Each one equals, for every input, the idiom it replaces at those sites.  Where two
+    // sites wrote one idea two ways, the variants carry two names and the inputs on which
+    // they differ are documented; nothing here unifies them.
+
+    /**
+     * @brief True when a signal label is an ionosphere-free pair label ("L1C_L2W") rather
+     *        than a single signal ("L1C"): the label holds a '_' anywhere.
+     *
+     * The test the user side writes as @c label.find('_') @c != @c npos (and negates for
+     * "raw signal only"), equal to it for every input: an empty label is false, a label with
+     * two separators ("L1C_L2W_L5Q") is true, and the double-difference row label of an
+     * ionosphere-free combination ("L1C+L2W") holds no '_' and is false, as it is at those
+     * sites.  Nothing else is checked: @ref IonoFreePairLabel::parse is the stricter reading
+     * (a '_' with text on both sides) and @ref SignalPair::parse the validating parser.
+     *
+     * @param label The signal label, e.g. "L1C" or "L1C_L2W".
+     * @return True when @p label contains '_'.
+     */
+    constexpr bool isIonoFreePairLabel(std::string_view label) {
+        return label.find('_') != std::string_view::npos;
+    }
+
+    /**
+     * @brief The two member labels of an ionosphere-free pair label, as text: "L1C_L2W"
+     *        holds "L1C" and "L2W".
+     *
+     * The split that MeasurementModel's ionosphere-free coverage checks and the MW and IF
+     * phase detectors' @c splitIfLabel write by hand.  The members stay the text of the
+     * label: no constellation is needed and no code is validated (@ref SignalPair::parse is
+     * the typed, validating parse of the same text).
+     */
+    struct IonoFreePairLabel {
+        std::string first;   ///< The text before the first '_', e.g. "L1C".
+        std::string second;  ///< The text after the first '_', e.g. "L2W".
+
+        /**
+         * @brief Split a label at its first '_' when that '_' has text on both sides.
+         *
+         * Equal for every input to the sites' idiom: @c us = @c label.find('_') is a pair
+         * when @c us @c != @c npos, @c us @c > @c 0 and @c us @c + @c 1 @c < @c size, with the
+         * members @c substr(0, us) and @c substr(us + 1).  Stricter than
+         * @ref isIonoFreePairLabel, which is true for "_L2W", "L1C_" and "_", all three
+         * refused here.  A second '_' stays in @ref second ("L1C_L2W_L5Q" holds "L1C" and
+         * "L2W_L5Q"), and the members' length is not checked.
+         *
+         * @param label The signal label.
+         * @return The two members, or @c std::nullopt when @p label holds no '_' or holds
+         *         its first '_' as its first or last character.
+         */
+        static std::optional<IonoFreePairLabel> parse(std::string_view label);
+    };
+
+    /**
+     * @brief The row id of a between-satellite difference: "G01-G05", the primary
+     *        (non-pivot) satellite first and the reference (pivot) satellite second.
+     *
+     * The BSSD single difference (@c BssdTransform, "non_pivot-pivot") and the baseline
+     * double-difference rows ("sat_i-sat_p") write this id into
+     * @c EpochMeasurement::satellite_ids, where an undifferenced row carries its satellite
+     * alone ("G01"); the ambiguity resolver writes the same form into its log text.  The
+     * members are the satellite id strings as they stand in the row id, not normalized
+     * (@ref SatId::parse validates one satellite).
+     *
+     * The user-side sites read a row id three ways, and the three differ for a '-' at either
+     * end of the id, so each has its own name: @ref parse (the KalmanFilter rule),
+     * @ref splitAtFirstDash and @ref hasSatPairSeparator.
+     */
+    struct SatPairId {
+        std::string primary;    ///< The non-pivot satellite, e.g. "G01"; the whole id of an undifferenced row.
+        std::string reference;  ///< The pivot satellite, e.g. "G05"; empty for an undifferenced row.
+
+        /**
+         * @brief Read a row id: split at its first '-' when that '-' has text on both sides;
+         *        otherwise the whole id is the primary and the reference is empty.
+         *
+         * The rule of @c kalman::splitBssdSatId (filter/KalmanRowIdentity.hpp, which forwards
+         * here), equal to it for every input, so a malformed id reads as an undifferenced
+         * satellite: "-G05" and "G01-" are each their own primary with an empty reference,
+         * and the empty id gives two empty members.  A second '-' stays in the reference
+         * ("G01-G05-G07" gives "G01" and "G05-G07").
+         *
+         * @param row_id The row id, e.g. "G01-G05" or "G01".
+         * @return The pair; never fails.
+         */
+        static SatPairId parse(std::string_view row_id);
+
+        /**
+         * @brief Split a row id at its first '-' wherever it stands; without a '-', the
+         *        whole id and an empty reference.
+         *
+         * The looser reading of two sites: the trace writer takes the primary (the text
+         * before the first '-', the whole id without one) and the baseline DD statistics
+         * take the pivot (the text after the first '-', when there is any).  Equal to
+         * @ref parse except where the first '-' is the first or the last character:
+         * "-G05" gives "" and "G05" (@ref parse: "-G05" and ""), "G01-" gives "G01" and ""
+         * (@ref parse: "G01-" and ""), "-" gives two empty members (@ref parse: "-" and "").
+         *
+         * @param row_id The row id.
+         * @return The text before and after the first '-'.
+         */
+        static SatPairId splitAtFirstDash(std::string_view row_id);
+
+        /**
+         * @brief True when the id names a pair: the reference is non-empty.
+         *
+         * For a value from @ref parse, true exactly when the first '-' has text on both
+         * sides; not the test @ref hasSatPairSeparator makes.
+         *
+         * @return @c !reference.empty().
+         */
+        bool isPair() const { return !reference.empty(); }
+
+        /**
+         * @brief The row id, primary + "-" + reference, joined whatever the members hold.
+         *
+         * Equal to the builders' expression @c sat_i @c + @c "-" @c + @c sat_p for every pair
+         * of strings, so an empty reference renders "G01-" (an undifferenced row's id is its
+         * satellite id itself, not a rendering of this type).  For a pair whose primary holds
+         * no '-' and whose members are both non-empty, @ref parse of the rendering gives the
+         * pair back.
+         *
+         * @return The row id, e.g. "G01-G05".
+         */
+        std::string str() const;
+    };
+
+    /**
+     * @brief True when a row id holds a '-' anywhere: a between-satellite difference row
+     *        (see @ref SatPairId).
+     *
+     * The test the real-time engine's single-satellite reads write as
+     * @c row_id.find('-') @c != @c npos to skip the difference rows, equal to it for every
+     * input.  Looser than @c SatPairId::parse(row_id).isPair(): true also for "-G05", "G01-"
+     * and "-".
+     *
+     * @param row_id The row id.
+     * @return True when @p row_id contains '-'.
+     */
+    constexpr bool hasSatPairSeparator(std::string_view row_id) {
+        return row_id.find('-') != std::string_view::npos;
+    }
+
+    /**
+     * @brief The band the slant-ionosphere state is referenced to: GPS L1, for every
+     *        constellation.
+     *
+     * The state is the first-order slant delay in metres on this band's carrier, so a row on
+     * a carrier f reads it with the coefficient (f_ref / f)^2, f_ref being
+     * @c nominalCarrierFrequencyHz(kIonoReferenceBand), which equals
+     * @c Constants::GPS_L1_FREQ bit for bit.  The GIM pseudo-observation is queried at
+     * f_ref, and a TECU converts to metres at f_ref (@ref ionoDelayMetresPerTecu).  The
+     * observation equation's ionosphere column and the ionosphere and code-bias seeds name
+     * the band through this constant; the GIM pseudo-observation of the PPP driver and the
+     * real-time declared level step still read @c Constants::GPS_L1_FREQ, the same value.
+     */
+    inline constexpr FrequencyBand kIonoReferenceBand = FrequencyBand::GpsL1;
+
+    /**
+     * @brief The constellation field of a DD ambiguity key ("DD|GPS|G05|L1C|G01") and the
+     *        constellation group of the baseline DD statistics, from a satellite id's first
+     *        character.
+     *
+     * The rule of three copies that agree (MeasurementModel's @c ddConstellationOf, the
+     * KalmanFilter's baseline phase-outlier key, the baseline driver's
+     * @c constellationOfSatPairId).  It is its own letter policy and differs from
+     * @c systemName(systemOfSat(sat)) on three inputs, each kept as the copies have it:
+     * IRNSS 'I' gives "IRNSS" (there is no @c System value for it), any other letter
+     * outside the traits table gives that letter as a one-character string ("X"), and an
+     * empty id gives "" (@ref systemName gives "Unknown" for all three).  The six
+     * constellations of the table give @ref systemName.
+     *
+     * @param sat The satellite id, e.g. "G05"; only its first character is read.
+     * @return "GPS", "Galileo", "GLONASS", "BeiDou", "QZSS", "SBAS", "IRNSS", the first
+     *         character itself, or "" for an empty id.
+     */
+    std::string ddConstellationName(std::string_view sat);
+
 } // namespace GnssProcessor

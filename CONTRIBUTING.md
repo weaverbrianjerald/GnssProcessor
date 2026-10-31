@@ -57,9 +57,13 @@ The first row is carried out step by step in
 - **No source globbing.** A new `.cpp` that is missing from `CMakeLists.txt` produces
   "unresolved external symbol" at link time.
 - **State-vector keys** in new code are built and parsed only through
-  `include/filter/StateKeySchema.hpp`, never formatted by hand. Older single-receiver
-  code still formats some keys by hand (`sat + "_" + signal`); card UOM step U8 moves
-  them onto the schema.
+  `include/filter/StateKeySchema.hpp`, never formatted by hand. In the single-receiver
+  code the measurement, slip, application and real-time files build their ambiguity,
+  satellite-bias, pivot-seed and double-difference ambiguity keys through it. The
+  filter's pivot managers, smoother, ambiguity resolver, outlier response and post-fit QC
+  still build or split ambiguity, satellite-bias and double-difference keys by hand
+  (`sat + "_" + signal`). Other keys of the same shape (the slip layer's statistics and
+  arc keys, the row-exclusion tokens) are not state keys.
 - **Post-processing-only features** (smoother, `gnss_rate_s`) must not run in real-time
   mode. They are guarded on `AppMode::RealTime`.
 - **One test suite name per file.** A new test file is preferred over extending an
