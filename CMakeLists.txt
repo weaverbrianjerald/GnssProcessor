@@ -91,6 +91,7 @@ add_library(gnss_core STATIC
     src/core/filter/StateManagerFamilies.cpp
     src/core/filter/ImuIntegrator.cpp
     src/core/filter/AmbiguityResolver.cpp
+    src/core/filter/AmbiguityResolverSetup.cpp
     src/core/filter/IlsCore.cpp
     src/core/filter/ResidualHistoryTracker.cpp
     src/core/measurement/MeasurementModel.cpp
@@ -240,6 +241,8 @@ add_library(gnss_core STATIC
     src/core/realtime/AmbLevelCheck.cpp
     src/core/realtime/InnovationScreen.cpp
     src/core/realtime/RealTimeEngineScreen.cpp
+    src/core/realtime/RealTimeEngineArObserve.cpp
+    src/core/realtime/ArObserve.cpp
     src/core/realtime/ConsumerSatTrace.cpp
     src/core/filter/PivotManager.cpp
     src/core/filter/DdPivotManager.cpp
@@ -634,6 +637,12 @@ add_executable(gnss_tests
     tests/test_innovation_screen_engine.cpp
     tests/test_disc_mark_scope.cpp
     tests/test_consumer_sat_trace.cpp
+    tests/test_ar_observe_search.cpp
+    tests/test_ar_observe_trace.cpp
+    tests/test_ar_observe_engine.cpp
+    tests/test_ar_observe_config.cpp
+    tests/test_ambiguity_resolver_setup.cpp
+    tests/test_network_product_chain_token.cpp
     tests/test_transforms.cpp
     tests/test_filter_core.cpp
     tests/test_rtcm.cpp

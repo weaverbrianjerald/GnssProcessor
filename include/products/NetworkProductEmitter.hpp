@@ -83,6 +83,15 @@ struct NetworkPhaseBias {
     /// @c SsrPhaseBiasEntry::hold_generation and serialized as the P-record @c gen=
     /// token; a change of it is the declaration on which a consumer refloats.
     std::uint32_t hold_generation{0};
+    /// Component of the chain datum that this satellite phase bias belongs to, as a
+    /// P-record @c cmp=<n> token declares it (a truth wire carries @c cmp=1).  Two phase
+    /// biases of one signal share an integer frame only when their components are equal,
+    /// so a consumer pairs satellites within a component.  0 means the record carries
+    /// no token (every wire written before the token existed, every golden wire).  Read
+    /// by @ref NetworkProductReader and handed to the consumer's observe-mode integer
+    /// search; the writer does not emit it and it is not stamped onto
+    /// @c SsrPhaseBiasEntry, so the store and every pre-existing output are unchanged.
+    std::uint32_t chain_component{0};
 };
 
 /// One satellite's estimated satellite-side solution for a single epoch.

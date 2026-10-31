@@ -369,6 +369,40 @@ namespace GnssProcessor {
          * since it never reaches the producer).
          */
         std::string   replay_products_path;
+        /**
+         * @brief Run the observe-mode integer search on the consumer's float
+         *        (@c network.closed_loop.ar_observe, default false, byte-identical).
+         *
+         * Each epoch with an applied measurement update the consumer forms the
+         * between-satellite single-difference ambiguities of its own state, searches them
+         * for integers and records what the search finds.  It writes nothing back: no
+         * state, covariance, hold, counter of the legacy resolver or pre-existing trace
+         * column changes, whatever @ref ar_mode says, so an arm with it on and
+         * @ref ar_mode 0 is the float consumer plus an instrument.
+         * @c deriveClosedLoopConsumerConfig copies it and the two parameters below onto
+         * the consumer engine's config (@c GnssConfig::arObserve).  It never reaches the
+         * producer's solve or its resume fingerprint.  With
+         * @c network.require_signal_integer_for_ar on, the search admits only ambiguities
+         * whose phase bias is integer-grade on a chain wire (S line amb_datum 2) that
+         * carries a @c cmp= component, and pairs them within equal components.  See
+         * @c RealTimeEngine::observeIntegerSearch_ (RealTimeEngineArObserve.cpp) and
+         * @c ArObserve.hpp.
+         */
+        bool          ar_observe{ false };
+        /// Search of the observe mode (@c network.closed_loop.ar_search): @c "full"
+        /// (default; one joint integer search over every single difference, the accepted
+        /// fix conditions the position) or @c "decorrelated_partial" (fix in the
+        /// decorrelated space and report the single-signal integers the fixed
+        /// combinations determine).  Anything else is a load error.
+        std::string   ar_search{ "full" };
+        /// Conditional sigma (cycles) at or below which an integer counts as determined
+        /// in the observe mode (@c network.closed_loop.ar_determined_sigma_cyc, default
+        /// 0.05).  Read by the decorrelated search and by the wide-lane rows of both.
+        double        ar_determined_sigma_cyc{ 0.05 };
+        /// Write @c logs/closed_loop_ar_fixes.csv and @c logs/closed_loop_ar_epoch.csv
+        /// (@c network.closed_loop.trace_ar_fixes, default false).  Armed without
+        /// @ref ar_observe the loader warns and nothing is opened.
+        bool          trace_ar_fixes{ false };
     };
 
     /// SD pre-reduce EWL constraint.  The between-satellite single-differenced

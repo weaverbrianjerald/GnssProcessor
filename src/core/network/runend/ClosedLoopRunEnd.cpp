@@ -123,6 +123,13 @@ int networkClosedLoopRunEnd(const NetworkRunEndView& v) {
                   ctx.counters.n_cst_rows, ctx.counters.n_cst_epochs,
                   (log_dir_ / "closed_loop_sat_trace.csv").string());
     }
+    // The observe-mode integer search's files, named only when armed (its totals are the
+    // engine's own line below, logArObserveSummary).
+    if (cl.ar_observe && cl.trace_ar_fixes) {
+        log->info("  observe-mode AR traces    : {} and {}",
+                  (log_dir_ / "closed_loop_ar_fixes.csv").string(),
+                  (log_dir_ / "closed_loop_ar_epoch.csv").string());
+    }
     // Emit-side phase-bias hold: the ON-path telemetry and both edges, printed only
     // when armed so a run with it off keeps a byte-identical summary.  `held_emissions 0` means the hold never wrote, however
     // clean the wire reads.  The cost of the decoupling edge is the |estimate - held|
@@ -406,6 +413,7 @@ int networkClosedLoopRunEnd(const NetworkRunEndView& v) {
     consumer->logRosterConsumerSummary("closed loop");
     consumer->logPbHoldPresenceSummary("closed loop");   // held-key presence edges, silent unless armed
     consumer->logInnovationScreenSummary("closed loop");   // pre-update innovation screen, silent unless armed
+    consumer->logArObserveSummary("closed loop");   // observe-mode integer search totals, silent unless armed
     consumer->logReinflateSummary("closed loop");   // consumer re-inflation summary
     // Consumer snapshots written beside the network history copies;
     // 0 written on an armed seed means no warm start is on offer.

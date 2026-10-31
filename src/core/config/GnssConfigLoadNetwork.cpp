@@ -12030,6 +12030,23 @@ namespace GnssProcessor {
             // still gates the station validation below), so a config that sets it is
             // a consumer-only run.
             clc.replay_products_path     = cl.value("replay_products_path", std::string{});
+            // The observe-mode integer search (derived into the consumer engine as
+            // GnssConfig::arObserve): reads the consumer's float and writes nothing back.
+            // Default false, byte-identical, and it never reaches the producer's solve or its
+            // resume fingerprint.  The search name and the determined bar are refused here,
+            // at load, so a typo cannot fall back silently to another search.
+            clc.ar_observe               = cl.value("ar_observe", false);
+            clc.ar_search                = cl.value("ar_search", std::string("full"));
+            clc.ar_determined_sigma_cyc  = cl.value("ar_determined_sigma_cyc", 0.05);
+            clc.trace_ar_fixes           = cl.value("trace_ar_fixes", false);
+            if (clc.ar_search != "full" && clc.ar_search != "decorrelated_partial")
+                throw std::runtime_error(
+                    "network.closed_loop.ar_search must be \"full\" or \"decorrelated_partial\", got \""
+                    + clc.ar_search + "\"");
+            if (!(clc.ar_determined_sigma_cyc > 0.0) || !std::isfinite(clc.ar_determined_sigma_cyc))
+                throw std::runtime_error(
+                    "network.closed_loop.ar_determined_sigma_cyc must be a positive number of cycles, got "
+                    + std::to_string(clc.ar_determined_sigma_cyc));
             if (cl.contains("ar_active_systems") && cl["ar_active_systems"].is_array()) {
                 for (const auto& s : cl["ar_active_systems"])
                     if (s.is_string()) clc.ar_active_systems.push_back(s.get<std::string>());
@@ -12061,6 +12078,19 @@ namespace GnssProcessor {
             log->warn("Network: network.trace_consumer_sat is ON but the "
                       "closed-loop harness is NOT enabled (network.closed_loop.enable) — "
                       "there is no consumer to read, so no closed_loop_sat_trace.csv will be "
+                      "opened and the knob is INERT on this run.");
+        }
+        // The same sink dependencies for the observe-mode search and its two files.
+        const ClosedLoopConfig& cl_obs = network_config_.closed_loop;
+        if (cl_obs.ar_observe && !cl_obs.enable) {
+            log->warn("Network: network.closed_loop.ar_observe is ON but the closed-loop "
+                      "harness is NOT enabled (network.closed_loop.enable) — there is no "
+                      "consumer to search, so the knob is INERT on this run.");
+        }
+        if (cl_obs.trace_ar_fixes && !cl_obs.ar_observe) {
+            log->warn("Network: network.closed_loop.trace_ar_fixes is ON but "
+                      "network.closed_loop.ar_observe is off — there is no search to write, so "
+                      "closed_loop_ar_fixes.csv and closed_loop_ar_epoch.csv will not be "
                       "opened and the knob is INERT on this run.");
         }
     }
@@ -12303,6 +12333,17 @@ namespace GnssProcessor {
         // base config is kept.
         if (cl.pb_hold_presence_flip)
             c.ssr_pb_hold_presence_flip_ = true;
+        // The observe-mode integer search.  Never cleared here; the search name and the
+        // determined bar are carried along so the harness key is self-contained, and an
+        // out-of-range value falls back to the default as the base config's load would have
+        // refused it before reaching this point.
+        if (cl.ar_observe) {
+            c.ar_observe_ = true;
+            c.ar_observe_search_ =
+                (cl.ar_search == "decorrelated_partial") ? "decorrelated_partial" : "full";
+            c.ar_observe_determined_sigma_cyc_ =
+                (cl.ar_determined_sigma_cyc > 0.0) ? cl.ar_determined_sigma_cyc : 0.05;
+        }
         // The same derivation for the declared-roster latch and freshness response.
         // Never cleared here, and the consumer detects the
         // declaration's presence from the wire rather than from this flag, so arming it

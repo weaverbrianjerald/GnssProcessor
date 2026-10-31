@@ -243,6 +243,11 @@ void RealTimeEngine::resolveAmbiguities(RtEpochContext& ctx) {
     const std::vector<PppObservation>& modeled_obs = ctx.modeled_obs;
     bool& update_applied = ctx.update_applied;
 
+    // Observe-mode integer search: reads this epoch's float ahead of the resolver and
+    // writes nothing back.  It gates itself on its own knob and on an applied update, and
+    // not on the resolver, which ar_mode 0 never builds.
+    observeIntegerSearch_(ctx);
+
     last_ar_ran_ = false;
     last_ar_result_ = AmbiguityResolution{};
     if (ambiguity_resolver_ && update_applied) {
