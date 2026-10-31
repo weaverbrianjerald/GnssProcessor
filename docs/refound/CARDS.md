@@ -181,7 +181,9 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   static-algebra stop rule (2026-10-31): microscope chords event-free for 30 min at 0.22 cycle (bar 0.02), because the
   double differences under bundle A0 drift off the integers after half an hour (R1 exact); certification and lattice
   rules fail, D0 keeps the floor (GF-datum defect), seed-round not adopted, D-N fires; nothing from IRD-3 on until the
-  cause is closed.
+  cause is closed. The bisection (section 4) puts the cause in the chain's event handling, not its static algebra: A0
+  is R1 plus the chain on the microscope, and with the floor off the chain tracks R1 until the first satellite return;
+  the author's ruling on the stop is owed.
 - [RKD](RKD_retired_key_deletion_2026-10-14.md): closed, 2026-10-14: the 144 retired network keys and five lane keys
   they orphan deleted with their code (149 ledger rows, 784 to 635; 30 C++ files); landed after the same-build
   golden comparison passed (only declared text moves on the goldens).
