@@ -301,7 +301,7 @@ Sim, hour 2 and the closing sweep, 186 events: the RAIM tier never spiked in the
 | sections 6, 8.5 and 9: arm the estimable form, or disarm the census | section 10 (2026-10-28): armed in both goldens at the author's decision |
 | sections 7, 8.5, 9 and 11.6: the guard for the unwarmed first sweep | the reader filter below; a guard that withholds events in the producer is an output change and stays out of this card (section 7) |
 
-**The first-sweep guard as a reader filter.** Every BLOCKBAARDA event already says whether its statistic was scaled with sigma0 = 1 because the family had not warmed up: `raw_formal=1` in the event detail (`src/core/network/qc/BlockBaarda.cpp`). `scripts/block_baarda_join.py` takes `--skip-raw-formal`, which leaves those events out of the join and prints how many; without the flag its output is as before. Run once on each key-on 2 h arm of section 8 (outputs `D:/GnssProcessorSupport/gates/docsclose/bbe/join_{s2,f2}_{plain,skip}.txt`):
+**The first-sweep guard as a reader filter.** Every BLOCKBAARDA event already says whether its statistic was scaled with sigma0 = 1 because the family had not warmed up: `raw_formal=1` in the event detail (`src/core/network/qc/BlockBaarda.cpp`). `scripts/block_baarda_join.py` takes `--skip-raw-formal`, which leaves those events out of the join and prints how many; without the flag its output is as before. It was run on each key-on 2 h arm of section 8, with and without the flag (outputs `D:/GnssProcessorSupport/gates/docsclose/bbe/join_{s2,f2}_{plain,skip}.txt`):
 
 | arm | events | left out | read | epoch and satellite groups of 3 or more stations (cells in them) | events with none of the other tiers at the cell |
 | --- | --- | --- | --- | --- | --- |
