@@ -4,6 +4,8 @@
     python scripts/nis_inject_grade.py grade [--consumer wtzz ...] [--set core|ext|all]
                                              [--runs ROOT] [--json OUT] [--quiet]
     python scripts/nis_inject_grade.py validity [--consumer ...] [--set ...]     the validity test only
+    python scripts/nis_inject_grade.py combine F1.json F2.json ... [--json OUT] [--md OUT]
+                                             one report from per-consumer grades (they can run side by side)
     python scripts/nis_inject_grade.py selftest
 
 The replays are those laid out by scripts/nis_inject_arms.py: per consumer an unperturbed cell and
@@ -103,19 +105,38 @@ def read_sat_trace(run, tows=None):
     """Rows of logs/closed_loop_sat_trace.csv: ({(tow, sat, sig): row}, [(tow, sat, sig, column, token)]).
     `rows` holds only the epochs in `tows` (all when None); the second list holds every screen token."""
     rows, toks = {}, []
+    want = None if tows is None else {"%.3f" % t for t in tows}      # the trace prints tow with three decimals
     with open(run + "/logs/closed_loop_sat_trace.csv", newline="") as fh:
-        for r in csv.DictReader(fh):
-            tow = round(float(r["tow"]), 3)
-            for col in ("ev_pb", "ev_cb"):
-                for t in r[col].split(";"):
-                    if t.startswith("screen_"):
-                        toks.append((tow, r["sat"], r["sig"] if col == "ev_pb" else r["code_sig"], col, t))
-            if tows is None or tow in tows:
-                row = {k: r[k] for k in ("ev_pb", "ev_cb", "ev_clk")}
-                for k in ("clk_disc", "cb_disc", "pb_disc", "innov_code_m", "innov_phase_m", "amb_var", "elev_deg"):
-                    row[k] = num(r[k])
-                rows[(tow, r["sat"], r["sig"])] = row
+        rd = csv.reader(fh)
+        ix = {k: i for i, k in enumerate(next(rd))}
+        i_tow, i_sat, i_sig, i_csig = ix["tow"], ix["sat"], ix["sig"], ix["code_sig"]
+        i_pb, i_cb = ix["ev_pb"], ix["ev_cb"]
+        text_cols = ("ev_pb", "ev_cb", "ev_clk")
+        num_cols = ("clk_disc", "cb_disc", "pb_disc", "innov_code_m", "innov_phase_m", "amb_var", "elev_deg")
+        for r in rd:
+            if "screen_" in r[i_pb] or "screen_" in r[i_cb]:
+                tow = round(float(r[i_tow]), 3)
+                for col, i, key in (("ev_pb", i_pb, i_sig), ("ev_cb", i_cb, i_csig)):
+                    for t in r[i].split(";"):
+                        if t.startswith("screen_"):
+                            toks.append((tow, r[i_sat], r[key], col, t))
+            if want is None or r[i_tow] in want:
+                row = {k: r[ix[k]] for k in text_cols}
+                for k in num_cols:
+                    row[k] = num(r[ix[k]])
+                rows[(round(float(r[i_tow]), 3), r[i_sat], r[i_sig])] = row
     return rows, toks
+
+
+_WINDOW_CACHE = {}
+
+
+def window_rows(run, win):
+    """read_sat_trace(run, win)[0], read once per run and window."""
+    key = (run, tuple(sorted(win)))
+    if key not in _WINDOW_CACHE:
+        _WINDOW_CACHE[key] = read_sat_trace(run, win)[0]
+    return _WINDOW_CACHE[key]
 
 
 def read_screen_log(run):
@@ -322,8 +343,8 @@ def grade_cell(runs, cell, nulls):
         rec[s] = metrics(excess_series(err[s], nulls[s][1]))
     # validity from the screen-off traces
     win = {round(T_INJ + d, 3) for d in (0.0, DT)}
-    prow, _ = read_sat_trace(rd["off"], win)
-    nrow, _ = read_sat_trace(nulls["off"][0], win)
+    prow = window_rows(rd["off"], win)
+    nrow = window_rows(nulls["off"][0], win)
     valid, reasons, info = validity(cell.cls, sats, cell.step_m, prow, nrow)
     if not rec["pre_identical"]:
         valid, reasons = False, reasons + ["history before the injection differs from the unperturbed replay"]
@@ -466,18 +487,18 @@ def report(nulls, graded, quiet=False):
 
 
 def md_cells(graded):
-    """Markdown rows of the complete cells, for a card table."""
-    out = ["| cell | valid | off: peak20 m / recovery / mean3h m | on: peak20 m / recovery / mean3h m | flagged rows (innocent) | refloats | B2 | B3 |",
-           "| --- | --- | --- | --- | --- | --- | --- | --- |"]
+    """Markdown rows of the cells, for a card table (a void cell carries VOID after its name)."""
+    out = ["| cell | screen off: peak20 m / recovery / mean3h m | screen on: peak20 m / recovery / mean3h m | flagged rows (innocent keys) | B2 | B3 |",
+           "| --- | --- | --- | --- | --- | --- |"]
+    rc = lambda m: "never" if m["recovery"] is None else str(m["recovery"])
     for r in graded:
         if "incomplete" in r:
-            out.append("| %s | incomplete | | | | | | |" % r["cell"])
+            out.append("| %s | incomplete | | | | |" % r["cell"])
             continue
         off, on, fs = r["off"], r["on"], r["flags"]
-        rc = lambda m: "never" if m["recovery"] is None else str(m["recovery"])
-        out.append("| %s | %s | %s / %s / %s | %s / %s / %s | %d (%d) | %d | %s | %s |" % (
-            r["cell"], "yes" if r["valid"] else "VOID", fmt(off["peak20"]), rc(off), fmt(off["mean3h"], 4),
-            fmt(on["peak20"]), rc(on), fmt(on["mean3h"], 4), fs["n_flags_after"], len(fs["innocent"]), fs["n_refloat"],
+        out.append("| %s%s | %s / %s / %s | %s / %s / %s | %d (%d) | %s | %s |" % (
+            r["cell"], "" if r["valid"] else " VOID", fmt(off["peak20"]), rc(off), fmt(off["mean3h"]),
+            fmt(on["peak20"]), rc(on), fmt(on["mean3h"]), fs["n_flags_after"], len(fs["innocent"]),
             "-" if r["b2"] is None else ("met" if r["b2"]["met"] else "MISSED"),
             "-" if not r["b3"] else ("met" if r["b3"]["met"] else "MISSED")))
     return "\n".join(out)
@@ -498,6 +519,27 @@ def cmd_grade(a):
     text, v = report(nulls, graded)
     if not a.quiet:
         print(text)
+    if a.md:
+        with open(a.md, "w") as fh:
+            fh.write(md_cells(graded) + "\n")
+    if a.json:
+        with open(a.json, "w") as fh:
+            json.dump({"nulls": nulls, "cells": graded, "verdict": v}, fh, indent=1, default=str)
+
+
+def cmd_combine(a):
+    """One report from the JSON files that `grade --consumer X --json F` wrote, cells in the registered order."""
+    nulls, graded = [], []
+    for path in a.files:
+        with open(path) as fh:
+            d = json.load(fh)
+        nulls += d["nulls"]
+        graded += d["cells"]
+    order = {c.key: i for i, c in enumerate(arms.cells("all"))}
+    nulls.sort(key=lambda r: order[r["cell"]])
+    graded.sort(key=lambda r: order[r["cell"]])
+    text, v = report(nulls, graded)
+    print(text)
     if a.md:
         with open(a.md, "w") as fh:
             fh.write(md_cells(graded) + "\n")
@@ -581,6 +623,26 @@ def selftest():
     assert not ok and any(x.startswith("clk_disc G01") for x in why), why
     assert not validity("pb", ["G77"], 10.0, pert, null)[0]            # a satellite with no row
 
+    # the sat trace reader: window rows by their printed tow, every screen token, blanks as None
+    head = "week,tow,sat,sig,code_sig,elev_deg,n_sig,clk_m,cb_m,pb_m,clk_disc,cb_disc,pb_disc,ev_pb,ev_cb,ev_clk,innov_code_m,innov_phase_m,res_code_m,res_phase_m,amb_m,amb_var,iono_m,iono_var"
+    body = [
+        "2313,269970.000,G01,L1W,C1W,50.000,2,0.1,0.2,0.3,0,0,2,none,none,none,0.5,0.01,0.1,0.0,1.0,0.06,0.1,6.0",
+        "2313,270000.000,G01,L1W,C1W,50.000,2,0.1,0.2,0.3,0,0,3,screen_excl,screen_excl,none,0.5,,0.1,,1.0,0.06,0.1,6.0",
+        "2313,270000.000,G01,L2W,C2W,50.000,2,0.1,0.2,0.3,0,0,3,reset_disc;screen_refloat,none,none,,-9.9,,,1.0,1000,0.1,6.0",
+    ]
+    with tempfile.TemporaryDirectory() as td:
+        os.makedirs(td + "/logs")
+        with open(td + "/logs/closed_loop_sat_trace.csv", "w") as fh:
+            fh.write(head + "\n" + "\n".join(body) + "\n")
+        rows, toks = read_sat_trace(td, {270000.0})
+        assert sorted(rows) == [(270000.0, "G01", "L1W"), (270000.0, "G01", "L2W")], sorted(rows)
+        assert rows[(270000.0, "G01", "L1W")]["innov_phase_m"] is None and rows[(270000.0, "G01", "L1W")]["innov_code_m"] == 0.5
+        assert rows[(270000.0, "G01", "L2W")]["ev_pb"] == "reset_disc;screen_refloat" and rows[(270000.0, "G01", "L2W")]["pb_disc"] == 3
+        assert toks == [(270000.0, "G01", "L1W", "ev_pb", "screen_excl"), (270000.0, "G01", "C1W", "ev_cb", "screen_excl"),
+                        (270000.0, "G01", "L2W", "ev_pb", "screen_refloat")], toks
+        assert len(read_sat_trace(td)[0]) == 3 and read_sat_trace(td, set())[0] == {}
+        assert window_rows(td, {270000.0}) is window_rows(td, {270000.0})
+
     # the screen's flags: parse real log lines, keys, innocent flags and the persistence rule
     lines = [
         "[2313, 270000.000 (2024-05-08 03:00:00.000)] [rt_engine] [info] [RT] Innovation screen: EXCLUDE G01 L1W w=-268.4 (conditional sigma 0.344 m, innovation -65.261 m), flagged on 1 consecutive epoch(s)",
@@ -649,6 +711,11 @@ def main(argv=None):
             p.add_argument("--md", help="write the cell table as markdown rows to this file")
             p.add_argument("--quiet", action="store_true")
         p.set_defaults(fn=fn)
+    p = sub.add_parser("combine")
+    p.add_argument("files", nargs="+", help="the JSON files of `grade --consumer X --json F`")
+    p.add_argument("--json")
+    p.add_argument("--md")
+    p.set_defaults(fn=cmd_combine)
     p = sub.add_parser("selftest")
     p.set_defaults(fn=lambda a: selftest())
     a = ap.parse_args(argv)
