@@ -134,10 +134,10 @@ if (logging_config.enable_wls_trace) {
 }
 
     // Write the base header of the state trace without a terminating newline.
-    // The clock, phase clock, gradient and per-system time offset columns are
-    // appended on the first call to logState() based on what the StateManager
-    // has actually allocated (e.g. clock is omitted under BSSD, where it is not
-    // a state).
+    // The clock, phase clock, gradient, differential ZWD and per-system time
+    // offset columns are appended on the first call to logState() based on what
+    // the StateManager has actually allocated (e.g. clock is omitted under BSSD,
+    // where it is not a state).
     if (state_trace_.is_open()) {
         // cov_xy/xz/yz complete the 3x3 ECEF position block.  The diagonal std
         // columns alone cannot describe the orientation of an error ellipse:
@@ -252,6 +252,11 @@ if (!state_header_written_) {
     if (state_manager.hasTropoGradients()) {
         state_trace_ << ",gn_m,gn_std_m,ge_m,ge_std_m";
     }
+    // Baseline modes: the differential zenith wet delay (rover minus
+    // reference, StateManager label DZWD), when it is estimated.
+    if (state_manager.hasDifferentialTropo()) {
+        state_trace_ << ",dzwd_m,dzwd_std_m";
+    }
     const auto& time_offset_systems = state_manager.getSystemsWithTimeOffsets();
     for (const auto& sys : time_offset_systems) {
         state_trace_ << "," << sys << "_m," << sys << "_std_m";
@@ -280,13 +285,17 @@ auto cov_at = [&cov](size_t i, size_t j) -> double {
     const size_t pos_idx = state_manager.getPositionIndex();
     const size_t trop_idx = state_manager.getTropoIndex();
     const bool has_pos = sv.size() >= pos_idx + 3;
+    // The absolute zenith wet delay is not a state in the baseline modes
+    // (getTropoIndex() is max(); only the differential ZWD may be estimated):
+    // the tropo columns are then written as NaN, as std_at writes any absent
+    // state, and the row is still written.
     const bool has_trop = trop_idx < static_cast<size_t>(sv.size());
     const bool has_iono = is_ppp_rtk_ && !state_manager.getIonosphereStates().empty();
 
-    if (!(has_pos && has_trop)) {
+    if (!has_pos) {
         try { log_manager_.getLogger("main_log")->warn(
-            "[{} {:.3f}] Skipped state trace row: state size {} insufficient (pos_idx={}, trop_idx={})",
-            time.week, time.tow, sv.size(), pos_idx, trop_idx); }
+            "[{} {:.3f}] Skipped state trace row: state size {} insufficient (pos_idx={})",
+            time.week, time.tow, sv.size(), pos_idx); }
         catch (...) {}
         return;
     }
@@ -315,7 +324,8 @@ auto cov_at = [&cov](size_t i, size_t j) -> double {
         state_trace_.flags(saved_flags);
         state_trace_.precision(saved_prec);
     }
-    state_trace_ << sv(static_cast<Eigen::Index>(trop_idx)) << ","
+    state_trace_ << (has_trop ? sv(static_cast<Eigen::Index>(trop_idx))
+                              : std::numeric_limits<double>::quiet_NaN()) << ","
                  << std_at(trop_idx);
     if (is_ppp_rtk_) {
         // Log the number of per-satellite iono states and mean value
@@ -354,6 +364,12 @@ auto cov_at = [&cov](size_t i, size_t j) -> double {
         const size_t ge_idx = state_manager.getTropoGradientEastIndex();
         state_trace_ << "," << sv(static_cast<Eigen::Index>(gn_idx)) << "," << std_at(gn_idx)
                      << "," << sv(static_cast<Eigen::Index>(ge_idx)) << "," << std_at(ge_idx);
+    }
+
+    // Differential ZWD (baseline modes, when estimated)
+    if (state_manager.hasDifferentialTropo()) {
+        const size_t dz_idx = state_manager.getDifferentialTropoIndex();
+        state_trace_ << "," << sv(static_cast<Eigen::Index>(dz_idx)) << "," << std_at(dz_idx);
     }
     
     // Write inter-system time offset values (one pair of columns per system)
