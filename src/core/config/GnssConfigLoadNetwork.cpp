@@ -2978,6 +2978,29 @@ namespace GnssProcessor {
         if (network_config_.trace_events)
             log->info("Network: per-event QC trace ENABLED — network_events.csv logs every "
                       "tiered QC action (T1-T6, GATE/SIGMA0/PIVOT/RETRO) in long format.");
+        // The frame observatory of the eq34 chain datum and the pre-hold phase-bias trace
+        // (measure-only; network/solve/ChainFrame.hpp).
+        network_config_.trace_chain_datum =
+            jval<bool>(json, "network.trace_chain_datum", "trace_chain_datum", false);
+        network_config_.trace_pb_prehold =
+            jval<bool>(json, "network.trace_pb_prehold", "trace_pb_prehold", false);
+        network_config_.trace_rpb_states =
+            jval<bool>(json, "network.trace_rpb_states", "trace_rpb_states", false);
+        if (network_config_.trace_chain_datum)
+            log->info("Network: eq34 chain-frame observatory ENABLED — network_chain_edges.csv "
+                      "(every tree edge with its chain-event row and legacy step), "
+                      "network_chain_frame.csv (the chord table) and the run-end frame census; "
+                      "measure-only, no event row is armed.");
+        if (network_config_.trace_chain_datum && !network_config_.trace_events)
+            log->warn("Network: network.trace_chain_datum is armed but network.trace_events is "
+                      "OFF — network_events.csv is never opened, so the CHAIN rows (both edges of "
+                      "every chain event) are DISCARDED.  Arm network.trace_events too.");
+        if (network_config_.trace_pb_prehold)
+            log->info("Network: pre-hold phase-bias trace ENABLED — network_pb_prehold.csv "
+                      "samples every emitted phase bias immediately before the phase-bias hold.");
+        if (network_config_.trace_rpb_states)
+            log->info("Network: receiver phase-bias trace ENABLED — network_rpb_states.csv, with "
+                      "the time-link NEES at the run end.");
         // Sink dependency (deferred from its arming block above,
         // because this toggle is parsed only here).  Invariant #4: an armed instrument
         // whose output has nowhere to go has to say so.
@@ -9876,9 +9899,13 @@ namespace GnssProcessor {
                       "each (constellation,signal) connected component gets a per-(receiver,system,"
                       "signal) RPB split state δ_{{r,σ}}, ONE datum-receiver RPB pin, and a "
                       "spanning-tree of ambiguity pins over the bipartite (receiver × satellite) "
-                      "observation graph.  The emitted between-satellite phase-bias reference then "
-                      "stays integer-consistent across ALL satellites (each chain hop contributes "
-                      "only an integer) while the frame stays full-rank at global scale.  Reuses the "
+                      "observation graph, full-rank at global scale.  Its static algebra makes every "
+                      "between-satellite reference an integer combination across the component, but "
+                      "the as-built event handling (a re-host stepped by the new edge's float, the "
+                      "root-handover erase, parent-keyed edges, a returning vertex at baseline 0) "
+                      "steps the frame by fractions, so the emitted phase biases are NOT "
+                      "integer-consistent and no integer is claimed (network.trace_chain_datum "
+                      "measures the frame).  Reuses the "
                       "prioritized SPOF-cure machinery but replaces the anchor election with a chain "
                       "election; SUPERSEDES network.phase_datum_prioritized.  pin-round={}, "
                       "seed-round={}, rpb-prior sigma={} m (0=off).",
@@ -9999,6 +10026,11 @@ namespace GnssProcessor {
                       "(the legacy pivot datum has no union to gate).",
                       network_phase_datum_min_stations_);
         }
+        if (!network_phase_datum_eq34_
+            && (network_config_.trace_chain_datum || network_config_.trace_rpb_states))
+            log->warn("Network: network.trace_chain_datum / network.trace_rpb_states are INERT "
+                      "without network.phase_datum_eq34 (there is no chain to observe); "
+                      "nothing is written.");
 
         // Two-edge continuous handover: inert guards, then the arming line.  Follows the
         // eq34-hygiene / pool-re-host precedent: an arm that cannot change anything is

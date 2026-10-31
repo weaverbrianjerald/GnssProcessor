@@ -651,6 +651,20 @@ namespace GnssProcessor {
         /// anywhere else.
         std::ofstream rx_states_trace;
         const std::filesystem::path rx_states_trace_path;
+        /// The eq34 chain-frame observatory (network.trace_chain_datum;
+        /// network/solve/ChainFrame.hpp): every tree edge each epoch with its chain-event row,
+        /// and the chord table each epoch.
+        std::ofstream chain_edges_trace;
+        const std::filesystem::path chain_edges_trace_path;
+        std::ofstream chain_frame_trace;
+        const std::filesystem::path chain_frame_trace_path;
+        /// Every emitted satellite phase bias immediately before the phase-bias hold
+        /// (network.trace_pb_prehold).
+        std::ofstream pb_prehold_trace;
+        const std::filesystem::path pb_prehold_trace_path;
+        /// Every receiver phase-bias state of an eq34 run (network.trace_rpb_states).
+        std::ofstream rpb_states_trace;
+        const std::filesystem::path rpb_states_trace_path;
         /// Per-station residual field (L13; network.trace_station_residuals): every
         /// post-fit RAIM cell (non-pivot station x sat) with s_raw, s_norm and σ̂0.
         /// A heavy, opt-in trace.

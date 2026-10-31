@@ -3336,6 +3336,25 @@ namespace GnssProcessor {
         /// term cannot be graded against an injected truth.
         /// O(stations x (1 + codes) x epochs); off by default, byte-identical when off.
         bool trace_rx_states{ false };
+        /// Frame observatory of the eq34 chain datum (network/solve/ChainFrame.hpp): writes
+        /// @c network_chain_edges.csv (every tree edge each epoch, with its chain-event row and
+        /// legacy step), @c network_chain_frame.csv (the chord table each epoch: two-band float,
+        /// covariance, certified and lattice integers) and, with @c trace_events, CHAIN rows in
+        /// @c network_events.csv, plus the run-end frame census.  Measure-only: the election reads
+        /// nothing it writes.  Inert unless @c network.phase_datum_eq34.  Off by default,
+        /// byte-identical when off.
+        bool trace_chain_datum{ false };
+        /// Emit @c network_pb_prehold.csv: every emitted satellite phase bias as sampled
+        /// immediately before the phase-bias hold (the estimate, its sigma and the clock), with
+        /// the value and generation the hold then emitted and, on an eq34 run, the satellite's
+        /// role in the chain tree.  Measure-only.  Off by default, byte-identical when off.
+        bool trace_pb_prehold{ false };
+        /// Emit @c network_rpb_states.csv: every receiver phase-bias state of an eq34 run each
+        /// epoch, with its sigma, pin, rank-floor weight, time-link prior, parent satellite,
+        /// depth, component, chain event and shift; the run end reports the time-link NEES.
+        /// Measure-only.  Inert unless @c network.phase_datum_eq34.  Off by default,
+        /// byte-identical when off.
+        bool trace_rpb_states{ false };
         bool trace_events{ false };       ///< Emit @c network_events.csv (L2): one structured long-format row per discrete QC action (tiers T1 IF-slip … T6 clock-monitor, plus GATE / SIGMA0 / PIVOT / RETRO), in place of scraping spdlog with regular expressions for which satellite, station or arc was acted on and when.  Pivot handover and retro-bump arming are logged nowhere else.  Rows are written even on epochs that are later withheld (they are part of the disposition record).  O(QC events); off by default, byte-identical when off (no new file).
         /// Replay a product file that has no S contract line.  Such a
         /// wire (from before the S contract line) replays with the default emitter (no

@@ -35,6 +35,7 @@
 #include "network/qc/BlockBaarda.hpp"
 #include "network/state/CarryDisposition.hpp"
 #include "network/solve/ChainDatum.hpp"
+#include "network/solve/ChainFrame.hpp"
 #include "network/assembly/ChannelAll.hpp"
 #include "network/solve/ClockLevel.hpp"
 #include "network/qc/ClockQc.hpp"
@@ -308,6 +309,7 @@ static_assert(std::is_same_v<decltype(static_cast<NetworkEpochObserver>(&network
 static_assert(std::is_same_v<decltype(static_cast<NetworkEpochObserver>(&networkRhsAttribution)), NetworkEpochObserver>);
 static_assert(std::is_same_v<decltype(static_cast<NetworkEpochObserver>(&networkRhsAttribTrip)), NetworkEpochObserver>);
 static_assert(std::is_same_v<decltype(static_cast<NetworkEpochObserver>(&networkAmbStateTrace)), NetworkEpochObserver>);
+static_assert(std::is_same_v<decltype(static_cast<NetworkEpochObserver>(&networkChainFrameObserve)), NetworkEpochObserver>);
 static_assert(std::is_same_v<decltype(static_cast<NetworkEpochObserver>(&net::networkEntitiesReachSample)), NetworkEpochObserver>);
 
 // The harvest by carried kind.  The orchestrator and the 19 functions it

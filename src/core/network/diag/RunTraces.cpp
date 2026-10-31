@@ -58,6 +58,10 @@ NetworkRunTraces::NetworkRunTraces(std::filesystem::path log_dir)
       zwd_trace_path(log_dir_ / "network_zwd.csv"),
       sat_bias_states_trace_path(log_dir_ / "network_sat_bias_states.csv"),
       rx_states_trace_path(log_dir_ / "network_rx_states.csv"),
+      chain_edges_trace_path(log_dir_ / "network_chain_edges.csv"),
+      chain_frame_trace_path(log_dir_ / "network_chain_frame.csv"),
+      pb_prehold_trace_path(log_dir_ / "network_pb_prehold.csv"),
+      rpb_states_trace_path(log_dir_ / "network_rpb_states.csv"),
       station_res_trace_path(log_dir_ / "network_station_residuals.csv"),
       raim_redun_trace_path(log_dir_ / "network_raim_redundancy.csv"),
       station_factor_trace_path(log_dir_ / "network_station_factor.csv"),
@@ -988,6 +992,43 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
         else
             log->warn("Network: failed to open receiver-state trace {}",
                       rx_states_trace_path.string());
+    }
+    // The eq34 chain-frame observatory (network/solve/ChainFrame.hpp).  The chain traces need a
+    // chain: they open only on an eq34 run.
+    const bool chain_run = config_.networkPhaseDatumEq34();
+    if (nc.trace_chain_datum && chain_run) {
+        chain_edges_trace.open(chain_edges_trace_path);
+        if (chain_edges_trace)
+            chain_edges_trace << "week,tow,system,family,band,comp,r1,edge_sta,edge_sat,child,"
+                                 "parent,depth,target_m,target_cyc,prev_target_m,pinmove_m,known,"
+                                 "legacy_cause,row,row_armed,certified,cert_source,flipped,"
+                                 "returning,life_stamp\n";
+        else
+            log->warn("Network: failed to open chain-edge trace {}", chain_edges_trace_path.string());
+        chain_frame_trace.open(chain_frame_trace_path);
+        if (chain_frame_trace)
+            chain_frame_trace << "week,tow,family,arc_sta,arc_sat,float_cyc_1,float_cyc_2,q11,q12,"
+                                 "q22,int_1,int_2,source,conflict,lattice_int\n";
+        else
+            log->warn("Network: failed to open chain-frame trace {}", chain_frame_trace_path.string());
+    }
+    if (nc.trace_pb_prehold) {
+        pb_prehold_trace.open(pb_prehold_trace_path);
+        if (pb_prehold_trace)
+            pb_prehold_trace << "week,tow,sat,signal,est_pb_m,est_pb_sigma_m,est_clk_m,"
+                                "phase_visible_m,emit_pb_m,gen,role,comp,r1,attach_sta,depth\n";
+        else
+            log->warn("Network: failed to open pre-hold phase-bias trace {}",
+                      pb_prehold_trace_path.string());
+    }
+    if (nc.trace_rpb_states && chain_run) {
+        rpb_states_trace.open(rpb_states_trace_path);
+        if (rpb_states_trace)
+            rpb_states_trace << "week,tow,station,system,signal,value_m,sigma_m,pinned,floor_w,"
+                                "timelink_var_m2,parent_sat,depth,comp,event,shift_m\n";
+        else
+            log->warn("Network: failed to open receiver phase-bias trace {}",
+                      rpb_states_trace_path.string());
     }
     if (nc.trace_station_residuals) {
         station_res_trace.open(station_res_trace_path);

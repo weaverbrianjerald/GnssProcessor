@@ -989,6 +989,20 @@ struct PlPc {
     bool         carried{false};///< A carried prior was folded this epoch (else a birth row).
 };
 
+/// One receiver phase-bias column of a station-epoch as network_rpb_states.csv reports it: the
+/// state's column and linearization point, its pin, and the two priors the fold put on it.
+struct RpbTraceCol {
+    std::string  key;        ///< The receiver phase-bias key.
+    std::string  system;     ///< Its constellation name ("GPS").
+    std::string  signal;     ///< Its phase signal.
+    Eigen::Index col{-1};    ///< A_r column.
+    double       x_lin{0.0}; ///< This epoch's linearization point (m).
+    bool         pinned{false};  ///< The datum receiver's pinned bias.
+    double       floor_w{std::numeric_limits<double>::quiet_NaN()};   ///< Weight (1/m^2) of the zero-mean rank floor (NaN: not folded).
+    double       tl_value{std::numeric_limits<double>::quiet_NaN()};  ///< The carried value the time link pulls toward (m; NaN: no time link).
+    double       tl_var{std::numeric_limits<double>::quiet_NaN()};    ///< Its variance, carried plus q times the gap (m^2; NaN: no time link).
+};
+
 struct PlAmb {
     Eigen::Index col;     ///< A_r column of this ambiguity (= h2local[amb_idx]).
     std::string  sat;     ///< RINEX satellite id.
@@ -1432,6 +1446,10 @@ struct StationAssembly {
     /// column, linearization point) (eq34 RPB time-linking).  Empty unless
     /// network.phase_datum_eq34 is on with phase_datum_eq34_rpb_q_m2s > 0.
     std::vector<std::tuple<std::string, Eigen::Index, double>> pl_rpb;
+    /// Every receiver phase-bias column with a live phase row, pinned or not, with its priors,
+    /// for network_rpb_states.csv (the frame observatory).  Empty unless
+    /// network.trace_rpb_states is armed on an eq34 run; nothing in the solve reads it.
+    std::vector<RpbTraceCol> rpb_trace;
     /// Present per-LOS iono columns recorded for the post-solve harvest, as (sat, A_r
     /// column, linearization point) (I-in-block).  The harvest appends them to the
     /// block's columns.  Same tuple shape as pl_rpb.  Empty unless

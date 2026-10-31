@@ -76,6 +76,7 @@
 #include "network/slip/SlipFunnel.hpp"    // NetworkSlipFunnel
 #include "network/state/ArcLedger.hpp"            // ArcReentryOutcomeMap, ArcLedger::Key
 #include "network/solve/Sbasis.hpp"        // the code-datum records
+#include "network/solve/ChainFrame.hpp"    // ChainEpochObs
 #include "network/qc/BlockBaarda.hpp"   // BlockBaardaHit
 #include "network/qc/Congruence.hpp"    // CongruenceHit
 #include "network/assembly/RowClassify.hpp"   // kNetDataClasses
@@ -194,6 +195,7 @@ struct EpochEvents {
         std::map<std::string, int> eq34_epoch_declared;         ///< Per group: the declared gauge dimension.
         std::map<std::string, int> eq34_epoch_bridged;          ///< Per group: the shared-side bridge pins.
         std::set<std::pair<std::string, std::string>> eq34_reref;  ///< (sat, signal) re-referenced by the chain election.
+        ChainEpochObs chain;   ///< The chain election's record for the frame observatory (empty unless network.trace_chain_datum).
     };
     /// The clock-pivot handover's S-transform.
     struct Handover {

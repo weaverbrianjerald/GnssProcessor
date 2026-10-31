@@ -1645,6 +1645,41 @@ StationStep networkPhaseDatumPinRows(StationBuild& build) {
                 }
             }
         }
+        // The frame observatory's record of every receiver phase-bias column with a live phase
+        // row (network_rpb_states.csv): the folds' own reads, written to this station's slot
+        // only.  Nothing in the solve reads it.
+        if (phase_datum_eq34 && ctx.knobs.trace_rpb_states) {
+            for (const auto& [rpb_signal, rpb_idx] : st.params.rx_pb) {
+                (void)rpb_signal;
+                const std::string rpb_key = keyText(slotAt(st.params, rpb_idx).ref);
+                const auto hit = h2local.find(rpb_idx);
+                if (hit == h2local.end()) continue;   // no phase row on the signal
+                RpbTraceCol c;
+                c.key = rpb_key;
+                if (const auto sig = receiverPhaseBiasSignal(rpb_key)) {
+                    c.system = systemName(sig->sys);
+                    c.signal = net::signalKey(*sig);
+                }
+                c.col = static_cast<Eigen::Index>(hit->second);
+                c.x_lin = piv_x(static_cast<Eigen::Index>(rpb_idx));
+                c.pinned = st.pinned_rpb_keys.count(rpb_key) != 0;
+                if (!c.pinned && eq34_rpb_prior_w > 0.0) c.floor_w = eq34_rpb_prior_w;
+                if (!c.pinned && eq34_rpb_q > 0.0) {
+                    const LocalCarry* rc = net::get(
+                        sta_rows, StationId{static_cast<int>(i)}, &net::StationState::signals,
+                        rpb_key, &net::StationSignalState::rpb);
+                    if (rc != nullptr) {
+                        const double gap = pl_now_s - rc->last_seen_s;
+                        const double v = rc->var + eq34_rpb_q * gap;
+                        if (gap >= 0.0 && gap <= pl_max_gap_s && v > 0.0 && std::isfinite(v)) {
+                            c.tl_value = rc->value_abs;
+                            c.tl_var = v;
+                        }
+                    }
+                }
+                R.rpb_trace.push_back(std::move(c));
+            }
+        }
         const int np = static_cast<int>(pin_col.size());
         if (np > 0) {
             const Eigen::Index m0 = R.A_s.rows();

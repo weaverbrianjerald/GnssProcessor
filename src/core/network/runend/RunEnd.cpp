@@ -44,6 +44,7 @@
 #include "network/state/CarrySites.hpp"
 #include "network/carry/CarryVceRunEnd.hpp"
 #include "network/solve/ChainDatum.hpp"
+#include "network/solve/ChainFrame.hpp"
 #include "network/assembly/ChannelAll.hpp"
 #include "network/solve/ClockAnchor.hpp"
 #include "network/solve/ClockLevel.hpp"
@@ -198,6 +199,8 @@ const std::array<NetworkRunEndRow, kNetworkRunEndReportCount> kNetworkRunEndRepo
      "network/slip/SlipOracle.cpp", networkSlipOracleRunEnd},
     {"the eq34 chain datum: re-references, pin audit, seed round, slip-aware election",
      "network/solve/ChainDatum.cpp", networkChainDatumRunEnd},
+    {"the eq34 chain frame: events by table row, certification, pin identity",
+     "network/solve/ChainFrame.cpp", networkChainFrameRunEnd},
     {"the Iono-2 SH deviation carry",
      "network/diag/ShDevVtec.cpp", networkShDevCarryRunEnd},
     {"the carried receiver code biases and their family",

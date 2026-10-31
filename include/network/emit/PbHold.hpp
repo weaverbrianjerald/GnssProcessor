@@ -137,6 +137,48 @@ void networkPbHold(NetworkRunContext& ctx,
                    const SyncedEpoch& se,
                    NetworkSolutionEpoch& sol);
 
+struct ChainEpochObs;   // network/solve/ChainFrame.hpp
+
+/// One emitted satellite phase bias as sampled immediately before the phase-bias hold.
+struct PbPreholdSample {
+    std::string sat;          ///< Satellite.
+    std::string signal;       ///< Phase signal.
+    double      pb_m{0.0};    ///< The phase bias the hold receives (m).
+    double      sigma_m{0.0}; ///< Its emitted formal sigma (m; 0 unless emitted).
+    bool        has_clk{false};   ///< The satellite has an emitted clock.
+    double      clk_m{0.0};   ///< That clock (m).
+};
+
+/**
+ * @brief Sample every phase bias of the epoch about to be emitted, before the hold
+ *        (network_pb_prehold.csv).
+ *
+ * @param ctx The run context (the knob).
+ * @param sol The epoch about to be emitted.
+ * @return The samples in emission order; empty unless network.trace_pb_prehold is armed.
+ */
+std::vector<PbPreholdSample> networkPbPreholdSample(const NetworkRunContext& ctx,
+                                                    const NetworkSolutionEpoch& sol);
+
+/**
+ * @brief Write the pre-hold samples with what the hold then emitted and, on an eq34 run with
+ *        the chain observatory armed, each satellite's place in the chain tree.
+ *
+ * The role column is one of tree (attached by a tree edge), root_adj (its parent is the
+ * datum receiver), gated (emitted but outside every component of its group), bridged
+ * (grounded by a shared-side bridge row), or blank without a chain record.
+ *
+ * @param ctx    The run context (its counters).
+ * @param traces The trace sinks (network_pb_prehold.csv; no-op when closed).
+ * @param se     The synced epoch (its time stamps the rows).
+ * @param pre    The samples taken before the hold.
+ * @param sol    The epoch after the hold: the emitted value and its generation.
+ * @param chain  The epoch's chain record (empty unless network.trace_chain_datum).
+ */
+void networkPbPreholdWrite(NetworkRunContext& ctx, NetworkRunTraces& traces,
+                           const SyncedEpoch& se, const std::vector<PbPreholdSample>& pre,
+                           const NetworkSolutionEpoch& sol, const ChainEpochObs& chain);
+
 /**
  * @brief The median emitted-clock step of one constellation in one epoch.
  *

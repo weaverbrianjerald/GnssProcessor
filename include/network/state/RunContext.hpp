@@ -80,6 +80,7 @@
 #include "network/state/BorderCounters.hpp"                  // BorderCounters
 #include "network/ar/SdEwlAr.hpp"                            // SdEwlArCounters
 #include "network/solve/ChainDatum.hpp"                      // ChainDatumCounters
+#include "network/solve/ChainFrame.hpp"                      // ChainFrameCounters
 #include "network/emit/SolPrep.hpp"                          // SolPrepCounters
 #include "network/qc/RaimWithinEpoch.hpp"                    // RaimWithinEpochCounters
 #include "network/carry/LevelingCarry.hpp"                   // LevelingCarryCounters
@@ -826,6 +827,14 @@ namespace GnssProcessor {
         /// pre-pin float) and stays shiftable, instead of taking an unknown step that
         /// re-references the (sat, σ).  Resolved to false unless eq34_seed_round.
         bool eq34_seed_round_rehost{};
+        /// network.trace_chain_datum: the chain election records its tree for the frame
+        /// observatory (network/solve/ChainFrame.hpp).  Resolved to false unless eq34.
+        bool trace_chain_datum{};
+        /// network.trace_rpb_states: network_rpb_states.csv.  Resolved to false unless eq34.
+        bool trace_rpb_states{};
+        /// network.trace_pb_prehold: network_pb_prehold.csv, the emitted phase biases just before
+        /// the phase-bias hold (any datum).
+        bool trace_pb_prehold{};
         bool phase_datum_prioritized{};
         // --- eq34 reattach hygiene ---
         // All four are resolved against the datum mode: the loader already disarms them
@@ -2334,6 +2343,7 @@ namespace GnssProcessor {
           BorderCounters,
           SdEwlArCounters,
           ChainDatumCounters,
+          ChainFrameCounters,
           AnchorHygieneCounters,
           SignalIntegrityCounters,
           RaimCounters,

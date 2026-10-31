@@ -9,6 +9,7 @@
  */
 
 #include "network/emit/PbHold.hpp"
+#include "network/solve/ChainFrame.hpp"   // the chain record of the pre-hold trace
 
 #include "network/state/RunContext.hpp"
 #include "common/GnssIdentity.hpp"   // letterOfSat
@@ -454,6 +455,76 @@ void networkPbHold(NetworkRunContext& ctx,
                   "their first emitted value, max_gap_s {:.1f}.  The estimator keeps running "
                   "behind the hold; the solve, the C records and the B records are unchanged.",
                   ctx.counters.n_pbh_gen_first, max_gap_s);
+    }
+}
+
+std::vector<PbPreholdSample> networkPbPreholdSample(const NetworkRunContext& ctx,
+                                                    const NetworkSolutionEpoch& sol) {
+    std::vector<PbPreholdSample> out;
+    if (!ctx.knobs.trace_pb_prehold) return out;
+    for (const NetworkSatSolution& s : sol.sats)
+        for (const auto& [signal, npb] : s.phase_bias) {
+            PbPreholdSample p;
+            p.sat = s.sat;
+            p.signal = signal;
+            p.pb_m = npb.bias_m;
+            p.sigma_m = npb.sigma_m;
+            p.has_clk = s.has_clock;
+            p.clk_m = s.clock_c0_m;
+            out.push_back(std::move(p));
+        }
+    return out;
+}
+
+void networkPbPreholdWrite(NetworkRunContext& ctx, NetworkRunTraces& traces,
+                           const SyncedEpoch& se, const std::vector<PbPreholdSample>& pre,
+                           const NetworkSolutionEpoch& sol, const ChainEpochObs& chain) {
+    if (pre.empty() || !traces.pb_prehold_trace.is_open()) return;
+    // What the hold emitted, by key.
+    std::map<std::pair<std::string, std::string>, const NetworkPhaseBias*> emitted;
+    for (const NetworkSatSolution& s : sol.sats)
+        for (const auto& [signal, npb] : s.phase_bias) emitted[{s.sat, signal}] = &npb;
+    // The satellite's place in the chain: its parent edge, or a bridge root.
+    std::map<std::pair<std::string, std::string>, const ChainEdgeObs*> parent;
+    std::map<std::pair<std::string, std::string>, const ChainComponentObs*> bridged;
+    if (chain.armed) {
+        for (const ChainEdgeObs& e : chain.edges)
+            if (e.sat_is_child) parent[{e.sat, e.signal}] = &e;
+        for (const ChainComponentObs& k : chain.comps)
+            for (const std::string& b : k.bridged) bridged[{b, k.signal}] = &k;
+    }
+    for (const PbPreholdSample& p : pre) {
+        const auto em = emitted.find({p.sat, p.signal});
+        std::string role, comp, r1, attach, depth;
+        if (chain.armed) {
+            const auto pe = parent.find({p.sat, p.signal});
+            const auto br = bridged.find({p.sat, p.signal});
+            if (br != bridged.end()) {
+                role = "bridged";
+                comp = std::to_string(br->second->comp);
+                r1 = br->second->r1;
+                depth = "0";
+            } else if (pe != parent.end()) {
+                const ChainEdgeObs& e = *pe->second;
+                role = e.station_name == e.r1 ? "root_adj" : "tree";
+                comp = std::to_string(e.comp);
+                r1 = e.r1;
+                attach = e.station_name;
+                depth = std::to_string(e.depth);
+            } else {
+                role = "gated";
+            }
+        }
+        traces.pb_prehold_trace
+            << se.time.week << ',' << fmt::format("{:.3f}", se.time.tow) << ',' << p.sat << ','
+            << p.signal << ',' << fmt::format("{:.6f}", p.pb_m) << ','
+            << fmt::format("{:.6f}", p.sigma_m) << ','
+            << (p.has_clk ? fmt::format("{:.6f}", p.clk_m) : std::string()) << ','
+            << (p.has_clk ? fmt::format("{:.6f}", p.clk_m - p.pb_m) : std::string()) << ','
+            << (em != emitted.end() ? fmt::format("{:.6f}", em->second->bias_m) : std::string())
+            << ',' << (em != emitted.end() ? std::to_string(em->second->hold_generation) : std::string())
+            << ',' << role << ',' << comp << ',' << r1 << ',' << attach << ',' << depth << '\n';
+        ++ctx.counters.cf_pb_prehold_rows;
     }
 }
 

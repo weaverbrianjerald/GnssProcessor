@@ -13,6 +13,7 @@
 
 #include "network/state/Entities.hpp"
 #include "network/diag/AmbStateTrace.hpp"
+#include "network/solve/ChainFrame.hpp"
 #include "network/qc/BlockBaarda.hpp"
 #include "network/assembly/ChannelAll.hpp"
 #include "network/qc/Congruence.hpp"
@@ -84,6 +85,8 @@ const std::array<NetworkEpochObserverRow, kNetworkEpochObserverCount> kNetworkEp
     // ---- StashTail: after every carry-state row source ----
     {"networkAmbStateTrace", "carry-state trace drain (RF-1 7.4)",
      "network/diag/AmbStateTrace.cpp", Slot::StashTail, &networkAmbStateTrace},
+    {"networkChainFrameObserve", "eq34 chain-frame observatory and receiver phase-bias trace",
+     "network/solve/ChainFrame.cpp", Slot::StashTail, &networkChainFrameObserve},
     {"networkEntitiesReachSample", "the entity tables' reach sampler",
      "network/state/Entities.cpp", Slot::StashTail, &net::networkEntitiesReachSample},
 }};

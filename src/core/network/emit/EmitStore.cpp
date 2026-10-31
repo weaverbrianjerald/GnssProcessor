@@ -81,6 +81,7 @@ void networkEmitStore(NetworkRun& run, const NetworkEpoch& ep, NetworkSolutionEp
     bool we_t2_opp = ep.solve.we_t2_opp;
     bool we_t2_flag = ep.solve.we_t2_flag;
     ClosedLoopTally& cl_tally = run.closed_loop;
+    const ChainEpochObs& chain_obs = ep.events.phase_datum.chain;
     // ---- End of the bindings ----
     // --- Alias preamble: the Application::runNetwork aliases plus 5 reconstructed
     //     locals, so the relocated SB_EMITSTORE body reads the driver's names. ---
@@ -364,7 +365,11 @@ void networkEmitStore(NetworkRun& run, const NetworkEpoch& ep, NetworkSolutionEp
     // needs).  The on-disk write below consumes the same `sol`, so the file and the
     // in-process store carry the same held values.  Off: immediate return,
     // byte-identical.
+    // The pre-hold trace samples the phase biases the hold receives and writes them with what
+    // it emitted (network.trace_pb_prehold; both calls return at once when it is off).
+    const std::vector<PbPreholdSample> pb_prehold = networkPbPreholdSample(ctx, sol);
     networkPbHold(ctx, config_, log, traces, emitter, se, sol);
+    networkPbPreholdWrite(ctx, traces, se, pb_prehold, sol, chain_obs);
     // Native broadcast clock: the wire refers to the stamped broadcast ephemeris.  After the hold (the
     // last reader of C_est) and before the store push and the product write, so the file
     // and the in-process consumer carry C_wire = C_est + O with iode=k.  Off: immediate

@@ -14,6 +14,8 @@
 #include "network/state/RunContext.hpp"
 #include "config/GnssConfig.hpp"
 #include "network/ar/ArcGraph.hpp"    // the group graph, its components and the chain forest
+#include "network/ar/ArcLife.hpp"     // the arcs' life stamps (the frame observatory)
+#include "network/solve/ChainFrame.hpp"   // ChainEpochObs (the frame observatory)
 #include "network/carry/Coupling.hpp"
 #include "network/assembly/Responses.hpp"   // prmRespond / ResponseSite
 #include "filter/StateKeySchema.hpp"
@@ -151,6 +153,16 @@ const bool eq34_extend_only = ctx.knobs.eq34_extend_only;
 const bool eq34_slip_aware = ctx.knobs.eq34_slip_aware;
 const bool eq34_seed_round = ctx.knobs.eq34_seed_round;
 const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
+// The frame observatory (network/solve/ChainFrame.hpp): with network.trace_chain_datum armed
+// the election records each tree edge, component and chord for the post-solve observer.  It
+// only appends to `chain_obs`; nothing below reads it.
+const bool trace_chain = ctx.knobs.trace_chain_datum;
+ChainEpochObs& chain_obs = events.phase_datum.chain;   // written
+chain_obs = ChainEpochObs{};
+chain_obs.armed = trace_chain;
+std::map<std::string, int> chain_index_of;   // station name -> roster index (observatory only)
+if (trace_chain)
+    for (size_t i = 0; i < stations.size(); ++i) chain_index_of[stations[i].name] = static_cast<int>(i);
 
     // Slip-aware election: true when this arc slipped this epoch.  The
     // funnel is complete here by the ordering contract (every PASS-A drain, signal
@@ -236,7 +248,10 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
     for (size_t i = 0; i < stations.size(); ++i) {
         if (!present[i]) continue;
         for (const auto& [amb, pbkey] : usable_keys[i]) {
-            if (!union_keys.count(amb)) continue;          // gated out
+            if (!union_keys.count(amb)) {                  // gated out
+                if (trace_chain) ++chain_obs.gated_keys;
+                continue;
+            }
             const auto p = net::satPhaseBiasKey(pbkey);
             if (!p || p->sat == SatId{}) continue;
             const std::string pb_sat = net::satKey(p->sat);
@@ -456,6 +471,7 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
             station_rank.push_back(cov(grp_sys, staIdx(s)));
 
         std::string best_datum_rx; size_t best_comp = 0;
+        int chain_comp = 0;   // the observatory's component index within the group
         for (const arcgraph::Component& comp : comps) {
             // The component's stations (ascending roster index, as their slots are) and
             // satellites (string order).
@@ -525,6 +541,22 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
                             + comp_sats.size());   // n_c + m_c
             events.phase_datum.eq34_epoch_declared[dr_key] +=
                 static_cast<int>(rx_list.size() + comp_sats.size());
+            // The observatory's record of this component; its edges follow from index
+            // chain_edge0 (recordEdge appends them in attachment order, as `order`).
+            const std::size_t chain_edge0 = chain_obs.edges.size();
+            if (trace_chain) {
+                ChainComponentObs k;
+                k.group = dr_key;
+                k.sys = constellationKey(grp_sys);
+                k.signal = grp_sig;
+                k.comp = chain_comp;
+                k.r1 = stations[r1].name;
+                k.r1_station = static_cast<int>(r1);
+                for (size_t i : rx_list) k.stations.push_back(static_cast<int>(i));
+                k.sats = comp_sats;
+                k.declared = static_cast<int>(rx_list.size() + comp_sats.size());
+                chain_obs.comps.push_back(std::move(k));
+            }
 
             // Sticky spanning tree (arcgraph::growChainForest, a two-queue BFS
             // from r1).  The incumbent queue drains completely before any new
@@ -754,6 +786,83 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
                         ++ctx.counters.hyg.fresh_pin_ramps;
                     }
                 }
+                if (trace_chain) {
+                    ChainEdgeObs o;
+                    o.group = dr_key;
+                    o.sys = constellationKey(grp_sys);
+                    o.signal = grp_sig;
+                    o.comp = chain_comp;
+                    o.r1 = stations[r1].name;
+                    o.station = static_cast<int>(ri);
+                    o.station_name = stations[ri].name;
+                    o.sat = sat;
+                    o.sat_is_child = sat_is_child;
+                    const std::string rkey = "R:" + std::to_string(ri), skey = "S:" + sat;
+                    o.child  = sat_is_child ? skey : rkey;
+                    o.parent = sat_is_child ? rkey : skey;
+                    o.lambda_m = grp_lambda;
+                    o.target_m = target;
+                    if (const double* pt = net::getArcAmb(arc_rows, static_cast<int>(ri), amb,
+                                                          &net::ArcState::eq34_prev_target))
+                        o.prev_target_m = *pt;
+                    o.carry_m = carry_val;
+                    o.pinmove_m = pinmove;
+                    o.known = known;
+                    o.edge_changed = edge_changed;
+                    // The incumbent tree (last epoch's, replaced only after the election): this
+                    // arc as the satellite's parent edge or as the station's.
+                    const std::string* inc_sat =
+                        net::getSig(sig_rows, amb, &net::SatSignalState::anchor_incumbent);
+                    const std::string* inc_rx =
+                        net::get(entities.stations, StationId{static_cast<int>(ri)},
+                                 &net::StationState::signals, rx_suffix.substr(1),
+                                 &net::StationSignalState::eq34_rx_parent);
+                    const bool was_sat_edge = inc_sat != nullptr && *inc_sat == stations[ri].name;
+                    const bool was_rx_edge  = inc_rx != nullptr && *inc_rx == sat;
+                    if (sat_is_child) {
+                        o.had_parent = inc_sat != nullptr;
+                        o.incumbent_same = was_sat_edge;
+                        o.incumbent_flipped = !was_sat_edge && was_rx_edge;
+                        if (inc_sat != nullptr) {
+                            const auto ix = chain_index_of.find(*inc_sat);
+                            o.prev_parent = ix != chain_index_of.end()
+                                                ? "R:" + std::to_string(ix->second) : std::string();
+                        }
+                        const std::string* rt =
+                            net::getSig(sig_rows, amb, &net::SatSignalState::eq34_sat_root);
+                        o.root_unknown = rt != nullptr && *rt != stations[r1].name;
+                    } else {
+                        o.had_parent = inc_rx != nullptr;
+                        o.incumbent_same = was_rx_edge;
+                        o.incumbent_flipped = !was_rx_edge && was_sat_edge;
+                        if (inc_rx != nullptr) o.prev_parent = "S:" + *inc_rx;
+                    }
+                    if (o.root_unknown)          o.cause = ChainLegacyCause::RootHandover;
+                    else if (seed_deferred)      o.cause = ChainLegacyCause::SeedDeferred;
+                    else if (seed_rounded && pinmove != 0.0 && !frame_shiftable)
+                                                 o.cause = ChainLegacyCause::SeedStep;
+                    else if (edge_changed)
+                        o.cause = std::isfinite(carry_val) ? ChainLegacyCause::RehostCarry
+                                : frame_shiftable          ? ChainLegacyCause::RehostFramed
+                                                           : ChainLegacyCause::RehostCold;
+                    else o.cause = std::isfinite(o.prev_target_m) ? ChainLegacyCause::SameEdge
+                                                                  : ChainLegacyCause::FirstSighting;
+                    o.from_incumbent = edge.from_incumbent;
+                    o.second_pass = edge.pass == 2;
+                    const auto sc = stations[ri].pinned_amb_sigma_scale.find(amb);
+                    if (sc != stations[ri].pinned_amb_sigma_scale.end() && sc->second > 1.0) {
+                        o.sigma_scale = sc->second;
+                        ++chain_obs.soft_pins;
+                    }
+                    ArcLifeKeys lk;
+                    lk.arc = std::make_tuple(static_cast<int>(ri), sat, grp_sig);
+                    lk.amb = {static_cast<int>(ri), amb};
+                    const ArcLifeStamp ls = arcLifeStamp(ctx, lk);
+                    o.life_stamp = fmt::format("g{}.r{}.c{}.b{}.d{}.l{:.0f}.f{}", ls.adm_generation,
+                                               ls.adm_run_start, ls.has_carry ? 1 : 0, ls.birth_ep,
+                                               ls.dropped_ep, ls.relevel_s, ls.flag_ep);
+                    chain_obs.edges.push_back(std::move(o));
+                }
                 const int rv = arcgraph::stationVertex(graph, sta_slot);
                 const int sv = arcgraph::satVertex(graph, sat_slot);
                 order.emplace_back(sat_is_child ? sv : rv, sat_is_child ? rv : sv,
@@ -778,6 +887,10 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
                     // Audit: a bridge pin is realized on the shared side, so the
                     // station-side fold expectation is declared − bridged.
                     ++events.phase_datum.eq34_epoch_bridged[dr_key];
+                    if (trace_chain) {
+                        chain_obs.comps.back().bridged.push_back(satName(k));
+                        ++chain_obs.bridges;
+                    }
                 }
             }
             const arcgraph::SpanningForest forest = arcgraph::growChainForest(
@@ -851,10 +964,55 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
                     }
                 }
             }
+            if (trace_chain) {
+                // Each recorded edge's depth and frame step (the edges were appended in the
+                // order of `order`), then every chord's fundamental cycle with the targets on
+                // its tree path.
+                std::vector<int> vdepth(n_vertices, 0);
+                std::map<std::pair<int, std::string>, double> target_of;   // (station, sat) -> target
+                for (std::size_t k = 0; k < order.size(); ++k) {
+                    const int v = std::get<0>(order[k]);
+                    const int p = std::get<1>(order[k]);
+                    vdepth[static_cast<size_t>(v)] = vdepth[static_cast<size_t>(p)] + 1;
+                    ChainEdgeObs& o = chain_obs.edges[chain_edge0 + k];
+                    o.depth = vdepth[static_cast<size_t>(v)];
+                    o.step_m = vknown[static_cast<size_t>(v)] ? vshift[static_cast<size_t>(v)]
+                                                              : std::numeric_limits<double>::quiet_NaN();
+                    target_of[{o.station, o.sat}] = o.target_m;
+                }
+                chain_obs.comps.back().n_edges = static_cast<int>(order.size());
+                const arcgraph::CycleBasis basis = arcgraph::fundamentalBasis(graph, forest, 0);
+                for (const arcgraph::BasisCycle& bc : basis.cycles) {
+                    ChainChordCycle cc;
+                    cc.station = static_cast<int>(staIdx(graph.row_station[static_cast<size_t>(bc.pivot_arc)]));
+                    cc.sat = satName(graph.row_sat[static_cast<size_t>(bc.pivot_arc)]);
+                    cc.signal = grp_sig;
+                    cc.cycle = bc.cycle;
+                    for (const arcgraph::CycleTerm& term : bc.cycle.terms) {
+                        const int ts = term.arc.station.index;
+                        const std::string tsat = term.arc.sat.str();
+                        if (ts == cc.station && tsat == cc.sat) continue;   // the chord itself
+                        const auto it = target_of.find({ts, tsat});
+                        if (it == target_of.end() || !(grp_lambda > 0.0)) {
+                            cc.pins_integer = false;
+                            continue;
+                        }
+                        const double kc = it->second / grp_lambda;
+                        if (std::abs(kc - std::round(kc)) > 1e-6) cc.pins_integer = false;
+                        cc.pin_sum_cyc += term.coeff * kc;
+                    }
+                    chain_obs.chords.push_back(std::move(cc));
+                }
+            }
+            ++chain_comp;
         }
         if (!best_datum_rx.empty())
             net::put(entities.constellations, grp_sys, &net::ConstellationState::channels,
                      grp_sig, &net::ChannelState::datum_rx) = best_datum_rx;
+    }
+    if (trace_chain) {
+        chain_obs.shift_sat = shift_sat;
+        chain_obs.shift_rpb = shift_rpb;
     }
     // Rank cross-check (D3): recorded pins == Σ (n_c + m_c).  A mismatch
     // means a component was mis-pinned before the W5 gate ever runs.

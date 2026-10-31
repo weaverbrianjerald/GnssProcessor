@@ -23,7 +23,10 @@ negative control of section 13, not an ON arm).
 
 An arm is refused when it sets a key the config loader does not read (a quoted literal in
 src/core/config/*.cpp): the loader ignores an unknown key without a word, so such an arm would
-silently be its base.  The IRD-1 knobs (R1's traces) are therefore refused until IRD-1 lands.
+silently be its base.
+
+Fixtures are read from the repository's runs/.  The arm directories and the bases they are made
+from go under RAPID_RUNS_ROOT when it is set (the scripts/rapid_arm.py rule), else runs/.
 """
 import argparse
 import glob
@@ -37,7 +40,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import loader_keys  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__))).replace(os.sep, "/")
-RUNS = ROOT + "/runs"
+RUNS = (os.environ.get("RAPID_RUNS_ROOT") or (ROOT + "/runs")).replace("\\", "/").rstrip("/")
 GOLDEN_REV = "a02ccfb"
 GOLDEN = {
     "sim": ("config/golden/golden_sim_refound.json",
@@ -80,6 +83,8 @@ ARMS = {
     "G": ([], "the golden unchanged (the negative control, card IRD section 13)"),
     "R1": (SLIP_SET + SEARCH_LOG + IRD_TRACES, "reference: golden + slip set + search + traces"),
     "A0": (SLIP_SET + SEARCH_LOG + IRD_TRACES + BUNDLE_A0, "R1 + bundle A0"),
+    "A0q": (SLIP_SET + SEARCH_LOG + BUNDLE_A0,
+            "A0 without the IRD traces (the traces-off twin of IRD-1 gate 2)"),
     "A0h": (SLIP_SET + SEARCH_LOG + IRD_TRACES + BUNDLE_A0
             + ["network.emit_pb_hold=false", "network.emit_pb_hold_phase_clock=false"],
             "A0 with both emission holds off"),

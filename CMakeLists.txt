@@ -259,6 +259,7 @@ add_library(gnss_core STATIC
     src/core/network/solve/PhaseAnchorEpoch.cpp
     src/core/network/slip/SlipFunnel.cpp
     src/core/network/solve/ChainDatum.cpp
+    src/core/network/solve/ChainFrame.cpp
     src/core/network/solve/AnchorHygiene.cpp
     src/core/network/assembly/SignalIntegrity.cpp
     src/core/network/assembly/MeasurementAdmission.cpp
@@ -739,6 +740,7 @@ add_executable(gnss_tests
     tests/network/test_network_run_end.cpp
     tests/network/test_network_entities_records.cpp
     tests/network/test_network_epoch_observers.cpp
+    tests/network/test_network_chain_frame.cpp
     tests/network/test_network_solve_skip.cpp
     tests/network/test_network_we_choice.cpp
     tests/network/test_network_within_epoch_culprits.cpp
