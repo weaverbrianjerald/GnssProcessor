@@ -170,26 +170,28 @@ Standing documents (not split this pass):
 
 Program card on this topic (indexed in [refound/CARDS.md](refound/CARDS.md)):
 [OTL](refound/OTL_ocean_tide_loading_source_2026-10-16.md), ocean tide loading from the SIF registry alone and the
-nodal corrections, gated against IERS HARDISP (open, 2026-10-17: built default off and checked, identical off, consumer +6.5 mm, census median -2.0 mm; diagnosed, no sign defect, diurnal net translation removable behind a default-off key, consumer +2.0 mm; arming open).
+nodal corrections, gated against IERS HARDISP (closed, 2026-10-31: armed on the field golden 2026-10-28; over a whole tidal day the census gains 0.98 mm with none worse; the stations without a SIF block run at zero loading).
 
 Program card on this topic, also indexed in [refound/CARDS.md](refound/CARDS.md):
-[NSD](refound/NSD_network_small_defects_2026-10-17.md), three small network defects (open, 2026-10-17: the hard clock refloat counted by three response sites; the stash-status mirrors' skipped readmit seeds confirmed, counted and taken behind the default-off `network.readmit_seed_mirrors`; the coupled-mark census median per constellation; same-build check 2026-10-18: declared lines only; the 6 h seed counts owed).
+[NSD](refound/NSD_network_small_defects_2026-10-17.md), three small network defects (closed, 2026-10-31: the hard clock refloat counted by three response sites; the stash-status mirrors' skipped readmit seeds counted and taken behind `network.readmit_seed_mirrors`, armed 2026-10-28; the coupled-mark census median per constellation; the two unit-only coverages are field-inert on the baseline pair).
 
-[WGB](refound/WGB_windup_gap_bridge_2026-10-17.md), the phase wind-up accumulator through data gaps inside the leveling-carry horizon (open, 2026-10-18: built default off, UNVALIDATED, never armed; the simulator cannot grade it; checked: knob off identical to main, field golden 6 h restarts 139 to 91 and arcs refloated 116 to 23, consumer and census within 0.3 mm, no benefit shown).
+[WGB](refound/WGB_windup_gap_bridge_2026-10-17.md), the phase wind-up accumulator through data gaps inside the leveling-carry horizon (closed, 2026-10-31: built default off; checked 2026-10-18 on the golden of that day, then on the golden of cards MRF and BOF, 6 h and a day against same-exe controls, results in [WGB2](refound/WGB2_windup_bridge_current_golden_day_2026-10-31.md): G1 to G3 hold on both pairs, day arcs refloated 547 to 23, consumer within 0.15 mm, census median -0.01 mm, no benefit; the independent recount holds on the 6 h pair and on the day pair only under amendment A2, and is missed under the pre-registered origin rule through the check's origin model; KEEP_OFF recommended, the author decides).
 
 [PIV](refound/PIV_pivot_election_coverage_2026-10-17.md), the clock pivot elected by predicted station coverage, broadcast
 health and shadow, at ignition and at a forced handover (open, 2026-10-18: built default off, never armed; unit gate and
 Release smoke in; checked 2026-10-18 against same-exe controls on the field and sim goldens: knob absent identical except the declared lines, no handover in 6 h against two in each control, field hour-2 common drift 0.051 against 0.192 m/h, consumer and census unchanged at the median, clock product within 2.4 mm; 2026-10-28 to 2026-10-30, sections 9 to 11: ARHT00ATA worse by more than 1 cm on two of five 6 h days (DOY 130 +40.6, DOY 132 +25.9 mm), a response and not noise (card NSP), recurring but not systematic; not armed).
 
-[BDS](refound/BDS_beidou_third_constellation_2026-10-18.md), BeiDou on B1I and B3I as the third constellation of the field
-golden, against GPS only and GPS + Galileo on one exe (open, 2026-10-18: read, healthy, no failure mode A or B, no piece needed;
-single-band stations dropped whole, removed in arm GEC-s; census hours 2 to 6 -0.0038 m against GPS + Galileo, -0.0267 m against
-GPS only; nothing armed; the single-band rule is built behind `network.second_band_admission`, UNVALIDATED; 2026-10-19: key off identical,
-key on at 6 h it reproduces GEC-s).
-[BDSB](refound/BDSB_beidou_continued_2026-10-19.md), the BDS card's continuation (open, 2026-10-19: the identity gate and the 6 h grade repeated
-from fresh arms, key off 24 IDENTICAL, key on reproduces GEC-s, census median change against GEC-s 0.0000 m).
-[SNX](refound/SNX_sinex_station_coordinates_2026-10-19.md), the IGS weekly SINEX of week 2313 against the coordinates the field runs hold (open, 2026-10-19: median 3D 6.0 mm over 71 stations, 20 above 1 cm, 4 above 5 cm, MIZU00JPN 1.68 m, WTZZ00DEU 4.5 mm; frame and marker reduction not the cause; the Asian Up bias, MAJU00MHL and POHN00FSM not explained by it; a default-off coordinate source planned, nothing built; addendum: the NGS SIF post-seismic term double counted the displacement accumulated by 2020.0, fixed on branch fix/sif-psd, the SIF then within 3.1 mm per horizontal component of the SINEX at seven of eight roster stations; phase 1 arms of 2026-10-19 (continued in SNXB, section 10): the roster at its SINEX values moves the satellite clocks 5 to 7 mm RMS and no consumer by more than 2.4 mm, the SINEX truth moves the census median -1.35 mm, CEDU00AUS -11.5 mm).
-[SNXB](refound/SNXB_sinex_roster_arms_2026-10-19.md), the SNX card's continuation (open, 2026-10-19: phase 1 arms on the field golden, 6 h; the roster at its SINEX values moves the satellite clocks 5 to 7 mm RMS, a per-satellite level, and no consumer by more than 2.4 mm; the SINEX as grading truth moves the census median -1.35 mm, CEDU00AUS -11.5 mm; nothing armed, phase 2 not built).
+[BDS](refound/BDS_beidou_third_constellation_2026-10-18.md), BeiDou on B1I and B3I as the third constellation of the field golden, against
+GPS only and GPS + Galileo on one exe (closed, 2026-10-31; read 2026-10-18: healthy, no failure mode A or B, no piece needed; single-band
+stations dropped whole, removed in arm GEC-s; census hours 2 to 6 -0.0038 m against GPS + Galileo, -0.0267 m against GPS only; nothing armed;
+the single-band rule is built behind `network.second_band_admission`, UNVALIDATED; 2026-10-19: key off identical, key on at 6 h it reproduces
+GEC-s; 2026-10-31: every bar passes (the 6 h gates on the current golden, the multi-day users on the earlier golden's wires), see BDSB).
+[BDSB](refound/BDSB_beidou_continued_2026-10-19.md), the BDS card's continuation (closed, 2026-10-31: the identity gate and the 6 h grade repeated from fresh arms, key off 24 IDENTICAL, key on reproduces GEC-s, census median change against GEC-s 0.0000 m; posture C on the current golden, 6 h: every
+registered gate passes, census -0.0058 m (5 better, 0 worse), users of the wire without BeiDou -0.0003 and +0.0000 m; the multi-day users (R2), on the
+earlier golden's 24 h wires, pass ten clause-days within +0.0000 m, ARHT00ATA as a GPS-only user diverging on DOY 128 and 131; cost 2.7 times the epoch
+loop; nothing armed, the decision is the author's).
+[SNX](refound/SNX_sinex_station_coordinates_2026-10-19.md), the IGS weekly SINEX of week 2313 against the coordinates the field runs hold (closed, 2026-10-31: median 3D 6.0 mm over 71 stations, 20 above 1 cm, 4 above 5 cm, MIZU00JPN 1.68 m, WTZZ00DEU 4.5 mm; frame and marker reduction not the cause; the Asian Up bias, MAJU00MHL and POHN00FSM not explained by it; addendum: the NGS SIF post-seismic term double counted the displacement accumulated by 2020.0, fixed (merge `bedc424`), the SIF then within 3.1 mm per horizontal component of the SINEX at seven of eight roster stations; phase 1 arms (continued in SNXB, sections 10 to 12): the roster at its SINEX values moves the satellite clocks 5 to 7 mm RMS and the consumers 2.4 mm at most on the 2026-10-19 wire, on the current golden 7.4 mm at ARHT00ATA and 1.6 mm at the next site, the SINEX truth moves the census median -1.35 mm, CEDU00AUS -11.5 mm; MIZU00JPN at its SINEX coordinate is repaired; the roster-file route does what a loader key would, phase 2 not built; the open list of section 9 is triaged).
+[SNXB](refound/SNXB_sinex_roster_arms_2026-10-19.md), the SNX card's continuation (closed, 2026-10-31: phase 1 arms on the field golden, 6 h; 2026-10-19: the roster at its SINEX values moves the satellite clocks 5 to 7 mm RMS, a per-satellite level, and the consumers 2.4 mm at most, the SINEX as grading truth moves the census median -1.35 mm, CEDU00AUS -11.5 mm; 2026-10-31, current golden: the same roster moves ARHT00ATA 7.4 mm and the next site 1.6 mm, MIZU00JPN at the held coordinate reads a congruence statistic of 74.2 and moves the wire 84 mm, at its SINEX coordinate 0.707 with clock rows within 0.0005 m of the roster without it; B1 and B4 (b) met, B3 (ARHT00ATA +11.2 mm) and B4 (a) not met; nothing armed, phase 2 not built).
 [PLANT](refound/PLANT_planted_coordinate_offsets_2026-10-19.md), the held coordinate of one sim station planted wrong by 1 cm to 1 km, East and Up (closed, 2026-10-19: measurement only; up to 10 m the wire moves 28.5 mm of satellite-clock RMS per metre East and 6.2 per metre Up and the consumer up to 3.4 mm per metre, no tier acts below 1 km; the congruence screen names the station at 10 m from the first sweep and at 1 m only after hours; at 1 km Up the gross-LOS screen declares the station alone at epoch 1, at 1 km East it declares 47 other stations and the consumer ends 335 m off; the existing station tier clears it only after the 120-epoch horizon; nothing built, nothing armed).
 [MDAY](refound/MDAY_multiday_candidate_2026-10-19.md), the field golden and the BeiDou candidate on five 24 h days, DOY 128 to 132 of 2024
 (closed, 2026-10-20: both postures run healthy and accurate on every day, WTZZ00DEU at most 0.060 m per hour after ignition, census median
@@ -354,7 +356,7 @@ Standing documents (not split this pass):
 
 Program card on this topic (indexed in [refound/CARDS.md](refound/CARDS.md)):
 
-- [BBE](refound/BBE_block_baarda_estimable_2026-10-18.md), the block Baarda test on the float vehicle (open, 2026-10-18: the whole-block test refused every block because a line of sight's free slant ionosphere absorbs one direction exactly; `network.block_baarda_estimable` built default off and never armed; knob off identical on the smokes, the 2 h arms and the same-build gates; the 2 h check found no flagged block block-only; a positive control is owed).
+- [BBE](refound/BBE_block_baarda_estimable_2026-10-18.md), the block Baarda test on the float vehicle (closed, 2026-10-31: the whole-block test refused every block because a line of sight's free slant ionosphere absorbs one direction exactly; the estimable form is armed in both goldens, reports 1.5 m code multipath at 24 times the control's rate and costs 1.05 times the refusing sweep at equal load; an independent rebuild and a reader filter for the unwarmed first sweep are recorded).
 - [MGT](refound/MGT_maturity_gate_telemetry_2026-10-30.md), the telemetry of the isolated-arc refloat maturity gate (closed, 2026-10-30: BUILT and GATED, default off; gate off byte-identical on 2 h field and sim arms; gate on at 120 epochs, 2 h field: 27 flags held on 11 epochs, the lift at 62.5 min, 3 of the 4 refloats after it on arcs held before it; the persistence gate's `acted` defect fixed with it; nothing armed).
 
 Standing documents (not split this pass):
@@ -386,9 +388,9 @@ Standing documents (not split this pass):
 Program cards on this topic (indexed in [refound/CARDS.md](refound/CARDS.md)):
 
 - [SEA](refound/SEA_seasonal_term_outside_window_2026-10-16.md), the seasonal term of a SIF coordinate
-  outside its block windows (open, 2026-10-17: built without a knob; the same-build golden identity
-  check passed; the merge is owed).
-- [NIS](refound/NIS_consumer_innovation_screen_2026-10-17.md), the consumer's pre-update innovation screen (open, 2026-10-17: built default off, never armed; checked 2026-10-17: key absent identical on every gate, armed no output moved, no benefit shown).
+  outside its block windows (closed, 2026-10-31: merged 2026-10-17 as `65db9eb`, built without a knob, the
+  same-build golden identity check passed twice).
+- [NIS](refound/NIS_consumer_innovation_screen_2026-10-17.md), the consumer's pre-update innovation screen (closed, 2026-10-31: built default off, never armed; checked 2026-10-17: key absent identical on every gate, armed no output moved; injected 2026-10-31: an undeclared step on 3 satellites moves the unscreened consumer 20 to 408 m for 3 h, the screen cures the phase-bias class at 3 satellites and fails on the clock class, on 12 gross rows and at 2 m (B2 missed in 10 of 16 cells, B3 in 21 of 54); KEEP_OFF).
 
 ### `sim-bed` — [topics/sim-bed.md](topics/sim-bed.md)
 
@@ -421,8 +423,8 @@ Standing documents (not split this pass):
 
 Program card on this topic (indexed in [refound/CARDS.md](refound/CARDS.md)):
 [NETCOST](refound/NETCOST_gps_galileo_cost_attribution_2026-10-18.md), where the GPS + Galileo epoch time goes and the exact sparse station
-normals (open, 2026-10-18: loop 5.3 and 3.7 times the GPS-only loop; the sparse formation behind a default-off key
-shortens the field loop 13.3 % and the sim loop 10.6 % at identical output; arming and two further optimizations owed).
+normals (closed, 2026-10-31: loop 5.3 and 3.7 times the GPS-only loop; the sparse formation shortens the field loop 13.3 % and the
+sim loop 10.6 % at identical output and is armed since 2026-10-19; optimization 3 is not built and is superseded by card PES).
 
 [CVF](refound/CVF_conditional_variance_frame_2026-10-29.md), optimization 2 of card NETCOST: the border-known
 variance read directly and one datum-frame covariance per solve (closed, 2026-10-29: identical on every gate, field golden
