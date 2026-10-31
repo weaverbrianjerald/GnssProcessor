@@ -89,8 +89,9 @@ void networkAssemblyTally(NetworkRun& run, const NetworkEpoch& ep,
 // product_writer and consumer, and ctx.carry.slip_oracle, oracle_pin and rhs_prev_frame.
 //
 // The orders a step may not change, because the normal equations sum in them:
-//   - rows: data, phase-datum pins, GLONASS anchors, zero-ionosphere rows, ionosphere ties,
-//     SD-EWL, the coupling region, phase-colour rows (the table's first-appearance order);
+//   - rows: data, phase-datum pins, GLONASS anchors, zero-ionosphere rows, troposphere-gradient
+//     priors, ionosphere ties, SD-EWL, the coupling region, phase-colour rows (the table's
+//     first-appearance order);
 //   - diagonal priors (StationCarryFrame::inj): ambiguity, oracle pin, wet delay, receiver
 //     code bias, sorted by column with std::sort (not stable), so duplicates coalesce in
 //     insertion order;
@@ -159,7 +160,7 @@ struct StationBuildStep {
     ContributionKindSet kinds;   ///< The row and prior kinds this step can create; 0 for a record-only step.
     StationBuildFn      build;   ///< Gates itself at its first line.
 };
-inline constexpr std::size_t kStationBuildStepCount = 12;
+inline constexpr std::size_t kStationBuildStepCount = 13;
 /// The type of a station build's step table.
 using StationBuildSteps = std::array<StationBuildStep, kStationBuildStepCount>;
 /// The station build, in walk order (src/core/network/assembly/StationBuild.cpp).

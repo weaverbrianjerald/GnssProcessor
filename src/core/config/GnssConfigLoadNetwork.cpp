@@ -3322,6 +3322,17 @@ namespace GnssProcessor {
         // flag's (estimation.estimate_tropo_gradients), which sets the consumer's layout.
         network_config_.estimate_tropo_gradients =
             jval<bool>(json, "network.estimate_tropo_gradients", "", false);
+        // Their zero-mean prior, one row per column and epoch (0 removes it).  A negative or
+        // non-finite sigma names no bound, so it is refused and the physical default restored.
+        network_config_.tropo_gradient_prior_sigma_m =
+            jval<double>(json, "network.tropo_gradient_prior_sigma_m", "", 0.001);
+        if (!(std::isfinite(network_config_.tropo_gradient_prior_sigma_m)
+              && network_config_.tropo_gradient_prior_sigma_m >= 0.0)) {
+            log->error("Network: network.tropo_gradient_prior_sigma_m = {} is negative or not a "
+                       "number; falling back to 0.001 m (0 removes the prior).",
+                       network_config_.tropo_gradient_prior_sigma_m);
+            network_config_.tropo_gradient_prior_sigma_m = 0.001;
+        }
         // Code-weight half of the band-5-code-removed emulation.  With B5D
         // armed, the extra-band code-bias column stays determined by the extra-band
         // code rows alone, so raising their sigma keeps the wire's band-5 code bias

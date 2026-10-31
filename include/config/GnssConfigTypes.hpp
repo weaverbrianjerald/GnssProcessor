@@ -2129,6 +2129,16 @@ namespace GnssProcessor {
         /// single-receiver filter's (in a network run, the consumer's) layout.  Default false
         /// is byte-identical apart from the declared run-start rows of the kind.
         bool estimate_tropo_gradients{ false };
+        /// The zero-mean prior on each troposphere gradient column
+        /// (network.tropo_gradient_prior_sigma_m, m): one row per column and epoch, +1 on the
+        /// column and aimed at absolute zero, with weight 1/sigma^2.  One epoch of data
+        /// determines a gradient to only 5 to 7 mm, several times its physical size, so the
+        /// uncarried columns need this bound; the default 0.001 is that physical size (the
+        /// single-receiver filter seeds its gradients with the same
+        /// filter.initial_std.tropo_gradient).  0 removes the prior (unbounded columns); a
+        /// negative or non-finite value is refused and reset to 0.001.  Read only with
+        /// estimate_tropo_gradients.
+        double tropo_gradient_prior_sigma_m{ 0.001 };
         /// Zenith sigma of the state's stationary prior (m); the elevation law is
         /// sigma(e) = sigma_zen / sin(max(e, phase_colour_elev_floor_deg)), the sim
         /// fixture's.  Must be > 0.

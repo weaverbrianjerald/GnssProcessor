@@ -296,7 +296,7 @@ NetworkParamRegistry NetworkParamRegistry::build(const NetworkKnobs& k, const Gn
     }
     {
         // The troposphere gradients: two local columns per station, estimated afresh every
-        // epoch (uncarried, as the golden wet delay is).
+        // epoch (uncarried, as the golden wet delay is) under a zero-mean prior row each.
         ParamSpec s;
         s.estimated = k.tgrad_on;
         s.carried = false;
@@ -306,8 +306,9 @@ NetworkParamRegistry NetworkParamRegistry::build(const NetworkKnobs& k, const Gn
         s.birth_var_m2 = kNaN;
         s.gap_horizon_s = kNaN;
         s.route = ParamRoute::NotCarried;
-        s.source = "network.estimate_tropo_gradients (uncarried; the single-receiver flag "
-                   "estimation.estimate_tropo_gradients sets the consumer's layout)";
+        s.source = "network.estimate_tropo_gradients (uncarried; a zero-mean prior row per "
+                   "column and epoch, network.tropo_gradient_prior_sigma_m; the single-receiver "
+                   "flag estimation.estimate_tropo_gradients sets the consumer's layout)";
         set(NetworkParamKind::TropoGradient, std::move(s));
     }
 

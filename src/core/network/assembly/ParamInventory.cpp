@@ -11,6 +11,7 @@
 #include "network/state/StationParams.hpp"   // receiverCodeBiasKey (the receiver IFB rule)
 #include "network/state/StationParams.hpp"    // StationParams (the inventory records its columns)
 #include "network/diag/RunTraces.hpp"  // appendRunManifestRecord
+#include "network/assembly/Contributions.hpp"  // the gradient prior's row tally (run-end line)
 #include "model/PppModel.hpp"            // getAllowedBandDigits (rxExtraBandTracked)
 #include "rinex/MultiRinexSync.hpp"      // SyncedEpoch
 
@@ -942,12 +943,25 @@ static int networkTropoGradientRunEnd(const NetworkRunEndView& v) {
         estimated[k]  += count.count(ParamDisposition::EstimatedLocal);
         unobserved[k] += count.count(ParamDisposition::Unobserved);
     }
+    // The prior rows, from the run's contribution tally.
+    const double sigma = v.ctx.knobs.tgrad_prior_sigma_m;
+    const long long prior_rows =
+        v.ctx.contributions.whole_run
+            .kinds[static_cast<std::size_t>(ContributionKind::TropoGradientPrior)].count;
+    const std::string prior =
+        sigma > 0.0 ? fmt::format("a zero-mean prior of {:.2f} mm on each column, {} row(s)",
+                                  sigma * 1e3, prior_rows)
+                    : std::string("no prior (network.tropo_gradient_prior_sigma_m 0: unbounded)");
     v.log->info("Network (troposphere gradients): north estimated in {} station-epoch(s) and left "
-                "out as unobserved in {}; east {} and {}; uncarried (estimated afresh every epoch).",
-                estimated[0], unobserved[0], estimated[1], unobserved[1]);
+                "out as unobserved in {}; east {} and {}; uncarried (estimated afresh every "
+                "epoch); {}.",
+                estimated[0], unobserved[0], estimated[1], unobserved[1], prior);
     if (estimated[0] + estimated[1] == 0)
         v.log->warn("Network (troposphere gradients): INERT: network.estimate_tropo_gradients is "
                     "armed and no station block ever estimated a gradient column.");
+    else if (sigma > 0.0 && prior_rows == 0)
+        v.log->warn("Network (troposphere gradients): INERT: the prior is armed, gradient columns "
+                    "were estimated, and no prior row was built.");
     return 0;
 }
 

@@ -1,7 +1,7 @@
 /**
  * @file test_network_layout_flags.cpp
  * @brief The single-receiver layout flags in a network run, and the network's own troposphere
- *        gradient columns.
+ *        gradient columns with their zero-mean prior.
  *
  * A network station's layout is its own parameter set.  The single-receiver flags
  * (estimation.estimate_velocity, estimate_phase_clock, estimate_tropo_gradients, imu.enabled,
@@ -9,28 +9,38 @@
  * because the consumer is configured by a copy of the network configuration.  With no consumer
  * a flag reaches no parameter, so the loader refuses it and names the network key where one
  * exists.  network.estimate_tropo_gradients gives every station two gradient columns, which the
- * shared observation equation fills.
+ * shared observation equation fills, and network.tropo_gradient_prior_sigma_m one zero-mean
+ * prior row per column and epoch.
  */
 
 #include <gtest/gtest.h>
 
+#include "atmosphere/GlobalIonosphereMap.hpp"
 #include "common/Constants.hpp"
 #include "common/ParamRef.hpp"
 #include "config/GnssConfig.hpp"
 #include "logging/LogManager.hpp"
+#include "network/assembly/Contributions.hpp"
 #include "network/assembly/LocalBirth.hpp"
 #include "network/assembly/SharedAdmission.hpp"
+#include "network/assembly/StationAnchors.hpp"
+#include "network/assembly/StationBuild.hpp"
 #include "network/assembly/StationRows.hpp"
+#include "network/driver/RunTypes.hpp"
+#include "network/state/RunContext.hpp"   // the snapshot fingerprint
 #include "network/state/StationParams.hpp"
+#include "../support/NetworkTestRun.hpp"
 #include "../support/StationBirthFixture.hpp"
 #include "../support/TestTempDir.hpp"
 
+#include <nlohmann/json.hpp>
 #include <spdlog/sinks/ostream_sink.h>
 #include <spdlog/spdlog.h>
 
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <memory>
 #include <sstream>
 #include <string>
@@ -223,4 +233,167 @@ TEST(NetworkLayoutFlagsTest, TheGradientColumnsSurviveAPruneAndKeepTheirSlots) {
     removeSlots(f.set, {gn, ge});
     EXPECT_EQ(f.set.slots.size(), n);
     EXPECT_EQ(findParam(f.set, gradientRef(true)), gn);
+}
+
+TEST(NetworkLayoutFlagsTest, TheGradientPriorDefaultsToOneMillimetreAndARefusedValueRestoresIt) {
+    const Loaded def = loadCapturing("prior_default",
+                                     networkConfig("", R"(, "estimate_tropo_gradients": true)"));
+    ASSERT_TRUE(def.ok) << def.text;
+    EXPECT_DOUBLE_EQ(def.cfg.getNetworkConfig().tropo_gradient_prior_sigma_m, 0.001);
+    const Loaded zero = loadCapturing(
+        "prior_zero", networkConfig("", R"(, "estimate_tropo_gradients": true,
+                                         "tropo_gradient_prior_sigma_m": 0.0)"));
+    ASSERT_TRUE(zero.ok) << zero.text;
+    EXPECT_EQ(zero.cfg.getNetworkConfig().tropo_gradient_prior_sigma_m, 0.0);
+    // A negative sigma names no bound: refused, and the physical default restored.
+    const Loaded bad = loadCapturing(
+        "prior_negative", networkConfig("", R"(, "estimate_tropo_gradients": true,
+                                             "tropo_gradient_prior_sigma_m": -0.002)"));
+    ASSERT_TRUE(bad.ok) << bad.text;
+    EXPECT_DOUBLE_EQ(bad.cfg.getNetworkConfig().tropo_gradient_prior_sigma_m, 0.001);
+    EXPECT_NE(bad.text.find("tropo_gradient_prior_sigma_m"), std::string::npos) << bad.text;
+}
+
+namespace {
+
+/// One station over a gradient-armed configuration, and its build at the first epoch with a
+/// slot that holds one data row and the two gradient columns at local columns 0 and 1.
+struct GradientPriorFixture {
+    BirthFixture                         birth;
+    NetworkTestRun                       run;
+    std::unique_ptr<GlobalIonosphereMap> gim;
+    StationAssembly                      slot;
+
+    explicit GradientPriorFixture(const std::string& network_extra)
+        : birth(options(network_extra)), run(birth.stack.config) {
+        run.setup().stations.resize(1);
+        station().name   = "AAAA";
+        station().params = birth.set;
+        run.newEpoch(GnssTime{2313, 259230.0});
+        slot.h2local = {{birth.set.gradient[0], 0}, {birth.set.gradient[1], 1}};
+        slot.A_s = Eigen::MatrixXd::Zero(1, 3);
+        slot.A_r = Eigen::MatrixXd::Zero(1, 2);
+        slot.w = Eigen::VectorXd::Ones(1);
+        slot.y = Eigen::VectorXd::Zero(1);
+        slot.row_tags = {RowTag{ContributionKind::DataCode, {}, {}}};
+    }
+
+    static BirthOptions options(const std::string& network_extra) {
+        BirthOptions o;
+        o.network_extra = network_extra;
+        return o;
+    }
+
+    NetStation& station() { return run.setup().stations[0]; }
+
+    StationBuild build() {
+        NetworkEpoch& e = run.ep();
+        return StationBuild{run.ctx(), run.config(), run.est(), run.setup(), e.se, e.clock,
+                            e.pass_a, e.events, gim, 0, station(), slot};
+    }
+};
+
+}  // namespace
+
+TEST(NetworkLayoutFlagsTest, EachGradientColumnTakesAZeroMeanPriorRow) {
+    GradientPriorFixture f(R"(, "estimate_tropo_gradients": true,
+                              "tropo_gradient_prior_sigma_m": 0.002)");
+    // A linearization value away from zero: the row aims at absolute zero, so its target is
+    // minus that value.
+    f.station().params.slots[static_cast<std::size_t>(f.birth.set.gradient[1])].x_lin = 0.0004;
+    StationBuild b = f.build();
+    EXPECT_EQ(networkTropoGradientPriorRows(b), StationStep::Next);
+    ASSERT_EQ(f.slot.A_r.rows(), 3);
+    ASSERT_EQ(f.slot.A_s.rows(), 3);
+    ASSERT_EQ(f.slot.row_tags.size(), 3u);
+    for (Eigen::Index r = 1; r < 3; ++r) {
+        EXPECT_EQ(f.slot.row_tags[static_cast<std::size_t>(r)].kind,
+                  ContributionKind::TropoGradientPrior);
+        EXPECT_DOUBLE_EQ(f.slot.w(r), 1.0 / (0.002 * 0.002));
+        EXPECT_EQ(f.slot.A_s.row(r).squaredNorm(), 0.0);
+    }
+    EXPECT_EQ(f.slot.A_r(1, 0), 1.0);   // north
+    EXPECT_EQ(f.slot.A_r(1, 1), 0.0);
+    EXPECT_EQ(f.slot.A_r(2, 0), 0.0);   // east
+    EXPECT_EQ(f.slot.A_r(2, 1), 1.0);
+    EXPECT_DOUBLE_EQ(f.slot.y(1), 0.0);
+    EXPECT_DOUBLE_EQ(f.slot.y(2), -0.0004);
+    // The data row is untouched.
+    EXPECT_EQ(f.slot.row_tags[0].kind, ContributionKind::DataCode);
+    EXPECT_EQ(f.slot.w(0), 1.0);
+}
+
+TEST(NetworkLayoutFlagsTest, NoPriorRowWithSigmaZeroOrForAColumnOutOfTheBlock) {
+    {
+        GradientPriorFixture f(R"(, "estimate_tropo_gradients": true,
+                                  "tropo_gradient_prior_sigma_m": 0.0)");
+        StationBuild b = f.build();
+        EXPECT_EQ(networkTropoGradientPriorRows(b), StationStep::Next);
+        EXPECT_EQ(f.slot.A_r.rows(), 1);
+        EXPECT_EQ(f.slot.row_tags.size(), 1u);
+    }
+    {
+        // The east column left out of this epoch's block: the north column alone gets a row.
+        GradientPriorFixture f(R"(, "estimate_tropo_gradients": true)");
+        f.slot.h2local.erase(f.birth.set.gradient[1]);
+        StationBuild b = f.build();
+        EXPECT_EQ(networkTropoGradientPriorRows(b), StationStep::Next);
+        ASSERT_EQ(f.slot.A_r.rows(), 2);
+        EXPECT_EQ(f.slot.A_r(1, 0), 1.0);
+        EXPECT_DOUBLE_EQ(f.slot.w(1), 1.0 / (0.001 * 0.001));
+    }
+}
+
+namespace {
+
+/// The field golden with @p edit applied, loaded into @p cfg.  @p tag must be unique.
+bool loadFieldGolden(const std::function<void(nlohmann::json&)>& edit, GnssConfig& cfg,
+                     const std::string& tag) {
+    const fs::path src =
+        fs::path(GNSS_PROJECT_ROOT) / "config" / "golden" / "golden_field_refound.json";
+    std::ifstream in(src);
+    nlohmann::json j = nlohmann::json::parse(in, nullptr, true, /*ignore_comments=*/true);
+    edit(j);
+    const fs::path p = gnss_test::tempDir() / ("golden_" + tag + ".json");
+    { std::ofstream out(p); out << j.dump(2); }
+    LogManager log;
+    const bool ok = cfg.loadFromJson(p, log);
+    std::error_code ec;
+    fs::remove(p, ec);
+    return ok;
+}
+
+/// The live snapshot fingerprint a run of @p cfg would compute.
+std::uint64_t liveFingerprint(const GnssConfig& cfg) {
+    NetworkRunContext ctx(cfg, cfg.getNetworkConfig());
+    ctx.carry.snap_path = "state_snapshot.snap";   // the builder is a no-op without a path
+    std::vector<NetStation> st(2);
+    st[0].name = "AAAA"; st[0].is_pivot = true;
+    st[1].name = "BBBB"; st[1].is_pivot = false;
+    networkSnapshotFingerprint(ctx, cfg, st);
+    return ctx.carry.live_fingerprint;
+}
+
+}  // namespace
+
+TEST(NetworkLayoutFlagsTest, TheGradientPriorJoinsTheFingerprintOnlyWithTheGradients) {
+    const auto grad = [](nlohmann::json& j) { j["network"]["estimate_tropo_gradients"] = true; };
+    const auto sigma = [](double s) {
+        return [s](nlohmann::json& j) { j["network"]["tropo_gradient_prior_sigma_m"] = s; };
+    };
+    GnssConfig off, off_sigma, on, on_sigma, on_zero;
+    ASSERT_TRUE(loadFieldGolden([](nlohmann::json&) {}, off, "fp_off"));
+    ASSERT_TRUE(loadFieldGolden(sigma(0.002), off_sigma, "fp_off_sigma"));
+    ASSERT_TRUE(loadFieldGolden(grad, on, "fp_on"));
+    ASSERT_TRUE(loadFieldGolden([&](nlohmann::json& j) { grad(j); sigma(0.002)(j); }, on_sigma,
+                                "fp_on_sigma"));
+    ASSERT_TRUE(loadFieldGolden([&](nlohmann::json& j) { grad(j); sigma(0.0)(j); }, on_zero,
+                                "fp_on_zero"));
+    // Without the gradients the prior is not read, so every existing fingerprint is unchanged.
+    EXPECT_NE(liveFingerprint(off), 0u);
+    EXPECT_EQ(liveFingerprint(off_sigma), liveFingerprint(off));
+    // With them, the gradients and each prior sigma give their own fingerprint.
+    EXPECT_NE(liveFingerprint(on), liveFingerprint(off));
+    EXPECT_NE(liveFingerprint(on_sigma), liveFingerprint(on));
+    EXPECT_NE(liveFingerprint(on_zero), liveFingerprint(on));
 }

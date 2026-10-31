@@ -13,8 +13,9 @@ same mechanism is needed).
 
 In both golden configurations the ZWD is not carried: it is one column of the station's
 local block, estimated afresh every epoch (`network.carry_zwd` is off, ledger verdict
-KEEP_OFF). The gradient follows that posture (two uncarried columns) and needed the REQUIRED
-steps only.
+KEEP_OFF). The gradient follows that posture (two uncarried columns): the REQUIRED steps
+added it, and one step of rows of its own bounds it, a zero-mean prior row per column and
+epoch (section 3).
 
 | # | Step | Where (the gradient's edits) | Mark |
 | --- | --- | --- | --- |
@@ -108,7 +109,13 @@ rule) is an edit; `RxIfbRule` is the template.
 A parameter with rows or priors of its own needs a step: a function in the family's file
 and a row in `kStationBuildSteps` or `kStationCarrySteps` (`StationBuild.cpp`) with
 the `ContributionKind` set it creates (`kindBit`), the matching count in
-`StationBuild.hpp`, and the step named in its kinds' builder text.
+`StationBuild.hpp`, and the step named in its kinds' builder text. The gradient's prior is
+the example: `networkTropoGradientPriorRows` (`src\core\network\assembly\StationAnchors.cpp`),
+row `tropo_gradient_prior` after `sim_zero_iono`, kind `ContributionKind::TropoGradientPrior`
+(its declaration in `contributionSpecs()`, and a case in `rowClassOfKind`, `RowClassify.cpp`,
+since it is a row and not a diagonal prior). One row per gradient column, +1 on the column,
+weight `1 / network.tropo_gradient_prior_sigma_m^2`, and the target minus the slot's
+linearization value, so the row holds the gradient toward absolute zero.
 
 The parallel contract (header of `StationBuild.hpp`): one OpenMP iteration per
 station; a step gets its own station and slot writable (`StationBuild::st`, `::R`) and
@@ -263,13 +270,22 @@ the ZWD trace.
   an uncarried column.
 - **Whether an uncarried column keeps the station blocks well conditioned** is a graded
   question, not a recipe step: for the gradient it is card NOM5's gate G4, and its verdict is
-  recorded there.
+  recorded there. Conditioning is not the whole test. The gradient's blocks stayed well
+  conditioned, but one epoch determines a gradient to only 5 to 7 mm, and the free columns fit
+  noise and took up a station-level step; the gradient therefore takes the zero-mean prior of
+  section 3, graded in card NOM5 section 6. A carried gradient would instead need the in-block
+  vehicle: a diagonal carry of a station-common column is the double count that
+  `network.carry_zwd` (KEEP_OFF) showed.
 
 The gradient took edits in 5 files for step 1 (`ParamRef` and `StationParams`, header and source
 each, and `UserParamView.cpp` because the identity is shared; the equation already had the
 term), 5 for step 2, none for step 3, 1 for the fingerprint, 5 for the configuration
 (`GnssConfigTypes.hpp`, `GnssConfigLoadNetwork.cpp`, `RunContext.hpp`, `Knobs.cpp`, the ledger
 JSON) and a section of `ParamInventory.cpp` for the run-end line, plus the optional trace
-(`RunTraces` header and source, `IonoDiag.cpp`) and one test file.
+(`RunTraces` header and source, `IonoDiag.cpp`) and one test file. Its prior took the step and
+its row (`StationAnchors` header and source, `StationBuild` header and source), the kind
+(`ContributionKind.hpp`, `Contributions.cpp`, `RowClassify.cpp`), the key in the same five
+configuration files, the fingerprint token, a clause of the run-end line, and tests in the same
+file plus the step-table and row-class pins.
 
 Next: [7 · Network tour](07_network_tour.md), or the network task at hand.
