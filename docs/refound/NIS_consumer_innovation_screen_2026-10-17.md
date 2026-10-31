@@ -4,14 +4,14 @@
 
 - **id:** NIS
 - **topic:** consumer
-- **status:** open
-- **summary:** BUILT 2026-10-17, default OFF, NOT ARMED: before each measurement update the consumer tests every undifferenced row's innovation against the predicted state (conditional normalized innovation with a model-error floor, flag above 6), holds a flagged row out of that epoch's update as an event with counters, re-tests it every epoch, and re-floats the ambiguity of a phase row flagged on three consecutive epochs. Bars N0 to N5 are frozen below (N2 amended before any graded read, section 8). CHECKED 2026-10-17 (section 9): key absent, the exe is byte-identical to main on the G5, user-side and real-time gates, on the field golden 6 h and at 17 of 17 census consumers; armed, no output moved on the golden (0 flagged) or in the 16-site census (462 flagged, all one E11 C5Q code row that the update already leaves out), and the 92 m case moves the position by at most 1.5 cm; no benefit shown, never armed.
+- **status:** closed
+- **summary:** BUILT 2026-10-17, default OFF, NOT ARMED: before each measurement update the consumer tests every undifferenced row's innovation against the predicted state (conditional normalized innovation with a model-error floor, flag above 6), holds a flagged row out of that epoch's update as an event with counters, re-tests it every epoch, and re-floats the ambiguity of a phase row flagged on three consecutive epochs. Bars N0 to N5 are frozen below (N2 amended before any graded read, section 8). CHECKED 2026-10-17 (section 9): key absent, the exe is byte-identical to main on the G5, user-side and real-time gates, on the field golden 6 h and at 17 of 17 census consumers; armed, no output moved on the golden (0 flagged) or in the 16-site census (462 flagged, all one E11 C5Q code row that the update already leaves out), and the 92 m case moves the position by at most 1.5 cm; no benefit shown, never armed. INJECTED 2026-10-31 (sections 10 and 11): an undeclared step on 3 satellites at once moves the unscreened consumer 20 to 408 m for 3 h (one satellite never bites); the screen cures the phase-bias class at K 3 (peak 0.008 to 0.011 m, B2 met in 6 of 6 cells) and not the clock class, 12 gross rows or a 2 m step (B2 missed in 10 of 16 cells, B3 in 21 of 54, by innocent flags); the unperturbed pair is identical with 0 flags; KEEP_OFF, closed, never armed.
 - **source:** [PBF](PBF_pb_hold_presence_edges_2026-09-28.md) section 1 item 3 (one 92 m phase row moved the first update 704 m and the peel reset innocent satellites) and section 4 owed item 2 (a pre-update screen of the innovations); the register item "Consumer innovation screen" ([OPEN_ITEMS](../status/OPEN_ITEMS.md)); standing invariant 7 ([CLAUDE.md](../../CLAUDE.md)).
 - **knobs / posture:** new `processing.innovation_screen` (bool, default false, byte-identical) with `innovation_screen_k` 6.0, `innovation_screen_mode` `act`, `innovation_screen_rows` `all`, `innovation_screen_max_fraction` 0.25, `innovation_screen_refloat_ep` 3, `innovation_screen_phase_floor_m` 0.3 and `innovation_screen_code_floor_m` 1.0; new `network.closed_loop.innovation_screen` with the same seven parameters (derived into the consumer engine, never reaching the producer's solve or its resume fingerprint); ledger rows UNVALIDATED (the key) and PARAM (the seven); no golden, no loader default and no posture row changed.
-- **dates in the text:** 2026-10-17
-- **hashes / run dirs:** base main `4318fe3`; branch `feat/innoscreen`; control exe `gnss_processor_innoscreen_ctl.exe` (main `4318fe3`, Release); the check's run dirs are listed in section 9.7.
+- **dates in the text:** 2026-10-17, 2026-10-31
+- **hashes / run dirs:** base main `4318fe3`; branch `feat/innoscreen`; control exe `gnss_processor_innoscreen_ctl.exe` (main `4318fe3`, Release); the check's run dirs are listed in section 9.7. Injection (sections 10 and 11): branch `close/nis`, exe `gnss_processor_nis_close.exe` (a copy of `gnss_processor_bofarm.exe`, sha256 prefix `91143c81de9a9547`), wires `runs/_rf0hv17_{field,sim}6`, run dirs `D:/GnssProcessorSupport/runs_nis/_rap_nis_*` (section 11.10).
 
-**Outcome.** Question: can a gross row be stopped before the update spreads it, by testing each innovation against the previous state? The screen is built with its counters and both exclusion edges, unit-tested on synthetic matrices and on a hand-built engine measurement, and default off. A model-error floor was added at build after the formal covariance proved miscalibrated (section 8). The check (section 9) ran: key absent, the exe is byte-identical to main on every gate, on the golden and at 17 of 17 census consumers. Armed, no output moved: the golden flags 0 rows, the census flags one E11 C5Q code row at two sites that the update already leaves out, and the 92 m case moves the position by at most 1.5 cm. No data holds the edge the screen answers, so its worth stays open. Arming is the author's decision; this card never arms.
+**Outcome.** Question: can a gross row be stopped before the update spreads it? Built and checked 2026-10-17: key absent identical on every gate, armed no output moved, and no data held the edge. Injected 2026-10-31 (58 cells, 116 replays, four consumers): an undeclared step on 3 satellites at once moves the unscreened consumer 20 to 408 m for 3 h. The screen cures the phase-bias class at 3 satellites (0.008 to 0.011 m) and fails on the clock class, on 12 gross rows (it flags the innocent rows first) and at 2 m. B2 is missed in 10 of 16 cells and B3 in 21 of 54: KEEP_OFF, never armed. Arming or a successor is the author's decision.
 
 ## 1. The case
 
@@ -159,3 +159,200 @@ The key-absent gate is clean on every surface (G5 24 of 24, user side 16 of 16, 
 ### 9.7 Run directories
 
 Under `D:/GnssProcessorSupport/runs_nom/`: golden `_rap_isc_g_{ctl,off,act,k9}`; census `_rap_isc6_{ctl0,off,act,k9,obs}_<site4>` (17 each); case `_rap_isc_n2_{ctl,off,act}`; cost `_rap_isc_cost_{ctl,act}{1,2,3}`; G5 `_rap_g5_w2innoscreen_*` (gate summary `gates/g7/summary_w2innoscreen.txt`). User-side arms `runs/_uom_w2innoscreen`; real-time captures `runs/rtseam_goldens/w2innoscreen_{dr,cl}`. Scratch (logs, compare outputs, the counter reader): `D:/GnssProcessorSupport/gates/innoscreen/chk/`.
+
+## 10. 2026-10-31: the multi-satellite injection (pre-registered)
+
+Committed before any screen-on replay of this section was read. Read before it: the natural-edge audit (10.2) and the four unperturbed screen-off replays, whose sat traces rank the satellites (10.4). This section changes no knob, golden, ledger row or code. The key stays default off and is not armed here.
+
+### 10.1 The question
+
+Section 9 found no benefit because no data holds the edge the screen answers: an undeclared step reaching the consumer on several satellites at once (section 1). The edge is run here by injection into a recorded wire, and the screen is decided on it by the bars of 10.8, frozen below.
+
+### 10.2 Natural edges (read first)
+
+`scripts/wire_step_audit.py` and `scripts/product_step_census.py` on the baseline pair `runs/_rf0hv17_field6` and `runs/_rf0hv17_sim6` (outputs in `D:/GnssProcessorSupport/gates/nisclose/`: `wire_step_audit.txt`, `wire_step_audit_0p5.txt`, `product_step_census_{0p5,2,10}.txt`). Steps between consecutive emitted epochs that the key's discontinuity counter does not signal: none above 10 m and none above 2 m, on either bed and on either channel (clock, phase bias). Above 0.5 m the clock channel has 1 on the field wire (G24, 0.803 m at TOW 259230) and 65 on the sim wire (TOW 259260 to 259470); the phase-bias channel has none. All lie in the first 270 s of the run, inside the consumers' own convergence, and every replay carries them, so the unperturbed cell is their cell (the pair of bar B3 reads it). No natural hit above 2 m exists to become an extra cell. The product census, which does not read counters, finds the same epochs: 3 phase-bias key-steps above 0.5 m on the field wire (TOW 259230) and 188 on the sim wire (ten epochs from TOW 259260; 4 above 2 m, E18 at TOW 259260 and 259290, signalled); none above 10 m on either.
+
+### 10.3 Wires, consumers, executable
+
+Wires: `C:/GnssProcessor/runs/_rf0hv17_field6/products.txt` (sha256 prefix `bf16e9474305e2de`) and `C:/GnssProcessor/runs/_rf0hv17_sim6/products.txt` (`4ef06f1f3f9c0bf4`), the baseline pair of card BOF. Consumer-only replays (`network.closed_loop.replay_products_path`) of 6 h from the wire's start, `network.trace_consumer_sat` true, built by `scripts/nis_inject_arms.py` from the wire's own `arm.json` (the census sites with the consumer settings of `gcensus.py make`). Consumers: WTZZ00DEU (primary, the field wire's own held-out consumer); extension ARHT00ATA and QUIN00USA on the field wire; SZZ000SIM, the sim wire's own consumer (the sim twin). The unperturbed replays of WTZZ00DEU and SZZ000SIM reproduce the wires' in-process consumers byte for byte in `closed_loop_trace.csv`.
+
+Executable: `gnss_processor_nis_close.exe`, a copy of `gnss_processor_bofarm.exe` (the wire's own exe, which holds the screen), sha256 `91143c81de9a95479aa08131c08945676d5e542dbd607e9a8ff6d1852d2d73d6`, under `D:/GnssProcessorSupport/gates/exe/x64-Release/`. Runs root `D:/GnssProcessorSupport/runs_nis`, run dirs `_rap_nis_<cell>_<off|on>`. Screen on: `network.closed_loop.innovation_screen` true with every other screen knob at its default (mode `act`, k 6.0, rows `all`, max fraction 0.25, re-float after 3, floors 0.3 m and 1.0 m). Screen off: the key absent, same exe.
+
+### 10.4 Faults and satellites
+
+From the first product epoch at or after TOW 270000 (hour 4) to the end of the wire, persistent and undeclared (`scripts/inject_wire_step.py`). Epoch times compare with a 0.5 s tolerance: the writer's TOW can sit just below the exact second, and a bare comparison starts a step one epoch late, as the build-stage injection of section 8 item 7 did.
+
+- class PB: the step is added to the bias of every P record of K satellites, all signals. The trailing fields (counter, `sigma=`, `gen=`) are untouched.
+- class CLK: the step is added to the clock of the C record of K satellites. The rest of the record is untouched.
+
+Satellites: the K highest-elevation ones in the unperturbed screen-off replay's `closed_loop_sat_trace.csv` at TOW 270000 (ties by satellite id; K 1 inside K 3 inside K 6; `nis_inject_arms.py sats`, frozen in `gates/nisclose/sats_<consumer>.json`):
+
+| consumer | the six, highest first |
+| --- | --- |
+| WTZZ00DEU | E24 E05 G24 G15 E31 E09 |
+| ARHT00ATA | G09 E19 E30 G26 G01 G04 |
+| QUIN00USA | G32 E08 E15 G10 E13 E03 |
+| SZZ000SIM | E05 E24 G15 G12 G24 E25 |
+
+### 10.5 Cells
+
+Core: class {PB, CLK} x K {1, 3, 6} x step {10, 92.409} m on each of the four consumers (48 cells). Extension: step 2 m, the same six cells, on WTZZ00DEU (6 cells). One unperturbed cell per consumer (4). Each cell is replayed screen off and on: 116 replays. A replay that does not exit 0 is run once more; a cell still without its replays is reported incomplete.
+
+### 10.6 Measures
+
+Against the matched unperturbed replay (same consumer, same screen setting, same exe), epoch by epoch from `closed_loop_trace.csv`. Excess is the 3D error of the perturbed replay minus that of the unperturbed one; the injection epoch is TOW 270000, index 0.
+
+- peak20: the largest excess over the 40 epochs from index 0 (20 min), taken as 0 when none is positive.
+- recovery: the first index n from which the absolute excess stays within 0.05 m for 10 consecutive epochs; none when it never does.
+- mean3h: the mean excess over the 360 epochs from index 0 (3 h).
+- flagged: the EXCLUDE and REFLOAT events of `logs/rt_engine.log`, by key `<sat>_<signal>`; the screen tokens of `closed_loop_sat_trace.csv` are counted beside them. Innocent: a flag from TOW 270000 on at a key the step does not touch (class PB touches the phase rows of the stepped satellites, class CLK all their rows).
+- abstaining cell: the log holds an ABSTAIN from TOW 270000 on and no EXCLUDE or REFLOAT.
+
+The by-hour p50 of every replay is recomputed from the run dirs (`scripts/clock_level/p50.py`) for context; it is not a bar.
+
+### 10.7 Validity (B0)
+
+Read from the two screen-off sat traces (perturbed, unperturbed) at TOW 270000 and 270030. A cell is valid when every stepped satellite shows the step on a row of its own, either as an innovation that differs from the unperturbed one by at least half the step (class PB: the phase innovation; class CLK: the phase or the code innovation) or as a row that the final update no longer holds (blank where the unperturbed run has one: the existing post-fit machinery peeled it); and no stepped row carries a consumer reaction token (`ev_pb`, `ev_cb`, `ev_clk`) that the unperturbed run does not carry at the same row and epoch; and, for class CLK, `clk_disc` equals the unperturbed run's.
+
+The replay reads no counters from these wires (`serialize_disc_counters` is off) and recomputes them from the values. The phase-bias recompute steps a key's counter by one when its value steps above the threshold, so `pb_disc` moves at the first stepped epoch in every class-PB cell. Every key of these wires is held (`gen=`), and the consumer's hold seam consumes and ignores the counter of a held key (`reactToPbHold_`; build-stage evidence `runs_nom/_rap_isc_pbs_off`, G13 L1W: `pb_disc` 2 to 3 at TOW 262830 with `ev_pb` none, the step arriving as an innovation and being peeled). "pb_disc unchanged" is therefore read as "no consumer reaction to it"; the recompute is counted per cell (`pb_disc_recomputed`) and does not void a cell. The clock recompute has no value test, so `clk_disc` is expected unchanged in class CLK, and a change voids the cell.
+
+A void cell is counted and reported with its reason, and enters no bar.
+
+### 10.8 Bars (frozen)
+
+| gate | reading | bar |
+| --- | --- | --- |
+| B1 (the edge bites) | a valid cell, screen off | peak20 above 0.10 m, or recovery above 10 epochs or never |
+| B2 (benefit) | every valid biting cell with K at most 3, screen on against screen off | peak20 at most half the screen-off one, recovery no longer (never counts as longest), mean3h no larger |
+| B3 (no harm), pair | the unperturbed pair of each consumer | `closed_loop_trace.csv` identical byte for byte, 0 rows flagged |
+| B3, quiet cell | a valid cell that does not bite | screen-on peak20 within 0.01 m of screen-off |
+| B3, every cell | every valid cell | 0 innocent flags; each flagged stepped phase key re-floated within 3 epochs of its first flag, unless its episode ended (readmitted, lost, released) before the third flagged epoch; an abstaining cell has `closed_loop_trace.csv` identical byte for byte to screen-off |
+
+### 10.9 Verdict rule
+
+Over all registered cells together (the primary consumer's core matrix is also reported alone). No valid biting cell: KEEP_OFF, to be reopened on a natural edge. Valid biting cells with B2 and B3 met, and at least one valid biting cell with K at most 3 (B2 is not met by having no cell): a recommendation to arm for cold consumers. The ledger verdict stays UNVALIDATED for the author (a RECOMMEND verdict makes `make_golden_config.py --verify` fail until armed), and the unsnapshotted open episodes are named field-blocking for a warm-resumed consumer. A miss of B2 or B3: KEEP_OFF with the miss stated. A missed bar is recorded as missed.
+
+### 10.10 Reading of the design (not a bar)
+
+At TOW 270000 the consumers hold 64 (WTZZ00DEU), 60 (ARHT00ATA), 56 (QUIN00USA) and 52 (SZZ000SIM) eligible rows, so the screen abstains above 16, 15, 14 and 13 flagged rows. Class PB steps 2, 6 and 12 rows at K 1, 3 and 6, class CLK 4, 12 and 24. Class CLK at K 6 exceeds the limit on every consumer and is expected to abstain; class PB at K 6 sits 1 to 4 rows under it (1 on the sim twin).
+
+### 10.11 Tools
+
+`scripts/inject_wire_step.py`, `scripts/nis_inject_arms.py` (cells, satellites, wires, arms) and `scripts/nis_inject_grade.py` (the measures, B0 to B3 and the verdict), each with a `selftest` that passes at this commit. Scratch, wires and outputs: `D:/GnssProcessorSupport/gates/nisclose/`. An amendment to this section is dated and made before any screen-on replay of the section is read.
+
+## 11. 2026-10-31: the multi-satellite injection (results)
+
+All 116 registered replays ran and exited 0 (58 cells, screen off and on). Run dirs `D:/GnssProcessorSupport/runs_nis/_rap_nis_<cell>_<off|on>`. Grader output in `D:/GnssProcessorSupport/gates/nisclose/`: `grade_all.txt` (report and verdict), `grade_all.json` (every number below), `grade_cells.md` (the table of 11.7), `validity_all.txt` (B0), `thread_invariance.txt`; in `recheck/` the regrades of the core matrix alone (11.8: `grade_core_wtzz.txt`, `grade_core_all.txt`, tallies `core_summary.txt`) and the checks behind 11.3, 11.4 and 11.6 (`pb3_refloat_check.out`, `refloat_exempt_check.out`, `eligible_rows_check.out`, `clk3_ratio_check.out`, `unstepped_rows_check.out`); tools at commit `8e42f62` of branch `close/nis`, unchanged. No code, knob, golden or ledger row changed; the key stays default off.
+
+Operational note, made before any screen-on replay was read. The golden arm sets `processing.eigen_threads` 20. On the loaded box a 20-thread replay took 13 min or longer (800 s for `wtzz_pb1_s10_off`; five others were stopped at about 55 % after 14 min), so the arms were remade with `processing.eigen_threads` 1: ten at a time, the screen-off replays took a median of 137 s (56 to 371 s) and the screen-on replays 318 s (209 to 836 s). The setting does not move the results: the single-thread repeats of the four unperturbed screen-off replays and of `wtzz_pb1_s10_off` are byte-identical to the 20-thread runs in `closed_loop_trace.csv` and `closed_loop_sat_trace.csv`. Those five ran at 20 threads, every other replay at 1.
+
+### 11.1 Validity (B0): 54 of 54 valid, none void
+
+At TOW 270000 or 270030 the step shows on a row of every stepped satellite: as an innovation differing from the unperturbed one by at least half the step in 160 of the 180 stepped satellites (summed over the cells), and as a row the final update no longer holds (peeled by the existing post-fit machinery) in the other 20. No stepped row carries a consumer reaction token, and `clk_disc` equals the unperturbed run's in all 27 class-CLK cells. The replay recomputed `pb_disc` in all 27 class-PB cells, which the held keys ignore (10.7). Every step is therefore unanswered on arrival, as the bars assume.
+
+### 11.2 The edge bites (B1): 33 of 54 cells
+
+With the screen off, one satellite never bites (K 1: peak20 at most 0.010 m). From K 3 the step moves the consumer within two epochs and it does not come back within 3 h (recovery never, except ARHT00ATA class PB, K 6, 92.409 m: 96 epochs). Peak20 of the biting cells at K 3 and 6: 10 m, 20.3 to 43.4 m; 92.409 m, 144.8 to 407.8 m (ARHT00ATA class PB aside, below); 2 m, 3.8 to 4.2 m (WTZZ00DEU). Hourly p50 of WTZZ00DEU, class PB, K 3, 10 m: 16.819 / 15.323 / 14.512 m in hours 4 to 6, against 0.012 / 0.017 / 0.012 m unperturbed. ARHT00ATA is the exception for class PB (peak20 at most 0.002 m at K 1 to 6 for 10 m and K 1 to 3 for 92.409 m, 7.7 m at K 6 for 92.409 m); the clock class moves it 40.6 to 407.8 m. Biting cells: WTZZ00DEU 12 of 18, ARHT00ATA 5 of 12, QUIN00USA 8 of 12, SZZ000SIM 8 of 12.
+
+### 11.3 Class PB, screen on (B2 met)
+
+K 3, 10 and 92.409 m (6 stepped phase rows of 52 to 64): the screen flags all 6 stepped phase keys at TOW 270000 on every consumer (|w| 8.2 to 20.4 at 10 m, 75.8 to 189.3 at 92.409 m; conditional sigma 0.34 to 0.57 m), holds them out and re-floats each on the third consecutive flag (TOW 270060) in 7 of the 8 cells. The exception is ARHT00ATA at 10 m: G09 L1W is flagged at 270000 and 270030 (raw innovations -0.333 and -0.388 m) and readmitted at 270060 after 2 flagged epochs, and the other 5 keys are re-floated there (`_rap_nis_arht_pb3_s10_on/logs/rt_engine.log`). The wire holds no L1W phase bias for G09 at these epochs (L1C and L2W only; `unstepped_rows_check.out`), so the step is not on that row, which the registered key rule still counts as stepped (11.6). B3 stays met: the episode ended by readmission before the third flagged epoch. Peak20 is 0.008 m (WTZZ00DEU, QUIN00USA) and 0.011 m (SZZ000SIM) against 20.3 to 295.4 m off, recovery 0, mean3h 0.001 to 0.003 m: B2 is met in 6 of 6 valid biting cells of this kind (ARHT00ATA does not bite). The cost is small and steady: WTZZ00DEU hourly p50 in hours 5 and 6 is 0.020 and 0.016 m against 0.017 and 0.012 m unperturbed (the re-floated ambiguities).
+
+K 6 (12 stepped phase rows): not cured at 10 m (peak20 20.290, 27.797 and 13.568 m for WTZZ00DEU, QUIN00USA and SZZ000SIM; SZZ000SIM recovers after 135 epochs); cured with a transient at 92.409 m (peak20 0.155, 0.171 and 0.543 m, recovery 20, 105 and 73 epochs), the screen having abstained at the first epoch (more than 25 % of the rows flagged) and acted from the second.
+
+### 11.4 Class CLK, screen on (B2 missed)
+
+K 1: the stepped satellite's two code rows are held out for 245 to 361 epochs each (to the end of the run, or until readmitted) and its phase rows re-floated, with no innocent flag; the unscreened consumer also survives (11.2). K 3 (12 stepped rows, 19 to 23 % of the rows): B2 is missed in 8 of 8 cells, screen-on peak20 being 0.90 to 1.11 times screen-off. The first pass flags the wrong rows. WTZZ00DEU, 10 m, TOW 270000: the phase rows of G15, E31 and G14, none stepped (raw innovations -0.009 to -0.052 m, w -13.2 to +10.1), while the 12 stepped rows (E24, E05, G24) stay in the update. At 92.409 m the screen abstains at the first epoch (more than 25 % flagged) and then holds out innocent code rows for hours (4,151 flagged code rows in 325 epochs, 36 innocent keys).
+
+Innocent keys per cell: class CLK K 3 and K 6, 10 to 37 in 16 of 16 cells; class PB K 6, 11 to 29 in 3 of 8 cells; class PB K 3, 2 in the two SZZ000SIM cells (G24, one epoch, the cure unaffected). The mechanism is the statistic. With a consistent cluster of about 19 to 23 % of the rows gross, the other rows imply for an innocent row a value that the cluster pulls away, the innocent row takes the largest |w|, and sequential removal takes it first; the screen's premise (the predicted state is right) fails from there, and later epochs test innocent rows against a corrupted state.
+
+### 11.5 Step 2 m (extension, WTZZ00DEU)
+
+The screen flags 0 rows in all six cells and the screen-on run equals the screen-off run byte for byte: 2 m is under the bar, k 6 times the conditional sigma of a phase row, which is 2.0 to 3.4 m. K 3 and K 6 move the unscreened consumer 3.8 to 4.2 m for 3 h; B2 is missed at K 3.
+
+### 11.6 No harm (B3)
+
+- Unperturbed pair: `closed_loop_trace.csv` identical byte for byte and 0 rows flagged on 4 of 4 consumers (720 epochs; 40,952, 50,548, 38,780 and 39,768 eligible rows).
+- Quiet cells: 21 of 21 non-biting cells within 0.01 m (largest difference 0.0055 m).
+- Re-float: every flagged stepped phase key re-floated within 3 epochs of its first flag in 54 of 54 cells, except 5 keys in 3 cells that were readmitted before the third flagged epoch, which the bar exempts: G15 L1W and L2W in `wtzz_pb6_s10`, G09 L1W in `arht_pb3_s10` (11.3), E30 L1X and L5X in `arht_clk3_s10` (`refloat_exempt_check.out`).
+- Innocent flags: 21 of 54 cells have them (11.4), 33 none. The registered key rule counts every phase row of a stepped satellite as stepped. The step does not reach the L1W rows of ARHT00ATA's stepped GPS satellites (the wire holds no L1W phase bias for them at TOW 270000: G09 at K 3; G09, G01, G04 and G26 at K 6), and the screen flags those rows in the four class-PB cells at K 3 and K 6, both steps (`unstepped_rows_check.out`). Read as innocent flags they make B3 missed in 25 of 54 cells; the verdict is unchanged. The abstaining-cell clause was not exercised: 15 cells abstained at some epoch (1,583 epochs in all, all for too many rows) and acted at others.
+- Counters: closure HOLDS and 0 skipped calls in 58 of 58 screen-on runs; the log's EXCLUDE and REFLOAT events equal the sat trace's screen tokens in 54 of 54 cells.
+
+### 11.7 The cells
+
+Screen off against screen on, each against its matched unperturbed replay. Flagged rows are EXCLUDE and REFLOAT events of the whole screen-on run; the bracket is the number of innocent keys flagged from TOW 270000. "never" is no 10-epoch stretch within 0.05 m before the end of the run.
+
+| cell | screen off: peak20 m / recovery / mean3h m | screen on: peak20 m / recovery / mean3h m | flagged rows (innocent keys) | B2 | B3 |
+| --- | --- | --- | --- | --- | --- |
+| wtzz_pb1_s10 | 0.004 / 0 / -0.000 | 0.002 / 0 / 0.000 | 6 (0) | - | met |
+| wtzz_pb3_s10 | 20.304 / never / 15.665 | 0.008 / 0 / 0.003 | 18 (0) | met | met |
+| wtzz_pb6_s10 | 21.267 / never / 16.937 | 20.290 / never / 16.624 | 1083 (11) | - | MISSED |
+| wtzz_clk1_s10 | 0.003 / 0 / -0.000 | 0.002 / 0 / 0.000 | 726 (0) | - | met |
+| wtzz_clk3_s10 | 23.212 / never / 17.993 | 21.977 / never / 17.809 | 1738 (14) | MISSED | MISSED |
+| wtzz_clk6_s10 | 20.265 / never / 15.981 | 21.979 / never / 17.743 | 1522 (10) | - | MISSED |
+| wtzz_pb1_s92p409 | 0.001 / 0 / 0.000 | 0.002 / 0 / 0.000 | 6 (0) | - | met |
+| wtzz_pb3_s92p409 | 204.627 / never / 163.583 | 0.008 / 0 / 0.003 | 18 (0) | met | met |
+| wtzz_pb6_s92p409 | 204.627 / never / 161.494 | 0.155 / 20 / 0.011 | 6 (0) | - | met |
+| wtzz_clk1_s92p409 | 0.001 / 0 / 0.000 | 0.002 / 0 / 0.000 | 726 (0) | - | met |
+| wtzz_clk3_s92p409 | 205.675 / never / 166.447 | 205.746 / never / 170.048 | 4151 (36) | MISSED | MISSED |
+| wtzz_clk6_s92p409 | 202.058 / never / 165.304 | 202.402 / never / 164.589 | 2879 (30) | - | MISSED |
+| wtzz_pb1_s2 | 0.006 / 0 / 0.000 | 0.006 / 0 / 0.000 | 0 (0) | - | met |
+| wtzz_pb3_s2 | 3.851 / never / 3.421 | 3.851 / never / 3.421 | 0 (0) | MISSED | met |
+| wtzz_pb6_s2 | 3.841 / never / 3.247 | 3.841 / never / 3.247 | 0 (0) | - | met |
+| wtzz_clk1_s2 | 0.006 / 0 / 0.001 | 0.006 / 0 / 0.001 | 0 (0) | - | met |
+| wtzz_clk3_s2 | 4.180 / never / 3.402 | 4.180 / never / 3.402 | 0 (0) | MISSED | met |
+| wtzz_clk6_s2 | 3.840 / never / 3.203 | 3.840 / never / 3.203 | 0 (0) | - | met |
+| arht_pb1_s10 | 0.000 / 0 / -0.023 | 0.000 / 0 / -0.003 | 3 (0) | - | met |
+| arht_pb3_s10 | 0.000 / 0 / 0.004 | 0.002 / 0 / 0.005 | 17 (0) | - | met |
+| arht_pb6_s10 | 0.001 / 0 / -0.008 | 0.000 / 0 / 0.007 | 36 (0) | - | met |
+| arht_clk1_s10 | 0.000 / 0 / -0.019 | 0.000 / 0 / -0.003 | 496 (0) | - | met |
+| arht_clk3_s10 | 43.446 / never / 24.199 | 48.346 / never / 23.188 | 2037 (20) | MISSED | MISSED |
+| arht_clk6_s10 | 40.620 / never / 21.586 | 31.859 / never / 19.976 | 2630 (20) | - | MISSED |
+| arht_pb1_s92p409 | 0.000 / 0 / -0.003 | 0.000 / 0 / -0.003 | 3 (0) | - | met |
+| arht_pb3_s92p409 | 0.002 / 0 / 0.005 | 0.002 / 0 / 0.005 | 18 (0) | - | met |
+| arht_pb6_s92p409 | 7.734 / 96 / -0.002 | 0.000 / 0 / 0.007 | 36 (0) | - | met |
+| arht_clk1_s92p409 | 0.000 / 0 / -0.004 | 0.000 / 0 / -0.003 | 560 (0) | - | met |
+| arht_clk3_s92p409 | 407.766 / never / 351.269 | 407.766 / never / 402.369 | 4291 (37) | MISSED | MISSED |
+| arht_clk6_s92p409 | 238.800 / never / 229.394 | 238.800 / never / 233.727 | 4197 (29) | - | MISSED |
+| quin_pb1_s10 | 0.004 / 0 / 0.000 | 0.003 / 0 / 0.001 | 6 (0) | - | met |
+| quin_pb3_s10 | 29.455 / never / 26.607 | 0.008 / 0 / 0.002 | 18 (0) | met | met |
+| quin_pb6_s10 | 27.548 / never / 31.294 | 27.797 / never / 36.126 | 3801 (29) | - | MISSED |
+| quin_clk1_s10 | 0.004 / 0 / 0.000 | 0.003 / 0 / 0.001 | 598 (0) | - | met |
+| quin_clk3_s10 | 24.917 / never / 22.831 | 22.542 / never / 22.434 | 2820 (29) | MISSED | MISSED |
+| quin_clk6_s10 | 27.543 / never / 32.456 | 27.543 / never / 36.001 | 2553 (18) | - | MISSED |
+| quin_pb1_s92p409 | 0.003 / 0 / 0.001 | 0.003 / 0 / 0.001 | 6 (0) | - | met |
+| quin_pb3_s92p409 | 295.405 / never / 320.737 | 0.008 / 0 / 0.002 | 18 (0) | met | met |
+| quin_pb6_s92p409 | 189.731 / never / 222.575 | 0.171 / 105 / 0.033 | 6 (0) | - | met |
+| quin_clk1_s92p409 | 0.003 / 0 / 0.001 | 0.003 / 0 / 0.001 | 726 (0) | - | met |
+| quin_clk3_s92p409 | 292.787 / never / 347.497 | 291.469 / never / 333.351 | 140 (14) | MISSED | MISSED |
+| quin_clk6_s92p409 | 210.334 / never / 254.450 | 214.109 / never / 253.881 | 1054 (15) | - | MISSED |
+| szz_pb1_s10 | 0.010 / 0 / 0.003 | 0.005 / 0 / 0.001 | 6 (0) | - | met |
+| szz_pb3_s10 | 21.283 / never / 15.337 | 0.011 / 0 / 0.001 | 20 (2) | met | MISSED |
+| szz_pb6_s10 | 22.835 / never / 21.603 | 13.568 / 135 / 0.639 | 27 (12) | - | MISSED |
+| szz_clk1_s10 | 0.007 / 0 / -0.000 | 0.005 / 0 / 0.001 | 728 (0) | - | met |
+| szz_clk3_s10 | 21.728 / never / 15.902 | 21.440 / never / 15.457 | 3293 (19) | MISSED | MISSED |
+| szz_clk6_s10 | 20.644 / never / 20.195 | 15.799 / never / 14.520 | 1324 (10) | - | MISSED |
+| szz_pb1_s92p409 | 0.004 / 0 / 0.001 | 0.005 / 0 / 0.001 | 6 (0) | - | met |
+| szz_pb3_s92p409 | 203.624 / never / 156.588 | 0.011 / 0 / 0.001 | 20 (2) | met | MISSED |
+| szz_pb6_s92p409 | 144.899 / never / 119.725 | 0.543 / 73 / 0.038 | 12 (0) | - | met |
+| szz_clk1_s92p409 | 0.005 / 0 / 0.001 | 0.005 / 0 / 0.001 | 728 (0) | - | met |
+| szz_clk3_s92p409 | 201.423 / never / 161.260 | 208.343 / never / 178.281 | 921 (15) | MISSED | MISSED |
+| szz_clk6_s92p409 | 144.830 / never / 114.273 | 144.253 / never / 112.816 | 1546 (19) | - | MISSED |
+
+### 11.8 Verdict: KEEP_OFF, with the misses stated
+
+B2 is missed in 10 of the 16 valid biting cells with K at most 3: the eight class-CLK K 3 cells (10 and 92.409 m, four consumers) and the two K 3 cells at 2 m; it is met in the other 6 (class PB, K 3, 10 and 92.409 m, three consumers). B3 is missed in 21 of 54 cells, all by innocent flags (11.4); its pair, quiet-cell and re-float clauses are met everywhere. The primary consumer's core matrix, which the registered rule also reports alone (12 cells at 10 and 92.409 m, `recheck/grade_core_wtzz.txt`), gives the same verdict: 8 cells bite; B2 cells 4, met 2 (class PB, K 3, both steps), missed 2 (class CLK, K 3, both steps); B3 missed 5 (pb6_s10, clk3_s10, clk6_s10, clk3_s92p409, clk6_s92p409); KEEP_OFF. The four consumers' 48 core cells (`recheck/grade_core_all.txt`): 29 bite; B2 cells 14, met 6, missed 8; B3 missed 21; KEEP_OFF. The registered rule gives KEEP_OFF for a miss of B2 or B3, which is recorded here as it stands.
+
+What the result says. The edge exists on every consumer: an undeclared step on 3 satellites at once costs the unscreened consumer 20 to 408 m for 3 h, and one satellite costs nothing. The screen answers it when few rows are gross: class PB at K 3 (6 rows) is cured to 0.008 to 0.011 m, a single clock step is held out, and the unperturbed replays are untouched. It fails from about 12 gross rows (19 to 23 % of the rows), whether phase rows only (PB, K 6) or code and phase (CLK, K 3), by flagging the innocent rows first, and it is blind under about 2 to 3 m. The first failure is the removal order of the leave-one-out statistic (the innocent rows take the largest |w|), which no threshold changes. Arming is not recommended; a successor (a first removal that does not take the cluster for the reference) or the deletion of the screen are the author's decisions. The key stays default off.
+
+### 11.9 Deferrals, triaged (standing invariant 3)
+
+- A differenced (BSSD) consumer is not screened: field-inert. All 116 arms are undifferenced (`consumer_undifferenced` true), and the run-end line shows 0 skipped calls in 58 of 58 screen-on runs (no epoch lacked an eligible row).
+- The filter's robust R inflations are not in S: field-inert, unmeasured. No failure above is of this kind: the stepped rows are flagged at |w| 8 to 189 where the screen works, and the failures are the masking of 11.4 and the floor of 11.5.
+- The open exclusion episodes are not in the real-time snapshot: field-blocking for a warm-resumed consumer, as before. 15 of 58 screen-on runs end with episodes open (up to 16, held-out code rows of a persistent step); a restored consumer starts with none and re-flags at its first epoch, losing the streak toward a re-float. The knob is not warm-resume-runnable.
+- The events are not drained into `network_events.csv`: field-inert; the log and the sat trace carry the same events in 54 of 54 cells.
+- The threshold (section 7 item 2): k 6 gives the floor of 11.5. A lower k trades that floor for false flags (none here: 0 of about 170,000 unperturbed rows flagged at k 6). A different k is a new card line, not field-blocking while the key is default off.
+
+### 11.10 Run directories
+
+`D:/GnssProcessorSupport/runs_nis/`: `_rap_nis_<consumer>_null_<off|on>` (4 pairs), `_rap_nis_<consumer>_<pb|clk><K>_s<10|92p409|2>_<off|on>` (54 pairs), the single-thread repeats `_rap_chk_t1_*` (5) and the build-time smokes `_rap_smoke_*`, `_rap_smk2_*`. Perturbed wires `gates/nisclose/wires/<cell>.txt` (54), satellite lists `gates/nisclose/sats_<consumer>.json`.
