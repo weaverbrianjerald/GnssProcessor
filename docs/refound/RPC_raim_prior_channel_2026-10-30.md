@@ -158,3 +158,78 @@ decides. FAIL: G1, G2, G3, G4 or G5 misses; the failed clause is reported and th
 Arming is the author's decision, through a ledger row and the golden generator.
 
 <!-- Results are appended below this line under dated headings. -->
+
+## 7. 2026-10-30: results
+
+### 7.1 Executables and runs
+
+| role | executable | sha256[:16] | source |
+| --- | --- | --- | --- |
+| base | `gnss_processor_rpc0.exe` | `95319872ea22e966` | Release build of main `5127429` |
+| changed | `gnss_processor_rpc1.exe` | `266ec04b510b6f01` | Release build of `b3c6b1f` (this branch) |
+
+Every arm of section 5 exits 0 and emits all its epochs with none withheld (2 h field: 240 of 242 synced; 2 h sim:
+241). The box was shared with other sessions' arms throughout; no wall-clock figure is quoted. Every number below was
+read from the run directories (`products.txt`, `logs/network_events.csv`, `logs/network_raim_attrib.csv`,
+`logs/closed_loop_trace.csv`, `stdout.txt`).
+
+### 7.2 Gates G0 to G3
+
+| gate | result | verdict |
+| --- | --- | --- |
+| G0 unit | Debug `gnss_tests`: 3 665 tests in 498 suites, 3 632 passed, 33 skipped, none failed; every skip a fixture absent from this worktree (SIF 25, GPT3 5, BRDC, IONEX and SP3 one each). The new suite `RaimPriorChannel` (13 cases) passes | PASS |
+| G1 key off | `nom_td_gate.py --whole`, base against changed exe: field 2 h IDENTICAL (`products.txt` in full, every CSV, the 12 manifest records, the whole `stdout.txt` and main log, `rt_engine.log`, the exit code); sim 2 h IDENTICAL | PASS |
+| G2 mechanism | `rpc_on_f2`: the channel ran on 234 passes, the 234 post-fit walks; 13 513 station-epochs with carried-prior rows; rows tested 379 082 (`block_ambiguity_carry` 342 739, `block_rx_cb_carry` 36 343), none at the redundancy floor. Both pools admitted `data_phase` only (345 032 visits) and refused `block_ambiguity_carry` 4 276 000 and `block_rx_cb_carry` 635 330 visits, with 0 own-column disagreements. Flags 29: 15 line-of-sight refloats (15 `prior_arc refloat` rows, 30 ambiguities reached), 12 on arcs the observation channel refloated in the same pass (12 `obs_refloat` rows), 2 code-bias resets (2 `prior_rxcb reset` rows); 0 held, 0 unwired | PASS |
+| G3 the brake | G07's emitted clock, `E` from its 259380 value (+0.535 m) over 259410 to 259650: `rpc_c0rpa_f2` 11.886 m (+0.120, -1.208, -2.792, -4.488, -6.225, -7.940, -9.660, -11.351 m at 259620): the event reproduces; `rpc_c0off_f2` 0.441 m; `rpc_c0on_f2` 0.440 m, at most 1.441 m and at most 5.943 m; `T4_prior prior_arc` refloats of BSHM00ISR G07 at 259410, 259470, 259530, 259590, 259620 and 259770 (flag statistics 32.2, 58.2, 62.6, 74.0, 6.8, 19.2) | PASS |
+
+The 0.44 m of every arm, the golden's included (0.429 m), is the 259410 epoch's own move (+0.535 to +0.120 m), which
+precedes every response (card ICF section 7 measured 0.444 m).
+
+### 7.3 Readings at 2 h (D1 to D4)
+
+**D1, refloats by tier** (2 h field; by half hour in brackets):
+
+| arm | `T4_attrib` arcs | `T4_prior` refloats | on arcs `T4_attrib` took | code-bias resets | `amb_raim_drop` | `amb_drop_latch_slip` | `amb_gross_erase` |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `rpc_off_f2` (golden) | 30 (12 14 4) | | | | 60 | 196 | 8 |
+| `rpc_rpa_f2` (pools only) | 18 (0 11 7) | | | | 36 | 200 | 8 |
+| `rpc_on_f2` (the key) | 18 (0 11 7) | 15 (7 6 2) | 12 (0 10 2) | 2 | 66 | 200 | 8 |
+| `rpc_c0off_f2` | 40 (22 14 4) | | | | 77 | 196 | 0 |
+| `rpc_c0rpa_f2` | 18 (0 11 7) | | | | 36 | 200 | 0 |
+| `rpc_c0on_f2` | 18 (0 11 7) | 24 (16 6 2) | 12 (0 10 2) | 5 | 79 | 200 | 0 |
+
+No arm has a `T3_raim` or a within-epoch (`T2_within_epoch`) row. On the sim (`rpc_off_s2`, `rpc_on_s2`) no arm has a T4
+row of either channel (`amb_raim_drop` 0, `amb_drop_latch_slip` 2 in both); the key-on sim arm tested 413 642
+carried-prior rows (largest statistic 2.17) and flagged none.
+
+**D2, what the channel adds to the pool restriction.** `rpc_rpa_f2` and `rpc_on_f2` take the same 18 observation-channel
+refloats. The channel adds 15 refloats and 2 code-bias resets: BSHM00ISR G07, G09, G14 and its GPS code bias at 259410;
+MAC100AUS G31 and its Galileo code bias at 259800; LCK400IND G04 at 259830 (the own row at 9.45 with no other carried
+column on it, the refloat card NOM section 16 found driven by a prior row: it is that carry's own); MAJU00MHL G08 at
+260040; YKRO00CIV E10 at 260490 and G05 at 262380; HKSL00HKG E13, E19 and E26 between 262590 and 263040, beside the
+observation channel's refloats of the station's persistent E04 misfit.
+
+**D3, the two events.**
+
+| arm | BSHM00ISR, 259410 to 259650 |
+| --- | --- |
+| golden (`rpc_off_f2`) | the cold bound declares G07 at 259410 (24.8 m against 12 m) and refloats it at 259470, 259530 and 259590; T4 refloats E04, E14, E19, G05 and G07 at 259410, five cells with one interaction (10.7533): one prior row in five pools |
+| `rpc_c0off_f2` (prior rows in the pools) | 15 T4 refloats: E04, E14, E19, G05, G07 at 259410; E04, G05, G07 at 259470; E04, E19, G05, G07 at 259530; E04, G05, G07 at 259590 |
+| `rpc_c0rpa_f2` (observation rows only) | none; G07's clock runs away to -11.35 m |
+| `rpc_c0on_f2` (the channel) | G07's own row at 259410, 259470, 259530, 259590, 259620 and 259770; G09 at 259410 and 259470; G14 at 259410 to 259590; the GPS code bias at 259410 to 259590 |
+
+At 259410 the channel's cells at BSHM00ISR read G07 32.21, G14 21.44, G09 14.84 and the GPS code bias 14.08 (flagged),
+the Galileo code bias -6.13 and E19 -6.13 (not): the cells the spread rule could not separate. KIT300UZB, 263670 to
+263730: the golden refloats G21 at 263700 only; with observation rows in the pools (`rpc_rpa_f2`, `rpc_on_f2`) the
+observation channel refloats E21, E26, G02, G08, G19 and G21 at 263670, and the channel flags G21's own carry row
+(statistic 183.6) on the arc already refloated.
+
+**D4.** Held-out consumer at 2 h (WTZZ00DEU 3D p50, mm): golden 58.80 12.30, the key 58.80 11.95, pools only 58.70
+11.90; event posture: `c0off` 51.05 12.10, `c0on` 50.35 11.95, `c0rpa` 53.60 14.75 (the runaway costs +2.65 mm in hour
+2). Sim (SZZ000SIM from 00:30:15): 99.45 32.60 in both arms, `products.txt` and the closed-loop trace byte-identical;
+only `sigma0_global` and `prior_tension_ratio` of the epoch status move (the constraint-aware sigma0's data side no
+longer counts the prior rows). Coefficient check: 60.3 % of the tested rows on the field and 60.2 % on the sim have their
+largest coefficient on another carried column than their own. The check counts a row's other band of the same line of
+sight (the two ambiguities of one satellite are strongly correlated through its slant ionosphere), which stays in the
+row's own cell; at BSHM00ISR the flagged G07 row's own coefficient (2.778) and its largest other (2.780) are equal to the
+third digit. Reading R-b is not supported on this event: the fault's own carry flags first and the brake holds.
