@@ -1815,9 +1815,9 @@ def check_v13(tree):
     """(problems, info): no network file (src/core/network, include/network) names a class of the
     single-receiver state outside its comments: StateManager, MeasurementModel, StateInitializer,
     nor the dense EpochMeasurement.  A network station's columns are its own parameter set
-    (network/state/StationParams.hpp, card NOM step N6) and its rows are sparse
-    (StationDataRows, step N6f, card NOM5); a name back in the network tree is the borrowed
-    state or the dense matrix this check keeps out."""
+    (network/state/StationParams.hpp) and its rows are sparse (StationDataRows,
+    network/assembly/StationRows.hpp); a name back in the network tree is the borrowed state
+    or the dense matrix this check keeps out."""
     problems, n = [], 0
     for path in tree.files("src/core/network", "include/network"):
         if not path.endswith((".cpp", ".hpp", ".h")):

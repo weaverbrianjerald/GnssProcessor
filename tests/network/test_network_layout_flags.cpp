@@ -1,7 +1,7 @@
 /**
  * @file test_network_layout_flags.cpp
  * @brief The single-receiver layout flags in a network run, and the network's own troposphere
- *        gradient columns (card NOM5 step N6h).
+ *        gradient columns.
  *
  * A network station's layout is its own parameter set.  The single-receiver flags
  * (estimation.estimate_velocity, estimate_phase_clock, estimate_tropo_gradients, imu.enabled,
