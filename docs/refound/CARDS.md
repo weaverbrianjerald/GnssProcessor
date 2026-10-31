@@ -270,8 +270,10 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   gate had the same defect). Gate off: byte-identical on 2 h field and sim arms. Gate on at 120 epochs, 2 h field: 27 flags
   held on 11 epochs (19 arcs), the lift at 62.5 min, 3 of the 4 refloats after it on arcs held before it. Nothing armed;
   ledger verdicts unchanged.
-- [RPC](RPC_raim_prior_channel_2026-10-30.md): open, 2026-10-30: the post-fit RAIM's prior channel (card RPA's first
-  defect), `network.raim_prior_channel` default off: the observation pools keep observation rows, and each carried-prior
-  row is tested once, in the cell of its own column, with the T4 isolated-arc test; a flag answers its carry (the arc
-  refloat or the receiver code-bias reset). Gates frozen before any run: off identity, mechanism, the BSHM00ISR brake
-  with the cold-start bound at 0, the 6 h field and sim users, census and clock wire.
+- [RPC](RPC_raim_prior_channel_2026-10-30.md): closed, 2026-10-30: PASS, the post-fit RAIM's prior channel (card RPA's
+  first defect), `network.raim_prior_channel` built default off on branch `claude/awesome-leavitt-2520ab` (not merged).
+  The pools keep observation rows; each carried-prior row is tested once, in its own column's cell, with the T4
+  isolated-arc test, and a flag answers its carry. Key off byte-identical (2 h field and sim). With the cold-start bound
+  at 0, BSHM00ISR's G07 runaway (11.9 m without a brake) is held at 0.44 m by the line of sight's own carry row. 6 h:
+  WTZZ00DEU +0.25 mm, census median 0.0 mm, clock wire within 2 %, sim byte-identical; refloats 55 to 71, mostly one
+  faulty line of sight answered every epoch. UNVALIDATED; a hold and multi-day owed.

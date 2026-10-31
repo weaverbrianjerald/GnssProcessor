@@ -4,15 +4,20 @@
 
 - **id:** RPC
 - **topic:** raim-qc
-- **status:** open
-- **summary:** Pre-registered 2026-10-30, gates frozen in section 6 before any run of a changed executable. The first defect card RPA named (section 4, "What this points to"): the post-fit RAIM pools admit whitened carried-prior rows as phase data, so a large prior residual is spread over every ambiguity column its row clears and dilutes the observation pool, while card RPA's cure (observation rows only) removed the only brake on a cold-start G07 clock runaway at BSHM00ISR. The new key `network.raim_prior_channel` (default off) keeps the observation pools to observation rows and tests every carried-prior row on its own channel, in the cell of its own column, with the T4 isolated-arc test; a flag answers the carry it belongs to.
+- **status:** closed
+- **summary:** PASS, BUILT and GATED default off on branch `claude/awesome-leavitt-2520ab` (not merged; nothing armed). `network.raim_prior_channel` keeps the RAIM pools to observation rows and tests every carried-prior row once, in the cell of its own column, with the T4 isolated-arc test; a flag answers its carry (the arc refloat, or the receiver code-bias reset). Key off: byte-identical on 2 h field and sim goldens. The brake card RPA lost holds: with the cold-start bound at 0, BSHM00ISR's G07 runaway (11.9 m with observation rows only) is held at 0.44 m by the faulty line of sight's own carried-ambiguity row. 6 h: WTZZ00DEU +0.25 mm over hours 2 to 6, census median 0.0 mm (none worse), clock wire within 2 %, sim byte-identical. Cost: 71 arc refloats against 55 and 127 drops against 107, mostly one persistently faulty line of sight answered every epoch (BSHM00ISR G22). Pre-registered 2026-10-30 (`3b784a4`), gates in section 6.
 - **source:** card [RPA](RPA_raim_pool_data_rows_2026-10-08.md) sections 4 and 5 (the defect and the event); card [ICF](ICF_ignition_code_fault_2026-10-09.md) sections 1, 6 and 7 (the conduit, and the cold-start bound now armed in both goldens); card [NOM](NOM_network_object_model_2026-10-08.md) section 16 (11 of 12 refloats through prior rows); card [MGT](MGT_maturity_gate_telemetry_2026-10-30.md) (the T4 block and the maturity gate's telemetry); `src/core/network/qc/Raim.cpp`, `src/core/network/qc/RaimWithinEpoch.cpp`, `src/core/network/carry/Coupling.cpp`
 - **knobs / posture:** new `network.raim_prior_channel` (default off; not fingerprinted, a QC key like the other `raim_*` keys); read, not changed: `network.raim_pool_data_rows_only` (KEEP_OFF), `network.gross_los_cold_bound_m` (12 m in both goldens, set to 0 in the three event arms only). Base: `config/golden/golden_field_refound.json` and `config/golden/golden_sim_refound.json` of main `5127429`.
 - **dates in the text:** 2026-10-30
-- **hashes / run dirs:** base exe `gnss_processor_rpc0.exe` (the Release build of main `5127429`), changed exe `gnss_processor_rpc1.exe` (the Release build of this branch), both under `D:/GnssProcessorSupport/gates/exe/x64-Release/`; run root `D:/GnssProcessorSupport/runs_nom`, arms `_rap_rpc_*` (section 5)
+- **hashes / run dirs:** pre-registration `3b784a4`, code `b3c6b1f`; base exe `gnss_processor_rpc0.exe` (the Release build of main `5127429`, sha256[:16] `95319872ea22e966`), changed exe `gnss_processor_rpc1.exe` (the Release build of `b3c6b1f`, `266ec04b510b6f01`), both under `D:/GnssProcessorSupport/gates/exe/x64-Release/`; run root `D:/GnssProcessorSupport/runs_nom`, arms `_rap_rpc_*` (section 5), census replays `_rap_rpcc_{off,on}_<site4>`
 - **gates (frozen at pre-registration):** section 6
 
-**Outcome.** Owed at close.
+**Outcome.** Question: can the carried-prior rows be tested on their own channel, against their own column, without
+losing the brake card RPA lost? Yes. With the key, the RAIM pools hold observation rows and each prior row is tested once
+in its own column's cell. With the cold-start bound at 0 the channel refloats BSHM00ISR's G07 carry by its own row and
+holds the runaway at 0.44 m (11.9 m without it). Every gate passes: key off byte-identical; 6 h users unchanged within
+the bars. Cost: more refloats (71 against 55), mostly one faulty line of sight answered every epoch. Standing: UNVALIDATED,
+not merged; a hold and multi-day owed (section 8).
 
 ## 1. The question
 
@@ -233,3 +238,74 @@ largest coefficient on another carried column than their own. The check counts a
 sight (the two ambiguities of one satellite are strongly correlated through its slant ionosphere), which stays in the
 row's own cell; at BSHM00ISR the flagged G07 row's own coefficient (2.778) and its largest other (2.780) are equal to the
 third digit. Reading R-b is not supported on this event: the fault's own carry flags first and the brake holds.
+
+### 7.4 Gates G4 and G5 (6 h)
+
+| gate | result | verdict |
+| --- | --- | --- |
+| G4 field, WTZZ00DEU | 3D p50 by hour (mm): control `rpc_off_f6` 58.80 12.30 23.05 12.25 16.50 12.00 (equal to card RCG's control, the baseline `_rf0hv17_field6`); the key 58.80 11.95 23.95 12.80 16.65 12.00. Change 0.00, -0.35, +0.90, +0.55, +0.15, 0.00: mean over hours 2 to 6 +0.25 mm (bar +1.0), worst hour +0.90 mm (bar +10) | PASS |
+| G4 field, census | `gcensus.py grade rpcc_off rpcc_on`, 16 sites, hours 2 to 6: paired median +0.0000 m, 0 better and 0 worse at 1 cm; the largest site changes WUH2 -0.7 mm, POHN +0.5 mm, ANMG +0.3 mm; hour 1 median -0.0001 m | PASS |
+| G4 field, clock wire | `ftc_step_attrib.py --r3 --systems G,E`, `e_clk` de-commoned p50 over hours 2 to 6 (m), all / tracked: GPS 0.0234 / 0.0189 against 0.0234 / 0.0189 (0 %, 0 %); Galileo 0.0215 / 0.0123 against 0.0211 / 0.0125 (+1.9 %, -1.6 %); bar +10 % on each | PASS |
+| G4 field, epochs | 720 emitted, 0 withheld in both arms | PASS |
+| G5 sim, from 00:30:15 | `products.txt`, the closed-loop trace and the events file byte-identical to the control (SZZ000SIM 99.45 32.60 39.80 16.00 18.00 15.15 mm in both); only the two measure-only columns of D4 move in the epoch status; 720 emitted, 0 withheld in both; the channel flagged nothing | not applicable (byte-identical), holds trivially |
+
+### 7.5 Readings at 6 h
+
+**Refloats by tier** (field 6 h; by half hour in brackets):
+
+| arm | `T4_attrib` arcs | `T4_prior` refloats | on arcs `T4_attrib` took | code-bias resets | `amb_raim_drop` | `amb_drop_latch_slip` | `amb_gross_erase` | `GROSSLOS` rows |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `rpc_off_f6` | 55 (12 14 4 0 3 8 0 4 0 2 2 6) | | | | 107 | 456 | 14 | 37 |
+| `rpc_on_f6` | 19 (0 11 7 0 1) | 52 (7 6 2 0 3 7 2 10 3 3 3 6) | 12 (0 10 2) | 2 | 127 | 460 | 13 | 29 |
+
+The control's rows equal card RCG's control. With the key the arcs refloated rise from 55 to 71 and the drops from 107
+to 127: over hours 3 to 6 the key's arm refloats 38 arcs (37 by the channel) against the golden's 25, and the users do
+not move (section 7.4). The channel's 52 refloats: BSHM00ISR 21, HKSL00HKG 7, SGOC00LKA 5, GAMB00PYF 5,
+JPLM00USA 3, two each at YKRO00CIV, DARW00AUS, STHL00GBR and CPVG00CPV, one each at MAC100AUS, LCK400IND and MAJU00MHL.
+The observation channel's 19 are HKSL00HKG's persistent E04 misfit (11), the KIT300UZB spikes (7) and YKRO00CIV E10.
+
+**A persistent faulty line of sight is answered once per epoch.** Of the 37 channel refloats after the second hour, 13
+are BSHM00ISR G22 (the golden refloats it once), the faulty L1 channel card RPA section 5 found on G22 and G13 later in
+the day; they are 12 of the 16 refloats the key adds over 6 h. The channel refloats G22 at its re-entries of 269310,
+271200 and 273450, three epochs after the re-entry of 269490 (269580), and on the epochs after a re-entry while the
+carry rebuilds tension: 269340, 269370, and every epoch from 273480 to 273660. On the golden the gross
+line-of-sight screen declares the line of sight once (273510, its C1C row at 195.8 m) and holds it until expiry
+(274560); with the key that declaration does not happen (over the run the `GROSSLOS` rows fall from 37 to 29). The channel has no
+hold and no persistence gate (section 3), so a line of sight whose fault persists is refloated on every epoch the fault
+shows; the cost is churn, not the users.
+
+**Coefficient check at 6 h:** 658 027 of 1 170 288 tested rows (56.2 %) have their largest coefficient on another
+carried column. The largest row statistic of the run is HKSL00HKG E04's at 316.91 (TOW 262770), the arc the observation
+channel refloats eleven times.
+
+### 7.6 Verdict
+
+**PASS.** G0 to G4 hold and G5 is not applicable (the sim arm is byte-identical in products and consumer). The
+carried-prior rows leave the observation pools, each is tested once in the cell of its own column, and the channel keeps
+the brake card RPA lost: with the cold-start bound at 0, the G07 runaway that reaches 11.9 m with observation rows only
+is held at 0.44 m, as by the spread rule, through the faulty line of sight's own carried ambiguity (reading R-a; R-b not
+supported on this event). On the golden the users are unchanged within every bar (WTZZ00DEU +0.25 mm over hours 2 to 6,
+census median 0.0 mm with no site worse, clock wire within 2 %, the sim byte-identical), and the observation channel now
+catches the observation spikes the prior rows masked (KIT300UZB). The cost is churn: 71 arc refloats against 55 and 127
+drops against 107 over 6 h, three quarters of the added refloats on one persistently faulty line of sight (BSHM00ISR
+G22). The ledger row stays UNVALIDATED; arming is the author's decision.
+
+## 8. Owed and not done
+
+Triage per standing invariant 3; none is field-blocking (the key is field-runnable as built).
+
+- **A hold for a persistent flag** (field-inert: churn, no user cost measured). The channel refloats a faulty line of
+  sight on every epoch its fault shows (BSHM00ISR G22, section 7.5). A declaration that holds the line of sight, or a
+  hand-over to the gross line-of-sight screen's declaration, would answer it once; a card of its own, graded on churn.
+- **Multi-day.** Card RPA's G5 asked for DOY 130 and 131 before adoption; this card's gates are one day. The census on
+  card MDAY's days is owed before any arming.
+- **The receiver code-bias reset is not a row of the parameter-response table** (section 3): a migration owed when the
+  key is armed, since a new site moves every run's manifest.
+- **The within-epoch tier has no prior channel** (field-inert: no arm of this card has a within-epoch trigger).
+- **The coefficient check counts the spread within one line of sight** (two bands of one satellite) beside the spread
+  across subjects. A split by subject would size reading R-b on every row; the column's w-test of section 2 remains the
+  order-free alternative if a fault is ever found answered in the wrong cell.
+- **The wet delay and the receiver clock in the block have no response** (field-inert: neither is armed in either
+  golden; counted and warned when they are).
+- **The register line** of `docs/status/OPEN_ITEMS_BUILT_OFF.md` is added on merge, not here (this branch is not
+  merged).
