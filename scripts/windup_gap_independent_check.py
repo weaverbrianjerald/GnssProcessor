@@ -666,7 +666,7 @@ def nonzero_range(br):
 
 
 def summarize(rows, bridge, struct):
-    """The counts of a table as a dict (printed by write_outputs, kept for the card)."""
+    """The counts of a table as a dict (printed by write_outputs)."""
     n_failed = len([r for r in rows if r.get("failed")])
     rows = [r for r in rows if not r.get("failed")]
     br = [r for r in rows if r["bridge_outcome"] == "bridged"]
@@ -1050,9 +1050,9 @@ def main():
     c.add_argument("--no-rinex", action="store_true", help="skip the RINEX epoch reader (origins from elevation only)")
     c.add_argument("--origin-rule", choices=["registered", "births"], default="births",
                    help="accumulator origin of a pair without a restart event: 'registered' is the first epoch with a phase "
-                        "observation above the mask outside the umbra (the pre-registered rule); 'births' is the first "
-                        "carried ambiguity of the bridge run's network_amb_state.csv, the epoch the project modelled the pair "
-                        "(amendment A2), with the dual-frequency receiver data as the alternative")
+                        "observation above the mask outside the umbra; 'births' (default) is the first carried ambiguity of "
+                        "the bridge run's network_amb_state.csv, the epoch the project first modelled the pair, with the "
+                        "dual-frequency receiver data as the alternative")
     c.add_argument("--out-csv")
     c.add_argument("--out-md")
     c.add_argument("--out-summary", help="the printed summary, as a text file")
