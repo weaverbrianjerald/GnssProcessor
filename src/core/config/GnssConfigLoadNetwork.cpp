@@ -7714,6 +7714,19 @@ namespace GnssProcessor {
             jval<double>(json, "network.phase_datum_eq34_rpb_q_m2s",
                          "network_phase_datum_eq34_rpb_q_m2s",
                          network_config_.process_noise.get(NetworkQClass::ChainDatumRpb));
+        network_phase_datum_eq34_rpb_prior_birth_only_ =
+            jval<bool>(json, "network.phase_datum_eq34_rpb_prior_birth_only",
+                       "network_phase_datum_eq34_rpb_prior_birth_only", false);
+        if (network_phase_datum_eq34_rpb_prior_birth_only_
+            && !(network_phase_datum_eq34_rpb_prior_sigma_m_ > 0.0
+                 && network_phase_datum_eq34_rpb_q_m2s_ > 0.0))
+            log->warn("Network: network.phase_datum_eq34_rpb_prior_birth_only is INERT: it needs "
+                      "both the receiver phase-bias floor (phase_datum_eq34_rpb_prior_sigma_m > 0) "
+                      "and the time link (phase_datum_eq34_rpb_q_m2s > 0) it hands the bias to.");
+        else if (network_phase_datum_eq34_rpb_prior_birth_only_)
+            log->info("Network: eq34 receiver phase-bias floor BIRTH-ONLY: the zero-mean floor "
+                      "folds only while a bias has no time-linked carry (birth, erase, a gap past "
+                      "the horizon); the time link carries it from there.");
         network_phase_datum_eq34_carry_shift_ =
             jval<bool>(json, "network.phase_datum_eq34_carry_shift",
                        "network_phase_datum_eq34_carry_shift", false);

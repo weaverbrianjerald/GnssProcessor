@@ -4780,6 +4780,23 @@ namespace GnssProcessor {
         double networkPhaseDatumEq34RpbPriorSigmaM() const { return network_phase_datum_eq34_rpb_prior_sigma_m_; }
 
         /**
+         * @brief Fold the receiver phase-bias floor only at the bias's birth
+         *        (@c network.phase_datum_eq34_rpb_prior_birth_only).
+         *
+         * Off (default), the zero-mean floor of @ref networkPhaseDatumEq34RpbPriorSigmaM is
+         * folded every epoch, and with the time link on it becomes the datum of each
+         * receiver's geometry-free direction (receiver phase bias, slant ionosphere and
+         * receiver DCB; the DCB spread reaches metres).  On, it is folded only while the bias
+         * has no time-linked carry this epoch (its birth, or after an erase or a gap past the
+         * horizon), and the time link carries it from there.  Inert (resolved off) unless both
+         * the floor and @ref networkPhaseDatumEq34RpbQ are positive.
+         *
+         * @return True when armed in the configuration.
+         * @see networkPhaseDatumEq34RpbPriorSigmaM, networkPhaseDatumEq34RpbQ
+         */
+        bool networkPhaseDatumEq34RpbPriorBirthOnly() const { return network_phase_datum_eq34_rpb_prior_birth_only_; }
+
+        /**
          * @brief Process noise q (m²/s) of the local receiver phase-bias
          *        time-linking carry (@c network.phase_datum_eq34_rpb_q_m2s).
          *
@@ -8851,6 +8868,7 @@ namespace GnssProcessor {
         bool   network_phase_datum_eq34_seed_round_{false}; ///< Seed-round (docs/SPEC_eq34_seed_round.md): round otherwise-zero pin targets to λ·round(x_state/λ) (first sighting, dead-carry incumbents, and every carry_invariant epoch).  |pin innovation| ≤ λ/2 by construction.  Default off; refused without network_phase_datum_eq34_.
         bool   network_phase_datum_eq34_seed_round_rehost_frame_{false}; ///< Seed-round re-host (docs/SPEC_eq34_seed_round.md §8.5): a tree pin that moves to a new host takes its frame step from that host's own ambiguity state (exact pre-pin float) and S-transforms the carries, instead of an unknown step that re-references the (sat,σ) and marginalizes its carried PB prior. Default off; refused without network_phase_datum_eq34_seed_round_.
         double network_phase_datum_eq34_rpb_prior_sigma_m_{1.0}; ///< Loose per-epoch zero-mean prior σ (m) on every RPB column: the station-local information floor for the near-null RPB↔ambiguity split (field A/B instrument); 0 disables. Inert unless network_phase_datum_eq34_.
+        bool   network_phase_datum_eq34_rpb_prior_birth_only_{false}; ///< Fold that floor only while the RPB has no time-linked carry (see networkPhaseDatumEq34RpbPriorBirthOnly).
         double network_phase_datum_eq34_rpb_q_m2s_{3E-06};       ///< q (m²/s) of the local δ_{r,σ} time-linking carry (D6 v2, local form), which suppresses the per-epoch RPB re-estimation bounce that corrupts the individual-float phase-leveling carries; 0 = v1 fresh re-estimation. Inert unless network_phase_datum_eq34_.
         bool   network_phase_datum_eq34_carry_shift_{false};     ///< Experimental: S-transform carried values on pin displacement instead of erase/skip (exact in the chain algebra; in the field it injects error through the weakly held δ split, DD step 86 against 11–15 cyc/epoch for erase-based hygiene; root cause open). Off = erase-based hygiene. Inert unless network_phase_datum_eq34_.
         bool   network_phase_datum_eq34_longevity_election_{false}; ///< Grow the eq34 spanning tree's new edges by arc longevity (rising arcs first, then high elevation; high-coverage receivers first) instead of lexical order, so tree edges are chosen to outlive the epoch, which reduces b_s re-reference churn at the source (the preference of spec D2 step 3). Incumbent-edge seed untouched; deterministic tie-break; off = legacy lexical growth (B9 baseline). Inert unless network_phase_datum_eq34_.

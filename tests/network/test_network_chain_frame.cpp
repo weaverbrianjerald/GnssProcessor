@@ -94,7 +94,7 @@ TEST(NetworkChainFrame, EventTableHasOneRowPerClassInOrder) {
 
 TEST(NetworkChainFrame, CertificationDeterminesAPreciseChordAndNotAnImpreciseOne) {
     ChainChordRow r;
-    // sigma 0.01 cycle per band (0.02 after the scale), correlated: both bands determined.
+    // sigma 0.01 cycle per band (0.03 after the scale), correlated: both bands determined.
     chainCertifyChord(7.004, -3.003, 1e-4, 0.8e-4, 1e-4, 0.9999, 3.0, 1e4, 0.10, r);
     ASSERT_TRUE(r.have_int_1);
     ASSERT_TRUE(r.have_int_2);

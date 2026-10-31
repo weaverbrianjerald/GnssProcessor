@@ -171,8 +171,10 @@ enum class ChainCertSource : std::uint8_t {
 const char* chainCertSourceName(ChainCertSource s);
 
 /// Sigma scale of the chord covariance in the certification (the measured optimism of the
-/// carried covariance); the variances are multiplied by its square.
-inline constexpr double kChainCertSigmaScale = 2.0;
+/// carried covariance); the variances are multiplied by its square.  3.0: at 2.0 the would-be
+/// certifications of the sim beds were wrong against truth, and the frozen certification rule
+/// raises the scale to 3.0 for the re-measurement.
+inline constexpr double kChainCertSigmaScale = 3.0;
 /// Conditional sigma (cycles) at or below which the certification counts a band's integer as
 /// determined.
 inline constexpr double kChainCertDeterminedSigmaCyc = 0.05;

@@ -812,6 +812,10 @@ namespace GnssProcessor {
         int ar_suspect_epochs{};
         double eq34_rpb_prior_sigma{};
         double eq34_rpb_prior_w{};
+        /// network.phase_datum_eq34_rpb_prior_birth_only: the zero-mean floor folds only while a
+        /// receiver phase bias has no time-linked carry.  Resolved to false unless the floor and
+        /// the time link are both on.
+        bool eq34_rpb_birth_only{};
         double eq34_rpb_q{};
         bool eq34_shift_on{};
         bool eq34_longevity{};
