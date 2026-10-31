@@ -25,6 +25,8 @@ computed:
      as a second layer of protection).
   5. "hold expired after <N>s".
   6. elapsed / ms-per-epoch / "<N> ms wall" timing fields.
+  7. "<N> ms total": the cost clause of the network arc ledger's run-end line
+     ("COST: build <N> ms total (<N> ms/epoch), audit ..."), a wall-clock sum.
 
 Not masked, deliberately: satellite counts, reset/repair counts, AR ratios,
 sigma0, discontinuity notices, gate decisions. Those are the signal.
@@ -48,6 +50,7 @@ MASKS = [
     (re.compile(r"\b\d+(\.\d+)?\s*ms wall\b"),            "<MS> ms wall"),
     (re.compile(r"epoch-loop wall [\d.]+ ms"),            "epoch-loop wall <MS> ms"),
     (re.compile(r"\b(elapsed|took|in)\s+\d+(\.\d+)?\s*(s|ms)\b"), r"\1 <T>"),
+    (re.compile(r"\b\d+(\.\d+)?\s*ms total\b"),            "<MS> ms total"),   # 7
 ]
 
 # --- CSV column masks -------------------------------------------------------

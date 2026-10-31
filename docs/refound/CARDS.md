@@ -173,9 +173,11 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   within max(0.05, the null's 99 % band)); PASSES in 44 of 44 cells; re-based onto `a02ccfb`. Results from IRD-1 on
   in IRDB.
 - [IRDB](IRDB_integer_recovering_datum_continued_2026-10-30.md): open, 2026-10-30: card IRD's continuation, from IRD-1
-  on. IRD-1: the observatory, measure-only and default off (the chain's event table, edge and chord traces, CHAIN
-  events, pre-hold and receiver phase-bias traces, the run-end frame census; the consumer's shared AR builder,
-  observe-mode integer search, fix traces and extended gate).
+  on. IRD-1 LANDED, measure-only and default off (the chain's event table, edge and chord traces, CHAIN events,
+  pre-hold and receiver phase-bias traces, the run-end frame census; the consumer's shared AR builder, observe-mode
+  integer search, fix traces and extended gate); every gate passes (`rt_seam_verify.py` retired, the retired lineage
+  graded same-build). A0 on rung 3c: 144 re-hosts in 2 h, 128 stepped by a fraction, none certifiable; RPB NEES 2.58.
+  Truth wires: 0 wrong of 2 506 settled integers per bed; the golden wire admits nothing. IRD-2 next.
 - [RKD](RKD_retired_key_deletion_2026-10-14.md): closed, 2026-10-14: the 144 retired network keys and five lane keys
   they orphan deleted with their code (149 ledger rows, 784 to 635; 30 C++ files); landed after the same-build
   golden comparison passed (only declared text moves on the goldens).
