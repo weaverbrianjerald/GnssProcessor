@@ -82,7 +82,7 @@ void networkEmitStore(NetworkRun& run, const NetworkEpoch& ep, NetworkSolutionEp
     bool we_t2_opp = ep.solve.we_t2_opp;
     bool we_t2_flag = ep.solve.we_t2_flag;
     ClosedLoopTally& cl_tally = run.closed_loop;
-    const ChainEpochObs& chain_obs = ep.events.phase_datum.chain;
+    const ChainEpochObs* chain_obs = ep.events.phase_datum.chain.get();
     // ---- End of the bindings ----
     // --- Alias preamble: the Application::runNetwork aliases plus 5 reconstructed
     //     locals, so the relocated SB_EMITSTORE body reads the driver's names. ---

@@ -157,8 +157,9 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
 // the election records each tree edge, component and chord for the post-solve observer.  It
 // only appends to `chain_obs`; nothing below reads it.
 const bool trace_chain = ctx.knobs.trace_chain_datum;
-ChainEpochObs& chain_obs = events.phase_datum.chain;   // written
-chain_obs = ChainEpochObs{};
+if (trace_chain) events.phase_datum.chain = std::make_shared<ChainEpochObs>();   // written: a fresh record
+ChainEpochObs chain_unarmed;   // the record's stand-in with the observatory off (written by no guarded line)
+ChainEpochObs& chain_obs = trace_chain ? *events.phase_datum.chain : chain_unarmed;
 chain_obs.armed = trace_chain;
 std::map<std::string, int> chain_index_of;   // station name -> roster index (observatory only)
 if (trace_chain)

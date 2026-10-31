@@ -12,6 +12,7 @@
 #include <gtest/gtest.h>
 
 #include <map>
+#include <memory>
 #include <set>
 #include <string>
 #include <vector>
@@ -255,14 +256,15 @@ TEST(NetworkChainFrame, RootHandoverAndSplit) {
 
 TEST(NetworkChainFrame, RememberReplacesTheMemoryAndCountsDepartures) {
     ChainFrameCounters cnt;
-    cnt.chain_frame_memory = memoryOf("A", {"R:0", "R:1", "S:G01", "S:G02"});
+    cnt.chain_frame_memory = std::make_shared<ChainFrameMemory>(memoryOf("A", {"R:0", "R:1", "S:G01", "S:G02"}));
     ChainEpochObs obs;
     obs.armed = true;
     obs.comps.push_back(component(0, "A", {0}, {"G01"}));
     obs.edges = {edge(0, "G01", true)};
-    const ChainEpochClass cls = chainClassifyEpoch(obs, cnt.chain_frame_memory, kNoFree, kNoCause, cnt);
+    const ChainEpochClass cls = chainClassifyEpoch(obs, *cnt.chain_frame_memory, kNoFree, kNoCause, cnt);
     chainRememberEpoch(obs, cls, {}, 2313, 300.0, 200.0, cnt);
-    const ChainFrameMemory& m = cnt.chain_frame_memory;
+    ASSERT_TRUE(cnt.chain_frame_memory);
+    const ChainFrameMemory& m = *cnt.chain_frame_memory;
     EXPECT_TRUE(m.have);
     EXPECT_EQ(m.vertex_comp.at(kGroup).size(), 2u);
     EXPECT_EQ(m.vertex_parent.at(kGroup).at("S:G01"), "R:0");

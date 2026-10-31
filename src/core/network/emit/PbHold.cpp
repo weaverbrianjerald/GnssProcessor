@@ -478,8 +478,10 @@ std::vector<PbPreholdSample> networkPbPreholdSample(const NetworkRunContext& ctx
 
 void networkPbPreholdWrite(NetworkRunContext& ctx, NetworkRunTraces& traces,
                            const SyncedEpoch& se, const std::vector<PbPreholdSample>& pre,
-                           const NetworkSolutionEpoch& sol, const ChainEpochObs& chain) {
+                           const NetworkSolutionEpoch& sol, const ChainEpochObs* chain_rec) {
     if (pre.empty() || !traces.pb_prehold_trace.is_open()) return;
+    const ChainEpochObs no_record;
+    const ChainEpochObs& chain = chain_rec != nullptr ? *chain_rec : no_record;
     // What the hold emitted, by key.
     std::map<std::pair<std::string, std::string>, const NetworkPhaseBias*> emitted;
     for (const NetworkSatSolution& s : sol.sats)

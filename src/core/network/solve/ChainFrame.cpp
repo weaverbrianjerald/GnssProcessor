@@ -25,6 +25,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <memory>
 #include <optional>
 #include <set>
 
@@ -430,7 +431,9 @@ ChainEpochClass chainClassifyEpoch(const ChainEpochObs& obs, const ChainFrameMem
 void chainRememberEpoch(const ChainEpochObs& obs, const ChainEpochClass& cls,
                         std::map<std::tuple<int, std::string, std::string>, std::pair<ChainChordRow, int>> chords,
                         int week, double tow, double now_s, ChainFrameCounters& cnt) {
-    const ChainFrameMemory& mem = cnt.chain_frame_memory;
+    const std::shared_ptr<ChainFrameMemory> prev = cnt.chain_frame_memory;   // alive until the end
+    const ChainFrameMemory none;
+    const ChainFrameMemory& mem = prev ? *prev : none;
     ChainFrameMemory next;
     next.have = true;
     next.week = week;
@@ -453,7 +456,7 @@ void chainRememberEpoch(const ChainEpochObs& obs, const ChainEpochClass& cls,
                 if (nit == next.vertex_comp.end() || !nit->second.count(v)) ++cnt.cf_departed;
             }
         }
-    cnt.chain_frame_memory = std::move(next);
+    cnt.chain_frame_memory = std::make_shared<ChainFrameMemory>(std::move(next));
 }
 
 // ---- The observer ---------------------------------------------------------------------------------
@@ -470,12 +473,14 @@ void networkChainFrameObserve(NetworkRun& run, const NetworkEpoch& ep) {
     const std::vector<StationAssembly>& asm_res = ep.assembly.asm_res;
     const std::vector<int>& est_index_of = ep.assembly.est_index_of;
     const EpochEvents::PhaseDatum& phase_datum_ev = ep.events.phase_datum;
-    const ChainEpochObs& obs = phase_datum_ev.chain;
+    const ChainEpochObs* obs_rec = phase_datum_ev.chain.get();
     const RelevelEpochState& relevel = ep.events.slip.relevel;
     ChainFrameCounters& cnt = ctx.counters;   // written: the observatory's counters and memory
     // ---- End of the bindings ----
     // Both knobs resolve to false off an eq34 run (network/driver/Knobs.cpp).
     if (!(ctx.knobs.trace_chain_datum || ctx.knobs.trace_rpb_states)) return;
+    const ChainEpochObs no_record;   // an epoch the election did not record
+    const ChainEpochObs& obs = obs_rec != nullptr ? *obs_rec : no_record;
 
     // Each station's ambiguity columns: (sat, signal) -> (column, linearization point).
     auto ambColumns = [&](std::size_t i) {
@@ -488,7 +493,10 @@ void networkChainFrameObserve(NetworkRun& run, const NetworkEpoch& ep) {
 
     std::vector<ChainEdgeObs> classified;   // this epoch's classified edges (the chain trace armed)
     if (ctx.knobs.trace_chain_datum && obs.armed) {
-        const ChainFrameMemory& mem = cnt.chain_frame_memory;
+        // The last observed epoch's memory, held alive here while chainRememberEpoch replaces it.
+        const std::shared_ptr<ChainFrameMemory> mem_hold =
+            cnt.chain_frame_memory ? cnt.chain_frame_memory : std::make_shared<ChainFrameMemory>();
+        const ChainFrameMemory& mem = *mem_hold;
         // 1. Classify and certify against the last observed epoch.
         const ChainEpochClass cls =
             chainClassifyEpoch(obs, mem, relevel.free_ambs, relevel.free_cause, cnt);

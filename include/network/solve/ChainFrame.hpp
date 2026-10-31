@@ -49,7 +49,8 @@
  * integer, it is a cross-check: a disagreement is a conflict and counts as uncertified.
  */
 
-#include "network/ar/ArcGraph.hpp"   // arcgraph::Cycle
+#include "network/ar/ArcGraph.hpp"                 // arcgraph::Cycle
+#include "network/solve/ChainFrameCounters.hpp"   // ChainFrameCounters, kChainEventRowCount
 
 #include <array>
 #include <cstddef>
@@ -83,8 +84,8 @@ enum class ChainEventRow : std::uint8_t {
     Split,              ///< The component split off a component of the last observed epoch.
 };
 
-/// The number of @ref ChainEventRow values.
-inline constexpr std::size_t kChainEventRowCount = 9;
+static_assert(kChainEventRowCount == static_cast<std::size_t>(ChainEventRow::Split) + 1,
+              "kChainEventRowCount (ChainFrameCounters.hpp) counts the ChainEventRow values");
 
 /// The frame step the integer rule of a row puts on the frame.
 enum class ChainStep : std::uint8_t {
@@ -311,52 +312,8 @@ struct ChainFrameMemory {
     std::map<std::tuple<int, std::string, std::string>, std::pair<ChainChordRow, int>> chords;
 };
 
-/// Run-scope counters and memory of the frame observatory, a base of NetworkServiceCounters
-/// (network/state/RunContext.hpp).  All zero unless network.trace_chain_datum is armed.
-struct ChainFrameCounters {
-    ChainFrameMemory chain_frame_memory;           ///< The last observed epoch.
-    long long cf_epochs{0};                        ///< Epochs observed.
-    long long cf_edges{0};                         ///< Tree edges recorded.
-    std::array<long long, kChainEventRowCount> cf_rows{};   ///< Edges by table row.
-    std::array<long long, kChainEventRowCount> cf_rows_frac{};     ///< ...whose legacy step was a known nonzero step that is not an integer of cycles.
-    std::array<long long, kChainEventRowCount> cf_rows_unknown{};  ///< ...whose legacy step was unknown (a re-reference).
-    long long cf_nonint_targets{0};                ///< Pins whose target is not an integer of cycles.
-    long long cf_soft_pins{0};                     ///< Soft pins (sigma multiplier above 1).
-    long long cf_bridges{0};                       ///< Shared-side bridge pins.
-    long long cf_d4_keys{0};                       ///< (sat, signal) keys the legacy rule re-referenced (D4 erase).
-    long long cf_known_shifts{0};                  ///< (sat, signal) keys the legacy shift walk moved.
-    long long cf_frac_shifts{0};                   ///< ...by a step that is not an integer of cycles.
-    long long cf_rehosts{0};                       ///< Re-hosts classified.
-    std::array<long long, 3> cf_cert{};            ///< Re-hosts by certification source (none, pair, lattice).
-    long long cf_cert_missing{0};                  ///< Uncertified re-hosts whose new arc has no row in the previous chord table.
-    long long cf_conflicts{0};                     ///< Re-hosts whose pair and lattice integers disagree.
-    long long cf_wrong_cand{0};                    ///< Certified re-hosts whose integer is not the nearest integer of the band's own float.
-    long long cf_cut_arcs{0};                      ///< Arcs cut-released (0 while no row is armed).
-    long long cf_cut_pb{0};                        ///< Phase-bias priors cut-released (0 while no row is armed).
-    long long cf_cut_rpb{0};                       ///< Receiver phase biases cut-released (0 while no row is armed).
-    long long cf_declared_keys{0};                 ///< Keys declared moved (0 while no row is armed).
-    long long cf_root_handovers{0};                ///< Components whose datum receiver changed.
-    long long cf_merges{0};                        ///< Components of the last epoch absorbed into another.
-    long long cf_splits{0};                        ///< Components split off a component of the last epoch.
-    long long cf_returning{0};                     ///< Returning vertices.
-    long long cf_flipped{0};                       ///< Kept edges whose direction flipped.
-    long long cf_departed{0};                      ///< Vertices of the last epoch absent from this one.
-    long long cf_gated_keys{0};                    ///< Usable keys gated out of the union.
-    std::map<std::string, int>       cf_comp_max;  ///< group -> the most components in one epoch.
-    std::map<std::string, long long> cf_comp_sum;  ///< group -> components summed over the epochs.
-    std::map<std::string, long long> cf_comp_epochs;   ///< group -> epochs observed.
-    long long cf_pin_epochs{0};                    ///< Epochs whose pin identity was checked.
-    long long cf_pin_mismatch_epochs{0};           ///< ...where declared, traced and folded pins disagreed.
-    long long cf_chord_rows{0};                    ///< Chord table rows written.
-    long long cf_chord_pair_det{0};                ///< ...with a band determined by the two-band fix.
-    long long cf_chord_lattice{0};                 ///< ...with a band the lattice implies.
-    long long cf_chord_conflicts{0};               ///< ...where the two disagree.
-    long long cf_events{0};                        ///< CHAIN rows written.
-    long long cf_rpb_rows{0};                      ///< network_rpb_states.csv rows written.
-    double    cf_rpb_nees_sum{0.0};                ///< Sum of the time-link NEES terms.
-    long long cf_rpb_nees_n{0};                    ///< Their count.
-    long long cf_pb_prehold_rows{0};               ///< network_pb_prehold.csv rows written.
-};
+// ChainFrameCounters, the run tallies with this memory behind a pointer, is in
+// network/solve/ChainFrameCounters.hpp.
 
 // ---- The classification ---------------------------------------------------------------------------
 
