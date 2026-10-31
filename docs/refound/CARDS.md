@@ -265,3 +265,6 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   of the check's origin model. Benefit bar (1 mm) not met. Deferrals triaged: warm-resume re-derivation field-inert,
   provider unit test a register line, simulator bed not built. Verdict: correct and inert, KEEP_OFF recommended, the author
   decides.
+- [WGB2-T](WGB2_attempt_tables.md): reference, 2026-10-31: companion table of card WGB2: every attempt of the bridge arms
+  `_rap_wgbc_on_f6` (61 attempts) and `_rap_wgbc_on_f24` (280 attempts) with the bridge's whole-cycle count and the
+  independent recount of `scripts/windup_gap_independent_check.py`.

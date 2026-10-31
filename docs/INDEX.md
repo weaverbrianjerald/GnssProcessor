@@ -177,6 +177,10 @@ Program card on this topic, also indexed in [refound/CARDS.md](refound/CARDS.md)
 
 [WGB](refound/WGB_windup_gap_bridge_2026-10-17.md), the phase wind-up accumulator through data gaps inside the leveling-carry horizon (closed, 2026-10-31: built default off; checked 2026-10-18 on the golden of that day, then on the golden of cards MRF and BOF, 6 h and a day against same-exe controls, results in [WGB2](refound/WGB2_windup_bridge_current_golden_day_2026-10-31.md): G1 to G3 hold on both pairs, day arcs refloated 547 to 23, consumer within 0.15 mm, census median -0.01 mm, no benefit; the independent recount holds on the 6 h pair and on the day pair only under amendment A2, and is missed under the pre-registered origin rule through the check's origin model; KEEP_OFF recommended, the author decides).
 
+[WGB2](refound/WGB2_windup_bridge_current_golden_day_2026-10-31.md), the WGB card's continuation (closed, 2026-10-31: the bridge against
+same-exe controls on the field golden of cards MRF and BOF, 6 h and a day, with an independent recount of the whole-cycle counts; the results and
+the verdict are in the WGB entry above; every attempt of the two bridge arms is in [WGB2_attempt_tables](refound/WGB2_attempt_tables.md)).
+
 [PIV](refound/PIV_pivot_election_coverage_2026-10-17.md), the clock pivot elected by predicted station coverage, broadcast
 health and shadow, at ignition and at a forced handover (open, 2026-10-18: built default off, never armed; unit gate and
 Release smoke in; checked 2026-10-18 against same-exe controls on the field and sim goldens: knob absent identical except the declared lines, no handover in 6 h against two in each control, field hour-2 common drift 0.051 against 0.192 m/h, consumer and census unchanged at the median, clock product within 2.4 mm; 2026-10-28 to 2026-10-30, sections 9 to 11: ARHT00ATA worse by more than 1 cm on two of five 6 h days (DOY 130 +40.6, DOY 132 +25.9 mm), a response and not noise (card NSP), recurring but not systematic; not armed).
