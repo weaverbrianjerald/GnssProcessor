@@ -649,3 +649,9 @@ de-saturated **0.97×**.  The post-fix arms live in `runs/fc1_*_v2` with configs
 `_fc1_split_n2_3h_v2.json` (same posture, **fresh output dirs** — append-mode service CSVs
 make reusing a run dir unsafe); grading those reports the honest post-fix **1.00×**.  Both
 families resolve under `D:\GnssProcessor_archive\2026-08-12\runs\`.
+
+---
+
+## Appended 2026-10-30: the retired keys (card RKD)
+
+Card [RKD](refound/RKD_retired_key_deletion_2026-10-14.md) deleted these keys of this document with their code on 2026-10-14: `network.fast_clock.allow_single_band`, `network.fast_clock.emit`, `network.fast_clock.emit_max_gap_s`, `network.fast_clock.enable`, `network.fast_clock.min_sats_per_station`, `network.fast_clock.min_stations_per_sat`, `network.fast_clock.screen_k_sigma`, `network.fast_clock.shadow`, `network.fast_clock.trace` and `network.fast_clock.trace_sat_stride` (the FC-1 split-cadence fast clock, commit `1de8b9b`). The text above records them as they stood. A configuration that still sets one runs without it, and the loader names each such key in one warning (card [RKT](refound/RKT_retired_key_tombstone_2026-10-30.md)).

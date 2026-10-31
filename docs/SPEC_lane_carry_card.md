@@ -215,3 +215,9 @@ Deferrals: none field-blocking (the card itself is a perf unblock; every lever i
 2. INC-1 core: rank-m Woodbury with an m×m LDLT vs m sequential downdates — which preserves SPD better on the stiff lane-shape blocks at the q_wl 0.01 scale disparity? Prototype both on the 60-ep captured blocks.
 3. INC-3: does the RTB-7 fingerprint need a marginalization-count term so a warm resume across a kill-policy flip is rejected (the carrycpljoint lesson)?
 4. K distribution at 305 under family pairs: one giant G component (~2,700 arcs) dominates — is component-splitting (forest partitioning) ever admissible without breaking cycle closure, or is INC-4's ceiling just Amdahl on that component?
+
+---
+
+## Appended 2026-10-30: the retired keys (card RKD)
+
+Card [RKD](refound/RKD_retired_key_deletion_2026-10-14.md) deleted these keys of this document with their code on 2026-10-14: `network.lane_carry.enable`, `network.lane_carry.fold_blocked`, `network.lane_carry.parallel_components`, `network.lane_carry.q_wl_scale`, `network.lane_carry.sigma_wl_fresh_cyc` and `network.lane_carry.skip_pinned_increments` (the WL-3 lane-coordinate carry and the UWL family pairs, commit `c5be295`); `network.mw_wl.ewl_enable` (the WL-2 EWL lane, the WL inject, the GF bridge and the lane layer, commit `365edfe`). The text above records them as they stood. A configuration that still sets one runs without it, and the loader names each such key in one warning (card [RKT](refound/RKT_retired_key_tombstone_2026-10-30.md)).

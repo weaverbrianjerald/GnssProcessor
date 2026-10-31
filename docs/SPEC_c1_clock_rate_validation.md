@@ -688,3 +688,9 @@ ceiling) → **Card Q3** (`docs/SPEC_clock_temporal_anchor.md`, the estimator-si
 temporal anchor that all three named as their prerequisite).  The emission-side half is
 **Card CLK-R** (`docs/SPEC_clock_emit_rebase.md`), whose own §2 independently falsified
 per-key value smoothing — the fourth face of the same root cause.
+
+---
+
+## Appended 2026-10-30: the retired keys (card RKD)
+
+Card [RKD](refound/RKD_retired_key_deletion_2026-10-14.md) deleted these keys of this document with their code on 2026-10-14: `network.emit_clock_rate` (the finite-difference C1 clock rate, commit `2ba604a`). The text above records them as they stood. A configuration that still sets one runs without it, and the loader names each such key in one warning (card [RKT](refound/RKT_retired_key_tombstone_2026-10-30.md)).

@@ -161,3 +161,9 @@ which is what produced §13.
 
 ---
 
+
+---
+
+## Appended 2026-10-30: the retired keys (card RKD)
+
+Card [RKD](../../refound/RKD_retired_key_deletion_2026-10-14.md) deleted these keys of this card with their code on 2026-10-14: `network.rx_cb_carry_demean`, `network.rx_cb_carry_demean_within`, `network.rx_cb_carry_step_gate` and `network.rx_cb_harvest_demean` (the level tools LV-1, LV-2, LV-4, LV-5 and S2H, commit `15b927c`). The text above records them as they stood. A configuration that still sets one runs without it, and the loader names each such key in one warning (card [RKT](../../refound/RKT_retired_key_tombstone_2026-10-30.md)).

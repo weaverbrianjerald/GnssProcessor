@@ -361,3 +361,9 @@ belongs with EV6 §8.1 and CST §7.2 on one arm; (a) is ~20 lines inside this kn
   `scripts/ev6_event_read.py` (the last one shown BLIND here, §2).
 - `config/golden/`, `golden_manifest.json`, `docs/CONFIG_promotion_ledger.{md,json}`, `config/refound/*_rf0hv.json` and every loader default
   untouched.
+
+---
+
+## Appended 2026-10-30: the retired keys (card RKD)
+
+Card [RKD](RKD_retired_key_deletion_2026-10-14.md) deleted these keys of this card with their code on 2026-10-14: `network.serialize_sbasis_contract` (the parse-only and loader-forced keys, commit `4c0e731`); `network.disc_jump_test_decommon` (the de-commoned phase jump test (card JT), commit `475b587`). The text above records them as they stood. A configuration that still sets one runs without it, and the loader names each such key in one warning (card [RKT](RKT_retired_key_tombstone_2026-10-30.md)).

@@ -298,3 +298,9 @@ The star structure is visible too: **`BELE00BRA` appears in 679 of 939 cycles (7
 
 - `scripts/mwwl_event_census.py` — `parse` / `analyze` / `oracle`. Estimator-free, windowed, cached (re-analysis is seconds). `oracle` grades any lane against a long-arc MW truth, bucketed by baseline, and reports the shipped-gate wrong-integer injection rate.
 - `scripts/mwwl_cond_arm.py` — derives `ctl` / `lane` / `casc` arms from an anchor leg's own `leg.json`; documents the loader interlocks in its header.
+
+---
+
+## Appended 2026-10-30: the retired keys (card RKD)
+
+Card [RKD](refound/RKD_retired_key_deletion_2026-10-14.md) deleted these keys of this document with their code on 2026-10-14: `network.mw_wl.debug_r_scale`, `network.mw_wl.enable`, `network.mw_wl.ewl_fold_rows`, `network.mw_wl.f6_all_blocks`, `network.mw_wl.f6_dump` and `network.mw_wl.f6_max_rows` (the WL-1 MW-seeded wide-lane rows and the F6 dump, commit `f1ea3de`); `network.lane_carry.enable` (the WL-3 lane-coordinate carry and the UWL family pairs, commit `c5be295`); `network.mw_wl.ewl_enable`, `network.mw_wl.fix_weight_sigma_cyc`, `network.mw_wl.max_rows_per_epoch`, `network.mw_wl.sigma_floor_cyc` and `network.mw_wl.wl_fix_frac_cyc` (the WL-2 EWL lane, the WL inject, the GF bridge and the lane layer, commit `365edfe`). The text above records them as they stood. A configuration that still sets one runs without it, and the loader names each such key in one warning (card [RKT](refound/RKT_retired_key_tombstone_2026-10-30.md)).

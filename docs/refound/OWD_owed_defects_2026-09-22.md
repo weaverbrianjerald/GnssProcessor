@@ -377,3 +377,9 @@ windows. The fixes have no knob and are in force from `d64c230`; the goldens pin
 The card closes. Owed, the author's decisions (section 4): O6, the BeiDou pair rule; O7, the sim
 fixture regeneration and the Galileo yaw law; health on the network path. O8 stays as section 1
 left it.
+
+---
+
+## Appended 2026-10-30: the retired keys (card RKD)
+
+Card [RKD](RKD_retired_key_deletion_2026-10-14.md) deleted these keys of this card with their code on 2026-10-14: `network.serialize_sbasis_contract` (the parse-only and loader-forced keys, commit `4c0e731`); `network.iono_dw_park_bound_tecu`, `network.iono_dw_release_floor_eps`, `network.iono_dw_release_reseed` and `network.iono_dw_release_validate_k` (the station iono deweight gate and its release hygiene, commit `158b9b2`). The text above records them as they stood. A configuration that still sets one runs without it, and the loader names each such key in one warning (card [RKT](RKT_retired_key_tombstone_2026-10-30.md)).

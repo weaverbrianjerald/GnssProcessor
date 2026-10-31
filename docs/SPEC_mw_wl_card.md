@@ -210,3 +210,9 @@ Instrument: the one-shot dump `network.mw_wl.f6_dump` (log-only, default-OFF →
 - **(C) WL-informed re-tap** — treat a confident MW-vs-carried-WL disagreement as a WL slip and re-tap the chord's carry from the MW WL (reuses D5 plumbing). *(Became WL-2's inject primitive with the refloat replaced by a lane-targeted value edit.)*
 
 **Secondary (separate, latent) finding — station-1 x_lin.** Station index 1 carries pathological ambiguity LINEARIZATION points (**x_lin ≈ 256540 m ≈ 256 km**, uniform across G01/G10/G15/G16/G27). They cancel in the invariant DD (so the solve survives) but make the WL row's `z_lin` a difference of two ~3e5 values and render its correction-frame innovation ill-conditioned for station-1 cycles (row 5: innov 17.3 vs true gap 1.0). Not the F6 cause. **ROOT-CAUSED and FIXED later:** it is the cold ambiguity seed subtracting a clock term that is zero at the first network epoch — cured by `cold_clock_seed`, which cut `x_lin1_m` from 269 352 m to 57 m at station 1 (`SPEC_ewl_wl_cascade_card.md` §12.6).
+
+---
+
+## Appended 2026-10-30: the retired keys (card RKD)
+
+Card [RKD](refound/RKD_retired_key_deletion_2026-10-14.md) deleted these keys of this document with their code on 2026-10-14: `network.carry_invariant_innov_refold` (the parse-only and loader-forced keys, commit `4c0e731`); `network.mw_wl.debug_r_scale`, `network.mw_wl.enable`, `network.mw_wl.f6_all_blocks`, `network.mw_wl.f6_dump`, `network.mw_wl.f6_max_rows`, `network.mw_wl.fix_enable`, `network.mw_wl.fix_frac_cyc`, `network.mw_wl.fix_sigma_cyc` and `network.mw_wl.min_arc_epochs` (the WL-1 MW-seeded wide-lane rows and the F6 dump, commit `f1ea3de`). The text above records them as they stood. A configuration that still sets one runs without it, and the loader names each such key in one warning (card [RKT](refound/RKT_retired_key_tombstone_2026-10-30.md)).

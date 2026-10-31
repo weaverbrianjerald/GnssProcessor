@@ -210,3 +210,9 @@ poor instrument for differences of a few centimetres: a one-station roster chang
 moves hour 1 by a factor of two, and the ignition history lingers for hours. A
 consumer started cold on an already settled wire would separate the two; no such
 start offset exists for the closed-loop consumer today.
+
+---
+
+## Appended 2026-10-30: the retired keys (card RKD)
+
+Card [RKD](RKD_retired_key_deletion_2026-10-14.md) deleted these keys of this card with their code on 2026-10-14: `network.sh_gate_min_epochs`, `network.sh_gate_rms_max_tecu` and `network.sh_health_gate` (the SH health gate, commit `b216f55`). The text above records them as they stood. A configuration that still sets one runs without it, and the loader names each such key in one warning (card [RKT](RKT_retired_key_tombstone_2026-10-30.md)).

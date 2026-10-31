@@ -160,3 +160,9 @@ a₀₀ seam transient is gone; a stateful consumer sees 0 phase-bias resets at 
 shared border, restored DIAGONAL on this lineage (RS-7, §21.14) — the code-bias level, the ZWD sink offset, the
 pooled clock contrast and the rx-CB gate's 26 % share all sit with it.
 
+
+---
+
+## Appended 2026-10-30: the retired keys (card RKD)
+
+Card [RKD](../../refound/RKD_retired_key_deletion_2026-10-14.md) deleted these keys of this card with their code on 2026-10-14: `network.emit_pb_filter` (the PB emission-continuity filter, commit `6d719e4`); `network.resume_station_restore_shdev` (the retired warm-resume knobs (RS-2 re-base, RS-6 shdev switch, seam re-inflate, resume shock), commit `98df220`). The text above records them as they stood. A configuration that still sets one runs without it, and the loader names each such key in one warning (card [RKT](../../refound/RKT_retired_key_tombstone_2026-10-30.md)).

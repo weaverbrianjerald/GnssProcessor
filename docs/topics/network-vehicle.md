@@ -29,6 +29,12 @@ re-validated as a whole, and the field golden's station block turned out to be S
 phase-datum family; the `carry_invariant` family is off. See [the network re-founding](../refound/NETWORK_REFOUNDING_2026-09-14.md), RF-1
 (ambiguities as float states with covariance) and RF-2 (a fixed S-basis with declared
 S-transformations).
+From 2026-10-14 the keys left from the `carry_invariant` lineage (`carry_invariant_honesty`,
+`carry_invariant_innov_refold`, `raim_carry_invariant_refloat`), the ensemble phase datum and its hold, F1 and the F3
+age gate, the young-arc inflate and the coupling carry's SH marginalize, joint whitening and gauge-free closure are
+deleted with their code (card [RKD](../refound/RKD_retired_key_deletion_2026-10-14.md)). A configuration that still
+sets one of those keys loads with a warning naming it (card
+[RKT](../refound/RKT_retired_key_tombstone_2026-10-30.md)).
 
 ## Cards, oldest first
 

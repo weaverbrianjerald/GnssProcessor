@@ -403,3 +403,9 @@ the phase side alone, because the held phase biases do not follow the converging
 replays, `runs/_hyb_ctu_*`). Sections 6.1 to 6.6 stand as the record of how the station memory
 holds the level; the items of 6.7 are superseded by the consistent-recursion plan, which goes into
 its own card after an outside review.
+
+---
+
+## Appended 2026-10-30: the retired keys (card RKD)
+
+Card [RKD](RKD_retired_key_deletion_2026-10-14.md) deleted these keys of this card with their code on 2026-10-14: `network.clock_level_carry`, `network.clock_level_confirm_epochs`, `network.clock_level_datum_pause`, `network.clock_level_free_cb_follow`, `network.clock_level_free_cb_rebase`, `network.clock_level_horizon_s` and `network.clock_level_pin_pair_read` (the CLV out-of-solve clock-level re-base, commit `b326c8c`). The text above records them as they stood. A configuration that still sets one runs without it, and the loader names each such key in one warning (card [RKT](RKT_retired_key_tombstone_2026-10-30.md)).

@@ -265,3 +265,9 @@ instead — `dw_admit_reject` for (BSHM00ISR, the entering satellite) at 329160,
 < 150 through 19:40 — and grade INC-1/INC-2 on a run that contains a genuine release (the DOY-129 day had
 22 engage / 15 release events; 19:26 was not one of them). Their run-end block says so explicitly rather
 than letting a zero-opportunity run read as a pass.
+
+---
+
+## Appended 2026-10-30: the retired keys (card RKD)
+
+Card [RKD](refound/RKD_retired_key_deletion_2026-10-14.md) deleted these keys of this document with their code on 2026-10-14: `network.iono_dw_admit_validate_k`, `network.iono_dw_park_bound_tecu`, `network.iono_dw_release_reseed` and `network.iono_dw_release_validate_k` (the station iono deweight gate and its release hygiene, commit `158b9b2`); `network.adaptive_iono_q` (the network adaptive iono q, commit `1d35585`). The text above records them as they stood. A configuration that still sets one runs without it, and the loader names each such key in one warning (card [RKT](refound/RKT_retired_key_tombstone_2026-10-30.md)).

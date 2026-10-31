@@ -744,3 +744,9 @@ a channel that is measurably removing ~3 cyc of real error per refloat.
 reproduced exactly.  Field products SHA256-identical to the control for the
 FOURTH time; T4 closures OK; gauge skips unchanged (62).
 
+
+---
+
+## Appended 2026-10-30: the retired keys (card RKD)
+
+Card [RKD](../../refound/RKD_retired_key_deletion_2026-10-14.md) deleted these keys of this card with their code on 2026-10-14: `network.cycle_slip.relevel_lane_snap` (the lane slip responses (bridge v3 EWL slot, statistical retap, its corroboration, lane snap), commit `f48868c`). The text above records them as they stood. A configuration that still sets one runs without it, and the loader names each such key in one warning (card [RKT](../../refound/RKT_retired_key_tombstone_2026-10-30.md)).

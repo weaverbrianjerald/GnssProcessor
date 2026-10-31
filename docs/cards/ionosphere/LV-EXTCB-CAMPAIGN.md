@@ -199,3 +199,9 @@ Galileo E1X and BeiDou C2I receiver OSBs run -3.4 to -3.9 ns.** Worth its own ca
 
 ---
 
+
+---
+
+## Appended 2026-10-30: the retired keys (card RKD)
+
+Card [RKD](../../refound/RKD_retired_key_deletion_2026-10-14.md) deleted these keys of this card with their code on 2026-10-14: `network.external_sat_code_bias` (the retired code-bias datum options and the clock signal-basis hold, commit `d1cd9ea`). The text above records them as they stood. A configuration that still sets one runs without it, and the loader names each such key in one warning (card [RKT](../../refound/RKT_retired_key_tombstone_2026-10-30.md)).

@@ -543,3 +543,9 @@ inventory table stays here and its status column is dated Aug-1 — **re-audit a
 tree before quoting a cell**.  INC-4 is the symptom-side half: it makes the DECOUPLING and
 RE-COUPLING edges of the SH-tie valve into events with identities, which is what invariant #7
 requires of every valve in that table.
+
+---
+
+## Appended 2026-10-30: the retired keys (card RKD)
+
+Card [RKD](refound/RKD_retired_key_deletion_2026-10-14.md) deleted these keys of this document with their code on 2026-10-14: `network.prefit_fuse_require_uncheckable` (the parse-only and loader-forced keys, commit `4c0e731`); `network.adaptive_iono_q` (the network adaptive iono q, commit `1d35585`). The text above records them as they stood. A configuration that still sets one runs without it, and the loader names each such key in one warning (card [RKT](refound/RKT_retired_key_tombstone_2026-10-30.md)).

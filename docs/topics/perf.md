@@ -17,6 +17,10 @@ decomposition that keeps `ApplicationNetwork.cpp` and `RealTimeEngine.cpp` thin.
 
 **Current posture (2026-09-14)** — the lane layer is OFF at both scales, on speed and on
 science; the scope cut in [the network re-founding](../refound/NETWORK_REFOUNDING_2026-09-14.md) removes the lanes entirely for now.
+From 2026-10-14 the lane layer and `network.parallel_reduce` are deleted with their code (card
+[RKD](../refound/RKD_retired_key_deletion_2026-10-14.md)): the Schur reduce runs serially and `parallel_carry`
+(armed in both goldens) has no mutex partner left. A configuration that still sets `parallel_reduce` loads with a
+warning naming it (card [RKT](../refound/RKT_retired_key_tombstone_2026-10-30.md)).
 
 ## Cards, oldest first
 

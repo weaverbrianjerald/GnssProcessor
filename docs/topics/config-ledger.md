@@ -27,6 +27,10 @@ hand-written head (procedure, regime vocabulary, bundles, history) and tables re
 JSON twin) into one row per key; stale pre-refound recommendations were demoted with their
 posture rows. The goldens remain the posture
 ([GAD](../refound/GAD_galileo_adoption_2026-10-13.md)).
+From 2026-10-14 the REMOVE rows are gone with their keys and code: 149 rows left the ledger (784 to 635, card
+[RKD](../refound/RKD_retired_key_deletion_2026-10-14.md)) and no row carries REMOVE. From 2026-10-30 the loader names
+each deleted key a configuration sets, once, from a declared table beside it (`include/config/RetiredConfigKeys.hpp`,
+card [RKT](../refound/RKT_retired_key_tombstone_2026-10-30.md)).
 
 ## Cards, oldest first
 

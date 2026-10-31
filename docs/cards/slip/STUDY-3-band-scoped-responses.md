@@ -326,3 +326,9 @@ must run from a SLIPPED-bed seed (converged on the campaign fixture, ambient
 cycles off), not the quiet one: a quiet-seed harness win certifies the mechanism,
 not the cure.
 
+
+---
+
+## Appended 2026-10-30: the retired keys (card RKD)
+
+Card [RKD](../../refound/RKD_retired_key_deletion_2026-10-14.md) deleted these keys of this card with their code on 2026-10-14: `network.cycle_slip.refloat_band_scope` and `network.raim_erase_band_scope` (the study-3 band-scoped responses, commit `dab7d80`). The text above records them as they stood. A configuration that still sets one runs without it, and the loader names each such key in one warning (card [RKT](../../refound/RKT_retired_key_tombstone_2026-10-30.md)).

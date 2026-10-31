@@ -558,3 +558,9 @@ deliberate byte-identity exception) is unconditional and unaffected by this verd
 live regardless of the knob.
 
 
+
+---
+
+## Appended 2026-10-30: the retired keys (card RKD)
+
+Card [RKD](../../refound/RKD_retired_key_deletion_2026-10-14.md) deleted these keys of this card with their code on 2026-10-14: `network.mw_wl.bridge_sample_debias` (the WL-2 EWL lane, the WL inject, the GF bridge and the lane layer, commit `365edfe`); `network.shared_carry_gauge_free` (the coupling carry's SH marginalize, joint whitening and gauge-free closure, commit `e7e470b`). The text above records them as they stood. A configuration that still sets one runs without it, and the loader names each such key in one warning (card [RKT](../../refound/RKT_retired_key_tombstone_2026-10-30.md)).

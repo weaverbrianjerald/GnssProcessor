@@ -301,3 +301,9 @@ erased; Q3 0 nis / 13 gap / 201 datum trips, 1068 LOOSE folds; the two
 the resume-side code are byte-inert with the knobs off, (b) the other
 session's concurrent tree changes are inert on this bed, and (c) every ON
 vs OFF difference above is the knob.
+
+---
+
+## Appended 2026-10-30: the retired keys (card RKD)
+
+Card [RKD](../../refound/RKD_retired_key_deletion_2026-10-14.md) deleted these keys of this card with their code on 2026-10-14: `network.amb_seam_reinflate_var_m2` (the retired warm-resume knobs (RS-2 re-base, RS-6 shdev switch, seam re-inflate, resume shock), commit `98df220`). The text above records them as they stood. A configuration that still sets one runs without it, and the loader names each such key in one warning (card [RKT](../../refound/RKT_retired_key_tombstone_2026-10-30.md)).
