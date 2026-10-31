@@ -88,3 +88,79 @@ Median site p50 by hour (m): GE 0.136 0.054 0.041 0.036 0.040 0.037; GEC rule of
 - Key off identical: PASS. 24 IDENTICAL against the parent side after the two declared census lines (products, every trace, manifest and snapshot bytes identical before any reversal). Against `w3base` the products and traces are identical in all 23 arms, and the remaining differences are the NSD manifest rows and log text, which the parent side shows equally.
 - Grade: ran. Every number of card BDS section 9 (counters, consumer by hour, census, withheld records, edge rows) is reproduced from fresh runs to the precision printed there. The rule reproduces the subtraction GEC-s: no station is rejected, the heal and the S-basis completion are silent, the consumer differs from GEC-s by at most 0.6 mm, and the census median change against GEC-s is 0.0000 m with no site above 6 mm.
 - The ledger row stays UNVALIDATED and is not armed. Not run (as in card BDS section 9.5): the 305-station regime, a second day, the warm resume, the satellite-scope hysteresis, the users-of-the-wire census, and a same-exe 6 h GEC-s (the comparator `bds_gecs6` ran on the `w3base` exe).
+
+## 3. 2026-10-31: posture C on the current golden (pre-registered)
+
+Committed before the smoke, the 6 h arm, the replays and the offline reads of this section were run or read. A change after a result is read is a dated amendment below this section, never an edit of it.
+
+### 3.1 Question
+
+Cards BDS, BDSB and MDAY graded posture C (GPS + Galileo + BeiDou on B1I + B3I with the second-band admission and the per-signal wire, written C below) before cards MRF and BOF armed the MW re-flag skip, ocean tide loading, the noon-turn attitude, the estimable block-Baarda test and the seed mirrors, and the census sites of card BDS305 are all producers there (its off-roster read is three consumers). The adoption instrument on the golden as it stands is missing. Questions: does C pass the gates of card BDS section 4 against the current golden (baseline pair `runs/_rf0hv17_{field,sim}6`); do the users of the five multi-day C wires who do not use BeiDou lose; and what do the four offline reads of section 3.5 add to the open items of cards BDS, BDSB, MDAY and BDS305. Arming is the author's decision and is not made here.
+
+### 3.2 Exe, control and arm
+
+- **Exe.** `D:/GnssProcessorSupport/gates/exe/x64-Release/gnss_processor_bdsclose.exe`, a renamed copy of `C:/GnssProcessor/build/x64-Release/gnss_processor_bofarm.exe`, the exe of the baseline pair; sha256 `91143c81de9a95479aa08131c08945676d5e542dbd607e9a8ff6d1852d2d73d6` for both. Nothing is built in this track. Run root `D:/GnssProcessorSupport/runs_nom` (`RAPID_RUNS_ROOT`).
+- **Control (GE).** `runs/_rf0hv17_field6`: exit 0, 1,343.5 s, 720 of 720 epochs emitted, 1,784.57 ms per epoch on the load of its own day. It was copied whole to `runs_nom/_rap_bdsc_ctl` so that replays resolve under the run root (sha256 of `products.txt` `bf16e947...` and of `arm.json` `956226c6...`, equal to the originals). Its `arm.json` equals the current field golden in the comment and the output path only.
+- **Arm C6** (tag `bdsc_c6`, 6 h, 58 stations): the control's `arm.json` plus exactly the four posture-C keys of the 305-station C arm of card BDS305 (`_rap_bds305_c_f6` against its GE twin differ in these four and the output path). Flattened leaf diff of `_rap_bdsc_c6/arm.json` against `runs/_rf0hv17_field6/arm.json` (`gates/bdsclose/tools/flatdiff.py`; `rapid.json` beside it records the `--set` list):
+
+  ```
+  + network.n3c_wire_per_signal = true
+  ~ network.product_output_path: "C:/GnssProcessor/runs/_rap_rf0hv17_field6/products.txt" -> "D:/GnssProcessorSupport/runs_nom/_rap_bdsc_c6/products.txt"
+  + network.second_band_admission = true
+  ~ processing.active_systems: ["GPS", "Galileo"] -> ["GPS", "Galileo", "BeiDou"]
+  + processing.signal_priorities.BeiDou = ["C2I", "L2I", "C6I", "L6I"]
+  # 5 differing leaves (446 in A, 449 in B)
+  ```
+
+  `network.sparse_station_normals` is in the golden; `network.second_band_scope` (`station`) and `network.second_band_min_sats` (1) stay at their loader defaults.
+- **Same-load control** (tag `bdsc_ge6r`, no bar): the control's `arm.json` unchanged, started together with C6 on the same exe. It prices the cost under one load (S6) and checks that the exe copy reproduces the baseline run (`products.txt` byte-identical to `runs/_rf0hv17_field6/products.txt`). Gates use the baseline run as the control; a re-run that differs is reported and changes no gate.
+- **Smoke** (tag `bdsc_c6_sm`): C6 with `--hours 0.0833` (10 epochs) before the 6 h arm; expected exit 0, 10 of 10 epochs emitted, `C##` clock lines on the wire. A failed smoke is repaired by a dated amendment before the 6 h arm; no bar moves.
+- **Census replays** (`scripts/clock_level/gcensus.py make`, 6 h, WTZZ00DEU and the 16 sites of `scripts/clock_level/site_list.json`, tags `<key>_<site4>`, each key the consumer base `arm.json`, the wire and the exe above):
+
+  | key | consumers | wire | role |
+  | --- | --- | --- | --- |
+  | `bdsc6ge` | control arm (GPS + Galileo) | control | reference of S4 and of S5 clause 1 |
+  | `bdsc6c` | C6 arm (GPS + Galileo + BeiDou) | C6 | S4 |
+  | `bdsc6cge` | control arm | C6 | S5 clause 1 |
+  | `bdsc6geg` | GPS-only base | control | reference of S5 clause 2 |
+  | `bdsc6cg` | GPS-only base | C6 | S5 clause 2 |
+
+  The GPS-only base is the control's `arm.json` with `processing.active_systems` `["GPS"]` and the `processing.signal_priorities.Galileo` entry removed (the form of the G arm of card BDS section 3; `runs_nom/_bdsc_bases/g_c6stage/arm.json`, two differing leaves). Card BDS read S5 clause 2 against `bdsg`, the GPS-only wire of a GPS-only producer arm. The golden is GPS + Galileo and the decision is C against the golden, so the clause is read here against the GPS-only users of the control wire (`bdsc6geg`); no GPS-only producer arm is run.
+
+### 3.3 Gates of the 6 h arm
+
+Gates S1, S2, S4, S5, S6 and S7 of card BDS section 4 apply unchanged to C6 against the control; S3 (GE against G) is on file and is not re-run. Hours are counted from 00:00 UT of DOY 129 (2024); hour 1 is ignition and settled claims come from hours 2 to 6. Better and worse count at 1 cm. Medians are applied unrounded. A bar missed is recorded as missed and not reworded.
+
+| gate | read-out | passes when |
+| --- | --- | --- |
+| B0 | `rapid.json` and the flattened `arm.json` diff of each arm and replay; the exe hash | C6 differs from the control arm in the four keys and the output path only (printed above); each replay differs from its base in the wire, consumer and output paths only; the exe sha256 is the one of 3.2 |
+| S1 | C6 over 720 epochs, gates H1 to H4 of card BDS section 4 | H1: exit 0; 720 of 720 epochs emitted; 0 skipped; 0 withheld by the observability gate, the A4 ceiling or the rank gate (UNDER or OVER-specified). H2: BeiDou `c0` (the `C,C##` lines of `products.txt`) at most 50 m at every epoch; 1 km or more is the signature of failure mode A; a maximum between the two is neither healthy nor mode A and the verdict waits for the author. H3: GPS and Galileo clocks of C6 against the control wire, same epochs, the per-epoch rms of the change after removing the per-epoch median over the constellation at most 1.0 m at every epoch, and the maximum absolute `c0` of both at most 50 m. H4: the median epoch carries at least 10 `C##` satellites on the wire, each with a clock line, code-bias lines and phase-bias lines; the run log's BeiDou counters and the run-end report of the second-band admission are reported with the zero cases named; an admission report reading "ARMED AND INERT" fails H4 |
+| S2 | WTZZ00DEU `closed_loop_trace.csv`: 3D p50 by hour and epochs below 0.1 m. Row 1: the in-run consumer of C6 on its own systems (GPS + Galileo + BeiDou). Row 2: the GPS + Galileo consumer of the C6 wire (`bdsc6cge_wtzz`) | Row 1, C6 minus control, no worse than +0.010 m in any of hours 2 to 6. Row 2 is read. One instrument: read, not adopted on |
+| S4 | `gcensus.py grade bdsc6ge bdsc6c`: paired change of each site's mean hourly p50 over hours 2 to 6 (16 sites), C6 consumers on the C6 wire against GE consumers on the control wire | median at most 0 m and more sites better than worse; no site worse by more than 0.05 m without being named. Hour 1 reported. Read apart by what the site tracks: the ten sites with the B1I + B3I pair (QUIN00USA, HARB00ZAF, POHN00FSM, DAV100ATA, STPM00SPM, ASCG00SHN, CEDU00AUS, KOKB00USA, ARHT00ATA, WUH200CHN), the two with B1I and no B3I (CHTI00NZL, SCRZ00BOL), the four without a usable pair (ANMG00MYS, BADG00RUS, UTQI00USA, BAKE00CAN) |
+| S5 | users of the C6 wire. Clause 1: `gcensus.py grade bdsc6ge bdsc6cge`. Clause 2: `gcensus.py grade bdsc6geg bdsc6cg` | each clause: paired median over hours 2 to 6 at most +0.005 m; sites worse by more than 0.05 m named |
+| S6 | cost | read: process wall (`exitcode.txt`) and epoch-loop ms per epoch (the run log's `Network[timing]` line) of C6 and of the same-load control re-run, with the count of other `gnss_processor` processes on the machine sampled each minute |
+| S7 | BeiDou wire | read: datum-free rms of `c0` by hour for `C`, `G` and `E` (the deviation from the a priori product, not a truth), the median count of `C##` satellites per epoch, the BeiDou rows of the run-end tables. Extra, not gated: a BeiDou-only consumer of the C6 wire at WTZZ00DEU (`bdsc6bds_wtzz`, `processing.active_systems` `["BeiDou"]`) |
+
+### 3.4 R2: users of the multi-day wires
+
+The wires are `runs_nom/_rap_mday_c_128` to `_rap_mday_c_132` (24 h each; DOY 132 for 86,100 s), card MDAY's arm C. Consumers are replayed on `D:/GnssProcessorSupport/gates/exe/x64-Release/gnss_processor_mday.exe` (sha256 `3d6c679e8068a39879c582b4495e069c569a3706049826f96f6123e2267a288e`), the exe that produced the wires and the GE census of card MDAY, and on no other. Per day 17 consumers (WTZZ00DEU and the 16 sites), `gcensus.py make --day <doy> --hours 24`, with `--obs-root D:/GnssProcessorSupport/data_mday` for DOY 128 and 130 to 132 and `--duration-s 86100` for DOY 132, as in card MDAY.
+
+| clause | consumers | wire | reference |
+| --- | --- | --- | --- |
+| R2a, GPS + Galileo users | the day's GE arm `_rap_mday_ge_<doy>/arm.json`; key `bdsr2cge<doy>` | `_rap_mday_c_<doy>` | `mdyge<doy>` of card MDAY (the same consumers on the GE wire, same exe) |
+| R2b, GPS-only users | the GPS-only base of the day (the GE arm with `processing.active_systems` `["GPS"]` and the Galileo priority entry removed; `runs_nom/_bdsc_bases/g_doy<doy>/arm.json`); key `bdsr2cg<doy>` | `_rap_mday_c_<doy>` | the same GPS-only consumers on `_rap_mday_ge_<doy>`, key `bdsr2geg<doy>` (run for this card) |
+
+Bar, per clause and day: the paired median over the 16 sites of the change (users of the C wire minus users of the GE wire) of each site's mean hourly p50 over hours 2 to 24 at most +0.005 m; sites worse by more than 0.05 m named. Each day and clause is reported; a day that misses its bar fails that clause.
+
+Read (no bar), DOY 130 after 10:46 UT (card MDAY section 6.1: G03 about -11 m on the C wire from its return at 10:46:00, against 4 m on the GE wire): for both clauses and for each of the 17 consumers, the 3D p50 and the epochs above 0.2 m and above 1 m over 10:46:00 to the end of the day under each wire; the 16-site paired median of the change, sites worse than +0.01 m named; the C-wire and GE-wire G03 clock over the same window. A paired median above +0.005 m, or a consumer above 1 m under the C wire and not under the GE wire, is recorded as an effect of the G03 level on users.
+
+### 3.5 Offline reads of existing outputs (no producer run; no bar)
+
+- **(a) The BeiDou clock class on the BDS305 wires.** `runs_nom/_rap_bds305_c_f6` and `_rap_bds305_ge_f6`, `products.txt` (305 stations, 6 h, card BDS305): the distribution of absolute `c0` per constellation (median, p99, maximum with satellite and epoch, counts above 50 m and above 1 km); the GPS and Galileo clocks, C against GE, datum-free (per-epoch rms of the change after removing the per-epoch median), by hour, with the constellation-common shift. H2 and H3 of 3.3 are read on this pair as stated there.
+- **(b) The hour-2 transient at 58 stations across DOY 128 to 132.** The WTZZ00DEU in-run consumers of the ten arms of card MDAY and the 17 consumers of its census replays (`mdyge<doy>`, `mdyc<doy>`): 3D p50 by half hour over 00:00 to 03:00 UT. The transient is read as recurring on a day when the WTZZ00DEU p50 of 01:00 to 01:30 under C exceeds the GE value by at least 5.0 mm (bar G2 of card BDS305, applied to the half hour in which the excess sat); the 16-site paired median change in that half hour is read beside it. The result is the number of the five days on which it recurs.
+- **(c) BeiDou beta angles, DOY 128 to 132.** The BeiDou satellites of the COD MGX final SP3 of each day (38 of them); beta from the SP3 positions (inertial orbit normal, Sun from the low-precision almanac series), computed independently of the producer, with `scripts/attitude_beta_check.py` as the cross-check; the count of satellite-epochs (each 5-minute node standing for ten 30 s epochs) with absolute beta below 4 degrees, by satellite, orbit type and day, and how many of them lie on epochs carried by the C wire of the day. Nominal yaw steering is wrong for an orbit-normal BeiDou satellite below that angle.
+- **(d) BeiDou RAIM load and the BSHM00ISR L6I gaps.** `logs/network_raim.csv` of `_rap_bds_gec6`, `_rap_bds_gecs6`, `_rap_sbv_on6` and C6: rows naming a `C##` satellite, by satellite and by station (spiked, refloated, withheld); `logs/network_events.csv`: the per-signal resumptions at BSHM00ISR by satellite and signal; the station's RINEX: the L6I gaps (phase blank while L2I is present) by satellite and length.
+
+### 3.6 Closing rule
+
+Cards BDS and BDSB close when the arm, the replays, R2 and the four reads are done and read, and each item still open in card BDS section 6 and card BDSB section 2.5 is answered, returned as a register line, or triaged field-blocking or field-inert with data (standing invariant 3). Closing records that the question of the cards is answered; it does not depend on every bar passing, and a missed bar stays recorded as missed. The decision on arming C (arm it on the field golden, keep it as a separate lineage, or hold) is returned to the author with its evidence and its cost.
