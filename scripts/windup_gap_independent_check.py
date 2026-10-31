@@ -30,6 +30,8 @@ Modes
   --selftest        analytic and synthetic checks, no data needed
   validate-trace    compare the raw angle of this script with the `wrapped_rad` column of a
                     `windup_trace.csv` written by the project (single-receiver run)
+  validate-gap-run  recount, from the same trace of a bridge-on run, the whole-cycle count of every
+                    gap it bridged (the project's count is accumulated minus raw in the trace)
   check             the table: one row per attempt (see `check --help`)
 
 Guard-set limit.  The bridge refuses a walk only in the Earth's umbra and in the noon-turn
@@ -59,6 +61,7 @@ GRID_S = 15.0                      # the independent integration step (the bridg
 MASK_DEG = 15.0                    # elevation mask of the field golden
 HORIZON_LO_S, HORIZON_HI_S = 300, 900   # the bridged range [lo, hi) of the golden
 BETA_FLAG_DEG = 5.0                # |beta| below this: the nominal yaw model is in doubt
+CUT_TOL_RAD = 0.07                 # |raw angle| within this of pi: the side of the cut is model-dependent
 YAW_RATE_IIF_DPS = 0.11            # GPS Block IIF maximum yaw rate (deg/s), the lower of IIF and IIR
 
 
@@ -430,6 +433,30 @@ def nominal_yaw_rate_dps(sat, sun):
     return np.degrees(np.abs(wrap_pi(np.diff(psi)))) / GRID_S
 
 
+def cut_side(r_now):
+    """+1 when the epoch's raw angle lies within CUT_TOL_RAD below +pi, -1 within it above -pi, else 0.
+
+    The count N is defined against the raw angle at the epoch, so two implementations whose raw angles differ
+    by their model difference (median 9e-4 cycle, largest 1.0e-2 cycle against the project's trace) can put
+    the epoch on either side of the +-pi cut.  Their bridged angles (raw + 2 pi N) still agree to that model
+    difference, and their counts differ by one: N_project = N_independent + 1 when this check's angle is just
+    below +pi and the project's just above -pi, and N_project = N_independent - 1 for the other side."""
+    if r_now > math.pi - CUT_TOL_RAD:
+        return 1
+    if r_now < -math.pi + CUT_TOL_RAD:
+        return -1
+    return 0
+
+
+def judge(bridge_cycles, n_ind, side):
+    """'yes' for equal counts, 'yes (cut)' for counts that differ by the flip of the cut, else 'NO'."""
+    if bridge_cycles == n_ind:
+        return "yes"
+    if side != 0 and bridge_cycles == n_ind + side:
+        return "yes (cut)"
+    return "NO"
+
+
 class Attempts:
     """The universe of attempts of a bridge run and everything the independent count needs."""
 
@@ -501,15 +528,16 @@ class Attempts:
             outcome, b_cyc = lst["outcome"], lst["cycles"]
         else:
             outcome, b_cyc = ("restart" if key in self.brg_ref else "bridged"), None
+        side = cut_side(float(raw[i_now]))
         if outcome == "bridged":
-            agree = ("yes" if b_cyc == n else "NO") if b_cyc is not None else "not listed"
+            agree = judge(b_cyc, n, side) if b_cyc is not None else "not listed"
         else:
             agree = "refused"
         return {
             "station": s, "sat": p, "tow": int(t_now % 604800), "gap_s": gap,
             "bridge_outcome": outcome, "listed": lst is not None,
             "bridge_cycles": "" if b_cyc is None else b_cyc,
-            "K_ind": k, "J_ind": j, "N_ind": n, "agree": agree,
+            "K_ind": k, "J_ind": j, "N_ind": n, "agree": agree, "near_cut": side,
             "umbra_ind": bool(np.any(ctx.umbra(p)[i_prev:i_now + 1])),
             "min_abs_beta_deg": round(float(np.min(np.abs(beta))), 2),
             "max_yaw_rate_dps": round(float(np.max(rate)) if len(rate) else 0.0, 3),
@@ -536,16 +564,47 @@ class Attempts:
         return res
 
 
+def failed_row(key, why):
+    """A table row for an attempt the check could not evaluate (no orbit for the satellite, a
+    missing SP3 epoch in the span): kept in the table and counted, left out of the statistics."""
+    s, p, t_now, gap = key
+    return {"station": s, "sat": p, "tow": int(t_now % 604800), "gap_s": gap, "bridge_outcome": "?", "listed": False,
+            "bridge_cycles": "", "K_ind": "", "J_ind": "", "N_ind": "", "agree": "not evaluated: " + why,
+            "failed": True}
+
+
 def run_check(a):
     att = Attempts(a)
-    rows = [att.row(key) for key in att.universe]
+    rows = []
+    for key in att.universe:
+        try:
+            r = att.row(key)
+            if not np.isfinite(r["max_step_cyc"]) or not np.isfinite(r["min_abs_beta_deg"]):
+                r = failed_row(key, "non-finite geometry")
+            rows.append(r)
+        except (KeyError, ValueError, FloatingPointError) as e:
+            rows.append(failed_row(key, repr(e)))
     struct = att.structure() if att.presence else {"events": 0, "match": 0, "mismatch": []}
     write_outputs(a, rows, att.bridge, att.universe, struct)
     return 0
 
 
+def nonzero_range(br):
+    """(lowest, highest) number of bridged attempts whose project count may be nonzero, given that an
+    attempt near the cut may carry its independent count or the flipped one."""
+    lo = hi = 0
+    for r in br:
+        alts = {r["N_ind"]} if r["near_cut"] == 0 else {r["N_ind"], r["N_ind"] + r["near_cut"]}
+        nz = {a != 0 for a in alts}
+        lo += int(nz == {True})
+        hi += int(True in nz)
+    return lo, hi
+
+
 def summarize(rows, bridge, struct):
     """The counts of a table as a dict (printed by write_outputs, kept for the card)."""
+    n_failed = len([r for r in rows if r.get("failed")])
+    rows = [r for r in rows if not r.get("failed")]
     br = [r for r in rows if r["bridge_outcome"] == "bridged"]
     ref = [r for r in rows if r["bridge_outcome"] != "bridged"]
     lst = [r for r in br if r["listed"]]
@@ -554,11 +613,14 @@ def summarize(rows, bridge, struct):
     gps_exposed = [r for r in br if r["sat"][0] == "G" and r["max_yaw_rate_dps"] > YAW_RATE_IIF_DPS]
     low_beta = [r for r in br if r["sat"][0] != "G" and r["min_abs_beta_deg"] < BETA_FLAG_DEG]
     return {
-        "attempts": len(rows), "counter_attempts": sm.get("attempts"),
+        "attempts": len(rows), "not_evaluated": n_failed, "counter_attempts": sm.get("attempts"),
         "bridged": len(br), "not_bridged": len(ref),
         "counter_bridged": sm.get("bridged"), "counter_refused": sm.get("refused"),
         "listed_bridged": len(lst), "unlisted_bridged": len(unl),
         "listed_agree": len([r for r in lst if r["agree"] == "yes"]),
+        "listed_agree_cut": len([r for r in lst if r["agree"] == "yes (cut)"]),
+        "near_cut_bridged": len([r for r in br if r["near_cut"] != 0]),
+        "counter_nonzero_range": nonzero_range(br),
         "listed_disagree": len([r for r in lst if r["agree"] == "NO"]),
         "listed_bridge_nonzero": len([r for r in lst if r["bridge_cycles"] != 0]),
         "listed_ind_nonzero": len([r for r in lst if r["N_ind"] != 0]),
@@ -583,24 +645,29 @@ def summarize(rows, bridge, struct):
 
 def write_outputs(a, rows, bridge, universe, struct):
     if a.out_csv:
+        names = list(next((r for r in rows if not r.get("failed")), rows[0]).keys())
         with open(a.out_csv, "w", newline="") as f:
-            w = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
+            w = csv.DictWriter(f, fieldnames=names + (["failed"] if "failed" not in names else []),
+                               extrasaction="ignore", restval="")
             w.writeheader()
             w.writerows(rows)
     sm = summarize(rows, bridge, struct)
     lines = [
-        f"attempts in the universe: {sm['attempts']} (bridge run-end counters: {sm['counter_attempts']})",
+        f"attempts in the universe: {sm['attempts']} evaluated, {sm['not_evaluated']} not evaluated "
+        f"(bridge run-end counters: {sm['counter_attempts']})",
         f"bridged {sm['bridged']} (run-end {sm['counter_bridged']}; {sm['listed_bridged']} listed with their cycles, "
         f"{sm['unlisted_bridged']} not listed); not bridged (restart or refused) {sm['not_bridged']} "
         f"(run-end refused {sm['counter_refused']}); run-end lines list {len(bridge['attempts'])} attempts, "
         f"{bridge['not_listed']} not listed",
-        f"agreement of the listed bridged attempts: {sm['listed_agree']} of {sm['listed_bridged']}; "
-        f"disagreements: {sm['listed_disagree']}",
+        f"agreement of the listed bridged attempts: equal counts {sm['listed_agree']}, equal up to the cut "
+        f"{sm['listed_agree_cut']}, of {sm['listed_bridged']}; disagreements: {sm['listed_disagree']}; bridged "
+        f"attempts with the epoch's raw angle within {CUT_TOL_RAD} rad of the cut: {sm['near_cut_bridged']}",
         f"listed with nonzero bridge cycles: {sm['listed_bridge_nonzero']}; with nonzero independent N: "
         f"{sm['listed_ind_nonzero']}",
         f"not listed: independent N nonzero in {sm['unlisted_ind_nonzero']} of {sm['unlisted_bridged']}; "
         f"run-end count of nonzero over all bridged: {sm['counter_nonzero']}; independent nonzero over all bridged: "
-        f"{sm['bridged_ind_nonzero']}",
+        f"{sm['bridged_ind_nonzero']} (the project's count may lie between {sm['counter_nonzero_range'][0]} and "
+        f"{sm['counter_nonzero_range'][1]} once the cut is allowed for)",
         f"independent J (cycles gained inside the gap) nonzero: {sm['bridged_J_nonzero']}; K (carried into the gap) "
         f"nonzero: {sm['bridged_K_nonzero']}",
         f"origin of the accumulator, bridged attempts: last restart {sm['origin_restart']}, first processed epoch "
@@ -664,6 +731,48 @@ def run_validate(a):
     worst = sorted(((float(np.max(np.abs(v))) / TWO_PI, s) for s, v in by_sat.items()), reverse=True)[:8]
     print("largest per-satellite maxima (cycles):", ", ".join(f"{s} {x:.2e}" for x, s in worst))
     return 0
+
+
+def run_validate_gap(a):
+    """Recount the gaps of a single-receiver run (the bridge on, accumulated wind-up) from its
+    `windup_trace.csv`.  The trace holds, per satellite and epoch, the raw angle (`wrapped_rad`) and
+    the accumulated angle, so the project's whole-cycle count after a gap is
+    (accumulated - wrapped) / 2 pi at the first epoch back, a number that does not come from the
+    bridge's log.  The origin is the satellite's first row (or its last restart row)."""
+    sp3_first = Sp3(a.sp3, systems="G").t[0]
+    ctx = Context(a.sp3, sp3_first, a.hours)
+    rx = np.array(a.ecef, dtype=float)
+    rows_by_sat = {}
+    with open(a.trace, "r", newline="") as f:
+        for row in csv.DictReader(f):
+            rows_by_sat.setdefault(row["satellite"], []).append(row)
+    n_gap = n_agree = n_equal = n_nonzero = n_cross = 0
+    for sat in sorted(rows_by_sat):
+        if sat not in ctx.sp3.pos:
+            continue
+        raw, el = ctx.series(sat, "rx", rx)
+        origin_t = None
+        for row in rows_by_sat[sat]:
+            t = int(row["week"]) * 604800.0 + float(row["tow_s"])
+            if origin_t is None or row["restart"] == "1":
+                origin_t = t
+            gap = float(row["gap_s"]) if row["gap_s"] else 0.0
+            if HORIZON_LO_S <= round(gap) < HORIZON_HI_S and row["restart"] == "0":
+                n_proj = int(round((float(row["accumulated_rad"]) - float(row["wrapped_rad"])) / TWO_PI))
+                i_o, i_prev, i_now = ctx.index(origin_t), ctx.index(t - round(gap)), ctx.index(t)
+                k, j, n, _, _ = count_across(raw, i_o, i_prev, i_now)
+                verdict = judge(n_proj, n, cut_side(float(raw[i_now])))
+                n_gap += 1
+                n_agree += int(verdict != "NO")
+                n_equal += int(verdict == "yes")
+                n_nonzero += int(n_proj != 0)
+                n_cross += int(j != 0)
+                print(f"{sat} at TOW {t % 604800:.0f} s, gap {round(gap)} s: project {n_proj:+d}, independent {n:+d} "
+                      f"(K {k:+d}, J {j:+d}, raw angle {float(raw[i_now]):+.3f} rad) {verdict if verdict != 'NO' else 'DISAGREE'}")
+    print(f"gaps recounted: {n_gap}; equal counts: {n_equal}; equal up to the cut: {n_agree - n_equal}; "
+          f"disagreements: {n_gap - n_agree}; nonzero in the project's accumulation: {n_nonzero}; "
+          f"gaps with the cut crossed inside them (J nonzero): {n_cross}")
+    return 0 if n_gap == n_agree else 1
 
 
 # --------------------------------------------------------------------------- selftest
@@ -805,6 +914,14 @@ def selftest():
         b = beta_deg(pos_e, sun_e)[5:-5]
         check(f"beta of a Sun {label}", float(np.max(np.abs(b - want))) < 0.1, f"{b[0]:+.3f} deg")
 
+    # 8b. The cut rule: counts that differ by the flip of the cut at an epoch near +-pi agree.
+    check("cut side near +pi, near -pi, away from the cut",
+          (cut_side(3.10), cut_side(-3.10), cut_side(0.5), cut_side(3.0)) == (1, -1, 0, 0))
+    check("counts equal", judge(-1, -1, 0) == "yes" and judge(0, 0, 1) == "yes")
+    check("counts that differ by the flip at the cut", judge(0, -1, 1) == "yes (cut)" and judge(-1, 0, -1) == "yes (cut)")
+    check("counts that differ away from the cut, or against its direction, disagree",
+          judge(0, -1, 0) == "NO" and judge(-2, -1, 1) == "NO" and judge(1, 0, -1) == "NO")
+
     # 9. The readers, on small constructed files: the run-end lines, the restart events and
     # the RINEX phase presence (one malformed event record, a zero value, a code-only line).
     import tempfile
@@ -869,6 +986,11 @@ def main():
     c.add_argument("--out-md")
     c.add_argument("--out-summary", help="the printed summary, as a text file")
     c.add_argument("--out-struct", help="the control restarts the processed-epoch model does not reproduce")
+    g = sub.add_parser("validate-gap-run", help="recount the gaps of a single-receiver bridge-on run from its windup_trace.csv")
+    g.add_argument("--trace", required=True)
+    g.add_argument("--ecef", type=float, nargs=3, required=True)
+    g.add_argument("--sp3", required=True)
+    g.add_argument("--hours", type=float, default=24.0)
     v = sub.add_parser("validate-trace", help="compare the raw angle with a project windup_trace.csv")
     v.add_argument("--trace", required=True)
     v.add_argument("--ecef", type=float, nargs=3, required=True)
@@ -881,6 +1003,8 @@ def main():
         return run_check(a)
     if a.cmd == "validate-trace":
         return run_validate(a)
+    if a.cmd == "validate-gap-run":
+        return run_validate_gap(a)
     ap.print_help()
     return 2
 
