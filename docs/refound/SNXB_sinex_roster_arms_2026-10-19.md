@@ -347,3 +347,8 @@ python -I scripts/clock_level/snx_roster_grade.py consumer --ref snxc_C ... | ce
 ```
 
 `ftc_step_attrib.py` runs under `C:/Program Files/Python314/python.exe`; `gcensus.py` without `-I`. Instruments and outputs: `D:/GnssProcessorSupport/gates/snxclose/` (`tools/`, `ros/`, `out/`, `grade_all.sh`, `census_launch.sh`).
+
+### 12.10 Reopen criterion for phase 2; the reference of gate G3 of card SCU
+
+- Phase 2 reopens with a warm resume or a real-time deployment whose roster coordinates differ between legs (the snapshot fingerprint hashes station names and not coordinates, card SNX section 8.2, so such a resume would not cold-start), or with a rule that every run declares its coordinate source in the run-start table. Every arm here is a cold start, and neither case exists today.
+- Gate G3 of card SCU (a correction within 0.05 m of (+1.47, -0.64, -0.12) m) has a data-based reference now: the leave-out replay of 12.7 puts the data (+1.5274, -0.6984, -0.0270) m from the held coordinate, against the SINEX difference (+1.5270, -0.6987, -0.0224) m. Restating the reference is the author's decision (card SNX section 8.5).
