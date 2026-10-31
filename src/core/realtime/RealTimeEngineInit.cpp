@@ -12,6 +12,7 @@
 
 #include "realtime/RealTimeEngine.hpp"
 #include "aiding/ImuAidingSource.hpp"
+#include "filter/AmbiguityResolverSetup.hpp"   // makeAmbiguityResolverConfig (the one builder)
 #include "math/TimeUtils.hpp"
 #include "products/ProductCache.hpp"
 #include "products/SsrCorrectionStore.hpp"
@@ -295,29 +296,18 @@ void RealTimeEngine::initAmbiguityResolver() {
     // as the post-processing path (Application::run).  The WL feed comes from the
     // MW slip detector; the real-time path needs no CycleSlipManager.
     if (config_.getArMode() > 0) {
-        AmbiguityResolverConfig ar_config;
-        ar_config.ar_mode               = config_.getArMode();
-        ar_config.ratio_threshold       = config_.getArRatioThreshold();
-        ar_config.elevation_mask_ar     = config_.getArElevationMask();
-        ar_config.hold_variance         = config_.getArHoldVariance();
-        ar_config.min_epochs            = config_.getArMinEpochs();
-        ar_config.max_position_sigma_m  = config_.getArMaxPositionSigma();
-        ar_config.ratio_upper_bound     = config_.getArRatioUpperBound();
-        ar_config.wl_only               = config_.getArWlOnly();
-        ar_config.wl_only_pseudo_var    = config_.getArWlOnlyPseudoVar();
-        ar_config.wl_max_frac           = config_.getArWlMaxFrac();
-        ar_config.min_success_rate      = config_.getArMinSuccessRate();
-        ar_config.wl_only_ffr            = config_.getArWlOnlyFfr();
-        ar_config.wl_only_min_arc_count  = config_.getArWlOnlyMinArcCount();
-        ar_config.wl_only_max_innov_cyc = config_.getArWlOnlyMaxInnovCyc();
-        ar_config.nl_max_per_pair_frac  = config_.getArNlMaxPerPairFrac();
-        ar_config.nl_iono_free_row      = config_.getArNlIonoFreeRow();
-        ar_config.ar_active_systems     = config_.getArActiveSystems();
-        ar_config.state_ambiguity_basis = config_.getStateAmbiguityBasis();
+        const AmbiguityResolverConfig ar_config = makeAmbiguityResolverConfig(config_);
         ambiguity_resolver_ = std::make_unique<AmbiguityResolver>(ar_config, log_manager_);
         log->info("Real-time AR enabled: mode={}, wl_only={}, ratio>={:.1f}, elev_mask={:.1f} deg",
                   ar_config.ar_mode, ar_config.wl_only ? "on" : "off",
                   ar_config.ratio_threshold, ar_config.elevation_mask_ar);
+        // The real-time builder used to drop partial AR and the per-candidate maturity
+        // gate; a setting of either now reaches the resolver, so a run that sets one says so.
+        if (ar_config.enable_partial_ar || ar_config.min_arc_info > 0.0) {
+            log->info("Real-time AR: partial_ar={}, min_arc_info={:.2f} now reach the resolver "
+                      "(the real-time builder dropped both before the shared builder).",
+                      ar_config.enable_partial_ar ? "on" : "off", ar_config.min_arc_info);
+        }
     }
 }
 

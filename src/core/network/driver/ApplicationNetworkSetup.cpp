@@ -1688,6 +1688,21 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
             // no products still has ambiguities, iono states and residuals, and the A/B
             // between the two arms is one of the comparisons this trace serves.
             consumer->setConsumerSatTrace(nc.trace_consumer_sat);
+            // The wire's phase-datum declaration for the observe-mode integer search, as the
+            // producer stamps it on the S line: the pending contract's when a product file is
+            // requested (the contract is built only then), else the choice the contract builder
+            // makes from the configuration.  The chain components of the phase biases follow
+            // with each emitted epoch (networkEmitStore).
+            if (consumer_config.arObserve()) {
+                WireChainContext chain;
+                chain.amb_datum = static_cast<int>(
+                    pending_contract.present
+                        ? pending_contract.decl.amb_datum
+                        : (config_.networkPhaseDatumEq34()
+                               ? SbasisDeclaration::AmbDatum::SingleReceiverChain
+                               : SbasisDeclaration::AmbDatum::PivotReceiverZeroAmbiguity));
+                consumer->setWireChainContext(chain);
+            }
             const bool undiff = cl.consumer_undifferenced;
             if (undiff)
                 log->info("Network closed-loop: UNDIFFERENCED user model — direct per-band "

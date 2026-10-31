@@ -25,6 +25,7 @@
 #include "filter/StateKeySchema.hpp"
 #include "math/Coordinates.hpp"
 #include "products/NetworkProductIO.hpp"
+#include "realtime/ArObserve.hpp"         // absorbWireChain, arEpochErrors (observe-mode integer search)
 
 #include <spdlog/spdlog.h>
 #include <fmt/format.h>
@@ -739,6 +740,15 @@ void networkEmitStore(NetworkRun& run, const NetworkEpoch& ep, NetworkSolutionEp
                                   "consumer satellite(s) (TOW {:.1f}).", n_iono, se.time.tow);
                 }
             }
+            // The chain components of this epoch's phase biases reach the observe-mode
+            // search with the products (the in-process counterpart of the replay driver's
+            // read of the P records' cmp= tokens).  Nothing is copied unless the search is
+            // armed, and a producer that stamps no component leaves the context empty.
+            if (consumer->arObserveArmed()) {
+                WireChainContext chain = consumer->wireChainContext();
+                absorbWireChain(chain, sol);
+                consumer->setWireChainContext(chain);
+            }
             consumer->processEpoch(cit->second);
             ++cl_epochs;
 
@@ -818,6 +828,18 @@ void networkEmitStore(NetworkRun& run, const NetworkEpoch& ep, NetworkSolutionEp
                     traces.writeConsumerSatRows(se.time, consumer->consumerSatRows());
                 if (n_cst > 0) ++ctx.counters.n_cst_epochs;
                 ctx.counters.n_cst_rows += static_cast<long long>(n_cst);
+            }
+            // Observe-mode integer search: the engine kept this epoch's rows and summary;
+            // this seam moves them to the streams NetworkRunTraces owns, stamped with the
+            // same (week, tow) as closed_loop_trace.csv, and writes the position errors
+            // against the truth ARP.  Its run-end totals are the engine's own counters
+            // (RealTimeEngine::logArObserveSummary).  An epoch that did not search leaves an
+            // invalid buffer and writes nothing.
+            if (consumer->arObserveArmed() && cl.trace_ar_fixes) {
+                const ArObserveEpoch& search = consumer->arObserveEpoch();
+                if (search.valid)
+                    traces.writeConsumerArObserve(
+                        se.time, search, arEpochErrors(search.summary, cl_truth, cl_truth_llh));
             }
             // Drain the consumer's AMB_LEVEL events into network_events.csv and the run
             // counters (invariant #7, both edges with identities).  The

@@ -51,6 +51,7 @@
 #include "products/ProductParser.hpp"
 #include "products/RinexNavParser.hpp"
 #include "products/SsrCorrectionStore.hpp"
+#include "realtime/ArObserve.hpp"
 #include "realtime/ConsumerSatTrace.hpp"
 #include "realtime/RealTimeEngine.hpp"
 #include "rinex/MultiRinexSync.hpp"
@@ -376,6 +377,14 @@ int Application::runConsumerReplay() {
     // the harness does (ApplicationNetworkSetup), so the baseline arm has it too.
     // Measure-only: the consumer's solve is unchanged with it armed.
     consumer.setConsumerSatTrace(nc.trace_consumer_sat);
+    // The wire's integer-frame declarations for the observe-mode search: the file's phase
+    // datum now (-1 for a wire without an S line, which the chain gate refuses), and the
+    // chain component of each phase bias as its record is replayed (the loop below).
+    const bool observe_on = consumer_config.arObserve();
+    WireChainContext wire_chain;
+    wire_chain.amb_datum = file_contract.present
+        ? static_cast<int>(file_contract.decl.amb_datum) : -1;
+    if (observe_on) consumer.setWireChainContext(wire_chain);
     if (cl.consume_network_products) {
         consumer.setSsrStore(&store, cl.consume_network_clock, /*bias=*/true);
         log->info("Consumer replay: consumer '{}' reading the OWNED replay store ({}), "
@@ -420,6 +429,22 @@ int Application::runConsumerReplay() {
             cl_sat_trace << kConsumerSatTraceHeader;
         else
             log->warn("Consumer replay: failed to open {}", cls_path.string());
+    }
+    // The observe-mode integer search's two files (network.closed_loop.ar_observe with
+    // trace_ar_fixes): the headers and the row formatters are the in-process streams'
+    // (ArObserve.hpp), the stamp is the (week, tow) of the closed_loop_trace.csv row.
+    // Unarmed, nothing is opened.
+    std::ofstream cl_ar_fix_trace, cl_ar_epoch_trace;
+    long long n_ar_trace_rows = 0, n_ar_trace_epochs = 0;
+    if (observe_on && cl.trace_ar_fixes) {
+        const std::filesystem::path fix_path = log_dir_ / "closed_loop_ar_fixes.csv";
+        const std::filesystem::path ep_path  = log_dir_ / "closed_loop_ar_epoch.csv";
+        cl_ar_fix_trace.open(fix_path);
+        cl_ar_epoch_trace.open(ep_path);
+        if (cl_ar_fix_trace)   cl_ar_fix_trace << kArFixTraceHeader;
+        else log->warn("Consumer replay: failed to open {}", fix_path.string());
+        if (cl_ar_epoch_trace) cl_ar_epoch_trace << kArEpochTraceHeader;
+        else log->warn("Consumer replay: failed to open {}", ep_path.string());
     }
 
     // Truth in the frame the consumer estimates: the configured coordinate is a
@@ -496,6 +521,7 @@ int Application::runConsumerReplay() {
                && TimeUtils::continuousGpsSeconds(records[rec_cursor].epoch.epoch_time)
                       <= now_s + sync_tol) {
             NetworkProductReader::replay(records[rec_cursor], store, emitter);
+            if (observe_on) absorbWireChain(wire_chain, records[rec_cursor].epoch);
             ++rec_cursor;
             ++replayed_here;
         }
@@ -532,6 +558,7 @@ int Application::runConsumerReplay() {
         auto obs_it = se.by_station.find(cl.station.name);
         if (obs_it == se.by_station.end() || obs_it->second.empty()) continue;
 
+        if (observe_on) consumer.setWireChainContext(wire_chain);
         consumer.processEpoch(obs_it->second);
         ++n_processed;
 
@@ -601,6 +628,23 @@ int Application::runConsumerReplay() {
             n_cst_rows += static_cast<long long>(rows.size());
             if (!rows.empty()) ++n_cst_epochs;
         }
+        // The observe-mode search of this epoch, when the engine ran one (a deferred or
+        // update-less epoch leaves an invalid buffer and writes nothing).
+        if (cl_ar_fix_trace.is_open() || cl_ar_epoch_trace.is_open()) {
+            const ArObserveEpoch& search = consumer.arObserveEpoch();
+            if (search.valid) {
+                const ArEpochErrors err = arEpochErrors(search.summary, truth, truth_llh);
+                if (cl_ar_epoch_trace.is_open())
+                    cl_ar_epoch_trace << formatArEpochRow(se.time.week, se.time.tow,
+                                                          search.summary, err);
+                if (cl_ar_fix_trace.is_open())
+                    for (const auto& r : search.rows)
+                        cl_ar_fix_trace << formatArFixRow(se.time.week, se.time.tow, r,
+                                                          search.summary);
+                n_ar_trace_rows += static_cast<long long>(search.rows.size());
+                ++n_ar_trace_epochs;
+            }
+        }
 
         if (n_processed == 1 || n_processed % 120 == 0)
             log->info("Consumer replay: ep {} (tow {:.1f}) — {} sats, 3D err {:.3f} m "
@@ -616,6 +660,16 @@ int Application::runConsumerReplay() {
         log->info("Consumer replay: per-sat consumer trace: {} rows over {} consumer "
                   "epoch(s) -> {}", n_cst_rows, n_cst_epochs,
                   (log_dir_ / "closed_loop_sat_trace.csv").string());
+    }
+    // The observe-mode search's on-path counter: 0 epochs on an armed replay means the
+    // search stage never ran (no applied update).  Printed only when armed.
+    if (cl_ar_fix_trace.is_open() || cl_ar_epoch_trace.is_open()) {
+        cl_ar_fix_trace.flush();
+        cl_ar_epoch_trace.flush();
+        log->info("Consumer replay: observe-mode AR trace: {} rows over {} searched consumer "
+                  "epoch(s) -> {} and {}", n_ar_trace_rows, n_ar_trace_epochs,
+                  (log_dir_ / "closed_loop_ar_fixes.csv").string(),
+                  (log_dir_ / "closed_loop_ar_epoch.csv").string());
     }
 
     // --- Phase 7: run-end telemetry ------------------------------------------
@@ -662,6 +716,7 @@ int Application::runConsumerReplay() {
     consumer.logRosterConsumerSummary("end of replay");
     consumer.logPbHoldPresenceSummary("end of replay");   // held-key presence edges, silent unless armed
     consumer.logInnovationScreenSummary("end of replay");   // pre-update innovation screen, silent unless armed
+    consumer.logArObserveSummary("end of replay");   // observe-mode integer search totals, silent unless armed
     consumer.logReinflateSummary("end of replay");   // re-inflation summary
 
     // Hourly level bands, the summary this series supports (a single

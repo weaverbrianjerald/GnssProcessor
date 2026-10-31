@@ -745,6 +745,28 @@ namespace GnssProcessor {
         /// See @c RealTimeEngine::resetOnPhaseBiasDisc.
         bool ssrPbHoldPresenceFlip() const { return ssr_pb_hold_presence_flip_; }
         /**
+         * @brief Run the observe-mode integer search on this engine's float
+         *        (derived from @c network.closed_loop.ar_observe; there is no
+         *        @c processing key).
+         *
+         * Each epoch with an applied update the engine forms the between-satellite
+         * single-difference ambiguities of its own state, searches them for integers and
+         * records the outcome, and writes nothing back, whatever the AR mode is.  Default
+         * false: nothing is read, nothing is allocated, the epoch is byte-identical.
+         * See @c RealTimeEngine::observeIntegerSearch_ and @c ArObserve.hpp.
+         * @return true when armed.
+         */
+        bool arObserve() const { return ar_observe_; }
+        /// @brief Search of the observe mode: @c "full" (default) or @c "decorrelated_partial"
+        ///        (derived from @c network.closed_loop.ar_search; the loader rejects anything else).
+        /// @return the search name.
+        const std::string& arObserveSearch() const { return ar_observe_search_; }
+        /// @brief Conditional sigma (cycles) at or below which an integer counts as determined
+        ///        in the observe mode (derived from @c network.closed_loop.ar_determined_sigma_cyc,
+        ///        default 0.05).
+        /// @return the bar in cycles (positive).
+        double arObserveDeterminedSigmaCyc() const { return ar_observe_determined_sigma_cyc_; }
+        /**
          * @brief Answer a declared code-level step by raising the variance along
          *        the stepped satellite's phase-blind ionosphere-ambiguity direction
          *        (@c processing.ssr_level_step_inflate, or derived from
@@ -8542,6 +8564,9 @@ namespace GnssProcessor {
         bool   ssr_phase_bias_step_translate_{ false };   ///< Translate the float ambiguity by −Δ on every change in the applied phase bias, declared or not (covers undeclared steps and empty declarations in one rule, see EV6 and CST §7.1); off = the existing reset / declared-step carry path (byte-identical).  Set directly (processing.ssr_phase_bias_step_translate) or derived from network.closed_loop.pb_step_translate.  When on it replaces both reactions ⇒ a declared step is translated exactly once.
         double ssr_phase_bias_step_translate_eps_m_{ 0.005 }; ///< Dead band of the step translation (m): at or below it nothing is written and the filter absorbs the move as noise.  processing.ssr_phase_bias_step_translate_eps_m / network.closed_loop.pb_step_translate_eps_m.
         bool   ssr_pb_hold_presence_flip_{ false };        ///< A held phase bias's presence edge (it appears on, or leaves, a row already in use) takes the A5 reaction of an unheld key instead of none; off = the phase-bias-hold dispatch, byte-identical.  processing.ssr_pb_hold_presence_flip / network.closed_loop.pb_hold_presence_flip.
+        bool   ar_observe_{ false };                       ///< Observe-mode integer search on this engine's float (reads, never writes back); off = nothing measured (byte-identical).  Derived from network.closed_loop.ar_observe; no processing key.
+        std::string ar_observe_search_{ "full" };          ///< The observe search: "full" or "decorrelated_partial".  Derived from network.closed_loop.ar_search.
+        double ar_observe_determined_sigma_cyc_{ 0.05 };   ///< Conditional sigma (cycles) at or below which an observe-mode integer counts as determined.  Derived from network.closed_loop.ar_determined_sigma_cyc.
         bool   amb_level_check_{ false };                 ///< Re-validate each float ambiguity against its own windowed code level (MW wide-lane + iono-free, both from the consumer's own corrected observations) and refloat the ones the code rejects; off = nothing measured, nothing written (byte-identical).  processing.amb_level_check / network.closed_loop.amb_level_check.
         int    amb_level_check_window_ep_{ 20 };          ///< Samples per satellite before the level test may run (20 = 10 min at 30 s).  processing.amb_level_check_window_ep.
         double amb_level_check_k_{ 4.0 };                 ///< Level-test trip at |state − level| > k · σ_level.  processing.amb_level_check_k.

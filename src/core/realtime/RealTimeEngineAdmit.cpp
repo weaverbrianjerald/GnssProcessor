@@ -26,6 +26,11 @@ namespace GnssProcessor {
  * (frozen lines 835-915); see scripts/rt_seam_verify.py.
  */
 bool RealTimeEngine::admitBacklogAndSync(RtEpochContext& ctx) {
+    // The first seam of every epoch: drop the previous epoch's observe-mode output, so an epoch
+    // that one of the gates below ends hands the harness nothing instead of a repeat (the same
+    // contract as consumer_sat_rows_, which processEpoch clears).  No-op unarmed.
+    if (config_.arObserve()) ar_observe_epoch_ = ArObserveEpoch{};
+
     auto log = log_manager_.getLogger("rt_engine");
     const std::string& epoch_prefix = ctx.epoch_prefix;
     const GnssTime& current_time = ctx.current_time;

@@ -18,6 +18,7 @@
 #include "network/diag/AmbStateTrace.hpp"  // kAmbStateHeader (RF-1 §7.4 carry-state trace)
 #include "network/state/ArcLedger.hpp"             // the arc ledger's two window constants
 #include "realtime/ConsumerSatTrace.hpp"    // ConsumerSatRow, kConsumerSatTraceHeader
+#include "realtime/ArObserve.hpp"           // ArObserveEpoch, the two observe-mode trace headers and formatters
 #include "math/TimeUtils.hpp"           // continuousGpsSeconds (heartbeat cadence, INC-4)
 
 #include <fmt/format.h>
@@ -189,6 +190,25 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
             else
                 log->warn("Network: failed to open closed-loop per-satellite trace {}",
                           cls_path.string());
+        }
+        // The observe-mode integer search's two files (network.closed_loop.ar_observe and
+        // trace_ar_fixes).  They exist only where there is a search to write; armed
+        // without the search the loader warned and nothing is opened.
+        if (nc.closed_loop.ar_observe && nc.closed_loop.trace_ar_fixes) {
+            const std::filesystem::path fix_path = log_dir_ / "closed_loop_ar_fixes.csv";
+            cl_ar_fix_trace.open(fix_path);
+            if (cl_ar_fix_trace)
+                cl_ar_fix_trace << kArFixTraceHeader;
+            else
+                log->warn("Network: failed to open closed-loop AR fixes trace {}",
+                          fix_path.string());
+            const std::filesystem::path ep_path = log_dir_ / "closed_loop_ar_epoch.csv";
+            cl_ar_epoch_trace.open(ep_path);
+            if (cl_ar_epoch_trace)
+                cl_ar_epoch_trace << kArEpochTraceHeader;
+            else
+                log->warn("Network: failed to open closed-loop AR epoch trace {}",
+                          ep_path.string());
         }
         // The consumer's inter-system bias, opened only when a second constellation
         // is active; a GPS-only consumer has no such state.
@@ -1164,6 +1184,20 @@ std::size_t NetworkRunTraces::writeConsumerSatRows(const GnssTime& t,
     return rows.size();
 }
 
+std::size_t NetworkRunTraces::writeConsumerArObserve(const GnssTime& t, const ArObserveEpoch& epoch,
+                                                     const ArEpochErrors& err) {
+    // The streams exist only when the harness, the search and its trace are all armed; an
+    // epoch whose search stage did not run (a deferred or update-less consumer epoch) has
+    // nothing to say, so the epoch file holds one row per epoch whose stage ran.
+    if (!epoch.valid) return 0;
+    if (cl_ar_epoch_trace.is_open())
+        cl_ar_epoch_trace << formatArEpochRow(t.week, t.tow, epoch.summary, err);
+    if (!cl_ar_fix_trace.is_open()) return 0;
+    for (const auto& r : epoch.rows)
+        cl_ar_fix_trace << formatArFixRow(t.week, t.tow, r, epoch.summary);
+    return epoch.rows.size();
+}
+
 // Writes one network_epoch_status.csv row for this epoch; a no-op when the trace is
 // off (L1).  Relocated verbatim from the runNetwork() lambda (decomposition INC-4).
 void NetworkRunTraces::emitEpochStatus(const GnssTime& t, const char* disposition,
@@ -1750,6 +1784,12 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                // unarmed run's manifest bytes are unchanged.
                << (nc.trace_consumer_sat
                        ? std::string("\"trace_consumer_sat\":true,") : std::string())
+               // Consumer observe-mode integer search: same armed-only rule.  It reads
+               // the consumer's float and writes nothing back, so the products are unchanged;
+               // the record says which search the closed_loop_ar_*.csv files hold.
+               << (nc.closed_loop.ar_observe
+                       ? std::string("\"closed_loop_ar_observe\":\"") + nc.closed_loop.ar_search
+                             + "\"," : std::string())
                // station_prior_before_pd affects the solve: it decides
                // which stations are in the network, so an archived logs/ folder has to be
                // able to say which side of it produced the products.  Emitted only when
@@ -2541,6 +2581,8 @@ void NetworkRunTraces::closeAll() {
     if (vtec_sh_trace.is_open()) vtec_sh_trace.close();
     if (cl_trace) cl_trace.close();
     if (cl_sat_trace.is_open()) cl_sat_trace.close();   // per-satellite consumer trace
+    if (cl_ar_fix_trace.is_open()) cl_ar_fix_trace.close();     // observe-mode integer search
+    if (cl_ar_epoch_trace.is_open()) cl_ar_epoch_trace.close(); // observe-mode integer search
     if (cl_isb_trace.is_open()) cl_isb_trace.close();   // consumer inter-system bias
     if (if_slip_trace.is_open()) if_slip_trace.close();
     if (raim_trace.is_open()) raim_trace.close();

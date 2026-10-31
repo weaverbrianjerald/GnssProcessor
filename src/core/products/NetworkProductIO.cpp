@@ -250,7 +250,8 @@ struct LineAssembler {
                 pb.wide_lane_integer = std::stoi(f[5]);
                 // Fields >= 7, in any order: the positional post-emit phase disc counter
                 // (a bare int, RTA-4) and key=value tokens such as the σ token
-                // sigma=<val> (T3d).  Each field is dispatched by its shape, as in the
+                // sigma=<val> (T3d), the hold generation gen=<n> and the chain component
+                // cmp=<n>.  Each field is dispatched by its shape, as in the
                 // S line, so the two forms coexist.
                 for (std::size_t k = 6; k < f.size(); ++k) {
                     if (f[k].rfind("sigma=", 0) == 0)
@@ -259,6 +260,9 @@ struct LineAssembler {
                         pb.sigc_m = std::stod(f[k].substr(5));
                     else if (f[k].rfind("gen=", 0) == 0)    // hold generation
                         pb.hold_generation =
+                            static_cast<std::uint32_t>(std::stoul(f[k].substr(4)));
+                    else if (f[k].rfind("cmp=", 0) == 0)    // chain component of the bias
+                        pb.chain_component =
                             static_cast<std::uint32_t>(std::stoul(f[k].substr(4)));
                     else if (f[k].find('=') == std::string::npos)
                         cur.serialized_disc.phase[f[1] + "|" + f[2]] = std::stoi(f[k]);
