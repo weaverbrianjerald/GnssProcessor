@@ -13,7 +13,12 @@ every cell all the time does not look like an explanation.  The flagged blocks a
 grouped by epoch and satellite, and by station: a fault of the satellite or the station
 shows as many cells flagged together.
 
-  block_baarda_join.py <run_dir> [--window-s 90] [--control-s 1800] [--top 12]
+  block_baarda_join.py <run_dir> [--window-s 90] [--control-s 1800] [--top 12] [--skip-raw-formal]
+
+--skip-raw-formal leaves out the block events whose detail reads raw_formal=1: the statistic was scaled
+with sigma0 = 1 because the family had not warmed up (the first sweeps, where the scale is not yet the
+empirical one and most of a bed can be flagged).  The count dropped is printed.  Without the flag every
+event is read, as before.
 
 Reads <run_dir>/logs/network_events.csv and network_raim.csv.  Needs trace_events.
 """
@@ -91,9 +96,17 @@ def main():
     ap.add_argument("--window-s", type=float, default=90.0)
     ap.add_argument("--control-s", type=float, default=1800.0)
     ap.add_argument("--top", type=int, default=12)
+    ap.add_argument("--skip-raw-formal", action="store_true",
+                    help="leave out the events scaled with sigma0 = 1 because the family had not warmed up "
+                         "(detail raw_formal=1)")
     a = ap.parse_args()
 
     blocks, cells = load(a.run)
+    if a.skip_raw_formal:
+        n_all = len(blocks)
+        blocks = [b for b in blocks if parse_detail(b[4]).get("raw_formal", "0") != "1"]
+        print(f"--skip-raw-formal: {n_all - len(blocks)} of {n_all} block event(s) left out "
+              f"(sigma0 = 1, family not warmed up); {len(blocks)} read")
     if not blocks:
         print("no BLOCKBAARDA event in", a.run, "(none flagged, or trace_events off)")
         return 0

@@ -4,15 +4,15 @@
 
 - **id:** SEA
 - **topic:** consumer
-- **status:** open
-- **summary:** BUILT 2026-10-16, default behaviour (no knob): the periodic (seasonal) term of the SIF coordinate function is one block chosen by the epoch with the NGS M-PAGES v1.2 rule (the covering block; the first block before all windows, the last after all, the block that ended last inside a gap), so it no longer drops to zero where the linear term extrapolates. 8 stations of the field roster gain 0.4 to 6.4 mm; the covered stations are bit-identical. The same-build golden comparison (field and sim, 2 h arms) PASSED 2026-10-17: every product, trace, log and manifest is identical to a control built from main `4318fe3` (section 8). Owed: the merge.
+- **status:** closed
+- **summary:** CLOSED 2026-10-31: merged into main on 2026-10-17 as `65db9eb` (branch `mpg/seasonal`); nothing is owed (section 11). BUILT 2026-10-16, default behaviour (no knob): the periodic (seasonal) term of the SIF coordinate function is one block chosen by the epoch with the NGS M-PAGES v1.2 rule (the covering block; the first block before all windows, the last after all, the block that ended last inside a gap), so it no longer drops to zero where the linear term extrapolates. 8 stations of the field roster gain 0.4 to 6.4 mm; the covered stations are bit-identical. The same-build golden comparison (field and sim, 2 h arms) passed twice (sections 8 and 10): every product, trace, log and manifest identical to a control built from main `4318fe3`; no golden evaluates the function.
 - **source:** the register item "Build 5: SIF outside its window" ([OPEN_ITEMS](../status/OPEN_ITEMS.md), queued after NOM); NGS M-PAGES v1.2 `Lib/Station/Periodic.cpp`, `PeriodicMotion::computeDisplacement` (lines 148 to 200); [`StationInfoFile.cpp`](../../src/core/products/StationInfoFile.cpp)
 - **knobs / posture:** none. No ledger row: the change is the intended behaviour of the register item, and no golden reaches the function (section 4)
-- **dates in the text:** 2026-10-16
-- **hashes / run dirs:** base main `4318fe3`, branch `mpg/seasonal` (code `4b4313a`); exe `gnss_processor_seasonal.exe` `ed32e9be281843c6`, control exe `gnss_processor_seasonal_ctl.exe` `ec71c45fae3052be` (main `4318fe3`); unit gates `tests/test_station_info_seasonal.cpp` (suite `SifSeasonalTermTest`) and `tools/sif_propagate/test_sif_propagate.py` section 10; smoke runs under `D:/GnssProcessorSupport/gates/seasonal/`; identity arms `D:/GnssProcessorSupport/runs_nom/_rap_seasonal_{ctl,new}_{f,s}`, gate output `D:/GnssProcessorSupport/gates/seasonal/chk/`; second check (section 10, branch head `8b7b1a5`) arms `D:/GnssProcessorSupport/runs_nom/_rap_seasonal_c2_{ctl,new}_{f,s}`, gate output and scripts `D:/GnssProcessorSupport/gates/seasonal/chk2/`
+- **dates in the text:** 2026-10-16, 2026-10-17, 2026-10-31
+- **hashes / run dirs:** base main `4318fe3`, branch `mpg/seasonal` (code `4b4313a`); exe `gnss_processor_seasonal.exe` `ed32e9be281843c6`, control exe `gnss_processor_seasonal_ctl.exe` `ec71c45fae3052be` (main `4318fe3`); unit gates `tests/test_station_info_seasonal.cpp` (suite `SifSeasonalTermTest`) and `tools/sif_propagate/test_sif_propagate.py` section 10; smoke runs under `D:/GnssProcessorSupport/gates/seasonal/`; identity arms `D:/GnssProcessorSupport/runs_nom/_rap_seasonal_{ctl,new}_{f,s}`, gate output `D:/GnssProcessorSupport/gates/seasonal/chk/`; second check (section 10, branch head `8b7b1a5`) arms `D:/GnssProcessorSupport/runs_nom/_rap_seasonal_c2_{ctl,new}_{f,s}`, gate output and scripts `D:/GnssProcessorSupport/gates/seasonal/chk2/`; merged into main as `65db9eb` (2026-10-17)
 - **gates (frozen at pre-registration):** section 6
 
-**Outcome.** Question: should the seasonal coordinate term follow the linear term past the end of its block window, as M-PAGES v1.2 does? The old sum over covering blocks dropped the seasonal term to zero while the linear term extrapolated, a step of up to 13 mm. The rule is now M-PAGES's: covered epochs are bit-identical and 8 field-roster stations gain 0.4 to 6.4 mm. Verdict: the unit gates and the same-build golden identity check (field and sim, 2 h arms) passed, as no golden evaluates the function (section 8). Standing: merge owed ([OPEN_ITEMS](../status/OPEN_ITEMS.md)).
+**Outcome.** Question: should the seasonal coordinate term follow the linear term past the end of its block window, as M-PAGES v1.2 does? Result: the old sum over covering blocks dropped the seasonal term to zero while the linear term extrapolated, a step of up to 13 mm; the rule is now M-PAGES's, covered epochs are bit-identical and 8 field-roster stations gain 0.4 to 6.4 mm. Verdict: the unit gates and the same-build identity check passed (field and sim, 2 h arms), as no golden evaluates the function (section 8). Standing: merged into main on 2026-10-17 (`65db9eb`); nothing owed (section 11).
 
 ## 1. The defect
 
@@ -341,3 +341,18 @@ MARA00VEN and RIOB00BRA, outside the roster.
 Verdict: the knob-off identity holds (there is no knob; the goldens are unchanged to the byte), the
 declared intent of the fix reaches runs only through the SIF path, and there it moves exactly the 8
 stations of section 3 by the amounts of that table. Open: the merge.
+
+## 11. 2026-10-31: closed
+
+The merge owed at the end of sections 8 and 10 landed on 2026-10-17 as `65db9eb` ("Merge mpg/seasonal"), the day of the second identity check. Each statement below was read from git or from the tree on 2026-10-31.
+
+| owed or open item | where it landed, or its disposition |
+| --- | --- |
+| the merge (sections 8 and 10) | `65db9eb` is an ancestor of main. `git diff 8b7b1a5 65db9eb` over `src`, `include`, `tests`, `tools`, `pyviz` and `CMakeLists.txt` is empty, so the merged code is the branch head that sections 8 and 10 checked. The tree carries the block rule in `src/core/products/StationInfoFile.cpp` and the suite `SifSeasonalTermTest` (`tests/test_station_info_seasonal.cpp`). |
+| later change to the same file | `4800a92` (2026-10-19, the post-seismic term, card SNX addendum) changed the post-seismic term and a comment; the periodic rule is as merged. |
+| section 7, the ledger row of `network.use_sif_coordinates` stays as it is; no knob to restore the old term | Field-inert, standing invariant 3, with data. The function is evaluated only by a run that arms `processing.enable_station_info` or `network.use_sif_coordinates`. On 2026-10-31 `config/` arms the first in one file (`config/ppp_rtk_internal_AR.json`) and the second in none, and neither golden carries either key. The golden identity of sections 8 and 10 (field and sim, 2 h arms, every product, trace, log and manifest line) is the data. Reverting is one function, as section 7 states. |
+| register and index lines | The register item "Build 5: SIF outside its window" no longer owes anything and leaves the register; the card index and the topic line read closed. |
+
+Not claimed here: the unit suite and the golden identity were not run again on 2026-10-31. The evidence is the checks of sections 8 and 10 on the branch head, which the merge carried unchanged (zero diff above).
+
+Nothing is owed on this card.

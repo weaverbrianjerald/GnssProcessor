@@ -4,15 +4,15 @@
 
 - **id:** NOM2
 - **topic:** network-vehicle
-- **status:** open
-- **summary:** Card NOM's continuation (that file nears the size bar). Step N2 as card NOM section 17 pre-registered it: N2a declares a kind for every contribution to the normal equations and tags every row and fold where it is created; N2b moves the readers onto the tags. N2a LANDED, byte-identical (section 2); N2b LANDED, the solve unchanged and every trace move explained (section 3). Step N3 specified (section 4); N3a LANDED, the signal roster built on every run with a "signals as planned" table, byte-identical, +1.7 to +1.8 % wall (section 5). Step TD pre-registered: the 7 189-line, 44-parameter run-end function cut into reports owned by their subsystems (section 6); TD1a LANDED, its 44 parameters now the run and one bundle of named groups, identical output (section 7). TD1b LANDED: the 7 277-line file is 68 lines, walking a declared table of 107 reports that live beside their subsystems, verified character-exact and identical on 18 arms (section 8).
+- **status:** closed
+- **summary:** CLOSED 2026-10-31. Card NOM's continuation (that file nears the size bar). Step N2 as card NOM section 17 pre-registered it: N2a declares a kind for every contribution to the normal equations (57 kinds) and tags every row and fold where it is created; N2b moves the readers onto the tags. N2a LANDED, byte-identical (section 2); N2b LANDED, the solve unchanged and every trace move explained (section 3). Step N3 specified (section 4); N3a LANDED, the signal roster built on every run with a "signals as planned" table, byte-identical, +1.7 to +1.8 % wall (section 5); N3b landed in card NOM4 (wave 3) and the N3c switches are graded in `scripts/nom3_designs/N3b_decisions.md` sections 9 and 10 (default off; arming is the author's). Step TD pre-registered: the 7 189-line, 44-parameter run-end function cut into reports owned by their subsystems (section 6); TD1a LANDED, its 44 parameters now the run and one bundle of named groups, identical output (section 7); TD1b LANDED: the 7 277-line file is 68 lines, walking a declared table of 107 reports that live beside their subsystems, verified character-exact and identical on 18 arms (section 8); TD2 landed in card NOM4 (wave 4; 82 rows). Step N6 is in cards NOM and NOM5 (section 9).
 - **source:** [NOM](NOM_network_object_model_2026-10-08.md) sections 3, 4, 10, 13, 16 (the row inventory and the confirmed defects) and 17 (the N2 contract); [RPA](RPA_raim_pool_data_rows_2026-10-08.md) (the science card that follows N2b)
 - **knobs / posture:** none; N2a byte-identical including traces, N2b with explained trace moves and an unchanged solve
-- **dates in the text:** 2026-10-09
+- **dates in the text:** 2026-10-09, 2026-10-15, 2026-10-16, 2026-10-20, 2026-10-31
 - **hashes / run dirs:** main `f1ff6a8` (the pre-step tree); the pre-change reference build `gnss_processor_gal2.exe` (`df936f39`, clean `a4cda77`), byte-identical to main on every golden arm so far
 - **gates (frozen at pre-registration):** card NOM section 17
 
-**Outcome.** Question: can every contribution to the network's normal equations carry a declared kind a reader can follow? N2a: 57 kinds, a tag on every row and fold, and a "contributions as armed" table, byte-identical on six arms, the eq34 posture and 25 family smokes, with every integrity line at 0 (section 2). N2b: every reader takes the row kind from the tag, the RAIM pool admission is a declared rule with counters (about 90 % of its samples are carried-prior rows, card RPA), the solve is unchanged and every trace move is explained (section 3). N3a: the signal roster is built on every run and a "signals as planned" table names each station's modelled signal per band with eleven decision-site counters, byte-identical on four arms at +1.7 to +1.8 % wall; the counters show where two rules choose differently (the two latch rules at 22 of 58 field stations, the ionosphere-free pin against C1W stations, missing per-family wire biases on GPS+Galileo), which is N3b's decision list (section 5).
+**Outcome.** Question: can every contribution to the network's normal equations carry a declared kind a reader can follow, and the signal and run-end layers become tables? Result: N2a (57 kinds, a tag on every row and fold) and N2b (every reader takes the kind from the tag; the RAIM pool admission is a declared rule with counters, about 90 % of its samples carried-prior rows) landed with the solve unchanged and every trace move explained; N3a built the signal roster on every run at +1.7 to +1.8 % wall; the run end became 107 owned reports (TD1a, TD1b), then 82 (TD2). Standing: closed; N3b, TD2 and N6 are recorded in cards NOM4, NOM and NOM5; the N3c arming decisions are the author's (section 9).
 
 ## 1. The contract
 
@@ -160,3 +160,26 @@ Built on branch `nom/td1b` from main `067fdc1`, re-graded by the manager (the ve
 - **Suite** (Debug, final tree): 2 987 run, 2 963 passed, 24 skipped, 0 failed (`NetworkRunEndTable`, 6 cases: every row filled and present once, and the order constraints).
 
 **Deviations, recorded.** 107 rows, not about 40: keeping today's print order with every report in its owner's file needs one row per contiguous run of one owner, and the 40-row proposal needed chapter functions that call into other owners' files (TD2's merge by subsystem shrinks the table: the slip QC 5 rows to 1, RAIM 3 to 1). Section S36 is split at its owners (its later parts read only the counters), S98 to S102 are separate rows held in order by the table and its test, S02, S90 and S106 stay whole. The trace close is the first row, ahead of the timing report (it prints nothing, so no output moves). The timing, trace-close, manifest-complete and run-summary reports live in `app/`, not in `logging/NetworkRunTraces.cpp`, because they read the estimator, the carry driver and the setup. Two writes outside the old function surfaced at compile time and were made local (the roster census's class sums; a const walk in the carry-site census).
+
+## 9. 2026-10-31: closed
+
+Every step this card carried landed or was handed to the card that built it. Hashes below were checked against main on 2026-10-31.
+
+| step or item | where it landed |
+| --- | --- |
+| N2a (declare and tag) | section 2 (`cad880f`, `c0be47f`) |
+| N2b (the readers on the tags) | section 3 (`2fe6eaa`, `3822040`) |
+| the science card that follows N2b | card [RPA](RPA_raim_pool_data_rows_2026-10-08.md), closed: RAIM pools on observation rows only, KEEP_OFF (ledger `network.raim_pool_data_rows_only`) |
+| N3a (the roster always built and printed) | section 5 (`ae21417`, `c474737`) |
+| N3b (the readers on the roster, one site at a time) | card [NOM4](NOM4_network_object_model_finish_2026-10-15.md), wave 3 (merge `3feec9a`); the decision list D1 to D9 with counts is `scripts/nom3_designs/N3b_decisions.md`; D8 (GPS as the time and inter-system reference) and D9 (BeiDou digit 1 is B1C) were declared in NOM4 wave 6 |
+| the decisions section 4 put to the author | taken as defaults in N3b_decisions section 8 (2026-10-16, delegated); the switches are N3c |
+| N3c (the switches D1 to D7) | `scripts/nom3_designs/N3b_decisions.md` sections 9 and 10: default-off keys, graded on the field golden at the held-out consumer and on the 16-site census (D1 -0.2 mm, D6 0.0, D7 0.0, no site worse at 1 cm; D3 +0.6 mm, KEEP_OFF; D2 and D4 inert). Arming D1 (`network.n3c_bia_pin_pair`), D6 (`network.n3c_wire_per_signal`) and D7 (`network.n3c_ledger_lifecycle`) re-bases the goldens and is the author's decision; the register line is "N3c: the signal decisions, graded" |
+| TD1a, TD1b | sections 7 and 8 |
+| TD2 (one report per subsystem) | card NOM4, wave 4 (merge `459f485`): 106 rows to 82, a heading line ahead of every printing report |
+| the routing rule (section 6, item 4) | `CLAUDE.md` ("New run-end telemetry / readout") and `docs/onboarding/07_network_tour.md` carry it: a new line goes in its subsystem's report, a new report is a row of `kNetworkRunEndReports` |
+| section 1: the user-side measurement header includes no network header | done in N2a (section 2); the record it moved was deleted with the user-side twins at N6e |
+| G3, wall time, owed on an idle box (sections 2 and 3) | measured on an idle machine in section 3 (309.2 and 307.6 ms per epoch before N2b, 305.8 and 304.6 after) and section 5 (+1.82 % field, +1.66 % sim, inside the 2 % bar); the cost of the whole series is NOM4's cost pair (field +0.7 %, sim +3.3 %), kept as a register line (the sim figure is unattributed: loaded pairs read +0.5 % and 0.0 %, NETCOST sections 10 and 11.5) |
+| step N6 | card NOM and `scripts/nom3_designs/N6_design.md`: N6.0 to N6e on main (merge `f64f916`); N6f to N6j are card NOM5 on the unmerged branch `nom/n6-tail` |
+| section 3, "for the author": the meanings that moved with the classes | `network.prefit_fuse_sigma` (KEEP_OFF) now caps clock-only code rows and no longer station-unique phase rows, and the `network.h_sigma0_classes` class "other" now means unclassified (0 rows on the goldens), so the H-record sigma0 is formed from code and SH rows only. Both statements go into the ledger rows' text (ledger edits returned with this close); the verdicts do not change |
+
+Nothing else is owed on this card.
