@@ -609,13 +609,21 @@ namespace GnssProcessor {
         /// exists.
         bool raim_ci_on{};
         /// The carried-phase RAIM pools admit observation phase rows only, each to the
-        /// pool of the ambiguity column its tag names (@c network.raim_pool_data_rows_only).
+        /// pool of the ambiguity column its tag names (@c network.raim_pool_data_rows_only,
+        /// or @c network.raim_prior_channel, which takes the carried-prior rows out of the
+        /// pools to test them on their own channel).
         /// Read by both pool walks (the post-fit pass in network/qc/Raim.cpp
-        /// and the within-epoch assess in network/solve/SolveGlue.cpp) through
+        /// and the within-epoch assess in network/qc/RaimWithinEpoch.cpp) through
         /// @c raimPoolAdmitsRow, and by the run-end admission lines.  The loader guarantees
         /// @c network.raim.  Off = today's declared rule (byte-identical).  Not
         /// fingerprinted (a QC knob).
         bool raim_pool_data_rows_only{};
+        /// The post-fit pass tests the carried-prior rows on their own channel, each once in
+        /// the cell of its own column (@c network.raim_prior_channel,
+        /// network/qc/RaimPriorChannel.hpp).  The loader guarantees @c network.raim and
+        /// @c network.raim_attribution; it implies @ref raim_pool_data_rows_only.  Off =
+        /// byte-identical.  Not fingerprinted (a QC knob).
+        bool raim_prior_channel{};
         /// The gross line-of-sight screen is armed for this run (
         /// docs/SPEC_event_harness.md §24.18).  Resolved once from
         /// @c network.gross_los_screen so the driver, the assembly, the seam and the

@@ -6258,6 +6258,12 @@ namespace GnssProcessor {
         network_raim_pool_data_rows_only_ =
             jval<bool>(json, "network.raim_pool_data_rows_only",
                        "network_raim_pool_data_rows_only", false);
+        // The carried-prior rows tested on their own channel (card RPC).  Parsed with the
+        // RAIM family; its interlocks (network.raim, network.raim_attribution) are checked in
+        // validateNetworkCarryPosture_, after the RAIM auto-couplings.  A QC knob: not in the
+        // warm-resume fingerprint.
+        network_raim_prior_channel_ =
+            jval<bool>(json, "network.raim_prior_channel", "network_raim_prior_channel", false);
         network_raim_within_epoch_ =
             jval<bool>(json, "network.raim_within_epoch", "network_raim_within_epoch", false);
         network_raim_sigma0_trigger_ =
@@ -11678,6 +11684,37 @@ namespace GnssProcessor {
                       "column its tag names; the carried-prior and SD-EWL rows are refused.  "
                       "Solve-affecting (T3/T4 and the within-epoch adaptation read observation "
                       "residuals only); fingerprint-safe.");
+        // The prior channel tests the carried-prior rows inside the post-fit pass's
+        // attribution, and answers a line-of-sight flag with the attribution's arc refloat, so
+        // without network.raim or network.raim_attribution it has nothing to act on.  Disabled
+        // rather than left to read as armed (invariant #4).
+        if (network_raim_prior_channel_ && (!network_raim_ || !network_raim_attribution_)) {
+            log->warn("Network (RAIM prior channel): network.raim_prior_channel is on but {} is "
+                      "OFF: the channel runs in the post-fit attribution and answers through its "
+                      "refloat.  DISABLED.",
+                      !network_raim_ ? "network.raim" : "network.raim_attribution");
+            network_raim_prior_channel_ = false;
+        }
+        if (network_raim_prior_channel_) {
+            log->info("Network (RAIM prior channel): network.raim_prior_channel ON: the RAIM pools "
+                      "admit the observation phase rows only, and the post-fit pass tests every "
+                      "carried-prior row once, in the cell of its own column (a line of sight, a "
+                      "receiver code bias, or a station carry with no response), with the T4 "
+                      "isolated-arc test at {:g} times the channel's own robust scale; a "
+                      "line-of-sight flag takes the arc refloat, a receiver code-bias flag erases "
+                      "that carried code bias.  Solve-affecting; fingerprint-safe.",
+                      network_raim_k_sigma_);
+            if (network_raim_arc_persist_epochs_ > 1)
+                log->warn("Network (RAIM prior channel): network.raim_arc_persist_epochs = {} "
+                          "gates the observation channel's isolated-arc refloats only; the prior "
+                          "channel refloats at its first flag.",
+                          network_raim_arc_persist_epochs_);
+            if (network_carry_zwd_in_block_ || network_carry_rx_clock_in_block_)
+                log->warn("Network (RAIM prior channel): the {} in the carried block has no prior-"
+                          "channel response: its rows are tested and a flag is counted and written "
+                          "as T4_prior prior_unwired, and nothing is done.",
+                          network_carry_zwd_in_block_ ? "wet delay" : "receiver clock");
+        }
         // Isolated-arc refloat maturity gate (T2d).  It is evaluated inside the attribution
         // path of networkPostFitRaim, so without network.raim and network.raim_attribution
         // there is no isolated-arc refloat for it to hold; and a horizon that does not exceed

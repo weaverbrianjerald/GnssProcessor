@@ -6642,6 +6642,34 @@ namespace GnssProcessor {
         bool networkRaimPoolDataRowsOnly() const { return network_raim_pool_data_rows_only_; }
 
         /**
+         * @brief Test the carried-prior rows on a channel of their own, each against its own
+         *        column (@c network.raim_prior_channel;
+         *        docs/refound/RPC_raim_prior_channel_2026-10-30.md).
+         *
+         * The carried local block of a station folds as whitened rows (one row of
+         * @f$L^{-1}@f$ per carried column, its diagonal on that column, recorded in
+         * @c StationAssembly::cpl_row_local_cols).  Off, those rows enter the carried-phase
+         * RAIM pools of every ambiguity column they clear 0.5 on (@ref networkRaimPoolDataRowsOnly).
+         * On:
+         *  - both pools keep the observation phase rows only, each to the pool of its own
+         *    column (the rule of @ref networkRaimPoolDataRowsOnly), so σ̂0, T3, T4 and the
+         *    within-epoch adaptation read observation residuals only;
+         *  - the post-fit pass tests every row of a station's coupling region once, in the cell
+         *    of its own column's subject (a line of sight, a receiver code bias, or a station
+         *    carry with no response), with the T4 isolated-arc test on a table of its own
+         *    (network/qc/RaimPriorChannel.hpp);
+         *  - a line-of-sight flag takes the T4 arc refloat; a receiver code-bias flag erases
+         *    that carried code bias; a flag on another station carry is counted only.
+         *
+         * A QC knob: it moves refloat decisions, not the state layout, so it is not in the
+         * warm-resume fingerprint.  Requires @ref networkRaim and @ref networkRaimAttribution
+         * (the loader disables it otherwise).  Off = byte-identical.
+         *
+         * @return True when the carried-prior rows are tested on their own channel.
+         */
+        bool networkRaimPriorChannel() const { return network_raim_prior_channel_; }
+
+        /**
          * @brief Whether a "so bad" epoch triggers within-epoch adaptation
          *        (@c network.raim_within_epoch).
          *
@@ -8768,6 +8796,7 @@ namespace GnssProcessor {
         bool   network_raim_attribution_{false};  ///< Drive RAIM refloats by prominence attribution (median-polish sat/station/arc) instead of per-satellite consensus; off = consensus behaviour.
         bool   network_raim_carry_invariant_{false};         ///< Run the post-fit RAIM screen on the invariant-carry lineage (pool re-host, measure-only) by building the carry-neutral `qc_amb` census and widening the seam's call-site gate. Otherwise post-fit RAIM is structurally inert under carry_invariant: the seam is not called (carry_warm needs phase_leveling) and its pool `pl_amb` is never filled (its fill site is under `!carry_invariant`). Not emission-neutral: filling the pool makes σ̂0 real, which feeds the A4 withhold and the URA EWMA. Requires network_carry_invariant_ + network_raim_. Off = byte-identical.
         bool   network_raim_pool_data_rows_only_{false};     ///< The carried-phase RAIM pools (post-fit and within-epoch) admit the observation phase rows only, each to the pool of the ambiguity column its tag names; the carried-prior and SD-EWL rows are refused. Requires network_raim_ (loader disables it otherwise). Off = today's declared rule (byte-identical). QC knob: fingerprint-safe.
+        bool   network_raim_prior_channel_{false};           ///< The carried-prior rows leave the RAIM pools (observation rows only, as network_raim_pool_data_rows_only_) and the post-fit pass tests each once, in the cell of its own column, with the T4 isolated-arc test; a flag answers its carry (the arc refloat, or the receiver code-bias reset). Requires network_raim_ and network_raim_attribution_ (loader disables it otherwise). Off = byte-identical. QC knob: fingerprint-safe.
         bool   network_raim_within_epoch_{false}; ///< Arm within-epoch adaptation (detect→drop-culprit→re-solve) when σ̂0 exceeds the trigger; off = emit the first solve (byte-identical).
         double network_raim_sigma0_trigger_{3.0}; ///< σ̂0 above which an epoch is "so bad" that within-epoch adaptation fires.
         double network_raim_withhold_sigma0_{0.0}; ///< Within-epoch escape-hatch ceiling (A4): if σ̂0 still exceeds this after the 5-pass adaptation, the epoch is withheld (reusing the observability-gate disposition) instead of emitted with a warning; 0 = off (emit anyway). Used only when @ref networkRaimWithinEpoch. Typically ~2× @ref networkRaimSigma0Trigger.
