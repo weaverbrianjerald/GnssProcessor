@@ -260,9 +260,16 @@ class Sp3:
 
 
 # --------------------------------------------------------------------------- RINEX epochs
-def read_phase_presence(path, wanted, systems="GE"):
+DUAL_BANDS = {"G": ("1", "2"), "E": ("1", "5")}     # the two bands of the dual-frequency mode, by system
+
+
+def read_phase_presence(path, wanted, systems="GE", allowed=None):
     """{sat: sorted array of GPS seconds} of the epochs at which a RINEX 3 observation file
-    holds a non-zero phase observation of the satellite (only the satellites in `wanted`)."""
+    holds a non-zero phase observation of the satellite (only the satellites in `wanted`).
+
+    With `allowed` ({system letter: set of 3-character phase types}) an epoch counts only when a phase
+    type of the set is present in each of the two bands of DUAL_BANDS[system]: the epochs a dual-frequency
+    run with that signal list can model.  Without it any phase observation counts."""
     types = {}
     out = {s: [] for s in wanted}
     with open(path, "r", errors="replace") as f:
@@ -277,7 +284,9 @@ def read_phase_presence(path, wanted, systems="GE"):
                     types[cur].extend(line[7:60].split())
             elif lab == "END OF HEADER":
                 break
-        phase_cols = {s: [i for i, t in enumerate(v) if t.startswith("L")] for s, v in types.items()}
+        phase_cols = {s: [i for i, t in enumerate(v) if t.startswith("L") and (allowed is None or t in allowed.get(s, ()))]
+                      for s, v in types.items()}
+        band_of = {s: [types[s][i][1] for i in cols] for s, cols in phase_cols.items()}
         t_epoch, skip = None, 0
         for line in f:
             if line.startswith(">"):
@@ -294,15 +303,17 @@ def read_phase_presence(path, wanted, systems="GE"):
             sat = line[:3]
             if sat not in out:
                 continue
-            for i in phase_cols.get(sat[0], []):
+            have = set()
+            for i, band in zip(phase_cols.get(sat[0], []), band_of.get(sat[0], [])):
                 field = line[3 + 16 * i:3 + 16 * i + 14].strip()
                 if field:
                     try:
                         if float(field) != 0.0:
-                            out[sat].append(t_epoch)
-                            break
+                            have.add(band)
                     except ValueError:
                         pass
+            if (have and allowed is None) or (allowed is not None and set(DUAL_BANDS.get(sat[0], ("?", "?"))) <= have):
+                out[sat].append(t_epoch)
     return {s: np.array(sorted(set(v))) for s, v in out.items()}
 
 
@@ -340,6 +351,31 @@ def read_run_end(path):
             if m:
                 res["not_listed"] = int(m.group(1))
     return res
+
+
+def phase_signal_sets(arm_json):
+    """{system letter: set of phase types} of the arm's processing.signal_priorities."""
+    import json
+    with open(arm_json, "r") as f:
+        pr = json.load(f).get("processing", {}).get("signal_priorities", {})
+    letter = {"GPS": "G", "Galileo": "E"}
+    return {letter[k]: {t for t in v if t.startswith("L")} for k, v in pr.items() if k in letter} or None
+
+
+def read_births(amb_state_csv):
+    """{(station, satellite): sorted GPS seconds} of the 'birth' events of a network_amb_state.csv: the
+    epochs at which the project created a carried phase ambiguity, hence modelled the pair."""
+    out = {}
+    with open(amb_state_csv, "r", newline="") as f:
+        rd = csv.reader(f)
+        head = next(rd)
+        while head and head[0].startswith("#"):
+            head = next(rd)
+        iw, it, isn, isa, ie = (head.index(c) for c in ("week", "tow", "station", "sat", "event"))
+        for row in rd:
+            if len(row) > ie and row[ie] == "birth":
+                out.setdefault((row[isn], row[isa]), []).append(int(row[iw]) * 604800.0 + float(row[it]))
+    return {k: sorted(v) for k, v in out.items()}
 
 
 def read_restarts(events_csv):
@@ -469,7 +505,9 @@ class Attempts:
         week0 = int(self.ctx.t0 // 604800) * 604800
 
         def in_range(gap):
-            return HORIZON_LO_S <= round(gap) < HORIZON_HI_S
+            # the printed gap of the event, not rounded: 899.999999 s is a gap under the horizon (an
+            # attempt), 900.000001 s is beyond it; a restart event never has a gap under the lower bound
+            return HORIZON_LO_S <= gap < HORIZON_HI_S
 
         self.ctl_att = {(s, p, round(t), round(g)) for s, p, t, g in self.ctl_restarts if in_range(g)}
         self.brg_ref = {(s, p, round(t), round(g)) for s, p, t, g in self.brg_restarts if in_range(g)}
@@ -478,6 +516,12 @@ class Attempts:
         self.last_restart = {}
         for s, p, t, g in sorted(self.brg_restarts, key=lambda r: r[2]):
             self.last_restart.setdefault((s, p), []).append(t)
+        self.rule = a.origin_rule
+        self.births = {}
+        births_path = os.path.join(a.bridge_run, "logs", "network_amb_state.csv")
+        if self.rule == "births":
+            self.births = read_births(births_path)
+        self.allowed = phase_signal_sets(os.path.join(a.bridge_run, "arm.json")) if self.rule == "births" else None
         self.presence = {}
         if not a.no_rinex:
             need = {}
@@ -485,7 +529,7 @@ class Attempts:
                 need.setdefault(s, set()).add(p)
             for s, sats in need.items():
                 if s in self.stations and os.path.exists(self.stations[s][0]):
-                    self.presence[s] = read_phase_presence(self.stations[s][0], sorted(sats))
+                    self.presence[s] = read_phase_presence(self.stations[s][0], sorted(sats), allowed=self.allowed)
         self._proc = {}
 
     def processed(self, s, p):
@@ -505,6 +549,10 @@ class Attempts:
         vis = np.nonzero(el >= MASK_DEG)[0]
         i_vis = int(vis[0]) if len(vis) else 0
         fp = first_processed(self.processed(s, p))
+        births = [t for t in self.births.get((s, p), []) if t <= t_prev + 0.5]
+        if births:
+            # the project's own first modelled epoch; the alternative is the earlier epoch the receiver data allow
+            return self.ctx.index(births[0]), "first_birth", fp if fp is not None else i_vis
         if fp is None:
             return i_vis, "visibility", None
         return fp, "first_processed", i_vis
@@ -633,6 +681,7 @@ def summarize(rows, bridge, struct):
         "max_defect": max([r["defect"] for r in rows] or [0.0]),
         "origin_restart": len([r for r in br if r["origin_kind"] == "restart"]),
         "origin_first_processed": len([r for r in br if r["origin_kind"] == "first_processed"]),
+        "origin_first_birth": len([r for r in br if r["origin_kind"] == "first_birth"]),
         "origin_visibility": len([r for r in br if r["origin_kind"] == "visibility"]),
         "origin_sensitive": len([r for r in br if r["origin_sensitive"]]),
         "gps_bridged_above_iif_yaw_rate": [(r["station"], r["sat"], r["tow"], r["max_yaw_rate_dps"]) for r in gps_exposed],
@@ -670,9 +719,10 @@ def write_outputs(a, rows, bridge, universe, struct):
         f"{sm['counter_nonzero_range'][1]} once the cut is allowed for)",
         f"independent J (cycles gained inside the gap) nonzero: {sm['bridged_J_nonzero']}; K (carried into the gap) "
         f"nonzero: {sm['bridged_K_nonzero']}",
-        f"origin of the accumulator, bridged attempts: last restart {sm['origin_restart']}, first processed epoch "
+        f"origin of the accumulator, bridged attempts: last restart {sm['origin_restart']}, first birth "
+        f"{sm['origin_first_birth']}, first processed epoch "
         f"{sm['origin_first_processed']}, first visible epoch {sm['origin_visibility']}; N changes with the "
-        f"origin (first processed against first visible) in {sm['origin_sensitive']}",
+        f"origin (the primary origin against the earlier alternative from the receiver data) in {sm['origin_sensitive']}",
         f"largest 15 s step inside a bridged gap: {sm['max_step_cyc']:.3f} cycles (the bridge refuses 0.25 per half step); "
         f"largest series defect: {sm['max_defect']:.2e}",
         f"independent umbra in the gap: not bridged {sm['refused_in_umbra_ind']} of {sm['refused']}; "
@@ -757,7 +807,7 @@ def run_validate_gap(a):
             if origin_t is None or row["restart"] == "1":
                 origin_t = t
             gap = float(row["gap_s"]) if row["gap_s"] else 0.0
-            if HORIZON_LO_S <= round(gap) < HORIZON_HI_S and row["restart"] == "0":
+            if HORIZON_LO_S <= gap < HORIZON_HI_S and row["restart"] == "0":
                 n_proj = int(round((float(row["accumulated_rad"]) - float(row["wrapped_rad"])) / TWO_PI))
                 i_o, i_prev, i_now = ctx.index(origin_t), ctx.index(t - round(gap)), ctx.index(t)
                 k, j, n, _, _ = count_across(raw, i_o, i_prev, i_now)
@@ -982,6 +1032,11 @@ def main():
     c.add_argument("--sp3", required=True)
     c.add_argument("--hours", type=float, default=24.0, help="length of the grid from the first SP3 epoch")
     c.add_argument("--no-rinex", action="store_true", help="skip the RINEX epoch reader (origins from elevation only)")
+    c.add_argument("--origin-rule", choices=["registered", "births"], default="births",
+                   help="accumulator origin of a pair without a restart event: 'registered' is the first epoch with a phase "
+                        "observation above the mask outside the umbra (the pre-registered rule); 'births' is the first "
+                        "carried ambiguity of the bridge run's network_amb_state.csv, the epoch the project modelled the pair "
+                        "(amendment A2), with the dual-frequency receiver data as the alternative")
     c.add_argument("--out-csv")
     c.add_argument("--out-md")
     c.add_argument("--out-summary", help="the printed summary, as a text file")
