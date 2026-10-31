@@ -454,6 +454,8 @@ Standing documents (not split this pass):
 Program card on this topic (indexed in [refound/CARDS.md](refound/CARDS.md)):
 [RKD](refound/RKD_retired_key_deletion_2026-10-14.md), the 144 retired network keys deleted with
 their code (closed, 2026-10-14: landed; the same-build golden comparison passed).
+[RKT](refound/RKT_retired_key_tombstone_2026-10-30.md), the warn-once tombstone of those keys in the
+loader (open, 2026-10-30: pre-registered, gates frozen).
 
 ### `queues` — [topics/queues.md](topics/queues.md)
 

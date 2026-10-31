@@ -270,3 +270,6 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   gate had the same defect). Gate off: byte-identical on 2 h field and sim arms. Gate on at 120 epochs, 2 h field: 27 flags
   held on 11 epochs (19 arcs), the lift at 62.5 min, 3 of the 4 refloats after it on arcs held before it. Nothing armed;
   ledger verdicts unchanged.
+- [RKT](RKT_retired_key_tombstone_2026-10-30.md): open, 2026-10-30: card RKD's follow-on F4, a warn-once tombstone of
+  the 150 retired network keys: a declared table beside the loader (path, flat spelling, deletion commit) and one
+  warning per retired key a configuration sets; no key and no other change. Gates frozen at pre-registration.
