@@ -159,3 +159,83 @@ The key-absent gate is clean on every surface (G5 24 of 24, user side 16 of 16, 
 ### 9.7 Run directories
 
 Under `D:/GnssProcessorSupport/runs_nom/`: golden `_rap_isc_g_{ctl,off,act,k9}`; census `_rap_isc6_{ctl0,off,act,k9,obs}_<site4>` (17 each); case `_rap_isc_n2_{ctl,off,act}`; cost `_rap_isc_cost_{ctl,act}{1,2,3}`; G5 `_rap_g5_w2innoscreen_*` (gate summary `gates/g7/summary_w2innoscreen.txt`). User-side arms `runs/_uom_w2innoscreen`; real-time captures `runs/rtseam_goldens/w2innoscreen_{dr,cl}`. Scratch (logs, compare outputs, the counter reader): `D:/GnssProcessorSupport/gates/innoscreen/chk/`.
+
+## 10. 2026-10-31: the multi-satellite injection (pre-registered)
+
+Committed before any screen-on replay of this section was read. Read before it: the natural-edge audit (10.2) and the four unperturbed screen-off replays, whose sat traces rank the satellites (10.4). This section changes no knob, golden, ledger row or code. The key stays default off and is not armed here.
+
+### 10.1 The question
+
+Section 9 found no benefit because no data holds the edge the screen answers: an undeclared step reaching the consumer on several satellites at once (section 1). The edge is run here by injection into a recorded wire, and the screen is decided on it by the bars of 10.8, frozen below.
+
+### 10.2 Natural edges (read first)
+
+`scripts/wire_step_audit.py` and `scripts/product_step_census.py` on the baseline pair `runs/_rf0hv17_field6` and `runs/_rf0hv17_sim6` (outputs in `D:/GnssProcessorSupport/gates/nisclose/`: `wire_step_audit.txt`, `wire_step_audit_0p5.txt`, `product_step_census_{0p5,2,10}.txt`). Steps between consecutive emitted epochs that the key's discontinuity counter does not signal: none above 10 m and none above 2 m, on either bed and on either channel (clock, phase bias). Above 0.5 m the clock channel has 1 on the field wire (G24, 0.803 m at TOW 259230) and 65 on the sim wire (TOW 259260 to 259470); the phase-bias channel has none. All lie in the first 270 s of the run, inside the consumers' own convergence, and every replay carries them, so the unperturbed cell is their cell (the pair of bar B3 reads it). No natural hit above 2 m exists to become an extra cell. The product census, which does not read counters, finds the same epochs: 3 phase-bias key-steps above 0.5 m on the field wire (TOW 259230) and 188 on the sim wire (ten epochs from TOW 259260; 4 above 2 m, E18 at TOW 259260 and 259290, signalled); none above 10 m on either.
+
+### 10.3 Wires, consumers, executable
+
+Wires: `C:/GnssProcessor/runs/_rf0hv17_field6/products.txt` (sha256 prefix `bf16e9474305e2de`) and `C:/GnssProcessor/runs/_rf0hv17_sim6/products.txt` (`4ef06f1f3f9c0bf4`), the baseline pair of card BOF. Consumer-only replays (`network.closed_loop.replay_products_path`) of 6 h from the wire's start, `network.trace_consumer_sat` true, built by `scripts/nis_inject_arms.py` from the wire's own `arm.json` (the census sites with the consumer settings of `gcensus.py make`). Consumers: WTZZ00DEU (primary, the field wire's own held-out consumer); extension ARHT00ATA and QUIN00USA on the field wire; SZZ000SIM, the sim wire's own consumer (the sim twin). The unperturbed replays of WTZZ00DEU and SZZ000SIM reproduce the wires' in-process consumers byte for byte in `closed_loop_trace.csv`.
+
+Executable: `gnss_processor_nis_close.exe`, a copy of `gnss_processor_bofarm.exe` (the wire's own exe, which holds the screen), sha256 `91143c81de9a95479aa08131c08945676d5e542dbd607e9a8ff6d1852d2d73d6`, under `D:/GnssProcessorSupport/gates/exe/x64-Release/`. Runs root `D:/GnssProcessorSupport/runs_nis`, run dirs `_rap_nis_<cell>_<off|on>`. Screen on: `network.closed_loop.innovation_screen` true with every other screen knob at its default (mode `act`, k 6.0, rows `all`, max fraction 0.25, re-float after 3, floors 0.3 m and 1.0 m). Screen off: the key absent, same exe.
+
+### 10.4 Faults and satellites
+
+From the first product epoch at or after TOW 270000 (hour 4) to the end of the wire, persistent and undeclared (`scripts/inject_wire_step.py`). Epoch times compare with a 0.5 s tolerance: the writer's TOW can sit just below the exact second, and a bare comparison starts a step one epoch late, as the build-stage injection of section 8 item 7 did.
+
+- class PB: the step is added to the bias of every P record of K satellites, all signals. The trailing fields (counter, `sigma=`, `gen=`) are untouched.
+- class CLK: the step is added to the clock of the C record of K satellites. The rest of the record is untouched.
+
+Satellites: the K highest-elevation ones in the unperturbed screen-off replay's `closed_loop_sat_trace.csv` at TOW 270000 (ties by satellite id; K 1 inside K 3 inside K 6; `nis_inject_arms.py sats`, frozen in `gates/nisclose/sats_<consumer>.json`):
+
+| consumer | the six, highest first |
+| --- | --- |
+| WTZZ00DEU | E24 E05 G24 G15 E31 E09 |
+| ARHT00ATA | G09 E19 E30 G26 G01 G04 |
+| QUIN00USA | G32 E08 E15 G10 E13 E03 |
+| SZZ000SIM | E05 E24 G15 G12 G24 E25 |
+
+### 10.5 Cells
+
+Core: class {PB, CLK} x K {1, 3, 6} x step {10, 92.409} m on each of the four consumers (48 cells). Extension: step 2 m, the same six cells, on WTZZ00DEU (6 cells). One unperturbed cell per consumer (4). Each cell is replayed screen off and on: 116 replays. A replay that does not exit 0 is run once more; a cell still without its replays is reported incomplete.
+
+### 10.6 Measures
+
+Against the matched unperturbed replay (same consumer, same screen setting, same exe), epoch by epoch from `closed_loop_trace.csv`. Excess is the 3D error of the perturbed replay minus that of the unperturbed one; the injection epoch is TOW 270000, index 0.
+
+- peak20: the largest excess over the 40 epochs from index 0 (20 min), taken as 0 when none is positive.
+- recovery: the first index n from which the absolute excess stays within 0.05 m for 10 consecutive epochs; none when it never does.
+- mean3h: the mean excess over the 360 epochs from index 0 (3 h).
+- flagged: the EXCLUDE and REFLOAT events of `logs/rt_engine.log`, by key `<sat>_<signal>`; the screen tokens of `closed_loop_sat_trace.csv` are counted beside them. Innocent: a flag from TOW 270000 on at a key the step does not touch (class PB touches the phase rows of the stepped satellites, class CLK all their rows).
+- abstaining cell: the log holds an ABSTAIN from TOW 270000 on and no EXCLUDE or REFLOAT.
+
+The by-hour p50 of every replay is recomputed from the run dirs (`scripts/clock_level/p50.py`) for context; it is not a bar.
+
+### 10.7 Validity (B0)
+
+Read from the two screen-off sat traces (perturbed, unperturbed) at TOW 270000 and 270030. A cell is valid when every stepped satellite shows the step on a row of its own, either as an innovation that differs from the unperturbed one by at least half the step (class PB: the phase innovation; class CLK: the phase or the code innovation) or as a row that the final update no longer holds (blank where the unperturbed run has one: the existing post-fit machinery peeled it); and no stepped row carries a consumer reaction token (`ev_pb`, `ev_cb`, `ev_clk`) that the unperturbed run does not carry at the same row and epoch; and, for class CLK, `clk_disc` equals the unperturbed run's.
+
+The replay reads no counters from these wires (`serialize_disc_counters` is off) and recomputes them from the values. The phase-bias recompute steps a key's counter by one when its value steps above the threshold, so `pb_disc` moves at the first stepped epoch in every class-PB cell. Every key of these wires is held (`gen=`), and the consumer's hold seam consumes and ignores the counter of a held key (`reactToPbHold_`; build-stage evidence `runs_nom/_rap_isc_pbs_off`, G13 L1W: `pb_disc` 2 to 3 at TOW 262830 with `ev_pb` none, the step arriving as an innovation and being peeled). "pb_disc unchanged" is therefore read as "no consumer reaction to it"; the recompute is counted per cell (`pb_disc_recomputed`) and does not void a cell. The clock recompute has no value test, so `clk_disc` is expected unchanged in class CLK, and a change voids the cell.
+
+A void cell is counted and reported with its reason, and enters no bar.
+
+### 10.8 Bars (frozen)
+
+| gate | reading | bar |
+| --- | --- | --- |
+| B1 (the edge bites) | a valid cell, screen off | peak20 above 0.10 m, or recovery above 10 epochs or never |
+| B2 (benefit) | every valid biting cell with K at most 3, screen on against screen off | peak20 at most half the screen-off one, recovery no longer (never counts as longest), mean3h no larger |
+| B3 (no harm), pair | the unperturbed pair of each consumer | `closed_loop_trace.csv` identical byte for byte, 0 rows flagged |
+| B3, quiet cell | a valid cell that does not bite | screen-on peak20 within 0.01 m of screen-off |
+| B3, every cell | every valid cell | 0 innocent flags; each flagged stepped phase key re-floated within 3 epochs of its first flag, unless its episode ended (readmitted, lost, released) before the third flagged epoch; an abstaining cell has `closed_loop_trace.csv` identical byte for byte to screen-off |
+
+### 10.9 Verdict rule
+
+Over all registered cells together (the primary consumer's core matrix is also reported alone). No valid biting cell: KEEP_OFF, to be reopened on a natural edge. Valid biting cells with B2 and B3 met, and at least one valid biting cell with K at most 3 (B2 is not met by having no cell): a recommendation to arm for cold consumers. The ledger verdict stays UNVALIDATED for the author (a RECOMMEND verdict makes `make_golden_config.py --verify` fail until armed), and the unsnapshotted open episodes are named field-blocking for a warm-resumed consumer. A miss of B2 or B3: KEEP_OFF with the miss stated. A missed bar is recorded as missed.
+
+### 10.10 Reading of the design (not a bar)
+
+At TOW 270000 the consumers hold 64 (WTZZ00DEU), 60 (ARHT00ATA), 56 (QUIN00USA) and 52 (SZZ000SIM) eligible rows, so the screen abstains above 16, 15, 14 and 13 flagged rows. Class PB steps 2, 6 and 12 rows at K 1, 3 and 6, class CLK 4, 12 and 24. Class CLK at K 6 exceeds the limit on every consumer and is expected to abstain; class PB at K 6 sits 1 to 4 rows under it (1 on the sim twin).
+
+### 10.11 Tools
+
+`scripts/inject_wire_step.py`, `scripts/nis_inject_arms.py` (cells, satellites, wires, arms) and `scripts/nis_inject_grade.py` (the measures, B0 to B3 and the verdict), each with a `selftest` that passes at this commit. Scratch, wires and outputs: `D:/GnssProcessorSupport/gates/nisclose/`. An amendment to this section is dated and made before any screen-on replay of the section is read.
