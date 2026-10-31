@@ -188,6 +188,23 @@ def metrics(series, t0=T_INJ):
             "max_abs": max((abs(x) for x in ex), default=None)}
 
 
+def hourly_p50(err):
+    """Median 3D error by hour, hours counted from the first row of the trace (the binning of
+    scripts/clock_level/p50.py); an hour with 30 rows or fewer is skipped."""
+    if not err:
+        return []
+    t0 = min(err)
+    by = {}
+    for t in sorted(err):
+        by.setdefault(int(round((t - t0) * 1000)) // 3600000, []).append(err[t])
+    out = []
+    for h in sorted(by):
+        v = sorted(by[h])
+        if len(v) > 30:
+            out.append(v[len(v) // 2] if len(v) % 2 else 0.5 * (v[len(v) // 2 - 1] + v[len(v) // 2]))
+    return out
+
+
 def same_trace(run_a, run_b):
     """True when the two runs' logs/closed_loop_trace.csv are the same bytes."""
     with open(run_a + "/logs/closed_loop_trace.csv", "rb") as fa, open(run_b + "/logs/closed_loop_trace.csv", "rb") as fb:
@@ -311,6 +328,11 @@ def grade_cell(runs, cell, nulls):
     if not rec["pre_identical"]:
         valid, reasons = False, reasons + ["history before the injection differs from the unperturbed replay"]
     rec["valid"], rec["void_reasons"], rec["pb_disc_recomputed"], rec["shown"] = valid, reasons, info["pb_disc_recomputed"], info["shown"]
+    at0 = [(k, r) for k, r in nrow.items() if k[0] == T_INJ and k[1] in sats]
+    rec["stepped_phase_rows"] = len(at0)
+    rec["stepped_code_rows"] = sum(1 for k, r in at0 if r["innov_code_m"] is not None)
+    rec["p50"] = {s: hourly_p50(err[s]) for s in rd}
+    rec["p50"]["null_off"] = hourly_p50(nulls["off"][1])
     # bar B1
     off = rec["off"]
     rec["biting"] = bool(off["peak20"] is not None and (off["peak20"] > BITE_PEAK_M or off["recovery"] is None or off["recovery"] > BITE_REC_EP))
@@ -320,6 +342,7 @@ def grade_cell(runs, cell, nulls):
     rec["flags"], rec["closure"], rec["screen_summary"] = fs, log["closure"], log["summary"]
     _, toks = read_sat_trace(rd["on"], set())
     rec["trace_tokens"] = {t: sum(1 for x in toks if x[4] == t) for t in SCREEN_TOKENS}
+    rec["tokens_match_log"] = fs["n_flags"] == rec["trace_tokens"]["screen_excl"] + rec["trace_tokens"]["screen_refloat"]
     rec["abstaining"] = abstaining(fs)
     rec["on_equals_off"] = same_trace(rd["on"], rd["off"])
     # bars
@@ -423,6 +446,9 @@ def report(nulls, graded, quiet=False):
         w("  %s: %s" % (r["cell"], "; ".join(r["void_reasons"])))
     recomputed = sum(1 for r in graded if r.get("pb_disc_recomputed"))
     w("pb_disc recomputed by the replay in %d pb cells" % recomputed)
+    done = [r for r in graded if "incomplete" not in r]
+    miss = [r["cell"] for r in done if not r["tokens_match_log"]]
+    w("log flags equal the sat-trace screen tokens in %d of %d cells%s" % (len(done) - len(miss), len(done), (": not in " + ", ".join(miss)) if miss else ""))
     w("")
     w("FLAGS BY KEY (screen on, whole run)")
     for r in graded:
@@ -437,6 +463,24 @@ def report(nulls, graded, quiet=False):
     for m in misses:
         w("  miss: " + m)
     return "\n".join(lines), {"verdict": v, "reason": why, "misses": misses}
+
+
+def md_cells(graded):
+    """Markdown rows of the complete cells, for a card table."""
+    out = ["| cell | valid | off: peak20 m / recovery / mean3h m | on: peak20 m / recovery / mean3h m | flagged rows (innocent) | refloats | B2 | B3 |",
+           "| --- | --- | --- | --- | --- | --- | --- | --- |"]
+    for r in graded:
+        if "incomplete" in r:
+            out.append("| %s | incomplete | | | | | | |" % r["cell"])
+            continue
+        off, on, fs = r["off"], r["on"], r["flags"]
+        rc = lambda m: "never" if m["recovery"] is None else str(m["recovery"])
+        out.append("| %s | %s | %s / %s / %s | %s / %s / %s | %d (%d) | %d | %s | %s |" % (
+            r["cell"], "yes" if r["valid"] else "VOID", fmt(off["peak20"]), rc(off), fmt(off["mean3h"], 4),
+            fmt(on["peak20"]), rc(on), fmt(on["mean3h"], 4), fs["n_flags_after"], len(fs["innocent"]), fs["n_refloat"],
+            "-" if r["b2"] is None else ("met" if r["b2"]["met"] else "MISSED"),
+            "-" if not r["b3"] else ("met" if r["b3"]["met"] else "MISSED")))
+    return "\n".join(out)
 
 
 def cmd_grade(a):
@@ -454,6 +498,9 @@ def cmd_grade(a):
     text, v = report(nulls, graded)
     if not a.quiet:
         print(text)
+    if a.md:
+        with open(a.md, "w") as fh:
+            fh.write(md_cells(graded) + "\n")
     if a.json:
         with open(a.json, "w") as fh:
             json.dump({"nulls": nulls, "cells": graded, "verdict": v}, fh, indent=1, default=str)
@@ -599,6 +646,7 @@ def main(argv=None):
         p.add_argument("--runs", default=arms.RUNS)
         if name == "grade":
             p.add_argument("--json")
+            p.add_argument("--md", help="write the cell table as markdown rows to this file")
             p.add_argument("--quiet", action="store_true")
         p.set_defaults(fn=fn)
     p = sub.add_parser("selftest")

@@ -10,7 +10,7 @@ and builds the replay arms (scripts/rapid_arm.py make).  scripts/nis_inject_grad
     python scripts/nis_inject_arms.py sats --consumer wtzz [--force]
     python scripts/nis_inject_arms.py wires [--consumer wtzz ...] [--set core|ext|all]
     python scripts/nis_inject_arms.py make [--consumer ...] [--set ...] [--screen off|on|both]
-                                           [--null-only] [--smoke]
+                                           [--null-only] [--smoke] [--eigen-threads N] [--skip-started] [--jobs N]
     python scripts/nis_inject_arms.py tags [--consumer ...] [--set ...] [--screen ...] [--null-only]
     python scripts/nis_inject_arms.py status [--consumer ...] [--set ...]
     python scripts/nis_inject_arms.py selftest
@@ -176,8 +176,10 @@ def cmd_wires(a):
         print("%-22s %s %s m on %s: %d records, %d epochs" % (c.key, c.cls, c.step_m, ",".join(sats), sum(counts.values()), n_ep))
 
 
-def arm_args(c, screen, hours=None, tag_prefix=""):
-    """The rapid_arm.py make argument list of one replay arm."""
+def arm_args(c, screen, hours=None, tag_prefix="", eigen_threads=None):
+    """The rapid_arm.py make argument list of one replay arm.  `eigen_threads` sets processing.eigen_threads
+    (the golden arm has 20; a replay is single-threaded work, and on a loaded box 20 threads waiting at a
+    barrier make it an order of magnitude slower; the results do not depend on it, see the card)."""
     bed, site = CONSUMERS[c.consumer]
     args = ["make", "--base", BEDS[bed] + "/arm.json", "--tag", tag_prefix + c.tag(screen)]
     if hours:
@@ -190,6 +192,8 @@ def arm_args(c, screen, hours=None, tag_prefix=""):
         args += ["--set", "network.closed_loop.station.name=" + s["name"],
                  "--set", "network.closed_loop.station.rinex_path=" + s["path"],
                  "--set", "network.closed_loop.station.position_ecef=" + json.dumps(s["ecef"])]
+    if eigen_threads is not None:
+        args += ["--set", "processing.eigen_threads=%d" % eigen_threads]
     if screen == "on":
         args += ["--set", SCREEN_KEY + "=true"]
     return args
@@ -201,14 +205,27 @@ def cmd_make(a):
     todo = cells("core" if a.null_only else a.set, a.consumer, with_null=True)
     if a.null_only:
         todo = [c for c in todo if c.cls == "null"]
+    jobs = []
     for c in todo:
         for screen in screens:
-            r = subprocess.run([sys.executable, "-I", ROOT + "/scripts/rapid_arm.py"] +
-                               arm_args(c, screen, hours=(0.083333 if a.smoke else None), tag_prefix=("smoke_" if a.smoke else "")),
-                               capture_output=True, text=True, env=env, cwd=ROOT)
-            if r.returncode:
-                sys.exit("make failed for %s %s:\n%s%s" % (c.key, screen, r.stdout, r.stderr))
-            print(r.stdout.strip())
+            tag = ("smoke_" if a.smoke else "") + c.tag(screen)
+            if a.skip_started and os.path.isdir("%s/_rap_%s/logs" % (RUNS, tag)):
+                continue            # a replay has started or finished in this directory: its arm is not rewritten
+            jobs.append((c, screen))
+
+    def one(job):
+        c, screen = job
+        cmd = [sys.executable, "-I", ROOT + "/scripts/rapid_arm.py"] + arm_args(
+            c, screen, hours=(0.083333 if a.smoke else None), tag_prefix=("smoke_" if a.smoke else ""), eigen_threads=a.eigen_threads)
+        r = subprocess.run(cmd, capture_output=True, text=True, env=env, cwd=ROOT)
+        if r.returncode:
+            sys.exit("make failed for %s %s:\n%s%s" % (c.key, screen, r.stdout, r.stderr))
+        return r.stdout.strip()
+
+    import concurrent.futures
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, a.jobs)) as pool:
+        for line in pool.map(one, jobs):
+            print(line)
 
 
 def selected(a):
@@ -274,6 +291,8 @@ def selftest():
     assert "network.closed_loop.replay_products_path=%s/wires/wtzz_pb3_s10.txt" % SCRATCH in a_off
     assert "network.trace_consumer_sat=true" in a_off and SCREEN_KEY + "=true" not in a_off and SCREEN_KEY + "=true" in a_on
     assert not any(x.startswith("network.closed_loop.station") for x in a_off)
+    assert "processing.eigen_threads=1" in arm_args(Cell("wtzz", "pb", 3, "10"), "on", eigen_threads=1)
+    assert not any(x.startswith("processing.eigen_threads") for x in a_off)
     a_null = arm_args(Cell("szz", "null"), "off", hours=0.083333, tag_prefix="smoke_")
     assert a_null[2] == BEDS["sim"] + "/arm.json" and "smoke_nis_szz_null_off" in a_null and "--hours" in a_null
     assert "network.closed_loop.replay_products_path=%s/products.txt" % BEDS["sim"] in a_null
@@ -294,7 +313,12 @@ def main(argv=None):
     p = sub.add_parser("cells"); common(p); p.set_defaults(fn=cmd_cells)
     p = sub.add_parser("sats"); p.add_argument("--consumer", required=True, choices=list(CONSUMERS)); p.add_argument("--force", action="store_true"); p.set_defaults(fn=cmd_sats)
     p = sub.add_parser("wires"); common(p); p.set_defaults(fn=cmd_wires)
-    p = sub.add_parser("make"); common(p, True); p.add_argument("--smoke", action="store_true", help="10 epochs, tags prefixed smoke_"); p.set_defaults(fn=cmd_make)
+    p = sub.add_parser("make"); common(p, True)
+    p.add_argument("--smoke", action="store_true", help="10 epochs, tags prefixed smoke_")
+    p.add_argument("--eigen-threads", type=int, help="processing.eigen_threads of the arms (default: the wire's own arm)")
+    p.add_argument("--skip-started", action="store_true", help="leave an arm alone whose run directory already has a logs/ directory")
+    p.add_argument("--jobs", type=int, default=1, help="arms made at once")
+    p.set_defaults(fn=cmd_make)
     p = sub.add_parser("tags"); common(p, True); p.set_defaults(fn=cmd_tags)
     p = sub.add_parser("status"); common(p, True); p.set_defaults(fn=cmd_status)
     p = sub.add_parser("selftest"); p.set_defaults(fn=lambda a: selftest())
