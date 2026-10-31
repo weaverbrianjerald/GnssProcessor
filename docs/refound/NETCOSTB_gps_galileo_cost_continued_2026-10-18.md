@@ -226,7 +226,7 @@ By the author's decision, `network.sparse_station_normals` is default on: the lo
 
 ## 6. 2026-10-31: card NETCOST closed
 
-Card NETCOST is closed with this section (its file is at the 60 KB bar). Its Owed list and its three optimizations are mapped below; each statement was read from the named card, ledger row or commit on 2026-10-31. Branch `perf/pes` is not merged, so the card PES it holds is cited in plain text.
+Card NETCOST is closed with this section (its file is at the 60 KB bar). Its Owed list and its three optimizations are mapped below; each statement was read from the named card, ledger row, commit or run directory on 2026-10-31. Branch `perf/pes` is not merged, so the card PES it holds is cited in plain text.
 
 | owed item (card NETCOST section "Owed", sections 5 and 12.6) | where it landed |
 | --- | --- |
