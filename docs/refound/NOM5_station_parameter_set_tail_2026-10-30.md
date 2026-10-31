@@ -4,15 +4,20 @@
 
 - **id:** NOM5
 - **topic:** network-vehicle
-- **status:** open
-- **summary:** Pre-registered 2026-10-30. Card NOM's step N6 landed its body (steps N6.0 to N6e, merge `f64f916`, 2026-10-20: the network owns its station parameter set, and one observation equation serves the producer, the consumer and the seeds); the merge named N6f to N6j as remaining. This card builds them on branch `nom/n6-tail`: N6f, direct assembly (no dense Jacobian on the network; byte-identical; cost expected lower); N6g, the seeds on the whole equation behind `estimation.seed_full_equation` (default off, fingerprinted; the consumer moves at births); N6h, a user-side layout flag that reaches no parameter of a network run refused at load, and `network.estimate_tropo_gradients` (default off, fingerprinted) as the first station parameter added through the set alone; N6j, the close (tests, onboarding pages 7 and 8, `CLAUDE.md` routing). N6i (a canonical column order) is not taken (decision D2's default).
+- **status:** closed
+- **summary:** CLOSED 2026-10-30 on branch `nom/n6-tail` (not merged; the merge is the author's decision). BUILT and GATED (section 4). N6f: the producer's data rows are sparse (`StationDataRows`, written straight into the shared border and the local block); every output identical (24 of 24 network arms with the snapshot, 16 of 16 user arms, real time apart from wall-clock text); the loop cost flat within 0.15 % (the bar passes; the expected gain not shown). N6g: with `estimation.seed_full_equation` the producer is byte-identical and the consumer moves by under 1 mm at its births and not at all by hour; every clause of the recommendation bar passes, a neutral change; arming is the author's decision. N6h: a single-receiver layout flag in a network run with no consumer is refused at load (no configuration under `config/` sets one); `network.estimate_tropo_gradients` was added through the set alone and its conditioning clause passes, but its uncarried columns fit noise at their formal sigma on the sim bed (no gradient in the truth) and at HKSL00HKG absorbed part of a station-level step (the gradient reached 390 mm) while other arcs' carried levels moved by metres: field-blocking (standing invariant 3), a bound owed. N6j: the tests, onboarding pages 7 and 8, the `CLAUDE.md` routing and lint check V13. Both keys stay UNVALIDATED and default off. At pre-registration: card NOM's step N6 landed its body (steps N6.0 to N6e, merge `f64f916`, 2026-10-20: the network owns its station parameter set, and one observation equation serves the producer, the consumer and the seeds); the merge named N6f to N6j as remaining. This card builds them on branch `nom/n6-tail`: N6f, direct assembly (no dense Jacobian on the network; byte-identical; cost expected lower); N6g, the seeds on the whole equation behind `estimation.seed_full_equation` (default off, fingerprinted; the consumer moves at births); N6h, a user-side layout flag that reaches no parameter of a network run refused at load, and `network.estimate_tropo_gradients` (default off, fingerprinted) as the first station parameter added through the set alone; N6j, the close (tests, onboarding pages 7 and 8, `CLAUDE.md` routing). N6i (a canonical column order) is not taken (decision D2's default).
 - **source:** `scripts/nom3_designs/N6_design.md` (sections 3 to 7; decisions D1 to D10, defaults taken); the merge `f64f916` ("N6f to N6j remain"); `docs/onboarding/08_adding_a_network_parameter.md` (the recipe and its open rough edge on gradients); `docs/refound/UOM_n6_user_side_edits_2026-10-17.md` (the user-side notices of N6a and N6b)
 - **knobs / posture:** N6f and N6j: no key. N6g: `estimation.seed_full_equation` (new, default false, fingerprinted, ledger UNVALIDATED). N6h: `network.estimate_tropo_gradients` (new, default false, fingerprinted, ledger UNVALIDATED); the load-time refusal of section 2.3 (no key). Base: the goldens of main `5127429` (card BOF's posture; baseline pair `runs/_rf0hv17_{field,sim}6`).
 - **dates in the text:** 2026-10-30
-- **hashes / run dirs:** branch `nom/n6-tail` from main `5127429`; worktree `D:/GnssProcessorSupport/worktrees/n6tail`; control executable `D:/GnssProcessorSupport/gates/exe/x64-Release/gnss_processor_n6tctl.exe` (the worktree's Release build of `5127429`, before any change); gate records `D:/GnssProcessorSupport/gates/n6t/`; run root `D:/GnssProcessorSupport/runs_nom`
-- **gates (frozen at pre-registration):** section 3, written before any run of a changed executable
+- **hashes / run dirs:** branch `nom/n6-tail` from main `5127429`: pre-registration `6821ea0`, N6f `4381a61` (test pin `f9b4dac`), N6g `3748df0`, N6h `bf32eee`, N6j `1a36c66`, section 4.1 `e28b324`, comment edit `30d5d4b`; worktree `D:/GnssProcessorSupport/worktrees/n6tail`; executables under `D:/GnssProcessorSupport/gates/exe/x64-Release/`: control `gnss_processor_n6tctl.exe` (the worktree's Release build of `5127429`, before any change, sha256[:16] `7696875ef0d8c41f`; its copy `gnss_processor_n6tctl2.exe`), N6f `gnss_processor_n6tf.exe` (`1bcd0e640ee44aea`, build of `4381a61`), final `gnss_processor_n6th.exe` (`bf865f5b79546234`, build of `bf32eee`, the processor of the tip); gate records `D:/GnssProcessorSupport/gates/n6t/` (N6f), `final/` (G0, G4), `g3/` (G3), `g1final/` (the Debug suite at the tip); run root `D:/GnssProcessorSupport/runs_nom`: `_rap_g5_n6tctl2_*` and `_rap_g5_n6th_*` (G0), `_rap_n6t_g3{off,on}_{f2,s2,f6,s6}` and their census replays (G3), `_rap_n6t_g4{off,on}_{f,s}2` (G4)
+- **gates (frozen at pre-registration):** section 3, written before any run of a changed executable, with amendment A1 (section 3.1). G0, G1, G2, G3 and G5 pass; G4's conditioning clause passes and its estimates are field-blocking (section 4.4)
 
-**Outcome.** Pre-registered 2026-10-30; no result yet.
+**Outcome.** Question: can card NOM step N6 be finished as designed? Result: yes, one key excepted. The producer's
+rows are assembled sparsely, every output identical, the cost flat (no gain shown). The full-equation seeds leave the
+producer identical and move the consumer under 1 mm at its births only: every bar clause passes, a neutral change. A
+layout flag that reaches no parameter is refused at load. The troposphere gradient conditions well, but its unbounded
+columns fit noise and at HKSL00HKG absorbed part of a station-level step: field-blocking. Standing: branch `nom/n6-tail`, not
+merged; both keys UNVALIDATED; the bound, the arming decision and the merge owed (section 5).
 
 ## 1. Question
 
@@ -173,3 +178,175 @@ a section row in these pairs; the removal of the dense matrix's zero fill and co
 
 **Verdict, N6f.** Identity, checks and the cost bar pass. The network forms no dense matrix of rows by slots, at
 no measurable cost and no measurable gain.
+
+### 4.2 2026-10-30: the final build with both keys absent (G0); checks at the tip (G1)
+
+**Build.** Candidate `gnss_processor_n6th.exe` (sha256[:16] `bf865f5b79546234`), the Release build of `bf32eee`;
+step N6j (`1a36c66`) and the comment edit `30d5d4b` change no C++ of the processor, so it is the executable of the
+branch tip. Control `gnss_processor_n6tctl2.exe`, a copy of the section 4.1 control (`7696875ef0d8c41f`). Both hashes
+were unchanged after every run. The machine was shared with gate G3's runs and other sessions' runs (the lists are in
+`stages.log`); no gate of this section reads time. Gate records: `D:/GnssProcessorSupport/gates/n6t/final/`
+(`REPORT_FINAL.txt`, `g0a_aggregate.txt`, `g0a_detail/`, `g0b_uom_detail.txt`, `g0b_rt_dr_detail.txt`,
+`g0b_rt_cl_detail.txt`, `stages.log`).
+
+**G0, identity: pass; the text moves are the declared ones.** The 23 G5 arms: every product file, every CSV trace
+(26 to 39 per arm), `products.txt`, `rt_engine.log`, every module log other than `gnss_config.log`, and the exit codes
+are identical (arms `a4`, `gate`, `joint` and `zero` exit 1 on both sides). The snapshot bytes are identical apart from
+the write time in its first record, which the gate masks; its fingerprint field is equal, and the reading arm `snapr`
+exits 0. The text of every arm differs in two classes, and no line falls outside them:
+
+1. The `Toggles:` line (amendment A1): the control's line plus `, seed_full=off`, in `stdout.txt` and
+   `logs/gnss_config.log`. Amendment A1 named `main_log`, which does not carry the line.
+2. The rows of the new kind, estimated "no": a `tropo_gradient` row in "Network (param model)" and "Network (param
+   responses)" (`stdout.txt` and `main_log`), and in the run manifest one `param_model` entry and one entry in each of
+   the four data kinds of every `contributions` record (`data_code`, `data_code_companion`, `data_phase`,
+   `data_phase_second`, whose parameter lists name every kind a row can touch, armed or not). The param model table is
+   printed again at run end ("Network (param model, run end)") with the same row: the one move that the frozen G0
+   text, which named the run-start tables, did not name.
+
+User side, 16 arms: each differs in the `Toggles:` line alone (`logs/gnss_config.log`, `stdout.txt`); every CSV,
+every other log and every exit code (0) is identical. Real time: `sbf`, `sbf_bssd` and `sbf_te` differ in the
+`Toggles:` line alone (`console.log`, `gnss_config.log`; 30 to 32 files identical); `cl` adds the class 2 rows and
+records and wall-clock text (the cost tail of the arc-ledger line; the manifest's wall-clock keys and the
+service-health timing columns, which `rt_seam_compare.py` masks), with 35 files identical.
+
+**G1, checks at the tip `30d5d4b`: pass.** `nom_epoch_lint.py` (its new check V13: 304 network files, none names
+`StateManager`, `MeasurementModel`, `StateInitializer` or `EpochMeasurement` outside comments),
+`nom_n4_verify.py --whole`, `make_golden_config.py --verify`, `config_posture_check.py --verify-loader`,
+`ledger_render.py --check` and `docs_index_check.py` pass. The Release unit suite of `bf32eee`: 3665 tests in 498
+suites, 3632 passed, 33 skipped (the fixture-gated list), 0 failed. The Debug suite of `30d5d4b` (records
+`D:/GnssProcessorSupport/gates/n6t/g1final/`): 3665 tests in 498 suites, 3632 passed, 33 skipped (the same 33 names as
+at `f9b4dac`), 0 failed; the 13 tests added since `f9b4dac` (`NetworkLayoutFlagsTest` 7, `SeedsTest` 4,
+`StationBirthTest` 2) pass, and none was removed. `gnss_simulator_selftest`: 99 of 99 passed.
+
+### 4.3 2026-10-30: N6g, the full-equation seeds (G3)
+
+**Arms.** The final executable, with the key the only difference; 2 h and 6 h arms on both goldens, all exit 0.
+Records: `D:/GnssProcessorSupport/gates/n6t/g3/` (`td_gate_{f,s}{2,6}.txt`, `table_field6.txt`, `table_sim6.txt`,
+`table_sim6_from0030.txt`, `rowdiff_{field,sim}6.txt`, `census_field_grade.txt`, `census_field_exact.txt`,
+`census_sim_grade.txt`, `census_sim_persite.txt`, `replay_active.txt`); runs
+`D:/GnssProcessorSupport/runs_nom/_rap_n6t_g3{off,on}_{f2,s2,f6,s6}` and the census replays beside them.
+
+**The producer is unchanged, as predicted.** On both beds, at 2 h and at 6 h, `products.txt` (113,888 lines field and
+80,766 sim at 2 h), all 31 `logs/network_*.csv`, the run manifest, `main_log` and the exit code are identical with the
+key on. The consumer's files differ: `closed_loop_trace.csv`, `closed_loop_isb.csv` and `closed_loop_sat_trace.csv`
+from their first row, the consumer's per-epoch lines (`rt_engine.log` and their copies in `stdout.txt`), and the
+`Toggles:` line (`seed_full=on`).
+
+**The consumer moves at its births only, by under a millimetre.** At the consumer's first epoch the full seeds take
+the SSR terms out of the seeds (field, `closed_loop_isb.csv` and `closed_loop_sat_trace.csv`: the Galileo
+inter-system bias 2.8025 to 2.8058 m, the receiver clock -30768.3625 to -30768.3653 m, and the phase innovation of
+G22 L1W at its birth -28.106 m, its SSR phase bias, to 0), and the first update absorbs the rest: the
+held-out consumer's 3D error changes by 0.7 mm on the field's first row and by at most 0.2 mm in the sim's first hour,
+and no row after hour 2 changes by more than 0.05 mm. Held-out consumers, p50 of `pos_err_3d_m` by hour (m), off and
+on equal to 0.1 mm in every hour:
+
+| consumer | 1 | 2 | 3 | 4 | 5 | 6 |
+| --- | --- | --- | --- | --- | --- | --- |
+| `WTZZ00DEU`, from the first row | 0.0588 | 0.0123 | 0.0231 | 0.0123 | 0.0165 | 0.0120 |
+| `SZZ000SIM`, from the first row | 0.1368 | 0.0723 | 0.0307 | 0.0239 | 0.0257 | 0.0182 |
+| `SZZ000SIM`, from 00:30:15 | 0.1004 | 0.0274 | 0.0374 | 0.0215 | 0.0247 | 0.0161 |
+
+The off rows reproduce the baseline pair `_rf0hv17` by hour. The GLONASS channel part of the key is not exercised:
+the goldens carry no GLONASS.
+
+**Census.** Every one of the 33 replay pairs ran with the key live (`seed_full=off` and `on`, differing consumer
+files). Field (`gcensus.py`): median site p50 by hour 0.142 0.050 0.036 0.029 0.032 0.030 m off and on; paired change
+over hours 2 to 6 +0.0000 m (better 0, worse 0, n 16), hour 1 +0.0000 m; largest hourly change of any site +0.15 mm
+(site SCRZ, hour 1). Sim (`simcensus6h.py`): 0.397 0.065 0.029 0.029 0.025 0.024 m off and on; change +0.000 m in
+every hour, better and worse at 1 cm 0 and 0; largest site change 0.1 mm (hour 1).
+
+**Bar (decision D6).** Held-out consumers not worse by more than 1 mm in any hour 1 to 6: largest change +0.0 mm on
+both beds, pass. Census median site not worse: equal on both beds, pass. No census site worse by more than 1 cm: none
+(largest 0.15 mm), pass. The arming decision is the author's.
+
+**Verdict, N6g.** With `estimation.seed_full_equation` the seeds read the whole observation equation. The producer
+is byte-identical with the key on, and the consumer moves at its births by under a millimetre and not at all by
+hour: every clause of the recommendation bar passes, as a neutral change.
+
+### 4.4 2026-10-30: N6h, the refusal (G5) and the troposphere gradient (G4)
+
+**G5, the refusal: pass.** Before the rule landed, none of the 1,334 configurations under `config/` set one of the
+six flags in network mode. In the unit suite (`tests/network/test_network_layout_flags.cpp`, 7 cases, among the 3632
+passed), each flag in a two-station network configuration with no consumer fails to load, the message ending "so it
+reaches no parameter; the network stations' key is network.estimate_tropo_gradients" for the gradient flag and "so it
+reaches no parameter; a network station has no such parameter" for the other five; with a consumer each loads; with
+no flag both forms load; the network key loads alone, and a top-level `estimate_tropo_gradients` stays the
+single-receiver flag's legacy spelling. The rule runs only in the network section's loader and returns at once when a
+consumer is configured, so outside network mode nothing changes (the 16 user arms, section 4.2). The setup's scope
+line for a run with a consumer and a flag set is not covered by a test; no golden sets a flag.
+
+**G4, the gradient.** 2 h arms of both goldens, with the key the only difference, all four exit 0. Records:
+`D:/GnssProcessorSupport/gates/n6t/final/g4_field.txt`, `g4_sim.txt`, `g4_halfhour.txt`; runs
+`D:/GnssProcessorSupport/runs_nom/_rap_n6t_g4{off,on}_{f,s}2`.
+
+*Arming.* The on arms' "parameters as armed" tables list `tropo_gradient.north` and `tropo_gradient.east`
+estimated-local at every station (58 field, 60 sim) at the first epoch and over the run (13,919 and 14,400
+station-epochs, none unobserved); the integrity lines are 0 (the field's one unreached station-epoch, a station with
+no observations, is on both arms). The run-end line, field: "Network (troposphere gradients): north estimated in 13919
+station-epoch(s) and left out as unobserved in 0; east 13919 and 0; uncarried (estimated afresh every epoch)."
+`logs/network_tropo_gradient.csv` holds 13,919 and 14,400 rows; the off arms write none.
+
+*Conditioning, the clause of G4: pass on both beds.* No `sta_pd_dropped` event and no `n_sta_pd_dropped` on either
+arm of either bed; no station-epoch rejected after the split; unreached 1 and 1 (field), 0 and 0 (sim); 240 of 240
+epochs emitted on every arm, none withheld. By the frozen rule, no prior is built.
+
+*The estimates.* Hours 2 onward; per station the median, the robust spread (1.4826 MAD) and the median formal sigma,
+then the median over stations (mm):
+
+| bed | median north | median east | spread north | spread east | sigma north | sigma east |
+| --- | --- | --- | --- | --- | --- | --- |
+| field, 58 stations | -1.5 | +0.3 | 2.7 | 3.9 | 4.7 | 6.6 |
+| sim, 60 stations (truth 0) | +0.7 | -1.1 | 3.0 | 4.2 | 4.9 | 7.1 |
+
+The sim truth carries no gradient, and its estimates have the field's size and spread: the single-epoch estimates
+are noise at the level of their formal sigma. The tails are larger. In hours 2 onward, 48 of 58 field stations and 54
+of 60 sim stations exceed 10 mm in magnitude at some epoch, and 8 field and 13 sim stations exceed 30 mm (the sim's
+largest 70 mm, S31000SIM).
+
+*HKSL00HKG.* Its gradient read a few millimetres until 01:00 (formal sigma 6 to 10 mm), then -224 mm north and
++315 mm east at 262800, decaying over the next hour (-20 and +37 mm at 266100); its largest magnitude is 390 mm, at
+262890. The two arms' event logs at the station agree until 262770, after the IF-TD test had refloated Galileo E04
+six times in nine minutes on both. At 262770, with the key off, the arc attribution refloated E04, E13, E19, E26 and
+E33 (as it had refloated E04, E13 and E19 at 262650), and an hour later the station's prior-residual reports read 4.3
+to 7.1 against the threshold 4 (residuals -0.02 to -0.06 m). With the key on, no attribution refloat fired at the
+station: the gross-LOS screen declared E04 (statistic 16.3 against the 12 m cold bound) and erased it; the same epoch's prior
+residuals moved GPS arcs' carried levels by metres (G14 -7.7 m on L1C and -9.3 m on L2W; G17, G30 and G09 by 0.7 to
+3.2 m); the redundancy census flagged the local column `amb:E04_L1C` unobservable at 262800; and the prior-residual
+reports read 346 to 385 on E13, E19 and E26 at 263220 to 263280 (residuals -0.19 to -0.35 m). The two free columns
+absorbed part of a station-level step; the attribution test that answers such a step did not trip; the carried
+levels of other arcs took the rest, and the uncarried gradient fit the mismatch for an hour. Over the run the
+attribution refloats fell from 30 to 5 (field) and from 14 to 5 (sim).
+
+*Effect.* Held-out consumer, p50 of `pos_err_3d_m` by hour (mm):
+
+| consumer | hour | off | on | change |
+| --- | --- | --- | --- | --- |
+| `WTZZ00DEU`, from the first row | 1 | 58.8 | 55.1 | -3.7 |
+| | 2 | 12.3 | 11.3 | -1.0 |
+| `SZZ000SIM`, from the first row | 1 | 136.8 | 204.2 | +67.3 |
+| | 2 | 72.3 | 52.3 | -20.0 |
+| `SZZ000SIM`, from 00:30:15 | 1 | 100.4 | 137.5 | +37.1 |
+| | 2 (30 min) | 34.8 | 38.7 | +3.9 |
+
+`products.txt` differs in almost every line (as multisets, 113,379 of the field's 113,888 lines appear in the off arm
+only; every B, P and U record). Wall under shared load: field 1039 and 1054 s, sim 386 and 394 s. No adoption claim
+(2 h arms).
+
+**Verdict, N6h.** The refusal passes G5. The gradient was added through the set alone (the kind, the set's field, the
+registry block, the inventory class, the contribution sets, the labels, the loader line, `NetworkKnobs`, the ledger
+row, the run-end line, the trace), and its conditioning clause passes. The estimates fail a test the clause does not
+make: uncarried and unbounded, the two columns fit noise at their formal sigma on a bed with no gradient, and at
+HKSL00HKG they took up a station-level step that the attribution test answers with the key off, moving other arcs'
+carried levels by metres. Triage (standing invariant 3): field-blocking. `network.estimate_tropo_gradients` stays
+UNVALIDATED and is not field-runnable until its columns are bounded (the zero-mean prior of section 2.3, or a carried
+random walk); the bound and a repeat of G4 with it are owed.
+
+## 5. Owed at close
+
+1. **The gradient's bound** (section 4.4): the prior `network.tropo_gradient_prior_sigma_m` of section 2.3 or a
+   carried random walk, then G4 repeated with HKSL00HKG's episode and the attribution-refloat count read on both
+   beds.
+2. **The arming decision on `estimation.seed_full_equation`** (section 4.3, the author's).
+3. **The merge of `nom/n6-tail`** (the author's), and the `docs/status/OPEN_ITEMS.md` lines of items 1 and 2, kept
+   off the branch because the main checkout holds another session's uncommitted edits of that file.
