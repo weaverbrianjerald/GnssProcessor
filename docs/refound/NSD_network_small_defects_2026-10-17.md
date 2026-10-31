@@ -4,21 +4,14 @@
 
 - **id:** NSD
 - **topic:** network-vehicle
-- **status:** open
-- **summary:** ARMED 2026-10-28 at the author's decision (section 9, card BOF). BUILT 2026-10-17 on branch `fix/netsmall`. (1) The hard clock refloat (`clock_monitor_reinit_sigma_m` <= 0) is counted in the response registry by three new sites (`clk_hard_refloat`, `pb_hard_refloat`, `cb_hard_refloat`). (2) The stash-status mirrors (the carry LS-VCE monitor snapshot and the prior-residual census snapshot) skip every parked entry, a readmit seed the D2 fold applied included: confirmed in code, counted at run end by a new READMIT line, and taken as rows behind the default-off key `network.readmit_seed_mirrors`. (3) The de-commoned clock step of the coupled-mark census takes one median per constellation. Items 1 and 3 are measure-only and carry no key; item 2's key is unarmed. The same-build check of 2026-10-18 (section 7) found the declared lines and no others. 2026-10-28 (section 8): on the 6 h field golden the key leaves the products identical and takes 23 code-bias seeds the monitor and the census skipped.
+- **status:** closed
+- **summary:** CLOSED 2026-10-31. ARMED 2026-10-28 at the author's decision (section 9, card BOF; landed as `2b9af4a`): `network.readmit_seed_mirrors` is pinned in both goldens. BUILT 2026-10-17 on branch `fix/netsmall` (`d84f695`, in main). (1) The hard clock refloat (`clock_monitor_reinit_sigma_m` <= 0) is counted in the response registry by three new sites (`clk_hard_refloat`, `pb_hard_refloat`, `cb_hard_refloat`). (2) The stash-status mirrors (the carry LS-VCE monitor snapshot and the prior-residual census snapshot) skip every parked entry, a readmit seed the D2 fold applied included: confirmed in code, counted at run end by a READMIT line, and taken as rows behind the key `network.readmit_seed_mirrors`. (3) The de-commoned clock step of the coupled-mark census takes one median per constellation. Items 1 and 3 are measure-only and carry no key. The same-build check of 2026-10-18 (section 7) found the declared lines and no others; on the 6 h field golden the key leaves the products identical and takes 23 code-bias seeds the monitor and the census skipped (section 8). The two coverages that rest on unit cases only are field-inert, with data (section 10).
 - **source:** `docs/status/OPEN_ITEMS.md` rows "Hard clock refloat uncounted", "Stash-status mirrors (suspected)" and "Mixed-system clock step"; [PRM3](PRM3_responses_2026-10-02.md) section 5; `docs/cards/queues/CAF-COMMENT-AUDIT-FINDINGS.md` sections 4 and 5
 - **knobs / posture:** `network.readmit_seed_mirrors` (ledger row UNVALIDATED, default false, not fingerprinted, unarmed in both goldens); no key for items 1 and 3
-- **dates in the text:** 2026-10-17
+- **dates in the text:** 2026-10-17, 2026-10-18, 2026-10-28, 2026-10-31
 - **hashes / run dirs:** branch `fix/netsmall`, commit `d84f695` (worktree `D:/GnssProcessorSupport/worktrees/netsmall`); Release exe `D:/GnssProcessorSupport/gates/exe/x64-Release/gnss_processor_netsmall.exe` md5 `72ec1b10103493b73ca3f546d3f1eb02` (the sources of that commit; docs and tests excluded); tests `tests/network/test_net_small_defects.cpp` (suites `PbHoldDecommonedStepTest`, `StashHardRefloatTest`, `StashStatusSeedMirrorTest`); smoke and check output `D:/GnssProcessorSupport/gates/netsmall/` and `D:/GnssProcessorSupport/gates/g7/summary_w3netsmall_masked.txt`, arms `_rap_g5_w3netsmall_*` under `D:/GnssProcessorSupport/runs_nom`
 
-**Outcome.** Question: are three small open defects of the network producer real, and can each be fixed without
-moving a number? All three are real in the code. The hard refloat left out three kinds of border entry with no count;
-now each is a site of the response table. The two stash-status mirrors never saw a readmit seed although the fold
-applies it; a counter states how many, and one default-off key takes them as rows. The coupled-mark census read one
-median across GPS and Galileo where the hold's own transfer is per constellation; it is per constellation now. Every
-output difference with the key off is declared line by line in section 4. The same-build check
-([section 7](#7-same-build-check-2026-10-18)) found those lines and no others; the 6 h seed counts stay owed
-([section 6](#6-what-remains)). 2026-10-28 (section 8): on the 6 h field golden the key leaves the products identical and takes 23 code-bias seeds the monitor and the census skipped.
+**Outcome.** Question: are three small open defects of the network producer real, and can each be fixed without moving a number? Result: all three are real in the code. The hard refloat left out three kinds of border entry with no count, and each is now a site of the response table. The two stash-status mirrors never saw a readmit seed although the fold applies it; a counter states how many (23 code-bias seeds in 6 h on the field golden) and the key takes them as rows with the products identical. The coupled-mark census read one median across GPS and Galileo and is per constellation now. Verdict: every output difference with the key off is declared (section 4) and the check found those lines and no others (section 7). Standing: closed; the key is armed in both goldens (section 9); the two unit-only coverages are field-inert on the baseline pair (section 10).
 
 ## 1. Hard clock refloat uncounted
 
@@ -202,3 +195,21 @@ monitor feeds the solve only through `network.carry_vce_apply`, which neither go
 ## 9. Armed, 2026-10-28
 
 Armed at the author's decision with card [BOF](BOF_built_off_follow_through_2026-10-28.md) (section 6, the gates and the baseline pair `runs/_rf0hv17_{field,sim}6`): `network.readmit_seed_mirrors` is pinned in both goldens (ledger RECOMMEND_SCOPED, regime `readmit_seed_horizon_s > 0`); the sim products are identical to the pair before it, as section 8 predicted for the field.
+
+## 10. 2026-10-31: closed; what was owed, and what remains triaged
+
+The check, the 6 h counts and the arming that sections 6 and 7 left owed are done; the two coverages that rest on unit cases are triaged here. The baseline pair is `runs/_rf0hv17_{field,sim}6` (exe `gnss_processor_bofarm.exe`, card BOF); the figures below are read from its `logs/main_log.log` and `logs/network_run_manifest.json`.
+
+| owed item | where it landed |
+| --- | --- |
+| the same-build golden comparison (field and sim, 2 h, against a main `30ca49e` control) | section 7 (2026-10-18): 24 of 24 IDENTICAL after the declared lines are reversed; 16 of 16 user arms; the real-time arms up to wall-clock text |
+| the seed counts on a 6 h field arm | section 8 (2026-10-28): 23 code-bias seeds met by the monitor and by the census, 0 clock seeds in the census; the key takes them with the products identical |
+| arming `network.readmit_seed_mirrors` (section 6: "not proposed") | section 9: pinned in both goldens at the author's decision (ledger RECOMMEND_SCOPED, regime `readmit_seed_horizon_s > 0`); on the baseline pair the READMIT run-end line reads 5 clock + 23 code-bias seeds applied on the field bed and 5 + 14 on the sim bed, with 23 and 14 code-bias seeds taken by the monitor and the census (key ON) |
+
+**What remains: the two unit-only coverages (standing invariant 3).** Both are field-inert, with data.
+
+- **Item 1, the hard-refloat sites.** The per-site counts rest on the five cases of `StashHardRefloatTest` (`tests/network/test_net_small_defects.cpp`); no gate arm arms the hard refloat (section 7). On the 6 h baseline pair the manifest record `param_responses` reads `clk_hard_refloat`, `cb_hard_refloat` and `pb_hard_refloat` as `armed:false, count:0` on both beds (32 of 68 declared sites armed on each). The sites arm only with the clock monitor on and `clock_monitor_reinit_sigma_m` <= 0; neither golden sets either key, and `clock_monitor` is listed with the built and never graded keys of the register. Reopen when a posture arms the hard refloat: its first run reads the three counts against the stash.
+- **Item 3, the per-constellation median.** The two-constellation change rests on the three cases of `PbHoldDecommonedStepTest`; the GPS-only arm `bcl` is the only gate arm that reads samples (4, section 7). On the baseline pair the run-end line "pb hold, coupled (PBH)" reads 0 coupled marks and 0 samples on both beds over 6 h, so the changed median is not reached on either golden. The census is measure-only (it feeds the census and the `PB_HOLD coupled_mark` event, not the emission). Reopen when a GPS + Galileo arm reads samples.
+- **Item 2** has no unit-only remainder: it is counted (section 8) and taken (section 9).
+
+Nothing else is owed on this card.
