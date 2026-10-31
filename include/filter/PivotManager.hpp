@@ -148,8 +148,11 @@ public:
     /**
      * @brief Freeze pivot ambiguity covariances to zero.
      *
-     * Must be called after ensureRequiredStates() so that newly created
-     * pivot ambiguity states are frozen.
+     * Zeroes the covariance rows and columns of every carrier-ambiguity
+     * column of each pivot (@ref satelliteAmbiguityColumns without a signal
+     * filter: per band, or NL plus WL).  Must be called after
+     * ensureRequiredStates() so that newly created pivot ambiguity states are
+     * frozen.
      */
     void freezePivotAmbiguityCovariance(StateManager& state_manager);
 
@@ -193,6 +196,83 @@ public:
 
     /// Check if BSSD pivots have been initialized.
     bool hasPivots() const { return !pivot_sat_.empty(); }
+
+    // -------------------------------------------------------------------
+    // The pivot-column resolver
+    // -------------------------------------------------------------------
+
+    /**
+     * @brief One carrier-ambiguity column of a satellite in the BSSD frame.
+     *
+     * @c kind is the key's text after the satellite and the delimiter (as
+     * @c StateKeys::parseAmbiguityKey splits it): the phase signal on the
+     * per-band basis ("L1W", or an ionosphere-free pair "L1C_L2W"), "NL_<b>"
+     * or "WL_<a>_<b>" on the NL/WL basis.  The columns of one kind in one
+     * constellation form one S-transform group, referenced to the pivot's
+     * column of the same kind.
+     */
+    struct AmbiguityColumn {
+        std::string key;        ///< State key, e.g. "G01_L1W", "G01_NL_1", "G01_WL_1_2".
+        std::string kind;       ///< The key after the satellite, e.g. "L1W", "NL_1", "WL_1_2".
+        int         index{-1};  ///< State index.
+    };
+
+    /**
+     * @brief The pivot-column resolver: a satellite's carrier-ambiguity
+     *        columns under the run's ambiguity basis.
+     *
+     * The one place that knows which state columns hold a satellite's carrier
+     * ambiguities in the BSSD frame.  The handover re-reference, the pivot
+     * freeze, the disturbance check and the disturbed pivot's re-zero and
+     * re-seed read it, and @ref phaseRowAmbiguityColumns (the columns
+     * @c BssdTransform::apply zeroes) is derived from it, so the frame the
+     * single-difference rows assume and the frame this class maintains are
+     * one.
+     *
+     *  - Per-band basis: one column per phase signal.  With @p phase_sigs, the
+     *    column "<sat>_<signal>" of each signal in @p phase_sigs the satellite
+     *    has a state for, in the order of @p phase_sigs (the handover and the
+     *    disturbance check act on the epoch's phase signals).  Without it,
+     *    every column of the satellite whose signal is a carrier phase
+     *    ("L..."), in key order (the freeze).
+     *  - NL/WL basis (@c StateAmbiguityBasis::NlWl): the satellite's NL column
+     *    and every WL column ("<sat>_NL_<b>", "<sat>_WL_<a>_<b>"), in key
+     *    order.  @p phase_sigs is not consulted: the NL/WL columns belong to
+     *    the satellite, not to one signal.
+     *
+     * @param state_manager Filter state (read only).
+     * @param sat           Satellite, e.g. "G01".
+     * @param phase_sigs    The epoch's phase signals, or null for every column.
+     * @return The columns; empty when the satellite has none.
+     */
+    std::vector<AmbiguityColumn> satelliteAmbiguityColumns(
+        const StateManager& state_manager,
+        const std::string& sat,
+        const std::set<std::string>* phase_sigs = nullptr) const;
+
+    /**
+     * @brief The carrier-ambiguity columns that one phase row of @p sat on
+     *        @p signal loads.
+     *
+     * @c BssdTransform::apply (step 7) zeroes these columns of the pivot, so
+     * that the pivot's ambiguity is the single-difference frame's datum.
+     *  - Per-band basis: the column "<sat>_<signal>".
+     *  - NL/WL basis: the satellite's NL column, and the WL column that pairs
+     *    the NL column's reference band with the signal's band when the two
+     *    differ (the row model of @c MeasurementModel::buildJacobianRow,
+     *    N_b = NL_ref - sign * WL).  The reference band is read from the NL
+     *    column's key (the last in key order should a reference-band change
+     *    not be pruned yet); a satellite without an NL column loads none.
+     *
+     * @param state_manager Filter state (read only).
+     * @param sat           Satellite, e.g. "G01".
+     * @param signal        The row's phase signal, e.g. "L2W".
+     * @return State indices; empty when the satellite has no such column.
+     */
+    std::vector<int> phaseRowAmbiguityColumns(
+        const StateManager& state_manager,
+        const std::string& sat,
+        const std::string& signal) const;
 
     /**
      * @brief Forget all sticky pivots and unfreeze sat-specific states.
@@ -348,9 +428,9 @@ private:
      * Searches the constellation for a replacement (any satellite other
      * than the disturbed pivot and not in @p exclude_sats, ranked by
      * (coverage, score)).  If one is found, updates @p pivot and returns
-     * true.  If none exists, re-zeroes the disturbed pivot's phase
-     * ambiguity states in place (value and covariance row/column set to 0)
-     * and returns false.
+     * true.  If none exists, re-zeroes the disturbed pivot's carrier-ambiguity
+     * columns (@ref satelliteAmbiguityColumns) in place (value and covariance
+     * row/column set to 0) and returns false.
      *
      * @param cons        Constellation name.
      * @param[in,out] pivot  Current pivot (updated to replacement on success).
@@ -381,8 +461,9 @@ private:
      * @brief Check whether a pivot satellite's frozen state is disturbed.
      *
      * A pivot's ambiguity state is expected at (0, 0).  The pivot is
-     * reported disturbed when any of its phase ambiguity states has
-     * |x| > 1e-6 or P > 1e-12, which indicates external corruption
+     * reported disturbed when any of its carrier-ambiguity columns
+     * (@ref satelliteAmbiguityColumns over @p phase_sigs: per band, or NL plus
+     * WL) has |x| > 1e-6 or P > 1e-12, which indicates external corruption
      * (cycle-slip reset, filter reset, etc.).
      */
     bool isPivotDisturbed(
@@ -398,6 +479,12 @@ private:
 
     /**
      * @brief Apply lossless T·P·T' re-referencing for ambiguity states.
+     *
+     * One group per carrier-ambiguity column of the new pivot
+     * (@ref satelliteAmbiguityColumns over @p phase_sigs): every column of
+     * the constellation of the same kind (the same phase signal per band, the
+     * same "NL_<b>" or "WL_<a>_<b>" under NL/WL) loses the pivot's value and
+     * the pivot's column goes to (0, 0).
      */
     void reReferenceAmbiguities(
         const std::string& cons,

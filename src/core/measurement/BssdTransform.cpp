@@ -280,30 +280,19 @@ for (Eigen::Index i = 0; i < n; ++i) {
     }
 
     // ---- Step 7: Reparameterize phase ambiguities ----------------------
-    // The reference ambiguity to zero is keyed by the pivot row's signal type.
-    // With full-signal grouping (Step 1) it equals the non-pivot's; the code
-    // reads it from the pivot row regardless.
+    // The pivot's ambiguity columns that each SD row's pivot row loads are
+    // zeroed, so the pivot's ambiguity is the frame's datum.  The pivot row's
+    // signal type keys them; with full-signal grouping (Step 1) it equals the
+    // non-pivot's, and the code reads it from the pivot row regardless.
     //
-    // Under @c StateAmbiguityBasis::NlWl the pivot's ambiguity on band b is
-    // split across two state columns: NL_<ref_band> and (when b != ref_band)
-    // WL_<min(ref,b)>_<max(ref,b)>.  The S-transform zeroes both, by the same
-    // mechanism as PerBand with two columns instead of one.  The pivot's
-    // ref_band is recovered by parsing the NL ambiguity key that references the
-    // pivot satellite (one per satellite, by construction in
-    // @c MeasurementModel::ensureRequiredStates).
-    const bool nlwl = (config_.getStateAmbiguityBasis()
-                       == StateAmbiguityBasis::NlWl);
-    std::map<std::string, char> pivot_ref_band;
-    std::map<std::string, int>  pivot_nl_idx;
-    if (nlwl) {
-        for (const auto& [key, idx] : state_manager_.getAmbiguities()) {
-            auto parts = StateKeys::parseNlAmbiguityKey(key);
-            if (!parts) continue;
-            pivot_ref_band[parts->satellite] = parts->band;
-            pivot_nl_idx[parts->satellite]   = static_cast<int>(idx);
-        }
-    }
-
+    // PivotManager::phaseRowAmbiguityColumns resolves the columns under the
+    // run's ambiguity basis: "<pivot>_<signal>" per band; under
+    // @c StateAmbiguityBasis::NlWl the pivot's NL column and, when the row's
+    // band is not the NL reference band, the WL column pairing the two (the
+    // same mechanism as per band, with two columns instead of one).  The same
+    // resolver serves the pivot handover's re-reference, the pivot freeze and
+    // the disturbance check, so the frame these rows assume is the frame
+    // PivotManager maintains.
     std::set<Eigen::Index> ref_amb_cols;
     for (size_t k = 0; k < n_sd; ++k) {
         const auto& entry = sd_entries[k];
@@ -311,35 +300,10 @@ for (Eigen::Index i = 0; i < n; ++i) {
         const std::string& pivot_sig = update.signal_types[static_cast<size_t>(r_row)];
         if (obsTypeOf(pivot_sig) != ObsType::Phase) continue;
 
-        const std::string ref_sat = update.satellite_ids[static_cast<size_t>(r_row)];
-
-        if (!nlwl) {
-            const std::string ref_amb_key = StateKeys::makeAmbiguityKey(ref_sat, pivot_sig);
-            const int ref_amb_idx = state_manager_.getAmbiguityIndex(ref_amb_key);
-            if (ref_amb_idx >= 0)
-                ref_amb_cols.insert(static_cast<Eigen::Index>(ref_amb_idx));
-        } else {
-            auto rb_it = pivot_ref_band.find(ref_sat);
-            if (rb_it == pivot_ref_band.end()) continue;
-            const char ref_band = rb_it->second;
-
-            // NL column always zeroed.
-            auto nl_it = pivot_nl_idx.find(ref_sat);
-            if (nl_it != pivot_nl_idx.end())
-                ref_amb_cols.insert(static_cast<Eigen::Index>(nl_it->second));
-
-            // WL column zeroed when this row is on a non-ref band.
-            if (pivot_sig.size() >= 2) {
-                const char band = pivot_sig[1];
-                if (band != ref_band) {
-                    const std::string wl_key = StateKeys::makeWlAmbiguityKey(
-                        ref_sat, ref_band, band);
-                    const int wl_idx = state_manager_.getAmbiguityIndex(wl_key);
-                    if (wl_idx >= 0)
-                        ref_amb_cols.insert(static_cast<Eigen::Index>(wl_idx));
-                }
-            }
-        }
+        const std::string& ref_sat = update.satellite_ids[static_cast<size_t>(r_row)];
+        for (const int col : pivot_manager_.phaseRowAmbiguityColumns(
+                 state_manager_, ref_sat, pivot_sig))
+            ref_amb_cols.insert(static_cast<Eigen::Index>(col));
     }
     for (const Eigen::Index col : ref_amb_cols)
         new_H.col(col).setZero();

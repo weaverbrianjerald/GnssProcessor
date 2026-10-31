@@ -7,6 +7,7 @@
 #include "filter/PivotManager.hpp"
 #include "filter/CovarianceReReference.hpp"
 #include "common/GnssIdentity.hpp"
+#include "filter/StateKeySchema.hpp"
 #include "measurement/Seeds.hpp"
 #include <algorithm>
 #include <cmath>
@@ -20,6 +21,76 @@ namespace GnssProcessor {
 
 PivotManager::PivotManager(const GnssConfig& config, LogManager& log_manager)
     : config_(config), log_manager_(log_manager) {
+}
+
+// ===========================================================================
+// The pivot-column resolver
+// ===========================================================================
+
+std::vector<PivotManager::AmbiguityColumn> PivotManager::satelliteAmbiguityColumns(
+    const StateManager& state_manager,
+    const std::string& sat,
+    const std::set<std::string>* phase_sigs) const {
+
+    const bool nlwl = config_.getStateAmbiguityBasis() == StateAmbiguityBasis::NlWl;
+    std::vector<AmbiguityColumn> cols;
+
+    // Per band, on the epoch's phase signals: one key per signal.
+    if (!nlwl && phase_sigs) {
+        for (const auto& sig : *phase_sigs) {
+            std::string key = StateKeys::makeAmbiguityKey(sat, sig);
+            const int idx = state_manager.getAmbiguityIndex(key);
+            if (idx >= 0) cols.push_back({ std::move(key), sig, idx });
+        }
+        return cols;
+    }
+
+    // Every column of the satellite: its keys "<sat>_..." are one contiguous
+    // run of the ordered ambiguity map.
+    const std::string prefix = sat + StateKeys::kAmbiguityDelimiter;
+    const auto& ambiguities = state_manager.getAmbiguities();
+    for (auto it = ambiguities.lower_bound(prefix);
+         it != ambiguities.end() && it->first.compare(0, prefix.size(), prefix) == 0;
+         ++it) {
+        const std::string& key = it->first;
+        const bool carrier = nlwl
+            ? (StateKeys::isNlAmbiguityKey(key) || StateKeys::isWlAmbiguityKey(key))
+            : (obsTypeOf(std::string_view(key).substr(prefix.size())) == ObsType::Phase);
+        if (!carrier) continue;
+        cols.push_back({ key, key.substr(prefix.size()), static_cast<int>(it->second) });
+    }
+    return cols;
+}
+
+std::vector<int> PivotManager::phaseRowAmbiguityColumns(
+    const StateManager& state_manager,
+    const std::string& sat,
+    const std::string& signal) const {
+
+    std::vector<int> cols;
+    if (config_.getStateAmbiguityBasis() != StateAmbiguityBasis::NlWl) {
+        const int idx = state_manager.getAmbiguityIndex(StateKeys::makeAmbiguityKey(sat, signal));
+        if (idx >= 0) cols.push_back(idx);
+        return cols;
+    }
+
+    // NL/WL: the NL column names the satellite's reference band (one per
+    // satellite by construction in MeasurementModel::collectNlWlKeys; the last
+    // in key order should a reference-band change not be pruned yet).
+    const auto sat_cols = satelliteAmbiguityColumns(state_manager, sat);
+    const AmbiguityColumn* nl = nullptr;
+    for (const auto& c : sat_cols)
+        if (StateKeys::isNlAmbiguityKey(c.key)) nl = &c;
+    if (!nl) return cols;
+
+    const char ref_band = nl->key.back();
+    cols.push_back(nl->index);
+    if (signal.size() >= 2 && signal[1] != ref_band) {
+        const int wl_idx = state_manager.getAmbiguityIndex(
+            StateKeys::makeWlAmbiguityKey(sat, ref_band, signal[1]));
+        if (wl_idx >= 0) cols.push_back(wl_idx);
+    }
+    return cols;
 }
 
 // ===========================================================================
@@ -59,7 +130,10 @@ void PivotManager::buildEpochMaps(
         // ambiguity variance, so one
         // poorly converged signal on the candidate pivot degrades the whole
         // SD frame.  The worst per-signal variance is therefore the
-        // pivot-fitness measure.
+        // pivot-fitness measure.  It reads per-band keys only: under the NL/WL
+        // basis no key matches, every candidate carries the no-state sentinel
+        // and elevation decides within a coverage tier (the penalty's metre
+        // scale does not fit NL/WL cycles).
         for (const auto& [sig, val] : obs.observed) {
             if (obsTypeOf(sig) != ObsType::Phase) continue;
             const int aidx = state_manager.getAmbiguityIndex(obs.satellite + "_" + sig);
@@ -281,11 +355,8 @@ bool PivotManager::isPivotDisturbed(
     const Eigen::VectorXd& x,
     const Eigen::MatrixXd& P) const {
 
-    for (const auto& sig : phase_sigs) {
-        const std::string key = sat + "_" + sig;
-        const int idx = state_manager.getAmbiguityIndex(key);
-        if (idx < 0) continue;
-        if (std::abs(x(idx)) > 1e-6 || P(idx, idx) > 1e-12)
+    for (const auto& col : satelliteAmbiguityColumns(state_manager, sat, &phase_sigs)) {
+        if (std::abs(x(col.index)) > 1e-6 || P(col.index, col.index) > 1e-12)
             return true;
     }
     return false;
@@ -351,11 +422,8 @@ bool PivotManager::handleDisturbedPivot(
               "Re-zeroing disturbed pivot {} in place.",
               epoch_prefix, cons, pivot);
 
-    for (const auto& sig : phase_sigs) {
-        const std::string piv_key = pivot + "_" + sig;
-        const int piv_idx = state_manager.getAmbiguityIndex(piv_key);
-        if (piv_idx < 0) continue;
-        const auto pidx = static_cast<Eigen::Index>(piv_idx);
+    for (const auto& col : satelliteAmbiguityColumns(state_manager, pivot, &phase_sigs)) {
+        const auto pidx = static_cast<Eigen::Index>(col.index);
         x(pidx) = 0.0;
         P.row(pidx).setZero();
         P.col(pidx).setZero();
@@ -395,29 +463,25 @@ void PivotManager::reReferenceAmbiguities(
 
     auto log = log_manager_.getLogger("bssd_pivot_manager");
 
-    for (const auto& sig : phase_sigs) {
-        const std::string new_ref_key = pivot + "_" + sig;
-        const int new_ref_idx = state_manager.getAmbiguityIndex(new_ref_key);
-        if (new_ref_idx < 0) continue;
-
-        const double n_new_ref = x(new_ref_idx);
-        const auto ri = static_cast<Eigen::Index>(new_ref_idx);
+    // One group per carrier-ambiguity column of the new pivot: the columns of
+    // the same kind in this constellation (the same phase signal per band, the
+    // same NL_<b> or WL_<a>_<b> under NL/WL).
+    for (const auto& ref : satelliteAmbiguityColumns(state_manager, pivot, &phase_sigs)) {
+        const double n_new_ref = x(ref.index);
+        const auto ri = static_cast<Eigen::Index>(ref.index);
 
         // Single pass: collect group indices and transform state vector.
         std::vector<Eigen::Index> group_indices;
         for (const auto& [amb_key, amb_idx] : state_manager.getAmbiguities()) {
-            const auto us = amb_key.find('_');
-            if (us == std::string::npos) continue;
-            const std::string amb_sat = amb_key.substr(0, us);
-            const std::string amb_sig = amb_key.substr(us + 1);
-            if (amb_sig != sig) continue;
-            if (systemName(systemOfSat(amb_sat)) != cons) continue;
+            const auto parts = StateKeys::parseAmbiguityKey(amb_key);
+            if (!parts || parts->signal != ref.kind) continue;
+            if (systemName(systemOfSat(parts->satellite)) != cons) continue;
 
             const auto aidx = static_cast<Eigen::Index>(amb_idx);
             group_indices.push_back(aidx);
 
             const double old_val = x(aidx);
-            x(aidx) = (amb_sat == pivot) ? 0.0 : (old_val - n_new_ref);
+            x(aidx) = (parts->satellite == pivot) ? 0.0 : (old_val - n_new_ref);
 
             log->debug("{}  Handover {}: {:.4f} -> {:.4f}",
                        epoch_prefix, amb_key, old_val, x(aidx));
@@ -631,6 +695,9 @@ void PivotManager::handlePivotHandover(
     bool cov_modified   = false;
 
     const double pivot_min_el = config_.getBssdPivotMinElevation();
+    // The ambiguity basis decides how the old pivot's columns are re-seeded and
+    // which columns are orphaned; satelliteAmbiguityColumns resolves the rest.
+    const bool nlwl = config_.getStateAmbiguityBasis() == StateAmbiguityBasis::NlWl;
 
     // Code-detected handovers carry a per-constellation set of non-pivot
     // satellites whose iono / sat-bias state absorbed the pivot's code bias.
@@ -757,7 +824,11 @@ void PivotManager::handlePivotHandover(
         // re-referencing they become  0 − x(new_pivot),  which is incorrect.
         // They are re-seeded from SD observations so the KF starts from a
         // consistent state instead of producing large innovations that
-        // cascade through many outlier passes.
+        // cascade through many outlier passes.  Per band the SD seed is
+        // computed here; an NL/WL column is marked for re-seed, which the
+        // NL/WL seeding owner (MeasurementModel::ensureNlWlAmbiguities) performs
+        // in cycles against the new pivot's absolute seed in this epoch's
+        // pre-pass, the same route as an orphaned column below.
         if (was_disturbed) {
             const double amb_std = config_.getInitialStd().ambiguity;
             const PppObservation* obs_old = nullptr;
@@ -768,12 +839,21 @@ void PivotManager::handlePivotHandover(
                 if (obs_old && obs_new) break;
             }
 
-            for (const auto& sig : phase_sigs) {
-                const std::string key = old_pivot + "_" + sig;
-                const int idx = state_manager.getAmbiguityIndex(key);
-                if (idx < 0) continue;
-                const auto aidx = static_cast<Eigen::Index>(idx);
+            for (const auto& col : satelliteAmbiguityColumns(state_manager, old_pivot, &phase_sigs)) {
+                const std::string& key = col.key;
+                const auto aidx = static_cast<Eigen::Index>(col.index);
 
+                if (nlwl) {
+                    log->info("{}  Re-seed disturbed {}: {:.4f} -> pending NL/WL re-seed (std={:.1f})",
+                              epoch_prefix, key, x(aidx), amb_std);
+                    P.row(aidx).setZero();
+                    P.col(aidx).setZero();
+                    P(aidx, aidx) = amb_std * amb_std;
+                    state_manager.markAmbiguityPendingReseed(key);
+                    continue;
+                }
+
+                const std::string& sig = col.kind;
                 double sd_seed = 0.0;
                 if (obs_old && obs_new) {
                     // The new pivot may use a different tracking attribute
@@ -808,8 +888,33 @@ void PivotManager::handlePivotHandover(
         // Even if the new pivot covers the same band (e.g. L1W covers L1),
         // the SD ambiguity was parameterized as N(sat) - N(old_pivot) and
         // must be reset so ensureRequiredStates() can re-seed it as
-        // N(sat) - N(new_pivot) using band-matched observations.
-        {
+        // N(sat) - N(new_pivot) using band-matched observations.  Per band an
+        // orphan is a phase signal the new pivot does not observe; under NL/WL
+        // it is a column kind (NL_<b>, WL_<a>_<b>) the new pivot holds no
+        // column of, which reReferenceAmbiguities therefore did not move.
+        if (nlwl) {
+            std::set<std::string> pivot_kinds;
+            for (const auto& c : satelliteAmbiguityColumns(state_manager, pivot))
+                pivot_kinds.insert(c.kind);
+
+            const double amb_std = config_.getInitialStd().ambiguity;
+            for (const auto& [amb_key, amb_idx] : state_manager.getAmbiguities()) {
+                if (!StateKeys::isNlAmbiguityKey(amb_key)
+                    && !StateKeys::isWlAmbiguityKey(amb_key)) continue;
+                const auto parts = StateKeys::parseAmbiguityKey(amb_key);
+                if (!parts || pivot_kinds.count(parts->signal)) continue;
+                if (systemName(systemOfSat(parts->satellite)) != cons) continue;
+
+                const auto aidx = static_cast<Eigen::Index>(amb_idx);
+                log->info("{}  Orphaned ambiguity {} (new pivot {} lacks {}): "
+                          "resetting for re-seed (old={:.4f})",
+                          epoch_prefix, amb_key, pivot, parts->signal, x(aidx));
+                P.row(aidx).setZero();
+                P.col(aidx).setZero();
+                P(aidx, aidx) = amb_std * amb_std;
+                state_manager.markAmbiguityPendingReseed(amb_key);
+            }
+        } else {
             // Collect the new pivot's exact phase signal types.
             std::set<std::string> pivot_phase_sigs;
             for (const auto& obs : observations) {
@@ -917,13 +1022,8 @@ void PivotManager::freezePivotAmbiguityCovariance(StateManager& state_manager) {
     Eigen::MatrixXd Pf = state_manager.getCovariance();
     bool any_frozen = false;
     for (const auto& [cons, piv] : pivot_sat_) {
-        for (const auto& [amb_key, amb_idx] : state_manager.getAmbiguities()) {
-            const auto us = amb_key.find('_');
-            if (us == std::string::npos) continue;
-            if (amb_key.substr(0, us) != piv) continue;
-            const std::string amb_sig = amb_key.substr(us + 1);
-            if (obsTypeOf(amb_sig) != ObsType::Phase) continue;
-            const auto aidx = static_cast<Eigen::Index>(amb_idx);
+        for (const auto& col : satelliteAmbiguityColumns(state_manager, piv)) {
+            const auto aidx = static_cast<Eigen::Index>(col.index);
             if (Pf(aidx, aidx) != 0.0) {
                 Pf.row(aidx).setZero();
                 Pf.col(aidx).setZero();

@@ -147,7 +147,8 @@ namespace GnssProcessor {
          * between satellites on different slots.  Uncombined mode also zeroes the
          * pivot satellites' ionosphere and satellite-bias columns.
          *
-         * In both modes the pivot's ambiguity columns are zeroed (under the NlWl
+         * In both modes the pivot's ambiguity columns are zeroed, as
+         * @c PivotManager::phaseRowAmbiguityColumns resolves them (under the NlWl
          * basis, its NL column and, for a non-reference band, the WL column), and
          * the differencing operator D is applied to z, H, and R.  R is formed from
          * the diagonal @c R_v: each SD row's variance is the sum of its two input
