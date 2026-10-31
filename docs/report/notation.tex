@@ -7,7 +7,7 @@ Indices are lower-case Latin letters; sets are calligraphic upper-case:
 \begin{itemize}[leftmargin=*, itemsep=0pt]
 \item $\rx \in \rxset$ is the receiver.  Single-receiver modes (PPP,
       PPP-RTK) have $|\rxset| = 1$.  Baseline modes have a fixed
-      reference and one or more rovers.  The network producer
+      reference and one or more rovers.  The network estimator
       (\texttt{PPP\_RTK\_Network}) processes a peer set of
       $|\rxset| \ge 2$ stations (50--305 in practice) with no
       reference/rover asymmetry.
@@ -60,8 +60,8 @@ Here $f_1$ is the GPS~L1 frequency ($1575.42$~MHz), the common
 reference for all constellations; it is not the band-1 frequency of
 the satellite's own system.  The estimated state $I^\sat_{\rx,1}$ is
 therefore GPS-L1-equivalent for BDS, GLO and GAL satellites as well
-(\texttt{MeasurementModel::buildJacobianRow}: \texttt{f\_ref =
-Constants::GPS\_L1\_FREQ}).
+(the slant-ionosphere term of \texttt{measurement/ObservationEquation.cpp},
+\texttt{addIonosphere}: \texttt{f\_ref = Constants::GPS\_L1\_FREQ}).
 
 \paragraph{Differencing operators.}
 Three differencing operators recur throughout:
@@ -85,7 +85,13 @@ observable with a positive sign and the carrier phase observable with a
 negative sign; this sign difference produces code--phase divergence.
 All other range-additive terms (geometry, clocks, troposphere, biases)
 carry the same sign on both observables.
-\Cref{eq:obs-code,eq:obs-phase} give the explicit equations.
+\Cref{eq:obs-code,eq:obs-phase} give the explicit equations.  In the
+implementation the satellite bias parameters (code and phase) enter each row
+with the partial $+1$ and the satellite clock correction with the partial
+$-1$, one constant each shared by every code that builds the row
+(\Cref{sec:obs-shared}); a bias parameter therefore carries the sign of
+the term as it appears in the observation, $-B^\sat_\sigl$ or
+$-b^\sat_\sigl$ of \Cref{eq:obs-code,eq:obs-phase}.
 
 \paragraph{Symbol table.}
 \begin{center}
@@ -97,14 +103,14 @@ $\rxpos_\rx, \satpos$         & m   & ECEF position of receiver/satellite \\
 $\geomrange^\sat_\rx$         & m   & geometric range $\|\satpos - \rxpos_\rx\|$ \\
 $\los^\sat_\rx$               & none & unit LOS from $\rx$ to $\sat$ in ECEF \\
 $\sLight\,\mathrm{d}t_\rx$    & m   & receiver clock offset (scaled by $c$) \\
-$\sLight\,\mathrm{d}t^\sat$   & m   & satellite clock offset (CLK product in user modes; estimated state \texttt{"<sat>|SC"} in \texttt{PPP\_RTK\_Network}) \\
+$\sLight\,\mathrm{d}t^\sat$   & m   & satellite clock offset (CLK product in user modes; the estimated correction \texttt{"<sat>|SC"} in \texttt{PPP\_RTK\_Network}) \\
 $\sLight\,\delta t^{(g)}_\rx$ & m   & receiver inter-system time offset for constellation $g\neq g_{\mathrm{ref}}$ \\
 $T^\sat_\rx$                  & m   & total tropospheric path delay \\
 $\zhd^\sat_\rx, \zwd^\sat_\rx$ & m  & zenith hydrostatic / wet components \\
 $I^\sat_{\rx,1}$              & m   & L1-equivalent slant ionospheric delay \\
 $N^\sat_{\rx,\sigl}$          & cyc & integer carrier-phase ambiguity \\
 $b_{\rx,\sigl}, b^\sat_\sigl$ & m   & receiver / satellite phase biases \\
-$\bar b^\sat_\sigl$           & m   & estimable satellite phase bias (network mode; \Cref{sec:state}) \\
+$\bar b^\sat_\sigl$           & m   & estimable satellite phase bias (network mode; \Cref{sec:state-network}) \\
 $B_{\rx,\sigl}, B^\sat_\sigl$ & m   & receiver / satellite code biases (OSB) \\
 $B^{(g,b)}_{\rx,k}$           & m   & per-FCN-slot GLONASS receiver IFB, band $b$; here $k \in [-7,+6]$ is the signed FDMA channel number (a context-local reuse, not the epoch index) \\
 $\varepsilon^\code, \varepsilon^\phaseo$ & m & residual (multipath + thermal) \\

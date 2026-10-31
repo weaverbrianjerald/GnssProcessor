@@ -12,10 +12,13 @@
 %  Impl: driver in src/core/filter/AmbiguityResolver.{hpp,cpp};
 %  MLAMBDA numerical kernels + acceptance battery in
 %  src/core/filter/IlsCore.{hpp,cpp} (ils:: free functions);
-%  network-producer AR seams (both default-OFF) in
-%  src/core/filter/NetworkProducerAr.{hpp,cpp} (log-only fixability
-%  probe) and src/core/filter/NetworkSdEwlAr.{hpp,cpp} (SD
-%  extra-wide-lane integer decision, Route B + A2 datum)
+%  network integer machinery (all default-OFF) in
+%  src/core/network/ar/: ProducerAr (log-only fixability probe),
+%  ArcGraph / ArCycleBasis / ArSuspect / ArcLife / ArLattice (the arc
+%  graph, cycle bases and the ledger of fixed cycles), FixedCycles (the
+%  detached held solve; kernel in network/solve/NormalEquationsDetached),
+%  SdEwlAr / SdEwlRows (SD extra-wide-lane rows and integer decision,
+%  Route B + A2 datum)
 % ============================================================
 
 Integer ambiguity resolution (AR) maps the real-valued, bias-contaminated
@@ -65,10 +68,10 @@ $\Zmat$-reduction, the Schnorr--Euchner search, the bootstrap success
 rate and the full acceptance battery.  These are pure free functions over
 $(\ambfloat\ \text{cycles},\,\ambcov\ \text{cycles}^2)$, with no
 dependence on \texttt{StateManager}, \texttt{KalmanFilter} or the
-configuration.  The PPP-RTK network producer (\dcref{sec:net}{the
-Network mode document}) calls the same \texttt{ils} core under its own
-gate set, as a read-only fixability probe only, because the producer is
-float-only (\Cref{sec:ar-network}).  The single-receiver and baseline
+configuration.  The PPP-RTK network (\dcref{sec:net}{the Network mode
+document}) calls the same \texttt{ils} core under its own gate set, as a
+read-only search and a measure-only held solve, because the emitted
+product is float (\Cref{sec:ar-network}).  The single-receiver and baseline
 paths below are configured under the JSON path
 \texttt{estimation.ambiguity\_resolution.*}.
 
@@ -269,7 +272,9 @@ for satellites whose WL is float''
 \paragraph{WL from Melbourne--W\"ubbena (integer by contract).}
 The DD wide-lane integer is not searched.  It is the difference of the
 MW detector's single-difference WL integers
-(\texttt{src/core/slip/MwSlipDetector}):
+(\texttt{src/core/slip/MwSlipDetectorSample.cpp}; the lock criterion is in
+\dcref{sec:slip-mw}{the Melbourne--W\"ubbena section of the cycle-slip
+document}):
 \begin{equation}
 \dd N_{\mathrm{WL}} = N^{\,\sat}_{\mathrm{WL}} - N^{\,\piv{g}}_{\mathrm{WL}}
   \in \mathbb{Z},
@@ -616,66 +621,327 @@ so the hold's innovation is zero: it tightens the covariance of the fixed
 pairs a second time and moves no mean.  Under the NL/WL state basis the
 hold is a no-op by design.
 
-\subsection{Network-producer AR (both mechanisms default
-off)}\label{sec:ar-network}
+\subsection{Network integer machinery (all default off)}\label{sec:ar-network}
 
-The PPP-RTK network producer of \dcref{sec:net}{the Network mode
-document} is float-only.  Its per-epoch seam sequence contains two
-integer mechanisms, both default-off; with the defaults, neither changes
-the emitted satellite-bias product.  They are documented here because
-their algebra is settled, not because they are in use.
+\paragraph{Status.}
+Network-side ambiguity resolution is not built for the emitted product.  The
+integer search makes no wrong fix at 300 stations (the sticky cycle basis of
+\Cref{sec:ar-arcgraph} settles 45\,026 and 365\,566 integers at 60 and 300
+stations on the simulated network, none wrong:
+\texttt{docs/refound/AGTB\_arc\_graph\_continued\_2026-10-10.md}).  Holding
+the fixes then failed: a held solve of the shared parameters neither reaches
+nor helps the user on the reference configuration, and a slip that no
+detector flags leaves the zero-process-noise float on the wrong integer,
+which the held solve cannot see
+(\texttt{docs/refound/FCFC\_fixed\_cycle\_ledger\_2026-10-11.md}, section~9).
+Every mechanism below is therefore off in the loader.  The search, the ledger
+and the fold are measure-only instruments, the SD extra-wide-lane rows act on
+the solve only when armed, and the emitted network product is float.  The
+mathematics is settled, and the instruments are kept to grade the float.
 
-\paragraph{Producer AR: a log-only fixability probe.}
+\paragraph{Probe: a log-only search.}
 Under \texttt{network.ambiguity\_resolution.enable} (default
-\texttt{false}) the seam \texttt{filter/NetworkProducerAr} reconstructs
-each station's float ambiguities from the reduced solution
-(\texttt{NetworkEstimator::reconstructStation}) and forms an
-independent between-station double-difference basis: a star topology
-per $(\text{constellation},\,\text{signal})$, restricted to GPS and
-Galileo because GLONASS FDMA leaves a per-slot receiver term that
-survives the difference.  It then builds the exact DD covariance from
-\texttt{NetworkEstimator::jointConditionalCovariance}, rescales it to
-cycles by \eqref{eq:m2c}, and calls \texttt{ils::ilsFix}.  The result is
-logged and discarded: nothing is re-pinned or re-solved, and the run is
-byte-identical whether the block executes or not.  The probe is
-meaningful because the between-station DD ambiguity
+\texttt{false}) the seam \texttt{network/ar/ProducerAr}
+(\texttt{src/core/network/ar/ProducerAr.cpp}) reconstructs each station's
+float ambiguities from the reduced solution
+(\texttt{NetworkEstimator::reconstructStation}, in
+\texttt{network/solve/Estimator.hpp}) and forms an independent
+between-station double-difference basis per $(\text{constellation},
+\text{signal})$, restricted to GPS and Galileo because GLONASS FDMA leaves a
+per-slot receiver term that survives the difference.  It builds the exact DD
+covariance from \texttt{NetworkEstimator::jointConditionalCovariance},
+rescales it to cycles by \eqref{eq:m2c}, and calls \texttt{ils::ilsFix} (or
+the decorrelated partial fix below) under a gate set stricter than the user
+path: bootstrap success rate at least $0.9999$ and per-entry residual at most
+$0.10$ cycle, because a wrong network fix would reach every user.  The result
+is logged and discarded: nothing is re-pinned or re-solved, and the run is
+byte-identical whether the block executes or not.  The probe is meaningful
+because the between-station DD ambiguity
 \begin{equation}
 \dd N^{\sat,\piv{g}}_{\rx_1\rx_2,\sigl}
 \;=\;
 \bsd N^{\sat,\piv{g}}_{\rx_1,\sigl} - \bsd N^{\sat,\piv{g}}_{\rx_2,\sigl}
 \label{eq:net-dd-invariant}
 \end{equation}
-is invariant under the producer's choice of phase-bias S-basis: the
+is invariant under the network's choice of phase-bias S-basis: the
 satellite bias $b^\sat_\sigl$ cancels in the between-receiver
 difference exactly as it does in the baseline DD of
 \dcref{sec:dd}{the double-difference section of the Foundations
 document}.  The probe therefore reports the network's intrinsic integer
-recoverability rather than a property of the datum the producer holds.
-Its convergence gauge is the median DD formal standard deviation in
-cycles.  That value must fall well below the half-cycle scale before
-\eqref{eq:ils} is reachable, and it is a better progress indicator than
-the fix count.  Two configuration notes apply.
-\texttt{ils\_max\_dim} (default $0$ = uncapped) exists because the
-search does not return on the full-network basis at operational station
-counts; a positive value restricts the search to the
-lowest-formal-$\sigma$ subset, in the manner of \Cref{sec:ar-partial}.
-\texttt{wl\_cascade} is parsed and echoed in the load-time log but has
-no consumer in the code, so it is inert.
+recoverability rather than a property of the datum it holds.  Its
+convergence gauge is the median DD formal standard deviation in cycles.
+That value must fall well below the half-cycle scale before
+\eqref{eq:ils} is reachable, and it is a better progress indicator than the
+fix count.  \texttt{ils\_max\_dim} (default $0$, uncapped) restricts the
+search to the lowest-formal-$\sigma$ subset in the manner of
+\Cref{sec:ar-partial}, because the full search does not return on a
+full-network star basis at operational station counts.
 
-\paragraph{SD extra-wide-lane integers: Route B and the A2 datum.}
-The second mechanism (\texttt{filter/NetworkSdEwlAr}, gated on
-\texttt{network.sd\_ewl.fix\_enable}, default \texttt{false}) decides an
-integer for the between-satellite single-differenced extra-wide-lane
-ambiguity.  The motivation is a rank argument.  The float
-Melbourne--W\"ubbena row that the enclosing SD-EWL layer folds is a
-linear combination of observables already in the epoch's normal
-equations, so it adds no rank; the only new information the row can
-supply is integrality.  Rounding the SD statistic directly is circular,
+\paragraph{Decorrelated partial fix.}
+With a free slant ionosphere each uncombined L1 or L2 DD is imprecise (about
+$0.3$ cycle), while combinations of a pair (the wide lane, the
+ionosphere-free part) are precise.  A subset chosen entry by entry
+(\Cref{sec:ar-partial}) then finds nothing, and the per-entry residual cap
+rejects correct fixes.  \texttt{ils::ilsFixDecorrelatedPartial}
+(\texttt{src/core/filter/IlsCore.cpp}), armed by
+\texttt{network.ambiguity\_resolution.decorrelated\_partial}, works in the
+decorrelated space of \Cref{sec:ar-lambda} instead.
+\begin{enumerate}[leftmargin=*, itemsep=0pt]
+\item With $\ambcov = \Lmat^{\Tr}\Dmat\Lmat$ and $\bm{z} = \Zmat^{\Tr}\ambfloat$
+  the search fixes $\bm{z}$ from its last component, so the trailing
+  components are fixed first.
+\item The largest trailing set whose bootstrap rate \eqref{eq:ffr} is at
+  least $P_s^{\min}$ is searched, on the trailing block of the factors.  If its
+  ratio test fails the set shrinks by one component and is searched again.
+\item The floats are conditioned on the fixed components $\check{\bm{z}}_F$,
+  \begin{equation}
+  \check{\bm{a}} = \ambfloat - \bm{Q}_{aF}\bm{Q}_{FF}^{-1}\bigl(\hat{\bm{z}}_F - \check{\bm{z}}_F\bigr),
+  \qquad
+  \bm{Q}_{\check a} = \ambcov - \bm{Q}_{aF}\bm{Q}_{FF}^{-1}\bm{Q}_{Fa},
+  \label{eq:ar-cond}
+  \end{equation}
+  with $\bm{Q}_{aF}$ the covariance of the floats with $\hat{\bm{z}}_F$.
+\item An input entry is reported fixed when its conditional standard
+  deviation is at most \texttt{decorrelated\_determined\_sigma\_cyc}
+  ($0.05$ cycle) and its conditional value lies within the per-entry residual
+  cap of an integer: the fixed combinations then determine that single-signal
+  ambiguity.
+\end{enumerate}
+A caller forms any combination of the conditioned values (the wide lane and
+the narrow lane of an L1/L2 pair) from $\check{\bm{a}}$ and
+$\bm{Q}_{\check a}$.  With \texttt{block\_search}, the search rows that share
+one baseline (its L1 and L2 DDs) are fixed as one block on their marginal
+covariance, each block with its own bootstrap rate and ratio test
+(\texttt{netar::blockDecorrelatedFix}).  One weak baseline no longer refuses
+the whole network, and the cost is the sum of small blocks instead of one
+large search.  The merged result keeps the smallest accepted block ratio and
+the product of the accepted blocks' bootstrap rates, a bound for the epoch.
+
+\subsubsection{The observation graph and its bases}\label{sec:ar-arcgraph}
+
+The search needs a set of independent double differences.  Their number and
+algebra are properties of the observation graph, a bipartite graph whose
+vertices are the stations and the satellites of one constellation and whose
+\emph{arcs} are the (station, satellite) pairs with a live ambiguity in a
+band.  The cycle space of that graph and its use for the carried
+double differences are described in
+\dcref{sec:net-carry-cycles}{the between-epoch carry document}; this
+subsection adds what the integer search uses.  One owner,
+\texttt{network/ar/ArcGraph}, serves the chain datum, the invariant carry, the
+search and the fixed-cycle ledger, as plain value types and free functions with
+no state.
+
+An arc set is a family: one constellation with one band, or an L1/L2 pair that
+shares one graph.  A band-$b$ lattice has dimension $E - V + C$ over the arcs
+present in that band, with $E$ arcs, $V$ vertices and $C$ connected components.
+Three bases for the search exist, in increasing coverage.
+\begin{itemize}[leftmargin=*, itemsep=0pt]
+\item The \emph{star} basis (the default), per
+  $(\text{constellation},\text{signal})$, takes a reference satellite (tracked
+  at the most stations) and a reference station (tracking it and the most
+  satellites), and forms one DD for each other station and satellite that both
+  that station and the reference station track.
+\item \texttt{tree\_basis} grows a spanning forest of station baselines per
+  $(\text{constellation},\text{signal})$ by a Prim rule on satellite bitmasks
+  (\texttt{growBaselineForest}).  The root is the incumbent root or the station
+  with the most arcs.  Each outside station joins the in-tree station that
+  shares the most satellites with it, at least two, through its first common
+  satellite as reference, and the growth stops when no station reaches that
+  count.  The DD of a satellite $j$ on the baseline $(r,p)$ with reference
+  $k$ is
+  \begin{equation}
+  \dd N^{jk}_{rp} = (N_{rj} - N_{rk}) - (N_{pj} - N_{pk}).
+  \label{eq:ar-baseline-dd}
+  \end{equation}
+  Only the chords whose satellite the link parent tracks are closed.
+\item \texttt{cycle\_basis} (needing \texttt{tree\_basis},
+  \texttt{decorrelated\_partial} and \texttt{block\_search}) closes every chord
+  of every band.  The growth finishes through one common satellite when two
+  are not available, and the reference satellite of a link is the most durable
+  one.  It is sticky: the forest is seeded with the last search's
+  links, a station whose link waits for its parent rejoins after that parent,
+  and a chord that was closed by a borrowed DD keeps its partner and reference
+  while they still close it, so the DD identities outlive an epoch as
+  satellites rise and set.  A chord that no DD can close is a long fundamental
+  cycle, counted and never searched.
+\end{itemize}
+
+A basis cycle owns one chord that no earlier cycle of its band contains
+(a \emph{unit-triangular} basis).  The cycles are therefore independent, and
+the integer coordinates of any cycle in the basis follow by back-substitution
+on the pivots, exactly (\texttt{cycleCoordinates}).  Between two epochs,
+\texttt{basisChangeMap} gives each new cycle as an integer combination of
+stored cycles; the matrix is unimodular on an unchanged graph.  A new cycle is
+\emph{fresh} when it touches an arc whose integer may have changed (a slip or
+a new life of the arc) or leaves the stored span.  This is the same exactness
+that makes the carried double differences safe across a change of tree.
+
+\paragraph{Arc life and the suspect-corner mask.}
+An arc keeps one integer for as long as nothing breaks its phase or resets its
+float.  The life stamp of an arc (\texttt{network/ar/ArcLife}) reads the
+events that end a life from their owners: a birth or a re-entry after a gap
+in the arc ledger, an erase, a drop, a re-level or a screen flag on the
+leveling carry.  Equal stamps mean a continuous integer.  The search reads
+the stamp once per epoch, and counts the echo that an event leaves one search
+later as part of the same life.
+
+A slip that no pre-fit detector caught leaves the float variance, the
+bootstrap rate and the ratio where a clean arc has them, so every gate passes
+and the search fixes a wrong integer.  The slip layer holds evidence about such
+arcs, from the slip epoch or a few epochs later.  The suspect-corner mask
+(\texttt{network.ambiguity\_resolution.suspect\_epochs}, off at 0;
+\texttt{network/ar/ArSuspect}) keeps per (station, satellite) corner the
+epoch of the last event of each cause: an MW flag dropped for an unknown
+integer, an arc geometry-free jump flag
+(\dcref{sec:slip-gfjump}{the arc-scoped geometry-free test}), a drop or
+re-level of the leveling carry, a free-epoch latch, and a RAIM attribution
+drop.  A stamp masks the searches $e, e+1, \dots, e+W-1$ with $W$ the setting.
+A DD is masked when any of its four corners is suspect.  It stays in the basis
+and the trace, and the search does not see it.  The release is by time only
+and is counted, not judged.
+
+\subsubsection{Ledger of fixed cycles}\label{sec:ar-lattice}
+
+A fixed DD is an integer combination of band-tagged arcs.
+\texttt{arcgraph::CycleLattice} keeps the fixed cycles in reduced echelon
+form: row $k$ owns a pivot arc at coefficient $+1$ that no other row
+contains.  The lattice is then \emph{saturated}: an integer cycle in the
+rational span of the rows has integer coordinates (its values at the pivots),
+so the integer it implies is exact.  Offering a fixed cycle with its integer
+reduces it by the pivots and gives one of four verdicts: \emph{added} (a new
+direction), \emph{confirmed} (in the span, with the implied integer),
+\emph{contradicted} (in the span, with another integer: a wrong fix or a
+missed release) or \emph{not primitive} (refused).  The ledger
+(\texttt{network/ar/ArLattice}, armed by \texttt{trace\_lattice} or by the fold
+at source \texttt{lattice}) admits a fix only after it has kept one integer for
+\texttt{fixed\_cycles.persist\_ep} epochs (10) with no new life on its arcs.
+
+A verdict on a cycle puts its integer in question without saying which of its
+arcs moved, so the ledger \emph{releases the arcs} of the cycle, eliminating each
+of them from the lattice.  Dropping only the rows behind the cycle is not
+enough: in reduced echelon form other rows can hold one of its arcs as a
+non-pivot term, keep that arc's old integer, and imply the released cycle
+again once unrelated fixes complete the span.  Every release has a cause
+(a vanished arc, a new life, a within-epoch replay or gross-line-of-sight
+decision that named the line of sight, a contradiction, a failed float test,
+a refusal of the fold) and an event row.
+
+\subsubsection{Fixed cycles folded into a detached held solve}\label{sec:ar-fixedcycles}
+
+The fixed-cycle fold (\texttt{network.ambiguity\_resolution.fixed\_cycles.fold},
+values \texttt{off}, \texttt{observe}, \texttt{emit}; default \texttt{off},
+setting status KEEP\_OFF) folds the integers the search fixed into a second
+solve of the shared parameters (clocks, phase biases, code biases), made from a
+copy of the float solve's own reduced normals
+(\texttt{NetworkEstimator::solveHeldDetached}).  The estimator, the carried
+ambiguities, the search and post-fit QC keep the float: with
+zero-process-noise ambiguities the float at an epoch already holds the whole
+history, so a hold fed back into the filter would add only cross terms and let
+the hold confirm itself.  Under \texttt{emit} the solution preparation and the
+emitter read the held vector; every other reader keeps the float.
+
+One epoch has five steps (\texttt{network/ar/FixedCycles}).
+\begin{enumerate}[leftmargin=*, itemsep=0pt]
+\item \emph{Units.}  A unit is one DD identity of a pair family that the search
+  determined in \emph{both} bands: two integers $(n_1,n_2)$.  A DD determined
+  in one band only has little test power and is never a unit.
+\item \emph{The per-unit test.}  With $\bm{v} = \bm{y} - \bm{n}$ in cycles and
+  $\bm{\Sigma}_{\mathrm{pair}}$ the pair's float covariance from the search's own
+  readback,
+  \begin{equation}
+  T = \bm{v}^{\Tr}\bm{\Sigma}_{\mathrm{pair}}^{-1}\bm{v} \;\sim\; \chi^2_2
+  \quad\text{under right integers.}
+  \label{eq:fc-unit}
+  \end{equation}
+  A unit above the $1-\alpha_u$ quantile ($\alpha_u = 10^{-6}$,
+  \texttt{unit\_alpha}) is not placed, because the overall block test cannot
+  see one wrong pair among the rows of a network-sized block.
+\item \emph{Placement.}  A unit becomes two soft rows
+  $\bm{z} = \bm{C}\bm{x}_L \sim \mathcal{N}(\hat{\bm{z}}, \bm{P}^z)$, one per
+  band, on the live ambiguity columns of its four band-arcs.  The target is
+  $\lambda N$ minus the linearisation terms re-based on the epoch's
+  linearisation point, and the hold standard deviation is
+  \texttt{sigma\_cyc} ($0.003$ cycle) of the band.  One block per connected
+  station component, so no two blocks share a station.
+\item \emph{The held solve.}  The fold is the Woodbury fold of the carried
+  double differences (\dcref{sec:net-carry-fold}{the folding section of the
+  between-epoch carry document}) returned as operands instead of written into
+  the kernel.  Per block of $K$ rows, with $\bm{N}_{rr}$, $\bm{N}_{sr}$ and
+  $\bm{u}_r$ the station blocks of the reduced normals,
+  \begin{equation}
+  \bm{B} = \sum_r \bm{C}_r\bm{N}_{rr}^{-1}\bm{C}_r^{\Tr},
+  \quad
+  \bm{G} = \sum_r \bm{N}_{sr}\bm{N}_{rr}^{-1}\bm{C}_r^{\Tr},
+  \quad
+  \bm{z}_{\mathrm{free}} = \sum_r \bm{C}_r\bm{N}_{rr}^{-1}\bm{u}_r,
+  \quad
+  \bm{A} = \bm{P}^z + \bm{B},
+  \label{eq:fc-operands}
+  \end{equation}
+  \begin{equation}
+  \Delta\bm{N} = \bm{G}\bm{A}^{-1}\bm{G}^{\Tr},
+  \qquad
+  \Delta\bm{u} = \bm{G}\bm{A}^{-1}\bigl(\bm{z}_{\mathrm{free}} - \hat{\bm{z}}\bigr).
+  \label{eq:fc-fold}
+  \end{equation}
+  The stations of a block are touched by no other block, so the corrections
+  add exactly across blocks.  $\bm{P}^z$ is diagonal, so $\bm{A}$ is as sparse
+  as the overlap of the rows' stations and is factored by a sparse
+  $LDL^{\Tr}$ after a Jacobi equilibration.  Two screens guard a block:
+  $\bm{B}$ alone is singular exactly when the rows are linearly dependent,
+  whatever the hold, and then $\bm{A}$.  A refused float reproduction, a
+  non-finite held estimate, or a shift of the shared estimate above
+  \texttt{max\_shift\_m} ($\SI{0.5}{m}$) on any column leaves the epoch float,
+  counted.
+\item \emph{Acceptance.}  Each block's own statistic
+  $\chi^2_b = \bm{v}_b^{\Tr}\bm{S}_{bb}^{-1}\bm{v}_b$, with $\bm{v}$ the float
+  cycle values minus their targets and
+  $\bm{S} = \mathrm{Var}(\text{float cycles}) + \bm{P}^z$, is tested against the
+  $1-\alpha_g$ quantile of $\chi^2_K$ ($\alpha_g = 10^{-4}$,
+  \texttt{gate\_alpha}).  A failing block drops its unit of largest $T$ and
+  refolds, up to \texttt{max\_iter} (3) passes, and a block that still fails
+  stays float for the epoch.
+\end{enumerate}
+Under \texttt{source: lattice} the units are the L1/L2 pairs the ledger implies,
+and the epoch's steps are the ledger's own: it opens by releasing what the
+epoch's evidence ended, re-tests every implied pair against the search's float
+exactly as in step~2, admits fixes that persisted, optionally stops placing a
+unit whose pair the search has not determined for \texttt{lapse\_ep} epochs
+(default 0, off), and then folds as above.  Both tests see a wrong integer only
+where the float disagrees with it.
+
+\paragraph{SD extra-wide-lane rows and integers: Route B and the A2 datum.}
+The second mechanism (\texttt{network/ar/SdEwlAr} and \texttt{SdEwlRows}, gated
+on \texttt{network.sd\_ewl.enable} for the float rows and on
+\texttt{network.sd\_ewl.fix\_enable}, default \texttt{false}, for the
+integers) uses the MW statistic on the extra-wide-lane band pair
+(GPS L2/L5, Galileo E5b/E5a; BeiDou deferred, GLONASS excluded for its FDMA
+frequencies).  For each satellite $s$ against a pivot satellite $p$ at a
+station the float row is the pseudo-observation
+\begin{equation}
+z_{SD} = \overline{\mwc}(\rx,s) - \overline{\mwc}(\rx,p)
+= \lamewl\bigl[N_{\mathrm{EWL}}(\rx,s) - N_{\mathrm{EWL}}(\rx,p)\bigr]
++ \bigl[B^s_{\mathrm{EWL}} - B^p_{\mathrm{EWL}}\bigr],
+\label{eq:sdewl-row}
+\end{equation}
+with coefficients $\pm\lamewl/\lambda_{b}$ on the metre-valued ambiguity
+states and, from $\mwc = \phaseo_{\mathrm{WL}} - \code_{\mathrm{NL}}$,
+$+f_1/(f_1-f_2)$ and $-f_2/(f_1-f_2)$ on the satellite phase biases and
+$-f_1/(f_1+f_2)$ and $-f_2/(f_1+f_2)$ on the satellite code biases of the two
+bands, negated for $p$.  The rows of one constellation at a station share the
+pivot arc's noise, $\bm{R} = \operatorname{diag}(\mathrm{var}_s) +
+\mathrm{var}_p\bm{1}\bm{1}^{\Tr}$, and are whitened by the Cholesky factor of
+$\bm{R}$.  They enter the station block before the reduction, so they compose
+exactly with the post-reduction double-difference fold.  The float rows add
+no rank: the MW row is a linear combination of observables already in the
+epoch's normal equations, and at a realistic row noise they raised the
+soft-end eigenvalue of the normal equations by 0.51 per cent, below the bar
+set for them (\texttt{docs/SPEC\_sd\_ewl\_prereduce.md}).  The only new information a row
+can carry is integrality.  Rounding the SD statistic directly is circular,
 because it requires the satellite bias difference
-$b^\sat_{\mathrm{EWL}} - b^{\piv{g}}_{\mathrm{EWL}}$ that the network
-estimates.  Route B avoids the circularity by differencing the SD MW
-statistic between stations, which gives the same double difference as
-\eqref{eq:net-dd-invariant}:
+$B^s_{\mathrm{EWL}} - B^p_{\mathrm{EWL}}$ that the network estimates.  Route B
+avoids the circularity by differencing the SD MW statistic between stations,
+which gives the same double difference as \eqref{eq:net-dd-invariant}:
 \begin{empheq}[box=\fbox]{equation}
 \bigl(\mwc^\sat_{\rx_1} - \mwc^{\piv{g}}_{\rx_1}\bigr)
 - \bigl(\mwc^\sat_{\rx_2} - \mwc^{\piv{g}}_{\rx_2}\bigr)
@@ -701,7 +967,7 @@ consensus and admits only stations that hold that pair.
 Equation \eqref{eq:sdewl-routeb} yields a double difference, while the
 constrained row needs a single-differenced integer per (station,
 satellite).  The A2 datum supplies one.  Within each connected component
-a reference station $\rx_0$ is elected, $\bsd n^{\sat,\piv{g}}_{\rx_0} :=
+a reference station $\rx_0$ is elected and kept sticky, $\bsd n^{\sat,\piv{g}}_{\rx_0} :=
 0$ is defined, and the rounded DD fixes are propagated outward along a
 spanning tree; the link satellite absorbs the per-station free integer.
 The asserted quantity is then
@@ -736,7 +1002,7 @@ P_{s,\mathrm{round}}
 so a single rounding and the $n$-dimensional search share the same
 failure-rate semantics.
 
-The mechanism is subject to the standing rule that a stiff, time-linked
+The mechanism is subject to the design rule that a stiff, time-linked
 quantity needs a wired event response.  The fixed row writes a
 $\lamewl$-quantised value into satellite bias states with very small
 process noise, so an integer that changes between epochs would inject a
@@ -750,13 +1016,19 @@ its integer has legitimately changed.  The stored integer is used only
 to veto, never to supply a value; this keeps the mechanism short of a
 carried zero-process-noise hold, which is deliberately not built.
 
-\paragraph{Status.}  Both mechanisms are default-off, and neither has a
-graded, datum-invariant field result.  The loader also disarms
-\texttt{network.sd\_ewl.fix\_enable}, with a warning, unless the float
-row layer (\texttt{network.sd\_ewl.enable}) is armed.  That layer is
-itself inert without \texttt{network.phase\_leveling} and an MW-class
-slip detector, because it reads the arc accumulator they build.  The
-emitted network product is float.
+\paragraph{Settings.}
+All mechanisms of this subsection are off in the loader, and the reference
+configurations set none of them.  The loader disarms
+\texttt{network.sd\_ewl.fix\_enable}, with a warning, unless the float row
+layer (\texttt{network.sd\_ewl.enable}) is armed.  That layer needs
+\texttt{network.phase\_leveling} and an MW-class slip detector, because it reads
+the arc accumulator they build, and its pairs need GPS L5 or Galileo E5b,
+which the dual-frequency reference configurations do not carry.  The fixed-cycle
+fold's emit mode needs the two slip tests of
+\dcref{sec:slip-gfjump}{the arc-scoped geometry-free test} and
+\dcref{sec:slip-if}{the ionosphere-free phase test}
+(\texttt{gf\_arc\_jump} and \texttt{if\_phase\_td\_reseed\_on\_flag}),
+refuses a state snapshot, and checks that every station is a simulated one.
 
 \subsection{Configuration summary}\label{sec:ar-config}
 
@@ -771,11 +1043,12 @@ code (\Cref{sec:ar-feedback}).  The table omits three WL acceptance keys
 described in \Cref{sec:ar-wlnl} (wl\_only\_ffr, default on;
 wl\_only\_min\_arc\_count, default 10; wl\_only\_max\_innov\_cyc, default
 0.5) and the search-row option nl\_iono\_free\_row (default off).  The
-two network-producer mechanisms of \Cref{sec:ar-network} are configured
-separately, under \texttt{network.ambiguity\_resolution.*} and
-\texttt{network.sd\_ewl.*} (parsed in
-\texttt{src/core/config/GnssConfigLoadNetwork.cpp}); both master switches
-default to \texttt{false} and are omitted from the table.
+network mechanisms of \Cref{sec:ar-network} are configured separately, under
+\texttt{network.ambiguity\_resolution.*} (including
+\texttt{fixed\_cycles.*}) and \texttt{network.sd\_ewl.*} (parsed in
+\texttt{src/core/config/GnssConfigLoadNetwork.cpp}); every master switch
+defaults to off, and the settings are omitted from the table.  The verdict
+for each key is in \texttt{docs/CONFIG\_promotion\_ledger.json}.
 
 \begin{center}
 \footnotesize

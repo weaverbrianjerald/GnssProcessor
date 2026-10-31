@@ -13,65 +13,128 @@
 %  are produced by scripts/gen_report_tables.py instead.)
 %
 %  Shared TikZ styles (proc/io/store/note/flow/feedback) and the
-%  \fitwidth helper are defined in main.tex.
+%  \fitwidth helper are defined in gnssreport.sty.
+%
+%  Sources: src/core/app/Application.cpp (runPpp) and PppSetup.cpp,
+%  PppEpochSteps.cpp, PppEpochUpdate.cpp, PppEpochRecords.cpp,
+%  PppRunEnd.cpp; src/core/realtime/RealTimeEngine*.cpp (read at HEAD);
+%  src/core/network/driver/ApplicationNetwork.cpp,
+%  ApplicationNetworkEpoch.cpp, EpochAdmission.cpp,
+%  include/network/driver/EpochObservers.hpp,
+%  include/network/solve/SolveGlue.hpp,
+%  include/network/carry/LocalCarryHarvest.hpp,
+%  include/network/emit/SolPrep.hpp and EmitStore.hpp,
+%  include/network/runend/RunEnd.hpp.
 % ============================================================
 
 This section shows the control and data flow behind the algebra of the other
-chapters: the per-epoch estimation loop (\Cref{fig:epoch-loop}), the shared
-geometry kernel behind the three differencing regimes (\Cref{fig:differencing}),
-the real-time SSR correction pipeline (\Cref{fig:ssr-pipeline}), the real-time
-streaming front-end that feeds it (\Cref{fig:rt-stream}), and the joint
-estimator of the PPP-RTK network producer (\Cref{fig:net-flow}).  Each box names
-the function or class that implements the step, so the diagrams also serve as a
-map into \texttt{src/}.  The diagrams are maintained by hand and simplify the
-code: they show the main sequence, not every gate or diagnostic.
+chapters. For the single-receiver path it gives the preparation of a run
+(\Cref{fig:ppp-setup}), the per-epoch loop (\Cref{fig:epoch-loop}) and the
+shared geometry kernel behind the three differencing regimes
+(\Cref{fig:differencing}). For the real-time path it gives the order of the
+seams of one epoch, with the pre-update innovation screen
+(\Cref{fig:rt-seams}), the SSR correction pipeline (\Cref{fig:ssr-pipeline})
+and the streaming front end that feeds it (\Cref{fig:rt-stream}). For the
+network estimator it gives the joint estimator (\Cref{fig:net-flow}), the
+structure of a run (\Cref{fig:net-run}), the epoch before and after the solve
+(\Cref{fig:net-spine-pre,fig:net-spine-post}), the fourteen stages of the solve
+(\Cref{fig:net-solve}), the emission (\Cref{fig:net-emit}) and the harvest of
+the carried state (\Cref{fig:net-harvest}). Each box names the function or
+class that implements the step, so the diagrams also serve as a map into
+\texttt{src/}. The diagrams are maintained by hand and simplify the code: they
+show the main sequence, not every gate or diagnostic.
 
-% ------------------------------------------------------------
-%  Figure 1: per-epoch post-processing loop
-% ------------------------------------------------------------
+% ============================================================
+%  Figure: preparation of a PPP / PPP-RTK run
+% ============================================================
 \begin{figure}[tbp]
 \centering
 \fitwidth{%
-\begin{tikzpicture}[node distance=5mm and 12mm]
-  \node[io]   (collect)                      {Collect epoch observations\\{\footnotesize decimation $\cdot$ max-duration $\cdot$ gap detection}};
-  \node[proc, below=of collect] (geom)       {Geometry models\\{\footnotesize \texttt{PppModel::computeModels}}};
-  \node[proc, below=of geom]    (wls)        {WLS clock seeding $\cdot$ gap recovery\\{\footnotesize \texttt{handleWlsSeeding} $\cdot$ \texttt{handleGap}}};
-  \node[proc, below=of wls]     (predict)    {Kalman predict\\{\footnotesize \texttt{predict} / \texttt{predictAided}}};
-  \node[proc, below=of predict] (slip)       {Cycle-slip detect \& repair\\{\footnotesize \texttt{CycleSlipManager}}};
-  \node[proc, below=of slip]    (update)     {Iterative KF update loop\\{\footnotesize outlier gating $\cdot$ pivot handover $\cdot$ measurement rebuild}};
-  \node[proc, below=of update]  (relin)      {Geometry relinearisation (IEKF)\\{\footnotesize optional $\cdot$ \texttt{runGeometryRelinearization}}};
-  \node[proc, below=of relin]   (gim)        {GIM iono weighting~\textsuperscript{(P)}\\{\footnotesize \texttt{applyGimIonoUpdate}}};
-  \node[proc, below=of gim]     (ar)         {Ambiguity resolution\\{\footnotesize MLAMBDA $\cdot$ \texttt{AmbiguityResolver::resolve}}};
-  \node[io,   below=of ar]      (log)        {Log epoch + write CSV traces};
-  \node[proc, below=8mm of log] (smoother)   {RTS smoother: backward pass~\textsuperscript{(P)}\\{\footnotesize \texttt{Smoother::run}}};
+\begin{tikzpicture}[node distance=4mm and 14mm]
+  \node[proc, text width=7.2cm] (s1)
+        {Locate and parse the inputs\\{\footnotesize \texttt{resolveData} $\cdot$ \texttt{loadInputData}}\\{\footnotesize \texttt{PathResolver} $\cdot$ \texttt{RinexParser} $\cdot$ \texttt{ProductCache}}};
+  \node[proc, text width=7.2cm, below=of s1] (s2)
+        {State layout and run-start table\\{\footnotesize \texttt{StateManager} $\cdot$ \texttt{logFamiliesAsArmed}}};
+  \node[proc, text width=7.2cm, below=of s2] (s3)
+        {Position seed\\{\footnotesize \texttt{initializePosition}}};
+  \node[proc, text width=7.2cm, below=of s3] (s4)
+        {Model, measurement, filter, WLS, slip layer\\{\footnotesize \texttt{buildPppComponents\_}}};
+  \node[proc, text width=7.2cm, below=of s4] (s5)
+        {Optional components\\{\footnotesize \texttt{buildGlobalIonosphereMap\_} $\cdot$ \texttt{buildIonoVariabilityMonitor\_} $\cdot$ \texttt{buildNeqAccumulator\_}}};
 
-  \node[note, left=10mm of collect, text width=3.4cm] (modes)
-        {Before the loop the driver branches on mode:\\
-         \texttt{RealTime}~$\to$~\texttt{RealTimeEngine};\\
-         baseline~$\to$~DD pipeline;\\
-         \texttt{PPP\_RTK\_Network}~$\to$~producer\\
-         (or the consumer-replay driver when\\
-         \texttt{closed\_loop.}\\\texttt{replay\_products\_path} is set).};
+  \node[proc, text width=7.2cm, right=of s1] (s6)
+        {Slip layer wiring\\{\footnotesize \texttt{wireCycleSlipManager\_} (biases, interval, KF tiebreak)}};
+  \node[proc, text width=7.2cm, below=of s6] (s7)
+        {Module traces and aiding sources\\{\footnotesize \texttt{enablePppTraceStreams\_} $\cdot$ \texttt{buildAidingSources\_}}};
+  \node[proc, text width=7.2cm, below=of s7] (s8)
+        {Initial state\\{\footnotesize \texttt{initializePppState\_}}};
+  \node[proc, text width=7.2cm, below=of s8] (s9)
+        {Ambiguity resolver and trace streams\\{\footnotesize \texttt{buildAmbiguityResolver\_} $\cdot$ \texttt{buildTraceLogger\_}}};
+  \node[io, text width=7.2cm, below=of s9] (s10)
+        {Epoch loop (\Cref{fig:epoch-loop})};
 
-  \foreach \a/\b in {collect/geom, geom/wls, wls/predict, predict/slip,
-                     slip/update, update/relin, relin/gim, gim/ar, ar/log}
+  \foreach \a/\b in {s1/s2, s2/s3, s3/s4, s4/s5, s6/s7, s7/s8, s8/s9, s9/s10}
       \draw[flow] (\a) -- (\b);
-  \draw[flow] (log) -- (smoother) node[midway, right, note] {after final epoch};
-  \draw[feedback] (log.east) -- ++(1.6,0) |- (collect.east)
-      node[pos=0.25, right, note] {next epoch};
+  \draw[flow] (s5.east) -- ++(0.7,0) |- (s6.west);
 \end{tikzpicture}}
-\caption{Per-epoch post-processing loop in \texttt{Application::run}.  Solid
-arrows give the sequence within an epoch; the dashed arrow is the feedback from
-one epoch to the next.  Steps tagged \textsuperscript{(P)} run in
-post-processing only; the real-time path (\texttt{RealTimeEngine}) has no GIM
-source and no smoother.  The smoother runs once, after the forward pass, and
-only when \texttt{run\_smoother} is set.}
+\caption{Preparation of a PPP or PPP-RTK run in \texttt{Application::runPpp}.
+The steps after \texttt{initializePosition} are private members defined in
+\texttt{app/PppSetup.cpp}, called in this order. \texttt{StateManager}
+declares the state families once and prints them as the run-start table
+\emph{state families as armed}; the optional components are built only when
+their settings are on.}
+\label{fig:ppp-setup}
+\end{figure}
+
+% ============================================================
+%  Figure: per-epoch post-processing loop
+% ============================================================
+\begin{figure}[tbp]
+\centering
+\fitwidth{%
+\begin{tikzpicture}[node distance=4mm and 14mm]
+  \node[io, text width=7.2cm]   (e1)  {Collect epoch observations and gate\\{\footnotesize \texttt{collectEpochObservations} $\cdot$ \texttt{skipDecimatedEpoch\_} $\cdot$ \texttt{reachedMaxDuration\_}}};
+  \node[proc, text width=7.2cm, below=of e1] (e2) {Epoch clock, time step, data-gap test\\{\footnotesize \texttt{stepEpochClock\_} $\cdot$ \texttt{syncPppState\_}}};
+  \node[proc, text width=7.2cm, below=of e2] (e3) {Geometry, corrections, signal selection, variances\\{\footnotesize \texttt{computeEpochModels\_} $\to$ \texttt{PppModel::computeModels}}};
+  \node[proc, text width=7.2cm, below=of e3] (e4) {WLS clock seed and gap policy\\{\footnotesize \texttt{handleWlsSeeding} $\cdot$ \texttt{handleGap} (data gap only)}};
+  \node[proc, text width=7.2cm, below=of e4] (e5) {Process-noise overrides\\{\footnotesize \texttt{refreshSubstitutedAtxQ\_} $\cdot$ \texttt{refreshAdaptiveIonoQ\_}}};
+  \node[proc, text width=7.2cm, below=of e5] (e6) {Kalman predict\\{\footnotesize \texttt{predictEpoch\_} $\to$ \texttt{predict} / \texttt{predictAided}}};
+  \node[proc, text width=7.2cm, below=of e6] (e7) {Smoother prior\\{\footnotesize \texttt{capturePriorSnapshot}~\textsuperscript{(P)}}};
+
+  \node[proc, text width=7.2cm, right=of e1] (e8) {Cycle-slip detection and repair\\{\footnotesize \texttt{detectCycleSlips} $\to$ \texttt{CycleSlipManager::detectAndRepair} $\cdot$ \texttt{foldSlipRepairsIntoPrior\_}}};
+  \node[proc, text width=7.2cm, below=of e8] (e9) {Iterative update loop\\{\footnotesize \texttt{runFilterUpdateLoop}: outlier gating $\cdot$ pivot handover $\cdot$ rebuild}};
+  \node[proc, text width=7.2cm, below=of e9] (e10) {Relinearisation and resets\\{\footnotesize \texttt{runGeometryRelinearization} (optional) $\cdot$ \texttt{mergeEpochResets\_}}};
+  \node[proc, text width=7.2cm, below=of e10] (e11) {GIM ionosphere weighting~\textsuperscript{(P)}\\{\footnotesize \texttt{applyGimIonoUpdate}}};
+  \node[proc, text width=7.2cm, below=of e11] (e12) {Float-solution records\\{\footnotesize \texttt{capturePosteriorSnapshot}~\textsuperscript{(P)} $\cdot$ \texttt{accumulateNormalEquations\_} $\cdot$ \texttt{recordBridgeSnapshot\_}}};
+  \node[proc, text width=7.2cm, below=of e12] (e13) {Ambiguity resolution\\{\footnotesize \texttt{resolveEpochAmbiguities\_} $\to$ MLAMBDA, \texttt{AmbiguityResolver::resolve}}};
+  \node[io, text width=7.2cm, below=of e13] (e14) {Epoch summary and CSV traces\\{\footnotesize \texttt{logEpochSummary} $\cdot$ \texttt{writeEpochTraces}}};
+
+  \node[proc, text width=7.2cm, below=9mm of e14] (e15) {Run end: table of reports\\{\footnotesize \texttt{reportPppRunEnd\_} $\to$ \texttt{kPppRunEndReports}: \texttt{Smoother::run}~\textsuperscript{(P)}, NEQ export, QC counters}};
+
+  \foreach \a/\b in {e1/e2, e2/e3, e3/e4, e4/e5, e5/e6, e6/e7, e8/e9, e9/e10, e10/e11, e11/e12, e12/e13, e13/e14}
+      \draw[flow] (\a) -- (\b);
+  \draw[flow] (e7.east) -- ++(0.7,0) |- (e8.west);
+  \draw[flow] (e14) -- (e15) node[midway, right, note] {after the last epoch};
+  \draw[feedback] (e14.east) -- ++(0.9,0) |- ([yshift=9mm]e1.north)
+      -- (e1.north);
+  \node[note, above] at ([yshift=9mm]e1.north east) {next epoch};
+\end{tikzpicture}}
+\caption{Per-epoch loop of \texttt{Application::runPpp}. Solid arrows give the
+sequence within an epoch. The first column runs from the observations to the
+prediction; the second column runs from the slip layer to the output, after
+which the loop returns to the first box for the next epoch. Steps tagged
+\textsuperscript{(P)} run in post-processing only; the real-time path
+(\texttt{RealTimeEngine}, \Cref{fig:rt-seams}) has no GIM source and no
+smoother. The smoother runs once, after the forward pass, as one report of
+the run-end table, and only when \texttt{processing.run\_smoother} is set.
+The values the stages hand to one another are the members of one
+\texttt{PppEpochWork}, built empty at the top of each epoch.}
 \label{fig:epoch-loop}
 \end{figure}
 
-% ------------------------------------------------------------
-%  Figure 2: differencing strategy hierarchy
-% ------------------------------------------------------------
+% ============================================================
+%  Figure: differencing strategy hierarchy
+% ============================================================
 \begin{figure}[tbp]
 \centering
 \fitwidth{%
@@ -100,19 +163,63 @@ only when \texttt{run\_smoother} is set.}
   \draw[flow] (bssd.south) -- (kf.north);
   \draw[flow] (dd.south)   |- (kf.east);
 \end{tikzpicture}}
-\caption{The three differencing regimes share one geometry kernel.  The
-undifferenced observed and modelled values are computed once.  The regime
+\caption{The three differencing regimes share one geometry kernel. The
+undifferenced observed and modelled values are computed once. The regime
 returned by \texttt{differencingModeFor} (selected once, when
 \texttt{MeasurementBuilderFactory} builds the measurement builder) then applies
 no transform (PPP), a between-satellite single difference against a pivot
 (PPP-RTK), or a between-receiver$\,\to\,$between-satellite double difference
-(baseline).  All three feed the same Kalman update.}
+(baseline). All three feed the same Kalman update.}
 \label{fig:differencing}
 \end{figure}
 
-% ------------------------------------------------------------
-%  Figure 3: real-time SSR correction pipeline
-% ------------------------------------------------------------
+% ============================================================
+%  Figure: real-time engine, the order of the seams of one epoch
+% ============================================================
+\begin{figure}[tbp]
+\centering
+\fitwidth{%
+\begin{tikzpicture}[node distance=3.6mm and 14mm]
+  \node[proc, text width=7.4cm] (r1) {Staged warm restart\\{\footnotesize \texttt{applyStagedStateSnapshot\_} (\texttt{StateSnap})}};
+  \node[proc, text width=7.4cm, below=of r1] (r2) {Admission: backlog and sync, duration budget, time step\\{\footnotesize \texttt{admitBacklogAndSync} $\cdot$ \texttt{gateMaxDuration} $\cdot$ \texttt{stepTimeAndDetectGap} (\texttt{Admit})}};
+  \node[proc, text width=7.4cm, below=of r2] (r3) {State sync, active systems, declared roster, models\\{\footnotesize \texttt{refreshDeclaredRoster\_} (\texttt{SsrBreaks}) $\cdot$ \texttt{PppModel::computeModels} (driver)}};
+  \node[proc, text width=7.4cm, below=of r3] (r4) {Corrections-ready gate and observability\\{\footnotesize \texttt{gateCorrectionsReady} (\texttt{Admit}) $\cdot$ \texttt{logSsrCoverage} $\cdot$ \texttt{traceSsrConsumer} (\texttt{SsrDiag})}};
+  \node[proc, text width=7.4cm, below=of r4] (r5) {Measurement-set conditioning\\{\footnotesize \texttt{dropBroadcastGrade} $\cdot$ \texttt{seedClockFromWls} $\cdot$ \texttt{regaugeBssd} (\texttt{Prepare})}};
+  \node[proc, text width=7.4cm, below=of r5] (r6) {Kalman predict and slips\\{\footnotesize \texttt{predict} / \texttt{predictAided} (driver) $\cdot$ \texttt{detectAndRepairSlips} (\texttt{SlipQc})}};
+
+  \node[proc, text width=7.4cm, right=of r1] (r7) {Reactions to the network moving its datum\\{\footnotesize \texttt{reactToGenerationChange} $\to$ \texttt{resetOnPhaseBiasDisc} $\to$ \texttt{reinflateOnCodeBiasDisc} $\to$ \texttt{reinflateOnClockDisc} $\to$ \texttt{reactToDeclaredLevelSteps\_} $\cdot$ \texttt{reactToEphemerisJumps\_} (\texttt{SsrBreaks})}};
+  \node[proc, text width=7.4cm, below=of r7, fill=orange!10] (r8) {Pre-update innovation screen\\{\footnotesize \texttt{screenInnovations\_} (\texttt{Screen}) inside \texttt{runMeasurementUpdate}: $w_i = (\bm{S}^{-1}\bm{\nu})_i/\sqrt{(\bm{S}^{-1})_{ii}}$, sequential removal, refloat}};
+  \node[proc, text width=7.4cm, below=of r8] (r9) {Update loop with rebuild\\{\footnotesize \texttt{runMeasurementUpdate}: \texttt{KalmanFilter::update} $\cdot$ pivot handover $\cdot$ re-inflation (\texttt{Estimate})}};
+  \node[proc, text width=7.4cm, below=of r9] (r10) {Constraints and ambiguity resolution\\{\footnotesize \texttt{applyZwdConstraint} $\cdot$ \texttt{applyNetworkIonoPrior} $\cdot$ \texttt{resolveAmbiguities} $\cdot$ \texttt{writeEpochTraces} (\texttt{Estimate})}};
+  \node[proc, text width=7.4cm, below=of r10] (r11) {Ambiguity-level check and readout\\{\footnotesize \texttt{checkAmbiguityLevel\_} (\texttt{Estimate}) $\cdot$ \texttt{traceConsumerSat\_} (\texttt{SsrDiag})}};
+  \node[proc, text width=7.4cm, below=of r11] (r12) {Filter-state snapshot\\{\footnotesize \texttt{writeStateSnapshot\_} (\texttt{StateSnap}) $\cdot$ \texttt{RtStateSnapshot}}};
+
+  \foreach \a/\b in {r1/r2, r2/r3, r3/r4, r4/r5, r5/r6, r7/r8, r8/r9, r9/r10, r10/r11, r11/r12}
+      \draw[flow] (\a) -- (\b);
+  \draw[flow] (r6.east) -- ++(0.7,0) |- (r7.west);
+\end{tikzpicture}}
+\caption{Order of the seams of \texttt{RealTimeEngine::processEpoch}. The names
+in parentheses are the files \texttt{RealTimeEngine<name>.cpp} that hold each
+seam. Only the admission gates, the corrections-ready gate and the empty-epoch
+checks of the driver can end an epoch; everything after them is straight-line.
+The reaction to the generation change comes first because it subsumes the finer
+reactions that follow. The shaded box is the user's pre-update innovation
+screen (\dcref{sec:rt-screen}{the innovation-screen section}): it tests every
+row against the predicted state before the first update pass can spread a gross
+row over the states, and builds that first pass itself with the flagged rows
+held out. The other seams with a section of their own are the staged warm
+restart and the filter-state snapshot (first and last box;
+\dcref{sec:rt-snapshot}{the filter-state snapshot section}), the broadcast-baseline
+jump response (\texttt{reactToEphemerisJumps\_}, in the reaction box;
+\dcref{sec:rt-ephjump}{the jump-response section}) and the ambiguity-level check
+(\texttt{checkAmbiguityLevel\_}; \dcref{sec:rt-amblevel}{the ambiguity-level
+section}).}
+\label{fig:rt-seams}
+\end{figure}
+
+% ============================================================
+%  Figure: real-time SSR correction pipeline
+% ============================================================
 \begin{figure}[tbp]
 \centering
 \fitwidth{%
@@ -127,16 +234,18 @@ no transform (PPP), a between-satellite single difference against a pivot
   \node[proc, text width=3.0cm, below=10mm of feed] (ssrdec)
         {SSR decode\\{\footnotesize legacy 1057--1068\\IGS-SSR 4076}};
   \node[proc, text width=3.2cm, below=10mm of feed, xshift=5.4cm] (ephdec)
-        {Broadcast eph.\\{\footnotesize 1019/1020/1042/1044/1046}};
+        {Broadcast eph.\\{\footnotesize 1019/1020/1042/\\1044/1046}};
 
   \node[store, below=10mm of ssrdec] (ssrstore) {\texttt{SsrCorrection}\\\texttt{Store}};
   \node[store, below=10mm of ephdec] (ephstore) {\texttt{LiveEphemeris}\\\texttt{Store}};
 
   \node[proc, text width=7.2cm, below=24mm of obs] (apply)
-        {Apply to undifferenced model\\{\footnotesize orbit (RAC) $\cdot$ clock polynomial $\cdot$ code+phase bias}\\{\footnotesize \texttt{ModelGeometry} $\cdot$ \texttt{GnssCorrections} $\cdot$ \texttt{MeasurementModel}}};
-  \node[proc, below=of apply] (reset)
-        {Phase-bias discontinuity $\to$ \texttt{resetAmbiguity}};
-  \node[proc, below=of reset] (kf)
+        {Apply to undifferenced model\\{\footnotesize orbit (RAC) $\cdot$ clock polynomial $\cdot$ code and phase bias}\\{\footnotesize \texttt{ModelGeometry} $\cdot$ \texttt{GnssCorrections}\\\texttt{MeasurementModel}}};
+  \node[proc, text width=7.2cm, below=of apply] (reset)
+        {Reactions to the network's datum\\{\footnotesize \texttt{reactToGenerationChange} $\cdot$ \texttt{resetOnPhaseBiasDisc} $\to$ \texttt{resetAmbiguity}}};
+  \node[proc, text width=7.2cm, below=of reset, fill=orange!10] (screen)
+        {Pre-update innovation screen\\{\footnotesize \texttt{screenInnovations\_}}};
+  \node[proc, below=of screen] (kf)
         {\texttt{KalmanFilter::update} (rebuild loop)};
   \node[proc, below=of kf] (arr)
         {Ambiguity resolution};
@@ -152,27 +261,34 @@ no transform (PPP), a between-satellite single difference against a pivot
   \draw[flow] (ssrstore.south) |- (apply.east);
   \draw[flow] (ephstore.south) |- (apply.east);
   \draw[flow] (apply) -- (reset);
-  \draw[flow] (reset) -- (kf);
+  \draw[flow] (reset) -- (screen);
+  \draw[flow] (screen) -- (kf);
   \draw[flow] (kf) -- (arr);
 \end{tikzpicture}}
-\caption{Real-time SSR correction pipeline.  The decoder splits the byte stream
+\caption{Real-time SSR correction pipeline. The decoder splits the byte stream
 three ways: observations go to \texttt{processEpoch}, SSR corrections to
 \texttt{SsrCorrectionStore}, and broadcast ephemerides to
-\texttt{LiveEphemerisStore}.  The legacy SSR decoder accepts message types
-1057--1068 and 1240--1270; the diagram lists the first range only.  The
+\texttt{LiveEphemerisStore}. The legacy SSR decoder accepts message types
+1057--1068 and 1240--1270; the diagram lists the first range only. The
 undifferenced observation model then applies the precise orbit (RAC frame), the
-clock polynomial and the code and phase biases.  Between the slip check and the
-Kalman update, \texttt{resetOnPhaseBiasDisc} reacts to a change of the
-phase-bias discontinuity counter, by default with an ambiguity reset;
-\texttt{reinflateOnCodeBiasDisc} and \texttt{reinflateOnClockDisc} follow for
-the code-bias and clock counters.  See \texttt{RealTimeEngine::processEpoch}.}
+clock polynomial and the code and phase biases. After the slip check and
+before the Kalman update, \texttt{reactToGenerationChange} resets every
+network-corrected ambiguity when the product's solution generation changes, and
+\texttt{resetOnPhaseBiasDisc} answers a change of a phase-bias discontinuity
+counter (by default with an ambiguity reset), a hold generation, or a
+freshness flip of the applied bias; \texttt{reinflateOnCodeBiasDisc} and
+\texttt{reinflateOnClockDisc} follow for the code-bias and clock counters
+(\dcref{sec:net-wire-consumer}{the user's answer to the emitted product};
+\dcref{sec:ssr-pbstep}{the phase-bias step section of the SSR document}). The
+innovation screen runs inside the update step ahead of the first pass. See
+\texttt{RealTimeEngine::processEpoch}.}
 \label{fig:ssr-pipeline}
 \end{figure}
 
-% ------------------------------------------------------------
-%  Figure 4: real-time streaming front-end (NTRIP -> decode ->
+% ============================================================
+%  Figure: real-time streaming front-end (NTRIP -> decode ->
 %  sync buffer -> per-epoch update)
-% ------------------------------------------------------------
+% ============================================================
 \begin{figure}[tbp]
 \centering
 \fitwidth{%
@@ -213,28 +329,28 @@ the code-bias and clock counters.  See \texttt{RealTimeEngine::processEpoch}.}
         node[pos=0.25, above, note] {drainHeldObs};
 \end{tikzpicture}}
 \caption{Real-time streaming front-end ahead of the SSR correction stage of
-\Cref{fig:ssr-pipeline}.  \texttt{RtcmStreamReader} reassembles the raw bytes
+\Cref{fig:ssr-pipeline}. \texttt{RtcmStreamReader} reassembles the raw bytes
 from \texttt{NtripClient} or \texttt{TcpClient} into CRC-validated RTCM3 frames,
-and \texttt{feedRtcmFrame} decodes and dispatches each frame.  MSM observations
+and \texttt{feedRtcmFrame} decodes and dispatches each frame. MSM observations
 accumulate in \texttt{pending\_obs\_}, which is submitted to
 \texttt{processEpoch} when a frame with a new epoch time arrives (the edge
-trigger).  SSR corrections and broadcast ephemerides go to their stores.  With
+trigger). SSR corrections and broadcast ephemerides go to their stores. With
 \texttt{enable\_obs\_ssr\_sync} set, the first admission gate of
 \texttt{processEpoch} (\texttt{admitBacklogAndSync}) holds an observation epoch
 that is newer than the SSR coverage horizon (newest SSR content epoch $+$
-\texttt{ssr\_max\_age}).  The held epoch is kept in \texttt{held\_obs\_} (only
+\texttt{ssr\_max\_age}). The held epoch is kept in \texttt{held\_obs\_} (only
 the latest one) and resubmitted by \texttt{drainHeldObs} after each SSR push.
-An epoch inside the horizon is processed at once.  A hold longer than
+An epoch inside the horizon is processed at once. A hold longer than
 \texttt{obs\_ssr\_sync\_max\_hold\_s} (default \SI{30}{s}) latches a degraded
 outage state in which epochs pass through without SSR until the stream covers
-them again.  The gate applies only with a live SSR orbit and clock source and
-never before the first epoch.  See \dcref{sec:rt}{the real-time engine}.}
+them again. The gate applies only with a live SSR orbit and clock source and
+never before the first epoch. See \dcref{sec:rt}{the real-time engine}.}
 \label{fig:rt-stream}
 \end{figure}
 
-% ------------------------------------------------------------
-%  Figure 5: PPP-RTK network producer joint estimator
-% ------------------------------------------------------------
+% ============================================================
+%  Figure: PPP-RTK network estimator, the joint estimator
+% ============================================================
 \begin{figure}[tbp]
 \centering
 \fitwidth{%
@@ -256,9 +372,9 @@ never before the first epoch.  See \dcref{sec:rt}{the real-time engine}.}
   \node[io, text width=6.2cm, below=of map] (emit)
         {SSR-style products\\{\footnotesize \texttt{NetworkProductEmitter::emitToStore} (IGS-SSR convention)}};
 
-  \node[note, right=9mm of add, text width=3.6cm]
-        {shared cols $=$ (sat, kind, signal); local cols $=$ per-station nuisances (rx clock, ZWD, iono, ambiguities)};
-  \node[note, right=9mm of solve, text width=3.6cm]
+  \node[note, left=9mm of add, text width=3.6cm]
+        {shared cols $=$ (sat, kind, signal); local cols $=$ per-station nuisances (rx clock, ZWD, slant iono, ambiguities)};
+  \node[note, left=9mm of solve, text width=3.6cm]
         {datum pins the gauge freedoms: overall clock, the phase-bias$\leftrightarrow$ambiguity datum, ISB};
 
   \foreach \a/\b in {obs/layout, layout/begin, begin/add, add/schur,
@@ -267,33 +383,276 @@ never before the first epoch.  See \dcref{sec:rt}{the real-time engine}.}
   \draw[feedback] (emit.east) -- ++(1.4,0) |- (obs.east)
         node[pos=0.25, right, note] {next epoch};
 \end{tikzpicture}}
-\caption{Joint estimator of the PPP-RTK network producer
-(\texttt{NetworkEstimator}).  The shared satellite-side columns, one per
-(satellite, parameter kind, signal) for the estimable clock, code bias and phase
-bias, are registered afresh every epoch (\texttt{reset}, \texttt{registerClock},
-\texttt{registerCodeBias}, \texttt{registerPhaseBias}, and
-\texttt{registerVtecCoeff} for the SH-VTEC coefficients when
-\texttt{network.estimate\_iono\_sh} is on); \texttt{beginEpoch} opens an
-arrowhead normal-equation system of that width.  \texttt{addStation} adds one
-pre-formed block of local-versus-shared design rows per station, with no
-receiver-side differencing.  Schur reduction removes the local nuisances; the
-reduced shared system is rank-deficient by the gauge freedoms.  \texttt{solve}
-fixes them with an explicit minimum-constraint S-basis datum on a copy of the
-reduced system, and \texttt{toSolutionEpoch} maps the estimate to a record that
-\texttt{NetworkProductEmitter} writes in the IGS-SSR convention.  The driver
-\texttt{Application::runNetwork} runs this core once per epoch over the
-\texttt{MultiRinexSync} stations and only orchestrates:
-\texttt{networkPassAHead\_} models each station, \texttt{networkAssemblyRegisterColumns\_}
-registers the columns and calls \texttt{beginEpoch}, \texttt{networkPassB\_}
-calls \texttt{addStation} (all in \texttt{app/ApplicationNetworkAssembly}),
-\texttt{networkSolveGlue} applies the datum and solves, \texttt{networkSolPrep}
-maps, and \texttt{networkEmitStore} emits.  With
-\texttt{network.closed\_loop.enable} set, the emit step also drives a held-out
-PPP-RTK consumer on the new products: BSSD by default, undifferenced with
-\texttt{closed\_loop.consumer\_undifferenced}.
-See \dcref{sec:net}{the network mode} and
-\dcref{sec:net-arch}{its producer-architecture section}.}
+\caption{Joint estimator of the PPP-RTK network
+(\texttt{NetworkEstimator}, \texttt{network/solve/Estimator}). The shared
+satellite-side columns, one per (satellite, parameter kind, signal) for the
+estimable clock, code bias and phase bias, are registered afresh every epoch
+(\texttt{reset}, \texttt{registerClock}, \texttt{registerCodeBias},
+\texttt{registerPhaseBias}; \texttt{registerVtecCoeff} serves the
+spherical-harmonic ionosphere, which the reference configurations do not use);
+\texttt{beginEpoch} opens an arrowhead normal-equation system of that width.
+\texttt{addStation} adds one pre-formed block of local-versus-shared design
+rows per station, with no receiver-side differencing. Schur reduction removes
+the local nuisances; the reduced shared system is rank-deficient by the gauge
+freedoms. \texttt{solve} fixes them with an explicit minimum-constraint S-basis
+datum on a copy of the reduced system, and \texttt{toSolutionEpoch} maps the
+estimate to a record that \texttt{NetworkProductEmitter} writes in the IGS-SSR
+convention. The driver only orchestrates: \Cref{fig:net-spine-pre} shows where
+the columns are registered and the rows added, \Cref{fig:net-solve} the stages
+around the datum and the solve, \Cref{fig:net-emit} the emission. With
+\texttt{network.closed\_loop.enable} set, the emit step also drives a test
+station's PPP-RTK user on the new products: undifferenced in the reference
+configurations (\texttt{closed\_loop.consumer\_undifferenced}), between-satellite
+differenced otherwise. See \dcref{sec:net}{the network mode} and
+\dcref{sec:net-arch}{its architecture section}.}
 \label{fig:net-flow}
+\end{figure}
+
+% ============================================================
+%  Figure: structure of a network run
+% ============================================================
+\begin{figure}[tbp]
+\centering
+\fitwidth{%
+\begin{tikzpicture}[node distance=5mm and 10mm]
+  \node[proc, text width=10.5cm] (n1)
+        {Validation, products, setup\\{\footnotesize \texttt{networkValidateInputs\_} $\cdot$ \texttt{resolveData} $\cdot$ \texttt{networkSetup\_} (roster, \texttt{MultiRinexSync}, sinks, test-station user)}};
+  \node[proc, text width=10.5cm, below=of n1] (n2)
+        {Run context and run\\{\footnotesize \texttt{NetworkRunContext} (settings, carry state, counters, entity tables) $\cdot$ \texttt{NetworkRunTraces} $\cdot$ \texttt{NetworkRun}}};
+  \node[proc, text width=10.5cm, below=of n2] (n3)
+        {Setup builders, one per concern, in this order\\{\footnotesize \texttt{networkSlipQcConfigure} $\cdot$ oracle arms $\cdot$ \texttt{NetworkRunTraces::openAll} $\cdot$ carry-VCE, prior-residual, block-Baarda, congruence and pivot-coverage arms $\cdot$ \texttt{networkRunManifestStartup} $\cdot$ \texttt{networkEstimatorConfigure} $\cdot$ \texttt{networkSectionTimersArm} $\cdot$ \texttt{networkRunArm}}};
+  \node[proc, text width=10.5cm, below=of n3] (n4)
+        {Epoch source\\{\footnotesize batch: the synced epochs of \texttt{MultiRinexSync}; streaming (\texttt{network.streaming.enable}): \texttt{NetworkStreamFrontEnd} with per-station lanes and a wait-budget aligner}};
+  \node[proc, text width=10.5cm, below=of n4] (n5)
+        {One epoch per call\\{\footnotesize \texttt{Application::networkProcessEpoch\_} (\Cref{fig:net-spine-pre,fig:net-spine-post}); returns Next or Stop}};
+  \node[io, text width=10.5cm, below=of n5] (n6)
+        {Run end\\{\footnotesize \texttt{networkTeardown} walks the table \texttt{kNetworkRunEndReports}, one report per subsystem}};
+
+  \foreach \a/\b in {n1/n2, n2/n3, n3/n4, n4/n5, n5/n6}
+      \draw[flow] (\a) -- (\b);
+  \draw[feedback] (n5.east) -- ++(1.0,0) |- (n4.east)
+        node[pos=0.25, right, note] {next epoch};
+\end{tikzpicture}}
+\caption{Structure of \texttt{Application::runNetwork}, the thin orchestrator of
+a network run (\texttt{network/driver/ApplicationNetwork}). Setup, the builders
+and the run end are lists of calls; the epoch loop has one body, whichever
+epoch source feeds it. A closed-loop replay of an existing product file
+replaces the whole run (\texttt{runConsumerReplay}) before validation.}
+\label{fig:net-run}
+\end{figure}
+
+% ============================================================
+%  Figure: the network epoch before the solve
+% ============================================================
+\begin{figure}[tbp]
+\centering
+\fitwidth{%
+\begin{tikzpicture}[node distance=3.2mm and 6mm]
+  \node[io, text width=10.2cm] (a1)
+        {Admission\\{\footnotesize \texttt{networkFastForward} $\cdot$ injector $\cdot$ canonical-pair and second-band admission $\cdot$ \texttt{networkBuildSignalRoster} $\cdot$ \texttt{networkAdmitEpoch} (Process, Skip, Stop)}};
+  \node[proc, text width=10.2cm, below=of a1] (a2)
+        {PASS A: geometry and layout, slip scans\\{\footnotesize \texttt{networkSlipFunnelOpen} $\cdot$ \texttt{networkPassAHead\_} $\cdot$ \texttt{networkPassASlipScan\_} $\cdot$ \texttt{networkSlipFunnelUnionRaw}}};
+  \node[proc, text width=10.2cm, below=of a2] (a3)
+        {Prefilter and admission screens\\{\footnotesize \texttt{networkAssemblyPrefilter\_} $\cdot$ \texttt{networkSignalIntegrity} $\cdot$ \texttt{networkMeasurementAdmission}}};
+  \node[proc, text width=10.2cm, below=of a3] (a4)
+        {Phase datum\\{\footnotesize \texttt{networkPhaseAnchorEpoch} $\cdot$ \texttt{networkReceiverPhaseBiasAllocation}}};
+  \node[proc, text width=10.2cm, below=of a4] (a5)
+        {Shared columns, integer and oracle inputs\\{\footnotesize \texttt{networkAssemblyRegisterColumns\_} $\cdot$ \texttt{networkSdEwlAr} $\cdot$ \texttt{networkOraclePinEpoch}}};
+  \node[proc, text width=10.2cm, below=of a5] (a6)
+        {Carry inputs of the epoch\\{\footnotesize \texttt{networkAmbFloatDropEpoch} $\cdot$ \texttt{networkClockLevelRestoreRaise} $\cdot$ \texttt{networkHandoverStransformBeforeRows} $\cdot$ \texttt{networkCarryDecide} $\cdot$ \texttt{networkCouplingExactPrepare}}};
+  \node[proc, text width=10.2cm, below=of a6] (a7)
+        {PASS B: station rows (parallel produce, serial consume)\\{\footnotesize \texttt{networkPassB\_}: \texttt{kStationBuildSteps} $\cdot$ \texttt{kStationCarrySteps} $\cdot$ \texttt{addStation}}};
+  \node[proc, text width=10.2cm, below=of a7] (a8)
+        {Resumption count and DD priors\\{\footnotesize \texttt{networkGapResumeCensus} $\cdot$ \texttt{networkCarryDriverBeginEpoch} $\cdot$ \texttt{networkBuildCarryDdPriors}}};
+  \node[proc, text width=10.2cm, below=of a8, fill=orange!10] (a9)
+        {Solve glue, fourteen stages\\{\footnotesize \texttt{networkSolveGlue} (\Cref{fig:net-solve}); a stage can end the epoch}};
+
+  \node[note, right=3mm of a1, text width=3.4cm] {observers: \emph{Admitted}};
+  \node[note, right=3mm of a4, text width=3.4cm] {observers: \emph{BeforeColumns}};
+
+  \foreach \a/\b in {a1/a2, a2/a3, a3/a4, a4/a5, a5/a6, a6/a7, a7/a8, a8/a9}
+      \draw[flow] (\a) -- (\b);
+\end{tikzpicture}}
+\caption{The epoch of \texttt{Application::networkProcessEpoch\_} up to the
+solve. Each box is a seam of the form $(\texttt{NetworkRun\&},
+\texttt{NetworkEpoch})$ that owns no state; the epoch's values are grouped by
+the stage that writes them. The notes mark the two observer slots of this
+half. An observer is a measure-only instrument: it writes only its own
+counters and traces, and the table \texttt{kNetworkEpochObservers}
+(\texttt{network/driver/EpochObservers}) lists every observer with its slot
+and the reason for its place. \Cref{fig:net-spine-post} continues the
+sequence.}
+\label{fig:net-spine-pre}
+\end{figure}
+
+% ============================================================
+%  Figure: the network epoch after the solve
+% ============================================================
+\begin{figure}[tbp]
+\centering
+\fitwidth{%
+\begin{tikzpicture}[node distance=3.2mm and 6mm]
+  \node[proc, text width=10.2cm] (p1)
+        {Install and integer search\\{\footnotesize \texttt{networkInstallCarry} $\cdot$ \texttt{networkProducerAr} (log-only unless the fixed-cycle fold emits)}};
+  \node[proc, text width=10.2cm, below=of p1] (p2)
+        {Solution preparation\\{\footnotesize \texttt{networkGrossLosScreen} (Decide) $\cdot$ \texttt{networkFixedCycles} $\cdot$ \texttt{networkSolPrep}}};
+  \node[proc, text width=10.2cm, below=of p2] (p3)
+        {Emission\\{\footnotesize \texttt{networkPbHoldCloneUpdate} $\cdot$ \texttt{networkEmitStore} (\Cref{fig:net-emit})}};
+  \node[proc, text width=10.2cm, below=of p3] (p4)
+        {Diagnostic traces\\{\footnotesize \texttt{networkIonoDiag} $\cdot$ \texttt{networkDdFrac} $\cdot$ \texttt{networkShDevVtec} $\cdot$ \texttt{networkShHealth}}};
+  \node[proc, text width=10.2cm, below=of p4, fill=orange!10] (p5)
+        {Harvest of the carried state\\{\footnotesize \texttt{networkLeveling} $\to$ \texttt{networkHarvestLocalCarries} (\Cref{fig:net-harvest})}};
+  \node[proc, text width=10.2cm, below=of p5] (p6)
+        {Post-fit quality control\\{\footnotesize \texttt{networkPostFitRaim} $\cdot$ \texttt{networkGrossLosScreen} (Act) $\cdot$ \texttt{networkClockQc}}};
+  \node[proc, text width=10.2cm, below=of p6] (p7)
+        {Roster audit\\{\footnotesize \texttt{networkSignalRosterAudit}}};
+  \node[proc, text width=10.2cm, below=of p7] (p8)
+        {Predict halves of the block-Baarda and congruence diagnostics\\{\footnotesize \texttt{networkBlockBaardaPredict} $\cdot$ \texttt{networkCongruencePredict}}};
+  \node[proc, text width=10.2cm, below=of p8] (p9)
+        {Stash and epoch status\\{\footnotesize \texttt{networkStashStatus} $\cdot$ \texttt{networkPbHoldCloneHarvest} $\cdot$ \texttt{networkClockLevelMonitor} $\cdot$ \texttt{networkBufferedTraceDrains}}};
+  \node[io, text width=10.2cm, below=of p9] (p10)
+        {Section timers and snapshot\\{\footnotesize \texttt{networkSectionTimersReadout} $\cdot$ \texttt{networkWriteStateSnapshot}}};
+
+  \node[note, right=3mm of p6, text width=3.4cm] {observers: \emph{AfterClockQc}};
+  \node[note, right=3mm of p7, text width=3.4cm] {observers: \emph{RosterTail}};
+  \node[note, right=3mm of p8, text width=3.4cm] {observers: \emph{FrameDiag}};
+  \node[note, right=3mm of p9, text width=3.4cm] {observers: \emph{StashTail}};
+
+  \foreach \a/\b in {p1/p2, p2/p3, p3/p4, p4/p5, p5/p6, p6/p7, p7/p8, p8/p9, p9/p10}
+      \draw[flow] (\a) -- (\b);
+\end{tikzpicture}}
+\caption{The epoch after the solve. The emission precedes the harvest, and the
+post-fit tiers follow the harvest because an erase of a carried entry is the
+refloat: it must act on the entry the harvest wrote. The notes name the four
+remaining observer slots, so the six slots of the observer table are, in spine
+order, \emph{Admitted}, \emph{BeforeColumns}, \emph{AfterClockQc},
+\emph{RosterTail}, \emph{FrameDiag} and \emph{StashTail}. After the solve the only
+epoch values a seam writes are the hand-off to the post-fit tiers, the prepared
+solution and the epoch's events.}
+\label{fig:net-spine-post}
+\end{figure}
+
+% ============================================================
+%  Figure: the 14 stages of the solve
+% ============================================================
+\begin{figure}[tbp]
+\centering
+\fitwidth{%
+\begin{tikzpicture}[node distance=3.4mm and 12mm]
+  \node[proc, text width=7.6cm] (g1)  {1\quad Prefit sigma-zero scan\\{\footnotesize \texttt{networkCensusSigma0} (\texttt{qc/PrefitCensus})}};
+  \node[proc, text width=7.6cm, below=of g1] (g2)  {2\quad Code-bias datum rows\\{\footnotesize \texttt{networkCodeBiasDatum} (\texttt{solve/CodeBiasDatum})}};
+  \node[proc, text width=7.6cm, below=of g2] (g3)  {3\quad Clock datum\\{\footnotesize \texttt{networkClockDatum}~\textit{exit: datum failed}}};
+  \node[proc, text width=7.6cm, below=of g3] (g4)  {4\quad Pre-gate priors\\{\footnotesize \texttt{networkPreGatePriors} (\texttt{solve/SolveGlue})}};
+  \node[proc, text width=7.6cm, below=of g4] (g5)  {5\quad Estimability dump\\{\footnotesize \texttt{networkEstimabilityDump} (\texttt{solve/RankGate})}};
+  \node[proc, text width=7.6cm, below=of g5] (g6)  {6\quad Code-bias prior margin against the gate, logged once\\{\footnotesize \texttt{networkKaulaMargin} (\texttt{assembly/BiasAdmission})}};
+  \node[proc, text width=7.6cm, below=of g6] (g7)  {7\quad S-basis completion\\{\footnotesize \texttt{networkSbasisCompletion} (\texttt{solve/SbasisCompletion})}};
+
+  \node[proc, text width=7.6cm, right=of g1] (g8)  {8\quad Null-space rank gate and heal\\{\footnotesize \texttt{networkRankGate}~\textit{exit: gate withheld}}};
+  \node[proc, text width=7.6cm, below=of g8] (g9)  {9\quad Clock-model warm flag\\{\footnotesize \texttt{networkClockModelWarm}}};
+  \node[proc, text width=7.6cm, below=of g9] (g10) {10\quad Post-gate priors\\{\footnotesize \texttt{networkPostGatePriors}: handover transform, D2 carry prior, cold clock anchor}};
+  \node[proc, text width=7.6cm, below=of g10] (g11) {11\quad Primary solve\\{\footnotesize \texttt{networkPrimarySolve}~\textit{exit: solve failed}}};
+  \node[proc, text width=7.6cm, below=of g11] (g12) {12\quad Clock-anchor guard\\{\footnotesize \texttt{networkClockAnchorGuardEpoch} (\texttt{solve/ClockAnchor}): refloat a prior fault before the tier below}};
+  \node[proc, text width=7.6cm, below=of g12] (g13) {13\quad Within-epoch RAIM tier\\{\footnotesize \texttt{networkWithinEpochAdapt} (\texttt{qc/RaimWithinEpoch})~\textit{exit: restore failed}}};
+  \node[proc, text width=7.6cm, below=of g13] (g14) {14\quad Sigma-zero ceiling\\{\footnotesize \texttt{networkSigma0Ceiling}~\textit{exit: sigma-zero withheld}}};
+
+  \foreach \a/\b in {g1/g2, g2/g3, g3/g4, g4/g5, g5/g6, g6/g7, g8/g9, g9/g10, g10/g11, g11/g12, g12/g13, g13/g14}
+      \draw[flow] (\a) -- (\b);
+  \draw[flow] (g7.east) -- ++(0.7,0) |- (g8.west);
+\end{tikzpicture}}
+\caption{The fourteen stages of \texttt{networkSolveGlue}
+(\texttt{network/solve/SolveGlue}), in the order the estimator folds them: the
+order is load-bearing because the estimator accumulates the folds in this
+order and each stage reads what an earlier one wrote. Everything the rank
+gate must see is folded before stage~8; the gate, the dump and the heal read
+one tolerance. Stage~12 follows the solve and precedes stage~13, so that a
+prior fault is refloated before the tier can attribute it to data. Four
+stages can end the epoch, five ways, each a row of \texttt{kSolveSkips}. A new
+fold goes into stage~4 or stage~10 at its place in the order; a new way to end
+the epoch is a new row of the table and never an inline return. Unlabelled
+files are in \texttt{solve/}.}
+\label{fig:net-solve}
+\end{figure}
+
+% ============================================================
+%  Figure: the emission
+% ============================================================
+\begin{figure}[tbp]
+\centering
+\fitwidth{%
+\begin{tikzpicture}[node distance=3.4mm and 6mm]
+  \node[proc, text width=10.4cm] (m1)
+        {Map to the solution epoch and prune\\{\footnotesize \texttt{toSolutionEpoch} $\cdot$ values the solve did not measure erased $\cdot$ clock-runaway quarantine $\cdot$ gross-line-of-sight and declared-line-of-sight withholds}};
+  \node[proc, text width=10.4cm, below=of m1] (m2)
+        {Quality channels\\{\footnotesize \texttt{emit\_ura}: URA per satellite $\cdot$ optional phase-bias and combined sigmas}};
+  \node[proc, text width=10.4cm, below=of m2] (m3)
+        {Datum bumps and discontinuity landings\\{\footnotesize \texttt{networkSolPrep} (\texttt{emit/SolPrep}): pivot handover, retro-bump queue, anchor and cutover marks}};
+  \node[proc, text width=10.4cm, below=of m3] (m4)
+        {Clock emission frame and step test\\{\footnotesize \texttt{NetworkClockEmitRebase::rebaseEpoch}: held frame, step marks $\to$ \texttt{markSatDiscontinuity}}};
+  \node[proc, text width=10.4cm, below=of m4] (m5)
+        {Phase-bias hold\\{\footnotesize \texttt{networkPbHold}: generation, phase-clock transfer; last writer of \texttt{bias\_m}}};
+  \node[proc, text width=10.4cm, below=of m5] (m6)
+        {Store push\\{\footnotesize \texttt{NetworkProductEmitter::emitToStore}: value-jump tests, discontinuity counters}};
+  \node[proc, text width=10.4cm, below=of m6] (m7)
+        {Product file\\{\footnotesize \texttt{NetworkProductWriter}: S contract line, signal declaration, heartbeat, \texttt{E}/\texttt{C}/\texttt{B}/\texttt{P}/\texttt{R} records}};
+  \node[proc, text width=10.4cm, below=of m7] (m8)
+        {Test-station user on the fresh store\\{\footnotesize \texttt{RealTimeEngine::processEpoch} of the closed-loop user; per-satellite solution CSV}};
+
+  \foreach \a/\b in {m1/m2, m2/m3, m3/m4, m4/m5, m5/m6, m6/m7, m7/m8}
+      \draw[flow] (\a) -- (\b);
+\end{tikzpicture}}
+\caption{Emission, from the solved shared estimate to the product and the test
+station. The first three boxes are \texttt{networkSolPrep}, the last five
+\texttt{networkEmitStore} (the emit-layer frame re-base of the invariant carry
+is omitted, inactive in the reference configurations). Every step that changes
+an emitted value acts before \texttt{emitToStore} and before the file write,
+so the in-process store and a replay of the file carry the same values and
+reproduce the same discontinuity counters from the serialised records. The
+solve is unchanged by any step of this figure
+(\dcref{sec:net-wire}{the event-response and emitted-product section}).}
+\label{fig:net-emit}
+\end{figure}
+
+% ============================================================
+%  Figure: the harvest of the carried state
+% ============================================================
+\begin{figure}[tbp]
+\centering
+\fitwidth{%
+\begin{tikzpicture}[node distance=3.4mm and 6mm]
+  \node[proc, text width=10.4cm] (h1)
+        {Anchor handover ledger\\{\footnotesize \texttt{networkHarvestHandoverLedger}: reads the previous epoch's first-stash variance}};
+  \node[proc, text width=10.4cm, below=of h1] (h2)
+        {Per station: block layout, ambiguity rows, trace, phase colour\\{\footnotesize \texttt{networkHarvestStationBlock} $\cdot$ \texttt{networkHarvestAmbiguityStation} (\texttt{carry/LevelingCarry}) $\cdot$ \texttt{networkAmbIfTraceStation} $\cdot$ \texttt{networkHarvestPhaseColourStation}}};
+  \node[proc, text width=10.4cm, below=of h2] (h3)
+        {Stamp the harvest, prune\\{\footnotesize \texttt{pl\_prev\_now\_s} advanced $\cdot$ \texttt{networkPrunePhaseColour} $\cdot$ \texttt{networkPruneAmbiguities}}};
+  \node[proc, text width=10.4cm, below=of h3] (h4)
+        {Kinds that write rows of the station block\\{\footnotesize \texttt{networkHarvestSlantIonoBlock} $\cdot$ \texttt{networkHarvestRxClock} $\cdot$ \texttt{networkHarvestRxCbBlock} $\cdot$ \texttt{networkHarvestZwd}}};
+  \node[proc, text width=10.4cm, below=of h4] (h5)
+        {Border close, eq34 phase bias\\{\footnotesize \texttt{networkHarvestBorderEnd} $\cdot$ \texttt{networkHarvestRxPhaseBias}}};
+  \node[proc, text width=10.4cm, below=of h5] (h6)
+        {Receiver code bias outside the warm bracket\\{\footnotesize \texttt{networkRxCbDatumGaugeCensus} $\cdot$ \texttt{networkHarvestRxCbCarry}}};
+  \node[proc, text width=10.4cm, below=of h6] (h7)
+        {First post-resume harvest\\{\footnotesize \texttt{networkResumeFirstEpochRetire} (closes the latch that two diagnostic rows read)}};
+
+  \foreach \a/\b in {h1/h2, h2/h3, h3/h4, h4/h5, h5/h6, h6/h7}
+      \draw[flow] (\a) -- (\b);
+\end{tikzpicture}}
+\caption{The post-solve harvest of the station-local carries,
+\texttt{networkHarvestLocalCarries} (\texttt{network/carry/LocalCarryHarvest}),
+called by \texttt{networkLeveling}. The orchestrator is a list of calls, one per
+carried kind, each in the file of its carry; the boxes from the second to the
+fifth run only with the carry warm. The order is fixed. The handover ledger
+reads the previous epoch's variance before the ambiguity stash rewrites it. Per
+station the layout, the ambiguity rows, the ionosphere-free trace and the phase
+colour come first, and the shared-history compression is sensitive to that
+order. The harvest clock advances after every station and before the prunes.
+Every writer of a row of the station block runs before the border is closed. The
+receiver code-bias carry runs outside the warm bracket because it must work on
+the invariant-carry lineage without phase leveling. RAIM and the gross
+line-of-sight screen run after the harvest because they set new marks. A
+carried column's regression goes through \texttt{networkHarvestColumn}
+(\dcref{sec:net-vehicle-column}{the carried local column}).}
+\label{fig:net-harvest}
 \end{figure}
 
 \ifSubfilesClassLoaded{\printbibliography}{}

@@ -63,13 +63,21 @@ docs/report/
                             below: the notation, state vector, observation
                             equations, and differencing that everything cites.
     notation.tex              Symbol table + sign conventions.
-    state_vector.tex          Variable-dimension Kalman state vector layout.
-    observation_equations.tex Uncombined PPP pseudorange/phase observation model.
+    state_vector.tex          Variable-dimension Kalman state vector layout, the
+                              declared state families, the network's station
+                              parameter set.
+    observation_equations.tex Uncombined pseudorange/phase observation model; the
+                              one equation shared by the user filter, the network
+                              and the seeds.
     bssd_dd.tex               BSSD (PPP-RTK) and DD (baseline) transformations
                               + S-transform structure.
   frames_time.tex           WGS84 ECEF<->geodetic<->ENU, GNSS time scales + leap
                             seconds (GLONASS TOD, BeiDou BDT), legacy IAU-1976/1980
-                            and CIO-based ECI<->ECEF transforms.
+                            and CIO-based ECI<->ECEF transforms, marker/ARP.
+  reference_frames.tex      Terrestrial reference frames, datum transformations,
+                            station-coordinate epoch propagation (velocity,
+                            post-seismic, periodic terms), the SIF registry and
+                            the SINEX roster as the engine reads them.
   product_evaluation.tex    Baseline orbit/clock product evaluation: derotated-
                             Neville / sidereal-trig SP3 interpolation, rate-anchored
                             clock LSQ, broadcast Kepler / GLONASS PZ-90, ephemeris
@@ -78,56 +86,68 @@ docs/report/
                             mapping, Chen-Herring gradients) and ionospheric
                             (uncombined slant scaling, GIM/IONEX STEC + iono-
                             weighted pseudo-obs, Klobuchar seed, higher-order)
-                            delay models.
+                            delay models; the default-off SH VTEC field.
   site_displacement.tex     Geophysical station displacements: solid Earth tide
                             (IERS-2010 Steps 1+2), pole + ocean-pole tide, ocean
-                            tidal loading, and the LOS-projection integration.
+                            tidal loading with nodal corrections, and the
+                            LOS-projection integration.
   observation_physics.tex   Deterministic per-observation corrections: antenna
-                            PCO/PCV + ATX fallback, satellite attitude/yaw, phase
-                            wind-up, relativity/Shapiro/Sagnac, group-delay/biases.
+                            PCO/PCV + ATX fallback, the one satellite attitude
+                            model (yaw, GPS noon turns), accumulated phase wind-up
+                            and its gap bridge, relativity/Shapiro/Sagnac,
+                            group-delay/biases.
   stochastic_qc.tex         Measurement stochastic models (elevation/SNR/sat-block
                             weighting) + a-posteriori QC: variance factor, Baarda
-                            data-snooping, redundancy numbers, MDB, full-R kernel.
+                            data-snooping, redundancy numbers, MDB, full-R kernel,
+                            block test on a line of sight, carried-prior variance
+                            components, network RAIM tiers, emission gates.
   estimator_infrastructure.tex  Filter-bootstrap machinery: WLS position/clock/tropo
                             seed, first-epoch residual-difference state initialisation
                             (ISB/phase-clock/code-bias/iono/ambiguity), BSSD/DD pivot
                             selection + disturbance detection.
   kalman_smoother.tex       Variable-dim EKF (Joseph update, prior-anchored IEKF,
                             robust gating) + backward RTS smoother.
-  slip_detection.tex        MW/GF/GRAPHIC/EWL combinations + TurboEdit 2x2 repair,
-                            code-event veto, gap bridge.
+  slip_detection.tex        MW/GF/GRAPHIC/EWL/IF-time-difference combinations, the
+                            network slip layer and slip funnel, TurboEdit 2x2
+                            repair, code-event veto, gap bridge.
   ambiguity_resolution.tex  MLAMBDA ILS, LDL^T decorrelation, WL/NL, validation,
-                            constrained (pseudo-observation) feedback.
+                            constrained (pseudo-observation) feedback, fix-and-hold;
+                            the network's default-off integer machinery.
   imu_aiding.tex            Strapdown mechanisation + 15-state INS error model.
   ssr_corrections.tex       SSR orbit/clock/bias to undifferenced-observation
-                            correction mapping.
-  realtime_engine.tex       Streaming architecture: NTRIP transport, RTCM/MSM
+                            correction mapping; phase-bias step reactions.
+  realtime_engine.tex       Streaming architecture: NTRIP/TCP transport, RTCM/MSM
                             decode, observation/SSR synchronisation, per-epoch
-                            real-time update path.
-  network.tex               Multi-station PPP-RTK network estimator: producer
-                            architecture (the decomposed epoch loop and its seam
-                            sequence), joint model, satellite phase-bias state,
-                            S-basis datum, Schur reduction; the producer of the
-                            SSR-style corrections the single-receiver modes consume.
+                            real-time update path, innovation screen, broadcast
+                            jump response, state snapshot.
+  network.tex               Multi-station PPP-RTK network estimator: architecture
+                            (the decomposed epoch loop and its seam sequence),
+                            parameter set and joint model, satellite phase-bias
+                            state, S-basis datum (clock, phase, code bias), rank
+                            gate, Schur reduction with sparse station normals,
+                            constellation scope; the source of the SSR-style
+                            corrections the single-receiver modes use.
   network_example.tex       Fully numerical 2-receiver x 4-satellite S-system
                             estimability worked example, mirroring
-                            tests/test_network_estimator.cpp.
-  network_carry.tex         Between-epoch carry: the three folds an arrowhead
-                            system admits and where each must be applied, the
-                            DD cycle basis (spanning-tree chords) as the only
-                            gauge-free carriable quantity, the Woodbury DD-prior
-                            fold with its posterior/innovation closed forms, and
-                            a fully numerical 2-receiver x 2-satellite example
-                            (one chord) carried end to end.
-  network_vehicle.tex       The float ambiguity vehicle the golden configurations
-                            arm: carried local column, joint local block, floored
-                            birth prior and bounded drop, held phase-datum basis,
-                            exact conditional time update of the coupling rows.
-  network_wire.tex          Event responses and the emitted product: gap re-entry,
-                            re-admission seeds, accumulated wind-up and its restart
-                            response, the gross line-of-sight screen, the
+                            tests/network/test_network_estimator.cpp.
+  network_carry.tex         Between-epoch carry: the carried families, the three
+                            folds an arrowhead system admits and where each must
+                            be applied, the DD cycle basis (spanning-tree chords)
+                            as the only gauge-free carriable quantity, the
+                            Woodbury DD-prior fold with its posterior/innovation
+                            closed forms, and a fully numerical 2-receiver x
+                            2-satellite example (one chord) carried end to end.
+  network_vehicle.tex       The float ambiguity vehicle the reference
+                            configurations use: carried local column, joint local
+                            block, floored birth prior and bounded drop, held
+                            phase-datum basis, exact conditional time update of
+                            the coupling rows, the clock anchor and its guard.
+  network_wire.tex          Event responses and the emitted product: the MW
+                            re-flag skip, gap re-entry, re-admission seeds,
+                            accumulated wind-up and its restart response, the
+                            gross line-of-sight screen, the emitted clock, the
                             phase-bias generation hold and phase-clock mode, the
-                            consumer's presence-edge response.
+                            product contract, the user's presence-edge response.
   pipeline_diagrams.tex     Curated TikZ process diagrams.
   generated_tables.tex      Appendix subfile; \input's the generated/ tables.
   linear_algebra.tex        Appendix subfile: linear algebra supplement (norms,
@@ -202,12 +222,15 @@ sync when the pipeline changes.
 ## Scope
 
 This document covers the estimation mathematics and design rationale,
-the material that ages slowly because it is settled theory or algebra,
-not churning code:
+the material that ages slowly because it is settled theory or algebra.
+The revision of 2026-10-30 describes the code at commit `5127429`; a
+chapter is stale once the code it cites moves, and `docs/report/` has no
+automatic check for that beyond the generated tables.
 
-- State vector layout (rarely changes).
-- Observation equations (settled GNSS theory).
+- State vector layout and the declared state families.
+- Observation equations (settled GNSS theory; one equation for all users).
 - Coordinate frames and time systems (WGS84/ENU, leap seconds, CIO/SOFA).
+- Terrestrial reference frames and station-coordinate propagation (SIF, SINEX).
 - Orbit/clock product evaluation (SP3 interpolation, Kepler/PZ-90).
 - Atmospheric delay models (troposphere mapping, ionosphere GIM/HOI).
 - Geophysical site displacements (solid Earth / ocean / pole tides).
@@ -221,7 +244,8 @@ not churning code:
 - Inertial aiding (strapdown mechanisation, INS error state).
 - Real-time SSR-to-observation correction mapping.
 - Real-time streaming engine (transport, decode, synchronisation).
-- Network-mode PPP-RTK estimation (the correction producer).
+- Network-mode PPP-RTK estimation (the source of the corrections): datum,
+  carry, the float ambiguity vehicle, event responses, the emitted product.
 - Linear algebra supplement (study material: norms, SVD, pseudoinverse,
   with reproducible numerical examples).
 

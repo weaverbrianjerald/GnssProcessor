@@ -9,10 +9,12 @@
 %  error model and how the GNSS update corrects it.
 %
 %  Scope note: this section documents ONLY the implemented core
-%  (filter/ImuIntegrator, KalmanFilter::predictAided, the TC
-%  Doppler Jacobian).  Lever-arm/scale-factor states and a full
-%  Somigliana gravity model are NOT implemented today and are
-%  called out as such inline.
+%  (filter/ImuIntegrator, aiding/ImuAidingSource,
+%  KalmanFilter::predictAided and its splice in KalmanKernels.cpp,
+%  the TC Doppler Jacobian in MeasurementModelRow.cpp).
+%  Lever-arm/scale-factor states and a full Somigliana gravity
+%  model are NOT implemented today and are called out as such
+%  inline.
 % ============================================================
 
 With an IMU configured, a first-order strapdown mechanization in the
@@ -26,30 +28,36 @@ selects the IMU source in the \texttt{AidingSourceManager}.  When
 
 The mechanization is implemented in
 \texttt{src/core/filter/ImuIntegrator.cpp}.  The per-epoch prediction
-runs \texttt{Application::run} $\to$
+runs \texttt{Application::predictEpoch\_}
+(\texttt{src/core/app/PppEpochSteps.cpp}) $\to$
 \texttt{AidingSourceManager::collectPredict} $\to$
 \texttt{src/core/aiding/ImuAidingSource.cpp}, and
 \texttt{KalmanFilter::predictAided}
 (\texttt{src/core/filter/KalmanFilter.cpp}) splices the resulting
-\texttt{PredictContribution} into the filter covariance.  The real-time
+\texttt{PredictContribution} into the filter covariance
+(\texttt{KalmanFilter::spliceAndPropagate} in
+\texttt{src/core/filter/KalmanKernels.cpp}).  The real-time
 engine (\texttt{RealTimeEngine::processEpoch}) uses the same
 \texttt{predictAided} $/$ \texttt{collectPredict} path.  Only the sample
 ingest differs.  Post-processing reads a CSV file with
 \texttt{loadData}, which sorts the samples by time.  In real time each
-sensor sample reaches \texttt{ImuIntegrator::addSample}, which appends it
+sensor sample reaches \texttt{ImuIntegrator::addSample} through
+\texttt{ImuAidingSource::ingestSample}, which appends it
 to the same buffer in arrival order.  For samples that arrive in time
 order the two paths therefore give the same \texttt{integrate} results.
 
 The \texttt{IAidingSource} / \texttt{AidingSourceManager} abstraction
 (\texttt{include/aiding/}) is the interface through which every non-GNSS
-modality (IMU, ZUPT, NHC, baro, wheel odometry, vision) contributes up to
+modality contributes up to
 three items: a \texttt{StateManager}-owned state block, a predict-time
 $\Phi/Q$ sub-block, and either independent measurement rows or extra
 Jacobian \emph{columns} on existing GNSS rows.  The IMU is its first
-client.  \texttt{ImuAidingSource} reproduces the arithmetic of the older
-monolithic \texttt{KalmanFilter::predictImu}, so the
-strapdown equations below apply unchanged.  \texttt{predictImu} remains
-in the source but has no callers; \texttt{predictAided} replaces it.
+client; a zero-velocity update source is the second, and the registry
+declares no implementation for the non-holonomic, wheel, barometric and
+vision kinds.  \texttt{ImuAidingSource} reproduces the arithmetic of the
+older monolithic \texttt{KalmanFilter::predictImu}, so the
+strapdown equations below apply unchanged.  \texttt{predictImu} has been
+removed from the source; \texttt{predictAided} replaces it.
 
 The formulation is an \emph{error-state} extended Kalman filter.  The
 mechanization propagates the nominal navigation state
@@ -196,7 +204,7 @@ are read from
 \texttt{imu.\{accel\_noise\_density},
 \texttt{gyro\_noise\_density}, \texttt{accel\_bias\_instability},
 \texttt{gyro\_bias\_instability\}}.  The defaults in
-\texttt{config/GnssConfigTypes.hpp} are
+\texttt{include/config/GnssConfigTypes.hpp} are
 \SI{0.05}{\metre\per\second\squared\per\hertz\tothe{0.5}},
 \SI{5e-4}{\radian\per\second\per\hertz\tothe{0.5}},
 \SI{1e-4}{\metre\per\second\cubed\per\hertz\tothe{0.5}} and
@@ -279,7 +287,9 @@ relinearisation pass calls
 \texttt{AidingSourceManager::applyTcJacobianInputs} $\to$
 \texttt{ImuAidingSource::applyTcJacobianInputs}, which passes the current
 attitude and specific force to \texttt{MeasurementModel::setImuState}
-(\texttt{src/core/measurement/MeasurementModel.cpp}).  With
+(\texttt{src/core/measurement/MeasurementModel.cpp}), and
+\texttt{MeasurementModel::buildDopplerRow}
+(\texttt{src/core/measurement/MeasurementModelRow.cpp}) writes the columns.  With
 $\imufe = \Cbe\imuf$ the specific force in ECEF and
 $\los^\sat_{\rx}$ the unit line-of-sight of
 \dcref{eq:los}{the line-of-sight definition}, the Doppler measurement
@@ -312,7 +322,8 @@ requirement as a capability query
 true for the IMU source under tight coupling), so any later source with
 nominal-state feedback selects the same path.  Direct
 \texttt{tightlyCoupledImu()} checks remain in
-\texttt{Application.cpp} / \texttt{KalmanFilter.cpp} (the IEKF gating
+\texttt{src/core/app/PppEpochUpdate.cpp} and
+\texttt{src/core/filter/KalmanFilter.cpp} (the IEKF gating
 and the prior capture), so the migration to the capability query is
 incomplete.
 \end{remark}

@@ -4,19 +4,27 @@
 %
 %  Companion to the Network-mode section.  Where sec:net-schur
 %  STATES the arrowhead reduction, this document develops its
-%  consequences: which folds an arrowhead system admits and
-%  where, why the carried time-linked quantity must be the
-%  double-differenced cycle basis (chords), and the Woodbury
-%  algebra that folds it.  Closes with a fully numerical
+%  consequences: what is carried between epochs (the carried
+%  families), which folds an arrowhead system admits and where,
+%  why the carried time-linked quantity of the invariant carry
+%  must be the double-differenced cycle basis (chords), and the
+%  Woodbury algebra that folds it.  Closes with a fully numerical
 %  minimum-parameter example (2 receivers x 2 satellites, one
 %  chord) carried end to end.
 %
-%  Sources: filter/NetworkNormalEquations (addStationPrior,
+%  Sources: network/solve/NormalEquations (addStationPrior,
 %  addSharedInfo, foldReducedSumZeroGauges, foldReducedDdPriors,
 %  ddPriorPosteriorMean/Covariance, ddPriorInnovation),
-%  filter/NetworkZStore (ArcKey / ZComponent cycle algebra),
-%  filter/NetworkInvariantCarryDriver (the per-epoch reconcile),
-%  filter/NetworkEstimator (setDdPriors, the datum seam).
+%  network/ar/ArcGraph (ArcKey, the typed and integer-id cycle
+%  algebra) and network/ar/ZStore (ZComponent, the one-event
+%  oracle), network/carry/InvariantCarryDriver (the per-epoch
+%  reconcile), network/carry/DdPriorBuild and InstallCarry,
+%  network/solve/Estimator (setDdPriors, the datum seam),
+%  network/state/BorderPrior (the border fold),
+%  network/carry/LocalCarryHarvest and the family files
+%  (LevelingCarry, ZwdCarry, SlantIonoCarry, RxClockCarry,
+%  RxCodeBiasCarry, PhaseColourCarry), network/carry/Coupling,
+%  network/assembly/ParamRegistry.
 %
 %  Every number in the worked example is exact and was checked
 %  against a dense stacked solve of the same system.
@@ -71,13 +79,14 @@ the minimum-constraint datum
 document covers the step between them: \emph{how information from
 outside the current epoch enters an arrowhead system}.
 
-The structure of the problem sets the requirements.  A network producer
+The structure of the problem sets the requirements.  A network estimator
 that solves each epoch independently discards what it has learned about
 the carrier-phase ambiguities, the only constant quantities in the
-problem.  A producer that carries them without care destroys either the
+problem.  An estimator that carries them without care destroys either the
 sparsity that keeps the solve affordable or the datum invariance that
-gives the product its meaning.  The design has three parts, developed in
-order:
+gives the product its meaning.  \Cref{sec:net-carry-families} lists what
+is carried at all and the route each family takes.  The design of the
+fold then has three parts, developed in order:
 
 \begin{enumerate}[leftmargin=*, itemsep=1pt]
 \item An arrowhead system admits exactly \emph{three} kinds of
@@ -98,18 +107,19 @@ order:
 two-satellite network, the smallest network whose observation graph
 has a cycle, through every step with exact arithmetic.
 
-The golden configurations do not arm the invariant DD carry developed
-here (\texttt{network.carry\_invariant} is false in both); they carry
-the float ambiguity vehicle instead
+The reference configurations (\texttt{config/golden/golden\_field\_refound.json}
+and \texttt{config/golden/golden\_sim\_refound.json}) do not arm the
+invariant DD carry developed here (\texttt{network.carry\_invariant} is
+false in both); they carry the float ambiguity vehicle instead
 (\dcref{sec:net-vehicle}{the float-ambiguity-vehicle section}).  The
 door analysis of \Cref{sec:net-carry-doors} still governs where that
 vehicle's folds enter.  The shared-border carry takes door~1, and the
 vehicle's per-station block, with its regression on the shared border,
 enters before the reduction as whitened rows of that station's own
 design (\texttt{CouplingRowBuilder::buildLocalBlock},
-\texttt{filter/NetworkCoupling}), so it touches only that station's
-blocks and is bound by door~2's ordering constraint.  No golden fold
-takes door~3.
+\texttt{network/carry/Coupling}), so it touches only that station's
+blocks and is bound by door~2's ordering constraint.  No fold of the
+reference configurations takes door~3.
 
 \begin{remark}[Theoretical footing]
 Time-linking a \emph{selected} set of linear functions $\bm{z} =
@@ -125,6 +135,136 @@ spanning-tree S-basis itself is due to \textcite{deJonge1998processing},
 who selects it once and never re-selects it.  The construction here
 extends it to a basis that changes from epoch to epoch.
 \end{remark}
+
+% ------------------------------------------------------------------
+\subsection{The carried families and how they are folded}
+\label{sec:net-carry-families}
+
+Two places hold information across epochs: the shared border and each
+station's local columns.  Both fold before the solve of the next epoch
+and neither adds a station--station coupling.
+
+\paragraph{The shared border.}
+After every kept epoch the posterior value of each border key (satellite
+clock, satellite phase bias, satellite code bias) and the covariance of
+the border are stashed (\texttt{networkStashCarry},
+\texttt{network/state/BorderStash}).  At the next epoch the fold
+(\texttt{networkInjectD2CarryPrior}, \texttt{network/state/BorderPrior})
+applies the time update in information form, as a border prior of door~1.
+The diagonal route gives each key the variance
+$\mathrm{var} + q\,\dt$, with $q$ the rate of the registry kind
+(\texttt{network/assembly/ParamRegistry}).  The dense route
+(\texttt{network.shared\_carry\_full\_cov}, on in the reference
+configurations) folds one information block
+\begin{equation}
+\bm{\Lambda} \;=\; \left(\bm{P}_{\text{prev}} + \bm{Q}\right)^{-1},
+\label{eq:carry-border-dense}
+\end{equation}
+the information-form Kalman time update on the border, where $\bm{Q}$
+is diagonal and $\bm{P}_{\text{prev}}$ is the stashed covariance in the
+datum frame of \dcref{sec:net-schur}{the Schur-reduction section}.  The
+dense block keeps the cross-covariances between clock and phase bias
+that the diagonal route discards.  A key absent from the epoch's layout
+is \emph{marginalised} (its rows and columns of $\bm{P}_{\text{prev}}$ are
+not selected) and a key with no matrix row folds on the diagonal.  The
+fold of each key is decided once per epoch
+(\texttt{networkCarryDecide}, \texttt{network/state/CarryDisposition}) and
+read by the border fold and the coupling rows alike.  The decision is one
+of folded, anchored or loose (the temporal clock anchor), reinitialised
+(the clock monitor's flag), seeded (a parked entry whose column returned
+inside \texttt{network.readmit\_seed\_horizon\_s}, folded at $q$ over the
+gap since its park), parked, re-referenced (a phase-bias frame the datum
+moved), retired (the datum of its constellation changed), screened (a
+non-positive variance), carried by the two-state clock oscillator model
+(\texttt{network.clock\_model}, off) or folded by another prior (the
+spherical-harmonic one, off).
+
+\paragraph{The station-local columns.}
+A local column carried as an independent diagonal prior would count the
+information it shares with the border twice.  The posterior of the
+joint $(\xshared, r)$ factorises into the marginal of $\xshared$, which the
+dense border block carries, and the distribution of $r$ conditional on
+$\xshared$; only the conditional is carried for $r$.  After the solve, the
+harvest (\texttt{networkHarvestLocalCarries},
+\texttt{network/carry/LocalCarryHarvest}) reads for each carried column
+$c$ of a station: its value $\hat r_c$; its border-known conditional
+variance $v_c = (\Nrr^{-1})_{cc}$, which does not depend on the datum
+(\dcref{sec:net-schur}{the Schur-reduction section}); and its regression
+on the border, $\bm{m}_c = \Nsr\,\Nrr^{-1}\bm{e}_c$, restricted to the
+free (non-datum) shared columns and kept only where
+$|m_{cj}|$ exceeds a relative threshold ($10^{-8}$,
+\texttt{kCouplingSparsifyRelThresh}).  Both come from one local solve
+with the cached factor of the station's block.  The next epoch carries
+$c$ as one pseudo-observation row of that station's own design,
+\begin{equation}
+r_c + \sum_{j} m_{cj}\,s_j \;=\;
+   \hat r_c + \sum_{j\in\text{present}} m_{cj}\,\hat s_j,
+\qquad
+\sigma^2 \;=\; v_c + q\,\dt + \sum_{j\in\text{departed}} m_{cj}^2\,P_{jj},
+\label{eq:carry-condrow}
+\end{equation}
+written in the correction coordinates of the rows (coefficient $+1$ on
+the local column, $m_{cj}$ on the border).  A border term whose column
+left the layout enters through its marginal variance, the third term of
+$\sigma^2$.  The variance is floored (\texttt{network.phase\_leveling\_var\_floor\_m2}
+for the ambiguities) and scaled by the carry variance factor of the
+variance-component monitor.  The row is built in PASS~B by
+\texttt{CouplingRowBuilder} (\texttt{network/carry/Coupling}), before the
+reduction, so it is a door~2 fold, and combined with the dense border
+block it reproduces the batch solve for a constant parameter when the
+carried columns are conditionally independent given the border, that is
+when $\Nrr$ is diagonal (\texttt{DenseCarryRecursiveEqualsBatch} and
+\texttt{ConditionalCarryRecursiveEqualsBatch} in
+\texttt{tests/network/test\_network\_estimator.cpp}; the diagonal carry
+does not).  The time update
+that shrinks each present column, its gauge projection and the exact
+update are in \dcref{sec:net-vehicle}{the float-ambiguity-vehicle
+section}.  The float vehicle folds the carried columns of a station as
+one jointly whitened block, which keeps the cross-covariances between
+them.  Each family has a PASS~B step that installs its rows and a
+harvest in the same file; \Cref{tab:carry-families} lists them.
+
+\begin{table}[tbp]
+\centering
+\caption{Carried station-local families.  The kind is the registry kind
+(\texttt{network/assembly/ParamRegistry}); the file holds the family's
+PASS~B step and its harvest.}
+\label{tab:carry-families}
+\footnotesize
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.17\linewidth}>{\raggedright\arraybackslash}p{0.28\linewidth}>{\raggedright\arraybackslash}p{0.27\linewidth}>{\raggedright\arraybackslash}p{0.22\linewidth}@{}}
+\toprule
+family (file) & process noise & gap horizon & route \\
+\midrule
+ambiguity (\texttt{Leveling\-Carry}) & random walk, \texttt{network.phase\_leveling\_q\_amb} (default $0$, a random constant) & \texttt{network.phase\_leveling\_max\_gap\_s} (default \SI{120}{\second}, \SI{900}{\second} in the reference configurations) & local block with coupling rows (float vehicle) \\
+receiver code bias (\texttt{RxCodeBias\-Carry}) & random walk, \texttt{network.rx\_cb\_carry\_q} (default \SI{1e-9}{\metre\squared\per\second}) & \SI{900}{\second} (fixed, \texttt{kRxCbMaxGapS}) & local block (\texttt{network.carry\_rx\_code\_bias\_in\_block}); else diagonal station prior \\
+wet delay (\texttt{ZwdCarry}) & random walk, \texttt{network.zwd\_carry\_q} & the ambiguity horizon & local block (\texttt{network.carry\_zwd\_in\_block}); else conditional row or diagonal prior \\
+slant ionosphere (\texttt{SlantIono\-Carry}) & random walk per epoch, \texttt{network.carry\_iono\_in\_block\_q\_m2} (default \SI{2.5e-3}{\metre\squared} at L1) & \texttt{network.carry\_iono\_in\_block\_max\_gap\_s} ($0$ takes the ambiguity horizon) & local block \\
+receiver clock and inter-system bias (\texttt{RxClock\-Carry}) & random walk per epoch, \texttt{network.carry\_rx\_clock\_q\_m2} (default \SI{0.09}{\metre\squared}), with a drift state for the clock & \texttt{network.carry\_rx\_clock\_max\_gap\_s} & local block \\
+phase colour (\texttt{PhaseColour\-Carry}) & Gauss--Markov, stationary variance $\sigma_{\mathrm{zen}}^2$ at the zenith with an elevation law, $\tau$ \SI{300}{\second} (\texttt{network.phase\_colour\_*}) & \SI{900}{\second} (\texttt{network.phase\_colour\_max\_gap\_s}) & local block \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+In the reference configurations the ambiguity and the receiver code-bias
+families are carried; the wet delay, the slant ionosphere, the receiver
+clock and the phase colour are re-estimated at every epoch (their
+settings are off).  The stationary standard deviation of a phase-colour
+state at elevation $e$ is $\sigma_{\mathrm{zen}}/\sin\big(\max(e,
+e_{\mathrm{floor}})\big)$.
+
+The registry also declares, per family, the events it responds to: a
+slip, a gap, a datum handover, a decoupling and a re-admission
+(\texttt{ParamEvent}).  A carried quantity with a stiff or zero rate
+needs such a response before it may be armed, because a stiff prior
+carried past a jump moves the whole solution
+(\Cref{sec:net-carry-example}); the responses are developed in
+\dcref{sec:net-wire}{the event-response and emitted-product section}.
+The remaining carry, the invariant DD carry
+(\texttt{network.carry\_invariant}), is the only one that is not a
+conditional row: it folds a prior on the double-differenced cycle basis
+after the reduction, door~3, and is developed in
+\Cref{sec:net-carry-cycles,sec:net-carry-fold}.
 
 % ------------------------------------------------------------------
 \subsection{Three doors into an arrowhead system}
@@ -165,10 +305,10 @@ A border prior may therefore be folded \emph{before or after} the
 reduction with identical results.  The between-epoch carry of the
 satellite clock and biases costs no second Schur pass even when it is
 applied late, for example between the null-space rank gate and the
-solve.  \texttt{addSharedInfo} (\texttt{filter/NetworkNormalEquations})
+solve.  \texttt{addSharedInfo} (\texttt{network/solve/NormalEquations})
 uses this: when a reduction is already cached, it folds the delta in
 place and leaves the cache current.  The dense form of the same carry
-(\texttt{addSharedPriorDense}, \texttt{NetworkEstimator}) takes a
+(\texttt{addSharedPriorDense}, \texttt{network/solve/Estimator}) takes a
 \emph{covariance} rather than an information matrix.  A carried key
 absent from the current epoch's layout must be \emph{marginalised}, a
 row and column deletion on $\Pzmat$; deleting the same rows of $\Pzinv$
@@ -232,8 +372,11 @@ inverse without any signal.  The implementation enforces the exclusion:
 the sum-to-zero ensemble phase gauge (\texttt{foldReducedSumZeroGauges})
 and the carried DD priors (\texttt{foldReducedDdPriors}) are mutually
 exclusive, and \texttt{NetworkEstimator::solve} throws if both are set.
-Under the invariant carry the phase datum is realised instead through
-door~2, by the pre-reduce tree pins.  These compose \emph{exactly} with a
+No configuration the loader accepts arms the ensemble gauge any more;
+the kernel keeps the fold and the exclusion is tested
+(\texttt{DdPriorAndSumZeroGaugeAreMutuallyExclusive}).  Under the
+invariant carry the phase datum is realised through door~2, by the
+pre-reduce tree pins.  These compose \emph{exactly} with a
 post-reduce door~3 fold, because the fold then reads an already-pinned
 factor.
 
@@ -276,7 +419,7 @@ receiver--satellite pairs carrying an ambiguity this epoch:
 $(\rx,\sat) \in \arcset$ iff station $\rx$ tracks satellite $\sat$ on
 signal $\sigl$.  There is at most one arc per pair, so an unordered
 vertex pair is a unique arc identity (\texttt{ArcKey},
-\texttt{filter/NetworkZStore}).  The graph is \emph{bipartite} by
+\texttt{network/ar/ArcGraph}).  The graph is \emph{bipartite} by
 construction: no arc joins two receivers or two satellites.
 
 \paragraph{Trees and chords.}
@@ -306,7 +449,10 @@ z_c \;=\; \sum_{(\rx,\sat)\,\in\,\mathcal{C}_c}
 \qquad \sigma_{(\rx,\sat)} = \pm 1 \ \text{alternating},
 \label{eq:carry-cycle-sum}
 \end{equation}
-which for the shortest cycle (length four) is a plain double difference
+where the sign is $+1$ when the arc is traversed from its lower vertex id
+to its higher one, and receiver ids lie below satellite ids, so the sign
+alternates around the cycle (\texttt{network/ar/ArcGraph}).  For the
+shortest cycle (length four) $z_c$ is a plain double difference
 $N^{\sat_1}_{\rx_1} - N^{\sat_1}_{\rx_2} + N^{\sat_2}_{\rx_2} -
 N^{\sat_2}_{\rx_1}$, and for a longer fundamental cycle is a
 higher-order alternating difference on six or more columns.
@@ -354,8 +500,11 @@ follow, and together they make the cycle basis the carried object:
 
 \paragraph{Graph events are exact operations.}
 Every way the graph can change between epochs maps to an exact
-operation on the carried $(\hat{\bm{z}}, \Pzmat)$
-(\texttt{ZComponent}, \texttt{filter/NetworkZStore}):
+operation on the carried $(\hat{\bm{z}}, \Pzmat)$.  The z-store
+(\texttt{ZComponent}, \texttt{network/ar/ZStore}) implements each as a
+primitive and serves as the test oracle of the driver; the producing
+code does not build it.
+
 
 \begin{center}\small
 \begin{tabular}{@{}p{0.36\linewidth}p{0.58\linewidth}@{}}
@@ -382,10 +531,12 @@ Components merge &
 \end{tabular}
 \end{center}
 
-The producer does not apply these as a sequence of events.  The
-per-epoch driver (\texttt{filter/NetworkInvariantCarryDriver}) receives
-the current epoch's tree/chord partition from the election and computes
-the \emph{composed} transform directly.  A new chord's fundamental cycle
+The network estimator does not apply these as a sequence of events.
+The per-epoch driver (\texttt{network/carry/InvariantCarryDriver}) receives
+the current epoch's tree/chord partition from the chain-datum election,
+takes the trees and fundamental cycles from \texttt{network/ar/ArcGraph}
+(\texttt{arcgraph::singleTreeOf}, \texttt{arcgraph::fundamentalCycle}) and
+computes the \emph{composed} transform directly.  A new chord's fundamental cycle
 lies in the previous epoch's cycle space if and only if every arc of
 that cycle was present last epoch; its carried mean is then
 $\hat z^{\text{new}}_c = \sum_j w_j\,\hat z^{\text{old}}_j$, with
@@ -395,6 +546,13 @@ $\hat{\bm{z}}^{\text{prior}} = \bm{W}\hat{\bm{z}}^{\text{old}}$ and
 $\Pzprior = \bm{W}\Pzmat\bm{W}^\Tr$.  A dead chord's column of $\bm{W}$
 is zero (marginalisation).  Merges and splits follow from the
 contributor gather with no special case.
+\texttt{networkBuildCarryDdPriors} (\texttt{network/carry/DdPriorBuild})
+resolves each arc to an estimator (station, local ambiguity column), marks
+the tree edges as the pinned gauge and the others as chords, and excludes
+GLONASS, whose FDMA signals have no common-wavelength integer double
+difference.  \texttt{networkInstallCarry} installs the posterior after the
+accepted solve, so a withheld or contaminated epoch never enters the
+carry.
 
 A chord whose cycle uses a newborn arc is \emph{fresh}.  The driver
 gives it a finite diffuse prior (variance \texttt{fresh\_prior\_var},
@@ -403,9 +561,8 @@ zero-information tap-off of the table.  Its posterior is therefore the
 data-only tap-off up to a term of the order of the ratio of the data
 variance to \texttt{fresh\_prior\_var}.  An arc
 flagged as slipped this epoch counts as absent from the previous arc set,
-so every chord whose cycle uses it is also born fresh (for a two-band
-pair group under the lane shape, the driver takes the union of the
-band-1 and band-2 slip flags).  The production caller passes only arcs
+so every chord whose cycle uses it is also born fresh.  The production
+caller passes only arcs
 that resolve to an estimator column; a carried chord whose cycle has an
 unresolvable arc this epoch is dropped from the carry and re-tapped when
 the arc returns.
@@ -416,7 +573,9 @@ A slip on a \emph{chord} costs exactly one carried DD.  A slip on a
 With \texttt{network.phase\_datum\_eq34\_slip\_aware\_election} armed
 (default off), the election therefore keeps slipped arcs out of the
 tree wherever the graph allows it.  The argument is structural and
-independent of any detector threshold.
+independent of any detector threshold; the setting measured
+net-harmful on a 63-station case and is off
+(\texttt{docs/SPEC\_d5\_churn\_limit\_cycle.md}).
 \end{remark}
 
 % ------------------------------------------------------------------
@@ -472,6 +631,7 @@ data-implied DD,
 \label{eq:carry-post-mean}
 \end{equation}
 with covariance, in the datum-as-known shared frame $\Sigss$ (the
+datum frame of \dcref{sec:net-schur}{the Schur-reduction section}: the
 solve's shared covariance with every datum-pinned and gauge column
 treated as exact),
 \begin{equation}
@@ -486,6 +646,9 @@ the coupling through it.  $\Sigss$ is datum-constrained, but $\Pzpost$
 is datum-invariant because $\bm{z}$ is estimable.
 \texttt{ddPriorPosteriorMean} and \texttt{ddPriorPosteriorCovariance}
 evaluate the two expressions per block from the cached fold factors.
+The driver builds the datum frame once per install
+(\texttt{NetworkEstimator::datumFrameSharedCov}) and passes it to every
+block.
 
 \paragraph{Innovation.}
 The same factors give an exact test of the carry against the epoch's
@@ -540,15 +703,15 @@ epochs behind clean logs.  The implementation treats the PD screen as
 \emph{always-on telemetry}: per-fold counts of degenerate blocks and
 their dimension, the worst relative pivot, and the count of repairs are
 exposed unconditionally (\texttt{DdFoldStats},
-\texttt{filter/NetworkNormalEquations}).  An optional PD-safe path
+\texttt{network/solve/NormalEquations}).  An optional PD-safe path
 (\texttt{network.carry\_invariant\_pd\_safe}, default off) replaces the
 absolute screen with an equilibrated factorisation and a scale-relative
 pivot test, evaluates the posterior in a product form that avoids the
 subtraction, and applies a counted eigenvalue-clamp repair to
-round-off-level failures.  This is standing invariant~4 of the project
-(run-end counters are the telemetry of an ON path): an inert path needs
-a counter, because the absence of an error is no evidence that the
-mechanism ran.
+round-off-level failures.  The project rule is that run-end counters are the
+telemetry of an armed path (\texttt{CLAUDE.md}, the pre-flight invariants
+for estimation changes): an inert path needs a counter, because the
+absence of an error is no evidence that the mechanism ran.
 
 % ------------------------------------------------------------------
 \subsection{Worked example: the smallest network with a cycle}
@@ -572,7 +735,7 @@ observations, the carrier phase reduces to
 \label{eq:carry-ex-model}
 \end{equation}
 where $\beta_\rx$ is the receiver phase bias, $b^{\sat}$ the satellite
-phase bias (the producer's target), and $N^{\sat}_{\rx}\in\mathbb{Z}$
+phase bias (the quantity the network emits), and $N^{\sat}_{\rx}\in\mathbb{Z}$
 the ambiguity.  The truth is
 \[
 \beta_A = 0.30,\quad \beta_B = -0.20,\qquad
@@ -793,11 +956,14 @@ cycle and spreads the remainder evenly over every observation in the
 network.  This is the general mechanism by which a stale zero-$q$ carry
 damages a solution: the network cannot reject information asserted
 with infinite confidence, so it redistributes the contradiction into
-whatever states can absorb it.  It is the reason for standing
-invariant~1 of the project: any zero-$q$ time link requires a wired,
-tested slip response before it may be armed.  Invariant~7 applies the
-same reasoning to the edges of the carry: the driver treats a slipped
-or unresolvable arc as a decoupling event (the chord is dropped or born
+whatever states can absorb it.  It is the reason for the project rule
+that any zero-$q$ or stiff time link requires a wired, tested slip,
+jump or event response before it may be armed
+(\texttt{CLAUDE.md}, the pre-flight invariants for estimation changes).
+The same rule applies to the edges of the carry: every mechanism that
+changes which information reaches which states is an event at both
+edges, with counters and identities.  The driver treats a slipped or
+unresolvable arc as a decoupling event (the chord is dropped or born
 fresh, and counted), and a returning arc re-couples only through a
 fresh tap-off.
 
@@ -865,32 +1031,41 @@ Object & Symbol & Home \\
 \midrule
 Arrowhead accumulation, Schur reduction, back-substitution &
   \texttt{addStation}, \texttt{reduce}, \texttt{reconstructStation} &
-  \texttt{filter/Network\-Normal\-Equations} \\
+  \texttt{network/solve/Normal\-Equations} \\
 Door 1: shared border prior &
   \texttt{addSharedInfo}, \texttt{addSharedPriorDense} &
-  \texttt{filter/Network\-Normal\-Equations}, \texttt{filter/Network\-Estimator} \\
-Door 2: pre-reduce local prior &
-  \texttt{addStationPrior} &
-  \texttt{filter/Network\-Normal\-Equations} \\
+  \texttt{network/solve/Normal\-Equations}, \texttt{network/solve/Estimator} \\
+Border carry: stash, decision, fold &
+  \texttt{networkStashCarry}, \texttt{networkCarryDecide}, \texttt{networkInjectD2CarryPrior} &
+  \texttt{network/state/Border\-Stash}, \texttt{Carry\-Disposition}, \texttt{Border\-Prior} \\
+Door 2: pre-reduce local prior and coupling row &
+  \texttt{addStationPrior}, \texttt{CouplingRowBuilder} &
+  \texttt{network/solve/Normal\-Equations}, \texttt{network/carry/Coupling} \\
+Harvest of the station-local carries &
+  \texttt{networkHarvestLocalCarries}, \texttt{networkHarvestColumn} &
+  \texttt{network/carry/Local\-Carry\-Harvest} and the family files \\
 Door 3: post-reduce Woodbury folds &
   \texttt{foldReducedSumZeroGauges}, \texttt{foldReducedDdPriors} &
-  \texttt{filter/Network\-Normal\-Equations} \\
-Cycle algebra, lifecycle operations &
-  \texttt{ArcKey}, \texttt{ZComponent} &
-  \texttt{filter/NetworkZStore} \\
+  \texttt{network/solve/Normal\-Equations} \\
+Cycle algebra (trees, fundamental cycles, chord restriction) &
+  \texttt{ArcKey}, \texttt{arcgraph::singleTreeOf}, \texttt{arcgraph::fundamentalCycle} &
+  \texttt{network/ar/Arc\-Graph} \\
+Lifecycle primitives (oracle) &
+  \texttt{ZComponent} &
+  \texttt{network/ar/ZStore} \\
 Per-epoch reconcile $\bm{W}$, posterior install, innovation gate &
   \texttt{buildDdPriors}, \texttt{installPosterior} &
-  \texttt{filter/Network\-Invariant\-Carry\-Driver} \\
+  \texttt{network/carry/Invariant\-Carry\-Driver}, \texttt{Dd\-Prior\-Build}, \texttt{Install\-Carry} \\
 Posterior and innovation readouts &
   \texttt{ddPriorPosteriorMean}, \texttt{ddPriorPosteriorCovariance},
   \texttt{ddPriorInnovation} &
-  \texttt{filter/Network\-Normal\-Equations} \\
+  \texttt{network/solve/Normal\-Equations} \\
 PD screen telemetry &
   \texttt{DdFoldStats}, \texttt{ddPriorBlockDegenerate} &
-  \texttt{filter/Network\-Normal\-Equations} \\
+  \texttt{network/solve/Normal\-Equations} \\
 Datum and rank gate &
   \texttt{NetworkSbasis}, \texttt{assertNullSpaceRank} &
-  \texttt{filter/NetworkSbasis} \\
+  \texttt{network/solve/Sbasis} \\
 \bottomrule
 \end{tabular}
 \end{center}

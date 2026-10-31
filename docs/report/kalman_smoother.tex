@@ -15,12 +15,17 @@ PPP-RTK parameterisation of \dcref{sec:state}{the state-vector-layout
 section of the Foundations document}: receiver position (and optionally
 velocity), receiver clock and per-system time offsets, zenith wet
 troposphere and gradients, per-satellite slant ionosphere, receiver and
-satellite code and phase biases, and one float ambiguity per tracked
+satellite code biases, and one float ambiguity per tracked
 carrier.  The dimension changes from epoch to epoch as satellites rise
 and set and as ambiguities are reset.  \texttt{filter/StateManager} owns
 the layout and the dynamic key$\to$index maps.  The filter operates on
 that state and assumes no fixed indices
-(\texttt{src/core/filter/KalmanFilter.cpp}).
+(\texttt{src/core/filter/KalmanFilter.cpp}; its sparse products are in
+\texttt{KalmanKernels.cpp}, the post-fit screen in \texttt{KalmanPostFitQc.cpp},
+the statistical residual QC in \texttt{KalmanResidualQc.cpp} and the outlier
+responses in \texttt{KalmanOutlierResponse.cpp}).  The network estimator does
+not use this filter (\dcref{sec:net}{the network-mode document}); it
+solves per-epoch normal equations and links epochs by carried priors.
 
 The notation throughout is $\Fmat$ for the state-transition matrix, $\Qmat$
 for the discrete process-noise covariance, $\Rmat$ for the
@@ -37,7 +42,7 @@ notation-and-conventions section of the Foundations document}.
 The transition matrix $\Fmat(\dt)$ for epoch interval
 $\dt = t_k - t_{k-1}$ is identity plus a small number of coupling
 blocks, assembled by \texttt{StateManager::getTransitionMatrix}
-(\texttt{src/core/filter/StateManager.cpp}).  The kinematic-integrator
+(\texttt{src/core/filter/StateManagerProcessNoise.cpp}).  The kinematic-integrator
 off-diagonal couplings are
 \begin{equation}
 \Fmat[\,\rxpos,\bm{v}\,] = \dt\,\bm{I}_3,
@@ -94,7 +99,11 @@ before \Cref{eq:kf-predict}.
 
 \paragraph{Process-noise model.}
 The discrete process noise $\Qmat(\dt)$ is built from continuous
-spectral densities by \texttt{StateManager::getProcessNoiseMatrix}.
+spectral densities by \texttt{StateManager::getProcessNoiseMatrix}, a short
+driver over one function per block of $\Qmat$
+(\texttt{StateManagerProcessNoise.cpp}); the family blocks read their rule and
+spectral-density key from the family table (\dcref{sec:state-families}{the
+declared state families}), which the run-start log prints.
 Two block structures appear.  Pure random-walk states have a scalar
 discrete variance increment
 \begin{equation}
@@ -111,9 +120,10 @@ Representative entries are zenith wet troposphere
 bias (\texttt{sat\_phase\_bias\_q}, a separate density on the separate
 \texttt{sat\_phase\_bias\_indices\_} map),
 phase clock (\texttt{phase\_clock\_q}), and the float ambiguity
-(\texttt{ambiguity\_q}).  Both satellite-bias blocks, and the
-satellite-clock block beside them, set $\Qmat$ to zero for a frozen-pivot
-satellite.  The frozen state is held at (value, variance) $=(0,0)$ as
+(\texttt{ambiguity\_q}).  The three satellite blocks (code bias, phase bias
+and clock, one function over the family table) set $\Qmat$ to zero for a
+frozen-pivot satellite, as do the ambiguity and ionosphere blocks.  The frozen
+state is held at (value, variance) $=(0,0)$ as
 the datum, and any process noise would move it off that datum.  The
 ambiguity density defaults to a numerical floor ($10^{-12}$), not a
 physical value.  Per-key overrides are supported for reseeding
@@ -128,7 +138,10 @@ the slant by the squared obliquity factor,
 \label{eq:kf-Q-iono}
 \end{equation}
 with $\spd{\mathrm{iono}} = $ \texttt{ionosphere\_q} and optional
-per-satellite overrides driven by the adaptive-iono scheme.  Under the
+per-satellite overrides driven by the adaptive-iono scheme (off by default).
+The rule applies on every run that carries slant-ionosphere states
+(\texttt{GnssConfig::carriesSlantIonosphere}: uncombined processing outside
+the baseline modes), PPP included.  Under the
 constant-velocity model of \Cref{eq:kf-F-iono} this random walk is used
 only for satellites without a rate state.  Otherwise the level/rate pair
 takes the CWNA block of \Cref{eq:kf-Q-cwna} below, with the acceleration
@@ -168,11 +181,11 @@ $\Qmat_{ii} = \sigma^2\dt$ governed by
 
 \paragraph{Scope: the recursive estimator only.}
 These densities apply to the \emph{recursive} estimator.  The network
-producer does not run a \texttt{KalmanFilter}.
+estimator does not run a \texttt{KalmanFilter}.
 \texttt{getTransitionMatrix} and \texttt{getProcessNoiseMatrix} are
-called only from \texttt{KalmanFilter::predict} / \texttt{predictImu} /
+called only from \texttt{KalmanFilter::predict} /
 \texttt{predictAided} and from the smoother's
-\texttt{Application::capturePriorSnapshot}.  The producer solves
+\texttt{Application::capturePriorSnapshot}.  The network solves
 per-epoch normal equations for corrections to each station's
 linearisation point.  It links epochs with explicit information-form
 carry priors of effective variance
@@ -186,18 +199,23 @@ per-class fallbacks equal the legacy \texttt{filter.process\_noise.*}
 defaults, so an unmodified config gives the same values either way.
 
 \paragraph{Aided time update.}
-When inertial aiding is active, \texttt{KalmanFilter::predictImu}
-mechanises the nominal position, velocity, and attitude (strapdown).  It
-inserts a $15\times15$ INS error-state transition $\bm{\Phi}$ and noise
+When inertial aiding is active, the aiding source
+(\texttt{aiding/ImuAidingSource}) mechanises the nominal position, velocity
+and attitude (strapdown) over the integrated interval and returns a predict
+contribution: a $15\times15$ INS error-state transition $\bm{\Phi}$ and noise
 $\Qmat_{\mathrm{ins}}$, with error order
 $[\delta\bm{p},\,\delta\bm{v},\,\delta\bm{\psi},\,\delta\bm{b}_a,\,
-\delta\bm{b}_g]$, into the GNSS-dimensioned $\Fmat$ and $\Qmat$ over the
-integrated interval.  \Cref{eq:kf-predict} then runs on the full state,
-followed by the symmetrisation
-$\covM \leftarrow \tfrac12(\covM + \covM^{\Tr})$.  The general
-\texttt{predictAided} path does the same for any aiding source.  With no
-aiding payload it calls the GNSS-only \Cref{eq:kf-predict} and gives a
-byte-identical result.
+\delta\bm{b}_g]$, with the full-state indices it owns.
+\texttt{KalmanFilter::predictAided} writes each contribution over an identity
+$\Fmat$ and over the baseline $\Qmat$ built for the integrated interval
+(\texttt{spliceAndPropagate}, \texttt{KalmanKernels.cpp}).  The write is an
+assignment on the rows the contribution owns, so their baseline process noise
+is not counted twice, and the means of states no contribution owns are not
+propagated.  The covariance recursion of \Cref{eq:kf-predict} then runs on the
+full state, followed by the symmetrisation
+$\covM \leftarrow \tfrac12(\covM + \covM^{\Tr})$.  With no valid
+contribution \texttt{predictAided} calls the GNSS-only
+\texttt{KalmanFilter::predict} and gives a byte-identical result.
 
 \subsection{Measurement update}\label{sec:kf-update}
 
@@ -205,9 +223,9 @@ The measurement update (\texttt{KalmanFilter::update}) is a
 \emph{batch} update: all observation rows of the epoch are processed
 together, not one at a time.  A sparse-$\jacH$ optimisation speeds up
 the four products that involve the design matrix ($\jacH\covM$,
-$\jacH\covM\jacH^{\Tr}$, $\Kgain\jacH$, and the $\jacH$ parts of the
-gain).  It agrees with the dense computation to a $10^{-12}$ structural
-threshold (\texttt{src/core/filter/KalmanFilter.cpp}).
+$\jacH\covM\jacH^{\Tr}$, $\Kgain\jacH$ and $\jacH\,\delta\stateV$).  It agrees
+with the dense computation: entries of $\jacH$ at or below $10^{-12}$ are
+dropped from the row lists (\texttt{src/core/filter/KalmanKernels.cpp}).
 
 Given the design matrix $\jacH$ from the linearisation of the
 \dcref{eq:obs-code}{code observation equation} and
@@ -257,10 +275,10 @@ $\covM \leftarrow \tfrac12(\covM + \covM^{\Tr})$, to remove round-off.
 The factor $(\bm{I} - \Kgain\jacH)$ is built from the sparse
 $\Kgain\jacH$ product by adding one on the diagonal.  The same kernel,
 with the explicit gain $\Kgain = \covM\jacH^{\Tr}\Smat^{-1}$, is the
-static routine \texttt{josephPseudoUpdate}.  It is reused for scalar
-pseudo-observation constraints (for example the GIM ionosphere prior via
-\texttt{applyPseudoObservation}) and for the IEKF pass of
-\Cref{sec:kf-iekf}.
+static routine \texttt{josephPseudoUpdate} (\texttt{KalmanKernels.cpp}).  It
+is reused for the pseudo-observation constraints applied through
+\texttt{applyPseudoObservation} (the GIM ionosphere prior and the a-priori ZWD
+constraint) and for the IEKF pass of \Cref{sec:kf-iekf}.
 
 \paragraph{Post-fit residuals.}
 After the update the post-fit residuals and their (diagonal) covariance
@@ -341,7 +359,7 @@ fixed prior $(\stateV^{-}, \covM^{-})$, so the covariance does
 
 \paragraph{Firing condition.}
 The driver \texttt{Application::runGeometryRelinearization}
-(\texttt{src/core/app/Application.cpp}) fires the iteration when all of
+(\texttt{src/core/app/PppEpochUpdate.cpp}) fires the iteration when all of
 the following hold:
 \begin{enumerate}[leftmargin=*, itemsep=0pt]
 \item \texttt{processing.relinearize\_geometry} is on and a prior was
@@ -368,10 +386,16 @@ update from the prior.
 \subsection{Innovation and residual gating}\label{sec:kf-gating}
 
 The engine performs \emph{no} $\chi^2$ test on the innovation covariance.
-Outlier rejection (\texttt{KalmanFilter::validatePostFitResiduals}) tests
+Outlier rejection (\texttt{KalmanFilter::validatePostFitResiduals}, a driver
+over named stages in \texttt{KalmanPostFitQc.cpp}) tests
 the standardised \emph{post-fit} residuals $\sres_i$ of \Cref{eq:kf-sres}
 against a fixed scalar threshold.  Robust median-based detectors for
-pivot slips supplement it.  The two top-level thresholds are hardcoded
+pivot slips supplement it.  The stages run in this order: the residual and
+statistical reports, the coherent pivot-offset detectors, the non-pivot
+multi-band slip detector, the Huber inflation pass, the gate (the
+$\sigma$ threshold or the Baarda $w$-test), the response to the gated row and
+the complete-reset backstop.  A detector that rejects a group ends the pass
+before the later stages.  The two top-level thresholds are hardcoded
 \texttt{GnssConfig} defaults (\texttt{residual\_threshold\_} $= 6.0$ and
 \texttt{bad\_meas\_percent\_} $= 0.5$ in
 \texttt{src/core/config/GnssConfig.cpp}).  They are not exposed to JSON,
@@ -384,10 +408,16 @@ row and the criterion.
 
 \paragraph{Per-row rejection.}
 If $\max_i |\sres_i| > 6.0$, the worst row is handled according to its
-type.  A phase outlier triggers an ambiguity reset, with BSSD pivot
-handling and a sub-cycle $\lambda$-fraction floor.  A code outlier is
-excluded from the epoch.  Correlated phase rows of the same satellite on
-other bands are reset with it.
+type (\texttt{KalmanOutlierResponse.cpp}).  A phase outlier triggers an
+ambiguity reset, with BSSD pivot handling.  A real slip moves the
+observation by an integer number of wavelengths, so a raw residual below
+$\lambda/4$ (\texttt{estimation.pivot\_slip\_min\_cycles}, default $0.25$,
+with \texttt{estimation.enable\_subcycle\_slip\_suppression}, default on) is
+sub-cycle bias: the row is excluded from the pass and its ambiguity state is
+kept.  A code outlier is excluded from the epoch.  Correlated phase rows of
+the same satellite on other bands are reset with it.  Among phase outliers
+of one constellation within $5\,\%$ of the maximum $|\sres|$, the satellite
+with the largest Melbourne--W\"ubbena deviation score is chosen.
 
 \paragraph{Baarda data-snooping gate (optional override).}
 When \texttt{estimation.enable\_data\_snooping} is set, the fixed-$\sigma$
@@ -403,8 +433,9 @@ fires when $|w_i| > $ \texttt{estimation.data\_snooping\_critical}
 therefore differ from the $\sigma$ gate.  The handling of the selected
 row by type is unchanged.  The $w$-test statistic and
 redundancy are produced by the a-posteriori QC diagnostics layer
-(\texttt{computeResidualQc\_}, gated by
-\texttt{estimation.enable\_variance\_factor}): the variance factor
+(\texttt{computeResidualQc\_} in \texttt{KalmanResidualQc.cpp}, run when
+\texttt{estimation.enable\_variance\_factor} or
+\texttt{estimation.enable\_data\_snooping} is set): the variance factor
 $\hat\sigma_0^2 = \big(\sum_i v_i^2/R_{ii}\big)/\mathrm{dof}$, the per-row
 redundancy $r_i$, the $w$-test, and the minimal detectable bias (MDB).
 This layer accounts for a correlated $R$ through $S_r^{-1}$ when the
@@ -418,27 +449,37 @@ In the smoother it marks a segment boundary
 (\Cref{sec:kf-smoother}).
 
 \paragraph{Robust pivot-slip detectors (BSSD).}
-Before the per-row gate, single-difference phase rows are grouped by
-(pivot, signal) and screened for a pivot slip common to the group, using
-median and median-absolute-deviation (MAD) statistics.  A forced pivot
-handover fires when four conditions hold: the group is large enough, a
-majority of its rows exceed the threshold, the group median exceeds a
-metre-scale floor, and the MAD-to-median ratio is small.  A small ratio
-means a tight cluster, which indicates a common shift and not scattered
-noise.  Cross-band pooled and code-side variants apply similar tests
-with their own floors.  Slips on non-pivot satellites across several
-bands are confirmed by integer-cycle consistency:
+Before the per-row gate, single-difference rows are grouped by
+(pivot, signal) and screened for a disturbance common to the group, using
+median and median-absolute-deviation (MAD) statistics.  Four detectors are
+the rows of one table (\texttt{kalman::kPivotDetectors}): phase per signal,
+phase pooled across bands, code per signal and code pooled across bands.  A
+forced pivot handover fires when four conditions hold: the group is large
+enough (four rows in a per-signal group; three rows on two bands in a pooled
+one), at least half of its rows exceed the per-row threshold, the group
+median exceeds a floor ($5\,\mathrm{mm}$ on phase, $0.30\,\mathrm{m}$ on code,
+above routine code multipath), and the MAD-to-median ratio is at most $0.4$.
+A small ratio means a tight cluster, which indicates a common shift and not
+scattered noise.  On phase per signal the median must also exceed the
+wavelength fraction $\lambda/4$ of \texttt{estimation.pivot\_slip\_min\_cycles},
+unless the cluster is tight (ratio at most $0.2$), where only a common pivot
+disturbance explains several rows.  A firing group requests a handover that
+excludes the satellites whose residuals disagree with the group median, and
+its rows are left out of the pass.  Slips on non-pivot satellites across
+several bands are confirmed by integer-cycle consistency:
 $|r|/\lambda_{\mathrm{band}}$ must round to the same nonzero integer on
 each band.
 
 \paragraph{Down-weighting (not gating).}
 Two paths inflate $\Rmat$ and do not reject.  A persistent EWMA-bias term
-adds the squared mean bias to $R_{ii}$ once an arc has warmed up.  A
+adds the squared mean bias to $R_{ii}$ once an arc has warmed up
+(\texttt{estimation.persistent\_bias\_min\_cycles}).  A
 Huber post-fit scheme inflates $R$ for sub-cycle rows whose $|\sres_i|$
-exceeds the Huber knee, either once on the innovation or iteratively on
-the post-fit residual (IRLS), toggled by
-\texttt{enable\_huber\_r\_inflation} and
-\texttt{enable\_huber\_innovation}.  Both change the working $\Rmat$ used
+exceeds the Huber knee (\texttt{estimation.phase\_huber\_sres\_threshold},
+default $6$), iteratively on the post-fit residual (IRLS, the default) or
+once on the innovation, toggled by
+\texttt{enable\_huber\_r\_inflation} (default on) and
+\texttt{enable\_huber\_innovation} (default off).  Both change the working $\Rmat$ used
 in \Cref{eq:kf-S,eq:kf-sres}.  The standardised residual is therefore
 scaled by the working noise, not the formal noise.
 
@@ -458,12 +499,19 @@ $\tilde{\stateV}_{k|k-1}, \tilde{\covM}_{k|k-1}$, the posterior
 $\hat{\stateV}_{k|k}, \covM_{k|k}$, the matrix $\Fmat_k$, and all core and
 dynamic key$\to$index maps (\texttt{capturePriorSnapshot} /
 \texttt{capturePosteriorSnapshot} in
-\texttt{src/core/app/Application.cpp}).  The order of capture makes the
+\texttt{src/core/app/PppEpochRecords.cpp}).  The order of capture makes the
 stored prior equal to $\Fmat_k\hat{\stateV}_{k-1|k-1}$.  The a-priori is
 recorded immediately after \texttt{predict()}, before any cycle-slip
 reseeding or measurement update.  The a-posteriori is recorded
 \emph{before} integer ambiguity resolution, so the smoother uses
-\emph{float} ambiguities only.
+\emph{float} ambiguities only.  One edit follows the capture: a
+covariance-preserving integer repair of an ambiguity (the TurboEdit repair of
+\dcref{sec:slip}{the cycle-slip document}) moves the ambiguity by a known
+$\mathrm{d}N\,\lambda$ in the frame of the stored prior.  It is folded into
+$\tilde{\stateV}_{k|k-1}$ as a deterministic control input
+(\texttt{Application::foldSlipRepairsIntoPrior\_}), so the backward pass does
+not read the jump as an innovation; a satellite that was also reset in the
+epoch is segmented instead (below).
 
 \paragraph{Recursion.}
 Initialised at the terminal posterior
@@ -509,7 +557,12 @@ state update is then
 \label{eq:rts-subspace}
 \end{equation}
 with the analogous projection on \Cref{eq:rts-cov}.  States outside the
-subspace keep their forward a-posteriori value.  The indexing needs
+subspace keep their forward a-posteriori value.  The subspace holds the
+position and the ZWD; the receiver clock, velocity, phase clock and
+gradients when both epochs have them; and the ambiguity, ionosphere,
+ionosphere-rate, receiver code-bias, satellite code-bias and inter-system
+offset keys present at both epochs.  The clock-rate, inter-system rate and
+inertial states are not in it and keep their forward value.  The indexing needs
 care.  $\tilde{\stateV}_{k+1|k}$, $\tilde{\covM}_{k+1|k}$ and
 $\Fmat_{k+1}$ are sized for epoch $k$'s layout, because the predict step
 does not grow the state.  They are addressed with epoch $k$'s common

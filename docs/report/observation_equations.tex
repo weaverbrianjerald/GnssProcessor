@@ -12,13 +12,13 @@ slip detection only (\dcref{sec:slip}{the cycle-slip document};
 \texttt{slip/MwSlipDetector}, \texttt{slip/GraphicSlipDetector}) and do
 not enter the measurement update.  The loader
 (\texttt{GnssConfig::loadProcessingSection\_}) forces
-\texttt{uncombined\_enabled=true} for the whole PPP-RTK family (user,
-network producer, network consumer) and for the baseline
+\texttt{uncombined\_enabled=true} for the whole PPP-RTK family (the
+single-receiver PPP-RTK modes and the network estimator) and for the baseline
 double-difference modes, which process each signal independently
 (\Cref{sec:dd}).  Plain PPP mode keeps the flag at its default
 \texttt{false} and builds ionosphere-free combined observables (keys
-such as \texttt{C1W\_C5X}); these feed
-\texttt{MeasurementModel::buildJacobianRow} and the update.  The rest of
+such as \texttt{C1W\_C5X}); these enter the same observation equation
+(\Cref{sec:obs-shared}) and the update.  The rest of
 this section describes the uncombined case.
 
 \subsection{Code (pseudorange) observation}
@@ -75,7 +75,9 @@ remarks:
       \dcref{sec:ssr}{the SSR-corrections document}).  The filter treats
       it as deterministic.  Its error enters the observation: the part
       common to all satellites is absorbed by the receiver clock state,
-      and the satellite-specific part remains in the residuals.
+      and the satellite-specific part remains in the residuals.  The
+      network estimator adds a per-satellite clock correction to the
+      product clock as a parameter of its own (\Cref{sec:obs-shared}).
 \item The system time offset $\sLight\,\delta t^{(g(\sat))}_\rx$ is
       zero by construction when $g(\sat)$ is the reference
       constellation, which is GPS (the state manager keys no offset for
@@ -118,10 +120,11 @@ The position columns of the Jacobian row $\jacH_{(\sat,\sigl)}$ are
 therefore $-(\los^\sat_{\hat{\rx}})^{\Tr}$.  One linearisation per epoch
 suffices for sub-metre residual targets.  For large initial position
 offsets the engine can relinearise within the epoch
-(\texttt{processing.relinearize\_geometry}).  The flag defaults to off in
-code; the PPP, PPP-RTK, baseline and real-time configs in
-\texttt{config/} enable it, and the six network-producer configs leave
-it off.
+(\texttt{processing.relinearize\_geometry}, \dcref{sec:kf-iekf}{the iterated-update section of the filtering document}).  The flag
+defaults to off in code; the PPP, PPP-RTK, baseline and real-time
+configurations in \texttt{config/} enable it, and the network reference
+configurations (\texttt{config/golden/golden\_field\_refound.json},
+\texttt{config/golden/golden\_sim\_refound.json}) leave it off.
 
 The satellite position $\satpos$ is a function of the transmission
 time.  \texttt{Geometry::computeEmissionState} obtains the emission time
@@ -146,6 +149,98 @@ re-runs \texttt{computeEmissionState} on a cleaned pseudorange: the seed
 minus the slant hydrostatic delay and the IF-combined ATX projection,
 plus the periodic relativistic clock term.  This refines the
 pseudorange; it is not a range-versus-position iteration.
+
+\subsection{One equation for every parameter set}\label{sec:obs-shared}
+
+\Cref{eq:obs-code,eq:obs-phase} are written once in code, as the list of
+terms that \texttt{observationEquation}
+(\texttt{measurement/ObservationEquation.hpp}) returns for a row.  Three
+callers build a row through it: the single-receiver filter
+(\texttt{MeasurementModel}), the network estimator's station rows
+(\texttt{networkStationRows}, \texttt{network/assembly/StationRows.cpp}) and
+the first-epoch seeds (\texttt{measurement/Seeds.cpp},
+\dcref{sec:estinfra-init}{the first-epoch seeding section of the estimator-infrastructure document}).  The user's rows and the network's rows are
+therefore one equation evaluated over two different parameter sets.  The
+predicted observable of a row is
+\begin{equation}
+\hat z^\sat_{\rx,\sigl}
+\;=\; z^{\sat,\mathrm{mod}}_{\rx,\sigl}
+\;+\; \sum_{e}\; a_e \sum_{k} h_{e,k}\,x_{e,k},
+\label{eq:obs-terms}
+\end{equation}
+where $z^{\mathrm{mod}}$ is the a-priori model value of the signal (the
+range at the linearisation position, the a-priori troposphere, the product
+clock and the deterministic corrections of the last remark above), $e$ runs
+over the terms of \Cref{tab:obs-terms} in the order listed, $a_e$ is the
+term's own factor (one unless stated), $h_{e,k}$ the partial of the
+$k$-th parameter of the term and $x_{e,k}$ its value at the linearisation
+point.  The innovation of the row is $\innov = z - \hat z$ and the
+Jacobian row holds $a_e h_{e,k}$ in the column the parameter occupies.  A
+term whose parameter does not exist in the parameter set is absent, which
+is the same as adding zero; a phase row whose ambiguity does not exist has
+no equation.
+
+\begin{table}[tbp]
+\centering
+\caption{Terms of the predicted observable, in the order of the sum
+(\texttt{ObsEffect} in \texttt{measurement/ObservationEquation.hpp}).
+$\mu_\sigl$ is \Cref{eq:iono-scaling}.}
+\label{tab:obs-terms}
+\small
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{3.1cm}
+                >{\raggedright\arraybackslash}p{4.6cm}
+                >{\raggedright\arraybackslash}p{3.6cm}
+                >{\raggedright\arraybackslash}p{3.6cm}@{}}
+\toprule
+Term & Parameter & Partial & Present on \\
+\midrule
+range correction & receiver position $\rxpos_\rx$ (three columns) & $-\los^\sat$, applied to $\rxpos_\rx - \rxpos_0$ (\Cref{eq:geom-linear}) & every row \\
+receiver clock & $\sLight\,\mathrm{d}t_\rx$ & $+1$ & every row \\
+phase clock & $\sLight\,\mathrm{d}t^{\phi}_\rx$ & $+1$ & phase rows \\
+troposphere & $\zwd_\rx$ & $m_w(\theta^\sat_\rx)$ & every row \\
+gradients & $(g_N, g_E)$ & $m_g(\theta)\cos\alpha$, $m_g(\theta)\sin\alpha$ (\Cref{eq:tropo-mapping}) & every row \\
+inter-system bias & $\sLight\,\delta t^{(g)}_\rx$, $g$ not the time reference & $+1$ & every row \\
+slant ionosphere & $I^\sat_{\rx,1}$ & $+\mu_\sigl$ on code, $-\mu_\sigl$ on phase & uncombined rows \\
+receiver code bias & $B_{\rx,\cdot}$ (\Cref{sec:state}) & coefficient of the receiver-bias rule ($1$, or the geometry-free coefficient of \dcref{eq:estinfra-bias-coef}{the code-bias seed of the estimator-infrastructure document}) & code rows, uncombined, with \texttt{estimation.estimate\_ifb} \\
+satellite code bias & $B^\sat_\sigl$ & $+1$ & code rows, with \texttt{estimation.estimate\_sat\_biases} \\
+satellite phase bias & $\bar b^\sat_\sigl$ and, with the receiver phase bias, $\delta_{\rx,\sigl}$ & $+1$ each & uncombined phase rows, with \texttt{estimation.estimate\_sat\_phase\_biases} \\
+satellite clock & $\Delta\delta t^\sat$ & $-1$ & uncombined rows, with \texttt{estimation.estimate\_sat\_clocks} \\
+SSR bias & none (a known value) & the decoded bias times $+1$ & every row; none on the network's own rows \\
+ambiguity & $\lambda N$ in metres; on the NL/WL basis $N_{\mathrm{NL}}$ and $N_{\mathrm{WL}}$ in cycles & $+1$; on the NL/WL basis $\lambda_\sigl$ and $\mp\lambda_\sigl$ & phase rows \\
+phase colour & per-satellite nuisance & $+1$ & phase rows, with \texttt{network.phase\_colour\_state} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Parameter views.}
+The caller owns the parameters.  It passes a lookup that answers, for one
+typed identity (kind, form, satellite, signal), the column and the
+linearisation value, or no column when the parameter does not exist.  The
+single-receiver filter answers from its state vector through
+\texttt{UserParamView} (\texttt{measurement/UserParamView.hpp}), which maps
+an identity to the key formats of \Cref{sec:state-indexing} and to the
+fixed core columns.  The network answers from the station's own parameter
+set through \texttt{NetView} (\Cref{sec:state-network}).  A shared satellite
+parameter (clock, phase bias, code bias) answers with its border column and
+the value zero, because it is absolute in the joint solve and is never
+written back to a station.  A seed asks for fewer terms: it subtracts only
+those known when its state is born, selected by a mask of terms
+(\dcref{sec:estinfra-init}{the first-epoch seeding section}).  A network station always carries one ambiguity
+per band, whatever \texttt{estimation.state\_ambiguity\_basis} says.
+
+\paragraph{Signs shared by the network and the user.}
+The network estimates the satellite biases and clocks as parameters; a user
+of the network's corrections takes the same quantities as known terms.  The
+two agree only if the partial of the estimated parameter and the
+multiplier of the known term are the same number, so one constant each
+serves both sides: $+1$ for a satellite bias, code or phase
+(\texttt{kSatBiasSign}), and $-1$ for the satellite clock correction
+(\texttt{kSatClockPartial}).  The clock enters with $-1$ because the
+observable carries $-\sLight\,\mathrm{d}t^\sat$ and the a-priori product
+clock is already inside the modelled value.  The imported bias sign is
+treated with the SSR mapping (\dcref{sec:ssr}{the SSR-corrections document}).
+Doppler rows are not part of this equation: velocity, clock rate and the
+inertial states are columns only a single-receiver configuration has.
 
 \subsection{Stochastic model}
 
@@ -187,3 +282,12 @@ the elevation factor
 (\texttt{StochasticModelWeight::computeSnr}).  Cross-correlations between
 observations are zero in the undifferenced parameterisation; differencing
 introduces the structured correlations treated in \Cref{sec:diff}.
+
+The variance of a row is \Cref{eq:noise-model} on the network estimator's
+own rows (\texttt{rowVariance} in
+\texttt{measurement/MeasurementModelVariance.cpp}).  A user of the network's
+corrections adds the uncertainty of the corrections it applies to the same
+variance: the satellite accuracy index with its clock-staleness growth, the
+phase-bias sigma on phase rows, the combined-correction sigma where it
+replaces those two, and a down-weighting factor on code rows without a
+bias-product entry (\dcref{sec:ssr}{the SSR-corrections document}).

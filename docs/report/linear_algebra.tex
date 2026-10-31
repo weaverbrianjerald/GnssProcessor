@@ -484,9 +484,10 @@ with $\bm{L}$ lower triangular.  The factor is used for
 \item solving the normal equations, at half the cost of an LU factorisation
       and without pivoting;
 \item whitening correlated observations: $\bm{L}^{-1}\bm{y}$ has identity
-      covariance (the network producer whitens its correlated
-      pseudo-observation blocks this way, \dcref{sec:atmos-shvtec}{the
-      spherical-harmonic VTEC section of the Atmosphere document});
+      covariance (the network estimator whitens its correlated
+      ionosphere-constraint and extra-wide-lane row blocks this way, in
+      \texttt{networkWriteWhitenedRows},
+      \texttt{src/core/network/assembly/StationBuild.cpp});
 \item simulating correlated noise: $\bm{\varepsilon} = \bm{L}\bm{z}$ with
       $\bm{z}\sim N(\bm{0},\bm{I})$;
 \item in the form $\ambcov = \Lmat^\Tr\Dmat\Lmat$, the LAMBDA decorrelation
@@ -596,7 +597,7 @@ combinations the data cannot see.  In a network that estimates every
 receiver and satellite clock, adding one constant to all of them leaves
 every observation unchanged, so a zero singular value is structural there
 (Example~13; \dcref{sec:net-example}{the two-receiver worked example of the
-Network-mode document}).  The network producer counts such directions from
+Network-mode document}).  The network estimator counts such directions from
 the eigenvalues of its reduced normals before every solve
 (\dcref{sec:net-sbasis}{the S-basis section of the Network-mode document}).
 
@@ -956,9 +957,12 @@ The same operations appear in the engine as follows.
 Operation & Symbol (file) \\
 \midrule
 Cholesky whitening of correlated row blocks into unit-information rows
-  & \texttt{Application::networkAppendShIonoRows\_} and its siblings for the GIM
-    and single-difference extra-wide-lane rows
-    (\texttt{src/core/app/ApplicationNetworkAssembly.cpp}) \\
+  & \texttt{networkWriteWhitenedRows}
+    (\texttt{src/core/network/assembly/StationBuild.cpp}), called by the
+    ionosphere-constraint rows
+    (\texttt{src/core/network/assembly/IonoConstraintRows.cpp}); the
+    single-difference extra-wide-lane rows whiten their own groups
+    (\texttt{src/core/network/ar/SdEwlRows.cpp}) \\
 Condition number of the WLS normal matrix (logged through an SVD) and the
   determinant guard & \texttt{WlsEstimator::estimate}
     (\texttt{src/core/math/WlsEstimator.cpp}) \\
@@ -970,7 +974,7 @@ SVD re-orthonormalisation during strapdown integration
 SP3 orbit fit by truncated-SVD least squares
   & \texttt{Interpolate::trigSvdInterp} (\texttt{src/core/math/Interpolate.cpp}) \\
 Null-space (datum) count from eigenvalues
-  & \texttt{NetworkSbasis::assertNullSpaceRank} (\texttt{src/core/filter/NetworkSbasis.cpp}) \\
+  & \texttt{NetworkSbasis::assertNullSpaceRank} (\texttt{src/core/network/solve/Sbasis.cpp}) \\
 $\mathrm{LDL}^\Tr$ decorrelation and integer search (MLAMBDA)
   & \texttt{src/core/filter/IlsCore.cpp},
     \texttt{AmbiguityResolver} (\texttt{src/core/filter/AmbiguityResolver.cpp}) \\

@@ -8,6 +8,11 @@
 %  clocks first, then carrier phase to show why the satellite
 %  phase bias is estimable only across stations.
 %
+%  Mirrors tests/network/test_network_estimator.cpp in structure: the
+%  same code and phase rows, the same clock pin and the same pivot
+%  ambiguity pins.  Every number of the example was recomputed
+%  against a dense solve of the same system.
+%
 %  Standalone-compilable subfile (shares gnssreport.sty via the
 %  subfiles package, as network.tex does).  Wired into the
 %  combined volume after \subfile{network} in main.tex.
@@ -118,9 +123,9 @@ Under $a_A \equiv 0$, every satellite-clock estimate comes out as
 $\hat g^\sat = g^\sat - a_A^{\text{true}}$: the reference receiver's
 clock is absorbed into all of them. The estimated ``satellite clock'' is
 the physical clock shifted by the chosen datum. This offset is the
-\emph{lumping}, and the user must account for it. For this reason a
-producer declares its datum
-(\dcref{sec:net-closedloop}{the closed-loop section of the Network-mode document}).
+\emph{lumping}, and the user must account for it. For this reason the
+network declares its datum in the emitted product
+(\dcref{sec:net-closedloop}{the emitted-product section of the Network-mode document}).
 
 \paragraph{What is invariant.}
 The estimable quantities (combinations annihilated by the null vector
@@ -141,7 +146,7 @@ The absolute values are a convention; the differences are physical.
 This is the S-system of \cite{teunissen1985generalised} in six
 parameters.
 
-\begin{remark}[Why the producer cannot difference]
+\begin{remark}[Why the network cannot difference]
 The double difference of this code-only model is
 $\dd{\code^{\sat,1}_{AB}} = (\code^1_A - \code^\sat_A) - (\code^1_B -
 \code^\sat_B)$. The between-satellite step gives $g^\sat - g^1$ for both
@@ -149,8 +154,8 @@ receivers, so the between-receiver step yields exactly $\bm{0}$. Double
 differencing eliminates the entire model: DD removes clocks, and here the
 model contains nothing else
 (\dcref{sec:diff}{the differencing section}). A DD user estimates
-nothing. The network producer instead keeps the clocks and pins one
-datum. This degeneracy is, in miniature, the reason a network producer
+nothing. The network estimator instead keeps the clocks and pins one
+datum. This degeneracy is, in miniature, the reason a network estimator
 exists.
 \end{remark}
 
@@ -162,11 +167,16 @@ The single-frequency carrier phase, with the same clock lumps, is
 \phaseo^\sat_\rx \;=\; a_\rx - g^\sat \;+\; b^\sat \;+\; N^\sat_\rx,
 \label{eq:ex-phase-model}
 \end{equation}
-where $b^\sat$ is the satellite phase bias, the producer's target,
-and $N^\sat_\rx$ is the float ambiguity (in metres). The receiver phase
-bias and the receiver code-minus-phase offset are constant per receiver
-and are absorbed into $N^\sat_\rx$. The satellite bias $b^\sat$ stays
-explicit because the producer emits it. The truth is extended with
+where $b^\sat$ is the satellite phase bias, the quantity the network
+emits, and $N^\sat_\rx$ is the float ambiguity (in metres). The receiver
+phase bias and the receiver code-minus-phase offset are constant per
+receiver and are absorbed into $N^\sat_\rx$. The satellite bias $b^\sat$
+stays explicit because the network emits it. It enters with the partial
+$+1$, as the network's rows carry a satellite bias
+(\dcref{sec:obs-shared}{the one-equation section}), so it has the sign of
+the term as it appears in the observation, that is $-b^\sat_\sigl$ of
+\dcref{eq:obs-phase}{the carrier-phase equation}. The truth is extended
+with
 \begin{align*}
 b^1 &= 0.10, & b^2 &= -0.20, & b^3 &= 0.05, & b^4 &= 0.15, \\
 N^\sat_A &: 10,\ -5,\ 20,\ 8, & & & N^\sat_B &: 12,\ -3,\ 18,\ 9, & &
@@ -242,9 +252,9 @@ The solution shows two properties.
       receiver~$A$'s ambiguity ($10$~m) for that satellite. This is
       Odijk's $\bar b^\sat = b^\sat + (\text{pivot-receiver
       ambiguity})$ (\dcref{sec:net-phasebias}{the satellite phase-bias section of the Network-mode document},
-      Eq.~4/9) in numbers. A consumer recovers integers only by removing
-      the same lumped quantity, so the producer datum and the consumer
-      integer recovery must belong to one S-system.
+      Eq.~4/9) in numbers. A user recovers integers only by removing
+      the same lumped quantity, so the datum of the network and the
+      integer recovery of the user must belong to one S-system.
 \item \emph{The network makes the integer estimable.} The estimable
       $\hat N^\sat_B = N^\sat_B - N^\sat_A = \brd{N^\sat_{AB}}$ is the
       between-receiver single-difference ambiguity, the quantity an RTK
@@ -258,15 +268,23 @@ Up to the geometry and the second frequency it omits, this
 four-satellite, two-receiver instance has the structure of the synthetic
 network on which the estimator core is tested. The
 \texttt{RecoversSyntheticTruthUpToSTransform} test
-(\texttt{tests/test\_network\_estimator.cpp}) builds rows of this shape
-(four receivers and five satellites, from a seeded random truth), pins
-the reference-satellite clock datum $g^1 \equiv 0$
-(S-transform-equivalent to the $a_A \equiv 0$ used above) through
-\texttt{NetworkEstimator::solve}, and pins the pivot receiver's
-ambiguities with tight-prior rows in that station's block. It asserts
-recovery of the satellite-side parameters up to the declared
-S-transform: the lumped $\bar b^\sat$ and the single-difference
-ambiguities above, not the unobservable physical $b^\sat$.
+(\texttt{tests/network/test\_network\_estimator.cpp}) builds rows of this
+shape (four receivers and five satellites, from a seeded random truth),
+with the code row $a_\rx - g^\sat$ and the phase row
+$a_\rx - g^\sat + b^\sat + N^\sat_\rx$ of this section. It pins the
+reference-satellite clock datum $g^1 \equiv 0$ (S-transform-equivalent to
+the $a_A \equiv 0$ used above) through \texttt{NetworkEstimator::solve},
+and pins the pivot receiver's ambiguities with tight-prior rows of
+information $10^{10}$ in that station's block. It asserts recovery of the
+satellite clocks $g^\sat - g^1$, the lumped phase bias
+$b^\sat + N^\sat_A$, the receiver clocks $a_\rx - g^1$ and the
+ambiguities $N^\sat_\rx - N^\sat_A$ to $10^{-6}$~m: the lumped $\bar b^\sat$
+and the single-difference ambiguities above, not the unobservable
+physical $b^\sat$. Two further tests of the file vary the datum on the
+same network: a second, independent gauge pinned beside the clock pin,
+and the anchor-free sum-to-zero phase gauge, whose result is a pure
+S-transform of the pin datum (the between-receiver differences equal the
+truth).
 
 \ifSubfilesClassLoaded{\printbibliography}{}
 \end{document}

@@ -103,7 +103,8 @@ the remaining satellites.  The second is a disturbed state:
 \texttt{isPivotDisturbed} reports the pivot disturbed when any of its phase
 ambiguity states has left $(0,0)$ (absolute value above \num{1e-6} or variance
 above \num{1e-12}), for example after a cycle-slip reset.  The third is an event: the
-Kalman filter's post-fit residual analyser calls
+Kalman filter's post-fit residual analyser (the pivot-offset detectors of
+\dcref{sec:kf-gating}{the gating section of the filtering document}) calls
 \texttt{PivotManager::requestForcedHandover} when the pivot's observation has
 slipped while its filter state is intact, a case \texttt{isPivotDisturbed} cannot
 detect.  The forced request carries an exclusion set, so the handover cannot land on
@@ -131,8 +132,9 @@ $\covM^{\mathrm{new}} = \bm{S}\,\covM^{\mathrm{old}}\,\bm{S}^{\Tr}$.  The transf
 conserves the filter's information and so preserves the integer information
 accumulated in the ambiguities.  In the uncombined PPP-RTK parameterisation
 \texttt{PivotManager} applies the same $\bm{S}\,\covM\,\bm{S}^{\Tr}$ re-reference to
-three state groups (\texttt{reReferenceAmbiguities}, \texttt{reReferenceIonosphere}
-and \texttt{reReferenceSatBiases}).  This is why \texttt{BssdTransform} zeroes the
+three state groups (\texttt{reReferenceAmbiguities}, \texttt{reReferenceIonosphere},
+which also moves the ionosphere-rate states when they exist, and
+\texttt{reReferenceSatBiases}).  This is why \texttt{BssdTransform} zeroes the
 pivot's ionosphere and sat-bias $\bm{H}$-columns after differencing, and why
 $\bsd{I^{\sat,\piv{g}}_{\rx,1}}$ in \Cref{eq:bssd-code,eq:bssd-phase} is a
 pivot-referenced SD quantity rather than an absolute slant delay.

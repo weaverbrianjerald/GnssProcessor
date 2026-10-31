@@ -1,23 +1,28 @@
 % ============================================================
 %  Network mode
-%  Multi-station PPP-RTK network estimator that GENERATES the
+%  Multi-station PPP-RTK network estimator that generates the
 %  SSR-style corrections the single-receiver modes consume:
-%  joint observation model, S-basis / minimum-constraint datum,
-%  per-station Schur reduction, explicit satellite phase-bias
-%  state.
+%  architecture of the epoch loop, joint observation model and
+%  parameter set, explicit satellite phase-bias state, the
+%  minimum-constraint datum (clock and pivot election, phase,
+%  satellite code bias), per-station Schur reduction with exact
+%  sparse station normals and the datum-frame covariance,
+%  constellation scope, and the emitted product with its test
+%  station.
 %
 %  Sources: network/solve/Estimator (NetworkEstimator, with the
-%  explicit sat-phase-bias block; keys from filter/StateKeySchema) +
-%  network/solve/NormalEquations (NetworkNormalEquations, the arrowhead
-%  Schur kernel), measurement/MeasurementBuilder
-%  (DifferencingMode::None), network/driver/ApplicationNetwork.cpp
-%  (setup and the epoch source) + network/driver/ApplicationNetworkEpoch.cpp
-%  (one epoch: the seam spine) + network/driver/ApplicationNetworkSetup.cpp /
-%  ApplicationNetworkAssembly.cpp + include/network/state/RunContext.hpp
-%  and the seven files that define its functions (network/driver/Knobs,
-%  network/state/SnapshotFingerprint, WarmResume, StateSnapshotWrite,
-%  BorderPrior, BorderStash, network/carry/LocalCarryHarvest) + the
-%  network/<concern>/ epoch seams, and the S-system theory in
+%  explicit satellite-bias blocks) + network/solve/NormalEquations
+%  (NetworkNormalEquations, the arrowhead Schur kernel) +
+%  network/solve/Sbasis, ClockDatum, PivotElection, PhaseDatum,
+%  PhaseAnchorEpoch, CodeBiasDatum, RankGate, SbasisCompletion +
+%  network/assembly/ParamInventory, ParamRegistry, StationRows,
+%  StationSplit, StationBuild + network/state/StationParams +
+%  measurement/ObservationEquation (one equation for every parameter
+%  set) + network/driver/ApplicationNetwork.cpp (setup and the epoch
+%  source), ApplicationNetworkEpoch.cpp (one epoch: the seam spine),
+%  ApplicationNetworkSetup.cpp, ApplicationNetworkAssembly.cpp,
+%  EpochAdmission, EpochObservers + network/state/RunContext and the
+%  files that define its functions, and the S-system theory in
 %  foundations (\Cref{sec:diff}).
 % ============================================================
 \documentclass[main.tex]{subfiles}
@@ -43,96 +48,94 @@ The other modes in this reference either difference away the satellite
 clock and hardware biases (\dcref{sec:diff}{the differencing section}),
 take them as known inputs from precise orbit, clock and bias products,
 or import them as known SSR quantities
-(\dcref{sec:ssr}{the SSR-corrections section}). The network producer
+(\dcref{sec:ssr}{the SSR-corrections section}). The network estimator
 inverts that relationship. It estimates the satellite clock and the
 satellite \emph{phase} bias as explicit states, and the satellite
 \emph{code} bias as well when \texttt{network.estimate\_sat\_code\_bias}
-is set (armed by both goldens; the loader default is off),
-jointly across a network of stations with known coordinates, and emits
-them in IGS-SSR convention for a downstream consumer. The loop is closed
-by design: the single-receiver PPP-RTK engine documented elsewhere is
-the product test, run on a station \emph{held out} of the network solve.
+is set (armed by both reference configurations; the loader default is
+off), jointly across a network of stations with known coordinates, and
+emits them in IGS-SSR convention for a downstream user. The loop is
+closed by design: the single-receiver PPP-RTK engine documented
+elsewhere is the product test, run on a \emph{test station} held out of
+the network solve.
 
 \paragraph{Scope and status.}
 The numerical core consists of the arrowhead normal-equation kernel
 (\texttt{network/solve/NormalEquations}) and the semantic estimator
 that drives it (\texttt{network/solve/Estimator}). It is validated on a
 synthetic noise-free network, where it recovers the truth up to the
-declared S-transform. The surrounding pipeline is complete: the
-\texttt{PPP\_RTK\_Network} enum, its forced undifferenced
-\texttt{DifferencingMode::None}
-(\texttt{measurement/MeasurementBuilder}) with the forced uncombined
-configuration of the PPP-RTK family, the explicit satellite
-phase-bias state, owned by the network estimator
-(\texttt{network/solve/Estimator}; the key schema is
-\texttt{filter/StateKeySchema}), and the mode dispatch
-in \texttt{Application::run}. \texttt{Application::runNetwork} holds the
-setup calls and the epoch source; one epoch is
+declared S-transform (\texttt{tests/network/test\_network\_estimator.cpp}),
+and on real and simulated networks through the two reference
+configurations (\texttt{config/golden/golden\_field\_refound.json}: 58
+stations of real data, day 129 of 2024;
+\texttt{config/golden/golden\_sim\_refound.json}: 60 stations of a
+simulated data set). Both are GPS L1/L2 and Galileo E1/E5a, dual
+frequency, with a free per-line-of-sight slant ionosphere (no global
+ionosphere map, no spherical-harmonic constraint), the satellite
+geometry-free code bias pinned at the broadcast group delay, the
+prioritized phase datum with a held basis, the float ambiguity vehicle,
+and the armed quality control: post-fit network RAIM with its
+attribution pass and within-epoch tier
+(\dcref{sec:stoch-net-raim}{the network-RAIM section}), the gross
+line-of-sight screen, the measurement admission screen and the clock
+runaway check. The network owns its stations' parameter sets
+(\Cref{sec:net-model}) and builds every row through the one observation
+equation that also serves the single-receiver filter and the first-epoch
+seeds (\dcref{sec:obs-shared}{the one-equation section}). The pipeline
+around the core is complete: the \texttt{PPP\_RTK\_Network} enum with
+the forced uncombined configuration of the PPP-RTK family, the explicit
+satellite phase-bias state (\Cref{sec:net-phasebias}), the mode
+dispatch in \texttt{Application::run}, the setup calls and epoch source
+of \texttt{Application::runNetwork}, and one epoch as
 \texttt{Application::networkProcessEpoch\_}, which calls a fixed,
 ordered sequence of single-concern seams (\Cref{sec:net-arch}). Every
-step derived in this chapter runs inside one of those seams: per-station
-design-row assembly from each station's parameter set
-(\texttt{networkStationRows}) through the shared observation equation
-(\texttt{networkPassB\_}, after the PASS~A layout pass
-\texttt{networkPassAHead\_}), the S-basis
-datum with its null-space rank gate (\Cref{sec:net-sbasis}, sequenced by
-\texttt{networkSolveGlue}), the between-epoch time update, and the
-product emitter (\texttt{NetworkProductEmitter}, driven from
-\texttt{networkEmitStore}). The mathematics below describes that
-estimator core.
+step derived in this chapter runs inside one of those seams.
 
-This chapter treats the single-epoch solve. The between-epoch carry is
-layered. The base layer is the \emph{diagonal} D2 shared carry: each
-shared parameter's posterior value and variance are re-injected as a
-diagonal prior on the next epoch's shared border, inflated by $q\,\dt$
-(a satellite clock takes the increment of the temporal clock anchor
-instead when \texttt{network.clock\_temporal\_anchor} is on, as in both
-goldens, and a phase or code bias variance is floored)
-and dropped on a datum change (\texttt{networkInjectD2CarryPrior},
-\texttt{network/state/BorderPrior}). The drop covers every key, or with
-\texttt{network.scoped\_handover\_response} (default off, armed by the
-goldens) only the keys of the constellation whose datum changed. The
-exception is the clock-pivot handover S-transform
-(\texttt{network.handover\_stransform}, default off, armed by the
-goldens), which re-expresses the clock levels of the changed
-constellation in the incoming datum; its code-bias and phase-bias
-carries are released to fold unchanged. The D2 shared carry has no
-enable flag, so the shared border is always carried as a filtered
-solve. The station-local ambiguity states are carried only with
-\texttt{network.phase\_leveling}; without it they are re-solved each
-epoch, a per-epoch snapshot solve for those states. The other carries
-are each a large subsystem, default off in the loader, and are referenced
-here without derivation: the C1 full-covariance shared carry
-(\texttt{network.shared\_carry\_full\_cov}, an alternative to the
-diagonal fold for the keys that have a dense row, folded through
-\texttt{addSharedPriorDense}), the Card-4 invariant DD carry
-(\texttt{network.carry\_invariant}, \texttt{setDdPriors}), and the
-station-local phase-leveling, ZWD and receiver-code-bias carries, which
-are folded through \texttt{addStationPrior} on the legacy diagonal route
-(\texttt{network.carry\_conditional\_coupling} off, the loader default).
-The MW-WL, EWL and lane-coordinate widelane layers that once belonged to
-this list were deleted by card RKD (2026-10-14); the single-difference
-extra-widelane constraint \texttt{network.sd\_ewl}, a PASS~B row set
-that is not a layer on the D2 carry, is default off. The golden configurations
-(\texttt{config/golden/golden\_field\_refound.json},
-\texttt{config/golden/golden\_sim\_refound.json}) arm the C1 carry,
-conditional coupling and
-phase leveling (\texttt{network.phase\_leveling}) with the float
-ambiguity vehicle (\texttt{network.ambiguity\_vehicle} set to
-\texttt{float\_kf}; the loader default is \texttt{level}). They leave
-the invariant DD carry and \texttt{network.sd\_ewl} off. Under the vehicle
-the carried ambiguities, and with
-\texttt{network.carry\_rx\_code\_bias\_in\_block} the receiver code
-biases, enter as whitened coupling rows of each station's design
-(\texttt{CouplingRowBuilder::buildLocalBlock}), not through
-\texttt{addStationPrior}. The vehicle, its exact coupling time update
-(\texttt{network.carry\_coupling\_exact\_update}) and the temporal clock
-anchor are developed in
-\dcref{sec:net-vehicle}{the float-ambiguity-vehicle section}; the event
-responses and the holds on the emitted product are in
+This chapter treats the single-epoch solve and its datum. The
+between-epoch carry has three layers; each is developed in its own
+document.
+\begin{itemize}[leftmargin=*, itemsep=1pt]
+\item The \emph{shared border} (satellite clocks, phase biases, code
+      biases) is always carried as a filtered solve. In the reference
+      configurations the carried posterior is one dense information block
+      $(\covM_{\text{prev}} + \bm{Q})^{-1}$
+      (\texttt{network.shared\_carry\_full\_cov},
+      \texttt{networkInjectD2CarryPrior} in
+      \texttt{network/state/BorderPrior}). With that setting off, each key
+      is carried as a diagonal prior of variance $\mathrm{var} + q\,\dt$.
+      A satellite clock takes the increment of the temporal clock anchor
+      instead when \texttt{network.clock\_temporal\_anchor} is on (both
+      reference configurations), and a phase or code bias variance is
+      floored when a floor is set. A clock-pivot handover drops the
+      carry of the constellation whose datum changed
+      (\texttt{network.scoped\_handover\_response}), unless
+      \texttt{network.handover\_stransform} re-expresses it in the
+      incoming datum (\Cref{sec:net-pivot}); both settings are on in the
+      reference configurations.
+\item The \emph{station-local columns} are carried as whitened coupling
+      rows of each station's design, not as independent priors
+      (\dcref{sec:net-carry}{the between-epoch carry document}). In the
+      reference configurations the carried families are the float
+      ambiguities (the float ambiguity vehicle,
+      \texttt{network.ambiguity\_vehicle} set to \texttt{float\_kf};
+      the loader default is \texttt{level}) and the receiver code biases
+      (\texttt{network.carry\_rx\_code\_bias\_in\_block}). The vehicle,
+      its exact coupling time update
+      (\texttt{network.carry\_coupling\_exact\_update}) and the temporal
+      clock anchor are developed in
+      \dcref{sec:net-vehicle}{the float-ambiguity-vehicle section}.
+\item The \emph{invariant DD carry} (\texttt{network.carry\_invariant},
+      default off, off in the reference configurations) carries the
+      double-differenced cycle basis instead of the raw ambiguities
+      (\dcref{sec:net-carry-cycles}{the cycle-space section}).
+\end{itemize}
+The event responses and the holds on the emitted product are in
 \dcref{sec:net-wire}{the event-response and emitted-product section}.
+The single-difference extra-widelane constraint
+\texttt{network.sd\_ewl}, a PASS~B row set that is not a layer of the
+carry, is default off.
 
-\subsection{Producer architecture: the decomposed epoch loop}
+\subsection{Architecture: the decomposed epoch loop}
 \label{sec:net-arch}
 
 The rest of this chapter is mathematics. This subsection maps each
@@ -140,30 +143,24 @@ piece of it to the code that executes it, which is spread over several
 translation units.
 
 \paragraph{Decomposition.}
-The producer was a single driver function of roughly $14{,}700$ lines.
-At that size it could not be reasoned about as a whole, exercised below
-the granularity of a full run, or reviewed: a search for the datum
-build could not bound where it was \emph{not}. It was decomposed into
-single-concern \emph{seams} under the strongest available safety
-property. Relocation is \emph{verbatim}: bodies move without rewriting,
-and each increment was gated on a matrix of golden runs required to be
-\emph{byte-identical} to the pre-cut binary's output. That gate supports
-the claim that the equations below still describe the code. The driver
-shrank by roughly a factor of eight, to under $1{,}800$ lines of
-epoch-loop orchestration, with no change in the gated numbers. Later cards
-have added seams to the call sequence: the file
-(then \texttt{src/core/app/ApplicationNetwork.cpp}) exceeded $2{,}250$ lines
-by 2026-08-15 and measured 3,139 lines on 2026-10-07. Card NOM3 then cut
-it into the driver (\texttt{network/driver/ApplicationNetwork.cpp}, the
-setup calls and the epoch source, 360 lines on 2026-10-21) and the
-per-epoch spine (\texttt{network/driver/ApplicationNetworkEpoch.cpp},
-633 lines). The placement rules for new network code (the anti-regrowth
-decision tree in \texttt{CLAUDE.md}) exist to bound that growth. The gate's coverage
-is incomplete. \texttt{docs/network\_decomposition\_plan.md} records
-per-increment byte gates through increment~8 (with increment~7b) only.
-Increment~8b has its own specification, and the later cuts (solve glue,
-carry install, DD-prior build, producer AR, MW/WL glue, re-level,
-teardown) have no gate record in that document.
+The network driver began as a single function of more than $14{,}000$
+lines. At that size it could not be reasoned about as a whole,
+exercised below the granularity of a full run, or reviewed: a search
+for the datum build could not bound where it was \emph{not}. It was
+decomposed into single-concern \emph{seams}, first by verbatim
+relocation gated on byte-identical output against the pre-cut binary
+(per-increment records:
+\texttt{docs/network\_decomposition\_plan.md}), then into one source
+folder per concern under \texttt{src/core/network/} and
+\texttt{include/network/}: \texttt{driver}, \texttt{state},
+\texttt{assembly}, \texttt{carry}, \texttt{solve}, \texttt{qc},
+\texttt{slip}, \texttt{ar}, \texttt{emit}, \texttt{diag} and
+\texttt{runend}. The driver
+(\texttt{network/driver/ApplicationNetwork.cpp}) holds the setup calls
+and the epoch source. One epoch is the spine
+(\texttt{network/driver/ApplicationNetworkEpoch.cpp}). The placement rules
+for new network code (the anti-regrowth decision tree in
+\texttt{CLAUDE.md}) exist to keep both short.
 
 \paragraph{Four stages.}
 A network run has four stages: three translation units and the seam
@@ -174,14 +171,16 @@ sequence between them.
       observation \texttt{rinex\_path} before anything is allocated.
       \texttt{networkSetup\_} then builds the station roster and its
       synchroniser, the product sink and its declared S-basis contract,
-      and, when the closed loop is armed, the consumer engine
+      and, when the closed loop is armed, the test-station engine
       (\Cref{sec:net-closedloop}). Its output is one
       \texttt{NetworkSetupResult}, filled in place and neither copyable
       nor movable: three run-long references pin its member addresses,
       so the member declaration order in that header
-      (\texttt{network/driver/SetupResult.hpp}) is normative.
-\item \textbf{Assembly} (\texttt{network/driver/ApplicationNetworkAssembly}), two
-      passes per epoch. PASS~A is \emph{layout}. It runs each present
+      (\texttt{network/driver/SetupResult.hpp}) is normative. Further
+      setup builders, one per concern and called in a fixed order from
+      \texttt{runNetwork}, configure the engines the run owns.
+\item \textbf{Assembly} (\texttt{network/driver/ApplicationNetworkAssembly}),
+      two passes per epoch. PASS~A is \emph{layout}. It runs each present
       station's geometry models and pre-allocates the shared satellite
       states. On the legacy single-pivot datum
       (\texttt{network.phase\_datum\_prioritized} off, the loader default)
@@ -189,20 +188,24 @@ sequence between them.
       phase-bias columns admitted to the shared block are those backed
       by a pivot-receiver ambiguity pin, and the local half of the datum
       (\Cref{sec:net-sbasis}) therefore constrains the column layout as
-      well as the solve. Under the prioritized datum that the goldens arm,
-      the pivot is not taken first and the shared set is the union
-      elected by the phase-anchor epoch
-      (\texttt{network/solve/PhaseAnchorEpoch}). PASS~B is \emph{assembly}. Each station's
-      undifferenced design block is computed with no receiver-side
-      differencing and then \emph{split}: the satellite clock and
-      phase-bias columns scatter into the shared border
-      $\bm{A}_{s,\rx}$, and the remainder, less any held receiver
-      inter-frequency-bias columns and the structurally unobservable
-      columns, becomes the private block
-      $\bm{A}_{r,\rx}$ of \Cref{eq:net-station-rows}. The three
+      well as the solve. Under the prioritized datum that the reference
+      configurations arm, the pivot is not taken first and the shared set
+      is the union elected by the phase-anchor epoch
+      (\Cref{sec:net-phasedatum}). PASS~B is \emph{assembly}. Each
+      station's undifferenced design block is computed in parallel over the
+      stations (\texttt{network.parallel\_stations};
+      \texttt{networkAssemblyProduce}), with no
+      receiver-side differencing, and then \emph{split}
+      (\texttt{networkSplitStation}): the satellite clock and
+      satellite-bias columns scatter into the shared border
+      $\bm{A}_{s,\rx}$, and the remainder, less the columns held at their
+      seed and the structurally unobservable ones, becomes the private
+      block $\bm{A}_{r,\rx}$ of \Cref{eq:net-station-rows}. The three
       receiver-position columns are dropped, because network station
-      coordinates are held fixed. \Cref{eq:net-blocks} is formed from
-      these two pieces.
+      coordinates are held fixed; the split throws if one reaches
+      $\bm{A}_{r,\rx}$. The blocks are then folded into the estimator
+      serially in station order (\texttt{networkAssemblyConsume}).
+      \Cref{eq:net-blocks} is formed from these two pieces.
 \item \textbf{The epoch seams}: the ordered sequence tabulated
       below, which is the body of the loop.
 \item \textbf{Teardown} (\texttt{network/runend/Teardown}). The run-end
@@ -220,139 +223,133 @@ sequence between them.
 A seam is a free function (or one of five \texttt{Application} members)
 over the run, \texttt{NetworkRun\&}, and the epoch,
 \texttt{const NetworkEpoch\&}, with any outputs as further parameters.
-The run holds the context, the configuration, the logger and the trace
-bundle. A seam opens with an alias preamble that
-reconstructs the driver's former local names, so the relocated body
-reads as it did before the cut. The seam contract (card NOM3, step EP1)
-is that a seam \emph{owns no state}, although not every seam header
-repeats it: every carried object is a reference into the run, that is,
-into its context for the carry, the knobs and the counters, and into its
-engines, setup, traces and timing for the rest. Pure relocation required two structural adaptations. A
-relocated block that used to \texttt{continue} the epoch loop returns an
-\texttt{EpochAction} of \texttt{Proceed}, \texttt{SkipEpoch} or
-\texttt{StopRun} (\texttt{network/driver/RunTypes}) instead. The
-per-skip bookkeeping stays verbatim inside the seam, and the caller's
-early return of \texttt{LoopSignal::Next} preserves the original bypass of
-the timing bracket.
-A block whose locals are read further down the loop returns a result
-struct (\texttt{NetworkSolveGlueResult} and its siblings,
+The run (\texttt{network/driver/Run.hpp}) holds the references to the
+context, the configuration, the logger, the trace bundle and the setup,
+and owns the estimation engines, the emit engines, the timing record and
+the closed-loop tally. The epoch (\texttt{network/driver/Epoch.hpp})
+holds the values the stages hand each other, grouped by the stage that
+writes them; it is built empty with the epoch and destroyed at its end,
+so nothing in it reaches the next epoch. A seam \emph{owns no state}:
+every carried object is a reference into the run. It opens with one
+binding per name it uses, reads through the epoch, and writes only
+through its output parameters. A block that used to \texttt{continue}
+the epoch loop returns an \texttt{EpochAction} of \texttt{Proceed},
+\texttt{SkipEpoch} or \texttt{StopRun} (\texttt{network/driver/RunTypes})
+instead; the per-skip bookkeeping stays inside the seam. A block whose
+locals are read further down the loop returns a result struct
+(\texttt{NetworkSolveGlueResult},
 \texttt{network/solve/SolveGlue}) that the spine stores in a group of the
-epoch (\texttt{ep.solve}); later seams read the values there.
+epoch (\texttt{ep.solve}); later seams read the values there. The
+placement of a new epoch-level value, event or observer is fixed by the
+same decision tree: a value the next epoch reads is run state, never an
+epoch member.
 
 \paragraph{The run context.}
-Carried state, configuration snapshots and counters live in one object,
+Carried state, configuration snapshots and counters live in
 \texttt{NetworkRunContext} (\texttt{network/state/RunContext}). It holds a
-\texttt{const} \texttt{NetworkKnobs} snapshot of the configuration,
-taken in the original getter read order, the cross-epoch
-\texttt{NetworkCarryState}, and \texttt{NetworkServiceCounters}. A seam
-introduces no function-local carry: a relocated block that leaves a
-local behind \emph{forks} the carry with no diagnostic, and increment~12
-deleted 191 dead aliases that this pattern had left. Persistence follows
-the \emph{three-place rule}: a carry field that is a snapshot member
-appears in the warm-resume fingerprint, in the restore and in the
-snapshot write, in \texttt{network/state/SnapshotFingerprint},
-\texttt{network/state/WarmResume} and \texttt{network/state/StateSnapshotWrite}
-respectively (the context's functions are defined in seven files by
-concern, each declaration in \texttt{network/state/RunContext} naming its
-file). A field present
+\texttt{const} \texttt{NetworkKnobs} snapshot of the configuration, the
+cross-epoch \texttt{NetworkCarryState}, the entity tables
+(\texttt{ctx.entities}, \texttt{network/state/Entities}) and
+\texttt{NetworkServiceCounters}. The entity tables key the cross-epoch
+state by typed identity (station, constellation, line of sight,
+satellite and signal, satellite, arc; \texttt{common/GnssIdentity}), and
+each field has a declared persistence row (\texttt{kStationFields} and
+its siblings). A cross-epoch value outside the entities has a row in
+\texttt{net::kRunFields} (\texttt{network/state/RunFields}); an
+undeclared member is rejected by the verification script
+\texttt{scripts/nom\_n4\_verify.py}. Persistence follows the
+\emph{three-place rule}: a carry field that is a snapshot member appears
+in the warm-resume fingerprint, in the restore and in the snapshot
+write, in \texttt{network/state/SnapshotFingerprint},
+\texttt{network/state/WarmResume} and
+\texttt{network/state/StateSnapshotWrite} respectively. A field present
 in only two of the three yields a warm resume that disagrees with the
 run that wrote it, with no error raised.
 
 \paragraph{The ordered epoch seams.}
 The table below lists the per-epoch call sequence in spine order
-(\texttt{networkProcessEpoch\_}, \texttt{network/driver/ApplicationNetworkEpoch}).
-The spine's section timers bracket groups of the calls. Rows marked \emph{default
-off} are inert unless armed; most of the newer machinery in this
-producer is in that state. Rows that name a frame-diagnostic or census
-instrument are measure-only observers: the spine walks them by slot
-through \texttt{networkObserveEpoch}, and each is a row of
-\texttt{kNetworkEpochObservers} (\texttt{network/driver/EpochObservers}).
-The table omits smaller calls in the same
-loop, among them the signal roster (\texttt{networkBuildSignalRoster}),
-the float-vehicle drop step, which applies the drops and tallies the
-latch causes (\texttt{networkAmbFloatDropEpoch}), and
-the gross line-of-sight screen (\texttt{networkGrossLosScreen}, loader
-default off, armed by the goldens). Further small calls
-are inert on the goldens (loader default off, not armed): ahead of the
-fold decision, card CTU's one-time level raise after a warm resume
-(\texttt{networkClockLevelRestoreRaise}) and the clock-pivot handover
-S-transform before the coupling rows
-(\texttt{networkHandoverStransformBeforeRows}); around the emission, the
-smoothed-hold clock clones of card SMH (\texttt{networkPbHoldCloneUpdate}
-before \texttt{networkEmitStore}, \texttt{networkPbHoldCloneHarvest}
-after \texttt{networkStashStatus}); after \texttt{networkClockQc}, the
-phase-visible consistency instrument of card PVN
-(\texttt{networkPhaseVisibleMonitor}); and after
-\texttt{networkPbHoldCloneHarvest}, card CTU's level monitor and bound
-raise (\texttt{networkClockLevelMonitor}, \texttt{network.clock\_level\_monitor}).
-The gross screen runs its response half after post-fit RAIM; under
-\texttt{network.gross\_los\_emit\_exclude} its decision half runs
-earlier, before \texttt{networkSolPrep}, so that a declaration reaches
-the epoch it declares. The prefit census row runs only when one of its
-instruments is armed: \texttt{network.trace\_prefit\_census} or
-\texttt{network.trace\_topology} (both armed by the goldens), or a
-positive \texttt{network.seed\_birth\_check\_sigma}.
+(\texttt{networkProcessEpoch\_},
+\texttt{network/driver/ApplicationNetworkEpoch}). The spine's section
+timers bracket groups of the calls. Rows marked \emph{default off} are
+inert unless armed. The measure-only instruments (the tallies, the
+frame diagnostics, the first-epoch tables) are not spine calls. Each is a
+row of the table \texttt{kNetworkEpochObservers}
+(\texttt{network/driver/EpochObservers}, 22 rows in six slots), and the
+spine walks a slot with \texttt{networkObserveEpoch}; the row after the
+table summarises them.
 
-\begin{center}
-\footnotesize
-\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.335\linewidth}>{\raggedright\arraybackslash}p{0.595\linewidth}@{}}
+{\footnotesize
+\begin{longtable}{@{}>{\raggedright\arraybackslash}p{0.335\linewidth}>{\raggedright\arraybackslash}p{0.595\linewidth}@{}}
 \toprule
 seam call (spine order) & concern (translation unit) \\
 \midrule
-\texttt{networkPassAHead\_} & PASS~A head: per-station geometry and shared-state pre-allocation; on the legacy single-pivot datum the datum station first (\texttt{network/driver/ApplicationNetworkAssembly}) \\
-\texttt{networkPassASlipScan\_} & PASS~A tail and the slip scans that fill the slip funnel (\texttt{network/driver/ApplicationNetworkAssembly}, \texttt{network/slip/PassASlipScan}, \texttt{network/slip/SlipQc}) \\
+\endhead
+\texttt{networkFastForward}, \texttt{networkInjectEpoch}, \texttt{networkCanonicalPairAdmission}, \texttt{networkSecondBandAdmission} & start-offset skip; simulated-fault injection (default off); record admission upstream of every model and detector: the canonical-pair rule and the second-band rule (both default off; \Cref{sec:net-constellations}) (\texttt{network/driver/EpochAdmission}, \texttt{network/carry/Inject}, \texttt{network/assembly/CanonicalPairAdmission}, \texttt{SecondBandAdmission}) \\
+\texttt{networkBuildSignalRoster}, \texttt{networkAdmitEpoch} & signal roster and arc ledger, advanced on every synced epoch; the epoch's clears and broadcast feeds, the max-duration stop, the decimation skip (\texttt{network/assembly/SignalRoster}, \texttt{network/driver/EpochAdmission}) \\
+\texttt{networkSlipFunnelOpen}, \texttt{networkPassAHead\_}, \texttt{networkPassASlipScan\_}, \texttt{networkSlipFunnelUnionRaw} & PASS~A: the slip funnel opens with the previous epoch's deferred flags; per-station geometry and shared-state pre-allocation, on the legacy datum the datum station first; the slip scans that fill the funnel (\texttt{network/slip/SlipFunnel}, \texttt{network/driver/ApplicationNetworkAssembly}, \texttt{network/slip/PassASlipScan}, \texttt{SlipQc}) \\
 \texttt{networkAssemblyPrefilter\_} & raw slip observables; cross-station observability prune (\texttt{network/driver/ApplicationNetworkAssembly}) \\
-\texttt{networkSignalIntegrity} & per-LOS band-state classifier: degraded/unvetted phase demotion and regain refloat; \emph{default off} (\texttt{network/assembly/SignalIntegrity}) \\
-\texttt{networkMeasurementAdmission} & product-referenced corrupt-channel screen, the one admission test a differential screen cannot see; \emph{default off} (\texttt{network/assembly/MeasurementAdmission}) \\
-\texttt{networkPhaseAnchorEpoch}, which runs \texttt{networkBuildPhaseDatum\-Candidates}, then \texttt{networkAnchorHygiene} and whichever of \texttt{networkElect\-PhaseAnchors} / \texttt{networkElect\-ChainDatum} is armed & election of the \emph{local} half of the datum: the candidate census and coverage gate, the eq34 reattach hygiene that governs anchor-host eligibility and the fresh-pin deweight ramp, then the armed realisation (\texttt{network/solve/PhaseAnchorEpoch}, \texttt{network/solve/PhaseDatum}, \texttt{network/solve/AnchorHygiene}, \texttt{network/solve/ChainDatum}) \\
+\texttt{networkSignalIntegrity}, \texttt{networkMeasurementAdmission} & per-line-of-sight band-state classifier (default off); product-referenced corrupt-channel screen, the one admission test a differential screen cannot see (armed by \texttt{network.adm\_screen}) (\texttt{network/assembly/SignalIntegrity}, \texttt{MeasurementAdmission}) \\
+\texttt{networkPhaseAnchorEpoch}, \texttt{networkReceiver\-Phase\-Bias\-Allocation} & election of the \emph{local} half of the phase datum: the candidate tally and coverage gate, then the armed realisation (\texttt{network/solve/PhaseAnchorEpoch}, \texttt{PhaseDatum}, \texttt{AnchorHygiene}, \texttt{ChainDatum}); the receiver phase-bias allocation is inert unless the chain datum is armed \\
 \texttt{networkAssembly\-RegisterColumns\_} & clear the layout, register this epoch's shared columns, open the arrowhead system (\texttt{network/driver/ApplicationNetworkAssembly}) \\
-\texttt{networkSdEwlAr} & single-difference extra-widelane integer decision; \emph{default off} (\texttt{network/ar/SdEwlAr}) \\
-\texttt{networkCarryDecide}, \texttt{networkCoupling\-ExactPrepare} & the fold decision for every carried border entry, made once per epoch and read by both the coupling rows and the D2 fold (\texttt{network/state/CarryDisposition}); the inputs of the exact coupling time update, \emph{default off}, armed by the goldens (\texttt{network/state/BorderPrior}) \\
-\texttt{networkPassB\_} & PASS~B produce/consume: the split design blocks handed to \texttt{addStation} (\texttt{network/driver/ApplicationNetworkAssembly}, \texttt{network/assembly/StationBuild}, \texttt{network/carry/Coupling}) \\
-\texttt{networkBuildCarryDdPriors} & Card-4 DD carry priors; \emph{default off} (\texttt{network/carry/DdPriorBuild}) \\
-\texttt{networkSolveGlue} & shared datum build, rank gate and drop-and-heal, D2 carry injection, the constrained solve, within-epoch RAIM re-solve, withhold gates, as the fixed list of stages in the banner of \texttt{network/solve/SolveGlue.hpp} (\texttt{network/solve/SolveGlue}, calling \texttt{network/solve/Sbasis}, \texttt{network/solve/ClockDatum}, \texttt{network/solve/RankGate}, \texttt{network/qc/RaimWithinEpoch}) \\
-\texttt{networkInstallCarry} & DD posterior read-back into the invariant carry; \emph{default off} (\texttt{network/carry/InstallCarry}) \\
-\texttt{networkProducerAr} & producer-side AR diagnostic and normal-equation export; read-only and log-only, \emph{default off} (\texttt{network/ar/ProducerAr}) \\
-\texttt{networkSolPrep} & map to the solution epoch; per-satellite discontinuity signalling (\texttt{network/emit/SolPrep}) \\
-\texttt{networkEmitStore} & emit re-base, phase-bias hold, store push, product write, closed-loop consume (\texttt{network/emit/EmitStore}, calling \texttt{network/emit/PbHold}) \\
-\texttt{networkIonoDiag}, \texttt{networkDdFrac}, \texttt{networkShDevVtec}, \texttt{networkShHealth}, \texttt{networkLeveling} & diagnostic sweeps, and the SH-deviation and phase-leveling carry harvests (\texttt{network/diag/IonoDiag}, \texttt{DdFrac}, \texttt{ShDevVtec}, \texttt{ShHealth}, \texttt{Leveling}) \\
-\texttt{networkPostFitRaim} & post-fit network RAIM and its attribution pass (\texttt{network/qc/Raim}) \\
-\texttt{networkClockQc} & two-state clock update and clock fault QC (\texttt{network/qc/ClockQc}) \\
-\texttt{networkPostfitSigma0}, \texttt{networkShSpectrum} & post-fit variance factor and reduced-normal spectrum; observers, \emph{default off} (\texttt{network/diag/FrameDiag}) \\
-\texttt{networkPrefitCensus} & prefit innovation census, structural fuse (not armed on the goldens), seed-birth tripwire and estimation-topology ledger; observer, runs only when one of its instruments is armed (\texttt{network/qc/PrefitCensus}) \\
-\texttt{networkRedundancyCensus} & row redundancy and testability, the statistical parked-garbage monitor; measure-only, \emph{default off} (\texttt{network/qc/RedundancyCensus}) \\
-\texttt{networkBlockBaardaEmit} & (station, satellite) LOS block outlier census; measure-only, \emph{default off} (\texttt{network/qc/BlockBaarda}) \\
-\texttt{networkCongruenceEmit} & station-congruence screen: coordinate-fault detection in position space; measure-only, \emph{default off} (\texttt{network/qc/Congruence}) \\
-\texttt{networkMdbFlush} & Baarda reliability numbers and minimal detectable bias on the network path; measure-only, \emph{default off} (\texttt{network/qc/Mdb}) \\
-\texttt{networkDatumGraphCensus} & structural S-basis dimension predicted from the epoch's support topology and reconciled against the spectral observation; \emph{default off} (\texttt{network/solve/DatumGraph}) \\
-\texttt{networkRhsAttribution}, \texttt{networkRhsAttribTrip} & reduced-RHS class attribution, so a discharge attributes itself without an armed epoch; diagnostics-only, \emph{default off} (\texttt{network/qc/RhsAttrib}) \\
-\texttt{networkStashStatus} & carry re-stash and the epoch-status record (\texttt{network/diag/StashStatus}) \\
+\texttt{networkSdEwlAr}, \texttt{networkOraclePinEpoch}, \texttt{networkAmbFloatDropEpoch} & single-difference extra-widelane decision (default off); simulation-only ambiguity pin; the float vehicle's bounded drop (\texttt{network/ar/SdEwlAr}, \texttt{network/slip/OraclePin}, \texttt{network/ar/AmbFloat}) \\
+\texttt{networkClockLevelRestoreRaise}, \texttt{networkHandover\-StransformBeforeRows}, \texttt{networkCarryDecide}, \texttt{networkCouplingExactPrepare} & the first two default off; the fold decision for every carried border entry, made once per epoch and read by both the coupling rows and the border fold; the inputs of the exact coupling time update (\texttt{network/state/CarryDisposition}, \texttt{network/state/BorderPrior}) \\
+\texttt{networkPassB\_} & PASS~B produce and consume: the split design blocks handed to \texttt{addStation} (\texttt{network/driver/ApplicationNetworkAssembly}, \texttt{network/assembly/StationBuild}, \texttt{network/carry/Coupling}) \\
+\texttt{networkGapResumeCensus}, \texttt{networkCarryDriverBeginEpoch}, \texttt{networkBuildCarryDdPriors} & arc-resumption tally (measure-only); the invariant DD carry's predict and prior blocks (default off) (\texttt{network/slip/GapResumeCensus}, \texttt{network/carry/DdPriorBuild}) \\
+\texttt{networkSolveGlue} & the solve as a fixed list of 14 stages (below) (\texttt{network/solve/SolveGlue}, calling \texttt{Sbasis}, \texttt{CodeBiasDatum}, \texttt{ClockDatum}, \texttt{RankGate}, \texttt{SbasisCompletion}, \texttt{network/qc/RaimWithinEpoch}) \\
+\texttt{networkInstallCarry}, \texttt{networkProducerAr} & DD posterior read-back into the invariant carry (default off); network-side integer decision, read-only and log-only unless its fixed-cycle fold is set to emit (default off) (\texttt{network/carry/InstallCarry}, \texttt{network/ar/ProducerAr}) \\
+\texttt{networkGrossLosScreen} (decision half), \texttt{networkFixedCycles}, \texttt{networkSolPrep} & gross line-of-sight decision, so a declaration reaches the epoch it declares (\texttt{network.gross\_los\_emit\_exclude}); fixed-cycle fold (default off); map to the solution epoch and per-satellite discontinuity signalling (\texttt{network/qc/GrossLos}, \texttt{network/ar/FixedCycles}, \texttt{network/emit/SolPrep}) \\
+\texttt{networkPbHoldCloneUpdate}, \texttt{networkEmitStore} & smoothed-hold clock clones (default off); emit re-base, phase-bias hold, store push, product write, test-station step (\texttt{network/emit/PbHoldClone}, \texttt{EmitStore}, \texttt{PbHold}) \\
+\texttt{networkIonoDiag}, \texttt{networkDdFrac}, \texttt{networkShDevVtec}, \texttt{networkShHealth}, \texttt{networkLeveling} & diagnostic sweeps, and the harvest of the station-local carries after the solve (\texttt{networkHarvestLocalCarries}, \texttt{network/carry/LocalCarryHarvest}) (\texttt{network/diag/IonoDiag}, \texttt{DdFrac}, \texttt{ShDevVtec}, \texttt{ShHealth}, \texttt{Leveling}) \\
+\texttt{networkPostFitRaim}, \texttt{networkGrossLosScreen} (response half) & post-fit network RAIM with its attribution pass; the gross line-of-sight response (\texttt{network/qc/Raim}, \texttt{GrossLos}) \\
+\texttt{networkClockQc} & post-solve satellite-clock quality control and the retro-flag feed (\texttt{network/qc/ClockQc}) \\
+\texttt{networkSignalRosterAudit}, \texttt{networkBlockBaardaPredict}, \texttt{networkCongruencePredict} & roster disagreement pass; the predict halves of the block-Baarda and station-congruence tallies (\texttt{network/assembly/SignalRoster}, \texttt{network/qc/BlockBaarda}, \texttt{Congruence}) \\
+\texttt{networkStashStatus}, \texttt{networkPbHoldCloneHarvest}, \texttt{networkClockLevelMonitor}, \texttt{networkBufferedTraceDrains} & carry re-stash and the epoch-status record; the clones' re-harvest and the level monitor (both default off); the buffered trace rows (\texttt{network/diag/StashStatus}, \texttt{network/emit/PbHoldClone}, \texttt{network/solve/ClockLevel}) \\
 \texttt{networkWriteStateSnapshot} & warm-resume state snapshot (\texttt{network/state/StateSnapshotWrite}) \\
+\midrule
+\texttt{networkObserveEpoch}, six slots & the 22 measure-only instruments, by slot: admitted (satellite-identity tally), before columns (level-authority tally), after clock QC (phase-visible monitor), roster tail (ledger emit, second-phase and all-channel censuses, second-constellation census, the \emph{parameters as armed} and \emph{contributions as armed} tables), frame diagnostics (post-fit variance factor and residual traces, reduced-normal spectrum, station-block audit, prefit census, redundancy census, block-Baarda and congruence drains, minimal-detectable-bias flush, datum-graph census, reduced-RHS attribution and its flight recorder), stash tail (carry-state trace drain, entity reach sampler) (\texttt{network/driver/EpochObservers}) \\
 \bottomrule
-\end{tabular}
-\end{center}
+\end{longtable}}
+
+\paragraph{The solve.}
+\texttt{networkSolveGlue} (\texttt{network/solve/SolveGlue.hpp}) calls 14
+stages in a fixed order; the estimator accumulates its folds in that
+order, so the order is part of the numerical result. In order: (1)
+\texttt{networkCensusSigma0}, the prefit variance tally; (2)
+\texttt{networkCodeBiasDatum}, the satellite code-bias datum rows
+(\Cref{sec:net-cbdatum}); (3) \texttt{networkClockDatum}, the clock
+datum and pivot election (\Cref{sec:net-pivot}); (4)
+\texttt{networkPreGatePriors}; (5) \texttt{networkEstimabilityDump}; (6)
+\texttt{networkKaulaMargin}; (7) \texttt{networkSbasisCompletion}; (8)
+\texttt{networkRankGate} (\Cref{sec:net-rankgate}); (9)
+\texttt{networkClockModelWarm}; (10) \texttt{networkPostGatePriors}
+(the ephemeris re-level, the handover S-transform, the border carry
+prior, the clock-oscillator prior and the cold clock anchor); (11)
+\texttt{networkPrimarySolve}; (12) \texttt{networkClockAnchorGuardEpoch};
+(13) \texttt{networkWithinEpochAdapt}, the within-epoch RAIM tier; (14)
+\texttt{networkSigma0Ceiling}. Four stages can end the epoch, five ways;
+each way is a row of \texttt{kSolveSkips}. Everything the rank gate must
+see is folded before stage~8.
 
 \paragraph{Reading key.}
-The three derivations that follow map to three places in that
-sequence. The rank deficiency and its minimum-constraint datum
-(\Cref{sec:net-sbasis}) are built and gated inside
+The derivations that follow map to places in that sequence. The rank
+deficiency and its minimum-constraint datum (\Cref{sec:net-sbasis} to
+\Cref{sec:net-rankgate}) are built and gated inside
 \texttt{networkSolveGlue}. The arrowhead Schur reduction
-(\Cref{sec:net-schur}) runs in the kernel that the same seam invokes,
-on normals accumulated station by station during PASS~B. The closed
-loop (\Cref{sec:net-closedloop}), meaning emission, product write and,
-when armed, the held-out consumer step, runs in
+(\Cref{sec:net-schur}) runs in the kernel that the same seam invokes, on
+normals accumulated station by station during PASS~B. The emitted
+product and the test station (\Cref{sec:net-closedloop}) are handled in
 \texttt{networkEmitStore}. The rest of the table is assembly, datum
 election, ambiguity resolution and solution preparation, with quality
-control, diagnostics and carry bookkeeping, around those three.
+control, diagnostics and carry bookkeeping, around those places.
 
 \subsection{Joint multi-station observation model}\label{sec:net-model}
 
-The producer uses the same \emph{undifferenced, uncombined}
+The network estimator uses the same \emph{undifferenced, uncombined}
 observations as single-receiver PPP
-(\dcref{sec:obs}{the observation-equations section}),
-but stacks the equations of every station $\rx \in \rxset$ into one
-system. The unknowns partition into a block \emph{shared} by all
-stations and a block \emph{private} to each:
+(\dcref{sec:obs}{the observation-equations section}), but stacks the
+equations of every station $\rx \in \rxset$ into one system. The unknowns
+partition into a block \emph{shared} by all stations and a block
+\emph{private} to each:
 \begin{itemize}[leftmargin=*, itemsep=1pt]
 \item \textbf{Shared (satellite-side).} The estimable satellite clock
       $\sLight\,\mathrm{d}t^\sat$, the per-signal satellite code bias
@@ -360,45 +357,85 @@ stations and a block \emph{private} to each:
       bias $\satbiasPB^\sat_\sigl$. These columns are identical for
       every station, since a satellite's clock and hardware delays do
       not depend on the observer. Orbits are held fixed to a precise
-      product; orbit determination is outside the producer's scope.
-      When \texttt{network.estimate\_iono\_sh} is set, the shared block
-      carries a fourth family, network-wide rather than per-satellite:
-      the coefficients $a_{nm},b_{nm}$ of a global single-layer
-      spherical-harmonic VTEC expansion (\texttt{SharedParamKind::VtecSh},
-      registered through \texttt{NetworkEstimator::registerVtecCoeff}).
-      An optional second, plasmasphere-side shell is set by
-      \texttt{estimation.global\_vtec\_sh.layer2\_max\_degree} (default
-      $0$, i.e.\ single-layer); the coefficients of both shells coexist
-      on the shared border, and the pin row sums them. This
-      co-estimated ionosphere model replaces the external GIM. It also
-      forces satellite code-bias estimation on, since the two are
-      jointly required for the per-satellite slant-iono columns below,
-      unless \texttt{network.external\_sat\_code\_bias} takes the
-      satellite code biases from the external \texttt{.BIA}. Its
-      columns Schur-reduce onto the shared border in the same way as
-      the satellite-indexed families. The goldens leave
-      \texttt{network.estimate\_iono\_sh} off and estimate a free
-      per-station, per-satellite slant ionosphere instead.
-\item \textbf{Private (station-side).} For each station $\rx$: its
-      receiver clock $\sLight\,\mathrm{d}t_\rx$, the inter-system time
-      offsets $\sLight\,\delta t^{(g)}_\rx$, the zenith wet troposphere
-      $\zwd_\rx$ (and gradients), the per-satellite slant ionosphere
-      $I^\sat_{\rx,1}$, the receiver biases, and one float ambiguity
-      $N^\sat_{\rx,\sigl}$ per tracked carrier. Under the chain datum
-      only (\texttt{network.phase\_datum\_eq34}, default off), the block
-      also holds a per-$(\text{receiver},\text{system},\text{signal})$
-      receiver \emph{phase}-bias split $\delta_{\rx,\sigl}$, re-derived
-      each epoch (\texttt{StateKeys::makeReceiverPhaseBiasKey}). Under
-      that realisation it keeps the receiver's fractional phase bias
-      out of the \emph{emitted} satellite phase bias. Station
-      coordinates are known and held fixed, so position is not a free
-      parameter.
+      product; orbit determination is outside the scope of the network
+      estimator. A fourth family, the coefficients of a global
+      spherical-harmonic VTEC expansion
+      (\texttt{network.estimate\_iono\_sh}), is kept in the code and is
+      off in both reference configurations: the ionosphere is the free
+      per-line-of-sight slant delay below
+      (\texttt{docs/refound/AB1\_sh\_consumer\_product\_2026-09-20.md}).
+\item \textbf{Private (station-side).} For each station $\rx$ the
+      parameter set of \Cref{tab:net-params}. Station coordinates are
+      known and held fixed, so position is not a free parameter.
 \end{itemize}
+
+\paragraph{The parameter set.}
+A station's model is a list of columns, held in one \texttt{StationParams}
+(\texttt{network/state/StationParams}). Each column has a typed identity
+(\texttt{ParamRef}, \texttt{common/ParamRef}), a linearization point and
+the disposition the split gave it
+(\dcref{sec:state-network}{the network-station-parameters section of the
+state-vector document} describes the layout from the state-vector side). The set also names the shared border
+parameters the station's rows reference and the shared parameters a gate
+withheld from it. \Cref{tab:net-params} lists the families.
+
+\begin{table}[tbp]
+\centering
+\caption{Parameter families of a network station. The kind names are
+those of \texttt{NetworkParamKind} (\texttt{common/ParamRef}).}
+\label{tab:net-params}
+\footnotesize
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.19\linewidth}>{\raggedright\arraybackslash}p{0.17\linewidth}>{\raggedright\arraybackslash}p{0.54\linewidth}@{}}
+\toprule
+family & kind & content \\
+\midrule
+receiver clock and inter-system biases & \texttt{rx\_clock} & $\sLight\,\mathrm{d}t_\rx$ and one $\sLight\,\delta t^{(g)}_\rx$ per active constellation $g$ other than the time reference (GPS) \\
+wet troposphere & \texttt{zwd} & $\zwd_\rx$ (no gradient columns) \\
+slant ionosphere & \texttt{slant\_iono} & one $I^\sat_{\rx,1}$ per tracked satellite, scaled to signal $\sigl$ by $\mu_\sigl$ (+ on code, $-$ on phase) \\
+ambiguities & \texttt{ambiguity} & one float ambiguity per satellite and phase signal, $\lambda_\sigl N^\sat_{\rx,\sigl}$ in metres \\
+receiver code biases & \texttt{rx\_code\_bias} & differential bias of the constellation's clock-reference pair, inter-frequency bias of each further band, inter-signal correction of a second code \\
+receiver phase biases & \texttt{rx\_phase\_bias} & $\delta_{\rx,\sigl}$ per (system, signal); only under the chain datum (\texttt{network.phase\_datum\_eq34}, default off) \\
+phase colour & \texttt{phase\_colour} & per-satellite phase nuisance, Gauss--Markov (\texttt{network.phase\_colour\_state}, default off) \\
+position & \texttt{rx\_position} & three columns, held at the roster coordinate \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Dispositions and the \emph{parameters as armed} table.}
+Every column of every station, and every shared satellite parameter a
+gate withheld from a station, is an instance with a declared
+\emph{disposition} on each epoch
+(\texttt{ParamDisposition}, \texttt{network/assembly/ParamInventory}):
+\emph{estimated in the shared border}, \emph{estimated in the local
+block}, \emph{held at its seed} (in the station's model at a fixed value,
+outside the solve), \emph{absorbed} (a shared satellite phase or code
+bias a gate withheld from the station, which another column of the
+station takes up), \emph{pinned} (the station coordinates), \emph{dropped
+with a stated reason} and \emph{unobserved} (in the layout, but its
+design column is zero this epoch). The run prints the counts per
+parameter class and disposition as the \emph{parameters as armed} table
+once after the first emitted epoch and again at the run end, with a
+warning for a class governed by a rule whose premise does not hold, and
+the run manifest carries the same record. A gate that withholds a shared
+parameter has a row in a reason table (\texttt{AbsorbedReason}): the
+GLONASS code-only scope, the coverage allowlist of the phase-bias
+columns, the legacy pivot allowlist, the code-bias admission tally, the
+anchored-union coverage gate and the anchor-hygiene block. On both reference
+configurations the border count plus the absorbed count of a satellite
+phase-bias class equals the ambiguity count of the same signal, because
+the screens that remove an observation remove its ambiguity with it. A second table, \emph{model as
+armed}, is built from the parameter registry
+(\texttt{NetworkParamRegistry}, \texttt{network/assembly/ParamRegistry}),
+which declares once per parameter kind whether it is estimated and
+carried, its process-noise rule and rate, its variance floors, its gap
+horizon, the route it takes into the next epoch's solve (dense border,
+diagonal border, local block, conditional row, diagonal station prior)
+and the responses it has to slips, gaps, handovers, decoupling and
+re-admission.
 
 Write the shared satellite-parameter vector as $\xshared$ and station
 $\rx$'s private nuisance vector as $\xlocal{\rx}$. The undifferenced
-observation rows of station $\rx$ linearise
-(\dcref{sec:obs}{the observation-equations section}) to
+observation rows of station $\rx$ linearise to
 \begin{equation}
 \bm{y}_\rx \;=\; \bm{A}_{s,\rx}\,\xshared \;+\; \bm{A}_{r,\rx}\,\xlocal{\rx}
             \;+\; \bm{\varepsilon}_\rx,
@@ -413,16 +450,37 @@ $\bm{A}_{r,\rx'}$ term for $\rx' \neq \rx$: a station's observations
 touch only the shared block and its own private block. The reduction of
 \Cref{sec:net-schur} rests on that sparsity.
 
+\paragraph{One equation.}
+A row's predicted observable is the term list of
+\texttt{observationEquation} (\texttt{measurement/ObservationEquation.hpp};
+\dcref{sec:obs-shared}{the one-equation section}). The network reads it
+through \texttt{NetView}, which answers for each parameter with the slot
+of the station's set and its linearization point
+(\texttt{networkStationRows}, \texttt{network/assembly/StationRows}). A
+shared satellite parameter answers with its border column and the value
+zero: it is absolute in the network solve and is never written back to a
+station. On the network's rows the satellite clock enters with the partial
+$-1$ (\texttt{kSatClockPartial}) and each satellite bias, code or phase,
+with $+1$ (\texttt{kSatBiasSign}); the same two constants multiply the
+known terms of a user of the corrections. A network station always has
+one ambiguity per band, and the network takes no SSR bias term, because
+it estimates the biases themselves. The estimated bias parameters
+therefore carry the sign of the term as it appears in the observation,
+$-B^\sat_\sigl$ and $-b^\sat_\sigl$ of
+\dcref{eq:obs-code}{the pseudorange equation} and
+\dcref{eq:obs-phase}{the carrier-phase equation}.
+
 \paragraph{No receiver-side differencing.}
-Unlike the PPP-RTK user mode, the producer applies \emph{no}
-between-satellite or between-receiver differencing. The differencing
-strategy is forced to \texttt{DifferencingMode::None}
-(\texttt{MeasurementBuilder.cpp}, \texttt{differencingModeFor}),
+Unlike the PPP-RTK user mode, the network estimator applies \emph{no}
+between-satellite or between-receiver differencing. Its rows are the
+undifferenced equation of \texttt{networkStationRows}, and the
+differencing strategy of the mode is \texttt{DifferencingMode::None}
+(\texttt{differencingModeFor} in \texttt{measurement/MeasurementBuilder.cpp}),
 overriding any \texttt{between\_satellite\_sd} toggle in a network
-config. Differencing would cancel the satellite-side terms the producer
-\emph{estimates}. The network carries them as explicit columns instead
-and resolves the resulting rank deficiency with a minimum-constraint
-datum (\Cref{sec:net-sbasis}).
+configuration. Differencing would cancel the satellite-side terms the
+network \emph{estimates}. The network carries them as explicit columns
+instead and resolves the resulting rank deficiency with a
+minimum-constraint datum (\Cref{sec:net-sbasis}).
 
 \subsection{The explicit satellite phase-bias state}\label{sec:net-phasebias}
 
@@ -435,30 +493,33 @@ explicit unknown: between-satellite single differencing
 \emph{known} SSR product, and what remains is an integer
 single-difference ambiguity. The user handles biases \emph{implicitly}.
 
-The producer \emph{generates} that known product, so it carries the
-satellite phase bias as an estimated state. The state vector gains a
-per-$(\text{satellite},\text{signal})$ phase bias column,
+The network estimator \emph{generates} that known product, so it carries
+the satellite phase bias as an estimated state. The shared border gains a
+per-$(\text{satellite},\text{signal})$ phase-bias column,
 \begin{equation}
 \satbiasPB^\sat_\sigl \in \xshared,
 \qquad
-\text{keyed by } \texttt{makeSatPhaseBiasKey}(\sat,\sigl)
-   = \texttt{"$\sat$|$\sigl$|PB"},
+\text{registered by } \texttt{NetworkEstimator::registerPhaseBias}(\sat,\sigl),
+\quad \text{layout key } \texttt{"$\sat$|PB|$\sigl$"},
 \label{eq:net-pb-key}
 \end{equation}
-held in \texttt{StateManager::sat\_phase\_bias\_indices\_}, a map kept
-disjoint from the satellite \emph{code} bias map
-(\texttt{sat\_bias\_indices\_}); the trailing \texttt{|PB}
-discriminator keeps the two key namespaces apart
-(\texttt{include/filter/StateKeySchema.hpp}). Its process noise is a
+disjoint from the satellite \emph{code}-bias columns (layout key
+\texttt{"$\sat$|CB|$\sigl$"}) and the clock column
+(\texttt{"$\sat$|CLK"}). A station's parameter set names the parameter by
+the typed identity of kind \texttt{sat\_phase\_bias}; the spelling
+\texttt{"$\sat$|$\sigl$|PB"} of \texttt{filter/StateKeySchema} is the
+single-receiver filter's key for the same family
+(\dcref{sec:state}{the state-vector section}). Its process noise is a
 small random walk (\texttt{network.process\_noise.sat\_phase\_bias},
 legacy \texttt{filter.process\_noise.sat\_phase\_bias\_q}; default
 \SI{1e-12}{\metre\squared\per\second}, two orders of magnitude below the
-\texttt{sat\_code\_bias\_q} default of
-\SI{1e-10}{\metre\squared\per\second}).
+\texttt{sat\_code\_bias} default of
+\SI{1e-10}{\metre\squared\per\second}). The rate is the carry rate of
+the border, applied as $\mathrm{var} + q\,\dt$ in the carried prior.
 Satellite phase hardware delays are nearly constant but not strictly
 so: a $q=0$ random walk would over-converge the diagonal of $\covM$ and
-leave the column insensitive to real slow drift
-(\texttt{src/core/filter/StateManager.cpp}).
+leave the column insensitive to real slow drift (the registry kind
+\texttt{sat\_phase\_bias}, \texttt{network/assembly/ParamRegistry}).
 
 \begin{remark}
 The estimated $\satbiasPB^\sat_\sigl$ is not the raw satellite phase
@@ -468,8 +529,8 @@ hardware delay, which is not separately estimable. It is the delay
 that, when removed by a user receiver, restores the integer property of
 that user's single-difference ambiguities. Because of this lumping the
 phase-bias product must be \emph{consistent}
-(\dcref{sec:ssr}{the SSR-corrections section}): the producer's datum
-and the consumer's integer recovery must use the same S-system.
+(\dcref{sec:ssr}{the SSR-corrections section}): the datum of the network
+and the integer recovery of the user must use the same S-system.
 \end{remark}
 
 \subsection{Rank deficiency and the minimum-constraint S-basis}
@@ -479,127 +540,423 @@ The undifferenced network system \Cref{eq:net-station-rows} is rank
 deficient. The linear dependencies that the user side removes by
 differencing appear here as exact \emph{gauge freedoms} of the joint
 normal matrix. No observation distinguishes a common shift of all
-satellite clocks from an opposite shift of all receiver clocks; none
-fixes the split of an absolute phase bias between the satellite column
-and the per-station ambiguity datum; none fixes an inter-system bias
-(ISB) common to a constellation. These are the S-system ambiguities of
-\cite{teunissen1985generalised}: the data fix only \emph{estimable
-combinations}, and a \emph{datum} must be chosen to pin the remaining
-null space.
+satellite clocks of a constellation from the opposite shift of the
+receivers' clocks (the receiver clock for the time-reference
+constellation, the inter-system bias for each other one); none fixes the
+split of an absolute phase bias between the satellite column and the
+per-station ambiguity datum; none fixes the common level of the code
+biases between the satellite and receiver sides, or their split between
+the clock, the ionosphere and the geometry-free combination. These are
+the S-system ambiguities of \cite{teunissen1985generalised}: the data fix
+only \emph{estimable combinations}, and a \emph{datum} must be chosen to
+pin the remaining null space. The gauges are, in the order the datum
+treats them: one clock gauge per constellation; one phase-bias against
+ambiguity gauge per $(\text{satellite},\text{signal})$; and the code-bias
+gauges of \Cref{sec:net-cbdatum}.
 
 \paragraph{Exact gauge, soft elimination.}
 The datum is a \emph{minimum-constraint} datum applied as exact hard
 pins to the reduced shared system, never a structural elimination of
-columns. Each gauge is realised as a single \emph{Dirichlet pin} of one
-shared column $c$ to a datum value (almost always $0$): the column's
-known contribution moves to the right-hand side, its row and column in
-the reduced normal matrix are zeroed, and a diagonal entry is set so
-that $x_c = \text{value}$ holds exactly (\texttt{NetworkEstimator::solve},
-\texttt{src/core/filter/NetworkEstimator.cpp}). The pin is applied to a
+columns. Each shared gauge that is a pin is realised as a single
+\emph{Dirichlet pin} of one shared column $c$ to a datum value (almost
+always $0$): the column's known contribution moves to the right-hand
+side, its row and column in the reduced normal matrix are zeroed, and a
+diagonal entry is set so that $x_c = \text{value}$ holds exactly
+(\texttt{NetworkEstimator::solve}, \texttt{applyDatumPins} in
+\texttt{network/solve/Estimator.cpp}). The pin is applied to a
 \emph{copy} of the reduced normals (the kernel's
 \texttt{solveSharedConstrained} seam). The estimator's own reduced
 system stays unmodified, so per-station back-substitution
 (\Cref{sec:net-schur}) stays valid. The pinned diagonal is set to the
-reduced normals' own scale (the largest diagonal magnitude) rather than
-to unity. An \emph{under}-specified datum then still appears as a
-near-zero \emph{relative} pivot in the positive-definiteness guard,
-independent of the network's overall weighting magnitude.
+reduced normals' own scale (the largest diagonal magnitude, at least
+one) rather than to unity. An \emph{under}-specified datum then still
+appears as a near-zero \emph{relative} pivot in the positive-definiteness
+guard, independent of the network's overall weighting magnitude. The
+gauges that are rows (code-bias gauges, the sum-to-zero and
+broadcast-anchored clock datums, the S-basis completion) are folded as
+tight constraint rows before the rank gate; their weights are listed in
+the \emph{contributions as armed} table
+(\texttt{network/assembly/Contributions}).
 
 In S-transform language, let $\bm{x}$ collect the rank-deficient
 undifferenced parameters and $\bm{S}$ be the S-basis selection. The
 emitted satellite corrections are the estimable combination
-$\bm{S}\,\bm{x}$. Choosing the datum is choosing $\bm{S}$, and the hard
-pins above are the minimal set of rows of $\bm{S}$ that remove the
-deficiency. The two halves of the datum live in two places:
+$\bm{S}\,\bm{x}$. Choosing the datum is choosing $\bm{S}$, and the pins
+and rows above are the minimal set of rows of $\bm{S}$ that remove the
+deficiency. The datum is declared in the product
+(\texttt{SbasisDeclaration}, \Cref{sec:net-closedloop}) and has two
+halves that live in two places:
 
 \begin{itemize}[leftmargin=*, itemsep=1pt]
 \item \textbf{Shared-block gauges} touch the shared satellite columns:
-      the overall clock datum (one per constellation), the
-      per-constellation phase-bias$\leftrightarrow$ambiguity datum, and
-      the ISB datum. They go through the explicit
+      the clock datum, one per constellation, and the code-bias gauges.
+      The clock pins go through the explicit
       \texttt{NetworkEstimator::Datum} (a list of column pins) and are
       applied in \texttt{solve}.
 \item \textbf{Local datum elements} live on one station's private
-      block: a network \emph{pivot receiver}'s own ambiguity/clock pin,
-      which the emitted satellite phase bias absorbs (Odijk Eq.~4/9).
-      The \emph{caller} realises them as tight prior rows folded into
-      that station's $\bm{A}_{r,\rx}$, $\bm{W}$, and $\bm{y}$, not
-      through the shared \texttt{Datum} (\texttt{NetworkEstimator.hpp}).
-      Station priors also make each local block $\Nrr$ full rank for
-      the Schur step (\Cref{sec:net-schur}).
+      block: the phase-bias gauge is realised by tight prior rows on the
+      ambiguities of the elected anchor station, which the emitted
+      satellite phase bias absorbs (Odijk Eq.~4/9). The \emph{caller}
+      folds them into that station's $\bm{A}_{r,\rx}$, $\bm{W}$, and
+      $\bm{y}$ at information $10^{10}$ (row kind \texttt{ambiguity\_pin}),
+      not through the shared \texttt{Datum}. Station priors also make
+      each local block $\Nrr$ full rank for the Schur step
+      (\Cref{sec:net-schur}).
 \end{itemize}
 
 \paragraph{Selectable datum realisations.}
-The pins just described are the loader defaults. Each half of the
-datum admits alternatives, selected by config and recorded in the
-\texttt{SbasisDeclaration}. All produce the same estimable
-$\bm{S}\,\bm{x}$ and differ in how they distribute the gauge. The
-clock/ISB datum has three modes (\texttt{SbasisDeclaration::IsbDatum}):
-the hard \texttt{PerConstellationSatClockPin} above (default); a
-\texttt{SumToZeroPerConstellation} constraint
-(\texttt{network.clock\_datum\_sum\_to\_zero}) that spreads the pin
-across all satellites of a constellation; and a
-\texttt{BroadcastAnchoredPerSatellite} soft anchor
-(\texttt{network.clock\_datum\_broadcast\_anchored}) that ties each
-satellite clock to its a-priori value (the broadcast clock under
-\texttt{network.apriori\_source} \texttt{brdc\_rts}, the precise clock
-under \texttt{sp3}) at a declared $1\sigma$. The
-ambiguity$\leftrightarrow$phase-bias datum also has three modes
-(\texttt{AmbDatum}). The first is the local
-\texttt{PivotReceiverZeroAmbiguity} pin above (default). Its anchor may
-be elected \emph{per} $(\text{satellite},\text{signal})$ at the
-highest-coverage tracking receiver instead of at the single clock pivot
-(\texttt{network.phase\_datum\_prioritized}, default off;
-\texttt{networkElectPhaseAnchors}, \texttt{filter/NetworkPhaseDatum}).
-This is the same one-pin-per-freedom constraint realised at a different
-station, and it keeps a clean gauge for a satellite that is low or
-unseen at the clock pivot. The other two modes are a
-\texttt{SumToZeroPerReceiver} ensemble
-(\texttt{network.phase\_datum\_ensemble}) and a
-\texttt{SingleReceiverChain} realisation
-(\texttt{network.phase\_datum\_eq34}). When satellite code biases are
-estimated (the W6 slice, \texttt{network.estimate\_sat\_code\_bias}),
-their gauge, a per-constellation sum-to-zero
-(\texttt{CodeBiasDatum::SumToZeroPerConstellation}), is folded as
-explicit constraint rows through
-\texttt{NetworkEstimator::addSharedConstraintRows} rather than as
-column pins. With no ionosphere constraint, \texttt{network.sat\_gf\_datum}
-(\texttt{none}, \texttt{zero} or \texttt{broadcast\_tgd}; default
-\texttt{none}) adds per-satellite geometry-free code-bias datum rows.
-Whichever realisations are active, the rank gate below is declared
-against the matching S-basis dimension. The goldens keep the default
-clock pin (at \texttt{network.clock\_datum\_station}), arm the
-prioritized phase datum with \texttt{network.phase\_datum\_held\_basis},
-estimate the satellite code biases, and pin the geometry-free code bias
-at the broadcast T\textsubscript{GD} (\texttt{broadcast\_tgd}). They
-also arm the guarded temporal clock anchor
-(\texttt{network.clock\_temporal\_anchor}, default off). The anchor
-leaves the clock pin and the declared S-basis unchanged. It makes each
-satellite clock's carried prior bind across epochs and is treated with
-the carry
-(\dcref{sec:net-vehicle}{the float-ambiguity-vehicle section}).
+Each gauge admits alternatives, selected by configuration and recorded in
+the \texttt{SbasisDeclaration}. All produce the same estimable
+$\bm{S}\,\bm{x}$ and differ in how they distribute the gauge.
+\Cref{tab:net-datum} lists what the reference configurations arm and what
+the loader offers instead.
 
-\begin{remark}
+\begin{table}[tbp]
+\centering
+\caption{Datum realisations. The reference configurations are
+\texttt{config/golden/golden\_field\_refound.json} and
+\texttt{config/golden/golden\_sim\_refound.json}.}
+\label{tab:net-datum}
+\footnotesize
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.17\linewidth}>{\raggedright\arraybackslash}p{0.38\linewidth}>{\raggedright\arraybackslash}p{0.37\linewidth}@{}}
+\toprule
+gauge & reference configurations & other realisations (default status) \\
+\midrule
+clock, per constellation & hard pin of one satellite clock, the pivot; sticky incumbent (\texttt{network.sticky\_pivot}); \Cref{sec:net-pivot} & sum-to-zero over the constellation (\texttt{network.clock\_datum\_sum\_to\_zero}); per-satellite soft anchor to the a priori clock (\texttt{network.clock\_datum\_broadcast\_anchored}); declared pivot (\texttt{network.clock\_datum\_satellite}); coverage election (\texttt{network.pivot\_election}) \\
+phase bias against ambiguity, per (satellite, signal) & prioritized anchor election, held basis (\texttt{network.phase\_datum\_prioritized}, \texttt{network.phase\_datum\_held\_basis}); \Cref{sec:net-phasedatum} & one pivot receiver (the loader default); single-receiver chain (\texttt{network.phase\_datum\_eq34}, off) \\
+satellite code biases & ionosphere-free pin, geometry-free pin and sum-to-zero rows, time-linked, geometry-free pin at the broadcast group delay (\texttt{network.sat\_gf\_datum}); Galileo family difference; \Cref{sec:net-cbdatum} & geometry-free pin at zero or none; Kaula prior (\texttt{network.cb\_kaula\_prior}, off) \\
+receiver code biases & loose zero-mean prior on each station's differential bias (\texttt{network.rx\_code\_bias\_datum}) & none \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\noindent The removed ensemble realisation of the phase gauge
+(a sum-to-zero over the receivers) remains in the S-basis declaration so
+that a stored product naming it can be read, and its Schur-projected
+fold remains a kernel capability (\dcref{sec:net-carry-doors}{the three-doors section}); no
+configuration the loader accepts arms it.
+
+\subsection{The clock datum and the pivot election}\label{sec:net-pivot}
+
+\paragraph{The pivot pin.}
+Adding a constant to every satellite clock of a constellation and
+absorbing it in the receivers' clock and inter-system bias leaves every
+row unchanged. In the default pin mode
+(\texttt{SbasisDeclaration::IsbDatum::PerConstellationSatClockPin}) the
+gauge is fixed by one hard pin per constellation: the clock correction
+of one satellite, the \emph{pivot}, is held at $0$, that is at the
+a priori product clock, and every other clock of the constellation is
+estimated against it. No system is anchored to a receiver clock; each
+station's clock and inter-system bias stay free local states. After the
+local ambiguity pins are eliminated, the reduced shared normals then have
+exactly one null direction per constellation, which is the declared
+S-basis dimension that the rank gate checks (\Cref{sec:net-rankgate}).
+The two alternatives are constraint-realised and need no pivot: the
+sum-to-zero mode replaces the pin by the tight row $\sum_\sat
+\Delta\delta t^\sat = 0$ over the constellation's registered clocks, and
+the broadcast-anchored mode anchors each clock to its own a priori value
+by a soft pseudo-observation of declared $1\sigma$. In both the declared
+dimension is $0$. The reference configurations keep the pin.
+\texttt{network.clock\_datum\_station} names the reference receiver of
+the declaration; the pin is on a satellite clock, never on that
+receiver's clock.
+
+\paragraph{Choosing the pivot.}
+The pivot is only a gauge, but a satellite that few stations track, that
+the broadcast flags unhealthy, or that enters the Earth's shadow soon,
+holds the whole constellation's clock level on a weak and short-lived
+tie. The choice per constellation, in priority order
+(\texttt{NetworkSbasis::electClockPivot}):
+\begin{enumerate}[leftmargin=*, itemsep=1pt]
+\item the declared pin \texttt{network.clock\_datum\_satellite}, kept
+      even when unhealthy;
+\item the sticky incumbent (\texttt{network.sticky\_pivot}, armed in the
+      reference configurations), while it stays registered and, under
+      \texttt{network.sat\_health}, healthy: a new pivot is chosen only
+      when the incumbent is absent, and the old one returning does not
+      flip the datum back;
+\item the pick of an earlier election that no emitted product has
+      adopted yet;
+\item a new pick: the first registered satellite in lexical order or,
+      with \texttt{network.pivot\_election} set to \texttt{coverage}, the
+      satellite the coverage ranking below names.
+\end{enumerate}
+
+\paragraph{Election by predicted coverage.}
+The election (\texttt{network/solve/PivotElection}) applies at a
+constellation's first epoch and at a forced handover only (the incumbent
+left the registered set, or the broadcast flags it unhealthy). It reads
+no observation: it uses the orbit product, the roster coordinates and the
+Sun. For a candidate satellite $i$ with an orbit and the samples
+$t_k = t_0 + k\,\Delta$, $k = 0,\dots,K$, with
+$K = \lfloor H/\Delta\rfloor$, horizon $H$
+(\texttt{network.pivot\_election\_horizon\_s}, default
+\SI{7200}{\second}) and step $\Delta$
+(\texttt{network.pivot\_election\_step\_s}, default \SI{300}{\second}),
+the score is
+\begin{equation}
+n_i \;=\; \Big|\Big\{(k,\rx) \;:\; \rx\in\rxset,\ 0\le k\le K,\
+          \theta^\sat_\rx(t_k) \ge \theta_{\min}\Big\}\Big|,
+\label{eq:net-pivot-score}
+\end{equation}
+with $\theta_{\min}$ the run's elevation mask
+(\texttt{processing.elevation\_mask\_deg}), and the umbra time of $i$
+is the first sample inside the cylindrical Earth shadow (radius scaled
+by \texttt{GnssConfig::getEclipseShadowScale}). Candidates that stay out
+of the umbra for the whole horizon come first, and the largest $n_i$
+wins. When every candidate enters the umbra, the one that enters it last
+wins, then the larger $n_i$. A tie goes to the lexically first
+satellite, and a candidate without an orbit is never elected. The
+ranking is a pure function of integer counts, so the preview before
+PASS~B and the solve glue, which both elect, always agree. The setting
+is default off, never armed, and inert under the two constraint-realised
+clock datums
+(\texttt{docs/refound/PIV\_pivot\_election\_coverage\_2026-10-17.md}).
+
+\paragraph{Handover.}
+When the pin moves from satellite $p$ to $q$ inside a constellation, the
+estimable clock solution of the whole constellation is re-referenced.
+The pin swap is a rank-one S-transform along the constellation's
+structural clock null direction $v_c$:
+\begin{equation}
+c_0 = \frac{x_q^{\text{pre}}}{v_c[q]},
+\qquad
+x_i \leftarrow x_i - v_c[i]\,c_0,
+\qquad
+\mathrm{var}_i \leftarrow \mathrm{var}_i + v_c[i]^2\,\mathrm{var}_q,
+\label{eq:net-handover-s}
+\end{equation}
+where $x_q^{\text{pre}}$ is the carried level of the incoming pivot in
+the outgoing frame (\texttt{network/solve/HandoverStransform}). Only the
+constellation's clock columns have a nonzero component of $v_c$, and
+every between-satellite difference is unchanged to machine precision.
+With \texttt{network.handover\_stransform} the carried clocks are
+re-expressed this way and folded; without it the carry of the changed
+constellation is skipped for one epoch and re-levels from the data.
+The code-bias and phase-bias carries are released to fold unchanged,
+because their gauges are realised independently of the clock pivot. The
+variance update drops the cross term, which is conservative for the
+positively correlated clock common mode; the full $\bm{S}\bm{P}\bm{S}^\Tr$
+form is a separate default-off setting
+(\texttt{network.handover\_stransform\_dense}). The time-linked clock
+anchor and the clock step test that bind a satellite's carried clock
+across epochs are in \dcref{sec:net-vehicle}{the float-ambiguity-vehicle
+section}.
+
+\subsection{The phase datum}\label{sec:net-phasedatum}
+
+The satellite phase bias $\satbiasPB^\sat_\sigl$ is collinear with the
+column of ambiguities $\{N^\sat_{\rx,\sigl}\}_\rx$ (null vector
+$\delta \satbiasPB^\sat_\sigl = -\delta N^\sat_{\rx,\sigl}$ for any
+per-satellite shift). The datum fixes this gauge once per
+$(\text{satellite},\text{signal})$ key by pinning the ambiguity of one
+station. The emitted phase bias therefore carries that station's
+ambiguity lump (\Cref{sec:net-phasebias}).
+
+\paragraph{Legacy single pivot.}
+By default the datum receiver is one pivot receiver, whose ambiguities
+are all pinned (at information $10^{10}$), and the shared phase-bias set
+is restricted to the keys that pivot tracks. A satellite low or unseen at
+the pivot then has no clean gauge.
+
+\paragraph{Prioritized anchors.}
+With \texttt{network.phase\_datum\_prioritized} (armed in the reference
+configurations) the shared set is the \emph{union} of the keys that at
+least \texttt{network.phase\_datum\_min\_stations} stations track (the
+coverage gate; a key below the bar is pruned at every station and, with
+\texttt{network.phase\_datum\_gate\_drop\_erase}, its carried ambiguities
+are erased at the drop edge). For each key one tracking station is the
+\emph{anchor}: its ambiguity is pinned and the other stations' are free.
+This is the same one-pin-per-gauge constraint realised at a different
+station per key
+(\texttt{networkBuildPhaseDatumCandidates} and
+\texttt{networkElectPhaseAnchors}, \texttt{network/solve/PhaseDatum}).
+The election keeps the sticky incumbent while it is present, still
+tracks the key and is not deposed by a screen flag on its own column
+(\texttt{network.phase\_datum\_sticky}, default on). Otherwise, under the
+held basis, the candidates whose arc is old enough
+(\texttt{network.phase\_anchor\_min\_age\_ep}) and has been free of
+screen flags for \texttt{network.phase\_anchor\_flag\_quiet\_ep} epochs
+are ranked by descending elevation, and the highest one whose carried
+level passes the handover ledger test is elected. When none passes, the
+highest eligible one is elected and pinned at $0$, a cold handover, and
+when none is eligible the coverage-ranked sweeps over the trackers elect
+(coverage is counted above \texttt{network.phase\_datum\_pref\_elev\_deg},
+default \SI{15}{\degree}). A handover pins the incoming anchor at its own
+carried level (\texttt{network.phase\_datum\_handover\_continuous}), so the
+family's frame does not step. The ledger test refuses a successor with no
+ledger entry, a non-finite value, or a carried variance that is not
+finite, not positive or above
+\texttt{network.phase\_datum\_handover\_max\_var\_m2}; a cold
+handover steps the emitted phase bias, and it is declared to the user
+(\texttt{network.phase\_datum\_held\_mark\_cold}). The
+\emph{held basis} (\texttt{network.phase\_datum\_held\_basis}) freezes
+the pin value of a retained incumbent for its whole tenure, so the datum
+is constant between declared handovers
+(\dcref{sec:net-vehicle}{the float-ambiguity-vehicle section}). The
+election runs once per epoch after the admission screens, whose withholds
+prune the states an election could otherwise pin
+(\texttt{network/solve/PhaseAnchorEpoch}).
+
+\paragraph{Chain datum.}
+With \texttt{network.phase\_datum\_eq34} (off) the gauge is fixed by one
+datum-receiver phase-bias pin plus a spanning tree of ambiguity pins over
+the bipartite receiver--satellite graph per (constellation, signal)
+connected component, with per-(receiver, system, signal) phase-bias
+split states $\delta_{\rx,\sigl}$ that carry each receiver's fractional
+bias (\texttt{network/solve/ChainDatum}). It is the substrate of the
+invariant DD carry (\dcref{sec:net-carry-cycles}{the cycle-space
+section}).
+
+\subsection{The satellite code-bias datum}\label{sec:net-cbdatum}
+
+With \texttt{network.estimate\_sat\_code\_bias} the network estimates a
+code bias $\satbiasCB^\sat_\sigl$ per satellite and code signal, and
+the external \texttt{.BIA} product is not used. The code biases are
+collinear with the clock, the slant ionosphere and the receiver code
+biases. The datum rows are built by
+\texttt{NetworkSbasis::buildCodeBiasDatumRows}, folded by
+\texttt{networkCodeBiasDatum} (stage~2 of the solve) as tight rows of
+information $10^{3}$, before the rank gate. With no ionosphere constraint
+(\texttt{network.w6\_iono\_constraint} \texttt{none}, armed in the
+reference configurations) these rows are the whole code-bias datum.
+
+\paragraph{Per-satellite pins.}
+For a satellite with code signals $\sigl_1,\sigl_2$ (the two lowest
+distinct-frequency signals of its registered set, chosen
+deterministically), two rows are built. The ionosphere-free pin ties the
+clock-common gauge,
+\begin{equation}
+a_1\,\satbiasCB^\sat_{\sigl_1} + a_2\,\satbiasCB^\sat_{\sigl_2} = 0,
+\qquad
+a_1 = \frac{f_1^2}{f_1^2 - f_2^2},\quad
+a_2 = -\frac{f_2^2}{f_1^2 - f_2^2},
+\label{eq:net-cb-if}
+\end{equation}
+so the ionosphere-free lump lives in the estimable satellite clock. The
+geometry-free pin fixes the split that the slant ionosphere would
+otherwise absorb,
+\begin{equation}
+\frac{\satbiasCB^\sat_{\sigl_2} - \satbiasCB^\sat_{\sigl_1}}
+     {\mu_{\sigl_2} - \mu_{\sigl_1}}
+\;=\; d^\sat_{\mathrm{GF}},
+\qquad
+\mu_\sigl = \frac{f_1^2}{f_\sigl^2},
+\label{eq:net-cb-gf}
+\end{equation}
+with $d^\sat_{\mathrm{GF}}$ a datum quantity: any value is legal and the
+estimable parameters absorb the difference. \texttt{network.sat\_gf\_datum}
+selects it: \texttt{none}, \texttt{zero}, or \texttt{broadcast\_tgd}
+(pinned in both reference configurations), where
+$d^\sat_{\mathrm{GF}} = \sLight\,T_{\mathrm{GD}}$ for GPS $(L1,L2)$ and
+$\sLight\,\mathrm{BGD}(E1,E5a)$ for Galileo $(E1,E5a)$. The identity is
+exact: in the model's sign convention the broadcast biases are
+$\sLight T_{\mathrm{GD}}\,\mu_\sigl$, whose ionosphere-free combination
+is identically zero and whose geometry-free combination is
+$\sLight T_{\mathrm{GD}}$, so the two pins do not conflict. The target is
+used only when the pinned pair is the pair the group delay describes;
+any other pair falls back to zero and is counted. Extra signals of a
+satellite are pinned through their geometry-free combination against the
+band-1 reference at the same target, and a channel whose every column
+the datum pins has its sum-to-zero row suppressed.
+
+\paragraph{Level of each channel.}
+The common level of a channel $(g,\sigl)$ between the satellite and the
+receiver sides is fixed by a sum-to-zero row over the satellites that
+carry it. On the receiver side the same freedom is fixed by a loose
+zero-mean prior $\delta_{\rx}\sim N(0,\sigma^2)$ on each station's
+differential bias (\texttt{network.rx\_code\_bias\_datum}, armed;
+$\sigma$ = \texttt{network.rx\_code\_bias\_datum\_sigma\_m}, default
+\SI{10}{\metre}). The prior adds $1/\sigma^2$ along the common mode,
+independent of the station count, and leaves the between-station
+differences to the data.
+
+\paragraph{Time linking.}
+With \texttt{network.code\_datum\_time\_linked} (armed) the rows pin the
+\emph{change} of the datum instead of its level. The right-hand side of
+the ionosphere-free row becomes the satellite's previous solved
+combination $a_1\hat\satbiasCB_{\sigl_1,\text{prev}}
++ a_2\hat\satbiasCB_{\sigl_2,\text{prev}}$, but only when the pair is
+unchanged and both signals have previous values; otherwise the row
+re-seeds at $0$ and the satellite is marked. The geometry-free rows
+carry their previous combination
+(\texttt{network.sat\_gf\_datum\_time\_linked}), with the absolute target
+only at a first sighting. The sum-to-zero row spans the channel's
+\emph{veterans} (satellites with a previous solved value) with right-hand
+side $\sum_{\text{vet}}\hat\satbiasCB^\sat_{\sigl,\text{prev}}$, so a
+rise or set does not move the target. A channel with no veteran
+re-seeds at $\sum = 0$, which is the one path on which the emitted level
+re-references; it is counted and declared.
+
+\paragraph{Family difference.}
+Galileo band-1 and band-5 codes come in two families by tracking
+attribute: the combined I+Q correlator output (attribute \texttt{X}, the
+\emph{secondary} family) and the discrete components (the pilot,
+the \emph{primary} family; \texttt{channelFamilyOf}). Their biases are
+distinct hardware paths with their own bias. A time-linked sum-to-zero
+row per family would leave the two families' levels independent, so
+that the combined and pilot clocks differ by a datum accident.
+With \texttt{network.code\_datum\_family\_difference} (armed with
+\texttt{network.code\_datum\_time\_linked}) the sum-to-zero row of a
+secondary channel $X$ is replaced by a row over the satellites
+$\mathcal{C}$ that carry both $X$ and its primary partner $P$ of the same
+band,
+\begin{equation}
+\sum_{\sat\in\mathcal{C}}
+   \left(\satbiasCB^\sat_{X} - \satbiasCB^\sat_{P}\right)
+\;=\; \sum_{\sat\in\mathcal{C}_{\text{vet}}}
+   \left(\hat\satbiasCB^\sat_{X} - \hat\satbiasCB^\sat_{P}\right)_{\text{prev}},
+\label{eq:net-cb-family}
+\end{equation}
+time-linked like the sum-to-zero row. The partner is the same-band
+primary channel with the most satellites in common. The sum-to-zero row
+is kept where no partner or common satellite exists, where every
+spanned secondary column is pinned by another row, and for one epoch
+when the family row has no veteran but the sum-to-zero row has. At the
+first sighting of a secondary or partner column, with
+\texttt{network.code\_family\_birth\_prior\_sigma\_m} (armed at
+\SI{0.10}{\metre}), one soft row
+$\satbiasCB^\sat_X - \satbiasCB^\sat_P = \mu$ is folded, with $\mu$ the
+family's veteran mean difference and $0$ without a veteran. The
+option \texttt{network.code\_datum\_pair\_continuity}, which holds the
+ionosphere-free pin pair through a gap, is off: it preserved the two
+families' birth realisations and worsened pilot-family users
+(\texttt{docs/refound/GFC\_galileo\_family\_clock\_datum\_2026-10-10.md},
+\texttt{docs/refound/GAD\_galileo\_adoption\_2026-10-13.md}).
+
+\subsection{The rank gate and the S-basis completion}\label{sec:net-rankgate}
+
 A null-space rank gate eigen-decomposes the pre-constraint reduced
 normals and asserts that the count of small eigenvalues equals the
 \emph{declared} S-basis dimension. It is implemented as
 \texttt{NetworkSbasis::assertNullSpaceRank} and is invoked on
 \texttt{reducedSharedNormals()} \emph{before} the constrained solve,
-against the \texttt{SbasisDeclaration}'s \texttt{declared\_dimension}.
-The call sits in the solve seam \texttt{networkSolveGlue}
-(\texttt{filter/NetworkSolveGlue}), which also builds the datum through
-\texttt{NetworkSbasis::buildSharedDatum} (\Cref{sec:net-arch}). The gate
-complements the positive-definiteness guard. The guard catches the
-exact-deficiency (under-specified datum) case on the pinned pivot; the
-rank gate checks the reduced deficiency against the declared gauge
-dimension and withholds any epoch whose null-space count disagrees.
-Under the prioritized phase datum the gate first attempts a
+against the declared dimension of the clock datum's plan. An eigenvalue
+is small when it is below $\mathrm{tol}\cdot\max(\lambda_{\max},1)$, with
+$\mathrm{tol}$ = \texttt{network.rank\_gate\_tol} (loader default
+$10^{-9}$, $10^{-11}$ in the reference configurations). The call sits in
+stage~8 of the solve (\texttt{networkRankGate},
+\texttt{network/solve/RankGate}). The gate complements the
+positive-definiteness guard. The guard catches the exact-deficiency
+(under-specified datum) case on the pinned pivot; the rank gate checks
+the reduced deficiency against the declared gauge dimension in both
+directions and records whether a mismatch was an under- or an
+over-specified datum, which need opposite fixes.
+
+Two mechanisms keep a sound epoch from being withheld by a weak column.
+\emph{S-basis completion} (\texttt{network.sbasis\_complete}, armed;
+stage~7, \texttt{networkSbasisCompletion}) constrains each separated
+extra near-null direction of the reduced system along its own
+eigenvector at its carried level, with a tight row of information
+$10^{3}$, instead of withholding. It is capped per epoch
+(\texttt{network.sbasis\_complete\_max}, default $6$), refuses when the
+weight is less than two decades above the cutoff, and skips a direction
+not separated by a decade from the declared-gauge cluster; both edges are
+events. Under the prioritized phase datum the gate then runs a
 \emph{drop-and-heal} pass that soft-anchors the near-null phase-bias
-columns (\texttt{healNearNullPhaseBias},
-\texttt{filter/NetworkPhaseDatum}) and then re-gates once. On the legacy
-pivot datum there is nothing to heal: the heal returns zero and the
-epoch is withheld immediately.
-\end{remark}
+columns toward $0$ at $\sigma = \SI{1}{\metre}$ (\texttt{healNearNullPhaseBias},
+\texttt{network/solve/PhaseDatum}) and re-gates once. On the legacy pivot
+datum there is nothing to heal and the epoch is withheld immediately.
 
 \subsection{Per-station Schur reduction (arrowhead normals)}
 \label{sec:net-schur}
@@ -641,7 +998,12 @@ $\bm{u}_r^{\,\rx} = \bm{A}_{r,\rx}^\Tr \bm{W}_\rx \bm{y}_\rx$. A full
 (non-diagonal) $\bm{W}_\rx$ is supported, so correlated undifferenced
 measurement covariance (e.g.\ shared pre-corrections) propagates
 exactly (\texttt{addStationObservations},
-\texttt{NetworkNormalEquations.hpp}).
+\texttt{network/solve/NormalEquations.hpp}). The station's diagonal prior
+rows can be passed to \texttt{addStation} so that the positive-definiteness
+test judges the block the solve uses
+(\texttt{network.station\_prior\_before\_pd}, armed): a station whose
+observation-only block is rank deficient in the direction its own datum
+row gauges is then kept.
 
 \paragraph{Lossless marginalisation.}
 The arrowhead system is solved by Schur-eliminating each station's
@@ -672,11 +1034,88 @@ reproduces the dense stacked solve to machine precision. Fill-in is
 confined to the satellite border and each station's elimination is
 independent, so the cost is linear in the station count and the
 per-station eliminations run in parallel (\texttt{reconstructStation},
-\texttt{NetworkNormalEquations.cpp}). The shared-block priors
+\texttt{network/solve/NormalEquations.cpp}). The shared-block priors
 $\bm{N}_{ss}^{\text{prior}}$ in \Cref{eq:net-schur-N} (soft physical
-priors and any additive exact-gauge contributions) are added before the
+priors, the datum rows and the carried border prior) are added before the
 reduction through \texttt{addSharedInfo} and pass through the Schur
 complement unchanged.
+
+\paragraph{Exact sparse station normals.}
+A station's design rows touch a handful of the $n_s$ shared columns (its
+satellites' clocks and biases) and of its own locals. The dense products
+of \Cref{eq:net-blocks} spend almost all of their work on zeros. With
+\texttt{network.sparse\_station\_normals} (default on, set in both
+reference configurations; \texttt{false} gives the dense products) the
+blocks are formed from the nonzero entries only
+(\texttt{NetworkNormalEquations::formStationNormalsSparse}). The result
+is not an approximation. Each element is summed in the order Eigen's
+blocked product sums it: the terms in ascending row order from $+0$,
+except that an element of a 4-column block in the 2-row tile of its row
+panel keeps two accumulators (even and odd row index) that are added
+before the remaining rows. A skipped term is an exact zero, so the
+blocks equal the dense products bit for bit. The function reports that
+equality is not guaranteed, and the caller then forms the products
+densely, when the build contracts multiply and add, when Eigen runs
+more than one thread (the driver pins it to one for the epoch loop), when
+a result is a vector or the shapes are so small that Eigen evaluates
+the product coefficient by coefficient, when the row count exceeds the
+panel depth, and when an input, weight or weighted entry is not finite.
+The shared block $\Nss^{\,\rx}$ is accumulated on the square of the
+columns any row touches and added to the border entry by entry, which
+replaces an $n_s\times n_s$ product and symmetry check per station and
+epoch. The equality is gated against Eigen's own product in
+\texttt{tests/network/test\_neq\_sparse\_station\_normals.cpp} and was
+checked on whole runs
+(\texttt{docs/refound/NETCOST\_gps\_galileo\_cost\_attribution\_2026-10-18.md}).
+
+\paragraph{The datum frame, and the covariance of the locals.}
+The covariance of the shared estimate is the inverse of the
+datum-constrained reduced normals,
+$\bm{\Sigma}_{ss} = \redNss^{-1}$ of the constrained system, recovered
+from the same $\mathrm{LDL}^\Tr$ factor as the solve
+(\texttt{solveSharedConstrained}). A datum-pinned column and a folded
+ensemble gauge column carry only an artificial variance, so the
+consumers of the covariance treat them as exact. The \emph{datum frame}
+$\bm{\Sigma}^{\mathrm{df}}_{ss}$ is $\bm{\Sigma}_{ss}$ with the rows and
+columns of those columns zeroed. A station's locals then have the
+covariance
+\begin{equation}
+\mathrm{Cov}(\xlocal{\rx}) \;=\;
+   (\Nrr^{\,\rx})^{-1} \;+\; \bm{M}_\rx\,
+   \bm{\Sigma}^{\mathrm{df}}_{ss}\,\bm{M}_\rx^\Tr,
+\qquad
+\bm{M}_\rx = (\Nrr^{\,\rx})^{-1}\Nsr^{\,\rx\Tr},
+\label{eq:net-local-cov}
+\end{equation}
+which every reader of the datum-frame covariance uses: the conditional variance and
+regression of each carried column (the carry harvest), the row
+redundancy of the RAIM and Baarda tests, the redundancy and block
+tallies, and the covariance of a carried double difference
+(\dcref{sec:net-carry-fold}{the posterior and innovation section}).
+The frame is a function of three inputs only (the last solve's
+$\bm{\Sigma}_{ss}$, the pinned columns of the datum and the folded
+gauges), so the solve builds it once, right after $\bm{\Sigma}_{ss}$, and
+stores it with the list of pinned columns. A reader whose datum pins
+the same columns in the same order reads the stored matrix; any other
+datum builds a local frame by the same function. The stored frame is
+invalidated at the start of the next solve, by a reset and by a change of
+the gauges, and only the non-const solve writes it, so the parallel
+station loops read immutable data. This replaced one copy of the $n_s^2$
+matrix per call, and it changes no output bit.
+
+The \emph{border-known variance} is the case $\bm{\Sigma}^{\mathrm{df}}_{ss}
+= \bm{0}$ of \Cref{eq:net-local-cov}: $\mathrm{diag}\big((\Nrr^{\,\rx})^{-1}\big)$,
+the variance of a local column with the whole shared border treated as
+known. The anchor-handover test uses it, because the uncertainty of the
+shared phase-bias column moves the pin target and the realised frame
+together and so is common mode in a handover step. It is computed by
+\texttt{stationConditionalVarianceDiag}, one local solve $n_c =
+(\Nrr^{\,\rx})^{-1}e_c$ per column, without forming or multiplying the
+all-zero $n_s\times n_s$ matrix. The result is bit-identical to the
+product form: with $m_c = \Nsr n_c$ finite, $m_c^\Tr\bm{0}\,m_c = \pm 0$
+leaves a nonzero variance unchanged, and the two cases where the sum
+could differ (a zero variance, a non-finite $m_c$) take the product
+itself (\texttt{docs/refound/CVF\_conditional\_variance\_frame\_2026-10-29.md}).
 
 \begin{remark}
 This arrowhead topology with exact reduction mirrors the NGS M-PAGES
@@ -690,11 +1129,94 @@ exact and cheaper here.
 
 \subsection{Constellation scope}\label{sec:net-constellations}
 
-The producer supports GPS, Galileo and BeiDou on the same footing,
-selected by \texttt{processing.active\_systems}. The goldens are
-GPS-only (L1/L2). The Galileo extension of the golden posture (card
-GAL, \texttt{docs/refound/GAL\_gps\_galileo\_dual\_2026-09-22.md}) is
-built, default off and not armed. GLONASS phase biases are excluded.
+The network estimator supports GPS, Galileo and BeiDou on the same
+footing, selected by \texttt{processing.active\_systems}. GPS is the time
+reference: it carries no inter-system bias, and every other active
+constellation adds one per station. The reference configurations are
+GPS and Galileo.
+
+\paragraph{Galileo.}
+The reference configurations estimate E1 and E5a for Galileo beside L1
+and L2 for GPS (\texttt{processing.frequency\_mode} \texttt{dual}), with
+both code families of each Galileo band on the signal list
+(\texttt{processing.signal\_priorities.Galileo}:
+\texttt{C1C}, \texttt{C1X}, \texttt{L1C}, \texttt{L1X}, \texttt{C5Q},
+\texttt{C5X}, \texttt{L5Q}, \texttt{L5X}). The package that makes this
+posture work includes the code-bias family difference
+(\Cref{sec:net-cbdatum}), the receiver cross-system antenna fallback
+(\texttt{model\_corrections.enable\_receiver\_cross\_system\_atx\_fallback},
+which substitutes the nearest GPS band when the receiver antenna entry
+lacks a Galileo frequency) and, on the user side,
+\texttt{estimation.clock\_disc\_isb\_reinflate\_std} of
+\SI{10}{\metre}: a network clock-datum re-reference steps one
+constellation's satellite clocks by a common constant, which the receiver
+clock absorbs for the reference constellation but which lands on the
+near-frozen inter-system bias of any other, so the user re-inflates that
+bias on a consumed clock-datum discontinuity
+(\texttt{docs/refound/GAD\_galileo\_adoption\_2026-10-13.md}).
+
+\paragraph{Free slant ionosphere.}
+The ionosphere of the network posture is the free per-line-of-sight
+slant delay $I^\sat_{\rx,1}$ of each station, re-estimated every epoch,
+with no external global map and no spherical-harmonic constraint
+(\texttt{estimation.ionosphere\_weighting.enable} off,
+\texttt{network.w6\_iono\_constraint} \texttt{none}). The datum of the
+code biases is therefore the pins above and nothing else
+(\Cref{sec:net-cbdatum}).
+
+\paragraph{BeiDou and the second-band rule.}
+BeiDou runs under the same rules (code-bias datum, phase datum, clock
+pivot) and is not armed in the reference configurations. On B1I and B3I
+it runs healthy on the 58-station real data set: every epoch is emitted
+and none is withheld. A station that
+tracks a non-reference constellation on one band only leaves three
+directions of its local block collinear: the constellation's
+inter-system bias, the slant ionosphere of its lines of sight and their
+ambiguities. One band gives a code row and a phase row per satellite
+against two free unknowns, so a common shift of the bias is absorbed by
+the unknowns of every satellite. The positive-definiteness guard of
+\texttt{addStation} then rejects the whole station at every epoch, and
+its other constellations leave the solve with it. The second-band rule
+(\texttt{network.second\_band\_admission}, default off) withholds the
+records of a constellation at a station unless the station holds it on
+two modelled bands. A band is modelled for a satellite when the epoch
+carries an admitted code signal and an admitted phase signal on it. Under
+\texttt{network.second\_band\_scope} \texttt{station} (default) the
+constellation is admitted at the station while at least
+\texttt{network.second\_band\_min\_sats} of its satellites are on two
+modelled bands there, and under \texttt{satellite} each satellite is
+tested alone. The unit that fails is withheld whole, upstream of the
+roster, the models and the detectors, so it is absent as if the RINEX
+record were missing and its return is read as a re-entry. Each edge is an
+event (\texttt{network/assembly/SecondBandAdmission}). The time-reference
+constellation is outside the rule. With BeiDou on B1I and B3I the rule
+reproduces the subtraction of the single-band stations; the setting is
+unvalidated and not armed
+(\texttt{docs/refound/BDS\_beidou\_third\_constellation\_2026-10-18.md},
+\texttt{docs/refound/BDS305\_beidou\_305\_stations\_6h\_2026-10-29.md}).
+
+\paragraph{Third band: the receiver band-5 code delay.}
+When the satellite code biases are estimated, the receiver
+inter-frequency bias columns of the bands outside a constellation's
+clock-reference pair would absorb the code information that separates
+that band's satellite clock from its phase bias. The declared rule
+(\texttt{RxIfbRule}, \texttt{network/assembly/ParamInventory}) therefore
+leaves them out of the station's local block, in the station's model at
+the value their first-epoch seed gave them (disposition \emph{held at
+seed}). The rule rests on a premise, that an ionosphere weighting leaves
+each station's ionosphere level free to fold the band's receiver delay;
+without that weighting nothing takes the delay up, and the
+\emph{parameters as armed} table prints a warning. With
+\texttt{network.estimate\_rx\_extra\_band\_code\_delay} (default off,
+unvalidated) the columns are estimated in the local block and carried by
+the receiver code-bias carry. The setting acts only where a
+constellation tracks a band outside a two-band pair under the run's
+frequency mode, so it is inert on the dual-frequency reference
+configurations
+(\texttt{docs/refound/L5B\_band5\_receiver\_delay\_2026-10-10.md}).
+
+\paragraph{GLONASS.}
+GLONASS phase biases are excluded.
 The reason is structural: GLONASS is FDMA, so each satellite transmits
 on a slightly different frequency, and the receiver inter-channel
 (hardware) bias does \emph{not} cancel across satellites as it does for
@@ -704,104 +1226,119 @@ that underpins the explicit-bias S-system
 common to a constellation's satellites. The per-frequency GLONASS
 inter-channel bias breaks that assumption and would corrupt the phase
 datum. GLONASS is therefore excluded from the network \emph{phase}-bias
-product by design (\texttt{docs/attic/ssystem\_conformance\_2026-06-15.md}); the
-user side excludes it from ambiguity resolution for the same reason.
+product by design (\texttt{docs/attic/ssystem\_conformance\_2026-06-15.md});
+the user side excludes it from ambiguity resolution for the same reason.
 A \emph{code-only} GLONASS mode is available behind
 \texttt{network.estimate\_glonass} (\texttt{enableGlonassNetwork},
-default off). It admits GLONASS to the solve with a satellite clock and
-a per-slot receiver inter-frequency bias but \emph{no} FDMA phase bias,
-so the phase-datum bookkeeping above is unaffected. The mode is
-mutually exclusive with the W6 satellite code-bias slice: GLONASS
+default off, kept off). It admits GLONASS to the solve with a satellite
+clock and a per-slot receiver inter-frequency bias but \emph{no} FDMA
+phase bias, so the phase-datum bookkeeping above is unaffected. The mode
+is mutually exclusive with the satellite code-bias slice: GLONASS
 admission skips the GPS/Galileo receiver DCB that code-bias separation
 needs, so \texttt{network.estimate\_sat\_code\_bias} together with
-\texttt{network.estimate\_glonass} is a hard load error. The same
-exclusion applies to the co-estimated SH-VTEC ionosphere, which forces
-the code-bias slice on (unless \texttt{network.external\_sat\_code\_bias}
-is set), and to the goldens, which estimate satellite code biases. This
-mode is distinct from the float-only GLONASS support that the user
-engine carries for positioning. With the code-only mode off, the network
-\emph{producer} generates no GLONASS bias products.
+\texttt{network.estimate\_glonass} is a hard load error. This mode is
+distinct from the float-only GLONASS support that the user engine carries
+for positioning. With the code-only mode off, the network estimator
+generates no GLONASS bias products.
+
+\paragraph{Broadcast health.}
 Broadcast satellite health enters the network path through
-\texttt{network.sat\_health} (card HLT; \texttt{off}, \texttt{pivot} or
-\texttt{exclude}, default \texttt{off}; built, not armed). Under
+\texttt{network.sat\_health} (\texttt{off}, \texttt{pivot} or
+\texttt{exclude}, default \texttt{off}; unvalidated, not armed). Under
 \texttt{exclude}, setup removes a satellite's observations from the
 synchronised epochs at which the broadcast flags it; under
-\texttt{pivot}, only the clock-pivot election reads the health series.
+\texttt{pivot}, only the clock-pivot election reads the health series
+(\Cref{sec:net-pivot}).
 
-\subsection{The closed loop: producer $\to$ held-out user}
+\subsection{The emitted product and the test station}
 \label{sec:net-closedloop}
 
-The emitted product is one \texttt{NetworkSolutionEpoch} per content
-epoch: per-satellite clock $C_0$ plus per-signal code and phase biases,
+\paragraph{The emitted product.}
+The network emits one \texttt{NetworkSolutionEpoch} per content epoch:
+the per-satellite clock $C_0$ and the per-signal code and phase biases,
 keyed by RINEX satellite id and serialised in IGS-SSR convention by
 \texttt{NetworkProductEmitter}
-(\texttt{NetworkEstimator::toSolutionEpoch}). That product is the SSR
-stream the single-receiver engine already consumes: the satellite clock
-refines $-\sLight\,\mathrm{d}t^\sat$, and the observable-specific biases
-refine $-\satbiasCB^\sat_\sigl$ and $-b^\sat_\sigl$ as \emph{known}
-corrections, restoring the integer ambiguity property as described in
+(\texttt{NetworkEstimator::toSolutionEpoch}). The product also declares
+its datum (the S record, \texttt{SbasisDeclaration}): the reference
+receiver, the clock pivot of each constellation, the convention of the
+phase-bias gauge, the code-bias datum, the sign of the biases, and the
+wind-up model revision (\texttt{windup\_id}, \texttt{kWindUpYawModelId}).
+A user checks the declaration before it claims integer recovery
+(\texttt{NetworkProductReader::checkContract}), so a product built under a
+different wind-up convention is refused. Network and user share one
+wind-up convention, the accumulated wind-up of the \texttt{nominal-wu93}
+frame, and a mismatch is absorbed by the ambiguities and is invisible to
+the post-fit variance factor.
+
+A user applies the product as known corrections: the satellite clock
+correction with the factor $-1$ and each signal bias with the factor $+1$,
+the constants the network's own rows use
+(\dcref{sec:obs-shared}{the one-equation section}), restoring the integer
+ambiguity property as described in
 \dcref{sec:ssr}{the SSR-corrections section}.
 
-The validation strategy follows from this symmetry. The companion
-\texttt{ProcessingMode::PPP\_RTK\_User} mode runs the ordinary
-uncombined PPP-RTK pipeline but consumes the network's own
-bias/atmosphere product. A station held \emph{out} of the network solve
+\paragraph{The test station.}
+The validation follows from this symmetry. The companion
+\texttt{ProcessingMode::PPP\_RTK\_User} mode runs the ordinary uncombined
+PPP-RTK pipeline but takes the network's own bias and clock product. A
+station held \emph{out} of the network solve, with a known coordinate,
 and positioned as a user against the produced corrections is a
-closed-loop product test: its recovered position and fixed ambiguities
-show whether the producer's S-system datum and the consumer's integer
-recovery are mutually consistent. The \texttt{PPP\_RTK\_User} consumer
-runs through the standard PPP path and is not a separate estimator;
-only the producer takes the joint multi-station pipeline of this
-section.
+closed-loop product test of the whole chain. With integer recovery on,
+its fixed ambiguities show whether the datum of the network and the
+integer recovery of the user are mutually consistent; with it off (the
+reference configurations set \texttt{network.closed\_loop.ar\_mode} to
+$0$) its position error is the grade. The test station runs through the
+standard PPP path and is not a separate estimator; only the network
+estimator takes the joint multi-station pipeline of this section. The
+reference configurations hold out WTZZ00DEU (real data) and SZZ000SIM
+(simulated data).
 
-The test has two mechanised forms. The \emph{in-process} harness
-(\texttt{network.closed\_loop.enable}) builds a consumer engine from a
-derived configuration during setup and gives it an \emph{owned} SSR
-correction store instead of the process-wide one, so the producer's
-products cannot leak into a store that another component reads. The
-emit seam \texttt{networkEmitStore} steps the consumer after that
+\paragraph{Two forms of the test.}
+The \emph{in-process} form (\texttt{network.closed\_loop.enable}) builds
+the user engine from a derived configuration during setup
+(\texttt{GnssConfig::deriveClosedLoopConsumerConfig}) and gives it an
+\emph{owned} SSR correction store instead of the process-wide one, so the
+network's products cannot leak into a store that another component reads.
+The emit seam \texttt{networkEmitStore} steps the user after that
 epoch's products have been pushed, which closes the loop \emph{within}
-the epoch. The consumer runs a between-satellite single-difference user
-model by default, or an undifferenced one under
-\texttt{closed\_loop.consumer\_undifferenced}. The goldens arm the
-harness with the undifferenced consumer on a held-out station
-(WTZZ00DEU on the field bed, SZZ000SIM on the sim bed). The
-\emph{offline replay} driver
+the epoch. The user runs a between-satellite single-difference model by
+default, or an undifferenced one under
+\texttt{closed\_loop.consumer\_undifferenced}, which the reference
+configurations arm. The derived configuration is a full copy of the
+network's and leaves \texttt{estimation.accumulate\_phase\_windup}
+unchanged, so the in-process user runs the network's wind-up mode; the
+reference configurations arm accumulation on both beds. The
+\emph{offline replay} form
 (\texttt{network.closed\_loop.replay\_products\_path} $\to$
 \texttt{Application::runConsumerReplay},
 \texttt{app/ApplicationConsumerReplay}) short-circuits
-\texttt{runNetwork} before input validation and producer setup. It
-fills the same owned store from an already-written product file through
-the same reader path, so the recorded stream's discontinuity
-bookkeeping is reconstructed exactly, and a position-domain arm costs
-minutes instead of a producer run. One limit applies to what a replay
-arm proves: the in-process SH-VTEC slant-ionosphere supply has no
-product-wire record, so \texttt{closed\_loop.consume\_network\_iono} is
-inert on the replay path (the driver logs a warning), and the consumer
-floats its own ionosphere there.
+\texttt{runNetwork} before input validation and setup. It fills the same
+owned store from an already-written product file through the same reader
+path, so the recorded stream's discontinuity bookkeeping is reconstructed
+exactly, and a position-domain case costs minutes instead of a full run.
+The replay derives its user through the same call from the replay
+configuration, and the product's S-basis contract records only the
+wind-up model revision, so a replay matches the network's mode only when
+its configuration does. The setting
+\texttt{network.closed\_loop.consume\_network\_iono} would supply the
+user a slant ionosphere from a spherical-harmonic model; the reference
+configurations build none, so it supplies nothing.
 
-The goldens also arm two emit-side holds and the consumer's answer to
-them, treated in
+\paragraph{Holds on the product.}
+The reference configurations also arm two emit-side holds and the user's
+answer to them, treated in
 \dcref{sec:net-wire}{the event-response and emitted-product section}.
 The phase-bias generation hold (\texttt{network.emit\_pb\_hold}) freezes
 each emitted phase bias at the first value of its generation and
-declares every new generation on the wire. The phase-clock hold
-(\texttt{network.emit\_pb\_hold\_phase\_clock}), a mode of the same
-hold, keeps the satellite's phase-visible clock over the generation
-instead. Both run inside \texttt{networkEmitStore}
-(\texttt{filter/NetworkPbHold}) and leave the solve unchanged. Under
-\texttt{network.closed\_loop.pb\_hold\_presence\_flip} the derived
-consumer (\texttt{processing.ssr\_pb\_hold\_presence\_flip}) answers a
-held phase bias that appears on, or leaves, a phase row it already uses
-as it answers an unheld one. The derived configuration is a full copy
-of the producer's (\texttt{GnssConfig::deriveClosedLoopConsumerConfig})
-and leaves \texttt{estimation.accumulate\_phase\_windup} unchanged, so
-the in-process consumer runs the producer's wind-up mode; the goldens
-arm accumulation on both beds. The replay driver derives its consumer
-through the same call from the replay configuration, and the product's
-S-basis contract records only the wind-up model revision
-(\texttt{windup\_id}), so a replay matches the producer's mode only when
-its configuration does.
+declares every new generation. The phase-clock hold
+(\texttt{network.emit\_pb\_hold\_phase\_clock}), a mode of the same hold,
+keeps the satellite's phase-visible clock over the generation instead.
+Both run inside \texttt{networkEmitStore}
+(\texttt{network/emit/PbHold}) and leave the solve unchanged. Under
+\texttt{network.closed\_loop.pb\_hold\_presence\_flip} the derived user
+(\texttt{processing.ssr\_pb\_hold\_presence\_flip}) answers a held phase
+bias that appears on, or leaves, a phase row it already uses as it
+answers an unheld one.
 
 \ifSubfilesClassLoaded{\printbibliography}{}
 \end{document}

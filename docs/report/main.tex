@@ -39,18 +39,31 @@ This document is the mathematical companion to \texttt{GnssProcessor}, a
 C\texttt{++}17 post-processing and real-time GNSS engine implementing
 PPP, PPP-RTK (single-receiver and network), and double-differenced
 baseline modes.  Its scope is the estimation mathematics and design
-rationale: the material that ages slowly because it is settled theory
-or algebra, not churning code.
+rationale: the material that ages slowly, because it is settled theory
+or algebra.  This revision describes the source tree of 30 October 2026
+(commit \texttt{5127429}).
+
+Two configuration files fix what the network runs with, and the text
+calls them the \emph{reference configurations}:
+\texttt{config/golden/golden\_field\_refound.json} (real data, 58
+stations) and \texttt{config/golden/golden\_sim\_refound.json} (a
+simulated network of 60 stations).  Both use GPS L1/L2 and Galileo
+E1/E5a.  A setting described as default off is off in the loader; the
+verdict on every network setting is recorded in
+\texttt{docs/CONFIG\_promotion\_ledger.json}.
 
 The reference is organised as a set of \emph{component documents}, each of
 which also compiles to a standalone PDF.  This combined volume gathers
 them in roughly the order the engine applies them:
 \begin{itemize}[leftmargin=*]
 \item \textbf{Foundations} (\Cref{sec:notation,sec:state,sec:obs,sec:diff}):
-      notation, the variable-dimension state vector, the
-      \emph{uncombined} pseudorange / carrier-phase observation model, and
-      the between-satellite single-difference (BSSD) and double-difference
-      (DD) transformations.  Every other component builds on this.
+      notation; the variable-dimension state vector, its declared state
+      families and the network's station parameter set; the
+      \emph{uncombined} pseudorange / carrier-phase observation model,
+      written once and shared by the user filter, the network estimator
+      and the state seeds; and the between-satellite single-difference
+      (BSSD) and double-difference (DD) transformations.  Every other
+      component builds on this.
 \item \textbf{Reference systems and measurement models}
       (\Cref{sec:frames,sec:trf,sec:products,sec:atmos,sec:sitedisp,sec:obsphys}):
       the deterministic substrate and physics behind the observation
@@ -70,55 +83,68 @@ them in roughly the order the engine applies them:
       prior-anchored iterated relinearisation, robust gating) and the
       backward RTS smoother; the measurement stochastic model and the
       a-posteriori quality-control layer (variance factor, Baarda
-      data-snooping, minimal detectable bias); and the supporting
-      infrastructure that bootstraps the filter: the weighted
-      least-squares seed, the first-epoch residual-difference state
-      initialisation, and the pivot selection / disturbance logic.
+      data-snooping, minimal detectable bias, the block test on a line
+      of sight, variance components of the carried priors, and the
+      network's RAIM tiers); and the supporting infrastructure that
+      bootstraps the filter: the weighted least-squares seed, the
+      first-epoch residual-difference state initialisation, and the
+      pivot selection / disturbance logic.
 \item \textbf{Cycle-slip detection and repair} (\Cref{sec:slip}): the
       linear-combination test statistics (Melbourne--W\"ubbena,
-      geometry-free, GRAPHIC, extra-wide-lane) and the TurboEdit
-      $2\times2$ integer repair.
+      geometry-free, GRAPHIC, extra-wide-lane, ionosphere-free time
+      difference), the network's slip layer and its slip funnel, and the
+      TurboEdit $2\times2$ integer repair.
 \item \textbf{Integer ambiguity resolution} (\Cref{sec:ar}): the
       \textsc{MLAMBDA} integer least-squares search, wide-lane /
-      narrow-lane decomposition, validation, constrained feedback, and
-      the (default-off) network-producer AR machinery.
+      narrow-lane decomposition, validation, constrained feedback and
+      fix-and-hold, and the network's integer machinery (the observation
+      graph and its bases, the block search, the fixed-cycle fold), all
+      default off.
 \item \textbf{Inertial aiding} (\Cref{sec:imu}): the strapdown
       mechanisation and 15-state INS error model of the tightly-coupled
       IMU path.
 \item \textbf{Real-time SSR corrections} (\Cref{sec:ssr}): how State
       Space Representation orbit, clock, and bias corrections refine the
-      undifferenced observation model.
+      undifferenced observation model, and how the user's filter answers
+      a step in the network's phase biases.
 \item \textbf{Real-time engine} (\Cref{sec:rt}): the streaming
-      architecture: NTRIP transport, RTCM/MSM decoding, observation/SSR
-      time synchronisation, and the per-epoch real-time update path.
+      architecture: NTRIP and TCP transport, RTCM/MSM decoding,
+      observation/SSR time synchronisation, the per-epoch real-time
+      update path, the pre-update innovation screen, the
+      broadcast-baseline jump response and the filter-state snapshot.
 \item \textbf{Network mode} (\Cref{sec:net}): the multi-station
       PPP-RTK network estimator that \emph{generates} the SSR-style
-      corrections consumed by the single-receiver modes: the joint
-      observation model, the S-basis / minimum-constraint datum, the
-      per-station Schur reduction, and the single-concern seam
-      architecture of the per-epoch producer loop.
+      corrections consumed by the single-receiver modes: the
+      architecture of the per-epoch loop, the network's parameter set
+      and joint observation model, the S-basis datum and its clock,
+      phase and satellite code-bias parts, the rank gate, the
+      per-station Schur reduction with exact sparse station normals,
+      and the constellation scope.
 \item \textbf{Between-epoch carry} (\Cref{sec:net-carry}): how
       information reaches that arrowhead system from outside the
-      current epoch: the three folds an arrowhead admits and where each
+      current epoch: the carried families and how each is folded, the
+      three folds an arrowhead admits and where each
       must be applied, the double-difference cycle basis (the spanning
       tree's \emph{chords}) that is the only gauge-free quantity worth
       time-linking, the Woodbury algebra that folds it, and a fully
       numerical minimum-parameter example.
 \item \textbf{The float ambiguity vehicle} (\Cref{sec:net-vehicle}):
-      the carry the golden configurations arm: the carried local
+      the carry the reference configurations use: the carried local
       column and its joint local block, the floored birth prior and the
       bounded drop, the held phase-datum basis, and the exact
       conditional time update of the coupling rows with the temporal
       clock anchor.
 \item \textbf{Event responses and the emitted product}
-      (\Cref{sec:net-wire}): how the producer answers gap re-entry,
-      re-admission, wind-up restarts and gross line-of-sight faults on
-      its carried state, and what it emits: the phase-bias generation
-      hold, its phase-clock mode, and the consumer's answer to a held
-      bias's presence edges.
+      (\Cref{sec:net-wire}): how the network answers slips (one slip
+      frees a carried arc once), gap re-entry, re-admission, wind-up
+      restarts and gross line-of-sight faults on its carried state, and
+      what it emits: the clock with its step test, the phase-bias
+      generation hold and its phase-clock mode, the product contract,
+      and the user's answer to a held bias's presence edges.
 \item \textbf{Pipeline and architecture diagrams} (\Cref{sec:diagrams}):
-      the per-mode data-flow figures that place every chapter above
-      in the epoch loop.
+      the per-mode data-flow figures (user PPP, real time, the network's
+      run, epoch, solve stages, emission and harvest) that place every
+      chapter above in its loop.
 \item \textbf{Generated reference tables} (\Cref{sec:gentables},
       appendix): processing modes, feature toggles, the cycle-slip
       detector registry, and the state-vector key schema, produced

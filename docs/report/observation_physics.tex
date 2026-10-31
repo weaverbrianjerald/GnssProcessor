@@ -64,7 +64,9 @@ paths call it.  It adds the terms to the geometric range from
 \;+\;d_{\mathrm{tide}},
 \label{eq:obsphys-assembly}
 \end{equation}
-where $A^\sat_{\rx,\sigl}$ is the total antenna correction
+where $T^\sat_\rx$ is the a~priori slant hydrostatic delay (the wet delay
+and the gradients are estimated;
+\dcref{sec:atmos}{the Atmosphere document}), $A^\sat_{\rx,\sigl}$ is the total antenna correction
 (\Cref{sec:obsphys-antenna}), $\delta t_{\mathrm{rel}}$ the periodic
 relativistic clock term (\Cref{sec:obsphys-rel}), $S^\sat_\rx$ the
 Shapiro delay (\Cref{sec:obsphys-shapiro}), $B_{\mathrm{grp}}$ the
@@ -106,10 +108,12 @@ direction to the Sun, the nadir axis and the cross-track axis are
 \label{eq:obsphys-yaw-frame}
 \end{equation}
 in the operand order of \texttt{SatAttitude::compute}
-(\texttt{model/SatAttitude.cpp}).  The antenna path calls that routine
-(\texttt{Antenna::getAntennaCorrection}) and does not rebuild the frame.
-The wind-up path does contain an inline copy of the construction, noted
-in \Cref{sec:obsphys-windup}.  Forming $\jcross$ first and then
+(\texttt{model/SatAttitude.cpp}).  One model serves the satellite PCO and
+PCV and the wind-up: the antenna path
+(\texttt{Antenna::getAntennaCorrection}) and the wind-up
+(\texttt{GnssCorrections::windUpGeometry}) both take the frame from
+\texttt{SatAttitude}, so the two cannot disagree on the mode selection or
+on the sign conventions.  Forming $\jcross$ first and then
 $\isun=\jcross\times\knad$ is the Gram--Schmidt orthogonalisation of the
 Sun direction against nadir.  By the
 $\bm{a}\times(\bm{b}\times\bm{c})$ identity,
@@ -132,31 +136,111 @@ rotate a body-frame offset into ECEF.
 
 \paragraph{Sun elevation and the mode switch.}
 Non-nominal attitude (eclipse seasons, the noon and midnight yaw turns)
-depends on the Sun's elevation above the orbital plane, $\beta$.  With the orbit angular-momentum (normal) unit vector
-$\hat{\bm{n}}=(\satpos\times\satvel)/\lVert\satpos\times\satvel\rVert$,
+depends on the Sun's elevation above the orbital plane, $\beta$.  The orbit
+plane is inertial, so the orbit angular-momentum (normal) unit vector
+$\hat{\bm{n}}=(\satpos\times\satvel_{\mathrm{I}})/\lVert\satpos\times\satvel_{\mathrm{I}}\rVert$
+is formed from the inertial velocity
+$\satvel_{\mathrm{I}} = \satvel_{\mathrm{ECEF}} + \bm{\omega}_\oplus\times\satpos$
+(\texttt{SatAttitude::inertialVelocity}, the inverse of
+\dcref{eq:prod-vel-ecef}{the product-evaluation velocity transform}),
 \begin{empheq}[box=\fbox]{equation}
-\beta = \arcsin\!\big(\hat{\bm{n}}\cdot\esun\big),
-\qquad
-\hat{\bm{n}} = \frac{\satpos\times\satvel}{\lVert\satpos\times\satvel\rVert},
+\beta = \arcsin\!\big(\hat{\bm{n}}\cdot\esun\big).
 \label{eq:obsphys-beta}
 \end{empheq}
-signed by the projection of the Sun direction onto the $+(\satpos\times
-\satvel)$ normal (\texttt{SatAttitude::computeBeta},
-\texttt{model/SatAttitude.cpp}; the sign is noted in-code as unvalidated
-against an external attitude product).  The mode selector
+Forming $\satpos\times\satvel_{\mathrm{ECEF}}$ instead removes
+$\satpos\times(\bm{\omega}_\oplus\times\satpos)$ from the normal, a vector
+of 29 to 59\,\% of $\lVert\satpos\times\satvel_{\mathrm{I}}\rVert$ at GPS and
+Galileo orbits, which tilts the normal by tens of degrees.  The
+conversion applies when
+\texttt{estimation.enable\_sun\_frame\_correction} is set
+(\dcref{sec:frame-sunmoon}{the Sun and Moon section of the Coordinate
+Frames document}); with it off, the ECEF velocity is used as before, bit for
+bit.  The noon-turn model below always converts.  The angle is signed by
+the projection of the Sun direction onto the $+(\satpos\times\satvel)$
+normal (\texttt{SatAttitude::computeBeta}).  With the conversion on, it
+agrees with an independent computation (SP3 positions rotated to the
+inertial frame and an almanac Sun,
+\texttt{scripts/attitude\_beta\_check.py}) to $0.01^\circ$, with no sign
+mismatch, on seven GPS satellites over a day.  The mode selector
 (\texttt{SatAttitude::determineMode}) keeps GPS, GLONASS and Galileo in
 yaw-steering unconditionally, and switches BeiDou and QZSS to
 orbit-normal attitude below a constellation-specific $\beta$ threshold
 ($4.0^\circ$ BeiDou, $20.0^\circ$ QZSS,
-\texttt{model/SatAttitude.cpp}).  In orbit-normal mode the $+Y$ axis is
+\texttt{model/SatAttitude.cpp}).  The threshold compares the signed
+$\beta$, as NGS M-PAGES does.  In orbit-normal mode the $+Y$ axis is
 pinned to the orbit normal, $\jcross=\hat{\bm{n}}$, and the triad is
 re-orthogonalised $\isun=\jcross\times\knad$, $\jcross=\knad\times\isun$.
-The legacy default path also forces a hard-coded list of BeiDou-2 GEO
+The axes are those of the positive orbit normal in every orbit-normal
+case; the QZSS label \texttt{OrbitNormalNegative} serves traces only.  The
+legacy default path also forces a hard-coded list of BeiDou-2 GEO
 PRNs (C01--C05, C59, C60) into orbit-normal mode whatever the value of
 $\beta$.  The $\beta$-driven table is active only when
-\texttt{enableOrbitNormalAttitude()} is set.  With the flag off the
-result is bit-identical to the earlier inline frame
-(\texttt{model/Antenna.cpp}, \texttt{model/SatAttitude.cpp}).
+\texttt{processing.enable\_orbit\_normal\_attitude} is set (default off).
+With the flag off the result is bit-identical to the earlier inline frame
+(\texttt{model/Antenna.cpp}, \texttt{model/SatAttitude.cpp}).  The
+wind-up takes the same frame but keeps only the BeiDou-2 GEO
+orbit-normal rule and yaw-steers every other satellite whatever that
+flag says; the flag moves the PCO frame alone.  Without a Sun direction
+the frame is built from the velocity direction about the nadir axis
+(\texttt{SatAttitude::velocityFrame}), and a Sun collinear with nadir
+falls back to $\jcross\propto\knad\times\hat{\bm{v}}$.
+
+\paragraph{Nominal yaw steering for Galileo and the other systems.}
+GPS, GLONASS and Galileo satellites carry the nominal frame
+\eqref{eq:obsphys-yaw-frame} at every $\beta$.  The model has no
+manoeuvre law for Galileo or GLONASS, no eclipse or midnight turn for any
+system, and no yaw bias.  A Galileo satellite in the Earth's shadow is
+therefore excluded upstream when
+\texttt{processing.exclude\_eclipsing\_satellites} is set (default off,
+on in the reference configurations), and the nominal frame is used
+otherwise.
+
+\paragraph{GPS noon turn.}
+Near the orbit noon at small $|\beta|$ the nominal yaw would need a rate
+above what the attitude controller of a GPS Block~IIF or IIR satellite
+delivers.  The satellite then yaws at its maximum rate and rejoins the
+nominal yaw afterwards \cite{kouba2009simplified}.  With $\mu$ the orbit angle from the orbit
+midnight ($0$ at midnight, $\pi$ at noon) and $\dot\mu$ the mean orbit
+rate $0.00836^\circ/\mathrm{s}$, the nominal yaw about the nadir axis,
+measured from the velocity direction, is
+\begin{equation}
+\psi_{\mathrm{nom}} = \operatorname{atan2}\!\big(-\tan\beta,\;\sin\mu\big),
+\label{eq:obsphys-yaw-nominal}
+\end{equation}
+and its rate peaks at noon at $\dot\mu/\lvert\tan\beta\rvert$.  With
+$\dot\psi_{\max}$ the controller limit ($0.11^\circ/\mathrm{s}$ for Block~IIF,
+$0.20^\circ/\mathrm{s}$ for Block~IIR, IIR-A, IIR-B and IIR-M, chosen from
+the block named in the ATX satellite type), no turn occurs when
+$\lvert\beta\rvert\ge\beta_0 = \arctan(\dot\mu/\dot\psi_{\max})$, that is
+$4.35^\circ$ and $2.39^\circ$.  Below $\beta_0$ the satellite follows
+$\psi_{\mathrm{nom}}$ until the nominal rate reaches $\dot\psi_{\max}$, at
+the orbit angle $x_s$ before noon with $c=\cos x_s$ the positive root of
+\begin{equation}
+\dot\psi_{\max}\,c^{2} + \dot\mu\,\lvert\tan\beta\rvert\,c
+ - \dot\psi_{\max}\,(1+\tan^{2}\beta) = 0 ,
+\label{eq:obsphys-noon-start}
+\end{equation}
+then yaws at $\dot\psi_{\max}$ against the sign of $\beta$ until the ramp
+meets $\psi_{\mathrm{nom}}$ again.  Inside the turn the body $X$ and $Y$
+axes are rotated about nadir by the difference
+$\Delta=\psi_{\mathrm{act}}-\psi_{\mathrm{nom}}$ (wrapped to $\pm\pi$):
+\begin{equation}
+\isun' = \cos\Delta\;\isun + \sin\Delta\,(\knad\times\isun),
+\qquad
+\jcross' = \knad\times\isun' ,
+\label{eq:obsphys-noon-rotate}
+\end{equation}
+and outside the turn the frame is returned bit for bit
+(\texttt{SatAttitude::noonTurnYaw}, \texttt{applyNoonTurn},
+\texttt{noonTurnLaw}).  The same rotated frame feeds the satellite PCO
+and PCV (\texttt{Antenna::getAntennaCorrection}) and the wind-up dipole
+\eqref{eq:obsphys-windup-dipoles}, so the two stay on one attitude.  The
+model applies only to GPS Block~IIF and IIR satellites and only when
+\texttt{processing.enable\_noon\_turn\_attitude} is set (default off; on
+in the real-data reference configuration, listed as a documented
+exception in the simulated-network one because the simulated data carry no
+noon-turn law).  The model is described in
+\texttt{docs/refound/NTA\_noon\_turn\_attitude\_2026-10-16.md}.
 
 \paragraph{Eclipse gating.}
 The body frame above assumes a known yaw angle.  That assumption fails
@@ -225,12 +309,18 @@ header eccentricity before it seeds the state
 marker/ARP section of the Coordinate Frames document}).  A coordinate
 supplied directly in the configuration is \emph{not} reduced.  It is
 used as given, on the policy that the user owns its reference point.
-This matters in the network producer.  Its station coordinates come from
+This matters in the network estimator.  Its station coordinates come from
 the configuration (\texttt{StationConfig::position\_ecef}) and are held
 fixed, with their position columns dropped from the normal equations.  A
 monument coordinate there is not absorbed by a position state.  The
 offset goes into the residuals, and from there into the estimated
-clocks, biases, and ionosphere.
+clocks, biases, and ionosphere.  \texttt{network.station\_marker\_to\_arp}
+(default off, on in both reference configurations) reduces each
+roster coordinate once at setup; a SIF coordinate is reduced through the
+same function
+(\dcref{sec:frame-arp}{the marker/ARP section of the Coordinate Frames
+document}, \dcref{sec:trf-engine}{the engine section of the Reference
+Frames document}).
 
 \paragraph{Satellite PCO (subtracted).}
 The satellite phase-centre offset $\pco^\sat_{\mathrm{body}}$ is published
@@ -308,8 +398,8 @@ spacecraft, and many receiver antennas published before triple-frequency
 tracking.  Setting the antenna correction to zero would leave a vertical
 bias of several centimetres.  The engine instead substitutes the
 \emph{nearest carrier} when the requested ANTEX frequency key is absent
-(\texttt{pickAtxFrequencyKey},
-\texttt{model/Antenna.cpp}).  The chains are ordered by carrier-frequency
+(\texttt{model\_corrections.enable\_atx\_frequency\_fallback}, default on;
+\texttt{pickAtxFrequencyKey}, \texttt{model/Antenna.cpp}).  The chains are ordered by carrier-frequency
 proximity, e.g. for GPS $\mathtt{G05}\to\{\mathtt{G02},\mathtt{G01}\}$ and
 for Galileo $\mathtt{E05}\to\{\mathtt{E08},\mathtt{E07},\mathtt{E06},
 \mathtt{E01}\}$.  The PCO of one physical antenna typically changes by
@@ -322,13 +412,15 @@ is allowed; another constellation's spacecraft entry would be
 meaningless.  For the \emph{receiver} antenna a \emph{cross-system}
 chain to the nearest GPS band is allowed after the same-system chain is
 exhausted, and only when
-\texttt{enable\_receiver\_cross\_system\_atx\_fallback} is set
-(\texttt{pickReceiverAtxFrequencyKey}).  This is justified because the
+\texttt{model\_corrections.enable\_receiver\_cross\_system\_atx\_fallback}
+is set (default off; on in both reference configurations, where the
+Galileo E1 and E5a signals take the GPS L1 and L5 receiver entries;
+\texttt{pickReceiverAtxFrequencyKey}).  This is justified because the
 receiver phase pattern depends on frequency, not on constellation.  The
 important mappings are exact carrier matches
 ($\mathtt{E01}\!\to\!\mathtt{G01}$, $\mathtt{E05}\!\to\!\mathtt{G05}$ at
-$1575.42$ and $1176.45$\,MHz).  The rest are approximations over
-$\sim$10--70\,MHz (\texttt{model/Antenna.cpp}).  Each substitution sets a
+$1575.42$ and $1176.45$\,MHz).  The rest are approximations 14 to
+51\,MHz apart (\texttt{model/Antenna.cpp}).  Each substitution sets a
 coverage flag and writes a log line.  The same fallback policy is used
 for biases: substitute and report, and do not exclude the measurement.
 
@@ -366,9 +458,10 @@ $|\bm{D}| = 1-\cos\varepsilon$, a dipole that \emph{vanishes on
 boresight}.  RTKLIB's $(-,+)$ pairing is stated with
 $\bm{y}_\rx = -\mathrm{East}$ and is the same construction; with the
 $+\mathrm{East}$ convention used here it becomes $(-,-)$.
-\emph{Earlier revisions of this document printed $(+,+)$, copied from a
-defect in the code that was corrected on 2026-08-21; see
-\texttt{docs/SPEC\_phase\_windup\_sign.md}.}
+The construction with both signs negative \cite{wu1993effects} replaced a
+$(+,+)$ pairing on 2026-08-21 (\texttt{docs/SPEC\_phase\_windup\_sign.md});
+the revision is declared as \texttt{nominal-wu93} (see the paragraph on
+the shared convention below).
 
 The receiver North and East axes are built from the geodetic latitude
 $\phi$ and longitude $\lambda$,
@@ -400,33 +493,106 @@ observables only (the code branch passes zero wavelength).
 
 \paragraph{Fractional vs.\ accumulated modes.}
 The $\operatorname{atan2}$ returns the wind-up wrapped to one cycle.  The
-default \emph{fractional} mode uses this wrapped angle directly.  The
+\emph{fractional} mode (\texttt{estimation.accumulate\_phase\_windup}
+false, the loader default) uses this wrapped angle directly.  The
 float ambiguity $N^\sat_{\rx,\sigl}$ absorbs any whole-cycle part, so
-the wrapping does no harm.  Integer ambiguity resolution needs the
+the wrapping does no harm to a float solution, but each crossing of
+$\pm\pi$ steps the applied correction by one cycle on every signal of the
+satellite.  Integer ambiguity resolution needs the
 ambiguity to stay a constant integer across the arc.  For that the
-engine offers an \emph{accumulated} (unwrapped) mode
-(\texttt{config.accumulatePhaseWindUp()}), which unwraps each epoch
-relative to the previous stored angle,
-$\winddphi_t = \winddphi_{t-1} + \operatorname{wrap}_{2\pi}(\winddphi_t -
-\winddphi_{t-1})$, provided the gap between epochs is below the $300$\,s
-continuity threshold.  A larger gap, or a backward time step, restarts
-the accumulator from the raw angle
-(\texttt{corrections/GnssCorrections.cpp}).  A gap that long invalidates
-the unwrap reference, so the engine starts a new arc, as it does for an
-ambiguity.
+engine offers an \emph{accumulated} (unwrapped) mode, which unwraps each
+epoch relative to the previous accumulated angle $A_{k-1}$ and restarts
+from the raw angle $\winddphi_k$ otherwise:
+\begin{equation}
+A_k =
+\begin{cases}
+A_{k-1} + \operatorname{wrap}_{2\pi}\!\big(\winddphi_k - A_{k-1}\big),
+ & 0 < t_k - t_{k-1} < T_{\mathrm{wu}},\\[2pt]
+\winddphi_k \quad\text{(restart)}, & \text{otherwise,}
+\end{cases}
+\qquad
+\operatorname{wrap}_{2\pi}(x) = x - 2\pi\operatorname{round}\!\big(\tfrac{x}{2\pi}\big),
+\label{eq:obsphys-windup-accum}
+\end{equation}
+with $T_{\mathrm{wu}}$ the continuity horizon
+\texttt{estimation.phase\_windup\_max\_gap\_s} (default $300$\,s).  The
+accumulator keeps one angle and one epoch per satellite; a repeated call
+within one epoch (once per signal and per rebuild pass) reuses the
+accumulated value and is not a restart.  A larger gap, or a backward time
+step, restarts the accumulator
+(\texttt{corrections/GnssCorrections.cpp}, \texttt{computePhaseWindUp}).
+By \eqref{eq:obsphys-windup-accum}, $A_k-\winddphi_k\in2\pi\mathbb{Z}$, so
+a restart steps the modelled phase of every signal of the satellite by
+the same whole number of cycles.  On a single receiver the step cannot
+bias the solution, because an absent satellite's ambiguity is pruned and
+re-seeded on re-acquisition.  Each restart is recorded as a
+(satellite, gap, epoch) entry, which the network's event response reads
+(\dcref{sec:net-wire-windup}{the wind-up section of the Network Event
+Responses document}).  Both reference configurations accumulate.
 
-\paragraph{Known frame duplication.}
-The satellite body frame feeding the wind-up dipole $\dipS$
-\eqref{eq:obsphys-windup-dipoles} is built \emph{inline} inside
-\texttt{computePhaseWindUp} (\texttt{corrections/GnssCorrections.cpp})
-rather than calling the shared \texttt{model/SatAttitude.cpp} helper used
-by the antenna path \eqref{eq:obsphys-yaw-frame}.  The two constructions
-are kept bit-for-bit identical: the same operand order, the same
-BeiDou-2 GEO orbit-normal special case, and the same velocity fallback.
-Both source files note the duplication.  It is recorded here as a
-\emph{maintenance} obligation.  A change to one frame must be copied to
-the other.  Otherwise the antenna PCV and the wind-up would use
-different frames for the same satellite, with no error reported.
+\paragraph{Gap bridge.}
+\texttt{estimation.phase\_windup\_gap\_bridge} (default off; it needs the
+accumulated mode, and the loader switches it off with a warning
+otherwise) replaces the restart for a gap $g$ with
+$T_{\mathrm{wu}}\le g<T_{\mathrm{br}}$, where $T_{\mathrm{br}}$ is
+\texttt{estimation.phase\_windup\_bridge\_max\_gap\_s} (default
+$900$\,s, the horizon of the network's phase-leveling carry).  The angle is
+walked across the gap through virtual epochs.  Cut the gap into
+$n=\lceil g/\Delta\rceil$ equal steps, with $\Delta$ =
+\texttt{estimation.phase\_windup\_bridge\_step\_s} (default $30$\,s,
+accepted in $(0,120]$).  The raw angle $\theta(\cdot)$ at a virtual epoch
+comes from the same routine as the epoch's own angle, with the satellite
+state taken from the orbit products and the receiver where it is now
+(\texttt{Geometry::getLookBackState}).  Each step is evaluated at its
+middle as well, and each half step is wrapped to half a cycle either way:
+\begin{align}
+W &= \sum_{i=1}^{n}\Big[\operatorname{wrap}_{2\pi}\!\big(\theta(t_{i-\frac12})-\theta(t_{i-1})\big)
+ + \operatorname{wrap}_{2\pi}\!\big(\theta(t_{i})-\theta(t_{i-\frac12})\big)\Big],
+\label{eq:obsphys-windup-walk}\\
+N &= \operatorname{round}\!\Big(\frac{A_{k-1}+W-\winddphi_k}{2\pi}\Big),
+\label{eq:obsphys-windup-bridge}
+\end{align}
+with $t_i=t_{k-1}+i\,g/n$.  The bridged
+angle is $A_k=\winddphi_k+2\pi N$: the fractional part is the epoch's own,
+and the walk supplies only the integer, so an error of the virtual
+geometry matters only if it moves the sum by a quarter of a cycle.  The
+walk is refused, and the restart happens as without the bridge, when a
+virtual epoch has no satellite state or a degenerate geometry; when the
+satellite is in the Earth's umbra there
+(\texttt{Planetary::isSatelliteEclipsing}, with
+\texttt{processing.eclipse\_shadow\_scale}); when it is in a GPS noon-turn
+window, widened by one step of orbit motion
+(\texttt{SatAttitude::inNoonTurnWindow}); when a half step moves the
+angle by a quarter of a cycle or more; and when
+$\lvert A_{k-1}+W-\winddphi_k-2\pi N\rvert$ exceeds a quarter of a cycle
+(\texttt{WindUpBridge::walk}).  Each attempt is counted by outcome
+(\texttt{WindUpBridge::Counters}), and the first attempts of a receiver
+are kept with their satellite, epoch and gap.  The setting is
+UNVALIDATED in \texttt{docs/CONFIG\_promotion\_ledger.json}: in a six-hour real-data case
+the restarts fell from 139 to 91 and the refloated arcs from 116 to 23
+with no change in the test station beyond \SI{0.3}{\milli\metre}
+(\texttt{docs/refound/WGB\_windup\_gap\_bridge\_2026-10-17.md}).  The
+simulator injects wind-up through the same function, so no simulated data
+can grade it.
+
+\paragraph{One convention for the network, the user and the simulator.}
+The wind-up angle depends on the satellite attitude model, the sign rule
+of the dipoles and the accumulation mode.  A mismatch between the network
+and a user is absorbed by the user's ambiguities and is invisible in the
+variance factor.  The construction is declared by the compile-time
+constant \texttt{kWindUpYawModelId} $=$ \texttt{"nominal-wu93"}
+(\texttt{network/solve/Sbasis.hpp}), written into the contract line of
+every emitted product, and a product that declares another value is
+refused by \texttt{NetworkProductReader::checkContract}.  The bare token
+\texttt{"nominal"} names the earlier $(+,+)$ construction, whose products
+carry $2\varphi_{\mathrm{wu}}$ in their satellite clocks and phase biases.
+The suffix names a revision of the wind-up construction.  The token does
+not record the accumulation mode or the noon-turn setting, so those are
+held by configuration.  The network, the users and the
+simulator evaluate the same function: the simulator injects its
+wind-up through \texttt{GnssCorrections::computePhaseWindUp} in accumulated
+mode (\texttt{src/sim/EphemerisProvider.cpp}), so the simulated network,
+the network estimator and the user share one model.
 
 % ============================================================
 \subsection{Periodic relativistic clock correction}\label{sec:obsphys-rel}
@@ -550,14 +716,48 @@ $B^\sat_\sigl,\,b^\sat_\sigl$ and the receiver biases
 $B_{\rx,\sigl},\,b_{\rx,\sigl}$.  This section relates the products to
 those symbols.
 
+\paragraph{Signals of the reference configurations.}
+Both reference configurations
+(\texttt{config/golden/golden\_field\_refound.json} and
+\texttt{golden\_sim\_refound.json}) run GPS L1/L2 and Galileo E1/E5a in
+the dual-frequency mode (\texttt{processing.frequency\_mode} \texttt{dual}),
+with one signal per band chosen by the priority rule.  The Galileo priority
+list is \texttt{C1C}, \texttt{C1X}, \texttt{L1C}, \texttt{L1X},
+\texttt{C5Q}, \texttt{C5X}, \texttt{L5Q}, \texttt{L5X}: each band is admitted
+in both tracking families, the pilot-only signal (\texttt{C1C}, \texttt{C5Q})
+and the combined data-plus-pilot signal (\texttt{C1X}, \texttt{C5X}).  The
+clock datum across the two families belongs to the network
+(\dcref{sec:net-sbasis}{the S-basis section of the Network document}).
+
 \paragraph{Broadcast group delay.}
 The broadcast navigation message carries a per-system inter-frequency
-group delay (GPS TGD, Galileo BGD, BeiDou TGD).  It refers each signal's
-code hardware delay to the ionosphere-free combination used to generate
-the broadcast clock.  In the uncombined parameterisation these delays
-are part of the deterministic code bias applied through the bias term of
-\texttt{model/PppModel.cpp}.  They realise $B^\sat_\sigl$ at broadcast
-accuracy and are used when no precise bias product is available.
+group delay (GPS $T_{\mathrm{GD}}$, Galileo BGD, BeiDou TGD).  It refers each
+signal's code hardware delay to the ionosphere-free combination used to
+generate the broadcast clock.  The observation model does not apply it as
+a correction: the broadcast clock of
+\dcref{sec:prod-bclock}{the product-evaluation document} omits it by
+convention, so that it matches the precise-clock baseline, and the
+ionosphere-free combination is free of it.  The satellite code bias of an
+uncombined row is the precise-product value below or an estimated state.
+The delay is used by the network as the level of the satellite
+geometry-free code bias.  For GPS the broadcast clock is the L1/L2
+ionosphere-free clock, so $d_1=\sLight\,T_{\mathrm{GD}}$ and
+$d_2=\gamma\,\sLight\,T_{\mathrm{GD}}$ with $\gamma=f_1^2/f_2^2$, which makes
+the ionosphere-free combination of the two delays exactly zero and the
+geometry-free combination exactly $\sLight\,T_{\mathrm{GD}}$:
+\begin{equation}
+\frac{f_1^{2}d_1-f_2^{2}d_2}{f_1^{2}-f_2^{2}} = 0,
+\qquad
+\frac{d_2-d_1}{\mu_2-\mu_1} = \sLight\,T_{\mathrm{GD}} .
+\label{eq:obsphys-tgd}
+\end{equation}
+With \texttt{network.sat\_gf\_datum} $=$ \texttt{broadcast\_tgd} (both
+reference configurations) one pin row per satellite fixes that
+combination, over the pair of the ionosphere-free pin, at
+$\sLight\,T_{\mathrm{GD}}$ for GPS and at $\sLight\,\mathrm{BGD}(\mathrm{E1},\mathrm{E5a})$ for
+Galileo, and the pin is carried in time
+(\texttt{network.sat\_gf\_datum\_time\_linked}).  The datum is developed in
+\dcref{sec:net-sbasis}{the S-basis section of the Network document}.
 
 \paragraph{Precise OSB / DCB biases.}
 When a precise bias product is loaded, the deterministic correction is the
@@ -573,7 +773,9 @@ t_{\mathrm{start}} \le t \le t_{\mathrm{end}},
 \label{eq:obsphys-bias-window}
 \end{equation}
 with the application gated by
-\texttt{enable\_code\_phase\_bias} (\texttt{model/PppModel.cpp}).  The
+\texttt{model\_corrections.enable\_code\_phase\_bias} (\texttt{model/PppModel.cpp};
+default on, and off in both reference configurations, where the network
+estimates the satellite code biases itself).  The
 bias index (\texttt{GnssCorrections::buildBiasIndex}) excludes two kinds
 of entry.
 
@@ -598,23 +800,30 @@ differencing (\dcref{sec:diff}{the differencing section}).  The
 per-(\sat,\sigl) satellite code bias may be \emph{estimated} as a state
 when no product
 covers it (\texttt{estimation.estimate\_sat\_biases},
-\texttt{measurement/MeasurementModel.cpp}).  The state-allocation gate
+\texttt{addSatelliteCodeBias} of \texttt{measurement/ObservationEquation.cpp}).
+The network estimator estimates the satellite code biases of both
+reference configurations through its own columns
+(\texttt{network.estimate\_sat\_code\_bias}).
+The state-allocation gate
 that prevents estimating a bias the products already supply,
 $\mathrm{hasBIA}(\sat,\sigl)$ from the static product, OR'd with
 $\mathrm{hasSsrCB}(\sat,\sigl)$ from the live stream, is documented with
-the SSR overlay (\dcref{sec:ssr}{the SSR corrections document},
-\Cref{eq:ssr-satbias-gate} there); the present document supplies only the
+the SSR overlay (\dcref{eq:ssr-satbias-gate}{the satellite-bias
+gate of the SSR corrections document}); the present document supplies only the
 \emph{deterministic} half of that OR.
 
 \paragraph{Relation to the SSR overlay.}
 The streamed SSR code/phase OSB (\dcref{sec:ssr}{the SSR corrections
 document}) refines the \emph{same} $B^\sat_\sigl,\,b^\sat_\sigl$ terms in
-real time, summed onto the predicted observable as \texttt{ssr\_bias\_term}
-in \texttt{measurement/MeasurementModel.cpp} alongside the deterministic
-$B_{\mathrm{grp}}$ here.  The SSR bias is a per-(\sat,\sigl) scalar like
+real time, as a known term of the observation equation
+(\texttt{addSsrBias} in \texttt{measurement/ObservationEquation.cpp}, with
+the sign constant \texttt{kSatBiasSign}) alongside the deterministic
+$B_{\mathrm{grp}}$ here.  The network estimator takes no SSR bias term,
+because it estimates the biases as states and importing the same quantity
+would count it twice.  The SSR bias is a per-(\sat,\sigl) scalar like
 \eqref{eq:obsphys-bias-window}.  The SSR \emph{orbit} delta is different:
 it is expressed in a radial/along/cross (RAC) frame
-(\dcref{sec:ssr}{the SSR document}'s \Cref{eq:ssr-rac-frame}), which is
+(\dcref{eq:ssr-rac-frame}{the RAC frame of the SSR document}), which is
 \emph{not} the satellite body frame \eqref{eq:obsphys-bodyframe-matrix}
 of this document.  The RAC frame is built from the broadcast position
 and velocity to express an orbit correction.  The body frame is built

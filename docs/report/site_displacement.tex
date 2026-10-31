@@ -71,8 +71,17 @@ and the summation into the modelled range are in
 \texttt{src/core/model/PppModel.cpp}.  Each term has a config flag
 (\texttt{enable\_solid\_earth\_tide}, \texttt{enable\_ocean\_tide\_loading},
 \texttt{enable\_pole\_tide}, \texttt{enable\_ocean\_pole\_tide},
-\texttt{enable\_atmospheric\_loading}).  With a flag off, that term is
-a zero vector.
+\texttt{enable\_atmospheric\_loading}, all under
+\texttt{model\_corrections}).  With a flag off, that term is
+a zero vector.  The loader defaults are the solid Earth tide, ocean tidal
+loading and the pole tide on, and the ocean pole tide and the atmospheric
+loading off; ocean tidal loading without a coefficient source is a zero
+vector (\Cref{sec:sitedisp-otl-coeffs}).  The real-data reference
+configuration \texttt{config/golden/golden\_field\_refound.json} arms the
+solid tide, the pole tide and ocean tidal loading with its three
+extensions (\Cref{sec:sitedisp-otl}); the simulated-network reference
+configuration \texttt{config/golden/golden\_sim\_refound.json} leaves
+ocean loading off, because the simulated data carry none.
 
 \subsection{Sign convention and projection into the range}
 \label{sec:sitedisp-projection}
@@ -268,21 +277,27 @@ Ocean tidal loading is the elastic response of the crust to the moving
 mass of the ocean tides.  It reaches centimetres near coasts and is
 computed as a harmonic sum over the eleven principal
 constituents M2, S2, N2, K2, K1, O1, P1, Q1, Mf, Mm, Ssa
-(\texttt{OceanTideModel.hpp}, \texttt{OTL\_CONSTITUENT\_NAMES}).  Each
+(\texttt{OceanTideModel.hpp}, \texttt{OTL\_CONSTITUENT\_NAMES}).  No admittance
+interpolation to minor constituents is applied.  Each
 constituent $k$ contributes, on each local component
 $c\in\{\text{up},\text{west},\text{south}\}$,
 \begin{empheq}[box=\fbox]{equation}
-dr_c(t) \;=\; \sum_{k=1}^{11} A_{c,k}\,\cos\!\big(\chi_k(t) - \phi_{c,k}\big),
+dr_c(t) \;=\; \sum_{k=1}^{11} f_k(t)\,A_{c,k}\,\cos\!\big(\chi_k(t) + u_k(t) - \phi_{c,k}\big),
 \label{eq:sitedisp-otl}
 \end{empheq}
 where $A_{c,k}$ is the station amplitude, $\phi_{c,k}$ the Greenwich
 phase lag, and $\chi_k(t)$ the astronomical argument (the
 eleven-constituent accumulation of
-\texttt{OceanTideModel::computeDisplacement}).  The internal
+\texttt{OceanTideModel::computeDisplacement}).  The nodal factor $f_k$
+and nodal phase $u_k$ are exactly $1$ and $0$ unless
+\texttt{model\_corrections.otl\_nodal\_corrections} is set
+(\Cref{sec:sitedisp-otl-nodal}), and the sum is then the original
+evaluation bit for bit.  The internal
 accumulation is in the $(\text{up},\text{west},\text{south})$ frame; the
 conversion to ENU is
 $(E,N,U)=(-\text{west},-\text{south},\text{up})$, then ENU$\to$ECEF
-(same routine).
+(same routine).  A non-finite displacement, or one above \SI{0.5}{\metre},
+is replaced by zero.
 
 \subsubsection{Astronomical argument and the Doodson--Warburg phase bias}
 \label{sec:sitedisp-otl-dw}
@@ -324,15 +339,37 @@ four sources (\texttt{Geometry::loadData}, OTL coefficient block): a
 Station Information File (SIF), a station BLQ block, the global EOT20
 grid, and finally zero.
 
-The SIF gives the best coefficients.  When \texttt{enableStationInfo()}
-is set and the SIF has an entry for the RINEX marker, it supplies
-per-station three-component FES2014b coefficients.  The SIF stores
-Up/East/North amplitude and phase, while the model accumulates in
-Up/West/South (\Cref{eq:sitedisp-otl}).  Since
-$\text{East}=-\text{West}$ and $\text{South}=-\text{North}$, the
-horizontal components keep their amplitude and shift phase by
-$+180^\circ$ (\texttt{d.phase\_west = c.east\_phase + 180},
-\texttt{d.phase\_south = c.north\_phase + 180}).  Up is unchanged.
+The SIF is consulted when \texttt{processing.enable\_station\_info} or
+\texttt{model\_corrections.otl\_from\_sif} is set.  The second setting
+loads the registry for ocean loading alone (from
+\texttt{files.station\_info\_path(s)}, or \texttt{static/sif/} of the data
+root), without arming the a~priori position and the ocean pole tide of the
+station-information subsystem.  A prefix match of the marker is confirmed
+by the receiver's approximate position
+(\dcref{sec:trf-engine}{the engine section of the Reference Frames
+document}).  When the SIF has an OTL block for the marker, it supplies
+per-station three-component FES2014b coefficients, the best of the four
+sources.  The block is generated from BLQ files, whose rows are radial,
+west-positive and south-positive, and stores them under the names UP,
+EAST and NORTH.  The model accumulates in Up/West/South
+(\Cref{eq:sitedisp-otl}).  Two readings of the horizontal columns exist
+(\texttt{SifOtlHorizontal}, \texttt{otlCoefficientsFromSif}).  Under
+\texttt{otl\_from\_sif} the EAST and NORTH columns are the BLQ west and
+south rows and are copied unchanged, as NGS M-PAGES passes them to its
+HARDISP routine.  Two independent checks support that reading
+(\texttt{scripts/otl\_compare/sif\_horizontal\_convention.py} and
+\texttt{sif\_vs\_blq\_rows.py}): the horizontal vector of a station points
+up the gradient of the radial depression measured from its neighbours in
+98\,\% of 568 stations for M2, and the Onsala semidiurnal columns match
+the CSR4.0 west and south rows without a shift.  With
+\texttt{enable\_station\_info} alone, the columns are read as true east
+and north.  Since $\text{East}=-\text{West}$ and
+$\text{South}=-\text{North}$, the horizontal components then keep their
+amplitude and shift phase by $+180^\circ$.  That reading reverses the
+horizontal vector.  It is kept so that runs that armed the subsystem stay
+unchanged.  Up is copied in both readings.  A marker with no OTL block in
+the SIF falls through to the BLQ block and then to the grid, with a
+warning.
 
 Without a SIF entry the coefficients come from a station BLQ block.
 Without that, they are synthesised by bilinear interpolation of the
@@ -366,6 +403,85 @@ the BLQ slot $k$ to the EOT20 index via
 $\{4,13,8,3,2,9,10,11,6,7,15\}$
 (the \texttt{EOT20\_INDICES\_FOR\_BLQ} table in
 \texttt{OceanTideModel::parseEot20Load}).
+
+\subsubsection{Nodal corrections and the UTC Greenwich argument}
+\label{sec:sitedisp-otl-nodal}
+
+Each constituent of \eqref{eq:sitedisp-otl} is one spectral line.  The
+18.6-year regression of the lunar node $\Omega$ splits a lunar line into
+a main line and side lines that differ from it only in the multiplier
+$n_l$ of $\Omega$, and the sum of the lines modulates the amplitude and
+advances the phase of the constituent.  With
+\texttt{model\_corrections.otl\_nodal\_corrections}, constituent $k$ is
+scaled by $f_k$ and advanced by $u_k$ at the node longitude $\Omega$ of
+the epoch,
+\begin{equation}
+f_k\,e^{\,\mathrm{i}\,u_k} \;=\; 1 + \sum_{l\in\text{side lines of }k} r_{k,l}\,e^{-\mathrm{i}\,n_l\,\Omega},
+\label{eq:sitedisp-nodal}
+\end{equation}
+with $r_{k,l}$ the signed ratio of the equilibrium-tide amplitude of a
+side line to that of the main line
+(\texttt{OceanTideModel::nodalFactor}).  The ratios are those of the
+Cartwright--Tayler--Edden development tabulated in the IERS HARDISP
+routine, and the loading admittance is taken as flat across a main line
+and its side lines.  The series reproduces the usual closed forms (for
+M2, $f = 1 - 0.0373\cos\Omega$ and $u = -2.14^\circ\sin\Omega$) to 0.0005
+in $f$ and $0.1^\circ$ in $u$ for M2, N2, K1, O1, Q1 and Mf.
+
+The same setting takes the Greenwich sidereal angle inside $\chi_k$ from
+the UTC Julian Date and not from the GPS-scale date, as HARDISP does.
+GPS time leads UTC by 18\,s, which shifts a semidiurnal argument by
+$0.15^\circ$; $\mathrm{UT1}-\mathrm{UTC}$ (below \SI{0.9}{\second}) is
+neglected, as in HARDISP.  Against HARDISP the evaluation agrees within
+0.2 to \SI{1.9}{\milli\metre} over six hours at four stations
+(\texttt{docs/refound/OTL\_ocean\_tide\_loading\_source\_2026-10-16.md}).
+
+\subsubsection{The net translation of the diurnal loading}
+\label{sec:sitedisp-otl-trans}
+
+The SIF loading is computed relative to the centre of mass of the Earth
+system.  Part of the diurnal loading moves every station by the same
+ECEF displacement, a translation of the origin: a uniform vector fitted
+to the 597 stations of the bundled IGS SIF carries 45\,\% (K1), 40\,\%
+(O1) and 45\,\% (P1) of the east, north and up variance, against 6\,\%
+for the semidiurnal species.  Orbit and clock products whose solution
+absorbs a common network translation do not contain that part, so a user
+working against them does not see it in the data, and applying it moves
+the estimated position by minus the translation.
+\texttt{model\_corrections.otl\_remove\_diurnal\_translation} (with
+\texttt{otl\_from\_sif}) removes it from the coefficients of the four
+diurnal constituents K1, O1, P1 and Q1.  Let $Z_{c,k} = A_{c,k}\,e^{-\mathrm{i}\phi_{c,k}}$
+be the BLQ phasor of component $c$ and $\bm{G}_k$ the fitted translation
+phasor of constituent $k$, one complex number per ECEF axis
+(\texttt{removeOtlDiurnalTranslation}; the table is generated by
+\texttt{scripts/otl\_compare/net\_translation.py}).  The east, north and up
+components of $\bm{G}_k$ at the station are
+$g^{E}_k,g^{N}_k,g^{U}_k$, and
+\begin{equation}
+Z_{\mathrm{up},k}\leftarrow Z_{\mathrm{up},k}-g^{U}_k,
+\qquad
+Z_{\mathrm{west},k}\leftarrow Z_{\mathrm{west},k}+g^{E}_k,
+\qquad
+Z_{\mathrm{south},k}\leftarrow Z_{\mathrm{south},k}+g^{N}_k,
+\label{eq:sitedisp-otl-trans}
+\end{equation}
+since east is minus west and north is minus south.  The semidiurnal and
+long-period constituents are unchanged.  The table holds for the SIF it
+was fitted to, and the function applies to the coefficients that
+\texttt{otlCoefficientsFromSif} returns, not to a BLQ file or the grid.
+On user replays of CODE-based network products the scale at which
+the north component of the translation appears in the data is $-0.11$
+(95\,\% interval $-0.75$ to $+0.27$), against $1.19$ for the rest of the
+model (same document).
+
+\paragraph{Armed state.}
+The real-data reference configuration sets
+\texttt{enable\_ocean\_tide\_loading}, \texttt{otl\_from\_sif},
+\texttt{otl\_nodal\_corrections} and \texttt{otl\_remove\_diurnal\_translation},
+and reads the registry from \texttt{static/sif/} of the data root.  Over a
+whole tidal day the four settings gain \SI{0.8}{\milli\metre} at the test
+station
+(\texttt{docs/refound/BOF\_built\_off\_follow\_through\_2026-10-28.md}).
 
 % ============================================================
 \subsection{Pole tide (rotational deformation, IERS 7.1.4)}

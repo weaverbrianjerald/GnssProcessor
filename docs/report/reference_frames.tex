@@ -36,7 +36,9 @@ rule is:
 its one exception.  \Cref{sec:trf-conv,sec:trf-params} give the sign
 conventions and the published parameter sets.  \Cref{sec:trf-natrf}
 covers NATRF2022.  \Cref{sec:trf-sif,sec:trf-arp} cover the NGS Site
-Information File and the monument-to-ARP offset.  \Cref{sec:trf-corv}
+Information File and the monument-to-ARP offset.
+\Cref{sec:trf-engine} states where the engine reads station coordinates
+and how a weekly SINEX supplies roster coordinates.  \Cref{sec:trf-corv}
 is a numerical example at CORV, and \Cref{sec:trf-defmodel} compares the
 NGS deformation model with station velocities.
 
@@ -68,14 +70,27 @@ Moving a coordinate between epochs requires information about the site:
 \label{eq:trf-propagate}
 \end{equation}
 with $\stavel$ a station velocity, $\bm{d}_{\mathrm{per}}$ the periodic
-(annual $+$ semiannual) terms, and $\bm{d}_{\mathrm{PSD}}$ the
-post-seismic deformation accumulated since the earthquakes.  The reference
+(annual $+$ semiannual) terms of one block (\Cref{sec:trf-sif}), and
+$\bm{d}_{\mathrm{PSD}}$ the post-seismic deformation accumulated since
+the earthquakes.  The reference epoch $\refep$ is that of the selected
+occupation record.  The reference
 coordinate $\bm{x}(\refep)$ is the model position with
 $\bm{d}_{\mathrm{PSD}}(\refep)$ already in it (the SIF coordinates at
 $2020.0$ exceed the ITRF2020 secular positions by that amount), so only the
-change since the reference epoch is added.
-\texttt{resolveStationCoordinate} and
-\texttt{tools/sif\_propagate} implement this form.  The three site terms
+change since the reference epoch is added.  The post-seismic term is the
+sum over earthquakes $e$ of the logarithmic and exponential relaxations
+since the event epoch $t_e$, evaluated per local east, north and up
+component and zero for $t \le t_e$:
+\begin{equation}
+\bm{d}_{\mathrm{PSD}}(t) \;=\; \sum_{e}\Big[\sum_{j}A^{\log}_{e,j}\,
+   \ln\!\Big(1+\frac{t-t_e}{\tau^{\log}_{e,j}}\Big)
+ \;+\;\sum_{j}A^{\exp}_{e,j}\Big(1-e^{-(t-t_e)/\tau^{\exp}_{e,j}}\Big)\Big].
+\label{eq:trf-psd}
+\end{equation}
+The bracketed change in \eqref{eq:trf-propagate} is zero at $\refep$, and
+an event after $\refep$ enters in full.
+\texttt{resolveStation\allowbreak Coordinate} and
+\texttt{tools/sif\_\allowbreak propagate} implement this form.  The three site terms
 are observed or modelled.  A transformation parameter set does not
 contain them, so a transformation that appears to handle an epoch
 change is using the rigid-plate approximation of \Cref{sec:trf-plate}.
@@ -319,8 +334,10 @@ PROJ 9.5.1 has no NATRF2022 CRS, so the caller must apply
 
 The NGS Site Information File (SIF) gives ITRF2020 coordinates at epoch
 $2020.0$ from the MYCS3 solution.  A station can have several
-\textbf{occupation} windows, each with its own reference coordinate and
-velocity.  An occupation boundary is an equipment change or a known
+\textbf{occupation} windows, each with its own reference coordinate,
+velocity and reference epoch ($2020.0$ in the bundled files, except four
+flagged site-log records at $2010.0$;
+\texttt{tools/sif\_propagate/README.md}).  An occupation boundary is an equipment change or a known
 offset, so the coordinate series is discontinuous there.  Two
 consequences follow.
 
@@ -335,7 +352,10 @@ $2010.0$.  This recipe reproduces the datasheet to $0.4$~mm at CORV
 
 \paragraph{The engine convention.}  \texttt{resolveStationCoordinate},
 and \texttt{tools/sif\_propagate} by default, select the occupation that
-\emph{covers the requested epoch}.  A coordinate for an observation
+\emph{covers the requested epoch}; when no usable window covers it, the
+window whose midpoint is nearest is extrapolated and the result says
+how far and whether an antenna or receiver change lies in the gap.  A
+coordinate for an observation
 session must describe the equipment installed at that time.  At CORV a
 request for $2010.0$ uses the 1998--2019 occupation and differs from the
 datasheet by $32.8$~mm.  Of that, $\delta U = -32.4$~mm is the jump at
@@ -348,9 +368,36 @@ is \emph{not} a velocity.  It includes the equipment offset, which is
 often the larger part.
 \end{remark}
 
+\paragraph{The seasonal term is one block, chosen by the epoch.}
+A station carries periodic blocks, each with a window, a reference epoch
+$t_b$ and sinusoids of periods $P_f$ (annual and semiannual) in ECEF
+$x$, $y$ and $z$.  The
+seasonal displacement is that of a single block, chosen by the epoch
+alone and not by the occupation:
+\begin{equation}
+\bm{d}_{\mathrm{per}}(t) \;=\; \sum_{f}\Big[\bm{A}^{\cos}_{f}\cos\big(\omega_f(t-t_b)\big)
+  + \bm{A}^{\sin}_{f}\sin\big(\omega_f(t-t_b)\big)\Big],
+\qquad \omega_f = \frac{2\pi}{P_f}.
+\label{eq:trf-periodic}
+\end{equation}
+The blocks are taken in start order.  The first block whose window
+covers the epoch applies; before the first window, the first block; at
+or after the end of the last window, the last block; inside a gap, the
+block that ended last.  This is the rule of NGS M-PAGES v1.2
+(\texttt{PeriodicMotion::computeDisplacement}), implemented by
+\texttt{selectPeriodicBlock}.  Overlapping windows are not summed, and
+the file order of the blocks is irrelevant.  Outside its window the
+block continues on the phase of its own reference epoch, so the seasonal
+term does not fall to zero where the linear term goes on.  The rule
+replaced a sum over the covering blocks, under which a station whose
+last segment had closed lost its seasonal term at once, a step of up to
+several millimetres.  The result carries which case applied
+(\texttt{SifPeriodicReach}: covered, before first, after last, in gap),
+the signed distance outside the block, and its window.
+
 \paragraph{Periodic terms are a constant offset at whole-year epochs.}
-The SIF annual and semiannual terms are referenced to the station's
-reference epoch.  A whole number of years from that epoch,
+The SIF annual and semiannual terms are referenced to the reference
+epoch of the block.  A whole number of years from that epoch,
 $\cos = 1$ and $\sin = 0$, so the terms add a fixed vector: $0.65$~mm at
 CORV, $1.73$~mm at NEWP, $3.18$~mm at CHZZ.  The offset cancels in a
 difference between two such epochs but not in an absolute comparison.
@@ -379,6 +426,65 @@ At CORV, $\delta H = 1.521$~m, and both comparisons close:
 Omitting this step at CORV gives an obvious $1.5$~m height error.  The
 harder case is a site with an eccentricity of a few centimetres, where
 the error is small enough to go unnoticed.
+
+% ============================================================
+\subsection{Station coordinates in the engine}\label{sec:trf-engine}
+
+\paragraph{The SIF registry and the single-receiver a~priori.}
+The SIF subsystem is off by default (\texttt{processing.enable\_station\_info}).
+The registry is read from \texttt{files.station\_info\_path} or
+\texttt{files.station\_info\_paths}, or, when neither is set, from every
+JSON file under \texttt{static/sif/} of the data root.  A station is
+found by its nine-character identifier, its DOMES number or its
+four-character prefix.  A prefix match is a candidate only: it is
+accepted when the receiver's approximate position lies within
+\SI{10}{\kilo\metre} of the candidate, or, without a position, for a bare
+four-character key
+(\texttt{StationInfoFile::find}, \texttt{SIF\_MAX\_PREFIX\_DISTANCE\_M}).
+With the subsystem on and the marker resolved, the single-receiver
+a~priori position is the SIF coordinate at the first observation epoch,
+with the periodic and post-seismic terms, reduced from the monument to
+the ARP by \texttt{reduceSifCoordinateToArp}: through the RINEX
+\texttt{ANTENNA: DELTA H/E/N} record when the header carries one, and
+otherwise through the \texttt{ARP\_MINUS\_GRP\_ENU} of the SIF antenna
+window covering the epoch.  A disagreement of the two eccentricities
+above \SI{1}{\milli\metre} is reported and the RINEX value is applied.  A
+configured reference position takes precedence over the SIF seed.  The
+reduction is the one of \dcref{sec:frame-arp}{the marker/ARP section of
+the Coordinate Frames document}.
+
+\paragraph{The network roster.}
+With \texttt{network.use\_sif\_coordinates}, a roster station that has no
+\texttt{position\_ecef} takes the SIF coordinate at the run date
+(\texttt{data\_download.year} and \texttt{doy}), through
+\texttt{resolveRosterCoordinate}.  An explicit \texttt{position\_ecef}
+always wins.  The declared coordinate epoch defaults to the propagation
+date.  An extrapolated occupation and an extrapolated periodic block are
+each reported per station, so a coordinate that is held fixed for a run
+carries its own warning when it rests on a window that closed.  The
+resolved roster coordinate is a monument coordinate and takes the
+reduction of \texttt{network.station\_marker\_to\_arp} like any other.
+
+\paragraph{Roster coordinates from an IGS weekly SINEX.}
+No engine setting reads a SINEX.  A weekly combined SINEX holds one
+marker position per station, at the middle of the week, and no velocity
+rows.  \texttt{scripts/roster\_from\_sinex.py} reads it and writes, for
+every roster station the file holds, the marker coordinate of the
+solution that covers the epoch.  A station the file lacks keeps its
+configured coordinate and is named, and a SINEX position more than
+\SI{1}{\kilo\metre} from the configured one is refused as a reused
+station code.  \texttt{scripts/rapid\_arm.py make -{}-roster} splices
+the result into \texttt{network.stations[].position\_ecef} of a case
+configuration, so the engine sees ordinary configured coordinates.  The
+SIF evaluator and the weekly SINEX agree within \SI{3.1}{\milli\metre}
+per horizontal component at seven of the eight stations of the real-data roster
+with an active post-seismic term
+(\texttt{tools/sif\_propagate/README.md}).  Replacing the roster by its
+SINEX coordinates moved the emitted satellite clocks by 5 to
+\SI{7}{\milli\metre} RMS and no test station by more than
+\SI{2.4}{\milli\metre}
+(\texttt{docs/refound/SNXB\_sinex\_roster\_arms\_2026-10-19.md}); nothing is
+armed, and a coordinate-source setting was not built.
 
 % ============================================================
 \subsection{Worked example: CORV}\label{sec:trf-corv}

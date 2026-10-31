@@ -41,6 +41,12 @@ the machinery that provides them:
 \end{itemize}
 None of this is filtering.  It is what makes the filter's local-linear
 assumptions valid at the first epoch and after every discontinuity.
+The first-epoch seeds are pure functions of the observation equation
+(\dcref{sec:obs-shared}{the shared observation equation of the Foundations
+document}), written in \texttt{measurement/Seeds.cpp}.  The single-receiver model
+applies them to its \texttt{StateManager}
+(\texttt{measurement/MeasurementModelSeeds.cpp}) and the network estimator to a
+station's parameter set (\texttt{network/assembly/LocalBirth.cpp}).
 
 The lossless covariance re-referencing (the
 $\stransform\,\covM\,\stransform^\Tr$ S\nobreakdash-transform that moves
@@ -133,8 +139,8 @@ filter uses only the \emph{clock} from this result.
 \texttt{Application::handleWlsSeeding} writes $\sLight\,\mathrm{d}t_\rx$
 into the receiver-clock state when one of three triggers fires: the
 first epoch, a data gap, or a clock \emph{jump} of at least
-\texttt{kClockJumpThreshSec}~$=0.5\,\mathrm{ms}$ between the WLS and
-filter clock estimates.  In practice the jump is the most common
+\texttt{kClockJumpThreshSec}~$=\SI{50}{\micro\second}$ (about $\SI{15}{km}$) between
+the WLS and filter clock estimates.  In practice the jump is the most common
 trigger.
 
 The position, the zenith wet delay, and the covariance
@@ -142,7 +148,7 @@ The position, the zenith wet delay, and the covariance
 seeds.  The position prior is the RINEX-header
 \texttt{approx\_position} plus the antenna offset.  The WLS position
 re-seeds the filter only on a kinematic (non-IMU) cold start after a
-long gap (\texttt{Application::handleGap}).  The ZWD estimate goes only
+data gap (\texttt{Application::handleGap}).  The ZWD estimate goes only
 to a trace-CSV column, and nothing in the filter reads the formal
 covariance.  The whole seeding path is skipped under BSSD, where the
 filter has no receiver-clock state (\texttt{handleWlsSeeding} returns
@@ -167,7 +173,7 @@ a kinematic cold start, the position.  It does not touch the
 receiver code bias, per-satellite ionosphere, and carrier ambiguity.
 Each of these is created empty and must be seeded from the measurement
 residuals.  The common idea
-(\texttt{src/core/measurement/StateInitializer.cpp}) is that each state
+(\texttt{src/core/measurement/Seeds.cpp}) is that each state
 is what remains in a particular \emph{difference} of residuals after all
 modelled terms are removed.  The seed is that difference, taken as a
 median over satellites for robustness.
@@ -181,11 +187,17 @@ The shared prefit residual is
 \label{eq:estinfra-rawres}
 \end{equation}
 the observation minus every term the model can already account for, evaluated
-at the current state (\texttt{StateInitializer::computeRawResidual}, which
-also forms the tropospheric gradient projection
-$g_{\mathrm{trop}} = m_g(g_N\cos\mathrm{az} + g_E\sin\mathrm{az})$).  The
-five \emph{differential} seeds (a)--(e) below are
-differences of \eqref{eq:estinfra-rawres}; a sixth, network-only pre-seed~(f)
+at the current state (\texttt{rawResidual} in \texttt{measurement/Seeds.cpp}).
+The residual is the equation of \dcref{sec:obs-shared}{the shared observation
+equation} built with a mask of the terms known when the state is born, and
+its terms are subtracted in a fixed order: the modelled value, the receiver
+clock, the wet troposphere, the inter-system bias, the gradient projection
+$g_{\mathrm{trop}} = m_g(g_N\cos\mathrm{az} + g_E\sin\mathrm{az})$, the slant
+ionosphere (with the sign $+$ on a code row and $-$ on a phase row), the
+receiver code bias and the satellite code bias.  The
+four \emph{differential} seeds (a)--(d) below are
+differences of \eqref{eq:estinfra-rawres}, the ambiguity seed~(e) is the
+phase residual with its own mask, and a sixth pre-seed~(f)
 anchors the receiver clock itself.
 
 \paragraph{(a) Inter-system bias.}  Each non-GPS constellation $g$ carries a
@@ -199,11 +211,12 @@ residual of the constellation minus the median GPS residual:
           - \medop_{\sat\in\mathrm{GPS}}\ \coderes^{\sat}
 \label{eq:estinfra-isb}
 \end{empheq}
-(\texttt{StateInitializer::initializeInterSystemBiases}).  Medians are used
+(\texttt{seedIsb}, applied by \texttt{MeasurementModel::initializeInterSystemBiases}
+and by the station birth).  Medians are used
 throughout, so one gross code outlier cannot spoil the seed.  A guard
-requires at least one GPS code observation at the seeding epoch (the
-GPS-median guard in the same routine).  If GPS is absent the routine
-returns \texttt{false} and \emph{tries again at the next epoch}.  It does
+requires at least one GPS code observation, the time reference, at the seeding
+epoch.  If GPS is absent the seed reports itself unsettled and
+\emph{is tried again at the next epoch}.  It does
 not mark the ISB states as initialised against an arbitrary datum.
 Without the guard, whichever constellation is acquired first would
 become the implicit zero, and a GPS satellite rising later would then
@@ -218,11 +231,12 @@ observation of the code-minus-phase residual:
 \pclk = \medop_{\sat}\ \bigl(\coderes^{\sat}_{\code} - \coderes^{\sat}_{\phaseo}\bigr)
 \label{eq:estinfra-pclk}
 \end{equation}
-(\texttt{StateInitializer::initializePhaseClockOffset}).  The covariance of
+(\texttt{seedPhaseClock}, applied by
+\texttt{MeasurementModel::initializePhaseClockOffset}).  The covariance of
 the seed is set from the code noise.  It is tighter than the default
 initial standard deviation, and it does not depend on the number $n$ of
-differences in the median (the covariance-seeding code at the end of
-that routine):
+differences in the median (the covariance seeding in
+\texttt{initializePhaseClockOffset}):
 \begin{equation}
 \sigma_{\pclk} = \max\!\Bigl(\tfrac{\sigma_{\code}}{\sqrt{n}},\ \sigma_{\code}\Bigr),
 \qquad
@@ -235,7 +249,8 @@ $\sigma_{\code}/\sqrt{n}\le\sigma_{\code}$ for every $n\ge1$, the $\max$
 always selects $\sigma_{\code}$, and the seeded variance is
 $\sigma_{\code}^{2}$ whatever the value of $n$.  The seed is floored at
 the noise of a single code measurement and does not improve as
-$1/\sqrt{n}$.
+$1/\sqrt{n}$.  The network estimator has no phase clock and does not form
+this seed.
 
 \paragraph{(c) Uncombined receiver code bias / IFB.}  In the uncombined
 PPP-RTK model each non-reference code band carries a receiver differential
@@ -254,10 +269,13 @@ coefficients gives
        {\biascoef_j - \biascoef_{\mathrm{ref}}}
 \label{eq:estinfra-codebias}
 \end{empheq}
-(\texttt{StateInitializer::initializeCodeBiases}), median-aggregated over satellites and
+(\texttt{seedCodeBias}), median-aggregated over satellites and
 subject to the same $\lvert\widehat{b}\rvert > 200\,\mathrm{m}$ reject as the
-ionosphere seed below.  The Jacobian coefficient $\biascoef_\sigl$ depends on
-the bias parameterisation (\texttt{StateInitializer::resolveReceiverBias}):
+ionosphere seed below; $\ionoest^\sat$ is the current value of the satellite's
+slant-ionosphere state.  After a warm resume of the network estimator, a key
+that the installed linearisation points cover takes the installed value in
+place of the median (\texttt{StationParams::rx\_cb\_restore}).  The Jacobian coefficient $\biascoef_\sigl$ depends on
+the bias parameterisation (\texttt{ReceiverBiasResolver::resolveReceiverBias}):
 for a pure
 IFB state it is the unit coefficient $\biascoef = 1$, whereas for a
 geometry-free / ionosphere-free DCB state against reference bands of
@@ -298,7 +316,7 @@ the seed is
        {\alpha_1 - \alpha_2}
 \label{eq:estinfra-iono}
 \end{empheq}
-(\texttt{StateInitializer::computeIonosphereSeed}), where $\code_k^{\mathrm{mod}}$ is the
+(\texttt{seedIonosphere}), where $\code_k^{\mathrm{mod}}$ is the
 modelled pseudorange on band $k$.  Two guards apply.  The denominator
 must satisfy $\lvert\alpha_1-\alpha_2\rvert \ge 10^{-6}$.  The seed is
 rejected unless it is finite and
@@ -313,7 +331,7 @@ entry exists on the band, with the zero-valued BeiDou C2I/C6I entries
 treated as missing.  The second is the coverage \emph{application} check
 (\texttt{bias\_coverage\_requires\_apply}).  It skips the seed when an
 entry is loaded but not \emph{applied} to $(P-\mathrm{mod})$, because the
-raw hardware bias is then still present.  The network producer uses
+raw hardware bias is then still present.  The network estimator uses
 presence only.  The application check is needed because the failure it
 prevents, a zero-valued BeiDou entry that injects
 $30$--$60\,\mathrm{m}$, is well below the $200\,\mathrm{m}$ reject and
@@ -323,8 +341,8 @@ would pass it.
 integer resolution (\dcref{sec:ar}{the ambiguity-resolution document}) is
 the part of the \emph{phase} residual that remains after every other
 modelled and estimated term is removed
-(\texttt{StateManager::computeAmbiguitySeed}, the routine that every
-phase-seeding call site uses),
+(\texttt{seedAmbiguity}, the routine that every phase-seeding call site
+uses),
 \begin{equation}
 \widehat{N}^\sat_{\rx,\sigl}
 = \phaseo^\sat_{\rx,\sigl} - \mathrm{modelled}
@@ -351,23 +369,27 @@ bias cancels under between-satellite differencing.
 \paragraph{(f) Cold receiver-clock pre-seed (network path).}  Seeds (a)--(e)
 assume the receiver clock has already been solved.  That holds on the PPP
 path, where the WLS clock seed of \Cref{sec:estinfra-wls} runs first.
-The network producer does not run the WLS seed, so nothing solves the
+The network estimator does not run the WLS seed, so nothing solves the
 receiver clock before the ambiguity of (e) is seeded.
-\texttt{computeAmbiguitySeed} then subtracts a clock term of zero, and
+\texttt{seedAmbiguity} then subtracts a clock term of zero, and
 the whole free-running receiver-clock offset goes into every cold
 ambiguity seed.
 
-The opt-in \texttt{seedColdReceiverClock}
-(\texttt{network.cold\_clock\_seed}, default off) fixes this.  It writes
-the median GPS code residual into $x(\mathrm{clock})$.  This is the
-\texttt{gps\_median} that ISB seed (a) computes and discards.  The seed
+The opt-in \texttt{seedColdClock}
+(\texttt{network.cold\_clock\_seed}, loader default off, armed in both
+reference configurations) fixes this.  It writes
+the median GPS code residual into the clock parameter, the median that ISB
+seed (a) forms for the time reference.  The seed
 overwrites only a \emph{cold} clock.  Any
 $\lvert x(\mathrm{clock})\rvert > \texttt{kColdClockEpsilonM} = 10^{-6}\,\mathrm{m}$
 is treated as already solved and is left unchanged.  When the epoch has
-no GPS code observation the routine returns \texttt{false}, so it tries
+no GPS code observation the seed reports no reference, so it tries
 again at the next epoch and does \emph{not} mark the clock as seeded.
-This matches the GPS-reference contract of seed (a)
-(\texttt{StateInitializer::seedColdReceiverClock}).
+This matches the GPS-reference contract of seed (a).  A station's birth
+applies it once, after the slant ionospheres and before the ambiguities
+(\texttt{seedColdClockOnce}, \texttt{network/assembly/LocalBirth.cpp}); the
+single-receiver model applies it in the same place of its state pre-pass
+(\texttt{MeasurementModel::preseedColdReceiverClock}).
 
 % ============================================================
 \subsection{BSSD pivot management}

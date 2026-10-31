@@ -246,6 +246,12 @@ def gen_slip_detectors() -> tuple[str, int]:
 
     kinds = enum_members(islip, "SlipDetectorKind")
 
+    # The JSON key is the one the loader reads, which can differ from the field
+    # name: `cycle_slip_.ifp = jval<bool>(json, "estimation.cycle_slip.if", ...)`.
+    json_key = dict(re.findall(
+        r'cycle_slip_\.(\w+)\s*=\s*jval<bool>\(\s*json,\s*"([^"]+)"',
+        read(SRC["config_load"])))
+
     # Which kinds have a creator registered? -> the creators() table body.
     m = re.search(r"creators\(\)\s*\{", reg) or re.search(r"creators\(\)", reg)
     registered = set()
@@ -262,7 +268,9 @@ def gen_slip_detectors() -> tuple[str, int]:
     for name, doc in kinds:
         field, sigma_field = SLIP_FIELD.get(name, (None, None))
         flag = (
-            r"\texttt{estimation.cycle\_slip." + tex_escape(field) + "}"
+            r"\texttt{"
+            + tex_escape(json_key.get(field, "estimation.cycle_slip." + field))
+            + "}"
             if field
             else "--"
         )

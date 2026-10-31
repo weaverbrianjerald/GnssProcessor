@@ -260,23 +260,34 @@ the closed-loop consumer truth all take the marker through
 \eqref{eq:frame-marker2arp}, some calling
 \texttt{Coordinates::markerToArp} directly, others through the accessor
 \texttt{RinexParser::getArpPositionXyz} that pairs the two header
-fields.  A coordinate supplied
+fields.  A coordinate resolved from a Station Information File is a
+monument coordinate too and is reduced through the same function
+(\dcref{sec:trf-sif}{the SIF section of the Reference Frames document}).
+A coordinate supplied
 \emph{directly in the configuration} is not reduced: it is taken at face
 value, on the stated policy that the user owns its reference point.  So
 the baseline \emph{reference} coordinate is used as given while the
 rover a~priori read from its header is reduced, an asymmetry inside
-one mode, and, more consequentially, the network producer's station
-coordinates (\texttt{StationConfig::position\_ecef}, optionally
-SIF-resolved under \texttt{network.use\_sif\_coordinates}) are used as
-given while being held \emph{fixed}, their three position columns
-dropped from the normal equations.  A monument-referenced coordinate
-there is therefore not absorbed by a position state; it survives into
-the residuals and hence into the estimated clocks, biases, and
-ionosphere.  A zero or absent eccentricity makes
-\eqref{eq:frame-marker2arp} an exact, bitwise no-op, which is what keeps
-header-less RTCM/SBF streams and \texttt{0/0/0} stations untouched; the
-ordering, sign, no-op, and round-trip properties are pinned by the
-\texttt{AntennaEccentricityTest} suite.
+one mode.  The network estimator's station coordinates
+(\texttt{StationConfig::position\_ecef}, optionally
+SIF-resolved under \texttt{network.use\_sif\_coordinates}) are monument
+coordinates held \emph{fixed}, their three position columns
+dropped from the normal equations.  With
+\texttt{network.station\_marker\_to\_arp} (default off; on in both
+reference configurations, \texttt{config/golden/golden\_field\_refound.json}
+and \texttt{golden\_sim\_refound.json}) the network setup
+reduces each roster coordinate through \eqref{eq:frame-marker2arp} once,
+with the station's own RINEX eccentricity, before the coordinate reaches
+the state, the model or any geometry; the test station's truth
+coordinate takes the same function.  A station whose header carries no
+eccentricity record is left unchanged and named in a warning.  With the
+setting off, a monument-referenced coordinate is not absorbed by a
+position state; it survives into the residuals and hence into the
+estimated clocks, biases, and ionosphere.  A zero or absent eccentricity
+makes \eqref{eq:frame-marker2arp} an exact, bitwise no-op, which is what
+keeps header-less RTCM/SBF streams and \texttt{0/0/0} stations
+untouched; the ordering, sign, no-op, and round-trip properties are
+pinned by the \texttt{AntennaEccentricityTest} suite.
 
 % ============================================================
 \subsection{GNSS time scales and the GPS reference epoch}
@@ -343,6 +354,27 @@ have the leap seconds at that epoch added to reach GPS time
 (\texttt{TimeUtils::gregorianToGpsTime}).  Confusing the two produces
 whole-second timing errors.
 
+\paragraph{Elapsed time and the start-offset comparison.}
+Epoch times come from a calendar-to-GPS conversion that carries about
+$2\times10^{-5}$\,s of double-precision residue, and a continuous GPS
+second count near $1.4\times10^{9}$ resolves only $2.4\times10^{-7}$\,s.
+Both are far below a millisecond and far below any epoch schedule, so
+elapsed time between two epochs is taken on a whole-millisecond grid
+(\texttt{TimeUtils::elapsedMs}):
+\begin{equation}
+\Delta_{\mathrm{ms}} \;=\; \operatorname{round}\!\big(10^{3}\,(T_{\mathrm{later}}-T_{\mathrm{earlier}})\big).
+\label{eq:frame-elapsed-ms}
+\end{equation}
+The start-offset seek (\texttt{network.start\_offset\_hours}) and the
+banding of the elapsed hour read it.  An epoch has reached an offset $o$
+when $\Delta_{\mathrm{ms}} \ge \operatorname{round}(10^{3}\,o)$
+(\texttt{TimeUtils::offsetReached}).  An offset that lies on an epoch (a
+bare hour on a 30\,s schedule) is therefore reached by that epoch, where
+a floating-point comparison reached it one epoch late whenever the
+residue was negative.  An offset between two epochs (a half-epoch
+back-off) selects the same epoch under either comparison, because no
+epoch lies within a millisecond of it.
+
 % ============================================================
 \subsection{Leap seconds and per-system dispatch}
 \label{sec:frame-leap}
@@ -350,19 +382,33 @@ whole-second timing errors.
 
 UTC is tied to GPS by the historical table of leap-second insertions.
 The engine stores the table as $\big(\mathrm{JD}_k,\,\leapgu(k)\big)$
-pairs, the GPS$-$UTC offset that takes effect at each insertion
-boundary, the first row being the GPS epoch itself with offset zero
-(\texttt{src/core/math/TimeUtils.cpp}, \texttt{LEAP\_TABLE}).  A query resolves the
-offset by a reverse scan that returns the offset of the latest boundary
-not after the epoch:
+pairs: the Julian Date of 0\,h \emph{UTC} on the insertion day and the
+GPS$-$UTC offset that holds from then on, the first row being the GPS
+epoch itself with offset zero
+(\texttt{src/core/math/TimeUtils.cpp}, \texttt{LEAP\_TABLE}).  The
+dates are UTC, so a lookup compares on the scale of its argument.  A
+date already on UTC compares directly, and a reverse scan returns the
+offset of the latest boundary not after the epoch:
 \begin{equation}
-\leapgu(\mathrm{JD}) = \leapgu(k^{\star}),
+\leapgu(\mathrm{JD}_{\mathrm{UTC}}) = \leapgu(k^{\star}),
 \qquad
-k^{\star} = \max\{\,k : \mathrm{JD}_k \le \mathrm{JD}\,\},
+k^{\star} = \max\{\,k : \mathrm{JD}_k \le \mathrm{JD}_{\mathrm{UTC}}\,\},
 \label{eq:frame-leaplookup}
 \end{equation}
 falling back to zero before the epoch
-(\texttt{TimeUtils::leapSecondsGpsUtc}).  TAI$-$UTC is then
+(\texttt{TimeUtils::leapSecondsAtUtcJd}, used by the calendar UTC-to-GPS
+conversion \texttt{TimeUtils::gregorianToGpsTime}).  An instant on the
+GPS scale is moved onto UTC before the comparison.  A new offset applies
+when UTC reaches 0\,h of the insertion date, and that instant lies
+$\leapgu(k)$ seconds later on the GPS clock, so
+\begin{equation}
+k^{\star} = \max\Big\{\,k : \mathrm{JD}_{\mathrm{GPS}}
+   - \tfrac{\leapgu(k)}{86400} \;\ge\; \mathrm{JD}_k\Big\}
+\label{eq:frame-leaplookup-gps}
+\end{equation}
+(\texttt{TimeUtils::leapSecondsGpsUtc}).  Comparing a GPS-scale date with
+the UTC table directly would apply each offset early by its own value
+(18\,s at the 2017-01-01 insertion).  TAI$-$UTC is then
 $\leapgu + 19\;\mathrm{s}$ from \eqref{eq:frame-tai-tt}
 (\texttt{TimeUtils::leapSecondsTaiUtc}).  The lookup must depend on the
 epoch.  A leap second was inserted between 2005 and 2010, so the same
@@ -386,15 +432,10 @@ a live binary without a rebuild: \texttt{setLeapSecondsOverride}, driven
 by the config key \texttt{realtime.leap\_seconds}
 (\texttt{src/core/config/GnssConfigLoad.cpp}), replaces it at real-time
 startup.  The override deliberately touches \emph{only} the wall-clock
-path; the epoch-dependent \eqref{eq:frame-leaplookup} lookups are left
-alone, since they are correct at every historical epoch outside the
-insertion instants themselves\footnote{The comparison in
-\texttt{TimeUtils::leapSecondsGpsUtc} is made on the GPS scale against
-boundary Julian Dates tabulated at the \emph{UTC} insertion instant, so
-the offset advances $\leapgu$ seconds early, a known, deferred
-discrepancy confined to a $\leapgu$-second window at each boundary
-(18\,s at the most recent insertion, 2017-01-01).} and an override
-there would corrupt rather than update them.
+path; the epoch-dependent \eqref{eq:frame-leaplookup} and
+\eqref{eq:frame-leaplookup-gps} lookups are left alone, since they are
+correct at every historical epoch, the insertion instants included, and
+an override there would corrupt rather than update them.
 
 \paragraph{Per-constellation Gregorian dispatch.}
 The four supported time systems differ only in how a RINEX/broadcast
@@ -413,7 +454,8 @@ tag (\texttt{TimeUtils::GnssTimeFromDate}):
     (\texttt{TimeUtils::GnssTimeFromDate}, BeiDou branch).
   \item \textbf{GLONASS}: the RINEX timestamp is UTC; the full leap
     correction of \eqref{eq:frame-leaplookup} is applied to bring it onto
-    GPS time (\texttt{TimeUtils::GnssTimeFromDate}, GLONASS branch).
+    GPS time (\texttt{TimeUtils::GnssTimeFromDate}, GLONASS branch, through
+    \texttt{TimeUtils::gregorianToGpsTime}).
 \end{itemize}
 GPS and Galileo therefore carry no leap correction, BeiDou a fixed
 $14\;\mathrm{s}$, and GLONASS the full epoch-dependent leap count.  Each
@@ -445,7 +487,8 @@ $D = 86\,400\;\mathrm{s}$, half-day $D/2$, and Moscow offset
 $M = 3\times3600\;\mathrm{s}$:
 \begin{enumerate}
   \item Convert the anchor GPS seconds to UTC by subtracting the leap
-    count at that epoch, $\,t_{\mathrm{UTC}} = t_{\mathrm{anchor}} -
+    count at that epoch (the GPS-scale lookup
+    \eqref{eq:frame-leaplookup-gps}), $\,t_{\mathrm{UTC}} = t_{\mathrm{anchor}} -
     \leapgu$, then shift into the Moscow-day frame
     $t_{\mathrm M} = t_{\mathrm{UTC}} + M$ and locate that day's midnight
     $t_0 = \lfloor t_{\mathrm M}/D\rfloor\,D$, giving the anchor's
@@ -740,7 +783,10 @@ Moon directions carry the precession accumulated since J2000 a second time
 \texttt{estimation.enable\_sun\_frame\_correction} (default off,
 byte-identical when off) de-precesses the of-date vectors to J2000 before
 the rotation and removes that error (\texttt{Planetary::precessionIau1976}).
-A non-finite guard substitutes a nominal 1\,AU / mean-lunar-distance
+The same setting makes the satellite attitude model form the orbit normal
+from the inertial velocity
+(\dcref{sec:obsphys-attitude}{the attitude section of the Observation
+Physics document}).  A non-finite guard substitutes a nominal 1\,AU / mean-lunar-distance
 fallback rather than propagate a NaN into the correction stack (the
 output-validation tail of \texttt{Planetary::computeSunMoonPosition}).
 

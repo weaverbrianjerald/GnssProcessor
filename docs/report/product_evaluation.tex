@@ -569,6 +569,39 @@ scale.  BeiDou's BDT $t_{oe}$ is first converted to GPS seconds
 (\texttt{toeGpsContinuous}).  Without that, every BeiDou record would
 appear $\sim\!1356$ weeks old and be skipped.
 
+\paragraph{Fit window.}
+A held record is evaluated only within a per-system limit on
+$\lvert t-t_{\mathrm{oe}}\rvert$, about twice the broadcast fit interval of
+the system and longest for GPS and QZSS, shortest for GLONASS.  Beyond it
+the satellite is skipped and the caller keeps its prior value, so that a
+stale record never produces a wrong position
+(\texttt{LiveEphemerisStore::withinFitWindow}).
+
+\paragraph{Selection by transmission time.}
+With \texttt{network.apriori\_source} $=$ \texttt{sp3\_brdc\_clock} (SP3
+orbits, the broadcast clock, no CLK product; default \texttt{sp3}, not set by
+the reference configurations) the record of satellite $s$ at epoch $t$ is
+the latest healthy one whose transmission time is at or before $t$
+(\texttt{network.brdc\_select} $=$ \texttt{ttom}).  The a~priori clock is
+kept continuous across every cut-over by an offset table,
+\begin{equation}
+a_s(t) = \mathrm{brdc}_k(t) + O_{s,k},
+\qquad
+O_{s,k} = O_{s,k-1} + \mathrm{brdc}_{k-1}(t_{\mathrm{sw}}) - \mathrm{brdc}_{k}(t_{\mathrm{sw}}),
+\label{eq:prod-brdc-offset}
+\end{equation}
+with $t_{\mathrm{sw}}$ the first 30\,s node at or after the transmission
+time of record $k$ and $\mathrm{brdc}_k$ the polynomial
+\eqref{eq:prod-bclock-poly}, so the estimator sees no step.  The emitted
+clock refers to the stamped record, $C_{\mathrm{prod}}=C_{\mathrm{est}}+O_{s,k}$
+with \texttt{iode}~$=k$, and a user holding record $k$ reconstructs
+$\mathrm{brdc}_k(t)+C_{\mathrm{prod}}=a_s(t)+C_{\mathrm{est}}$
+(\texttt{products/BrdcClockApriori.hpp}).  The store is fed in
+transmission order (\texttt{LiveEphemerisStore::insertTransmitted}): the
+record replaces the current one whatever its $t_{\mathrm{oe}}$, because the
+freshest-$t_{\mathrm{oe}}$ rule above rejects a re-upload whose
+$t_{\mathrm{oe}}$ is earlier than that of the held record.
+
 \paragraph{IGS-source authority over receiver nav.}
 When the engine ingests both an IGS broadcast stream and the receiver's
 own decoded navigation, the IGS record takes priority.  The IGS-RTS SSR
