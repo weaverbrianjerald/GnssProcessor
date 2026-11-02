@@ -933,6 +933,42 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
     }
 }
 
+namespace {
+
+/// Median of a non-empty sample (an even count takes the mean of the two middle
+/// values); sorts @p v in place.
+double ifTdMedianInPlace(std::vector<double>& v) {
+    std::sort(v.begin(), v.end());
+    const std::size_t n = v.size();
+    return (n % 2 == 1) ? v[n / 2] : 0.5 * (v[n / 2 - 1] + v[n / 2]);
+}
+
+}  // namespace
+
+IfTdSatClockVerdict ifTdSatClockClassify(const std::vector<IfTdSatClockSample>& samples,
+                                         int min_stations, double min_fraction,
+                                         double coherence) {
+    IfTdSatClockVerdict v;
+    v.n_obs = static_cast<int>(samples.size());
+    std::vector<double> flagged_r;
+    for (const auto& s : samples)
+        if (s.flagged) flagged_r.push_back(s.r);
+    v.n_flag = static_cast<int>(flagged_r.size());
+    if (flagged_r.empty()) return v;
+
+    v.step_m = ifTdMedianInPlace(flagged_r);
+    std::vector<double> dev;
+    dev.reserve(flagged_r.size());
+    for (double r : flagged_r) dev.push_back(std::abs(r - v.step_m));
+    v.disp_m = 1.4826 * ifTdMedianInPlace(dev);
+
+    const int need_fraction = static_cast<int>(std::ceil(min_fraction * v.n_obs - 1e-9));
+    v.event = v.n_flag >= min_stations
+           && v.n_flag >= need_fraction
+           && v.disp_m <= coherence * std::abs(v.step_m);
+    return v;
+}
+
 void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                            std::vector<NetStation>& stations,
                            const std::vector<bool>& present,
@@ -952,7 +988,8 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                            const std::vector<RawSlipHistory>* raw_hist,
                            NetworkSlipOracle* oracle,
                            const CommonBandEpoch* common_band,
-                           IfTdPairTallies* pair_tally) {
+                           IfTdPairTallies* pair_tally,
+                           IfTdSatClockSink* sat_clock) {
     // Alias block (INC-6 migration mechanic).
     const auto& sta_if_resets   = pa.sta_if_resets;
     auto&       if_slip_trace   = traces.if_slip_trace;
@@ -1164,6 +1201,14 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
         int n_if_arcs = 0, n_sparse = 0, n_warm_sp = 0;
         std::string if_detail;
 
+        // Satellite clock event rule (null sink: the knob is off and none of this runs).
+        // n_clk_kept counts the arcs the rule kept this epoch (flag samples and
+        // reference-gate resets) and clk_detail names the event satellites, for the
+        // epoch log line.
+        const SlipQcConfig& sq_cfg = config_.getNetworkConfig().slip_qc;
+        int n_clk_kept = 0;
+        std::string clk_detail;
+
         // --- Bridge v2, pend side: SPEC_slip_relevel_walk §8.2 -----------------
         // The flag epoch only captures: the pre-slip carry (this PASS-A map still
         // holds the previous harvest) and the measured δIF with its empirical σ,
@@ -1225,6 +1270,69 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
             const double s_pool = pstat.s_pool;
             if (static_cast<int>(samples.size()) < min_pool) ++n_sparse;
 
+            // Satellite clock event rule.  A satellite clock step reaches the double
+            // difference of the satellite at every station where it is not the chain's
+            // reference, with one magnitude, so a satellite flagged at most of its stations
+            // with one common step is read as a clock event and not as a slip at each of
+            // them.  Each non-reference sample gets the residual and the threshold the
+            // per-station loop below will use (the station-pair scale is read here without
+            // inserting an entry: a missing one acts as count 0, which takes the pooled
+            // scale), then the satellite's flags are classified.  The flagged samples within
+            // their threshold of the step are collected in `clock_kept` with the step; the
+            // loop below keeps their arcs.  The rule removes flags and never adds one.
+            std::map<const PairSample*, double> clock_kept;   // sample -> its satellite's step (m)
+            if (sat_clock) {
+                std::map<std::string, std::vector<IfTdSatClockSample>> by_sat;
+                std::map<std::string, std::vector<const PairSample*>> by_sat_src;
+                for (const auto& s : samples) {
+                    if (s.is_ref) continue;   // identically 0 by construction: no information
+                    long   sc_count = 0;
+                    double sc_ewma  = 0.0;
+                    const auto sit = stations[s.sta].if_pair_scale.find(pair);
+                    if (sit != stations[s.sta].if_pair_scale.end()) {
+                        sc_count = sit->second.count;
+                        sc_ewma  = sit->second.ewma_scale;
+                    }
+                    const double s_eff_c = ifTdShrunkScale(sc_count, sc_ewma, s_pool, shrink_kappa);
+                    IfTdSatClockSample cs;
+                    cs.sta     = s.sta;
+                    cs.r       = s.dd - med;
+                    cs.thr     = std::max(k_mad * s_eff_c * ifElevMap(s.el), floor_frac * s.lambda);
+                    cs.flagged = std::abs(cs.r) > cs.thr;
+                    by_sat[s.sat].push_back(cs);
+                    by_sat_src[s.sat].push_back(&s);
+                }
+                for (const auto& [sat, cs_list] : by_sat) {
+                    const IfTdSatClockVerdict verdict = ifTdSatClockClassify(
+                        cs_list, sq_cfg.if_phase_td_sat_clock_min_stations,
+                        sq_cfg.if_phase_td_sat_clock_min_fraction,
+                        sq_cfg.if_phase_td_sat_clock_coherence);
+                    if (!verdict.event) continue;
+                    int n_kept = 0;
+                    const std::vector<const PairSample*>& src = by_sat_src[sat];
+                    for (std::size_t k = 0; k < cs_list.size(); ++k)
+                        if (cs_list[k].flagged
+                            && ifTdSatClockKeeps(verdict, cs_list[k].r, cs_list[k].thr)) {
+                            clock_kept[src[k]] = verdict.step_m;
+                            ++n_kept;
+                        }
+                    // The first pair kind to classify a satellite sets its step.
+                    sat_clock->step_m.emplace(sat, verdict.step_m);
+                    ++sat_clock->counters.if_td_clock_events;
+                    sat_clock->counters.if_td_clock_flagged += verdict.n_flag;
+                    emitEvent("T1_if_slip", "sat_clock_event", sat, "",
+                              std::abs(verdict.step_m),
+                              sq_cfg.if_phase_td_sat_clock_coherence * std::abs(verdict.step_m),
+                              "clock",
+                              fmt::format("pair={};step={:.4f};disp={:.4f};n_flag={};n_obs={};"
+                                          "kept={}",
+                                          pair, verdict.step_m, verdict.disp_m, verdict.n_flag,
+                                          verdict.n_obs, n_kept));
+                    clk_detail += fmt::format("{}{} step {:.3f} m", clk_detail.empty() ? "" : ", ",
+                                              sat, verdict.step_m);
+                }
+            }
+
             // Group the pair's samples by station (ordered, hence deterministic) so
             // each station-pair thresholds with its own shrunk scale, then updates
             // its own EWMA once this epoch's flags are known.
@@ -1261,7 +1369,21 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                         ++tally->post_flag_evaluated;
                         if (flagged) ++tally->post_flag_flagged;
                     }
-                    if (flagged) {
+                    const auto kept_it = clock_kept.find(sp);   // empty unless sat_clock
+                    if (flagged && kept_it != clock_kept.end()) {
+                        // A flag of a satellite clock event that lies within its threshold
+                        // of the common step: the satellite's clock moved, not this
+                        // station's carrier phase.  The arc is kept: no detector reset or
+                        // re-seed, no refloat, no bridge pend, and the sample stays out of
+                        // the station-pair scale, as any flagged sample does.  The trace
+                        // row below is written as for any flagged sample.
+                        emitEvent("T1_if_slip", "sat_clock_keep", sp->sat,
+                                  stations[sp->sta].name, abs_dev, thr, "keep",
+                                  sp->sig1 + ";" + sp->sig2
+                                      + fmt::format(";step={:.4f}", kept_it->second));
+                        ++sat_clock->counters.if_td_clock_kept;
+                        ++n_clk_kept;
+                    } else if (flagged) {
                         // Restart only this pair's chain (§14.10 rule).  Resetting
                         // the satellite would discard the other pairs' clean
                         // gradient histories and make one pair's decision depend
@@ -1467,6 +1589,17 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
             for (const auto& rkey : sta_if_resets[i]) {
                 std::string sat, sig1, sig2;
                 if (!parseIfPairResetKey(rkey, sat, sig1, sig2)) continue;
+                // The reset of a satellite the pools read as a clock event this epoch:
+                // the satellite's clock moved at every station, so the reference gate
+                // saw the same step.  The arcs are kept (the detector's own chain reset
+                // is unchanged); the pair loop above ran first, so the steps are final.
+                if (sat_clock && sat_clock->step_m.count(sat) > 0) {
+                    emitEvent("T1_if_slip", "refsat_clock_keep", sat, stations[i].name,
+                              std::nullopt, std::nullopt, "keep", sig1 + ";" + sig2);
+                    ++sat_clock->counters.if_td_clock_refsat_kept;
+                    ++n_clk_kept;
+                    continue;
+                }
                 const auto pact = refloat_pair(i, sat, sig1, sig2);
                 emitEvent("T1_if_slip", "refsat_reset", sat, stations[i].name,
                           std::nullopt, std::nullopt,
@@ -1496,15 +1629,20 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
             }
         }
 
-        if (n_if_arcs > 0)
+        if (n_if_arcs > 0 || n_clk_kept > 0)
             log->info("Network[IF-phase slip]: TOW {:.1f} flagged {} arc(s){} across {} pair(s) "
-                      "({} station-pair(s) warm){}{}",
+                      "({} station-pair(s) warm){}{}{}",
                       se.time.tow, n_if_arcs,
                       carry_warm ? " for refloat" : " (carry cold; diagnostic)",
                       by_pair.size(), n_warm_sp,
                       n_sparse > 0 ? fmt::format(", {} pair(s) under min_pool({})", n_sparse, min_pool)
                                    : std::string{},
-                      if_detail.empty() ? std::string{} : (" [" + if_detail + "]"));
+                      if_detail.empty() ? std::string{} : (" [" + if_detail + "]"),
+                      // Only with the clock event rule armed and having kept an arc.
+                      n_clk_kept > 0
+                          ? fmt::format("; {} arc(s) KEPT as a satellite clock step [{}]",
+                                        n_clk_kept, clk_detail)
+                          : std::string{});
     }
 }
 

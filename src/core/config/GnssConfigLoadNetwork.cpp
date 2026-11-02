@@ -2585,6 +2585,9 @@ namespace GnssProcessor {
             jval<bool>(json, "network.emit_pb_hold", "emit_pb_hold", false);
         network_config_.emit_pb_hold_max_gap_s =
             jval<double>(json, "network.emit_pb_hold_max_gap_s", "emit_pb_hold_max_gap_s", 300.0);
+        network_config_.emit_pb_hold_trip_generation =
+            jval<bool>(json, "network.emit_pb_hold_trip_generation",
+                       "emit_pb_hold_trip_generation", false);
         if (network_config_.emit_pb_hold) {
             log->info("Network: network.emit_pb_hold = true — the emitted phase bias "
                       "of each (satellite, signal) is HELD at the first value of its generation "
@@ -2604,6 +2607,22 @@ namespace GnssProcessor {
                       "the de-commoned clock step at every coupled clock+phase-bias mark that "
                       "reaches a held key (the cost of not transferring a coupled frame move).",
                       network_config_.emit_pb_hold_max_gap_s);
+        }
+        // A tripped clock opens a hold generation.  Emit-side only, and only on an
+        // event, so it is not in the warm-resume fingerprint either.
+        if (network_config_.emit_pb_hold_trip_generation) {
+            if (!network_config_.emit_pb_hold)
+                log->warn("Network: network.emit_pb_hold_trip_generation is armed without "
+                          "network.emit_pb_hold.  There is no hold to open a generation in: "
+                          "the knob is INERT.");
+            else
+                log->info("Network: network.emit_pb_hold_trip_generation = true: every "
+                          "phase-bias key of a satellite whose clock the anchor guard's test "
+                          "tripped (statistic, absolute backstop or IF-TD satellite clock "
+                          "event) starts a new hold generation at that epoch, the edge a gap "
+                          "opens (PB_HOLD/gen_start, cause 'trip').  Frame retirements (gap, "
+                          "datum, external) do not.  Inert without "
+                          "network.clock_temporal_anchor.");
         }
         // The level-aware hold: the held key keeps the satellite's
         // phase-visible clock, not its phase bias.  Emit-side only, like the hold.
@@ -5796,6 +5815,62 @@ namespace GnssProcessor {
                               "a flag is evaluated and a slip repeated there is seen.  "
                               "SOLVE-AFFECTING through those evaluations; not fingerprinted.");
             }
+            // IF-TD satellite clock event: a coherent satellite-wide flag set is a clock
+            // step, not a slip at every station.  Removes flags only; acts only on an
+            // event, so it is not fingerprinted.  Changes the solve; default off.
+            sq.if_phase_td_sat_clock_event =
+                jval<bool>(json, "network.cycle_slip.if_phase_td_sat_clock_event",
+                           "network_cycle_slip_if_phase_td_sat_clock_event", false);
+            sq.if_phase_td_sat_clock_min_stations =
+                jval<int>(json, "network.cycle_slip.if_phase_td_sat_clock_min_stations",
+                          "network_cycle_slip_if_phase_td_sat_clock_min_stations", 4);
+            sq.if_phase_td_sat_clock_min_fraction =
+                jval<double>(json, "network.cycle_slip.if_phase_td_sat_clock_min_fraction",
+                             "network_cycle_slip_if_phase_td_sat_clock_min_fraction", 0.75);
+            sq.if_phase_td_sat_clock_coherence =
+                jval<double>(json, "network.cycle_slip.if_phase_td_sat_clock_coherence",
+                             "network_cycle_slip_if_phase_td_sat_clock_coherence", 0.25);
+            if (sq.if_phase_td_sat_clock_min_stations < 2) {
+                log->error("Network (IF-TD clock event): "
+                           "network.cycle_slip.if_phase_td_sat_clock_min_stations = {} is below "
+                           "2 (one station cannot show a satellite-wide step); the default 4 is "
+                           "used.", sq.if_phase_td_sat_clock_min_stations);
+                sq.if_phase_td_sat_clock_min_stations = 4;
+            }
+            if (!(sq.if_phase_td_sat_clock_min_fraction > 0.0
+                  && sq.if_phase_td_sat_clock_min_fraction <= 1.0)) {
+                log->error("Network (IF-TD clock event): "
+                           "network.cycle_slip.if_phase_td_sat_clock_min_fraction = {} is outside "
+                           "(0, 1]; the default 0.75 is used.",
+                           sq.if_phase_td_sat_clock_min_fraction);
+                sq.if_phase_td_sat_clock_min_fraction = 0.75;
+            }
+            if (!(sq.if_phase_td_sat_clock_coherence > 0.0)
+                || !std::isfinite(sq.if_phase_td_sat_clock_coherence)) {
+                log->error("Network (IF-TD clock event): "
+                           "network.cycle_slip.if_phase_td_sat_clock_coherence = {} is not a "
+                           "positive finite ratio; the default 0.25 is used.",
+                           sq.if_phase_td_sat_clock_coherence);
+                sq.if_phase_td_sat_clock_coherence = 0.25;
+            }
+            if (sq.if_phase_td_sat_clock_event) {
+                if (!network_cycle_slip_if_phase_td_)
+                    log->warn("Network (IF-TD clock event): "
+                              "network.cycle_slip.if_phase_td_sat_clock_event is armed without "
+                              "network.cycle_slip.if_phase_td.  No IF-TD detector is built, so "
+                              "nothing is flagged or classified: the knob is INERT.");
+                else
+                    log->info("Network (IF-TD clock event): satellite clock event ON "
+                              "(min_stations {}, min_fraction {:.2f}, coherence {:.2f}).  A "
+                              "satellite flagged at that many of its stations with one common "
+                              "magnitude is a clock step: the flags within threshold of the step "
+                              "keep their arcs and the clock anchor guard decouples the "
+                              "satellite in the same epoch.  SOLVE-AFFECTING on an event only; "
+                              "not fingerprinted.",
+                              sq.if_phase_td_sat_clock_min_stations,
+                              sq.if_phase_td_sat_clock_min_fraction,
+                              sq.if_phase_td_sat_clock_coherence);
+            }
             // Sim-only oracle slip response (include/network/slip/SlipOracle.hpp): shifts
             // the carried level by the true integer jump instead of freeing the arc, to
             // measure the ceiling of a level-preserving re-level.  Changes the solve;
@@ -8512,6 +8587,22 @@ namespace GnssProcessor {
         network_clock_anchor_resolve_ =
             jval<bool>(json, "network.clock_anchor_resolve",
                        "network_clock_anchor_resolve", true);
+        network_clock_anchor_defer_coupled_ =
+            jval<bool>(json, "network.clock_anchor_defer_coupled",
+                       "network_clock_anchor_defer_coupled", false);
+        if (network_clock_anchor_defer_coupled_) {
+            if (!network_clock_anchor_resolve_)
+                log->warn("Network (clock anchor): network.clock_anchor_defer_coupled is armed "
+                          "without network.clock_anchor_resolve.  There is no in-epoch re-solve "
+                          "to defer: the knob is INERT.");
+            else
+                log->info("Network (clock anchor): network.clock_anchor_defer_coupled = true: a "
+                          "tripped clock whose own column the exact coupling rows reference is "
+                          "decoupled and marked but NOT withdrawn and re-solved in the trip "
+                          "epoch; it folds LOOSE from the next epoch.  A clock whose rows "
+                          "reference its clone keeps the clone withdrawal.  Acts only on a trip; "
+                          "not fingerprinted.");
+        }
         network_clock_anchor_gauge_free_ =
             jval<bool>(json, "network.clock_anchor_gauge_free",
                        "network_clock_anchor_gauge_free", false);
@@ -12534,10 +12625,12 @@ namespace GnssProcessor {
                 if (ev.kind != "slip" && ev.kind != "outage"
                     && ev.kind != "anchor_handover" && ev.kind != "arc_erase"
                     && ev.kind != "sat_clock_step" && ev.kind != "rx_clock_step"
-                    && ev.kind != "oracle_pin" && ev.kind != "fixed_cycle_plant") {
+                    && ev.kind != "oracle_pin" && ev.kind != "fixed_cycle_plant"
+                    && ev.kind != "sat_health" && ev.kind != "station_step") {
                     log->error("Config: {}.kind '{}' is not one of slip | outage | "
                                "anchor_handover | arc_erase | sat_clock_step | "
-                               "rx_clock_step | oracle_pin | fixed_cycle_plant.",
+                               "rx_clock_step | oracle_pin | fixed_cycle_plant | "
+                               "sat_health | station_step.",
                                where, ev.kind);
                     return false;
                 }
@@ -12562,6 +12655,9 @@ namespace GnssProcessor {
                 ev.step_m       = el.value("step_m", 0.0);
                 ev.scope        = el.value("scope", std::string{});
                 ev.sigma_m      = el.value("sigma_m", 1.0e-4);
+                ev.east_m       = el.value("east_m", 0.0);
+                ev.north_m      = el.value("north_m", 0.0);
+                ev.up_m         = el.value("up_m", 0.0);
 
                 auto need = [&](bool ok, const char* what) {
                     if (!ok) log->error("Config: {} (kind '{}') requires {}.",
@@ -12579,9 +12675,54 @@ namespace GnssProcessor {
                               "a non-zero delta_cycles")) return false;
                 } else if (ev.kind == "outage") {
                     if (!need(!ev.station.empty(), "a station")) return false;
-                    if (!need(!ev.sat.empty(), "a sat")) return false;
+                    if (!need(!ev.sat.empty(), "a sat (or \"all\" for the whole station)"))
+                        return false;
                     if (!need(ev.duration_s > 0.0,
                               "a positive duration_s")) return false;
+                    // Optional signal scope: a ";"-separated list of phase codes, the
+                    // signals that lose lock while the satellite's others track.  Every
+                    // element is checked, because a code that silently matched nothing
+                    // would drop nothing and the leg would be graded as a null.
+                    if (!ev.signal.empty() && ev.signal != "all") {
+                        std::string tok;
+                        for (const char c : ev.signal + ";") {
+                            if (c == ';' || c == ',') {
+                                if (!tok.empty() && !need(tok.size() == 3 && tok[0] == 'L',
+                                                          "a signal list of PHASE codes "
+                                                          "(e.g. \"L1C;L2W\"), 'all', or none"))
+                                    return false;
+                                tok.clear();
+                            } else if (!std::isspace(static_cast<unsigned char>(c))) {
+                                tok.push_back(c);
+                            }
+                        }
+                    }
+                    if (!need(std::isfinite(ev.delta_cycles),
+                              "a finite delta_cycles (the re-acquisition shift)")) return false;
+                } else if (ev.kind == "sat_health") {
+                    // A broadcast health flip of one satellite, read by network.sat_health
+                    // (pivot | exclude) and network.pivot_election.  The satellite is the
+                    // whole scope: a station or a signal would read as a narrower scope and
+                    // is not one, so it is refused rather than ignored.
+                    if (!need(!ev.sat.empty() && ev.sat != "all", "one sat")) return false;
+                    if (!need(ev.station.empty() && ev.signal.empty(),
+                              "no 'station' and no 'signal' (the broadcast flag is the "
+                              "satellite's, at every station)")) return false;
+                    if (!need(ev.duration_s >= 0.0 && std::isfinite(ev.duration_s),
+                              "a duration_s >= 0 (0 = to the run end)")) return false;
+                } else if (ev.kind == "station_step") {
+                    // A step of one station's held coordinate (local East, North, Up).
+                    if (!need(!ev.station.empty(), "a station")) return false;
+                    if (!need(ev.sat.empty() && ev.signal.empty(),
+                              "no 'sat' and no 'signal' (the coordinate is the station's)"))
+                        return false;
+                    if (!need(std::isfinite(ev.east_m) && std::isfinite(ev.north_m)
+                                  && std::isfinite(ev.up_m)
+                                  && (ev.east_m != 0.0 || ev.north_m != 0.0 || ev.up_m != 0.0),
+                              "a finite, non-zero east_m / north_m / up_m (metres)"))
+                        return false;
+                    if (!need(ev.duration_s >= 0.0 && std::isfinite(ev.duration_s),
+                              "a duration_s >= 0 (0 = to the run end)")) return false;
                 } else if (ev.kind == "anchor_handover") {
                     if (!need(!ev.sat.empty(), "a sat")) return false;
                     if (ev.signal.empty()) ev.signal = "all";

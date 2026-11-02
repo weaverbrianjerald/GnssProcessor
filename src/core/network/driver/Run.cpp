@@ -282,6 +282,7 @@ void networkRunArm(NetworkRun& run, LogManager& log_manager_) {
     const NetworkConfig& nc = run.nc;
     const std::shared_ptr<spdlog::logger>& log = run.log;
     const std::filesystem::path& log_dir_ = run.log_dir;
+    NetworkSetupResult& setup = run.setup;
     MultiRinexSync& sync = *run.setup.sync;
     std::vector<NetStation>& stations = run.setup.stations;
     NetworkProductEmitter& emitter = *run.setup.emitter;
@@ -330,7 +331,9 @@ void networkRunArm(NetworkRun& run, LogManager& log_manager_) {
     // comes after the warm resume because the injector is outside the resume
     // fingerprint, and its "ARMED" banner must not be mistaken for restored state.
     // Unarmed (network.inject absent), the injection seams in the epoch loop do nothing.
-    networkInjectArm(ctx, config_, log_manager_, log);
+    // The setup is handed over for the kinds that act on it (a station's held
+    // coordinate, the broadcast health series).
+    networkInjectArm(ctx, config_, log_manager_, log, &setup);
     // Canonical-pair admission: sizes the per-station canonical-latch cache from the
     // producer roster.  Disarmed, that cache stays empty and the seam is unreachable.
     networkCanonicalPairArm(ctx, config_, static_cast<int>(stations.size()));

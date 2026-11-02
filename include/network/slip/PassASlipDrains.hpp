@@ -27,10 +27,16 @@ std::map<net::ArcTuple, RelevelPend> passAMwRefloatStage(const PassAView& v, boo
 
 /**
  * @brief IF-phase triple-difference slip driver.
+ *
+ * @param sat_clock_ptr The satellite clock event sink (the epoch's
+ *                      @c EpochEvents::Slip::sat_clock_step and the run's slip-QC
+ *                      counters), non-null only when
+ *                      @c network.cycle_slip.if_phase_td_sat_clock_event is armed.
  */
 void passAIfTdStage(const PassAView& v, RelevelEpochState* relevel_ptr,
                     std::map<net::ArcTuple, RelevelPend>& relevel_pend,
-                    const CommonBandEpoch* common_band_ptr);
+                    const CommonBandEpoch* common_band_ptr,
+                    IfTdSatClockSink* sat_clock_ptr);
 
 /**
  * @brief Arc-scoped GF jump trigger, then the AR search's suspect-corner stamps for every

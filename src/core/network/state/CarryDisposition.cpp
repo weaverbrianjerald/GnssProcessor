@@ -87,13 +87,17 @@ CarryFoldDecision carryFoldDecide(const NetworkRunContext& ctx, const NetworkEst
         d.rate_m2ps    = q;
         d.q_applied_m2 = q * d.dt_applied_s;
         if (k.cta_on && cp.kind == SharedParamKind::Clock) {
+            // A satellite the IF-TD pools read as a clock event this epoch (PASS A ran
+            // before this pass) folds LOOSE if it is anchored.
             const ClockAnchorFold f = clockAnchorFoldDecide(
-                ctx, cp.sat, cp.var, dt, cta_now_s, seed_gap > 0.0 ? readmit_h : 0.0);
+                ctx, cp.sat, cp.var, dt, cta_now_s, seed_gap > 0.0 ? readmit_h : 0.0,
+                events.slip.sat_clock_step.count(cp.sat) > 0);
             d.q_applied_m2 = f.inc_m2;
             d.dt_applied_s = f.dt_s;
             d.rate_m2ps    = f.rate_m2ps;
             d.anchored     = f.anchored;
             d.decoupled    = f.decoupled;
+            d.slip_clk     = f.slip_clk;
             if (!(seed_gap > 0.0))
                 d.disposition = f.anchored ? CarryDisposition::Anchored : CarryDisposition::Loose;
         }
@@ -124,6 +128,7 @@ double carryFoldVarEff(const NetworkRunContext& ctx, const CarryPrior& cp,
         f.inc_m2    = d.q_applied_m2;
         f.anchored  = d.anchored;
         f.decoupled = d.decoupled;
+        f.slip_clk  = d.slip_clk;
         f = clockAnchorFoldAt(ctx, f, var);
         if (anchor) *anchor = f;
         var_eff = f.var_eff;

@@ -929,6 +929,39 @@ static int networkIfTdReseedRunEnd(const NetworkRunEndView& v) {
 }
 
 /**
+ * @brief Run-end section: slip QC: the IF-TD satellite clock event.
+ *
+ * The ON-path telemetry (invariant #4) of
+ * @c network.cycle_slip.if_phase_td_sat_clock_event: the satellite clock events the
+ * pools classified (one per signal pair kind and satellite), the flagged samples of those
+ * satellites split into the arcs kept (within threshold of the common step) and the flags
+ * beyond the step, which take the ordinary slip path, and the reference-gate resets of event
+ * satellites whose arcs were kept.  The clock anchor guard's share of the event is in its
+ * own report (the @c slip_clk trips).
+ *
+ * Gate: @c network.cycle_slip.if_phase_td and the event knob both armed; prints nothing
+ * otherwise, so an unarmed run's log is unchanged.
+ *
+ * @param v The run at its end (network/runend/RunEnd.hpp).
+ * @return 0 (this report does not set the exit code).
+ */
+static int networkIfTdSatClockRunEnd(const NetworkRunEndView& v) {
+    const SlipQcConfig& sq = v.config.getNetworkConfig().slip_qc;
+    if (!v.config.networkCycleSlipIfPhaseTd() || !sq.if_phase_td_sat_clock_event) return 0;
+    const SlipQcCounters& cnt = v.run.engines.slip_qc.counters;
+    v.log->info("Network (IF-TD clock event): {} satellite clock event(s) (signal pair kind x "
+                "satellite; min_stations {}, min_fraction {:.2f}, coherence {:.2f}); their {} "
+                "flagged sample(s) = {} kept (arc kept, within threshold of the common step) + "
+                "{} beyond the step (taken as slips); {} reference-gate reset(s) kept.  0 events "
+                "means no satellite was flagged coherently at that many stations.",
+                cnt.if_td_clock_events, sq.if_phase_td_sat_clock_min_stations,
+                sq.if_phase_td_sat_clock_min_fraction, sq.if_phase_td_sat_clock_coherence,
+                cnt.if_td_clock_flagged, cnt.if_td_clock_kept,
+                cnt.if_td_clock_flagged - cnt.if_td_clock_kept, cnt.if_td_clock_refsat_kept);
+    return 0;
+}
+
+/**
  * @brief Run-end section: the co-resumed share of the per-signal gap re-entry tier.
  *
  * States the population the share can act on (lines of sight re-acquired with at
@@ -1012,6 +1045,7 @@ int networkSlipQcRunEnd(const NetworkRunEndView& v) {
         networkSlipWindupMwRunEnd,
         networkSlipBandResponsesRunEnd,
         networkIfTdReseedRunEnd,
+        networkIfTdSatClockRunEnd,
         networkSlipDatumStationRunEnd,
         networkSlipGapRefGateRunEnd,
         networkSlipGapCoresumedShareRunEnd

@@ -317,7 +317,13 @@ void Application::networkPassASlipScan_(NetworkRun& run, const NetworkEpoch& ep,
 
     std::map<net::ArcTuple, RelevelPend> relevel_pend =
         passAMwRefloatStage(v, mw_carry_warm, datum_detect_on, relevel_ptr, common_band_ptr);
-    passAIfTdStage(v, relevel_ptr, relevel_pend, common_band_ptr);
+    // The satellite clock event sink (the epoch's event map and the slip-QC counters):
+    // nullptr when the knob is off, so the driver's classification is never reached
+    // (byte-identical).
+    IfTdSatClockSink sat_clock_sink{slip_ev.sat_clock_step, qc.counters};
+    IfTdSatClockSink* sat_clock_ptr =
+        config_.getNetworkConfig().slip_qc.if_phase_td_sat_clock_event ? &sat_clock_sink : nullptr;
+    passAIfTdStage(v, relevel_ptr, relevel_pend, common_band_ptr, sat_clock_ptr);
     passAGfArcJumpStage(v, relevel_ptr, relevel_pend, common_band_ptr);
     passAWindupRestartStage(v, relevel_ptr, relevel_pend);
     passAGapReentryStage(v, relevel_ptr, relevel_pend);

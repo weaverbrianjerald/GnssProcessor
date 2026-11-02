@@ -60,3 +60,21 @@ they were written under.  Never mix a `_v2` snapshot with the current golden —
 guard will refuse it, and clearing `state_snapshot_require` to "fix" that is the silent
 cold-start this project has already been bitten by.
 
+
+---
+
+## 2026-10-24: seeds re-written on the refound goldens (card SMX)
+
+Every earlier seed in this record is on a retired base (`golden_sim_tri_w6`, the campaign configs) or GPS only from before card GAD; card [SMX](../../refound/SMX_scenario_matrix_2026-10-24.md) re-wrote them on the current goldens and the clock-level postures of card SCB. Writer: `python scripts/scenario_matrix.py seed <posture>` (through `scripts/event_leg.py write-seed`, whose `DEFAULT_GOLDEN` is now `config/golden/golden_sim_refound.json`), 6 h, a snapshot every 1800 s, exe `gnss_processor_smx_main.exe` (the Release build of main `7bdcebc`, sha256[:16] `10426f27f2e231b8`), goldens at sha256[:16] `887b2dcf84079149` (sim) and `6db4dc5b3e61533b` (field). Each seed passed a 10-epoch smoke first (`evseed_smx_<posture>_smoke`). All under `D:/GnssProcessorSupport/runs_nom/`.
+
+| seed | posture | fixture, start | emitted | wall (s) | fingerprint (`ep0485`) | snapshots |
+|---|---|---|---|---|---|---|
+| `evseed_smx_g` | the sim golden as armed (GPS + Galileo) | `runs/simnet60_quiet_col_24h`, 00:30:15 | 720 | 1475 | `212dada761590f60` | ep0001, 0062, 0122, 0182, 0243, 0304, 0364, 0424, 0485, 0545, 0605, 0666 |
+| `evseed_smx_c` | GPS only + the self-contained regime of card SCL2B | same | 720 | 854 | `4efce5196f2f002d` | same suffixes |
+| `evseed_smx_n` | `c` + the native broadcast-clock a priori of card NBP | same, data root `runs/_scl_data_nbp` | 720 | 758 | `63599558801a208f` | same suffixes |
+| `evseed_smx_gx` | the sim golden + `network.sat_health` "exclude" (the door removes G01, E14 and E18 for the broadcast's own flags) | same | 720 | 551 | `56eee3dfe8a3f433` | same suffixes |
+| `evseed_smx_f` | the field golden as armed (58 stations, held-out `WTZZ00DEU`) | `data/2024-129`, 00:00:00 | 720 | 1216 | `8041b7d719d81620` (`ep0484`, TOW 273690) | ep0001, 0061, 0122, 0182, 0242, 0303, 0363, 0423, 0484, 0544, 0604, 0665 |
+
+Snapshot `ep0485` (TOW 275580, 4 h after the start) is the one the matrix resumes. The snapshot suffix is the emitted count at each 1800 s write, so the same index carries the same tow on every posture of one fixture.
+
+**Two loader traps, both handled by the tools now.** (1) A leg arms `resume_rxcb_lin_restore`, which the loader refuses under `rx_code_bias_datum` (armed in both refound goldens): `event_leg.py` arms the restore only where the datum is off. (2) A fingerprinted knob (for example `network.sat_health`) cannot be added on a warm leg: it needs its own seed, hence `evseed_smx_gx`.

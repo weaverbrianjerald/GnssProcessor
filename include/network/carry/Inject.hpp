@@ -16,7 +16,9 @@
  *
  * ### Where each kind acts
  *
- * Eight kinds exist.  Four are corruptions of the producer's input (@c slip,
+ * Ten kinds exist; the two newest (@c sat_health, @c station_step) and the
+ * outage scopes are described in the section "Scenario kinds" below.  Of the first
+ * eight, four are corruptions of the producer's input (@c slip,
  * @c outage, @c sat_clock_step, @c rx_clock_step) and are applied to a per-epoch
  * mutable copy of the @c SyncedEpoch at the top of the epoch body: before
  * @c computeModels, every slip detector, the raw-observable pass and assembly.  One
@@ -60,6 +62,44 @@
  * beyond the arming summary: network/slip/OraclePin.hpp reads it from the config
  * and feeds @c NetworkInjectState::n_applied itself.
  *
+ * ### Scenario kinds: scoped outages, a health flip, a coordinate step
+ *
+ * Three more shapes complete the fault matrix of card SMX
+ * (docs/refound/SMX_scenario_matrix_2026-10-24.md):
+ *
+ *   * @c outage takes two scopes beyond one satellite at one station.  A
+ *     @c signal list ("L1C;L2W") drops only those signals (each phase code with
+ *     the code, Doppler and strength observables of its band and tracking
+ *     attribute) while the satellite's other signals track through: the
+ *     single-signal loss of lock of card L5B's MAJU00MHL event.  @c sat "all"
+ *     drops every satellite of the station (a whole-station outage).  An optional
+ *     @c delta_cycles is added to every dropped phase observable from the end of
+ *     the window on (the re-acquisition's new integer), and @c flag_lli raises
+ *     LLI 0x1 on them at the first epoch back.  Both act on this same site.
+ *   * @c sat_health flags one satellite's broadcast health unhealthy from
+ *     @c tow, for @c duration_s or to the run end.  The span is written into the
+ *     run's health series (@c NetworkSetupResult::sat_health) at arm time, where
+ *     the readers of @c network.sat_health ("pivot") and
+ *     @c network.pivot_election query it.  The "exclude" door ran at setup on the
+ *     broadcast as parsed, so under "exclude" this seam removes the satellite's
+ *     observations at every station, the consumer included, while the flag is in
+ *     force, exactly as the door would have.  With no reader armed the flag is
+ *     unread: the event still fires (the flag is in force) and the arming line
+ *     and the run-end clause say that nothing reads it.
+ *   * @c station_step moves one roster station's held coordinate by
+ *     (@c east_m, @c north_m, @c up_m) in its local frame at the first epoch at or
+ *     after @c tow, and moves it back after @c duration_s when that is positive.
+ *     The held coordinate is pinned in the solve (@c StationSplit), so the step
+ *     reaches the rows through @c NetStation::ecef, @c PppState::position (read
+ *     by @c computeModels) and the position slots' linearization points, all
+ *     three written together here, before the epoch's models are computed.  The
+ *     observations are unchanged, so a step of +d is the antenna moving by -d;
+ *     card PLANT's planted offsets are the same fault from the first epoch.
+ *
+ * Each of the three is an event at both edges: an @c INJECT row at onset and a
+ * @c released row at the closing edge (the outage's return, the flag's clear,
+ * the coordinate's return), and the run-end clause counts both.
+ *
  * ### Byte-identity
  *
  * With @c network.inject absent, @c enable false or an empty event list,
@@ -78,6 +118,7 @@
  */
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <map>
 #include <memory>
@@ -96,6 +137,7 @@ namespace GnssProcessor {
     class LogManager;
     class PppUtils;                // common/PppUtils.hpp (held by shared_ptr, so incomplete is fine)
     struct NetworkRunContext;
+    struct NetworkSetupResult;     // network/driver/SetupResult.hpp (stations, broadcast health)
     class NetworkRunTraces;
     struct SyncedEpoch;            // rinex/MultiRinexSync.hpp, namespace scope
 
@@ -214,7 +256,36 @@ namespace GnssProcessor {
         std::vector<NetworkInjectEvent> events;         ///< The schedule (config copy).
         std::vector<long long> n_applied;               ///< Per event: epochs it acted on.
         std::vector<bool>      onset_logged;            ///< Per event: onset row already emitted.
+        /// Per event: the closing-edge row already emitted (an outage's return, a health
+        /// flag's clear, a coordinate's return).
+        std::vector<bool>      release_logged;
+        std::vector<long long> n_window;                ///< Per event: outage epochs that dropped something.
+        /// Per event: the outage's signal scope (phase codes); empty = the whole record.
+        std::vector<std::set<std::string>> signal_scope;
         std::map<std::string, long long> fired_by_kind; ///< kind -> events that fired at least once.
+
+        /// The run's setup (non-owning; it outlives the epoch loop), for the two kinds
+        /// that act on it: @c station_step moves a roster station's held coordinate and
+        /// @c sat_health writes the broadcast health series.  Null when the caller passed
+        /// none (a unit test of the other kinds).
+        NetworkSetupResult* setup{ nullptr };
+        /// Per event: the station_step's roster index (-1 until it fires), the ECEF shift
+        /// it applied (m), and the coordinate and position linearization points it found
+        /// (x, y, z each), which the closing edge restores to the bit.
+        std::vector<int> station_index;
+        std::vector<std::array<double, 3>> station_shift;
+        std::vector<std::array<double, 6>> station_orig;
+        /// The readers of the broadcast health series on this run ("exclude", "pivot",
+        /// "pivot_election", comma-joined), or "none" when nothing reads a sat_health flip.
+        std::string health_readers{ "none" };
+        bool health_exclude{ false };          ///< network.sat_health "exclude": this seam removes observations.
+        long long n_health_obs_removed{ 0 };   ///< Observations removed under an injected flag ("exclude").
+        long long n_health_spans{ 0 };         ///< Unhealthy spans written into the health series.
+        long long n_station_steps{ 0 };        ///< Held-coordinate steps applied.
+        long long n_station_returns{ 0 };      ///< Held-coordinate steps moved back.
+        long long n_outage_signal_obs{ 0 };    ///< Observables dropped by signal-scoped outages.
+        long long n_outage_station_recs{ 0 };  ///< Records dropped by whole-station outages.
+        long long n_outage_return_obs{ 0 };    ///< Returned phase observables shifted or flagged.
         /// Wavelength source for the clock-step kinds (phase observables are in
         /// cycles).  Built once at arm time; null on every unarmed run.
         std::shared_ptr<PppUtils> utils;
@@ -268,12 +339,16 @@ namespace GnssProcessor {
      * @param config_      The run's config (reads @c network.inject).
      * @param log_manager  Owner of the @c PppUtils the wavelength lookup needs.
      * @param log          Logger for the arming summary.
+     * @param setup        The run's setup, kept for @c station_step (the roster) and
+     *                     @c sat_health (the health series, into which each flip's span
+     *                     is written here); null when the schedule has neither kind.
      *
      * Absent, disabled or empty => @c ctx.inject.armed stays false and nothing
      * else in the harness is reachable.
      */
     void networkInjectArm(NetworkRunContext& ctx, const GnssConfig& config_,
-                          LogManager& log_manager, const std::shared_ptr<spdlog::logger>& log);
+                          LogManager& log_manager, const std::shared_ptr<spdlog::logger>& log,
+                          NetworkSetupResult* setup = nullptr);
 
     /**
      * @brief Apply this epoch's observation-side faults and stage its directives.

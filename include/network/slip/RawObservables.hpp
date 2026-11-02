@@ -999,6 +999,16 @@ struct SlipQcCounters {
 
     // --- Arc-scoped GF jump trigger (network.cycle_slip.gf_arc_jump) ---
     GfArcJumpCounters gf_jump;                ///< Tests, flags and the flag closure (networkGfArcJumpRunEnd).
+
+    // --- IF-TD satellite clock event (network.cycle_slip.if_phase_td_sat_clock_event) ---
+    // All zero with the knob off.  Armed, a run that reads 0 events had no satellite
+    // flagged coherently (a statement about the data); a run with events and no
+    // `sat_clock_step` read by the clock anchor guard is dead wiring.  Closure:
+    // if_td_clock_flagged == if_td_clock_kept + (flags beyond the step, taken as slips).
+    long long if_td_clock_events{0};        ///< (pair kind, satellite) pooled flag sets classified as a clock event.
+    long long if_td_clock_flagged{0};       ///< Flagged samples of event satellites.
+    long long if_td_clock_kept{0};          ///< ...of those, arcs kept (within threshold of the common step).
+    long long if_td_clock_refsat_kept{0};   ///< Reference-gate resets of event satellites whose arcs were kept.
 };
 
 /**

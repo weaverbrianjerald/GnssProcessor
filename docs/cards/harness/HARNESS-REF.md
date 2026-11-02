@@ -411,3 +411,21 @@ that file).
   producer's response is what is being measured. There is no "the receiver
   re-acquires cleanly at +N" form.
 
+
+---
+
+## 2026-10-24: the scenario kinds and the standing matrix (card SMX)
+
+Card [SMX](../../refound/SMX_scenario_matrix_2026-10-24.md) added three shapes to the injector, default off and byte-identical when `network.inject` is absent (the 2 h sim and field goldens hash-equal against main `7bdcebc`):
+
+| kind | fields | acts on |
+|---|---|---|
+| `outage` (new scopes) | `signal` ";"-list of phase codes; `sat` "all"; optional `delta_cycles` and `flag_lli` at the return | the listed signals with the code, Doppler and strength of their band and attribute (the satellite's other signals track); every satellite of the station; the returned phase from the end of the window |
+| `sat_health` | `sat`, `duration_s` (0: to the run end) | the run's broadcast health series (read by `network.sat_health` "pivot" and `network.pivot_election`); under "exclude" the satellite's observations at every station; unread (and said so) on a posture with no reader |
+| `station_step` | `station`, `east_m`, `north_m`, `up_m`, `duration_s` (0: permanent) | the station's held coordinate (the observations unchanged, so +d is the antenna moving by -d), restored to the bit at the closing edge |
+
+Each is an event at both edges: an `INJECT` row with action `injected` at onset and `released` at the closing edge, and a run-end clause (`scenario edges: ...`). Two items of section 8 are closed by it: a station-wide outage is now injectable, and a re-acquisition after an outage can carry its new integer and LLI.
+
+`scripts/event_leg.py` now defaults to `config/golden/golden_sim_refound.json` (sim seeds add `--extra '{"network":{"start_offset_hours":0.504167}}'`, or keep a base that sets it), writes under `--runs-root` or `RAPID_RUNS_ROOT`, takes a list of events or `@file` for `--event`, and arms `resume_rxcb_lin_restore` only where `rx_code_bias_datum` is off.
+
+**The standing matrix.** `scripts/scenario_matrix.py seed|make|run|grade|report` runs the frozen rows of `scripts/smx/matrix.json` (one event per row on a converged seed, event minus a matched null, bars frozen before the run) on each clock-level posture, for any Release exe, and writes one table per exe to `D:/GnssProcessorSupport/gates/smx/<label>/report.md`; `report --control <label2>` compares two labels made with the same exe and must read IDENTICAL. The recipe and the bars are in the card, sections 5 and 6.

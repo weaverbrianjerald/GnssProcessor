@@ -212,7 +212,12 @@ struct ClockAnchorFold {
     double var_eff{0.0};      ///< the variance to fold (already floored)
     bool   anchored{false};   ///< folded at the anchor rate (false = LOOSE, legacy rate)
     bool   floor_hit{false};  ///< the consistency floor bound this fold
-    bool   decoupled{false};  ///< this fold found an anchored satellite's carry stale; the guard emits the decouple event and the mark
+    bool   decoupled{false};  ///< this fold found an anchored satellite's carry stale, or took it LOOSE for a satellite clock event; the guard emits the decouple event and the mark
+    /// The satellite was ANCHORED and the IF-TD pools read a clock event for it this epoch
+    /// (@c network.cycle_slip.if_phase_td_sat_clock_event), so the fold took the LOOSE legacy
+    /// increment and set @c decoupled.  The commit records it as @c slip_clk_pending instead
+    /// of @c stale_pending, and the guard decouples the satellite with reason @c slip_clk.
+    bool   slip_clk{false};
     /// The increment over the carried variance before the floor (m^2): cta_q·dt_sat
     /// anchored, the legacy rate over the driver's step (or over the true gap for a
     /// re-admission seed) loose.  @c var_eff is the carried variance plus this, floored
@@ -271,9 +276,15 @@ ClockAnchorFold clockAnchorFoldVariance(NetworkRunContext& ctx,
 /// (@ref ClockAnchorFold::inc_m2) and the variance on @p prev_var.  Writes nothing: no state,
 /// no counter.  @ref clockAnchorFoldCommit applies it.
 /// @param ctx run context (read only); the other parameters as for the fold.
+/// @param slip_clk the IF-TD pools read a satellite clock event for @p sat this epoch
+///        (@c EpochEvents::Slip::sat_clock_step).  An ANCHORED satellite then folds LOOSE
+///        exactly as a stale carry does (the legacy increment, no floor) with
+///        @ref ClockAnchorFold::decoupled and @ref ClockAnchorFold::slip_clk set, so the
+///        stiff prior never meets the step and nothing has to be withdrawn.  A LOOSE
+///        satellite is unchanged.  false (the default) is the unchanged rule.
 ClockAnchorFold clockAnchorFoldDecide(const NetworkRunContext& ctx, const std::string& sat,
                                       double prev_var, double dt_epoch, double pl_now_s,
-                                      double seed_horizon_s = 0.0);
+                                      double seed_horizon_s = 0.0, bool slip_clk = false);
 
 /// @brief The anchor's decision @p f re-formed on the carried variance @p prev_var: the
 ///        variance is @p prev_var plus the decision's increment, floored at
@@ -292,7 +303,8 @@ ClockAnchorFold clockAnchorFoldAt(const NetworkRunContext& ctx, const ClockAncho
 /// @brief Apply the anchor's fold decision @p f to the per-satellite state and counters,
 ///        the bookkeeping half of @ref clockAnchorFoldVariance.
 ///
-/// Marks a decoupling (`stale_pending`, which the guard turns into the edge), counts the fold
+/// Marks a decoupling (`stale_pending`, or `slip_clk_pending` for a satellite clock event; the
+/// guard turns either into the edge), counts the fold
 /// (anchored or loose, the floor hits, per constellation) and stamps the satellite's last
 /// fold (time, value, variance, folded, folded anchored).  Called by the fold only, so an
 /// epoch that ends before the fold advances nothing.  A no-op with the anchor disarmed.
@@ -340,7 +352,17 @@ void clockAnchorBeginEpoch(NetworkRunContext& ctx);
 /// @param changed_consts      constellations whose datum changed (scopes
 ///                            @p datum_changed under a scoped handover)
 /// @param events              the epoch's events, read: the handover's re-expressed
-///                            constellations and dense record
+///                            constellations and dense record, and the satellites the
+///                            IF-TD pools read as a clock event
+///                            (@c events.slip.sat_clock_step).  The fold already took an
+///                            anchored such satellite LOOSE (@ref clockAnchorFoldDecide), and
+///                            the guard decouples it with reason @c slip_clk before the test
+///                            (counted in @c cta_trip_slip_clk, no re-solve).  In the test a
+///                            LOOSE such satellite has its in-band run reset, and an anchored
+///                            one (a fold path that did not read the decision) is tripped as
+///                            a backstop with reason @c slip_clk_late.  A trip of the test
+///                            (statistic, backstop or @c slip_clk_late) and a @c slip_clk
+///                            decoupling are recorded in @c ctx.carry.clk_anchor.stepped.
 void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
                              const std::shared_ptr<spdlog::logger>& log,
                              NetworkRunTraces& traces, const GnssTime& se_time,
@@ -417,10 +439,14 @@ struct ClockAnchorCounters {
     long long cta_floor_hits = 0;        ///< folds where the variance floor bound
     long long cta_trip_nis = 0;          ///< decouples: |w| over network.clock_anchor_k
     long long cta_trip_abs = 0;          ///< decouples: |ê| over network.clock_anchor_abs_m
+    long long cta_trip_slip_clk = 0;     ///< decouples: the IF-TD pools read a satellite clock event (network.cycle_slip.if_phase_td_sat_clock_event) and the fold took the anchored clock LOOSE; 0 with the knob off
+    long long cta_trip_slip_clk_late = 0; ///< trips of the test's backstop: an event satellite whose fold was nevertheless anchored (a fold path that did not read the decision); 0 expected, and 0 with the knob off
     long long cta_trip_gap = 0;          ///< decouples: per-sat elapsed time over network.clock_anchor_max_gap_s
     long long cta_trip_datum = 0;        ///< decouples: a datum change retired this satellite's frame
     long long cta_trip_ext = 0;          ///< decouples: an external tier (clock monitor / RAIM) already refloated this satellite
     long long cta_resolves = 0;          ///< in-epoch re-solves executed (the adapt-and-emit half)
+    long long cta_resolve_deferred_coupled = 0;  ///< tripped clocks whose value correction was deferred to the next epoch because the exact coupling rows reference their own column (network.clock_anchor_defer_coupled); 0 with the knob off
+    long long cta_resolve_deferred_fault = 0;    ///< the fault-class (nis, abs) share of cta_resolve_deferred_coupled, the rest being backstop trips; the run-end "ZERO in-epoch re-solves" warning leaves these out
     long long cta_resolve_failed = 0;    ///< in-epoch re-solves that threw and were reverted to the anchored solution
     long long cta_datum_kept = 0;           ///< anchored clocks kept engaged at a dense-transformed handover (no datum decouple)
     long long cta_datum_kept_refused = 0;   ///< armed datum decouples the keep rule refused (no dense edge, no row, a loose fold)
