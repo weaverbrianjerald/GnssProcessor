@@ -87,8 +87,10 @@
     "reconnect_delay_s": 5,
 
     // SSR corrections stream (IGS-SSR 4076, SSRA00IGS0).  Enable this to turn the
-    // broadcast orbits/clocks into cm-grade and actually run PPP-RTK / AR.  Fill
-    // in your IGS-IP credentials; until then the engine is broadcast-only float.
+    // broadcast orbits/clocks into cm-grade and actually run PPP-RTK / AR.  Leave
+    // ntrip_user and ntrip_password empty and put the IGS-IP login in the netrc file
+    // (docs/onboarding/02_code_tour.md, section "NTRIP logins"); until the stream
+    // is enabled the engine is broadcast-only float.
     "corrections": {
       "enabled":          false,
       "input_type":       "ntrip",

@@ -76,7 +76,7 @@ namespace GnssProcessor {
         int         port{ 2101 };         ///< Caster / TCP port.
         std::string mountpoint;           ///< NTRIP mountpoint (ntrip only).
         std::string username;             ///< NTRIP username ("" = anonymous).
-        std::string password;             ///< NTRIP password.
+        std::string password;             ///< NTRIP password.  Empty: the netrc entry of @c host supplies the login and password (@c NtripCredentials.hpp).
         bool        use_tls{ false };     ///< HTTPS caster (e.g. port-443 casters).
         bool        tls_insecure{ false };///< Skip TLS peer/host verification (testing only).
         std::string input_path;           ///< RTCM3 dump path for "file" replay lanes.
@@ -3472,7 +3472,7 @@ namespace GnssProcessor {
         int         ntrip_port{ 2101 };           ///< NTRIP caster port.
         std::string ntrip_mountpoint;             ///< NTRIP mountpoint name.
         std::string ntrip_user;                   ///< NTRIP username (empty = anonymous).
-        std::string ntrip_password;               ///< NTRIP password.
+        std::string ntrip_password;               ///< NTRIP password.  Empty: the netrc entry of @c ntrip_host supplies the login and password (@c NtripCredentials.hpp); committed configs leave it empty.
         std::string nmea_gga;                     ///< Optional GGA sentence for VRS.
         int         reconnect_delay_s{ 5 };       ///< Seconds before reconnect on failure.
         bool        ntrip_use_tls{ false };       ///< Connect to the primary caster over HTTPS (port-443 casters such as CDDIS).  Transport setting, not a GnssConfig feature flag.  Default false keeps plain-HTTP casters byte-identical.
@@ -3519,7 +3519,7 @@ namespace GnssProcessor {
             int         ntrip_port{ 2101 };
             std::string ntrip_mountpoint;         ///< e.g. "IGS01" on products.igs-ip.net
             std::string ntrip_user;
-            std::string ntrip_password;
+            std::string ntrip_password;           ///< As @c RealTimeConfig::ntrip_password: empty reads the netrc entry of @c ntrip_host.
             std::string nmea_gga;
             int         reconnect_delay_s{ 5 };
             bool        ntrip_use_tls{ false };   ///< Connect this aux caster over HTTPS (CDDIS-class port-443 SSR/nav mountpoints).

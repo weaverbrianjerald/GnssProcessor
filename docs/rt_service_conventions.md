@@ -515,6 +515,10 @@ armed front-end with zero transports outright.
 }
 ```
 
+A lane's `username` and `password` are optional. With `password` empty or absent, the lane reads its
+login from the netrc entry of `host`, as every NTRIP stream does (`docs/onboarding/02_code_tour.md`,
+section "NTRIP logins"); a committed config keeps `password` empty.
+
 Roster `rinex_path` files must **STILL EXIST** (v1 metadata constraint, §9.5).  **Perf design point:**
 305-sta all-on is **27.7 s/epoch**; **1 Hz live is credible at ~50 stations** for the clock+PB scope
 (**559 ms/epoch Release measured**) — the assumption behind the wait-budget defaults.

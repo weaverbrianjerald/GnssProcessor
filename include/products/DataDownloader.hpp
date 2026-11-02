@@ -20,7 +20,9 @@ namespace GnssProcessor {
  *   2. Otherwise @c ~/.netrc (Unix convention).
  *   3. Otherwise @c ~/_netrc (Windows convention).
  *   4. Otherwise a warning is logged; CDDIS downloads then fail authentication.
- * The home directory is @c HOME, falling back to @c USERPROFILE.
+ * The home directory is @c HOME, falling back to @c USERPROFILE.  The search is
+ * @c locateNetrcFile (@c NetrcFile.hpp), shared with the NTRIP streams, which read
+ * their caster logins from the same file.
  *
  * The resolved path is passed to libcurl via @c CURLOPT_NETRC_FILE so the
  * behaviour is the same on every platform.  libcurl's default file discovery

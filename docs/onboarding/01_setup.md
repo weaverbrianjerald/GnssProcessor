@@ -107,6 +107,9 @@ The source is NASA CDDIS, which requires a free account:
 2. Create the file `%USERPROFILE%\_netrc` with one line:
    `machine urs.earthdata.nasa.gov login YOUR_USER password YOUR_PASSWORD`
 
+The same file holds the logins of the NTRIP casters that the real-time configs use
+([NTRIP logins](02_code_tour.md#ntrip-logins)).
+
 Then:
 
 ```powershell

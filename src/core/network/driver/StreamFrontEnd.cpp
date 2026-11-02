@@ -88,6 +88,7 @@ bool NetworkStreamFrontEnd::openLane(Lane& lane, const StationTransportConfig& t
         cfg.mountpoint        = tc.mountpoint;
         cfg.username          = tc.username;
         cfg.password          = tc.password;
+        cfg.netrc_path        = config_.getDownloadConfig().netrc_path;
         cfg.reconnect_delay_s = tc.reconnect_delay_s;
         cfg.use_tls           = tc.use_tls;
         cfg.tls_insecure      = tc.tls_insecure;
