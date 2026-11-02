@@ -274,27 +274,27 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
 - [SCR](SCR_sat_clock_step_response_2026-10-26.md): open, 2026-10-26: builds card SCK decisions 1 and 3, default off. A satellite flagged by the IF-TD pool at most of its stations with one magnitude keeps its arcs and has its clock anchor tripped and re-solved; a tripped clock opens a phase-bias hold generation so the consumer refloats the satellite. Pre-registered bars: SMX row sat_clk passes on g, c and n, no other cell changes verdict, knobs-off identity with smx1.
 - [ARS](ARS_anchor_resolve_coupling_2026-10-26.md): closed, 2026-10-26: the clock anchor's same-epoch withdraw-and-re-solve on the sim golden moves a tripped clock by metres because the exact coupling rows were conditioned on the anchored clock and the prior is withdrawn after them (unit: 17 % of the step, linear; the leg's 24-fold size not reproduced). The default-off deferral `network.clock_anchor_defer_coupled` passes its bars (storm g: 0 of 22 clocks pushed away against 16 of 31; no matrix verdict changed; c and n byte-identical); P1's trip clause and P2's second clause falsified. UNVALIDATED; arming is the author's decision.
 - [CRS](CRS_leg_consumer_resume_2026-10-26.md): closed, 2026-10-26: why every event-harness leg consumer resumes 0.7 to 1.2 m off. The snapshot is the converged consumer and is restored. Producer, every posture: the phase-bias hold is not snapshotted, so a warm resume restarts every held key at generation 1 and re-levels every phase bias by up to 21 m (clocks and code biases within 47 mm) under a seam mark held keys ignore; the kept ambiguities absorb 0.1 to 2.4 m. Consumer, GPS + Galileo: the initializer latches are not snapshotted, so the ISB and receiver DCBs are re-seeded (14 m on an unbroken wire). The seam alone breaks a consumer that never restarted (about 100 m); both fixes owed. Nothing armed.
-- [PES](PES_parallel_epoch_stages_2026-10-29.md): open, 2026-10-29: BUILT, GATED and ARMED, not merged (branch `perf/pes`).
+- [PES](PES_parallel_epoch_stages_2026-10-29.md): open, 2026-10-29: BUILT, GATED and ARMED, merged into main 2026-11-02 (branch `perf/pes`).
   The station normal formation, the Schur reduce (split by border columns, not by stations) and the redundancy census run
   in parallel behind `network.parallel_station_normals`, `parallel_schur_columns` and `parallel_redundancy_census`
   (loader default off; ARMED and pinned in both goldens at the author's decision): key on IDENTICAL to off on both
   goldens for each key and all three, off IDENTICAL to main; loop -27.9 % (field), -20.3 % (sim), -39.7 % at 305
   stations after card CVF. The baseline pair stands.
 - [RKT](RKT_retired_key_tombstone_2026-10-30.md): closed, 2026-10-30: card RKD's follow-on F4, a warn-once tombstone of
-  the 150 retired network keys, BUILT and GATED on branch `claude/pensive-ptolemy-4f6046` (not merged): a declared table
+  the 150 retired network keys, BUILT and GATED on branch `claude/pensive-ptolemy-4f6046` (merged into main 2026-11-02): a declared table
   beside the loader (path, flat spelling, deletion commit) and one warning per retired key a configuration sets. Both
   2 h goldens and the 16 user-side arms identical on a same-build pair; a golden with 30 retired keys differs only by
   the 30 warnings. 1,153 of the 1,234 network-mode configurations under `config/` now warn. Card RKD's notes written,
   two still owed.
 - [RPC](RPC_raim_prior_channel_2026-10-30.md): closed, 2026-10-30: PASS, the post-fit RAIM's prior channel (card RPA's
-  first defect), `network.raim_prior_channel` built default off on branch `claude/awesome-leavitt-2520ab` (not merged).
+  first defect), `network.raim_prior_channel` built default off on branch `claude/awesome-leavitt-2520ab` (merged into main 2026-11-02).
   The pools keep observation rows; each carried-prior row is tested once, in its own column's cell, with the T4
   isolated-arc test, and a flag answers its carry. Key off byte-identical (2 h field and sim). With the cold-start bound
   at 0, BSHM00ISR's G07 runaway (11.9 m without a brake) is held at 0.44 m by the line of sight's own carry row. 6 h:
   WTZZ00DEU +0.25 mm, census median 0.0 mm, clock wire within 2 %, sim byte-identical; refloats 55 to 71, mostly one
   faulty line of sight answered every epoch. UNVALIDATED; a hold and multi-day owed.
 - [NOM5](NOM5_station_parameter_set_tail_2026-10-30.md): closed, 2026-10-31: card NOM step N6's remaining steps, BUILT and
-  GATED on branch `nom/n6-tail` (not merged). N6f: the producer's rows sparse, every output identical (24 of 24 network
+  GATED on branch `nom/n6-tail` (merged into main 2026-11-02). N6f: the producer's rows sparse, every output identical (24 of 24 network
   arms with the snapshot, 16 of 16 user arms, real time), the loop cost flat (no gain shown). N6g:
   `estimation.seed_full_equation` leaves the producer byte-identical and moves the consumer under 1 mm at its births;
   every bar clause passes, a neutral change. N6h: a user layout flag that reaches no parameter is refused at load (the
