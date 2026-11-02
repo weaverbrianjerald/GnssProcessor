@@ -183,7 +183,15 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   rules fail, D0 keeps the floor (GF-datum defect), seed-round not adopted, D-N fires; nothing from IRD-3 on until the
   cause is closed. The bisection (section 4) puts the cause in the chain's event handling, not its static algebra: A0
   is R1 plus the chain on the microscope, and with the floor off the chain tracks R1 until the first satellite return;
-  the author's ruling on the stop is owed.
+  the author's ruling on the stop is owed. The return's source is traced in IRDC.
+- [IRDC](IRDC_integer_recovering_datum_events_2026-11-02.md): open, 2026-11-02: card IRDB's continuation, the trace of
+  the IRD-2 stop's event causes. The first satellite return's shock is traced: the chain reads a returning satellite
+  as a first sighting with a known zero step (extend-only can never keep a tree edge: a pinned arc carries no leveling
+  entry), so its old-frame carries survive, and the float vehicle folds them at a birth variance the chain makes as
+  tight as 7.8 mm against a 2.1 m frame step. One knob (`phase_leveling_max_gap_s` 600) prunes them and removes the
+  shock (end-of-run reference-free residual 0.257 to 0.036 cycle; R1 unchanged); the stop rule still fails (0.090
+  cycle). Every kept re-pin is a stale-carry re-pin; the re-host class (card IRD C8) is open; the author's ruling on
+  the stop is owed.
 - [RKD](RKD_retired_key_deletion_2026-10-14.md): closed, 2026-10-14: the 144 retired network keys and five lane keys
   they orphan deleted with their code (149 ledger rows, 784 to 635; 30 C++ files); landed after the same-build
   golden comparison passed (only declared text moves on the goldens).
