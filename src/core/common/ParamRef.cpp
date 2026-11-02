@@ -59,6 +59,7 @@ const char* paramKindName(NetworkParamKind kind) {
         case NetworkParamKind::RxCodeBias:   return "rx_code_bias";
         case NetworkParamKind::PhaseColour:  return "phase_colour";
         case NetworkParamKind::RxPosition:   return "rx_position";
+        case NetworkParamKind::TropoGradient: return "tropo_gradient";
     }
     return "?";
 }
@@ -74,6 +75,8 @@ const char* paramFormName(ParamForm f) {
         case ParamForm::Ifb:        return "ifb";
         case ParamForm::Isc:        return "isc";
         case ParamForm::GloSlotIfb: return "slot";
+        case ParamForm::North:      return "north";
+        case ParamForm::East:       return "east";
     }
     return "?";
 }
@@ -148,8 +151,6 @@ std::string describe(const ParamRef& r) {
     switch (r.core) {
         case UserCore::None:          break;
         case UserCore::PhaseClock:    out += " phase_clock"; break;
-        case UserCore::GradientNorth: out += " gradient_north"; break;
-        case UserCore::GradientEast:  out += " gradient_east"; break;
     }
     if (r.kind == NetworkParamKind::RxPosition) out += " axis=" + std::to_string(r.axis);
     if (r.sys != System::Unknown) out += std::string(" ") + systemName(r.sys);
@@ -198,8 +199,8 @@ ParamRef phaseClockRef() {
 
 ParamRef gradientRef(bool north) {
     ParamRef r;
-    r.kind = NetworkParamKind::Zwd;
-    r.core = north ? UserCore::GradientNorth : UserCore::GradientEast;
+    r.kind = NetworkParamKind::TropoGradient;
+    r.form = north ? ParamForm::North : ParamForm::East;
     return r;
 }
 
@@ -326,6 +327,7 @@ ParamInstanceId paramInstanceOf(const ParamRef& ref, StationId station) {
     switch (ref.kind) {
         case PK::RxPosition:
         case PK::Zwd:
+        case PK::TropoGradient:
         case PK::VtecSh:
             break;
         case PK::RxClock:

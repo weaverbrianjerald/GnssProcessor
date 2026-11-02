@@ -13,12 +13,31 @@
 #include "products/ProductCache.hpp"
 #include "products/SsrCorrectionStore.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <exception>
 
 namespace GnssProcessor {
 
 namespace {
+
+/// The Jacobian entries of one row: one per part of the equation, in the order of its terms and
+/// parts.  A slot that two parts name keeps the later value, as an assignment into a dense row
+/// would (measurement/ObservationEquation.hpp, scatterDense).
+void rowPartialsOf(const ObservationEquation& eq, std::vector<RowPartial>& out) {
+    out.clear();
+    for (std::uint8_t i = 0; i < eq.n; ++i) {
+        const ObsAddend& a = eq.addend[i];
+        for (std::uint8_t k = 0; k < a.n_part; ++k) {
+            const RowPartial entry{a.part[k].column, a.scale * a.part[k].partial};
+            const auto same = std::find_if(out.begin(), out.end(), [&](const RowPartial& p) {
+                return p.slot == entry.slot;
+            });
+            if (same != out.end()) same->value = entry.value;
+            else                   out.push_back(entry);
+        }
+    }
+}
 
 /// The NL/WL reference bands of a satellite: none.  A network station estimates one ambiguity
 /// per band, so its inputs name the per-band basis and read no reference band.
@@ -58,25 +77,55 @@ ObsInput rowObsInput(const StationRowContext& c) {
 }
 
 ObsInput residualSeedObsInput(const StationRowContext& c) {
-    return ObsInput{productsOf(c), c.inputs.rx_bias.frequencyHelper(), &c.inputs.rx_bias,
-                    noNlWlReferenceBands(), kNetworkAmbiguityBasis, *c.inputs.clock_refs};
+    // The full-equation seeds take the rows' frequency helper (the station's own GLONASS
+    // channels); the legacy seeds keep the resolver's default channel table.
+    const PppUtils& freq = c.config.seedFullEquation() ? c.inputs.freq
+                                                       : c.inputs.rx_bias.frequencyHelper();
+    return ObsInput{productsOf(c), freq, &c.inputs.rx_bias, noNlWlReferenceBands(),
+                    kNetworkAmbiguityBasis, *c.inputs.clock_refs};
 }
 
 ObsInput ambiguitySeedObsInput(const StationRowContext& c) {
+    // The full-equation seeds take the satellite's own channel, as the rows do; the legacy
+    // ambiguity seed keeps channel 0.
+    const FdmaChannel fdma = c.config.seedFullEquation() ? FdmaChannel::Satellite : FdmaChannel::Zero;
     return ObsInput{productsOf(c), c.inputs.freq, &c.inputs.rx_bias, noNlWlReferenceBands(),
-                    kNetworkAmbiguityBasis, *c.inputs.clock_refs, FdmaChannel::Zero};
+                    kNetworkAmbiguityBasis, *c.inputs.clock_refs, fdma};
 }
 
-EpochMeasurement networkStationRows(const StationRowContext& c, const StationParams& set,
-                                    const std::vector<PppObservation>& observations) {
-    EpochMeasurement update;
-    update.time = observations.empty() ? GnssTime{0, 0.0} : observations[0].time;
+double rowPartial(const StationDataRows& rows, Eigen::Index row, int slot) {
+    const auto r = static_cast<std::size_t>(row);
+    for (std::size_t e = rows.row_start[r]; e < rows.row_start[r + 1]; ++e)
+        if (rows.partials[e].slot == slot) return rows.partials[e].value;
+    return 0.0;
+}
+
+Eigen::MatrixXd slotColumns(const StationDataRows& rows, int first_slot, int count) {
+    Eigen::MatrixXd block = Eigen::MatrixXd::Zero(rows.rows(), count);
+    for (Eigen::Index r = 0; r < rows.rows(); ++r) {
+        const auto ru = static_cast<std::size_t>(r);
+        for (std::size_t e = rows.row_start[ru]; e < rows.row_start[ru + 1]; ++e) {
+            const int k = rows.partials[e].slot - first_slot;
+            if (k >= 0 && k < count) block(r, k) = rows.partials[e].value;
+        }
+    }
+    return block;
+}
+
+Eigen::MatrixXd denseJacobian(const StationDataRows& rows) {
+    return slotColumns(rows, 0, static_cast<int>(rows.n_slots));
+}
+
+StationDataRows networkStationRows(const StationRowContext& c, const StationParams& set,
+                                   const std::vector<PppObservation>& observations) {
+    StationDataRows rows;
+    rows.n_slots = set.slots.size();
     const std::string epoch_prefix;   // the log pattern carries the timestamp
     auto log = c.log.getLogger("measurement_model");
 
     if (observations.empty()) {
         log->error("No observations provided for measurement update, mode=PPP-RTK");
-        return update;
+        return rows;
     }
 
     const PivotSignalMap no_pivot_filter;
@@ -94,22 +143,21 @@ EpochMeasurement networkStationRows(const StationRowContext& c, const StationPar
             if (usable(obs, entry.first)) ++num_obs;
     if (num_obs == 0) {
         log->error("No valid observations found in residuals, mode=PPP-RTK");
-        return update;
+        return rows;
     }
 
-    const std::size_t state_size = set.slots.size();
-    update.innovations.resize(static_cast<Eigen::Index>(num_obs));
-    update.R_v.resize(static_cast<Eigen::Index>(num_obs));
-    update.H.resize(static_cast<Eigen::Index>(num_obs), static_cast<Eigen::Index>(state_size));
-    update.H.setZero();
-    update.satellite_ids.reserve(num_obs);
-    update.signal_types.reserve(num_obs);
+    rows.innovations.resize(static_cast<Eigen::Index>(num_obs));
+    rows.R_v.resize(static_cast<Eigen::Index>(num_obs));
+    rows.satellite_ids.reserve(num_obs);
+    rows.signal_types.reserve(num_obs);
+    rows.row_start.reserve(num_obs + 1);
 
     const NetView view(set);
     const ParamLookup lookup(view);
     const ObsInput input = rowObsInput(c);
     const RowProducts products = productsOf(c);
 
+    std::vector<RowPartial> entries;   // one row's entries, kept once the row is complete
     std::size_t row = 0;
     for (const PppObservation& obs : observations) {
         if (!hasValidGeometry(c.config, c.log, obs, epoch_prefix)) continue;
@@ -122,23 +170,23 @@ EpochMeasurement networkStationRows(const StationRowContext& c, const StationPar
                 ObsTermValues terms;
                 const bool decomposed = wantsRowDecomposition(c.log, obs);
                 const double predicted = evaluate(eq, decomposed ? &terms : nullptr);
-                Eigen::VectorXd jacobian = Eigen::VectorXd::Zero(static_cast<Eigen::Index>(state_size));
-                scatterDense(eq, jacobian);
+                rowPartialsOf(eq, entries);
                 if (decomposed) traceRowDecomposition(c.log, obs, ref_type, predicted, terms);
 
                 const auto r = static_cast<Eigen::Index>(row);
-                update.innovations(r) = entry.second - predicted;
-                update.R_v(r)         = rowVariance(products, obs, ref_type);
-                update.H.row(r)       = jacobian;
-                update.satellite_ids.push_back(obs.satellite);
-                update.signal_types.push_back(ref_type);
-                if (!std::isfinite(update.innovations(r)) || !std::isfinite(update.R_v(r))) {
-                    update.innovations(r) = 0.0;
-                    update.R_v(r)         = 1e6;
+                rows.innovations(r) = entry.second - predicted;
+                rows.R_v(r)         = rowVariance(products, obs, ref_type);
+                rows.partials.insert(rows.partials.end(), entries.begin(), entries.end());
+                rows.row_start.push_back(rows.partials.size());
+                rows.satellite_ids.push_back(obs.satellite);
+                rows.signal_types.push_back(ref_type);
+                if (!std::isfinite(rows.innovations(r)) || !std::isfinite(rows.R_v(r))) {
+                    rows.innovations(r) = 0.0;
+                    rows.R_v(r)         = 1e6;
                 }
                 log->trace("Meas {}/{}: obs={:.3f}, mod={:.3f}, pred={:.3f}, innov={:.3f}",
                            obs.satellite, ref_type, entry.second, obs.modeled.at(ref_type), predicted,
-                           update.innovations(r));
+                           rows.innovations(r));
                 ++row;
             } catch (const std::exception&) {
                 continue;
@@ -148,25 +196,23 @@ EpochMeasurement networkStationRows(const StationRowContext& c, const StationPar
 
     if (row == 0) {
         log->error("No valid measurement updates computed, mode=PPP-RTK");
-        update.innovations.resize(0);
-        update.R_v.resize(0);
-        update.H.resize(0, static_cast<Eigen::Index>(state_size));
-        update.satellite_ids.clear();
-        update.signal_types.clear();
-        return update;
+        rows.innovations.resize(0);
+        rows.R_v.resize(0);
+        rows.partials.clear();
+        rows.row_start.assign(1, 0);
+        rows.satellite_ids.clear();
+        rows.signal_types.clear();
+        return rows;
     }
     if (row < num_obs) {
         log->warn("Processed {} observations out of {} expected, mode=PPP-RTK", row, num_obs);
-        update.innovations.conservativeResize(static_cast<Eigen::Index>(row));
-        update.R_v.conservativeResize(static_cast<Eigen::Index>(row));
-        update.H.conservativeResize(static_cast<Eigen::Index>(row), Eigen::NoChange);
-        update.satellite_ids.resize(row);
-        update.signal_types.resize(row);
+        rows.innovations.conservativeResize(static_cast<Eigen::Index>(row));
+        rows.R_v.conservativeResize(static_cast<Eigen::Index>(row));
     }
-    update.bad_residual_count = 0;
+    // The Jacobian's shape is printed as before: rows by slots of the set.
     log->info("Computed measurement update: {} valid innovations, H ({}x{}), mode=PPP-RTK", row,
-              update.H.rows(), update.H.cols());
-    return update;
+              row, rows.n_slots);
+    return rows;
 }
 
 } // namespace GnssProcessor

@@ -1,6 +1,7 @@
 /**
  * @file StationAnchors.cpp
- * @brief The station's anchor rows: GLONASS local-nuisance anchors and the test-only zero-ionosphere rows.
+ * @brief The station's anchor rows: GLONASS local-nuisance anchors, the test-only zero-ionosphere
+ *        rows and the troposphere gradients' zero-mean prior.
  */
 
 #include "network/assembly/StationAnchors.hpp"
@@ -192,6 +193,46 @@ StationStep networkSimZeroIonoRows(StationBuild& build) {
             R.y(m0 + k) = zi_y[k];
         }
         R.row_tags.insert(R.row_tags.end(), zi_tag.begin(), zi_tag.end());
+    }
+    return StationStep::Next;
+}
+
+StationStep networkTropoGradientPriorRows(StationBuild& build) {
+    // ---- From the station build ----
+    const NetworkKnobs& knobs = build.ctx.knobs;
+    NetStation& st = build.st;
+    StationAssembly& R = build.R;
+    std::map<int, int>& h2local = R.h2local;
+    // ---- End of the bindings ----
+
+    // The troposphere gradients' zero-mean prior (network.tropo_gradient_prior_sigma_m).
+    // The gradient columns are uncarried, and one epoch of data determines them to only 5 to
+    // 7 mm, several times a physical gradient: free, they fit noise and take up station-level
+    // steps that the attribution test would otherwise answer.  One row per column holds the
+    // gradient toward absolute zero at its physical size.  The column is an increment on the
+    // slot's linearization value, so the row's target is minus that value.
+    if (!knobs.tgrad_on || !(knobs.tgrad_prior_sigma_m > 0.0)) return StationStep::Next;
+    const double weight = 1.0 / (knobs.tgrad_prior_sigma_m * knobs.tgrad_prior_sigma_m);
+    std::vector<int> cols;
+    std::vector<double> targets;
+    for (const int g : st.params.gradient) {
+        if (g < 0) continue;
+        const auto hit = h2local.find(g);
+        if (hit == h2local.end() || hit->second < 0) continue;   // not in this epoch's block
+        const double x_lin = slotAt(st.params, g).x_lin;
+        if (!std::isfinite(x_lin)) continue;
+        cols.push_back(hit->second);
+        targets.push_back(-x_lin);
+    }
+    const int n = static_cast<int>(cols.size());
+    if (n == 0) return StationStep::Next;
+    const Eigen::Index m0 = R.A_s.rows();
+    networkGrowBlockRows(R.A_s, R.A_r, R.w, R.y, n);
+    for (int k = 0; k < n; ++k) {
+        R.A_r(m0 + k, cols[static_cast<std::size_t>(k)]) = 1.0;
+        R.w(m0 + k) = weight;
+        R.y(m0 + k) = targets[static_cast<std::size_t>(k)];
+        R.row_tags.push_back(RowTag{ContributionKind::TropoGradientPrior, {}, {}});
     }
     return StationStep::Next;
 }

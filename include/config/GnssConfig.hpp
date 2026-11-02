@@ -1333,6 +1333,22 @@ namespace GnssProcessor {
         bool estimateTropoGradients() const { return estimate_tropo_gradients_; }
 
         /**
+         * @brief Whether a state is born from the whole observation equation
+         *        (@c estimation.seed_full_equation, default false).
+         *
+         * Off, the seeds subtract the terms the two pre-N6 copies of the equation subtracted
+         * (measurement/Seeds.hpp, @c kLegacySeedMask): no range correction, satellite phase
+         * bias, satellite clock, SSR bias or phase colour.  On, they subtract every known term
+         * of the row (@c kFullSeedMask), and every seed takes the carrier frequency of the
+         * satellite's own GLONASS channel, as the rows do.  A network producer's births are
+         * unchanged (those terms are zero at a birth); a consumer's inter-system bias, clock,
+         * code-bias and ambiguity seeds lose the SSR code and phase biases they absorbed.
+         * Fingerprinted: a warm resume never crosses it.
+         * @return True when the seeds use the whole equation.
+         */
+        bool seedFullEquation() const { return seed_full_equation_; }
+
+        /**
          * @brief Check if the backward RTS smoother is enabled.
          *
          * When true, the application runs a forward Kalman pass, buffers
@@ -8466,6 +8482,14 @@ namespace GnssProcessor {
         void logNetworkRxExtraBandDelay_(const std::shared_ptr<spdlog::logger>& log) const;
         void loadNetworkClosedLoop_(const nlohmann::json& nw,
                                     const std::shared_ptr<spdlog::logger>& log);
+        /// The single-receiver layout flags in a network run.  A network station's layout is
+        /// its own parameter set; the flags set only the closed-loop or replay consumer's,
+        /// whose configuration is a copy of this one.  With no consumer
+        /// (@c network.closed_loop.enable off) a flag reaches no parameter of the run, so the
+        /// configuration is refused, naming the network key where one exists.  Throws
+        /// std::runtime_error (loadFromJson then returns false).  Called after
+        /// @ref loadNetworkClosedLoop_, which settles whether a consumer runs.
+        void validateNetworkUserLayoutFlags_() const;
         /// Parse @c network.inject (scripted producer-side faults; event harness).
         /// Strict: a malformed event is a load failure, never a silent drop (a test
         /// fixture that silently does not exist would be graded as a null).
@@ -8651,6 +8675,7 @@ namespace GnssProcessor {
         std::shared_ptr<const StationInfoFile> station_info_;   ///< Loaded SIF registry (nullptr when disabled/empty).
 
         bool estimate_tropo_gradients_;   ///< Estimate troposphere horizontal gradients (Gn, Ge).
+        bool seed_full_equation_{false};  ///< Seeds subtract every known term of the row (estimation.seed_full_equation).
         bool   relinearize_geometry_;            ///< Re-run computeModels after first KF update to recompute geometry at updated position.
         double relinearize_dpos_threshold_phase_m_;     ///< |Δpos| threshold (m) when phase observables are present.
         double relinearize_dpos_threshold_code_only_m_; ///< |Δpos| threshold (m) when no phase observables (code-only).

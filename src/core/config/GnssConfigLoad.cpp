@@ -1196,6 +1196,8 @@ namespace GnssProcessor {
                                                 "estimate_phase_clock", false);
         estimate_velocity_        = jval<bool>(json, "estimation.estimate_velocity",
                                                 "estimate_velocity", false);
+        seed_full_equation_       = jval<bool>(json, "estimation.seed_full_equation",
+                                                "seed_full_equation", false);
         enable_iono_rate_         = jval<bool>(json, "estimation.enable_iono_rate",
                                                 "enable_iono_rate", false);
         estimate_ifb_             = jval<bool>(json, "estimation.estimate_ifb",
@@ -3586,7 +3588,7 @@ namespace GnssProcessor {
         const char* basis_label =
             state_ambiguity_basis_ == StateAmbiguityBasis::NlWl ? "nl_wl" : "per_band";
 
-        log_manager.getLogger("gnss_config")->info("Toggles: tropo_grad={}, relin_geom={}, smoother={}, phase_clk={}, if_slip={}, accum_windup={}, wu_gap={:.0f}s, wu_census={}, bssd={}, velocity={}, iono_rate={}, ifb={}, glonass_ifb={}, lock_clkref={}, req_bia={}, sat_bias={}, no_bia_dw={:.0f}, imu={}, amb_basis={}, adaptive_iono_q={}, eclipse_excl={}, cio_frame={}, sun_frame_fix={}, auto_report={}, nc_bridge={}, var_factor={}, data_snoop={}, full_r={}, neq_export={}, trig_sp3={}, orbit_normal_att={}, noon_turn_att={}, wu_bridge={}",
+        log_manager.getLogger("gnss_config")->info("Toggles: tropo_grad={}, relin_geom={}, smoother={}, phase_clk={}, if_slip={}, accum_windup={}, wu_gap={:.0f}s, wu_census={}, bssd={}, velocity={}, iono_rate={}, ifb={}, glonass_ifb={}, lock_clkref={}, req_bia={}, sat_bias={}, no_bia_dw={:.0f}, imu={}, amb_basis={}, adaptive_iono_q={}, eclipse_excl={}, cio_frame={}, sun_frame_fix={}, auto_report={}, nc_bridge={}, var_factor={}, data_snoop={}, full_r={}, neq_export={}, trig_sp3={}, orbit_normal_att={}, noon_turn_att={}, wu_bridge={}, seed_full={}",
             estimate_tropo_gradients_ ? "on" : "off",
             relinearize_geometry_     ? "on" : "off",
             run_smoother_             ? "on" : "off",
@@ -3620,7 +3622,8 @@ namespace GnssProcessor {
             enable_trig_sp3_interp_ ? "on" : "off",
             enable_orbit_normal_attitude_ ? "on" : "off",
             enable_noon_turn_attitude_ ? "on" : "off",
-            phase_windup_gap_bridge_ ? "on" : "off");
+            phase_windup_gap_bridge_ ? "on" : "off",
+            seed_full_equation_ ? "on" : "off");
     }
 
 } // namespace GnssProcessor

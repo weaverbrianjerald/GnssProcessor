@@ -284,6 +284,7 @@ namespace GnssProcessor {
         if (!validateNetworkCarryPosture_(json, log)) return false;
         logNetworkRxExtraBandDelay_(log);
         loadNetworkClosedLoop_(nw, log);
+        validateNetworkUserLayoutFlags_();
         // The event harness loads last, so its cross-knob warnings read final values
         // (a check beside a knob's own parse would read the code defaults of knobs
         // that are parsed later).
@@ -1463,6 +1464,31 @@ namespace GnssProcessor {
      * @param log The "gnss_config" logger.
      * @throws std::runtime_error on a refused posture.
      */
+    void GnssConfig::validateNetworkUserLayoutFlags_() const {
+        if (network_config_.closed_loop.enable) return;   // the consumer's layout: allowed
+        struct Flag { bool on; const char* key; const char* network_key; };
+        const Flag flags[] = {
+            {estimate_velocity_, "estimation.estimate_velocity", nullptr},
+            {estimate_phase_clock_, "estimation.estimate_phase_clock", nullptr},
+            {estimate_tropo_gradients_, "estimation.estimate_tropo_gradients",
+             "network.estimate_tropo_gradients"},
+            {imu_config_.enabled, "imu.enabled", nullptr},
+            {state_ambiguity_basis_ == StateAmbiguityBasis::NlWl,
+             "estimation.state_ambiguity_basis nl_wl", nullptr},
+            {enable_between_satellite_sd_, "estimation.between_satellite_sd.enabled", nullptr},
+        };
+        for (const Flag& f : flags) {
+            if (!f.on) continue;
+            throw std::runtime_error(
+                std::string(f.key)
+                + " sets the single-receiver layout, and this network run has no consumer "
+                  "(network.closed_loop.enable is off), so it reaches no parameter; "
+                + (f.network_key != nullptr
+                       ? std::string("the network stations' key is ") + f.network_key
+                       : std::string("a network station has no such parameter")));
+        }
+    }
+
     void GnssConfig::validateNetworkFixedCycles_(const std::shared_ptr<spdlog::logger>& log) const {
         const NetworkArConfig& ar = network_config_.ambiguity_resolution;
         if (ar.fixed_cycle_fold == FixedCycleFold::Off) {
@@ -3321,6 +3347,22 @@ namespace GnssProcessor {
         network_config_.estimate_rx_extra_band_code_delay =
             jval<bool>(json, "network.estimate_rx_extra_band_code_delay",
                        "estimate_rx_extra_band_code_delay", false);
+        // The stations' troposphere gradients (a parameter of the station set, uncarried).
+        // No top-level legacy spelling: a root "estimate_tropo_gradients" is the single-receiver
+        // flag's (estimation.estimate_tropo_gradients), which sets the consumer's layout.
+        network_config_.estimate_tropo_gradients =
+            jval<bool>(json, "network.estimate_tropo_gradients", "", false);
+        // Their zero-mean prior, one row per column and epoch (0 removes it).  A negative or
+        // non-finite sigma names no bound, so it is refused and the physical default restored.
+        network_config_.tropo_gradient_prior_sigma_m =
+            jval<double>(json, "network.tropo_gradient_prior_sigma_m", "", 0.001);
+        if (!(std::isfinite(network_config_.tropo_gradient_prior_sigma_m)
+              && network_config_.tropo_gradient_prior_sigma_m >= 0.0)) {
+            log->error("Network: network.tropo_gradient_prior_sigma_m = {} is negative or not a "
+                       "number; falling back to 0.001 m (0 removes the prior).",
+                       network_config_.tropo_gradient_prior_sigma_m);
+            network_config_.tropo_gradient_prior_sigma_m = 0.001;
+        }
         // Code-weight half of the band-5-code-removed emulation.  With B5D
         // armed, the extra-band code-bias column stays determined by the extra-band
         // code rows alone, so raising their sigma keeps the wire's band-5 code bias

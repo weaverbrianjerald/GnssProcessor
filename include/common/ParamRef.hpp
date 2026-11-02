@@ -86,10 +86,13 @@ enum class NetworkParamKind : int {
     /// the network holds at the roster coordinate and never estimates (the
     /// parameter inventory's coordinate instances, treatment Pinned).
     RxPosition,
+    /// Troposphere gradient per station, north and east (local; network.estimate_tropo_gradients,
+    /// and on the single-receiver side estimation.estimate_tropo_gradients).
+    TropoGradient,
 };
 
 /// Number of @ref NetworkParamKind enumerators (the registry's table size).
-inline constexpr std::size_t kNetworkParamKindCount = 12;
+inline constexpr std::size_t kNetworkParamKindCount = 13;
 
 /**
  * @brief Lower-case table name of a kind (e.g. "sat_clock").
@@ -118,12 +121,14 @@ enum class ParamForm : std::uint8_t {
     Ifb,         ///< rx_code_bias: "<system>_IFB<band>", the inter-frequency bias of a band outside that pair.
     Isc,         ///< rx_code_bias: "<system>_ISC_<signal>", the inter-signal correction of a second code.
     GloSlotIfb,  ///< rx_code_bias: "<system>_IFB<band>_k<slot>", the GLONASS per-slot inter-frequency bias.
+    North,       ///< tropo_gradient: the north component (mapping function times cos(azimuth)).
+    East,        ///< tropo_gradient: the east component (mapping function times sin(azimuth)).
 };
 
 /**
  * @brief The name of a form, appended to the kind in the table ("rx_code_bias.ifb").
  * @param f The form.
- * @return "" for None; "isb", "if", "nl", "wl", "dcb", "ifb", "isc" or "slot".
+ * @return "" for None; "isb", "if", "nl", "wl", "dcb", "ifb", "isc", "slot", "north" or "east".
  */
 const char* paramFormName(ParamForm f);
 
@@ -332,17 +337,16 @@ bool operator<(const RxCbKey& a, const RxCbKey& b);
  *        column the user side adds by configuration flag.
  *
  * The observation equation (measurement/ObservationEquation.hpp) is shared by the
- * single-receiver filter and the network producer.  The receiver phase clock and the
- * troposphere gradients are terms of the equation that only a user configuration switches on;
- * they are named here so that the equation names every column it can write.  Every network
- * term has @c None.  The columns of the Doppler rows (velocity, clock rate, the IMU states)
- * are not terms of the shared equation.
+ * single-receiver filter and the network producer.  The receiver phase clock is a term of the
+ * equation that only a user configuration switches on; it is named here so that the equation
+ * names every column it can write.  Every network term has @c None.  The troposphere gradients
+ * were user-only too until the network took them as a kind of its own
+ * (@ref NetworkParamKind::TropoGradient).  The columns of the Doppler rows (velocity, clock
+ * rate, the IMU states) are not terms of the shared equation.
  */
 enum class UserCore : std::uint8_t {
     None = 0,       ///< A network parameter (the default).
     PhaseClock,     ///< The receiver phase-clock offset: +1 on every phase row.
-    GradientNorth,  ///< The troposphere north gradient: mapping function times cos(azimuth).
-    GradientEast,   ///< The troposphere east gradient: mapping function times sin(azimuth).
 };
 
 /**
@@ -359,7 +363,7 @@ enum class UserCore : std::uint8_t {
  * | receiver clock               | rx_clock       | none |                                  |
  * | inter-system bias            | rx_clock       | isb  | sys                              |
  * | receiver phase clock         | rx_clock       | none | core                             |
- * | troposphere gradient         | zwd            | none | core                             |
+ * | troposphere gradient         | tropo_gradient | north, east |                           |
  * | slant ionosphere             | slant_iono     | none | sat                              |
  * | receiver code bias           | rx_code_bias   | key  | the fields of @ref RxCbKey       |
  * | satellite code bias          | sat_code_bias  | none | sat, signal                      |
@@ -375,8 +379,8 @@ enum class UserCore : std::uint8_t {
  *
  * The receiver code-bias row repeats @ref RxCbKey; @ref rxCodeBiasRef and @ref rxCbKeyOf
  * convert.  A user-only column has a non-default @ref core and the kind that names its place
- * in the row (the phase clock sits with the receiver clock, a gradient with the
- * troposphere).  The factory functions below build each row of the table.
+ * in the row (the phase clock sits with the receiver clock).  The factory functions below
+ * build each row of the table.
  */
 struct ParamRef {
     NetworkParamKind kind{NetworkParamKind::RxClock};  ///< Registry kind.
@@ -434,9 +438,9 @@ ParamRef isbRef(System sys);
 /// @return The receiver phase-clock offset (user-only).
 ParamRef phaseClockRef();
 /**
- * @brief A troposphere gradient (user-only).
+ * @brief A troposphere gradient.
  * @param north True for the north gradient, false for the east gradient.
- * @return The reference.
+ * @return The reference (kind tropo_gradient, form north or east).
  */
 ParamRef gradientRef(bool north);
 /**

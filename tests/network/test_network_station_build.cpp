@@ -15,6 +15,7 @@
 #include "network/assembly/StationBuild.hpp"
 #include "network/assembly/ContributionKind.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <string>
 #include <type_traits>
@@ -40,8 +41,8 @@ static_assert(std::is_same_v<decltype(StationBuild::i), const int>,
               "the roster index keeps the frozen loop variable's type (the carry keys are int)");
 static_assert(std::is_same_v<decltype(StationBuild::st), NetStation&>, "the station is writable");
 static_assert(std::is_same_v<decltype(StationBuild::R), StationAssembly&>, "its slot is writable");
-static_assert(std::is_same_v<decltype(StationBuild::em), EpochMeasurement>,
-              "the measurement update is the one value a step hands a later one");
+static_assert(std::is_same_v<decltype(StationBuild::rows), StationDataRows>,
+              "the data rows are the one value a step hands a later one");
 static_assert(std::is_same_v<StationBuildFn, StationStep (*)(StationBuild&)>);
 static_assert(std::is_same_v<StationCarryFn, void (*)(StationCarryFrame&)>);
 static_assert(std::is_same_v<decltype(StationCarryFrame::build), StationBuild&>);
@@ -89,8 +90,8 @@ std::size_t carryIndex(const std::string& name) {
 TEST(NetworkStationBuildTable, TopLevelStepsInWalkOrder) {
     const std::vector<std::string> want = {
         "data_rows", "rx_ifb_recouple", "congruence_geometry", "phase_datum_pins",
-        "glonass_anchors", "sim_zero_iono", "iono_constraint", "sd_ewl", "raim_columns",
-        "carried_priors", "phase_colour_rows", "zwd_capture"};
+        "glonass_anchors", "sim_zero_iono", "tropo_gradient_prior", "iono_constraint", "sd_ewl",
+        "raim_columns", "carried_priors", "phase_colour_rows", "zwd_capture"};
     EXPECT_EQ(buildNames(), want);
 }
 
@@ -121,15 +122,19 @@ TEST(NetworkStationBuildTable, KindsCoverExactlyTheStationKinds) {
         station |= kindBit(static_cast<ContributionKind>(k));
     EXPECT_EQ(top, station);
     // carried_priors declares the union of the carry table's kinds.
-    EXPECT_EQ(kStationBuildSteps[9].kinds, carry);
+    const std::vector<std::string> names = buildNames();
+    const std::size_t carried =
+        static_cast<std::size_t>(std::find(names.begin(), names.end(), "carried_priors") - names.begin());
+    ASSERT_LT(carried, names.size());
+    EXPECT_EQ(kStationBuildSteps[carried].kinds, carry);
 }
 
 // ---- The orders that fix the bytes --------------------------------------------------------
 TEST(NetworkStationBuildOrder, RowsFollowTheTableOrder) {
     using CK = ContributionKind;
     const std::vector<CK> rows = {CK::DataCode, CK::AmbiguityPin, CK::GloIfbAnchor,
-                                  CK::SimZeroIono, CK::ShIonoTie, CK::SdEwl,
-                                  CK::CouplingScalar, CK::PhaseColourBirth};
+                                  CK::SimZeroIono, CK::TropoGradientPrior, CK::ShIonoTie,
+                                  CK::SdEwl, CK::CouplingScalar, CK::PhaseColourBirth};
     for (std::size_t j = 1; j < rows.size(); ++j)
         EXPECT_LT(firstBuildStep(rows[j - 1]), firstBuildStep(rows[j])) << j;
 }

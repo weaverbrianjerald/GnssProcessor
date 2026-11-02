@@ -65,6 +65,7 @@
 #include <map>
 #include <memory>
 #include <random>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -307,15 +308,18 @@ TEST(StationParamsTest, AddParamKeepsEverySlotAndCountsWhatNoMapHolds) {
     // Forms only the single-receiver filter allocates have no typed map.
     EXPECT_FALSE(addParam(set, slot(ambiguityIfRef(g05, SignalPair{l1c, l2w}), 3.0)));
     EXPECT_FALSE(addParam(set, slot(phaseClockRef(), 4.0)));
-    EXPECT_FALSE(addParam(set, slot(gradientRef(true), 5.0)));
+    // The troposphere gradient is a network kind with its own field (north, then east).
+    EXPECT_TRUE(addParam(set, slot(gradientRef(true), 5.0)));
     EXPECT_TRUE(addParam(set, slot(rxClockRef(), 6.0)));
     EXPECT_FALSE(addParam(set, slot(rxClockRef(), 7.0)));
 
     EXPECT_EQ(set.slots.size(), 7u);
-    EXPECT_EQ(set.untyped, 5);
+    EXPECT_EQ(set.untyped, 4);
     EXPECT_EQ(findParam(set, ambiguityRef(g05, l1c)), 0);
     EXPECT_EQ(findParam(set, ambiguityRef(g05, l2w)), -1);
     EXPECT_EQ(findParam(set, ambiguityIfRef(g05, SignalPair{l1c, l2w})), -1);
+    EXPECT_EQ(findParam(set, gradientRef(true)), 4);
+    EXPECT_EQ(findParam(set, gradientRef(false)), -1);
     EXPECT_EQ(findParam(set, rxClockRef()), 5);
     EXPECT_EQ(findParam(set, zwdRef()), -1);
     EXPECT_EQ(findParam(set, rxPositionRef(0)), -1);
@@ -837,32 +841,45 @@ TEST(StationParamsTest, TheRowsAreOneRowPerUsableSignalOverTheColumnsOfTheSet) {
     networkBirthLocalStates(c, f.set, obs);
     networkAdmitSharedStates(c, f.set, obs, {}, nullptr);
 
-    const EpochMeasurement em = networkStationRows(c, f.set, obs);
-    const Eigen::Index rows = em.innovations.size();
+    const StationDataRows data = networkStationRows(c, f.set, obs);
+    const Eigen::Index rows = data.innovations.size();
     EXPECT_EQ(rows, 12);   // two code and two phase signals of three satellites
-    EXPECT_EQ(em.H.rows(), rows);
-    EXPECT_EQ(em.H.cols(), static_cast<Eigen::Index>(f.set.slots.size()));
-    EXPECT_EQ(em.satellite_ids.size(), static_cast<std::size_t>(rows));
-    EXPECT_EQ(em.signal_types.size(), static_cast<std::size_t>(rows));
+    EXPECT_EQ(data.n_slots, f.set.slots.size());
+    ASSERT_EQ(data.row_start.size(), static_cast<std::size_t>(rows) + 1);
+    EXPECT_EQ(data.row_start.back(), data.partials.size());
+    const Eigen::MatrixXd H = denseJacobian(data);
+    EXPECT_EQ(H.rows(), rows);
+    EXPECT_EQ(H.cols(), static_cast<Eigen::Index>(f.set.slots.size()));
+    EXPECT_EQ(data.satellite_ids.size(), static_cast<std::size_t>(rows));
+    EXPECT_EQ(data.signal_types.size(), static_cast<std::size_t>(rows));
     for (Eigen::Index r = 0; r < rows; ++r) {
-        EXPECT_TRUE(std::isfinite(em.innovations(r))) << r;
-        EXPECT_GT(em.R_v(r), 0.0) << r;
-        const std::string& sat = em.satellite_ids[static_cast<std::size_t>(r)];
-        const std::string& sig = em.signal_types[static_cast<std::size_t>(r)];
+        EXPECT_TRUE(std::isfinite(data.innovations(r))) << r;
+        EXPECT_GT(data.R_v(r), 0.0) << r;
+        const std::string& sat = data.satellite_ids[static_cast<std::size_t>(r)];
+        const std::string& sig = data.signal_types[static_cast<std::size_t>(r)];
         const SatId s = *SatId::parse(sat);
         // The receiver clock enters every row with +1; a phase row carries its own ambiguity.
-        EXPECT_EQ(em.H(r, f.set.clock), 1.0) << sat << " " << sig;
+        EXPECT_EQ(H(r, f.set.clock), 1.0) << sat << " " << sig;
         const int amb = findAmbiguity(f.set, K::makeAmbiguityKey(sat, sig));
         if (sig[0] == 'L') {
             ASSERT_GE(amb, 0);
-            EXPECT_EQ(em.H(r, amb), 1.0);
+            EXPECT_EQ(H(r, amb), 1.0);
         } else {
             EXPECT_LT(amb, 0);
         }
         // The slant ionosphere of the row's satellite is its own column.
-        EXPECT_NE(em.H(r, f.set.iono.at(s)), 0.0);
+        EXPECT_NE(H(r, f.set.iono.at(s)), 0.0);
         // The satellite clock is a shared column of the set.
-        EXPECT_EQ(em.H(r, f.set.shared.sat_clock.at(s)), kSatClockPartial);
+        EXPECT_EQ(H(r, f.set.shared.sat_clock.at(s)), kSatClockPartial);
+        // Each slot appears at most once in a row, and the dense row holds exactly the entries.
+        std::set<int> seen;
+        for (std::size_t e = data.row_start[static_cast<std::size_t>(r)];
+             e < data.row_start[static_cast<std::size_t>(r) + 1]; ++e) {
+            EXPECT_TRUE(seen.insert(data.partials[e].slot).second) << r;
+            EXPECT_EQ(rowPartial(data, r, data.partials[e].slot), data.partials[e].value) << r;
+        }
+        for (Eigen::Index k = 0; k < H.cols(); ++k)
+            if (!seen.count(static_cast<int>(k))) EXPECT_EQ(H(r, k), 0.0) << r << "," << k;
     }
 }
 

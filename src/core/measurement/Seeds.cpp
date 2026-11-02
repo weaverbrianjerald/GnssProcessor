@@ -60,6 +60,10 @@ bool isCodeRow(const GnssConfig& config, const PppObservation& obs, const std::s
 // The residual
 // ===========================================================================
 
+const SeedMasks& seedMasksOf(const GnssConfig& config) {
+    return config.seedFullEquation() ? kFullSeedMask : kLegacySeedMask;
+}
+
 double seedResidual(const ObservationEquation& eq, const SeedMask& mask, double observed) {
     const auto value = [&](ObsEffect effect) -> std::optional<double> {
         if (!mask.effects.has(effect)) return std::nullopt;
@@ -82,7 +86,7 @@ double seedResidual(const ObservationEquation& eq, const SeedMask& mask, double 
 
 std::optional<double> rawResidual(const ObsInput& in, const ParamLookup& params,
                                   const PppObservation& obs, const std::string& ref_type) {
-    const SeedMask& mask = kLegacySeedMask.residual;
+    const SeedMask& mask = seedMasksOf(in.products.config).residual;
     const ObservationEquation eq = observationEquation(in, obs, ref_type, params, mask.effects);
     if (!eq.usable) return std::nullopt;
     return seedResidual(eq, mask, obs.observed.at(ref_type));
@@ -95,7 +99,7 @@ std::optional<double> rawResidual(const ObsInput& in, const ParamLookup& params,
 double seedAmbiguity(const ObsInput& in, const ParamLookup& params, const PppObservation& obs,
                      const std::string& ref_type) {
     if (!obs.observed.count(ref_type) || !obs.modeled.count(ref_type)) return 0.0;
-    SeedMask mask = kLegacySeedMask.ambiguity;
+    SeedMask mask = seedMasksOf(in.products.config).ambiguity;
     if (obsTypeOf(ref_type) != ObsType::Phase)
         mask.effects = mask.effects.without(ObsEffect::Ionosphere);   // the ionosphere advances phase only
     const ObservationEquation eq = observationEquation(in, obs, ref_type, params, mask.effects);

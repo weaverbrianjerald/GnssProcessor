@@ -56,6 +56,7 @@ NetworkRunTraces::NetworkRunTraces(std::filesystem::path log_dir)
       health_trace_path(log_dir_ / "network_service_health.csv"),
       events_trace_path(log_dir_ / "network_events.csv"),
       zwd_trace_path(log_dir_ / "network_zwd.csv"),
+      tgrad_trace_path(log_dir_ / "network_tropo_gradient.csv"),
       sat_bias_states_trace_path(log_dir_ / "network_sat_bias_states.csv"),
       rx_states_trace_path(log_dir_ / "network_rx_states.csv"),
       station_res_trace_path(log_dir_ / "network_station_residuals.csv"),
@@ -960,6 +961,17 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
             zwd_trace << "week,tow,station,zwd_m,std_m,carried\n";
         else
             log->warn("Network: failed to open ZWD trace {}", zwd_trace_path.string());
+    }
+    if (nc.estimate_tropo_gradients) {
+        tgrad_trace.open(tgrad_trace_path);
+        if (tgrad_trace)
+            // north_m, east_m = linearization point + reconstructed correction (the gradient
+            // in metres at the zenith scale of the term mf_grad * (cos(az) g_n + sin(az) g_e));
+            // *_std_m = datum-conditioned formal sigma.
+            tgrad_trace << "week,tow,station,north_m,east_m,north_std_m,east_std_m\n";
+        else
+            log->warn("Network: failed to open the troposphere gradient trace {}",
+                      tgrad_trace_path.string());
     }
     if (nc.trace_sat_bias_states) {
         sat_bias_states_trace.open(sat_bias_states_trace_path);
@@ -2518,6 +2530,7 @@ void NetworkRunTraces::closeAll() {
     if (health_trace.is_open()) health_trace.close();
     if (events_trace.is_open()) events_trace.close();
     if (zwd_trace.is_open()) zwd_trace.close();
+    if (tgrad_trace.is_open()) tgrad_trace.close();
     if (station_res_trace.is_open()) station_res_trace.close();
     if (raim_redun_trace.is_open()) raim_redun_trace.close();
     if (station_factor_trace.is_open()) station_factor_trace.close();

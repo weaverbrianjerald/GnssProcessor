@@ -761,20 +761,28 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
     // the bias and the signal is not AR-eligible.  Both default to 0 (empty
     // allowlists, byte-identical).
     // A network station has the layout of its own parameter set: the receiver clock, the wet
-    // delay and one inter-system bias per constellation.  The single-receiver filter's optional
-    // columns are not part of it.
+    // delay, one inter-system bias per constellation and the network's own optional columns
+    // (network.estimate_tropo_gradients).  The single-receiver filter's optional columns set
+    // only the consumer's layout: the consumer is configured by a copy of this configuration,
+    // and the loader refuses a flag when no consumer runs
+    // (GnssConfig::validateNetworkUserLayoutFlags_).
     {
-        const auto ignored = [&](bool on, const char* key) {
-            if (on) log->warn("Network: {} is set but a network station has no such parameter; "
-                              "it is ignored.", key);
+        const auto consumerOnly = [&](bool on, const char* key, const char* network_key) {
+            if (!on) return;
+            log->info("Network: {} sets the closed-loop consumer's layout, not the stations'{}.",
+                      key, network_key != nullptr
+                               ? std::string(" (the stations' key is ") + network_key + ")"
+                               : std::string());
         };
-        ignored(config_.estimateVelocity(), "estimation.estimate_velocity");
-        ignored(config_.estimatePhaseClock(), "estimation.estimate_phase_clock");
-        ignored(config_.estimateTropoGradients(), "estimation.estimate_tropo_gradients");
-        ignored(config_.enableImu(), "imu.enabled");
-        ignored(config_.getStateAmbiguityBasis() == StateAmbiguityBasis::NlWl,
-                "estimation.state_ambiguity_basis nl_wl");
-        ignored(config_.enableBetweenSatelliteSd(), "estimation.between_satellite_sd.enabled");
+        consumerOnly(config_.estimateVelocity(), "estimation.estimate_velocity", nullptr);
+        consumerOnly(config_.estimatePhaseClock(), "estimation.estimate_phase_clock", nullptr);
+        consumerOnly(config_.estimateTropoGradients(), "estimation.estimate_tropo_gradients",
+                     "network.estimate_tropo_gradients");
+        consumerOnly(config_.enableImu(), "imu.enabled", nullptr);
+        consumerOnly(config_.getStateAmbiguityBasis() == StateAmbiguityBasis::NlWl,
+                     "estimation.state_ambiguity_basis nl_wl", nullptr);
+        consumerOnly(config_.enableBetweenSatelliteSd(), "estimation.between_satellite_sd.enabled",
+                     nullptr);
     }
 
     std::map<std::string, std::set<std::string>> signal_allowlist;       // drop gate (code and phase)

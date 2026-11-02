@@ -1203,8 +1203,8 @@ struct StationAssembly {
     /// lockstep, so the row's kind, satellite and signal travel with it.  Every reader that
     /// asks what a row is reads its tag (filter/NetworkRowClassify).
     std::vector<RowTag> row_tags;
-    /// The split's data rows: rows [0, n_data_rows) of the block are the measurement
-    /// update's (@c em.H.rows()), everything after them is appended (the tag
+    /// The split's data rows: rows [0, n_data_rows) of the block are the station's
+    /// data rows (@c StationDataRows::rows()), everything after them is appended (the tag
     /// check reads it).
     Eigen::Index n_data_rows{0};
     /// One tag per entry of @c carry_cols (the post-PD diagonal channel), in entry order.  An
@@ -1471,12 +1471,12 @@ struct StationAssembly {
     /// congruence screen needs to test for such an error.
     ///
     /// It is the Jacobian, not a raw line-of-sight vector, by design: it is copied from
-    /// @c em.H (whose position partial is @f$-\hat u@f$ per
+    /// the data rows' entries at the position slots (whose partial is @f$-\hat u@f$ per
     /// the observation equation) and rotated by the ENU→ECEF matrix at the
     /// station's held coordinate.  Taking the partial the observation equation built,
     /// rather than re-deriving a sign per row type, makes the screen's convention
     /// correct by construction for every current and future row class:
-    /// @c em.innovations and @c em.H are one linearization, so @f$y \approx H\,\delta x@f$
+    /// the rows' innovations and entries are one linearization, so @f$y \approx H\,\delta x@f$
     /// holds row by row whatever the observable is.  A row whose observable carries no
     /// geometry (an SH↔slant tie, a pin, a coupling row) has an exactly-zero partial
     /// here or lies past @c rows(): every append site in the assembly appends past the

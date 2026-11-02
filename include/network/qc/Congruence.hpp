@@ -996,7 +996,7 @@ enum class StationStep : std::uint8_t;     // network/assembly/StationBuild.hpp
  * @brief The station congruence screen's per-row position partials (CG-INC-0).
  *
  * Step `congruence_geometry` of kStationBuildSteps (network/assembly/StationBuild.hpp); its kinds:
- * none (it records only). It returns at once unless `congruence_rows && em.H.rows() > 0 &&
+ * none (it records only). It returns at once unless `congruence_rows && rows.rows() > 0 &&
  * st.ecef.norm() > 1.0`. Records: row_pos_enu. The frozen text of networkPassB_'s produce loop
  * below its bindings.
  * @param build One station's build: the station and its slot writable, the run read only.

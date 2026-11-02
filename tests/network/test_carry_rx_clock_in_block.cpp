@@ -16,7 +16,7 @@
  * (0.723 m against 0.088 m in-block on the quiet bed).
  *
  * The drift is the main design decision, and half of these cases cover it.  The
- * producer never writes its solution back into the station StateManager, so
+ * producer never writes its solution back into the station's parameter set, so
  * @c x_lin(clock) is constant over the run and @f$x_r@f$ carries the entire clock,
  * including a ~0.3 m/s ramp (0.29994 m/s on the sim truth bed, against 0.299 m of
  * random-walk jitter), i.e. 9 m per 30 s epoch.  A bias-only random walk would inject

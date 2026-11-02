@@ -54,6 +54,10 @@ bool addParam(StationParams& set, const LocalSlot& slot) {
         case PK::Zwd:
             placed = r.core == UserCore::None && placeOnce(set.zwd, index);
             break;
+        case PK::TropoGradient:
+            placed = (r.form == ParamForm::North || r.form == ParamForm::East)
+                  && placeOnce(set.gradient[r.form == ParamForm::North ? 0 : 1], index);
+            break;
         case PK::RxClock:
             if (r.core != UserCore::None) break;
             placed = r.form == ParamForm::Isb ? place(set.isb, r.sys, index)
@@ -98,6 +102,9 @@ int findParam(const StationParams& set, const ParamRef& r) {
             return r.axis < set.position.size() ? set.position[r.axis] : -1;
         case PK::Zwd:
             return r.core == UserCore::None ? set.zwd : -1;
+        case PK::TropoGradient:
+            if (r.form == ParamForm::North) return set.gradient[0];
+            return r.form == ParamForm::East ? set.gradient[1] : -1;
         case PK::RxClock:
             if (r.core != UserCore::None) return -1;
             return r.form == ParamForm::Isb ? slotOf(set.isb, r.sys) : set.clock;
@@ -216,10 +223,8 @@ std::string stateLabel(const LocalSlot& slot, std::size_t index) {
             if (r.core == UserCore::PhaseClock) return "PHASE_CLK";
             if (r.core != UserCore::None) break;
             return r.form == ParamForm::Isb ? "ISB_" + keyText(r) : std::string("CLK");
-        case PK::Zwd:
-            if (r.core == UserCore::GradientNorth) return "TGRAD_N";
-            if (r.core == UserCore::GradientEast) return "TGRAD_E";
-            return "ZWD";
+        case PK::Zwd:           return "ZWD";
+        case PK::TropoGradient: return r.form == ParamForm::North ? "TGRAD_N" : "TGRAD_E";
         case PK::SlantIono:    return familyPrefix(StateFamily::Ionosphere) + keyText(r);
         case PK::Ambiguity:    return familyPrefix(StateFamily::Ambiguity) + keyText(r);
         case PK::RxCodeBias:   return familyPrefix(StateFamily::ReceiverCodeBias) + keyText(r);
@@ -248,6 +253,12 @@ StationParams startStationParams(const GnssConfig& config, const Eigen::Vector3d
     for (std::uint8_t axis = 0; axis < 3; ++axis) push(rxPositionRef(axis), position(axis));
     push(rxClockRef(), 0.0);
     push(zwdRef(), 0.0);
+    // The troposphere gradients, north then east, when the network estimates them (born at
+    // 0, as the wet delay is).
+    if (config.getNetworkConfig().estimate_tropo_gradients) {
+        push(gradientRef(true), 0.0);
+        push(gradientRef(false), 0.0);
+    }
     // One inter-system bias per active constellation other than the time reference (GPS), in
     // the order of the configuration's list.
     for (const std::string& name : config.getActiveSystems()) {
@@ -264,7 +275,7 @@ namespace {
 /// Whether a slot is one of the core columns, which are never removed.
 bool isCore(const StationParams& set, int k) {
     return k == set.position[0] || k == set.position[1] || k == set.position[2]
-        || k == set.clock || k == set.zwd;
+        || k == set.clock || k == set.zwd || k == set.gradient[0] || k == set.gradient[1];
 }
 
 /// Renumber a typed map after a removal, dropping the entries of removed slots.
@@ -319,6 +330,8 @@ void removeSlots(StationParams& set, std::vector<int> indices) {
     for (int& p : set.position) p = remap[static_cast<std::size_t>(p)];
     set.clock = remap[static_cast<std::size_t>(set.clock)];
     set.zwd   = remap[static_cast<std::size_t>(set.zwd)];
+    for (int& g : set.gradient)
+        if (g >= 0) g = remap[static_cast<std::size_t>(g)];
     renumber(set.isb, remap);
     renumber(set.iono, remap);
     renumber(set.colour, remap);

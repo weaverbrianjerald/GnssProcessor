@@ -862,13 +862,106 @@ TEST_F(SeedsTest, ThePhaseClockIsAddedToTheReceiverClockFirstInTheAmbiguitySeedO
 }
 
 TEST_F(SeedsTest, EverySubtractedEffectIsInTheSeedOrder) {
-    for (const SeedMask& mask : {kLegacySeedMask.residual, kLegacySeedMask.ambiguity})
+    for (const SeedMask& mask : {kLegacySeedMask.residual, kLegacySeedMask.ambiguity,
+                                 kFullSeedMask.residual, kFullSeedMask.ambiguity})
         for (std::size_t e = 0; e < kObsEffectCount; ++e) {
             const ObsEffect effect = static_cast<ObsEffect>(e);
             if (!mask.effects.has(effect) || effect == ObsEffect::PhaseClock) continue;
             EXPECT_NE(std::find(kSeedOrder.begin(), kSeedOrder.end(), effect), kSeedOrder.end())
                 << obsEffectName(effect);
         }
+}
+
+// ===========================================================================
+// The full-equation masks (estimation.seed_full_equation)
+// ===========================================================================
+
+namespace {
+
+/// An equation with one term of every effect, each worth a distinct power of two, so that any
+/// set of the terms subtracts exactly.  @p worth receives each effect's value.
+ObservationEquation everyEffect(std::map<ObsEffect, double>& worth) {
+    ObservationEquation eq;
+    double v = 1.0;
+    for (std::size_t e = 0; e < kObsEffectCount; ++e) {
+        const ObsEffect effect = static_cast<ObsEffect>(e);
+        ObsAddend& a = eq.addend[eq.n++];
+        a.effect = effect;
+        if (effect == ObsEffect::RangeCorrection) {
+            // Minus the line of sight (1, 0, 0) dotted with an offset of -v from the origin.
+            a.part[0].partial = -1.0;
+            a.part[0].x = -v;
+            a.n_part = 3;
+        } else if (effect == ObsEffect::Modeled || effect == ObsEffect::SsrBias) {
+            a.constant = v;
+        } else {
+            a.part[0].partial = 1.0;
+            a.part[0].x = v;
+            a.n_part = 1;
+        }
+        worth[effect] = v;
+        v *= 2.0;
+    }
+    eq.usable = true;
+    return eq;
+}
+
+}  // namespace
+
+TEST_F(SeedsTest, TheFullMasksSubtractEveryKnownTermButTheParameterBeingBorn) {
+    std::map<ObsEffect, double> worth;
+    const ObservationEquation eq = everyEffect(worth);
+    for (const auto& [effect, v] : worth) ASSERT_EQ(termValue(eq, *findTerm(eq, effect)), v);
+    const double observed = 1048576.0;   // 2^20: every difference below is exact
+    double all = 0.0;
+    for (const auto& [effect, v] : worth) all += v;
+    // The residual form: every term but the phase clock and the ambiguity.
+    EXPECT_EQ(seedResidual(eq, kFullSeedMask.residual, observed),
+              observed - (all - worth[ObsEffect::PhaseClock] - worth[ObsEffect::Ambiguity]));
+    // The ambiguity form: every term but the ambiguity (the phase clock with the clock).
+    EXPECT_EQ(seedResidual(eq, kFullSeedMask.ambiguity, observed),
+              observed - (all - worth[ObsEffect::Ambiguity]));
+    // Against the legacy forms, exactly the five terms only the full forms hold.
+    double extra = 0.0;
+    for (const ObsEffect e : {ObsEffect::RangeCorrection, ObsEffect::SatellitePhaseBias,
+                              ObsEffect::SatelliteClock, ObsEffect::SsrBias, ObsEffect::PhaseColour})
+        extra += worth[e];
+    EXPECT_EQ(seedResidual(eq, kLegacySeedMask.residual, observed)
+                  - seedResidual(eq, kFullSeedMask.residual, observed), extra);
+    EXPECT_EQ(seedResidual(eq, kLegacySeedMask.ambiguity, observed)
+                  - seedResidual(eq, kFullSeedMask.ambiguity, observed),
+              extra + worth[ObsEffect::ReceiverCodeBias] + worth[ObsEffect::SatelliteCodeBias]);
+}
+
+TEST_F(SeedsTest, TheLegacyTermsKeepTheirOrderAheadOfTheFullOnes) {
+    // The first eight entries of the order are the legacy terms in the legacy order, so a
+    // legacy seed subtracts exactly what it did before the order grew.
+    const std::array<ObsEffect, 8> legacy_order{
+        ObsEffect::Modeled,          ObsEffect::ReceiverClock,    ObsEffect::Troposphere,
+        ObsEffect::SystemTimeOffset, ObsEffect::TropoGradient,    ObsEffect::Ionosphere,
+        ObsEffect::ReceiverCodeBias, ObsEffect::SatelliteCodeBias};
+    for (std::size_t i = 0; i < legacy_order.size(); ++i) EXPECT_EQ(kSeedOrder[i], legacy_order[i]) << i;
+    for (std::size_t i = legacy_order.size(); i < kSeedOrder.size(); ++i) {
+        EXPECT_FALSE(kLegacySeedMask.residual.effects.has(kSeedOrder[i])) << obsEffectName(kSeedOrder[i]);
+        EXPECT_FALSE(kLegacySeedMask.ambiguity.effects.has(kSeedOrder[i])) << obsEffectName(kSeedOrder[i]);
+    }
+}
+
+TEST_F(SeedsTest, WithoutTheKeyTheSeedsKeepTheLegacyMasksAndFrequencies) {
+    load("ppp-rtk");
+    EXPECT_EQ(&seedMasksOf(config()), &kLegacySeedMask);
+    EXPECT_EQ(model().ambiguitySeedInput().fdma, FdmaChannel::Zero);
+    EXPECT_EQ(&model().residualSeedInput().ppp_utils, &model().getStateInitializer().frequencyHelper());
+}
+
+TEST_F(SeedsTest, TheKeyPicksTheFullMasksAndTheRowsFrequencyRule) {
+    load("ppp-rtk", "", R"(, "seed_full_equation": true)");
+    EXPECT_EQ(&seedMasksOf(config()), &kFullSeedMask);
+    EXPECT_EQ(model().ambiguitySeedInput().fdma, FdmaChannel::Satellite);
+    // The residual seeds take the rows' helper (the model's own), the one the ambiguity seed
+    // has always taken, not the initializer's default channel table.
+    EXPECT_NE(&model().residualSeedInput().ppp_utils, &model().getStateInitializer().frequencyHelper());
+    EXPECT_EQ(&model().residualSeedInput().ppp_utils, &model().ambiguitySeedInput().ppp_utils);
 }
 
 // ===========================================================================

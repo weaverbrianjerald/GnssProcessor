@@ -162,6 +162,7 @@ std::string censusLabel(const ParamRef& r) {
         case PK::RxCodeBias:  return "rxcb:" + keyText(r);
         case PK::RxPhaseBias: return "rpb:" + keyText(r);
         case PK::Zwd:         return r.core == UserCore::None ? "zwd" : std::string();
+        case PK::TropoGradient: return r.form == ParamForm::North ? "tgrad:n" : "tgrad:e";
         case PK::RxClock:
             return r.core == UserCore::None && r.form == ParamForm::None ? "rx_clock" : std::string();
         default:              break;

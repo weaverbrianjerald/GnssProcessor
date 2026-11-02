@@ -260,12 +260,14 @@ A station's own parameter set is a fourth home, and the network is its only writ
 order, each as a typed `ParamRef` with its linearization point and the split's disposition, and
 looks a parameter up by satellite, signal or constellation without parsing a state key. A
 station has the layout of its own set (`startStationParams`): the position, the receiver clock,
-the wet delay and one inter-system bias per active non-GPS constellation. The single-receiver
-filter's optional columns (velocity, phase clock, gradients, IMU, NL/WL ambiguities,
-between-satellite differencing) are not part of it, and a network run that enables one warns at
-start that it is ignored. The equation's inputs for a station name the per-band ambiguity basis
-(`kNetworkAmbiguityBasis`, `include\network\assembly\StationRows.hpp`), so
-`estimation.state_ambiguity_basis` has no effect on a network run.
+the wet delay, the north and east troposphere gradients under `network.estimate_tropo_gradients`,
+and one inter-system bias per active non-GPS constellation. The single-receiver filter's optional
+columns (velocity, phase clock, its own gradient flag, IMU, NL/WL ambiguities, between-satellite
+differencing) set only the closed-loop consumer's layout, because the consumer is configured by a
+copy of the network configuration; with no consumer the loader refuses them
+(`GnssConfig::validateNetworkUserLayoutFlags_`). The equation's inputs for a station name the
+per-band ambiguity basis (`kNetworkAmbiguityBasis`, `include\network\assembly\StationRows.hpp`),
+so `estimation.state_ambiguity_basis` has no effect on a network station.
 
 The columns are born in the network's own functions. `networkAdmitSharedStates`
 (`network\assembly\SharedAdmission.cpp`) takes up the shared columns (satellite clock, phase
@@ -273,11 +275,14 @@ bias, code bias) in PASS A behind the gates that decide which a station carries.
 `networkBirthLocalStates` (`network\assembly\LocalBirth.cpp`) births the local ones at the head
 of the station's data-rows step: the slant ionosphere, the phase colour, the cold receiver
 clock, the ambiguities (with their re-seeds and prunes), the receiver code biases and the
-first-epoch code-bias seed. The seed values are the pure functions of `measurement\Seeds.hpp`;
-the births apply them to the set. `networkStationRows` (`network\assembly\StationRows.cpp`)
-then builds the station's rows over the set through the observation equation
-(`measurement\ObservationEquation.hpp`), with `NetView` as the lookup and `scatterDense` writing
-the dense Jacobian. A shared parameter reads zero there, as its linearization point does. At
+first-epoch code-bias seed. The seed values are the pure functions of `measurement\Seeds.hpp`
+(on the whole equation under `estimation.seed_full_equation`); the births apply them to the set.
+`networkStationRows` (`network\assembly\StationRows.cpp`) then builds the station's rows over the
+set through the observation equation (`measurement\ObservationEquation.hpp`), with `NetView` as
+the lookup. Each row keeps its Jacobian entries as (slot, value) pairs (`StationDataRows`), and
+the split writes them straight into the shared border and the local block: no matrix of rows by
+slots is formed on the network. A shared parameter reads zero in the equation, as its
+linearization point does. At
 trace level each row also prints its PHASE-DECOMP or CODE-DECOMP line (`measurement\RowTrace.hpp`),
 the same function the single-receiver model calls.
 

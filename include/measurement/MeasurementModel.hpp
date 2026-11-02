@@ -319,7 +319,8 @@ namespace GnssProcessor {
         /**
          * @brief The equation inputs of an ambiguity seed: this model's row inputs with
          *        the GLONASS FDMA bands taken at channel 0, the number the ambiguity seed
-         *        has always used.
+         *        has always used, or under @c estimation.seed_full_equation at the
+         *        satellite's own channel, as the rows take them.
          *
          * For a caller that re-seeds an ambiguity without holding the model (the pivot
          * handover); pass it to @c seedAmbiguityOfState.
@@ -332,7 +333,8 @@ namespace GnssProcessor {
          * @brief The equation inputs of the residual seeds (inter-system bias, cold clock,
          *        phase clock, receiver code biases, slant ionosphere): this model's row
          *        inputs with the frequency helper of the state initializer, whose GLONASS
-         *        channels are the default table, the number those seeds have always used.
+         *        channels are the default table, the number those seeds have always used, or
+         *        under @c estimation.seed_full_equation the rows' own helper.
          * @return Non-owning references into this model.
          */
         ObsInput residualSeedInput() const;

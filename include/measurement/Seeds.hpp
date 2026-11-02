@@ -33,6 +33,12 @@
  * two copies subtracted them in (the inter-system bias before the gradients, not after, as in
  * the equation's sum), so that the numbers are the same bit for bit.
  *
+ * @ref kFullSeedMask (@c estimation.seed_full_equation) subtracts every known term of the row:
+ * the table's terms, then the range correction, the satellite phase bias, the satellite clock,
+ * the SSR bias and the phase colour, in that order after the legacy terms.  Only the parameter
+ * being born stays in the residual: the ambiguity, and in the residual form also the phase
+ * clock (the residual seeds include the phase clock's own).  @ref seedMasksOf picks the pair.
+ *
  * ### Pure
  *
  * The functions read the observations, a @ref ParamLookup and an @ref ObsInput (the
@@ -44,15 +50,17 @@
  * (MeasurementModelSeeds.cpp); the network will apply them to its own parameter set.  A seed for
  * a parameter that does not exist in the lookup is not returned.
  *
- * ### The carrier frequency (open)
+ * ### The carrier frequency
  *
  * The slant-ionosphere term scales by a carrier frequency, and the three places that did so
  * disagreed on GLONASS FDMA bands only (every other band is the same number, bit for bit; see
- * tests/test_seeds.cpp).  Seeds keep the number each copy used: the residuals take the
- * frequency helper of @c StateInitializer (whose GLONASS channels are the default table, never
- * the receiver's), the ambiguity seed takes channel 0.  @ref residualSeedInput and
- * @ref ambiguitySeedInput of @c MeasurementModel build those two inputs; one rule for both is
- * the open difference of the full-equation seed.
+ * tests/test_seeds.cpp).  With the legacy masks the seeds keep the number each copy used: the
+ * residuals take the frequency helper of @c StateInitializer (whose GLONASS channels are the
+ * default table, never the receiver's), the ambiguity seed takes channel 0.  With the full
+ * masks every seed takes the rows' rule, the satellite's own channel.  @ref residualSeedInput
+ * and @ref ambiguitySeedInput of @c MeasurementModel, and @c residualSeedObsInput and
+ * @c ambiguitySeedObsInput of a network station (network/assembly/StationRows.hpp), build the
+ * inputs under either rule.
  *
  * Plain value types and free functions.
  */
@@ -109,16 +117,41 @@ inline constexpr SeedMasks kLegacySeedMask{
 };
 
 /**
+ * @brief The terms the full-equation seeds subtract (@c estimation.seed_full_equation): every
+ *        known term of the row.
+ *
+ * The residual form leaves out the phase clock and the ambiguity, the ambiguity form the
+ * ambiguity only (with the phase clock summed into the receiver clock, as in the legacy form).
+ */
+inline constexpr SeedMasks kFullSeedMask{
+    SeedMask{kAllEffects.without(ObsEffect::PhaseClock).without(ObsEffect::Ambiguity),
+             /*group_clocks=*/false},
+    SeedMask{kAllEffects.without(ObsEffect::Ambiguity),
+             /*group_clocks=*/true},
+};
+
+/**
  * @brief The effects a seed can subtract, in the order it subtracts them.
  *
  * The receiver clock stands for the clock group when @ref SeedMask::group_clocks is set.  An
- * effect outside this list is never subtracted, whatever a mask says.
+ * effect outside this list is never subtracted, whatever a mask says.  The first eight are the
+ * legacy terms in the order the pre-N6 copies subtracted them; the rest are the terms only the
+ * full masks hold, so the legacy seeds keep their numbers bit for bit.
  */
-inline constexpr std::array<ObsEffect, 8> kSeedOrder{
-    ObsEffect::Modeled,          ObsEffect::ReceiverClock,    ObsEffect::Troposphere,
-    ObsEffect::SystemTimeOffset, ObsEffect::TropoGradient,    ObsEffect::Ionosphere,
-    ObsEffect::ReceiverCodeBias, ObsEffect::SatelliteCodeBias,
+inline constexpr std::array<ObsEffect, 13> kSeedOrder{
+    ObsEffect::Modeled,            ObsEffect::ReceiverClock,    ObsEffect::Troposphere,
+    ObsEffect::SystemTimeOffset,   ObsEffect::TropoGradient,    ObsEffect::Ionosphere,
+    ObsEffect::ReceiverCodeBias,   ObsEffect::SatelliteCodeBias,
+    ObsEffect::RangeCorrection,    ObsEffect::SatellitePhaseBias, ObsEffect::SatelliteClock,
+    ObsEffect::SsrBias,            ObsEffect::PhaseColour,
 };
+
+/**
+ * @brief The seed masks a configuration asks for.
+ * @param config The configuration.
+ * @return @ref kFullSeedMask under @c estimation.seed_full_equation, else @ref kLegacySeedMask.
+ */
+const SeedMasks& seedMasksOf(const GnssConfig& config);
 
 // =======================================================================
 // The residual

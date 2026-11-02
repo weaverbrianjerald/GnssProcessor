@@ -40,7 +40,7 @@ namespace GnssProcessor {
      * line instead of passing as an observation row.
      */
     enum class ContributionKind : std::uint8_t {
-        // --- Station data rows: the split's rows [0, em.H.rows()) ---------------------
+        // --- Station data rows: the split's rows [0, rows.rows()) ---------------------
         DataCode = 0,             ///< Code rows of the latched code signal.
         DataCodeCompanion,        ///< Code rows routed through a receiver inter-signal state: the second code channel's companion rows and its fallback rows (an allow-listed band-1 code that arrived without the canonical code beside it).
         DataPhase,                ///< Phase rows of the latched phase signal.
@@ -53,6 +53,7 @@ namespace GnssProcessor {
         GloIfbAnchor,             ///< Zero-mean anchor rows on the GLONASS per-slot receiver IFB columns.
         GloIonoAnchor,            ///< Zero-mean anchor rows on the GLONASS slant-ionosphere columns.
         SimZeroIono,              ///< Test-only rows tying every slant ionosphere to absolute zero (network.sim_zero_iono_sigma_m; a fixture simulated without ionosphere).
+        TropoGradientPrior,       ///< Zero-mean prior rows on the station's troposphere gradient columns, one per column and epoch (network.tropo_gradient_prior_sigma_m).
         ShIonoTie,                ///< Slant-ionosphere to SH-VTEC tie rows (whitened per constellation).
         GimIono,                  ///< External GIM slant-ionosphere rows (whitened per constellation).
         SdEwl,                    ///< Between-satellite single-differenced EWL rows (whitened per constellation).

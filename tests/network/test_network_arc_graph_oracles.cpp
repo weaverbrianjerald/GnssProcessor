@@ -3468,7 +3468,7 @@ TEST(NetworkArcGraphOracle, ChainElectionOnTheModuleEqualsTheFrozenElection) {
         ASSERT_EQ(ctx_l.knobs.eq34_slip_aware, kn.slip_aware);
         ASSERT_EQ(ctx_l.knobs.eq34_extend_only, kn.extend_only);
         ASSERT_EQ(ctx_l.knobs.eq34_shift_on, kn.carry_shift);
-        ASSERT_FALSE(ctx_l.knobs.eq34_seed_round);   // stations carry no StateManager here
+        ASSERT_FALSE(ctx_l.knobs.eq34_seed_round);   // the toy stations hold no parameter set here
 
         AnchorHygiene hyg_shape;   // the lineage's hygiene: inactive, or INC-1 with or without bridges and INC-3
         hyg_shape.active = chance(rng, 0.5);

@@ -338,9 +338,9 @@ namespace GnssProcessor {
      * none) is tagged @c DataCode with no identity, so the tag vector stays aligned.
      *
      * @param tags The station's tag vector; cleared, then filled with @p m tags.
-     * @param m    Rows of the measurement update (@c em.H.rows()).
-     * @param sats The rows' satellites (@c em.satellite_ids).
-     * @param sigs The rows' observation codes (@c em.signal_types).
+     * @param m    Rows of the station's data rows (@c rows.rows()).
+     * @param sats The rows' satellites (@c rows.satellite_ids).
+     * @param sigs The rows' observation codes (@c rows.signal_types).
      */
     void tagDataRows(std::vector<RowTag>& tags, Eigen::Index m,
                      const std::vector<std::string>& sats,

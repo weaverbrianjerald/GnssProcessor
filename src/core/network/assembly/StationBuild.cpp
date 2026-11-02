@@ -36,7 +36,6 @@
 #include "network/assembly/StationCarry.hpp"
 #include "network/assembly/StationSplit.hpp"
 #include "network/carry/ZwdCarry.hpp"
-#include "common/EpochMeasurement.hpp"
 
 namespace GnssProcessor {
 
@@ -131,6 +130,9 @@ const StationBuildSteps kStationBuildSteps = {{
     {"sim_zero_iono", "filter/NetworkStationAnchors",
      kindBit(CK::SimZeroIono),
      &networkSimZeroIonoRows},
+    {"tropo_gradient_prior", "filter/NetworkStationAnchors",
+     kindBit(CK::TropoGradientPrior),
+     &networkTropoGradientPriorRows},
     {"iono_constraint", "filter/NetworkIonoConstraintRows",
      kindBit(CK::ShIonoTie) | kindBit(CK::GimIono),
      &networkIonoConstraintRows},

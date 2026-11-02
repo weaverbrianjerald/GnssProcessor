@@ -55,10 +55,11 @@ constexpr ParamKindSet bit(PK k) { return ParamKindSet{1} << static_cast<unsigne
 constexpr ParamKindSet kBorder = bit(PK::SatClock) | bit(PK::SatPhaseBias)
                                | bit(PK::SatCodeBias) | bit(PK::VtecSh);
 constexpr ParamKindSet kCodeRow = bit(PK::SatClock) | bit(PK::SatCodeBias) | bit(PK::RxClock)
-                                | bit(PK::RxCodeBias) | bit(PK::SlantIono) | bit(PK::Zwd);
+                                | bit(PK::RxCodeBias) | bit(PK::SlantIono) | bit(PK::Zwd)
+                                | bit(PK::TropoGradient);
 constexpr ParamKindSet kPhaseRow = bit(PK::SatClock) | bit(PK::SatPhaseBias) | bit(PK::Ambiguity)
-                                 | bit(PK::SlantIono) | bit(PK::Zwd) | bit(PK::RxClock)
-                                 | bit(PK::RxPhaseBias) | bit(PK::PhaseColour);
+                                 | bit(PK::SlantIono) | bit(PK::Zwd) | bit(PK::TropoGradient)
+                                 | bit(PK::RxClock) | bit(PK::RxPhaseBias) | bit(PK::PhaseColour);
 // A whitened local block row spans its own column and every block column pushed before it
 // (L⁻¹ is lower triangular); the push order is ambiguity, wet delay, ionosphere, receiver
 // clock, receiver code bias, phase colour (ApplicationNetworkAssembly.cpp, PASS B).
@@ -77,6 +78,7 @@ constexpr const char* kLgmRows = "networkPhaseColourRows (PhaseColourCarry.cpp),
 // (scripts/nom_pb1/rows_pb1b.py, decision 3): the function and file that create the
 // kind's rows, and the station step that calls it.
 constexpr const char* kSimZeroIono = "networkSimZeroIonoRows (StationAnchors.cpp), station step sim_zero_iono";
+constexpr const char* kTropoGradientPrior = "networkTropoGradientPriorRows (StationAnchors.cpp), station step tropo_gradient_prior";
 constexpr const char* kShIonoRows = "networkAppendShIonoRows (IonoConstraintRows.cpp), station step iono_constraint";
 constexpr const char* kGimIonoRows = "networkAppendGimIonoRows (IonoConstraintRows.cpp), station step iono_constraint";
 constexpr const char* kSdEwlRows = "networkAppendSdEwlRows (SdEwlAr.cpp), station step sd_ewl";
@@ -149,6 +151,10 @@ constexpr std::array<ContributionSpec, kContributionKinds> kSpecs = {{
      CU::Rows, bit(PK::SlantIono),
      "1/network.sim_zero_iono_sigma_m^2 (test-only; a fixture simulated without ionosphere)",
      kSimZeroIono, false, nullptr},
+    {CK::TropoGradientPrior, "tropo_gradient_prior", CC::StationRows, CG::BeforeGate,
+     CS::Station, CU::Rows, bit(PK::TropoGradient),
+     "1/network.tropo_gradient_prior_sigma_m^2 (the physical size of a gradient, default 1 mm)",
+     kTropoGradientPrior, false, "two rows per station-epoch with both gradient columns"},
     {CK::ShIonoTie, "sh_iono_tie", CC::StationRows, CG::BeforeGate, CS::StationLos, CU::Rows,
      bit(PK::SlantIono) | bit(PK::VtecSh),
      "unit (whitened); R from estimation.global_vtec_sh.representation_sigma_tecu, floored at "

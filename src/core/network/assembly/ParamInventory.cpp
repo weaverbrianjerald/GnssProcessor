@@ -11,6 +11,7 @@
 #include "network/state/StationParams.hpp"   // receiverCodeBiasKey (the receiver IFB rule)
 #include "network/state/StationParams.hpp"    // StationParams (the inventory records its columns)
 #include "network/diag/RunTraces.hpp"  // appendRunManifestRecord
+#include "network/assembly/Contributions.hpp"  // the gradient prior's row tally (run-end line)
 #include "model/PppModel.hpp"            // getAllowedBandDigits (rxExtraBandTracked)
 #include "rinex/MultiRinexSync.hpp"      // SyncedEpoch
 
@@ -18,6 +19,7 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
 #include <map>
@@ -375,6 +377,9 @@ std::string paramClassLabel(const ParamClass& c) {
             }
         case NetworkParamKind::PhaseColour:  return "phase colour, " + sys;
         case NetworkParamKind::RxPosition:   return "receiver position";
+        case NetworkParamKind::TropoGradient:
+            return c.form == ParamForm::North ? "troposphere gradient, north"
+                                              : "troposphere gradient, east";
     }
     return "?";
 }
@@ -919,11 +924,53 @@ static int networkRxExtraBandDelayRunEnd(const NetworkRunEndView& v) {
     return 0;
 }
 
+    /**
+     * @brief The troposphere gradient columns at run end (network.estimate_tropo_gradients).
+     *
+     * From the inventory's own tally: the station-epochs that estimated each component in
+     * the local block and that left it out as unobserved.  An armed key that never estimated
+     * a column is INERT and says so (standing invariant 4).  Prints nothing with the key off.
+     *
+     * @param v The run at its end (network/runend/RunEnd.hpp).
+     * @return 0 (this report does not set the exit code).
+     */
+static int networkTropoGradientRunEnd(const NetworkRunEndView& v) {
+    if (!v.ctx.knobs.tgrad_on) return 0;
+    std::array<long long, 2> estimated{0, 0}, unobserved{0, 0};   // north, east
+    for (const auto& [cls, count] : v.ctx.param_inventory.whole_run.classes) {
+        if (cls.kind != NetworkParamKind::TropoGradient) continue;
+        const std::size_t k = cls.form == ParamForm::North ? 0 : 1;
+        estimated[k]  += count.count(ParamDisposition::EstimatedLocal);
+        unobserved[k] += count.count(ParamDisposition::Unobserved);
+    }
+    // The prior rows, from the run's contribution tally.
+    const double sigma = v.ctx.knobs.tgrad_prior_sigma_m;
+    const long long prior_rows =
+        v.ctx.contributions.whole_run
+            .kinds[static_cast<std::size_t>(ContributionKind::TropoGradientPrior)].count;
+    const std::string prior =
+        sigma > 0.0 ? fmt::format("a zero-mean prior of {:.2f} mm on each column, {} row(s)",
+                                  sigma * 1e3, prior_rows)
+                    : std::string("no prior (network.tropo_gradient_prior_sigma_m 0: unbounded)");
+    v.log->info("Network (troposphere gradients): north estimated in {} station-epoch(s) and left "
+                "out as unobserved in {}; east {} and {}; uncarried (estimated afresh every "
+                "epoch); {}.",
+                estimated[0], unobserved[0], estimated[1], unobserved[1], prior);
+    if (estimated[0] + estimated[1] == 0)
+        v.log->warn("Network (troposphere gradients): INERT: network.estimate_tropo_gradients is "
+                    "armed and no station block ever estimated a gradient column.");
+    else if (sigma > 0.0 && prior_rows == 0)
+        v.log->warn("Network (troposphere gradients): INERT: the prior is armed, gradient columns "
+                    "were estimated, and no prior row was built.");
+    return 0;
+}
+
 // Run-end report of this subsystem: its sections in print order (
 // declared in network/assembly/ParamInventory.hpp).
 int networkParamInventoryRunEnd(const NetworkRunEndView& v) {
     return networkRunEndSections(v, {
         networkRxExtraBandDelayRunEnd,
+        networkTropoGradientRunEnd,
         networkParamInventoryTableRunEnd
     });
 }

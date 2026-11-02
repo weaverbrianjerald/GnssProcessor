@@ -36,6 +36,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <functional>
 #include <limits>
 #include <map>
@@ -501,12 +502,12 @@ TEST(StationBirthTest, TheAdmissionAndTheRowLoopAgreeOnTheStoredGeometry) {
         EXPECT_EQ(f.set.shared.sat_clock.count(satOf("G05")), 1u) << gate.name;
         for (const auto& kv : f.set.shared.sat_phase_bias) EXPECT_NE(kv.first.sat, satOf("G12")) << gate.name;
         // The row loop drops the same satellite, so no admitted column is left without a row.
-        const EpochMeasurement em = networkStationRows(c, f.set, obs);
-        EXPECT_EQ(em.satellite_ids.size(), 8u) << gate.name;   // four signals of each of two satellites
-        EXPECT_EQ(std::count(em.satellite_ids.begin(), em.satellite_ids.end(), std::string("G12")), 0) << gate.name;
+        const StationDataRows rows = networkStationRows(c, f.set, obs);
+        EXPECT_EQ(rows.satellite_ids.size(), 8u) << gate.name;   // four signals of each of two satellites
+        EXPECT_EQ(std::count(rows.satellite_ids.begin(), rows.satellite_ids.end(), std::string("G12")), 0) << gate.name;
         for (const auto& kv : f.set.shared.sat_clock) {
             bool written = false;
-            for (Eigen::Index r = 0; r < em.H.rows(); ++r) written = written || em.H(r, kv.second) != 0.0;
+            for (Eigen::Index r = 0; r < rows.rows(); ++r) written = written || rowPartial(rows, r, kv.second) != 0.0;
             EXPECT_TRUE(written) << gate.name << " " << kv.first.str();
         }
     }
@@ -518,30 +519,39 @@ TEST(StationBirthTest, TheAdmissionAndTheRowLoopAgreeOnTheStoredGeometry) {
 
 namespace {
 
+/// A closed-loop consumer the loader accepts.  The single-receiver layout flags set the
+/// consumer's layout, so a network configuration may carry them only with a consumer.
+const std::string kWithConsumer =
+    R"(, "closed_loop": {"enable": true, "station": {"name": "CCCC", "rinex_path": "consumer.rnx",
+                                                    "position_ecef": [0.0, 0.0, 6356752.3]}})";
+
 /// The rows of a station, after its births and its admission, over a configuration with the
-/// given members of the estimation object.
-EpochMeasurement rowsUnder(const std::string& estimation_extra, StationParams* set_out = nullptr) {
+/// given members of the estimation object, and a consumer.
+StationDataRows rowsUnder(const std::string& estimation_extra, StationParams* set_out = nullptr) {
     BirthOptions o;
     o.estimation_extra = estimation_extra;
+    o.network_extra = kWithConsumer;
     BirthFixture f(o);
     const StationRowContext c = f.context();
     const std::vector<PppObservation> obs = f.epoch(0);
     networkBirthLocalStates(c, f.set, obs);
     networkAdmitSharedStates(c, f.set, obs, {}, nullptr);
-    EpochMeasurement em = networkStationRows(c, f.set, obs);
+    StationDataRows rows = networkStationRows(c, f.set, obs);
     if (set_out != nullptr) *set_out = f.set;
-    return em;
+    return rows;
 }
 
 /// Whether two row blocks are the same bit for bit.
-void expectSameRows(const EpochMeasurement& a, const EpochMeasurement& b) {
+void expectSameRows(const StationDataRows& a, const StationDataRows& b) {
     ASSERT_EQ(a.innovations.size(), b.innovations.size());
-    ASSERT_EQ(a.H.rows(), b.H.rows());
-    ASSERT_EQ(a.H.cols(), b.H.cols());
-    for (Eigen::Index r = 0; r < a.H.rows(); ++r) {
+    const Eigen::MatrixXd Ha = denseJacobian(a);
+    const Eigen::MatrixXd Hb = denseJacobian(b);
+    ASSERT_EQ(Ha.rows(), Hb.rows());
+    ASSERT_EQ(Ha.cols(), Hb.cols());
+    for (Eigen::Index r = 0; r < Ha.rows(); ++r) {
         EXPECT_EQ(a.innovations(r), b.innovations(r)) << r;
         EXPECT_EQ(a.R_v(r), b.R_v(r)) << r;
-        for (Eigen::Index k = 0; k < a.H.cols(); ++k) EXPECT_EQ(a.H(r, k), b.H(r, k)) << r << "," << k;
+        for (Eigen::Index k = 0; k < Ha.cols(); ++k) EXPECT_EQ(Ha(r, k), Hb(r, k)) << r << "," << k;
     }
     EXPECT_EQ(a.satellite_ids, b.satellite_ids);
     EXPECT_EQ(a.signal_types, b.signal_types);
@@ -551,11 +561,12 @@ void expectSameRows(const EpochMeasurement& a, const EpochMeasurement& b) {
 
 TEST(StationBirthTest, ANetworkStationHasOneAmbiguityPerBandWhateverTheAmbiguityBasisSays) {
     StationParams per_band_set, nlwl_set;
-    const EpochMeasurement per_band = rowsUnder("", &per_band_set);
-    const EpochMeasurement nlwl = rowsUnder(R"(, "state_ambiguity_basis": "nl_wl")", &nlwl_set);
+    const StationDataRows per_band = rowsUnder("", &per_band_set);
+    const StationDataRows nlwl = rowsUnder(R"(, "state_ambiguity_basis": "nl_wl")", &nlwl_set);
 
     BirthOptions o;
     o.estimation_extra = R"(, "state_ambiguity_basis": "nl_wl")";
+    o.network_extra = kWithConsumer;
     BirthFixture probe(o);
     ASSERT_EQ(probe.stack.config.getStateAmbiguityBasis(), StateAmbiguityBasis::NlWl);
 
@@ -567,10 +578,57 @@ TEST(StationBirthTest, ANetworkStationHasOneAmbiguityPerBandWhateverTheAmbiguity
     expectSameRows(per_band, nlwl);
 }
 
+// The flags set the consumer's layout; the stations' rows do not change.
 TEST(StationBirthTest, ANetworkStationIgnoresTheSingleReceiverPhaseClockAndGradients) {
-    const EpochMeasurement plain = rowsUnder("");
-    const EpochMeasurement flagged = rowsUnder(
+    const StationDataRows plain = rowsUnder("");
+    const StationDataRows flagged = rowsUnder(
         R"(, "estimate_phase_clock": true, "estimate_tropo_gradients": true)");
     EXPECT_EQ(flagged.innovations.size(), 12);
     expectSameRows(plain, flagged);
+}
+
+// ---------------------------------------------------------------------------
+// The full-equation seeds (estimation.seed_full_equation)
+// ---------------------------------------------------------------------------
+
+TEST(StationBirthTest, TheSeedInputsFollowTheFullEquationKey) {
+    BirthFixture legacy;
+    const StationRowContext cl = legacy.context();
+    EXPECT_EQ(&residualSeedObsInput(cl).ppp_utils, &cl.inputs.rx_bias.frequencyHelper());
+    EXPECT_EQ(ambiguitySeedObsInput(cl).fdma, FdmaChannel::Zero);
+
+    BirthOptions o;
+    o.estimation_extra = R"(, "seed_full_equation": true)";
+    BirthFixture full(o);
+    ASSERT_TRUE(full.stack.config.seedFullEquation());
+    const StationRowContext cf = full.context();
+    // The rows' helper and the satellite's own channel, as the rows take them.
+    EXPECT_EQ(&residualSeedObsInput(cf).ppp_utils, &cf.inputs.freq);
+    EXPECT_EQ(ambiguitySeedObsInput(cf).fdma, FdmaChannel::Satellite);
+}
+
+TEST(StationBirthTest, AProducersBirthsAreTheSameUnderTheFullEquationSeeds) {
+    // At a producer birth the terms the legacy seeds leave out are zero (shared states at 0,
+    // no SSR term in network mode, range correction 0), so every slot is born at the same
+    // value, bit for bit, with the key on.
+    const auto bornSet = [](const std::string& estimation_extra) {
+        BirthOptions o;
+        o.estimation_extra = estimation_extra;
+        BirthFixture f(o);
+        const StationRowContext c = f.context();
+        const std::vector<PppObservation> obs = f.epoch(0);
+        networkBirthLocalStates(c, f.set, obs);
+        networkAdmitSharedStates(c, f.set, obs, {}, nullptr);
+        networkBirthLocalStates(c, f.set, f.epoch(1));
+        return f.set;
+    };
+    const StationParams legacy = bornSet("");
+    const StationParams full = bornSet(R"(, "seed_full_equation": true)");
+    ASSERT_EQ(legacy.slots.size(), full.slots.size());
+    ASSERT_GT(legacy.amb.size(), 0u);
+    for (std::size_t k = 0; k < legacy.slots.size(); ++k) {
+        EXPECT_EQ(legacy.slots[k].ref.kind, full.slots[k].ref.kind) << k;
+        EXPECT_TRUE(std::memcmp(&legacy.slots[k].x_lin, &full.slots[k].x_lin, sizeof(double)) == 0)
+            << k << " " << legacy.slots[k].x_lin << " " << full.slots[k].x_lin;
+    }
 }

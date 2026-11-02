@@ -30,7 +30,6 @@
 #include <gtest/gtest.h>
 
 #include "network/state/RunContext.hpp"   // the snapshot fingerprint (NetworkRunContext, NetStation)
-#include "common/EpochMeasurement.hpp"
 #include "config/GnssConfig.hpp"
 #include "network/assembly/ParamInventory.hpp"
 #include "network/assembly/StationSplit.hpp"   // rxIfbExcludedRows
@@ -340,30 +339,33 @@ TEST(NetworkRxExtraBandDelayTest, RowsWithoutASharedSatelliteColumnAreExcluded) 
     const int n = static_cast<int>(set.slots.size());
 
     // Rows: G03 C5Q, G06 C5Q, G08 C5Q (the IFB's rows), and G03 C1C (a pair-band row).
-    EpochMeasurement em;
-    em.H = Eigen::MatrixXd::Zero(4, n);
-    em.satellite_ids = {"G03", "G06", "G08", "G03"};
-    em.signal_types  = {"C5Q", "C5Q", "C5Q", "C1C"};
-    em.H(0, ifb) = 1.0; em.H(0, b03) = 1.0;
-    em.H(1, ifb) = 1.0;
-    em.H(2, ifb) = 1.0; em.H(2, b08) = 1.0;
-    em.H(3, dcb) = -1.5457;
+    StationDataRows rows;
+    rows.n_slots       = static_cast<std::size_t>(n);
+    rows.innovations   = Eigen::VectorXd::Zero(4);
+    rows.R_v           = Eigen::VectorXd::Ones(4);
+    rows.satellite_ids = {"G03", "G06", "G08", "G03"};
+    rows.signal_types  = {"C5Q", "C5Q", "C5Q", "C1C"};
+    rows.partials      = {{ifb, 1.0}, {b03, 1.0},
+                         {ifb, 1.0},
+                         {ifb, 1.0}, {b08, 1.0},
+                         {dcb, -1.5457}};
+    rows.row_start     = {0, 2, 3, 5, 6};
 
     // G03 shared; G08 not (a CB-ADM sponge: in the state manager, not in the border).
     RxIfbStationState s;
-    EXPECT_EQ(rxIfbExcludedRows(s, set, em, std::set<int>{b03}), (std::vector<int>{1, 2}));
+    EXPECT_EQ(rxIfbExcludedRows(s, set, rows, std::set<int>{b03}), (std::vector<int>{1, 2}));
     EXPECT_EQ(s.rows_unregistered, 2);
     EXPECT_EQ(s.cols_unregistered, 0);
     EXPECT_EQ(s.reg_edges + s.dereg_edges, 0);   // first sighting of every row: no edge
     EXPECT_EQ(s.signals.at(K::makeIfbKey("GPS", '5')), (std::set<std::string>{"C5Q"}));
 
     // Next epoch G08 registers and G03 leaves the border: one edge each way.
-    EXPECT_EQ(rxIfbExcludedRows(s, set, em, std::set<int>{b08}), (std::vector<int>{0, 1}));
+    EXPECT_EQ(rxIfbExcludedRows(s, set, rows, std::set<int>{b08}), (std::vector<int>{0, 1}));
     EXPECT_EQ(s.reg_edges, 1);
     EXPECT_EQ(s.dereg_edges, 1);
 
     // No shared satellite column at all: every IFB row is excluded, and the column with them.
-    EXPECT_EQ(rxIfbExcludedRows(s, set, em, std::set<int>{}), (std::vector<int>{0, 1, 2}));
+    EXPECT_EQ(rxIfbExcludedRows(s, set, rows, std::set<int>{}), (std::vector<int>{0, 1, 2}));
     EXPECT_EQ(s.cols_unregistered, 1);
     EXPECT_EQ(s.dereg_edges, 2);
     EXPECT_EQ(s.rows_unregistered, 2 + 2 + 3);

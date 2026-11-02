@@ -193,6 +193,7 @@ std::string blockLabel(const ParamRef& r) {
             if (r.core != UserCore::None) return {};
             return r.form == ParamForm::Isb ? "isb:" + keyText(r) : std::string("clk");
         case PK::Zwd:          return r.core == UserCore::None ? "zwd" : std::string();
+        case PK::TropoGradient: return r.form == ParamForm::North ? "tgrad:n" : "tgrad:e";
         case PK::SlantIono:    return "iono:" + keyText(r);
         case PK::RxCodeBias:   return "rxcb:" + keyText(r);
         case PK::SatCodeBias:  return "satbias:" + keyText(r);

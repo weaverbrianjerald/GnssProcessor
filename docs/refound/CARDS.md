@@ -293,3 +293,14 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   at 0, BSHM00ISR's G07 runaway (11.9 m without a brake) is held at 0.44 m by the line of sight's own carry row. 6 h:
   WTZZ00DEU +0.25 mm, census median 0.0 mm, clock wire within 2 %, sim byte-identical; refloats 55 to 71, mostly one
   faulty line of sight answered every epoch. UNVALIDATED; a hold and multi-day owed.
+- [NOM5](NOM5_station_parameter_set_tail_2026-10-30.md): closed, 2026-10-31: card NOM step N6's remaining steps, BUILT and
+  GATED on branch `nom/n6-tail` (not merged). N6f: the producer's rows sparse, every output identical (24 of 24 network
+  arms with the snapshot, 16 of 16 user arms, real time), the loop cost flat (no gain shown). N6g:
+  `estimation.seed_full_equation` leaves the producer byte-identical and moves the consumer under 1 mm at its births;
+  every bar clause passes, a neutral change. N6h: a user layout flag that reaches no parameter is refused at load (the
+  closed-loop consumer's configuration is a copy of the network's, so with a consumer the flags set its layout);
+  `network.estimate_tropo_gradients` conditions well, but its unbounded columns fit noise and at HKSL00HKG held part of
+  a station-level step for an hour. Its bound (section 6, `network.tropo_gradient_prior_sigma_m`, a 1 mm zero-mean prior
+  per column and epoch) removes both, but in the event's own epoch the gradient still takes up part of the misfit
+  (HKSL00HKG 101 mm; two arcs escaped the attribution refloat): field-blocking. N6j: the tests, onboarding pages 7 and
+  8, the routing. Both keys UNVALIDATED; nothing armed.

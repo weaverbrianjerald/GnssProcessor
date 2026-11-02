@@ -519,6 +519,18 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         if (nc.cb_excursion_reinit)
             add(fmt::format("cbexc={},{}", nc.cb_excursion_median_m,
                             nc.cb_excursion_reinit_all_sats));
+        // The full-equation seeds change the value a new state is born at (on a producer
+        // only where a term the legacy seeds leave out is non-zero, as a receiver phase
+        // bias or a phase colour is), so a resume across the key would mix states born under
+        // two rules.  Appended only when armed, so every existing fingerprint is unchanged.
+        if (config_.seedFullEquation()) add("seed:full");
+        // The stations' troposphere gradient columns change every station block the carried
+        // states were estimated in, so a resume across the key has to cold-start.  Appended
+        // only when armed, so every existing fingerprint is unchanged.
+        if (nc.estimate_tropo_gradients) add("tgrad:1");
+        // Their prior changes the same station blocks; appended only with the gradients armed.
+        if (nc.estimate_tropo_gradients)
+            add(fmt::format("tgrad_prior:{}", nc.tropo_gradient_prior_sigma_m));
         // --- Not fingerprinted: the forward-only policy exemption ---
         //
         // The knobs listed below are left out of the fingerprint for one shared reason,
