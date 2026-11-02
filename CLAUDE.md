@@ -409,6 +409,7 @@ card list `docs/refound/CARDS.md`). Every network arm is a copy of one:
 ```
 config/golden/golden_field_refound.json   # field DOY-129, 58 sta, WTZZ00DEU held-out consumer
 config/golden/golden_sim_refound.json     # sim truth bed, 60 sta (runs/simnet60_quiet_col_24h), SZZ000SIM
+config/golden/golden_field_bds_refound.json # third lineage: the field golden + BeiDou B1I/B3I (card BDG)
 python scripts/make_golden_config.py --verify   # at session start and after ANY ledger change
 ```
 
@@ -421,6 +422,10 @@ bound; accumulated wind-up with restart refloat. Field golden only: ocean tide l
 registry and the GPS IIF / IIR noon-turn attitude (the sim fixture carries neither). No lanes, F3,
 SH constraint or seams.
 
+- **The BeiDou golden is a separate lineage** (card BDG, 2026-11-02: the author's course B of card BDSB): generated
+  from the field golden's output plus `processing.active_systems` with BeiDou, its B1I / B3I priorities,
+  `network.second_band_admission` and `network.n3c_wire_per_signal`. The GPS + Galileo goldens stay the primary posture
+  and the base of every arm; the sim bed has no BeiDou. Its baseline is card BDSB's arm `runs_nom/_rap_bdsc_c6`.
 - **Generated, never hand-edited.** `make_golden_config.py` builds them from
   `config/golden/golden_manifest.json` and `docs/CONFIG_promotion_ledger.json`, and FAILS when an
   in-regime RECOMMEND_ON/SCOPED knob is unarmed without a documented exception. A knob is armed only

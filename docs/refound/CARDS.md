@@ -187,7 +187,8 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   subtraction: no station dropped, consumer within 1 mm of GEC-s; 2026-10-19, section 9: key off, 24 IDENTICAL on the identity
   gate; key on at 6 h it reproduces GEC-s, census hours 2 to 6 -0.0035 m against GE, 5 better, 0 worse). CLOSED 2026-10-31: the adoption instrument (posture C: 6 h
   on the current golden, the five 24 h wires of the earlier golden, four offline reads) is in
-  [BDSB](BDSB_beidou_continued_2026-10-19.md) sections 3 to 5 and every registered bar passes; the arming decision is the author's.
+  [BDSB](BDSB_beidou_continued_2026-10-19.md) sections 3 to 5 and every registered bar passes; the arming decision is the author's (course B, a third golden, decided
+  2026-11-02: card BDG).
 - [BDSB](BDSB_beidou_continued_2026-10-19.md): closed, 2026-10-31: card BDS's continuation (that file is at the 60 KB bar). The
   second-band admission re-run from fresh arms on the Release build of `fix/single-band` at `f300bda`. Key off: 24 IDENTICAL against
   the parent side after the two declared run-end census lines; products and traces also identical against `w3base`. Key on at 6 h: no
@@ -304,3 +305,6 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   per column and epoch) removes both, but in the event's own epoch the gradient still takes up part of the misfit
   (HKSL00HKG 101 mm; two arcs escaped the attribution refloat): field-blocking. N6j: the tests, onboarding pages 7 and
   8, the routing. Both keys UNVALIDATED; nothing armed.
+- [BDG](BDG_beidou_third_golden_2026-11-02.md): open, 2026-11-02: the BeiDou golden, the author's course B of card BDSB: `golden_field_bds_refound`, the field
+  golden's output plus BeiDou B1I / B3I, the second-band admission and one wire bias per modelled signal; the three BeiDou ledger rows
+  RECOMMEND_SCOPED under the new regime predicate `has_bds`, so the GPS + Galileo goldens are unchanged; gates G1 to G5 pre-registered.

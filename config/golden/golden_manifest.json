@@ -57,7 +57,11 @@
   "formation ahead of the serial scatter (network.parallel_station_normals), the Schur reduce split by border columns",
   "(network.parallel_schur_columns) and the redundancy census's per-station kernels (network.parallel_redundancy_census).",
   "Each is byte-identical to its serial path by construction and at any thread count (key on identical to key off on both",
-  "goldens over 2 h, card PES), so the baseline pair stands; the golden loop is 28 % (field) and 20 % (sim) shorter."
+  "goldens over 2 h, card PES), so the baseline pair stands; the golden loop is 28 % (field) and 20 % (sim) shorter.",
+  "2026-11-02 (card BDG): a third lineage, golden_field_bds_refound, at the author's decision (course B of card BDSB): the",
+  "field golden's generated output plus BeiDou B1I / B3I, network.second_band_admission and network.n3c_wire_per_signal;",
+  "its three BeiDou rows are RECOMMEND_SCOPED under the regime predicate has_bds, so the GPS + Galileo goldens are out of",
+  "their regime and unchanged.  Generate in manifest order: its base is the field golden's output."
  ],
  "goldens": [
   {
@@ -263,6 +267,32 @@
     "network.phase_bias_exclude_unmatched_antenna",
     "network.carry_invariant_honesty"
    ],
+   "exceptions": {
+    "network.trace_dd_fractional_ref": "CONTINUITY, not doubt: the A/B PASSES the structural half and 'oldest' measurably improves the as-traced grade at a returned-reference hour (SPEC_amb_iono §6.13.3, E h5 0.334 -> 0.195 cyc), but the goldens ARE the comparison baseline and changing which satellite their dd-frac trace references would break continuity with the entire existing record of dd-frac grades.  The golden lineages are graded ref-free (simnet_dd_reref.py / --ref-free), which is strictly better than any reference policy, so they gain nothing and lose comparability.  Arm 'oldest' on a standalone/archival trace, not here.",
+    "network.serialize_disc_counters": "scope cut of the re-founding decision - no seams, no snapshots, no warm resume (scripts/make_refound_config.py DROP: 'snapshot serialization'); its whole regime is products consumed across producer restarts, and arming it changes the P/B/C record bytes.  Add back with the seam work on a re-validated posture."
+   }
+  },
+  {
+   "name": "golden_field_bds_refound",
+   "out": "config/golden/golden_field_bds_refound.json",
+   "base": "config/golden/golden_field_refound.json",
+   "description": "FIELD bed with BeiDou as a third constellation (posture C of cards BDS and BDSB, the author's course B of card BDSB section 5, decided 2026-11-02, card BDG): exactly the generated field golden plus four keys, BeiDou in processing.active_systems, its B1I / B3I priorities (C2I, L2I, C6I, L6I), network.second_band_admission (a station holding BeiDou on one modelled band keeps its other constellations) and network.n3c_wire_per_signal (one wire bias per modelled signal).  A separate lineage: the GPS + Galileo field golden is unchanged, and the sim bed cannot follow (the fixture holds no BeiDou observations).  The base is the field golden's generated output, so this file is regenerated after it (manifest order) and never drifts from it.  With BeiDou active the gps_gal_only regime rows (the code-bias and Galileo package rows) fall out of regime, so the loader and this generator stop requiring them here; the field golden's values are inherited unchanged.  Graded 6 h on the field golden of card BOF (runs_nom/_rap_bdsc_c6 against runs/_rf0hv17_field6, exe gnss_processor_bdsclose.exe): 720/720 emitted, BeiDou clocks at most 13.9 m, 16-site census -5.8 mm over hours 2 to 6 (5 better, 0 worse), users without BeiDou -0.3 and +0.0 mm, 2.7 times the epoch loop.  Owed before days with a BeiDou IGSO plane within 4 degrees of the Sun (C13, C38, C08 from about DOY 137): the orbit-normal attitude graded for BeiDou.",
+   "pins": {
+    "processing.active_systems": [
+     "GPS",
+     "Galileo",
+     "BeiDou"
+    ],
+    "processing.signal_priorities.BeiDou": [
+     "C2I",
+     "L2I",
+     "C6I",
+     "L6I"
+    ],
+    "network.second_band_admission": true,
+    "network.n3c_wire_per_signal": true
+   },
+   "unset": [],
    "exceptions": {
     "network.trace_dd_fractional_ref": "CONTINUITY, not doubt: the A/B PASSES the structural half and 'oldest' measurably improves the as-traced grade at a returned-reference hour (SPEC_amb_iono §6.13.3, E h5 0.334 -> 0.195 cyc), but the goldens ARE the comparison baseline and changing which satellite their dd-frac trace references would break continuity with the entire existing record of dd-frac grades.  The golden lineages are graded ref-free (simnet_dd_reref.py / --ref-free), which is strictly better than any reference policy, so they gain nothing and lose comparability.  Arm 'oldest' on a standalone/archival trace, not here.",
     "network.serialize_disc_counters": "scope cut of the re-founding decision - no seams, no snapshots, no warm resume (scripts/make_refound_config.py DROP: 'snapshot serialization'); its whole regime is products consumed across producer restarts, and arming it changes the P/B/C record bytes.  Add back with the seam work on a re-validated posture."

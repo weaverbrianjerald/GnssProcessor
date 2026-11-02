@@ -137,7 +137,8 @@ def snapshot_state(cfg):
 #  GnssConfigNetworkPosture.cpp).  Keep the two in step: a predicate added here is added
 #  there, and vice versa.
 _ALLOWED_NAMES = {"n_sta", "n_sys", "tri", "warm", "rt", "par", "pstations", "gps_only",
-                  "gps_gal_only", "spacing_s", "on", "val", "v", "found", "True", "False", "None"}
+                  "gps_gal_only", "has_bds", "spacing_s", "on", "val", "v", "found", "True", "False",
+                  "None"}
 _ALLOWED_CALLS = {"on", "val"}
 _ALLOWED_NODES = (
     ast.Expression, ast.BoolOp, ast.UnaryOp, ast.BinOp, ast.Compare, ast.Call, ast.Name,
@@ -211,6 +212,8 @@ def make_env(cfg):
         # predicates test the names.
         "gps_only": len(systems) == 1 and str(systems[0]) == "GPS",
         "gps_gal_only": bool(systems) and set(map(str, systems)) <= {"GPS", "Galileo"},
+        # BeiDou named in active_systems: the regime of the BeiDou golden's posture rows.
+        "has_bds": "BeiDou" in map(str, systems),
         # Config-determinable epoch spacing; 0 when gnss_rate_s is 0 (native RINEX rate).
         "spacing_s": float(proc.get("gnss_rate_s", 0.0) or 0.0)
                      * float(net.get("epoch_decimation_n", 1) or 1),

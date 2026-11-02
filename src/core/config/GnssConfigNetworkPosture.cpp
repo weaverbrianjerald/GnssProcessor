@@ -75,9 +75,15 @@ namespace GnssProcessor {
             !active_systems_.empty()
             && std::all_of(active_systems_.begin(), active_systems_.end(),
                            [](const std::string& s) { return s == "GPS" || s == "Galileo"; });
+        // BeiDou named in active_systems: the regime of the BeiDou golden's posture rows.
+        // An absent active_systems loads every system, but the rows that read this need
+        // the BeiDou signal priorities, so they report a gap there rather than pass.
+        const bool has_bds =
+            std::find(active_systems_.begin(), active_systems_.end(), "BeiDou")
+            != active_systems_.end();
 
         return PostureRegime{ n_sta, n_sys, tri, warm, rt, par,
-                              spacing_s, gps_only, gps_gal_only };
+                              spacing_s, gps_only, gps_gal_only, has_bds };
     }
 
     /**
@@ -536,6 +542,29 @@ namespace GnssProcessor {
               "a receiver antenna without Galileo PCO / PCV takes its nearest GPS band (E1 -> "
               "G01, E5a -> G05) instead of dropping the station's Galileo: 6 field stations "
               "; never applied to a satellite antenna" },
+            // --- The BeiDou golden: the field golden plus BeiDou B1I / B3I, the second-band
+            //     admission and one wire bias per modelled signal.  In regime only where
+            //     BeiDou is active, so the GPS + Galileo goldens never report these rows; on
+            //     the BeiDou golden the gps_gal_only rows above fall out of regime instead.
+            { nc.ambiguity_vehicle == NetworkAmbiguityVehicle::FloatKf && !r.tri && r.has_bds,
+              signal_priorities_.count("BeiDou") != 0
+                  && signal_priorities_.at("BeiDou")
+                         == std::vector<std::string>{ "C2I", "L2I", "C6I", "L6I" },
+              Tier::SCOPED, false, "processing.signal_priorities.BeiDou",
+              "B1I / B3I, the dual pair BeiDou was graded on at 58 and 305 stations; a missing "
+              "entry drops the constellation" },
+            { nc.ambiguity_vehicle == NetworkAmbiguityVehicle::FloatKf && !r.tri && r.has_bds,
+              network_second_band_admission_,
+              Tier::SCOPED, false, "network.second_band_admission",
+              "a station holding BeiDou on one modelled band keeps its GPS and Galileo instead of "
+              "being rejected whole: field 6 h census -5.8 mm over hours 2 to 6 (5 sites better, "
+              "0 worse), 720 of 720 epochs emitted" },
+            { nc.ambiguity_vehicle == NetworkAmbiguityVehicle::FloatKf && !r.tri && r.has_bds,
+              network_n3c_wire_per_signal_,
+              Tier::SCOPED, false, "network.n3c_wire_per_signal",
+              "one wire bias per modelled signal, so a user tracking a signal without its own "
+              "column still gets its bias: ARHT00ATA -0.21 m (GPS + Galileo user) and -0.54 m "
+              "(GPS-only user), no census site worse" },
             // --- Station and satellite models adopted 2026-10-28 (card BOF).  Field data
             //     only: the sim fixture carries neither ocean tide loading nor a noon-turn
             //     law, so the sim golden lists them as exceptions.  The three OTL rows are in

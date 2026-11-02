@@ -8552,6 +8552,7 @@ namespace GnssProcessor {
             double      spacing_s;    ///< Config-determinable epoch spacing (0 = native RINEX rate).
             bool        gps_only;     ///< active_systems == {GPS}.
             bool        gps_gal_only; ///< active_systems ⊆ {GPS, Galileo}.
+            bool        has_bds;      ///< "BeiDou" named in active_systems (the BeiDou golden's regime).
         };
         PostureRegime networkPostureRegime_() const;
         void appendNetworkPostureItemsOn_(const PostureRegime& r,

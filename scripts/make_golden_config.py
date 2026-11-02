@@ -100,7 +100,8 @@ def _rewrite_run_paths(cfg, name):
 
 
 def _sha(path):
-    return hashlib.sha256(io.open(path, "rb").read()).hexdigest()[:16]
+    """sha256[:16] of the file with CRLF read as LF, so a CRLF checkout records the same hash."""
+    return hashlib.sha256(io.open(path, "rb").read().replace(b"\r\n", b"\n")).hexdigest()[:16]
 
 
 def generate(entry, ledger_path, when):
