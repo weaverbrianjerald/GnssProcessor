@@ -171,7 +171,7 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   control: golden chord WL and 6 h wire E_L1 up to 0.029 cycle off the null (tolerance 0.02); graders, truth-wire
   positive control and the E_b slope pass. Re-registered by the author's ruling (IRD-0r: above 0.15 cycle and
   within max(0.05, the null's 99 % band)); PASSES in 44 of 44 cells; re-based onto `a02ccfb`. Results from IRD-1 on
-  in IRDB.
+  in IRDB and IRDC; IRD-2's stop closed by the author's ruling (2026-11-02).
 - [IRDB](IRDB_integer_recovering_datum_continued_2026-10-30.md): open, 2026-10-30: card IRD's continuation, from IRD-1
   on. IRD-1 LANDED, measure-only and default off (the chain's event table, edge and chord traces, CHAIN events,
   pre-hold and receiver phase-bias traces, the run-end frame census; the consumer's shared AR builder, observe-mode
@@ -183,7 +183,7 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   rules fail, D0 keeps the floor (GF-datum defect), seed-round not adopted, D-N fires; nothing from IRD-3 on until the
   cause is closed. The bisection (section 4) puts the cause in the chain's event handling, not its static algebra: A0
   is R1 plus the chain on the microscope, and with the floor off the chain tracks R1 until the first satellite return;
-  the author's ruling on the stop is owed. The return's source is traced in IRDC.
+  the author's ruling was owed. Its event causes are traced in IRDC, and the author ruled the stop closed (2026-11-02).
 - [IRDC](IRDC_integer_recovering_datum_events_2026-11-02.md): open, 2026-11-02: card IRDB's continuation, the trace of
   the IRD-2 stop's event causes. The first satellite return's shock is traced: the chain reads a returning satellite
   as a first sighting with a known zero step (extend-only can never keep a tree edge: a pinned arc carries no leveling
@@ -193,7 +193,8 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   cycle). Every kept re-pin is a stale-carry re-pin. The remaining drift is card IRD C8 damage from the cold re-host
   at epoch 88 and a flipped kept edge at epoch 210, which the election keys on parent identity (C7) and declares an
   unknown step; every frame step that damages the microscope's double differences (RPB floor off) is traced, none
-  in the static algebra; the fixes are IRD-4's event rows; the author's ruling on the stop is owed.
+  in the static algebra; the fixes are IRD-4's event rows. The author ruled the stop closed (2026-11-02, section 4):
+  IRD-3 onward may be built in card IRD section 11's order.
 - [RKD](RKD_retired_key_deletion_2026-10-14.md): closed, 2026-10-14: the 144 retired network keys and five lane keys
   they orphan deleted with their code (149 ledger rows, 784 to 635; 30 C++ files); landed after the same-build
   golden comparison passed (only declared text moves on the goldens).
