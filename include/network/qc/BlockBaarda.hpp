@@ -725,6 +725,13 @@ BlockEstimableForm blockEstimableForm(const Eigen::MatrixXd& Q, const Eigen::Vec
 struct NetworkRunContext;   // network/state/RunContext.hpp, included in the .cpp only
 struct NetworkRunTraces;    // network/diag/RunTraces.hpp, included in the .cpp only
 
+/// One block's residual cofactor, computed ahead of the sweep (@ref networkBlockBaardaCofactors).
+struct BlockBaardaCofactor {
+    std::string     sat;        ///< the block's satellite
+    bool            ok{false};  ///< false: the cofactor call threw (the sweep skips the block)
+    Eigen::MatrixXd Q;          ///< the cofactor @c blockResidualCofactor returned
+};
+
 /**
  * @brief Sweep one station's (station, satellite) blocks: the costly tier of INC-1.
  *
@@ -758,6 +765,8 @@ struct NetworkRunTraces;    // network/diag/RunTraces.hpp, included in the .cpp 
  *                        precedence, per SPEC §4's "union of its rows' labels" rule.
  * @param tallies         [in/out] run totals.
  * @param hits            [out] reportable blocks, appended.
+ * @param cofactors       The station's cofactors from @ref networkBlockBaardaCofactors, or null
+ *                        (the default) to compute each block's cofactor here.
  */
 void networkBlockBaardaSweepStation(NetworkBlockBaarda& acc,
                                     const NetworkNormalEquations& kernel,
@@ -770,7 +779,29 @@ void networkBlockBaardaSweepStation(NetworkBlockBaarda& acc,
                                     const std::set<std::string>& responded_sats,
                                     bool datum_changed,
                                     NetworkBlockBaardaTallies& tallies,
-                                    std::vector<BlockBaardaHit>& hits);
+                                    std::vector<BlockBaardaHit>& hits,
+                                    const std::vector<BlockBaardaCofactor>* cofactors = nullptr);
+
+/**
+ * @brief The residual cofactors @ref networkBlockBaardaSweepStation needs for one station,
+ *        computed ahead of the sweep (@c network.parallel_redundancy_census).
+ *
+ * The same blocks, in the same order, and the same @c blockResidualCofactor call the sweep makes:
+ * a block the sweep would skip before its cofactor (no requested family, a non-finite residual)
+ * gets no entry, and a call that throws gets an entry with @c ok false.  Reads only its arguments
+ * (@p acc through const queries), so the census can compute several stations at once; the sweep
+ * then reads the list through its @p cofactors argument and is otherwise unchanged.
+ *
+ * @return One entry per tested block, in the sweep's block order.
+ */
+std::vector<BlockBaardaCofactor> networkBlockBaardaCofactors(const NetworkBlockBaarda& acc,
+                                                             const NetworkNormalEquations& kernel,
+                                                             std::size_t slot,
+                                                             const StationAssembly& R,
+                                                             const std::vector<NetRowClass>& cls,
+                                                             const std::vector<std::string>& sat,
+                                                             const Eigen::VectorXd& resid,
+                                                             const Eigen::MatrixXd& cov_free);
 
 /**
  * @brief Whether a block's residual cofactor is safe to invert.

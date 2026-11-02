@@ -159,6 +159,34 @@ bool networkAssemblyConsume(NetworkRun& run, const NetworkEpoch& ep, EpochPassA&
                                      static_cast<long long>(f.n_local), fam_s, cols));
     };
 
+    // network.parallel_station_normals: every station the loop below adds is formed first
+    // (its normal blocks, checks and LDLᵀ factor), in parallel, each into its own slot of the
+    // estimator's form pool; the loop then commits the slots in its own order, so the border
+    // receives the same additions in the same order as the serial add.  The predicate is the
+    // loop's own: a station is formed exactly when the loop reaches its add.  A station formed
+    // after an epoch-ending break is never committed (its slot is simply left).
+    std::vector<int> form_slot(stations.size(), -1);
+    std::vector<NetworkNormalEquations::StationPrior> form_priors;
+    if (nc.parallel_station_normals && setup.parallel_on && setup.n_threads > 1) {
+        std::vector<NetworkNormalEquations::StationObservations> form_in;
+        std::vector<std::size_t> form_station;
+        for (size_t i = 0; i < stations.size(); ++i) {
+            if (!present[i]) continue;
+            const StationAssembly& R = asm_res[i];
+            if (R.empty_innov || R.state_mismatch || R.threw || !R.ok) continue;
+            form_slot[i] = static_cast<int>(form_station.size());
+            form_station.push_back(i);
+        }
+        form_priors.reserve(form_station.size());   // stable addresses for the inputs below
+        for (const std::size_t i : form_station) {
+            const StationAssembly& R = asm_res[i];
+            form_priors.push_back(NetworkNormalEquations::StationPrior{
+                R.prior_cols, R.prior_dNrr, R.prior_dur});
+            form_in.push_back({&R.A_s, &R.A_r, &R.w, &R.y, &form_priors.back()});
+        }
+        est.formStations(form_in, setup.n_threads);
+    }
+
     // Serial consume: scatter each station's block into the shared arrowhead
     // in deterministic station order.
     total_pins = 0;
@@ -210,9 +238,11 @@ bool networkAssemblyConsume(NetworkRun& run, const NetworkEpoch& ep, EpochPassA&
             // nothing to roll back (which is why the prior goes into addStation
             // rather than into a two-phase add + validate).
             est_index_of[i] = static_cast<int>(
-                est.addStation(R.A_s, R.A_r, R.w, R.y,
-                               NetworkNormalEquations::StationPrior{
-                                   R.prior_cols, R.prior_dNrr, R.prior_dur}));
+                form_slot[i] >= 0
+                    ? est.commitStation(static_cast<std::size_t>(form_slot[i]))
+                    : est.addStation(R.A_s, R.A_r, R.w, R.y,
+                                     NetworkNormalEquations::StationPrior{
+                                         R.prior_cols, R.prior_dNrr, R.prior_dur}));
         } catch (const std::exception& ex) {
             // One station's rank-deficient / ill-conditioned local block must not
             // cost the whole epoch in a large heterogeneous network: the station is

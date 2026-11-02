@@ -293,6 +293,32 @@ public:
                                NetworkNormalEquations::StationPrior{});
 
     /**
+     * @brief Form the normal-equation blocks of several stations at once, ahead of their
+     *        commits (@c network.parallel_station_normals).
+     *
+     * The first half of the diagonal-weight @ref addStation for every entry of @p in, on up
+     * to @p n_threads threads, into the kernel's form pool
+     * (@ref NetworkNormalEquations::formStations).  Nothing is added to the shared border
+     * until @ref commitStation.
+     * @param in        One entry per station; slot @c k is formed from @c in[k].
+     * @param n_threads Threads for the forming loop; 1 or less forms serially.
+     * @throws std::logic_error if called before @ref beginEpoch or after @ref solve.
+     */
+    void formStations(const std::vector<NetworkNormalEquations::StationObservations>& in,
+                      int n_threads);
+
+    /**
+     * @brief Commit slot @p k of the last @ref formStations: the second half of the
+     *        diagonal-weight @ref addStation, with the same result and the same exceptions
+     *        (@ref NetworkNormalEquations::commitStation).
+     * @param k Slot index (the position of the station in the @p in of @ref formStations).
+     * @return The 0-based station index for @ref reconstructStation.
+     * @throws std::logic_error if called before @ref beginEpoch or after @ref solve;
+     *         whatever @ref addStation would have thrown for this station.
+     */
+    std::size_t commitStation(std::size_t k);
+
+    /**
      * @brief Set the thread budget for the deterministic-parallel DD carry-fold
      *        (@c network.parallel_seam): the per-block fan-out of
      *        @ref NetworkNormalEquations::foldReducedDdPriors.
@@ -394,6 +420,12 @@ public:
     /// @c network.sparse_station_normals).  Configuration-level: set once before
     /// the epoch loop; survives @ref beginEpoch / @ref reset.
     void setSparseStationNormals(bool on) { neq_.setSparseStationNormals(on); }
+
+    /// Column-split Schur reduce passthrough
+    /// (@ref NetworkNormalEquations::setSchurColumnThreads;
+    /// @c network.parallel_schur_columns).  Configuration-level: set once before
+    /// the epoch loop; survives @ref beginEpoch / @ref reset.
+    void setSchurColumnThreads(int n_threads) { neq_.setSchurColumnThreads(n_threads); }
 
     /// Passthrough for the station PD null-direction read
     /// (@ref NetworkNormalEquations::setStationPdNullTrace;

@@ -201,6 +201,81 @@ BlockOutcome estimableBlockForm(const Eigen::MatrixXd& Q, const Eigen::VectorXd&
 
 }  // namespace
 
+namespace {
+
+/// One station's data rows by satellite, the blocks networkBlockBaardaSweepStation tests (an
+/// unnamed data row is counted in @p unnamed_rows and joins no block).
+std::map<std::string, std::vector<Eigen::Index>> blockBaardaRowsBySat(
+    Eigen::Index m, const std::vector<NetRowClass>& cls, const std::vector<std::string>& sat,
+    long long& unnamed_rows) {
+    std::map<std::string, std::vector<Eigen::Index>> by_sat;
+    for (Eigen::Index row = 0; row < m; ++row) {
+        const NetRowClass k = cls[static_cast<std::size_t>(row)];
+        if (!isDataRowClass(k)) continue;
+        const std::string& s = sat[static_cast<std::size_t>(row)];
+        if (s.empty()) { ++unnamed_rows; continue; }
+        by_sat[s].push_back(row);
+    }
+    return by_sat;
+}
+
+/// One block's rows of the shared and local Jacobians, its weights and its post-fit residuals;
+/// false when a residual is not finite (the block is then not tested).
+bool blockBaardaBlockRows(const StationAssembly& R, const std::vector<Eigen::Index>& rows,
+                          const Eigen::VectorXd& resid, Eigen::MatrixXd& Bs, Eigen::MatrixXd& Br,
+                          Eigen::VectorXd& bw, Eigen::VectorXd& be) {
+    const Eigen::Index b = static_cast<Eigen::Index>(rows.size());
+    Bs.resize(b, R.A_s.cols());
+    Br.resize(b, R.A_r.cols());
+    bw.resize(b);
+    be.resize(b);
+    for (Eigen::Index i = 0; i < b; ++i) {
+        const Eigen::Index row = rows[static_cast<std::size_t>(i)];
+        Bs.row(i) = R.A_s.row(row);
+        Br.row(i) = R.A_r.row(row);
+        bw(i) = (row < R.w.size()) ? R.w(row) : 0.0;
+        be(i) = resid(row);
+    }
+    return be.allFinite();
+}
+
+} // namespace
+
+std::vector<BlockBaardaCofactor> networkBlockBaardaCofactors(const NetworkBlockBaarda& acc,
+                                                             const NetworkNormalEquations& kernel,
+                                                             std::size_t slot,
+                                                             const StationAssembly& R,
+                                                             const std::vector<NetRowClass>& cls,
+                                                             const std::vector<std::string>& sat,
+                                                             const Eigen::VectorXd& resid,
+                                                             const Eigen::MatrixXd& cov_free) {
+    std::vector<BlockBaardaCofactor> out;
+    if (!acc.enabled()) return out;
+    const Eigen::Index m = R.y.size();
+    if (m <= 0 || resid.size() != m
+        || static_cast<Eigen::Index>(cls.size()) < m
+        || static_cast<Eigen::Index>(sat.size()) < m) return out;
+    long long unnamed_rows = 0;   // the sweep counts these itself
+    const std::map<std::string, std::vector<Eigen::Index>> by_sat =
+        blockBaardaRowsBySat(m, cls, sat, unnamed_rows);
+    for (const auto& kv : by_sat) {
+        if (kv.second.empty() || acc.familyIndex(kv.first) < 0) continue;
+        Eigen::MatrixXd Bs, Br;
+        Eigen::VectorXd bw, be;
+        if (!blockBaardaBlockRows(R, kv.second, resid, Bs, Br, bw, be)) continue;
+        BlockBaardaCofactor c;
+        c.sat = kv.first;
+        try {
+            c.Q = kernel.blockResidualCofactor(slot, Bs, Br, bw, cov_free);
+            c.ok = true;
+        } catch (...) {
+            c.ok = false;
+        }
+        out.push_back(std::move(c));
+    }
+    return out;
+}
+
 void networkBlockBaardaSweepStation(NetworkBlockBaarda& acc,
                                     const NetworkNormalEquations& kernel,
                                     std::size_t slot, int station_index,
@@ -212,7 +287,8 @@ void networkBlockBaardaSweepStation(NetworkBlockBaarda& acc,
                                     const std::set<std::string>& responded_sats,
                                     bool datum_changed,
                                     NetworkBlockBaardaTallies& tallies,
-                                    std::vector<BlockBaardaHit>& hits) {
+                                    std::vector<BlockBaardaHit>& hits,
+                                    const std::vector<BlockBaardaCofactor>* cofactors) {
     if (!acc.enabled()) return;
     const Eigen::Index m = R.y.size();
     if (m <= 0 || resid.size() != m
@@ -229,14 +305,9 @@ void networkBlockBaardaSweepStation(NetworkBlockBaarda& acc,
     // block it joined.  std::map keeps the block order deterministic across runs,
     // which a hash map would not; the run-end worst-block identity must be
     // reproducible for an A/B comparison.
-    std::map<std::string, std::vector<Eigen::Index>> by_sat;
-    for (Eigen::Index row = 0; row < m; ++row) {
-        const NetRowClass k = cls[static_cast<std::size_t>(row)];
-        if (!isDataRowClass(k)) continue;
-        const std::string& s = sat[static_cast<std::size_t>(row)];
-        if (s.empty()) { ++tallies.unnamed_rows; continue; }
-        by_sat[s].push_back(row);
-    }
+    const std::map<std::string, std::vector<Eigen::Index>> by_sat =
+        blockBaardaRowsBySat(m, cls, sat, tallies.unnamed_rows);
+    std::size_t next_cofactor = 0;   // the precomputed cofactors come in this loop's block order
 
     for (const auto& kv : by_sat) {
         const std::string& s = kv.first;
@@ -265,20 +336,22 @@ void networkBlockBaardaSweepStation(NetworkBlockBaarda& acc,
                                         : PriorResidualLabel::Clean);
 
         // The block's rows, in the form the kernel takes.
-        Eigen::MatrixXd Bs(b, R.A_s.cols()), Br(b, R.A_r.cols());
-        Eigen::VectorXd bw(b), be(b);
-        for (Eigen::Index i = 0; i < b; ++i) {
-            const Eigen::Index row = rows[static_cast<std::size_t>(i)];
-            Bs.row(i) = R.A_s.row(row);
-            Br.row(i) = R.A_r.row(row);
-            bw(i) = (row < R.w.size()) ? R.w(row) : 0.0;
-            be(i) = resid(row);
-        }
-        if (!be.allFinite()) { ++tallies.unnamed_rows; continue; }
+        Eigen::MatrixXd Bs, Br;
+        Eigen::VectorXd bw, be;
+        if (!blockBaardaBlockRows(R, rows, resid, Bs, Br, bw, be)) { ++tallies.unnamed_rows; continue; }
 
+        // The residual cofactor: precomputed (network.parallel_redundancy_census, the same call
+        // on the same block, in this loop's block order) or computed here.
         Eigen::MatrixXd Q;
-        try { Q = kernel.blockResidualCofactor(slot, Bs, Br, bw, cov_free); }
-        catch (...) { continue; }
+        if (cofactors && next_cofactor < cofactors->size()
+            && (*cofactors)[next_cofactor].sat == s) {
+            const BlockBaardaCofactor& c = (*cofactors)[next_cofactor++];
+            if (!c.ok) continue;
+            Q = c.Q;
+        } else {
+            try { Q = kernel.blockResidualCofactor(slot, Bs, Br, bw, cov_free); }
+            catch (...) { continue; }
+        }
         if (Q.rows() != b) continue;
 
         const BlockOutcome form = acc.estimable()

@@ -73,6 +73,7 @@
 
 #include <cmath>      // std::isfinite (the carry-aware readback's refuse-never-clamp screen)
 #include <cstddef>
+#include <exception>  // std::exception_ptr (a formed station's failure, rethrown at its commit)
 #include <memory>     // std::shared_ptr (the detached fold's opaque factor)
 #include <utility>
 #include <vector>
@@ -354,6 +355,63 @@ public:
      * survives @ref reset.  Default off: the dense products, byte-identical.
      */
     void setSparseStationNormals(bool on) { sparse_station_normals_ = on; }
+
+    /// One station's inputs to @ref formStations: the arguments of the diagonal-weight
+    /// @ref addStationObservations, by pointer (the caller keeps them alive until the commit).
+    struct StationObservations {
+        const Eigen::MatrixXd* A_s{nullptr};    ///< Jacobian wrt the shared parameters (@c m × @c n_shared)
+        const Eigen::MatrixXd* A_r{nullptr};    ///< Jacobian wrt the station's locals (@c m × @c n_local)
+        const Eigen::VectorXd* w{nullptr};      ///< diagonal weights (length @c m)
+        const Eigen::VectorXd* y{nullptr};      ///< prefit residual (length @c m)
+        const StationPrior*    prior{nullptr};  ///< diagonal prior rows folded before the PD test (null: none)
+    };
+
+    /**
+     * @brief Form several stations' normal-equation blocks at once, on up to @p n_threads threads,
+     *        without touching the shared border (@c network.parallel_station_normals).
+     *
+     * The diagonal-weight @ref addStationObservations does two things.  It forms and validates the
+     * station's blocks (the products or the nonzero-entry formation, the dimension, symmetry and
+     * prior checks, the station prior folded into @f$N_{rr}@f$, the LDLᵀ factor and its
+     * positive-definiteness test), which reads only the station's own inputs and this object's
+     * configuration; and it commits the station's contribution to the shared border.  This call does
+     * the first part for every entry of @p in, each into its own slot of a form pool, and
+     * @ref commitStation does the second, one slot at a time, in the order the caller chooses.  A slot
+     * holds the numbers the serial add computes (the same expressions, evaluated by Eigen on one
+     * thread), and the commit makes the same border additions, so this call followed by one
+     * @ref commitStation per slot in station order is byte-identical to the same
+     * @ref addStationObservations calls in that order.
+     *
+     * Every exception the serial add would throw (a dimension mismatch, a rejected local block) is
+     * caught in its slot and rethrown by @ref commitStation, after the commit has recorded a
+     * positive-definiteness rejection as the serial add records it (@ref lastStationPdFailure), so a
+     * rejected station leaves the border untouched on both paths.  Inside the parallel region an
+     * iteration writes only its own slot (no member of this object, no log); with the sparse formation
+     * on, each thread forms into a scratch matrix of its own and moves the touched square into the
+     * slot.  The region runs only when Eigen is pinned to one thread (the sparse formation and the
+     * dense products then take the same path they take in the serial add) and no parallel region
+     * encloses the call; otherwise the slots are formed serially, with the same numbers.
+     *
+     * @param in        One entry per station; slot @c k is formed from @c in[k].
+     * @param n_threads Threads for the forming loop; 1 or less forms serially.
+     */
+    void formStations(const std::vector<StationObservations>& in, int n_threads);
+
+    /**
+     * @brief Commit slot @p k of the last @ref formStations: the second half of
+     *        @ref addStationObservations.
+     *
+     * A slot that holds a failure records a positive-definiteness rejection (when that was the
+     * failure) as the serial add does, rethrows the failure and commits nothing.  Otherwise the
+     * slot's local block becomes the next active station and its @f$N_{ss}@f$ and @f$u_s@f$ are added
+     * to the shared border entry by entry, as @ref addStationObservations adds them.
+     *
+     * @param k Slot index (the position of the station in the @p in of @ref formStations).
+     * @return The 0-based station index, as @ref addStationObservations returns it.
+     * @throws std::out_of_range when @p k is not a slot of the last @ref formStations, or the slot was
+     *         already committed; otherwise whatever the serial add would have thrown for this station.
+     */
+    std::size_t commitStation(std::size_t k);
 
     /**
      * @brief Fold a diagonal information increment into one station's local
@@ -989,6 +1047,32 @@ public:
     void reduce(int n_threads = 1);
 
     /**
+     * @brief Split the serial Schur subtraction of @ref reduce over column blocks of the shared
+     *        border, one thread per block (@c network.parallel_schur_columns).
+     *
+     * The serial reduce subtracts each station's term @f$N_{sr}(N_{rr}^{-1}N_{rs})@f$ from the
+     * border in ascending station order, as one blocked product per station fused into the
+     * subtraction.  With @p n_threads > 1 the per-station local solves run in parallel into slots,
+     * the RHS subtraction stays serial, and the border is cut into column blocks (widths a multiple
+     * of 4, the last block holding the remainder): each thread subtracts every station's term,
+     * in ascending station order, from its own block only.  Every element of the border then
+     * receives the same fused product-subtractions, in the same order, as in the serial reduce, and
+     * each is summed by Eigen's kernel exactly as the whole product sums it, because the split is
+     * taken only where Eigen's blocking heuristic gives the block products and the whole product
+     * one depth panel and cuts their row and column panels at multiples of the kernel's 4-row and
+     * 4-column tiles, and the column cut keeps every column in the tile or the remainder it has in
+     * the whole product.  The result is byte-identical
+     * to the serial reduce at any thread count (no per-thread partial sum is formed, unlike the
+     * @p n_threads argument of @ref reduce).  The split also requires Eigen pinned to one thread
+     * and no enclosing parallel region; a station shape outside the guarantee, or a failure inside
+     * a block, falls back to the serial loop for the whole reduce.  Configuration level; survives
+     * @ref reset.  Default 1: the serial loop.
+     *
+     * @param n_threads Threads for the split; 1 or less keeps the serial loop.
+     */
+    void setSchurColumnThreads(int n_threads) { schur_column_threads_ = n_threads; }
+
+    /**
      * @brief Solve the reduced shared system @f$\tilde N_{ss}\,x_s=\tilde u_s@f$.
      *
      * Calls @ref reduce first when the reduction is stale.  The reduced block must
@@ -1514,6 +1598,19 @@ public:
     /// Zero the section-timer accumulators (see @ref SectionTimers).
     void resetSectionTimers() const { timers_ = SectionTimers{}; }
 
+    /// Run-cumulative counts of the parallel stages of card PES (@ref formStations,
+    /// @ref commitStation, @ref setSchurColumnThreads): the on-path telemetry the run end
+    /// prints when a key is armed.  Not cleared by @ref reset.
+    struct ParallelStageCounts {
+        long long forms_parallel{0};   ///< stations formed inside a parallel region of @ref formStations
+        long long forms_serial{0};     ///< stations formed serially by @ref formStations (a region was not possible)
+        long long commits{0};          ///< @ref commitStation calls
+        long long schur_split{0};      ///< reduces taken by the column split
+        long long schur_declined{0};   ///< reduces the armed split declined (the serial loop ran)
+    };
+    /// @return The counts of @ref ParallelStageCounts.
+    const ParallelStageCounts& parallelStageCounts() const { return par_counts_; }
+
     /// Put back accumulators read earlier from @ref sectionTimers, discarding whatever was
     /// timed since.  For a caller whose solves are not the float path's own: the detached
     /// held solve (@ref NetworkEstimator::solveHeldDetached) restores them on exit,
@@ -1635,6 +1732,39 @@ private:
                                 const Eigen::VectorXd& u_s_r, const Eigen::VectorXd& u_r_r,
                                 const StationPrior& prior);
 
+    /// The checks of @ref addStationImpl_ that run before a pool slot is taken: the block
+    /// dimensions, their symmetry and the prior's contract.  Throws as @ref addStation throws.
+    void checkStationBlocks_(const Eigen::MatrixXd* N_ss_dense, const SparseBorder* border,
+                             const Eigen::MatrixXd& N_sr_r, const Eigen::MatrixXd& N_rr_r,
+                             const Eigen::VectorXd& u_s_r, const Eigen::VectorXd& u_r_r,
+                             const StationPrior& prior) const;
+
+    /// The local block of @ref addStationImpl_ built into @p st: the prior folded into a copy of
+    /// @p N_rr_r, the LDLᵀ factor and the positive-definiteness test, then (accepted) the cross
+    /// block, the local RHS and the prior's RHS half.  A rejection writes its spectral record to
+    /// @p pd_record (@ref lastStationPdFailure on the serial path), sets @p pd_rejected and throws.
+    void buildStationLocal_(Station& st, const Eigen::MatrixXd& N_sr_r, const Eigen::MatrixXd& N_rr_r,
+                            const Eigen::VectorXd& u_r_r, const StationPrior& prior,
+                            StationPdFailure& pd_record, bool& pd_rejected) const;
+
+    /// One slot of the form pool (@ref formStations / @ref commitStation).
+    struct StationForm {
+        Station st;                          ///< the local block the commit makes the next active station
+        bool sparse{false};                  ///< N_ss came from the nonzero-entry formation
+        Eigen::MatrixXd N_ss;                ///< dense path: the station's n_shared × n_shared block
+        std::vector<Eigen::Index> active;    ///< sparse path: the shared columns N_ss is nonzero on (ascending)
+        std::vector<double> nss_active;      ///< sparse path: N_ss on the square of @c active (column-major)
+        Eigen::VectorXd u_s;                 ///< the station's shared RHS
+        bool pd_rejected{false};             ///< the failure is a positive-definiteness rejection
+        StationPdFailure pd_record;          ///< its spectral record (copied to last_pd_failure_ at the commit)
+        std::exception_ptr error;            ///< the exception the serial add would have thrown, or null
+        bool committed{false};               ///< @ref commitStation has consumed this slot
+    };
+
+    /// Form slot @p f from one station's inputs: the first half of the diagonal-weight
+    /// @ref addStationObservations.  Writes only @p f (and the calling thread's own sparse scratch).
+    void formStation_(const StationObservations& in, StationForm& f) const;
+
     Eigen::Index n_shared_;       ///< shared-block dimension
     Eigen::MatrixXd N_ss_;        ///< Σ_r N_ss^r + priors (pre-reduction)
     Eigen::VectorXd u_s_;         ///< Σ_r u_s^r + priors (pre-reduction)
@@ -1750,6 +1880,16 @@ private:
     bool sparse_station_normals_{false};    ///< form a station's normals from its nonzero entries (network.sparse_station_normals); survives reset()
     Eigen::MatrixXd sparse_nss_;            ///< the sparse formation's @f$N_{ss}@f$ scratch; all zero between stations (only the square of the columns in @ref sparse_border_ is ever nonzero, and each station restores that)
     SparseBorder sparse_border_;            ///< the touched columns of @ref sparse_nss_ for the station in hand
+    std::vector<StationForm> forms_;        ///< the form pool of @ref formStations (buffers persist across epochs)
+    int schur_column_threads_{1};           ///< threads of the column-split Schur reduce (@ref setSchurColumnThreads); 1 = serial
+    ParallelStageCounts par_counts_;        ///< run-cumulative counts of the parallel stages (@ref parallelStageCounts)
+    std::vector<Eigen::MatrixXd> schur_x_;  ///< per active station: N_rr⁻¹ N_rs of the column-split reduce (buffers persist)
+    std::vector<Eigen::VectorXd> schur_v_;  ///< per active station: N_rr⁻¹ u_r of the column-split reduce
+    /// The column-split Schur subtraction of @ref reduce (@ref setSchurColumnThreads).  Returns
+    /// false, with the reduced border as it found it, when the split does not apply; the caller then
+    /// runs the serial loop.
+    bool reduceByColumns_();
+    std::size_t n_forms_{0};                ///< slots formed by the last @ref formStations
     bool station_pd_median_scale_{false};   ///< pin-aware addStation PD test (median-|pivot| reference scale); survives reset()
     bool station_pd_null_trace_{false};     ///< eigen-read the rejected local block's null direction (RF-PD); survives reset()
     StationPdFailure last_pd_failure_;      ///< the last PD rejection's spectral record (RF-PD; see @ref lastStationPdFailure)

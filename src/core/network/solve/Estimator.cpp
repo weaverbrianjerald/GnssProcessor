@@ -363,6 +363,17 @@ std::size_t NetworkEstimator::addStation(const Eigen::MatrixXd& A_s,
     return neq_.addStationObservations(A_s, A_r, w_diag, y, prior);
 }
 
+void NetworkEstimator::formStations(
+    const std::vector<NetworkNormalEquations::StationObservations>& in, int n_threads) {
+    requireAccumulating_();
+    neq_.formStations(in, n_threads);
+}
+
+std::size_t NetworkEstimator::commitStation(std::size_t k) {
+    requireAccumulating_();
+    return neq_.commitStation(k);
+}
+
 Eigen::VectorXd NetworkEstimator::solve(const Datum& datum) {
     if (!epoch_open_) {
         throw std::logic_error("NetworkEstimator::solve: call beginEpoch() first");
@@ -1779,6 +1790,10 @@ void networkEstimatorConfigure(NetworkRun& run, const NetworkEngineSpec& engine_
     // Each station's normal blocks from the nonzero entries of its rows (network.sparse_station_normals):
     // bit-identical to the dense products, a fraction of their work at GPS + Galileo size.
     est.setSparseStationNormals(config_.getNetworkConfig().sparse_station_normals);
+    // The Schur reduce's subtraction split over column blocks of the border
+    // (network.parallel_schur_columns, card PES): byte-identical to the serial loop.  The
+    // per-station thread budget is 1 unless the per-station parallel path is active.
+    est.setSchurColumnThreads(config_.getNetworkConfig().parallel_schur_columns ? n_threads : 1);
     // Null-direction read (network.trace_station_pd_null): an eigen-read of
     // the null direction of a block the PD test rejects, so the drop names a parameter
     // instead of a pivot magnitude.  Measure-only; it runs only on an already-rejected

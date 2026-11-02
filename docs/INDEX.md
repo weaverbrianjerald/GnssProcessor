@@ -435,6 +435,10 @@ sim loop 10.6 % at identical output and is armed since 2026-10-19; optimization 
 variance read directly and one datum-frame covariance per solve (closed, 2026-10-29: identical on every gate, field golden
 loop 12.8 to 13.5 % shorter, merged into main).
 
+[PES](refound/PES_parallel_epoch_stages_2026-10-29.md), the sequential stages of the network epoch run in parallel at
+identical output (open, 2026-10-29: three stages built behind keys off by default, identical on every gate, ARMED on
+both goldens; golden loop 27.9 % (field) and 20.3 % (sim) shorter after card CVF, 39.7 % at 305 stations; not merged).
+
 ### `realtime` — [topics/realtime.md](topics/realtime.md)
 
 | card | one line | status | last dated |

@@ -1815,6 +1815,16 @@ namespace GnssProcessor {
         // of the shared columns (about 420 for GPS + Galileo on the field golden) and is the
         // largest part of the serial scatter.  Default off: the dense products.
         bool sparse_station_normals{ true };   ///< Form each station's normal blocks from the nonzero entries of its rows, bit-identical to the dense products (default on; false gives the dense products).
+        // Card PES: three serial stages of the epoch run in parallel over stations, under the
+        // contract of the PASS B station build (each iteration writes only its own slot; the
+        // shared result is combined serially in the order the serial code uses, so every
+        // floating-point sum keeps its association; no log or entity-table write inside a
+        // region).  Each acts only when @ref parallel_stations is active (Eigen pinned to one
+        // thread for the epoch) and is byte-identical to its serial path at any thread count.
+        // Default off: the serial path, with no new code on it.
+        bool parallel_station_normals{ false };   ///< Form every station's normal blocks (products, checks, LDLᵀ factor) in parallel ahead of the serial scatter, which then commits them in station order (@ref NetworkNormalEquations::formStations; card PES).
+        bool parallel_redundancy_census{ false }; ///< Compute the redundancy census's per-station row redundancies and block residual cofactors in parallel ahead of its serial walk (card PES).
+        bool parallel_schur_columns{ false };     ///< Split the Schur reduce's per-station subtraction over column blocks of the shared border, one thread per block, every element still summed over the stations in ascending order (card PES).
         // Thread the dense per-block linear algebra of the invariant carry across all
         // cores.  @ref parallel_seam parallelizes the carry only over the few
         // (const,signal) blocks (byte-identical) and leaves each block's O(K²–K³) dense

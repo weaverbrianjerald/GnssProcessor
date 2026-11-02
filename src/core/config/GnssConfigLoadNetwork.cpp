@@ -1782,6 +1782,12 @@ namespace GnssProcessor {
             jval<bool>(json, "network.parallel_seam", "parallel_seam", false);
         network_config_.sparse_station_normals =
             jval<bool>(json, "network.sparse_station_normals", "sparse_station_normals", true);
+        network_config_.parallel_station_normals =
+            jval<bool>(json, "network.parallel_station_normals", "parallel_station_normals", false);
+        network_config_.parallel_redundancy_census =
+            jval<bool>(json, "network.parallel_redundancy_census", "parallel_redundancy_census", false);
+        network_config_.parallel_schur_columns =
+            jval<bool>(json, "network.parallel_schur_columns", "parallel_schur_columns", false);
         network_config_.parallel_carry =
             jval<bool>(json, "network.parallel_carry", "parallel_carry", false);
 
@@ -12184,6 +12190,15 @@ namespace GnssProcessor {
             log->info("Network: per-station compute runs SERIALLY ({} stations <= threshold {} or "
                       "parallel_stations=false)", network_config_.stations.size(),
                       network_config_.parallel_min_stations);
+        }
+        if (network_config_.parallel_station_normals || network_config_.parallel_redundancy_census
+            || network_config_.parallel_schur_columns) {
+            log->info("Network (PES): parallel serial stages ARMED: station normals {}, redundancy "
+                      "census {}, Schur reduce by columns {} (byte-identical to the serial "
+                      "stages; active only with the per-station parallel path)",
+                      network_config_.parallel_station_normals ? "on" : "off",
+                      network_config_.parallel_redundancy_census ? "on" : "off",
+                      network_config_.parallel_schur_columns ? "on" : "off");
         }
         if (network_config_.parallel_seam) {
             log->info("Network: deterministic-parallel post-solve seam ENABLED "

@@ -71,6 +71,69 @@ namespace GnssProcessor {
 //  The per-station congruence sweep
 // ===========================================================================
 
+namespace {
+
+/// The rows of one station that carry position information (the congruence screen's rows):
+/// observation rows with a nonzero finite geometry triple, a positive finite weight and a finite
+/// residual.  Counts the code and phase rows kept and the rows dropped for their geometry.
+std::vector<Eigen::Index> congruenceRows(const StationAssembly& R, const std::vector<NetRowClass>& cls,
+                                         const Eigen::VectorXd& resid, Eigen::Index m,
+                                         int& n_code, int& n_phase, long long& dropped_geom) {
+    const Eigen::Index m_geo = R.row_pos_enu.rows();
+    std::vector<Eigen::Index> rows;
+    rows.reserve(static_cast<std::size_t>(m));
+    for (Eigen::Index row = 0; row < m; ++row) {
+        const NetRowClass k = cls[static_cast<std::size_t>(row)];
+        if (k != NetRowClass::ObsCode && k != NetRowClass::ObsPhase) continue;
+        if (row >= m_geo || R.row_pos_enu.cols() != 3) { ++dropped_geom; continue; }
+        const double w_i = (row < R.w.size()) ? R.w(row) : 0.0;
+        if (!(w_i > 0.0) || !std::isfinite(w_i)) { ++dropped_geom; continue; }
+        if (!std::isfinite(resid(row)))          { ++dropped_geom; continue; }
+        const Eigen::Vector3d h = R.row_pos_enu.row(row).transpose();
+        if (!h.allFinite() || h.isZero(0.0))     { ++dropped_geom; continue; }
+        rows.push_back(row);
+        if (k == NetRowClass::ObsCode) ++n_code; else ++n_phase;
+    }
+    return rows;
+}
+
+} // namespace
+
+CongruenceCofactor networkCongruenceCofactor(const NetworkCongruence& acc,
+                                             const NetworkNormalEquations& kernel,
+                                             std::size_t slot, const StationAssembly& R,
+                                             const std::vector<NetRowClass>& cls,
+                                             const Eigen::VectorXd& resid,
+                                             const Eigen::MatrixXd& cov_free) {
+    CongruenceCofactor c;
+    if (!acc.enabled()) return c;
+    const Eigen::Index m = R.y.size();
+    if (m <= 0 || resid.size() != m
+        || static_cast<Eigen::Index>(cls.size()) < m) return c;
+    int n_code = 0, n_phase = 0;
+    long long dropped_geom = 0;
+    const std::vector<Eigen::Index> rows =
+        congruenceRows(R, cls, resid, m, n_code, n_phase, dropped_geom);
+    if (rows.empty()) return c;
+    const Eigen::Index b = static_cast<Eigen::Index>(rows.size());
+    Eigen::MatrixXd Bs(b, R.A_s.cols()), Br(b, R.A_r.cols());
+    Eigen::VectorXd bw(b);
+    for (Eigen::Index i = 0; i < b; ++i) {
+        const Eigen::Index row = rows[static_cast<std::size_t>(i)];
+        Bs.row(i) = R.A_s.row(row);
+        Br.row(i) = R.A_r.row(row);
+        bw(i) = R.w(row);
+    }
+    c.formed = true;
+    try {
+        c.Q = kernel.blockResidualCofactor(slot, Bs, Br, bw, cov_free);
+        c.ok = true;
+    } catch (...) {
+        c.ok = false;
+    }
+    return c;
+}
+
 void networkCongruenceSweepStation(NetworkCongruence& acc,
                                    const NetworkNormalEquations& kernel,
                                    std::size_t slot, int station_index,
@@ -81,7 +144,8 @@ void networkCongruenceSweepStation(NetworkCongruence& acc,
                                    double delta_0, bool datum_changed,
                                    bool block_known, bool block_flagged,
                                    NetworkCongruenceTallies& tallies,
-                                   std::vector<CongruenceHit>& hits) {
+                                   std::vector<CongruenceHit>& hits,
+                                   const CongruenceCofactor* cofactor) {
     if (!acc.enabled()) return;
     const Eigen::Index m = R.y.size();
     if (m <= 0 || resid.size() != m
@@ -105,23 +169,10 @@ void networkCongruenceSweepStation(NetworkCongruence& acc,
     // assembled before the screen was armed (or one whose position column was
     // missing) has an empty row_pos_enu; its rows are counted in no_geom_rows
     // rather than read as "no fault here".
-    const Eigen::Index m_geo = R.row_pos_enu.rows();
-    std::vector<Eigen::Index> rows;
-    rows.reserve(static_cast<std::size_t>(m));
     int n_code = 0, n_phase = 0;
     long long dropped_geom = 0;
-    for (Eigen::Index row = 0; row < m; ++row) {
-        const NetRowClass k = cls[static_cast<std::size_t>(row)];
-        if (k != NetRowClass::ObsCode && k != NetRowClass::ObsPhase) continue;
-        if (row >= m_geo || R.row_pos_enu.cols() != 3) { ++dropped_geom; continue; }
-        const double w_i = (row < R.w.size()) ? R.w(row) : 0.0;
-        if (!(w_i > 0.0) || !std::isfinite(w_i)) { ++dropped_geom; continue; }
-        if (!std::isfinite(resid(row)))          { ++dropped_geom; continue; }
-        const Eigen::Vector3d h = R.row_pos_enu.row(row).transpose();
-        if (!h.allFinite() || h.isZero(0.0))     { ++dropped_geom; continue; }
-        rows.push_back(row);
-        if (k == NetRowClass::ObsCode) ++n_code; else ++n_phase;
-    }
+    const std::vector<Eigen::Index> rows =
+        congruenceRows(R, cls, resid, m, n_code, n_phase, dropped_geom);
     tallies.no_geom_rows += dropped_geom;
     if (rows.empty()) {
         ++tallies.no_rows;
@@ -148,9 +199,18 @@ void networkCongruenceSweepStation(NetworkCongruence& acc,
         Hd.row(i) = -R.row_pos_enu.row(row);
     }
 
+    // The residual cofactor: precomputed (network.parallel_redundancy_census, the same call on
+    // the same rows) or computed here.
     Eigen::MatrixXd Q;
-    try { Q = kernel.blockResidualCofactor(slot, Bs, Br, bw, cov_free); }
-    catch (...) {
+    bool q_failed = false;
+    if (cofactor && cofactor->formed) {
+        if (cofactor->ok) Q = cofactor->Q;
+        else              q_failed = true;
+    } else {
+        try { Q = kernel.blockResidualCofactor(slot, Bs, Br, bw, cov_free); }
+        catch (...) { q_failed = true; }
+    }
+    if (q_failed) {
         ++tallies.solve_failed;
         tallies.wall_ms += std::chrono::duration<double, std::milli>(
             std::chrono::steady_clock::now() - t0).count();
