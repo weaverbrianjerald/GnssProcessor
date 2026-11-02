@@ -113,17 +113,19 @@ ARMS = {
                "network.carry_rebase_complete=true"], "card PRM's eq34c posture"),
 }
 # Card IRD section 6 fixtures.  The slip fixtures are generated under FIXTURES_ROOT; the gap fixtures
-# are rung 3b with one station blanked.  TOW = 261030 + 30 (epoch - 1).
+# are rung 3b with one station blanked; the one-band fixture of IRD-3 (card IRDC section 5) is rung 3b
+# with one station's L2 blanked.  TOW = 261030 + 30 (epoch - 1).
 FIXTURES_ROOT = "D:/GnssProcessorSupport/runs_nom"
 GAP_FIRST_EPOCH = 152          # the settled part: a quiet stretch of the rung 3b chain trace
 GAP_ROOT, GAP_STATION = "S13000SIM", "S45000SIM"     # r1 of rung 3b; an interior vertex with two child satellites
 
 
-def gap_op(station, n_epochs, first_epoch=GAP_FIRST_EPOCH):
-    """The `strip` op that blanks every type of `station` for `n_epochs` epochs of 30 s from `first_epoch`.
-    Both bounds of the window are inclusive, so the last blanked epoch is first_epoch + n_epochs - 1."""
+def gap_op(station, n_epochs, first_epoch=GAP_FIRST_EPOCH, types="???"):
+    """The `strip` op that blanks `types` (every type by default) of `station` for `n_epochs` epochs of
+    30 s from `first_epoch`.  Both bounds of the window are inclusive, so the last blanked epoch is
+    first_epoch + n_epochs - 1."""
     a = 261030 + 30 * (first_epoch - 1)
-    return "strip;types=???;stations=%s;tow_from=%d;tow_to=%d" % (station, a, a + 30 * (n_epochs - 1))
+    return "strip;types=%s;stations=%s;tow_from=%d;tow_to=%d" % (types, station, a, a + 30 * (n_epochs - 1))
 
 
 # name -> (golden, fixture dir or None, extra knobs, what it is, rapid_arm.py --rinex ops)
@@ -160,6 +162,12 @@ BEDS = {
     "ird_rv16": ("sim", "runs/simarl_r3b", ARL_GPS_ONLY,
                  "IRD rv16: %s (interior vertex) blanked 16 min from epoch %d" % (GAP_STATION, GAP_FIRST_EPOCH),
                  [gap_op(GAP_STATION, 32)]),
+    # the one-band fixture: rv16's station and window with only its L2 blanked (phase and code), so that
+    # the station tracks one band (the pair family's band extension; card IRDC section 5)
+    "ird_l2v16": ("sim", "runs/simarl_r3b", ARL_GPS_ONLY,
+                  "IRD l2v16: %s (interior vertex) loses L2 (L2W, C2W) for 16 min from epoch %d"
+                  % (GAP_STATION, GAP_FIRST_EPOCH),
+                  [gap_op(GAP_STATION, 32, types="L2W,C2W")]),
 }
 
 
@@ -381,8 +389,9 @@ def selftest():
         GOLDEN.pop("_x", None)
     # --- the IRD-2 fixtures (card IRD section 6)
     fixtures = ("ird_t1", "ird_t2", "ird_t3", "ird_t4", "ird_t5", "ird_tr", "ird_rg", "ird_rv6", "ird_rv16")
-    chk(all(b in BEDS for b in fixtures) and sorted(b for b in BEDS if b.startswith("ird_")) == sorted(fixtures),
-        "a bed for each of the nine fixtures, and no other ird_ bed")
+    chk(all(b in BEDS for b in fixtures)
+        and sorted(b for b in BEDS if b.startswith("ird_")) == sorted(fixtures + ("ird_l2v16",)),
+        "a bed for each of the nine fixtures and the one-band fixture, and no other ird_ bed")
     chk(all(ARL_GPS_ONLY[0] in compose("A0", b) for b in fixtures), "every fixture bed is GPS-only like the ARL beds")
     chk(all(os.path.isabs(BEDS[b][1]) and BEDS[b][1] == FIXTURES_ROOT + "/simird_" + b[4:] and not BEDS[b][4]
             for b in fixtures[:6]),
@@ -402,6 +411,11 @@ def selftest():
         % (GAP_FIRST_EPOCH, win["ird_rg"][0]))
     chk(ops["ird_rg"]["stations"] == GAP_ROOT and ops["ird_rv6"]["stations"] == ops["ird_rv16"]["stations"] == GAP_STATION
         and GAP_STATION != GAP_ROOT, "rg blanks r1; rv6 and rv16 blank one other station")
+    l2 = rapid_arm.parse_op(BEDS["ird_l2v16"][4][0])
+    chk(len(BEDS["ird_l2v16"][4]) == 1 and BEDS["ird_l2v16"][1] == "runs/simarl_r3b" and l2["op"] == "strip"
+        and l2["types"] == "L2W,C2W" and l2["sats"] == "all" and l2["consumer"] == "0"
+        and l2["stations"] == GAP_STATION and rapid_arm.op_window(l2) == win["ird_rv16"],
+        "the one-band fixture blanks L2W and C2W of rv16's station over rv16's window, the consumer untouched")
     d = {"processing": {"max_duration_s": 21600.0}, "network": {"max_duration_s": 21600.0}}
     chk(duration_sets(d, 2.0) == ["processing.max_duration_s=7200.0", "network.max_duration_s=7200.0"]
         and duration_sets({"processing": {}}, 2.0) == [], "the duration is set where the golden has it, as --hours does")
