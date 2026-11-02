@@ -17,6 +17,7 @@
 #include "config/GnssConfig.hpp"              // config_ getters
 #include "network/qc/Mdb.hpp"              // Baarda MDB rider on B2's r_i (SPEC_redundancy_census)
 #include "network/assembly/RowClassify.hpp"      // raimPoolAdmitsKind, rowTagAt (the pool's admission rule)
+#include "network/qc/RaimPriorChannel.hpp" // the prior channel (network.raim_prior_channel)
 #include "network/qc/RobustStats.hpp"      // medianPolish2Way / robustProminence / medianCopy / MedianPolish
 #include "network/diag/AmbStateTrace.hpp"    // ambStateNoteErase (RF-1 §7.4 D3 erase inventory)
 #include "network/ar/AmbFloat.hpp"          // ambFloatDrop (RF-1 step 4: the bounded drop)
@@ -190,6 +191,13 @@ void networkPostFitRaim(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitH
     const bool need_attrib = attrib_on || attrib_act || trace_flag_rates;
     struct Cell { int sta; std::string sat, sig; double r; };
     std::vector<Cell> cells;
+    // The prior channel (network.raim_prior_channel, network/qc/RaimPriorChannel.hpp): with it
+    // on, the pools below hold observation rows only (raim_pool_data_rows_only is resolved true),
+    // and every carried-prior row is collected here once, against its own column, for the
+    // channel's own table and isolated-arc test after the observation channel's.
+    const bool prior_on = ctx.knobs.raim_prior_channel;
+    RaimPriorChannelTally& prior_tally = ctx.counters.prior_channel;
+    std::vector<RaimPriorRow> prior_rows;
     // Per-station factor rows (R2), collected during Pass 1 and reduced once σ̂₀
     // exists (the trim bar is k·σ̂₀, which is not known until the pool closes).
     std::vector<std::vector<StationFactorRow>> staf_rows;
@@ -392,6 +400,12 @@ void networkPostFitRaim(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitH
             if (r_max > cur) cur = r_max;
             if (need_attrib) cells.push_back({static_cast<int>(i), pa.sat, pa.signal, r_max});
         }
+        // The station's carried-prior rows, each once against its own column (the prior
+        // channel), standardized as the pool's rows are.
+        if (prior_on)
+            raimPriorChannelCollect(R, static_cast<int>(i), stations[i].name, resid, row_r,
+                                    raim_redun, kBaardaRedundancyFloor, se.time.tow,
+                                    prior_rows, prior_tally);
         if (mdb_here) mdb_feed->finish();   // commit this station's event candidates
         for (const auto& [sat, rmax] : sat_rmax)
             amb_stats.push_back({sat, static_cast<int>(i), rmax});
@@ -665,6 +679,7 @@ void networkPostFitRaim(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitH
         std::set<int>         bad_stations;   // deliberately never populated; see below
         RaimIsolatedArcs      isolated;       // the isolated-arc scan, filled below
         auto&                 bad_arcs = isolated.refloat;   // the arcs T4 refloats (staged injections are appended)
+        RaimPriorSelection    prior_sel;      // the prior channel's test, filled below with the key on
         if (attrib_act) {
             // Wholesale satellite refloat happens only when the network as a whole is
             // contaminated (σ̂0 above the within-epoch trigger).  At a robust-clean epoch
@@ -732,6 +747,17 @@ void networkPostFitRaim(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitH
             n_arc_refloat_epoch += static_cast<int>(bad_arcs.size());  // heartbeat churn metric (T2d)
             if (raim_maturity_gate)
                 networkRaimMaturityGateNote(run, ep, isolated, raim_mature, sigma0);
+            // The prior channel's test: its table of carried-prior rows (one cell per station
+            // and own-column subject), its own robust scale, the same isolated-arc bar and the
+            // same maturity verdict; the satellites caught wholesale above are not flagged
+            // again, and an arc refloated above is not refloated twice.  Its responses run
+            // after the observation channel's, at the end of this block.
+            if (prior_on) {
+                prior_sel = raimPriorChannelSelect(prior_rows, raim_s0_floor, raim_k, bad_sats,
+                                                   bad_arcs, raim_mature);
+                raimPriorChannelNoteSelection(prior_sel, !prior_rows.empty(), prior_tally);
+                n_arc_refloat_epoch += static_cast<int>(prior_sel.arcs.size());
+            }
         }
 
         if (attrib_on) {
@@ -777,6 +803,35 @@ void networkPostFitRaim(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitH
                     : (fset.count(sat) ? 1 : 0);
                 emit("ARC", stations[sta].name + "/" + sat, mp.interaction[k], pr, 1, acted);
                 ++arc_logged;
+            }
+            // The prior channel's cells (dim PCELL), as the ARC rows: the most prominent
+            // interactions of its own table, with its own overall effect and scale.
+            if (prior_on && !prior_sel.cells.empty()) {
+                std::vector<double> p_abs;
+                p_abs.reserve(prior_sel.interaction.size());
+                for (double v : prior_sel.interaction) p_abs.push_back(std::abs(v));
+                const double p_mad = std::max(1e-9, 1.4826 * medianCopy(p_abs));
+                std::vector<std::size_t> p_order(prior_sel.interaction.size());
+                for (std::size_t k = 0; k < p_order.size(); ++k) p_order[k] = k;
+                std::sort(p_order.begin(), p_order.end(), [&](std::size_t a, std::size_t b) {
+                    return std::abs(prior_sel.interaction[a]) > std::abs(prior_sel.interaction[b]);
+                });
+                int p_logged = 0;
+                for (std::size_t k : p_order) {
+                    const double pr = std::abs(prior_sel.interaction[k]) / p_mad;
+                    if (pr <= kAttribReportProm || p_logged >= 20) break;
+                    const int sta = std::get<0>(prior_sel.cells[k]);
+                    const std::string& label = std::get<1>(prior_sel.cells[k]);
+                    raim_attrib_trace
+                        << se.time.week << ',' << fmt::format("{:.3f}", se.time.tow) << ','
+                        << "PCELL," << stations[sta].name << '/' << label << ','
+                        << fmt::format("{:.4f}", prior_sel.interaction[k]) << ','
+                        << fmt::format("{:.2f}", pr) << ",1,"
+                        << fmt::format("{:.4f}", prior_sel.overall) << ','
+                        << fmt::format("{:.3f}", prior_sel.scale) << ','
+                        << (prior_sel.acted(sta, label) ? 1 : 0) << '\n';
+                    ++p_logged;
+                }
             }
         }
 
@@ -824,172 +879,177 @@ void networkPostFitRaim(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitH
                            "un-indexed, or the legacy pivot.  The event will be "
                            "reported as NEVER FIRED at run-end.", se.time.tow);
         }
+        // The arc response, shared by the observation channel's flags (drop cause t4_attrib)
+        // and the prior channel's line-of-sight flags (drop cause t4_prior): the carried
+        // ambiguities of the satellite at the station, with their line of sight's
+        // slant-ionosphere and phase-colour carries.  Returns the ambiguities it reached.
+        auto refloat_sat_at = [&](int i, const std::string& sat, bool statistical_arc,
+                                  const char* drop_cause) -> int {
+            int n = 0;
+            // Study-1 sub-knob: production defaults unless this arc was
+            // staged by the injector with a diagnostic mode.  Every flag
+            // below is `true` on the production path, so an unarmed run
+            // executes the same path as without the sub-knob.
+            bool inj_reseed = true;
+            const std::set<std::string>* inj_sigs = nullptr;
+            if (!inject_arc_mode.empty()) {
+                const auto mit = inject_arc_mode.find({ i, sat });
+                if (mit != inject_arc_mode.end()) {
+                    inj_reseed = (mit->second != "erase_no_reseed");
+                    const auto sit = inject_arc_sigs.find({ i, sat });
+                    if (sit != inject_arc_sigs.end() && !sit->second.empty())
+                        inj_sigs = &sit->second;
+                }
+            }
+            for (const auto& pa : ambPool(asm_res[i]))
+                if (pa.sat == sat
+                    && !(inj_sigs && inj_sigs->count(pa.signal) == 0)) {
+                    {
+                        // With pd_held_basis armed, a T4 attribution flag stamps the
+                        // arc, so the next election refuses it the S-basis for
+                        // flag_quiet_ep epochs and, if it holds the basis, deposes it
+                        // before any response acts on the column (RF-2 items 3 and
+                        // 4).  The stamp is set here, at the flag, not at the
+                        // response: the two are different edges.
+                        if (ctx.knobs.pd_held_basis)
+                            net::putAmbFlagEp(entities, static_cast<int>(i), pa.amb_key) =
+                                static_cast<long long>(ctx.counters.n_loop_epochs);
+                        // The producer AR search's suspect-corner mask: a
+                        // T4 drop or erase stamps the corner.  This site runs after the
+                        // epoch's search, so the stamp is the next epoch's, the first
+                        // search that can act on it.
+                        if (ctx.knobs.ar_suspect_epochs > 0)
+                            arSuspectNote(ctx.carry.ar_suspect, static_cast<int>(i), pa.sat,
+                                          arSuspectPostSearchEpoch(static_cast<long long>(
+                                              ctx.counters.n_loop_epochs)),
+                                          kArSuspectRaim, &ctx.counters.netar_suspect);
+                        const auto lane_lk = std::make_tuple(i, pa.sat, pa.signal);
+                        const auto lane_lit = net::getArc(ctx.entities.arcs, lane_lk, &net::ArcState::amb);
+                        if (lane_lit != nullptr) {
+                            // The entry is recorded before the erase (RF-1 §7.4 D3):
+                            // this is the class design §3.4 replaces with a bounded
+                            // drop, and its variance before the event exists only here.
+                            // Under the float_kf vehicle this is a bounded drop, not
+                            // an erase (RF-1 step 4, §3.4).  An erase removes all
+                            // information about the column; the anchor's w = 1e10 pin
+                            // holds the phase bias, so the only shared parameter left
+                            // to absorb the opened direction is the clock (R10
+                            // attributed 88 % of a run's unsignalled satellite-clock
+                            // steps at dt = 0 to this event).  A drop bounds what can
+                            // move and keeps value_abs and the arc's identity (birth
+                            // stamps, var_first, n_folds), so the next epoch
+                            // re-couples against a stated prior instead of a first
+                            // sighting.
+                            if (ctx.knobs.amb_float_kf) {
+                                // The drop is taken at both floors, each mapped at this
+                                // line of sight's own elevation, the same mapping the
+                                // birth stash uses (RF-3a A1).  Both floors are 0 by
+                                // default, so the mapping matters only on a run that
+                                // arms a floor.
+                                const double e_pa = pa.elev_deg;
+                                const auto o_t4 = ambFloatDropFloored(
+                                    (*lane_lit),
+                                    ambFloatBirthFloor(ctx.knobs.amb_birth_var_floor,
+                                                       e_pa, amb_elev_power_),
+                                    ambFloatBirthFloor(amb_drop_floor_now_,
+                                                       e_pa, amb_elev_power_),
+                                    se.time.week * 604800.0 + se.time.tow,
+                                    static_cast<long long>(
+                                        ctx.counters.n_loop_epochs),
+                                    ctx.knobs.amb_drop_decouple_always);
+                                if (o_t4.decoupled_idem)
+                                    ++ctx.counters.n_amb_drop_decoupled_idem;
+                                if (o_t4.from_drop_floor)
+                                    ++ctx.counters.n_amb_drop_floored;
+                                if (amb_drop_pre_gate_)
+                                    ++ctx.counters.n_amb_drop_pre_gate;
+                                // A drop that changed the prior (its
+                                // variance moved, or the idempotent branch cleared the
+                                // regression and the block row); a re-drop that changed
+                                // nothing is not a response of this site.
+                                if (o_t4.acted || o_t4.decoupled_idem)
+                                    prmRespond(ctx.counters.prm_resp,
+                                               ResponseSite::AmbRaimDrop);
+                                ambStateNoteDrop(ctx, se.time.week, se.time.tow,
+                                                 stations[i].name, pa.sat, pa.signal,
+                                                 (*lane_lit), drop_cause);
+                                ++ctx.counters.n_amb_drop;
+                                ++ctx.counters.n_amb_drop_t4;
+                            } else {
+                            ambStateNoteErase(ctx, se.time.week, se.time.tow,
+                                              stations[i].name, pa.sat, pa.signal,
+                                              (*lane_lit), drop_cause);
+                            net::dropArc(entities.arcs, lane_lk, &net::ArcState::amb);
+                            prmRespond(ctx.counters.prm_resp,
+                                       ResponseSite::AmbRaimErase);
+                            }
+                            ++ctx.counters.n_cr_raim_attrib;   // census (C): T4 attribution refloat
+                        }
+                    }
+                    // Iono in the carried block (network.carry_iono_in_block,
+                    // I-in-block): a T4 or consensus erase means the arc's level is
+                    // not trusted, and its wired response under invariant #1 erases
+                    // the LOS's carried iono with it.  The T4 statistic reads level
+                    // error and carried-iono error as a sum, so an arc whose level is
+                    // no longer trusted cannot vouch for the iono estimated jointly
+                    // with it.  Erasing here makes the LOS re-draw both from data (its
+                    // next harvest re-creates the entry with a fresh birth_s).
+                    if (ctx.knobs.iono_blk &&
+                        net::dropLos(entities.los, i, pa.sat, &net::LosState::iono_blk)) {
+                        ++ctx.counters.n_iono_blk_erased_t4;
+                        prmRespond(ctx.counters.prm_resp,
+                                   ResponseSite::IonoRaimErase);
+                    }
+                    // The line of sight's phase-colour entry with them.  The
+                    // T4 statistic reads its error in the same sum, so a level that is
+                    // no longer trusted cannot vouch for it either; it re-starts from
+                    // its birth prior next epoch.
+                    if (ctx.knobs.pc_on
+                        && net::dropLos(entities.los, i, pa.sat, &net::LosState::pc)) {
+                        ++ctx.counters.n_pc_erase_raim;
+                        prmRespond(ctx.counters.prm_resp,
+                                   ResponseSite::PcRaimErase);
+                    }
+                    // The receiver clock in the carried block (RX-CLK-in-block) has no
+                    // T4 edge here, by a triaged decision rather than an omission.
+                    // Invariant #1 requires a wired event response for every stiff
+                    // time-linked quantity; this one's is the jump gate at the
+                    // harvest, not the arc refloat.  A T4 refloat is a per-(station,
+                    // satellite) arc event, while the receiver clock is station-wide
+                    // and re-determined every epoch by every code and phase row of the
+                    // station; erasing it on any one arc's refloat would erase the
+                    // carry on most station-epochs of a slipped bed and leave the
+                    // channel effectively unarmed.  A real clock displacement caused
+                    // by a refloat appears as a one-step prediction innovation and is
+                    // caught by network.carry_rx_clock_jump_k.
+                    // Under carry_invariant this mark is bookkeeping, not the actuator:
+                    // the producer forms every innovation against the linearization
+                    // point and never writes the solution back, so moving x_lin leaves
+                    // the reduced shared RHS b_red = u_s − N_sr N_rr⁻¹ u_r
+                    // algebraically unchanged (SPEC_deweight_release_hygiene §7.2).  It
+                    // is kept because it is the actuator on phase-leveling runs.
+                    if (inj_reseed) {
+                        markPendingReseed(stations[i].params, pa.amb_key);
+                    }
+                    ++n;
+                }
+            return n;
+        };
         if ((attrib_act || inject_arc_act)
             && (!bad_sats.empty() || !bad_stations.empty() || !bad_arcs.empty())) {
-            auto refloat_sat_at = [&](int i, const std::string& sat,
-                                      bool statistical_arc) -> int {
-                int n = 0;
-                // Study-1 sub-knob: production defaults unless this arc was
-                // staged by the injector with a diagnostic mode.  Every flag
-                // below is `true` on the production path, so an unarmed run
-                // executes the same path as without the sub-knob.
-                bool inj_reseed = true;
-                const std::set<std::string>* inj_sigs = nullptr;
-                if (!inject_arc_mode.empty()) {
-                    const auto mit = inject_arc_mode.find({ i, sat });
-                    if (mit != inject_arc_mode.end()) {
-                        inj_reseed = (mit->second != "erase_no_reseed");
-                        const auto sit = inject_arc_sigs.find({ i, sat });
-                        if (sit != inject_arc_sigs.end() && !sit->second.empty())
-                            inj_sigs = &sit->second;
-                    }
-                }
-                for (const auto& pa : ambPool(asm_res[i]))
-                    if (pa.sat == sat
-                        && !(inj_sigs && inj_sigs->count(pa.signal) == 0)) {
-                        {
-                            // With pd_held_basis armed, a T4 attribution flag stamps the
-                            // arc, so the next election refuses it the S-basis for
-                            // flag_quiet_ep epochs and, if it holds the basis, deposes it
-                            // before any response acts on the column (RF-2 items 3 and
-                            // 4).  The stamp is set here, at the flag, not at the
-                            // response: the two are different edges.
-                            if (ctx.knobs.pd_held_basis)
-                                net::putAmbFlagEp(entities, static_cast<int>(i), pa.amb_key) =
-                                    static_cast<long long>(ctx.counters.n_loop_epochs);
-                            // The producer AR search's suspect-corner mask: a
-                            // T4 drop or erase stamps the corner.  This site runs after the
-                            // epoch's search, so the stamp is the next epoch's, the first
-                            // search that can act on it.
-                            if (ctx.knobs.ar_suspect_epochs > 0)
-                                arSuspectNote(ctx.carry.ar_suspect, static_cast<int>(i), pa.sat,
-                                              arSuspectPostSearchEpoch(static_cast<long long>(
-                                                  ctx.counters.n_loop_epochs)),
-                                              kArSuspectRaim, &ctx.counters.netar_suspect);
-                            const auto lane_lk = std::make_tuple(i, pa.sat, pa.signal);
-                            const auto lane_lit = net::getArc(ctx.entities.arcs, lane_lk, &net::ArcState::amb);
-                            if (lane_lit != nullptr) {
-                                // The entry is recorded before the erase (RF-1 §7.4 D3):
-                                // this is the class design §3.4 replaces with a bounded
-                                // drop, and its variance before the event exists only here.
-                                // Under the float_kf vehicle this is a bounded drop, not
-                                // an erase (RF-1 step 4, §3.4).  An erase removes all
-                                // information about the column; the anchor's w = 1e10 pin
-                                // holds the phase bias, so the only shared parameter left
-                                // to absorb the opened direction is the clock (R10
-                                // attributed 88 % of a run's unsignalled satellite-clock
-                                // steps at dt = 0 to this event).  A drop bounds what can
-                                // move and keeps value_abs and the arc's identity (birth
-                                // stamps, var_first, n_folds), so the next epoch
-                                // re-couples against a stated prior instead of a first
-                                // sighting.
-                                if (ctx.knobs.amb_float_kf) {
-                                    // The drop is taken at both floors, each mapped at this
-                                    // line of sight's own elevation, the same mapping the
-                                    // birth stash uses (RF-3a A1).  Both floors are 0 by
-                                    // default, so the mapping matters only on a run that
-                                    // arms a floor.
-                                    const double e_pa = pa.elev_deg;
-                                    const auto o_t4 = ambFloatDropFloored(
-                                        (*lane_lit),
-                                        ambFloatBirthFloor(ctx.knobs.amb_birth_var_floor,
-                                                           e_pa, amb_elev_power_),
-                                        ambFloatBirthFloor(amb_drop_floor_now_,
-                                                           e_pa, amb_elev_power_),
-                                        se.time.week * 604800.0 + se.time.tow,
-                                        static_cast<long long>(
-                                            ctx.counters.n_loop_epochs),
-                                        ctx.knobs.amb_drop_decouple_always);
-                                    if (o_t4.decoupled_idem)
-                                        ++ctx.counters.n_amb_drop_decoupled_idem;
-                                    if (o_t4.from_drop_floor)
-                                        ++ctx.counters.n_amb_drop_floored;
-                                    if (amb_drop_pre_gate_)
-                                        ++ctx.counters.n_amb_drop_pre_gate;
-                                    // A drop that changed the prior (its
-                                    // variance moved, or the idempotent branch cleared the
-                                    // regression and the block row); a re-drop that changed
-                                    // nothing is not a response of this site.
-                                    if (o_t4.acted || o_t4.decoupled_idem)
-                                        prmRespond(ctx.counters.prm_resp,
-                                                   ResponseSite::AmbRaimDrop);
-                                    ambStateNoteDrop(ctx, se.time.week, se.time.tow,
-                                                     stations[i].name, pa.sat, pa.signal,
-                                                     (*lane_lit),
-                                                     AmbDropCause::kT4Attrib);
-                                    ++ctx.counters.n_amb_drop;
-                                    ++ctx.counters.n_amb_drop_t4;
-                                } else {
-                                ambStateNoteErase(ctx, se.time.week, se.time.tow,
-                                                  stations[i].name, pa.sat, pa.signal,
-                                                  (*lane_lit), "t4_attrib");
-                                net::dropArc(entities.arcs, lane_lk, &net::ArcState::amb);
-                                prmRespond(ctx.counters.prm_resp,
-                                           ResponseSite::AmbRaimErase);
-                                }
-                                ++ctx.counters.n_cr_raim_attrib;   // census (C): T4 attribution refloat
-                            }
-                        }
-                        // Iono in the carried block (network.carry_iono_in_block,
-                        // I-in-block): a T4 or consensus erase means the arc's level is
-                        // not trusted, and its wired response under invariant #1 erases
-                        // the LOS's carried iono with it.  The T4 statistic reads level
-                        // error and carried-iono error as a sum, so an arc whose level is
-                        // no longer trusted cannot vouch for the iono estimated jointly
-                        // with it.  Erasing here makes the LOS re-draw both from data (its
-                        // next harvest re-creates the entry with a fresh birth_s).
-                        if (ctx.knobs.iono_blk &&
-                            net::dropLos(entities.los, i, pa.sat, &net::LosState::iono_blk)) {
-                            ++ctx.counters.n_iono_blk_erased_t4;
-                            prmRespond(ctx.counters.prm_resp,
-                                       ResponseSite::IonoRaimErase);
-                        }
-                        // The line of sight's phase-colour entry with them.  The
-                        // T4 statistic reads its error in the same sum, so a level that is
-                        // no longer trusted cannot vouch for it either; it re-starts from
-                        // its birth prior next epoch.
-                        if (ctx.knobs.pc_on
-                            && net::dropLos(entities.los, i, pa.sat, &net::LosState::pc)) {
-                            ++ctx.counters.n_pc_erase_raim;
-                            prmRespond(ctx.counters.prm_resp,
-                                       ResponseSite::PcRaimErase);
-                        }
-                        // The receiver clock in the carried block (RX-CLK-in-block) has no
-                        // T4 edge here, by a triaged decision rather than an omission.
-                        // Invariant #1 requires a wired event response for every stiff
-                        // time-linked quantity; this one's is the jump gate at the
-                        // harvest, not the arc refloat.  A T4 refloat is a per-(station,
-                        // satellite) arc event, while the receiver clock is station-wide
-                        // and re-determined every epoch by every code and phase row of the
-                        // station; erasing it on any one arc's refloat would erase the
-                        // carry on most station-epochs of a slipped bed and leave the
-                        // channel effectively unarmed.  A real clock displacement caused
-                        // by a refloat appears as a one-step prediction innovation and is
-                        // caught by network.carry_rx_clock_jump_k.
-                        // Under carry_invariant this mark is bookkeeping, not the actuator:
-                        // the producer forms every innovation against the linearization
-                        // point and never writes the solution back, so moving x_lin leaves
-                        // the reduced shared RHS b_red = u_s − N_sr N_rr⁻¹ u_r
-                        // algebraically unchanged (SPEC_deweight_release_hygiene §7.2).  It
-                        // is kept because it is the actuator on phase-leveling runs.
-                        if (inj_reseed) {
-                            markPendingReseed(stations[i].params, pa.amb_key);
-                        }
-                        ++n;
-                    }
-                return n;
-            };
             int n_ref = 0;
             for (const auto& sat : bad_sats)
                 for (size_t i = 0; i < stations.size(); ++i)
                     if (present[i] && est_index_of[i] >= 0
                         && (phase_datum_prioritized || !stations[i].is_pivot))
                         n_ref += refloat_sat_at(static_cast<int>(i), sat,
-                                                /*statistical_arc=*/false);
+                                                /*statistical_arc=*/false,
+                                                AmbDropCause::kT4Attrib);
             // (bad_stations is intentionally empty: the whole-station refloat path is
             //  disabled to avoid mass refloats from regional mis-attribution.)
             for (const auto& [sta, sat] : bad_arcs)
-                n_ref += refloat_sat_at(sta, sat, /*statistical_arc=*/true);
+                n_ref += refloat_sat_at(sta, sat, /*statistical_arc=*/true,
+                                        AmbDropCause::kT4Attrib);
             if (inject_arc_act) {
                 // The injected pairs are the tail of bad_arcs (appended above).
                 const std::size_t n_inj = inject_arc_staged.size();
@@ -1046,6 +1106,71 @@ void networkPostFitRaim(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitH
                     emitEvent("T4_attrib", "attrib_arc", sat, stations[sta].name,
                               std::nullopt, raim_k, "refloat", sd);
             }
+        }
+
+        // The prior channel's responses (network.raim_prior_channel), after the observation
+        // channel's.  A line-of-sight flag takes the arc response above under the cause
+        // t4_prior.  A receiver code-bias flag erases that carried code bias, the reset the
+        // harvest's step test takes (reset, not repair: this epoch folded the suspect prior,
+        // so the next harvest re-seeds the column from a solve without it); it is counted in
+        // the channel's tally and written as an event, and is not a row of the
+        // parameter-response table (a new site would change every run's manifest).  A flag on
+        // an unwired subject, and one the maturity gate held, are written and change nothing.
+        // One T4_prior event per flag, with the flag statistic (interaction over the channel's
+        // scale), the bar, and the cell's row in the detail.
+        if (prior_on && !prior_sel.cells.empty()) {
+            const auto detail_of = [&](std::size_t c) {
+                return raimPriorEventDetail(prior_rows[prior_sel.cell_row[c]], prior_sel.scale);
+            };
+            const auto prior_event = [&](const char* event, std::size_t c, const char* action,
+                                         const std::string& extra) {
+                if (!events_trace.is_open()) return;
+                const RaimPriorRow& r = prior_rows[prior_sel.cell_row[c]];
+                emitEvent("T4_prior", event, r.subject.sat, stations[r.station].name,
+                          prior_sel.flagStatistic(c), raim_k, action, detail_of(c) + extra);
+            };
+            int n_ref_prior = 0;
+            for (std::size_t a = 0; a < prior_sel.arcs.size(); ++a) {
+                const auto& [sta, sat] = prior_sel.arcs[a];
+                const int n = refloat_sat_at(sta, sat, /*statistical_arc=*/true,
+                                             AmbDropCause::kT4Prior);
+                n_ref_prior += n;
+                ++prior_tally.arcs;
+                prior_tally.arcs_ambiguities += n;
+                if (n == 0) ++prior_tally.arcs_empty;
+                prior_event("prior_arc", prior_sel.arc_cells[a], "refloat",
+                            fmt::format(";ambiguities={}", n));
+            }
+            for (std::size_t c : prior_sel.arcs_both)
+                prior_event("prior_arc", c, "obs_refloat", "");
+            int n_rxcb_reset = 0;
+            for (std::size_t c : prior_sel.rxcb) {
+                const RaimPriorRow& r = prior_rows[prior_sel.cell_row[c]];
+                const bool erased =
+                    net::drop(entities.stations, StationId{r.station}, &net::StationState::signals,
+                              r.subject.cb_key, &net::StationSignalState::rx_cb) > 0;
+                if (erased) {
+                    ++prior_tally.rxcb_resets;
+                    ++n_rxcb_reset;
+                } else {
+                    ++prior_tally.rxcb_no_entry;
+                }
+                prior_event("prior_rxcb", c, erased ? "reset" : "no_entry",
+                            ";key=" + r.subject.cb_key);
+            }
+            for (std::size_t c : prior_sel.unwired)
+                prior_event("prior_unwired", c, "none", "");
+            for (std::size_t c : prior_sel.held_cells)
+                prior_event("prior_held", c, "hold", "");
+            if (!prior_sel.arcs.empty() || !prior_sel.rxcb.empty() || !prior_sel.unwired.empty())
+                log->info("Network[RAIM-prior]: TOW {:.1f} {} line-of-sight flag(s) refloated {} "
+                          "carried ambiguity(ies), {} more on arcs T4 refloated, {} receiver "
+                          "code-bias reset(s) of {} flag(s), {} unwired flag(s), {} held "
+                          "(scale {:.2f}, gate {:.1f})",
+                          se.time.tow, prior_sel.arcs.size(), n_ref_prior,
+                          prior_sel.arcs_both.size(), n_rxcb_reset, prior_sel.rxcb.size(),
+                          prior_sel.unwired.size(), prior_sel.isolated.held.size(),
+                          prior_sel.scale, raim_k);
         }
     }
 
@@ -1560,7 +1685,8 @@ int networkRaimRunEnd(const NetworkRunEndView& v) {
     return networkRunEndSections(v, {
         networkRaimPoolRunEnd,
         networkRaimWithholdRunEnd,
-        networkRaimMaturityGateRunEnd
+        networkRaimMaturityGateRunEnd,
+        networkRaimPriorChannelRunEnd
     });
 }
 

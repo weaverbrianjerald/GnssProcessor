@@ -69,6 +69,7 @@ struct EpochEvents;   // network/driver/Epoch.hpp
         inline constexpr const char* kStaleGap    = "stale_gap";     ///< the inject-site gap cliff (gap > phase_leveling_max_gap_s).
         inline constexpr const char* kT4Attrib    = "t4_attrib";     ///< RAIM prominence-attribution refloat (an erase on the leveling vehicle).
         inline constexpr const char* kT3Consensus = "t3_consensus";  ///< RAIM per-satellite consensus refloat (an erase on the leveling vehicle).
+        inline constexpr const char* kT4Prior     = "t4_prior";      ///< RAIM prior-channel refloat (network.raim_prior_channel): the attribution's arc response on a carried-prior flag (an erase on the leveling vehicle).
     }
 
     /**

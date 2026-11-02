@@ -286,3 +286,10 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   2 h goldens and the 16 user-side arms identical on a same-build pair; a golden with 30 retired keys differs only by
   the 30 warnings. 1,153 of the 1,234 network-mode configurations under `config/` now warn. Card RKD's notes written,
   two still owed.
+- [RPC](RPC_raim_prior_channel_2026-10-30.md): closed, 2026-10-30: PASS, the post-fit RAIM's prior channel (card RPA's
+  first defect), `network.raim_prior_channel` built default off on branch `claude/awesome-leavitt-2520ab` (not merged).
+  The pools keep observation rows; each carried-prior row is tested once, in its own column's cell, with the T4
+  isolated-arc test, and a flag answers its carry. Key off byte-identical (2 h field and sim). With the cold-start bound
+  at 0, BSHM00ISR's G07 runaway (11.9 m without a brake) is held at 0.44 m by the line of sight's own carry row. 6 h:
+  WTZZ00DEU +0.25 mm, census median 0.0 mm, clock wire within 2 %, sim byte-identical; refloats 55 to 71, mostly one
+  faulty line of sight answered every epoch. UNVALIDATED; a hold and multi-day owed.

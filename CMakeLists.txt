@@ -266,6 +266,7 @@ add_library(gnss_core STATIC
     src/core/network/assembly/SignalIntegrity.cpp
     src/core/network/assembly/MeasurementAdmission.cpp
     src/core/network/qc/Raim.cpp
+    src/core/network/qc/RaimPriorChannel.cpp
     src/core/network/qc/ClockQc.cpp
     src/core/network/solve/ClockAnchor.cpp
     src/core/network/state/CarryDisposition.cpp
@@ -728,6 +729,7 @@ add_executable(gnss_tests
     tests/network/test_network_engine_spec.cpp
     tests/network/test_network_row_classify.cpp
     tests/network/test_raim_pool_data_rows_only.cpp
+    tests/network/test_raim_prior_channel.cpp
     tests/network/test_network_rhs_attrib.cpp
     tests/test_rhs_attrib_columns.cpp
     tests/test_rhs_attrib_local.cpp

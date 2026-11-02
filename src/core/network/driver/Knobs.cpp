@@ -338,10 +338,15 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     // keep the faulted level the cold response erases).  Not fingerprinted, like the
     // screen's other knobs.
     k.gl_cold_bound_m  = (k.gl_on && !k.gl_bound) ? config_.networkGrossLosColdBoundM() : 0.0;
-    // The RAIM pools restricted to observation phase rows.  ANDed with raim_on
+    // The prior channel (card RPC): the carried-prior rows tested on their own channel.
+    // ANDed with raim_on (the loader already guarantees it and raim_attribution).
+    k.raim_prior_channel = k.raim_on && config_.networkRaimPriorChannel();
+    // The RAIM pools restricted to observation phase rows: by their own key, or by the prior
+    // channel, which takes the carried-prior rows out of the pools.  ANDed with raim_on
     // (the loader already guarantees it), so both pool walks and the run-end lines read
     // one bool.  Not appended to the snapshot fingerprint (SnapshotFingerprint.cpp): a QC knob, like raim_*.
-    k.raim_pool_data_rows_only = k.raim_on && config_.networkRaimPoolDataRowsOnly();
+    k.raim_pool_data_rows_only =
+        k.raim_on && (config_.networkRaimPoolDataRowsOnly() || k.raim_prior_channel);
     k.eq34_rpb_prior_sigma = config_.networkPhaseDatumEq34RpbPriorSigmaM();
     k.eq34_rpb_prior_w = (k.phase_datum_eq34 && k.eq34_rpb_prior_sigma > 0.0) ? 1.0 / (k.eq34_rpb_prior_sigma * k.eq34_rpb_prior_sigma) : 0.0;
     k.eq34_rpb_q = (k.phase_datum_eq34 && !k.carry_invariant) ? config_.networkPhaseDatumEq34RpbQ() : 0.0;

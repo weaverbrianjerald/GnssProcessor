@@ -37,6 +37,12 @@
  *  - With @c network.raim_refloat_maturity_gate on it writes the gate's run-scope telemetry
  *    (@c ctx.counters.maturity_gate, the RAIM_MATURITY event rows and the lift line), which
  *    nothing in the solve reads.
+ *  - With @c network.raim_prior_channel on (network/qc/RaimPriorChannel.hpp) the carried-prior
+ *    rows leave the pools and are tested on their own channel: a line-of-sight flag takes the
+ *    arc refloat above, and a receiver code-bias flag erases that carried code bias
+ *    (@c net::StationSignalState::rx_cb of @c ctx.entities.stations), so the next epoch folds
+ *    the column without its carry.  The tally (@c ctx.counters.prior_channel) and the
+ *    @c T4_prior event rows are telemetry.
  *
  * It therefore runs:
  *  - after the joint solve and the carry harvest: it operates on the post-fit @c x_s
@@ -305,6 +311,62 @@ struct RaimMaturityGateTally {
     bool noteScan(std::size_t n_flagged, std::size_t n_held, bool mature, const RaimScanStamp& at);
 };
 
+/**
+ * @brief Run-scope telemetry of the prior channel (@c network.raim_prior_channel,
+ *        network/qc/RaimPriorChannel.hpp): the carried-prior rows tested once, in the cell of
+ *        their own column, and the responses their flags took.
+ *
+ * The channel changes which test reaches the carried priors, so it is counted at both of its
+ * edges (standing invariant 7): the rows it tests and the cells it flags (the decoupling of a
+ * carry, by its refloat or reset), and the arcs both channels flagged.  The denominators tell
+ * apart the outcomes that otherwise read alike (standing invariant 4):
+ *  - @c passes == 0: the channel never ran (post-fit RAIM never reached the attribution);
+ *  - no row of any kind: there were no carried-prior rows, so the key acts on nothing;
+ *  - @c flags == 0 and @c held == 0: rows were tested and nothing stood out.
+ *
+ * Every member stays at zero unless the key is armed, and nothing in the solve reads it.
+ */
+struct RaimPriorChannelTally {
+    long long passes{0};               ///< Post-fit passes with the channel armed.
+    long long station_walks{0};        ///< Station-epochs with at least one tested carried-prior row.
+    std::array<long long, kContributionKinds + 1> rows{};  ///< Rows tested, by kind (@c Unset last).
+    long long rows_floor{0};           ///< Rows left out at the redundancy floor (@c network.raim_redundancy_normalize).
+    long long rows_other_dominant{0};  ///< Tested rows whose largest coefficient is on another carried column than their own.
+    long long cells{0};                ///< Prior-table cells over the run.
+    long long scale_n{0};              ///< Passes with at least one tested row (the scale's denominator).
+    double    scale_sum{0.0};          ///< Sum of the channel's robust scale over those passes.
+    double    scale_max{0.0};          ///< Its largest value.
+    long long flags{0};                ///< Cells over the isolated-arc bar that passed the maturity gate.
+    long long held{0};                 ///< Cells over the bar held by the maturity gate.
+    long long arcs{0};                 ///< Line-of-sight flags the channel refloated.
+    long long arcs_ambiguities{0};     ///< Carried ambiguities those refloats reached (the arc response's count).
+    long long arcs_both{0};            ///< Line-of-sight flags on an arc the observation channel refloated in the same pass (one refloat).
+    long long arcs_empty{0};           ///< Channel refloats that found no ambiguity of the satellite in the station's pool.
+    long long rxcb_resets{0};          ///< Receiver code-bias flags that erased the carried entry.
+    long long rxcb_no_entry{0};        ///< Receiver code-bias flags whose carry held no entry to erase.
+    long long unwired{0};              ///< Flags on an unwired subject: counted and written, no response.
+    double      max_statistic{0.0};    ///< The largest row statistic of the run.
+    double      max_tow{-1.0};         ///< Its epoch (GPS TOW, s); < 0 = never set.
+    std::string max_station;           ///< Its station.
+    std::string max_label;             ///< Its cell label.
+    ContributionKind max_kind{ContributionKind::Unset};  ///< Its row kind.
+
+    /**
+     * @brief Count one tested row, and keep its identity when it is the run's largest.
+     * @param kind           The row's kind.
+     * @param statistic      Its statistic.
+     * @param other_dominant Whether its largest coefficient is on another carried column.
+     * @param station        Its station.
+     * @param label          Its cell label.
+     * @param tow            The epoch.
+     */
+    void noteRow(ContributionKind kind, double statistic, bool other_dominant,
+                 const std::string& station, const std::string& label, double tow);
+
+    /// @return The rows tested over every kind.
+    long long rowsTested() const;
+};
+
 struct NetworkRun;              // network/driver/Run.hpp
 struct NetworkEpoch;            // network/driver/Epoch.hpp
 struct NetworkPostFitHandoff;   // network/solve/SolveGlue.hpp
@@ -402,6 +464,9 @@ struct NetworkRunEndView;
  *   - networkRaimMaturityGateRunEnd: the isolated-arc refloat maturity gate
  *     (@c network.raim_refloat_maturity_gate): the arcs and epochs it held, the lift, and
  *     the outcomes the denominators tell apart (RaimMaturityGateTally).
+ *   - networkRaimPriorChannelRunEnd (network/qc/RaimPriorChannel.cpp): the prior channel
+ *     (@c network.raim_prior_channel): the rows it tested, the cells it flagged and the
+ *     responses taken (RaimPriorChannelTally).
  *
  * @param v The run at its end (network/runend/RunEnd.hpp).
  * @return 0, or the last non-zero verdict of its sections.
@@ -452,6 +517,11 @@ struct RaimCounters {
     /// zero unless the gate is armed and the T4 attribution path ran (see
     /// RaimMaturityGateTally).
     RaimMaturityGateTally maturity_gate;
+
+    /// Run-end telemetry of the prior channel (network.raim_prior_channel): the carried-prior
+    /// rows tested, the cells flagged and the responses taken.  All zero unless the key is
+    /// armed (see RaimPriorChannelTally).
+    RaimPriorChannelTally prior_channel;
 
     // Ambiguity-vehicle telemetry.  These counters are the on-path evidence for the
     // float ambiguity vehicle (network.ambiguity_vehicle float_kf).  A float_kf run with
