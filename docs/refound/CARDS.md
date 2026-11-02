@@ -190,8 +190,10 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   entry), so its old-frame carries survive, and the float vehicle folds them at a birth variance the chain makes as
   tight as 7.8 mm against a 2.1 m frame step. One knob (`phase_leveling_max_gap_s` 600) prunes them and removes the
   shock (end-of-run reference-free residual 0.257 to 0.036 cycle; R1 unchanged); the stop rule still fails (0.090
-  cycle). Every kept re-pin is a stale-carry re-pin; the re-host class (card IRD C8) is open; the author's ruling on
-  the stop is owed.
+  cycle). Every kept re-pin is a stale-carry re-pin. The remaining drift is card IRD C8 damage from the cold re-host
+  at epoch 88 and a flipped kept edge at epoch 210, which the election keys on parent identity (C7) and declares an
+  unknown step; every frame step that damages the microscope's double differences (RPB floor off) is traced, none
+  in the static algebra; the fixes are IRD-4's event rows; the author's ruling on the stop is owed.
 - [RKD](RKD_retired_key_deletion_2026-10-14.md): closed, 2026-10-14: the 144 retired network keys and five lane keys
   they orphan deleted with their code (149 ledger rows, 784 to 635; 30 C++ files); landed after the same-build
   golden comparison passed (only declared text moves on the goldens).
