@@ -189,10 +189,11 @@ inline constexpr double kChainCertDeterminedSigmaCyc = 0.05;
  * satellite.
  */
 struct ChainEdgeObs {
-    std::string group;          ///< "<constellation key>|<signal>", the election's group key.
+    std::string group;          ///< "<constellation key>|<signal>", the election's group key (one per band, also in a pair family).
     std::string sys;            ///< Constellation key ("G", "E", ...).
-    std::string signal;         ///< Phase signal of the group.
-    int         comp{0};        ///< Component index within the group (the election's order).
+    std::string signal;         ///< Phase signal of the group (the band this edge is pinned on).
+    std::string family{"signal"};  ///< The election family that grew the edge: "signal" (one band) or "pair" (the constellation's L1/L2 pair).
+    int         comp{0};        ///< Component index within the group (the election's order, per band).
     std::string r1;             ///< The component's datum receiver.
     int         station{-1};    ///< The arc's station (roster index).
     std::string station_name;   ///< Its name.

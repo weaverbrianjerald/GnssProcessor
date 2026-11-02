@@ -97,6 +97,10 @@ ARMS = {
             "A0 with both emission holds off"),
     "A0f": (SLIP_SET + SEARCH_LOG + IRD_TRACES + BUNDLE_A0
             + ["network.phase_datum_eq34_rpb_prior_sigma_m=0"], "A0 with the RPB floor off"),
+    # Card IRD section 6, IRD-3: the pair family on bundle A0.  D0 keeps the RPB floor (A0 already
+    # has it) and D-S keeps seed-round off (A0 already has it off), so A1 less A0 is the family knob.
+    "A1": (SLIP_SET + SEARCH_LOG + IRD_TRACES + BUNDLE_A0 + ["network.phase_datum_eq34_family=pair"],
+           "A0 + the pair family (IRD-3; D0 keeps the floor, D-S keeps seed-round off)"),
     # The bisection of the stop (card IRDB section 4): bundle A0 less one group.
     "A0hb": (SLIP_SET + SEARCH_LOG + IRD_TRACES + CHAIN_ON + FLOAT_REPIN_OFF
              + ["network.phase_datum_min_stations=1"],
@@ -334,6 +338,10 @@ def selftest():
     chk(a0 - set(compose("R1C", "microscope")) == set(HELD_OFF)
         and set(compose("R1C", "microscope")) - set(compose("R1", "microscope"))
         == set(CHAIN_ON + FLOAT_REPIN_OFF), "R1C is R1 + the chain, A0 less every held knob")
+    a1 = compose("A1", "r3c")
+    chk(set(a1) - set(compose("A0", "r3c")) == {"network.phase_datum_eq34_family=pair"}
+        and set(compose("A0", "r3c")) <= set(a1) and len(a1) == len(compose("A0", "r3c")) + 1,
+        "A1 is A0 plus exactly the pair family knob")
     o = compose("A0", "r2", knob="network.phase_datum_min_stations=2")
     chk(o.count("network.phase_datum_min_stations=2") == 1
         and "network.phase_datum_min_stations=1" not in o, "the knob under test overrides the arm")

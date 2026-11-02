@@ -821,6 +821,8 @@ namespace GnssProcessor {
         bool eq34_longevity{};
         bool eq34_extend_only{};
         bool eq34_slip_aware{};   ///< network.phase_datum_eq34_slip_aware_election: keep slipped arcs out of the spanning tree, so a slip costs one chord instead of every cycle through a tree edge.
+        /// network.phase_datum_eq34_family "pair" (after the loader's fallbacks): the chain election grows one spanning forest per constellation over its L1/L2 pair and pins the same tree edges on both bands (network/solve/ChainDatum.hpp).  Resolved to false unless eq34.  Not fingerprinted, like the other election knobs.
+        bool eq34_pair_family{};
         /// network.phase_datum_eq34_seed_round (docs/SPEC_eq34_seed_round.md): round
         /// otherwise-zero pin targets to λ·round(x_state/λ), so |innovation| ≤ λ/2 by
         /// construction.  Not gated on !carry_invariant: the invariant-carry zero-target rationale

@@ -527,7 +527,8 @@ void networkChainFrameObserve(NetworkRun& run, const NetworkEpoch& ep) {
             for (const ChainEdgeObs& e : edges) {
                 const std::string life = e.life_stamp;
                 traces.chain_edges_trace
-                    << t.week << ',' << fmt::format("{:.3f}", t.tow) << ',' << e.sys << ",signal,"
+                    << t.week << ',' << fmt::format("{:.3f}", t.tow) << ',' << e.sys << ','
+                    << e.family << ','
                     << e.signal << ',' << e.comp << ',' << e.r1 << ',' << e.station_name << ','
                     << e.sat << ',' << vertexName(e.child, stations) << ','
                     << vertexName(e.parent, stations) << ',' << e.depth << ','

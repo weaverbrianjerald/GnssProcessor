@@ -4,8 +4,9 @@
  * @brief Eq-34 / de Jonge single-receiver-chain phase-bias datum for the PPP-RTK
  *        network producer.
  *
- * For each (constellation, signal) connected component of the bipartite
- * (receiver × satellite) observation graph, the election picks a datum receiver r1
+ * For each connected component of the bipartite (receiver × satellite) observation graph of
+ * a family (a constellation's phase signal, or with the pair family the constellation's L1/L2
+ * pair; see "Families" at the election), the election picks a datum receiver r1
  * (its receiver phase bias is pinned to 0) and pins the ambiguities on the edges of a
  * sticky spanning tree rooted at r1.  Every between-satellite reference is then an
  * integer combination across the whole component, including satellites r1 does not
@@ -112,18 +113,34 @@ void eq34ShiftCarry(NetworkCarryState& carry, net::NetworkEntities& entities,
  * @brief Elect the eq34 chain datum for this epoch.
  *
  * Resets every station's pins, seeds the shared set from the (post-gate) union,
- * builds the per-(constellation,signal) bipartite graph, elects r1 and grows a
+ * builds the bipartite graph of each family, elects r1 and grows a
  * sticky spanning tree per connected component, then runs the carry hygiene
  * (re-reference erase + S-transformation apply + extend-only merge-back) and
  * advances the sticky baselines.
  *
  * The graph, its components and the tree are those of network/ar/ArcGraph.hpp:
- * arcgraph::buildArcGraph per group (stations in roster order,
+ * arcgraph::buildArcGraph per family (stations in roster order,
  * satellites in string order, arcs in usable_keys order), arcgraph::arcComponents in
  * the legacy order (arcgraph::legacyChainVertexRank) and arcgraph::growChainForest per
  * component (roots r1 and the bridged satellites, the live incumbent arcs as the
  * sticky seed).  The pins are recorded by replaying the tree's edges in attachment
  * order after the walk, which is exact because the walk reads nothing a pin writes.
+ *
+ * ## Families
+ *
+ * The unit of the election is a family.  By default (@c network.phase_datum_eq34_family
+ * "signal") every (constellation, phase signal) group is a family of one band.  With "pair" a
+ * constellation that tracks exactly two phase signals of different bands in the epoch forms one
+ * family of both: one graph whose arcs carry a presence bit per band, one forest per component
+ * of the arcs both bands carry, so the same tree edges are pinned on both bands, and one datum
+ * receiver per component, pinned on both bands' receiver phase-bias keys.  The pins, the frame
+ * steps and the observatory's records stay per band.  A vertex only one band tracks (a station or
+ * satellite none of whose arcs both bands carry) is attached afterwards, on its band alone, to the
+ * pair tree its band's graph reaches it from (the band extension); a component of one band's graph
+ * with no vertex in any pair tree is elected on that band as a one-band component.  Any other
+ * constellation is elected per signal in that epoch.  The pin bridge grounds a satellite per
+ * (satellite, signal) key, which one shared tree cannot hold: the loader refuses it with the
+ * pair family, and a pair family is never rooted at a bridged satellite.
  *
  * @param ctx           [in/out] carry + counters.  The whole context is passed
  *                      instead of about twenty individual references because the
@@ -175,12 +192,13 @@ struct NetworkRunEndView;
 /**
  * @brief Run-end report: the eq34 chain datum: re-references, pin audit, seed round, slip-aware election.
  *
- * The eq34 chain datum: the re-reference totals, the pin audit, the seed round
+ * The eq34 chain datum: the re-reference totals, the pair family, the pin audit, the seed round
  * and the slip-aware election.
  *
  * Gate: each section under its own condition:
  * `config_.networkPhaseDatumEq34()`; `config_.networkPhaseDatumEq34SeedRound()`;
- * `config_.networkPhaseDatumEq34SlipAwareElection()`.
+ * `config_.networkPhaseDatumEq34SlipAwareElection()`; the pair family line under
+ * `ctx.knobs.eq34_pair_family`.
  *
  * @param v The run at its end (network/runend/RunEnd.hpp).
  * @return 0 (this report does not set the exit code).
@@ -321,6 +339,13 @@ struct ChainDatumCounters {
     long long eq34_cpl_sprev_total = 0;   // coupling s_prev references re-based with those shifts; structurally 0 with coupling off, since the stashes are empty
     long long eq34_gap_repin_total = 0;   // tree edges resumed from a carry-alive gap, re-pinned to their pre-gap integer instead of re-leveling from 0
     int eq34_mismatch_epochs = 0;
+    // The pair family (network.phase_datum_eq34_family "pair"); all four stay 0 with the knob off.
+    // A pair family that is elected but never attaches a band-only vertex is the ordinary case on a
+    // bed where every arc carries both bands, so the last two are read against the bed, not alone.
+    long long eq34_pair_families = 0;         ///< pair families elected: constellation-epochs with exactly two phase signals of different bands
+    long long eq34_pair_fallbacks = 0;        ///< constellation-epochs that formed no pair family and were elected per signal (one signal, three or more, or two of one band)
+    long long eq34_pair_ext_edges = 0;        ///< tree edges the band extension added: a band-only vertex attached to a pair tree, on its own band
+    long long eq34_pair_band_only_comps = 0;  ///< band-only components elected on their own band: a band component with no vertex in any pair tree
 };
 
 } // namespace GnssProcessor

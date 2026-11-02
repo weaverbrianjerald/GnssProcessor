@@ -349,6 +349,7 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.eq34_longevity = k.phase_datum_eq34 && config_.networkPhaseDatumEq34LongevityElection();
     k.eq34_extend_only = k.phase_datum_eq34 && config_.networkPhaseDatumEq34ExtendOnly();
     k.eq34_slip_aware = k.phase_datum_eq34 && config_.networkPhaseDatumEq34SlipAwareElection();
+    k.eq34_pair_family = k.phase_datum_eq34 && config_.networkPhaseDatumEq34PairFamily();
     k.eq34_seed_round = k.phase_datum_eq34 && config_.networkPhaseDatumEq34SeedRound();
     k.eq34_seed_round_rehost = k.eq34_seed_round
                             && config_.networkPhaseDatumEq34SeedRoundRehostFrame();
@@ -375,6 +376,11 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
         k.pin_bridge_info    = k.pin_bridge_on
                                ? 1.0 / (k.pin_bridge_sigma * k.pin_bridge_sigma) : 0.0;
         k.pin_bridge_max_ep  = k.pin_bridge_on ? nc.phase_datum_bridge_max_ep : 0;
+        // The pair family and the pin bridge exclude each other (the loader gives the family up
+        // under the bridge): a configuration built by hand that has both reads as the bridge, as the
+        // loader would have it, because a bridged satellite cannot be rooted in a tree shared by
+        // two bands.
+        if (k.pin_bridge_on) k.eq34_pair_family = false;
         const bool ramp_on   = anchored && nc.eq34_fresh_pin_sigma_scale > 1.0
                                && nc.eq34_fresh_pin_ramp_ep > 0;
         k.fresh_pin_scale    = ramp_on ? nc.eq34_fresh_pin_sigma_scale : 1.0;

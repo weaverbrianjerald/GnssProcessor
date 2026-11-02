@@ -26,6 +26,14 @@
 //
 // The live ZComponent (ZStore.hpp) is the oracle of singleTreeOf and fundamentalCycle.
 //
+// The pair family of the chain datum (network.phase_datum_eq34_family "pair") has no frozen
+// predecessor, and the frozen copy above stays as taken: it still proves the signal family, the
+// default.  The pair family's cases run the live election.  With both bands on every arc it must
+// equal the signal family, outputs and observatory record alike.  With band-only arcs it must
+// still pin a full-rank forest, one datum receiver per tree and the same tree edges on both
+// bands, and the band extension's work must equal what the arcs alone say it is.  A hand-built
+// epoch checks which constellations form a pair family at all.
+//
 // The AGT-1 to AGT-3 frozen blocks compile against stand-ins for the run context (FakeCtx,
 // ChainStation, FakeHygiene).  The stand-ins also observe the walk without editing it: a shared tape records,
 // in order, each new_q pop (the operator[] reads of `arcs` and `satrx`), each eligibility test,
@@ -46,6 +54,7 @@
 #include "config/GnssConfig.hpp"
 #include "network/solve/AnchorHygiene.hpp"
 #include "network/solve/ChainDatum.hpp"
+#include "network/solve/ChainFrame.hpp"    // ChainEpochObs (the pair family cases compare the observatory's record)
 #include "network/carry/Coupling.hpp"
 #include "network/assembly/Responses.hpp"
 #include "network/driver/RunTypes.hpp"
@@ -3119,6 +3128,8 @@ struct ChainKnobs {
     bool        carry_shift{false};
     bool        pin_round{true};
     std::string preferred;   ///< network.phase_datum_eq34_receiver ("" = none).
+    std::string family{"signal"};   ///< network.phase_datum_eq34_family ("signal" or "pair").
+    bool        trace_chain{false}; ///< network.trace_chain_datum (the frame observatory records the tree).
 };
 
 /// Load a network config on the chain datum with the given knobs, through the production loader.
@@ -3136,6 +3147,8 @@ std::unique_ptr<GnssConfig> loadChainConfig(LogManager& lm, const ChainKnobs& k,
         + "    \"phase_datum_eq34_carry_shift\": " + b(k.carry_shift) + ",\n"
         + "    \"phase_datum_eq34_pin_round\": " + b(k.pin_round) + ",\n"
         + "    \"phase_datum_eq34_receiver\": \"" + k.preferred + "\",\n"
+        + "    \"phase_datum_eq34_family\": \"" + k.family + "\",\n"
+        + "    \"trace_chain_datum\": " + b(k.trace_chain) + ",\n"
         + "    \"stations\": [\n"
         + "      { \"name\": \"AAAA\", \"position_ecef\": [ -2493304.99, -4655214.79, 3565497.67 ] },\n"
         + "      { \"name\": \"BBBB\", \"position_ecef\": [ -2281621.75, -1453585.08, 5756964.89 ] }\n"
@@ -3159,6 +3172,13 @@ std::unique_ptr<GnssConfig> loadChainConfig(LogManager& lm, const ChainKnobs& k,
 /// The signals of the chain groups: GPS on two signals (the second not at every arc), Galileo on one.
 const std::vector<std::pair<char, std::string>> kChainSignals{{'G', "L1C"}, {'G', "L2W"}, {'E', "L1C"}};
 
+/// How a lineage's epochs give the two GPS bands to the arcs.
+enum class ChainBands {
+    Mixed,     ///< L2W is missing on about 15 % of the arcs; every other draw is independent per band (the AGT-4 case).
+    Mirrored,  ///< Every GPS arc carries both bands; its slip, age and gating draws are one per arc, copied to both.
+    BandOnly,  ///< Band-only arcs, satellites (for stretches) and stations, and an island whose arcs one band alone carries.
+};
+
 /// A lineage's roster and its sky: each station sees the satellites of its region, and the regions
 /// overlap or not (one component or several per group).
 struct ChainWorld {
@@ -3166,9 +3186,16 @@ struct ChainWorld {
     std::vector<int>                   region;   ///< Roster index -> region.
     std::vector<std::set<std::string>> sky;      ///< Region -> satellites in view (they rise and set).
     std::vector<std::string>           pool;     ///< Every satellite the lineage can see.
+    // Band-only lineages (ChainBands::BandOnly); empty otherwise.
+    std::vector<char>                  sta_band; ///< Roster index -> 0 both bands, 1 L1C only, 2 L2W only.
+    std::map<std::string, int>         sat_band; ///< GPS satellite -> its bands now (0 both, 1 L1C only, 2 L2W only).
+    std::map<std::string, int>         sat_left; ///< ... epochs left in its current one-band stretch.
+    std::set<int>                      island_sta;  ///< An island: stations that see only the island's satellites ...
+    std::set<std::string>              island_sat;  ///< ... which only they see, ...
+    int                                island_band{0};  ///< ... on one band alone (1 L1C, 2 L2W; 0: no island).
 };
 
-ChainWorld randomChainWorld(std::mt19937& rng) {
+ChainWorld randomChainWorld(std::mt19937& rng, ChainBands mode = ChainBands::Mixed) {
     ChainWorld w;
     const int n_sta = uniform(rng, 3, 28);
     std::set<std::string> used;
@@ -3185,6 +3212,26 @@ ChainWorld randomChainWorld(std::mt19937& rng) {
     for (auto& sky : w.sky)
         for (const std::string& s : w.pool)
             if (chance(rng, 0.5)) sky.insert(s);
+    if (mode != ChainBands::BandOnly) return w;
+    // Band-only lineages: some stations track one band alone, and a part of the lineages has an
+    // island, a few stations whose satellites nobody else sees and whose arcs only one band carries
+    // (a component of that band's graph with no vertex in any pair tree).
+    w.sta_band.assign(static_cast<std::size_t>(n_sta), 0);
+    for (char& band : w.sta_band) {
+        const double u = std::uniform_real_distribution<double>(0.0, 1.0)(rng);
+        band = static_cast<char>(u < 0.2 ? 1 : (u < 0.3 ? 2 : 0));
+    }
+    std::vector<std::string> gps;
+    for (const std::string& s : w.pool)
+        if (s[0] == 'G') gps.push_back(s);
+    if (n_sta >= 3 && gps.size() >= 3 && chance(rng, 0.6)) {
+        const int n_island = uniform(rng, 1, std::min(3, n_sta - 1));
+        while (static_cast<int>(w.island_sta.size()) < n_island) w.island_sta.insert(uniform(rng, 0, n_sta - 1));
+        const int m_island = uniform(rng, 2, std::min(4, static_cast<int>(gps.size())));
+        while (static_cast<int>(w.island_sat.size()) < m_island)
+            w.island_sat.insert(gps[static_cast<std::size_t>(uniform(rng, 0, static_cast<int>(gps.size()) - 1))]);
+        w.island_band = chance(rng, 0.5) ? 1 : 2;
+    }
     return w;
 }
 
@@ -3199,12 +3246,25 @@ struct ChainEpoch {
 };
 
 /// Advance the sky one epoch (a few satellites set, a few rise) and draw the epoch's census.
-ChainEpoch nextChainEpoch(std::mt19937& rng, ChainWorld& w, const AnchorHygiene& hyg_shape) {
+/// @p mode gives the arcs their bands (ChainBands); the default draws the AGT-4 case.
+ChainEpoch nextChainEpoch(std::mt19937& rng, ChainWorld& w, const AnchorHygiene& hyg_shape,
+                          ChainBands mode = ChainBands::Mixed) {
     for (auto& sky : w.sky)
         for (const std::string& s : w.pool) {
             if (sky.count(s) ? chance(rng, 0.06) : chance(rng, 0.06)) {
                 if (sky.count(s)) sky.erase(s);
                 else              sky.insert(s);
+            }
+        }
+    if (mode == ChainBands::BandOnly)   // a GPS satellite goes one-band at every station for a stretch
+        for (const std::string& s : w.pool) {
+            if (s[0] != 'G') continue;
+            int& left = w.sat_left[s];
+            if (left > 0) {
+                if (--left == 0) w.sat_band[s] = 0;
+            } else if (chance(rng, 0.04)) {
+                left = uniform(rng, 3, 14);
+                w.sat_band[s] = chance(rng, 0.7) ? 1 : 2;
             }
         }
     ChainEpoch e;
@@ -3216,20 +3276,80 @@ ChainEpoch nextChainEpoch(std::mt19937& rng, ChainWorld& w, const AnchorHygiene&
         e.present[i] = chance(rng, 0.92);
         e.cnd.cover['G'][i] = uniform(rng, 1, 4);   // few values: coverage ties
         e.cnd.cover['E'][i] = uniform(rng, 1, 4);
-        for (const std::string& s : w.sky[static_cast<std::size_t>(w.region[i])]) {
+        const bool on_island = mode == ChainBands::BandOnly && w.island_band != 0
+                            && w.island_sta.count(static_cast<int>(i)) != 0;
+        const std::set<std::string>& seen = on_island ? w.island_sat : w.sky[static_cast<std::size_t>(w.region[i])];
+        for (const std::string& s : seen) {
+            if (mode == ChainBands::BandOnly && w.island_band != 0 && !on_island && w.island_sat.count(s))
+                continue;   // nobody but the island sees its satellites
             if (!chance(rng, 0.85)) continue;   // a station-local dropout
             e.cnd.sat_el[i][s] = 10.0 * uniform(rng, 1, 6);   // few values: longevity ties
-            for (const auto& [cons, sig] : kChainSignals) {
-                if (s[0] != cons || (sig == "L2W" && !chance(rng, 0.85))) continue;
+            if (mode == ChainBands::Mixed) {
+                for (const auto& [cons, sig] : kChainSignals) {
+                    if (s[0] != cons || (sig == "L2W" && !chance(rng, 0.85))) continue;
+                    const std::string amb = StateKeys::makeAmbiguityKey(s, sig);
+                    e.cnd.usable_keys[i][amb] = StateKeys::makeSatPhaseBiasKey(s, sig);
+                    if (chance(rng, 0.08)) e.slipped.insert({static_cast<int>(i), amb});
+                    e.age[{static_cast<int>(i), amb}] = uniform(rng, 0, 6);
+                }
+                continue;
+            }
+            const auto addArc = [&](const std::string& sig, bool slip, int age) {
                 const std::string amb = StateKeys::makeAmbiguityKey(s, sig);
                 e.cnd.usable_keys[i][amb] = StateKeys::makeSatPhaseBiasKey(s, sig);
-                if (chance(rng, 0.08)) e.slipped.insert({static_cast<int>(i), amb});
-                e.age[{static_cast<int>(i), amb}] = uniform(rng, 0, 6);
+                if (slip) e.slipped.insert({static_cast<int>(i), amb});
+                e.age[{static_cast<int>(i), amb}] = age;
+            };
+            if (s[0] == 'E') {   // Galileo carries one signal
+                const bool slip = chance(rng, 0.08);
+                addArc("L1C", slip, uniform(rng, 0, 6));
+                continue;
+            }
+            if (mode == ChainBands::Mirrored) {   // both bands, one draw of slip and age for the two
+                const bool slip = chance(rng, 0.08);
+                const int age = uniform(rng, 0, 6);
+                addArc("L1C", slip, age);
+                addArc("L2W", slip, age);
+                continue;
+            }
+            // BandOnly: the bands the arc carries follow its station, its satellite's stretch and
+            // the island; an unrestricted arc loses L2W on about 15 % and L1C on about 8 %.
+            bool l1 = true, l2 = true;
+            if (on_island) {
+                l1 = w.island_band == 1;
+                l2 = w.island_band == 2;
+            } else {
+                const int sb = w.sat_band[s];
+                if (w.sta_band[i] == 1 || sb == 1) l2 = false;
+                if (w.sta_band[i] == 2 || sb == 2) l1 = false;
+                if (l1 && l2) {
+                    if (!chance(rng, 0.85)) l2 = false;
+                    else if (chance(rng, 0.1)) l1 = false;
+                }
+            }
+            if (l1) {
+                const bool slip = chance(rng, 0.08);
+                addArc("L1C", slip, uniform(rng, 0, 6));
+            }
+            if (l2) {
+                const bool slip = chance(rng, 0.08);
+                addArc("L2W", slip, uniform(rng, 0, 6));
             }
         }
-        if (e.present[i])
+        if (!e.present[i]) continue;
+        if (mode == ChainBands::Mirrored) {
+            // The gate keeps or drops an arc whole: one draw per satellite for both of its bands.
+            std::map<std::string, bool> kept;
+            for (const auto& [amb, pbkey] : e.cnd.usable_keys[i]) {
+                const std::string sat = amb.substr(0, amb.find('_'));
+                auto it = kept.find(sat);
+                if (it == kept.end()) it = kept.emplace(sat, !chance(rng, 0.03)).first;
+                if (it->second) e.cnd.union_keys[amb] = pbkey;
+            }
+        } else {
             for (const auto& [amb, pbkey] : e.cnd.usable_keys[i])
                 if (!chance(rng, 0.03)) e.cnd.union_keys[amb] = pbkey;   // a few keys gated out
+        }
     }
     e.hyg = hyg_shape;
     if (e.hyg.active)
@@ -3241,9 +3361,15 @@ ChainEpoch nextChainEpoch(std::mt19937& rng, ChainWorld& w, const AnchorHygiene&
 /// The same random edit applied to both run contexts: carried values, last pin targets, roots,
 /// incumbents and parents that the previous epochs did not leave behind, so that every field of
 /// the order tuple (pin displacement, known, root handover, re-host) and every carry the shift
-/// walk and the D4 erase touch is exercised.  Keys are drawn from @p a; @p b must equal @p a.
+/// walk and the D4 erase touch is exercised.  Keys are drawn from @p a; @p b must equal @p a (the
+/// same context may be given twice: every edit is a put or a drop).
+///
+/// @p mirror_gps gives the two GPS bands the same structure: the L1C key draws for both and the
+/// L2W key follows, so the incumbents, roots, parents, remembered datum receiver and the presence
+/// of a leveling carry (which the extend-only merge reads) agree between the bands, and only the
+/// carried values differ.  Off, every key draws for itself and the draws are the AGT-4 case's.
 void perturbChainCarry(std::mt19937& rng, const ChainWorld& w, const ChainEpoch& e, NetworkRunContext& a,
-                       NetworkRunContext& b) {
+                       NetworkRunContext& b, bool mirror_gps = false) {
     const auto both = [&](const std::function<void(NetworkCarryState&)>& f) {
         f(a.carry);
         f(b.carry);
@@ -3255,33 +3381,48 @@ void perturbChainCarry(std::mt19937& rng, const ChainWorld& w, const ChainEpoch&
     for (std::size_t i = 0; i < w.names.size(); ++i) {
         for (const auto& [amb, pbkey] : e.cnd.usable_keys[i]) {
             const auto parts = StateKeys::parseAmbiguityKey(amb);
-            const auto key = std::make_tuple(static_cast<int>(i), parts->satellite, parts->signal);
-            if (chance(rng, 0.25)) {
-                LocalCarry lc{};
-                lc.value_abs = std::uniform_real_distribution<double>(-3.0, 3.0)(rng);
-                lc.var       = 1e-4;
-                bothEnt([&](net::NetworkEntities& c) { net::putArc(c, key, &net::ArcState::amb) = lc; });
-            } else if (chance(rng, 0.08)) {
-                bothEnt([&](net::NetworkEntities& c) { net::dropArc(c.arcs, key, &net::ArcState::amb); });
+            const bool gps = parts->satellite[0] == 'G';
+            if (mirror_gps && gps && parts->signal == "L2W") continue;   // drawn with its L1C key
+            std::vector<std::string> sigs{parts->signal};
+            if (mirror_gps && gps && parts->signal == "L1C") sigs.push_back("L2W");
+            const auto ambOf = [&](const std::string& sig) {
+                return StateKeys::makeAmbiguityKey(parts->satellite, sig);
+            };
+            const bool put_carry = chance(rng, 0.25);
+            const bool drop_carry = !put_carry && chance(rng, 0.08);
+            for (const std::string& sig : sigs) {
+                const auto key = std::make_tuple(static_cast<int>(i), parts->satellite, sig);
+                if (put_carry) {
+                    LocalCarry lc{};
+                    lc.value_abs = std::uniform_real_distribution<double>(-3.0, 3.0)(rng);
+                    lc.var       = 1e-4;
+                    bothEnt([&](net::NetworkEntities& c) { net::putArc(c, key, &net::ArcState::amb) = lc; });
+                } else if (drop_carry) {
+                    bothEnt([&](net::NetworkEntities& c) { net::dropArc(c.arcs, key, &net::ArcState::amb); });
+                }
             }
-            if (chance(rng, 0.1)) {
-                const double t = chance(rng, 0.5) ? 0.19 * uniform(rng, -3, 3)
-                                                  : std::uniform_real_distribution<double>(-1.0, 1.0)(rng);
-                bothEnt([&](net::NetworkEntities& c) {
-                    net::putArcAmb(c, static_cast<int>(i), amb, &net::ArcState::eq34_prev_target) = t;
-                });
+            for (const std::string& sig : sigs) {
+                if (chance(rng, 0.1)) {
+                    const double t = chance(rng, 0.5) ? 0.19 * uniform(rng, -3, 3)
+                                                      : std::uniform_real_distribution<double>(-1.0, 1.0)(rng);
+                    bothEnt([&](net::NetworkEntities& c) {
+                        net::putArcAmb(c, static_cast<int>(i), ambOf(sig), &net::ArcState::eq34_prev_target) = t;
+                    });
+                }
             }
             if (chance(rng, 0.03)) {
                 const std::string sta = chance(rng, 0.9) ? w.names[static_cast<std::size_t>(uniform(rng, 0, static_cast<int>(w.names.size()) - 1))] : "ZZZZ";
-                bothEnt([&](net::NetworkEntities& c) {
-                    net::putSig(c, amb, &net::SatSignalState::anchor_incumbent) = sta;
-                });
+                for (const std::string& sig : sigs)
+                    bothEnt([&](net::NetworkEntities& c) {
+                        net::putSig(c, ambOf(sig), &net::SatSignalState::anchor_incumbent) = sta;
+                    });
             }
             if (chance(rng, 0.04)) {
                 const std::string sta = w.names[static_cast<std::size_t>(uniform(rng, 0, static_cast<int>(w.names.size()) - 1))];
-                bothEnt([&](net::NetworkEntities& c) {
-                    net::putSig(c, amb, &net::SatSignalState::eq34_sat_root) = sta;
-                });
+                for (const std::string& sig : sigs)
+                    bothEnt([&](net::NetworkEntities& c) {
+                        net::putSig(c, ambOf(sig), &net::SatSignalState::eq34_sat_root) = sta;
+                    });
             }
         }
         for (const auto& [cons, sig] : kChainSignals) {
@@ -3296,13 +3437,16 @@ void perturbChainCarry(std::mt19937& rng, const ChainWorld& w, const ChainEpoch&
                              rpb_key, &net::StationSignalState::rpb) = lc;
                 });
             }
+            if (mirror_gps && cons == 'G' && sig == "L2W") continue;   // its parent is drawn with L1C's
             if (chance(rng, 0.04) && !w.pool.empty()) {
                 const std::string sat = w.pool[static_cast<std::size_t>(uniform(rng, 0, static_cast<int>(w.pool.size()) - 1))];
-                const std::string rxkey = w.names[i] + "|" + constellationKey(sys) + "|" + sig;
-                bothEnt([&](net::NetworkEntities& c) {
-                    net::put(c.stations, StationId{static_cast<int>(i)}, &net::StationState::signals,
-                             constellationKey(sys) + "|" + sig, &net::StationSignalState::eq34_rx_parent) = sat;
-                });
+                std::vector<std::string> sigs{sig};
+                if (mirror_gps && cons == 'G') sigs.push_back("L2W");
+                for (const std::string& s2 : sigs)
+                    bothEnt([&](net::NetworkEntities& c) {
+                        net::put(c.stations, StationId{static_cast<int>(i)}, &net::StationState::signals,
+                                 constellationKey(sys) + "|" + s2, &net::StationSignalState::eq34_rx_parent) = sat;
+                    });
             }
         }
     }
@@ -3311,6 +3455,9 @@ void perturbChainCarry(std::mt19937& rng, const ChainWorld& w, const ChainEpoch&
         bothEnt([&](net::NetworkEntities& c) {
             net::put(c.constellations, System::GPS, &net::ConstellationState::channels, "L1C",
                      &net::ChannelState::datum_rx) = sta;
+            if (mirror_gps)
+                net::put(c.constellations, System::GPS, &net::ConstellationState::channels, "L2W",
+                         &net::ChannelState::datum_rx) = sta;
         });
     }
     const bool first = chance(rng, 0.1);
@@ -3318,10 +3465,13 @@ void perturbChainCarry(std::mt19937& rng, const ChainWorld& w, const ChainEpoch&
 }
 
 /// Every output of the election, from both runs, compared.  Returns the first difference (empty: none).
+/// @p compare_deseeded: also compare the count of de-seeded incumbents.  A pair family counts an arc
+/// once however many bands' maps named it, so two runs of different families differ there by design.
 std::string chainElectionDiff(const NetworkRunContext& f, const NetworkRunContext& l,
                               const EpochEvents& ef, const EpochEvents& el,
                               const std::vector<NetStation>& sf, const std::vector<NetStation>& sl,
-                              const std::set<std::string>& shf, const std::set<std::string>& shl) {
+                              const std::set<std::string>& shf, const std::set<std::string>& shl,
+                              bool compare_deseeded = true) {
     for (std::size_t i = 0; i < sf.size(); ++i) {
         if (sf[i].pinned_amb_targets != sl[i].pinned_amb_targets) return "pinned_amb_targets of " + sf[i].name;
         if (sf[i].pinned_rpb_keys != sl[i].pinned_rpb_keys) return "pinned_rpb_keys of " + sf[i].name;
@@ -3385,7 +3535,7 @@ std::string chainElectionDiff(const NetworkRunContext& f, const NetworkRunContex
         return "rpb_carry entry";
     const auto& ca = f.counters;
     const auto& cb = l.counters;
-    if (ca.eq34_slip_deseeded != cb.eq34_slip_deseeded) return "eq34_slip_deseeded";
+    if (compare_deseeded && ca.eq34_slip_deseeded != cb.eq34_slip_deseeded) return "eq34_slip_deseeded";
     if (ca.eq34_slip_readmitted != cb.eq34_slip_readmitted) return "eq34_slip_readmitted";
     if (ca.hyg.cold_fallback_pins != cb.hyg.cold_fallback_pins) return "hyg.cold_fallback_pins";
     if (ca.hyg.reattaches != cb.hyg.reattaches) return "hyg.reattaches";
@@ -3523,6 +3673,523 @@ TEST(NetworkArcGraphOracle, ChainElectionOnTheModuleEqualsTheFrozenElection) {
               << n_multi << " multi-component groups (" << n_size_ties << " with a tie for the largest), "
               << n_bridged << " bridged roots; eq34_slip_demoted " << n_frozen_demoted
               << " comparator calls (frozen) against " << n_live_demoted << " slipped arcs (live)\n";
+}
+
+
+// ---------------------------------------------------------------------------------------------
+// The pair family (network.phase_datum_eq34_family "pair").  One spanning forest per constellation
+// over its L1/L2 pair, the same tree edges pinned on both bands, one datum receiver per component
+// pinned on both bands' receiver phase biases; the vertices only one band tracks are attached to
+// that band afterwards.  Two proofs: with both bands on every arc the pair family is the signal
+// family (cases below), and with band-only arcs it still pins one tree per component at full rank.
+// ---------------------------------------------------------------------------------------------
+
+/// One live election on one context for one epoch: fresh stations and events, as the epoch builds them.
+struct ChainRun {
+    std::vector<NetStation> stations;
+    std::set<std::string>   shared;
+    EpochEvents             events;
+};
+
+ChainRun runLiveChainElection(NetworkRunContext& ctx, const GnssConfig& cfg, const ChainWorld& w,
+                              const ChainEpoch& e, const std::shared_ptr<spdlog::logger>& log) {
+    ChainRun r;
+    r.stations.resize(w.names.size());
+    for (std::size_t i = 0; i < w.names.size(); ++i) r.stations[i].name = w.names[i];
+    networkElectChainDatum(ctx, cfg, log, r.stations, e.present, e.cnd, e.hyg, e.slipped, r.shared, r.events);
+    return r;
+}
+
+/// A draw of the knobs of a chain lineage, as the AGT-4 case draws them.
+ChainKnobs drawChainKnobs(std::mt19937& rng) {
+    ChainKnobs kn;
+    kn.longevity   = chance(rng, 0.5);
+    kn.slip_aware  = chance(rng, 0.5);
+    kn.extend_only = chance(rng, 0.4);
+    kn.carry_shift = chance(rng, 0.5);
+    kn.pin_round   = chance(rng, 0.7);
+    return kn;
+}
+
+/// The lineage's hygiene: inactive, or INC-1 with or without INC-3 (no bridges: the loader refuses
+/// the pin bridge with the pair family, and the epoch generator's bridges are cleared by the caller).
+AnchorHygiene drawChainHygiene(std::mt19937& rng) {
+    AnchorHygiene hyg_shape;
+    hyg_shape.active = chance(rng, 0.5);
+    if (hyg_shape.active) {
+        hyg_shape.min_arc_ep = uniform(rng, 0, 3);
+        if (chance(rng, 0.5)) {
+            hyg_shape.fresh_pin_scale   = 4.0;
+            hyg_shape.fresh_pin_ramp_ep = 3;
+        }
+    }
+    return hyg_shape;
+}
+
+/// Point an epoch's hygiene at its ages and drop the bridges.
+void finishPairEpoch(ChainEpoch& e) {
+    e.hyg.bridged.clear();
+    e.age_arcs = net::arcAmbTableOf(e.age, &net::ArcState::anchor_arc_age);
+    e.hyg.age = e.hyg.active ? &e.age_arcs : nullptr;
+}
+
+/// Two doubles equal, or both not a number.
+bool sameOrNan(double a, double b) { return (std::isnan(a) && std::isnan(b)) || a == b; }
+
+/// The first difference between two epochs' observatory records, the family label aside (empty:
+/// none).  The same trees on the same bands must record the same edges, components and chords.
+std::string chainObsDiff(const ChainEpochObs& a, const ChainEpochObs& b) {
+    if (a.armed != b.armed) return "armed";
+    if (a.edges.size() != b.edges.size()) return "edge count";
+    for (std::size_t k = 0; k < a.edges.size(); ++k) {
+        const ChainEdgeObs &x = a.edges[k], &y = b.edges[k];
+        const std::string at = " (edge " + std::to_string(k) + ")";
+        if (x.group != y.group || x.sys != y.sys || x.signal != y.signal || x.comp != y.comp) return "group/comp" + at;
+        if (x.r1 != y.r1 || x.station != y.station || x.sat != y.sat || x.sat_is_child != y.sat_is_child) return "edge identity" + at;
+        if (x.child != y.child || x.parent != y.parent || x.depth != y.depth) return "child/parent/depth" + at;
+        if (!sameOrNan(x.lambda_m, y.lambda_m) || !sameOrNan(x.target_m, y.target_m)
+            || !sameOrNan(x.prev_target_m, y.prev_target_m) || !sameOrNan(x.carry_m, y.carry_m)
+            || !sameOrNan(x.pinmove_m, y.pinmove_m) || !sameOrNan(x.step_m, y.step_m))
+            return "targets and steps" + at;
+        if (x.known != y.known || x.cause != y.cause || x.root_unknown != y.root_unknown
+            || x.edge_changed != y.edge_changed || x.had_parent != y.had_parent)
+            return "legacy facts" + at;
+        if (x.prev_parent != y.prev_parent || x.incumbent_same != y.incumbent_same
+            || x.incumbent_flipped != y.incumbent_flipped || x.from_incumbent != y.from_incumbent
+            || x.second_pass != y.second_pass || x.sigma_scale != y.sigma_scale || x.life_stamp != y.life_stamp)
+            return "incumbent facts" + at;
+    }
+    if (a.comps.size() != b.comps.size()) return "component count";
+    for (std::size_t k = 0; k < a.comps.size(); ++k) {
+        const ChainComponentObs &x = a.comps[k], &y = b.comps[k];
+        if (x.group != y.group || x.sys != y.sys || x.signal != y.signal || x.comp != y.comp || x.r1 != y.r1
+            || x.r1_station != y.r1_station || x.stations != y.stations || x.sats != y.sats
+            || x.bridged != y.bridged || x.declared != y.declared || x.n_edges != y.n_edges)
+            return "component " + std::to_string(k);
+    }
+    if (a.chords.size() != b.chords.size()) return "chord count";
+    for (std::size_t k = 0; k < a.chords.size(); ++k) {
+        const ChainChordCycle &x = a.chords[k], &y = b.chords[k];
+        if (x.station != y.station || x.sat != y.sat || x.signal != y.signal || x.pins_integer != y.pins_integer
+            || !sameOrNan(x.pin_sum_cyc, y.pin_sum_cyc) || x.cycle.terms.size() != y.cycle.terms.size())
+            return "chord " + std::to_string(k);
+        for (std::size_t t = 0; t < x.cycle.terms.size(); ++t)
+            if (x.cycle.terms[t].arc != y.cycle.terms[t].arc || x.cycle.terms[t].coeff != y.cycle.terms[t].coeff)
+                return "chord term " + std::to_string(k);
+    }
+    if (a.shift_sat != b.shift_sat || a.shift_rpb != b.shift_rpb) return "shift maps";
+    if (a.gated_keys != b.gated_keys || a.soft_pins != b.soft_pins || a.bridges != b.bridges) return "tallies";
+    return {};
+}
+
+TEST(NetworkArcGraphOracle, ChainPairFamilyEqualsTheSignalFamilyWithBothBands) {
+    std::mt19937 rng(20261102u);
+    LogManager lm;
+    const auto quiet = std::make_shared<spdlog::logger>("ird3_pair_equal", spdlog::sinks_init_list{});
+    long long n_epochs = 0, n_pins = 0, n_multi = 0, n_size_ties = 0, n_reref = 0, n_pair = 0, n_fallback = 0;
+    long long n_deseeded_signal = 0, n_deseeded_pair = 0, n_obs_edges = 0;
+    for (int lineage = 0; lineage < 16; ++lineage) {
+        ChainKnobs kn = drawChainKnobs(rng);
+        kn.trace_chain = true;
+        ChainWorld w = randomChainWorld(rng, ChainBands::Mirrored);
+        if (chance(rng, 0.2)) kn.preferred = w.names[static_cast<std::size_t>(uniform(rng, 0, static_cast<int>(w.names.size()) - 1))];
+        ChainKnobs ks = kn, kp = kn;
+        ks.family = "signal";
+        kp.family = "pair";
+        const std::unique_ptr<GnssConfig> cfg_s = loadChainConfig(lm, ks, 3000 + lineage);
+        const std::unique_ptr<GnssConfig> cfg_p = loadChainConfig(lm, kp, 4000 + lineage);
+        ASSERT_TRUE(cfg_s && cfg_p) << "lineage " << lineage;
+        ASSERT_EQ(cfg_p->networkPhaseDatumEq34Family(), "pair");
+        NetworkRunContext ctx_s(*cfg_s, cfg_s->getNetworkConfig());
+        NetworkRunContext ctx_p(*cfg_p, cfg_p->getNetworkConfig());
+        ctx_s.entities.names.assign(w.names);
+        ctx_p.entities.names.assign(w.names);
+        ASSERT_FALSE(ctx_s.knobs.eq34_pair_family);
+        ASSERT_TRUE(ctx_p.knobs.eq34_pair_family);
+        const AnchorHygiene hyg_shape = drawChainHygiene(rng);
+        for (int ep = 0; ep < 40; ++ep) {
+            ChainEpoch e = nextChainEpoch(rng, w, hyg_shape, ChainBands::Mirrored);
+            finishPairEpoch(e);
+            perturbChainCarry(rng, w, e, ctx_s, ctx_p, /*mirror_gps=*/true);
+            const long long deseeded_s = ctx_s.counters.eq34_slip_deseeded;
+            const long long deseeded_p = ctx_p.counters.eq34_slip_deseeded;
+            const ChainRun rs = runLiveChainElection(ctx_s, *cfg_s, w, e, quiet);
+            const ChainRun rp = runLiveChainElection(ctx_p, *cfg_p, w, e, quiet);
+            ASSERT_EQ(chainElectionDiff(ctx_s, ctx_p, rs.events, rp.events, rs.stations, rp.stations, rs.shared,
+                                        rp.shared, /*compare_deseeded=*/false), "")
+                << "lineage " << lineage << " epoch " << ep;
+            ASSERT_TRUE(rs.events.phase_datum.chain && rp.events.phase_datum.chain);
+            ASSERT_EQ(chainObsDiff(*rs.events.phase_datum.chain, *rp.events.phase_datum.chain), "")
+                << "lineage " << lineage << " epoch " << ep;
+            // A pair family counts a de-seeded arc once however many bands' maps named it; the
+            // signal family counts once per map entry.
+            const long long d_s = ctx_s.counters.eq34_slip_deseeded - deseeded_s;
+            const long long d_p = ctx_p.counters.eq34_slip_deseeded - deseeded_p;
+            ASSERT_LE(d_p, d_s) << "lineage " << lineage << " epoch " << ep;
+            ASSERT_EQ(d_p == 0, d_s == 0) << "lineage " << lineage << " epoch " << ep;
+            n_deseeded_signal += d_s;
+            n_deseeded_pair += d_p;
+            for (const NetStation& st : rp.stations) n_pins += static_cast<long long>(st.pinned_amb_targets.size());
+            n_obs_edges += static_cast<long long>(rp.events.phase_datum.chain->edges.size());
+            tallyChainComponents(e, n_multi, n_size_ties);
+            ++n_epochs;
+        }
+        // The pair family's own tallies: every GPS epoch formed one, Galileo (one signal) never could,
+        // and the bands never needed an extension.
+        EXPECT_EQ(ctx_s.counters.eq34_pair_families, 0);
+        EXPECT_EQ(ctx_s.counters.eq34_pair_fallbacks, 0);
+        EXPECT_EQ(ctx_p.counters.eq34_pair_ext_edges, 0);
+        EXPECT_EQ(ctx_p.counters.eq34_pair_band_only_comps, 0);
+        n_pair += ctx_p.counters.eq34_pair_families;
+        n_fallback += ctx_p.counters.eq34_pair_fallbacks;
+        n_reref += ctx_p.counters.eq34_reref_total;
+    }
+    EXPECT_GT(n_pins, 15000);
+    EXPECT_GT(n_multi, 40);
+    EXPECT_GT(n_pair, 400);
+    EXPECT_GT(n_fallback, 250);
+    EXPECT_GT(n_reref, 4000);
+    EXPECT_GT(n_deseeded_signal, 300);
+    EXPECT_GT(n_deseeded_pair, 150);
+    EXPECT_GT(n_obs_edges, 15000);
+    std::cout << "[ NetworkArcGraphOracle ] pair family on both bands: " << n_epochs << " epochs, " << n_pins
+              << " pins, " << n_multi << " multi-component groups (" << n_size_ties
+              << " with a tie for the largest), " << n_pair << " pair families (" << n_fallback
+              << " constellation-epochs without one), " << n_reref << " re-references, " << n_obs_edges
+              << " observed edges; de-seeded incumbents " << n_deseeded_signal << " (signal family, per map entry) against "
+              << n_deseeded_pair << " (pair family, per arc)\n";
+}
+
+/// The arcs of this epoch's chain graphs per (constellation, signal) group, "G|L1C": (station,
+/// satellite) over the present stations' ungated keys.
+using ChainGroupArcs = std::map<std::string, std::set<std::pair<int, std::string>>>;
+
+ChainGroupArcs chainGroupArcs(const ChainEpoch& e) {
+    ChainGroupArcs g;
+    for (std::size_t i = 0; i < e.present.size(); ++i) {
+        if (!e.present[i]) continue;
+        for (const auto& [amb, pbkey] : e.cnd.usable_keys[i]) {
+            if (!e.cnd.union_keys.count(amb)) continue;
+            const auto parts = StateKeys::parseAmbiguityKey(amb);
+            g[std::string(1, parts->satellite[0]) + "|" + parts->signal].insert({static_cast<int>(i), parts->satellite});
+        }
+    }
+    return g;
+}
+
+/// One connected component of a set of arcs.
+struct ChainArcComponent {
+    std::set<int>         stations;
+    std::set<std::string> sats;
+};
+
+std::vector<ChainArcComponent> chainArcComponents(const std::set<std::pair<int, std::string>>& arcs) {
+    Dsu d;
+    std::map<std::string, int> sat_vertex;
+    const auto vertexOf = [&](const std::string& s) {
+        return sat_vertex.emplace(s, 1000 + static_cast<int>(sat_vertex.size())).first->second;
+    };
+    for (const auto& [i, s] : arcs) dsuUnite(d, i, vertexOf(s));
+    std::map<int, ChainArcComponent> by_root;
+    for (const auto& [i, s] : arcs) {
+        ChainArcComponent& c = by_root[dsuFind(d, i)];
+        c.stations.insert(i);
+        c.sats.insert(s);
+    }
+    std::vector<ChainArcComponent> out;
+    for (auto& [root, c] : by_root) out.push_back(std::move(c));
+    return out;
+}
+
+/// The rank properties of one epoch's pins on a group (empty: all hold).  The pinned arcs are arcs
+/// of the group and form a forest that reaches every vertex; each of its trees holds exactly one
+/// receiver phase-bias pin; so the pins, tree edges plus receiver phase biases, equal the gauge
+/// dimension, the sum over the group's components of n_c + m_c, and every component holds a
+/// receiver phase-bias pin.  Adds the group's gauge dimension to @p dimension and its trees to @p trees.
+std::string chainGroupPinProblem(const std::string& group, const std::set<std::pair<int, std::string>>& arcs,
+                                 const std::vector<NetStation>& st, const std::string& rpb_key,
+                                 long long& dimension, long long& trees) {
+    Dsu d;
+    std::map<std::string, int> sat_vertex;
+    const auto vertexOf = [&](const std::string& s) {
+        return sat_vertex.emplace(s, 1000 + static_cast<int>(sat_vertex.size())).first->second;
+    };
+    std::set<int> vertices;
+    for (const auto& [i, s] : arcs) {
+        vertices.insert(i);
+        vertices.insert(vertexOf(s));
+    }
+    std::set<int> covered;
+    long long tree_pins = 0, rpb_pins = 0;
+    for (std::size_t i = 0; i < st.size(); ++i) {
+        for (const auto& [amb, target] : st[i].pinned_amb_targets) {
+            const auto parts = StateKeys::parseAmbiguityKey(amb);
+            if (std::string(1, parts->satellite[0]) + "|" + parts->signal != group) continue;
+            if (!arcs.count({static_cast<int>(i), parts->satellite}))
+                return group + ": " + amb + " is pinned at " + st[i].name + ", which is no arc of the group";
+            const int a = static_cast<int>(i), b = vertexOf(parts->satellite);
+            if (dsuFind(d, a) == dsuFind(d, b)) return group + ": the pinned arcs close a cycle at " + amb;
+            dsuUnite(d, a, b);
+            covered.insert(a);
+            covered.insert(b);
+            ++tree_pins;
+        }
+        if (st[i].pinned_rpb_keys.count(rpb_key)) {
+            if (!vertices.count(static_cast<int>(i))) return group + ": a receiver phase-bias pin at " + st[i].name + ", which has no arc";
+            ++rpb_pins;
+        }
+    }
+    if (covered != vertices) return group + ": a vertex of the group is on no pinned arc";
+    std::map<int, int> rpb_of_tree;
+    for (std::size_t i = 0; i < st.size(); ++i)
+        if (st[i].pinned_rpb_keys.count(rpb_key)) ++rpb_of_tree[dsuFind(d, static_cast<int>(i))];
+    std::set<int> roots;
+    for (int v : vertices) roots.insert(dsuFind(d, v));
+    for (int r : roots)
+        if (rpb_of_tree[r] != 1)
+            return group + ": a pinned tree holds " + std::to_string(rpb_of_tree[r]) + " receiver phase-bias pins";
+    long long dim = 0;
+    for (const ChainArcComponent& c : chainArcComponents(arcs)) {
+        dim += static_cast<long long>(c.stations.size() + c.sats.size());
+        bool has_rpb = false;
+        for (int i : c.stations) has_rpb = has_rpb || st[static_cast<std::size_t>(i)].pinned_rpb_keys.count(rpb_key) != 0;
+        if (!has_rpb) return group + ": a component holds no receiver phase-bias pin";
+    }
+    if (tree_pins + rpb_pins != dim)
+        return group + ": " + std::to_string(tree_pins) + " tree pins + " + std::to_string(rpb_pins)
+             + " receiver phase-bias pins against a gauge dimension of " + std::to_string(dim);
+    dimension += dim;
+    trees += static_cast<long long>(roots.size());
+    return {};
+}
+
+TEST(NetworkArcGraphOracle, ChainPairFamilyPinsOneTreeAtFullRank) {
+    std::mt19937 rng(20261103u);
+    LogManager lm;
+    const auto quiet = std::make_shared<spdlog::logger>("ird3_pair_rank", spdlog::sinks_init_list{});
+    long long n_epochs = 0, n_pair_epochs = 0, n_pins = 0, n_trees = 0, n_components = 0, n_band_only = 0;
+    long long n_ext = 0, n_band_only_comps = 0, n_shared_edges = 0, n_obs_edges = 0, n_multi_tree_comps = 0;
+    long long n_reref = 0;
+    for (int lineage = 0; lineage < 24; ++lineage) {
+        ChainKnobs kn = drawChainKnobs(rng);
+        kn.family = "pair";
+        kn.trace_chain = true;
+        ChainWorld w = randomChainWorld(rng, ChainBands::BandOnly);
+        if (chance(rng, 0.2)) kn.preferred = w.names[static_cast<std::size_t>(uniform(rng, 0, static_cast<int>(w.names.size()) - 1))];
+        const std::unique_ptr<GnssConfig> cfg = loadChainConfig(lm, kn, 5000 + lineage);
+        ASSERT_TRUE(cfg) << "lineage " << lineage;
+        NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
+        ctx.entities.names.assign(w.names);
+        ASSERT_TRUE(ctx.knobs.eq34_pair_family);
+        ASSERT_TRUE(ctx.knobs.trace_chain_datum);
+        const AnchorHygiene hyg_shape = drawChainHygiene(rng);
+        const std::string l1_rpb = StateKeys::makeReceiverPhaseBiasKey(systemName(System::GPS), "L1C");
+        for (int ep = 0; ep < 40; ++ep) {
+            ChainEpoch e = nextChainEpoch(rng, w, hyg_shape, ChainBands::BandOnly);
+            finishPairEpoch(e);
+            perturbChainCarry(rng, w, e, ctx, ctx);   // the bands' structure independent: any signal-family history
+            const long long mismatch0 = ctx.counters.eq34_mismatch_epochs;
+            const long long ext0 = ctx.counters.eq34_pair_ext_edges;
+            const long long bonly0 = ctx.counters.eq34_pair_band_only_comps;
+            const ChainRun r = runLiveChainElection(ctx, *cfg, w, e, quiet);
+            const std::string at = "lineage " + std::to_string(lineage) + " epoch " + std::to_string(ep);
+            ASSERT_EQ(ctx.counters.eq34_mismatch_epochs, mismatch0) << at;   // (iii)
+            const ChainGroupArcs arcs = chainGroupArcs(e);
+            // (iv), (v): every group's pins, pair or not, are a full-rank forest with one datum receiver per tree.
+            for (const auto& [cons, sig] : kChainSignals) {
+                const std::string group = std::string(1, cons) + "|" + sig;
+                const auto it = arcs.find(group);
+                if (it == arcs.end()) continue;
+                const std::string rpb = StateKeys::makeReceiverPhaseBiasKey(
+                    systemName(cons == 'G' ? System::GPS : System::Galileo), sig);
+                long long dim = 0, trees = 0;
+                ASSERT_EQ(chainGroupPinProblem(group, it->second, r.stations, rpb, dim, trees), "") << at;
+                n_pins += dim;
+                n_trees += trees;
+                n_components += static_cast<long long>(chainArcComponents(it->second).size());
+            }
+            const bool pair = arcs.count("G|L1C") != 0 && arcs.count("G|L2W") != 0;
+            if (pair) {
+                ++n_pair_epochs;
+                const auto& a1 = arcs.at("G|L1C");
+                const auto& a2 = arcs.at("G|L2W");
+                // (i), (ii): an arc both bands carry is pinned on both or on neither; an arc pinned
+                // on one band alone is an arc the other band does not carry.
+                for (std::size_t i = 0; i < r.stations.size(); ++i) {
+                    std::set<std::string> on1, on2;   // the satellites pinned at the station, per band
+                    for (const auto& [amb, target] : r.stations[i].pinned_amb_targets) {
+                        const auto parts = StateKeys::parseAmbiguityKey(amb);
+                        if (parts->satellite[0] != 'G') continue;
+                        (parts->signal == "L1C" ? on1 : on2).insert(parts->satellite);
+                    }
+                    std::set<std::string> both1, both2;
+                    for (const std::string& s : on1) if (a2.count({static_cast<int>(i), s})) both1.insert(s);
+                    for (const std::string& s : on2) if (a1.count({static_cast<int>(i), s})) both2.insert(s);
+                    ASSERT_EQ(both1, both2) << at << " station " << r.stations[i].name;
+                    n_shared_edges += static_cast<long long>(both1.size());
+                    for (const std::string& s : on1)
+                        if (!on2.count(s)) ASSERT_FALSE(a2.count({static_cast<int>(i), s})) << at << " " << s;
+                    for (const std::string& s : on2)
+                        if (!on1.count(s)) ASSERT_FALSE(a1.count({static_cast<int>(i), s})) << at << " " << s;
+                }
+                // The extension's work, counted from the arcs alone: per band, a component of that
+                // band's graph that holds vertices no pair tree reaches either hangs them under the
+                // pair trees it touches (one edge each) or is a band-only component of its own.
+                std::set<int> pair_sta;
+                std::set<std::string> pair_sat;
+                for (const auto& arc : a1)
+                    if (a2.count(arc)) {
+                        pair_sta.insert(arc.first);
+                        pair_sat.insert(arc.second);
+                    }
+                long long want_ext = 0, want_comps = 0;
+                const auto extension = [&](const std::set<std::pair<int, std::string>>& arcs_b) {
+                    for (const ChainArcComponent& c : chainArcComponents(arcs_b)) {
+                        long long free_v = 0;
+                        for (int i : c.stations) free_v += pair_sta.count(i) ? 0 : 1;
+                        for (const std::string& s : c.sats) free_v += pair_sat.count(s) ? 0 : 1;
+                        if (free_v == 0) continue;
+                        n_band_only += free_v;
+                        if (free_v < static_cast<long long>(c.stations.size() + c.sats.size())) want_ext += free_v;
+                        else                                                                   ++want_comps;
+                    }
+                };
+                extension(a1);
+                extension(a2);
+                ASSERT_EQ(ctx.counters.eq34_pair_ext_edges - ext0, want_ext) << at;
+                ASSERT_EQ(ctx.counters.eq34_pair_band_only_comps - bonly0, want_comps) << at;
+                n_ext += want_ext;
+                n_band_only_comps += want_comps;
+                // A component of one band that holds several pair trees has several datum receivers.
+                for (const ChainArcComponent& c : chainArcComponents(a1)) {
+                    long long rpb = 0;
+                    for (int i : c.stations) rpb += r.stations[static_cast<std::size_t>(i)].pinned_rpb_keys.count(l1_rpb) ? 1 : 0;
+                    n_multi_tree_comps += rpb > 1 ? 1 : 0;
+                }
+            } else {
+                ASSERT_EQ(ctx.counters.eq34_pair_ext_edges, ext0) << at;
+                ASSERT_EQ(ctx.counters.eq34_pair_band_only_comps, bonly0) << at;
+            }
+            // The observatory's identity: per group the recorded edges plus one root pin per component
+            // are the declared gauge dimension, and each edge names the family that grew it.
+            ASSERT_TRUE(r.events.phase_datum.chain) << at;
+            const ChainEpochObs& obs = *r.events.phase_datum.chain;
+            for (const auto& [group, declared] : r.events.phase_datum.eq34_epoch_declared) {
+                long long edges = 0, comps = 0;
+                for (const ChainEdgeObs& o : obs.edges) edges += o.group == group ? 1 : 0;
+                for (const ChainComponentObs& k : obs.comps) comps += k.group == group ? 1 : 0;
+                ASSERT_EQ(edges + comps, declared) << at << " " << group;
+            }
+            for (const ChainEdgeObs& o : obs.edges)
+                ASSERT_EQ(o.family, (o.group.rfind("G|", 0) == 0 && pair) ? "pair" : "signal") << at << " " << o.group;
+            for (const ChainComponentObs& k : obs.comps)
+                ASSERT_EQ(k.declared, static_cast<int>(k.stations.size() + k.sats.size())) << at << " " << k.group;
+            n_obs_edges += static_cast<long long>(obs.edges.size());
+            ++n_epochs;
+        }
+        n_reref += ctx.counters.eq34_reref_total;
+    }
+    EXPECT_GT(n_pair_epochs, 600);
+    EXPECT_GT(n_pins, 25000);
+    EXPECT_GT(n_shared_edges, 6000);
+    EXPECT_GT(n_band_only, 4000);          // vertices only one band tracks
+    EXPECT_GT(n_ext, 3000);                // ... attached under pair trees
+    EXPECT_GT(n_band_only_comps, 250);     // ... and components with no pair vertex at all
+    EXPECT_GT(n_multi_tree_comps, 25);     // ... and band components that hold several pair trees
+    EXPECT_GT(n_reref, 5000);
+    std::cout << "[ NetworkArcGraphOracle ] pair family with band-only arcs: " << n_epochs << " epochs ("
+              << n_pair_epochs << " with a pair family), " << n_pins << " pins in " << n_trees << " trees over "
+              << n_components << " group components, " << n_shared_edges << " tree edges pinned on both bands, "
+              << n_band_only << " band-only vertices (" << n_ext << " extension edges, " << n_band_only_comps
+              << " band-only components, " << n_multi_tree_comps << " band components with several pair trees), "
+              << n_reref << " re-references, " << n_obs_edges << " observed edges\n";
+}
+
+
+/// A hand-built epoch: every station tracks every satellite on every listed GPS signal.
+ChainEpoch handChainEpoch(std::size_t n_sta, const std::vector<std::string>& sats,
+                          const std::vector<std::string>& signals) {
+    ChainEpoch e;
+    e.present.assign(n_sta, true);
+    e.cnd.sat_el.resize(n_sta);
+    e.cnd.usable_keys.resize(n_sta);
+    for (std::size_t i = 0; i < n_sta; ++i) {
+        e.cnd.cover['G'][i] = 1;
+        for (const std::string& s : sats) {
+            e.cnd.sat_el[i][s] = 45.0;
+            for (const std::string& sig : signals) {
+                const std::string amb = StateKeys::makeAmbiguityKey(s, sig);
+                e.cnd.usable_keys[i][amb] = StateKeys::makeSatPhaseBiasKey(s, sig);
+                e.cnd.union_keys[amb] = StateKeys::makeSatPhaseBiasKey(s, sig);
+            }
+        }
+    }
+    return e;
+}
+
+TEST(NetworkArcGraphOracle, ChainPairFamilyFormsOnlyFromTwoSignalsOfDifferentBands) {
+    LogManager lm;
+    const auto quiet = std::make_shared<spdlog::logger>("ird3_pair_forms", spdlog::sinks_init_list{});
+    ChainWorld w;
+    w.names = {"AAAA", "BBBB", "CCCC"};
+    const std::vector<std::string> sats{"G01", "G02", "G03", "G04"};
+    struct Case {
+        std::vector<std::string> signals;
+        long long families;   ///< pair families formed with the knob on
+        long long fallbacks;  ///< constellation-epochs elected per signal with the knob on
+    };
+    const std::vector<Case> cases{{{"L1C", "L2W"}, 1, 0},           // two bands: a pair
+                                  {{"L1C", "L1W"}, 0, 1},           // two signals of one band: per signal
+                                  {{"L1C"}, 0, 1},                  // one signal
+                                  {{"L1C", "L1W", "L2W"}, 0, 1}};   // three signals
+    int tag = 6000;
+    for (const Case& c : cases) {
+        const std::string what = c.signals.front() + "+" + (c.signals.size() > 1 ? c.signals[1] : "-")
+                               + (c.signals.size() > 2 ? "+" + c.signals[2] : "");
+        ChainKnobs kn;
+        kn.family = "pair";
+        const std::unique_ptr<GnssConfig> cfg_p = loadChainConfig(lm, kn, tag++);
+        kn.family = "signal";
+        const std::unique_ptr<GnssConfig> cfg_s = loadChainConfig(lm, kn, tag++);
+        ASSERT_TRUE(cfg_p && cfg_s);
+        NetworkRunContext ctx_p(*cfg_p, cfg_p->getNetworkConfig());
+        NetworkRunContext ctx_s(*cfg_s, cfg_s->getNetworkConfig());
+        ctx_p.entities.names.assign(w.names);
+        ctx_s.entities.names.assign(w.names);
+        const ChainEpoch e = handChainEpoch(w.names.size(), sats, c.signals);
+        const ChainRun rp = runLiveChainElection(ctx_p, *cfg_p, w, e, quiet);
+        const ChainRun rs = runLiveChainElection(ctx_s, *cfg_s, w, e, quiet);
+        EXPECT_EQ(ctx_p.counters.eq34_pair_families, c.families) << what;
+        EXPECT_EQ(ctx_p.counters.eq34_pair_fallbacks, c.fallbacks) << what;
+        EXPECT_EQ(ctx_s.counters.eq34_pair_families, 0) << what;     // the knob off counts nothing
+        EXPECT_EQ(ctx_s.counters.eq34_pair_fallbacks, 0) << what;
+        EXPECT_EQ(ctx_p.counters.eq34_mismatch_epochs, 0) << what;
+        // Every arc carries every signal here, so the pair family has no band-only vertex, and a
+        // constellation elected per signal is the signal family whatever the knob says.
+        EXPECT_EQ(ctx_p.counters.eq34_pair_ext_edges, 0) << what;
+        EXPECT_EQ(ctx_p.counters.eq34_pair_band_only_comps, 0) << what;
+        EXPECT_EQ(chainElectionDiff(ctx_p, ctx_s, rp.events, rs.events, rp.stations, rs.stations, rp.shared,
+                                    rs.shared), "") << what;
+        // One datum receiver (the coverage ties break by name), pinned on every band's receiver
+        // phase bias, and a spanning tree per band: 3 stations + 4 satellites - 1 = 6 edges.
+        std::set<std::string> rpb_hosts;
+        std::size_t edges = 0;
+        for (const NetStation& st : rp.stations) {
+            if (!st.pinned_rpb_keys.empty()) {
+                rpb_hosts.insert(st.name);
+                EXPECT_EQ(st.pinned_rpb_keys.size(), c.signals.size()) << what << " " << st.name;
+            }
+            edges += st.pinned_amb_targets.size();
+        }
+        EXPECT_EQ(rpb_hosts, std::set<std::string>{"AAAA"}) << what;
+        EXPECT_EQ(edges, 6u * c.signals.size()) << what;
+        if (c.families == 1)   // a pair: the same tree edges on both bands
+            for (const NetStation& st : rp.stations)
+                for (const std::string& s : sats)
+                    EXPECT_EQ(st.pinned_amb_targets.count(StateKeys::makeAmbiguityKey(s, "L1C")),
+                              st.pinned_amb_targets.count(StateKeys::makeAmbiguityKey(s, "L2W")))
+                        << st.name << " " << s;
+    }
 }
 
 }  // namespace

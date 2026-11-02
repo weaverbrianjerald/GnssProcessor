@@ -7775,6 +7775,33 @@ namespace GnssProcessor {
                 // validation pass instead, where every flag is settled.
             }
         }
+        // The graph family of the chain election: "signal" (default; one tree per
+        // constellation and phase signal) or "pair" (one forest per constellation over its
+        // L1/L2 pair, the same tree edges pinned on both bands).  An unknown value reads
+        // "signal" with a warning; "pair" without the chain is inert.  The exclusion with the
+        // pin bridge (network.phase_datum_time_linked) is raised in validateNetworkPhaseDatum_,
+        // where the bridge flag has settled.
+        {
+            const std::string s = jval<std::string>(json, "network.phase_datum_eq34_family",
+                                                    "phase_datum_eq34_family",
+                                                    std::string{"signal"});
+            if (s.empty() || s == "signal") {
+                network_phase_datum_eq34_family_ = "signal";
+            } else if (s == "pair") {
+                network_phase_datum_eq34_family_ = "pair";
+            } else {
+                network_phase_datum_eq34_family_ = "signal";
+                log->warn("Network: network.phase_datum_eq34_family = '{}' is not one of "
+                          "signal|pair - using 'signal' (one tree per constellation and phase "
+                          "signal).", s);
+            }
+            if (network_phase_datum_eq34_family_ == "pair" && !network_phase_datum_eq34_) {
+                log->warn("Network: network.phase_datum_eq34_family = 'pair' is set but "
+                          ".phase_datum_eq34 is OFF - there is no chain election to group by "
+                          "band, so it is INERT this run.");
+                network_phase_datum_eq34_family_ = "signal";
+            }
+        }
         // DD cycle-basis invariant carry (network.carry_invariant*).
         network_carry_invariant_ =
             jval<bool>(json, "network.carry_invariant",
@@ -9937,6 +9964,28 @@ namespace GnssProcessor {
                           "carried phase-bias prior for the epoch.  A/B lever "
                           "(docs/SPEC_eq34_seed_round.md §8.5); the run-end seed-round "
                           "block reports framed vs cold re-hosts.");
+            // The pair family grows one tree for both bands of a constellation; the pin
+            // bridge grounds a satellite by (satellite, signal) key, band by band, which a
+            // shared tree cannot hold.  The bridge flag is settled by now
+            // (loadNetworkReattachHygiene_), so the exclusion is decided here.
+            if (network_phase_datum_eq34_family_ == "pair") {
+                if (network_config_.phase_datum_time_linked) {
+                    log->warn("Network: network.phase_datum_eq34_family = 'pair' with "
+                              "network.phase_datum_time_linked - the pin bridge roots satellites "
+                              "band by band, which one shared tree cannot hold; falling back to "
+                              "'signal' (one tree per constellation and phase signal).");
+                    network_phase_datum_eq34_family_ = "signal";
+                } else {
+                    log->info("Network producer: eq34 PAIR FAMILY ON - a constellation that "
+                              "tracks exactly two phase signals of different bands in an epoch "
+                              "grows ONE spanning forest over both, pins the same tree edges on "
+                              "both bands and one datum receiver per component on both bands' "
+                              "receiver phase biases; the vertices only one band tracks are "
+                              "attached to that band afterwards.  Any other constellation is "
+                              "elected per signal that epoch.  The run-end eq34 block reports "
+                              "the families formed, the fallbacks and the band-only attachments.");
+                }
+            }
             if (network_phase_datum_prioritized_)
                 log->info("Network producer: network.phase_datum_eq34 SUPERSEDES "
                           "network.phase_datum_prioritized — the anchor "
