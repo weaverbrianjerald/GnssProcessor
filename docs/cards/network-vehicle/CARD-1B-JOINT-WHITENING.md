@@ -75,3 +75,9 @@ Instrumented the Card-1b row construction (census of `M_w` columns + `var_eff` v
 - **Card 1b:** knob `network.carry_coupling_joint_whiten` (default OFF, RETIRE-recommended); gate `JointWhitenCouplingMarginalizationEqualsBatch`; configs `_t7_joint_lowfloor_12h.json`, `_t7c_jointwhiten_12h.json`, `_t7_ab_{scalar,joint}.json` (only differing key = `carry_coupling_joint_whiten`); run `runs/t7c_jointwhiten_12h`.
 - **OFF byte-identity anchor:** `_t4_gg_treated_smoke.json` SHA == **`69C20D38E22B5EBE`** on a **FRESHLY REBUILT x64-Release** — verify exe mtime > source mtime; *"stale-exe validation has burned us three times."* Suite bar at the time: green ≥ 602/1.
 
+
+---
+
+## Appended 2026-10-30: the retired keys (card RKD)
+
+Card [RKD](../../refound/RKD_retired_key_deletion_2026-10-14.md) deleted these keys of this card with their code on 2026-10-14: `network.carry_coupling_joint_whiten` (the coupling carry's SH marginalize, joint whitening and gauge-free closure, commit `e7e470b`). The text above records them as they stood. A configuration that still sets one runs without it, and the loader names each such key in one warning (card [RKT](../../refound/RKT_retired_key_tombstone_2026-10-30.md)).

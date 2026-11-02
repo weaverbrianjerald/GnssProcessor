@@ -474,3 +474,9 @@ posture is slip-proofing the lanes (or an EWL-first partial cascade), not iono.
 structurally blind to it (SPEC_phase_windup_sign §2, §9.9: the mixed-pairing
 smoke is bit-near-identical), and these arms exist to prove the slip stack
 still stands on the regenerated frame-consistent fixtures.
+
+---
+
+## Appended 2026-10-30: the retired keys (card RKD)
+
+Card [RKD](refound/RKD_retired_key_deletion_2026-10-14.md) deleted these keys of this document with their code on 2026-10-14: `network.cycle_slip.relevel_bridge_ewl` and `network.cycle_slip.relevel_bridge_ewl_sigma_floor_cyc` (the lane slip responses (bridge v3 EWL slot, statistical retap, its corroboration, lane snap), commit `f48868c`). The text above records them as they stood. A configuration that still sets one runs without it, and the loader names each such key in one warning (card [RKT](refound/RKT_retired_key_tombstone_2026-10-30.md)).

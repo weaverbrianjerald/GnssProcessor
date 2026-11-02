@@ -18,6 +18,11 @@ carries, what it silently does not, and what the wire does at the seam epoch. Th
 **Current posture (2026-09-14)** — seams, snapshots and warm resumes are **off** under
 the re-founding's scope cut; they are an add-back, one at a time, after the cold consumer
 is sub-decimetre. See [the network re-founding](../refound/NETWORK_REFOUNDING_2026-09-14.md).
+From 2026-10-14 the retired warm-resume knobs (`resume_carry_rebase`, `resume_station_restore_shdev`,
+`amb_seam_reinflate_var_m2`, `state_snapshot_resume_shock_m`) are deleted with their code (card
+[RKD](../refound/RKD_retired_key_deletion_2026-10-14.md)); a snapshot holding `O`, `PF` or `PS` records no longer
+parses and cold-starts. A configuration that still sets one of those keys loads with a warning naming it (card
+[RKT](../refound/RKT_retired_key_tombstone_2026-10-30.md)).
 
 ## Cards, oldest first
 

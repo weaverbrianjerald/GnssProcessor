@@ -288,3 +288,9 @@ Getting that first row to pass took **two real code fixes plus one finding about
 S1 and S2 agree on the class, which per §4 closes the campaign verdict and makes S3 optional confirmation rather than a requirement: the **churn** is iono representation — one ~0.3 m dispersive DD motion per epoch, 75–79 % ladder-explained, unchanged by arc maturity; the **residual per-arc bias** is cycle-structured per-signal (20 % explained), and the anchor partition splits cross-vs-same on all three EWL rungs, so the datum mechanism contributes independently (§3.4 row 4); the **integer fold works as designed**, reaching the satellite phase biases 16.7× harder than the code biases and 7× more selectively than the float layer, in a common datum, with an inert arm byte-identical to float.
 
 **What that does NOT license: arming `sd_ewl.fix_enable` in production.** Gate 3 (the 50-sta 30-epoch ev1 field verdict) is still owed, the A2 re-datum must route fix-onset through the per-λ disc contract before any consumer sees it, and the campaign measured **7 fixed rows per epoch out of ~300 built** — a yield question the channel-consensus rule (over half the arcs excluded) now owns. Full text: `docs/SPEC_sd_ewl_prereduce.md` §11.3.
+
+---
+
+## Appended 2026-10-30: the retired keys (card RKD)
+
+Card [RKD](refound/RKD_retired_key_deletion_2026-10-14.md) deleted these keys of this document with their code on 2026-10-14: `network.mw_wl.debug_r_scale` and `network.mw_wl.enable` (the WL-1 MW-seeded wide-lane rows and the F6 dump, commit `f1ea3de`). The text above records them as they stood. A configuration that still sets one runs without it, and the loader names each such key in one warning (card [RKT](refound/RKT_retired_key_tombstone_2026-10-30.md)).

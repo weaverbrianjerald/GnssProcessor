@@ -280,3 +280,9 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   (loader default off; ARMED and pinned in both goldens at the author's decision): key on IDENTICAL to off on both
   goldens for each key and all three, off IDENTICAL to main; loop -27.9 % (field), -20.3 % (sim), -39.7 % at 305
   stations after card CVF. The baseline pair stands.
+- [RKT](RKT_retired_key_tombstone_2026-10-30.md): closed, 2026-10-30: card RKD's follow-on F4, a warn-once tombstone of
+  the 150 retired network keys, BUILT and GATED on branch `claude/pensive-ptolemy-4f6046` (not merged): a declared table
+  beside the loader (path, flat spelling, deletion commit) and one warning per retired key a configuration sets. Both
+  2 h goldens and the 16 user-side arms identical on a same-build pair; a golden with 30 retired keys differs only by
+  the 30 warnings. 1,153 of the 1,234 network-mode configurations under `config/` now warn. Card RKD's notes written,
+  two still owed.

@@ -85,3 +85,9 @@ present all day; the per-satellite IF-correction dispersion p90 ≤ RF-0c's 0.55
 all ⇒ **RF-0f IS the baseline** — self-contained, the GIM gone, the ledger rows on the author's go, the RF-1 + RF-2 winner re-run on it; the
 dispersion falls but the consumer does not ⇒ read the remaining worst satellites' IF correction against their C2X / ISC status; the ISC
 unobservable for most satellites ⇒ the roster read (which stations track both) decides whether C2X is emitted at all.
+
+---
+
+## Appended 2026-10-30: the retired keys (card RKD)
+
+Card [RKD](RKD_retired_key_deletion_2026-10-14.md) deleted these keys of this card with their code on 2026-10-14: `network.sat_if_level_datum` (the retired code-bias datum options and the clock signal-basis hold, commit `d1cd9ea`). The text above records them as they stood. A configuration that still sets one runs without it, and the loader names each such key in one warning (card [RKT](RKT_retired_key_tombstone_2026-10-30.md)).

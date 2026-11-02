@@ -107,3 +107,9 @@ promotion case).  The level-authority thread moves to LV-6's gates
 (§4 there): census tracking first, fold second, with the fold's natural
 EXT-route being L_cs as the per-epoch VALUE of the existing a00 anchor —
 item 0b's design, internally sourced.
+
+---
+
+## Appended 2026-10-30: the retired keys (card RKD)
+
+Card [RKD](../../refound/RKD_retired_key_deletion_2026-10-14.md) deleted these keys of this card with their code on 2026-10-14: `network.rx_cb_harvest_demean` and `network.rx_cb_harvest_screen_z` (the level tools LV-1, LV-2, LV-4, LV-5 and S2H, commit `15b927c`). The text above records them as they stood. A configuration that still sets one runs without it, and the loader names each such key in one warning (card [RKT](../../refound/RKT_retired_key_tombstone_2026-10-30.md)).

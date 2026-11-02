@@ -406,3 +406,9 @@ as the drafting pass reported them.
   (2026-10-07).
 - [ ] The re-admission clock-only falsification was measured on the triple-frequency sim
   bed (card READMIT); no dual-frequency re-measurement was found.
+
+---
+
+## Appended 2026-10-30: the retired keys (card RKD)
+
+Card [RKD](../../refound/RKD_retired_key_deletion_2026-10-14.md) deleted these keys of this card with their code on 2026-10-14: `network.amb_float_q_m2s` (the parse-only and loader-forced keys, commit `4c0e731`); `network.emit_pb_filter` and `network.emit_pb_filter_gate_v2` (the PB emission-continuity filter, commit `6d719e4`). The text above records them as they stood. A configuration that still sets one runs without it, and the loader names each such key in one warning (card [RKT](../../refound/RKT_retired_key_tombstone_2026-10-30.md)).

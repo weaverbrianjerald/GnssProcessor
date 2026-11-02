@@ -20,6 +20,11 @@ constellation-specific bias work (BeiDou W6, GLONASS IFB).
 the re-founding's scope cut. See [the network re-founding](../refound/NETWORK_REFOUNDING_2026-09-14.md).
 From 2026-10-13 the goldens carry Galileo E1 / E5a in both code families with one Galileo clock datum across the
 families (card [GAD](../refound/GAD_galileo_adoption_2026-10-13.md); cards GAL2 and GFC).
+From 2026-10-14 the retired code-bias datum options (`external_sat_code_bias`, `code_bias_gf_datum`,
+`code_bias_gf_datum_per_family`, `sat_if_level_datum`) and the receiver code-bias level tools (`rx_cb_carry_demean*`,
+`rx_cb_carry_step_*`, `rx_cb_harvest_*`) are deleted with their code (card
+[RKD](../refound/RKD_retired_key_deletion_2026-10-14.md)). A configuration that still sets one of those keys loads
+with a warning naming it (card [RKT](../refound/RKT_retired_key_tombstone_2026-10-30.md)).
 
 ## Cards, oldest first
 

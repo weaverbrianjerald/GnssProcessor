@@ -336,3 +336,9 @@ Reader: `scripts/rf_ign_level_read.py`.  Graders re-used unchanged: `scripts/rf2
    size-matched null) does not exist yet.
 6. **RF-PD-fix's own open items are untouched** — the 9 residual non-finite-input rejections, the carry rows still judged after the PD
    test, and the promotion decision.
+
+---
+
+## Appended 2026-10-30: the retired keys (card RKD)
+
+Card [RKD](RKD_retired_key_deletion_2026-10-14.md) deleted these keys of this card with their code on 2026-10-14: `network.sh_gate_min_epochs` (the SH health gate, commit `b216f55`); `network.iono_constraint_deweight_min_epochs` (the station iono deweight gate and its release hygiene, commit `158b9b2`); `network.phase_leveling_conv_rms_thresh_tecu`, `network.phase_leveling_refloat_at_convergence` and `network.phase_leveling_warmup_on_convergence` (the T1d SH-convergence latch, commit `09e3151`); `network.rx_cb_harvest_demean` and `network.rx_cb_harvest_screen_z` (the level tools LV-1, LV-2, LV-4, LV-5 and S2H, commit `15b927c`). The text above records them as they stood. A configuration that still sets one runs without it, and the loader names each such key in one warning (card [RKT](RKT_retired_key_tombstone_2026-10-30.md)).

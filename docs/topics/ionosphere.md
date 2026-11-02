@@ -21,6 +21,11 @@ a quiet simulated bed — is the deepest card in the topic.
 **Current posture (2026-09-14)** — free slant iono; `network.estimate_iono_sh: false`,
 the SH field returns later as a CONSUMER product and never as a producer constraint.
 See [the network re-founding](../refound/NETWORK_REFOUNDING_2026-09-14.md).
+From 2026-10-14 the SH health gate, the station iono deweight gate and its release hygiene, the network adaptive iono
+q, the T1d SH-convergence latch, the diagonal slant-iono carry (`carry_iono`) and the level tools LV-1, LV-2, LV-4,
+LV-5 and S2H are deleted with their keys and code (card [RKD](../refound/RKD_retired_key_deletion_2026-10-14.md)). A
+configuration that still sets one of those keys loads with a warning naming it (card
+[RKT](../refound/RKT_retired_key_tombstone_2026-10-30.md)).
 
 ## Cards, oldest first
 

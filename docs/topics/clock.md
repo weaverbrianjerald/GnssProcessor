@@ -18,6 +18,11 @@ the C1 rate card, and clock-step signalling.
 
 **Current posture (2026-09-14)** — the physical clock time-link (`clock_anchor_q: 2.9e-8`)
 and `clock_disc_jump_test: true` are both in the frozen posture of [the network re-founding](../refound/NETWORK_REFOUNDING_2026-09-14.md).
+From 2026-10-14 the FC-1 split-cadence fast clock (`network.fast_clock.*`), the finite-difference C1 clock rate
+(`emit_clock_rate`), the CLV out-of-solve clock-level re-base (`clock_level_carry` and its parameters) and the clock
+signal-basis hold are deleted with their keys and code (card
+[RKD](../refound/RKD_retired_key_deletion_2026-10-14.md)). A configuration that still sets one of those keys loads
+with a warning naming it (card [RKT](../refound/RKT_retired_key_tombstone_2026-10-30.md)).
 
 ## Cards, oldest first
 

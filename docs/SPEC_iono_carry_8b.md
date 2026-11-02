@@ -432,3 +432,9 @@ none of it in this card's scope.  The
 session's validated survivors are `relevel_free_epoch` (load-bearing),
 bridge v3 (§8.3 — 74 % yield, 0 integer-class wrong), and the §6.4 field-smoke
 σ̂₀ −29 % with its ≥4 h escalation owed.
+
+---
+
+## Appended 2026-10-30: the retired keys (card RKD)
+
+Card [RKD](refound/RKD_retired_key_deletion_2026-10-14.md) deleted these keys of this document with their code on 2026-10-14: `network.carry_iono`, `network.iono_carry_max_gap_s`, `network.iono_carry_q`, `network.iono_carry_scope`, `network.iono_carry_source` and `network.iono_carry_var_floor` (the diagonal slant-iono carry, commit `f4be1a8`). The text above records them as they stood. A configuration that still sets one runs without it, and the loader names each such key in one warning (card [RKT](refound/RKT_retired_key_tombstone_2026-10-30.md)).

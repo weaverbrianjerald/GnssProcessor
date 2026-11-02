@@ -157,3 +157,9 @@ BR-3's anchor (B2-warm's first post-restore blob vs B1's final) was expected ≈
 ## 7. Artifacts
 
 Knobs (all default-OFF/0, committed in `dee2824`): `network.state_snapshot_carry` (blob v2 + `S` line), `state_snapshot_resume_shock_m`, `state_snapshot_require`, `state_snapshot_keep_history`, `state_snapshot_carry_diagonal` (v3, RTB-7e). Code: `NetworkCarryVce::seedRobustFloor`; `NetworkInvariantCarryDriver::{serializeCarry,restoreCarry,applyResumeShock,validateCarryBinding}` + resume telemetry; the RE-4 run-end line. Tooling: `scripts/{run_warm_resume_arm.sh, warm_resume_sd_metric.py, diff_carry_blobs.py}` + `scripts/README.md`. Configs: `config/test_suite/_rs_*.json`, `_warm_*.json` (all carry `parallel_carry: true / parallel_reduce: false`). Run matrix, 50-station GPS smokes at 60 ep: A-60 (`_warm_inline.json` @ 1830 s), B1 (`_warm_conv.json`, 450 s, converge + snapshot), B2-OFF-60 (`_warm_resume_nocarry.json`), B2-ON-60 (`_warm_resume.json`), B2-RS-60 × {0.05, 0.10, 0.20, 0.50}.
+
+---
+
+## Appended 2026-10-30: the retired keys (card RKD)
+
+Card [RKD](refound/RKD_retired_key_deletion_2026-10-14.md) deleted these keys of this document with their code on 2026-10-14: `network.state_snapshot_resume_shock_m` (the retired warm-resume knobs (RS-2 re-base, RS-6 shdev switch, seam re-inflate, resume shock), commit `98df220`); `network.parallel_reduce` (the parallel Schur reduce fan, commit `6e86437`). The text above records them as they stood. A configuration that still sets one runs without it, and the loader names each such key in one warning (card [RKT](refound/RKT_retired_key_tombstone_2026-10-30.md)).

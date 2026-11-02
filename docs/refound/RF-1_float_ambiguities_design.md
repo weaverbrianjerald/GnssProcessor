@@ -704,3 +704,9 @@ sub-25° iono rows and the band-scoped free are both places where the estimator'
 level deserves — so RF-1 could deliver a correctly-converging state carrying a wrong level, passing every internal
 bar while the wire does not move; step 2's measure-only `σ̂₀(pl)`-by-arc-age read is pre-registered precisely so that
 outcome can refute the card before any mechanism is built.
+
+---
+
+## Appended 2026-10-30: the retired keys (card RKD)
+
+Card [RKD](RKD_retired_key_deletion_2026-10-14.md) deleted with their code on 2026-10-14: `network.amb_float_q_m2s` (commit `4c0e731`), `network.phase_leveling_young_inflate_var_m2`, `_tau_ep` and `_max_age_ep` (`1068750`), `network.phase_leveling_los_scale` (`34793c9`) and `network.raim_erase_band_scope` (`dab7d80`). The text above records them as they stood; the loader names such a key in one warning (card [RKT](RKT_retired_key_tombstone_2026-10-30.md)).

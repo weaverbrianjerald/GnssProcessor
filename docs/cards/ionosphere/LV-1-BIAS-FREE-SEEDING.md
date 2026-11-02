@@ -84,3 +84,9 @@ seed'_los = seed_los − station_offset_r + field_slant(IPP_los)
    Prediction: `med|frac_cyc|` moves off the uniform-0.25 signature. → **Dead at 12 h too (§17 item 0: 0.2503
    vs 0.2498 on 322 936 rows).**
 
+
+---
+
+## Appended 2026-10-30: the retired keys (card RKD)
+
+Card [RKD](../../refound/RKD_retired_key_deletion_2026-10-14.md) deleted these keys of this card with their code on 2026-10-14: `network.iono_seed_field_frame` and `network.iono_seed_field_frame_min_sats` (the level tools LV-1, LV-2, LV-4, LV-5 and S2H, commit `15b927c`). The text above records them as they stood. A configuration that still sets one runs without it, and the loader names each such key in one warning (card [RKT](../../refound/RKT_retired_key_tombstone_2026-10-30.md)).

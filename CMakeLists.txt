@@ -62,6 +62,7 @@ add_library(gnss_core STATIC
     src/core/config/GnssConfigLoad.cpp
     src/core/config/GnssConfigLoadNetwork.cpp
     src/core/config/GnssConfigNetworkPosture.cpp
+    src/core/config/RetiredConfigKeys.cpp
     src/core/logging/LogManager.cpp
     src/core/logging/GatedSink.cpp
     src/core/logging/CsvRotator.cpp
@@ -621,6 +622,7 @@ add_executable(gnss_tests
     tests/network/test_level_authority.cpp
     tests/test_config_extends.cpp
     tests/test_ambiguity_initial_std.cpp
+    tests/test_retired_config_keys.cpp
     tests/test_sd_ewl_prereduce.cpp
     tests/network/test_sd_ewl_integer.cpp
     tests/network/test_sd_ewl_station_params.cpp

@@ -57,6 +57,7 @@
 #include "network/assembly/SecondPhaseScope.hpp" // secondPhaseAllowEntryValid
 #include "network/solve/Sbasis.hpp"         // pinPairContinuityBlocker
 #include "config/GnssConfigJsonHelpers.hpp"
+#include "config/RetiredConfigKeys.hpp"           // warnRetiredConfigKeys (the retired-key tombstone)
 #include "common/Constants.hpp"                   // GPS_Lx_WAVELENGTH (H3 per-λ log line)
 #include "products/NetworkProductEmitter.hpp"   // kDefaultDiscThresholdM (R9 single source of truth)
 #include "products/StationInfoFile.hpp"         // resolveRosterCoordinate (RTA-12 SIF roster)
@@ -235,6 +236,10 @@ namespace GnssProcessor {
             log->error("PPP-RTK-Network mode selected but no 'network' section found in config");
             return false;
         }
+
+        // A key deleted from this section is named once, with the deletion that removed it,
+        // instead of being ignored without a word (config/RetiredConfigKeys.hpp).
+        warnRetiredConfigKeys(json, *log);
 
         // Read the service-profile flag first (RTB-8).  Several coherence warnings in
         // this section (per_const no-op, contract-rebroadcast inert, warmup-URA no-op,

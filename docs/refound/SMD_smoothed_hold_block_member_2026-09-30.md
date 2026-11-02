@@ -309,3 +309,9 @@ anchor's q set against the sim's floor (the estimator's own wander, which a matc
 as motion) and the field's excess over it (the candidate a priori error), not against r as a
 whole. The phase biases' own walk (a model with a level walk) is a separate estimator question,
 not a hold one.
+
+---
+
+## Appended 2026-10-30: the retired keys (card RKD)
+
+Card [RKD](RKD_retired_key_deletion_2026-10-14.md) deleted these keys of this card with their code on 2026-10-14: `network.emit_pb_hold_smoothed_block` (the smoothed hold's block member, commit `08cd639`). The text above records them as they stood. A configuration that still sets one runs without it, and the loader names each such key in one warning (card [RKT](RKT_retired_key_tombstone_2026-10-30.md)).

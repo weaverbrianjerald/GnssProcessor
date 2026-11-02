@@ -114,3 +114,9 @@ Galileo arms via `processing.active_systems` (no new toggle); the existing FFR/b
 2. Frame uniformity per pair (§1.5 — NOT a product dependence): is the OSB coverage the fixture loads all-or-nothing PER SATELLITE for each Galileo pair? Uniform (either way) ⇒ zero mixed-frame skips. Partial ⇒ `skip_mixed_frame` thins the pair graph; if measured non-trivial, the clean cure is to force the lane-facing pairs uniformly no-BIA rather than demand fuller products — the lanes never needed the OSBs.
 3. The closure cross-check for the UWL decision: MW(1,5) is the natural iono-free-ish check (the analogue of MW(1,2) for GPS) — confirm its Welford arcs exist under `mw_frequency_mode` on the fixture, else the closure gate starves and the card loses its wrong-integer backstop (invariant #1).
 4. Does the WL-3 lane re-pin need a per-cons `fix_weight_sigma_cyc`? At λ(E1,E5a) = 0.751 m the same 0.01 cyc is 7.5 mm — probably fine; check the D5 per-cons flag rates before inventing a knob.
+
+---
+
+## Appended 2026-10-30: the retired keys (card RKD)
+
+Card [RKD](refound/RKD_retired_key_deletion_2026-10-14.md) deleted these keys of this document with their code on 2026-10-14: `network.mw_wl.uwl_family_pairs` (the WL-3 lane-coordinate carry and the UWL family pairs, commit `c5be295`); `network.mw_wl.uwl_dual_top` (the UWL-1 per-constellation lane tiers, commit `819f4a6`). The text above records them as they stood. A configuration that still sets one runs without it, and the loader names each such key in one warning (card [RKT](refound/RKT_retired_key_tombstone_2026-10-30.md)).

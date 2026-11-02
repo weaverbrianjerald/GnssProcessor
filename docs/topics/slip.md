@@ -22,6 +22,11 @@ own true integer.
 **Current posture (2026-09-14)** — lanes OFF under the re-founding's scope cut; the slip
 response becomes "drop the prior (refloat)" once ambiguities are float states with
 covariance (RF-1). See [the network re-founding](../refound/NETWORK_REFOUNDING_2026-09-14.md).
+From 2026-10-14 the lane layer (WL-1, WL-2, WL-3, UWL-1), the lane slip responses (the bridge v3 EWL slot, the
+statistical retap and its corroboration, the lane snap) and the study-3 band scopes are deleted with their keys and
+code (card [RKD](../refound/RKD_retired_key_deletion_2026-10-14.md)); lanes return only as card AB3's new build. A
+configuration that still sets one of those keys loads with a warning naming it (card
+[RKT](../refound/RKT_retired_key_tombstone_2026-10-30.md)).
 
 ## Cards, oldest first
 

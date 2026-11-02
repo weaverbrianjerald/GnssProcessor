@@ -605,3 +605,9 @@ holding `=`, the C++ reader's rule.
    inter-system bias within 0.10 m.
 4. R-B: the datum pause is kept; the confirmation arm is dropped until the anchor trips after
    its delayed arm are read.
+
+---
+
+## Appended 2026-10-30: the retired keys (card RKD)
+
+Card [RKD](RKD_retired_key_deletion_2026-10-14.md) deleted these keys of this card with their code on 2026-10-14: `network.amb_float_q_m2s` and `network.serialize_sbasis_contract` (the parse-only and loader-forced keys, commit `4c0e731`); `network.clock_level_carry`, `network.clock_level_confirm_epochs`, `network.clock_level_datum_pause`, `network.clock_level_free_cb_follow`, `network.clock_level_horizon_s`, `network.clock_level_pin_pair_read`, `network.clock_level_pivot_ref` and `network.clock_level_sigma_floor_m` (the CLV out-of-solve clock-level re-base, commit `b326c8c`); `network.phase_leveling_young_inflate_var_m2` (the age-aware young-arc inflate, commit `1068750`). The text above records them as they stood. A configuration that still sets one runs without it, and the loader names each such key in one warning (card [RKT](RKT_retired_key_tombstone_2026-10-30.md)).

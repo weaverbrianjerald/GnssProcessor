@@ -347,3 +347,9 @@ offline proxy (rho = 1 / (1 + n / 60)); the smoothed member itself is owed a bui
 field consumer 3.878 / 2.245 m in hours 1 / 2, with this hold 0.108 / 0.024 m. Interim: valid only
 with a precise a priori clock product. Its named regressions stand on the 6 h census of card EXL
 section 4: ARHT00ATA +0.404 m over hours 2 to 6, KOKB00USA hour 2 0.22 to 1.48 m, QUIN00USA +0.041 m.
+
+---
+
+## Appended 2026-10-30: the retired keys (card RKD)
+
+Card [RKD](RKD_retired_key_deletion_2026-10-14.md) deleted these keys of this card with their code on 2026-10-14: `network.fast_clock.enable` (the FC-1 split-cadence fast clock, commit `1de8b9b`); `network.clock_level_carry` (the CLV out-of-solve clock-level re-base, commit `b326c8c`). The text above records them as they stood. A configuration that still sets one runs without it, and the loader names each such key in one warning (card [RKT](RKT_retired_key_tombstone_2026-10-30.md)).

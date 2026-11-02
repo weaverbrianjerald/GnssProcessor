@@ -188,3 +188,9 @@ integer-snap the EWL lane to its EWL-MW-measured delta (σ ≈ 0.05 cyc
 single-epoch ⇒ a confident snap), bridge-v2 corroboration shape.  Rung 3 is
 the next build; this decomposition (F1/F3/F4C + the age tables) is its brief.
 
+
+---
+
+## Appended 2026-10-30: the retired keys (card RKD)
+
+Card [RKD](../../refound/RKD_retired_key_deletion_2026-10-14.md) deleted these keys of this card with their code on 2026-10-14: `network.cycle_slip.relevel_retap_corroborate`, `network.cycle_slip.relevel_retap_statistical`, `network.cycle_slip.relevel_retap_streak_max` and `network.cycle_slip.relevel_retap_var_m2` (the lane slip responses (bridge v3 EWL slot, statistical retap, its corroboration, lane snap), commit `f48868c`). The text above records them as they stood. A configuration that still sets one runs without it, and the loader names each such key in one warning (card [RKT](../../refound/RKT_retired_key_tombstone_2026-10-30.md)).

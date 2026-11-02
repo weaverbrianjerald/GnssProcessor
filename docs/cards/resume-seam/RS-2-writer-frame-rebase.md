@@ -472,3 +472,9 @@ regime, row present at `GnssConfigNetworkPosture.cpp:201`); zero unknown-knob wa
 637 re-based, and `products.txt` `d75d12a6…` **byte-identical to `rs2_null_rebase_d5w1`'s** on a different
 binary — the harness posture reproduces the hand-armed leg exactly.
 
+
+---
+
+## Appended 2026-10-30: the retired keys (card RKD)
+
+Card [RKD](../../refound/RKD_retired_key_deletion_2026-10-14.md) deleted these keys of this card with their code on 2026-10-14: `network.sh_health_gate` (the SH health gate, commit `b216f55`); `network.resume_carry_rebase` (the retired warm-resume knobs (RS-2 re-base, RS-6 shdev switch, seam re-inflate, resume shock), commit `98df220`). The text above records them as they stood. A configuration that still sets one runs without it, and the loader names each such key in one warning (card [RKT](../../refound/RKT_retired_key_tombstone_2026-10-30.md)).

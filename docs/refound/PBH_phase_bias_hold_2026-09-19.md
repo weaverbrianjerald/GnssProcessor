@@ -508,3 +508,9 @@ GPS Block IIF L5 signal carries a thermally driven inter-frequency clock
 variation of order a decimetre, so on L5 part of the phase-bias movement is
 signal, and the hold needs a per-signal scope or a declared slow-variation
 channel there.
+
+---
+
+## Appended 2026-10-30: the retired keys (card RKD)
+
+Card [RKD](RKD_retired_key_deletion_2026-10-14.md) deleted these keys of this card with their code on 2026-10-14: `network.serialize_sbasis_contract` (the parse-only and loader-forced keys, commit `4c0e731`); `network.emit_pb_filter`, `network.emit_pb_filter_emit_sigma`, `network.emit_pb_filter_gate_v2`, `network.emit_pb_filter_jump_k`, `network.emit_pb_filter_max_gap_s`, `network.emit_pb_filter_meas_sigma_m`, `network.emit_pb_filter_q` and `network.emit_pb_filter_window_epochs` (the PB emission-continuity filter, commit `6d719e4`). The text above records them as they stood. A configuration that still sets one runs without it, and the loader names each such key in one warning (card [RKT](RKT_retired_key_tombstone_2026-10-30.md)).

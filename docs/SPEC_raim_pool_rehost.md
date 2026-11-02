@@ -419,3 +419,9 @@ keep their current (inert) behaviour until a validated arm.
 card copies. `docs/SPEC_d5_churn_limit_cycle.md` — the churn failure mode of R4.
 `docs/SPEC_pd_safe_dd_fold.md`, `NetworkDdPriorBuild.cpp:550-576` — the `A_old` membership-exclusion edge
 the drain feeds. CLAUDE.md standing invariants #1, #3, #4, #5, #6, #7 — all pre-flighted in §3.4, §5, §6.
+
+---
+
+## Appended 2026-10-30: the retired keys (card RKD)
+
+Card [RKD](refound/RKD_retired_key_deletion_2026-10-14.md) deleted these keys of this document with their code on 2026-10-14: `network.raim_carry_invariant_refloat` (the RAIM carry-invariant refloat actuator, commit `8409b43`). The text above records them as they stood. A configuration that still sets one runs without it, and the loader names each such key in one warning (card [RKT](refound/RKT_retired_key_tombstone_2026-10-30.md)).

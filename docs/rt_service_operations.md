@@ -158,6 +158,14 @@ the line is a WARN saying the gate is untested in that run — do not read a cle
 **Restart:** the gate is **not** in the resume fingerprint (it belongs to the `raim` class, not the datum class), so
 it can be armed, disarmed or retuned across a bounce and still resume **warm**.
 
+> **Note, 2026-10-30.** The SH health gate was deleted with its code on 2026-10-14 (card
+> [RKD](refound/RKD_retired_key_deletion_2026-10-14.md), commit `b216f55`). `network.sh_health_gate`,
+> `network.sh_gate_min_epochs` and `network.sh_gate_rms_max_tecu` are no longer read, and the producer writes no
+> `SH_GATE` event, no `sh_gate_withheld` disposition and no `withheld_sh` heartbeat; the consumer still reads
+> `withheld_sh` in archived product files. This section and the SH gate row of the tier table above describe the tier
+> as it was. A configuration that still sets one of the three keys loads with a warning naming it (card
+> [RKT](refound/RKT_retired_key_tombstone_2026-10-30.md)).
+
 ### 3.3 CB-excursion reinit — `network.cb_excursion_reinit`
 
 Not a withhold: a **state-repair** guard — the only tier here that alters product *content* rather than its
