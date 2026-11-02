@@ -1,0 +1,229 @@
+% ============================================================
+%  Network estimation workbook
+%
+%  A course in the estimation theory behind GnssProcessor's network
+%  processor, built from the project's own record: nine lessons of
+%  progressive questions, then the answer key.  Each question names the
+%  earlier questions it builds on.
+%
+%  Preamble and notation: gnssreport.sty of the Mathematical Reference
+%  (docs/report), found through latexmkrc.  Build: latexmk.
+%  Content:  lessons_1_4.tex, lessons_5_9.tex (questions),
+%            answers_1_4.tex, answers_5_9.tex (answer key).
+% ============================================================
+\documentclass[11pt,letterpaper]{article}
+\usepackage{gnssreport}
+\usepackage{verbatim}          % lets \newenvironment{cmd} end a verbatim block
+\usepackage{upquote}           % straight quotes in commands, so they paste correctly
+\addbibresource{references.bib}
+\graphicspath{{figures/}}
+
+% ---- questions and answers ------------------------------------------
+\newcounter{question}[section]
+\renewcommand{\thequestion}{\thesection.\arabic{question}}
+\crefname{question}{Question}{Questions}
+\Crefname{question}{Question}{Questions}
+% math bullets: the text-companion bullet is a bitmap font on this machine
+\setlist[itemize]{label=$\bullet$}
+% \begin{question}{key}{kind}{title}{builds on}
+\newenvironment{question}[4]{%
+  \par\addvspace{\bigskipamount}%
+  \refstepcounter{question}\label{q:#1}%
+  \noindent{\bfseries Question \thequestion}\quad{\scshape #2}\quad{\bfseries #3}%
+  \par\nopagebreak
+  \noindent{\footnotesize\itshape\if\relax\detokenize{#4}\relax\else Builds on #4.\fi}%
+  \hfill{\footnotesize\hyperref[a:#1]{answer, p.~\pageref*{a:#1}}}%
+  \par\nopagebreak\smallskip}{\par}
+% \begin{answer}{key}
+\newenvironment{answer}[1]{%
+  \par\addvspace{\medskipamount}%
+  \noindent\phantomsection\label{a:#1}{\bfseries Answer \ref*{q:#1}}%
+  \quad{\footnotesize(\hyperref[q:#1]{question, p.~\pageref*{q:#1}})}%
+  \par\nopagebreak\smallskip}{\par}
+% teaching parts of an answer: try the strategy before reading the solution
+\newcommand{\strategy}[1]{\par\noindent\colorbox{blue!5}{\parbox{\dimexpr\linewidth-2\fboxsep}{%
+  \small\textbf{Strategy.}\ #1}}\par\smallskip}
+\newcommand{\solution}{\par\noindent\textbf{Solution.}\par\nopagebreak}
+\newcommand{\why}[1]{\par\smallskip\noindent\textbf{Why it works.}\ #1\par}
+\newcommand{\pitfall}[1]{\par\smallskip\noindent\textbf{Pitfall.}\ #1\par}
+\newcommand{\takeaway}[1]{\par\smallskip\noindent\textbf{\color{blue!50!black}Takeaway.}\ #1\par}
+\newcommand{\src}[1]{\par\smallskip\noindent{\small\textit{Source.} #1}\par}
+\newcommand{\chk}{\par\smallskip\noindent{\small\textit{Check.}}\par\nopagebreak}
+% verbatim command block (no indentation, small type)
+\newenvironment{cmd}{\par\small\verbatim}{\endverbatim\par}
+% lesson summary box
+\newcommand{\lessonbox}[2]{%
+  \par\bigskip\noindent
+  \fcolorbox{blue!50!black}{blue!4}{\parbox{\dimexpr\linewidth-2\fboxsep-2\fboxrule}{%
+    \small\textbf{\color{blue!50!black}#1.}\ #2}}\par\medskip}
+
+\title{\bfseries Network Estimation Workbook\\[4pt]
+  \large The theory behind GnssProcessor's network processor, in 41 questions}
+\author{}
+\date{October 2026}
+
+\begin{document}
+\maketitle
+\tableofcontents
+
+% ==================================================================
+\section*{How the course works}
+\addcontentsline{toc}{section}{How the course works}
+% ==================================================================
+
+The course teaches the estimation theory of the network processor and its
+reference choices (datum, S-basis) from this project's own record. It starts on
+familiar ground, one receiver, and adds one idea at a time. Lessons~1 to~3 work
+the theory by hand on small examples, then find the same structure in a real
+run. Lessons~4 to~7 apply it to the project's own choices: the four reference
+choices, what a user receives, the satellite clock and the integer ambiguities.
+Lessons~8 and~9 show how the results are tested on simulated and real data and
+what they support. Every question names the earlier questions it builds on, so
+the lessons are best worked in order.
+
+Three kinds of question appear in every lesson: \textsc{derive} (a calculation
+by hand), \textsc{read} (what a given line of a card, configuration file, log or
+source file says) and \textsc{measure} (run an existing tool on an existing run
+and interpret the number). The last question of the course,
+\textsc{synthesis}, gathers what the presentation of 29~October may claim.
+
+\begin{enumerate}[leftmargin=*, itemsep=1pt]
+\item Work one lesson per sitting, in order.
+\item Read the lesson's opening section and figures; open a source only when a
+      question sends there.
+\item Write each answer before turning to the answer key. An answer is complete
+      when it names its source.
+\item Turn to the key in two stages. Read only the answer's \emph{Strategy}
+      first and try again; then read the \emph{Solution}, which explains each
+      step, \emph{Why it works}, the usual \emph{Pitfall} and the
+      \emph{Takeaway} that later lessons build on (each question links to its
+      answer and back).
+\item Where an answer differs, rerun the key's check.
+\end{enumerate}
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}p{0.4cm}>{\raggedright\arraybackslash}p{4.0cm}>{\raggedright\arraybackslash}p{8.6cm}r@{}}
+\toprule
+& Lesson & What it builds & Questions \\
+\midrule
+1 & One receiver & the three directions a receiver's data cannot fix & 3 \\
+2 & Two receivers & rank, a reference choice, what it changes and what it cannot, a user, a change of satellites & 6 \\
+3 & The real network & elimination of the stations, two constellations, the count of Eq.~24, the parameter table, the rank gate & 5 \\
+4 & The project's reference choices & the theorem, the four choices and their rows, the code-bias datum, the station level & 5 \\
+5 & What a user sees & what a user absorbs, the header line of the corrections, a declared step, the reference satellite of a double difference & 4 \\
+6 & The satellite clock & the anchor as a step and as a time constant, the hold, two postures, the cost of leaving the final clock & 5 \\
+7 & Ambiguities & why an integer is mostly ionosphere, cycles, integer and float pins, the oracle pin, the corrections at the null & 5 \\
+8 & Simulated data & what a simulation tests, where a run starts, grading in the network's basis, the user's floor & 4 \\
+9 & Real data & the test station and 16 stations, five days, the clock against CODE and GFZ, the claims & 4 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\paragraph{Before the measure questions.} Commands run from
+\texttt{C:/GnssProcessor} in Git Bash, with
+\texttt{C:/Python313/python.exe} (the Python on the path lacks numpy). Several
+runs and the clock data set are on the D: drive
+(\texttt{D:/GnssProcessorSupport/runs\_nom/}, \texttt{D:/GnssProcessorSupport/fixtures/}),
+which must be connected. No question builds the code or starts a new run; all
+commands together take about two minutes. The status report is
+\texttt{D:/GnssProcessorSupport/presentation/status\_update\_2026-10-29/status\_update\_2026-10-29.tex};
+paths starting \texttt{results/} or \texttt{figures/deck/} in captions are in that
+folder.
+
+\paragraph{Terms.} The course uses plain words; the cards, code and
+configuration files use the record's labels.
+\begin{center}\footnotesize
+\begin{tabular}{@{}p{3.6cm}p{3.4cm}p{7.2cm}@{}}
+\toprule
+In this workbook & In the record & Meaning \\
+\midrule
+our network, the network processor & producer & \texttt{runNetwork}: estimates satellite clocks and biases from many stations \\
+corrections, the correction file & the wire, \texttt{products.txt} & what the network writes per epoch: C (clock), B (code bias), P (phase bias) and other records \\
+user & consumer & a receiver positioned with the corrections \\
+test station & held-out station & a reference station left out of the network and positioned as a user: WTZZ00DEU (real), SZZ000SIM (simulated) \\
+16 further stations & census & users positioned afterwards from the stored corrections \\
+real data & field & 58 IGS stations, 8 May 2024 (day 129) \\
+simulated data set & fixture, sim bed & \texttt{runs/simnet60\_quiet\_col\_24h} (quiet), \texttt{simnet60\_clk\_col\_24h} (clock error) \\
+reference configuration & golden & \texttt{config/golden/golden\_field\_refound.json} and \texttt{golden\_sim\_refound.json}, generated \\
+case, setting & arm, knob & a copy of a reference configuration with one setting changed; a configuration key \\
+the first hour & ignition & hour 1 after a cold start \\
+reference choice & datum, S-basis, gauge & the constraints that fix the directions no data determine \\
+header line of reference choices & S line & line 2 of \texttt{products.txt} \\
+perfect corrections & truth wire & corrections written from the simulator's truth \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\input{lessons_1_4}
+\input{lessons_5_9}
+
+\clearpage
+% ==================================================================
+\section*{Answers}
+\addcontentsline{toc}{section}{Answers}
+% ==================================================================
+The key is written to teach. Each answer opens with a \emph{Strategy}: the
+principle to apply and the first move, enough to restart a stalled attempt
+without giving the result away. The \emph{Solution} then works the question
+step by step and says why each step is taken. \emph{Why it works} names the
+idea underneath, \emph{Pitfall} the mistake most often made with it, and
+\emph{Takeaway} the result that later questions use. Each answer gives its
+source: the card and lines, the file and lines, or the run. Where a command
+reproduces the answer, \emph{Check} gives it. Answers
+marked \emph{checked} were reproduced on 24~October 2026 (the list is in the
+last section). Cards named by a short name are files in \texttt{docs/refound/}:
+ALD \texttt{ALD\_anchor\_level\_datum\_2026-10-23.md}, ARL
+\texttt{ARL\_integer\_ambiguity\_ladder\_2026-10-09.md}, CTU
+\texttt{CTU\_coupling\_time\_update\_2026-09-28.md}, FCFC
+\texttt{FCFC\_fixed\_cycle\_ledger\_2026-10-11.md}, GAD
+\texttt{GAD\_galileo\_adoption\_2026-10-13.md}, IRD
+\texttt{IRD\_integer\_recovering\_datum\_2026-10-13.md}, LAH
+\texttt{LAH\_level\_aware\_hold\_2026-09-29.md}, NBP
+\texttt{NBP\_native\_broadcast\_clock\_posture\_2026-10-07.md}, R1D
+\texttt{R1D\_station\_level\_datum\_2026-10-23.md}, SCB
+\texttt{SCB\_sim\_clock\_error\_bed\_2026-10-24.md}, SCL
+\texttt{SCL\_self\_contained\_clock\_level\_2026-10-03.md}. The S-system cards
+\texttt{SBASIS-THEORY-E.md} and \texttt{SBASIS-CONTRACT.md} are in
+\texttt{docs/cards/network-vehicle/}. ``The worked example'' is
+\texttt{docs/report/network\_example.tex} (Mathematical Reference, ``Worked
+example: estimability in a two-receiver network''). Status report sections are
+cited by name; its wording was qualified on 24~October with the boundaries of
+\cref{q:capstone}.
+
+\input{answers_1_4}
+\input{answers_5_9}
+
+% ==================================================================
+\section*{How the answers were checked}
+\addcontentsline{toc}{section}{How the answers were checked}
+% ==================================================================
+On 24~October 2026, against branch \texttt{card/scb-clock-bed} and the runs
+named, each check below reproduced the answers it lists. Three statements
+gathered for an earlier version of the key failed their check and were removed.
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}p{2.0cm}p{6.6cm}p{6.2cm}@{}}
+\toprule
+Answers & Check & Result \\
+\midrule
+2.1 to 2.6, 3.1, 3.2 & a numpy script that builds the worked example's systems & every number of those answers; ranks 5, 13 (18 and 26 unknowns) and 7 \\
+3.4, 3.5 & the parameter table of \texttt{runs/\_rf0hv15\_sim6}; \texttt{rf\_null\_space\_read.py} & 280 shared columns; eigenvalues 4.036e-11 and $-1.803$e-10, weights 0.2040 and 0.1767; cutoff 1.0459e-6 \\
+4.2, 6.3 & \texttt{make\_golden\_config.py --verify}; the loader lines & ``golden verify: PASS''; the refusal and warning as quoted \\
+4.4 & B records of G05 against the navigation file & $-3.2108400641$~m $= c\,T_{GD}$; ratio 1.646944 \\
+5.3 & the datum-step script & 31 satellites, 1.6278~m, 0.0027~m after the mean \\
+5.4 & \texttt{simnet\_amb\_integer.py --ref-free} & 0.304 and 0.122 cycle \\
+6.4, 8.3 & \texttt{simnet\_clock\_truth\_grade.py} on the card SCB cases and the baseline & every number of those answers \\
+7.5 & \texttt{simnet\_wire\_integer\_consistency.py}; \texttt{simnet\_producer\_ar\_grade.py} & 0.252 to 0.260 against 0.250; 5572 of 5572 \\
+9.1 to 9.3 & \texttt{rapid\_arm.py score}; \texttt{gcensus.py}; the five-day script; \texttt{clock\_stats.csv} & the hourly medians; $-0.0198$~m; 0.038, 0.0406, 0.018~m; 1.20, 2.23~cm \\
+all derive answers & one script with their arithmetic & as given \\
+\midrule
+removed & ``the 16 further stations have no co-located network station'' & KOKB00USA and network station KOKV00USA share a RINEX header position \\
+removed & ``integer fixing equals the float within 0.1~mm at ALGO00CAN'' & the cited line gives another comparison \\
+removed & ``code-bias records agree to 3e-11~m'' & from a scratch script; replaced by the run's own count \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\printbibliography
+
+\end{document}

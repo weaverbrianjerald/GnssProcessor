@@ -1,0 +1,11 @@
+# LaTeX intermediates of workbook.tex (the PDF is kept)
+*.aux
+*.bbl
+*.bcf
+*.blg
+*.fdb_latexmk
+*.fls
+*.out
+*.run.xml
+*.toc
+*.synctex.gz
