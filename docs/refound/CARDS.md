@@ -174,7 +174,8 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   in IRDB, IRDC and IRDD; IRD-2's stop closed by the author's ruling (2026-11-02); IRD-3 landed (IRDC section 5);
   the certification rule closed as a float defect by the author's ruling (IRDC sections 6 and 7); IRD-4's kept row
   landed default off, I-b and the r3c consumer FAILED (IRDC section 8); the epoch-88 divergence is the zero-target
-  cold pin's integer, C6 (IRDD section 2).
+  cold pin's integer, C6 (IRDD section 2); the returning row landed default off, the return shock removed and
+  I-b FAILED (IRDD section 3).
 - [IRDB](IRDB_integer_recovering_datum_continued_2026-10-30.md): open, 2026-10-30: card IRD's continuation, from IRD-1
   on. IRD-1 LANDED, measure-only and default off (the chain's event table, edge and chord traces, CHAIN events,
   pre-hold and receiver phase-bias traces, the run-end frame census; the consumer's shared AR builder, observe-mode
@@ -212,8 +213,11 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   the solve carries the new arc's whole old-frame float (-22 / +31 cycles as built, +42 / -87 with the row: exactly
   the integer the row's frozen targets left, fraction 0.02 cycle). A scratch diagnostic that changes only that
   pin's target swaps every reading with the integer; rounding it away makes the event free (double differences
-  integer-clean from 70 min in both arms), and the epoch-210 re-host is its aftermath too. Next: `returning`; the
-  fix is `rehost`.
+  integer-clean from 70 min in both arms), and the epoch-210 re-host is its aftermath too. The `returning`
+  row (section 3) LANDED default off: every returning edge takes the cut release with its identities and
+  declared keys; at the golden's 900 s horizon the floor-off microscope's wire equals the 600 s horizon arm's
+  byte for byte (the return shock removed); I-b FAILED on every bed; the consumer holds its bound. Next:
+  `rehost`, the C6 fix.
 - [RKD](RKD_retired_key_deletion_2026-10-14.md): closed, 2026-10-14: the 144 retired network keys and five lane keys
   they orphan deleted with their code (149 ledger rows, 784 to 635; 30 C++ files); landed after the same-build
   golden comparison passed (only declared text moves on the goldens).
