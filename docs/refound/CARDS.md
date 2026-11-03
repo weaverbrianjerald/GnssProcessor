@@ -315,7 +315,10 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   Two knobs, default off: `network.cycle_slip.if_phase_td_sat_centre` and `network.apriori_clock_track`. GPS, 6 h: WTZZ00DEU -0.008 and
   +0.008 m against the GPS golden (before +0.021 and +0.027), census +0.013 to +0.007 m pooled; DOY 129 passes, DOY 132 fails. GPS + Galileo
   fails with the receivers' frozen inter-system offset. Both keys UNVALIDATED; nothing armed.
-- [BRD2](BRD2_broadcast_remainder_hold_days_2026-11-03.md): open, 2026-11-03: card BRD's three owed items on the GPS broadcast-referenced
-  posture with both knobs: the DOY-132 remainder (+0.016 m census against the same estimator on the CODE a priori), card LAH's phase-clock
-  hold in place of the smoothed hold on the tracked a priori (predicted to wander 112 to 116 mm per 120 epochs), DOY 130 and 131. Gates
-  pre-registered; results owed.
+- [BRD2](BRD2_broadcast_remainder_hold_days_2026-11-03.md): closed, 2026-11-03 (pre-registered 2026-11-03): card BRD's three owed items on
+  the GPS broadcast-referenced posture with both knobs. DOY 130 and 131 pass the day bars against the GPS golden (WTZZ00DEU -0.010 and
+  -0.002 m, census +0.005 and +0.002 m); over the four days 25 % of site-days are worse by 2 cm (bar 20 %). The DOY-132 remainder (+0.016 m
+  against the same estimator on the CODE a priori) is the clock anchor's statistic decouplings, passed to users through the smoothed hold's
+  bridge; with `network.clock_anchor_k` 1e6 it vanishes and all four days pass (census pooled +0.0021 m, 17 %), pending a satellite clock
+  step test (field-blocking). The phase-clock hold on the tracked a priori (`network.apriori_clock_track_phase_clock_hold`, KEEP_OFF) walks
+  112 to 116 mm per 120 epochs and costs users 0.3 to 0.6 m. Nothing armed.

@@ -108,6 +108,8 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.nbp_on       = config_.networkAprioriBrdcClock();        // broadcast clock a priori (fingerprinted in SnapshotFingerprint.cpp)
     k.apriori_track_on = config_.networkAprioriBrdcClock()
                       && config_.networkAprioriClockTrack();      // the tracked broadcast a priori (fingerprinted)
+    k.apriori_track_pc_hold = k.apriori_track_on
+                           && config_.networkAprioriClockTrackPhaseClockHold();   // loader guarantees the phase-clock hold
     k.pv_window_ep = config_.networkPhaseVisibleWindowEp();
     k.clm_restore_credit_ep = config_.networkClockLevelRestoreCreditEp();
     k.clm_restore_raise = config_.networkClockLevelRestoreRaise();       // loader guarantees clm_on

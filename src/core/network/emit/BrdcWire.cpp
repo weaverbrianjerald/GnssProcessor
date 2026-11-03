@@ -120,6 +120,16 @@ int networkBrdcWireRunEnd(const NetworkRunEndView& v) {
                   c.brd_track_epochs, c.brd_track_applied, c.brd_track_paused,
                   c.brd_track_started, c.brd_track_resumed, h[0], h[1], h[2], h[3], h[4], h[5],
                   c.brd_track_max_abs_m, c.brd_track_rows_moved, c.brd_track_wire);
+        // The hold's a priori.  Under the phase-clock hold on the track the transfer runs on the
+        // clocks before the wire adds U, so a held key's phase-visible clock follows the track
+        // within its generation; the hold's own line (pb hold, phase clock) counts its writes.
+        if (ctx.knobs.apriori_track_pc_hold)
+            log->info("Network (tracked broadcast a priori): the phase-clock hold replaces the "
+                      "smoothed hold; within a generation a held key's phase-visible clock is "
+                      "brdc(iode) + O + U plus the constellation's common term, so every "
+                      "increment of the track above reached the held keys of its satellite "
+                      "({} held emission(s) moved by the clock transfer).",
+                      c.n_pbh_frz_moved);
     }
     return 0;
 }

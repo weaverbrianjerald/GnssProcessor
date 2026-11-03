@@ -314,16 +314,33 @@ namespace GnssProcessor {
         // and refuses the phase-clock hold, which is valid only with a precise a
         // priori clock product (LAH under the broadcast clock reads
         // 1.191 m).  On the resolved values, beside SMH's own refusals.
+        // The tracked a priori may carry the phase-clock hold in its place when
+        // network.apriori_clock_track_phase_clock_hold asks for it: within a generation the
+        // phase-visible clock is then the tracked a priori, brdc(iode) + O + U.
+        const bool phase_clock_on_track =
+            network_apriori_clock_track_ && network_apriori_clock_track_phase_clock_hold_;
         if (network_apriori_source_ == NetworkAprioriSource::Sp3BrdcClock) {
-            if (network_config_.emit_pb_hold_phase_clock)
-                throw std::runtime_error("network.apriori_source sp3_brdc_clock refuses "
-                                         "network.emit_pb_hold_phase_clock: the phase-clock hold "
-                                         "is valid only with a precise a priori clock product");
-            if (!(network_config_.emit_pb_hold && network_config_.emit_pb_hold_smoothed))
-                throw std::runtime_error("network.apriori_source sp3_brdc_clock requires "
-                                         "network.emit_pb_hold with network.emit_pb_hold_smoothed "
-                                         "(the smoothed hold, the hold the posture was measured with)");
+            if (phase_clock_on_track) {
+                if (!(network_config_.emit_pb_hold && network_config_.emit_pb_hold_phase_clock))
+                    throw std::runtime_error("network.apriori_clock_track_phase_clock_hold requires "
+                                             "network.emit_pb_hold with "
+                                             "network.emit_pb_hold_phase_clock (the hold it admits "
+                                             "in place of the smoothed hold)");
+            } else {
+                if (network_config_.emit_pb_hold_phase_clock)
+                    throw std::runtime_error("network.apriori_source sp3_brdc_clock refuses "
+                                             "network.emit_pb_hold_phase_clock: the phase-clock hold "
+                                             "is valid only with a precise a priori clock product");
+                if (!(network_config_.emit_pb_hold && network_config_.emit_pb_hold_smoothed))
+                    throw std::runtime_error("network.apriori_source sp3_brdc_clock requires "
+                                             "network.emit_pb_hold with network.emit_pb_hold_smoothed "
+                                             "(the smoothed hold, the hold the posture was measured with)");
+            }
         }
+        if (network_apriori_clock_track_phase_clock_hold_ && !network_apriori_clock_track_)
+            throw std::runtime_error("network.apriori_clock_track_phase_clock_hold requires "
+                                     "network.apriori_clock_track (it admits the phase-clock hold "
+                                     "on the tracked broadcast a priori only)");
         // The tracked a priori moves the broadcast clock by the IF-TD columns: it needs the
         // broadcast a priori and the two-way centring that fits them.
         if (network_apriori_clock_track_) {
@@ -3991,6 +4008,19 @@ namespace GnssProcessor {
                       "two-way centring measures (the network's own phase), before the station "
                       "rows; the wire adds the track after the hold.  Fingerprinted; fresh "
                       "convergence only.");
+        // The phase-clock hold on the tracked a priori: read here, refused at the end of the
+        // section on the resolved values (it needs the track and the phase-clock hold).
+        // Emit-side; not fingerprinted.
+        network_apriori_clock_track_phase_clock_hold_ =
+            jval<bool>(json, "network.apriori_clock_track_phase_clock_hold",
+                       "apriori_clock_track_phase_clock_hold", false);
+        if (network_apriori_clock_track_phase_clock_hold_)
+            log->info("Network: network.apriori_clock_track_phase_clock_hold = true: the "
+                      "phase-clock hold (network.emit_pb_hold_phase_clock) replaces the smoothed "
+                      "hold on the tracked broadcast a priori; within a generation the delivered "
+                      "phase-visible clock is brdc(iode) + O + U plus the constellation's common "
+                      "term: it follows the track, the sum of the per-epoch IF-TD columns.  "
+                      "Emit-side.");
         // A-priori clock anchor σ (m; D6): 0 = auto (resolved per mode at the
         // producer), an explicit positive value wins.  Parsed and stored only here.
         network_apriori_clock_anchor_sigma_m_ = jval<double>(
