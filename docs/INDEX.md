@@ -218,6 +218,10 @@ random walk under the tracked a priori, passed by the smoothed hold; a default-o
 level from 188 and 193 to 9 and 32 mm per hour and the census from +0.206 and +0.116 to +0.011 and +0.017 m, receivers as configured
 then equal to free-offset receivers; G1, G4 on DOY 129 and G5 fail; nothing armed).
 
+[ICL2](refound/ICL2_frame_day_one_level_2026-11-03.md), the phase-visible frame over a day and one level for code and phase
+(open, pre-registered 2026-11-03: the frame over 24 h on DOY 129 and 132 against the golden; with the frame each constellation's
+code and phase levels drift apart by 20 to 25 mm per 120 epochs, two candidates for one level chosen offline by a frozen rule).
+
 ### `resume-seam` — [topics/resume-seam.md](topics/resume-seam.md)
 
 | card | one line | status | last dated |

@@ -322,3 +322,9 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   frame on the emitted phase-visible clock (`network.emit_phase_frame_hold`, default off, outputs only): 9 and 32 mm, census +0.206 and
   +0.116 to +0.011 and +0.017 m against the golden, receivers as configured equal to free-offset receivers (paired -0.0002 and +0.0044
   m); on the CODE a priori it cures the regime's own GPS + Galileo cost. G1, G4 (DOY 129) and G5 fail. UNVALIDATED; nothing armed.
+- [ICL2](ICL2_frame_day_one_level_2026-11-03.md): open, pre-registered 2026-11-03: card ICL's two owed items on card BRD's GPS +
+  Galileo broadcast posture with both knobs and the phase-visible frame. (1) The frame over 24 h on DOY 129 and 132 against the
+  GPS + Galileo golden over the same 24 h: re-anchors, |G| by hour, the levels, the receiver's offset, WTZZ00DEU and the census.
+  (2) One level for code and phase: with the frame each constellation's code and phase levels still drift apart by 20 to 25 mm per
+  120 epochs (golden: 0); the clock frame hold voting on C + U or the phase frame voting on the phase biases' motion beyond the
+  hold's clock transfer, chosen offline by a frozen rule, then built default off.
