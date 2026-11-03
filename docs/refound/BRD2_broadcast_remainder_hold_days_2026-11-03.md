@@ -179,3 +179,14 @@ quarter-hour from 0.25 h on the regime's wire and never on the tracked wire). Ca
 | gate | bar |
 | --- | --- |
 | B1, the satellite set | DOY 132: the regime on CODE with G01 removed from its a priori (`files.internal_data_root` `C:/GnssProcessor/runs/_nbpa_cod_nog01`, the only change against `brd_r132_6`). The tracked posture against it is the remainder with the satellite sets equal: G01's absence carries the remainder if it falls to at most +0.005 m, does not if it stays above +0.010 m, carries part of it between. The regime without G01 against the regime is reported beside it (G01's own worth to the census). |
+
+## 4c. Amendment B2: the anchor's statistic test off on the other days (pre-registered 2026-11-03, before any run of it)
+
+A2's tracked arm (`brd2_tk132_6`, `network.clock_anchor_k` 1e6) read +0.0008 m at the census and -0.0040 m at WTZZ00DEU
+against the GPS golden on DOY 132, inside the bars of D, before its regime twin's census was read. Whether that holds on
+the days with few decouplings is measured before any reading of it: the tracked posture and the regime on CODE, each with
+`network.clock_anchor_k` 1e6, on DOY 129, 130 and 131 (6 h, the arms of D or card BRD with that one change).
+
+| gate | bar |
+| --- | --- |
+| B2, the anchor's test off | The tracked posture with the test off: the bars of D against the GPS golden on each of DOY 129 to 131 and over the four days with A2's DOY-132 arm (64 site-days). Reported beside it: each arm against its arm with the test on, and the tracked arm against the regime on CODE with the test off of the same day. |
