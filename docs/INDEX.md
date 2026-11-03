@@ -211,6 +211,8 @@ paired median -0.8 to -3.8 mm, no site worse than +2.9 mm, ARHT00ATA -0.08 to -0
 and 132; two causes measured, the IF-TD test's one-way centring and the clock time update's broadcast prior mean; two default-off knobs bring
 the receiver to -0.008 and +0.008 m and the census from +0.013 to +0.007 m pooled: DOY 129 passes, DOY 132 fails; GPS + Galileo needs the
 receiver's inter-system offset re-estimated every epoch; nothing armed).
+[BRD2](refound/BRD2_broadcast_remainder_hold_days_2026-11-03.md), card BRD's owed items: the DOY-132 remainder, the phase-clock hold on the
+tracked a priori, DOY 130 and 131 (open, 2026-11-03: gates pre-registered; results owed).
 
 ### `resume-seam` — [topics/resume-seam.md](topics/resume-seam.md)
 

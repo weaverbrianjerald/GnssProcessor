@@ -315,3 +315,7 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   Two knobs, default off: `network.cycle_slip.if_phase_td_sat_centre` and `network.apriori_clock_track`. GPS, 6 h: WTZZ00DEU -0.008 and
   +0.008 m against the GPS golden (before +0.021 and +0.027), census +0.013 to +0.007 m pooled; DOY 129 passes, DOY 132 fails. GPS + Galileo
   fails with the receivers' frozen inter-system offset. Both keys UNVALIDATED; nothing armed.
+- [BRD2](BRD2_broadcast_remainder_hold_days_2026-11-03.md): open, 2026-11-03: card BRD's three owed items on the GPS broadcast-referenced
+  posture with both knobs: the DOY-132 remainder (+0.016 m census against the same estimator on the CODE a priori), card LAH's phase-clock
+  hold in place of the smoothed hold on the tracked a priori (predicted to wander 112 to 116 mm per 120 epochs), DOY 130 and 131. Gates
+  pre-registered; results owed.
