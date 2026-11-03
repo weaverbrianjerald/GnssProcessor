@@ -116,12 +116,12 @@ TEST(NetworkChainFrame, EventTableHasOneRowPerClassInOrder) {
 }
 
 // The loader takes its entries from the table: the distinct non-empty ones, in table order, with
-// the rows built so far (the rows are built in table order, kept first).
-TEST(NetworkChainFrame, EventRowEntriesAreTheTablesAndOnlyKeptIsBuilt) {
+// the rows built so far (the rows are built in table order, kept and returning first).
+TEST(NetworkChainFrame, EventRowEntriesAreTheTablesAndOnlyKeptAndReturningAreBuilt) {
     EXPECT_EQ(chainEventRowEntries(), (std::vector<std::string>{"kept", "returning", "rehost", "root", "slip",
                                                                "merge_split"}));
-    EXPECT_TRUE(chainEventRowEntryBuilt("kept"));
-    for (const char* entry : {"returning", "rehost", "root", "slip", "merge_split", "", "bogus"})
+    for (const char* entry : {"kept", "returning"}) EXPECT_TRUE(chainEventRowEntryBuilt(entry)) << entry;
+    for (const char* entry : {"rehost", "root", "slip", "merge_split", "", "bogus"})
         EXPECT_FALSE(chainEventRowEntryBuilt(entry)) << entry;
     // An entry two rows share is built only when both rows are.
     for (const ChainEventSpec& s : kChainEventSpec)
@@ -134,6 +134,12 @@ TEST(NetworkChainFrame, EventRowEntriesAreTheTablesAndOnlyKeptIsBuilt) {
     for (std::size_t r = 0; r < kChainEventRowCount; ++r)
         EXPECT_EQ(chainEventRowArmed(k, kChainEventSpec[r].row), kChainEventSpec[r].row == ChainEventRow::Kept)
             << kChainEventSpec[r].name;
+    k.eq34_row_kept = false;
+    k.eq34_row_returning = true;
+    for (std::size_t r = 0; r < kChainEventRowCount; ++r)
+        EXPECT_EQ(chainEventRowArmed(k, kChainEventSpec[r].row), kChainEventSpec[r].row == ChainEventRow::Returning)
+            << kChainEventSpec[r].name;
+    EXPECT_STREQ(chainEventSpec(ChainEventRow::Returning).event, "returning");
 }
 
 TEST(NetworkChainFrame, CertificationDeterminesAPreciseChordAndNotAnImpreciseOne) {
@@ -310,6 +316,61 @@ TEST(NetworkChainFrame, RememberKeepsTheAsBuiltTargetsOfTheHeldEdgesAndReplacesT
     EXPECT_TRUE(remember({no_longer, plain}, 90.0).empty());
 }
 
+TEST(NetworkChainFrame, RememberKeepsTheRealizedTargetOfAReleasedEdgeSoTheNextHoldIsQuiet) {
+    using Key = std::tuple<int, std::string, std::string>;
+    ChainFrameCounters cnt;
+    const auto observe = [&](std::vector<std::string> sats, std::vector<ChainEdgeObs> edges,
+                             std::vector<ChainReleaseObs> releases, double tow) {
+        ChainEpochObs obs;
+        obs.armed = true;
+        obs.comps.push_back(component(0, "A", {0, 1}, std::move(sats)));
+        obs.edges = std::move(edges);
+        obs.releases = std::move(releases);
+        const ChainFrameMemory none;
+        const ChainFrameMemory& mem = cnt.chain_frame_memory ? *cnt.chain_frame_memory : none;
+        ChainEpochClass cls = chainClassifyEpoch(obs, mem, kNoFree, kNoCause, cnt);
+        chainRememberEpoch(obs, cls, {}, 2313, tow, tow, cnt);
+        return cls;
+    };
+    // G02 is a vertex, leaves, and returns under B: the returning row releases its edge with the
+    // first-sighting target 0, where the as-built draft read the old-frame carry (37 cycles).
+    observe({"G01", "G02"}, {edge(0, "G01", true), edge(1, "G02", true)}, {}, 30.0);
+    observe({"G01"}, {edge(0, "G01", true)}, {}, 60.0);
+    ChainEdgeObs held = edge(0, "G01", true);
+    held.incumbent_same = true;
+    held.row_armed = true;
+    held.legacy_target_m = 0.5;
+    held.target_m = 0.5;
+    ChainEdgeObs released = edge(1, "G02", true);
+    released.row_armed = true;
+    released.legacy_target_m = 37.0 * kLambda;
+    released.target_m = 0.0;
+    ChainReleaseObs r;
+    r.group = kGroup;
+    r.signal = "L1C";
+    r.station = 1;
+    r.sat = "G02";
+    r.vertex = "S:G02";
+    r.sats = {"G02"};
+    const ChainEpochClass cls = observe({"G01", "G02"}, {held, released}, {r}, 90.0);
+    ASSERT_EQ(cls.edges.size(), 2u);
+    EXPECT_EQ(cls.edges[1].row, ChainEventRow::Returning);
+    // The held edge keeps the as-built draft; the released edge keeps the target it realized.
+    EXPECT_EQ(cnt.chain_frame_memory->kept_as_built_target,
+              (std::map<Key, double>{{Key{0, "G01", "L1C"}, 0.5}, {Key{1, "G02", "L1C"}, 0.0}}));
+    // At the next election the kept row holds the edge and the as-built draft reads the carry of the
+    // released target: no as-built step, so no hold row (against the old-frame draft it would be one).
+    ChainEdgeObs next = edge(1, "G02", true);
+    next.incumbent_same = true;
+    next.row_armed = true;
+    next.legacy_target_m = 0.0;
+    const double& remembered = cnt.chain_frame_memory->kept_as_built_target.at(Key{1, "G02", "L1C"});
+    EXPECT_EQ(chainKeptAsBuiltStep(next, &remembered), 0.0);
+    EXPECT_FALSE(chainKeptEdgeMoved(next, &remembered));
+    const double old_frame = 37.0 * kLambda;
+    EXPECT_TRUE(chainKeptEdgeMoved(next, &old_frame));
+}
+
 TEST(NetworkChainFrame, RehostIsCertifiedFromThePreviousChordTable) {
     ChainEpochObs obs;
     obs.armed = true;
@@ -464,7 +525,12 @@ struct ChainObserverRun {
     fs::path                        trace_dir;
     std::unique_ptr<NetworkTestRun> fx;
 
+    /// The kept row armed or not.
     ChainObserverRun(const std::string& tag, bool armed)
+        : ChainObserverRun(tag, armed ? std::vector<std::string>{"kept"} : std::vector<std::string>{}) {}
+
+    /// The given entries of network.phase_datum_eq34_event_rows armed (none: every row as built).
+    ChainObserverRun(const std::string& tag, const std::vector<std::string>& rows)
         : loaded(TestSupport::loadNetworkConfigCapturing(
               "chain_obs_" + tag,
               std::string("    \"phase_leveling\": true,\n"
@@ -474,7 +540,7 @@ struct ChainObserverRun {
                           "    \"phase_datum_eq34\": true,\n"
                           "    \"trace_chain_datum\": true,\n"
                           "    \"trace_events\": true,\n")
-                  + (armed ? "    \"phase_datum_eq34_event_rows\": [\"kept\"],\n" : ""))) {
+                  + rowsEntry(rows))) {
         EXPECT_TRUE(loaded.ok) << loaded.text;
         auto sink = std::make_shared<spdlog::sinks::ostream_sink_mt>(log_text);
         log = std::make_shared<spdlog::logger>("chain_obs_" + tag, sink);
@@ -505,6 +571,23 @@ struct ChainObserverRun {
         NetworkEpoch& e = fx->newEpoch(GnssTime{2313, tow});
         e.events.phase_datum.chain = rec;
         networkChainFrameObserve(fx->run(), e);
+    }
+
+    /// Observe one epoch whose election recorded @p rec, at the time @p tow (the epoch's clock too, so a
+    /// vertex's gap since it was last seen is measured).
+    void observeRecord(double tow, std::shared_ptr<ChainEpochObs> rec) {
+        NetworkEpoch& e = fx->newEpoch(GnssTime{2313, tow});
+        e.clock.pl_now_s = tow;
+        e.events.phase_datum.chain = std::move(rec);
+        networkChainFrameObserve(fx->run(), e);
+    }
+
+    /// The config line arming @p rows ("" for none).
+    static std::string rowsEntry(const std::vector<std::string>& rows) {
+        if (rows.empty()) return std::string();
+        std::string s = "    \"phase_datum_eq34_event_rows\": [";
+        for (std::size_t i = 0; i < rows.size(); ++i) s += (i ? ", \"" : "\"") + rows[i] + "\"";
+        return s + "],\n";
     }
 
     /// The rows of a trace file of the run (header first), split at the commas; the traces are
@@ -823,6 +906,302 @@ TEST(NetworkChainFrame, TheElectionRunEndReportsTheKeptRowOnlyWhenArmed) {
         ChainObserverRun r("elect_off", /*armed=*/false);
         const std::string text = r.runEnd(&networkChainDatumRunEnd);
         EXPECT_FALSE(contains(text, "eq34 kept row")) << text;
+        EXPECT_FALSE(contains(text, "eq34 returning row")) << text;
+    }
+}
+
+// ---- The returning row ------------------------------------------------------------------------------
+
+/// The CHAIN rows of the events trace of a run, as cells, with the header's columns.
+struct ChainRows {
+    std::vector<std::vector<std::string>> rows;
+    int tow{-1}, event{-1}, action{-1}, sat{-1}, station{-1}, detail{-1};
+    explicit ChainRows(ChainObserverRun& r) {
+        const auto events = r.rows("network_events.csv");
+        const int tier = columnOf(events[0], "tier");
+        tow = columnOf(events[0], "tow");
+        event = columnOf(events[0], "event");
+        action = columnOf(events[0], "action");
+        sat = columnOf(events[0], "sat");
+        station = columnOf(events[0], "station");
+        detail = columnOf(events[0], "detail");
+        EXPECT_TRUE(tier >= 0 && tow >= 0 && event >= 0 && action >= 0 && sat >= 0 && station >= 0 && detail >= 0);
+        for (std::size_t k = 1; k < events.size(); ++k)
+            if (events[k][static_cast<std::size_t>(tier)] == "CHAIN") rows.push_back(events[k]);
+    }
+    /// The cell @p col of row @p k.
+    const std::string& at(std::size_t k, int col) const { return rows.at(k).at(static_cast<std::size_t>(col)); }
+};
+
+/// Observe the three epochs of a returning receiver: receiver B (station 1) is below G01 at the first
+/// epoch (261030), away at the second (G02 is born under A there) and returns at the third (261120) below G02,
+/// with a satellite G03, a receiver C and a satellite G04 below it (births, no row decided them).  @p armed:
+/// the returning row released B's edge (and the epoch carries the release of its moved side) rather than
+/// leaving the as-built edge.
+void observeReturningReceiver(ChainObserverRun& r, bool armed) {
+    {   // epoch 1: B below G01
+        auto rec = std::make_shared<ChainEpochObs>();
+        rec->armed = true;
+        rec->comps.push_back(component(0, "A", {0, 1}, {"G01"}));
+        rec->edges = {edge(0, "G01", true), edge(1, "G01", false)};
+        r.observeRecord(261030.0, rec);
+    }
+    {   // epoch 2: B away, G02 born
+        auto rec = std::make_shared<ChainEpochObs>();
+        rec->armed = true;
+        rec->comps.push_back(component(0, "A", {0}, {"G01", "G02"}));
+        ChainEdgeObs g1 = edge(0, "G01", true);
+        g1.had_parent = g1.incumbent_same = true;
+        rec->edges = {g1, edge(0, "G02", true)};
+        r.observeRecord(261060.0, rec);
+    }
+    {   // epoch 3: B returns below G02
+        auto rec = std::make_shared<ChainEpochObs>();
+        rec->armed = true;
+        rec->comps.push_back(component(0, "A", {0, 1, 2}, {"G01", "G02", "G03", "G04"}));
+        ChainEdgeObs g1 = edge(0, "G01", true);
+        g1.had_parent = g1.incumbent_same = true;
+        ChainEdgeObs g2 = edge(0, "G02", true);
+        g2.had_parent = g2.incumbent_same = true;
+        ChainEdgeObs back = edge(1, "G02", false);   // B below G02: the returning edge
+        back.depth = 2;
+        back.legacy_known = true;                    // the as-built rule: a known step of 5 cycles from the old carry
+        back.legacy_pinmove_m = back.legacy_target_m = 5.0 * kLambda;
+        if (armed) {                                 // the release replaced it
+            back.row_armed = true;
+            back.known = false;
+            back.pinmove_m = 0.0;
+            back.target_m = 0.0;
+        } else {
+            back.known = true;
+            back.pinmove_m = back.target_m = 5.0 * kLambda;
+        }
+        ChainEdgeObs g3 = edge(1, "G03", true);      // births below it
+        g3.known = false;
+        ChainEdgeObs c3 = edge(2, "G03", false);
+        c3.known = false;
+        ChainEdgeObs g4 = edge(2, "G04", true);
+        g4.known = false;
+        rec->edges = {g1, g2, back, g3, c3, g4};
+        if (armed) {
+            ChainReleaseObs rel;
+            rel.group = kGroup;
+            rel.signal = "L1C";
+            rel.comp = 0;
+            rel.station = 1;
+            rel.sat = "G02";
+            rel.sat_is_child = false;
+            rel.vertex = "R:1";
+            rel.sats = {"G03", "G04"};
+            rel.stations = {1, 2};
+            rel.arcs = 5;
+            rel.rpb = 2;
+            rel.pb = 1;
+            rec->releases = {rel};
+        }
+        r.observeRecord(261120.0, rec);
+    }
+}
+
+// A released edge writes its leave and join rows with identities, one cut_release row and one declared_keys
+// row per satellite of its moved side; the counters sum the release; the memory keeps the parent a vertex had
+// when it was last seen across its absence.
+TEST(NetworkChainFrame, TheObserverWritesTheLeaveJoinCutReleaseAndDeclaredKeyRowsOfAReleasedEdge) {
+    ChainObserverRun r("ret_rows", std::vector<std::string>{"returning"});
+    ASSERT_TRUE(r.fx->ctx().knobs.eq34_row_returning);
+    ASSERT_FALSE(r.fx->ctx().knobs.eq34_row_kept);
+    observeReturningReceiver(r, /*armed=*/true);
+
+    // The memory: B's last parent is G01 across its absence and G02 now; the root has none.
+    ASSERT_TRUE(r.fx->ctx().counters.chain_frame_memory);
+    const ChainFrameMemory& mem = *r.fx->ctx().counters.chain_frame_memory;
+    EXPECT_EQ(mem.last_parent.at(kGroup).at("R:1"), "S:G02");
+    EXPECT_EQ(mem.last_parent.at(kGroup).at("R:0"), "");
+    EXPECT_EQ(mem.last_parent.at(kGroup).at("S:G01"), "R:0");
+    EXPECT_EQ(mem.last_parent.at(kGroup).at("S:G04"), "R:2");
+
+    const ChainFrameCounters& c = r.fx->ctx().counters;
+    const std::size_t returning = static_cast<std::size_t>(ChainEventRow::Returning);
+    EXPECT_EQ(c.cf_rows[returning], 1);
+    EXPECT_EQ(c.cf_rows_armed[returning], 1);
+    EXPECT_EQ(c.cf_rows_unknown[returning], 1);     // the realized step: the release's unknown step
+    EXPECT_EQ(c.cf_returning, 1);
+    EXPECT_EQ(c.cf_ret_pairs, 1);
+    EXPECT_EQ(c.cf_ret_asbuilt_whole, 1);           // the as-built step was 5 whole cycles
+    EXPECT_EQ(c.cf_ret_asbuilt_zero + c.cf_ret_asbuilt_other + c.cf_ret_asbuilt_unknown, 0);
+    EXPECT_EQ(c.cf_cut_releases, 1);
+    EXPECT_EQ(c.cf_cut_arcs, 5);
+    EXPECT_EQ(c.cf_cut_rpb, 2);
+    EXPECT_EQ(c.cf_cut_pb, 1);
+    EXPECT_EQ(c.cf_declared_keys, 2);
+    EXPECT_EQ(c.cf_events, 5);                      // leave, join, cut_release and two declared_keys
+
+    ChainRows ev(r);
+    ASSERT_EQ(ev.rows.size(), 5u);
+    for (const auto& row : ev.rows) EXPECT_EQ(row[static_cast<std::size_t>(ev.tow)], "261120.000");
+    // leave: the vertex and the parent it had when it was last seen (the old parent in the sat column).
+    EXPECT_EQ(ev.at(0, ev.event), "returning");
+    EXPECT_EQ(ev.at(0, ev.action), "leave");
+    EXPECT_EQ(ev.at(0, ev.sat), "G01");
+    EXPECT_EQ(ev.at(0, ev.station), "B");
+    EXPECT_TRUE(contains(ev.at(0, ev.detail), " gap_s=90.0 child=B parent=G01")) << ev.at(0, ev.detail);
+    // join: the new edge.
+    EXPECT_EQ(ev.at(1, ev.event), "returning");
+    EXPECT_EQ(ev.at(1, ev.action), "join");
+    EXPECT_EQ(ev.at(1, ev.sat), "G02");
+    EXPECT_EQ(ev.at(1, ev.station), "B");
+    EXPECT_TRUE(contains(ev.at(1, ev.detail), " gap_s=90.0 child=B parent=G02")) << ev.at(1, ev.detail);
+    for (std::size_t k : {std::size_t{0}, std::size_t{1}}) {
+        // The as-built facts the release replaced.
+        const std::string& d = ev.at(k, ev.detail);
+        EXPECT_TRUE(contains(d, "legacy_cause=same_edge legacy_known=1 legacy_pinmove_m=" + fmt::format("{:.6f}", 5.0 * kLambda)))
+            << d;
+        EXPECT_TRUE(contains(d, "legacy_target_cyc=5.000000")) << d;
+        EXPECT_TRUE(contains(d, "known=0")) << d;    // the realized step
+        EXPECT_FALSE(contains(d, "prev=")) << d;
+    }
+    // cut_release: one row per release, with the counts.
+    EXPECT_EQ(ev.at(2, ev.event), "cut_release");
+    EXPECT_EQ(ev.at(2, ev.action), "release");
+    EXPECT_EQ(ev.at(2, ev.sat), "G02");
+    EXPECT_EQ(ev.at(2, ev.station), "B");
+    EXPECT_EQ(ev.at(2, ev.detail), "sig=L1C comp=0 root=B arcs=5 rpb=2 pb=1 n_rx=2 n_sat=2");
+    // declared_keys: one row per satellite of the moved side, its key in the sat column and the signal a token.
+    for (std::size_t k : {std::size_t{3}, std::size_t{4}}) {
+        EXPECT_EQ(ev.at(k, ev.event), "declared_keys");
+        EXPECT_EQ(ev.at(k, ev.action), "declare");
+        EXPECT_EQ(ev.at(k, ev.detail), "sig=L1C cause=returning root=B");
+    }
+    EXPECT_EQ(ev.at(3, ev.sat), "G03");
+    EXPECT_EQ(ev.at(4, ev.sat), "G04");
+
+    // The edge trace marks the released edge and no other.
+    const auto edges = r.rows("network_chain_edges.csv");
+    const int armed = columnOf(edges[0], "row_armed"), row = columnOf(edges[0], "row"),
+              tow = columnOf(edges[0], "tow"), known = columnOf(edges[0], "known"), sat = columnOf(edges[0], "edge_sat");
+    ASSERT_TRUE(armed >= 0 && row >= 0 && tow >= 0 && known >= 0 && sat >= 0);
+    int n_armed = 0;
+    for (std::size_t k = 1; k < edges.size(); ++k) {
+        if (edges[k][static_cast<std::size_t>(tow)] != "261120.000") continue;
+        const bool is_armed = edges[k][static_cast<std::size_t>(armed)] == "1";
+        n_armed += is_armed ? 1 : 0;
+        if (is_armed) {
+            EXPECT_EQ(edges[k][static_cast<std::size_t>(row)], "Returning");
+            EXPECT_EQ(edges[k][static_cast<std::size_t>(known)], "0");
+            EXPECT_EQ(edges[k][static_cast<std::size_t>(sat)], "G02");
+        }
+    }
+    EXPECT_EQ(n_armed, 1);
+}
+
+// With the row off a returning edge writes the one join row it always has, with the gap and an empty
+// previous parent, and the cut and declared counts stay 0.
+TEST(NetworkChainFrame, WithTheRowOffAReturningEdgeWritesTheOneJoinRowItAlwaysHad) {
+    ChainObserverRun r("ret_off", std::vector<std::string>{"kept"});   // another row armed: no returning row
+    ASSERT_FALSE(r.fx->ctx().knobs.eq34_row_returning);
+    observeReturningReceiver(r, /*armed=*/false);
+    const ChainFrameCounters& c = r.fx->ctx().counters;
+    EXPECT_EQ(c.cf_ret_pairs + c.cf_cut_releases + c.cf_cut_arcs + c.cf_cut_pb + c.cf_cut_rpb + c.cf_declared_keys, 0);
+    EXPECT_EQ(c.cf_rows_armed[static_cast<std::size_t>(ChainEventRow::Returning)], 0);
+    EXPECT_EQ(c.cf_returning, 1);
+    // The memory still keeps the last parent (observatory-internal).
+    EXPECT_EQ(c.chain_frame_memory->last_parent.at(kGroup).at("R:1"), "S:G02");
+    ChainRows ev(r);
+    // The births below B are not returning vertices; the Returning edge's one row is a join.
+    std::vector<std::size_t> returning_rows;
+    for (std::size_t k = 0; k < ev.rows.size(); ++k)
+        if (ev.at(k, ev.event) == "returning") returning_rows.push_back(k);
+    ASSERT_EQ(returning_rows.size(), 1u);
+    EXPECT_EQ(ev.at(returning_rows[0], ev.action), "join");
+    EXPECT_EQ(ev.at(returning_rows[0], ev.sat), "G02");
+    EXPECT_EQ(ev.at(returning_rows[0], ev.station), "B");
+    EXPECT_TRUE(contains(ev.at(returning_rows[0], ev.detail), " gap_s=90.0 prev=")) << ev.at(returning_rows[0], ev.detail);
+    EXPECT_FALSE(contains(ev.at(returning_rows[0], ev.detail), "child=")) << ev.at(returning_rows[0], ev.detail);
+    for (std::size_t k = 0; k < ev.rows.size(); ++k) {
+        EXPECT_NE(ev.at(k, ev.event), "cut_release");
+        EXPECT_NE(ev.at(k, ev.event), "declared_keys");
+    }
+}
+
+// The run-end report of the observatory names the returning row as the one that cuts and declares, and counts
+// what it wrote; with the row off (or another row alone) it says what it said before.
+TEST(NetworkChainFrame, TheRunEndNamesTheReturningRowOnlyWhenArmed) {
+    {
+        ChainObserverRun r("ret_end_on", std::vector<std::string>{"kept", "returning"});
+        observeReturningReceiver(r, /*armed=*/true);
+        const std::string text = r.runEnd(&networkChainFrameRunEnd);
+        EXPECT_TRUE(contains(text, "event row(s) armed: kept, returning; the other rows ran the as-built rule")) << text;
+        EXPECT_TRUE(contains(text, "5 cut-released arc(s), 1 phase-bias prior(s) and 2 receiver phase bias(es); "
+                                   "2 declared key(s) (cut and declared by the returning row)")) << text;
+        EXPECT_FALSE(contains(text, "the armed rows cut and declare nothing")) << text;
+        EXPECT_TRUE(contains(text, "1 edge(s), 1 under the integer rule: realized step unknown 1, fractional 0")) << text;
+        EXPECT_TRUE(contains(text, "5 returning row(s) written to the event trace: 1 released edge(s) (a leave and a "
+                                   "join row each; the as-built step was a known zero on 0, whole cycles on 1, another "
+                                   "nonzero step on 0 and unknown on 0), 1 cut_release row(s) and 2 declared_keys row(s)"))
+            << text;
+    }
+    {
+        ChainObserverRun r("ret_end_kept", std::vector<std::string>{"kept"});
+        observeReturningReceiver(r, /*armed=*/false);
+        const std::string text = r.runEnd(&networkChainFrameRunEnd);
+        EXPECT_TRUE(contains(text, "event row(s) armed: kept; the other rows ran the as-built rule")) << text;
+        EXPECT_TRUE(contains(text, "0 declared key(s) (the armed rows cut and declare nothing)")) << text;
+        EXPECT_FALSE(contains(text, "returning row(s) written")) << text;
+        EXPECT_FALSE(contains(text, "cut and declared by the returning row")) << text;
+    }
+    {
+        ChainObserverRun r("ret_end_off", std::vector<std::string>{});
+        observeReturningReceiver(r, /*armed=*/false);
+        const std::string text = r.runEnd(&networkChainFrameRunEnd);
+        EXPECT_TRUE(contains(text, "no event row is armed, so the election ran the legacy rule throughout (observe mode)")) << text;
+        EXPECT_TRUE(contains(text, "0 declared key(s) (all 0 while no event row is armed)")) << text;
+        EXPECT_FALSE(contains(text, "returning row(s) written")) << text;
+        EXPECT_FALSE(contains(text, "under the integer rule")) << text;
+    }
+}
+
+// The election's run-end report prints the returning row's tallies only when the row is armed, says so when an
+// armed row released nothing, and counts the edges left to the slip row.
+TEST(NetworkChainFrame, TheElectionRunEndReportsTheReturningRowOnlyWhenArmed) {
+    {
+        ChainObserverRun r("ret_elect_on", std::vector<std::string>{"returning"});
+        auto& c = r.fx->ctx().counters;
+        c.eq34_ret_released = 7;
+        c.eq34_ret_not_freed = 2;
+        c.eq34_ret_with_state = 5;
+        c.eq34_ret_asbuilt_zero = 1;
+        c.eq34_ret_asbuilt_whole = 3;
+        c.eq34_ret_asbuilt_frac = 1;
+        c.eq34_ret_asbuilt_unknown = 2;
+        c.eq34_ret_asbuilt_pinround = 4;
+        c.eq34_ret_arcs = 41;
+        c.eq34_ret_rpb = 6;
+        c.eq34_ret_pb = 9;
+        c.eq34_ret_declared = 11;
+        const std::string text = r.runEnd(&networkChainDatumRunEnd);
+        EXPECT_TRUE(contains(text, "7 returning edge(s) released, 5 of them with state (a leveling carry, a receiver "
+                                   "phase-bias carry or a satellite phase-bias prior) on the moved side")) << text;
+        EXPECT_TRUE(contains(text, "The releases erased 41 leveling carry(ies) and dropped 6 receiver phase-bias "
+                                   "carry(ies), took 9 satellite phase-bias prior(s) and declared 11 (satellite, "
+                                   "signal) key(s) moved")) << text;
+        EXPECT_TRUE(contains(text, "known zero step on 1 of the released edges, a whole-cycle step on 3, another "
+                                   "nonzero step on 1 and an unknown step on 2, and read its target from the arc's "
+                                   "old-frame carry (pin-to-round) on 4")) << text;
+        EXPECT_TRUE(contains(text, "2 returning edge(s) left to the slip row")) << text;
+        EXPECT_FALSE(contains(text, "released NO edge")) << text;
+        EXPECT_FALSE(contains(text, "eq34 kept row")) << text;
+    }
+    {
+        ChainObserverRun r("ret_elect_none", std::vector<std::string>{"returning"});   // armed, nothing released
+        const std::string text = r.runEnd(&networkChainDatumRunEnd);
+        EXPECT_TRUE(contains(text, "Network (eq34 returning row): ARMED but released NO edge")) << text;
+        EXPECT_TRUE(contains(text, "0 returning edge(s) left to the slip row")) << text;
+    }
+    {
+        ChainObserverRun r("ret_elect_kept", std::vector<std::string>{"kept"});
+        r.fx->ctx().counters.eq34_ret_released = 3;   // never read with the row off
+        const std::string text = r.runEnd(&networkChainDatumRunEnd);
+        EXPECT_FALSE(contains(text, "eq34 returning row")) << text;
     }
 }
 

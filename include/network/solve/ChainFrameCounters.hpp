@@ -40,6 +40,14 @@ struct ChainFrameCounters {
     long long cf_kept_hold_whole{0};               ///< Hold rows whose as-built step was a nonzero whole number of cycles (within 1e-6).
     long long cf_kept_hold_other{0};               ///< Hold rows whose as-built step was nonzero and not whole cycles.
     long long cf_kept_hold_unknown{0};             ///< Hold rows whose as-built step was unknown.
+    // The returning rows written to the event trace.  An edge the returning row released writes a leave row and a
+    // join row; the as-built step is the one the election drafted before the release replaced it.
+    long long cf_ret_pairs{0};                     ///< Released edges written as a leave row and a join row.
+    long long cf_ret_asbuilt_zero{0};              ///< ...whose as-built step was a known zero.
+    long long cf_ret_asbuilt_whole{0};             ///< ...a known nonzero whole number of cycles (within 1e-6).
+    long long cf_ret_asbuilt_other{0};             ///< ...a known nonzero step that is not whole cycles.
+    long long cf_ret_asbuilt_unknown{0};           ///< ...an unknown step.
+    long long cf_cut_releases{0};                  ///< Cut releases of the returning row (one cut_release row each).
     long long cf_nonint_targets{0};                ///< Pins whose target is not an integer of cycles.
     long long cf_soft_pins{0};                     ///< Soft pins (sigma multiplier above 1).
     long long cf_bridges{0};                       ///< Shared-side bridge pins.
@@ -51,10 +59,10 @@ struct ChainFrameCounters {
     long long cf_cert_missing{0};                  ///< Uncertified re-hosts whose new arc has no row in the previous chord table.
     long long cf_conflicts{0};                     ///< Re-hosts whose pair and lattice integers disagree.
     long long cf_wrong_cand{0};                    ///< Certified re-hosts whose integer is not the nearest integer of the band's own float.
-    long long cf_cut_arcs{0};                      ///< Arcs cut-released (0 while no row is armed).
-    long long cf_cut_pb{0};                        ///< Phase-bias priors cut-released (0 while no row is armed).
-    long long cf_cut_rpb{0};                       ///< Receiver phase biases cut-released (0 while no row is armed).
-    long long cf_declared_keys{0};                 ///< Keys declared moved (0 while no row is armed).
+    long long cf_cut_arcs{0};                      ///< Arcs cut-released (0 unless the returning row is armed).
+    long long cf_cut_pb{0};                        ///< Phase-bias priors cut-released (0 unless the returning row is armed).
+    long long cf_cut_rpb{0};                       ///< Receiver phase biases cut-released (0 unless the returning row is armed).
+    long long cf_declared_keys{0};                 ///< Keys declared moved (0 unless the returning row is armed).
     long long cf_root_handovers{0};                ///< Components whose datum receiver changed.
     long long cf_merges{0};                        ///< Components of the last epoch absorbed into another.
     long long cf_splits{0};                        ///< Components split off a component of the last epoch.

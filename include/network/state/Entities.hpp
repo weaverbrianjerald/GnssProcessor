@@ -549,6 +549,13 @@ struct SatSignalState {
     /// @c NetworkCarryState::eq34_sat_root ("sat_signal"; step N4e2, re-placed from the
     /// satellite rows).  Record EQS.
     std::optional<std::string> eq34_sat_root;
+    /// The key was a satellite of its band's eq34 chain tree at an earlier election: set at each
+    /// election for every satellite of the tree of the key's band, never cleared.  The returning
+    /// row of the chain's event table reads it to tell a satellite that rejoins the tree after an
+    /// absence from one it has never seen (a birth, which the row leaves alone).  Written only
+    /// with @c network.phase_datum_eq34_event_rows holding @c returning, so it is false on every
+    /// other run.  ColdStart: after a warm resume the first election's absent vertices are births.
+    bool eq34_tree_seen{false};
 };
 
 /// The station-level dispositions (RF-3b B4, @c network.gross_los_station_tier),
@@ -628,6 +635,14 @@ struct StationSignalState {
     /// With @c anchor_incumbent (the satellite side) it is last epoch's tree; replaced
     /// wholesale per election.  Was @c NetworkCarryState::eq34_rx_parent.  Record EQP.
     std::optional<std::string> eq34_rx_parent;
+    /// The receiver was a vertex of the eq34 chain tree of the signal family "<c>|<sigma>" (the
+    /// key) at an earlier election, as a root or below one: set at each election for every
+    /// receiver of the tree of that family, never cleared.  The returning row of the chain's
+    /// event table reads it to tell a receiver that rejoins the tree after an absence from one it
+    /// has never seen (a birth, which the row leaves alone).  Written only with
+    /// @c network.phase_datum_eq34_event_rows holding @c returning, so it is false on every other
+    /// run.  ColdStart: after a warm resume the first election's absent vertices are births.
+    bool eq34_tree_seen{false};
 };
 
 /// The SD EWL integer fixes of one station: constellation letter -> satellite -> fix.
@@ -1288,6 +1303,37 @@ void dropAll(T& t, M R::*sub, std::optional<V> SR::*f) {
 /// The number of (row, sub-key) cells where nested field @p f is present: @c size().
 template <class T, class R, class M, class SR, class V>
 std::size_t present(const T& t, M R::*sub, std::optional<V> SR::*f) {
+    std::size_t n = 0;
+    for (const auto& kv : t)
+        for (const auto& sk : kv.second.*sub) n += (sk.second.*f) ? 1 : 0;
+    return n;
+}
+
+/// True when the set-membership field @p f at (@p id, @p k) is set: the nested form of @ref has.
+template <class T, class R, class M, class SR>
+bool has(const T& t, const typename T::key_type& id, M R::*sub, const typename M::key_type& k,
+         bool SR::*f) {
+    const auto it = t.find(id);
+    if (it == t.end()) return false;
+    const auto jt = (it->second.*sub).find(k);
+    return jt != (it->second.*sub).end() && jt->second.*f;
+}
+
+/// Sets the set-membership field @p f at (@p id, @p k), creating the row and the cell; true when
+/// it was not set: the nested form of @ref mark.  Serial code only.
+template <class T, class R, class M, class SR>
+bool mark(T& t, const typename T::key_type& id, M R::*sub, const typename M::key_type& k,
+          bool SR::*f) {
+    bool& b = (t[id].*sub)[k].*f;
+    const bool inserted = !b;
+    b = true;
+    return inserted;
+}
+
+/// The number of (row, sub-key) cells where the set-membership field @p f is set: the nested
+/// form of the bool @ref present.
+template <class T, class R, class M, class SR>
+std::size_t present(const T& t, M R::*sub, bool SR::*f) {
     std::size_t n = 0;
     for (const auto& kv : t)
         for (const auto& sk : kv.second.*sub) n += (sk.second.*f) ? 1 : 0;

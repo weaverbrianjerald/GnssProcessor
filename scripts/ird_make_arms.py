@@ -111,6 +111,15 @@ ARMS = {
     "A0fk": (SLIP_SET + SEARCH_LOG + IRD_TRACES + BUNDLE_A0
              + ["network.phase_datum_eq34_rpb_prior_sigma_m=0", 'network.phase_datum_eq34_event_rows=["kept"]'],
              "A0f + the kept row (IRD-4, the causal reading of the flips)"),
+    # The second row in table order: the returning row armed beside the kept row.  Each arm is its parent
+    # (A1k, A0fk) with the event-row list extended and nothing else.
+    "A1kr": (SLIP_SET + SEARCH_LOG + IRD_TRACES + BUNDLE_A0
+             + ["network.phase_datum_eq34_family=pair", 'network.phase_datum_eq34_event_rows=["kept","returning"]'],
+             "A1k + the returning row (IRD-4)"),
+    "A0fkr": (SLIP_SET + SEARCH_LOG + IRD_TRACES + BUNDLE_A0
+              + ["network.phase_datum_eq34_rpb_prior_sigma_m=0",
+                 'network.phase_datum_eq34_event_rows=["kept","returning"]'],
+              "A0fk + the returning row (IRD-4)"),
     # The bisection of the stop (card IRDB section 4): bundle A0 less one group.
     "A0hb": (SLIP_SET + SEARCH_LOG + IRD_TRACES + CHAIN_ON + FLOAT_REPIN_OFF
              + ["network.phase_datum_min_stations=1"],
@@ -365,9 +374,19 @@ def selftest():
         and set(a1) <= set(a1k) and len(a1k) == len(a1) + 1,
         "A1k is A1 plus exactly the kept row knob")
     a0f = compose("A0f", "microscope")
-    chk(set(compose("A0fk", "microscope")) - set(a0f) == {'network.phase_datum_eq34_event_rows=["kept"]'}
-        and set(a0f) <= set(compose("A0fk", "microscope")),
+    a0fk = compose("A0fk", "microscope")
+    chk(set(a0fk) - set(a0f) == {'network.phase_datum_eq34_event_rows=["kept"]'}
+        and set(a0f) <= set(a0fk),
         "A0fk is A0f plus exactly the kept row knob")
+    rows_kr = 'network.phase_datum_eq34_event_rows=["kept","returning"]'
+    a1kr = compose("A1kr", "r3c")
+    chk(set(a1kr) - set(a1k) == {rows_kr} and set(a1k) - set(a1kr) == {'network.phase_datum_eq34_event_rows=["kept"]'}
+        and len(a1kr) == len(a1k),
+        "A1kr is A1k with the event-row list extended by the returning row and nothing else")
+    a0fkr = compose("A0fkr", "microscope")
+    chk(set(a0fkr) - set(a0fk) == {rows_kr} and set(a0fk) - set(a0fkr) == {'network.phase_datum_eq34_event_rows=["kept"]'}
+        and len(a0fkr) == len(a0fk),
+        "A0fkr is A0fk with the event-row list extended by the returning row and nothing else")
     import rapid_arm
     cfg = {}
     for kv in a1k:
@@ -375,6 +394,12 @@ def selftest():
     chk(cfg["network"]["phase_datum_eq34_event_rows"] == ["kept"]
         and cfg["network"]["phase_datum_eq34_family"] == "pair",
         "the kept row lands in the arm's JSON as an array, not a string")
+    cfg = {}
+    for kv in a1kr:
+        rapid_arm.set_key(cfg, *kv.split("=", 1))
+    chk(cfg["network"]["phase_datum_eq34_event_rows"] == ["kept", "returning"]
+        and cfg["network"]["phase_datum_eq34_family"] == "pair",
+        "the two rows land in the arm's JSON as one array, in table order")
     o = compose("A0", "r2", knob="network.phase_datum_min_stations=2")
     chk(o.count("network.phase_datum_min_stations=2") == 1
         and "network.phase_datum_min_stations=1" not in o, "the knob under test overrides the arm")

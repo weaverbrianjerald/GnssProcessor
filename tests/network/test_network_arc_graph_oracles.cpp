@@ -4492,7 +4492,10 @@ struct KeptBed {
     ChainWorld                         world;
     std::shared_ptr<spdlog::logger>    log = std::make_shared<spdlog::logger>("ird4_kept_bed", spdlog::sinks_init_list{});
 
-    ChainRun elect(const ChainEpoch& e) { return runLiveChainElection(*ctx, *cfg, world, e, log); }
+    /// One election; @p freed is the epoch's free-epoch latch, (station, ambiguity key).
+    ChainRun elect(const ChainEpoch& e, const std::set<std::pair<int, std::string>>& freed = {}) {
+        return runLiveChainElection(*ctx, *cfg, world, e, log, freed);
+    }
 };
 
 KeptBed makeKeptBed(LogManager& lm, bool armed, int tag, const std::vector<std::string>& names) {
@@ -4712,6 +4715,853 @@ TEST(NetworkArcGraphOracle, KeptRowHasNoPruneFallbackToZero) {
         }
         EXPECT_EQ(bed.ctx->counters.eq34_mismatch_epochs, 0) << what;
     }
+}
+
+
+// ---------------------------------------------------------------------------------------------
+// The returning row of the chain's event table (network.phase_datum_eq34_event_rows "returning").
+// A tree edge whose child vertex rejoins the tree after an absence (absent from the last
+// election's tree, a vertex of an earlier one, its arc not in the free-epoch latch) takes the cut
+// release: the first-sighting target with an unknown step, every carry that touches the vertex and
+// its subtree erased, the keys of its subtree declared moved.  Hand-built cases for each condition
+// and each effect, the row off against the frozen election, and random lineages where the rule and
+// the moved sides are restated apart from the production code.
+// ---------------------------------------------------------------------------------------------
+
+using ArcList = std::vector<std::pair<int, std::string>>;
+
+/// The path A - G01 - B - G02 - C: the arcs of three stations and two satellites.
+const ArcList kPathArcs{{0, "G01"}, {1, "G01"}, {1, "G02"}, {2, "G02"}};
+
+ArcList arcsPlus(ArcList a, const ArcList& more) {
+    a.insert(a.end(), more.begin(), more.end());
+    return a;
+}
+
+/// A bed (as makeKeptBed) with the given rows of network.phase_datum_eq34_event_rows armed, on the
+/// float vehicle: the chain, the carry shift on, the first station the datum receiver.
+KeptBed makeRowsBed(LogManager& lm, const std::vector<std::string>& rows, int tag, const std::vector<std::string>& names) {
+    ChainKnobs kn;
+    kn.trace_chain   = true;
+    kn.carry_shift   = true;
+    kn.preferred     = names.front();
+    kn.float_vehicle = true;
+    kn.rows          = rows;
+    KeptBed bed;
+    bed.world.names = names;
+    bed.cfg = loadChainConfig(lm, kn, tag);
+    if (bed.cfg) {
+        bed.ctx = std::make_unique<NetworkRunContext>(*bed.cfg, bed.cfg->getNetworkConfig());
+        bed.ctx->entities.names.assign(names);
+    }
+    return bed;
+}
+
+std::string gpsRpbKey() { return StateKeys::makeReceiverPhaseBiasKey(systemName(System::GPS), "L1C"); }
+
+void putRpbCarry(NetworkRunContext& ctx, int sta) {
+    LocalCarry lc{};
+    lc.value_abs = 0.07;
+    lc.var       = 1e-4;
+    net::put(ctx.entities.stations, StationId{sta}, &net::StationState::signals, gpsRpbKey(),
+             &net::StationSignalState::rpb) = lc;
+}
+
+bool hasRpbCarry(const NetworkRunContext& ctx, int sta) {
+    return net::get(ctx.entities.stations, StationId{sta}, &net::StationState::signals, gpsRpbKey(),
+                    &net::StationSignalState::rpb) != nullptr;
+}
+
+bool hasCarry(const NetworkRunContext& ctx, int sta, const std::string& sat, const std::string& sig = "L1C") {
+    return net::getArc(ctx.entities.arcs, std::make_tuple(sta, sat, sig), &net::ArcState::amb) != nullptr;
+}
+
+void putPbPrior(NetworkRunContext& ctx, const std::string& sat, const std::string& sig = "L1C") {
+    CarryPrior cp{};
+    cp.kind   = SharedParamKind::PhaseBias;
+    cp.sat    = sat;
+    cp.signal = sig;
+    cp.value  = 0.1;
+    cp.var    = 1e-2;
+    ctx.carry.prev_carry.push_back(cp);
+}
+
+bool seenSat(const NetworkRunContext& ctx, const std::string& amb) {
+    const std::optional<SatSignalId> id = net::satSignalKey(amb);
+    return id && net::has(ctx.entities.sat_signals, *id, &net::SatSignalState::eq34_tree_seen);
+}
+
+bool seenRx(const NetworkRunContext& ctx, int sta, const std::string& group = "G|L1C") {
+    return net::has(ctx.entities.stations, StationId{sta}, &net::StationState::signals, group,
+                    &net::StationSignalState::eq34_tree_seen);
+}
+
+/// The returning row's election counters, in the order of the struct.
+std::array<long long, 12> retCounters(const NetworkRunContext& ctx) {
+    const auto& c = ctx.counters;
+    return {c.eq34_ret_released,     c.eq34_ret_not_freed,       c.eq34_ret_with_state,
+            c.eq34_ret_asbuilt_zero, c.eq34_ret_asbuilt_whole,   c.eq34_ret_asbuilt_frac,
+            c.eq34_ret_asbuilt_unknown, c.eq34_ret_asbuilt_pinround, c.eq34_ret_arcs,
+            c.eq34_ret_rpb,          c.eq34_ret_pb,              c.eq34_ret_declared};
+}
+
+enum RetCounter : std::size_t {
+    kRetReleased, kRetNotFreed, kRetWithState, kRetAsZero, kRetAsWhole, kRetAsFrac, kRetAsUnknown,
+    kRetAsPinRound, kRetArcs, kRetRpb, kRetPb, kRetDeclared
+};
+
+/// Nothing of the returning row has happened: no tally counted and no vertex remembered.
+void expectNoReturningTrace(const NetworkRunContext& ctx, const std::string& what) {
+    for (long long n : retCounters(ctx)) EXPECT_EQ(n, 0) << what;
+    EXPECT_EQ(net::present(ctx.entities.sat_signals, &net::SatSignalState::eq34_tree_seen), 0u) << what;
+    EXPECT_EQ(net::present(ctx.entities.stations, &net::StationState::signals,
+                           &net::StationSignalState::eq34_tree_seen), 0u) << what;
+}
+
+// A satellite that left the tree and returns: its edge is released (an unknown step, the first-sighting
+// target 0), its key is re-referenced and declared moved, every carry of the key at every station is
+// erased and its carried phase-bias prior is counted.  What does not touch the satellite is left alone.
+TEST(NetworkArcGraphOracle, ReturningRowReleasesAReturningSatelliteWithTheCarriesOfItsKeyAndItsPhaseBiasPrior) {
+    LogManager lm;
+    const std::vector<std::string> names{"AAAA", "BBBB", "CCCC"};
+    const double lam = nominalWavelengthOfDigitM(System::GPS, '1');
+    ASSERT_GT(lam, 0.0);
+    for (const bool armed : {false, true}) {
+        const std::string what = armed ? "returning row on" : "returning row off";
+        KeptBed bed = makeRowsBed(lm, armed ? std::vector<std::string>{"returning"} : std::vector<std::string>{},
+                                  8300 + (armed ? 1 : 0), names);
+        ASSERT_TRUE(bed.cfg && bed.ctx) << what;
+        ASSERT_EQ(bed.ctx->knobs.eq34_row_returning, armed) << what;
+        // G03 is born under C at epoch 1, leaves at epoch 2 and returns at epoch 3.
+        bed.elect(arcsChainEpoch(3, arcsPlus(kPathArcs, {{2, "G03"}})));
+        const ChainRun away = bed.elect(arcsChainEpoch(3, kPathArcs));
+        EXPECT_TRUE(away.events.phase_datum.eq34_reref.empty()) << what;
+        EXPECT_EQ(seenSat(*bed.ctx, "G03_L1C"), armed) << what;   // remembered once it was in a tree
+        // What the history left: carries of G03 at three stations (two of them on arcs that are gone), carries of
+        // two arcs that touch neither G03 nor a tree edge, a phase-bias prior of G03 and one of G02, and a
+        // receiver phase-bias carry at C.
+        for (int sta : {0, 1, 2}) putStaleCarry(*bed.ctx, sta, "G03", "L1C", (sta + 1) * 1.7 * lam);
+        putStaleCarry(*bed.ctx, 2, "G01", "L1C", 3.4 * lam);
+        putStaleCarry(*bed.ctx, 0, "G02", "L1C", -2.2 * lam);
+        putPbPrior(*bed.ctx, "G03");
+        putPbPrior(*bed.ctx, "G02");
+        putRpbCarry(*bed.ctx, 2);
+        const ChainRun r = bed.elect(arcsChainEpoch(3, arcsPlus(kPathArcs, {{2, "G03"}})));
+        ASSERT_TRUE(r.events.phase_datum.chain) << what;
+        const ChainEpochObs& obs = *r.events.phase_datum.chain;
+        ASSERT_EQ(obs.edges.size(), 5u) << what;
+        const ChainEdgeObs* g3 = keptEdge(obs, 2, "G03");
+        ASSERT_TRUE(g3) << what;
+        EXPECT_TRUE(g3->sat_is_child) << what;
+        EXPECT_FALSE(g3->had_parent || g3->incumbent_same || g3->incumbent_flipped) << what;
+        EXPECT_EQ(g3->cause, ChainLegacyCause::FirstSighting) << what;
+        EXPECT_TRUE(g3->legacy_known) << what;           // the as-built rule: a known zero step, marked known
+        EXPECT_EQ(g3->legacy_pinmove_m, 0.0) << what;
+        EXPECT_EQ(g3->legacy_target_m, 0.0) << what;
+        if (!armed) {
+            EXPECT_TRUE(g3->known) << what;
+            EXPECT_FALSE(g3->row_armed) << what;
+            EXPECT_TRUE(r.events.phase_datum.eq34_reref.empty()) << what;
+            for (int sta : {0, 1, 2}) EXPECT_TRUE(hasCarry(*bed.ctx, sta, "G03")) << what << " " << sta;
+            EXPECT_TRUE(obs.releases.empty()) << what;
+            expectNoReturningTrace(*bed.ctx, what);
+            continue;
+        }
+        // The edge: released, with the draft kept as the as-built facts.
+        EXPECT_TRUE(g3->row_armed) << what;
+        EXPECT_FALSE(g3->known) << what;
+        EXPECT_EQ(g3->target_m, 0.0) << what;
+        EXPECT_EQ(g3->pinmove_m, 0.0) << what;
+        EXPECT_TRUE(std::isnan(g3->step_m)) << what;
+        EXPECT_EQ(r.stations[2].pinned_amb_targets.at("G03_L1C"), 0.0) << what;
+        // The satellite is re-referenced, and every carry of its key is erased at every station.
+        EXPECT_EQ(r.events.phase_datum.eq34_reref, (std::set<std::pair<std::string, std::string>>{{"G03", "L1C"}})) << what;
+        for (int sta : {0, 1, 2}) EXPECT_FALSE(hasCarry(*bed.ctx, sta, "G03")) << what << " " << sta;
+        EXPECT_TRUE(hasCarry(*bed.ctx, 2, "G01")) << what;   // touches neither the satellite nor a receiver of the moved side
+        EXPECT_TRUE(hasCarry(*bed.ctx, 0, "G02")) << what;
+        EXPECT_TRUE(hasRpbCarry(*bed.ctx, 2)) << what;       // C is the satellite's parent, not part of the moved side
+        // The counters and the record of the release.
+        const auto c = retCounters(*bed.ctx);
+        EXPECT_EQ(c[kRetReleased], 1) << what;
+        EXPECT_EQ(c[kRetNotFreed], 0) << what;
+        EXPECT_EQ(c[kRetWithState], 1) << what;
+        EXPECT_EQ(c[kRetAsZero], 1) << what;
+        EXPECT_EQ(c[kRetAsWhole] + c[kRetAsFrac] + c[kRetAsUnknown] + c[kRetAsPinRound], 0) << what;
+        EXPECT_EQ(c[kRetArcs], 3) << what;
+        EXPECT_EQ(c[kRetRpb], 0) << what;
+        EXPECT_EQ(c[kRetPb], 1) << what;
+        EXPECT_EQ(c[kRetDeclared], 1) << what;
+        ASSERT_EQ(obs.releases.size(), 1u) << what;
+        const ChainReleaseObs& rel = obs.releases[0];
+        EXPECT_EQ(rel.group, "G|L1C") << what;
+        EXPECT_EQ(rel.signal, "L1C") << what;
+        EXPECT_EQ(rel.station, 2) << what;
+        EXPECT_EQ(rel.sat, "G03") << what;
+        EXPECT_TRUE(rel.sat_is_child) << what;
+        EXPECT_EQ(rel.vertex, "S:G03") << what;
+        EXPECT_EQ(rel.sats, std::vector<std::string>{"G03"}) << what;
+        EXPECT_TRUE(rel.stations.empty()) << what;
+        EXPECT_EQ(rel.arcs, 3) << what;
+        EXPECT_EQ(rel.rpb, 0) << what;
+        EXPECT_EQ(rel.pb, 1) << what;
+        // The prior is left to the re-reference's marginalization: the census only counts it.
+        EXPECT_EQ(bed.ctx->carry.prev_carry.size(), 2u) << what;
+        // Every vertex of the tree is remembered as seen.
+        for (const char* amb : {"G01_L1C", "G02_L1C", "G03_L1C"}) EXPECT_TRUE(seenSat(*bed.ctx, amb)) << what << " " << amb;
+        for (int sta : {0, 1, 2}) EXPECT_TRUE(seenRx(*bed.ctx, sta)) << what << " " << sta;
+        EXPECT_EQ(bed.ctx->counters.eq34_mismatch_epochs, 0) << what;
+    }
+}
+
+// A receiver that left the tree and returns onto an arc that still holds an old-frame carry: the as-built
+// rule would have read the target from that carry (pin-to-round) with a known whole-cycle step; the release
+// takes the first-sighting target 0 instead, drops the receiver's phase-bias carry and erases every carry of
+// the receiver on the signal, present or absent satellites alike, and none on another signal.
+TEST(NetworkArcGraphOracle, ReturningRowReleasesAReturningReceiverInPlaceOfTheCarryRoundAndErasesItsCarries) {
+    LogManager lm;
+    const std::vector<std::string> names{"AAAA", "BBBB", "CCCC", "DDDD"};
+    const double lam = nominalWavelengthOfDigitM(System::GPS, '1');
+    ASSERT_GT(lam, 0.0);
+    for (const bool armed : {false, true}) {
+        const std::string what = armed ? "returning row on" : "returning row off";
+        KeptBed bed = makeRowsBed(lm, armed ? std::vector<std::string>{"returning"} : std::vector<std::string>{},
+                                  8310 + (armed ? 1 : 0), names);
+        ASSERT_TRUE(bed.cfg && bed.ctx) << what;
+        // D hangs under G02 at epoch 1, is away at epoch 2 and returns at epoch 3.
+        bed.elect(arcsChainEpoch(4, arcsPlus(kPathArcs, {{3, "G02"}})));
+        bed.elect(arcsChainEpoch(4, kPathArcs));
+        ASSERT_EQ(seenRx(*bed.ctx, 3), armed) << what;
+        // The returning arc holds an old-frame carry; D holds two more on the signal (a satellite it no longer
+        // tracks, and one it never did) and one on another signal; B and D hold a receiver phase bias.
+        putStaleCarry(*bed.ctx, 3, "G02", "L1C", 7.3 * lam);
+        putStaleCarry(*bed.ctx, 3, "G07", "L1C", -1.4 * lam);
+        putStaleCarry(*bed.ctx, 3, "G01", "L1C", 2.6 * lam);
+        putStaleCarry(*bed.ctx, 3, "G02", "L2W", 1.1 * lam);
+        putStaleCarry(*bed.ctx, 0, "G02", "L1C", -2.2 * lam);   // touches neither D nor a satellite of the moved side
+        putStaleCarry(*bed.ctx, 2, "G01", "L1C", 3.4 * lam);
+        putRpbCarry(*bed.ctx, 3);
+        putRpbCarry(*bed.ctx, 1);
+        const ChainRun r = bed.elect(arcsChainEpoch(4, arcsPlus(kPathArcs, {{3, "G02"}})));
+        ASSERT_TRUE(r.events.phase_datum.chain) << what;
+        const ChainEpochObs& obs = *r.events.phase_datum.chain;
+        const ChainEdgeObs* d2 = keptEdge(obs, 3, "G02");
+        ASSERT_TRUE(d2) << what;
+        EXPECT_FALSE(d2->sat_is_child) << what;
+        EXPECT_FALSE(d2->had_parent || d2->incumbent_same || d2->incumbent_flipped) << what;
+        // The as-built draft reads the old-frame carry: its integer is the target, and the step is known.
+        EXPECT_NEAR(d2->carry_m, 7.3 * lam, 1e-12) << what;
+        EXPECT_NEAR(d2->legacy_target_m, 7.0 * lam, 1e-12) << what;
+        EXPECT_NEAR(d2->legacy_pinmove_m, 7.0 * lam, 1e-12) << what;
+        EXPECT_TRUE(d2->legacy_known) << what;
+        if (!armed) {
+            EXPECT_TRUE(d2->known) << what;
+            EXPECT_FALSE(d2->row_armed) << what;
+            EXPECT_NEAR(d2->target_m, 7.0 * lam, 1e-12) << what;
+            EXPECT_TRUE(hasCarry(*bed.ctx, 3, "G02") && hasCarry(*bed.ctx, 3, "G07") && hasCarry(*bed.ctx, 3, "G01")) << what;
+            EXPECT_TRUE(hasRpbCarry(*bed.ctx, 3)) << what;
+            EXPECT_TRUE(obs.releases.empty()) << what;
+            expectNoReturningTrace(*bed.ctx, what);
+            continue;
+        }
+        // Released: the first-sighting target, not lambda * round(carry); an unknown step.
+        EXPECT_TRUE(d2->row_armed) << what;
+        EXPECT_FALSE(d2->known) << what;
+        EXPECT_EQ(d2->target_m, 0.0) << what;
+        EXPECT_EQ(d2->pinmove_m, 0.0) << what;
+        EXPECT_EQ(r.stations[3].pinned_amb_targets.at("G02_L1C"), 0.0) << what;
+        EXPECT_NEAR(d2->carry_m, 7.3 * lam, 1e-12) << what;   // the draft's fact is still the draft's
+        // The receiver's phase-bias carry is dropped, every one of its carries on the signal is erased, the
+        // other signal's survives; what touches neither the receiver nor a satellite of the moved side stays.
+        EXPECT_FALSE(hasRpbCarry(*bed.ctx, 3)) << what;
+        EXPECT_FALSE(hasCarry(*bed.ctx, 3, "G02") || hasCarry(*bed.ctx, 3, "G07") || hasCarry(*bed.ctx, 3, "G01")) << what;
+        EXPECT_TRUE(hasCarry(*bed.ctx, 3, "G02", "L2W")) << what;
+        EXPECT_TRUE(hasCarry(*bed.ctx, 0, "G02") && hasCarry(*bed.ctx, 2, "G01")) << what;
+        EXPECT_TRUE(hasRpbCarry(*bed.ctx, 1)) << what;
+        EXPECT_TRUE(r.events.phase_datum.eq34_reref.empty()) << what;   // no satellite is part of the moved side
+        const auto c = retCounters(*bed.ctx);
+        EXPECT_EQ(c[kRetReleased], 1) << what;
+        EXPECT_EQ(c[kRetAsWhole], 1) << what;
+        EXPECT_EQ(c[kRetAsPinRound], 1) << what;
+        EXPECT_EQ(c[kRetAsZero] + c[kRetAsFrac] + c[kRetAsUnknown], 0) << what;
+        EXPECT_EQ(c[kRetArcs], 3) << what;
+        EXPECT_EQ(c[kRetRpb], 1) << what;
+        EXPECT_EQ(c[kRetPb], 0) << what;
+        EXPECT_EQ(c[kRetDeclared], 0) << what;
+        EXPECT_EQ(c[kRetWithState], 1) << what;
+        ASSERT_EQ(obs.releases.size(), 1u) << what;
+        const ChainReleaseObs& rel = obs.releases[0];
+        EXPECT_EQ(rel.vertex, "R:3") << what;
+        EXPECT_EQ(rel.sat, "G02") << what;
+        EXPECT_EQ(rel.station, 3) << what;
+        EXPECT_FALSE(rel.sat_is_child) << what;
+        EXPECT_TRUE(rel.sats.empty()) << what;
+        EXPECT_EQ(rel.stations, std::vector<int>{3}) << what;
+        EXPECT_EQ(rel.arcs, 3) << what;
+        EXPECT_EQ(rel.rpb, 1) << what;
+        EXPECT_EQ(bed.ctx->counters.eq34_mismatch_epochs, 0) << what;
+    }
+}
+
+// A returning vertex with a subtree: the receivers D, E and F and the satellites G08 and G09 hang below the
+// returning receiver D this epoch.  The moved side is D and all of them: every receiver of it loses its carries
+// on the signal and its phase-bias carry, every satellite of it is re-referenced, loses its carries at every
+// station (A and B included) and is declared; what is outside the side is untouched.
+TEST(NetworkArcGraphOracle, ReturningRowReleasesTheWholeSubtreeOfAReturningVertex) {
+    LogManager lm;
+    const std::vector<std::string> names{"AAAA", "BBBB", "CCCC", "DDDD", "EEEE", "FFFF"};
+    const double lam = nominalWavelengthOfDigitM(System::GPS, '1');
+    ASSERT_GT(lam, 0.0);
+    // D (station 3) sees G02 and G08, E sees G08 and G09, F sees G09: the chain G02 - D - G08 - E - G09 - F.
+    const ArcList below{{3, "G02"}, {3, "G08"}, {4, "G08"}, {4, "G09"}, {5, "G09"}};
+    for (const bool armed : {false, true}) {
+        const std::string what = armed ? "returning row on" : "returning row off";
+        KeptBed bed = makeRowsBed(lm, armed ? std::vector<std::string>{"returning"} : std::vector<std::string>{},
+                                  8320 + (armed ? 1 : 0), names);
+        ASSERT_TRUE(bed.cfg && bed.ctx) << what;
+        bed.elect(arcsChainEpoch(6, arcsPlus(kPathArcs, {{3, "G02"}})));   // D is in the tree ...
+        bed.elect(arcsChainEpoch(6, kPathArcs));                           // ... leaves ...
+        // What the history left: carries on arcs of the side (D's returning arc holds an old-frame one) and
+        // outside it, phase-bias carries and priors.
+        putStaleCarry(*bed.ctx, 3, "G02", "L1C", 4.4 * lam);   // the released arc
+        putStaleCarry(*bed.ctx, 3, "G08", "L1C", 1.3 * lam);   // inside the side
+        putStaleCarry(*bed.ctx, 3, "G01", "L1C", 2.6 * lam);   // a receiver of the side, a satellite outside it
+        putStaleCarry(*bed.ctx, 4, "G01", "L1C", -3.1 * lam);
+        putStaleCarry(*bed.ctx, 5, "G02", "L1C", 0.8 * lam);
+        putStaleCarry(*bed.ctx, 0, "G08", "L1C", 5.5 * lam);   // a satellite of the side, a receiver outside it
+        putStaleCarry(*bed.ctx, 1, "G09", "L1C", -4.5 * lam);
+        putStaleCarry(*bed.ctx, 0, "G02", "L1C", -2.2 * lam);  // outside the side altogether
+        putStaleCarry(*bed.ctx, 2, "G01", "L1C", 3.4 * lam);
+        putStaleCarry(*bed.ctx, 0, "G07", "L1C", 1.9 * lam);
+        for (int sta : {0, 1, 3, 4, 5}) putRpbCarry(*bed.ctx, sta);
+        for (const char* sat : {"G08", "G09", "G02"}) putPbPrior(*bed.ctx, sat);
+        const ChainRun r = bed.elect(arcsChainEpoch(6, arcsPlus(kPathArcs, below)));   // ... and returns with the rest
+        ASSERT_TRUE(r.events.phase_datum.chain) << what;
+        const ChainEpochObs& obs = *r.events.phase_datum.chain;
+        ASSERT_EQ(obs.edges.size(), 9u) << what;
+        const ChainEdgeObs* back = keptEdge(obs, 3, "G02");
+        ASSERT_TRUE(back) << what;
+        EXPECT_FALSE(back->sat_is_child) << what;
+        if (!armed) {
+            EXPECT_TRUE(r.events.phase_datum.eq34_reref.empty()) << what;
+            EXPECT_TRUE(obs.releases.empty()) << what;
+            EXPECT_TRUE(hasCarry(*bed.ctx, 3, "G01") && hasCarry(*bed.ctx, 0, "G08") && hasCarry(*bed.ctx, 1, "G09")) << what;
+            expectNoReturningTrace(*bed.ctx, what);
+            continue;
+        }
+        EXPECT_TRUE(back->row_armed && !back->known) << what;
+        EXPECT_EQ(back->target_m, 0.0) << what;                // not lambda * round(4.4)
+        EXPECT_NEAR(back->legacy_target_m, 4.0 * lam, 1e-12) << what;
+        // The side below the released edge: its own edges are the draft's, but their step is unknown.
+        for (const auto& [sta, sat] : std::vector<std::pair<int, std::string>>{{3, "G08"}, {4, "G08"}, {4, "G09"}, {5, "G09"}}) {
+            const ChainEdgeObs* below_edge = keptEdge(obs, sta, sat);
+            ASSERT_TRUE(below_edge) << what << " " << sta << " " << sat;
+            EXPECT_FALSE(below_edge->row_armed) << what << " " << sta << " " << sat;   // a birth: no row decided it
+            EXPECT_TRUE(std::isnan(below_edge->step_m)) << what << " " << sta << " " << sat;
+        }
+        // The path above is untouched: known steps, no row.
+        for (const auto& [sta, sat] : std::vector<std::pair<int, std::string>>{{0, "G01"}, {1, "G01"}, {1, "G02"}, {2, "G02"}}) {
+            const ChainEdgeObs* up = keptEdge(obs, sta, sat);
+            ASSERT_TRUE(up) << what << " " << sta << " " << sat;
+            EXPECT_FALSE(up->row_armed) << what << " " << sta << " " << sat;
+            EXPECT_EQ(up->step_m, 0.0) << what << " " << sta << " " << sat;
+        }
+        EXPECT_EQ(r.events.phase_datum.eq34_reref,
+                  (std::set<std::pair<std::string, std::string>>{{"G08", "L1C"}, {"G09", "L1C"}})) << what;
+        // Every carry that touches the side is erased; the rest stay.
+        for (const auto& [sta, sat] : std::vector<std::pair<int, std::string>>{
+                 {3, "G02"}, {3, "G08"}, {3, "G01"}, {4, "G01"}, {5, "G02"}, {0, "G08"}, {1, "G09"}})
+            EXPECT_FALSE(hasCarry(*bed.ctx, sta, sat)) << what << " " << sta << " " << sat;
+        for (const auto& [sta, sat] : std::vector<std::pair<int, std::string>>{{0, "G02"}, {2, "G01"}, {0, "G07"}})
+            EXPECT_TRUE(hasCarry(*bed.ctx, sta, sat)) << what << " " << sta << " " << sat;
+        for (int sta : {3, 4, 5}) EXPECT_FALSE(hasRpbCarry(*bed.ctx, sta)) << what << " " << sta;
+        for (int sta : {0, 1}) EXPECT_TRUE(hasRpbCarry(*bed.ctx, sta)) << what << " " << sta;
+        const auto c = retCounters(*bed.ctx);
+        EXPECT_EQ(c[kRetReleased], 1) << what;                 // the births below it are no returning edges
+        EXPECT_EQ(c[kRetNotFreed], 0) << what;
+        EXPECT_EQ(c[kRetWithState], 1) << what;
+        EXPECT_EQ(c[kRetArcs], 7) << what;                     // 3 by satellite (G08, G09), 4 by receiver
+        EXPECT_EQ(c[kRetRpb], 3) << what;
+        EXPECT_EQ(c[kRetPb], 2) << what;
+        EXPECT_EQ(c[kRetDeclared], 2) << what;
+        ASSERT_EQ(obs.releases.size(), 1u) << what;
+        const ChainReleaseObs& rel = obs.releases[0];
+        EXPECT_EQ(rel.vertex, "R:3") << what;
+        EXPECT_EQ(rel.sat, "G02") << what;
+        EXPECT_EQ(rel.sats, (std::vector<std::string>{"G08", "G09"})) << what;
+        EXPECT_EQ(rel.stations, (std::vector<int>{3, 4, 5})) << what;
+        EXPECT_EQ(rel.arcs, 7) << what;
+        EXPECT_EQ(rel.rpb, 3) << what;
+        EXPECT_EQ(rel.pb, 2) << what;
+        // The births in the side are remembered too.
+        for (const char* amb : {"G08_L1C", "G09_L1C"}) EXPECT_TRUE(seenSat(*bed.ctx, amb)) << what << " " << amb;
+        for (int sta : {3, 4, 5}) EXPECT_TRUE(seenRx(*bed.ctx, sta)) << what << " " << sta;
+        EXPECT_EQ(bed.ctx->counters.eq34_mismatch_epochs, 0) << what;
+    }
+}
+
+// A vertex never seen in a tree is a birth: the row leaves it as built (a known zero step), whether or not
+// the row is on, and remembers it for a later return.
+TEST(NetworkArcGraphOracle, ReturningRowLeavesAVertexNeverSeenBeforeAsBuilt) {
+    LogManager lm;
+    const std::vector<std::string> names{"AAAA", "BBBB", "CCCC"};
+    const double lam = nominalWavelengthOfDigitM(System::GPS, '1');
+    ASSERT_GT(lam, 0.0);
+    for (const bool armed : {false, true}) {
+        const std::string what = armed ? "returning row on" : "returning row off";
+        KeptBed bed = makeRowsBed(lm, armed ? std::vector<std::string>{"returning"} : std::vector<std::string>{},
+                                  8330 + (armed ? 1 : 0), names);
+        ASSERT_TRUE(bed.cfg && bed.ctx) << what;
+        bed.elect(arcsChainEpoch(3, kPathArcs));
+        // A carry on a satellite the tree has never held: the birth does not take the release.
+        putStaleCarry(*bed.ctx, 0, "G05", "L1C", 2.5 * lam);
+        putPbPrior(*bed.ctx, "G05");
+        ASSERT_FALSE(seenSat(*bed.ctx, "G05_L1C")) << what;
+        const ChainRun r = bed.elect(arcsChainEpoch(3, arcsPlus(kPathArcs, {{2, "G05"}})));
+        ASSERT_TRUE(r.events.phase_datum.chain) << what;
+        const ChainEdgeObs* born = keptEdge(*r.events.phase_datum.chain, 2, "G05");
+        ASSERT_TRUE(born) << what;
+        EXPECT_FALSE(born->row_armed) << what;
+        EXPECT_TRUE(born->known) << what;
+        EXPECT_EQ(born->pinmove_m, 0.0) << what;
+        EXPECT_EQ(born->target_m, 0.0) << what;
+        EXPECT_EQ(born->step_m, 0.0) << what;
+        EXPECT_TRUE(r.events.phase_datum.eq34_reref.empty()) << what;
+        EXPECT_TRUE(hasCarry(*bed.ctx, 0, "G05")) << what;
+        EXPECT_TRUE(r.events.phase_datum.chain->releases.empty()) << what;
+        EXPECT_EQ(seenSat(*bed.ctx, "G05_L1C"), armed) << what;   // remembered from now on
+        for (long long n : retCounters(*bed.ctx)) EXPECT_EQ(n, 0) << what;
+    }
+}
+
+// A returning edge whose arc is in the epoch's free-epoch latch is the slip row's case: the returning row
+// leaves it as built and counts it.
+TEST(NetworkArcGraphOracle, ReturningRowLeavesAReturningEdgeInTheFreeEpochLatchToTheSlipRow) {
+    LogManager lm;
+    const std::vector<std::string> names{"AAAA", "BBBB", "CCCC"};
+    const double lam = nominalWavelengthOfDigitM(System::GPS, '1');
+    ASSERT_GT(lam, 0.0);
+    KeptBed bed = makeRowsBed(lm, {"returning"}, 8340, names);
+    ASSERT_TRUE(bed.cfg && bed.ctx);
+    bed.elect(arcsChainEpoch(3, arcsPlus(kPathArcs, {{2, "G03"}})));
+    bed.elect(arcsChainEpoch(3, kPathArcs));
+    putStaleCarry(*bed.ctx, 0, "G03", "L1C", 1.7 * lam);
+    putPbPrior(*bed.ctx, "G03");
+    const std::set<std::pair<int, std::string>> freed{{2, StateKeys::makeAmbiguityKey("G03", "L1C")}};
+    const ChainRun r = bed.elect(arcsChainEpoch(3, arcsPlus(kPathArcs, {{2, "G03"}})), freed);
+    ASSERT_TRUE(r.events.phase_datum.chain);
+    const ChainEdgeObs* g3 = keptEdge(*r.events.phase_datum.chain, 2, "G03");
+    ASSERT_TRUE(g3);
+    EXPECT_FALSE(g3->row_armed);
+    EXPECT_TRUE(g3->known);
+    EXPECT_EQ(g3->pinmove_m, 0.0);
+    EXPECT_TRUE(r.events.phase_datum.eq34_reref.empty());
+    EXPECT_TRUE(hasCarry(*bed.ctx, 0, "G03"));
+    EXPECT_TRUE(r.events.phase_datum.chain->releases.empty());
+    const auto c = retCounters(*bed.ctx);
+    EXPECT_EQ(c[kRetNotFreed], 1);
+    EXPECT_EQ(c[kRetReleased], 0);
+    EXPECT_EQ(c[kRetArcs] + c[kRetPb] + c[kRetDeclared] + c[kRetWithState], 0);
+    // The same return without the latch is released (the case above): the latch is the only difference.
+    KeptBed twin = makeRowsBed(lm, {"returning"}, 8341, names);
+    ASSERT_TRUE(twin.cfg && twin.ctx);
+    twin.elect(arcsChainEpoch(3, arcsPlus(kPathArcs, {{2, "G03"}})));
+    twin.elect(arcsChainEpoch(3, kPathArcs));
+    const ChainRun t = twin.elect(arcsChainEpoch(3, arcsPlus(kPathArcs, {{2, "G03"}})));
+    EXPECT_EQ(retCounters(*twin.ctx)[kRetReleased], 1);
+    EXPECT_EQ(retCounters(*twin.ctx)[kRetNotFreed], 0);
+    EXPECT_TRUE(t.events.phase_datum.chain->edges.size() == 5u);
+}
+
+// A receiver that was the datum receiver of a component at the last election and is a child of another
+// tree now (the components merged) is no returning vertex, although it has no incumbent parent and has been
+// in a tree before: that is a change of root, not a return.
+TEST(NetworkArcGraphOracle, ReturningRowLeavesAFormerRootThatIsAChildNowToTheRootRow) {
+    LogManager lm;
+    const std::vector<std::string> names{"AAAA", "BBBB", "CCCC", "DDDD"};
+    // Two components: A - G01 - B - G02, and C - G05, G06 - D (rooted at C, the first station by name).
+    const ArcList apart{{0, "G01"}, {1, "G01"}, {1, "G02"}, {2, "G05"}, {2, "G06"}, {3, "G06"}};
+    for (const bool armed : {false, true}) {
+        const std::string what = armed ? "returning row on" : "returning row off";
+        KeptBed bed = makeRowsBed(lm, armed ? std::vector<std::string>{"returning"} : std::vector<std::string>{},
+                                  8350 + (armed ? 1 : 0), names);
+        ASSERT_TRUE(bed.cfg && bed.ctx) << what;
+        bed.elect(arcsChainEpoch(4, apart));
+        // C is a root: no parent, remembered as the root of G05 and G06, and (armed) seen in a tree.
+        EXPECT_EQ(net::get(bed.ctx->entities.stations, StationId{2}, &net::StationState::signals, "G|L1C",
+                           &net::StationSignalState::eq34_rx_parent), nullptr) << what;
+        ASSERT_NE(net::getSig(bed.ctx->entities.sat_signals, "G05_L1C", &net::SatSignalState::eq34_sat_root), nullptr) << what;
+        EXPECT_EQ(*net::getSig(bed.ctx->entities.sat_signals, "G05_L1C", &net::SatSignalState::eq34_sat_root), "CCCC") << what;
+        EXPECT_EQ(seenRx(*bed.ctx, 2), armed) << what;
+        // B starts to track G05: the components merge under A, and C hangs below G05 (its arc reversed).
+        const ChainRun r = bed.elect(arcsChainEpoch(4, arcsPlus(apart, {{1, "G05"}})));
+        ASSERT_TRUE(r.events.phase_datum.chain) << what;
+        const ChainEdgeObs* c5 = keptEdge(*r.events.phase_datum.chain, 2, "G05");
+        ASSERT_TRUE(c5) << what;
+        EXPECT_FALSE(c5->sat_is_child) << what;             // C is a child now
+        EXPECT_TRUE(c5->incumbent_flipped) << what;
+        EXPECT_FALSE(c5->row_armed) << what;
+        EXPECT_FALSE(c5->legacy_known == false) << what;
+        for (const ChainEdgeObs& o : r.events.phase_datum.chain->edges) EXPECT_FALSE(o.row_armed) << what << " " << o.child;
+        EXPECT_TRUE(r.events.phase_datum.chain->releases.empty()) << what;
+        const auto c = retCounters(*bed.ctx);
+        EXPECT_EQ(c[kRetReleased] + c[kRetNotFreed], 0) << what;
+        EXPECT_EQ(bed.ctx->counters.eq34_mismatch_epochs, 0) << what;
+    }
+}
+
+// With the row off the election's outputs are the frozen election's, and the row leaves no trace: no
+// vertex remembered, no tally counted.  The random lineages are the AGT-4 case's, so returning vertices
+// (stations that drop out, satellites that set and rise) occur in them.
+TEST(NetworkArcGraphOracle, ReturningRowOffLeavesTheElectionAsTheFrozenOneAndRemembersNothing) {
+    std::mt19937 rng(20261105u);
+    LogManager lm;
+    const auto quiet = std::make_shared<spdlog::logger>("ird4_returning_off", spdlog::sinks_init_list{});
+    long long n_epochs = 0, n_pins = 0, n_returning_sightings = 0;
+    for (int lineage = 0; lineage < 12; ++lineage) {
+        ChainKnobs kn = drawChainKnobs(rng);
+        kn.float_vehicle = true;   // the vehicle the rows are written for, with no row armed
+        ChainWorld w = randomChainWorld(rng);
+        if (chance(rng, 0.2)) kn.preferred = w.names[static_cast<std::size_t>(uniform(rng, 0, static_cast<int>(w.names.size()) - 1))];
+        const std::unique_ptr<GnssConfig> cfg = loadChainConfig(lm, kn, 9500 + lineage);
+        ASSERT_TRUE(cfg) << "lineage " << lineage;
+        ASSERT_TRUE(cfg->networkPhaseDatumEq34EventRows().empty()) << "lineage " << lineage;
+        NetworkRunContext ctx_f(*cfg, cfg->getNetworkConfig());
+        NetworkRunContext ctx_l(*cfg, cfg->getNetworkConfig());
+        ctx_f.entities.names.assign(w.names);
+        ctx_l.entities.names.assign(w.names);
+        ASSERT_FALSE(ctx_l.knobs.eq34_row_returning);
+        ASSERT_FALSE(ctx_l.knobs.eq34_seed_round);
+        AnchorHygiene hyg_shape;
+        hyg_shape.active = chance(rng, 0.5);
+        if (hyg_shape.active) hyg_shape.min_arc_ep = uniform(rng, 0, 3);
+        std::set<std::string> ever_in_tree, in_tree_last;   // "<sat>_<signal>" the election has put in a tree
+        for (int ep = 0; ep < 40; ++ep) {
+            ChainEpoch e = nextChainEpoch(rng, w, hyg_shape);
+            e.age_arcs = net::arcAmbTableOf(e.age, &net::ArcState::anchor_arc_age);
+            e.hyg.age = e.hyg.active ? &e.age_arcs : nullptr;
+            perturbChainCarry(rng, w, e, ctx_f, ctx_l);
+            std::vector<NetStation> st_f(w.names.size()), st_l(w.names.size());
+            for (std::size_t i = 0; i < w.names.size(); ++i) st_f[i].name = st_l[i].name = w.names[i];
+            std::set<std::string> sh_f, sh_l;
+            EpochEvents ev_f, ev_l;
+            frozen_eq34::networkElectChainDatum(ctx_f, *cfg, quiet, st_f, e.present, e.cnd, e.hyg, e.slipped, sh_f, ev_f);
+            networkElectChainDatum(ctx_l, *cfg, quiet, st_l, e.present, e.cnd, e.hyg, e.slipped, sh_l, ev_l);
+            ASSERT_EQ(chainElectionDiff(ctx_f, ctx_l, ev_f, ev_l, st_f, st_l, sh_f, sh_l), "")
+                << "lineage " << lineage << " epoch " << ep;
+            expectNoReturningTrace(ctx_l, "lineage " + std::to_string(lineage) + " epoch " + std::to_string(ep));
+            // The control: how often a key re-enters a tree after an epoch out of it (the vertices the row would see).
+            std::set<std::string> now;
+            for (const auto& [amb, host] : net::sigMap(ctx_l.entities.sat_signals, &net::SatSignalState::anchor_incumbent, '_')) now.insert(amb);
+            for (const std::string& amb : now)
+                if (in_tree_last.count(amb) == 0 && ever_in_tree.count(amb) != 0) ++n_returning_sightings;
+            ever_in_tree.insert(now.begin(), now.end());
+            in_tree_last = std::move(now);
+            for (const NetStation& st : st_l) n_pins += static_cast<long long>(st.pinned_amb_targets.size());
+            ++n_epochs;
+        }
+    }
+    EXPECT_GT(n_pins, 20000);
+    EXPECT_GT(n_returning_sightings, 200);
+    std::cout << "[ NetworkArcGraphOracle ] returning row off: " << n_epochs << " epochs, " << n_pins
+              << " pins, " << n_returning_sightings << " keys back in a tree after an epoch out of it; identical to "
+              << "the frozen election, no vertex remembered, no tally counted\n";
+}
+
+/// What the returning row reads, as it stands before an election (the rule is restated from it).
+struct ReturningBefore {
+    std::map<std::string, std::string>                  anchor;      ///< "<sat>_<signal>" -> the station hosting the satellite
+    std::map<std::pair<int, std::string>, std::string>  rx_parent;   ///< (station, "<c>|<signal>") -> the satellite above the station
+    std::map<std::string, std::string>                  root;        ///< "<sat>_<signal>" -> the remembered datum receiver
+    std::map<std::string, std::string>                  datum;       ///< "<c>|<signal>" -> the remembered datum receiver of the band
+    std::set<std::string>                               seen_sat;    ///< "<sat>_<signal>" of the epoch's arcs that were seen in a tree
+    std::set<std::pair<int, std::string>>               seen_rx;     ///< (station, "<c>|<signal>") that were seen in a tree
+    std::set<net::ArcTuple>                             carries;     ///< (station, satellite, signal) with a leveling carry
+    std::set<std::pair<int, std::string>>               rpb;         ///< (station, receiver phase-bias key) with a carry
+    std::vector<std::pair<std::string, std::string>>    pb;          ///< (satellite, signal) of the phase-bias priors
+};
+
+/// The "<c>|<signal>" group of an ambiguity key "<sat>_<signal>".
+std::string groupOfAmb(const std::string& amb) { return amb.substr(0, 1) + "|" + amb.substr(amb.find('_') + 1); }
+
+/// The receiver phase-bias key of a group.
+std::string rpbKeyOfGroup(const std::string& group) {
+    return StateKeys::makeReceiverPhaseBiasKey(systemName(group[0] == 'E' ? System::Galileo : System::GPS), group.substr(2));
+}
+
+ReturningBefore returningBefore(const NetworkRunContext& ctx, const ChainWorld& w, const ChainEpoch& e) {
+    ReturningBefore b;
+    b.anchor = net::sigMap(ctx.entities.sat_signals, &net::SatSignalState::anchor_incumbent, '_');
+    b.root   = net::sigMap(ctx.entities.sat_signals, &net::SatSignalState::eq34_sat_root, '_');
+    b.datum  = net::channelMap(ctx.entities.constellations, &net::ChannelState::datum_rx);
+    net::forEach(ctx.entities.stations, &net::StationState::signals, &net::StationSignalState::eq34_rx_parent,
+                 [&](const StationId& id, const std::string& family, const std::string& sat) {
+                     b.rx_parent[{id.index, family}] = sat;
+                 });
+    for (std::size_t i = 0; i < w.names.size(); ++i) {
+        for (const auto& [amb, pbkey] : e.cnd.usable_keys[i])
+            if (seenSat(ctx, amb)) b.seen_sat.insert(amb);
+        for (const auto& [cons, sig] : kChainSignals) {
+            const std::string group = std::string(1, cons) + "|" + sig;
+            if (seenRx(ctx, static_cast<int>(i), group)) b.seen_rx.insert({static_cast<int>(i), group});
+        }
+    }
+    for (const auto& [key, lc] : net::arcMap(ctx.entities.arcs, &net::ArcState::amb)) b.carries.insert(key);
+    net::forEach(ctx.entities.stations, &net::StationState::signals, &net::StationSignalState::rpb,
+                 [&](const StationId& id, const std::string& key, const LocalCarry&) { b.rpb.insert({id.index, key}); });
+    for (const CarryPrior& cp : ctx.carry.prev_carry)
+        if (cp.kind == SharedParamKind::PhaseBias) b.pb.emplace_back(cp.sat, cp.signal);
+    return b;
+}
+
+/// Random vertices already seen in a tree, and random phase-bias priors, as the history of a long run leaves them.
+void perturbReturning(std::mt19937& rng, const ChainWorld& w, const ChainEpoch& e, NetworkRunContext& ctx) {
+    ctx.carry.prev_carry.clear();
+    for (std::size_t i = 0; i < w.names.size(); ++i) {
+        for (const auto& [amb, pbkey] : e.cnd.usable_keys[i]) {
+            const auto parts = StateKeys::parseAmbiguityKey(amb);
+            if (chance(rng, 0.3))
+                if (const std::optional<SatSignalId> id = net::satSignalKey(amb))
+                    net::mark(ctx.entities.sat_signals, *id, &net::SatSignalState::eq34_tree_seen);
+            if (chance(rng, 0.1)) putPbPrior(ctx, parts->satellite, parts->signal);
+        }
+        for (const auto& [cons, sig] : kChainSignals)
+            if (chance(rng, 0.3))
+                net::mark(ctx.entities.stations, StationId{static_cast<int>(i)}, &net::StationState::signals,
+                          std::string(1, cons) + "|" + sig, &net::StationSignalState::eq34_tree_seen);
+    }
+}
+
+/// The moved side a release must have, restated.
+struct WantRelease {
+    std::string              group, signal, vertex, sat;
+    int                      station{-1}, comp{0};
+    bool                     sat_is_child{true};
+    std::vector<std::string> sats;
+    std::vector<int>         stations;
+    long long                arcs{0}, rpb{0}, pb{0};
+};
+
+TEST(NetworkArcGraphOracle, ReturningRowReleasesExactlyTheReturningEdgesAndErasesWhatTouchesTheirMovedSides) {
+    std::mt19937 rng(20261106u);
+    LogManager lm;
+    const auto quiet = std::make_shared<spdlog::logger>("ird4_returning_identity", spdlog::sinks_init_list{});
+    const auto whole = [](double cyc) { return std::isfinite(cyc) && std::abs(cyc - std::round(cyc)) <= 1e-6; };
+    long long n_epochs = 0, n_edges = 0, n_released = 0, n_not_freed = 0, n_in_sides = 0, n_nested = 0;
+    long long n_arcs = 0, n_rpb = 0, n_pb = 0, n_declared = 0, n_pinround = 0, n_kept_held = 0, n_receivers = 0;
+    long long n_with_subtree = 0;
+    for (int lineage = 0; lineage < 24; ++lineage) {
+        ChainKnobs kn = drawChainKnobs(rng);
+        kn.trace_chain = true;
+        const bool with_kept = lineage % 4 >= 2;
+        kn.rows = with_kept ? std::vector<std::string>{"kept", "returning"} : std::vector<std::string>{"returning"};
+        kn.family = lineage % 2 ? "pair" : "signal";
+        const ChainBands mode = lineage % 2 ? ChainBands::BandOnly : ChainBands::Mixed;
+        ChainWorld w = randomChainWorld(rng, mode);
+        if (chance(rng, 0.2)) kn.preferred = w.names[static_cast<std::size_t>(uniform(rng, 0, static_cast<int>(w.names.size()) - 1))];
+        const std::unique_ptr<GnssConfig> cfg = loadChainConfig(lm, kn, 9000 + lineage);
+        ASSERT_TRUE(cfg) << "lineage " << lineage;
+        ASSERT_TRUE(cfg->networkPhaseDatumEq34EventRowArmed("returning")) << "lineage " << lineage;
+        NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
+        ctx.entities.names.assign(w.names);
+        ASSERT_TRUE(ctx.knobs.eq34_row_returning);
+        ASSERT_EQ(ctx.knobs.eq34_row_kept, with_kept);
+        ASSERT_EQ(ctx.knobs.eq34_pair_family, lineage % 2 == 1);
+        ASSERT_FALSE(ctx.knobs.eq34_seed_round);   // the first-sighting target is 0
+        const AnchorHygiene hyg_shape = drawChainHygiene(rng);
+        for (int ep = 0; ep < 40; ++ep) {
+            ChainEpoch e = nextChainEpoch(rng, w, hyg_shape, mode);
+            finishPairEpoch(e);
+            perturbChainCarry(rng, w, e, ctx, ctx);
+            perturbChainLedger(rng, e, ctx, ep);
+            perturbReturning(rng, w, e, ctx);
+            std::set<std::pair<int, std::string>> freed;   // the free-epoch latch of the epoch
+            for (std::size_t i = 0; i < e.present.size(); ++i)
+                for (const auto& [amb, pbkey] : e.cnd.usable_keys[i])
+                    if (e.cnd.union_keys.count(amb) && chance(rng, 0.03)) freed.insert({static_cast<int>(i), amb});
+            const KeptBefore kept_before = keptBefore(ctx, e);
+            const ReturningBefore before = returningBefore(ctx, w, e);
+            const auto counters0 = retCounters(ctx);
+            const ChainRun r = runLiveChainElection(ctx, *cfg, w, e, quiet, freed);
+            const std::string at = "lineage " + std::to_string(lineage) + " epoch " + std::to_string(ep);
+            ASSERT_TRUE(r.events.phase_datum.chain) << at;
+            const ChainEpochObs& obs = *r.events.phase_datum.chain;
+            const auto reref = r.events.phase_datum.eq34_reref;
+
+            // The rule, restated: which edges the row releases, and which it leaves to the slip row.
+            std::vector<WantRelease> want;
+            std::map<std::pair<std::string, std::string>, std::size_t> release_of;   // (group, vertex key) -> its release
+            long long want_not_freed = 0, want_zero = 0, want_whole = 0, want_frac = 0, want_unknown = 0, want_pinround = 0;
+            for (const ChainEdgeObs& o : obs.edges) {
+                const std::string amb = StateKeys::makeAmbiguityKey(o.sat, o.signal);
+                const bool kept_held = with_kept && keptWant(kept_before, o, freed) == KeptWant::Held;
+                bool absent = false;
+                if (o.sat_is_child) {
+                    absent = before.anchor.count(amb) == 0;
+                } else {
+                    absent = before.rx_parent.count({o.station, o.group}) == 0;
+                    const auto datum = before.datum.find(o.group);
+                    if (datum != before.datum.end() && datum->second == o.station_name) absent = false;
+                    for (const auto& [key, root] : before.root)
+                        if (root == o.station_name && groupOfAmb(key) == o.group) absent = false;
+                }
+                const bool seen = o.sat_is_child ? before.seen_sat.count(amb) != 0
+                                                 : before.seen_rx.count({o.station, o.group}) != 0;
+                const bool in_latch = freed.count({o.station, amb}) != 0;
+                const bool released = !kept_held && absent && seen && !in_latch;
+                if (!kept_held && absent && seen && in_latch) ++want_not_freed;
+                n_kept_held += kept_held ? 1 : 0;
+                ASSERT_EQ(o.row_armed, released || kept_held) << at << " " << o.group << " " << o.station_name << " " << o.sat;
+                std::optional<std::size_t> side;   // the release whose moved side this edge's child lies in
+                if (released) {
+                    // The release replaced the draft: the first-sighting target, no displacement, an unknown step.
+                    ASSERT_FALSE(o.known) << at;
+                    ASSERT_EQ(o.pinmove_m, 0.0) << at;
+                    ASSERT_EQ(o.target_m, 0.0) << at;
+                    ASSERT_EQ(r.stations[static_cast<std::size_t>(o.station)].pinned_amb_targets.at(amb), 0.0) << at;
+                    ASSERT_TRUE(std::isnan(o.step_m)) << at;
+                    if (!o.legacy_known)                                              ++want_unknown;
+                    else if (o.legacy_pinmove_m == 0.0)                               ++want_zero;
+                    else if (o.lambda_m > 0.0 && whole(o.legacy_pinmove_m / o.lambda_m)) ++want_whole;
+                    else                                                              ++want_frac;
+                    if (std::isfinite(o.carry_m)) ++want_pinround;
+                    want.push_back(WantRelease{o.group, o.signal, o.child, o.sat, o.station, o.comp, o.sat_is_child, {}, {}});
+                    side = want.size() - 1;
+                    if (release_of.count({o.group, o.parent})) ++n_nested;
+                    if (!o.sat_is_child) ++n_receivers;
+                } else {
+                    if (!kept_held) {   // an edge no row decided is the as-built edge
+                        ASSERT_EQ(o.legacy_known, o.known) << at;
+                        ASSERT_TRUE(sameOrNan(o.legacy_pinmove_m, o.pinmove_m)) << at;
+                        ASSERT_TRUE(sameOrNan(o.legacy_target_m, o.target_m)) << at;
+                    }
+                    const auto up = release_of.find({o.group, o.parent});
+                    if (up != release_of.end()) side = up->second;
+                }
+                if (!side) continue;
+                release_of[{o.group, o.child}] = *side;
+                if (o.sat_is_child) want[*side].sats.push_back(o.sat);
+                else                want[*side].stations.push_back(o.station);
+                ++n_in_sides;
+            }
+
+            // The moved sides, and what the release took from them, restated from the state before the election.
+            std::map<std::pair<std::string, std::string>, std::size_t> side_of_sat;   // (satellite, signal) -> release
+            std::map<std::pair<int, std::string>, std::size_t>         side_of_rx;    // (station, group) -> release
+            for (std::size_t k = 0; k < want.size(); ++k) {
+                for (const std::string& s : want[k].sats) side_of_sat[{s, want[k].signal}] = k;
+                for (int s : want[k].stations) side_of_rx[{s, want[k].group}] = k;
+            }
+            for (const auto& [key, k] : side_of_sat) ASSERT_TRUE(reref.count(key)) << at;   // a satellite of a side is re-referenced
+            for (const net::ArcTuple& carry : before.carries) {
+                const int sta = std::get<0>(carry);
+                const std::string &sat = std::get<1>(carry), &sig = std::get<2>(carry);
+                const auto by_sat = side_of_sat.find({sat, sig});
+                const auto by_rx  = side_of_rx.find({sta, sat.substr(0, 1) + "|" + sig});
+                const bool in_reref = reref.count({sat, sig}) != 0;
+                if (by_sat != side_of_sat.end()) {         // a satellite of a side: erased at every station
+                    ++want[by_sat->second].arcs;
+                    ASSERT_FALSE(hasCarry(ctx, sta, sat, sig)) << at << " " << sta << " " << sat;
+                } else if (by_rx != side_of_rx.end()) {    // a receiver of a side: erased to every satellite
+                    if (!in_reref) ++want[by_rx->second].arcs;   // (one a re-reference erased for another reason is not the release's)
+                    ASSERT_FALSE(hasCarry(ctx, sta, sat, sig)) << at << " " << sta << " " << sat;
+                } else if (!in_reref) {                    // what touches no side survives
+                    ASSERT_TRUE(hasCarry(ctx, sta, sat, sig)) << at << " " << sta << " " << sat;
+                }
+            }
+            for (const auto& [key, k] : side_of_rx) {      // a receiver of a side loses its phase-bias carry
+                const std::string rpb_key = rpbKeyOfGroup(key.second);
+                if (before.rpb.count({key.first, rpb_key}) == 0) continue;
+                ++want[k].rpb;
+                ASSERT_EQ(net::get(ctx.entities.stations, StationId{key.first}, &net::StationState::signals, rpb_key,
+                                   &net::StationSignalState::rpb), nullptr) << at;
+            }
+            for (const auto& [sat, sig] : before.pb) {     // and the priors of the satellites of a side are counted
+                const auto by_sat = side_of_sat.find({sat, sig});
+                if (by_sat != side_of_sat.end()) ++want[by_sat->second].pb;
+            }
+
+            // The record of the releases.
+            ASSERT_EQ(obs.releases.size(), want.size()) << at;
+            long long sum_arcs = 0, sum_rpb = 0, sum_pb = 0, sum_declared = 0, n_state = 0;
+            for (std::size_t k = 0; k < want.size(); ++k) {
+                const ChainReleaseObs& got = obs.releases[k];
+                const WantRelease& exp = want[k];
+                ASSERT_EQ(got.group, exp.group) << at;
+                ASSERT_EQ(got.signal, exp.signal) << at;
+                ASSERT_EQ(got.vertex, exp.vertex) << at;
+                ASSERT_EQ(got.sat, exp.sat) << at;
+                ASSERT_EQ(got.station, exp.station) << at;
+                ASSERT_EQ(got.comp, exp.comp) << at;
+                ASSERT_EQ(got.sat_is_child, exp.sat_is_child) << at;
+                auto sorted = [](auto v) { std::sort(v.begin(), v.end()); return v; };
+                ASSERT_EQ(sorted(got.sats), sorted(exp.sats)) << at;
+                ASSERT_EQ(sorted(got.stations), sorted(exp.stations)) << at;
+                ASSERT_EQ(got.arcs, exp.arcs) << at << " release " << k;
+                ASSERT_EQ(got.rpb, exp.rpb) << at << " release " << k;
+                ASSERT_EQ(got.pb, exp.pb) << at << " release " << k;
+                sum_arcs += exp.arcs;
+                sum_rpb += exp.rpb;
+                sum_pb += exp.pb;
+                sum_declared += static_cast<long long>(exp.sats.size());
+                if (exp.arcs + exp.rpb + exp.pb > 0) ++n_state;
+                if (exp.sats.size() + exp.stations.size() > 1) ++n_with_subtree;
+            }
+
+            // The tallies of the election.
+            const auto counters1 = retCounters(ctx);
+            const auto delta = [&](RetCounter k) { return counters1[k] - counters0[k]; };
+            ASSERT_EQ(delta(kRetReleased), static_cast<long long>(want.size())) << at;
+            ASSERT_EQ(delta(kRetNotFreed), want_not_freed) << at;
+            ASSERT_EQ(delta(kRetWithState), n_state) << at;
+            ASSERT_EQ(delta(kRetAsZero), want_zero) << at;
+            ASSERT_EQ(delta(kRetAsWhole), want_whole) << at;
+            ASSERT_EQ(delta(kRetAsFrac), want_frac) << at;
+            ASSERT_EQ(delta(kRetAsUnknown), want_unknown) << at;
+            ASSERT_EQ(delta(kRetAsPinRound), want_pinround) << at;
+            ASSERT_EQ(delta(kRetArcs), sum_arcs) << at;
+            ASSERT_EQ(delta(kRetRpb), sum_rpb) << at;
+            ASSERT_EQ(delta(kRetPb), sum_pb) << at;
+            ASSERT_EQ(delta(kRetDeclared), sum_declared) << at;
+
+            // Every vertex of the tree is remembered as seen, and nothing remembered is forgotten.
+            for (const ChainEdgeObs& o : obs.edges) {
+                ASSERT_TRUE(seenSat(ctx, StateKeys::makeAmbiguityKey(o.sat, o.signal))) << at;
+                ASSERT_TRUE(seenRx(ctx, o.station, o.group)) << at;
+            }
+            for (const ChainComponentObs& k : obs.comps) ASSERT_TRUE(seenRx(ctx, k.r1_station, k.group)) << at;
+            for (const std::string& amb : before.seen_sat) ASSERT_TRUE(seenSat(ctx, amb)) << at;
+            for (const auto& [sta, group] : before.seen_rx) ASSERT_TRUE(seenRx(ctx, sta, group)) << at;
+
+            n_edges += static_cast<long long>(obs.edges.size());
+            n_released += static_cast<long long>(want.size());
+            n_not_freed += want_not_freed;
+            n_arcs += sum_arcs;
+            n_rpb += sum_rpb;
+            n_pb += sum_pb;
+            n_declared += sum_declared;
+            n_pinround += want_pinround;
+            ++n_epochs;
+        }
+    }
+    // The case bites: edges are released, receivers among them, some below another release and some with a
+    // subtree, the latch holds some back, and the release takes carries, phase-bias carries and priors.
+    std::cout << "[ NetworkArcGraphOracle ] returning row: " << n_epochs << " epochs, " << n_edges << " tree edges, "
+              << n_released << " released (" << n_receivers << " receivers, " << n_nested << " below another release, "
+              << n_with_subtree << " with a side of more than one vertex), " << n_not_freed << " left to the slip row, "
+              << n_kept_held << " held by the kept row; the sides hold " << n_in_sides << " vertices; the releases erased "
+              << n_arcs << " leveling carries, dropped " << n_rpb << " receiver phase-bias carries, counted " << n_pb
+              << " priors and declared " << n_declared << " keys; the as-built rule read a carry on " << n_pinround << "\n";
+    EXPECT_GT(n_released, 1500);
+    EXPECT_GT(n_receivers, 1200);
+    EXPECT_GT(n_not_freed, 40);
+    EXPECT_GT(n_arcs, 800);
+    EXPECT_GT(n_rpb, 800);
+    EXPECT_GT(n_pb, 250);
+    EXPECT_GT(n_declared, 400);
+    EXPECT_GT(n_pinround, 200);
+    EXPECT_GT(n_nested, 150);
+    EXPECT_GT(n_with_subtree, 150);
+    EXPECT_GT(n_kept_held, 3000);
 }
 
 }  // namespace

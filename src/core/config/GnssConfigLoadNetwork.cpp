@@ -10055,13 +10055,27 @@ namespace GnssProcessor {
                     std::string armed;
                     for (const std::string& e : network_phase_datum_eq34_event_rows_)
                         armed += (armed.empty() ? "" : ", ") + e;
+                    // What each armed row does, in table order, and what the run-end eq34 block reports.
+                    std::string rows, reports;
+                    if (networkPhaseDatumEq34EventRowArmed("kept")) {
+                        rows += "'kept' holds an arc that stays in the tree, in either direction, with "
+                                "its pinned life continuing at its previous pin target, with no frame "
+                                "step of its own.";
+                        reports += "the edges held and the incumbent edges not held, by cause";
+                    }
+                    if (networkPhaseDatumEq34EventRowArmed("returning")) {
+                        rows += std::string(rows.empty() ? "" : "  ")
+                              + "'returning' releases a vertex that rejoins the tree after an absence: "
+                                "every carry that touches it and its subtree is erased, its pin takes the "
+                                "first-sighting target with an unknown step and the keys of its subtree "
+                                "are declared moved.";
+                        reports += std::string(reports.empty() ? "" : "; ")
+                                 + "the edges released, what the release took and the keys declared";
+                    }
                     log->info("Network producer: eq34 EVENT ROWS ON ({}) - the integer rule of each "
                               "armed row replaces the as-built rule for its class of tree edge: "
-                              "'kept' holds an arc that stays in the tree, in either direction, with "
-                              "its pinned life continuing at its previous pin target, with no frame "
-                              "step of its own.  The other rows run the as-built rule.  The run-end "
-                              "eq34 block reports the edges held and the incumbent edges not held, "
-                              "by cause.", armed);
+                              "{}  The other rows run the as-built rule.  The run-end "
+                              "eq34 block reports {}.", armed, rows, reports);
                 }
             }
             if (network_phase_datum_prioritized_)

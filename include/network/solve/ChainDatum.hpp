@@ -156,7 +156,23 @@ void eq34ShiftCarry(NetworkCarryState& carry, net::NetworkEntities& entities,
  * not remember another root and that has a previous target, is held: it keeps its previous target
  * and takes no frame step of its own, so the shift walk gives its child the parent's step exactly
  * and an unknown parent step passes down.  An edge the row does not hold runs the as-built rule.
- * With the row off nothing here changes.
+ *
+ * With the returning row armed (@c "returning") a tree edge whose child vertex rejoins the tree
+ * after an absence takes the cut release.  The child is absent from the last election's tree on
+ * the band (a satellite with no incumbent anchor; a receiver with no incumbent parent that was
+ * not a root, the band's remembered datum receiver or a satellite's remembered root), was a
+ * vertex of an earlier election's tree (@c eq34_tree_seen, so a vertex never seen is a birth and
+ * keeps the as-built rule) and the arc is not in the epoch's free-epoch latch (that is the slip
+ * row's case).  The moved side M is the vertex and its subtree in this election's tree.  The
+ * release takes the first-sighting target (0, or the seed round's) with an unknown step in place
+ * of the as-built draft, which may have read the target from the arc's old-frame carry; the
+ * unknown step re-references the satellites of M and drops the receiver phase-bias carries of
+ * its receivers, and the release then erases every leveling carry that touches M (a satellite of
+ * M at any station, a receiver of M to any satellite on the band, at present and absent
+ * stations) before the shift walk applies.  The keys of M's satellites are the moved keys the
+ * observatory declares.  The row certifies nothing: a returning vertex's own carries are never
+ * trusted to keep its old frame, so every returning edge takes the release.  With a row off
+ * nothing here changes.
  *
  * @param ctx           [in/out] carry + counters.  The whole context is passed
  *                      instead of about twenty individual references because the
@@ -208,13 +224,14 @@ struct NetworkRunEndView;
 /**
  * @brief Run-end report: the eq34 chain datum: re-references, pin audit, seed round, slip-aware election.
  *
- * The eq34 chain datum: the re-reference totals, the pair family, the kept row, the pin audit,
- * the seed round and the slip-aware election.
+ * The eq34 chain datum: the re-reference totals, the pair family, the kept row, the returning row,
+ * the pin audit, the seed round and the slip-aware election.
  *
  * Gate: each section under its own condition:
  * `config_.networkPhaseDatumEq34()`; `config_.networkPhaseDatumEq34SeedRound()`;
  * `config_.networkPhaseDatumEq34SlipAwareElection()`; the pair family line under
- * `ctx.knobs.eq34_pair_family`; the kept row lines under `ctx.knobs.eq34_row_kept`.
+ * `ctx.knobs.eq34_pair_family`; the kept row lines under `ctx.knobs.eq34_row_kept`; the
+ * returning row lines under `ctx.knobs.eq34_row_returning`.
  *
  * @param v The run at its end (network/runend/RunEnd.hpp).
  * @return 0 (this report does not set the exit code).
@@ -381,6 +398,24 @@ struct ChainDatumCounters {
     long long eq34_kept_not_target = 0;       ///< ...the arc has no previous target
     long long eq34_kept_not_life = 0;         ///< ...the arc has no remembered pin life (not pinned at the last election, or a warm resume)
     long long eq34_kept_not_ended = 0;        ///< ...the arc's pinned life ended (reborn, re-entered after a gap, flagged)
+    // The returning row of the chain's event table (network.phase_datum_eq34_event_rows "returning"); all
+    // stay 0 with the row off.  A returning edge is a tree edge whose child vertex was absent from the last
+    // election's tree on its band and a vertex of an earlier one.  The row releases it (the cut release) or,
+    // when its arc is in the epoch's free-epoch latch, leaves it to the slip row.  The as-built tallies state
+    // what the as-built draft of a released edge had been, before the release replaced it; they and the
+    // released count are per election.  The cut tallies are what the releases took, per release.
+    long long eq34_ret_released = 0;          ///< returning edges the row released
+    long long eq34_ret_not_freed = 0;         ///< returning edges not released: the arc is in the epoch's free-epoch latch (the slip row's case)
+    long long eq34_ret_with_state = 0;        ///< ...released edges whose moved side held at least one leveling carry, receiver phase-bias carry or satellite phase-bias prior that the release took
+    long long eq34_ret_asbuilt_zero = 0;      ///< ...released edges whose as-built step was a known zero
+    long long eq34_ret_asbuilt_whole = 0;     ///< ...a known nonzero step of whole cycles
+    long long eq34_ret_asbuilt_frac = 0;      ///< ...a known nonzero step that is not whole cycles (or that has no wavelength)
+    long long eq34_ret_asbuilt_unknown = 0;   ///< ...an unknown step
+    long long eq34_ret_asbuilt_pinround = 0;  ///< ...released edges whose as-built target was read from the arc's old-frame carry (pin-to-round)
+    long long eq34_ret_arcs = 0;              ///< leveling carries the releases erased: every carry of a satellite of a moved side at any station, and every carry of a receiver of a moved side on its band
+    long long eq34_ret_rpb = 0;               ///< receiver phase-bias carries the releases dropped
+    long long eq34_ret_pb = 0;                ///< satellite phase-bias priors of the moved sides (measure-only: the re-reference marginalizes them)
+    long long eq34_ret_declared = 0;          ///< (satellite, signal) keys of the moved sides, declared moved
 };
 
 } // namespace GnssProcessor

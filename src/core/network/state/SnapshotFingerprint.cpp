@@ -551,7 +551,9 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         //                           target and step an election gives an edge, not what a stored
         //                           value means.  Its pin life is never serialized, so a resume
         //                           starts every row cold and the row holds its first edges one
-        //                           election late
+        //                           election late.  The returning row's memory of the vertices
+        //                           seen in an earlier tree is never serialized either: after a
+        //                           resume the first election's absent vertices are births
         //   signal integrity        network.signal_integrity.*
         //   measurement admission   adm_{screen,bound_m,min_sats,heal_ep,max_frac,
         //                           trace} and adm_revet{,_gap_ep,_ep,_census,_hold}

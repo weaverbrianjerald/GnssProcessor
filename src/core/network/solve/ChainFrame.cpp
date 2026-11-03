@@ -45,7 +45,7 @@ const std::array<ChainEventSpec, kChainEventRowCount> kChainEventSpec = {{
     {ChainEventRow::Returning, "Returning", "returning", "returning",
      "baseline 0: pinmove lambda round(carry), marked known",
      "certified from its own previous carries; else cut release and treated as a birth",
-     ChainStep::ZeroOrCutRelease, ChainCarry::KeepOrCutRelease, ChainWire::NoneOrDeclareMoved, false},
+     ChainStep::ZeroOrCutRelease, ChainCarry::KeepOrCutRelease, ChainWire::NoneOrDeclareMoved, true},
     {ChainEventRow::RehostCertified, "RehostCertified", "rehost", "rehost",
      "pinmove = target minus carry (a fraction)",
      "the chord's integer from the previous chord table, jointly certified; no shift",
@@ -98,8 +98,9 @@ bool chainEventRowEntryBuilt(const std::string& entry) {
 
 bool chainEventRowArmed(const NetworkKnobs& k, ChainEventRow r) {
     switch (r) {
-        case ChainEventRow::Kept: return k.eq34_row_kept;
-        default:                  return false;   // the other rows' integer rules are not built
+        case ChainEventRow::Kept:      return k.eq34_row_kept;
+        case ChainEventRow::Returning: return k.eq34_row_returning;
+        default:                       return false;   // the other rows' integer rules are not built
     }
 }
 
@@ -215,6 +216,10 @@ double wavelengthOf(const std::string& sat, const std::string& signal) {
 
 /// True when x is within 1e-6 of an integer.
 bool nearInteger(double x) { return std::isfinite(x) && std::abs(x - std::round(x)) <= 1e-6; }
+
+/// The CHAIN event names of the returning row's cut release (the frame grader reads both).
+constexpr const char* kChainCutReleaseEvent   = "cut_release";
+constexpr const char* kChainDeclaredKeysEvent = "declared_keys";
 
 /// A blank cell for NaN, else the value with @p digits decimals.
 std::string cell(double v, int digits) {
@@ -453,6 +458,13 @@ ChainEpochClass chainClassifyEpoch(const ChainEpochObs& obs, const ChainFrameMem
     cnt.cf_soft_pins  += obs.soft_pins;
     cnt.cf_bridges    += obs.bridges;
     cnt.cf_gated_keys += obs.gated_keys;
+    for (const ChainReleaseObs& r : obs.releases) {
+        ++cnt.cf_cut_releases;
+        cnt.cf_cut_arcs += r.arcs;
+        cnt.cf_cut_pb += r.pb;
+        cnt.cf_cut_rpb += r.rpb;
+        cnt.cf_declared_keys += static_cast<long long>(r.sats.size());
+    }
     for (const auto& [key, s] : obs.shift_sat) {
         ++cnt.cf_known_shifts;
         const double lam = wavelengthOf(key.first, key.second);
@@ -479,19 +491,32 @@ void chainRememberEpoch(const ChainEpochObs& obs, const ChainEpochClass& cls,
     next.week = week;
     next.tow  = tow;
     next.last_seen_s = mem.last_seen_s;
+    next.last_parent = mem.last_parent;
     next.chords = std::move(chords);
     for (const ChainComponentObs& k : obs.comps) {
         auto& vc = next.vertex_comp[k.group];
         auto& seen = next.last_seen_s[k.group];
-        for (int s : k.stations) { vc[stationKey(s)] = k.comp; seen[stationKey(s)] = now_s; }
-        for (const std::string& s : k.sats) { vc[satKeyOf(s)] = k.comp; seen[satKeyOf(s)] = now_s; }
+        auto& parent = next.last_parent[k.group];
+        for (int s : k.stations) { vc[stationKey(s)] = k.comp; seen[stationKey(s)] = now_s; parent[stationKey(s)].clear(); }
+        for (const std::string& s : k.sats) { vc[satKeyOf(s)] = k.comp; seen[satKeyOf(s)] = now_s; parent[satKeyOf(s)].clear(); }
         next.comp_root[k.group][k.comp] = k.r1;
     }
-    for (const ChainEdgeObs& e : cls.edges) next.vertex_parent[e.group][e.child] = e.parent;
-    // The as-built target of every edge the kept row held, for the next epoch's rows (empty while
-    // the row is off).
-    for (const ChainEdgeObs& e : cls.edges)
-        if (e.row_armed) next.kept_as_built_target[{e.station, e.sat, e.signal}] = e.legacy_target_m;
+    for (const ChainEdgeObs& e : cls.edges) {
+        next.vertex_parent[e.group][e.child] = e.parent;
+        next.last_parent[e.group][e.child] = e.parent;   // a root keeps the empty parent set above
+    }
+    // The as-built target of every edge an event row decided, for the next epoch's rows (empty while no
+    // row is armed): the as-built draft for an edge the kept row held, the realized target for an edge
+    // the returning row released.  A release erases the old-frame carry the as-built draft read, so from
+    // the next election on the as-built rule reads the carry of the released target; remembering the
+    // draft would make the kept row report the release itself as an as-built step one election later.
+    std::set<std::tuple<int, std::string, std::string>> released;
+    for (const ChainReleaseObs& r : obs.releases) released.insert({r.station, r.sat, r.signal});
+    for (const ChainEdgeObs& e : cls.edges) {
+        if (!e.row_armed) continue;
+        const std::tuple<int, std::string, std::string> arc{e.station, e.sat, e.signal};
+        next.kept_as_built_target[arc] = released.count(arc) ? e.target_m : e.legacy_target_m;
+    }
     if (mem.have)
         for (const auto& [g, vc] : mem.vertex_comp) {
             const auto nit = next.vertex_comp.find(g);
@@ -617,8 +642,42 @@ void networkChainFrameObserve(NetworkRun& run, const NetworkEpoch& ep) {
                         const auto p = pit->second.find(e.child);
                         if (p != pit->second.end()) prev_parent = vertexName(p->second, stations);
                     }
+                    if (!e.row_armed || !chainEventRowArmed(ctx.knobs, ChainEventRow::Returning)) {
+                        event(spec.event, e.sat, e.station_name, e.pinmove_m, "join",
+                              detail + fmt::format(" gap_s={} prev={}", cell(gap, 1), prev_parent));
+                        break;
+                    }
+                    // The returning row released the edge: both edges of the event with their
+                    // identities.  The vertex leaves the parent it had when it was last seen
+                    // (empty: it was a root, or the memory has no parent for it) and joins the
+                    // parent of this epoch's edge; the as-built facts the release replaced follow.
+                    std::string last_parent;
+                    const auto lpit = mem.last_parent.find(e.group);
+                    if (lpit != mem.last_parent.end()) {
+                        const auto p = lpit->second.find(e.child);
+                        if (p != lpit->second.end()) last_parent = vertexName(p->second, stations);
+                    }
+                    ++cnt.cf_ret_pairs;
+                    const double asbuilt_cyc = e.lambda_m > 0.0 ? e.legacy_pinmove_m / e.lambda_m : 0.0;
+                    if (!e.legacy_known)                                 ++cnt.cf_ret_asbuilt_unknown;
+                    else if (e.legacy_pinmove_m == 0.0)                  ++cnt.cf_ret_asbuilt_zero;
+                    else if (e.lambda_m > 0.0 && nearInteger(asbuilt_cyc)) ++cnt.cf_ret_asbuilt_whole;
+                    else                                                 ++cnt.cf_ret_asbuilt_other;
+                    const std::string returning_detail = detail + fmt::format(
+                        " legacy_cause={} legacy_known={} legacy_pinmove_m={:.6f} legacy_target_cyc={} gap_s={}",
+                        chainLegacyCauseName(e.cause), e.legacy_known ? 1 : 0, e.legacy_pinmove_m,
+                        e.lambda_m > 0.0 ? fmt::format("{:.6f}", e.legacy_target_m / e.lambda_m) : "",
+                        cell(gap, 1));
+                    const std::string child = vertexName(e.child, stations);
+                    const std::string parent = vertexName(e.parent, stations);
+                    if (e.sat_is_child)
+                        event(spec.event, e.sat, last_parent, std::nullopt, "leave",
+                              returning_detail + fmt::format(" child={} parent={}", child, last_parent));
+                    else
+                        event(spec.event, last_parent, e.station_name, std::nullopt, "leave",
+                              returning_detail + fmt::format(" child={} parent={}", child, last_parent));
                     event(spec.event, e.sat, e.station_name, e.pinmove_m, "join",
-                          detail + fmt::format(" gap_s={} prev={}", cell(gap, 1), prev_parent));
+                          returning_detail + fmt::format(" child={} parent={}", child, parent));
                     break;
                 }
                 case ChainEventRow::Kept: {
@@ -666,6 +725,18 @@ void networkChainFrameObserve(NetworkRun& run, const NetworkEpoch& ep) {
                 default:
                     break;
             }
+        }
+        // The cut releases of the returning row: one cut_release row per release, then one
+        // declared_keys row per satellite of its moved side (the keys the producer declares moved).
+        for (const ChainReleaseObs& r : obs.releases) {
+            const std::string root = vertexName(r.vertex, stations);
+            event(kChainCutReleaseEvent, r.sat, vertexName("R:" + std::to_string(r.station), stations),
+                  std::nullopt, "release",
+                  fmt::format("sig={} comp={} root={} arcs={} rpb={} pb={} n_rx={} n_sat={}", r.signal, r.comp,
+                              root, r.arcs, r.rpb, r.pb, r.stations.size(), r.sats.size()));
+            for (const std::string& sat : r.sats)
+                event(kChainDeclaredKeysEvent, sat, "", std::nullopt, "declare",
+                      fmt::format("sig={} cause=returning root={}", r.signal, root));
         }
         // The component events: a root handover or a split names the old root (leave) and the
         // new root (join).
@@ -904,6 +975,14 @@ int networkChainFrameRunEnd(const NetworkRunEndView& v) {
                   2 * c.cf_kept_reversed + holds, c.cf_kept_reversed, holds, c.cf_kept_hold_whole,
                   c.cf_kept_hold_other, c.cf_kept_hold_unknown);
     }
+    if (chainEventRowArmed(ctx.knobs, ChainEventRow::Returning))
+        log->info("Network (chain frame): {} returning row(s) written to the event trace: {} released edge(s) "
+                  "(a leave and a join row each; the as-built step was a known zero on {}, whole cycles on "
+                  "{}, another nonzero step on {} and unknown on {}), {} cut_release row(s) and {} "
+                  "declared_keys row(s).",
+                  2 * c.cf_ret_pairs + c.cf_cut_releases + c.cf_declared_keys, c.cf_ret_pairs,
+                  c.cf_ret_asbuilt_zero, c.cf_ret_asbuilt_whole, c.cf_ret_asbuilt_other,
+                  c.cf_ret_asbuilt_unknown, c.cf_cut_releases, c.cf_declared_keys);
     const long long n_cert = c.cf_cert[static_cast<std::size_t>(ChainCertSource::Pair)]
                            + c.cf_cert[static_cast<std::size_t>(ChainCertSource::Lattice)];
     log->info("Network (chain frame): {} re-host(s), {} certified ({} by the two-band fix of the "
@@ -924,12 +1003,15 @@ int networkChainFrameRunEnd(const NetworkRunEndView& v) {
               "returning and {} departed vertex(es), {} flipped kept edge(s); {} gated key(s).",
               c.cf_root_handovers, c.cf_merges, c.cf_splits, c.cf_returning, c.cf_departed,
               c.cf_flipped, c.cf_gated_keys);
-    // The kept row cuts and declares nothing, so these stay 0 with it armed too.
+    // Only the returning row cuts and declares: the kept row does neither, so these stay 0 with it
+    // armed alone.
     log->info("Network (chain frame): {} cut-released arc(s), {} phase-bias prior(s) and {} "
               "receiver phase bias(es); {} declared key(s) ({}).",
               c.cf_cut_arcs, c.cf_cut_pb, c.cf_cut_rpb, c.cf_declared_keys,
               armed_entries.empty() ? "all 0 while no event row is armed"
-                                    : "the armed rows cut and declare nothing");
+              : chainEventRowArmed(ctx.knobs, ChainEventRow::Returning)
+                  ? "cut and declared by the returning row"
+                  : "the armed rows cut and declare nothing");
     for (const auto& [g, mx] : c.cf_comp_max) {
         const auto s = c.cf_comp_sum.find(g);
         const auto n = c.cf_comp_epochs.find(g);

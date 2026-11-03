@@ -170,6 +170,13 @@ TEST(LoaderMessages, Eq34EventRowsDefaultToEmptyAndKeptArmsOnTheFloatChain) {
     EXPECT_FALSE(k.config.networkPhaseDatumEq34EventRowArmed("returning"));
     EXPECT_TRUE(contains(k.text, "eq34 EVENT ROWS ON (kept)")) << k.text;
     EXPECT_TRUE(contains(k.text, "The other rows run the as-built rule")) << k.text;
+    // The line of a run with the kept row alone is the line it always was.
+    EXPECT_TRUE(contains(k.text,
+        "eq34 EVENT ROWS ON (kept) - the integer rule of each armed row replaces the as-built rule for its class of "
+        "tree edge: 'kept' holds an arc that stays in the tree, in either direction, with its pinned life continuing "
+        "at its previous pin target, with no frame step of its own.  The other rows run the as-built rule.  The "
+        "run-end eq34 block reports the edges held and the incumbent edges not held, by cause.")) << k.text;
+    EXPECT_FALSE(contains(k.text, "'returning'")) << k.text;
 
     // An empty list is the default.
     const LoadedConfig e = loadNetworkConfigCapturing("eq34_rows_empty", kFloatChain + eventRows("[]"));
@@ -209,7 +216,7 @@ TEST(LoaderMessages, Eq34EventRowsUnknownEntryWarnsAndADuplicateIsDroppedSilentl
 // The rows are built in table order: an entry whose rule is not built yet is dropped with a warning
 // and arms nothing.
 TEST(LoaderMessages, Eq34EventRowsNotBuiltYetAreDroppedWithAWarning) {
-    for (const char* entry : {"returning", "rehost", "root", "slip", "merge_split"}) {
+    for (const char* entry : {"rehost", "root", "slip", "merge_split"}) {
         const LoadedConfig r = loadNetworkConfigCapturing(std::string("eq34_rows_nb_") + entry,
             kFloatChain + eventRows(std::string("[\"") + entry + "\"]"));
         EXPECT_TRUE(r.ok) << entry << ": " << r.text;
@@ -221,10 +228,46 @@ TEST(LoaderMessages, Eq34EventRowsNotBuiltYetAreDroppedWithAWarning) {
     }
     // One built entry beside an unbuilt one: the built one arms.
     const LoadedConfig mixed = loadNetworkConfigCapturing("eq34_rows_nb_mixed",
-        kFloatChain + eventRows("[\"returning\", \"kept\"]"));
+        kFloatChain + eventRows("[\"rehost\", \"kept\"]"));
     EXPECT_TRUE(mixed.ok) << mixed.text;
     EXPECT_EQ(mixed.config.networkPhaseDatumEq34EventRows(), std::vector<std::string>{"kept"});
-    EXPECT_TRUE(contains(mixed.text, "'returning' is not built yet")) << mixed.text;
+    EXPECT_TRUE(contains(mixed.text, "'rehost' is not built yet")) << mixed.text;
+}
+
+// The returning row is built: its entry arms on the float chain, alone or beside the kept row, in the order the
+// config gave them, and the loader names each armed row and what it does (and the rows that stay as built).
+TEST(LoaderMessages, Eq34EventRowsReturningArmsOnTheFloatChainAndTheLoaderSaysWhatItDoes) {
+    const LoadedConfig r = loadNetworkConfigCapturing("eq34_rows_returning", kFloatChain + eventRows("[\"returning\"]"));
+    EXPECT_TRUE(r.ok) << r.text;
+    EXPECT_EQ(r.config.networkPhaseDatumEq34EventRows(), std::vector<std::string>{"returning"});
+    EXPECT_TRUE(r.config.networkPhaseDatumEq34EventRowArmed("returning"));
+    EXPECT_FALSE(r.config.networkPhaseDatumEq34EventRowArmed("kept"));
+    EXPECT_TRUE(contains(r.text, "eq34 EVENT ROWS ON (returning)")) << r.text;
+    EXPECT_TRUE(contains(r.text, "'returning' releases a vertex that rejoins the tree after an absence")) << r.text;
+    EXPECT_TRUE(contains(r.text, "the keys of its subtree are declared moved")) << r.text;
+    EXPECT_TRUE(contains(r.text, "The other rows run the as-built rule")) << r.text;
+    EXPECT_TRUE(contains(r.text, "The run-end eq34 block reports the edges released, what the release took and the "
+                                 "keys declared.")) << r.text;
+    EXPECT_FALSE(contains(r.text, "'kept' holds")) << r.text;              // the kept row is not armed: not described
+    EXPECT_FALSE(contains(r.text, "is not built yet")) << r.text;
+
+    const LoadedConfig both = loadNetworkConfigCapturing("eq34_rows_kept_returning",
+        kFloatChain + eventRows("[\"kept\", \"returning\"]"));
+    EXPECT_TRUE(both.ok) << both.text;
+    EXPECT_EQ(both.config.networkPhaseDatumEq34EventRows(), (std::vector<std::string>{"kept", "returning"}));
+    EXPECT_TRUE(contains(both.text, "eq34 EVENT ROWS ON (kept, returning)")) << both.text;
+    EXPECT_TRUE(contains(both.text, "'kept' holds an arc that stays in the tree")) << both.text;
+    EXPECT_TRUE(contains(both.text, "'returning' releases a vertex that rejoins the tree")) << both.text;
+    EXPECT_TRUE(contains(both.text, "The run-end eq34 block reports the edges held and the incumbent edges not held, by "
+                                    "cause; the edges released, what the release took and the keys declared.")) << both.text;
+
+    // Without the chain, or off the float vehicle, the entry is cleared like any other.
+    const LoadedConfig nochain = loadNetworkConfigCapturing("eq34_rows_returning_nochain",
+        kFloatVehicle + eventRows("[\"returning\"]"));
+    EXPECT_TRUE(nochain.ok) << nochain.text;
+    EXPECT_TRUE(nochain.config.networkPhaseDatumEq34EventRows().empty());
+    EXPECT_FALSE(nochain.config.networkPhaseDatumEq34EventRowArmed("returning"));
+    EXPECT_TRUE(contains(nochain.text, "event rows are inert without the chain")) << nochain.text;
 }
 
 // Without the chain the list is inert and cleared; off the float vehicle, or with the invariant

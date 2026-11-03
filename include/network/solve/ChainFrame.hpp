@@ -20,9 +20,11 @@
  * from the previous epoch's chord table.  A row's integer rule is switched on by its entry of
  * @c network.phase_datum_eq34_event_rows and applied by the election itself (the kept row: an
  * arc that stays in the tree keeps its previous pin target and puts no frame step of its own on
- * the frame); the observatory then records the edge as the election realized it, with the facts
- * the as-built rule drafted next to it.  The election reads nothing this file writes; every
- * output is a trace row, an event row or a counter.
+ * the frame; the returning row: a vertex that rejoins the tree after an absence takes the cut
+ * release and a first-sighting target); the observatory then records the edge as the election
+ * realized it, with the facts the as-built rule drafted next to it, and the cut releases with the
+ * keys they declare moved.  The election reads nothing this file writes; every output is a trace
+ * row, an event row or a counter.
  *
  * ## One epoch, in order
  *
@@ -159,7 +161,8 @@ bool chainEventRowEntryBuilt(const std::string& entry);
 
 /**
  * @brief Whether the integer rule of a row is armed for this run.
- * @param k The run's knob snapshot (@c eq34_row_kept resolves @c kept, and only on the chain).
+ * @param k The run's knob snapshot (@c eq34_row_kept resolves @c kept and @c eq34_row_returning
+ *          resolves @c returning, and only on the chain).
  * @param r The row.
  * @return True when the election applies the row's integer rule; false for a row whose rule is
  *         not built.
@@ -243,7 +246,7 @@ struct ChainEdgeObs {
     bool        root_unknown{false};    ///< The satellite's remembered root differs from r1.
     bool        edge_changed{false};    ///< The election saw a new parent edge (the as-built reading unless @ref row_armed).
     // The integer rule of the edge's row and the as-built facts it replaced.
-    bool        row_armed{false};       ///< An event row's integer rule decided this edge (the kept row held it).
+    bool        row_armed{false};       ///< An event row's integer rule decided this edge (the kept row held it, or the returning row released it).
     double      legacy_target_m{0.0};   ///< The target the as-built rule drafted (@ref target_m when no rule applied).
     double      legacy_pinmove_m{0.0};  ///< The displacement the as-built rule drafted (@ref pinmove_m when no rule applied).
     bool        legacy_known{true};     ///< Whether the as-built step was known (@ref known when no rule applied).
@@ -290,6 +293,31 @@ struct ChainChordCycle {
     bool             pins_integer{true};  ///< Every target on the path is an integer number of cycles.
 };
 
+/**
+ * @brief One cut release of the epoch: the returning row released the tree edge that re-attached a
+ *        vertex after an absence, with every carry that touches the vertex's moved side.
+ *
+ * The moved side M is the returning vertex and its subtree in the epoch's tree on one band.  A
+ * subtree vertex that is itself a returning vertex opens a release of its own, and the release
+ * above it does not list the vertices below it, so each vertex of a moved side is listed once.
+ * The counts are what the release took: the leveling carries erased, the receiver phase-bias
+ * carries dropped and the satellite phase-bias priors of the satellites in M.
+ */
+struct ChainReleaseObs {
+    std::string group;          ///< "<constellation key>|<signal>", the group of the band.
+    std::string signal;         ///< Phase signal of the band.
+    int         comp{0};        ///< Component index within the group (the election's order, per band).
+    int         station{-1};    ///< The released edge's station (roster index).
+    std::string sat;            ///< The released edge's satellite.
+    bool        sat_is_child{true};   ///< The returning vertex is the satellite (else the station).
+    std::string vertex;         ///< Vertex key of the returning vertex ("S:<satellite>" or "R:<station index>").
+    std::vector<std::string> sats;       ///< Satellites of M, in the order the walk attached them.
+    std::vector<int>         stations;   ///< Receivers of M (roster index), in the order the walk attached them.
+    long long   arcs{0};        ///< Leveling carries erased: every carry of a satellite of M at any station, and every carry of a receiver of M on the band.
+    long long   rpb{0};         ///< Receiver phase-bias carries dropped (the receivers of M).
+    long long   pb{0};          ///< Satellite phase-bias priors of M in the border stash (measure-only: the re-reference marginalizes them).
+};
+
 /// The observation of one epoch's chain (EpochEvents::PhaseDatum::chain).  Empty unless
 /// network.trace_chain_datum is armed.
 struct ChainEpochObs {
@@ -297,6 +325,7 @@ struct ChainEpochObs {
     std::vector<ChainEdgeObs>      edges;     ///< Tree edges, in election order.
     std::vector<ChainComponentObs> comps;     ///< Components, in election order.
     std::vector<ChainChordCycle>   chords;    ///< Chords of the tree, per component in arc order.
+    std::vector<ChainReleaseObs>   releases;  ///< The returning row's cut releases, in election order (empty unless the row is armed).
     std::map<std::pair<std::string, std::string>, double> shift_sat;  ///< (sat, signal) -> the legacy known frame step (m).
     std::map<std::pair<int, std::string>, double>         shift_rpb;  ///< (station, receiver phase-bias key) -> its step (m).
     long long gated_keys{0};                  ///< Usable (station, ambiguity) keys the coverage gate held out of the union.
@@ -346,14 +375,20 @@ struct ChainFrameMemory {
     std::map<std::string, std::map<std::string, std::string>> vertex_parent;
     /// group -> vertex key -> time (continuous GPS seconds) it was last a vertex.
     std::map<std::string, std::map<std::string, double>> last_seen_s;
+    /// group -> vertex key -> its parent vertex key at the last epoch it was a vertex ("" for a
+    /// root).  Carried forward across epochs like @ref last_seen_s, so a vertex that left keeps
+    /// the parent it had when it was last seen; the returning row's leave row names it.
+    std::map<std::string, std::map<std::string, std::string>> last_parent;
     /// (station, satellite, signal) -> (chord row, band 1 or 2): the chord table of that epoch.
     std::map<std::tuple<int, std::string, std::string>, std::pair<ChainChordRow, int>> chords;
     /// (station, satellite, signal) -> the as-built target (m) the as-built rule drafted for the arc
-    /// at that epoch, for every arc the kept row held then (@c ChainEdgeObs::row_armed).  Replaced
-    /// wholesale at each observed epoch, and empty while the row is off.  A held arc keeps its frozen
-    /// target while the as-built draft may differ from it for any number of elections, so the
-    /// as-built rule's own step is measured against this value: a difference that persists is one
-    /// event, at the epoch the draft changed.
+    /// at that epoch, for every arc the kept row held then (@c ChainEdgeObs::row_armed), and the
+    /// realized target for every arc the returning row released then (the release erased the
+    /// old-frame carry the draft read, so the next draft reads the carry of the realized target).
+    /// Replaced wholesale at each observed epoch, and
+    /// empty while no row is armed.  A held arc keeps its frozen target while the as-built draft may
+    /// differ from it for any number of elections, so the as-built rule's own step is measured
+    /// against this value: a difference that persists is one event, at the epoch the draft changed.
     std::map<std::tuple<int, std::string, std::string>, double> kept_as_built_target;
 };
 
@@ -391,7 +426,8 @@ struct ChainEpochClass {
  * (the child was absent, seen earlier or never); RootHandover (the child was a root).  A Kept
  * edge whose satellite remembers another root takes RootHandover, or Split in a split-off
  * piece.  Every count of @p cnt that the classification determines is accumulated, an edge
- * an armed row decided (@c row_armed) also in @c cf_rows_armed.
+ * an armed row decided (@c row_armed) also in @c cf_rows_armed, and the epoch's cut releases
+ * (@ref ChainEpochObs::releases) in the cut and declared counts.
  *
  * @param obs        The epoch's chain record.
  * @param mem        The memory of the last observed epoch.
@@ -406,9 +442,10 @@ ChainEpochClass chainClassifyEpoch(const ChainEpochObs& obs, const ChainFrameMem
                                    ChainFrameCounters& cnt);
 
 /**
- * @brief The memory after an observed epoch: its vertices, components, parents, sightings,
- *        chord table and the as-built targets of the edges the kept row held.  Counts the
- *        vertices of the last epoch that left.
+ * @brief The memory after an observed epoch: its vertices, components, parents, sightings, the
+ *        parent each vertex had when it was last seen, the chord table and the as-built
+ *        targets of the edges an event row decided.  Counts the vertices of the last epoch that
+ *        left.
  *
  * @param obs    The epoch's chain record.
  * @param cls    Its classification.
@@ -475,6 +512,15 @@ bool chainKeptEdgeMoved(const ChainEdgeObs& e, const double* remembered);
  * as-built target and the frozen one that persists is written once, at the election the
  * as-built target changed.
  *
+ *
+ * An edge the returning row released (@ref ChainEdgeObs::row_armed, classified Returning) writes
+ * two @c returning rows, @c leave (the vertex and the parent it had when it was last seen) and
+ * @c join (the new edge), each with its @c gap_s, @c child and @c parent.  Each release of the
+ * epoch (@ref ChainEpochObs::releases) then writes one @c cut_release row (action @c release,
+ * with the counts the release took) and one @c declared_keys row per satellite of its moved side,
+ * which the frame grader reads as the keys the producer declares moved.  A returning edge no row
+ * decided writes the one @c join row it always has.
+ *
  * @param run The run (its context, traces, setup and engines).
  * @param ep  The epoch after the solve and the harvests.
  */
@@ -491,9 +537,11 @@ void networkChainFrameObserve(NetworkRun& run, const NetworkEpoch& ep);
  * phase-bias time-link NEES when network.trace_rpb_states is armed.  With a row armed the
  * first line names the armed rows and says the others ran the as-built rule, and an armed
  * row prints its count of edges under the integer rule, its unknown and fractional counts
- * being the steps as realized, and one line counts the kept rows written: the reversed arcs and
- * the hold rows, by the kind of the as-built step.  A run with no row armed prints what it
- * printed before the rows existed.
+ * being the steps as realized, one line counts the kept rows written (the reversed arcs and the
+ * hold rows, by the kind of the as-built step) and one the returning rows written (the released
+ * edges by the kind of the as-built step, the cut releases and the declared keys).  The line of
+ * cut and declared counts names the returning row as the one that cuts and declares.  A run with
+ * no row armed prints what it printed before the rows existed.
  *
  * @param v The run at its end.
  * @return 0 (this report does not set the exit code).
