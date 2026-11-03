@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Frame census of the eq34 chain on the float vehicle (card IRD, step IRD-2).
 
-Three graders on the chain traces of a run (network.trace_chain_datum writes
+Four graders on the chain traces of a run (network.trace_chain_datum writes
 logs/network_chain_edges.csv and logs/network_chain_frame.csv; the wire graders read
 logs/network_pb_prehold.csv and products.txt):
 
@@ -9,6 +9,9 @@ logs/network_pb_prehold.csv and products.txt):
   cert  <run> <fixture>    truth correctness of the would-be certifications (section 10) and of
                            the re-host rows
   floor <run> <fixture>    the event-free floor of the W bars (sections 9 and 10, calibration rule)
+  nees  <run> <fixture>    the floats against truth in units of their own covariance: the chord
+                           table, and which wrong certifications an honest float explains; the
+                           producer's double differences (card IRDC section 6)
 
 Every mode prints its sample sizes before any verdict.  --json writes the result.  --selftest runs
 synthetic traces with hand-computed answers.
@@ -60,6 +63,20 @@ Checks that accompany the cert grade, because a wrong integer is only wrong when
     cycle or more, the float's step against the formula's step (the float follows a frame event when
     the two agree).
 
+The normalized estimation error (mode nees)
+-------------------------------------------
+NEES = e^T Q^-1 e of a float's error e against its truth, under the covariance Q the producer traced
+(unscaled): for one float z^2 = (e / s)^2, for a chord row the joint value of its two floats under
+[[q11, q12], [q12, q22]] (2 degrees of freedom).  An honest covariance gives |z| p50 0.674 and p90
+1.645, and a joint value below 13.8 with probability 0.999.  A chord row with a wrong determined
+integer is a certifier failure when its joint NEES lies within the honest bound 13.8 s^2 (s the
+certifier's sigma scale, --scale): the float is as close to its truth as the certifier assumes and
+the certification still erred.  Beyond the bound it is a damaged float, off its truth by more than
+its covariance admits; a sigma scale cannot separate such rows from the correct ones while both
+carry the same formal sigma (the readout prints both).  The producer's double differences
+(logs/network_producer_ar.csv, float_cyc and sigma_cyc) are read by time bin; they exist on runs
+without the chain (the reference arm R1), whose chord table is empty.
+
 Reading choices that the card leaves open (printed again in the headers of the output)
   - event-free is evaluated per band; the joint line requires both bands;
   - the chord table row at tow t belongs to the trees of epoch t (the producer writes it after the
@@ -78,11 +95,14 @@ Usage:
     python scripts/ird_frame_census.py floor <run> <fixture> [--source prehold|products]
         [--systems G] [--bands L1C,L2W] [--quiet-min 30] [--short-window] [--strict-rows]
         [--start-hms HH:MM:SS | --start-tow T] [--hours H] [--min-n 200] [--json out.json]
+    python scripts/ird_frame_census.py nees  <run> <fixture> [--systems G] [--scale 3]
+        [--bin-min 10] [--settle-min 60] [--no-windup-branch] [--json out.json]
     python scripts/ird_frame_census.py --selftest
 """
 import argparse
 import csv
 import json
+import math
 import os
 import sys
 import tempfile
@@ -144,8 +164,9 @@ class Edge(namedtuple("Edge", "tow system family band comp r1 sta sat child pare
 
 
 class Chord(namedtuple("Chord", "tow system b1 b2 sta sat f1 f2 q11 q22 int1 int2 source "
-                                "conflict lat1 lat2")):
-    """One row of network_chain_frame.csv: a chord of both bands' trees (arc sta-sat)."""
+                                "conflict lat1 lat2 q12", defaults=(0.0,))):
+    """One row of network_chain_frame.csv: a chord of both bands' trees (arc sta-sat); q12 is the
+    covariance between its two floats (cycles^2, unscaled, as q11 and q22)."""
     __slots__ = ()
 
     def band(self, k):
@@ -215,7 +236,7 @@ def read_chords(run, systems=None):
                          r[ix["arc_sat"]], float(r[ix["float_cyc_1"]]), float(r[ix["float_cyc_2"]]),
                          float(r[ix["q11"]]), float(r[ix["q22"]]), _int_or_none(r[ix["int_1"]]),
                          _int_or_none(r[ix["int_2"]]), r[ix["source"]], int(r[ix["conflict"]]),
-                         _int_or_none(lat1), _int_or_none(lat2)))
+                         _int_or_none(lat1), _int_or_none(lat2), float(r[ix["q12"]])))
     return out
 
 
@@ -1083,6 +1104,218 @@ def run_floor(args):
 
 
 # --------------------------------------------------------------------------- #
+# mode 4: nees
+# --------------------------------------------------------------------------- #
+NEES_P = 0.001                              # the honest bound's tail probability
+NEES_BOUND_2DOF = -2.0 * math.log(NEES_P)   # 13.8155: the chi-square quantile (2 dof) at 1 - NEES_P
+CERT_SIGMA_SCALE = 3.0                      # kChainCertSigmaScale (include/network/solve/ChainFrame.hpp)
+
+
+def joint_nees(e1, e2, q11, q12, q22):
+    """e^T Q^-1 e of (e1, e2) under Q = [[q11, q12], [q12, q22]]; None unless Q is positive definite."""
+    det = q11 * q22 - q12 * q12
+    if not (q11 > 0.0 and q22 > 0.0 and det > 0.0):
+        return None
+    return (q22 * e1 * e1 - 2.0 * q12 * e1 * e2 + q11 * e2 * e2) / det
+
+
+def nees_channel(s, e):
+    """{n, sigma_p50, sigma_p90, e_p50, e_p90, z_p50, z_p90} of formal sigmas s and errors e (|e|)."""
+    s, e = np.asarray(s, float), np.abs(np.asarray(e, float))
+    if s.size == 0:
+        return {"n": 0}
+    z = e / s
+    return {"n": int(s.size), "sigma_p50": float(np.median(s)), "sigma_p90": float(np.percentile(s, 90)),
+            "e_p50": float(np.median(e)), "e_p90": float(np.percentile(e, 90)),
+            "z_p50": float(np.median(z)), "z_p90": float(np.percentile(z, 90))}
+
+
+def quantiles(a):
+    """{n, min, p10, p50} of an array (empty: n 0)."""
+    a = np.asarray(a, float)
+    if a.size == 0:
+        return {"n": 0}
+    return {"n": int(a.size), "min": float(a.min()), "p10": float(np.percentile(a, 10)),
+            "p50": float(np.median(a))}
+
+
+def chord_nees(forest, truth, chords, scale=CERT_SIGMA_SCALE, bin_s=600.0, settle_s=3600.0):
+    """The chord table against the frame truth in units of its own covariance (module docstring).
+
+    Returns {"channels": {band 1, band 2, "WL"} -> {"all", "settled"} -> nees_channel,
+    "determined": the census of the rows with a determined integer, "bins": [{"start_s", "integers",
+    "determined", "wrong", "certifier_failures"}]}.  Integers are counted per band where the band's
+    frame truth exists; a row's joint NEES needs both bands' truth."""
+    bound = NEES_BOUND_2DOF * scale * scale
+    since_c = chord_runs(chords, forest)
+    t0 = min(c.tow for c in chords)
+    ch = defaultdict(lambda: {"all": ([], []), "settled": ([], [])})
+    det = {"rows": 0, "correct": 0, "wrong": 0, "no_joint": 0, "certifier_failures": 0,
+           "within_unscaled": 0, "damaged": 0, "integers": 0, "wrong_integers": 0}
+    nees_ok, nees_bad, sig_ok, sig_bad = [], [], [], []
+    bins = defaultdict(lambda: {"integers": 0, "determined": 0, "wrong": 0, "certifier_failures": 0})
+
+    def add(channel, s, e, settled):
+        for part in (("all", "settled") if settled else ("all",)):
+            ch[channel][part][0].append(s)
+            ch[channel][part][1].append(e)
+
+    for c in chords:
+        settled = c.tow - since_c.get((c.key, c.tow), c.tow) >= settle_s - EPS_S
+        b = bins[int((c.tow - t0) // bin_s)]
+        v = {}
+        for k, q in ((1, c.q11), (2, c.q22)):
+            n, why = frame_integer(forest, truth, c.system, c.band(k), c.sta, c.sat, c.tow)
+            v[k] = n if (n is not None and why == "ok") else None
+            if v[k] is None or not q > 0.0:
+                continue
+            add(c.band(k), math.sqrt(q), c.flt(k) - v[k], settled)
+            b["integers"] += 1
+            iv = c.det(k)
+            if iv is None:
+                continue
+            b["determined"] += 1
+            det["integers"] += 1
+            if iv == v[k]:
+                sig_ok.append(math.sqrt(q))
+            else:
+                b["wrong"] += 1
+                det["wrong_integers"] += 1
+                sig_bad.append(math.sqrt(q))
+        if v[1] is None or v[2] is None:
+            continue
+        e1, e2 = c.f1 - v[1], c.f2 - v[2]
+        q_wl = c.q11 + c.q22 - 2.0 * c.q12
+        if q_wl > 0.0:
+            add("WL", math.sqrt(q_wl), e1 - e2, settled)
+        if c.int1 is None and c.int2 is None:
+            continue
+        det["rows"] += 1
+        x = joint_nees(e1, e2, c.q11, c.q12, c.q22)
+        if x is None:
+            det["no_joint"] += 1
+            continue
+        if (c.int1 is not None and c.int1 != v[1]) or (c.int2 is not None and c.int2 != v[2]):
+            det["wrong"] += 1
+            nees_bad.append(x)
+            det["within_unscaled"] += int(x <= NEES_BOUND_2DOF)
+            if x <= bound:
+                det["certifier_failures"] += 1
+                b["certifier_failures"] += 1
+            else:
+                det["damaged"] += 1
+        else:
+            det["correct"] += 1
+            nees_ok.append(x)
+    det.update({"bound": bound, "scale": scale, "nees_correct": quantiles(nees_ok),
+                "nees_wrong": quantiles(nees_bad), "sigma_correct": quantiles(sig_ok),
+                "sigma_wrong": quantiles(sig_bad)})
+    channels = {g: {p: nees_channel(*ch[g][p]) for p in ("all", "settled")} for g in ch}
+    return {"channels": channels, "determined": det,
+            "bins": [dict(start_s=k * bin_s, **bins[k]) for k in sorted(bins)]}
+
+
+def read_ar_rows(run, systems=None):
+    """[(tow, cons, signal, sat_j, ref_sat, sta_r, ref_sta, float_cyc, sigma_cyc)] of the producer's
+    double-difference trace (of `systems` when given), or None when the run carries none."""
+    out = []
+    path = os.path.join(run, AR_REL)
+    if not os.path.isfile(path):
+        return None
+    need = ("tow", "cons", "signal", "sat_j", "ref_sat", "sta_r", "ref_sta", "float_cyc", "sigma_cyc")
+    for r, ix in _rows(path, need):
+        if systems and r[ix["cons"]] not in systems:
+            continue
+        out.append((round(float(r[ix["tow"]]), 3),) + tuple(r[ix[c]] for c in need[1:7])
+                   + (float(r[ix["float_cyc"]]), float(r[ix["sigma_cyc"]])))
+    return out
+
+
+def dd_nees(truth, rows, bin_s=600.0):
+    """The producer's double-difference floats against truth: {"<cons>:<signal>": [{"start_s", **
+    nees_channel}]} by time bin, over the rows whose four arcs have truth (the producer's integers,
+    wind-up branch included, as simnet_producer_ar_grade.py forms them)."""
+    acc = defaultdict(lambda: defaultdict(lambda: ([], [])))
+    t0 = min(r[0] for r in rows) if rows else 0.0
+    for tow, cons, sig, sj, rs, sr, rf, f, s in rows:
+        n = [truth.N(a, b, sig, tow) for a, b in ((sr, sj), (sr, rs), (rf, sj), (rf, rs))]
+        if None in n or not s > 0.0:
+            continue
+        a = acc[cons + ":" + sig][int((tow - t0) // bin_s)]
+        a[0].append(s)
+        a[1].append(f - ((n[0] - n[1]) - (n[2] - n[3])))
+    return {g: [dict(start_s=k * bin_s, **nees_channel(*acc[g][k])) for k in sorted(acc[g])]
+            for g in sorted(acc)}
+
+
+def fmt_channel(d):
+    if not d.get("n"):
+        return "n       0"
+    return ("n %7d  s p50 %.4f p90 %.4f  |e| p50 %8.3f p90 %8.3f  z p50 %8.1f p90 %8.1f"
+            % (d["n"], d["sigma_p50"], d["sigma_p90"], d["e_p50"], d["e_p90"], d["z_p50"], d["z_p90"]))
+
+
+def fmt_q(d, digits=1):
+    if not d.get("n"):
+        return "none"
+    return "min %.*f, p10 %.*f, p50 %.*f" % (digits, d["min"], digits, d["p10"], digits, d["p50"])
+
+
+def run_nees(args):
+    run = os.path.abspath(args.run)
+    fixture = os.path.abspath(args.fixture)
+    systems = tuple(args.systems.split(","))
+    bin_s = 60.0 * args.bin_min
+    truth = Truth(fixture, run, windup=not args.no_windup_branch)
+    have_chain = all(os.path.isfile(os.path.join(run, p)) for p in (EDGES_REL, FRAME_REL))
+    chords = read_chords(run, systems) if have_chain else []
+    ar = read_ar_rows(run, systems)
+    print("== normalized estimation error against truth (the covariance's honesty, card IRDC section 6)")
+    print("run %s\nfixture %s" % (run, fixture))
+    print("n (before any verdict): chord rows %d%s; double-difference rows %s"
+          % (len(chords), "" if have_chain else " (no chain traces)", "none" if ar is None else len(ar)))
+    result = {"mode": "nees", "run": run, "fixture": fixture, "systems": systems, "scale": args.scale,
+              "n_chord_rows": len(chords), "n_dd_rows": None if ar is None else len(ar)}
+    verdict = "NOT GRADEABLE"
+    if chords:
+        res = chord_nees(Forest(read_edges(run, systems)), truth, chords, args.scale, bin_s,
+                         60.0 * args.settle_min)
+        result["chords"] = res
+        print("chord floats against the frame truth (s the formal sigma, unscaled; z = |e| / s; an honest "
+              "covariance reads |z| p50 0.674, p90 1.645; settled: in the table >= %.0f min):" % args.settle_min)
+        for g in sorted(res["channels"], key=lambda g: (g == "WL", g)):
+            for part in ("all", "settled"):
+                print("  %-4s %-8s %s" % (g if part == "all" else "", part, fmt_channel(res["channels"][g][part])))
+        d = res["determined"]
+        print("determined rows %d: correct %d, wrong %d (a determined integer differs from the truth); joint "
+              "NEES not formed %d; integers %d, wrong %d"
+              % (d["rows"], d["correct"], d["wrong"], d["no_joint"], d["integers"], d["wrong_integers"]))
+        print("  joint NEES (2 dof, unscaled): correct rows %s; wrong rows %s"
+              % (fmt_q(d["nees_correct"]), fmt_q(d["nees_wrong"])))
+        print("  formal sigma of the determined integers: correct %s; wrong %s (cycles)"
+              % (fmt_q(d["sigma_correct"], 4), fmt_q(d["sigma_wrong"], 4)))
+        print("  wrong rows within the honest bound %.1f (13.8 x scale^2, scale %.1f): %d certifier failure(s); "
+              "within 13.8 (unscaled) %d; beyond the bound %d (damaged floats)"
+              % (d["bound"], d["scale"], d["certifier_failures"], d["within_unscaled"], d["damaged"]))
+        print("  by %.0f min bin: integers, determined, wrong, certifier failures" % args.bin_min)
+        for b in res["bins"]:
+            print("    %4.0f min: %7d %7d %7d %5d" % (b["start_s"] / 60.0, b["integers"], b["determined"],
+                                                     b["wrong"], b["certifier_failures"]))
+        if d["rows"] - d["no_joint"] > 0:
+            verdict = "SOUND" if d["certifier_failures"] == 0 else "UNSOUND"
+    if ar:
+        dd = dd_nees(truth, ar, bin_s)
+        result["dd"] = dd
+        print("producer double differences against truth (%s; z = |e| / sigma_cyc):" % AR_REL)
+        for g, rows in dd.items():
+            for b in rows:
+                print("  %-7s %4.0f min: %s" % (g, b["start_s"] / 60.0, fmt_channel(b)))
+    print("CERTIFIER ON HONEST FLOATS: %s (0 wrong determined rows within the honest bound)" % verdict)
+    result["verdict"] = verdict
+    return result, {"SOUND": 0, "UNSOUND": 1}.get(verdict, 2)
+
+
+# --------------------------------------------------------------------------- #
 # selftest
 # --------------------------------------------------------------------------- #
 class DictTruth:
@@ -1426,6 +1659,45 @@ def selftest():
         "calibration: F 0.015 stands, F 0.017 is MISSED and the bar becomes 0.02125, n < 200 stands, "
         "F = 0.8 B stands")
 
+    # -- nees: the floats in units of their covariance -----------------------------------------
+    chk(near(NEES_BOUND_2DOF, 13.815511, 1e-6) and near(joint_nees(0.6, 0.0, 0.01, 0.005, 0.01), 48.0)
+        and joint_nees(1.0, 1.0, 1.0, 1.0, 1.0) is None,
+        "joint NEES: the 2-dof bound 13.8155; (0.6, 0) under [[0.01, 0.005], [0.005, 0.01]] reads "
+        "0.0036 / 0.000075 = 48; a singular Q is not formed")
+    nc = [Chord(_tow(6), "G", L1, L2, B, "G02", 1.02, 14.01, 1e-4, 1e-4, 1, 14, "pair", 0, None, None, 0.0),
+          Chord(_tow(7), "G", L1, L2, B, "G02", 1.6, 14.0, 1e-2, 1e-2, 2, 14, "pair", 0, None, None, 5e-3),
+          Chord(_tow(5), "G", L1, L2, B, "G03", 12.0, -14.0, 1e-4, 1e-4, 12, -14, "pair", 0, None, None, 0.0),
+          Chord(_tow(6), "G", L1, L2, B, "G03", 8.3, -20.0, 1e-4, 1e-4, None, None, "none", 0, None, None, 0.0)]
+    nr = chord_nees(forest, truth, nc, scale=3.0, bin_s=60.0, settle_s=30.0)
+    d = nr["determined"]
+    chk(d["rows"] == 3 and d["correct"] == 1 and d["wrong"] == 2 and d["certifier_failures"] == 1
+        and d["damaged"] == 1 and d["within_unscaled"] == 0 and d["integers"] == 6 and d["wrong_integers"] == 3,
+        "nees: 3 determined rows; (B, G02) at 6 correct; at 7 wrong (band 1: 2 against 1) with NEES 48 inside "
+        "13.8 x 9, a certifier failure; (B, G03) at 5 wrong 61e4 beyond it, a damaged float")
+    chk(near(d["nees_correct"]["p50"], 5.0) and near(d["nees_wrong"]["min"], 48.0)
+        and near(d["nees_wrong"]["p50"], (48.0 + 610000.0) / 2.0)
+        and near(d["sigma_correct"]["p50"], 0.01) and near(d["sigma_wrong"]["p50"], 0.01),
+        "nees: correct (0.02, 0.01) / 1e-4 = 5; wrong 48 and (25 + 36) / 1e-4 = 610000; formal sigma p50 "
+        "0.01 of the correct integers (0.01, 0.01, 0.1) and of the wrong (0.1, 0.01, 0.01)")
+    c1n, wln = nr["channels"][L1], nr["channels"]["WL"]
+    chk(c1n["all"]["n"] == 4 and near(c1n["all"]["z_p50"], 18.0) and near(c1n["all"]["e_p50"], 0.45)
+        and c1n["settled"]["n"] == 2 and near(c1n["settled"]["z_p50"], 18.0)
+        and near(wln["all"]["z_p50"], (6.0 + 0.3 / math.sqrt(2e-4)) / 2.0, 1e-9),
+        "nees channels: band 1 z = 2, 6, 500, 30 (p50 18; |e| p50 0.45), settled (in the table 30 s) the "
+        "rows at 7 and the second at 6 (z 6 and 30); WL z p50 (6 + 21.2) / 2")
+    chk([(b["start_s"], b["integers"], b["determined"], b["wrong"], b["certifier_failures"])
+         for b in nr["bins"]] == [(0.0, 6, 4, 2, 0), (60.0, 2, 2, 1, 1)],
+        "nees bins of 60 s from epoch 5: 6 integers, 4 determined, 2 wrong; then 2, 2, 1 and the failure")
+    chk(chord_nees(forest, truth, nc, scale=1.0, bin_s=60.0, settle_s=30.0)["determined"]["certifier_failures"] == 0,
+        "nees at scale 1: the bound is 13.8 and the row at NEES 48 counts as damaged")
+    ddr = dd_nees(truth, [(_tow(4), "G", L1, "G02", "G01", B, A, 5.1, 0.05),
+                          (_tow(5), "G", L1, "G02", "G01", B, A, 4.97, 0.1),
+                          (_tow(5), "G", L1, "G02", "G01", C, A, 9.0, 0.1)], bin_s=600.0)
+    chk(list(ddr) == ["G:L1C"] and ddr["G:L1C"][0]["n"] == 2 and near(ddr["G:L1C"][0]["z_p50"], 1.15)
+        and near(ddr["G:L1C"][0]["e_p50"], 0.065),
+        "dd nees: DD truth (26 - 11) - (20 - 10) = 5; errors 0.1 and -0.03 over sigmas 0.05 and 0.1 (z 2 and "
+        "0.3, p50 1.15); the row of a station without truth is left out")
+
     # -- the traces on disk: loaders, consistency, the three modes ------------------------------
     with tempfile.TemporaryDirectory() as td:
         fx, run = _write_world(td)
@@ -1489,6 +1761,28 @@ def selftest():
         ns.no_windup_branch = True
         chk(_captured(run_cert, ns)[0][0]["bands"][L2]["wrong"] > 0,
             "cert on disk without the wind-up branch grades wrong")
+
+        ns = argparse.Namespace(run=run, fixture=fx, systems="G", scale=3.0, bin_min=10.0, settle_min=2.0,
+                                no_windup_branch=False, json=None)
+        (r, rc), text = _captured(run_nees, ns)
+        d = r["chords"]["determined"]
+        chk(rc == 1 and r["verdict"] == "UNSOUND" and d["rows"] == 6 and d["correct"] == 4 and d["wrong"] == 2
+            and d["certifier_failures"] == 2 and d["within_unscaled"] == 2 and d["integers"] == 11
+            and d["wrong_integers"] == 2,
+            "nees on disk: 6 gradeable determined rows; (B, G03) at 6 and 7 determined 7 and 9 against 8 from "
+            "floats 8.4 (NEES 1.6 under q 0.1): two certifier failures, UNSOUND (exit 1)")
+        dl1 = r["dd"]["G:L1C"]
+        chk(len(dl1) == 1 and dl1[0]["n"] == 5 and near(dl1[0]["e_p50"], 0.007, 1e-6)
+            and near(dl1[0]["z_p50"], 0.035, 1e-6) and r["dd"]["G:L2W"][0]["n"] == 5,
+            "nees on disk: the producer's DD rows of (B, G02) against (A, G01), errors the planted fractions "
+            "0.005 to 0.009 over sigma 0.2 (z p50 0.035) in each band")
+        chk(0 <= text.index("n (before any verdict)") < text.index("CERTIFIER ON HONEST FLOATS:"),
+            "nees prints its sample sizes before the verdict")
+        os.rename(os.path.join(run, FRAME_REL), os.path.join(run, FRAME_REL + ".off"))
+        (r, rc), _text = _captured(run_nees, ns)
+        os.rename(os.path.join(run, FRAME_REL + ".off"), os.path.join(run, FRAME_REL))
+        chk(rc == 2 and r["verdict"] == "NOT GRADEABLE" and r["n_chord_rows"] == 0 and r["dd"]["G:L1C"][0]["n"] == 5,
+            "nees on a run without the chain (the reference arm): the DD readout alone, NOT GRADEABLE (exit 2)")
 
         knl = WIC.DUAL_FREQ["G"]["2"] / (WIC.DUAL_FREQ["G"]["1"] - WIC.DUAL_FREQ["G"]["2"])
         for src in ("prehold", "products"):
@@ -1575,6 +1869,15 @@ def build_parser():
     p.add_argument("--start-hms", default=None, help="grading start HH:MM:SS on the run's day")
     p.add_argument("--hours", type=float, default=None, help="graded span (h)")
     p.add_argument("--min-n", type=int, default=CAL_MIN_N, help="calibration needs this many pair-epochs")
+    p = sub.add_parser("nees", help="the floats against truth in units of their covariance; certifier failures")
+    common(p, True)
+    p.add_argument("--scale", type=float, default=CERT_SIGMA_SCALE,
+                   help="the certifier's sigma scale for the honest bound (default 3, kChainCertSigmaScale)")
+    p.add_argument("--bin-min", type=float, default=10.0, help="time bin in minutes (default 10)")
+    p.add_argument("--settle-min", type=float, default=60.0,
+                   help="chord age (minutes in the table) of the settled readout (default 60)")
+    p.add_argument("--no-windup-branch", action="store_true",
+                   help="grade against the simulator's raw integers (no per-arc wind-up branch)")
     return ap
 
 
@@ -1584,8 +1887,8 @@ def main():
     if args.selftest:
         return selftest()
     if args.mode is None:
-        ap.error("a mode (stop, cert, floor) or --selftest is required")
-    fn = {"stop": run_stop, "cert": run_cert, "floor": run_floor}[args.mode]
+        ap.error("a mode (stop, cert, floor, nees) or --selftest is required")
+    fn = {"stop": run_stop, "cert": run_cert, "floor": run_floor, "nees": run_nees}[args.mode]
     result, rc = fn(args)
     if args.json:
         with open(args.json, "w", encoding="utf-8") as fh:

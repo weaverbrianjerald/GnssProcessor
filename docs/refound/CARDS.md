@@ -171,7 +171,8 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   control: golden chord WL and 6 h wire E_L1 up to 0.029 cycle off the null (tolerance 0.02); graders, truth-wire
   positive control and the E_b slope pass. Re-registered by the author's ruling (IRD-0r: above 0.15 cycle and
   within max(0.05, the null's 99 % band)); PASSES in 44 of 44 cells; re-based onto `a02ccfb`. Results from IRD-1 on
-  in IRDB and IRDC; IRD-2's stop closed by the author's ruling (2026-11-02); IRD-3 landed (IRDC section 5).
+  in IRDB and IRDC; IRD-2's stop closed by the author's ruling (2026-11-02); IRD-3 landed (IRDC section 5); the
+  certification defect re-measured as a float defect (IRDC section 6).
 - [IRDB](IRDB_integer_recovering_datum_continued_2026-10-30.md): open, 2026-10-30: card IRD's continuation, from IRD-1
   on. IRD-1 LANDED, measure-only and default off (the chain's event table, edge and chord traces, CHAIN events,
   pre-hold and receiver phase-bias traces, the run-end frame census; the consumer's shared AR builder, observe-mode
@@ -196,7 +197,10 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   in the static algebra; the fixes are IRD-4's event rows. The author ruled the stop closed (2026-11-02, section 4):
   IRD-3 onward may be built in card IRD section 11's order. IRD-3 (section 5) LANDED default off: the pair family
   pins one tree on both bands at full rank and reproduces A0 byte for byte on r3c and the golden sim (every arc on
-  both bands); P-c FAILED on four clauses, as A0's. A one-band fixture runs the band extension on data.
+  both bands); P-c FAILED on four clauses, as A0's. A one-band fixture runs the band extension on data. The
+  certification defect re-measured (section 6): the certifier is sound (no wrong integer on a float its covariance
+  describes); every wrong would-be certification is a float the events or the RPB floor damaged, so no sigma scale
+  fixes it; the author's ruling on the rule is owed.
 - [RKD](RKD_retired_key_deletion_2026-10-14.md): closed, 2026-10-14: the 144 retired network keys and five lane keys
   they orphan deleted with their code (149 ledger rows, 784 to 635; 30 C++ files); landed after the same-build
   golden comparison passed (only declared text moves on the goldens).
