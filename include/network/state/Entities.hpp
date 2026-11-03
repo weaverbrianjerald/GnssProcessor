@@ -67,6 +67,7 @@
 #include "network/ar/ArCycleBasis.hpp"   // ArFamilyKey, ArBasisMemory
 #include "network/qc/GrossLos.hpp"       // GrossLosState
 #include "network/emit/PbHoldClone.hpp"    // PbHoldClone
+#include "network/emit/PhaseFrameHold.hpp" // PhaseFrameSample
 #include "network/solve/Sbasis.hpp"         // NetworkSbasis::PinPairHold
 #include "network/assembly/MeasurementAdmission.hpp"   // MeasurementAdmissionArc
 #include "network/assembly/SignalIntegrity.hpp"   // SignalIntegrityArc
@@ -254,6 +255,10 @@ struct ConstellationState {
     /// and the previous emitted epoch, of the emitted clock step.  Absent unless
     /// network.emit_pb_hold_phase_clock.  Was @c NetworkCarryState::pb_hold_frz_M.  ColdStart.
     std::optional<double> pb_hold_frz_M;
+    /// The phase-visible frame hold (network.emit_phase_frame_hold): the constellation's frame
+    /// G (m), added to every emitted phase bias of its satellites; present once its first vote
+    /// started it.  ColdStart (a warm resume marks the seam).
+    std::optional<double> phase_frame_g_m;
     /// The sticky component reference station name of the SD EWL search (A2's r0).  Was
     /// @c NetworkCarryState::sd_ewl_r0.  ColdStart.
     std::optional<std::string> sd_ewl_r0;
@@ -364,6 +369,9 @@ struct SatelliteState {
     /// Consecutive epochs the tracked satellite had no IF-TD column (its track held); the
     /// resumption edge reads it.  ColdStart.
     std::optional<int> apriori_track_paused;
+    /// The phase-visible frame hold: the satellite's phase-visible correction against the raw a
+    /// priori at the previous emitted epoch, holding only that epoch's satellites.  ColdStart.
+    std::optional<PhaseFrameSample> phase_frame_prev;
     /// The clock-monitor refloat flag at the last stash: hard-refloat mode skip-stashes the
     /// satellite, so the D2 stash cannot carry the flag.  Was
     /// @c NetworkCarryState::prev_clock_refloat_sats.  Record QR.

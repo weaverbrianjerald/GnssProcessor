@@ -315,3 +315,10 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   Two knobs, default off: `network.cycle_slip.if_phase_td_sat_centre` and `network.apriori_clock_track`. GPS, 6 h: WTZZ00DEU -0.008 and
   +0.008 m against the GPS golden (before +0.021 and +0.027), census +0.013 to +0.007 m pooled; DOY 129 passes, DOY 132 fails. GPS + Galileo
   fails with the receivers' frozen inter-system offset. Both keys UNVALIDATED; nothing armed.
+- [ICL](ICL_inter_constellation_level_2026-11-03.md): closed, 2026-11-03 (pre-registered the same day): the GPS-to-Galileo level of card
+  BRD's broadcast-referenced posture, held for receivers whose inter-system offset is frozen. Measured before building: each
+  constellation's phase-visible level is its clock pivot's a priori error (under the tracked a priori a random walk, 188 and 193 mm over
+  120 epochs against the golden's 2.5), passed to the user by the smoothed hold; the clock frame hold keeps it off the code side. A held
+  frame on the emitted phase-visible clock (`network.emit_phase_frame_hold`, default off, outputs only): 9 and 32 mm, census +0.206 and
+  +0.116 to +0.011 and +0.017 m against the golden, receivers as configured equal to free-offset receivers (paired -0.0002 and +0.0044
+  m); on the CODE a priori it cures the regime's own GPS + Galileo cost. G1, G4 (DOY 129) and G5 fail. UNVALIDATED; nothing armed.

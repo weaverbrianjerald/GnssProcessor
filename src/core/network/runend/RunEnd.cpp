@@ -38,6 +38,7 @@
 #include "network/assembly/BiasAdmission.hpp"
 #include "network/qc/BlockBaarda.hpp"
 #include "network/emit/BrdcWire.hpp"
+#include "network/emit/PhaseFrameHold.hpp"
 #include "network/assembly/CanonicalPairAdmission.hpp"
 #include "network/assembly/SecondBandAdmission.hpp"
 #include "network/state/CarryDisposition.hpp"
@@ -232,6 +233,8 @@ const std::array<NetworkRunEndRow, kNetworkRunEndReportCount> kNetworkRunEndRepo
      "network/solve/ClockLevel.cpp", networkClockLevelMonitorRunEnd},
     {"the native broadcast clock a priori (NBP)",
      "network/emit/BrdcWire.cpp", networkBrdcWireRunEnd},
+    {"the phase-visible frame hold (ICL)",
+     "network/emit/PhaseFrameHold.cpp", networkPhaseFrameHoldRunEnd},
     {"the phase-visible consistency (PVN)",
      "network/diag/PhaseVisibleDiag.cpp", networkPhaseVisibleRunEnd},
     {"the exact coupling time update (CTU, WSX, SCL, SCL2)",

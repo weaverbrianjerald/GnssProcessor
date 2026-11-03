@@ -212,6 +212,12 @@ and 132; two causes measured, the IF-TD test's one-way centring and the clock ti
 the receiver to -0.008 and +0.008 m and the census from +0.013 to +0.007 m pooled: DOY 129 passes, DOY 132 fails; GPS + Galileo needs the
 receiver's inter-system offset re-estimated every epoch; nothing armed).
 
+[ICL](refound/ICL_inter_constellation_level_2026-11-03.md), the GPS-to-Galileo level of the broadcast-referenced network for receivers
+whose inter-system offset is frozen (closed, 2026-11-03: each constellation's phase-visible level is its clock pivot's a priori error, a
+random walk under the tracked a priori, passed by the smoothed hold; a default-off held frame on the emitted phase-visible clock cuts the
+level from 188 and 193 to 9 and 32 mm per hour and the census from +0.206 and +0.116 to +0.011 and +0.017 m, receivers as configured
+then equal to free-offset receivers; G1, G4 on DOY 129 and G5 fail; nothing armed).
+
 ### `resume-seam` — [topics/resume-seam.md](topics/resume-seam.md)
 
 | card | one line | status | last dated |

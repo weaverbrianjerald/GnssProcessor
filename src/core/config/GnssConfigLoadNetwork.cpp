@@ -324,6 +324,10 @@ namespace GnssProcessor {
                                          "network.emit_pb_hold with network.emit_pb_hold_smoothed "
                                          "(the smoothed hold, the hold the posture was measured with)");
         }
+        // The phase-visible frame votes within the phase-bias hold's generations.
+        if (network_emit_phase_frame_hold_ && !network_config_.emit_pb_hold)
+            throw std::runtime_error("network.emit_phase_frame_hold requires network.emit_pb_hold "
+                                     "(its generations delimit the frame's vote)");
         // The tracked a priori moves the broadcast clock by the IF-TD columns: it needs the
         // broadcast a priori and the two-way centring that fits them.
         if (network_apriori_clock_track_) {
@@ -8592,6 +8596,23 @@ namespace GnssProcessor {
         network_clock_frame_leash_m_ =
             jval<double>(json, "network.clock_frame_leash_m",
                          "network_clock_frame_leash_m", 50.0);
+        // The phase-visible clock's held frame: outputs only; its requirement (the
+        // phase-bias hold, whose generations delimit the vote) is refused at the end of the
+        // section, on the resolved values.
+        network_emit_phase_frame_hold_ =
+            jval<bool>(json, "network.emit_phase_frame_hold", "emit_phase_frame_hold", false);
+        network_phase_frame_leash_m_ =
+            jval<double>(json, "network.phase_frame_leash_m", "phase_frame_leash_m", 1.0);
+        if (network_emit_phase_frame_hold_) {
+            if (!(network_phase_frame_leash_m_ > 0.0))
+                throw std::runtime_error("network.phase_frame_leash_m must be positive");
+            log->info("Network: network.emit_phase_frame_hold = true: after the phase-bias hold, "
+                      "each constellation's median innovation of the emitted phase-visible "
+                      "correction against the raw a priori (C - P_IF + U) accumulates into a "
+                      "frame G added to every phase bias of its satellites (leash {:.3f} m, "
+                      "re-anchored with a datum mark).  Outputs only.",
+                      network_phase_frame_leash_m_);
+        }
         network_clock_disc_jump_test_ =
             jval<bool>(json, "network.clock_disc_jump_test",
                        "network_clock_disc_jump_test", false);
