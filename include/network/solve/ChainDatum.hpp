@@ -142,6 +142,22 @@ void eq34ShiftCarry(NetworkCarryState& carry, net::NetworkEntities& entities,
  * (satellite, signal) key, which one shared tree cannot hold: the loader refuses it with the
  * pair family, and a pair family is never rooted at a bridged satellite.
  *
+ * ## Event rows
+ *
+ * The frame is the set of (arc, target) pins plus the receiver phase-bias pin of each root; it does
+ * not depend on the direction of an arc.  The as-built rule keys a tree edge on its child's
+ * incumbent parent, so an arc that stays in the tree with its direction reversed (a fragment that
+ * re-attaches through one new edge reverses the path to its old top) reads as a re-host, and it
+ * re-reads its target from the arc's leveling carry, which a pinned arc never refreshes: a stale
+ * chord carry, then nothing, so the target falls back to 0.  With the kept row armed
+ * (@c network.phase_datum_eq34_event_rows "kept") an incumbent tree edge, in either direction,
+ * whose pinned life continues (@c arcPinnedLifeContinues against the stamp remembered in
+ * @c ArcState::eq34_pin_life), that is not in the epoch's free-epoch latch, whose satellite does
+ * not remember another root and that has a previous target, is held: it keeps its previous target
+ * and takes no frame step of its own, so the shift walk gives its child the parent's step exactly
+ * and an unknown parent step passes down.  An edge the row does not hold runs the as-built rule.
+ * With the row off nothing here changes.
+ *
  * @param ctx           [in/out] carry + counters.  The whole context is passed
  *                      instead of about twenty individual references because the
  *                      body value-mutates the leveling carries, the receiver
@@ -192,13 +208,13 @@ struct NetworkRunEndView;
 /**
  * @brief Run-end report: the eq34 chain datum: re-references, pin audit, seed round, slip-aware election.
  *
- * The eq34 chain datum: the re-reference totals, the pair family, the pin audit, the seed round
- * and the slip-aware election.
+ * The eq34 chain datum: the re-reference totals, the pair family, the kept row, the pin audit,
+ * the seed round and the slip-aware election.
  *
  * Gate: each section under its own condition:
  * `config_.networkPhaseDatumEq34()`; `config_.networkPhaseDatumEq34SeedRound()`;
  * `config_.networkPhaseDatumEq34SlipAwareElection()`; the pair family line under
- * `ctx.knobs.eq34_pair_family`.
+ * `ctx.knobs.eq34_pair_family`; the kept row lines under `ctx.knobs.eq34_row_kept`.
  *
  * @param v The run at its end (network/runend/RunEnd.hpp).
  * @return 0 (this report does not set the exit code).
@@ -346,6 +362,25 @@ struct ChainDatumCounters {
     long long eq34_pair_fallbacks = 0;        ///< constellation-epochs that formed no pair family and were elected per signal (one signal, three or more, or two of one band)
     long long eq34_pair_ext_edges = 0;        ///< tree edges the band extension added: a band-only vertex attached to a pair tree, on its own band
     long long eq34_pair_band_only_comps = 0;  ///< band-only components elected on their own band: a band component with no vertex in any pair tree
+    // The kept row of the chain's event table (network.phase_datum_eq34_event_rows "kept"); all stay 0
+    // with the row off.  An incumbent arc is a pinned tree edge whose arc was a tree edge at the last
+    // election, in either direction.  The row holds it (previous target kept, no frame step of its own)
+    // or not; every incumbent arc of an election lands in exactly one of the tallies below, the first
+    // cause that applies in the order listed.  The tallies are per election: an edge counts once per
+    // election, and a target the as-built rule would re-read differently counts at every election
+    // until the two agree (the observatory counts such a difference once, at its onset).  The
+    // seed-round tallies above count the as-built draft of a held edge as well.
+    long long eq34_kept_held = 0;             ///< incumbent arcs the row held
+    long long eq34_kept_flipped = 0;          ///< ...of them, arcs whose direction reversed (the as-built rule read a re-host)
+    long long eq34_kept_unknown = 0;          ///< ...of them, edges whose as-built step was unknown (a re-reference of the subtree)
+    long long eq34_kept_step_whole = 0;       ///< ...of them, edges whose as-built step was a known nonzero step of whole cycles
+    long long eq34_kept_step_frac = 0;        ///< ...of them, edges whose as-built step was a known nonzero step that is not whole cycles (or that has no wavelength)
+    long long eq34_kept_rehost = 0;           ///< ...of them, edges whose as-built rule read a host change
+    long long eq34_kept_not_freed = 0;        ///< incumbent arcs not held: the arc is in the epoch's free-epoch latch (the slip row's case)
+    long long eq34_kept_not_root = 0;         ///< ...a satellite's remembered root differs from the component's datum receiver (the root row's case)
+    long long eq34_kept_not_target = 0;       ///< ...the arc has no previous target
+    long long eq34_kept_not_life = 0;         ///< ...the arc has no remembered pin life (not pinned at the last election, or a warm resume)
+    long long eq34_kept_not_ended = 0;        ///< ...the arc's pinned life ended (reborn, re-entered after a gap, flagged)
 };
 
 } // namespace GnssProcessor

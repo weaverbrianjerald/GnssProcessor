@@ -55,6 +55,7 @@
 #include "network/solve/AnchorHygiene.hpp"
 #include "network/solve/ChainDatum.hpp"
 #include "network/solve/ChainFrame.hpp"    // ChainEpochObs (the pair family cases compare the observatory's record)
+#include "network/ar/ArcLife.hpp"         // ArcLifeStamp, arcLifeStamp (the kept row cases read the pinned life)
 #include "network/carry/Coupling.hpp"
 #include "network/assembly/Responses.hpp"
 #include "network/driver/RunTypes.hpp"
@@ -67,6 +68,7 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <array>
 #include <bitset>
 #include <cstdint>
 #include <deque>
@@ -3130,16 +3132,31 @@ struct ChainKnobs {
     std::string preferred;   ///< network.phase_datum_eq34_receiver ("" = none).
     std::string family{"signal"};   ///< network.phase_datum_eq34_family ("signal" or "pair").
     bool        trace_chain{false}; ///< network.trace_chain_datum (the frame observatory records the tree).
+    /// network.phase_datum_eq34_event_rows.  The rows are written for the float vehicle, so a config
+    /// that names one is loaded on it.
+    std::vector<std::string> rows;
+    bool        float_vehicle{false};   ///< Load on the float vehicle with no row armed (the control of an armed twin).
 };
 
 /// Load a network config on the chain datum with the given knobs, through the production loader.
 std::unique_ptr<GnssConfig> loadChainConfig(LogManager& lm, const ChainKnobs& k, int tag) {
     const auto b = [](bool v) { return std::string(v ? "true" : "false"); };
+    std::string float_vehicle;   // the vehicle the event rows are written for, and its prerequisites
+    if (k.float_vehicle || !k.rows.empty())
+        float_vehicle = "    \"phase_leveling\": true,\n    \"shared_carry_full_cov\": true,\n"
+                        "    \"carry_conditional_coupling\": true,\n    \"ambiguity_vehicle\": \"float_kf\",\n";
+    std::string rows;
+    if (!k.rows.empty()) {
+        rows = "    \"phase_datum_eq34_event_rows\": [";
+        for (std::size_t i = 0; i < k.rows.size(); ++i) rows += (i ? ", \"" : "\"") + k.rows[i] + "\"";
+        rows += "],\n";
+    }
     const std::string json = std::string("{\n")
         + "  \"processing\": { \"mode\": \"ppp-rtk-network\", \"active_systems\": [ \"GPS\" ],\n"
         + "                  \"signal_priorities\": { \"GPS\": \"WC\" } },\n"
         + "  \"network\": {\n"
         + "    \"clock_datum_station\": \"AAAA\",\n"
+        + float_vehicle + rows
         + "    \"phase_datum_eq34\": true,\n"
         + "    \"phase_datum_eq34_longevity_election\": " + b(k.longevity) + ",\n"
         + "    \"phase_datum_eq34_slip_aware_election\": " + b(k.slip_aware) + ",\n"
@@ -3691,11 +3708,14 @@ struct ChainRun {
     EpochEvents             events;
 };
 
+/// @p freed is the epoch's free-epoch latch, (station, ambiguity key), which the kept row reads.
 ChainRun runLiveChainElection(NetworkRunContext& ctx, const GnssConfig& cfg, const ChainWorld& w,
-                              const ChainEpoch& e, const std::shared_ptr<spdlog::logger>& log) {
+                              const ChainEpoch& e, const std::shared_ptr<spdlog::logger>& log,
+                              const std::set<std::pair<int, std::string>>& freed = {}) {
     ChainRun r;
     r.stations.resize(w.names.size());
     for (std::size_t i = 0; i < w.names.size(); ++i) r.stations[i].name = w.names[i];
+    r.events.slip.relevel.free_ambs = freed;
     networkElectChainDatum(ctx, cfg, log, r.stations, e.present, e.cnd, e.hyg, e.slipped, r.shared, r.events);
     return r;
 }
@@ -4189,6 +4209,508 @@ TEST(NetworkArcGraphOracle, ChainPairFamilyFormsOnlyFromTwoSignalsOfDifferentBan
                     EXPECT_EQ(st.pinned_amb_targets.count(StateKeys::makeAmbiguityKey(s, "L1C")),
                               st.pinned_amb_targets.count(StateKeys::makeAmbiguityKey(s, "L2W")))
                         << st.name << " " << s;
+    }
+}
+
+
+// ---------------------------------------------------------------------------------------------
+// The kept row of the chain's event table (network.phase_datum_eq34_event_rows "kept").  An
+// incumbent tree edge, in either direction, whose pinned life continues keeps its previous pin
+// target and takes no frame step of its own.  Three proofs: random lineages, where the row's five
+// conditions decide every pinned edge as stated and a held edge's step passes the shift walk
+// exactly; a hand-built re-host that reverses a path of two edges; and a stale leveling carry that
+// is pruned between two elections.
+// ---------------------------------------------------------------------------------------------
+
+/// The ledger of the epoch's arcs as the roster audit would have left it: an arc not yet admitted is
+/// admitted with probability one half (generation 1, the epoch as its run start), and an admitted one
+/// is sometimes reborn (the generation steps), starts a new run, goes into a gap or comes back from
+/// one, or is flagged.  Applied to a context between two elections, as the audit of the epoch in
+/// between.
+void perturbChainLedger(std::mt19937& rng, const ChainEpoch& e, NetworkRunContext& ctx, long long epoch) {
+    for (std::size_t i = 0; i < e.present.size(); ++i)
+        for (const auto& [amb, pbkey] : e.cnd.usable_keys[i]) {
+            const std::optional<ArcId> id = net::arcKey(static_cast<int>(i), amb);
+            if (!id) continue;
+            ArcRecord* r = net::get(ctx.entities.arcs, *id, &net::ArcState::ledger);
+            if (r == nullptr) {
+                if (!chance(rng, 0.5)) continue;
+                ArcRecord& n = net::put(ctx.entities.arcs, *id, &net::ArcState::ledger);
+                n.adm_generation       = 1;
+                n.adm_state            = GnssProcessor::ArcState::Tracking;
+                n.ep_adm_state_changed = epoch;
+                continue;
+            }
+            if (chance(rng, 0.03)) {   // reborn
+                ++r->adm_generation;
+                r->adm_state            = GnssProcessor::ArcState::Tracking;
+                r->ep_adm_state_changed = epoch;
+            } else if (chance(rng, 0.03)) {   // a new run, or the gap and the return
+                r->adm_state = r->adm_state == GnssProcessor::ArcState::Tracking
+                                   ? GnssProcessor::ArcState::Gap : GnssProcessor::ArcState::Reentered;
+                r->ep_adm_state_changed = epoch;
+            }
+            if (chance(rng, 0.01)) net::putAmbFlagEp(ctx.entities, static_cast<int>(i), amb) = epoch;
+        }
+}
+
+/// What the kept row must decide for one pinned edge, in the order its conditions are tested.
+enum class KeptWant : int { NotIncumbent = 0, Freed, RootChanged, NoTarget, NoLife, LifeEnded, Held, Count };
+
+/// The state the kept row reads, as it stands before an election.
+struct KeptBefore {
+    std::map<std::string, std::string>                  anchor;       ///< "<sat>_<signal>" -> the station hosting the satellite
+    std::map<std::pair<int, std::string>, std::string>  rx_parent;    ///< (station, "G|L1C") -> the satellite above the station
+    std::map<std::string, std::string>                  root;         ///< "<sat>_<signal>" -> the remembered datum receiver
+    std::map<std::pair<int, std::string>, double>       prev_target;
+    std::map<std::pair<int, std::string>, ArcLifeStamp> pin_life;
+    std::map<std::pair<int, std::string>, ArcLifeStamp> now;          ///< the stamp of every arc of the epoch
+};
+
+KeptBefore keptBefore(const NetworkRunContext& ctx, const ChainEpoch& e) {
+    KeptBefore b;
+    b.anchor = net::sigMap(ctx.entities.sat_signals, &net::SatSignalState::anchor_incumbent, '_');
+    b.root   = net::sigMap(ctx.entities.sat_signals, &net::SatSignalState::eq34_sat_root, '_');
+    net::forEach(ctx.entities.stations, &net::StationState::signals, &net::StationSignalState::eq34_rx_parent,
+                 [&](const StationId& id, const std::string& family, const std::string& sat) {
+                     b.rx_parent[{id.index, family}] = sat;
+                 });
+    b.prev_target = net::arcAmbMap(ctx.entities.arcs, &net::ArcState::eq34_prev_target);
+    b.pin_life    = net::arcAmbMap(ctx.entities.arcs, &net::ArcState::eq34_pin_life);
+    for (std::size_t i = 0; i < e.present.size(); ++i)
+        for (const auto& [amb, pbkey] : e.cnd.usable_keys[i])
+            if (const std::optional<ArcId> id = net::arcKey(static_cast<int>(i), amb))
+                b.now[{static_cast<int>(i), amb}] = arcLifeStamp(ctx, *id);
+    return b;
+}
+
+/// The pinned life of an arc continues (the stated rule, restated apart from the production function).
+bool keptLifeContinues(const ArcLifeStamp& at_pin, const ArcLifeStamp& now) {
+    if (at_pin.flag_ep != now.flag_ep) return false;
+    if (at_pin.adm_generation == now.adm_generation && at_pin.adm_run_start == now.adm_run_start) return true;
+    return at_pin.adm_run_start < 0 && now.adm_run_start >= 0 && now.adm_generation >= at_pin.adm_generation;
+}
+
+/// The row's decision for an edge of the observatory's record, from the state before the election.
+KeptWant keptWant(const KeptBefore& b, const ChainEdgeObs& o, const std::set<std::pair<int, std::string>>& freed) {
+    const std::string amb = StateKeys::makeAmbiguityKey(o.sat, o.signal);
+    const std::pair<int, std::string> key{o.station, amb};
+    const auto a  = b.anchor.find(amb);
+    const auto rp = b.rx_parent.find({o.station, o.group});
+    const bool was_sat = a != b.anchor.end() && a->second == o.station_name;
+    const bool was_rx  = rp != b.rx_parent.end() && rp->second == o.sat;
+    if (!was_sat && !was_rx) return KeptWant::NotIncumbent;
+    if (freed.count(key)) return KeptWant::Freed;
+    if (o.sat_is_child) {
+        const auto root = b.root.find(amb);
+        if (root != b.root.end() && root->second != o.r1) return KeptWant::RootChanged;
+    }
+    if (!b.prev_target.count(key)) return KeptWant::NoTarget;
+    const auto life = b.pin_life.find(key);
+    if (life == b.pin_life.end()) return KeptWant::NoLife;
+    if (!keptLifeContinues(life->second, b.now.at(key))) return KeptWant::LifeEnded;
+    return KeptWant::Held;
+}
+
+/// The kept row's tallies.
+struct KeptTally {
+    long long held{0}, flipped{0}, unknown{0}, whole{0}, frac{0}, rehost{0};
+    long long freed{0}, root{0}, target{0}, life{0}, ended{0};
+};
+
+KeptTally keptTally(const NetworkRunContext& ctx) {
+    const auto& c = ctx.counters;
+    return KeptTally{c.eq34_kept_held, c.eq34_kept_flipped, c.eq34_kept_unknown, c.eq34_kept_step_whole,
+                     c.eq34_kept_step_frac, c.eq34_kept_rehost, c.eq34_kept_not_freed, c.eq34_kept_not_root,
+                     c.eq34_kept_not_target, c.eq34_kept_not_life, c.eq34_kept_not_ended};
+}
+
+KeptTally operator-(const KeptTally& a, const KeptTally& b) {
+    return KeptTally{a.held - b.held, a.flipped - b.flipped, a.unknown - b.unknown, a.whole - b.whole,
+                     a.frac - b.frac, a.rehost - b.rehost, a.freed - b.freed, a.root - b.root,
+                     a.target - b.target, a.life - b.life, a.ended - b.ended};
+}
+
+TEST(NetworkArcGraphOracle, KeptRowHoldsAnIncumbentTreeEdgeByArcIdentity) {
+    std::mt19937 rng(20261104u);
+    LogManager lm;
+    const auto quiet = std::make_shared<spdlog::logger>("ird4_kept_identity", spdlog::sinks_init_list{});
+    long long n_epochs = 0, n_edges = 0, n_held = 0, n_flipped = 0, n_unknown = 0, n_whole = 0, n_frac = 0;
+    long long n_rehost = 0, n_reref_passed = 0, n_reref_held = 0, n_rpb_known = 0;
+    std::array<long long, static_cast<std::size_t>(KeptWant::Count)> n_want{};
+    for (int lineage = 0; lineage < 24; ++lineage) {
+        ChainKnobs kn = drawChainKnobs(rng);
+        kn.trace_chain = true;
+        kn.rows = {"kept"};
+        kn.family = lineage % 2 ? "pair" : "signal";
+        const ChainBands mode = lineage % 2 ? ChainBands::BandOnly : ChainBands::Mixed;
+        ChainWorld w = randomChainWorld(rng, mode);
+        if (chance(rng, 0.2)) kn.preferred = w.names[static_cast<std::size_t>(uniform(rng, 0, static_cast<int>(w.names.size()) - 1))];
+        const std::unique_ptr<GnssConfig> cfg = loadChainConfig(lm, kn, 7000 + lineage);
+        ASSERT_TRUE(cfg) << "lineage " << lineage;
+        ASSERT_TRUE(cfg->networkPhaseDatumEq34EventRowArmed("kept")) << "lineage " << lineage;
+        NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
+        ctx.entities.names.assign(w.names);
+        ASSERT_TRUE(ctx.knobs.eq34_row_kept);
+        ASSERT_EQ(ctx.knobs.eq34_pair_family, lineage % 2 == 1);
+        const AnchorHygiene hyg_shape = drawChainHygiene(rng);
+        for (int ep = 0; ep < 40; ++ep) {
+            ChainEpoch e = nextChainEpoch(rng, w, hyg_shape, mode);
+            finishPairEpoch(e);
+            perturbChainCarry(rng, w, e, ctx, ctx);
+            perturbChainLedger(rng, e, ctx, ep);
+            std::set<std::pair<int, std::string>> freed;   // the free-epoch latch of the epoch
+            for (std::size_t i = 0; i < e.present.size(); ++i)
+                for (const auto& [amb, pbkey] : e.cnd.usable_keys[i])
+                    if (e.cnd.union_keys.count(amb) && chance(rng, 0.03)) freed.insert({static_cast<int>(i), amb});
+            const KeptBefore before = keptBefore(ctx, e);
+            const KeptTally tally0 = keptTally(ctx);
+            const ChainRun r = runLiveChainElection(ctx, *cfg, w, e, quiet, freed);
+            const std::string at = "lineage " + std::to_string(lineage) + " epoch " + std::to_string(ep);
+            ASSERT_TRUE(r.events.phase_datum.chain) << at;
+            const ChainEpochObs& obs = *r.events.phase_datum.chain;
+            std::array<long long, static_cast<std::size_t>(KeptWant::Count)> want{};
+            KeptTally legacy{};   // the as-built facts of the held edges, as the record states them
+            for (const ChainEdgeObs& o : obs.edges) {
+                const KeptWant verdict = keptWant(before, o, freed);
+                ++want[static_cast<std::size_t>(verdict)];
+                ASSERT_EQ(o.incumbent_same || o.incumbent_flipped, verdict != KeptWant::NotIncumbent) << at;
+                ASSERT_EQ(o.row_armed, verdict == KeptWant::Held) << at << " " << o.group << " " << o.station_name << " " << o.sat;
+                if (verdict != KeptWant::Held) {   // an edge the row does not hold is the as-built edge
+                    ASSERT_EQ(o.legacy_known, o.known) << at;
+                    ASSERT_TRUE(sameOrNan(o.legacy_pinmove_m, o.pinmove_m)) << at;
+                    ASSERT_TRUE(sameOrNan(o.legacy_target_m, o.target_m)) << at;
+                    continue;
+                }
+                const std::string amb = StateKeys::makeAmbiguityKey(o.sat, o.signal);
+                const std::pair<int, std::string> key{o.station, amb};
+                // The held edge: the previous target, no displacement, a known step, no host change.
+                ASSERT_EQ(o.target_m, before.prev_target.at(key)) << at;
+                ASSERT_EQ(o.pinmove_m, 0.0) << at;
+                ASSERT_TRUE(o.known) << at;
+                ASSERT_FALSE(o.edge_changed) << at;
+                ASSERT_EQ(r.stations[static_cast<std::size_t>(o.station)].pinned_amb_targets.at(amb), o.target_m) << at;
+                // Its child takes the parent's step exactly, and an unknown parent step passes down.
+                const ChainEdgeObs* up = nullptr;   // the edge that attached the parent vertex (none: the root)
+                for (const ChainEdgeObs& p : obs.edges)
+                    if (p.group == o.group && p.child == o.parent) { up = &p; break; }
+                const bool parent_known = up == nullptr || !std::isnan(up->step_m);
+                ASSERT_EQ(std::isnan(o.step_m), !parent_known) << at;
+                if (parent_known) ASSERT_EQ(o.step_m, -(up == nullptr ? 0.0 : up->step_m)) << at;
+                if (o.sat_is_child) {
+                    const bool reref = r.events.phase_datum.eq34_reref.count({o.sat, o.signal}) != 0;
+                    ASSERT_EQ(reref, !parent_known) << at;
+                    (reref ? n_reref_passed : n_reref_held) += 1;
+                } else {
+                    n_rpb_known += parent_known ? 1 : 0;
+                }
+                // The as-built facts the record keeps, tallied the way the row counts them.
+                if (o.incumbent_flipped) ++legacy.flipped;
+                if (!o.legacy_known) {
+                    ++legacy.unknown;
+                } else if (o.legacy_pinmove_m != 0.0) {
+                    const double cyc = o.legacy_pinmove_m / o.lambda_m;
+                    (std::abs(cyc - std::round(cyc)) <= 1e-6 ? legacy.whole : legacy.frac) += 1;
+                }
+                const auto a  = before.anchor.find(amb);
+                const auto rp = before.rx_parent.find({o.station, o.group});
+                const bool changed = o.sat_is_child ? (a != before.anchor.end() && a->second != o.station_name)
+                                                    : (rp != before.rx_parent.end() && rp->second != o.sat);
+                if (changed) ++legacy.rehost;
+            }
+            // The tallies account for every incumbent arc of the tree, held or not, by cause.
+            const KeptTally d = keptTally(ctx) - tally0;
+            ASSERT_EQ(d.held, want[static_cast<std::size_t>(KeptWant::Held)]) << at;
+            ASSERT_EQ(d.freed, want[static_cast<std::size_t>(KeptWant::Freed)]) << at;
+            ASSERT_EQ(d.root, want[static_cast<std::size_t>(KeptWant::RootChanged)]) << at;
+            ASSERT_EQ(d.target, want[static_cast<std::size_t>(KeptWant::NoTarget)]) << at;
+            ASSERT_EQ(d.life, want[static_cast<std::size_t>(KeptWant::NoLife)]) << at;
+            ASSERT_EQ(d.ended, want[static_cast<std::size_t>(KeptWant::LifeEnded)]) << at;
+            ASSERT_EQ(d.flipped, legacy.flipped) << at;
+            ASSERT_EQ(d.unknown, legacy.unknown) << at;
+            ASSERT_EQ(d.whole, legacy.whole) << at;
+            ASSERT_EQ(d.frac, legacy.frac) << at;
+            ASSERT_EQ(d.rehost, legacy.rehost) << at;
+            ASSERT_EQ(d.held + d.freed + d.root + d.target + d.life + d.ended,
+                      static_cast<long long>(obs.edges.size()) - want[static_cast<std::size_t>(KeptWant::NotIncumbent)]) << at;
+            // Every pinned edge, held or not, leaves its life stamp for the next election.
+            ASSERT_EQ(net::arcAmbMap(ctx.entities.arcs, &net::ArcState::eq34_pin_life).size(), obs.edges.size()) << at;
+            n_edges += static_cast<long long>(obs.edges.size());
+            for (std::size_t k = 0; k < want.size(); ++k) n_want[k] += want[k];
+            n_held += d.held; n_flipped += d.flipped; n_unknown += d.unknown; n_whole += d.whole;
+            n_frac += d.frac; n_rehost += d.rehost;
+            ++n_epochs;
+        }
+    }
+    // The case bites: edges are held, among them reversed arcs and arcs the as-built rule would have
+    // re-referenced, and every cause that keeps an incumbent arc from being held is reached.
+    EXPECT_GT(n_held, 15000);
+    EXPECT_GT(n_flipped, 1000);
+    EXPECT_GT(n_unknown, 800);
+    EXPECT_GT(n_whole, 2500);
+    EXPECT_GT(n_frac, 2000);
+    EXPECT_GT(n_rehost, 1000);
+    EXPECT_GT(n_reref_passed, 1000);   // an unknown parent step reaches a held satellite child ...
+    EXPECT_GT(n_reref_held, 1800);     // ... and a known one leaves it out of the re-references
+    EXPECT_GT(n_rpb_known, 2800);
+    for (KeptWant k : {KeptWant::Freed, KeptWant::RootChanged, KeptWant::NoTarget, KeptWant::LifeEnded})
+        EXPECT_GT(n_want[static_cast<std::size_t>(k)], 400) << static_cast<int>(k);
+    EXPECT_GT(n_want[static_cast<std::size_t>(KeptWant::NoLife)], 100);
+    std::cout << "[ NetworkArcGraphOracle ] kept row: " << n_epochs << " epochs, " << n_edges << " pinned edges, " << n_held << " held (" << n_flipped
+              << " reversed; as-built step unknown " << n_unknown << ", whole " << n_whole << ", fractional "
+              << n_frac << ", host change " << n_rehost << "); not held: freed "
+              << n_want[static_cast<std::size_t>(KeptWant::Freed)] << ", root changed "
+              << n_want[static_cast<std::size_t>(KeptWant::RootChanged)] << ", no previous target "
+              << n_want[static_cast<std::size_t>(KeptWant::NoTarget)] << ", no pin life "
+              << n_want[static_cast<std::size_t>(KeptWant::NoLife)] << ", life ended "
+              << n_want[static_cast<std::size_t>(KeptWant::LifeEnded)] << "; held satellite children re-referenced "
+              << n_reref_passed << " (unknown parent step) and kept " << n_reref_held << "\n";
+}
+
+/// A hand-built epoch of one GPS signal: the listed (station, satellite) arcs, every one a graph arc.
+ChainEpoch arcsChainEpoch(std::size_t n_sta, const std::vector<std::pair<int, std::string>>& arcs,
+                          const std::string& signal = "L1C") {
+    ChainEpoch e;
+    e.present.assign(n_sta, true);
+    e.cnd.sat_el.resize(n_sta);
+    e.cnd.usable_keys.resize(n_sta);
+    for (std::size_t i = 0; i < n_sta; ++i) e.cnd.cover['G'][i] = 1;
+    for (const auto& [i, sat] : arcs) {
+        const std::string amb = StateKeys::makeAmbiguityKey(sat, signal);
+        e.cnd.sat_el[static_cast<std::size_t>(i)][sat] = 45.0;
+        e.cnd.usable_keys[static_cast<std::size_t>(i)][amb] = StateKeys::makeSatPhaseBiasKey(sat, signal);
+        e.cnd.union_keys[amb] = StateKeys::makeSatPhaseBiasKey(sat, signal);
+    }
+    return e;
+}
+
+/// One run context for a hand-built case: the chain on the float vehicle, the carry shift on, the
+/// first station the datum receiver, with the kept row armed or not.
+struct KeptBed {
+    std::unique_ptr<GnssConfig>        cfg;
+    std::unique_ptr<NetworkRunContext> ctx;
+    ChainWorld                         world;
+    std::shared_ptr<spdlog::logger>    log = std::make_shared<spdlog::logger>("ird4_kept_bed", spdlog::sinks_init_list{});
+
+    ChainRun elect(const ChainEpoch& e) { return runLiveChainElection(*ctx, *cfg, world, e, log); }
+};
+
+KeptBed makeKeptBed(LogManager& lm, bool armed, int tag, const std::vector<std::string>& names) {
+    ChainKnobs kn;
+    kn.trace_chain = true;
+    kn.carry_shift = true;
+    kn.preferred   = names.front();
+    if (armed) kn.rows = {"kept"};
+    else       kn.float_vehicle = true;
+    KeptBed bed;
+    bed.world.names = names;
+    bed.cfg = loadChainConfig(lm, kn, tag);
+    if (bed.cfg) {
+        bed.ctx = std::make_unique<NetworkRunContext>(*bed.cfg, bed.cfg->getNetworkConfig());
+        bed.ctx->entities.names.assign(names);
+    }
+    return bed;
+}
+
+/// The leveling carry a chord left on an arc that is a tree edge now.  A pinned arc is never
+/// harvested, so such a carry is stale.
+void putStaleCarry(NetworkRunContext& ctx, int sta, const std::string& sat, const std::string& sig, double value_abs) {
+    LocalCarry lc{};
+    lc.value_abs = value_abs;
+    lc.var       = 1e-4;
+    net::putArc(ctx.entities, std::make_tuple(sta, sat, sig), &net::ArcState::amb) = lc;
+}
+
+void putPrevTarget(NetworkRunContext& ctx, int sta, const std::string& sat, const std::string& sig, double target) {
+    net::putArcAmb(ctx.entities, sta, StateKeys::makeAmbiguityKey(sat, sig), &net::ArcState::eq34_prev_target) = target;
+}
+
+const ChainEdgeObs* keptEdge(const ChainEpochObs& obs, int station, const std::string& sat) {
+    for (const ChainEdgeObs& o : obs.edges)
+        if (o.station == station && o.sat == sat) return &o;
+    return nullptr;
+}
+
+TEST(NetworkArcGraphOracle, KeptRowKeepsTheTargetsOfAReversedPathAndTheFragmentTakesTheNewEdgesStep) {
+    LogManager lm;
+    const std::vector<std::string> names{"AAAA", "BBBB", "CCCC"};
+    const double lam = nominalWavelengthOfDigitM(System::GPS, '1');
+    ASSERT_GT(lam, 0.0);
+    const std::string rpb = StateKeys::makeReceiverPhaseBiasKey(systemName(System::GPS), "L1C");
+    for (const bool armed : {false, true}) {
+        const std::string what = armed ? "kept row on" : "kept row off";
+        KeptBed bed = makeKeptBed(lm, armed, 8100 + (armed ? 1 : 0), names);
+        ASSERT_TRUE(bed.cfg && bed.ctx) << what;
+        ASSERT_EQ(bed.ctx->knobs.eq34_row_kept, armed) << what;
+        // Epoch 1: the path A - G01 - B - G02 - C rooted at A.
+        const ChainRun r1 = bed.elect(arcsChainEpoch(3, {{0, "G01"}, {1, "G01"}, {1, "G02"}, {2, "G02"}}));
+        ASSERT_TRUE(r1.events.phase_datum.chain) << what;
+        EXPECT_EQ(r1.events.phase_datum.chain->edges.size(), 4u) << what;
+        EXPECT_EQ(net::arcAmbMap(bed.ctx->entities.arcs, &net::ArcState::eq34_pin_life).size(), armed ? 4u : 0u) << what;
+        // The pins' integers the history left, and the stale chord carries of the second epoch's arcs.
+        putPrevTarget(*bed.ctx, 0, "G01", "L1C", 2.0 * lam);
+        putPrevTarget(*bed.ctx, 1, "G01", "L1C", -4.0 * lam);
+        putPrevTarget(*bed.ctx, 1, "G02", "L1C", 7.0 * lam);
+        putPrevTarget(*bed.ctx, 2, "G02", "L1C", -1.0 * lam);
+        putStaleCarry(*bed.ctx, 0, "G02", "L1C", 5.3 * lam);   // the arc that joins the tree
+        putStaleCarry(*bed.ctx, 1, "G02", "L1C", 9.2 * lam);   // an arc that is a tree edge, reversed
+        putStaleCarry(*bed.ctx, 2, "G02", "L1C", -3.1 * lam);  // an arc that is a tree edge, as before
+        // Epoch 2: A loses G01 and sees G02.  The fragment G01 - B - G02 - C re-attaches through the
+        // one new edge A - G02, and the path B - G02, G01 - B reverses.
+        const ChainRun r2 = bed.elect(arcsChainEpoch(3, {{0, "G02"}, {1, "G01"}, {1, "G02"}, {2, "G02"}}));
+        ASSERT_TRUE(r2.events.phase_datum.chain) << what;
+        const ChainEpochObs& obs = *r2.events.phase_datum.chain;
+        const ChainEdgeObs* up = keptEdge(obs, 0, "G02");   // the new edge
+        const ChainEdgeObs* b2 = keptEdge(obs, 1, "G02");   // reversed: B now hangs under G02
+        const ChainEdgeObs* b1 = keptEdge(obs, 1, "G01");   // reversed: G01 now hangs under B
+        const ChainEdgeObs* c2 = keptEdge(obs, 2, "G02");   // as before: C under G02
+        ASSERT_TRUE(up && b2 && b1 && c2) << what;
+        ASSERT_EQ(obs.edges.size(), 4u) << what;
+        EXPECT_FALSE(up->incumbent_same || up->incumbent_flipped) << what;
+        EXPECT_TRUE(b2->incumbent_flipped && b1->incumbent_flipped && c2->incumbent_same) << what;
+        // The new edge is a re-host with its own step in both runs: the target of its chord carry,
+        // the displacement the difference of the two.
+        EXPECT_TRUE(up->edge_changed && up->known && !up->row_armed) << what;
+        EXPECT_NEAR(up->target_m, 5.0 * lam, 1e-12) << what;
+        const double m = up->pinmove_m;
+        EXPECT_NEAR(m, -0.3 * lam, 1e-12) << what;
+        EXPECT_EQ(up->step_m, -m) << what;
+        const auto& c = bed.ctx->counters;
+        if (!armed) {
+            // The as-built rule keys an edge on its child's parent, so a reversed arc reads as a re-host.
+            EXPECT_TRUE(b2->edge_changed && b1->edge_changed) << what;
+            EXPECT_FALSE(b2->row_armed || b1->row_armed || c2->row_armed) << what;
+            // ... which takes its target minus the stale carry, or has no carry and an unknown step ...
+            EXPECT_NEAR(b2->target_m, 9.0 * lam, 1e-12) << what;
+            EXPECT_NEAR(b2->pinmove_m, -0.2 * lam, 1e-12) << what;
+            EXPECT_FALSE(b1->known) << what;
+            EXPECT_EQ(b1->target_m, 0.0) << what;
+            // ... and the arc that kept its direction re-reads its target from the stale carry too.
+            EXPECT_NEAR(c2->target_m, -3.0 * lam, 1e-12) << what;
+            EXPECT_NEAR(c2->pinmove_m, -2.0 * lam, 1e-12) << what;
+            // The unknown step re-references G01, the subtree below the reversed edge.
+            EXPECT_EQ(r2.events.phase_datum.eq34_reref, (std::set<std::pair<std::string, std::string>>{{"G01", "L1C"}})) << what;
+            EXPECT_TRUE(net::arcAmbMap(bed.ctx->entities.arcs, &net::ArcState::eq34_pin_life).empty()) << what;
+            EXPECT_EQ(c.eq34_kept_held + c.eq34_kept_not_life + c.eq34_kept_not_target, 0) << what;   // nothing moves
+        } else {
+            // The reversed arcs and the arc that kept its direction hold their targets, with no displacement.
+            EXPECT_EQ(b2->target_m, 7.0 * lam) << what;
+            EXPECT_EQ(b1->target_m, -4.0 * lam) << what;
+            EXPECT_EQ(c2->target_m, -1.0 * lam) << what;
+            for (const ChainEdgeObs* h : {b2, b1, c2}) {
+                EXPECT_TRUE(h->row_armed) << what;
+                EXPECT_EQ(h->pinmove_m, 0.0) << what;
+                EXPECT_TRUE(h->known) << what;
+                EXPECT_FALSE(h->edge_changed) << what;
+            }
+            // The observatory still names what the as-built rule would have done to them.
+            EXPECT_TRUE(b2->edge_changed == false && b2->legacy_known);
+            EXPECT_NEAR(b2->legacy_target_m, 9.0 * lam, 1e-12) << what;
+            EXPECT_NEAR(b2->legacy_pinmove_m, -0.2 * lam, 1e-12) << what;
+            EXPECT_FALSE(b1->legacy_known) << what;
+            EXPECT_EQ(b1->legacy_target_m, 0.0) << what;
+            EXPECT_NEAR(c2->legacy_pinmove_m, -2.0 * lam, 1e-12) << what;
+            EXPECT_EQ(b2->cause, ChainLegacyCause::RehostCarry) << what;
+            EXPECT_EQ(b1->cause, ChainLegacyCause::RehostCold) << what;
+            EXPECT_EQ(c2->cause, ChainLegacyCause::SameEdge) << what;
+            // (None of the arcs was held at an earlier observed epoch, so the as-built step is the draft's own.)
+            EXPECT_TRUE(chainKeptEdgeMoved(*b2, nullptr) && chainKeptEdgeMoved(*b1, nullptr)
+                        && chainKeptEdgeMoved(*c2, nullptr)) << what;
+            EXPECT_FALSE(chainKeptEdgeMoved(*up, nullptr)) << what;
+            // No re-reference comes from them, and the fragment's steps are the new edge's step
+            // propagated with alternating signs: G02 -m, B and C +m, G01 -m.
+            EXPECT_TRUE(r2.events.phase_datum.eq34_reref.empty()) << what;
+            EXPECT_EQ(b2->step_m, m) << what;
+            EXPECT_EQ(c2->step_m, m) << what;
+            EXPECT_EQ(b1->step_m, -m) << what;
+            EXPECT_EQ(obs.shift_sat, (std::map<std::pair<std::string, std::string>, double>{
+                {{"G01", "L1C"}, -m}, {{"G02", "L1C"}, -m}}));
+            EXPECT_EQ(obs.shift_rpb, (std::map<std::pair<int, std::string>, double>{{{1, rpb}, m}, {{2, rpb}, m}}));
+            // The pin lives of this election are remembered for the next, held edges and the new edge alike.
+            EXPECT_EQ(net::arcAmbMap(bed.ctx->entities.arcs, &net::ArcState::eq34_pin_life).size(), 4u) << what;
+            // The tallies: three incumbent arcs held, two of them reversed, one with an unknown
+            // as-built step, one a whole-cycle step and one a fractional step, two read as a host change.
+            EXPECT_EQ(c.eq34_kept_held, 3) << what;
+            EXPECT_EQ(c.eq34_kept_flipped, 2) << what;
+            EXPECT_EQ(c.eq34_kept_unknown, 1) << what;
+            EXPECT_EQ(c.eq34_kept_step_whole, 1) << what;
+            EXPECT_EQ(c.eq34_kept_step_frac, 1) << what;
+            EXPECT_EQ(c.eq34_kept_rehost, 2) << what;
+            EXPECT_EQ(c.eq34_kept_not_freed + c.eq34_kept_not_root + c.eq34_kept_not_target + c.eq34_kept_not_life
+                      + c.eq34_kept_not_ended, 0) << what;
+            // The held targets are what the next election reads as the previous ones.
+            EXPECT_EQ(net::arcAmbMap(bed.ctx->entities.arcs, &net::ArcState::eq34_prev_target).at({1, "G02_L1C"}), 7.0 * lam) << what;
+        }
+        EXPECT_EQ(c.eq34_mismatch_epochs, 0) << what;
+    }
+}
+
+TEST(NetworkArcGraphOracle, KeptRowHasNoPruneFallbackToZero) {
+    LogManager lm;
+    const std::vector<std::string> names{"AAAA", "BBBB"};
+    const double lam = nominalWavelengthOfDigitM(System::GPS, '1');
+    ASSERT_GT(lam, 0.0);
+    // The path A - G01 - B - G02, the same three arcs at every election.
+    const ChainEpoch e = arcsChainEpoch(2, {{0, "G01"}, {1, "G01"}, {1, "G02"}});
+    for (const bool armed : {false, true}) {
+        const std::string what = armed ? "kept row on" : "kept row off";
+        KeptBed bed = makeKeptBed(lm, armed, 8200 + (armed ? 1 : 0), names);
+        ASSERT_TRUE(bed.cfg && bed.ctx) << what;
+        const auto prevTarget = [&](int sta, const std::string& sat) {
+            return net::arcAmbMap(bed.ctx->entities.arcs, &net::ArcState::eq34_prev_target)
+                .at({sta, StateKeys::makeAmbiguityKey(sat, "L1C")});
+        };
+        bed.elect(e);   // epoch 1
+        putPrevTarget(*bed.ctx, 0, "G01", "L1C", 2.0 * lam);
+        putPrevTarget(*bed.ctx, 1, "G01", "L1C", 4.0 * lam);
+        putPrevTarget(*bed.ctx, 1, "G02", "L1C", -3.0 * lam);
+        // A chord left a carry on the arc B - G01 before it became a tree edge, and it is not refreshed.
+        putStaleCarry(*bed.ctx, 1, "G01", "L1C", 6.1 * lam);
+        const ChainRun r2 = bed.elect(e);
+        ASSERT_TRUE(r2.events.phase_datum.chain) << what;
+        const ChainEdgeObs* a1 = keptEdge(*r2.events.phase_datum.chain, 0, "G01");
+        const ChainEdgeObs* b1 = keptEdge(*r2.events.phase_datum.chain, 1, "G01");
+        const ChainEdgeObs* b2 = keptEdge(*r2.events.phase_datum.chain, 1, "G02");
+        ASSERT_TRUE(a1 && b1 && b2) << what;
+        EXPECT_TRUE(a1->incumbent_same && b1->incumbent_same && b2->incumbent_same) << what;
+        if (armed) {
+            EXPECT_EQ(b1->target_m, 4.0 * lam) << what;     // the carry's rounded integer is not read
+            EXPECT_EQ(b1->pinmove_m, 0.0) << what;
+            EXPECT_EQ(a1->target_m, 2.0 * lam) << what;
+            EXPECT_EQ(b2->target_m, -3.0 * lam) << what;
+        } else {
+            EXPECT_NEAR(b1->target_m, 6.0 * lam, 1e-12) << what;     // the target moves to the rounded carry
+            EXPECT_NEAR(b1->pinmove_m, 2.0 * lam, 1e-12) << what;
+            EXPECT_EQ(a1->target_m, 0.0) << what;                    // an arc with no carry falls to 0
+            EXPECT_NEAR(a1->pinmove_m, -2.0 * lam, 1e-12) << what;
+        }
+        // The carry is pruned (a horizon after its chord became a tree edge); the next election.
+        net::dropArc(bed.ctx->entities.arcs, std::make_tuple(1, std::string("G01"), std::string("L1C")), &net::ArcState::amb);
+        const ChainRun r3 = bed.elect(e);
+        ASSERT_TRUE(r3.events.phase_datum.chain) << what;
+        const ChainEpochObs& obs3 = *r3.events.phase_datum.chain;
+        b1 = keptEdge(obs3, 1, "G01");
+        ASSERT_TRUE(b1) << what;
+        if (armed) {
+            EXPECT_EQ(b1->target_m, 4.0 * lam) << what;     // stays the previous target
+            EXPECT_EQ(b1->pinmove_m, 0.0) << what;
+            EXPECT_TRUE(b1->known && b1->row_armed) << what;
+            EXPECT_EQ(prevTarget(1, "G01"), 4.0 * lam) << what;
+            // Three incumbent arcs held at each election; the as-built steps were whole cycles
+            // (the arcs without a carry falling to 0, and the arc with the stale carry moving to it).
+            const auto& c = bed.ctx->counters;
+            EXPECT_EQ(c.eq34_kept_held, 6) << what;
+            EXPECT_EQ(c.eq34_kept_step_whole, 6) << what;
+            EXPECT_EQ(c.eq34_kept_step_frac + c.eq34_kept_unknown + c.eq34_kept_flipped + c.eq34_kept_rehost, 0) << what;
+        } else {
+            EXPECT_EQ(b1->target_m, 0.0) << what;           // the prune fallback: back to the first-sighting 0
+            EXPECT_NEAR(b1->pinmove_m, -6.0 * lam, 1e-12) << what;   // a whole integer re-pinned
+            EXPECT_TRUE(b1->known) << what;                 // a known step the shift walk passes
+            EXPECT_EQ(prevTarget(1, "G01"), 0.0) << what;
+            EXPECT_TRUE(net::arcAmbMap(bed.ctx->entities.arcs, &net::ArcState::eq34_pin_life).empty()) << what;
+            EXPECT_EQ(bed.ctx->counters.eq34_kept_held, 0) << what;
+        }
+        EXPECT_EQ(bed.ctx->counters.eq34_mismatch_epochs, 0) << what;
     }
 }
 

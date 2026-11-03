@@ -11,6 +11,8 @@
  *
  * The graph family of the eq34 chain (network.phase_datum_eq34_family) is read here too: its value,
  * and the two cases in which "pair" gives way to "signal" (no chain, pin bridge), print what they do.
+ * So are the event rows (network.phase_datum_eq34_event_rows): the entries it takes, drops and
+ * clears, and the line that says which rows are armed.
  */
 
 #include <gtest/gtest.h>
@@ -135,6 +137,121 @@ TEST(LoaderMessages, Eq34FamilyPairFallsBackUnderThePinBridge) {
     EXPECT_FALSE(contains(r.text, "PAIR FAMILY ON")) << r.text;
     // The bridge itself stays as configured: only the family gave way.
     EXPECT_TRUE(r.config.getNetworkConfig().phase_datum_time_linked);
+}
+
+// The event rows of the eq34 chain (network.phase_datum_eq34_event_rows): a list of the entries
+// whose integer rule replaces the as-built rule.  The rows are written for the float vehicle on the
+// chain datum, which the first lines of each case below set up.
+namespace {
+const std::string kFloatVehicle =
+    "    \"phase_leveling\": true,\n"
+    "    \"shared_carry_full_cov\": true,\n"
+    "    \"carry_conditional_coupling\": true,\n"
+    "    \"ambiguity_vehicle\": \"float_kf\",\n";
+const std::string kFloatChain = kFloatVehicle + "    \"phase_datum_eq34\": true,\n";
+std::string eventRows(const std::string& json_array) {
+    return "    \"phase_datum_eq34_event_rows\": " + json_array + ",\n";
+}
+}  // namespace
+
+// The default is empty (every row as built); "kept" arms the kept row on the float chain and the
+// loader says so, naming the row and that the others run the as-built rule.
+TEST(LoaderMessages, Eq34EventRowsDefaultToEmptyAndKeptArmsOnTheFloatChain) {
+    const LoadedConfig d = loadNetworkConfigCapturing("eq34_rows_default", kFloatChain);
+    EXPECT_TRUE(d.ok) << d.text;
+    EXPECT_TRUE(d.config.networkPhaseDatumEq34EventRows().empty());
+    EXPECT_FALSE(d.config.networkPhaseDatumEq34EventRowArmed("kept"));
+    EXPECT_FALSE(contains(d.text, "EVENT ROWS ON")) << d.text;
+
+    const LoadedConfig k = loadNetworkConfigCapturing("eq34_rows_kept", kFloatChain + eventRows("[\"kept\"]"));
+    EXPECT_TRUE(k.ok) << k.text;
+    EXPECT_EQ(k.config.networkPhaseDatumEq34EventRows(), std::vector<std::string>{"kept"});
+    EXPECT_TRUE(k.config.networkPhaseDatumEq34EventRowArmed("kept"));
+    EXPECT_FALSE(k.config.networkPhaseDatumEq34EventRowArmed("returning"));
+    EXPECT_TRUE(contains(k.text, "eq34 EVENT ROWS ON (kept)")) << k.text;
+    EXPECT_TRUE(contains(k.text, "The other rows run the as-built rule")) << k.text;
+
+    // An empty list is the default.
+    const LoadedConfig e = loadNetworkConfigCapturing("eq34_rows_empty", kFloatChain + eventRows("[]"));
+    EXPECT_TRUE(e.ok) << e.text;
+    EXPECT_TRUE(e.config.networkPhaseDatumEq34EventRows().empty());
+    EXPECT_FALSE(contains(e.text, "EVENT ROWS ON")) << e.text;
+}
+
+// An entry the event table does not name is dropped with a warning that names the key and the
+// entry; a duplicate is dropped without a word; a value that is no array is ignored.
+TEST(LoaderMessages, Eq34EventRowsUnknownEntryWarnsAndADuplicateIsDroppedSilently) {
+    const LoadedConfig u = loadNetworkConfigCapturing("eq34_rows_unknown",
+        kFloatChain + eventRows("[\"kept\", \"Kept\", \"bogus\", 7]"));
+    EXPECT_TRUE(u.ok) << u.text;
+    EXPECT_EQ(u.config.networkPhaseDatumEq34EventRows(), std::vector<std::string>{"kept"});
+    for (const char* bad : {"Kept", "bogus"})
+        EXPECT_TRUE(contains(u.text, std::string("network.phase_datum_eq34_event_rows entry '") + bad
+                                         + "' is not one of kept|returning|rehost|root|slip|merge_split"))
+            << bad << ": " << u.text;
+    EXPECT_TRUE(contains(u.text, "holds a non-string entry")) << u.text;
+    EXPECT_TRUE(contains(u.text, "eq34 EVENT ROWS ON (kept)")) << u.text;
+
+    const LoadedConfig dup = loadNetworkConfigCapturing("eq34_rows_dup",
+        kFloatChain + eventRows("[\"kept\", \"kept\"]"));
+    EXPECT_TRUE(dup.ok) << dup.text;
+    EXPECT_EQ(dup.config.networkPhaseDatumEq34EventRows(), std::vector<std::string>{"kept"});
+    EXPECT_FALSE(contains(dup.text, "network.phase_datum_eq34_event_rows")) << dup.text;   // no message names the key
+    EXPECT_TRUE(contains(dup.text, "eq34 EVENT ROWS ON (kept)")) << dup.text;
+
+    const LoadedConfig str = loadNetworkConfigCapturing("eq34_rows_string",
+        kFloatChain + eventRows("\"kept\""));
+    EXPECT_TRUE(str.ok) << str.text;
+    EXPECT_TRUE(str.config.networkPhaseDatumEq34EventRows().empty());
+    EXPECT_TRUE(contains(str.text, "network.phase_datum_eq34_event_rows must be an array")) << str.text;
+}
+
+// The rows are built in table order: an entry whose rule is not built yet is dropped with a warning
+// and arms nothing.
+TEST(LoaderMessages, Eq34EventRowsNotBuiltYetAreDroppedWithAWarning) {
+    for (const char* entry : {"returning", "rehost", "root", "slip", "merge_split"}) {
+        const LoadedConfig r = loadNetworkConfigCapturing(std::string("eq34_rows_nb_") + entry,
+            kFloatChain + eventRows(std::string("[\"") + entry + "\"]"));
+        EXPECT_TRUE(r.ok) << entry << ": " << r.text;
+        EXPECT_TRUE(r.config.networkPhaseDatumEq34EventRows().empty()) << entry;
+        EXPECT_FALSE(r.config.networkPhaseDatumEq34EventRowArmed(entry)) << entry;
+        EXPECT_TRUE(contains(r.text, std::string("the rows are built in table order; '") + entry
+                                         + "' is not built yet")) << entry << ": " << r.text;
+        EXPECT_FALSE(contains(r.text, "EVENT ROWS ON")) << entry << ": " << r.text;
+    }
+    // One built entry beside an unbuilt one: the built one arms.
+    const LoadedConfig mixed = loadNetworkConfigCapturing("eq34_rows_nb_mixed",
+        kFloatChain + eventRows("[\"returning\", \"kept\"]"));
+    EXPECT_TRUE(mixed.ok) << mixed.text;
+    EXPECT_EQ(mixed.config.networkPhaseDatumEq34EventRows(), std::vector<std::string>{"kept"});
+    EXPECT_TRUE(contains(mixed.text, "'returning' is not built yet")) << mixed.text;
+}
+
+// Without the chain the list is inert and cleared; off the float vehicle, or with the invariant
+// carry, it is cleared with the reason that the rows are written for the float vehicle.
+TEST(LoaderMessages, Eq34EventRowsAreInertWithoutTheChainAndWrittenForTheFloatVehicle) {
+    const LoadedConfig nochain = loadNetworkConfigCapturing("eq34_rows_nochain",
+        kFloatVehicle + eventRows("[\"kept\"]"));
+    EXPECT_TRUE(nochain.ok) << nochain.text;
+    EXPECT_TRUE(nochain.config.networkPhaseDatumEq34EventRows().empty());
+    EXPECT_TRUE(contains(nochain.text, "event rows are inert without the chain")) << nochain.text;
+    EXPECT_FALSE(contains(nochain.text, "EVENT ROWS ON")) << nochain.text;
+
+    const LoadedConfig level = loadNetworkConfigCapturing("eq34_rows_level",
+        "    \"phase_leveling\": true,\n"
+        "    \"phase_datum_eq34\": true,\n" + eventRows("[\"kept\"]"));
+    EXPECT_TRUE(level.ok) << level.text;
+    EXPECT_TRUE(level.config.networkPhaseDatumEq34EventRows().empty());
+    EXPECT_TRUE(contains(level.text, "the event rows are written for the float vehicle")) << level.text;
+    EXPECT_FALSE(contains(level.text, "EVENT ROWS ON")) << level.text;
+
+    // The float vehicle refuses the invariant carry outright; the list is cleared first.
+    const LoadedConfig inv = loadNetworkConfigCapturing("eq34_rows_invariant",
+        kFloatChain + "    \"carry_invariant\": true,\n    \"carry_invariant_qz\": 1e-6,\n"
+        + eventRows("[\"kept\"]"));
+    EXPECT_TRUE(inv.config.networkPhaseDatumEq34EventRows().empty());
+    EXPECT_TRUE(contains(inv.text, "is set with network.carry_invariant")) << inv.text;
+    EXPECT_FALSE(contains(inv.text, "EVENT ROWS ON")) << inv.text;
 }
 
 }  // namespace GnssProcessor

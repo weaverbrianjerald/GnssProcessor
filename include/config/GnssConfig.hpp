@@ -4947,6 +4947,38 @@ namespace GnssProcessor {
         /// True when @ref networkPhaseDatumEq34Family is @c "pair" (the loader's fallbacks applied; still inert unless @ref networkPhaseDatumEq34).
         bool networkPhaseDatumEq34PairFamily() const { return network_phase_datum_eq34_family_ == "pair"; }
 
+        /**
+         * @brief The event rows of the eq34 chain's event table whose integer rule is armed
+         *        (@c network.phase_datum_eq34_event_rows), after the loader's resolution.
+         *
+         * Each row of the event table (network/solve/ChainFrame.hpp, @c kChainEventSpec) names
+         * the entry that switches its integer rule on in place of the as-built rule: @c kept,
+         * @c returning, @c rehost, @c root, @c slip, @c merge_split.  The rows are built in table
+         * order, so an entry whose rule is not built yet is not armed.  The default is empty
+         * (every row runs the as-built rule).
+         *
+         * The loader drops an entry that is not one of the six (with a warning), a duplicate
+         * (silently) and an entry whose rule is not built yet (with a warning), and clears the
+         * list with a warning when the chain is off, when @c network.ambiguity_vehicle is not
+         * @c float_kf or when @c network.carry_invariant is on: the rows are written for the
+         * float vehicle on the chain datum.
+         *
+         * @return The armed entries in the order the config gave them, without duplicates.
+         * @see networkPhaseDatumEq34, networkPhaseDatumEq34EventRowArmed
+         */
+        const std::vector<std::string>& networkPhaseDatumEq34EventRows() const { return network_phase_datum_eq34_event_rows_; }
+
+        /**
+         * @brief Whether one entry of @ref networkPhaseDatumEq34EventRows is armed.
+         * @param entry An entry of @c network.phase_datum_eq34_event_rows ("kept", ...).
+         * @return True when the resolved list holds @p entry.
+         */
+        bool networkPhaseDatumEq34EventRowArmed(const std::string& entry) const {
+            return std::find(network_phase_datum_eq34_event_rows_.begin(),
+                             network_phase_datum_eq34_event_rows_.end(), entry)
+                   != network_phase_datum_eq34_event_rows_.end();
+        }
+
         /// Emit the satellite clocks in a per-constellation held frame:
         /// the per-epoch common-mode innovation (median vs the previous
         /// emitted values) is accumulated into a frame offset that never re-enters
@@ -8913,6 +8945,7 @@ namespace GnssProcessor {
         bool   network_carry_aware_covariance_{false};     ///< Carry-aware covariance readback (docs/SPEC_carry_aware_covariance.md). foldReducedDdPriors is a per-block rank-K Woodbury update on the pristine per-station factors, i.e. exactly the Schur complement of A~^-1 = N_rr^-1 - SUM_b Y_b M_b Y_b' (Y_b = N_rr^-1 C_b'), and reconstructStation already reads that model back on the mean (the kappa correction). Without this knob the four covariance readbacks use N_rr^-1 while NetworkEstimator's shared covariance (inverted from the folded reduced normals) is carry-aware, so every sigma the producer publishes is a hybrid that is the covariance of no estimator. Armed, jointConditionalCovariance (dd_sigma_cyc, the AR probe's Q_cyc) uses A~^-1 and A~^-1.N_rs instead, including the cross-station local term N_rr^-1 cannot express and a between-station DD needs. Consistent with the fold that ran, not with the true posterior: the fold composes one Woodbury update per block against the pristine N_rr^-1, which is exact only if no station is touched by two blocks, and a block is one connected component of one (const,signal) group, so a station tracking two signals sits in both. The correction therefore inherits the same block-Jacobi truncation the solve made (deliberately: a covariance from a different model than the mean would reintroduce the same defect), and its non-positive-variance guard (refuse, never clamp, always count) is the first measurement of that truncation's size. rowRedundancy deliberately gets no carry_aware flag: it is on the armed RAIM path and the correction would make the detector fire less. Both consumers are read-only (NetworkProducerAr is log-only, Phase 2 read-only), so on must be byte-identical to off on the solve; that is the acceptance gate. Why it matters: med|frac| ~ 0.25 is the expected reading whenever sigma_DD >~ 0.3 cyc, so the conclusion "no DD integer information at this cadence/geometry" (6 h + GPS+Gal) cannot be tested without a valid sigma, and without this knob the only sigma emitted is carry-blind (pinned ~3.9 cyc; scripts/grade_pdfix_arms.py excludes it on purpose). Not fingerprinted (no stored state changes meaning). Inert unless network_carry_invariant_. Off = byte-identical.
         bool   network_phase_datum_eq34_slip_aware_election_{false}; ///< Make the eq34 spanning-tree election slip-aware, so a slipped arc is kept out of the tree wherever the graph allows it. Two effects, both fail-safe: a slipped incumbent is not sticky-seeded (it must re-win as a new edge), and a slipped arc ranks below every clean arc in the I4 longevity order (inert unless network_phase_datum_eq34_longevity_election_). Reason: a slipped tree edge corrupts every fundamental cycle through it, so all dependent chords refloat at once, while a slipped chord costs exactly one DD (its cycle support is 1). Demoting the arc to a chord turns the mass refloat into a single-chord refloat without discarding any information: the DD through the slipped arc still refloats, and its neighbours are not refloated with it. If the arc is the component's only connection, the completion re-admits it and the mass refloat happens anyway, which is correct: the topology, not the policy, forces it. Under network_carry_invariant_ the resulting basis change is a non-event by construction (the driver re-expresses exactly). Off = byte-identical.
         std::string network_phase_datum_eq34_family_{"signal"}; ///< Graph family of the eq34 chain election: "signal" (default; one tree per constellation and phase signal) or "pair" (one spanning forest per constellation over its L1/L2 pair, the same tree edges pinned on both bands, with the one-band-only vertices attached afterwards; a constellation without exactly two phase signals of different bands is elected per signal that epoch). Anything else is refused to "signal"; "pair" is inert without network_phase_datum_eq34_ and falls back to "signal" under network_config_.phase_datum_time_linked. Off ("signal") = byte-identical.
+        std::vector<std::string> network_phase_datum_eq34_event_rows_; ///< The armed entries of network.phase_datum_eq34_event_rows, resolved by the loader: kept, returning, rehost, root, slip, merge_split name the rows of the chain's event table (network/solve/ChainFrame.hpp) whose integer rule replaces the as-built rule. Default empty (every row as built). An unknown entry, a duplicate and an entry whose rule is not built yet are dropped; the list is cleared without network_phase_datum_eq34_, off network_config_.ambiguity_vehicle float_kf and under network_carry_invariant_. Empty = byte-identical.
         bool   network_emit_clock_frame_hold_{false};      ///< Emit the satellite clocks in a per-constellation held frame (docs/SPEC_clock_emit_rebase.md): the per-epoch common-mode innovation (median vs the previous emitted values, ≥4 fresh unforced keys) accumulates into a frame offset A_c that never re-enters the wire. The removed direction is the per-epoch clock-ensemble gauge (a consumer's per-epoch receiver clock absorbs it; between-sat differences preserved exactly); in offline replay of a 12 h run it removed all 613 census step epochs (max 17.7 m). Outputs-only (solve byte-identical even when on; fingerprint-safe); baked into the product (replay-safe). Off = the leaf is never called (byte-identical).
         double network_clock_frame_leash_m_{50.0};         ///< |A_c| re-anchor bound (m). Crossing it re-anchors the constellation to the solve frame with markDatumChange (the marked re-coupling edge of invariant #7; never silent). Measured 12 h wander on the reference lineage: 23 m. Inert unless network_emit_clock_frame_hold_.
         bool   network_clock_disc_jump_test_{false};       ///< Mark per-satellite common-removed clock steps > network_clock_disc_jump_m_ via the markSatDiscontinuity retro-bump: R record + per-sat phase/code/clock counters, the consumer-reset chain Q4 proved end-to-end. Independent of the frame hold (alone it marks the raw wire with the census's own statistic). Per RTA-11 the emitter's clock counter keeps no internal magnitude test; this test lives at the emission-prep tier and replay reproduces it from the serialized R/E records. Off = byte-identical.

@@ -1111,6 +1111,8 @@ const std::vector<FieldDecl> kArcFields = {
      &arcRows<&R::gl_hold_amb>},
     {"eq34_prev_target", "eq34_prev_target", Persist::Record, "EQT", "", &eqtToSnapshot,
      &eqtFromSnapshot, &arcRows<&R::eq34_prev_target>},
+    {"eq34_pin_life", "", Persist::ColdStart, "", "",   // no former member: new with the kept row of the chain's event table
+     nullptr, nullptr, &arcRows<&R::eq34_pin_life>},
     {"eq34_retained_edge", "eq34_retained_edges", Persist::Record, "EQR", "", &eqrToSnapshot,
      &eqrFromSnapshot, &retainedRows},
     {"anchor_arc_age", "anchor_arc_age", Persist::ColdStart, "", "", nullptr, nullptr,

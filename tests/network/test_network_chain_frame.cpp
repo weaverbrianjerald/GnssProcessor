@@ -8,17 +8,39 @@
 #include "network/solve/ChainFrame.hpp"
 
 #include "filter/StateKeySchema.hpp"
+#include "network/state/RunContext.hpp"   // NetworkKnobs (chainEventRowArmed)
+#include "network/solve/ChainDatum.hpp"   // networkChainDatumRunEnd
+#include "network/driver/Epoch.hpp"
+#include "network/driver/Run.hpp"
+#include "network/driver/RunGroups.hpp"
+#include "network/driver/SetupResult.hpp"
+#include "network/diag/RunTraces.hpp"
+#include "network/runend/RunEnd.hpp"
+#include "config/GnssConfig.hpp"
+#include "../support/NetworkTestRun.hpp"   // the run and epoch the observer takes
+#include "../support/TestTempDir.hpp"      // per-process, per-test scratch directory
+#include "ConfigLoadCapture.hpp"
 
 #include <gtest/gtest.h>
+#include <spdlog/sinks/ostream_sink.h>
+#include <spdlog/spdlog.h>
 
+#include <cmath>
+#include <filesystem>
+#include <fstream>
 #include <map>
 #include <memory>
 #include <set>
+#include <sstream>
 #include <string>
+#include <tuple>
+#include <utility>
 #include <vector>
 
 namespace GnssProcessor {
 namespace {
+
+using TestSupport::contains;
 
 const std::string kGroup = "G|L1C";
 constexpr double kLambda = 0.19029367;   // GPS L1 (m)
@@ -74,7 +96,7 @@ const std::map<std::pair<int, std::string>, std::uint8_t> kNoCause;
 
 TEST(NetworkChainFrame, EventTableHasOneRowPerClassInOrder) {
     const std::set<std::string> entries{"", "kept", "returning", "rehost", "root", "slip", "merge_split"};
-    const std::set<std::string> events{"", "rehost", "root_handover", "returning", "slip_deseat",
+    const std::set<std::string> events{"", "kept", "rehost", "root_handover", "returning", "slip_deseat",
                                        "merge", "split"};
     std::set<std::string> names;
     for (std::size_t r = 0; r < kChainEventRowCount; ++r) {
@@ -90,6 +112,28 @@ TEST(NetworkChainFrame, EventTableHasOneRowPerClassInOrder) {
     EXPECT_STREQ(chainEventSpec(ChainEventRow::RehostUncertified).event, "rehost");
     EXPECT_EQ(chainEventSpec(ChainEventRow::RehostUncertified).step, ChainStep::CutRelease);
     EXPECT_EQ(chainEventSpec(ChainEventRow::Kept).wire, ChainWire::None);
+    EXPECT_STREQ(chainEventSpec(ChainEventRow::Kept).event, "kept");   // written only with the row armed
+}
+
+// The loader takes its entries from the table: the distinct non-empty ones, in table order, with
+// the rows built so far (the rows are built in table order, kept first).
+TEST(NetworkChainFrame, EventRowEntriesAreTheTablesAndOnlyKeptIsBuilt) {
+    EXPECT_EQ(chainEventRowEntries(), (std::vector<std::string>{"kept", "returning", "rehost", "root", "slip",
+                                                               "merge_split"}));
+    EXPECT_TRUE(chainEventRowEntryBuilt("kept"));
+    for (const char* entry : {"returning", "rehost", "root", "slip", "merge_split", "", "bogus"})
+        EXPECT_FALSE(chainEventRowEntryBuilt(entry)) << entry;
+    // An entry two rows share is built only when both rows are.
+    for (const ChainEventSpec& s : kChainEventSpec)
+        if (std::string(s.rows_entry).empty()) EXPECT_FALSE(s.built) << s.name;   // Birth has no entry
+    // The knob snapshot arms a row through chainEventRowArmed, and a row not built is never armed.
+    NetworkKnobs k{};
+    for (std::size_t r = 0; r < kChainEventRowCount; ++r)
+        EXPECT_FALSE(chainEventRowArmed(k, kChainEventSpec[r].row)) << kChainEventSpec[r].name;
+    k.eq34_row_kept = true;
+    for (std::size_t r = 0; r < kChainEventRowCount; ++r)
+        EXPECT_EQ(chainEventRowArmed(k, kChainEventSpec[r].row), kChainEventSpec[r].row == ChainEventRow::Kept)
+            << kChainEventSpec[r].name;
 }
 
 TEST(NetworkChainFrame, CertificationDeterminesAPreciseChordAndNotAnImpreciseOne) {
@@ -131,6 +175,139 @@ TEST(NetworkChainFrame, KeptEdgesAndFlips) {
     EXPECT_EQ(cnt.cf_flipped, 1);
     EXPECT_EQ(cnt.cf_rows[static_cast<std::size_t>(ChainEventRow::Kept)], 2);
     EXPECT_EQ(cnt.cf_rehosts, 0);
+    EXPECT_EQ(cnt.cf_rows_armed[static_cast<std::size_t>(ChainEventRow::Kept)], 0);   // no row armed
+}
+
+// An edge the kept row held is counted under the row it took, and its step is the one realized.
+TEST(NetworkChainFrame, AnEdgeAnArmedRowDecidedIsCountedAsArmedWithItsRealizedStep) {
+    ChainEpochObs obs;
+    obs.armed = true;
+    obs.comps.push_back(component(0, "A", {0, 1}, {"G01", "G02"}));
+    ChainEdgeObs held = edge(0, "G01", true);
+    held.incumbent_same = true;
+    held.had_parent = true;
+    held.row_armed = true;
+    held.legacy_known = false;            // the as-built rule would have declared the step unknown ...
+    held.legacy_pinmove_m = 0.03;
+    held.known = true;                    // ... the row realized a known step of 0
+    held.pinmove_m = 0.0;
+    ChainEdgeObs plain = edge(1, "G02", false);
+    plain.incumbent_same = true;
+    plain.had_parent = true;              // an incumbent edge the row did not hold
+    plain.known = false;                  // the as-built step stands, unknown
+    obs.edges = {held, plain};
+    ChainFrameCounters cnt;
+    const ChainFrameMemory mem = memoryOf("A", {"R:0", "R:1", "S:G01", "S:G02"});
+    const ChainEpochClass cls = chainClassifyEpoch(obs, mem, kNoFree, kNoCause, cnt);
+    const std::size_t kept = static_cast<std::size_t>(ChainEventRow::Kept);
+    ASSERT_EQ(cls.edges.size(), 2u);
+    EXPECT_EQ(cls.edges[0].row, ChainEventRow::Kept);
+    EXPECT_EQ(cls.edges[1].row, ChainEventRow::Kept);
+    EXPECT_EQ(cnt.cf_rows[kept], 2);
+    EXPECT_EQ(cnt.cf_rows_armed[kept], 1);       // the held edge only
+    EXPECT_EQ(cnt.cf_rows_unknown[kept], 1);     // the realized steps: the edge the row did not hold
+}
+
+// The observer writes a kept row for a held edge only where the as-built rule would have moved it.
+TEST(NetworkChainFrame, AHeldEdgeWritesARowOnlyWhereTheAsBuiltRuleWouldHaveMovedIt) {
+    ChainEdgeObs e = edge(0, "G01", true);
+    e.row_armed = true;
+    EXPECT_FALSE(chainKeptEdgeMoved(e, nullptr));    // held, the as-built step 0 and known, no flip: nothing to say
+    ChainEdgeObs unknown = e;
+    unknown.legacy_known = false;
+    EXPECT_TRUE(chainKeptEdgeMoved(unknown, nullptr));
+    ChainEdgeObs stepped = e;
+    stepped.legacy_pinmove_m = -0.04;
+    EXPECT_TRUE(chainKeptEdgeMoved(stepped, nullptr));   // not held at the last observed epoch: against the realized target
+    ChainEdgeObs flipped = e;
+    flipped.incumbent_flipped = true;
+    EXPECT_TRUE(chainKeptEdgeMoved(flipped, nullptr));
+    // An edge no row decided writes none, whatever the as-built facts say.
+    ChainEdgeObs unarmed = flipped;
+    unarmed.row_armed = false;
+    unarmed.legacy_known = false;
+    EXPECT_FALSE(chainKeptEdgeMoved(unarmed, nullptr));
+}
+
+// A held arc whose as-built target differs from the frozen one keeps differing at every election, but
+// the as-built rule would have moved the edge once, when its target changed.  Its step is measured
+// against the as-built target of the last observed epoch, so the persistent difference is one event.
+TEST(NetworkChainFrame, APersistentDifferenceFromTheFrozenTargetIsOneEventAtItsOnset) {
+    const double frozen = 5.0 * kLambda;
+    ChainEdgeObs e = edge(0, "G01", true);
+    e.row_armed = true;
+    e.target_m = e.prev_target_m = frozen;   // what the kept row realized
+    e.legacy_target_m = 0.0;                 // the chord carry is pruned: the as-built rule re-reads 0 ...
+    e.legacy_pinmove_m = 0.0 - frozen;       // ... against the frozen target, at every election
+    // Not held at the last observed epoch: the as-built rule elected the arc then, so its previous
+    // target is the realized one and the step is the draft's own displacement.
+    EXPECT_TRUE(chainKeptEdgeMoved(e, nullptr));
+    EXPECT_DOUBLE_EQ(chainKeptAsBuiltStep(e, nullptr), -frozen);
+    // Held then, the as-built target at that epoch still the frozen value: the target falls now.
+    const double before = frozen;
+    EXPECT_TRUE(chainKeptEdgeMoved(e, &before));
+    EXPECT_DOUBLE_EQ(chainKeptAsBuiltStep(e, &before), -frozen);
+    // Held then, the as-built target already 0: the difference persists but the as-built rule would not move.
+    const double zero = 0.0;
+    EXPECT_FALSE(chainKeptEdgeMoved(e, &zero));
+    EXPECT_EQ(chainKeptAsBuiltStep(e, &zero), 0.0);
+    // The as-built target changes a second time.
+    e.legacy_target_m = 2.0 * kLambda;
+    e.legacy_pinmove_m = 2.0 * kLambda - frozen;
+    EXPECT_TRUE(chainKeptEdgeMoved(e, &zero));
+    EXPECT_DOUBLE_EQ(chainKeptAsBuiltStep(e, &zero), 2.0 * kLambda);
+    // An unknown as-built step has no value and always writes a row.
+    ChainEdgeObs unknown = e;
+    unknown.legacy_known = false;
+    EXPECT_TRUE(std::isnan(chainKeptAsBuiltStep(unknown, &zero)));
+    EXPECT_TRUE(chainKeptEdgeMoved(unknown, &zero));
+    // A reversed arc is a host change for the as-built rule: its displacement does not depend on a
+    // previous target, and it always writes its pair.
+    ChainEdgeObs flipped = e;
+    flipped.incumbent_flipped = true;
+    flipped.legacy_target_m = 0.0;           // the same as-built target as remembered
+    flipped.legacy_pinmove_m = -0.0123;
+    EXPECT_DOUBLE_EQ(chainKeptAsBuiltStep(flipped, &zero), -0.0123);
+    EXPECT_TRUE(chainKeptEdgeMoved(flipped, &zero));
+    // An edge no row decided has no step to move.
+    ChainEdgeObs unarmed = e;
+    unarmed.row_armed = false;
+    EXPECT_FALSE(chainKeptEdgeMoved(unarmed, &zero));
+}
+
+// The memory keeps the as-built target of every edge the kept row held, replaced at each observed
+// epoch: an edge the row did not hold, an arc no longer held and a run with no row leave nothing.
+TEST(NetworkChainFrame, RememberKeepsTheAsBuiltTargetsOfTheHeldEdgesAndReplacesThem) {
+    using Key = std::tuple<int, std::string, std::string>;
+    ChainFrameCounters cnt;
+    const auto remember = [&](std::vector<ChainEdgeObs> edges, double tow) {
+        ChainEpochObs obs;
+        obs.armed = true;
+        obs.comps.push_back(component(0, "A", {0, 1}, {"G01", "G02"}));
+        obs.edges = std::move(edges);
+        const ChainFrameMemory none;
+        const ChainFrameMemory& mem = cnt.chain_frame_memory ? *cnt.chain_frame_memory : none;
+        const ChainEpochClass cls = chainClassifyEpoch(obs, mem, kNoFree, kNoCause, cnt);
+        chainRememberEpoch(obs, cls, {}, 2313, tow, tow, cnt);
+        return cnt.chain_frame_memory->kept_as_built_target;
+    };
+    ChainEdgeObs held = edge(0, "G01", true);
+    held.incumbent_same = true;
+    held.row_armed = true;
+    held.legacy_target_m = 0.5;
+    ChainEdgeObs plain = edge(1, "G02", false);      // an incumbent edge the row did not hold
+    plain.incumbent_same = true;
+    plain.legacy_target_m = 0.7;
+    EXPECT_EQ(remember({held, plain}, 30.0), (std::map<Key, double>{{Key{0, "G01", "L1C"}, 0.5}}));
+    // The next epoch holds the other arc and no longer the first: the memory is replaced, not added to.
+    ChainEdgeObs no_longer = held;
+    no_longer.row_armed = false;
+    ChainEdgeObs other = plain;
+    other.row_armed = true;
+    other.legacy_target_m = -0.25;
+    EXPECT_EQ(remember({no_longer, other}, 60.0), (std::map<Key, double>{{Key{1, "G02", "L1C"}, -0.25}}));
+    // An epoch in which the row holds nothing empties it, as does a run with the row off.
+    EXPECT_TRUE(remember({no_longer, plain}, 90.0).empty());
 }
 
 TEST(NetworkChainFrame, RehostIsCertifiedFromThePreviousChordTable) {
@@ -272,6 +449,381 @@ TEST(NetworkChainFrame, RememberReplacesTheMemoryAndCountsDepartures) {
     EXPECT_DOUBLE_EQ(m.last_seen_s.at(kGroup).at("S:G02"), 100.0);   // kept from before
     EXPECT_EQ(cnt.cf_departed, 2);   // R:1 and S:G02
     EXPECT_EQ(cnt.cf_epochs, 1);
+}
+
+// ---- The observer and the run end of an armed row ------------------------------------------------
+
+namespace fs = std::filesystem;
+
+/// A run on the float chain with the chain trace and the events trace open and the kept row armed or
+/// not, a logger that captures what the run-end reports print, and stations "A", "B", "C".
+struct ChainObserverRun {
+    TestSupport::LoadedConfig       loaded;
+    std::ostringstream              log_text;
+    std::shared_ptr<spdlog::logger> log;
+    fs::path                        trace_dir;
+    std::unique_ptr<NetworkTestRun> fx;
+
+    ChainObserverRun(const std::string& tag, bool armed)
+        : loaded(TestSupport::loadNetworkConfigCapturing(
+              "chain_obs_" + tag,
+              std::string("    \"phase_leveling\": true,\n"
+                          "    \"shared_carry_full_cov\": true,\n"
+                          "    \"carry_conditional_coupling\": true,\n"
+                          "    \"ambiguity_vehicle\": \"float_kf\",\n"
+                          "    \"phase_datum_eq34\": true,\n"
+                          "    \"trace_chain_datum\": true,\n"
+                          "    \"trace_events\": true,\n")
+                  + (armed ? "    \"phase_datum_eq34_event_rows\": [\"kept\"],\n" : ""))) {
+        EXPECT_TRUE(loaded.ok) << loaded.text;
+        auto sink = std::make_shared<spdlog::sinks::ostream_sink_mt>(log_text);
+        log = std::make_shared<spdlog::logger>("chain_obs_" + tag, sink);
+        log->set_level(spdlog::level::info);
+        trace_dir = gnss_test::tempDir() / ("chain_obs_" + tag);
+        fs::create_directories(trace_dir);
+        fx = std::make_unique<NetworkTestRun>(loaded.config, log, trace_dir);
+        fx->traces().openAll(loaded.config, loaded.config.getNetworkConfig(),
+                             loaded.config.getGlobalVtecShConfig(), /*sh_model=*/nullptr,
+                             /*cl_trace_armed=*/false, log);
+        for (const char* name : {"A", "B", "C"}) {
+            fx->setup().stations.emplace_back();
+            fx->setup().stations.back().name = name;
+        }
+    }
+    ~ChainObserverRun() {
+        fx->traces().closeAll();
+        std::error_code ec;
+        fs::remove_all(trace_dir, ec);
+    }
+
+    /// Observe one epoch whose election recorded @p edges in one component.
+    void observe(double tow, std::vector<ChainEdgeObs> edges) {
+        auto rec = std::make_shared<ChainEpochObs>();
+        rec->armed = true;
+        rec->comps.push_back(component(0, "A", {0, 1, 2}, {"G01", "G02", "G03"}));
+        rec->edges = std::move(edges);
+        NetworkEpoch& e = fx->newEpoch(GnssTime{2313, tow});
+        e.events.phase_datum.chain = rec;
+        networkChainFrameObserve(fx->run(), e);
+    }
+
+    /// The rows of a trace file of the run (header first), split at the commas; the traces are
+    /// flushed first.
+    std::vector<std::vector<std::string>> rows(const std::string& file) {
+        fx->traces().closeAll();
+        fx->traces().chain_edges_trace.flush();   // closeAll leaves the chain trace to the destructor
+        std::ifstream f(trace_dir / file);
+        std::vector<std::vector<std::string>> out;
+        for (std::string line; std::getline(f, line);) {
+            std::vector<std::string> cells;
+            std::stringstream ss(line);
+            for (std::string c; std::getline(ss, c, ',');) cells.push_back(c);
+            out.push_back(std::move(cells));
+        }
+        return out;
+    }
+
+    /// What the run-end reports print, with @p report run over the run.
+    std::string runEnd(int (*report)(const NetworkRunEndView&)) {
+        NetworkRun& run = fx->run();
+        const NetworkRunEndInputs inputs{run.engines, run.emit, run.timing, run.closed_loop};
+        const NetworkRunEndView view{fx->ctx(), fx->config(), log, fx->traces(), fx->setup(), inputs,
+                                     /*loop_ms=*/0.0};
+        EXPECT_EQ(report(view), 0);
+        log->flush();
+        return log_text.str();
+    }
+};
+
+/// The column of a trace file by its header name (-1: none).
+int columnOf(const std::vector<std::string>& header, const std::string& name) {
+    for (std::size_t i = 0; i < header.size(); ++i)
+        if (header[i] == name) return static_cast<int>(i);
+    return -1;
+}
+
+/// An incumbent edge in the same direction the kept row held.
+ChainEdgeObs heldEdge(int sta, const std::string& sat, bool sat_is_child) {
+    ChainEdgeObs e = edge(sta, sat, sat_is_child);
+    e.had_parent = true;
+    e.incumbent_same = true;
+    e.row_armed = true;
+    return e;
+}
+
+// The edges of an armed row are marked in the edge trace, and the event trace says what the as-built
+// rule would have done to the held edges it would have moved, and says nothing of the others.
+TEST(NetworkChainFrame, TheObserverMarksTheHeldEdgesAndWritesKeptRowsOnlyWhereTheAsBuiltRuleWouldHaveMovedThem) {
+    ChainObserverRun r("rows", /*armed=*/true);
+    ASSERT_TRUE(r.fx->ctx().knobs.eq34_row_kept);
+    ChainEdgeObs quiet = heldEdge(0, "G01", true);          // held, and the as-built step was zero and known
+    ChainEdgeObs unknown = heldEdge(1, "G02", true);        // held, the as-built step would have been unknown
+    unknown.legacy_known = false;
+    unknown.cause = ChainLegacyCause::RehostCold;
+    ChainEdgeObs flipped = heldEdge(2, "G02", false);       // held, the arc reversed: C under G02
+    flipped.incumbent_same = false;
+    flipped.incumbent_flipped = true;
+    flipped.legacy_pinmove_m = 0.0123;
+    flipped.legacy_target_m = 3.0 * kLambda;
+    flipped.cause = ChainLegacyCause::RehostCarry;
+    ChainEdgeObs plain = edge(1, "G03", true);              // an incumbent edge the row did not hold
+    plain.had_parent = true;
+    plain.incumbent_same = true;
+    plain.known = false;
+    r.observe(261060.0, {quiet, unknown, flipped, plain});
+
+    const ChainFrameCounters& c = r.fx->ctx().counters;
+    const std::size_t kept = static_cast<std::size_t>(ChainEventRow::Kept);
+    EXPECT_EQ(c.cf_rows[kept], 4);
+    EXPECT_EQ(c.cf_rows_armed[kept], 3);
+    EXPECT_EQ(c.cf_flipped, 1);
+    EXPECT_EQ(c.cf_events, 3);   // one hold row, and a reversed arc's leave and join
+    EXPECT_EQ(c.cf_kept_reversed, 1);
+    EXPECT_EQ(c.cf_kept_hold_unknown, 1);
+    EXPECT_EQ(c.cf_kept_hold_whole + c.cf_kept_hold_other, 0);
+
+    const auto edges = r.rows("network_chain_edges.csv");
+    ASSERT_EQ(edges.size(), 5u);   // the header and four edges
+    const int armed = columnOf(edges[0], "row_armed"), row = columnOf(edges[0], "row"),
+              sat = columnOf(edges[0], "edge_sat"), known = columnOf(edges[0], "known");
+    ASSERT_TRUE(armed >= 0 && row >= 0 && sat >= 0 && known >= 0);
+    const std::vector<std::string> want_armed{"1", "1", "1", "0"};
+    for (std::size_t k = 0; k < 4; ++k) {
+        EXPECT_EQ(edges[k + 1][static_cast<std::size_t>(armed)], want_armed[k]) << k;
+        EXPECT_EQ(edges[k + 1][static_cast<std::size_t>(row)], "Kept") << k;
+    }
+    EXPECT_EQ(edges[4][static_cast<std::size_t>(known)], "0");   // the realized step of the edge not held
+
+    const auto events = r.rows("network_events.csv");
+    const int tier = columnOf(events[0], "tier"), event = columnOf(events[0], "event"),
+              action = columnOf(events[0], "action"), detail = columnOf(events[0], "detail"),
+              station = columnOf(events[0], "station");
+    ASSERT_TRUE(tier >= 0 && event >= 0 && action >= 0 && detail >= 0 && station >= 0);
+    std::vector<std::vector<std::string>> chain;
+    for (std::size_t k = 1; k < events.size(); ++k)
+        if (events[k][static_cast<std::size_t>(tier)] == "CHAIN") chain.push_back(events[k]);
+    ASSERT_EQ(chain.size(), 3u);
+    for (const auto& ev : chain) EXPECT_EQ(ev[static_cast<std::size_t>(event)], "kept");
+    EXPECT_EQ(chain[0][static_cast<std::size_t>(action)], "hold");
+    EXPECT_EQ(chain[0][static_cast<std::size_t>(station)], "B");
+    EXPECT_TRUE(contains(chain[0][static_cast<std::size_t>(detail)], "legacy_cause=rehost_cold legacy_known=0"))
+        << chain[0][static_cast<std::size_t>(detail)];
+    EXPECT_TRUE(contains(chain[0][static_cast<std::size_t>(detail)], " legacy_step_m= legacy_target_cyc="))   // an unknown step has no value
+        << chain[0][static_cast<std::size_t>(detail)];
+    EXPECT_TRUE(contains(chain[0][static_cast<std::size_t>(detail)], "flipped=0"));
+    EXPECT_EQ(chain[1][static_cast<std::size_t>(action)], "leave");
+    EXPECT_EQ(chain[2][static_cast<std::size_t>(action)], "join");
+    for (std::size_t k : {std::size_t{1}, std::size_t{2}}) {
+        const std::string& d = chain[k][static_cast<std::size_t>(detail)];
+        EXPECT_EQ(chain[k][static_cast<std::size_t>(station)], "C");
+        EXPECT_TRUE(contains(d, "legacy_cause=rehost_carry legacy_known=1 legacy_pinmove_m=0.012300 "
+                                "legacy_step_m=0.012300 legacy_target_cyc=3.000000 flipped=1")) << d;
+    }
+    // C is this epoch's child under G02; the incumbent orientation had G02 as the child.
+    EXPECT_TRUE(contains(chain[1][static_cast<std::size_t>(detail)], " child=G02 parent=C"));
+    EXPECT_TRUE(contains(chain[2][static_cast<std::size_t>(detail)], " child=C parent=G02"));
+}
+
+// A held arc whose as-built target differs from the frozen one keeps differing at every election, but the
+// as-built rule would have moved the edge once, when its target changed: one hold row at the onset, none at
+// the elections after it, a second row at the next change of the as-built target, and a reversed arc still
+// writes its leave and join pair.
+TEST(NetworkChainFrame, TheKeptHoldRowIsWrittenAtTheOnsetOfAnAsBuiltChangeAndNotAtEveryElection) {
+    ChainObserverRun r("onset", /*armed=*/true);
+    const double frozen = 5.0 * kLambda;
+    // The arc A - G01 held at the frozen target while the as-built draft is `drafted`, which the
+    // election states against the realized previous target.
+    const auto held = [&](double drafted) {
+        ChainEdgeObs e = heldEdge(0, "G01", true);
+        e.target_m = e.prev_target_m = frozen;
+        e.legacy_target_m = drafted;
+        e.legacy_pinmove_m = drafted - frozen;
+        return e;
+    };
+    ChainEdgeObs freed = edge(0, "G01", true);               // the row does not hold it: its draft is its pin
+    freed.had_parent = true;
+    freed.incumbent_same = true;
+    freed.target_m = freed.prev_target_m = freed.legacy_target_m = 0.0;
+    ChainEdgeObs reversed = heldEdge(2, "G02", false);       // C under G02, the arc reversed
+    reversed.incumbent_same = false;
+    reversed.incumbent_flipped = true;
+    reversed.legacy_target_m = frozen;
+    reversed.legacy_pinmove_m = 0.02;
+    reversed.cause = ChainLegacyCause::RehostCarry;
+    ChainEdgeObs unknown = held(0.0);
+    unknown.legacy_known = false;
+    using Key = std::tuple<int, std::string, std::string>;
+    struct Epoch {
+        double                    tow;
+        std::vector<ChainEdgeObs> edges;
+        std::size_t               rows;     // the kept rows it writes
+        std::map<Key, double>     memory;   // the memory after it
+    };
+    const Key a{0, "G01", "L1C"}, c{2, "G02", "L1C"};
+    const std::vector<Epoch> epochs{
+        {261060.0, {held(0.0)}, 1, {{a, 0.0}}},                      // held for the first time, the as-built draft 0: a row
+        {261090.0, {held(0.0)}, 0, {{a, 0.0}}},                      // the same difference: no row
+        {261120.0, {held(0.0)}, 0, {{a, 0.0}}},
+        {261150.0, {held(2.5 * kLambda)}, 1, {{a, 2.5 * kLambda}}},  // the as-built target changes: a second row
+        {261180.0, {held(2.5 * kLambda)}, 0, {{a, 2.5 * kLambda}}},
+        {261210.0, {freed}, 0, {}},                                  // not held: the memory forgets the arc
+        {261240.0, {held(0.0)}, 1, {{a, 0.0}}},                      // held again, not held at the last epoch: a row
+        {261270.0, {held(0.0), reversed}, 2, {{a, 0.0}, {c, frozen}}},   // the reversed arc's leave and join, nothing else
+        {261300.0, {unknown}, 1, {{a, 0.0}}},                        // an unknown as-built step is a row of its own kind
+    };
+    for (const Epoch& e : epochs) {
+        r.observe(e.tow, e.edges);
+        ASSERT_TRUE(r.fx->ctx().counters.chain_frame_memory) << e.tow;
+        EXPECT_EQ(r.fx->ctx().counters.chain_frame_memory->kept_as_built_target, e.memory) << e.tow;
+    }
+    const ChainFrameCounters& cnt = r.fx->ctx().counters;
+    EXPECT_EQ(cnt.cf_kept_hold_whole, 2);     // the fall to 0 at the first epoch, and again after the arc was not held
+    EXPECT_EQ(cnt.cf_kept_hold_other, 1);     // 0 to 2.5 cycles
+    EXPECT_EQ(cnt.cf_kept_hold_unknown, 1);
+    EXPECT_EQ(cnt.cf_kept_reversed, 1);
+    EXPECT_EQ(cnt.cf_events, 6);              // four hold rows, and the reversed arc's pair
+
+    const auto events = r.rows("network_events.csv");
+    const int tow = columnOf(events[0], "tow"), tier = columnOf(events[0], "tier"),
+              action = columnOf(events[0], "action"), detail = columnOf(events[0], "detail");
+    ASSERT_TRUE(tow >= 0 && tier >= 0 && action >= 0 && detail >= 0);
+    std::map<std::string, std::vector<std::vector<std::string>>> by_epoch;   // the kept rows of each epoch
+    for (std::size_t k = 1; k < events.size(); ++k)
+        if (events[k][static_cast<std::size_t>(tier)] == "CHAIN")
+            by_epoch[events[k][static_cast<std::size_t>(tow)]].push_back(events[k]);
+    for (const Epoch& e : epochs) {
+        const auto it = by_epoch.find(fmt::format("{:.3f}", e.tow));
+        const std::size_t n = it == by_epoch.end() ? 0u : it->second.size();
+        EXPECT_EQ(n, e.rows) << e.tow;
+    }
+    const auto row = [&](double t, std::size_t k) -> const std::vector<std::string>& {
+        return by_epoch.at(fmt::format("{:.3f}", t)).at(k);
+    };
+    const auto stepToken = [](double step) { return " legacy_step_m=" + fmt::format("{:.6f}", step) + " "; };
+    EXPECT_EQ(row(261060.0, 0)[static_cast<std::size_t>(action)], "hold");
+    EXPECT_TRUE(contains(row(261060.0, 0)[static_cast<std::size_t>(detail)], stepToken(-frozen)))
+        << row(261060.0, 0)[static_cast<std::size_t>(detail)];
+    EXPECT_TRUE(contains(row(261150.0, 0)[static_cast<std::size_t>(detail)], stepToken(2.5 * kLambda)))
+        << row(261150.0, 0)[static_cast<std::size_t>(detail)];
+    EXPECT_TRUE(contains(row(261240.0, 0)[static_cast<std::size_t>(detail)], stepToken(-frozen)))
+        << row(261240.0, 0)[static_cast<std::size_t>(detail)];
+    EXPECT_EQ(row(261270.0, 0)[static_cast<std::size_t>(action)], "leave");
+    EXPECT_EQ(row(261270.0, 1)[static_cast<std::size_t>(action)], "join");
+    EXPECT_TRUE(contains(row(261270.0, 0)[static_cast<std::size_t>(detail)], stepToken(0.02)))   // the host change's own displacement
+        << row(261270.0, 0)[static_cast<std::size_t>(detail)];
+    EXPECT_TRUE(contains(row(261300.0, 0)[static_cast<std::size_t>(detail)], " legacy_step_m= legacy_target_cyc="))
+        << row(261300.0, 0)[static_cast<std::size_t>(detail)];
+}
+
+// With the row off the memory stays empty and nothing is written, whatever the as-built facts say.
+TEST(NetworkChainFrame, WithTheRowOffTheKeptMemoryStaysEmptyAndNothingIsWritten) {
+    ChainObserverRun r("onset_off", /*armed=*/false);
+    ASSERT_FALSE(r.fx->ctx().knobs.eq34_row_kept);
+    for (int k = 0; k < 4; ++k) {
+        ChainEdgeObs same = edge(0, "G01", true);
+        same.had_parent = true;
+        same.incumbent_same = true;
+        same.legacy_target_m = 0.5 * k;                       // the as-built facts move; no row decided the edge
+        same.legacy_pinmove_m = 0.5;
+        same.legacy_known = k % 2 == 0;
+        ChainEdgeObs flipped = edge(2, "G02", false);
+        flipped.had_parent = true;
+        flipped.incumbent_flipped = true;
+        r.observe(261060.0 + 30.0 * k, {same, flipped});
+        ASSERT_TRUE(r.fx->ctx().counters.chain_frame_memory);
+        EXPECT_TRUE(r.fx->ctx().counters.chain_frame_memory->kept_as_built_target.empty()) << k;
+    }
+    const ChainFrameCounters& cnt = r.fx->ctx().counters;
+    EXPECT_EQ(cnt.cf_events, 0);
+    EXPECT_EQ(cnt.cf_kept_reversed + cnt.cf_kept_hold_whole + cnt.cf_kept_hold_other + cnt.cf_kept_hold_unknown, 0);
+    EXPECT_EQ(cnt.cf_rows_armed[static_cast<std::size_t>(ChainEventRow::Kept)], 0);
+    const auto events = r.rows("network_events.csv");
+    const int tier = columnOf(events[0], "tier");
+    ASSERT_GE(tier, 0);
+    for (std::size_t k = 1; k < events.size(); ++k) EXPECT_NE(events[k][static_cast<std::size_t>(tier)], "CHAIN");
+}
+
+// The run-end report of the observatory names the armed rows and labels the counts of an armed row;
+// a run with no row armed prints what it printed before the rows existed.
+TEST(NetworkChainFrame, TheRunEndNamesTheArmedRowAndLabelsItsCounts) {
+    ChainEdgeObs plain = edge(1, "G03", true);
+    plain.had_parent = true;
+    plain.incumbent_same = true;
+    plain.known = false;                                   // an as-built re-reference
+    {
+        ChainObserverRun r("end_on", /*armed=*/true);
+        r.observe(261060.0, {heldEdge(0, "G01", true), plain});
+        const std::string text = r.runEnd(&networkChainFrameRunEnd);
+        EXPECT_TRUE(contains(text, "event row(s) armed: kept; the other rows ran the as-built rule")) << text;
+        EXPECT_FALSE(contains(text, "no event row is armed")) << text;
+        EXPECT_TRUE(contains(text, "the armed rows cut and declare nothing")) << text;
+        EXPECT_TRUE(contains(text, "Kept")) << text;
+        EXPECT_TRUE(contains(text, "2 edge(s), 1 under the integer rule: realized step unknown 1, fractional 0")) << text;
+        EXPECT_TRUE(contains(text, "Birth")) << text;
+        EXPECT_TRUE(contains(text, "edge(s): legacy step unknown 0, fractional 0")) << text;   // the rows not armed
+        EXPECT_TRUE(contains(text, "0 kept row(s) written to the event trace: 0 reversed arc(s) (a leave and a join "
+                                   "row each) and 0 hold row(s), the hold rows by the as-built step 0 of whole "
+                                   "cycles, 0 other nonzero and 0 unknown")) << text;
+    }
+    {
+        ChainObserverRun r("end_off", /*armed=*/false);
+        ChainEdgeObs same = edge(0, "G01", true);
+        same.had_parent = true;
+        same.incumbent_same = true;
+        r.observe(261060.0, {same, plain});
+        const std::string text = r.runEnd(&networkChainFrameRunEnd);
+        EXPECT_TRUE(contains(text, "no event row is armed, so the election ran the legacy rule throughout (observe mode)"))
+            << text;
+        EXPECT_FALSE(contains(text, "under the integer rule")) << text;
+        EXPECT_FALSE(contains(text, "event row(s) armed")) << text;
+        EXPECT_FALSE(contains(text, "kept row(s) written")) << text;
+        EXPECT_TRUE(contains(text, "declared key(s) (all 0 while no event row is armed)")) << text;
+        EXPECT_TRUE(contains(text, "Kept")) << text;
+        EXPECT_TRUE(contains(text, "2 edge(s): legacy step unknown 1, fractional 0")) << text;
+    }
+}
+
+// The election's run-end report prints the kept row's tallies only when the row is armed, and says
+// so when an armed row held nothing.
+TEST(NetworkChainFrame, TheElectionRunEndReportsTheKeptRowOnlyWhenArmed) {
+    {
+        ChainObserverRun r("elect_on", /*armed=*/true);
+        auto& c = r.fx->ctx().counters;
+        c.eq34_kept_held = 9;
+        c.eq34_kept_flipped = 2;
+        c.eq34_kept_unknown = 3;
+        c.eq34_kept_step_whole = 4;
+        c.eq34_kept_step_frac = 1;
+        c.eq34_kept_rehost = 5;
+        c.eq34_kept_not_freed = 1;
+        c.eq34_kept_not_root = 2;
+        c.eq34_kept_not_target = 3;
+        c.eq34_kept_not_life = 4;
+        c.eq34_kept_not_ended = 5;
+        const std::string text = r.runEnd(&networkChainDatumRunEnd);
+        EXPECT_TRUE(contains(text, "9 incumbent tree edge(s) held at their previous target with no frame step of "
+                                   "their own, 2 of them with the arc's direction reversed")) << text;
+        EXPECT_TRUE(contains(text, "unknown step on 3 of them (re-referencing the subtree), a whole-cycle step "
+                                   "on 4, another nonzero step on 1 and read a host change on 5")) << text;
+        EXPECT_TRUE(contains(text, "15 incumbent tree edge(s) not held: 1 in the epoch's free-epoch latch, 2 with "
+                                   "another remembered root, 3 with no previous target, 4 with no remembered pinned "
+                                   "life, 5 whose pinned life ended")) << text;
+        EXPECT_TRUE(contains(text, "All of these tallies are per election: an edge counts once per election, and a "
+                                   "target the as-built rule would re-read differently counts at every election "
+                                   "until the two agree")) << text;
+        EXPECT_FALSE(contains(text, "held NO edge")) << text;
+    }
+    {
+        ChainObserverRun r("elect_none", /*armed=*/true);   // armed, and nothing held
+        const std::string text = r.runEnd(&networkChainDatumRunEnd);
+        EXPECT_TRUE(contains(text, "Network (eq34 kept row): ARMED but held NO edge")) << text;
+        EXPECT_TRUE(contains(text, "tallies are per election")) << text;
+    }
+    {
+        ChainObserverRun r("elect_off", /*armed=*/false);
+        const std::string text = r.runEnd(&networkChainDatumRunEnd);
+        EXPECT_FALSE(contains(text, "eq34 kept row")) << text;
+    }
 }
 
 }  // namespace

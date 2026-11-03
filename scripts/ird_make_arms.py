@@ -101,6 +101,16 @@ ARMS = {
     # has it) and D-S keeps seed-round off (A0 already has it off), so A1 less A0 is the family knob.
     "A1": (SLIP_SET + SEARCH_LOG + IRD_TRACES + BUNDLE_A0 + ["network.phase_datum_eq34_family=pair"],
            "A0 + the pair family (IRD-3; D0 keeps the floor, D-S keeps seed-round off)"),
+    # Card IRD section 6, IRD-4: the event rows armed cumulatively on A1 in table order.  The first is
+    # the kept row.  The value is a JSON array (rapid_arm.py reads a --set value as JSON).
+    "A1k": (SLIP_SET + SEARCH_LOG + IRD_TRACES + BUNDLE_A0
+            + ["network.phase_datum_eq34_family=pair", 'network.phase_datum_eq34_event_rows=["kept"]'],
+            "A1 + the kept row (IRD-4)"),
+    # The kept row's causal reading (card IRDC section 3): the flips were traced on A0f, so A0fk less
+    # A0f is the kept row alone.
+    "A0fk": (SLIP_SET + SEARCH_LOG + IRD_TRACES + BUNDLE_A0
+             + ["network.phase_datum_eq34_rpb_prior_sigma_m=0", 'network.phase_datum_eq34_event_rows=["kept"]'],
+             "A0f + the kept row (IRD-4, the causal reading of the flips)"),
     # The bisection of the stop (card IRDB section 4): bundle A0 less one group.
     "A0hb": (SLIP_SET + SEARCH_LOG + IRD_TRACES + CHAIN_ON + FLOAT_REPIN_OFF
              + ["network.phase_datum_min_stations=1"],
@@ -350,6 +360,21 @@ def selftest():
     chk(set(a1) - set(compose("A0", "r3c")) == {"network.phase_datum_eq34_family=pair"}
         and set(compose("A0", "r3c")) <= set(a1) and len(a1) == len(compose("A0", "r3c")) + 1,
         "A1 is A0 plus exactly the pair family knob")
+    a1k = compose("A1k", "r3c")
+    chk(set(a1k) - set(a1) == {'network.phase_datum_eq34_event_rows=["kept"]'}
+        and set(a1) <= set(a1k) and len(a1k) == len(a1) + 1,
+        "A1k is A1 plus exactly the kept row knob")
+    a0f = compose("A0f", "microscope")
+    chk(set(compose("A0fk", "microscope")) - set(a0f) == {'network.phase_datum_eq34_event_rows=["kept"]'}
+        and set(a0f) <= set(compose("A0fk", "microscope")),
+        "A0fk is A0f plus exactly the kept row knob")
+    import rapid_arm
+    cfg = {}
+    for kv in a1k:
+        rapid_arm.set_key(cfg, *kv.split("=", 1))   # as `rapid_arm.py make --set` writes a value
+    chk(cfg["network"]["phase_datum_eq34_event_rows"] == ["kept"]
+        and cfg["network"]["phase_datum_eq34_family"] == "pair",
+        "the kept row lands in the arm's JSON as an array, not a string")
     o = compose("A0", "r2", knob="network.phase_datum_min_stations=2")
     chk(o.count("network.phase_datum_min_stations=2") == 1
         and "network.phase_datum_min_stations=1" not in o, "the knob under test overrides the arm")

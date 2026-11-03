@@ -196,6 +196,7 @@ struct ChainElection {
           extend_only(ctx_.knobs.eq34_extend_only), slip_aware(ctx_.knobs.eq34_slip_aware),
           seed_round(ctx_.knobs.eq34_seed_round), seed_rehost(ctx_.knobs.eq34_seed_round_rehost),
           pair_family(ctx_.knobs.eq34_pair_family), trace_chain(ctx_.knobs.trace_chain_datum),
+          kept_row(ctx_.knobs.eq34_row_kept),
           pref_rx(config.networkPhaseDatumEq34Receiver()),
           // Under carry_invariant pin-to-round is off: the frame is re-realized each epoch and
           // continuity is held by the invariant DD carry.  (Seed-round, below, can still round
@@ -230,6 +231,7 @@ struct ChainElection {
     const bool        seed_rehost;
     const bool        pair_family;
     const bool        trace_chain;
+    const bool        kept_row;    ///< The kept row of the event table is armed (network.phase_datum_eq34_event_rows).
     const std::string pref_rx;
     const bool        pin_round;
 
@@ -243,6 +245,9 @@ struct ChainElection {
     // collected by the shift walks: the step per (satellite, signal), per (station, constellation,
     // signal) and per (station, receiver phase-bias key).
     std::map<std::pair<int, std::string>, double>         new_prev_target;
+    // The life stamp of every pinned tree edge at this election (to eq34_pin_life), filled only with
+    // the kept row armed.
+    std::map<std::pair<int, std::string>, ArcLifeStamp>   new_pin_life;
     std::map<std::pair<std::string, std::string>, double> shift_sat;
     std::map<std::tuple<int, char, std::string>, double>  shift_rxg;
     std::map<std::pair<int, std::string>, double>         shift_rpb;
@@ -741,6 +746,16 @@ struct BandWalk {
     int                 next_comp{0};          ///< The observatory's next component index.
 };
 
+/// What the as-built rule drafted for a pin: the facts an event row's integer rule replaces.
+struct PinAsBuilt {
+    double target{0.0};
+    double pinmove{0.0};
+    bool   known{true};
+    bool   edge_changed{false};
+    bool   seed_deferred{false};
+    bool   frame_shiftable{false};
+};
+
 /// A pin's target and frame step, and the facts they were read from.
 struct PinDraft {
     double target{0.0};
@@ -755,7 +770,17 @@ struct PinDraft {
     double pinmove{0.0};
     bool   known{true};
     bool   edge_changed{false};
+    /// An event row's integer rule replaced the draft: the target, step and host facts above are
+    /// then what the row set, and @ref as_built is what the as-built rule drafted.
+    bool       held{false};
+    PinAsBuilt as_built;   ///< Meaningful only when @ref held.
 };
+
+/// What the as-built rule drafted for a pin: the draft itself unless an event row replaced it.
+PinAsBuilt asBuilt(const PinDraft& d) {
+    if (d.held) return d.as_built;
+    return PinAsBuilt{d.target, d.pinmove, d.known, d.edge_changed, d.seed_deferred, d.frame_shiftable};
+}
 
 /// The pin target of the tree edge (ri, sat) on one band.  Target = 0 on a first-sighting edge
 /// (unless seed-round applies, below); on a re-pin of an already-lit (sat, signal) (pin-to-round),
@@ -900,6 +925,83 @@ void draftPinStep(ChainElection& el, const ChainBand& band, const ChainComponent
     }
 }
 
+/// True when @p cyc is a whole number of cycles (within 1e-6).
+bool wholeCycles(double cyc) { return std::isfinite(cyc) && std::abs(cyc - std::round(cyc)) <= 1e-6; }
+
+/// The kept row of the chain's event table, applied to a pin after the as-built draft.  An edge is
+/// held when all of these hold:
+///  - its arc was a tree edge at the last election, in either direction: the (satellite, signal)'s
+///    incumbent anchor names this station, or this station's incumbent receiver-side parent for the
+///    band names this satellite;
+///  - the arc is not in this epoch's free-epoch latch (a freed arc is the slip row's case);
+///  - for a satellite child, the (satellite, signal)'s remembered root is absent or this
+///    component's datum receiver (another root is the root row's case);
+///  - the arc has a previous target;
+///  - the arc has a remembered pin life and it continues (@c arcPinnedLifeContinues).
+/// A held edge keeps its previous target and takes no frame step of its own: pin displacement 0, a
+/// known step, no host change, not shiftable.  The shift walk then gives its child the parent's
+/// step exactly and passes an unknown parent step down.  The draft's direction bookkeeping
+/// (@c this_epoch_anchor, @c new_sat_root, @c new_rx_parent) is left as it is: it describes this
+/// epoch's tree.  An edge that is not held keeps the as-built draft.
+///
+/// Every pinned edge, held or not, remembers its life stamp for the next election.  Each
+/// incumbent arc is counted once, as held or under the first cause that applies.
+///
+/// @param plan The tree the edge hangs in (its datum receiver is the satellite's root).
+/// @param d    The as-built draft; replaced in place when the edge is held.
+void applyKeptRow(ChainElection& el, const ChainBand& band, const ChainComponentPlan& plan,
+                  std::size_t ri, const std::string& sat, const std::string& amb, bool sat_is_child,
+                  PinDraft& d) {
+    auto& cnt = el.ctx.counters;
+    const std::pair<int, std::string> key{static_cast<int>(ri), amb};
+    ArcLifeKeys keys;
+    keys.arc = std::make_tuple(static_cast<int>(ri), sat, band.signal);
+    keys.amb = key;
+    const ArcLifeStamp now = arcLifeStamp(el.ctx, keys);
+    el.new_pin_life[key] = now;
+    // The two reads of the incumbent tree that classify a kept edge in the observatory.
+    const std::string* inc_sat = net::getSig(el.sig_rows, amb, &net::SatSignalState::anchor_incumbent);
+    const std::string* inc_rx =
+        net::get(el.entities.stations, StationId{static_cast<int>(ri)}, &net::StationState::signals,
+                 band.rx_suffix.substr(1), &net::StationSignalState::eq34_rx_parent);
+    const bool was_sat_edge = inc_sat != nullptr && *inc_sat == el.stations[ri].name;
+    const bool was_rx_edge  = inc_rx != nullptr && *inc_rx == sat;
+    if (!was_sat_edge && !was_rx_edge) return;
+    if (el.events.slip.relevel.free_ambs.count(key) != 0) { ++cnt.eq34_kept_not_freed; return; }
+    if (sat_is_child) {
+        const std::string* root = net::getSig(el.sig_rows, amb, &net::SatSignalState::eq34_sat_root);
+        if (root != nullptr && *root != el.stations[plan.r1].name) { ++cnt.eq34_kept_not_root; return; }
+    }
+    const double* prev = net::getArcAmb(el.arc_rows, key.first, amb, &net::ArcState::eq34_prev_target);
+    if (prev == nullptr) { ++cnt.eq34_kept_not_target; return; }
+    const ArcLifeStamp* at_pin = net::getArcAmb(el.arc_rows, key.first, amb, &net::ArcState::eq34_pin_life);
+    if (at_pin == nullptr) { ++cnt.eq34_kept_not_life; return; }
+    if (!arcPinnedLifeContinues(*at_pin, now)) { ++cnt.eq34_kept_not_ended; return; }
+
+    // Held.  What the as-built draft would have done is tallied and kept for the observatory.
+    ++cnt.eq34_kept_held;
+    const bool flipped = sat_is_child ? (!was_sat_edge && was_rx_edge) : (!was_rx_edge && was_sat_edge);
+    if (flipped) ++cnt.eq34_kept_flipped;
+    if (!d.known) {
+        ++cnt.eq34_kept_unknown;
+    } else if (d.pinmove != 0.0) {
+        if (band.lambda_m > 0.0 && wholeCycles(d.pinmove / band.lambda_m)) ++cnt.eq34_kept_step_whole;
+        else                                                               ++cnt.eq34_kept_step_frac;
+    }
+    if (d.edge_changed) ++cnt.eq34_kept_rehost;
+    d.as_built = asBuilt(d);
+    d.held = true;
+    d.target = *prev;
+    d.pinmove = 0.0;
+    d.known = true;
+    d.edge_changed = false;
+    d.frame_shiftable = false;
+    if (d.seed_deferred) {   // the fold would round the state again: the frozen target stands
+        el.stations[ri].pinned_amb_seed_lambda.erase(amb);
+        d.seed_deferred = false;
+    }
+}
+
 /// Record the pin: the target the station folds, the next epoch's baseline and the pin count.
 /// eq34 reattach hygiene (docs/SPEC_eq34_reattach_hygiene.md): this pin's host arc is (ri, amb)
 /// whichever endpoint the edge attaches.  Count the reattach (the satellite-side host moved;
@@ -943,6 +1045,9 @@ void traceTreeEdge(ChainElection& el, const ChainFamily& fam, const ChainBand& b
     o.child  = sat_is_child ? skey : rkey;
     o.parent = sat_is_child ? rkey : skey;
     o.lambda_m = band.lambda_m;
+    // The facts as the election realized them, and the as-built facts they replace (the same
+    // unless an event row decided the edge).
+    const PinAsBuilt ab = asBuilt(d);
     o.target_m = d.target;
     if (const double* pt = net::getArcAmb(el.arc_rows, static_cast<int>(ri), amb,
                                           &net::ArcState::eq34_prev_target))
@@ -951,6 +1056,10 @@ void traceTreeEdge(ChainElection& el, const ChainFamily& fam, const ChainBand& b
     o.pinmove_m = d.pinmove;
     o.known = d.known;
     o.edge_changed = d.edge_changed;
+    o.row_armed = d.held;
+    o.legacy_target_m = ab.target;
+    o.legacy_pinmove_m = ab.pinmove;
+    o.legacy_known = ab.known;
     // The incumbent tree (last epoch's, replaced only after the election): this arc as the
     // satellite's parent edge or as the station's.
     const std::string* inc_sat = net::getSig(el.sig_rows, amb, &net::SatSignalState::anchor_incumbent);
@@ -976,13 +1085,14 @@ void traceTreeEdge(ChainElection& el, const ChainFamily& fam, const ChainBand& b
         o.incumbent_flipped = !was_rx_edge && was_sat_edge;
         if (inc_rx != nullptr) o.prev_parent = "S:" + *inc_rx;
     }
+    // The cause names what the as-built rule did or would have done.
     if (o.root_unknown)          o.cause = ChainLegacyCause::RootHandover;
-    else if (d.seed_deferred)    o.cause = ChainLegacyCause::SeedDeferred;
-    else if (d.seed_rounded && d.pinmove != 0.0 && !d.frame_shiftable)
+    else if (ab.seed_deferred)   o.cause = ChainLegacyCause::SeedDeferred;
+    else if (d.seed_rounded && ab.pinmove != 0.0 && !ab.frame_shiftable)
                                  o.cause = ChainLegacyCause::SeedStep;
-    else if (d.edge_changed)
+    else if (ab.edge_changed)
         o.cause = std::isfinite(d.carry_val) ? ChainLegacyCause::RehostCarry
-                : d.frame_shiftable          ? ChainLegacyCause::RehostFramed
+                : ab.frame_shiftable         ? ChainLegacyCause::RehostFramed
                                              : ChainLegacyCause::RehostCold;
     else o.cause = std::isfinite(o.prev_target_m) ? ChainLegacyCause::SameEdge
                                                   : ChainLegacyCause::FirstSighting;
@@ -1034,6 +1144,7 @@ TreeStep recordTreeEdge(ChainElection& el, const ChainFamily& fam, const ChainGr
         ++el.ctx.counters.eq34_gap_repin_total;
     PinDraft d = draftPinTarget(el, band, ri, sat, amb);
     draftPinStep(el, band, plan, ri, sat, amb, sat_is_child, d);
+    if (el.kept_row) applyKeptRow(el, band, plan, ri, sat, amb, sat_is_child, d);
     notePin(el, ri, amb, sat_is_child, d);
     if (el.trace_chain)
         traceTreeEdge(el, fam, band, plan, comp_index, ri, sat, amb, sat_is_child, edge, d);
@@ -1573,6 +1684,10 @@ void advanceChainBaselines(ChainElection& el) {
     }
     net::assignSig(entities, &net::SatSignalState::eq34_sat_root, new_sat_root);
     net::assignArcAmb(entities, &net::ArcState::eq34_prev_target, new_prev_target);
+    // The pinned lives of this election's tree edges, replaced wholesale like the targets (an arc
+    // that is no tree edge now drops out); written only with the kept row armed.
+    if (el.kept_row)
+        net::assignArcAmb(entities, &net::ArcState::eq34_pin_life, el.new_pin_life);
     if (eq34_extend_only)
         net::assignArcAmbFlags(entities, &net::ArcState::eq34_retained_edge, new_retained_edges);
     // Snapshot this epoch's arc elevations (I4) so next epoch's arcLife
@@ -1702,6 +1817,33 @@ int networkChainDatumRunEnd(const NetworkRunEndView& v) {
                       "on their own band.",
                       c.eq34_pair_families, c.eq34_pair_fallbacks, c.eq34_pair_ext_edges,
                       c.eq34_pair_band_only_comps);
+    }
+    // The kept row (network.phase_datum_eq34_event_rows "kept"), reported only when armed so that a
+    // twin with the row off keeps a run-end block byte-identical to a build without it.
+    if (ctx.knobs.eq34_row_kept) {
+        const auto& c = ctx.counters;
+        const long long not_held = c.eq34_kept_not_freed + c.eq34_kept_not_root + c.eq34_kept_not_target
+                                 + c.eq34_kept_not_life + c.eq34_kept_not_ended;
+        if (c.eq34_kept_held == 0)
+            log->warn("Network (eq34 kept row): ARMED but held NO edge ({} incumbent tree edge(s) were "
+                      "not held). Standing invariant #4: that is INERT, not validated. A row holds an "
+                      "edge only when its arc was a tree edge at the last election with a previous "
+                      "target and a continuing pinned life.", not_held);
+        else
+            log->info("Network (eq34 kept row): {} incumbent tree edge(s) held at their previous "
+                      "target with no frame step of their own, {} of them with the arc's direction "
+                      "reversed.  The as-built rule would have taken an unknown step on {} of them "
+                      "(re-referencing the subtree), a whole-cycle step on {}, another nonzero step on "
+                      "{} and read a host change on {}.",
+                      c.eq34_kept_held, c.eq34_kept_flipped, c.eq34_kept_unknown,
+                      c.eq34_kept_step_whole, c.eq34_kept_step_frac, c.eq34_kept_rehost);
+        log->info("Network (eq34 kept row): {} incumbent tree edge(s) not held: {} in the epoch's "
+                  "free-epoch latch, {} with another remembered root, {} with no previous target, {} "
+                  "with no remembered pinned life, {} whose pinned life ended.  All of these tallies are "
+                  "per election: an edge counts once per election, and a target the as-built rule would "
+                  "re-read differently counts at every election until the two agree.",
+                  not_held, c.eq34_kept_not_freed, c.eq34_kept_not_root, c.eq34_kept_not_target,
+                  c.eq34_kept_not_life, c.eq34_kept_not_ended);
     }
     // Chain-pin audit (docs/SPEC_synthetic_minimum_network.md §14 T1, measured record
     // §12.8): declared → folded → landed per (constellation, signal).  The election's

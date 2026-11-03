@@ -17,8 +17,12 @@
  * The observatory records, for every tree edge of every epoch, which row of the chain-event
  * table (@ref kChainEventSpec) the edge took part in, what the as-built (legacy) rule did to it,
  * and what the integer rule of that row would have needed: for a re-host, an integer certified
- * from the previous epoch's chord table.  No row of the table is armed here, so the election
- * reads nothing this file writes; every output is a trace row, an event row or a counter.
+ * from the previous epoch's chord table.  A row's integer rule is switched on by its entry of
+ * @c network.phase_datum_eq34_event_rows and applied by the election itself (the kept row: an
+ * arc that stays in the tree keeps its previous pin target and puts no frame step of its own on
+ * the frame); the observatory then records the edge as the election realized it, with the facts
+ * the as-built rule drafted next to it.  The election reads nothing this file writes; every
+ * output is a trace row, an event row or a counter.
  *
  * ## One epoch, in order
  *
@@ -68,6 +72,7 @@ namespace GnssProcessor {
 struct NetworkRun;          // network/driver/Run.hpp
 struct NetworkEpoch;        // network/driver/Epoch.hpp
 struct NetworkRunEndView;   // network/runend/RunEnd.hpp
+struct NetworkKnobs;        // network/state/RunContext.hpp
 
 // ---- The chain-event table ----------------------------------------------------------------------
 
@@ -117,13 +122,14 @@ enum class ChainWire : std::uint8_t {
 struct ChainEventSpec {
     ChainEventRow row;           ///< The class.
     const char*   name;          ///< Its name in the traces ("Kept", "RehostCertified", ...).
-    const char*   rows_entry;    ///< The entry of network.phase_datum_eq34_event_rows that will arm its integer rule ("" when none).
+    const char*   rows_entry;    ///< The entry of network.phase_datum_eq34_event_rows that arms its integer rule ("" when none).
     const char*   event;         ///< Its CHAIN event name in network_events.csv ("" when the class writes none).
     const char*   legacy_rule;   ///< What the as-built election does.
     const char*   integer_rule;  ///< What the integer rule does.
     ChainStep     step;          ///< The integer rule's frame step.
     ChainCarry    carry;         ///< The integer rule's carry action.
     ChainWire     wire;          ///< The integer rule's declaration.
+    bool          built;         ///< The integer rule is built, so the loader takes the row's entry (the rows are built in table order).
 };
 
 /// The chain-event table, in @ref ChainEventRow order.
@@ -135,6 +141,30 @@ extern const std::array<ChainEventSpec, kChainEventRowCount> kChainEventSpec;
  * @return Its row of @ref kChainEventSpec.
  */
 const ChainEventSpec& chainEventSpec(ChainEventRow r);
+
+/**
+ * @brief The entries of @c network.phase_datum_eq34_event_rows: the distinct non-empty
+ *        @c rows_entry of @ref kChainEventSpec, in table order.
+ * @return @c kept, @c returning, @c rehost, @c root, @c slip, @c merge_split.
+ */
+std::vector<std::string> chainEventRowEntries();
+
+/**
+ * @brief Whether the integer rule of an entry of @c network.phase_datum_eq34_event_rows is built.
+ * @param entry An entry from @ref chainEventRowEntries.
+ * @return True when every row of the table that names @p entry has its @c built flag set; false
+ *         for an entry the table does not name.
+ */
+bool chainEventRowEntryBuilt(const std::string& entry);
+
+/**
+ * @brief Whether the integer rule of a row is armed for this run.
+ * @param k The run's knob snapshot (@c eq34_row_kept resolves @c kept, and only on the chain).
+ * @param r The row.
+ * @return True when the election applies the row's integer rule; false for a row whose rule is
+ *         not built.
+ */
+bool chainEventRowArmed(const NetworkKnobs& k, ChainEventRow r);
 
 /// The name of a @ref ChainStep value ("Zero", "New", "ZeroOrCutRelease", "CutRelease").
 const char* chainStepName(ChainStep s);
@@ -203,15 +233,20 @@ struct ChainEdgeObs {
     std::string parent;         ///< Vertex key of the other endpoint.
     int         depth{0};       ///< The child's depth below its root (an edge on r1 has depth 1).
     double      lambda_m{0.0};  ///< The group's carrier wavelength (0: no integer target, an FDMA group).
-    double      target_m{0.0};  ///< The pin target (m).
+    double      target_m{0.0};  ///< The pin target (m) as the election realized it (the as-built target unless @ref row_armed).
     double      prev_target_m{std::numeric_limits<double>::quiet_NaN()};  ///< The last target on this (station, ambiguity) (NaN: none).
     double      carry_m{std::numeric_limits<double>::quiet_NaN()};        ///< The new host's carried value (NaN: none read).
-    double      pinmove_m{0.0}; ///< The legacy pin displacement.
-    bool        known{true};    ///< The legacy step is known (else the key is re-referenced).
+    double      pinmove_m{0.0}; ///< The pin displacement as realized (the as-built displacement unless @ref row_armed).
+    bool        known{true};    ///< The step as realized is known (else the key is re-referenced).
     double      step_m{std::numeric_limits<double>::quiet_NaN()};  ///< The child's frame step from the shift walk (NaN: unknown).
-    ChainLegacyCause cause{ChainLegacyCause::SameEdge};  ///< What the legacy rule did.
+    ChainLegacyCause cause{ChainLegacyCause::SameEdge};  ///< What the as-built rule did or would have done (named from the as-built facts even when @ref row_armed).
     bool        root_unknown{false};    ///< The satellite's remembered root differs from r1.
-    bool        edge_changed{false};    ///< The legacy rule saw a new parent edge.
+    bool        edge_changed{false};    ///< The election saw a new parent edge (the as-built reading unless @ref row_armed).
+    // The integer rule of the edge's row and the as-built facts it replaced.
+    bool        row_armed{false};       ///< An event row's integer rule decided this edge (the kept row held it).
+    double      legacy_target_m{0.0};   ///< The target the as-built rule drafted (@ref target_m when no rule applied).
+    double      legacy_pinmove_m{0.0};  ///< The displacement the as-built rule drafted (@ref pinmove_m when no rule applied).
+    bool        legacy_known{true};     ///< Whether the as-built step was known (@ref known when no rule applied).
     bool        had_parent{false};      ///< The child had an incumbent parent edge.
     std::string prev_parent;            ///< That incumbent parent's vertex key ("" when none).
     bool        incumbent_same{false};  ///< The incumbent parent edge is this arc, same direction.
@@ -313,6 +348,13 @@ struct ChainFrameMemory {
     std::map<std::string, std::map<std::string, double>> last_seen_s;
     /// (station, satellite, signal) -> (chord row, band 1 or 2): the chord table of that epoch.
     std::map<std::tuple<int, std::string, std::string>, std::pair<ChainChordRow, int>> chords;
+    /// (station, satellite, signal) -> the as-built target (m) the as-built rule drafted for the arc
+    /// at that epoch, for every arc the kept row held then (@c ChainEdgeObs::row_armed).  Replaced
+    /// wholesale at each observed epoch, and empty while the row is off.  A held arc keeps its frozen
+    /// target while the as-built draft may differ from it for any number of elections, so the
+    /// as-built rule's own step is measured against this value: a difference that persists is one
+    /// event, at the epoch the draft changed.
+    std::map<std::tuple<int, std::string, std::string>, double> kept_as_built_target;
 };
 
 // ChainFrameCounters, the run tallies with this memory behind a pointer, is in
@@ -348,7 +390,8 @@ struct ChainEpochClass {
  * has one, agrees); Merge (child and parent lay in different components); Returning or Birth
  * (the child was absent, seen earlier or never); RootHandover (the child was a root).  A Kept
  * edge whose satellite remembers another root takes RootHandover, or Split in a split-off
- * piece.  Every count of @p cnt that the classification determines is accumulated.
+ * piece.  Every count of @p cnt that the classification determines is accumulated, an edge
+ * an armed row decided (@c row_armed) also in @c cf_rows_armed.
  *
  * @param obs        The epoch's chain record.
  * @param mem        The memory of the last observed epoch.
@@ -363,8 +406,9 @@ ChainEpochClass chainClassifyEpoch(const ChainEpochObs& obs, const ChainFrameMem
                                    ChainFrameCounters& cnt);
 
 /**
- * @brief The memory after an observed epoch: its vertices, components, parents, sightings and
- *        chord table.  Counts the vertices of the last epoch that left.
+ * @brief The memory after an observed epoch: its vertices, components, parents, sightings,
+ *        chord table and the as-built targets of the edges the kept row held.  Counts the
+ *        vertices of the last epoch that left.
  *
  * @param obs    The epoch's chain record.
  * @param cls    Its classification.
@@ -381,11 +425,55 @@ void chainRememberEpoch(const ChainEpochObs& obs, const ChainEpochClass& cls,
 // ---- The observer and the run end -----------------------------------------------------------------
 
 /**
+ * @brief The step the as-built rule would have put on an edge the kept row held.
+ *
+ * The as-built rule steps an edge by the change of its target, so the step is measured against the
+ * as-built rule's own previous target.  That is not the frozen target the kept row realized: a
+ * held arc whose chord carry was pruned keeps its frozen target, while the as-built rule would
+ * have fallen to 0 once and stayed there.  The previous as-built target is @p remembered when the
+ * kept row held the arc at the last observed epoch; otherwise the arc was elected by the as-built
+ * rule then, and its realized previous target is the as-built one.  A reversed arc is a host
+ * change for the as-built rule, whose displacement (the target less the new host's carry) does
+ * not depend on any previous target.
+ *
+ * @param e          A classified edge the kept row held (@ref ChainEdgeObs::row_armed).
+ * @param remembered The as-built target (m) drafted for the arc at the last observed epoch if the
+ *                   kept row held it then (@ref ChainFrameMemory::kept_as_built_target), else null.
+ * @return NaN when the as-built step was unknown (@c legacy_known false); for a reversed arc, or
+ *         when @p remembered is null, the draft's own displacement (@c legacy_pinmove_m); else
+ *         the as-built target (@c legacy_target_m) less @p remembered.
+ */
+double chainKeptAsBuiltStep(const ChainEdgeObs& e, const double* remembered);
+
+/**
+ * @brief Whether the as-built rule would have moved an edge the kept row held, at this election.
+ *
+ * The observer writes a @c kept event row only for such an edge, once per move.  A held arc whose
+ * as-built target differs from its frozen target keeps differing at every election until the two
+ * agree, but the as-built rule would have moved the edge only at the election its target changed,
+ * so the persistent difference is one event at its onset (@ref chainKeptAsBuiltStep) and held
+ * edges the as-built rule would have left alone are the common case.
+ *
+ * @param e          A classified edge.
+ * @param remembered The as-built target (m) drafted for the arc at the last observed epoch if the
+ *                   kept row held it then, else null (@ref chainKeptAsBuiltStep).
+ * @return True when @ref ChainEdgeObs::row_armed and the arc reversed direction
+ *         (@c incumbent_flipped), the as-built step was unknown (@c legacy_known false) or the
+ *         as-built step is nonzero.
+ */
+bool chainKeptEdgeMoved(const ChainEdgeObs& e, const double* remembered);
+
+/**
  * @brief Classify, trace and remember this epoch's chain (file banner, step 2).
  *
  * Observer of the StashTail slot.  Gate: network.trace_chain_datum (the chain trace and the
  * memory) or network.trace_rpb_states (the receiver phase-bias trace), on an eq34 run.  Writes
- * only its traces, its CHAIN event rows and @ref ChainFrameCounters.
+ * only its traces, its CHAIN event rows and @ref ChainFrameCounters.  An edge the kept row
+ * held, where the as-built rule would have moved it at this election (@ref chainKeptEdgeMoved),
+ * writes a @c kept row: one row, action @c hold, or for an arc that reversed direction two,
+ * @c leave (the incumbent orientation) and @c join (this epoch's).  A difference between the
+ * as-built target and the frozen one that persists is written once, at the election the
+ * as-built target changed.
  *
  * @param run The run (its context, traces, setup and engines).
  * @param ep  The epoch after the solve and the harvests.
@@ -400,7 +488,12 @@ void networkChainFrameObserve(NetworkRun& run, const NetworkEpoch& ep);
  * candidates, the targets, soft pins and bridges, the legacy re-references and fractional
  * shifts, the cut releases and declarations (0 while no row is armed), the component census,
  * the pin identity, the per-site moved-value counts of the chain shift, and the receiver
- * phase-bias time-link NEES when network.trace_rpb_states is armed.
+ * phase-bias time-link NEES when network.trace_rpb_states is armed.  With a row armed the
+ * first line names the armed rows and says the others ran the as-built rule, and an armed
+ * row prints its count of edges under the integer rule, its unknown and fractional counts
+ * being the steps as realized, and one line counts the kept rows written: the reversed arcs and
+ * the hold rows, by the kind of the as-built step.  A run with no row armed prints what it
+ * printed before the rows existed.
  *
  * @param v The run at its end.
  * @return 0 (this report does not set the exit code).

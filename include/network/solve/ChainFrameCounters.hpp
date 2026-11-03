@@ -30,8 +30,16 @@ struct ChainFrameCounters {
     long long cf_epochs{0};                        ///< Epochs observed.
     long long cf_edges{0};                         ///< Tree edges recorded.
     std::array<long long, kChainEventRowCount> cf_rows{};   ///< Edges by table row.
-    std::array<long long, kChainEventRowCount> cf_rows_frac{};     ///< ...whose legacy step was a known nonzero step that is not an integer of cycles.
-    std::array<long long, kChainEventRowCount> cf_rows_unknown{};  ///< ...whose legacy step was unknown (a re-reference).
+    std::array<long long, kChainEventRowCount> cf_rows_armed{};    ///< ...decided by the row's integer rule (@c network.phase_datum_eq34_event_rows).
+    std::array<long long, kChainEventRowCount> cf_rows_frac{};     ///< ...whose step as realized was a known nonzero step that is not an integer of cycles (the as-built step on a row that is not armed).
+    std::array<long long, kChainEventRowCount> cf_rows_unknown{};  ///< ...whose step as realized was unknown (a re-reference; the as-built step on a row that is not armed).
+    // The kept rows written to the event trace.  A row marks the election at which the as-built rule would
+    // have moved the edge (a reversed arc, an unknown step, or a change of the as-built target), so a
+    // difference between the as-built target and the frozen one that persists is counted once.
+    long long cf_kept_reversed{0};                 ///< Reversed arcs the kept row held, each written as a leave row and a join row.
+    long long cf_kept_hold_whole{0};               ///< Hold rows whose as-built step was a nonzero whole number of cycles (within 1e-6).
+    long long cf_kept_hold_other{0};               ///< Hold rows whose as-built step was nonzero and not whole cycles.
+    long long cf_kept_hold_unknown{0};             ///< Hold rows whose as-built step was unknown.
     long long cf_nonint_targets{0};                ///< Pins whose target is not an integer of cycles.
     long long cf_soft_pins{0};                     ///< Soft pins (sigma multiplier above 1).
     long long cf_bridges{0};                       ///< Shared-side bridge pins.

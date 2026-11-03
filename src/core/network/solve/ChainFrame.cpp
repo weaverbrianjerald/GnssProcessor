@@ -34,46 +34,85 @@ namespace GnssProcessor {
 // ---- The chain-event table ----------------------------------------------------------------------
 
 const std::array<ChainEventSpec, kChainEventRowCount> kChainEventSpec = {{
-    {ChainEventRow::Kept, "Kept", "kept", "",
+    {ChainEventRow::Kept, "Kept", "kept", "kept",
      "keyed on parent identity; a flip takes target minus a stale carry",
      "arc identity plus life stamp; target frozen; no prune fallback to 0",
-     ChainStep::Zero, ChainCarry::Keep, ChainWire::None},
+     ChainStep::Zero, ChainCarry::Keep, ChainWire::None, true},
     {ChainEventRow::Birth, "Birth", "", "",
      "0, or lambda round(float) under seed-round",
      "unchanged (seed-round by decision D-S)",
-     ChainStep::New, ChainCarry::Keep, ChainWire::NewKey},
+     ChainStep::New, ChainCarry::Keep, ChainWire::NewKey, false},
     {ChainEventRow::Returning, "Returning", "returning", "returning",
      "baseline 0: pinmove lambda round(carry), marked known",
      "certified from its own previous carries; else cut release and treated as a birth",
-     ChainStep::ZeroOrCutRelease, ChainCarry::KeepOrCutRelease, ChainWire::NoneOrDeclareMoved},
+     ChainStep::ZeroOrCutRelease, ChainCarry::KeepOrCutRelease, ChainWire::NoneOrDeclareMoved, false},
     {ChainEventRow::RehostCertified, "RehostCertified", "rehost", "rehost",
      "pinmove = target minus carry (a fraction)",
      "the chord's integer from the previous chord table, jointly certified; no shift",
-     ChainStep::Zero, ChainCarry::Keep, ChainWire::None},
+     ChainStep::Zero, ChainCarry::Keep, ChainWire::None, false},
     {ChainEventRow::RehostUncertified, "RehostUncertified", "rehost", "rehost",
      "pinmove = target minus carry (a fraction)",
      "rounded integer target, cut release, declaration",
-     ChainStep::CutRelease, ChainCarry::CutRelease, ChainWire::DeclareMoved},
+     ChainStep::CutRelease, ChainCarry::CutRelease, ChainWire::DeclareMoved, false},
     {ChainEventRow::RootHandover, "RootHandover", "root", "root_handover",
      "unknown step: the component's carries erased",
      "the new root's receiver phase bias pinned at its carried value",
-     ChainStep::Zero, ChainCarry::Keep, ChainWire::None},
+     ChainStep::Zero, ChainCarry::Keep, ChainWire::None, false},
     {ChainEventRow::TreeEdgeSlip, "TreeEdgeSlip", "slip", "slip_deseat",
      "read from carry_slipped_ambs (empty on the float vehicle): the slipped edge stays",
      "read the free-epoch latch with its cause bits, de-seat at the slip epoch, re-host from previous values",
-     ChainStep::ZeroOrCutRelease, ChainCarry::ReleaseArc, ChainWire::NoneOrDeclareMoved},
+     ChainStep::ZeroOrCutRelease, ChainCarry::ReleaseArc, ChainWire::NoneOrDeclareMoved, false},
     {ChainEventRow::Merge, "Merge", "merge_split", "merge",
      "none",
      "cut release of the absorbed side",
-     ChainStep::CutRelease, ChainCarry::CutRelease, ChainWire::ComponentChange},
+     ChainStep::CutRelease, ChainCarry::CutRelease, ChainWire::ComponentChange, false},
     {ChainEventRow::Split, "Split", "merge_split", "split",
      "none",
      "the split-off root pinned at its carried receiver phase bias; the component change declared",
-     ChainStep::Zero, ChainCarry::Keep, ChainWire::ComponentChange},
+     ChainStep::Zero, ChainCarry::Keep, ChainWire::ComponentChange, false},
 }};
 
 const ChainEventSpec& chainEventSpec(ChainEventRow r) {
     return kChainEventSpec[static_cast<std::size_t>(r)];
+}
+
+std::vector<std::string> chainEventRowEntries() {
+    std::vector<std::string> entries;
+    for (const ChainEventSpec& s : kChainEventSpec) {
+        const std::string entry = s.rows_entry;
+        if (!entry.empty() && std::find(entries.begin(), entries.end(), entry) == entries.end())
+            entries.push_back(entry);
+    }
+    return entries;
+}
+
+bool chainEventRowEntryBuilt(const std::string& entry) {
+    bool named = false;
+    for (const ChainEventSpec& s : kChainEventSpec) {
+        if (entry != s.rows_entry) continue;
+        if (!s.built) return false;
+        named = true;
+    }
+    return named;
+}
+
+bool chainEventRowArmed(const NetworkKnobs& k, ChainEventRow r) {
+    switch (r) {
+        case ChainEventRow::Kept: return k.eq34_row_kept;
+        default:                  return false;   // the other rows' integer rules are not built
+    }
+}
+
+double chainKeptAsBuiltStep(const ChainEdgeObs& e, const double* remembered) {
+    if (!e.legacy_known) return std::numeric_limits<double>::quiet_NaN();
+    if (e.incumbent_flipped || remembered == nullptr) return e.legacy_pinmove_m;
+    return e.legacy_target_m - *remembered;
+}
+
+bool chainKeptEdgeMoved(const ChainEdgeObs& e, const double* remembered) {
+    if (!e.row_armed) return false;
+    if (e.incumbent_flipped || !e.legacy_known) return true;
+    return chainKeptAsBuiltStep(e, remembered) != 0.0;
 }
 
 const char* chainStepName(ChainStep s) {
@@ -380,6 +419,7 @@ ChainEpochClass chainClassifyEpoch(const ChainEpochObs& obs, const ChainFrameMem
         const std::size_t r = static_cast<std::size_t>(e.row);
         ++cnt.cf_edges;
         ++cnt.cf_rows[r];
+        if (e.row_armed) ++cnt.cf_rows_armed[r];
         if (!e.known) ++cnt.cf_rows_unknown[r];
         else if (e.lambda_m > 0.0 && e.pinmove_m != 0.0 && !nearInteger(e.pinmove_m / e.lambda_m))
             ++cnt.cf_rows_frac[r];
@@ -448,6 +488,10 @@ void chainRememberEpoch(const ChainEpochObs& obs, const ChainEpochClass& cls,
         next.comp_root[k.group][k.comp] = k.r1;
     }
     for (const ChainEdgeObs& e : cls.edges) next.vertex_parent[e.group][e.child] = e.parent;
+    // The as-built target of every edge the kept row held, for the next epoch's rows (empty while
+    // the row is off).
+    for (const ChainEdgeObs& e : cls.edges)
+        if (e.row_armed) next.kept_as_built_target[{e.station, e.sat, e.signal}] = e.legacy_target_m;
     if (mem.have)
         for (const auto& [g, vc] : mem.vertex_comp) {
             const auto nit = next.vertex_comp.find(g);
@@ -536,7 +580,8 @@ void networkChainFrameObserve(NetworkRun& run, const NetworkEpoch& ep) {
                     << (e.lambda_m > 0.0 ? fmt::format("{:.6f}", e.target_m / e.lambda_m) : "") << ','
                     << cell(e.prev_target_m, 6) << ',' << fmt::format("{:.6f}", e.pinmove_m) << ','
                     << (e.known ? 1 : 0) << ',' << chainLegacyCauseName(e.cause) << ','
-                    << chainEventSpec(e.row).name << ",0," << (e.certified ? 1 : 0) << ','
+                    << chainEventSpec(e.row).name << ',' << (e.row_armed ? 1 : 0) << ','
+                    << (e.certified ? 1 : 0) << ','
                     << chainCertSourceName(e.cert_source) << ',' << (e.incumbent_flipped ? 1 : 0)
                     << ',' << (e.returning ? 1 : 0) << ',' << life << '\n';
             }
@@ -574,6 +619,41 @@ void networkChainFrameObserve(NetworkRun& run, const NetworkEpoch& ep) {
                     }
                     event(spec.event, e.sat, e.station_name, e.pinmove_m, "join",
                           detail + fmt::format(" gap_s={} prev={}", cell(gap, 1), prev_parent));
+                    break;
+                }
+                case ChainEventRow::Kept: {
+                    // Only an edge the kept row held and the as-built rule would have moved at this
+                    // election: a difference between the as-built target and the frozen one that
+                    // persists is one event, at the election the as-built target changed, and the
+                    // rest of the held edges are the quiet majority.
+                    const auto was = mem.kept_as_built_target.find({e.station, e.sat, e.signal});
+                    const double* remembered = was == mem.kept_as_built_target.end() ? nullptr : &was->second;
+                    if (!chainKeptEdgeMoved(e, remembered)) break;
+                    const double step = chainKeptAsBuiltStep(e, remembered);
+                    const std::string kept_detail = detail + fmt::format(
+                        " legacy_cause={} legacy_known={} legacy_pinmove_m={:.6f} legacy_step_m={} "
+                        "legacy_target_cyc={} flipped={}",
+                        chainLegacyCauseName(e.cause), e.legacy_known ? 1 : 0, e.legacy_pinmove_m,
+                        cell(step, 6),
+                        e.lambda_m > 0.0 ? fmt::format("{:.6f}", e.legacy_target_m / e.lambda_m) : "",
+                        e.incumbent_flipped ? 1 : 0);
+                    if (!e.incumbent_flipped) {
+                        event(spec.event, e.sat, e.station_name, e.pinmove_m, "hold", kept_detail);
+                        if (!e.legacy_known)                                   ++cnt.cf_kept_hold_unknown;
+                        else if (e.lambda_m > 0.0 && nearInteger(step / e.lambda_m)) ++cnt.cf_kept_hold_whole;
+                        else                                                   ++cnt.cf_kept_hold_other;
+                        break;
+                    }
+                    ++cnt.cf_kept_reversed;
+                    // A reversed arc leaves its incumbent orientation (this epoch's parent as the
+                    // child) and joins this epoch's.  The sat and station columns name the same two
+                    // endpoints in both rows, so each row says which of them is the child.
+                    const std::string child = vertexName(e.child, stations);
+                    const std::string parent = vertexName(e.parent, stations);
+                    event(spec.event, e.sat, e.station_name, std::nullopt, "leave",
+                          kept_detail + fmt::format(" child={} parent={}", parent, child));
+                    event(spec.event, e.sat, e.station_name, e.pinmove_m, "join",
+                          kept_detail + fmt::format(" child={} parent={}", child, parent));
                     break;
                 }
                 case ChainEventRow::TreeEdgeSlip:
@@ -784,15 +864,45 @@ int networkChainFrameRunEnd(const NetworkRunEndView& v) {
                   "measured by this run.");
         return 0;
     }
-    log->info("Network (chain frame): {} epoch(s) observed, {} tree edge(s); no event row is "
-              "armed, so the election ran the legacy rule throughout (observe mode).",
-              c.cf_epochs, c.cf_edges);
+    // The armed rows' entries of network.phase_datum_eq34_event_rows (two rows may share one).
+    std::vector<std::string> armed;
+    for (const ChainEventSpec& s : kChainEventSpec)
+        if (chainEventRowArmed(ctx.knobs, s.row)
+            && std::find(armed.begin(), armed.end(), std::string(s.rows_entry)) == armed.end())
+            armed.push_back(s.rows_entry);
+    std::string armed_entries;
+    for (const std::string& entry : armed) armed_entries += (armed_entries.empty() ? "" : ", ") + entry;
+    if (armed_entries.empty())
+        log->info("Network (chain frame): {} epoch(s) observed, {} tree edge(s); no event row is "
+                  "armed, so the election ran the legacy rule throughout (observe mode).",
+                  c.cf_epochs, c.cf_edges);
+    else
+        log->info("Network (chain frame): {} epoch(s) observed, {} tree edge(s); event row(s) "
+                  "armed: {}; the other rows ran the as-built rule.",
+                  c.cf_epochs, c.cf_edges, armed_entries);
     for (std::size_t r = 0; r < kChainEventRowCount; ++r) {
         const ChainEventSpec& s = kChainEventSpec[r];
-        log->info("Network (chain frame)   {:<18} {:>8} edge(s): legacy step unknown {}, "
-                  "fractional {}; integer rule {} / {} / {}.",
-                  s.name, c.cf_rows[r], c.cf_rows_unknown[r], c.cf_rows_frac[r],
-                  chainStepName(s.step), chainCarryName(s.carry), chainWireName(s.wire));
+        if (chainEventRowArmed(ctx.knobs, s.row))
+            log->info("Network (chain frame)   {:<18} {:>8} edge(s), {} under the integer rule: "
+                      "realized step unknown {}, fractional {}; integer rule {} / {} / {}.",
+                      s.name, c.cf_rows[r], c.cf_rows_armed[r], c.cf_rows_unknown[r],
+                      c.cf_rows_frac[r], chainStepName(s.step), chainCarryName(s.carry),
+                      chainWireName(s.wire));
+        else
+            log->info("Network (chain frame)   {:<18} {:>8} edge(s): legacy step unknown {}, "
+                      "fractional {}; integer rule {} / {} / {}.",
+                      s.name, c.cf_rows[r], c.cf_rows_unknown[r], c.cf_rows_frac[r],
+                      chainStepName(s.step), chainCarryName(s.carry), chainWireName(s.wire));
+    }
+    if (chainEventRowArmed(ctx.knobs, ChainEventRow::Kept)) {
+        const long long holds = c.cf_kept_hold_whole + c.cf_kept_hold_other + c.cf_kept_hold_unknown;
+        log->info("Network (chain frame): {} kept row(s) written to the event trace: {} reversed "
+                  "arc(s) (a leave and a join row each) and {} hold row(s), the hold rows by the "
+                  "as-built step {} of whole cycles, {} other nonzero and {} unknown.  A hold row marks "
+                  "the election at which the as-built target changed, so a difference from the frozen "
+                  "target that persists is written once.",
+                  2 * c.cf_kept_reversed + holds, c.cf_kept_reversed, holds, c.cf_kept_hold_whole,
+                  c.cf_kept_hold_other, c.cf_kept_hold_unknown);
     }
     const long long n_cert = c.cf_cert[static_cast<std::size_t>(ChainCertSource::Pair)]
                            + c.cf_cert[static_cast<std::size_t>(ChainCertSource::Lattice)];
@@ -814,9 +924,12 @@ int networkChainFrameRunEnd(const NetworkRunEndView& v) {
               "returning and {} departed vertex(es), {} flipped kept edge(s); {} gated key(s).",
               c.cf_root_handovers, c.cf_merges, c.cf_splits, c.cf_returning, c.cf_departed,
               c.cf_flipped, c.cf_gated_keys);
+    // The kept row cuts and declares nothing, so these stay 0 with it armed too.
     log->info("Network (chain frame): {} cut-released arc(s), {} phase-bias prior(s) and {} "
-              "receiver phase bias(es); {} declared key(s) (all 0 while no event row is armed).",
-              c.cf_cut_arcs, c.cf_cut_pb, c.cf_cut_rpb, c.cf_declared_keys);
+              "receiver phase bias(es); {} declared key(s) ({}).",
+              c.cf_cut_arcs, c.cf_cut_pb, c.cf_cut_rpb, c.cf_declared_keys,
+              armed_entries.empty() ? "all 0 while no event row is armed"
+                                    : "the armed rows cut and declare nothing");
     for (const auto& [g, mx] : c.cf_comp_max) {
         const auto s = c.cf_comp_sum.find(g);
         const auto n = c.cf_comp_epochs.find(g);

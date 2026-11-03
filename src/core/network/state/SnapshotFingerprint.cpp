@@ -547,6 +547,11 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         //                           choose which tree the next election grows, and a frame step
         //                           the new tree puts on a carry goes through the same re-reference
         //                           and shift responses as any other re-host
+        //   eq34 event rows         phase_datum_eq34_event_rows: a row's integer rule decides which
+        //                           target and step an election gives an edge, not what a stored
+        //                           value means.  Its pin life is never serialized, so a resume
+        //                           starts every row cold and the row holds its first edges one
+        //                           election late
         //   signal integrity        network.signal_integrity.*
         //   measurement admission   adm_{screen,bound_m,min_sats,heal_ep,max_frac,
         //                           trace} and adm_revet{,_gap_ep,_ep,_census,_hold}

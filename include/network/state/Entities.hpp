@@ -64,6 +64,7 @@
 
 #include "common/GnssIdentity.hpp"
 #include "network/state/ArcLedger.hpp"            // ArcRecord (an arc's ledger record, step N4f2)
+#include "network/ar/ArcLife.hpp"        // ArcLifeStamp (the pinned life of an eq34 tree edge)
 #include "network/ar/ArCycleBasis.hpp"   // ArFamilyKey, ArBasisMemory
 #include "network/qc/GrossLos.hpp"       // GrossLosState
 #include "network/emit/PbHoldClone.hpp"    // PbHoldClone
@@ -862,6 +863,14 @@ struct ArcState {
     /// Replaced wholesale each election.  Was @c NetworkCarryState::eq34_prev_target.
     /// Record EQT.
     std::optional<double> eq34_prev_target;
+    /// The arc's life stamp at the election that last pinned it as a tree edge, one entry per
+    /// pinned edge of every band (the band extension's included).  The kept row of the chain's
+    /// event table reads it to tell an arc whose pinned life continues from one that was
+    /// reborn, re-entered after a gap or flagged since (@c arcPinnedLifeContinues).  Replaced
+    /// wholesale each election, and written only with
+    /// @c network.phase_datum_eq34_event_rows holding @c kept, so it is empty on every other
+    /// run.  ColdStart: after a warm resume the row holds its first edges one election late.
+    std::optional<ArcLifeStamp> eq34_pin_life;
     /// A tree edge retained across the current gap because its leveling carry is still
     /// alive (network.phase_datum_eq34_extend_only); rebuilt at each election.  Was
     /// @c NetworkCarryState::eq34_retained_edges.  Record EQR.

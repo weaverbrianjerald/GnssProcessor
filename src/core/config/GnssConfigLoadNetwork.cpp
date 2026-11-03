@@ -56,6 +56,7 @@
 #include "network/assembly/SecondCodeScope.hpp" // secondCodeAllowEntryValid (second-code allow-list grammar)
 #include "network/assembly/SecondPhaseScope.hpp" // secondPhaseAllowEntryValid
 #include "network/solve/Sbasis.hpp"         // pinPairContinuityBlocker
+#include "network/solve/ChainFrame.hpp"     // chainEventRowEntries / chainEventRowEntryBuilt (the event rows' grammar)
 #include "config/GnssConfigJsonHelpers.hpp"
 #include "common/Constants.hpp"                   // GPS_Lx_WAVELENGTH (H3 per-λ log line)
 #include "products/NetworkProductEmitter.hpp"   // kDefaultDiscThresholdM (R9 single source of truth)
@@ -7802,6 +7803,61 @@ namespace GnssProcessor {
                 network_phase_datum_eq34_family_ = "signal";
             }
         }
+        // The event rows of the chain election (the event table of network/solve/ChainFrame.hpp):
+        // an array of the entries whose integer rule replaces the as-built rule of their row.  An
+        // entry the table does not name is dropped with a warning, a duplicate silently, and an
+        // entry whose rule is not built yet with a warning (the rows are built in table order).
+        // The list is inert without the chain and is written for the float vehicle.  The
+        // exclusion with network.carry_invariant is raised in validateNetworkPhaseDatum_, where
+        // that flag has settled.
+        network_phase_datum_eq34_event_rows_.clear();
+        if (jhas(json, "network.phase_datum_eq34_event_rows", "phase_datum_eq34_event_rows")) {
+            const nlohmann::json& rows = jsection(json, "network.phase_datum_eq34_event_rows",
+                                                  "phase_datum_eq34_event_rows");
+            const std::vector<std::string> known = chainEventRowEntries();
+            std::string known_list;
+            for (const std::string& e : known) known_list += (known_list.empty() ? "" : "|") + e;
+            if (!rows.is_array()) {
+                log->warn("Network: network.phase_datum_eq34_event_rows must be an array of entries "
+                          "({}) - ignored; every row runs the as-built rule.", known_list);
+            } else {
+                std::vector<std::string> seen;
+                for (const auto& v : rows) {
+                    if (!v.is_string()) {
+                        log->warn("Network: network.phase_datum_eq34_event_rows holds a non-string "
+                                  "entry - dropped.");
+                        continue;
+                    }
+                    const std::string entry = v.get<std::string>();
+                    if (std::find(known.begin(), known.end(), entry) == known.end()) {
+                        log->warn("Network: network.phase_datum_eq34_event_rows entry '{}' is not "
+                                  "one of {} - dropped.", entry, known_list);
+                        continue;
+                    }
+                    if (std::find(seen.begin(), seen.end(), entry) != seen.end()) continue;
+                    seen.push_back(entry);
+                    if (!chainEventRowEntryBuilt(entry)) {
+                        log->warn("Network: network.phase_datum_eq34_event_rows: the rows are built "
+                                  "in table order; '{}' is not built yet - dropped.", entry);
+                        continue;
+                    }
+                    network_phase_datum_eq34_event_rows_.push_back(entry);
+                }
+            }
+            if (!network_phase_datum_eq34_event_rows_.empty() && !network_phase_datum_eq34_) {
+                log->warn("Network: network.phase_datum_eq34_event_rows is set but "
+                          ".phase_datum_eq34 is OFF - the event rows are inert without the chain, so "
+                          "the list is cleared and every row runs the as-built rule.");
+                network_phase_datum_eq34_event_rows_.clear();
+            } else if (!network_phase_datum_eq34_event_rows_.empty()
+                       && network_config_.ambiguity_vehicle != NetworkAmbiguityVehicle::FloatKf) {
+                log->warn("Network: network.phase_datum_eq34_event_rows is set but "
+                          "network.ambiguity_vehicle is not 'float_kf' - the event rows are written "
+                          "for the float vehicle, so the list is cleared and every row runs the "
+                          "as-built rule.");
+                network_phase_datum_eq34_event_rows_.clear();
+            }
+        }
         // DD cycle-basis invariant carry (network.carry_invariant*).
         network_carry_invariant_ =
             jval<bool>(json, "network.carry_invariant",
@@ -9984,6 +10040,28 @@ namespace GnssProcessor {
                               "attached to that band afterwards.  Any other constellation is "
                               "elected per signal that epoch.  The run-end eq34 block reports "
                               "the families formed, the fallbacks and the band-only attachments.");
+                }
+            }
+            // The event rows are written for the float vehicle, whose leveling carry the pins act
+            // on.  The vehicle was checked where the list is read; the invariant carry has settled
+            // only now.
+            if (!network_phase_datum_eq34_event_rows_.empty()) {
+                if (network_carry_invariant_) {
+                    log->warn("Network: network.phase_datum_eq34_event_rows is set with "
+                              "network.carry_invariant - the event rows are written for the float "
+                              "vehicle, so the list is cleared and every row runs the as-built rule.");
+                    network_phase_datum_eq34_event_rows_.clear();
+                } else {
+                    std::string armed;
+                    for (const std::string& e : network_phase_datum_eq34_event_rows_)
+                        armed += (armed.empty() ? "" : ", ") + e;
+                    log->info("Network producer: eq34 EVENT ROWS ON ({}) - the integer rule of each "
+                              "armed row replaces the as-built rule for its class of tree edge: "
+                              "'kept' holds an arc that stays in the tree, in either direction, with "
+                              "its pinned life continuing at its previous pin target, with no frame "
+                              "step of its own.  The other rows run the as-built rule.  The run-end "
+                              "eq34 block reports the edges held and the incumbent edges not held, "
+                              "by cause.", armed);
                 }
             }
             if (network_phase_datum_prioritized_)
