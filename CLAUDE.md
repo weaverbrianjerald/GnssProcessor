@@ -8,7 +8,7 @@ C++17 GNSS post-processor and real-time engine. Supports PPP and PPP-RTK (uncomb
 standing user directive, 2026-08-12. Do not invoke the 2022 toolchain even
 though it is still installed on disk.**
 
-Use the wrapper — it encodes every trap below:
+Use the wrapper; it encodes the toolchain traps (vcvars64 path, two CMakes, `%PATH%` trap, logger defect), recorded in `docs/onboarding/build_toolchain.md`. A bare `cmake --build` fails; `vswhere.exe not recognized` is benign noise.
 
 ```powershell
 C:\GnssProcessor\scripts\vs2026_build.ps1 -Config x64-Debug -Target gnss_core   # fast compile check
@@ -17,63 +17,13 @@ C:\GnssProcessor\scripts\vs2026_build.ps1 -Config x64-Release                   
 C:\GnssProcessor\scripts\vs2026_build.ps1 -Config x64-Debug -Reconfigure        # after a toolchain change
 ```
 
-Migration facts, all verified 2026-08-12 (fresh configure + 538/538 build +
-full unit suite under the new toolchain):
-
-- **vcvars64.bat moved.** `...\Microsoft Visual Studio\18\Enterprise\VC\Auxiliary\Build\`
-  — `18` is the install *major-version* dir, not a year. The user's default
-  shell still does NOT source it, so a naive `cmake --build` fails with
-  "Cannot open include file: 'memory'".
-- **Toolchain: MSVC 19.51.36256 / toolset 14.51.36231.** The existing
-  `C:\vcpkg` tree is v143-built and links against it cleanly (Eigen, spdlog,
-  gtest 1.17, netCDF, CURL, ZLIB, pybind11 2.13.6) — no vcpkg rebuild needed.
-- **⚠ Two CMakes on this box.** `cmake` on PATH is the standalone **3.18.3**
-  (`C:\Program Files\CMake`) and vcvars does NOT override it; VS 2026 bundles
-  **4.3.1** at `...\18\Enterprise\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\`.
-  The wrapper pins the bundled 4.3.1 by absolute path so a CLI configure and
-  an IDE configure agree. CMake 4 hard-errors on `cmake_minimum_required` < 3.5;
-  the lowest in our dependency closure is exactly 3.5 (and only in a doc file
-  plus a vcpkg-internal port script, neither consumed by `find_package`), so
-  the project configures clean.
-- **⚠ Never `set "PATH=...;%PATH%"` inside the `cmd /c "vcvars && ..."` chain.**
-  `cmd` expands `%PATH%` when it parses the whole `a && b` line — *before*
-  vcvars runs — so the assignment writes back the pre-vcvars PATH and silently
-  destroys the compiler entries, giving "No CMAKE_CXX_COMPILER could be found"
-  on a machine where the compiler is fine. Ninja needs no pinning: vcvars
-  already puts VS 2026's own ninja (1.13.2) on PATH.
-- **⚠ The migration surfaced one real code defect — the cached-static logger
-  accessor.** `RinexNavParser.cpp`'s `navLog()` held
-  `static shared_ptr lg = spdlog::get(...) ? ... : spdlog::default_logger();`
-  and returned `lg.get()`. Under VS 2026 that faulted (0xC0000005) on the only
-  two parser paths that log, so the suite showed exactly two failures
-  (`RinexNavParser.RejectsPreRinex3`, `MissingEndOfHeaderReturnsEmpty`).
-  Causality was confirmed both ways (revert reproduces, fix clears), and a
-  standalone probe in the identical Debug/`SPDLOG_SHARED_LIB` flavour showed
-  `spdlog::default_logger()` itself returns a **valid** logger — so this is NOT
-  a vcpkg ABI problem; explicit loggers and fmt formatting cross the v143 DLL
-  boundary fine. **The pattern to avoid is caching a raw pointer out of a
-  by-value `shared_ptr` (worse, out of a ternary of two DLL-returned
-  temporaries) in a function-local `static`.** Resolve per call and return the
-  `shared_ptr`; `spdlog::default_logger()` is nullable in principle because
-  `spdlog::drop_all()` clears it, and `LogManager` calls that on both
-  re-initialize and shutdown. `tailLog()` in `NetworkProductIO.cpp` had the
-  same nullable shape with three unguarded `->` uses and was hardened too.
-  Whether VS 2022 also faulted on the *current* source is unverified — the
-  archived pre-migration exe is a different source revision, and current
-  source was not rebuilt with 2022 per the retirement directive.
-- `vswhere.exe not recognized` from the cmd subshell remains benign noise.
-
 Targets: `gnss_core` (static lib), `gnss_processor` (exe), `gnss_tests` (exe),
 `gnss_processor_module` (pybind11 `.pyd`), plus `gnss_simulator_selftest`.
 
 Build tree: `build/x64-Debug` and `build/x64-Release` — both are **git-ignored
 and disposable**; regenerating from scratch is one wrapper call (~180 s Debug).
 
-**Disk placement (owner request, 2026-10-13: keep C: free, target D: for builds
-and runs).** C: is a 1 TB internal NVMe that runs short; D: is a 4 TB NVMe SSD
-in a USB enclosure on a 5 Gbps port (about 0.4 GB/s; Release builds on D:
-timed within the range of C: worktree builds, being CPU-bound; anything on D:
-is unavailable while it is disconnected).
+**Disk placement (owner request, 2026-10-13: keep C: free, target D: for builds and runs).** D: is USB-attached and unavailable while disconnected.
 - **Worktrees and their builds go on D:**, as
   `git worktree add D:\GnssProcessorSupport\worktrees\<name>`, built with
   `scripts\wt_build.ps1` from inside that worktree (it roots the build tree at
@@ -89,10 +39,7 @@ is unavailable while it is disconnected).
   junction left at the old path. Never `robocopy /MOVE` without `/XJ`, and
   never `scripts/run_decomp_arm.py --force` on a junctioned run dir (its
   `resolve()` + `rmtree` deletes the D: target).
-- Claude session scratchpads (`%TEMP%\claude\...`, where session worktrees
-  used to accumulate 11 GB builds) move to D: only if the owner sets the
-  documented `CLAUDE_CODE_TMPDIR` variable (user environment or user
-  settings `env`; new sessions only).
+- Claude session scratchpads (`%TEMP%\claude\...`) move to D: only if the owner sets the documented `CLAUDE_CODE_TMPDIR` variable (new sessions only).
 
 **NEVER run `gnss_processor` on data from the Debug tree** (standing user
 directive). Debug's unoptimized Eigen is 50–100× slower — a Release run of
@@ -105,135 +52,76 @@ linker never hits a locked exe.
 ## Layout
 
 ```
-include/              All public headers, organized into subdirs mirroring
-                      src/core/ — heavy Doxygen is the norm.  Always include
-                      with the subdir prefix: `#include "filter/KalmanFilter.hpp"`
-                      not `#include "KalmanFilter.hpp"`.  CMake adds `include/`
-                      to the include path; the subdir is part of the include
-                      string.
-  app/                Application.hpp (post-processing + real-time entry points;
-                      impls split across Application.cpp / ApplicationBaseline.cpp /
-                      ApplicationRealtime.cpp)
-  atmosphere/         Ionosphere, Troposphere
-  common/             Truly cross-cutting types and identifiers only:
-                      Constants, Namespaces, GnssTypes, PppTypes, PppState,
-                      PppObservation, EpochMeasurement, PppUtils, SignalBand
-  config/             GnssConfig + GnssConfigTypes (the config enums + POD
-                      sub-structs, relocated out of the GnssConfig.hpp header;
-                      GnssConfig.hpp includes it) + GnssConfigJsonHelpers
-                      (loader split into per-section helpers in
-                      src/core/config/GnssConfigLoad.cpp)
-  corrections/        GnssCorrections, OceanTideModel
-  filter/             KalmanFilter, StateManager, StateKeySchema, Smoother,
-                      AmbiguityResolver, ImuIntegrator, PivotManager (PPP-RTK SD),
-                      DdPivotManager (baseline DD)
-  logging/            LogManager, TraceLogger, KalmanFilterLogger, WlsLogger
-  math/               Coordinates, TimeUtils, Interpolate, WlsEstimator
-  measurement/        MeasurementModel, StateInitializer, BssdTransform, BrsdTransform
-                      (BSSD: PPP-RTK SD via BssdTransform::apply, baseline DD via
-                       BssdTransform::differenceBrsd composed on BrsdTransform output)
-  model/              PppModel (also hosts uncombined PPP-RTK, composed with
-                      measurement/BssdTransform), StochasticModel, Antenna,
-                      Planetary, ModelGeometry
-  products/           ProductManager, ProductCache, ProductParser, PathResolver,
-                      ProductResolver, ProductTypes, DataDownloader
-  realtime/           NtripClient, RtcmStreamReader, RealTimeEngine
-  rinex/              RinexParser, MultiRinexSync
-  rtcm/               RtcmParser
-  slip/               CycleSlipManager + detectors: MwSlipDetector,
-                      GraphicSlipDetector (active); IfPhaseSlipDetector (active
-                      on the NETWORK path — network.cycle_slip.if_phase_td;
-                      STAGED for user/kinematic); GfSlipDetector (STAGED —
-                      uncompiled, not wired in; see its header banner);
-                      IonoVariabilityMonitor
-  network/            The network producer, one folder per concern, mirrored
-                      under src/core/network/ (tests: tests/network/).  File
-                      basenames drop the Network prefix (class NetworkEstimator
-                      is in network/solve/Estimator.hpp); include with the full
-                      prefix: `#include "network/qc/Raim.hpp"`.  The wire I/O,
-                      emitter and state snapshot (products/NetworkProductIO,
-                      NetworkProductEmitter, NetworkStateSnapshot) stay in
-                      products/: consumers and the real-time engine include them.
-    driver/           ApplicationNetwork*, Run, Epoch (+ admission,
-                      observers), Knobs, run-type headers, stream front end
-    state/            RunContext, Entities, RunFields, snapshot
-                      write, warm resume, border stash and prior, carry sites and
-                      disposition, ArcLedger
-    assembly/         station build, split, anchors and carry; contributions;
-                      parameter inventory and registry; responses; admissions; band
-                      scopes; SignalRoster
-    carry/            the carried families (leveling, phase colour, slant iono, rx
-                      clock, rx code bias, ZWD), harvest, install, invariant-carry
-                      driver, DD prior, injector, coupling, shared history, carry VCE
-    solve/            solve glue and stations, estimator, normal equations, rank gate,
-                      datum (clock, code bias, phase, chain, S-basis, anchors)
-    qc/               RAIM (+ within-epoch), clock QC, gross-LOS, prefit and
-                      redundancy census, Baarda, congruence, MDB, relevel
-    slip/             slip QC and funnel, oracle and pin, gap-resume census, raw
-                      observables, common-band scope, the PASS A scan and drain stages
-    ar/               arc graph and life, cycle basis, lattice, suspect, fixed
-                      cycles, producer AR, SD-EWL (rows and row stages), float vehicle, z-store
-    emit/             solution prep, emit and store, ledger emit, broadcast wire, PB
-                      hold, emit rebase
-    diag/             trace sweeps and diagnostics, run traces, station block
-    runend/           the run-end report table, its walker and the driver-level
-                      reports
+include/        All public headers, organized into subdirs mirroring src/core/ — heavy Doxygen is the norm.  Always
+                include with the subdir prefix: `#include "filter/KalmanFilter.hpp"` not `#include "KalmanFilter.hpp"`.
+                CMake adds `include/` to the include path; the subdir is part of the include string.
+  app/          Application.hpp (post-processing + real-time entry points; impls split across Application.cpp /
+                ApplicationBaseline.cpp / ApplicationRealtime.cpp)
+  atmosphere/   Ionosphere, Troposphere
+  common/       Truly cross-cutting types and identifiers only: Constants, Namespaces, GnssTypes, PppTypes, PppState,
+                PppObservation, EpochMeasurement, PppUtils, SignalBand
+  config/       GnssConfig + GnssConfigTypes (the config enums + POD sub-structs, relocated out of the GnssConfig.hpp
+                header; GnssConfig.hpp includes it) + GnssConfigJsonHelpers (loader split into per-section helpers in
+                src/core/config/GnssConfigLoad.cpp)
+  corrections/  GnssCorrections, OceanTideModel
+  filter/       KalmanFilter, StateManager, StateKeySchema, Smoother, AmbiguityResolver, ImuIntegrator, PivotManager
+                (PPP-RTK SD), DdPivotManager (baseline DD)
+  logging/      LogManager, TraceLogger, KalmanFilterLogger, WlsLogger
+  math/         Coordinates, TimeUtils, Interpolate, WlsEstimator
+  measurement/  MeasurementModel, StateInitializer, BssdTransform, BrsdTransform (BSSD: PPP-RTK SD via
+                BssdTransform::apply, baseline DD via BssdTransform::differenceBrsd composed on BrsdTransform output)
+  model/        PppModel (also hosts uncombined PPP-RTK, composed with measurement/BssdTransform), StochasticModel,
+                Antenna, Planetary, ModelGeometry
+  products/     ProductManager, ProductCache, ProductParser, PathResolver, ProductResolver, ProductTypes, DataDownloader
+  realtime/     NtripClient, RtcmStreamReader, RealTimeEngine
+  rinex/        RinexParser, MultiRinexSync
+  rtcm/         RtcmParser
+  slip/         CycleSlipManager + detectors: MwSlipDetector, GraphicSlipDetector (active); IfPhaseSlipDetector (active
+                on the NETWORK path — network.cycle_slip.if_phase_td; STAGED for user/kinematic); GfSlipDetector (STAGED
+                — uncompiled, not wired in; see its header banner); IonoVariabilityMonitor
+  network/      The network producer, one folder per concern, mirrored under src/core/network/ (tests: tests/network/).
+                File basenames drop the Network prefix (class NetworkEstimator is in network/solve/Estimator.hpp);
+                include with the full prefix: `#include "network/qc/Raim.hpp"`.  The wire I/O, emitter and state
+                snapshot (products/NetworkProductIO, NetworkProductEmitter, NetworkStateSnapshot) stay in products/:
+                consumers and the real-time engine include them.
+    driver/     ApplicationNetwork*, Run, Epoch (+ admission, observers), Knobs, run-type headers, stream front end
+    state/      RunContext, Entities, RunFields, snapshot write, warm resume, border stash and prior, carry sites and
+                disposition, ArcLedger
+    assembly/   station build, split, anchors and carry; contributions; parameter inventory and registry; responses;
+                admissions; band scopes; SignalRoster
+    carry/      the carried families (leveling, phase colour, slant iono, rx clock, rx code bias, ZWD), harvest,
+                install, invariant-carry driver, DD prior, injector, coupling, shared history, carry VCE
+    solve/      solve glue and stations, estimator, normal equations, rank gate, datum (clock, code bias, phase, chain,
+                S-basis, anchors)
+    qc/         RAIM (+ within-epoch), clock QC, gross-LOS, prefit and redundancy census, Baarda, congruence, MDB,
+                relevel
+    slip/       slip QC and funnel, oracle and pin, gap-resume census, raw observables, common-band scope, the PASS A
+                scan and drain stages
+    ar/         arc graph and life, cycle basis, lattice, suspect, fixed cycles, producer AR, SD-EWL (rows and row
+                stages), float vehicle, z-store
+    emit/       solution prep, emit and store, ledger emit, broadcast wire, PB hold, emit rebase
+    diag/       trace sweeps and diagnostics, run traces, station block
+    runend/     the run-end report table, its walker and the driver-level reports
 
-src/core/             Implementation files mirror the include/ subdir layout
-                      one-to-one (app/, common/, config/, logging/, math/,
-                      products/, slip/, network/, etc.).  User-edited scenario
-                      configs live in the top-level config/ dir, not here.
+src/core/       Implementation files mirror the include/ subdir layout one-to-one (app/, common/, config/, logging/,
+                math/, products/, slip/, network/, etc.).  User-edited scenario configs live in the top-level config/
+                dir, not here.
 
-tests/                GoogleTest unit suite (1540 cases / 215 suites across 104
-                      files) linked into `gnss_tests.exe`.  tests/sim/ is a
-                      SEPARATE target, `gnss_simulator_selftest` (80 cases).
-                      The network-producer tests are in tests/network/ (same
-                      `gnss_tests.exe`); tests/support/ holds the shared harness.
-                      Note: docs/test_suite.md documents the real-data
-                      truth-graded harness, NOT this unit suite.
-logs/                 Runtime CSV traces + spdlog files.  Hard-coded `./logs`
-                      relative to the process CWD (`Application::log_dir_`);
-                      git-ignored, recreated by the next run.
-runs/                 Campaign run outputs.  ⚠️ RELOCATED OFF C: AGAIN on
-                      2026-09-19 (the repo-root cleanup for onboarding): the
-                      741 run dirs then in the tree (149 GB, incl. every RF-* /
-                      ALC / PBT run cited by `docs/refound/`) are at
-                      D:\GnssProcessorSupport\runs\ (same names), so a cited
-                      `runs/<name>` resolves there.  `reference_software/`
-                      (M-PAGES, POINT, cssrlib), `val_out/`,
-                      `test_suite_results/`, `out/`, `batch_results*/` and the
-                      stray root files moved with them;
-                      D:\GnssProcessorSupport\MANIFEST.md maps every old path.
-                      Again on 2026-10-06: 4,719 finished run dirs (266 GB)
-                      moved to the same place (MANIFEST addendum); the live
-                      fixtures, baselines and the 2026-10-03+ working set
-                      stayed on C:.  Again on 2026-10-13: 441 entries older
-                      than a week (35 GB) moved there too, same rule, plus
-                      every FCF / AGT arm (280 dirs, 60 GB; cards closed),
-                      plus the runs of every other closed card (1,095 dirs,
-                      65 GB) (MANIFEST addendum).  `runs/` is still the git-ignored default output dir; a
-                      new campaign recreates it.  Earlier: ARCHIVED on 2026-08-12
-                      to D:\GnssProcessor_archive\2026-08-12\runs\ (619 dirs,
-                      40.6 GB) along with the pre-VS2026 build/ trees, to
-                      reclaim disk.  Both are git-ignored.  Reports that cite
-                      a `runs/<name>` or `build/x64-Release/run_<name>` path
-                      (e.g. CONFIG_promotion_ledger.md §A1,
-                      CLOCK_HADAMARD_CALIB_2026-07-14.md) resolve under the
-                      archive, NOT in the working tree.  Per user: those
-                      results predate the recent network work and are not
-                      trusted — regenerate rather than re-grade them.
+tests/          GoogleTest unit suite in `gnss_tests.exe` (network tests in tests/network/, shared harness in
+                tests/support/); tests/sim/ is a SEPARATE target, `gnss_simulator_selftest`. docs/test_suite.md
+                documents the real-data truth-graded harness, NOT this unit suite.
+logs/           Runtime CSV traces + spdlog files.  Hard-coded `./logs` relative to the process CWD
+                (`Application::log_dir_`); git-ignored, recreated by the next run.
+runs/           Campaign run outputs (the git-ignored default output dir). Finished runs live on
+                D:\GnssProcessorSupport\runs\ under the same names, so a cited `runs/<name>` resolves there
+                (D:\GnssProcessorSupport\MANIFEST.md maps every move). Runs whose newest file predates 2026-09-02
+                were deleted on 2026-11-02, with the old archive D:\GnssProcessor_archive\: a run cited from
+                before September is regenerated, not looked up (history: docs/onboarding/build_toolchain.md).
 
-scripts/              One-off Python utilities.  Most notably
-                      bootstrap_internal_data.py, which populates
-                      data/ for internal-mode runs (see "File management"
-                      below).
-data/                 Local cache for internal-mode test fixtures.
-                      Empty in git (.gitignored except for README.md
-                      shells); populated by the bootstrap script.
-                      Layout matches what ProductResolver creates in
-                      production: products/{orbit,clock,dcb,erp,brdc,
-                      rinex}/{zip,unzip}/, products/{atx,nc}/,
-                      observations/{absolute,baseline/...}/.
+scripts/        One-off Python utilities (bootstrap_internal_data.py populates data/ for internal-mode runs).
+data/           Local cache for internal-mode test fixtures. Empty in git (.gitignored except for README.md shells);
+                populated by the bootstrap script in the date-first layout: data/<YYYY-DOY>/{products,obs/<station>}/,
+                data/static/{atx,nc}/, data/cache/<YYYY-DOY>/ (see "File management" below).
 ```
 
 Anything that genuinely belongs to *every* TU lives in `common/`; everything else
@@ -242,24 +130,7 @@ specific subdir that fits — resist the urge to drop new headers into `common/`
 
 ## Documentation — the topic tree (standing user directive, 2026-09-14)
 
-**`docs/INDEX.md` is the single entry point, and `docs/refound/` is the current
-program.** The author's directive: *"We need a method to organize our whole project,
-rather than simply appending to these massive files."* On 2026-09-14, 18 of the 19
-`docs/*.md` over 60 KB were split into a topic tree — verbatim, hash-verified, with the
-originals frozen. The nineteenth, `CONFIG_promotion_ledger.md`, is now a generated view
-of the ledger JSON (see the ⚠ below).
-
-```
-docs/INDEX.md                    entry point: topics, cards, the rules
-docs/refound/                    the current program (RF-0..RF-3) — not split, not moved
-docs/cards/<topic>/<CARD-ID>.md  one card per file: STATUS block + verbatim text
-docs/topics/<topic>.md           a short living page per topic (17 topics)
-docs/decisions/                  posture rulings whose text is self-contained
-docs/status/OPEN_ITEMS.md        everything owed, with its evidence pointer
-docs/archive/<monolith>.md       the pre-split originals, byte-for-byte, FROZEN
-docs/<monolith>.md               a routing stub: section -> card, so an existing
-                                 citation ("SPEC_event_harness §24.10") still resolves
-```
+**`docs/INDEX.md` is the single entry point, and `docs/refound/` is the current program.** The author's directive: *"We need a method to organize our whole project, rather than simply appending to these massive files."*
 
 The rules — **all seven are enforced or checked**:
 
@@ -270,12 +141,7 @@ The rules — **all seven are enforced or checked**:
 4. **No non-archive file over ~60 KB.** Split by topic as one approaches it. The one
    exemption is the generated ledger view `CONFIG_promotion_ledger.md`, named in
    `SIZE_EXEMPT` in `scripts/docs_index_check.py`.
-5. **Every card file starts with the STATUS block** (`id`, `topic`, `status`, `summary`,
-   `source`, plus the knobs / hashes / run dirs / dates). `status` ∈ {`open`, `closed`,
-   `parked`, `superseded`, `reference`}; PROMOTED / KEEP_OFF / FALSIFIED belong in the
-   summary and the text. An **Outcome** paragraph follows the block (2026-10-07): question,
-   decisive result, verdict (missed bars included), current standing with a link, about 90
-   words. The header (title, STATUS, Outcome) is revised as results land; the body never is.
+5. **Every card file starts with the STATUS block** (`id`, `topic`, `status`, `summary`, `source`) and an **Outcome** paragraph (about 90 words); `status` ∈ {`open`, `closed`, `parked`, `superseded`, `reference`}. The header is revised as results land; the body never is (field details: `docs/INDEX.md`, rule 5).
 6. **The monoliths are frozen.** `docs/archive/` is read-only; the old path is a stub.
 7. **`python scripts/docs_index_check.py` must pass before a docs commit** (reachability
    from INDEX, dangling links, STATUS blocks, the 60 KB bar, the archive banners, the
@@ -290,14 +156,7 @@ existing split is byte-exact (results appended below a body are reported, not fa
 `--build` renders missing cards from `scripts/docs_map/*.json` and never re-renders an
 existing card, whose header is maintained by hand.
 
-⚠ **The config ledger is `docs/CONFIG_promotion_ledger.json`: one row, one verdict, per
-config key the network loader reads** (rebuilt 2026-10-13; verdicts RECOMMEND_ON /
-RECOMMEND_SCOPED / ARMED / UNVALIDATED / KEEP_OFF / REMOVE / PARAM / TRACE / CORE).
-`make_golden_config.py --verify` and `config_posture_check.py` read it;
-`docs/CONFIG_promotion_ledger.md` is its view (a hand-written head, then tables rendered by
-`scripts/ledger_render.py`). A ledger change is a JSON edit, a re-render and the two
-verifies; a new knob gets its row in the same commit. The full-prose ledger before
-2026-10-13 is in git (`git show 8326da3:docs/CONFIG_promotion_ledger.md`).
+⚠ **The config ledger is `docs/CONFIG_promotion_ledger.json`** (one verdict per config key; `docs/topics/config-ledger.md`). A ledger change is a JSON edit, a re-render and the two verifies; a new knob gets its row in the same commit.
 
 ## Conventions
 
@@ -462,34 +321,7 @@ SH constraint or seams.
   `docs/refound/RKD_retired_key_deletion_2026-10-14.md`): `sh_health_gate`, the old lane layer
   (`mw_wl.*`, `lane_carry.*`; lanes return only as card AB3's new build) and `emit_pb_filter*`.
 
-**Baseline: card BOF (2026-10-28, `docs/refound/BOF_built_off_follow_through_2026-10-28.md`), after
-card MRF, on card GAD's Galileo posture (2026-10-13, `docs/refound/GAD_galileo_adoption_2026-10-13.md`).**
-Card BOF armed ocean tide loading (four keys) and the noon-turn attitude on the field golden, and the
-estimable block-Baarda test and the readmit-seed mirrors on both; pair `runs/_rf0hv17_{field,sim}6` (exe
-`gnss_processor_bofarm.exe`, sha256[:16] 91143c81de9a9547): field WTZZ00DEU 0.059 0.012 0.023 0.012 0.017
-0.012 m by hour (2.0 mm worse than `_rf0hv16` over hours 2 to 6, the loading's 00-06 UT phase: over a
-whole tidal day the same keys gain 0.8 mm and the census 1.0 mm); sim products identical to `_rf0hv16_sim6`.
-The
-Galileo package is armed: `processing.active_systems` `["GPS","Galileo"]` with E1/E5a in both code
-families (`["C1C","C1X","L1C","L1X","C5Q","C5X","L5Q","L5X"]`, `frequency_mode` dual),
-`estimation.clock_disc_isb_reinflate_std` 10 and
-`model_corrections.enable_receiver_cross_system_atx_fallback` (card GAL2),
-`network.code_datum_family_difference` with `code_family_birth_prior_sigma_m` 0.10 (card GFC;
-`code_datum_pair_continuity` KEEP_OFF), and the MW re-flag skip (`network.cycle_slip.mw_reflag_skip`,
-card MRF: an MW flag that re-detects a step the LLI or IF-TD response already answered frees no band
-re-levelled since, so one slip frees a carried arc once; field 6 h 18 of 30 re-flag bands skipped, the
-sim bed has no receiver flags and skips none). Pair `runs/_rf0hv16_{field,sim}6` (exe
-`gnss_processor_mrf.exe`; the field byte-identical to card MRF's arm `_rap_sdr_on_f6`): field WTZZ00DEU
-0.057 0.012 0.018 0.010 0.015 0.011 m by hour; sim SZZ000SIM 0.137 0.072 0.031 0.024 0.026 0.018 m from
-the run start (card GAD's pair `runs/_rf0hv15_{field,sim}6`, exe `gnss_processor_galp2.exe`: field 0.058
-0.011 0.018 0.010 0.015 0.011, the sim the same medians). Census against GPS only,
-median site in hours 2 to 6: field -0.020 m (10 better, 2 worse: DAV100ATA, HARB00ZAF), sim
--0.030 m; GPS-only users of the wire unchanged at the median (ARHT00ATA +0.20 m). ⚠ Every golden
-arm is GPS + Galileo and 2 to 6 times slower. Constellation-blind graders pool the systems:
-`rapid_arm.py score` counts E5a as band 5, `ftc_step_attrib.py` R3 needs `--systems G,E`, and
-`census6h.py` / `simcensus6h.py` default to GPS-only bases (use `gcensus.py`, or `SIMCENSUS_BASE` =
-the wire's arm). Open: DAV100ATA, the GFC hour-2 clauses, SEYG00SYC's E11 / E12 C5Q rows, nominal
-yaw steering only, E14 / E18 broadcast unhealthy and kept (GAD section 4).
+**Baseline: card BOF (2026-10-28, `docs/refound/BOF_built_off_follow_through_2026-10-28.md`), after card MRF, on card GAD's Galileo posture (2026-10-13).** Pair `runs/_rf0hv17_{field,sim}6` (exe `gnss_processor_bofarm.exe`, sha256[:16] 91143c81de9a9547): field WTZZ00DEU 0.059 0.012 0.023 0.012 0.017 0.012 m by hour; sim products identical to `_rf0hv16_sim6`. The armed keys of cards GAL2, GFC, MRF and BOF, the earlier pairs (`_rf0hv16`, `_rf0hv15`), the census against GPS only and the open items: the cards, and the paragraph at full length in `docs/onboarding/claude_md_history.md`. ⚠ Every golden arm is GPS + Galileo and 2 to 6 times slower. Constellation-blind graders pool the systems: `rapid_arm.py score` counts E5a as band 5, `ftc_step_attrib.py` R3 needs `--systems G,E`, and `census6h.py` / `simcensus6h.py` default to GPS-only bases (use `gcensus.py`, or `SIMCENSUS_BASE` = the wire's arm).
 
 ### Grading traps that still apply
 
@@ -510,252 +342,52 @@ yaw steering only, E14 / E18 broadcast unhealthy and kept (GAD section 4).
 - **Seams (an add-back):** grade with a cold-consumer replay (`scripts/splice_wire.py`), never the
   seam-epoch diff alone; it cannot see an integrated, unsignalled drift.
 
-### Retired network rules (full pre-2026-10-13 text: `git show 8326da3:CLAUDE.md`)
-
-- Card-4 `carry_invariant` lineage (`emit_pb_filter_gate_v2`, `emit_pb_filter_jump_k` 8.0,
-  `raim_carry_invariant`, the `trace_station_residuals` zero-row trap): float vehicle, cards RF-1,
-  RF-2b, GRB; ledger rows (the `emit_pb_filter*` rows left with their keys, card RKD:
-  `git show 4bdd693:docs/CONFIG_promotion_ledger.json`).
-- MW/WL lane layer cost and retention (AGU-26, 63 and 305 stations): card AB3; the `lane_carry.*`
-  and `mw_wl.*` keys were deleted by card RKD (rows: `git show 4bdd693:docs/CONFIG_promotion_ledger.json`).
-- Lane slip responses (`relevel_retap_*`, `relevel_lane_snap`, lane-preserving refloat):
-  `docs/cards/slip/`; the keys were deleted by card RKD (rows at `4bdd693`, as above).
-- SH and GIM ionosphere level (GIM mean series, DEFECT 2, rx-CB carry memory, SH gate release):
-  `docs/cards/ionosphere/LV-CORRECTION-AND-12H.md`, card AB1.
-- Pre-golden armed set (the Jul-28 guard list, `scripts/p2_make_guard_configs.py`,
-  `cb_excursion_reinit` chains, `raim_we_code_iono`): the goldens and the ledger.
-- Clock-datum candidates (`clock_datum_broadcast_anchored`, `clock_datum_sum_to_zero`, pivot
-  election): ledger rows; pivot election is a queued build (`docs/status/OPEN_ITEMS.md`).
-- Wind-up accumulation (fractional census, inverted horizon, restart response): card WUP,
-  `docs/cards/slip/WINDUP-FRACTIONAL-CENSUS.md`.
-- Re-admission edge (`readmit_seed_horizon_s` 3900 pinned; its KEEP_OFF siblings):
-  `docs/cards/network-vehicle/READMIT-EDGE.md`.
-- Golden re-bases 2026-09-15 to 2026-10-01 (RF-3-prep, GRB, RF-3, PBF, WUP, SFR, EXL; baselines
-  `_rf0hv9` to `_rf0hv14`): the cards in `docs/refound/CARDS.md`.
+Retired network rules (Card-4 `carry_invariant`, lanes, SH and GIM ionosphere level, pre-golden armed set, clock-datum candidates, wind-up accumulation, re-admission edge): records in `docs/onboarding/claude_md_history.md`; pre-2026-10-13 text: `git show 8326da3:CLAUDE.md`.
 
 ## File management (RINEX, products, downloads)
 
-Input-file location goes through one class — `PathResolver` — driven
-by a single top-level config field, `data_source`.  Both modes share
-the same on-disk layout (date-first); they differ only in how files
-get there (bundled fixtures vs automatic downloads).
+Input-file location goes through one class, `PathResolver` (`include/products/PathResolver.hpp`; new file types plug in there, not into the call sites), driven by the top-level config field `data_source`: `"internal"` globs the bundled `data/` tree with no network access, `"production"` delegates to `ProductResolver`, which downloads missing products from CDDIS. Both modes share one date-first layout (`<root>/<YYYY-DOY>/{products,obs/<station>}`, `static/{atx,nc}`, `cache/<YYYY-DOY>/`).
 
-**Unified layout** under any data root:
-```
-<root>/
-  <YYYY-DOY>/                      e.g. "2024-129"
-    products/                      ready *.SP3 *.CLK *.BIA *.ERP *_MN.rnx
-    obs/<station>/                 ready *.rnx (Hatanaka converted via crx2rnx)
-  static/
-    atx/igs20.atx
-    nc/EOT20_load.nc
-  cache/<YYYY-DOY>/                raw .gz / .crx (production-mode only)
-```
-
-- **`data_source: "internal"`** (default).  PathResolver globs the
-  bundled `data/` tree at `getInternalDataRoot()` (a CMake-baked
-  absolute path; defaults to `<project_root>/data`, overridable via
-  `files.internal_data_root` in JSON).  No network access.  Forces
-  `data_download.enabled = false` regardless of what the user wrote.
-  Suitable for unit tests, demos, and turnkey runs against the
-  bundled fixtures.
-
-- **`data_source: "production"`**.  PathResolver delegates to
-  `ProductResolver`, which builds IGS long-name URLs from
-  `data_download.{year, doy, station, product_source, product_type}`
-  and downloads any missing products from CDDIS into
-  `data_download.data_root`.  Same layout — a directory populated by
-  internal-mode bootstrap is a perfectly valid production cache and
-  vice versa.
-
-**Date selection (internal mode).**  PathResolver picks a date from,
-in order: (1) the YYYYDOY embedded in `files.observation_path` /
-`baseline.{reference,rovers}.rinex_path` if pinned, (2)
-`data_download.{year, doy}` (re-used as a generic date hint even
-under `data_source = internal`), (3) the earliest `<YYYY-DOY>/`
-subdir under `<root>` (lex sort).  Step (3) makes a single-fixture
-data root work without any config knobs at all.
-
-**Migrating from the old flat layout.**  For pre-refactor data trees
-(`<root>/products/{orbit,clock,...}/{zip,unzip}/` + `observations/`):
-`python scripts/migrate_data_layout.py <root>` relocates in-place
-(`--dry-run` previews; idempotent; preserves user-managed dirs outside
-the canonical scan paths).
-
-**CDDIS authentication.** Production-mode downloads use HTTP Basic auth
-via `.netrc`. `DataDownloader` resolves the file at startup in this
-order: `data_download.netrc_path` (if set) → `~/.netrc` → `~/_netrc`
-(Windows convention). If none is found a warning is logged at startup;
-HTTP 401 / 403 responses include the resolved-path and a hint pointing
-at the CDDIS netrc-creation guide.
-
-**crx2rnx (Hatanaka decompression).** Python data scripts decompress
-via the **`hatanaka`** library (pinned in `requirements.txt`; handles
-RINEX 2/3/**4** — standalone crx2rnx 4.0.x rejects RINEX 4), with the
-external exe as legacy fallback. The C++ production path shells out to
-RNXCMP `crx2rnx` (output captured; failures logged with exit code);
-exe resolution: `data_download.crx2rnx_path` → well-known dirs (incl.
-`C:/GnssProcessorSupport/exe/crx2rnx.exe`, RNXCMP 4.1.0) → PATH. A
-successful `.crx.gz` download whose conversion fails is a hard error,
-never masked by a `.rnx.gz` fallback.
-
-Either mode produces a `PathResolver::ResolvedPaths` struct that the
-`Application` driver merges into `GnssConfig` via the
-`setObservationPath` / `setNavigationPath` / `setProductPaths` /
-`setBaselineReferenceRinexPath` / `setBaselineRoverRinexPath`
-setters.  Path resolution runs once per process via
-`Application::resolveData()` — for PPP / PPP-RTK from `run()`, for
-baseline modes from `runBaseline()` (which dispatches before the
-generic resolveData call site).
-
-**Path precedence within a mode.** Explicit paths in the JSON config
-always win over auto-discovery.  An empty string in
-`files.observation_path`, `files.navigation_path`,
-`baseline.reference.rinex_path`, or any rover's `rinex_path` is the
-signal that PathResolver should fill it in.  This lets a config
-override one specific input while letting everything else
-auto-resolve.
-
-**Internal-mode bootstrap.** `data/` is `.gitignore`d except for
-README shells.  Populate it once after a fresh clone:
-```
-python scripts/bootstrap_internal_data.py            # full set
-python scripts/bootstrap_internal_data.py --no-eot20 # skip the 280 MB ocean tide file
-python scripts/bootstrap_internal_data.py --crx2rnx C:/path/to/crx2rnx.exe
-```
-The script writes the unified date-first layout: products land in
-`data/<YYYY-DOY>/products/`, observations in
-`data/<YYYY-DOY>/obs/<station>/`, raw `.gz` / `.crx` intermediates in
-`data/cache/<YYYY-DOY>/`, and `igs20.atx` / `EOT20_load.nc` under
-`data/static/`.  PathResolver picks files up by station-name match
-within the date subtree.  Local research data (e.g. the OSU baseline
-fixtures) is not on a public archive and the script prints a "please
-supply manually" message at the end with the destination paths.
-
-**Baseline fixture presets.** The top-level config field
-`baseline_fixture` selects a named bundle of (reference station,
-reference ECEF, rover station, year/DOY) from
-`include/config/BaselineFixtures.hpp`:
-
-- `IGS_Pasadena` (default) — Caltech (CIT100USA) vs JPL (JPLM00USA),
-  ~10 km, 2024-DOY129.  Both stations on CDDIS daily archive;
-  bootstrap fetches them automatically.
-- `OSU_Campus` — Local OSU survey (NARY ref + 233 rover), ~340 m,
-  2023-DOY321.  Not on any public archive; user supplies the obs
-  files manually under `data/2023-321/obs/<station>/`.
-- `Custom` — disable presets entirely; every baseline field must be
-  set explicitly in the JSON config.
-
-The preset only fills fields the user left blank in the
-`baseline.{reference,rover}` JSON block — explicit values always
-win.  The preset's year/doy also seeds `data_download.{year,doy}`
-when the user hasn't typed their own.  Adding a preset:
-register it in `BaselineFixtures.hpp`, then add matching
-`FIXTURE_OBSERVATIONS` entries in the bootstrap script.
-
-**`.gz` cleanup.**  `DataDownloader::downloadAndDecompress` removes
-the `.gz` after a successful gunzip by default, halving the cache
-footprint.  Set `data_download.keep_zip_after_unzip = true` in the
-JSON to retain the compressed copy (for byte-exact archival).
+**Date selection (internal mode)**, in order: (1) the YYYYDOY embedded in `files.observation_path` / `baseline.{reference,rovers}.rinex_path` if pinned, (2) `data_download.{year, doy}`, (3) the earliest `<YYYY-DOY>/` subdir under `<root>`. **Path precedence:** explicit JSON paths always win; an empty string in `files.observation_path`, `files.navigation_path`, `baseline.reference.rinex_path` or any rover's `rinex_path` is the signal that PathResolver fills it in. Layout tree, CDDIS authentication, crx2rnx, baseline fixture presets and `.gz` cleanup: `docs/onboarding/data_files.md`.
 
 ## Known state
 
-- **Test suite.** `gnss_tests.exe` runs 2083 GoogleTest cases across 282 suites in 140 files (85 s on an idle box, ~205 s under load; full Debug run under VS 2026, measured 2082 passed + 1 skip on 2026-09-14 after card CC (the consumer's declared-step carry + warm start); the 2073/281/139 figure of 2026-09-13 covered the RS-7..RS-10b warm-resume cards, REF-FAN, the D5-v5 field card and the RAIM-pool re-host gates — the earlier 1540/215/104 and 2013/275/135 figures predate them; one fixture-gated skip — `FixtureSmokeTest.Sp3HeaderTimeConversionMatches`, which needs `bootstrap_internal_data.py` to have run) — math core, site displacement, atmosphere models, antenna/ATX, filter core, transforms/estimation, RTCM/SBF decoders, ILS/MLAMBDA, state-key schema, the network estimator + normal equations + invariant-carry driver + product I/O, cycle-slip/TurboEdit, the RTS smoother, aiding, and real-time seams. `tests/sim/` is a **separate** target, `gnss_simulator_selftest` (80 cases), not linked into `gnss_tests`. The suite guards structure and non-regression (new work is developed default-OFF / byte-identical). It does NOT validate end-to-end estimation accuracy — confidence for numerical changes still comes from a clean build + field runs graded on datum-invariant quantities (see Standing invariants) + trace inspection.
-  - Suite hygiene: every suite name should be owned by exactly one file — keep it that way, and prefer a new file over widening an existing one (the zero-cross-file-overlap property was re-verified at 215 suites on 2026-08-22, tests/ + tests/sim/ both scanned). At 51.5k test LOC against 189.2k production LOC the suite is *thin* (0.27 ratio, ~1 case per 139 production lines); the gap is coverage, not bloat. There is no dedicated doc for this suite — `docs/test_suite.md` is the real-data harness.
-- **Pre-existing C4828 warnings** (illegal characters at codepage 65001) are from older mixed-encoding files and unrelated to new work. Ignore unless the user asks to clean them up.
-- **`vswhere.exe not recognized`** messages from cmd subshells are benign noise when using the vcvars64 pattern above — the build proceeds.
-- **Real-time mode** uses a separate path (`Application::runRealTime` → `RealTimeEngine`). Post-processing-only features (e.g. smoother, `gnss_rate_s`) live in `Application::run` and should guard against `AppMode::RealTime`.
+- **Test suite.** Debug `gnss_tests.exe`: 3,833 cases in 523 suites, 3,800 passed, 33 skipped (fixture-gated), 0 failed; `gnss_simulator_selftest` 99 of 99 (measured 2026-11-02, card BDG gate G5; re-measure with the Debug build). It guards structure and non-regression (new work is developed default-OFF / byte-identical), NOT end-to-end estimation accuracy: confidence for numerical changes comes from a clean build + field runs graded on datum-invariant quantities + trace inspection. Every suite name is owned by exactly one file; prefer a new file over widening one.
 
 ## Entry points worth knowing
 
-- `src/core/app/Application.cpp` — `run()` is the post-processing pipeline, `runRealTime()` the streaming one. The per-epoch loop is the place to wire in new predict/update-phase logic. Mode-specific impls in `ApplicationBaseline.cpp` and `ApplicationRealtime.cpp`.
-- `src/core/config/GnssConfigLoad.cpp` — `loadFromJson()` is a thin orchestrator; each top-level JSON section has its own `loadXxxSection_` private helper. New toggles slot into the matching section helper. Shared JSON-reading primitives (`jval`, `jsection`, `resolvePath`) live in `include/config/GnssConfigJsonHelpers.hpp`.
-- `include/products/PathResolver.hpp` — single mode-aware locator for every input file. Internal mode globs `data/`; production mode delegates to `ProductResolver`. New file types (e.g. an SSR stream cache) plug in here, not into the call sites in `Application` / `ApplicationBaseline`.
-- `include/filter/KalmanFilter.hpp` — predict / update / IMU-aided predict. Variable-dimension state is handled via `StateManager` key maps, not via fixed indices.
-- `include/filter/StateKeySchema.hpp` — single source of truth for every dynamic state-vector key format (PPP ambiguity, DD ambiguity, per-sat iono, receiver code bias, sat bias, system time offset, BSSD pivot seed). All key construction and parsing should go through its `make*` / `parse*` helpers.
-- `include/filter/Smoother.hpp` — RTS smoother operates on float ambiguities; segment boundaries at ambiguity resets. Smoothed position is degenerate (constant across epochs) in static PPP by construction — that's expected.
+`Application::run()` (`src/core/app/Application.cpp`) is the post-processing pipeline and its per-epoch loop is where new predict/update logic is wired; `runRealTime()` is the streaming path (`RealTimeEngine`). Post-processing-only features (e.g. smoother, `gnss_rate_s`) live in `run()` and should guard against `AppMode::RealTime`. New toggles slot into the matching `loadXxxSection_` helper of `src/core/config/GnssConfigLoad.cpp`. Dynamic state-vector keys are built and parsed only through the `make*` / `parse*` helpers of `include/filter/StateKeySchema.hpp`. The RTS smoother's position is degenerate (constant across epochs) in static PPP by construction.
 
 ### Network producer — where new code goes (anti-regrowth decision-tree)
 
-`src/core/network/driver/ApplicationNetwork.cpp` (`runNetwork`) holds setup and the epoch source (351 lines after card NOM3 step EP4, 2026-10-15; `runNetwork` is 153 of them: the setup calls, an ordered list of builders, and the epoch source). One processed epoch is `Application::networkProcessEpoch_(NetworkRun&, const SyncedEpoch&)` in `src/core/network/driver/ApplicationNetworkEpoch.cpp` (624 lines after card NOM3 steps EP2 and EP3, 2026-10-15): a spine of seam calls inside `networkSubBegin(run, SB_X)` / `networkSubEnd(run, SB_X)` brackets, opened by the admission (`network/driver/EpochAdmission`: `networkFastForward` before the injector, `networkAdmitEpoch` after the roster, one `EpochAdmission` verdict, Process, Skip or Stop). `NetworkRun` (`network/driver/Run.hpp`) owns the run's engines and groups; `NetworkEpoch` (`network/driver/Epoch.hpp`) holds the per-epoch values, grouped by the stage that writes them. **Keep it thin** — new network-producer code goes in the seam matching its concern, NOT inline in the driver:
+`runNetwork` holds setup and the epoch source; one epoch is `Application::networkProcessEpoch_`, a spine of seam calls (`network/driver/ApplicationNetworkEpoch.cpp`); `NetworkRun` (`driver/Run.hpp`) owns the engines and groups, `NetworkEpoch` (`driver/Epoch.hpp`) the per-epoch values grouped by the writing stage. **Keep it thin**: new network-producer code goes in the seam matching its concern, NOT inline in the driver. Paths below are under `network/`; the full rows are in `docs/onboarding/where_new_code_goes.md` (read it before adding network code).
 
-- **New per-epoch estimation/QC step** → the matching seam (or a new one) in its concern folder under `network/` (the Layout block), called from the loop. Datum/solve → `Sbasis` / `ChainDatum` / `PhaseDatum` (the epoch's election: `PhaseAnchorEpoch`) / `SolveGlue` / `DdPriorBuild` / `InstallCarry` / `ProducerAr`; post-fit QC → `Raim` / `ClockQc` / `Relevel`; slip → `network/slip/SlipQc` (the arc-resumption census: `network/slip/GapResumeCensus`); coupling → `Coupling`. Observation-graph components, spanning forests, cycle bases, the integer map between bases and fixed-cycle lattices → `network/ar/ArcGraph` (card AGT; no new union-find or tree walk elsewhere); a per-band arc life stamp → `network/ar/ArcLife`; fixed integer cycles folded into a detached held solve → `network/ar/FixedCycles` (card FCF, default off, measure-only; its algebra in `NormalEquationsDetached.cpp`).
-- **New slip-funnel producer or reader** (the epoch's set of slipped (station, ambiguity) arcs that the carried quantities' slip responses read) → `network/slip/SlipFunnel`: its header lists the producers and readers and the standing invariants 1 and 7 the funnel serves (what is enforced, what is named and not). A producer takes the funnel as an output parameter and joins that list and the `funnel` row of `network/driver/Epoch.hpp`; a reader binds it const through `ep`.
-- **Inside the solve** (`networkSolveGlue`, card NOM3 step SG) → the solve is a fixed list of 14 stages; the table, its homes and its order constraints are the banner of `network/solve/SolveGlue.hpp`. A new pre-gate or post-gate fold goes into `networkPreGatePriors` / `networkPostGatePriors` at its place in that order; a new within-epoch (T2) response class into `network/qc/RaimWithinEpoch`; a new way to end the epoch is a `SolveSkip` row of `kSolveSkips` (never an inline return with its own bookkeeping). Inside the solve a stage reaches `ws`, `est_index_of` and `dd_build` only through its parameters, never through `ep` (one access path, card WCF). The stage text is generated (`python scripts/nom_sg_cut.py --check`) and verified (`python scripts/nom_sg_verify.py`, `--controls`); both are pinned to the commit that landed step SG and read the pre-move paths, so they hold at that commit only.
-- **Which signal stands for a band, and which arcs a (station, satellite) has** → ask the roster and the arc ledger, never a new rule: `signalRosterModelledOr` (`network/assembly/SignalRosterSites.cpp`; the roster's Modelled role, the latch only at a constellation's first epoch) and `network/state/ArcLedger` (the wind-up restart's carry targets are named by it). A new band-role or signal-choice site gets a `RosterN3bSite` counter first and reads the roster only at 0 on every arm. The open choices (pin pair, channel family, canonical pair, the signal for a band) are the decision list `scripts/nom3_designs/N3b_decisions.md` (card NOM step N3b).
-- **New emit/store behavior** → `SolPrep` (pre-emit prep) or `EmitStore` (emit / product-write / closed-loop consume).
-- **New diagnostic/trace sweep** → `IonoDiag` / `DdFrac` / `ShDevVtec` / `ShHealth` / `Leveling` / `StashStatus`, or a new diag seam. Trace-stream ownership + run-summary/manifest writers live in `network/diag/RunTraces` (NOT the driver).
-- **New measure-only per-epoch instrument** (an observer: `void networkX(NetworkRun&, const NetworkEpoch&)` that writes only its own counters, trace rows, events and manifest records (and the epoch-status values `networkStashStatus` reads, named in the header's FrameDiag note), gated on its first line after its bindings) → one row of `kNetworkEpochObservers` (`network/driver/EpochObservers.hpp`, whose header states the six slots, why each observer sits at its slot, and the order constraints within a slot; `tests/network/test_network_epoch_observers.cpp` pins every row), in the slot where its inputs are final. The spine walks a slot with `networkObserveEpoch(run, ep, NetworkObserverSlot::X)`; never a new direct spine call (card NOM3 step EP3, 2026-10-15: 21 rows in six slots; `ApplicationNetworkEpoch.cpp` 624 lines; the observers' three remaining driver gates moved into their seams, so the RAIM gate is the one `if` left around a spine call).
-- **New run-end telemetry / readout** → the subsystem's own run-end report, `int networkXxxRunEnd(const NetworkRunEndView&)` in the subsystem's `.cpp` (or a `<Subsystem>RunEnd.cpp` beside it when its state lives in one of the large files), registered as one row of `kNetworkRunEndReports` (`network/runend/RunEnd.hpp`, whose header states the order constraints). `network/runend/Teardown` only walks the table (card NOM step TD1b, 2026-10-09: the 7,277-line run-end function became 107 owned reports). Never add lines to `Teardown.cpp`.
-  One report per subsystem (card NOM2 step TD2): a new line goes in its subsystem's report, or in a new `static` section of it listed by `networkRunEndSections`; a subsystem with no row yet gets one row. The walk prints a `Network[run-end] <row name>` heading ahead of each row that prints.
-- **New cross-epoch state** → an entity field with a `FieldDecl` row (the entity rules below, `network/state/Entities.hpp`), or, when no entity owns it, a `NetworkCarryState` member with its row in `net::kRunFields` (`src/core/network/state/RunFields.cpp`, name `carry.<member>`, its persistence from the `Persist` enum); never an undeclared `NetworkCarryState` member (card NOM step N4g: `python scripts/nom_n4_verify.py --whole` fails on one).  A run-end counter, warn latch or instrument clock that nothing in the solve reads → a subsystem's counter struct in its own header, a base of `NetworkServiceCounters` (the base list is in `network/state/RunContext.hpp`; `python scripts/counters_split_check.py` proves no member is lost or declared twice; decision D6; its former carry members keep `counters.<m>` rows); a warm-resume hand-off to the first leg epoch → `NetworkCarryState::resume` (`ResumeHandoff`); config snapshots → `NetworkKnobs`.  `network/state/RunContext.hpp` is 2752 lines after the counters split (4358 after N4g).  Do NOT add a bare function-local (that is precisely what INC-12 spent a pass deleting: 191 dead aliases left behind by relocated blocks).
-- **New station parameter** (a column of every station's local block) → its identity in `common/ParamRef.hpp` (a `NetworkParamKind` and, for components, `ParamForm` values), its slot in `network/state/StationParams` (a field or a typed map, the cases of `addParam` and `findParam`, the layout in `startStationParams`), its term in `measurement/ObservationEquation.cpp` (one function per effect, one equation for the producer, the consumer and the seeds), then the declared treatment (registry block, inventory class, contribution sets, labels) and a network key with its ledger row; the recipe, with the troposphere gradient as its worked example, is `docs/onboarding/08_adding_a_network_parameter.md` (card NOM5). A station's rows are sparse (`StationDataRows`, the split writes each entry into the border or the local block): never a dense matrix of rows by slots on the network. A single-receiver layout flag sets only the consumer's layout in a network run (`GnssConfig::validateNetworkUserLayoutFlags_`).
-- **New cross-epoch per-station state** → the Station entity (`network/state/Entities.hpp`: a field of `net::StationState`, or of `net::StationSignalState` for state keyed below the station), with a `FieldDecl` row in `kStationFields` (`src/core/network/state/Entities.cpp`) declaring its persistence; never a new station-keyed member of `NetworkCarryState` (card NOM step N4a). Access goes through the free functions of that header (`net::get` / `put` / `drop` / `forEach`, `byStationName` for a name-keyed walk); `python scripts/nom_n4_verify.py --entity station` checks the moves.
-- **New cross-epoch per-constellation state** → the Constellation entity (a field of `net::ConstellationState`, keyed by `System` in letter order, or of `net::ChannelState` for state keyed below the constellation by its signal), with a `FieldDecl` row in `kConstellationFields`; never a new constellation-keyed member of `NetworkCarryState` (card NOM step N4b). A pure reader that takes the old one-letter or "<c>|<signal>" map reads the `net::letterMap` / `net::channelMap` view; `python scripts/nom_n4_verify.py --entity constellation` checks the moves.
-- **New cross-epoch per-line-of-sight state** → the Los entity (a field of `net::LosState`, keyed by `LosId` = (station, satellite), or of `net::LosEventState` for an event holdoff clock keyed below the line of sight), with a `FieldDecl` row in `kLosFields`; never a new (station, satellite)-keyed member of `NetworkCarryState` (card NOM step N4c). Code holding the old (station index, satellite string) key goes through `net::getLos` / `putLos` / `dropLos` / `hasLos` (`losKey` converts without counting, safe in the parallel produce; `losOf` / `losOfName` count failures in the reach table); a station-name key converts through `losOfName` (O3). `python scripts/nom_n4_verify.py --entity los` checks the moves.
-- **New cross-epoch per-satellite-signal state** → the SatSignal entity (a field of `net::SatSignalState`, keyed by `SatSignalId` = (satellite, signal) in the string order of the old "<sat>_<signal>" and "<sat>|<signal>" keys, the signal a phase code; "" is the no-satellite `SatId{}` or the satellite-wide `SignalId{}`), with a `FieldDecl` row in `kSatSignalFields`; never a new "sat_signal"- or "sat|signal"-keyed member of `NetworkCarryState` (card NOM step N4d). Code holding an old key goes through `net::getSig` / `putSig` / `dropSig` / `emplaceSig` (`satSignalKey` converts without counting, safe in the parallel produce; `satSignalOf` counts failures in the reach table); a pure kernel that takes the old string-keyed map gets a `net::sigMap` view and its results are written back with `net::assignSig` (serial code only).
-- **New cross-epoch per-satellite state** → the Satellite entity (a field of `net::SatelliteState`, keyed by `SatId` in the string order of the old satellite keys; "" is the no-satellite `SatId{}`; a set membership is a `bool` flag), with a `FieldDecl` row in `kSatelliteFields`; never a new satellite-keyed member of `NetworkCarryState` (card NOM step N4e1 moved the clock half, N4e2 the datum and QC half; a pending wire discontinuity is a `net::Disc` bit of `disc_pending`, one bit per drain queue, decision D7). Code holding a satellite string goes through `net::getSat` / `putSat` / `dropSat` and, for flags, `hasSat` / `markSat` / `unmarkSat` (`satIdKey` converts without counting, safe in the parallel produce; `satIdOf` counts failures in the reach table); a pure kernel or the snapshot takes a `net::satMap` / `net::satSet` view, and a wholesale replacement is `net::assignSat` / `assignSatFlags` (serial code only).
-- **New cross-epoch per-arc state** → the Arc entity (a field of `net::ArcState`, keyed by `ArcId` (station, satellite, phase signal) in the order of the old (station index, sat, signal) and (station index, "sat_signal") keys), with a `FieldDecl` row in `kArcFields`; never a new arc-keyed member of `NetworkCarryState` (card NOM step N4f1 moved the carries: the leveling carry `ArcState::amb`, the gross-LOS hold, the eq34 targets and retained edges, the anchor ages). Code holding an old key goes through `net::getArc` / `putArc` / `dropArc` (tuple keys) or `getArcAmb` / `putArcAmb` / `markArcAmb` ("sat_signal" keys); a walk is `net::forEach` / `eraseIf` in id order, a per-station or per-(station, satellite) range scan is `net::arcsOfStation` / `arcsFrom` with the `arcOfLos` stop test (O8), never `lower_bound` on a tuple; a pure function takes `net::ArcTable&` (tests build one with `putArcIn`).  The arc ledger's records are the rows' `ledger` field (card NOM step N4f2): `ArcLedger` is the machine, bound to `ctx.entities`, and a reader that needs an arc's lifecycle and its carry reads one row (`net::forEachRow`). State keyed below an arc by a string no `ArcId` reproduces keeps that string on the owner of its typed prefix (O4: `StationState::amb_flag_ep`, `adm_arc`, `adm_event_last`; `LosState::relevel_pend`, which the slip drains take as a copied-in map).
-- **New per-epoch value a later stage reads** → a member of `NetworkEpoch` in the group of the stage that writes it, with that group's writer list in the header updated; a value that must survive the epoch is run state (`NetworkRunContext`), never an epoch member.
-- **New per-epoch event** (a flag, set, verdict or count a later stage of the same epoch, or its traces, reads) → a member of the writing stage's group of `EpochEvents` (`network/driver/Epoch.hpp`, held as `ep.events`, built empty with the epoch). The writer takes `EpochEvents& events` as its last output and binds its group (`EpochEvents::Gross& gross_ev = events.gross;   // written`); a reader binds through `ep.events`; a helper below a seam takes `EpochEvents&` or `const EpochEvents&`. Never a `NetworkCarryState` member cleared by hand. A value the next epoch reads (a one-epoch latch, a hand-off a later stage drains across a possible skip) stays run state with its `net::kRunFields` row (`Persist::Latch`, `Persist::Pending`). A FrameDiag observer that records events for the epoch-status row is a recorder row (`NetworkEpochRecorder`, `network/driver/EpochObservers.hpp`).
-- **New entity-table access** → bind the table in the seam's opening block, const to read, non-const to write (`net::LosTable& los_rows = ctx.entities.los;`); a non-const binding has its row in `net::kEntityWriters` (`network/state/Entities.hpp`), and `python scripts/nom_epoch_lint.py` (check V12) fails a binding without its row or a row without its binding.
-  Every write goes through that binding. A helper that takes a table (`drop*`, `put`, `eraseIf`, `unmarkSat`) takes the table binding; a helper that takes the whole set (`putSat`, `putLos`, `putSig`, `putArc`, `markSat`, `assign*`) or a callee handed the set takes `net::NetworkEntities& entities = ctx.entities;   // written: sats los` (the list names the tables written; no list stands for every table). V12 fails a write that spells `ctx.entities` in place of a binding and a write to a table the list leaves out; a read keeps `ctx.entities` or binds const.
-- **New run-loop-local helper type a seam must name** → `network/driver/RunTypes` (general) or `network/driver/WlRunTypes` (section timing).
-- **Setup** (validation / sinks / consumer) → `network/driver/ApplicationNetworkSetup`; **assembly** (PASS A/B) → `network/driver/ApplicationNetworkAssembly`. The PASS A slip scan (`networkPassASlipScan_`, 104 lines, was 1,022; card NOM3 step PB3) is an orchestrator over named stages: a new scan, fold or bookkeeping step is a `passA*` function of `network/slip/PassASlipScan` and a new serial response drain a `passA*Stage` of `network/slip/PassASlipDrains`, called from the orchestrator in epoch order; the stages read the epoch through `PassAView` (references and copies, declared in the header, bound by name at the head of each stage), and a value created mid-epoch (`relevel_ptr`, `relevel_pend`, `common_band_ptr`) is an explicit parameter. Never new inline code in the orchestrator.
-- **New station row or carried-prior family (PASS B's parallel produce)** → the family's file under `network/` (`StationSplit`, `PhaseDatum`, `StationAnchors`, `IonoConstraintRows`, `SdEwlAr` (the SD-EWL row builder `networkAppendSdEwlRows` is 91 lines, was 582: its steps are the `sdEwl*` stages of `network/ar/SdEwlRows`, read through `SdEwlRowView`), `Raim`, `StationCarry`, `LevelingCarry`, `SlantIonoCarry`, `RxClockCarry`, `RxCodeBiasCarry`, `PhaseColourCarry`, `ZwdCarry`, `OraclePin`, `Coupling`, `Congruence`), as one row of `kStationBuildSteps` or `kStationCarrySteps` (`network/assembly/StationBuild.hpp`, card NOM3 step PB1b; its banner states the parallel contract and the orders a step may not change, `tests/network/test_network_station_build.cpp` pins them). A step takes `StationBuild&` (the station and its slot writable, the run and every other station through const references) or the carried-prior frame `StationCarryFrame&`; never a writable `NetworkRun&` inside the parallel produce, and never a write through a pointer member of the view other than the station's own. `ApplicationNetworkAssembly.cpp` keeps PASS A, the prefilter, the column registration and the `networkPassB_` orchestrator (1,671 lines after step PB1b, 2026-10-15; the six carry families' harvest halves are step HV1's).
-- **New harvest of a carried kind** (the post-solve read of a station-local carry, its stash and its prune) → a function `void networkHarvestX(NetworkRun& run, const NetworkEpoch& ep[, HarvestBorder&, the layout])` in the harvest half of the kind's family file (the files of its PASS B steps; the AIL trace in `network/diag/AmbStateTrace`, the eq34 receiver phase bias in `network/solve/ChainDatum`, the post-resume census in `network/state/WarmResume`), called in its place from the orchestrator `networkHarvestLocalCarries(run, ep)` (`network/carry/LocalCarryHarvest.hpp`: the table of contents and the seven order constraints; card NOM3 step HV1, 2026-10-15: the 1,871-line function became an orchestrator and 21 functions, the spine file 390 lines). A carried column's regression goes through `networkHarvestColumn`; a row of the F3 block goes to `StationHarvestBlock::segmentBlock(BlockSegment::X)` at `rowOf(X)`, before `networkHarvestBorderEnd`. Never a new per-station hand-forward vector or a bare alias of the harvest's former 17 parameters.
-- **New setup step** (an engine's or the run's configuration before the first epoch) → a builder `void networkX(NetworkRun& run[, kept...])` in the file of the subsystem that consumes what it builds (a `<Concern>Setup.cpp` beside it when that file is large or shared), Doxygen at its declaration, called once from `runNetwork` in its place in the order (card NOM3 step EP4; `scripts/nom3_designs/EP4_design.md` section 2 states the order constraints). Never inline in `runNetwork`.
+- **Per-epoch estimation/QC step** → the matching seam (or a new one) in its concern folder (Layout), called from the loop; graph components, spanning forests, cycle bases and integer maps → `ar/ArcGraph` only (no new union-find or tree walk elsewhere).
+- **Slip-funnel producer or reader** → `slip/SlipFunnel`.
+- **Inside the solve** (`networkSolveGlue`, 14 stages; order constraints in the banner of `solve/SolveGlue.hpp`) → `networkPreGatePriors` / `networkPostGatePriors`, `qc/RaimWithinEpoch`; a new way to end the epoch is a `SolveSkip` row of `kSolveSkips`, never an inline return; a stage reaches `ws`, `est_index_of` and `dd_build` only through its parameters, never through `ep`.
+- **Which signal stands for a band, which arcs a (station, satellite) has** → the roster (`signalRosterModelledOr`) and `state/ArcLedger`, never a new rule; a new band-role or signal-choice site gets a `RosterN3bSite` counter first.
+- **Emit/store** → `emit/SolPrep` or `EmitStore`. **Diagnostic/trace sweep** → `diag/`; trace streams and manifest writers: `diag/RunTraces`, not the driver.
+- **Measure-only instrument** (an observer `void networkX(NetworkRun&, const NetworkEpoch&)` writing only its own counters, trace rows, events and manifest records) → one row of `kNetworkEpochObservers` (`driver/EpochObservers.hpp`); never a direct spine call.
+- **Run-end telemetry** → the subsystem's own `networkXxxRunEnd`, one row of `kNetworkRunEndReports` (`runend/RunEnd.hpp`); a new line goes in its subsystem's report, never in `runend/Teardown.cpp`.
+- **Cross-epoch state** → an entity field with a `FieldDecl` row (`state/Entities.hpp`: station, constellation, line of sight, satellite signal, satellite, arc), else a `NetworkCarryState` member with a `net::kRunFields` row; never an undeclared member, a bare function-local or an entity-keyed `NetworkCarryState` member (`python scripts/nom_n4_verify.py`). Counters and latches nothing in the solve reads → a base of `NetworkServiceCounters`; a warm-resume hand-off → `NetworkCarryState::resume`; config snapshots → `NetworkKnobs`.
+- **Station parameter** (a column of every station's local block) → its identity in `common/ParamRef.hpp`, its slot in `state/StationParams`, its term in `measurement/ObservationEquation.cpp` (one equation for the producer, the consumer and the seeds), then the declared treatment and a network key with its ledger row; the recipe is `docs/onboarding/08_adding_a_network_parameter.md`. A station's rows are sparse (`StationDataRows`): never a dense matrix of rows by slots on the network.
+- **Per-epoch value a later stage reads** → `NetworkEpoch`, in the writing stage's group; a per-epoch event → `EpochEvents` (`ep.events`); what survives the epoch is run state.
+- **Entity-table access** → bind the table in the seam's opening block; each non-const binding has its `net::kEntityWriters` row (`python scripts/nom_epoch_lint.py`, check V12).
+- **Setup step** → a builder `networkX(NetworkRun&[, kept...])` in the consuming subsystem's file, called once from `runNetwork`, never inline there (validation, sinks, consumer: `driver/ApplicationNetworkSetup`; assembly: `driver/ApplicationNetworkAssembly`; helper types a seam must name: `driver/RunTypes`, `WlRunTypes`).
+- **PASS A scan step** → `passA*` in `slip/PassASlipScan`, a serial drain → `passA*Stage` in `slip/PassASlipDrains`, never in the orchestrator. **Station row or carried-prior family** (PASS B) → one row of `kStationBuildSteps` / `kStationCarrySteps` (`assembly/StationBuild.hpp`); a step never takes a writable `NetworkRun&` inside the parallel produce.
+- **Harvest of a carried kind** → `networkHarvestX` in the kind's family file, called from `networkHarvestLocalCarries` (`carry/LocalCarryHarvest.hpp`).
 
-Seam contract (card NOM3 step EP1): a per-epoch seam is a free function (or one of the five `Application` members) `R networkX(NetworkRun& run, const NetworkEpoch& ep[, kept...][, outputs...])`. It owns no state. It opens with one binding per name it uses (reads through `ep`, writes through its output parameters, marked `// written`) and below the bindings never spells `ep.`. An output is an epoch group the seam is listed as a writer of in `network/driver/Epoch.hpp`; after the solve the only outputs are `ep.solve.handoff`, `ep.prep.sol` and `ep.events` (each writer its own group; the post-solve writers are listed in the lint's `POST_SOLVE_OUTPUTS`). A measure-only seam has the observer form `void(NetworkRun&, const NetworkEpoch&)`; a seam with another caller (a test, another seam) keeps its explicit form beside a one-line epoch-form adapter. A seam's arming gate is its own first statement after its bindings, never an `if` around its spine call (card NOM3 step EP2; the four still in the driver belong to step SG's files). A unit test calls the epoch form through `tests/support/NetworkTestRun.hpp`, never an explicit-parameter overload kept for it. A new or changed epoch writer is a row of `tests/network/test_network_epoch_contract.cpp`; run `python scripts/nom_epoch_lint.py` before committing a change to a seam signature or to `ApplicationNetworkEpoch.cpp`. New `.cpp` seams need a manual `CMakeLists.txt` entry (no globbing). Of the NOM step tools, `scripts/nom_epoch_lint.py`, `scripts/nom_n4_verify.py` and `scripts/nom_n5_verify.py` read the current tree. The `nom_*_cut.py` and `nom_*_verify.py` tools of steps EP1 to EP4, SG, PB1, HV0, HV1, N3b and TD are pinned to the commit that landed their step and read the paths from before the move to `network/<concern>/`: they hold at those commits only.
+Seam contract: a per-epoch seam is a free function `R networkX(NetworkRun& run, const NetworkEpoch& ep[, kept...][, outputs...])` that owns no state, opens with one binding per name it uses (reads through `ep`, writes through output parameters marked `// written`), never spells `ep.` below the bindings, and keeps its arming gate as its own first statement. A new or changed epoch writer is a row of `tests/network/test_network_epoch_contract.cpp`; run `python scripts/nom_epoch_lint.py` before committing a change to a seam signature or to `ApplicationNetworkEpoch.cpp`.
 
 ### Real-time engine — where new code goes (anti-regrowth decision-tree)
 
-`src/core/realtime/RealTimeEngine.cpp` got the same treatment (2,366 → 625 lines;
-`processEpoch` 1,438 → 135, `initialize` 343 → 19, `feedRtcmFrame` 256 → 78),
-cut **before** the RTF-4..9 service queue lands more accretion. The driver is now
-thin ordered orchestration. **Keep it thin** — new code goes in the seam matching
-its concern:
+`src/core/realtime/RealTimeEngine.cpp` is thin ordered orchestration. **Keep it thin**: new code goes in the seam matching its concern (full text: `docs/onboarding/where_new_code_goes.md`):
 
-- **New per-epoch admission / deferral rule** → `RealTimeEngineAdmit.cpp`. These
-  are the ONLY seams that may end an epoch: `bool`, false ⇒ `processEpoch`
-  returns false. Everything downstream is unconditionally straight-line.
-- **New consumer-side observability** → `RealTimeEngineSsrDiag.cpp`.
-- **New measurement-set conditioning** (drop/seed/re-gauge, pre-predict) →
-  `RealTimeEnginePrepare.cpp`. Note `seedClockFromWls` and `regaugeBssd` are
-  mutually exclusive (`hasClock()` vs not) — a matrix that arms only one leaves
-  the other uncertified.
-- **New slip detection / repair** → `RealTimeEngineSlipQc.cpp`.
-- **New "the producer moved its datum" reaction** → `RealTimeEngineSsrBreaks.cpp`.
-  Order is load-bearing: `reactToGenerationChange` applies the union globally and
-  must precede the per-signal handlers.
-- **New update / constraint / AR / trace step** → `RealTimeEngineEstimate.cpp`.
-  Pseudo-observation constraints belong after the update and before AR.
-- **New pre-update row screen or exclusion** (a test of the epoch's innovations against
-  the predicted state that holds rows out of the update) → `RealTimeEngineScreen.cpp`
-  (the engine side: S from the predicted covariance, exclusion keys, re-float, events,
-  run-end block), with the arithmetic, the episodes and the counters in
-  `realtime/InnovationScreen` (pure, unit-tested on synthetic matrices). The seam runs inside
-  `runMeasurementUpdate`, builds the first pass itself and returns false with the knob off.
-  An exclusion is an event at both edges (standing invariant 7): the held-out key is
-  re-tested every epoch, and a persistent phase row that cannot heal is re-floated.
-- **New construction step** → `RealTimeEngineInit.cpp` (the order there is a real
-  dependency chain — `seedInitialState` must follow `initProcessingComponents`).
-- **New RTCM ingest step** → `RealTimeEngineIngest.cpp`. The obs-buffering loop
-  and ephemeris push stay in the driver on purpose: they call the file-local
-  anon-namespace helpers `isSystemActive` / `refreshGlonassSlots`.
+- **Per-epoch admission / deferral rule** → `RealTimeEngineAdmit.cpp`: the ONLY seams that may end an epoch (`bool`, false ⇒ `processEpoch` returns false); everything downstream is unconditionally straight-line.
+- **Consumer-side observability** → `RealTimeEngineSsrDiag.cpp`. **Slip detection / repair** → `RealTimeEngineSlipQc.cpp`. **Construction step** → `RealTimeEngineInit.cpp` (`seedInitialState` must follow `initProcessingComponents`). **RTCM ingest step** → `RealTimeEngineIngest.cpp` (the obs-buffering loop and ephemeris push stay in the driver on purpose).
+- **Measurement-set conditioning** (drop/seed/re-gauge, pre-predict) → `RealTimeEnginePrepare.cpp`; `seedClockFromWls` and `regaugeBssd` are mutually exclusive, so a matrix that arms only one leaves the other uncertified.
+- **"The producer moved its datum" reaction** → `RealTimeEngineSsrBreaks.cpp`; order is load-bearing: `reactToGenerationChange` applies the union globally and must precede the per-signal handlers.
+- **Update / constraint / AR / trace step** → `RealTimeEngineEstimate.cpp`; pseudo-observation constraints belong after the update and before AR.
+- **Pre-update row screen or exclusion** → `RealTimeEngineScreen.cpp` (arithmetic and counters in `realtime/InnovationScreen`); an exclusion is an event at both edges (standing invariant 7): the held-out key is re-tested every epoch, and a persistent phase row that cannot heal is re-floated.
 
-Seam contract: a **private member function** (not a free function — every
-persistent value is already a `RealTimeEngine` member, so no `NetworkRunContext`
-equivalent is needed) opening with an alias preamble reconstructing the driver's
-local names. Cross-seam per-epoch values travel in `RtEpochContext`, which owns
-nothing that outlives the epoch — **a value that must survive to the next epoch
-is a member, and putting it in the context silently cold-starts it every epoch.**
-
-Gate: `scripts/rt_seam_gate.ps1` + `scripts/rt_seam_compare.py` (4-arm same-build
-byte-identity A/B, all PASS at the 2026-08-01 cut). The cut's verbatim verifier,
-`scripts/rt_seam_verify.py` (30/30 at the cut), was retired on 2026-10-17: eight seam
-bodies have been extended since, so against the pre-cut source it could only fail.
-`scripts/rt_seamcut.py` (the generator) is a record, not a tool: re-running it rewrites the
-seams from the frozen source. A seam edit is gated like any other code (the unit suite, the
-A/B above, and a test of its own for a reaction the arms do not drive); see
-`docs/rt_seam_decomposition.md` for the coverage the A/B does and does NOT certify.
+Seam contract: a **private member function** opening with an alias preamble reconstructing the driver's local names; cross-seam per-epoch values travel in `RtEpochContext`, which owns nothing that outlives the epoch: **a value that must survive to the next epoch is a member, and putting it in the context silently cold-starts it every epoch.** Gate: `scripts/rt_seam_gate.ps1` + `scripts/rt_seam_compare.py` (4-arm same-build byte-identity A/B) and a test of its own for a reaction the arms do not drive (`docs/rt_seam_decomposition.md`).

@@ -339,7 +339,7 @@ its file: a new per-epoch step to a `Network*` stage file, a new per-epoch event
 writing stage's group of `EpochEvents`, new run state to `NetworkRunContext`, new emission behaviour to `SolPrep` or `EmitStore`, a
 new run-end readout to a report in the subsystem's own file plus one row of
 `kNetworkRunEndReports` (the table's header lists the order rules). The loop itself stays a
-list of calls.
+list of calls. The rows at full length are in [where_new_code_goes.md](where_new_code_goes.md).
 
 ## The record
 
