@@ -4,8 +4,8 @@
 
 - **id:** BDG
 - **topic:** network-vehicle
-- **status:** open
-- **summary:** The author's decision of 2026-11-02 on card BDSB section 5: course B, BeiDou as a separate third golden. `config/golden/golden_field_bds_refound.json` is generated from the field golden's own output plus four keys (`processing.active_systems` with BeiDou, `processing.signal_priorities.BeiDou` `["C2I","L2I","C6I","L6I"]`, `network.second_band_admission`, `network.n3c_wire_per_signal`); the two GPS + Galileo goldens are unchanged. The three BeiDou rows become RECOMMEND_SCOPED under a new regime predicate `has_bds` (BeiDou named in `processing.active_systems`), defined in the loader and the offline checker. Gates pre-registered in section 3; all five pass (section 5).
+- **status:** closed
+- **summary:** The author's decision of 2026-11-02 on card BDSB section 5: course B, BeiDou as a separate third golden. `config/golden/golden_field_bds_refound.json` is generated from the field golden's own output plus four keys (`processing.active_systems` with BeiDou, `processing.signal_priorities.BeiDou` `["C2I","L2I","C6I","L6I"]`, `network.second_band_admission`, `network.n3c_wire_per_signal`); the two GPS + Galileo goldens are unchanged. The three BeiDou rows become RECOMMEND_SCOPED under a new regime predicate `has_bds` (BeiDou named in `processing.active_systems`), defined in the loader and the offline checker. Gates pre-registered in section 3; all five pass (section 5). Merged into main 2026-11-02 at the author's word (section 6).
 - **source:** card [BDSB](BDSB_beidou_continued_2026-10-19.md) section 5 (the three courses and what course B needs); cards [BDS](BDS_beidou_third_constellation_2026-10-18.md), [MDAY](MDAY_multiday_candidate_2026-10-19.md) and [BDS305](BDS305_beidou_305_stations_6h_2026-10-29.md) (the evidence); the author, 2026-11-02: "Yes, BeiDou as a third golden is good."
 - **knobs / posture:** the four keys above, pinned on the new lineage only; regime of the three ledger rows: `val("network.ambiguity_vehicle", "level") == "float_kf" and not tri and has_bds`. `network.second_band_scope` (`station`) and `network.second_band_min_sats` (1) stay at their loader defaults, as graded.
 - **code:** `src/core/config/GnssConfigNetworkPosture.cpp` (the `has_bds` predicate and three SCOPED rows), `include/config/GnssConfig.hpp` (`PostureRegime::has_bds`), `scripts/config_posture_check.py` (the same predicate), `scripts/make_golden_config.py` (provenance hashes read CRLF as LF), `config/golden/golden_manifest.json` (the third entry), `docs/CONFIG_promotion_ledger.json` (two rows promoted, one added)
@@ -13,7 +13,7 @@
 - **hashes / run dirs:** branch `golden/bds-third` from main `bb9a352`; reference exe `gnss_processor_int1102.exe` (the Release build of `bb9a352`, sha256[:16] `7f4bd4729069be0e`); baseline of the lineage `D:/GnssProcessorSupport/runs_nom/_rap_bdsc_c6` (card BDSB section 4, exe `gnss_processor_bdsclose.exe`, sha256[:16] `91143c81de9a9547`)
 - **gates (frozen at pre-registration):** section 3
 
-**Outcome.** Question: can BeiDou posture C be made a golden of its own, generated and verified like the other two, without moving them? Built: a third manifest entry whose base is the field golden's output, three RECOMMEND_SCOPED ledger rows under the new `has_bds` regime, and the matching loader posture rows. All five gates pass (section 5): the GPS + Galileo goldens and the 16 user-side arms are identical; the BeiDou golden reproduces card BDSB's arm C6 byte for byte in `products.txt` over 6 h, so C6 is the lineage's baseline. Standing: gated; the merge into main is the author's word.
+**Outcome.** Question: can BeiDou posture C be made a golden of its own, generated and verified like the other two, without moving them? Built: a third manifest entry whose base is the field golden's output, three RECOMMEND_SCOPED ledger rows under the new `has_bds` regime, and the matching loader posture rows. All five gates pass (section 5): the GPS + Galileo goldens and the 16 user-side arms are identical; the BeiDou golden reproduces card BDSB's arm C6 byte for byte in `products.txt` over 6 h, so C6 is the lineage's baseline. Standing: merged into main 2026-11-02 at the author's word; the GPS + Galileo field golden stays the primary golden, and the register lines of section 4 are in `docs/status/OPEN_ITEMS.md`.
 
 > Results are appended TO THIS FILE, below the text.
 
@@ -58,3 +58,7 @@ Card BDSB section 5 set out three courses after every registered bar of cards BD
 | G5, unit suite | PASS. Debug `gnss_tests` 3,833 tests in 523 suites, 3,800 passed, 33 skipped, 0 failed (main's counts); `gnss_simulator_selftest` 99 of 99. |
 
 **Verdict.** Every gate passes. The BeiDou golden is the field golden plus the four posture keys and nothing else, the two GPS + Galileo goldens and the user side do not move, and the lineage reproduces the graded arm. Its baseline is card BDSB's arm C6 (`runs_nom/_rap_bdsc_c6`, figures in card BDSB section 4); `runs_int1102/_rap_bdg_g4` is its byte-identical twin on the current executable.
+
+## 6. 2026-11-02: close
+
+The author's word on 2026-11-02 ("Merge it"). Branch `golden/bds-third` fast-forwarded into main. The lineage's baseline stays card BDSB's arm C6 (`runs_nom/_rap_bdsc_c6`), its twin on the current executable `runs_int1102/_rap_bdg_g4`. The owed items of section 4 are carried by the OPEN_ITEMS line "The BeiDou golden (third lineage)".

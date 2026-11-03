@@ -305,6 +305,7 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   per column and epoch) removes both, but in the event's own epoch the gradient still takes up part of the misfit
   (HKSL00HKG 101 mm; two arcs escaped the attribution refloat): field-blocking. N6j: the tests, onboarding pages 7 and
   8, the routing. Both keys UNVALIDATED; nothing armed.
-- [BDG](BDG_beidou_third_golden_2026-11-02.md): open, 2026-11-02: the BeiDou golden, the author's course B of card BDSB: `golden_field_bds_refound`, the field
+- [BDG](BDG_beidou_third_golden_2026-11-02.md): closed, 2026-11-02: the BeiDou golden, the author's course B of card BDSB: `golden_field_bds_refound`, the field
   golden's output plus BeiDou B1I / B3I, the second-band admission and one wire bias per modelled signal; the three BeiDou ledger rows
-  RECOMMEND_SCOPED under the new regime predicate `has_bds`, so the GPS + Galileo goldens are unchanged; gates G1 to G5 pre-registered.
+  RECOMMEND_SCOPED under the new regime predicate `has_bds`, so the GPS + Galileo goldens are unchanged; gates G1 to G5 all pass (the two
+  GPS + Galileo goldens and 16 user-side arms identical; the 6 h BeiDou golden byte-identical in `products.txt` to card BDSB's arm C6, its baseline); merged into main 2026-11-02.
