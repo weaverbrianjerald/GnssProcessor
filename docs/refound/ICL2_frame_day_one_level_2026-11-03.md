@@ -144,3 +144,41 @@ Arms: the graded posture with the new key, `_rap_icl2_k{129,132}_{2,6}`; referen
 
 Reported without a bar: the comparison with the golden (`brdc`) and the free-offset arm (`brdngtI`); card ICL's G5 user bars;
 hour 1; the prediction's error (built against predicted, each quantity).
+
+---
+
+## 5. Results
+
+### 5.1 Item 2: the offline prediction and the decision (2026-11-03, before any build)
+
+`icl2_tools/icl2_predict.py`, the rule of section 3.3. The phase-frame simulator, run on the frame arm's own vote, reproduces the
+run's G (`network_phase_frame.csv`) to 0.018 mm (DOY 129) and 0.007 mm (DOY 132) at most over 1 440 values each; with the clock
+frame re-held on C + U it reproduces the frame arm's phase-visible D exactly (9.4 and 32.4 mm), as section 3.2 states.
+Hours 2 to 6, lags 1 / 10 / 40 / 120 / 240 epochs, mm:
+
+| day | candidate | code D | phase D | K_G | K_E |
+| --- | --- | --- | --- | --- | --- |
+| 129 | as run (the frame) | 1.7 / 4.9 / 10.3 / 22.6 / 33.4 | 1.1 / 3.1 / 5.7 / 9.4 / 14.0 | 1.1 / 3.8 / 10.0 / 23.1 / 39.7 | 0.7 / 3.1 / 9.8 / 23.7 / 36.3 |
+| 129 | (a) clock frame on C + U | 1.2 / 3.6 / 8.0 / 14.4 / 14.5 | 1.1 / 3.1 / 5.7 / 9.4 / 14.0 | 0.5 / 2.2 / 7.4 / 18.4 / 27.0 | 0.4 / 1.6 / 4.1 / 9.3 / 11.9 |
+| 129 | (b) phase frame on C - P_IF - M | 1.7 / 4.9 / 10.3 / 22.6 / 33.4 | 1.6 / 4.7 / 9.9 / 19.0 / 28.1 | 0.4 / 1.4 / 3.1 / 5.9 / 10.4 | 0.4 / 1.4 / 3.0 / 7.0 / 11.8 |
+| 132 | as run (the frame) | 1.9 / 6.0 / 12.2 / 28.3 / 54.2 | 1.4 / 5.0 / 12.6 / 32.4 / 64.1 | 1.2 / 4.6 / 10.4 / 24.9 / 48.9 | 0.7 / 2.9 / 8.5 / 19.5 / 37.5 |
+| 132 | (a) clock frame on C + U | 1.4 / 5.2 / 14.4 / 37.7 / 66.7 | 1.4 / 5.0 / 12.6 / 32.4 / 64.1 | 0.6 / 2.7 / 8.0 / 20.5 / 30.1 | 0.6 / 2.0 / 5.1 / 12.8 / 25.5 |
+| 132 | (b) phase frame on C - P_IF - M | 1.9 / 6.0 / 12.2 / 28.3 / 54.2 | 2.0 / 6.1 / 13.7 / 34.8 / 65.4 | 0.5 / 1.6 / 3.6 / 9.0 / 15.3 | 0.4 / 1.4 / 3.4 / 7.3 / 13.9 |
+
+S (the root mean square of the eight lag-120 values): as run 23.84 mm, (a) 21.73 mm, (b) 19.69 mm. **(b) is built** (smaller S;
+the two are 9.4 % apart counted on (a), 10.4 % on (b), and the tie rule names (b) as well).
+
+Read beside the rule. (a) takes the code side to the raw broadcast level (code D 14.4 and 37.7 mm), but its code-to-phase level
+stays near today's for GPS (18.4 and 20.5 mm): the two frames remove the medians of C + U and of C + U - P_IF, which differ by
+the clones' passed motion. (b) closes each constellation's K to 6 to 9 mm (the CODE regime with the frame reads 4.5 and 6.0) at the
+price of the phase-visible D on DOY 129 (9.4 to 19.0 mm): code and phase then follow one level, the tracked a priori's common mode
+(the code-visible D unchanged, 22.6 and 28.3 mm). Against the frozen bars the prediction reads: K3's K_G on DOY 132 at 9.0 mm
+against 8, its phase-visible D at 34.8 mm against 35; the user gate K4 is not predicted.
+
+On the GPS + Galileo golden (card LAH's hold, `brd_c{129,132}_6`) the vote on w = C - P_IF - M, rebuilt from the printed
+products, moves by at most 7.1e-15 and 5.6e-15 m per epoch (median 0) over 1 436 voted epochs each: the rounding of the hold's
+arithmetic. With the 1e-9 m floor of section 3.2 G stays exactly 0.
+
+The key: `network.phase_frame_hold_level_vote` (bool, default false): the phase frame votes on the phase-visible correction in
+the phase-bias hold's level, C - P_IF - M, in place of C - P_IF + U. It requires `network.emit_phase_frame_hold` and a hold that
+keeps M (`network.emit_pb_hold_phase_clock` or `network.emit_pb_hold_smoothed`), refused at load otherwise.
