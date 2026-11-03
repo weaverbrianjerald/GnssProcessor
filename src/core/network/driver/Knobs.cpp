@@ -106,6 +106,8 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.clm_innov_window_ep = config_.networkClockLevelInnovWindowEp();
     k.pv_on        = config_.networkPhaseVisibleMonitor();     // phase-visible monitor (trace class)
     k.nbp_on       = config_.networkAprioriBrdcClock();        // broadcast clock a priori (fingerprinted in SnapshotFingerprint.cpp)
+    k.apriori_track_on = config_.networkAprioriBrdcClock()
+                      && config_.networkAprioriClockTrack();      // the tracked broadcast a priori (fingerprinted)
     k.pv_window_ep = config_.networkPhaseVisibleWindowEp();
     k.clm_restore_credit_ep = config_.networkClockLevelRestoreCreditEp();
     k.clm_restore_raise = config_.networkClockLevelRestoreRaise();       // loader guarantees clm_on

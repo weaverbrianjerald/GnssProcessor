@@ -363,6 +363,22 @@ void networkCommonBandVerdictEpoch(const PassABuffers& pa,
             }
         }
 
+        // Two-way centring (network.cycle_slip.if_phase_td_sat_centre): the driver pools
+        // each sample's centred value, so the preview centres the same samples with the
+        // same fit before pooling.  Off, no sample is touched.
+        const SlipQcConfig& sq_cfg = config_.getNetworkConfig().slip_qc;
+        if (sq_cfg.if_phase_td_sat_centre) {
+            for (auto& [pair, samples] : by_pair) {
+                std::vector<IfTdCentreSample> cin;
+                cin.reserve(samples.size());
+                for (const auto& s : samples) cin.push_back({ s.sta, s.sat, s.dd, s.is_ref });
+                const IfTdSatCentre fit =
+                    ifTdSatCentreFit(cin, sq_cfg.if_phase_td_sat_centre_min_stations);
+                for (std::size_t k = 0; k < samples.size(); ++k)
+                    samples[k].dd = ifTdSatCentred(fit, cin[k]);
+            }
+        }
+
         for (const auto& [pair, samples] : by_pair) {
             std::vector<double> dd, el;
             std::vector<char>   ref;

@@ -2020,6 +2020,21 @@ namespace GnssProcessor {
         NetworkBrdcSelect networkBrdcSelect() const { return network_brdc_select_; }
 
         /**
+         * @brief The broadcast a priori clock follows the network's own phase
+         *        (@c network.apriori_clock_track).
+         *
+         * Each epoch every satellite's a priori moves by the satellite-common between-epoch
+         * change that the IF-TD two-way centring measures, before the station rows are built,
+         * and the wire adds the track after the hold (network/assembly/AprioriClockTrack.hpp).
+         * Requires @c network.apriori_source @c sp3_brdc_clock and
+         * @c network.cycle_slip.if_phase_td_sat_centre (refused at load otherwise).  Default
+         * off; fingerprinted, fresh convergence only.
+         *
+         * @return True when armed.
+         */
+        bool networkAprioriClockTrack() const { return network_apriori_clock_track_; }
+
+        /**
          * @brief A-priori satellite-clock anchor pseudo-observation σ (m) for the
          *        network producer (@c network.apriori_clock_anchor_sigma_m).
          *
@@ -8717,6 +8732,7 @@ namespace GnssProcessor {
         int  network_cb_admission_census_epochs_{15};     ///< Census window length K (epochs from the loop start; CB-ADM); clamped to the available span.
         bool network_cold_clock_seed_{false};             ///< Pre-seed a cold per-station receiver clock from the median GPS code residual before the first ambiguity seed (removes the network cold-start clock leak into cold ambiguity seeds).  Default off => byte-identical.
         NetworkAprioriSource network_apriori_source_{NetworkAprioriSource::Sp3}; ///< Producer a-priori orbit/clock source (network.apriori_source; RTF-1); Sp3 (default) = precise SP3/CLK identity (byte-identical), BrdcRts = broadcast eph + external RTS orbits.  Read by the network producer setup.
+        bool network_apriori_clock_track_{false};  ///< The broadcast a priori tracked by the IF-TD columns (network.apriori_clock_track).
         NetworkBrdcSelect network_brdc_select_{NetworkBrdcSelect::Ttom};  ///< Ephemeris selection rule of the native broadcast clock a priori (network.brdc_select); read only under apriori_source sp3_brdc_clock.
         double network_apriori_clock_anchor_sigma_m_{0.0};  ///< A-priori satellite-clock anchor pseudo-obs σ (m; RTF-1/D6); 0 (default) = auto (mode-resolved at the producer), explicit positive wins.  Read through resolveNetworkAprioriClockAnchorSigmaM().
         bool   network_phase_leveling_{false};            ///< Carry per-station carrier-phase ambiguities across epochs (phase-leveling, Increment 1); off = byte-identical absolute solve.

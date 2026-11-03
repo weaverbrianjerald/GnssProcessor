@@ -43,6 +43,7 @@
 #include "common/PppUtils.hpp"
 #include "network/slip/GfArcJump.hpp"   // GfArcJumpParams / GfArcJumpArc / GfArcJumpCounters
 
+#include <array>
 #include <functional>
 #include <map>
 #include <memory>
@@ -1009,6 +1010,21 @@ struct SlipQcCounters {
     long long if_td_clock_flagged{0};       ///< Flagged samples of event satellites.
     long long if_td_clock_kept{0};          ///< ...of those, arcs kept (within threshold of the common step).
     long long if_td_clock_refsat_kept{0};   ///< Reference-gate resets of event satellites whose arcs were kept.
+
+    // --- IF-TD two-way centring (network.cycle_slip.if_phase_td_sat_centre) ---
+    // All zero with the knob off.  Armed, 0 pools centred is inert wiring.  Closure:
+    // if_td_centre_refsat_tested == if_td_centre_refsat_kept + if_td_centre_refsat_refloated.
+    long long if_td_centre_pools{0};            ///< (epoch, signal pair kind) pools centred.
+    long long if_td_centre_cols{0};             ///< Satellite columns fitted, summed over the pools.
+    long long if_td_centre_thin{0};             ///< Satellites left without a column (too few non-reference samples).
+    std::array<long long, 6> if_td_centre_col_hist{};  ///< |column| below 5, 10, 20, 50, 100 mm, and at or above 100 mm.
+    double    if_td_centre_col_max_m{0.0};      ///< Largest |column| over the run (m).
+    long long if_td_centre_flags_removed{0};    ///< Samples the one-way centre would flag at the same threshold and the residual does not.
+    long long if_td_centre_flags_added{0};      ///< Samples the residual flags and the one-way centre would not.
+    long long if_td_centre_refsat_tested{0};    ///< Reference-gate resets re-tested with the reference's own column.
+    long long if_td_centre_refsat_kept{0};      ///< ...kept: the satellites' common changes explain the step.
+    long long if_td_centre_refsat_refloated{0}; ///< ...refloated: a slip remains after the clock part is removed.
+    long long if_td_centre_refsat_untested{0};  ///< Resets with no recorded step or no fitted column: the ordinary path.
 };
 
 /**

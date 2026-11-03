@@ -315,6 +315,24 @@ namespace GnssProcessor {
         }
 
         /**
+         * @brief The reference arm's step behind each reference reset key of the last
+         *        detect() call.
+         *
+         * When the reference gate fires (own arm or inherited), the reset key of the
+         * chain's reference is returned by detect() and the median of the chain's
+         * non-reference double differences, the step the gate read as the reference's
+         * slip, is recorded here under that key.  The network driver's two-way
+         * centring (@c network.cycle_slip.if_phase_td_sat_centre) re-tests the reset
+         * with it: the part of the step that the satellites' own common changes
+         * explain is not a slip.  Cleared at the start of every detect() call.
+         *
+         * @return Reset key (an ambiguity key, as returned by detect()) to the step (m).
+         */
+        const std::map<std::string, double>& getLastRefFireMedians() const {
+            return last_ref_fire_median_m_;
+        }
+
+        /**
          * @brief Evaluate every distinct pair of a satellite's phase bands (§14.10).
          *
          * Off (default), the detector forms one pair per satellite from its
@@ -756,6 +774,9 @@ namespace GnssProcessor {
          *  evaluated pair (§14.10): a superset of @ref last_if_jumps_ that holds
          *  the same samples while @ref all_pairs_ is off. */
         std::map<SatPairKey, IfJumpInfo> last_if_jumps_all_;
+        /// Reference reset key to the reference arm's step (m) of the last detect()
+        /// call (@ref getLastRefFireMedians).
+        std::map<std::string, double> last_ref_fire_median_m_;
 
         /** @brief Per-satellite data collected during observation grouping. */
         struct SatData {

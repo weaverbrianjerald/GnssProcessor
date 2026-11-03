@@ -16,6 +16,7 @@
  */
 
 #include <memory>
+#include <array>
 #include <set>
 #include <string>
 #include <utility>
@@ -90,6 +91,19 @@ struct BrdcWireCounters {
     double    nbp_offset_min_m{0.0};       ///< smallest O on the wire (m)
     double    nbp_offset_max_m{0.0};       ///< largest O on the wire (m)
     std::set<std::pair<std::string, int>> nbp_records;   ///< distinct (satellite, IODE) stamped
+
+    // The tracked broadcast a priori (network.apriori_clock_track, network/assembly/
+    // AprioriClockTrack.hpp).  All zero with the knob off; `applied 0` with it on is inert
+    // wiring.  Closure: every stamped record of a tracked satellite carries its U on the wire.
+    long long brd_track_epochs{0};          ///< epochs the track seam ran
+    long long brd_track_applied{0};         ///< satellite-epochs whose track moved by a column
+    long long brd_track_paused{0};          ///< tracked satellite-epochs with no column (track held)
+    long long brd_track_started{0};         ///< satellites tracked for the first time
+    long long brd_track_resumed{0};         ///< resumptions after an epoch without a column
+    long long brd_track_rows_moved{0};      ///< modelled observations moved by a nonzero track
+    std::array<long long, 6> brd_track_inc_hist{};   ///< |increment| below 5, 10, 20, 50, 100 mm and above
+    double    brd_track_max_abs_m{0.0};     ///< largest |U| (m)
+    long long brd_track_wire{0};            ///< stamped clock records that carried a track on the wire
 };
 
 } // namespace GnssProcessor

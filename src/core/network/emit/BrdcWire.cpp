@@ -46,6 +46,19 @@ void networkBrdcWire(NetworkRunContext& ctx,
         net::satMap(ctx.entities.sats, &net::SatelliteState::nbp_prev_iode);
     const auto rows = apriori.stampWire(sol, se.time, &LiveEphemerisStore::getInstance(),
                                         nbp_prev_iode);
+    // The tracked a priori (network.apriori_clock_track): the solve ran against a + U, so the
+    // wire adds U after the hold, and brdc(iode) + C_wire = a + U + C_est.
+    std::map<std::string, double> track;
+    if (ctx.knobs.apriori_track_on) {
+        track = net::satMap(ctx.entities.sats, &net::SatelliteState::apriori_track_m);
+        for (auto& s : sol.sats) {
+            if (!s.has_clock || s.clock_iode < 0) continue;
+            const auto it = track.find(s.sat);
+            if (it == track.end()) continue;
+            s.clock_c0_m += it->second;
+            ++c.brd_track_wire;
+        }
+    }
     net::assignSat(entities, &net::SatelliteState::nbp_prev_iode, nbp_prev_iode);
     ++c.nbp_epochs;
     for (const auto& r : rows) {
@@ -60,11 +73,15 @@ void networkBrdcWire(NetworkRunContext& ctx,
             c.nbp_offset_min_m = first ? r.offset_m : std::min(c.nbp_offset_min_m, r.offset_m);
             c.nbp_offset_max_m = first ? r.offset_m : std::max(c.nbp_offset_max_m, r.offset_m);
         }
+        // Under the tracked a priori the offset column is O + U, the whole of what the wire
+        // adds to the estimate.
+        const auto tit = (r.iode >= 0) ? track.find(r.sat) : track.end();
+        const double u = (tit != track.end()) ? tit->second : 0.0;
         if (trace)
             trace << se.time.week << ',' << fmt::format("{:.3f}", se.time.tow) << ',' << r.sat
                   << ',' << r.iode << ',' << fmt::format("{:.6f}", r.c_est_m) << ','
-                  << fmt::format("{:.6f}", r.offset_m) << ','
-                  << fmt::format("{:.6f}", r.c_est_m + r.offset_m) << ','
+                  << fmt::format("{:.6f}", r.offset_m + u) << ','
+                  << fmt::format("{:.6f}", r.c_est_m + r.offset_m + u) << ','
                   << fmt::format("{:.6f}", r.brdc_m) << ',' << (r.held ? 1 : 0) << ','
                   << (r.switched ? 1 : 0) << '\n';
     }
@@ -93,6 +110,17 @@ int networkBrdcWireRunEnd(const NetworkRunEndView& v) {
               c.nbp_epochs, c.nbp_stamped, c.nbp_unstamped, c.nbp_records.size(),
               c.nbp_switches, table_sw, c.nbp_offset_min_m, c.nbp_offset_max_m,
               c.nbp_held, c.nbp_stamped, c.nbp_not_held, fed);
+    if (ctx.knobs.apriori_track_on) {
+        const auto& h = c.brd_track_inc_hist;
+        log->info("Network (tracked broadcast a priori): {} epoch(s); {} satellite-epoch(s) "
+                  "moved by an IF-TD column, {} held (no column); {} satellite(s) started, {} "
+                  "resumption(s); |increment| < 5 mm {}, 5-10 mm {}, 10-20 mm {}, 20-50 mm {}, "
+                  "50-100 mm {}, >= 100 mm {}; largest |U| {:.4f} m; {} modelled value(s) moved; "
+                  "{} stamped record(s) carried U on the wire.  0 moved is inert wiring.",
+                  c.brd_track_epochs, c.brd_track_applied, c.brd_track_paused,
+                  c.brd_track_started, c.brd_track_resumed, h[0], h[1], h[2], h[3], h[4], h[5],
+                  c.brd_track_max_abs_m, c.brd_track_rows_moved, c.brd_track_wire);
+    }
     return 0;
 }
 

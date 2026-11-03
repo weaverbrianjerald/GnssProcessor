@@ -40,6 +40,7 @@
 #include <limits>
 #include <map>
 #include <memory>
+#include <optional>
 #include <set>
 #include <string>
 #include <tuple>
@@ -137,6 +138,83 @@ inline double ifTdShrunkScale(long count, double ewma_scale,
     return s_eff;
 }
 
+/// One sample of an IF-TD signal pair's pool as the two-way centring reads it.
+struct IfTdCentreSample {
+    int         sta{ 0 };         ///< Station index (the table's row).
+    std::string sat;              ///< Satellite (the table's column).
+    double      dd{ 0.0 };        ///< Raw between-epoch double difference (m).
+    bool        is_ref{ false };  ///< The chain's reference: identically 0, never fitted.
+};
+
+/// @brief The station x satellite decomposition of one IF-TD signal pair's pool
+///        (@c network.cycle_slip.if_phase_td_sat_centre).
+///
+/// dd_i(s) = overall + row_i + col_s + residual, from a Tukey median polish of the
+/// non-reference samples.  col_s is the satellite's common between-epoch change across
+/// the stations that track it (the increment of its a priori clock's error, less the
+/// pool's typical one), row_i the station's (its reference satellite's increment, sign
+/// reversed, plus the station's own common mode).  A row is one station's chain of one
+/// constellation (@ref ifTdSatCentreRow): each constellation's chain has its own reference
+/// satellite, so a pool that holds two constellations under one pair label keeps them apart.  Only satellites with at least the
+/// minimum number of non-reference samples enter the fit; a thinner satellite has no
+/// column and keeps the station centring.
+struct IfTdSatCentre {
+    double                        overall{ 0.0 };  ///< Grand effect (m).
+    std::map<int, double>         row;             ///< Station-chain effects (m), keyed by @ref ifTdSatCentreRow; fitted rows only.
+    std::map<std::string, double> col;             ///< Satellite effects (m), fitted satellites only.
+    std::map<std::string, int>    n_obs;           ///< Non-reference samples per satellite, fitted or not.
+};
+
+/// @brief The row of a sample in the two-way centring: its station and its constellation
+///        (the RINEX letter of the satellite), so each constellation chain at a station is a row.
+/// @param s The sample.
+/// @return The row key, station * 256 + letter.
+int ifTdSatCentreRow(const IfTdCentreSample& s);
+
+/// @brief Fit the two-way centring of one IF-TD signal pair's pool.
+///
+/// Shared by @ref networkSlipIfTdDriver and the common-band scope's flag preview, so
+/// the preview centres exactly as the decision does.  The polish runs on the
+/// non-reference samples of the satellites with at least @p min_stations of them
+/// (five sweeps of @ref medianPolish2Way); with no such satellite the fit is empty and
+/// every residual is the raw value less nothing, i.e. the one-way pool centres it.
+/// The result does not depend on the order of @p samples.
+///
+/// @param samples       The pair's samples from every present station.
+/// @param min_stations  Fewest non-reference samples for a fitted column (at least 3).
+/// @return The fit.
+IfTdSatCentre ifTdSatCentreFit(const std::vector<IfTdCentreSample>& samples, int min_stations);
+
+/// @brief The centred value of one sample under a fit: dd - overall - row - col.
+///
+/// A reference sample returns 0 (its structural zero carries no information; the
+/// reference is screened by the reference gate).  A station or satellite absent from
+/// the fit contributes 0 for its effect.  With an empty fit (no fitted column) the
+/// overall effect is 0 as well, so the value is the raw @c dd.
+///
+/// @param fit The pair's fit.
+/// @param s   The sample.
+/// @return The centred double difference (m).
+double ifTdSatCentred(const IfTdSatCentre& fit, const IfTdCentreSample& s);
+
+/// @brief The reference gate's step at one station with the satellites' common changes
+///        removed (@c network.cycle_slip.if_phase_td_sat_centre).
+///
+/// The gate fired on m = median over the chain's non-reference satellites of
+/// dd_i(s) = de_s - de_ref - slip_ref, so the clock part of m is
+/// median(col over those satellites) - col_ref and the slip estimate is
+/// m - median(col) + col_ref (its sign reversed; the test reads the magnitude).
+///
+/// @param fit         The pair's fit.
+/// @param step_m      The gate's step m (@ref IfPhaseSlipDetector::getLastRefFireMedians).
+/// @param ref_sat     The chain's reference satellite.
+/// @param station_sats The non-reference satellites of the chain at the station this epoch.
+/// @return The corrected step (m), or @c std::nullopt when the reference or none of
+///         @p station_sats has a fitted column (the reset then takes the ordinary path).
+std::optional<double> ifTdSatCentreRefStep(const IfTdSatCentre& fit, double step_m,
+                                           const std::string& ref_sat,
+                                           const std::vector<std::string>& station_sats);
+
 /// One station's IF-TD sample of one satellite, as the satellite clock event rule reads it.
 struct IfTdSatClockSample {
     int    sta{ 0 };           ///< Station index.
@@ -202,6 +280,17 @@ inline bool ifTdSatClockKeeps(const IfTdSatClockVerdict& v, double r, double thr
 struct IfTdSatClockSink {
     std::map<std::string, double>& step_m;   ///< Satellite -> its common step (m), for the clock anchor guard; first pair kind wins.
     SlipQcCounters&                counters; ///< Run-end counters (@c if_td_clock_*).
+};
+
+/// Where the IF-TD driver reads the two-way centring's parameter and writes its counters
+/// (@c network.cycle_slip.if_phase_td_sat_centre).  The driver takes a pointer to this and
+/// centres only when the pointer is non-null.
+struct IfTdSatCentreSink {
+    int             min_stations;  ///< @c network.cycle_slip.if_phase_td_sat_centre_min_stations.
+    SlipQcCounters& counters;      ///< Run-end counters (@c if_td_centre_*).
+    /// Where the epoch's columns go, satellite -> column (m) of the pool with the most
+    /// non-reference samples; null unless @c network.apriori_clock_track reads them.
+    std::map<std::string, double>* columns = nullptr;
 };
 
 /// Parse an IfPhaseSlipDetector reset key ("G01_L1C_L2W") into the satellite and
@@ -1208,6 +1297,20 @@ BridgeReplaceOutcome networkSlipBridgeV3Replace(
  *                           satellite at a station where it is the chain's reference
  *                           keeps its arcs too (a @c refsat_clock_keep row).  The rule
  *                           only removes flags.
+ * @param sat_centre         Two-way centring sink (@c network.cycle_slip.if_phase_td_sat_centre;
+ *                           null, the default, when the knob is off, and then every branch
+ *                           is the pre-knob one).  Per pair kind the samples are fitted with
+ *                           @ref ifTdSatCentreFit and each non-reference sample enters the
+ *                           pool as its centred value (@ref ifTdSatCentred), so the pooled
+ *                           centre, scale, thresholds, station-pair EWMA, bridge pend and
+ *                           satellite clock rule all read the residual; the trace row keeps
+ *                           the raw double difference and writes the effective centre.  A
+ *                           satellite column of at least half the pair's physical floor is
+ *                           a @c sat_centre event row.  A reference-gate reset is re-tested
+ *                           with @ref ifTdSatCentreRefStep against the gate's physical floor
+ *                           (@c if_phase_td_ref_floor_frac times the IF wavelength): within
+ *                           it, a @c refsat_centre_keep row and the arcs are kept; beyond
+ *                           it, the ordinary refloat with a @c centre_step token.
  */
 void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                            std::vector<NetStation>& stations,
@@ -1238,7 +1341,10 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                            IfTdPairTallies* pair_tally = nullptr,
                            /// Satellite clock event sink (see @p sat_clock).  Null (the
                            /// knob off): no classification, the pre-knob behaviour.
-                           IfTdSatClockSink* sat_clock = nullptr);
+                           IfTdSatClockSink* sat_clock = nullptr,
+                           /// Two-way centring sink (see @p sat_centre).  Null (the knob
+                           /// off): the one-way network median, the pre-knob behaviour.
+                           IfTdSatCentreSink* sat_centre = nullptr);
 
 /**
  * @brief Injected @c free_epoch arc response (event harness, Study 1).

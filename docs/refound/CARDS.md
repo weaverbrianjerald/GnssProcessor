@@ -309,3 +309,9 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   golden's output plus BeiDou B1I / B3I, the second-band admission and one wire bias per modelled signal; the three BeiDou ledger rows
   RECOMMEND_SCOPED under the new regime predicate `has_bds`, so the GPS + Galileo goldens are unchanged; gates G1 to G5 all pass (the two
   GPS + Galileo goldens and 16 user-side arms identical; the 6 h BeiDou golden byte-identical in `products.txt` to card BDSB's arm C6, its baseline); merged into main 2026-11-02.
+- [BRD](BRD_broadcast_referenced_level_2026-11-02.md): closed, 2026-11-03 (pre-registered 2026-11-02): a network referenced to the broadcast
+  clock, SP3 orbits the only precise product. Two causes of card NBP's cost measured: the IF-TD test's one-way centring (false refloats at
+  every station on real clock motion) and the clock time update's broadcast prior mean (22.6 against 6.9 mm of phase-visible wander per hour).
+  Two knobs, default off: `network.cycle_slip.if_phase_td_sat_centre` and `network.apriori_clock_track`. GPS, 6 h: WTZZ00DEU -0.008 and
+  +0.008 m against the GPS golden (before +0.021 and +0.027), census +0.013 to +0.007 m pooled; DOY 129 passes, DOY 132 fails. GPS + Galileo
+  fails with the receivers' frozen inter-system offset. Both keys UNVALIDATED; nothing armed.

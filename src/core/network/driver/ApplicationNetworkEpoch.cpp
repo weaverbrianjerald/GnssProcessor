@@ -59,6 +59,7 @@
 #include "network/solve/HandoverStransform.hpp" // kStsExactTolM, the S-transform exactness tolerance
 #include "network/solve/ChainDatum.hpp"    // eq34 single-receiver-chain datum
 #include "network/assembly/SignalIntegrity.hpp" // flicker/gap: band-state classifier + unvetted phase demotion
+#include "network/assembly/AprioriClockTrack.hpp" // the broadcast a priori tracked by the IF-TD columns
 #include "network/assembly/MeasurementAdmission.hpp" // product-referenced admission: the corrupt-channel screen
 #include "network/qc/GrossLos.hpp"    // gross line-of-sight screen
 #include "network/qc/Raim.hpp"        // post-fit network RAIM
@@ -282,6 +283,11 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
     ++slip_qc.epoch_idx;   // monotonic processed-epoch index (gap arithmetic)
     networkPassASlipScan_(run, ep, ep.pass_a, ep.funnel, ep.events);
     networkSlipFunnelUnionRaw(run, ep, ep.funnel);   // the raw subset joins the funnel
+    // The tracked broadcast a priori moves the modelled observations by each satellite's
+    // track.  After the slip scans, whose IF-TD columns it reads and whose detectors must see
+    // the untracked a priori; before every reader of `modeled` that feeds the solve.  No-op
+    // unless network.apriori_clock_track.
+    networkAprioriClockTrack(run, ep, ep.pass_a);
     networkSubEnd(run, SB_SLIP);       // close the slip scans
     networkSubBegin(run, SB_PREASM);   // pre-assembly measurement build, from the slip scans to the assembly wall
 

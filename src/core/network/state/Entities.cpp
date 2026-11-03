@@ -507,6 +507,10 @@ const std::vector<FieldDecl> kSatelliteFields = {
     // Step N4e2: the datum and QC half.
     {"nbp_prev_iode", "nbp_prev_iode", Persist::ColdStart, "", "", nullptr, nullptr,
      &satRows<&A::nbp_prev_iode>},
+    {"apriori_track_m", "", Persist::ColdStart, "", "network.apriori_clock_track", nullptr, nullptr,
+     &satRows<&A::apriori_track_m>},
+    {"apriori_track_paused", "", Persist::ColdStart, "", "network.apriori_clock_track", nullptr,
+     nullptr, &satRows<&A::apriori_track_paused>},
     {"disc_pending", "clk_anchor_disc_pending", Persist::Pending, "", "", nullptr, nullptr,
      &discRows<Disc::ClockAnchor>},
     {"prev_clock_refloat", "prev_clock_refloat_sats", Persist::Record, "QR", "", &qrToSnapshot,
@@ -1237,6 +1241,7 @@ const std::vector<EntityWriterRow> kEntityWriters = {
     {"networkAmbFloatDeclaredHandover", "network/ar/AmbFloat.cpp", "all"},
     {"networkProducerAr", "network/ar/ProducerAr.cpp", "constellations"},
     {"networkSdEwlAr", "network/ar/SdEwlAr.cpp", "constellations los stations"},
+    {"networkAprioriClockTrack", "network/assembly/AprioriClockTrack.cpp", "sats"},
     {"networkMeasurementAdmission", "network/assembly/MeasurementAdmission.cpp", "stations"},
     {"networkSecondBandAdmission", "network/assembly/SecondBandAdmission.cpp", "stations"},
     {"networkSignalIntegrity", "network/assembly/SignalIntegrity.cpp", "los"},

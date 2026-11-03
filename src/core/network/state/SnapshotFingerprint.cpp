@@ -390,6 +390,10 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // is unchanged.
         if (config_.networkAprioriBrdcClock())
             add(fmt::format("nbp:sel={}", static_cast<int>(config_.networkBrdcSelect())));
+        // The tracked a priori puts the carried clock on the frame a + U: a resume across the
+        // knob would fold a clock carry in the other frame.  Appended only when armed.
+        if (config_.networkAprioriBrdcClock() && config_.networkAprioriClockTrack())
+            add("brdtrack");
         // The clock-gauge realization defines the frame of the carried clock states (pin,
         // sum-to-zero and broadcast-anchored differ by per-constellation or common-mode
         // constants), so a resume across a realization change has to cold-start.  Appended

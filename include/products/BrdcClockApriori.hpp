@@ -118,6 +118,29 @@ public:
                      BrdcSelectRule rule = BrdcSelectRule::Ttom, double node_s = 30.0);
 
     /**
+     * @brief The navigation records the a priori selects from.
+     *
+     * GPS records are kept as they are.  Galileo records are kept when @p galileo is true
+     * and the record is an F/NAV one (data-source bit 1, E5a-I): the F/NAV clock refers to
+     * the (E1, E5a) ionosphere-free pair the network models and the satellite code-bias pin
+     * uses (BGD(E1, E5a)), while I/NAV refers to (E1, E5b).  The two share IODnav and are
+     * transmitted at different times, so a transmission-time rule over both would alternate
+     * between two clocks; keeping one message per constellation makes the selection, the
+     * offset table, the store feed and the wire stamp one message's.  Every other record is
+     * dropped.  The producer's setup and the consumer replay both build from this set, so
+     * the consumer's store holds exactly the records the producer can stamp.
+     *
+     * @param nav     Parsed navigation records.
+     * @param galileo Keep the Galileo F/NAV records.
+     * @return The kept records, in their input order.
+     */
+    static std::vector<BroadcastEphemeris> aprioriRecords(std::vector<BroadcastEphemeris> nav,
+                                                          bool galileo);
+
+    /// Data-source bit of a Galileo F/NAV record (E5a-I).
+    static constexpr int kGalileoFnavBit = 0x2;
+
+    /**
      * @brief 00:00 of the GPS day containing @p t_s.
      * @param t_s Continuous GPS seconds.
      * @return The day's origin in continuous GPS seconds.

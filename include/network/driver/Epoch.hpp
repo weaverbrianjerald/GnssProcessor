@@ -22,7 +22,7 @@
  *   clock         EpochClock           the epoch top             the driver, once
  *   funnel        NetworkSlipFunnel    the funnel's opening      networkSlipFunnelOpen, networkPassASlipScan_ (raw subset), networkSlipFunnelUnionRaw,
  *                                                                networkSignalIntegrity, networkMeasurementAdmission (network/slip/SlipFunnel.hpp)
- *   pass_a        EpochPassA           PASS A's sizing           networkPassAHead_, networkPassASlipScan_, networkAssemblyPrefilter_,
+ *   pass_a        EpochPassA           PASS A's sizing           networkPassAHead_, networkPassASlipScan_, networkAprioriClockTrack (modeled), networkAssemblyPrefilter_,
  *                                                                networkSignalIntegrity, networkMeasurementAdmission, networkPhaseAnchorEpoch
  *                                                                (shared_phase_keys), networkPassB_ (present; modeled is read only)
  *   columns       EpochColumns         networkAssemblyRegisterColumns_   that seam only
@@ -150,7 +150,7 @@ struct EpochDdBuild {
  *
  *   group        written by
  *   slip         networkSlipFunnelOpen (carry_innov_flat_now); networkPassASlipScan_
- *                (relevel, sid_reentry_outcome, sat_clock_step); networkAmbFloatDropEpoch (relevel)
+ *                (relevel, sid_reentry_outcome, sat_clock_step, sat_centre_col); networkAmbFloatDropEpoch (relevel)
  *   admission    networkMeasurementAdmission
  *   phase_datum  networkPhaseAnchorEpoch
  *   handover     networkHandoverStransformBeforeRows (sts_pre); networkSolveGlue (the rest)
@@ -185,6 +185,10 @@ struct EpochEvents {
         /// common step (m) (network.cycle_slip.if_phase_td_sat_clock_event); empty with the knob off.
         /// Read by the clock anchor guard, which decouples an anchored one in the same epoch.
         std::map<std::string, double> sat_clock_step;
+        /// The IF-TD two-way centring's column of each satellite this epoch (m), from the pool
+        /// with the most non-reference samples (network.cycle_slip.if_phase_td_sat_centre);
+        /// filled only under network.apriori_clock_track, whose seam reads it.
+        std::map<std::string, double> sat_centre_col;
     };
     /// The measurement admission's epoch summary, stamped with the epoch's TOW.
     struct Admission {
