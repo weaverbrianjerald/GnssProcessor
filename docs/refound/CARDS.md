@@ -171,9 +171,10 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   control: golden chord WL and 6 h wire E_L1 up to 0.029 cycle off the null (tolerance 0.02); graders, truth-wire
   positive control and the E_b slope pass. Re-registered by the author's ruling (IRD-0r: above 0.15 cycle and
   within max(0.05, the null's 99 % band)); PASSES in 44 of 44 cells; re-based onto `a02ccfb`. Results from IRD-1 on
-  in IRDB and IRDC; IRD-2's stop closed by the author's ruling (2026-11-02); IRD-3 landed (IRDC section 5); the
-  certification rule closed as a float defect by the author's ruling (IRDC sections 6 and 7); IRD-4's kept row landed
-  default off, I-b and the r3c consumer FAILED (IRDC section 8).
+  in IRDB, IRDC and IRDD; IRD-2's stop closed by the author's ruling (2026-11-02); IRD-3 landed (IRDC section 5);
+  the certification rule closed as a float defect by the author's ruling (IRDC sections 6 and 7); IRD-4's kept row
+  landed default off, I-b and the r3c consumer FAILED (IRDC section 8); the epoch-88 divergence is the zero-target
+  cold pin's integer, C6 (IRDD section 2).
 - [IRDB](IRDB_integer_recovering_datum_continued_2026-10-30.md): open, 2026-10-30: card IRD's continuation, from IRD-1
   on. IRD-1 LANDED, measure-only and default off (the chain's event table, edge and chord traces, CHAIN events,
   pre-hold and receiver phase-bias traces, the run-end frame census; the consumer's shared AR builder, observe-mode
@@ -204,7 +205,15 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   fixes it. The author ruled the rule closed so (section 7): IRD-4's certified re-hosts are held until they grade
   0 wrong. IRD-4's kept row (section 8) LANDED default off: every kept edge held with no unknown or whole-cycle step,
   the flips' re-references gone; I-b FAILED on every bed and the float consumer FAILED on r3c in hour 2, where a
-  reversed subtree takes its parent re-host's estimated step.
+  reversed subtree takes its parent re-host's estimated step. Continued in IRDD.
+- [IRDD](IRDD_integer_recovering_datum_rows_2026-11-03.md): open, 2026-11-03: card IRDC's continuation, IRD-4's event
+  rows from the trace of the epoch-88 divergence on. The divergence is card IRD C6, not the kept row: at the only
+  cold re-host after convergence the zero target meets the old frame that the subtree's surviving chords keep, so
+  the solve carries the new arc's whole old-frame float (-22 / +31 cycles as built, +42 / -87 with the row: exactly
+  the integer the row's frozen targets left, fraction 0.02 cycle). A scratch diagnostic that changes only that
+  pin's target swaps every reading with the integer; rounding it away makes the event free (double differences
+  integer-clean from 70 min in both arms), and the epoch-210 re-host is its aftermath too. Next: `returning`; the
+  fix is `rehost`.
 - [RKD](RKD_retired_key_deletion_2026-10-14.md): closed, 2026-10-14: the 144 retired network keys and five lane keys
   they orphan deleted with their code (149 ledger rows, 784 to 635; 30 C++ files); landed after the same-build
   golden comparison passed (only declared text moves on the goldens).
