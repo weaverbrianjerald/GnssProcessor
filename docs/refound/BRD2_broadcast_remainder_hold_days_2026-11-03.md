@@ -165,3 +165,17 @@ base build (`1e8a543`).
 
 Reported without a bar: hour 1 per arm; decoupling counts, bridges and generations per arm; the run-end lines; the
 per-site rows of every census.
+
+## 4b. Amendment B1: the G01 control (pre-registered 2026-11-03 09:40, before any run of it)
+
+While the section-4 arms ran, a second difference between the tracked wire and the regime on CODE was found on card
+BRD's runs: G01 is absent from the broadcast-referenced wire for the whole day (0 clock records on `brd_nt132_6`
+against 595 on `brd_r132_6` and the golden). The broadcast navigation file flags G01 unhealthy (health 63 in every
+record of DOY 129 to 132), so the broadcast a priori has no clock for it, while the CODE product carries it. Every
+census user that tracks G01 therefore loses a satellite against the regime on CODE (ARHT00ATA uses G01 in every
+quarter-hour from 0.25 h on the regime's wire and never on the tracked wire). Card NBP built the matching data root
+(`runs/_nbpa_cod_nog01`: the CODE clock files of DOY 128 to 132 without G01) and used it only for its clock statistic.
+
+| gate | bar |
+| --- | --- |
+| B1, the satellite set | DOY 132: the regime on CODE with G01 removed from its a priori (`files.internal_data_root` `C:/GnssProcessor/runs/_nbpa_cod_nog01`, the only change against `brd_r132_6`). The tracked posture against it is the remainder with the satellite sets equal: G01's absence carries the remainder if it falls to at most +0.005 m, does not if it stays above +0.010 m, carries part of it between. The regime without G01 against the regime is reported beside it (G01's own worth to the census). |
