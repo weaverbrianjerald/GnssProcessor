@@ -553,7 +553,9 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         //                           starts every row cold and the row holds its first edges one
         //                           election late.  The returning row's memory of the vertices
         //                           seen in an earlier tree is never serialized either: after a
-        //                           resume the first election's absent vertices are births
+        //                           resume the first election's absent vertices are births.  The
+        //                           rehost row keeps no memory of its own: it reads the incumbent tree of the
+        //                           last election
         //   signal integrity        network.signal_integrity.*
         //   measurement admission   adm_{screen,bound_m,min_sats,heal_ep,max_frac,
         //                           trace} and adm_revet{,_gap_ep,_ep,_census,_hold}

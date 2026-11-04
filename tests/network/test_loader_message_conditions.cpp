@@ -216,7 +216,7 @@ TEST(LoaderMessages, Eq34EventRowsUnknownEntryWarnsAndADuplicateIsDroppedSilentl
 // The rows are built in table order: an entry whose rule is not built yet is dropped with a warning
 // and arms nothing.
 TEST(LoaderMessages, Eq34EventRowsNotBuiltYetAreDroppedWithAWarning) {
-    for (const char* entry : {"rehost", "root", "slip", "merge_split"}) {
+    for (const char* entry : {"root", "slip", "merge_split"}) {
         const LoadedConfig r = loadNetworkConfigCapturing(std::string("eq34_rows_nb_") + entry,
             kFloatChain + eventRows(std::string("[\"") + entry + "\"]"));
         EXPECT_TRUE(r.ok) << entry << ": " << r.text;
@@ -228,10 +228,58 @@ TEST(LoaderMessages, Eq34EventRowsNotBuiltYetAreDroppedWithAWarning) {
     }
     // One built entry beside an unbuilt one: the built one arms.
     const LoadedConfig mixed = loadNetworkConfigCapturing("eq34_rows_nb_mixed",
-        kFloatChain + eventRows("[\"rehost\", \"kept\"]"));
+        kFloatChain + eventRows("[\"root\", \"kept\"]"));
     EXPECT_TRUE(mixed.ok) << mixed.text;
     EXPECT_EQ(mixed.config.networkPhaseDatumEq34EventRows(), std::vector<std::string>{"kept"});
-    EXPECT_TRUE(contains(mixed.text, "'rehost' is not built yet")) << mixed.text;
+    EXPECT_TRUE(contains(mixed.text, "'root' is not built yet")) << mixed.text;
+}
+
+// The rehost row is built, its certified branch held: its entry arms on the float chain beside the others, in the
+// order the config gave them, and the loader names what it does; the kept-only and kept-and-returning lines are
+// the lines they were.
+TEST(LoaderMessages, Eq34EventRowsRehostArmsOnTheFloatChainAndTheLoaderSaysWhatItDoes) {
+    const LoadedConfig r = loadNetworkConfigCapturing("eq34_rows_rehost", kFloatChain + eventRows("[\"rehost\"]"));
+    EXPECT_TRUE(r.ok) << r.text;
+    EXPECT_EQ(r.config.networkPhaseDatumEq34EventRows(), std::vector<std::string>{"rehost"});
+    EXPECT_TRUE(r.config.networkPhaseDatumEq34EventRowArmed("rehost"));
+    EXPECT_FALSE(r.config.networkPhaseDatumEq34EventRowArmed("kept"));
+    EXPECT_TRUE(contains(r.text, "eq34 EVENT ROWS ON (rehost)")) << r.text;
+    EXPECT_TRUE(contains(r.text,
+        "'rehost' releases every re-host, its certified branch held: the re-hosted vertex and its subtree take the cut "
+        "release, the new pin keeps its rounded integer target with an unknown step, and the subtree's keys are "
+        "declared moved.")) << r.text;
+    EXPECT_TRUE(contains(r.text, "The run-end eq34 block reports the re-hosts released, what the release took and the "
+                                 "keys declared.")) << r.text;
+    EXPECT_FALSE(contains(r.text, "is not built yet")) << r.text;
+    EXPECT_FALSE(contains(r.text, "'kept' holds")) << r.text;
+    EXPECT_FALSE(contains(r.text, "'returning' releases")) << r.text;
+
+    const LoadedConfig all = loadNetworkConfigCapturing("eq34_rows_all_three",
+        kFloatChain + eventRows("[\"kept\", \"returning\", \"rehost\"]"));
+    EXPECT_TRUE(all.ok) << all.text;
+    EXPECT_EQ(all.config.networkPhaseDatumEq34EventRows(), (std::vector<std::string>{"kept", "returning", "rehost"}));
+    EXPECT_TRUE(contains(all.text, "eq34 EVENT ROWS ON (kept, returning, rehost)")) << all.text;
+    EXPECT_TRUE(contains(all.text, "'kept' holds an arc that stays in the tree")) << all.text;
+    EXPECT_TRUE(contains(all.text, "'returning' releases a vertex that rejoins the tree")) << all.text;
+    EXPECT_TRUE(contains(all.text, "'rehost' releases every re-host")) << all.text;
+    EXPECT_TRUE(contains(all.text, "The run-end eq34 block reports the edges held and the incumbent edges not held, by "
+                                   "cause; the edges released, what the release took and the keys declared; the "
+                                   "re-hosts released, what the release took and the keys declared.")) << all.text;
+
+    // The text of the kept row beside the returning row is the text it was.
+    const LoadedConfig kr = loadNetworkConfigCapturing("eq34_rows_kept_returning_text",
+        kFloatChain + eventRows("[\"kept\", \"returning\"]"));
+    EXPECT_FALSE(contains(kr.text, "'rehost'")) << kr.text;
+    EXPECT_TRUE(contains(kr.text, "eq34 EVENT ROWS ON (kept, returning)")) << kr.text;
+    EXPECT_TRUE(contains(kr.text, "The run-end eq34 block reports the edges held and the incumbent edges not held, by "
+                                  "cause; the edges released, what the release took and the keys declared.")) << kr.text;
+
+    // Without the chain the entry is cleared like any other.
+    const LoadedConfig nochain = loadNetworkConfigCapturing("eq34_rows_rehost_nochain",
+        kFloatVehicle + eventRows("[\"rehost\"]"));
+    EXPECT_TRUE(nochain.ok) << nochain.text;
+    EXPECT_TRUE(nochain.config.networkPhaseDatumEq34EventRows().empty());
+    EXPECT_TRUE(contains(nochain.text, "event rows are inert without the chain")) << nochain.text;
 }
 
 // The returning row is built: its entry arms on the float chain, alone or beside the kept row, in the order the

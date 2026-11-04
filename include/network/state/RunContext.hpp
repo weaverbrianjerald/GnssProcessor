@@ -827,6 +827,8 @@ namespace GnssProcessor {
         bool eq34_row_kept{};
         /// network.phase_datum_eq34_event_rows holds "returning" (after the loader's resolution): a tree edge whose child vertex rejoins the tree after an absence (absent from the last election's tree, a vertex of an earlier one) takes the cut release.  Every carry that touches the vertex and its subtree is erased, its pin takes the first-sighting target with an unknown step, and the keys of its subtree are declared moved (network/solve/ChainDatum.hpp).  Resolved to false unless eq34.  Not fingerprinted, like the other election knobs.
         bool eq34_row_returning{};
+        /// network.phase_datum_eq34_event_rows holds "rehost" (after the loader's resolution): a tree edge whose child had a parent at the last election and whose arc was no tree edge then takes the cut release.  Its pin keeps the rounded integer target the as-built rule drafted with an unknown step, every carry that touches the child and its subtree is erased, and the keys of its subtree are declared moved (network/solve/ChainDatum.hpp).  The row's certified branch is held: every re-host takes this rule.  Resolved to false unless eq34.  Not fingerprinted, like the other election knobs.
+        bool eq34_row_rehost{};
         /// network.phase_datum_eq34_seed_round (docs/SPEC_eq34_seed_round.md): round
         /// otherwise-zero pin targets to λ·round(x_state/λ), so |innovation| ≤ λ/2 by
         /// construction.  Not gated on !carry_invariant: the invariant-carry zero-target rationale

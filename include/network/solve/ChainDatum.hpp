@@ -171,8 +171,17 @@ void eq34ShiftCarry(NetworkCarryState& carry, net::NetworkEntities& entities,
  * M at any station, a receiver of M to any satellite on the band, at present and absent
  * stations) before the shift walk applies.  The keys of M's satellites are the moved keys the
  * observatory declares.  The row certifies nothing: a returning vertex's own carries are never
- * trusted to keep its old frame, so every returning edge takes the release.  With a row off
- * nothing here changes.
+ * trusted to keep its old frame, so every returning edge takes the release.
+ *
+ * With the rehost row armed (@c "rehost") a tree edge whose child had a parent at the last
+ * election but whose arc was no tree edge then, in either direction, takes the same cut release.
+ * The arc is not in the epoch's free-epoch latch (that is the slip row's case).  The pin keeps the
+ * target the as-built rule drafted, which is already an integer (the rounded carry of the new host
+ * or the seed round's first-sighting target), with an unknown step: the integer of a chord the
+ * previous epoch certified is not read, so every re-host takes this rule.  The release is the
+ * returning row's: the moved side is the child and its subtree, whose satellites are
+ * re-referenced and declared moved and whose receivers lose their carries.  A held or flipped
+ * kept edge below a released re-host joins its moved side.  With a row off nothing here changes.
  *
  * @param ctx           [in/out] carry + counters.  The whole context is passed
  *                      instead of about twenty individual references because the
@@ -225,13 +234,14 @@ struct NetworkRunEndView;
  * @brief Run-end report: the eq34 chain datum: re-references, pin audit, seed round, slip-aware election.
  *
  * The eq34 chain datum: the re-reference totals, the pair family, the kept row, the returning row,
- * the pin audit, the seed round and the slip-aware election.
+ * the rehost row, the pin audit, the seed round and the slip-aware election.
  *
  * Gate: each section under its own condition:
  * `config_.networkPhaseDatumEq34()`; `config_.networkPhaseDatumEq34SeedRound()`;
  * `config_.networkPhaseDatumEq34SlipAwareElection()`; the pair family line under
  * `ctx.knobs.eq34_pair_family`; the kept row lines under `ctx.knobs.eq34_row_kept`; the
- * returning row lines under `ctx.knobs.eq34_row_returning`.
+ * returning row lines under `ctx.knobs.eq34_row_returning`; the rehost row lines under
+ * `ctx.knobs.eq34_row_rehost`.
  *
  * @param v The run at its end (network/runend/RunEnd.hpp).
  * @return 0 (this report does not set the exit code).
@@ -416,6 +426,26 @@ struct ChainDatumCounters {
     long long eq34_ret_rpb = 0;               ///< receiver phase-bias carries the releases dropped
     long long eq34_ret_pb = 0;                ///< satellite phase-bias priors of the moved sides (measure-only: the re-reference marginalizes them)
     long long eq34_ret_declared = 0;          ///< (satellite, signal) keys of the moved sides, declared moved
+    // The rehost row of the chain's event table (network.phase_datum_eq34_event_rows "rehost"); all stay 0
+    // with the row off.  A re-host edge is a tree edge whose child had a parent at the last election and
+    // whose arc was no tree edge then, in either direction.  The row releases it (the cut release the
+    // returning row takes) or, when its arc is in the epoch's free-epoch latch, leaves it to the slip row.
+    // The as-built tallies state what the as-built draft of a released edge had been, before the release
+    // replaced its step; they and the released count are per election.  The cut tallies are what the
+    // releases took, per release.
+    long long eq34_rh_released = 0;           ///< re-host edges the row released
+    long long eq34_rh_not_freed = 0;          ///< re-host edges not released: the arc is in the epoch's free-epoch latch (the slip row's case)
+    long long eq34_rh_with_state = 0;         ///< ...released edges whose moved side held at least one leveling carry, receiver phase-bias carry or satellite phase-bias prior that the release took
+    long long eq34_rh_carry = 0;              ///< ...released edges whose as-built target was read from the new host's carried value (pin-to-round)
+    long long eq34_rh_cold = 0;               ///< ...released edges with no carried value at the new host
+    long long eq34_rh_asbuilt_zero = 0;       ///< ...released edges whose as-built step was a known zero
+    long long eq34_rh_asbuilt_whole = 0;      ///< ...a known nonzero step of whole cycles
+    long long eq34_rh_asbuilt_frac = 0;       ///< ...a known nonzero step that is not whole cycles (or that has no wavelength)
+    long long eq34_rh_asbuilt_unknown = 0;    ///< ...an unknown step
+    long long eq34_rh_arcs = 0;               ///< leveling carries the rehost releases erased: every carry of a satellite of a moved side at any station, and every carry of a receiver of a moved side on its band
+    long long eq34_rh_rpb = 0;                ///< receiver phase-bias carries the rehost releases dropped
+    long long eq34_rh_pb = 0;                 ///< satellite phase-bias priors of the moved sides (measure-only: the re-reference marginalizes them)
+    long long eq34_rh_declared = 0;           ///< (satellite, signal) keys of the moved sides, declared moved
 };
 
 } // namespace GnssProcessor

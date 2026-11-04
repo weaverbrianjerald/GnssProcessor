@@ -116,16 +116,20 @@ TEST(NetworkChainFrame, EventTableHasOneRowPerClassInOrder) {
 }
 
 // The loader takes its entries from the table: the distinct non-empty ones, in table order, with
-// the rows built so far (the rows are built in table order, kept and returning first).
-TEST(NetworkChainFrame, EventRowEntriesAreTheTablesAndOnlyKeptAndReturningAreBuilt) {
+// the rows built so far (the rows are built in table order: kept, returning, rehost).
+TEST(NetworkChainFrame, EventRowEntriesAreTheTablesAndOnlyKeptReturningAndRehostAreBuilt) {
     EXPECT_EQ(chainEventRowEntries(), (std::vector<std::string>{"kept", "returning", "rehost", "root", "slip",
                                                                "merge_split"}));
-    for (const char* entry : {"kept", "returning"}) EXPECT_TRUE(chainEventRowEntryBuilt(entry)) << entry;
-    for (const char* entry : {"rehost", "root", "slip", "merge_split", "", "bogus"})
+    for (const char* entry : {"kept", "returning", "rehost"}) EXPECT_TRUE(chainEventRowEntryBuilt(entry)) << entry;
+    for (const char* entry : {"root", "slip", "merge_split", "", "bogus"})
         EXPECT_FALSE(chainEventRowEntryBuilt(entry)) << entry;
-    // An entry two rows share is built only when both rows are.
+    // An entry two rows share is built when each of its rows is built or held and at least one is built.
     for (const ChainEventSpec& s : kChainEventSpec)
-        if (std::string(s.rows_entry).empty()) EXPECT_FALSE(s.built) << s.name;   // Birth has no entry
+        if (std::string(s.rows_entry).empty()) EXPECT_FALSE(s.built || s.held) << s.name;   // Birth has no entry
+    for (const ChainEventSpec& s : kChainEventSpec)
+        EXPECT_EQ(s.held, s.row == ChainEventRow::RehostCertified) << s.name;
+    EXPECT_TRUE(chainEventSpec(ChainEventRow::RehostUncertified).built);
+    EXPECT_FALSE(chainEventSpec(ChainEventRow::RehostCertified).built);   // held: its edges take the other row's rule
     // The knob snapshot arms a row through chainEventRowArmed, and a row not built is never armed.
     NetworkKnobs k{};
     for (std::size_t r = 0; r < kChainEventRowCount; ++r)
@@ -140,6 +144,16 @@ TEST(NetworkChainFrame, EventRowEntriesAreTheTablesAndOnlyKeptAndReturningAreBui
         EXPECT_EQ(chainEventRowArmed(k, kChainEventSpec[r].row), kChainEventSpec[r].row == ChainEventRow::Returning)
             << kChainEventSpec[r].name;
     EXPECT_STREQ(chainEventSpec(ChainEventRow::Returning).event, "returning");
+    // The rehost entry arms both re-host rows (the certified branch is held, not off).
+    k.eq34_row_returning = false;
+    k.eq34_row_rehost = true;
+    for (std::size_t r = 0; r < kChainEventRowCount; ++r)
+        EXPECT_EQ(chainEventRowArmed(k, kChainEventSpec[r].row),
+                  kChainEventSpec[r].row == ChainEventRow::RehostCertified
+                      || kChainEventSpec[r].row == ChainEventRow::RehostUncertified)
+            << kChainEventSpec[r].name;
+    EXPECT_STREQ(chainReleaseRowName(ChainReleaseRow::Returning), "returning");
+    EXPECT_STREQ(chainReleaseRowName(ChainReleaseRow::Rehost), "rehost");
 }
 
 TEST(NetworkChainFrame, CertificationDeterminesAPreciseChordAndNotAnImpreciseOne) {
@@ -1202,6 +1216,306 @@ TEST(NetworkChainFrame, TheElectionRunEndReportsTheReturningRowOnlyWhenArmed) {
         r.fx->ctx().counters.eq34_ret_released = 3;   // never read with the row off
         const std::string text = r.runEnd(&networkChainDatumRunEnd);
         EXPECT_FALSE(contains(text, "eq34 returning row")) << text;
+    }
+}
+
+// ---- The rehost row -----------------------------------------------------------------------------------
+
+/// Observe two epochs of a re-hosting satellite: at the first (261030) G01 hangs under A, B under G01 and G02 under
+/// B; at the second (261060) G02 moves onto A (its edge A - G02 is a re-host that left B), G01 and B keep their
+/// edges.  The as-built rule took a known step of 5 whole cycles from the new host's carry.  @p armed: the rehost
+/// row released the edge (and the epoch carries the release of its moved side) rather than leaving the as-built
+/// edge.  @p certified: the memory of the first epoch holds a chord table that certifies G02's integer at A, so
+/// the observatory calls the re-host certified (the certified branch is held, so the release is the same).
+void observeRehostSatellite(ChainObserverRun& r, bool armed, bool certified = false) {
+    {   // epoch 1
+        auto rec = std::make_shared<ChainEpochObs>();
+        rec->armed = true;
+        rec->comps.push_back(component(0, "A", {0, 1}, {"G01", "G02"}));
+        rec->edges = {edge(0, "G01", true), edge(1, "G01", false), edge(1, "G02", true)};
+        r.observeRecord(261030.0, rec);
+    }
+    if (certified) {
+        auto mem = std::make_shared<ChainFrameMemory>(*r.fx->ctx().counters.chain_frame_memory);
+        ChainChordRow c;
+        c.station = 0;
+        c.sat = "G02";
+        c.sig1 = "L1C";
+        c.sig2 = "L2W";
+        c.float_cyc_1 = 5.1;
+        c.have_int_1 = true;
+        c.int_1 = 5;
+        mem->chords[{0, "G02", "L1C"}] = {c, 1};
+        r.fx->ctx().counters.chain_frame_memory = mem;
+    }
+    {   // epoch 2: G02 moves onto A
+        auto rec = std::make_shared<ChainEpochObs>();
+        rec->armed = true;
+        rec->comps.push_back(component(0, "A", {0, 1}, {"G01", "G02"}));
+        ChainEdgeObs g1 = edge(0, "G01", true);
+        g1.had_parent = g1.incumbent_same = true;
+        ChainEdgeObs b1 = edge(1, "G01", false);
+        b1.had_parent = b1.incumbent_same = true;
+        ChainEdgeObs g2 = edge(0, "G02", true);
+        g2.had_parent = true;
+        g2.prev_parent = "R:1";
+        g2.edge_changed = true;
+        g2.cause = ChainLegacyCause::RehostCarry;
+        g2.depth = 1;
+        g2.legacy_known = true;                      // the as-built rule: a known step of 5 cycles
+        g2.legacy_pinmove_m = g2.legacy_target_m = 5.0 * kLambda;
+        if (armed) {                                 // the release replaced the step, kept the rounded target
+            g2.row_armed = true;
+            g2.known = false;
+            g2.pinmove_m = 0.0;
+            g2.target_m = 5.0 * kLambda;
+        } else {
+            g2.known = true;
+            g2.pinmove_m = g2.target_m = 5.0 * kLambda;
+        }
+        rec->edges = {g1, b1, g2};
+        if (armed) {
+            ChainReleaseObs rel;
+            rel.row = ChainReleaseRow::Rehost;
+            rel.group = kGroup;
+            rel.signal = "L1C";
+            rel.comp = 0;
+            rel.station = 0;
+            rel.sat = "G02";
+            rel.sat_is_child = true;
+            rel.vertex = "S:G02";
+            rel.sats = {"G02"};
+            rel.arcs = 2;
+            rel.pb = 1;
+            rec->releases = {rel};
+        }
+        r.observeRecord(261060.0, rec);
+    }
+}
+
+// A released re-host writes its leave and join rows with the as-built facts the release replaced, one cut_release
+// row and one declared_keys row per satellite of its moved side whose cause names the rehost row; the counters
+// sum the release.  A re-host the chord table certifies is released the same way (its certified branch is held)
+// and counted as such.
+TEST(NetworkChainFrame, TheObserverWritesTheRehostRowsOfAReleasedReHostWithTheAsBuiltFacts) {
+    for (const bool certified : {false, true}) {
+        const std::string what = certified ? "certified" : "uncertified";
+        ChainObserverRun r(std::string("rh_rows_") + (certified ? "c" : "u"), std::vector<std::string>{"rehost"});
+        ASSERT_TRUE(r.fx->ctx().knobs.eq34_row_rehost);
+        ASSERT_FALSE(r.fx->ctx().knobs.eq34_row_returning || r.fx->ctx().knobs.eq34_row_kept);
+        observeRehostSatellite(r, /*armed=*/true, certified);
+
+        const ChainFrameCounters& c = r.fx->ctx().counters;
+        const std::size_t klass = static_cast<std::size_t>(certified ? ChainEventRow::RehostCertified
+                                                                     : ChainEventRow::RehostUncertified);
+        EXPECT_EQ(c.cf_rows[klass], 1) << what;
+        EXPECT_EQ(c.cf_rows_armed[klass], 1) << what;
+        EXPECT_EQ(c.cf_rows_unknown[klass], 1) << what;    // the realized step: the release's unknown step
+        EXPECT_EQ(c.cf_rehosts, 1) << what;
+        EXPECT_EQ(c.cf_rh_pairs, 1) << what;
+        EXPECT_EQ(c.cf_rh_asbuilt_whole, 1) << what;       // the as-built step was 5 whole cycles
+        EXPECT_EQ(c.cf_rh_asbuilt_zero + c.cf_rh_asbuilt_other + c.cf_rh_asbuilt_unknown, 0) << what;
+        EXPECT_EQ(c.cf_rh_certified_held, certified ? 1 : 0) << what;
+        EXPECT_EQ(c.cf_ret_pairs, 0) << what;
+        EXPECT_EQ(c.cf_cut_releases, 1) << what;
+        EXPECT_EQ(c.cf_cut_arcs, 2) << what;
+        EXPECT_EQ(c.cf_cut_pb, 1) << what;
+        EXPECT_EQ(c.cf_cut_rpb, 0) << what;
+        EXPECT_EQ(c.cf_declared_keys, 1) << what;
+        EXPECT_EQ(c.cf_events, 4) << what;                 // leave, join, cut_release and one declared_keys
+
+        ChainRows ev(r);
+        ASSERT_EQ(ev.rows.size(), 4u) << what;
+        for (const auto& row : ev.rows) EXPECT_EQ(row[static_cast<std::size_t>(ev.tow)], "261060.000") << what;
+        // leave: the parent edge it left (the old parent in the station column), join: the new edge.
+        EXPECT_EQ(ev.at(0, ev.event), "rehost") << what;
+        EXPECT_EQ(ev.at(0, ev.action), "leave") << what;
+        EXPECT_EQ(ev.at(0, ev.sat), "G02") << what;
+        EXPECT_EQ(ev.at(0, ev.station), "B") << what;
+        EXPECT_EQ(ev.at(1, ev.event), "rehost") << what;
+        EXPECT_EQ(ev.at(1, ev.action), "join") << what;
+        EXPECT_EQ(ev.at(1, ev.sat), "G02") << what;
+        EXPECT_EQ(ev.at(1, ev.station), "A") << what;
+        for (std::size_t k : {std::size_t{0}, std::size_t{1}}) {
+            const std::string& d = ev.at(k, ev.detail);
+            EXPECT_TRUE(contains(d, std::string("row=") + (certified ? "RehostCertified cert=1" : "RehostUncertified cert=0")))
+                << what << ": " << d;
+            EXPECT_TRUE(contains(d, "known=0")) << what << ": " << d;   // the realized step
+            EXPECT_TRUE(contains(d, " legacy_cause=rehost_carry legacy_known=1 legacy_pinmove_m="
+                                        + fmt::format("{:.6f}", 5.0 * kLambda)
+                                        + " legacy_target_cyc=5.000000")) << what << ": " << d;
+        }
+        EXPECT_EQ(ev.at(2, ev.event), "cut_release") << what;
+        EXPECT_EQ(ev.at(2, ev.action), "release") << what;
+        EXPECT_EQ(ev.at(2, ev.sat), "G02") << what;
+        EXPECT_EQ(ev.at(2, ev.station), "A") << what;
+        EXPECT_EQ(ev.at(2, ev.detail), "sig=L1C comp=0 root=G02 arcs=2 rpb=0 pb=1 n_rx=0 n_sat=1") << what;
+        EXPECT_EQ(ev.at(3, ev.event), "declared_keys") << what;
+        EXPECT_EQ(ev.at(3, ev.action), "declare") << what;
+        EXPECT_EQ(ev.at(3, ev.sat), "G02") << what;
+        EXPECT_EQ(ev.at(3, ev.detail), "sig=L1C cause=rehost root=G02") << what;
+    }
+}
+
+// With the row off a re-host writes the leave and join rows it always has, with no as-built tokens, and
+// the cut and declared counts stay 0.
+TEST(NetworkChainFrame, WithTheRowOffAReHostWritesThePlainLeaveAndJoinRows) {
+    ChainObserverRun r("rh_off", std::vector<std::string>{"kept", "returning"});   // other rows armed: no rehost row
+    ASSERT_FALSE(r.fx->ctx().knobs.eq34_row_rehost);
+    observeRehostSatellite(r, /*armed=*/false);
+    const ChainFrameCounters& c = r.fx->ctx().counters;
+    EXPECT_EQ(c.cf_rh_pairs + c.cf_rh_asbuilt_zero + c.cf_rh_asbuilt_whole + c.cf_rh_asbuilt_other
+              + c.cf_rh_asbuilt_unknown + c.cf_rh_certified_held, 0);
+    EXPECT_EQ(c.cf_cut_releases + c.cf_cut_arcs + c.cf_cut_pb + c.cf_cut_rpb + c.cf_declared_keys, 0);
+    EXPECT_EQ(c.cf_rows_armed[static_cast<std::size_t>(ChainEventRow::RehostUncertified)], 0);
+    EXPECT_EQ(c.cf_rehosts, 1);
+    ChainRows ev(r);
+    ASSERT_EQ(ev.rows.size(), 2u);
+    for (std::size_t k = 0; k < 2; ++k) {
+        EXPECT_EQ(ev.at(k, ev.event), "rehost");
+        EXPECT_FALSE(contains(ev.at(k, ev.detail), "legacy_")) << ev.at(k, ev.detail);
+        EXPECT_TRUE(contains(ev.at(k, ev.detail), "known=1")) << ev.at(k, ev.detail);
+    }
+    EXPECT_EQ(ev.at(0, ev.action), "leave");
+    EXPECT_EQ(ev.at(0, ev.station), "B");
+    EXPECT_EQ(ev.at(1, ev.action), "join");
+    EXPECT_EQ(ev.at(1, ev.station), "A");
+}
+
+// A returning release and a rehost release in one epoch: each declared_keys row names the row that released.
+TEST(NetworkChainFrame, TheDeclaredKeysRowNamesTheRowThatReleased) {
+    ChainObserverRun r("rh_two_rows", std::vector<std::string>{"returning", "rehost"});
+    auto rec = std::make_shared<ChainEpochObs>();
+    rec->armed = true;
+    rec->comps.push_back(component(0, "A", {0, 1}, {"G01", "G02"}));
+    ChainReleaseObs ret;
+    ret.row = ChainReleaseRow::Returning;
+    ret.group = kGroup;
+    ret.signal = "L1C";
+    ret.station = 0;
+    ret.sat = "G01";
+    ret.vertex = "S:G01";
+    ret.sats = {"G01"};
+    ChainReleaseObs reh = ret;
+    reh.row = ChainReleaseRow::Rehost;
+    reh.sat = "G02";
+    reh.vertex = "S:G02";
+    reh.sats = {"G02"};
+    rec->releases = {ret, reh};
+    r.observeRecord(261030.0, rec);
+    ChainRows ev(r);
+    std::vector<std::string> causes;
+    for (std::size_t k = 0; k < ev.rows.size(); ++k)
+        if (ev.at(k, ev.event) == "declared_keys") causes.push_back(ev.at(k, ev.sat) + ":" + ev.at(k, ev.detail));
+    EXPECT_EQ(causes, (std::vector<std::string>{"G01:sig=L1C cause=returning root=G01",
+                                                 "G02:sig=L1C cause=rehost root=G02"}));
+    const ChainFrameCounters& c = r.fx->ctx().counters;
+    EXPECT_EQ(c.cf_cut_releases, 2);
+    EXPECT_EQ(c.cf_declared_keys, 2);
+    const std::string text = r.runEnd(&networkChainFrameRunEnd);
+    EXPECT_TRUE(contains(text, "2 declared key(s) (cut and declared by the returning and rehost rows)")) << text;
+    // Each row's line counts only its own rows.
+    EXPECT_EQ(c.cf_ret_cut_releases, 1);
+    EXPECT_EQ(c.cf_ret_declared_keys, 1);
+    EXPECT_EQ(c.cf_rh_cut_releases, 1);
+    EXPECT_EQ(c.cf_rh_declared_keys, 1);
+    EXPECT_TRUE(contains(text, "2 returning row(s) written to the event trace: 0 released edge(s) (a leave and a join "
+                               "row each; the as-built step was a known zero on 0, whole cycles on 0, another nonzero "
+                               "step on 0 and unknown on 0), 1 cut_release row(s) and 1 declared_keys row(s)")) << text;
+    EXPECT_TRUE(contains(text, "2 rehost row(s) written to the event trace: 0 released edge(s) (a leave and a join "
+                               "row each; the as-built step was a known zero on 0, whole cycles on 0, another nonzero "
+                               "step on 0 and unknown on 0; the previous chord table certified 0 of them and the held "
+                               "certified branch released them anyway), 1 cut_release row(s) and 1 declared_keys "
+                               "row(s)")) << text;
+    EXPECT_TRUE(contains(text, "event row(s) armed: returning, rehost; the other rows ran the as-built rule")) << text;
+}
+
+// The run-end report of the observatory names the rehost row as one that cuts and declares, counts what it wrote
+// and says the certified branch is held; with the row off it says what it said before.
+TEST(NetworkChainFrame, TheRunEndNamesTheRehostRowAndItsHeldCertifiedBranchOnlyWhenArmed) {
+    {
+        ChainObserverRun r("rh_end_on", std::vector<std::string>{"kept", "rehost"});
+        observeRehostSatellite(r, /*armed=*/true, /*certified=*/false);
+        const std::string text = r.runEnd(&networkChainFrameRunEnd);
+        EXPECT_TRUE(contains(text, "event row(s) armed: kept, rehost; the other rows ran the as-built rule")) << text;
+        EXPECT_TRUE(contains(text, "1 edge(s), 1 under the integer rule: realized step unknown 1, fractional 0; integer "
+                                   "rule CutRelease / CutRelease / DeclareMoved")) << text;
+        EXPECT_TRUE(contains(text, "0 edge(s), 0 under the integer rule: HELD, its edges took the rule of the rehost "
+                                   "entry's built row (RehostUncertified); realized step unknown 0, fractional 0")) << text;
+        EXPECT_TRUE(contains(text, "4 rehost row(s) written to the event trace: 1 released edge(s) (a leave and a join "
+                                   "row each; the as-built step was a known zero on 0, whole cycles on 1, another "
+                                   "nonzero step on 0 and unknown on 0; the previous chord table certified 0 of them and "
+                                   "the held certified branch released them anyway), 1 cut_release row(s) and 1 "
+                                   "declared_keys row(s)")) << text;
+        EXPECT_TRUE(contains(text, "4 rehost row(s) written")) << text;
+        EXPECT_TRUE(contains(text, "2 cut-released arc(s), 1 phase-bias prior(s) and 0 receiver phase bias(es); "
+                                   "1 declared key(s) (cut and declared by the rehost row)")) << text;
+        EXPECT_FALSE(contains(text, "returning row(s) written")) << text;
+    }
+    {
+        ChainObserverRun r("rh_end_cert", std::vector<std::string>{"rehost"});
+        observeRehostSatellite(r, /*armed=*/true, /*certified=*/true);
+        const std::string text = r.runEnd(&networkChainFrameRunEnd);
+        EXPECT_TRUE(contains(text, "1 edge(s), 1 under the integer rule: HELD, its edges took the rule of the rehost "
+                                   "entry's built row (RehostUncertified); realized step unknown 1, fractional 0")) << text;
+        EXPECT_TRUE(contains(text, "the previous chord table certified 1 of them and the held certified branch "
+                                   "released them anyway")) << text;
+    }
+    {
+        ChainObserverRun r("rh_end_off", std::vector<std::string>{"kept"});
+        observeRehostSatellite(r, /*armed=*/false);
+        const std::string text = r.runEnd(&networkChainFrameRunEnd);
+        EXPECT_TRUE(contains(text, "event row(s) armed: kept; the other rows ran the as-built rule")) << text;
+        EXPECT_TRUE(contains(text, "0 declared key(s) (the armed rows cut and declare nothing)")) << text;
+        EXPECT_FALSE(contains(text, "rehost row(s) written")) << text;
+        EXPECT_FALSE(contains(text, "HELD")) << text;
+        EXPECT_FALSE(contains(text, "cut and declared by")) << text;
+    }
+}
+
+// The election's run-end report prints the rehost row's tallies only when the row is armed, says so when an armed
+// row released nothing, and counts the edges left to the slip row.
+TEST(NetworkChainFrame, TheElectionRunEndReportsTheRehostRowOnlyWhenArmed) {
+    {
+        ChainObserverRun r("rh_elect_on", std::vector<std::string>{"rehost"});
+        auto& c = r.fx->ctx().counters;
+        c.eq34_rh_released = 7;
+        c.eq34_rh_not_freed = 2;
+        c.eq34_rh_with_state = 5;
+        c.eq34_rh_carry = 4;
+        c.eq34_rh_cold = 3;
+        c.eq34_rh_asbuilt_zero = 1;
+        c.eq34_rh_asbuilt_whole = 3;
+        c.eq34_rh_asbuilt_frac = 1;
+        c.eq34_rh_asbuilt_unknown = 2;
+        c.eq34_rh_arcs = 41;
+        c.eq34_rh_rpb = 6;
+        c.eq34_rh_pb = 9;
+        c.eq34_rh_declared = 11;
+        const std::string text = r.runEnd(&networkChainDatumRunEnd);
+        EXPECT_TRUE(contains(text, "7 re-host edge(s) released, 5 of them with state (a leveling carry, a receiver "
+                                   "phase-bias carry or a satellite phase-bias prior) on the moved side")) << text;
+        EXPECT_TRUE(contains(text, "The releases erased 41 leveling carry(ies) and dropped 6 receiver phase-bias "
+                                   "carry(ies), took 9 satellite phase-bias prior(s) and declared 11 (satellite, "
+                                   "signal) key(s) moved")) << text;
+        EXPECT_TRUE(contains(text, "known zero step on 1 of the released edges, a whole-cycle step on 3, another "
+                                   "nonzero step on 1 and an unknown step on 2, and read its target from the new "
+                                   "host's carried value (pin-to-round) on 4 (a cold re-host on 3)")) << text;
+        EXPECT_TRUE(contains(text, "2 re-host edge(s) left to the slip row")) << text;
+        EXPECT_FALSE(contains(text, "released NO edge")) << text;
+        EXPECT_FALSE(contains(text, "eq34 returning row")) << text;
+    }
+    {
+        ChainObserverRun r("rh_elect_none", std::vector<std::string>{"rehost"});   // armed, nothing released
+        const std::string text = r.runEnd(&networkChainDatumRunEnd);
+        EXPECT_TRUE(contains(text, "Network (eq34 rehost row): ARMED but released NO edge")) << text;
+        EXPECT_TRUE(contains(text, "0 re-host edge(s) left to the slip row")) << text;
+    }
+    {
+        ChainObserverRun r("rh_elect_ret", std::vector<std::string>{"kept", "returning"});
+        r.fx->ctx().counters.eq34_rh_released = 3;   // never read with the row off
+        const std::string text = r.runEnd(&networkChainDatumRunEnd);
+        EXPECT_FALSE(contains(text, "eq34 rehost row")) << text;
     }
 }
 

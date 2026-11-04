@@ -120,6 +120,16 @@ ARMS = {
               + ["network.phase_datum_eq34_rpb_prior_sigma_m=0",
                  'network.phase_datum_eq34_event_rows=["kept","returning"]'],
               "A0fk + the returning row (IRD-4)"),
+    # The third row in table order: the rehost row armed beside the kept and returning rows.  Each arm is its
+    # parent (A1kr, A0fkr) with the event-row list extended and nothing else.
+    "A1krh": (SLIP_SET + SEARCH_LOG + IRD_TRACES + BUNDLE_A0
+              + ["network.phase_datum_eq34_family=pair",
+                 'network.phase_datum_eq34_event_rows=["kept","returning","rehost"]'],
+              "A1kr + the rehost row (IRD-4)"),
+    "A0fkrh": (SLIP_SET + SEARCH_LOG + IRD_TRACES + BUNDLE_A0
+               + ["network.phase_datum_eq34_rpb_prior_sigma_m=0",
+                  'network.phase_datum_eq34_event_rows=["kept","returning","rehost"]'],
+               "A0fkr + the rehost row (IRD-4)"),
     # The bisection of the stop (card IRDB section 4): bundle A0 less one group.
     "A0hb": (SLIP_SET + SEARCH_LOG + IRD_TRACES + CHAIN_ON + FLOAT_REPIN_OFF
              + ["network.phase_datum_min_stations=1"],
@@ -387,6 +397,15 @@ def selftest():
     chk(set(a0fkr) - set(a0fk) == {rows_kr} and set(a0fk) - set(a0fkr) == {'network.phase_datum_eq34_event_rows=["kept"]'}
         and len(a0fkr) == len(a0fk),
         "A0fkr is A0fk with the event-row list extended by the returning row and nothing else")
+    rows_krh = 'network.phase_datum_eq34_event_rows=["kept","returning","rehost"]'
+    a1krh = compose("A1krh", "r3c")
+    chk(set(a1krh) - set(a1kr) == {rows_krh} and set(a1kr) - set(a1krh) == {rows_kr}
+        and len(a1krh) == len(a1kr),
+        "A1krh is A1kr with the event-row list extended by the rehost row and nothing else")
+    a0fkrh = compose("A0fkrh", "microscope")
+    chk(set(a0fkrh) - set(a0fkr) == {rows_krh} and set(a0fkr) - set(a0fkrh) == {rows_kr}
+        and len(a0fkrh) == len(a0fkr),
+        "A0fkrh is A0fkr with the event-row list extended by the rehost row and nothing else")
     import rapid_arm
     cfg = {}
     for kv in a1k:
@@ -400,6 +419,12 @@ def selftest():
     chk(cfg["network"]["phase_datum_eq34_event_rows"] == ["kept", "returning"]
         and cfg["network"]["phase_datum_eq34_family"] == "pair",
         "the two rows land in the arm's JSON as one array, in table order")
+    cfg = {}
+    for kv in a1krh:
+        rapid_arm.set_key(cfg, *kv.split("=", 1))
+    chk(cfg["network"]["phase_datum_eq34_event_rows"] == ["kept", "returning", "rehost"]
+        and cfg["network"]["phase_datum_eq34_family"] == "pair",
+        "the three rows land in the arm's JSON as one array, in table order")
     o = compose("A0", "r2", knob="network.phase_datum_min_stations=2")
     chk(o.count("network.phase_datum_min_stations=2") == 1
         and "network.phase_datum_min_stations=1" not in o, "the knob under test overrides the arm")

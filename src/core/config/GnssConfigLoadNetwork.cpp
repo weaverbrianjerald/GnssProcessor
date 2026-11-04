@@ -10072,6 +10072,15 @@ namespace GnssProcessor {
                         reports += std::string(reports.empty() ? "" : "; ")
                                  + "the edges released, what the release took and the keys declared";
                     }
+                    if (networkPhaseDatumEq34EventRowArmed("rehost")) {
+                        rows += std::string(rows.empty() ? "" : "  ")
+                              + "'rehost' releases every re-host, its certified branch held: the "
+                                "re-hosted vertex and its subtree take the cut release, the new pin "
+                                "keeps its rounded integer target with an unknown step, and the "
+                                "subtree's keys are declared moved.";
+                        reports += std::string(reports.empty() ? "" : "; ")
+                                 + "the re-hosts released, what the release took and the keys declared";
+                    }
                     log->info("Network producer: eq34 EVENT ROWS ON ({}) - the integer rule of each "
                               "armed row replaces the as-built rule for its class of tree edge: "
                               "{}  The other rows run the as-built rule.  The run-end "
