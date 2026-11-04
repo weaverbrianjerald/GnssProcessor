@@ -4,15 +4,15 @@
 
 - **id:** ICL2
 - **topic:** network-vehicle
-- **status:** open
-- **summary:** Pre-registered 2026-11-03: card ICL's two owed items on card BRD's GPS + Galileo broadcast posture with both of its knobs and the phase-visible frame. (1) The frame over 24 h on DOY 129 and 132 against the GPS + Galileo golden over the same 24 h (re-anchors, |G| by hour, the levels, the receiver, the census). (2) One level for code and phase: the clock frame hold voting on C + U, or the phase frame voting on the phase biases' motion beyond the hold's clock transfer, chosen offline by a frozen rule, then built default off.
+- **status:** closed
+- **summary:** Pre-registered and closed 2026-11-03. (1) Over 24 h (DOY 129 and 132) the phase-visible frame keeps receivers whose GPS-to-Galileo offset is frozen equal to free-offset receivers (paired +0.0009 and +0.0019 m); one marked leash re-anchor (GPS, after 23.4 h, harmless); one unmarked 0.403 m step when the clock anchor decoupled 18 of 22 Galileo satellites (D2 fails on DOY 129; D1, D3, D4 pass). (2) The frame voting in the phase-bias hold's level (`network.phase_frame_hold_level_vote`, default off, chosen offline over the clock frame hold voting on C + U) brings each constellation's code and phase to within 6 to 9 mm per 120 epochs of one level (from 20 to 25), an exact no-op on the golden, receivers unchanged; the GPS-to-Galileo level then follows the code side (19.0 mm on DOY 129, from 9.4). K2 and K3 fail on their bars. Nothing armed.
 - **source:** card [ICL](ICL_inter_constellation_level_2026-11-03.md) section 7 (the two items); card [BRD](BRD_broadcast_referenced_level_2026-11-02.md) (the posture and its knobs); card [SMH](SMH_smoothed_hold_clone_2026-09-29.md) (the smoothed hold); card [LAH](LAH_level_aware_hold_2026-09-29.md) (the phase-clock hold); `docs/SPEC_clock_emit_rebase.md` (the clock frame hold)
-- **knobs / posture:** existing, read: `network.emit_phase_frame_hold`, `network.phase_frame_leash_m` (card ICL), `network.emit_clock_frame_hold`, `network.apriori_clock_track`, `network.cycle_slip.if_phase_td_sat_centre`; new, default off: the key of the candidate built in item 2 (section 3.3), named at the decision amendment
+- **knobs / posture:** new, default off: `network.phase_frame_hold_level_vote` (UNVALIDATED, parent `network.emit_phase_frame_hold`; section 5.2); existing, read: `network.emit_phase_frame_hold`, `network.phase_frame_leash_m` (card ICL), `network.emit_clock_frame_hold`, `network.apriori_clock_track`, `network.cycle_slip.if_phase_td_sat_centre`; graded on card BRD's GPS + Galileo broadcast posture with both of its knobs and the frame (card ICL's `icl_p{129,132}_6`), receivers as the golden configures them
 - **dates in the text:** 2026-11-03
-- **hashes / run dirs:** branch `icl2/frame-day-one-level` from `icl/inter-constellation-level` (`7026d4b`, unmerged), worktree `D:/GnssProcessorSupport/worktrees/icl2`; item 1 exe `gnss_processor_icl2d.exe`, a copy of card ICL's `gnss_processor_icl2.exe` (sha256[:16] `6eaa68964d3ff620`); arms `D:/GnssProcessorSupport/runs_nom/_rap_icl2_*`; census replays `_rap_<key><doy>_<site>`, keys `i2p`, `i2c` (item 1), `i2k` (item 2); scripts in `D:/GnssProcessorSupport/worktrees/icl2_tools/` (outside the repository)
+- **hashes / run dirs:** branch `icl2/frame-day-one-level` from `icl/inter-constellation-level` (`7026d4b`, unmerged, not pushed), worktree `D:/GnssProcessorSupport/worktrees/icl2`; item 1 exe `gnss_processor_icl2d.exe` (census `gnss_processor_icl2c.exe`), copies of card ICL's `gnss_processor_icl2.exe` (sha256[:16] `6eaa68964d3ff620`) in `D:/GnssProcessorSupport/worktrees/icl/build/x64-Release`; item 2 exe `gnss_processor_icl2k1.exe` (`3d0b60a606c380c7`), Release from this worktree; arms `D:/GnssProcessorSupport/runs_nom/_rap_icl2_*` (`icl2_{p,c}{129,132}_24` item 1, `icl2_k{129,132}_{sm,2,6}`, `icl2_{c129,s,p129,cv129}_2` item 2); census replays `_rap_<key><doy>_<site>`, keys `i2p`, `i2c`, `i2pI` (item 1, 24 h), `i2k` (item 2, 6 h); scripts in `D:/GnssProcessorSupport/worktrees/icl2_tools/` (outside the repository)
 - **gates (frozen at pre-registration):** section 4
 
-**Outcome.** Pre-registration. Card ICL held the GPS-to-Galileo phase-visible level of the broadcast-referenced network in a per-constellation frame and left two items: whether the frame holds over a day (|G| reached 0.49 m in 6 h against a 1.0 m leash, and each re-anchor is a datum mark), and whether code and phase can follow one level (the frame takes the phase side to the raw broadcast a priori, the clock frame hold the code side to the tracked one). Measured first: with the frame, each constellation's code and phase levels still drift apart by 20 to 25 mm per 120 epochs.
+**Outcome.** Over 24 h the phase-visible frame keeps receivers whose GPS-to-Galileo offset is frozen where free-offset receivers are (paired +0.001 and +0.002 m on DOY 129 and 132). It crossed the 1 m leash once (marked, harmless) and stepped 0.40 m unmarked when the clock anchor decoupled 18 of 22 Galileo satellites (D2 fails on DOY 129). Each constellation's code and phase levels drifted apart by 20 to 25 mm per hour; the frame voting in the phase-bias hold's level (default off) cuts that to 6 to 9 mm, an exact no-op on the golden, at a cost on DOY 129's GPS-to-Galileo level (9 to 19 mm). Nothing armed.
 
 > Results are appended TO THIS FILE, below the text.
 
@@ -271,3 +271,155 @@ epochs of one level (from 20 to 25), is an exact no-op on the golden's hold, and
 them (paired +0.0005 m pooled); the price is the GPS-to-Galileo phase-visible level on DOY 129, which follows the tracked a
 priori's common mode with the code side (19.0 mm against 9.4), and the receiver's offset (1.33 and 1.52 mm per epoch against
 1.03 and 1.26).
+
+### 5.4 Item 1: the frame over a day (2026-11-03)
+
+`icl2_p{129,132}_24` (exe `gnss_processor_icl2d.exe`, card ICL's icl2) and the controls `icl2_c{129,132}_24` (the same exe, the
+GPS + Galileo golden): all four exit 0 at 23:59:30 (12 403 and 12 247 s; 7 424 s the DOY 132 control). The four 10-epoch smokes
+reproduce the 6 h arms' first epochs in `products.txt`, `closed_loop_trace.csv` and `network_epoch_status.csv`. Census keys
+`i2p129`, `i2c129`, `i2p132`, `i2c132` (24 h consumer replays, 17 of 17 exit 0 each); `i2pI129`, `i2pI132` the same wires with
+receivers that re-estimate the offset every epoch (`filter.process_noise.system_time_offset_q` 1e-3, card BRD's free-offset
+setting), a reading beside the gates. Tools: `icl2_day.py`, `icl2_reanchor.py`, `icl2_pool.py`, `icl2_ctrl_levels.py`.
+
+**The frame by hour.** G at the end of hours 1 to 24 (m):
+
+- DOY 129, GPS: -0.017 -0.128 -0.207 -0.202 -0.204 -0.034 +0.037 +0.011 -0.100 -0.056 +0.113 +0.302 +0.367 +0.499 +0.590 +0.719
+  +0.847 +0.878 +0.610 +0.605 +0.700 +0.749 +0.911 +0.065 (largest |G| 1.003 m, at the re-anchor);
+- DOY 129, Galileo: -0.047 +0.152 +0.336 +0.399 +0.424 +0.465 +0.418 +0.399 +0.337 +0.276 +0.284 +0.304 +0.400 +0.477 +0.557
+  +0.602 +0.648 +0.615 +0.588 +0.668 +0.680 +0.700 +0.627 +0.952 (largest 0.976 m);
+- DOY 132, GPS: -0.050 -0.265 -0.447 -0.434 -0.426 -0.313 -0.244 -0.302 -0.495 -0.465 -0.355 -0.221 -0.094 +0.081 +0.200 +0.320
+  +0.456 +0.440 +0.243 +0.181 +0.210 +0.281 +0.525 +0.664 (largest 0.705 m);
+- DOY 132, Galileo: +0.093 +0.237 +0.326 +0.346 +0.359 +0.321 +0.281 +0.203 +0.189 +0.248 +0.249 +0.282 +0.305 +0.371 +0.332
+  +0.290 +0.205 +0.255 +0.329 +0.347 +0.284 +0.222 +0.235 +0.298 (largest 0.379 m).
+
+Drained over the day: GPS 5.63 and 6.18 m, Galileo 3.74 and 3.64 m (DOY 129 and 132), 0.09 to 0.55 m per hour. The frame does
+not walk to the leash at a steady rate: it wanders and comes back (DOY 132 GPS from -0.50 m in hour 9 to +0.66 m in hour 24);
+one leash crossing in 48 constellation-hours.
+
+**The re-anchor.** DOY 129, GPS, 23:25:00 (hour 24, after 23.4 h): |G| 1.003 m, reset to 0; the E record carries the datum change
+of GPS; the closed-loop receiver re-inflates its offset and takes the 1.003 m step in the epoch (its Galileo offset moves -1.003
+m). Around it, the median 3D error over the 30 minutes after minus that over the 30 minutes before: WTZZ00DEU +0.0008 m, the site
+median -0.0043 m (worst site +0.059 m); over 10 minutes +0.0059 and -0.0028 m. DOY 132: no re-anchor.
+
+**An unmarked step, DOY 129, 23:40:30.** The clock anchor decoupled 18 of the 22 Galileo satellites in one epoch (`CLK_ANCHOR`
+`cta_decouple`, statistics 6.4 to 223 against 6.0, and G06), each with a retro bump; their clock estimates stepped by -5.2 to +1.0
+m. The golden logs the same phase-anchor handover and S-transform at that epoch and no decoupling: an event of the broadcast
+posture (card BRD2's anchor decouplings, on GPS + Galileo). The frame voted on the 4 satellites left, its minimum (E02, the
+pivot; E03; E07; E36), and moved +0.403 m without a datum mark. On E02 and E36 the phase biases had moved by about 0.4 m while
+their code-visible clocks stayed (+0.4 and +1.2 mm): the frame kept their phase-visible clocks to +1.7 and +2.8 mm (E07 +100 mm,
+E03 -445 mm). The 18 bumped satellites carry the frame's shift (their median phase-visible step -445 mm, which is the level
+statistic's jump); the receiver re-solves them (its Galileo offset moves -0.487 m in the epoch) and its position does not notice:
+over the 10 minutes after against the 10 before, WTZZ00DEU -0.0037 m, the site median -0.0007 m, the worst site (SCRZ) +0.027 m
+(the control: -0.0023, -0.0025, +0.014 m).
+
+**The levels** (lag 120 epochs, mm; pivot handovers and every E-record datum change out, which moves card ICL's 6 h numbers by at
+most 0.2 mm):
+
+| day | window | code D | phase D | K_G | K_E | receiver ISB rms (p99) |
+| --- | --- | --- | --- | --- | --- | --- |
+| 129 | the control, hours 2 to 24 | 1.4 | 1.4 | 0.0 | 0.0 | 0.75 (2.8) |
+| 129 | the frame, hours 2 to 24 | 34.9 | **58.3** | 33.4 | 53.9 | **9.49** (4.8) |
+| 129 | the frame, hours 2 to 24, 23:40:30 out | 33.5 | 15.8 | 33.4 | 24.5 | 1.95 (4.5) |
+| 129 | the frame, hours 2 to 6 | 22.5 | 9.4 | 23.1 | 23.7 | 1.04 (3.9) |
+| 129 | the frame, hours 7 to 24 | 38.0 | 66.1 | 34.7 | 59.7 | 10.71 (4.9) |
+| 132 | the control, hours 2 to 24 | 1.6 | 1.6 | 0.0 | 0.0 | 0.49 (2.0) |
+| 132 | the frame, hours 2 to 24 | 27.5 | **18.9** | 31.4 | 25.7 | **0.87** (3.5) |
+| 132 | the frame, hours 2 to 6 | 28.5 | 32.4 | 24.9 | 19.7 | 1.26 (3.7) |
+| 132 | the frame, hours 7 to 24 | 27.9 | 14.0 | 32.4 | 27.3 | 0.72 (3.0) |
+
+The phase-visible GPS-to-Galileo D at the end of each hour from hour 2 (mm): DOY 129 -1 -13 -20 -7 -23 -21 -34 -59 -82 -75 -66 -90
+-102 -134 -147 -149 -156 -159 -158 -182 -192 -217 -673 (the last hour: the 23:40:30 step); DOY 132 +23 +53 +98 +115 +139 +141 +153
++142 +151 +179 +190 +193 +191 +198 +215 +222 +241 +238 +256 +230 +232 +257 +252.
+
+**The user** (census against the control, the site's mean hourly p50 over the window, paired):
+
+| day | window | census paired median | worse by > 2 cm | better / worse at 1 cm | WTZZ00DEU change |
+| --- | --- | --- | --- | --- | --- |
+| 129 | hours 2 to 6 | +0.0113 | 5 (31 %) | 3 / 8 | +0.0008 |
+| 129 | hours 7 to 24 | **+0.0160** | 6 (38 %) | 0 / 12 | **-0.0004** |
+| 129 | hours 2 to 24 | +0.0164 | 6 (38 %) | 0 / 11 | -0.0002 |
+| 132 | hours 2 to 6 | +0.0175 | 7 (44 %) | 2 / 11 | +0.0208 |
+| 132 | hours 7 to 24 | **+0.0100** | 2 (12 %) | 1 / 8 | **+0.0066** |
+| 132 | hours 2 to 24 | +0.0151 | 5 (31 %) | 0 / 9 | +0.0097 |
+| pooled | hours 2 to 24 | +0.0159 | 11 of 32 (34 %) | | |
+
+By hour (median over the 16 sites, then WTZZ00DEU), m:
+
+- DOY 129, control: 0.143 0.050 0.036 0.029 0.032 0.030 0.023 0.027 0.026 0.023 0.027 0.024 0.030 0.028 0.038 0.032 0.026 0.033
+  0.031 0.027 0.027 0.024 0.029 0.028; WTZZ00DEU 0.059 0.012 0.023 0.012 0.017 0.012 0.016 0.009 0.008 0.011 0.010 0.008 0.012
+  0.012 0.008 0.011 0.010 0.017 0.012 0.013 0.016 0.029 0.035 0.030;
+- DOY 129, the frame: 0.192 0.051 0.042 0.038 0.051 0.039 0.035 0.040 0.043 0.033 0.034 0.034 0.039 0.040 0.043 0.046 0.061 0.056
+  0.042 0.052 0.054 0.048 0.045 0.051; WTZZ00DEU 0.059 0.026 0.016 0.013 0.015 0.010 0.006 0.008 0.008 0.007 0.010 0.013 0.023
+  0.015 0.014 0.044 0.029 0.011 0.011 0.009 0.012 0.012 0.012 0.011;
+- DOY 132, control: 0.117 0.068 0.051 0.036 0.034 0.027 0.023 0.024 0.023 0.022 0.029 0.024 0.028 0.028 0.028 0.026 0.025 0.025
+  0.032 0.023 0.026 0.030 0.028 0.026; WTZZ00DEU 0.070 0.018 0.015 0.017 0.019 0.009 0.011 0.019 0.026 0.012 0.015 0.017 0.015
+  0.029 0.024 0.016 0.012 0.017 0.013 0.019 0.024 0.016 0.019 0.013;
+- DOY 132, the frame: 0.237 0.092 0.071 0.057 0.049 0.043 0.044 0.048 0.042 0.046 0.040 0.036 0.038 0.042 0.043 0.039 0.040 0.035
+  0.033 0.037 0.046 0.048 0.034 0.032; WTZZ00DEU 0.062 0.046 0.045 0.040 0.022 0.029 0.044 0.047 0.046 0.026 0.023 0.024 0.015
+  0.015 0.019 0.016 0.021 0.010 0.028 0.016 0.031 0.024 0.014 0.017.
+
+Receivers that re-estimate the offset every epoch, on the same wires: hours 2 to 24 against the control +0.0161 and +0.0112 m
+(WTZZ00DEU -0.0006 and +0.0101 m); paired with them, the receivers as configured read **+0.0009 and +0.0019 m** over hours 2 to 24
+(0 of 32 site-days worse by 2 cm), +0.0003 and -0.0009 m over hours 17 to 24. Over the whole day, the re-anchor and the 23:40:30
+step included, the frame keeps the receivers as configured where free-offset receivers are; DOY 129's later hours sit about 0.02 m
+above the control for both (0.042 to 0.074 m by hour from hour 17 with the free offset, against 0.024 to 0.033 m): the broadcast
+posture's, not the level's.
+
+**Gates.** D1: exit 0 and 23:59:30 on all four arms; each constellation's frame moved on 2 878 of 2 878 (GPS) and 2 877 of 2 877
+(Galileo, one datum-change epoch aside) emitted epochs after the first, each day; the run-end line present. **D1 PASS.** D2: DOY 132
+phase-visible D 18.9 mm against 35, the receiver's offset 0.87 mm against 2.0 (pass); DOY 129 58.3 mm and 9.49 mm (fail), both from
+the 23:40:30 step (without that epoch 15.8 mm and 1.95 mm). **D2 FAIL** (DOY 129). D3: the one re-anchor is marked, WTZZ00DEU
++0.0008 m against +0.02, the site median -0.0043 m against +0.01; DOY 132 not exercised (largest |G| 0.705 m). **D3 PASS.** D4: DOY
+129 census +0.0160 m over hours 7 to 24 against its bar of +0.0163 (hours 2 to 6 +0.0113 plus 0.005), WTZZ00DEU -0.0004 m against
++0.0108; DOY 132 +0.0100 against +0.0225, WTZZ00DEU +0.0066 against +0.0308. **D4 PASS.** Card ICL's G5 user bars over hours 2 to
+24: WTZZ00DEU -0.0002 m (pass) and +0.0097 m (fail), the census +0.0164 and +0.0151 m (fail), 34 % of the site-days worse by 2 cm
+(fail).
+
+**The vote in the hold's level over the same day, predicted.** `icl2_predict_day.py` (the simulator that reproduced the built key to
+0.1 mm, run on the 24 h frame arms with the frame's G taken off): no re-anchor (largest |G| 0.50 and 0.75 m); hours 2 to 24
+(23:40:30 out), lag 120: K_G and K_E 4.1 and 5.4 mm (DOY 129), 5.8 and 3.9 mm (DOY 132), against 33.4 and 24.5, 31.4 and 25.7 with
+the frame's vote; the phase-visible D follows the code side, 32.8 and 29.5 mm (code-visible 33.5 and 27.5).
+
+## 6. Verdict
+
+**Item 1: the frame holds a day.** Over 24 h on DOY 129 and 132 the phase-visible frame keeps the receivers as configured (the
+offset frozen) where receivers that re-estimate their offset every epoch are: paired +0.0009 and +0.0019 m over hours 2 to 24, no
+site-day worse by 2 cm, the last hours included. Its |G| wanders and comes back (largest 1.003, 0.976, 0.705 and 0.379 m over the
+four constellation-days) and crossed the 1 m leash once, GPS on DOY 129 after 23.4 h; that re-anchor is marked and the receivers do
+not notice it (WTZZ00DEU +0.0008 m, the site median -0.0043 m over 30 minutes). D1, D3 and D4 pass. D2 fails on DOY 129 through one
+unmarked step: at 23:40:30 the clock anchor decoupled 18 of the 22 Galileo satellites in one epoch, each with its retro bump, and
+the frame moved 0.403 m on the 4 left, its minimum. The level statistic, which keeps the bumped satellites, jumps 0.45 m and the
+receiver's offset 0.49 m; the receivers' positions do not move (WTZZ00DEU -0.0037 m, the site median -0.0007 m over 10 minutes).
+Without that epoch the level reads 15.8 mm per 120 epochs and the receiver's offset 1.95 mm per epoch on DOY 129. What the receivers
+lose against the golden over the day (census +0.0164 and +0.0151 m; DOY 129's later hours about 0.02 m) free-offset receivers lose
+too: the broadcast posture's remainder, not the level.
+
+**Item 2: one level for code and phase, at a price on the GPS-to-Galileo level.** Measured first: with card ICL's frame each
+constellation's code and phase levels drift apart by 20 to 25 mm per 120 epochs (the golden: 0). Offline, the phase frame voting
+on C - P_IF - M (the phase-bias hold's level) beat the clock frame hold voting on C + U (S 19.69 against 21.73 mm; the two together
+21.55). Built as `network.phase_frame_hold_level_vote` (default off, outputs only), it reads its prediction to 0.1 mm: K 5.9 and 7.0
+mm (DOY 129), 9.0 and 7.3 mm (DOY 132) per 120 epochs, from 23.1 and 23.7, 24.9 and 19.5, and 4 to 6 mm over a day predicted. It is
+an exact no-op on the golden's phase-clock hold (byte-identical, every step floored), the property card ICL's G1 found missing, and
+the receivers are where card ICL's frame left them (paired +0.0004 and +0.0015 m). The price: the GPS-to-Galileo phase-visible level
+then follows the tracked a priori's common mode with the code side, 19.0 mm per 120 epochs on DOY 129 (from 9.4) and 34.8 on DOY 132
+(from 32.4), and the receiver's offset moves 1.33 and 1.52 mm per epoch (from 1.03 and 1.26). K-U0, K0, K1 and K4 pass; K2 (hour 2,
+lag 40: 4.2 to 4.8 mm against 4) and K3 (DOY 132's K_G, 9.0 mm against 8, as predicted) fail on their code-to-phase bars.
+
+Nothing is armed; arming, any golden change and the merge are the author's decisions.
+
+## 7. What remains
+
+- **The vote at a mass decoupling.** When the clock anchor decouples most of a constellation in one epoch, the frame votes on the
+  few satellites left (4 of 22 at 23:40:30 on DOY 129) and moves unmarked. Untested: a quorum relative to the constellation's
+  continuing satellites, below which the frame pauses, or a datum mark of the constellation when the anchor decouples most of it.
+  Card BRD2's tracked posture with the anchor's statistic test disarmed (`network.clock_anchor_k` 1e6, branch `brdc/brd2`, GPS only)
+  removes such decouplings at the source; it has no GPS + Galileo run.
+- **The key over a day.** Predicted (section 5.4): no re-anchor, K of 4 to 6 mm per 120 epochs. A 24 h run of
+  `network.phase_frame_hold_level_vote` with its census is owed.
+- **The level both sides follow.** With the vote in the hold's level, code and phase follow the tracked a priori's common mode (the
+  code-visible D 33.5 and 27.5 mm per 120 epochs over a day). The raw broadcast level is quieter on DOY 129 and noisier on DOY 132
+  (section 5.1, candidate (a) and the two together). A level that follows neither (the S-basis pinning an untracked or a quiet
+  pivot, card ICL section 2.5 rows (a) and (a')) is the remaining lever on the GPS-to-Galileo D.
+- **The broadcast posture's remainder.** Against the golden the receivers lose +0.016 m pooled over the day whatever their offset
+  setting, DOY 129's later hours about 0.02 m (card BRD2: the anchor's decouplings and the smoothed hold's bridge). DOY 130 and 131
+  and a real-time run remain owed (card ICL section 7).
