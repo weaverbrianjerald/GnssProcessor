@@ -770,6 +770,7 @@ add_executable(gnss_tests
     tests/network/test_network_iftd_sat_centre.cpp
     tests/network/test_network_apriori_clock_track.cpp
     tests/network/test_network_phase_frame_hold.cpp
+    tests/network/test_network_phase_frame_level_vote.cpp
     tests/network/test_network_solve_skip.cpp
     tests/network/test_network_we_choice.cpp
     tests/network/test_network_within_epoch_culprits.cpp

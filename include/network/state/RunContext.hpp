@@ -307,6 +307,7 @@ namespace GnssProcessor {
         bool apriori_track_on{};        ///< network.apriori_clock_track: the broadcast a priori follows the IF-TD columns (AprioriClockTrack.hpp)
         bool   phase_frame_hold{};        ///< network.emit_phase_frame_hold: the emitted phase-visible clock in a per-constellation held frame (PhaseFrameHold.hpp)
         double phase_frame_leash_m{1.0};  ///< network.phase_frame_leash_m: its |G| re-anchor bound, m
+        bool   phase_frame_level_vote{};  ///< network.phase_frame_hold_level_vote: the frame votes on C - P_IF - M, the phase-bias hold's level
         int  pv_window_ep{60};          ///< network.phase_visible_window_ep: its window, epochs
         /// network.carry_coupling_gauge_project: hold each (constellation, kind)
         /// coefficient sum of a truncated coupling row at its harvest value, so a departed

@@ -4959,6 +4959,27 @@ namespace GnssProcessor {
          * @return The bound (m).
          */
         double networkPhaseFrameLeashM() const { return network_phase_frame_leash_m_; }
+
+        /**
+         * @brief The phase-visible frame votes in the phase-bias hold's level
+         *        (@c network.phase_frame_hold_level_vote,
+         *        docs/refound/ICL2_frame_day_one_level_2026-11-03.md).
+         *
+         * The frame of @ref networkEmitPhaseFrameHold votes on each satellite's C - P_IF - M,
+         * M the phase-bias hold's accumulated median step of its constellation's emitted clocks
+         * (the level the phase-clock hold keeps on code and phase alike), in place of the
+         * correction against the raw a priori C - P_IF + U.  Under the phase-clock hold the
+         * vote is constant within a generation and the frame does not move (an exact no-op;
+         * steps up to 1e-9 m are the hold's rounding and are not applied); under the smoothed
+         * hold it removes the common mode of the clones' passed motion, so each constellation's
+         * phase-visible level follows its code-visible one.  Outputs only; requires
+         * @c network.emit_phase_frame_hold and @c network.emit_pb_hold_phase_clock or
+         * @c network.emit_pb_hold_smoothed (hard error at load).  Default false
+         * (byte-identical).
+         *
+         * @return Whether the phase-visible frame votes in the hold's level.
+         */
+        bool networkPhaseFrameHoldLevelVote() const { return network_phase_frame_hold_level_vote_; }
         /// |frame accumulator| bound (m) beyond which the constellation re-anchors
         /// to the solve frame with a datum mark (markDatumChange): the marked
         /// re-coupling edge (invariant #7).
@@ -8966,6 +8987,7 @@ namespace GnssProcessor {
         bool   network_emit_clock_frame_hold_{false};      ///< Emit the satellite clocks in a per-constellation held frame (docs/SPEC_clock_emit_rebase.md): the per-epoch common-mode innovation (median vs the previous emitted values, ≥4 fresh unforced keys) accumulates into a frame offset A_c that never re-enters the wire. The removed direction is the per-epoch clock-ensemble gauge (a consumer's per-epoch receiver clock absorbs it; between-sat differences preserved exactly); in offline replay of a 12 h run it removed all 613 census step epochs (max 17.7 m). Outputs-only (solve byte-identical even when on; fingerprint-safe); baked into the product (replay-safe). Off = the leaf is never called (byte-identical).
         bool   network_emit_phase_frame_hold_{false};      ///< The emitted phase-visible clock in a per-constellation held frame (network.emit_phase_frame_hold). Outputs only.
         double network_phase_frame_leash_m_{1.0};          ///< Its |G| re-anchor bound (m) (network.phase_frame_leash_m). Inert unless network_emit_phase_frame_hold_.
+        bool   network_phase_frame_hold_level_vote_{false}; ///< The phase-visible frame votes on C - P_IF - M, the phase-bias hold's level (network.phase_frame_hold_level_vote). Outputs only.
         double network_clock_frame_leash_m_{50.0};         ///< |A_c| re-anchor bound (m). Crossing it re-anchors the constellation to the solve frame with markDatumChange (the marked re-coupling edge of invariant #7; never silent). Measured 12 h wander on the reference lineage: 23 m. Inert unless network_emit_clock_frame_hold_.
         bool   network_clock_disc_jump_test_{false};       ///< Mark per-satellite common-removed clock steps > network_clock_disc_jump_m_ via the markSatDiscontinuity retro-bump: R record + per-sat phase/code/clock counters, the consumer-reset chain Q4 proved end-to-end. Independent of the frame hold (alone it marks the raw wire with the census's own statistic). Per RTA-11 the emitter's clock counter keeps no internal magnitude test; this test lives at the emission-prep tier and replay reproduces it from the serialized R/E records. Off = byte-identical.
         double network_clock_disc_jump_m_{1.5};            ///< Flat per-sat step threshold (m). Empirical (SPEC clock_emit_rebase §1): 1.5 ≈ 16σ of the measured per-epoch walk step (robust σ 0.092 m) ⇒ ~7 marks/h on the reference internal lineage; the census outlier floor (0.5) would mark 73/h, a burst of consumer resets. Inert unless network_clock_disc_jump_test_.

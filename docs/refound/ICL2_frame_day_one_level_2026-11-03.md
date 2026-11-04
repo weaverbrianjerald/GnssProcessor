@@ -182,3 +182,50 @@ arithmetic. With the 1e-9 m floor of section 3.2 G stays exactly 0.
 The key: `network.phase_frame_hold_level_vote` (bool, default false): the phase frame votes on the phase-visible correction in
 the phase-bias hold's level, C - P_IF - M, in place of C - P_IF + U. It requires `network.emit_phase_frame_hold` and a hold that
 keeps M (`network.emit_pb_hold_phase_clock` or `network.emit_pb_hold_smoothed`), refused at load otherwise.
+
+### 5.2 Item 2: the build and the 2 h gates (2026-11-03)
+
+`network.phase_frame_hold_level_vote` (section 5.1): `network/emit/PhaseFrameHold` takes -M of the satellite's constellation
+(`pb_hold_frz_M`, written by the phase-bias hold earlier in the same epoch) as the offset of its sample in place of U, and a
+median step of at most `kPhaseFrameLevelVoteFloorM` (1e-9 m) is not applied (`PhaseFrameConfig::step_floor_m`,
+`PhaseFrameStep::floored`); the leash, the datum marks and the trace are the frame's. Events: the `PHASE_FRAME` `frame_start`
+event names the vote (`vote=hold_level`); the re-anchor and the resume seam unchanged. Counters: per constellation the voted
+epochs floored (`phf_floored`) and the satellite-epochs without a hold level (`phf_no_level`), on a second run-end line, "every
+voted epoch floored is the phase-clock hold's exact no-op". Loader: refused without `network.emit_phase_frame_hold` and without
+`network.emit_pb_hold_phase_clock` or `network.emit_pb_hold_smoothed`. Ledger row UNVALIDATED (parent
+`network.emit_phase_frame_hold`); `make_golden_config.py --verify` PASS, `config_posture_check.py --verify-loader` 0 gaps,
+`docs_index_check.py`, `nom_epoch_lint.py` (V12: 96 writers, 96 rows) and `nom_n4_verify.py --whole` pass. Tests: the new suite
+`PhaseFrameLevelVote` (10 tests: the sample with -M, the floor, the phase-clock hold's stream left at exactly 0 over 240 epochs, the
+smoothed hold's common passed motion absorbed to 1e-9 m, the loader). Exe `gnss_processor_icl2k1.exe` (sha256[:16]
+`3d0b60a606c380c7`), Release from the worktree.
+
+**K-U0.** Debug `gnss_tests`: 3 883 tests in 529 suites, 3 850 passed, 33 skipped (fixture-gated, as on the base), 0 failed
+(card ICL's base: 3 873 in 528); `gnss_simulator_selftest` 99 of 99; the verifiers above pass. **K-U0 PASS.**
+
+The 10-epoch smokes (`icl2_k{129,132}_sm`): exit 0; every record but the phase biases identical to card ICL's frame arms over the
+same epochs; 4 of the 10 voted epochs floored per constellation (the smoothed hold's clones are not yet born, so the keys bridge on
+the phase-clock hold's transfer: the no-op case).
+
+**K0, off.** The 2 h field golden (`icl2_c129_2` against card ICL's `icl_c129_2`), the sim golden (`icl2_s_2` against `icl_s_2`)
+and the graded posture with the key off (`icl2_p129_2` against the first 240 epochs of `icl_p129_6`): `products.txt` without
+comment lines, `closed_loop_trace.csv` and `network_epoch_status.csv` byte-identical. **K0 PASS.**
+
+**K1, a no-op by construction.** The key and the frame on the GPS + Galileo golden (`icl2_cv129_2`, card LAH's phase-clock hold,
+2 h, DOY 129) against `icl_c129_2`: the three files byte-identical; run-end: 239 of 239 voted epochs floored for each constellation,
+0 phase-bias values shifted, largest |G| 0. Card ICL's frame on the same golden moved |G| to 35 and 51 mm (its G1). **K1 PASS.**
+
+**K2, live.** `icl2_k{129,132}_2`: exit 0; GPS and Galileo voted on 238 of 238 emitted epochs after the first on DOY 129 (238 of
+238 and 237 of 237 on DOY 132, one Galileo datum-change epoch aside), 30.6 and 20.9 voters per epoch (DOY 129); 7 and 16 voted
+epochs floored (DOY 129), 19 and 11 (DOY 132); largest |G| 0.176 and 0.129 m (DOY 129), 0.304 and 0.201 m (DOY 132); no
+re-anchor. Hour 2, lags 1 / 10 / 40 (mm):
+
+| day | arm | code D | phase D | K_G | K_E |
+| --- | --- | --- | --- | --- | --- |
+| 129 | card ICL's frame (`icl_p129_6`, hour 2) | 1.8 / 4.0 / 7.7 | 1.3 / 3.1 / 5.8 | 1.1 / 3.3 / 8.9 | 0.8 / 3.5 / 11.4 |
+| 129 | the key (`icl2_k129_2`) | 1.8 / 4.0 / 7.7 | 1.6 / 4.0 / 8.8 | 0.5 / 2.0 / **4.8** | 0.5 / 1.6 / **4.2** |
+| 132 | card ICL's frame (`icl_p132_6`, hour 2) | 1.8 / 7.0 / 8.1 | 1.4 / 4.3 / 5.5 | 1.1 / 3.5 / 6.9 | 0.8 / 2.5 / 5.4 |
+| 132 | the key (`icl2_k132_2`) | 1.8 / 7.0 / 8.1 | 2.0 / 6.6 / 10.6 | 0.7 / 2.3 / **4.3** | 0.6 / 1.8 / 3.6 |
+
+The phase-visible D passes its bars (lag 1 1.6 and 2.0 mm against 2.5; lag 40 8.8 and 10.6 mm against 20); the code-to-phase level
+at lag 40 halves against the frame's but stays above the 4 mm bar for both constellations on DOY 129 and for GPS on DOY 132. **K2
+FAIL** (the K bar; the mechanics pass). The 6 h arms follow as the task orders; K3 and K4 decide.

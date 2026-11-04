@@ -51,6 +51,24 @@
  *
  * Outputs only: no estimate moves.  Default off; requires @c network.emit_pb_hold, whose
  * generations delimit the vote.
+ *
+ * ## The vote in the hold's level (@c network.phase_frame_hold_level_vote)
+ *
+ * The vote above takes the phase side to the median of the raw broadcast a priori increments,
+ * while the clock frame hold takes the code side to the median of the tracked ones, so each
+ * constellation's code-visible and phase-visible levels drift apart (20 to 25 mm per 120 epochs
+ * on the broadcast posture with the track;
+ * docs/refound/ICL2_frame_day_one_level_2026-11-03.md).  In this mode each satellite votes on
+ * w = C - P_IF - M, M the phase-bias hold's accumulated median step of its constellation's
+ * emitted clocks (@c pb_hold_frz_M, the level the phase-clock hold keeps on code and phase
+ * alike).  The phase-clock hold writes each satellite's de-commoned clock step into its held
+ * phase biases, so w is constant within a generation and the frame does not move: an exact
+ * no-op, with a step of at most @c step_floor_m (1e-9 m, far above the hold's rounding and far
+ * below any physical motion) not applied.  The smoothed hold writes the same transfer minus the
+ * clone's passed motion Phi, so w moves with Phi and the frame removes Phi's common mode: each
+ * constellation's phase-visible level then follows M, its code-visible one.  The decoupling edge
+ * is the same @c frame_start event, named with the vote; the re-coupling edges are the same
+ * re-anchor and resume seam.
  */
 
 #include <array>
@@ -75,7 +93,7 @@ struct PhaseFrameSample {
     std::string   pair;      ///< The modelled pair, as "L1W+L2W".
     std::uint32_t gen1{0};   ///< Hold generation of the pair's first phase bias.
     std::uint32_t gen2{0};   ///< Hold generation of the pair's second phase bias.
-    double        v_m{0.0};  ///< C - P_IF + U (m), before the frame.
+    double        v_m{0.0};  ///< C - P_IF + offset (m), before the frame: + U against the raw a priori, - M in the hold's level.
     double        t_s{0.0};  ///< Product content time (s): week * 604800 + tow.
 };
 
@@ -87,7 +105,9 @@ struct PhaseFrameSample {
  * ionosphere-free phase bias is P_IF = a P1 - (a - 1) P2 with a = f1^2 / (f1^2 - f2^2).
  *
  * @param s    The emitted satellite: its clock and its phase biases after the phase-bias hold.
- * @param u_m  Its tracked a priori offset U (m); 0 without the track.
+ * @param u_m  The offset added to C - P_IF (m): its tracked a priori offset U for the vote
+ *             against the raw a priori (0 without the track), or -M, its constellation's hold
+ *             level, for the vote in the hold's level.
  * @param t_s  Product content time (s).
  * @return Empty when the satellite has no emitted clock or no complete modelled pair.
  */
@@ -101,11 +121,22 @@ struct PhaseFrameEntry {
     bool                            forced{false};  ///< A datum change of its constellation or a retro bump of its own is pending: no vote.
 };
 
+/**
+ * @brief The step floor of the vote in the hold's level (m).
+ *
+ * Under the phase-clock hold every satellite's C - P_IF - M is constant within a generation in
+ * exact arithmetic; rebuilt from the emitted doubles it moves by at most about 1e-14 m per epoch
+ * (measured on the GPS + Galileo golden, DOY 129 and 132).  A median step of at most this floor is
+ * that rounding and is not applied, so the frame stays exactly 0 and the products are unchanged.
+ */
+inline constexpr double kPhaseFrameLevelVoteFloorM = 1e-9;
+
 /// Tunables of the frame.
 struct PhaseFrameConfig {
     double leash_m{1.0};      ///< |G| re-anchor bound (m), @c network.phase_frame_leash_m.
     int    min_voters{4};     ///< Fewer voters: the frame does not move this epoch (the clock frame hold's @c min_common).
     double max_gap_s{600.0};  ///< A previous sample older than this (s) does not vote (the clock frame hold's horizon).
+    double step_floor_m{0.0}; ///< A median step with |step| at most this (m) is not applied (@ref PhaseFrameStep::floored); 0: every step applies.  1e-9 m in the vote in the hold's level.
 };
 
 /// One constellation's frame at one epoch.
@@ -113,7 +144,8 @@ struct PhaseFrameStep {
     int    voters{0};          ///< Satellites that voted.
     int    forced{0};          ///< Satellites left out for a pending mark.
     bool   moved{false};       ///< At least @c min_voters voted.
-    double step_m{0.0};        ///< The median innovation (m); 0 unless @ref moved.
+    double step_m{0.0};        ///< The median innovation (m); 0 unless @ref moved, and 0 when @ref floored.
+    bool   floored{false};     ///< The median innovation was at most @c step_floor_m in magnitude and was not applied.
     bool   started{false};     ///< This epoch is the frame's first vote.
     bool   reanchored{false};  ///< |G| exceeded the leash and was reset to 0.
     double g_peak_m{0.0};      ///< G after the step, before any re-anchor (m).
@@ -126,7 +158,8 @@ struct PhaseFrameStep {
  * For each constellation with an entry, the voters are the entries with a sample that are not
  * forced and whose satellite has a stored sample of the same pair and generations, no older than
  * @c max_gap_s; their innovation is v - v_prev.  With at least @c min_voters voters the step is
- * their median (an even count takes the mean of the two middle values): G += step, G created at
+ * their median (an even count takes the mean of the two middle values), set to 0 when its
+ * magnitude is at most @c step_floor_m (@ref PhaseFrameStep::floored): G += step, G created at
  * 0 by the first such epoch (@ref PhaseFrameStep::started).  |G| above @c leash_m resets G to 0
  * (@ref PhaseFrameStep::reanchored).  Then @p prev is replaced by this epoch's samples.
  *
@@ -196,6 +229,8 @@ struct PhaseFrameHoldCounters {
     long long phf_resume_seams{0};                        ///< Constellations marked at a warm resume's first armed epoch.
     long long phf_biases_shifted{0};                      ///< Phase-bias values emitted with a nonzero G.
     long long phf_no_pair{0};                             ///< Satellite-epochs with phase biases and a clock but no complete modelled pair.
+    std::map<char, long long> phf_floored;                ///< Constellation -> voted epochs whose step was at most the floor and not applied (the vote in the hold's level).
+    long long phf_no_level{0};                            ///< Satellite-epochs left without a sample because their constellation had no hold level M (the vote in the hold's level).
 };
 
 }  // namespace GnssProcessor

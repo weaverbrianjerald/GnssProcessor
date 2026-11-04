@@ -328,6 +328,18 @@ namespace GnssProcessor {
         if (network_emit_phase_frame_hold_ && !network_config_.emit_pb_hold)
             throw std::runtime_error("network.emit_phase_frame_hold requires network.emit_pb_hold "
                                      "(its generations delimit the frame's vote)");
+        // The vote in the hold's level reads the level M that the phase-clock hold and the
+        // smoothed hold keep; it is a mode of the frame.
+        if (network_phase_frame_hold_level_vote_) {
+            if (!network_emit_phase_frame_hold_)
+                throw std::runtime_error("network.phase_frame_hold_level_vote requires "
+                                         "network.emit_phase_frame_hold (it is a mode of the frame)");
+            if (!(network_config_.emit_pb_hold_phase_clock || network_config_.emit_pb_hold_smoothed))
+                throw std::runtime_error("network.phase_frame_hold_level_vote requires "
+                                         "network.emit_pb_hold_phase_clock or "
+                                         "network.emit_pb_hold_smoothed (the holds that keep the "
+                                         "level M it votes in)");
+        }
         // The tracked a priori moves the broadcast clock by the IF-TD columns: it needs the
         // broadcast a priori and the two-way centring that fits them.
         if (network_apriori_clock_track_) {
@@ -8613,6 +8625,16 @@ namespace GnssProcessor {
                       "re-anchored with a datum mark).  Outputs only.",
                       network_phase_frame_leash_m_);
         }
+        // Its vote in the phase-bias hold's level; the requirements are refused at the end of
+        // the section, on the resolved values.
+        network_phase_frame_hold_level_vote_ =
+            jval<bool>(json, "network.phase_frame_hold_level_vote", "phase_frame_hold_level_vote", false);
+        if (network_phase_frame_hold_level_vote_)
+            log->info("Network: network.phase_frame_hold_level_vote = true: the phase-visible frame "
+                      "votes on C - P_IF - M, M the phase-bias hold's accumulated median step of the "
+                      "constellation's emitted clocks, so each constellation's phase-visible level "
+                      "follows its code-visible one (a no-op under the phase-clock hold).  Outputs "
+                      "only.");
         network_clock_disc_jump_test_ =
             jval<bool>(json, "network.clock_disc_jump_test",
                        "network_clock_disc_jump_test", false);

@@ -109,6 +109,10 @@ std::map<char, PhaseFrameStep> phaseFrameHoldEpoch(const std::vector<PhaseFrameE
         if (st.voters >= cfg.min_voters) {
             st.moved  = true;
             st.step_m = medianOf(iit->second);
+            if (cfg.step_floor_m > 0.0 && std::abs(st.step_m) <= cfg.step_floor_m) {
+                st.step_m  = 0.0;
+                st.floored = true;
+            }
             const auto [git, inserted] = frame_g.emplace(c, 0.0);
             st.started = inserted;
             git->second += st.step_m;
@@ -142,19 +146,34 @@ std::set<char> networkPhaseFrameHold(NetworkRunContext& ctx, NetworkRunTraces& t
     const bool resume_seam = (c.phf_epochs == 0 && n_emitted > 0);
     ++c.phf_epochs;
 
+    // The offset added to C - P_IF: +U (the vote against the raw a priori) or, in the vote in
+    // the hold's level, -M of the satellite's constellation (written by the phase-bias hold
+    // this epoch, before this seam).
+    const bool level_vote = ctx.knobs.phase_frame_level_vote;
     const std::map<std::string, double> track =
-        ctx.knobs.apriori_track_on
+        (ctx.knobs.apriori_track_on && !level_vote)
             ? net::satMap(ctx.entities.sats, &net::SatelliteState::apriori_track_m)
             : std::map<std::string, double>{};
+    std::map<char, double> hold_level;
+    if (level_vote)
+        net::forEach(ctx.entities.constellations, &net::ConstellationState::pb_hold_frz_M,
+                     [&](System sys, double m) { hold_level.emplace(rinexLetter(sys), m); });
     std::vector<PhaseFrameEntry> entries;
     entries.reserve(sol.sats.size());
     for (const NetworkSatSolution& s : sol.sats) {
         if (s.sat.empty() || s.phase_bias.empty()) continue;
         PhaseFrameEntry e;
         e.sat = s.sat;
-        const auto tit = track.find(s.sat);
-        e.now = phaseFrameSample(s, tit != track.end() ? tit->second : 0.0, t_s);
-        if (!e.now && s.has_clock) ++c.phf_no_pair;
+        if (level_vote) {
+            const auto mit = hold_level.find(letterOfSat(s.sat));
+            if (mit != hold_level.end()) e.now = phaseFrameSample(s, -mit->second, t_s);
+            else if (s.has_clock) ++c.phf_no_level;
+        } else {
+            const auto tit = track.find(s.sat);
+            e.now = phaseFrameSample(s, tit != track.end() ? tit->second : 0.0, t_s);
+        }
+        if (!e.now && s.has_clock && (!level_vote || hold_level.count(letterOfSat(s.sat))))
+            ++c.phf_no_pair;
         e.forced = global_bump || marked_consts.count(letterOfSat(s.sat)) != 0
                    || retro_sats.count(s.sat) != 0;
         entries.push_back(std::move(e));
@@ -167,6 +186,7 @@ std::set<char> networkPhaseFrameHold(NetworkRunContext& ctx, NetworkRunTraces& t
                  [&](System sys, double g) { frame_g.emplace(rinexLetter(sys), g); });
     PhaseFrameConfig cfg;
     cfg.leash_m = ctx.knobs.phase_frame_leash_m;
+    if (level_vote) cfg.step_floor_m = kPhaseFrameLevelVoteFloorM;
     const std::map<char, PhaseFrameStep> steps = phaseFrameHoldEpoch(entries, t_s, prev, frame_g, cfg);
     net::assignSat(entities, &net::SatelliteState::phase_frame_prev, prev);
     for (const auto& [cc, g] : frame_g)
@@ -181,6 +201,7 @@ std::set<char> networkPhaseFrameHold(NetworkRunContext& ctx, NetworkRunTraces& t
             c.phf_voters[cc] += st.voters;
             ++c.phf_step_hist[cc][stepBin(st.step_m)];
             c.phf_drained_m[cc] += std::abs(st.step_m);
+            if (st.floored) ++c.phf_floored[cc];
         } else if (st.forced > 0 && st.voters == 0) {
             ++c.phf_marked[cc];
             event = "marked";
@@ -202,7 +223,8 @@ std::set<char> networkPhaseFrameHold(NetworkRunContext& ctx, NetworkRunTraces& t
         if (st.started) {
             if (!st.reanchored) event = "start";
             traces.emitEvent(se.time, "PHASE_FRAME", "frame_start", cons, "", st.step_m, std::nullopt,
-                             "hold", fmt::format("voters={}", st.voters));
+                             "hold", level_vote ? fmt::format("voters={}; vote=hold_level", st.voters)
+                                                : fmt::format("voters={}", st.voters));
         }
         if (resume_seam) {
             marked.insert(cc);
@@ -264,6 +286,16 @@ int networkPhaseFrameHoldRunEnd(const NetworkRunEndView& v) {
               "shifted {}; satellite-epochs without a complete modelled pair {}.  0 voted is inert "
               "wiring.",
               c.phf_epochs, per, c.phf_resume_seams, c.phf_biases_shifted, c.phf_no_pair);
+    if (ctx.knobs.phase_frame_level_vote) {
+        std::string fl;
+        for (char cc : conses)
+            fl += fmt::format("{}{}: {} of {} voted epoch(s)", fl.empty() ? "" : ", ", cc,
+                              at(c.phf_floored, cc), at(c.phf_voted, cc));
+        log->info("Network (phase frame hold, vote in the hold's level C - P_IF - M): steps at most "
+                  "{:.0e} m not applied (the hold's rounding) [{}]; satellite-epochs without a hold "
+                  "level {}.  Every voted epoch floored is the phase-clock hold's exact no-op.",
+                  kPhaseFrameLevelVoteFloorM, fl.empty() ? std::string("none") : fl, c.phf_no_level);
+    }
     return 0;
 }
 

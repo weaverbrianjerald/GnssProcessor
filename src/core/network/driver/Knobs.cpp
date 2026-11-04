@@ -110,6 +110,7 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
                       && config_.networkAprioriClockTrack();      // the tracked broadcast a priori (fingerprinted)
     k.phase_frame_hold    = config_.networkEmitPhaseFrameHold();      // the phase-visible clock's held frame (outputs only)
     k.phase_frame_leash_m = config_.networkPhaseFrameLeashM();
+    k.phase_frame_level_vote = config_.networkPhaseFrameHoldLevelVote();   // the frame's vote in the hold's level
     k.pv_window_ep = config_.networkPhaseVisibleWindowEp();
     k.clm_restore_credit_ep = config_.networkClockLevelRestoreCreditEp();
     k.clm_restore_raise = config_.networkClockLevelRestoreRaise();       // loader guarantees clm_on
