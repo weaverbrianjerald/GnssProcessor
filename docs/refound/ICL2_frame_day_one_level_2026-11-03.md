@@ -229,3 +229,45 @@ re-anchor. Hour 2, lags 1 / 10 / 40 (mm):
 The phase-visible D passes its bars (lag 1 1.6 and 2.0 mm against 2.5; lag 40 8.8 and 10.6 mm against 20); the code-to-phase level
 at lag 40 halves against the frame's but stays above the 4 mm bar for both constellations on DOY 129 and for GPS on DOY 132. **K2
 FAIL** (the K bar; the mechanics pass). The 6 h arms follow as the task orders; K3 and K4 decide.
+
+### 5.3 Item 2: the 6 h gates (2026-11-03)
+
+`icl2_k{129,132}_6` (exit 0, 2 605 s each). Run-end, DOY 129: GPS voted 719, paused 1, 30.4 voters per epoch, drained 1.155 m, largest
+|G| 0.349 m; Galileo voted 718, paused 1, one datum-change epoch, 21.9 voters, drained 0.797 m, largest |G| 0.367 m; no re-anchor;
+120 110 phase-bias values shifted. DOY 132: GPS drained 1.202 m, largest |G| 0.591 m; Galileo 0.715 m and 0.254 m; no re-anchor.
+Hours 2 to 6, lags 1 / 10 / 40 / 120 / 240 epochs (mm):
+
+| day | arm | code D | phase D | K_G | K_E | receiver ISB rms |
+| --- | --- | --- | --- | --- | --- | --- |
+| 129 | card ICL's frame (`icl_p129_6`) | 1.7 / 4.9 / 10.3 / 22.6 / 33.4 | 1.1 / 3.1 / 5.7 / 9.4 / 14.0 | 1.1 / 3.8 / 10.0 / 23.1 / 39.7 | 0.7 / 3.1 / 9.8 / 23.7 / 36.3 | 1.03 |
+| 129 | the key (`icl2_k129_6`) | 1.7 / 4.9 / 10.3 / 22.6 / 33.4 | 1.6 / 4.7 / 9.9 / **19.0** / 28.1 | 0.4 / 1.4 / 3.1 / **5.9** / 10.4 | 0.4 / 1.4 / 3.0 / **7.0** / 11.8 | **1.33** |
+| 132 | card ICL's frame (`icl_p132_6`) | 1.9 / 6.0 / 12.2 / 28.3 / 54.2 | 1.4 / 5.0 / 12.6 / 32.4 / 64.1 | 1.2 / 4.6 / 10.4 / 24.9 / 48.9 | 0.7 / 2.9 / 8.5 / 19.5 / 37.5 | 1.26 |
+| 132 | the key (`icl2_k132_6`) | 1.9 / 6.0 / 12.2 / 28.3 / 54.2 | 2.0 / 6.1 / 13.7 / **34.8** / 65.4 | 0.5 / 1.6 / 3.6 / **9.0** / 15.3 | 0.4 / 1.4 / 3.4 / **7.3** / 13.9 | **1.52** |
+
+The built mechanism reads its offline prediction (section 5.1) to the printed 0.1 mm in every column. **K3:** K_G and K_E at lag
+120 5.9 and 7.0 mm (DOY 129) and 9.0 and 7.3 mm (DOY 132) against 8 mm; the code-visible D 22.6 and 28.3 mm and the phase-visible D
+19.0 and 34.8 mm against 35; the receiver's offset 1.33 and 1.52 mm against 2.0. **K3 FAIL** (DOY 132's K_G, 9.0 mm, as predicted
+in section 5.1); every other clause passes.
+
+The user, census keys `i2k129`, `i2k132` (17 replays each, exit 0), hours 2 to 6:
+
+| day | against | census paired median | worse by > 2 cm | better / worse at 1 cm | WTZZ00DEU change |
+| --- | --- | --- | --- | --- | --- |
+| 129 | card ICL's frame (`iclp129`) | **+0.0004** | 0 (0 %) | 2 / 0 | **+0.0018** (0.0178 against 0.0160) |
+| 132 | card ICL's frame (`iclp132`) | **+0.0015** | 1 (6 %) | 1 / 4 | **-0.0048** (0.0315 against 0.0363) |
+| 129 | the golden (`brdc129`) | +0.0080 (the frame: +0.0114) | 5 (31 %) | 3 / 8 | +0.0025 |
+| 132 | the golden (`brdc132`) | +0.0205 (the frame: +0.0173) | 8 (50 %) | 2 / 11 | +0.0159 |
+| 129 | the free-offset arm (`brdngtI129`) | -0.0005 | 1 (6 %) | 1 / 3 | +0.0049 |
+| 132 | the free-offset arm (`brdngtI132`) | +0.0034 | 3 (19 %) | 4 / 6 | -0.0091 |
+
+Census median by hour: 0.164 0.049 0.047 0.035 0.042 0.038 (DOY 129), 0.216 0.094 0.063 0.061 0.056 0.045 (DOY 132); WTZZ00DEU
+0.067 0.032 0.022 0.013 0.012 0.010 and 0.052 0.040 0.044 0.039 0.019 0.016. **K4 PASS** (census +0.0004 and +0.0015 m against
++0.003; WTZZ00DEU +0.0018 and -0.0048 m against +0.005). Pooled against the golden +0.0142 m, 13 of 32 site-days (41 %) worse by
+2 cm (the frame: +0.0144 m, 38 %): card ICL's G5 user bars still fail (WTZZ00DEU +0.0159 m and the census on DOY 132, the census
+on DOY 129, the 20 % share).
+
+Read beside the gates: the vote in the hold's level brings each constellation's code and phase to within 6 to 9 mm per 120
+epochs of one level (from 20 to 25), is an exact no-op on the golden's hold, and leaves the receivers where card ICL's frame left
+them (paired +0.0005 m pooled); the price is the GPS-to-Galileo phase-visible level on DOY 129, which follows the tracked a
+priori's common mode with the code side (19.0 mm against 9.4), and the receiver's offset (1.33 and 1.52 mm per epoch against
+1.03 and 1.26).
