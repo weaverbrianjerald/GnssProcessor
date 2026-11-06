@@ -135,3 +135,32 @@ Reported without a bar: the built arm's products against the rewritten candidate
 receivers around the event (key `i3qI129`); the vote in the hold's level with the quorum, predicted offline; an injected second event,
 if one reproduces a minority vote in a 2.5 h arm (a slip at a Galileo satellite's phase anchor station, the trigger of section 2.2): the
 same statistics over the 30 minutes after it, or "not reproduced".
+
+---
+
+## 5. Results
+
+### 5.1 The replays and the decision (2026-11-05, before any build)
+
+`icl3_tools/icl3_rewrite.py` on `icl2_p129_24/products.txt`: 3 494 Galileo phase-bias values shifted from 23:40:30 on; a zero shift
+rewrites the file byte for byte. Census replays of 24 h, 17 of 17 exit 0 per key. Over the 39 epochs from 23:40:30 to 23:59:30 (m):
+
+| candidate | key | S (median over the 16 sites of the site's median 3D error) | WTZZ00DEU | worst site | paired against as run: median, most worse, most better |
+| --- | --- | --- | --- | --- | --- |
+| as run (the frame) | `i2p129` | 0.0507 | 0.0101 | ARHT00ATA 0.1903 | |
+| (P) pause | `i3P129` | 0.0505 | 0.0101 | ARHT00ATA 0.1905 | -0.0000, +0.0010 (DAV100ATA), -0.0044 (HARB00ZAF) |
+| (W) widen | `i3W129` | 0.0505 | 0.0101 | ARHT00ATA 0.1905 | -0.0000, +0.0011 (DAV100ATA), -0.0058 (HARB00ZAF) |
+| (M) pause with a datum mark | `i3M129` | 0.0505 | 0.0101 | ARHT00ATA 0.1905 | -0.0000, +0.0010 (DAV100ATA), -0.0044 (HARB00ZAF) |
+
+All three candidates tie within 0.002 m (0.2 mm against as run, no site moving by 2 cm), so **the rule of section 3.3 builds (W)**, the
+vote widened to the satellites marked by their own bumps.
+
+Why the positions do not choose: a clock-channel retro bump makes a receiver re-inflate its GPS-to-Galileo offset and keep its
+ambiguities (`closed_loop_sat_trace.csv`, WTZZ00DEU, `ev_clk` = `reinflate_isb`, ambiguity variance unchanged), so on the epoch of the
+18 bumps the receiver absorbs a common phase step through its offset. As run, the bumped satellites' phase innovations at 23:40:30 read
+-0.434 to -0.455 m (the frame's step, absorbed: the offset moves -0.487 m); with (W) they read -0.008 to +0.025 m, as on the epoch
+before; with (P) -0.019 to -0.052 m. E07's phase is refused by the receiver in all arms. The guard's gain is therefore the level and the
+receiver's offset, not the position at this event: a receiver gets away with the frame's step because the same epoch happens to carry
+the marks of the satellites that voted against it.
+
+The key: `network.phase_frame_quorum` (section 3.4), with `PHASE_FRAME` events `quorum_low` and `quorum_restored`.
