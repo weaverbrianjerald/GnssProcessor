@@ -216,7 +216,7 @@ TEST(LoaderMessages, Eq34EventRowsUnknownEntryWarnsAndADuplicateIsDroppedSilentl
 // The rows are built in table order: an entry whose rule is not built yet is dropped with a warning
 // and arms nothing.
 TEST(LoaderMessages, Eq34EventRowsNotBuiltYetAreDroppedWithAWarning) {
-    for (const char* entry : {"slip", "merge_split"}) {
+    for (const char* entry : {"merge_split"}) {
         const LoadedConfig r = loadNetworkConfigCapturing(std::string("eq34_rows_nb_") + entry,
             kFloatChain + eventRows(std::string("[\"") + entry + "\"]"));
         EXPECT_TRUE(r.ok) << entry << ": " << r.text;
@@ -228,10 +228,42 @@ TEST(LoaderMessages, Eq34EventRowsNotBuiltYetAreDroppedWithAWarning) {
     }
     // One built entry beside an unbuilt one: the built one arms.
     const LoadedConfig mixed = loadNetworkConfigCapturing("eq34_rows_nb_mixed",
-        kFloatChain + eventRows("[\"slip\", \"kept\"]"));
+        kFloatChain + eventRows("[\"merge_split\", \"kept\"]"));
     EXPECT_TRUE(mixed.ok) << mixed.text;
     EXPECT_EQ(mixed.config.networkPhaseDatumEq34EventRows(), std::vector<std::string>{"kept"});
-    EXPECT_TRUE(contains(mixed.text, "'slip' is not built yet")) << mixed.text;
+    EXPECT_TRUE(contains(mixed.text, "'merge_split' is not built yet")) << mixed.text;
+}
+
+// The slip row: armed on the chain, with its text and its report, alone or beside the earlier rows, and cleared with the
+// chain off.  A snapshot does not drop it: it reads the one-epoch latch and keeps no target.
+TEST(LoaderMessages, Eq34EventRowSlipIsArmedWithItsTextOnTheChainOnly) {
+    const LoadedConfig r = loadNetworkConfigCapturing("eq34_rows_slip", kFloatChain + eventRows("[\"slip\"]"));
+    EXPECT_TRUE(r.ok) << r.text;
+    EXPECT_EQ(r.config.networkPhaseDatumEq34EventRows(), std::vector<std::string>{"slip"});
+    EXPECT_TRUE(r.config.networkPhaseDatumEq34EventRowArmed("slip"));
+    EXPECT_TRUE(contains(r.text, "eq34 EVENT ROWS ON (slip)")) << r.text;
+    EXPECT_TRUE(contains(r.text, "'slip' takes an arc in the epoch's free-epoch latch out of the tree at the slip epoch, "
+                                 "on both bands of a pair family: the old child re-attaches through a new edge, which is "
+                                 "that edge's own row's, and a slipped arc no other route can replace takes the cut "
+                                 "release.")) << r.text;
+    EXPECT_TRUE(contains(r.text, "The run-end eq34 block reports the slipped edges de-seated and released, by the latch's "
+                                 "cause bits.")) << r.text;
+    EXPECT_FALSE(contains(r.text, "is not built yet")) << r.text;
+    const LoadedConfig all = loadNetworkConfigCapturing("eq34_rows_all_five",
+        kFloatChain + eventRows("[\"kept\", \"returning\", \"rehost\", \"root\", \"slip\"]"));
+    EXPECT_TRUE(all.ok) << all.text;
+    EXPECT_EQ(all.config.networkPhaseDatumEq34EventRows(),
+              (std::vector<std::string>{"kept", "returning", "rehost", "root", "slip"}));
+    EXPECT_TRUE(contains(all.text, "eq34 EVENT ROWS ON (kept, returning, rehost, root, slip)")) << all.text;
+    const LoadedConfig nochain = loadNetworkConfigCapturing("eq34_rows_slip_nochain",
+        std::string("    \"phase_datum_eq34\": false,\n") + eventRows("[\"slip\"]"));
+    EXPECT_TRUE(nochain.ok) << nochain.text;
+    EXPECT_TRUE(nochain.config.networkPhaseDatumEq34EventRows().empty());
+    EXPECT_TRUE(contains(nochain.text, ".phase_datum_eq34 is OFF")) << nochain.text;
+    const LoadedConfig snap = loadNetworkConfigCapturing("eq34_rows_slip_snapshot",
+        kFloatChain + eventRows("[\"slip\"]") + "    \"state_snapshot_path\": \"eq34_rows_slip_snapshot.bin\",\n");
+    EXPECT_TRUE(snap.ok) << snap.text;
+    EXPECT_TRUE(snap.config.networkPhaseDatumEq34EventRowArmed("slip"));
 }
 
 // The rehost row is built, its certified branch held: its entry arms on the float chain beside the others, in the

@@ -831,6 +831,8 @@ namespace GnssProcessor {
         bool eq34_row_rehost{};
         /// network.phase_datum_eq34_event_rows holds "root" (after the loader's resolution): a component whose datum receiver is new (a satellite of it remembers another root, and the new root was a vertex of the last tree) pins the new root's receiver phase bias at the value its last solve gave it, instead of 0, so the frame does not step.  The satellites that remembered the old root keep their carries (their edges are not marked unknown on that account).  A handover whose new root has no carried bias inside the horizon, was no vertex of the last tree, or is a split piece other than the one that keeps the old root runs the as-built rule (network/solve/ChainDatum.hpp).  Resolved to false unless eq34.  Not fingerprinted, like the other election knobs (the target memory is not snapshotted, so the loader drops the entry when a snapshot is written).
         bool eq34_row_root{};
+        /// network.phase_datum_eq34_event_rows holds "slip" (after the loader's resolution): an arc in the epoch's free-epoch latch leaves the tree at the slip epoch while another route reaches its child, whose new edge is that edge's own row's; a slipped arc no other route can replace takes the cut release (network/solve/ChainDatum.hpp).  Off: a slipped tree edge stays, and the frame takes the slip.
+        bool eq34_row_slip{};
         /// network.phase_datum_eq34_seed_round (docs/SPEC_eq34_seed_round.md): round
         /// otherwise-zero pin targets to λ·round(x_state/λ), so |innovation| ≤ λ/2 by
         /// construction.  Not gated on !carry_invariant: the invariant-carry zero-target rationale

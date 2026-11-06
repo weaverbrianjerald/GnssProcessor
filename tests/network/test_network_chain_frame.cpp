@@ -116,12 +116,13 @@ TEST(NetworkChainFrame, EventTableHasOneRowPerClassInOrder) {
 }
 
 // The loader takes its entries from the table: the distinct non-empty ones, in table order, with
-// the rows built so far (the rows are built in table order: kept, returning, rehost, root).
-TEST(NetworkChainFrame, EventRowEntriesAreTheTablesAndOnlyKeptReturningRehostAndRootAreBuilt) {
+// the rows built so far (the rows are built in table order: kept, returning, rehost, root, slip).
+TEST(NetworkChainFrame, EventRowEntriesAreTheTablesAndOnlyKeptReturningRehostRootAndSlipAreBuilt) {
     EXPECT_EQ(chainEventRowEntries(), (std::vector<std::string>{"kept", "returning", "rehost", "root", "slip",
                                                                "merge_split"}));
-    for (const char* entry : {"kept", "returning", "rehost", "root"}) EXPECT_TRUE(chainEventRowEntryBuilt(entry)) << entry;
-    for (const char* entry : {"slip", "merge_split", "", "bogus"})
+    for (const char* entry : {"kept", "returning", "rehost", "root", "slip"})
+        EXPECT_TRUE(chainEventRowEntryBuilt(entry)) << entry;
+    for (const char* entry : {"merge_split", "", "bogus"})
         EXPECT_FALSE(chainEventRowEntryBuilt(entry)) << entry;
     // An entry two rows share is built when each of its rows is built or held and at least one is built.
     for (const ChainEventSpec& s : kChainEventSpec)
@@ -167,6 +168,16 @@ TEST(NetworkChainFrame, EventRowEntriesAreTheTablesAndOnlyKeptReturningRehostAnd
     EXPECT_STREQ(chainRootOutcomeName(ChainRootOutcome::NoCarry), "no_carry");
     EXPECT_STREQ(chainReleaseRowName(ChainReleaseRow::Returning), "returning");
     EXPECT_STREQ(chainReleaseRowName(ChainReleaseRow::Rehost), "rehost");
+    // The slip entry arms the slip row alone.
+    k.eq34_row_root = false;
+    k.eq34_row_slip = true;
+    for (std::size_t r = 0; r < kChainEventRowCount; ++r)
+        EXPECT_EQ(chainEventRowArmed(k, kChainEventSpec[r].row), kChainEventSpec[r].row == ChainEventRow::TreeEdgeSlip)
+            << kChainEventSpec[r].name;
+    EXPECT_TRUE(chainEventSpec(ChainEventRow::TreeEdgeSlip).built);
+    EXPECT_FALSE(chainEventSpec(ChainEventRow::TreeEdgeSlip).held);
+    EXPECT_STREQ(chainEventSpec(ChainEventRow::TreeEdgeSlip).event, "slip_deseat");
+    EXPECT_STREQ(chainReleaseRowName(ChainReleaseRow::Slip), "slip");
 }
 
 TEST(NetworkChainFrame, CertificationDeterminesAPreciseChordAndNotAnImpreciseOne) {
@@ -1762,6 +1773,358 @@ TEST(NetworkChainFrame, TheElectionRunEndReportsTheRootRowOnlyWhenArmed) {
         c.eq34_root_pinned = 3;
         const std::string text = r.runEnd(&networkChainDatumRunEnd);
         EXPECT_FALSE(contains(text, "eq34 root row")) << text;
+    }
+}
+
+
+// ---- The slip row ------------------------------------------------------------------------------------
+
+/// Observe a slip on the tree edge B-G02 at the second epoch (261060), with the row armed: the edge left the tree, C
+/// re-attached through G03 and the rehost row released it, with G02 in its moved side.  The record carries the de-seat.
+void observeDeseat(ChainObserverRun& r) {
+    {   // epoch 1: G02 below B, C below G02
+        auto rec = std::make_shared<ChainEpochObs>();
+        rec->armed = true;
+        rec->comps.push_back(component(0, "A", {0, 1, 2}, {"G01", "G02", "G03"}));
+        rec->edges = {edge(0, "G01", true), edge(1, "G01", false), edge(1, "G02", true), edge(1, "G03", true),
+                      edge(2, "G02", false)};
+        r.observeRecord(261030.0, rec);
+    }
+    {   // epoch 2: the slip
+        auto rec = std::make_shared<ChainEpochObs>();
+        rec->armed = true;
+        rec->comps.push_back(component(0, "A", {0, 1, 2}, {"G01", "G02", "G03"}));
+        ChainEdgeObs join = edge(2, "G03", false);   // the new edge: C below G03
+        join.had_parent = true;
+        join.prev_parent = "S:G02";
+        join.row_armed = true;
+        join.known = false;
+        join.step_m = std::numeric_limits<double>::quiet_NaN();
+        join.legacy_known = true;
+        join.legacy_pinmove_m = 0.3 * kLambda;
+        ChainEdgeObs rev = heldEdge(2, "G02", true);   // G02 reversed, below C
+        rev.incumbent_same = false;
+        rev.incumbent_flipped = true;
+        rec->edges = {heldEdge(0, "G01", true), heldEdge(1, "G01", false), heldEdge(1, "G03", true), join, rev};
+        ChainDeseatObs d;
+        d.group = kGroup;
+        d.signal = "L1C";
+        d.comp = 0;
+        d.station = 1;
+        d.station_name = "B";
+        d.sat = "G02";
+        d.sat_is_child = true;
+        d.child = "S:G02";
+        d.parent = "R:1";
+        d.lambda_m = kLambda;
+        d.prev_target_m = 3.0 * kLambda;
+        d.cause = 132;
+        d.band_latched = true;
+        d.new_parent = "R:2";
+        d.released = true;
+        d.release_row = ChainReleaseRow::Rehost;
+        d.release_station = 2;
+        d.release_sat = "G03";
+        d.release_vertex = "R:2";
+        rec->deseats = {d};
+        ChainReleaseObs rel;
+        rel.row = ChainReleaseRow::Rehost;
+        rel.group = kGroup;
+        rel.signal = "L1C";
+        rel.station = 2;
+        rel.sat = "G03";
+        rel.sat_is_child = false;
+        rel.vertex = "R:2";
+        rel.stations = {2};
+        rel.sats = {"G02"};
+        rel.arcs = 3;
+        rec->releases = {rel};
+        r.observeRecord(261060.0, rec);
+    }
+}
+
+// A de-seated edge writes both edges of the event with their identities: the slipped arc leaves, naming its cause bits,
+// and the old child joins through the edge of the release that took its moved side.
+TEST(NetworkChainFrame, TheObserverWritesTheLeaveAndJoinRowsOfADeseatedEdge) {
+    ChainObserverRun r("slip_obs_deseat", std::vector<std::string>{"kept", "rehost", "slip"});
+    observeDeseat(r);
+    const ChainRows ev(r);
+    std::vector<std::size_t> slip_rows;
+    for (std::size_t k = 0; k < ev.rows.size(); ++k)
+        if (ev.at(k, ev.event) == "slip_deseat") slip_rows.push_back(k);
+    ASSERT_EQ(slip_rows.size(), 2u);
+    EXPECT_EQ(ev.at(slip_rows[0], ev.action), "leave");
+    EXPECT_EQ(ev.at(slip_rows[0], ev.sat), "G02");
+    EXPECT_EQ(ev.at(slip_rows[0], ev.station), "B");
+    EXPECT_EQ(ev.at(slip_rows[0], ev.detail),
+              "sig=L1C comp=0 slip_cause=132 deseated=1 band_latched=1 child=G02 parent=B prev_target_cyc=3.000000 "
+              "new_parent=C released_by=rehost");
+    EXPECT_EQ(ev.at(slip_rows[1], ev.action), "join");
+    EXPECT_EQ(ev.at(slip_rows[1], ev.sat), "G03");
+    EXPECT_EQ(ev.at(slip_rows[1], ev.station), "C");
+    EXPECT_EQ(ev.at(slip_rows[1], ev.detail),
+              "sig=L1C comp=0 slip_cause=132 deseated=1 band_latched=1 child=G02 parent=B prev_target_cyc=3.000000 "
+              "new_parent=C released_by=rehost rejoin=C");
+    const ChainFrameCounters& c = r.fx->ctx().counters;
+    EXPECT_EQ(c.cf_sl_deseats, 1);
+    EXPECT_EQ(c.cf_sl_pairs, 0);
+    EXPECT_EQ(c.cf_rh_cut_releases, 1);
+    EXPECT_EQ(c.cf_sl_cut_releases, 0);
+}
+
+// With no release the join row names the old child's new parent edge.
+TEST(NetworkChainFrame, ADeseatedEdgeWithNoReleaseJoinsThroughItsNewParentEdge) {
+    ChainObserverRun r("slip_obs_noreleases", std::vector<std::string>{"kept", "slip"});
+    auto rec = std::make_shared<ChainEpochObs>();
+    rec->armed = true;
+    rec->comps.push_back(component(0, "A", {0, 1, 2}, {"G01", "G02"}));
+    ChainDeseatObs sat_child;
+    sat_child.group = kGroup;
+    sat_child.signal = "L1C";
+    sat_child.comp = 0;
+    sat_child.station = 1;
+    sat_child.station_name = "B";
+    sat_child.sat = "G02";
+    sat_child.child = "S:G02";
+    sat_child.parent = "R:1";
+    sat_child.lambda_m = kLambda;
+    sat_child.new_parent = "R:2";
+    ChainDeseatObs rx_child = sat_child;
+    rx_child.sat = "G01";
+    rx_child.sat_is_child = false;
+    rx_child.child = "R:1";
+    rx_child.parent = "S:G01";
+    rx_child.new_parent = "S:G03";
+    rx_child.band_latched = false;
+    rec->deseats = {sat_child, rx_child};
+    r.observeRecord(261030.0, rec);
+    const ChainRows ev(r);
+    std::vector<std::size_t> joins;
+    for (std::size_t k = 0; k < ev.rows.size(); ++k)
+        if (ev.at(k, ev.event) == "slip_deseat" && ev.at(k, ev.action) == "join") joins.push_back(k);
+    ASSERT_EQ(joins.size(), 2u);
+    EXPECT_EQ(ev.at(joins[0], ev.sat), "G02");    // the satellite joins under its new station
+    EXPECT_EQ(ev.at(joins[0], ev.station), "C");
+    EXPECT_TRUE(contains(ev.at(joins[0], ev.detail), "released_by=none")) << ev.at(joins[0], ev.detail);
+    EXPECT_FALSE(contains(ev.at(joins[0], ev.detail), "rejoin=")) << ev.at(joins[0], ev.detail);
+    EXPECT_EQ(ev.at(joins[1], ev.sat), "G03");    // the receiver joins under its new satellite
+    EXPECT_EQ(ev.at(joins[1], ev.station), "B");
+    EXPECT_TRUE(contains(ev.at(joins[1], ev.detail), "band_latched=0")) << ev.at(joins[1], ev.detail);
+    EXPECT_EQ(r.fx->ctx().counters.cf_sl_deseats, 2);
+}
+
+// An old child with no parent edge now (a root, or no vertex of the band's trees) still names both edges: the join row
+// keeps the arc's own names and says so, with no blank satellite or station.
+TEST(NetworkChainFrame, ADeseatedEdgeWhoseChildHasNoParentNowJoinsOnTheArcsOwnNames) {
+    ChainObserverRun r("slip_obs_noparent", std::vector<std::string>{"kept", "slip"});
+    auto rec = std::make_shared<ChainEpochObs>();
+    rec->armed = true;
+    rec->comps.push_back(component(0, "B", {0, 1}, {"G01"}));
+    ChainDeseatObs d;
+    d.group = kGroup;
+    d.signal = "L1C";
+    d.comp = 0;
+    d.station = 1;
+    d.station_name = "B";
+    d.sat = "G01";
+    d.sat_is_child = false;
+    d.child = "R:1";
+    d.parent = "S:G01";
+    d.lambda_m = kLambda;
+    rec->deseats = {d};
+    r.observeRecord(261030.0, rec);
+    const ChainRows ev(r);
+    std::vector<std::size_t> joins;
+    for (std::size_t k = 0; k < ev.rows.size(); ++k)
+        if (ev.at(k, ev.event) == "slip_deseat" && ev.at(k, ev.action) == "join") joins.push_back(k);
+    ASSERT_EQ(joins.size(), 1u);
+    EXPECT_EQ(ev.at(joins[0], ev.sat), "G01");
+    EXPECT_EQ(ev.at(joins[0], ev.station), "B");
+    EXPECT_TRUE(contains(ev.at(joins[0], ev.detail), "new_parent= released_by=none rejoin=none")) << ev.at(joins[0], ev.detail);
+}
+
+/// An edge on a slipped arc that stayed, as the election records it: @p released, the slip row released it.
+ChainEdgeObs latchedEdge(bool released) {
+    ChainEdgeObs e = edge(1, "G02", true);
+    e.had_parent = e.incumbent_same = true;
+    e.legacy_known = true;
+    e.legacy_pinmove_m = -2.0 * kLambda;
+    e.legacy_target_m = 5.0 * kLambda;
+    e.target_m = 7.0 * kLambda;
+    if (released) {
+        e.row_armed = e.slip_released = true;
+        e.known = false;
+        e.pinmove_m = 0.0;
+        e.step_m = std::numeric_limits<double>::quiet_NaN();
+    } else {
+        e.pinmove_m = -2.0 * kLambda;
+        e.target_m = 5.0 * kLambda;
+    }
+    return e;
+}
+
+/// Observe the latched edge of @ref latchedEdge at one epoch, with the free-epoch latch naming it and, when released,
+/// the slip row's release.
+void observeLatchedEdge(ChainObserverRun& r, bool released) {
+    auto rec = std::make_shared<ChainEpochObs>();
+    rec->armed = true;
+    rec->comps.push_back(component(0, "A", {0, 1}, {"G01", "G02"}));
+    rec->edges = {edge(0, "G01", true), edge(1, "G01", false), latchedEdge(released)};
+    if (released) {
+        ChainReleaseObs rel;
+        rel.row = ChainReleaseRow::Slip;
+        rel.group = kGroup;
+        rel.signal = "L1C";
+        rel.station = 1;
+        rel.sat = "G02";
+        rel.vertex = "S:G02";
+        rel.sats = {"G02"};
+        rel.arcs = 2;
+        rel.pb = 1;
+        rec->releases = {rel};
+    }
+    NetworkEpoch& e = r.fx->newEpoch(GnssTime{2313, 261030.0});
+    e.clock.pl_now_s = 261030.0;
+    const std::pair<int, std::string> key{1, StateKeys::makeAmbiguityKey("G02", "L1C")};
+    e.events.slip.relevel.free_ambs.insert(key);
+    e.events.slip.relevel.free_cause[key] = 128;
+    e.events.phase_datum.chain = std::move(rec);
+    networkChainFrameObserve(r.fx->run(), e);
+}
+
+// An edge the slip row released writes a leave and a join row on the arc itself, with the as-built facts the release
+// replaced, then the slip row's cut_release and declared_keys rows.
+TEST(NetworkChainFrame, TheObserverWritesTheRowsOfAnEdgeTheSlipRowReleased) {
+    ChainObserverRun r("slip_obs_released", std::vector<std::string>{"kept", "slip"});
+    observeLatchedEdge(r, /*released=*/true);
+    const ChainRows ev(r);
+    std::vector<std::size_t> slip_rows, cut_rows, declared_rows;
+    for (std::size_t k = 0; k < ev.rows.size(); ++k) {
+        if (ev.at(k, ev.event) == "slip_deseat") slip_rows.push_back(k);
+        if (ev.at(k, ev.event) == "cut_release") cut_rows.push_back(k);
+        if (ev.at(k, ev.event) == "declared_keys") declared_rows.push_back(k);
+    }
+    ASSERT_EQ(slip_rows.size(), 2u);
+    EXPECT_EQ(ev.at(slip_rows[0], ev.action), "leave");
+    EXPECT_EQ(ev.at(slip_rows[1], ev.action), "join");
+    for (std::size_t k : slip_rows) {
+        EXPECT_EQ(ev.at(k, ev.sat), "G02");
+        EXPECT_EQ(ev.at(k, ev.station), "B");
+        const std::string& detail = ev.at(k, ev.detail);
+        EXPECT_TRUE(contains(detail, "row=TreeEdgeSlip")) << detail;
+        EXPECT_TRUE(contains(detail, "slip_cause=128 deseated=0 readmitted=1 child=G02 parent=B")) << detail;
+        EXPECT_TRUE(contains(detail, "legacy_known=1")) << detail;
+        EXPECT_TRUE(contains(detail, "legacy_target_cyc=5.000000")) << detail;
+    }
+    ASSERT_EQ(cut_rows.size(), 1u);
+    ASSERT_EQ(declared_rows.size(), 1u);
+    EXPECT_EQ(ev.at(declared_rows[0], ev.sat), "G02");
+    EXPECT_EQ(ev.at(declared_rows[0], ev.detail), "sig=L1C cause=slip root=G02");
+    const ChainFrameCounters& c = r.fx->ctx().counters;
+    EXPECT_EQ(c.cf_sl_pairs, 1);
+    EXPECT_EQ(c.cf_sl_asbuilt_whole, 1);
+    EXPECT_EQ(c.cf_sl_asbuilt_zero + c.cf_sl_asbuilt_other + c.cf_sl_asbuilt_unknown, 0);
+    EXPECT_EQ(c.cf_sl_cut_releases, 1);
+    EXPECT_EQ(c.cf_sl_declared_keys, 1);
+    EXPECT_EQ(c.cf_rh_cut_releases + c.cf_ret_cut_releases, 0);
+    EXPECT_EQ(c.cf_rows_armed[static_cast<std::size_t>(ChainEventRow::TreeEdgeSlip)], 1);
+    EXPECT_EQ(c.cf_rows_unknown[static_cast<std::size_t>(ChainEventRow::TreeEdgeSlip)], 1);
+}
+
+// With the row off a slipped edge in the tree writes the one observe row it always had, and no counter of the row moves.
+TEST(NetworkChainFrame, WithTheRowOffASlippedEdgeWritesTheObserveRowItAlwaysHad) {
+    for (const std::vector<std::string>& rows : {std::vector<std::string>{}, std::vector<std::string>{"kept", "rehost", "root"}}) {
+        ChainObserverRun r("slip_obs_off_" + std::to_string(rows.size()), rows);
+        observeLatchedEdge(r, /*released=*/false);
+        const ChainRows ev(r);
+        std::vector<std::size_t> slip_rows;
+        for (std::size_t k = 0; k < ev.rows.size(); ++k)
+            if (ev.at(k, ev.event) == "slip_deseat") slip_rows.push_back(k);
+        ASSERT_EQ(slip_rows.size(), 1u) << rows.size();
+        EXPECT_EQ(ev.at(slip_rows[0], ev.action), "observe") << rows.size();
+        EXPECT_TRUE(contains(ev.at(slip_rows[0], ev.detail), "slip_cause=128 deseated=0")) << ev.at(slip_rows[0], ev.detail);
+        EXPECT_FALSE(contains(ev.at(slip_rows[0], ev.detail), "readmitted")) << ev.at(slip_rows[0], ev.detail);
+        const ChainFrameCounters& c = r.fx->ctx().counters;
+        EXPECT_EQ(c.cf_sl_deseats + c.cf_sl_pairs + c.cf_sl_cut_releases + c.cf_sl_declared_keys, 0) << rows.size();
+        EXPECT_EQ(c.cf_rows_armed[static_cast<std::size_t>(ChainEventRow::TreeEdgeSlip)], 0) << rows.size();
+    }
+}
+
+// The run-end report of the observatory names the slip row's rows only when the row is armed.
+TEST(NetworkChainFrame, TheRunEndNamesTheSlipRowOnlyWhenArmed) {
+    {
+        ChainObserverRun r("slip_end_on", std::vector<std::string>{"kept", "rehost", "slip"});
+        observeDeseat(r);
+        const std::string text = r.runEnd(&networkChainFrameRunEnd);
+        EXPECT_TRUE(contains(text, "event row(s) armed: kept, rehost, slip; the other rows ran the as-built rule")) << text;
+        EXPECT_TRUE(contains(text, "2 slip row(s) written to the event trace: 1 de-seated edge(s) and 0 edge(s) released "
+                                   "because no other route reached the child")) << text;
+        EXPECT_TRUE(contains(text, "cut and declared by the rehost and slip rows")) << text;
+    }
+    {
+        ChainObserverRun r("slip_end_all", std::vector<std::string>{"kept", "returning", "rehost", "root", "slip"});
+        observeLatchedEdge(r, /*released=*/true);
+        const std::string text = r.runEnd(&networkChainFrameRunEnd);
+        EXPECT_TRUE(contains(text, "4 slip row(s) written to the event trace: 0 de-seated edge(s) and 1 edge(s) released "
+                                   "because no other route reached the child (a leave and a join row each; the as-built "
+                                   "step of a released edge was a known zero on 0, whole cycles on 1, another nonzero step "
+                                   "on 0 and unknown on 0), 1 cut_release row(s) and 1 declared_keys row(s) of the slip "
+                                   "row's releases")) << text;
+        EXPECT_TRUE(contains(text, "cut and declared by the returning, rehost and slip rows")) << text;
+    }
+    {
+        ChainObserverRun r("slip_end_off", std::vector<std::string>{"kept", "rehost"});
+        observeLatchedEdge(r, /*released=*/false);
+        const std::string text = r.runEnd(&networkChainFrameRunEnd);
+        EXPECT_FALSE(contains(text, "slip row(s) written")) << text;
+        EXPECT_TRUE(contains(text, "cut and declared by the rehost row")) << text;
+    }
+}
+
+// The election's run-end report prints the slip row's tallies only when the row is armed, and calls a run in which no
+// tree edge slipped no event.
+TEST(NetworkChainFrame, TheElectionRunEndReportsTheSlipRowOnlyWhenArmed) {
+    {
+        ChainObserverRun r("slip_elect_on", std::vector<std::string>{"slip"});
+        auto& c = r.fx->ctx().counters;
+        c.eq34_sl_deseated = 6;
+        c.eq34_sl_deseated_family = 2;
+        c.eq34_sl_by_cause = {1, 2, 3, 4, 5, 6, 7, 8};
+        c.eq34_sl_released = 3;
+        c.eq34_sl_birth = 1;
+        c.eq34_sl_with_state = 2;
+        c.eq34_sl_arcs = 9;
+        c.eq34_sl_rpb = 1;
+        c.eq34_sl_pb = 4;
+        c.eq34_sl_declared = 5;
+        c.eq34_sl_asbuilt_zero = 1;
+        c.eq34_sl_asbuilt_whole = 1;
+        c.eq34_sl_asbuilt_frac = 0;
+        c.eq34_sl_asbuilt_unknown = 1;
+        const std::string text = r.runEnd(&networkChainDatumRunEnd);
+        EXPECT_TRUE(contains(text, "Network (eq34 slip row): 6 slipped tree edge(s) de-seated at the slip epoch, 2 of them "
+                                   "on a band whose own arc did not slip")) << text;
+        EXPECT_TRUE(contains(text, "3 edge(s) on a slipped arc released because no other route reached the child, 2 of them "
+                                   "with state")) << text;
+        EXPECT_TRUE(contains(text, "those releases erased 9 leveling carry(ies), dropped 1 receiver phase-bias carry(ies), "
+                                   "took 4 satellite phase-bias prior(s) and declared 5 (satellite, signal) key(s) moved"))
+            << text;
+        EXPECT_TRUE(contains(text, "de-seated and released edges by the latch's cause bit: MW 1, LLI 2, IF-TD 3, RAIM "
+                                   "attribution 4, RAIM consensus 5, wind-up restart 6, gap re-entry 7, GF jump 8")) << text;
+    }
+    {
+        ChainObserverRun r("slip_elect_none", std::vector<std::string>{"slip"});   // armed, no tree edge slipped
+        const std::string text = r.runEnd(&networkChainDatumRunEnd);
+        EXPECT_TRUE(contains(text, "Network (eq34 slip row): ARMED, and no tree edge of any election had its arc in the "
+                                   "free-epoch latch")) << text;
+        EXPECT_FALSE(contains(text, "INERT")) << text;
+    }
+    {
+        ChainObserverRun r("slip_elect_off", std::vector<std::string>{"kept", "returning", "rehost", "root"});
+        auto& c = r.fx->ctx().counters;
+        c.eq34_sl_deseated = 3;   // never read with the row off
+        const std::string text = r.runEnd(&networkChainDatumRunEnd);
+        EXPECT_FALSE(contains(text, "eq34 slip row")) << text;
     }
 }
 

@@ -145,6 +145,22 @@ ARMS = {
                + ["network.phase_datum_eq34_rpb_prior_sigma_m=0",
                   'network.phase_datum_eq34_event_rows=["kept","returning","root"]'],
                "A0fkr + the root row, no rehost row (IRD-4, the row alone)"),
+    # The fifth row in table order: the slip row armed beside the kept, returning, rehost and root rows (A1krhRs,
+    # A0fkrhRs), and with no rehost row on A0fkrR's base (A0fkrRs, the row alone: a de-seated vertex re-attaches by
+    # the as-built rule).  Each arm is its parent (A1krhR, A0fkrhR, A0fkrR) with the event-row list extended and
+    # nothing else.
+    "A1krhRs": (SLIP_SET + SEARCH_LOG + IRD_TRACES + BUNDLE_A0
+                + ["network.phase_datum_eq34_family=pair",
+                   'network.phase_datum_eq34_event_rows=["kept","returning","rehost","root","slip"]'],
+                "A1krhR + the slip row (IRD-4)"),
+    "A0fkrhRs": (SLIP_SET + SEARCH_LOG + IRD_TRACES + BUNDLE_A0
+                 + ["network.phase_datum_eq34_rpb_prior_sigma_m=0",
+                    'network.phase_datum_eq34_event_rows=["kept","returning","rehost","root","slip"]'],
+                 "A0fkrhR + the slip row (IRD-4)"),
+    "A0fkrRs": (SLIP_SET + SEARCH_LOG + IRD_TRACES + BUNDLE_A0
+                + ["network.phase_datum_eq34_rpb_prior_sigma_m=0",
+                   'network.phase_datum_eq34_event_rows=["kept","returning","root","slip"]'],
+                "A0fkrR + the slip row, no rehost row (IRD-4, the row alone)"),
     # The bisection of the stop (card IRDB section 4): bundle A0 less one group.
     "A0hb": (SLIP_SET + SEARCH_LOG + IRD_TRACES + CHAIN_ON + FLOAT_REPIN_OFF
              + ["network.phase_datum_min_stations=1"],
@@ -196,6 +212,12 @@ BEDS = {
                "IRD t5: the t2 shape on the t2 arc, S03000SIM G25, at the settled epoch 175 (TOW 266250)", []),
     "ird_tr": ("sim", FIXTURES_ROOT + "/simird_tr", ARL_GPS_ONLY,
                "IRD tr: L1C +1 on r1's own edge, S13000SIM G03, epoch 158", []),
+    # the causal readings of t1 and tr: the microscope (rung 1c with zero-ionosphere rows) with the same scripted
+    # slip on the same arc, generated like the others
+    "ird_t1m": ("sim", FIXTURES_ROOT + "/simird_t1m", ARL_GPS_ONLY + MICROSCOPE,
+                "IRD t1 on the microscope: L1C +1, S10000SIM G09, satellite-side edge, epoch 158", []),
+    "ird_trm": ("sim", FIXTURES_ROOT + "/simird_trm", ARL_GPS_ONLY + MICROSCOPE,
+                "IRD tr on the microscope: L1C +1 on r1's own edge, S13000SIM G03, epoch 158", []),
     # gap fixtures: rung 3b with one station's RINEX blanked (every type) from epoch 152
     "ird_rg": ("sim", "runs/simarl_r3b", ARL_GPS_ONLY,
                "IRD rg: r1 (%s) blanked 10 min from epoch %d" % (GAP_ROOT, GAP_FIRST_EPOCH),
@@ -504,7 +526,8 @@ def selftest():
     # --- the IRD-2 fixtures (card IRD section 6)
     fixtures = ("ird_t1", "ird_t2", "ird_t3", "ird_t4", "ird_t5", "ird_tr", "ird_rg", "ird_rv6", "ird_rv16")
     chk(all(b in BEDS for b in fixtures)
-        and sorted(b for b in BEDS if b.startswith("ird_")) == sorted(fixtures + ("ird_l2v16", "ird_rg_mic")),
+        and sorted(b for b in BEDS if b.startswith("ird_"))
+        == sorted(fixtures + ("ird_l2v16", "ird_rg_mic", "ird_t1m", "ird_trm")),
         "a bed for each of the nine fixtures, the one-band fixture and the microscope gap bed, and no other ird_ bed")
     chk(all(ARL_GPS_ONLY[0] in compose("A0", b) for b in fixtures), "every fixture bed is GPS-only like the ARL beds")
     chk(all(os.path.isabs(BEDS[b][1]) and BEDS[b][1] == FIXTURES_ROOT + "/simird_" + b[4:] and not BEDS[b][4]

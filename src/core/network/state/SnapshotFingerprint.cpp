@@ -558,7 +558,9 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         //                           last election.  The root row's pinned receiver phase-bias targets are
         //                           not serialized either (the loader drops the entry when a snapshot is
         //                           written): a resumed leg would pin a root at 0 under carries in the old
-        //                           frame
+        //                           frame.  The slip row reads the one-epoch free-epoch latch and the same
+        //                           memory of earlier trees, so after a resume it also reads a first absent
+        //                           vertex as a birth
         //   signal integrity        network.signal_integrity.*
         //   measurement admission   adm_{screen,bound_m,min_sats,heal_ep,max_frac,
         //                           trace} and adm_revet{,_gap_ep,_ep,_census,_hold}

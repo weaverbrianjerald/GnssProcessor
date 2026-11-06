@@ -3708,15 +3708,18 @@ struct ChainRun {
     EpochEvents             events;
 };
 
-/// @p freed is the epoch's free-epoch latch, (station, ambiguity key), which the kept row reads.
+/// @p freed is the epoch's free-epoch latch, (station, ambiguity key), which the event rows read, and
+/// @p cause its cause bits, which the slip row reads.
 /// @p now_s is the epoch's continuous GPS seconds, which the root row reads for a carry's age.
 ChainRun runLiveChainElection(NetworkRunContext& ctx, const GnssConfig& cfg, const ChainWorld& w,
                               const ChainEpoch& e, const std::shared_ptr<spdlog::logger>& log,
-                              const std::set<std::pair<int, std::string>>& freed = {}, double now_s = 0.0) {
+                              const std::set<std::pair<int, std::string>>& freed = {}, double now_s = 0.0,
+                              const std::map<std::pair<int, std::string>, std::uint8_t>& cause = {}) {
     ChainRun r;
     r.stations.resize(w.names.size());
     for (std::size_t i = 0; i < w.names.size(); ++i) r.stations[i].name = w.names[i];
     r.events.slip.relevel.free_ambs = freed;
+    r.events.slip.relevel.free_cause = cause;
     networkElectChainDatum(ctx, cfg, log, r.stations, e.present, e.cnd, e.hyg, e.slipped, r.shared, r.events,
                            now_s);
     return r;
@@ -7045,6 +7048,1011 @@ TEST(NetworkArcGraphOracle, RootRowAbsentLeavesNoRootTraceWithTheKeptReturningAn
     EXPECT_GT(n_unknown, 100);
     std::cout << "[ NetworkArcGraphOracle ] root row absent: " << n_epochs << " epochs, " << n_unknown
               << " satellite edges that remember another root, all unknown as built\n";
+}
+
+
+// ---------------------------------------------------------------------------------------------
+// The slip row of the chain's event table (network.phase_datum_eq34_event_rows "slip").  An arc in
+// the epoch's free-epoch latch leaves the tree at the slip epoch: an incumbent edge on it loses its
+// seat and a new edge on it is refused while another route exists, on both bands of a pair family.
+// The old child re-attaches through a new edge, which is that edge's own row's.  A slipped arc no
+// other route can replace stays, and the row releases it.  Hand-built cases for each condition and
+// effect, and random lineages where the rule is restated apart from the production code.
+// ---------------------------------------------------------------------------------------------
+
+/// The slip row's election counters, in the order of the struct (the cause bits apart).
+std::array<long long, 13> slCounters(const NetworkRunContext& ctx) {
+    const auto& c = ctx.counters;
+    return {c.eq34_sl_deseated,      c.eq34_sl_deseated_family, c.eq34_sl_released, c.eq34_sl_birth,
+            c.eq34_sl_with_state,    c.eq34_sl_asbuilt_zero,    c.eq34_sl_asbuilt_whole,
+            c.eq34_sl_asbuilt_frac,  c.eq34_sl_asbuilt_unknown, c.eq34_sl_arcs,
+            c.eq34_sl_rpb,           c.eq34_sl_pb,              c.eq34_sl_declared};
+}
+
+enum SlCounter : std::size_t {
+    kSlDeseated, kSlDeseatedFamily, kSlReleased, kSlBirth, kSlWithState, kSlAsZero, kSlAsWhole, kSlAsFrac,
+    kSlAsUnknown, kSlArcs, kSlRpb, kSlPb, kSlDeclared
+};
+
+/// Nothing of the slip row has happened: no tally counted.
+void expectNoSlipTrace(const NetworkRunContext& ctx, const std::string& what) {
+    for (long long n : slCounters(ctx)) EXPECT_EQ(n, 0) << what;
+    for (long long n : ctx.counters.eq34_sl_by_cause) EXPECT_EQ(n, 0) << what;
+}
+
+/// A hand-built bed with the rows armed, on the pair family or not.
+KeptBed makeSlipBed(LogManager& lm, const std::vector<std::string>& rows, int tag, const std::vector<std::string>& names,
+                    bool pair = false) {
+    ChainKnobs kn;
+    kn.trace_chain   = true;
+    kn.carry_shift   = true;
+    kn.preferred     = names.front();
+    kn.float_vehicle = true;
+    kn.rows          = rows;
+    kn.family        = pair ? "pair" : "signal";
+    KeptBed bed;
+    bed.world.names = names;
+    bed.cfg = loadChainConfig(lm, kn, tag);
+    if (bed.cfg) {
+        bed.ctx = std::make_unique<NetworkRunContext>(*bed.cfg, bed.cfg->getNetworkConfig());
+        bed.ctx->entities.names.assign(names);
+    }
+    return bed;
+}
+
+/// An epoch whose arcs carry both GPS bands.
+ChainEpoch twoBandChainEpoch(std::size_t n_sta, const ArcList& arcs) {
+    ChainEpoch e = arcsChainEpoch(n_sta, arcs, "L1C");
+    for (const auto& [i, sat] : arcs) {
+        const std::string amb = StateKeys::makeAmbiguityKey(sat, "L2W");
+        e.cnd.usable_keys[static_cast<std::size_t>(i)][amb] = StateKeys::makeSatPhaseBiasKey(sat, "L2W");
+        e.cnd.union_keys[amb] = StateKeys::makeSatPhaseBiasKey(sat, "L2W");
+    }
+    return e;
+}
+
+/// The latch key of an arc.
+std::pair<int, std::string> latchKey(int sta, const std::string& sat, const std::string& sig = "L1C") {
+    return {sta, StateKeys::makeAmbiguityKey(sat, sig)};
+}
+
+/// A-G01-B, with G02 and G03 at B and C: B holds G02 and G03, and C hangs below G02.  The arc C-G03 is the chord.
+const ArcList kSlipArcs{{0, "G01"}, {1, "G01"}, {1, "G02"}, {1, "G03"}, {2, "G02"}, {2, "G03"}};
+
+// The slipped edge leaves the tree at the slip epoch.  Its child's fragment (G02, C) re-attaches through the chord
+// C-G03, which the rehost row releases: the moved side is C and G02, and the edge C-G02 reverses inside it.  The
+// frame outside the moved side does not step.
+TEST(NetworkArcGraphOracle, SlipRowDeseatsASlippedEdgeAndTheRehostRowReleasesTheFragmentThatReAttaches) {
+    LogManager lm;
+    const std::vector<std::string> names{"AAAA", "BBBB", "CCCC"};
+    const double lam = nominalWavelengthOfDigitM(System::GPS, '1');
+    ASSERT_GT(lam, 0.0);
+    KeptBed bed = makeSlipBed(lm, {"kept", "rehost", "slip"}, 8700, names);
+    ASSERT_TRUE(bed.cfg && bed.ctx);
+    ASSERT_TRUE(bed.ctx->knobs.eq34_row_slip);
+    bed.elect(arcsChainEpoch(3, kSlipArcs));
+    putPrevTarget(*bed.ctx, 1, "G02", "L1C", 3.0 * lam);
+    putPrevTarget(*bed.ctx, 2, "G02", "L1C", -2.0 * lam);
+    putStaleCarry(*bed.ctx, 2, "G03", "L1C", 5.3 * lam);   // the chord
+    putStaleCarry(*bed.ctx, 1, "G02", "L1C", 3.1 * lam);   // the slipped arc
+    putRpbCarry(*bed.ctx, 2);
+    putPbPrior(*bed.ctx, "G02");
+    const std::map<std::pair<int, std::string>, std::uint8_t> cause{{latchKey(1, "G02"), std::uint8_t{132}}};
+    const ChainRun r = runLiveChainElection(*bed.ctx, *bed.cfg, bed.world, arcsChainEpoch(3, kSlipArcs),
+                                            bed.log, {latchKey(1, "G02")}, 0.0, cause);
+    ASSERT_TRUE(r.events.phase_datum.chain);
+    const ChainEpochObs& obs = *r.events.phase_datum.chain;
+    EXPECT_EQ(keptEdge(obs, 1, "G02"), nullptr);                                // the slipped arc is a chord now
+    EXPECT_EQ(r.stations[1].pinned_amb_targets.count("G02_L1C"), 0u);
+    const ChainEdgeObs* join = keptEdge(obs, 2, "G03");
+    const ChainEdgeObs* rev  = keptEdge(obs, 2, "G02");
+    ASSERT_TRUE(join && rev);
+    EXPECT_EQ(join->child, "R:2");                                              // the new edge: C below G03
+    EXPECT_TRUE(join->row_armed && !join->known && !join->slip_released);       // the rehost row's
+    EXPECT_NEAR(join->target_m, 5.0 * lam, 1e-12);                              // the rounded chord
+    EXPECT_FALSE(join->second_pass);
+    EXPECT_TRUE(rev->incumbent_flipped && rev->row_armed && rev->known);        // the kept row holds the reversed edge
+    EXPECT_EQ(rev->target_m, -2.0 * lam);
+    EXPECT_TRUE(std::isnan(rev->step_m));                                       // ... inside the moved side
+    ASSERT_EQ(obs.releases.size(), 1u);
+    EXPECT_EQ(obs.releases[0].row, ChainReleaseRow::Rehost);
+    EXPECT_EQ(obs.releases[0].vertex, "R:2");
+    EXPECT_EQ(obs.releases[0].sats, std::vector<std::string>{"G02"});
+    EXPECT_EQ(obs.releases[0].stations, std::vector<int>{2});
+    ASSERT_EQ(obs.deseats.size(), 1u);
+    const ChainDeseatObs& d = obs.deseats[0];
+    EXPECT_EQ(d.group, "G|L1C");
+    EXPECT_EQ(d.signal, "L1C");
+    EXPECT_EQ(d.station, 1);
+    EXPECT_EQ(d.station_name, "BBBB");
+    EXPECT_EQ(d.sat, "G02");
+    EXPECT_TRUE(d.sat_is_child);
+    EXPECT_EQ(d.child, "S:G02");
+    EXPECT_EQ(d.parent, "R:1");
+    EXPECT_EQ(d.prev_target_m, 3.0 * lam);
+    EXPECT_EQ(d.cause, 132);
+    EXPECT_TRUE(d.band_latched);
+    EXPECT_EQ(d.comp, 0);
+    EXPECT_EQ(d.new_parent, "R:2");                                             // G02 hangs under C now
+    EXPECT_TRUE(d.released);
+    EXPECT_EQ(d.release_row, ChainReleaseRow::Rehost);
+    EXPECT_EQ(d.release_station, 2);
+    EXPECT_EQ(d.release_sat, "G03");
+    EXPECT_EQ(d.release_vertex, "R:2");
+    // What moved: the key of the moved side and every carry touching it.  G03 and G01 stay.
+    EXPECT_EQ(r.events.phase_datum.eq34_reref, (std::set<std::pair<std::string, std::string>>{{"G02", "L1C"}}));
+    EXPECT_FALSE(hasCarry(*bed.ctx, 1, "G02"));
+    EXPECT_FALSE(hasCarry(*bed.ctx, 2, "G03"));
+    EXPECT_FALSE(hasRpbCarry(*bed.ctx, 2));
+    // The tallies: one de-seat with its cause bits, the release under the rehost row, none under the slip row.
+    const auto c = slCounters(*bed.ctx);
+    EXPECT_EQ(c[kSlDeseated], 1);
+    EXPECT_EQ(c[kSlDeseatedFamily], 0);
+    EXPECT_EQ(c[kSlReleased] + c[kSlBirth] + c[kSlArcs] + c[kSlRpb] + c[kSlPb] + c[kSlDeclared], 0);
+    EXPECT_EQ(bed.ctx->counters.eq34_sl_by_cause[2], 1);                        // IF-TD
+    EXPECT_EQ(bed.ctx->counters.eq34_sl_by_cause[7], 1);                        // GF jump
+    EXPECT_EQ(bed.ctx->counters.eq34_sl_by_cause[0], 0);
+    EXPECT_EQ(rhCounters(*bed.ctx)[kRhReleased], 1);
+    EXPECT_EQ(bed.ctx->counters.eq34_kept_not_freed, 0);                        // the slipped arc is no edge to hold
+    EXPECT_EQ(bed.ctx->counters.eq34_mismatch_epochs, 0);
+    // The next election holds the new tree: no slip, no release.
+    const ChainRun next = bed.elect(arcsChainEpoch(3, kSlipArcs));
+    ASSERT_TRUE(next.events.phase_datum.chain);
+    EXPECT_TRUE(next.events.phase_datum.chain->releases.empty());
+    EXPECT_TRUE(next.events.phase_datum.chain->deseats.empty());
+    const ChainEdgeObs* held = keptEdge(*next.events.phase_datum.chain, 2, "G03");
+    ASSERT_TRUE(held);
+    EXPECT_NEAR(held->target_m, 5.0 * lam, 1e-12);
+    EXPECT_TRUE(held->row_armed && held->known && held->pinmove_m == 0.0);
+}
+
+// The same fragment with no rehost row: the de-seat stands, the new edge runs the as-built rule (its step is the
+// chord's fraction, shifted), and the record says no row released the moved side.
+TEST(NetworkArcGraphOracle, SlipRowWithNoRehostRowLeavesTheNewEdgeAsBuilt) {
+    LogManager lm;
+    const std::vector<std::string> names{"AAAA", "BBBB", "CCCC"};
+    const double lam = nominalWavelengthOfDigitM(System::GPS, '1');
+    ASSERT_GT(lam, 0.0);
+    KeptBed bed = makeSlipBed(lm, {"kept", "slip"}, 8702, names);
+    ASSERT_TRUE(bed.cfg && bed.ctx);
+    bed.elect(arcsChainEpoch(3, kSlipArcs));
+    putStaleCarry(*bed.ctx, 2, "G03", "L1C", 5.3 * lam);
+    const ChainRun r = bed.elect(arcsChainEpoch(3, kSlipArcs), {latchKey(1, "G02")});
+    ASSERT_TRUE(r.events.phase_datum.chain);
+    const ChainEpochObs& obs = *r.events.phase_datum.chain;
+    EXPECT_EQ(keptEdge(obs, 1, "G02"), nullptr);
+    const ChainEdgeObs* join = keptEdge(obs, 2, "G03");
+    ASSERT_TRUE(join);
+    EXPECT_FALSE(join->row_armed);
+    EXPECT_TRUE(join->known);
+    EXPECT_NEAR(join->pinmove_m, -0.3 * lam, 1e-12);
+    EXPECT_TRUE(obs.releases.empty());
+    ASSERT_EQ(obs.deseats.size(), 1u);
+    EXPECT_FALSE(obs.deseats[0].released);
+    EXPECT_EQ(obs.deseats[0].new_parent, "R:2");
+    EXPECT_EQ(obs.deseats[0].release_station, -1);
+    EXPECT_EQ(obs.deseats[0].cause, 0);                       // no cause recorded for this latch
+    EXPECT_TRUE(r.events.phase_datum.eq34_reref.empty());
+    EXPECT_EQ(slCounters(*bed.ctx)[kSlDeseated], 1);
+}
+
+// A slipped arc with no other route stays in the tree (the second pass admits it) and the row releases it: the moved
+// side takes the slip, at the arc's previous target.  The as-built draft is kept for the observatory.
+TEST(NetworkArcGraphOracle, SlipRowReleasesASlippedEdgeNoOtherRouteCanReplaceAtItsPreviousTarget) {
+    LogManager lm;
+    const std::vector<std::string> names{"AAAA", "BBBB"};
+    const double lam = nominalWavelengthOfDigitM(System::GPS, '1');
+    ASSERT_GT(lam, 0.0);
+    const ArcList arcs{{0, "G01"}, {1, "G01"}, {1, "G02"}};
+    KeptBed bed = makeSlipBed(lm, {"kept", "returning", "rehost", "slip"}, 8704, names);
+    ASSERT_TRUE(bed.cfg && bed.ctx);
+    bed.elect(arcsChainEpoch(2, arcs));
+    putPrevTarget(*bed.ctx, 1, "G02", "L1C", 7.0 * lam);
+    putStaleCarry(*bed.ctx, 1, "G02", "L1C", 5.3 * lam);
+    putPbPrior(*bed.ctx, "G02");
+    const std::map<std::pair<int, std::string>, std::uint8_t> cause{{latchKey(1, "G02"), std::uint8_t{64}}};
+    const ChainRun r = runLiveChainElection(*bed.ctx, *bed.cfg, bed.world, arcsChainEpoch(2, arcs), bed.log,
+                                            {latchKey(1, "G02")}, 0.0, cause);
+    ASSERT_TRUE(r.events.phase_datum.chain);
+    const ChainEpochObs& obs = *r.events.phase_datum.chain;
+    EXPECT_EQ(bed.ctx->counters.eq34_sl_by_cause[6], 1);      // the gap re-entry bit
+    const ChainEdgeObs* g2 = keptEdge(obs, 1, "G02");
+    ASSERT_TRUE(g2);
+    EXPECT_TRUE(g2->slip_released);
+    EXPECT_TRUE(g2->row_armed);
+    EXPECT_TRUE(g2->second_pass);
+    EXPECT_FALSE(g2->known);
+    EXPECT_EQ(g2->pinmove_m, 0.0);
+    EXPECT_TRUE(std::isnan(g2->step_m));
+    EXPECT_EQ(g2->target_m, 7.0 * lam);                       // the arc's previous target
+    EXPECT_EQ(r.stations[1].pinned_amb_targets.at("G02_L1C"), 7.0 * lam);
+    EXPECT_NEAR(g2->legacy_target_m, 5.0 * lam, 1e-12);       // the as-built draft: the rounded carry
+    EXPECT_NEAR(g2->legacy_pinmove_m, -2.0 * lam, 1e-12);
+    EXPECT_TRUE(g2->legacy_known);
+    EXPECT_TRUE(obs.deseats.empty());                         // it did not leave the tree
+    ASSERT_EQ(obs.releases.size(), 1u);
+    EXPECT_EQ(obs.releases[0].row, ChainReleaseRow::Slip);
+    EXPECT_EQ(obs.releases[0].vertex, "S:G02");
+    EXPECT_EQ(obs.releases[0].sats, std::vector<std::string>{"G02"});
+    EXPECT_EQ(obs.releases[0].arcs, 1);
+    EXPECT_EQ(obs.releases[0].pb, 1);
+    EXPECT_EQ(r.events.phase_datum.eq34_reref, (std::set<std::pair<std::string, std::string>>{{"G02", "L1C"}}));
+    EXPECT_FALSE(hasCarry(*bed.ctx, 1, "G02"));
+    const auto c = slCounters(*bed.ctx);
+    EXPECT_EQ(c[kSlReleased], 1);
+    EXPECT_EQ(c[kSlDeseated], 0);
+    EXPECT_EQ(c[kSlWithState], 1);
+    EXPECT_EQ(c[kSlAsWhole], 1);
+    EXPECT_EQ(c[kSlArcs], 1);
+    EXPECT_EQ(c[kSlPb], 1);
+    EXPECT_EQ(c[kSlDeclared], 1);
+    // The slip row's release goes to the slip row's tallies and to no other row's.
+    EXPECT_EQ(rhCounters(*bed.ctx)[kRhArcs] + rhCounters(*bed.ctx)[kRhDeclared], 0);
+    EXPECT_EQ(retCounters(*bed.ctx)[kRetArcs] + retCounters(*bed.ctx)[kRetDeclared], 0);
+    EXPECT_EQ(bed.ctx->counters.eq34_kept_not_freed, 1);      // the kept row left it to this row
+    EXPECT_EQ(bed.ctx->counters.eq34_mismatch_epochs, 0);
+    // A held edge next: the released target stands.
+    const ChainRun next = bed.elect(arcsChainEpoch(2, arcs));
+    ASSERT_TRUE(next.events.phase_datum.chain);
+    const ChainEdgeObs* again = keptEdge(*next.events.phase_datum.chain, 1, "G02");
+    ASSERT_TRUE(again);
+    EXPECT_FALSE(again->slip_released);
+    EXPECT_EQ(again->target_m, 7.0 * lam);
+    EXPECT_TRUE(again->known);
+    EXPECT_EQ(slCounters(*bed.ctx)[kSlReleased], 1);
+}
+
+// A receiver edge no other route can replace: the moved side is the receiver and every satellite only it sees.
+TEST(NetworkArcGraphOracle, SlipRowReleasesAReceiverEdgeWithItsSubtree) {
+    LogManager lm;
+    const std::vector<std::string> names{"AAAA", "BBBB"};
+    const double lam = nominalWavelengthOfDigitM(System::GPS, '1');
+    ASSERT_GT(lam, 0.0);
+    const ArcList arcs{{0, "G01"}, {1, "G01"}, {1, "G02"}, {1, "G03"}};
+    KeptBed bed = makeSlipBed(lm, {"kept", "rehost", "slip"}, 8706, names);
+    ASSERT_TRUE(bed.cfg && bed.ctx);
+    bed.elect(arcsChainEpoch(2, arcs));
+    putPrevTarget(*bed.ctx, 1, "G01", "L1C", -3.0 * lam);
+    putStaleCarry(*bed.ctx, 1, "G02", "L1C", 1.1 * lam);
+    putRpbCarry(*bed.ctx, 1);
+    const ChainRun r = bed.elect(arcsChainEpoch(2, arcs), {latchKey(1, "G01")});
+    ASSERT_TRUE(r.events.phase_datum.chain);
+    const ChainEpochObs& obs = *r.events.phase_datum.chain;
+    const ChainEdgeObs* b = keptEdge(obs, 1, "G01");
+    ASSERT_TRUE(b);
+    EXPECT_EQ(b->child, "R:1");
+    EXPECT_TRUE(b->slip_released);
+    EXPECT_EQ(b->target_m, -3.0 * lam);
+    ASSERT_EQ(obs.releases.size(), 1u);
+    EXPECT_EQ(obs.releases[0].row, ChainReleaseRow::Slip);
+    EXPECT_FALSE(obs.releases[0].sat_is_child);
+    EXPECT_EQ(obs.releases[0].stations, std::vector<int>{1});
+    std::vector<std::string> sats = obs.releases[0].sats;
+    std::sort(sats.begin(), sats.end());
+    EXPECT_EQ(sats, (std::vector<std::string>{"G02", "G03"}));
+    EXPECT_EQ(r.events.phase_datum.eq34_reref,
+              (std::set<std::pair<std::string, std::string>>{{"G02", "L1C"}, {"G03", "L1C"}}));
+    EXPECT_FALSE(hasRpbCarry(*bed.ctx, 1));
+    EXPECT_FALSE(hasCarry(*bed.ctx, 1, "G02"));
+    EXPECT_EQ(obs.releases[0].rpb, 1);
+    EXPECT_EQ(slCounters(*bed.ctx)[kSlRpb], 1);
+    EXPECT_EQ(slCounters(*bed.ctx)[kSlDeclared], 2);
+}
+
+// A satellite that returns through latched arcs only: the second pass admits one, and the row releases it, with the
+// carries of its key at every station.  The returning row leaves it to this row.
+TEST(NetworkArcGraphOracle, SlipRowReleasesAReturningSatelliteThroughALatchedArc) {
+    LogManager lm;
+    const std::vector<std::string> names{"AAAA", "BBBB"};
+    const double lam = nominalWavelengthOfDigitM(System::GPS, '1');
+    ASSERT_GT(lam, 0.0);
+    const ArcList base{{0, "G01"}, {1, "G01"}};
+    KeptBed bed = makeSlipBed(lm, {"kept", "returning", "rehost", "slip"}, 8708, names);
+    ASSERT_TRUE(bed.cfg && bed.ctx);
+    bed.elect(arcsChainEpoch(2, arcsPlus(base, {{0, "G03"}, {1, "G03"}})));   // G03 in the tree
+    bed.elect(arcsChainEpoch(2, base));                                       // G03 away
+    putStaleCarry(*bed.ctx, 0, "G03", "L1C", 1.7 * lam);
+    putStaleCarry(*bed.ctx, 1, "G03", "L1C", -2.2 * lam);
+    const ChainRun r = bed.elect(arcsChainEpoch(2, arcsPlus(base, {{0, "G03"}, {1, "G03"}})),
+                                 {latchKey(0, "G03"), latchKey(1, "G03")});
+    ASSERT_TRUE(r.events.phase_datum.chain);
+    const ChainEpochObs& obs = *r.events.phase_datum.chain;
+    const ChainEdgeObs* g3 = nullptr;
+    for (const ChainEdgeObs& o : obs.edges)
+        if (o.sat == "G03") { ASSERT_EQ(g3, nullptr); g3 = &o; }
+    ASSERT_TRUE(g3);
+    EXPECT_TRUE(g3->slip_released);
+    EXPECT_TRUE(g3->second_pass);
+    EXPECT_EQ(g3->target_m, 0.0);                             // the first-sighting target
+    ASSERT_EQ(obs.releases.size(), 1u);
+    EXPECT_EQ(obs.releases[0].row, ChainReleaseRow::Slip);
+    EXPECT_EQ(obs.releases[0].vertex, "S:G03");
+    EXPECT_EQ(obs.releases[0].arcs, 2);
+    EXPECT_FALSE(hasCarry(*bed.ctx, 0, "G03"));
+    EXPECT_FALSE(hasCarry(*bed.ctx, 1, "G03"));
+    EXPECT_EQ(retCounters(*bed.ctx)[kRetNotFreed], 1);
+    EXPECT_EQ(retCounters(*bed.ctx)[kRetReleased], 0);
+    EXPECT_EQ(slCounters(*bed.ctx)[kSlReleased], 1);
+    EXPECT_TRUE(obs.deseats.empty());                         // no incumbent edge: it was away
+}
+
+// A receiver that returns through its latched arcs: the as-built draft rounds its old-frame carry (the satellite has a
+// parent, so pin-to-round reads the arc), and the row takes the first-sighting target in its place.
+TEST(NetworkArcGraphOracle, SlipRowReleasesAReturningReceiverAtTheFirstSightingTargetInPlaceOfTheCarryRound) {
+    LogManager lm;
+    const std::vector<std::string> names{"AAAA", "BBBB", "CCCC"};
+    const double lam = nominalWavelengthOfDigitM(System::GPS, '1');
+    ASSERT_GT(lam, 0.0);
+    const ArcList base{{0, "G01"}, {1, "G01"}};
+    KeptBed bed = makeSlipBed(lm, {"kept", "returning", "rehost", "slip"}, 8709, names);
+    ASSERT_TRUE(bed.cfg && bed.ctx);
+    bed.elect(arcsChainEpoch(3, arcsPlus(base, {{2, "G01"}})));   // C below G01
+    bed.elect(arcsChainEpoch(3, base));                           // C away
+    putStaleCarry(*bed.ctx, 2, "G01", "L1C", 1.7 * lam);
+    const ChainRun r = bed.elect(arcsChainEpoch(3, arcsPlus(base, {{2, "G01"}})), {latchKey(2, "G01")});
+    ASSERT_TRUE(r.events.phase_datum.chain);
+    const ChainEpochObs& obs = *r.events.phase_datum.chain;
+    const ChainEdgeObs* c1 = keptEdge(obs, 2, "G01");
+    ASSERT_TRUE(c1);
+    EXPECT_EQ(c1->child, "R:2");
+    EXPECT_TRUE(c1->slip_released);
+    EXPECT_TRUE(c1->second_pass);
+    EXPECT_EQ(c1->target_m, 0.0);
+    EXPECT_NEAR(c1->legacy_target_m, 2.0 * lam, 1e-12);       // the rounded old-frame carry the row does not trust
+    ASSERT_EQ(obs.releases.size(), 1u);
+    EXPECT_EQ(obs.releases[0].row, ChainReleaseRow::Slip);
+    EXPECT_EQ(obs.releases[0].vertex, "R:2");
+    EXPECT_EQ(obs.releases[0].arcs, 1);
+    EXPECT_FALSE(hasCarry(*bed.ctx, 2, "G01"));
+    EXPECT_TRUE(r.events.phase_datum.eq34_reref.empty());     // a receiver: no key moves
+    EXPECT_EQ(retCounters(*bed.ctx)[kRetNotFreed], 1);
+    EXPECT_EQ(slCounters(*bed.ctx)[kSlReleased], 1);
+    EXPECT_EQ(bed.ctx->counters.eq34_mismatch_epochs, 0);
+}
+
+// A vertex never seen in a tree on a latched arc is a birth, and keeps the as-built rule.
+TEST(NetworkArcGraphOracle, SlipRowLeavesABirthOnALatchedArcAsBuilt) {
+    LogManager lm;
+    const std::vector<std::string> names{"AAAA", "BBBB"};
+    const ArcList base{{0, "G01"}, {1, "G01"}};
+    KeptBed bed = makeSlipBed(lm, {"kept", "rehost", "slip"}, 8710, names);
+    ASSERT_TRUE(bed.cfg && bed.ctx);
+    bed.elect(arcsChainEpoch(2, base));
+    const ChainRun r = bed.elect(arcsChainEpoch(2, arcsPlus(base, {{1, "G04"}})), {latchKey(1, "G04")});
+    ASSERT_TRUE(r.events.phase_datum.chain);
+    const ChainEpochObs& obs = *r.events.phase_datum.chain;
+    const ChainEdgeObs* g4 = keptEdge(obs, 1, "G04");
+    ASSERT_TRUE(g4);
+    EXPECT_FALSE(g4->slip_released);
+    EXPECT_FALSE(g4->row_armed);
+    EXPECT_TRUE(g4->known);
+    EXPECT_TRUE(obs.releases.empty());
+    EXPECT_TRUE(r.events.phase_datum.eq34_reref.empty());
+    EXPECT_EQ(slCounters(*bed.ctx)[kSlBirth], 1);
+    EXPECT_EQ(slCounters(*bed.ctx)[kSlReleased], 0);
+    // Seen now: the next latch on it is a slip.
+    const ChainRun again = bed.elect(arcsChainEpoch(2, arcsPlus(base, {{1, "G04"}})), {latchKey(1, "G04")});
+    ASSERT_TRUE(again.events.phase_datum.chain);
+    EXPECT_EQ(slCounters(*bed.ctx)[kSlReleased], 1);
+}
+
+// A vertex that lost its parent edge and has a latched and a clean arc: the row refuses the latched one, which the
+// walk would otherwise take first.
+TEST(NetworkArcGraphOracle, SlipRowRefusesANewEdgeOnALatchedArcWhileAnotherRouteExists) {
+    LogManager lm;
+    const std::vector<std::string> names{"AAAA", "BBBB", "CCCC"};
+    const ArcList path{{0, "G01"}, {1, "G01"}, {1, "G02"}, {2, "G02"}};
+    const ArcList before = arcsPlus(path, {{2, "G03"}});            // G03 under C
+    const ArcList after  = arcsPlus(path, {{0, "G03"}, {1, "G03"}});   // C lost it; A and B see it
+    for (const bool slip_on : {false, true}) {
+        const std::string what = slip_on ? "slip row on" : "slip row off";
+        KeptBed bed = makeSlipBed(lm, slip_on ? std::vector<std::string>{"kept", "rehost", "slip"}
+                                              : std::vector<std::string>{"kept", "rehost"},
+                                  8712 + (slip_on ? 1 : 0), names);
+        ASSERT_TRUE(bed.cfg && bed.ctx) << what;
+        bed.elect(arcsChainEpoch(3, before));
+        const ChainRun r = bed.elect(arcsChainEpoch(3, after), {latchKey(0, "G03")});
+        ASSERT_TRUE(r.events.phase_datum.chain) << what;
+        const ChainEpochObs& obs = *r.events.phase_datum.chain;
+        const ChainEdgeObs* a3 = keptEdge(obs, 0, "G03");
+        const ChainEdgeObs* b3 = keptEdge(obs, 1, "G03");
+        if (!slip_on) {
+            // The walk takes the first station's arc, latched or not, and the rehost row leaves it.
+            ASSERT_TRUE(a3) << what;
+            EXPECT_EQ(b3, nullptr) << what;
+            EXPECT_FALSE(a3->row_armed) << what;
+            EXPECT_EQ(rhCounters(*bed.ctx)[kRhNotFreed], 1) << what;
+            expectNoSlipTrace(*bed.ctx, what);
+            continue;
+        }
+        EXPECT_EQ(a3, nullptr) << what;
+        ASSERT_TRUE(b3) << what;
+        EXPECT_FALSE(b3->second_pass) << what;
+        EXPECT_TRUE(b3->row_armed && !b3->known && !b3->slip_released) << what;
+        ASSERT_EQ(obs.releases.size(), 1u) << what;
+        EXPECT_EQ(obs.releases[0].row, ChainReleaseRow::Rehost) << what;
+        EXPECT_TRUE(obs.deseats.empty()) << what;   // the latched arc was no incumbent edge
+        EXPECT_EQ(rhCounters(*bed.ctx)[kRhNotFreed], 0) << what;
+        EXPECT_EQ(slCounters(*bed.ctx)[kSlReleased], 0) << what;
+    }
+}
+
+// Pair family: a slip on one band takes the arc out of the one tree, so both bands re-attach through the same new
+// edge; the band whose arc did not slip names the other band's latch, with no cause of its own.
+TEST(NetworkArcGraphOracle, SlipRowOnAPairFamilyMovesBothBandsForASlipOnOne) {
+    LogManager lm;
+    const std::vector<std::string> names{"AAAA", "BBBB", "CCCC"};
+    KeptBed bed = makeSlipBed(lm, {"kept", "rehost", "slip"}, 8714, names, /*pair=*/true);
+    ASSERT_TRUE(bed.cfg && bed.ctx);
+    ASSERT_TRUE(bed.ctx->knobs.eq34_pair_family);
+    bed.elect(twoBandChainEpoch(3, kSlipArcs));
+    const std::map<std::pair<int, std::string>, std::uint8_t> cause{{latchKey(1, "G02"), std::uint8_t{1}}};
+    const ChainRun r = runLiveChainElection(*bed.ctx, *bed.cfg, bed.world, twoBandChainEpoch(3, kSlipArcs),
+                                            bed.log, {latchKey(1, "G02")}, 0.0, cause);
+    ASSERT_TRUE(r.events.phase_datum.chain);
+    const ChainEpochObs& obs = *r.events.phase_datum.chain;
+    std::map<std::string, std::set<std::pair<int, std::string>>> trees;
+    for (const ChainEdgeObs& o : obs.edges) trees[o.signal].insert({o.station, o.sat});
+    ASSERT_EQ(trees.size(), 2u);
+    EXPECT_EQ(trees["L1C"], trees["L2W"]);                    // one tree
+    EXPECT_EQ(trees["L1C"].count({1, "G02"}), 0u);
+    EXPECT_EQ(trees["L1C"].count({2, "G03"}), 1u);
+    ASSERT_EQ(obs.deseats.size(), 2u);
+    const ChainDeseatObs& d1 = obs.deseats[0].signal == "L1C" ? obs.deseats[0] : obs.deseats[1];
+    const ChainDeseatObs& d2 = obs.deseats[0].signal == "L1C" ? obs.deseats[1] : obs.deseats[0];
+    EXPECT_EQ(d1.signal, "L1C");
+    EXPECT_TRUE(d1.band_latched);
+    EXPECT_EQ(d1.cause, 1);
+    EXPECT_EQ(d2.signal, "L2W");
+    EXPECT_FALSE(d2.band_latched);
+    EXPECT_EQ(d2.cause, 0);
+    for (const ChainDeseatObs* d : {&d1, &d2}) {
+        EXPECT_EQ(d->station, 1);
+        EXPECT_EQ(d->sat, "G02");
+        EXPECT_TRUE(d->released);
+        EXPECT_EQ(d->release_row, ChainReleaseRow::Rehost);
+        EXPECT_EQ(d->release_sat, "G03");
+    }
+    EXPECT_EQ(obs.releases.size(), 2u);                       // one per band
+    EXPECT_EQ(r.events.phase_datum.eq34_reref,
+              (std::set<std::pair<std::string, std::string>>{{"G02", "L1C"}, {"G02", "L2W"}}));
+    const auto c = slCounters(*bed.ctx);
+    EXPECT_EQ(c[kSlDeseated], 2);
+    EXPECT_EQ(c[kSlDeseatedFamily], 1);
+    EXPECT_EQ(bed.ctx->counters.eq34_sl_by_cause[0], 1);      // the cause bit of the band it names
+    EXPECT_EQ(bed.ctx->counters.eq34_mismatch_epochs, 0);
+}
+
+// Pair family: when a slip on one band leaves no other route, the arc stays in the one tree.  The latched band is
+// released; the other band's pin keeps the frame, and the kept row holds it.
+TEST(NetworkArcGraphOracle, SlipRowOnAPairFamilyReleasesOnlyTheLatchedBandOfAnArcThatStays) {
+    LogManager lm;
+    const std::vector<std::string> names{"AAAA", "BBBB"};
+    const ArcList arcs{{0, "G01"}, {1, "G01"}, {1, "G02"}};
+    KeptBed bed = makeSlipBed(lm, {"kept", "rehost", "slip"}, 8716, names, /*pair=*/true);
+    ASSERT_TRUE(bed.cfg && bed.ctx);
+    bed.elect(twoBandChainEpoch(2, arcs));
+    bed.elect(twoBandChainEpoch(2, arcs));
+    const ChainRun r = bed.elect(twoBandChainEpoch(2, arcs), {latchKey(1, "G02", "L2W")});
+    ASSERT_TRUE(r.events.phase_datum.chain);
+    const ChainEpochObs& obs = *r.events.phase_datum.chain;
+    const ChainEdgeObs* l1 = nullptr;
+    const ChainEdgeObs* l2 = nullptr;
+    for (const ChainEdgeObs& o : obs.edges)
+        if (o.station == 1 && o.sat == "G02") (o.signal == "L1C" ? l1 : l2) = &o;
+    ASSERT_TRUE(l1 && l2);
+    EXPECT_TRUE(l2->slip_released);
+    EXPECT_FALSE(l2->known);
+    EXPECT_FALSE(l1->slip_released);
+    EXPECT_TRUE(l1->row_armed && l1->known && l1->pinmove_m == 0.0);   // held
+    ASSERT_EQ(obs.releases.size(), 1u);
+    EXPECT_EQ(obs.releases[0].signal, "L2W");
+    EXPECT_EQ(r.events.phase_datum.eq34_reref, (std::set<std::pair<std::string, std::string>>{{"G02", "L2W"}}));
+    EXPECT_TRUE(obs.deseats.empty());
+}
+
+// A slip on the root's own edge: the child's subtree re-attaches elsewhere and the root stays the root, its pin as it was.
+TEST(NetworkArcGraphOracle, SlipRowOnTheRootsOwnEdgeKeepsTheRoot) {
+    LogManager lm;
+    const std::vector<std::string> names{"AAAA", "BBBB"};
+    const ArcList arcs{{0, "G01"}, {0, "G02"}, {1, "G01"}, {1, "G02"}};   // A holds G01 and G02; B hangs below one, the other a chord
+    KeptBed bed = makeSlipBed(lm, {"kept", "rehost", "root", "slip"}, 8718, names);
+    ASSERT_TRUE(bed.cfg && bed.ctx);
+    bed.elect(arcsChainEpoch(2, arcs));
+    const ChainRun r = bed.elect(arcsChainEpoch(2, arcs), {latchKey(0, "G01")});
+    ASSERT_TRUE(r.events.phase_datum.chain);
+    const ChainEpochObs& obs = *r.events.phase_datum.chain;
+    EXPECT_EQ(keptEdge(obs, 0, "G01"), nullptr);
+    ASSERT_EQ(obs.comps.size(), 1u);
+    EXPECT_EQ(obs.comps[0].r1, "AAAA");
+    EXPECT_EQ(bed.ctx->counters.eq34_root_handovers, 0);
+    EXPECT_EQ(r.stations[0].pinned_rpb_keys.size(), 1u);
+    ASSERT_EQ(obs.deseats.size(), 1u);
+    EXPECT_EQ(obs.deseats[0].parent, "R:0");
+    EXPECT_EQ(slCounters(*bed.ctx)[kSlDeseated], 1);
+    EXPECT_EQ(bed.ctx->counters.eq34_mismatch_epochs, 0);
+}
+
+// Every arc of the root latched: no clean arc leaves the root, so the second pass takes them all and the row releases
+// each.  The whole component but the root moves.  (A root handover could keep it; that is not this row's rule.)
+TEST(NetworkArcGraphOracle, SlipRowReleasesEveryEdgeOfARootWhoseArcsAllSlipped) {
+    LogManager lm;
+    const std::vector<std::string> names{"AAAA", "BBBB"};
+    const ArcList arcs{{0, "G01"}, {0, "G02"}, {1, "G01"}, {1, "G02"}};
+    KeptBed bed = makeSlipBed(lm, {"kept", "rehost", "slip"}, 8720, names);
+    ASSERT_TRUE(bed.cfg && bed.ctx);
+    bed.elect(arcsChainEpoch(2, arcs));
+    const ChainRun r = bed.elect(arcsChainEpoch(2, arcs), {latchKey(0, "G01"), latchKey(0, "G02")});
+    ASSERT_TRUE(r.events.phase_datum.chain);
+    const ChainEpochObs& obs = *r.events.phase_datum.chain;
+    ASSERT_EQ(obs.comps.size(), 1u);
+    EXPECT_EQ(obs.comps[0].r1, "AAAA");
+    std::set<std::string> released;
+    for (const ChainReleaseObs& rel : obs.releases) {
+        EXPECT_EQ(rel.row, ChainReleaseRow::Slip);
+        released.insert(rel.sat);
+    }
+    EXPECT_EQ(released, (std::set<std::string>{"G01", "G02"}));
+    EXPECT_EQ(r.events.phase_datum.eq34_reref,
+              (std::set<std::pair<std::string, std::string>>{{"G01", "L1C"}, {"G02", "L1C"}}));
+    EXPECT_EQ(slCounters(*bed.ctx)[kSlReleased], 2);
+    EXPECT_EQ(bed.ctx->counters.eq34_mismatch_epochs, 0);
+}
+
+// With the slip entry absent a slipped tree edge stays, whatever else is armed: no tally, no record, no release of the
+// slip row, and a latched arc is never refused.
+TEST(NetworkArcGraphOracle, SlipRowAbsentLeavesNoSlipTraceWithTheOtherRowsArmed) {
+    std::mt19937 rng(20261111u);
+    LogManager lm;
+    const auto quiet = std::make_shared<spdlog::logger>("ird4_slip_absent", spdlog::sinks_init_list{});
+    long long n_epochs = 0, n_latched_edges = 0;
+    for (int lineage = 0; lineage < 3; ++lineage) {
+        ChainKnobs kn = drawChainKnobs(rng);
+        kn.trace_chain = true;
+        kn.slip_aware  = false;
+        kn.rows = {"kept", "returning", "rehost", "root"};
+        ChainWorld w = randomChainWorld(rng);
+        const std::unique_ptr<GnssConfig> cfg = loadChainConfig(lm, kn, 9970 + lineage);
+        ASSERT_TRUE(cfg) << "lineage " << lineage;
+        NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
+        ctx.entities.names.assign(w.names);
+        ASSERT_FALSE(ctx.knobs.eq34_row_slip);
+        const AnchorHygiene hyg_shape{};
+        for (int ep = 0; ep < 40; ++ep) {
+            ChainEpoch e = nextChainEpoch(rng, w, hyg_shape);
+            perturbChainCarry(rng, w, e, ctx, ctx);
+            std::set<std::pair<int, std::string>> freed;
+            for (std::size_t i = 0; i < e.present.size(); ++i)
+                for (const auto& [amb, pbkey] : e.cnd.usable_keys[i])
+                    if (e.cnd.union_keys.count(amb) && chance(rng, 0.1)) freed.insert({static_cast<int>(i), amb});
+            const ChainRun r = runLiveChainElection(ctx, *cfg, w, e, quiet, freed);
+            ASSERT_TRUE(r.events.phase_datum.chain);
+            const ChainEpochObs& obs = *r.events.phase_datum.chain;
+            ASSERT_TRUE(obs.deseats.empty());
+            for (const ChainReleaseObs& rel : obs.releases) ASSERT_NE(rel.row, ChainReleaseRow::Slip);
+            for (const ChainEdgeObs& o : obs.edges) {
+                ASSERT_FALSE(o.slip_released);
+                ASSERT_FALSE(o.second_pass);
+                if (freed.count({o.station, StateKeys::makeAmbiguityKey(o.sat, o.signal)})) ++n_latched_edges;
+            }
+            ++n_epochs;
+        }
+        expectNoSlipTrace(ctx, "lineage " + std::to_string(lineage));
+    }
+    EXPECT_GT(n_latched_edges, 100);
+    std::cout << "[ NetworkArcGraphOracle ] slip row absent: " << n_epochs << " epochs, " << n_latched_edges
+              << " tree edges on a latched arc, all in the tree as built\n";
+}
+
+/// What a band's tree must show of an incumbent edge that lost its seat, restated.
+struct WantDeseat {
+    std::string group, signal, sat;
+    int         station{-1};
+    bool        sat_is_child{true};
+    bool operator<(const WantDeseat& o) const {
+        return std::tie(group, station, sat, sat_is_child) < std::tie(o.group, o.station, o.sat, o.sat_is_child);
+    }
+};
+
+/// The arcs of one epoch's graph on a group: (station, satellite) over the present stations' ungated keys.
+std::set<std::pair<int, std::string>> arcsOfGroup(const ChainGroupArcs& groups, const std::string& group) {
+    const auto it = groups.find(group);
+    return it == groups.end() ? std::set<std::pair<int, std::string>>{} : it->second;
+}
+
+// The rule restated: every edge on an arc latched on its own band is released unless its child is a birth; an edge in
+// the first pass is never on a latched arc of its family; every incumbent edge of a band whose arc is latched on its
+// family and that is no tree edge of the band is recorded as de-seated, with where its child hangs now and the release
+// that took it; the moved sides and the tallies follow.  Without hygiene a child that clean arcs reach from the root is
+// never attached through a latched arc in a one-band family.
+TEST(NetworkArcGraphOracle, SlipRowDeseatsAndReleasesExactlyTheLatchedEdgesAndErasesWhatTouchesTheirMovedSides) {
+    std::mt19937 rng(20261112u);
+    LogManager lm;
+    const auto quiet = std::make_shared<spdlog::logger>("ird4_slip_identity", spdlog::sinks_init_list{});
+    long long n_epochs = 0, n_edges = 0, n_deseats = 0, n_family = 0, n_released = 0, n_births = 0, n_returning = 0;
+    long long n_prev_target = 0, n_draft_target = 0, n_rejoin_released = 0, n_rejoin_as_built = 0, n_second_pass = 0;
+    long long n_reversed_child = 0;
+    for (int lineage = 0; lineage < 8; ++lineage) {
+        ChainKnobs kn = drawChainKnobs(rng);
+        kn.trace_chain = true;
+        kn.slip_aware  = false;
+        const bool with_kept = lineage % 2 == 0;
+        const bool with_ret  = lineage % 4 < 2;
+        const bool with_rh   = lineage % 4 != 3;
+        kn.rows = {};
+        if (with_kept) kn.rows.push_back("kept");
+        if (with_ret)  kn.rows.push_back("returning");
+        if (with_rh)   kn.rows.push_back("rehost");
+        kn.rows.push_back("slip");
+        const bool pair = lineage >= 4;
+        kn.family = pair ? "pair" : "signal";
+        const ChainBands mode = pair ? ChainBands::BandOnly : ChainBands::Mixed;
+        ChainWorld w = randomChainWorld(rng, mode);
+        if (chance(rng, 0.2)) kn.preferred = w.names[static_cast<std::size_t>(uniform(rng, 0, static_cast<int>(w.names.size()) - 1))];
+        const std::unique_ptr<GnssConfig> cfg = loadChainConfig(lm, kn, 9980 + lineage);
+        ASSERT_TRUE(cfg) << "lineage " << lineage;
+        NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
+        ctx.entities.names.assign(w.names);
+        ASSERT_TRUE(ctx.knobs.eq34_row_slip);
+        ASSERT_EQ(ctx.knobs.eq34_row_rehost, with_rh);
+        ASSERT_EQ(ctx.knobs.eq34_row_returning, with_ret);
+        ASSERT_EQ(ctx.knobs.eq34_row_kept, with_kept);
+        ASSERT_EQ(ctx.knobs.eq34_pair_family, pair);
+        ASSERT_FALSE(ctx.knobs.eq34_seed_round);   // the first-sighting target is 0
+        const AnchorHygiene no_hygiene{};          // the walk's only refusal is the latch
+        for (int ep = 0; ep < 40; ++ep) {
+            ChainEpoch e = nextChainEpoch(rng, w, no_hygiene, mode);
+            finishPairEpoch(e);
+            perturbChainCarry(rng, w, e, ctx, ctx);
+            perturbChainLedger(rng, e, ctx, ep);
+            perturbReturning(rng, w, e, ctx);
+            std::set<std::pair<int, std::string>> freed;
+            std::map<std::pair<int, std::string>, std::uint8_t> cause;
+            // A dense latch at the first election, where most vertices are births; a sparse one after it.
+            const double p_latch = ep == 0 ? 0.5 : 0.08;
+            for (std::size_t i = 0; i < e.present.size(); ++i)
+                for (const auto& [amb, pbkey] : e.cnd.usable_keys[i])
+                    if (e.cnd.union_keys.count(amb) && chance(rng, p_latch)) {
+                        freed.insert({static_cast<int>(i), amb});
+                        cause[{static_cast<int>(i), amb}] = static_cast<std::uint8_t>(1u << uniform(rng, 0, 7));
+                    }
+            const KeptBefore kept_before = keptBefore(ctx, e);
+            const ReturningBefore before = returningBefore(ctx, w, e);
+            const auto sl0 = slCounters(ctx);
+            const auto cause0 = ctx.counters.eq34_sl_by_cause;
+            const auto rh0 = rhCounters(ctx);
+            const auto ret0 = retCounters(ctx);
+            const ChainRun r = runLiveChainElection(ctx, *cfg, w, e, quiet, freed, 0.0, cause);
+            const std::string at = "lineage " + std::to_string(lineage) + " epoch " + std::to_string(ep);
+            ASSERT_TRUE(r.events.phase_datum.chain) << at;
+            const ChainEpochObs& obs = *r.events.phase_datum.chain;
+            const auto reref = r.events.phase_datum.eq34_reref;
+            const ChainGroupArcs groups = chainGroupArcs(e);
+
+            // The family of a group this epoch, as the election forms it: GPS on its two bands under the pair family.
+            const auto familyGroups = [&](const std::string& group) {
+                std::vector<std::string> out{group};
+                if (pair && group[0] == 'G' && groups.count("G|L1C") && groups.count("G|L2W")) out = {"G|L1C", "G|L2W"};
+                return out;
+            };
+            const auto latchedInFamily = [&](int sta, const std::string& sat, const std::string& group) {
+                for (const std::string& g : familyGroups(group)) {
+                    if (!arcsOfGroup(groups, g).count({sta, sat})) continue;
+                    if (freed.count({sta, StateKeys::makeAmbiguityKey(sat, g.substr(2))})) return true;
+                }
+                return false;
+            };
+
+            // The edges: which row decides each, and what the slip row does.
+            std::vector<WantRehostRelease> want;
+            std::map<std::pair<std::string, std::string>, std::size_t> release_of;   // (group, vertex key) -> its release
+            long long want_released = 0, want_birth = 0, want_zero = 0, want_whole = 0, want_frac = 0, want_unknown = 0;
+            long long want_rh = 0, want_ret = 0;
+            std::map<std::string, std::set<std::pair<int, std::string>>> tree_of_group;
+            std::map<std::pair<std::string, std::string>, const ChainEdgeObs*> edge_of_child;
+            for (const ChainEdgeObs& o : obs.edges) {
+                const std::string amb = StateKeys::makeAmbiguityKey(o.sat, o.signal);
+                tree_of_group[o.group].insert({o.station, o.sat});
+                edge_of_child[{o.group, o.child}] = &o;
+                const bool in_latch = freed.count({o.station, amb}) != 0;
+                const bool fam_latched = latchedInFamily(o.station, o.sat, o.group);
+                // A first-pass edge is never on a latched arc of its family, in the family's own tree.
+                if (fam_latched && !o.second_pass) {
+                    const auto rows = familyGroups(o.group);
+                    const bool both_bands = rows.size() == 1
+                        || (arcsOfGroup(groups, rows[0]).count({o.station, o.sat})
+                            && arcsOfGroup(groups, rows[1]).count({o.station, o.sat}));
+                    // An arc only one band of a pair carries belongs to the band's extension, whose latch is that band's.
+                    if (both_bands || in_latch) {
+                        ASSERT_TRUE(o.second_pass) << at << " " << o.group << " " << o.station_name << " " << o.sat;
+                    }
+                }
+                if (o.second_pass) ++n_second_pass;
+                const KeptWant kw = keptWant(kept_before, o, freed);
+                const bool kept_held = with_kept && kw == KeptWant::Held;
+                bool absent = false;
+                if (o.sat_is_child) {
+                    absent = before.anchor.count(amb) == 0;
+                } else {
+                    absent = before.rx_parent.count({o.station, o.group}) == 0;
+                    const auto datum = before.datum.find(o.group);
+                    if (datum != before.datum.end() && datum->second == o.station_name) absent = false;
+                    for (const auto& [key, root] : before.root)
+                        if (root == o.station_name && groupOfAmb(key) == o.group) absent = false;
+                }
+                const bool seen = o.sat_is_child ? before.seen_sat.count(amb) != 0
+                                                 : before.seen_rx.count({o.station, o.group}) != 0;
+                const auto host = before.anchor.find(amb);
+                const auto rxp = before.rx_parent.find({o.station, o.group});
+                const bool had_parent = o.sat_is_child ? host != before.anchor.end() : rxp != before.rx_parent.end();
+                const bool was_sat_edge = host != before.anchor.end() && host->second == o.station_name;
+                const bool was_rx_edge  = rxp != before.rx_parent.end() && rxp->second == o.sat;
+                const bool ret_released = with_ret && !kept_held && absent && seen && !in_latch;
+                const bool rh_released = with_rh && !kept_held && !ret_released && had_parent && !was_sat_edge
+                                      && !was_rx_edge && !in_latch;
+                const bool birth = in_latch && absent && !seen;
+                const bool sl_released = in_latch && !birth;
+                ASSERT_EQ(o.slip_released, sl_released) << at << " " << o.group << " " << o.station_name << " " << o.sat;
+                ASSERT_EQ(o.row_armed, kept_held || ret_released || rh_released || sl_released)
+                    << at << " " << o.group << " " << o.station_name << " " << o.sat;
+                if (birth) ++want_birth;
+                std::optional<std::size_t> side;
+                if (ret_released || rh_released || sl_released) {
+                    ASSERT_FALSE(o.known) << at;
+                    ASSERT_EQ(o.pinmove_m, 0.0) << at;
+                    ASSERT_TRUE(std::isnan(o.step_m)) << at;
+                    if (sl_released) {
+                        ++want_released;
+                        const auto prev = kept_before.prev_target.find({o.station, amb});
+                        if (absent) {
+                            ASSERT_EQ(o.target_m, 0.0) << at;
+                            ++n_returning;
+                        } else if ((was_sat_edge || was_rx_edge) && prev != kept_before.prev_target.end()) {
+                            ASSERT_EQ(o.target_m, prev->second) << at;
+                            ++n_prev_target;
+                        } else {
+                            ASSERT_EQ(o.target_m, o.legacy_target_m) << at;
+                            ++n_draft_target;
+                        }
+                        ASSERT_EQ(r.stations[static_cast<std::size_t>(o.station)].pinned_amb_targets.at(amb), o.target_m) << at;
+                        if (!o.legacy_known)                                              ++want_unknown;
+                        else if (o.legacy_pinmove_m == 0.0)                               ++want_zero;
+                        else if (o.lambda_m > 0.0 && std::abs(o.legacy_pinmove_m / o.lambda_m
+                                     - std::round(o.legacy_pinmove_m / o.lambda_m)) <= 1e-6) ++want_whole;
+                        else                                                              ++want_frac;
+                    } else if (rh_released) {
+                        ++want_rh;
+                    } else {
+                        ++want_ret;
+                    }
+                    WantRehostRelease wr;
+                    wr.group = o.group; wr.signal = o.signal; wr.vertex = o.child; wr.sat = o.sat;
+                    wr.station = o.station; wr.comp = o.comp; wr.sat_is_child = o.sat_is_child;
+                    wr.row = sl_released ? ChainReleaseRow::Slip
+                           : rh_released ? ChainReleaseRow::Rehost : ChainReleaseRow::Returning;
+                    want.push_back(wr);
+                    side = want.size() - 1;
+                } else {
+                    const auto up = release_of.find({o.group, o.parent});
+                    if (up != release_of.end()) side = up->second;
+                }
+                if (!side) continue;
+                release_of[{o.group, o.child}] = *side;
+                if (o.sat_is_child) want[*side].sats.push_back(o.sat);
+                else                want[*side].stations.push_back(o.station);
+            }
+
+            // The one-band families: a child the clean arcs reach from its root is not attached through a latched arc.
+            if (!pair) {
+                for (const ChainComponentObs& k : obs.comps) {
+                    std::set<std::string> reached{"R:" + std::to_string(k.r1_station)};
+                    const auto arcs = arcsOfGroup(groups, k.group);
+                    for (bool grew = true; grew;) {
+                        grew = false;
+                        for (const auto& [sta, sat] : arcs) {
+                            if (freed.count({sta, StateKeys::makeAmbiguityKey(sat, k.signal)})) continue;
+                            const std::string rv = "R:" + std::to_string(sta), sv = "S:" + sat;
+                            if (reached.count(rv) != reached.count(sv)) {
+                                reached.insert(rv);
+                                reached.insert(sv);
+                                grew = true;
+                            }
+                        }
+                    }
+                    for (const ChainEdgeObs& o : obs.edges) {
+                        if (o.group != k.group || o.comp != k.comp) continue;
+                        if (freed.count({o.station, StateKeys::makeAmbiguityKey(o.sat, o.signal)}))
+                            ASSERT_EQ(reached.count(o.child), 0u) << at << " " << o.group << " " << o.child;
+                    }
+                }
+            }
+
+            // The de-seats: the incumbent edges of each band whose arc is latched on the family, present on the band,
+            // and no tree edge of the band.
+            std::set<WantDeseat> want_deseats;
+            std::map<std::string, int> index_of_name;
+            for (std::size_t i = 0; i < w.names.size(); ++i) index_of_name[w.names[i]] = static_cast<int>(i);
+            for (const auto& group_arcs : groups) {
+                const std::string& group = group_arcs.first;
+                const auto& arcs = group_arcs.second;
+                const std::string signal = group.substr(2);
+                const auto consider = [&](int sta, const std::string& sat, bool sat_is_child) {
+                    if (!arcs.count({sta, sat}) || !latchedInFamily(sta, sat, group)) return;
+                    if (tree_of_group[group].count({sta, sat})) return;
+                    WantDeseat d;
+                    d.group = group; d.signal = signal; d.sat = sat; d.station = sta; d.sat_is_child = sat_is_child;
+                    want_deseats.insert(d);
+                };
+                for (const auto& [amb, name] : before.anchor) {
+                    if (groupOfAmb(amb) != group) continue;
+                    const auto ix = index_of_name.find(name);
+                    if (ix != index_of_name.end()) consider(ix->second, amb.substr(0, amb.find('_')), true);
+                }
+                for (const auto& [key, sat] : before.rx_parent)
+                    if (key.second == group) consider(key.first, sat, false);
+            }
+            std::set<WantDeseat> got_deseats;
+            for (const ChainDeseatObs& d : obs.deseats) {
+                WantDeseat g;
+                g.group = d.group; g.signal = d.signal; g.sat = d.sat; g.station = d.station; g.sat_is_child = d.sat_is_child;
+                got_deseats.insert(g);
+                const std::string amb = StateKeys::makeAmbiguityKey(d.sat, d.signal);
+                ASSERT_EQ(d.band_latched, freed.count({d.station, amb}) != 0) << at;
+                const auto fc = cause.find({d.station, amb});
+                ASSERT_EQ(d.cause, fc == cause.end() ? 0 : fc->second) << at;
+                const std::string rk = "R:" + std::to_string(d.station), sk = "S:" + d.sat;
+                ASSERT_EQ(d.child, d.sat_is_child ? sk : rk) << at;
+                ASSERT_EQ(d.parent, d.sat_is_child ? rk : sk) << at;
+                // Where the old child hangs now.
+                const auto ce = edge_of_child.find({d.group, d.child});
+                if (ce != edge_of_child.end()) {
+                    ASSERT_EQ(d.new_parent, ce->second->parent) << at;
+                    ASSERT_EQ(d.comp, ce->second->comp) << at;
+                    if (ce->second->incumbent_flipped) ++n_reversed_child;
+                } else {
+                    ASSERT_TRUE(d.new_parent.empty()) << at;   // a root, or no vertex of the band's trees
+                }
+                // The release that took its moved side, if any.
+                const auto side = release_of.find({d.group, d.child});
+                ASSERT_EQ(d.released, side != release_of.end()) << at;
+                if (side != release_of.end()) {
+                    const WantRehostRelease& rel = want[side->second];
+                    ASSERT_EQ(d.release_row, rel.row) << at;
+                    ASSERT_EQ(d.release_station, rel.station) << at;
+                    ASSERT_EQ(d.release_sat, rel.sat) << at;
+                    ASSERT_EQ(d.release_vertex, rel.vertex) << at;
+                    ++n_rejoin_released;
+                } else {
+                    ++n_rejoin_as_built;
+                }
+                if (!d.band_latched) ++n_family;
+            }
+            ASSERT_EQ(got_deseats.size(), obs.deseats.size()) << at;
+            ASSERT_EQ(got_deseats.size(), want_deseats.size()) << at;
+            for (const WantDeseat& d : want_deseats)
+                ASSERT_EQ(got_deseats.count(d), 1u) << at << " " << d.group << " " << d.station << " " << d.sat;
+
+            // The moved sides, and what the releases took from them, restated from the state before the election.
+            std::map<std::pair<std::string, std::string>, std::size_t> side_of_sat;   // (satellite, signal) -> release
+            std::map<std::pair<int, std::string>, std::size_t>         side_of_rx;    // (station, group) -> release
+            for (std::size_t k = 0; k < want.size(); ++k) {
+                for (const std::string& s : want[k].sats) side_of_sat[{s, want[k].signal}] = k;
+                for (int s : want[k].stations) side_of_rx[{s, want[k].group}] = k;
+            }
+            for (const auto& [key, k] : side_of_sat) ASSERT_TRUE(reref.count(key)) << at;
+            for (const net::ArcTuple& carry : before.carries) {
+                const int sta = std::get<0>(carry);
+                const std::string &sat = std::get<1>(carry), &sig = std::get<2>(carry);
+                const auto by_sat = side_of_sat.find({sat, sig});
+                const auto by_rx  = side_of_rx.find({sta, sat.substr(0, 1) + "|" + sig});
+                const bool in_reref = reref.count({sat, sig}) != 0;
+                if (by_sat != side_of_sat.end()) {
+                    ++want[by_sat->second].arcs;
+                    ASSERT_FALSE(hasCarry(ctx, sta, sat, sig)) << at << " " << sta << " " << sat;
+                } else if (by_rx != side_of_rx.end()) {
+                    if (!in_reref) ++want[by_rx->second].arcs;
+                    ASSERT_FALSE(hasCarry(ctx, sta, sat, sig)) << at << " " << sta << " " << sat;
+                }
+            }
+            for (const auto& [key, k] : side_of_rx) {
+                const std::string rpb_key = rpbKeyOfGroup(key.second);
+                if (before.rpb.count({key.first, rpb_key}) == 0) continue;
+                ++want[k].rpb;
+                ASSERT_EQ(net::get(ctx.entities.stations, StationId{key.first}, &net::StationState::signals, rpb_key,
+                                   &net::StationSignalState::rpb), nullptr) << at;
+            }
+            for (const auto& [sat, sig] : before.pb) {
+                const auto by_sat = side_of_sat.find({sat, sig});
+                if (by_sat != side_of_sat.end()) ++want[by_sat->second].pb;
+            }
+
+            // The record of the releases and the tallies, split by the row of the release.
+            ASSERT_EQ(obs.releases.size(), want.size()) << at;
+            std::array<long long, 3> sum_arcs{}, sum_rpb{}, sum_pb{}, sum_declared{}, n_state{};
+            for (std::size_t k = 0; k < want.size(); ++k) {
+                const ChainReleaseObs& got = obs.releases[k];
+                const WantRehostRelease& exp = want[k];
+                ASSERT_EQ(got.row, exp.row) << at << " release " << k;
+                ASSERT_EQ(got.vertex, exp.vertex) << at;
+                ASSERT_EQ(got.sat, exp.sat) << at;
+                ASSERT_EQ(got.station, exp.station) << at;
+                auto sorted = [](auto v) { std::sort(v.begin(), v.end()); return v; };
+                ASSERT_EQ(sorted(got.sats), sorted(exp.sats)) << at;
+                ASSERT_EQ(sorted(got.stations), sorted(exp.stations)) << at;
+                ASSERT_EQ(got.arcs, exp.arcs) << at << " release " << k;
+                ASSERT_EQ(got.rpb, exp.rpb) << at << " release " << k;
+                ASSERT_EQ(got.pb, exp.pb) << at << " release " << k;
+                const auto row = static_cast<std::size_t>(exp.row);
+                sum_arcs[row] += exp.arcs;
+                sum_rpb[row] += exp.rpb;
+                sum_pb[row] += exp.pb;
+                sum_declared[row] += static_cast<long long>(exp.sats.size());
+                if (exp.arcs + exp.rpb + exp.pb > 0) ++n_state[row];
+            }
+            const auto sl1 = slCounters(ctx);
+            const auto rh1 = rhCounters(ctx);
+            const auto ret1 = retCounters(ctx);
+            const auto ds = [&](SlCounter k) { return sl1[k] - sl0[k]; };
+            const std::size_t kS = static_cast<std::size_t>(ChainReleaseRow::Slip);
+            const std::size_t kH = static_cast<std::size_t>(ChainReleaseRow::Rehost);
+            const std::size_t kR = static_cast<std::size_t>(ChainReleaseRow::Returning);
+            ASSERT_EQ(ds(kSlDeseated), static_cast<long long>(obs.deseats.size())) << at;
+            long long want_family = 0;
+            std::array<long long, 8> want_cause{};
+            for (const ChainDeseatObs& d : obs.deseats) {
+                if (!d.band_latched) ++want_family;
+                for (std::size_t c = 0; c < 8; ++c)
+                    if ((d.cause >> c) & 1u) ++want_cause[c];
+            }
+            for (const ChainEdgeObs& o : obs.edges) {   // the released edges count under their bits too
+                if (!o.slip_released) continue;
+                const auto fc = cause.find({o.station, StateKeys::makeAmbiguityKey(o.sat, o.signal)});
+                const unsigned bits = fc == cause.end() ? 0u : fc->second;
+                for (std::size_t c = 0; c < 8; ++c)
+                    if ((bits >> c) & 1u) ++want_cause[c];
+            }
+            ASSERT_EQ(ds(kSlDeseatedFamily), want_family) << at;
+            for (std::size_t c = 0; c < 8; ++c)
+                ASSERT_EQ(ctx.counters.eq34_sl_by_cause[c] - cause0[c], want_cause[c]) << at;
+            ASSERT_EQ(ds(kSlReleased), want_released) << at;
+            ASSERT_EQ(ds(kSlBirth), want_birth) << at;
+            ASSERT_EQ(ds(kSlAsZero), want_zero) << at;
+            ASSERT_EQ(ds(kSlAsWhole), want_whole) << at;
+            ASSERT_EQ(ds(kSlAsFrac), want_frac) << at;
+            ASSERT_EQ(ds(kSlAsUnknown), want_unknown) << at;
+            ASSERT_EQ(ds(kSlWithState), n_state[kS]) << at;
+            ASSERT_EQ(ds(kSlArcs), sum_arcs[kS]) << at;
+            ASSERT_EQ(ds(kSlRpb), sum_rpb[kS]) << at;
+            ASSERT_EQ(ds(kSlPb), sum_pb[kS]) << at;
+            ASSERT_EQ(ds(kSlDeclared), sum_declared[kS]) << at;
+            ASSERT_EQ(rh1[kRhReleased] - rh0[kRhReleased], want_rh) << at;
+            ASSERT_EQ(rh1[kRhArcs] - rh0[kRhArcs], sum_arcs[kH]) << at;
+            ASSERT_EQ(rh1[kRhDeclared] - rh0[kRhDeclared], sum_declared[kH]) << at;
+            ASSERT_EQ(ret1[kRetReleased] - ret0[kRetReleased], want_ret) << at;
+            ASSERT_EQ(ret1[kRetArcs] - ret0[kRetArcs], sum_arcs[kR]) << at;
+            ASSERT_EQ(ret1[kRetDeclared] - ret0[kRetDeclared], sum_declared[kR]) << at;
+
+            n_edges += static_cast<long long>(obs.edges.size());
+            n_deseats += static_cast<long long>(obs.deseats.size());
+            n_released += want_released;
+            n_births += want_birth;
+            ++n_epochs;
+        }
+    }
+    std::cout << "[ NetworkArcGraphOracle ] slip row: " << n_epochs << " epochs, " << n_edges << " tree edges, " << n_deseats
+              << " edges de-seated (" << n_family << " for the other band's latch; " << n_rejoin_released
+              << " in a released moved side, " << n_rejoin_as_built << " re-attached with no release, " << n_reversed_child
+              << " children reversed), " << n_released << " latched edges released (" << n_returning << " returning at the "
+              << "first-sighting target, " << n_prev_target << " at the previous target, " << n_draft_target
+              << " at the draft), " << n_births << " births left as built, " << n_second_pass << " second-pass edges\n";
+    EXPECT_GT(n_deseats, 200);
+    EXPECT_GT(n_family, 20);
+    EXPECT_GT(n_rejoin_released, 50);
+    EXPECT_GT(n_rejoin_as_built, 20);
+    EXPECT_GT(n_released, 30);
+    EXPECT_GT(n_returning, 2);
+    EXPECT_GT(n_prev_target, 5);
+    EXPECT_GT(n_births, 2);
 }
 
 }  // namespace

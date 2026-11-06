@@ -24,7 +24,8 @@
  * release and a first-sighting target; the rehost row: a vertex that moves to a new parent
  * edge takes the cut release and keeps the rounded target of its pin; the root row: a new datum
  * receiver pins its receiver phase bias at its carried value and the satellites of its old frame keep
- * their carries); the observatory then
+ * their carries; the slip row: an arc in the free-epoch latch leaves the tree at the slip epoch, and
+ * a slipped arc no other route can replace takes the cut release); the observatory then
  * records the edge as the election
  * realized it, with the facts the as-built rule drafted next to it, and the cut releases with the
  * keys they declare moved.  The election reads nothing this file writes; every output is a trace
@@ -169,8 +170,8 @@ bool chainEventRowEntryBuilt(const std::string& entry);
 /**
  * @brief Whether the integer rule of a row is armed for this run.
  * @param k The run's knob snapshot (@c eq34_row_kept resolves @c kept, @c eq34_row_returning
- *          resolves @c returning, @c eq34_row_rehost resolves both re-host rows and
- *          @c eq34_row_root resolves the root row, and only on the chain).
+ *          resolves @c returning, @c eq34_row_rehost resolves both re-host rows, @c eq34_row_root
+ *          resolves the root row and @c eq34_row_slip the slip row, and only on the chain).
  * @param r The row.
  * @return True when the election applies the row's integer rule; false for a row whose rule is
  *         not built.
@@ -254,7 +255,8 @@ struct ChainEdgeObs {
     bool        root_unknown{false};    ///< The satellite's remembered root differs from r1.
     bool        edge_changed{false};    ///< The election saw a new parent edge (the as-built reading unless @ref row_armed).
     // The integer rule of the edge's row and the as-built facts it replaced.
-    bool        row_armed{false};       ///< An event row's integer rule decided this edge (the kept row held it, the returning or rehost row released it, or the root row kept its frame through a root handover).
+    bool        row_armed{false};       ///< An event row's integer rule decided this edge (the kept row held it, the returning, rehost or slip row released it, or the root row kept its frame through a root handover).
+    bool        slip_released{false};   ///< The slip row released this edge: its arc is in the free-epoch latch and no other route reached the child.
     double      legacy_target_m{0.0};   ///< The target the as-built rule drafted (@ref target_m when no rule applied).
     double      legacy_pinmove_m{0.0};  ///< The displacement the as-built rule drafted (@ref pinmove_m when no rule applied).
     bool        legacy_known{true};     ///< Whether the as-built step was known (@ref known when no rule applied).
@@ -334,15 +336,16 @@ struct ChainChordCycle {
 enum class ChainReleaseRow : std::uint8_t {
     Returning,  ///< The returning row: a vertex rejoined the tree after an absence.
     Rehost,     ///< The rehost row: a vertex moved to a new parent edge.
+    Slip,       ///< The slip row: the arc is in the free-epoch latch and no other route reached the vertex.
 };
 
-/// The name of a @ref ChainReleaseRow value ("returning", "rehost").
+/// The name of a @ref ChainReleaseRow value ("returning", "rehost", "slip").
 const char* chainReleaseRowName(ChainReleaseRow r);
 
 /**
  * @brief One cut release of the epoch: an event row (@ref ChainReleaseRow) released a tree edge
- *        (the one that re-attached a vertex after an absence, or moved it to a new parent edge),
- *        with every carry that touches the vertex's moved side.
+ *        (the one that re-attached a vertex after an absence, moved it to a new parent edge, or
+ *        kept it on an arc that slipped), with every carry that touches the vertex's moved side.
  *
  * The moved side M is the released vertex and its subtree in the epoch's tree on one band.  A
  * subtree vertex that is itself a released vertex opens a release of its own, and the release
@@ -366,6 +369,37 @@ struct ChainReleaseObs {
     long long   pb{0};          ///< Satellite phase-bias priors of M in the border stash (measure-only: the re-reference marginalizes them).
 };
 
+/**
+ * @brief One tree edge the slip row de-seated: an incumbent edge of the band whose arc is in the
+ *        epoch's free-epoch latch and is no tree edge of the band at this election.
+ *
+ * The decoupling edge of the event is the arc itself.  The re-coupling edge is where the old child
+ * hangs now: its new parent and, when an event row released the moved side it lies in, that
+ * release's edge.  The release is the other row's, usually the rehost row's: the slip row does not
+ * release an edge it de-seated.
+ */
+struct ChainDeseatObs {
+    std::string  group;         ///< "<constellation key>|<signal>", the group of the band.
+    std::string  signal;        ///< Phase signal of the band.
+    int          comp{-1};      ///< Component index of the old child at this election (-1: the child is no vertex of the band's trees).
+    int          station{-1};   ///< The arc's station (roster index).
+    std::string  station_name;  ///< Its name.
+    std::string  sat;           ///< The arc's satellite.
+    bool         sat_is_child{true};   ///< The edge attached the satellite (else the station).
+    std::string  child;         ///< Vertex key of the old child.
+    std::string  parent;        ///< Vertex key of the old parent.
+    double       lambda_m{0.0}; ///< The band's carrier wavelength (0: no integer target).
+    double       prev_target_m{std::numeric_limits<double>::quiet_NaN()};  ///< The arc's target at the last election (NaN: none).
+    std::uint8_t cause{0};      ///< Free-epoch cause bits of the arc on this band (0: the latch names it on the family's other band only).
+    bool         band_latched{true};   ///< The latch names the arc on this band (else the family's tree moved it for the other band's slip).
+    std::string  new_parent;    ///< Vertex key of the old child's parent at this election ("": a root, or no vertex).
+    bool         released{false};      ///< An event row released the moved side the old child lies in.
+    ChainReleaseRow release_row{ChainReleaseRow::Rehost};   ///< That row (meaningful when @ref released).
+    int          release_station{-1};  ///< That released edge's station (roster index).
+    std::string  release_sat;   ///< That released edge's satellite.
+    std::string  release_vertex;   ///< Vertex key of the released vertex.
+};
+
 /// The observation of one epoch's chain (EpochEvents::PhaseDatum::chain).  Empty unless
 /// network.trace_chain_datum is armed.
 struct ChainEpochObs {
@@ -373,8 +407,9 @@ struct ChainEpochObs {
     std::vector<ChainEdgeObs>      edges;     ///< Tree edges, in election order.
     std::vector<ChainComponentObs> comps;     ///< Components, in election order.
     std::vector<ChainChordCycle>   chords;    ///< Chords of the tree, per component in arc order.
-    std::vector<ChainReleaseObs>   releases;  ///< The cut releases of the returning and rehost rows, in election order (empty unless one is armed).
+    std::vector<ChainReleaseObs>   releases;  ///< The cut releases of the returning, rehost and slip rows, in election order (empty unless one is armed).
     std::vector<ChainRootObs>      roots;     ///< The root handovers the root row decided, in election order (empty unless the row is armed).
+    std::vector<ChainDeseatObs>    deseats;   ///< The tree edges the slip row de-seated, per family and band in seed order (empty unless the row is armed).
     std::map<std::pair<std::string, std::string>, double> shift_sat;  ///< (sat, signal) -> the legacy known frame step (m).
     std::map<std::pair<int, std::string>, double>         shift_rpb;  ///< (station, receiver phase-bias key) -> its step (m).
     long long gated_keys{0};                  ///< Usable (station, ambiguity) keys the coverage gate held out of the union.
@@ -432,7 +467,7 @@ struct ChainFrameMemory {
     std::map<std::tuple<int, std::string, std::string>, std::pair<ChainChordRow, int>> chords;
     /// (station, satellite, signal) -> the as-built target (m) the as-built rule drafted for the arc
     /// at that epoch, for every arc the kept row held then (@c ChainEdgeObs::row_armed), and the
-    /// realized target for every arc the returning or rehost row released then (the release erased the
+    /// realized target for every arc the returning, rehost or slip row released then (the release erased the
     /// old-frame carry the draft read, so the next draft reads the carry of the realized target).
     /// Replaced wholesale at each observed epoch, and
     /// empty while no row is armed.  A held arc keeps its frozen target while the as-built draft may
@@ -475,8 +510,9 @@ struct ChainEpochClass {
  * (the child was absent, seen earlier or never); RootHandover (the child was a root).  A Kept
  * edge whose satellite remembers another root takes RootHandover, or Split in a split-off
  * piece.  Every count of @p cnt that the classification determines is accumulated, an edge
- * an armed row decided (@c row_armed) also in @c cf_rows_armed, and the epoch's cut releases
- * (@ref ChainEpochObs::releases) in the cut and declared counts.
+ * an armed row decided (@c row_armed) also in @c cf_rows_armed, the epoch's cut releases
+ * (@ref ChainEpochObs::releases) in the cut and declared counts and its de-seated edges
+ * (@ref ChainEpochObs::deseats) in @c cf_sl_deseats.
  *
  * @param obs        The epoch's chain record.
  * @param mem        The memory of the last observed epoch.

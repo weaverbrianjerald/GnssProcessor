@@ -59,7 +59,18 @@ struct ChainFrameCounters {
     long long cf_ret_declared_keys{0};             ///< Keys the returning row's releases declared (one declared_keys row each).
     long long cf_rh_cut_releases{0};               ///< Cut releases of the rehost row (one cut_release row each).
     long long cf_rh_declared_keys{0};              ///< Keys the rehost row's releases declared (one declared_keys row each).
-    long long cf_cut_releases{0};                  ///< Cut releases of the returning and rehost rows (one cut_release row each).
+    long long cf_cut_releases{0};                  ///< Cut releases of the returning, rehost and slip rows (one cut_release row each).
+    // The slip rows written to the event trace (all 0 with the row off).  An edge the slip row de-seated, and an
+    // edge it released because no other route reached the child, each write a leave row and a join row; the
+    // as-built step of a released edge is the one the election drafted before the release replaced it.
+    long long cf_sl_deseats{0};                    ///< De-seated edges, each written as a leave row and a join row.
+    long long cf_sl_pairs{0};                      ///< Edges the row released, each written as a leave row and a join row.
+    long long cf_sl_asbuilt_zero{0};               ///< ...whose as-built step was a known zero.
+    long long cf_sl_asbuilt_whole{0};              ///< ...a known nonzero whole number of cycles (within 1e-6).
+    long long cf_sl_asbuilt_other{0};              ///< ...a known nonzero step that is not whole cycles.
+    long long cf_sl_asbuilt_unknown{0};            ///< ...an unknown step.
+    long long cf_sl_cut_releases{0};               ///< Cut releases of the slip row (one cut_release row each).
+    long long cf_sl_declared_keys{0};              ///< Keys the slip row's releases declared (one declared_keys row each).
     // The root handovers the root row decided (one record per component and band; all 0 with the row off).
     long long cf_root_pinned{0};                   ///< Handovers whose new root was pinned at its carried receiver phase bias.
     long long cf_root_left{0};                     ///< Handovers left as built (the sum of the three causes below).

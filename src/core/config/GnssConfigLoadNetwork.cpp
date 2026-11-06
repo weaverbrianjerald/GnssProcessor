@@ -10101,6 +10101,15 @@ namespace GnssProcessor {
                         reports += std::string(reports.empty() ? "" : "; ")
                                  + "the root handovers pinned at a carried bias and those left as built";
                     }
+                    if (networkPhaseDatumEq34EventRowArmed("slip")) {
+                        rows += std::string(rows.empty() ? "" : "  ")
+                              + "'slip' takes an arc in the epoch's free-epoch latch out of the tree at the slip "
+                                "epoch, on both bands of a pair family: the old child re-attaches through a new "
+                                "edge, which is that edge's own row's, and a slipped arc no other route can "
+                                "replace takes the cut release.";
+                        reports += std::string(reports.empty() ? "" : "; ")
+                                 + "the slipped edges de-seated and released, by the latch's cause bits";
+                    }
                     log->info("Network producer: eq34 EVENT ROWS ON ({}) - the integer rule of each "
                               "armed row replaces the as-built rule for its class of tree edge: "
                               "{}  The other rows run the as-built rule.  The run-end "

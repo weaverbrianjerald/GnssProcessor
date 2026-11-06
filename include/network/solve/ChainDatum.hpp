@@ -51,6 +51,7 @@
 #include "network/solve/AnchorHygiene.hpp"   // AnchorHygiene (eq34 reattach hygiene)
 #include "network/state/CarrySites.hpp"      // CarrySiteCounts
 
+#include <array>
 #include <map>
 #include <memory>
 #include <set>
@@ -196,8 +197,20 @@ void eq34ShiftCarry(NetworkCarryState& carry, net::NetworkEntities& entities,
  * root is then not marked unknown on that account (it keeps its carries); a satellite that remembers
  * any other root (a merge) stays unknown.  A root that stays a root keeps its pinned target (the
  * station's @c eq34_root_rpb_target), because a pinned bias is not refreshed by the carry.  Every
- * other handover runs the as-built rule and is counted by cause.  With a row off nothing here
- * changes.
+ * other handover runs the as-built rule and is counted by cause.
+ *
+ * With the slip row armed (@c "slip") an arc in the epoch's free-epoch latch
+ * (@c RelevelEpochState::free_ambs, the arcs a slip detector or a re-entry response flagged, with
+ * their cause bits) leaves the tree at the slip epoch.  An incumbent tree edge on such an arc loses
+ * its seat and a new edge on one is refused while another route exists; in a pair family this holds
+ * when either band's arc is latched, because the bands share one tree.  The old child re-attaches
+ * through a new edge, which is that edge's own row's: the rehost row takes it, its certified branch
+ * held, so the old child's moved side takes the cut release, and with the rehost row off it runs the
+ * as-built rule.  When no other route reaches the child, the slipped arc stays and the slip row
+ * releases it, on the band whose arc is latched: the moved side is the child and its subtree, and the
+ * pin takes the first-sighting target for a returning child, the arc's previous target for an arc
+ * that was a tree edge at the last election, else the as-built draft.  A child never seen in a tree
+ * before is a birth and keeps the as-built rule.  With a row off nothing here changes.
  *
  * @param ctx           [in/out] carry + counters.  The whole context is passed
  *                      instead of about twenty individual references because the
@@ -255,14 +268,15 @@ struct NetworkRunEndView;
  * @brief Run-end report: the eq34 chain datum: re-references, pin audit, seed round, slip-aware election.
  *
  * The eq34 chain datum: the re-reference totals, the pair family, the kept row, the returning row,
- * the rehost row, the root row, the pin audit, the seed round and the slip-aware election.
+ * the rehost row, the root row, the slip row, the pin audit, the seed round and the slip-aware election.
  *
  * Gate: each section under its own condition:
  * `config_.networkPhaseDatumEq34()`; `config_.networkPhaseDatumEq34SeedRound()`;
  * `config_.networkPhaseDatumEq34SlipAwareElection()`; the pair family line under
  * `ctx.knobs.eq34_pair_family`; the kept row lines under `ctx.knobs.eq34_row_kept`; the
  * returning row lines under `ctx.knobs.eq34_row_returning`; the rehost row lines under
- * `ctx.knobs.eq34_row_rehost`; the root row lines under `ctx.knobs.eq34_row_root`.
+ * `ctx.knobs.eq34_row_rehost`; the root row lines under `ctx.knobs.eq34_row_root`; the slip row
+ * lines under `ctx.knobs.eq34_row_slip`.
  *
  * @param v The run at its end (network/runend/RunEnd.hpp).
  * @return 0 (this report does not set the exit code).
@@ -479,6 +493,26 @@ struct ChainDatumCounters {
     long long eq34_root_not_vertex = 0;       ///< ...handovers left as built: the new root was no vertex of the last tree on the band
     long long eq34_root_not_keeper = 0;       ///< ...handovers left as built: the component is a split piece other than the one that keeps the old root
     long long eq34_root_not_carry = 0;        ///< ...handovers left as built: no receiver phase-bias carry for the new root inside the horizon
+    // The slip row of the chain's event table (network.phase_datum_eq34_event_rows "slip"); all stay 0 with
+    // the row off.  An arc in the epoch's free-epoch latch leaves the tree while another route reaches its
+    // child.  A de-seated edge is an incumbent tree edge of a band that left the band's tree this way; the new
+    // edge that re-attaches its child is that edge's own row's, and what a release took there is counted under
+    // that row.  An edge on a latched arc that no other route could replace is released here, on the band whose
+    // arc is latched.  The tallies are per election and band; the cut tallies are what the slip row's releases took.
+    long long eq34_sl_deseated = 0;           ///< incumbent tree edges de-seated: the arc is latched on some band of the family and is no tree edge of this band now
+    long long eq34_sl_deseated_family = 0;    ///< ...of them, edges whose arc is latched only on the family's other band
+    long long eq34_sl_released = 0;           ///< edges on a latched arc the row released: no other route reached the child
+    std::array<long long, 8> eq34_sl_by_cause{};   ///< de-seated and released edges by the latch's cause bits on their band (RelevelEpochState::kCause*, bit order); an edge counts under each of its bits
+    long long eq34_sl_birth = 0;              ///< edges on a latched arc left as built: the child was never a vertex of a tree
+    long long eq34_sl_with_state = 0;         ///< ...released edges whose moved side held at least one leveling carry, receiver phase-bias carry or satellite phase-bias prior that the release took
+    long long eq34_sl_asbuilt_zero = 0;       ///< ...released edges whose as-built step was a known zero
+    long long eq34_sl_asbuilt_whole = 0;      ///< ...a known nonzero step of whole cycles
+    long long eq34_sl_asbuilt_frac = 0;       ///< ...a known nonzero step that is not whole cycles (or that has no wavelength)
+    long long eq34_sl_asbuilt_unknown = 0;    ///< ...an unknown step
+    long long eq34_sl_arcs = 0;               ///< leveling carries the slip row's releases erased: every carry of a satellite of a moved side at any station, and every carry of a receiver of a moved side on its band
+    long long eq34_sl_rpb = 0;                ///< receiver phase-bias carries the slip row's releases dropped
+    long long eq34_sl_pb = 0;                 ///< satellite phase-bias priors of the moved sides (measure-only: the re-reference marginalizes them)
+    long long eq34_sl_declared = 0;           ///< (satellite, signal) keys of the moved sides, declared moved
 };
 
 } // namespace GnssProcessor
