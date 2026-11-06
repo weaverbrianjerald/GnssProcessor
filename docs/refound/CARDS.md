@@ -335,3 +335,5 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   (`network.phase_frame_quorum`, default off; chosen by a frozen rule on replayed receivers, a tie among pause, widen and mark): below half of the constellation the satellites marked by
   their own bumps vote too. The level over the day 15.8 mm per 120 epochs (from 58.3), the receiver's offset -0.040 m at the event (from -0.487 m), positions unchanged. Q2 fails on one
   clause (offset rms 2.10 against 2.0 mm). One natural event; injections did not reproduce it. UNVALIDATED; nothing armed.
+- [ICL4](ICL4_post_flag_slip_scatter_2026-11-06.md): open, 2026-11-06 (pre-registered): why one slip scatters a constellation's clocks. Measured first: a second, real slip
+  one epoch after an IF-TD flag, when that test has no double difference; the misclosure spreads through the receiver's Galileo offset and the anchor's q sets how far.

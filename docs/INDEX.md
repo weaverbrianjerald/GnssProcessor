@@ -229,6 +229,9 @@ golden, at a cost on DOY 129's GPS-to-Galileo level; K2 and K3 fail; nothing arm
 default-off quorum widens the vote below half of the constellation: level over the day 15.8 mm per hour, from 58.3; receiver's offset -0.040 m, from -0.487 m; positions unchanged; Q2 fails on
 one clause; nothing armed).
 
+[ICL4](refound/ICL4_post_flag_slip_scatter_2026-11-06.md), why one slip scatters a constellation's clocks
+(open, 2026-11-06: the event is a second slip one epoch after an IF-TD flag, not the handover; gates frozen for the cause, the anchor's amplification and a second natural event).
+
 ### `resume-seam` — [topics/resume-seam.md](topics/resume-seam.md)
 
 | card | one line | status | last dated |
