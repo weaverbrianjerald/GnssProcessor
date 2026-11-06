@@ -177,7 +177,8 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   cold pin's integer, C6 (IRDD section 2); the returning row landed default off, the return shock removed and
   I-b FAILED (IRDD section 3); the rehost row landed default off, the double-difference damage removed and
   the float consumer FAILED (IRDD section 4); the root row landed default off, the handover's step removed and
-  I-b FAILED on the fractional bar (IRDD section 5).
+  I-b FAILED on the fractional bar (IRDD section 5); the slip row landed default off, the slipped edge out of the
+  tree at the slip epoch and I-b FAILED (IRDE).
 - [IRDB](IRDB_integer_recovering_datum_continued_2026-10-30.md): open, 2026-10-30: card IRD's continuation, from IRD-1
   on. IRD-1 LANDED, measure-only and default off (the chain's event table, edge and chord traces, CHAIN events,
   pre-hold and receiver phase-bias traces, the run-end frame census; the consumer's shared AR builder, observe-mode
@@ -226,7 +227,15 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   (section 5) LANDED default off: a new root's receiver phase bias is pinned at its carried value, so the
   satellites on its side keep their frame and carries (undeclared integer steps at the handover 0 against 235
   to 262) and the consumer holds its bound; I-b FAILED on the fractional bar, at the size the same pairs reach
-  at quiet epochs.
+  at quiet epochs. Continued in IRDE.
+- [IRDE](IRDE_integer_recovering_datum_slip_2026-11-06.md): open, 2026-11-06: card IRDD's continuation, from IRD-4's `slip` row on. The row
+  LANDED default off: an arc in the free-epoch latch leaves the tree at the slip epoch, the fragment re-attaches through
+  a new edge under the rehost row, and a slipped arc no other route can replace takes the cut release. As built the cycle
+  stays in the pinned arc's phase row and the target can fall to 0 (+57 and -91 cycles on ird_t1). The class's as-built
+  steps fall to 0, both edges carry identities, and the consumer and W5 pass, a weak test here because the hold keeps
+  the emitted bias. I-b FAILED: undeclared integer steps 508 to 224 on ird_t1 and 213 to 146 on ird_tr, 0 on the
+  microscope twins, and the fractional bar missed. With the receiver floor off, ird_tr passes I-b. Next: `merge_split`, whose
+  class no bed reaches yet.
 - [RKD](RKD_retired_key_deletion_2026-10-14.md): closed, 2026-10-14: the 144 retired network keys and five lane keys
   they orphan deleted with their code (149 ledger rows, 784 to 635; 30 C++ files); landed after the same-build
   golden comparison passed (only declared text moves on the goldens).
