@@ -339,3 +339,5 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   IF-TD flag, when that test has no double difference and the MW signal is dropped; the handover is a coincidence. The misclosure spreads through the receiver's Galileo offset and `network.clock_anchor_q` sets how far (18
   decouplings at 5e-6, 2 at 2.9e-8, on the same posture). `network.cycle_slip.if_phase_td_reseed_on_flag` flags the slip at 94.1 m and removes the event on both postures and on DOY 132's natural event. All gates pass;
   receivers not graded (a 24 h grade of the key is owed); nothing armed.
+- [ICL5](ICL5_reseed_key_over_a_day_2026-11-06.md): open, 2026-11-06 (pre-registered): a 24 h grade of `network.cycle_slip.if_phase_td_reseed_on_flag` on DOY 129 and 132, on the golden and
+  on the broadcast posture, with the 16-site census against card ICL2's controls.

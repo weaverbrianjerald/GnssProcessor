@@ -233,6 +233,9 @@ one clause; nothing armed).
 (closed, 2026-11-06: the event is a second, real slip one epoch after an IF-TD flag, not the handover; it spreads through the receiver's Galileo offset and the anchor's q sets its reach; the existing re-seed key removes it on both postures
 and on DOY 132; all gates pass; receivers not graded; nothing armed).
 
+[ICL5](refound/ICL5_reseed_key_over_a_day_2026-11-06.md), the IF-TD post-flag re-seed over a day, on both postures
+(open, 2026-11-06: 24 h on DOY 129 and 132 with the 16-site census; gates frozen for the events, the day's footprint, the cost in arcs, the receivers and the level).
+
 ### `resume-seam` — [topics/resume-seam.md](topics/resume-seam.md)
 
 | card | one line | status | last dated |
