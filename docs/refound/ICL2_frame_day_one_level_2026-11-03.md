@@ -423,3 +423,14 @@ Nothing is armed; arming, any golden change and the merge are the author's decis
 - **The broadcast posture's remainder.** Against the golden the receivers lose +0.016 m pooled over the day whatever their offset
   setting, DOY 129's later hours about 0.02 m (card BRD2: the anchor's decouplings and the smoothed hold's bridge). DOY 130 and 131
   and a real-time run remain owed (card ICL section 7).
+
+## 8. Correction (2026-11-05)
+
+Section 5.4 states that at 23:40:30 on DOY 129 the golden "logs the same phase-anchor handover and S-transform at that epoch and no
+decoupling". Both clauses are wrong, and the text above stands as written. The graded arm's own handover is E26's, one epoch earlier
+(23:40:00, YKRO00CIV to WIND00NAM, after the IF-TD test refloated E26's L1X + L5X at the anchor station); the golden's handover at
+23:40:30 is E18's (HOLB00CAN to JPLM00USA). The golden does decouple at 23:40:30, 2 satellites (E26 and E33, innovations relative to
+their median -0.287 and +0.188 m), after the same slip. So the event is not absent from the golden: the broadcast posture amplifies it
+(-4.46 and +0.98 m, 18 satellites). Section 5.4's reading of the frame's step and of the receivers is unchanged. The analysis continues in
+card [ICL3](ICL3_frame_quorum_2026-11-05.md), section 2.2, which also finds that the 18 bumped satellites did not move by the common
+step: the frame's minority vote made it.

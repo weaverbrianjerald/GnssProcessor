@@ -330,3 +330,7 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   voting in the phase-bias hold's level (`network.phase_frame_hold_level_vote`, default off) cuts each constellation's code-to-phase
   drift from 20 to 25 to 6 to 9 mm per 120 epochs, an exact no-op on the golden, receivers unchanged; the GPS-to-Galileo level then
   follows the code side (19.0 mm on DOY 129, from 9.4). K2 and K3 fail on their bars. UNVALIDATED; nothing armed.
+- [ICL3](ICL3_frame_quorum_2026-11-05.md): open, pre-registered 2026-11-05: the failure of card ICL2's D2. At a clock-anchor decoupling of
+  18 of 22 Galileo satellites the phase-visible frame voted on the 4 left and turned a decaying excursion of 3 of them into a permanent,
+  unmarked 0.40 m level step. A quorum on the vote (`network.phase_frame_quorum`, default off): pause, widen the vote to the satellites
+  marked by their own bumps, or pause with a datum mark, chosen by replaying the receivers on rewritten products under a frozen rule.

@@ -224,6 +224,10 @@ one marked re-anchor, one unmarked 0.403 m step at an 18-satellite anchor decoup
 phase-bias hold's level cuts each constellation's code-to-phase drift from 20 to 25 to 6 to 9 mm per hour, an exact no-op on the
 golden, at a cost on DOY 129's GPS-to-Galileo level; K2 and K3 fail; nothing armed).
 
+[ICL3](refound/ICL3_frame_quorum_2026-11-05.md), the phase-visible frame's quorum at a mass clock-anchor decoupling
+(open, pre-registered 2026-11-05: a decoupling of 18 of 22 Galileo satellites turned a transient of 3 satellites into a permanent,
+unmarked 0.40 m level step through the frame's minority vote; three candidates chosen by replaying the receivers under a frozen rule).
+
 ### `resume-seam` — [topics/resume-seam.md](topics/resume-seam.md)
 
 | card | one line | status | last dated |
