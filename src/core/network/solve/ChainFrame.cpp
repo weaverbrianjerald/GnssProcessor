@@ -57,7 +57,7 @@ const std::array<ChainEventSpec, kChainEventRowCount> kChainEventSpec = {{
     {ChainEventRow::RootHandover, "RootHandover", "root", "root_handover",
      "unknown step: the component's carries erased",
      "the new root's receiver phase bias pinned at its carried value",
-     ChainStep::Zero, ChainCarry::Keep, ChainWire::None, false},
+     ChainStep::Zero, ChainCarry::Keep, ChainWire::None, true},
     {ChainEventRow::TreeEdgeSlip, "TreeEdgeSlip", "slip", "slip_deseat",
      "read from carry_slipped_ambs (empty on the float vehicle): the slipped edge stays",
      "read the free-epoch latch with its cause bits, de-seat at the slip epoch, re-host from previous values",
@@ -102,6 +102,7 @@ bool chainEventRowArmed(const NetworkKnobs& k, ChainEventRow r) {
         case ChainEventRow::Returning: return k.eq34_row_returning;
         case ChainEventRow::RehostCertified:
         case ChainEventRow::RehostUncertified: return k.eq34_row_rehost;
+        case ChainEventRow::RootHandover: return k.eq34_row_root;
         default:                       return false;   // the other rows' integer rules are not built
     }
 }
@@ -167,6 +168,16 @@ const char* chainReleaseRowName(ChainReleaseRow r) {
     switch (r) {
         case ChainReleaseRow::Returning: return "returning";
         case ChainReleaseRow::Rehost:    return "rehost";
+    }
+    return "?";
+}
+
+const char* chainRootOutcomeName(ChainRootOutcome o) {
+    switch (o) {
+        case ChainRootOutcome::Pinned:     return "pinned";
+        case ChainRootOutcome::NotVertex:  return "not_vertex";
+        case ChainRootOutcome::NotKeeper:  return "not_keeper";
+        case ChainRootOutcome::NoCarry:    return "no_carry";
     }
     return "?";
 }
@@ -478,6 +489,15 @@ ChainEpochClass chainClassifyEpoch(const ChainEpochObs& obs, const ChainFrameMem
         cnt.cf_cut_rpb += r.rpb;
         cnt.cf_declared_keys += static_cast<long long>(r.sats.size());
     }
+    for (const ChainRootObs& r : obs.roots) {
+        switch (r.outcome) {
+            case ChainRootOutcome::Pinned:    ++cnt.cf_root_pinned; continue;
+            case ChainRootOutcome::NotVertex: ++cnt.cf_root_not_vertex; break;
+            case ChainRootOutcome::NotKeeper: ++cnt.cf_root_not_keeper; break;
+            case ChainRootOutcome::NoCarry:   ++cnt.cf_root_no_carry; break;
+        }
+        ++cnt.cf_root_left;
+    }
     for (const auto& [key, s] : obs.shift_sat) {
         ++cnt.cf_known_shifts;
         const double lam = wavelengthOf(key.first, key.second);
@@ -772,8 +792,17 @@ void networkChainFrameObserve(NetworkRun& run, const NetworkEpoch& ep) {
             if (!k.root_changed && !k.split) continue;
             const char* name = k.split ? chainEventSpec(ChainEventRow::Split).event
                                        : chainEventSpec(ChainEventRow::RootHandover).event;
-            const std::string detail = fmt::format("sig={} comp={} old_root={} new_root={}",
-                                                   k.signal, k.comp, k.old_root, k.r1);
+            std::string detail = fmt::format("sig={} comp={} old_root={} new_root={}",
+                                             k.signal, k.comp, k.old_root, k.r1);
+            // With the root row armed, what it did with this handover.
+            if (!k.split && chainEventRowArmed(ctx.knobs, ChainEventRow::RootHandover))
+                for (const ChainRootObs& ro : obs.roots) {
+                    if (ro.group != k.group || ro.comp != k.comp) continue;
+                    detail += fmt::format(" outcome={}", chainRootOutcomeName(ro.outcome));
+                    if (ro.outcome == ChainRootOutcome::Pinned)
+                        detail += fmt::format(" rpb_target_m={:.6f} rpb_sigma_m={:.6f}", ro.target_m, ro.sigma_m);
+                    break;
+                }
             event(name, "", k.old_root, std::nullopt, "leave", detail);
             event(name, "", k.r1, std::nullopt, "join", detail);
         }
@@ -1028,6 +1057,13 @@ int networkChainFrameRunEnd(const NetworkRunEndView& v) {
                   c.cf_rh_asbuilt_zero, c.cf_rh_asbuilt_whole, c.cf_rh_asbuilt_other,
                   c.cf_rh_asbuilt_unknown, c.cf_rh_certified_held, c.cf_rh_cut_releases,
                   c.cf_rh_declared_keys);
+    if (chainEventRowArmed(ctx.knobs, ChainEventRow::RootHandover))
+        log->info("Network (chain frame): {} root handover(s) decided by the root row: {} pinned at a carried "
+                  "receiver phase bias and {} left as built (the new root was no vertex of the last tree on {}, "
+                  "a split piece that does not keep the old root on {}, no carried bias inside the horizon on "
+                  "{}).",
+                  c.cf_root_pinned + c.cf_root_left, c.cf_root_pinned, c.cf_root_left, c.cf_root_not_vertex,
+                  c.cf_root_not_keeper, c.cf_root_no_carry);
     const long long n_cert = c.cf_cert[static_cast<std::size_t>(ChainCertSource::Pair)]
                            + c.cf_cert[static_cast<std::size_t>(ChainCertSource::Lattice)];
     log->info("Network (chain frame): {} re-host(s), {} certified ({} by the two-band fix of the "

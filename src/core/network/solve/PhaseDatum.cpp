@@ -573,6 +573,7 @@ void networkElectPhaseAnchors(
     for (auto& st : stations) {
         st.pinned_amb_targets.clear();
         st.pinned_rpb_keys.clear();   // eq34-only; always empty here (no-op)
+        st.pinned_rpb_targets.clear();   // eq34-only; always empty here (no-op)
         st.pinned_amb_sigma_scale.clear();   // eq34 hygiene INC-3 (empty ⇒ no scaling)
     }
     this_epoch_anchor.clear();
@@ -1488,7 +1489,7 @@ StationStep networkPhaseDatumPinRows(StationBuild& build) {
     // invariant is that the pin lives in the block whose local ambiguity
     // column it constrains.  eq34: the spanning-tree edge pins
     // (target 0 or the pin-to-round integer) plus the datum receiver's single
-    // RPB pin (δ_{r1,σ}=0), both in this station's own block.
+    // RPB pin (δ_{r1,σ} = 0, or the root row's carried value), both in this station's own block.
     const bool do_fold = phase_datum_prioritized
         ? (!st.pinned_amb_targets.empty() || !st.pinned_rpb_keys.empty())
         : st.is_pivot;
@@ -1553,15 +1554,20 @@ StationStep networkPhaseDatumPinRows(StationBuild& build) {
             pin_w.push_back(w);
             return kPinFolded;
         };
-        // eq34: r1's RPB pin, δ_{r1,σ}=0 on the RPB column in this
-        // station's own block (the receiver half of the chain gauge).
+        // eq34: r1's RPB pin on the RPB column in this station's own block (the receiver
+        // half of the chain gauge): δ_{r1,σ} = 0, or the key's entry of pinned_rpb_targets
+        // when the root row pinned a new datum receiver at its carried value.
         auto foldRpb = [&](const std::string& rpb_key) -> int {
             const int rpb_idx = findReceiverPhaseBias(st.params, rpb_key);
             if (rpb_idx < 0) return kPinMissState;
             const auto hit = h2local.find(rpb_idx);
             if (hit == h2local.end()) return kPinMissRow;  // no phase row on σ this epoch
             pin_col.push_back(hit->second);
-            pin_y.push_back(-piv_x(rpb_idx));
+            // Keep the exact expression (-x) when the key has no target: the pin at 0.
+            const auto target = st.pinned_rpb_targets.find(rpb_key);
+            pin_y.push_back(target == st.pinned_rpb_targets.end()
+                                ? -piv_x(rpb_idx)
+                                : target->second - piv_x(rpb_idx));
             pin_w.push_back(1e10);   // hard pin (exact gauge)
             pin_tag.push_back(rxPhaseBiasTag(ContributionKind::Eq34RpbPin, rpb_key));
             return kPinFolded;
@@ -1605,7 +1611,7 @@ StationStep networkPhaseDatumPinRows(StationBuild& build) {
         // cyc/ep).  This is not a second datum: the gauge is already fixed,
         // and the pull toward 0 is ≪ one phase row (the GLONASS local-anchor
         // precedent).  The datum receiver's pinned RPB is skipped (already
-        // hard-pinned to 0).
+        // hard-pinned to its target: 0, or the root row's carried value).
         if (phase_datum_eq34
             && (eq34_rpb_prior_w > 0.0 || eq34_rpb_q > 0.0)) {
             for (const auto& [rpb_signal, rpb_idx] : st.params.rx_pb) {

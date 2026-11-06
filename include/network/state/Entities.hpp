@@ -643,6 +643,15 @@ struct StationSignalState {
     /// @c network.phase_datum_eq34_event_rows holding @c returning, so it is false on every other
     /// run.  ColdStart: after a warm resume the first election's absent vertices are births.
     bool eq34_tree_seen{false};
+    /// The value (m) the eq34 chain pinned this receiver's phase bias at, for the signal family's
+    /// receiver phase-bias key (the key, like @ref rpb), when the receiver is a component root and a
+    /// root handover pinned it at its carried value.  The root row of the chain's event table keeps
+    /// the target while the receiver stays a root, so a pinned bias that the carry no longer
+    /// refreshes keeps its frame.  Replaced wholesale at each election: a receiver that is no root
+    /// now loses it.  Written only with @c network.phase_datum_eq34_event_rows holding @c root, so it
+    /// is absent on every other run.  ColdStart: not snapshotted (the loader drops the @c root entry
+    /// when a snapshot is written).
+    std::optional<double> eq34_root_rpb_target;
 };
 
 /// The SD EWL integer fixes of one station: constellation letter -> satellite -> fix.

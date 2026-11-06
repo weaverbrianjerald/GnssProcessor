@@ -130,6 +130,21 @@ ARMS = {
                + ["network.phase_datum_eq34_rpb_prior_sigma_m=0",
                   'network.phase_datum_eq34_event_rows=["kept","returning","rehost"]'],
                "A0fkr + the rehost row (IRD-4)"),
+    # The fourth row in table order: the root row armed beside the kept, returning and rehost rows (A1krhR,
+    # A0fkrhR), and alone on A0fkr's base with no rehost row (A0fkrR, the row's own reading).  Each arm is its
+    # parent (A1krh, A0fkrh, A0fkr) with the event-row list extended and nothing else.
+    "A1krhR": (SLIP_SET + SEARCH_LOG + IRD_TRACES + BUNDLE_A0
+               + ["network.phase_datum_eq34_family=pair",
+                  'network.phase_datum_eq34_event_rows=["kept","returning","rehost","root"]'],
+               "A1krh + the root row (IRD-4)"),
+    "A0fkrhR": (SLIP_SET + SEARCH_LOG + IRD_TRACES + BUNDLE_A0
+                + ["network.phase_datum_eq34_rpb_prior_sigma_m=0",
+                   'network.phase_datum_eq34_event_rows=["kept","returning","rehost","root"]'],
+                "A0fkrh + the root row (IRD-4)"),
+    "A0fkrR": (SLIP_SET + SEARCH_LOG + IRD_TRACES + BUNDLE_A0
+               + ["network.phase_datum_eq34_rpb_prior_sigma_m=0",
+                  'network.phase_datum_eq34_event_rows=["kept","returning","root"]'],
+               "A0fkr + the root row, no rehost row (IRD-4, the row alone)"),
     # The bisection of the stop (card IRDB section 4): bundle A0 less one group.
     "A0hb": (SLIP_SET + SEARCH_LOG + IRD_TRACES + CHAIN_ON + FLOAT_REPIN_OFF
              + ["network.phase_datum_min_stations=1"],
@@ -185,6 +200,10 @@ BEDS = {
     "ird_rg": ("sim", "runs/simarl_r3b", ARL_GPS_ONLY,
                "IRD rg: r1 (%s) blanked 10 min from epoch %d" % (GAP_ROOT, GAP_FIRST_EPOCH),
                [gap_op(GAP_ROOT, 20)]),
+    # the causal reading of rg: the microscope (zero-ionosphere rows) with r1 blanked the same way
+    "ird_rg_mic": ("sim", "runs/simarl_r1c", ARL_GPS_ONLY + MICROSCOPE,
+                   "IRD rg on the microscope: r1 (%s) blanked 10 min from epoch %d" % (GAP_ROOT, GAP_FIRST_EPOCH),
+                   [gap_op(GAP_ROOT, 20)]),
     "ird_rv6": ("sim", "runs/simarl_r3b", ARL_GPS_ONLY,
                 "IRD rv6: %s (interior vertex) blanked 6 min from epoch %d" % (GAP_STATION, GAP_FIRST_EPOCH),
                 [gap_op(GAP_STATION, 12)]),
@@ -398,6 +417,8 @@ def selftest():
         and len(a0fkr) == len(a0fk),
         "A0fkr is A0fk with the event-row list extended by the returning row and nothing else")
     rows_krh = 'network.phase_datum_eq34_event_rows=["kept","returning","rehost"]'
+    rows_krhR = 'network.phase_datum_eq34_event_rows=["kept","returning","rehost","root"]'
+    rows_krR = 'network.phase_datum_eq34_event_rows=["kept","returning","root"]'
     a1krh = compose("A1krh", "r3c")
     chk(set(a1krh) - set(a1kr) == {rows_krh} and set(a1kr) - set(a1krh) == {rows_kr}
         and len(a1krh) == len(a1kr),
@@ -406,6 +427,18 @@ def selftest():
     chk(set(a0fkrh) - set(a0fkr) == {rows_krh} and set(a0fkr) - set(a0fkrh) == {rows_kr}
         and len(a0fkrh) == len(a0fkr),
         "A0fkrh is A0fkr with the event-row list extended by the rehost row and nothing else")
+    a1krhR = compose("A1krhR", "r3c")
+    chk(set(a1krhR) - set(a1krh) == {rows_krhR} and set(a1krh) - set(a1krhR) == {rows_krh}
+        and len(a1krhR) == len(a1krh),
+        "A1krhR is A1krh with the event-row list extended by the root row and nothing else")
+    a0fkrhR = compose("A0fkrhR", "microscope")
+    chk(set(a0fkrhR) - set(a0fkrh) == {rows_krhR} and set(a0fkrh) - set(a0fkrhR) == {rows_krh}
+        and len(a0fkrhR) == len(a0fkrh),
+        "A0fkrhR is A0fkrh with the event-row list extended by the root row and nothing else")
+    a0fkrR = compose("A0fkrR", "microscope")
+    chk(set(a0fkrR) - set(a0fkr) == {rows_krR} and set(a0fkr) - set(a0fkrR) == {rows_kr}
+        and len(a0fkrR) == len(a0fkr),
+        "A0fkrR is A0fkr with the event-row list extended by the root row (no rehost row) and nothing else")
     import rapid_arm
     cfg = {}
     for kv in a1k:
@@ -425,6 +458,12 @@ def selftest():
     chk(cfg["network"]["phase_datum_eq34_event_rows"] == ["kept", "returning", "rehost"]
         and cfg["network"]["phase_datum_eq34_family"] == "pair",
         "the three rows land in the arm's JSON as one array, in table order")
+    cfg = {}
+    for kv in a1krhR:
+        rapid_arm.set_key(cfg, *kv.split("=", 1))
+    chk(cfg["network"]["phase_datum_eq34_event_rows"] == ["kept", "returning", "rehost", "root"]
+        and cfg["network"]["phase_datum_eq34_family"] == "pair",
+        "the four rows land in the arm's JSON as one array, in table order")
     o = compose("A0", "r2", knob="network.phase_datum_min_stations=2")
     chk(o.count("network.phase_datum_min_stations=2") == 1
         and "network.phase_datum_min_stations=1" not in o, "the knob under test overrides the arm")
@@ -465,8 +504,8 @@ def selftest():
     # --- the IRD-2 fixtures (card IRD section 6)
     fixtures = ("ird_t1", "ird_t2", "ird_t3", "ird_t4", "ird_t5", "ird_tr", "ird_rg", "ird_rv6", "ird_rv16")
     chk(all(b in BEDS for b in fixtures)
-        and sorted(b for b in BEDS if b.startswith("ird_")) == sorted(fixtures + ("ird_l2v16",)),
-        "a bed for each of the nine fixtures and the one-band fixture, and no other ird_ bed")
+        and sorted(b for b in BEDS if b.startswith("ird_")) == sorted(fixtures + ("ird_l2v16", "ird_rg_mic")),
+        "a bed for each of the nine fixtures, the one-band fixture and the microscope gap bed, and no other ird_ bed")
     chk(all(ARL_GPS_ONLY[0] in compose("A0", b) for b in fixtures), "every fixture bed is GPS-only like the ARL beds")
     chk(all(os.path.isabs(BEDS[b][1]) and BEDS[b][1] == FIXTURES_ROOT + "/simird_" + b[4:] and not BEDS[b][4]
             for b in fixtures[:6]),
@@ -491,6 +530,12 @@ def selftest():
         and l2["types"] == "L2W,C2W" and l2["sats"] == "all" and l2["consumer"] == "0"
         and l2["stations"] == GAP_STATION and rapid_arm.op_window(l2) == win["ird_rv16"],
         "the one-band fixture blanks L2W and C2W of rv16's station over rv16's window, the consumer untouched")
+    mic = BEDS["ird_rg_mic"]
+    mic_op = rapid_arm.parse_op(mic[4][0])
+    chk(mic[1] == BEDS["microscope"][1] and mic[2] == BEDS["microscope"][2] and len(mic[4]) == 1
+        and mic[4] == BEDS["ird_rg"][4] and mic_op["stations"] == GAP_ROOT and mic_op["op"] == "strip"
+        and rapid_arm.op_window(mic_op) == win["ird_rg"],
+        "the microscope gap bed is the microscope with rg's one RINEX op: r1 blanked over rg's window")
     d = {"processing": {"max_duration_s": 21600.0}, "network": {"max_duration_s": 21600.0}}
     chk(duration_sets(d, 2.0) == ["processing.max_duration_s=7200.0", "network.max_duration_s=7200.0"]
         and duration_sets({"processing": {}}, 2.0) == [], "the duration is set where the golden has it, as --hours does")

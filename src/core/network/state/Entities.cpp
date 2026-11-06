@@ -815,6 +815,8 @@ const std::vector<FieldDecl> kStationFields = {
      &eqpToSnapshot, &eqpFromSnapshot, &signalRows<&SS::eq34_rx_parent>},
     {"eq34_tree_seen", "", Persist::ColdStart, "", "",   // no former member: new with the returning row of the chain's event table
      nullptr, nullptr, &signalRows<&SS::eq34_tree_seen>},
+    {"eq34_root_rpb_target", "", Persist::ColdStart, "", "",   // no former member: new with the root row of the chain's event table
+     nullptr, nullptr, &signalRows<&SS::eq34_root_rpb_target>},
 };
 std::optional<LosId> losKey(int station, const std::string& sat) {
     if (sat.empty()) return LosId{StationId{station}, SatId{}};

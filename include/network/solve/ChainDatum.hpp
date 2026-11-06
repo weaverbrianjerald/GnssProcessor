@@ -181,7 +181,23 @@ void eq34ShiftCarry(NetworkCarryState& carry, net::NetworkEntities& entities,
  * previous epoch certified is not read, so every re-host takes this rule.  The release is the
  * returning row's: the moved side is the child and its subtree, whose satellites are
  * re-referenced and declared moved and whose receivers lose their carries.  A held or flipped
- * kept edge below a released re-host joins its moved side.  With a row off nothing here changes.
+ * kept edge below a released re-host joins its moved side.
+ *
+ * With the root row armed (@c "root") a component whose datum receiver is new pins the new root's
+ * receiver phase bias at the value its last solve gave it, in place of 0.  In a chain frame the
+ * root's pin is a constant the S-basis leaves free, and as built it is 0, so a new root's real bias
+ * becomes a step of the whole component (marked unknown, every satellite of the component
+ * re-referenced).  Pinned at its carried value the frame every other carry is in does not step.  The
+ * row applies to a handover when: some satellite of the component remembers a root other than the
+ * new one; the new root had a parent edge in the last tree on the band (so the old root is known);
+ * the component is the piece that keeps the old root (the piece holding the old root's station, else
+ * the largest piece, as the observatory reads a split); and the new root's receiver phase-bias
+ * carry is no older than the carry horizon.  A satellite edge whose satellite remembers the old
+ * root is then not marked unknown on that account (it keeps its carries); a satellite that remembers
+ * any other root (a merge) stays unknown.  A root that stays a root keeps its pinned target (the
+ * station's @c eq34_root_rpb_target), because a pinned bias is not refreshed by the carry.  Every
+ * other handover runs the as-built rule and is counted by cause.  With a row off nothing here
+ * changes.
  *
  * @param ctx           [in/out] carry + counters.  The whole context is passed
  *                      instead of about twenty individual references because the
@@ -206,6 +222,7 @@ void eq34ShiftCarry(NetworkCarryState& carry, net::NetworkEntities& entities,
  *                      σ multiplier for pins the eligible pass could not avoid.
  * @param shared_phase_keys [out] the post-gate union's phase-bias keys.
  * @param events The epoch's events; writes phase_datum.
+ * @param now_s  This epoch in continuous GPS seconds (the root row's carry age); 0 when omitted.
  */
 void networkElectChainDatum(NetworkRunContext& ctx,
                             const GnssConfig& config_,
@@ -224,7 +241,11 @@ void networkElectChainDatum(NetworkRunContext& ctx,
                             /// every PASS-A drain, signal integrity and measurement
                             /// admission.
                             const std::set<std::pair<int, std::string>>& carry_slipped_ambs,
-                            std::set<std::string>& shared_phase_keys, EpochEvents& events);
+                            std::set<std::string>& shared_phase_keys, EpochEvents& events,
+                            /// This epoch in continuous GPS seconds (@c EpochClock::pl_now_s).  The
+                            /// root row reads it for the age of a receiver phase-bias carry.  The
+                            /// default 0 serves callers whose carries carry no time.
+                            double now_s = 0.0);
 
 // ---- Run-end reports ----
 
@@ -234,14 +255,14 @@ struct NetworkRunEndView;
  * @brief Run-end report: the eq34 chain datum: re-references, pin audit, seed round, slip-aware election.
  *
  * The eq34 chain datum: the re-reference totals, the pair family, the kept row, the returning row,
- * the rehost row, the pin audit, the seed round and the slip-aware election.
+ * the rehost row, the root row, the pin audit, the seed round and the slip-aware election.
  *
  * Gate: each section under its own condition:
  * `config_.networkPhaseDatumEq34()`; `config_.networkPhaseDatumEq34SeedRound()`;
  * `config_.networkPhaseDatumEq34SlipAwareElection()`; the pair family line under
  * `ctx.knobs.eq34_pair_family`; the kept row lines under `ctx.knobs.eq34_row_kept`; the
  * returning row lines under `ctx.knobs.eq34_row_returning`; the rehost row lines under
- * `ctx.knobs.eq34_row_rehost`.
+ * `ctx.knobs.eq34_row_rehost`; the root row lines under `ctx.knobs.eq34_row_root`.
  *
  * @param v The run at its end (network/runend/RunEnd.hpp).
  * @return 0 (this report does not set the exit code).
@@ -446,6 +467,18 @@ struct ChainDatumCounters {
     long long eq34_rh_rpb = 0;                ///< receiver phase-bias carries the rehost releases dropped
     long long eq34_rh_pb = 0;                 ///< satellite phase-bias priors of the moved sides (measure-only: the re-reference marginalizes them)
     long long eq34_rh_declared = 0;           ///< (satellite, signal) keys of the moved sides, declared moved
+    // The root row of the chain's event table (network.phase_datum_eq34_event_rows "root"); all stay 0
+    // with the row off.  A handover is a component of one band whose datum receiver is not the root its
+    // satellites remember.  The row pins the new root's receiver phase bias at its carried value when the
+    // new root was a vertex of the last tree, keeps the old root's pieces apart (only the piece that keeps
+    // the old root is pinned) and finds a carried bias inside the horizon; every other handover runs the
+    // as-built rule.  The tallies are per election, one per component and band.
+    long long eq34_root_handovers = 0;        ///< handovers seen: components whose root is new and whose satellites remember another root
+    long long eq34_root_pinned = 0;           ///< ...handovers whose new root is pinned at its carried receiver phase bias
+    long long eq34_root_kept_edges = 0;       ///< satellite edges of pinned handovers the as-built rule would have marked unknown and whose frame stayed in the old root's (not released, and not below a cut release or another unknown step)
+    long long eq34_root_not_vertex = 0;       ///< ...handovers left as built: the new root was no vertex of the last tree on the band
+    long long eq34_root_not_keeper = 0;       ///< ...handovers left as built: the component is a split piece other than the one that keeps the old root
+    long long eq34_root_not_carry = 0;        ///< ...handovers left as built: no receiver phase-bias carry for the new root inside the horizon
 };
 
 } // namespace GnssProcessor

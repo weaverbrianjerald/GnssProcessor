@@ -116,12 +116,12 @@ TEST(NetworkChainFrame, EventTableHasOneRowPerClassInOrder) {
 }
 
 // The loader takes its entries from the table: the distinct non-empty ones, in table order, with
-// the rows built so far (the rows are built in table order: kept, returning, rehost).
-TEST(NetworkChainFrame, EventRowEntriesAreTheTablesAndOnlyKeptReturningAndRehostAreBuilt) {
+// the rows built so far (the rows are built in table order: kept, returning, rehost, root).
+TEST(NetworkChainFrame, EventRowEntriesAreTheTablesAndOnlyKeptReturningRehostAndRootAreBuilt) {
     EXPECT_EQ(chainEventRowEntries(), (std::vector<std::string>{"kept", "returning", "rehost", "root", "slip",
                                                                "merge_split"}));
-    for (const char* entry : {"kept", "returning", "rehost"}) EXPECT_TRUE(chainEventRowEntryBuilt(entry)) << entry;
-    for (const char* entry : {"root", "slip", "merge_split", "", "bogus"})
+    for (const char* entry : {"kept", "returning", "rehost", "root"}) EXPECT_TRUE(chainEventRowEntryBuilt(entry)) << entry;
+    for (const char* entry : {"slip", "merge_split", "", "bogus"})
         EXPECT_FALSE(chainEventRowEntryBuilt(entry)) << entry;
     // An entry two rows share is built when each of its rows is built or held and at least one is built.
     for (const ChainEventSpec& s : kChainEventSpec)
@@ -152,6 +152,19 @@ TEST(NetworkChainFrame, EventRowEntriesAreTheTablesAndOnlyKeptReturningAndRehost
                   kChainEventSpec[r].row == ChainEventRow::RehostCertified
                       || kChainEventSpec[r].row == ChainEventRow::RehostUncertified)
             << kChainEventSpec[r].name;
+    // The root entry arms the root row alone.
+    k.eq34_row_rehost = false;
+    k.eq34_row_root = true;
+    for (std::size_t r = 0; r < kChainEventRowCount; ++r)
+        EXPECT_EQ(chainEventRowArmed(k, kChainEventSpec[r].row), kChainEventSpec[r].row == ChainEventRow::RootHandover)
+            << kChainEventSpec[r].name;
+    EXPECT_TRUE(chainEventSpec(ChainEventRow::RootHandover).built);
+    EXPECT_FALSE(chainEventSpec(ChainEventRow::RootHandover).held);
+    EXPECT_STREQ(chainEventSpec(ChainEventRow::RootHandover).event, "root_handover");
+    EXPECT_STREQ(chainRootOutcomeName(ChainRootOutcome::Pinned), "pinned");
+    EXPECT_STREQ(chainRootOutcomeName(ChainRootOutcome::NotVertex), "not_vertex");
+    EXPECT_STREQ(chainRootOutcomeName(ChainRootOutcome::NotKeeper), "not_keeper");
+    EXPECT_STREQ(chainRootOutcomeName(ChainRootOutcome::NoCarry), "no_carry");
     EXPECT_STREQ(chainReleaseRowName(ChainReleaseRow::Returning), "returning");
     EXPECT_STREQ(chainReleaseRowName(ChainReleaseRow::Rehost), "rehost");
 }
@@ -1516,6 +1529,239 @@ TEST(NetworkChainFrame, TheElectionRunEndReportsTheRehostRowOnlyWhenArmed) {
         r.fx->ctx().counters.eq34_rh_released = 3;   // never read with the row off
         const std::string text = r.runEnd(&networkChainDatumRunEnd);
         EXPECT_FALSE(contains(text, "eq34 rehost row")) << text;
+    }
+}
+
+
+// ---- The root row -------------------------------------------------------------------------------------
+
+/// Observe two epochs of a root handover: at the first (261030) the component is rooted at A with receivers A
+/// and B and satellites G01 (under A) and G02 (under B), B under G01; at the second (261060) A is gone and the
+/// component is rooted at B, whose edges to G01 (reversed) and G02 (as before) carry satellites that remember A.
+/// The as-built rule marks both satellite edges unknown.  @p armed: the root row pinned the handover, so the
+/// edges keep their frame (known, and decided by the row) and the epoch carries the row's record with
+/// @p outcome; otherwise the as-built edges and no record.
+void observeRootHandover(ChainObserverRun& r, bool armed, ChainRootOutcome outcome = ChainRootOutcome::Pinned) {
+    {   // epoch 1: root A
+        auto rec = std::make_shared<ChainEpochObs>();
+        rec->armed = true;
+        rec->comps.push_back(component(0, "A", {0, 1}, {"G01", "G02"}));
+        rec->edges = {edge(0, "G01", true), edge(1, "G01", false), edge(1, "G02", true)};
+        r.observeRecord(261030.0, rec);
+    }
+    {   // epoch 2: root B
+        auto rec = std::make_shared<ChainEpochObs>();
+        rec->armed = true;
+        rec->comps.push_back(component(0, "B", {1}, {"G01", "G02"}));
+        ChainEdgeObs g1 = edge(1, "G01", true);   // reversed: G01 now hangs under B
+        g1.r1 = "B";
+        g1.had_parent = g1.incumbent_flipped = g1.root_unknown = true;
+        g1.legacy_known = false;
+        g1.cause = ChainLegacyCause::RootHandover;
+        ChainEdgeObs g2 = edge(1, "G02", true);   // as before
+        g2.r1 = "B";
+        g2.had_parent = g2.incumbent_same = g2.root_unknown = true;
+        g2.legacy_known = false;
+        g2.cause = ChainLegacyCause::RootHandover;
+        const bool pinned = armed && outcome == ChainRootOutcome::Pinned;
+        for (ChainEdgeObs* g : {&g1, &g2}) {
+            g->known = pinned;
+            g->row_armed = pinned;
+        }
+        rec->edges = {g1, g2};
+        if (armed) {
+            ChainRootObs ro;
+            ro.group = kGroup;
+            ro.signal = "L1C";
+            ro.comp = 0;
+            ro.old_root = "A";
+            ro.new_root = "B";
+            ro.outcome = outcome;
+            ro.target_m = 0.07;
+            ro.sigma_m = 0.01;
+            rec->roots = {ro};
+        }
+        r.observeRecord(261060.0, rec);
+    }
+}
+
+// The component event of a root handover keeps its leave and join rows; with the row armed they append the row's
+// outcome and, for a pinned handover, the carried value and its standard deviation.  The edges the row kept are
+// counted as armed and are not given rows of their own.
+TEST(NetworkChainFrame, TheObserverAppendsTheRootRowsOutcomeToTheRootHandoverRows) {
+    ChainObserverRun r("root_obs_on", std::vector<std::string>{"root"});
+    observeRootHandover(r, /*armed=*/true);
+    const ChainRows ev(r);
+    std::vector<std::size_t> root_rows;
+    for (std::size_t k = 0; k < ev.rows.size(); ++k)
+        if (ev.at(k, ev.event) == "root_handover") root_rows.push_back(k);
+    ASSERT_EQ(root_rows.size(), 2u);
+    EXPECT_EQ(ev.at(root_rows[0], ev.action), "leave");
+    EXPECT_EQ(ev.at(root_rows[0], ev.station), "A");
+    EXPECT_EQ(ev.at(root_rows[1], ev.action), "join");
+    EXPECT_EQ(ev.at(root_rows[1], ev.station), "B");
+    for (std::size_t k : root_rows)
+        EXPECT_EQ(ev.at(k, ev.detail), "sig=L1C comp=0 old_root=A new_root=B outcome=pinned rpb_target_m=0.070000 "
+                                       "rpb_sigma_m=0.010000") << ev.at(k, ev.detail);
+    // No per-edge row: the kept edges are in the edge trace, flagged as armed.
+    for (std::size_t k = 0; k < ev.rows.size(); ++k) {
+        EXPECT_NE(ev.at(k, ev.event), "kept");
+        EXPECT_NE(ev.at(k, ev.event), "cut_release");
+    }
+    const auto edges = r.rows("network_chain_edges.csv");
+    const int armed_col = columnOf(edges[0], "row_armed");
+    const int row_col = columnOf(edges[0], "row");
+    const int known_col = columnOf(edges[0], "known");
+    ASSERT_TRUE(armed_col >= 0 && row_col >= 0 && known_col >= 0);
+    int n_armed = 0;
+    for (std::size_t k = 1; k < edges.size(); ++k)
+        if (edges[k][static_cast<std::size_t>(row_col)] == "RootHandover") {
+            EXPECT_EQ(edges[k][static_cast<std::size_t>(armed_col)], "1");
+            EXPECT_EQ(edges[k][static_cast<std::size_t>(known_col)], "1");
+            ++n_armed;
+        }
+    EXPECT_EQ(n_armed, 2);
+    const ChainFrameCounters& c = r.fx->ctx().counters;
+    EXPECT_EQ(c.cf_rows_armed[static_cast<std::size_t>(ChainEventRow::RootHandover)], 2);
+    EXPECT_EQ(c.cf_root_handovers, 1);
+    EXPECT_EQ(c.cf_root_pinned, 1);
+    EXPECT_EQ(c.cf_root_left, 0);
+}
+
+// A handover the row left as built writes the outcome only, and the counters split it by cause.
+TEST(NetworkChainFrame, ARootHandoverTheRowLeftAsBuiltNamesItsOutcomeAndIsCountedByCause) {
+    const std::vector<std::pair<ChainRootOutcome, const char*>> causes{
+        {ChainRootOutcome::NotVertex, "not_vertex"}, {ChainRootOutcome::NotKeeper, "not_keeper"},
+        {ChainRootOutcome::NoCarry, "no_carry"}};
+    for (const auto& [outcome, name] : causes) {
+        ChainObserverRun r(std::string("root_obs_left_") + name, std::vector<std::string>{"root"});
+        observeRootHandover(r, /*armed=*/true, outcome);
+        const ChainRows ev(r);
+        int n = 0;
+        for (std::size_t k = 0; k < ev.rows.size(); ++k)
+            if (ev.at(k, ev.event) == "root_handover") {
+                EXPECT_EQ(ev.at(k, ev.detail), std::string("sig=L1C comp=0 old_root=A new_root=B outcome=") + name)
+                    << ev.at(k, ev.detail);
+                ++n;
+            }
+        EXPECT_EQ(n, 2) << name;
+        const ChainFrameCounters& c = r.fx->ctx().counters;
+        EXPECT_EQ(c.cf_root_pinned, 0) << name;
+        EXPECT_EQ(c.cf_root_left, 1) << name;
+        EXPECT_EQ(c.cf_root_not_vertex, outcome == ChainRootOutcome::NotVertex ? 1 : 0) << name;
+        EXPECT_EQ(c.cf_root_not_keeper, outcome == ChainRootOutcome::NotKeeper ? 1 : 0) << name;
+        EXPECT_EQ(c.cf_root_no_carry, outcome == ChainRootOutcome::NoCarry ? 1 : 0) << name;
+        EXPECT_EQ(c.cf_rows_armed[static_cast<std::size_t>(ChainEventRow::RootHandover)], 0) << name;
+    }
+}
+
+// With the row off the root handover rows are the rows they were, with or without another row armed, and no root
+// counter moves.
+TEST(NetworkChainFrame, WithTheRootRowOffTheRootHandoverRowsAreUnchanged) {
+    for (const std::vector<std::string>& rows : {std::vector<std::string>{}, std::vector<std::string>{"kept"},
+                                                 std::vector<std::string>{"kept", "returning", "rehost"}}) {
+        ChainObserverRun r("root_obs_off_" + std::to_string(rows.size()), rows);
+        observeRootHandover(r, /*armed=*/false);
+        const ChainRows ev(r);
+        int n = 0;
+        for (std::size_t k = 0; k < ev.rows.size(); ++k)
+            if (ev.at(k, ev.event) == "root_handover") {
+                EXPECT_EQ(ev.at(k, ev.detail), "sig=L1C comp=0 old_root=A new_root=B") << ev.at(k, ev.detail);
+                ++n;
+            }
+        EXPECT_EQ(n, 2) << rows.size();
+        const ChainFrameCounters& c = r.fx->ctx().counters;
+        EXPECT_EQ(c.cf_root_pinned + c.cf_root_left + c.cf_root_not_vertex + c.cf_root_not_keeper + c.cf_root_no_carry, 0)
+            << rows.size();
+        EXPECT_EQ(c.cf_rows_armed[static_cast<std::size_t>(ChainEventRow::RootHandover)], 0) << rows.size();
+        EXPECT_EQ(c.cf_root_handovers, 1) << rows.size();   // the observatory's own census of the handover
+    }
+}
+
+// The run-end report of the observatory names the root row's decisions only when the row is armed.
+TEST(NetworkChainFrame, TheRunEndNamesTheRootRowOnlyWhenArmed) {
+    {
+        ChainObserverRun r("root_end_on", std::vector<std::string>{"root"});
+        observeRootHandover(r, /*armed=*/true);
+        const std::string text = r.runEnd(&networkChainFrameRunEnd);
+        EXPECT_TRUE(contains(text, "event row(s) armed: root; the other rows ran the as-built rule")) << text;
+        EXPECT_TRUE(contains(text, "2 edge(s), 2 under the integer rule: realized step unknown 0, fractional 0; integer "
+                                   "rule Zero / Keep / None")) << text;
+        EXPECT_TRUE(contains(text, "1 root handover(s) decided by the root row: 1 pinned at a carried receiver phase "
+                                   "bias and 0 left as built (the new root was no vertex of the last tree on 0, a split "
+                                   "piece that does not keep the old root on 0, no carried bias inside the horizon on "
+                                   "0)")) << text;
+        EXPECT_TRUE(contains(text, "0 declared key(s) (the armed rows cut and declare nothing)")) << text;
+    }
+    {
+        ChainObserverRun r("root_end_left", std::vector<std::string>{"kept", "root"});
+        observeRootHandover(r, /*armed=*/true, ChainRootOutcome::NoCarry);
+        const std::string text = r.runEnd(&networkChainFrameRunEnd);
+        EXPECT_TRUE(contains(text, "1 root handover(s) decided by the root row: 0 pinned at a carried receiver phase "
+                                   "bias and 1 left as built (the new root was no vertex of the last tree on 0, a split "
+                                   "piece that does not keep the old root on 0, no carried bias inside the horizon on "
+                                   "1)")) << text;
+    }
+    {
+        ChainObserverRun r("root_end_off", std::vector<std::string>{"kept"});
+        observeRootHandover(r, /*armed=*/false);
+        const std::string text = r.runEnd(&networkChainFrameRunEnd);
+        EXPECT_TRUE(contains(text, "event row(s) armed: kept; the other rows ran the as-built rule")) << text;
+        EXPECT_FALSE(contains(text, "decided by the root row")) << text;
+        // The root-handover row prints as an unarmed row: its edges ran the as-built rule.
+        EXPECT_TRUE(contains(text, "2 edge(s): legacy step unknown 2, fractional 0; integer rule Zero / Keep / None"))
+            << text;
+    }
+}
+
+// The election's run-end report prints the root row's tallies only when the row is armed, calls a run with no
+// handover no event, and calls a run whose handovers were all left as built inert.
+TEST(NetworkChainFrame, TheElectionRunEndReportsTheRootRowOnlyWhenArmed) {
+    {
+        ChainObserverRun r("root_elect_on", std::vector<std::string>{"root"});
+        auto& c = r.fx->ctx().counters;
+        c.eq34_root_handovers = 6;
+        c.eq34_root_pinned = 3;
+        c.eq34_root_kept_edges = 9;
+        c.eq34_root_not_vertex = 1;
+        c.eq34_root_not_keeper = 2;
+        c.eq34_root_not_carry = 0;
+        const std::string text = r.runEnd(&networkChainDatumRunEnd);
+        EXPECT_TRUE(contains(text, "Network (eq34 root row): 6 root handover(s) seen, 3 pinned at the new root's carried "
+                                   "receiver phase bias and 9 satellite edge(s) kept in the old root's frame (the "
+                                   "as-built rule marks every one unknown); 3 left as built (1 the new root was no vertex "
+                                   "of the last tree, 2 a split piece that does not keep the old root, 0 no carried bias "
+                                   "inside the horizon)")) << text;
+        EXPECT_FALSE(contains(text, "INERT")) << text;
+        EXPECT_FALSE(contains(text, "eq34 rehost row")) << text;
+    }
+    {
+        ChainObserverRun r("root_elect_none", std::vector<std::string>{"root"});   // armed, no handover at all
+        const std::string text = r.runEnd(&networkChainDatumRunEnd);
+        EXPECT_TRUE(contains(text, "Network (eq34 root row): ARMED, and the election saw no root handover")) << text;
+        EXPECT_FALSE(contains(text, "INERT")) << text;
+    }
+    {
+        ChainObserverRun r("root_elect_inert", std::vector<std::string>{"root"});   // armed, every handover left as built
+        auto& c = r.fx->ctx().counters;
+        c.eq34_root_handovers = 4;
+        c.eq34_root_not_vertex = 1;
+        c.eq34_root_not_keeper = 1;
+        c.eq34_root_not_carry = 2;
+        const std::string text = r.runEnd(&networkChainDatumRunEnd);
+        EXPECT_TRUE(contains(text, "Network (eq34 root row): ARMED but pinned NO handover (4 seen: 1 left as built "
+                                   "because the new root was no vertex of the last tree, 1 because the component was a "
+                                   "split piece that does not keep the old root, 2 because the new root had no receiver "
+                                   "phase-bias carry inside the horizon)")) << text;
+        EXPECT_TRUE(contains(text, "INERT")) << text;
+    }
+    {
+        ChainObserverRun r("root_elect_off", std::vector<std::string>{"kept", "returning", "rehost"});
+        auto& c = r.fx->ctx().counters;
+        c.eq34_root_handovers = 3;   // never read with the row off
+        c.eq34_root_pinned = 3;
+        const std::string text = r.runEnd(&networkChainDatumRunEnd);
+        EXPECT_FALSE(contains(text, "eq34 root row")) << text;
     }
 }
 

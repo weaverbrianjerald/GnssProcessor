@@ -555,7 +555,10 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         //                           seen in an earlier tree is never serialized either: after a
         //                           resume the first election's absent vertices are births.  The
         //                           rehost row keeps no memory of its own: it reads the incumbent tree of the
-        //                           last election
+        //                           last election.  The root row's pinned receiver phase-bias targets are
+        //                           not serialized either (the loader drops the entry when a snapshot is
+        //                           written): a resumed leg would pin a root at 0 under carries in the old
+        //                           frame
         //   signal integrity        network.signal_integrity.*
         //   measurement admission   adm_{screen,bound_m,min_sats,heal_ep,max_frac,
         //                           trace} and adm_revet{,_gap_ep,_ep,_census,_hold}

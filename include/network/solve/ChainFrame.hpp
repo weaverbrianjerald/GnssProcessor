@@ -22,7 +22,9 @@
  * arc that stays in the tree keeps its previous pin target and puts no frame step of its own on
  * the frame; the returning row: a vertex that rejoins the tree after an absence takes the cut
  * release and a first-sighting target; the rehost row: a vertex that moves to a new parent
- * edge takes the cut release and keeps the rounded target of its pin); the observatory then
+ * edge takes the cut release and keeps the rounded target of its pin; the root row: a new datum
+ * receiver pins its receiver phase bias at its carried value and the satellites of its old frame keep
+ * their carries); the observatory then
  * records the edge as the election
  * realized it, with the facts the as-built rule drafted next to it, and the cut releases with the
  * keys they declare moved.  The election reads nothing this file writes; every output is a trace
@@ -167,8 +169,8 @@ bool chainEventRowEntryBuilt(const std::string& entry);
 /**
  * @brief Whether the integer rule of a row is armed for this run.
  * @param k The run's knob snapshot (@c eq34_row_kept resolves @c kept, @c eq34_row_returning
- *          resolves @c returning and @c eq34_row_rehost resolves both re-host rows, and only on
- *          the chain).
+ *          resolves @c returning, @c eq34_row_rehost resolves both re-host rows and
+ *          @c eq34_row_root resolves the root row, and only on the chain).
  * @param r The row.
  * @return True when the election applies the row's integer rule; false for a row whose rule is
  *         not built.
@@ -252,7 +254,7 @@ struct ChainEdgeObs {
     bool        root_unknown{false};    ///< The satellite's remembered root differs from r1.
     bool        edge_changed{false};    ///< The election saw a new parent edge (the as-built reading unless @ref row_armed).
     // The integer rule of the edge's row and the as-built facts it replaced.
-    bool        row_armed{false};       ///< An event row's integer rule decided this edge (the kept row held it, or the returning row released it).
+    bool        row_armed{false};       ///< An event row's integer rule decided this edge (the kept row held it, the returning or rehost row released it, or the root row kept its frame through a root handover).
     double      legacy_target_m{0.0};   ///< The target the as-built rule drafted (@ref target_m when no rule applied).
     double      legacy_pinmove_m{0.0};  ///< The displacement the as-built rule drafted (@ref pinmove_m when no rule applied).
     bool        legacy_known{true};     ///< Whether the as-built step was known (@ref known when no rule applied).
@@ -272,6 +274,35 @@ struct ChainEdgeObs {
     bool            conflict{false};                 ///< The pair and the lattice disagree.
     bool            returning{false};                ///< The child was absent at the last observed epoch and seen before.
     std::uint8_t    slip_cause{0};                   ///< Free-epoch cause bits of the arc (TreeEdgeSlip).
+};
+
+/// What the root row did with one root handover of a component on a band.
+enum class ChainRootOutcome : std::uint8_t {
+    Pinned,      ///< The new root's receiver phase bias is pinned at its carried value.
+    NotVertex,   ///< Left as built: the new root was no vertex of the last tree on the band (the old root is unknown).
+    NotKeeper,   ///< Left as built: the component is a split piece other than the one that keeps the old root.
+    NoCarry,     ///< Left as built: the new root has no receiver phase-bias carry inside the horizon.
+};
+
+/// The name of a @ref ChainRootOutcome value ("pinned", "not_vertex", "not_keeper", "no_carry").
+const char* chainRootOutcomeName(ChainRootOutcome o);
+
+/**
+ * @brief One root handover of the epoch the root row decided: a component of one band whose datum
+ *        receiver is new and whose satellites remember another root.
+ *
+ * Recorded for every handover that reaches the old root's identification (a first election or a
+ * component whose satellites remember no other root has none).
+ */
+struct ChainRootObs {
+    std::string      group;       ///< "<constellation key>|<signal>", the group of the band.
+    std::string      signal;      ///< Phase signal of the band.
+    int              comp{0};     ///< Component index within the group (the election's order, per band).
+    std::string      old_root;    ///< The root the satellites remember ("" when the new root was no vertex of the last tree).
+    std::string      new_root;    ///< The component's datum receiver.
+    ChainRootOutcome outcome{ChainRootOutcome::NotVertex};   ///< What the row did.
+    double           target_m{0.0};   ///< The pinned value (m); meaningful when @ref outcome is Pinned.
+    double           sigma_m{0.0};    ///< The standard deviation (m) of that carried value; meaningful when Pinned.
 };
 
 /// One component of one group.
@@ -343,6 +374,7 @@ struct ChainEpochObs {
     std::vector<ChainComponentObs> comps;     ///< Components, in election order.
     std::vector<ChainChordCycle>   chords;    ///< Chords of the tree, per component in arc order.
     std::vector<ChainReleaseObs>   releases;  ///< The cut releases of the returning and rehost rows, in election order (empty unless one is armed).
+    std::vector<ChainRootObs>      roots;     ///< The root handovers the root row decided, in election order (empty unless the row is armed).
     std::map<std::pair<std::string, std::string>, double> shift_sat;  ///< (sat, signal) -> the legacy known frame step (m).
     std::map<std::pair<int, std::string>, double>         shift_rpb;  ///< (station, receiver phase-bias key) -> its step (m).
     long long gated_keys{0};                  ///< Usable (station, ambiguity) keys the coverage gate held out of the union.
@@ -543,6 +575,12 @@ bool chainKeptEdgeMoved(const ChainEdgeObs& e, const double* remembered);
  * grader reads as the keys the producer declares moved.  A returning edge no row
  * decided writes the one @c join row it always has.
  *
+ * With the root row armed the @c root_handover leave and join rows of a component whose root
+ * changed append @c outcome (the row's @ref ChainRootOutcome name) and, for a pinned handover,
+ * @c rpb_target_m and @c rpb_sigma_m (the carried value the new root is pinned at and its standard
+ * deviation).  The edges the row kept are in the edge trace with @c row_armed set; no per-edge
+ * event rows are added.
+ *
  * @param run The run (its context, traces, setup and engines).
  * @param ep  The epoch after the solve and the harvests.
  */
@@ -565,6 +603,8 @@ void networkChainFrameObserve(NetworkRun& run, const NetworkEpoch& ep);
  * rehost rows written (the released edges by the kind of the as-built step, how many the chord
  * table certified, and the cut_release and declared_keys rows of the rehost releases).  The table
  * line of a held row says it is held and that its edges took the rule of the entry's built row.
+ * With the root row armed one line counts the root handovers it pinned at a carried bias and those
+ * it left as built, by outcome.
  * The line of cut and declared counts names the armed rows that cut and declare.  A run with no
  * row armed prints what it printed before the rows existed.
  *

@@ -7844,6 +7844,18 @@ namespace GnssProcessor {
                     network_phase_datum_eq34_event_rows_.push_back(entry);
                 }
             }
+            // The root row's target memory is not serialized: a resumed leg would pin the root at 0
+            // under carries kept in the old frame, so the entry is dropped when a snapshot is written.
+            const auto root_entry = std::find(network_phase_datum_eq34_event_rows_.begin(),
+                                              network_phase_datum_eq34_event_rows_.end(), "root");
+            if (root_entry != network_phase_datum_eq34_event_rows_.end()
+                && !network_config_.state_snapshot_path.empty()) {
+                log->warn("Network: network.phase_datum_eq34_event_rows entry 'root' is set with "
+                          "network.state_snapshot_path - dropped: the row's pinned receiver phase-bias "
+                          "targets are not written to the snapshot, so a resumed leg would pin a new root "
+                          "at 0 under carries kept in the old frame.");
+                network_phase_datum_eq34_event_rows_.erase(root_entry);
+            }
             if (!network_phase_datum_eq34_event_rows_.empty() && !network_phase_datum_eq34_) {
                 log->warn("Network: network.phase_datum_eq34_event_rows is set but "
                           ".phase_datum_eq34 is OFF - the event rows are inert without the chain, so "
@@ -10080,6 +10092,14 @@ namespace GnssProcessor {
                                 "subtree's keys are declared moved.";
                         reports += std::string(reports.empty() ? "" : "; ")
                                  + "the re-hosts released, what the release took and the keys declared";
+                    }
+                    if (networkPhaseDatumEq34EventRowArmed("root")) {
+                        rows += std::string(rows.empty() ? "" : "  ")
+                              + "'root' pins a new datum receiver's phase bias at its carried value at a "
+                                "root handover, so the frame does not step and the satellites of its old "
+                                "frame keep their carries.";
+                        reports += std::string(reports.empty() ? "" : "; ")
+                                 + "the root handovers pinned at a carried bias and those left as built";
                     }
                     log->info("Network producer: eq34 EVENT ROWS ON ({}) - the integer rule of each "
                               "armed row replaces the as-built rule for its class of tree edge: "

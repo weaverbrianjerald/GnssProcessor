@@ -216,7 +216,7 @@ TEST(LoaderMessages, Eq34EventRowsUnknownEntryWarnsAndADuplicateIsDroppedSilentl
 // The rows are built in table order: an entry whose rule is not built yet is dropped with a warning
 // and arms nothing.
 TEST(LoaderMessages, Eq34EventRowsNotBuiltYetAreDroppedWithAWarning) {
-    for (const char* entry : {"root", "slip", "merge_split"}) {
+    for (const char* entry : {"slip", "merge_split"}) {
         const LoadedConfig r = loadNetworkConfigCapturing(std::string("eq34_rows_nb_") + entry,
             kFloatChain + eventRows(std::string("[\"") + entry + "\"]"));
         EXPECT_TRUE(r.ok) << entry << ": " << r.text;
@@ -228,10 +228,10 @@ TEST(LoaderMessages, Eq34EventRowsNotBuiltYetAreDroppedWithAWarning) {
     }
     // One built entry beside an unbuilt one: the built one arms.
     const LoadedConfig mixed = loadNetworkConfigCapturing("eq34_rows_nb_mixed",
-        kFloatChain + eventRows("[\"root\", \"kept\"]"));
+        kFloatChain + eventRows("[\"slip\", \"kept\"]"));
     EXPECT_TRUE(mixed.ok) << mixed.text;
     EXPECT_EQ(mixed.config.networkPhaseDatumEq34EventRows(), std::vector<std::string>{"kept"});
-    EXPECT_TRUE(contains(mixed.text, "'root' is not built yet")) << mixed.text;
+    EXPECT_TRUE(contains(mixed.text, "'slip' is not built yet")) << mixed.text;
 }
 
 // The rehost row is built, its certified branch held: its entry arms on the float chain beside the others, in the
@@ -316,6 +316,70 @@ TEST(LoaderMessages, Eq34EventRowsReturningArmsOnTheFloatChainAndTheLoaderSaysWh
     EXPECT_TRUE(nochain.config.networkPhaseDatumEq34EventRows().empty());
     EXPECT_FALSE(nochain.config.networkPhaseDatumEq34EventRowArmed("returning"));
     EXPECT_TRUE(contains(nochain.text, "event rows are inert without the chain")) << nochain.text;
+}
+
+// The root row is built: its entry arms on the float chain, alone or beside the others, and the loader names what
+// it does; the texts of the earlier rows are the texts they were.  A snapshot written by the run drops the entry
+// (the pinned targets are not serialized, so a resumed leg would pin a new root at 0 under old-frame carries).
+TEST(LoaderMessages, Eq34EventRowsRootArmsOnTheFloatChainAndTheLoaderSaysWhatItDoes) {
+    const LoadedConfig r = loadNetworkConfigCapturing("eq34_rows_root", kFloatChain + eventRows("[\"root\"]"));
+    EXPECT_TRUE(r.ok) << r.text;
+    EXPECT_EQ(r.config.networkPhaseDatumEq34EventRows(), std::vector<std::string>{"root"});
+    EXPECT_TRUE(r.config.networkPhaseDatumEq34EventRowArmed("root"));
+    EXPECT_FALSE(r.config.networkPhaseDatumEq34EventRowArmed("kept"));
+    EXPECT_TRUE(contains(r.text, "eq34 EVENT ROWS ON (root)")) << r.text;
+    EXPECT_TRUE(contains(r.text,
+        "'root' pins a new datum receiver's phase bias at its carried value at a root handover, so the frame does not "
+        "step and the satellites of its old frame keep their carries.")) << r.text;
+    EXPECT_TRUE(contains(r.text, "The run-end eq34 block reports the root handovers pinned at a carried bias and those "
+                                 "left as built.")) << r.text;
+    EXPECT_FALSE(contains(r.text, "is not built yet")) << r.text;
+    EXPECT_FALSE(contains(r.text, "'kept' holds")) << r.text;
+    EXPECT_FALSE(contains(r.text, "'rehost' releases")) << r.text;
+
+    // Beside the earlier rows, in the order the config gave them; their texts are unchanged.
+    const LoadedConfig all = loadNetworkConfigCapturing("eq34_rows_all_four",
+        kFloatChain + eventRows("[\"kept\", \"returning\", \"rehost\", \"root\"]"));
+    EXPECT_TRUE(all.ok) << all.text;
+    EXPECT_EQ(all.config.networkPhaseDatumEq34EventRows(),
+              (std::vector<std::string>{"kept", "returning", "rehost", "root"}));
+    EXPECT_TRUE(contains(all.text, "eq34 EVENT ROWS ON (kept, returning, rehost, root)")) << all.text;
+    EXPECT_TRUE(contains(all.text, "'rehost' releases every re-host, its certified branch held: the re-hosted vertex "
+                                   "and its subtree take the cut release, the new pin keeps its rounded integer target "
+                                   "with an unknown step, and the subtree's keys are declared moved.  'root' pins a new "
+                                   "datum receiver's phase bias")) << all.text;
+    EXPECT_TRUE(contains(all.text, "The run-end eq34 block reports the edges held and the incumbent edges not held, by "
+                                   "cause; the edges released, what the release took and the keys declared; the "
+                                   "re-hosts released, what the release took and the keys declared; the root handovers "
+                                   "pinned at a carried bias and those left as built.")) << all.text;
+    // The rehost text of a run without the root row ends where it did.
+    const LoadedConfig kr = loadNetworkConfigCapturing("eq34_rows_rehost_no_root",
+        kFloatChain + eventRows("[\"rehost\"]"));
+    EXPECT_FALSE(contains(kr.text, "'root'")) << kr.text;
+
+    // Without the chain the entry is cleared like any other.
+    const LoadedConfig nochain = loadNetworkConfigCapturing("eq34_rows_root_nochain",
+        kFloatVehicle + eventRows("[\"root\"]"));
+    EXPECT_TRUE(nochain.ok) << nochain.text;
+    EXPECT_TRUE(nochain.config.networkPhaseDatumEq34EventRows().empty());
+    EXPECT_TRUE(contains(nochain.text, "event rows are inert without the chain")) << nochain.text;
+
+    // A snapshot path drops the root entry alone, with the reason; the other entries arm.
+    const LoadedConfig snap = loadNetworkConfigCapturing("eq34_rows_root_snapshot",
+        kFloatChain + eventRows("[\"kept\", \"root\", \"rehost\"]")
+        + "    \"state_snapshot_path\": \"eq34_rows_root_snapshot.bin\",\n");
+    EXPECT_TRUE(snap.ok) << snap.text;
+    EXPECT_EQ(snap.config.networkPhaseDatumEq34EventRows(), (std::vector<std::string>{"kept", "rehost"}));
+    EXPECT_FALSE(snap.config.networkPhaseDatumEq34EventRowArmed("root"));
+    EXPECT_TRUE(contains(snap.text, "entry 'root' is set with network.state_snapshot_path - dropped")) << snap.text;
+    EXPECT_TRUE(contains(snap.text, "would pin a new root at 0 under carries kept in the old frame")) << snap.text;
+    EXPECT_TRUE(contains(snap.text, "eq34 EVENT ROWS ON (kept, rehost)")) << snap.text;
+    EXPECT_FALSE(contains(snap.text, "'root' pins")) << snap.text;
+    // Without the root entry a snapshot path leaves the list alone and says nothing about the root row.
+    const LoadedConfig keep = loadNetworkConfigCapturing("eq34_rows_kept_snapshot",
+        kFloatChain + eventRows("[\"kept\"]") + "    \"state_snapshot_path\": \"eq34_rows_kept_snapshot.bin\",\n");
+    EXPECT_EQ(keep.config.networkPhaseDatumEq34EventRows(), std::vector<std::string>{"kept"});
+    EXPECT_FALSE(contains(keep.text, "entry 'root'")) << keep.text;
 }
 
 // Without the chain the list is inert and cleared; off the float vehicle, or with the invariant

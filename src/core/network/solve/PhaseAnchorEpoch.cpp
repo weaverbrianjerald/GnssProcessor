@@ -138,7 +138,7 @@ void networkPhaseAnchorEpoch(NetworkRun& run, const NetworkEpoch& ep, EpochPassA
             // network/solve/ChainDatum.hpp.
             networkElectChainDatum(ctx, config_, log, stations,
                                    present, cnd, hyg, carry_slipped_ambs,
-                                   shared_phase_keys, events);
+                                   shared_phase_keys, events, ep.clock.pl_now_s);
         } else {
             // Two-edge continuous handover. The handover ledger is passed only when
             // network.phase_datum_handover_continuous is armed (it decides the pin

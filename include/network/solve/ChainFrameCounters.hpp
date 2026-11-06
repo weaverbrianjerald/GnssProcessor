@@ -60,6 +60,12 @@ struct ChainFrameCounters {
     long long cf_rh_cut_releases{0};               ///< Cut releases of the rehost row (one cut_release row each).
     long long cf_rh_declared_keys{0};              ///< Keys the rehost row's releases declared (one declared_keys row each).
     long long cf_cut_releases{0};                  ///< Cut releases of the returning and rehost rows (one cut_release row each).
+    // The root handovers the root row decided (one record per component and band; all 0 with the row off).
+    long long cf_root_pinned{0};                   ///< Handovers whose new root was pinned at its carried receiver phase bias.
+    long long cf_root_left{0};                     ///< Handovers left as built (the sum of the three causes below).
+    long long cf_root_not_vertex{0};               ///< ...the new root was no vertex of the last tree on the band.
+    long long cf_root_not_keeper{0};               ///< ...a split piece other than the one that keeps the old root.
+    long long cf_root_no_carry{0};                 ///< ...no receiver phase-bias carry inside the horizon.
     long long cf_nonint_targets{0};                ///< Pins whose target is not an integer of cycles.
     long long cf_soft_pins{0};                     ///< Soft pins (sigma multiplier above 1).
     long long cf_bridges{0};                       ///< Shared-side bridge pins.

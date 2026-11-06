@@ -4961,7 +4961,8 @@ namespace GnssProcessor {
          * (silently) and an entry whose rule is not built yet (with a warning), and clears the
          * list with a warning when the chain is off, when @c network.ambiguity_vehicle is not
          * @c float_kf or when @c network.carry_invariant is on: the rows are written for the
-         * float vehicle on the chain datum.
+         * float vehicle on the chain datum.  The @c root entry is also dropped (with a warning)
+         * when @c network.state_snapshot_path is set: its pinned targets are not serialized.
          *
          * @return The armed entries in the order the config gave them, without duplicates.
          * @see networkPhaseDatumEq34, networkPhaseDatumEq34EventRowArmed

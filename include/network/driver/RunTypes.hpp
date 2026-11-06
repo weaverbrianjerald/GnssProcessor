@@ -162,11 +162,17 @@ struct NetStation {
     std::map<std::string, double> pinned_amb_targets;
     // eq34 only: the "<sys>_RPB_<σ>" receiver-phase-bias keys for which this
     // station is the datum receiver r1 this epoch, each folded as a 1e10 pin on the
-    // RPB column in this station's own block (δ_{r1,σ} = 0, the receiver half of the
+    // RPB column in this station's own block (δ_{r1,σ} = the key's target in
+    // @ref pinned_rpb_targets, 0 when it has none: the receiver half of the
     // single-receiver-chain gauge).  Cleared and rebuilt every epoch by the chain
     // election.  Empty except at an eq34 component's datum receiver, and always empty
     // when network.phase_datum_eq34 is off.
     std::set<std::string> pinned_rpb_keys;
+    // eq34 root row only: the absolute value (m) the fold pins a key of @ref pinned_rpb_keys at,
+    // when it is not 0 (a new datum receiver pinned at its carried phase bias).  A key with no
+    // entry is pinned at 0.  Cleared and rebuilt every epoch by the chain election; always empty
+    // unless network.phase_datum_eq34_event_rows holds "root".
+    std::map<std::string, double> pinned_rpb_targets;
     // Per-pin σ multiplier for the few entries of @ref pinned_amb_targets that had to
     // be pinned on a host younger than the eligibility threshold (eq34 reattach
     // hygiene, docs/SPEC_eq34_reattach_hygiene.md, INC-3).  The fold divides the 1e10
