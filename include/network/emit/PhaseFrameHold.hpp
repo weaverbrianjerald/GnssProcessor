@@ -69,6 +69,22 @@
  * constellation's phase-visible level then follows M, its code-visible one.  The decoupling edge
  * is the same @c frame_start event, named with the vote; the re-coupling edges are the same
  * re-anchor and resume seam.
+ *
+ * ## The quorum (@c network.phase_frame_quorum)
+ *
+ * A retro bump keeps one satellite's own event out of the vote.  When most of a constellation is
+ * marked in one epoch (a mass decoupling by the clock anchor) the few satellites left are not the
+ * constellation: on DOY 129 of 2024, 18 of 22 Galileo satellites were marked, 3 of the 4 left
+ * carried an excursion of +0.45 m that decayed within 4 epochs, and the frame took it for the common
+ * move, leaving the whole constellation's phase-visible level 0.40 m off for good, unmarked
+ * (docs/refound/ICL3_frame_quorum_2026-11-05.md).  With the quorum armed, the plain vote stands when
+ * its voters reach max(min_voters, ceil(quorum x n)), n the constellation's satellites with a sample;
+ * below that the satellites forced by their own bump alone vote too, if they continue in their
+ * generation, and the frame moves by the median of the wider set when it reaches the same number, else
+ * it stays.  A pending datum change of the constellation is not a quorum event: every satellite is
+ * forced and the frame stays, as without the quorum.  Both edges are events: @c quorum_low when a
+ * started frame's constellation falls below (its voters, its satellites, the plain step not taken, the
+ * step taken) and @c quorum_restored when its plain vote is back.  Default 0 (off, byte-identical).
  */
 
 #include <array>
@@ -119,6 +135,7 @@ struct PhaseFrameEntry {
     std::string                     sat;            ///< RINEX satellite id ("G01").
     std::optional<PhaseFrameSample> now;            ///< This epoch's sample; empty: no vote, nothing stored.
     bool                            forced{false};  ///< A datum change of its constellation or a retro bump of its own is pending: no vote.
+    bool                            own_mark_only{false};  ///< Forced by a retro bump of its own alone, no datum change of its constellation: it votes when the plain vote misses the quorum.
 };
 
 /**
@@ -137,6 +154,7 @@ struct PhaseFrameConfig {
     int    min_voters{4};     ///< Fewer voters: the frame does not move this epoch (the clock frame hold's @c min_common).
     double max_gap_s{600.0};  ///< A previous sample older than this (s) does not vote (the clock frame hold's horizon).
     double step_floor_m{0.0}; ///< A median step with |step| at most this (m) is not applied (@ref PhaseFrameStep::floored); 0: every step applies.  1e-9 m in the vote in the hold's level.
+    double quorum{0.0};       ///< The plain vote needs this share of the constellation's satellites with a sample (@c network.phase_frame_quorum); 0: off.
 };
 
 /// One constellation's frame at one epoch.
@@ -150,6 +168,11 @@ struct PhaseFrameStep {
     bool   reanchored{false};  ///< |G| exceeded the leash and was reset to 0.
     double g_peak_m{0.0};      ///< G after the step, before any re-anchor (m).
     double g_m{0.0};           ///< G after the step and any re-anchor (m).
+    int    present{0};         ///< The constellation's satellites with a sample this epoch.
+    int    own_marked{0};      ///< Satellites forced by their own bump alone that continue in their generation (they vote when @ref widened).
+    bool   below_quorum{false};  ///< A started frame's plain vote missed the quorum (no datum change of the constellation pending).
+    bool   widened{false};     ///< Below the quorum, the frame moved by the median of the voters and the satellites marked by their own bumps.
+    double plain_step_m{0.0};  ///< Below the quorum, the median of the plain voters: the step not taken (m); 0 without a plain voter.
 };
 
 /**
@@ -162,6 +185,12 @@ struct PhaseFrameStep {
  * magnitude is at most @c step_floor_m (@ref PhaseFrameStep::floored): G += step, G created at
  * 0 by the first such epoch (@ref PhaseFrameStep::started).  |G| above @c leash_m resets G to 0
  * (@ref PhaseFrameStep::reanchored).  Then @p prev is replaced by this epoch's samples.
+ *
+ * With @c quorum above 0 the voters must also reach ceil(quorum x n), n the constellation's entries
+ * with a sample.  A started frame below that (no entry forced by a datum change of the constellation)
+ * is @ref PhaseFrameStep::below_quorum: the entries with @ref PhaseFrameEntry::own_mark_only that pass
+ * the same continuity tests vote too, and the frame moves by the median of the wider set if that set
+ * reaches the same number (@ref PhaseFrameStep::widened), else it stays.
  *
  * @param entries  This epoch's satellites.
  * @param t_s      This epoch's content time (s).
@@ -231,6 +260,10 @@ struct PhaseFrameHoldCounters {
     long long phf_no_pair{0};                             ///< Satellite-epochs with phase biases and a clock but no complete modelled pair.
     std::map<char, long long> phf_floored;                ///< Constellation -> voted epochs whose step was at most the floor and not applied (the vote in the hold's level).
     long long phf_no_level{0};                            ///< Satellite-epochs left without a sample because their constellation had no hold level M (the vote in the hold's level).
+    std::map<char, long long> phf_quorum_widened;         ///< Constellation -> epochs below the quorum on which the frame moved by the widened vote.
+    std::map<char, long long> phf_quorum_paused;          ///< Constellation -> epochs below the quorum on which the frame stayed.
+    std::map<char, double> phf_quorum_declined_m;         ///< Constellation -> largest |plain step - step taken| below the quorum (m): the minority's move kept off the level.
+    std::set<char> phf_quorum_low;                        ///< Constellations below the quorum since their last plain vote (the latch of the two edges).
 };
 
 }  // namespace GnssProcessor

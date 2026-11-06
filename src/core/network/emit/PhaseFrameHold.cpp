@@ -87,13 +87,19 @@ std::map<char, PhaseFrameStep> phaseFrameHoldEpoch(const std::vector<PhaseFrameE
                                                    const PhaseFrameConfig& cfg) {
     std::map<char, PhaseFrameStep> out;
     std::map<char, std::vector<double>> innov;
+    std::map<char, std::vector<double>> own_marked_innov;   // voters only below the quorum
+    std::set<char> declared;                                // a datum change of the constellation is pending
     for (const PhaseFrameEntry& e : entries) {
         if (e.sat.empty()) continue;
         const char c = letterOfSat(e.sat);
         PhaseFrameStep& st = out[c];
+        if (e.now) ++st.present;
         if (e.forced) {
             ++st.forced;
-            continue;
+            if (!e.own_mark_only) {
+                declared.insert(c);
+                continue;
+            }
         }
         if (!e.now) continue;
         const auto it = prev.find(e.sat);
@@ -101,14 +107,33 @@ std::map<char, PhaseFrameStep> phaseFrameHoldEpoch(const std::vector<PhaseFrameE
         const PhaseFrameSample& p = it->second;
         if (p.pair != e.now->pair || p.gen1 != e.now->gen1 || p.gen2 != e.now->gen2) continue;
         if (!(t_s - p.t_s <= cfg.max_gap_s)) continue;
-        innov[c].push_back(e.now->v_m - p.v_m);
+        (e.forced ? own_marked_innov : innov)[c].push_back(e.now->v_m - p.v_m);
     }
     for (auto& [c, st] : out) {
         const auto iit = innov.find(c);
         st.voters = (iit == innov.end()) ? 0 : static_cast<int>(iit->second.size());
-        if (st.voters >= cfg.min_voters) {
+        const auto oit = own_marked_innov.find(c);
+        st.own_marked = (oit == own_marked_innov.end()) ? 0 : static_cast<int>(oit->second.size());
+        // The vote that stands: the plain voters at the quorum; below it, on a started frame, the
+        // satellites marked by their own bumps too.
+        int need = cfg.min_voters;
+        if (cfg.quorum > 0.0)
+            need = std::max(need, static_cast<int>(std::ceil(cfg.quorum * st.present)));
+        std::vector<double> vote;
+        if (st.voters >= need) {
+            vote = (st.voters > 0) ? iit->second : std::vector<double>{};
+        } else if (cfg.quorum > 0.0 && declared.count(c) == 0 && frame_g.count(c) != 0) {
+            st.below_quorum = true;
+            if (st.voters > 0) st.plain_step_m = medianOf(iit->second);
+            if (st.voters + st.own_marked >= need) {
+                st.widened = true;
+                if (st.voters > 0) vote = iit->second;
+                vote.insert(vote.end(), oit->second.begin(), oit->second.end());
+            }
+        }
+        if (!vote.empty()) {
             st.moved  = true;
-            st.step_m = medianOf(iit->second);
+            st.step_m = medianOf(std::move(vote));
             if (cfg.step_floor_m > 0.0 && std::abs(st.step_m) <= cfg.step_floor_m) {
                 st.step_m  = 0.0;
                 st.floored = true;
@@ -174,8 +199,9 @@ std::set<char> networkPhaseFrameHold(NetworkRunContext& ctx, NetworkRunTraces& t
         }
         if (!e.now && s.has_clock && (!level_vote || hold_level.count(letterOfSat(s.sat))))
             ++c.phf_no_pair;
-        e.forced = global_bump || marked_consts.count(letterOfSat(s.sat)) != 0
-                   || retro_sats.count(s.sat) != 0;
+        const bool const_marked = global_bump || marked_consts.count(letterOfSat(s.sat)) != 0;
+        e.forced = const_marked || retro_sats.count(s.sat) != 0;
+        e.own_mark_only = e.forced && !const_marked;
         entries.push_back(std::move(e));
     }
 
@@ -186,6 +212,7 @@ std::set<char> networkPhaseFrameHold(NetworkRunContext& ctx, NetworkRunTraces& t
                  [&](System sys, double g) { frame_g.emplace(rinexLetter(sys), g); });
     PhaseFrameConfig cfg;
     cfg.leash_m = ctx.knobs.phase_frame_leash_m;
+    cfg.quorum  = ctx.knobs.phase_frame_quorum;
     if (level_vote) cfg.step_floor_m = kPhaseFrameLevelVoteFloorM;
     const std::map<char, PhaseFrameStep> steps = phaseFrameHoldEpoch(entries, t_s, prev, frame_g, cfg);
     net::assignSat(entities, &net::SatelliteState::phase_frame_prev, prev);
@@ -196,12 +223,36 @@ std::set<char> networkPhaseFrameHold(NetworkRunContext& ctx, NetworkRunTraces& t
     for (const auto& [cc, st] : steps) {
         const std::string cons(1, cc);
         const char* event = "";
+        if (st.below_quorum) {
+            // The decoupling edge of the quorum: the first epoch below it since the last plain
+            // vote names the constellation, the vote and the step not taken; every such epoch counts.
+            (st.widened ? c.phf_quorum_widened : c.phf_quorum_paused)[cc] += 1;
+            double& declined = c.phf_quorum_declined_m[cc];
+            declined = std::max(declined, std::abs(st.plain_step_m - st.step_m));
+            if (c.phf_quorum_low.insert(cc).second)
+                traces.emitEvent(se.time, "PHASE_FRAME", "quorum_low", cons, "",
+                                 st.present > 0 ? static_cast<double>(st.voters) / st.present : 0.0,
+                                 ctx.knobs.phase_frame_quorum, st.widened ? "widened" : "paused",
+                                 fmt::format("voters={}; present={}; own_marked={}; plain_step={:.4f} m; "
+                                             "step={:.4f} m", st.voters, st.present, st.own_marked,
+                                             st.plain_step_m, st.step_m));
+        } else if (st.moved && c.phf_quorum_low.erase(cc) != 0) {
+            // The re-coupling edge: the plain vote stands again.
+            traces.emitEvent(se.time, "PHASE_FRAME", "quorum_restored", cons, "",
+                             st.present > 0 ? static_cast<double>(st.voters) / st.present : 0.0,
+                             ctx.knobs.phase_frame_quorum, "hold",
+                             fmt::format("voters={}; present={}", st.voters, st.present));
+        }
         if (st.moved) {
             ++c.phf_voted[cc];
             c.phf_voters[cc] += st.voters;
             ++c.phf_step_hist[cc][stepBin(st.step_m)];
             c.phf_drained_m[cc] += std::abs(st.step_m);
             if (st.floored) ++c.phf_floored[cc];
+            if (st.widened) event = "quorum_widened";
+        } else if (st.below_quorum) {
+            ++c.phf_paused[cc];
+            event = "quorum_paused";
         } else if (st.forced > 0 && st.voters == 0) {
             ++c.phf_marked[cc];
             event = "marked";
@@ -295,6 +346,16 @@ int networkPhaseFrameHoldRunEnd(const NetworkRunEndView& v) {
                   "{:.0e} m not applied (the hold's rounding) [{}]; satellite-epochs without a hold "
                   "level {}.  Every voted epoch floored is the phase-clock hold's exact no-op.",
                   kPhaseFrameLevelVoteFloorM, fl.empty() ? std::string("none") : fl, c.phf_no_level);
+    }
+    if (ctx.knobs.phase_frame_quorum > 0.0) {
+        std::string q;
+        for (char cc : conses)
+            q += fmt::format("{}{}: widened {}, paused {}, largest minority move kept off the level "
+                             "{:.4f} m", q.empty() ? "" : "; ", cc, at(c.phf_quorum_widened, cc),
+                             at(c.phf_quorum_paused, cc), at(c.phf_quorum_declined_m, cc));
+        log->info("Network (phase frame hold, quorum {:.2f}): epochs below the quorum: [{}].  0 below "
+                  "the quorum is the normal reading.",
+                  ctx.knobs.phase_frame_quorum, q.empty() ? std::string("none") : q);
     }
     return 0;
 }

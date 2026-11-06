@@ -340,6 +340,10 @@ namespace GnssProcessor {
                                          "network.emit_pb_hold_smoothed (the holds that keep the "
                                          "level M it votes in)");
         }
+        // The quorum is a rule of the frame's vote.
+        if (network_phase_frame_quorum_ > 0.0 && !network_emit_phase_frame_hold_)
+            throw std::runtime_error("network.phase_frame_quorum requires "
+                                     "network.emit_phase_frame_hold (it is a rule of the frame's vote)");
         // The tracked a priori moves the broadcast clock by the IF-TD columns: it needs the
         // broadcast a priori and the two-way centring that fits them.
         if (network_apriori_clock_track_) {
@@ -8635,6 +8639,17 @@ namespace GnssProcessor {
                       "constellation's emitted clocks, so each constellation's phase-visible level "
                       "follows its code-visible one (a no-op under the phase-clock hold).  Outputs "
                       "only.");
+        // Its quorum; the requirement is refused at the end of the section, on the resolved values.
+        network_phase_frame_quorum_ =
+            jval<double>(json, "network.phase_frame_quorum", "phase_frame_quorum", 0.0);
+        if (!(network_phase_frame_quorum_ >= 0.0 && network_phase_frame_quorum_ <= 1.0))
+            throw std::runtime_error("network.phase_frame_quorum must be in [0, 1]");
+        if (network_phase_frame_quorum_ > 0.0)
+            log->info("Network: network.phase_frame_quorum = {:.2f}: the phase-visible frame's plain "
+                      "vote needs that share of the constellation's satellites with a sample; below "
+                      "it the satellites marked by their own retro bumps vote too, else the frame "
+                      "stays.  Outputs only.",
+                      network_phase_frame_quorum_);
         network_clock_disc_jump_test_ =
             jval<bool>(json, "network.clock_disc_jump_test",
                        "network_clock_disc_jump_test", false);

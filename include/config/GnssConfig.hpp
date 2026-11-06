@@ -4980,6 +4980,24 @@ namespace GnssProcessor {
          * @return Whether the phase-visible frame votes in the hold's level.
          */
         bool networkPhaseFrameHoldLevelVote() const { return network_phase_frame_hold_level_vote_; }
+
+        /**
+         * @brief The share of a constellation the phase-visible frame's plain vote needs
+         *        (@c network.phase_frame_quorum,
+         *        docs/refound/ICL3_frame_quorum_2026-11-05.md).
+         *
+         * The plain vote of @ref networkEmitPhaseFrameHold stands when its voters reach this share
+         * of the constellation's satellites with a sample (and the frame's minimum of 4).  Below
+         * it, the satellites forced by their own retro bump alone vote too; the frame moves by the
+         * median of the wider set if that set reaches the same number, else it stays.  A pending
+         * datum change of the constellation is not a quorum event.  In [0, 1]; 0.5 in the graded
+         * arms, which acts on a mass decoupling by the clock anchor and on nothing else in 24 h.
+         * Outputs only; above 0 it requires @c network.emit_phase_frame_hold (hard error at load).
+         * Default 0: off (byte-identical).
+         *
+         * @return The share; 0 when off.
+         */
+        double networkPhaseFrameQuorum() const { return network_phase_frame_quorum_; }
         /// |frame accumulator| bound (m) beyond which the constellation re-anchors
         /// to the solve frame with a datum mark (markDatumChange): the marked
         /// re-coupling edge (invariant #7).
@@ -8988,6 +9006,7 @@ namespace GnssProcessor {
         bool   network_emit_phase_frame_hold_{false};      ///< The emitted phase-visible clock in a per-constellation held frame (network.emit_phase_frame_hold). Outputs only.
         double network_phase_frame_leash_m_{1.0};          ///< Its |G| re-anchor bound (m) (network.phase_frame_leash_m). Inert unless network_emit_phase_frame_hold_.
         bool   network_phase_frame_hold_level_vote_{false}; ///< The phase-visible frame votes on C - P_IF - M, the phase-bias hold's level (network.phase_frame_hold_level_vote). Outputs only.
+        double network_phase_frame_quorum_{0.0};           ///< The share of a constellation the frame's plain vote needs (network.phase_frame_quorum); 0 off. Outputs only.
         double network_clock_frame_leash_m_{50.0};         ///< |A_c| re-anchor bound (m). Crossing it re-anchors the constellation to the solve frame with markDatumChange (the marked re-coupling edge of invariant #7; never silent). Measured 12 h wander on the reference lineage: 23 m. Inert unless network_emit_clock_frame_hold_.
         bool   network_clock_disc_jump_test_{false};       ///< Mark per-satellite common-removed clock steps > network_clock_disc_jump_m_ via the markSatDiscontinuity retro-bump: R record + per-sat phase/code/clock counters, the consumer-reset chain Q4 proved end-to-end. Independent of the frame hold (alone it marks the raw wire with the census's own statistic). Per RTA-11 the emitter's clock counter keeps no internal magnitude test; this test lives at the emission-prep tier and replay reproduces it from the serialized R/E records. Off = byte-identical.
         double network_clock_disc_jump_m_{1.5};            ///< Flat per-sat step threshold (m). Empirical (SPEC clock_emit_rebase §1): 1.5 ≈ 16σ of the measured per-epoch walk step (robust σ 0.092 m) ⇒ ~7 marks/h on the reference internal lineage; the census outlier floor (0.5) would mark 73/h, a burst of consumer resets. Inert unless network_clock_disc_jump_test_.
