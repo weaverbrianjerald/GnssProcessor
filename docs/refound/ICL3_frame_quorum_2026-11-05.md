@@ -273,3 +273,7 @@ The choice among the three candidates came from a tie, by the frozen rule's orde
 - **The hold's level M.** Its median runs over every satellite with a clock, the 18 included, so a mass decoupling writes -44 mm into every bridged key's phase-visible clock and into the level the code side shares; a quorum on M is untested.
 - **The receiver's offset at bumps.** A re-inflated offset follows that epoch's code (12:28 on DOY 129, +63.7 mm); whether one bump should re-inflate it, and for how long, is a receiver question.
 - **The key over a day, and DOY 130 and 131.** The vote in the hold's level with the quorum has a prediction (section 5.3) and no 24 h run; card ICL's other owed days and the real-time run remain.
+
+## 8. Correction (2026-11-06)
+
+Section 7's first item is answered by card [ICL4](ICL4_post_flag_slip_scatter_2026-11-06.md), and its framing is wrong. The slip handover is not the cause: a short arm with E26's anchors at another station and no handover decouples the same 18 satellites. The cause is a second, real slip (L5X of E26, about -294 cycles, no LLI) in the epoch after the IF-TD flag of section 2.2, which no pre-solve test answers. That is also why the four injected slips of section 5 did not reproduce the event: each was a first slip, which the IF-TD test catches. With `network.cycle_slip.if_phase_td_reseed_on_flag` the event does not occur and the frame votes on 22 satellites, so this card's one natural event no longer reaches the quorum on that key.

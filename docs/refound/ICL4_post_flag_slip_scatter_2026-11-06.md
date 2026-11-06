@@ -4,15 +4,15 @@
 
 - **id:** ICL4
 - **topic:** network-vehicle
-- **status:** open
-- **summary:** Pre-registered 2026-11-06, from card ICL3 section 7: why the slip at YKRO00CIV at 23:40 on DOY 129 scatters 18 of 22 Galileo clocks on the broadcast posture and 2 on the golden. Measured first: the slip handover is not the cause. A second, real slip (L5X of E26 jumps about -75 m) arrives in the epoch after the IF-TD flag, when that test has no double difference. Gates freeze the cause, the amplification and the handover's role before the short arms are read.
+- **status:** closed
+- **summary:** Pre-registered and closed 2026-11-06, from card ICL3 section 7. The scatter at 23:40:30 on DOY 129 is not the slip handover's: a second, real slip (L5X of E26 at YKRO00CIV, about -294 cycles, no LLI) arrives in the epoch after an IF-TD flag, when that test has no double difference and the MW signal is dropped. The arc's ionosphere-free level is already stiff, so the receiver's Galileo offset takes +10.8 m and the scatter walks the Galileo graph; `network.clock_anchor_q` sets its reach. `network.cycle_slip.if_phase_td_reseed_on_flag` removes it on both postures and on DOY 132. All gates pass. Nothing armed.
 - **source:** card [ICL3](ICL3_frame_quorum_2026-11-05.md) section 7 (the owed item) and section 2.2 (the event); card [ARL](ARL_integer_ambiguity_ladder_2026-10-09.md) section 14 (`network.cycle_slip.if_phase_td_reseed_on_flag`, rung S7); card [SCL](SCL_self_contained_clock_level_2026-10-03.md) (`network.clock_anchor_q` 5e-6 on the broadcast a priori); standing invariant 1 of `CLAUDE.md`
 - **knobs / posture:** read, not changed in any default: `network.cycle_slip.if_phase_td_reseed_on_flag`, `network.clock_anchor_q`. Graded on card BRD's GPS + Galileo broadcast posture with card ICL's frame (base `icl_p{129,132}_6`) and on the golden of the same exe (base `brd_c{129,132}_6`).
 - **dates in the text:** 2026-11-06
 - **hashes / run dirs:** branch `icl4/post-flag-slip` from `icl3/frame-quorum` (`569482c`), worktree `D:/GnssProcessorSupport/worktrees/icl2`; exe `gnss_processor_icl3q1.exe` (sha256[:16] `92743f1fb3c747fb`); arms `D:/GnssProcessorSupport/runs_nom/_rap_icl4_*`; the 24 h arms read are `icl2_{p,c}{129,132}_24` of card ICL2; scripts `D:/GnssProcessorSupport/worktrees/icl3_tools/icl4_*` (outside the repository)
 - **gates (frozen at pre-registration):** section 3
 
-**Outcome.** Open. Measured before the gates: the event's cause is a second slip one epoch after an IF-TD flag, not the handover. The arms are graded in section 4.
+**Outcome.** The scatter comes from a second, real slip one epoch after an IF-TD flag, when no pre-solve test answers it; the handover is a coincidence. The misclosure spreads through the receiver's Galileo offset, and the anchor's process noise sets how far: 18 decouplings at 5e-6, 2 at the golden's 2.9e-8. The existing re-seed key flags the slip at 94.1 m and removes the event on both postures, and a second natural event on DOY 132. All gates pass. Receivers are not graded here. Nothing armed.
 
 > Results are appended TO THIS FILE, below the text.
 
@@ -85,3 +85,91 @@ Beside the gates, not bars: the key's other flags in the short arms, the receive
 No key is armed and no default moves. A day-long grade of the key is a separate decision.
 
 ## 4. Results
+
+### 4.1 The gates (2026-11-06)
+
+Short arms from one exe (sha256[:16] `92743f1fb3c747fb`). `e_phi` is the anchor's first pass, relative to the constellation's median; `dC` is the emitted clock's increment relative to the median, from `products.txt`; the offset is the row's station's `ISB:Galileo`. Scripts `icl4_grade.py`, `icl4_rx.py`.
+
+DOY 129, epoch 344430, E26 at YKRO00CIV:
+
+| arm | change | IF-TD at the epoch | decouplings G / E | T4 arcs | s0 phase | E26 `e_phi` (m) | YKRO offset move (m) | E `dC` range (m) | E beyond 0.12 m |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `icl4_b0` | broadcast posture, control | none | 1 / 18 | 102 | 6.01 | -4.417 | +10.278 | -5.147 to +1.029 | 18 |
+| `icl4_b1` | re-seed key | `post_flag`, 94.127 m | 0 / 0 | 2 | 0.29 | -0.001 | -0.004 | -0.006 to +0.007 | 0 |
+| `icl4_b2` | q 2.9e-8 | none | 0 / 2 | 57 | 1.15 | -0.289 | +10.554 | -5.342 to +0.817 | 3 |
+| `icl4_b4` | clone and shared history off (beside the gates) | none | 2 / 16 | 99 | 4.90 | -3.800 | +17.451 | -4.201 to +0.588 | 17 |
+| `icl4_g0` | golden, control | none | 0 / 2 | 41 | 0.66 | -0.285 | +10.164 | -1.670 to +0.365 | 2 |
+| `icl4_g1` | q 5e-6 | none | 0 / 13 | 58 | 2.61 | -2.122 | +4.818 | -2.318 to +0.510 | 13 |
+| `icl4_g2` | re-seed key | `post_flag`, 94.131 m | 0 / 0 | 0 | 0.24 | +0.000 | -0.004 | -0.003 to +0.001 | 0 |
+
+DOY 132, epoch 529770, E19 at SYOG00ATA (the first flag at 529740, 95.791 m, `cb_kept=L5X`):
+
+| arm | change | IF-TD at the epoch | decouplings G / E | T4 arcs | s0 phase | E19 `e_phi` (m) | SYOG offset move (m) | E `dC` range (m) |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `icl4_r0` | broadcast posture, control | none | 4 / 7 | 43 | 2.33 | -0.895 | +0.438 | -1.054 to +0.477 |
+| `icl4_r1` | re-seed key | `post_flag`, 95.817 m | 0 / 0 | 0 | 0.31 | +0.003 | -0.003 | -0.013 to +0.016 |
+
+- **C0 PASS.** `icl4_b0`: the second slip unanswered, 18 Galileo decouplings. `icl4_g0`: 2. The short arm starting 2 h before the event reproduces the 24 h arm's response (18 against 18; -4.42 against -4.46 m for E26), so it is a bed for this event, at about a tenth of the run time.
+- **H1 PASS, every clause on both postures.** The key flags the second slip before the solve, at the size the accounting of section 2.2 predicts (94.1 m against 94.5 m), and the event is gone: no decoupling, at most 2 T4 arcs, s0 phase at its normal level, the YKRO offset still.
+- **H2 PASS in both directions, with an unequal share.** The broadcast posture at the golden's q answers exactly as the golden does (E26 -0.289 against -0.285 m, 2 decouplings against 2), so at low q the rest of the posture adds nothing at this event. The golden at q 5e-6 crosses every bar (13 decouplings, -2.122 m) but reaches about half of the posture's amplitude, uniformly over the satellites (E33 +0.503 against +1.021 m). That factor of 2 is not attributed. The clock clone with its shared history is not it (`icl4_b4`: -3.800 m, 16 Galileo decouplings).
+- **H3 PASS.** `icl4_b0` has E26's anchors at STHL00GBR on both bands and no slip handover of E26 at all, and decouples 18 satellites. `icl4_g1` has them at MBAR00UGA and decouples 13. The handover in the 24 h arm is a coincidence of where the anchor stood.
+- **R PASS.** `icl4_r0` reproduces the 24 h arm's footprint exactly (s0 phase 2.33, 43 arcs, 11 retro bumps); the key removes it (0 decouplings against 11).
+- **Measure only.** `icl4_b3`'s products are byte-identical to `icl4_b0`'s. Its detector log at 344430: `MWDEC sta=YKRO00CIV E26_L1X_L5X dev=+219.4446 m (+292.041 WL) thr=2.2416 m n=93 flag=1`, then `MW outlier on locked E26 ... absorbing into Welford`, then `WL lock demoted ... Signaling unknown-integer slip`. So the MW detector does report the slip at its own epoch, with an unknown integer, and the PASS A admission drops it: the integer rule needs a known integer, and the evidence rule refuses a bias-corrected lane (`bia=yes` here). The day's run-end line reads `legacy 482, evidence 0 [knob on; would-admit 0]; dropped loose 240 / unknown 5710` on `icl2_p129_24`, and evidence 0 on the golden's arm too (`legacy 526`, `unknown 6034`).
+
+### 4.2 The raw data of the event
+
+RINEX of YKRO00CIV, E26 (`icl4_rnx.py`): S1X falls 45.25, 42.75, 37.75, 30.25 dB-Hz and S5X 35.25, 28.00, 26.00, 21.50 dB-Hz over 23:38:30 to 23:40:00, and both recover at once at 23:40:30 (45.25, 35.75). The L5X increment at 23:40:30 is about 294 cycles short of its neighbours, the L5X record is absent at 23:41:00 and no LLI is set on any of these records. A deep fade at an equatorial station in the local evening, followed by a re-acquisition about 294 cycles off with no mark from the receiver. The fade is measured; scintillation as its cause is an interpretation, not tested here. E12 at the same station holds steady over these epochs; G06 dips from 39.25 to 31.75 dB-Hz at 23:40:00.
+
+### 4.3 What a post-flag step needs in order to scatter (a correction to section 2.4)
+
+Section 2.4 closes with "the footprint needs a first flag small enough to leave the refloated arc in the solve". That is too narrow: DOY 132's first flag is 95.8 m. Over both days, per (station, satellite), every |dGF| of at least 3 m in the epoch after an IF-TD flag of that arc (`icl4_postflag.py`):
+
+| what met the second step | arcs (DOY 129 + 132) | largest s0 phase |
+| --- | --- | --- |
+| an LLI or MW refloat at its own epoch | 17 + 28 | 0.62 |
+| T4 had dropped the arc at the flag epoch | 2 + 1 | 0.38 |
+| nothing: the arc stood in the solve | 3 + 8 | 5.85 |
+
+The third row is the population. All 11: E26 at YKRO (s0 phase 5.85, 100 arcs, 19 decouplings), E19 at SYOG (2.33, 43, 11), G16 at SYOG (1.20, 14, 6), G14 with G22 at SYOG (1.16, 11, 3), G08 at SYOG (0.83, 8, 0), G19 at SYOG (0.82, 1, 0), HKSL E04 (0.81, 2, 0), G23 at SYOG (0.71, 8, 4), G13 at SYOG (0.55, 0, 1), KIT3 G21 (0.40, 0, 0). The size of the step matters less than which row it falls in: SYOG G03 at -124 m in the second row and DJIG E07 at +60.5 m in the first decouple nothing.
+
+Epochs the IF-TD test cannot see at all are about 0.9 % of adjacent samples (DOY 129: 2 300 733 tested, 20 670 blind, of which 1 051 post-flag; `icl4_blind.py`). A tested row can also be vacuous. At WIND00NAM at 311100 the phases step at once on every satellite of the pools (E30's code stays smooth in the RINEX), and E30's double difference of 6.81 m is the median of its pool of 5 rows (`abs_dev_m` 0.000), so it cannot flag; G31 is the same among 8. The flags then erase the others' gradients, which leaves a pool of one row per chain at 311130. That epoch leaves no footprint, but the coverage after a mass flag is thin; the key keeps those satellites in the pool. The other blind classes hold no comparable footprint on these days: the large jumps there are on pairs outside the solve (LMMF00MTQ E27 L1X + L8X) or in the first minutes of a run (BSHM00ISR G07). The epochs 304110 of DOY 129 (CEBR00ESP, no raw step at or above 1 m) and 604560 to 604770 of DOY 132 (a smooth rise and fall of phase residuals over the whole network, up to 7.6 cm, no retro bump) are other mechanisms, not traced here.
+
+### 4.4 What the key costs and what the receiver sees
+
+Beside the gates; no adoption claim. Paired against each control after hour 1 (`icl4_pairs.py`):
+
+| pair | IF-TD flags | T4 arcs | anchor decouplings | WTZZ00DEU 3D, median of the pair (mm) | paired change (mm) |
+| --- | --- | --- | --- | --- | --- |
+| `icl4_b1` against `icl4_b0`, 1.4 h | 19 to 22 | 107 to 2 | 20 to 1 | 56.0, 52.9 | -2.40 |
+| `icl4_g2` against `icl4_g0`, 1.4 h | 17 to 19 | 48 to 2 | 3 to 1 | 36.3, 36.0 | -0.20 |
+| `icl4_r1` against `icl4_r0`, 2.25 h | 81 to 99 | 73 to 13 | 30 to 19 | 45.0, 46.6 | +1.60 |
+
+The extra flags sit on arcs already in trouble at equatorial or polar stations (MBAR00UGA, YKRO00CIV, DJIG00DJI; STHL00GBR G05 on DOY 132), mostly in hour 1; card ARL's 6 h arm reads the same way (111 to 149 flags, census 0.0 mm). One receiver on short arms does not grade the key: the three paired changes have both signs, and the first half hour of `icl4_r1` moves +17 mm. At the event itself the receiver's error rises and decays without the key and does not with it: `icl2_p129_24` 11 mm before, then 33, 34, 27, 20, 20, 17 mm; `icl4_r0` 39 mm before, then 53, 48, 46 mm, against `icl4_r1` 41 mm before, then 41, 40, 41 mm. The receiver's Galileo offset moves -31 mm at the event in `icl4_b0` and -1 mm in `icl4_b1`, and the frame votes on 4 satellites in `icl4_b0` (step -0.085 m) and on 22 in `icl4_b1` (step -0.001 m), so this event no longer reaches card ICL3's quorum.
+
+### 4.5 The golden pays too
+
+The hole is not the broadcast posture's. On the golden the same slip costs 41 arcs refloated by T4, 2 retro bumps and an emitted E26 clock of -1.67 m for one epoch, all gone with the key (`icl4_g2`: 0, 0, -0.003 m). The broadcast posture adds the reach, not the cause.
+
+## 5. Verdict
+
+**The scatter is not the slip handover's. It is a second, real slip that no pre-solve test answers, spread through the receiver's Galileo offset, and the broadcast posture's anchor lets it reach the whole constellation.** In order:
+
+1. At 23:40:00 a deep signal fade at YKRO00CIV gives E26 a small step, and the IF-TD test flags and refloats the arc, erasing the satellite's gradient.
+2. At 23:40:30 L5X returns about 294 cycles off (-75 m) with no LLI. IF-TD has no double difference. The MW detector reports an unknown integer and the admission drops it.
+3. The one-epoch-old arc is loose only along the ionosphere; its ionosphere-free level is already stiff, so a misclosure of 94.5 m meets stiff rows. YKRO's per-epoch Galileo offset takes +10.8 m and pulls the stiff arcs of its other four Galileo satellites.
+4. Those clocks and E26's pull the offset of every station that shares them, so the scatter walks through the Galileo graph. GPS is shielded by the offset.
+5. The anchor's process noise sets how far the walk reaches. At q 5e-6 the anchor decouples 18 of 22 Galileo satellites; at the golden's 2.9e-8 it decouples 2, with the same slip, on the same posture.
+
+Everything downstream follows from that: 19 decouplings and retro bumps, 100 arcs refloated by T4, clocks scattered by -5 to +1 m for one epoch, and the frame's minority vote of card ICL3. The within-epoch tier stays silent: its robust sigma0 reads 1.00 against the bar of 3.0 (the post-fit 1.09, the phase family alone 5.85), since one arc is a small share of 3 800 rows, although the attribution table names E26 at once (prominence 81, `acted=0`).
+
+`network.cycle_slip.if_phase_td_reseed_on_flag`, built by card ARL for this hole on the sim bed's rung S7 and left off because its 6 h field arm held no such event, removes the event entirely on both postures and on DOY 132's natural event. C0, H1, H2, H3 and R pass. This is standing invariant 1 on a response's own re-coupling edge: the refloat's fresh value is stiff again after one epoch, and the test that would guard it is switched off for exactly that epoch.
+
+Nothing is armed. Card ICL3's quorum stays useful as a guard on the frame, but its evidence, this one event, is removed at the source by the key. Arming, any golden change and the merge are the author's decisions.
+
+## 6. What remains
+
+- **The key over a day.** A 24 h grade of `network.cycle_slip.if_phase_td_reseed_on_flag` on DOY 129 and 132 with the 16-site census, on the golden and on the broadcast posture. The short arms here remove the events and do not grade the receivers. Card ARL's unit-test debt for the key's run-end report falls due with any arming.
+- **The factor of 2 at q 5e-6.** The golden at the broadcast posture's q reaches half of its amplitude; the clone is not it.
+- **MW at a locked arc.** A flag of 292 wide-lane cycles is treated as a noise outlier for its own epoch, and the unknown-integer signal that follows is dropped. `network.cycle_slip.mw_evidence_refloat`, armed in the goldens, admitted 0 flags on the arms read, because the rule refuses bias-corrected lanes (standing invariant 4). A second pre-solve answer is possible here; it is not needed for this event once the key is on.
+- **The within-epoch tier and one arc.** Its robust sigma0 cannot trip on one stiff arc; the attribution table names the arc and does not act. Whether a large single-arc attribution should re-solve within the epoch is a question for the response doctrine (adapt and emit within the detected epoch).
+- **Other footprints.** The epoch 304110 of DOY 129 at CEBR00ESP and the last minutes of DOY 132 are other mechanisms.

@@ -230,7 +230,8 @@ default-off quorum widens the vote below half of the constellation: level over t
 one clause; nothing armed).
 
 [ICL4](refound/ICL4_post_flag_slip_scatter_2026-11-06.md), why one slip scatters a constellation's clocks
-(open, 2026-11-06: the event is a second slip one epoch after an IF-TD flag, not the handover; gates frozen for the cause, the anchor's amplification and a second natural event).
+(closed, 2026-11-06: the event is a second, real slip one epoch after an IF-TD flag, not the handover; it spreads through the receiver's Galileo offset and the anchor's q sets its reach; the existing re-seed key removes it on both postures
+and on DOY 132; all gates pass; receivers not graded; nothing armed).
 
 ### `resume-seam` — [topics/resume-seam.md](topics/resume-seam.md)
 

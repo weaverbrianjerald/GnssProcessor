@@ -335,5 +335,7 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   (`network.phase_frame_quorum`, default off; chosen by a frozen rule on replayed receivers, a tie among pause, widen and mark): below half of the constellation the satellites marked by
   their own bumps vote too. The level over the day 15.8 mm per 120 epochs (from 58.3), the receiver's offset -0.040 m at the event (from -0.487 m), positions unchanged. Q2 fails on one
   clause (offset rms 2.10 against 2.0 mm). One natural event; injections did not reproduce it. UNVALIDATED; nothing armed.
-- [ICL4](ICL4_post_flag_slip_scatter_2026-11-06.md): open, 2026-11-06 (pre-registered): why one slip scatters a constellation's clocks. Measured first: a second, real slip
-  one epoch after an IF-TD flag, when that test has no double difference; the misclosure spreads through the receiver's Galileo offset and the anchor's q sets how far.
+- [ICL4](ICL4_post_flag_slip_scatter_2026-11-06.md): closed, 2026-11-06 (pre-registered the same day): why one slip scatters a constellation's clocks. A second, real slip one epoch after an
+  IF-TD flag, when that test has no double difference and the MW signal is dropped; the handover is a coincidence. The misclosure spreads through the receiver's Galileo offset and `network.clock_anchor_q` sets how far (18
+  decouplings at 5e-6, 2 at 2.9e-8, on the same posture). `network.cycle_slip.if_phase_td_reseed_on_flag` flags the slip at 94.1 m and removes the event on both postures and on DOY 132's natural event. All gates pass;
+  receivers not graded (a 24 h grade of the key is owed); nothing armed.
