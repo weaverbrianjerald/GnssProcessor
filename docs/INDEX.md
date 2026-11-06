@@ -225,8 +225,9 @@ phase-bias hold's level cuts each constellation's code-to-phase drift from 20 to
 golden, at a cost on DOY 129's GPS-to-Galileo level; K2 and K3 fail; nothing armed).
 
 [ICL3](refound/ICL3_frame_quorum_2026-11-05.md), the phase-visible frame's quorum at a mass clock-anchor decoupling
-(open, pre-registered 2026-11-05: a decoupling of 18 of 22 Galileo satellites turned a transient of 3 satellites into a permanent,
-unmarked 0.40 m level step through the frame's minority vote; three candidates chosen by replaying the receivers under a frozen rule).
+(closed, 2026-11-05: an anchor decoupling of 18 of 22 Galileo satellites turned a transient of 3 satellites into a permanent, unmarked 0.40 m level step through the frame's minority vote; a
+default-off quorum widens the vote below half of the constellation: level over the day 15.8 mm per hour, from 58.3; receiver's offset -0.040 m, from -0.487 m; positions unchanged; Q2 fails on
+one clause; nothing armed).
 
 ### `resume-seam` — [topics/resume-seam.md](topics/resume-seam.md)
 

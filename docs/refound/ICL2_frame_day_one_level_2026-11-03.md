@@ -434,3 +434,7 @@ their median -0.287 and +0.188 m), after the same slip. So the event is not abse
 (-4.46 and +0.98 m, 18 satellites). Section 5.4's reading of the frame's step and of the receivers is unchanged. The analysis continues in
 card [ICL3](ICL3_frame_quorum_2026-11-05.md), section 2.2, which also finds that the 18 bumped satellites did not move by the common
 step: the frame's minority vote made it.
+
+Section 5.4 also says that leaving out the datum-change epochs moves card ICL's 6 h numbers by at most 0.2 mm. The larger part of those differences is the arms themselves: an arm of 24 h is not a superset of an arm of 6 h, because the
+broadcast group delays are latched over the processing window (over 24 h, 15 Galileo satellites latch another value; the clocks move by about 1 mm, the phase biases of those satellites by up to 0.5 m on a band). The 10-epoch smokes
+reproduce the 6 h arms, not the 24 h arms' first epochs. No grade of this card mixes the two lengths except that attribution ([ICL3](ICL3_frame_quorum_2026-11-05.md), section 5.3).
