@@ -176,7 +176,8 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   landed default off, I-b and the r3c consumer FAILED (IRDC section 8); the epoch-88 divergence is the zero-target
   cold pin's integer, C6 (IRDD section 2); the returning row landed default off, the return shock removed and
   I-b FAILED (IRDD section 3); the rehost row landed default off, the double-difference damage removed and
-  the float consumer FAILED (IRDD section 4).
+  the float consumer FAILED (IRDD section 4); the root row landed default off, the handover's step removed and
+  I-b FAILED on the fractional bar (IRDD section 5).
 - [IRDB](IRDB_integer_recovering_datum_continued_2026-10-30.md): open, 2026-10-30: card IRD's continuation, from IRD-1
   on. IRD-1 LANDED, measure-only and default off (the chain's event table, edge and chord traces, CHAIN events,
   pre-hold and receiver phase-bias traces, the run-end frame census; the consumer's shared AR builder, observe-mode
@@ -221,7 +222,11 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   `rehost` row (section 4) LANDED default off with its certified branch held: every re-host takes the cut
   release, which removes the C6 and C8 double-difference damage (the search's wrong would-be fixes 3 282 to 20
   on the floor-off microscope); the float consumer FAILED in hour 2 on every bed, about twice the previous
-  arm, and I-b FAILED. The author's decision on the hold is owed.
+  arm, and I-b FAILED. The author chose to continue in table order with the hold as built. The `root` row
+  (section 5) LANDED default off: a new root's receiver phase bias is pinned at its carried value, so the
+  satellites on its side keep their frame and carries (undeclared integer steps at the handover 0 against 235
+  to 262) and the consumer holds its bound; I-b FAILED on the fractional bar, at the size the same pairs reach
+  at quiet epochs.
 - [RKD](RKD_retired_key_deletion_2026-10-14.md): closed, 2026-10-14: the 144 retired network keys and five lane keys
   they orphan deleted with their code (149 ledger rows, 784 to 635; 30 C++ files); landed after the same-build
   golden comparison passed (only declared text moves on the goldens).
