@@ -197,6 +197,22 @@ void cbpFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
             put(e.constellations, ch->first, &C::channels, ch->second, &Ch::code_bias_prev) = per_sat;
 }
 
+// Record PHM (card CRS2): one-letter key -> the hold's accumulated common emitted-clock
+// step M.  A non-finite value is dropped at the source (strtod accepts one on the way
+// back, and M enters every held emission of the constellation).
+void phmToSnapshot(const NetworkRunContext& ctx, NetworkStateSnapshot& snap) {
+    forEach(ctx.entities.constellations, &C::pb_hold_frz_M, [&](System sys, double m) {
+        if (std::isfinite(m)) snap.pb_hold_frz_M[constellationKey(sys)] = m;
+    });
+}
+void phmFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
+    NetworkEntities& e = ctx.entities;   // written: constellations
+    dropAll(e.constellations, &C::pb_hold_frz_M);
+    for (const auto& [key, m] : snap.pb_hold_frz_M)
+        if (const std::optional<System> sys = constellationOfKey(e, key))
+            put(e.constellations, *sys, &C::pb_hold_frz_M) = m;
+}
+
 // Record EQD: "<letter>|<signal>" -> the component datum receiver.
 void eqdToSnapshot(const NetworkRunContext& ctx, NetworkStateSnapshot& snap) {
     forEach(ctx.entities.constellations, &C::channels, &Ch::datum_rx,
@@ -225,8 +241,8 @@ const std::vector<FieldDecl> kConstellationFields = {
      nullptr, nullptr, &constellationRows<&C::cxu_pivot>},
     {"pfq_pivot", "pfq_pivot", Persist::ResumeSeeded, "", "",
      nullptr, nullptr, &constellationRows<&C::pfq_pivot>},
-    {"pb_hold_frz_M", "pb_hold_frz_M", Persist::ColdStart, "", "",
-     nullptr, nullptr, &constellationRows<&C::pb_hold_frz_M>},
+    {"pb_hold_frz_M", "pb_hold_frz_M", Persist::Record, "PHM", "",
+     &phmToSnapshot, &phmFromSnapshot, &constellationRows<&C::pb_hold_frz_M>},
     {"sd_ewl_r0", "sd_ewl_r0", Persist::ColdStart, "", "",
      nullptr, nullptr, &constellationRows<&C::sd_ewl_r0>},
     {"ar_basis", "ar_basis", Persist::ColdStart, "", "",
@@ -421,6 +437,28 @@ void lbNFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
     for (const auto& [sat, in] : snap.level_info) putSat(e, sat, &A::clm_n) = in.second;
 }
 
+// Records PHC and PHF (card CRS2): satellite -> the hold's two previous-clock baselines,
+// written and restored wholesale; a non-finite value is dropped at the source.
+std::map<std::string, double> finiteSatMap(const SatTable& t, std::optional<double> SatelliteState::*f) {
+    std::map<std::string, double> out;
+    forEach(t, f, [&](const SatId& id, double v) { if (std::isfinite(v)) out.emplace(satKey(id), v); });
+    return out;
+}
+void phcToSnapshot(const NetworkRunContext& ctx, NetworkStateSnapshot& snap) {
+    snap.pb_hold_prev_clock_m = finiteSatMap(ctx.entities.sats, &A::pb_hold_prev_clock_m);
+}
+void phcFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
+    NetworkEntities& e = ctx.entities;   // written: sats
+    assignSat(e, &A::pb_hold_prev_clock_m, snap.pb_hold_prev_clock_m);
+}
+void phfToSnapshot(const NetworkRunContext& ctx, NetworkStateSnapshot& snap) {
+    snap.pb_hold_frz_prev_clk = finiteSatMap(ctx.entities.sats, &A::pb_hold_frz_prev_clk);
+}
+void phfFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
+    NetworkEntities& e = ctx.entities;   // written: sats
+    assignSat(e, &A::pb_hold_frz_prev_clk, snap.pb_hold_frz_prev_clk);
+}
+
 // Records I, CBI and SV (step N4e2): satellite-keyed maps, written and restored wholesale.
 void iToSnapshot(const NetworkRunContext& ctx, NetworkStateSnapshot& snap) {
     snap.relevel_iode = satMap(ctx.entities.sats, &A::relevel_iode);
@@ -498,10 +536,10 @@ const std::vector<FieldDecl> kSatelliteFields = {
      &discRows<Disc::UraRetro>},
     {"retro_active", "retro_active", Persist::Record, "A", "", &aToSnapshot, &aFromSnapshot,
      &satRows<&A::retro_active>},
-    {"pb_hold_prev_clock_m", "pb_hold_prev_clock_m", Persist::ColdStart, "", "", nullptr, nullptr,
-     &satRows<&A::pb_hold_prev_clock_m>},
-    {"pb_hold_frz_prev_clk", "pb_hold_frz_prev_clk", Persist::ColdStart, "", "", nullptr, nullptr,
-     &satRows<&A::pb_hold_frz_prev_clk>},
+    {"pb_hold_prev_clock_m", "pb_hold_prev_clock_m", Persist::Record, "PHC", "", &phcToSnapshot,
+     &phcFromSnapshot, &satRows<&A::pb_hold_prev_clock_m>},
+    {"pb_hold_frz_prev_clk", "pb_hold_frz_prev_clk", Persist::Record, "PHF", "", &phfToSnapshot,
+     &phfFromSnapshot, &satRows<&A::pb_hold_frz_prev_clk>},
     {"cb_exc_prev_clk", "cb_exc_prev_clk", Persist::ColdStart, "", "", nullptr, nullptr,
      &satRows<&A::cb_exc_prev_clk>},
     // Step N4e2: the datum and QC half.
@@ -628,6 +666,51 @@ void ptFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
     assignSig(e, &G::anchor_pin_target, snap.anchor_pin_target);
 }
 
+// Record PH (card CRS2): "<sat>|<signal>" -> the key's hold state, wholesale, through the
+// snapshot's POD mirror.  A key with no generation or a non-finite level or reference is
+// not written: the parser refuses such a row, and a cold first sighting of that one key at
+// the resume is the behaviour the capture replaces.
+void phToSnapshot(const NetworkRunContext& ctx, NetworkStateSnapshot& snap) {
+    forEach(ctx.entities.sat_signals, &G::pb_hold, [&](const SatSignalId& id, const PbHoldKey& k) {
+        if (k.generation == 0 || !std::isfinite(k.held_m) || !std::isfinite(k.last_emit_s)
+            || !std::isfinite(k.frz_ref) || !std::isfinite(k.frz_last)
+            || !std::isfinite(k.smh_last) || !std::isfinite(k.smh_lah_last))
+            return;
+        NetworkStateSnapshot::PbHoldRow r;
+        r.generation      = k.generation;
+        r.held_m          = k.held_m;
+        r.last_emit_s     = k.last_emit_s;
+        r.frz_ref         = k.frz_ref;
+        r.frz_ok          = k.frz_ok;
+        r.frz_last        = k.frz_last;
+        r.smh_reverted    = k.smh_reverted;
+        r.smh_last        = k.smh_last;
+        r.smh_ref_pending = k.smh_ref_pending;
+        r.smh_on_clone    = k.smh_on_clone;
+        r.smh_lah_last    = k.smh_lah_last;
+        snap.pb_hold[holdKey(id)] = r;
+    });
+}
+void phFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
+    NetworkEntities& e = ctx.entities;   // written: sat_signals
+    dropAll(e.sat_signals, &G::pb_hold);
+    for (const auto& [key, r] : snap.pb_hold) {
+        PbHoldKey k;
+        k.generation      = r.generation;
+        k.held_m          = r.held_m;
+        k.last_emit_s     = r.last_emit_s;
+        k.frz_ref         = r.frz_ref;
+        k.frz_ok          = r.frz_ok;
+        k.frz_last        = r.frz_last;
+        k.smh_reverted    = r.smh_reverted;
+        k.smh_last        = r.smh_last;
+        k.smh_ref_pending = r.smh_ref_pending;
+        k.smh_on_clone    = r.smh_on_clone;
+        k.smh_lah_last    = r.smh_lah_last;
+        putSig(e, key, &G::pb_hold) = k;
+    }
+}
+
 // Record EQS (step N4e2): "<sat>_<signal>" -> the component datum receiver, wholesale.
 void eqsToSnapshot(const NetworkRunContext& ctx, NetworkStateSnapshot& snap) {
     snap.eq34_sat_root = sigMap(ctx.entities.sat_signals, &G::eq34_sat_root, '_');
@@ -652,7 +735,8 @@ const std::vector<FieldDecl> kSatSignalFields = {
      &satSignalRows<&G::pin_bridge>},
     {"phase_basis", "phase_basis", Persist::ColdStart, "", "", nullptr, nullptr,
      &satSignalRows<&G::phase_basis>},
-    {"pb_hold", "pb_hold", Persist::ColdStart, "", "", nullptr, nullptr, &satSignalRows<&G::pb_hold>},
+    {"pb_hold", "pb_hold", Persist::Record, "PH", "", &phToSnapshot, &phFromSnapshot,
+     &satSignalRows<&G::pb_hold>},
     {"smh_clone", "smh_clone", Persist::ColdStart, "", "", nullptr, nullptr,
      &satSignalRows<&G::smh_clone>},
     {"smh_pending", "smh_pending", Persist::Pending, "", "", nullptr, nullptr,
@@ -1129,8 +1213,9 @@ const std::array<EntityFields, 6> kEntityFieldTables = {{
 }};
 
 const std::vector<const char*> kRestoreOrder = {"V", "C", "J", "K", "L", "Z", "PA", "PT", "EQD", "EQP",
-                                                  "EQS", "EQT", "EQE", "EQR", "CBP", "CBS", "CBI", "LB",
-                                                  "RC", "SD", "QR", "Y", "R", "A", "I", "X", "SV", "GG"};
+                                                  "EQS", "EQT", "EQE", "EQR", "CBP", "CBS", "CBI", "PH",
+                                                  "PHM", "PHC", "PHF", "LB", "RC", "SD", "QR", "Y", "R",
+                                                  "A", "I", "X", "SV", "GG"};
 
 // ===========================================================================
 // Record lookup
@@ -1314,6 +1399,10 @@ const std::vector<EntityWriterRow> kEntityWriters = {
     {"lbInfoFromSnapshot", "network/state/Entities.cpp", "sats"},
     {"lbNFromSnapshot", "network/state/Entities.cpp", "sats"},
     {"paFromSnapshot", "network/state/Entities.cpp", "sat_signals"},
+    {"phFromSnapshot", "network/state/Entities.cpp", "sat_signals"},
+    {"phcFromSnapshot", "network/state/Entities.cpp", "sats"},
+    {"phfFromSnapshot", "network/state/Entities.cpp", "sats"},
+    {"phmFromSnapshot", "network/state/Entities.cpp", "constellations"},
     {"prevPivotFromSnapshot", "network/state/Entities.cpp", "constellations"},
     {"ptFromSnapshot", "network/state/Entities.cpp", "sat_signals"},
     {"qrFromSnapshot", "network/state/Entities.cpp", "sats"},

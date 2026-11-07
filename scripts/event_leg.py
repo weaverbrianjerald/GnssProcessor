@@ -299,6 +299,12 @@ def cmd_write_seed(args):
     # latch that a resume otherwise re-decides (on 23 of 61 stations).
     # (RS-8, SPEC_event_harness §21.16)
     net["state_snapshot_signal_capture"] = True
+    # Also capture the emit-side phase-bias hold (PH/PHM/PHC/PHF rows: every held key's
+    # generation, held value and transfer references, the common clock step, the
+    # previous-clock baselines), so a resume leg continues the writer's held values
+    # instead of first-sighting every key at the current estimate (a re-level of up to
+    # 21 m per key, card CRS section 4).  (Card CRS2)
+    net["state_snapshot_hold_capture"] = True
     # Also write the closed-loop consumer's RtStateSnapshot beside every network
     # history copy (state_snapshot.txt.consumer.epNNNN, same suffix, same tow), so a
     # leg's consumer can resume at the seam instead of cold-starting.  Consumer
@@ -306,6 +312,10 @@ def cmd_write_seed(args):
     # with it (the v9 field seed hashes v8's products).  Inert without a closed_loop
     # block.  (Card CC (B), SPEC_event_harness §24.4)
     net.setdefault("closed_loop", {})["state_snapshot"] = True
+    # The consumer snapshot also carries the initializer's four seed latches (I rows), so
+    # a leg's restored consumer does not re-seed its inter-system bias and receiver code
+    # biases from one epoch of code (card CRS section 6).  (Card CRS2)
+    cfg.setdefault("realtime", {})["state_snapshot_latch_capture"] = True
     net["state_snapshot_require"] = False          # the seed is the cold start
     net["product_output_path"] = _fwd(os.path.join(rundir, "products.txt"))
     net["write_run_manifest"] = True
@@ -473,6 +483,10 @@ def _leg_common(args, event_json):
     # Restore the canonical-signal latch at the seam (chord births at +1: 64 -> 1).
     # Inert (logged) against a seed written without CN rows.  (RS-8)
     net["resume_signal_canon_restore"] = True
+    # Restore the emit-side phase-bias hold at the seam, so the first leg emit continues
+    # the seed's held values and generations (card CRS: 17 to 21 m of re-level per key
+    # otherwise).  Inert (logged) against a seed written without PH rows.  (Card CRS2)
+    net["resume_hold_restore"] = True
     # Ledger row network.zwd_seam_reseed (RECOMMEND_SCOPED, regime warm +
     # phase_leveling, "arm on the RESUME leg"): without it the ZWD channel restarts
     # at the seam.  On evseed_quiet6h ep0665 the null leg's ZWD truth rms sat at
@@ -524,6 +538,11 @@ def _leg_common(args, event_json):
         # the continuous consumer at k = 1.  (SPEC_event_harness §24.4 G2)
         rt["state_snapshot_restore_scope"] = "full"
         rt["state_snapshot_seam_refloat"] = False
+        # Keep the restored consumer's seed latches, so its first epoch does not re-seed
+        # the restored inter-system bias and receiver code biases from one epoch of code
+        # (14 m on the GPS + Galileo golden, card CRS section 6).  Inert (logged) against
+        # a seed consumer snapshot without I rows.  (Card CRS2)
+        rt["state_snapshot_latch_restore"] = True
 
     # Event tow: the snapshot's tow is the last epoch it recorded, so the leg's
     # first processed epoch is tow + 30 s.  --at-ep is counted from that first

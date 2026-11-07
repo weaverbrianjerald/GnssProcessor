@@ -750,6 +750,7 @@ add_executable(gnss_tests
     tests/test_resume_coupling_restore.cpp
     tests/test_resume_datum_restore.cpp
     tests/test_rt_state_snapshot.cpp
+    tests/test_rt_state_snapshot_latches.cpp
     tests/test_state_family.cpp
     tests/test_state_manager_process_noise.cpp
     tests/test_state_manager_families.cpp
@@ -785,6 +786,7 @@ add_executable(gnss_tests
     tests/test_restored_arc_age.cpp
     tests/network/test_resume_carry_rebase.cpp
     tests/test_resume_emit_restore.cpp
+    tests/test_resume_hold_restore.cpp
     tests/test_resume_station_restore.cpp
     tests/test_resume_signal_canon_restore.cpp
     tests/test_resume_rxcb_lin_restore.cpp

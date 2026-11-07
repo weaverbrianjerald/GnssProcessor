@@ -2928,6 +2928,35 @@ namespace GnssProcessor {
                           "level instead.  Write-side only; the products and every trace "
                           "are byte-identical.");
         }
+        // Hold capture, the write side of network.resume_hold_restore (card CRS2).  Same
+        // shape as the emit capture above: its own knob, path-gated, write-only.  The rows
+        // are copies of the hold's entity fields taken after the emit, so arming it can
+        // change no estimate and no trace, only the snapshot bytes.
+        network_config_.state_snapshot_hold_capture =
+            jval<bool>(json, "network.state_snapshot_hold_capture",
+                       "state_snapshot_hold_capture", false);
+        if (network_config_.state_snapshot_hold_capture) {
+            if (network_config_.state_snapshot_path.empty())
+                log->warn("Network (CRS2 hold capture): state_snapshot_hold_capture armed but "
+                          "network.state_snapshot_path is empty — no snapshot is written, "
+                          "INERT.");
+            else if (!network_config_.emit_pb_hold)
+                log->warn("Network (CRS2 hold capture): state_snapshot_hold_capture armed but "
+                          "network.emit_pb_hold is OFF — the hold holds no key, so no PH row "
+                          "is written, INERT.");
+            else
+                log->info("Network (CRS2 hold capture): every snapshot also carries the "
+                          "emit-side PHASE-BIAS HOLD (PH: one held key per sat|signal with its "
+                          "generation, held value and transfer references; PHM: the common "
+                          "emitted-clock step per constellation; PHC / PHF: the previous-clock "
+                          "baselines per satellite) as format-forward rows under the existing "
+                          "header.  Without these rows a warm resume first-sights every held "
+                          "key at the current estimate and re-levels the wire's phase biases "
+                          "by the whole accumulated difference; a resume armed with "
+                          "network.resume_hold_restore continues the writer's held values "
+                          "instead.  Write-side only; the products and every trace are "
+                          "byte-identical.");
+        }
         // Station-layer capture, the write side of network.resume_station_restore
         // (RS-6, §21.13).  Same shape as the frame, datum and emit captures above: its
         // own knob, path-gated, write-only.  The rows are plain copies of two ctx.carry
@@ -4806,6 +4835,19 @@ namespace GnssProcessor {
                 "election re-references every phase-bias family, so the restored "
                 "emission frame would re-base the new realization onto a level the "
                 "writer never emitted — strictly worse than cold-starting the engines.");
+        // Hold restore, the read side of network.state_snapshot_hold_capture (card CRS2).
+        // Same exemption class as the restores above: forward-only resume response policy,
+        // inert on a run that never resumes.
+        network_resume_hold_restore_ =
+            jval<bool>(json, "network.resume_hold_restore", "resume_hold_restore", false);
+        if (network_resume_hold_restore_ && !network_resume_frame_restore_)
+            throw std::runtime_error(
+                "network.resume_hold_restore requires network.resume_frame_restore: the held "
+                "values are the writer's emitted phase-bias level, which continues only when "
+                "the realization frame underneath it also continues.  Without the frame "
+                "restore the first election re-references every phase-bias family, and a "
+                "held value restored on top of that would hide a re-realization the wire "
+                "has to declare.");
         // Station-layer restore, the read side of network.state_snapshot_station_capture
         // (RS-6, SPEC_event_harness §21.13).  Same exemption class as the restores
         // above: forward-only resume response policy, inert on a run that never
@@ -5033,6 +5075,32 @@ namespace GnssProcessor {
                           "leaves the re-base exactly as today and says so.  Outputs-only "
                           "(no estimate moves) and not in the warm-resume fingerprint "
                           "(forward-only resume response policy).");
+        }
+        // Armed/inert status line of the hold restore (card CRS2).  Its prerequisite is
+        // checked above, so here it can only be inert for lack of a snapshot to resume
+        // from, or because the hold itself is off (then nothing reads the restored rows).
+        if (network_resume_hold_restore_) {
+            if (network_config_.state_snapshot_path.empty())
+                log->warn("Network (CRS2 hold restore): resume_hold_restore armed but "
+                          "network.state_snapshot_path is empty — nothing can resume, INERT "
+                          "this run.");
+            else if (!network_config_.emit_pb_hold)
+                log->warn("Network (CRS2 hold restore): resume_hold_restore armed but "
+                          "network.emit_pb_hold is OFF — nothing reads a restored hold, INERT "
+                          "this run.");
+            else
+                log->info("Network (CRS2 hold restore): ON — at a warm resume the snapshot's "
+                          "hold rows are restored BEFORE the first emit: every held key's "
+                          "generation, held value and transfer references (PH), the common "
+                          "emitted-clock step per constellation (PHM) and the previous-clock "
+                          "baselines per satellite (PHC / PHF), so the first post-resume "
+                          "emission continues the writer's held values instead of "
+                          "first-sighting every key at the current estimate; the smoothed "
+                          "hold's clone births are queued again in the restored generation.  "
+                          "The rows are captured under network.state_snapshot_hold_capture; a "
+                          "file without them leaves the hold exactly as today and says so.  "
+                          "Outputs-only (no estimate moves) and not in the warm-resume "
+                          "fingerprint (forward-only resume response policy).");
         }
         // Armed/inert status line of the station-layer restore (RS-6, §21.13).  Its
         // prerequisite is checked above, so here it can only be inert for lack of a

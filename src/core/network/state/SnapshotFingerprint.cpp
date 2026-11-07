@@ -571,6 +571,8 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         //                           resume_d5_warmup_ep,
         //                           resume_datum_restore,
         //                           resume_emit_restore,
+        //                           resume_hold_restore (card CRS2: the hold writes the wire
+        //                           only, the solve does not read it),
         //                           resume_station_restore{,_rxcb},
         //                           resume_signal_canon_restore,
         //                           resume_border_restore,
@@ -605,7 +607,9 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         //   `snap`.  The coupling arithmetic tokens those rows depend on are already in fp
         //   above, so a writer/reader mismatch on the coupling arithmetic cannot occur.
         //   The same reasoning covers the unconditional Z-row and frame-row captures and
-        //   the emit-layer (state_snapshot_emit_capture) and station-layer
+        //   the emit-layer (state_snapshot_emit_capture), hold (state_snapshot_hold_capture,
+        //   card CRS2; the hold is fingerprinted by nothing because it never reaches the
+        //   solve) and station-layer
         //   (state_snapshot_station_capture) captures: both add rows under the existing
         //   header and leave the writer's products and traces byte-identical, and the
         //   quantities themselves are fingerprinted by the knobs that create them

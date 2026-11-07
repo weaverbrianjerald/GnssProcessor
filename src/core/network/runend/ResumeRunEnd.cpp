@@ -368,6 +368,28 @@ static int networkResumeSnapshotRunEnd(const NetworkRunEndView& v) {
                         "log for the RS-5 line."
                       : "");
     }
+    // The emit-side phase-bias hold across the seam (card CRS2), beside the emit line for
+    // the same reason.  Printed whenever either half is armed; 0 restored under an armed
+    // read is the inert case the resume log names.
+    if (config_.getNetworkConfig().state_snapshot_hold_capture
+        || config_.networkResumeHoldRestore()) {
+        const auto& C = ctx.counters;
+        log->info("Network (CRS2 hold restore): write {} / read {}; last snapshot carried "
+                  "{} hold row(s); restored held keys {} (largest generation {}), common "
+                  "clock step of {} constellation(s), previous clocks of {} satellite(s), "
+                  "clone births queued {}.{}",
+                  config_.getNetworkConfig().state_snapshot_hold_capture ? "ARMED" : "off",
+                  config_.networkResumeHoldRestore() ? "ARMED" : "off",
+                  ctx.counters.snap_hold_rows_last,
+                  C.n_resume_hold_keys, C.n_resume_hold_gen_max, C.n_resume_hold_consts,
+                  C.n_resume_hold_sats, C.n_resume_hold_clones_queued,
+                  (config_.networkResumeHoldRestore() && C.n_resume_hold_keys == 0)
+                      ? "  ⚠ 0 restored under an ARMED read — the snapshot carried no PH "
+                        "rows (a writer without network.state_snapshot_hold_capture?), the "
+                        "hold is off this run, or no warm resume happened; check the resume "
+                        "log for the CRS2 line."
+                      : "");
+    }
     // Station-layer continuity halves, beside the emit line and at the same function
     // scope for the same reason: the two carries run on lineages that do and do not arm
     // each other.  Printed whenever either half is armed: an armed writer that wrote no

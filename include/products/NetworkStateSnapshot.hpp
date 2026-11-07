@@ -85,6 +85,12 @@
  *   CBS,<sat>                                            # RS-3: code-bias ever-seen
  *   CBI,<sat>,<sig1>,<sig2>                              # RS-3: code-bias IF-pin pair
  *   ER,<sat|signal>,<last_emit_m>                        # RS-5: eq34 emit re-base frame
+ *   PH,<sat|signal>,<gen>,<held_m>,<last_emit_s>,<frz_ref>,<frz_ok>,<frz_last>,
+ *      <smh_reverted>,<smh_last>,<smh_ref_pending>,<smh_on_clone>,<smh_lah_last>
+ *                                                       # CRS2: phase-bias hold key
+ *   PHM,<const>,<M>                                      # CRS2: hold's common clock step
+ *   PHC,<sat>,<prev_clock_m>                             # CRS2: hold's coupled-mark baseline
+ *   PHF,<sat>,<frz_prev_clk>                             # CRS2: hold's common-step baseline
  *   RC,<station_idx>,<cb_key>,<value_abs>,<var>,<last_seen_s>  # RS-6: rx-CB carry
  *   SD,<station|sat>,<dev>,<var>,<var_ss>,<t_s>          # RS-6: T5 per-LOS deviation carry
  *   CN,<station_idx>,<cons>,<band>,<C|L>,<signal>        # RS-8: canonical-signal latch
@@ -138,6 +144,18 @@
  * resume cold-starts.  Nothing in this group enters the
  * warm-resume fingerprint: it changes no estimate, only the level in which the emitted
  * phase biases are expressed.
+ *
+ * The hold records (@c PH / @c PHM / @c PHC / @c PHF, card CRS2) follow the RS-5
+ * precedent: rows under the existing header, written only under
+ * @c network.state_snapshot_hold_capture, restored behind @c network.resume_hold_restore.
+ * They hold the emit-side phase-bias hold (@c network.emit_pb_hold): per key its held
+ * value, generation and transfer references, per constellation the accumulated common
+ * emitted-clock step, per satellite the two previous-clock baselines.  Without them a
+ * warm resume first-sights every held key (generation 1, held value equal to the
+ * current estimate), which re-levels the wire's phase biases by the whole difference the
+ * hold had accumulated (up to 21 m per key, card CRS section 4) under a declaration the
+ * consumer ignores on a held key by design.  Nothing in this group enters the
+ * warm-resume fingerprint: the hold writes the wire only, the solve does not read it.
  *
  * The RS-8 canonical-signal records (@c CN, docs/SPEC_event_harness.md §21.16) follow the
  * same precedent, written only under @c network.state_snapshot_signal_capture.  They
@@ -513,6 +531,40 @@ struct NetworkStateSnapshot {
     /// emit-only snapshot claim frame state it does not have.
     bool hasEmitState() const {
         return !emit_rebase_last.empty();
+    }
+    // --- The emit-side phase-bias hold (card CRS2) ---------------------------
+    //
+    // The hold (network.emit_pb_hold, network/emit/PbHold.cpp) is the last writer of the
+    // emitted phase bias: each (satellite, signal) key is held at the value its generation
+    // started on, moved only by the hold's transfer (the satellite's common-removed emitted
+    // clock step).  Its rows were ColdStart until this card, so a warm resume first-sighted
+    // every key and re-levelled the wire by the accumulated difference.  Written under
+    // network.state_snapshot_hold_capture, restored behind network.resume_hold_restore;
+    // empty on every other file.
+    /// One held key; a POD mirror of @c net::PbHoldKey (the snapshot module names no
+    /// engine type), in the declaration order of the @c PH row.
+    struct PbHoldRow {
+        std::uint32_t generation{0};     ///< 1-based; 0 never appears on a live entry.
+        double        held_m{0.0};       ///< The value every emission of this generation writes.
+        double        last_emit_s{0.0};  ///< Product content time (s) of the key's last emission.
+        double        frz_ref{0.0};      ///< The common-removed emitted clock at the generation's start.
+        bool          frz_ok{false};     ///< The generation started with an emitted clock.
+        double        frz_last{0.0};     ///< The transfer written at the last held emission (m).
+        bool          smh_reverted{false};    ///< The smoothed hold reverted to the plain transfer.
+        double        smh_last{0.0};          ///< The smoothed transfer at the last held emission (m).
+        bool          smh_ref_pending{false}; ///< The plain transfer's reference waits for an emitted clock.
+        bool          smh_on_clone{false};    ///< The last held emission wrote the clone's transfer.
+        double        smh_lah_last{0.0};      ///< The plain transfer at the last smoothed emission (m).
+    };
+    std::map<std::string, PbHoldRow> pb_hold;        ///< "sat|signal" -> the held key (@c PH rows).
+    std::map<std::string, double> pb_hold_frz_M;      ///< constellation letter -> M (@c PHM rows).
+    std::map<std::string, double> pb_hold_prev_clock_m;  ///< sat -> clock at its previous emission (@c PHC rows).
+    std::map<std::string, double> pb_hold_frz_prev_clk;  ///< sat -> clock at the previous emitted epoch (@c PHF rows).
+    /// True when any hold record is present.  A predicate of its own, like
+    /// @ref hasEmitState: the restore site judges the hold inert from its own records only.
+    bool hasHoldState() const {
+        return !pb_hold.empty() || !pb_hold_frz_M.empty()
+            || !pb_hold_prev_clock_m.empty() || !pb_hold_frz_prev_clk.empty();
     }
     // --- Station-layer memories (RS-6; SPEC_event_harness §21.13) -----------
     //

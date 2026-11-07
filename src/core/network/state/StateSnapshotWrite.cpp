@@ -364,6 +364,26 @@ void networkWriteStateSnapshot(NetworkRun& run, const NetworkEpoch& ep) {
             ctx.counters.snap_emit_rows_last =
                 static_cast<long long>(snap.emit_rebase_last.size());
         }   // state_snapshot_emit_capture
+        // Hold capture (network.state_snapshot_hold_capture, card CRS2): the write half of
+        // the emit-side phase-bias hold.  The emit block above carries the re-base frame
+        // under the hold; this carries the hold itself: every held key's generation, held
+        // value and transfer references, the common emitted-clock step per constellation
+        // and the two previous-clock baselines per satellite.  Plain copies of the entity
+        // tables after the emit, into `snap` only, with the same write-side discipline as
+        // the blocks above: products and traces stay byte-identical, so the knob can be
+        // added to an existing recipe.  A run with the hold off holds no key and writes no
+        // row.  The smoothed hold's clock clone is not written (the restore queues its
+        // birth again).
+        if (nc.state_snapshot_hold_capture) {
+            net::recordToSnapshot("PH", ctx, snap);    // the satellite signals
+            net::recordToSnapshot("PHM", ctx, snap);   // the constellations
+            net::recordToSnapshot("PHC", ctx, snap);   // the satellites
+            net::recordToSnapshot("PHF", ctx, snap);   // the satellites
+            ctx.counters.snap_hold_rows_last =
+                static_cast<long long>(snap.pb_hold.size() + snap.pb_hold_frz_M.size()
+                                       + snap.pb_hold_prev_clock_m.size()
+                                       + snap.pb_hold_frz_prev_clk.size());
+        }   // state_snapshot_hold_capture
         // Station-layer capture (network.state_snapshot_station_capture): the write half of
         // the two per-station memories that otherwise restart cold at every warm resume.  The frame and datum blocks carry
         // the network's realization and the emit block the level on top of it; these two

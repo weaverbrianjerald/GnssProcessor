@@ -252,7 +252,8 @@ struct ConstellationState {
     /// M, the accumulated common clock step (m): the sum over emitted epochs of the
     /// median, over the constellation's satellites with an emitted clock at both that epoch
     /// and the previous emitted epoch, of the emitted clock step.  Absent unless
-    /// network.emit_pb_hold_phase_clock.  Was @c NetworkCarryState::pb_hold_frz_M.  ColdStart.
+    /// network.emit_pb_hold_phase_clock or network.emit_pb_hold_smoothed.  Snapshotted with
+    /// the hold (card CRS2).  Was @c NetworkCarryState::pb_hold_frz_M.  Record PHM.
     std::optional<double> pb_hold_frz_M;
     /// The sticky component reference station name of the SD EWL search (A2's r0).  Was
     /// @c NetworkCarryState::sd_ewl_r0.  ColdStart.
@@ -340,12 +341,13 @@ struct SatelliteState {
     bool retro_active{false};
     /// Satellite -> the clock (m) this producer emitted at that satellite's previous
     /// emission: the baseline the coupled-mark step above is differenced against.
-    /// Maintained only while the hold is armed.
-    /// Was @c NetworkCarryState::pb_hold_prev_clock_m.  ColdStart.
+    /// Maintained only while the hold is armed.  Snapshotted with the hold (card CRS2).
+    /// Was @c NetworkCarryState::pb_hold_prev_clock_m.  Record PHC.
     std::optional<double> pb_hold_prev_clock_m;
     /// Satellite -> emitted clock (m) at the previous emitted epoch, holding
     /// only that epoch's satellites (a satellite absent there contributes no step).
-    /// Was @c NetworkCarryState::pb_hold_frz_prev_clk.  ColdStart.
+    /// Snapshotted with the hold (card CRS2).
+    /// Was @c NetworkCarryState::pb_hold_frz_prev_clk.  Record PHF.
     std::optional<double> pb_hold_frz_prev_clk;
     /// sat -> previous epoch's solved clock (m)
     /// Was @c NetworkCarryState::cb_exc_prev_clk.  ColdStart.
@@ -506,16 +508,21 @@ struct SatSignalState {
     std::optional<PhaseBasisEntry> phase_basis;
     /// "<sat>|<signal>" -> the held value and its generation (knob
     /// @c network.emit_pb_hold).  Owned here rather than in the seam because it must
-    /// survive the epoch loop; empty and never touched when the knob is off.  Not
-    /// snapshotted: a warm resume cold-starts every key as a first sighting, which
-    /// advances the generation the consumer sees and so re-floats instead of silently
-    /// re-seating a stale held value (the conservative direction, as for the slant-iono
-    /// carry below).
-    /// Was @c NetworkCarryState::pb_hold.  ColdStart.
+    /// survive the epoch loop; empty and never touched when the knob is off.  Written to
+    /// the snapshot under network.state_snapshot_hold_capture and restored under
+    /// network.resume_hold_restore (card CRS2); otherwise a warm resume first-sights every
+    /// key, which does not advance the generation the consumer sees (the restarted key
+    /// reads generation 1 as the seed's did) and re-levels the wire by the whole
+    /// difference the hold had accumulated (card CRS section 4).
+    /// Was @c NetworkCarryState::pb_hold.  Record PH.
     std::optional<PbHoldKey> pb_hold;
     /// Hold key ("sat|signal") -> its clock clone (network.emit_pb_hold_smoothed).
     /// A clone lives for its key's generation; a dead one stays until the next
-    /// generation replaces it.  Empty and untouched unless the mode is armed.
+    /// generation replaces it.  Empty and untouched unless the mode is armed.  Not
+    /// snapshotted: the clone is a coupling row stamped on the write epoch's stash; the
+    /// hold restore (card CRS2) queues its birth again in the restored generation
+    /// (@ref smh_pending, the rule a generation start applies), and the key carries the
+    /// hold family's transfer until the birth, the continuous switch of a clone's death.
     /// Was @c NetworkCarryState::smh_clone.  ColdStart.
     std::optional<PbHoldClone> smh_clone;
     /// Hold keys whose generation started at this epoch's emit, born at

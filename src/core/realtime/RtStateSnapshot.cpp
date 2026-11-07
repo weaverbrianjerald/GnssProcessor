@@ -123,7 +123,26 @@ void RtStateSnapshotIO::serialize(std::ostream& os, const RtStateSnapshot& snap)
         put(fmt::format("F,{},{}", key, b ? 1 : 0));
     for (const auto& [key, b] : snap.code_bias_applied)
         put(fmt::format("C,{},{}", key, b ? 1 : 0));
+    // The initializer's seed latches (card CRS2), in the writer's order; empty on a
+    // writer without realtime.state_snapshot_latch_capture, so such a file keeps the
+    // previous bytes.
+    for (const char* name : kRtSnapshotLatchNames) {
+        const auto it = snap.init_latches.find(name);
+        if (it != snap.init_latches.end()) put(fmt::format("I,{},{}", name, it->second ? 1 : 0));
+    }
     os << "END," << n_lines << '\n';
+}
+
+std::vector<std::string> rtSnapshotLatchesToApply(const std::map<std::string, bool>& latches,
+                                                  bool full_scope) {
+    std::vector<std::string> out;
+    for (const char* name : kRtSnapshotLatchNames) {
+        const auto it = latches.find(name);
+        if (it == latches.end() || !it->second) continue;
+        if (!full_scope && it->first == "code_bias") continue;
+        out.emplace_back(name);
+    }
+    return out;
 }
 
 bool RtStateSnapshotIO::parse(std::istream& is, RtStateSnapshot& out, std::string* err) {
@@ -231,6 +250,14 @@ bool RtStateSnapshotIO::parse(std::istream& is, RtStateSnapshot& out, std::strin
             bool b = false;
             if (!parseB(f[2], b)) return fail("malformed F/C flag");
             (tag == "F" ? s.phase_bias_applied : s.code_bias_applied)[f[1]] = b;
+        } else if (tag == "I") {   // initializer seed latch (card CRS2)
+            if (f.size() != 3) return fail("malformed I line");
+            bool known = false;
+            for (const char* name : kRtSnapshotLatchNames) known = known || f[1] == name;
+            if (!known) return fail("unknown latch '" + f[1] + "' in I line");
+            bool b = false;
+            if (!parseB(f[2], b)) return fail("malformed I flag");
+            if (!s.init_latches.emplace(f[1], b).second) return fail("duplicate I latch '" + f[1] + "'");
         } else {
             return fail("unknown record tag '" + tag + "'");
         }

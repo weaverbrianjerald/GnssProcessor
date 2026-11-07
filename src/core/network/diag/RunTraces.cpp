@@ -2013,6 +2013,13 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                                      nc.state_snapshot_rxcb_lin_capture ? "true" : "false",
                                      config_.networkResumeRxCbLinRestore() ? "true" : "false")
                        : std::string())
+               // The phase-bias hold halves (card CRS2), armed-only like the pairs above.
+               << ((nc.state_snapshot_hold_capture || config_.networkResumeHoldRestore())
+                       ? fmt::format("\"state_snapshot_hold_capture\":{},"
+                                     "\"resume_hold_restore\":{},",
+                                     nc.state_snapshot_hold_capture ? "true" : "false",
+                                     config_.networkResumeHoldRestore() ? "true" : "false")
+                       : std::string())
                << "\"state_snapshot_require\":" << (nc.state_snapshot_require ? "true" : "false") << ','
                << "\"estimate_sat_code_bias\":" << (config_.estimateNetworkSatCodeBias() ? "true" : "false") << ','
                << "\"estimate_iono_sh\":" << (config_.estimateNetworkIonoSh() ? "true" : "false") << ','
