@@ -583,7 +583,7 @@ NetworkSbasis::GaugeCompletion NetworkSbasis::completeSbasisDimension(
     const Eigen::MatrixXd& reduced_N_ss, int declared_dim, double tol,
     const Eigen::VectorXd& x_prev,
     const std::function<std::string(Eigen::Index)>& labelOf,
-    int max_extra) const {
+    int max_extra, bool values_first) const {
     GaugeCompletion out;
     const Eigen::Index n = reduced_N_ss.rows();
     if (n == 0 || reduced_N_ss.cols() != n || declared_dim < 0) return out;
@@ -593,9 +593,11 @@ NetworkSbasis::GaugeCompletion NetworkSbasis::completeSbasisDimension(
     // decision the gate does not make (the shared-tolerance rule).
     // Eigenvectors are needed here because the rows are the eigenvectors.  This runs
     // only when armed, and the gate-failure drop-and-heal already pays for the same
-    // decomposition on the epochs where the gate fails.
-    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(reduced_N_ss,
-                                                      Eigen::ComputeEigenvectors);
+    // decomposition on the epochs where the gate fails.  With values_first they wait for
+    // an epoch that has a row to form: most epochs have none, and the vectors are most
+    // of the decomposition's cost.
+    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es;
+    es.compute(reduced_N_ss, values_first ? Eigen::EigenvaluesOnly : Eigen::ComputeEigenvectors);
     if (es.info() != Eigen::Success) return out;   // the gate reports the failure (throws)
     const Eigen::VectorXd& ev = es.eigenvalues();  // ascending
     const double smax   = ev.size() > 0 ? ev(ev.size() - 1) : 0.0;
@@ -607,7 +609,19 @@ NetworkSbasis::GaugeCompletion NetworkSbasis::completeSbasisDimension(
     out.observed = observed;
     // observed < declared is the gate's "over-specified" verdict (a tolerance below
     // this configuration's gauge depth); there is nothing to complete in either case.
-    if (observed <= declared_dim) return out;
+    if (observed <= declared_dim) {
+        out.vectors_computed = !values_first;
+        if (values_first) out.eigenvalues = ev;   // the gate judges this same matrix
+        return out;
+    }
+    if (values_first) {
+        // The rows are the eigenvectors.  The eigenvalues stay as they were, bit for bit: the
+        // tridiagonal reduction and the QL sweeps do the same arithmetic on the diagonal and
+        // subdiagonal with or without the vectors.
+        es.compute(reduced_N_ss, Eigen::ComputeEigenvectors);
+        if (es.info() != Eigen::Success) return out;
+    }
+    out.vectors_computed = true;
 
     // Per-direction degeneracy skip.  The structural gauges sit at machine zero (the
     // locals absorb them exactly).  An extra that is not separated from that cluster
@@ -718,7 +732,8 @@ NetworkSbasis::GaugeCompletion NetworkSbasis::completeSbasisDimension(
 
 void NetworkSbasis::assertNullSpaceRank(const Eigen::MatrixXd& reduced_N_ss,
                                         int declared_dim, double tol,
-                                        int* observed_out, double* ev_max_out) const {
+                                        int* observed_out, double* ev_max_out,
+                                        const Eigen::VectorXd* known_eigenvalues) const {
     // Report the observed count on every exit that computed one, including the
     // throwing one: the caller cannot recover it from the exception, and
     // "over-specified" (observed < declared) must be countable separately from a
@@ -752,14 +767,17 @@ void NetworkSbasis::assertNullSpaceRank(const Eigen::MatrixXd& reduced_N_ss,
     // of the order of the largest).  A slightly negative gauge eigenvalue (rounding)
     // is still below the positive cutoff, so it is counted as the SVD magnitude would
     // be.
-    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(reduced_N_ss,
-                                                      Eigen::EigenvaluesOnly);
-    if (es.info() != Eigen::Success) {
-        throw std::runtime_error(
-            "NetworkSbasis null-space gate: eigenvalue decomposition of the reduced "
-            "shared normals failed to converge");
+    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es;
+    const bool known = known_eigenvalues != nullptr && known_eigenvalues->size() == n;
+    if (!known) {
+        es.compute(reduced_N_ss, Eigen::EigenvaluesOnly);
+        if (es.info() != Eigen::Success) {
+            throw std::runtime_error(
+                "NetworkSbasis null-space gate: eigenvalue decomposition of the reduced "
+                "shared normals failed to converge");
+        }
     }
-    const Eigen::VectorXd& ev = es.eigenvalues();   // ascending
+    const Eigen::VectorXd& ev = known ? *known_eigenvalues : es.eigenvalues();   // ascending
     const double smax = ev.size() > 0 ? ev(ev.size() - 1) : 0.0;
     const double cutoff = tol * std::max(smax, 1.0);
 

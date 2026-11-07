@@ -65,7 +65,7 @@ Eigen::MatrixXd ldltInverseColumns(const Eigen::LDLT<Eigen::MatrixXd>& f, Eigen:
             std::vector<char> failed(static_cast<std::size_t>(n_blocks), 0);
             // The epoch's one team size, also when there are fewer blocks than threads: under
             // MSVC's OpenMP runtime a region of another size rebuilds the team (about 9 ms of wall
-            // per change, gates/pes2/ompbench).
+            // per change).
             #pragma omp parallel for schedule(dynamic) num_threads(n_threads)
             for (long long b = 0; b < static_cast<long long>(n_blocks); ++b) {
                 const Eigen::Index c0 = static_cast<Eigen::Index>(b) * width;

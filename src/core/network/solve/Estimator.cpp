@@ -1791,7 +1791,7 @@ void networkEstimatorConfigure(NetworkRun& run, const NetworkEngineSpec& engine_
     // bit-identical to the dense products, a fraction of their work at GPS + Galileo size.
     est.setSparseStationNormals(config_.getNetworkConfig().sparse_station_normals);
     // The Schur reduce's subtraction split over column blocks of the border
-    // (network.parallel_schur_columns, card PES): byte-identical to the serial loop.  The
+    // (network.parallel_schur_columns): byte-identical to the serial loop.  The
     // per-station thread budget is 1 unless the per-station parallel path is active.
     est.setSchurColumnThreads(config_.getNetworkConfig().parallel_schur_columns ? n_threads : 1);
     // Null-direction read (network.trace_station_pd_null): an eigen-read of

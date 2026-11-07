@@ -532,6 +532,7 @@ add_executable(gnss_tests
     tests/network/test_network_conditional_variance_frame.cpp
     tests/network/test_neq_parallel_stages.cpp
     tests/network/test_harvest_coupling_parallel.cpp
+    tests/network/test_sbasis_values_first.cpp
     tests/network/test_pd_safe_fold.cpp
     tests/network/test_carry_aware_covariance.cpp
     tests/test_w6_iono_constraint.cpp
