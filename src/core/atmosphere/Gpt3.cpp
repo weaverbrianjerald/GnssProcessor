@@ -8,13 +8,16 @@
  *    failed load leaves the instance empty and unloaded.
  *  - Annual + semi-annual harmonic evaluation per cell.
  *  - Bilinear lat/lon interpolation with longitude wrap-around.
- *  - Standard barometric pressure reduction (exponent 5.225) and linear
- *    temperature lapse from the grid orthometric reference height to
- *    the station's orthometric height.
+ *  - Exponential pressure reduction with the cell's virtual temperature, as in
+ *    the GPT2 / GPT3 reference code, and linear temperature lapse, from the grid
+ *    orthometric reference height to the station's orthometric height.
  *
- * Reference:
+ * References:
  *   Landskron, D., and J. Boehm (2018), VMF3/GPT3: refined discrete and
  *   empirical troposphere mapping functions, J. Geod., 92(4), 349–360.
+ *   Lagler, K., M. Schindelegger, J. Boehm, H. Krasna, and T. Nilsson (2013),
+ *   GPT2: Empirical slant delay model for radio space geodetic techniques,
+ *   Geophys. Res. Lett., 40, 1069–1073 (the pressure reduction GPT3 keeps).
  */
 
 #include "atmosphere/Gpt3.hpp"
@@ -31,12 +34,19 @@ namespace GnssProcessor {
     namespace {
         // Number of whitespace-separated columns per data row in gpt3_5.grd.
         constexpr int N_COLS = 64;
-        // Pressure reduction: P(h) = P(Hs) * (1 - K_PRES * dh_m)^EXP_PRES.
-        // K_PRES = L/T_std = 6.5e-3 / 288.15 ≈ 2.2557e-5 per metre (lapse rate L over
-        // standard temperature), used rounded to 2.26e-5.  EXP_PRES = 5.225 stands for
-        // g·M/(R·L), which evaluates to about 5.256 with standard-atmosphere constants.
-        constexpr double K_PRES = 0.0000226;
-        constexpr double EXP_PRES = 5.225;
+        // Pressure reduction of the GPT2 / GPT3 reference code:
+        //   P(h) = P(Hs) * exp(-c * dh),  c = G_MEAN * M_DRY / (R_GAS * Tv),
+        //   Tv   = T0 * (1 + VIRTUAL_T_Q * Q),
+        // with T0 the cell's temperature and Q its specific humidity (kg/kg), both at
+        // the grid height.  The scale height follows the cell's own air: near 7.2 km
+        // over the Antarctic plateau against 8.4 km at 288 K, which matters where a
+        // corner cell lies a kilometre or more above the station.
+        constexpr double G_MEAN = 9.80665;      // m/s^2
+        constexpr double M_DRY = 28.965e-3;     // kg/mol, molar mass of dry air
+        constexpr double R_GAS = 8.3143;        // J/(mol K), as in the reference code
+        constexpr double VIRTUAL_T_Q = 0.6077;  // virtual-temperature factor per kg/kg of humidity
+        // The grid file stores specific humidity in g/kg.
+        constexpr double Q_SCALE = 1.0e-3;
         // Temperature lapse uses dT [K/km] applied to dh [m] × 1e-3.
         constexpr double KM_PER_M = 1.0e-3;
         // The grid file stores the VMF3 hydrostatic and wet "a" coefficients
@@ -122,6 +132,7 @@ namespace GnssProcessor {
             Cell c;
             for (int i = 0; i < 5; ++i) c.p[i]   = v[2  + i];  // pressure (Pa)
             for (int i = 0; i < 5; ++i) c.T[i]   = v[7  + i];  // temperature (K)
+            for (int i = 0; i < 5; ++i) c.Q[i]   = v[12 + i];  // specific humidity (g/kg)
             for (int i = 0; i < 5; ++i) c.dT[i]  = v[17 + i];  // lapse (K/km)
             c.undu = v[22];
             c.Hs   = v[23];
@@ -172,22 +183,23 @@ namespace GnssProcessor {
         const double f_lon = lon_idx - i_lon;
         const int i_lon_next = (i_lon + 1) % N_LON;
 
-        // Per-corner reduction: harmonic eval of P/T/dT/a_h/a_w followed by
-        // barometric / lapse extrapolation from grid Hs to station h_ortho.
-        // a_h/a_w have no height reduction: VMF puts the height correction into
-        // the mapping function itself.
+        // Per-corner reduction: harmonic eval of P/T/Q/dT/a_h/a_w followed by
+        // the exponential (pressure) and lapse (temperature) extrapolation from
+        // grid Hs to station h_ortho.  a_h/a_w have no height reduction: VMF puts
+        // the height correction into the mapping function itself.
         struct CornerVals { double P_mbar, T_K, a_h, a_w; };
         auto reduce = [&](const Cell& c) -> CornerVals {
             const double p_grid_Pa  = harmonic(c.p,  doy);
             const double T_grid_K   = harmonic(c.T,  doy);
+            const double q_grid     = harmonic(c.Q,  doy) * Q_SCALE;
             const double dT_per_km  = harmonic(c.dT, doy);
 
             const double h_ortho = h_ellipsoidal_m - c.undu;
             const double dh = h_ortho - c.Hs;
 
-            double factor = 1.0 - K_PRES * dh;
-            if (factor <= 0.0) factor = 1e-12;
-            const double p_station_Pa = p_grid_Pa * std::pow(factor, EXP_PRES);
+            const double Tv_K = T_grid_K * (1.0 + VIRTUAL_T_Q * q_grid);
+            const double c_per_m = G_MEAN * M_DRY / (R_GAS * Tv_K);
+            const double p_station_Pa = p_grid_Pa * std::exp(-c_per_m * dh);
             const double T_station_K  = T_grid_K + dT_per_km * dh * KM_PER_M;
 
             const double a_h_val = harmonic(c.a_h, doy);
