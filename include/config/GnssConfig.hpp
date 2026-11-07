@@ -3912,6 +3912,25 @@ namespace GnssProcessor {
         }
 
         /**
+         * @brief Whether the second-code row test matches on the constellation as well as
+         *        the signal.
+         *
+         * `network.second_code_system_aware`.  The station split collects the receiver
+         * inter-signal states a station holds and scales, tags and counts the code rows
+         * that route through them.  Off, the test reads the observation code only, so a
+         * Galileo C1C row at a station holding `GPS_ISC_C1C` takes the scale although no
+         * inter-signal state of its own exists.  On, the test reads the (constellation,
+         * signal) pair, the identity the receiver bias resolver keys the state on.
+         * Default off and byte-identical; inert unless
+         * @ref networkSecondCodeRowsActive.
+         *
+         * @return True when the row test is constellation-aware.
+         */
+        bool networkSecondCodeSystemAware() const {
+            return network_config_.second_code_system_aware;
+        }
+
+        /**
          * @brief Whether `processing.channel_mode: all` is active on the network path.
          *
          * The one entry of the all-channel widening. Every admitted code and phase

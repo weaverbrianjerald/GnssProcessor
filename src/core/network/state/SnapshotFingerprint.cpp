@@ -205,6 +205,13 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
             for (const auto& sig : config_.networkSecondCodeSignals()) add(sig);
             add(fmt::format("{}", config_.networkSecondCodeSigmaScale()));
         }
+        // Constellation-aware second-code row test: decides which code rows were
+        // accumulated at the second-code scale (another constellation's rows with the same
+        // observation code no longer are), the same argument as for the scale above.
+        // Appended only when it acts, so a snapshot written with it off keeps its
+        // fingerprint.
+        if (config_.networkSecondCodeRowsActive() && config_.networkSecondCodeSystemAware())
+            add("scc:sysaware");
         // Second phase channel: adds a float ambiguity per extra
         // arc and feeds an existing satellite phase-bias family from stations that did not
         // support it before, so the carried levels and the shared border in a snapshot

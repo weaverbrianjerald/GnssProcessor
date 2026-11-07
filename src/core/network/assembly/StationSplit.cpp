@@ -523,31 +523,32 @@ void networkSplitStation(const GnssConfig& config_, NetStation& st, const Networ
     // The counters run whether or not the scale is applied: a scale of 1 is the default
     // posture, not an unarmed one.
     //
+    // Which rows match: secondCodeIscRows.  The receiver states are keyed on the
+    // constellation and the signal; with network.second_code_system_aware off the match
+    // reads the observation code alone (the historic test), so another constellation's
+    // row with the same code (a Galileo C1C row beside GPS_ISC_C1C) is scaled, tagged and
+    // counted as a fallback row although no state of its own exists.  Those rows are
+    // counted in both forms (scc_other_system_rows).
+    //
     // Off: the whole block is skipped and the output is byte-identical.  With the
     // knob armed at scale 1 the weights are untouched (no division is performed).
     if (config_.networkSecondCodeRowsActive()) {
-        std::set<std::string> isc_sigs;   // signals with an inter-signal state at this station
-        for (const auto& entry : st.params.rx_cb)
-            if (entry.first.form == ParamForm::Isc)
-                isc_sigs.insert(entry.first.signal.obsCode(ObsType::Code));
-        if (!isc_sigs.empty()) {
+        const std::vector<std::size_t> isc_rows = secondCodeIscRows(
+            st.params.rx_cb, rows.satellite_ids, rows.signal_types,
+            static_cast<std::size_t>(m), config_.networkSecondCodeSystemAware(),
+            &st.scc_other_system_rows);
+        if (!isc_rows.empty()) {
             const double sc_scale = config_.networkSecondCodeSigmaScale();
-            const Eigen::Index mr = std::min<Eigen::Index>(
-                m, static_cast<Eigen::Index>(rows.signal_types.size()));
             long long n_comp = 0, n_fall = 0;
-            for (Eigen::Index r = 0; r < mr; ++r) {
-                const std::string& sig = rows.signal_types[static_cast<std::size_t>(r)];
-                if (sig.empty() || obsTypeOf(sig) == ObsType::Phase) continue;   // phase untouched
-                if (!isc_sigs.count(sig)) continue;
-                if (r >= static_cast<Eigen::Index>(rows.satellite_ids.size())) break;
-                const std::string& sat = rows.satellite_ids[static_cast<std::size_t>(r)];
-                if (sat.empty()) continue;
+            for (const std::size_t r : isc_rows) {
+                const std::string& sig = rows.signal_types[r];
+                const std::string& sat = rows.satellite_ids[r];
                 // A companion or a fallback row (one kind for both, the rows
                 // routed through the inter-signal state).
-                tags[static_cast<std::size_t>(r)].kind = ContributionKind::DataCodeCompanion;
+                tags[r].kind = ContributionKind::DataCodeCompanion;
                 if (st.scc_cells.count(StateKeys::makeSatBiasKey(sat, sig))) ++n_comp;
                 else                                                         ++n_fall;
-                if (sc_scale > 1.0) w(r) /= sc_scale * sc_scale;       // σ × scale
+                if (sc_scale > 1.0) w(static_cast<Eigen::Index>(r)) /= sc_scale * sc_scale;  // σ × scale
             }
             st.scc_rows          += n_comp;
             st.scc_fallback_rows += n_fall;
