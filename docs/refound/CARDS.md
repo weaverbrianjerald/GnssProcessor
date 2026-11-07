@@ -310,5 +310,7 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   RECOMMEND_SCOPED under the new regime predicate `has_bds`, so the GPS + Galileo goldens are unchanged; gates G1 to G5 all pass (the two
   GPS + Galileo goldens and 16 user-side arms identical; the 6 h BeiDou golden byte-identical in `products.txt` to card BDSB's arm C6, its baseline); merged into main 2026-11-02.
 - [ZTL](ZTL_zwd_time_link_float_vehicle_2026-11-07.md): open, 2026-11-07: build B2 of card SRN, a time link for the station wet delay on the
-  float vehicle: the in-block wet-delay carry made reachable under `float_kf` (vehicle-aware interlock), with a declared event
-  response (a slip latch or a RAIM per-arc attribution erases the station's carried entry for one epoch); q bracketed on the sim truth.
+  float vehicle: the in-block wet-delay carry made reachable under `float_kf` (vehicle-aware interlock) with an erase-for-one-epoch event
+  response (slip latch, RAIM per-arc attribution), off and byte-identical by default. At q 5e-8 the field wet delay moves 0.73 mm per epoch
+  (was 2.59), the slip-epoch excursions are gone, user and census unchanged; the sim truth bar fails (hours 4 to 6 rms 6.4 mm against 4,
+  NEES to 2.8; 0.77 to 0.86 with the phase colour state); no integer gain. Not recommended for arming alone; the colour pairing is owed.

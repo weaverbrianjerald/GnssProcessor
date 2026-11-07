@@ -5,14 +5,14 @@
 - **id:** ZTL
 - **topic:** network-vehicle
 - **status:** open
-- **summary:** Build B2 of the scientific review (card SRN, finding F2). On the float vehicle the station wet delay is a local column born at zero every epoch with no time link; the only vehicle the record did not falsify (`network.carry_zwd_in_block`) was disabled by a loader interlock that tests the F3 knob, which the float vehicle forces off. The card makes the interlock vehicle-aware, folds the wet delay as a column of the station's whitened block, adds the declared event response that standing invariant 1 requires, and grades the time link on the sim truth and the field. Pre-registered 2026-11-07; results below.
+- **summary:** Build B2 of the scientific review (card SRN, finding F2). On the float vehicle the station wet delay is a local column born at zero every epoch with no time link; the only vehicle the record did not falsify (`network.carry_zwd_in_block`) was disabled by a loader interlock that tests the F3 knob, which the float vehicle forces off. The card makes the interlock vehicle-aware, folds the wet delay as a column of the station's whitened block, adds the declared event response that standing invariant 1 requires, and grades the time link on the sim truth and the field. Built and graded 2026-11-07 (section 4): G1, G2, G5 pass, G4 fails (hours 4 to 6 accuracy and, without the phase colour state, consistency), G6 shows no integer gain. Open: the pairing with the phase colour state is owed on the field.
 - **source:** card SRN (`D:/GnssProcessorSupport/worktrees/scirev/docs/refound/SRN_scientific_review_network_2026-11-06.md`, finding F2, section 3.5, build B2); the second-model verdicts `D:/GnssProcessorSupport/srn/wave2_verdicts.json` (D2-10, D5-02, D5-03, D5-10); `docs/cards/sim-bed/ZWD-SINK-CENSUS.md` (the diagonal carry falsified).
 - **dates in the text:** 2026-11-07
 - **knobs / posture:** `network.carry_zwd` + `network.carry_zwd_in_block` (both default false, both off on the goldens), `network.zwd_carry_q` (bracket 1e-8, 5e-8, 2e-7 m^2/s); the float vehicle of both goldens (`network.ambiguity_vehicle float_kf`).
-- **hashes / run dirs:** branch of this card from main `284ec29`; review executable `D:/GnssProcessorSupport/worktrees/scirev/build/x64-Release/gnss_processor_srn.exe` (main `adef08b`); arms under `D:/GnssProcessorSupport/runs_nom/_rap_ztl_*`; renamed executable `gnss_processor_ztl.exe`.
+- **hashes / run dirs:** branch `worktree-wf_c49deb5b-2f3-2` from main `284ec29`, code commit `986bd89`; executable `gnss_processor_ztl.exe` (sha256[:16] `c98f567e94a31006`); arms `_rap_ztl_off_{f2,s2}`, `_rap_ztl_q{1e8,5e8,2e7}_s2`, `_rap_ztl_{ctl,on}_{f6,s6}`, `_rap_ztl_q2e7_s6`, `_rap_ztl_pc{ctl,on}_s6`, census keys `ztlc`, `ztla`; review executable `D:/GnssProcessorSupport/worktrees/scirev/build/x64-Release/gnss_processor_srn.exe` (main `adef08b`); arms under `D:/GnssProcessorSupport/runs_nom/_rap_ztl_*`; renamed executable `gnss_processor_ztl.exe`.
 - **gates (frozen at pre-registration):** section 3
 
-**Outcome.** Pre-registered; no result yet.
+**Outcome.** Question: does the wet delay as a column of the float vehicle's station block track the sim truth closer and stay neutral on the field? Built: the vehicle-aware interlock and an erase-for-one-epoch event response on slip latches and RAIM per-arc attributions, default off and byte-identical off. At q 5e-8 the wet delay is four times smoother (field 2.59 to 0.73 mm per epoch), the field slip-epoch excursions (0.77 m, 0.26 m) are gone, user and census unchanged. The sim error falls only 13 to 17 % (hours 4 to 6 rms 6.4 mm, bar 4) and NEES reaches 2.8; with the phase colour state NEES is 0.77 to 0.86. Standing: open, not recommended for arming alone.
 
 > Results are appended TO THIS FILE, below the text.
 
@@ -74,3 +74,107 @@ Every path is gated on `carry_zwd_in_block` (and the response on the float vehic
 - **G4 sim 6 h** at the chosen q: hour-2 rms under 12 mm (baseline 27 from the run start of the fixture; the 00:30:15 control is reported beside it), hours 4 to 6 under 4 mm (baseline 7), NEES 0.7 to 1.3 by hour, consumer p50 within 2 mm of the control by hour.
 - **G5 field 6 h** at the chosen q: the user (WTZZ00DEU) within 2 mm of the control by hour; the wet-delay epoch-to-epoch sd (hours 2 to 6, median over stations) from 2.6 mm toward 1 mm; the HKSL00HKG and KIT300UZB steps gone or declared by the response counter; the 16-site census median within 0.5 mm.
 - **G6 integer reading.** `scripts/simnet_amb_integer.py --ref-free --by-age` on the 6 h sim arm and its control: the L1C and L2W reference-free median |e| by chord age.
+
+## 4. Results (2026-11-07)
+
+Executable `gnss_processor_ztl.exe`, the Release build of commit `986bd89` (sha256[:16] `c98f567e94a31006`). Arms under `D:/GnssProcessorSupport/runs_nom/`. Sim arms start at 00:30:15 (`start_offset_hours` 0.504167) and are graded by hour from their start; field arms from 00:00. The wet delay is graded with a script of this card (each station's `zwd_m` of `logs/network_zwd.csv` against `truth_tropo.csv` at the same epoch: rms, median |e|, NEES with `std_m`; the epoch-to-epoch difference sd per station, median over stations).
+
+### 4.1 G1, build and checks
+
+- Debug `gnss_tests.exe`: 3,843 cases in 524 suites, 3,810 passed, 33 skipped (fixture-gated), 0 failed (10 cases and one suite more than CLAUDE.md's count, the new `ZwdTimeLinkFloatVehicleTest`). The 11 cases of `CarryZwdInBlockTest` pass unchanged.
+- `nom_epoch_lint.py` PASS (V12: 95 entity writers, 95 rows); `nom_n4_verify.py --whole` PASS; `make_golden_config.py --verify` PASS (sim 78, field 82, BeiDou 76 armed in regime, 0 failures); `ledger_render.py --check` matches; `config_posture_check.py --verify-loader` 0 coverage gaps; `docs_index_check.py` OK.
+
+**G1: PASS.**
+
+### 4.2 G2, off identity
+
+The golden copies on `gnss_processor_ztl.exe` against the review executable's control arms: `products.txt` without `#` lines identical, and all 34 pre-existing `logs/*.csv` identical once the wall-clock columns are blanked (`ms` of `network_datum_graph.csv`, `loop_ms` and `ms_per_epoch` of `network_run_summary.csv`, `ms_per_epoch_window` of `network_service_health.csv`; every other column of those three files is identical). No new trace file.
+
+| pair | products.txt | logs/*.csv |
+| --- | --- | --- |
+| `_rap_ztl_off_f2` / `_rap_srn_ctl_f2` | identical (3,759,133 bytes) | 34 of 34 |
+| `_rap_ztl_off_s2` / `_rap_srn_ctl_s2` | identical (2,614,453 bytes) | 34 of 34 |
+| `_rap_ztl_ctl_f6` / `_rap_srn_ctl_f6` | identical (11,344,396 bytes) | 34 of 34 |
+| `_rap_ztl_ctl_s6` / `_rap_srn_ctl_s6` | identical (7,814,424 bytes) | 34 of 34 |
+
+The run-end text differs by the two response-table rows (declared). **G2: PASS.**
+
+Smoke (10 epochs, q 5e-8): sim 360 wet-delay block columns, 0 diagonal fallbacks, 0 missing cross terms; field 282 columns, 0 fallbacks, 7 slip-latch erases and 1 RAIM erase.
+
+### 4.3 G3, the sim q bracket (2 h)
+
+| arm | q (m^2/s) | hour-2 rms (mm) | hour-2 median |e| | hour-2 NEES | epoch-to-epoch sd (mm) | hour-2 formal sigma p50 (mm) | consumer 3D p50 h1 / h2 (m) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `_rap_ztl_off_s2` (control) | | 10.07 | 5.98 | 0.70 | 3.34 | 10.99 | 0.0994 / 0.0326 |
+| `_rap_ztl_q1e8_s2` | 1e-8 | 8.30 | 5.36 | 1.73 | 0.70 | 6.47 | 0.0997 / 0.0316 |
+| `_rap_ztl_q5e8_s2` | 5e-8 | 7.92 | 4.84 | 1.13 | 0.96 | 7.57 | 0.0997 / 0.0313 |
+| `_rap_ztl_q2e7_s2` | 2e-7 | 8.44 | 5.23 | 0.95 | 1.38 | 8.51 | 0.0998 / 0.0321 |
+
+Hour 1 is the start transient (rms 173 to 174 mm on every arm); the carry acts on 94 % of the station-epochs of hour 1 and all of hour 2. The consumer moves by at most 1.3 mm. q 1e-8 is over-confident already in hour 2 (NEES 1.73); 5e-8, the fixture's own walk, has the smallest error. **Chosen q: 5e-8.** G3 as a selection gate: PASS (hour-2 rms below 12 mm on every arm, consumer within 2 mm).
+
+### 4.4 G4, the sim at 6 h
+
+| hour | control rms / NEES | q 5e-8 rms / median / NEES | q 2e-7 rms / NEES | consumer 3D p50 control / q 5e-8 (m) |
+| --- | --- | --- | --- | --- |
+| 1 | 174.2 / 1.02 | 173.1 / 13.3 / 1.27 | 173.2 / 1.16 | 0.0994 / 0.0997 |
+| 2 | 10.07 / 0.70 | 7.92 / 4.84 / 1.13 | 8.44 / 0.95 | 0.0326 / 0.0313 |
+| 3 | 8.30 / 0.85 | 7.16 / 4.62 / 1.99 | 7.54 / 1.51 | 0.0398 / 0.0392 |
+| 4 | 7.43 / 0.79 | 6.36 / 4.11 / 2.33 | 6.75 / 1.67 | 0.0160 / 0.0160 |
+| 5 | 7.66 / 0.90 | 6.39 / 4.19 / 2.82 | 6.85 / 1.98 | 0.0180 / 0.0178 |
+| 6 | 6.34 / 0.69 | 5.51 / 3.70 / 2.43 | 5.75 / 1.63 | 0.0152 / 0.0152 |
+
+(rms and median in mm; runs `_rap_ztl_ctl_s6`, `_rap_ztl_on_s6`, `_rap_ztl_q2e7_s6`.) The epoch-to-epoch sd falls from 3.24 to 0.81 mm (hours 2 to 6) and the formal sigma from 7.4 to 3.4 mm in hour 6, but the error falls only by 13 to 17 %. Hours 4 to 6, per station: the bias (the station's mean error) is 12 % of the mean square on the control and 14 % on the arm; the rest is a slow wander, sd 6.2 mm about the station mean on the control and 5.4 mm on the arm, while consecutive epochs move 0.7 mm. The error the time link leaves is low-frequency and common to both arms; the carry cannot average it down, and treating the rows as white it shrinks the formal sigma below it.
+
+The phase error of the fixture is coloured by latitude class (card SFR). A diagnostic pair with the per-line-of-sight phase colour state armed (`network.phase_colour_state`, not in the goldens), control `_rap_ztl_pcctl_s6` and arm `_rap_ztl_pcon_s6` (q 5e-8):
+
+| hour | colour control rms / NEES | colour + time link rms / median / NEES | consumer 3D p50 (m) |
+| --- | --- | --- | --- |
+| 2 | 9.41 / 0.41 | 7.58 / 4.88 / 0.61 | 0.0329 / 0.0320 |
+| 3 | 7.56 / 0.44 | 6.36 / 4.21 / 0.77 | 0.0399 / 0.0396 |
+| 4 | 6.70 / 0.41 | 5.46 / 3.58 / 0.79 | 0.0163 / 0.0161 |
+| 5 | 6.95 / 0.46 | 5.33 / 3.60 / 0.86 | 0.0185 / 0.0183 |
+| 6 | 6.06 / 0.40 | 4.99 / 3.36 / 0.84 | 0.0149 / 0.0149 |
+
+With the colour state the time link's NEES is 0.77 to 0.86 from hour 3 and the hours 4 to 6 rms is 5.0 to 5.5 mm (18 to 23 % below its control); the over-confidence of the plain arm is the white-noise model meeting a coloured error, not the carry's algebra.
+
+**G4: FAIL.** Hour-2 rms 7.92 mm passes (below 12 mm; the control at this start is 10.07 mm, the baseline's 27 mm is from the fixture start); hours 4 to 6 rms 6.36, 6.39, 5.51 mm fail the 4 mm bar (5.46, 5.33, 4.99 mm with the colour state); NEES by hour fails from hour 3 (1.99 to 2.82; q 2e-7 1.51 to 1.98; with the colour state 0.77 to 0.86, a pass from hour 3); the consumer is within 1.3 mm by hour (pass).
+
+### 4.5 G5, the field at 6 h
+
+`_rap_ztl_ctl_f6` and `_rap_ztl_on_f6` (q 5e-8).
+
+| hour | 1 | 2 | 3 | 4 | 5 | 6 |
+| --- | --- | --- | --- | --- | --- | --- |
+| WTZZ00DEU 3D p50, control (m) | 0.0588 | 0.0123 | 0.0231 | 0.0123 | 0.0165 | 0.0120 |
+| WTZZ00DEU 3D p50, arm (m) | 0.0586 | 0.0118 | 0.0241 | 0.0135 | 0.0166 | 0.0113 |
+| wet-delay epoch-to-epoch sd, control / arm (mm) | 63.0 / 60.0 | 2.73 / 0.89 | 2.67 / 0.65 | 2.34 / 0.68 | 2.49 / 0.61 | 2.50 / 0.62 |
+| formal sigma p50, control / arm (mm) | 18.2 / 15.6 | 7.1 / 5.0 | 5.6 / 3.3 | 5.2 / 2.9 | 5.1 / 2.8 | 4.9 / 2.7 |
+
+- User: largest change +1.2 mm (hour 4). Pass.
+- Epoch-to-epoch sd, hours 2 to 6, median over stations: 2.59 to 0.73 mm. Pass.
+- Steps above 5 cm in hours 2 to 6: 6 on the control, 0 on the arm. HKSL00HKG: -0.773 / +0.740 m at TOW 262770 / 262800 on the control, -0.050 / +0.042 m on the arm; the station had a slip latch at 262740 (carry erased, 262770 is the re-coupling fold) and a RAIM per-arc attribution (E04) at 262770 (262800 folds no prior). KIT300UZB: +0.260, -0.086, -0.169 m at 263670 to 263730 on the control, +0.011, +0.008, -0.020 m on the arm; slip latch at 263640, RAIM attribution (G21) at 263700. The excursions are gone; the remaining 2 to 5 cm moves sit at declared response epochs. Pass.
+- Response load: 241 slip-latch erases and 29 RAIM erases over 41,760 station-epochs (0.65 %); 244 re-coupling folds; 41,082 wet-delay block columns, 0 diagonal fallbacks, 229 missing cross terms. The `zwd` prior-residual family: sigma0 0.46 (field), 0.56 (sim): the folded prior is looser than the epoch-to-epoch increments, while against the sim truth the posterior is tighter than the low-frequency error (section 4.4): the census sees the increments, not the wander.
+- 16-site census (`scripts/clock_level/gcensus.py`, keys `ztlc` on the control wire and `ztla` on the arm wire, same executable, 17 replays each, all exit 0): median site p50 by hour 0.142, 0.050, 0.036, 0.029, 0.032, 0.030 m (control) and 0.143, 0.050, 0.036, 0.028, 0.032, 0.030 m (arm); hours 2 to 6 paired median change -0.0000 m, 0 better and 0 worse at 1 cm. Largest site moves: ARHT +3.4 mm, DAV1 +2.5 mm (worse), ANMG -0.5 mm; above the 0.19 mm neutral spread of card NSP, so these two are real small responses. Pass (median within 0.5 mm).
+
+**G5: PASS.**
+
+### 4.6 G6, the integer reading
+
+`scripts/simnet_amb_integer.py --ref-free --by-age` on `_rap_ztl_ctl_s6` and `_rap_ztl_on_s6`:
+
+| | control | arm |
+| --- | --- | --- |
+| reference-free median |e|, L1C / L2W, whole run (cycle) | 0.103 / 0.138 | 0.103 / 0.138 |
+| same, last 25 % of epochs | 0.084 / 0.120 | 0.084 / 0.120 |
+| reference-free WL(1,2) median |e| | 0.033 | 0.033 |
+| L1C median |e| by chord age [1,10) [10,30) [30,100) [100,300) [300,1000), runs of 200 epochs or more | 1.278 0.508 0.280 0.144 0.121 | 1.268 0.508 0.276 0.142 0.119 |
+| L2W, same | 1.566 0.615 0.337 0.186 0.150 | 1.549 0.605 0.335 0.184 0.147 |
+| log-log slope L1C / L2W | -0.478 / -0.471 | -0.480 / -0.472 |
+
+The narrow-lane convergence does not improve measurably: 0.002 to 0.017 cycle by age bin, slope unchanged. The carried ambiguities already transmit the time information the wet delay's link adds (the review's increment ratio 0.34). **G6: no improvement (a reading, not a bar).**
+
+### 4.7 Reading and recommendation
+
+The route works on the float vehicle as built: every station-epoch folds the wet delay inside its block, the field excursions at slip epochs are gone, the user and the census do not move, and the wet delay is four times smoother on both beds. The truth grade fails its accuracy bar for hours 4 to 6 and, without the phase colour state, its consistency bar: the error left is a low-frequency wander common to the white and the linked estimate, and a random-walk carry over white-noise rows reports a sigma below it. The card recommends leaving `network.carry_zwd` / `network.carry_zwd_in_block` off on the goldens for now; arming them is the author's decision, and the evidence favours arming them together with `network.phase_colour_state` (NEES 0.77 to 0.86), which needs its own field grade.
+
+Owed: (a) a field 6 h arm and census with the phase colour state and the time link together, and its control; (b) a 24 h sim grade (the wander's time scale against the 6 h window); (c) the slant-ionosphere and receiver-clock in-block carries are now reachable under the float vehicle and ungraded there; (d) the RAIM within-epoch replay withholds carried ambiguity priors but not the wet delay's (not a feed of this response).
