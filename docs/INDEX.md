@@ -216,6 +216,12 @@ tracked a priori, DOY 130 and 131 (closed, 2026-11-03: DOY 130 and 131 pass the 
 site-days worse; the DOY-132 remainder is the clock anchor's statistic decouplings through the smoothed hold's bridge, and with that test off
 all four days pass, pooled +0.0021 m, pending a satellite clock step test; the phase-clock hold on the tracked a priori fails, users +0.3 to
 +0.6 m; nothing armed).
+[BRD3](refound/BRD3_anchor_decoupling_clock_share_2026-11-06.md), card BRD2's remainder read apart: the smoothed hold's bridge, the
+clock-space share of the statistic trips, and the injected clock step on the tracked posture (open, pre-registered 2026-11-06: against
+CODE the bridge drops the LOOSE clock's own excursion as much as the a priori's drift and is the right member on the CODE regime, so no
+bridge member recovers the remainder, the decoupling is the carrier; every trip of DOY 132 is a phase-bias-key event with clock-space
+|w| at most 0.57 where a true step reads 7.9; the next build, a clock-share requirement on the trip, pre-registered with frozen bars;
+measure-only trace columns and the tracked sim postures built; nothing armed).
 
 ### `resume-seam` — [topics/resume-seam.md](topics/resume-seam.md)
 

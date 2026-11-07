@@ -322,3 +322,12 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   bridge; with `network.clock_anchor_k` 1e6 it vanishes and all four days pass (census pooled +0.0021 m, 17 %), pending a satellite clock
   step test (field-blocking). The phase-clock hold on the tracked a priori (`network.apriori_clock_track_phase_clock_hold`, KEEP_OFF) walks
   112 to 116 mm per 120 epochs and costs users 0.3 to 0.6 m. Nothing armed.
+- [BRD3](BRD3_anchor_decoupling_clock_share_2026-11-06.md): open, pre-registered 2026-11-06: card BRD2's remainder read apart against
+  CODE. The smoothed hold's bridge follows the a priori while a clock is decoupled and drops the correction's motion D over the bridge;
+  D is the LOOSE clock's own excursion plus the a priori's drift, the a priori-following bridge is the right member on the CODE regime
+  (lasting phase-visible error 6 against 13 mm) and a coin flip on the tracked a priori (15 against 13.5 mm, 12 of 26), so the bridge
+  member is refuted as the lever and the decoupling is the carrier. Every one of DOY 132's 59 statistic trips on both postures is carried
+  by the phase-bias keys (clock-space |w| at most 0.57; a true 0.5 m step at q 5e-6 reads 7.94). Next build, pre-registered with frozen
+  bars: `network.clock_anchor_clock_k`, a clock-share requirement on the phase statistic's trip, refused below q 1e-6. Built here,
+  measure-only: the guard trace's statistic parts, the matrix postures `t` and `tk`; run here: the injected clock step on the tracked
+  posture with the test on and off, the instrumented DOY-132 rerun, short arms around card ICL5's lone trips. Nothing armed.

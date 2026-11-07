@@ -557,7 +557,11 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
         anchor_guard_trace.open(anchor_guard_trace_path);
         if (anchor_guard_trace)
             anchor_guard_trace << "week,tow,sat,anchored,e_clk,sqrtS_clk,w_clk,e_phi,sqrtS_phi,"
-                                  "w_phi,n_pb,decision\n";
+                                  "w_phi,n_pb,decision,"
+                                  // The phase statistic's parts (clockAnchorGuardPartsCsv): the pair,
+                                  // the clock's own innovation and sd, then each chosen phase-bias
+                                  // key's weight, innovation and sd.
+                                  "sigs,dclk,clk_sd,w1,dpb1,pb1_sd,w2,dpb2,pb2_sd\n";
     }
     if (config_.networkClockLevelMonitor() && nc.trace_events) {
         // The level monitor of the exact coupling update; the header documents the columns.
