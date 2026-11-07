@@ -272,13 +272,14 @@ int Application::runConsumerReplay() {
         const std::filesystem::path nav_path = config_.getNavigationPath();
         std::vector<BroadcastEphemeris> nav =
             nav_path.empty() ? std::vector<BroadcastEphemeris>{} : RinexNavParser::parse(nav_path.string());
-        nav.erase(std::remove_if(nav.begin(), nav.end(),
-                                 [](const BroadcastEphemeris& e) { return e.system != System::GPS; }),
-                  nav.end());
+        // The producer's own record set (GPS, and Galileo F/NAV), so the store holds every
+        // record the wire can stamp and no Galileo I/NAV record sharing its IODnav.
+        nav = BrdcClockApriori::aprioriRecords(std::move(nav), /*galileo=*/true);
         if (nav.empty()) {
             log->error("Consumer replay: the product's S line declares a native "
-                       "broadcast clock ('{}'), but no GPS broadcast record was read from the "
-                       "navigation file '{}'.", file_contract.apriori_product_id, nav_path.string());
+                       "broadcast clock ('{}'), but no GPS or Galileo F/NAV broadcast record was "
+                       "read from the navigation file '{}'.", file_contract.apriori_product_id,
+                       nav_path.string());
             return 1;
         }
         const double t_first = TimeUtils::continuousGpsSeconds(records.front().epoch.epoch_time);
@@ -287,7 +288,8 @@ int Application::runConsumerReplay() {
                                                       BrdcClockApriori::dayOrigin(t_first),
                                                       t_last, BrdcSelectRule::Ttom);
         log->info("Consumer replay: native broadcast-clock wire '{}': {} selectable GPS "
-                  "records staged from '{}', fed to the store by transmission time.",
+                  "and Galileo F/NAV records staged from '{}', fed to the store by "
+                  "transmission time.",
                   file_contract.apriori_product_id, nbp_feed->stats().n_staged,
                   nav_path.filename().string());
     }

@@ -21,6 +21,7 @@
 #include "common/GnssIdentity.hpp"      // obsTypeOf, systemOfSat, SignalId, LosId
 #include "config/GnssConfig.hpp"        // networkCycleSlip* getters
 #include "math/TimeUtils.hpp"           // continuousGpsSeconds (the MW re-flag's epoch clock)
+#include "network/qc/RobustStats.hpp"   // medianPolish2Way (the IF-TD two-way centring)
 #include "network/state/StationParams.hpp"   // the station's parameter set: the ambiguities the drains free
 #include "rinex/MultiRinexSync.hpp"     // SyncedEpoch (se.time in log/event rows)
 
@@ -969,6 +970,49 @@ IfTdSatClockVerdict ifTdSatClockClassify(const std::vector<IfTdSatClockSample>& 
     return v;
 }
 
+int ifTdSatCentreRow(const IfTdCentreSample& s) {
+    return s.sta * 256 + static_cast<unsigned char>(s.sat.empty() ? '?' : s.sat[0]);
+}
+
+IfTdSatCentre ifTdSatCentreFit(const std::vector<IfTdCentreSample>& samples, int min_stations) {
+    IfTdSatCentre fit;
+    for (const auto& s : samples)
+        if (!s.is_ref) ++fit.n_obs[s.sat];
+    std::vector<std::tuple<int, std::string, double>> cells;
+    for (const auto& s : samples)
+        if (!s.is_ref && fit.n_obs[s.sat] >= min_stations)
+            cells.emplace_back(ifTdSatCentreRow(s), s.sat, s.dd);
+    if (cells.empty()) return fit;
+    const MedianPolish mp = medianPolish2Way(cells);
+    fit.overall = mp.overall;
+    fit.row     = mp.row_eff;
+    fit.col     = mp.col_eff;
+    return fit;
+}
+
+double ifTdSatCentred(const IfTdSatCentre& fit, const IfTdCentreSample& s) {
+    if (s.is_ref) return 0.0;
+    const auto rit = fit.row.find(ifTdSatCentreRow(s));
+    const auto cit = fit.col.find(s.sat);
+    return s.dd - fit.overall - (rit != fit.row.end() ? rit->second : 0.0)
+                              - (cit != fit.col.end() ? cit->second : 0.0);
+}
+
+std::optional<double> ifTdSatCentreRefStep(const IfTdSatCentre& fit, double step_m,
+                                           const std::string& ref_sat,
+                                           const std::vector<std::string>& station_sats) {
+    const auto rit = fit.col.find(ref_sat);
+    if (rit == fit.col.end()) return std::nullopt;
+    std::vector<double> cols;
+    for (const auto& sat : station_sats) {
+        if (sat == ref_sat) continue;
+        const auto cit = fit.col.find(sat);
+        if (cit != fit.col.end()) cols.push_back(cit->second);
+    }
+    if (cols.empty()) return std::nullopt;
+    return step_m - ifTdMedianInPlace(cols) + rit->second;
+}
+
 void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                            std::vector<NetStation>& stations,
                            const std::vector<bool>& present,
@@ -989,7 +1033,8 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                            NetworkSlipOracle* oracle,
                            const CommonBandEpoch* common_band,
                            IfTdPairTallies* pair_tally,
-                           IfTdSatClockSink* sat_clock) {
+                           IfTdSatClockSink* sat_clock,
+                           IfTdSatCentreSink* sat_centre) {
     // Alias block (INC-6 migration mechanic).
     const auto& sta_if_resets   = pa.sta_if_resets;
     auto&       if_slip_trace   = traces.if_slip_trace;
@@ -1171,8 +1216,11 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
         // under `first`, where there is one chain per system.
         // `after_reseed` marks the evaluation a re-seed restored (the epoch after a
         // flag; always false with the re-seed off).
+        // `dd_raw` is set only under the two-way centring, which replaces `dd` by the
+        // centred value; the trace row reads it there.
         struct PairSample { int sta; std::string sat, sig1, sig2; double dd, el, lambda;
-                            bool is_ref; std::string state_key; bool after_reseed; };
+                            bool is_ref; std::string state_key; bool after_reseed;
+                            double dd_raw{ 0.0 }; };
         std::map<std::string, std::vector<PairSample>> by_pair;
         for (int i = i_lo; i < n_sta_total; ++i) {
             if (!present[i] || !stations[i].if_slip) continue;
@@ -1200,6 +1248,66 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
 
         int n_if_arcs = 0, n_sparse = 0, n_warm_sp = 0;
         std::string if_detail;
+
+        // Two-way centring (null sink: the knob is off and none of this runs).  Each pair's
+        // samples are fitted as a station x satellite table and enter the pool as their
+        // centred values, so everything below (centre, scale, thresholds, EWMA, bridge pend,
+        // the satellite clock rule) reads the residual.  The fit, each pool's raw median (for
+        // the flags-removed / flags-added count) and each station's non-reference satellites
+        // (for the reference re-test) are kept for the loops below.
+        std::map<std::string, IfTdSatCentre> centre_fit;
+        std::map<std::string, double> centre_raw_med;
+        std::map<std::pair<int, std::string>, std::vector<std::string>> centre_sta_sats;
+        std::map<std::string, int> centre_col_n;   // the samples behind each written column
+        if (sat_centre) {
+            SlipQcCounters& cc = sat_centre->counters;
+            for (auto& [pair, samples] : by_pair) {
+                std::vector<IfTdCentreSample> cin;
+                cin.reserve(samples.size());
+                std::vector<double> raw;
+                raw.reserve(samples.size());
+                double lambda = 0.0;
+                for (const auto& s : samples) {
+                    cin.push_back({ s.sta, s.sat, s.dd, s.is_ref });
+                    raw.push_back(s.dd);
+                    if (!s.is_ref) centre_sta_sats[{ s.sta, pair }].push_back(s.sat);
+                    lambda = std::max(lambda, s.lambda);
+                }
+                IfTdSatCentre fit = ifTdSatCentreFit(cin, sat_centre->min_stations);
+                for (std::size_t k = 0; k < samples.size(); ++k) {
+                    samples[k].dd_raw = samples[k].dd;
+                    samples[k].dd     = ifTdSatCentred(fit, cin[k]);
+                }
+                std::nth_element(raw.begin(), raw.begin() + raw.size() / 2, raw.end());
+                centre_raw_med[pair] = raw.empty() ? 0.0 : raw[raw.size() / 2];
+                ++cc.if_td_centre_pools;
+                cc.if_td_centre_cols += static_cast<long long>(fit.col.size());
+                cc.if_td_centre_thin += static_cast<long long>(fit.n_obs.size() - fit.col.size());
+                const double ev_floor = 0.5 * floor_frac * lambda;
+                for (const auto& [sat, col] : fit.col) {
+                    const double a = std::abs(col);
+                    const std::size_t bin = a < 0.005 ? 0 : a < 0.01 ? 1 : a < 0.02 ? 2
+                                          : a < 0.05 ? 3 : a < 0.10 ? 4 : 5;
+                    ++cc.if_td_centre_col_hist[bin];
+                    cc.if_td_centre_col_max_m = std::max(cc.if_td_centre_col_max_m, a);
+                    if (ev_floor > 0.0 && a >= ev_floor)
+                        emitEvent("T1_if_slip", "sat_centre", sat, "", a, ev_floor, "centre",
+                                  fmt::format("pair={};col={:.4f};n={}", pair, col,
+                                              fit.n_obs.at(sat)));
+                    // The tracked a priori reads one column per satellite: the pool with the
+                    // most non-reference samples (pools are visited in pair order, so a tie keeps
+                    // the first).
+                    if (sat_centre->columns) {
+                        const int n = fit.n_obs.at(sat);
+                        if (n > centre_col_n[sat]) {
+                            centre_col_n[sat] = n;
+                            (*sat_centre->columns)[sat] = col;
+                        }
+                    }
+                }
+                centre_fit.emplace(pair, std::move(fit));
+            }
+        }
 
         // Satellite clock event rule (null sink: the knob is off and none of this runs).
         // n_clk_kept counts the arcs the rule kept this epoch (flag samples and
@@ -1358,6 +1466,13 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                     const double thr     = std::max(k_mad * s_eff * emap, floor_m);
                     const double abs_dev = std::abs(sp->dd - med);
                     const bool   flagged = (abs_dev > thr);
+                    if (sat_centre && !sp->is_ref) {
+                        // The same threshold against the one-way centre of the raw values.
+                        const bool raw_flag =
+                            std::abs(sp->dd_raw - centre_raw_med[pair]) > thr;
+                        if (raw_flag && !flagged) ++sat_centre->counters.if_td_centre_flags_removed;
+                        if (flagged && !raw_flag) ++sat_centre->counters.if_td_centre_flags_added;
+                    }
                     if (trace_flag_rates) { ++fr_if_slip.opp; if (flagged) ++fr_if_slip.flag; }  // B8/T1
                     // Per-pair run-end telemetry (§14.10 rule), knob-independent
                     // (invariant #4).
@@ -1548,7 +1663,8 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                             << stations[sp->sta].name << ',' << sp->sat << ','
                             << sp->sig1 << ',' << sp->sig2 << ','
                             << fmt::format("{:.2f}", sp->el) << ','
-                            << fmt::format("{:.6f}", sp->dd) << ',' << fmt::format("{:.6f}", med) << ','
+                            << fmt::format("{:.6f}", sat_centre ? sp->dd_raw : sp->dd) << ','
+                            << fmt::format("{:.6f}", sat_centre ? (sp->dd_raw - sp->dd + med) : med) << ','
                             << fmt::format("{:.6f}", s_pool) << ',' << fmt::format("{:.6f}", sc.ewma_scale) << ','
                             << sc.count << ',' << fmt::format("{:.3f}", w) << ','
                             << fmt::format("{:.6f}", s_eff) << ',' << fmt::format("{:.3f}", emap) << ','
@@ -1600,6 +1716,46 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                     ++n_clk_kept;
                     continue;
                 }
+                // Two-way centring: the gate's step less the clock part (the median of the
+                // station's satellite columns minus the reference's own column).  Within the
+                // gate's physical floor the reference did not slip: its clock moved, and the
+                // arcs are kept (the detector's own chain reset is unchanged).  Beyond it the
+                // ordinary refloat runs, its row naming the corrected step.
+                std::string centre_tok;
+                if (sat_centre) {
+                    SlipQcCounters& cc = sat_centre->counters;
+                    const std::string pair = sig1 + "_" + sig2;
+                    const auto& meds = stations[i].if_slip->getLastRefFireMedians();
+                    const auto mit = meds.find(rkey);
+                    const auto fit_it = centre_fit.find(pair);
+                    const auto sats_it = centre_sta_sats.find({ i, pair });
+                    std::optional<double> step;
+                    if (mit != meds.end() && fit_it != centre_fit.end()
+                        && sats_it != centre_sta_sats.end())
+                        step = ifTdSatCentreRefStep(fit_it->second, mit->second, sat,
+                                                    sats_it->second);
+                    double lambda = 0.0;
+                    const auto bp = by_pair.find(pair);
+                    if (bp != by_pair.end())
+                        for (const auto& smp : bp->second)
+                            if (smp.sta == i) lambda = std::max(lambda, smp.lambda);
+                    const double floor_ref = sq_cfg.ref_floor_frac * lambda;
+                    if (!step || !(lambda > 0.0)) {
+                        ++cc.if_td_centre_refsat_untested;
+                    } else {
+                        ++cc.if_td_centre_refsat_tested;
+                        if (std::abs(*step) <= floor_ref) {
+                            ++cc.if_td_centre_refsat_kept;
+                            emitEvent("T1_if_slip", "refsat_centre_keep", sat, stations[i].name,
+                                      std::abs(*step), floor_ref, "keep",
+                                      fmt::format("{};{};step={:.4f};gate={:.4f}", sig1, sig2,
+                                                  *step, mit->second));
+                            continue;
+                        }
+                        ++cc.if_td_centre_refsat_refloated;
+                        centre_tok = fmt::format(";centre_step={:.4f}", *step);
+                    }
+                }
                 const auto pact = refloat_pair(i, sat, sig1, sig2);
                 emitEvent("T1_if_slip", "refsat_reset", sat, stations[i].name,
                           std::nullopt, std::nullopt,
@@ -1607,7 +1763,7 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                               ? (pact.repaired ? "oracle_repair" : "oracle_keep")
                               : (carry_warm ? "refloat" : "diagnostic"),
                           (pact.handled ? (sig1 + ";" + sig2 + ";" + pact.detail)
-                                        : (sig1 + ";" + sig2)));
+                                        : (sig1 + ";" + sig2)) + centre_tok);
                 // Queue the satellite for a per-sat discontinuity mark at its next
                 // actual emit (network.mark_refsat_reset_disc, Edge-1 piece 2;
                 // refsat_mark_sats is null when off, which keeps the run

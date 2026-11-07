@@ -313,6 +313,8 @@ namespace GnssProcessor {
         int  clm_innov_window_ep{60};   ///< network.clock_level_innov_window_ep: the level innovation instrument's window, epochs
         bool pv_on{};                   ///< network.phase_visible_monitor: the phase-visible consistency instrument, measure-only
         bool nbp_on{};                  ///< network.apriori_source sp3_brdc_clock: the native broadcast clock a priori; the wire refers to the stamped ephemeris
+        bool apriori_track_on{};        ///< network.apriori_clock_track: the broadcast a priori follows the IF-TD columns (AprioriClockTrack.hpp)
+        bool apriori_track_pc_hold{};   ///< network.apriori_clock_track_phase_clock_hold: the phase-clock hold on the tracked a priori (run-end statement only)
         int  pv_window_ep{60};          ///< network.phase_visible_window_ep: its window, epochs
         /// network.carry_coupling_gauge_project: hold each (constellation, kind)
         /// coefficient sum of a truncated coupling row at its harvest value, so a departed

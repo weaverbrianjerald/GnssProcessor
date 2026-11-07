@@ -32,11 +32,15 @@ std::map<net::ArcTuple, RelevelPend> passAMwRefloatStage(const PassAView& v, boo
  *                      @c EpochEvents::Slip::sat_clock_step and the run's slip-QC
  *                      counters), non-null only when
  *                      @c network.cycle_slip.if_phase_td_sat_clock_event is armed.
+ * @param sat_centre_ptr The two-way centring sink (its minimum column size and the run's
+ *                      slip-QC counters), non-null only when
+ *                      @c network.cycle_slip.if_phase_td_sat_centre is armed.
  */
 void passAIfTdStage(const PassAView& v, RelevelEpochState* relevel_ptr,
                     std::map<net::ArcTuple, RelevelPend>& relevel_pend,
                     const CommonBandEpoch* common_band_ptr,
-                    IfTdSatClockSink* sat_clock_ptr);
+                    IfTdSatClockSink* sat_clock_ptr,
+                    IfTdSatCentreSink* sat_centre_ptr = nullptr);
 
 /**
  * @brief Arc-scoped GF jump trigger, then the AR search's suspect-corner stamps for every

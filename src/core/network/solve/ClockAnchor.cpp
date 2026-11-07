@@ -108,6 +108,21 @@ std::vector<double> clockAnchorPhaseClockWeights(const std::vector<double>& alph
     return w;
 }
 
+std::string clockAnchorGuardPartsCsv(const ClockAnchorPhiRow* row) {
+    // The phase statistic's parts for the guard trace: the pair, the clock's own innovation
+    // and standard deviation, then (weight, innovation, standard deviation) of each chosen
+    // phase-bias key, two keys at most; empty fields when the statistic was not formed.
+    if (!row || !row->ok) return ",,,,,,,,";
+    std::string out = fmt::format("{},{:.5f},{:.5f}", row->sigs, row->dclk, row->clk_sd);
+    for (std::size_t j = 0; j < 2; ++j) {
+        if (j < row->dpb.size())
+            out += fmt::format(",{:.4f},{:.5f},{:.5f}", row->w[j], row->dpb[j], row->pb_sd[j]);
+        else
+            out += ",,,";
+    }
+    return out;
+}
+
 std::map<std::string, ClockAnchorPhiRow> clockAnchorPhaseStatistic(
         const NetworkEstimator& est, const Eigen::VectorXd& x_s,
         const std::vector<NetworkEstimator::SharedPrior>& keys, const Eigen::MatrixXd& cov,
@@ -184,13 +199,19 @@ std::map<std::string, ClockAnchorPhiRow> clockAnchorPhaseStatistic(
             if (cc < 0 || cc >= x_s.size()) continue;
             double e = x_s(cc) - keys[static_cast<std::size_t>(s.ic)].value;
             double d = x_s(cc);                  // the posterior value
+            row.dclk   = e;
+            row.clk_sd = std::sqrt(std::max(0.0, cov(s.ic, s.ic)));
             fn.ka.emplace_back(s.ic, 1.0);
             fn.sc.emplace_back(cc, 1.0);
             for (std::size_t j = 0; j < s.ip.size(); ++j) {
                 const Eigen::Index pc = est.phaseBiasColumn(sat, s.sig[j]);
                 if (pc < 0 || pc >= x_s.size()) { ok = false; break; }
-                e -= w[j] * (x_s(pc) - keys[static_cast<std::size_t>(s.ip[j])].value);
+                const double dp = x_s(pc) - keys[static_cast<std::size_t>(s.ip[j])].value;
+                e -= w[j] * dp;
                 d -= w[j] * x_s(pc);
+                row.w.push_back(w[j]);
+                row.dpb.push_back(dp);
+                row.pb_sd.push_back(std::sqrt(std::max(0.0, cov(s.ip[j], s.ip[j]))));
                 fn.ka.emplace_back(s.ip[j], -w[j]);
                 fn.sc.emplace_back(pc, -w[j]);
             }
@@ -714,6 +735,7 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
                                              std::sqrt(pit->second.S), w_phi, pit->second.n_pb)
                                : std::string(",,,0"))
                     << ',' << ((bad_nis || bad_abs || forced) ? (r.anchored ? "trip" : "out") : "ok")
+                    << ',' << clockAnchorGuardPartsCsv(phi_ok ? &pit->second : nullptr)
                     << '\n';
             // The k derivation of §3 needs the realized distribution, not only its
             // max: the denominator √S shrinks as q tightens, so a fixed k means a

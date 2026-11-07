@@ -93,6 +93,21 @@ POSTURES = {
           "sim"),
     "gx": (SIM_GOLDEN, {"network": {"sat_health": "exclude"}}, "sim"),
     "f": (FIELD_GOLDEN, {}, "field"),
+    # Card BRD's tracked broadcast posture: n plus the IF-TD two-way centring and the tracked a
+    # priori (both fingerprinted, so a seed of its own); tk the same with the clock anchor's
+    # statistic test disarmed (card BRD2's candidate; clock_anchor_k is fingerprinted too).
+    "t": (SIM_GOLDEN, {"processing": {"active_systems": ["GPS"]},
+                       "files": {"internal_data_root": NATIVE_ROOT},
+                       "network": dict(REGIME_NET, apriori_source="sp3_brdc_clock", brdc_select="ttom",
+                                       apriori_clock_track=True,
+                                       cycle_slip={"if_phase_td_sat_centre": True})},
+          "sim"),
+    "tk": (SIM_GOLDEN, {"processing": {"active_systems": ["GPS"]},
+                        "files": {"internal_data_root": NATIVE_ROOT},
+                        "network": dict(REGIME_NET, apriori_source="sp3_brdc_clock", brdc_select="ttom",
+                                        apriori_clock_track=True, clock_anchor_k=1e6,
+                                        cycle_slip={"if_phase_td_sat_centre": True})},
+           "sim"),
 }
 
 
@@ -370,6 +385,10 @@ def cmd_make(a):
     rows = [r for r in m["rows"] if not a.rows or r["id"] in a.rows.split(",")]
     only = set(a.postures.split(",")) if a.postures else None
     postures = [p for p in m["postures"] if only is None or p in only]
+    # A posture named explicitly that the matrix does not list (a seed of another regime,
+    # such as t or tk) is graded on the matrix's rows and bars like the listed ones.
+    if only:
+        postures += [p for p in sorted(only) if p not in m["postures"] and p in POSTURES]
 
     def postures_of(r):
         """The matrix's postures for every row, plus the row's own extra ones (filtered)."""

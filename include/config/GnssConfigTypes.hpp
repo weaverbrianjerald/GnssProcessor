@@ -772,6 +772,39 @@ namespace GnssProcessor {
         /// (@c network.cycle_slip.if_phase_td_sat_clock_coherence; positive).
         double if_phase_td_sat_clock_coherence{ 0.25 };
 
+        // --- IF-TD two-way centring (satellite-common increment removed) ---------
+        /**
+         * @brief Arm (@c network.cycle_slip.if_phase_td_sat_centre) for centring the pooled
+         *        IF-TD test on each station's and each satellite's common between-epoch change
+         *        instead of on one network median per signal pair.
+         *
+         * The between-epoch IF phase double difference of satellite s at station i carries
+         * the increment of the a priori clock error of s and of the station's reference
+         * satellite: dd_i(s) = de_s - de_ref(i) + slip + noise.  With a precise a priori
+         * clock (the COD product) both increments are about a millimetre; with the broadcast
+         * clock (@c network.apriori_source @c sp3_brdc_clock) they are the broadcast
+         * polynomial's misfit to the real clock, a few centimetres at times, and one network
+         * median cannot remove them: every station that sees the satellite then flags it, and
+         * the reference gate fires at every station whose reference moved.  Armed, each signal
+         * pair's samples are median-polished as a station x satellite table (Tukey, reference
+         * samples excluded; a satellite's column is fitted only with at least
+         * @ref if_phase_td_sat_centre_min_stations non-reference samples), and the pooled
+         * test thresholds the residual dd - overall - row - column.  A reference-gate reset is
+         * re-tested with the reference satellite's own column: kept when the station's step
+         * less the clock part (median of the station's columns minus the reference's column)
+         * is within the gate's physical floor, refloated otherwise.  The common-band scope's
+         * flag preview centres the same way.
+         *
+         * Solve-affecting (it decides which arcs refloat); default off (every branch is the
+         * pre-knob one, byte-identical).  Not fingerprinted: no carried state changes meaning.
+         * Inert without @c network.cycle_slip.if_phase_td.
+         */
+        bool   if_phase_td_sat_centre{ false };
+        /// Fewest non-reference samples a satellite needs for its column to be fitted
+        /// (@c network.cycle_slip.if_phase_td_sat_centre_min_stations; at least 3).  A thinner
+        /// satellite keeps the station centring only.
+        int    if_phase_td_sat_centre_min_stations{ 4 };
+
         // --- Oracle slip response, simulation only (the level-preserving ceiling) ---
         /**
          * @brief Master arm (@c network.cycle_slip.oracle_relevel) for the

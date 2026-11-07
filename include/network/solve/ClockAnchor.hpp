@@ -182,6 +182,14 @@ struct ClockAnchorPhiRow {
     /// the functional's value changes definition when it does: a series of @c d_post is
     /// continuous only between changes of this string.
     std::string sigs;
+    // The functional's parts on the pass that computed it (measure-only: the guard trace
+    // reads them apart, so a trip's statistic is attributed to the clock's own innovation or
+    // to one phase-bias key's).  In the order of @ref sigs.
+    double dclk{0.0};            ///< the clock's innovation x_c - prior_c (m), before the median
+    double clk_sd{0.0};          ///< the clock key's folded standard deviation (m)
+    std::vector<double> w;       ///< the weight of each chosen signal
+    std::vector<double> dpb;     ///< each chosen phase-bias key's innovation x_p - prior_p (m)
+    std::vector<double> pb_sd;   ///< each chosen key's folded standard deviation (m)
 };
 
 /// Minimum-norm weights w over a satellite's phase-bias signals with sum w = 1 (blind to
@@ -196,6 +204,14 @@ std::vector<double> clockAnchorPhaseClockWeights(const std::vector<double>& alph
 /// P- - P+ (the folded block and the posterior, projected on the constellation contrast)
 /// floored at @p floor_m^2, and the constellation median removed.  A constellation with
 /// fewer than two such satellites has no contrast and yields no rows.
+/**
+ * @brief The phase statistic's parts as the guard trace's trailing columns (measure-only).
+ *
+ * @param row  The satellite's row this pass, or null when no statistic was formed.
+ * @return `sigs,dclk,clk_sd,w1,dpb1,pb1_sd,w2,dpb2,pb2_sd` (nine fields, empty when not formed).
+ */
+std::string clockAnchorGuardPartsCsv(const ClockAnchorPhiRow* row);
+
 std::map<std::string, ClockAnchorPhiRow> clockAnchorPhaseStatistic(
     const NetworkEstimator& est, const Eigen::VectorXd& x_s,
     const std::vector<NetworkEstimator::SharedPrior>& keys, const Eigen::MatrixXd& cov,

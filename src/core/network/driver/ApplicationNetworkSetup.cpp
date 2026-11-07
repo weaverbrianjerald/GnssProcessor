@@ -523,8 +523,9 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
     // is built here for every GPS satellite of the file, from 00:00 of the observation day
     // (a fixed origin: the level is an ignition draw, and a run-start origin would change
     // every satellite's level by its first step), so a warm resume recomputes the same
-    // table.  GPS only: Galileo's I/NAV and F/NAV records carry different clock pairs and
-    // the transmission-time rule alone would alternate between them.
+    // table.  GPS and Galileo: Galileo's I/NAV and F/NAV records carry different clock
+    // pairs and the transmission-time rule over both would alternate between them, so
+    // only the F/NAV records (the (E1, E5a) clock) are kept (BrdcClockApriori::aprioriRecords).
     if (config_.networkAprioriBrdcClock()) {
         if (product_cache.getClockCount() > 0) {
             log->error("Network: {} CLK sample(s) are loaded under "
@@ -534,10 +535,13 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                        product_cache.getClockCount());
             return 1;
         }
+        bool brdc_galileo = false;
         for (const std::string& sys : config_.getActiveSystems()) {
-            if (sys != systemName(timeReferenceSystem())) {
-                log->error("Network: network.apriori_source sp3_brdc_clock is GPS-only "
-                           "(processing.active_systems names '{}').", sys);
+            if (sys == systemName(System::Galileo)) {
+                brdc_galileo = true;
+            } else if (sys != systemName(timeReferenceSystem())) {
+                log->error("Network: network.apriori_source sp3_brdc_clock takes GPS and "
+                           "Galileo (processing.active_systems names '{}').", sys);
                 return 1;
             }
         }
@@ -548,12 +552,10 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
             return 1;
         }
         std::vector<BroadcastEphemeris> nav = RinexNavParser::parse(nav_path.string());
-        nav.erase(std::remove_if(nav.begin(), nav.end(),
-                                 [](const BroadcastEphemeris& e) { return !isTimeReference(e.system); }),
-                  nav.end());
+        nav = BrdcClockApriori::aprioriRecords(std::move(nav), brdc_galileo);
         if (nav.empty()) {
-            log->error("Network: parsed 0 GPS broadcast records from '{}'.",
-                       nav_path.string());
+            log->error("Network: parsed 0 GPS{} broadcast records from '{}'.",
+                       brdc_galileo ? " or Galileo F/NAV" : "", nav_path.string());
             return 1;
         }
         const double origin_s = BrdcClockApriori::dayOrigin(setup.window_t0_s);
@@ -561,15 +563,16 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
             std::move(nav), origin_s, setup.window_t1_s, BrdcSelectRule::Ttom);
         const auto& bs = setup.brdc_apriori->stats();
         log->info("Network: native broadcast clock a priori from '{}' (rule ttom): "
-                  "{} GPS records, {} selectable (healthy, with a transmission time), {} "
+                  "{} {} records, {} selectable (healthy, with a transmission time), {} "
                   "unhealthy, {} without a transmission time; {} satellites; offset table from "
                   "tow {:.0f} to {:.0f}: {} cut-overs, O range [{:.4f}, {:.4f}] m.",
-                  nav_path.filename().string(), bs.n_records, bs.n_staged, bs.n_unhealthy,
+                  nav_path.filename().string(), bs.n_records,
+                  brdc_galileo ? "GPS and Galileo F/NAV" : "GPS", bs.n_staged, bs.n_unhealthy,
                   bs.n_no_ttom, bs.n_sats, std::fmod(bs.origin_s, 604800.0),
                   std::fmod(bs.end_s, 604800.0), bs.n_switches, bs.offset_min_m,
                   bs.offset_max_m);
         if (bs.n_staged == 0) {
-            log->error("Network: no selectable GPS broadcast record in '{}'.",
+            log->error("Network: no selectable broadcast record in '{}'.",
                        nav_path.string());
             return 1;
         }

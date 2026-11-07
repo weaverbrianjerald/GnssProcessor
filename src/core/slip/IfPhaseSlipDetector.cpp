@@ -784,6 +784,7 @@ namespace GnssProcessor {
 
         const std::string ref_amb_key = StateKeys::makeAmbiguityKey(cs.ref_satellite, ref_data->phase_if_key);
         reset_keys.push_back(ref_amb_key);
+        last_ref_fire_median_m_[ref_amb_key] = median_dd;
 
         // An own-arm fire logs the unchanged text; only an inherited fire
         // adds a clause, so no existing log line changes under the knob.
@@ -877,6 +878,7 @@ namespace GnssProcessor {
         std::vector<std::string> reset_keys;
         last_if_jumps_.clear();
         last_if_jumps_all_.clear();
+        last_ref_fire_median_m_.clear();
         // Monotonic detect() index: the unit of the reference gate's persistence
         // run length.  Incremented on every call (inert while the gate
         // is disabled), so it does not depend on which constellations were

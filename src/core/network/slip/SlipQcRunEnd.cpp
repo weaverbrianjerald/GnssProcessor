@@ -962,6 +962,40 @@ static int networkIfTdSatClockRunEnd(const NetworkRunEndView& v) {
 }
 
 /**
+ * @brief Run-end section: the IF-TD two-way centring (@c network.cycle_slip.if_phase_td_sat_centre).
+ *
+ * The pools centred, the satellite columns fitted and left thin, the distribution of the
+ * column magnitudes (the satellites' common between-epoch change, which the one-way centre
+ * left in every station's sample), the flags the centring removed and added against the
+ * one-way centre at the same thresholds, and the reference-gate re-test (tested = kept +
+ * refloated).  0 pools centred with the knob armed is inert wiring.
+ *
+ * Gate: @c network.cycle_slip.if_phase_td and the knob both armed; prints nothing otherwise.
+ *
+ * @param v The run at its end (network/runend/RunEnd.hpp).
+ * @return 0 (this report does not set the exit code).
+ */
+static int networkIfTdSatCentreRunEnd(const NetworkRunEndView& v) {
+    const SlipQcConfig& sq = v.config.getNetworkConfig().slip_qc;
+    if (!v.config.networkCycleSlipIfPhaseTd() || !sq.if_phase_td_sat_centre) return 0;
+    const SlipQcCounters& cnt = v.run.engines.slip_qc.counters;
+    const auto& h = cnt.if_td_centre_col_hist;
+    v.log->info("Network (IF-TD two-way centring): {} pool(s) centred; {} satellite column(s) "
+                "fitted (min {} non-reference samples), {} left thin; |column| < 5 mm {}, 5-10 "
+                "mm {}, 10-20 mm {}, 20-50 mm {}, 50-100 mm {}, >= 100 mm {}, largest {:.4f} m.  "
+                "Against the one-way centre at the same thresholds: {} flag(s) removed, {} "
+                "added.  Reference-gate resets re-tested {} = {} kept + {} refloated; {} "
+                "untested (no step or no fitted column, the ordinary path).",
+                cnt.if_td_centre_pools, cnt.if_td_centre_cols,
+                sq.if_phase_td_sat_centre_min_stations, cnt.if_td_centre_thin,
+                h[0], h[1], h[2], h[3], h[4], h[5], cnt.if_td_centre_col_max_m,
+                cnt.if_td_centre_flags_removed, cnt.if_td_centre_flags_added,
+                cnt.if_td_centre_refsat_tested, cnt.if_td_centre_refsat_kept,
+                cnt.if_td_centre_refsat_refloated, cnt.if_td_centre_refsat_untested);
+    return 0;
+}
+
+/**
  * @brief Run-end section: the co-resumed share of the per-signal gap re-entry tier.
  *
  * States the population the share can act on (lines of sight re-acquired with at
@@ -1046,6 +1080,7 @@ int networkSlipQcRunEnd(const NetworkRunEndView& v) {
         networkSlipBandResponsesRunEnd,
         networkIfTdReseedRunEnd,
         networkIfTdSatClockRunEnd,
+        networkIfTdSatCentreRunEnd,
         networkSlipDatumStationRunEnd,
         networkSlipGapRefGateRunEnd,
         networkSlipGapCoresumedShareRunEnd

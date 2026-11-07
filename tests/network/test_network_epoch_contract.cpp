@@ -56,6 +56,7 @@
 #include "network/diag/Leveling.hpp"
 #include "network/qc/Mdb.hpp"
 #include "network/assembly/MeasurementAdmission.hpp"
+#include "network/assembly/AprioriClockTrack.hpp"
 #include "network/assembly/MultiGnss.hpp"
 #include "network/slip/OraclePin.hpp"
 #include "network/assembly/ParamInventory.hpp"
@@ -139,6 +140,8 @@ using SigBuildSignalRoster = void (*)(NetworkRun&, const NetworkEpoch&);   // W1
 static_assert(std::is_same_v<decltype(static_cast<SigBuildSignalRoster>(&networkBuildSignalRoster)), SigBuildSignalRoster>);
 using SigParamInventoryNoteSatellites = void (*)(NetworkRun&, const NetworkEpoch&);   // W4 direct
 static_assert(std::is_same_v<decltype(static_cast<SigParamInventoryNoteSatellites>(&networkParamInventoryNoteSatellites)), SigParamInventoryNoteSatellites>);
+using SigAprioriClockTrack = void (*)(NetworkRun&, const NetworkEpoch&, EpochPassA&);   // W2 adapter
+static_assert(std::is_same_v<decltype(static_cast<SigAprioriClockTrack>(&networkAprioriClockTrack)), SigAprioriClockTrack>);
 using SigSignalIntegrity = void (*)(NetworkRun&, const NetworkEpoch&, EpochPassA&, NetworkSlipFunnel&);   // W2 adapter
 static_assert(std::is_same_v<decltype(static_cast<SigSignalIntegrity>(&networkSignalIntegrity)), SigSignalIntegrity>);
 using SigMeasurementAdmission = void (*)(NetworkRun&, const NetworkEpoch&, EpochPassA&, NetworkSlipFunnel&, EpochEvents&);   // W2 adapter

@@ -213,6 +213,23 @@ per-signal wire, not BeiDou; implications for BeiDou course A, PIV and the COD-r
 site 0.02 to 0.07 m, no consumer above 1 m after hour 1 except the golden's ARHT00ATA for 26 min on DOY 130; candidate against golden: census
 paired median -0.8 to -3.8 mm, no site worse than +2.9 mm, ARHT00ATA -0.08 to -0.13 m on four days; nothing armed).
 
+[BRD](refound/BRD_broadcast_referenced_level_2026-11-02.md), the network referenced to the broadcast clock, SP3 orbits the only precise product
+(closed, 2026-11-03: the cost against the CODE-anchored GPS golden reproduced, +0.021 and +0.027 m at WTZZ00DEU over hours 2 to 6 on DOY 129
+and 132; two causes measured, the IF-TD test's one-way centring and the clock time update's broadcast prior mean; two default-off knobs bring
+the receiver to -0.008 and +0.008 m and the census from +0.013 to +0.007 m pooled: DOY 129 passes, DOY 132 fails; GPS + Galileo needs the
+receiver's inter-system offset re-estimated every epoch; nothing armed).
+[BRD2](refound/BRD2_broadcast_remainder_hold_days_2026-11-03.md), card BRD's owed items: the DOY-132 remainder, the phase-clock hold on the
+tracked a priori, DOY 130 and 131 (closed, 2026-11-03: DOY 130 and 131 pass the day bars, the four days fail only the pooled share, 25 % of
+site-days worse; the DOY-132 remainder is the clock anchor's statistic decouplings through the smoothed hold's bridge, and with that test off
+all four days pass, pooled +0.0021 m, pending a satellite clock step test; the phase-clock hold on the tracked a priori fails, users +0.3 to
++0.6 m; nothing armed).
+[BRD3](refound/BRD3_anchor_decoupling_clock_share_2026-11-06.md), card BRD2's remainder read apart: the smoothed hold's bridge, the
+clock-space share of the statistic trips, and the injected clock step on the tracked posture (open, pre-registered 2026-11-06: against
+CODE the bridge drops the LOOSE clock's own excursion as much as the a priori's drift and is the right member on the CODE regime, so no
+bridge member recovers the remainder, the decoupling is the carrier; every trip of DOY 132 is a phase-bias-key event with clock-space
+|w| at most 0.57 where a true step reads 7.9; the next build, a clock-share requirement on the trip, pre-registered with frozen bars;
+measure-only trace columns and the tracked sim postures built; nothing armed).
+
 ### `resume-seam` — [topics/resume-seam.md](topics/resume-seam.md)
 
 | card | one line | status | last dated |

@@ -359,6 +359,13 @@ struct SatelliteState {
     /// trace and the run-end switch count.  Empty unless the native broadcast clock a
     /// priori is armed.  Was @c NetworkCarryState::nbp_prev_iode.  ColdStart.
     std::optional<int> nbp_prev_iode;
+    /// The tracked broadcast a priori (network.apriori_clock_track): the satellite's track U
+    /// (m), the sum of its IF-TD columns' increments; the a priori of the solve is a + U and
+    /// the wire adds U after the hold.  Empty unless armed.  ColdStart (fingerprinted).
+    std::optional<double> apriori_track_m;
+    /// Consecutive epochs the tracked satellite had no IF-TD column (its track held); the
+    /// resumption edge reads it.  ColdStart.
+    std::optional<int> apriori_track_paused;
     /// The clock-monitor refloat flag at the last stash: hard-refloat mode skip-stashes the
     /// satellite, so the D2 stash cannot carry the flag.  Was
     /// @c NetworkCarryState::prev_clock_refloat_sats.  Record QR.

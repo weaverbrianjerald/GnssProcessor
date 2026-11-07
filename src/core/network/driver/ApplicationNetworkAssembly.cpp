@@ -323,7 +323,14 @@ void Application::networkPassASlipScan_(NetworkRun& run, const NetworkEpoch& ep,
     IfTdSatClockSink sat_clock_sink{slip_ev.sat_clock_step, qc.counters};
     IfTdSatClockSink* sat_clock_ptr =
         config_.getNetworkConfig().slip_qc.if_phase_td_sat_clock_event ? &sat_clock_sink : nullptr;
-    passAIfTdStage(v, relevel_ptr, relevel_pend, common_band_ptr, sat_clock_ptr);
+    // The two-way centring sink (its parameter and the slip-QC counters): nullptr when
+    // the knob is off, so the driver centres nothing (byte-identical).
+    const SlipQcConfig& sq_centre = config_.getNetworkConfig().slip_qc;
+    IfTdSatCentreSink sat_centre_sink{sq_centre.if_phase_td_sat_centre_min_stations, qc.counters,
+                                      ctx.knobs.apriori_track_on ? &slip_ev.sat_centre_col : nullptr};
+    IfTdSatCentreSink* sat_centre_ptr =
+        sq_centre.if_phase_td_sat_centre ? &sat_centre_sink : nullptr;
+    passAIfTdStage(v, relevel_ptr, relevel_pend, common_band_ptr, sat_clock_ptr, sat_centre_ptr);
     passAGfArcJumpStage(v, relevel_ptr, relevel_pend, common_band_ptr);
     passAWindupRestartStage(v, relevel_ptr, relevel_pend);
     passAGapReentryStage(v, relevel_ptr, relevel_pend);

@@ -85,7 +85,8 @@ std::map<net::ArcTuple, RelevelPend> passAMwRefloatStage(const PassAView& v, boo
 void passAIfTdStage(const PassAView& v, RelevelEpochState* relevel_ptr,
                     std::map<net::ArcTuple, RelevelPend>& relevel_pend,
                     const CommonBandEpoch* common_band_ptr,
-                    IfTdSatClockSink* sat_clock_ptr) {
+                    IfTdSatClockSink* sat_clock_ptr,
+                    IfTdSatCentreSink* sat_centre_ptr) {
     const SyncedEpoch& se = v.se;
     NetworkRunContext& ctx = v.ctx;
     NetworkRunTraces& traces = v.traces;
@@ -134,7 +135,10 @@ void passAIfTdStage(const PassAView& v, RelevelEpochState* relevel_ptr,
                           // Satellite clock event sink: null unless
                           // network.cycle_slip.if_phase_td_sat_clock_event armed the run,
                           // so the off path never reaches the classification.
-                          sat_clock_ptr);
+                          sat_clock_ptr,
+                          // Two-way centring sink: null unless
+                          // network.cycle_slip.if_phase_td_sat_centre armed the run.
+                          sat_centre_ptr);
 }
 
 void passAGfArcJumpStage(const PassAView& v, RelevelEpochState* relevel_ptr,

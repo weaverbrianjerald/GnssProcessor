@@ -2020,6 +2020,41 @@ namespace GnssProcessor {
         NetworkBrdcSelect networkBrdcSelect() const { return network_brdc_select_; }
 
         /**
+         * @brief The broadcast a priori clock follows the network's own phase
+         *        (@c network.apriori_clock_track).
+         *
+         * Each epoch every satellite's a priori moves by the satellite-common between-epoch
+         * change that the IF-TD two-way centring measures, before the station rows are built,
+         * and the wire adds the track after the hold (network/assembly/AprioriClockTrack.hpp).
+         * Requires @c network.apriori_source @c sp3_brdc_clock and
+         * @c network.cycle_slip.if_phase_td_sat_centre (refused at load otherwise).  Default
+         * off; fingerprinted, fresh convergence only.
+         *
+         * @return True when armed.
+         */
+        bool networkAprioriClockTrack() const { return network_apriori_clock_track_; }
+
+        /**
+         * @brief The phase-clock hold on the tracked broadcast a priori
+         *        (@c network.apriori_clock_track_phase_clock_hold).
+         *
+         * Under @c network.apriori_source @c sp3_brdc_clock the loader requires the smoothed
+         * hold and refuses the phase-clock hold (@c network.emit_pb_hold_phase_clock), which is
+         * valid only with a precise a priori clock.  With the tracked a priori
+         * (@c network.apriori_clock_track) this key makes the loader accept the phase-clock
+         * hold in its place, and require it.  Nothing else changes: the hold's transfer runs on
+         * the clocks about to be emitted, before the broadcast wire adds the track U, so within a
+         * generation the delivered phase-visible clock is the tracked a priori brdc(iode) + O + U
+         * plus the constellation's common term.  Refused at load without the track.  Default
+         * off; emit-side (the solve, the C and the B records are unchanged), not fingerprinted.
+         *
+         * @return True when armed.
+         */
+        bool networkAprioriClockTrackPhaseClockHold() const {
+            return network_apriori_clock_track_phase_clock_hold_;
+        }
+
+        /**
          * @brief A-priori satellite-clock anchor pseudo-observation σ (m) for the
          *        network producer (@c network.apriori_clock_anchor_sigma_m).
          *
@@ -8779,6 +8814,8 @@ namespace GnssProcessor {
         int  network_cb_admission_census_epochs_{15};     ///< Census window length K (epochs from the loop start; CB-ADM); clamped to the available span.
         bool network_cold_clock_seed_{false};             ///< Pre-seed a cold per-station receiver clock from the median GPS code residual before the first ambiguity seed (removes the network cold-start clock leak into cold ambiguity seeds).  Default off => byte-identical.
         NetworkAprioriSource network_apriori_source_{NetworkAprioriSource::Sp3}; ///< Producer a-priori orbit/clock source (network.apriori_source; RTF-1); Sp3 (default) = precise SP3/CLK identity (byte-identical), BrdcRts = broadcast eph + external RTS orbits.  Read by the network producer setup.
+        bool network_apriori_clock_track_{false};  ///< The broadcast a priori tracked by the IF-TD columns (network.apriori_clock_track).
+        bool network_apriori_clock_track_phase_clock_hold_{false};  ///< The phase-clock hold admitted on the tracked a priori (network.apriori_clock_track_phase_clock_hold).
         NetworkBrdcSelect network_brdc_select_{NetworkBrdcSelect::Ttom};  ///< Ephemeris selection rule of the native broadcast clock a priori (network.brdc_select); read only under apriori_source sp3_brdc_clock.
         double network_apriori_clock_anchor_sigma_m_{0.0};  ///< A-priori satellite-clock anchor pseudo-obs σ (m; RTF-1/D6); 0 (default) = auto (mode-resolved at the producer), explicit positive wins.  Read through resolveNetworkAprioriClockAnchorSigmaM().
         bool   network_phase_leveling_{false};            ///< Carry per-station carrier-phase ambiguities across epochs (phase-leveling, Increment 1); off = byte-identical absolute solve.

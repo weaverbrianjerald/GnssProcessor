@@ -264,6 +264,7 @@ add_library(gnss_core STATIC
     src/core/network/slip/SlipFunnel.cpp
     src/core/network/solve/ChainDatum.cpp
     src/core/network/solve/AnchorHygiene.cpp
+    src/core/network/assembly/AprioriClockTrack.cpp
     src/core/network/assembly/SignalIntegrity.cpp
     src/core/network/assembly/MeasurementAdmission.cpp
     src/core/network/qc/Raim.cpp
@@ -523,6 +524,7 @@ add_executable(gnss_tests
     tests/network/test_network_combined_sigma.cpp
     tests/test_rinex_nav_parser.cpp
     tests/test_brdc_clock_apriori.cpp
+    tests/test_brdc_apriori_galileo.cpp
     tests/test_rinex_zero_sentinel.cpp
     tests/test_rinex3_blank_prn.cpp
     tests/test_rinex3_phase_shift.cpp
@@ -768,6 +770,9 @@ add_executable(gnss_tests
     tests/network/test_network_entities_records.cpp
     tests/network/test_network_epoch_observers.cpp
     tests/network/test_network_sat_clock_event.cpp
+    tests/network/test_network_iftd_sat_centre.cpp
+    tests/network/test_network_apriori_clock_track.cpp
+    tests/network/test_network_apriori_track_phase_clock_hold.cpp
     tests/network/test_network_solve_skip.cpp
     tests/network/test_network_we_choice.cpp
     tests/network/test_network_within_epoch_culprits.cpp

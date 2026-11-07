@@ -83,6 +83,20 @@ BrdcClockApriori::BrdcClockApriori(std::vector<BroadcastEphemeris> records, doub
     buildTable_();
 }
 
+std::vector<BroadcastEphemeris> BrdcClockApriori::aprioriRecords(std::vector<BroadcastEphemeris> nav,
+                                                                 bool galileo) {
+    nav.erase(std::remove_if(nav.begin(), nav.end(),
+                             [galileo](const BroadcastEphemeris& e) {
+                                 if (e.system == System::GPS) return false;
+                                 if (e.system == System::Galileo)
+                                     return !(galileo && e.data_source >= 0
+                                              && (e.data_source & kGalileoFnavBit) != 0);
+                                 return true;
+                             }),
+              nav.end());
+    return nav;
+}
+
 double BrdcClockApriori::dayOrigin(double t_s) {
     return std::floor(t_s / 86400.0) * 86400.0;
 }

@@ -314,15 +314,45 @@ namespace GnssProcessor {
         // and refuses the phase-clock hold, which is valid only with a precise a
         // priori clock product (LAH under the broadcast clock reads
         // 1.191 m).  On the resolved values, beside SMH's own refusals.
+        // The tracked a priori may carry the phase-clock hold in its place when
+        // network.apriori_clock_track_phase_clock_hold asks for it: within a generation the
+        // phase-visible clock is then the tracked a priori, brdc(iode) + O + U.
+        const bool phase_clock_on_track =
+            network_apriori_clock_track_ && network_apriori_clock_track_phase_clock_hold_;
         if (network_apriori_source_ == NetworkAprioriSource::Sp3BrdcClock) {
-            if (network_config_.emit_pb_hold_phase_clock)
-                throw std::runtime_error("network.apriori_source sp3_brdc_clock refuses "
-                                         "network.emit_pb_hold_phase_clock: the phase-clock hold "
-                                         "is valid only with a precise a priori clock product");
-            if (!(network_config_.emit_pb_hold && network_config_.emit_pb_hold_smoothed))
-                throw std::runtime_error("network.apriori_source sp3_brdc_clock requires "
-                                         "network.emit_pb_hold with network.emit_pb_hold_smoothed "
-                                         "(the smoothed hold, the hold the posture was measured with)");
+            if (phase_clock_on_track) {
+                if (!(network_config_.emit_pb_hold && network_config_.emit_pb_hold_phase_clock))
+                    throw std::runtime_error("network.apriori_clock_track_phase_clock_hold requires "
+                                             "network.emit_pb_hold with "
+                                             "network.emit_pb_hold_phase_clock (the hold it admits "
+                                             "in place of the smoothed hold)");
+            } else {
+                if (network_config_.emit_pb_hold_phase_clock)
+                    throw std::runtime_error("network.apriori_source sp3_brdc_clock refuses "
+                                             "network.emit_pb_hold_phase_clock: the phase-clock hold "
+                                             "is valid only with a precise a priori clock product");
+                if (!(network_config_.emit_pb_hold && network_config_.emit_pb_hold_smoothed))
+                    throw std::runtime_error("network.apriori_source sp3_brdc_clock requires "
+                                             "network.emit_pb_hold with network.emit_pb_hold_smoothed "
+                                             "(the smoothed hold, the hold the posture was measured with)");
+            }
+        }
+        if (network_apriori_clock_track_phase_clock_hold_ && !network_apriori_clock_track_)
+            throw std::runtime_error("network.apriori_clock_track_phase_clock_hold requires "
+                                     "network.apriori_clock_track (it admits the phase-clock hold "
+                                     "on the tracked broadcast a priori only)");
+        // The tracked a priori moves the broadcast clock by the IF-TD columns: it needs the
+        // broadcast a priori and the two-way centring that fits them.
+        if (network_apriori_clock_track_) {
+            if (network_apriori_source_ != NetworkAprioriSource::Sp3BrdcClock)
+                throw std::runtime_error("network.apriori_clock_track requires "
+                                         "network.apriori_source sp3_brdc_clock (it tracks the "
+                                         "broadcast a priori)");
+            if (!(network_cycle_slip_if_phase_td_ && network_config_.slip_qc.if_phase_td_sat_centre))
+                throw std::runtime_error("network.apriori_clock_track requires "
+                                         "network.cycle_slip.if_phase_td with "
+                                         "network.cycle_slip.if_phase_td_sat_centre (the columns "
+                                         "it follows)");
         }
 
         // The fixed-cycle fold's interlocks, here for the reason given for the
@@ -4002,6 +4032,30 @@ namespace GnssProcessor {
                           "wire's clock refers to the stamped ephemeris (C_wire = C_est + O, "
                           "iode=k).  Fingerprinted; fresh convergence only.", sel);
         }
+        // The broadcast a priori tracked by the IF-TD columns (card BRD): read only under
+        // sp3_brdc_clock; its requirements are refused at the end of the section, on the
+        // resolved values.  Changes the solve; fingerprinted.
+        network_apriori_clock_track_ = jval<bool>(json, "network.apriori_clock_track",
+                                                  "apriori_clock_track", false);
+        if (network_apriori_clock_track_)
+            log->info("Network: network.apriori_clock_track = true: each satellite's broadcast "
+                      "a priori follows the satellite-common between-epoch change the IF-TD "
+                      "two-way centring measures (the network's own phase), before the station "
+                      "rows; the wire adds the track after the hold.  Fingerprinted; fresh "
+                      "convergence only.");
+        // The phase-clock hold on the tracked a priori: read here, refused at the end of the
+        // section on the resolved values (it needs the track and the phase-clock hold).
+        // Emit-side; not fingerprinted.
+        network_apriori_clock_track_phase_clock_hold_ =
+            jval<bool>(json, "network.apriori_clock_track_phase_clock_hold",
+                       "apriori_clock_track_phase_clock_hold", false);
+        if (network_apriori_clock_track_phase_clock_hold_)
+            log->info("Network: network.apriori_clock_track_phase_clock_hold = true: the "
+                      "phase-clock hold (network.emit_pb_hold_phase_clock) replaces the smoothed "
+                      "hold on the tracked broadcast a priori; within a generation the delivered "
+                      "phase-visible clock is brdc(iode) + O + U plus the constellation's common "
+                      "term: it follows the track, the sum of the per-epoch IF-TD columns.  "
+                      "Emit-side.");
         // A-priori clock anchor σ (m; D6): 0 = auto (resolved per mode at the
         // producer), an explicit positive value wins.  Parsed and stored only here.
         network_apriori_clock_anchor_sigma_m_ = jval<double>(
@@ -5997,6 +6051,40 @@ namespace GnssProcessor {
                               sq.if_phase_td_sat_clock_min_stations,
                               sq.if_phase_td_sat_clock_min_fraction,
                               sq.if_phase_td_sat_clock_coherence);
+            }
+            // IF-TD two-way centring: the pooled test thresholds the residual of a station x
+            // satellite median polish, so a satellite's common between-epoch change (the a
+            // priori clock's misfit) is not read as a slip at every station.  Changes the
+            // solve; default off; not fingerprinted.
+            sq.if_phase_td_sat_centre =
+                jval<bool>(json, "network.cycle_slip.if_phase_td_sat_centre",
+                           "network_cycle_slip_if_phase_td_sat_centre", false);
+            sq.if_phase_td_sat_centre_min_stations =
+                jval<int>(json, "network.cycle_slip.if_phase_td_sat_centre_min_stations",
+                          "network_cycle_slip_if_phase_td_sat_centre_min_stations", 4);
+            if (sq.if_phase_td_sat_centre_min_stations < 3) {
+                log->error("Network (IF-TD two-way centring): "
+                           "network.cycle_slip.if_phase_td_sat_centre_min_stations = {} is below "
+                           "3 (a median of two samples moves with either); the default 4 is "
+                           "used.", sq.if_phase_td_sat_centre_min_stations);
+                sq.if_phase_td_sat_centre_min_stations = 4;
+            }
+            if (sq.if_phase_td_sat_centre) {
+                if (!network_cycle_slip_if_phase_td_)
+                    log->warn("Network (IF-TD two-way centring): "
+                              "network.cycle_slip.if_phase_td_sat_centre is armed without "
+                              "network.cycle_slip.if_phase_td.  No IF-TD detector is built, so "
+                              "nothing is centred: the knob is INERT.");
+                else
+                    log->info("Network (IF-TD two-way centring): ON (a satellite column needs "
+                              "{} non-reference samples).  Each signal pair's between-epoch "
+                              "double differences are median-polished as a station x satellite "
+                              "table and the pooled test thresholds the residual, so a "
+                              "satellite's common change (the a priori clock's misfit) is not a "
+                              "slip at every station; a reference-gate reset is kept when the "
+                              "reference's own column explains the station's step.  "
+                              "SOLVE-AFFECTING; not fingerprinted.",
+                              sq.if_phase_td_sat_centre_min_stations);
             }
             // Sim-only oracle slip response (include/network/slip/SlipOracle.hpp): shifts
             // the carried level by the true integer jump instead of freeing the arc, to
