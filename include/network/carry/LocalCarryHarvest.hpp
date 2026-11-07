@@ -46,6 +46,12 @@
  *   7. The receiver code-bias census and carry run outside the warm bracket: the carry must
  *      work on the carry_invariant lineage without phase leveling.
  *
+ * network.parallel_carry_harvest computes the costly kernels ahead of this walk, in parallel: the
+ * handover ledger's back-substitutions and variances, and every carried column's regression and
+ * coupling row (networkHarvestColumnsAhead, read through networkHarvestColumn).  The kernels read
+ * only the solved normal equations and the border, so none of the constraints above moves: every
+ * write to the carried tables, counters, traces and marks stays in this walk, in its order.
+ *
  * Each function opens with generated bindings (scripts/nom_hv1_cut.py): the run, epoch and
  * harvest values it reads, under the names the code below them uses.
  */
@@ -66,6 +72,17 @@ struct EpochEvents;   // network/driver/Epoch.hpp
 
 struct NetworkRun;
 struct NetworkEpoch;
+class NetworkNormalEquations;   // network/solve/NormalEquations.hpp
+
+/// One carried column's harvest computed ahead of the serial walk
+/// (network.parallel_carry_harvest): what networkHarvestColumn would compute for it.
+struct HarvestColumnAhead {
+    bool   ready{false};       ///< Computed and not read yet; a column left false is computed by the walk.
+    bool   with_cross{false};  ///< Computed with the station's block columns (@c cross holds their terms).
+    double cond_var{-1.0};     ///< The pure conditional variance (N_rr^-1)_cc.
+    std::vector<CoupledShared> coupling;  ///< The sparsified, identity-keyed regression on the border.
+    Eigen::VectorXd cross;     ///< (N_rr^-1)_{c c_j} over the station's block columns.
+};
 
 /// The shared border every carried column of one warm epoch regresses on (formerly four
 /// locals of networkHarvestLocalCarries).  Built by networkHarvestBorderBegin, read by
@@ -73,9 +90,13 @@ struct NetworkEpoch;
 /// last row.  Empty on the legacy diagonal path (no network.carry_conditional_coupling).
 struct HarvestBorder {
     std::map<Eigen::Index, CoupledShared> col2desc;  ///< Shared column -> its identity (clock, phase bias, code bias, SH coefficient).
+    std::vector<const CoupledShared*> desc_of_col;   ///< The same identities by shared column (null: not in the enumerated set); the row walk's constant-time lookup into @c col2desc.
     Eigen::MatrixXd      cov_df;  ///< The shared covariance in the datum frame: datum-pinned and ensemble-gauge columns zeroed.
     ClockCloneHarvest    ccl_h;   ///< Clock clones: the clones' posterior regression on the rest of the border.
     SharedHistoryHarvest shx_h;   ///< Shared history: where each harvested row's entry was written.
+    /// The columns computed ahead of the walk, by estimator slot then local column; empty unless
+    /// network.parallel_carry_harvest acts this epoch (networkHarvestColumnsAhead).
+    std::vector<std::vector<HarvestColumnAhead>> ahead;
 };
 
 /// The segments of a station's F3 harvest block, in the order their columns are appended.
@@ -192,6 +213,59 @@ std::pair<double, std::vector<CoupledShared>> networkHarvestColumn(
  */
 StationHarvestBlock networkHarvestStationBlock(NetworkRun& run, const NetworkEpoch& ep,
                                                HarvestBorder& border, std::size_t i);
+
+/**
+ * @brief A carried column's regression row as the carried coupling: the entries above the
+ *        sparsification threshold of the row's largest entry, identity-keyed, with the shared
+ *        estimate and the datum-frame variance of each kept column.
+ * @param row    The regression row over the shared border.
+ * @param border This harvest's border (identities, datum-frame covariance); only read.
+ * @param x_s    The shared estimates.
+ * @return The kept terms, in column order.
+ */
+std::vector<CoupledShared> networkHarvestCouplingRow(const Eigen::VectorXd& row,
+                                                     const HarvestBorder& border,
+                                                     const Eigen::VectorXd& x_s);
+
+/**
+ * @brief Whether the harvest's kernels are computed ahead of its walk: the key
+ *        (network.parallel_carry_harvest) with the per-station parallel path active and Eigen
+ *        pinned to one thread (the epoch loop's pin, so no kernel nests threads).
+ * @param run The run (the configuration, the setup's thread count).
+ * @return True when the regions of this stage may run.
+ */
+bool networkHarvestParallel(const NetworkRun& run);
+
+/**
+ * @brief One station's block columns computed into their slots, serially.  Reads only its
+ *        arguments and catches everything: a column that fails stays unset and the walk computes
+ *        it, as it computes any column left out.  The parallel region's iteration, and a unit
+ *        test's reference.
+ * @param kernel  The solved normal equations.
+ * @param border  This harvest's border; only read.
+ * @param x_s     The shared estimates.
+ * @param est_idx The station's estimator slot.
+ * @param sb      The station's layout (the columns, the block).
+ * @param slots   The station's slots, indexed by local column.
+ */
+void networkHarvestStationColumnsAhead(const NetworkNormalEquations& kernel,
+                                       const HarvestBorder& border, const Eigen::VectorXd& x_s,
+                                       std::size_t est_idx, const StationHarvestBlock& sb,
+                                       std::vector<HarvestColumnAhead>& slots) noexcept;
+
+/**
+ * @brief Compute every station's block columns ahead of the serial walk, each into its own slot
+ *        of @c border.ahead, in parallel over stations (network.parallel_carry_harvest).  The walk
+ *        reads each slot once through networkHarvestColumn, in its own order, so every write to
+ *        the carried tables stays serial and in station order.
+ * @param run    The run (the kernel, the thread count, the counters).
+ * @param ep     This epoch (solve.x_s, assembly.est_index_of).
+ * @param blocks Every station's layout (networkHarvestStationBlock).
+ * @param border This harvest's border; @c ahead is written.
+ */
+void networkHarvestColumnsAhead(NetworkRun& run, const NetworkEpoch& ep,
+                                const std::vector<StationHarvestBlock>& blocks,
+                                HarvestBorder& border);
 
 /**
  * @brief Close the border: the clones' within-station covariance into the F3 blocks, then the

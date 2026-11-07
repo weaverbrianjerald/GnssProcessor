@@ -21,8 +21,11 @@
 #include <fmt/format.h>
 
 #include <algorithm>
+#include <array>
+#include <chrono>
 #include <cmath>
 #include <deque>
+#include <exception>
 #include <limits>
 #include <map>
 #include <memory>
@@ -37,6 +40,256 @@
 #include "rinex/MultiRinexSync.hpp"
 
 namespace GnssProcessor {
+
+namespace {
+
+/// What one station's trace rows read: the solved kernel, the datum frame and the epoch's names.
+/// Every member is only read, so a row builder may run inside a parallel region.
+struct IonoDiagRead {
+    const NetworkNormalEquations& kernel;
+    const Eigen::MatrixXd& frame;       ///< The shared covariance in the datum-as-known frame.
+    const Eigen::VectorXd& x_s;
+    const SyncedEpoch& se;
+    const std::vector<NetStation>& stations;
+    const std::vector<int>& est_index_of;
+    const std::vector<StationAssembly>& asm_res;
+    const std::vector<std::vector<PppObservation>>& modeled;
+    bool iono_on, zwd_on, tgrad_on, rx_on;   ///< Which of the traces are open.
+    bool time_calls;    ///< Read the clock around the kernel calls (serially, with the timing on).
+};
+
+/// One station's rows of this epoch, in the bytes each trace receives, and its kernel calls for the
+/// section timers' covariance-consumer book (written serially).  Inside a parallel region the book
+/// gets the calls without times: the region's wall stays in the block's net.
+struct IonoDiagStationRows {
+    std::string iono, zwd, tgrad, rx;
+    std::array<double, 8> consumer_ms{};
+    std::size_t n_consumer{0};
+    std::exception_ptr error;           ///< What the builder threw; rethrown at the station's write.
+};
+
+/// Book one kernel call in @p rows, with its wall time when @p time is set.
+struct IonoDiagCallTimer {
+    IonoDiagStationRows& rows;
+    bool time;
+    std::chrono::steady_clock::time_point t0;
+    IonoDiagCallTimer(IonoDiagStationRows& r, bool time_calls) : rows(r), time(time_calls) {
+        if (time) t0 = std::chrono::steady_clock::now();
+    }
+    ~IonoDiagCallTimer() {
+        if (rows.n_consumer >= rows.consumer_ms.size()) return;
+        rows.consumer_ms[rows.n_consumer++] =
+            time ? std::chrono::duration<double, std::milli>(
+                       std::chrono::steady_clock::now() - t0).count()
+                 : 0.0;
+    }
+};
+
+Eigen::VectorXd reconstructTimed(const IonoDiagRead& in, std::size_t slot, IonoDiagStationRows& rows) {
+    IonoDiagCallTimer t(rows, in.time_calls);
+    return in.kernel.reconstructStation(slot, in.x_s);
+}
+
+Eigen::VectorXd varianceTimed(const IonoDiagRead& in, std::size_t slot,
+                              const std::vector<Eigen::Index>& cols, IonoDiagStationRows& rows) {
+    IonoDiagCallTimer t(rows, in.time_calls);
+    return in.kernel.reconstructStationCovarianceDiag(slot, cols, in.frame, /*carry_aware=*/false);
+}
+
+// --- Network-estimated slant ionosphere (viz trace) -----------------
+// Back-substitute the station's local nuisance block (the slant iono states live there) and emit
+// one row per satellite at the measured elevation/azimuth, so the pyviz viewer can map each value
+// to its ionospheric pierce point.  Gated by network.trace_ionosphere.
+void ionoRows(const IonoDiagRead& in, std::size_t i, IonoDiagStationRows& rows) {
+    Eigen::VectorXd x_r;
+    try {
+        x_r = reconstructTimed(in, static_cast<std::size_t>(in.est_index_of[i]), rows);
+    } catch (...) { return; }
+    // Elevation/azimuth per satellite from the modeled observations
+    // (first observation of each satellite carries the geometry).
+    std::map<std::string, std::pair<double, double>> elaz;
+    for (const auto& o : in.modeled[i])
+        elaz.emplace(o.satellite, std::make_pair(o.elevation, o.azimuth));
+    const auto& h2l = in.asm_res[i].h2local;
+    const StationParams& params = in.stations[i].params;
+    for (const auto& [sat, slot_idx] : params.iono) {
+        const auto hit = h2l.find(slot_idx);
+        if (hit == h2l.end()) continue;
+        if (hit->second < 0
+            || static_cast<Eigen::Index>(hit->second) >= x_r.size())
+            continue;
+        const std::string sat_text = sat.str();
+        const auto e = elaz.find(sat_text);
+        if (e == elaz.end()) continue;
+        // Frame of the columns.  `iono_m` is the reconstructed correction x_r
+        // alone.  The per-LOS iono state is seeded at allocation, so x_r is a
+        // correction to that seed, not the absolute slant ionosphere.  The
+        // column stays as it is because pyviz consumes it; the absolute value
+        // is appended after it, on the ZWD block's pattern below: x_lin from
+        // the station's own state vector, iono_total_m = x_lin + x_r.  Grade
+        // `iono_total_m`, not `iono_m`.
+        const double x_lin = params.slots[static_cast<std::size_t>(slot_idx)].x_lin;
+        const double iono_total = x_lin + x_r(hit->second);
+        rows.iono += fmt::format("{},{:.3f},{},{},{:.4f},{:.2f},{:.2f},{:.6f},{:.6f}\n",
+                                 in.se.time.week, in.se.time.tow, in.stations[i].name, sat_text,
+                                 x_r(hit->second), e->second.first, e->second.second, x_lin,
+                                 iono_total);
+    }
+}
+
+// --- Per-station ZWD trace -------------------------------------------
+// One row per present station each emitted epoch: the estimated ZWD (a-priori state +
+// reconstructed correction) and its datum-conditioned formal σ (the instrument for
+// border-station σ sharpening).  Independent of the carry: the ZWD column is located via
+// the station's parameter set and h2local, not R.pl_zwd_present, which is set only when
+// the ZWD carry (network.carry_zwd) or snapshot capture is active (a lookup through it
+// would emit no rows on a run with neither).
+void zwdRows(const IonoDiagRead& in, std::size_t i, IonoDiagStationRows& rows) {
+    const StationParams& params = in.stations[i].params;
+    if (params.zwd < 0) return;                      // no ZWD state
+    const int tropo_idx = params.zwd;
+    const auto& h2l = in.asm_res[i].h2local;
+    const auto zhit = h2l.find(tropo_idx);
+    if (zhit == h2l.end() || zhit->second < 0) return;   // ZWD not in A_r this epoch
+    const Eigen::Index zcol = static_cast<Eigen::Index>(zhit->second);
+    Eigen::VectorXd x_r, vard;
+    const std::size_t slot = static_cast<std::size_t>(in.est_index_of[i]);
+    try {
+        x_r = reconstructTimed(in, slot, rows);
+        vard = varianceTimed(in, slot, {zcol}, rows);
+    } catch (...) { return; }
+    if (zcol >= x_r.size()) return;
+    const double x_lin = params.slots[static_cast<std::size_t>(tropo_idx)].x_lin;  // ≡0.0 today; kept for robustness
+    const double zwd_m = x_lin + x_r(zcol);
+    const double var   = (vard.size() > 0) ? vard(0) : -1.0;
+    if (!(var > 0.0) || !std::isfinite(var) || !std::isfinite(zwd_m)) return;
+    rows.zwd += fmt::format("{},{:.3f},{},{:.6f},{:.6e},{}\n", in.se.time.week, in.se.time.tow,
+                            in.stations[i].name, zwd_m, std::sqrt(var),
+                            in.asm_res[i].pl_zwd_injected ? 1 : 0);
+}
+
+// One row per present station each emitted epoch while the network estimates the
+// troposphere gradients: the north and east estimates (linearization point plus the
+// reconstructed correction) and their datum-conditioned formal sigma.  The columns are
+// found through the station's set and h2local, as the wet delay's are above.
+void tgradRows(const IonoDiagRead& in, std::size_t i, IonoDiagStationRows& rows) {
+    const StationParams& params = in.stations[i].params;
+    if (params.gradient[0] < 0 || params.gradient[1] < 0) return;
+    const auto& h2l = in.asm_res[i].h2local;
+    const auto hn = h2l.find(params.gradient[0]);
+    const auto he = h2l.find(params.gradient[1]);
+    if (hn == h2l.end() || he == h2l.end() || hn->second < 0 || he->second < 0)
+        return;                                      // left out of A_r this epoch
+    const Eigen::Index cn = static_cast<Eigen::Index>(hn->second);
+    const Eigen::Index ce = static_cast<Eigen::Index>(he->second);
+    Eigen::VectorXd x_r, vard;
+    const std::size_t slot = static_cast<std::size_t>(in.est_index_of[i]);
+    try {
+        x_r = reconstructTimed(in, slot, rows);
+        vard = varianceTimed(in, slot, {cn, ce}, rows);
+    } catch (...) { return; }
+    if (cn >= x_r.size() || ce >= x_r.size() || vard.size() < 2) return;
+    const double north =
+        params.slots[static_cast<std::size_t>(params.gradient[0])].x_lin + x_r(cn);
+    const double east =
+        params.slots[static_cast<std::size_t>(params.gradient[1])].x_lin + x_r(ce);
+    if (!std::isfinite(north) || !std::isfinite(east) || !(vard(0) > 0.0)
+        || !(vard(1) > 0.0))
+        return;
+    rows.tgrad += fmt::format("{},{:.3f},{},{:.6f},{:.6f},{:.6e},{:.6e}\n", in.se.time.week,
+                              in.se.time.tow, in.stations[i].name, north, east,
+                              std::sqrt(vard(0)), std::sqrt(vard(1)));
+}
+
+// --- Per-station receiver state trace (network.trace_rx_states) ------
+// With estimate_sat_code_bias on, the loader forces estimate_ifb on
+// (GnssConfigLoadNetwork.cpp, where estimate_sat_code_bias promotes estimate_ifb_): an
+// explicit receiver DCB state per (station, RINEX code), without which the receiver GF
+// code lump rides inside the slant ionosphere and pulls against the spherical-harmonic
+// (SH) field.  No other output exports those columns as estimates; they appear only
+// as prior-residual census labels carrying standardized residuals.  Without this
+// trace, the receiver term (ι̃ = ι + d̄_r,GF − d_GF^s) cannot be graded against the
+// injected receiver-bias truth that the synthetic fixture provides.
+//
+// Same construction as the ZWD block above: reconstructStation for the value,
+// conditionalLocalVarianceDiag for the datum-conditioned σ, and the column located via
+// the parameter set's clock and receiver code biases + h2local rather than any
+// carry-gated flag.  A carry-gated lookup would emit no rows on a cold run, which would
+// read as "the states do not exist".
+//
+// One conditionalLocalVarianceDiag call per station covers all of that station's
+// receiver columns: the cost is in the conditioning, and the returned diagonal is
+// per requested column either way.
+void rxStateRows(const IonoDiagRead& in, std::size_t i, IonoDiagStationRows& rows) {
+    const auto& h2l = in.asm_res[i].h2local;
+    // Collect (kind, key, state_index, local_column) for the clock, each rx CB and each ISB.
+    struct RxCol { const char* kind; std::string key; int sidx; Eigen::Index col; };
+    std::vector<RxCol> want;
+    const StationParams& params = in.stations[i].params;
+    if (params.clock >= 0) {
+        const auto hit = h2l.find(params.clock);
+        if (hit != h2l.end() && hit->second >= 0)
+            want.push_back({ "CLK", std::string(), params.clock,
+                             static_cast<Eigen::Index>(hit->second) });
+    }
+    for (const auto& [cb, idx] : params.rx_cb) {
+        const auto hit = h2l.find(idx);
+        if (hit == h2l.end() || hit->second < 0) continue;
+        want.push_back({ "CB", keyText(params.slots[static_cast<std::size_t>(idx)].ref), idx,
+                         static_cast<Eigen::Index>(hit->second) });
+    }
+    // The receiver inter-system bias: one row per non-GPS system whose column
+    // is in this station's block this epoch (kind ISB, key = the system name).
+    // A GPS-only run allocates no such state and writes no such row.
+    for (const auto& [sys, idx] : params.isb) {
+        const auto hit = h2l.find(idx);
+        if (hit == h2l.end() || hit->second < 0) continue;
+        want.push_back({ "ISB", systemName(sys), idx,
+                         static_cast<Eigen::Index>(hit->second) });
+    }
+    if (want.empty()) return;
+    std::vector<Eigen::Index> cols;
+    cols.reserve(want.size());
+    for (const auto& w : want) cols.push_back(w.col);
+    Eigen::VectorXd x_r, vard;
+    const std::size_t slot = static_cast<std::size_t>(in.est_index_of[i]);
+    try {
+        x_r = reconstructTimed(in, slot, rows);
+        vard = varianceTimed(in, slot, cols, rows);
+    } catch (...) { return; }
+    for (size_t k = 0; k < want.size(); ++k) {
+        const auto& w = want[k];
+        if (w.col >= x_r.size()) continue;
+        const double x_lin = params.slots[static_cast<std::size_t>(w.sidx)].x_lin;
+        const double value  = x_lin + x_r(w.col);
+        const double var    = (static_cast<Eigen::Index>(k) < vard.size())
+                                  ? vard(static_cast<Eigen::Index>(k)) : -1.0;
+        if (!std::isfinite(value)) continue;
+        rows.rx += fmt::format("{},{:.3f},{},{},{},{:.6f},", in.se.time.week, in.se.time.tow,
+                               in.stations[i].name, w.kind, w.key, value);
+        // A blank σ means no valid conditional variance this epoch; 0 is never
+        // written.
+        if (var > 0.0 && std::isfinite(var))
+            rows.rx += fmt::format("{:.6e}", std::sqrt(var));
+        rows.rx += '\n';
+    }
+}
+
+/// One station's rows of the open traces.  Reads only @p in; what it throws is kept for the
+/// station's write, so a parallel region never sees an exception escape an iteration.
+void ionoDiagStationRows(const IonoDiagRead& in, std::size_t i, IonoDiagStationRows& rows) noexcept {
+    try {
+        if (in.est_index_of[i] < 0) return;   // not added to this epoch's solve
+        if (in.iono_on)  ionoRows(in, i, rows);
+        if (in.zwd_on)   zwdRows(in, i, rows);
+        if (in.tgrad_on) tgradRows(in, i, rows);
+        if (in.rx_on)    rxStateRows(in, i, rows);
+    } catch (...) {
+        rows.error = std::current_exception();
+    }
+}
+
+}  // namespace
 
 void networkIonoDiag(NetworkRun& run, const NetworkEpoch& ep) {
     // ---- From the run and the epoch. Reads bind through `ep`; a write to an entity table
@@ -67,205 +320,39 @@ void networkIonoDiag(NetworkRun& run, const NetworkEpoch& ep) {
     auto& clk_prior_info = ws.clk_prior_info;
 
 
-    // --- Network-estimated slant ionosphere (viz trace) -----------------
-    // Back-substitute each present station's local nuisance block (the slant
-    // iono states live there) and emit one row per (station, satellite) at the
-    // measured elevation/azimuth, so the pyviz viewer can map each value to its
-    // ionospheric pierce point.  Gated by network.trace_ionosphere.
-    if (iono_trace.is_open()) {
-        for (size_t i = 0; i < stations.size(); ++i) {
-            if (est_index_of[i] < 0) continue;   // not added to this epoch's solve
-            Eigen::VectorXd x_r;
-            try {
-                x_r = est.reconstructStation(
-                    static_cast<std::size_t>(est_index_of[i]), x_s);
-            } catch (...) { continue; }
-            // Elevation/azimuth per satellite from the modeled observations
-            // (first observation of each satellite carries the geometry).
-            std::map<std::string, std::pair<double, double>> elaz;
-            for (const auto& o : modeled[i])
-                elaz.emplace(o.satellite, std::make_pair(o.elevation, o.azimuth));
-            const auto& h2l = asm_res[i].h2local;
-            const StationParams& params = stations[i].params;
-            for (const auto& [sat, slot_idx] : params.iono) {
-                const auto hit = h2l.find(slot_idx);
-                if (hit == h2l.end()) continue;
-                if (hit->second < 0
-                    || static_cast<Eigen::Index>(hit->second) >= x_r.size())
-                    continue;
-                const std::string sat_text = sat.str();
-                const auto e = elaz.find(sat_text);
-                if (e == elaz.end()) continue;
-                // Frame of the columns.  `iono_m` is the reconstructed correction x_r
-                // alone.  The per-LOS iono state is seeded at allocation, so x_r is a
-                // correction to that seed, not the absolute slant ionosphere.  The
-                // column stays as it is because pyviz consumes it; the absolute value
-                // is appended after it, on the ZWD block's pattern below: x_lin from
-                // the station's own state vector, iono_total_m = x_lin + x_r.  Grade
-                // `iono_total_m`, not `iono_m`.
-                const double x_lin = params.slots[static_cast<std::size_t>(slot_idx)].x_lin;
-                const double iono_total = x_lin + x_r(hit->second);
-                iono_trace << se.time.week << ','
-                           << fmt::format("{:.3f}", se.time.tow) << ','
-                           << stations[i].name << ',' << sat_text << ','
-                           << fmt::format("{:.4f}", x_r(hit->second)) << ','
-                           << fmt::format("{:.2f}", e->second.first) << ','
-                           << fmt::format("{:.2f}", e->second.second) << ','
-                           << fmt::format("{:.6f}", x_lin) << ','
-                           << fmt::format("{:.6f}", iono_total) << '\n';
-            }
+    // --- The per-station traces -------------------------------------------
+    // Each station's rows are formed from the solved kernel alone, into the station's own buffer
+    // (serially, or in parallel under network.parallel_iono_traces), and the buffers are written
+    // in station order, so each trace receives the same bytes either way.
+    const bool iono_on = iono_trace.is_open(), zwd_on = zwd_trace.is_open(),
+               tgrad_on = tgrad_trace.is_open(), rx_on = rx_states_trace.is_open();
+    if (iono_on || zwd_on || tgrad_on || rx_on) {
+        const NetworkNormalEquations& kernel = est.normals();
+        Eigen::MatrixXd frame_scratch;
+        const Eigen::MatrixXd& frame = est.datumFrameShared(plan.shared_datum, frame_scratch);
+        const bool in_parallel = config_.getNetworkConfig().parallel_iono_traces && setup.parallel_on
+                                 && setup.n_threads > 1 && Eigen::nbThreads() == 1;
+        const IonoDiagRead in{kernel, frame, x_s, se, stations, est_index_of, asm_res, modeled,
+                              iono_on, zwd_on, tgrad_on, rx_on, kernel.perfTiming() && !in_parallel};
+        std::vector<IonoDiagStationRows> rows(stations.size());
+        if (in_parallel) {
+            ctx.counters.n_iono_rows_parallel += static_cast<long long>(
+                std::count_if(est_index_of.begin(), est_index_of.end(), [](int s) { return s >= 0; }));
+            #pragma omp parallel for schedule(dynamic) num_threads(setup.n_threads)
+            for (long long i = 0; i < static_cast<long long>(rows.size()); ++i)
+                ionoDiagStationRows(in, static_cast<std::size_t>(i), rows[static_cast<std::size_t>(i)]);
+        } else {
+            for (std::size_t i = 0; i < rows.size(); ++i) ionoDiagStationRows(in, i, rows[i]);
         }
-    }
-
-    // --- Per-station ZWD trace -------------------------------------------
-    // One row per present station each emitted epoch: the estimated ZWD (a-priori state +
-    // reconstructed correction) and its datum-conditioned formal σ (the instrument for
-    // border-station σ sharpening).  Independent of the carry: the ZWD column is located via
-    // the station's parameter set and h2local, not R.pl_zwd_present, which is set only when
-    // the ZWD carry (network.carry_zwd) or snapshot capture is active (a lookup through it
-    // would emit no rows on a run with neither).
-    if (zwd_trace.is_open()) {
-        for (size_t i = 0; i < stations.size(); ++i) {
-            if (est_index_of[i] < 0) continue;               // not in this epoch's solve
-            const StationParams& params = stations[i].params;
-            if (params.zwd < 0) continue;                    // no ZWD state
-            const int tropo_idx = params.zwd;
-            const auto& h2l = asm_res[i].h2local;
-            const auto zhit = h2l.find(tropo_idx);
-            if (zhit == h2l.end() || zhit->second < 0) continue;   // ZWD not in A_r this epoch
-            const Eigen::Index zcol = static_cast<Eigen::Index>(zhit->second);
-            Eigen::VectorXd x_r, vard;
-            try {
-                x_r = est.reconstructStation(static_cast<std::size_t>(est_index_of[i]), x_s);
-                vard = est.conditionalLocalVarianceDiag(
-                    static_cast<std::size_t>(est_index_of[i]), {zcol}, plan.shared_datum);
-            } catch (...) { continue; }
-            if (zcol >= x_r.size()) continue;
-            const double x_lin = params.slots[static_cast<std::size_t>(tropo_idx)].x_lin;  // ≡0.0 today; kept for robustness
-            const double zwd_m = x_lin + x_r(zcol);
-            const double var   = (vard.size() > 0) ? vard(0) : -1.0;
-            if (!(var > 0.0) || !std::isfinite(var) || !std::isfinite(zwd_m)) continue;
-            zwd_trace << se.time.week << ',' << fmt::format("{:.3f}", se.time.tow) << ','
-                      << stations[i].name << ',' << fmt::format("{:.6f}", zwd_m) << ','
-                      << fmt::format("{:.6e}", std::sqrt(var)) << ','
-                      << (asm_res[i].pl_zwd_injected ? 1 : 0) << '\n';
-        }
-    }
-
-    // One row per present station each emitted epoch while the network estimates the
-    // troposphere gradients: the north and east estimates (linearization point plus the
-    // reconstructed correction) and their datum-conditioned formal sigma.  The columns are
-    // found through the station's set and h2local, as the wet delay's are above.
-    if (tgrad_trace.is_open()) {
-        for (size_t i = 0; i < stations.size(); ++i) {
-            if (est_index_of[i] < 0) continue;               // not in this epoch's solve
-            const StationParams& params = stations[i].params;
-            if (params.gradient[0] < 0 || params.gradient[1] < 0) continue;
-            const auto& h2l = asm_res[i].h2local;
-            const auto hn = h2l.find(params.gradient[0]);
-            const auto he = h2l.find(params.gradient[1]);
-            if (hn == h2l.end() || he == h2l.end() || hn->second < 0 || he->second < 0)
-                continue;                                    // left out of A_r this epoch
-            const Eigen::Index cn = static_cast<Eigen::Index>(hn->second);
-            const Eigen::Index ce = static_cast<Eigen::Index>(he->second);
-            Eigen::VectorXd x_r, vard;
-            try {
-                x_r = est.reconstructStation(static_cast<std::size_t>(est_index_of[i]), x_s);
-                vard = est.conditionalLocalVarianceDiag(
-                    static_cast<std::size_t>(est_index_of[i]), {cn, ce}, plan.shared_datum);
-            } catch (...) { continue; }
-            if (cn >= x_r.size() || ce >= x_r.size() || vard.size() < 2) continue;
-            const double north =
-                params.slots[static_cast<std::size_t>(params.gradient[0])].x_lin + x_r(cn);
-            const double east =
-                params.slots[static_cast<std::size_t>(params.gradient[1])].x_lin + x_r(ce);
-            if (!std::isfinite(north) || !std::isfinite(east) || !(vard(0) > 0.0)
-                || !(vard(1) > 0.0))
-                continue;
-            tgrad_trace << se.time.week << ',' << fmt::format("{:.3f}", se.time.tow) << ','
-                        << stations[i].name << ',' << fmt::format("{:.6f}", north) << ','
-                        << fmt::format("{:.6f}", east) << ','
-                        << fmt::format("{:.6e}", std::sqrt(vard(0))) << ','
-                        << fmt::format("{:.6e}", std::sqrt(vard(1))) << '\n';
-        }
-    }
-
-    // --- Per-station receiver state trace (network.trace_rx_states) ------
-    // With estimate_sat_code_bias on, the loader forces estimate_ifb on
-    // (GnssConfigLoadNetwork.cpp, where estimate_sat_code_bias promotes estimate_ifb_): an
-    // explicit receiver DCB state per (station, RINEX code), without which the receiver GF
-    // code lump rides inside the slant ionosphere and pulls against the spherical-harmonic
-    // (SH) field.  No other output exports those columns as estimates; they appear only
-    // as prior-residual census labels carrying standardized residuals.  Without this
-    // trace, the receiver term (ι̃ = ι + d̄_r,GF − d_GF^s) cannot be graded against the
-    // injected receiver-bias truth that the synthetic fixture provides.
-    //
-    // Same construction as the ZWD block above: reconstructStation for the value,
-    // conditionalLocalVarianceDiag for the datum-conditioned σ, and the column located via
-    // the parameter set's clock and receiver code biases + h2local rather than any
-    // carry-gated flag.  A carry-gated lookup would emit no rows on a cold run, which would
-    // read as "the states do not exist".
-    //
-    // One conditionalLocalVarianceDiag call per station covers all of that station's
-    // receiver columns: the cost is in the conditioning, and the returned diagonal is
-    // per requested column either way.
-    if (rx_states_trace.is_open()) {
-        for (size_t i = 0; i < stations.size(); ++i) {
-            if (est_index_of[i] < 0) continue;               // not in this epoch's solve
-            const auto& h2l = asm_res[i].h2local;
-            // Collect (kind, key, state_index, local_column) for the clock, each rx CB and each ISB.
-            struct RxCol { const char* kind; std::string key; int sidx; Eigen::Index col; };
-            std::vector<RxCol> want;
-            const StationParams& params = stations[i].params;
-            if (params.clock >= 0) {
-                const auto hit = h2l.find(params.clock);
-                if (hit != h2l.end() && hit->second >= 0)
-                    want.push_back({ "CLK", std::string(), params.clock,
-                                     static_cast<Eigen::Index>(hit->second) });
-            }
-            for (const auto& [cb, idx] : params.rx_cb) {
-                const auto hit = h2l.find(idx);
-                if (hit == h2l.end() || hit->second < 0) continue;
-                want.push_back({ "CB", keyText(params.slots[static_cast<std::size_t>(idx)].ref), idx,
-                                 static_cast<Eigen::Index>(hit->second) });
-            }
-            // The receiver inter-system bias: one row per non-GPS system whose column
-            // is in this station's block this epoch (kind ISB, key = the system name).
-            // A GPS-only run allocates no such state and writes no such row.
-            for (const auto& [sys, idx] : params.isb) {
-                const auto hit = h2l.find(idx);
-                if (hit == h2l.end() || hit->second < 0) continue;
-                want.push_back({ "ISB", systemName(sys), idx,
-                                 static_cast<Eigen::Index>(hit->second) });
-            }
-            if (want.empty()) continue;
-            std::vector<Eigen::Index> cols;
-            cols.reserve(want.size());
-            for (const auto& w : want) cols.push_back(w.col);
-            Eigen::VectorXd x_r, vard;
-            try {
-                x_r = est.reconstructStation(static_cast<std::size_t>(est_index_of[i]), x_s);
-                vard = est.conditionalLocalVarianceDiag(
-                    static_cast<std::size_t>(est_index_of[i]), cols, plan.shared_datum);
-            } catch (...) { continue; }
-            for (size_t k = 0; k < want.size(); ++k) {
-                const auto& w = want[k];
-                if (w.col >= x_r.size()) continue;
-                const double x_lin = params.slots[static_cast<std::size_t>(w.sidx)].x_lin;
-                const double value  = x_lin + x_r(w.col);
-                const double var    = (static_cast<Eigen::Index>(k) < vard.size())
-                                          ? vard(static_cast<Eigen::Index>(k)) : -1.0;
-                if (!std::isfinite(value)) continue;
-                rx_states_trace << se.time.week << ','
-                                << fmt::format("{:.3f}", se.time.tow) << ','
-                                << stations[i].name << ',' << w.kind << ',' << w.key << ','
-                                << fmt::format("{:.6f}", value) << ',';
-                // A blank σ means no valid conditional variance this epoch; 0 is never
-                // written.
-                if (var > 0.0 && std::isfinite(var))
-                    rx_states_trace << fmt::format("{:.6e}", std::sqrt(var));
-                rx_states_trace << '\n';
-            }
+        for (const IonoDiagStationRows& r : rows) {
+            if (kernel.perfTiming())
+                for (std::size_t c = 0; c < r.n_consumer; ++c)
+                    kernel.accumulateCovConsumer(r.consumer_ms[c]);
+            if (r.error) std::rethrow_exception(r.error);
+            if (!r.iono.empty())  iono_trace << r.iono;
+            if (!r.zwd.empty())   zwd_trace << r.zwd;
+            if (!r.tgrad.empty()) tgrad_trace << r.tgrad;
+            if (!r.rx.empty())    rx_states_trace << r.rx;
         }
     }
 

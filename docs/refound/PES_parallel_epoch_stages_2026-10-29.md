@@ -5,11 +5,11 @@
 - **id:** PES
 - **topic:** perf
 - **status:** open
-- **summary:** ARMED 2026-10-29 at the author's decision (section 5), merged into main 2026-11-02 (branch `perf/pes`, section 6). Three serial stages of the network epoch run in parallel over stations behind keys the loader leaves off (ledger ARMED, pinned true in both goldens): `network.parallel_station_normals` (the station normal blocks formed ahead of the serial scatter, committed in station order), `network.parallel_schur_columns` (the Schur reduce split by border columns, every element summed over the stations in serial order; no per-thread partial sum) and `network.parallel_redundancy_census` (the census's per-station kernels ahead of its serial walk). Key on against off, one build, 2 h: IDENTICAL on both goldens for each key and for the three together; off IDENTICAL to main; full Debug suite 3 591 passed, 0 failed; the lints pass. On main with card CVF the loop is 27.9 % shorter on the field golden, 20.3 % on the sim golden and 39.7 % on a 305-station field arm (30 min), at identical output. Armed: all three; the baseline pair `runs/_rf0hv17_{field,sim}6` stands (section 5).
+- **summary:** ARMED 2026-10-29 at the author's decision (section 5), merged into main 2026-11-02 (branch `perf/pes`, section 6). Three serial stages of the network epoch run in parallel over stations behind keys the loader leaves off (ledger ARMED, pinned true in both goldens): `network.parallel_station_normals` (the station normal blocks formed ahead of the serial scatter, committed in station order), `network.parallel_schur_columns` (the Schur reduce split by border columns, every element summed over the stations in serial order; no per-thread partial sum) and `network.parallel_redundancy_census` (the census's per-station kernels ahead of its serial walk). Key on against off, one build, 2 h: IDENTICAL on both goldens for each key and for the three together; off IDENTICAL to main; full Debug suite 3 591 passed, 0 failed; the lints pass. On main with card CVF the loop is 27.9 % shorter on the field golden, 20.3 % on the sim golden and 39.7 % on a 305-station field arm (30 min), at identical output. Armed: all three; the baseline pair `runs/_rf0hv17_{field,sim}6` stands (section 5). 2026-11-06 (section 7, branch `perf/pes-next`, NOT merged, NOT armed): three more stages behind keys the loader leaves off, ledger UNVALIDATED: `network.parallel_carry_harvest`, `network.parallel_iono_traces`, `network.parallel_coupling_prepare`; PASS A's serial remainder rejected with its timing. One OpenMP team size in every region (a change of size rebuilds the team, about 9 ms of wall each: PASS A alone returns 36 of the 66 ms section 4.3 left open) and a cheaper coupling row reach the armed posture without a key. Each key alone and the three together IDENTICAL to off on both goldens, off IDENTICAL to main; on the final build the three keys shorten the golden loop by 16.1 % (field) and 13.3 % (sim) against off; the whole change is 28.9 % (field) and 25.7 % (sim) shorter than main in one matched sequence, and all six stages 48.7 % shorter than none at 305 stations over 2 h, on a machine carrying 11 to 18 logical processors of foreign load. Recommended: arm the three keys (the author's decision).
 - **source:** [NETCOST](NETCOST_gps_galileo_cost_attribution_2026-10-18.md) sections 2 and 3 (the section attribution under load); [CVF](CVF_conditional_variance_frame_2026-10-29.md) (the covariance-consumer overheads; merged into main during this card, section 4.3); the auto-memory records of the closed perf doors (`parallel_reduce` deleted by card RKD: per-thread partial sums regroup the Schur subtraction and the network's conditioning amplifies the ULP difference over the carried epochs).
-- **knobs / posture:** new `network.parallel_station_normals`, `network.parallel_schur_columns`, `network.parallel_redundancy_census`: bool, loader default false, ledger ARMED and pinned true in both goldens since 2026-10-29 (section 5); nothing else changed.
-- **dates in the text:** 2026-10-29
-- **hashes / run dirs:** branch `perf/pes` from main `a78ba68` (gates G1 to G4), main merged in at `b09c353` (G5); executables `gnss_processor_pes_c3.exe` (`64d24097d86f7bef`), `gnss_processor_pes_c4.exe` (`0845299169e2b0bd`), main `gnss_processor_pes_base.exe` (`66333b5e42827350`); worktree `D:/GnssProcessorSupport/worktrees/pes`; executables under its `build/x64-Release/`; runs `D:/GnssProcessorSupport/runs_pes/`; gate records `D:/GnssProcessorSupport/gates/pes/`.
+- **knobs / posture:** new `network.parallel_station_normals`, `network.parallel_schur_columns`, `network.parallel_redundancy_census`: bool, loader default false, ledger ARMED and pinned true in both goldens since 2026-10-29 (section 5); nothing else changed. New 2026-11-06 on branch `perf/pes-next`: `network.parallel_carry_harvest`, `network.parallel_iono_traces`, `network.parallel_coupling_prepare`: bool, loader default false, ledger UNVALIDATED, in no golden.
+- **dates in the text:** 2026-10-29, 2026-11-02, 2026-11-06
+- **hashes / run dirs:** branch `perf/pes` from main `a78ba68` (gates G1 to G4), main merged in at `b09c353` (G5); executables `gnss_processor_pes_c3.exe` (`64d24097d86f7bef`), `gnss_processor_pes_c4.exe` (`0845299169e2b0bd`), main `gnss_processor_pes_base.exe` (`66333b5e42827350`); worktree `D:/GnssProcessorSupport/worktrees/pes`; executables under its `build/x64-Release/`; runs `D:/GnssProcessorSupport/runs_pes/`; gate records `D:/GnssProcessorSupport/gates/pes/`. Section 7: branch `perf/pes-next` from main `284ec29`, worktree `D:/GnssProcessorSupport/worktrees/pes2`, runs `D:/GnssProcessorSupport/runs_pes2/`, gate records `D:/GnssProcessorSupport/gates/pes2/`.
 - **gates (frozen at pre-registration):** section 3, written before any run of a changed executable.
 
 **Outcome.** Question: which serial stages of the network epoch split by station, and how much of the loop do they
@@ -17,7 +17,7 @@ return when run in parallel without moving an output bit? Result: the station no
 the redundancy census (37 % of the field epoch) run 2.0 to 4.8 times faster in parallel. Every key-on arm is identical
 to key off, and key off to main. The golden loop is 27.9 % shorter (field) and 20.3 % (sim), and 39.7 % at 305
 stations (bars: identical, a gain on both beds: met). Standing: ARMED on both goldens at the author's decision,
-loader default off, merged into main 2026-11-02 (section 6).
+loader default off, merged into main 2026-11-02 (section 6). Continued 2026-11-06 (section 7): the carry harvest, the iono traces and the coupling inverse also run in parallel at identical output, PASS A is rejected on its timing, and one OpenMP team size removes about 9 ms of wall per team change. The golden loop is 28.9 % (field) and 25.7 % (sim) shorter than main, and all six stages 48.7 % shorter than none at 305 stations. Standing: the three new keys unarmed on branch `perf/pes-next`, not merged.
 
 ## 1. Question
 
@@ -227,8 +227,207 @@ holds at any thread count (section 4.4).
   within-epoch re-solve still adds its stations serially (`RaimWithinEpoch`, event epochs only) and can use
   `formStations`.
 - The 66 ms per field epoch that the other sections grow with the regions on (section 4.3).
-- A settled 305-station pair (2 h or more) for the scaling figure.
+- A settled 305-station pair (2 h or more) for the scaling figure. Done 2026-11-06 (section 7.6). The next serial stages
+  and the 66 ms above: section 7. The RHS attribution trip and the within-epoch re-solve stay owed.
 
 ## 6. 2026-11-02: merged into main
 
 Merged in the integration branch `int/2026-11-02` (merge `8d2a481`), with cards NOM5, RPC, RKT, SMX, SCK, SCR, ARS, CRS, SCB and PES and the NTRIP credentials loader, then fast-forwarded into main. Gate against the Release build of main `aed227f` (`gnss_processor_closeint.exe`, sha256[:16] `3c8bc25102a7cad7`; candidate `gnss_processor_int1102.exe`, `7f4bd4729069be0e`): both 2 h goldens, `products.txt` and every CSV identical (the wall-clock columns dropped); the 32 user-side arms of `scripts/uom_gate.py`, every CSV identical and the `Toggles:` line the one log difference; the four real-time arms of `scripts/rt_seam_gate.ps1`, 34 of 34 CSVs identical; Debug `gnss_tests` 3833 tests in 523 suites, 3800 passed, 33 skipped, 0 failed; `gnss_simulator_selftest` 99 of 99. The log text that moves is declared: the `Toggles:` line gains `seed_full=off` and the parameter tables gain the inert `tropo_gradient` rows (card NOM5), the PES arming line and run-end counters are new, and the real-time arm `cl` prints one retired-key warning (`network.serialize_sbasis_contract`, set by `config/ppp_rtk_network_brdc_rts.json`; card RKT). Records: `D:/GnssProcessorSupport/worktrees/int1102/runs/_int1102_gate_records/`. The goldens arm the three stages from this merge on. Wall time of the 2 h goldens, reference against candidate on a shared and loaded machine (not a timing grade): field 411 s to 287 s, sim 263 s to 202 s. The items of the Owed list stand.
+
+## 7. 2026-11-06: the next stages (branch `perf/pes-next`, not merged, not armed)
+
+Branch `perf/pes-next` from main `284ec29`, worktree `D:/GnssProcessorSupport/worktrees/pes2`. Executables under its
+`build/x64-Release/`: main `gnss_processor_pes2_base.exe` (sha256[:16] `55b166f424bfc86c`), scratch profiler
+`gnss_processor_pes2_prof.exe` (`467bb586775b5c1e`, patch `gates/pes2/scratchprof2.patch`, not part of the branch),
+candidate `gnss_processor_pes2_c4.exe` (`0af5b6e4d3859e51`). Runs `D:/GnssProcessorSupport/runs_pes2/`, gate records
+`D:/GnssProcessorSupport/gates/pes2/`. The machine carried about ten network arms and several builds of other sessions
+throughout (12 to 18 of 20 logical processors of foreign load, read per run), so every timing below is a controlled
+sequence on above-normal priority, one run of this card at a time, and absolute times are above the quiet figures of
+section 4.3.
+
+### 7.1 The profile on main
+
+The scratch timer of section 2 with finer scopes, 2 h arms `_rap_pes2_prof_{f,s}_ge`, read for shares: field loop 1 046.7
+ms per epoch, sim 598.8. Per processed epoch (the timer's own ms/ep column divides the sim by its 303 synced epochs):
+
+| stage | field ms | field % | sim ms | sim % | decision |
+| --- | --- | --- | --- | --- | --- |
+| ambiguity harvest: regressions and coupling rows (`networkHarvestColumn`) | 132.2 | 12.6 | 76.8 | 12.8 | built |
+| of which the regression (`stationRegression`) | 25.0 | 2.4 | 13.9 | 2.3 | |
+| ambiguity harvest: stash into the arc table | 21.2 | 2.0 | 14.2 | 2.4 | serial: the writes |
+| ambiguity harvest: monitor feeds | 5.7 | 0.5 | 3.7 | 0.6 | serial: the writes |
+| handover ledger | 20.2 | 1.9 | 15.7 | 2.6 | built, with the harvest |
+| receiver code bias harvest | 17.9 | 1.7 | 8.2 | 1.4 | its columns built, with the harvest |
+| iono traces: receiver states, ZWD, slant iono | 53.0 | 5.1 | 24.3 | 4.1 | built |
+| coupling preparation: all | 47.4 | 4.5 | 13.6 | 2.3 | inverse built |
+| of which factor and inverse | 42.2 | 4.0 | 12.2 | 2.0 | |
+| PASS A slip scans: all | 76.1 | 7.3 | 62.6 | 10.5 | see below |
+| of which the station scan (already parallel) | 44.0 | 4.2 | 32.5 | 5.4 | already parallel |
+| of which raw observables | 15.4 | 1.5 | 11.9 | 2.0 | rejected |
+| of which the IF-TD drain | 11.1 | 1.1 | 13.8 | 2.3 | rejected |
+| of which second code, common band, MW drain | 4.2 | 0.4 | 3.0 | 0.5 | rejected |
+
+**The harvest's cost was not the solve.** Of the 132 ms, the regression is 25; the other 107 are the coupling row: a
+`std::map` lookup per border column (about 420 per carried column, about 1 430 carried columns per epoch) and a vector
+grown by repeated reallocation of 112-byte elements. The row now reads a table by column and reserves its counted size,
+which keeps the same terms in the same order (unit test against the map walk).
+
+**PASS A is rejected as a stage.** Its largest piece is already parallel. The serial remainder is 31 ms on the field and
+30 ms on the sim. The IF-TD drain pools over every station, takes the medians and then writes in station order, so it
+has no station-independent part of any size. The raw observables split by station only with the roster lookups' counters,
+the mismatch counter, the resumption lists and the stepped set made per-station and folded afterwards, for a return of
+about 10 ms (1 to 1.5 % of the loop). No key was added.
+
+### 7.2 What was built
+
+Three keys, loader default off, ledger UNVALIDATED, each with a run-end counter line (invariant 4), each acting only with
+`parallel_stations` and Eigen pinned to one thread:
+
+- **`network.parallel_carry_harvest`.** The harvest's layouts are read first, then every carried column's regression and
+  coupling row is computed into its own slot in parallel; the walk reads each slot once through `networkHarvestColumn`
+  and keeps every write to the arc table, counters, traces and marks, in its order. The handover ledger's two kernels are
+  computed the same way. A column left unset, or asked for in another form, is computed by the walk. A clone regression is
+  not taken ahead: its row step writes the border.
+- **`network.parallel_iono_traces`.** Each station's rows of the slant iono, ZWD, gradient and receiver-state traces are a
+  function of the solved kernel, formed into the station's own buffer, serially or in parallel; the buffers are written in
+  station order. The back-substitutions, the conditional variances and the formatting all run in the region.
+- **`network.parallel_coupling_prepare`.** The inverse of the exact update's preparation (`LDLT::solve` on the identity) is
+  split over column blocks whose width is a multiple of 4, on the reasoning of section 4.1: a column's arithmetic in the
+  blocked triangular solve depends on the depth and row panels and on its 4-column tile, not on the block that holds it.
+  `ldltInverseColumns` takes the split only where Eigen's heuristic gives the blocks the panels of the whole solve. The
+  factorization stays serial.
+
+Not keyed, identical by construction and gated with the rest: the coupling row's table and reservation above, and one team
+size in every region (section 7.3).
+
+### 7.3 One team size: the owed 66 ms
+
+Section 4.3 left 66 ms per field epoch unattributed: sections other than the three stages grew with the regions on. The
+first candidate of this card (`c2`) showed the coupling key returning nothing on the field and costing about 10 ms on the
+sim, with the block count (18 or 19) as its team size (arms `_rap_pes2_m1*`, `_rap_pes2_g1_*`; all three keys together
+read -9.8 % on the field and -10.3 % on the sim on that candidate). A micro-benchmark on this toolchain (`gates/pes2/ompbench`, MSVC
+`vcomp`, 60 iterations of about 0.5 ms per region, above-normal priority, the same load) gives the reason:
+
+| team sizes of successive regions | wall per region | kernel CPU per region |
+| --- | --- | --- |
+| 20, 20, 20, ... | 2.6 ms | 5.7 ms |
+| 20, 18, 20, 18, ... | 11.3 to 12.0 ms | 46.8 to 51.9 ms |
+
+Each change of team size rebuilds the team: about 9 ms of wall and 45 ms of kernel CPU. At normal priority on the same
+loaded machine the two rows read 10.8 and 37.1 ms of wall. The armed Schur reduce changed size twice per epoch (20 for
+its solves, the block count 17 to 19 for its columns, 20 again in the next region), and the cost landed in the reduce and
+in the regions after it. From main to the candidate with the new keys off, the reduce's own section falls from 74 to 35
+ms (field) and 33 to 14 ms (sim) and PASS A's from 87 to 51 ms and 74 to 46 ms, with no change to the work of either
+stage. PASS A alone returns 36 of the 66 ms that section 4.3 could not attribute. Every region of the card now uses the
+run's thread count; a block count below it leaves threads idle in the region. Which thread runs a block does not enter
+its arithmetic.
+
+### 7.4 Gates on the final candidate
+
+Arms `_rap_pes2_m3{a,b}_{f,s}_*` (2 h), main `_rap_pes2_m2a_base_{f,s}_off`; comparison `gates/pes2/pes2_cmp.py`
+(`prm_ab.py`'s `compare_dirs`, `products.txt` and every CSV), record `gates/pes2/final_cmp.log`.
+
+| gate | field golden | sim golden |
+| --- | --- | --- |
+| G1, `parallel_carry_harvest` alone against off | IDENTICAL (36 files) | IDENTICAL (36 files) |
+| G1, `parallel_iono_traces` alone against off | IDENTICAL | IDENTICAL |
+| G1, `parallel_coupling_prepare` alone against off | IDENTICAL | IDENTICAL |
+| G1, the three together against off | IDENTICAL | IDENTICAL |
+| G2, every new key off against main `284ec29` | IDENTICAL | IDENTICAL |
+| the two off arms of one executable | IDENTICAL | IDENTICAL |
+
+On-path counters of the `hv_io_cx` arms: field 381 533 carried columns computed ahead and 381 533 read, 13 919 ledger
+stations, 13 919 station-epochs of trace rows, 239 of 239 inverses split, 0 declined; sim 416 410 and 416 410, 14 460,
+14 460, 240 of 240, 0 declined. The earlier candidates `c2` and `c3` were identical on the same gates.
+
+- **G3.** Full Debug `gnss_tests.exe` on the final tree: 3 839 tests in 526 suites, 3 806 passed, 33 skipped
+  (fixture-gated), 0 failed (`gates/pes2/g3_unit_suite_final.log`). The 6 new cases of
+  `tests/network/test_harvest_coupling_parallel.cpp` compare with `memcmp` against the serial arithmetic: the inverse over
+  column blocks against the whole solve on every residue of the order modulo 4 and a network order, with the split required
+  from order 256 up; the decline with Eigen threaded and inside a region; the exact update's factor; the coupling row against
+  the map walk it replaced; the columns ahead inside a parallel region; a column the kernel refuses stays for the walk.
+- **G4.** `nom_epoch_lint.py` PASS (V12: 94 binding functions, 94 rows, 0 unbound writes), `counters_split_check.py`,
+  `nom_n4_verify.py --whole`, `make_golden_config.py --verify`, `config_posture_check.py --verify-loader` (0 coverage gaps),
+  `ledger_render.py --check` and `docs_index_check.py` pass. `nom_hv1_verify.py` fails on main itself (stale paths from
+  before the header move) and is not a live gate; the harvest's order constraints are kept by hand and stated in the header.
+
+### 7.5 Cost (G5)
+
+Controlled sequences, one run at a time, above-normal priority, 12 to 15 logical processors of foreign load. `off` is the
+golden as it is on the candidate; `all` adds the three keys.
+
+| golden (2 h, ms per epoch) | main | off | all | off against main | all against off | all against main |
+| --- | --- | --- | --- | --- | --- | --- |
+| field, sequence `m2` | 1 062.1, 1 011.9 | 877.2, 848.8 | 732.4, 742.7 | -16.8 % | -14.5 % | -28.9 % |
+| sim, sequence `m2` | 609.0, 633.7 | 558.7, 525.8 | 466.1, 457.5 | -12.7 % | -14.8 % | -25.7 % |
+| field, sequence `m4` | | 866.9, 855.3 | 719.8, 725.5 | | -16.1 % | |
+| sim, sequence `m4` | | 511.8, 501.5 | 438.5, 439.6 | | -13.3 % | |
+
+Sequence `m2` runs main, off, all, all, off, main on each golden (candidate `c3`, which differs from the final build only in the
+team size of a network under 20 stations); `m4` runs off, all, all, off on the final build. Each pair is identical again.
+
+Per key, one sequence off, each key alone, all, off (arms `m3`; off is the mean of the two; ms per epoch):
+
+| golden | off | `parallel_carry_harvest` | `parallel_iono_traces` | `parallel_coupling_prepare` | all three |
+| --- | --- | --- | --- | --- | --- |
+| field | 872.7, 848.3 | 812.8 (-5.5 %) | 817.3 (-5.0 %) | 838.7 (-2.5 %) | 727.8 (-15.4 %) |
+| sim | 510.6, 527.5 | 475.1 (-8.5 %) | 492.5 (-5.1 %) | 499.6 (-3.8 %) | 473.0 (-8.9 %) |
+
+The spread of two off arms is 2.8 % (field) and 3.3 % (sim). The sim's `all` arm of this sequence met a busier moment than
+its keys alone suggest (its PASS A and frame diagnostics sections read 7 to 12 % above the other arms); the matched sequences
+above are the reading for the three together.
+
+Per stage (section timers, ms per epoch; main from `m2`, off and on from `m4`):
+
+| section | key | field main | field off | field on | sim main | sim off | sim on |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| leveling (the harvest) | `parallel_carry_harvest` | 188 | 103 | 53 (1.9x) | 132 | 75 | 45 (1.7x) |
+| iono traces | `parallel_iono_traces` | 52 | 45 | 3.6 (12.5x) | 26 | 20 | 2.1 (9.5x) |
+| pre-assembly (the coupling preparation) | `parallel_coupling_prepare` | 65 | 63 | 36 (1.8x) | 29 | 29 | 22 (1.3x) |
+| Schur reduce | none: one team size | 74 | 35 | 32 | 33 | 14 | 14 |
+| PASS A slip scans | none: one team size | 87 | 51 | 50 | 74 | 46 | 47 |
+
+Processor time rises while the wall falls: on the field `off` reads 1 280 s of CPU (484 s kernel) and `all` 1 560 s (697 s
+kernel). The work is the same, so the extra is the runtime's overhead, most of it kernel time; it is read here as the idle
+workers waiting after each added region and is not attributed further. It does not lengthen a run, but it takes processors
+from other sessions on a shared machine.
+
+### 7.6 The settled 305-station pair
+
+Base `runs_nom/bof_bases/golden_field_305.json` (card BOF; written before this card, so it arms none of the stages), 2 h, 240
+epochs, 303 stations in the solve, 433 shared columns, final build, one run at a time in the order all six, none, three,
+above-normal priority, 15 to 18 logical processors of foreign load. Arms `_rap_pes2_x1_x_{off,on3,on3_hv_io_cx}`.
+
+| stages on | ms per epoch | hour 1 | hour 2 | against none | CPU s (kernel) |
+| --- | --- | --- | --- | --- | --- |
+| none | 7 539 | 7 259 | 7 630 | | 3 711 (458) |
+| the three armed | 5 037 | 4 164 | 5 705 | -33.2 %, hour 2 -25.2 % | 4 527 (765) |
+| all six | 3 866 | 3 339 | 4 189 | -48.7 %, hour 2 -45.1 % | 5 043 (1 210) |
+
+All three arms are identical (36 files per pair, `gates/pes2/x305_cmp.log`), with 72 621 station forms in parallel, 240 of 240
+reduces split, 239 of 239 inverses split, 2 056 436 carried columns computed ahead and read, and 7 215 census station-epochs.
+The absolute times sit above the 30-minute pair of section 4.3 (3 952 and 2 384 ms on a quiet machine) because the foreign load
+takes processors, so the ratios are the reading, one run each. The three-stage arm's second hour reads 37 % above its first,
+against 5 % for no stage and 25 % for all six, so its figure may carry a busier machine. Against the three armed stages, the
+three new keys return -23.3 % (hour 2 -26.6 %). They weigh more here than on the 58-station goldens because the harvest and the
+traces scale with the station count: leveling and the iono traces are 33 % of the three-stage loop at 305 stations and 17 % at
+58 stations. The iono traces fall from 244 to 17 ms per epoch and leveling from 1 413 to 849 ms.
+
+### 7.7 Recommendation and follow-ups
+
+All three keys pass G1 to G5 on both goldens. **Recommended: arm all three** (the author's decision: the ledger rows move from
+UNVALIDATED to ARMED with the golden pins, as in section 5). The unkeyed changes reach the goldens with the merge, at
+identical output.
+
+Follow-ups this card found and did not build:
+
+- **The S-basis completion's eigenvectors.** `completeSbasisDimension` computes eigenvectors on every epoch: 115 ms on the
+  field (11 % of the loop in the profile of section 7.1), 36 ms on the sim. Both 2 h goldens fold 0 completion rows, so the
+  vectors are read on no epoch. A scratch check (`gates/pes2/ompbench/eigbench.cpp`, order 420) reads 175 ms with vectors
+  against 37 ms for eigenvalues only, with the eigenvalues bit-identical. Eigenvalues first, vectors only when the count
+  exceeds the declared dimension, would return about 8 % (field) and 4 % (sim) at identical output. The rank gate then
+  decomposes the same matrix again (29 ms) when no row was added.
+- **The instruction set.** `CMakeLists.txt` sets no `/arch`, so the dense kernels run on SSE2. An AVX2 build is not
+  byte-identical (fused multiply-add and other kernel tiles) and needs a new baseline pair: the author's decision.
+- **The waiting workers.** `OMP_WAIT_POLICY` and `parallel_max_threads` at the physical core count would lower the idle
+  processor time of section 7.5; neither is measured on a golden arm here.

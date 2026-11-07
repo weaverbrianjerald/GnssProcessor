@@ -906,7 +906,13 @@ void networkCouplingExactPrepare(NetworkRun& run, const NetworkEpoch& nep) {
                      } catch (...) {}
                  });
     if (any_clk && ep.pivot.empty()) ++ctx.counters.cxu_pivot_missing;
-    if (!couplingExactFactor(ep)) {
+    // network.parallel_coupling_prepare: the factor's inverse over column blocks, at identical bits.
+    const int cxu_threads = (run.config.getNetworkConfig().parallel_coupling_prepare
+                             && run.setup.parallel_on) ? run.setup.n_threads : 1;
+    const bool cxu_factored = couplingExactFactor(ep, cxu_threads);
+    if (cxu_threads > 1 && cxu_factored)
+        ++(ep.inverse_split ? ctx.counters.cxu_inverse_split : ctx.counters.cxu_inverse_declined);
+    if (!cxu_factored) {
         ++ctx.counters.cxu_epochs_unfactored;
         log->warn("Network: P_SS + Q_S over {} carried key(s) did not factor at "
                   "TOW {:.1f}; the coupling rows take the coupling-carry route this epoch.",

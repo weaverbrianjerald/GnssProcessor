@@ -1082,8 +1082,7 @@ void NetworkNormalEquations::formStations(const std::vector<StationObservations>
     // one thread: the sparse formation and the dense products then take the path the serial add
     // takes, and no Eigen kernel nests threads inside the region.
     if (n_threads > 1 && n > 1 && Eigen::nbThreads() == 1 && !omp_in_parallel()) {
-        const int nt = static_cast<int>(std::min<std::size_t>(static_cast<std::size_t>(n_threads), n));
-        #pragma omp parallel for schedule(dynamic) num_threads(nt)
+        #pragma omp parallel for schedule(dynamic) num_threads(n_threads)   // the epoch's one team size (reduceByColumns_)
         for (long long k = 0; k < static_cast<long long>(n); ++k) {
             const std::size_t kk = static_cast<std::size_t>(k);
             formStation_(in[kk], forms_[kk]);
@@ -1386,8 +1385,7 @@ bool NetworkNormalEquations::reduceByColumns_() {
         schur_v_.resize(n_active_);
     }
     std::vector<char> solve_failed(n_active_, 0);
-    const int nt_sta = static_cast<int>(std::min<std::size_t>(static_cast<std::size_t>(want), n_active_));
-    #pragma omp parallel for schedule(dynamic) num_threads(nt_sta)
+    #pragma omp parallel for schedule(dynamic) num_threads(want)   // the epoch's one team size (step 3)
     for (long long ii = 0; ii < static_cast<long long>(n_active_); ++ii) {
         const std::size_t i = static_cast<std::size_t>(ii);
         const Station& st = stations_[i];
@@ -1412,9 +1410,11 @@ bool NetworkNormalEquations::reduceByColumns_() {
 
     // (3) The border, one column block per iteration: every station's fused product-subtraction,
     //     in ascending station order, on this block's columns only.
+    // The epoch's one team size, also when there are fewer blocks than threads (each block's
+    // arithmetic does not depend on the thread that runs it): under MSVC's OpenMP runtime a region of
+    // another size rebuilds the team, about 9 ms of wall per change.
     std::vector<char> block_failed(static_cast<std::size_t>(n_blocks), 0);
-    const int nt_blk = static_cast<int>(std::min<Eigen::Index>(static_cast<Eigen::Index>(want), n_blocks));
-    #pragma omp parallel for schedule(static) num_threads(nt_blk)
+    #pragma omp parallel for schedule(static) num_threads(want)
     for (long long b = 0; b < static_cast<long long>(n_blocks); ++b) {
         const Eigen::Index c0 = static_cast<Eigen::Index>(b) * width;
         const Eigen::Index w = (static_cast<Eigen::Index>(b) == n_blocks - 1) ? last : width;

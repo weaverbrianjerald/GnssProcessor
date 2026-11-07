@@ -39,6 +39,7 @@ struct BorderCounters {
     long long n_readmit_mirror_seed_vce_cb    = 0;  ///< code-bias seeds met by the monitor's snapshot
     long long n_readmit_mirror_seed_census_cb = 0;  ///< code-bias seeds met by the census snapshot
     long long n_readmit_mirror_seed_census_clk = 0; ///< clock seeds met by the census snapshot
+    long long cxu_inverse_split = 0, cxu_inverse_declined = 0;   ///< network.parallel_coupling_prepare: inverses split over column blocks, and those that took the whole solve
     long long cxu_epochs = 0, cxu_epochs_built = 0, cxu_epochs_unfactored = 0,
               cxu_epochs_nostash = 0;
     long long cxu_keys_s = 0, cxu_keys_d[kCouplingExactRoutes]{};

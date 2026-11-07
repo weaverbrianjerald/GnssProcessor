@@ -1233,6 +1233,8 @@ void networkRunManifestStartup(NetworkRun& run, const std::filesystem::path& con
 
     /// @brief Run-scope counters of RunTraces, a base of NetworkServiceCounters (network/state/RunContext.hpp).
     struct RunTracesCounters {
+    /// network.parallel_iono_traces: the station-epochs of the iono diagnostics' trace rows formed in parallel.
+    long long n_iono_rows_parallel = 0;
         std::vector<int> sta_in_solve_ep;        ///< per consume epoch: stations that entered the arrowhead
         // ms_per_epoch_window anchors (P4(b)): wall ms and loop-epoch count as of the
         // previous health row, so each row reports the mean over its own window (the

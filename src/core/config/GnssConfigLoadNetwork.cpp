@@ -1819,6 +1819,12 @@ namespace GnssProcessor {
             jval<bool>(json, "network.parallel_redundancy_census", "parallel_redundancy_census", false);
         network_config_.parallel_schur_columns =
             jval<bool>(json, "network.parallel_schur_columns", "parallel_schur_columns", false);
+        network_config_.parallel_carry_harvest =
+            jval<bool>(json, "network.parallel_carry_harvest", "parallel_carry_harvest", false);
+        network_config_.parallel_iono_traces =
+            jval<bool>(json, "network.parallel_iono_traces", "parallel_iono_traces", false);
+        network_config_.parallel_coupling_prepare =
+            jval<bool>(json, "network.parallel_coupling_prepare", "parallel_coupling_prepare", false);
         network_config_.parallel_carry =
             jval<bool>(json, "network.parallel_carry", "parallel_carry", false);
 
@@ -12283,6 +12289,15 @@ namespace GnssProcessor {
                       network_config_.parallel_station_normals ? "on" : "off",
                       network_config_.parallel_redundancy_census ? "on" : "off",
                       network_config_.parallel_schur_columns ? "on" : "off");
+        }
+        if (network_config_.parallel_carry_harvest || network_config_.parallel_iono_traces
+            || network_config_.parallel_coupling_prepare) {
+            log->info("Network (PES): parallel serial stages ARMED: carry harvest {}, iono traces {}, "
+                      "coupling preparation {} (byte-identical to the serial stages; active only "
+                      "with the per-station parallel path)",
+                      network_config_.parallel_carry_harvest ? "on" : "off",
+                      network_config_.parallel_iono_traces ? "on" : "off",
+                      network_config_.parallel_coupling_prepare ? "on" : "off");
         }
         if (network_config_.parallel_seam) {
             log->info("Network: deterministic-parallel post-solve seam ENABLED "

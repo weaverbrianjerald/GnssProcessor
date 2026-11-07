@@ -75,6 +75,18 @@ int networkRunTimingRunEnd(const NetworkRunEndView& v) {
         if (pnc.parallel_schur_columns)
             log->info("Network (PES) Schur reduce by columns: {} reduce(s) split, {} declined "
                       "(serial loop)", pc.schur_split, pc.schur_declined);
+        if (pnc.parallel_coupling_prepare)
+            log->info("Network (PES) coupling preparation: {} inverse(s) split over column blocks, "
+                      "{} declined (the whole solve)",
+                      v.ctx.counters.cxu_inverse_split, v.ctx.counters.cxu_inverse_declined);
+        if (pnc.parallel_iono_traces)
+            log->info("Network (PES) iono traces: {} station-epoch(s) of trace rows formed in parallel",
+                      v.ctx.counters.n_iono_rows_parallel);
+        if (pnc.parallel_carry_harvest)
+            log->info("Network (PES) carry harvest: {} carried column(s) computed in parallel ahead "
+                      "of the walk, {} read by it; {} station(s) of the handover ledger",
+                      v.ctx.counters.n_harvest_ahead_cols, v.ctx.counters.n_harvest_ahead_read,
+                      v.ctx.counters.n_harvest_ahead_ledger);
     }
     if (sec_timers_on) {
         const auto& stmr = est.sectionTimers();

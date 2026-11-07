@@ -178,6 +178,10 @@ struct LevelingCarryCounters {
     // Logged once at run end when the mechanism is armed.
     size_t n_cpl_stash = 0, n_cpl_stash_empty = 0, n_cpl_harvest_fail = 0;
     long long prm_pruned_after_drop = 0;
+    // network.parallel_carry_harvest: the carried columns computed ahead of the walk, those the
+    // walk read, and the stations of the handover ledger computed ahead of its walk.  A column
+    // computed and not read is one the walk skipped (a non-finite value).
+    long long n_harvest_ahead_cols = 0, n_harvest_ahead_read = 0, n_harvest_ahead_ledger = 0;
 };
 
 struct NetworkRunContext;   // network/state/RunContext.hpp

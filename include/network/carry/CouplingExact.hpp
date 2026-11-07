@@ -143,6 +143,7 @@ struct CouplingExactCounters {
 /// scalar-kappa route.
 struct CouplingExactEpoch {
     bool   ok{false};                    ///< built and factored this epoch
+    bool   inverse_split{false};         ///< the factor's inverse took the column split (@ref ldltInverseColumns)
     double stash_s{0.0};                 ///< content time (continuous GPS s) of the stash @c P belongs to
     Eigen::MatrixXd P;                   ///< the stashed border posterior (m^2)
     std::map<std::string, int> p_of_key; ///< sharedCarryKey identity -> P row
@@ -186,9 +187,32 @@ struct CouplingExactEpoch {
 /// correlation scaling (as the dense fold does, @c NetworkEstimator::addSharedPriorDense),
 /// and set @c ok.  An empty S is a valid epoch (every stashed column re-attributes or
 /// departs).
+/// @param solve_threads Threads for the inverse's column blocks (network.parallel_coupling_prepare,
+///         @ref ldltInverseColumns); 1 takes the whole solve.  Sets @c inverse_split.
 /// @return false (and @c ok false) when the scaled matrix is not positive definite or a
 ///         diagonal is not positive.
-bool couplingExactFactor(CouplingExactEpoch& ep);
+bool couplingExactFactor(CouplingExactEpoch& ep, int solve_threads = 1);
+
+/**
+ * @brief The inverse @c f.solve(Identity) with its columns split over blocks, one thread per block,
+ *        bit for bit the whole solve.
+ *
+ * Each column of the triangular solves is computed independently of the others.  Its arithmetic in
+ * Eigen's blocked kernel depends on the depth panels (@c kc), the row panels (@c mc) and the 4-column
+ * tile it falls in; it does not depend on which block of columns holds it.  The blocks therefore have
+ * a width that is a multiple of 4, every block is at least 8 wide (a one-column right-hand side takes
+ * the vector path), and the split is taken only where Eigen's own heuristic gives the blocks the same
+ * panels as the whole solve; otherwise, and inside a parallel region or with Eigen on more than one
+ * thread, this is the whole solve.
+ *
+ * @param f         The factorization.
+ * @param n         Its order.
+ * @param n_threads Threads to split over; 1 or less takes the whole solve.
+ * @param split     Receives whether the split was taken; may be null.
+ * @return The inverse (n x n).
+ */
+Eigen::MatrixXd ldltInverseColumns(const Eigen::LDLT<Eigen::MatrixXd>& f, Eigen::Index n,
+                                   int n_threads, bool* split = nullptr);
 
 /// The exact update of one row's stashed terms (the one rule of the exact coupling update).
 struct CouplingExactRow {
