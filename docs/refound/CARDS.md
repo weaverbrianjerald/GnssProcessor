@@ -317,3 +317,4 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   deleting seven wire records at one epoch, or G01 at the consumer for ten minutes; not by another satellite), the standing 0.2 m and its
   centimetre responses collapse on the covered L1C + C1C family and on the per-signal wires; the "ARHT00ATA wire gain" of posture C is
   the per-signal wire (D6 -208.5 mm, C6 -214.6 mm), not BeiDou; nothing armed.
+- [SRN](SRN_scientific_review_network_2026-11-06.md): open, 2026-11-06: a scientific review of the network producer at main `adef08b` on the golden posture, nine dimensions, findings with evidence, materiality and a falsification route each; results pending.
