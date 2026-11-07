@@ -62,7 +62,6 @@ product). These items are its replacement and the level's open edges.
 Card IRD carries its own step list (IRD-1 onward: bundle A0, decisions D0 and D-S, the
 consumer veto IRD-7). Only work outside it is listed.
 
-- **L2C against L2W quarter-cycle alignment.** Unexamined across receiver types; a prerequisite before integer work moves from the sim ladder to the field. [IRD](../refound/IRD_integer_recovering_datum_2026-10-13.md)
 - **Held phase bias under an eq34 shift.** The one open item of PRM3 step 2 (257 / 188 family-epochs); it matters for IRD's eq34 bundle. [PRM3](../refound/PRM3_responses_2026-10-02.md)
 
 ## L5 (SEQUENCED, never closed)
