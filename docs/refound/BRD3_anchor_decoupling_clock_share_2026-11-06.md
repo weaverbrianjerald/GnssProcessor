@@ -386,6 +386,21 @@ ICL5), and the clock-share rule of section 4 does not apply at the golden's q. T
 tonight: the key arm with the extra refloats at NIUM00NIU alone taken back (or NIUM00NIU dropped) should leave the key
 at the control's sd and the statistic under the bar. E07 at 554610 is appended when the runs pass it.
 
+**Result, the 24 h pair, E07 at 554610 (read mid-run, 22:10), and the reading corrected.** The same pattern to the
+digit: pair L1C + L5X in both runs, the clock's own innovation +1.3 mm in both (clock sd 17 mm), the L5X key +1.2 mm
+in both, and the L1C key -28.3 mm in the control (sd 42.3 mm, e_phi +0.0666) against -72.2 mm in the key arm (sd 57.2
+mm, e_phi +0.1657, trip); one epoch later both read within 4 mm of zero. E07's eight stations and its anchors (L1C at
+MRC100USA, L1X and L5X at BOGT00COL) are the same in both runs, and MRC100USA has no IF-TD refloat in either run in
+the four hours before, so the station-specific reading given for E26 above (its anchor NIUM00NIU's extra refloats)
+does not carry to E07 and is withdrawn as the mechanism. What the two trips share: the key arm refloats more arcs
+across the network (228 against 181 in the four hours before 554610, +26 %; card ICL5: +22 to +32 % over the day),
+its phase-bias keys carry larger folded variances (E26's L1C sd 60 against 45 mm, E07's 57 against 42 mm, variance
+ratios 1.8), and the same one-epoch L1C transient that moves the control's key by -27 and -28 mm moves the looser key
+2.2 and 2.6 times as far, over the 0.12 m bar on the 0.02 m floor. The clock did not move in either trip. The
+falsifier of this reading, not run tonight: the control's L1C keys re-inflated to the key arm's variances at those
+epochs should reproduce the trips; a key arm whose extra refloats are confined to stations that do not track E26 or
+E07 should not.
+
 ## 6. Verdict (2026-11-06)
 
 **The bridge is not the lever; the decoupling is. Every statistic trip of the day that fails is a phase-bias-key event
@@ -434,9 +449,8 @@ Nothing is armed; arming, any golden change and the merge are the author's decis
 
 - **The next build** (section 4): `network.clock_anchor_clock_k` with gates X-U0 and X0 to X5; then 24 h on DOY 129 and
   132 against a 24 h GPS golden, DOY 128 and a real-time run before any arming (card BRD2 section 7).
-- **The lone trips.** E07 at 554610 from the 24 h pair (appended when passed); the DOY-129 trip (E08 at 311100), which
-  needs its own 24 h instrumented pair; and the falsifier of section 5.3's reading of E26 (the key arm with NIUM00NIU's
-  extra refloats taken back).
+- **The lone trips.** The DOY-129 trip (E08 at 311100) needs its own 24 h instrumented pair; the falsifier of section
+  5.3's reading (the key arm's looser keys carry the same one-epoch L1C transients over the bar) is named there.
 - **The clock-carried trips** of DOY 131 (one tracked at 2.09, two on the regime at 4.08, e_clk 56 and 111 mm): real
   clock events or not, read with the new columns when X2 runs that day.
 - **The column at a flagged epoch.** The tracked a priori drifts 22 to 36 mm over the bridges of the mass trips: a
