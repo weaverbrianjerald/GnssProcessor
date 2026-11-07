@@ -317,4 +317,8 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   deleting seven wire records at one epoch, or G01 at the consumer for ten minutes; not by another satellite), the standing 0.2 m and its
   centimetre responses collapse on the covered L1C + C1C family and on the per-signal wires; the "ARHT00ATA wire gain" of posture C is
   the per-signal wire (D6 -208.5 mm, C6 -214.6 mm), not BeiDou; nothing armed.
-- [VIN](VIN_validation_instruments_2026-11-07.md): open, 2026-11-07: validation instruments (build B5 of card SRN): the consumer's formal sigma in the trace, a NEES and a convergence grader, the headline beside the census, the sim start.
+- [VIN](VIN_validation_instruments_2026-11-07.md): closed, 2026-11-07: validation instruments (build B5 of card SRN), measure-only:
+  the consumer's formal position sigma in `closed_loop_trace.csv` (four trailing columns, one shared schema, products and traces otherwise
+  identical); position NEES consistent at the field and sim users in hours 2 to 6, mildly over-confident in hour 1; census convergence
+  medians 30.5 min to 0.1 m and 94 min to a sustained 0.05 m (WTZZ00DEU 6 and 40 min); the sim pair of record starts inside the
+  start artifact; replacement baseline paragraph for CLAUDE.md and the sim golden's start pin proposed, not applied.
