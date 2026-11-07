@@ -443,7 +443,7 @@ identical output (open, 2026-10-29: three stages built behind keys off by defaul
 both goldens; golden loop 27.9 % (field) and 20.3 % (sim) shorter after card CVF, 39.7 % at 305 stations; merged. Continued
 2026-11-06 on branch `perf/pes-next`, not merged, not armed: harvest, iono traces and coupling inverse behind three more keys, identical on every gate, one OpenMP team size, loop 28.9 % (field) and 25.7 % (sim) shorter than main, 48.7 % at 305 stations against no stage).
 
-[AV2](refound/AV2_avx2_build_measurement_2026-11-07.md), what an `/arch:AVX2` build of the network producer returns and what it costs in reproducibility (open, 2026-11-07: pre-registered; branch `perf/avx2-measure`, not merged, nothing armed).
+[AV2](refound/AV2_avx2_build_measurement_2026-11-07.md), what an `/arch:AVX2` build of the network producer returns and what it costs in reproducibility (closed, 2026-11-07: as the build stands -8.5 % field, no gain sim; with the two column-split checks taught -15.7 to -20.8 % at identical output; outputs move by a neutral perturbation; recommended with the separate step and a new baseline pair; branch `perf/avx2-measure`, not merged, nothing armed).
 
 ### `realtime` — [topics/realtime.md](topics/realtime.md)
 

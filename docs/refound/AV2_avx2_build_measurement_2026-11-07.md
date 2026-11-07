@@ -4,15 +4,15 @@
 
 - **id:** AV2
 - **topic:** perf
-- **status:** open
-- **summary:** Pre-registered 2026-11-07, before any run. Measures an `/arch:AVX2` Release build of the network producer against the SSE2 Release build of one commit, on the two goldens: the loop and the section timers, how much the three SSE2 geometry checks give back, and how far the outputs move. Nothing armed, nothing merged; the decision is the author's.
+- **status:** closed
+- **summary:** Pre-registered 2026-11-07 (`3ec110d`), closed the same day; the decision is the author's. An `/arch:AVX2` Release build of the network producer against the SSE2 build of one commit (`8535d3b`), on the two goldens, 2 h, controlled sequences under 12 to 16 logical processors of foreign load. As the build stands the loop is 8.5 to 8.8 % shorter on the field golden and not measurably shorter on the sim golden. The Schur reduce and the coupling inverse turn serial because their checks read the SSE2 tile (counters: 0 of 240 reduces split). With the two column-split checks taught (scratch, identical to the AVX2 build as it stands, every split taken) the loop is 17.8 % (field) and 15.7 % (sim) shorter, and 20.8 % and 13.8 % with the three keys of card PES section 7. The sparse normals give back nothing, because the dense AVX2 product is faster. Reproducibility: every same-executable pair identical, 12 threads identical to 20; the SSE2 wires identical to the baseline pair; the AVX2 outputs move by about card NSP's neutral spread (field census at most 0.010 mm, sim census 0.000 mm from 00:30:15, held-out consumers within 0.05 mm by hour, no decision changed). Unit suite under AVX2: 10 of 3 839 fail (six pin the SSE2 tile, three tolerances at 1e-8, one hold-clone variance off by 2.1 %, unexplained). Recommended: AVX2 with the separate step (teach the two checks, a counter for the sparse formation, the four numerical tests settled), then a new baseline pair; not the build as it stands. Nothing armed, nothing merged.
 - **source:** [PES](PES_parallel_epoch_stages_2026-10-29.md) section 7.7 (the follow-up "the instruction set"); [NSP](NSP_census_neutral_spread_2026-10-29.md) (the census's spread under a neutral change of the wire, and `scripts/neutral_spread.py`); [BOF](BOF_built_off_follow_through_2026-10-28.md) section 6 (the baseline pair).
 - **knobs / posture:** no key added and none armed. The build flag is a separate tree, `scripts/wt_build.ps1 -Arch AVX2` (`build/x64-Release-avx2`); `CMakeLists.txt` and the default build are unchanged. The arms read the three stage keys of card PES section 7 (`network.parallel_carry_harvest`, `parallel_iono_traces`, `parallel_coupling_prepare`), unarmed, only in the arms named `all`.
 - **dates in the text:** 2026-11-07
-- **hashes / run dirs:** branch `perf/avx2-measure` from `perf/pes-next` `8535d3b` (main adds docs only since the merge base `284ec29`), worktree `D:/GnssProcessorSupport/worktrees/avx2`; runs `D:/GnssProcessorSupport/runs_avx2/`; gate records `D:/GnssProcessorSupport/gates/avx2/`.
+- **hashes / run dirs:** branch `perf/avx2-measure` from `perf/pes-next` `8535d3b` (main adds docs only since the merge base `284ec29`), worktree `D:/GnssProcessorSupport/worktrees/avx2`; runs `D:/GnssProcessorSupport/runs_avx2/`; gate records `D:/GnssProcessorSupport/gates/avx2/`. Executables (section 5.1): SSE2 `50023c016c09030a`, AVX2 `db6370b62c359add`, scratch T `581e457ba45a9b6c`, scratch X `411513bfc40fb14c`.
 - **gates (frozen at pre-registration):** section 3, written before any run of either executable.
 
-**Outcome.** Question: what does an AVX2 build of the network producer return in wall time on the two goldens, and what does it cost in reproducibility? Pre-registered 2026-11-07, no result yet. The card compares two Release builds of one commit in controlled sequences, reads how much the checks that decline under AVX2 give back, and grades the output movement on the held-out consumer by hour, the census, the between-satellite wire and the event sets, against the baseline pair and the neutral spread of card NSP. Standing: open, nothing armed.
+**Outcome.** Question: what does an AVX2 build of the network producer return in wall time on the two goldens, and what does it cost in reproducibility? As the build stands, the loop is 8.5 to 8.8 % shorter on the field golden and no shorter on the sim golden, because the Schur reduce and the coupling inverse decline to serial paths. With their two checks taught, the loop is 15.7 to 20.8 % shorter at identical output. The outputs move by about a neutral perturbation (census at most 0.010 mm, no decision changed), and each build reproduces itself exactly. Standing: closed. Recommended: AVX2 with the separate step and a new baseline pair; nothing armed.
 
 ## 1. Question
 
@@ -74,4 +74,155 @@ Teaching the checks on the branch, with unit tests, is not part of this card.
 
 ## 5. Results
 
-None yet.
+Appended 2026-11-07 after every run; sections 1 to 4 are as committed at pre-registration (`3ec110d`).
+
+### 5.1 The builds (gate B0)
+
+| executable | tree | sha256[:16] |
+| --- | --- | --- |
+| `gnss_processor_av2_sse2.exe` | `build/x64-Release` | `50023c016c09030a` |
+| `gnss_processor_av2_avx2.exe` | `build/x64-Release-avx2` | `db6370b62c359add` |
+| `gnss_processor_av2_teach.exe` (scratch, section 5.3) | `build/x64-Release-avx2`, patch `gates/avx2/teach_split.patch` | `581e457ba45a9b6c` |
+| `gnss_processor_av2_teachx.exe` (scratch, section 5.3) | the same, patch `gates/avx2/teach_split_sparse.patch` | `411513bfc40fb14c` |
+
+B0 passes. Every compile statement of `build/x64-Release-avx2/build.ninja` carries `/arch:AVX2`, and none of `build/x64-Release` does. The probe `gates/avx2/b0_geometry.cpp`, compiled with each flag:
+
+| flag | Eigen instruction sets | packet (doubles) | `mr` | `nr` | fused multiply-add | alignment | depth panel `kc` of a 420 x 420 x 420 product |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| none (SSE2) | SSE, SSE2 | 2 | 4 | 4 | no | 16 | 420 |
+| `/arch:AVX2` | AVX2, FMA | 4 | 12 | 4 | yes | 32 | 216 |
+| `/arch:AVX512` (probe only, not built) | AVX512, FMA | 8 | 24 | 4 | yes | 64 | 420 |
+
+The disassembly of the SSE2 executable holds no fused multiply-add instruction; the AVX2 one holds 3 062 (56 805 instruction lines on YMM registers against 6 355); the count was not attributed by function. Both 10-epoch smokes ran to exit 0 on both goldens; the AVX2 wire differs from the SSE2 one from the first epoch.
+
+### 5.2 Cost as the build stands (gate T)
+
+Controlled sequences, one run at a time, above-normal priority; the machine carried 12 to 16 logical processors of foreign load in every run (`other_procs_mean`, read per run in `runs_avx2/av2_runs.txt`). ms per epoch of the loop; spread is the gap between the two arms of one executable in the sequence.
+
+| sequence | golden | SSE2 (arms) | AVX2 (arms) | AVX2 against SSE2 | spread SSE2, AVX2 | CPU s user, SSE2 to AVX2 |
+| --- | --- | --- | --- | --- | --- | --- |
+| `t1`, golden | field | 947.4 (940.7, 954.1) | 864.1 (859.1, 869.1) | -8.8 % | 1.4 %, 1.2 % | 790 to 625 |
+| `t1`, golden | sim | 569.0 (573.6, 564.3) | 559.8 (572.1, 547.5) | -1.6 %, no gain | 1.6 %, 4.4 % | 531 to 455 |
+| `t2`, `all` | field | 776.2 (776.6, 775.8) | 751.5 (748.8, 754.2) | -3.2 % | 0.1 %, 0.7 % | 878 to 702 |
+| `t2`, `all` | sim | 492.9 (477.5, 508.3) | 487.0 (488.8, 485.2) | -1.2 %, no gain | 6.2 %, 0.7 % | 563 to 472 |
+
+The work falls by 14 to 21 % of user CPU on every arm, but the wall falls by much less, because the reduce turns serial (section 5.3). On the sim golden the gain is inside the spread of same-executable arms, so it is reported as no gain.
+
+### 5.3 The fallbacks, and the separate step (gate F, section 4)
+
+The run-end counters of the AVX2 arms show the declines: `Schur reduce by columns: 0 reduce(s) split, 240 declined` (field; 241 on the sim) and, in the `all` arms, `coupling preparation: 0 inverse(s) split, 239 declined`. The station normals are still formed in parallel (13 919 forms), but densely: the sparse formation has no run-end counter (a gap against standing invariant 4), so its decline is read from the code path and from the scratch arm X below.
+
+The scratch executables of section 4, in one sequence with the two builds (`t3`: SSE2, AVX2, T, X, X, T, AVX2, SSE2 on each golden; `t4`: SSE2, T, X, X, T, SSE2 with the three keys). T teaches `schurColumnSplitExact` and `inverseSplitExact` the AVX2 tile (`nr` 4, row panels cut at multiples of `mr`); X adds the sparse normals forced under AVX2 (a plain ascending sum, not the kernel's order).
+
+| sequence | golden | SSE2 | AVX2 as it stands | T: split checks taught | X: T plus sparse normals | spread (largest pair) |
+| --- | --- | --- | --- | --- | --- | --- |
+| `t3`, golden | field | 901.8 | 824.9 (-8.5 %) | 741.5 (-17.8 %) | 755.0 (-16.3 %) | 4.1 % |
+| `t3`, golden | sim | 519.3 | 499.2 (-3.9 %, no gain) | 437.6 (-15.7 %) | 445.1 (-14.3 %) | 8.7 % (AVX2), 5.5 % (SSE2) |
+| `t4`, `all` | field | 716.0 | (`t2`: -3.2 %) | 566.9 (-20.8 %) | 593.0 (-17.2 %) | 3.4 % |
+| `t4`, `all` | sim | 451.3 | (`t2`: -1.2 %) | 389.0 (-13.8 %) | 394.3 (-12.6 %) | 6.4 % |
+
+T is IDENTICAL to the AVX2 build as it stands on both goldens, in both postures (`t3` and `t4` T arms against the `t3` and `t2` AVX2 arms, every file), with every reduce split (240 of 240 field, 241 of 241 sim) and every inverse split (239 of 239). The argument of card PES holds under the AVX2 tile: a column's arithmetic depends on its 4-column tile and the panels, not on the block that holds it.
+
+Per section (ms per epoch, `t3`, golden as it is; `t4` for the coupling preparation):
+
+| section | field SSE2 | field AVX2 | field T | field X | sim SSE2 | sim AVX2 | sim T | sim X |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Schur reduce (`D0 reduce`) | 36.8 | 124.7 | 22.1 | 22.7 | 15.1 | 62.3 | 8.5 | 8.4 |
+| station normals (`D0 est.addStation`) | 51.3 | 38.0 | 37.9 | 51.8 | 25.4 | 17.0 | 16.7 | 27.1 |
+| assembly (`D0 assembly-wall`) | 96.7 | 75.9 | 76.2 | 91.0 | 54.4 | 43.3 | 42.3 | 53.0 |
+| covariance inverse (`D0 cov-inverse`) | 34.1 | 17.0 | 17.3 | 17.5 | 9.7 | 5.1 | 4.9 | 4.7 |
+| covariance consumers | 119.5 | 83.8 | 84.3 | 86.1 | 86.5 | 60.3 | 60.4 | 60.1 |
+| coupling preparation (`pre-asm`, `all`) | 35.6 (`t4`) | 50.1 (`t2`; SSE2 40.2) | 31.3 | 32.0 | 22.6 | 28.7 (`t2`; SSE2 26.5) | 20.7 | 20.2 |
+
+What the three fallbacks give back:
+
+- **The column-split reduce: most of the gain.** Serial under AVX2, the reduce costs 83 ms per field epoch (9.2 % of the SSE2 loop) and 62 ms per sim epoch (11.9 %). Taught, it is 1.7 (field) to 1.8 (sim) times faster than SSE2's split. On the golden as it is, the AVX2 gain is 77 ms (field) and 20 ms (sim) as the build stands and 160 and 82 ms with T.
+- **The split coupling inverse.** With the three keys of card PES section 7, the serial inverse makes the preparation slower than SSE2 (50.1 against 40.2 ms, field); taught, it is 31.3 against 35.6. As the build stands the `all` posture gains 3.2 % (field); with T, 20.8 %.
+- **The sparse station normals: nothing.** The dense AVX2 product is faster than the sparse formation: forcing the sparse path (X) costs 13.9 ms (field) and 10.4 ms (sim) per epoch in the station normals against T. `gemmOrderOf` declining under AVX2 costs nothing; teaching it the fused kernel's order is not worth building.
+
+The X wire differs from the AVX2 wire at the same scale as AVX2 from SSE2 (2 h field: between-satellite clock move p95 0.007 mm, phase bias p95 0.04 mm, 120 decision rows in one run only, all `PRIORRES`), and the X pairs are identical among themselves.
+
+### 5.4 Reproducibility against itself and against the baseline (gates R1, R3)
+
+- **R1 passes.** Every same-executable pair is IDENTICAL on both goldens: SSE2 and AVX2 in `t1` and `t2`, SSE2, AVX2, T and X in `t3` and `t4`, and the SSE2 arms of `t1` against those of `t3` (36 files each, `gates/avx2/av2_cmp.py`). The AVX2 build at `network.parallel_max_threads` 12 against the pinned 20 is identical in every file but `logs/network_run_summary.csv`, which records the thread count. Seven AVX2-family processes of each golden as it is (two AVX2 in `t1`, two AVX2 and two T in `t3`, one at 12 threads) and four in the `all` posture gave one output per golden and posture: no output followed the heap address.
+- **R3 passes.** The 6 h SSE2 wires of `8535d3b` are IDENTICAL to the baseline pair `runs/_rf0hv17_{field,sim}6` in `products.txt` and every compared CSV (`gates/avx2/r3_field.log`, `r3_sim.log`). Every AVX2 movement below is therefore also a movement against the baseline pair.
+
+### 5.5 How far the outputs move (gates R2, M1, M2)
+
+6 h wires `_rap_av2_w6_{sse,avx}_f_ge` (field), `_rap_av2_w6_{sse,avx}_S_ge` (sim from the run start, the baseline's form) and `_rap_av2_w6o_{sse,avx}_s_ge` (sim from 00:30:15, outside the fixture's start artifact).
+
+**R2, the wire and the decisions** (`scripts/neutral_spread.py wire` and `gates/avx2/av2_wire.py`; between-satellite move over hours 2 to 6, mm):
+
+| wire | first difference | clock p50 / p95 / max | code bias p95 / max | phase bias p50 / p95 / max | decision rows in one run only |
+| --- | --- | --- | --- | --- | --- |
+| field, AVX2 against SSE2 | 00:00:00 | 0.002 / 0.006 / 0.020 | 0.002 / 0.032 | 0.005 / 0.208 / 2.36 | 493, all `PRIORRES` (measure-only) |
+| sim from the start | 00:00:30 | 0.000 / 0.001 / 0.002 | 0.000 / 0.000 | 0.003 / 0.014 / 0.30 | 46, all `PRIORRES` |
+| sim from 00:30:15 | 00:31:00 | 0.000 / 0.000 / 0.000 | 0.000 / 0.000 | 0.002 / 0.012 / 0.12 | 36, all `PRIORRES` |
+| for scale: card NSP's neutral re-rounded roster, field DOY 129, six arms | 00:00:00 | 0.009 to 0.015 / 0.031 to 0.050 / 0.1 | | p95 0.16 to 0.27 | 401 to 492 |
+
+No record is present in one wire only, and no event class appears or disappears; every differing decision row is the measure-only prior-residual census. The largest phase-bias moves are steps captured at one epoch and then held: G12 L1W and L2W move by 1.42 and 2.35 mm at 02:22:00 and keep that offset to the end, E02 L5X by 1.88 mm at 04:16:30. The held value takes the rounding difference of the float state at the capture epoch. The AVX2 build moves the wire by about as much as card NSP's neutral arms: less in the clock, the same in the phase bias.
+
+**M1, the held-out consumer by hour** (hourly p50 of the 3D error, mm; `gates/avx2/av2_consumer.py`; the trace resolves 0.1 mm):
+
+| consumer | build | h1 | h2 | h3 | h4 | h5 | h6 | largest per-epoch change |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| WTZZ00DEU | SSE2 (= baseline) | 58.8 | 12.3 | 23.05 | 12.25 | 16.5 | 12.0 | |
+| WTZZ00DEU | AVX2 | 58.8 | 12.3 | 23.05 | 12.25 | 16.5 | 11.95 | 0.2 (h1), 0.1 after |
+| SZZ000SIM from the start | SSE2 (= baseline) | 136.85 | 72.3 | 30.75 | 23.95 | 25.7 | 18.2 | |
+| SZZ000SIM from the start | AVX2 | 136.85 | 72.3 | 30.8 | 23.95 | 25.7 | 18.2 | 0.6 (h1), 0.1 after |
+| SZZ000SIM from 00:30:15 | SSE2 | 99.45 | 32.6 | 39.8 | 16.0 | 18.0 | 15.15 | |
+| SZZ000SIM from 00:30:15 | AVX2 | identical | | | | | | 0.1 (719 of 720 rows identical) |
+
+The two re-founding instruments (`scripts/refound_grade.py`) agree at their printed precision except the third decimal of a metre in a few wire-against-reference rows.
+
+**M2, the census** (each build's wire with the same build's consumer; per site the mean hourly p50 over hours 2 to 6; `gates/avx2/census_fine.py`):
+
+| census | consumers | largest change, hours 2 to 6 | paired median | sites past the 1 cm clause | largest per-epoch change |
+| --- | --- | --- | --- | --- | --- |
+| field, DOY 129 | WTZZ00DEU and 16 sites | 0.010 mm (WTZZ00DEU -0.010; QUIN, ARHT, BAKE +0.010) | 0.000 mm | 0 | 0.5 mm (CHTI) |
+| sim from 00:30:15 | 16 stations | 0.000 mm | 0.000 mm | 0 | 0.1 mm |
+| sim from the start | 16 stations | 0.44 mm (S25, better) | 0.000 mm | 0 | 143 mm (S25, hour 1) |
+
+The field census sits 19 times below card NSP's neutral spread (0.19 mm). The one exception is S25 in the replay from the run start, inside the sim fixture's start artifact: the consumer starts 11.3 m off and its hour-1 p50 is 1.87 m on both builds. There AVX2 moves hour 1 by -30.7 mm and hours 2 to 6 by -0.44 mm (hour 2 -1.9 mm, hours 3 to 6 within 0.4 mm). The crossed replays (`gates/avx2/s25_cross.py`) separate the two halves: the AVX2 wire with the SSE2 consumer, and the SSE2 wire with the AVX2 consumer, each move S25 by at most 0.2 mm in any epoch. Only the two together make the 143 mm, which marks an ill-conditioned convergence from metres rather than a response of a settled solution. From 00:30:15, the grading start the project prescribes for the sim bed, S25 does not move (716 of 720 rows identical).
+
+### 5.6 The unit suite (gate U)
+
+Release `gnss_tests.exe` of the same commit in each tree (`gates/avx2/tests_sse2.log`, `tests_avx2.log`, the messages in `tests_avx2_failures.txt`):
+
+| build | tests | passed | skipped (fixture-gated in a worktree) | failed |
+| --- | --- | --- | --- | --- |
+| SSE2 | 3 839 in 526 suites | 3 806 | 33 | 0 |
+| AVX2 | 3 839 in 526 suites | 3 796 | 33 | 10 |
+
+The ten AVX2 failures, by kind:
+
+- **Six pin the SSE2 tile, by design.** `NeqSparseStationNormalsTest` (three cases: the sparse formation is refused on every shape, 0 accepted of 2 000), `NeqParallelStagesTest.ColumnSplitReduceMatchesTheSerialReduceBitForBit`, `LdltInverseColumnsTest.MatchesTheWholeSolveBitForBit` and `CouplingExactFactorSplitTest.HoldsTheSameInverseWithTheSplit` require the split or the sparse path and fail on the decline, not on a wrong number.
+- **Three meet a tolerance at the conditioning limit.** `CouplingExactUpdateTest` (`ExactRecursionEqualsTheBatch`, `DecoupledAndDepartedColumnsEqualTheBatch`, `BroadcastGradeWalkLocksThePerRowLevelWithRotatedAnchors`): the exact recursion against the batch solve differs by 1.09e-8 to 1.31e-8 against a bar of 1e-8 that the SSE2 rounding meets.
+- **One is not explained here.** `PbHoldSmoothedTest.AReinitOfTheClonesOwnClockKeepsItUnbiased` compares the hold clone's increment variance with an augmented-filter reference at 1e-6 relative after a re-initialization variance of 1e7; under AVX2 the two read 1.3340e-4 and 1.3059e-4 (2.1 %). Which side moved, the clone or the test's reference (a cancellation against the 1e7 re-initialization is the candidate), is not determined. The clone feeds the phase-bias hold that both goldens arm, so this is settled before any adoption.
+
+### 5.7 Not measured
+
+- A quiet machine: every timing carries 12 to 16 logical processors of foreign load, so the ratios are the reading and the absolute times sit above quiet figures.
+- The 305-station posture, the real-time engine, the user-side PPP path and the Python module under AVX2.
+- Another processor model. Eigen sizes its panels from the cache sizes it reads at run time, and the column-split checks read those panels, under either build.
+- An AVX-512 build (the probe of section 5.1 only: a 24-row tile).
+
+### 5.8 Recommendation
+
+The frozen rule of section 3, clause by clause:
+
+| clause | reading | met |
+| --- | --- | --- |
+| R1, reproducible against itself, both beds | every same-executable pair identical; 12 threads identical to 20 | yes |
+| M1, no settled hour worse by more than 1 cm | the largest hourly change is 0.05 mm (half the trace's 0.1 mm resolution) | yes |
+| M2, no site past the 1 cm clause | 0 of 17 (field) and 0 of 16 (sim); largest 0.010 mm field, 0.000 mm sim from 00:30:15 | yes |
+| R2, no new class of event | no class appears or disappears; every differing row is the measure-only prior-residual census | yes |
+| loop at least 10 % shorter on both beds, beyond the spread | as the build stands: field -8.5 to -8.8 % (golden), -3.2 % (`all`); sim -1.6 to -3.9 %, inside the spread | **no** |
+| the same with the separate step (scratch T) | field -17.8 % (golden), -20.8 % (`all`); sim -15.7 %, -13.8 %; spreads at most 6.4 % | yes |
+
+**The AVX2 build as it stands is not recommended:** it misses the 10 % bar on both beds, because the reduce and the coupling inverse turn serial. **AVX2 is recommended with the separate step as its condition.** The cost in reproducibility is one of bookkeeping, not of results. The outputs move by about as much as card NSP's neutral arms (field census 0.010 mm, sim census 0.000 mm from 00:30:15, held-out consumers within one 0.1 mm trace quantum, no decision changed). An AVX2 build reproduces itself exactly. What it costs is the baseline pair, re-established on the AVX2 build, and every byte comparison with an earlier arm, which stops applying across the change. The steps, in order, each the author's to approve:
+
+1. **Teach the two column-split checks** on a branch of their own: `schurColumnSplitExact` and `inverseSplitExact` accept `nr` 4 with row panels cut at multiples of `mr` (the scratch patch `gates/avx2/teach_split.patch` is three lines). Extend the unit tests that require the split to the AVX2 tile, with a test tree built under each flag. T is identical to the AVX2 build as it stands on both goldens, so this step moves no output.
+2. **Leave `gemmOrderOf` declining under AVX2**, and give the sparse formation a run-end counter (formed sparse, formed dense) so the decline shows as telemetry. Under AVX2 the dense product is faster than the sparse formation (section 5.3), so the three `NeqSparseStationNormalsTest` cases become SSE2-only.
+3. **Settle the four numerical tests** of section 5.6: the three recursion-against-batch tolerances (1e-8 against a measured 1.3e-8) and, before any adoption, which side of `PbHoldSmoothedTest.AReinitOfTheClonesOwnClockKeepsItUnbiased` moves by 2.1 %.
+4. **Switch the default build** (`/arch:AVX2` in `CMakeLists.txt`), which also requires AVX2 on every machine that runs the producer. Then re-establish the baseline pair on it.
