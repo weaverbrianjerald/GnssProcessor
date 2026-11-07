@@ -5301,6 +5301,43 @@ namespace GnssProcessor {
         bool networkPhaseDatumHeldBasis() const {
             return network_phase_datum_held_basis_;
         }
+        /**
+         * @brief Whether an anchoring station's level directions are held as part of the
+         *        phase datum (card ALD, H1).
+         *
+         * While a station anchors at least one phase-bias family of a constellation, one
+         * local row per such constellation, at the pins' weight, holds the carried part of
+         * its geometry-free level direction at its carried value, so the phase biases the
+         * station's pins define cannot inherit a move of its level (the anchor loop of card
+         * R1D).  The row is built beside the pins (station step `anchor_level_hold`), is
+         * continuous through a handover (the successor holds its own carried level) and is
+         * an event at both edges (ANCHOR_LEVEL hold_start / hold_end / hold_handover).
+         *
+         * Requires network.phase_datum_prioritized without network.phase_datum_eq34 (the
+         * loader refuses it otherwise).  Fingerprinted when armed.  Off = byte-identical.
+         *
+         * @return network.phase_datum_anchor_level_hold.
+         * @see networkPhaseDatumAnchorLevelHoldAllStations
+         */
+        bool networkPhaseDatumAnchorLevelHold() const {
+            return network_phase_datum_anchor_level_hold_;
+        }
+        /**
+         * @brief Whether the level hold is built at every station with a level direction,
+         *        every epoch (card ALD, H2).
+         *
+         * The minimum-constraint completion of every station level: it covers a station
+         * that handed its families over and still transmits through its carried coupling
+         * to the phase biases it defined, and it replaces the receiver DCB prior's weak
+         * closure along the level everywhere.
+         *
+         * @return network.phase_datum_anchor_level_hold_all_stations; requires
+         *         networkPhaseDatumAnchorLevelHold (the loader refuses it alone).  Off =
+         *         exactly the tenure-only hold.
+         */
+        bool networkPhaseDatumAnchorLevelHoldAllStations() const {
+            return network_phase_datum_anchor_level_hold_all_stations_;
+        }
         /// @brief Minimum arc age (loop epochs) to hold the S-basis (RF-2 item 3).
         /// @return network.phase_anchor_min_age_ep; 0 disables the gate.
         int networkPhaseAnchorMinAgeEp() const {
@@ -8985,6 +9022,16 @@ namespace GnssProcessor {
         /// Declare a held-basis handover to the consumer iff it is cold, not on
         /// |value − prev_value| (RF-2d).  Inert unless network_phase_datum_held_basis_.
         bool   network_phase_datum_held_mark_cold_{false};
+        /// An anchoring station's geometry-free level directions held as part of the phase
+        /// datum (card ALD, H1): while a station anchors a phase-bias family of a
+        /// constellation, one local row per such constellation beside its pins, at the pins'
+        /// weight, holds the carried part of that level at its carried value, so the phase
+        /// biases the pins define cannot inherit a move of the level.  Requires the
+        /// prioritized anchor election without eq34.  Off = byte-identical.
+        bool   network_phase_datum_anchor_level_hold_{false};
+        /// The hold at every station with a level direction, every epoch (card ALD, H2).
+        /// Requires network_phase_datum_anchor_level_hold_.  Off = exactly H1.
+        bool   network_phase_datum_anchor_level_hold_all_stations_{false};
         bool   network_phase_datum_candidacy_usable_{false}; ///< Cold anchor fallback (SPEC_event_harness §15; ledger KEEP_OFF): when a handover is about to happen, sweep the coverage-ranked candidates for one whose carried value is usable by the continuous branch's own predicate (finite, 0 < var <= ceiling, ratio gate, not freed this epoch, arc age >= network_phase_datum_candidacy_min_age_ep_) before falling through to the take-the-first-tracker sweeps.  A family with no usable candidate keeps the cold path.  Inert unless network_phase_datum_handover_continuous_ (no ledger to screen against).  Off = byte-identical (the pass is never entered).
         bool   network_phase_datum_candidacy_satellite_{true}; ///< Cold anchor fallback, iteration 2 (SPEC_event_harness §15.8): resolve a satellite's handover jointly; every family of the satellite moving this epoch takes one successor (the first coverage-ranked candidate usable for the most of them; a family it is not usable for is pinned there through the cold path, which is a frame step, not a split), and a partial handover prefers the station already anchoring the satellite's other families.  Iteration 1's per-family screen gained producer quality at the cost of split references (0.0 → 0.9/3) and a 49 % worse consumer.  Default true; inert unless network_phase_datum_candidacy_usable_; off = exactly iteration 1 (the single-knob A/B).
         int    network_phase_datum_candidacy_min_age_ep_{60}; ///< Cold anchor fallback maturity bar in loop epochs (n_loop_epochs − LocalCarry::birth_ep); 0 = no age test, unknown age = mature (the restored-entry convention: a warm-resume-restored entry carries LocalCarry::kBirthEpRestored, SPEC_event_harness §15.4).  Sized on the §15 census: cold successors p50 39 ep vs continuous p50 236 ep.  Inert unless network_phase_datum_candidacy_usable_.

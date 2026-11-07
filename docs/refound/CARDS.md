@@ -213,9 +213,13 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   (2.2 m). Candidate against golden: census paired median -0.8 to -3.8 mm, none worse than +2.9 mm, ARHT00ATA -0.08 to -0.13 m on four
   days, hour 1 better in the median; cost about twice. One wire difference read (G03 on DOY 130). Not armed.
 - [R1D](R1D_station_level_datum_2026-10-23.md): closed, 2026-10-31: L5 step R-1d, the station level under three bands. A datum row on the receiver band-5 delay and second-channel offset does not hold MAJU00MHL's level (10 m: nothing; 1 m: 0.95 m into the C1W rows); the transmission is the phase-datum anchor loop (barring the station: no event, clock wire 0.91 times dual); the coupling projections break the gauge or cost the dual clock wire 40 %, and a re-seed handover does not undo it. Five record branches, none merged. Continued in card ALD; L5 SEQUENCED.
-- [ALD](ALD_anchor_level_datum_2026-10-23.md): open, 2026-10-23: L5 step R-1d continued (successor of R1D): an
-  anchor station's level directions held as part of the phase datum. Derived and checked offline on MAJU00MHL's
-  dumps (the anchor's level is transported exactly into the phase biases its pins define); not built. L5 SEQUENCED.
+- [ALD](ALD_anchor_level_datum_2026-10-23.md): open, 2026-11-06: L5 step R-1d continued (successor of R1D): an
+  anchor station's level directions held as part of the phase datum. Derived 2026-10-23; built and graded 2026-11-06
+  on branch `ald/anchor-level-hold` (default off, not merged, not armed). Gates 1 to 3 pass and the off path is
+  byte-identical; gate 4 FAILED (MAJU00MHL's code biases still step at TOW 260040 by half the control's with its hold
+  in force, 28 decouples against 21; the all-stations hold the same); gate 5: the dual bar passes (clock wire 0.70
+  times), the three-band bars fail (wire 1.79 times the dual control, code offsets at 19 stations). The hold
+  redistributes a network-wide level re-realization; the transport reading is refuted. L5 SEQUENCED.
 - [MRF](MRF_mw_reflag_skip_2026-10-28.md): closed, 2026-10-28: MW re-flag: one slip freed a carried arc twice (the LLI or IF-TD
   response, then the MW detector's re-detection 30 to 420 s later; 11 in the field 6 h). The detector dates each step and
   `mw_reflag_skip` frees no band re-levelled since; off byte-identical, on frees once, user and census within 2 mm. ARMED

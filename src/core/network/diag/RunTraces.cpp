@@ -1813,6 +1813,14 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                // bytes are unchanged.
                << (config_.networkPhaseDatumHeldBasis()
                        ? std::string("\"phase_datum_held_basis\":true,") : std::string())
+               // The anchor-level hold (card ALD) affects the solve.  Emitted only when
+               // armed, so an unarmed run's manifest bytes are unchanged.
+               << (config_.networkPhaseDatumAnchorLevelHold()
+                       ? fmt::format("\"phase_datum_anchor_level_hold\":true,"
+                                     "\"phase_datum_anchor_level_hold_all_stations\":{},",
+                                     config_.networkPhaseDatumAnchorLevelHoldAllStations()
+                                         ? "true" : "false")
+                       : std::string())
                // The drop-only floor affects the solve, so the manifest records it
                // when armed (RF-3a).  Emitted only when armed, so an unarmed run's
                // manifest bytes are unchanged.

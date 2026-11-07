@@ -109,6 +109,7 @@ NetRowClass rowClassOfKind(ContributionKind k, double w) {
         case CK::Eq34RpbPin:
         case CK::Eq34RpbRankFloor:
         case CK::Eq34RpbTimeLink:
+        case CK::AnchorLevelHold:
         case CK::GloIfbAnchor:
         case CK::GloIonoAnchor:
         case CK::SimZeroIono:

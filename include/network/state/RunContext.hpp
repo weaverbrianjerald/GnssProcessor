@@ -111,6 +111,7 @@
 #include "network/slip/CommonBandScope.hpp"                  // CommonBandScopeCounters
 #include "network/solve/SolveGlue.hpp"                       // SolveGlueCounters
 #include "network/solve/PhaseDatum.hpp"                      // PhaseDatumCounters
+#include "network/solve/AnchorLevelHold.hpp"                 // AnchorLevelHoldCounters
 #include "network/driver/EpochAdmission.hpp"                 // EpochAdmissionCounters
 #include "network/solve/SbasisCompletion.hpp"                // SbasisCompletionCounters
 #include "network/diag/FrameDiag.hpp"                        // FrameDiagCounters
@@ -259,6 +260,15 @@ namespace GnssProcessor {
         int  pa_min_age_ep{};
         /// network.phase_anchor_flag_quiet_ep (0 = no quiet-window gate; RF-2 item 3).
         int  pa_flag_quiet_ep{};
+        /// network.phase_datum_anchor_level_hold (card ALD): an anchoring station's
+        /// geometry-free level directions held at their carried values beside its pins.
+        /// Resolved with the anchored election and not eq34, as pd_handover_continuous is
+        /// (the loader refuses it elsewhere; this is the same second guard).
+        bool pd_anchor_level_hold{};
+        /// network.phase_datum_anchor_level_hold_all_stations, already ANDed with
+        /// pd_anchor_level_hold (card ALD, H2): the hold at every station with a level
+        /// direction, every epoch, not only during an anchor's tenure.
+        bool pd_anchor_level_hold_all{};
         /// network.trace_amb_state: the per-arc carry-state trace
         /// (@c network_amb_state.csv).  Measure-only; off by default (no file, no rows).
         /// RF-1 §7.4.
@@ -2310,6 +2320,7 @@ namespace GnssProcessor {
     ///   CommonBandScopeCounters            network/slip/CommonBandScope.hpp
     ///   SolveGlueCounters                  network/solve/SolveGlue.hpp
     ///   PhaseDatumCounters                 network/solve/PhaseDatum.hpp
+    ///   AnchorLevelHoldCounters            network/solve/AnchorLevelHold.hpp
     ///   EpochAdmissionCounters             network/driver/EpochAdmission.hpp
     ///   SbasisCompletionCounters           network/solve/SbasisCompletion.hpp
     ///   FrameDiagCounters                  network/diag/FrameDiag.hpp
@@ -2395,6 +2406,7 @@ namespace GnssProcessor {
           CommonBandScopeCounters,
           SolveGlueCounters,
           PhaseDatumCounters,
+          AnchorLevelHoldCounters,
           EpochAdmissionCounters,
           SbasisCompletionCounters,
           FrameDiagCounters,

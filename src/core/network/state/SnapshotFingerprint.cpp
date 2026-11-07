@@ -300,6 +300,12 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // Appended only when armed, like the others.
         if (config_.networkRxCodeBiasDatum())
             add(fmt::format("rxcbdatum:{}", config_.networkRxCodeBiasDatumSigmaM()));
+        // The anchor-level hold chooses the value of every held station level, an
+        // inestimable combination a snapshot written without it realized differently, so
+        // the carried levels and the phase biases they define do not resume across the
+        // flip.  Appended only when armed, like the others; the scope is part of the token.
+        if (ctx.knobs.pd_anchor_level_hold)
+            add(ctx.knobs.pd_anchor_level_hold_all ? "aldhold:all" : "aldhold:anchors");
         // The receiver extra-band code delay estimated: the receiver IFB columns
         // join the local block and the carried receiver code-bias set, so a snapshot written
         // with them held carries a different state set.  Appended only when the knob turned

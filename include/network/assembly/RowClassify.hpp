@@ -160,7 +160,7 @@ bool isPhaseObservationKind(ContributionKind k);
  * | @c DataCode, @c DataCodeCompanion | @c obs_code |
  * | @c DataPhase, @c DataPhaseSecond | @c obs_phase |
  * | @c ShIonoTie | @c iono_sh_row |
- * | @c AmbiguityPin, the three eq34 rows, both GLONASS anchors, @c SimZeroIono, @c GimIono, @c SdEwl, @c PhaseColourBirth, @c PhaseColourBackstop | @c pivot_pin when @p w >= @ref kNetPivotPinWeight, else @c local_pin_row |
+ * | @c AmbiguityPin, the three eq34 rows, @c AnchorLevelHold, both GLONASS anchors, @c SimZeroIono, @c GimIono, @c SdEwl, @c PhaseColourBirth, @c PhaseColourBackstop | @c pivot_pin when @p w >= @ref kNetPivotPinWeight, else @c local_pin_row |
  * | @c CouplingScalar, the six @c Block*Carry kinds | @c cpl_row |
  * | every other kind (a diagonal prior or a shared kind, which no row should carry), and @c Unset | @c obs_other (unclassified) |
  *

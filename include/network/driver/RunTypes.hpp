@@ -1184,6 +1184,41 @@ struct PlRxClk {
     std::string  kind;     ///< "" = the primary receiver clock (the one with the carried drift); otherwise the ISB's system name ("Galileo", ...), which takes a pure random walk.
 };
 
+/// Why a (station, constellation) built no anchor-level hold row this epoch
+/// (network/solve/AnchorLevelHold.hpp, card ALD).
+enum class LevelHoldSkip : std::uint8_t {
+    None = 0,          ///< A row was built.
+    NoColumns,         ///< The block holds no level column of the constellation.
+    NoDataInformation, ///< The block's data rows carry no information at all.
+    NoNullDirection,   ///< The data-only null space holds no direction of the constellation.
+    NotUnique,         ///< It holds more than one.
+    NoCarriedColumn,   ///< No column of the direction carries a previous posterior.
+    NonFinite,         ///< The row's innovation is not finite.
+};
+
+/// What the anchor-level hold did for one (station, constellation) this epoch: written by
+/// the station step inside the parallel produce, read by the serial tally, which raises the
+/// hold's edges as events and sums the counts (card ALD).
+struct LevelHoldRecord {
+    System        sys{System::Unknown};      ///< The constellation.
+    bool          tenure{false};             ///< The station anchors at least one phase-bias family of it this epoch.
+    int           n_fam{0};                  ///< How many.
+    bool          held{false};               ///< A row was built.
+    LevelHoldSkip skip{LevelHoldSkip::None}; ///< Why none was, when @c held is false.
+    int           n_null{0};                 ///< Data-only null dimension of the whole block.
+    int           n_cols{0};                 ///< Carried columns in the row.
+    int           n_amb{0};                  ///< ... of which ambiguities.
+    int           n_iono{0};                 ///< ... of which slant ionospheres.
+    int           n_rxcb{0};                 ///< ... of which receiver code biases.
+    int           n_excl_pinned{0};          ///< Level columns left free: gauge-pinned (the pins hold them).
+    int           n_excl_dropped{0};         ///< Level columns left free: freed, dropped or marked for a re-seed this epoch.
+    int           n_excl_uncarried{0};       ///< Level columns left free: no previous posterior (new, stale or non-finite).
+    double        level_prev{0.0};           ///< a_r^T x_prev (m): the carried level the row holds.
+    double        level_lin{0.0};            ///< a_r^T x_lin (m).
+    double        y{0.0};                    ///< The row's innovation (m).
+    double        off_sys_max{0.0};          ///< Largest |loading| of the direction outside the constellation's columns before it was zeroed.
+};
+
 /// PASS B produce-phase result for one station: the assembled local Jacobian split
 /// plus the disposition flags that the serial consume phase needs.  Each slot is
 /// written by exactly one thread (indexed, never push_back) and consumed serially in
@@ -1225,6 +1260,12 @@ struct StationAssembly {
     /// @c sd_ewl_ctr.rows_built over the call; the tag check compares it with
     /// the @c SdEwl tags).
     long long sd_ewl_rows{0};
+    /// The anchor-level hold of this station-epoch (card ALD): one record per constellation
+    /// the step considered, written in the parallel produce, read by the serial tally; and the
+    /// rows it appended (the tag check compares it with the @c AnchorLevelHold tags).  Both
+    /// empty on every unarmed run.
+    std::vector<LevelHoldRecord> level_hold;
+    long long level_hold_rows{0};
     /// The station's parameter inventory of this epoch: every state column
     /// classified, with the disposition networkSplitStation_ gave it.  Written by this
     /// station's produce iteration only, drained serially after PASS B
