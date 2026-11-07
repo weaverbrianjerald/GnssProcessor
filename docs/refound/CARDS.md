@@ -343,3 +343,5 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   16-site census. It removes the post-flag events (R1 passes on all 6); one flag before the solve stands in for several arcs T4 dropped after it, so T4 arcs halve and refloats fall 2.4 to 6.0 % while flags rise 22 to 32 %. Card ICL2's D2 on DOY 129
   passes with the key alone (58.3 to 15.7 mm, 9.49 to 1.94 mm). Golden receivers do not move; broadcast receivers stay flat over the day. Two clauses fail: R3's decouplings on the golden at DOY 132 (82 to 84, two lone trips, cause not traced) and R5's hour
   clause on the broadcast posture at DOY 132 (hours 5 and 14). Nothing armed.
+- [ICL6](ICL6_anchor_trip_family_shift_2026-11-06.md): open, 2026-11-06 (pre-registered): why the clock anchor trips alone in card ICL5. Measured first: the statistic mixes two signal families and reads a shift of one, invisible to every row;
+  a freed arc's pre-slip level pushes a receiver's DCB gauge by metres (force balance r 0.93 to 0.998 over five day runs); the arm reads 2.5 times more because the key removes a T4 drop that had tightened the family's prior.

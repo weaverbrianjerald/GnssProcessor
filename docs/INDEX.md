@@ -237,6 +237,9 @@ and on DOY 132; all gates pass; receivers not graded; nothing armed).
 (closed, 2026-11-06: the key removes the post-flag events on both postures, T4 arcs halve, and the broadcast level passes card ICL2's bars without the quorum; golden receivers do not move, broadcast receivers stay flat over the day;
 two clauses fail, 2 extra lone decouplings on the golden at DOY 132 and two hours' census median on the broadcast posture at DOY 132; nothing armed).
 
+[ICL6](refound/ICL6_anchor_trip_family_shift_2026-11-06.md), why the clock anchor trips alone: a slip's stale level, a signal family's common mode, a mixed statistic
+(open, 2026-11-06: measured first, the lone trips read a shift of one signal family no row sees, through a statistic that mixes families; a freed arc's stale level is the push; gates frozen for the reader, the source and the amplification).
+
 ### `resume-seam` — [topics/resume-seam.md](topics/resume-seam.md)
 
 | card | one line | status | last dated |
