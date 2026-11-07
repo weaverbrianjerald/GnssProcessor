@@ -50,6 +50,7 @@ namespace GnssProcessor {
         Eq34RpbPin,               ///< The eq34 datum receiver's receiver phase-bias pin.
         Eq34RpbRankFloor,         ///< The eq34 zero-mean receiver phase-bias rank floor.
         Eq34RpbTimeLink,          ///< The eq34 receiver phase-bias time link toward the carried value.
+        AnchorLevelHold,          ///< An anchoring station's geometry-free level direction held at its carried value beside its pins (network.phase_datum_anchor_level_hold, card ALD).
         GloIfbAnchor,             ///< Zero-mean anchor rows on the GLONASS per-slot receiver IFB columns.
         GloIonoAnchor,            ///< Zero-mean anchor rows on the GLONASS slant-ionosphere columns.
         SimZeroIono,              ///< Test-only rows tying every slant ionosphere to absolute zero (network.sim_zero_iono_sigma_m; a fixture simulated without ionosphere).

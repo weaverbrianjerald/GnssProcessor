@@ -72,6 +72,7 @@ constexpr ParamKindSet kBlkPc    = kBlkRxCb | bit(PK::PhaseColour);
 
 constexpr const char* kSplit = "networkStationRows (StationRows.cpp), networkSplitStation (StationSplit.cpp), station step data_rows";
 constexpr const char* kPinFold = "networkPhaseDatumPinRows (PhaseDatum.cpp), station step phase_datum_pins";
+constexpr const char* kLevelHoldFold = "networkAnchorLevelHoldRows (AnchorLevelHold.cpp), station step anchor_level_hold";
 constexpr const char* kGloFold = "networkGlonassAnchorRows (StationAnchors.cpp), station step glonass_anchors";
 constexpr const char* kLgmRows = "networkPhaseColourRows (PhaseColourCarry.cpp), station step phase_colour_rows";
 // The builder column of the station kinds, from the step rows
@@ -141,6 +142,14 @@ constexpr std::array<ContributionSpec, kContributionKinds> kSpecs = {{
     {CK::Eq34RpbTimeLink, "eq34_rpb_time_link", CC::StationRows, CG::BeforeGate, CS::Station,
      CU::Rows, bit(PK::RxPhaseBias),
      "1/(carried var + network.phase_datum_eq34_rpb_q_m2s * gap)", kPinFold, false, nullptr},
+    {CK::AnchorLevelHold, "anchor_level_hold", CC::StationRows, CG::BeforeGate, CS::Station,
+     CU::Rows, bit(PK::Ambiguity) | bit(PK::SlantIono) | bit(PK::RxCodeBias),
+     "1e10 (literal, the pins' weight) on a unit level direction "
+     "(network.phase_datum_anchor_level_hold)",
+     kLevelHoldFold, false,
+     "one row per (station, constellation) the station anchors a family of (every station "
+     "under phase_datum_anchor_level_hold_all_stations): the geometry-free level direction of "
+     "the block's data rows restricted to the carried columns, aimed at the carried level"},
     {CK::GloIfbAnchor, "glonass_ifb_anchor", CC::StationRows, CG::BeforeGate, CS::Station,
      CU::Rows, bit(PK::RxCodeBias),
      "kGloAnchorWeight = 1.0, 1/(1 m)^2 (function-local constant)", kGloFold, false, nullptr},
@@ -583,6 +592,7 @@ StationTagCheck checkStationTags(const StationAssembly& R) {
         if (tags != counter) ++c.mismatches;
     };
     differ(at(CK::AmbiguityPin) + at(CK::Eq34RpbPin), R.np);
+    differ(at(CK::AnchorLevelHold), R.level_hold_rows);
     differ(at(CK::PhaseColourBirth), R.pc_birth_rows);
     differ(at(CK::PhaseColourBackstop), R.pc_backstop_rows);
     differ(at(CK::BlockAmbiguityCarry) + at(CK::BlockZwdCarry) + at(CK::BlockIonoCarry)

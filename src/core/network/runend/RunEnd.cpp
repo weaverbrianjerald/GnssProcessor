@@ -74,6 +74,7 @@
 #include "network/assembly/ParamRegistry.hpp"
 #include "network/carry/PhaseColourCarry.hpp"
 #include "network/solve/PhaseDatum.hpp"
+#include "network/solve/AnchorLevelHold.hpp"
 #include "network/diag/PhaseVisibleDiag.hpp"
 #include "network/qc/PrefitCensus.hpp"
 #include "network/qc/PriorResidual.hpp"
@@ -214,6 +215,8 @@ const std::array<NetworkRunEndRow, kNetworkRunEndReportCount> kNetworkRunEndRepo
      "network/ar/AmbFloat.cpp", networkAmbVehicleRunEnd},
     {"the phase datum: the held S-basis (RF-2), the prioritized drop and heal, the anchored-union gate and its drop edge",
      "network/solve/PhaseDatum.cpp", networkPhaseDatumRunEnd},
+    {"the anchor-level hold of the phase datum (card ALD)",
+     "network/solve/AnchorLevelHold.cpp", networkAnchorLevelHoldRunEnd},
     {"the ambiguity-state trace",
      "network/diag/AmbStateTrace.cpp", networkAmbStateTraceRunEnd},
     {"the emit-layer frame re-base",

@@ -9051,6 +9051,16 @@ namespace GnssProcessor {
         network_phase_datum_held_mark_cold_ =
             jval<bool>(json, "network.phase_datum_held_mark_cold",
                        "network_phase_datum_held_mark_cold", false);
+        // ---- An anchoring station's level held as part of the phase datum (card ALD):
+        //      one local row per anchored constellation beside the pins, aimed at the
+        //      carried level.  Both default off; the interlocks are with the carry posture
+        //      (validateNetworkCarryPosture_), beside the held basis's.
+        network_phase_datum_anchor_level_hold_ =
+            jval<bool>(json, "network.phase_datum_anchor_level_hold",
+                       "network_phase_datum_anchor_level_hold", false);
+        network_phase_datum_anchor_level_hold_all_stations_ =
+            jval<bool>(json, "network.phase_datum_anchor_level_hold_all_stations",
+                       "network_phase_datum_anchor_level_hold_all_stations", false);
         network_phase_datum_handover_max_var_m2_ =
             jval<double>(json, "network.phase_datum_handover_max_var_m2",
                          "network_phase_datum_handover_max_var_m2", 1.0);
@@ -11234,6 +11244,35 @@ namespace GnssProcessor {
             log->warn("Network (RF-2): phase_anchor_min_age_ep / _flag_quiet_ep are set "
                       "but network.phase_datum_held_basis is OFF — they gate the HELD "
                       "basis election and are INERT this run (standing invariant #4).");
+        }
+        // ---- Interlocks of the anchor-level hold (card ALD).  The hold is a row beside the
+        //      anchor election's pins, so it exists only on the prioritized anchor datum:
+        //      neither the legacy single pivot nor the eq34 chain elects an anchor whose
+        //      level it could hold.
+        if (network_phase_datum_anchor_level_hold_) {
+            if (!network_phase_datum_prioritized_ || network_phase_datum_eq34_) {
+                log->error("Network (ALD): network.phase_datum_anchor_level_hold requires "
+                           "network.phase_datum_prioritized without network.phase_datum_eq34: "
+                           "the hold is a local row beside the anchor election's ambiguity "
+                           "pins, and the legacy pivot datum and the eq34 chain elect no "
+                           "anchor whose level it could hold.");
+                return false;
+            }
+            log->info("Network (ALD): network.phase_datum_anchor_level_hold ON — while a "
+                      "station anchors a phase-bias family of a constellation, one local row "
+                      "per such constellation at the pins' weight holds the carried part of "
+                      "its geometry-free level direction at its carried value, so the phase "
+                      "biases its pins define cannot inherit a move of its level.  Scope: {}.  "
+                      "Edges: ANCHOR_LEVEL hold_start / hold_end / hold_handover in "
+                      "network_events.csv.  Solve-affecting; fingerprinted.",
+                      network_phase_datum_anchor_level_hold_all_stations_
+                          ? "EVERY station with a level direction, every epoch (H2)"
+                          : "the anchors, during their tenure (H1)");
+        } else if (network_phase_datum_anchor_level_hold_all_stations_) {
+            log->error("Network (ALD): network.phase_datum_anchor_level_hold_all_stations "
+                       "requires network.phase_datum_anchor_level_hold: it widens the hold's "
+                       "scope and builds nothing on its own.");
+            return false;
         }
         // The vehicle changes the solve from step 3 on.  The line lists what is live on
         // this posture rather than naming a build number, so a reader of a run manifest

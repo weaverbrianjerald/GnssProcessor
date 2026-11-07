@@ -260,6 +260,7 @@ add_library(gnss_core STATIC
     src/core/network/assembly/MultiGnss.cpp
     src/core/network/solve/PhaseDatum.cpp
     src/core/network/solve/PhaseAnchorEpoch.cpp
+    src/core/network/solve/AnchorLevelHold.cpp
     src/core/network/slip/SlipFunnel.cpp
     src/core/network/solve/ChainDatum.cpp
     src/core/network/solve/AnchorHygiene.cpp
@@ -727,6 +728,7 @@ add_executable(gnss_tests
     tests/network/test_network_layout_flags.cpp
     tests/network/test_network_epoch_contract.cpp
     tests/network/test_network_station_build.cpp
+    tests/network/test_network_anchor_level_hold.cpp
     tests/network/test_network_harvest_layout.cpp
     tests/network/test_network_engine_spec.cpp
     tests/network/test_network_row_classify.cpp

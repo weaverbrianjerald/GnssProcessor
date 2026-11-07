@@ -403,6 +403,13 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
         // hygiene.
         k.pa_carry_reref = anchored && !k.phase_datum_eq34
                            && config_.networkPhaseAnchorCarryReref();
+        // The anchor-level hold (card ALD): a row beside the anchor election's pins, so it
+        // exists only where that election runs.  The loader refuses it elsewhere; this is
+        // the same second guard as the handover knob above.
+        k.pd_anchor_level_hold = anchored && !k.phase_datum_eq34
+                                 && config_.networkPhaseDatumAnchorLevelHold();
+        k.pd_anchor_level_hold_all = k.pd_anchor_level_hold
+                                     && config_.networkPhaseDatumAnchorLevelHoldAllStations();
         // Cold anchor fallback.  Resolved against
         // pd_handover_continuous, not against `anchored`, because the pass screens
         // candidates with the handover ledger's usability predicate; without the ledger

@@ -867,6 +867,8 @@ const std::vector<FieldDecl> kStationFields = {
      nullptr, nullptr, &stationCells<&S::adm_event_last>},
     {"sba_since", "", Persist::ColdStart, "", "",   // no former member: new with the second-band admission
      nullptr, nullptr, &stationCells<&S::sba_since>},
+    {"level_hold", "", Persist::ColdStart, "", "",   // no former member: new with the anchor-level hold (card ALD)
+     nullptr, nullptr, &stationCells<&S::level_hold>},
     {"staf_ewma", "staf_ewma", Persist::ColdStart, "", "",
      nullptr, nullptr, &stationRows<&S::staf_ewma>},
     {"staf_updates", "staf_updates", Persist::ColdStart, "", "",
@@ -1325,6 +1327,7 @@ const std::vector<EntityWriterRow> kEntityWriters = {
     {"networkMeasurementAdmission", "network/assembly/MeasurementAdmission.cpp", "stations"},
     {"networkSecondBandAdmission", "network/assembly/SecondBandAdmission.cpp", "stations"},
     {"networkSignalIntegrity", "network/assembly/SignalIntegrity.cpp", "los"},
+    {"networkAnchorLevelHoldTally", "network/solve/AnchorLevelHold.cpp", "stations"},
     {"networkCouplingReinitHistory", "network/carry/Coupling.cpp", "sat_signals"},
     {"networkBuildCarryDdPriors", "network/carry/DdPriorBuild.cpp", "constellations sats"},
     {"networkHarvestAmbiguityStation", "network/carry/LevelingCarry.cpp", "arcs"},

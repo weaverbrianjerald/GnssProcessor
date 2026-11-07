@@ -27,6 +27,7 @@
 #include "network/carry/LevelingCarry.hpp"
 #include "network/carry/PhaseColourCarry.hpp"
 #include "network/solve/PhaseDatum.hpp"
+#include "network/solve/AnchorLevelHold.hpp"
 #include "network/qc/Raim.hpp"
 #include "network/carry/RxClockCarry.hpp"
 #include "network/carry/RxCodeBiasCarry.hpp"
@@ -99,6 +100,9 @@ void networkAssemblyTally(NetworkRun& run, const NetworkEpoch& ep,
                              registered_code_keys, se, log);
     networkCouplingExactTally(ctx, asm_res);
     networkSdEwlTraceDrain(config_, traces, asm_res);
+    // The anchor-level hold (card ALD): its counters, each station's memo and the hold's
+    // edges as events, in station order.
+    networkAnchorLevelHoldTally(ctx, traces, se, stations, asm_res);
 }
 
 // ---- End of the PASS B serial stages ----
@@ -124,6 +128,9 @@ const StationBuildSteps kStationBuildSteps = {{
      kindBit(CK::AmbiguityPin) | kindBit(CK::Eq34RpbPin) | kindBit(CK::Eq34RpbRankFloor) |
      kindBit(CK::Eq34RpbTimeLink),
      &networkPhaseDatumPinRows},
+    {"anchor_level_hold", "filter/NetworkAnchorLevelHold",
+     kindBit(CK::AnchorLevelHold),
+     &networkAnchorLevelHoldRows},
     {"glonass_anchors", "filter/NetworkStationAnchors",
      kindBit(CK::GloIfbAnchor) | kindBit(CK::GloIonoAnchor),
      &networkGlonassAnchorRows},

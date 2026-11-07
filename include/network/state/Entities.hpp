@@ -636,6 +636,16 @@ struct StationSignalState {
     std::optional<std::string> eq34_rx_parent;
 };
 
+/// The memo of one anchor-level hold (network/solve/AnchorLevelHold.hpp, card ALD): what the
+/// hold of one (station, constellation) did last epoch.  Written by the serial tally only.
+struct LevelHoldMemo {
+    bool      held{false};        ///< A hold row was built last epoch.
+    bool      tenure{false};      ///< The station anchored a family of the constellation last epoch.
+    long long since_ep{0};        ///< The loop epoch the current hold started.
+    long long held_epochs{0};     ///< Epochs held over the run.
+    double    level{0.0};         ///< The carried level the last row held (a_r^T x_prev, m).
+};
+
 /// The SD EWL integer fixes of one station: constellation letter -> satellite -> fix.
 using SdEwlFixes = std::map<char, std::map<std::string, SdEwlFix>>;
 
@@ -732,6 +742,13 @@ struct StationState {
     /// fingerprinted); a warm resume starts every unit admitted and the first withheld epoch
     /// raises its decoupling edge again.  New in the second-band admission.  ColdStart.
     std::map<std::string, long long> sba_since;
+    /// Constellation -> the memo of the station's anchor-level hold of that constellation
+    /// (network/solve/AnchorLevelHold.hpp, card ALD): what the hold did last epoch, read by the
+    /// serial tally to raise the hold's start, end and handover as events.  A cell exists once
+    /// the step considered the (station, constellation); empty on every unarmed run.  Not
+    /// serialized: a warm resume raises the hold's start again at its first epoch.  New with
+    /// the hold.  ColdStart.
+    std::map<System, LevelHoldMemo, ByLetter> level_hold;
     /// The members keyed below the station.
     std::map<std::string, StationSignalState> signals;
 };

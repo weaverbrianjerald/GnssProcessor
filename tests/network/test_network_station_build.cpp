@@ -90,8 +90,9 @@ std::size_t carryIndex(const std::string& name) {
 TEST(NetworkStationBuildTable, TopLevelStepsInWalkOrder) {
     const std::vector<std::string> want = {
         "data_rows", "rx_ifb_recouple", "congruence_geometry", "phase_datum_pins",
-        "glonass_anchors", "sim_zero_iono", "tropo_gradient_prior", "iono_constraint", "sd_ewl",
-        "raim_columns", "carried_priors", "phase_colour_rows", "zwd_capture"};
+        "anchor_level_hold", "glonass_anchors", "sim_zero_iono", "tropo_gradient_prior",
+        "iono_constraint", "sd_ewl", "raim_columns", "carried_priors", "phase_colour_rows",
+        "zwd_capture"};
     EXPECT_EQ(buildNames(), want);
 }
 
@@ -132,9 +133,10 @@ TEST(NetworkStationBuildTable, KindsCoverExactlyTheStationKinds) {
 // ---- The orders that fix the bytes --------------------------------------------------------
 TEST(NetworkStationBuildOrder, RowsFollowTheTableOrder) {
     using CK = ContributionKind;
-    const std::vector<CK> rows = {CK::DataCode, CK::AmbiguityPin, CK::GloIfbAnchor,
-                                  CK::SimZeroIono, CK::TropoGradientPrior, CK::ShIonoTie,
-                                  CK::SdEwl, CK::CouplingScalar, CK::PhaseColourBirth};
+    const std::vector<CK> rows = {CK::DataCode, CK::AmbiguityPin, CK::AnchorLevelHold,
+                                  CK::GloIfbAnchor, CK::SimZeroIono, CK::TropoGradientPrior,
+                                  CK::ShIonoTie, CK::SdEwl, CK::CouplingScalar,
+                                  CK::PhaseColourBirth};
     for (std::size_t j = 1; j < rows.size(); ++j)
         EXPECT_LT(firstBuildStep(rows[j - 1]), firstBuildStep(rows[j])) << j;
 }
