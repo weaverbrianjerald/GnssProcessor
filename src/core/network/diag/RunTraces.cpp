@@ -18,6 +18,7 @@
 #include "network/diag/AmbStateTrace.hpp"  // kAmbStateHeader (RF-1 §7.4 carry-state trace)
 #include "network/state/ArcLedger.hpp"             // the arc ledger's two window constants
 #include "realtime/ConsumerSatTrace.hpp"    // ConsumerSatRow, kConsumerSatTraceHeader
+#include "realtime/ConsumerTrace.hpp"       // kConsumerTraceHeader
 #include "math/TimeUtils.hpp"           // continuousGpsSeconds (heartbeat cadence, INC-4)
 
 #include <fmt/format.h>
@@ -166,11 +167,11 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
         const std::filesystem::path cl_path = log_dir_ / "closed_loop_trace.csv";
         cl_trace.open(cl_path);
         if (cl_trace)
-            // ar_gate (T2c) and p_succ (§8.11) are the trailing columns.  p_succ is the
-            // only confidence number on the WL-only paths: their `ratio` holds the
-            // "+inf = no LAMBDA ran" sentinel, which reads as a perfect ratio.
-            cl_trace << "week,tow,n_sats,ar_ran,ar_success,num_fixed,num_candidates,"
-                        "ratio,pos_err_3d_m,east_m,north_m,up_m,ar_gate,p_succ\n";
+            // The schema (ConsumerTrace.hpp) is shared with the consumer replay.  p_succ
+            // is the only confidence number on the WL-only paths: their `ratio` holds
+            // the "+inf = no LAMBDA ran" sentinel, which reads as a perfect ratio.  The
+            // formal position sigma columns follow p_succ.
+            cl_trace << kConsumerTraceHeader;
         else
             log->warn("Network: failed to open closed-loop trace {}", cl_path.string());
         // Per-satellite companion of the trace above (network.trace_consumer_sat).

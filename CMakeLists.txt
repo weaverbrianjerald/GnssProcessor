@@ -244,6 +244,7 @@ add_library(gnss_core STATIC
     src/core/realtime/InnovationScreen.cpp
     src/core/realtime/RealTimeEngineScreen.cpp
     src/core/realtime/ConsumerSatTrace.cpp
+    src/core/realtime/ConsumerTrace.cpp
     src/core/filter/PivotManager.cpp
     src/core/filter/DdPivotManager.cpp
     src/core/filter/CovarianceReReference.cpp
@@ -649,6 +650,7 @@ add_executable(gnss_tests
     tests/test_innovation_screen_engine.cpp
     tests/test_disc_mark_scope.cpp
     tests/test_consumer_sat_trace.cpp
+    tests/test_consumer_trace.cpp
     tests/test_transforms.cpp
     tests/test_pivot_column_resolver.cpp
     tests/test_filter_core.cpp

@@ -193,6 +193,13 @@ namespace GnssProcessor {
         return covariance_(idx, idx);
     }
 
+    Eigen::Matrix3d StateManager::getPositionCovariance() const {
+        const Eigen::Index pos = static_cast<Eigen::Index>(getPositionIndex());
+        if (covariance_.rows() < pos + 3 || covariance_.cols() < pos + 3)
+            return Eigen::Matrix3d::Zero();
+        return covariance_.block<3, 3>(pos, pos);
+    }
+
     // ===================================================================
     // Process noise / transition: StateManagerProcessNoise.cpp
     // ===================================================================

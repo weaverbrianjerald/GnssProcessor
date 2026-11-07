@@ -1158,8 +1158,9 @@ private:
      * injected via @c setSsrStore rather than the process-wide one), except
      * that the store is filled by @c NetworkProductReader::replay from the
      * recorded file instead of by the live emitter.  Writes the same
-     * @c closed_loop_trace.csv schema (@c pos_err_3d_m,east_m,north_m,up_m) so
-     * both sources grade identically.
+     * @c closed_loop_trace.csv schema (one header, row and formatter in
+     * @c realtime/ConsumerTrace.hpp: the error columns, the AR columns and the
+     * formal position sigma) so both sources grade identically.
      *
      * Implemented in @c ApplicationConsumerReplay.cpp.
      *

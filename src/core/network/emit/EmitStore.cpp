@@ -25,6 +25,7 @@
 #include "filter/StateKeySchema.hpp"
 #include "math/Coordinates.hpp"
 #include "products/NetworkProductIO.hpp"
+#include "realtime/ConsumerTrace.hpp"     // closed_loop_trace.csv row schema
 
 #include <spdlog/spdlog.h>
 #include <fmt/format.h>
@@ -760,34 +761,19 @@ void networkEmitStore(NetworkRun& run, const NetworkEpoch& ep, NetworkSolutionEp
             if (cl_recent_err3d.size() > kClRecentWindow) cl_recent_err3d.pop_front();
 
             if (cl_trace) {
-                // Record which gate stopped AR this epoch (T2c).  gate_reason is set at
-                // the pre-MLAMBDA early gates; reason 0 means MLAMBDA was reached, so the
-                // outcome is read from success/ratio (fixed / ratio-battery reject / a
-                // degenerate MLAMBDA that produced no ratio).
-                std::string ar_gate;
-                if (!ar_ran) {
-                    ar_gate = "not_run";
-                } else switch (ar.gate_reason) {
-                    case 1:  ar_gate = "disabled";      break;
-                    case 2:  ar_gate = "min_epochs";    break;
-                    case 3:  ar_gate = fmt::format("sigma_gate({:.3f}m)", ar.gate_sigma_3d); break;
-                    case 4:  ar_gate = "no_candidates"; break;
-                    case 5:  ar_gate = "wl_guard";      break;
-                    default: ar_gate = ar.success ? (ar.wl_only_fix ? "wl_only" : "fixed")
-                                     : (ar.ratio > 0.0 ? "ratio_battery" : "mlambda_fail");
-                             break;
-                }
-                cl_trace << se.time.week << ',' << fmt::format("{:.3f}", se.time.tow) << ','
-                         << cit->second.size() << ',' << (ar_ran ? 1 : 0) << ','
-                         << (fixed ? 1 : 0) << ',' << (ar_ran ? ar.num_fixed : 0) << ','
-                         << (ar_ran ? ar.num_candidates : 0) << ','
-                         << fmt::format("{:.2f}", ar_ran ? ar.ratio : 0.0) << ','
-                         << fmt::format("{:.4f}", err3d) << ','
-                         << fmt::format("{:.4f}", enu.x()) << ','
-                         << fmt::format("{:.4f}", enu.y()) << ','
-                         << fmt::format("{:.4f}", enu.z()) << ','
-                         << ar_gate << ','
-                         << fmt::format("{:.6f}", ar_ran ? ar.p_succ : 0.0) << '\n';
+                // The actual error, the AR outcome (with the gate that stopped it) and
+                // the formal sigma of the same position, in the replay's schema.
+                const Eigen::Matrix3d pos_cov = consumer->getPositionCovariance();
+                ConsumerTraceRow row;
+                row.week      = se.time.week;
+                row.tow       = se.time.tow;
+                row.n_sats    = cit->second.size();
+                row.err_3d_m  = err3d;
+                row.err_enu_m = enu;
+                row.sig_enu_m = enuSigmaFromEcefCovariance(pos_cov, cl_truth_llh);
+                row.sig_3d_m  = sigma3dFromCovariance(pos_cov);
+                fillConsumerTraceAr(row, ar_ran, ar);
+                cl_trace << formatConsumerTraceRow(row);
             }
             // The consumer's receiver inter-system bias, with the same stamp as the row
             // above.  The stream is open only with a second constellation
