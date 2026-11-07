@@ -28,7 +28,19 @@
  *   D,key,counter             StateManager SSR disc-counter memory
  *   F,key,0|1                 A5 phase-bias applied map
  *   C,key,0|1                 A5 code-bias applied map
+ *   I,latch,0|1               StateInitializer seed latch (card CRS2; isb, phase_clock,
+ *                             code_bias, clock_seed), written under
+ *                             realtime.state_snapshot_latch_capture
  *   END,n_lines
+ *
+ * The @c I rows (card CRS2) sit under the v1 header like the RS-3 rows of the network
+ * snapshot: a reader that finds none restores no latch (the behaviour before the card,
+ * in which a restored consumer re-ran its first-epoch seeds on the states it restored),
+ * and a binary that predates them fails the parse on the unknown tag, the documented
+ * cold-start signal.  Whether a resume applies them is the read knob
+ * realtime.state_snapshot_latch_restore (@ref rtSnapshotLatchesToApply for the scope
+ * rule).  Not in the fingerprint: the rows change what the first epoch does, not what a
+ * serialized state means.
  *
  * Not in v1: the consumer's last-applied phase-bias value map (the
  * declared-step carry's Δ baseline, @c PbDiscCarryLedger).  A restored engine
@@ -85,7 +97,32 @@ struct RtStateSnapshot {
     std::map<std::string, int>  ssr_disc;          ///< "sat|signal" -> counter.
     std::map<std::string, bool> phase_bias_applied; ///< Fresh/stale flip memory for phase biases (A5).
     std::map<std::string, bool> code_bias_applied;  ///< The code-bias counterpart (A5).
+
+    // --- I: the initializer's seed latches (card CRS2) ----------------------
+    /// Latch name (one of @ref kRtSnapshotLatchNames) -> set.  Empty on a file written
+    /// without realtime.state_snapshot_latch_capture.
+    std::map<std::string, bool> init_latches;
 };
+
+/// The latch names an @c I record may carry, in the writer's order: the four latches of
+/// @c StateInitializer (the inter-system bias seed, the phase-clock seed, the receiver
+/// code-bias seed, the cold receiver-clock seed).  The parser refuses any other name.
+inline constexpr const char* kRtSnapshotLatchNames[4] = {"isb", "phase_clock", "code_bias",
+                                                          "clock_seed"};
+
+/**
+ * @brief The latches a restore sets (card CRS2).
+ *
+ * Every latch @p latches holds true, in the order of @ref kRtSnapshotLatchNames, except
+ * that @c code_bias is set under the full restore scope only: the core scope re-creates
+ * the receiver code-bias states per epoch, and a state created after the restore needs
+ * its first-epoch seed.  Pure, so the rule has a unit test of its own.
+ * @param latches     The snapshot's @c I rows.
+ * @param full_scope  realtime.state_snapshot_restore_scope == "full".
+ * @return The names to set, possibly empty.
+ */
+std::vector<std::string> rtSnapshotLatchesToApply(const std::map<std::string, bool>& latches,
+                                                  bool full_scope);
 
 /// Serializer / strict parser / atomic file IO for @ref RtStateSnapshot.
 class RtStateSnapshotIO {

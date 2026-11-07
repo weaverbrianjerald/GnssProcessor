@@ -3064,6 +3064,34 @@ namespace GnssProcessor {
                           realtime_config_.state_snapshot_restore_scope);
                 realtime_config_.state_snapshot_restore_scope = "core";
             }
+            // The initializer's seed latches across the consumer's warm resume (card
+            // CRS2): the write half adds I rows under the existing header, the read half
+            // sets the restored latches before the first processed epoch.  Both default
+            // off and byte-identical; neither is in the consumer's snapshot fingerprint.
+            realtime_config_.state_snapshot_latch_capture =
+                rt.value("state_snapshot_latch_capture", false);
+            realtime_config_.state_snapshot_latch_restore =
+                rt.value("state_snapshot_latch_restore", false);
+            // The capture is not path-gated: the closed-loop consumer's snapshot beside
+            // each network history copy (network.closed_loop.state_snapshot) is written
+            // without realtime.state_snapshot_path, and that writer is the one the
+            // event-harness seeds use.
+            if (realtime_config_.state_snapshot_latch_capture)
+                log->info("realtime.state_snapshot_latch_capture ON — every consumer snapshot "
+                          "this engine writes also carries the initializer's four seed latches "
+                          "(I rows); the rows change no estimate (card CRS2).");
+            if (realtime_config_.state_snapshot_latch_restore) {
+                if (realtime_config_.state_snapshot_path.empty())
+                    log->warn("realtime.state_snapshot_latch_restore armed but "
+                              "realtime.state_snapshot_path is empty — nothing can resume, INERT.");
+                else
+                    log->info("realtime.state_snapshot_latch_restore ON — a warm resume sets the "
+                              "initializer's seed latches the snapshot holds (the code-bias latch "
+                              "under the \"full\" scope only), so the first processed epoch does "
+                              "not re-seed the restored inter-system bias and receiver code biases "
+                              "from one epoch of code (card CRS2).  A file without I rows leaves "
+                              "the seeds exactly as today and says so.");
+            }
             if (!realtime_config_.state_snapshot_path.empty()) {
                 if (realtime_config_.state_snapshot_interval_s <= 0.0) {
                     log->warn("realtime.state_snapshot_interval_s {} must be > 0; clamped to "

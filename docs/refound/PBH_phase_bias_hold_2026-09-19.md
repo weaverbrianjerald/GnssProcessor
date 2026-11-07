@@ -514,3 +514,7 @@ channel there.
 ## Appended 2026-10-30: the retired keys (card RKD)
 
 Card [RKD](RKD_retired_key_deletion_2026-10-14.md) deleted these keys of this card with their code on 2026-10-14: `network.serialize_sbasis_contract` (the parse-only and loader-forced keys, commit `4c0e731`); `network.emit_pb_filter`, `network.emit_pb_filter_emit_sigma`, `network.emit_pb_filter_gate_v2`, `network.emit_pb_filter_jump_k`, `network.emit_pb_filter_max_gap_s`, `network.emit_pb_filter_meas_sigma_m`, `network.emit_pb_filter_q` and `network.emit_pb_filter_window_epochs` (the PB emission-continuity filter, commit `6d719e4`). The text above records them as they stood. A configuration that still sets one runs without it, and the loader names each such key in one warning (card [RKT](RKT_retired_key_tombstone_2026-10-30.md)).
+
+## 2026-11-06: the hold across a warm resume (card CRS2)
+
+Section 6.6's "warm resume is out of scope and cold-starts the hold" was graded by card [CRS](CRS_leg_consumer_resume_2026-10-26.md) (the restart re-levels every held key by up to 21 m under a declaration held keys ignore, and the restarted generation is 1, as the seed's was, so no consumer re-floats) and closed by card [CRS2](CRS2_resume_hold_and_latches_2026-11-06.md): the hold's rows are in the snapshot under `network.state_snapshot_hold_capture` and restored under `network.resume_hold_restore`, default off, armed by the event harness.

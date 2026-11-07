@@ -3429,6 +3429,21 @@ namespace GnssProcessor {
         /// snapshot, so the writer's products and every trace stay byte-identical.
         /// Inert unless state_snapshot_path.
         bool state_snapshot_rxcb_lin_capture{ false };
+        /// Hold capture (card CRS2; the write side of @c network.resume_hold_restore):
+        /// every snapshot also carries the emit-side phase-bias hold (@c network.emit_pb_hold)
+        /// as format-forward rows under the existing header: one @c PH row per held key
+        /// (generation, held value, last emission time and the transfer references), one
+        /// @c PHM row per constellation (the accumulated common emitted-clock step) and the
+        /// @c PHC / @c PHF previous-clock baselines per satellite.  Without them a warm
+        /// resume first-sights every held key: generation 1, held value equal to the current
+        /// estimate, a re-level of the wire's phase biases by up to 21 m per key that the
+        /// consumer ignores on a held key by design (card CRS section 4).  A separate knob,
+        /// not a clause of @ref state_snapshot_emit_capture: those rows are the re-base
+        /// frame, these are the hold on top of it.  Write side only: the capture copies the
+        /// entity tables after the emit into the snapshot alone, so the writer's products
+        /// and every trace stay byte-identical.  Inert unless state_snapshot_path and
+        /// @c emit_pb_hold.
+        bool state_snapshot_hold_capture{ false };
         bool trace_station_residuals{ false }; ///< Emit @c network_station_residuals.csv (L13): every post-fit RAIM cell (per non-pivot station with carried ambiguities, per sat) with its measurement-standardized residual @c s_raw (already B2-normalized), the σ̂0-normalized @c s_norm, and the epoch σ̂0.  Identifies the station that corrupts the network solution.  Very heavy (≈ stations x sats x RAIM epochs, e.g. 50x40x3600 ≈ 7M rows); requires @ref raim at runtime with the RAIM ambiguity pool populated (by @ref phase_leveling, or by network.raim_carry_invariant on a carry_invariant lineage).  Off by default; byte-identical when off.
         bool trace_raim_redundancy{ false }; ///< Emit @c network_raim_redundancy.csv (SPEC_t3_null_derivation §7.1): one row per post-fit RAIM phase row (station x sat x signal x row) with its weight, Baarda redundancy @c r_i, raw residual, measurement-standardized @c z_meas = |v|·√w and Baarda-standardized @c z_baarda = z_meas/√r_i.  The RAIM cell is a maximum over signals, so @ref trace_station_residuals cannot separate L1C from L2W/L5Q; this trace can.  Diagnostic: it makes @c row_r be computed but never used, so unlike @ref raim_redundancy_normalize (which is solve-affecting) the census is solve-neutral.  Costs one @c rowRedundancy call per station per epoch.  Requires @ref raim at runtime with the RAIM ambiguity pool populated (by @ref phase_leveling, or by network.raim_carry_invariant on a carry_invariant lineage).  Off by default; byte-identical when off.
         bool trace_ssr_consumer{ false }; ///< Consumer-side trace (L10): the RealTimeEngine SSR consumer writes @c ssr_consumer_trace.csv (correction age, clk-applied, c0, URA, the recomputed R-inflation add-variance, phase-bias age/freshness, and disc counters) per modeled satellite per processed epoch.  The V4 consumer-side evidence that the producer's URA and discontinuity counters reach the user solution.  Off by default; byte-identical when off.
@@ -3723,6 +3738,33 @@ namespace GnssProcessor {
          * applies in both scopes.
          */
         std::string state_snapshot_restore_scope{ "core" };
+
+        /**
+         * @brief Write the initializer's seed latches into the consumer snapshot
+         *        (@c realtime.state_snapshot_latch_capture, default false; card CRS2).
+         *
+         * One @c I row per @c StateInitializer latch (inter-system bias, phase clock,
+         * receiver code bias, cold receiver clock), under the existing header.  Write
+         * side only: the rows change no estimate.  Inert unless @ref state_snapshot_path.
+         */
+        bool state_snapshot_latch_capture{ false };
+
+        /**
+         * @brief Restore the initializer's seed latches at a warm resume
+         *        (@c realtime.state_snapshot_latch_restore, default false; card CRS2).
+         *
+         * Without it a restored consumer re-runs its first-epoch seeds on the states it
+         * restored: on the GPS + Galileo golden the Galileo inter-system bias and both
+         * receiver code biases are overwritten from one epoch of code under the restored
+         * tight covariance (10.76 to 0.40 m, -1.37 to 6.28 m; card CRS section 6), which
+         * costs 14 m against an unbroken wire.  Armed, every latch the file holds true is
+         * set before the first processed epoch, except that the code-bias latch is set
+         * under the "full" restore scope only: the "core" scope re-creates the receiver
+         * code-bias states per epoch, and they need their seed.  A file without @c I rows
+         * is inert and says so.  Forward-only resume response policy, not in the
+         * consumer's snapshot fingerprint.  Off = byte-identical.
+         */
+        bool state_snapshot_latch_restore{ false };
 
         /**
          * @brief Blunder gate on the RTCM 1005/1006 a-priori seed (m) (RTA-12(3)).

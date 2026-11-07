@@ -236,6 +236,21 @@ void NetworkStateSnapshotIO::serialize(std::ostream& os, const NetworkStateSnaps
     // splits on ',' alone, so they need no escaping.
     for (const auto& [key, v] : snap.emit_rebase_last)
         put(fmt::format("ER,{},{}", key, v));
+    // The emit-side phase-bias hold (card CRS2): one PH row per held key in the
+    // declaration order of PbHoldRow, then the per-constellation common clock step and
+    // the two per-satellite previous-clock baselines.  Written only under
+    // network.state_snapshot_hold_capture (the driver leaves the containers empty
+    // otherwise, so a run without it writes the previous bytes unchanged), under the
+    // existing header like the RS-5 group, and before the CARRY / EMITTER blobs.  The
+    // flags are 0/1; the doubles take fmt's shortest round-trip form like every other row.
+    for (const auto& [key, h] : snap.pb_hold)
+        put(fmt::format("PH,{},{},{},{},{},{},{},{},{},{},{},{}", key, h.generation, h.held_m,
+                        h.last_emit_s, h.frz_ref, h.frz_ok ? 1 : 0, h.frz_last,
+                        h.smh_reverted ? 1 : 0, h.smh_last, h.smh_ref_pending ? 1 : 0,
+                        h.smh_on_clone ? 1 : 0, h.smh_lah_last));
+    for (const auto& [c, m] : snap.pb_hold_frz_M) put(fmt::format("PHM,{},{}", c, m));
+    for (const auto& [sat, v] : snap.pb_hold_prev_clock_m) put(fmt::format("PHC,{},{}", sat, v));
+    for (const auto& [sat, v] : snap.pb_hold_frz_prev_clk) put(fmt::format("PHF,{},{}", sat, v));
     // Station-layer records (SPEC_event_harness §21.13; RS-6): the rx-CB carry, then
     // the T5 per-LOS deviation carry.  Written only under
     // network.state_snapshot_station_capture (the driver leaves both containers empty
@@ -661,6 +676,39 @@ bool NetworkStateSnapshotIO::parse(std::istream& is, NetworkStateSnapshot& out,
             // emitted bias for that key (same screen as CBP).
             if (!std::isfinite(d1)) return fail("ER value not finite");
             s.emit_rebase_last[f[1]] = d1;
+        } else if (tag == "PH") {   // emit-side phase-bias hold key (card CRS2)
+            if (f.size() != 13 || f[1].empty() || f[1].find('|') == std::string::npos)
+                return fail("malformed PH line");
+            unsigned long long gen = 0;
+            if (!parseU(f[2], gen) || gen == 0 || gen > 0xFFFFFFFFull)
+                return fail("malformed PH generation (1-based)");
+            NetworkStateSnapshot::PbHoldRow h;
+            h.generation = static_cast<std::uint32_t>(gen);
+            // Every double is a level the next emission continues from (the held value)
+            // or a reference it differences against (the transfer references); a nan/inf,
+            // which strtod accepts, would reach the wire at the first post-resume emit.
+            double v[6] = {0, 0, 0, 0, 0, 0};
+            const std::size_t at[6] = {3, 4, 5, 7, 9, 12};
+            for (int k = 0; k < 6; ++k) {
+                if (!parseD(f[at[k]], v[k])) return fail("malformed PH value");
+                if (!std::isfinite(v[k])) return fail("PH value not finite");
+            }
+            h.held_m = v[0]; h.last_emit_s = v[1]; h.frz_ref = v[2];
+            h.frz_last = v[3]; h.smh_last = v[4]; h.smh_lah_last = v[5];
+            if (!parseB(f[6], h.frz_ok) || !parseB(f[8], h.smh_reverted)
+                || !parseB(f[10], h.smh_ref_pending) || !parseB(f[11], h.smh_on_clone))
+                return fail("malformed PH flag");
+            if (!s.pb_hold.emplace(f[1], h).second) return fail("duplicate PH key");
+        } else if (tag == "PHM") {  // the hold's accumulated common clock step (CRS2)
+            if (f.size() != 3 || f[1].empty()) return fail("malformed PHM line");
+            if (!parseD(f[2], d1)) return fail("malformed PHM value");
+            if (!std::isfinite(d1)) return fail("PHM value not finite");
+            s.pb_hold_frz_M[f[1]] = d1;
+        } else if (tag == "PHC" || tag == "PHF") {   // the hold's previous-clock baselines (CRS2)
+            if (f.size() != 3 || f[1].empty()) return fail("malformed " + tag + " line");
+            if (!parseD(f[2], d1)) return fail("malformed " + tag + " value");
+            if (!std::isfinite(d1)) return fail(tag + " value not finite");
+            (tag == "PHC" ? s.pb_hold_prev_clock_m : s.pb_hold_frz_prev_clk)[f[1]] = d1;
         } else if (tag == "RC") {   // receiver code-bias (rx-CB) carry entry (RS-6)
             if (f.size() != 6 || f[2].empty()) return fail("malformed RC line");
             if (!parseI(f[1], i1)) return fail("malformed RC station index");

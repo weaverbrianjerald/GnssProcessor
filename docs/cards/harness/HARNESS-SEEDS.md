@@ -78,3 +78,17 @@ Every earlier seed in this record is on a retired base (`golden_sim_tri_w6`, the
 Snapshot `ep0485` (TOW 275580, 4 h after the start) is the one the matrix resumes. The snapshot suffix is the emitted count at each 1800 s write, so the same index carries the same tow on every posture of one fixture.
 
 **Two loader traps, both handled by the tools now.** (1) A leg arms `resume_rxcb_lin_restore`, which the loader refuses under `rx_code_bias_datum` (armed in both refound goldens): `event_leg.py` arms the restore only where the datum is off. (2) A fingerprinted knob (for example `network.sat_health`) cannot be added on a warm leg: it needs its own seed, hence `evseed_smx_gx`.
+
+---
+
+## 2026-11-06: the SMX seeds re-written with the hold and latch captures (card CRS2)
+
+Card [CRS2](../../refound/CRS2_resume_hold_and_latches_2026-11-06.md) re-wrote the three sim seeds of card SMX with `network.state_snapshot_hold_capture` and `realtime.state_snapshot_latch_capture` (both armed by `scripts/event_leg.py write-seed` from this card on), so a leg can restore the emit-side phase-bias hold and the consumer's seed latches. Writer: `python scripts/scenario_matrix.py seed <posture>` as on 2026-10-24, exe `gnss_processor_crs2.exe` (the Release build of branch `crs/resume-fixes` on main `284ec29`, sha256[:16] `49e5271dfc4f9e3e`), goldens unchanged. The 2026-10-24 seeds stay on disk as `evseed_smx_<posture>_pre_crs2` for like-for-like re-grades of the legs already on record. All under `D:/GnssProcessorSupport/runs_nom/`.
+
+| seed | posture | emitted | wall (s) | fingerprint (`ep0485`) | `ep0485` hold rows (PH / PHM / PHC / PHF) | consumer `I` rows |
+|---|---|---|---|---|---|---|
+| `evseed_smx_g` | the sim golden as armed (GPS + Galileo) | 720 | 2759 | `212dada761590f60` | 114 / 2 / 57 / 57 (10 keys in generation 2) | isb 1, phase_clock 0, code_bias 1, clock_seed 1 |
+| `evseed_smx_c` | GPS only + the self-contained regime of card SCL2B | 720 | 2309 | `4efce5196f2f002d` | 64 / 1 / 32 / 32 (6 in generation 2, all 64 on a live clone) | same |
+| `evseed_smx_n` | `c` + the native broadcast-clock a priori of card NBP | 720 | 2225 | `63599558801a208f` | 62 / 1 / 31 / 31 (6 in generation 2, all on a live clone) | same |
+
+`products.txt`, `closed_loop_trace.csv` and `network_solution.csv` of each seed hash-equal the 2026-10-24 seed's (the captures are write side only); `network_events.csv` differs by the `BLOCKBAARDA` tier card BOF armed on 2026-10-28 (and one `PRIORRES` row on `c`), which card SMX's exe predates. The fingerprints are unchanged, so the snapshot suffixes and tows of the 2026-10-24 table apply. `evseed_smx_gx` was re-written the same way (720 emitted, 1738 s, fingerprint `56eee3dfe8a3f433`, 108 / 2 / 54 / 54 hold rows at `ep0485`, `products.txt` `f7c2603a73e7420f` identical to its 10-24 copy `evseed_smx_gx_pre_crs2`); `evseed_smx_f` was not.

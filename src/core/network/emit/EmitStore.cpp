@@ -308,13 +308,36 @@ void networkEmitStore(NetworkRun& run, const NetworkEpoch& ep, NetworkSolutionEp
             }
         }
     }
+    // Emit-side phase-bias hold (docs/refound/PBH_phase_bias_hold_2026-09-19.md §5).
+    // It is the last writer of the emitted phase bias; only read-only
+    // steps (the warm-resume seam census below, the SID capture and declaration build)
+    // follow it before emitToStore.
+    // That position has three consequences: it holds what the emission re-base
+    // produced instead of being overwritten by it; it
+    // runs before the emitter's phase-bias value-jump test, so the declared population
+    // screens the value the consumer receives; and every marking site of the epoch but
+    // the warm-resume seam declaration has already run, so the seam's
+    // pendingMarkChannels read sees the set of channels about to be declared (which the
+    // coupled clock+phase-bias cost census needs; the seam declaration, which reads the
+    // held emission, follows the hold and is not in that set on the one epoch it can
+    // fire).  The on-disk write below consumes the same `sol`, so the file and the
+    // in-process store carry the same held values.  Off: immediate return,
+    // byte-identical.
+    networkPbHold(ctx, config_, log, traces, emitter, se, sol);
     // Warm-resume phase-bias seam declaration (SPEC_event_harness §21.9, RS-4).
     // The CLK-R rule above marks a resume only when the held-frame clock engine comes
     // back cold (`epochs == 0`), so a lineage that restores the frame is not marked
     // there.  In that case the clock is continuous across the seam but the phase-bias
     // level need not be, and nothing else (`datum_changed`, an R record) declares it.
-    // The emitter's per-key baselines hold the previous run's emitted values only until
-    // emitToStore overwrites them, so the census is taken here, before that call.
+    // The census reads the EMITTED phase bias, so it runs after the hold, the last
+    // writer of that value, and before emitToStore, which overwrites the emitter's
+    // per-key baselines (the previous run's emitted values) that it compares with.
+    // Before card CRS2 it ran ahead of the hold and read the raw estimate; the two
+    // coincided while a resumed hold first-sighted every key at that estimate, and
+    // differ by the hold's whole accumulated deviation (20 m per key, card CRS) once
+    // the hold is restored, a step the wire does not carry: read there, the census
+    // declared every resume of a restored hold and its counter steps re-inflated every
+    // consumer's inter-system bias and receiver code biases for nothing.
     // One shot (the latch is cleared whether or not anything is marked), warm resumes
     // only (nothing sets the latch on a cold start), and outputs only: `sol` is not
     // touched, so every estimate and every between-satellite difference is unchanged.
@@ -352,19 +375,6 @@ void networkEmitStore(NetworkRun& run, const NetworkEpoch& ep, NetworkSolutionEp
             ser_consts_use = &pb_ser_consts;
         }
     }
-    // Emit-side phase-bias hold (docs/refound/PBH_phase_bias_hold_2026-09-19.md §5).
-    // It is the last writer of the emitted phase bias; only read-only
-    // steps (the SID capture and declaration build) follow it before emitToStore.
-    // That position has three consequences: it holds what the emission re-base
-    // produced instead of being overwritten by it; it
-    // runs before the emitter's phase-bias value-jump test, so the declared population
-    // screens the value the consumer receives; and every marking site of the epoch has
-    // already run, so the seam's pendingMarkChannels read sees the complete set of
-    // channels about to be declared (which the coupled clock+phase-bias cost census
-    // needs).  The on-disk write below consumes the same `sol`, so the file and the
-    // in-process store carry the same held values.  Off: immediate return,
-    // byte-identical.
-    networkPbHold(ctx, config_, log, traces, emitter, se, sol);
     // Native broadcast clock: the wire refers to the stamped broadcast ephemeris.  After the hold (the
     // last reader of C_est) and before the store push and the product write, so the file
     // and the in-process consumer carry C_wire = C_est + O with iode=k.  Off: immediate

@@ -121,6 +121,7 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.resume_coupling_restore = config_.networkResumeCouplingRestore();  // coupling rows
     k.resume_datum_restore   = config_.networkResumeDatumRestore();      // datum tree
     k.resume_emit_restore    = config_.networkResumeEmitRestore();       // emit engines
+    k.resume_hold_restore    = config_.networkResumeHoldRestore();       // the phase-bias hold (CRS2)
     k.resume_station_restore = config_.networkResumeStationRestore();    // station layer
     k.resume_station_rxcb    = config_.networkResumeStationRestoreRxCb();
     k.resume_signal_canon_restore = config_.networkResumeSignalCanonRestore();  // signal latch

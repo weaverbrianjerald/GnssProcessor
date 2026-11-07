@@ -3042,6 +3042,31 @@ namespace GnssProcessor {
          */
         bool networkResumeEmitRestore() const { return network_resume_emit_restore_; }
         /**
+         * @brief Resume hold restore (@c network.resume_hold_restore, card CRS2): the read
+         *        half of @c network.state_snapshot_hold_capture.
+         *
+         * Armed, a warm resume restores the emit-side phase-bias hold before the first
+         * emit: every held key's generation, held value and transfer references (the
+         * @c PH rows), the accumulated common emitted-clock step per constellation
+         * (@c PHM) and the previous-clock baselines per satellite (@c PHC / @c PHF).
+         * Without them the hold first-sights every key at the seam (generation 1, held
+         * value equal to the current estimate) and the wire's phase biases re-level by
+         * the whole difference the hold had accumulated, up to 21 m per key, under a
+         * declaration a consumer ignores on a held key by design (card CRS section 4);
+         * the kept ambiguities of the held-out consumer then carry about a metre for the
+         * whole leg.  The smoothed hold's clock clone is not in the file: its birth is
+         * queued again in the restored generation, the rule a generation start applies.
+         *
+         * Inert and logged when its rows are absent or the hold is off on this run.  The
+         * loader requires @ref networkResumeFrameRestore, as for the emit layer: the held
+         * values are the writer's emitted level, meaningful only when the realization
+         * frame underneath continues.  Outputs-only: no estimate moves.  Deliberately not
+         * in the warm-resume fingerprint (the forward-only resume-response exemption
+         * class of @ref networkResumeFrameRestore and @ref networkResumeEmitRestore).
+         * Default false = byte-identical.
+         */
+        bool networkResumeHoldRestore() const { return network_resume_hold_restore_; }
+        /**
          * @brief Resume station-layer restore (@c network.resume_station_restore,
          *        SPEC_event_harness §21.13; RS-6): the read half of
          *        @c network.state_snapshot_station_capture.
@@ -8760,6 +8785,7 @@ namespace GnssProcessor {
         bool   network_resume_coupling_restore_{false};    ///< Resume coupling-regressor restore (§18.12): at a warm resume, rebuild every restored leveling / ZWD carry's coupling regression on the free shared border from the v3 snapshot's QS dictionary + QL/QZ rows (verbatim, harvest order; never re-sparsified, ŝ_prev / P_prev never re-derived) and seed tu_reinit_hist from the columns the write epoch was re-drawing (loose CA anchors, pending eph cutovers, the QR refloat set), so the first PASS-B inject builds a conditional row (A_s = M_r, y = (value_abs − x_lin) + Σ M_j·ŝ_prev,j at the pure conditional variance) instead of the plain diagonal prior asserted at that conditional variance, which outvotes most Q3 anchored clock priors at the first fold (§18.11).  The loader requires resume_frame_restore + carry_conditional_coupling + carry_coupling_gauge_project).  The restore changes the row's direction only; var is never modified.  Not fingerprinted (forward-only resume response policy).  Off = byte-identical.
         bool   network_resume_datum_restore_{false};       ///< Resume datum restore (RS-3, SPEC_event_harness §21.7), the reader half of network.state_snapshot_datum_capture: at a warm resume, restore the eq34 chain datum's last-epoch spanning tree (eq34_datum_rx / eq34_rx_parent / eq34_sat_root / eq34_prev_target / eq34_prev_el / eq34_retained_edges) before the first election, so the sticky-tree seed continues the writer's tree instead of re-electing it from the cold arc registry, and restore the time-linked code-bias memory (code_bias_prev_ / code_bias_sat_seen_) with code_bias_datum_resumed_ left false, so a re-seed disc-bumps only where it actually re-seeds.  The loader requires resume_frame_restore (the sat-side half of the same tree).  If a half's rows are absent, that half behaves as if off and a warning is logged.  Not fingerprinted (forward-only resume response policy).  Off = byte-identical.
         bool   network_resume_emit_restore_{false};        ///< Resume emit-layer restore (RS-5, SPEC_event_harness §21.10), the reader half of network.state_snapshot_emit_capture: at a warm resume, restore the eq34 emit re-base engine's emission frame (NetworkEmitRebase::last_emit_, the ER rows) before the first emit, so the emitted phase biases continue the writer's emission level instead of stepping to the raw solve frame (metres per (sat,signal) at a field seam).  Inert and logged when its ER rows are absent.  The loader requires resume_frame_restore.  Outputs-only.  Not fingerprinted (forward-only resume response policy).  Off = byte-identical.
+        bool   network_resume_hold_restore_{false};        ///< Resume hold restore (card CRS2), the reader half of network.state_snapshot_hold_capture: at a warm resume, restore the emit-side phase-bias hold (the PH / PHM / PHC / PHF rows) before the first emit, so every held key continues the writer's generation, held value and transfer instead of first-sighting at the current estimate (a re-level of up to 21 m per key, card CRS section 4); the smoothed hold's clone birth is queued again in the restored generation.  Inert and logged when its rows are absent or the hold is off.  The loader requires resume_frame_restore.  Outputs-only.  Not fingerprinted (forward-only resume response policy).  Off = byte-identical.
         bool   network_resume_station_restore_{false};     ///< Resume station-layer restore (RS-6, SPEC_event_harness §21.13), the reader half of network.state_snapshot_station_capture: at a warm resume, restore the rx-CB carry (the RC rows, through makeRestoredLocalCarry so each entry carries the §15.4.1 restored-arc sentinel) and the T5 / Iono-2 per-LOS deviation carry (the SD rows, as written; ShDevCarry's cold test is t_s <= 0, so the restored harvest stamp is what makes the entry read warm) before the first epoch, instead of cold-starting both (without it the rx-CB inject gate withholds about twice as many priors on a leg as on the seed, and hundreds of deviation entries cold-seed at +1).  Each half is inert and logged when its rows are absent.  The loader requires resume_frame_restore.  Not fingerprinted (forward-only resume response policy).  Off = byte-identical.
         bool   network_resume_station_restore_rxcb_{true}; ///< Diagnostic sub-switch: restore the rx-CB half (RS-6).  Meaningful only under network_resume_station_restore_, and only so one leg of the §21.13 attribution matrix can restore one half.  Default true ⇒ an ordinary armed resume restores both.
         bool   network_resume_signal_canon_restore_{false};///< Resume canonical-signal restore (RS-8, SPEC_event_harness §21.16), the reader half of network.state_snapshot_signal_capture: at a warm resume, restore each station's per-(constellation, band, obs-type) canonical-signal latch (the CN rows) into its PppModel before the first epoch, so the first-epoch guard of decideConstellationCanonicals leaves it alone instead of re-deciding it from the resume epoch's satellite counts (a re-decided latch can flip a station's L2 signal, change the L2X tracker set, cost the eq34 L2X component its datum receiver, and step the L2X phase-bias families by tens of metres at +1).  A file without CN rows is inert and logged.  The loader requires resume_frame_restore.  Not fingerprinted (forward-only resume response policy).  Off = byte-identical.

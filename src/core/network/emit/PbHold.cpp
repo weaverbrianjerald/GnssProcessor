@@ -107,8 +107,10 @@ void networkPbHold(NetworkRunContext& ctx,
     // which the identity-passing contract loses information, because the hold does
     // not pass on the phase-bias half of the move.  The satellite's de-commoned clock
     // step at that epoch is recorded, so the run-end summary states the size of what
-    // was not transferred.  The marks pending at this point are the complete set:
-    // every marking site has run, and emitToStore, which consumes them, follows.
+    // was not transferred.  The marks pending at this point are the set every marking
+    // site of the epoch has left but one: the warm-resume seam declaration reads the
+    // held emission and therefore runs after this seam (EmitStore.cpp, card CRS2), on
+    // the one epoch it can fire.  emitToStore, which consumes them, follows.
     const std::map<std::string, double> clk_step =
         pbHoldDecommonedClockStep(sol, net::satMap(ctx.entities.sats, &net::SatelliteState::pb_hold_prev_clock_m));
 

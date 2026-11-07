@@ -34,6 +34,7 @@
 #include "network/carry/InvariantCarryDriver.hpp"   // branch-faithful carry (de)serialization (RTB-7(c))
 #include "network/emit/ClockEmitRebase.hpp"       // CLK-R held frame, restored on warm resume (§18.10)
 #include "network/emit/EmitRebase.hpp"            // eq34 emit re-base frame, restored on warm resume (RS-5, §21.10)
+#include "network/emit/PbHoldClone.hpp"           // PbHoldClone: the clone births the hold restore queues (card CRS2)
 #include "math/TimeUtils.hpp"                // TimeUtils::continuousGpsSeconds
 #include "products/NetworkProductEmitter.hpp"
 #include "products/NetworkStateSnapshot.hpp"
@@ -564,6 +565,97 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                                       "raw solve-frame value through; outputs-only, no "
                                       "estimate moves.",
                                       ctx.counters.n_resume_emit_rebase_keys);
+                    }
+                    // Hold restore (card CRS2; network.resume_hold_restore).  It runs after
+                    // the emit restore and before the first emit, and the loader guarantees
+                    // resume_frame_restore is armed with it.  The hold's rows (PH / PHM /
+                    // PHC / PHF) go back into the entity tables, so networkPbHold finds
+                    // every key of the writer's wire present in its generation, with its
+                    // held value and transfer references, and the first post-resume
+                    // emission continues the writer's wire.
+                    //
+                    // Without it the hold first-sights every key at the seam: generation 1,
+                    // held value equal to the current estimate, a re-level of the wire's
+                    // phase biases by the whole difference the hold had accumulated (up to
+                    // 21 m per key, card CRS section 4) under a declaration the consumer
+                    // ignores on a held key by design, and the held-out consumer's kept
+                    // ambiguities then carry about a metre for the whole leg.
+                    //
+                    // The smoothed hold's clock clone is not in the file (a coupling row
+                    // stamped on the write epoch's stash).  Its birth is queued again in the
+                    // restored generation, the rule a generation start applies (PbHold.cpp),
+                    // so it is born at the first post-resume stash at which the anchor holds
+                    // the clock; until then the key carries the hold family's transfer, the
+                    // continuous switch the hold makes when a clone dies, and the switch
+                    // back onto the new clone is continuous as well.  The keys are collected
+                    // first so the births are queued outside the table walk.
+                    //
+                    // Inert, and says so, when the rows are absent or the hold is off here
+                    // (invariant #4: a 0 under an armed knob reads as inert).
+                    if (ctx.knobs.resume_hold_restore) {
+                        if (!snap.hasHoldState()) {
+                            log->warn("Network (CRS2 hold restore): ARMED but the snapshot carries "
+                                      "NO hold rows (a writer without "
+                                      "network.state_snapshot_hold_capture, or one with "
+                                      "network.emit_pb_hold off) — INERT; the hold first-sights "
+                                      "every key at the seam and re-levels the wire's phase "
+                                      "biases exactly as an unarmed resume does.");
+                        } else if (!ctx.knobs.emit_pb_hold) {
+                            log->warn("Network (CRS2 hold restore): ARMED and the snapshot carries "
+                                      "{} PH row(s), but network.emit_pb_hold is OFF on this run — "
+                                      "INERT; nothing reads a restored hold.",
+                                      snap.pb_hold.size());
+                        } else {
+                            net::recordFromSnapshot("PH", snap, ctx);    // the satellite signals (N4d)
+                            net::recordFromSnapshot("PHM", snap, ctx);   // the constellations (N4b)
+                            net::recordFromSnapshot("PHC", snap, ctx);   // the satellites (N4e1)
+                            net::recordFromSnapshot("PHF", snap, ctx);   // the satellites (N4e1)
+                            std::vector<std::pair<std::string, unsigned>> held;   // (hold key, generation)
+                            unsigned gen_max = 0;
+                            net::forEach(entities.sat_signals, &net::SatSignalState::pb_hold,
+                                         [&](const SatSignalId& id, const net::PbHoldKey& k) {
+                                             held.emplace_back(net::holdKey(id), k.generation);
+                                             gen_max = std::max(gen_max, k.generation);
+                                         });
+                            ctx.counters.n_resume_hold_keys    = static_cast<long long>(held.size());
+                            ctx.counters.n_resume_hold_gen_max = static_cast<long long>(gen_max);
+                            ctx.counters.n_resume_hold_consts  = static_cast<long long>(
+                                net::present(entities.constellations,
+                                             &net::ConstellationState::pb_hold_frz_M));
+                            ctx.counters.n_resume_hold_sats    = static_cast<long long>(
+                                net::present(entities.sats, &net::SatelliteState::pb_hold_frz_prev_clk));
+                            long long n_queued = 0;
+                            if (ctx.knobs.emit_pb_hold_smoothed) {
+                                const long long ep = static_cast<long long>(ctx.counters.n_loop_epochs);
+                                for (const auto& [key, gen] : held) {
+                                    const std::optional<SatSignalId> id = net::satSignalKey(key);
+                                    if (!id) continue;
+                                    PbHoldClone q;
+                                    q.sat        = net::satKey(id->sat);
+                                    q.signal     = net::signalKey(id->signal);
+                                    q.generation = gen;
+                                    q.queued_ep  = ep;
+                                    q.rebirth    = true;   // within the generation, not at its start
+                                    if (net::emplaceSig(entities, key, &net::SatSignalState::smh_pending, q))
+                                        ++n_queued;
+                                    q.block = true;
+                                    net::emplaceSig(entities, key, &net::SatSignalState::smh_block_pending, q);
+                                }
+                            }
+                            ctx.counters.n_resume_hold_clones_queued = n_queued;
+                            log->info("Network (CRS2 hold restore): ARMED at the resume seam — {} held "
+                                      "key(s) restored in their generations (largest {}), the common "
+                                      "clock step of {} constellation(s), the previous-clock baselines "
+                                      "of {} satellite(s), {} clone birth(s) queued in the restored "
+                                      "generations ({}).  Restored BEFORE the first emit, so "
+                                      "networkPbHold continues the writer's held values and the "
+                                      "resume seam mark should find no key over its threshold.",
+                                      held.size(), gen_max, ctx.counters.n_resume_hold_consts,
+                                      ctx.counters.n_resume_hold_sats, n_queued,
+                                      ctx.knobs.emit_pb_hold_smoothed
+                                          ? "the smoothed hold is armed"
+                                          : "the smoothed hold is off: none to queue");
+                        }
                     }
                     // Station-layer restore (RS-6; network.resume_station_restore,
                     // SPEC_event_harness §21.13).  It runs after the emit restore and

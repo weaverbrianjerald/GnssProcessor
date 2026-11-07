@@ -50,6 +50,7 @@ struct StateSnapshotCounters {
     long long snap_cpl_rows_dropped  = 0;   // rows omitted whole for a non-finite/negative field, run total
     long long snap_datum_rows_last   = 0;   // EQ*/CB* datum rows in the last snapshot; 0 under an armed capture on an eq34/time-linked-CB run means the capture is inert
     long long snap_emit_rows_last    = 0;   // ER emit-layer rows in the last snapshot; 0 under an armed capture with the re-base running means the capture is inert
+    long long snap_hold_rows_last    = 0;   // PH/PHM/PHC/PHF hold rows in the last snapshot (card CRS2); 0 under an armed capture with the hold armed and keys held means the capture is inert
     long long snap_station_rows_last = 0;   // RC/SD station-layer rows in the last snapshot; 0 under an armed capture on a run that arms carry_rx_code_bias or the SH deviation carry means the capture is inert
     long long snap_canon_rows_last   = 0;   // CN canonical-signal rows in the last snapshot; 0 under an armed capture means no station had decided a latch yet, which on a network run past epoch 1 means the capture is inert
     long long snap_rxcb_lin_rows_last = 0;  // RL code-bias linearization-point rows in the last snapshot; 0 under an armed capture means the capture is inert: no RC row has a finite code-bias state to pair with (for example estimate_ifb is off)

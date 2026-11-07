@@ -612,6 +612,7 @@ public:
         std::size_t n_states{ 0 };        ///< Snapshot state size (Restored).
         std::size_t n_dynamic{ 0 };       ///< Snapshot dynamic-state count (Restored).
         std::string scope;                ///< "core" | "full" (Restored).
+        std::size_t n_latches{ 0 };       ///< Initializer seed latches set by the restore (Restored; card CRS2).
         std::string reason;               ///< The refusal reason (Discarded).
     };
     const RtSnapshotRestoreStatus& stateSnapshotRestoreStatus() const { return rt_snap_restore_; }

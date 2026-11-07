@@ -138,12 +138,12 @@ hpp_line	field	type	kind	key_type	entity	scope	persistence	step	files_member_acc
 1724	resume_d5_warmup_left	int	scalar		run.state	cross-epoch	ResumeSeeded	N4g	2	2	2	0	1	auto	NInstallCarry:2 NWarmResume:1
 1734	resume_datum_first_ep	bool	scalar		run.state	cross-epoch	ResumeSeeded	N4g	4	4	3	0	1	auto	NSolPrep:3 test_network_arc_graph_oracles:2 NWarmResume:1 NChainDatum:1
 1742	resume_pb_seam_pending	bool	scalar		run.state	pending	ResumeHandoff	N4g	2	2	2	0	1	auto	NEmitStore:2 NWarmResume:1
-1786	pb_hold	std::map<std::string, PbHoldKey>	map	std::string	SatSignal	cross-epoch	ColdStart	N4d	11	10	4	0	0	override	test_carry_sites:7 NPbHoldClone:4 test_pb_emit_hold:4 test_pb_hold_smoothed:2
+1786	pb_hold	std::map<std::string, PbHoldKey>	map	std::string	SatSignal	cross-epoch	Record:PH	N4d	11	10	4	0	0	override	test_carry_sites:7 NPbHoldClone:4 test_pb_emit_hold:4 test_pb_hold_smoothed:2
 1790	pb_hold_dev_abs_m	std::vector<double>	vector	double	run.state	cross-epoch	ColdStart	N4g	4	4	1	0	0	auto	test_pb_emit_hold:4 NClosedLoopRunEnd:2 NPbHold:1 test_pb_hold_phase_clock:1
 1795	pb_hold_coupled_step_m	std::vector<double>	vector	double	run.state	per-epoch	ColdStart	N5a	3	3	1	0	0	auto	NClosedLoopRunEnd:2 NPbHold:1 test_pb_hold_phase_clock:1
-1799	pb_hold_prev_clock_m	std::map<std::string, double>	map	std::string	Satellite	cross-epoch	ColdStart	N4e1	3	2	1	0	0	auto	NCarrySites:1 NPbHold:1 test_carry_sites:1
-1804	pb_hold_frz_M	std::map<char, double>	map	char	Constellation	cross-epoch	ColdStart	N4b	3	3	2	0	0	override	test_pb_hold_phase_clock:8 NPbHold:2 NClosedLoopRunEnd:1
-1807	pb_hold_frz_prev_clk	std::map<std::string, double>	map	std::string	Satellite	cross-epoch	ColdStart	N4e1	1	1	3	0	0	auto	NPbHold:4
+1799	pb_hold_prev_clock_m	std::map<std::string, double>	map	std::string	Satellite	cross-epoch	Record:PHC	N4e1	3	2	1	0	0	auto	NCarrySites:1 NPbHold:1 test_carry_sites:1
+1804	pb_hold_frz_M	std::map<char, double>	map	char	Constellation	cross-epoch	Record:PHM	N4b	3	3	2	0	0	override	test_pb_hold_phase_clock:8 NPbHold:2 NClosedLoopRunEnd:1
+1807	pb_hold_frz_prev_clk	std::map<std::string, double>	map	std::string	Satellite	cross-epoch	Record:PHF	N4e1	1	1	3	0	0	auto	NPbHold:4
 1810	pb_hold_frz_step_abs_m	std::vector<double>	vector	double	run.state	per-epoch	ColdStart	N5a	3	3	1	0	0	auto	NClosedLoopRunEnd:2 test_pb_hold_phase_clock:2 NPbHold:1
 1813	pb_hold_frz_total_abs_m	std::vector<double>	vector	double	run.state	cross-epoch	ColdStart	N4g	2	2	1	0	0	auto	NClosedLoopRunEnd:2 NPbHold:1
 1817	smh_clone	std::map<std::string, PbHoldClone>	map	std::string	SatSignal	cross-epoch	ColdStart	N4d	6	6	36	0	0	override	test_pb_hold_smoothed:27 test_network_shared_history:23 test_pb_hold_block:9 NPbHoldClone:3

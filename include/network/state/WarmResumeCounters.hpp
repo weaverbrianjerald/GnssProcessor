@@ -41,6 +41,17 @@ struct WarmResumeCounters {
     // carried no ER rows (a writer without network.state_snapshot_emit_capture), this run
     // builds no emit re-base, or no warm resume happened, and the run-end line says which.
     long long n_resume_emit_rebase_keys = 0; ///< emission-frame keys restored into NetworkEmitRebase (ER)
+    // Resume hold restore (network.resume_hold_restore, card CRS2): the re-coupling edge's
+    // identities for the emit-side phase-bias hold.  0 keys under an armed knob means
+    // inert: the snapshot carried no PH rows (a writer without
+    // network.state_snapshot_hold_capture, or with the hold off), the hold is off on this
+    // run, or no warm resume happened; the run-end line says which.  The queued clone
+    // births are the smoothed hold's half: 0 with the smoothed hold off is structural.
+    long long n_resume_hold_keys          = 0; ///< held keys restored (PH)
+    long long n_resume_hold_gen_max       = 0; ///< the largest restored generation (a continued generation above 1 is what a cold resume loses)
+    long long n_resume_hold_consts        = 0; ///< constellations whose common clock step M was restored (PHM)
+    long long n_resume_hold_sats          = 0; ///< satellites whose previous-clock baseline was restored (PHF)
+    long long n_resume_hold_clones_queued = 0; ///< clone births queued in the restored generations (smoothed hold only)
     // Resume station-layer restore (network.resume_station_restore): the re-coupling
     // edge's identities for the two station memories.  0 under an armed knob means
     // inert: the snapshot carried no RC / SD rows (a writer without

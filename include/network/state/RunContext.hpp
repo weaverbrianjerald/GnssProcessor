@@ -446,6 +446,18 @@ namespace GnssProcessor {
         /// Not fingerprinted (forward-only resume response policy).  Off = byte-identical
         /// resume (rows parsed into containers nothing reads).
         bool   resume_datum_restore{};
+        /// network.resume_hold_restore (card CRS2): at a warm resume, restore the emit-side
+        /// phase-bias hold before the first emit (the snapshot's @c PH / @c PHM / @c PHC /
+        /// @c PHF rows into @c SatSignalState::pb_hold, @c ConstellationState::pb_hold_frz_M,
+        /// @c SatelliteState::pb_hold_prev_clock_m and @c pb_hold_frz_prev_clk), so
+        /// @c networkPbHold finds every key of the writer's wire present in its generation
+        /// and the first post-resume emission continues the writer's held values; under the
+        /// smoothed hold each restored key's clone birth is queued again in its generation.
+        /// Inert, and says so in the log, on a snapshot with no hold rows or with the hold
+        /// off here.  The loader requires resume_frame_restore.  Not fingerprinted
+        /// (forward-only resume response policy).  Off = byte-identical resume (rows parsed
+        /// into containers nothing reads).
+        bool   resume_hold_restore{};
         /// network.resume_station_restore (RS-6, SPEC_event_harness §21.13): at a warm
         /// resume, restore the two station-layer memories before the first epoch: the rx-CB
         /// carry (the snapshot's RC rows, through @c makeRestoredLocalCarry, so every entry

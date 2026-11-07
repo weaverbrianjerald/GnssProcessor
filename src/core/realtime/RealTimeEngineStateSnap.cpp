@@ -158,6 +158,45 @@ void RealTimeEngine::applyStagedStateSnapshot_(RtEpochContext& ctx) {
                       - (static_cast<double>(snap->snap_week) * 604800.0 + snap->snap_tow));
     };
 
+    // The initializer's seed latches (card CRS2; realtime.state_snapshot_latch_restore).
+    // Without them the first processed epoch re-runs the first-epoch seeds on the states
+    // the restore brought back: the inter-system bias and the receiver code biases are
+    // overwritten from one epoch of code under the restored tight covariance (card CRS
+    // section 6).  Under the core scope the receiver code-bias states are not restored
+    // and re-create per epoch, so their latch stays clear there (rtSnapshotLatchesToApply).
+    // Armed with no I rows (a writer without realtime.state_snapshot_latch_capture) the
+    // restore is inert and says so (invariant #4).
+    auto applyLatches = [&](bool full_scope) {
+        if (!rt.state_snapshot_latch_restore) return;
+        if (snap->init_latches.empty()) {
+            log->warn("{}RT state snapshot: latch restore ARMED but the snapshot carries no I "
+                      "rows (a writer without realtime.state_snapshot_latch_capture) — INERT; "
+                      "the first-epoch seeds run on the restored states exactly as an unarmed "
+                      "resume.", ctx.epoch_prefix);
+            return;
+        }
+        if (!meas_model_) return;
+        StateInitializer& si = meas_model_->getStateInitializer();
+        std::string names;
+        std::size_t n = 0;
+        for (const std::string& name : rtSnapshotLatchesToApply(snap->init_latches, full_scope)) {
+            if (name == "isb")              si.markIsbInitialized();
+            else if (name == "phase_clock") si.markPhaseClockInitialized();
+            else if (name == "code_bias")   si.markCodeBiasInitialized();
+            else if (name == "clock_seed")  si.markClockSeedInitialized();
+            else continue;
+            names += (n ? ", " : "") + name;
+            ++n;
+        }
+        rt_snap_restore_.n_latches = n;
+        log->info("{}RT state snapshot: {} initializer latch(es) restored ({}){} — the first "
+                  "post-restore epoch does not re-seed those states from one epoch of code "
+                  "(re-coupling edge, card CRS2).",
+                  ctx.epoch_prefix, n, names,
+                  full_scope ? "" : "; the code-bias latch stays clear under the core scope, "
+                                    "whose receiver code-bias states re-create per epoch");
+    };
+
     const double now_s  = TimeUtils::continuousGpsSeconds(ctx.current_time);
     const double snap_s = static_cast<double>(snap->snap_week) * 604800.0 + snap->snap_tow;
     const double age_s  = now_s - snap_s;
@@ -267,6 +306,7 @@ void RealTimeEngine::applyStagedStateSnapshot_(RtEpochContext& ctx) {
                   zwd_freed ? "re-inflated to initial_std.troposphere (value kept)"
                             : "left as restored",
                   n_isb_freed);
+        applyLatches(/*full_scope=*/false);
         restored("core");
         return;
     }
@@ -387,6 +427,7 @@ void RealTimeEngine::applyStagedStateSnapshot_(RtEpochContext& ctx) {
                   ? ""
                   : " — SEAM REFLOAT OFF: only sound against a producer proven "
                     "emission-continuous across the outage");
+    applyLatches(/*full_scope=*/true);
     restored("full");
 }
 
@@ -450,6 +491,15 @@ bool RealTimeEngine::harvestStateSnapshot_(RtStateSnapshot& snap, const GnssTime
     snap.ssr_disc      = sm.getSsrDiscontinuityMemory();
     snap.phase_bias_applied = ssr_phase_bias_applied_;
     snap.code_bias_applied  = ssr_code_bias_applied_;
+    // The initializer's seed latches (card CRS2), under the write knob: a writer without
+    // it leaves the map empty and the file keeps the previous bytes.
+    if (config_.getRealTimeConfig().state_snapshot_latch_capture && meas_model_) {
+        const StateInitializer& si = meas_model_->getStateInitializer();
+        snap.init_latches = { { "isb",         si.isIsbInitialized() },
+                              { "phase_clock", si.isPhaseClockInitialized() },
+                              { "code_bias",   si.isCodeBiasInitialized() },
+                              { "clock_seed",  si.isClockSeedInitialized() } };
+    }
     return true;
 }
 
