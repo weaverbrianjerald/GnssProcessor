@@ -440,7 +440,8 @@ loop 12.8 to 13.5 % shorter, merged into main).
 
 [PES](refound/PES_parallel_epoch_stages_2026-10-29.md), the sequential stages of the network epoch run in parallel at
 identical output (open, 2026-10-29: three stages built behind keys off by default, identical on every gate, ARMED on
-both goldens; golden loop 27.9 % (field) and 20.3 % (sim) shorter after card CVF, 39.7 % at 305 stations; not merged).
+both goldens; golden loop 27.9 % (field) and 20.3 % (sim) shorter after card CVF, 39.7 % at 305 stations; merged. Continued
+2026-11-06 on branch `perf/pes-next`, not merged, not armed: harvest, iono traces and coupling inverse behind three more keys, identical on every gate, one OpenMP team size, loop 28.9 % (field) and 25.7 % (sim) shorter than main, 48.7 % at 305 stations against no stage).
 
 ### `realtime` — [topics/realtime.md](topics/realtime.md)
 

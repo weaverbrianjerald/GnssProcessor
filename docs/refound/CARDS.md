@@ -280,7 +280,8 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   in parallel behind `network.parallel_station_normals`, `parallel_schur_columns` and `parallel_redundancy_census`
   (loader default off; ARMED and pinned in both goldens at the author's decision): key on IDENTICAL to off on both
   goldens for each key and all three, off IDENTICAL to main; loop -27.9 % (field), -20.3 % (sim), -39.7 % at 305
-  stations after card CVF. The baseline pair stands.
+  stations after card CVF. The baseline pair stands. Continued 2026-11-06, branch `perf/pes-next`, not merged, not armed:
+  `network.parallel_carry_harvest`, `parallel_iono_traces` and `parallel_coupling_prepare` (each IDENTICAL to off, off IDENTICAL to main), PASS A rejected on its timing, one OpenMP team size in every region. Loop -28.9 % (field), -25.7 % (sim) against main; all six stages -48.7 % against none at 305 stations over 2 h.
 - [RKT](RKT_retired_key_tombstone_2026-10-30.md): closed, 2026-10-30: card RKD's follow-on F4, a warn-once tombstone of
   the 150 retired network keys, BUILT and GATED on branch `claude/pensive-ptolemy-4f6046` (merged into main 2026-11-02): a declared table
   beside the loader (path, flat spelling, deletion commit) and one warning per retired key a configuration sets. Both
