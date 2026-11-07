@@ -309,3 +309,4 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   golden's output plus BeiDou B1I / B3I, the second-band admission and one wire bias per modelled signal; the three BeiDou ledger rows
   RECOMMEND_SCOPED under the new regime predicate `has_bds`, so the GPS + Galileo goldens are unchanged; gates G1 to G5 all pass (the two
   GPS + Galileo goldens and 16 user-side arms identical; the 6 h BeiDou golden byte-identical in `products.txt` to card BDSB's arm C6, its baseline); merged into main 2026-11-02.
+- [CRO](CRO_carry_recursion_oracle_2026-11-07.md): open, 2026-11-07: a multi-epoch oracle of the carry recursion: the shipped per-station form against a joint filter across an arc birth, a slip drop, a READMIT seed and a clock-pivot handover (tests only); pre-registered.
