@@ -21,6 +21,7 @@
 #include "common/GnssIdentity.hpp"
 #include "network/emit/LedgerEmit.hpp"
 #include "network/emit/PbHold.hpp"
+#include "network/emit/PhaseFrameHold.hpp"
 #include "network/emit/BrdcWire.hpp"      // native broadcast clock wire stamp
 #include "filter/StateKeySchema.hpp"
 #include "math/Coordinates.hpp"
@@ -373,6 +374,24 @@ void networkEmitStore(NetworkRun& run, const NetworkEpoch& ep, NetworkSolutionEp
             pb_ser_consts = *ser_consts_use;
             pb_ser_consts.insert(pb_marked.begin(), pb_marked.end());
             ser_consts_use = &pb_ser_consts;
+        }
+    }
+    // The phase-visible clock's held frame (network.emit_phase_frame_hold): after
+    // the hold, the last writer of the phase biases, each constellation's phase-visible common
+    // mode is held as the clock frame hold holds the code side's.  A leash re-anchor or the
+    // warm-resume seam is a datum change of the constellation, marked with the clock
+    // re-anchor's wiring.  Off: immediate return, byte-identical.
+    std::set<char> phf_ser_consts;    // alive until the writer call below
+    {
+        const std::set<char> phf_marked =
+            networkPhaseFrameHold(ctx, traces, se, *ser_consts_use, global_bump, *retro_use,
+                                  n_emitted, sol);
+        if (!phf_marked.empty()) {
+            emitter.markDatumChange(phf_marked);
+            phf_ser_consts = *ser_consts_use;
+            phf_ser_consts.insert(phf_marked.begin(), phf_marked.end());
+            ser_consts_use      = &phf_ser_consts;
+            clk_reanchor_marked = true;
         }
     }
     // Native broadcast clock: the wire refers to the stamped broadcast ephemeris.  After the hold (the

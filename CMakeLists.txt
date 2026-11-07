@@ -293,6 +293,7 @@ add_library(gnss_core STATIC
     src/core/network/emit/EmitStore.cpp
     src/core/network/emit/PbHold.cpp
     src/core/network/emit/BrdcWire.cpp
+    src/core/network/emit/PhaseFrameHold.cpp
     src/core/network/emit/LedgerEmit.cpp
     src/core/network/diag/IonoDiag.cpp
     src/core/network/diag/DdFrac.cpp
@@ -773,6 +774,9 @@ add_executable(gnss_tests
     tests/network/test_network_iftd_sat_centre.cpp
     tests/network/test_network_apriori_clock_track.cpp
     tests/network/test_network_apriori_track_phase_clock_hold.cpp
+    tests/network/test_network_phase_frame_hold.cpp
+    tests/network/test_network_phase_frame_level_vote.cpp
+    tests/network/test_network_phase_frame_quorum.cpp
     tests/network/test_network_solve_skip.cpp
     tests/network/test_network_we_choice.cpp
     tests/network/test_network_within_epoch_culprits.cpp

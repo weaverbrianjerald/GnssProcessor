@@ -347,3 +347,34 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   bars: `network.clock_anchor_clock_k`, a clock-share requirement on the phase statistic's trip, refused below q 1e-6. Built here,
   measure-only: the guard trace's statistic parts, the matrix postures `t` and `tk`; run here: the injected clock step on the tracked
   posture with the test on and off, the instrumented DOY-132 rerun, short arms around card ICL5's lone trips. Nothing armed.
+- [ICL](ICL_inter_constellation_level_2026-11-03.md): closed, 2026-11-03 (pre-registered the same day): the GPS-to-Galileo level of card
+  BRD's broadcast-referenced posture, held for receivers whose inter-system offset is frozen. Measured before building: each
+  constellation's phase-visible level is its clock pivot's a priori error (under the tracked a priori a random walk, 188 and 193 mm over
+  120 epochs against the golden's 2.5), passed to the user by the smoothed hold; the clock frame hold keeps it off the code side. A held
+  frame on the emitted phase-visible clock (`network.emit_phase_frame_hold`, default off, outputs only): 9 and 32 mm, census +0.206 and
+  +0.116 to +0.011 and +0.017 m against the golden, receivers as configured equal to free-offset receivers (paired -0.0002 and +0.0044
+  m); on the CODE a priori it cures the regime's own GPS + Galileo cost. G1, G4 (DOY 129) and G5 fail. UNVALIDATED; nothing armed.
+- [ICL2](ICL2_frame_day_one_level_2026-11-03.md): closed, 2026-11-03 (pre-registered the same day): card ICL's two owed items on
+  card BRD's GPS + Galileo broadcast posture with both knobs and the phase-visible frame. (1) Over 24 h on DOY 129 and 132 the frame
+  keeps receivers whose offset is frozen equal to free-offset receivers (paired +0.0009 and +0.0019 m); one marked leash re-anchor
+  (GPS, after 23.4 h, harmless) and one unmarked 0.403 m step when the clock anchor decoupled 18 of 22 Galileo satellites (D2 fails
+  on DOY 129; D1, D3, D4 pass). (2) One level for code and phase: chosen offline over the clock frame hold voting on C + U, the frame
+  voting in the phase-bias hold's level (`network.phase_frame_hold_level_vote`, default off) cuts each constellation's code-to-phase
+  drift from 20 to 25 to 6 to 9 mm per 120 epochs, an exact no-op on the golden, receivers unchanged; the GPS-to-Galileo level then
+  follows the code side (19.0 mm on DOY 129, from 9.4). K2 and K3 fail on their bars. UNVALIDATED; nothing armed.
+- [ICL3](ICL3_frame_quorum_2026-11-05.md): closed, 2026-11-05 (pre-registered the same day): the failure of card ICL2's D2. At a clock-anchor decoupling of 18 of 22
+  Galileo satellites the phase-visible frame voted on the 4 left and turned a decaying excursion of 3 of them into a permanent, unmarked 0.40 m level step. A quorum on the vote
+  (`network.phase_frame_quorum`, default off; chosen by a frozen rule on replayed receivers, a tie among pause, widen and mark): below half of the constellation the satellites marked by
+  their own bumps vote too. The level over the day 15.8 mm per 120 epochs (from 58.3), the receiver's offset -0.040 m at the event (from -0.487 m), positions unchanged. Q2 fails on one
+  clause (offset rms 2.10 against 2.0 mm). One natural event; injections did not reproduce it. UNVALIDATED; nothing armed.
+- [ICL4](ICL4_post_flag_slip_scatter_2026-11-06.md): closed, 2026-11-06 (pre-registered the same day): why one slip scatters a constellation's clocks. A second, real slip one epoch after an
+  IF-TD flag, when that test has no double difference and the MW signal is dropped; the handover is a coincidence. The misclosure spreads through the receiver's Galileo offset and `network.clock_anchor_q` sets how far (18
+  decouplings at 5e-6, 2 at 2.9e-8, on the same posture). `network.cycle_slip.if_phase_td_reseed_on_flag` flags the slip at 94.1 m and removes the event on both postures and on DOY 132's natural event. All gates pass;
+  receivers not graded (a 24 h grade of the key is owed); nothing armed.
+- [ICL5](ICL5_reseed_key_over_a_day_2026-11-06.md): closed, 2026-11-06 (pre-registered the same day): `network.cycle_slip.if_phase_td_reseed_on_flag` over 24 h on DOY 129 and 132, on the golden and on the broadcast posture, with the
+  16-site census. It removes the post-flag events (R1 passes on all 6); one flag before the solve stands in for several arcs T4 dropped after it, so T4 arcs halve and refloats fall 2.4 to 6.0 % while flags rise 22 to 32 %. Card ICL2's D2 on DOY 129
+  passes with the key alone (58.3 to 15.7 mm, 9.49 to 1.94 mm). Golden receivers do not move; broadcast receivers stay flat over the day. Two clauses fail: R3's decouplings on the golden at DOY 132 (82 to 84, two lone trips, cause not traced) and R5's hour
+  clause on the broadcast posture at DOY 132 (hours 5 and 14). Nothing armed.
+- [ICL6](ICL6_anchor_trip_family_shift_2026-11-06.md): closed, 2026-11-07 (pre-registered 2026-11-06): why the clock anchor trips alone in card ICL5. The statistic mixes two signal families and reads a shift of one, invisible to every row (14 of 15 Galileo trips on a mixed pair, held about 2.7 % of the time);
+  a freed arc's pre-slip level pushes a receiver's DCB gauge by metres (force balance r 0.93 to 0.998, and within 2.4 % at a prior of 100 m2); the shift is the push times the family's variance. The key only softens that variance: 35 `phi` trips in the two golden controls, 36 with it.
+  The 100 m2 floor, used as the instrument, removes all of them, cuts T4 arcs 81 and 68 % and moves no census site by more than 5.2 mm. M0, H4, H5 pass; H1 (unread at three trips), H2 and H3 fail clauses. Nothing armed.

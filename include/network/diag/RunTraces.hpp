@@ -843,6 +843,10 @@ namespace GnssProcessor {
         /// C - O (= c_est_m) or brdc_m + c_wire_m (= the a priori plus the estimate).
         std::ofstream brdc_offset_trace;
         const std::filesystem::path brdc_offset_trace_path;
+        /// network.emit_phase_frame_hold: one row per emitted epoch and constellation (voters,
+        /// forced, the step, the frame G, the event).
+        std::ofstream phase_frame_trace;
+        const std::filesystem::path phase_frame_trace_path;
         /// The smoothed hold's clock clones (@c network.emit_pb_hold_smoothed):
         /// one row per smoothed held emission.  @c age_s the clone's age, @c xfer_m the
         /// key's transfer (the phase-clock transfer minus phi),

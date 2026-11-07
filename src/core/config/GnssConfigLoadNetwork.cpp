@@ -341,6 +341,26 @@ namespace GnssProcessor {
             throw std::runtime_error("network.apriori_clock_track_phase_clock_hold requires "
                                      "network.apriori_clock_track (it admits the phase-clock hold "
                                      "on the tracked broadcast a priori only)");
+        // The phase-visible frame votes within the phase-bias hold's generations.
+        if (network_emit_phase_frame_hold_ && !network_config_.emit_pb_hold)
+            throw std::runtime_error("network.emit_phase_frame_hold requires network.emit_pb_hold "
+                                     "(its generations delimit the frame's vote)");
+        // The vote in the hold's level reads the level M that the phase-clock hold and the
+        // smoothed hold keep; it is a mode of the frame.
+        if (network_phase_frame_hold_level_vote_) {
+            if (!network_emit_phase_frame_hold_)
+                throw std::runtime_error("network.phase_frame_hold_level_vote requires "
+                                         "network.emit_phase_frame_hold (it is a mode of the frame)");
+            if (!(network_config_.emit_pb_hold_phase_clock || network_config_.emit_pb_hold_smoothed))
+                throw std::runtime_error("network.phase_frame_hold_level_vote requires "
+                                         "network.emit_pb_hold_phase_clock or "
+                                         "network.emit_pb_hold_smoothed (the holds that keep the "
+                                         "level M it votes in)");
+        }
+        // The quorum is a rule of the frame's vote.
+        if (network_phase_frame_quorum_ > 0.0 && !network_emit_phase_frame_hold_)
+            throw std::runtime_error("network.phase_frame_quorum requires "
+                                     "network.emit_phase_frame_hold (it is a rule of the frame's vote)");
         // The tracked a priori moves the broadcast clock by the IF-TD columns: it needs the
         // broadcast a priori and the two-way centring that fits them.
         if (network_apriori_clock_track_) {
@@ -8696,6 +8716,44 @@ namespace GnssProcessor {
         network_clock_frame_leash_m_ =
             jval<double>(json, "network.clock_frame_leash_m",
                          "network_clock_frame_leash_m", 50.0);
+        // The phase-visible clock's held frame: outputs only; its requirement (the
+        // phase-bias hold, whose generations delimit the vote) is refused at the end of the
+        // section, on the resolved values.
+        network_emit_phase_frame_hold_ =
+            jval<bool>(json, "network.emit_phase_frame_hold", "emit_phase_frame_hold", false);
+        network_phase_frame_leash_m_ =
+            jval<double>(json, "network.phase_frame_leash_m", "phase_frame_leash_m", 1.0);
+        if (network_emit_phase_frame_hold_) {
+            if (!(network_phase_frame_leash_m_ > 0.0))
+                throw std::runtime_error("network.phase_frame_leash_m must be positive");
+            log->info("Network: network.emit_phase_frame_hold = true: after the phase-bias hold, "
+                      "each constellation's median innovation of the emitted phase-visible "
+                      "correction against the raw a priori (C - P_IF + U) accumulates into a "
+                      "frame G added to every phase bias of its satellites (leash {:.3f} m, "
+                      "re-anchored with a datum mark).  Outputs only.",
+                      network_phase_frame_leash_m_);
+        }
+        // Its vote in the phase-bias hold's level; the requirements are refused at the end of
+        // the section, on the resolved values.
+        network_phase_frame_hold_level_vote_ =
+            jval<bool>(json, "network.phase_frame_hold_level_vote", "phase_frame_hold_level_vote", false);
+        if (network_phase_frame_hold_level_vote_)
+            log->info("Network: network.phase_frame_hold_level_vote = true: the phase-visible frame "
+                      "votes on C - P_IF - M, M the phase-bias hold's accumulated median step of the "
+                      "constellation's emitted clocks, so each constellation's phase-visible level "
+                      "follows its code-visible one (a no-op under the phase-clock hold).  Outputs "
+                      "only.");
+        // Its quorum; the requirement is refused at the end of the section, on the resolved values.
+        network_phase_frame_quorum_ =
+            jval<double>(json, "network.phase_frame_quorum", "phase_frame_quorum", 0.0);
+        if (!(network_phase_frame_quorum_ >= 0.0 && network_phase_frame_quorum_ <= 1.0))
+            throw std::runtime_error("network.phase_frame_quorum must be in [0, 1]");
+        if (network_phase_frame_quorum_ > 0.0)
+            log->info("Network: network.phase_frame_quorum = {:.2f}: the phase-visible frame's plain "
+                      "vote needs that share of the constellation's satellites with a sample; below "
+                      "it the satellites marked by their own retro bumps vote too, else the frame "
+                      "stays.  Outputs only.",
+                      network_phase_frame_quorum_);
         network_clock_disc_jump_test_ =
             jval<bool>(json, "network.clock_disc_jump_test",
                        "network_clock_disc_jump_test", false);

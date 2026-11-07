@@ -105,6 +105,7 @@
 #include "network/state/CarryDisposition.hpp"                // CarryDispositionCounters
 #include "network/solve/ClockLevel.hpp"                      // ClockLevelCounters
 #include "network/emit/BrdcWire.hpp"                         // BrdcWireCounters
+#include "network/emit/PhaseFrameHold.hpp"                   // PhaseFrameHoldCounters
 #include "network/diag/PhaseVisibleDiag.hpp"                 // PhaseVisibleDiagCounters
 #include "network/assembly/SecondCodeScope.hpp"              // SecondCodeScopeCounters
 #include "network/assembly/SecondPhaseScope.hpp"             // SecondPhaseScopeCounters
@@ -315,6 +316,10 @@ namespace GnssProcessor {
         bool nbp_on{};                  ///< network.apriori_source sp3_brdc_clock: the native broadcast clock a priori; the wire refers to the stamped ephemeris
         bool apriori_track_on{};        ///< network.apriori_clock_track: the broadcast a priori follows the IF-TD columns (AprioriClockTrack.hpp)
         bool apriori_track_pc_hold{};   ///< network.apriori_clock_track_phase_clock_hold: the phase-clock hold on the tracked a priori (run-end statement only)
+        bool   phase_frame_hold{};        ///< network.emit_phase_frame_hold: the emitted phase-visible clock in a per-constellation held frame (PhaseFrameHold.hpp)
+        double phase_frame_leash_m{1.0};  ///< network.phase_frame_leash_m: its |G| re-anchor bound, m
+        bool   phase_frame_level_vote{};  ///< network.phase_frame_hold_level_vote: the frame votes on C - P_IF - M, the phase-bias hold's level
+        double phase_frame_quorum{};      ///< network.phase_frame_quorum: the share of the constellation the frame's plain vote needs; 0 off
         int  pv_window_ep{60};          ///< network.phase_visible_window_ep: its window, epochs
         /// network.carry_coupling_gauge_project: hold each (constellation, kind)
         /// coefficient sum of a truncated coupling row at its harvest value, so a departed
@@ -2411,6 +2416,7 @@ namespace GnssProcessor {
           ResponsesCounters,
           ClockLevelCounters,
           BrdcWireCounters,
+          PhaseFrameHoldCounters,
           PhaseVisibleDiagCounters,
           SecondCodeScopeCounters,
           SecondPhaseScopeCounters,

@@ -230,6 +230,35 @@ bridge member recovers the remainder, the decoupling is the carrier; every trip 
 |w| at most 0.57 where a true step reads 7.9; the next build, a clock-share requirement on the trip, pre-registered with frozen bars;
 measure-only trace columns and the tracked sim postures built; nothing armed).
 
+[ICL](refound/ICL_inter_constellation_level_2026-11-03.md), the GPS-to-Galileo level of the broadcast-referenced network for receivers
+whose inter-system offset is frozen (closed, 2026-11-03: each constellation's phase-visible level is its clock pivot's a priori error, a
+random walk under the tracked a priori, passed by the smoothed hold; a default-off held frame on the emitted phase-visible clock cuts the
+level from 188 and 193 to 9 and 32 mm per hour and the census from +0.206 and +0.116 to +0.011 and +0.017 m, receivers as configured
+then equal to free-offset receivers; G1, G4 on DOY 129 and G5 fail; nothing armed).
+
+[ICL2](refound/ICL2_frame_day_one_level_2026-11-03.md), the phase-visible frame over a day and one level for code and phase
+(closed, 2026-11-03: over 24 h on DOY 129 and 132 the frame keeps receivers whose offset is frozen equal to free-offset receivers,
+one marked re-anchor, one unmarked 0.403 m step at an 18-satellite anchor decoupling, D2 fails on DOY 129; a default-off vote in the
+phase-bias hold's level cuts each constellation's code-to-phase drift from 20 to 25 to 6 to 9 mm per hour, an exact no-op on the
+golden, at a cost on DOY 129's GPS-to-Galileo level; K2 and K3 fail; nothing armed).
+
+[ICL3](refound/ICL3_frame_quorum_2026-11-05.md), the phase-visible frame's quorum at a mass clock-anchor decoupling
+(closed, 2026-11-05: an anchor decoupling of 18 of 22 Galileo satellites turned a transient of 3 satellites into a permanent, unmarked 0.40 m level step through the frame's minority vote; a
+default-off quorum widens the vote below half of the constellation: level over the day 15.8 mm per hour, from 58.3; receiver's offset -0.040 m, from -0.487 m; positions unchanged; Q2 fails on
+one clause; nothing armed).
+
+[ICL4](refound/ICL4_post_flag_slip_scatter_2026-11-06.md), why one slip scatters a constellation's clocks
+(closed, 2026-11-06: the event is a second, real slip one epoch after an IF-TD flag, not the handover; it spreads through the receiver's Galileo offset and the anchor's q sets its reach; the existing re-seed key removes it on both postures
+and on DOY 132; all gates pass; receivers not graded; nothing armed).
+
+[ICL5](refound/ICL5_reseed_key_over_a_day_2026-11-06.md), the IF-TD post-flag re-seed over a day, on both postures
+(closed, 2026-11-06: the key removes the post-flag events on both postures, T4 arcs halve, and the broadcast level passes card ICL2's bars without the quorum; golden receivers do not move, broadcast receivers stay flat over the day;
+two clauses fail, 2 extra lone decouplings on the golden at DOY 132 and two hours' census median on the broadcast posture at DOY 132; nothing armed).
+
+[ICL6](refound/ICL6_anchor_trip_family_shift_2026-11-06.md), why the clock anchor trips alone: a slip's stale level, a signal family's common mode, a mixed statistic
+(closed, 2026-11-07: the lone trips read a shift of one signal family no row sees, through a statistic that mixes families, and a freed arc's stale level is the push; 14 of 15 Galileo trips sit on a mixed pair, held about 2.7 % of the time; the key only moves the trips,
+35 in the controls and 36 with it; a 100 m2 floor removes them at no census cost; H1, H2 and H3 each fail clauses; nothing armed).
+
 ### `resume-seam` — [topics/resume-seam.md](topics/resume-seam.md)
 
 | card | one line | status | last dated |

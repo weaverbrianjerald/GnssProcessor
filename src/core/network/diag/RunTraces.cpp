@@ -82,6 +82,7 @@ NetworkRunTraces::NetworkRunTraces(std::filesystem::path log_dir)
       level_innov_win_trace_path(log_dir_ / "network_level_innov_win.csv"),
       phase_visible_trace_path(log_dir_ / "network_phase_visible.csv"),
       brdc_offset_trace_path(log_dir_ / "network_brdc_offset.csv"),
+      phase_frame_trace_path(log_dir_ / "network_phase_frame.csv"),
       pb_hold_clone_trace_path(log_dir_ / "network_pb_hold_clone.csv"),
       station_block_trace_path(log_dir_ / "network_station_block.csv"),
       amb_state_trace_path(log_dir_ / "network_amb_state.csv"),
@@ -600,6 +601,15 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
         else
             log->warn("Network: failed to open the broadcast offset trace {}",
                       brdc_offset_trace_path.string());
+    }
+    if (config_.networkEmitPhaseFrameHold()) {
+        // The phase-visible frame hold; the header documents the columns.
+        phase_frame_trace.open(phase_frame_trace_path);
+        if (phase_frame_trace)
+            phase_frame_trace << "week,tow,cons,voters,forced,step_m,g_m,event\n";
+        else
+            log->warn("Network: failed to open the phase frame trace {}",
+                      phase_frame_trace_path.string());
     }
     if (nc.emit_pb_hold && nc.emit_pb_hold_smoothed) {
         // The smoothed hold's clock clones; the header documents the columns.
