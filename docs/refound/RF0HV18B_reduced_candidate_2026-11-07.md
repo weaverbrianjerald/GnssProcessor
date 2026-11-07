@@ -4,15 +4,15 @@
 
 - **id:** RF0HV18B
 - **topic:** network-vehicle
-- **status:** open
-- **summary:** Pre-registered 2026-11-07, before any 6 h run. Continues card RF0HV18, where D1 + D6 + D7 + the refloat maturity gate failed four clauses. Question: do D1 and D6 together (c2), or D6 alone (d6), pass the frozen gates of that card on four beds (field DOY 129, 130 and 132, and the sim), and do the post-flag re-seed (RS) and the coverage pivot election (PIV) pass on top of c2? One Release exe (the exe of card RF0HV18), controls and their censuses reused. Nothing is armed by this card.
+- **status:** closed
+- **summary:** Pre-registered 2026-11-07, before any 6 h run; graded 2026-11-07, c2 fails three clauses (section 4). Continues card RF0HV18, where D1 + D6 + D7 + the refloat maturity gate failed four clauses. Question: do D1 and D6 together (c2), or D6 alone (d6), pass the frozen gates of that card on four beds (field DOY 129, 130 and 132, and the sim), and do the post-flag re-seed (RS) and the coverage pivot election (PIV) pass on top of c2? One Release exe (the exe of card RF0HV18), controls and their censuses reused. Nothing is armed by this card.
 - **source:** [RF0HV18](RF0HV18_combined_candidate_2026-11-06.md) (sections 2 to 4: arms, gates, results), `scripts/nom3_designs/N3b_decisions.md` sections 9 and 10, cards [NOM5](NOM5_station_parameter_set_tail_2026-10-30.md), [PIV](PIV_pivot_election_coverage_2026-10-17.md), card ARHT (`docs/refound/ARHT_consumer_mechanism_2026-11-06.md` on main, not on this branch), [MDAY](MDAY_multiday_candidate_2026-10-19.md)
 - **knobs / posture:** see section 2. No golden, manifest or ledger row is edited.
 - **dates in the text:** 2026-11-07
-- **hashes / run dirs:** branch `golden/rf0hv18` (tip `1936252` at the start), worktree `D:/GnssProcessorSupport/worktrees/rf0hv18`; exe `build/x64-Release/gnss_processor_rf18.exe`, sha256[:16] `6e510cae8c234d69`; run root `D:/GnssProcessorSupport/runs_rf0hv18` (`RAPID_RUNS_ROOT`); scratch, arm scripts and graders `D:/GnssProcessorSupport/gates/rf0hv18/reduced/`
+- **hashes / run dirs:** branch `golden/rf0hv18` (tip `1936252` at the start), worktree `D:/GnssProcessorSupport/worktrees/rf0hv18`; exe `build/x64-Release/gnss_processor_rf18.exe`, sha256[:16] `6e510cae8c234d69` (verified before and after); run root `D:/GnssProcessorSupport/runs_rf0hv18` (`RAPID_RUNS_ROOT`); scratch, arm scripts and graders `D:/GnssProcessorSupport/gates/rf0hv18/reduced/`
 - **gates (frozen at pre-registration):** section 3
 
-**Outcome.** Pre-registered; no result yet. The reduced candidate drops the D7 keys (ledger lifecycle, roster tracker, gap re-entry) and the refloat maturity gate, which caused the DOY 132 DAV1 failure and the sim failures of card RF0HV18, and keeps D1 (`n3c_bia_pin_pair`) and D6 (`n3c_wire_per_signal`). Candidate arms c2 (D1 + D6) and the fallback d6 are graded on DOY 129, 130, 132 and the sim; the re-seed and the pivot election are graded on top of c2. The decision to arm anything is the author's.
+**Outcome.** On one Release exe (hash verified before and after) all 15 six-hour arms exit 0 with 720 of 720 epochs. Candidate c2 (D1 + D6) fails three clauses: census median +0.165 mm on DOY 129 and +0.170 mm on DOY 130, and WTZZ00DEU hour 2 +4.15 mm on DOY 130; it is byte-identical to the control on the sim. The fallback d6 passes every clause on DOY 129, 130 (supplementary arm) and 132 and was not run on the sim. The re-seed is neutral against c2 and inert on the sim; the pivot election fails on the sim and on DOY 132. Nothing armed; the decision is the author's.
 
 > Results are appended TO THIS FILE, below the text.
 
@@ -74,3 +74,103 @@ Instruments: held-out consumer WTZZ00DEU (SZZ000SIM on the sim), hourly p50 of `
 - Wall time is not graded.
 
 ---
+
+## 4. Results (2026-11-07)
+
+*Exe `build/x64-Release/gnss_processor_rf18.exe` of branch `golden/rf0hv18`, sha256[:16] `6e510cae8c234d69`, verified before the first arm and after the last census; unchanged. Run root `D:/GnssProcessorSupport/runs_rf0hv18` (`_rap_rf18b_<bed>_<arm>`; censuses `_rap_cfb_*`, `_rap_cgb_*`, `_rap_chb_*`, sim replays `_rap_smc6_<site>_scb_c2piv`). Graders, tables and logs `D:/GnssProcessorSupport/gates/rf0hv18/reduced/`: `grade_all.py`, `grade_all_out.txt`, `grade_s.txt`, `r2_all.txt`, `site_read.txt`, `counters_all.txt`, `make_arms.sh`, `armdiff.py`, `census_pipeline.sh`, `census_list.sh`, `sim_census_pipeline.sh`. Smokes (11 epochs, 14 arms) all exit 0. Wall time is not graded (the machine carried other sessions).*
+
+### 4.1 Setup checks
+
+- Every `arm.json` differs from its control's only by the listed keys and `network.product_output_path` (`armdiff.py`).
+- R1 holds for all 15 six-hour arms: exit 0, 720 of 720 epochs, 0 withheld (gate and A4), rank gate 720 emitted, same as every control.
+- One arm was added after the c2 result on DOY 130 and is not in the pre-registration: `rf18b_h_d6` (D6 alone on DOY 130). The fallback d6 cannot be judged on DOY 130 without it, and it is the only way to read the DOY 130 pivot question under D6 alone. It is graded under the same clauses and labelled supplementary.
+- Census replays use each field arm's own `arm.json`; the sim census uses the control's `arm.json` as consumer base for every arm (as pre-registered). The census `cfb_c2` was interrupted once by a restart of the census queue (10 of 17 replays complete); its other 7 replays were re-run with the same exe and configuration and the set is complete.
+- Controls and their censuses reused from card RF0HV18: `_rap_rf18_f_ctrl` / `cf_ctrl`, `_rap_rf18_g_ctrl` / `cg_ctrl`, `_rap_rf18_s_ctrl` / `sc_ctrl`. New: `rf18b_h_ctrl` and `chb_ctrl` (DOY 130).
+
+### 4.2 Sim bins: what was graded
+
+The first epoch of the unchanged sim control is 00:00:30 (tow 259230), not 00:30:15. The bar uses bins from 00:30:15 (section 3). Reported without a bar: bins from the first epoch (`rapid_arm.py score`) and wall-clock hours. Where the verdict differs between bin sets it is stated. For the arms that are byte-identical to the control all three bin sets read 0.000.
+
+### 4.3 Candidate c2 and fallback d6, against the control of the day
+
+Hourly change in mm of WTZZ00DEU (producer closed-loop consumer, `grade_all_out.txt`); census over hours 2 to 6 (`grade_all.py`, full resolution).
+
+| bed | arm | hour 1 (reported) | hours 2 to 6 | R2 | census median (R3, bar +0.1) | worst site (R4, bar +10) | sites over +0.19 mm |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| DOY 129 | c2 | -1.40 | +0.70 -3.00 -0.25 +0.55 +0.35 | PASS | **+0.165 mm FAIL** | BAKE +5.70 PASS | 8 |
+| DOY 129 | d6 | 0.00 | 0.00 in every hour | PASS | +0.000 PASS | WUH2 +1.91 PASS | 1 |
+| DOY 132 | c2 | -11.30 | -3.25 +0.60 +0.30 +0.15 +0.25 | PASS | -0.070 PASS | STPM +1.73 PASS | 7 |
+| DOY 132 | d6 | 0.00 | 0.00 in every hour | PASS | +0.000 PASS | 0.00 PASS | 0 |
+| DOY 130 | c2 | -6.30 | **+4.15 +2.40 +1.85** +0.20 +1.35 | **FAIL** (hours 2, 3, 4, 6 over +1) | **+0.170 mm FAIL** | WUH2 +1.61 PASS | 8 |
+| DOY 130 (supplementary) | d6 | 0.00 | 0.00 in every hour | PASS | +0.000 PASS | WUH2 +1.69 PASS | 1 |
+| sim | c2 | 0.00 | 0.00 in every hour (all bin sets) | PASS | census skipped: `products.txt` byte-identical to the control | none | none |
+
+**c2 fails.** DOY 129 R3 (+0.165 mm), DOY 130 R2 (+4.15 mm at hour 2; hours 3, 4 and 6 also over +1 mm) and DOY 130 R3 (+0.170 mm). It passes on DOY 132 and, by identity with the control, on the sim. No clause is marginal (R3 fails by 0.065 and 0.070 mm).
+
+**d6 passes** R1 to R4 on DOY 129, 130 and 132 with no producer-side move of the consumer (the wire change moves only census sites: WUH2 +1.91 mm on DOY 129, +1.69 mm on DOY 130; the ARHT00ATA mean of hours 2 to 6 falls 214 mm on DOY 129, 174 mm on DOY 130 and 49 mm on DOY 132). d6 was not run on the sim bed (it was not an arm there). The sim c2 arm is byte-identical to the control, so D1 and D6 together change nothing on the sim; d6 alone on the sim is inferred inert and was not run, so the d6 verdict on the sim is not measured.
+
+By the pre-registered rule the candidate is not c2. The fallback d6 passes where run (DOY 129, 130 supplementary, 132) and is unmeasured on the sim.
+
+### 4.4 Add-ons (R1 to R4 against c2 and against the control; both must pass)
+
+| bed | arm | against | hour 1 | hours 2 to 6 | R2 | census median | worst site | sites over +0.19 mm | verdict on the clause set |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| DOY 129 | c2rs | ctrl | -1.35 | +0.65 -2.95 -0.25 +0.60 +0.35 | PASS | **+0.190 FAIL** | BAKE +5.47 | 8 | FAIL (inherited from c2) |
+| DOY 129 | c2rs | c2 | +0.05 | -0.05 +0.05 0.00 +0.05 0.00 | PASS | +0.000 | DAV1 +0.45 | 1 | PASS |
+| DOY 132 | c2rs | ctrl | -11.45 | -3.05 +0.40 +0.25 +0.25 +0.25 | PASS | -0.120 | STPM +1.85 | 7 | PASS |
+| DOY 132 | c2rs | c2 | -0.15 | +0.20 -0.20 -0.05 +0.10 0.00 | PASS | -0.030 | DAV1 +0.31 | 1 | PASS |
+| sim | c2rs | ctrl, c2 | 0.00 | 0.00 | PASS | census skipped: byte-identical | | | PASS, but inert (R5) |
+| DOY 129 | c2piv | ctrl | -3.95 | +0.35 -3.85 -0.55 **+1.00** +0.05 | PASS (marginal: hour 5 at the bar) | +0.020 | BAKE +6.16 | 7 | PASS |
+| DOY 129 | c2piv | c2 | -2.55 | -0.35 -0.85 -0.30 +0.45 -0.30 | PASS | -0.110 | CEDU +2.43 | 5 | PASS |
+| DOY 132 | c2piv | ctrl | -23.60 | -8.05 **+1.60** +1.05 +0.45 +0.30 | **FAIL** (hours 3 and 4) | -0.410 | STPM +4.70 | 6 | FAIL |
+| DOY 132 | c2piv | c2 | -12.30 | -4.80 +1.00 +0.75 +0.30 +0.05 | PASS (marginal: hour 3 at the bar) | -0.030 | KOKB +3.91 | 6 | PASS |
+| DOY 130 | c2piv | ctrl | -5.90 | **+4.15 +3.40 +2.85** +0.65 -1.30 | **FAIL** (hours 2 to 4) | -0.050 | WUH2 +3.07 | 7 | FAIL (inherited from c2) |
+| DOY 130 | c2piv | c2 | +0.40 | 0.00 +1.00 +1.00 +0.45 -2.65 | PASS (marginal: hours 3 and 4 at the bar) | -0.055 | WUH2 +1.46 | 2 | PASS |
+| sim, bar bins (00:30:15) | c2piv | ctrl = c2 | -22.70 | **+33.70 +26.75** -7.15 -6.75 +1.70 | **FAIL** | **+1.340 FAIL** | **S60 +19.37 FAIL** (S21 +10.97, S33 +10.75) | 10 | FAIL |
+| sim, first-epoch bins (report) | c2piv | ctrl = c2 | +180.45 | -11.80 +32.85 +15.15 -10.30 -1.05 | FAIL | +5.760 FAIL | S21 +20.82 FAIL (6 sites over +10) | 10 | FAIL |
+| sim, wall-clock hours (report) | c2piv | ctrl = c2 | +186.90 | -13.70 +32.95 +15.15 -10.15 -1.25 | FAIL | +5.970 FAIL | S21 +20.60 FAIL (6 sites over +10) | 10 | FAIL |
+
+The verdict does not differ between the sim bin sets: c2piv fails R2, R3 and R4 in all three.
+
+**c2rs.** Fails against the control on DOY 129 only because c2 does; against c2 every clause passes on DOY 129 and 132. On the sim it is byte-identical to the control: no IF-TD flag occurs (0 flags, re-seed counters 0 driven), so the key is inert on the sim bed. By the rule (pass on every bed it ran, against both references) c2rs is not recommended on top of c2. It was not run on top of d6.
+
+**c2piv.** Fails against the control on DOY 130 (R2, inherited from c2), DOY 132 (R2, hour 3 +1.60 mm) and the sim (R2, R3, R4); against c2 it passes on the three field beds, with four clauses at the bar (hour 5 of DOY 129 against the control; hour 3 of DOY 132 and hours 3 and 4 of DOY 130 against c2: marginal passes). It fails on the sim against both references, which are the same wire. Not recommended by the rule.
+
+### 4.5 R5, run-end counters (`counters_all.txt`)
+
+| key | bed | reading |
+| --- | --- | --- |
+| D1 | DOY 129 | code-bias datum `cbpin=[G:C1W-C2W]` in c2 against `[G:C1C-C2W]` in the control and in d6: driven |
+| D6 | all field beds | wire records differ from the control (products differ): driven; sim: c2 byte-identical to the control, inert |
+| RS | DOY 129, 132 | IF-TD refloats 107 (control and c2), 143 (c2rs) on DOY 129 and 165, 165, 201 on DOY 132; 149 and 212 flags kept their gradient; T4 arc flags 55 to 33 and 61 to 36: driven. Sim: 0 flags, 0 driven: inert |
+| PIV | all | `pivot elections: G22` on each field bed and `G20` on the sim; clock decouplings 25 33 to G 3 (E, G) on DOY 129, E 34 G 72 to E 13 G 42 on DOY 132, E 1 G 44 to G 13 on DOY 130, E 69 G 94 to E 39 G 91 on the sim; T4 arc flags 14 to 20 on the sim: driven |
+
+All arms: 720 epochs emitted, 0 withheld by the observability gate or A4, 0 T2 refloats, 0 station exclusions.
+
+### 4.6 Reported without a bar
+
+**ARHT00ATA** (hourly p50 of the census replay in mm, hours 1 to 6, mean of hours 2 to 6 in brackets; `site_read.txt`):
+
+| day | ctrl | c2 | d6 | c2piv |
+| --- | --- | --- | --- | --- |
+| 129 | 300.6 374.3 209.7 194.0 128.6 245.8 (230.5) | 68.0 21.9 19.0 16.2 10.9 9.4 (15.5) | 50.5 21.3 22.3 18.9 12.6 9.0 (16.8) | 68.8 22.2 19.0 16.2 18.3 10.9 (17.3) |
+| 130 | 407.0 297.8 181.4 177.7 135.7 219.6 (202.4) | 268.3 33.4 50.1 49.4 31.6 20.3 (37.0) | 97.2 16.6 30.1 33.6 39.1 23.8 (28.7), supplementary | 265.0 33.2 50.0 49.4 21.9 15.6 (34.0) |
+| 132 | 612.7 164.8 173.7 45.5 47.5 50.1 (96.4) | 54.1 17.8 33.0 45.6 71.5 60.0 (45.6) | 55.1 18.1 33.2 42.8 74.1 66.8 (47.0) | 54.3 17.8 32.3 48.2 61.2 52.9 (42.5) |
+
+The DOY 130 pivot-election failure of card PIV (ARHT00ATA +40.6 mm against the control) does not appear: on DOY 130 c2piv reads 34.0 mm against 202.4 mm for the control and against 37.0 mm for c2 (-3.0 mm). The election on top of D6 alone was not run, so the persistence question is answered for D1 + D6 (c2piv) and not for D6 without D1.
+
+**BAKE, DOY 129** (census replay, mm, hours 1 to 6, mean of hours 2 to 6): ctrl 106.1 25.2 22.2 18.3 11.4 7.7 (17.0); c2 107.2 39.7 30.1 22.6 11.8 9.1 (22.7); d6 identical to ctrl (17.0); c2piv 101.0 42.6 31.6 22.4 10.8 8.3 (23.1); c2rs (22.4). D1's cost remains in c2 (+5.70 mm over hours 2 to 6) and in both add-on arms, and is absent in d6.
+
+**Hour 1 of WTZZ00DEU** against the control: c2 -1.40 (DOY 129), -6.30 (130), -11.30 (132); d6 0.00; c2piv -3.95, -5.90, -23.60 and, on the sim, -22.70 in the bar bins.
+
+### 4.7 Not done and not verified
+
+- d6 on the sim was not run (not an arm there); its sim verdict is unmeasured.
+- The election on top of D6 alone (the exact combination of card PIV's DOY 130 failure) was not run.
+- `rf18b_h_d6` is supplementary and was added after the c2 result; its clauses were frozen with the others but the arm is not in the pre-registered table.
+- Census replays are in-network consumers on the sim and GPS + Galileo consumers on the field, one realization each; no multi-day or 24 h grade; no mechanism traced for the DOY 130 R2 failure of c2 (WTZZ00DEU hours 2 to 4 move +4.15, +2.40, +1.85 mm; the counters of c2 and the control differ in one T4 arc flag only).
+- Wall time was not graded. Nothing is armed; no golden, manifest or ledger row changed.
+
+### 4.8 Reading for the arming decision
+
+Findings, not recommendations. c2 does not pass the frozen gates: D1 carries the DOY 129 and DOY 130 census medians to +0.165 and +0.170 mm (bar +0.1) and moves WTZZ00DEU on DOY 130 by up to +4.15 mm, while it helps WTZZ00DEU in hour 1 of every field day and in hour 2 of DOY 132. D6 alone passes every clause on the three field days; it lowers the ARHT00ATA mean of hours 2 to 6 by 49 to 214 mm and costs WUH2 1.7 to 1.9 mm. The re-seed key is neutral against c2 and inert on the sim. The coverage pivot election fails on the sim bed (SZZ000SIM hours 2 and 3 +33.7 and +26.8 mm, three census sites over +10 mm) and on DOY 132 against the control. No add-on passes on every bed it ran against both references.
