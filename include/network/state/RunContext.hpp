@@ -362,6 +362,12 @@ namespace GnssProcessor {
         /// The carried ZWD column joins the F3 block: @ref zwd_in_block and @ref pl_blk_on.
         /// Read by networkPassB_ and networkLocalCarryHarvest.
         bool zwd_blk_on{};
+        /// The wet delay's event response is armed: @ref zwd_blk_on under the float vehicle
+        /// (@ref amb_float_kf).  A station with a slip latch in the epoch, or a RAIM per-arc
+        /// attribution at the last epoch, has its carried wet delay erased, so its column folds
+        /// no prior for one epoch (network/carry/ZwdCarry.hpp, networkZwdEventResponse and
+        /// zwdEventDrop).  False on every run without network.carry_zwd_in_block.
+        bool zwd_event_on{};
         /// The carried slant-iono columns join the F3 block: @ref iono_blk and @ref pl_blk_on.
         /// Read by networkPassB_ and networkLocalCarryHarvest.
         bool iono_blk_on{};

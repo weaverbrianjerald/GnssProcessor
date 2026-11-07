@@ -118,6 +118,10 @@ const std::array<ResponseSiteSpec, kResponseSites> kTable{{
      "ZwdCarry.cpp PASS B inject gap gates", "wet delays not folded"},
     {R::ZwdGapPrune, "zwd_gap_prune", K::Zwd, E::Gap, P::GapPrune, Src::Increment, kNoDisp,
      "ZwdCarry.cpp harvest prune", "wet delays erased"},
+    {R::ZwdSlipErase, "zwd_slip_erase", K::Zwd, E::Slip, P::EraseAndRebirth, Src::Increment, kNoDisp,
+     "ZwdCarry.cpp networkZwdEventResponse", "stations whose carried wet delay was erased (a slip latch of the station this epoch)"},
+    {R::ZwdRaimErase, "zwd_raim_erase", K::Zwd, E::Slip, P::EraseAndRebirth, Src::Increment, kNoDisp,
+     "Raim.cpp attribution (T4, per arc)", "stations whose carried wet delay was erased (a RAIM per-arc attribution of the station)"},
     // --- Satellite clock ---------------------------------------------------------------
     {R::ClkDeparted, "clk_departed", K::SatClock, E::Gap, P::Marginalize, Src::Departed, kNoDisp,
      "BorderPrior.cpp the D2 fold (departed flag)", "key-epochs folded with the column departed"},
@@ -344,6 +348,9 @@ bool responseSiteArmed(ResponseSite s, const NetworkKnobs& k, const GnssConfig& 
         case R::RpbGapPrune:          return k.pl_on && k.eq34_rpb_q > 0.0;
         case R::ZwdGapSkip:           return k.pl_on && (k.zwd_on || k.zwd_seam_on);
         case R::ZwdGapPrune:          return k.pl_on && (k.zwd_on || k.zwd_capture || k.zwd_seam_on);
+        // The wet delay's event response: the float vehicle's in-block route only.
+        case R::ZwdSlipErase:         return k.zwd_event_on && relevelFree && slipLatch;
+        case R::ZwdRaimErase:         return k.zwd_event_on && k.raim_on && t4;
         // --- The border's READMIT, anchor and oscillator responses.
         case R::ClkPark:
         case R::ClkParkExpire:

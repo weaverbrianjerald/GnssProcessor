@@ -10,9 +10,12 @@
  * into a prior on the ZWD column, with the variance grown by a random walk over the time since
  * the stash. Capture alone only records the posterior for snapshots and feeds nothing back.
  *
- * The file has three parts:
+ * The file has four parts:
  * - Station build steps (networkZwdRowCapture, networkZwdCarryPrior). They run in the parallel
  *   per-station produce of PASS B (networkPassB_) and write only their own station's slot.
+ * - The event response of the float vehicle's in-block route (zwdSlipLatchStations,
+ *   zwdEventDrop, networkZwdEventResponse). It runs serially: before PASS B for a slip latch,
+ *   and inside the post-fit RAIM for a per-arc attribution.
  * - The harvest (networkHarvestZwd, networkZwdSeamWindowStep). It runs serially after the solve and
  *   is called by networkHarvestLocalCarries (network/carry/LocalCarryHarvest.hpp).
  * - The run-end report (networkZwdSeamRunEnd).
@@ -257,6 +260,56 @@ void networkZwdCarryPrior(StationCarryFrame& carry) {
 
 // ---- End of the station build steps ----
 
+// ---- Event response (the float vehicle's in-block route) ----
+
+std::set<int> zwdSlipLatchStations(const RelevelEpochState& relevel) {
+    // The re-entry responses (gap re-entry, wind-up restart) free an arc that came back,
+    // which is an event of that arc and not a misfit of the station: an arc latched by them
+    // alone is not a feed. Any other cause, or none recorded, is a slip of the station.
+    constexpr unsigned kReentryBits =
+        RelevelEpochState::kCauseGap | RelevelEpochState::kCauseWindup;
+    std::set<int> flagged;
+    for (const auto& key : relevel.free_ambs) {
+        const auto cz = relevel.free_cause.find(key);
+        const unsigned bits = (cz == relevel.free_cause.end()) ? 0u : cz->second;
+        const bool reentry_only = bits != 0u && (bits & ~kReentryBits) == 0u;
+        if (!reentry_only) flagged.insert(key.first);
+    }
+    return flagged;
+}
+
+bool zwdEventDrop(net::StationTable& sta_rows, int station) {
+    return net::drop(sta_rows, StationId{station}, &net::StationState::zwd) > 0;
+}
+
+void networkZwdEventResponse(NetworkRun& run, const NetworkEpoch& ep, const EpochEvents& events) {
+    // ---- From the run, the epoch and the events ----
+    NetworkRunContext& ctx = run.ctx;
+    net::StationTable& sta_rows = ctx.entities.stations;   // the station carries
+    const std::vector<NetStation>& stations = run.setup.stations;
+    NetworkRunTraces& traces = run.traces;
+    const SyncedEpoch& se = ep.se;
+    const RelevelEpochState& relevel = events.slip.relevel;
+    // ---- End of the bindings ----
+    if (!ctx.knobs.zwd_event_on) return;
+    // The decoupling edge for a slip latch: the station's carried wet delay is erased before
+    // PASS B builds its block, so the column folds no prior this epoch (its birth state: the
+    // column has no a priori row), and this epoch's harvest re-creates the entry from this
+    // epoch's posterior. The re-coupling edge is that entry's first fold, counted at the
+    // harvest (n_zwd_recouple).
+    for (const int i : zwdSlipLatchStations(relevel)) {
+        if (!zwdEventDrop(sta_rows, i)) continue;   // nothing carried, nothing to erase
+        ++ctx.counters.n_zwd_event_drop_slip;
+        prmRespond(ctx.counters.prm_resp, ResponseSite::ZwdSlipErase);
+        traces.emitEvent(se.time, "ZWD", "slip_latch", std::string(),
+                         (i >= 0 && i < static_cast<int>(stations.size()))
+                             ? stations[static_cast<std::size_t>(i)].name : std::string(),
+                         std::nullopt, std::nullopt, "erase", "no_prior_this_epoch");
+    }
+}
+
+// ---- End of the event response ----
+
 // ---- Harvest ----
 
 void networkHarvestZwd(NetworkRun& run, const NetworkEpoch& ep, HarvestBorder& border,
@@ -288,6 +341,9 @@ void networkHarvestZwd(NetworkRun& run, const NetworkEpoch& ep, HarvestBorder& b
     // Seam window (network.zwd_seam_reseed): open for a bounded run of epochs after
     // a warm resume.
     const bool   zwd_seam_live = ctx.carry.zwd_seam_ep_left > 0;
+    // The float vehicle's event response: stamp each entry this harvest creates, so the
+    // next harvest can count its first fold as the re-coupling edge.
+    const bool   zwd_event_on = ctx.knobs.zwd_event_on;
     SharedHistoryHarvest& shx_h = border.shx_h;
     // ---- End of the bindings ----
     // Harvest the posterior ZWD and stash it. This is its own loop, beside the
@@ -387,8 +443,25 @@ void networkHarvestZwd(NetworkRun& run, const NetworkEpoch& ep, HarvestBorder& b
                 networkResumeCouplingCensusRow(run, *zold, coupling);
             }
         }
+        // Re-coupling edge of the event response, read before the stash replaces the entry:
+        // an entry created at the previous harvest (relevel_s stamped there) that folded this
+        // epoch has re-coupled. Every creation counts (a first sighting, a gap prune, an
+        // event erase); the run-end line prints the three populations beside it.
+        bool zwd_reborn = false;
+        if (zwd_event_on) {
+            const auto* zprev = net::get(sta_rows, StationId{static_cast<int>(i)},
+                                         &net::StationState::zwd);
+            zwd_reborn = (zprev == nullptr);
+            if (zprev != nullptr && zprev->relevel_s != 0.0 && R.pl_zwd_injected)
+                ++ctx.counters.n_zwd_recouple;
+        }
         net::put(sta_rows, StationId{static_cast<int>(i)}, &net::StationState::zwd) =
             LocalCarry{value_abs, var, pl_now_s, std::move(coupling)};
+        // An ordinary re-stash leaves relevel_s at 0; only the stash that creates the entry
+        // stamps it (measure-only: nothing on the solve path reads the wet delay's stamp).
+        if (zwd_reborn)
+            net::put(sta_rows, StationId{static_cast<int>(i)}, &net::StationState::zwd)
+                .relevel_s = pl_now_s;
         networkSharedHistoryNoteEntry(shx_h, est_idx, R.pl_zwd.col, SharedHistoryMap::Zwd,
                                       static_cast<int>(i));   // shared history; no-op when off
         // In-block route: the last row of the station's harvest block is the ZWD

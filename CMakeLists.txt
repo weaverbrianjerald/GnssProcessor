@@ -742,6 +742,7 @@ add_executable(gnss_tests
     tests/test_zwd_seam_reseed_config.cpp
     tests/network/test_zwd_seam_reseed_q.cpp
     tests/network/test_carry_zwd_in_block.cpp
+    tests/network/test_zwd_time_link_float_vehicle.cpp
     tests/network/test_carry_iono_in_block.cpp
     tests/network/test_carry_rx_clock_in_block.cpp
     tests/test_resume_frame_restore.cpp

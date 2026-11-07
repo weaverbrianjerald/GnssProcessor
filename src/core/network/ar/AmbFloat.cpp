@@ -6,6 +6,7 @@
  * @see include/network/ar/AmbFloat.hpp
  */
 #include "network/ar/AmbFloat.hpp"
+#include "network/carry/ZwdCarry.hpp"   // networkZwdEventResponse: the wet delay's slip-latch response
 #include "network/driver/Epoch.hpp"          // NetworkEpoch
 #include "network/driver/Run.hpp"            // NetworkRun
 #include "network/driver/SetupResult.hpp"    // run.setup.stations
@@ -444,6 +445,10 @@ void networkAmbFloatDropEpoch(NetworkRun& run, const NetworkEpoch& ep, EpochEven
     networkResponseLatchTally(ctx, events);
     networkAmbFloatApplyDrops(ctx, config_, log, stations, amb_elev_of,
                               se.time.week, se.time.tow, pl_now_s, events);
+    // The wet delay of a station with a slip latch takes its event response here, on the
+    // same latch and before PASS B, so the station's block folds no wet-delay prior this
+    // epoch.  No-op unless the in-block wet-delay carry is armed under this vehicle.
+    networkZwdEventResponse(run, ep, events);
 }
 
 // ---- Run-end reports ----

@@ -1020,11 +1020,14 @@ namespace GnssProcessor {
               "sticky clock-pivot election: 8 -> 2 pivot handovers/day, the h16-h18 pivot-eclipse "
               "consumer excursion eliminated (settled 24 h 3D rms 0.303 -> 0.078 m); "
               "triple-freq / weak-third-signal postures" },
-            // --- SCOPED tier: the ZWD carry on an F3 lineage ----------------------------
-            // Reported only where the ZWD carry is armed on an F3 lineage: without either half
-            // there is no diagonal row to replace, and the loader interlock has already logged
-            // the case (SPEC_amb_iono_split_overcount §6.16.7d, arms Q/Z/F/F2).
-            { network_carry_zwd_ && network_phase_leveling_local_block_,
+            // --- SCOPED tier: the ZWD carry on a station-block lineage --------------------
+            // Reported only where the ZWD carry is armed on a lineage with a station block (F3,
+            // or the float vehicle, which supplies the block itself): without either half there
+            // is no diagonal row to replace, and the loader interlock has already logged the
+            // case (SPEC_amb_iono_split_overcount §6.16.7d, arms Q/Z/F/F2).
+            { network_carry_zwd_
+                  && (network_phase_leveling_local_block_
+                      || nc.ambiguity_vehicle == NetworkAmbiguityVehicle::FloatKf),
               network_carry_zwd_in_block_,
               Tier::SCOPED, true , "network.carry_zwd_in_block",
               "MANDATORY with carry_zwd under F3: the diagonal ZWD row is the same station-common "

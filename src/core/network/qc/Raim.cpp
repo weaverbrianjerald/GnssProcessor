@@ -12,6 +12,7 @@
  */
 
 #include "network/qc/Raim.hpp"
+#include "network/carry/ZwdCarry.hpp"   // zwdEventDrop: the wet delay's attribution response
 
 #include "network/state/RunContext.hpp"          // ctx.knobs / ctx.carry / ctx.counters
 #include "config/GnssConfig.hpp"              // config_ getters
@@ -1009,6 +1010,23 @@ void networkPostFitRaim(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitH
                         ++ctx.counters.n_pc_erase_raim;
                         prmRespond(ctx.counters.prm_resp,
                                    ResponseSite::PcRaimErase);
+                    }
+                    // The station's carried wet delay on the float vehicle's in-block route.
+                    // A per-arc attribution says this station's solve held a misfit the
+                    // estimate did not explain, and the wet delay was estimated jointly with
+                    // it, so the carried entry cannot vouch for itself: it is erased, and the
+                    // next epoch's column folds no prior (the harvest re-creates the entry).
+                    // Per arc only: a satellite-wide call (a bad satellite refloated at every
+                    // station) is a satellite fault, and erasing every tracking station's wet
+                    // delay on it would be a network-wide decoupling.  This site runs after
+                    // the harvest, so the next epoch is the first fold that can act on it.
+                    if (statistical_arc && ctx.knobs.zwd_event_on
+                        && zwdEventDrop(entities.stations, static_cast<int>(i))) {
+                        ++ctx.counters.n_zwd_event_drop_raim;
+                        prmRespond(ctx.counters.prm_resp, ResponseSite::ZwdRaimErase);
+                        traces.emitEvent(se.time, "ZWD", "raim_attribution", pa.sat,
+                                         stations[i].name, std::nullopt, std::nullopt,
+                                         "erase", "no_prior_next_epoch");
                     }
                     // The receiver clock in the carried block (RX-CLK-in-block) has no
                     // T4 edge here, by a triaged decision rather than an omission.

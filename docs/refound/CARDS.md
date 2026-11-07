@@ -309,3 +309,6 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   golden's output plus BeiDou B1I / B3I, the second-band admission and one wire bias per modelled signal; the three BeiDou ledger rows
   RECOMMEND_SCOPED under the new regime predicate `has_bds`, so the GPS + Galileo goldens are unchanged; gates G1 to G5 all pass (the two
   GPS + Galileo goldens and 16 user-side arms identical; the 6 h BeiDou golden byte-identical in `products.txt` to card BDSB's arm C6, its baseline); merged into main 2026-11-02.
+- [ZTL](ZTL_zwd_time_link_float_vehicle_2026-11-07.md): open, 2026-11-07: build B2 of card SRN, a time link for the station wet delay on the
+  float vehicle: the in-block wet-delay carry made reachable under `float_kf` (vehicle-aware interlock), with a declared event
+  response (a slip latch or a RAIM per-arc attribution erases the station's carried entry for one epoch); q bracketed on the sim truth.
