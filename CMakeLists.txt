@@ -511,6 +511,7 @@ add_executable(gnss_tests
     tests/test_leap_second_scale.cpp
     tests/test_atmosphere_models.cpp
     tests/test_gpt3_load_path.cpp
+    tests/test_troposphere_mapping_label.cpp
     tests/test_site_displacement.cpp
     tests/test_phase_windup_sign.cpp
     tests/test_antenna_model.cpp
