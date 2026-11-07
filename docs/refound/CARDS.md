@@ -280,7 +280,7 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   in parallel behind `network.parallel_station_normals`, `parallel_schur_columns` and `parallel_redundancy_census`
   (loader default off; ARMED and pinned in both goldens at the author's decision): key on IDENTICAL to off on both
   goldens for each key and all three, off IDENTICAL to main; loop -27.9 % (field), -20.3 % (sim), -39.7 % at 305
-  stations after card CVF. The baseline pair stands. Continued 2026-11-06, branch `perf/pes-next`, not merged, not armed:
+  stations after card CVF. The baseline pair stands. Continued 2026-11-06, branch `perf/pes-next`, ARMED 2026-11-07 (section 9):
   `network.parallel_carry_harvest`, `parallel_iono_traces` and `parallel_coupling_prepare` (each IDENTICAL to off, off IDENTICAL to main), PASS A rejected on its timing, one OpenMP team size in every region. Loop -28.9 % (field), -25.7 % (sim) against main; all six stages -48.7 % against none at 305 stations over 2 h.
   2026-11-07: a fourth key, `network.sbasis_values_first` (the S-basis completion on eigenvalues first, the rank gate reading
   them), identical; main against all four keys -41.5 % (field), -34.8 % (sim).
