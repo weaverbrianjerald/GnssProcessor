@@ -300,3 +300,30 @@ TEST(NetworkVcf, ApplyWithoutTheMeasurementIsDisarmed) {
         "    \"redundancy_census_stride\": 10,\n"), bad));
     EXPECT_DOUBLE_EQ(bad.networkVcfEwmaAlpha(), 0.1) << "an alpha outside (0, 1] is restored";
 }
+
+// The phase scale reaches the RAIM pools only under its own key, which needs network.vcf_apply.
+TEST(NetworkVcf, ThePhaseScaleNeedsItsOwnKeyOnTopOfApply) {
+    GnssConfig cfg;
+    ASSERT_TRUE(loadConfig("phaseonly", networkConfig(
+        "    \"vcf\": true,\n"
+        "    \"vcf_apply_phase\": true,\n"
+        "    \"redundancy_census_stride\": 10,\n"), cfg));
+    EXPECT_FALSE(cfg.networkVcfApplyPhase()) << "disarmed without network.vcf_apply";
+    GnssConfig code;
+    ASSERT_TRUE(loadConfig("codeonly", networkConfig(
+        "    \"vcf\": true,\n"
+        "    \"vcf_apply\": true,\n"
+        "    \"redundancy_census_stride\": 10,\n"), code));
+    NetworkKnobs k = NetworkKnobs::snapshot(code, code.getNetworkConfig());
+    EXPECT_TRUE(k.vcf_apply);
+    EXPECT_FALSE(k.vcf_apply_phase);
+    GnssConfig both;
+    ASSERT_TRUE(loadConfig("both", networkConfig(
+        "    \"vcf\": true,\n"
+        "    \"vcf_apply\": true,\n"
+        "    \"vcf_apply_phase\": true,\n"
+        "    \"redundancy_census_stride\": 10,\n"), both));
+    k = NetworkKnobs::snapshot(both, both.getNetworkConfig());
+    EXPECT_TRUE(k.vcf_apply);
+    EXPECT_TRUE(k.vcf_apply_phase);
+}

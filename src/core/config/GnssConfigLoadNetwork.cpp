@@ -6992,6 +6992,8 @@ namespace GnssProcessor {
             network_vcf_ewma_alpha_ =
                 jval<double>(json, "network.vcf_ewma_alpha", "vcf_ewma_alpha", 0.1);
             network_vcf_apply_ = jval<bool>(json, "network.vcf_apply", "vcf_apply", false);
+            network_vcf_apply_phase_ =
+                jval<bool>(json, "network.vcf_apply_phase", "vcf_apply_phase", false);
             if (!(network_vcf_ewma_alpha_ > 0.0 && network_vcf_ewma_alpha_ <= 1.0)) {
                 log->warn("Network (VCF): network.vcf_ewma_alpha = {:g} is outside (0, 1]; "
                           "restoring the 0.1 default.", network_vcf_ewma_alpha_);
@@ -7001,6 +7003,11 @@ namespace GnssProcessor {
                 log->warn("Network (VCF): network.vcf_apply reads the factors network.vcf "
                           "measures; with network.vcf off there is nothing to apply, disabled.");
                 network_vcf_apply_ = false;
+            }
+            if (network_vcf_apply_phase_ && !network_vcf_apply_) {
+                log->warn("Network (VCF): network.vcf_apply_phase extends network.vcf_apply to the "
+                          "RAIM pools; with network.vcf_apply off it is disabled.");
+                network_vcf_apply_phase_ = false;
             }
             if (network_vcf_ && !(vnc.redundancy_census_stride > 0
                                   || vnc.redundancy_escalate_sigma > 0.0))
@@ -12316,10 +12323,11 @@ namespace GnssProcessor {
         if (network_vcf_)
             log->info("Network (VCF): per-class variance factor ARMED on the redundancy-census "
                       "sweep (EWMA alpha {:g}); {}.", network_vcf_ewma_alpha_,
-                      network_vcf_apply_
-                          ? "APPLIED: the within-epoch and post-fit RAIM pools read the phase "
-                            "scale and the URA reads the code scale (solve weights untouched)"
-                          : "measure-only (network_vcf.csv and the run-end table)");
+                      !network_vcf_apply_ ? "measure-only (network_vcf.csv and the run-end table)"
+                      : network_vcf_apply_phase_
+                          ? "APPLIED: the URA reads the code scale and the within-epoch and "
+                            "post-fit RAIM pools the phase scale (solve weights untouched)"
+                          : "APPLIED: the URA reads the code scale (solve weights untouched)");
         if (network_config_.parallel_seam) {
             log->info("Network: deterministic-parallel post-solve seam ENABLED "
                       "(carry-fold + D5 readouts computed per-block in parallel, merged in "

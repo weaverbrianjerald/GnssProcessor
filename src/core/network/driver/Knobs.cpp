@@ -480,6 +480,7 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.vcf_on    = config_.networkVcf() && k.redun_census_on;
     k.vcf_alpha = config_.networkVcfEwmaAlpha();
     k.vcf_apply = k.vcf_on && config_.networkVcfApply();
+    k.vcf_apply_phase = k.vcf_apply && config_.networkVcfApplyPhase();
     // Prior-residual census.  Nothing to resolve against the estimation configuration:
     // the census reads the (prior mean, prior var, posterior var) triples the carry
     // harvests already hold and writes counters, so the master arm is the predicate.  The

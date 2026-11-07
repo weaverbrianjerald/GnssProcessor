@@ -56,9 +56,9 @@
  *
  * ## Stage 2: the applying scales
  *
- * With network.vcf_apply the robust aggregate EWMAs become the scale of three readers: the
- * within-epoch RAIM pool and the post-fit RAIM pool divide each pooled statistic by the phase
- * scale, and the URA scale is the code scale (@ref networkVcfApplyScale).  A scale is 1 (the a
+ * With network.vcf_apply the robust aggregate code EWMA becomes the URA's scale, and with
+ * network.vcf_apply_phase as well the robust aggregate phase EWMA divides each statistic of the
+ * within-epoch and the post-fit RAIM pools (@ref networkVcfApplyScale).  A scale is 1 (the a
  * priori model) until its class is identifiable and has @ref kVcfApplyMinSweeps sweeps.  The
  * solve's weights and the carried variances are never touched.
  */

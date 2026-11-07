@@ -6998,18 +6998,33 @@ namespace GnssProcessor {
         double networkVcfEwmaAlpha() const { return network_vcf_ewma_alpha_; }
 
         /**
-         * @brief Apply the per-class variance factor as the scale of three QC readers
+         * @brief Apply the per-class variance factor as the scale of the URA
          *        (@c network.vcf_apply; requires @c network.vcf).
          *
-         * The robust aggregate EWMAs, where identifiable, replace the fixed a priori scale:
-         * the within-epoch and post-fit RAIM pools divide each pooled statistic by the phase
-         * scale (so the trigger, the k bars and the floor are in calibrated sigma), and the URA
-         * is the code scale times the formal clock sigma.  The solve's weights and the carried
-         * variances are not touched.  Off = byte-identical.
+         * The robust aggregate code EWMA, where identifiable, replaces the fixed a priori scale
+         * of the URA: the URA EWMA is fed the code scale and emitted without the floor of 1,
+         * so the URA is the code scale times the formal clock sigma.  The RAIM pools take the
+         * phase scale only under @ref networkVcfApplyPhase.  The solve's weights and the
+         * carried variances are not touched.  Off = byte-identical.
          *
          * @return true when the scales are applied.
          */
         bool networkVcfApply() const { return network_vcf_apply_; }
+
+        /**
+         * @brief Let the phase scale reach the RAIM pools (@c network.vcf_apply_phase; requires
+         *        @c network.vcf_apply).
+         *
+         * With it the within-epoch and post-fit RAIM pools divide each pooled statistic by the
+         * phase scale (the robust phase aggregate, where identifiable), so their sigma0, trigger
+         * and k bars read in calibrated sigma.  Separate from @ref networkVcfApply because the
+         * phase factor read from post-fit residuals under a free slant ionosphere measures the
+         * absorption of the phase noise as much as the noise itself (card VCF).  Off =
+         * byte-identical.
+         *
+         * @return true when the phase scale is applied to the RAIM pools.
+         */
+        bool networkVcfApplyPhase() const { return network_vcf_apply_phase_; }
 
         /**
          * @brief T3/T3c population hygiene (@c network.raim_rate_hygiene;
@@ -8903,7 +8918,8 @@ namespace GnssProcessor {
         double network_raim_station_factor_ratio_{6.0};    ///< Depart threshold of the R2 statistic: EWMA factor / network median of EWMA factors (return at 0.8×). Above the 4.7× model-error spread measured in §4.
         bool   network_vcf_{false};                        ///< Per-class variance factor of the observation rows on the redundancy-census sweep (network/qc/Vcf.hpp): trace, EWMA, run-end table.  Measure-only; requires the census; off = byte-identical.
         double network_vcf_ewma_alpha_{0.1};               ///< EWMA weight of a new sweep in the per-class variance factor, clamped to (0, 1].
-        bool   network_vcf_apply_{false};                  ///< The per-class scales replace the fixed a priori scale at the within-epoch pool, the post-fit pool and the URA (requires network_vcf_); off = byte-identical.
+        bool   network_vcf_apply_{false};                  ///< The code scale replaces the fixed a priori scale of the URA (requires network_vcf_); off = byte-identical.
+        bool   network_vcf_apply_phase_{false};            ///< The phase scale also divides the within-epoch and post-fit RAIM pools (requires network_vcf_apply_); off = byte-identical.
         bool   network_raim_rate_hygiene_{false};          ///< T3/T3c population hygiene (QUEUE item 4 R4, SPEC_t3_null_derivation §6): the T3 opportunity count excludes s_raw==0 untestable cells (counted separately); the T3c opportunity becomes the unconditional ≥min_sta-cells population. Telemetry accounting only; requires raim + trace_flag_rates; off = byte-identical.
         bool   network_level_authority_csgf_{false};       ///< Per-epoch fleet CS-GF level census (LV-6, SPEC_level_authority_internal): measure-only, folds nothing; arms the CS advance without the carry; off = byte-identical.
         int    network_level_authority_min_n_{10};         ///< LOS maturity screen, CS-GF samples since reset (LV-6).

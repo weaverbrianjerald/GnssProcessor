@@ -938,7 +938,8 @@ namespace GnssProcessor {
         // read (the within-epoch pool, the post-fit pool, the URA EWMA); it requires vcf_on.
         bool   vcf_on{};              ///< Master: network.vcf on a live redundancy census.
         double vcf_alpha{0.1};        ///< EWMA weight of a new sweep (network.vcf_ewma_alpha).
-        bool   vcf_apply{};           ///< network.vcf_apply: the scales replace the fixed a priori scale at the three readers.
+        bool   vcf_apply{};           ///< network.vcf_apply: the code scale replaces the fixed a priori scale of the URA.
+        bool   vcf_apply_phase{};     ///< network.vcf_apply_phase: the phase scale also divides the within-epoch and post-fit RAIM pools (requires vcf_apply).
         // --- prior-residual census ---
         // `prires_on` is the one predicate every feed site reads for "does this run touch
         // the census at all", so an off run pays one bool test per site.  The per-family

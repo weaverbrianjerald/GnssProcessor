@@ -523,7 +523,9 @@ NetworkSolPrepResult networkSolPrep(NetworkRun& run, const NetworkEpoch& ep, Epo
         const Eigen::MatrixXd& scov = est.sharedCovariance();
         std::set<Eigen::Index> pinned;
         for (const auto& pin : plan.shared_datum) pinned.insert(pin.column);
-        const double s0 = std::max(1.0, ura_sigma0_ewma);
+        // The a priori scale is a floor of 1 on the EWMA; under network.vcf_apply the EWMA holds
+        // the calibrated code scale and is emitted as it is.
+        const double s0 = ctx.knobs.vcf_apply ? ura_sigma0_ewma : std::max(1.0, ura_sigma0_ewma);
         for (auto& s : sol.sats) {
             if (!s.has_clock) continue;
             Eigen::Index col;
