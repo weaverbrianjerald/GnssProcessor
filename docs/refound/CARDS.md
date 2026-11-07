@@ -310,3 +310,10 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   RECOMMEND_SCOPED under the new regime predicate `has_bds`, so the GPS + Galileo goldens are unchanged; gates G1 to G5 all pass (the two
   GPS + Galileo goldens and 16 user-side arms identical; the 6 h BeiDou golden byte-identical in `products.txt` to card BDSB's arm C6, its baseline); merged into main 2026-11-02.
 - [L2Q](L2Q_l2c_l2w_quarter_cycle_2026-11-06.md): closed, 2026-11-06: L2C against L2W quarter-cycle alignment in the field files: the L2C minus L2W phase fraction of 294 stations over DOY 128 to 132 (579 station-days, 21 receiver types, 34 482 arcs) is 0 at every station-day and never a quarter cycle (largest station offset 0.018 cycle, satellite part at most 0.004); the SYS / PHASE SHIFT records disagree across families (0, -0.25, +0.25) while every file is aligned; no correction for field integer work, `model_corrections.apply_phase_shifts` stays off (on, it un-aligns 162 stations; KEEP_OFF row landed 2026-11-06); every golden station latches L2W and a station-consistent offset cancels in every double difference.
+- [ARHT](ARHT_consumer_mechanism_2026-11-06.md): closed, 2026-11-06: the mechanism of the ARHT00ATA consumer's response to the wire, named
+  from consumer replays of existing wires: the wire declares a satellite's level steps and motion only through its held phase biases, and
+  the site latches the L1W family under the one sky no L1W roster station covers (none south of 45 S), so 60 % of its L1W phase rows run
+  without a wire bias; the 100 to 190 m divergences of DOY 128 and 131 are G01's leaked return record meeting such a row (removed by
+  deleting seven wire records at one epoch, or G01 at the consumer for ten minutes; not by another satellite), the standing 0.2 m and its
+  centimetre responses collapse on the covered L1C + C1C family and on the per-signal wires; the "ARHT00ATA wire gain" of posture C is
+  the per-signal wire (D6 -208.5 mm, C6 -214.6 mm), not BeiDou; nothing armed.
