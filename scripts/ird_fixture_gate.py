@@ -19,6 +19,9 @@ with the loss-of-lock digit set at the slip epoch for a flagged slip and nowhere
 the scripted rows; the child configs and the manifest equal rung 3b's apart from the comment and the paths.
 verify, gap fixtures: the arm's rewritten RINEX against rung 3b's: outside the window the file is
 identical, inside it every satellite record of the station is blank, and the epoch headers are all kept.
+verify, cut fixtures (card IRDE): every station's rewritten RINEX against the rung's: a record of an arc that crosses
+the bipartition is blank from the thinning to the return, the bridge's only from the split to the merge (never in a
+control), and every other line is identical.
 
 gate: the arm's chain trace (logs/network_chain_edges.csv).  A slip fixture passes when the slipped arc is
 a tree edge of the intended kind in every slipped band at the epoch before the event and at the event
@@ -32,7 +35,10 @@ The kinds (from the fixture's name): t1 satellite-side edge (the child is the sa
 satellites below it; t2 and t5 an edge in both bands with at least LARGE_SUBTREE vertices below it (the
 reading of "large subtree" used to pick the targets); t3 an edge in L2W; t4 an edge whose parent is a
 satellite that is itself a child of r1; tr an edge at r1 (edge_sta = r1).  t5 additionally fires at
-TOW 266250 (epoch 175).
+TOW 266250 (epoch 175).  A cut fixture passes when, on each band, the bridge is the one tree edge that crosses the
+bipartition at the epoch before the split, the small side is a component of its own from the split to the epoch
+before the merge, the graph is one component again at the merge with the bridge a tree edge, and the arm's
+products.txt equals the reference's (its control) for every epoch before the split.
 """
 import argparse
 import csv
@@ -52,6 +58,7 @@ SAT = re.compile(r"^[GE]\d\d$")
 LARGE_SUBTREE = 10
 SLIP_FIXTURES = ("t1", "t2", "t3", "t4", "t5", "tr")
 GAP_FIXTURES = ("rg", "rv6", "rv16")
+CUT_FIXTURES = ("ms", "ms_ctl", "msr", "msr_ctl", "ms_mic", "ms_ctl_mic", "msr_mic", "msr_ctl_mic")
 
 
 def epoch_tow(ep):
@@ -84,6 +91,14 @@ def gap_fixture(name):
     op = arms.BEDS["ird_" + name][4][0]
     kv = dict(p.split("=", 1) for p in op.split(";")[1:])
     return kv["stations"], tow_epoch(kv["tow_from"]), tow_epoch(kv["tow_to"])
+
+
+def cut_fixture(name):
+    """(stations of the small side, its satellites, the bridge (station, satellite), whether the bridge is blanked)
+    of a pure merge and split fixture."""
+    cut, bridge = (arms.CUT_ROOT, arms.CUT_ROOT_BRIDGE) if name.startswith("msr") else (arms.CUT, arms.CUT_BRIDGE)
+    stations, sats = [set(x.split(",")) for x in cut]
+    return stations, sats, bridge, "ctl" not in name
 
 
 # ----------------------------------------------------------------------------- RINEX
@@ -259,6 +274,50 @@ def verify_gap(name, arm, base_rinex_dir):
     return not problems and ep == 240
 
 
+def cut_record_blank(station, sat, ep, stations, sats, bridge, splits):
+    """Whether a cut fixture blanks the record of (station, sat) at epoch ep."""
+    if (station, sat) == bridge:
+        return splits and arms.CUT_SPLIT <= ep < arms.CUT_MERGE
+    return (station in stations) != (sat in sats) and arms.CUT_THIN <= ep < arms.CUT_BACK
+
+
+def verify_cut(name, arm, base_rinex_dir):
+    stations, sats, bridge, splits = cut_fixture(name)
+    problems, n_blank, n_kept = [], 0, 0
+    for i in range(1, 61):
+        station = "S%02d000SIM" % i
+        rn = "%s_R_20241290000_01D_30S_MO.rnx" % station
+        A = open("%s/%s/%s" % (base_rinex_dir, station, rn), encoding="ascii", errors="replace").read().split("\n")
+        B = open("%s/rinex/%s" % (arm, rn), encoding="ascii", errors="replace").read().split("\n")
+        if len(A) != len(B):
+            problems.append("%s: line count %d against %d" % (station, len(A), len(B)))
+            continue
+        ep = 0
+        for la, lb in zip(A, B):
+            if la.startswith(">"):
+                ep += 1
+            if la[:1] == "G" and not la.startswith(">") and ep:
+                sat = la[0] + la[1:3].replace(" ", "0")
+                if not la[3:].strip():
+                    continue                # the rung has no observation there
+                if cut_record_blank(station, sat, ep, stations, sats, bridge, splits):
+                    n_blank += 1
+                    if lb.rstrip() != la[:3]:
+                        problems.append("%s epoch %d: %s is not blank" % (station, ep, sat))
+                else:
+                    n_kept += 1
+                    if la.rstrip() != lb.rstrip():
+                        problems.append("%s epoch %d: %s differs" % (station, ep, sat))
+            elif la != lb:
+                problems.append("%s epoch %d: a line other than a GPS record differs (%s)" % (station, ep, la[:3]))
+    print("verify %s: %d records blanked, %d kept, over 60 stations; bridge %s-%s %s; %d problem(s)"
+          % (name, n_blank, n_kept, bridge[0], bridge[1],
+             "blanked in epochs %d..%d" % (arms.CUT_SPLIT, arms.CUT_MERGE - 1) if splits else "kept", len(problems)))
+    for p in problems[:10]:
+        print("  PROBLEM: " + p)
+    return not problems and n_blank > 0
+
+
 # ----------------------------------------------------------------------------- the chain trace
 def read_trees(path):
     """trees[(band, epoch)] = {child: (parent, depth, edge_sta, edge_sat, row)} and roots[(band, epoch)]."""
@@ -400,7 +459,63 @@ def print_events(arm, tow, label, max_rows):
     print("  other event rows at TOW %d: %s" % (tow, ", ".join("%s x%d" % kv for kv in sorted(other.items())) or "none"))
 
 
+def read_components(path):
+    """comps[(band, epoch)] = {component index: (root, its children)}."""
+    comps = {}
+    with open(path, newline="") as fh:
+        for r in csv.DictReader(fh):
+            comp = comps.setdefault((r["band"], tow_epoch(r["tow"])), {}).setdefault(r["comp"], (r["r1"], set()))
+            comp[1].add(r["child"])
+    return comps
+
+
+def gate_cut(name, arm_tag, ref_tag, quiet=False, max_rows=12):
+    arm, ref = resolve(arm_tag), resolve(ref_tag)
+    stations, sats, bridge, splits = cut_fixture(name)
+    side = stations | sats
+    trees, _ = read_trees(arm + "/logs/network_chain_edges.csv")
+    comps = read_components(arm + "/logs/network_chain_edges.csv")
+    results = []
+    detail = []
+    for band in ("L1C", "L2W"):
+        tree = trees.get((band, arms.CUT_SPLIT - 1), {})
+        crossing = sorted((rec[2], rec[3]) for rec in tree.values() if (rec[2] in stations) != (rec[3] in sats))
+        results.append(("%s epoch %d: the bridge is the one tree edge across the cut (%s)"
+                        % (band, arms.CUT_SPLIT - 1, crossing), crossing == [bridge]))
+        split_eps = range(arms.CUT_SPLIT, arms.CUT_MERGE)
+        results.append(("%s epochs %d..%d: two components, one of them the small side's"
+                        % (band, arms.CUT_SPLIT, arms.CUT_MERGE - 1),
+                        all(len(comps.get((band, ep), {})) == 2 for ep in split_eps)
+                        and all(any((c[1] | {c[0]}) <= side for c in comps[(band, ep)].values()) for ep in split_eps)))
+        merged = comps.get((band, arms.CUT_MERGE), {})
+        results.append(("%s epoch %d: one component, the bridge a tree edge" % (band, arms.CUT_MERGE),
+                        len(merged) == 1 and edge_of(trees.get((band, arms.CUT_MERGE), {}), *bridge) is not None))
+        for ep in (arms.CUT_SPLIT - 1, arms.CUT_SPLIT, arms.CUT_MERGE):
+            detail.append("%s epoch %d: components %s" % (band, ep, sorted(
+                (k, c[0], len(c[1]) + 1) for k, c in comps.get((band, ep), {}).items())))
+    diff = first_difference(arm + "/products.txt", ref + "/products.txt")
+    results.append(("products.txt equals the reference's for every epoch before %d (first difference: %s; blocks %d against %d)"
+                    % (arms.CUT_SPLIT, diff[0], diff[1], diff[2]), diff[0] is None or diff[0] >= arms.CUT_SPLIT))
+    ok = all(p for _, p in results)
+    if not quiet:
+        print("gate %s  arm %s  reference %s\n  event: %s and %s cut from the rest through %s-%s, split at epoch %d, "
+              "merged at epoch %d" % (name, arm_tag, ref_tag, ",".join(sorted(stations)), ",".join(sorted(sats)),
+                                      bridge[0], bridge[1], arms.CUT_SPLIT, arms.CUT_MERGE))
+        for d in detail:
+            print("  " + d)
+        for c, p in results:
+            print("  %s  %s" % ("PASS" if p else "FAIL", c))
+        print_events(arm, epoch_tow(arms.CUT_SPLIT), "the split", max_rows)
+        print_events(arm, epoch_tow(arms.CUT_MERGE), "the merge", max_rows)
+        for ln in run_end_lines(arm):
+            print("  " + ln)
+        print("  GATE %s: %s" % (name, "PASS" if ok else "FAIL"))
+    return ok
+
+
 def gate(name, arm_tag, ref_tag, quiet=False, max_rows=12):
+    if name in CUT_FIXTURES:
+        return gate_cut(name, arm_tag, ref_tag, quiet, max_rows)
     arm, ref = resolve(arm_tag), resolve(ref_tag)
     trees, roots = read_trees(arm + "/logs/network_chain_edges.csv")
     results = []
@@ -562,6 +677,25 @@ def selftest():
                  and arms.BEDS["ird_" + name][1] == "%s/simird_%s" % (arms.FIXTURES_ROOT, name))
     chk(good, "the six slip configs are rung 3b plus one station's scripted slips of the card's shapes, in the card's epoch "
         "window (t5 at epoch 175), the producer files rung 3b's re-pointed, and each bed names its station, satellite and epoch")
+    # the cut fixtures: who is blanked when
+    st, sa, br, sp = cut_fixture("ms")
+    chk(sp and not cut_fixture("ms_ctl")[3] and not cut_fixture("msr_ctl_mic")[3] and cut_fixture("msr_mic")[3]
+        and "S13000SIM" in cut_fixture("msr")[0] and "S13000SIM" not in st,
+        "the controls keep their bridge, and the datum receiver is on the small side of msr only")
+    crossing = ("S43000SIM", "G01")   # a small-side station and an outside satellite
+    inside = ("S43000SIM", "G15")
+    chk(cut_record_blank(*crossing, arms.CUT_THIN, st, sa, br, True)
+        and cut_record_blank(*crossing, arms.CUT_BACK - 1, st, sa, br, True)
+        and not cut_record_blank(*crossing, arms.CUT_THIN - 1, st, sa, br, True)
+        and not cut_record_blank(*crossing, arms.CUT_BACK, st, sa, br, True),
+        "a crossing arc is blank from the thinning to the epoch before the return")
+    chk(not cut_record_blank(*inside, arms.CUT_SPLIT, st, sa, br, True)
+        and not cut_record_blank("S01000SIM", "G01", arms.CUT_SPLIT, st, sa, br, True),
+        "an arc inside either side is never blank")
+    chk(cut_record_blank(*br, arms.CUT_SPLIT, st, sa, br, True) and cut_record_blank(*br, arms.CUT_MERGE - 1, st, sa, br, True)
+        and not cut_record_blank(*br, arms.CUT_SPLIT - 1, st, sa, br, True) and not cut_record_blank(*br, arms.CUT_MERGE, st, sa, br, True)
+        and not cut_record_blank(*br, arms.CUT_SPLIT, st, sa, br, False),
+        "the bridge is blank from the split to the epoch before the merge, and never in a control")
     print("ird_fixture_gate selftest: %s" % ("PASS" if ok[0] else "FAIL"))
     return 0 if ok[0] else 1
 
@@ -571,12 +705,12 @@ def main():
     ap.add_argument("--selftest", action="store_true")
     sub = ap.add_subparsers(dest="cmd")
     v = sub.add_parser("verify")
-    v.add_argument("--name", required=True, choices=SLIP_FIXTURES + GAP_FIXTURES)
+    v.add_argument("--name", required=True, choices=SLIP_FIXTURES + GAP_FIXTURES + CUT_FIXTURES)
     v.add_argument("--fixture", help="slip fixture directory (default FIXTURES_ROOT/simird_<name>)")
     v.add_argument("--base", default=ROOT + "/runs/simarl_r3b")
-    v.add_argument("--arm", help="gap fixture: the arm whose rinex/ holds the blanked file")
+    v.add_argument("--arm", help="gap and cut fixtures: the arm whose rinex/ holds the blanked files")
     g = sub.add_parser("gate")
-    g.add_argument("--name", required=True, choices=SLIP_FIXTURES + GAP_FIXTURES)
+    g.add_argument("--name", required=True, choices=SLIP_FIXTURES + GAP_FIXTURES + CUT_FIXTURES)
     g.add_argument("--arm", required=True)
     g.add_argument("--ref", default="ird2_a0_r3b")
     g.add_argument("--rows", type=int, default=12, help="CHAIN rows to print in full (the counts by kind are always printed)")
@@ -587,7 +721,9 @@ def main():
         if a.name in SLIP_FIXTURES:
             return 0 if verify_slip(a.name, a.fixture or "%s/simird_%s" % (arms.FIXTURES_ROOT, a.name), a.base) else 1
         if not a.arm:
-            ap.error("a gap fixture needs --arm")
+            ap.error("a gap or cut fixture needs --arm")
+        if a.name in CUT_FIXTURES:
+            return 0 if verify_cut(a.name, resolve(a.arm), a.base) else 1
         return 0 if verify_gap(a.name, resolve(a.arm), a.base) else 1
     if a.cmd == "gate":
         return 0 if gate(a.name, a.arm, a.ref, max_rows=a.rows) else 1

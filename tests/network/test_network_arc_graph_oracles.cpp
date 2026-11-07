@@ -6783,23 +6783,27 @@ TEST(NetworkArcGraphOracle, RootRowPinsExactlyTheKeepersOfTheHandoversWithACarri
     long long n_epochs = 0, n_comps = 0, n_handovers = 0, n_pinned = 0, n_kept_edges = 0, n_unknown_edges = 0;
     long long n_not_vertex = 0, n_not_keeper = 0, n_not_carry = 0, n_stay = 0, n_stay_target = 0, n_edges = 0;
     long long n_boundary = 0;
-    for (int lineage = 0; lineage < 8; ++lineage) {
+    long long n_split_pinned = 0, n_split_no_carry = 0;
+    for (int lineage = 0; lineage < 16; ++lineage) {
         ChainKnobs kn = drawChainKnobs(rng);
         kn.trace_chain = true;
         const bool with_kept = lineage % 4 == 1 || lineage % 4 == 3;
         const bool with_ret  = lineage % 4 >= 2;
         const bool with_rh   = lineage >= 4;
+        const bool with_split = lineage >= 8;   // the merge and split row: the other pieces of a split pin too
         kn.rows = {};
         if (with_kept) kn.rows.push_back("kept");
         if (with_ret)  kn.rows.push_back("returning");
         if (with_rh)   kn.rows.push_back("rehost");
         kn.rows.push_back("root");
+        if (with_split) kn.rows.push_back("merge_split");
         ChainWorld w = randomChainWorld(rng);
         const std::unique_ptr<GnssConfig> cfg = loadChainConfig(lm, kn, 9900 + lineage);
         ASSERT_TRUE(cfg) << "lineage " << lineage;
         NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
         ctx.entities.names.assign(w.names);
         ASSERT_TRUE(ctx.knobs.eq34_row_root);
+        ASSERT_EQ(ctx.knobs.eq34_row_merge_split, with_split);
         ASSERT_FALSE(ctx.knobs.eq34_pair_family);
         ASSERT_FALSE(ctx.knobs.eq34_seed_round);
         const double horizon = ctx.knobs.pl_max_gap_s;
@@ -6825,7 +6829,7 @@ TEST(NetworkArcGraphOracle, RootRowPinsExactlyTheKeepersOfTheHandoversWithACarri
             for (const auto& [amb, root] : before.root) prev_roots.insert({groupOfAmb(amb), root});
 
             // The rule, component by component.
-            struct WantRoot { std::string group, old_root; int comp; ChainRootOutcome outcome; double target, sigma; };
+            struct WantRoot { std::string group, old_root; int comp; ChainRootOutcome outcome; double target, sigma; bool split; };
             std::vector<WantRoot> want;
             std::map<std::pair<std::string, int>, std::string> handed;   // (group, comp) -> the old root a pinned handover is against
             std::map<std::pair<int, std::string>, double> want_memory;
@@ -6856,7 +6860,7 @@ TEST(NetworkArcGraphOracle, RootRowPinsExactlyTheKeepersOfTheHandoversWithACarri
                 }
                 if (!other) { ASSERT_FALSE(has_target) << at; continue; }
                 // A handover.
-                WantRoot wr{k.group, "", k.comp, ChainRootOutcome::NotVertex, 0.0, 0.0};
+                WantRoot wr{k.group, "", k.comp, ChainRootOutcome::NotVertex, 0.0, 0.0, false};
                 const auto parent = before.rx_parent.find({k.r1_station, k.group});
                 std::optional<std::string> old_root;
                 if (parent != before.rx_parent.end()) {
@@ -6892,7 +6896,8 @@ TEST(NetworkArcGraphOracle, RootRowPinsExactlyTheKeepersOfTheHandoversWithACarri
                     }
                     // No piece holds a satellite that remembers the old root (the memory the parent satellite names is
                     // not any satellite's of this band's components): no keeper, so not this component.
-                    if (keeper == nullptr || keeper->comp != k.comp) {
+                    wr.split = keeper != nullptr && keeper->comp != k.comp;
+                    if (keeper == nullptr || (wr.split && !with_split)) {
                         wr.outcome = ChainRootOutcome::NotKeeper;
                         ++want_not_keeper;
                     } else {
@@ -6901,6 +6906,7 @@ TEST(NetworkArcGraphOracle, RootRowPinsExactlyTheKeepersOfTheHandoversWithACarri
                         if (carry == before.rpb.end() || !(gap >= 0.0 && gap <= horizon)) {
                             wr.outcome = ChainRootOutcome::NoCarry;
                             ++want_not_carry;
+                            if (wr.split) ++n_split_no_carry;
                         } else {
                             wr.outcome = ChainRootOutcome::Pinned;
                             wr.target = carry->second.value_abs;
@@ -6908,6 +6914,7 @@ TEST(NetworkArcGraphOracle, RootRowPinsExactlyTheKeepersOfTheHandoversWithACarri
                             handed[{k.group, k.comp}] = *old_root;
                             want_memory[cell] = wr.target;
                             ++want_pinned;
+                            if (wr.split) ++n_split_pinned;
                             if (gap == horizon) ++n_boundary;
                         }
                     }
@@ -6930,6 +6937,7 @@ TEST(NetworkArcGraphOracle, RootRowPinsExactlyTheKeepersOfTheHandoversWithACarri
                 ASSERT_EQ(got.comp, want[k].comp) << at;
                 ASSERT_EQ(got.old_root, want[k].old_root) << at;
                 ASSERT_EQ(got.outcome, want[k].outcome) << at;
+                ASSERT_EQ(got.split, want[k].split) << at;
                 if (got.outcome == ChainRootOutcome::Pinned) {
                     ASSERT_EQ(got.target_m, want[k].target) << at;
                     ASSERT_EQ(got.sigma_m, want[k].sigma) << at;
@@ -6958,7 +6966,7 @@ TEST(NetworkArcGraphOracle, RootRowPinsExactlyTheKeepersOfTheHandoversWithACarri
                     ASSERT_TRUE(o.row_armed) << at << " " << o.sat;
                     ASSERT_FALSE(o.legacy_known) << at << " " << o.sat;
                     ASSERT_EQ(o.cause, ChainLegacyCause::RootHandover) << at;
-                } else {
+                } else if (!o.absorbed) {
                     ++n_unknown_edges;
                     ASSERT_FALSE(o.known) << at << " " << o.sat;
                 }
@@ -6994,7 +7002,9 @@ TEST(NetworkArcGraphOracle, RootRowPinsExactlyTheKeepersOfTheHandoversWithACarri
               << " no vertex, " << n_not_keeper << " not the keeper, " << n_not_carry << " no carry; " << n_boundary
               << " carries exactly on the horizon), " << n_stay << " roots that stayed (" << n_stay_target
               << " with a remembered target); satellite edges kept " << n_kept_edges << ", left unknown " << n_unknown_edges
-              << "\n";
+              << "; " << n_split_pinned << " split pieces pinned, " << n_split_no_carry << " with no carry\n";
+    EXPECT_GT(n_split_pinned, 2);
+    EXPECT_GT(n_split_no_carry, 2);
     EXPECT_GT(n_pinned, 50);
     EXPECT_GT(n_not_vertex, 50);
     EXPECT_GT(n_not_keeper, 30);
@@ -8053,6 +8063,628 @@ TEST(NetworkArcGraphOracle, SlipRowDeseatsAndReleasesExactlyTheLatchedEdgesAndEr
     EXPECT_GT(n_returning, 2);
     EXPECT_GT(n_prev_target, 5);
     EXPECT_GT(n_births, 2);
+}
+
+// ---------------------------------------------------------------------------------------------
+// The merge and split row of the chain's event table (network.phase_datum_eq34_event_rows
+// "merge_split").  A piece that splits off without the old root pins its new root's receiver phase
+// bias at the carried value, so its frame does not step.  A tree edge that joins two trees of the
+// last election is released, whichever other row its arc would fall under, and the edges inside the
+// side it attaches keep their targets.  Hand-built cases for each condition and effect, and random
+// lineages where the rule is restated apart from the production code.
+// ---------------------------------------------------------------------------------------------
+
+/// A bed with the rows armed: the first station is the preferred datum receiver.
+KeptBed makeMergeBed(LogManager& lm, const std::vector<std::string>& rows, int tag, const std::vector<std::string>& names,
+                     bool pair = false, bool extend_only = false) {
+    ChainKnobs kn;
+    kn.trace_chain   = true;
+    kn.carry_shift   = true;
+    kn.preferred     = names.front();
+    kn.float_vehicle = true;
+    kn.rows          = rows;
+    kn.family        = pair ? "pair" : "signal";
+    kn.extend_only   = extend_only;
+    KeptBed bed;
+    bed.world.names = names;
+    bed.cfg = loadChainConfig(lm, kn, tag);
+    if (bed.cfg) {
+        bed.ctx = std::make_unique<NetworkRunContext>(*bed.cfg, bed.cfg->getNetworkConfig());
+        bed.ctx->entities.names.assign(names);
+    }
+    return bed;
+}
+
+/// The row's tallies, in a fixed order.
+enum MergeCounter { kSplitPinned, kSplitNoCarry, kMgReleased, kMgAbsorbedHeld, kMgWithState, kMgZero, kMgWhole, kMgFrac,
+                    kMgUnknown, kMgArcs, kMgRpb, kMgPb, kMgDeclared, kMergeCounterCount };
+
+std::array<long long, kMergeCounterCount> mergeCounters(const NetworkRunContext& ctx) {
+    const auto& c = ctx.counters;
+    return {c.eq34_split_pinned, c.eq34_split_no_carry, c.eq34_mg_released, c.eq34_mg_absorbed_held, c.eq34_mg_with_state,
+            c.eq34_mg_asbuilt_zero, c.eq34_mg_asbuilt_whole, c.eq34_mg_asbuilt_frac, c.eq34_mg_asbuilt_unknown,
+            c.eq34_mg_arcs, c.eq34_mg_rpb, c.eq34_mg_pb, c.eq34_mg_declared};
+}
+
+/// The memory of the last election's trees.
+struct TreeRoots {
+    std::map<std::string, std::string>                 sats;   ///< Ambiguity key -> its tree's datum receiver.
+    std::map<std::pair<int, std::string>, std::string> rx;     ///< (station, "<c>|<signal>") -> its tree's datum receiver.
+    bool operator==(const TreeRoots& o) const { return sats == o.sats && rx == o.rx; }
+};
+
+TreeRoots treeRootsOf(const NetworkRunContext& ctx) {
+    TreeRoots t;
+    net::forEach(ctx.entities.sat_signals, &net::SatSignalState::eq34_tree_root,
+                 [&](const SatSignalId& id, const std::string& root) { t.sats[net::ambKey(id)] = root; });
+    net::forEach(ctx.entities.stations, &net::StationState::signals, &net::StationSignalState::eq34_tree_root,
+                 [&](const StationId& id, const std::string& key, const std::string& root) { t.rx[{id.index, key}] = root; });
+    return t;
+}
+
+/// Nothing of the row has happened: no tally, no memory.
+void expectNoMergeTrace(const NetworkRunContext& ctx, const std::string& what) {
+    for (long long n : mergeCounters(ctx)) EXPECT_EQ(n, 0) << what;
+    EXPECT_TRUE(treeRootsOf(ctx).sats.empty()) << what;
+    EXPECT_TRUE(treeRootsOf(ctx).rx.empty()) << what;
+}
+
+/// The two sides of the merge and split cases: A - G01, A - G04 - D on the left (A the preferred datum receiver), and
+/// B - G02 - C - G03 on the right.  The bridge B - G01 joins them.
+const ArcList kMgLeft{{0, "G01"}, {0, "G04"}, {3, "G04"}};
+const ArcList kMgRight{{1, "G02"}, {2, "G02"}, {2, "G03"}};
+const ArcList kMgBridge{{1, "G01"}};
+
+ArcList mgWhole() { return arcsPlus(arcsPlus(kMgLeft, kMgRight), kMgBridge); }
+ArcList mgApart() { return arcsPlus(kMgLeft, kMgRight); }
+
+const std::vector<std::string> kMgNames{"AAAA", "BBBB", "CCCC", "DDDD"};
+
+/// Elect the whole tree twice and leave targets and carries on the right side: the state the cases split.
+void prepareMergeWorld(KeptBed& bed, double lam) {
+    bed.elect(arcsChainEpoch(4, mgWhole()));
+    bed.elect(arcsChainEpoch(4, mgWhole()));
+    putPrevTarget(*bed.ctx, 1, "G02", "L1C", 3.0 * lam);
+    putPrevTarget(*bed.ctx, 2, "G02", "L1C", -2.0 * lam);
+    putPrevTarget(*bed.ctx, 2, "G03", "L1C", 4.0 * lam);
+    putRpbCarryAt(*bed.ctx, 1, 0.07);
+    putRpbCarryAt(*bed.ctx, 2, 0.11);
+    putRpbCarryAt(*bed.ctx, 3, 0.13);
+    putStaleCarry(*bed.ctx, 1, "G02", "L1C", 3.1 * lam);
+    putStaleCarry(*bed.ctx, 2, "G03", "L1C", 4.1 * lam);
+    putStaleCarry(*bed.ctx, 3, "G04", "L1C", 6.1 * lam);
+    putPbPrior(*bed.ctx, "G02");
+}
+
+// A piece splits off without the old root: its new root's bias is pinned at the carried value, no key is re-referenced,
+// its edges hold their targets with a known zero step and its carries stay.  The next election keeps the target.
+TEST(NetworkArcGraphOracle, MergeSplitRowPinsASplitPieceAtItsCarriedBiasAndItsFrameDoesNotStep) {
+    LogManager lm;
+    const double lam = nominalWavelengthOfDigitM(System::GPS, '1');
+    ASSERT_GT(lam, 0.0);
+    KeptBed bed = makeMergeBed(lm, {"kept", "rehost", "root", "merge_split"}, 8800, kMgNames);
+    ASSERT_TRUE(bed.cfg && bed.ctx);
+    ASSERT_TRUE(bed.ctx->knobs.eq34_row_merge_split);
+    prepareMergeWorld(bed, lam);
+    const ChainRun r = bed.elect(arcsChainEpoch(4, mgApart()));
+    ASSERT_TRUE(r.events.phase_datum.chain);
+    const ChainEpochObs& obs = *r.events.phase_datum.chain;
+    ASSERT_EQ(obs.comps.size(), 2u);
+    EXPECT_EQ((std::set<std::string>{obs.comps[0].r1, obs.comps[1].r1}), (std::set<std::string>{"AAAA", "BBBB"}));
+    EXPECT_EQ(r.stations[1].pinned_rpb_targets.at(gpsRpbKey()), 0.07);
+    EXPECT_TRUE(r.stations[0].pinned_rpb_targets.empty());
+    EXPECT_NE(rootTargetOf(*bed.ctx, 1), nullptr);
+    ASSERT_EQ(obs.roots.size(), 1u);
+    EXPECT_EQ(obs.roots[0].outcome, ChainRootOutcome::Pinned);
+    EXPECT_TRUE(obs.roots[0].split);
+    EXPECT_EQ(obs.roots[0].old_root, "AAAA");
+    EXPECT_EQ(obs.roots[0].new_root, "BBBB");
+    EXPECT_EQ(obs.roots[0].target_m, 0.07);
+    for (const auto& [sta, sat, target] : std::vector<std::tuple<int, std::string, double>>{
+             {1, "G02", 3.0 * lam}, {2, "G02", -2.0 * lam}, {2, "G03", 4.0 * lam}}) {
+        const ChainEdgeObs* o = keptEdge(obs, sta, sat);
+        ASSERT_TRUE(o) << sta << " " << sat;
+        EXPECT_TRUE(o->row_armed && o->known) << sta << " " << sat;
+        EXPECT_EQ(o->target_m, target) << sta << " " << sat;
+        EXPECT_EQ(o->step_m, 0.0) << sta << " " << sat;
+        EXPECT_FALSE(o->absorbed || o->merge_released) << sta << " " << sat;
+    }
+    EXPECT_TRUE(r.events.phase_datum.eq34_reref.empty());
+    EXPECT_TRUE(obs.releases.empty());
+    EXPECT_TRUE(hasCarry(*bed.ctx, 1, "G02"));
+    EXPECT_TRUE(hasCarry(*bed.ctx, 2, "G03"));
+    EXPECT_TRUE(hasRpbCarry(*bed.ctx, 2));
+    const auto c = mergeCounters(*bed.ctx);
+    EXPECT_EQ(c[kSplitPinned], 1);
+    EXPECT_EQ(c[kSplitNoCarry] + c[kMgReleased] + c[kMgArcs] + c[kMgRpb] + c[kMgDeclared], 0);
+    EXPECT_EQ(rootCounters(*bed.ctx)[kRootNotKeeper], 0);
+    EXPECT_EQ(rootCounters(*bed.ctx)[kRootKeptEdges], 2);
+    EXPECT_EQ(bed.ctx->counters.eq34_mismatch_epochs, 0);
+    // The memory says which tree each vertex is in now.
+    const TreeRoots mem = treeRootsOf(*bed.ctx);
+    EXPECT_EQ(mem.sats.at("G01_L1C"), "AAAA");
+    EXPECT_EQ(mem.sats.at("G02_L1C"), "BBBB");
+    EXPECT_EQ(mem.rx.at({1, "G|L1C"}), "BBBB");
+    EXPECT_EQ(mem.rx.at({3, "G|L1C"}), "AAAA");
+    // The next election: the root stays a root at the same target, and nothing moves.
+    const ChainRun next = bed.elect(arcsChainEpoch(4, mgApart()));
+    EXPECT_EQ(next.stations[1].pinned_rpb_targets.at(gpsRpbKey()), 0.07);
+    ASSERT_TRUE(next.events.phase_datum.chain);
+    EXPECT_TRUE(next.events.phase_datum.chain->roots.empty());
+    EXPECT_TRUE(next.events.phase_datum.eq34_reref.empty());
+    EXPECT_EQ(mergeCounters(*bed.ctx)[kSplitPinned], 1);
+}
+
+// A split piece whose new root has no carried bias inside the horizon runs the as-built rule: an unknown step of the
+// piece, counted.  A carry with a stash older than the horizon counts the same.
+TEST(NetworkArcGraphOracle, MergeSplitRowLeavesASplitPieceWithNoCarriedBiasAsBuilt) {
+    LogManager lm;
+    const double lam = nominalWavelengthOfDigitM(System::GPS, '1');
+    ASSERT_GT(lam, 0.0);
+    for (int stale = 0; stale < 2; ++stale) {
+        KeptBed bed = makeMergeBed(lm, {"kept", "root", "merge_split"}, 8810 + stale, kMgNames);
+        ASSERT_TRUE(bed.cfg && bed.ctx);
+        prepareMergeWorld(bed, lam);
+        const double now_s = 100000.0;
+        if (stale) putRpbCarryAt(*bed.ctx, 1, 0.07, now_s - bed.ctx->knobs.pl_max_gap_s - 30.0);
+        else net::drop(bed.ctx->entities.stations, StationId{1}, &net::StationState::signals, gpsRpbKey(),
+                       &net::StationSignalState::rpb);
+        const ChainRun r = bed.elect(arcsChainEpoch(4, mgApart()), {}, now_s);
+        ASSERT_TRUE(r.events.phase_datum.chain);
+        const ChainEpochObs& obs = *r.events.phase_datum.chain;
+        EXPECT_TRUE(r.stations[1].pinned_rpb_targets.empty());
+        ASSERT_EQ(obs.roots.size(), 1u);
+        EXPECT_EQ(obs.roots[0].outcome, ChainRootOutcome::NoCarry);
+        EXPECT_TRUE(obs.roots[0].split);
+        const auto c = mergeCounters(*bed.ctx);
+        EXPECT_EQ(c[kSplitPinned], 0);
+        EXPECT_EQ(c[kSplitNoCarry], 1);
+        EXPECT_TRUE(r.events.phase_datum.eq34_reref.count({"G02", "L1C"}));
+        EXPECT_TRUE(r.events.phase_datum.eq34_reref.count({"G03", "L1C"}));
+    }
+}
+
+// A tree edge joins the two trees through a receiver that had a parent: the rehost row does not take it.  The receiver
+// and its subtree are the moved side, the reversed edges and the same-direction edge inside it keep their targets, the
+// pin keeps the rounded carry, every carry touching the moved side is erased, the old root's target is forgotten and
+// the moved keys are declared.  The left side does not move.
+TEST(NetworkArcGraphOracle, MergeSplitRowReleasesTheEdgeThatJoinsTwoTreesAndTheAbsorbedSideKeepsItsIntegers) {
+    LogManager lm;
+    const double lam = nominalWavelengthOfDigitM(System::GPS, '1');
+    ASSERT_GT(lam, 0.0);
+    KeptBed bed = makeMergeBed(lm, {"kept", "rehost", "root", "merge_split"}, 8820, kMgNames);
+    ASSERT_TRUE(bed.cfg && bed.ctx);
+    prepareMergeWorld(bed, lam);
+    bed.elect(arcsChainEpoch(4, mgApart()));
+    putStaleCarry(*bed.ctx, 2, "G01", "L1C", 7.3 * lam);    // the new edge's arc
+    putStaleCarry(*bed.ctx, 2, "G04", "L1C", 1.2 * lam);    // a chord of the moved side to a satellite outside, absent
+    putStaleCarry(*bed.ctx, 3, "G01", "L1C", 2.2 * lam);    // a carry outside the moved side
+    const ChainRun r = bed.elect(arcsChainEpoch(4, arcsPlus(mgApart(), {{2, "G01"}})));
+    ASSERT_TRUE(r.events.phase_datum.chain);
+    const ChainEpochObs& obs = *r.events.phase_datum.chain;
+    ASSERT_EQ(obs.comps.size(), 1u);
+    EXPECT_EQ(obs.comps[0].r1, "AAAA");
+    const ChainEdgeObs* join = keptEdge(obs, 2, "G01");
+    ASSERT_TRUE(join);
+    EXPECT_EQ(join->child, "R:2");
+    EXPECT_TRUE(join->merge_released && join->row_armed);
+    EXPECT_FALSE(join->known || join->absorbed || join->slip_released);
+    EXPECT_NEAR(join->target_m, 7.0 * lam, 1e-12);
+    EXPECT_EQ(join->merge_from, "BBBB");
+    EXPECT_EQ(join->merge_into, "AAAA");
+    EXPECT_TRUE(std::isnan(join->step_m));
+    for (const auto& [sta, sat, target, flipped] : std::vector<std::tuple<int, std::string, double, bool>>{
+             {2, "G02", -2.0 * lam, true}, {1, "G02", 3.0 * lam, true}, {2, "G03", 4.0 * lam, false}}) {
+        const ChainEdgeObs* o = keptEdge(obs, sta, sat);
+        ASSERT_TRUE(o) << sta << " " << sat;
+        EXPECT_TRUE(o->absorbed && o->row_armed && o->known) << sta << " " << sat;
+        EXPECT_FALSE(o->merge_released) << sta << " " << sat;
+        EXPECT_EQ(o->incumbent_flipped, flipped) << sta << " " << sat;
+        EXPECT_EQ(o->target_m, target) << sta << " " << sat;
+        EXPECT_TRUE(std::isnan(o->step_m)) << sta << " " << sat;    // inside the moved side
+    }
+    ASSERT_EQ(obs.releases.size(), 1u);
+    const ChainReleaseObs& rel = obs.releases[0];
+    EXPECT_EQ(rel.row, ChainReleaseRow::Merge);
+    EXPECT_EQ(rel.vertex, "R:2");
+    EXPECT_EQ(rel.station, 2);
+    EXPECT_EQ(rel.sat, "G01");
+    EXPECT_EQ(std::set<std::string>(rel.sats.begin(), rel.sats.end()), (std::set<std::string>{"G02", "G03"}));
+    EXPECT_EQ(std::set<int>(rel.stations.begin(), rel.stations.end()), (std::set<int>{1, 2}));
+    EXPECT_EQ(r.events.phase_datum.eq34_reref,
+              (std::set<std::pair<std::string, std::string>>{{"G02", "L1C"}, {"G03", "L1C"}}));
+    EXPECT_FALSE(hasCarry(*bed.ctx, 1, "G02"));
+    EXPECT_FALSE(hasCarry(*bed.ctx, 2, "G03"));
+    EXPECT_FALSE(hasCarry(*bed.ctx, 2, "G01"));
+    EXPECT_FALSE(hasCarry(*bed.ctx, 2, "G04"));
+    EXPECT_FALSE(hasRpbCarry(*bed.ctx, 1));
+    EXPECT_FALSE(hasRpbCarry(*bed.ctx, 2));
+    EXPECT_TRUE(hasCarry(*bed.ctx, 3, "G04"));
+    EXPECT_TRUE(hasCarry(*bed.ctx, 3, "G01"));
+    EXPECT_TRUE(hasRpbCarry(*bed.ctx, 3));
+    EXPECT_TRUE(rootMemory(*bed.ctx).empty());
+    EXPECT_TRUE(r.stations[1].pinned_rpb_keys.empty());
+    const auto c = mergeCounters(*bed.ctx);
+    EXPECT_EQ(c[kMgReleased], 1);
+    EXPECT_EQ(c[kMgAbsorbedHeld], 3);
+    EXPECT_EQ(c[kMgWithState], 1);
+    EXPECT_EQ(c[kMgRpb], 2);
+    EXPECT_EQ(c[kMgDeclared], 2);
+    EXPECT_EQ(c[kMgPb], 1);
+    EXPECT_EQ(c[kMgArcs], 4);
+    EXPECT_EQ(c[kMgZero] + c[kMgWhole] + c[kMgFrac] + c[kMgUnknown], 1);
+    EXPECT_EQ(rhCounters(*bed.ctx)[kRhReleased], 0);    // the rehost row did not take it
+    EXPECT_EQ(bed.ctx->counters.eq34_mismatch_epochs, 0);
+    // The next election holds one tree: nothing is released.
+    const ChainRun next = bed.elect(arcsChainEpoch(4, arcsPlus(mgApart(), {{2, "G01"}})));
+    ASSERT_TRUE(next.events.phase_datum.chain);
+    EXPECT_TRUE(next.events.phase_datum.chain->releases.empty());
+    const ChainEdgeObs* held = keptEdge(*next.events.phase_datum.chain, 2, "G01");
+    ASSERT_TRUE(held);
+    EXPECT_NEAR(held->target_m, 7.0 * lam, 1e-12);
+    EXPECT_TRUE(held->known && !held->merge_released);
+}
+
+// The other kinds of edge that join two trees: the child is the other tree's old root (it had no parent), and the child
+// is a satellite.  Each is released, with its side.
+TEST(NetworkArcGraphOracle, MergeSplitRowReleasesAnEdgeWhoseChildIsTheOldRootOrASatellite) {
+    LogManager lm;
+    const double lam = nominalWavelengthOfDigitM(System::GPS, '1');
+    ASSERT_GT(lam, 0.0);
+    {
+        KeptBed bed = makeMergeBed(lm, {"kept", "rehost", "root", "merge_split"}, 8830, kMgNames);
+        ASSERT_TRUE(bed.cfg && bed.ctx);
+        prepareMergeWorld(bed, lam);
+        bed.elect(arcsChainEpoch(4, mgApart()));
+        const ChainRun r = bed.elect(arcsChainEpoch(4, arcsPlus(mgApart(), {{1, "G04"}})));   // B, the old root, sees G04
+        ASSERT_TRUE(r.events.phase_datum.chain);
+        const ChainEpochObs& obs = *r.events.phase_datum.chain;
+        const ChainEdgeObs* join = keptEdge(obs, 1, "G04");
+        ASSERT_TRUE(join);
+        EXPECT_EQ(join->child, "R:1");
+        EXPECT_FALSE(join->had_parent);
+        EXPECT_TRUE(join->merge_released && !join->known);
+        EXPECT_EQ(join->merge_from, "BBBB");
+        ASSERT_EQ(obs.releases.size(), 1u);
+        EXPECT_EQ(obs.releases[0].vertex, "R:1");
+        EXPECT_EQ(std::set<int>(obs.releases[0].stations.begin(), obs.releases[0].stations.end()), (std::set<int>{1, 2}));
+        EXPECT_FALSE(hasRpbCarry(*bed.ctx, 1));
+    }
+    {
+        KeptBed bed = makeMergeBed(lm, {"kept", "rehost", "root", "merge_split"}, 8831, kMgNames);
+        ASSERT_TRUE(bed.cfg && bed.ctx);
+        prepareMergeWorld(bed, lam);
+        bed.elect(arcsChainEpoch(4, mgApart()));
+        const ChainRun r = bed.elect(arcsChainEpoch(4, arcsPlus(mgApart(), {{3, "G02"}})));   // D sees G02
+        ASSERT_TRUE(r.events.phase_datum.chain);
+        const ChainEpochObs& obs = *r.events.phase_datum.chain;
+        const ChainEdgeObs* join = keptEdge(obs, 3, "G02");
+        ASSERT_TRUE(join);
+        EXPECT_EQ(join->child, "S:G02");
+        EXPECT_TRUE(join->merge_released && !join->known);
+        EXPECT_EQ(join->merge_into, "AAAA");
+        ASSERT_EQ(obs.releases.size(), 1u);
+        EXPECT_EQ(obs.releases[0].vertex, "S:G02");
+        EXPECT_EQ(std::set<std::string>(obs.releases[0].sats.begin(), obs.releases[0].sats.end()),
+                  (std::set<std::string>{"G02", "G03"}));
+        EXPECT_EQ(std::set<int>(obs.releases[0].stations.begin(), obs.releases[0].stations.end()), (std::set<int>{1, 2}));
+        EXPECT_FALSE(hasCarry(*bed.ctx, 1, "G02"));
+        EXPECT_TRUE(hasRpbCarry(*bed.ctx, 3));
+    }
+}
+
+// The bridge itself returns: its memory survived the split through the extend-only merge-back, so the arc reads as an
+// incumbent of the receiver and the kept row would hold it.  It joins two trees all the same, so the row releases it.
+TEST(NetworkArcGraphOracle, MergeSplitRowTakesARetainedBridgeBeforeTheKeptRow) {
+    LogManager lm;
+    const double lam = nominalWavelengthOfDigitM(System::GPS, '1');
+    ASSERT_GT(lam, 0.0);
+    KeptBed bed = makeMergeBed(lm, {"kept", "rehost", "root", "merge_split"}, 8840, kMgNames, false, /*extend_only=*/true);
+    ASSERT_TRUE(bed.cfg && bed.ctx);
+    prepareMergeWorld(bed, lam);
+    putPrevTarget(*bed.ctx, 1, "G01", "L1C", 9.0 * lam);
+    putStaleCarry(*bed.ctx, 1, "G01", "L1C", 9.2 * lam);    // keeps the bridge's memory alive
+    bed.elect(arcsChainEpoch(4, mgApart()));
+    const std::string* parent = net::get(bed.ctx->entities.stations, StationId{1}, &net::StationState::signals,
+                                         std::string("G|L1C"), &net::StationSignalState::eq34_rx_parent);
+    ASSERT_TRUE(parent);
+    EXPECT_EQ(*parent, "G01");
+    const ChainRun r = bed.elect(arcsChainEpoch(4, mgWhole()));
+    ASSERT_TRUE(r.events.phase_datum.chain);
+    const ChainEpochObs& obs = *r.events.phase_datum.chain;
+    const ChainEdgeObs* join = keptEdge(obs, 1, "G01");
+    ASSERT_TRUE(join);
+    EXPECT_TRUE(join->incumbent_same);
+    EXPECT_TRUE(join->merge_released && !join->known);
+    ASSERT_EQ(obs.releases.size(), 1u);
+    EXPECT_EQ(obs.releases[0].row, ChainReleaseRow::Merge);
+    ChainFrameCounters sink;
+    ChainFrameMemory mem;
+    mem.have = true;
+    const ChainEpochClass cls = chainClassifyEpoch(obs, mem, {}, {}, sink);
+    for (const ChainEdgeObs& e : cls.edges)
+        if (e.station == 1 && e.sat == "G01") EXPECT_EQ(e.row, ChainEventRow::Merge);
+}
+
+// A pair family: the row acts on both bands, a split piece pinned on each at its own carried value and the edge that
+// joins the trees released on each.
+TEST(NetworkArcGraphOracle, MergeSplitRowOnAPairFamilyActsOnBothBands) {
+    LogManager lm;
+    const double lam = nominalWavelengthOfDigitM(System::GPS, '1');
+    ASSERT_GT(lam, 0.0);
+    KeptBed bed = makeMergeBed(lm, {"kept", "rehost", "root", "merge_split"}, 8850, kMgNames, /*pair=*/true);
+    ASSERT_TRUE(bed.cfg && bed.ctx);
+    ASSERT_TRUE(bed.ctx->knobs.eq34_pair_family);
+    bed.elect(twoBandChainEpoch(4, mgWhole()));
+    bed.elect(twoBandChainEpoch(4, mgWhole()));
+    const std::string l2 = StateKeys::makeReceiverPhaseBiasKey(systemName(System::GPS), "L2W");
+    putRpbCarryAt(*bed.ctx, 1, 0.07);
+    LocalCarry lc{};
+    lc.value_abs = 0.17;
+    lc.var = 1e-4;
+    net::put(bed.ctx->entities.stations, StationId{1}, &net::StationState::signals, l2, &net::StationSignalState::rpb) = lc;
+    const ChainRun split = bed.elect(twoBandChainEpoch(4, mgApart()));
+    EXPECT_EQ(split.stations[1].pinned_rpb_targets.at(gpsRpbKey()), 0.07);
+    EXPECT_EQ(split.stations[1].pinned_rpb_targets.at(l2), 0.17);
+    EXPECT_EQ(mergeCounters(*bed.ctx)[kSplitPinned], 2);
+    EXPECT_TRUE(split.events.phase_datum.eq34_reref.empty());
+    const ChainRun r = bed.elect(twoBandChainEpoch(4, arcsPlus(mgApart(), {{2, "G01"}})));
+    ASSERT_TRUE(r.events.phase_datum.chain);
+    const ChainEpochObs& obs = *r.events.phase_datum.chain;
+    ASSERT_EQ(obs.releases.size(), 2u);
+    std::set<std::string> released_signals;
+    for (const ChainReleaseObs& rel : obs.releases) {
+        EXPECT_EQ(rel.row, ChainReleaseRow::Merge);
+        EXPECT_EQ(rel.vertex, "R:2");
+        released_signals.insert(rel.signal);
+    }
+    EXPECT_EQ(released_signals, (std::set<std::string>{"L1C", "L2W"}));
+    EXPECT_EQ(r.events.phase_datum.eq34_reref,
+              (std::set<std::pair<std::string, std::string>>{{"G02", "L1C"}, {"G02", "L2W"}, {"G03", "L1C"}, {"G03", "L2W"}}));
+    EXPECT_EQ(mergeCounters(*bed.ctx)[kMgReleased], 2);
+    EXPECT_EQ(bed.ctx->counters.eq34_mismatch_epochs, 0);
+}
+
+// A vertex in no tree of the last election passes on the old tree above it: a satellite never seen is a birth, not a
+// merge, and an edge below it that reaches the other tree is the merge.
+TEST(NetworkArcGraphOracle, MergeSplitRowReadsAVertexInNoTreeAsTheTreeAboveIt) {
+    LogManager lm;
+    const double lam = nominalWavelengthOfDigitM(System::GPS, '1');
+    ASSERT_GT(lam, 0.0);
+    KeptBed bed = makeMergeBed(lm, {"kept", "rehost", "root", "merge_split"}, 8860, kMgNames);
+    ASSERT_TRUE(bed.cfg && bed.ctx);
+    prepareMergeWorld(bed, lam);
+    bed.elect(arcsChainEpoch(4, mgApart()));
+    const ChainRun r = bed.elect(arcsChainEpoch(4, arcsPlus(mgApart(), {{3, "G09"}, {2, "G09"}})));   // G09 is new
+    ASSERT_TRUE(r.events.phase_datum.chain);
+    const ChainEpochObs& obs = *r.events.phase_datum.chain;
+    const ChainEdgeObs* birth = keptEdge(obs, 3, "G09");
+    const ChainEdgeObs* join = keptEdge(obs, 2, "G09");
+    ASSERT_TRUE(birth && join);
+    EXPECT_FALSE(birth->merge_released || birth->row_armed);
+    EXPECT_EQ(join->child, "R:2");
+    EXPECT_TRUE(join->merge_released);
+    EXPECT_EQ(join->merge_into, "AAAA");
+    EXPECT_EQ(join->merge_from, "BBBB");
+    ASSERT_EQ(obs.releases.size(), 1u);
+    EXPECT_EQ(obs.releases[0].vertex, "R:2");
+    // A vertex that has been out of the trees for one election has no memory either: it is no merge on its return.
+    KeptBed bed2 = makeMergeBed(lm, {"kept", "root", "merge_split"}, 8861, kMgNames);
+    ASSERT_TRUE(bed2.cfg && bed2.ctx);
+    bed2.elect(arcsChainEpoch(4, mgWhole()));
+    bed2.elect(arcsChainEpoch(4, ArcList{{0, "G01"}, {0, "G04"}, {3, "G04"}, {1, "G01"}, {1, "G02"}, {2, "G02"}}));   // G03 leaves
+    EXPECT_EQ(treeRootsOf(*bed2.ctx).sats.count("G03_L1C"), 0u);
+    const ChainRun back = bed2.elect(arcsChainEpoch(4, mgWhole()));
+    ASSERT_TRUE(back.events.phase_datum.chain);
+    EXPECT_TRUE(back.events.phase_datum.chain->releases.empty());
+    EXPECT_EQ(mergeCounters(*bed2.ctx)[kMgReleased], 0);
+}
+
+// With the entry absent the row leaves no trace, whatever else is armed: no tally, no memory, no merge release, no
+// absorbed edge and every split piece left as built.
+TEST(NetworkArcGraphOracle, MergeSplitRowAbsentLeavesNoTraceWithTheOtherRowsArmed) {
+    std::mt19937 rng(20261113u);
+    LogManager lm;
+    const auto quiet = std::make_shared<spdlog::logger>("ird4_merge_absent", spdlog::sinks_init_list{});
+    long long n_epochs = 0, n_multi = 0, n_not_keeper = 0;
+    for (int lineage = 0; lineage < 3; ++lineage) {
+        ChainKnobs kn = drawChainKnobs(rng);
+        kn.trace_chain = true;
+        kn.slip_aware  = false;
+        kn.rows = {"kept", "returning", "rehost", "root", "slip"};
+        ChainWorld w = randomChainWorld(rng);
+        const std::unique_ptr<GnssConfig> cfg = loadChainConfig(lm, kn, 10010 + lineage);
+        ASSERT_TRUE(cfg) << "lineage " << lineage;
+        NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
+        ctx.entities.names.assign(w.names);
+        ASSERT_FALSE(ctx.knobs.eq34_row_merge_split);
+        const AnchorHygiene hyg_shape{};
+        for (int ep = 0; ep < 40; ++ep) {
+            ChainEpoch e = nextChainEpoch(rng, w, hyg_shape);
+            perturbChainCarry(rng, w, e, ctx, ctx);
+            const ChainRun r = runLiveChainElection(ctx, *cfg, w, e, quiet);
+            ASSERT_TRUE(r.events.phase_datum.chain);
+            const ChainEpochObs& obs = *r.events.phase_datum.chain;
+            for (const ChainReleaseObs& rel : obs.releases) ASSERT_NE(rel.row, ChainReleaseRow::Merge);
+            for (const ChainEdgeObs& o : obs.edges) ASSERT_FALSE(o.merge_released || o.absorbed);
+            for (const ChainRootObs& ro : obs.roots)
+                if (ro.outcome == ChainRootOutcome::NotKeeper) ++n_not_keeper;
+            if (obs.comps.size() > 1) ++n_multi;
+            ++n_epochs;
+        }
+        expectNoMergeTrace(ctx, "lineage " + std::to_string(lineage));
+    }
+    EXPECT_GT(n_multi, 10);
+    std::cout << "[ NetworkArcGraphOracle ] merge and split row absent: " << n_epochs << " epochs, " << n_multi
+              << " with several components, " << n_not_keeper << " split pieces left as built\n";
+}
+
+// The rule restated from the memory before each election: along each band's trees, in attachment order, an edge is
+// released exactly when its child's old tree differs from the old tree its parent's side carries; an edge with both
+// ends in one old tree that the datum receiver does not continue is marked inside the absorbed side and, held, keeps
+// its target; the moved sides, the keys, the erased carries and the tallies follow, and the memory is replaced wholesale.
+TEST(NetworkArcGraphOracle, MergeSplitRowReleasesExactlyTheEdgesThatJoinOldTreesAndEverythingTouchingTheirSides) {
+    std::mt19937 rng(20261114u);
+    LogManager lm;
+    const auto quiet = std::make_shared<spdlog::logger>("ird4_merge_identity", spdlog::sinks_init_list{});
+    long long n_epochs = 0, n_edges = 0, n_released = 0, n_absorbed = 0, n_absorbed_held = 0, n_inherited = 0;
+    long long n_arcs_erased = 0, n_keys = 0, n_nested = 0;
+    for (int lineage = 0; lineage < 8; ++lineage) {
+        ChainKnobs kn = drawChainKnobs(rng);
+        kn.trace_chain = true;
+        kn.slip_aware  = false;
+        const bool with_kept = lineage % 2 == 0;
+        const bool with_ret  = lineage % 4 < 2;
+        const bool with_rh   = lineage % 4 != 3;
+        kn.rows = {};
+        if (with_kept) kn.rows.push_back("kept");
+        if (with_ret)  kn.rows.push_back("returning");
+        if (with_rh)   kn.rows.push_back("rehost");
+        kn.rows.push_back("root");
+        kn.rows.push_back("merge_split");
+        const bool pair = lineage >= 4;
+        kn.family = pair ? "pair" : "signal";
+        const ChainBands mode = pair ? ChainBands::BandOnly : ChainBands::Mixed;
+        ChainWorld w = randomChainWorld(rng, mode);
+        const std::unique_ptr<GnssConfig> cfg = loadChainConfig(lm, kn, 10020 + lineage);
+        ASSERT_TRUE(cfg) << "lineage " << lineage;
+        NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
+        ctx.entities.names.assign(w.names);
+        ASSERT_TRUE(ctx.knobs.eq34_row_merge_split);
+        ASSERT_EQ(ctx.knobs.eq34_pair_family, pair);
+        const AnchorHygiene no_hygiene{};
+        for (int ep = 0; ep < 40; ++ep) {
+            ChainEpoch e = nextChainEpoch(rng, w, no_hygiene, mode);
+            finishPairEpoch(e);
+            perturbChainCarry(rng, w, e, ctx, ctx);
+            perturbChainLedger(rng, e, ctx, ep);
+            const TreeRoots before = treeRootsOf(ctx);
+            const auto mg0 = mergeCounters(ctx);
+            const ChainRun r = runLiveChainElection(ctx, *cfg, w, e, quiet);
+            const std::string at = "lineage " + std::to_string(lineage) + " epoch " + std::to_string(ep);
+            ASSERT_TRUE(r.events.phase_datum.chain) << at;
+            const ChainEpochObs& obs = *r.events.phase_datum.chain;
+            // The old tree each vertex carries, by (group, vertex key); the roots of each band's trees first.
+            std::map<std::pair<std::string, std::string>, std::string> carries;
+            std::map<std::pair<std::string, int>, std::string> continued;   // (group, comp) -> the root's old tree
+            TreeRoots want_after;
+            const auto oldOfRx = [&](int sta, const std::string& group) {
+                const auto it = before.rx.find({sta, group});
+                return it == before.rx.end() ? std::string() : it->second;
+            };
+            for (const ChainComponentObs& k : obs.comps) {
+                const std::string old = oldOfRx(k.r1_station, k.group);
+                carries[{k.group, "R:" + std::to_string(k.r1_station)}] = old;
+                continued[{k.group, k.comp}] = old;
+                want_after.rx[{k.r1_station, k.group}] = k.r1;
+            }
+            long long want_released = 0, want_declared = 0;
+            std::map<std::pair<std::string, std::string>, std::size_t> side;   // (group, vertex key) -> the release it lies in
+            std::map<std::pair<std::string, std::string>, std::size_t> release_at;
+            for (std::size_t k = 0; k < obs.releases.size(); ++k) release_at[{obs.releases[k].group, obs.releases[k].vertex}] = k;
+            std::vector<std::set<std::string>> want_sats(obs.releases.size());
+            std::vector<std::set<int>> want_rx(obs.releases.size());
+            for (const ChainEdgeObs& o : obs.edges) {
+                ++n_edges;
+                const std::string amb = StateKeys::makeAmbiguityKey(o.sat, o.signal);
+                std::string old;
+                if (o.sat_is_child) {
+                    const auto it = before.sats.find(amb);
+                    if (it != before.sats.end()) old = it->second;
+                    want_after.sats[amb] = o.r1;
+                } else {
+                    old = oldOfRx(o.station, o.group);
+                    want_after.rx[{o.station, o.group}] = o.r1;
+                }
+                ASSERT_TRUE(carries.count({o.group, o.parent})) << at << " " << o.group << " " << o.parent;
+                const std::string above = carries.at({o.group, o.parent});
+                carries[{o.group, o.child}] = old.empty() ? above : old;
+                if (old.empty() && !above.empty()) ++n_inherited;
+                const bool joins = !old.empty() && !above.empty() && old != above;
+                const std::string& root_old = continued.at({o.group, o.comp});
+                const bool absorbed = !old.empty() && !above.empty() && old == above && !root_old.empty() && old != root_old;
+                ASSERT_EQ(o.merge_released, joins) << at << " " << o.group << " " << o.station_name << " " << o.sat;
+                ASSERT_EQ(o.absorbed, absorbed) << at << " " << o.group << " " << o.station_name << " " << o.sat;
+                if (joins) {
+                    ++want_released;
+                    ASSERT_EQ(o.merge_from, old) << at;
+                    ASSERT_EQ(o.merge_into, above) << at;
+                    ASSERT_TRUE(o.row_armed && !o.known) << at;
+                    ASSERT_EQ(o.pinmove_m, 0.0) << at;
+                    ASSERT_TRUE(release_at.count({o.group, o.child})) << at;
+                    ASSERT_EQ(obs.releases[release_at.at({o.group, o.child})].row, ChainReleaseRow::Merge) << at;
+                }
+                if (absorbed) {
+                    ++n_absorbed;
+                    if (o.row_armed && o.known) {   // the kept row held it
+                        ++n_absorbed_held;
+                        ASSERT_TRUE(with_kept) << at;
+                        ASSERT_EQ(o.target_m, o.prev_target_m) << at;
+                        ASSERT_EQ(o.pinmove_m, 0.0) << at;
+                    }
+                }
+                // The moved side: the nearest released vertex above, the child's own edge first.
+                const auto own = release_at.find({o.group, o.child});
+                const auto up = side.find({o.group, o.parent});
+                std::optional<std::size_t> in_side;
+                if (own != release_at.end()) in_side = own->second;
+                else if (up != side.end()) in_side = up->second;
+                if (own != release_at.end() && up != side.end()) ++n_nested;
+                if (in_side) {
+                    side[{o.group, o.child}] = *in_side;
+                    if (o.sat_is_child) want_sats[*in_side].insert(o.sat);
+                    else want_rx[*in_side].insert(o.station);
+                    ASSERT_TRUE(std::isnan(o.step_m)) << at;
+                }
+            }
+            for (std::size_t k = 0; k < obs.releases.size(); ++k) {
+                const ChainReleaseObs& rel = obs.releases[k];
+                ASSERT_EQ(std::set<std::string>(rel.sats.begin(), rel.sats.end()), want_sats[k]) << at;
+                ASSERT_EQ(std::set<int>(rel.stations.begin(), rel.stations.end()), want_rx[k]) << at;
+                if (rel.row == ChainReleaseRow::Merge) {
+                    want_declared += static_cast<long long>(want_sats[k].size());
+                    n_keys += static_cast<long long>(want_sats[k].size());
+                }
+                for (const std::string& sat : rel.sats)
+                    ASSERT_TRUE(r.events.phase_datum.eq34_reref.count({sat, rel.signal})) << at;
+                // No carry touches the moved side, at any station, present or absent.
+                net::forEach(ctx.entities.arcs, &net::ArcState::amb, [&](const ArcId& id, const LocalCarry&) {
+                    const std::string sig = net::signalKey(id.signal);
+                    if (sig != rel.signal || net::satKey(id.sat)[0] != rel.sat[0]) return;
+                    ASSERT_FALSE(want_sats[k].count(net::satKey(id.sat))) << at << " " << net::satKey(id.sat);
+                    ASSERT_FALSE(want_rx[k].count(id.station.index)) << at << " " << id.station.index;
+                });
+                const std::string rpb_key = rpbKeyOfGroup(rel.group);
+                for (int sta : want_rx[k])
+                    ASSERT_EQ(net::get(ctx.entities.stations, StationId{sta}, &net::StationState::signals, rpb_key,
+                                       &net::StationSignalState::rpb), nullptr) << at;
+                if (rel.row == ChainReleaseRow::Merge) n_arcs_erased += rel.arcs;
+            }
+            // The memory is replaced wholesale by this election's trees.
+            const TreeRoots after = treeRootsOf(ctx);
+            ASSERT_EQ(after.sats, want_after.sats) << at;
+            ASSERT_EQ(after.rx, want_after.rx) << at;
+            // The tallies.
+            const auto mg1 = mergeCounters(ctx);
+            ASSERT_EQ(mg1[kMgReleased] - mg0[kMgReleased], want_released) << at;
+            ASSERT_EQ(mg1[kMgDeclared] - mg0[kMgDeclared], want_declared) << at;
+            ASSERT_EQ((mg1[kMgZero] + mg1[kMgWhole] + mg1[kMgFrac] + mg1[kMgUnknown])
+                          - (mg0[kMgZero] + mg0[kMgWhole] + mg0[kMgFrac] + mg0[kMgUnknown]), want_released) << at;
+            ASSERT_EQ(ctx.counters.eq34_mismatch_epochs, 0) << at;
+            n_released += want_released;
+            ++n_epochs;
+        }
+    }
+    std::cout << "[ NetworkArcGraphOracle ] merge and split row: " << n_epochs << " epochs, " << n_edges << " tree edges, "
+              << n_released << " edges joining two old trees released, " << n_absorbed << " edges inside an absorbed side ("
+              << n_absorbed_held << " held at their targets), " << n_inherited << " vertices in no old tree passing on the "
+              << "one above, " << n_nested << " releases nested in another, " << n_arcs_erased << " carries erased and "
+              << n_keys << " keys declared\n";
+    EXPECT_GT(n_released, 20);
+    EXPECT_GT(n_absorbed, 15);
+    EXPECT_GT(n_absorbed_held, 10);
+    EXPECT_GT(n_inherited, 100);
+    EXPECT_GT(n_keys, 20);
 }
 
 }  // namespace

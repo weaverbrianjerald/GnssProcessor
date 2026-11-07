@@ -556,6 +556,14 @@ struct SatSignalState {
     /// with @c network.phase_datum_eq34_event_rows holding @c returning, so it is false on every
     /// other run.  ColdStart: after a warm resume the first election's absent vertices are births.
     bool eq34_tree_seen{false};
+    /// The datum receiver of the eq34 chain tree this key's satellite was a vertex of at the last
+    /// election on the key's band.  Replaced wholesale at each election, so a satellite absent from the
+    /// last election's trees has none (unlike @ref eq34_sat_root, the extend-only merge-back does not keep
+    /// it).  The merge and split row of the chain's event table compares the two ends of a tree edge by
+    /// it.  Written only with @c network.phase_datum_eq34_event_rows holding @c merge_split, so it is
+    /// absent on every other run.  ColdStart: not snapshotted (the loader drops the entry when a snapshot
+    /// is written).
+    std::optional<std::string> eq34_tree_root;
 };
 
 /// The station-level dispositions (RF-3b B4, @c network.gross_los_station_tier),
@@ -652,6 +660,13 @@ struct StationSignalState {
     /// is absent on every other run.  ColdStart: not snapshotted (the loader drops the @c root entry
     /// when a snapshot is written).
     std::optional<double> eq34_root_rpb_target;
+    /// The datum receiver of the eq34 chain tree this receiver was a vertex of at the last election on
+    /// the signal family "<c>|<sigma>" (the key): the receiver itself when it was the root.  Replaced
+    /// wholesale at each election, so a receiver absent from the last election's trees has none.  The
+    /// merge and split row of the chain's event table compares the two ends of a tree edge by it.  Written
+    /// only with @c network.phase_datum_eq34_event_rows holding @c merge_split, so it is absent on every
+    /// other run.  ColdStart: not snapshotted (the loader drops the entry when a snapshot is written).
+    std::optional<std::string> eq34_tree_root;
 };
 
 /// The SD EWL integer fixes of one station: constellation letter -> satellite -> fix.

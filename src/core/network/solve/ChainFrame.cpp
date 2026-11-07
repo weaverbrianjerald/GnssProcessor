@@ -65,11 +65,11 @@ const std::array<ChainEventSpec, kChainEventRowCount> kChainEventSpec = {{
     {ChainEventRow::Merge, "Merge", "merge_split", "merge",
      "none",
      "cut release of the absorbed side",
-     ChainStep::CutRelease, ChainCarry::CutRelease, ChainWire::ComponentChange, false},
+     ChainStep::CutRelease, ChainCarry::CutRelease, ChainWire::ComponentChange, true},
     {ChainEventRow::Split, "Split", "merge_split", "split",
      "none",
      "the split-off root pinned at its carried receiver phase bias; the component change declared",
-     ChainStep::Zero, ChainCarry::Keep, ChainWire::ComponentChange, false},
+     ChainStep::Zero, ChainCarry::Keep, ChainWire::ComponentChange, true},
 }};
 
 const ChainEventSpec& chainEventSpec(ChainEventRow r) {
@@ -104,7 +104,9 @@ bool chainEventRowArmed(const NetworkKnobs& k, ChainEventRow r) {
         case ChainEventRow::RehostUncertified: return k.eq34_row_rehost;
         case ChainEventRow::RootHandover: return k.eq34_row_root;
         case ChainEventRow::TreeEdgeSlip: return k.eq34_row_slip;
-        default:                       return false;   // the other rows' integer rules are not built
+        case ChainEventRow::Merge:
+        case ChainEventRow::Split:     return k.eq34_row_merge_split;
+        default:                       return false;   // the birth row has no integer rule of its own
     }
 }
 
@@ -170,6 +172,7 @@ const char* chainReleaseRowName(ChainReleaseRow r) {
         case ChainReleaseRow::Returning: return "returning";
         case ChainReleaseRow::Rehost:    return "rehost";
         case ChainReleaseRow::Slip:      return "slip";
+        case ChainReleaseRow::Merge:     return "merge";
     }
     return "?";
 }
@@ -362,7 +365,9 @@ void classifyEdge(ChainEdgeObs& e, const ChainFrameMemory& mem, const GroupChang
     };
     const int cc = prevComp(e.child), pc = prevComp(e.parent);
 
-    if (slipped) {
+    if (e.merge_released) {
+        e.row = ChainEventRow::Merge;
+    } else if (slipped) {
         e.row = ChainEventRow::TreeEdgeSlip;
     } else if (e.incumbent_same || e.incumbent_flipped) {
         e.row = ChainEventRow::Kept;
@@ -382,7 +387,7 @@ void classifyEdge(ChainEdgeObs& e, const ChainFrameMemory& mem, const GroupChang
         // Present at the last epoch without a parent edge: it was a root there.
         e.row = ChainEventRow::RootHandover;
     }
-    if (e.row == ChainEventRow::Kept && e.root_unknown)
+    if (e.row == ChainEventRow::Kept && e.root_unknown && !e.absorbed)
         e.row = change.split_pieces.count(e.comp) ? ChainEventRow::Split : ChainEventRow::RootHandover;
 }
 
@@ -484,9 +489,11 @@ ChainEpochClass chainClassifyEpoch(const ChainEpochObs& obs, const ChainFrameMem
     for (const ChainReleaseObs& r : obs.releases) {
         ++cnt.cf_cut_releases;
         ++(r.row == ChainReleaseRow::Rehost ? cnt.cf_rh_cut_releases
-           : r.row == ChainReleaseRow::Slip ? cnt.cf_sl_cut_releases : cnt.cf_ret_cut_releases);
+           : r.row == ChainReleaseRow::Slip   ? cnt.cf_sl_cut_releases
+           : r.row == ChainReleaseRow::Merge  ? cnt.cf_mg_cut_releases : cnt.cf_ret_cut_releases);
         (r.row == ChainReleaseRow::Rehost ? cnt.cf_rh_declared_keys
-         : r.row == ChainReleaseRow::Slip ? cnt.cf_sl_declared_keys : cnt.cf_ret_declared_keys)
+         : r.row == ChainReleaseRow::Slip  ? cnt.cf_sl_declared_keys
+         : r.row == ChainReleaseRow::Merge ? cnt.cf_mg_declared_keys : cnt.cf_ret_declared_keys)
             += static_cast<long long>(r.sats.size());
         cnt.cf_cut_arcs += r.arcs;
         cnt.cf_cut_pb += r.pb;
@@ -495,10 +502,16 @@ ChainEpochClass chainClassifyEpoch(const ChainEpochObs& obs, const ChainFrameMem
     }
     for (const ChainRootObs& r : obs.roots) {
         switch (r.outcome) {
-            case ChainRootOutcome::Pinned:    ++cnt.cf_root_pinned; continue;
+            case ChainRootOutcome::Pinned:
+                ++cnt.cf_root_pinned;
+                if (r.split) ++cnt.cf_split_pinned;
+                continue;
             case ChainRootOutcome::NotVertex: ++cnt.cf_root_not_vertex; break;
             case ChainRootOutcome::NotKeeper: ++cnt.cf_root_not_keeper; break;
-            case ChainRootOutcome::NoCarry:   ++cnt.cf_root_no_carry; break;
+            case ChainRootOutcome::NoCarry:
+                ++cnt.cf_root_no_carry;
+                if (r.split) ++cnt.cf_split_no_carry;
+                break;
         }
         ++cnt.cf_root_left;
     }
@@ -792,9 +805,29 @@ void networkChainFrameObserve(NetworkRun& run, const NetworkEpoch& ep) {
                     event(spec.event, e.sat, e.station_name, e.pinmove_m, "join", released_detail);
                     break;
                 }
-                case ChainEventRow::Merge:
-                    event(spec.event, e.sat, e.station_name, e.pinmove_m, "join", detail);
+                case ChainEventRow::Merge: {
+                    if (!e.merge_released) {
+                        event(spec.event, e.sat, e.station_name, e.pinmove_m, "join", detail);
+                        break;
+                    }
+                    // Both edges of the event, with the as-built facts the release replaced: the absorbed
+                    // tree's old root leaves, and the edge that joins the two trees joins.
+                    ++cnt.cf_mg_pairs;
+                    const double asbuilt_cyc = e.lambda_m > 0.0 ? e.legacy_pinmove_m / e.lambda_m : 0.0;
+                    if (!e.legacy_known)                                   ++cnt.cf_mg_asbuilt_unknown;
+                    else if (e.legacy_pinmove_m == 0.0)                    ++cnt.cf_mg_asbuilt_zero;
+                    else if (e.lambda_m > 0.0 && nearInteger(asbuilt_cyc)) ++cnt.cf_mg_asbuilt_whole;
+                    else                                                   ++cnt.cf_mg_asbuilt_other;
+                    const std::string merge_detail = detail + fmt::format(
+                        " old_root={} into_root={} child={} parent={} legacy_cause={} legacy_known={} "
+                        "legacy_pinmove_m={:.6f} legacy_target_cyc={}",
+                        e.merge_from, e.merge_into, vertexName(e.child, stations), vertexName(e.parent, stations),
+                        chainLegacyCauseName(e.cause), e.legacy_known ? 1 : 0, e.legacy_pinmove_m,
+                        e.lambda_m > 0.0 ? fmt::format("{:.6f}", e.legacy_target_m / e.lambda_m) : "");
+                    event(spec.event, "", e.merge_from, std::nullopt, "leave", merge_detail);
+                    event(spec.event, e.sat, e.station_name, e.pinmove_m, "join", merge_detail);
                     break;
+                }
                 default:
                     break;
             }
@@ -823,7 +856,7 @@ void networkChainFrameObserve(NetworkRun& run, const NetworkEpoch& ep) {
             else
                 event(name, new_parent, d.station_name, std::nullopt, "join", deseat_detail);
         }
-        // The cut releases of the returning, rehost and slip rows: one cut_release row per release, then one
+        // The cut releases of the returning, rehost, slip and merge rows: one cut_release row per release, then one
         // declared_keys row per satellite of its moved side (the keys the producer declares moved).
         for (const ChainReleaseObs& r : obs.releases) {
             const std::string root = vertexName(r.vertex, stations);
@@ -843,8 +876,8 @@ void networkChainFrameObserve(NetworkRun& run, const NetworkEpoch& ep) {
                                        : chainEventSpec(ChainEventRow::RootHandover).event;
             std::string detail = fmt::format("sig={} comp={} old_root={} new_root={}",
                                              k.signal, k.comp, k.old_root, k.r1);
-            // With the root row armed, what it did with this handover.
-            if (!k.split && chainEventRowArmed(ctx.knobs, ChainEventRow::RootHandover))
+            // With the row that decides it armed, what it did with this handover.
+            if (chainEventRowArmed(ctx.knobs, k.split ? ChainEventRow::Split : ChainEventRow::RootHandover))
                 for (const ChainRootObs& ro : obs.roots) {
                     if (ro.group != k.group || ro.comp != k.comp) continue;
                     detail += fmt::format(" outcome={}", chainRootOutcomeName(ro.outcome));
@@ -1037,6 +1070,7 @@ std::string chainCuttingRowsPhrase(const NetworkKnobs& k) {
     if (chainEventRowArmed(k, ChainEventRow::Returning))         rows.push_back("returning");
     if (chainEventRowArmed(k, ChainEventRow::RehostUncertified)) rows.push_back("rehost");
     if (chainEventRowArmed(k, ChainEventRow::TreeEdgeSlip))      rows.push_back("slip");
+    if (chainEventRowArmed(k, ChainEventRow::Merge))             rows.push_back("merge and split");
     if (rows.empty()) return "the armed rows cut and declare nothing";
     std::string out = "cut and declared by the ";
     for (std::size_t i = 0; i < rows.size(); ++i) {
@@ -1141,6 +1175,15 @@ int networkChainFrameRunEnd(const NetworkRunEndView& v) {
                   2 * (c.cf_sl_deseats + c.cf_sl_pairs) + c.cf_sl_cut_releases + c.cf_sl_declared_keys,
                   c.cf_sl_deseats, c.cf_sl_pairs, c.cf_sl_asbuilt_zero, c.cf_sl_asbuilt_whole,
                   c.cf_sl_asbuilt_other, c.cf_sl_asbuilt_unknown, c.cf_sl_cut_releases, c.cf_sl_declared_keys);
+    if (chainEventRowArmed(ctx.knobs, ChainEventRow::Merge))
+        log->info("Network (chain frame): {} merge row(s) written to the event trace: {} edge(s) joining two old "
+                  "trees released (a leave and a join row each; the as-built step was a known zero on {}, whole "
+                  "cycles on {}, another nonzero step on {} and unknown on {}), {} cut_release row(s) and {} "
+                  "declared_keys row(s) of the merges' releases; {} split piece(s) pinned at a carried receiver "
+                  "phase bias and {} left as built with no carried bias inside the horizon.",
+                  2 * c.cf_mg_pairs + c.cf_mg_cut_releases + c.cf_mg_declared_keys, c.cf_mg_pairs,
+                  c.cf_mg_asbuilt_zero, c.cf_mg_asbuilt_whole, c.cf_mg_asbuilt_other, c.cf_mg_asbuilt_unknown,
+                  c.cf_mg_cut_releases, c.cf_mg_declared_keys, c.cf_split_pinned, c.cf_split_no_carry);
     const long long n_cert = c.cf_cert[static_cast<std::size_t>(ChainCertSource::Pair)]
                            + c.cf_cert[static_cast<std::size_t>(ChainCertSource::Lattice)];
     log->info("Network (chain frame): {} re-host(s), {} certified ({} by the two-band fix of the "
@@ -1161,7 +1204,7 @@ int networkChainFrameRunEnd(const NetworkRunEndView& v) {
               "returning and {} departed vertex(es), {} flipped kept edge(s); {} gated key(s).",
               c.cf_root_handovers, c.cf_merges, c.cf_splits, c.cf_returning, c.cf_departed,
               c.cf_flipped, c.cf_gated_keys);
-    // Only the returning, rehost and slip rows cut and declare: the kept row does neither, so these stay 0
+    // Only the returning, rehost, slip and merge rows cut and declare: the kept row does neither, so these stay 0
     // with it armed alone.
     log->info("Network (chain frame): {} cut-released arc(s), {} phase-bias prior(s) and {} "
               "receiver phase bias(es); {} declared key(s) ({}).",

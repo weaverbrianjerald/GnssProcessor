@@ -670,6 +670,8 @@ const std::vector<FieldDecl> kSatSignalFields = {
      &eqsFromSnapshot, &satSignalRows<&G::eq34_sat_root>},
     {"eq34_tree_seen", "", Persist::ColdStart, "", "",   // no former member: new with the returning row of the chain's event table
      nullptr, nullptr, &satSignalRows<&G::eq34_tree_seen>},
+    {"eq34_tree_root", "", Persist::ColdStart, "", "",   // no former member: new with the merge and split row of the chain's event table
+     nullptr, nullptr, &satSignalRows<&G::eq34_tree_root>},
 };
 namespace {
 
@@ -817,6 +819,8 @@ const std::vector<FieldDecl> kStationFields = {
      nullptr, nullptr, &signalRows<&SS::eq34_tree_seen>},
     {"eq34_root_rpb_target", "", Persist::ColdStart, "", "",   // no former member: new with the root row of the chain's event table
      nullptr, nullptr, &signalRows<&SS::eq34_root_rpb_target>},
+    {"eq34_tree_root", "", Persist::ColdStart, "", "",   // no former member: new with the merge and split row of the chain's event table
+     nullptr, nullptr, &signalRows<&SS::eq34_tree_root>},
 };
 std::optional<LosId> losKey(int station, const std::string& sat) {
     if (sat.empty()) return LosId{StationId{station}, SatId{}};

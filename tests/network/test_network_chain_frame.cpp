@@ -117,12 +117,12 @@ TEST(NetworkChainFrame, EventTableHasOneRowPerClassInOrder) {
 
 // The loader takes its entries from the table: the distinct non-empty ones, in table order, with
 // the rows built so far (the rows are built in table order: kept, returning, rehost, root, slip).
-TEST(NetworkChainFrame, EventRowEntriesAreTheTablesAndOnlyKeptReturningRehostRootAndSlipAreBuilt) {
+TEST(NetworkChainFrame, EventRowEntriesAreTheTablesAndEveryEntryIsBuilt) {
     EXPECT_EQ(chainEventRowEntries(), (std::vector<std::string>{"kept", "returning", "rehost", "root", "slip",
                                                                "merge_split"}));
-    for (const char* entry : {"kept", "returning", "rehost", "root", "slip"})
+    for (const char* entry : {"kept", "returning", "rehost", "root", "slip", "merge_split"})
         EXPECT_TRUE(chainEventRowEntryBuilt(entry)) << entry;
-    for (const char* entry : {"merge_split", "", "bogus"})
+    for (const char* entry : {"", "bogus"})
         EXPECT_FALSE(chainEventRowEntryBuilt(entry)) << entry;
     // An entry two rows share is built when each of its rows is built or held and at least one is built.
     for (const ChainEventSpec& s : kChainEventSpec)
@@ -2083,6 +2083,312 @@ TEST(NetworkChainFrame, TheRunEndNamesTheSlipRowOnlyWhenArmed) {
 
 // The election's run-end report prints the slip row's tallies only when the row is armed, and calls a run in which no
 // tree edge slipped no event.
+// ---- The merge and split row -------------------------------------------------------------------------
+
+// The row's release is a Merge, ahead of every other row.  With the row off the classification is what it always was: an
+// edge that joins two components through a child with a parent reads as a re-host, and a kept edge of the absorbed side
+// whose satellite remembers another root as a root handover.  An edge the row marked inside an absorbed side stays Kept.
+TEST(NetworkChainFrame, TheRowsReleaseIsAMergeAndWithoutItTheClassificationIsUnchanged) {
+    ChainFrameMemory mem = memoryOf("A", {"R:0", "S:G01"});
+    mem.vertex_comp[kGroup]["R:1"] = 1;                 // a second previous component: B, G02, G03
+    mem.vertex_comp[kGroup]["S:G02"] = 1;
+    mem.vertex_comp[kGroup]["S:G03"] = 1;
+    mem.comp_root[kGroup][1] = "B";
+    ChainEpochObs obs;
+    obs.armed = true;
+    obs.comps.push_back(component(0, "A", {0, 1}, {"G01", "G02", "G03"}));
+    ChainEdgeObs re_host = edge(1, "G01", false);       // B below G01: B had a parent, the arc is new
+    re_host.had_parent = true;
+    re_host.prev_parent = "S:G09";
+    ChainEdgeObs retained = edge(1, "G02", true);       // inside the second tree, same direction: both ends in comp 1
+    retained.incumbent_same = true;
+    retained.root_unknown = true;
+    ChainEdgeObs marked = edge(1, "G03", true);         // the same, marked by the row
+    marked.incumbent_same = true;
+    marked.root_unknown = true;
+    marked.absorbed = true;
+    ChainEdgeObs stays = edge(0, "G01", true);
+    stays.incumbent_same = true;
+    obs.edges = {stays, re_host, retained, marked};
+    ChainFrameCounters cnt;
+    const ChainEpochClass cls = chainClassifyEpoch(obs, mem, {}, {}, cnt);
+    ASSERT_EQ(cls.edges.size(), 4u);
+    EXPECT_EQ(cls.edges[0].row, ChainEventRow::Kept);
+    EXPECT_EQ(cls.edges[1].row, ChainEventRow::RehostUncertified);
+    EXPECT_EQ(cls.edges[2].row, ChainEventRow::RootHandover);
+    EXPECT_EQ(cls.edges[3].row, ChainEventRow::Kept);
+    EXPECT_EQ(cnt.cf_merges, 1);                        // the component event counts the merge
+    EXPECT_EQ(cnt.cf_rehosts, 1);
+    // Released by the row, the same edge is a Merge, and asks no certification.
+    ChainEpochObs released = obs;
+    released.edges[1].merge_released = true;
+    ChainFrameCounters cnt_r;
+    EXPECT_EQ(chainClassifyEpoch(released, mem, {}, {}, cnt_r).edges[1].row, ChainEventRow::Merge);
+    EXPECT_EQ(cnt_r.cf_rehosts, 0);
+    // The row's release is a Merge even on an arc the latch names.
+    ChainEpochObs obs2 = obs;
+    obs2.edges = {edge(1, "G01", false)};
+    obs2.edges[0].merge_released = true;
+    const std::pair<int, std::string> key{1, StateKeys::makeAmbiguityKey("G01", "L1C")};
+    ChainFrameCounters cnt2;
+    EXPECT_EQ(chainClassifyEpoch(obs2, mem, {key}, {}, cnt2).edges[0].row, ChainEventRow::Merge);
+    ChainEpochObs obs3 = obs2;
+    obs3.edges[0].merge_released = false;
+    ChainFrameCounters cnt3;
+    EXPECT_EQ(chainClassifyEpoch(obs3, mem, {key}, {}, cnt3).edges[0].row, ChainEventRow::TreeEdgeSlip);
+}
+
+/// Observe two trees joined at the second epoch (261060) by C below G01: with the row armed its release, with the row
+/// off the edge as built.
+void observeMerge(ChainObserverRun& r, bool released) {
+    {   // epoch 1: A - G01, and B - G02 - C
+        auto rec = std::make_shared<ChainEpochObs>();
+        rec->armed = true;
+        rec->comps.push_back(component(0, "A", {0}, {"G01"}));
+        rec->comps.push_back(component(1, "B", {1, 2}, {"G02"}));
+        rec->comps[1].r1_station = 1;
+        ChainEdgeObs g2 = edge(1, "G02", true, 1);
+        g2.r1 = "B";
+        ChainEdgeObs c = edge(2, "G02", false, 1);
+        c.r1 = "B";
+        rec->edges = {edge(0, "G01", true), g2, c};
+        r.observeRecord(261030.0, rec);
+    }
+    auto rec = std::make_shared<ChainEpochObs>();
+    rec->armed = true;
+    rec->comps.push_back(component(0, "A", {0, 1, 2}, {"G01", "G02"}));
+    ChainEdgeObs join = edge(2, "G01", false);
+    join.had_parent = true;
+    join.prev_parent = "S:G02";
+    join.legacy_known = true;
+    join.legacy_pinmove_m = 0.3 * kLambda;
+    join.legacy_target_m = 5.0 * kLambda;
+    join.target_m = 5.0 * kLambda;
+    ChainEdgeObs g2 = heldEdge(2, "G02", true);
+    g2.incumbent_same = false;
+    g2.incumbent_flipped = true;
+    g2.absorbed = released;
+    g2.root_unknown = true;
+    ChainEdgeObs b = heldEdge(1, "G02", false);
+    b.incumbent_same = false;
+    b.incumbent_flipped = true;
+    b.absorbed = released;
+    if (released) {
+        join.row_armed = join.merge_released = true;
+        join.known = false;
+        join.pinmove_m = 0.0;
+        join.step_m = std::numeric_limits<double>::quiet_NaN();
+        join.merge_from = "B";
+        join.merge_into = "A";
+        ChainReleaseObs rel;
+        rel.row = ChainReleaseRow::Merge;
+        rel.group = kGroup;
+        rel.signal = "L1C";
+        rel.station = 2;
+        rel.sat = "G01";
+        rel.vertex = "R:2";
+        rel.sats = {"G02"};
+        rel.stations = {2, 1};
+        rel.arcs = 4;
+        rel.rpb = 2;
+        rel.pb = 1;
+        rec->releases = {rel};
+    } else {
+        join.pinmove_m = 0.3 * kLambda;
+        g2.row_armed = false;
+        g2.known = false;
+    }
+    rec->edges = {edge(0, "G01", true), join, g2, b};
+    r.observeRecord(261060.0, rec);
+}
+
+// The row's release writes a leave row naming the absorbed old root and a join row on the new edge, then the release's
+// cut_release and declared_keys rows; the edges inside the side write no event of their own.
+TEST(NetworkChainFrame, TheObserverWritesTheRowsOfAnEdgeTheMergeRowReleased) {
+    ChainObserverRun r("merge_obs_released", std::vector<std::string>{"kept", "root", "merge_split"});
+    observeMerge(r, /*released=*/true);
+    const ChainRows ev(r);
+    std::vector<std::size_t> merge_rows, cut_rows, declared_rows;
+    for (std::size_t k = 0; k < ev.rows.size(); ++k) {
+        if (ev.at(k, ev.event) == "merge") merge_rows.push_back(k);
+        if (ev.at(k, ev.event) == "cut_release") cut_rows.push_back(k);
+        if (ev.at(k, ev.event) == "declared_keys") declared_rows.push_back(k);
+    }
+    ASSERT_EQ(merge_rows.size(), 2u);
+    EXPECT_EQ(ev.at(merge_rows[0], ev.action), "leave");
+    EXPECT_EQ(ev.at(merge_rows[0], ev.station), "B");
+    EXPECT_EQ(ev.at(merge_rows[0], ev.sat), "");
+    EXPECT_EQ(ev.at(merge_rows[1], ev.action), "join");
+    EXPECT_EQ(ev.at(merge_rows[1], ev.station), "C");
+    EXPECT_EQ(ev.at(merge_rows[1], ev.sat), "G01");
+    for (std::size_t k : merge_rows) {
+        const std::string& detail = ev.at(k, ev.detail);
+        EXPECT_TRUE(contains(detail, "row=Merge")) << detail;
+        EXPECT_TRUE(contains(detail, "old_root=B into_root=A child=C parent=G01")) << detail;
+        EXPECT_TRUE(contains(detail, "legacy_known=1")) << detail;
+        EXPECT_TRUE(contains(detail, "legacy_target_cyc=5.000000")) << detail;
+    }
+    ASSERT_EQ(cut_rows.size(), 1u);
+    ASSERT_EQ(declared_rows.size(), 1u);
+    EXPECT_EQ(ev.at(declared_rows[0], ev.sat), "G02");
+    EXPECT_EQ(ev.at(declared_rows[0], ev.detail), "sig=L1C cause=merge root=C");
+    const ChainFrameCounters& c = r.fx->ctx().counters;
+    EXPECT_EQ(c.cf_mg_pairs, 1);
+    EXPECT_EQ(c.cf_mg_asbuilt_other, 1);
+    EXPECT_EQ(c.cf_mg_asbuilt_zero + c.cf_mg_asbuilt_whole + c.cf_mg_asbuilt_unknown, 0);
+    EXPECT_EQ(c.cf_mg_cut_releases, 1);
+    EXPECT_EQ(c.cf_mg_declared_keys, 1);
+    EXPECT_EQ(c.cf_rh_cut_releases + c.cf_ret_cut_releases + c.cf_sl_cut_releases, 0);
+    EXPECT_EQ(c.cf_merges, 1);
+    EXPECT_EQ(c.cf_rows_armed[static_cast<std::size_t>(ChainEventRow::Merge)], 1);
+    EXPECT_EQ(c.cf_rows_unknown[static_cast<std::size_t>(ChainEventRow::Merge)], 1);
+}
+
+// With the row off the edge reads as the re-host it always did and writes no merge row, an edge classified Merge writes
+// the one join row it always had (BirthReturningSlipAndMerge's case), and no counter of the row moves.
+TEST(NetworkChainFrame, WithTheRowOffAMergeWritesTheRowsItAlwaysHad) {
+    ChainObserverRun r("merge_obs_off", std::vector<std::string>{"kept", "root"});
+    observeMerge(r, /*released=*/false);
+    const ChainRows ev(r);
+    std::size_t n_merge = 0, n_rehost = 0;
+    for (std::size_t k = 0; k < ev.rows.size(); ++k) {
+        if (ev.at(k, ev.event) == "merge") ++n_merge;
+        if (ev.at(k, ev.event) == "rehost") ++n_rehost;
+    }
+    EXPECT_EQ(n_merge, 0u);
+    EXPECT_EQ(n_rehost, 2u);
+    const ChainFrameCounters& c = r.fx->ctx().counters;
+    EXPECT_EQ(c.cf_mg_pairs + c.cf_mg_cut_releases + c.cf_mg_declared_keys + c.cf_split_pinned, 0);
+    EXPECT_EQ(c.cf_rows_armed[static_cast<std::size_t>(ChainEventRow::Merge)], 0);
+    EXPECT_EQ(c.cf_merges, 1);
+}
+
+/// Observe one tree split at the second epoch: A keeps G01; B and G02 split off, with the record of the root row's pin.
+void observeSplit(ChainObserverRun& r, ChainRootOutcome outcome) {
+    {
+        auto rec = std::make_shared<ChainEpochObs>();
+        rec->armed = true;
+        rec->comps.push_back(component(0, "A", {0, 1}, {"G01", "G02"}));
+        rec->edges = {edge(0, "G01", true), edge(1, "G01", false), edge(1, "G02", true)};
+        r.observeRecord(261030.0, rec);
+    }
+    auto rec = std::make_shared<ChainEpochObs>();
+    rec->armed = true;
+    rec->comps.push_back(component(0, "A", {0}, {"G01"}));
+    rec->comps.push_back(component(1, "B", {1}, {"G02"}));
+    rec->comps[1].r1_station = 1;
+    ChainEdgeObs g2 = heldEdge(1, "G02", true);
+    g2.comp = 1;
+    g2.r1 = "B";
+    g2.root_unknown = true;
+    rec->edges = {edge(0, "G01", true), g2};
+    ChainRootObs ro;
+    ro.group = kGroup;
+    ro.signal = "L1C";
+    ro.comp = 1;
+    ro.old_root = "A";
+    ro.new_root = "B";
+    ro.outcome = outcome;
+    ro.target_m = 0.07;
+    ro.sigma_m = 0.01;
+    ro.split = true;
+    rec->roots = {ro};
+    r.observeRecord(261060.0, rec);
+}
+
+// A split piece's rows carry the row's outcome when the row is armed, and the counters split it from the root row's.
+TEST(NetworkChainFrame, TheSplitRowsCarryTheOutcomeOfTheRowWhenArmed) {
+    {
+        ChainObserverRun r("split_obs_on", std::vector<std::string>{"kept", "root", "merge_split"});
+        observeSplit(r, ChainRootOutcome::Pinned);
+        const ChainRows ev(r);
+        std::vector<std::size_t> split_rows;
+        for (std::size_t k = 0; k < ev.rows.size(); ++k)
+            if (ev.at(k, ev.event) == "split") split_rows.push_back(k);
+        ASSERT_EQ(split_rows.size(), 2u);
+        EXPECT_EQ(ev.at(split_rows[0], ev.action), "leave");
+        EXPECT_EQ(ev.at(split_rows[0], ev.station), "A");
+        EXPECT_EQ(ev.at(split_rows[1], ev.action), "join");
+        EXPECT_EQ(ev.at(split_rows[1], ev.station), "B");
+        for (std::size_t k : split_rows)
+            EXPECT_TRUE(contains(ev.at(k, ev.detail), "old_root=A new_root=B outcome=pinned rpb_target_m=0.070000 "
+                                                      "rpb_sigma_m=0.010000")) << ev.at(k, ev.detail);
+        const ChainFrameCounters& c = r.fx->ctx().counters;
+        EXPECT_EQ(c.cf_split_pinned, 1);
+        EXPECT_EQ(c.cf_root_pinned, 1);
+        EXPECT_EQ(c.cf_splits, 1);
+        EXPECT_EQ(c.cf_rows[static_cast<std::size_t>(ChainEventRow::Split)], 1);
+    }
+    {
+        ChainObserverRun r("split_obs_nocarry", std::vector<std::string>{"kept", "root", "merge_split"});
+        observeSplit(r, ChainRootOutcome::NoCarry);
+        const ChainFrameCounters& c = r.fx->ctx().counters;
+        EXPECT_EQ(c.cf_split_pinned, 0);
+        EXPECT_EQ(c.cf_split_no_carry, 1);
+        EXPECT_EQ(c.cf_root_no_carry, 1);
+    }
+    {   // the row off: the rows the split always had
+        ChainObserverRun r("split_obs_off", std::vector<std::string>{"kept", "root"});
+        observeSplit(r, ChainRootOutcome::NotKeeper);
+        const ChainRows ev(r);
+        for (std::size_t k = 0; k < ev.rows.size(); ++k)
+            if (ev.at(k, ev.event) == "split")
+                EXPECT_FALSE(contains(ev.at(k, ev.detail), "outcome=")) << ev.at(k, ev.detail);
+        EXPECT_EQ(r.fx->ctx().counters.cf_split_pinned + r.fx->ctx().counters.cf_split_no_carry, 0);
+        EXPECT_EQ(r.fx->ctx().counters.cf_root_not_keeper, 1);
+    }
+}
+
+// The run-end reports name the row only when it is armed, and call a run with no component event no event.
+TEST(NetworkChainFrame, TheRunEndsNameTheMergeAndSplitRowOnlyWhenArmed) {
+    {
+        ChainObserverRun r("merge_end_on", std::vector<std::string>{"kept", "rehost", "root", "merge_split"});
+        observeMerge(r, /*released=*/true);
+        const std::string text = r.runEnd(&networkChainFrameRunEnd);
+        EXPECT_TRUE(contains(text, "event row(s) armed: kept, rehost, root, merge_split; the other rows ran the as-built rule")) << text;
+        EXPECT_TRUE(contains(text, "4 merge row(s) written to the event trace: 1 edge(s) joining two old trees released")) << text;
+        EXPECT_TRUE(contains(text, "cut and declared by the rehost and merge and split rows")) << text;
+    }
+    {
+        ChainObserverRun r("merge_end_off", std::vector<std::string>{"kept", "root"});
+        observeMerge(r, /*released=*/false);
+        const std::string text = r.runEnd(&networkChainFrameRunEnd);
+        EXPECT_FALSE(contains(text, "merge row(s) written")) << text;
+    }
+    {
+        ChainObserverRun r("merge_elect_on", std::vector<std::string>{"root", "merge_split"});
+        auto& c = r.fx->ctx().counters;
+        c.eq34_split_pinned = 2;
+        c.eq34_split_no_carry = 1;
+        c.eq34_mg_released = 3;
+        c.eq34_mg_with_state = 2;
+        c.eq34_mg_arcs = 9;
+        c.eq34_mg_rpb = 4;
+        c.eq34_mg_pb = 5;
+        c.eq34_mg_declared = 6;
+        c.eq34_mg_absorbed_held = 7;
+        c.eq34_mg_asbuilt_unknown = 3;
+        const std::string text = r.runEnd(&networkChainDatumRunEnd);
+        EXPECT_TRUE(contains(text, "Network (eq34 merge and split row): 2 split piece(s) pinned at the new root's carried "
+                                   "receiver phase bias, 1 left as built")) << text;
+        EXPECT_TRUE(contains(text, "3 tree edge(s) joining two old trees released, 2 of them with state")) << text;
+        EXPECT_TRUE(contains(text, "those releases erased 9 leveling carry(ies), dropped 4 receiver phase-bias carry(ies), "
+                                   "took 5 satellite phase-bias prior(s) and declared 6 (satellite, signal) key(s) moved, "
+                                   "and the kept row held 7 tree edge(s) inside the absorbed sides at their targets")) << text;
+    }
+    {
+        ChainObserverRun r("merge_elect_none", std::vector<std::string>{"root", "merge_split"});
+        const std::string text = r.runEnd(&networkChainDatumRunEnd);
+        EXPECT_TRUE(contains(text, "Network (eq34 merge and split row): ARMED, and no tree edge joined two trees")) << text;
+        EXPECT_FALSE(contains(text, "INERT")) << text;
+    }
+    {
+        ChainObserverRun r("merge_elect_off", std::vector<std::string>{"root"});
+        const std::string text = r.runEnd(&networkChainDatumRunEnd);
+        EXPECT_FALSE(contains(text, "merge and split row")) << text;
+    }
+}
+
 TEST(NetworkChainFrame, TheElectionRunEndReportsTheSlipRowOnlyWhenArmed) {
     {
         ChainObserverRun r("slip_elect_on", std::vector<std::string>{"slip"});

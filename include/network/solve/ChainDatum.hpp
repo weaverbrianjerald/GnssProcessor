@@ -210,7 +210,19 @@ void eq34ShiftCarry(NetworkCarryState& carry, net::NetworkEntities& entities,
  * releases it, on the band whose arc is latched: the moved side is the child and its subtree, and the
  * pin takes the first-sighting target for a returning child, the arc's previous target for an arc
  * that was a tree edge at the last election, else the as-built draft.  A child never seen in a tree
- * before is a birth and keeps the as-built rule.  With a row off nothing here changes.
+ * before is a birth and keeps the as-built rule.
+ *
+ * With the merge and split row armed (@c "merge_split", which needs @c "root") the graph's component
+ * events keep the frame or declare its move.  At a split, a piece that does not keep the old root takes
+ * the root row's rule: its new root's receiver phase bias is pinned at the carried value, so the piece's
+ * frame does not step and its carries stay.  At a merge, a tree edge whose child was in another tree of
+ * the last election than its parent's side (the memory @c eq34_tree_root, written only with the row armed)
+ * is released, whichever other row its arc would fall under: the two trees' frames differ by a real number
+ * no carried value relates, so the moved side, the child and its subtree, takes the cut release, and the
+ * pin keeps the target the as-built rule drafted with an unknown step.  The edges inside that side keep
+ * their targets through the kept row: its integers stand, and the release moves them with it.  The datum
+ * receiver is elected by the satellites' memory, so the side with more satellites keeps its root and the
+ * other is absorbed.  With a row off nothing here changes.
  *
  * @param ctx           [in/out] carry + counters.  The whole context is passed
  *                      instead of about twenty individual references because the
@@ -512,6 +524,20 @@ struct ChainDatumCounters {
     long long eq34_sl_arcs = 0;               ///< leveling carries the slip row's releases erased: every carry of a satellite of a moved side at any station, and every carry of a receiver of a moved side on its band
     long long eq34_sl_rpb = 0;                ///< receiver phase-bias carries the slip row's releases dropped
     long long eq34_sl_pb = 0;                 ///< satellite phase-bias priors of the moved sides (measure-only: the re-reference marginalizes them)
+    // The merge and split row (network.phase_datum_eq34_event_rows "merge_split"; all 0 with the row off).
+    long long eq34_split_pinned = 0;          ///< split pieces (without the old root) whose new root is pinned at its carried receiver phase bias, per band
+    long long eq34_split_no_carry = 0;        ///< ...split pieces left as built: no receiver phase-bias carry for the new root inside the horizon
+    long long eq34_mg_released = 0;           ///< tree edges released because they join two trees of the last election
+    long long eq34_mg_absorbed_held = 0;      ///< tree edges inside an absorbed side that the kept row held at their targets
+    long long eq34_mg_with_state = 0;         ///< ...released edges whose moved side held at least one leveling carry, receiver phase-bias carry or satellite phase-bias prior
+    long long eq34_mg_asbuilt_zero = 0;       ///< ...released edges whose as-built step was a known zero
+    long long eq34_mg_asbuilt_whole = 0;      ///< ...a known nonzero step of whole cycles
+    long long eq34_mg_asbuilt_frac = 0;       ///< ...a known nonzero step that is not whole cycles (or that has no wavelength)
+    long long eq34_mg_asbuilt_unknown = 0;    ///< ...an unknown step
+    long long eq34_mg_arcs = 0;               ///< leveling carries the merges' releases erased
+    long long eq34_mg_rpb = 0;                ///< receiver phase-bias carries the merges' releases dropped
+    long long eq34_mg_pb = 0;                 ///< satellite phase-bias priors of the moved sides (measure-only: the re-reference marginalizes them this epoch)
+    long long eq34_mg_declared = 0;           ///< (satellite, signal) keys of the moved sides, declared moved
     long long eq34_sl_declared = 0;           ///< (satellite, signal) keys of the moved sides, declared moved
 };
 

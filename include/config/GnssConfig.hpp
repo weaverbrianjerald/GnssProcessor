@@ -4964,6 +4964,8 @@ namespace GnssProcessor {
          * float vehicle on the chain datum.  The @c root entry is also dropped (with a warning)
          * when @c network.state_snapshot_path is set: its pinned targets are not serialized.
          * The @c slip entry reads the epoch's free-epoch latch, on the float vehicle's slip set.
+         * The @c merge_split entry is dropped (with a warning) when @c root is not armed: a split
+         * piece's new root is pinned by the root row's rule.
          *
          * @return The armed entries in the order the config gave them, without duplicates.
          * @see networkPhaseDatumEq34, networkPhaseDatumEq34EventRowArmed

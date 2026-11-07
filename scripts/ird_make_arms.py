@@ -161,6 +161,20 @@ ARMS = {
                 + ["network.phase_datum_eq34_rpb_prior_sigma_m=0",
                    'network.phase_datum_eq34_event_rows=["kept","returning","root","slip"]'],
                 "A0fkrR + the slip row, no rehost row (IRD-4, the row alone)"),
+    # The merge and split row (card IRDE), cumulative in table order on A1krhRs and on the floor-off bed, and with no
+    # rehost row (A0fkrRsm, the row alone).  Each arm is its parent with the event-row list extended and nothing else.
+    "A1krhRsm": (SLIP_SET + SEARCH_LOG + IRD_TRACES + BUNDLE_A0
+                 + ["network.phase_datum_eq34_family=pair",
+                    'network.phase_datum_eq34_event_rows=["kept","returning","rehost","root","slip","merge_split"]'],
+                 "A1krhRs + the merge and split row (IRD-4)"),
+    "A0fkrhRsm": (SLIP_SET + SEARCH_LOG + IRD_TRACES + BUNDLE_A0
+                  + ["network.phase_datum_eq34_rpb_prior_sigma_m=0",
+                     'network.phase_datum_eq34_event_rows=["kept","returning","rehost","root","slip","merge_split"]'],
+                  "A0fkrhRs + the merge and split row (IRD-4)"),
+    "A0fkrRsm": (SLIP_SET + SEARCH_LOG + IRD_TRACES + BUNDLE_A0
+                 + ["network.phase_datum_eq34_rpb_prior_sigma_m=0",
+                    'network.phase_datum_eq34_event_rows=["kept","returning","root","slip","merge_split"]'],
+                 "A0fkrRs + the merge and split row, no rehost row (IRD-4, the row alone)"),
     # The bisection of the stop (card IRDB section 4): bundle A0 less one group.
     "A0hb": (SLIP_SET + SEARCH_LOG + IRD_TRACES + CHAIN_ON + FLOAT_REPIN_OFF
              + ["network.phase_datum_min_stations=1"],
@@ -186,6 +200,53 @@ def gap_op(station, n_epochs, first_epoch=GAP_FIRST_EPOCH, types="???"):
     first_epoch + n_epochs - 1."""
     a = 261030 + 30 * (first_epoch - 1)
     return "strip;types=%s;stations=%s;tow_from=%d;tow_to=%d" % (types, station, a, a + 30 * (n_epochs - 1))
+
+
+# The merge and split fixtures (card IRDE): the rung 3b observation graph is cut in two by blanking the arcs that
+# cross a bipartition.  A pure fixture blanks every crossing arc but one from CUT_THIN on, so the tree re-hosts
+# once and then holds the small side below that one arc, the bridge; the bridge alone is blanked from CUT_SPLIT
+# to the epoch before CUT_MERGE, which splits the graph with the small side's tree whole and merges it through
+# one arc; the other crossing arcs return at CUT_BACK.  Its control keeps the bridge.  The abrupt fixture blanks
+# every crossing arc from CUT_SPLIT to the epoch before CUT_MERGE.  Each side was searched for the fewest crossing
+# arcs with both sides connected through the window, every station keeping at least 3 satellites and every
+# satellite at least 3 stations.
+CUT_THIN, CUT_SPLIT, CUT_MERGE, CUT_BACK = 130, 158, 178, 190   # TOW 264900, 265740, 266340, 266700
+CUT = ("S41000SIM,S43000SIM,S53000SIM,S56000SIM,S59000SIM", "G15,G17,G22,G24,G30")   # the datum receiver outside
+CUT_BRIDGE = ("S51000SIM", "G15")          # the small side hangs below its satellite
+CUT_ROOT = ("S02000SIM,S05000SIM,S10000SIM,S13000SIM,S18000SIM,S23000SIM,S31000SIM",
+            "G01,G03,G04,G16,G26")         # the datum receiver inside
+CUT_ROOT_BRIDGE = ("S34000SIM", "G01")
+CUT_ABRUPT = ("S33000SIM,S35000SIM,S43000SIM,S46000SIM,S48000SIM,S51000SIM,S53000SIM,S54000SIM,S56000SIM",
+              "G02,G13,G14,G15,G22,G24")
+
+
+def epoch_tow(epoch):
+    return 261030 + 30 * (epoch - 1)
+
+
+def cut_ops(cut, first_epoch, end_epoch, keep=None):
+    """The `strip` ops that blank every arc crossing the bipartition `cut` = (its stations, its satellites) in
+    epochs first_epoch .. end_epoch - 1: its stations lose the other satellites and the other stations lose
+    its satellites, except the arc `keep` = (station, satellite).  The consumer's file is not touched."""
+    stations, sats = [set(x.split(",")) for x in cut]
+    others_sta = set("S%02d000SIM" % i for i in range(1, 61)) - stations
+    others_sat = set("G%02d" % i for i in range(1, 33)) - sats
+    rows = [(stations, others_sat), (others_sta, sats)]
+    if keep:
+        rows = [(sta - {keep[0]}, sat) for sta, sat in rows]
+        rows.append(({keep[0]}, (others_sat if keep[0] in stations else sats) - {keep[1]}))
+    a, b = epoch_tow(first_epoch), epoch_tow(end_epoch - 1)
+    return ["strip;types=???;stations=%s;sats=%s;tow_from=%d;tow_to=%d" % (",".join(sorted(sta)), ",".join(sorted(sat)), a, b)
+            for sta, sat in rows]
+
+
+def pure_cut_ops(cut, bridge, split=True):
+    """The ops of a pure merge and split fixture (`split` False: of its control, which keeps the bridge)."""
+    ops = cut_ops(cut, CUT_THIN, CUT_BACK, keep=bridge)
+    if split:
+        ops.append("strip;types=???;stations=%s;sats=%s;tow_from=%d;tow_to=%d"
+                   % (bridge[0], bridge[1], epoch_tow(CUT_SPLIT), epoch_tow(CUT_MERGE - 1)))
+    return ops
 
 
 # name -> (golden, fixture dir or None, extra knobs, what it is, rapid_arm.py --rinex ops)
@@ -238,6 +299,28 @@ BEDS = {
                   "IRD l2v16: %s (interior vertex) loses L2 (L2W, C2W) for 16 min from epoch %d"
                   % (GAP_STATION, GAP_FIRST_EPOCH),
                   [gap_op(GAP_STATION, 32, types="L2W,C2W")]),
+    # the merge and split fixtures and their controls: the graph falls into two components, and joins again
+    "ird_ms": ("sim", "runs/simarl_r3b", ARL_GPS_ONLY,
+               "IRD ms: 5 stations and 5 satellites split off at epoch %d through one tree edge, the datum receiver "
+               "outside, and merged at epoch %d" % (CUT_SPLIT, CUT_MERGE), pure_cut_ops(CUT, CUT_BRIDGE)),
+    "ird_ms_ctl": ("sim", "runs/simarl_r3b", ARL_GPS_ONLY,
+                   "IRD ms's control: the bridge stays", pure_cut_ops(CUT, CUT_BRIDGE, split=False)),
+    "ird_msr": ("sim", "runs/simarl_r3b", ARL_GPS_ONLY,
+                "IRD msr: 7 stations and 5 satellites with the datum receiver cut from the rest at epoch %d through "
+                "one tree edge, and merged at epoch %d" % (CUT_SPLIT, CUT_MERGE), pure_cut_ops(CUT_ROOT, CUT_ROOT_BRIDGE)),
+    "ird_msr_ctl": ("sim", "runs/simarl_r3b", ARL_GPS_ONLY,
+                    "IRD msr's control: the bridge stays", pure_cut_ops(CUT_ROOT, CUT_ROOT_BRIDGE, split=False)),
+    "ird_msx": ("sim", "runs/simarl_r3b", ARL_GPS_ONLY,
+                "IRD msx: 9 stations and 6 satellites cut off abruptly for 10 min from epoch %d, every crossing arc "
+                "at once" % CUT_SPLIT, cut_ops(CUT_ABRUPT, CUT_SPLIT, CUT_MERGE)),
+    "ird_ms_mic": ("sim", "runs/simarl_r1c", ARL_GPS_ONLY + MICROSCOPE,
+                   "IRD ms on the microscope", pure_cut_ops(CUT, CUT_BRIDGE)),
+    "ird_ms_ctl_mic": ("sim", "runs/simarl_r1c", ARL_GPS_ONLY + MICROSCOPE,
+                       "IRD ms's control on the microscope", pure_cut_ops(CUT, CUT_BRIDGE, split=False)),
+    "ird_msr_mic": ("sim", "runs/simarl_r1c", ARL_GPS_ONLY + MICROSCOPE,
+                    "IRD msr on the microscope", pure_cut_ops(CUT_ROOT, CUT_ROOT_BRIDGE)),
+    "ird_msr_ctl_mic": ("sim", "runs/simarl_r1c", ARL_GPS_ONLY + MICROSCOPE,
+                        "IRD msr's control on the microscope", pure_cut_ops(CUT_ROOT, CUT_ROOT_BRIDGE, split=False)),
 }
 
 
@@ -527,8 +610,29 @@ def selftest():
     fixtures = ("ird_t1", "ird_t2", "ird_t3", "ird_t4", "ird_t5", "ird_tr", "ird_rg", "ird_rv6", "ird_rv16")
     chk(all(b in BEDS for b in fixtures)
         and sorted(b for b in BEDS if b.startswith("ird_"))
-        == sorted(fixtures + ("ird_l2v16", "ird_rg_mic", "ird_t1m", "ird_trm")),
-        "a bed for each of the nine fixtures, the one-band fixture and the microscope gap bed, and no other ird_ bed")
+        == sorted(fixtures + ("ird_l2v16", "ird_rg_mic", "ird_t1m", "ird_trm", "ird_ms", "ird_ms_ctl", "ird_msr",
+                              "ird_msr_ctl", "ird_msx", "ird_ms_mic", "ird_ms_ctl_mic", "ird_msr_mic", "ird_msr_ctl_mic")),
+        "a bed for each of the nine fixtures, the one-band fixture, the microscope gap bed, the microscope slip beds and "
+        "the merge and split fixtures, and no other ird_ bed")
+    # The merge and split fixtures: a thinning, a split and a return, each in its window, on the bed's rung.
+    for bed, rung, cut, bridge in (("ird_ms", "runs/simarl_r3b", CUT, CUT_BRIDGE), ("ird_msr", "runs/simarl_r3b", CUT_ROOT, CUT_ROOT_BRIDGE),
+                                   ("ird_ms_mic", "runs/simarl_r1c", CUT, CUT_BRIDGE), ("ird_msr_mic", "runs/simarl_r1c", CUT_ROOT, CUT_ROOT_BRIDGE)):
+        parsed = [rapid_arm.parse_op(o) for o in BEDS[bed][4]]
+        ctl = [rapid_arm.parse_op(o) for o in BEDS[bed.replace("_mic", "") + "_ctl" + ("_mic" if bed.endswith("_mic") else "")][4]]
+        chk(BEDS[bed][1] == rung and len(parsed) == 4 and len(ctl) == 3
+            and all(rapid_arm.op_window(p) == (float(epoch_tow(CUT_THIN)), float(epoch_tow(CUT_BACK - 1))) for p in parsed[:3])
+            and rapid_arm.op_window(parsed[3]) == (float(epoch_tow(CUT_SPLIT)), float(epoch_tow(CUT_MERGE - 1)))
+            and (parsed[3]["stations"], parsed[3]["sats"]) == bridge
+            and all(bridge[0] not in p["stations"].split(",") for p in parsed[:2])
+            and bridge[1] not in parsed[2]["sats"].split(",") and parsed[2]["stations"] == bridge[0]
+            and BEDS[bed][4][:3] == BEDS[bed.replace("_mic", "") + "_ctl" + ("_mic" if bed.endswith("_mic") else "")][4],
+            "%s: every crossing arc but the bridge blanked in the thin window, the bridge from the split to the merge, and "
+            "the control the same ops but the last" % bed)
+    abrupt = [rapid_arm.parse_op(o) for o in BEDS["ird_msx"][4]]
+    chk(len(abrupt) == 2 and all(rapid_arm.op_window(p) == (float(epoch_tow(CUT_SPLIT)), float(epoch_tow(CUT_MERGE - 1))) for p in abrupt),
+        "the abrupt fixture blanks every crossing arc from the split to the epoch before the merge")
+    chk("S13000SIM" in CUT_ROOT[0] and "S13000SIM" not in CUT[0] and "S30000SIM" not in CUT[0] + CUT_ROOT[0],
+        "the datum receiver is on the small side of the root cut only, and the clock datum station on neither")
     chk(all(ARL_GPS_ONLY[0] in compose("A0", b) for b in fixtures), "every fixture bed is GPS-only like the ARL beds")
     chk(all(os.path.isabs(BEDS[b][1]) and BEDS[b][1] == FIXTURES_ROOT + "/simird_" + b[4:] and not BEDS[b][4]
             for b in fixtures[:6]),

@@ -200,7 +200,7 @@ struct ChainElection {
           pair_family(ctx_.knobs.eq34_pair_family), trace_chain(ctx_.knobs.trace_chain_datum),
           kept_row(ctx_.knobs.eq34_row_kept), returning_row(ctx_.knobs.eq34_row_returning),
           rehost_row(ctx_.knobs.eq34_row_rehost), root_row(ctx_.knobs.eq34_row_root),
-          slip_row(ctx_.knobs.eq34_row_slip), now_s(now_s_),
+          slip_row(ctx_.knobs.eq34_row_slip), merge_split_row(ctx_.knobs.eq34_row_merge_split), now_s(now_s_),
           pref_rx(config.networkPhaseDatumEq34Receiver()),
           // Under carry_invariant pin-to-round is off: the frame is re-realized each epoch and
           // continuity is held by the invariant DD carry.  (Seed-round, below, can still round
@@ -240,6 +240,7 @@ struct ChainElection {
     const bool        rehost_row;      ///< The rehost row of the event table is armed.
     const bool        root_row;        ///< The root row of the event table is armed.
     const bool        slip_row;        ///< The slip row of the event table is armed.
+    const bool        merge_split_row; ///< The merge and split row of the event table is armed.
     const double      now_s;           ///< This epoch in continuous GPS seconds (the age of a receiver phase-bias carry).
     const std::string pref_rx;
     const bool        pin_round;
@@ -266,8 +267,8 @@ struct ChainElection {
     // The tree edges kept across a row gap while their carry lives (extend-only): replaces the arcs' retained edges.
     std::set<std::pair<int, std::string>> new_retained_edges;
 
-    /// True when a row that releases edges (the returning, the rehost or the slip row) is armed.
-    bool cutsEdges() const { return returning_row || rehost_row || slip_row; }
+    /// True when a row that releases edges (the returning, the rehost, the slip or the merge and split row) is armed.
+    bool cutsEdges() const { return returning_row || rehost_row || slip_row || merge_split_row; }
     /// True when a row that reads the memory of earlier trees (the returning or the slip row) is armed.
     bool remembersTrees() const { return returning_row || slip_row; }
 
@@ -296,6 +297,14 @@ struct ChainElection {
     /// ("<constellation key>|<signal>", datum receiver roster index) -> the old root the receiver's
     /// handover was pinned against.  Read by the satellite edges below that receiver.
     std::map<std::pair<std::string, std::size_t>, std::string> root_handed;
+
+    // The merge and split row, filled only with the row armed.
+    /// Ambiguity key of every satellite of this election's trees -> its component's datum receiver;
+    /// replaces @c SatSignalState::eq34_tree_root after the election.
+    std::map<std::string, std::string> new_tree_root_sats;
+    /// (station index, "<constellation key>|<signal>") of every receiver of this election's trees -> its
+    /// component's datum receiver; replaces @c StationSignalState::eq34_tree_root after the election.
+    std::map<std::pair<int, std::string>, std::string> new_tree_root_rx;
 };
 
 /// The coverage count of a station in a constellation (0 when unknown).
@@ -796,7 +805,7 @@ struct BandWalk {
     explicit BandWalk(const ChainGraph& cg)
         : vshift(cg.nVertices(), 0.0), vknown(cg.nVertices(), 0), vdepth(cg.nVertices(), 0),
           owner(cg.nVertices(), -1), vrelease(cg.nVertices(), 0), vrel_root(cg.nVertices(), -1),
-          vparent(cg.nVertices(), -1) {}
+          vparent(cg.nVertices(), -1), vold_root(cg.nVertices()) {}
 
     /// One tree of the band: a component's plan with the index the observatory gave it.
     struct Tree {
@@ -812,6 +821,7 @@ struct BandWalk {
     std::vector<char>   vrelease;   ///< Per vertex: it lies in the moved side of a cut release (the returning row).
     std::vector<int>    vrel_root;  ///< Per vertex: the vertex whose released edge put it in that moved side, itself included (-1: none).
     std::vector<int>    vparent;    ///< Per vertex: the vertex it hangs under at this election (-1: a root, or no vertex of the band's trees).
+    std::vector<std::string> vold_root;   ///< Per vertex: the root of the last election's tree it was in, or for a vertex in none the nearest root above it (filled only with the merge and split row armed).
     std::set<int>       tree_arcs;  ///< The arcs of the band's trees at this election (filled only with the slip row armed).
     std::map<int, std::size_t> release_of;   ///< Released vertex -> its release (an index into ChainElection::releases).
     std::vector<Tree>   trees;   ///< The band's trees, in election order.
@@ -853,6 +863,12 @@ struct PinDraft {
     /// The root row kept this edge's frame through a root handover: the as-built rule would have marked
     /// the step unknown (the satellite remembers the old root), and the pinned handover left it known.
     bool       root_kept{false};
+    /// The merge and split row: both ends of the edge were in one tree at the last election, and this
+    /// component's datum receiver continues another, so the edge lies inside an absorbed side.  Its
+    /// satellite remembers another root, and the kept row may hold it all the same.
+    bool       absorbed{false};
+    std::string merge_from;   ///< The merge and split row released the edge: the root of the old tree of its child.
+    std::string merge_into;   ///< ...and the root of the old tree its parent's side continues.
     PinAsBuilt as_built;   ///< Meaningful only when @ref held.
 };
 
@@ -1056,14 +1072,76 @@ IncumbentEdge incumbentEdgeOf(const ChainElection& el, const ChainBand& band, st
     return inc;
 }
 
+/// The root of the tree a vertex of @p band was in at the last election ("": it was in none).
+///
+/// @param ri         The receiver's roster index (read when @p sat_vertex is false).
+/// @param amb        The satellite's ambiguity key on the band (read when @p sat_vertex is true).
+/// @param sat_vertex The vertex is the satellite.
+std::string oldTreeRootOf(const ChainElection& el, const ChainBand& band, std::size_t ri, const std::string& amb,
+                          bool sat_vertex) {
+    const std::string* root =
+        sat_vertex ? net::getSig(el.sig_rows, amb, &net::SatSignalState::eq34_tree_root)
+                   : net::get(el.entities.stations, StationId{static_cast<int>(ri)}, &net::StationState::signals,
+                              rxCellKey(band), &net::StationSignalState::eq34_tree_root);
+    return root != nullptr ? *root : std::string();
+}
+
+/// The merge half of the merge and split row of the chain's event table, applied to a pin after the
+/// as-built draft and before the other rows.  Each vertex of a band's walk carries the root of the last
+/// election's tree it was in; a vertex that was in no tree carries the one above it.  An edge whose child
+/// was in a tree other than the one its parent's side carries joins two old trees: it is released (the cut
+/// release of its moved side, the child and its subtree), whichever other row its arc would fall under,
+/// because the two trees' frames differ by a real number no carried value relates.  The pin keeps the
+/// target the as-built rule drafted (the rounded carry of the arc, or the first-sighting target) with an
+/// unknown step.  An edge with both ends in one old tree, when the datum receiver continues another, lies
+/// inside the absorbed side and is marked for the kept row (@ref PinDraft::absorbed): its integer stands,
+/// and the release above it moves it with its side.  A datum receiver that was in no tree starts its walk
+/// with no old tree to compare with, so a merge at the same election as such a handover is not seen.
+///
+/// @param plan   The tree the edge hangs in.
+/// @param child  The vertex the edge attaches.
+/// @param parent The vertex it hangs under.
+/// @param walk   The band's walk; records the child's old tree.
+/// @param d      The as-built draft; replaced in place when the edge is released.
+void applyMergeRow(ChainElection& el, const ChainBand& band, const ChainComponentPlan& plan, std::size_t ri,
+                   const std::string& amb, bool sat_is_child, int child, int parent, BandWalk& walk, PinDraft& d) {
+    const std::string old_root = oldTreeRootOf(el, band, ri, amb, sat_is_child);
+    const std::string above = walk.vold_root[static_cast<std::size_t>(parent)];
+    walk.vold_root[static_cast<std::size_t>(child)] = old_root.empty() ? above : old_root;
+    if (old_root.empty() || above.empty()) return;
+    if (old_root == above) {
+        const std::string& continued = walk.vold_root[static_cast<std::size_t>(plan.roots.front())];
+        d.absorbed = !continued.empty() && old_root != continued;
+        return;
+    }
+    // Released.  What the as-built draft would have done is tallied and kept for the observatory.
+    auto& cnt = el.ctx.counters;
+    ++cnt.eq34_mg_released;
+    if (!asBuilt(d).known)     ++cnt.eq34_mg_asbuilt_unknown;
+    else if (d.pinmove == 0.0) ++cnt.eq34_mg_asbuilt_zero;
+    else if (band.lambda_m > 0.0 && wholeCycles(d.pinmove / band.lambda_m)) ++cnt.eq34_mg_asbuilt_whole;
+    else                       ++cnt.eq34_mg_asbuilt_frac;
+    d.as_built = asBuilt(d);
+    d.held = true;
+    d.released = true;
+    d.release_row = ChainReleaseRow::Merge;
+    d.merge_from = old_root;
+    d.merge_into = above;
+    d.pinmove = 0.0;
+    d.known = false;
+    d.frame_shiftable = false;
+}
+
 /// The kept row of the chain's event table, applied to a pin after the as-built draft.  An edge is
 /// held when all of these hold:
 ///  - its arc was a tree edge at the last election, in either direction: the (satellite, signal)'s
 ///    incumbent anchor names this station, or this station's incumbent receiver-side parent for the
 ///    band names this satellite;
 ///  - the arc is not in this epoch's free-epoch latch (a freed arc is the slip row's case);
-///  - for a satellite child, the (satellite, signal)'s remembered root is absent or this
-///    component's datum receiver (another root is the root row's case);
+///  - no earlier row released it (the merge and split row);
+///  - for a satellite child, the (satellite, signal)'s remembered root is absent, or this component's
+///    datum receiver, or the old root of a handover the root row pinned (@ref PinDraft::root_kept), or
+///    any root when the edge lies inside an absorbed side (@ref PinDraft::absorbed);
 ///  - the arc has a previous target;
 ///  - the arc has a remembered pin life and it continues (@c arcPinnedLifeContinues).
 /// A held edge keeps its previous target and takes no frame step of its own: pin displacement 0, a
@@ -1087,6 +1165,7 @@ void applyKeptRow(ChainElection& el, const ChainBand& band, const ChainComponent
     keys.amb = key;
     const ArcLifeStamp now = arcLifeStamp(el.ctx, keys);
     el.new_pin_life[key] = now;
+    if (d.held) return;
     const IncumbentEdge inc = incumbentEdgeOf(el, band, ri, sat, amb);
     const bool was_sat_edge = inc.was_sat_edge;
     const bool was_rx_edge  = inc.was_rx_edge;
@@ -1094,7 +1173,7 @@ void applyKeptRow(ChainElection& el, const ChainBand& band, const ChainComponent
     if (el.events.slip.relevel.free_ambs.count(key) != 0) { ++cnt.eq34_kept_not_freed; return; }
     if (sat_is_child) {
         const std::string* root = net::getSig(el.sig_rows, amb, &net::SatSignalState::eq34_sat_root);
-        if (root != nullptr && *root != el.stations[plan.r1].name && !d.root_kept) {
+        if (root != nullptr && *root != el.stations[plan.r1].name && !d.root_kept && !d.absorbed) {
             ++cnt.eq34_kept_not_root;
             return;
         }
@@ -1107,6 +1186,7 @@ void applyKeptRow(ChainElection& el, const ChainBand& band, const ChainComponent
 
     // Held.  What the as-built draft would have done is tallied and kept for the observatory.
     ++cnt.eq34_kept_held;
+    if (d.absorbed) ++cnt.eq34_mg_absorbed_held;
     const bool flipped = sat_is_child ? (!was_sat_edge && was_rx_edge) : (!was_rx_edge && was_sat_edge);
     if (flipped) ++cnt.eq34_kept_flipped;
     if (!asBuilt(d).known) {
@@ -1388,7 +1468,8 @@ void buildRootKeepers(ChainElection& el, const ChainBand& band,
 ///  - some satellite of the component remembers another root;
 ///  - the datum receiver had a parent edge in the last tree on the band, whose satellite's remembered
 ///    root is the old root (otherwise the old root is unknown);
-///  - the component is the keeper of that old root (@ref buildRootKeepers), so a split's other pieces
+///  - the component is the keeper of that old root (@ref buildRootKeepers), or, with the merge and
+///    split row armed, any other piece of it, so a split's other pieces keep the frame too; off, they
 ///    run as built;
 ///  - the datum receiver has a receiver phase-bias carry no older than the carry horizon.
 /// Every other handover runs the as-built rule and is counted by cause.  A pinned handover records the
@@ -1436,7 +1517,9 @@ void applyRootRow(ChainElection& el, const ChainBand& band, const ChainComponent
     if (old_root == nullptr) { decided(ChainRootOutcome::NotVertex, cnt.eq34_root_not_vertex); return; }
     rec.old_root = *old_root;
     const auto keeper = el.root_keepers.find({band.dr_key, *old_root});
-    if (keeper == el.root_keepers.end() || keeper->second != &plan) {
+    const bool in_table = keeper != el.root_keepers.end();
+    rec.split = in_table && keeper->second != &plan;
+    if (!in_table || (rec.split && !el.merge_split_row)) {
         decided(ChainRootOutcome::NotKeeper, cnt.eq34_root_not_keeper);
         return;
     }
@@ -1444,6 +1527,7 @@ void applyRootRow(ChainElection& el, const ChainBand& band, const ChainComponent
                                     &net::StationSignalState::rpb);
     const double gap = rc == nullptr ? 0.0 : el.now_s - rc->last_seen_s;
     if (rc == nullptr || !(gap >= 0.0 && gap <= el.ctx.knobs.pl_max_gap_s)) {
+        if (rec.split) ++cnt.eq34_split_no_carry;
         decided(ChainRootOutcome::NoCarry, cnt.eq34_root_not_carry);
         return;
     }
@@ -1453,6 +1537,7 @@ void applyRootRow(ChainElection& el, const ChainBand& band, const ChainComponent
     rec.target_m = rc->value_abs;
     rec.sigma_m  = std::sqrt(rc->var);
     ++cnt.eq34_root_pinned;
+    if (rec.split) ++cnt.eq34_split_pinned;
     rec.outcome = ChainRootOutcome::Pinned;
     if (el.trace_chain) el.chain_obs.roots.push_back(rec);
 }
@@ -1520,6 +1605,10 @@ void traceTreeEdge(ChainElection& el, const ChainFamily& fam, const ChainBand& b
     o.edge_changed = d.edge_changed;
     o.row_armed = d.held || d.root_kept;
     o.slip_released = d.released && d.release_row == ChainReleaseRow::Slip;
+    o.merge_released = d.released && d.release_row == ChainReleaseRow::Merge;
+    o.absorbed = d.absorbed;
+    o.merge_from = d.merge_from;
+    o.merge_into = d.merge_into;
     o.legacy_target_m = ab.target;
     o.legacy_pinmove_m = ab.pinmove;
     o.legacy_known = ab.known;
@@ -1582,10 +1671,11 @@ void traceTreeEdge(ChainElection& el, const ChainFamily& fam, const ChainBand& b
 ///
 /// @param plan       The tree the edge hangs in (its datum receiver is the satellite's root).
 /// @param comp_index The observatory's component index of that tree on this band.
+/// @param walk       The band's walk (the merge and split row reads and records the vertices' old trees).
 /// @return The edge as the shift walk consumes it.
 TreeStep recordTreeEdge(ChainElection& el, const ChainFamily& fam, const ChainGraph& cg,
                         const ChainBand& band, const ChainComponentPlan& plan, int comp_index,
-                        const arcgraph::TreeEdge& edge) {
+                        const arcgraph::TreeEdge& edge, BandWalk& walk) {
     const int         sta_slot     = cg.graph.row_station[static_cast<size_t>(edge.arc)];
     const int         sat_slot     = cg.graph.row_sat[static_cast<size_t>(edge.arc)];
     const size_t      ri           = cg.staIdx(sta_slot);
@@ -1606,6 +1696,14 @@ TreeStep recordTreeEdge(ChainElection& el, const ChainFamily& fam, const ChainGr
         ++el.ctx.counters.eq34_gap_repin_total;
     PinDraft d = draftPinTarget(el, band, ri, sat, amb);
     draftPinStep(el, band, plan, ri, sat, amb, sat_is_child, d);
+    const int rv = arcgraph::stationVertex(cg.graph, sta_slot);
+    const int sv = arcgraph::satVertex(cg.graph, sat_slot);
+    if (el.merge_split_row) {
+        applyMergeRow(el, band, plan, ri, amb, sat_is_child, sat_is_child ? sv : rv, sat_is_child ? rv : sv, walk, d);
+        const std::string& root_name = el.stations[plan.r1].name;
+        if (sat_is_child) el.new_tree_root_sats[amb] = root_name;
+        else              el.new_tree_root_rx[{static_cast<int>(ri), rxCellKey(band)}] = root_name;
+    }
     if (el.kept_row) applyKeptRow(el, band, plan, ri, sat, amb, sat_is_child, d);
     if (el.returning_row) applyReturningRow(el, fam.sys, band, ri, amb, sat_is_child, d);
     if (el.remembersTrees()) noteTreeVertices(el, band, ri, amb);
@@ -1614,8 +1712,6 @@ TreeStep recordTreeEdge(ChainElection& el, const ChainFamily& fam, const ChainGr
     notePin(el, ri, amb, sat_is_child, d);
     if (el.trace_chain)
         traceTreeEdge(el, fam, band, plan, comp_index, ri, sat, amb, sat_is_child, edge, d);
-    const int rv = arcgraph::stationVertex(cg.graph, sta_slot);
-    const int sv = arcgraph::satVertex(cg.graph, sat_slot);
     return TreeStep{sat_is_child ? sv : rv, sat_is_child ? rv : sv, d.pinmove, d.known, d.frame_shiftable,
                     d.released, d.release_row, d.root_kept};
 }
@@ -1832,12 +1928,24 @@ void electBandComponent(ChainElection& el, const ChainFamily& fam, const ChainGr
     }
     walk.trees.push_back(BandWalk::Tree{&plan, comp_index, obs});
     for (int v : plan.vertices) walk.owner[static_cast<size_t>(v)] = static_cast<int>(walk.trees.size()) - 1;
+    // The merge and split row: the walk starts from the old trees of its roots, which join this election's memory.
+    if (el.merge_split_row) {
+        const std::string& root_name = el.stations[plan.r1].name;
+        walk.vold_root[static_cast<size_t>(plan.roots.front())] = oldTreeRootOf(el, band, plan.r1, "", false);
+        el.new_tree_root_rx[{static_cast<int>(plan.r1), rxCellKey(band)}] = root_name;
+        for (int k : plan.bridged) {
+            const std::string amb = StateKeys::makeAmbiguityKey(cg.satName(k), band.signal);
+            walk.vold_root[static_cast<size_t>(arcgraph::satVertex(cg.graph, k))] =
+                oldTreeRootOf(el, band, plan.r1, amb, true);
+            el.new_tree_root_sats[amb] = root_name;
+        }
+    }
     std::vector<TreeStep> order;
     for (const arcgraph::TreeEdge& edge : plan.forest.edges) {
         // A new edge on a non-eligible host is an unavoidable cold pin (the second pass admitted it).
         if (edge.ineligible_host) ++el.ctx.counters.hyg.cold_fallback_pins;
         if (el.slip_row) walk.tree_arcs.insert(edge.arc);
-        order.push_back(recordTreeEdge(el, fam, cg, band, plan, comp_index, edge));
+        order.push_back(recordTreeEdge(el, fam, cg, band, plan, comp_index, edge, walk));
     }
     // r1 and every bridged satellite are roots of the walk.  A bridged satellite's frame does not
     // move either (the bridge row holds b_s at its previous value), so it seeds the walk with a
@@ -1882,7 +1990,7 @@ void extendPairTrees(ChainElection& el, const ChainFamily& fam, const ChainGraph
         walk.owner[static_cast<size_t>(child)] = tree;
         const BandWalk::Tree& t = walk.trees[static_cast<size_t>(tree)];
         if (el.slip_row) walk.tree_arcs.insert(edge.arc);
-        order.push_back(recordTreeEdge(el, fam, cg, band, *t.plan, t.comp, edge));
+        order.push_back(recordTreeEdge(el, fam, cg, band, *t.plan, t.comp, edge, walk));
         ++el.ctx.counters.eq34_pair_ext_edges;
     }
     walkFrameSteps(el, fam, cg, band, order, walk);
@@ -2092,7 +2200,7 @@ void eraseReferencedCarries(ChainElection& el) {
     }
 }
 
-/// The cut release of the carries, for the returning, rehost and slip rows: every leveling carry that relates a moved side to
+/// The cut release of the carries, for the returning, rehost, slip and merge rows: every leveling carry that relates a moved side to
 /// the rest is erased.  eraseReferencedCarries has erased the carries of the satellites of the moved
 /// sides (the walk re-referenced them) at every station, present or absent; this erases the carries
 /// of the receivers of the moved sides on their band, to every satellite outside the moved sides,
@@ -2126,14 +2234,21 @@ void releaseCutCarries(ChainElection& el) {
     }
     // What each release took is counted under the row that released it.
     for (const ChainReleaseObs& r : el.releases) {
-        const bool rehost = r.row == ChainReleaseRow::Rehost, slip = r.row == ChainReleaseRow::Slip;
-        (rehost ? cnt.eq34_rh_arcs : slip ? cnt.eq34_sl_arcs : cnt.eq34_ret_arcs) += r.arcs;
-        (rehost ? cnt.eq34_rh_rpb : slip ? cnt.eq34_sl_rpb : cnt.eq34_ret_rpb) += r.rpb;
-        (rehost ? cnt.eq34_rh_pb : slip ? cnt.eq34_sl_pb : cnt.eq34_ret_pb) += r.pb;
-        (rehost ? cnt.eq34_rh_declared : slip ? cnt.eq34_sl_declared : cnt.eq34_ret_declared)
+        const auto ofRow = [&r](long long& ret, long long& rh, long long& sl, long long& mg) -> long long& {
+            switch (r.row) {
+                case ChainReleaseRow::Rehost: return rh;
+                case ChainReleaseRow::Slip:   return sl;
+                case ChainReleaseRow::Merge:  return mg;
+                default:                      return ret;
+            }
+        };
+        ofRow(cnt.eq34_ret_arcs, cnt.eq34_rh_arcs, cnt.eq34_sl_arcs, cnt.eq34_mg_arcs) += r.arcs;
+        ofRow(cnt.eq34_ret_rpb, cnt.eq34_rh_rpb, cnt.eq34_sl_rpb, cnt.eq34_mg_rpb) += r.rpb;
+        ofRow(cnt.eq34_ret_pb, cnt.eq34_rh_pb, cnt.eq34_sl_pb, cnt.eq34_mg_pb) += r.pb;
+        ofRow(cnt.eq34_ret_declared, cnt.eq34_rh_declared, cnt.eq34_sl_declared, cnt.eq34_mg_declared)
             += static_cast<long long>(r.sats.size());
         if (r.arcs + r.rpb + r.pb > 0)
-            ++(rehost ? cnt.eq34_rh_with_state : slip ? cnt.eq34_sl_with_state : cnt.eq34_ret_with_state);
+            ++ofRow(cnt.eq34_ret_with_state, cnt.eq34_rh_with_state, cnt.eq34_sl_with_state, cnt.eq34_mg_with_state);
     }
     if (el.trace_chain) el.chain_obs.releases = el.releases;
 }
@@ -2347,6 +2462,15 @@ void advanceChainBaselines(ChainElection& el) {
         for (const auto& [key, value] : el.new_root_targets)
             net::put(entities.stations, StationId{key.first}, &net::StationState::signals, key.second,
                      &net::StationSignalState::eq34_root_rpb_target) = value;
+    }
+    // The vertices of this election's trees with their datum receivers replace the memory of the last
+    // election's trees wholesale.  Written only with the merge and split row armed.
+    if (el.merge_split_row) {
+        net::assignSig(entities, &net::SatSignalState::eq34_tree_root, el.new_tree_root_sats);
+        net::dropAll(entities.stations, &net::StationState::signals, &net::StationSignalState::eq34_tree_root);
+        for (const auto& [key, root] : el.new_tree_root_rx)
+            net::put(entities.stations, StationId{key.first}, &net::StationState::signals, key.second,
+                     &net::StationSignalState::eq34_tree_root) = root;
     }
     if (eq34_extend_only)
         net::assignArcAmbFlags(entities, &net::ArcState::eq34_retained_edge, new_retained_edges);
@@ -2614,6 +2738,30 @@ int networkChainDatumRunEnd(const NetworkRunEndView& v) {
                   "RAIM attribution {}, RAIM consensus {}, wind-up restart {}, gap re-entry {}, GF jump {}.",
                   c.eq34_sl_by_cause[0], c.eq34_sl_by_cause[1], c.eq34_sl_by_cause[2], c.eq34_sl_by_cause[3],
                   c.eq34_sl_by_cause[4], c.eq34_sl_by_cause[5], c.eq34_sl_by_cause[6], c.eq34_sl_by_cause[7]);
+    }
+    // The merge and split row (network.phase_datum_eq34_event_rows "merge_split"), reported only when armed
+    // for the same reason.  A run whose graph never split or merged has nothing to act on: that reads as no
+    // event, not a failure.
+    if (ctx.knobs.eq34_row_merge_split) {
+        const auto& c = ctx.counters;
+        if (c.eq34_mg_released + c.eq34_split_pinned + c.eq34_split_no_carry == 0)
+            log->info("Network (eq34 merge and split row): ARMED, and no tree edge joined two trees of the last "
+                      "election and no piece split off without the old root: nothing to act on, so the row did "
+                      "not act.");
+        else
+            log->info("Network (eq34 merge and split row): {} split piece(s) pinned at the new root's carried "
+                      "receiver phase bias, {} left as built with no carried bias inside the horizon.  {} tree "
+                      "edge(s) joining two old trees released, {} of them with state (a leveling carry, a receiver "
+                      "phase-bias carry or a satellite phase-bias prior) on the moved side; those releases erased "
+                      "{} leveling carry(ies), dropped {} receiver phase-bias carry(ies), took {} satellite "
+                      "phase-bias prior(s) and declared {} (satellite, signal) key(s) moved, and the kept row held "
+                      "{} tree edge(s) inside the absorbed sides at their targets.  The as-built rule would have "
+                      "taken a known zero step on {} of the released edges, a whole-cycle step on {}, another "
+                      "nonzero step on {} and an unknown step on {}.  The tallies are per election and band.",
+                      c.eq34_split_pinned, c.eq34_split_no_carry, c.eq34_mg_released, c.eq34_mg_with_state,
+                      c.eq34_mg_arcs, c.eq34_mg_rpb, c.eq34_mg_pb, c.eq34_mg_declared, c.eq34_mg_absorbed_held,
+                      c.eq34_mg_asbuilt_zero, c.eq34_mg_asbuilt_whole, c.eq34_mg_asbuilt_frac,
+                      c.eq34_mg_asbuilt_unknown);
     }
     // Chain-pin audit (docs/SPEC_synthetic_minimum_network.md §14 T1, measured record
     // §12.8): declared → folded → landed per (constellation, signal).  The election's

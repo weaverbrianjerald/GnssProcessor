@@ -833,6 +833,8 @@ namespace GnssProcessor {
         bool eq34_row_root{};
         /// network.phase_datum_eq34_event_rows holds "slip" (after the loader's resolution): an arc in the epoch's free-epoch latch leaves the tree at the slip epoch while another route reaches its child, whose new edge is that edge's own row's; a slipped arc no other route can replace takes the cut release (network/solve/ChainDatum.hpp).  Off: a slipped tree edge stays, and the frame takes the slip.
         bool eq34_row_slip{};
+        /// network.phase_datum_eq34_event_rows holds "merge_split" (after the loader's resolution, which keeps it only with "root"): a tree edge joining two trees of the last election takes the cut release of the side it attaches, whose own tree edges keep their targets, and a piece that splits off without the old root pins its new root's receiver phase bias at its carried value, so its frame does not step (network/solve/ChainDatum.hpp).  Off: a split piece's frame takes an unknown step, undeclared.  Resolved to false unless eq34.  Not fingerprinted, like the other election knobs.
+        bool eq34_row_merge_split{};
         /// network.phase_datum_eq34_seed_round (docs/SPEC_eq34_seed_round.md): round
         /// otherwise-zero pin targets to λ·round(x_state/λ), so |innovation| ≤ λ/2 by
         /// construction.  Not gated on !carry_invariant: the invariant-carry zero-target rationale

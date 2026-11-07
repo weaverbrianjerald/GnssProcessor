@@ -560,7 +560,9 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         //                           written): a resumed leg would pin a root at 0 under carries in the old
         //                           frame.  The slip row reads the one-epoch free-epoch latch and the same
         //                           memory of earlier trees, so after a resume it also reads a first absent
-        //                           vertex as a birth
+        //                           vertex as a birth.  The merge and split row's memory of the last election's
+        //                           trees is not serialized either, and the loader drops its entry with the
+        //                           root row's
         //   signal integrity        network.signal_integrity.*
         //   measurement admission   adm_{screen,bound_m,min_sats,heal_ep,max_frac,
         //                           trace} and adm_revet{,_gap_ep,_ep,_census,_hold}

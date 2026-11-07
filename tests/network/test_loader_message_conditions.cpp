@@ -213,25 +213,37 @@ TEST(LoaderMessages, Eq34EventRowsUnknownEntryWarnsAndADuplicateIsDroppedSilentl
     EXPECT_TRUE(contains(str.text, "network.phase_datum_eq34_event_rows must be an array")) << str.text;
 }
 
-// The rows are built in table order: an entry whose rule is not built yet is dropped with a warning
-// and arms nothing.
-TEST(LoaderMessages, Eq34EventRowsNotBuiltYetAreDroppedWithAWarning) {
-    for (const char* entry : {"merge_split"}) {
-        const LoadedConfig r = loadNetworkConfigCapturing(std::string("eq34_rows_nb_") + entry,
-            kFloatChain + eventRows(std::string("[\"") + entry + "\"]"));
-        EXPECT_TRUE(r.ok) << entry << ": " << r.text;
-        EXPECT_TRUE(r.config.networkPhaseDatumEq34EventRows().empty()) << entry;
-        EXPECT_FALSE(r.config.networkPhaseDatumEq34EventRowArmed(entry)) << entry;
-        EXPECT_TRUE(contains(r.text, std::string("the rows are built in table order; '") + entry
-                                         + "' is not built yet")) << entry << ": " << r.text;
-        EXPECT_FALSE(contains(r.text, "EVENT ROWS ON")) << entry << ": " << r.text;
-    }
-    // One built entry beside an unbuilt one: the built one arms.
-    const LoadedConfig mixed = loadNetworkConfigCapturing("eq34_rows_nb_mixed",
-        kFloatChain + eventRows("[\"merge_split\", \"kept\"]"));
-    EXPECT_TRUE(mixed.ok) << mixed.text;
-    EXPECT_EQ(mixed.config.networkPhaseDatumEq34EventRows(), std::vector<std::string>{"kept"});
-    EXPECT_TRUE(contains(mixed.text, "'merge_split' is not built yet")) << mixed.text;
+// The merge and split row: armed on the chain with the root row, with its text and its report.  Without the root row it
+// is dropped with a warning (a split piece's pin is that row's), which also holds when a snapshot drops the root row.
+TEST(LoaderMessages, Eq34EventRowMergeSplitIsArmedWithItsTextWithTheRootRowOnly) {
+    const LoadedConfig r = loadNetworkConfigCapturing("eq34_rows_ms",
+        kFloatChain + eventRows("[\"root\", \"merge_split\"]"));
+    EXPECT_TRUE(r.ok) << r.text;
+    EXPECT_EQ(r.config.networkPhaseDatumEq34EventRows(), (std::vector<std::string>{"root", "merge_split"}));
+    EXPECT_TRUE(r.config.networkPhaseDatumEq34EventRowArmed("merge_split"));
+    EXPECT_TRUE(contains(r.text, "eq34 EVENT ROWS ON (root, merge_split)")) << r.text;
+    EXPECT_TRUE(contains(r.text, "'merge_split' releases a tree edge that joins two trees of the last election: the side "
+                                 "it attaches takes the cut release, its own tree edges keep their targets and its keys "
+                                 "are declared moved; and a piece that splits off without the old root pins its new "
+                                 "root's phase bias at its carried value, so its frame does not step.")) << r.text;
+    EXPECT_TRUE(contains(r.text, "the merges released, what the release took and the split pieces pinned")) << r.text;
+    EXPECT_FALSE(contains(r.text, "is not built yet")) << r.text;
+    const LoadedConfig alone = loadNetworkConfigCapturing("eq34_rows_ms_alone",
+        kFloatChain + eventRows("[\"kept\", \"merge_split\"]"));
+    EXPECT_TRUE(alone.ok) << alone.text;
+    EXPECT_EQ(alone.config.networkPhaseDatumEq34EventRows(), std::vector<std::string>{"kept"});
+    EXPECT_FALSE(alone.config.networkPhaseDatumEq34EventRowArmed("merge_split"));
+    EXPECT_TRUE(contains(alone.text, "entry 'merge_split' is set without 'root' - dropped")) << alone.text;
+    const LoadedConfig snap = loadNetworkConfigCapturing("eq34_rows_ms_snapshot",
+        kFloatChain + eventRows("[\"root\", \"merge_split\"]") + "    \"state_snapshot_path\": \"s.txt\",\n");
+    EXPECT_TRUE(snap.ok) << snap.text;
+    EXPECT_TRUE(snap.config.networkPhaseDatumEq34EventRows().empty());
+    EXPECT_TRUE(contains(snap.text, "entry 'root' is set with")) << snap.text;
+    EXPECT_TRUE(contains(snap.text, "entry 'merge_split' is set without 'root' - dropped")) << snap.text;
+    const LoadedConfig all = loadNetworkConfigCapturing("eq34_rows_all_six",
+        kFloatChain + eventRows("[\"kept\", \"returning\", \"rehost\", \"root\", \"slip\", \"merge_split\"]"));
+    EXPECT_TRUE(all.ok) << all.text;
+    EXPECT_TRUE(contains(all.text, "eq34 EVENT ROWS ON (kept, returning, rehost, root, slip, merge_split)")) << all.text;
 }
 
 // The slip row: armed on the chain, with its text and its report, alone or beside the earlier rows, and cleared with the

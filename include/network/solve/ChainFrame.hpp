@@ -257,6 +257,10 @@ struct ChainEdgeObs {
     // The integer rule of the edge's row and the as-built facts it replaced.
     bool        row_armed{false};       ///< An event row's integer rule decided this edge (the kept row held it, the returning, rehost or slip row released it, or the root row kept its frame through a root handover).
     bool        slip_released{false};   ///< The slip row released this edge: its arc is in the free-epoch latch and no other route reached the child.
+    bool        merge_released{false};  ///< The merge and split row released this edge: it joins two trees of the last election.
+    bool        absorbed{false};        ///< The merge and split row: the edge lies inside an absorbed side (its ends in one old tree, another than the one the root continues).
+    std::string merge_from;             ///< The released edge's child's old root (@ref merge_released).
+    std::string merge_into;             ///< The old root its parent's side continues (@ref merge_released).
     double      legacy_target_m{0.0};   ///< The target the as-built rule drafted (@ref target_m when no rule applied).
     double      legacy_pinmove_m{0.0};  ///< The displacement the as-built rule drafted (@ref pinmove_m when no rule applied).
     bool        legacy_known{true};     ///< Whether the as-built step was known (@ref known when no rule applied).
@@ -282,7 +286,7 @@ struct ChainEdgeObs {
 enum class ChainRootOutcome : std::uint8_t {
     Pinned,      ///< The new root's receiver phase bias is pinned at its carried value.
     NotVertex,   ///< Left as built: the new root was no vertex of the last tree on the band (the old root is unknown).
-    NotKeeper,   ///< Left as built: the component is a split piece other than the one that keeps the old root.
+    NotKeeper,   ///< Left as built: the component is a split piece other than the one that keeps the old root (with the merge and split row off).
     NoCarry,     ///< Left as built: the new root has no receiver phase-bias carry inside the horizon.
 };
 
@@ -305,6 +309,7 @@ struct ChainRootObs {
     ChainRootOutcome outcome{ChainRootOutcome::NotVertex};   ///< What the row did.
     double           target_m{0.0};   ///< The pinned value (m); meaningful when @ref outcome is Pinned.
     double           sigma_m{0.0};    ///< The standard deviation (m) of that carried value; meaningful when Pinned.
+    bool             split{false};    ///< The component is a split piece other than the one that keeps the old root.
 };
 
 /// One component of one group.
@@ -337,9 +342,10 @@ enum class ChainReleaseRow : std::uint8_t {
     Returning,  ///< The returning row: a vertex rejoined the tree after an absence.
     Rehost,     ///< The rehost row: a vertex moved to a new parent edge.
     Slip,       ///< The slip row: the arc is in the free-epoch latch and no other route reached the vertex.
+    Merge,      ///< The merge and split row: the edge joins two trees of the last election.
 };
 
-/// The name of a @ref ChainReleaseRow value ("returning", "rehost", "slip").
+/// The name of a @ref ChainReleaseRow value ("returning", "rehost", "slip", "merge").
 const char* chainReleaseRowName(ChainReleaseRow r);
 
 /**
@@ -502,14 +508,18 @@ struct ChainEpochClass {
 /**
  * @brief Classify one epoch's chain against the memory of the last observed epoch.
  *
- * Each edge takes the first row that applies: TreeEdgeSlip (the free-epoch latch names its
- * arc); Kept (its arc was the child's incumbent parent edge, in this direction or flipped);
- * RehostCertified or RehostUncertified (the child had another incumbent parent edge; certified
- * when the memory's chord table determines the new arc's band integer and the lattice, when it
- * has one, agrees); Merge (child and parent lay in different components); Returning or Birth
- * (the child was absent, seen earlier or never); RootHandover (the child was a root).  A Kept
- * edge whose satellite remembers another root takes RootHandover, or Split in a split-off
- * piece.  Every count of @p cnt that the classification determines is accumulated, an edge
+ * Each edge takes the first row that applies: Merge (the merge and split row released it);
+ * TreeEdgeSlip (the free-epoch latch names its arc); Kept (its arc was the child's incumbent
+ * parent edge, in this direction or flipped); RehostCertified or RehostUncertified (the child had
+ * another incumbent parent edge; certified when the memory's chord table determines the new arc's
+ * band integer and the lattice, when it has one, agrees); Merge (child and parent lay in different
+ * components); Returning or Birth (the child was absent, seen earlier or never); RootHandover (the
+ * child was a root).  A Kept edge whose satellite remembers another root takes RootHandover, or
+ * Split in a split-off piece, unless the merge and split row marked it inside an absorbed side (it
+ * stays Kept).  With that row off, an edge that joins two components through a child with a parent
+ * reads as a re-host and the kept edges of the absorbed side as a root handover: the component event
+ * (@ref ChainComponentEvent::merged) is what counts the merge.
+ * Every count of @p cnt that the classification determines is accumulated, an edge
  * an armed row decided (@c row_armed) also in @c cf_rows_armed, the epoch's cut releases
  * (@ref ChainEpochObs::releases) in the cut and declared counts and its de-seated edges
  * (@ref ChainEpochObs::deseats) in @c cf_sl_deseats.
@@ -615,7 +625,14 @@ bool chainKeptEdgeMoved(const ChainEdgeObs& e, const double* remembered);
  * changed append @c outcome (the row's @ref ChainRootOutcome name) and, for a pinned handover,
  * @c rpb_target_m and @c rpb_sigma_m (the carried value the new root is pinned at and its standard
  * deviation).  The edges the row kept are in the edge trace with @c row_armed set; no per-edge
- * event rows are added.
+ * event rows are added.  With the merge and split row armed the @c split rows of a piece that split
+ * off append the same tokens.
+ *
+ * An edge the merge and split row released (@ref ChainEdgeObs::merge_released) writes two @c merge
+ * rows: @c leave names the absorbed tree's old root and @c join the new edge, each with @c old_root,
+ * @c into_root, @c child, @c parent and the as-built tokens.  Its release writes the same
+ * @c cut_release and @c declared_keys rows as the others (@c cause=merge).  With the row off an edge
+ * classified Merge writes the one @c join row.
  *
  * @param run The run (its context, traces, setup and engines).
  * @param ep  The epoch after the solve and the harvests.

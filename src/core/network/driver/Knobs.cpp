@@ -355,6 +355,7 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.eq34_row_rehost = k.phase_datum_eq34 && config_.networkPhaseDatumEq34EventRowArmed("rehost");
     k.eq34_row_root = k.phase_datum_eq34 && config_.networkPhaseDatumEq34EventRowArmed("root");
     k.eq34_row_slip = k.phase_datum_eq34 && config_.networkPhaseDatumEq34EventRowArmed("slip");
+    k.eq34_row_merge_split = k.phase_datum_eq34 && config_.networkPhaseDatumEq34EventRowArmed("merge_split");
     k.eq34_seed_round = k.phase_datum_eq34 && config_.networkPhaseDatumEq34SeedRound();
     k.eq34_seed_round_rehost = k.eq34_seed_round
                             && config_.networkPhaseDatumEq34SeedRoundRehostFrame();

@@ -7856,6 +7856,18 @@ namespace GnssProcessor {
                           "at 0 under carries kept in the old frame.");
                 network_phase_datum_eq34_event_rows_.erase(root_entry);
             }
+            // A split piece's pin is the root row's: its keepers, its carried bias and its target memory.
+            const auto merge_split_entry = std::find(network_phase_datum_eq34_event_rows_.begin(),
+                                                     network_phase_datum_eq34_event_rows_.end(), "merge_split");
+            if (merge_split_entry != network_phase_datum_eq34_event_rows_.end()
+                && std::find(network_phase_datum_eq34_event_rows_.begin(),
+                             network_phase_datum_eq34_event_rows_.end(), "root")
+                       == network_phase_datum_eq34_event_rows_.end()) {
+                log->warn("Network: network.phase_datum_eq34_event_rows entry 'merge_split' is set without "
+                          "'root' - dropped: a split piece's new root is pinned by the root row's rule, and "
+                          "that row keeps the pinned target.");
+                network_phase_datum_eq34_event_rows_.erase(merge_split_entry);
+            }
             if (!network_phase_datum_eq34_event_rows_.empty() && !network_phase_datum_eq34_) {
                 log->warn("Network: network.phase_datum_eq34_event_rows is set but "
                           ".phase_datum_eq34 is OFF - the event rows are inert without the chain, so "
@@ -10109,6 +10121,16 @@ namespace GnssProcessor {
                                 "replace takes the cut release.";
                         reports += std::string(reports.empty() ? "" : "; ")
                                  + "the slipped edges de-seated and released, by the latch's cause bits";
+                    }
+                    if (networkPhaseDatumEq34EventRowArmed("merge_split")) {
+                        rows += std::string(rows.empty() ? "" : "  ")
+                              + "'merge_split' releases a tree edge that joins two trees of the last election: "
+                                "the side it attaches takes the cut release, its own tree edges keep their "
+                                "targets and its keys are declared moved; and a piece that splits off without "
+                                "the old root pins its new root's phase bias at its carried value, so its frame "
+                                "does not step.";
+                        reports += std::string(reports.empty() ? "" : "; ")
+                                 + "the merges released, what the release took and the split pieces pinned";
                     }
                     log->info("Network producer: eq34 EVENT ROWS ON ({}) - the integer rule of each "
                               "armed row replaces the as-built rule for its class of tree edge: "
