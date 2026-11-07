@@ -173,3 +173,7 @@ Nothing is armed. Card ICL3's quorum stays useful as a guard on the frame, but i
 - **MW at a locked arc.** A flag of 292 wide-lane cycles is treated as a noise outlier for its own epoch, and the unknown-integer signal that follows is dropped. `network.cycle_slip.mw_evidence_refloat`, armed in the goldens, admitted 0 flags on the arms read, because the rule refuses bias-corrected lanes (standing invariant 4). A second pre-solve answer is possible here; it is not needed for this event once the key is on.
 - **The within-epoch tier and one arc.** Its robust sigma0 cannot trip on one stiff arc; the attribution table names the arc and does not act. Whether a large single-arc attribution should re-solve within the epoch is a question for the response doctrine (adapt and emit within the detected epoch).
 - **Other footprints.** The epoch 304110 of DOY 129 at CEBR00ESP and the last minutes of DOY 132 are other mechanisms.
+
+## 7. The owed grade (2026-11-06)
+
+The first item of section 6 is answered by card [ICL5](ICL5_reseed_key_over_a_day_2026-11-06.md): 24 h on DOY 129 and 132, on both postures, with the 16-site census. The other items of section 6 stay open.

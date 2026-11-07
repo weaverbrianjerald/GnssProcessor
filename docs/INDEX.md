@@ -234,7 +234,8 @@ one clause; nothing armed).
 and on DOY 132; all gates pass; receivers not graded; nothing armed).
 
 [ICL5](refound/ICL5_reseed_key_over_a_day_2026-11-06.md), the IF-TD post-flag re-seed over a day, on both postures
-(open, 2026-11-06: 24 h on DOY 129 and 132 with the 16-site census; gates frozen for the events, the day's footprint, the cost in arcs, the receivers and the level).
+(closed, 2026-11-06: the key removes the post-flag events on both postures, T4 arcs halve, and the broadcast level passes card ICL2's bars without the quorum; golden receivers do not move, broadcast receivers stay flat over the day;
+two clauses fail, 2 extra lone decouplings on the golden at DOY 132 and two hours' census median on the broadcast posture at DOY 132; nothing armed).
 
 ### `resume-seam` — [topics/resume-seam.md](topics/resume-seam.md)
 

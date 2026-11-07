@@ -339,5 +339,7 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   IF-TD flag, when that test has no double difference and the MW signal is dropped; the handover is a coincidence. The misclosure spreads through the receiver's Galileo offset and `network.clock_anchor_q` sets how far (18
   decouplings at 5e-6, 2 at 2.9e-8, on the same posture). `network.cycle_slip.if_phase_td_reseed_on_flag` flags the slip at 94.1 m and removes the event on both postures and on DOY 132's natural event. All gates pass;
   receivers not graded (a 24 h grade of the key is owed); nothing armed.
-- [ICL5](ICL5_reseed_key_over_a_day_2026-11-06.md): open, 2026-11-06 (pre-registered): a 24 h grade of `network.cycle_slip.if_phase_td_reseed_on_flag` on DOY 129 and 132, on the golden and
-  on the broadcast posture, with the 16-site census against card ICL2's controls.
+- [ICL5](ICL5_reseed_key_over_a_day_2026-11-06.md): closed, 2026-11-06 (pre-registered the same day): `network.cycle_slip.if_phase_td_reseed_on_flag` over 24 h on DOY 129 and 132, on the golden and on the broadcast posture, with the
+  16-site census. It removes the post-flag events (R1 passes on all 6); one flag before the solve stands in for several arcs T4 dropped after it, so T4 arcs halve and refloats fall 2.4 to 6.0 % while flags rise 22 to 32 %. Card ICL2's D2 on DOY 129
+  passes with the key alone (58.3 to 15.7 mm, 9.49 to 1.94 mm). Golden receivers do not move; broadcast receivers stay flat over the day. Two clauses fail: R3's decouplings on the golden at DOY 132 (82 to 84, two lone trips, cause not traced) and R5's hour
+  clause on the broadcast posture at DOY 132 (hours 5 and 14). Nothing armed.
