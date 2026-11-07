@@ -130,3 +130,7 @@ The handover fold (event D): each between-satellite clock contrast of the candid
 - **The dense kernel:** this oracle supports `network.handover_stransform_dense` (UNVALIDATED) as the cure of event D's over-confidence; its own arm is card SRN's D4-07 falsification.
 - **The drop's scaling:** event B with more stations per satellite (the fixture's `kR` is 3) and the slip size swept.
 - **Not modelled (section 7):** the anchor's floor and guard, the clock clone, the gap re-entry response of the returning satellite's arcs.
+
+### 8.6 The suite (2026-11-07)
+
+Debug `gnss_tests.exe` built in the worktree from `599b75c` (the test commit): 3,841 cases in 524 suites, 3,808 passed, 33 skipped (fixture-gated), 0 failed, 2,975 s; the new suite's eight cases are the eight added to the 3,833 of main `284ec29`, and pass in about 63 s on their own. No Release build and no data run (the task's scope).
