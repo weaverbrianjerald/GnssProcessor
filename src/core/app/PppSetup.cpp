@@ -12,6 +12,7 @@
 
 #include "app/Application.hpp"
 #include "aiding/ImuAidingSource.hpp"   // full type for aiding_manager_->imu() wiring
+#include "filter/AmbiguityResolverSetup.hpp"   // makeAmbiguityResolverConfig (the one builder)
 #include "math/Coordinates.hpp"
 #include "math/TimeUtils.hpp"
 #include "products/StationInfoFile.hpp"
@@ -413,27 +414,7 @@ void Application::initializePppState_() {
 void Application::buildAmbiguityResolver_() {
     // Ambiguity resolution (MLAMBDA)
     if (config_.getArMode() > 0) {
-        AmbiguityResolverConfig ar_config;
-        ar_config.ar_mode               = config_.getArMode();
-        ar_config.ratio_threshold       = config_.getArRatioThreshold();
-        ar_config.elevation_mask_ar     = config_.getArElevationMask();
-        ar_config.hold_variance         = config_.getArHoldVariance();
-        ar_config.min_epochs            = config_.getArMinEpochs();
-        ar_config.max_position_sigma_m  = config_.getArMaxPositionSigma();
-        ar_config.ratio_upper_bound     = config_.getArRatioUpperBound();
-        ar_config.wl_only               = config_.getArWlOnly();
-        ar_config.wl_only_pseudo_var    = config_.getArWlOnlyPseudoVar();
-        ar_config.wl_max_frac           = config_.getArWlMaxFrac();
-        ar_config.min_success_rate      = config_.getArMinSuccessRate();
-        ar_config.wl_only_ffr           = config_.getArWlOnlyFfr();
-        ar_config.wl_only_min_arc_count = config_.getArWlOnlyMinArcCount();
-        ar_config.wl_only_max_innov_cyc = config_.getArWlOnlyMaxInnovCyc();
-        ar_config.min_arc_info          = config_.getArMinArcInfo();
-        ar_config.nl_max_per_pair_frac  = config_.getArNlMaxPerPairFrac();
-        ar_config.nl_iono_free_row      = config_.getArNlIonoFreeRow();
-        ar_config.enable_partial_ar     = config_.getArEnablePartialAr();
-        ar_config.ar_active_systems     = config_.getArActiveSystems();
-        ar_config.state_ambiguity_basis = config_.getStateAmbiguityBasis();
+        const AmbiguityResolverConfig ar_config = makeAmbiguityResolverConfig(config_);
         ambiguity_resolver_ = std::make_unique<AmbiguityResolver>(ar_config, log_manager_);
         log_manager_.getLogger("main_log")->info(
             "Ambiguity resolution enabled: mode={}, wl_only={}, partial_ar={}, nl_row={}, "

@@ -51,6 +51,7 @@
 #include "realtime/PbHoldLedger.hpp"         // Held phase-bias generation ledger
 #include "realtime/EphemerisJumpLedger.hpp"  // Last-used broadcast record per satellite, range-jump test
 #include "realtime/ConsumerSatTrace.hpp"     // Per-satellite consumer readout row
+#include "realtime/ArObserve.hpp"            // Observe-mode integer search: rows, counters, wire chain context
 #include "realtime/EpochCadence.hpp"         // Measured epoch spacing, source of the default data-gap threshold
 #include <Eigen/Dense>
 #include <chrono>
@@ -390,6 +391,55 @@ public:
      */
     const std::vector<ConsumerSatRow>& consumerSatRows() const { return consumer_sat_rows_; }
 
+    // --- Observe-mode integer search (network.closed_loop.ar_observe) ----
+    /// True iff the observe-mode integer search is armed on this engine's config (the
+    /// closed-loop harness derives it from @c network.closed_loop.ar_observe).
+    bool arObserveArmed() const { return config_.arObserve(); }
+
+    /**
+     * @brief Tell the engine what the wire it reads declares about its integer frame.
+     *
+     * The observe-mode search's chain gate (@c network.require_signal_integer_for_ar)
+     * admits an ambiguity only on a wire that declares the chain datum and gives its phase
+     * bias a component, and the search pairs satellites within one component.  Set by the
+     * replay driver from the product file and by the in-process run from the producer's
+     * contract.  A copy: the caller keeps its own and calls again when it changes.  The
+     * default context declares nothing (@c amb_datum -1, no components), so an engine that
+     * is never told admits nothing under the gate.
+     *
+     * @param ctx The declarations.
+     */
+    void setWireChainContext(const WireChainContext& ctx) { wire_chain_ = ctx; }
+    /// The declarations last set by @ref setWireChainContext.
+    const WireChainContext& wireChainContext() const { return wire_chain_; }
+
+    /**
+     * @brief The observe-mode search of the epoch the most recent @c processEpoch call
+     *        completed.
+     *
+     * Rows, summary and the integer search's own result, written by
+     * @ref observeIntegerSearch_ and read by the harness right after @c processEpoch
+     * returns (the same hand-off as @ref consumerSatRows).  The buffer is cleared at the
+     * top of every epoch, so an epoch that ends before the estimation tail, or whose
+     * measurement update was not applied, leaves an empty epoch with @c valid false, never
+     * the previous epoch's rows.  An epoch whose position-sigma gate closed is @c valid with
+     * @c summary.gated and no rows.  Always empty with the mode off.
+     *
+     * @return Const reference to the engine-owned buffer.
+     */
+    const ArObserveEpoch& arObserveEpoch() const { return ar_observe_epoch_; }
+    /// Run totals of the observe-mode search; all zero with the mode off.
+    const ArObserveCounters& arObserveCounters() const { return ar_observe_counters_; }
+    /**
+     * @brief Log the observe-mode totals as one line on the @c rt_engine logger.
+     *
+     * Printed by the harness at the end of a closed-loop run and of a replay.  Silent with
+     * the mode off, so a run without it keeps a byte-identical log.
+     *
+     * @param tag Where the line comes from ("closed loop", "end of replay").
+     */
+    void logArObserveSummary(const char* tag) const;
+
     /// Get the current receiver position (ECEF, meters).
     Eigen::Vector3d getPosition() const;
 
@@ -623,6 +673,8 @@ private:
     friend struct RealtimeDefectTestAccess;  ///< Drives the gap detection and the staged snapshot restore.
     friend struct InnovationScreenTestAccess;  ///< Drives the innovation screen on a hand-built measurement.
     friend struct EphemerisJumpTestAccess;  ///< Drives the broadcast-baseline jump response over a real StateManager.
+    friend struct ArObserveTestAccess;  ///< Drives the observe-mode integer search over a hand-built StateManager and store.
+    friend struct AmbiguityResolverSetupTestAccess;  ///< Reads the resolver configuration that initAmbiguityResolver built.
     /// Convert GPS-scale time to UTC-scale time.
     static GnssTime gpsToUtcTime(const GnssTime& gps_time);
 
@@ -1001,7 +1053,7 @@ public:
     /**
      * @brief Log this consumer's state-manager re-inflation counters.
      *
-     * One line, "card OWD re-inflations (<tag>): code_bias raised=N kept=M | isb ... |
+     * One line, "[RT] state re-inflations (<tag>): code_bias raised=N kept=M | isb ... |
      * iono ... | iono_rate ... | sat_bias ... | sat_phase_bias ... | sat_clock ...", on the
      * @c rt_engine logger.  A nonzero kept count names a re-inflation that left a larger
      * current variance in place, where the earlier rule would have lowered it.
@@ -1047,6 +1099,28 @@ private:
     void applyZwdConstraint(RtEpochContext& ctx);       ///< Soft a-priori ZWD pseudo-observation.
     void applyNetworkIonoPrior(RtEpochContext& ctx);    ///< Network slant-iono BLUP prior (ionosphere-weighted).
     void resolveAmbiguities(RtEpochContext& ctx);       ///< Integer ambiguity resolution (MLAMBDA).
+    /**
+     * @brief The observe-mode integer search (RealTimeEngineArObserve.cpp), called first by
+     *        @ref resolveAmbiguities.
+     *
+     * Self-gated on @c network.closed_loop.ar_observe (derived as
+     * @c GnssConfig::arObserve) and on an applied update.  It forms the epoch's
+     * between-satellite single-difference ambiguities from a copy of the state, searches them
+     * (@ref observeIntegerSearch) and keeps the outcome in @ref arObserveEpoch; it reads the
+     * state, the covariance, the modeled observations and the SSR store and writes none of them,
+     * so with it armed and the AR mode 0 every pre-existing output is bit-identical.
+     * Candidates are the ambiguity states the resolver would pair (same exclusions: a zero
+     * value or variance, an elevation under the AR mask, an unresolvable ambiguity, a
+     * constellation outside the AR set), without the iono-free keys and GLONASS; with
+     * @c network.require_signal_integer_for_ar on they must also be integer-grade on a chain
+     * wire with a component (@ref setWireChainContext).  Like the resolver, the integer
+     * search waits for the 3D position sigma to fall below a bar (the search of an unconverged
+     * float can run for an unbounded time): the larger of
+     * @c estimation.ambiguity_resolution.max_position_sigma_m and 0.20 m, the ceiling the
+     * loader puts on the resolver's own bar for a direct per-band search.  Until then the epoch
+     * records only its float position and is counted as gated.
+     */
+    void observeIntegerSearch_(RtEpochContext& ctx);
     void writeEpochTraces(RtEpochContext& ctx);         ///< Posterior extract, epoch log line, trace-logger sweep.
 
     // --- RT filter-state snapshot (RealTimeEngineStateSnap.cpp) -----------
@@ -1183,6 +1257,17 @@ private:
     /// (at the tail, before the harvest), and drained by @ref traceConsumerSat_;
     /// cleared with the row buffer.
     std::map<std::string, std::string> consumer_sat_events_;
+
+    // --- Observe-mode integer search (network.closed_loop.ar_observe) ---
+    /// The latest epoch's search output: cleared by the first admission seam of every epoch
+    /// (@ref admitBacklogAndSync) and filled by the search stage (@ref arObserveEpoch).
+    ArObserveEpoch ar_observe_epoch_;
+    /// Run totals of the search (printed by @ref logArObserveSummary).
+    ArObserveCounters ar_observe_counters_;
+    /// What the wire declares about its integer frame (@ref setWireChainContext).
+    WireChainContext wire_chain_;
+    bool ar_observe_logged_{ false };       ///< One-shot echo of the armed search and its gate.
+    bool ar_observe_gate_warned_{ false };  ///< One-shot warning that the chain gate admitted nothing.
 
     /// The declared code-level step totals last read per satellite
     /// (@ref reactToDeclaredLevelSteps_), and its counters.

@@ -51,6 +51,8 @@ namespace GnssProcessor {
     struct NetworkKnobs;            // network/state/RunContext.hpp (INC-4)
     struct NetworkServiceCounters;  // network/state/RunContext.hpp (INC-4)
     struct ConsumerSatRow;          // realtime/ConsumerSatTrace.hpp
+    struct ArObserveEpoch;          // realtime/ArObserve.hpp
+    struct ArEpochErrors;           // realtime/ArObserve.hpp
     class  NetworkCarryVceApply;    // network/carry/CarryVceApply.hpp (M2 v2)
 
     /// Flag-rate tally for one QC tier (B8): {opportunities, flags}.  Summarized at the
@@ -499,6 +501,16 @@ namespace GnssProcessor {
         /// @ref writeConsumerSatRows.
         std::ofstream cl_sat_trace;
 
+        /// The consumer's observe-mode integer search, one row per single-difference
+        /// ambiguity and wide lane (closed_loop_ar_fixes.csv) and one per epoch
+        /// (closed_loop_ar_epoch.csv).  Opened only when the held-out consumer is armed
+        /// and both @c network.closed_loop.ar_observe and @c trace_ar_fixes are set; the
+        /// paths are local to openAll().  Same ownership split as @ref cl_trace: the
+        /// engine keeps the epoch, the emit/store seam writes it through
+        /// @ref writeConsumerArObserve.  Neither file is opened with the search off.
+        std::ofstream cl_ar_fix_trace;
+        std::ofstream cl_ar_epoch_trace;
+
         /// The closed-loop consumer's receiver inter-system bias per non-GPS system
         /// (closed_loop_isb.csv).  Opened only when the held-out consumer is
         /// armed and a constellation other than GPS is active
@@ -656,6 +668,20 @@ namespace GnssProcessor {
         /// anywhere else.
         std::ofstream rx_states_trace;
         const std::filesystem::path rx_states_trace_path;
+        /// The eq34 chain-frame observatory (network.trace_chain_datum;
+        /// network/solve/ChainFrame.hpp): every tree edge each epoch with its chain-event row,
+        /// and the chord table each epoch.
+        std::ofstream chain_edges_trace;
+        const std::filesystem::path chain_edges_trace_path;
+        std::ofstream chain_frame_trace;
+        const std::filesystem::path chain_frame_trace_path;
+        /// Every emitted satellite phase bias immediately before the phase-bias hold
+        /// (network.trace_pb_prehold).
+        std::ofstream pb_prehold_trace;
+        const std::filesystem::path pb_prehold_trace_path;
+        /// Every receiver phase-bias state of an eq34 run (network.trace_rpb_states).
+        std::ofstream rpb_states_trace;
+        const std::filesystem::path rpb_states_trace_path;
         /// Per-station residual field (L13; network.trace_station_residuals): every
         /// post-fit RAIM cell (non-pivot station x sat) with s_raw, s_norm and σ̂0.
         /// A heavy, opt-in trace.
@@ -1124,6 +1150,28 @@ namespace GnssProcessor {
          */
         std::size_t writeConsumerSatRows(const GnssTime& t,
                                          const std::vector<ConsumerSatRow>& rows);
+
+        /**
+         * @brief Write one consumer epoch of the observe-mode integer search to
+         *        @ref cl_ar_fix_trace and @ref cl_ar_epoch_trace (no-op when the streams are
+         *        not open).
+         *
+         * Called from the emit/store seam right after @c consumer->processEpoch, with the
+         * engine's own buffer (@c RealTimeEngine::arObserveEpoch) and the ENU errors of its two
+         * positions against the harness's truth.  The stamp is the producer's @c se.time, the
+         * one @c closed_loop_trace.csv uses, so the files join on (week, tow).  An epoch whose
+         * search stage did not run (@c valid false) writes nothing; one whose stage ran writes
+         * its epoch row (a gated epoch included, with the float position as its fix) and one
+         * row per search row.
+         *
+         * @param t     Epoch time stamped on every row.
+         * @param epoch The consumer's search output for this epoch.
+         * @param err   ENU errors of the conditioned and the float position.
+         * @return Fix rows written (0 when the streams are closed or the epoch has none); the
+         *         caller folds it into the run-end counters (invariant #4).
+         */
+        std::size_t writeConsumerArObserve(const GnssTime& t, const ArObserveEpoch& epoch,
+                                           const ArEpochErrors& err);
 
         /**
          * @brief Write one arc transition row (no-op when off).

@@ -92,6 +92,7 @@ add_library(gnss_core STATIC
     src/core/filter/StateManagerFamilies.cpp
     src/core/filter/ImuIntegrator.cpp
     src/core/filter/AmbiguityResolver.cpp
+    src/core/filter/AmbiguityResolverSetup.cpp
     src/core/filter/IlsCore.cpp
     src/core/filter/ResidualHistoryTracker.cpp
     src/core/measurement/MeasurementModel.cpp
@@ -243,6 +244,8 @@ add_library(gnss_core STATIC
     src/core/realtime/AmbLevelCheck.cpp
     src/core/realtime/InnovationScreen.cpp
     src/core/realtime/RealTimeEngineScreen.cpp
+    src/core/realtime/RealTimeEngineArObserve.cpp
+    src/core/realtime/ArObserve.cpp
     src/core/realtime/ConsumerSatTrace.cpp
     src/core/filter/PivotManager.cpp
     src/core/filter/DdPivotManager.cpp
@@ -263,6 +266,7 @@ add_library(gnss_core STATIC
     src/core/network/solve/AnchorLevelHold.cpp
     src/core/network/slip/SlipFunnel.cpp
     src/core/network/solve/ChainDatum.cpp
+    src/core/network/solve/ChainFrame.cpp
     src/core/network/solve/AnchorHygiene.cpp
     src/core/network/assembly/AprioriClockTrack.cpp
     src/core/network/assembly/SignalIntegrity.cpp
@@ -420,6 +424,9 @@ if(MSVC)
     # tests/network/test_network_arc_graph_oracles.cpp: the epoch-event and run-context headers it
     # includes sat at the Debug section limit, and the satellite clock event's two members (a step
     # map in the slip events, a trip set in the clock anchor state) tipped it over (C1128).
+    # tests/network/test_network_arc_graph_oracles.cpp sits at the Debug section limit through the
+    # run-context headers it includes; the chain-frame observatory's counters
+    # (network/solve/ChainFrameCounters.hpp) tipped it over (C1128).
     set_source_files_properties(tests/network/test_network_arc_graph_oracles.cpp
         PROPERTIES COMPILE_FLAGS "/bigobj")
 endif()
@@ -654,6 +661,12 @@ add_executable(gnss_tests
     tests/test_innovation_screen_engine.cpp
     tests/test_disc_mark_scope.cpp
     tests/test_consumer_sat_trace.cpp
+    tests/test_ar_observe_search.cpp
+    tests/test_ar_observe_trace.cpp
+    tests/test_ar_observe_engine.cpp
+    tests/test_ar_observe_config.cpp
+    tests/test_ambiguity_resolver_setup.cpp
+    tests/test_network_product_chain_token.cpp
     tests/test_transforms.cpp
     tests/test_pivot_column_resolver.cpp
     tests/test_filter_core.cpp
@@ -777,6 +790,7 @@ add_executable(gnss_tests
     tests/network/test_network_phase_frame_hold.cpp
     tests/network/test_network_phase_frame_level_vote.cpp
     tests/network/test_network_phase_frame_quorum.cpp
+    tests/network/test_network_chain_frame.cpp
     tests/network/test_network_solve_skip.cpp
     tests/network/test_network_we_choice.cpp
     tests/network/test_network_within_epoch_culprits.cpp

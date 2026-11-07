@@ -64,6 +64,7 @@
 
 #include "common/GnssIdentity.hpp"
 #include "network/state/ArcLedger.hpp"            // ArcRecord (an arc's ledger record, step N4f2)
+#include "network/ar/ArcLife.hpp"        // ArcLifeStamp (the pinned life of an eq34 tree edge)
 #include "network/ar/ArCycleBasis.hpp"   // ArFamilyKey, ArBasisMemory
 #include "network/qc/GrossLos.hpp"       // GrossLosState
 #include "network/emit/PbHoldClone.hpp"    // PbHoldClone
@@ -570,6 +571,21 @@ struct SatSignalState {
     /// @c NetworkCarryState::eq34_sat_root ("sat_signal"; step N4e2, re-placed from the
     /// satellite rows).  Record EQS.
     std::optional<std::string> eq34_sat_root;
+    /// The key was a satellite of its band's eq34 chain tree at an earlier election: set at each
+    /// election for every satellite of the tree of the key's band, never cleared.  The returning
+    /// row of the chain's event table reads it to tell a satellite that rejoins the tree after an
+    /// absence from one it has never seen (a birth, which the row leaves alone).  Written only
+    /// with @c network.phase_datum_eq34_event_rows holding @c returning, so it is false on every
+    /// other run.  ColdStart: after a warm resume the first election's absent vertices are births.
+    bool eq34_tree_seen{false};
+    /// The datum receiver of the eq34 chain tree this key's satellite was a vertex of at the last
+    /// election on the key's band.  Replaced wholesale at each election, so a satellite absent from the
+    /// last election's trees has none (unlike @ref eq34_sat_root, the extend-only merge-back does not keep
+    /// it).  The merge and split row of the chain's event table compares the two ends of a tree edge by
+    /// it.  Written only with @c network.phase_datum_eq34_event_rows holding @c merge_split, so it is
+    /// absent on every other run.  ColdStart: not snapshotted (the loader drops the entry when a snapshot
+    /// is written).
+    std::optional<std::string> eq34_tree_root;
 };
 
 /// The station-level dispositions (RF-3b B4, @c network.gross_los_station_tier),
@@ -649,6 +665,30 @@ struct StationSignalState {
     /// With @c anchor_incumbent (the satellite side) it is last epoch's tree; replaced
     /// wholesale per election.  Was @c NetworkCarryState::eq34_rx_parent.  Record EQP.
     std::optional<std::string> eq34_rx_parent;
+    /// The receiver was a vertex of the eq34 chain tree of the signal family "<c>|<sigma>" (the
+    /// key) at an earlier election, as a root or below one: set at each election for every
+    /// receiver of the tree of that family, never cleared.  The returning row of the chain's
+    /// event table reads it to tell a receiver that rejoins the tree after an absence from one it
+    /// has never seen (a birth, which the row leaves alone).  Written only with
+    /// @c network.phase_datum_eq34_event_rows holding @c returning, so it is false on every other
+    /// run.  ColdStart: after a warm resume the first election's absent vertices are births.
+    bool eq34_tree_seen{false};
+    /// The value (m) the eq34 chain pinned this receiver's phase bias at, for the signal family's
+    /// receiver phase-bias key (the key, like @ref rpb), when the receiver is a component root and a
+    /// root handover pinned it at its carried value.  The root row of the chain's event table keeps
+    /// the target while the receiver stays a root, so a pinned bias that the carry no longer
+    /// refreshes keeps its frame.  Replaced wholesale at each election: a receiver that is no root
+    /// now loses it.  Written only with @c network.phase_datum_eq34_event_rows holding @c root, so it
+    /// is absent on every other run.  ColdStart: not snapshotted (the loader drops the @c root entry
+    /// when a snapshot is written).
+    std::optional<double> eq34_root_rpb_target;
+    /// The datum receiver of the eq34 chain tree this receiver was a vertex of at the last election on
+    /// the signal family "<c>|<sigma>" (the key): the receiver itself when it was the root.  Replaced
+    /// wholesale at each election, so a receiver absent from the last election's trees has none.  The
+    /// merge and split row of the chain's event table compares the two ends of a tree edge by it.  Written
+    /// only with @c network.phase_datum_eq34_event_rows holding @c merge_split, so it is absent on every
+    /// other run.  ColdStart: not snapshotted (the loader drops the entry when a snapshot is written).
+    std::optional<std::string> eq34_tree_root;
 };
 
 /// The memo of one anchor-level hold (network/solve/AnchorLevelHold.hpp, card ALD): what the
@@ -901,6 +941,14 @@ struct ArcState {
     /// Replaced wholesale each election.  Was @c NetworkCarryState::eq34_prev_target.
     /// Record EQT.
     std::optional<double> eq34_prev_target;
+    /// The arc's life stamp at the election that last pinned it as a tree edge, one entry per
+    /// pinned edge of every band (the band extension's included).  The kept row of the chain's
+    /// event table reads it to tell an arc whose pinned life continues from one that was
+    /// reborn, re-entered after a gap or flagged since (@c arcPinnedLifeContinues).  Replaced
+    /// wholesale each election, and written only with
+    /// @c network.phase_datum_eq34_event_rows holding @c kept, so it is empty on every other
+    /// run.  ColdStart: after a warm resume the row holds its first edges one election late.
+    std::optional<ArcLifeStamp> eq34_pin_life;
     /// A tree edge retained across the current gap because its leveling carry is still
     /// alive (network.phase_datum_eq34_extend_only); rebuilt at each election.  Was
     /// @c NetworkCarryState::eq34_retained_edges.  Record EQR.
@@ -1318,6 +1366,37 @@ void dropAll(T& t, M R::*sub, std::optional<V> SR::*f) {
 /// The number of (row, sub-key) cells where nested field @p f is present: @c size().
 template <class T, class R, class M, class SR, class V>
 std::size_t present(const T& t, M R::*sub, std::optional<V> SR::*f) {
+    std::size_t n = 0;
+    for (const auto& kv : t)
+        for (const auto& sk : kv.second.*sub) n += (sk.second.*f) ? 1 : 0;
+    return n;
+}
+
+/// True when the set-membership field @p f at (@p id, @p k) is set: the nested form of @ref has.
+template <class T, class R, class M, class SR>
+bool has(const T& t, const typename T::key_type& id, M R::*sub, const typename M::key_type& k,
+         bool SR::*f) {
+    const auto it = t.find(id);
+    if (it == t.end()) return false;
+    const auto jt = (it->second.*sub).find(k);
+    return jt != (it->second.*sub).end() && jt->second.*f;
+}
+
+/// Sets the set-membership field @p f at (@p id, @p k), creating the row and the cell; true when
+/// it was not set: the nested form of @ref mark.  Serial code only.
+template <class T, class R, class M, class SR>
+bool mark(T& t, const typename T::key_type& id, M R::*sub, const typename M::key_type& k,
+          bool SR::*f) {
+    bool& b = (t[id].*sub)[k].*f;
+    const bool inserted = !b;
+    b = true;
+    return inserted;
+}
+
+/// The number of (row, sub-key) cells where the set-membership field @p f is set: the nested
+/// form of the bool @ref present.
+template <class T, class R, class M, class SR>
+std::size_t present(const T& t, M R::*sub, bool SR::*f) {
     std::size_t n = 0;
     for (const auto& kv : t)
         for (const auto& sk : kv.second.*sub) n += (sk.second.*f) ? 1 : 0;

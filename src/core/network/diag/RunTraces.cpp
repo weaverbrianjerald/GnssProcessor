@@ -18,6 +18,7 @@
 #include "network/diag/AmbStateTrace.hpp"  // kAmbStateHeader (RF-1 §7.4 carry-state trace)
 #include "network/state/ArcLedger.hpp"             // the arc ledger's two window constants
 #include "realtime/ConsumerSatTrace.hpp"    // ConsumerSatRow, kConsumerSatTraceHeader
+#include "realtime/ArObserve.hpp"           // ArObserveEpoch, the two observe-mode trace headers and formatters
 #include "math/TimeUtils.hpp"           // continuousGpsSeconds (heartbeat cadence, INC-4)
 
 #include <fmt/format.h>
@@ -59,6 +60,10 @@ NetworkRunTraces::NetworkRunTraces(std::filesystem::path log_dir)
       tgrad_trace_path(log_dir_ / "network_tropo_gradient.csv"),
       sat_bias_states_trace_path(log_dir_ / "network_sat_bias_states.csv"),
       rx_states_trace_path(log_dir_ / "network_rx_states.csv"),
+      chain_edges_trace_path(log_dir_ / "network_chain_edges.csv"),
+      chain_frame_trace_path(log_dir_ / "network_chain_frame.csv"),
+      pb_prehold_trace_path(log_dir_ / "network_pb_prehold.csv"),
+      rpb_states_trace_path(log_dir_ / "network_rpb_states.csv"),
       station_res_trace_path(log_dir_ / "network_station_residuals.csv"),
       raim_redun_trace_path(log_dir_ / "network_raim_redundancy.csv"),
       station_factor_trace_path(log_dir_ / "network_station_factor.csv"),
@@ -187,6 +192,25 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
             else
                 log->warn("Network: failed to open closed-loop per-satellite trace {}",
                           cls_path.string());
+        }
+        // The observe-mode integer search's two files (network.closed_loop.ar_observe and
+        // trace_ar_fixes).  They exist only where there is a search to write; armed
+        // without the search the loader warned and nothing is opened.
+        if (nc.closed_loop.ar_observe && nc.closed_loop.trace_ar_fixes) {
+            const std::filesystem::path fix_path = log_dir_ / "closed_loop_ar_fixes.csv";
+            cl_ar_fix_trace.open(fix_path);
+            if (cl_ar_fix_trace)
+                cl_ar_fix_trace << kArFixTraceHeader;
+            else
+                log->warn("Network: failed to open closed-loop AR fixes trace {}",
+                          fix_path.string());
+            const std::filesystem::path ep_path = log_dir_ / "closed_loop_ar_epoch.csv";
+            cl_ar_epoch_trace.open(ep_path);
+            if (cl_ar_epoch_trace)
+                cl_ar_epoch_trace << kArEpochTraceHeader;
+            else
+                log->warn("Network: failed to open closed-loop AR epoch trace {}",
+                          ep_path.string());
         }
         // The consumer's inter-system bias, opened only when a second constellation
         // is active; a GPS-only consumer has no such state.
@@ -1015,6 +1039,43 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
             log->warn("Network: failed to open receiver-state trace {}",
                       rx_states_trace_path.string());
     }
+    // The eq34 chain-frame observatory (network/solve/ChainFrame.hpp).  The chain traces need a
+    // chain: they open only on an eq34 run.
+    const bool chain_run = config_.networkPhaseDatumEq34();
+    if (nc.trace_chain_datum && chain_run) {
+        chain_edges_trace.open(chain_edges_trace_path);
+        if (chain_edges_trace)
+            chain_edges_trace << "week,tow,system,family,band,comp,r1,edge_sta,edge_sat,child,"
+                                 "parent,depth,target_m,target_cyc,prev_target_m,pinmove_m,known,"
+                                 "legacy_cause,row,row_armed,certified,cert_source,flipped,"
+                                 "returning,life_stamp\n";
+        else
+            log->warn("Network: failed to open chain-edge trace {}", chain_edges_trace_path.string());
+        chain_frame_trace.open(chain_frame_trace_path);
+        if (chain_frame_trace)
+            chain_frame_trace << "week,tow,family,arc_sta,arc_sat,float_cyc_1,float_cyc_2,q11,q12,"
+                                 "q22,int_1,int_2,source,conflict,lattice_int\n";
+        else
+            log->warn("Network: failed to open chain-frame trace {}", chain_frame_trace_path.string());
+    }
+    if (nc.trace_pb_prehold) {
+        pb_prehold_trace.open(pb_prehold_trace_path);
+        if (pb_prehold_trace)
+            pb_prehold_trace << "week,tow,sat,signal,est_pb_m,est_pb_sigma_m,est_clk_m,"
+                                "phase_visible_m,emit_pb_m,gen,role,comp,r1,attach_sta,depth\n";
+        else
+            log->warn("Network: failed to open pre-hold phase-bias trace {}",
+                      pb_prehold_trace_path.string());
+    }
+    if (nc.trace_rpb_states && chain_run) {
+        rpb_states_trace.open(rpb_states_trace_path);
+        if (rpb_states_trace)
+            rpb_states_trace << "week,tow,station,system,signal,value_m,sigma_m,pinned,floor_w,"
+                                "timelink_var_m2,parent_sat,depth,comp,event,shift_m\n";
+        else
+            log->warn("Network: failed to open receiver phase-bias trace {}",
+                      rpb_states_trace_path.string());
+    }
     if (nc.trace_station_residuals) {
         station_res_trace.open(station_res_trace_path);
         if (station_res_trace)
@@ -1147,6 +1208,20 @@ std::size_t NetworkRunTraces::writeConsumerSatRows(const GnssTime& t,
     if (!cl_sat_trace.is_open()) return 0;
     for (const auto& r : rows) cl_sat_trace << formatConsumerSatRow(t.week, t.tow, r);
     return rows.size();
+}
+
+std::size_t NetworkRunTraces::writeConsumerArObserve(const GnssTime& t, const ArObserveEpoch& epoch,
+                                                     const ArEpochErrors& err) {
+    // The streams exist only when the harness, the search and its trace are all armed; an
+    // epoch whose search stage did not run (a deferred or update-less consumer epoch) has
+    // nothing to say, so the epoch file holds one row per epoch whose stage ran.
+    if (!epoch.valid) return 0;
+    if (cl_ar_epoch_trace.is_open())
+        cl_ar_epoch_trace << formatArEpochRow(t.week, t.tow, epoch.summary, err);
+    if (!cl_ar_fix_trace.is_open()) return 0;
+    for (const auto& r : epoch.rows)
+        cl_ar_fix_trace << formatArFixRow(t.week, t.tow, r, epoch.summary);
+    return epoch.rows.size();
 }
 
 // Writes one network_epoch_status.csv row for this epoch; a no-op when the trace is
@@ -1735,6 +1810,12 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                // unarmed run's manifest bytes are unchanged.
                << (nc.trace_consumer_sat
                        ? std::string("\"trace_consumer_sat\":true,") : std::string())
+               // Consumer observe-mode integer search: same armed-only rule.  It reads
+               // the consumer's float and writes nothing back, so the products are unchanged;
+               // the record says which search the closed_loop_ar_*.csv files hold.
+               << (nc.closed_loop.ar_observe
+                       ? std::string("\"closed_loop_ar_observe\":\"") + nc.closed_loop.ar_search
+                             + "\"," : std::string())
                // station_prior_before_pd affects the solve: it decides
                // which stations are in the network, so an archived logs/ folder has to be
                // able to say which side of it produced the products.  Emitted only when
@@ -2545,6 +2626,8 @@ void NetworkRunTraces::closeAll() {
     if (vtec_sh_trace.is_open()) vtec_sh_trace.close();
     if (cl_trace) cl_trace.close();
     if (cl_sat_trace.is_open()) cl_sat_trace.close();   // per-satellite consumer trace
+    if (cl_ar_fix_trace.is_open()) cl_ar_fix_trace.close();     // observe-mode integer search
+    if (cl_ar_epoch_trace.is_open()) cl_ar_epoch_trace.close(); // observe-mode integer search
     if (cl_isb_trace.is_open()) cl_isb_trace.close();   // consumer inter-system bias
     if (if_slip_trace.is_open()) if_slip_trace.close();
     if (raim_trace.is_open()) raim_trace.close();

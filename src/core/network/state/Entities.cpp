@@ -760,6 +760,10 @@ const std::vector<FieldDecl> kSatSignalFields = {
      &satSignalRows<&G::emitted_anchor_s>},
     {"eq34_sat_root", "eq34_sat_root", Persist::Record, "EQS", "", &eqsToSnapshot,
      &eqsFromSnapshot, &satSignalRows<&G::eq34_sat_root>},
+    {"eq34_tree_seen", "", Persist::ColdStart, "", "",   // no former member: new with the returning row of the chain's event table
+     nullptr, nullptr, &satSignalRows<&G::eq34_tree_seen>},
+    {"eq34_tree_root", "", Persist::ColdStart, "", "",   // no former member: new with the merge and split row of the chain's event table
+     nullptr, nullptr, &satSignalRows<&G::eq34_tree_root>},
 };
 namespace {
 
@@ -905,6 +909,12 @@ const std::vector<FieldDecl> kStationFields = {
      &rxcbToSnapshot, &rxcbFromSnapshot, &signalRows<&SS::rx_cb>},
     {"eq34_rx_parent", "eq34_rx_parent", Persist::Record, "EQP", "",
      &eqpToSnapshot, &eqpFromSnapshot, &signalRows<&SS::eq34_rx_parent>},
+    {"eq34_tree_seen", "", Persist::ColdStart, "", "",   // no former member: new with the returning row of the chain's event table
+     nullptr, nullptr, &signalRows<&SS::eq34_tree_seen>},
+    {"eq34_root_rpb_target", "", Persist::ColdStart, "", "",   // no former member: new with the root row of the chain's event table
+     nullptr, nullptr, &signalRows<&SS::eq34_root_rpb_target>},
+    {"eq34_tree_root", "", Persist::ColdStart, "", "",   // no former member: new with the merge and split row of the chain's event table
+     nullptr, nullptr, &signalRows<&SS::eq34_tree_root>},
 };
 std::optional<LosId> losKey(int station, const std::string& sat) {
     if (sat.empty()) return LosId{StationId{station}, SatId{}};
@@ -1205,6 +1215,8 @@ const std::vector<FieldDecl> kArcFields = {
      &arcRows<&R::gl_hold_amb>},
     {"eq34_prev_target", "eq34_prev_target", Persist::Record, "EQT", "", &eqtToSnapshot,
      &eqtFromSnapshot, &arcRows<&R::eq34_prev_target>},
+    {"eq34_pin_life", "", Persist::ColdStart, "", "",   // no former member: new with the kept row of the chain's event table
+     nullptr, nullptr, &arcRows<&R::eq34_pin_life>},
     {"eq34_retained_edge", "eq34_retained_edges", Persist::Record, "EQR", "", &eqrToSnapshot,
      &eqrFromSnapshot, &retainedRows},
     {"anchor_arc_age", "anchor_arc_age", Persist::ColdStart, "", "", nullptr, nullptr,

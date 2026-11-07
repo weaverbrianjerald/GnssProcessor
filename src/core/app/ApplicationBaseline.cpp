@@ -24,6 +24,7 @@
 
 #include "app/Application.hpp"
 #include "app/EpochUpdateSupport.hpp"
+#include "filter/AmbiguityResolverSetup.hpp"   // makeAmbiguityResolverConfig (the one builder)
 #include "filter/StateKeySchema.hpp"
 #include "math/TimeUtils.hpp"
 #include "common/GnssIdentity.hpp"
@@ -655,26 +656,7 @@ void Application::buildBaselineRoverAr_(const BaselineRunWork& run, size_t rover
     // Per-rover AR.  Each rover gets an independent resolver since
     // its DD ambiguity state set is independent of other rovers'.
     if (config_.getArMode() > 0) {
-        AmbiguityResolverConfig ar_config;
-        ar_config.ar_mode              = config_.getArMode();
-        ar_config.ratio_threshold      = config_.getArRatioThreshold();
-        ar_config.elevation_mask_ar    = config_.getArElevationMask();
-        ar_config.hold_variance        = config_.getArHoldVariance();
-        ar_config.min_epochs           = config_.getArMinEpochs();
-        ar_config.max_position_sigma_m = config_.getArMaxPositionSigma();
-        ar_config.ratio_upper_bound    = config_.getArRatioUpperBound();
-        ar_config.wl_only              = config_.getArWlOnly();
-        ar_config.wl_only_pseudo_var   = config_.getArWlOnlyPseudoVar();
-        ar_config.wl_max_frac          = config_.getArWlMaxFrac();
-        ar_config.min_success_rate     = config_.getArMinSuccessRate();
-        ar_config.wl_only_ffr          = config_.getArWlOnlyFfr();
-        ar_config.wl_only_min_arc_count = config_.getArWlOnlyMinArcCount();
-        ar_config.wl_only_max_innov_cyc = config_.getArWlOnlyMaxInnovCyc();
-        ar_config.nl_max_per_pair_frac = config_.getArNlMaxPerPairFrac();
-        ar_config.nl_iono_free_row     = config_.getArNlIonoFreeRow();
-        ar_config.enable_partial_ar    = config_.getArEnablePartialAr();
-        ar_config.ar_active_systems    = config_.getArActiveSystems();
-        ar_config.state_ambiguity_basis = config_.getStateAmbiguityBasis();
+        const AmbiguityResolverConfig ar_config = makeAmbiguityResolverConfig(config_);
         ambiguity_resolver_ = std::make_unique<AmbiguityResolver>(ar_config, log_manager_);
         log->info("Rover '{}' AR enabled: mode={}, wl_only={}, partial_ar={}, ratio=[{:.1f}, {:.1e}], elev_mask={:.1f} deg, "
                   "hold_var={:.4f}, min_epochs={}, max_pos_σ={:.3f} m",
@@ -682,6 +664,13 @@ void Application::buildBaselineRoverAr_(const BaselineRunWork& run, size_t rover
             ar_config.ratio_threshold, ar_config.ratio_upper_bound,
             ar_config.elevation_mask_ar, ar_config.hold_variance,
             ar_config.min_epochs, ar_config.max_position_sigma_m);
+        // The baseline builder used to drop the per-candidate maturity gate; a setting
+        // of it now reaches the resolver, so a run that sets it says so.
+        if (ar_config.min_arc_info > 0.0) {
+            log->info("Rover '{}' AR: min_arc_info={:.2f} now reaches the resolver (the baseline "
+                      "builder dropped it before the shared builder).",
+                rover_name, ar_config.min_arc_info);
+        }
     }
     else {
         ambiguity_resolver_.reset();

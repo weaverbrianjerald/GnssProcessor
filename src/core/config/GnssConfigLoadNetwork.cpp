@@ -56,6 +56,7 @@
 #include "network/assembly/SecondCodeScope.hpp" // secondCodeAllowEntryValid (second-code allow-list grammar)
 #include "network/assembly/SecondPhaseScope.hpp" // secondPhaseAllowEntryValid
 #include "network/solve/Sbasis.hpp"         // pinPairContinuityBlocker
+#include "network/solve/ChainFrame.hpp"     // chainEventRowEntries / chainEventRowEntryBuilt (the event rows' grammar)
 #include "config/GnssConfigJsonHelpers.hpp"
 #include "config/RetiredConfigKeys.hpp"           // warnRetiredConfigKeys (the retired-key tombstone)
 #include "common/Constants.hpp"                   // GPS_Lx_WAVELENGTH (H3 per-λ log line)
@@ -3119,6 +3120,29 @@ namespace GnssProcessor {
         if (network_config_.trace_events)
             log->info("Network: per-event QC trace ENABLED — network_events.csv logs every "
                       "tiered QC action (T1-T6, GATE/SIGMA0/PIVOT/RETRO) in long format.");
+        // The frame observatory of the eq34 chain datum and the pre-hold phase-bias trace
+        // (measure-only; network/solve/ChainFrame.hpp).
+        network_config_.trace_chain_datum =
+            jval<bool>(json, "network.trace_chain_datum", "trace_chain_datum", false);
+        network_config_.trace_pb_prehold =
+            jval<bool>(json, "network.trace_pb_prehold", "trace_pb_prehold", false);
+        network_config_.trace_rpb_states =
+            jval<bool>(json, "network.trace_rpb_states", "trace_rpb_states", false);
+        if (network_config_.trace_chain_datum)
+            log->info("Network: eq34 chain-frame observatory ENABLED — network_chain_edges.csv "
+                      "(every tree edge with its chain-event row and legacy step), "
+                      "network_chain_frame.csv (the chord table) and the run-end frame census; "
+                      "measure-only, no event row is armed.");
+        if (network_config_.trace_chain_datum && !network_config_.trace_events)
+            log->warn("Network: network.trace_chain_datum is armed but network.trace_events is "
+                      "OFF — network_events.csv is never opened, so the CHAIN rows (both edges of "
+                      "every chain event) are DISCARDED.  Arm network.trace_events too.");
+        if (network_config_.trace_pb_prehold)
+            log->info("Network: pre-hold phase-bias trace ENABLED — network_pb_prehold.csv "
+                      "samples every emitted phase bias immediately before the phase-bias hold.");
+        if (network_config_.trace_rpb_states)
+            log->info("Network: receiver phase-bias trace ENABLED — network_rpb_states.csv, with "
+                      "the time-link NEES at the run end.");
         // Sink dependency (deferred from its arming block above,
         // because this toggle is parsed only here).  Invariant #4: an armed instrument
         // whose output has nowhere to go has to say so.
@@ -8007,6 +8031,19 @@ namespace GnssProcessor {
             jval<double>(json, "network.phase_datum_eq34_rpb_q_m2s",
                          "network_phase_datum_eq34_rpb_q_m2s",
                          network_config_.process_noise.get(NetworkQClass::ChainDatumRpb));
+        network_phase_datum_eq34_rpb_prior_birth_only_ =
+            jval<bool>(json, "network.phase_datum_eq34_rpb_prior_birth_only",
+                       "network_phase_datum_eq34_rpb_prior_birth_only", false);
+        if (network_phase_datum_eq34_rpb_prior_birth_only_
+            && !(network_phase_datum_eq34_rpb_prior_sigma_m_ > 0.0
+                 && network_phase_datum_eq34_rpb_q_m2s_ > 0.0))
+            log->warn("Network: network.phase_datum_eq34_rpb_prior_birth_only is INERT: it needs "
+                      "both the receiver phase-bias floor (phase_datum_eq34_rpb_prior_sigma_m > 0) "
+                      "and the time link (phase_datum_eq34_rpb_q_m2s > 0) it hands the bias to.");
+        else if (network_phase_datum_eq34_rpb_prior_birth_only_)
+            log->info("Network: eq34 receiver phase-bias floor BIRTH-ONLY: the zero-mean floor "
+                      "folds only while a bias has no time-linked carry (birth, erase, a gap past "
+                      "the horizon); the time link carries it from there.");
         network_phase_datum_eq34_carry_shift_ =
             jval<bool>(json, "network.phase_datum_eq34_carry_shift",
                        "network_phase_datum_eq34_carry_shift", false);
@@ -8053,6 +8090,112 @@ namespace GnssProcessor {
                 // still false at this point and the warning would fire on every run,
                 // including runs that arm carry_invariant.  It lives in the cross-knob
                 // validation pass instead, where every flag is settled.
+            }
+        }
+        // The graph family of the chain election: "signal" (default; one tree per
+        // constellation and phase signal) or "pair" (one forest per constellation over its
+        // L1/L2 pair, the same tree edges pinned on both bands).  An unknown value reads
+        // "signal" with a warning; "pair" without the chain is inert.  The exclusion with the
+        // pin bridge (network.phase_datum_time_linked) is raised in validateNetworkPhaseDatum_,
+        // where the bridge flag has settled.
+        {
+            const std::string s = jval<std::string>(json, "network.phase_datum_eq34_family",
+                                                    "phase_datum_eq34_family",
+                                                    std::string{"signal"});
+            if (s.empty() || s == "signal") {
+                network_phase_datum_eq34_family_ = "signal";
+            } else if (s == "pair") {
+                network_phase_datum_eq34_family_ = "pair";
+            } else {
+                network_phase_datum_eq34_family_ = "signal";
+                log->warn("Network: network.phase_datum_eq34_family = '{}' is not one of "
+                          "signal|pair - using 'signal' (one tree per constellation and phase "
+                          "signal).", s);
+            }
+            if (network_phase_datum_eq34_family_ == "pair" && !network_phase_datum_eq34_) {
+                log->warn("Network: network.phase_datum_eq34_family = 'pair' is set but "
+                          ".phase_datum_eq34 is OFF - there is no chain election to group by "
+                          "band, so it is INERT this run.");
+                network_phase_datum_eq34_family_ = "signal";
+            }
+        }
+        // The event rows of the chain election (the event table of network/solve/ChainFrame.hpp):
+        // an array of the entries whose integer rule replaces the as-built rule of their row.  An
+        // entry the table does not name is dropped with a warning, a duplicate silently, and an
+        // entry whose rule is not built yet with a warning (the rows are built in table order).
+        // The list is inert without the chain and is written for the float vehicle.  The
+        // exclusion with network.carry_invariant is raised in validateNetworkPhaseDatum_, where
+        // that flag has settled.
+        network_phase_datum_eq34_event_rows_.clear();
+        if (jhas(json, "network.phase_datum_eq34_event_rows", "phase_datum_eq34_event_rows")) {
+            const nlohmann::json& rows = jsection(json, "network.phase_datum_eq34_event_rows",
+                                                  "phase_datum_eq34_event_rows");
+            const std::vector<std::string> known = chainEventRowEntries();
+            std::string known_list;
+            for (const std::string& e : known) known_list += (known_list.empty() ? "" : "|") + e;
+            if (!rows.is_array()) {
+                log->warn("Network: network.phase_datum_eq34_event_rows must be an array of entries "
+                          "({}) - ignored; every row runs the as-built rule.", known_list);
+            } else {
+                std::vector<std::string> seen;
+                for (const auto& v : rows) {
+                    if (!v.is_string()) {
+                        log->warn("Network: network.phase_datum_eq34_event_rows holds a non-string "
+                                  "entry - dropped.");
+                        continue;
+                    }
+                    const std::string entry = v.get<std::string>();
+                    if (std::find(known.begin(), known.end(), entry) == known.end()) {
+                        log->warn("Network: network.phase_datum_eq34_event_rows entry '{}' is not "
+                                  "one of {} - dropped.", entry, known_list);
+                        continue;
+                    }
+                    if (std::find(seen.begin(), seen.end(), entry) != seen.end()) continue;
+                    seen.push_back(entry);
+                    if (!chainEventRowEntryBuilt(entry)) {
+                        log->warn("Network: network.phase_datum_eq34_event_rows: the rows are built "
+                                  "in table order; '{}' is not built yet - dropped.", entry);
+                        continue;
+                    }
+                    network_phase_datum_eq34_event_rows_.push_back(entry);
+                }
+            }
+            // The root row's target memory is not serialized: a resumed leg would pin the root at 0
+            // under carries kept in the old frame, so the entry is dropped when a snapshot is written.
+            const auto root_entry = std::find(network_phase_datum_eq34_event_rows_.begin(),
+                                              network_phase_datum_eq34_event_rows_.end(), "root");
+            if (root_entry != network_phase_datum_eq34_event_rows_.end()
+                && !network_config_.state_snapshot_path.empty()) {
+                log->warn("Network: network.phase_datum_eq34_event_rows entry 'root' is set with "
+                          "network.state_snapshot_path - dropped: the row's pinned receiver phase-bias "
+                          "targets are not written to the snapshot, so a resumed leg would pin a new root "
+                          "at 0 under carries kept in the old frame.");
+                network_phase_datum_eq34_event_rows_.erase(root_entry);
+            }
+            // A split piece's pin is the root row's: its keepers, its carried bias and its target memory.
+            const auto merge_split_entry = std::find(network_phase_datum_eq34_event_rows_.begin(),
+                                                     network_phase_datum_eq34_event_rows_.end(), "merge_split");
+            if (merge_split_entry != network_phase_datum_eq34_event_rows_.end()
+                && std::find(network_phase_datum_eq34_event_rows_.begin(),
+                             network_phase_datum_eq34_event_rows_.end(), "root")
+                       == network_phase_datum_eq34_event_rows_.end()) {
+                log->warn("Network: network.phase_datum_eq34_event_rows entry 'merge_split' is set without "
+                          "'root' - dropped: a split piece's new root is pinned by the root row's rule, and "
+                          "that row keeps the pinned target.");
+                network_phase_datum_eq34_event_rows_.erase(merge_split_entry);
+            }
+            if (!network_phase_datum_eq34_event_rows_.empty() && !network_phase_datum_eq34_) {
+                log->warn("Network: network.phase_datum_eq34_event_rows is set but "
+                          ".phase_datum_eq34 is OFF - the event rows are inert without the chain, so "
+                          "the list is cleared and every row runs the as-built rule.");
+                network_phase_datum_eq34_event_rows_.clear();
+            } else if (!network_phase_datum_eq34_event_rows_.empty()
+                       && network_config_.ambiguity_vehicle != NetworkAmbiguityVehicle::FloatKf) {
+                log->warn("Network: network.phase_datum_eq34_event_rows is set but "
+                          "network.ambiguity_vehicle is not 'float_kf' - the event rows are written "
+                          "for the float vehicle, so the list is cleared and every row runs the "
+                          "as-built rule.");
+                network_phase_datum_eq34_event_rows_.clear();
             }
         }
         // DD cycle-basis invariant carry (network.carry_invariant*).
@@ -10256,9 +10399,13 @@ namespace GnssProcessor {
                       "each (constellation,signal) connected component gets a per-(receiver,system,"
                       "signal) RPB split state δ_{{r,σ}}, ONE datum-receiver RPB pin, and a "
                       "spanning-tree of ambiguity pins over the bipartite (receiver × satellite) "
-                      "observation graph.  The emitted between-satellite phase-bias reference then "
-                      "stays integer-consistent across ALL satellites (each chain hop contributes "
-                      "only an integer) while the frame stays full-rank at global scale.  Reuses the "
+                      "observation graph, full-rank at global scale.  Its static algebra makes every "
+                      "between-satellite reference an integer combination across the component, but "
+                      "the as-built event handling (a re-host stepped by the new edge's float, the "
+                      "root-handover erase, parent-keyed edges, a returning vertex at baseline 0) "
+                      "steps the frame by fractions, so the emitted phase biases are NOT "
+                      "integer-consistent and no integer is claimed (network.trace_chain_datum "
+                      "measures the frame).  Reuses the "
                       "prioritized SPOF-cure machinery but replaces the anchor election with a chain "
                       "election; SUPERSEDES network.phase_datum_prioritized.  pin-round={}, "
                       "seed-round={}, rpb-prior sigma={} m (0=off).",
@@ -10277,6 +10424,100 @@ namespace GnssProcessor {
                           "carried phase-bias prior for the epoch.  A/B lever "
                           "(docs/SPEC_eq34_seed_round.md §8.5); the run-end seed-round "
                           "block reports framed vs cold re-hosts.");
+            // The pair family grows one tree for both bands of a constellation; the pin
+            // bridge grounds a satellite by (satellite, signal) key, band by band, which a
+            // shared tree cannot hold.  The bridge flag is settled by now
+            // (loadNetworkReattachHygiene_), so the exclusion is decided here.
+            if (network_phase_datum_eq34_family_ == "pair") {
+                if (network_config_.phase_datum_time_linked) {
+                    log->warn("Network: network.phase_datum_eq34_family = 'pair' with "
+                              "network.phase_datum_time_linked - the pin bridge roots satellites "
+                              "band by band, which one shared tree cannot hold; falling back to "
+                              "'signal' (one tree per constellation and phase signal).");
+                    network_phase_datum_eq34_family_ = "signal";
+                } else {
+                    log->info("Network producer: eq34 PAIR FAMILY ON - a constellation that "
+                              "tracks exactly two phase signals of different bands in an epoch "
+                              "grows ONE spanning forest over both, pins the same tree edges on "
+                              "both bands and one datum receiver per component on both bands' "
+                              "receiver phase biases; the vertices only one band tracks are "
+                              "attached to that band afterwards.  Any other constellation is "
+                              "elected per signal that epoch.  The run-end eq34 block reports "
+                              "the families formed, the fallbacks and the band-only attachments.");
+                }
+            }
+            // The event rows are written for the float vehicle, whose leveling carry the pins act
+            // on.  The vehicle was checked where the list is read; the invariant carry has settled
+            // only now.
+            if (!network_phase_datum_eq34_event_rows_.empty()) {
+                if (network_carry_invariant_) {
+                    log->warn("Network: network.phase_datum_eq34_event_rows is set with "
+                              "network.carry_invariant - the event rows are written for the float "
+                              "vehicle, so the list is cleared and every row runs the as-built rule.");
+                    network_phase_datum_eq34_event_rows_.clear();
+                } else {
+                    std::string armed;
+                    for (const std::string& e : network_phase_datum_eq34_event_rows_)
+                        armed += (armed.empty() ? "" : ", ") + e;
+                    // What each armed row does, in table order, and what the run-end eq34 block reports.
+                    std::string rows, reports;
+                    if (networkPhaseDatumEq34EventRowArmed("kept")) {
+                        rows += "'kept' holds an arc that stays in the tree, in either direction, with "
+                                "its pinned life continuing at its previous pin target, with no frame "
+                                "step of its own.";
+                        reports += "the edges held and the incumbent edges not held, by cause";
+                    }
+                    if (networkPhaseDatumEq34EventRowArmed("returning")) {
+                        rows += std::string(rows.empty() ? "" : "  ")
+                              + "'returning' releases a vertex that rejoins the tree after an absence: "
+                                "every carry that touches it and its subtree is erased, its pin takes the "
+                                "first-sighting target with an unknown step and the keys of its subtree "
+                                "are declared moved.";
+                        reports += std::string(reports.empty() ? "" : "; ")
+                                 + "the edges released, what the release took and the keys declared";
+                    }
+                    if (networkPhaseDatumEq34EventRowArmed("rehost")) {
+                        rows += std::string(rows.empty() ? "" : "  ")
+                              + "'rehost' releases every re-host, its certified branch held: the "
+                                "re-hosted vertex and its subtree take the cut release, the new pin "
+                                "keeps its rounded integer target with an unknown step, and the "
+                                "subtree's keys are declared moved.";
+                        reports += std::string(reports.empty() ? "" : "; ")
+                                 + "the re-hosts released, what the release took and the keys declared";
+                    }
+                    if (networkPhaseDatumEq34EventRowArmed("root")) {
+                        rows += std::string(rows.empty() ? "" : "  ")
+                              + "'root' pins a new datum receiver's phase bias at its carried value at a "
+                                "root handover, so the frame does not step and the satellites of its old "
+                                "frame keep their carries.";
+                        reports += std::string(reports.empty() ? "" : "; ")
+                                 + "the root handovers pinned at a carried bias and those left as built";
+                    }
+                    if (networkPhaseDatumEq34EventRowArmed("slip")) {
+                        rows += std::string(rows.empty() ? "" : "  ")
+                              + "'slip' takes an arc in the epoch's free-epoch latch out of the tree at the slip "
+                                "epoch, on both bands of a pair family: the old child re-attaches through a new "
+                                "edge, which is that edge's own row's, and a slipped arc no other route can "
+                                "replace takes the cut release.";
+                        reports += std::string(reports.empty() ? "" : "; ")
+                                 + "the slipped edges de-seated and released, by the latch's cause bits";
+                    }
+                    if (networkPhaseDatumEq34EventRowArmed("merge_split")) {
+                        rows += std::string(rows.empty() ? "" : "  ")
+                              + "'merge_split' releases a tree edge that joins two trees of the last election: "
+                                "the side it attaches takes the cut release, its own tree edges keep their "
+                                "targets and its keys are declared moved; and a piece that splits off without "
+                                "the old root pins its new root's phase bias at its carried value, so its frame "
+                                "does not step.";
+                        reports += std::string(reports.empty() ? "" : "; ")
+                                 + "the merges released, what the release took and the split pieces pinned";
+                    }
+                    log->info("Network producer: eq34 EVENT ROWS ON ({}) - the integer rule of each "
+                              "armed row replaces the as-built rule for its class of tree edge: "
+                              "{}  The other rows run the as-built rule.  The run-end "
+                              "eq34 block reports {}.", armed, rows, reports);
+                }
+            }
             if (network_phase_datum_prioritized_)
                 log->info("Network producer: network.phase_datum_eq34 SUPERSEDES "
                           "network.phase_datum_prioritized — the anchor "
@@ -10379,6 +10620,11 @@ namespace GnssProcessor {
                       "(the legacy pivot datum has no union to gate).",
                       network_phase_datum_min_stations_);
         }
+        if (!network_phase_datum_eq34_
+            && (network_config_.trace_chain_datum || network_config_.trace_rpb_states))
+            log->warn("Network: network.trace_chain_datum / network.trace_rpb_states are INERT "
+                      "without network.phase_datum_eq34 (there is no chain to observe); "
+                      "nothing is written.");
 
         // Two-edge continuous handover: inert guards, then the arming line.  Follows the
         // eq34-hygiene / pool-re-host precedent: an arm that cannot change anything is
@@ -12470,6 +12716,23 @@ namespace GnssProcessor {
             // still gates the station validation below), so a config that sets it is
             // a consumer-only run.
             clc.replay_products_path     = cl.value("replay_products_path", std::string{});
+            // The observe-mode integer search (derived into the consumer engine as
+            // GnssConfig::arObserve): reads the consumer's float and writes nothing back.
+            // Default false, byte-identical, and it never reaches the producer's solve or its
+            // resume fingerprint.  The search name and the determined bar are refused here,
+            // at load, so a typo cannot fall back silently to another search.
+            clc.ar_observe               = cl.value("ar_observe", false);
+            clc.ar_search                = cl.value("ar_search", std::string("full"));
+            clc.ar_determined_sigma_cyc  = cl.value("ar_determined_sigma_cyc", 0.05);
+            clc.trace_ar_fixes           = cl.value("trace_ar_fixes", false);
+            if (clc.ar_search != "full" && clc.ar_search != "decorrelated_partial")
+                throw std::runtime_error(
+                    "network.closed_loop.ar_search must be \"full\" or \"decorrelated_partial\", got \""
+                    + clc.ar_search + "\"");
+            if (!(clc.ar_determined_sigma_cyc > 0.0) || !std::isfinite(clc.ar_determined_sigma_cyc))
+                throw std::runtime_error(
+                    "network.closed_loop.ar_determined_sigma_cyc must be a positive number of cycles, got "
+                    + std::to_string(clc.ar_determined_sigma_cyc));
             if (cl.contains("ar_active_systems") && cl["ar_active_systems"].is_array()) {
                 for (const auto& s : cl["ar_active_systems"])
                     if (s.is_string()) clc.ar_active_systems.push_back(s.get<std::string>());
@@ -12501,6 +12764,19 @@ namespace GnssProcessor {
             log->warn("Network: network.trace_consumer_sat is ON but the "
                       "closed-loop harness is NOT enabled (network.closed_loop.enable) — "
                       "there is no consumer to read, so no closed_loop_sat_trace.csv will be "
+                      "opened and the knob is INERT on this run.");
+        }
+        // The same sink dependencies for the observe-mode search and its two files.
+        const ClosedLoopConfig& cl_obs = network_config_.closed_loop;
+        if (cl_obs.ar_observe && !cl_obs.enable) {
+            log->warn("Network: network.closed_loop.ar_observe is ON but the closed-loop "
+                      "harness is NOT enabled (network.closed_loop.enable) — there is no "
+                      "consumer to search, so the knob is INERT on this run.");
+        }
+        if (cl_obs.trace_ar_fixes && !cl_obs.ar_observe) {
+            log->warn("Network: network.closed_loop.trace_ar_fixes is ON but "
+                      "network.closed_loop.ar_observe is off — there is no search to write, so "
+                      "closed_loop_ar_fixes.csv and closed_loop_ar_epoch.csv will not be "
                       "opened and the knob is INERT on this run.");
         }
     }
@@ -12761,6 +13037,17 @@ namespace GnssProcessor {
         // base config is kept.
         if (cl.pb_hold_presence_flip)
             c.ssr_pb_hold_presence_flip_ = true;
+        // The observe-mode integer search.  Never cleared here; the search name and the
+        // determined bar are carried along so the harness key is self-contained, and an
+        // out-of-range value falls back to the default as the base config's load would have
+        // refused it before reaching this point.
+        if (cl.ar_observe) {
+            c.ar_observe_ = true;
+            c.ar_observe_search_ =
+                (cl.ar_search == "decorrelated_partial") ? "decorrelated_partial" : "full";
+            c.ar_observe_determined_sigma_cyc_ =
+                (cl.ar_determined_sigma_cyc > 0.0) ? cl.ar_determined_sigma_cyc : 0.05;
+        }
         // The same derivation for the declared-roster latch and freshness response.
         // Never cleared here, and the consumer detects the
         // declaration's presence from the wire rather than from this flag, so arming it

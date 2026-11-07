@@ -10,9 +10,11 @@ steps the moved side by an integer, which the producer must declare; an estimate
 steps it by a fraction, which no declaration can repair.
 
 At each epoch t that carries CHAIN rows in logs/network_events.csv (card IRD-1: tier CHAIN,
-event one of rehost, cut_release, root_handover, returning, slip_deseat, merge, split, plus
+event one of kept, rehost, cut_release, root_handover, returning, slip_deseat, merge, split, plus
 declared_keys rows whose `sat` column and `sig=<signal>` detail token name a declared key; a
-declared_keys row without sig= declares every signal of the satellite), the step of every pair
+declared_keys row without sig= declares every signal of the satellite; a `kept` row is written
+when the kept row holds an edge the as-built rule would have moved, and is graded as a class
+like the others), the step of every pair
 present at t and at the previous graded epoch is
 
     step = D(t) - D(t_prev)        (unwrapped, cycles; WL = step_1 - step_2)
@@ -51,7 +53,7 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import simnet_wire_integer_consistency as WIC  # noqa: E402  (the wire algebra's one owner)
 
-EVENT_CLASSES = ("rehost", "cut_release", "root_handover", "returning", "slip_deseat",
+EVENT_CLASSES = ("kept", "rehost", "cut_release", "root_handover", "returning", "slip_deseat",
                  "merge", "split")
 BAR_BAND_MICRO = 0.02
 BAR_WL = 0.05
@@ -238,15 +240,25 @@ def selftest():
             fh.write("week,tow,tier,event,sat,station,statistic,threshold,action,detail\n")
             fh.write("2313,%.3f,CHAIN,rehost,G03,S01000SIM,,,,sig=L1C edge=S01000SIM/G03\n" % t_ev)
             fh.write("2313,%.3f,CHAIN,declared_keys,G03,,,,,sig=L1C\n" % t_ev)
+            fh.write("2313,%.3f,CHAIN,kept,G03,S01000SIM,,,hold,sig=L1C legacy_known=0\n" % t_ev)
             fh.write("2313,%.3f,CHAIN,root_handover,,S01000SIM,,,,\n" % (t_ev + 60))
             fh.write("2313,%.3f,PB_HOLD,gen_start,G01,,,,first,sig=L1C\n" % t_ev)
         osb, sc, eps, _ = WIC.dual_load(os.path.join(td, "fx"), run)
         ev = load_chain_events(run)
         chk(set(ev) == {t_ev, t_ev + 60} and ev[t_ev]["declared"] == {("G03", "L1C")},
             "CHAIN rows read (classes and declared keys); other tiers ignored")
+        chk("kept" in EVENT_CLASSES and ev[t_ev]["classes"]["kept"] == 1
+            and ev[t_ev]["classes"]["rehost"] == 1,
+            "a kept row is a CHAIN event class beside the rehost row of the same epoch")
         res = event_steps(eps, osb, sc, ("L1C", "L2W"), ev)
         chk(res["rehost"]["events"] == 1 and res["root_handover"]["events"] == 1,
             "one rehost and one root-handover epoch")
+        chk(res["kept"]["events"] == 1 and res["kept"]["E1"] == res["rehost"]["E1"],
+            "the kept class is graded on the pairs of its epoch like any other class")
+        rows_k, _ = verdict(res, "free", require=("kept",))
+        chk(any(r[0] == "kept" and r[1] == 1 and not r[2].startswith("FAILED (class not exercised)")
+                for r in rows_k),
+            "the kept class reaches n >= 1 and a required kept class is not read as unexercised")
         dec = np.asarray(res["rehost"]["E1"]["dec"])
         chk(dec.size == 5 and int(np.sum(np.abs(np.abs(dec) - 1.0) < 1e-6)) == 4
             and int(np.sum(np.abs(np.abs(dec) - 0.7) < 1e-6)) == 1,

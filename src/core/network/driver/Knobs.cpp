@@ -361,13 +361,26 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.eq34_rpb_prior_sigma = config_.networkPhaseDatumEq34RpbPriorSigmaM();
     k.eq34_rpb_prior_w = (k.phase_datum_eq34 && k.eq34_rpb_prior_sigma > 0.0) ? 1.0 / (k.eq34_rpb_prior_sigma * k.eq34_rpb_prior_sigma) : 0.0;
     k.eq34_rpb_q = (k.phase_datum_eq34 && !k.carry_invariant) ? config_.networkPhaseDatumEq34RpbQ() : 0.0;
+    // Birth-only needs both the floor and the time link it hands the bias over to.
+    k.eq34_rpb_birth_only = k.eq34_rpb_prior_w > 0.0 && k.eq34_rpb_q > 0.0
+                         && config_.networkPhaseDatumEq34RpbPriorBirthOnly();
     k.eq34_shift_on = k.phase_datum_eq34 && config_.networkPhaseDatumEq34CarryShift() && !k.carry_invariant;
     k.eq34_longevity = k.phase_datum_eq34 && config_.networkPhaseDatumEq34LongevityElection();
     k.eq34_extend_only = k.phase_datum_eq34 && config_.networkPhaseDatumEq34ExtendOnly();
     k.eq34_slip_aware = k.phase_datum_eq34 && config_.networkPhaseDatumEq34SlipAwareElection();
+    k.eq34_pair_family = k.phase_datum_eq34 && config_.networkPhaseDatumEq34PairFamily();
+    k.eq34_row_kept = k.phase_datum_eq34 && config_.networkPhaseDatumEq34EventRowArmed("kept");
+    k.eq34_row_returning = k.phase_datum_eq34 && config_.networkPhaseDatumEq34EventRowArmed("returning");
+    k.eq34_row_rehost = k.phase_datum_eq34 && config_.networkPhaseDatumEq34EventRowArmed("rehost");
+    k.eq34_row_root = k.phase_datum_eq34 && config_.networkPhaseDatumEq34EventRowArmed("root");
+    k.eq34_row_slip = k.phase_datum_eq34 && config_.networkPhaseDatumEq34EventRowArmed("slip");
+    k.eq34_row_merge_split = k.phase_datum_eq34 && config_.networkPhaseDatumEq34EventRowArmed("merge_split");
     k.eq34_seed_round = k.phase_datum_eq34 && config_.networkPhaseDatumEq34SeedRound();
     k.eq34_seed_round_rehost = k.eq34_seed_round
                             && config_.networkPhaseDatumEq34SeedRoundRehostFrame();
+    k.trace_chain_datum = k.phase_datum_eq34 && nc.trace_chain_datum;
+    k.trace_rpb_states  = k.phase_datum_eq34 && nc.trace_rpb_states;
+    k.trace_pb_prehold  = nc.trace_pb_prehold;
     k.phase_datum_prioritized = config_.networkPhaseDatumPrioritized() || k.phase_datum_eq34;
     // Resolved once for the run: the datum-station slip path exists only under
     // the legacy pivot datum.  Every no-pivot datum already runs the slip loops from
@@ -388,6 +401,11 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
         k.pin_bridge_info    = k.pin_bridge_on
                                ? 1.0 / (k.pin_bridge_sigma * k.pin_bridge_sigma) : 0.0;
         k.pin_bridge_max_ep  = k.pin_bridge_on ? nc.phase_datum_bridge_max_ep : 0;
+        // The pair family and the pin bridge exclude each other (the loader gives the family up
+        // under the bridge): a configuration built by hand that has both reads as the bridge, as the
+        // loader would have it, because a bridged satellite cannot be rooted in a tree shared by
+        // two bands.
+        if (k.pin_bridge_on) k.eq34_pair_family = false;
         const bool ramp_on   = anchored && nc.eq34_fresh_pin_sigma_scale > 1.0
                                && nc.eq34_fresh_pin_ramp_ep > 0;
         k.fresh_pin_scale    = ramp_on ? nc.eq34_fresh_pin_sigma_scale : 1.0;

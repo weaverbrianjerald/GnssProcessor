@@ -563,6 +563,28 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // Exempt families:
         //   eq34 reattach hygiene   eq34_anchor_min_arc_ep, phase_datum_time_linked,
         //                           eq34_fresh_pin_sigma_scale
+        //   eq34 election family    phase_datum_eq34_family, like the other election knobs
+        //                           (phase_datum_eq34_{longevity_election,extend_only,
+        //                           slip_aware_election}), none of which is fingerprinted: they
+        //                           choose which tree the next election grows, and a frame step
+        //                           the new tree puts on a carry goes through the same re-reference
+        //                           and shift responses as any other re-host
+        //   eq34 event rows         phase_datum_eq34_event_rows: a row's integer rule decides which
+        //                           target and step an election gives an edge, not what a stored
+        //                           value means.  Its pin life is never serialized, so a resume
+        //                           starts every row cold and the row holds its first edges one
+        //                           election late.  The returning row's memory of the vertices
+        //                           seen in an earlier tree is never serialized either: after a
+        //                           resume the first election's absent vertices are births.  The
+        //                           rehost row keeps no memory of its own: it reads the incumbent tree of the
+        //                           last election.  The root row's pinned receiver phase-bias targets are
+        //                           not serialized either (the loader drops the entry when a snapshot is
+        //                           written): a resumed leg would pin a root at 0 under carries in the old
+        //                           frame.  The slip row reads the one-epoch free-epoch latch and the same
+        //                           memory of earlier trees, so after a resume it also reads a first absent
+        //                           vertex as a birth.  The merge and split row's memory of the last election's
+        //                           trees is not serialized either, and the loader drops its entry with the
+        //                           root row's
         //   signal integrity        network.signal_integrity.*
         //   measurement admission   adm_{screen,bound_m,min_sats,heal_ep,max_frac,
         //                           trace} and adm_revet{,_gap_ep,_ep,_census,_hold}

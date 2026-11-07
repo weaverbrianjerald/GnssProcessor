@@ -13,6 +13,7 @@
 
 #include "network/state/Entities.hpp"
 #include "network/diag/AmbStateTrace.hpp"
+#include "network/solve/ChainFrame.hpp"
 #include "network/qc/BlockBaarda.hpp"
 #include "network/assembly/ChannelAll.hpp"
 #include "network/qc/Congruence.hpp"
@@ -72,6 +73,7 @@ const Pinned kPinned[] = {
     {"networkRhsAttribution",               Slot::FrameDiag,     &networkRhsAttribution},
     {"networkRhsAttribTrip",                Slot::FrameDiag,     &networkRhsAttribTrip},
     {"networkAmbStateTrace",                Slot::StashTail,     &networkAmbStateTrace},
+    {"networkChainFrameObserve",            Slot::StashTail,     &networkChainFrameObserve},
     {"networkEntitiesReachSample",          Slot::StashTail,     &net::networkEntitiesReachSample},
 };
 

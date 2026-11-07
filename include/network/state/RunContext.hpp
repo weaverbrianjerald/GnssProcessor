@@ -80,6 +80,7 @@
 #include "network/state/BorderCounters.hpp"                  // BorderCounters
 #include "network/ar/SdEwlAr.hpp"                            // SdEwlArCounters
 #include "network/solve/ChainDatum.hpp"                      // ChainDatumCounters
+#include "network/solve/ChainFrameCounters.hpp"              // ChainFrameCounters
 #include "network/emit/SolPrep.hpp"                          // SolPrepCounters
 #include "network/qc/RaimWithinEpoch.hpp"                    // RaimWithinEpochCounters
 #include "network/carry/LevelingCarry.hpp"                   // LevelingCarryCounters
@@ -852,11 +853,29 @@ namespace GnssProcessor {
         int ar_suspect_epochs{};
         double eq34_rpb_prior_sigma{};
         double eq34_rpb_prior_w{};
+        /// network.phase_datum_eq34_rpb_prior_birth_only: the zero-mean floor folds only while a
+        /// receiver phase bias has no time-linked carry.  Resolved to false unless the floor and
+        /// the time link are both on.
+        bool eq34_rpb_birth_only{};
         double eq34_rpb_q{};
         bool eq34_shift_on{};
         bool eq34_longevity{};
         bool eq34_extend_only{};
         bool eq34_slip_aware{};   ///< network.phase_datum_eq34_slip_aware_election: keep slipped arcs out of the spanning tree, so a slip costs one chord instead of every cycle through a tree edge.
+        /// network.phase_datum_eq34_family "pair" (after the loader's fallbacks): the chain election grows one spanning forest per constellation over its L1/L2 pair and pins the same tree edges on both bands (network/solve/ChainDatum.hpp).  Resolved to false unless eq34.  Not fingerprinted, like the other election knobs.
+        bool eq34_pair_family{};
+        /// network.phase_datum_eq34_event_rows holds "kept" (after the loader's resolution): an incumbent tree edge whose pinned life continues keeps its previous pin target and takes no frame step of its own, instead of the as-built rule that keys an edge on its child's parent and re-reads its target from a stale carry (network/solve/ChainDatum.hpp).  Resolved to false unless eq34.  Not fingerprinted, like the other election knobs.
+        bool eq34_row_kept{};
+        /// network.phase_datum_eq34_event_rows holds "returning" (after the loader's resolution): a tree edge whose child vertex rejoins the tree after an absence (absent from the last election's tree, a vertex of an earlier one) takes the cut release.  Every carry that touches the vertex and its subtree is erased, its pin takes the first-sighting target with an unknown step, and the keys of its subtree are declared moved (network/solve/ChainDatum.hpp).  Resolved to false unless eq34.  Not fingerprinted, like the other election knobs.
+        bool eq34_row_returning{};
+        /// network.phase_datum_eq34_event_rows holds "rehost" (after the loader's resolution): a tree edge whose child had a parent at the last election and whose arc was no tree edge then takes the cut release.  Its pin keeps the rounded integer target the as-built rule drafted with an unknown step, every carry that touches the child and its subtree is erased, and the keys of its subtree are declared moved (network/solve/ChainDatum.hpp).  The row's certified branch is held: every re-host takes this rule.  Resolved to false unless eq34.  Not fingerprinted, like the other election knobs.
+        bool eq34_row_rehost{};
+        /// network.phase_datum_eq34_event_rows holds "root" (after the loader's resolution): a component whose datum receiver is new (a satellite of it remembers another root, and the new root was a vertex of the last tree) pins the new root's receiver phase bias at the value its last solve gave it, instead of 0, so the frame does not step.  The satellites that remembered the old root keep their carries (their edges are not marked unknown on that account).  A handover whose new root has no carried bias inside the horizon, was no vertex of the last tree, or is a split piece other than the one that keeps the old root runs the as-built rule (network/solve/ChainDatum.hpp).  Resolved to false unless eq34.  Not fingerprinted, like the other election knobs (the target memory is not snapshotted, so the loader drops the entry when a snapshot is written).
+        bool eq34_row_root{};
+        /// network.phase_datum_eq34_event_rows holds "slip" (after the loader's resolution): an arc in the epoch's free-epoch latch leaves the tree at the slip epoch while another route reaches its child, whose new edge is that edge's own row's; a slipped arc no other route can replace takes the cut release (network/solve/ChainDatum.hpp).  Off: a slipped tree edge stays, and the frame takes the slip.
+        bool eq34_row_slip{};
+        /// network.phase_datum_eq34_event_rows holds "merge_split" (after the loader's resolution, which keeps it only with "root"): a tree edge joining two trees of the last election takes the cut release of the side it attaches, whose own tree edges keep their targets, and a piece that splits off without the old root pins its new root's receiver phase bias at its carried value, so its frame does not step (network/solve/ChainDatum.hpp).  Off: a split piece's frame takes an unknown step, undeclared.  Resolved to false unless eq34.  Not fingerprinted, like the other election knobs.
+        bool eq34_row_merge_split{};
         /// network.phase_datum_eq34_seed_round (docs/SPEC_eq34_seed_round.md): round
         /// otherwise-zero pin targets to λ·round(x_state/λ), so |innovation| ≤ λ/2 by
         /// construction.  Not gated on !carry_invariant: the invariant-carry zero-target rationale
@@ -867,6 +886,14 @@ namespace GnssProcessor {
         /// pre-pin float) and stays shiftable, instead of taking an unknown step that
         /// re-references the (sat, σ).  Resolved to false unless eq34_seed_round.
         bool eq34_seed_round_rehost{};
+        /// network.trace_chain_datum: the chain election records its tree for the frame
+        /// observatory (network/solve/ChainFrame.hpp).  Resolved to false unless eq34.
+        bool trace_chain_datum{};
+        /// network.trace_rpb_states: network_rpb_states.csv.  Resolved to false unless eq34.
+        bool trace_rpb_states{};
+        /// network.trace_pb_prehold: network_pb_prehold.csv, the emitted phase biases just before
+        /// the phase-bias hold (any datum).
+        bool trace_pb_prehold{};
         bool phase_datum_prioritized{};
         // --- eq34 reattach hygiene ---
         // All four are resolved against the datum mode: the loader already disarms them
@@ -2376,6 +2403,7 @@ namespace GnssProcessor {
           BorderCounters,
           SdEwlArCounters,
           ChainDatumCounters,
+          ChainFrameCounters,
           AnchorHygieneCounters,
           SignalIntegrityCounters,
           RaimCounters,

@@ -416,7 +416,9 @@ def main():
         ap.error("mode, fixture and --run are required (or --selftest)")
     fixture, run = os.path.abspath(a.fixture), os.path.abspath(a.run)
     bands = tuple(a.bands.split(","))
-    _, eps, _ = WIC.parse_products_tokens(os.path.join(run, "products.txt"))
+    # A replay writes no products.txt: its first epoch is the wire's.
+    wire_or_products = a.wire if a.wire else os.path.join(run, "products.txt")
+    _, eps, _ = WIC.parse_products_tokens(wire_or_products)
     t_first = eps[0]["tow"]
     if a.mode == "float":
         start = WIC.start_from_hms(t_first, a.from_hms)

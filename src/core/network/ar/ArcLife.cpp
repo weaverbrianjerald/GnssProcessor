@@ -112,6 +112,15 @@ unsigned arcLifeChange(const ArcLifeStamp& before, const ArcLifeStamp& now) {
     return m;
 }
 
+bool arcPinnedLifeContinues(const ArcLifeStamp& at_pin, const ArcLifeStamp& now) {
+    if (at_pin.flag_ep != now.flag_ep) return false;
+    if (at_pin.adm_generation == now.adm_generation && at_pin.adm_run_start == now.adm_run_start)
+        return true;
+    // The ledger had not admitted the arc when it was pinned and holds it live now.
+    return at_pin.adm_run_start < 0 && now.adm_run_start >= 0
+        && now.adm_generation >= at_pin.adm_generation;
+}
+
 ArcLifeStep arcLifeStep(const ArcLifeTrack* last, long long last_search_ep, const ArcLifeStamp& now,
                         bool freed, long long now_ep) {
     ArcLifeStep step;

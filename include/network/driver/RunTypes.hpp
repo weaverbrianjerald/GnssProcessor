@@ -162,11 +162,17 @@ struct NetStation {
     std::map<std::string, double> pinned_amb_targets;
     // eq34 only: the "<sys>_RPB_<σ>" receiver-phase-bias keys for which this
     // station is the datum receiver r1 this epoch, each folded as a 1e10 pin on the
-    // RPB column in this station's own block (δ_{r1,σ} = 0, the receiver half of the
+    // RPB column in this station's own block (δ_{r1,σ} = the key's target in
+    // @ref pinned_rpb_targets, 0 when it has none: the receiver half of the
     // single-receiver-chain gauge).  Cleared and rebuilt every epoch by the chain
     // election.  Empty except at an eq34 component's datum receiver, and always empty
     // when network.phase_datum_eq34 is off.
     std::set<std::string> pinned_rpb_keys;
+    // eq34 root row only: the absolute value (m) the fold pins a key of @ref pinned_rpb_keys at,
+    // when it is not 0 (a new datum receiver pinned at its carried phase bias).  A key with no
+    // entry is pinned at 0.  Cleared and rebuilt every epoch by the chain election; always empty
+    // unless network.phase_datum_eq34_event_rows holds "root".
+    std::map<std::string, double> pinned_rpb_targets;
     // Per-pin σ multiplier for the few entries of @ref pinned_amb_targets that had to
     // be pinned on a host younger than the eligibility threshold (eq34 reattach
     // hygiene, docs/SPEC_eq34_reattach_hygiene.md, INC-3).  The fold divides the 1e10
@@ -990,6 +996,20 @@ struct PlPc {
     bool         carried{false};///< A carried prior was folded this epoch (else a birth row).
 };
 
+/// One receiver phase-bias column of a station-epoch as network_rpb_states.csv reports it: the
+/// state's column and linearization point, its pin, and the two priors the fold put on it.
+struct RpbTraceCol {
+    std::string  key;        ///< The receiver phase-bias key.
+    std::string  system;     ///< Its constellation name ("GPS").
+    std::string  signal;     ///< Its phase signal.
+    Eigen::Index col{-1};    ///< A_r column.
+    double       x_lin{0.0}; ///< This epoch's linearization point (m).
+    bool         pinned{false};  ///< The datum receiver's pinned bias.
+    double       floor_w{std::numeric_limits<double>::quiet_NaN()};   ///< Weight (1/m^2) of the zero-mean rank floor (NaN: not folded).
+    double       tl_value{std::numeric_limits<double>::quiet_NaN()};  ///< The carried value the time link pulls toward (m; NaN: no time link).
+    double       tl_var{std::numeric_limits<double>::quiet_NaN()};    ///< Its variance, carried plus q times the gap (m^2; NaN: no time link).
+};
+
 struct PlAmb {
     Eigen::Index col;     ///< A_r column of this ambiguity (= h2local[amb_idx]).
     std::string  sat;     ///< RINEX satellite id.
@@ -1474,6 +1494,10 @@ struct StationAssembly {
     /// column, linearization point) (eq34 RPB time-linking).  Empty unless
     /// network.phase_datum_eq34 is on with phase_datum_eq34_rpb_q_m2s > 0.
     std::vector<std::tuple<std::string, Eigen::Index, double>> pl_rpb;
+    /// Every receiver phase-bias column with a live phase row, pinned or not, with its priors,
+    /// for network_rpb_states.csv (the frame observatory).  Empty unless
+    /// network.trace_rpb_states is armed on an eq34 run; nothing in the solve reads it.
+    std::vector<RpbTraceCol> rpb_trace;
     /// Present per-LOS iono columns recorded for the post-solve harvest, as (sat, A_r
     /// column, linearization point) (I-in-block).  The harvest appends them to the
     /// block's columns.  Same tuple shape as pl_rpb.  Empty unless

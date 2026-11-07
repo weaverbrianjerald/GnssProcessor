@@ -177,6 +177,28 @@ ArcLifeStamp arcLifeStamp(const NetworkRunContext& ctx, const ArcId& arc);
  */
 unsigned arcLifeChange(const ArcLifeStamp& before, const ArcLifeStamp& now);
 
+/**
+ * @brief Whether the life of a pinned arc continues from one election to the next.
+ *
+ * The chain election pins an arc as a tree edge and never harvests it, so the leveling carry an
+ * arc still holds while pinned is a stale chord carry: its appearance, prune or re-level says
+ * nothing about the phase of the pinned arc.  The carry fields of the stamp
+ * (@c has_carry, @c birth_ep, @c dropped_ep, @c relevel_s) are therefore not read.  The life of a
+ * pinned arc is the arc ledger's admitted side and the screen flag:
+ *  - a changed @c flag_ep ends it;
+ *  - an unchanged @c adm_generation and @c adm_run_start continue it;
+ *  - the ledger admits an epoch's rows after the election, so at the pin it may not yet have held
+ *    the arc live (@c at_pin.adm_run_start < 0, the first admission or the return after a gap),
+ *    and holds it live now (@c now.adm_run_start >= 0 with a generation not below the one at the
+ *    pin): that admission is the echo of the life the pin began and continues it;
+ *  - any other change of the two ledger fields ends it (a rebirth, or a new run after a gap).
+ *
+ * @param at_pin The arc's stamp at the election that last pinned it.
+ * @param now    Its stamp at this election.
+ * @return True when the arc's pinned life continues.
+ */
+bool arcPinnedLifeContinues(const ArcLifeStamp& at_pin, const ArcLifeStamp& now);
+
 /// One arc's life as a search tracks it from one search to the next.
 struct ArcLifeTrack {
     ArcLifeStamp stamp{};        ///< The stamp the last search read (re-baselined at an echo).

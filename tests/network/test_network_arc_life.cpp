@@ -436,5 +436,88 @@ TEST(NetworkArcLife, ANewLifeRestartsTheDurabilityAndAnEchoKeepsIt) {
     EXPECT_TRUE(first.newLife());
 }
 
+// ------------------------------------------------------------------ the pinned life
+
+/// A stamp with the ledger fields and the flag set and every carry field at its default.
+ArcLifeStamp pinnedStamp(int generation, long long run_start, long long flag_ep = -1) {
+    ArcLifeStamp s;
+    s.adm_generation = generation;
+    s.adm_run_start  = run_start;
+    s.flag_ep        = flag_ep;
+    return s;
+}
+
+TEST(NetworkArcLife, APinnedLifeContinuesWhileTheLedgerFieldsAndTheFlagAreUnchanged) {
+    EXPECT_TRUE(arcPinnedLifeContinues(pinnedStamp(2, 17), pinnedStamp(2, 17)));
+    EXPECT_TRUE(arcPinnedLifeContinues(pinnedStamp(0, -1), pinnedStamp(0, -1)));   // never admitted, still not
+    EXPECT_TRUE(arcPinnedLifeContinues(pinnedStamp(4, 30, 25), pinnedStamp(4, 30, 25)));   // flagged long ago
+    EXPECT_TRUE(arcPinnedLifeContinues(ArcLifeStamp{}, ArcLifeStamp{}));
+}
+
+TEST(NetworkArcLife, TheFirstAdmissionAfterThePinContinuesItsLife) {
+    // The election pinned the arc before the roster audit admitted it: (0, -1) at the pin, the
+    // admitted run (generation 1, starting at the pin's epoch or later) now.
+    EXPECT_TRUE(arcPinnedLifeContinues(pinnedStamp(0, -1), pinnedStamp(1, 7)));
+    EXPECT_TRUE(arcPinnedLifeContinues(pinnedStamp(0, -1), pinnedStamp(1, 0)));   // a run start of epoch 0 is live
+    // The admission echo holds one election later too, with the same kind of arc.
+    EXPECT_TRUE(arcPinnedLifeContinues(pinnedStamp(1, 7), pinnedStamp(1, 7)));
+}
+
+TEST(NetworkArcLife, ABridgedReentryEchoContinuesTheLifeThePinBegan) {
+    // The arc came back after a gap the ledger bridged: at the pin it was in the gap (generation g,
+    // run start -1), now it is live again in the same generation.
+    EXPECT_TRUE(arcPinnedLifeContinues(pinnedStamp(3, -1), pinnedStamp(3, 12)));
+    // A generation above the pin's is still the admission of the life the pin began.
+    EXPECT_TRUE(arcPinnedLifeContinues(pinnedStamp(3, -1), pinnedStamp(4, 12)));
+    // A generation below it is a different history.
+    EXPECT_FALSE(arcPinnedLifeContinues(pinnedStamp(3, -1), pinnedStamp(2, 12)));
+    // Still not live: nothing was admitted, but the fields changed.
+    EXPECT_FALSE(arcPinnedLifeContinues(pinnedStamp(3, -1), pinnedStamp(4, -1)));
+}
+
+TEST(NetworkArcLife, ARebirthEndsAPinnedLife) {
+    // Live at the pin (generation 2, run start 5), reborn since (generation 3, run start 8).
+    EXPECT_FALSE(arcPinnedLifeContinues(pinnedStamp(2, 5), pinnedStamp(3, 8)));
+    EXPECT_FALSE(arcPinnedLifeContinues(pinnedStamp(2, 5), pinnedStamp(3, 5)));   // the generation alone
+    // Gone from the ledger's live set (dead, or in a gap): the life is not the pinned one.
+    EXPECT_FALSE(arcPinnedLifeContinues(pinnedStamp(2, 5), pinnedStamp(2, -1)));
+    EXPECT_FALSE(arcPinnedLifeContinues(pinnedStamp(2, 5), pinnedStamp(3, -1)));
+}
+
+TEST(NetworkArcLife, ANewRunEndsAPinnedLife) {
+    // The run start moved with the generation unchanged: the arc left and came back as a new run.
+    EXPECT_FALSE(arcPinnedLifeContinues(pinnedStamp(2, 5), pinnedStamp(2, 9)));
+    EXPECT_FALSE(arcPinnedLifeContinues(pinnedStamp(2, 5), pinnedStamp(2, 6)));
+}
+
+TEST(NetworkArcLife, AScreenFlagEndsAPinnedLifeEvenWithoutAChangeOfTheLedger) {
+    EXPECT_FALSE(arcPinnedLifeContinues(pinnedStamp(2, 5, -1), pinnedStamp(2, 5, 40)));   // flagged since
+    EXPECT_FALSE(arcPinnedLifeContinues(pinnedStamp(2, 5, 40), pinnedStamp(2, 5, 41)));   // flagged again
+    EXPECT_FALSE(arcPinnedLifeContinues(pinnedStamp(2, 5, 40), pinnedStamp(2, 5, -1)));
+    // A flag also ends the life an admission echo would have continued.
+    EXPECT_FALSE(arcPinnedLifeContinues(pinnedStamp(0, -1, -1), pinnedStamp(1, 7, 6)));
+}
+
+TEST(NetworkArcLife, TheCarryFieldsOfAPinnedLifeAreNotRead) {
+    // A pinned arc is never harvested, so the carry it holds is a stale chord carry: its
+    // appearance, prune, drop and re-level say nothing about the pinned phase.
+    const auto withCarry = [](ArcLifeStamp s, bool has, long long birth, long long dropped, double relevel_s) {
+        s.has_carry  = has;
+        s.birth_ep   = birth;
+        s.dropped_ep = dropped;
+        s.relevel_s  = relevel_s;
+        return s;
+    };
+    const ArcLifeStamp base = pinnedStamp(2, 5);
+    EXPECT_TRUE(arcPinnedLifeContinues(withCarry(base, false, 0, 0, 0.0), withCarry(base, true, 12, 0, 360.0)));   // appears
+    EXPECT_TRUE(arcPinnedLifeContinues(withCarry(base, true, 12, 0, 360.0), withCarry(base, false, 0, 0, 0.0)));   // pruned
+    EXPECT_TRUE(arcPinnedLifeContinues(withCarry(base, true, 12, 0, 360.0), withCarry(base, true, 40, 33, 900.0)));  // erased, reborn, dropped, re-levelled
+    // The echo with carry fields that differ.
+    EXPECT_TRUE(arcPinnedLifeContinues(withCarry(pinnedStamp(0, -1), false, 0, 0, 0.0),
+                                       withCarry(pinnedStamp(1, 7), true, 7, 0, 210.0)));
+    // And a rebirth ends it however the carry looks.
+    EXPECT_FALSE(arcPinnedLifeContinues(withCarry(base, true, 12, 0, 360.0), withCarry(pinnedStamp(3, 8), true, 12, 0, 360.0)));
+}
+
 }  // namespace
 }  // namespace GnssProcessor
