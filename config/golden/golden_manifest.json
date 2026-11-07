@@ -61,7 +61,10 @@
   "2026-11-02 (card BDG): a third lineage, golden_field_bds_refound, at the author's decision (course B of card BDSB): the",
   "field golden's generated output plus BeiDou B1I / B3I, network.second_band_admission and network.n3c_wire_per_signal;",
   "its three BeiDou rows are RECOMMEND_SCOPED under the regime predicate has_bds, so the GPS + Galileo goldens are out of",
-  "their regime and unchanged.  Generate in manifest order: its base is the field golden's output."
+  "their regime and unchanged.  Generate in manifest order: its base is the field golden's output.",
+  "2026-11-07 (rule of that date: finished keys are armed unless measured harmful; card RF0HV18B, section Arming under the 2026-11-07 rule): ten keys pinned on both goldens, and so on the BeiDou lineage that extends the field golden: network.n3c_wire_per_signal (D6),",
+  "the PES stages parallel_carry_harvest, parallel_iono_traces and parallel_coupling_prepare, cycle_slip.if_phase_td_reseed_on_flag, raim_prior_channel, cycle_slip.if_phase_td_sat_clock_event, clock_anchor_defer_coupled, estimation.seed_full_equation and signal_integrity.census.",
+  "Kept off: n3c_bia_pin_pair (D1), n3c_ledger_lifecycle (D7), raim_refloat_maturity_gate, pivot_election.  Solve-affecting; fresh convergence only (seed_full_equation is fingerprinted)."
  ],
  "goldens": [
   {
@@ -75,6 +78,16 @@
     "network.parallel_station_normals": true,
     "network.parallel_schur_columns": true,
     "network.parallel_redundancy_census": true,
+    "network.parallel_carry_harvest": true,
+    "network.parallel_iono_traces": true,
+    "network.parallel_coupling_prepare": true,
+    "network.n3c_wire_per_signal": true,
+    "network.cycle_slip.if_phase_td_reseed_on_flag": true,
+    "network.raim_prior_channel": true,
+    "network.cycle_slip.if_phase_td_sat_clock_event": true,
+    "network.clock_anchor_defer_coupled": true,
+    "estimation.seed_full_equation": true,
+    "network.signal_integrity.census": true,
     "processing.active_systems": [
      "GPS",
      "Galileo"
@@ -177,6 +190,16 @@
     "network.parallel_station_normals": true,
     "network.parallel_schur_columns": true,
     "network.parallel_redundancy_census": true,
+    "network.parallel_carry_harvest": true,
+    "network.parallel_iono_traces": true,
+    "network.parallel_coupling_prepare": true,
+    "network.n3c_wire_per_signal": true,
+    "network.cycle_slip.if_phase_td_reseed_on_flag": true,
+    "network.raim_prior_channel": true,
+    "network.cycle_slip.if_phase_td_sat_clock_event": true,
+    "network.clock_anchor_defer_coupled": true,
+    "estimation.seed_full_equation": true,
+    "network.signal_integrity.census": true,
     "processing.active_systems": [
      "GPS",
      "Galileo"
