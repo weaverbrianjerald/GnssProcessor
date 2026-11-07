@@ -26,8 +26,8 @@ HERE = os.path.dirname(os.path.abspath(__file__)).replace("\\", "/")
 # The scripts that read RINEX 3 records by id and normalize it through this module.  The
 # selftest lints these; `lint` with no argument covers every script (slow on a cold disk).
 READERS = ("ab2_l5_raw_read.py", "ewl_bridge_oracle.py", "ewl_census.py", "extcb_gim_verdict.py",
-           "extcb_raw_if_check.py", "fleet_bias_diurnal.py", "mw_census.py", "mw_census_allpairs.py",
-           "mwwl_event_census.py", "rinex_edit.py", "simnet_mw_widelane.py",
+           "extcb_raw_if_check.py", "fleet_bias_diurnal.py", "l2_quarter_cycle.py", "mw_census.py",
+           "mw_census_allpairs.py", "mwwl_event_census.py", "rinex_edit.py", "simnet_mw_widelane.py",
            "clock_level/scl2_codepred.py", "clock_level/scl_brdc_clk.py")
 
 
