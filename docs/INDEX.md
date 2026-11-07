@@ -238,7 +238,8 @@ and on DOY 132; all gates pass; receivers not graded; nothing armed).
 two clauses fail, 2 extra lone decouplings on the golden at DOY 132 and two hours' census median on the broadcast posture at DOY 132; nothing armed).
 
 [ICL6](refound/ICL6_anchor_trip_family_shift_2026-11-06.md), why the clock anchor trips alone: a slip's stale level, a signal family's common mode, a mixed statistic
-(open, 2026-11-06: measured first, the lone trips read a shift of one signal family no row sees, through a statistic that mixes families; a freed arc's stale level is the push; gates frozen for the reader, the source and the amplification).
+(closed, 2026-11-07: the lone trips read a shift of one signal family no row sees, through a statistic that mixes families, and a freed arc's stale level is the push; 14 of 15 Galileo trips sit on a mixed pair, held about 2.7 % of the time; the key only moves the trips,
+35 in the controls and 36 with it; a 100 m2 floor removes them at no census cost; H1, H2 and H3 each fail clauses; nothing armed).
 
 ### `resume-seam` — [topics/resume-seam.md](topics/resume-seam.md)
 

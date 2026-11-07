@@ -219,3 +219,7 @@ Nothing is armed. Arming, any golden change and the merge are the author's decis
 - **Runs of flags.** Whether an arc refloated at every epoch for up to 10 minutes costs anything the census does not read.
 - **The key with the quorum.** Not run together here; card ICL3's guard still covers an anchor decoupling from any other cause.
 - **From card ICL4 section 6, still open:** the factor of 2 at q 5e-6; MW at a locked arc; the within-epoch tier and one arc; the epoch 304110 of DOY 129 and the last minutes of DOY 132. Card ARL's unit-test debt for the key's run-end report falls due with arming.
+
+## 7. The owed trace (2026-11-07)
+
+The second item of section 6 is answered by card [ICL6](ICL6_anchor_trip_family_shift_2026-11-06.md). The three lone trips of section 4.3 read a shift of one signal family, invisible to every row, through a statistic that mixes families; a freed arc's pre-slip level is the source. The key softens the family's prior or, on E08, moves the timing of a pair change; `phi` trips are 35 in the two golden controls and 36 with the key. R3's clause stays failed (82 to 84). The other items of section 6 stay open.
