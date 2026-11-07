@@ -475,6 +475,11 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.mdb_on          = nc.mdb && (k.mdb_from_raim || k.mdb_from_census);
     k.mdb_event_m     = std::max(0.0, nc.mdb_event_m);
     k.mdb_event_holdoff = static_cast<long long>(std::max(0, nc.mdb_event_holdoff_ep));
+    // Per-class variance factor.  The rider rides the census sweep, so a live census is part of
+    // the predicate (a second guard behind the loader's error, for hand-built configs).
+    k.vcf_on    = config_.networkVcf() && k.redun_census_on;
+    k.vcf_alpha = config_.networkVcfEwmaAlpha();
+    k.vcf_apply = k.vcf_on && config_.networkVcfApply();
     // Prior-residual census.  Nothing to resolve against the estimation configuration:
     // the census reads the (prior mean, prior var, posterior var) triples the carry
     // harvests already hold and writes counters, so the master arm is the predicate.  The

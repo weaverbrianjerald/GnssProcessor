@@ -51,6 +51,7 @@
 #include "network/qc/PrefitCensus.hpp"    // NetworkPrefitCensusTallies (prefit census / fuse / topology / recorder)
 #include "network/carry/CarryVceApply.hpp"   // NetworkCarryVceApply (M2 v2 carry variance-factor state)
 #include "network/qc/Mdb.hpp"             // NetworkMdbEpoch + NetworkMdbTallies (Baarda MDB reliability)
+#include "network/qc/Vcf.hpp"             // NetworkVcfState + VcfCounters (the per-class variance factor)
 #include "network/qc/BlockBaarda.hpp"     // NetworkBlockBaarda + BlockBaardaHit + tallies (BlockFormal LOS block census)
 #include "network/qc/Congruence.hpp"      // NetworkCongruence + CongruenceHit + tallies (station congruence screen)
 #include "network/solve/DatumGraph.hpp"      // NetDatumGraphSpectral + NetworkDatumGraphTallies (datum graph census)
@@ -931,6 +932,13 @@ namespace GnssProcessor {
         bool   mdb_from_census{};     ///< The redundancy-census feed site is armed (mirrors @ref redun_census_on).
         double mdb_event_m{};         ///< Reporting threshold, metres (0 = no events).  Nothing acts on it.
         long long mdb_event_holdoff{};///< Per-cell MDB event rate limit, in flush passes.
+        // --- per-class variance factor ---
+        // `vcf_on` is the one predicate the census rider and the flush read; it requires the
+        // census that hosts the rider.  `vcf_apply` is the stage-2 predicate the three readers
+        // read (the within-epoch pool, the post-fit pool, the URA EWMA); it requires vcf_on.
+        bool   vcf_on{};              ///< Master: network.vcf on a live redundancy census.
+        double vcf_alpha{0.1};        ///< EWMA weight of a new sweep (network.vcf_ewma_alpha).
+        bool   vcf_apply{};           ///< network.vcf_apply: the scales replace the fixed a priori scale at the three readers.
         // --- prior-residual census ---
         // `prires_on` is the one predicate every feed site reads for "does this run touch
         // the census at all", so an off run pays one bool test per site.  The per-family
@@ -2039,6 +2047,13 @@ namespace GnssProcessor {
         // aggregates.  Empty and unread unless ctx.knobs.mdb_on, so an off run allocates
         // nothing.
         NetworkMdbEpoch mdb;                   ///< this epoch's per-(constellation x class) accumulation.
+
+        // --- Per-class variance factor ---
+        // Snapshot: exempt (cold start).  Observer state under network.vcf alone; under
+        // network.vcf_apply its EWMAs scale three QC readers, and a warm-resumed leg then reads
+        // the a priori scale until the EWMAs re-seed (kVcfApplyMinSweeps sweeps).  Stamped, not
+        // cleared by the driver, like the MDB accumulator above.
+        NetworkVcfState vcf;                   ///< the epoch accumulator and every class's EWMA.
         // mdb_seq: moved to NetworkServiceCounters (decision D6).
         // mdb_event_last: moved to net::LosState::events (LosEventState::mdb_event_last) (network/state/Entities.hpp).
         // mdb_join_warned: moved to NetworkServiceCounters (decision D6).
@@ -2401,6 +2416,7 @@ namespace GnssProcessor {
           WithinEpochCulpritsCounters,
           RedundancyCensusCounters,
           MdbCounters,
+          VcfCounters,
           BlockBaardaCounters,
           CongruenceCounters,
           PriorResidualCounters,

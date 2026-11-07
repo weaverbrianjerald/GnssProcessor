@@ -6972,6 +6972,46 @@ namespace GnssProcessor {
         double networkRaimStationFactorRatio() const { return network_raim_station_factor_ratio_; }
 
         /**
+         * @brief The per-class variance factor of the observation rows (@c network.vcf).
+         *
+         * Measure-only: on every redundancy-census sweep, per class of observation row (code
+         * and phase by constellation and signal, and their aggregates), the
+         * redundancy-weighted factor @f$\sum w v^2 / \sum r_i@f$ and its robust companion
+         * @f$(1.4826\,\mathrm{med}|v|\sqrt{w/r_i})^2@f$, an EWMA per class, the trace
+         * @c network_vcf.csv and a run-end table (network/qc/Vcf.hpp).  Requires the
+         * redundancy census (@c network.redundancy_census_stride or
+         * @c network.redundancy_escalate_sigma); off = byte-identical.
+         *
+         * @return true when the factor is measured.
+         */
+        bool networkVcf() const { return network_vcf_; }
+
+        /**
+         * @brief EWMA weight of a new sweep in the per-class variance factor
+         *        (@c network.vcf_ewma_alpha).
+         *
+         * One sweep per @c network.redundancy_census_stride epochs; the default 0.1 gives an
+         * e-folding of 10 sweeps (50 minutes at stride 10 and 30 s).  Clamped to (0, 1].
+         *
+         * @return The weight.
+         */
+        double networkVcfEwmaAlpha() const { return network_vcf_ewma_alpha_; }
+
+        /**
+         * @brief Apply the per-class variance factor as the scale of three QC readers
+         *        (@c network.vcf_apply; requires @c network.vcf).
+         *
+         * The robust aggregate EWMAs, where identifiable, replace the fixed a priori scale:
+         * the within-epoch and post-fit RAIM pools divide each pooled statistic by the phase
+         * scale (so the trigger, the k bars and the floor are in calibrated sigma), and the URA
+         * is the code scale times the formal clock sigma.  The solve's weights and the carried
+         * variances are not touched.  Off = byte-identical.
+         *
+         * @return true when the scales are applied.
+         */
+        bool networkVcfApply() const { return network_vcf_apply_; }
+
+        /**
          * @brief T3/T3c population hygiene (@c network.raim_rate_hygiene;
          *        `SPEC_t3_null_derivation.md` §6; QUEUE item 4 R4).
          *
@@ -8861,6 +8901,9 @@ namespace GnssProcessor {
         bool   network_raim_station_factor_{false};        ///< Declare the per-station trimmed variance component Σw·v²/Σr_i as its own EWMA-tracked statistic (QUEUE item 4 R2, SPEC_t3_null_derivation §6/§7.5): trace + both-edge events + counters, never absorbed into a denominator. Measure-only; requires raim; off = byte-identical.
         double network_raim_station_factor_tau_s_{1800.0}; ///< EWMA time constant (s) of the R2 statistic; §12.1b: not yet measured, and this knob exists to measure it.
         double network_raim_station_factor_ratio_{6.0};    ///< Depart threshold of the R2 statistic: EWMA factor / network median of EWMA factors (return at 0.8×). Above the 4.7× model-error spread measured in §4.
+        bool   network_vcf_{false};                        ///< Per-class variance factor of the observation rows on the redundancy-census sweep (network/qc/Vcf.hpp): trace, EWMA, run-end table.  Measure-only; requires the census; off = byte-identical.
+        double network_vcf_ewma_alpha_{0.1};               ///< EWMA weight of a new sweep in the per-class variance factor, clamped to (0, 1].
+        bool   network_vcf_apply_{false};                  ///< The per-class scales replace the fixed a priori scale at the within-epoch pool, the post-fit pool and the URA (requires network_vcf_); off = byte-identical.
         bool   network_raim_rate_hygiene_{false};          ///< T3/T3c population hygiene (QUEUE item 4 R4, SPEC_t3_null_derivation §6): the T3 opportunity count excludes s_raw==0 untestable cells (counted separately); the T3c opportunity becomes the unconditional ≥min_sta-cells population. Telemetry accounting only; requires raim + trace_flag_rates; off = byte-identical.
         bool   network_level_authority_csgf_{false};       ///< Per-epoch fleet CS-GF level census (LV-6, SPEC_level_authority_internal): measure-only, folds nothing; arms the CS advance without the carry; off = byte-identical.
         int    network_level_authority_min_n_{10};         ///< LOS maturity screen, CS-GF samples since reset (LV-6).

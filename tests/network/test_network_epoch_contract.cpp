@@ -55,6 +55,7 @@
 #include "network/carry/LevelAuthority.hpp"
 #include "network/diag/Leveling.hpp"
 #include "network/qc/Mdb.hpp"
+#include "network/qc/Vcf.hpp"
 #include "network/assembly/MeasurementAdmission.hpp"
 #include "network/assembly/MultiGnss.hpp"
 #include "network/slip/OraclePin.hpp"
@@ -244,6 +245,8 @@ using SigCongruenceEmit = void (*)(NetworkRun&, const NetworkEpoch&);   // W4 di
 static_assert(std::is_same_v<decltype(static_cast<SigCongruenceEmit>(&networkCongruenceEmit)), SigCongruenceEmit>);
 using SigMdbFlush = void (*)(NetworkRun&, const NetworkEpoch&);   // W4 direct
 static_assert(std::is_same_v<decltype(static_cast<SigMdbFlush>(&networkMdbFlush)), SigMdbFlush>);
+using SigVcfFlush = void (*)(NetworkRun&, const NetworkEpoch&);   // observer: writes ctx.carry.vcf, counters, its trace
+static_assert(std::is_same_v<decltype(static_cast<SigVcfFlush>(&networkVcfFlush)), SigVcfFlush>);
 using SigDatumGraphCensus = void (*)(NetworkRun&, const NetworkEpoch&);   // W4 direct
 static_assert(std::is_same_v<decltype(static_cast<SigDatumGraphCensus>(&networkDatumGraphCensus)), SigDatumGraphCensus>);
 using SigRhsAttribution = void (*)(NetworkRun&, const NetworkEpoch&);   // W3 direct
@@ -304,6 +307,7 @@ static_assert(std::is_same_v<decltype(static_cast<NetworkEpochRecorder>(&network
 static_assert(std::is_same_v<decltype(static_cast<NetworkEpochObserver>(&networkBlockBaardaEmit)), NetworkEpochObserver>);
 static_assert(std::is_same_v<decltype(static_cast<NetworkEpochObserver>(&networkCongruenceEmit)), NetworkEpochObserver>);
 static_assert(std::is_same_v<decltype(static_cast<NetworkEpochObserver>(&networkMdbFlush)), NetworkEpochObserver>);
+static_assert(std::is_same_v<decltype(static_cast<NetworkEpochObserver>(&networkVcfFlush)), NetworkEpochObserver>);
 static_assert(std::is_same_v<decltype(static_cast<NetworkEpochObserver>(&networkDatumGraphCensus)), NetworkEpochObserver>);
 static_assert(std::is_same_v<decltype(static_cast<NetworkEpochObserver>(&networkRhsAttribution)), NetworkEpochObserver>);
 static_assert(std::is_same_v<decltype(static_cast<NetworkEpochObserver>(&networkRhsAttribTrip)), NetworkEpochObserver>);

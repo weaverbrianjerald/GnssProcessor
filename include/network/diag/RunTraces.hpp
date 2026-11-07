@@ -467,6 +467,16 @@ namespace GnssProcessor {
         "mdb_med_m,mdb_p95_m,mdb_max_m,sigma0_f,sigma0_src,"
         "mdb_scaled_med_m,mdb_scaled_p95_m,mdb_scaled_max_m,"
         "worst_station,worst_sat,worst_r,worst_sigma_m\n";
+    /// network_vcf.csv header (network/qc/Vcf.hpp).  One row per (census sweep x class) that
+    /// pooled a row: the class key ("code", "phase", "code_companion", "phase_second", or
+    /// "G C1C" for a per-signal class), its constellation letter ('*' for an aggregate), its
+    /// signal, its kind, the pooled row count, the two sums, the redundancy per row, the
+    /// sweep's redundancy-weighted factor f and robust factor g (variance ratios; blank when
+    /// not formed), the two EWMAs after this sweep (blank before the class enters the EWMA),
+    /// the identifiability flag, and the rows left out for a deweight or pooled uncheckable.
+    inline constexpr const char* kNetworkVcfHeader =
+        "week,tow,class,sys,signal,kind,n,sum_wv2,sum_r,rho,f,g,ewma_f,ewma_g,"
+        "identifiable,n_dw,n_unchk\n";
 
     /**
      * @internal Owns every trace stream of one runNetwork() invocation plus its
@@ -733,6 +743,11 @@ namespace GnssProcessor {
         /// written).
         std::ofstream mdb_trace;
         const std::filesystem::path mdb_trace_path;
+        /// Per-class variance factor (network.vcf; network/qc/Vcf.hpp): one row per (census
+        /// sweep x class) with the two factors, their EWMAs and the redundancy per row.  Off by
+        /// default (no file opened, no rows written).
+        std::ofstream vcf_trace;
+        const std::filesystem::path vcf_trace_path;
         /// Datum-graph census (network.datum_graph_census;
         /// docs/SPEC_datum_graph_census.md INC-2), the headline product: one row
         /// per (epoch × constellation) with the tier-1 component multiplicity and its

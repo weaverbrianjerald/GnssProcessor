@@ -282,6 +282,7 @@ add_library(gnss_core STATIC
     src/core/network/qc/PrefitCensus.cpp
     src/core/network/qc/RedundancyCensus.cpp
     src/core/network/qc/Mdb.cpp
+    src/core/network/qc/Vcf.cpp
     src/core/network/solve/DatumGraph.cpp
     src/core/network/qc/BlockBaarda.cpp
     src/core/network/qc/Congruence.cpp
@@ -584,6 +585,7 @@ add_executable(gnss_tests
     tests/test_measurement_model_prepass.cpp
     tests/network/test_redundancy_census.cpp
     tests/network/test_network_mdb.cpp
+    tests/network/test_network_vcf.cpp
     tests/network/test_block_baarda.cpp
     tests/network/test_block_baarda_estimable.cpp
     tests/network/test_network_gross_los.cpp

@@ -81,8 +81,9 @@
  *       and its station-side companion, kept beside the post-fit pass.
  *     - networkPrefitCensus before networkRedundancyCensus: the prefit walk is the free tier
  *       the redundancy census escalates from, and it writes the epoch-status scalars.
- *     - networkRedundancyCensus before networkBlockBaardaEmit, networkCongruenceEmit and
- *       networkMdbFlush (it feeds their accumulators, which they drain; the MDB join compares
+ *     - networkRedundancyCensus before networkBlockBaardaEmit, networkCongruenceEmit,
+ *       networkMdbFlush and networkVcfFlush (it feeds their accumulators, which they drain;
+ *       the variance factor's rows come only from its sweep; the MDB join compares
  *       its per-epoch row counts), and before networkRhsAttribution (a flight-recorder trip
  *       forces a full sweep, and the trip predicate is the attribution's own unconsumed
  *       window test, read before the attribution advances rhs_attrib_done).
@@ -128,7 +129,7 @@ struct NetworkEpochObserverRow {
 };
 
 /// The number of rows of @ref kNetworkEpochObservers.
-inline constexpr std::size_t kNetworkEpochObserverCount = 22;
+inline constexpr std::size_t kNetworkEpochObserverCount = 23;
 
 /// The observers in spine order (defined in network/driver/EpochObservers.cpp).
 extern const std::array<NetworkEpochObserverRow, kNetworkEpochObserverCount> kNetworkEpochObservers;
