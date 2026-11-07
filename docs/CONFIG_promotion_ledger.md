@@ -138,8 +138,8 @@ The full-prose ledger before 2026-10-13 is in git (`git show 8326da3:docs/CONFIG
 | RECOMMEND_ON | 25 |
 | RECOMMEND_SCOPED | 93 |
 | ARMED | 25 |
-| UNVALIDATED | 65 |
-| KEEP_OFF | 98 |
+| UNVALIDATED | 64 |
+| KEEP_OFF | 99 |
 | REMOVE | 0 |
 | TRACE | 63 |
 | PARAM | 293 |
@@ -309,7 +309,7 @@ Pinned in both goldens by the card named; the golden manifest is the authority.
 | `network.cycle_slip.relevel_free_epoch` | false | true | Pinned true in both goldens; its free-epoch latch is the slip set read by the anchor handover, the phase-datum candidacy screen and the ARL fold slip set. RF-1 retired only its inject skip. | [RF-1](refound/RF-1_float_ambiguities_design.md) |
 | `processing.exclude_eclipsing_satellites` |  |  | Drops satellites in Earth's umbra at the geometry (nominal yaw only); true in both goldens through the base lineage; its edges force the per-run clock-pivot handovers (E02, G01) the ISB re-inflation answers. | [OWD](refound/OWD_owed_defects_2026-09-22.md) |
 
-## UNVALIDATED (65)
+## UNVALIDATED (64)
 
 Built and plausible, never graded on the current posture.
 
@@ -356,8 +356,7 @@ Built and plausible, never graded on the current posture.
 | `network.raim_withhold_adapt_escalate` | 0 |  | Era-gated escalated peel budget, validated on the pre-refound leveling lineage (A4 era 29 to 1 withheld epochs); never graded on the posture, whose 6 h goldens withhold no epoch. | [WITHHOLD-CLIFF-RETIREMENT](cards/raim-qc/WITHHOLD-CLIFF-RETIREMENT.md) |
 | `network.raim_withhold_free_erase` | false |  | Erases detector-freed leveling-carry entries at an A4 withhold (needs relevel_free_epoch and a ceiling); exercised twice pre-refound, never graded on the float vehicle. | [WITHHOLD-CLIFF-RETIREMENT](cards/raim-qc/WITHHOLD-CLIFF-RETIREMENT.md) |
 | `network.signal_min_station_fraction` | 0.0 |  | Network coverage gate that drops a sparsely tracked observation code at every station; read at setup, never set in any config nor graded on the posture. |  |
-| `network.vcf_apply` | false |  | The per-class scales replace the fixed a priori scale at the within-epoch RAIM pool, the post-fit RAIM pool (phase scale) and the URA (code scale); solve weights untouched; requires network.vcf. | [VCF](refound/VCF_variance_factor_calibration_2026-11-07.md) |
-| `network.vcf_apply_phase` | false |  | The phase scale also divides the within-epoch and post-fit RAIM pools (their sigma0, trigger and k bars in calibrated sigma); requires network.vcf_apply. | [VCF](refound/VCF_variance_factor_calibration_2026-11-07.md) |
+| `network.vcf_apply` | false |  | Feeds the URA EWMA the calibrated code scale and emits it without the floor of 1. Card VCF 2026-11-07: every record but U identical, users and census untouched (no consumer reads U on the goldens); field URA 0.37 to 0.40 of the a priori. A truth grade of the URA (sim) is owed before arming. | [VCF](refound/VCF_variance_factor_calibration_2026-11-07.md) |
 | `network.eq34_anchor_min_arc_ep` | 0 |  | Cold re-host eligibility gate (INC-1), live under the prioritized election both goldens arm. Mechanism PASS on FT63, era-2 fix falsified, fires on the retired golden (AGT arm D); ungraded on the refound posture. | [SPEC_eq34_reattach_hygiene](SPEC_eq34_reattach_hygiene.md) |
 | `network.eq34_fresh_pin_sigma_scale` | 1.0 |  | INC-3 fresh-pin deweight ramp (armed only with a ramp length > 0); built as an optional softener and never graded in any leg. Card IRD holds it at 1.0 and its integer claim refuses it. | [SPEC_eq34_reattach_hygiene](SPEC_eq34_reattach_hygiene.md) |
 | `network.clock_datum_satellite` |  |  | Pins the per-constellation clock pivot (default: sticky lexical auto-pick). Card PAC: G14 pinned cut the field hour-2 common drift from -0.180 to -0.063 m/h, consumer unchanged; not armed. | [PAC](refound/PAC_common_drift_pivot_clock_2026-10-01.md) |
@@ -381,7 +380,7 @@ Built and plausible, never graded on the current posture.
 | `realtime.state_snapshot_path` |  |  | RT / consumer filter-state snapshot for a warm start; landed as the event-harness consumer default (card CC), but no benefit graded on a continuous product stream; seams are a scope-cut add-back. | [CC-declared-step-carry](cards/consumer/CC-declared-step-carry.md) |
 | `realtime.tcp_silent_timeout_s` | 0 |  | Redials the primary raw-TCP source after this many seconds without a byte; a peer that hangs with its socket open used to keep the stream silent for good. Default 0 is off. Unit-tested against a loopback server, never run on a live receiver. | [CAF-COMMENT-AUDIT-FINDINGS](cards/queues/CAF-COMMENT-AUDIT-FINDINGS.md) |
 
-## KEEP_OFF (98)
+## KEEP_OFF (99)
 
 Measured null or harmful, falsified, or superseded; the code stays as a diagnostic or alternative.
 
@@ -467,6 +466,7 @@ Measured null or harmful, falsified, or superseded; the code stays as a diagnost
 | `network.raim_we_code_iono` | false |  | Never tripped when exercised on the current posture (L5B probe, pool sigma0 at most 0.43); its iono half pools SH rows only, empty with the SH producer retired; unset in both goldens. | [L5B](refound/L5B_band5_receiver_delay_2026-10-10.md) |
 | `network.roster_tracker` | false |  | Names each band by the roster's modelled phase; byte-identical to card GRK's armed latched-phase keying on both beds (SID phase 2), so it adds no behavior. | [SID](refound/SID_signal_identity_2026-09-22.md) |
 | `network.sim_zero_iono_sigma_m` | 0.0 |  | Test-only zero-ionosphere rows for no-iono sim fixtures: the ARL rung-0 and IRD microscope instrument (floats integer to 0.006 cycle). Wrong on real data; never in the goldens. | [IRD](refound/IRD_integer_recovering_datum_2026-10-13.md) |
+| `network.vcf_apply_phase` | false |  | The phase scale also divides the within-epoch and post-fit RAIM pools. Card VCF 2026-11-07: user within 0.2 mm and census median 0.0 mm, but the phase scale is not a measurement (the sim reads 0.4 to 0.6 under a phase error above the a priori), field T4 refloats 55 to 93, no detection gain on a 0.1 or 0.5 m satellite clock step. | [VCF](refound/VCF_variance_factor_calibration_2026-11-07.md) |
 | `network.phase_datum_time_linked` | false |  | Pin bridge: cut code-bias rms 1.9x on the 24-station sim but was a net loss on the clock channel, so it was downgraded; card IRD holds it off and its integer claim refuses it. | [QPR-ITEMS-0-3](cards/queues/QPR-ITEMS-0-3.md) |
 | `network.n3c_canonical_pair_traits` | false |  | Canonical-pair admission reads each constellation's pair from its traits bands (GPS 1 and 2, Galileo 1 and 5) so Galileo cells are screened; inert unless network.canonical_pair_admission is armed, which both goldens leave off; the N3b decision D3. Field 6 h at the held-out consumer: hours 2 to 6 +0.6 mm against its own control (hour 3 +3.4 mm); worse, kept off. |  |
 | `network.service_mode` | false |  | RT-service bundle that force-arms a pre-refound toggle set including clock_model (NO-GO); the goldens are the posture. Still read by the loader arming block, the posture rt regime and the manifest. | [CLOCK_HADAMARD_CALIB_2026-07-14](CLOCK_HADAMARD_CALIB_2026-07-14.md) |

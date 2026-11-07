@@ -4,14 +4,14 @@
 
 - **id:** VCF
 - **topic:** raim-qc
-- **status:** open
-- **summary:** Pre-registered 2026-11-07 from build B1 of card SRN (findings F1 and F8). Stage 1: a measure-only per-class variance factor, the redundancy-weighted sum of squared standardized residuals and its robust companion, by constellation and signal for code and phase, on the redundancy census's sweep. Stage 2, only if the field code factor is stable by hour: the factor replaces the fixed scale at three readers (the within-epoch sigma0, the post-fit T4 bar, the URA scale) behind its own key. Results pending.
+- **status:** closed
+- **summary:** Closed 2026-11-07 (build B1 of card SRN, findings F1 and F8). Stage 1 built and validated measure-only (`network.vcf`): a per-class variance factor on the redundancy census sweep, sum w v^2 / sum r and its robust companion by constellation and signal. The kernel recovers the sim code law to 1 %; the field code noise is 0.35 of the a priori sigma (0.45 as a second moment), flat by hour; the phase factor is not identifiable (equal across bands by algebra, 0.4 to 0.6 on a sim whose phase error exceeds the a priori). Stage 2 built behind two keys: the URA reader (`network.vcf_apply`) changes only the U records (0.37 to 0.40 of the a priori on the field), UNVALIDATED for want of a truth grade; the RAIM readers (`network.vcf_apply_phase`) pass the user and census bars but raise T4 refloats 69 % on a non-measured scale and detect nothing more on a satellite clock step, KEEP_OFF. Nothing armed.
 - **source:** card SRN (`docs/refound/SRN_scientific_review_network_2026-11-06.md` in the worktree `D:/GnssProcessorSupport/worktrees/scirev`, branch `review/network-engine`), findings F1 and F8, build B1, sections 3.2, 3.4 and 4; the reviewer reports `D:/GnssProcessorSupport/srn/wave1.json` (D2-01 to D2-05, D2-08, D4-05, D6-01 to D6-04, D6-08, D6-09, D8-03, D8-04) and the second-model verdicts `D:/GnssProcessorSupport/srn/wave2_verdicts.json`; cards [T3 null](../cards/raim-qc/T3-NULL-DERIVATION.md), [T3 field](../cards/raim-qc/T3-FIELD-AND-COLLATERALS.md), [RPD](RPD_replay_station_prior_2026-10-01.md), [RPA](RPA_raim_pool_data_rows_2026-10-08.md), `docs/SPEC_carry_vce_apply.md`
 - **dates in the text:** 2026-11-07
-- **knobs / posture:** new `network.vcf` (bool, default false, measure-only), `network.vcf_ewma_alpha` (default 0.1), `network.vcf_apply` (bool, default false, requires `network.vcf`); the goldens unchanged, nothing armed
-- **hashes / run dirs:** pending
+- **knobs / posture:** new `network.vcf` (TRACE, default false, measure-only), `network.vcf_ewma_alpha` (PARAM, 0.1), `network.vcf_apply` (UNVALIDATED, default false, requires `network.vcf`), `network.vcf_apply_phase` (KEEP_OFF, default false, requires `network.vcf_apply`); the goldens and the manifest unchanged, nothing armed
+- **hashes / run dirs:** base main `adef08b`; branch `worktree-wf_c49deb5b-2f3-5` commits `1785acb` (pre-registration), `9cc67b0` (stage 1), `eb3150b` (stage 2); exes `gnss_processor_vcf.exe` sha256[:16] `74f3a31f43de22b8` (stage 1) and `gnss_processor_vcf2.exe` `7159193fc9b86f35` (stage 2), built in the worktree; runs `D:/GnssProcessorSupport/runs_nom/_rap_vcf_{smoke_f01,off_f2,off_s2,on_f6,on_s6,ctl_f6,ctl_s6}`, `_rap_vcf2_{ctl,apply,phase}_{f2,s2}`, `_rap_vcf2_{ctl,apply,phase}_f6`, `_rap_vcf2_clk{5,1}_{ctl,phase}`, census `_rap_vcfc_{ctl,phase}_<site>`; review controls `_rap_srn_ctl_{f2,s2,f6}`
 
-**Outcome.** Pending.
+**Outcome.** Question: what is the network producer's variance factor, class by class, and does it make a better scale for the QC thresholds and the URA than the fixed a priori one? The code factor is measurable and stable: 1.00 on the sim, whose generator uses the assumed law, and 0.35 in sigma on the field. The phase factor is not: it reads absorption by the carried ambiguities. Applied to the URA it changes only the U records; applied to the RAIM pools it refloats 69 % more arcs and catches no clock step. Stage 1 is kept as an instrument; neither reader is recommended for arming.
 
 ## 1. The question and what the review settled (2026-11-07)
 
@@ -88,3 +88,82 @@ Stage 2 is therefore built with two keys:
 - `network.vcf_apply_phase` (requires `network.vcf_apply`): the phase scale also divides the within-epoch and post-fit RAIM pools, the readers 1 and 2 of section 2.2. It is built so that the prescription of build B1 can be run and graded, not because the evidence supports it; the prediction written here is that it makes the post-fit T4 bar about twice as sensitive on both beds (6 calibrated sigma = 6 x 0.5 a priori units) and refloats more arcs, with the sim's post-ignition zero lost.
 
 Gates G4 as pre-registered, run for `network.vcf_apply` alone (arm `apply`) and with `network.vcf_apply_phase` (arm `phase`). For `apply` the RAIM readers are unchanged by construction, so the gate reduces to: the solve and the user identical to the control (the URA is written to the products but read by no consumer on the goldens), the URA medians by hour, and the satellite clock step bed is not run (the anchor guard and the within-epoch tier are untouched). For `phase` the full G4 applies.
+
+## 4. Stage 1 results (2026-11-07)
+
+Executable `build/x64-Release/gnss_processor_vcf.exe` (sha256[:16] `74f3a31f43de22b8`, branch commit `9cc67b0`), arms under `D:/GnssProcessorSupport/runs_nom/_rap_vcf_*`, each a golden copy with one change; sim arms start at 00:30:15. Tables from `logs/network_vcf.csv` (hours from the first sweep, one sweep per 10 epochs, 72 sweeps in 6 h); all numbers are scales (square roots of the factors), 1 = the a priori model.
+
+**G0 smoke** (`_rap_vcf_smoke_f01`, 12 epochs): exit 0; two sweeps written; the first epoch's phase rows have a redundancy per row of 2e-11 (the cold free ambiguities) and are flagged unidentifiable, as designed. PASS.
+
+**G1 off identity** (`_rap_vcf_off_{f2,s2}` against the review executable's `_rap_srn_ctl_{f2,s2}`): `products.txt` without `#` lines identical (113,888 and 80,690 records); of the 34 trace files 31 identical, and the three others (`network_datum_graph.csv`, `network_run_summary.csv`, `network_service_health.csv`) identical once their wall-time columns are removed. PASS.
+
+**G2 stage 1 on, 6 h** (`_rap_vcf_on_{f6,s6}` against the same-executable controls `_rap_vcf_ctl_{f6,s6}`): products identical (343,049 and 241,008 records), every common trace identical up to the wall-time columns, `network_vcf.csv` the only new file. The rider pooled 263,639 field rows (6 left out for a deweight, 2,034 uncheckable at r <= 1e-6). The control `_rap_vcf_ctl_f6` is itself identical to the review executable's `_rap_srn_ctl_f6`. PASS.
+
+| bed | class | rows per sweep | redundancy per row | robust scale by hour 1 to 6 | weighted scale by hour 1 to 6 | final EWMA robust / weighted |
+| --- | --- | --- | --- | --- | --- | --- |
+| field | code | 1650 | 0.990 | 0.360 0.363 0.355 0.348 0.354 0.359 | 0.453 0.452 0.450 0.461 0.447 0.433 | 0.354 / 0.466 |
+| field | phase | 1663 | 0.362 | 0.408 0.466 0.537 0.534 0.516 0.546 | 0.529 0.588 0.687 0.649 0.589 0.629 | 0.543 / 0.633 |
+| field | code_companion | 345 | 1.000 | 0.049 0.048 0.048 0.047 0.047 0.049 | 0.053 0.054 0.053 0.052 0.052 0.053 | 0.048 / 0.055 |
+| field | G C1C | 328 | 0.991 | 0.449 0.429 0.423 0.425 0.445 0.457 | 0.528 0.532 0.519 0.495 0.521 0.535 | 0.452 / 0.552 |
+| field | G C1W | 150 | 0.994 | 0.412 0.388 0.384 0.378 0.395 0.383 | 0.431 0.417 0.423 0.406 0.412 0.416 | 0.391 / 0.480 |
+| field | G C2W | 477 | 0.986 | 0.369 0.380 0.385 0.373 0.376 0.376 | 0.440 0.442 0.448 0.433 0.439 0.439 | 0.377 / 0.505 |
+| field | E C1C | 156 | 0.994 | 0.337 0.334 0.335 0.340 0.305 0.319 | 0.421 0.412 0.487 0.516 0.390 0.369 | 0.321 / 0.391 |
+| field | E C1X | 194 | 0.995 | 0.375 0.394 0.381 0.380 0.357 0.379 | 0.420 0.413 0.424 0.405 0.423 0.432 | 0.381 / 0.427 |
+| field | E C5Q | 166 | 0.986 | 0.256 0.245 0.247 0.266 0.253 0.251 | 0.341 0.457 0.386 0.532 0.419 0.358 | 0.255 / 0.384 |
+| field | E C5X | 194 | 0.986 | 0.292 0.324 0.301 0.302 0.314 0.291 | 0.382 0.405 0.395 0.375 0.382 0.361 | 0.300 / 0.371 |
+| field | G L1C | 326 | 0.542 | 0.355 0.419 0.504 0.538 0.514 0.541 | 0.515 0.583 0.723 0.669 0.590 0.622 | 0.533 / 0.643 |
+| field | G L1W | 150 | 0.541 | 0.396 0.468 0.511 0.514 0.502 0.487 | 0.484 0.553 0.603 0.616 0.586 0.583 | 0.511 / 0.598 |
+| field | G L2W | 478 | 0.200 | 0.380 0.433 0.522 0.529 0.508 0.533 | 0.489 0.589 0.702 0.660 0.589 0.627 | 0.525 / 0.629 |
+| field | E L1C | 170 | 0.514 | 0.409 0.470 0.548 0.521 0.508 0.519 | 0.527 0.583 0.700 0.644 0.602 0.631 | 0.533 / 0.629 |
+| field | E L1X | 194 | 0.538 | 0.467 0.492 0.546 0.564 0.582 0.595 | 0.538 0.556 0.648 0.602 0.604 0.657 | 0.611 / 0.646 |
+| field | E L5Q | 165 | 0.163 | 0.401 0.473 0.551 0.508 0.515 0.522 | 0.527 0.584 0.699 0.644 0.602 0.630 | 0.537 / 0.629 |
+| field | E L5X | 194 | 0.167 | 0.461 0.490 0.544 0.559 0.581 0.593 | 0.538 0.556 0.648 0.602 0.604 0.657 | 0.611 / 0.645 |
+| sim | code | 1774 | 0.991 | 1.014 1.009 1.010 1.012 0.993 0.994 | 1.005 0.993 0.994 0.999 1.000 0.998 | 0.997 / 0.999 |
+| sim | phase | 1774 | 0.361 | 0.413 0.456 0.492 0.594 0.590 0.622 | 0.424 0.488 0.526 0.604 0.623 0.633 | 0.639 / 0.646 |
+| sim | G C1C | 486 | 0.994 | 1.015 0.965 0.979 1.012 1.003 1.018 | 1.012 0.982 0.998 1.007 1.004 1.005 | 1.009 / 0.997 |
+| sim | G C2W | 486 | 0.986 | 1.013 1.013 1.022 1.032 1.015 1.002 | 1.002 1.014 1.009 1.034 1.003 1.013 | 0.998 / 1.010 |
+| sim | E C1C | 397 | 0.995 | 0.981 1.029 1.018 0.973 0.983 0.995 | 1.004 1.004 0.992 0.969 1.008 1.007 | 0.987 / 0.990 |
+| sim | E C5Q | 397 | 0.988 | 1.002 1.025 0.985 1.001 0.979 1.009 | 1.000 0.990 1.004 1.009 0.986 1.002 | 0.990 / 0.995 |
+| sim | G L1C | 486 | 0.535 | 0.393 0.435 0.487 0.572 0.563 0.587 | 0.419 0.469 0.521 0.559 0.570 0.594 | 0.612 / 0.615 |
+| sim | G L2W | 486 | 0.198 | 0.395 0.431 0.489 0.566 0.558 0.584 | 0.421 0.470 0.522 0.560 0.570 0.596 | 0.613 / 0.615 |
+| sim | E L1C | 397 | 0.540 | 0.423 0.492 0.516 0.640 0.634 0.659 | 0.443 0.513 0.527 0.659 0.669 0.680 | 0.673 / 0.682 |
+| sim | E L5Q | 397 | 0.168 | 0.428 0.499 0.523 0.630 0.633 0.660 | 0.445 0.516 0.526 0.659 0.670 0.679 | 0.672 / 0.682 |
+
+Readings against the pre-registered expectations:
+
+1. **The kernel is calibrated.** The sim code scale reads 0.993 to 1.014 by hour on both statistics and 0.97 to 1.03 on every signal (expected 0.95 to 1.05): with the redundancy drawn, the factor recovers the generator's code law. The instrument check passes.
+2. **Field code: 0.35 robust, 0.45 weighted** (expected 0.25 to 0.5), flat by hour. The two statistics differ by 1.27 in scale, the signature of a heavier-than-Gaussian tail (on the sim they agree to 1 %). Per signal, Galileo E5a is the quietest (C5Q 0.25, C5X 0.30) and GPS C1C the noisiest (0.42 to 0.46), the E1/E5a spread of the review (D2-02). The BSHM00ISR channel does not dominate the weighted factor at the sweep epochs (its 10.9 m rms is set by a few rows up to 416 m, which a sweep on one epoch in ten mostly misses). The second code channel's companions read 0.048 at sigma times 10, which is 0.48 of the canonical a priori: the same noise as the canonical rows (D2-03).
+3. **Phase: 0.41 to 0.55 on the field, 0.41 to 0.62 on the sim, rising by hour on both** (expected field 0.3 to 0.6, sim 0.2 to 0.5: the sim reads above its expectation from hour 4). The per-signal phase factors of a constellation are equal across its two bands to three decimals, so the kernel reproduces the free-ionosphere algebra; the redundancy per row (0.36, of which the band-2 or band-5 rows carry 0.16 to 0.20) clears the 0.1 bar. The sim reads 0.4 to 0.6 although its phase error exceeds the a priori, and the scale grows as the carried ambiguities tighten: the factor tracks how much of the coloured error the float ambiguities and the free slant ionosphere absorb, not the noise level. By the rule of section 2.1 the phase factor is not a measurement.
+4. **The carried-prior families** as the prior-residual census reports them (its per-family robust sigma0, a scale): field pl 0.165, pb 0.190, cb 0.035; sim pl 0.209, pb 0.216, cb 0.031 (the zwd and rxcb families are not fed on this posture). The field `pl` ladder is the one card SRN recorded (CLEAN 13.94 % above 4 sigma0, b-cell 97.9 %, the worst row MBAR00UGA G09 L2W at TOW 262380, prior tension 67): unchanged, because the numerator was not aligned (section 2.1: not contained).
+5. **G3, the stage-2 precondition:** the hourly median of the robust code factor over its EWMA at the hour's end reads field 0.991, 0.981, 0.961, 0.996, 1.028 and sim 1.002, 1.002, 1.012, 1.005, 0.995 in hours 2 to 6: within 20 % on both beds. PASS: stage 2 is built (section 3). The same ratio for phase fails on the sim (0.722 in hour 2).
+
+## 5. Stage 2 results (2026-11-07)
+
+Executable `build/x64-Release/gnss_processor_vcf2.exe` (sha256[:16] `7159193fc9b86f35`, branch commit `eb3150b`), same-executable controls `_rap_vcf2_ctl_{f2,s2,f6}`. The controls are themselves identical to the review executable's `_rap_srn_ctl_{f2,s2}` (products, and the traces up to their wall-time columns): the off identity holds on this executable too. Grades from `network_epoch_status.csv` (`n_adapt`), `network_events.csv` (tier `T4_attrib`), the `U` records of `products.txt` and `closed_loop_trace.csv`; hours from the run start.
+
+**Arm `apply` (`network.vcf_apply`, the URA reader only).** Field 2 h and 6 h, sim 2 h: every product record other than `U` identical to the control, the consumer identical at every epoch (the goldens' consumer reads no URA), no adaptation, the T4 refloats the control's. The URA EWMA is fed the code scale from the first warm sweep (field 0.398 at TOW 259830, sim 1.050 at TOW 261690; the sim's 1.05 is its first sweep's draw, settling to 1.00). URA median by hour:
+
+| bed | arm | h1 | h2 | h3 | h4 | h5 | h6 | consumer 3D p50 h2 to h6 (both arms) |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| field | control | 126.2 | 65.0 | 44.3 | 35.3 | 28.6 | 23.0 mm | 0.012 0.023 0.012 0.017 0.012 m |
+| field | apply | 51.2 | 24.1 | 16.1 | 12.5 | 10.1 | 8.2 mm | identical |
+| sim | control | 69.3 | 39.0 | | | | mm (2 h) | identical |
+| sim | apply | 72.2 | 39.6 | | | | mm (2 h) | identical |
+
+The URA is now the code scale times the formal clock sigma: 0.37 to 0.40 of the a priori URA on the field and the a priori URA on the sim, where the code law is the assumed one. Whether 8 mm in hour 6 is the realized clock error of the product is not graded here: no truth grade of the U record exists (the sim grade of D2-08's arm G is owed).
+
+**Arm `phase` (`network.vcf_apply_phase`, the RAIM pools also read the phase scale).**
+
+- *Quiet sim, 2 h:* the pools read the phase scale 0.334 from TOW 261990; within-epoch sigma0 1.0 on every epoch (the pool divided by 0.33 stays under the floor), 0 adaptations, 0 T4 refloats (control 0); every record other than `U` identical to the control, the consumer identical. Nothing adapts. PASS.
+- *Field, 2 h then 6 h:* the pools read the phase scale 0.453 from TOW 260130. Within-epoch adaptations 0 in every hour (both arms): sigma0 stays at the floor of 1.0, so the trigger is not reached. T4 refloats by hour 36, 6, 13, 17, 5, 16 (93) against the control's 26, 4, 11, 4, 2, 8 (55): the bar of 6 calibrated sigma is 2.7 a priori units, and the refloats rise 69 %, as section 3 predicted. The products move (clock records: median 0.5 mm, maximum 10.7 mm over 36,411 changed records); the consumer 3D p50 is identical in every hour to 0.1 mm (largest per-epoch change 0.2 mm). PASS of the 2 mm bar.
+- *16-site census* (`scripts/clock_level/gcensus.py`, consumer replays of the two 6 h wires on the control's consumer, keys `vcfc_ctl` and `vcfc_phase`): median site p50 by hour 0.142, 0.050, 0.036, 0.029, 0.032, 0.030 m on both; paired hours 2 to 6 median +0.0 mm, no site better or worse by 1 cm; the largest change ARHT00ATA +2.3 mm (its uncovered-L1W mechanism of card ARHT). PASS of the 0.5 mm bar.
+- *Satellite clock step* (card SMX's `sat_clock_step` injector on a fresh 2 h sim arm, G25 at TOW 264630, one hour after the 00:30:15 start, so the phase scale is warm; 0.5 m, the matrix's built step, and 0.1 m; arms `_rap_vcf2_clk{5,1}_{ctl,phase}`): the phase arm is identical to its control in every record other than `U` and at every consumer epoch. At the step epoch the within-epoch sigma0 reads 1.0 with 0 adaptations and no T4 refloat on both arms; the anchor guard sees e_clk = -0.24 mm on G25 (the step never reaches the clock innovation it tests); the 0.5 m step raises 10 IF-TD slip flags and the wire carries -0.012 m of the step at +3 epochs, -0.050 m at +10 and -0.165 m at +49 (card SMX's failure reproduced); the 0.1 m step raises no flag and the wire reads +0.008 m at +2 and -0.044 m at +49. The calibrated pools add no detection at either size, as the review's verdict on a median trigger predicted.
+
+## 6. Verdict and what is owed (2026-11-07)
+
+1. **Stage 1 (`network.vcf`) works and is the deliverable.** The kernel recovers the sim's code law to 1 %, and the field's code noise is 0.35 of the a priori sigma (robust; 0.45 as a second moment), flat by hour, quietest on Galileo E5a and noisiest on GPS C1C. The phase factor is not identifiable from post-fit residuals on this posture: the per-signal factors are equal by algebra, and the sim, whose phase error exceeds the a priori, reads 0.4 to 0.6 and climbs as the carried ambiguities tighten. Measure-only and byte-identical when off; ledger TRACE.
+2. **Stage 2's URA reader (`network.vcf_apply`) passes every gate it can be put to** (products and users identical but for the U records, which shrink to 0.37 to 0.40 of the a priori on the field) and stays UNVALIDATED: the calibrated URA has no truth grade.
+3. **Stage 2's RAIM readers (`network.vcf_apply_phase`) pass the user and census bars and should stay off.** They divide the pools by a phase scale that stage 1 showed is not a measurement, raise the field's T4 refloats 69 %, and detect nothing more on the clock-step bed; within-epoch adaptations stay at 0 because the floor still binds. Ledger KEEP_OFF.
+4. **The anchor guard and the within-epoch trigger are not variance-factor problems on this posture.** A satellite clock step is absorbed by IF-TD slips and by the held clock before any of the three statistics sees it; the response belongs to cards SCK and SCR.
+
+Owed: a truth grade of the URA on the sim (D2-08 arm G) before `network.vcf_apply` is armed; the prior-residual census's `pl` numerator and denominator aligned with the fold (a solve-adjacent card of its own, D6-08); a per-class factor of the carried priors from the same sweep (the redundancy kernel draws them; the census's per-family sigma0 is the present stand-in); if a phase factor is wanted, a design whose phase redundancy is not supplied by the carried ambiguities themselves (for example the time-differenced phase), graded on a bed whose phase law is white.
