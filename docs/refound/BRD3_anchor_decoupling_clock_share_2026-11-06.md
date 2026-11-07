@@ -199,7 +199,7 @@ the decision or any product changes; the only reader of the trace (`scripts/cloc
 column name.
 Checks: the instrumented exe reproduces card BRD's `brd_nt132_6` byte for byte (section 5.2) and the lvat legs'
 10-epoch prefix; Debug `gnss_tests` on the clock anchor and guard suites (`*ClockAnchor*:*Anchor*:*Guard*`): 142 tests
-in 48 suites, 138 passed, 4 fixture-gated skips, 0 failed; the full suite's count is appended at close;
+in 48 suites, 138 passed, 4 fixture-gated skips, 0 failed; the full Debug suite 3 863 tests in 528 suites, 3 830 passed, 33 fixture-gated skips, 0 failed (card BRD2's counts);
 `make_golden_config.py --verify` PASS, `nom_epoch_lint.py` PASS, `config_posture_check.py --verify-loader` 0 gaps,
 `docs_index_check.py` passes.
 
@@ -451,6 +451,10 @@ Nothing is armed; arming, any golden change and the merge are the author's decis
   132 against a 24 h GPS golden, DOY 128 and a real-time run before any arming (card BRD2 section 7).
 - **The lone trips.** The DOY-129 trip (E08 at 311100) needs its own 24 h instrumented pair; the falsifier of section
   5.3's reading (the key arm's looser keys carry the same one-epoch L1C transients over the bar) is named there.
+- **The day's composition on the golden.** `lva_g132_24c` and `lva_g132_24k` were at epoch 1 341 of 2 880 at this
+  card's commit (running at Normal priority on a machine shared with five other sessions' runs); their whole-day trip
+  composition (`trip_parts.py --all-trips`; over the first 9.4 h 52 and 53 trips, 49 of each at least 90 % key-carried,
+  21 rows on a key of sd at least 1 m) is read when they finish.
 - **The clock-carried trips** of DOY 131 (one tracked at 2.09, two on the regime at 4.08, e_clk 56 and 111 mm): real
   clock events or not, read with the new columns when X2 runs that day.
 - **The column at a flagged epoch.** The tracked a priori drifts 22 to 36 mm over the bridges of the mass trips: a
