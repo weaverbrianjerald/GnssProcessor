@@ -8,6 +8,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <vector>
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 
 // The run-end reports at the end of this file:
 #include "network/state/RunContext.hpp"
@@ -19,8 +23,74 @@
 
 namespace GnssProcessor {
 
-bool couplingExactFactor(CouplingExactEpoch& ep) {
+namespace {
+
+/// Whether the column blocks (@p width a multiple of 4, then @p last) get the panels of the whole
+/// solve from Eigen's blocking heuristic for a triangular solve (see ldltInverseColumns).
+bool inverseSplitExact(Eigen::Index n, Eigen::Index width, Eigen::Index last) {
+    using Traits = Eigen::internal::gebp_traits<double, double>;
+    if (Traits::mr != 4 || Traits::nr != 4 || width % 4 != 0 || width < 8 || last < 8) return false;
+    const auto panels = [n](Eigen::Index cols, Eigen::Index& kc, Eigen::Index& mc) {
+        kc = n;
+        mc = n;
+        Eigen::Index nc = cols;
+        Eigen::internal::computeProductBlockingSizes<double, double, 4>(kc, mc, nc, Eigen::Index(1));
+    };
+    Eigen::Index kc0, mc0, kc1, mc1, kc2, mc2;
+    panels(n, kc0, mc0);
+    panels(width, kc1, mc1);
+    panels(last, kc2, mc2);
+    return kc0 == kc1 && kc0 == kc2 && mc0 == mc1 && mc0 == mc2;
+}
+
+}  // namespace
+
+Eigen::MatrixXd ldltInverseColumns(const Eigen::LDLT<Eigen::MatrixXd>& f, Eigen::Index n,
+                                   int n_threads, bool* split) {
+    if (split) *split = false;
+#ifdef _OPENMP
+    if (n_threads > 1 && n >= 16 && Eigen::nbThreads() == 1 && !omp_in_parallel()) {
+        // Column blocks: a width that is a multiple of 4 (at least 8) and gives about one block per
+        // thread; a remainder narrower than 8 joins the last block.
+        Eigen::Index width = (n + n_threads - 1) / n_threads;
+        width = std::max<Eigen::Index>(8, (width + 3) & ~Eigen::Index(3));
+        Eigen::Index n_blocks = (n + width - 1) / width;
+        Eigen::Index last = n - (n_blocks - 1) * width;
+        if (last < 8 && n_blocks > 1) {
+            --n_blocks;
+            last += width;
+        }
+        if (n_blocks >= 2 && inverseSplitExact(n, width, last)) {
+            Eigen::MatrixXd out(n, n);
+            std::vector<char> failed(static_cast<std::size_t>(n_blocks), 0);
+            // The epoch's one team size, also when there are fewer blocks than threads: under
+            // MSVC's OpenMP runtime a region of another size rebuilds the team (about 9 ms of wall
+            // per change, gates/pes2/ompbench).
+            #pragma omp parallel for schedule(dynamic) num_threads(n_threads)
+            for (long long b = 0; b < static_cast<long long>(n_blocks); ++b) {
+                const Eigen::Index c0 = static_cast<Eigen::Index>(b) * width;
+                const Eigen::Index w = (static_cast<Eigen::Index>(b) + 1 < n_blocks) ? width : last;
+                try {
+                    out.middleCols(c0, w) = f.solve(Eigen::MatrixXd::Identity(n, n).middleCols(c0, w));
+                } catch (...) {
+                    failed[static_cast<std::size_t>(b)] = 1;
+                }
+            }
+            if (std::find(failed.begin(), failed.end(), char(1)) == failed.end()) {
+                if (split) *split = true;
+                return out;
+            }
+        }
+    }
+#else
+    (void)n_threads;
+#endif
+    return f.solve(Eigen::MatrixXd::Identity(n, n));
+}
+
+bool couplingExactFactor(CouplingExactEpoch& ep, int solve_threads) {
     ep.ok = false;
+    ep.inverse_split = false;
     const Eigen::Index n = ep.nS();
     if (ep.q_s.size() != n || ep.shat_s.size() != n
         || static_cast<Eigen::Index>(ep.col_of_s.size()) != n)
@@ -56,7 +126,8 @@ bool couplingExactFactor(CouplingExactEpoch& ep) {
     const Eigen::VectorXd dvec = f.vectorD();
     const double dmax = dvec.cwiseAbs().maxCoeff();
     if (!(dmax > 0.0) || !(dvec.minCoeff() > 1e-14 * dmax)) return false;
-    ep.F = dinv.asDiagonal() * f.solve(Eigen::MatrixXd::Identity(n, n)) * dinv.asDiagonal();
+    const Eigen::MatrixXd Cinv = ldltInverseColumns(f, n, solve_threads, &ep.inverse_split);
+    ep.F = dinv.asDiagonal() * Cinv * dinv.asDiagonal();
     ep.F = 0.5 * (ep.F + ep.F.transpose()).eval();
     if (!ep.F.allFinite()) return false;
     ep.ok = true;

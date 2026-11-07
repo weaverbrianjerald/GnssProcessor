@@ -1370,6 +1370,18 @@ public:
      */
     Eigen::MatrixXd datumFrameSharedCov(const Datum& datum) const;
 
+    /**
+     * @brief The frame of @ref datumFrameSharedCov without a copy when the solve's stored frame
+     *        fits: for a consumer that hands one frame to many kernel calls of a parallel region
+     *        (no timer is touched here or by the kernel).
+     * @param datum   The datum whose pinned columns are exact.
+     * @param scratch Receives the frame when the stored one does not fit.
+     * @return The stored frame or @p scratch; valid while both this object and @p scratch are.
+     */
+    const Eigen::MatrixXd& datumFrameShared(const Datum& datum, Eigen::MatrixXd& scratch) const {
+        return datumFrame_(datum, scratch);
+    }
+
     /// Matrix overloads that take a pre-built @ref datumFrameSharedCov (skip the copy).
     Eigen::MatrixXd ddPriorPosteriorCovariance(std::size_t b, const Eigen::MatrixXd& cov_free) const {
         return neq_.ddPriorPosteriorCovariance(b, cov_free);

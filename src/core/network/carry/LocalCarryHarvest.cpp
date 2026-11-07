@@ -59,8 +59,19 @@ void networkHarvestLocalCarries(NetworkRun& run, const NetworkEpoch& ep, EpochEv
     if (carry_warm) {
         HarvestBorder border = networkHarvestBorderBegin(run, ep);
         std::vector<StationHarvestBlock> blocks(stations.size());
+        // network.parallel_carry_harvest: the layouts first (they read only the solution and the
+        // assembly), then every carried column's regression into its own slot, in parallel; the
+        // walk below reads the slots through networkHarvestColumn and keeps every write serial.
+        // A clone regression is not taken ahead: its row step writes the border.
+        const bool ahead = networkHarvestParallel(run) && ctx.knobs.carry_cpl_cond
+                           && !border.ccl_h.on && !border.ccl_h.noreg;
+        if (ahead) {
+            for (size_t i = 0; i < stations.size(); ++i)
+                blocks[i] = networkHarvestStationBlock(run, ep, border, i);
+            networkHarvestColumnsAhead(run, ep, blocks, border);
+        }
         for (size_t i = 0; i < stations.size(); ++i) {
-            blocks[i] = networkHarvestStationBlock(run, ep, border, i);
+            if (!ahead) blocks[i] = networkHarvestStationBlock(run, ep, border, i);
             if (!blocks[i].ok) continue;
             networkHarvestAmbiguityStation(run, ep, border, blocks[i], i);
             networkAmbIfTraceStation(run, ep, blocks[i], i, events);
@@ -147,6 +158,9 @@ HarvestBorder networkHarvestBorderBegin(NetworkRun& run, const NetworkEpoch& ep)
             }
         est.zeroPhaseGaugeColumns(cov_df);
         ccl_h = networkClockCloneHarvestBegin(ctx, est, plan.shared_datum, col2desc);
+        border.desc_of_col.assign(static_cast<std::size_t>(est.numShared()), nullptr);
+        for (const auto& [col, desc] : col2desc)
+            border.desc_of_col[static_cast<std::size_t>(col)] = &desc;
     }
     // Where each harvested row's entry is written, for the compression at
     // the end (network/carry/SharedHistory.hpp).  Inert off.
@@ -168,28 +182,55 @@ std::pair<double, std::vector<CoupledShared>> networkHarvestColumn(
     NetworkRunContext& ctx = run.ctx;
     const NetworkEstimator& est = run.engines.est;
     const Eigen::VectorXd& x_s = ep.solve.x_s;
-    std::map<Eigen::Index, CoupledShared>& col2desc = border.col2desc;
-    Eigen::MatrixXd& cov_df = border.cov_df;
     ClockCloneHarvest& ccl_h = border.ccl_h;
     // ---- End of the bindings ----
+    // Computed ahead of this walk (network.parallel_carry_harvest): the slot is read once.
+    if (est_idx < border.ahead.size()
+        && col >= 0 && col < static_cast<Eigen::Index>(border.ahead[est_idx].size())) {
+        HarvestColumnAhead& a = border.ahead[est_idx][static_cast<std::size_t>(col)];
+        if (a.ready && a.with_cross == (cross_cols != nullptr)) {
+            a.ready = false;
+            // One consumer call in the section timers' count; the region's wall stays in the
+            // block's net (a sum of thread times would exceed the block's wall).
+            if (est.normals().perfTiming()) est.normals().accumulateCovConsumer(0.0);
+            ++ctx.counters.n_harvest_ahead_read;
+            if (cross) *cross = std::move(a.cross);
+            return {a.cond_var, std::move(a.coupling)};
+        }
+    }
     NetworkNormalEquations::StationRegression reg;
     try { reg = est.stationRegression(est_idx, col, /*carry_aware=*/false, cross_cols); }
     catch (...) { return {-1.0, {}}; }
     if (cross) *cross = std::move(reg.cross);
     // The row's coefficients on the clock clones regressed onto the rest of
     // the border and the clones' conditional variance added (the clone columns are
-    // not in col2desc, so without this the loop below would drop them).  No-op off.
+    // not in col2desc, so without this the walk below would drop them).  No-op off.
     networkClockCloneHarvestRow(ccl_h, ctx, est_idx, col, reg.row, reg.cond_var);
+    return {reg.cond_var, networkHarvestCouplingRow(reg.row, border, x_s)};
+}
+
+std::vector<CoupledShared> networkHarvestCouplingRow(const Eigen::VectorXd& row,
+                                                     const HarvestBorder& border,
+                                                     const Eigen::VectorXd& x_s) {
+    const std::vector<const CoupledShared*>& desc_of_col = border.desc_of_col;
+    const Eigen::MatrixXd& cov_df = border.cov_df;
     std::vector<CoupledShared> cpl;
-    const Eigen::Index ns = reg.row.size();
+    const Eigen::Index ns = row.size();
     if (ns > 0) {
-        const double maxabs = reg.row.cwiseAbs().maxCoeff();
+        const double maxabs = row.cwiseAbs().maxCoeff();
         const double thr = kCouplingSparsifyRelThresh * maxabs;
+        const auto described = [&](Eigen::Index j) {
+            return j < static_cast<Eigen::Index>(desc_of_col.size())
+                   && desc_of_col[static_cast<std::size_t>(j)] != nullptr;
+        };
+        std::size_t n_kept = 0;
+        for (Eigen::Index j = 0; j < ns; ++j)
+            if (std::abs(row(j)) > thr && described(j)) ++n_kept;
+        cpl.reserve(n_kept);
         for (Eigen::Index j = 0; j < ns; ++j) {
-            const double mj = reg.row(j);
+            const double mj = row(j);
             if (std::abs(mj) <= thr) continue;          // sparsify near-zero entries
-            const auto dit = col2desc.find(j);
-            if (dit == col2desc.end()) continue;        // col not in the enumerated shared set
+            if (!described(j)) continue;                // col not in the enumerated shared set
             // A datum-pinned or ensemble-gauge column is kept in the row
             // (coefficient and its ŝ_prev RHS term) with p_prev = 0 ("exactly
             // known"; the zeroed cov_df diagonal mirrors
@@ -207,14 +248,76 @@ std::pair<double, std::vector<CoupledShared>> networkHarvestColumn(
             // does not move), and a departed pinned column marginalizes to +0.
             const double pj = (j < cov_df.rows() && cov_df(j, j) > 0.0)
                                   ? cov_df(j, j) : 0.0;
-            CoupledShared cs = dit->second;
+            cpl.push_back(*desc_of_col[static_cast<std::size_t>(j)]);
+            CoupledShared& cs = cpl.back();
             cs.coeff  = mj;
             cs.s_prev = x_s(j);
             cs.p_prev = pj;
-            cpl.push_back(std::move(cs));
         }
     }
-    return {reg.cond_var, std::move(cpl)};
+    return cpl;
+}
+
+bool networkHarvestParallel(const NetworkRun& run) {
+    return run.config.getNetworkConfig().parallel_carry_harvest && run.setup.parallel_on
+           && run.setup.n_threads > 1 && Eigen::nbThreads() == 1;
+}
+
+void networkHarvestStationColumnsAhead(const NetworkNormalEquations& kernel,
+                                       const HarvestBorder& border, const Eigen::VectorXd& x_s,
+                                       std::size_t est_idx, const StationHarvestBlock& sb,
+                                       std::vector<HarvestColumnAhead>& slots) noexcept {
+    try {
+        // The walk asks for the block's columns with the block's cross terms, or for none.
+        const std::vector<Eigen::Index>* cross_cols = sb.blk ? &sb.cols : nullptr;
+        for (const Eigen::Index col : sb.cols) {
+            if (col < 0 || col >= static_cast<Eigen::Index>(slots.size())) continue;
+            HarvestColumnAhead& a = slots[static_cast<std::size_t>(col)];
+            if (a.ready) continue;
+            NetworkNormalEquations::StationRegression reg =
+                kernel.stationRegression(est_idx, col, /*carry_aware=*/false, cross_cols);
+            a.coupling   = networkHarvestCouplingRow(reg.row, border, x_s);
+            a.cross      = std::move(reg.cross);
+            a.cond_var   = reg.cond_var;
+            a.with_cross = (cross_cols != nullptr);
+            a.ready      = true;
+        }
+    } catch (...) {
+        // An allocation failure or a kernel refusal: the walk computes what is missing.
+    }
+}
+
+void networkHarvestColumnsAhead(NetworkRun& run, const NetworkEpoch& ep,
+                                const std::vector<StationHarvestBlock>& blocks,
+                                HarvestBorder& border) {
+    // ---- From the run and the epoch ----
+    NetworkRunContext& ctx = run.ctx;
+    const NetworkNormalEquations& kernel = run.engines.est.normals();
+    const Eigen::VectorXd& x_s = ep.solve.x_s;
+    const std::vector<int>& est_index_of = ep.assembly.est_index_of;
+    const int n_threads = run.setup.n_threads;
+    // ---- End of the bindings ----
+    std::vector<std::size_t> sta;   // the harvested stations, in station order
+    std::size_t n_slots = 0;
+    for (std::size_t i = 0; i < blocks.size(); ++i) {
+        if (!blocks[i].ok) continue;
+        sta.push_back(i);
+        n_slots = std::max(n_slots, static_cast<std::size_t>(est_index_of[i]) + 1);
+    }
+    border.ahead.assign(n_slots, {});
+    for (const std::size_t i : sta) {
+        border.ahead[static_cast<std::size_t>(est_index_of[i])].resize(
+            static_cast<std::size_t>(blocks[i].xr.size()));
+        ctx.counters.n_harvest_ahead_cols += static_cast<long long>(blocks[i].cols.size());
+    }
+    const HarvestBorder& border_read = border;
+    std::vector<std::vector<HarvestColumnAhead>>& slots = border.ahead;
+    #pragma omp parallel for schedule(dynamic) num_threads(n_threads)
+    for (long long k = 0; k < static_cast<long long>(sta.size()); ++k) {
+        const std::size_t i = sta[static_cast<std::size_t>(k)];
+        const std::size_t est_idx = static_cast<std::size_t>(est_index_of[i]);
+        networkHarvestStationColumnsAhead(kernel, border_read, x_s, est_idx, blocks[i], slots[est_idx]);
+    }
 }
 
 StationHarvestBlock networkHarvestStationBlock(NetworkRun& run, const NetworkEpoch& ep,

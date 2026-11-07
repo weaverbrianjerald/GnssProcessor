@@ -1825,6 +1825,9 @@ namespace GnssProcessor {
         bool parallel_station_normals{ false };   ///< Form every station's normal blocks (products, checks, LDLᵀ factor) in parallel ahead of the serial scatter, which then commits them in station order (@ref NetworkNormalEquations::formStations; card PES).
         bool parallel_redundancy_census{ false }; ///< Compute the redundancy census's per-station row redundancies and block residual cofactors in parallel ahead of its serial walk (card PES).
         bool parallel_schur_columns{ false };     ///< Split the Schur reduce's per-station subtraction over column blocks of the shared border, one thread per block, every element still summed over the stations in ascending order (card PES).
+        bool parallel_coupling_prepare{ false };  ///< Split the inverse of the exact coupling update's preparation (the LDLT solve on the identity) over column blocks, one thread per block, every element computed as in the whole solve (card PES).
+        bool parallel_iono_traces{ false };       ///< Form the iono diagnostics' per-station trace rows (slant ionosphere, ZWD, gradients, receiver states: back-substitution, conditional variances, formatting) in parallel, each station into its own buffer; the buffers are written in station order (card PES).
+        bool parallel_carry_harvest{ false };     ///< Compute the carry harvest's kernels (the handover ledger's variances, every carried column's border regression and coupling row) in parallel ahead of its serial walk, which reads them in its own order and keeps every write (card PES).
         // Thread the dense per-block linear algebra of the invariant carry across all
         // cores.  @ref parallel_seam parallelizes the carry only over the few
         // (const,signal) blocks (byte-identical) and leaves each block's O(K²–K³) dense
