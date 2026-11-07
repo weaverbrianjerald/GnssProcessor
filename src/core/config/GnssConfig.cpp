@@ -112,7 +112,7 @@ namespace GnssProcessor {
         , zhd_pressure_mbar{ 1013.25 }
         , zhd_temp_kelvin{ 288.15 }
         , tropo_apriori_source_{ TroposphereAprioriSource::StandardAtmosphere }
-        , tropo_mapping_function_{ TroposphereMappingFunction::Gmf }
+        , tropo_mapping_function_{ TroposphereMappingFunction::Nmf }
         , leap_seconds_tai_{ 37.0 }
         , residual_threshold_{ 6.0 }
         , bad_meas_percent_{ 0.5 }

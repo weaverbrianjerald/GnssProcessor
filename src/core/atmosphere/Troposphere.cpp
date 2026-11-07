@@ -4,17 +4,17 @@
  *
  * Implements:
  *  - Hydrostatic/wet mapping from the Niell (1996) NMF coefficient tables (the default
- *    path, labelled "GMF" in the method name and log text), or VMF3 with GPT3 "a"
- *    coefficients when the VMF3 mapping function is configured and the GPT3 grid loads.
+ *    path, configured as "nmf"; "gmf" is its legacy spelling and the Global Mapping
+ *    Function is not implemented), or VMF3 with GPT3 "a" coefficients when the VMF3
+ *    mapping function is configured and the GPT3 grid loads.
  *  - Standard-atmosphere pressure model used to estimate station pressure from height.
  *  - Saastamoinen zenith hydrostatic delay (ZHD).
  *
  * References:
  *   Niell, A. E. (1996), Global mapping functions for the atmosphere delay at radio
  *   wavelengths, J. Geophys. Res., 101(B2), 3227-3246.
- *   Boehm, J., A. Niell, P. Tregoning, H. Schuh (2006),
- *   Global Mapping Function (GMF): A new empirical mapping function based on
- *   numerical weather model data, Geophys. Res. Lett., 33, L07304.
+ *   Landskron, D., and J. Boehm (2018), VMF3/GPT3: refined discrete and empirical
+ *   troposphere mapping functions, J. Geod., 92(4), 349-360.
  */
 
 #include "config/GnssConfig.hpp"
@@ -70,8 +70,8 @@ namespace GnssProcessor {
         const bool want_gpt3_apriori =
             config_.getTroposphereAprioriSource() == TroposphereAprioriSource::Gpt3;
         logger->info("Troposphere model initialized (mapping={}, apriori={}): mode={}, elev_mask={}°",
-            want_vmf3 ? "VMF3" : "GMF",
-            want_gpt3_apriori ? "GPT3" : "stdatm",
+            troposphereMappingFunctionLabel(config_.getTroposphereMappingFunction()),
+            troposphereAprioriSourceLabel(config_.getTroposphereAprioriSource()),
             config_.getProcessingMode() == ProcessingMode::PPP ? "PPP" : "PPP-RTK",
             config_.getElevationMaskDeg());
 
@@ -91,7 +91,7 @@ namespace GnssProcessor {
             }
             gpt3_ = std::make_unique<Gpt3>();
             if (!gpt3_->load(grid_path, log_manager_)) {
-                logger->warn("GPT3 grid load failed ('{}'); falling back to the GMF mapping and the standard-atmosphere pressure",
+                logger->warn("GPT3 grid load failed ('{}'); falling back to the NMF mapping and the standard-atmosphere pressure",
                              grid_path.string());
                 gpt3_.reset();
             }
@@ -146,8 +146,8 @@ namespace GnssProcessor {
      * height correction to the hydrostatic mapping.  An invalid receiver position
      * selects a Black & Eisner fallback.
      *
-     * References: Niell (1996), J. Geophys. Res., 101(B2), 3227-3246; Boehm et al.
-     * (2006), Geophys. Res. Lett., 33, L07304.
+     * References: Niell (1996), J. Geophys. Res., 101(B2), 3227-3246; Landskron and
+     * Boehm (2018), J. Geod., 92(4), 349-360.
      */
     void Troposphere::getTroposphereMapping(double elevation,
                                             const Eigen::Vector3d& receiver_pos,
@@ -230,8 +230,8 @@ namespace GnssProcessor {
         double abs_lat = std::abs(lat); // radians
 
         // === Niell Mapping Function coefficients (Niell 1996, NMF) ===
-        // 5 data points at latitudes: 15°, 30°, 45°, 60°, 75°.  These are the NMF
-        // tables, although the method and its log text say "GMF"; the
+        // 5 data points at latitudes: 15°, 30°, 45°, 60°, 75°.  The configuration
+        // value "gmf" also selects these tables (its legacy spelling); the
         // spherical-harmonic VMF3 path is the branch above.
         //
         // The hydrostatic seasonal amplitude is zero at 15° and grows poleward,
@@ -308,14 +308,14 @@ namespace GnssProcessor {
         mf_d += ht_corr_coeff * h_km; // h_km is already in km (h_m / 1000)
 
         if (!std::isfinite(mf_d) || !std::isfinite(mf_w) || mf_d < 1.0 || mf_w < 1.0) {
-            log_manager_.getLogger("ppp_model")->warn("Invalid GMF mappings: mf_d={:.3f}, mf_w={:.3f}, elevation={:.3f} deg",
+            log_manager_.getLogger("ppp_model")->warn("Invalid NMF mappings: mf_d={:.3f}, mf_w={:.3f}, elevation={:.3f} deg",
                 mf_d, mf_w, elevation);
             // Clamp to reasonable values
             mf_d = std::max(mf_d, 1.0);
             mf_w = std::max(mf_w, 1.0);
         }
 
-        log_manager_.getLogger("ppp_model")->trace("GMF mappings: elevation={:.3f} deg, lat={:.3f} deg, h={:.1f} m, doy={:.1f}, mf_d={:.6f}, mf_w={:.6f}",
+        log_manager_.getLogger("ppp_model")->trace("NMF mappings: elevation={:.3f} deg, lat={:.3f} deg, h={:.1f} m, doy={:.1f}, mf_d={:.6f}, mf_w={:.6f}",
             elevation, lat * 180.0 / Constants::PI, llh.h_m, doy, mf_d, mf_w);
     }
 

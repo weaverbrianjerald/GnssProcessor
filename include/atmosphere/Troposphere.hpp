@@ -48,10 +48,11 @@ namespace GnssProcessor {
          * Computes the hydrostatic (dry) and wet mapping functions for a given
          * elevation angle.  With @c TroposphereMappingFunction::Vmf3 and a loaded
          * GPT3 grid, VMF3 is evaluated from the GPT3 "a" coefficients.  Otherwise,
-         * or when the GPT3 query fails, the Niell (1996) NMF tables are used (the
-         * method name and log text call this path "GMF", after the Global
-         * Mapping Function of Boehm et al. 2006); they account for
-         * latitude, height and day-of-year.  An invalid receiver position (norm
+         * or when the GPT3 query fails, the Niell (1996) NMF tables are used
+         * (@c TroposphereMappingFunction::Nmf, configured as "nmf"; "gmf" is its
+         * legacy spelling, and the Global Mapping Function of Boehm et al. 2006
+         * is not implemented); they account for latitude, height and
+         * day-of-year.  An invalid receiver position (norm
          * below 1 km or non-finite) selects the Black & Eisner mapping; an
          * elevation outside 0..90 deg returns 1.0 for both outputs.
          *
