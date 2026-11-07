@@ -4,14 +4,14 @@
 
 - **id:** CRO
 - **topic:** network-vehicle
-- **status:** open
-- **summary:** A unit test (`tests/network/test_carry_recursion_oracle.cpp`, suite `CarryRecursionOracle`) that compares the shipped per-station carry recursion of the golden posture (the exact coupling update in its per-row form, the float vehicle's bounded drop, the READMIT seed, the diagonal clock-pivot S-transform) with a joint information-form filter over one synthetic network and a 60-epoch window, with four events injected one at a time and then together. Tests only: no knob, no arm, no Release build.
+- **status:** closed
+- **summary:** A unit test (`tests/network/test_carry_recursion_oracle.cpp`, suite `CarryRecursionOracle`, eight cases) that compares the shipped per-station carry recursion of the golden posture (the exact coupling update in its per-row form, the float vehicle's bounded drop, the READMIT seed, the diagonal clock-pivot S-transform) with a joint information-form filter over one synthetic network and a 60-epoch window, with four events injected one at a time and then together. Tests only: no knob, no arm, no Release build. Results in section 8: the exact claims hold to rounding; the drop and the diagonal kernel depart more than their documents state; a READMIT seed across a handover of its constellation lands in the outgoing frame (a defect candidate, field count owed).
 - **source:** the scientific review card SRN (`D:/GnssProcessorSupport/worktrees/scirev/docs/refound/SRN_scientific_review_network_2026-11-06.md`, section 2.2), finding D4-11 in `D:/GnssProcessorSupport/srn/wave1.json`, confirmed by both lenses in `D:/GnssProcessorSupport/srn/wave2_verdicts.json`; the design documents whose claims are measured: card [CTU](CTU_coupling_time_update_2026-09-28.md) sections 4 and 9.2, card [SCL2](SCL2_level_residue_under_the_clone_2026-10-06.md) section 3, the [RF-1 design](RF-1_float_ambiguities_design.md) section 3.4, `include/network/solve/HandoverStransform.hpp` (the diagonal kernel's dropped cross term) and `include/network/carry/CouplingExact.hpp`.
 - **dates in the text:** 2026-11-07
 - **knobs / posture:** none added. The candidate reproduces the golden posture's recursion: `network.carry_coupling_exact_update` (per-row form), `network.shared_carry_full_cov` (dense border fold), `network.ambiguity_vehicle` `float_kf` with `network.amb_float_drop_decouple_always` and both floors at 0, `network.readmit_seed_horizon_s` 3900 with the Q3 anchor's q 2.9e-8 m^2/s, `network.handover_stransform` with `handover_stransform_before_rows` and `handover_stransform_dense` off.
 - **hashes / run dirs:** branch `worktree-wf_c49deb5b-2f3-6` from main `284ec29`; no run directories (unit test only).
 
-**Outcome.** Pre-registered 2026-11-07; results pending.
+**Outcome.** Question: does the shipped per-station carry recursion track a joint filter across arc events? The reference equals the batch, and the factorized joint form equals the reference through births and erasures, to 5e-9 m. The shipped form's steady residue is 2.7 mm; a birth adds nothing. The drop's kept mean moves the border 5.6 cm and persists (erase: 1.0 mm). The READMIT seed costs 6.6 cm, conservatively. The diagonal handover kernel leaves the incoming pivot's phase bias 15 % over-confident (NEES 22); the dense kernel removes it. A clock parked across a handover is not re-expressed: 0.68 m at the return. Owed: field counts, a fix card.
 
 > Results are appended TO THIS FILE, below the text.
 
@@ -74,3 +74,59 @@ Each event is read in the six epochs from the event on, against the same window 
 ## 7. Not modelled
 
 The anchor's variance floor (1e-5 m^2) and guard (`clock_anchor_k`, `clock_anchor_resolve`), the clock clone and the shared history (off on the goldens), receiver and satellite code biases, the 1e10 pin weight (a hard pin here), the gap re-entry response that would also drop the returning satellite's arcs (its operator is event B's), Galileo, and more than three stations (the cross-station term grows with the stations per satellite: card WSX).
+
+## 8. Results, 2026-11-07
+
+### 8.1 What was built
+
+`tests/network/test_carry_recursion_oracle.cpp` (suite `CarryRecursionOracle`, eight cases) and its entry in `CMakeLists.txt` (with `/bigobj`, as the other run-context test files). The candidate calls the shipped functions where one is callable without a run context: `couplingExactFactor`, `couplingExactRow`, `couplingExactCross`, `ambFloatDropFloored`, `applyClockStransform`, `applyClockStransformDense`, `NetworkSbasis::clockNullDirection`. Four rules are mirrored in the test because their code needs a run context: the dense fold of `BorderPrior.cpp` (the stash block with its diagonal replaced by var + q dt), the READMIT seed's var + q * gap (`carryFoldDecide`), the deficit spread of `exactRowIngredients` (`Coupling.cpp`) and the park of `BorderStash.cpp`. Options of the candidate, used as controls and decompositions: the joint block; the slip answered by erase and rebirth; three handover forms (the diagonal kernel after the rows, the golden; the dense kernel after the rows, `network.handover_stransform_dense`; a test-side exact form, the dense kernel with the rows re-expressed in the new frame first); the kernel's mechanism (`Handover`, or the wide `HandoverBeforeRows` traversal); the READMIT park off; and the pinned pivot's prior marginalized instead of conditioned on its pin. The fixture builders of `test_coupling_exact_update.cpp` are not shared: the arc lifecycle, the time-varying pivot and the clock continuous across a gap change every builder.
+
+### 8.2 The exact assertions
+
+| gate | statement | measured | bound |
+|---|---|---|---|
+| E1 | reference = batch over epochs 1..k, six scenarios, at epochs 20, 30, 40, 45, 50 and 60 | values 2.2e-9 m, covariances 1.2e-9 of the diagonal | 1e-8 |
+| E2 | factorized joint recursion with erase and rebirth = reference, every epoch, scenarios baseline, A, B, A+B | values 4.9e-9 m, covariances 3.4e-10 | 1e-8 |
+| E3 | diagonal kernel: folded contrast minus the exact re-expression of the candidate's own block | 2.000000 var_q, every pair | 1e-10 var_q |
+
+### 8.3 The measured table
+
+z is the largest |d_i| / sigma_ref,i; the sigma ratio is candidate over reference per column (min .. max); NEES is the largest of an epoch in the window, against the border dimension n_b. Each asserted row's bounds in the test are at most twice the measured value.
+
+| scenario | window (epochs) | max abs d (m) | z | NEES (n_b) | sigma ratio | column that sets it |
+|---|---|---|---|---|---|---|
+| baseline | 1..60 | 2.70e-3 (epoch 60) | 0.029 | 1.01 (14) | 1.0000 .. 1.0001 | |
+| A birth | 20..25 | 6.74e-4 (baseline 6.55e-4) | 0.0046 | 0.057 (14) | 1.0000 .. 1.0000 | |
+| B drop | 30..35 | 5.60e-2 | 0.24 | 0.30 (14) | 0.9878 .. 1.0000 | slipped satellite's L2 phase bias |
+| B drop | 46..60 | 4.02e-2 | 0.22 | 1.15 (14) | 0.9910 .. 1.0001 | |
+| B, erase control | 30..35 | 1.02e-3 | 0.008 | 0.20 (14) | 1.0000 .. 1.0000 | |
+| C departure | 40..45 | 1.96e-3 | 0.018 | 1.05 (11) | 1.0000 .. 1.0001 | |
+| C seeded return | 50..55 | 6.58e-2 | 0.32 | 3.02 (14) | 0.973 .. 1.408 | returning satellite's new L1 phase bias |
+| C seeded return | 56..60 | 1.09e-1 (epoch 57) | 0.57 | 2.53 (14) | 0.963 .. 1.340 | the same |
+| C, fresh control | 50..55 | 2.07 | 8.79 | 123 (14) | 1.000 .. 4.80 | |
+| D diagonal kernel | 45..50 | 3.51e-2 | 0.18 | 22.1 (11) | 0.852 .. 1.000 | incoming pivot's L1 phase bias (tight) |
+| D diagonal kernel | 51..60 | 2.91e-2 | 0.16 | 3.07 (11) | 0.865 .. 1.001 | the same |
+| D, dense kernel | 45..50 | 3.46e-3 | 0.018 | 0.56 (11) | 1.0001 .. 1.0003 | |
+| D, exact form | 45..50 | 2.41e-3 | 0.023 | 1.13 (11) | 1.0000 .. 1.0001 | |
+| D, pin marginalized | 45..50 | 3.39e-2 | 0.17 | 22.1 (11) | 0.862 .. 1.000 | (diagnostic, not asserted) |
+| ALL golden | 1..49 | 7.31e-2 | 0.37 | 16.5 (8) | 0.854 .. 1.000 | incoming pivot's phase bias |
+| ALL golden | 50..55 | 6.78e-1 (epoch 50) | 3.05 | 14.7 (11) | 0.859 .. 1.351 | returning satellite's new phase bias |
+| ALL, wide traversal | 50..55 | 1.03e-1 | 0.55 | 3.12 (11) | 0.861 .. 1.637 | |
+| ALL, exact form | 50..55 | 9.26e-2 | 0.50 | 0.93 (11) | 0.970 .. 1.674 | |
+
+The handover fold (event D): each between-satellite clock contrast of the candidate's dense prior is 3.00 times the reference's predicted variance (var_q = 1.21e-2 m^2 is about one contrast in this fixture), before and after the pin conditioning. The drop (event B) acts on both bands, keeps the value and restores the L1 arc's variance from 1.70e-2 to 4.93e-1 m^2 (its first harvest), on a kept value 1.165 m from the post-slip truth. The READMIT seed (event C) folds at 1.37e-2 m^2 over the 330 s gap.
+
+### 8.4 Reading
+
+- **Rounding.** E1, E2 and E3. A birth equals the baseline, and the departure edge (the rows' D route and the fold's marginalization) stays at the steady residue. The exact coupling update in its joint form is exact through births, erasures and departures over 60 epochs; the shipped per-station form's steady residue is 2.7 mm by epoch 60 with every sigma within 7e-5 of the reference's, at three stations (the residue grows with the stations per satellite, card WSX).
+- **Design-sized, as documented in kind.** The READMIT seed (C) drops the parked clock's covariance with the rest and the gap's smoothing of its value: the returning satellite's phase bias differs by 6.6 cm (z 0.29 one epoch after the return, 0.57 at its worst seven epochs later), stated up to 1.41 times looser than the reference, so the departure is on the conservative side; against a fresh return it removes 97 % of the miss. The diagonal kernel's contrast over-statement is exactly the documented 2 var_q.
+- **Design-sized, larger than the documents claim.** The drop (B): the RF-1 design (section 3.4) and card SRN (D4-06) read the kept mean as costing little ("sub-millimetre on the satellite level", inferred there, not measured). Here a 1.17 m kept-value error at the restored 0.49 m^2 moves the border 5.6 cm (z 0.24) and does not decay in two or three folds: 4.0 cm remains 16 to 30 epochs later, in the code-determined clock and phase-bias split, while the same form with erase and rebirth stays at 1.0 mm. The size scales with the kept value's error, and one slipped line of sight is a third of its satellite's stations here against about a twentieth on the field golden; that scaling is not measured. Card SRN's bar (0.1 reference sigma one epoch after the event) is missed by B (z 0.22) and C (0.29); D meets it one epoch after (0.06) and misses it from epoch 48 (0.18).
+- **Over-confident, not documented.** The diagonal kernel (D) is documented as conservative for the clocks ("dropping the cross term is conservative") with the clock-bias cross-covariances left stale. The measured consequence of those stale covariances is an over-confident phase bias of the incoming pivot: 15 % tight in sigma, NEES 22 at the handover epoch, 3.1 six epochs later, the column still 12 % tight at epoch 60. The dense kernel under the same rows removes it (NEES 0.56, every sigma within 2.5e-4), and the exact form adds little to that, so the rows' spread of the departed pivot's term is not material here; marginalizing the pinned pivot's prior instead of conditioning on its pin does not remove it.
+- **A frame defect candidate (ALL).** The golden kernel (`applyClockStransform`, mechanism `Handover`) takes its membership from the registered clocks, so a clock parked by READMIT across a handover of its constellation stays in the outgoing frame, and the fold's release keeps the park (`parked_retired` excludes a released constellation, `BorderPrior.cpp`). The seed then lands c0 = 0.371 m off at a sigma of 0.117 m, and the returning satellite's phase bias misses the reference by 0.68 m (z 3.05). The `CarryPrior::t_park_s` documentation states that a parked entry "is walked by every frame re-base that walks prev_carry"; this walk skips it. The dense kernel and the wide traversal walk it by -c0, which brings the return to the size of event C alone (0.10 m). In the producer the anchor guard (`clock_anchor_k` 6, `clock_anchor_abs_m` 2, `clock_anchor_resolve`) is expected to trip on a seed this far off and re-solve the satellite loose, and the READMIT seed check counts it; neither is modelled here, and no run measured how often a seed follows a handover of its constellation.
+
+### 8.5 What is owed
+
+- **Field count (no run made, by the task's scope):** in the 6 h golden pair, the READMIT seeds whose constellation had a STRANSFORM between the park and the seed, with the seed-check outliers and anchor trips at those seeds. The candidate producer fix (a card of its own, default off) walks the parked clocks of the changed constellation in the diagonal kernel by the dense kernel's diagonal rule.
+- **The dense kernel:** this oracle supports `network.handover_stransform_dense` (UNVALIDATED) as the cure of event D's over-confidence; its own arm is card SRN's D4-07 falsification.
+- **The drop's scaling:** event B with more stations per satellite (the fixture's `kR` is 3) and the slip size swept.
+- **Not modelled (section 7):** the anchor's floor and guard, the clock clone, the gap re-entry response of the returning satellite's arcs.
