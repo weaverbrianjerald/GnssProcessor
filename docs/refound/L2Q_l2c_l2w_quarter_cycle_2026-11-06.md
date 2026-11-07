@@ -7,7 +7,7 @@
 - **status:** closed
 - **summary:** CLOSED 2026-11-06: the GPS L2C minus L2W phase fraction, read from the raw RINEX of 294 stations over DOY 128 to 132 of 2024 (579 station-days, 21 receiver types, 34 482 arcs), sits at 0 at every station-day and never at a quarter cycle; the largest station offset is 0.018 cycle, the per-satellite part at most 0.004 cycle. The SYS / PHASE SHIFT records disagree with each other across receiver families (0, -0.25, +0.25 for the same physical relation) while every file is aligned. No correction is needed for field integer work, provided `model_corrections.apply_phase_shifts` stays false (on, it un-aligns the Trimble, Leica, JAVAD and Topcon files) and the files are used as recorded. Every golden station latches L2W, and a station-consistent offset cancels in every double difference by construction.
 - **source:** the register item "L2C against L2W quarter-cycle alignment" of [OPEN_ITEMS](../status/OPEN_ITEMS.md) (re-filed from [ARL](ARL_integer_ambiguity_ladder_2026-10-09.md) at its close, a prerequisite of [IRD](IRD_integer_recovering_datum_2026-10-13.md)); RINEX 3.04 (IGS/RTCM, 2018-11-23) section 9.1, Table 25, Table A2 and Table A23; the parser `src/core/rinex/RinexParser.cpp`; the canonical latch `src/core/model/PppModel.cpp`; the run log of `runs_nom/_rap_bdsc_c6`
-- **knobs / posture:** nothing armed; `model_corrections.apply_phase_shifts` (default false, no ledger row) read and left off; the field golden's GPS priority list (C2W, L2W before C2S, C2L, L2S, L2L; no 2X)
+- **knobs / posture:** nothing armed; `model_corrections.apply_phase_shifts` (default false) read and left off, its KEEP_OFF ledger row landed 2026-11-06 (section 8); the field golden's GPS priority list (C2W, L2W before C2S, C2L, L2S, L2L; no 2X)
 - **dates in the text:** 2026-11-06; data of 2024 DOY 128 to 132
 - **hashes / run dirs:** inputs `C:\GnssProcessor\data\2024-129\obs` (311 stations) and `D:\GnssProcessorSupport\data_mday\2024-{128,130,131,132}\obs` (75 stations); outputs `D:\GnssProcessorSupport\runs\l2align\` (`headers.csv`, `arcs.csv`, `arcs_files.csv`, `grade\`); script `scripts/l2_quarter_cycle.py` (selftest 17 of 17); worktree branch `l2/quarter-cycle`
 
@@ -329,3 +329,16 @@ alternatives), and the question of two attributes on one carrier was not asked o
    data decide, and the script is the check.
 
 The register item leaves [OPEN_ITEMS](../status/OPEN_ITEMS.md) with this card.
+
+## 8. The ledger row, 2026-11-06
+
+The KEEP_OFF row for `model_corrections.apply_phase_shifts` that sections 5 and 7 record as owed
+landed the same day at the author's decision, in a second commit on branch `l2/quarter-cycle`
+(the first, f22e2eb, holds the card and the script): verdict KEEP_OFF, area `model_corrections`,
+default false, evidence this card. The goldens were not regenerated: no golden names the key and
+a KEEP_OFF row pins nothing, so their content is unchanged, and the ledger hash in their
+provenance still records the generation of 2026-11-02, as after every earlier row-only ledger
+change. With the row, `python scripts/ledger_render.py` renders 686 keys (98 KEEP_OFF),
+`python scripts/make_golden_config.py --verify` passes on the three goldens,
+`python scripts/config_posture_check.py --verify-loader` reports 0 coverage gaps, and
+`python scripts/docs_index_check.py` passes.
