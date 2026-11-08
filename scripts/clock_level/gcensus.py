@@ -17,6 +17,11 @@ sites : `--sites FILE` anywhere on the line (or MSC_SITE_LIST in the environment
         Per key: the median over sites of the site's hourly p50 (3D, hours from 00:00), and against
         <refkey> the paired change of each site's mean hourly p50 over hours 2 to 6 and of hour 1,
         better / worse at 1 cm, the median change; then the per-site rows.
+        --convergence adds, per key, each site's convergence times and the census median and p90
+        (scripts/convergence_grade.py owns the statistic: time from the consumer's first epoch to the
+        first epoch under 0.1 m 3D and to the first 10-minute runs under 0.1 m and 0.05 m).
+        --nees adds, per key, each site's position NEES and actual-to-formal ratio per axis over the
+        whole replay (scripts/consumer_nees.py owns the statistic; needs the trace's sigma columns).
 
 Day options (either verb; card MDAY, 2026-10-19).  With none of them the tool is the DOY-129, 00:00, 6 h census of
 the cards above, command for command and line for line.
@@ -35,6 +40,10 @@ the cards above, command for command and line for line.
 import csv, json, os, statistics as st, subprocess, sys
 
 import msc_sites
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import convergence_grade  # noqa: E402  (the convergence statistic's owner)
+import consumer_nees      # noqa: E402  (the NEES statistic's owner)
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))).replace('\\', '/')   # this checkout
 RUNS = os.environ.get('RAPID_RUNS_ROOT', ROOT + '/runs').replace('\\', '/')   # the runs root rapid_arm.py uses
@@ -153,7 +162,39 @@ def summary(d, label):
     return f'{label}: median {st.median(d):+.4f} m, better {b}, worse {w}, n {len(d)}'
 
 
-def grade(ref, keys):
+def grade_convergence(key):
+    """Each site's convergence times and the census median / p90 (WTZZ beside, not pooled)."""
+    G = {}
+    for n in NAMES:
+        p = f'{RUNS}/_rap_{key}_{n}/logs/closed_loop_trace.csv'
+        if os.path.exists(p):
+            G[n] = convergence_grade.converge(p)
+    f = convergence_grade.fmt_min
+    print(f'   convergence (minutes from the first consumer epoch): site t<0.10 run0.10 run0.05')
+    for n, g in G.items():
+        if g:
+            print(f'   {n.upper():5s} {f(g["t01"]):>7s} {f(g["run01"]):>7s} {f(g["run005"]):>7s}')
+    census = [g for n, g in G.items() if g and n != 'wtzz']
+    if census:
+        c = convergence_grade.census_stats(census)
+        print('   census ' + '; '.join(f'{lab} median {f(c[k]["median"])} p90 {f(c[k]["p90"])} never {c[k]["never"]}'
+                                       for k, lab in (('t01', 't<0.10'), ('run01', 'run0.10'), ('run005', 'run0.05'))))
+
+
+def grade_nees(key):
+    """Each site's whole-replay NEES and actual-to-formal ratio per axis."""
+    print('   NEES (whole replay): site rows nees r_e r_n r_u reading')
+    for n in NAMES:
+        g = consumer_nees.grade(f'{RUNS}/_rap_{key}_{n}')
+        if g and g['all']:
+            a = g['all']
+            print(f'   {n.upper():5s} {a["n"]:5d} {a["nees"]:8.2f} ' + ' '.join(f'{a["r"][x]:6.2f}' for x in 'enu')
+                  + f'  {a["reading"]}')
+        elif os.path.isdir(f'{RUNS}/_rap_{key}_{n}'):
+            print(f'   {n.upper():5s} no sigma columns')
+
+
+def grade(ref, keys, convergence=False, nees=False):
     R = {n: hours(f'{ref}_{n}') for n in NAMES}
     for key in [ref] + keys:
         K = {n: hours(f'{key}_{n}') for n in NAMES}
@@ -161,6 +202,10 @@ def grade(ref, keys):
         med = [st.median([K[n][h] for n in sites]) for h in range(NH)]
         print(f'== {key}: {len(sites)} sites; median site p50 by hour ' + ' '.join(f'{x:.3f}' for x in med)
               + ('; WTZZ ' + ' '.join(f'{x:.3f}' for x in K['wtzz']) if K['wtzz'] else ''))
+        if convergence:
+            grade_convergence(key)
+        if nees:
+            grade_nees(key)
         if key == ref:
             continue
         pair = [n for n in sites if R[n]]
@@ -200,4 +245,6 @@ if __name__ == '__main__':
     if a[0] == 'make':
         make(a[1], a[2], a[3], a[4], a[5:])
     else:
-        grade(a[1], a[2:])
+        flags = {'--convergence', '--nees'}
+        grade(a[1], [x for x in a[2:] if x not in flags],
+              convergence='--convergence' in a, nees='--nees' in a)

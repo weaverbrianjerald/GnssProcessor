@@ -443,6 +443,18 @@ public:
     /// Get the current receiver position (ECEF, meters).
     Eigen::Vector3d getPosition() const;
 
+    /**
+     * @brief Formal covariance of @ref getPosition (ECEF axes, m^2).
+     *
+     * The filter's own 3x3 position block (StateManager::getPositionCovariance),
+     * read at the same moment as the position, so the pair is the estimate and
+     * its formal uncertainty.  Measure-only: written to the closed-loop trace
+     * beside the actual error so the two can be compared (NEES).
+     *
+     * @return Position covariance; all zeros before the state is built.
+     */
+    Eigen::Matrix3d getPositionCovariance() const;
+
     /// Get the current receiver clock bias (meters).
     double getClockBias() const;
 

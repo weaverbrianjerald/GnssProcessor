@@ -134,6 +134,20 @@ namespace GnssProcessor {
         double getStateVariance(int idx) const;
 
         /**
+         * @brief Read the 3x3 ECEF covariance block of the position state.
+         *
+         * The block at @ref getPositionIndex, copied without the O(n^2) copy of
+         * @c getCovariance().  It is the formal covariance of the position the
+         * state vector holds (after an accepted AR fix, the fixed covariance).
+         * Used by the closed-loop consumer trace to write the formal position sigma
+         * beside the actual error.
+         *
+         * @return Position covariance (m^2, ECEF axes); all zeros while the
+         *         covariance is smaller than the position block.
+         */
+        Eigen::Matrix3d getPositionCovariance() const;
+
+        /**
          * @brief Build the process noise matrix for prediction.
          *
          * Built from @c filter.process_noise and the time step \p dt, one block

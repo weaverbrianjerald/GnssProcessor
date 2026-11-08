@@ -53,6 +53,7 @@
 #include "products/SsrCorrectionStore.hpp"
 #include "realtime/ArObserve.hpp"
 #include "realtime/ConsumerSatTrace.hpp"
+#include "realtime/ConsumerTrace.hpp"
 #include "realtime/RealTimeEngine.hpp"
 #include "rinex/MultiRinexSync.hpp"
 
@@ -407,8 +408,7 @@ int Application::runConsumerReplay() {
     // script reads harness runs and replay runs alike.  Written here (not
     // through NetworkRunTraces) because that class owns the producer's stream
     // set and constructing it would demand producer state this driver has none
-    // of; the header string is duplicated deliberately and asserted by the
-    // grading script.
+    // of; the header, row and formatter are shared (ConsumerTrace.hpp).
     std::filesystem::create_directories(log_dir_);
     const std::filesystem::path cl_path = log_dir_ / "closed_loop_trace.csv";
     std::ofstream cl_trace(cl_path);
@@ -416,8 +416,7 @@ int Application::runConsumerReplay() {
         log->error("Consumer replay: failed to open {}", cl_path.string());
         return 1;
     }
-    cl_trace << "week,tow,n_sats,ar_ran,ar_success,num_fixed,num_candidates,"
-                "ratio,pos_err_3d_m,east_m,north_m,up_m,ar_gate,p_succ\n";
+    cl_trace << kConsumerTraceHeader;
     // Per-satellite companion (network.trace_consumer_sat): the header and the
     // row formatter are the in-process stream's (ConsumerSatTrace.hpp), and the stamp is
     // the (week, tow) of the closed_loop_trace.csv row, so the two files join exactly.
@@ -599,30 +598,19 @@ int Application::runConsumerReplay() {
         band_3d[hour].add(err3d);
         band_up[hour].add(enu.z());
 
-        std::string ar_gate;
-        if (!ar_ran) {
-            ar_gate = "not_run";
-        } else switch (ar.gate_reason) {
-            case 1:  ar_gate = "disabled";      break;
-            case 2:  ar_gate = "min_epochs";    break;
-            case 3:  ar_gate = fmt::format("sigma_gate({:.3f}m)", ar.gate_sigma_3d); break;
-            case 4:  ar_gate = "no_candidates"; break;
-            case 5:  ar_gate = "wl_guard";      break;
-            default: ar_gate = ar.success ? (ar.wl_only_fix ? "wl_only" : "fixed")
-                             : (ar.ratio > 0.0 ? "ratio_battery" : "mlambda_fail");
-                     break;
+        {
+            const Eigen::Matrix3d pos_cov = consumer.getPositionCovariance();
+            ConsumerTraceRow row;
+            row.week      = se.time.week;
+            row.tow       = se.time.tow;
+            row.n_sats    = obs_it->second.size();
+            row.err_3d_m  = err3d;
+            row.err_enu_m = enu;
+            row.sig_enu_m = enuSigmaFromEcefCovariance(pos_cov, truth_llh);
+            row.sig_3d_m  = sigma3dFromCovariance(pos_cov);
+            fillConsumerTraceAr(row, ar_ran, ar);
+            cl_trace << formatConsumerTraceRow(row);
         }
-        cl_trace << se.time.week << ',' << fmt::format("{:.3f}", se.time.tow) << ','
-                 << obs_it->second.size() << ',' << (ar_ran ? 1 : 0) << ','
-                 << (fixed ? 1 : 0) << ',' << (ar_ran ? ar.num_fixed : 0) << ','
-                 << (ar_ran ? ar.num_candidates : 0) << ','
-                 << fmt::format("{:.2f}", ar_ran ? ar.ratio : 0.0) << ','
-                 << fmt::format("{:.4f}", err3d) << ','
-                 << fmt::format("{:.4f}", enu.x()) << ','
-                 << fmt::format("{:.4f}", enu.y()) << ','
-                 << fmt::format("{:.4f}", enu.z()) << ','
-                 << ar_gate << ','
-                 << fmt::format("{:.6f}", ar_ran ? ar.p_succ : 0.0) << '\n';
         if (cl_sat_trace.is_open()) {
             const auto& rows = consumer.consumerSatRows();
             for (const auto& r : rows)

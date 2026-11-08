@@ -261,6 +261,7 @@ add_library(gnss_core STATIC
     src/core/realtime/RealTimeEngineArObserve.cpp
     src/core/realtime/ArObserve.cpp
     src/core/realtime/ConsumerSatTrace.cpp
+    src/core/realtime/ConsumerTrace.cpp
     src/core/filter/PivotManager.cpp
     src/core/filter/DdPivotManager.cpp
     src/core/filter/CovarianceReReference.cpp
@@ -686,6 +687,7 @@ add_executable(gnss_tests
     tests/test_ar_observe_config.cpp
     tests/test_ambiguity_resolver_setup.cpp
     tests/test_network_product_chain_token.cpp
+    tests/test_consumer_trace.cpp
     tests/test_transforms.cpp
     tests/test_pivot_column_resolver.cpp
     tests/test_filter_core.cpp

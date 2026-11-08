@@ -705,6 +705,11 @@ Eigen::Vector3d RealTimeEngine::getPosition() const {
     return ppp_state_.position;
 }
 
+Eigen::Matrix3d RealTimeEngine::getPositionCovariance() const {
+    if (!state_manager_) return Eigen::Matrix3d::Zero();
+    return state_manager_->getPositionCovariance();
+}
+
 double RealTimeEngine::getClockBias() const {
     return ppp_state_.clock_bias;
 }
