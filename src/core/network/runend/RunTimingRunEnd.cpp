@@ -87,6 +87,16 @@ int networkRunTimingRunEnd(const NetworkRunEndView& v) {
                       "of the walk, {} read by it; {} station(s) of the handover ledger",
                       v.ctx.counters.n_harvest_ahead_cols, v.ctx.counters.n_harvest_ahead_read,
                       v.ctx.counters.n_harvest_ahead_ledger);
+        // The sparse station normals, when armed: how many stations the nonzero-entry formation
+        // formed and how many it declined to the dense products.  A build with fused multiply-add
+        // declines every station by design (NetworkNormalEquations::sparseFormationOnThisBuild).
+        if (pnc.sparse_station_normals) {
+            const auto& fc = est.normals().stationFormationCounts();
+            log->info("Network station normals: {} formed sparse, {} formed dense after the sparse "
+                      "formation declined the shape{}", fc.sparse, fc.dense,
+                      NetworkNormalEquations::sparseFormationOnThisBuild()
+                          ? "" : " (this build has fused multiply-add: it declines every station)");
+        }
     }
     if (sec_timers_on) {
         const auto& stmr = est.sectionTimers();

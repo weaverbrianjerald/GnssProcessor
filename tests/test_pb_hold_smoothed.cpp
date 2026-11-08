@@ -7,7 +7,8 @@
  *    @ref pbHoldCloneRebase over the exact update's epoch inputs, equals the fixed-point
  *    smoother of a small dense random-walk model (an augmented Kalman filter carrying
  *    c(t0) as a zero-noise state) at every epoch, with a reinit of a column the clone
- *    has spread onto and of the clone's own clock.
+ *    has spread onto and of the clone's own clock (the reinit epoch in information
+ *    form, the exact limit of the exact rule's Reinit route).
  * 2. A frame step of the prior means never steps the clone; a pinned term adds no
  *    revision.
  * 3. A clone that would leave the exact route dies with its cause.
@@ -104,9 +105,42 @@ void kfUpdate(Eigen::VectorXd& x, Eigen::MatrixXd& P, const Eigen::MatrixXd& H,
     P = 0.5 * (P + P.transpose()).eval();
 }
 
-/// The reinit's prior variance in the reference filter (the q -> infinity limit of the
-/// exact rule's Reinit route, large enough and still well conditioned).
-constexpr double kReinitVar = 1e7;
+/// The measurement update of an epoch that re-initializes column @p col: the exact
+/// q -> infinity limit of the exact rule's Reinit route, in information form.  The prior
+/// information is that of the other columns (the re-initialized one carries none), so no
+/// large stand-in variance enters the posterior.  @p P is the time-updated prior; its row and
+/// column @p col are not read.
+void kfUpdateReinit(Eigen::VectorXd& x, Eigen::MatrixXd& P, const Eigen::MatrixXd& H,
+                    const Eigen::VectorXd& r, const Eigen::VectorXd& y, int col) {
+    const Eigen::Index n = P.rows();
+    std::vector<Eigen::Index> keep;
+    for (Eigen::Index i = 0; i < n; ++i)
+        if (i != col) keep.push_back(i);
+    const Eigen::Index m = static_cast<Eigen::Index>(keep.size());
+    Eigen::MatrixXd Pk(m, m);
+    Eigen::VectorXd xk(m);
+    for (Eigen::Index i = 0; i < m; ++i) {
+        xk(i) = x(keep[static_cast<std::size_t>(i)]);
+        for (Eigen::Index j = 0; j < m; ++j)
+            Pk(i, j) = P(keep[static_cast<std::size_t>(i)], keep[static_cast<std::size_t>(j)]);
+    }
+    const Eigen::MatrixXd Yk = Pk.ldlt().solve(Eigen::MatrixXd::Identity(m, m));
+    const Eigen::VectorXd bk = Yk * xk;
+    Eigen::MatrixXd Y = Eigen::MatrixXd::Zero(n, n);
+    Eigen::VectorXd b = Eigen::VectorXd::Zero(n);
+    for (Eigen::Index i = 0; i < m; ++i) {
+        b(keep[static_cast<std::size_t>(i)]) = bk(i);
+        for (Eigen::Index j = 0; j < m; ++j)
+            Y(keep[static_cast<std::size_t>(i)], keep[static_cast<std::size_t>(j)]) = Yk(i, j);
+    }
+    const Eigen::VectorXd w = r.cwiseInverse();
+    Y += H.transpose() * w.asDiagonal() * H;
+    b += H.transpose() * w.cwiseProduct(y);
+    const Eigen::LDLT<Eigen::MatrixXd> f(0.5 * (Y + Y.transpose()));
+    P = f.solve(Eigen::MatrixXd::Identity(n, n));
+    P = 0.5 * (P + P.transpose()).eval();
+    x = f.solve(b);
+}
 
 /// |a - b| within @p tol relative to max(1, |b|).
 ::testing::AssertionResult nearRel(double a, double b, double tol) {
@@ -232,26 +266,19 @@ void runAgainstTheSmoother(int T, int t0, int reinit_col, int t_reinit, double t
         // The exact inputs are built on the previous epoch's stash (x, P).
         const CouplingExactEpoch ep = exactEpoch(x, P, q, t - 1.0, reinit_now ? reinit_col : -1);
         const Eigen::VectorXd x_prior = x;
-        // Time update (a reinit decorrelates its key: the q -> infinity limit).
+        // Time update; a reinit decorrelates its key (the q -> infinity limit, exact in the
+        // information form of the update).
         P += Eigen::MatrixXd(q.asDiagonal());
-        if (reinit_now) {
-            P.row(reinit_col).setZero();
-            P.col(reinit_col).setZero();
-            P(reinit_col, reinit_col) = kReinitVar;
-        }
-        kfUpdate(x, P, H, r, y);
+        if (reinit_now) kfUpdateReinit(x, P, H, r, y, reinit_col);
+        else            kfUpdate(x, P, H, r, y);
         if (born) {
             Eigen::VectorXd qa = Eigen::VectorXd::Zero(6);
             qa.head(5) = q;
             Pa += Eigen::MatrixXd(qa.asDiagonal());
-            if (reinit_now) {
-                Pa.row(reinit_col).setZero();
-                Pa.col(reinit_col).setZero();
-                Pa(reinit_col, reinit_col) = kReinitVar;
-            }
             Eigen::MatrixXd Ha = Eigen::MatrixXd::Zero(H.rows(), 6);
             Ha.leftCols(5) = H;
-            kfUpdate(xa, Pa, Ha, r, y);
+            if (reinit_now) kfUpdateReinit(xa, Pa, Ha, r, y, reinit_col);
+            else            kfUpdate(xa, Pa, Ha, r, y);
 
             const PbHoldCloneInputs in = cloneInputs(ep, x, x_prior);
             const PbHoldCloneStep st = pbHoldCloneAdvance(in, clone);
@@ -297,13 +324,20 @@ TEST(PbHoldSmoothedTest, TheCloneRowIsTheFixedPointSmoother) {
     runAgainstTheSmoother(/*T=*/40, /*t0=*/3, /*reinit_col=*/-1, /*t_reinit=*/-1, 1e-8);
 }
 
+// The reinit cases are held to the plain case's 1e-8: the reference takes the reinit epoch in
+// information form, the exact q -> infinity limit.  Its earlier form, a Joseph update with a
+// stand-in prior variance of 1e7, missed the posterior of a re-initialized clock by 0.7 % (3.4e-5
+// on a variance of 4.8e-3) and its increment variance by 35 %; the case still passed on SSE2 only
+// because the 5-state and the 6-state filters rounded identically there, so the same error stood on
+// both sides, and failed by 2.1 % on a build with fused multiply-add.  The clone itself agrees with
+// the exact reference to 3e-15 or better on both builds.
 TEST(PbHoldSmoothedTest, AReinitOfASpreadColumnIsReattributedThroughP) {
     // G01's L1C phase bias, which the clone spreads onto within one epoch.
-    runAgainstTheSmoother(/*T=*/30, /*t0=*/3, /*reinit_col=*/1, /*t_reinit=*/12, 1e-6);
+    runAgainstTheSmoother(/*T=*/30, /*t0=*/3, /*reinit_col=*/1, /*t_reinit=*/12, 1e-8);
 }
 
 TEST(PbHoldSmoothedTest, AReinitOfTheClonesOwnClockKeepsItUnbiased) {
-    runAgainstTheSmoother(/*T=*/30, /*t0=*/3, /*reinit_col=*/0, /*t_reinit=*/9, 1e-6);
+    runAgainstTheSmoother(/*T=*/30, /*t0=*/3, /*reinit_col=*/0, /*t_reinit=*/9, 1e-8);
 }
 
 TEST(PbHoldSmoothedTest, RestrictingTheEpochToTheFoldedKeysIsTheReinitRoute) {

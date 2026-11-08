@@ -118,13 +118,7 @@ struct GemmOrder {
 /// restart in each part), a depth over the panel depth (partial sums are added afterwards), a kernel
 /// tile geometry other than the one described, or a build that fuses multiply and add.
 bool gemmOrderOf(Eigen::Index rows, Eigen::Index cols, Eigen::Index depth, GemmOrder& g) {
-#if defined(EIGEN_VECTORIZE_FMA) || defined(__FMA__) || defined(__AVX2__)
-    (void)rows; (void)cols; (void)depth; (void)g;
-    return false;
-#else
-    using Traits = Eigen::internal::gebp_traits<double, double>;
-    constexpr bool kKnownGeometry = Traits::mr == 4 && Traits::LhsProgress == 2 && Traits::nr == 4;
-    if (!kKnownGeometry) return false;
+    if (!NetworkNormalEquations::sparseFormationOnThisBuild()) return false;
     if (rows < 2 || cols < 2 || depth < 1) return false;
     if (rows + cols + depth < EIGEN_GEMM_TO_COEFFBASED_THRESHOLD) return false;
     if (Eigen::nbThreads() != 1) return false;
@@ -151,7 +145,6 @@ bool gemmOrderOf(Eigen::Index rows, Eigen::Index cols, Eigen::Index depth, GemmO
         for (Eigen::Index c = 0; c < (panel / 4) * 4; ++c) g.col_block4[static_cast<std::size_t>(j2 + c)] = 1;
     }
     return true;
-#endif
 }
 
 /// Accumulates the terms of one product into @p out in the order of @p g (see GemmOrder).  The terms
@@ -965,7 +958,10 @@ std::size_t NetworkNormalEquations::addStationObservations(
             sparse_nss_.setZero(n_shared_, n_shared_);
         }
         Eigen::MatrixXd N_sr_s, N_rr_s;
-        if (formStationNormalsSparse(A_s, A_r, w_diag, sparse_nss_, N_sr_s, N_rr_s, sparse_border_)) {
+        const bool formed = formStationNormalsSparse(A_s, A_r, w_diag, sparse_nss_, N_sr_s, N_rr_s,
+                                                     sparse_border_);
+        ++(formed ? formation_counts_.sparse : formation_counts_.dense);
+        if (formed) {
             const ZeroActiveOnThrow restore_border{sparse_nss_, sparse_border_.active};
             const Eigen::VectorXd u_s_s = WA_s.transpose() * y;
             const Eigen::VectorXd u_r_s = WA_r.transpose() * y;
@@ -995,6 +991,7 @@ Eigen::MatrixXd& threadSparseScratch(Eigen::Index n) {
 } // namespace
 
 void NetworkNormalEquations::formStation_(const StationObservations& in, StationForm& f) const {
+    f.formation = StationFormation::none;
     f.sparse = false;
     f.pd_rejected = false;
     f.error = nullptr;
@@ -1031,7 +1028,9 @@ void NetworkNormalEquations::formStation_(const StationObservations& in, Station
             Eigen::MatrixXd& scratch = threadSparseScratch(n_shared_);
             Eigen::MatrixXd N_sr_s, N_rr_s;
             SparseBorder border;
-            if (formStationNormalsSparse(A_s, A_r, w_diag, scratch, N_sr_s, N_rr_s, border)) {
+            const bool formed = formStationNormalsSparse(A_s, A_r, w_diag, scratch, N_sr_s, N_rr_s, border);
+            f.formation = formed ? StationFormation::sparse : StationFormation::dense;
+            if (formed) {
                 // Move the touched square into the slot; the scratch is all zero again after it.
                 const std::size_t na = border.active.size();
                 const Eigen::Index ld = n_shared_;
@@ -1106,6 +1105,9 @@ std::size_t NetworkNormalEquations::commitStation(std::size_t k) {
     StationForm& f = forms_[k];
     f.committed = true;
     ++par_counts_.commits;
+    // The formation is counted where the serial add counts it, before anything can throw.
+    if (f.formation == StationFormation::sparse) ++formation_counts_.sparse;
+    if (f.formation == StationFormation::dense) ++formation_counts_.dense;
     if (f.error) {
         // The serial add writes the rejection's record as it rejects: its validity always, the
         // spectral fields only when it read them.
@@ -1141,6 +1143,15 @@ std::size_t NetworkNormalEquations::commitStation(std::size_t k) {
 
     reduced_ = false;
     return n_active_++;
+}
+
+bool NetworkNormalEquations::sparseFormationOnThisBuild() {
+#if defined(EIGEN_VECTORIZE_FMA) || defined(__FMA__) || defined(__AVX2__)
+    return false;   // fused multiply-add: another summation order than the one GemmOrder describes
+#else
+    using Traits = Eigen::internal::gebp_traits<double, double>;
+    return Traits::mr == 4 && Traits::LhsProgress == 2 && Traits::nr == 4;
+#endif
 }
 
 bool NetworkNormalEquations::formStationNormalsSparse(
@@ -1331,24 +1342,29 @@ namespace {
 /// Whether the fused subtraction dst -= L * R (L: n x k, R: k x n, dst: n x n), taken column block by
 /// column block (blocks of @p width columns, a multiple of 4, then one block of @p last columns that
 /// starts at a multiple of 4), sums every element exactly as the whole product does in Eigen's blocked
-/// kernel on one thread (SSE2 doubles: 4-row and 4-column tiles, then 2-row, 1-row and 1-column
-/// remainders).  An element's arithmetic depends on the tile its row and its column fall in and on
-/// the depth panels; it does not depend on which row or column panel holds it.  Panels are cut at
-/// multiples of the tiles (Eigen rounds mc and nc to the kernel's mr and nr), so every tile but the
-/// global remainder is whole in either product, and the cut keeps each column in the tile it has in
-/// the whole product.  The split is therefore exact when the whole product and both block products
-/// take the blocked kernel (not the matrix-vector or the coefficient-based product), in one depth
-/// panel, with their row and column panels cut at multiples of 4, all read from Eigen's own blocking
-/// heuristic.  tests/network/test_neq_parallel_stages.cpp checks it against the serial reduce.
+/// kernel on one thread.  The kernel tiles the result with @c mr rows by @c nr columns, then smaller
+/// row tiles and single columns for the remainders.  Two tiles are accepted, both with @c nr = 4:
+///  - SSE2 doubles (the default build): @c mr = 4, then 2-row and 1-row remainders;
+///  - AVX2 with fused multiply-add (`/arch:AVX2`): @c mr = 12, then 8-, 4-, 2- and 1-row remainders.
+/// An element's arithmetic depends on the tile its row and its column fall in and on the depth panels;
+/// it does not depend on which row or column panel holds it.  Each row panel starts at a multiple of
+/// @c mc and each column panel at a multiple of @c nc, so with @c mc a multiple of @c mr and @c nc a
+/// multiple of @c nr every tile but the global remainder is whole in either product, and the column cut
+/// (at multiples of 4 = @c nr) keeps each column in the tile it has in the whole product.  The split is
+/// therefore exact when the whole product and both block products take the blocked kernel (not the
+/// matrix-vector or the coefficient-based product), in one depth panel, with their row panels cut at
+/// multiples of @c mr and their column panels at multiples of @c nr, all read from Eigen's own
+/// blocking heuristic.  tests/network/test_neq_parallel_stages.cpp checks it against the serial reduce
+/// on the tile of the build it runs in.
 bool schurColumnSplitExact(Eigen::Index n, Eigen::Index k, Eigen::Index width, Eigen::Index last) {
     using Traits = Eigen::internal::gebp_traits<double, double>;
-    if (Traits::mr != 4 || Traits::nr != 4 || width % 4 != 0) return false;
+    if (Traits::nr != 4 || width % Traits::nr != 0) return false;
     auto blocked = [&](Eigen::Index cols) {
         if (n < 2 || cols < 2 || k < 1) return false;
         if (k + n + cols < EIGEN_GEMM_TO_COEFFBASED_THRESHOLD) return false;
         Eigen::Index kc = k, mc = n, nc = cols;
         Eigen::internal::computeProductBlockingSizes<double, double>(kc, mc, nc, Eigen::Index(1));
-        return kc >= k && (mc >= n || mc % 4 == 0) && (nc >= cols || nc % 4 == 0);
+        return kc >= k && (mc >= n || mc % Traits::mr == 0) && (nc >= cols || nc % Traits::nr == 0);
     };
     return blocked(n) && blocked(width) && blocked(last);
 }

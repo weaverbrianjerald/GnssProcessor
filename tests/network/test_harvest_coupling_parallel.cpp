@@ -7,8 +7,9 @@
  * Both exist for speed and may not change a single bit, at any thread count:
  *
  *  1. **The inverse over column blocks against the whole solve.**  `ldltInverseColumns` equals
- *     `LDLT::solve(Identity)` bit for bit over every residue of the order modulo the 4-column tile,
- *     a network order and thread counts from 3 to 20; on orders from 256 up the split must be
+ *     `LDLT::solve(Identity)` bit for bit over every residue of the order modulo the row tile of
+ *     either build (4 rows on SSE2, 12 on AVX2, so modulo 12; the 4-column tile is the same on
+ *     both), a network order and thread counts from 3 to 20; on orders from 120 up the split must be
  *     taken, so the test cannot pass by declining.
  *  2. **The exact update's factor.**  `couplingExactFactor` holds the same F with the split as
  *     without it, and reports which path it took.
@@ -68,11 +69,15 @@ Eigen::MatrixXd randomCorrelation(std::mt19937_64& rng, Eigen::Index n) {
 TEST(LdltInverseColumnsTest, MatchesTheWholeSolveBitForBit) {
     const OneEigenThread pin;
     std::mt19937_64 rng(20261106);
-    // Small orders and every residue modulo the 4-column tile (the Debug suite affords these on two
-    // thread counts), then the network's own order on one.
+    using Traits = Eigen::internal::gebp_traits<double, double>;
+    // Small orders, then every residue modulo 12 at orders the split takes on either build (120 to 123
+    // and 128 to 131: residues 0 to 3 and 8 to 11; 256 to 259: residues 4 to 7; from 121 up both builds
+    // cut the depth into panels), each on two thread counts (the Debug suite affords these), then the
+    // network's own order on one.
     struct Shape { Eigen::Index n; std::vector<int> threads; };
     std::vector<Shape> shapes;
-    for (const Eigen::Index n : {16, 17, 18, 19, 48, 49, 50, 51, 120, 121, 122, 123, 256, 257, 258, 259})
+    for (const Eigen::Index n : {16, 17, 18, 19, 48, 49, 50, 51, 120, 121, 122, 123, 128, 129, 130, 131,
+                                 256, 257, 258, 259})
         shapes.push_back({n, {3, 8}});
     shapes.push_back({421, {20}});
     for (const Shape& shape : shapes) {
@@ -85,9 +90,10 @@ TEST(LdltInverseColumnsTest, MatchesTheWholeSolveBitForBit) {
             bool split = false;
             const Eigen::MatrixXd inv = ldltInverseColumns(f, n, threads, &split);
             EXPECT_TRUE(bitEqual(inv, whole)) << "order " << n << ", " << threads << " threads, split "
-                                              << split;
-            // The network's orders must take the split, or the test passes by declining.
-            if (n >= 256) EXPECT_TRUE(split) << "order " << n << ", " << threads << " threads";
+                                              << split << " (Eigen tile mr=" << Traits::mr
+                                              << ", nr=" << Traits::nr << ")";
+            // These orders must take the split, or the test passes by declining.
+            if (n >= 120) EXPECT_TRUE(split) << "order " << n << ", " << threads << " threads";
         }
         bool split = true;
         EXPECT_TRUE(bitEqual(ldltInverseColumns(f, n, 1, &split), whole)) << "order " << n;

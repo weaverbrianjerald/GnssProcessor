@@ -810,21 +810,33 @@ std::pair<double, double> levelGap(const Net& n, const BatchOut& bt, const RecOu
     return {rc.shat(ri) - bt.x(bi), rc.P(ri, ri) / bt.cov(bi, bi)};
 }
 
+/// The recursion against the batch: every value to 1e-7 m, every variance and covariance to 1e-8
+/// relative to the batch diagonal.
+///
+/// The values are held to 1e-7 m rather than 1e-8 because the batch itself is not determined to
+/// 1e-8 m.  Its information matrix has a condition number of about 2e7 (a code-determined level
+/// under millimetre phase), and the loose directions carry rounding at cond x eps.  Measured: a
+/// relative perturbation of 4 eps on each entry of that matrix moves the batch's border values by up
+/// to 1.4e-8 m; the recursion and the batch differ on a border value by up to 1.0e-8 m on an SSE2
+/// build and 1.3e-8 m on a build with fused multiply-add (`/arch:AVX2`), in each case on an L2 phase
+/// bias whose batch sigma is 0.19 m, and between the two builds the batch's border values move by up
+/// to 1.7e-8 m while the recursion's move by at most 2.7e-9 m (the reference carries the rounding,
+/// not the recursion); and every L2 ambiguity of a station differs from the batch by
+/// the same ~1.1e-8 m, a common per-station L2 offset (a code-determined direction, where sixty
+/// epochs of inversions accumulate rounding at cond x eps).  1e-7 m is 5e-7 of those columns' batch
+/// sigma, so the bar still separates rounding from a defect of the recursion by orders of magnitude.
+/// Every variance and covariance meets 1e-8 on both builds.
 void expectEqualsBatch(const Net& n, const BatchOut& bt, const RecOut& rc) {
     ASSERT_EQ(rc.keys.size(), bt.col_of.size());
     for (int a = 0; a < static_cast<int>(rc.keys.size()); ++a) {
         const int ba = bt.col_of.at(rc.keys[a]);
-        EXPECT_NEAR(rc.shat(a), bt.x(ba), 1e-8) << "border value " << a;
+        EXPECT_NEAR(rc.shat(a), bt.x(ba), 1e-7) << "border value " << a;
         for (int c = 0; c < static_cast<int>(rc.keys.size()); ++c) {
             const int bc = bt.col_of.at(rc.keys[c]);
             EXPECT_NEAR(rc.P(a, c), bt.cov(ba, bc), 1e-8 * std::abs(bt.cov(ba, ba)) + 1e-14)
                 << "border covariance " << a << "," << c;
         }
     }
-    // The ambiguities are held to 1e-7 m rather than 1e-8: measured, every L2 ambiguity of
-    // a station differs from the batch by the same ~1.1e-8 m, a common per-station L2
-    // offset (a code-determined direction, where sixty epochs of inversions accumulate
-    // rounding at cond x eps); the border and every variance meet 1e-8.
     for (int i = 0; i < Net::kN; ++i) {
         EXPECT_NEAR(rc.nhat(i), bt.x(bt.ncol[i]), 1e-7) << "ambiguity " << i;
         EXPECT_NEAR(rc.ncov(i, i), bt.cov(bt.ncol[i], bt.ncol[i]),

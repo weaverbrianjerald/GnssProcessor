@@ -20,6 +20,13 @@
  *     shared border, cross blocks, local normals, local right-hand sides, local pivots and reduced
  *     normals; a station the positive-definiteness test rejects is rejected identically and leaves
  *     no trace in either.
+ *  4. **The formation counts.**  Every station that reaches the formation is counted once, sparse or
+ *     dense, and nothing is counted with the option off.
+ *
+ * The formation reproduces the SSE2 kernel (separate multiply and add).  On a build with fused
+ * multiply-add (`/arch:AVX2`) it declines every shape by design, the dense products being the faster
+ * path there: the cases of items 1 and 2 that require an accepted shape are skipped on such a build
+ * (`NetworkNormalEquations::sparseFormationOnThisBuild`), and items 3 and 4 run on both.
  */
 
 #include <gtest/gtest.h>
@@ -139,7 +146,14 @@ bool compareOneShape(std::mt19937_64& rng, int m, int ns, int nr, bool dense_col
     return true;
 }
 
+/// Skips a case that requires the formation to accept a shape, on a build where it declines all.
+#define SKIP_UNLESS_SPARSE_FORMATION_ON_THIS_BUILD()                                              \
+    if (!NetworkNormalEquations::sparseFormationOnThisBuild())                                    \
+        GTEST_SKIP() << "the sparse formation reproduces the SSE2 kernel only; this build has "   \
+                        "fused multiply-add and forms every station densely"
+
 TEST(NeqSparseStationNormalsTest, MatchesTheDenseProductsBitForBit) {
+    SKIP_UNLESS_SPARSE_FORMATION_ON_THIS_BUILD();
     const OneEigenThread pin;
     std::mt19937_64 rng(20261018);
     int accepted = 0, refused = 0;
@@ -161,6 +175,7 @@ TEST(NeqSparseStationNormalsTest, MatchesTheDenseProductsBitForBit) {
 }
 
 TEST(NeqSparseStationNormalsTest, BlockRowsDenseAcrossTheBorderMatchToo) {
+    SKIP_UNLESS_SPARSE_FORMATION_ON_THIS_BUILD();
     const OneEigenThread pin;
     std::mt19937_64 rng(31);
     // The settled network: a third of the rows are block rows with most shared columns nonzero, among
@@ -180,6 +195,7 @@ TEST(NeqSparseStationNormalsTest, BlockRowsDenseAcrossTheBorderMatchToo) {
 }
 
 TEST(NeqSparseStationNormalsTest, RefusesWhatItCannotReproduce) {
+    SKIP_UNLESS_SPARSE_FORMATION_ON_THIS_BUILD();
     const OneEigenThread pin;
     std::mt19937_64 rng(7);
     auto run = [&](int m, int ns, int nr, bool poison) {
@@ -265,6 +281,47 @@ TEST(NeqSparseStationNormalsTest, ARejectedStationLeavesNoTraceWithTheOptionOn) 
     EXPECT_EQ(a, b);
     EXPECT_TRUE(bitEqual(dense.sharedNormals(), sparse.sharedNormals()));
     EXPECT_TRUE(bitEqual(dense.stationLocalNormals(a), sparse.stationLocalNormals(b)));
+}
+
+TEST(NeqSparseStationNormalsTest, TheFormationCountsShowEveryDecline) {
+    const OneEigenThread pin;
+    std::mt19937_64 rng(41);
+    const int ns = 60, nr = 12;   // small enough that the Debug suite affords the deep station's products
+    NetworkNormalEquations off(ns), on(ns);
+    on.setSparseStationNormals(true);
+    NetworkNormalEquations::StationPrior prior;
+    for (int c = 0; c < nr; ++c) prior.cols.push_back(c);
+    prior.dNrr = Eigen::VectorXd::Constant(nr, 0.5);
+    prior.dur = Eigen::VectorXd::Zero(nr);
+    // Two stations the formation accepts, one deeper than a panel of the blocked product (declined on
+    // every build), and one with an unobserved local column (counted, then rejected as singular).
+    const Rows a = randomRows(rng, 90, ns, nr, true);
+    const Rows b = randomRows(rng, 97, ns, nr, false, 25, 0.9);
+    const Rows deep = randomRows(rng, 4000, ns, nr, false);
+    Rows bad = randomRows(rng, 80, ns, nr, false);
+    bad.A_r.col(7).setZero();
+    for (NetworkNormalEquations* k : {&off, &on}) {
+        k->addStationObservations(a.A_s, a.A_r, a.w, a.y, prior);
+        k->addStationObservations(b.A_s, b.A_r, b.w, b.y, prior);
+        k->addStationObservations(deep.A_s, deep.A_r, deep.w, deep.y, prior);
+        EXPECT_THROW(k->addStationObservations(bad.A_s, bad.A_r, bad.w, bad.y), std::invalid_argument);
+    }
+    EXPECT_EQ(off.stationFormationCounts().sparse, 0);
+    EXPECT_EQ(off.stationFormationCounts().dense, 0) << "nothing is counted with the option off";
+    const auto& c = on.stationFormationCounts();
+    EXPECT_EQ(c.sparse + c.dense, 4) << "every station that reaches the formation is counted once";
+    if (NetworkNormalEquations::sparseFormationOnThisBuild()) {
+        EXPECT_EQ(c.sparse, 3) << "the two shallow stations and the rejected one are formed sparse";
+        EXPECT_EQ(c.dense, 1) << "the deep station is declined";
+    } else {
+        EXPECT_EQ(c.dense, 4) << "a build with fused multiply-add forms every station densely";
+    }
+    // A shape outside the counted entry: a dimension mismatch fails before the formation.
+    const Eigen::MatrixXd wrong = Eigen::MatrixXd::Zero(10, ns + 1);
+    const Eigen::MatrixXd A_r10 = a.A_r.topRows(10);
+    const Eigen::VectorXd w10 = a.w.head(10), y10 = a.y.head(10);
+    EXPECT_THROW(on.addStationObservations(wrong, A_r10, w10, y10), std::invalid_argument);
+    EXPECT_EQ(on.stationFormationCounts().sparse + on.stationFormationCounts().dense, 4);
 }
 
 } // namespace

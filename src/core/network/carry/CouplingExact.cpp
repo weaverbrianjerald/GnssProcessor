@@ -27,9 +27,20 @@ namespace {
 
 /// Whether the column blocks (@p width a multiple of 4, then @p last) get the panels of the whole
 /// solve from Eigen's blocking heuristic for a triangular solve (see ldltInverseColumns).
+///
+/// Eigen's triangular solve with a matrix right-hand side walks the depth in panels of @c kc, solves
+/// each panel's triangle in strips of max(@c mr, @c nr) rows, and updates the rows below with the
+/// blocked kernel over row panels of @c mc and column tiles of @c nr.  Every one of those cuts is a
+/// property of the rows (the order n and the panels), except the column tiles: a column's arithmetic
+/// depends on the tile of @c nr columns it falls in, not on how many columns share the call.  The
+/// blocks start at multiples of 4, so with @c nr = 4 each column keeps its tile, and the solve over a
+/// block equals the whole solve's columns when the block gets the whole solve's @c kc and @c mc.  This
+/// holds for either accepted tile: SSE2 doubles (@c mr = 4, the default build) and AVX2 with fused
+/// multiply-add (@c mr = 12, `/arch:AVX2`).  tests/network/test_harvest_coupling_parallel.cpp checks
+/// it against the whole solve on the tile of the build it runs in.
 bool inverseSplitExact(Eigen::Index n, Eigen::Index width, Eigen::Index last) {
     using Traits = Eigen::internal::gebp_traits<double, double>;
-    if (Traits::mr != 4 || Traits::nr != 4 || width % 4 != 0 || width < 8 || last < 8) return false;
+    if (Traits::nr != 4 || width % Traits::nr != 0 || width < 8 || last < 8) return false;
     const auto panels = [n](Eigen::Index cols, Eigen::Index& kc, Eigen::Index& mc) {
         kc = n;
         mc = n;

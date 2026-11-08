@@ -356,6 +356,32 @@ public:
      */
     void setSparseStationNormals(bool on) { sparse_station_normals_ = on; }
 
+    /**
+     * @brief Whether this build's product kernel is the one @ref formStationNormalsSparse reproduces.
+     *
+     * The sparse formation reproduces the summation order of Eigen's SSE2 kernel for doubles (4-row by
+     * 4-column tiles, separate multiply and add).  A build with fused multiply-add (`/arch:AVX2`: 12-row
+     * tiles, @c vfmadd) sums in another order, so there the formation declines every shape and every
+     * station takes the dense products, which on that build are also the faster path.
+     *
+     * @return true when the formation can accept a shape on this build; false when it declines all.
+     */
+    static bool sparseFormationOnThisBuild();
+
+    /// Run-cumulative counts of how the station normal blocks were formed while
+    /// @ref setSparseStationNormals is on: by the nonzero-entry formation
+    /// (@ref formStationNormalsSparse), or by the dense products after the formation declined the
+    /// shape (on a build where @ref sparseFormationOnThisBuild is false, every station).  Counted by
+    /// @ref addStationObservations and by @ref commitStation, once per station that reaches the
+    /// formation (inputs that fail a dimension check reach neither); nothing is counted while the
+    /// option is off.  Not cleared by @ref reset: the run-end telemetry of the option.
+    struct StationFormationCounts {
+        long long sparse{0};   ///< stations whose normal blocks the sparse formation formed
+        long long dense{0};    ///< stations it declined, formed by the dense products
+    };
+    /// @return The counts of @ref StationFormationCounts.
+    const StationFormationCounts& stationFormationCounts() const { return formation_counts_; }
+
     /// One station's inputs to @ref formStations: the arguments of the diagonal-weight
     /// @ref addStationObservations, by pointer (the caller keeps them alive until the commit).
     struct StationObservations {
@@ -1748,8 +1774,16 @@ private:
                             StationPdFailure& pd_record, bool& pd_rejected) const;
 
     /// One slot of the form pool (@ref formStations / @ref commitStation).
+    /// How a slot's normal blocks were formed, for @ref StationFormationCounts.
+    enum class StationFormation : unsigned char {
+        none,     ///< the sparse formation is off, or the inputs failed a check before the formation
+        sparse,   ///< the nonzero-entry formation formed them
+        dense     ///< the formation declined the shape; the dense products formed them
+    };
+
     struct StationForm {
         Station st;                          ///< the local block the commit makes the next active station
+        StationFormation formation{StationFormation::none};   ///< counted by @ref commitStation, also when the slot holds an error
         bool sparse{false};                  ///< N_ss came from the nonzero-entry formation
         Eigen::MatrixXd N_ss;                ///< dense path: the station's n_shared × n_shared block
         std::vector<Eigen::Index> active;    ///< sparse path: the shared columns N_ss is nonzero on (ascending)
@@ -1880,7 +1914,8 @@ private:
     bool sparse_station_normals_{false};    ///< form a station's normals from its nonzero entries (network.sparse_station_normals); survives reset()
     Eigen::MatrixXd sparse_nss_;            ///< the sparse formation's @f$N_{ss}@f$ scratch; all zero between stations (only the square of the columns in @ref sparse_border_ is ever nonzero, and each station restores that)
     SparseBorder sparse_border_;            ///< the touched columns of @ref sparse_nss_ for the station in hand
-    std::vector<StationForm> forms_;        ///< the form pool of @ref formStations (buffers persist across epochs)
+    StationFormationCounts formation_counts_;   ///< run-cumulative sparse / dense formations (@ref stationFormationCounts)
+    std::vector<StationForm> forms_;       ///< the form pool of @ref formStations (buffers persist across epochs)
     int schur_column_threads_{1};           ///< threads of the column-split Schur reduce (@ref setSchurColumnThreads); 1 = serial
     ParallelStageCounts par_counts_;        ///< run-cumulative counts of the parallel stages (@ref parallelStageCounts)
     std::vector<Eigen::MatrixXd> schur_x_;  ///< per active station: N_rr⁻¹ N_rs of the column-split reduce (buffers persist)
