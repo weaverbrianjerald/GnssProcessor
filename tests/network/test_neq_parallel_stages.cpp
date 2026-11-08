@@ -16,11 +16,16 @@
  *     message from its commit as from the serial add, records the same null-direction trace, and
  *     leaves no trace in the border; a slot cannot be committed twice or after a reset.
  *  3. **Column-split reduce against the serial reduce.**  The reduced normals and right-hand side
- *     are bitwise equal over every residue of the shared size modulo the 4-column tile, a border
- *     Eigen cuts into two column panels, local sizes on both sides of the 8-deep peeling, and odd
- *     and even thread counts; every one of those shapes must take the split.  The network's own
- *     shape (about 420 shared columns, 50 locals) must take the split, so the test cannot pass by
- *     declining everything; a shape the split declines still gives the serial result.
+ *     are bitwise equal over every residue of the shared size modulo the row tile of either build
+ *     (4 rows on SSE2, 12 on AVX2, so modulo 12; the 4-column tile is the same on both), local sizes
+ *     on both sides of the 8-deep peeling, and odd and even thread counts; every one of those shapes
+ *     must take the split.  The shapes include products Eigen cuts into row panels and into column
+ *     panels on either build (at the network's own shape SSE2 cuts the columns at 212 and AVX2 the
+ *     rows at 216).  The network's own shape (about 420 shared columns, 50 locals) must take the
+ *     split, so the test cannot pass by declining everything; a shape the split declines still
+ *     gives the serial result.
+ *  4. **The formation counts.**  The serial add and the formed-and-committed kernel count the same
+ *     sparse and dense formations, and nothing while the sparse formation is off.
  */
 
 #include <gtest/gtest.h>
@@ -138,6 +143,21 @@ void compareFormAndCommit(bool sparse, bool with_prior, int seed) {
     EXPECT_TRUE(bitEqual(serial.reducedSharedRhs(), formed.reducedSharedRhs())) << what;
     EXPECT_EQ(formed.parallelStageCounts().forms_parallel, n_sta) << "the forms must run in parallel";
     EXPECT_EQ(formed.parallelStageCounts().commits, n_sta);
+    // Both kernels count every station's formation once, at the same point; on a build whose kernel
+    // the sparse formation does not reproduce, every station is formed densely.
+    const auto& cs = serial.stationFormationCounts();
+    const auto& cf = formed.stationFormationCounts();
+    EXPECT_EQ(cs.sparse, cf.sparse) << what;
+    EXPECT_EQ(cs.dense, cf.dense) << what;
+    if (!sparse) {
+        EXPECT_EQ(cf.sparse + cf.dense, 0) << "nothing is counted while the sparse formation is off";
+    } else {
+        EXPECT_EQ(cf.sparse + cf.dense, n_sta) << what;
+        if (NetworkNormalEquations::sparseFormationOnThisBuild())
+            EXPECT_EQ(cf.sparse, n_sta) << "every station of this shape is formed sparse, " << what;
+        else
+            EXPECT_EQ(cf.dense, n_sta) << "a build with fused multiply-add forms every station densely";
+    }
 }
 
 TEST(NeqParallelStagesTest, FormAndCommitMatchTheSerialAddDense) {
@@ -223,14 +243,17 @@ bool compareSchur(int ns, int nr, int threads, int n_sta, int seed) {
 }
 
 TEST(NeqParallelStagesTest, ColumnSplitReduceMatchesTheSerialReduceBitForBit) {
-    // Every residue of the shared size modulo the 4-column tile, a border Eigen cuts into two column
-    // panels (about 300 columns and up), local sizes on both sides of the 8-deep peeling, odd and
-    // even thread counts.
-    for (const int ns : {64, 65, 66, 67, 421})
+    using Traits = Eigen::internal::gebp_traits<double, double>;
+    // Every residue of the shared size modulo the row tile of either build (64 to 75: modulo 12, and
+    // so modulo 4), the network's border (421: SSE2 cuts it into two column panels, AVX2 into two row
+    // panels of 216), local sizes on both sides of the 8-deep peeling, odd and even thread counts.
+    // From 64 to 75 Eigen also cuts row panels (5 locals) and column panels (49 locals) on both builds.
+    for (const int ns : {64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 421})
         for (const int nr : {5, 49})
             for (const int threads : {3, 20})
                 EXPECT_TRUE(compareSchur(ns, nr, threads, 5, ns * 31 + nr * 7 + threads))
-                    << "ns=" << ns << " nr=" << nr << " threads=" << threads << " must take the split";
+                    << "ns=" << ns << " nr=" << nr << " threads=" << threads << " must take the split"
+                    << " (Eigen tile mr=" << Traits::mr << ", nr=" << Traits::nr << ")";
     EXPECT_TRUE(compareSchur(418, 49, 20, 12, 3)) << "the network's own shape must take the split";
 }
 

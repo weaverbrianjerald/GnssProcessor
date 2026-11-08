@@ -14,6 +14,10 @@
   NOT a replacement for scripts\vs2026_build.ps1: the main tree keeps using
   that one.  This exists so a worktree agent never writes into
   C:\GnssProcessor\build.
+
+  -Arch AVX2 configures a separate tree, build\<Config>-avx2, with /arch:AVX2 on
+  every C and C++ translation unit (card AV2).  Without it the configure line and
+  the tree are the ones above.
 #>
 [CmdletBinding()]
 param(
@@ -21,7 +25,9 @@ param(
     [string]$Config = 'x64-Debug',
     [string]$Target,
     [switch]$Reconfigure,
-    [switch]$ConfigureOnly
+    [switch]$ConfigureOnly,
+    [ValidateSet('','AVX2')]
+    [string]$Arch = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -36,7 +42,7 @@ foreach ($p in @($vcvars, $cmakeEx)) {
 
 # THE ONE DIFFERENCE from scripts\vs2026_build.ps1: root from $PSScriptRoot.
 $proj      = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$buildRoot = "$proj\build\$Config"
+$buildRoot = if ($Arch) { "$proj\build\$Config-$($Arch.ToLower())" } else { "$proj\build\$Config" }
 $buildType = if ($Config -eq 'x64-Debug') { 'Debug' } else { 'Release' }
 
 $cfgArgs = @(
@@ -52,6 +58,7 @@ $cfgArgs = @(
     '-DPython_FIND_STRATEGY=LOCATION'
     '-DPython_FIND_REGISTRY=NEVER'
 )
+if ($Arch) { $cfgArgs += @("-DCMAKE_CXX_FLAGS_INIT=/arch:$Arch", "-DCMAKE_C_FLAGS_INIT=/arch:$Arch") }
 
 if ($Reconfigure -and (Test-Path "$buildRoot\CMakeCache.txt")) {
     Write-Host "Removing stale cache: $buildRoot\CMakeCache.txt" -ForegroundColor Yellow
