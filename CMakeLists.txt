@@ -441,8 +441,8 @@ if(MSVC)
     # translation unit and crosses the Debug section limit (C1128).
     set_source_files_properties(tests/test_pb_hold_block.cpp tests/test_pb_hold_smoothed.cpp
         PROPERTIES COMPILE_FLAGS "/bigobj")
-    # tests/test_rhs_attrib_local.cpp: the run fixture headers crossed the Debug section limit (C1128)
-    # once the merged branches' members landed in them.
+    # tests/test_rhs_attrib_local.cpp: the same run fixture crosses the Debug section limit
+    # (C1128) under /arch:AVX2.
     set_source_files_properties(tests/test_rhs_attrib_local.cpp
         PROPERTIES COMPILE_FLAGS "/bigobj")
     # tests/network/test_network_arc_graph_oracles.cpp: the epoch-event and run-context headers it
