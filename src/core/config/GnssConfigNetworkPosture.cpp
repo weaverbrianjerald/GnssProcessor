@@ -559,7 +559,9 @@ namespace GnssProcessor {
               "a station holding BeiDou on one modelled band keeps its GPS and Galileo instead of "
               "being rejected whole: field 6 h census -5.8 mm over hours 2 to 6 (5 sites better, "
               "0 worse), 720 of 720 epochs emitted" },
-            { nc.ambiguity_vehicle == NetworkAmbiguityVehicle::FloatKf && !r.tri && r.has_bds,
+            // In regime on every float-vehicle golden since 2026-11-07 (armed on the GPS +
+            // Galileo goldens under that date's rule), not only where BeiDou is active.
+            { nc.ambiguity_vehicle == NetworkAmbiguityVehicle::FloatKf && !r.tri,
               network_n3c_wire_per_signal_,
               Tier::SCOPED, false, "network.n3c_wire_per_signal",
               "one wire bias per modelled signal, so a user tracking a signal without its own "

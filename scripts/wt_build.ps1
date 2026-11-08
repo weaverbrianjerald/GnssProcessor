@@ -15,9 +15,10 @@
   that one.  This exists so a worktree agent never writes into
   C:\GnssProcessor\build.
 
-  -Arch AVX2 configures a separate tree, build\<Config>-avx2, with /arch:AVX2 on
-  every C and C++ translation unit (card AV2).  Without it the configure line and
-  the tree are the ones above.
+  AVX2 is the default build since 2026-11-07 (CMake cache GNSS_ARCH, card AV2).
+  -Arch SSE2 configures a separate tree, build\<Config>-sse2, with GNSS_ARCH=SSE2
+  (the build before that date), for comparisons against older baselines.
+  Without it the configure line and the tree are the ones above.
 #>
 [CmdletBinding()]
 param(
@@ -26,7 +27,7 @@ param(
     [string]$Target,
     [switch]$Reconfigure,
     [switch]$ConfigureOnly,
-    [ValidateSet('','AVX2')]
+    [ValidateSet('','SSE2')]
     [string]$Arch = ''
 )
 
@@ -58,7 +59,7 @@ $cfgArgs = @(
     '-DPython_FIND_STRATEGY=LOCATION'
     '-DPython_FIND_REGISTRY=NEVER'
 )
-if ($Arch) { $cfgArgs += @("-DCMAKE_CXX_FLAGS_INIT=/arch:$Arch", "-DCMAKE_C_FLAGS_INIT=/arch:$Arch") }
+if ($Arch) { $cfgArgs += "-DGNSS_ARCH=$Arch" }
 
 if ($Reconfigure -and (Test-Path "$buildRoot\CMakeCache.txt")) {
     Write-Host "Removing stale cache: $buildRoot\CMakeCache.txt" -ForegroundColor Yellow

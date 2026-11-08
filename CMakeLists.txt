@@ -47,6 +47,20 @@ set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /O2 /Zi")
 set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} /DEBUG")
 set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /DEBUG")
 
+# Instruction set.  AVX2 is the default build since 2026-11-07 (card AV2): the
+# network loop is about 16 to 21 % shorter, and outputs move by the size of a
+# neutral perturbation of the network (card NSP), so a baseline is valid only for
+# the build it was made with.  Every machine that runs the binaries needs AVX2.
+# GNSS_ARCH=SSE2 restores the compiler's default (the build before that date).
+set(GNSS_ARCH "AVX2" CACHE STRING "Target instruction set: AVX2 (default) or SSE2")
+set_property(CACHE GNSS_ARCH PROPERTY STRINGS AVX2 SSE2)
+if(MSVC AND GNSS_ARCH STREQUAL "AVX2")
+    add_compile_options(/arch:AVX2)
+elseif(NOT GNSS_ARCH STREQUAL "SSE2")
+    message(FATAL_ERROR "GNSS_ARCH must be AVX2 or SSE2, got '${GNSS_ARCH}'")
+endif()
+message(STATUS "GNSS_ARCH: ${GNSS_ARCH}")
+
 # Core library
 add_library(gnss_core STATIC
     src/core/atmosphere/Troposphere.cpp
