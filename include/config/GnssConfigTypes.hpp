@@ -2141,6 +2141,22 @@ namespace GnssProcessor {
         /// than the canonical one asks for the opposite of this knob and is treated as a
         /// typo.
         double second_code_sigma_scale{ 1.0 };
+        /// The station split's test for the rows that take @ref second_code_sigma_scale
+        /// matches on the (constellation, signal) pair of the receiver inter-signal state
+        /// instead of the observation code alone.
+        ///
+        /// Why: the receiver inter-signal states are per constellation
+        /// (`<system>_ISC_<signal>`), but the unarmed test collects their observation codes
+        /// without the constellation, so at a station whose GPS companion is C1C every
+        /// Galileo C1C row (a canonical row that routes through no inter-signal state) is
+        /// divided by the scale squared too, tagged as a companion and counted as a
+        /// fallback row.  Armed, only the rows of the constellation that holds the state
+        /// take the scale.
+        ///
+        /// Default off (byte-identical: the observation-code test is kept as it was).
+        /// Inert unless the second code channel's rows exist (@ref second_code_channel or
+        /// `processing.channel_mode: all`).  Fingerprinted only when armed.
+        bool second_code_system_aware{ false };
         /// A network station contributes, as ordinary float-ambiguity phase rows, every
         /// allow-listed band-1 carrier phase it reports for a satellite besides the
         /// phase its canonical latch selected (see

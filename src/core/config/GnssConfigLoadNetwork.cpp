@@ -3544,6 +3544,12 @@ namespace GnssProcessor {
                        network_config_.second_code_sigma_scale);
             network_config_.second_code_sigma_scale = 1.0;
         }
+        // The second-code row test keyed on (constellation, signal) instead of the
+        // observation code alone; read by the station split.  Its dependency on the
+        // channel is reported in the post-parse block below.
+        network_config_.second_code_system_aware =
+            jval<bool>(json, "network.second_code_system_aware",
+                       "second_code_system_aware", false);
         // Second phase channel, the phase twin of the block above.
         // A station contributes every allow-listed band-1 carrier phase it reports
         // besides the one its canonical latch selected, so the L1C and L1W satellite
@@ -11860,6 +11866,25 @@ namespace GnssProcessor {
                               return s;
                           }(),
                           network_config_.second_code_sigma_scale);
+            }
+        }
+        // The constellation-aware second-code row test.  Reported after the interlocks
+        // above, which can still disarm the channel.  Inert without second-code rows: the
+        // key stays as configured (it changes nothing) and the log says so.
+        if (network_config_.second_code_system_aware) {
+            if (networkSecondCodeRowsActive()) {
+                log->info("Network: second-code row test is CONSTELLATION-AWARE "
+                          "(network.second_code_system_aware): a code row takes the "
+                          "second-code sigma x {:.3f}, the companion tag and the companion or "
+                          "fallback count only when its station holds the receiver "
+                          "inter-signal state of the row's own constellation and signal "
+                          "(<system>_ISC_<signal>), not that of another constellation with "
+                          "the same observation code.",
+                          network_config_.second_code_sigma_scale);
+            } else {
+                log->warn("Network: network.second_code_system_aware is set but no "
+                          "second-code row exists (network.second_code_channel off and "
+                          "processing.channel_mode not 'all'): the key is inert.");
             }
         }
         // The three interlocks of the second phase channel.

@@ -847,6 +847,7 @@ add_executable(gnss_tests
     tests/test_mw_detector_steps.cpp
     tests/network/test_extra_band_code_sigma.cpp
     tests/network/test_network_second_code_scope.cpp
+    tests/network/test_second_code_system_aware.cpp
     tests/network/test_second_phase_channel.cpp
     tests/network/test_channel_mode_all.cpp
     tests/network/test_galileo_network.cpp

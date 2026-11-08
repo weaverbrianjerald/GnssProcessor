@@ -281,6 +281,11 @@ struct NetStation {
     /// whose canonical latch is decided this reads 0; a nonzero count means some
     /// station's canonical code is regularly missing, which points at the latch.
     long long scc_fallback_rows{ 0 };
+    /// Code rows at this station whose observation code matches one of its receiver
+    /// inter-signal states while their constellation holds no such state (a Galileo C1C
+    /// row beside GPS_ISC_C1C).  Counted with the constellation-aware row test off and
+    /// on; summed into the run-end report at teardown, like @c scc_rows.
+    long long scc_other_system_rows{ 0 };
 
     // --- second phase channel (docs/refound/SID_signal_identity_2026-09-22.md)
     /// This epoch's second-phase cells at this station, as
