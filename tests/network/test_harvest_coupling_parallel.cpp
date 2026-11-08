@@ -1,6 +1,6 @@
 /**
  * @file test_harvest_coupling_parallel.cpp
- * @brief Tests for two parallel stages of the network epoch (card PES, continued): the carry
+ * @brief Tests for two parallel stages of the network epoch: the carry
  *        harvest's columns computed ahead of its walk (`network.parallel_carry_harvest`) and the
  *        coupling preparation's inverse over column blocks (`network.parallel_coupling_prepare`).
  *

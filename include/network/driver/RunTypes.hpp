@@ -2136,6 +2136,10 @@ struct EpochWorkspace {
     Eigen::MatrixXd cap_ccl_walkQ;                                 ///< the walks' joint covariance (empty: the per-walk form)
     std::vector<NetworkEstimator::SharedPrior> cap_ccl_idle;       ///< the idle clones' isolated priors
     std::vector<NetworkEstimator::SharedPrior> cap_shx;            ///< the history columns' N(0, 1) priors (filter/NetworkSharedHistory)
+    /// The eigenvalues of the reduced normals the S-basis completion judged, when it folded
+    /// nothing and no clone view stood in (network.sbasis_values_first; else empty).  Read by
+    /// the rank gate's first evaluation, on the same matrix.
+    Eigen::VectorXd sbc_spectrum;
     /// Two-state clock-model predictions stashed by the prior fold
     /// (networkInjectClockOscPrior_), consumed by the post-solve normalized-
     /// innovation test (T5) later in the same epoch.

@@ -71,6 +71,9 @@ struct SbasisCompletionCounters {
     // clean run.  Every refusal path is counted separately because each needs a
     // different fix (cap: a pathological epoch or tolerance; degenerate: an orphaned
     // exact gauge, the territory of the soft anchors; weight: re-place rank_gate_tol).
+    long long n_sbc_values_only = 0;     ///< network.sbasis_values_first: epochs decided on the eigenvalues alone
+    long long n_sbc_vectors = 0;         ///< network.sbasis_values_first: epochs that computed the eigenvectors
+    long long n_gate_known_spectrum = 0; ///< network.sbasis_values_first: rank gate evaluations that read the completion's eigenvalues
     std::size_t n_sbc_epochs = 0;        ///< epochs on which ≥1 completion row was folded
     std::size_t n_sbc_dirs = 0;          ///< completion rows folded, cumulative
     int         sbc_max_dirs = 0;        ///< max rows folded on one epoch

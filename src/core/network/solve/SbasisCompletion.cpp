@@ -152,10 +152,14 @@ void networkSbasisCompletion(NetworkRun& run, const NetworkEpoch& ep, const Solv
         const bool ccl_sbc = networkClockCloneGateView(ctx, est, ccl_sbc_N);
         if (ccl_sbc) sbc_x_prev.conservativeResize(ccl_sbc_N.rows());
         const Eigen::MatrixXd* sbc_N = ccl_sbc ? &ccl_sbc_N : &est.reducedSharedNormals();
-        const auto sbc = sb.completeSbasisDimension(
+        const bool values_first = run.config.getNetworkConfig().sbasis_values_first;
+        auto sbc = sb.completeSbasisDimension(
             *sbc_N, plan.declared_dimension, est.rankGateTol(), sbc_x_prev,
             [&est](Eigen::Index c) { return est.sharedColumnLabel(c); },
-            ctx.knobs.sbasis_complete_max);
+            ctx.knobs.sbasis_complete_max, values_first);
+        if (values_first) ++(sbc.vectors_computed ? ctx.counters.n_sbc_vectors : ctx.counters.n_sbc_values_only);
+        // Returned only on an epoch with nothing to fold, so the gate judges this same matrix.
+        if (!ccl_sbc) ws.sbc_spectrum = std::move(sbc.eigenvalues);
         networkDatumGraphSpectralHandoff(ctx, sbc, plan);
         // A per-direction skip (a direction not separated from the declared-gauge
         // cluster: an orphaned exact gauge) does not end the epoch:
@@ -263,6 +267,11 @@ int networkSbasisCompletionRunEnd(const NetworkRunEndView& v) {
     // dimension with n_sbc_epochs == 0 is the miswire.
     // Refusals are counted per cause because each needs a different fix.
     if (!ctx.knobs.sbasis_complete_on) return 0;
+    if (v.config.getNetworkConfig().sbasis_values_first)
+        log->info("Network (SBC): eigenvalues first: {} epoch(s) decided on the eigenvalues alone, "
+                  "{} computed the eigenvectors; {} rank gate evaluation(s) read those eigenvalues",
+                  ctx.counters.n_sbc_values_only, ctx.counters.n_sbc_vectors,
+                  ctx.counters.n_gate_known_spectrum);
     log->info("Network (SBC): S-basis completion constrained {} extra near-null "
               "direction(s) on {} epoch(s) (max {}/epoch); {} release edge(s) "
               "(satellite re-observed); {} unseparated direction(s) skipped to "

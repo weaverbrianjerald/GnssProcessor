@@ -313,8 +313,9 @@ SH constraint or seams.
   RHS attribution on trip, run manifest and epoch status, postfit traces, `emit_ura`,
   `emit_clock_disc`, the CB jump test with `mw_detect`, `cold_clock_seed`, the estimable block-Baarda
   census (`block_baarda_estimable`, the one check that reports code multipath) and the readmit-seed
-  mirrors; `parallel_carry` true, with the three identical-output parallel stages of card PES
-  (`parallel_station_normals`, `parallel_schur_columns`, `parallel_redundancy_census`).
+  mirrors; `parallel_carry` true, with the seven identical-output stages of card PES
+  (`parallel_station_normals`, `parallel_schur_columns`, `parallel_redundancy_census`, `parallel_carry_harvest`,
+  `parallel_iono_traces`, `parallel_coupling_prepare`, `sbasis_values_first`).
   Response doctrine: adapt and EMIT within the detected epoch; a
   withhold is the backstop, graded as an adaptation failure unless the epoch is provably
   unrecoverable. Not armed: `prefit_fuse_sigma`. Deleted from the code on 2026-10-14 (card RKD,
@@ -352,7 +353,7 @@ Input-file location goes through one class, `PathResolver` (`include/products/Pa
 
 ## Known state
 
-- **Test suite.** Debug `gnss_tests.exe`: 3,833 cases in 523 suites, 3,800 passed, 33 skipped (fixture-gated), 0 failed; `gnss_simulator_selftest` 99 of 99 (measured 2026-11-02, card BDG gate G5; re-measure with the Debug build). It guards structure and non-regression (new work is developed default-OFF / byte-identical), NOT end-to-end estimation accuracy: confidence for numerical changes comes from a clean build + field runs graded on datum-invariant quantities + trace inspection. Every suite name is owned by exactly one file; prefer a new file over widening one.
+- **Test suite.** Debug `gnss_tests.exe`: 3,842 cases in 527 suites, 3,809 passed, 33 skipped (fixture-gated), 0 failed (measured 2026-11-07, card PES section 8); `gnss_simulator_selftest` 99 of 99 (measured 2026-11-02, card BDG gate G5); re-measure with the Debug build. It guards structure and non-regression (new work is developed default-OFF / byte-identical), NOT end-to-end estimation accuracy: confidence for numerical changes comes from a clean build + field runs graded on datum-invariant quantities + trace inspection. Every suite name is owned by exactly one file; prefer a new file over widening one.
 
 ## Entry points worth knowing
 

@@ -1876,6 +1876,8 @@ namespace GnssProcessor {
             jval<bool>(json, "network.parallel_iono_traces", "parallel_iono_traces", false);
         network_config_.parallel_coupling_prepare =
             jval<bool>(json, "network.parallel_coupling_prepare", "parallel_coupling_prepare", false);
+        network_config_.sbasis_values_first =
+            jval<bool>(json, "network.sbasis_values_first", "sbasis_values_first", false);
         network_config_.parallel_carry =
             jval<bool>(json, "network.parallel_carry", "parallel_carry", false);
 
@@ -12827,6 +12829,11 @@ namespace GnssProcessor {
                       network_config_.parallel_carry_harvest ? "on" : "off",
                       network_config_.parallel_iono_traces ? "on" : "off",
                       network_config_.parallel_coupling_prepare ? "on" : "off");
+        }
+        if (network_config_.sbasis_values_first) {
+            log->info("Network (PES): S-basis completion on eigenvalues first ARMED (byte-identical: "
+                      "the same eigenvalues, eigenvectors only on an epoch that needs them; the rank "
+                      "gate reads them when nothing was folded)");
         }
         if (network_config_.parallel_seam) {
             log->info("Network: deterministic-parallel post-solve seam ENABLED "

@@ -1598,7 +1598,7 @@ public:
     /// Zero the section-timer accumulators (see @ref SectionTimers).
     void resetSectionTimers() const { timers_ = SectionTimers{}; }
 
-    /// Run-cumulative counts of the parallel stages of card PES (@ref formStations,
+    /// Run-cumulative counts of the parallel stages (@ref formStations,
     /// @ref commitStation, @ref setSchurColumnThreads): the on-path telemetry the run end
     /// prints when a key is armed.  Not cleared by @ref reset.
     struct ParallelStageCounts {

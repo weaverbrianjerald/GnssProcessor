@@ -187,8 +187,13 @@ EpochAction networkRankGate(NetworkRun& run, const NetworkEpoch& ep, const Solve
     bool ccl_gate = networkClockCloneGateView(ctx, est, ccl_gate_N);
     try {
         const Eigen::MatrixXd* gate_N = ccl_gate ? &ccl_gate_N : &est.reducedSharedNormals();
+        // The S-basis completion's eigenvalues of this same matrix, when it folded nothing
+        // (network.sbasis_values_first; empty otherwise): no second decomposition.
+        const Eigen::VectorXd* spectrum =
+            (!ccl_gate && ws.sbc_spectrum.size() > 0) ? &ws.sbc_spectrum : nullptr;
+        if (spectrum) ++ctx.counters.n_gate_known_spectrum;
         sb.assertNullSpaceRank(*gate_N, plan.declared_dimension,
-                               est.rankGateTol(), &gate_observed, &gate_ev_max);
+                               est.rankGateTol(), &gate_observed, &gate_ev_max, spectrum);
         gate_first_observed = gate_observed;
     } catch (const std::exception& ex) {
         // assertNullSpaceRank writes observed_out before the equality test, so the

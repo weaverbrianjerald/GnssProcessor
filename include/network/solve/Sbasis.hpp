@@ -1579,6 +1579,8 @@ public:
         Eigen::VectorXd z;        ///< length-n_extra continuity targets (see Dir::target)
         std::vector<Dir> dirs;    ///< per-row attribution, same order as @ref H
         std::vector<Dir> skipped; ///< attribution of the n_skipped unconstrained directions (target unused, 0), so that the sbc_skip event names each skipped orphan and the withhold it causes can be diagnosed from the trace.  An orphan whose phase-bias components all stay below 0.3 is also outside the drop-and-heal's selection.
+        bool vectors_computed{ false };  ///< the eigenvectors were computed this epoch
+        Eigen::VectorXd eigenvalues;     ///< ascending; set only with @c values_first on an epoch that returned on them (nothing to fold)
     };
 
     /**
@@ -1662,6 +1664,12 @@ public:
      *                     empty (labels become "col<N>").
      * @param max_extra    Cap on constrained directions per epoch
      *                     (@c network.sbasis_complete_max); ≤ 0 ⇒ uncapped.
+     * @param values_first Decide on the eigenvalues alone and compute the eigenvectors
+     *                     only when the near-null count exceeds @p declared_dim
+     *                     (@c network.sbasis_values_first).  The eigenvalues are the
+     *                     same bit for bit: the decomposition's arithmetic on the
+     *                     diagonal and subdiagonal does not depend on accumulating the
+     *                     vectors.
      * @return The completion (see @ref GaugeCompletion).  @c n_extra == 0 with no
      *         refusal flag and no skip means the epoch needs no completion,
      *         including the observed < declared case, which is the gate's
@@ -1671,7 +1679,7 @@ public:
         const Eigen::MatrixXd& reduced_N_ss, int declared_dim, double tol,
         const Eigen::VectorXd& x_prev,
         const std::function<std::string(Eigen::Index)>& labelOf,
-        int max_extra) const;
+        int max_extra, bool values_first = false) const;
 
     /**
      * @brief Null-space rank gate: eigen-decompose the pre-constraint reduced
@@ -1712,13 +1720,17 @@ public:
      *                     returning it lets the invariant-#7 datum-direction
      *                     information ratio be measured against the bar the gate
      *                     judges by, without a second eigensolve.
+     * @param known_eigenvalues [optional] The eigenvalues of this same matrix, ascending,
+     *                     already computed (@ref GaugeCompletion::eigenvalues): no second
+     *                     decomposition.  Ignored unless its length is the matrix order.
      * @throws std::runtime_error with observed-vs-declared counts on mismatch; also
      *         when the matrix is not square or the eigensolve does not converge.
      */
     void assertNullSpaceRank(const Eigen::MatrixXd& reduced_N_ss,
                              int declared_dim, double tol = 1e-6,
                              int* observed_out = nullptr,
-                             double* ev_max_out = nullptr) const;
+                             double* ev_max_out = nullptr,
+                             const Eigen::VectorXd* known_eigenvalues = nullptr) const;
 };
 
 struct NetworkRunContext;

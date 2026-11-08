@@ -1,6 +1,6 @@
 /**
  * @file test_neq_parallel_stages.cpp
- * @brief Tests for the parallel stages of the network normal equations (card PES):
+ * @brief Tests for the parallel stages of the network normal equations:
  *        `NetworkNormalEquations::formStations` / `commitStation`
  *        (`network.parallel_station_normals`) and the column-split Schur reduce
  *        (`setSchurColumnThreads`, `network.parallel_schur_columns`).
