@@ -169,6 +169,9 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     // networkPassB_ and the harvest.
     k.pl_blk_on       = k.pl_local_block && k.carry_cpl_cond;
     k.zwd_blk_on      = k.zwd_in_block && k.pl_blk_on;
+    // The wet delay's event response belongs to the float vehicle's in-block route; the F3
+    // lineage of the level vehicle keeps its behaviour.
+    k.zwd_event_on    = k.zwd_blk_on && k.amb_float_kf;
     k.iono_blk_on     = k.iono_blk && k.pl_blk_on;
     k.rxclk_blk_on    = k.rxclk_blk && k.pl_blk_on;
     k.rxcb_blk_on     = k.rxcb_blk && k.pl_blk_on && k.rx_cb_on;

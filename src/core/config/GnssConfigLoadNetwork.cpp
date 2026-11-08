@@ -12084,6 +12084,24 @@ namespace GnssProcessor {
         // Interlocks for B9-in-block.  Armed-and-inert is not allowed (invariant #4: a
         // run-end "0 ZWD columns" must mean the mechanism found nothing, never that the
         // knob could not act), so a miswired arm is disabled here rather than left inert.
+        // The station block is the F3 knob or the float vehicle: the vehicle forces the F3
+        // member off above and supplies the block itself (NetworkKnobs::pl_local_block), the
+        // same test the receiver code-bias in-block interlock applies.
+        const bool block_from_vehicle =
+            network_config_.ambiguity_vehicle == NetworkAmbiguityVehicle::FloatKf;
+        // On the float vehicle every carried ambiguity of a station folds inside one whitened
+        // block, so a diagonal wet-delay row beside it asserts the station-common direction
+        // the block already asserts: the falsified double count of the diagonal carry.
+        if (block_from_vehicle && network_carry_zwd_ && !network_carry_zwd_in_block_) {
+            log->error("Network: network.carry_zwd is REFUSED under network.ambiguity_vehicle = "
+                       "\"float_kf\" without network.carry_zwd_in_block.  The vehicle folds every "
+                       "carried ambiguity of a station as one whitened block, so the diagonal "
+                       "wet-delay row would assert the station-common direction the block already "
+                       "asserts (the double count that falsified the diagonal carry, "
+                       "docs/cards/sim-bed/ZWD-SINK-CENSUS.md).  Arm network.carry_zwd_in_block "
+                       "with it, or leave network.carry_zwd off.");
+            return false;
+        }
         if (network_carry_zwd_in_block_) {
             if (!network_carry_zwd_) {
                 log->warn("Network: network.carry_zwd_in_block is on but network.carry_zwd is OFF — "
@@ -12091,7 +12109,7 @@ namespace GnssProcessor {
                           "the VEHICLE the B9 carry folds through, it never creates one).  "
                           "DISABLING carry_zwd_in_block; arm network.carry_zwd too.");
                 network_carry_zwd_in_block_ = false;
-            } else if (!network_phase_leveling_local_block_) {
+            } else if (!block_from_vehicle && !network_phase_leveling_local_block_) {
                 log->warn("Network: network.carry_zwd_in_block is on but "
                           "network.phase_leveling_local_block (F3) is OFF — there is no station "
                           "block to put the ZWD column into, so the knob could only ever fall back "
@@ -12113,6 +12131,15 @@ namespace GnssProcessor {
                           network_phase_leveling_, network_carry_invariant_,
                           network_carry_conditional_coupling_);
                 network_carry_zwd_in_block_ = false;
+            } else if (block_from_vehicle) {
+                log->info("Network producer (ZWD carry IN BLOCK, float vehicle): the carried ZWD "
+                          "column joins each station's whitened block of the float vehicle "
+                          "(harvested (N_rr^-1) cross terms against every carried column, one "
+                          "Cholesky for the whole station), random walk q {:.3e} m²/s.  Event "
+                          "response: a station with a slip latch this epoch, or a RAIM per-arc "
+                          "attribution at the last epoch, folds no wet-delay prior for one epoch "
+                          "(erase and rebirth, counted at run end).  SOLVE-AFFECTING.",
+                          network_zwd_carry_q_);
             } else {
                 log->info("Network producer (ZWD carry IN BLOCK): the carried ZWD column joins the "
                           "station's F3 whitened local block (harvested (N_rr^-1) cross terms "
@@ -12162,7 +12189,7 @@ namespace GnssProcessor {
                           "ambiguity carry, no local block), so the iono columns would "
                           "have nothing to join.  DISABLING carry_iono_in_block.");
                 network_carry_iono_in_block_ = false;
-            } else if (!network_phase_leveling_local_block_) {
+            } else if (!block_from_vehicle && !network_phase_leveling_local_block_) {
                 log->warn("Network: network.carry_iono_in_block is on but "
                           "network.phase_leveling_local_block (F3) is OFF — there is no "
                           "station block to put the iono columns into, and this carry "
@@ -12239,7 +12266,7 @@ namespace GnssProcessor {
                           "ambiguity carry, no local block), so the clock column would "
                           "have nothing to join.  DISABLING carry_rx_clock_in_block.");
                 network_carry_rx_clock_in_block_ = false;
-            } else if (!network_phase_leveling_local_block_) {
+            } else if (!block_from_vehicle && !network_phase_leveling_local_block_) {
                 log->warn("Network: network.carry_rx_clock_in_block is on but "
                           "network.phase_leveling_local_block (F3) is OFF — there is no "
                           "station block to put the receiver-clock column into, and this "

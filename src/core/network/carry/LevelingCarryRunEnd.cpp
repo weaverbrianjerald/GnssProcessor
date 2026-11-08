@@ -187,6 +187,17 @@ static int networkLevelingRetirementRunEnd(const NetworkRunEndView& v) {
                                "not a quiet run."
                              : "")
                       : " (knob OFF — these are structurally 0)");
+    // The event response of the wet delay on the float vehicle (both edges, standing
+    // invariants 1 and 7).  Printed only when armed, so a run without the in-block wet-delay
+    // carry keeps its log.  The re-coupling count covers every re-created entry; the three
+    // populations that create one are printed beside it.
+    if (ctx.knobs.zwd_event_on)
+        log->info("Network (ZWD event response, float vehicle): {} station-epoch(s) erased at "
+                  "a slip latch (no prior that epoch), {} at a RAIM per-arc attribution (no "
+                  "prior the next epoch); {} re-coupling fold(s) of a re-created entry (after "
+                  "the events above, {} gap prune(s) and the first sightings).",
+                  C.n_zwd_event_drop_slip, C.n_zwd_event_drop_raim, C.n_zwd_recouple,
+                  C.n_cr_zwd_gap_prune);
     return 0;
 }
 
