@@ -23,6 +23,8 @@ Targets: `gnss_core` (static lib), `gnss_processor` (exe), `gnss_tests` (exe),
 Build tree: `build/x64-Debug` and `build/x64-Release` — both are **git-ignored
 and disposable**; regenerating from scratch is one wrapper call (~180 s Debug).
 
+**Instruction set: AVX2 by default since 2026-11-07** (CMake cache `GNSS_ARCH`, card AV2): every machine that runs the binaries needs AVX2; outputs differ from the SSE2 build by a neutral spread, so compare runs of one build only. `GNSS_ARCH=SSE2` (worktrees: `wt_build.ps1 -Arch SSE2`, tree `build/<Config>-sse2`) rebuilds the earlier instruction set.
+
 **Disk placement (owner request, 2026-10-13: keep C: free, target D: for builds and runs).** D: is USB-attached and unavailable while disconnected.
 - **Worktrees and their builds go on D:**, as
   `git worktree add D:\GnssProcessorSupport\worktrees\<name>`, built with
@@ -322,7 +324,7 @@ SH constraint or seams.
   `docs/refound/RKD_retired_key_deletion_2026-10-14.md`): `sh_health_gate`, the old lane layer
   (`mw_wl.*`, `lane_carry.*`; lanes return only as card AB3's new build) and `emit_pb_filter*`.
 
-**Baseline: card BOF (2026-10-28, `docs/refound/BOF_built_off_follow_through_2026-10-28.md`), after card MRF, on card GAD's Galileo posture (2026-10-13).** Pair `runs/_rf0hv17_{field,sim}6` (exe `gnss_processor_bofarm.exe`, sha256[:16] 91143c81de9a9547): field WTZZ00DEU 0.059 0.012 0.023 0.012 0.017 0.012 m by hour; sim products identical to `_rf0hv16_sim6`. The armed keys of cards GAL2, GFC, MRF and BOF, the earlier pairs (`_rf0hv16`, `_rf0hv15`), the census against GPS only and the open items: the cards, and the paragraph at full length in `docs/onboarding/claude_md_history.md`. ⚠ Every golden arm is GPS + Galileo and 2 to 6 times slower. Constellation-blind graders pool the systems: `rapid_arm.py score` counts E5a as band 5, `ftc_step_attrib.py` R3 needs `--systems G,E`, and `census6h.py` / `simcensus6h.py` default to GPS-only bases (use `gcensus.py`, or `SIMCENSUS_BASE` = the wire's arm).
+**Baseline: `_rf0hv18` (2026-11-07), the first on the AVX2 build, after the 2026-11-07 arming rule (card RF0HV18B, section "Arming under the 2026-11-07 rule"; card AV2 section 7).** Runs `D:/GnssProcessorSupport/runs_avx2def/_rap_rf0hv18_{field6,sim6,bds6}` (exe `gnss_processor_avx2def.exe`, sha256[:16] 6c0162d829454319, branch `int/avx2-default`): field WTZZ00DEU 0.059 0.012 0.024 0.013 0.017 0.012 m by hour; sim SZZ000SIM 0.197 0.109 0.028 0.019 0.029 0.018 m; BeiDou lineage 0.034 0.014 0.021 0.020 0.020 0.016 m; census keys `c18f` (field, 16 sites) and `s18` (sim). Every user within 0.10 mm of the SSE2 build of the same keys. An SSE2 build (`wt_build.ps1 -Arch SSE2`) reproduces the earlier pairs; the earlier pairs (`_rf0hv17`, `_rf0hv16`) and their paragraphs: `docs/onboarding/claude_md_history.md`. ⚠ Every golden arm is GPS + Galileo and 2 to 6 times slower. Constellation-blind graders pool the systems: `rapid_arm.py score` counts E5a as band 5, `ftc_step_attrib.py` R3 needs `--systems G,E`, and `census6h.py` / `simcensus6h.py` default to GPS-only bases (use `gcensus.py`, or `SIMCENSUS_BASE` = the wire's arm).
 
 ### Grading traps that still apply
 

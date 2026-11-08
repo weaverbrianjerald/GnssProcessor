@@ -144,3 +144,9 @@ Use the wrapper — it encodes every trap below:
 - `include/filter/KalmanFilter.hpp` — predict / update / IMU-aided predict. Variable-dimension state is handled via `StateManager` key maps, not via fixed indices.
 - `include/filter/StateKeySchema.hpp` — single source of truth for every dynamic state-vector key format (PPP ambiguity, DD ambiguity, per-sat iono, receiver code bias, sat bias, system time offset, BSSD pivot seed). All key construction and parsing should go through its `make*` / `parse*` helpers.
 - `include/filter/Smoother.hpp` — RTS smoother operates on float ambiguities; segment boundaries at ambiguity resets. Smoothed position is degenerate (constant across epochs) in static PPP by construction — that's expected.
+
+## Baseline paragraph of CLAUDE.md, 2026-11-02 to 2026-11-07
+
+Replaced on 2026-11-07 by the `_rf0hv18` paragraph (the AVX2 build). Text as it stood:
+
+**Baseline: card BOF (2026-10-28, `docs/refound/BOF_built_off_follow_through_2026-10-28.md`), after card MRF, on card GAD's Galileo posture (2026-10-13).** Pair `runs/_rf0hv17_{field,sim}6` (exe `gnss_processor_bofarm.exe`, sha256[:16] 91143c81de9a9547): field WTZZ00DEU 0.059 0.012 0.023 0.012 0.017 0.012 m by hour; sim products identical to `_rf0hv16_sim6`. The armed keys of cards GAL2, GFC, MRF and BOF, the earlier pairs (`_rf0hv16`, `_rf0hv15`), the census against GPS only and the open items: the cards, and the paragraph at full length in `docs/onboarding/claude_md_history.md`. ⚠ Every golden arm is GPS + Galileo and 2 to 6 times slower. Constellation-blind graders pool the systems: `rapid_arm.py score` counts E5a as band 5, `ftc_step_attrib.py` R3 needs `--systems G,E`, and `census6h.py` / `simcensus6h.py` default to GPS-only bases (use `gcensus.py`, or `SIMCENSUS_BASE` = the wire's arm).
