@@ -7,7 +7,7 @@
 - **status:** closed
 - **summary:** Pre-registered 2026-11-07, before any 6 h run; graded 2026-11-07, c2 fails three clauses (section 4). Continues card RF0HV18, where D1 + D6 + D7 + the refloat maturity gate failed four clauses. Question: do D1 and D6 together (c2), or D6 alone (d6), pass the frozen gates of that card on four beds (field DOY 129, 130 and 132, and the sim), and do the post-flag re-seed (RS) and the coverage pivot election (PIV) pass on top of c2? One Release exe (the exe of card RF0HV18), controls and their censuses reused. Nothing is armed by this card.
 - **source:** [RF0HV18](RF0HV18_combined_candidate_2026-11-06.md) (sections 2 to 4: arms, gates, results), `scripts/nom3_designs/N3b_decisions.md` sections 9 and 10, cards [NOM5](NOM5_station_parameter_set_tail_2026-10-30.md), [PIV](PIV_pivot_election_coverage_2026-10-17.md), card ARHT (`docs/refound/ARHT_consumer_mechanism_2026-11-06.md` on main, not on this branch), [MDAY](MDAY_multiday_candidate_2026-10-19.md)
-- **knobs / posture:** see section 2. No golden, manifest or ledger row is edited.
+- **knobs / posture:** see section 2. No golden, manifest or ledger row is edited by the card's own grading. Section 5 (2026-11-07, appended) records the arming of ten keys under the author's rule of that date, with a health check.
 - **dates in the text:** 2026-11-07
 - **hashes / run dirs:** branch `golden/rf0hv18` (tip `1936252` at the start), worktree `D:/GnssProcessorSupport/worktrees/rf0hv18`; exe `build/x64-Release/gnss_processor_rf18.exe`, sha256[:16] `6e510cae8c234d69` (verified before and after); run root `D:/GnssProcessorSupport/runs_rf0hv18` (`RAPID_RUNS_ROOT`); scratch, arm scripts and graders `D:/GnssProcessorSupport/gates/rf0hv18/reduced/`
 - **gates (frozen at pre-registration):** section 3
@@ -174,3 +174,73 @@ The DOY 130 pivot-election failure of card PIV (ARHT00ATA +40.6 mm against the c
 ### 4.8 Reading for the arming decision
 
 Findings, not recommendations. c2 does not pass the frozen gates: D1 carries the DOY 129 and DOY 130 census medians to +0.165 and +0.170 mm (bar +0.1) and moves WTZZ00DEU on DOY 130 by up to +4.15 mm, while it helps WTZZ00DEU in hour 1 of every field day and in hour 2 of DOY 132. D6 alone passes every clause on the three field days; it lowers the ARHT00ATA mean of hours 2 to 6 by 49 to 214 mm and costs WUH2 1.7 to 1.9 mm. The re-seed key is neutral against c2 and inert on the sim. The coverage pivot election fails on the sim bed (SZZ000SIM hours 2 and 3 +33.7 and +26.8 mm, three census sites over +10 mm) and on DOY 132 against the control. No add-on passes on every bed it ran against both references.
+
+
+---
+
+## 5. Arming under the 2026-11-07 rule (2026-11-07, appended)
+
+Rule of 2026-11-07: finished keys are armed unless measured harmful; a key whose evidence has an open item carries a "Look here:" note in its ledger row. The health check below is not an adoption gate. Branch `int/2026-11-07`, worktree `D:/GnssProcessorSupport/worktrees/int1107`; golden/rf0hv18 merged as `5715e6c`, arming committed as `47b7563`.
+
+### 5.1 Armed and kept off
+
+Armed (manifest pins on the field and sim goldens, hence also on the BeiDou lineage, which extends the field golden; ledger rows ARMED, except the first):
+
+- `network.n3c_wire_per_signal` (D6). The row stays RECOMMEND_SCOPED under the regime `has_bds`; the pin arms it outside that regime. The regime and the C++ posture-table row are unchanged (a change needs a rebuild). Look here: sim not run alone (inert in candidate C).
+- `network.parallel_carry_harvest`, `network.parallel_iono_traces`, `network.parallel_coupling_prepare` (card PES, identical output).
+- `network.cycle_slip.if_phase_td_reseed_on_flag`. Look here: 24 h grade failed two clauses (card ICL6); neutral in this card.
+- `network.raim_prior_channel`. Look here: refloats +29 % (mostly BSHM00ISR G22); hold and multi-day not graded.
+- `network.cycle_slip.if_phase_td_sat_clock_event` and `network.clock_anchor_defer_coupled`. Look here: consumer legs: sat_clk passes on g, misses c by 4 mm, n consumer 15 cm off.
+- `estimation.seed_full_equation`. Fingerprinted (fresh convergence only; the golden runs are fresh). Look here: producer-inert on the goldens; acts on new-state seeds only.
+- `network.signal_integrity.census`. Look here: armed under the 2026-11-07 rule without its own golden A/B.
+
+Set-level note (not in a ledger row; the arm does not isolate a key): Look here: sim ignition hour of the 2026-11-07 armed set is 50 to 90 mm worse than the control (settled hours unchanged); key not isolated (D6 and the re-seed key were byte-inert on the sim in RF0HV18B).
+
+Kept off (ledger KEEP_OFF, reason appended): `network.n3c_bia_pin_pair` (D1), `network.n3c_ledger_lifecycle` (D7), `network.raim_refloat_maturity_gate`, `network.pivot_election`.
+
+No key was stopped. Each of the three regenerated goldens differs from its 3484ca4 version by these ten keys and the provenance header only.
+
+### 5.2 Method
+
+Exe `D:/GnssProcessorSupport/gates/int1107/x64-Release/gnss_processor_int1107.exe`, sha256[:16] `f333466f62cbc284` (checked before the runs). Release only; 10-epoch smoke on all ten arms (exit 0) before the 6 h runs. Run root `D:/GnssProcessorSupport/runs_int1107` (`_rap_i7_<bed>_<ctrl|arm>`, beds f = DOY 129, h = DOY 130, g = DOY 132, s = sim, b = BeiDou DOY 129). Control = the 3484ca4 goldens (day goldens derived with a copy of `scripts/mday_golden_config.py` pointed at the worktree golden, obs root `D:/GnssProcessorSupport/data_mday`; the control DOY 132 config equals card RF0HV18's), armed = the regenerated goldens. Each `arm.json` pair differs only by the listed keys and the run paths. Censuses: `scripts/clock_level/gcensus.py` (`ci7_<bed>_<ctrl|arm>_<site>`), sim census with the control's `arm.json` as consumer base (`si7_<ctrl|arm>`). Graders, configs and logs: `D:/GnssProcessorSupport/gates/int1107/arming/` (`grade_all.py`, `grade_field.txt`, `grade_sim.txt`, `hourly_all.txt`, `h4.py`). Field and BeiDou hours are counted from the first epoch; the sim hours from 00:30:15 (tow 261015).
+
+### 5.3 Health criteria
+
+| bed | H1 | H2 (settled hours 2 to 6, worst vs control; bar +10 mm) | H3 (census, worst site; bar +10 mm) | census median |
+| --- | --- | --- | --- | --- |
+| DOY 129 | PASS: 720 of 720, 0 withheld, exit 0, same as control | PASS +0.65 mm | PASS WUH2 +0.76 mm (6 sites over +0.19 mm) | -0.025 mm |
+| DOY 130 | PASS (same) | PASS +0.10 mm | PASS WUH2 +1.68 mm | -0.010 mm |
+| DOY 132 | PASS (same) | PASS +0.65 mm | PASS DAV1 +7.07 mm (HARB +5.20 mm) | -0.040 mm |
+| sim (SZZ000SIM) | PASS (same) | PASS +2.80 mm (from 00:30:15) | PASS S53 +3.78 mm (16-site sim census) | -0.180 mm |
+| BeiDou DOY 129 | PASS (same) | PASS +1.30 mm | not run (census was asked per field day only) | not run |
+
+All ten runs exit 0. Reported without a bar: sim ignition (hour 1 from 00:30:15) +75.3 mm; with first-epoch bins hours 1 and 2 read +59.8 and +36.3 mm; the coordinator's half-hour bins read +88.9 then +50.1 mm with settled bins -13.6 to +3.3 mm. The sim census median reads +0.185 and +0.170 mm in first-epoch and wall-clock bins (those bin sets include ignition; the bar bins read -0.180 mm).
+
+WTZZ00DEU hourly p50 of the closed-loop consumer, mm, hours 1 to 6 (control / armed):
+
+| bed | control | armed |
+| --- | --- | --- |
+| DOY 129 | 58.8 12.3 23.1 12.2 16.5 12.0 | 58.6 11.9 23.7 12.5 16.6 12.2 |
+| DOY 130 | 88.4 16.5 24.1 34.3 55.1 51.6 | 88.2 16.2 24.0 34.4 55.2 51.6 |
+| DOY 132 | 72.1 18.8 14.5 17.3 19.0 8.5 | 72.2 15.5 15.0 17.8 19.6 8.8 |
+| sim SZZ000SIM, bins from 00:30:15 | 100.4 27.4 37.4 21.5 24.7 16.1 | 175.7 30.2 24.9 22.5 26.5 15.9 |
+| BeiDou DOY 129 | 34.2 13.4 19.4 19.0 19.0 15.9 | 34.4 14.2 20.5 19.8 20.2 15.9 |
+
+### 5.4 H4, run-end counters of the armed keys (armed arm, `h4.py`)
+
+| key | reading |
+| --- | --- |
+| PES carry harvest, iono traces, coupling preparation | driven on every bed: harvest 1.14 to 1.85 million columns, traces 40.3 to 43.2 thousand station-epochs, 719 coupling inverses split, 0 declined |
+| `n3c_wire_per_signal` | driven on DOY 129, 130, 132 (5128 to 5204 wire records added); inert on the sim (0 added); already pinned in the BeiDou control, so the BeiDou pair does not exercise it |
+| `if_phase_td_reseed_on_flag` | driven on every field and BeiDou bed (149, 384, 212 and 264 flags kept their gradient on DOY 129, 130, 132 and BeiDou); 0 on the sim (no IF-TD flag), inert there |
+| `raim_prior_channel` | driven on every bed (flags 45, 18, 43, 12 sim, 74 BeiDou) |
+| `if_phase_td_sat_clock_event` | 0 satellite clock events on every bed: inert |
+| `clock_anchor_defer_coupled` | driven (trips deferred to the next epoch: 3, 13, 52, 85 sim, 2 BeiDou) |
+| `signal_integrity.census` | driven (flicker-regain refloats 76, 96, 79, 1412 on BeiDou, 0 on the sim); the log carries warnings of the classifier's re-entry premise (for example 25 re-entries with a surviving ambiguity state on DOY 129) |
+| `seed_full_equation` | no run-end counter exists (a producer's births are unchanged by construction); not observable here |
+
+Whole-run T4 arc flags on DOY 129 fall from 55 to 3 and IF-TD refloats rise 107 to 143; on the sim T4 arc flags go 14 to 1 and clock decouplings (E, G) 69 94 to 61 79.
+
+### 5.5 Reading
+
+H1 to H3 pass on every bed run. The largest settled-hour move of the held-out consumer is +2.80 mm (sim hour 3 is -12.5 mm); the largest census site move is DAV1 +7.07 mm on DOY 132, below the bar and above the +0.19 mm noise floor, with HARB +5.20 mm on the same day. The sim ignition hour is worse by 50 to 90 mm, which the settled hours do not carry; the responsible key is not isolated. `if_phase_td_sat_clock_event` is armed and inert on all five beds. The BeiDou bed has no census.
