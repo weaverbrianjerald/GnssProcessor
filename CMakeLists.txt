@@ -421,6 +421,10 @@ if(MSVC)
     # explicit eigen-solve and inverse references cross the Debug section limit (C1128).
     set_source_files_properties(tests/network/test_handover_stransform_dense.cpp
         PROPERTIES COMPILE_FLAGS "/bigobj")
+    # tests/network/test_carry_recursion_oracle.cpp: the run-context headers (the shipped handover kernel)
+    # plus three dense recursions cross the Debug section limit (C1128).
+    set_source_files_properties(tests/network/test_carry_recursion_oracle.cpp
+        PROPERTIES COMPILE_FLAGS "/bigobj")
     # tests/network/test_network_shared_history.cpp (card SCL2 X2b, gate U5): the smoothed hold's
     # clone types and the projection cases cross the Debug section limit (C1128).
     set_source_files_properties(tests/network/test_network_shared_history.cpp
@@ -847,6 +851,7 @@ add_executable(gnss_tests
     tests/test_clock_level_carry.cpp
     tests/network/test_coupling_exact_update.cpp
     tests/network/test_coupling_long_horizon.cpp
+    tests/network/test_carry_recursion_oracle.cpp
     tests/network/test_network_clock_clone.cpp
     tests/network/test_network_shared_history.cpp
     tests/network/test_network_column_family.cpp
