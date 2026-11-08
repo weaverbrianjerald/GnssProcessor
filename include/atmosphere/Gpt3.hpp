@@ -30,8 +30,9 @@ namespace GnssProcessor {
      * station position and day-of-year.  Pressure is reduced from the
      * grid's orthometric reference height @c Hs to the station's
      * orthometric height (ellipsoidal height minus grid undulation)
-     * using the standard barometric form; temperature is reduced with
-     * the grid's seasonally-varying lapse rate @c dT.
+     * with the exponential form of the GPT2 / GPT3 reference code, whose
+     * scale height follows the cell's virtual temperature; temperature is
+     * reduced with the grid's seasonally-varying lapse rate @c dT.
      *
      * The implementation returns pressure, temperature and the VMF3
      * hydrostatic and wet "a" coefficients.  The same file also carries
@@ -100,11 +101,16 @@ namespace GnssProcessor {
          *
          * Combines four-corner bilinear interpolation in latitude /
          * longitude with annual + semi-annual harmonic evaluation in
-         * day-of-year, then reduces pressure (barometric, exponent
-         * 5.225) and temperature (linear lapse rate @c dT) from the
-         * grid's orthometric reference height to the station's
-         * orthometric height (ellipsoidal height minus geoid undulation).
-         * The VMF3 coefficients have no height reduction.
+         * day-of-year, then reduces each corner's pressure and temperature
+         * from the grid's orthometric reference height @c Hs to the
+         * station's orthometric height (ellipsoidal height minus geoid
+         * undulation), @c dh = h_ortho - Hs:
+         *   P = P0 exp(-g M_d dh / (R Tv)),  Tv = T0 (1 + 0.6077 Q),
+         *   T = T0 + dT dh,
+         * with @c g = 9.80665 m/s^2, @c M_d = 28.965e-3 kg/mol,
+         * @c R = 8.3143 J/(mol K), and @c T0, @c Q, @c dT the cell's
+         * temperature, specific humidity and lapse rate (Lagler et al. 2013,
+         * kept by GPT3).  The VMF3 coefficients have no height reduction.
          *
          * Latitudes outside [-87.5°, 87.5°] are clamped to the edge
          * row; longitudes are wrapped into [0°, 360°).
@@ -136,13 +142,15 @@ namespace GnssProcessor {
          * @brief Per-cell parameters used by the query.
          *
          * Only the columns needed for pressure, temperature and the VMF3
-         * "a" coefficients are retained; the remaining GPT3 columns
-         * (humidity, lambda, Tm, gradients) are parsed and discarded, so
+         * "a" coefficients are retained (specific humidity enters the
+         * pressure reduction through the virtual temperature); the remaining
+         * GPT3 columns (lambda, Tm, gradients) are parsed and discarded, so
          * the file is read in its published format.
          */
         struct Cell {
             double p[5];   /**< Pressure harmonic (a0, A1, B1, A2, B2) in Pa. */
             double T[5];   /**< Temperature harmonic (a0, A1, B1, A2, B2) in K. */
+            double Q[5];   /**< Specific humidity harmonic in g/kg, as stored in the file. */
             double dT[5];  /**< Temperature lapse-rate harmonic in K/km. */
             double undu;   /**< Geoid undulation at grid cell (m). */
             double Hs;     /**< Orthometric grid height (m). */

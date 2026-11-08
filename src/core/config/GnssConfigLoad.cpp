@@ -30,6 +30,7 @@
 #include "products/NetworkProductEmitter.hpp"   // kDefaultDiscThresholdM (R9); unused in this file
 #include "products/StationInfoFile.hpp"
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <cstdio>
 #include <fmt/format.h>
@@ -2523,7 +2524,8 @@ namespace GnssProcessor {
         log->info("ZHD defaults: P={:.1f} mbar, T={:.1f} K", zhd_pressure_mbar, zhd_temp_kelvin);
 
         // Troposphere a priori source: "standard_atmosphere" (default) or "gpt3".
-        // Troposphere mapping function: "gmf" (default) or "vmf3".
+        // Troposphere mapping function: "nmf" (default; "gmf" is its legacy spelling)
+        // or "vmf3".
         {
             auto to_lower = [](std::string s) {
                 std::transform(s.begin(), s.end(), s.begin(),
@@ -2545,14 +2547,19 @@ namespace GnssProcessor {
 
             const std::string mf = to_lower(
                 jval<std::string>(json, "receiver.troposphere_mapping_function",
-                                  "troposphere_mapping_function", std::string{"gmf"}));
-            if (mf == "vmf3") {
-                tropo_mapping_function_ = TroposphereMappingFunction::Vmf3;
-            } else {
-                if (mf != "gmf") {
-                    log->warn("Unknown receiver.troposphere_mapping_function='{}', falling back to gmf", mf);
-                }
-                tropo_mapping_function_ = TroposphereMappingFunction::Gmf;
+                                  "troposphere_mapping_function", std::string{"nmf"}));
+            const TroposphereMappingSpelling spelling = parseTroposphereMappingFunction(mf);
+            tropo_mapping_function_ = spelling.function;
+            if (!spelling.recognized) {
+                log->warn("Unknown receiver.troposphere_mapping_function='{}', falling back to nmf", mf);
+            }
+            // "gmf" named this path before it was found to be the Niell (1996) tables.
+            // The note is written once per process: a run loads several configurations
+            // (the network and its consumer copy among them).
+            static std::atomic<bool> legacy_spelling_noted{ false };
+            if (spelling.legacy && !legacy_spelling_noted.exchange(true)) {
+                log->info("receiver.troposphere_mapping_function='gmf' is the legacy spelling of 'nmf': "
+                          "the mapping function is Niell (1996) NMF; GMF (Boehm et al. 2006) is not implemented");
             }
 
             const bool need_gpt3 =
@@ -2565,7 +2572,7 @@ namespace GnssProcessor {
             // The internal data root is resolved in loadFilesSection_, which runs
             // after this section, so a default built here would use an empty root
             // and yield the relative path "static/gpt3/gpt3_5.grd", which fails to
-            // open and silently drops VMF3/GPT3 back to GMF.  Deferring to the
+            // open and silently drops VMF3/GPT3 back to NMF.  Deferring to the
             // consumer matches how the ocean-pole-tide (opt_grid_path) and
             // atmospheric-loading (atm_tide_grid_path) static grids default in
             // ModelGeometry, where the internal data root is always known.
@@ -2580,8 +2587,8 @@ namespace GnssProcessor {
                 : need_gpt3              ? std::string("<default: static/gpt3/gpt3_5.grd under internal data root>")
                                         : std::string("<unset>");
             log->info("Troposphere a priori: source={}, mapping={}, gpt3_grid_path={}",
-                      tropo_apriori_source_ == TroposphereAprioriSource::Gpt3 ? "gpt3" : "standard_atmosphere",
-                      tropo_mapping_function_ == TroposphereMappingFunction::Vmf3 ? "vmf3" : "gmf",
+                      troposphereAprioriSourceLabel(tropo_apriori_source_),
+                      troposphereMappingFunctionLabel(tropo_mapping_function_),
                       gpt3_display);
         }
 

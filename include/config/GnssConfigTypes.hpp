@@ -4243,8 +4243,30 @@ namespace GnssProcessor {
     };
 
     /**
+     * @brief Label of an a priori troposphere source, in the spelling
+     *        @c receiver.troposphere_apriori_source accepts.
+     *
+     * @param source A priori source.
+     * @return Static NUL-terminated name: "standard_atmosphere" or "gpt3".
+     */
+    inline const char* troposphereAprioriSourceLabel(TroposphereAprioriSource source) {
+        switch (source) {
+            case TroposphereAprioriSource::StandardAtmosphere: return "standard_atmosphere";
+            case TroposphereAprioriSource::Gpt3:               return "gpt3";
+        }
+        return "unknown";
+    }
+
+    /**
      * @brief Tropospheric mapping function that maps zenith delays to
      *        slant delays.
+     *
+     * @c Nmf is the Niell (1996) mapping function: latitude-tabulated
+     * coefficients of the Marini continued fraction (hydrostatic mean plus an
+     * annual term, wet mean only) with the Niell height correction.  It was
+     * configured and logged as "gmf" before 2026-11-07; the Global Mapping
+     * Function of Boehm et al. (2006) is not implemented, and "gmf" is kept as
+     * the legacy spelling of @c Nmf.
      *
      * @c Vmf3 supplies @c a_h/@c a_w from the GPT3 5° grid (empirical
      * climatology, no operational 6-hourly product chain) combined with
@@ -4254,9 +4276,59 @@ namespace GnssProcessor {
      * @c troposphere_apriori_source is left at @c StandardAtmosphere.
      */
     enum class TroposphereMappingFunction {
-        Gmf,   ///< Global Mapping Function (Boehm et al. 2006).  No external grid required.
+        Nmf,   ///< Niell Mapping Function (Niell 1996).  No external grid required.  Configured as "nmf" (legacy "gmf").
         Vmf3   ///< VMF3 empirical from GPT3 (Landskron & Boehm 2018).  Requires gpt3_5.grd.
     };
+
+    /**
+     * @brief Label of a mapping function, in the canonical spelling
+     *        @c receiver.troposphere_mapping_function accepts.
+     *
+     * The loader's run-start line and the troposphere model's own line both
+     * print it, so the two cannot disagree.
+     *
+     * @param function Mapping function.
+     * @return Static NUL-terminated name: "nmf" or "vmf3".
+     */
+    inline const char* troposphereMappingFunctionLabel(TroposphereMappingFunction function) {
+        switch (function) {
+            case TroposphereMappingFunction::Nmf:  return "nmf";
+            case TroposphereMappingFunction::Vmf3: return "vmf3";
+        }
+        return "unknown";
+    }
+
+    /**
+     * @brief What a value of @c receiver.troposphere_mapping_function selects.
+     */
+    struct TroposphereMappingSpelling {
+        TroposphereMappingFunction function{ TroposphereMappingFunction::Nmf }; ///< Selected mapping function.
+        bool recognized{ true };   ///< False for an unknown value, which selects @c Nmf.
+        bool legacy{ false };      ///< True for "gmf", the legacy spelling of @c Nmf.
+    };
+
+    /**
+     * @brief Read a value of @c receiver.troposphere_mapping_function.
+     *
+     * "nmf" selects @c Nmf (the canonical spelling and the loader default),
+     * "gmf" selects the same @c Nmf path and is flagged as the legacy
+     * spelling, "vmf3" selects @c Vmf3.  Any other value is flagged as not
+     * recognized and selects @c Nmf.
+     *
+     * @param lowercase_value The configured value, already folded to lower case.
+     * @return The selection and its two flags.
+     */
+    inline TroposphereMappingSpelling parseTroposphereMappingFunction(const std::string& lowercase_value) {
+        TroposphereMappingSpelling s;
+        if (lowercase_value == "vmf3") {
+            s.function = TroposphereMappingFunction::Vmf3;
+        } else if (lowercase_value == "gmf") {
+            s.legacy = true;
+        } else if (lowercase_value != "nmf") {
+            s.recognized = false;
+        }
+        return s;
+    }
 
     /**
      * @brief Configuration for the post-fit residual history tracker.
