@@ -244,3 +244,21 @@ Whole-run T4 arc flags on DOY 129 fall from 55 to 3 and IF-TD refloats rise 107 
 ### 5.5 Reading
 
 H1 to H3 pass on every bed run. The largest settled-hour move of the held-out consumer is +2.80 mm (sim hour 3 is -12.5 mm); the largest census site move is DAV1 +7.07 mm on DOY 132, below the bar and above the +0.19 mm noise floor, with HARB +5.20 mm on the same day. The sim ignition hour is worse by 50 to 90 mm, which the settled hours do not carry; the responsible key is not isolated. `if_phase_td_sat_clock_event` is armed and inert on all five beds. The BeiDou bed has no census.
+
+## 6. The review builds under the same rule, on the AVX2 build (2026-11-07)
+
+Appended 2026-11-07. The six builds of card SRN (TRP, ZTL, SCC2, VIN, VCF, CRO) merged default-off on branch `int/srn-builds`, on top of the AVX2 default build and the baseline `_rf0hv18` (card AV2 section 7). Two integration fixes: the epoch-observer count 23 to 24 (VCF's flush row) and the run-end report count 88. Debug suite 4 177 cases, 0 failed; `gnss_simulator_selftest` 99 of 99; every verifier passes. Exe `gnss_processor_srnint.exe`, sha256[:16] 64543d2d89994cae. Gate records and graders `D:/GnssProcessorSupport/gates/avx2def/` (`srn_health.sh`, `grade_srn.py`, `grade_srn.txt`), runs `D:/GnssProcessorSupport/runs_avx2def/`.
+
+**Armed** (manifest pins, look-here notes in the ledger rows): `network.second_code_system_aware` (SCC2), `network.vcf` and `network.vcf_apply` (VCF) on both goldens; `receiver.troposphere_apriori_source` `gpt3` (TRP) on the field golden and so the BeiDou lineage, the sim golden keeping the standard atmosphere as a documented exception (the fixture's hydrostatic convention). **Kept off:** card ZTL's in-block wet-delay link (`network.carry_zwd`; the sim NEES reaches 2.8 alone, and its re-coupling edge has no identity rows), `network.vcf_apply_phase` (KEEP_OFF). VIN and CRO add instruments and tests only.
+
+**Keys-off identity.** The new exe on the goldens of `int/avx2-default`, 2 h, field and sim: `products.txt` an exact prefix of the 6 h baseline's on both beds.
+
+**Health check** (6 h, armed goldens against `_rf0hv18`, same build): every arm emits 720 of 720 epochs and withholds none.
+
+| bed | in-loop user, change by hour (mm) | census, hours 2 to 6 |
+| --- | --- | --- |
+| field DOY 129, WTZZ00DEU | -0.55 +0.60 -3.00 -0.90 +0.50 +0.95 | median -0.09 mm; DAV1 +7.86 mm (one hour +18.85), BAKE +1.83 (one hour +4.80), HARB -1.56 |
+| sim, SZZ000SIM | identical | identical at all 16 stations |
+| BeiDou lineage, WTZZ00DEU | -1.45 +0.85 -0.40 -0.80 -0.25 -0.85 | not run |
+
+**Reading.** No crash, no divergence, no settled hour of the held-out user worse by more than 1 mm. DAV1's cost is the one card SCC2 measured for its key alone (+7.7 mm), recorded in that row's look-here note; which of the two field keys carries it in this combination is not separated. The sim is identical because SCC2 acts on no sim row, VCF's code scale reaches only the U records, and the sim keeps the standard atmosphere.
