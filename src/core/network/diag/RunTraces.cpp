@@ -76,6 +76,7 @@ NetworkRunTraces::NetworkRunTraces(std::filesystem::path log_dir)
       block_baarda_trace_path(log_dir_ / "network_block_baarda.csv"),
       congruence_trace_path(log_dir_ / "network_congruence.csv"),
       mdb_trace_path(log_dir_ / "network_mdb.csv"),
+      vcf_trace_path(log_dir_ / "network_vcf.csv"),
       datum_graph_trace_path(log_dir_ / "network_datum_graph.csv"),
       estimability_trace_path(log_dir_ / "network_estimability.csv"),
       sh_spectrum_trace_path(log_dir_ / "network_sh_spectrum.csv"),
@@ -944,6 +945,14 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
         else
             log->warn("Network (MDB): failed to open reliability trace {}",
                       mdb_trace_path.string());
+    }
+    if (config_.networkVcf()) {
+        // The per-class variance factor's trace (network/qc/Vcf.hpp), closed at teardown.
+        vcf_trace.open(vcf_trace_path);
+        if (vcf_trace)
+            vcf_trace << kNetworkVcfHeader;
+        else
+            log->warn("Network (VCF): failed to open trace {}", vcf_trace_path.string());
     }
     if (nc.datum_graph_census) {
         // docs/SPEC_datum_graph_census.md INC-2: the predicted-versus-observed
@@ -2661,6 +2670,7 @@ void NetworkRunTraces::closeAll() {
     // rather than at scope exit: the MDB distribution is the graded artifact of a
     // reliability arm.
     if (mdb_trace.is_open()) mdb_trace.close();
+    if (vcf_trace.is_open()) vcf_trace.close();   // the variance factor's per-sweep table
     // Same reason: added after INC-4, and the contingency is the graded artifact
     // of a datum-graph arm.
     if (datum_graph_trace.is_open()) datum_graph_trace.close();

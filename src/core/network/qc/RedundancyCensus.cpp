@@ -53,6 +53,7 @@
 #include "network/qc/BlockBaarda.hpp" // BlockFormal LOS-block rider on this sweep (SPEC_redundancy_census)
 #include "network/qc/Congruence.hpp" // Station congruence rider on this sweep (SPEC_redundancy_census)
 #include "network/qc/Mdb.hpp"        // Baarda MDB rider on the swept r_i (SPEC_redundancy_census)
+#include "network/qc/Vcf.hpp"        // per-class variance factor rider on the swept (v, w, r_i)
 #include "network/solve/NormalEquations.hpp"
 #include "network/assembly/RowClassify.hpp"
 #include "filter/StateKeySchema.hpp"
@@ -218,6 +219,33 @@ struct CensusStationPre {
     CongruenceCofactor               cg;   ///< the congruence rider's cofactor
 };
 
+/// Feed one swept station's observation rows to the variance-factor rider.  A row on a line of
+/// sight that carries a deweight this epoch (the unvetted-LOS phase scale, the gross-LOS code
+/// scale, both keyed by satellite on the station) is passed as deweighted: it sits outside the
+/// nominal stochastic model and is counted, not pooled.
+void censusFeedVcf(NetworkVcfEpoch& acc, double tow, const NetStation& st,
+                   const StationAssembly& R, const Eigen::VectorXd& resid,
+                   const Eigen::VectorXd& r) {
+    NetworkVcfStationFeed feed(acc, tow);
+    const Eigen::Index m = std::min<Eigen::Index>(resid.size(), r.size());
+    const bool any_dw = !st.phase_sigma_scale.empty() || !st.gl_code_sigma_scale.empty();
+    for (Eigen::Index row = 0; row < m; ++row) {
+        const RowTag& tag = rowTagAt(R, row);
+        VcfKind kind;
+        if (!vcfKindOf(tag.kind, kind)) continue;
+        bool dw = false;
+        if (any_dw && tag.sat.valid()) {
+            const std::string sat = tag.sat.str();
+            const bool phase = (kind == VcfKind::Phase || kind == VcfKind::PhaseSecond);
+            const std::map<std::string, double>& scale =
+                phase ? st.phase_sigma_scale : st.gl_code_sigma_scale;
+            const auto hit = scale.find(sat);
+            dw = hit != scale.end() && hit->second > 1.0;
+        }
+        feed.add(tag, (row < R.w.size()) ? R.w(row) : 1.0, resid(row), r(row), dw);
+    }
+}
+
 /// Fill @p pre for one swept station.  Reads only its arguments; catches everything.
 void censusStationPre(const NetworkNormalEquations& kernel, const NetworkBlockBaarda& bb_acc,
                       const NetworkCongruence& cg_acc, bool bb_on, bool cg_on, std::size_t slot,
@@ -306,6 +334,10 @@ void networkRedundancyCensus(NetworkRun& run, const NetworkEpoch& nep, EpochEven
     // and the same empty-x_s disarm: run on the prefit innovation it would produce
     // a plausible delta_hat of the wrong quantity.
     const bool cg_on = ctx.knobs.cg_on && ctx.carry.cg.enabled() && x_s.size() > 0;
+    // The per-class variance factor, the third rider: it reads the post-fit residual, the
+    // weight and the redundancy of every swept observation row, so it shares the residual the
+    // two riders above form and the same empty-x_s disarm.
+    const bool vcf_on = ctx.knobs.vcf_on && x_s.size() > 0;
 
     const auto t0 = std::chrono::steady_clock::now();
     ++counters.redun_passes;
@@ -572,7 +604,7 @@ void networkRedundancyCensus(NetworkRun& run, const NetworkEpoch& nep, EpochEven
         // hoisted covariance and kernel slot the row census just used, so the
         // added cost is one back-substitution, two GEMVs and a b×b solve per
         // block, with b ≤ 8.
-        if (bb_on || cg_on) {
+        if (bb_on || cg_on || vcf_on) {
             // The post-fit residual.  The census statistic itself does not need it
             // (r_i depends on the geometry alone), but T_B does, and
             // StationAssembly::y is the prefit innovation.  The estimator wrapper
@@ -596,8 +628,11 @@ void networkRedundancyCensus(NetworkRun& run, const NetworkEpoch& nep, EpochEven
             if (x_r.size() != R.A_r.cols()) {
                 if (bb_on) ++ctx.counters.bb.no_resid;
                 if (cg_on) ++ctx.counters.cg.no_resid;
+                if (vcf_on) ++ctx.counters.vcf_no_resid;
             } else {
                 const Eigen::VectorXd resid = R.y - R.A_s * x_s - R.A_r * x_r;
+                if (vcf_on)
+                    censusFeedVcf(ctx.carry.vcf.ep, se.time.tow, stations[i], R, resid, r);
                 // Source of the RESPONDED label, built once per station.  It is an
                 // estimator-side signal (RAIM or slip refloat has marked the arc
                 // for reseeding this epoch), kept separate from the raw slip-QC

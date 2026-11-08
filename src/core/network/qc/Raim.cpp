@@ -16,6 +16,7 @@
 #include "network/state/RunContext.hpp"          // ctx.knobs / ctx.carry / ctx.counters
 #include "config/GnssConfig.hpp"              // config_ getters
 #include "network/qc/Mdb.hpp"              // Baarda MDB rider on B2's r_i (SPEC_redundancy_census)
+#include "network/qc/Vcf.hpp"              // the stage-2 scales (network.vcf_apply)
 #include "network/assembly/RowClassify.hpp"      // raimPoolAdmitsKind, rowTagAt (the pool's admission rule)
 #include "network/qc/RaimPriorChannel.hpp" // the prior channel (network.raim_prior_channel)
 #include "network/qc/RobustStats.hpp"      // medianPolish2Way / robustProminence / medianCopy / MedianPolish
@@ -151,6 +152,20 @@ void networkPostFitRaim(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitH
     auto& ura_sigma0_ewma = ctx.carry.ura_sigma0_ewma;
 
     auto& ura_ewma_updates = ctx.carry.ura_ewma_updates;
+    // The stage-2 scales (network.vcf_apply; 1 = the a priori model).  The post-fit pool's
+    // statistics are divided by the phase scale, so sigma0 and the T4 bar raim_k read in
+    // calibrated sigma; the URA EWMA is fed the code scale.
+    const bool   vcf_apply    = ctx.knobs.vcf_apply;
+    const double vcf_unit     = ctx.knobs.vcf_apply_phase ? networkVcfApplyScale(ctx.carry.vcf, VcfKind::Phase) : 1.0;
+    const double vcf_code_ura = vcf_apply ? networkVcfApplyScale(ctx.carry.vcf, VcfKind::Code) : 1.0;
+    if (vcf_apply) {
+        if (vcf_unit != 1.0) ++ctx.counters.vcf_pf_applied;
+        if (!ctx.counters.vcf_pf_logged && vcf_unit != 1.0) {
+            ctx.counters.vcf_pf_logged = true;
+            log->info("Network (VCF apply): the post-fit RAIM pool (sigma0, the T4 bar) reads the "
+                      "phase scale {:.4f} from TOW {:.1f}.", vcf_unit, se.time.tow);
+        }
+    }
 
     auto& n_emitted = ctx.counters.n_emitted;
     auto& fr_raim_cell = ctx.counters.fr_raim_cell;
@@ -393,6 +408,7 @@ void networkPostFitRaim(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitH
                     if (ri <= kRedFloor) continue;   // uncheckable row: exclude from σ̂0 pool + r_max
                     r /= std::sqrt(ri);
                 }
+                if (vcf_unit != 1.0) r /= vcf_unit;   // calibrated units (network.vcf_apply)
                 r_pool.push_back(r);
                 if (r > r_max) r_max = r;
             }
@@ -435,8 +451,19 @@ void networkPostFitRaim(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitH
     // the quality-ramp lift rule (its "EWMA has stabilized" half) and is read only
     // while the warm-up floor is armed (RTB-7(b)).
     if (ura_on) {
-        ura_sigma0_ewma = ura_alpha * sigma0 + (1.0 - ura_alpha) * ura_sigma0_ewma;
+        // Under network.vcf_apply the scale folded is the calibrated code scale, not the
+        // floored pool sigma0: the emitted clock's formal sigma is formed from the code law.
+        const double ura_in = vcf_apply ? vcf_code_ura : sigma0;
+        ura_sigma0_ewma = ura_alpha * ura_in + (1.0 - ura_alpha) * ura_sigma0_ewma;
         ++ura_ewma_updates;
+        if (vcf_apply) {
+            ++ctx.counters.vcf_ura_applied;
+            if (!ctx.counters.vcf_ura_logged && vcf_code_ura != 1.0) {
+                ctx.counters.vcf_ura_logged = true;
+                log->info("Network (VCF apply): the URA EWMA is fed the code scale {:.4f} from "
+                          "TOW {:.1f} (emitted unclamped).", vcf_code_ura, se.time.tow);
+            }
+        }
     }
 
     // --- Declared per-station variance factor (R2, queue item 4) ---------------

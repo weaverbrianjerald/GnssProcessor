@@ -23,6 +23,7 @@
 #include "network/emit/LedgerEmit.hpp"
 #include "network/carry/LevelAuthority.hpp"
 #include "network/qc/Mdb.hpp"
+#include "network/qc/Vcf.hpp"
 #include "network/assembly/MultiGnss.hpp"
 #include "network/assembly/ParamInventory.hpp"
 #include "network/diag/PhaseVisibleDiag.hpp"
@@ -69,6 +70,7 @@ const Pinned kPinned[] = {
     {"networkBlockBaardaEmit",              Slot::FrameDiag,     &networkBlockBaardaEmit},
     {"networkCongruenceEmit",               Slot::FrameDiag,     &networkCongruenceEmit},
     {"networkMdbFlush",                     Slot::FrameDiag,     &networkMdbFlush},
+    {"networkVcfFlush",                     Slot::FrameDiag,     &networkVcfFlush},
     {"networkDatumGraphCensus",             Slot::FrameDiag,     &networkDatumGraphCensus},
     {"networkRhsAttribution",               Slot::FrameDiag,     &networkRhsAttribution},
     {"networkRhsAttribTrip",                Slot::FrameDiag,     &networkRhsAttribTrip},
@@ -131,7 +133,7 @@ TEST(NetworkEpochObservers, OrderConstraintsHold) {
     EXPECT_LT(rowOf("networkPrefitCensus"), rowOf("networkRedundancyCensus"));
     // The redundancy census before the drains it feeds and before the attribution window.
     for (const char* later : {"networkBlockBaardaEmit", "networkCongruenceEmit",
-                              "networkMdbFlush", "networkRhsAttribution"})
+                              "networkMdbFlush", "networkVcfFlush", "networkRhsAttribution"})
         EXPECT_LT(rowOf("networkRedundancyCensus"), rowOf(later)) << later;
     // The attribution, then the flight recorder, last of its slot.
     EXPECT_LT(rowOf("networkRhsAttribution"), rowOf("networkRhsAttribTrip"));

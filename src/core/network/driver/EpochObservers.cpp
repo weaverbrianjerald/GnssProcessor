@@ -23,6 +23,7 @@
 #include "network/emit/LedgerEmit.hpp"
 #include "network/carry/LevelAuthority.hpp"
 #include "network/qc/Mdb.hpp"
+#include "network/qc/Vcf.hpp"
 #include "network/assembly/MultiGnss.hpp"
 #include "network/assembly/ParamInventory.hpp"
 #include "network/diag/PhaseVisibleDiag.hpp"
@@ -76,6 +77,8 @@ const std::array<NetworkEpochObserverRow, kNetworkEpochObserverCount> kNetworkEp
      "network/qc/Congruence.cpp", Slot::FrameDiag, &networkCongruenceEmit},
     {"networkMdbFlush", "MDB drain",
      "network/qc/Mdb.cpp", Slot::FrameDiag, &networkMdbFlush},
+    {"networkVcfFlush", "per-class variance factor drain",
+     "network/qc/Vcf.cpp", Slot::FrameDiag, &networkVcfFlush},
     {"networkDatumGraphCensus", "structural S-basis dimension census",
      "network/solve/DatumGraph.cpp", Slot::FrameDiag, &networkDatumGraphCensus},
     {"networkRhsAttribution", "reduced-RHS attribution window",

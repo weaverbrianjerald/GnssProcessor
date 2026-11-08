@@ -69,6 +69,7 @@
 #include "network/carry/LevelAuthority.hpp"
 #include "network/carry/LevelingCarryRunEnd.hpp"
 #include "network/qc/Mdb.hpp"
+#include "network/qc/Vcf.hpp"
 #include "network/assembly/MeasurementAdmission.hpp"
 #include "network/assembly/MultiGnss.hpp"
 #include "network/slip/OraclePin.hpp"
@@ -145,6 +146,8 @@ const std::array<NetworkRunEndRow, kNetworkRunEndReportCount> kNetworkRunEndRepo
      "network/qc/RedundancyCensus.cpp", networkRedundancyCensusRunEnd},
     {"Baarda MDB reliability",
      "network/qc/Mdb.cpp", networkMdbRunEnd},
+    {"the per-class variance factor",
+     "network/qc/Vcf.cpp", networkVcfRunEnd},
     {"the BlockFormal LOS-block census",
      "network/qc/BlockBaarda.cpp", networkBlockBaardaRunEnd},
     {"the station congruence screen",

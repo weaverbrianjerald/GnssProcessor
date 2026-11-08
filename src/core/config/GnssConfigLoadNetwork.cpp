@@ -7197,6 +7197,42 @@ namespace GnssProcessor {
             }
         }
 
+        // The per-class variance factor (network/qc/Vcf.hpp).  Parsed here for the MDB's
+        // load-order reason: it rides the redundancy census's sweep, whose arming
+        // loadNetworkObservabilityAndSnapshot_ has already resolved.
+        {
+            const NetworkConfig& vnc = network_config_;
+            network_vcf_ = jval<bool>(json, "network.vcf", "vcf", false);
+            network_vcf_ewma_alpha_ =
+                jval<double>(json, "network.vcf_ewma_alpha", "vcf_ewma_alpha", 0.1);
+            network_vcf_apply_ = jval<bool>(json, "network.vcf_apply", "vcf_apply", false);
+            network_vcf_apply_phase_ =
+                jval<bool>(json, "network.vcf_apply_phase", "vcf_apply_phase", false);
+            if (!(network_vcf_ewma_alpha_ > 0.0 && network_vcf_ewma_alpha_ <= 1.0)) {
+                log->warn("Network (VCF): network.vcf_ewma_alpha = {:g} is outside (0, 1]; "
+                          "restoring the 0.1 default.", network_vcf_ewma_alpha_);
+                network_vcf_ewma_alpha_ = 0.1;
+            }
+            if (network_vcf_apply_ && !network_vcf_) {
+                log->warn("Network (VCF): network.vcf_apply reads the factors network.vcf "
+                          "measures; with network.vcf off there is nothing to apply, disabled.");
+                network_vcf_apply_ = false;
+            }
+            if (network_vcf_apply_phase_ && !network_vcf_apply_) {
+                log->warn("Network (VCF): network.vcf_apply_phase extends network.vcf_apply to the "
+                          "RAIM pools; with network.vcf_apply off it is disabled.");
+                network_vcf_apply_phase_ = false;
+            }
+            if (network_vcf_ && !(vnc.redundancy_census_stride > 0
+                                  || vnc.redundancy_escalate_sigma > 0.0))
+                // A hard error, as for network.mdb: without the census sweep the rider is fed
+                // no row, and a run would print a clean, empty table.
+                throw std::runtime_error(
+                    "network.vcf requires the redundancy census (network.redundancy_census_stride "
+                    "> 0 or network.redundancy_escalate_sigma > 0): the per-class factor rides "
+                    "its sweep, and without it no row is ever pooled.");
+        }
+
         // Block-Baarda census (BLOCKFORMAL): the (station, satellite) LOS block outlier
         // census (docs/SPEC_redundancy_census.md).  Parsed here, next to the MDB
         // precondition and for the same load-order reason: it rides the redundancy
@@ -12860,6 +12896,14 @@ namespace GnssProcessor {
                       "the same eigenvalues, eigenvectors only on an epoch that needs them; the rank "
                       "gate reads them when nothing was folded)");
         }
+        if (network_vcf_)
+            log->info("Network (VCF): per-class variance factor ARMED on the redundancy-census "
+                      "sweep (EWMA alpha {:g}); {}.", network_vcf_ewma_alpha_,
+                      !network_vcf_apply_ ? "measure-only (network_vcf.csv and the run-end table)"
+                      : network_vcf_apply_phase_
+                          ? "APPLIED: the URA reads the code scale and the within-epoch and "
+                            "post-fit RAIM pools the phase scale (solve weights untouched)"
+                          : "APPLIED: the URA reads the code scale (solve weights untouched)");
         if (network_config_.parallel_seam) {
             log->info("Network: deterministic-parallel post-solve seam ENABLED "
                       "(carry-fold + D5 readouts computed per-block in parallel, merged in "

@@ -27,6 +27,7 @@
 #include "network/qc/Relevel.hpp"
 #include "network/qc/RhsAttrib.hpp"   // flight-recorder trip latch and inline A4 dump (INC-5)
 #include "network/qc/RobustStats.hpp"
+#include "network/qc/Vcf.hpp"        // the stage-2 phase scale of the pool (network.vcf_apply)
 #include "network/assembly/RowClassify.hpp"   // the row tags' readers: the pools' admission rule
 #include "network/solve/Sbasis.hpp"
 #include "filter/StateKeySchema.hpp"
@@ -155,6 +156,20 @@ static void weAssess(NetworkRun& run, const NetworkEpoch& ep, const SolveDatum& 
     // ---- End of the bindings ----
     auto& pool_tally = ctx.counters.raim_pool_within;
     ++pool_tally.walks;
+    // The pool's unit: 1 (the a priori model) unless network.vcf_apply holds an identifiable
+    // phase scale, which then divides every pooled statistic, so sigma0, the trigger, raim_k,
+    // the floor and the withhold ceiling read in calibrated sigma.
+    const double vcf_unit =
+        ctx.knobs.vcf_apply_phase ? networkVcfApplyScale(ctx.carry.vcf, VcfKind::Phase) : 1.0;
+    if (ctx.knobs.vcf_apply) {
+        if (vcf_unit != 1.0) ++ctx.counters.vcf_we_applied;
+        if (!ctx.counters.vcf_we_logged && vcf_unit != 1.0) {
+            ctx.counters.vcf_we_logged = true;
+            run.log->info("Network (VCF apply): the within-epoch RAIM pool reads the phase scale "
+                          "{:.4f} (pooled statistics divided by it) from TOW {:.1f}.",
+                          vcf_unit, ep.se.time.tow);
+        }
+    }
     std::vector<double> r_pool;
     std::vector<double> ci_code_pool, ci_iono_pool;   // per-pool standardized rows (WE-CI)
     if (we_ci) { ci_sat_code_max.clear(); ci_sta_max.clear(); }
@@ -216,6 +231,7 @@ static void weAssess(NetworkRun& run, const NetworkEpoch& ep, const SolveDatum& 
                     if (ri <= kRedFloor) continue;   // uncheckable row: exclude from σ̂0 pool + r_max
                     r /= std::sqrt(ri);
                 }
+                if (vcf_unit != 1.0) r /= vcf_unit;   // calibrated units (network.vcf_apply)
                 r_pool.push_back(r);
                 // The same standardized row (weighting and B2 √r_i normalization
                 // included; redundancy-floored rows excluded by the continue

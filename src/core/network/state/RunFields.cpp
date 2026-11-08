@@ -77,6 +77,7 @@ const std::vector<FieldDecl> kRunFields = {
     {"carry.resume_cpl_census_rel", "resume_cpl_census_rel", Persist::ResumeSeeded, "", "", nullptr, nullptr, nullptr},
     {"carry.resume_cpl_census_rhs", "resume_cpl_census_rhs", Persist::ResumeSeeded, "", "", nullptr, nullptr, nullptr},
     {"carry.mdb", "mdb", Persist::ColdStart, "", "", nullptr, nullptr, nullptr},
+    {"carry.vcf", "vcf", Persist::ColdStart, "", "", nullptr, nullptr, nullptr},
     {"carry.last_vce_hour", "last_vce_hour", Persist::ColdStart, "", "", nullptr, nullptr, nullptr},
     {"carry.first_vce_s", "first_vce_s", Persist::ColdStart, "", "", nullptr, nullptr, nullptr},
     {"carry.vce_apply", "vce_apply", Persist::ColdStart, "", "", nullptr, nullptr, nullptr},
