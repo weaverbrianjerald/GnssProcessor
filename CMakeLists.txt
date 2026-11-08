@@ -441,6 +441,10 @@ if(MSVC)
     # translation unit and crosses the Debug section limit (C1128).
     set_source_files_properties(tests/test_pb_hold_block.cpp tests/test_pb_hold_smoothed.cpp
         PROPERTIES COMPILE_FLAGS "/bigobj")
+    # tests/test_rhs_attrib_local.cpp: the run fixture headers crossed the Debug section limit (C1128)
+    # once the merged branches' members landed in them.
+    set_source_files_properties(tests/test_rhs_attrib_local.cpp
+        PROPERTIES COMPILE_FLAGS "/bigobj")
     # tests/network/test_network_arc_graph_oracles.cpp: the epoch-event and run-context headers it
     # includes sat at the Debug section limit, and the satellite clock event's two members (a step
     # map in the slip events, a trip set in the clock anchor state) tipped it over (C1128).
