@@ -198,3 +198,5 @@ verbatim on 2026-11-07 under the 60 KB bar. Entries are in pre-registration orde
   response (slip latch, RAIM per-arc attribution), off and byte-identical by default. At q 5e-8 the field wet delay moves 0.73 mm per epoch
   (was 2.59), the slip-epoch excursions are gone, user and census unchanged; the sim truth bar fails (hours 4 to 6 rms 6.4 mm against 4,
   NEES to 2.8; 0.77 to 0.86 with the phase colour state); no integer gain. Not recommended for arming alone; the colour pairing is owed.
+- [SCW](SCW_sat_clock_step_wire_2026-11-09.md): open, 2026-11-09: how an injected satellite clock step reaches the wire on the GPS + Galileo field golden, and why it does not. On card SLV's DOY 132 legs every arc of the stepped satellite is freed (all non-reference IF-TD samples flagged, the rest reset by the reference gate), the code keeps the step and the anchored clock moves about 1 mm per epoch.
+  Pre-registered: card SCR's route (satellite clock event with the trip generation) on the same seeds, bars R1 to R5; read-outs of the centred E02 overshoot (hold off, deferral, trip generation). Nothing armed.
