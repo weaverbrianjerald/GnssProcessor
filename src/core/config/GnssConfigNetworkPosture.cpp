@@ -1153,6 +1153,19 @@ namespace GnssProcessor {
               "the carry LS-VCE monitor and the prior-residual census take an applied readmit seed "
               "as a row instead of skipping it: field 6 h products identical, 23 code-bias seeds "
               "taken that both had skipped" },
+            // The clock-share requirement on the anchor's phase trip.  Regime: the anchor on in
+            // phase mode at a clock q of at least 1e-6 (the broadcast-referenced posture); the
+            // loader refuses the key at the goldens' 2.9e-8, where an anchored clock cannot move
+            // within an epoch and the requirement would withhold every real clock step.  Acts
+            // only on a trip; not fingerprinted.
+            { network_clock_temporal_anchor_ && network_clock_anchor_guard_space_ == 2
+                  && network_clock_anchor_q_ >= 1e-6,
+              network_clock_anchor_clock_k_ > 0.0,
+              Tier::SCOPED, false, "network.clock_anchor_clock_k",
+              "withhold a phase-statistic trip whose clock-space statistic is below the value "
+              "(2.0): on the broadcast-referenced posture the anchor's phase trips are carried by "
+              "the phase-bias keys, not the clock; DOY 129 to 132 take 1 trip and withhold 37, "
+              "an injected 0.5 m clock step still trips at |w_clk| 7.92" },
             // Coupling reinit sources.  Meaningful only where the
             // coupling rows exist: the conditional carry armed and not superseded by the
             // invariant carry (under carry_invariant the whole coupling trio is
