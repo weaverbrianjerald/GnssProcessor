@@ -149,8 +149,9 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   link's double count is built: `network.phase_datum_eq34_rpb_in_block` (default off) carries the receiver phase bias as
   a column of the station block. It removes the double count on both beds (formal sigma 1.99 and 1.96 m against 0.018,
   DCB error 0.538 m, 0 wrong would-be fixes) and a root handover keeps its target; the held-out consumer clause FAILED
-  on the golden sim in hour 1 (+24 %) and I-b's counts rise against the link arm on 17 of 24 cells. Adoption on the
-  research arm is the author's ruling.
+  on the golden sim in hour 1 (+24 %) and I-b's counts rise against the link arm on 17 of 24 cells. Adopted on the
+  research arm by the author's ruling of 2026-11-10 (section 8): arm A1 and its descendants set the key, `<arm>_link`
+  keeps the time link, the two failed clauses stay recorded as the arm's cost; loader default off, no golden armed.
 - [IRDF](IRDF_d0_receiver_floor_redecided_2026-11-07.md): closed, 2026-11-09: decision D0 (the receiver floor) re-decided at the author's word with every event
   row armed, after IRDE section 9. As written neither candidate passes (the DCB bar; floor off also r3c hour 1): the
   floor stays and the GF-datum defect is recorded. The bar lies below the true DCB spread, the floor-off spread is the
