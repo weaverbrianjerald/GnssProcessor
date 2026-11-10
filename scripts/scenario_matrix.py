@@ -35,7 +35,9 @@ Postures (the clock level of the goldens, card SCB's table):
   f   the field golden (no truth; seeds only in version 1, no rows run on it)
 
 Seeds are written under RAPID_RUNS_ROOT (default D:/GnssProcessorSupport/runs_nom) as
-``evseed_smx_<posture>``; legs as ``evleg_smx_<label>_<row>_<posture>`` (nulls ``..._null60``
+``evseed_<tag>_<posture>`` (the tag is ``smx`` unless the environment sets ``SMX_SEED_TAG``, so a
+later card writes fresh seeds beside the earlier ones without overwriting them; ``make`` records
+the tag in plan.json); legs as ``evleg_smx_<label>_<row>_<posture>`` (nulls ``..._null60``
 and ``..._null240``); the drift row's fresh arms as ``smx_<label>_drift_<q|k>_<posture>``;
 the plan, the grades and the report under ``D:/GnssProcessorSupport/gates/smx/<label>/``.
 """
@@ -62,6 +64,9 @@ ROOT = os.path.dirname(_HERE).replace("\\", "/")
 RUNS = (os.environ.get("RAPID_RUNS_ROOT") or "D:/GnssProcessorSupport/runs_nom").replace("\\", "/").rstrip("/")
 GATES = "D:/GnssProcessorSupport/gates/smx"
 MATRIX = ROOT + "/scripts/smx/matrix.json"
+# The seed family: evseed_<SEED_TAG>_<posture>.  "smx" is card SMX's (and card CRS2's re-written)
+# family; card SMX2 writes its own ("smx2") from the postures as armed on 2026-11-09.
+SEED_TAG = os.environ.get("SMX_SEED_TAG", "smx")
 
 SIM_GOLDEN = ROOT + "/config/golden/golden_sim_refound.json"
 FIELD_GOLDEN = ROOT + "/config/golden/golden_field_refound.json"
@@ -132,7 +137,7 @@ def posture_extra(posture):
 
 
 def seed_dir(posture, smoke=False):
-    return f"{RUNS}/evseed_smx_{posture}{'_smoke' if smoke else ''}"
+    return f"{RUNS}/evseed_{SEED_TAG}_{posture}{'_smoke' if smoke else ''}"
 
 
 def default_exe():
@@ -177,7 +182,7 @@ def white(diffs):
 # ------------------------------------------------------------------------------ seed
 def cmd_seed(a):
     base, _, _ = POSTURES[a.posture]
-    name = f"smx_{a.posture}{'_smoke' if a.smoke else ''}"
+    name = f"{SEED_TAG}_{a.posture}{'_smoke' if a.smoke else ''}"
     hours = 10 * EPOCH_S / 3600.0 if a.smoke else a.hours
     cmd = [sys.executable, ROOT + "/scripts/event_leg.py", "write-seed", "--name", name,
            "--base", base, "--hours", repr(hours), "--interval-ep", str(a.interval_ep),
@@ -396,6 +401,8 @@ def cmd_make(a):
     plan = {"label": a.label, "exe": exe, "exe_sha256": sha256(exe), "matrix_version": m["version"],
             "matrix_sha256": sha256(MATRIX), "made": time.strftime("%Y-%m-%d %H:%M:%S"),
             "postures": postures, "targets": {}, "legs": [], "cells": []}
+    if SEED_TAG != "smx":
+        plan["seed_tag"] = SEED_TAG          # absent for card SMX's own family: older plans unchanged
     if extra:
         plan["extra"] = extra
     old_plan = gate_dir(a.label) + "/plan.json"
@@ -406,6 +413,8 @@ def cmd_make(a):
             raise SystemExit("FATAL: --append needs the label's exe and matrix unchanged")
         if prev.get("extra", {}) != extra:
             raise SystemExit("FATAL: --append needs the label's --extra unchanged")
+        if prev.get("seed_tag", "smx") != SEED_TAG:
+            raise SystemExit("FATAL: --append needs the label's seed family (SMX_SEED_TAG) unchanged")
         plan.update({k: prev[k] for k in ("targets", "legs", "cells", "made")})
         plan["postures"] = sorted(set(prev["postures"]) | set(postures))
     needed = set()
