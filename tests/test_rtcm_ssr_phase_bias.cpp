@@ -14,6 +14,8 @@
  *     exactly (the decode reports ok).
  *   - Code- and phase-bias signal ids are read in the SSR numbering (GPS L1C is
  *     id 0, L2W id 11; Galileo L5Q id 6), not in the MSM observation numbering.
+ *   - The wire bias (a correction added to the observation) is stored negated, as the
+ *     bias present in the observation.
  *
  * The synthetic frames carry zero CRC bytes; the parser assumes the framer verified them.
  */
@@ -132,7 +134,8 @@ void expectRecord(const SsrPhaseBias& pb, const PbSat& s,
     for (std::size_t k = 0; k < s.sigs.size(); ++k) {
         const auto it = pb.bias_per_signal.find(phase_codes[k]);
         ASSERT_NE(it, pb.bias_per_signal.end()) << pb.sat << " " << phase_codes[k];
-        EXPECT_NEAR(it->second.bias_m, s.sigs[k].bias_raw * 1e-4, 1e-12);
+        // The wire value is the correction added to the phase; the record holds its negative.
+        EXPECT_NEAR(it->second.bias_m, -s.sigs[k].bias_raw * 1e-4, 1e-12);
         EXPECT_EQ(it->second.signal_integer, s.sigs[k].integer);
         EXPECT_EQ(it->second.wide_lane_integer, s.sigs[k].wl);
         EXPECT_EQ(it->second.discontinuity_counter, s.sigs[k].disc);
@@ -296,10 +299,10 @@ TEST(RtcmSsrSignalIdTest, GpsCodeBiasUsesSsrNumbering) {
     const auto& cb = parser.getSsrCodeBiases().front();
     EXPECT_EQ(cb.sat, "G05");
     ASSERT_EQ(cb.bias_per_signal.size(), 4u);
-    EXPECT_NEAR(cb.bias_per_signal.at("C1C"),  1.20, 1e-12);
-    EXPECT_NEAR(cb.bias_per_signal.at("C1W"), -0.80, 1e-12);
-    EXPECT_NEAR(cb.bias_per_signal.at("C2L"),  0.45, 1e-12);
-    EXPECT_NEAR(cb.bias_per_signal.at("C2W"),  3.00, 1e-12);
+    EXPECT_NEAR(cb.bias_per_signal.at("C1C"), -1.20, 1e-12);
+    EXPECT_NEAR(cb.bias_per_signal.at("C1W"),  0.80, 1e-12);
+    EXPECT_NEAR(cb.bias_per_signal.at("C2L"), -0.45, 1e-12);
+    EXPECT_NEAR(cb.bias_per_signal.at("C2W"), -3.00, 1e-12);
 }
 
 TEST(RtcmSsrSignalIdTest, GalileoCodeBiasUsesSsrNumbering) {
@@ -310,10 +313,33 @@ TEST(RtcmSsrSignalIdTest, GalileoCodeBiasUsesSsrNumbering) {
     const auto& cb = parser.getSsrCodeBiases().front();
     EXPECT_EQ(cb.sat, "E11");
     ASSERT_EQ(cb.bias_per_signal.size(), 4u);
-    EXPECT_NEAR(cb.bias_per_signal.at("C1C"), 0.10, 1e-12);
-    EXPECT_NEAR(cb.bias_per_signal.at("C5Q"), 0.20, 1e-12);
-    EXPECT_NEAR(cb.bias_per_signal.at("C7Q"), 0.30, 1e-12);
-    EXPECT_NEAR(cb.bias_per_signal.at("C6C"), 0.40, 1e-12);
+    EXPECT_NEAR(cb.bias_per_signal.at("C1C"), -0.10, 1e-12);
+    EXPECT_NEAR(cb.bias_per_signal.at("C5Q"), -0.20, 1e-12);
+    EXPECT_NEAR(cb.bias_per_signal.at("C7Q"), -0.30, 1e-12);
+    EXPECT_NEAR(cb.bias_per_signal.at("C6C"), -0.40, 1e-12);
+}
+
+// RTCM and IGS-SSR send each bias as the correction added to the observation (the cssrlib
+// model is range - bias with the wire value).  The store holds the bias present in the
+// observation, which the model adds (kSatBiasSign), so the decoder negates: a wire +2.50 m
+// code bias and a wire +0.1234 m phase bias are stored as -2.50 m and -0.1234 m.
+TEST(RtcmSsrSignalIdTest, WireBiasIsTheNegativeOfTheStoredBias) {
+    RtcmParser code_parser;
+    ASSERT_TRUE(code_parser.parseFrame(buildCodeBias4076(25, 3, {{0, 250}})));
+    ASSERT_EQ(code_parser.getSsrCodeBiases().size(), 1u);
+    EXPECT_NEAR(code_parser.getSsrCodeBiases().front().bias_per_signal.at("C1C"), -2.50, 1e-12);
+
+    BitWriter pw;
+    pw.put(12, 4076);
+    pw.put(3,  1);
+    pw.put(8,  26);                // IM: GPS phase bias
+    putPhaseBiasHeader(pw, 20, 100, /*iod_ssr=*/1, /*dispersive=*/0, /*mw=*/0, 1);
+    putPhaseBiasSat(pw, 6, PbSat{3, 0, 0, {{0, true, 0, 0, 1234}}});
+    RtcmParser phase_parser;
+    ASSERT_TRUE(phase_parser.parseFrame(buildFrame(pw.finish())));
+    ASSERT_EQ(phase_parser.getSsrPhaseBiases().size(), 1u);
+    EXPECT_NEAR(phase_parser.getSsrPhaseBiases().front().bias_per_signal.at("L1C").bias_m,
+                -0.1234, 1e-12);
 }
 
 } // namespace

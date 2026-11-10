@@ -184,8 +184,10 @@ struct SsrCombinedCorrection {
 /**
  * @brief Per-satellite code biases (one entry per signal).
  *
- * Bias is in meters; subtract from the corresponding observed pseudorange.
- * Signal keys are RINEX 3 observation codes (e.g. "C1C", "C2W").
+ * Bias is in meters: the satellite bias present in the observed pseudorange, so it is
+ * subtracted from the observation (added to the modelled range).  The RTCM and IGS-SSR
+ * wire value is the correction added to the pseudorange, the negative of this; the
+ * decoder negates it.  Signal keys are RINEX 3 observation codes (e.g. "C1C", "C2W").
  */
 struct SsrCodeBias {
     std::string                    sat;
@@ -216,7 +218,7 @@ struct SsrCodeBias {
  * ambiguity and when the bias jumped (which forces an ambiguity reset).
  */
 struct SsrPhaseBiasEntry {
-    double bias_m{0.0};                 ///< Phase bias (meters); subtract from the carrier-phase observable.
+    double bias_m{0.0};                 ///< Phase bias (meters) present in the carrier phase; subtract from the observable.  The negative of the RTCM / IGS-SSR wire value, which is added.
     bool   signal_integer{false};       ///< Bias preserves integer ambiguity (per IGS-SSR).
     int    wide_lane_integer{0};        ///< Wide-lane integer indicator (2 bits).
     int    discontinuity_counter{0};    ///< Increments on bias discontinuity (forces AR reset).

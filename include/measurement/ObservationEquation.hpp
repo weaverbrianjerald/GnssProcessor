@@ -82,10 +82,12 @@ class ReceiverBiasResolver;
  *        producer's satellite code-bias and phase-bias states, and the multiplier of the
  *        consumer's known SSR bias term.
  *
- * The decoded bias is the satellite signal bias present in the observation, so it is added
- * to the clean model.  This convention can only be confirmed empirically against the
- * provider's stream: float ambiguity fractions that cluster near 0.5 instead of 0 mean the
- * constant must be flipped (and the code rebuilt).  Code and phase share it.
+ * The stored bias is the satellite signal bias present in the observation, so it is added
+ * to the clean model.  The network emitter writes its states in this sense; an RTCM or
+ * IGS-SSR stream sends the correction added to the observation, and the SSR decoder
+ * negates it into this sense.  A wrong sign leaves twice the bias in every row: on the
+ * code, a constant between-satellite misfit between two signals of one band; on the
+ * phase, float ambiguities with no integer property.  Code and phase share it.
  */
 inline constexpr double kSatBiasSign = +1.0;
 

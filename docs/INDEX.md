@@ -375,6 +375,7 @@ against all four keys 41.5 % (field) and 34.8 % (sim) shorter).
 | [EPH-JUMP](cards/realtime/EPH-JUMP-RESEED.md) | re-seed a satellite whose broadcast record change moves its range > 10 m: BUILT default OFF; 6 h armed replay byte-identical, healthy changes <= 0.83 m; ungraded on a real jump | closed | 2026-10-23 |
 | [SSR-PB-HDR](cards/realtime/SSR-PB-HEADER.md) | SSR phase-bias messages read with the header's two consistency bits per satellite: every block after the first misaligned, the live coverage ramp and resets were artifacts; fixed, unit-tested; live after the fix 99.9 % coverage, 0 resets (28 before) | closed | 2026-10-29 |
 | [SSR-SIG-ID](cards/realtime/SSR-SIGNAL-ID.md) | SSR bias signal ids read through the MSM observation table: only Galileo E1C reached its own signal; fixed, unit-tested; live AR candidates on GPS and Galileo, but 0 fixes in a 30-minute session (floats carry no integer information, cause open) | closed | 2026-10-29 |
+| [SSR-BIAS-SIGN](cards/realtime/SSR-BIAS-SIGN.md) | SSR code and phase biases applied with the OSB sign (the wire value is the correction added): fixed in the decoder; live code misfit 0.58 to 0.05 m, wide-lane integer, narrow-lane not, still 0 fixes | open | 2026-10-29 |
 
 Standing documents (not split this pass):
 

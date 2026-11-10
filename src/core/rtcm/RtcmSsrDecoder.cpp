@@ -305,6 +305,12 @@ void decodeCombinedBody(RtcmBitReader& r, const SystemDescriptor& sys,
     out.push_back(std::move(cb));
 }
 
+// SSR code and phase biases on the wire (legacy and IGS-SSR) are corrections ADDED to the
+// observation; the store holds the bias present in the observation, which the model adds
+// to the clean range (kSatBiasSign, ObservationEquation.hpp) and the network emitter
+// writes.  The two differ in sign, so both bias bodies negate the wire value.  Reference:
+// cssrlib pppssr.py forms the model as range - cbias and range - pbias with the wire values
+// of RTCM3_SSR and IGS_SSR, and negates Bias-SINEX OSBs instead.
 void decodeCodeBiasBody(RtcmBitReader& r, const SystemDescriptor& sys,
                         const SsrHeader& hdr, const GnssTime& rx,
                         std::vector<SsrCodeBias>& out) {
@@ -318,12 +324,12 @@ void decodeCodeBiasBody(RtcmBitReader& r, const SystemDescriptor& sys,
 
     for (int i = 0; i < n_sigs; ++i) {
         const int    sig_id = static_cast<int>(r.u(5));
-        const double bias_m = r.s(14) * 0.01;           // 0.01 m
+        const double wire_m = r.s(14) * 0.01;           // 0.01 m, added to the pseudorange
         if (!r.ok()) return;
         // SSR bias numbering, which differs from the MSM one (RtcmSignalMap.hpp).
         const std::string suffix = RtcmSignalMap::ssrToRinexSuffix(sys.system, sig_id);
         if (!suffix.empty()) {
-            cb.bias_per_signal["C" + suffix] = bias_m;
+            cb.bias_per_signal["C" + suffix] = -wire_m;  // the bias present in the pseudorange
         }
     }
     out.push_back(std::move(cb));
@@ -384,13 +390,13 @@ void decodePhaseBiasBody(RtcmBitReader& r, const SystemDescriptor& sys,
         const bool   sig_int     = r.boolean();
         const int    wl_int      = static_cast<int>(r.u(2));
         const int    disc        = static_cast<int>(r.u(4));
-        const double bias_m      = r.s(20) * 1e-4;             // 0.1 mm
+        const double wire_m      = r.s(20) * 1e-4;             // 0.1 mm, added to the phase
         if (!r.ok()) return;
         // SSR bias numbering, which differs from the MSM one (RtcmSignalMap.hpp).
         const std::string suffix = RtcmSignalMap::ssrToRinexSuffix(sys.system, sig_id);
         if (suffix.empty()) continue;
         SsrPhaseBiasEntry e;
-        e.bias_m                = bias_m;
+        e.bias_m                = -wire_m;                     // the bias present in the phase
         e.signal_integer        = sig_int;
         e.wide_lane_integer     = wl_int;
         e.discontinuity_counter = disc;
