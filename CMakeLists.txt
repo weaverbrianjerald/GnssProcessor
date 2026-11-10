@@ -335,6 +335,7 @@ add_library(gnss_core STATIC
     src/core/network/assembly/LocalBirth.cpp
     src/core/network/assembly/SharedAdmission.cpp
     src/core/network/carry/ZwdCarry.cpp
+    src/core/network/carry/ZwdEdge.cpp
     src/core/network/diag/ShHealth.cpp
     src/core/network/diag/Leveling.cpp
     src/core/network/diag/StashStatus.cpp
@@ -444,6 +445,10 @@ if(MSVC)
     # tests/test_rhs_attrib_local.cpp: the same run fixture crosses the Debug section limit
     # (C1128) under /arch:AVX2.
     set_source_files_properties(tests/test_rhs_attrib_local.cpp
+        PROPERTIES COMPILE_FLAGS "/bigobj")
+    # tests/test_code_datum_family.cpp: the station entity's wet-delay edge record (card ZTL
+    # section 6) tipped its run-context headers over the Debug section limit (C1128).
+    set_source_files_properties(tests/test_code_datum_family.cpp
         PROPERTIES COMPILE_FLAGS "/bigobj")
     # tests/network/test_network_arc_graph_oracles.cpp: the epoch-event and run-context headers it
     # includes sat at the Debug section limit, and the satellite clock event's two members (a step
@@ -790,6 +795,7 @@ add_executable(gnss_tests
     tests/network/test_zwd_seam_reseed_q.cpp
     tests/network/test_carry_zwd_in_block.cpp
     tests/network/test_zwd_time_link_float_vehicle.cpp
+    tests/network/test_zwd_couple_edge.cpp
     tests/network/test_carry_iono_in_block.cpp
     tests/network/test_carry_rx_clock_in_block.cpp
     tests/test_resume_frame_restore.cpp

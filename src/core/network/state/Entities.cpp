@@ -866,6 +866,8 @@ const std::vector<FieldDecl> kStationFields = {
     // name, was, persistence, record, fingerprint, to_snapshot, from_snapshot, rows
     {"zwd", "zwd_carry", Persist::Record, "Z", "",
      &zwdToSnapshot, &zwdFromSnapshot, &stationRows<&S::zwd>},
+    {"zwd_edge", "", Persist::ColdStart, "", "",   // no former member: new with the wet delay's re-coupling identity rows (card ZTL)
+     nullptr, nullptr, &stationRows<&S::zwd_edge>},
     {"gross_los", "gl_sta_state", Persist::ColdStart, "", "",
      nullptr, nullptr, &stationRows<&S::gross_los>},
     {"cg_event_last", "cg_event_last", Persist::ColdStart, "", "",   // step N4e2, re-placed

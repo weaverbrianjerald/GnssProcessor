@@ -170,6 +170,7 @@ struct RaimPriorSelection {
     std::vector<std::size_t> arcs_both;   ///< Cells of the line-of-sight flags the observation channel also refloats.
     std::vector<std::size_t> rxcb;        ///< Cells of the receiver code-bias flags (their carries are reset).
     std::vector<std::size_t> unwired;     ///< Cells of the flags on an unwired subject.
+    std::vector<std::size_t> zwd;         ///< Cells of the flags on the station wet delay's block row that take the wet delay's event response (empty unless @ref raimPriorWireZwd moved them out of @c unwired).
     std::vector<std::size_t> held_cells;  ///< Per entry of @c isolated.held, its cell.
     /// The flagged cells that take a response: a line of sight refloated (by this channel, or by
     /// the observation channel in the same pass) and a receiver code bias reset.
@@ -209,6 +210,20 @@ RaimPriorSelection raimPriorChannelSelect(const std::vector<RaimPriorRow>& rows,
                                           double k_sigma, const std::set<std::string>& caught_sats,
                                           const std::vector<std::pair<int, std::string>>& obs_arcs,
                                           bool mature);
+
+/**
+ * @brief Moves the flags on the station wet delay's own block row (@c block_zwd_carry) out of
+ *        @c unwired into @c zwd and marks them acted.
+ *
+ * Called only where the wet delay's event response is armed (NetworkKnobs::zwd_event_on, the
+ * in-block route under the float vehicle): those flags then take the response of a RAIM per-arc
+ * attribution (the station's carried wet delay is erased), so they are neither unwired nor
+ * counted as such.  Every other unwired flag stays where it is.
+ *
+ * @param sel  [in/out] The selection (@ref raimPriorChannelSelect).
+ * @param rows The pass's tested rows the selection indexes.
+ */
+void raimPriorWireZwd(RaimPriorSelection& sel, const std::vector<RaimPriorRow>& rows);
 
 /**
  * @brief Fold one pass's selection into the tally: the scale, the cells, the flags and held

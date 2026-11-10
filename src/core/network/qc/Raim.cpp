@@ -12,7 +12,8 @@
  */
 
 #include "network/qc/Raim.hpp"
-#include "network/carry/ZwdCarry.hpp"   // zwdEventDrop: the wet delay's attribution response
+#include "network/carry/ZwdCarry.hpp"   // zwdEventErase: the wet delay's attribution response
+#include "math/TimeUtils.hpp"              // continuousGpsSeconds (the wet delay's edge record)
 
 #include "network/state/RunContext.hpp"          // ctx.knobs / ctx.carry / ctx.counters
 #include "config/GnssConfig.hpp"              // config_ getters
@@ -783,6 +784,9 @@ void networkPostFitRaim(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitH
             if (prior_on) {
                 prior_sel = raimPriorChannelSelect(prior_rows, raim_s0_floor, raim_k, bad_sats,
                                                    bad_arcs, raim_mature);
+                // With the wet delay's event response armed, a flag on its own block row takes
+                // that response (an erase), not the unwired count.
+                if (ctx.knobs.zwd_event_on) raimPriorWireZwd(prior_sel, prior_rows);
                 raimPriorChannelNoteSelection(prior_sel, !prior_rows.empty(), prior_tally);
                 n_arc_refloat_epoch += static_cast<int>(prior_sel.arcs.size());
             }
@@ -1038,23 +1042,6 @@ void networkPostFitRaim(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitH
                         prmRespond(ctx.counters.prm_resp,
                                    ResponseSite::PcRaimErase);
                     }
-                    // The station's carried wet delay on the float vehicle's in-block route.
-                    // A per-arc attribution says this station's solve held a misfit the
-                    // estimate did not explain, and the wet delay was estimated jointly with
-                    // it, so the carried entry cannot vouch for itself: it is erased, and the
-                    // next epoch's column folds no prior (the harvest re-creates the entry).
-                    // Per arc only: a satellite-wide call (a bad satellite refloated at every
-                    // station) is a satellite fault, and erasing every tracking station's wet
-                    // delay on it would be a network-wide decoupling.  This site runs after
-                    // the harvest, so the next epoch is the first fold that can act on it.
-                    if (statistical_arc && ctx.knobs.zwd_event_on
-                        && zwdEventDrop(entities.stations, static_cast<int>(i))) {
-                        ++ctx.counters.n_zwd_event_drop_raim;
-                        prmRespond(ctx.counters.prm_resp, ResponseSite::ZwdRaimErase);
-                        traces.emitEvent(se.time, "ZWD", "raim_attribution", pa.sat,
-                                         stations[i].name, std::nullopt, std::nullopt,
-                                         "erase", "no_prior_next_epoch");
-                    }
                     // The receiver clock in the carried block (RX-CLK-in-block) has no
                     // T4 edge here, by a triaged decision rather than an omission.
                     // Invariant #1 requires a wired event response for every stiff
@@ -1078,6 +1065,25 @@ void networkPostFitRaim(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitH
                     }
                     ++n;
                 }
+            // The station's carried wet delay on the float vehicle's in-block route.  A
+            // per-arc attribution says this station's solve held a misfit the estimate did not
+            // explain, and the wet delay was estimated jointly with it, so the carried entry
+            // cannot vouch for itself: it is erased, and the next epoch's column folds no prior
+            // (the harvest re-creates the entry).  Once per flagged arc, whether or not the
+            // station's pool held an ambiguity of the satellite: the misfit is the station's
+            // either way.  Per arc only: a satellite-wide call (a bad satellite refloated at
+            // every station) is a satellite fault, and erasing every tracking station's wet
+            // delay on it would be a network-wide decoupling.  This site runs after the
+            // harvest, so the next epoch is the first fold that can act on it.
+            if (statistical_arc && ctx.knobs.zwd_event_on
+                && zwdEventErase(entities.stations, i, ZwdEdgeCause::RaimArc,
+                                 TimeUtils::continuousGpsSeconds(se.time), ctx.counters, sat,
+                                 drop_cause)) {
+                ++ctx.counters.n_zwd_event_drop_raim;
+                prmRespond(ctx.counters.prm_resp, ResponseSite::ZwdRaimErase);
+                traces.emitEvent(se.time, "ZWD", "raim_attribution", sat, stations[i].name,
+                                 std::nullopt, std::nullopt, "erase", "no_prior_next_epoch");
+            }
             return n;
         };
         if ((attrib_act || inject_arc_act)
@@ -1202,6 +1208,26 @@ void networkPostFitRaim(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitH
                 }
                 prior_event("prior_rxcb", c, erased ? "reset" : "no_entry",
                             ";key=" + r.subject.cb_key);
+            }
+            // A flag on the station wet delay's own block row (only with its event response
+            // armed): the carried wet delay is erased, and the next epoch's column folds no
+            // prior, the response of a RAIM per-arc attribution.
+            for (std::size_t c : prior_sel.zwd) {
+                const RaimPriorRow& r = prior_rows[prior_sel.cell_row[c]];
+                const bool erased =
+                    zwdEventErase(entities.stations, r.station, ZwdEdgeCause::RaimPrior,
+                                  TimeUtils::continuousGpsSeconds(se.time), ctx.counters);
+                if (erased) {
+                    ++prior_tally.zwd_erases;
+                    ++ctx.counters.n_zwd_event_drop_prior;
+                    prmRespond(ctx.counters.prm_resp, ResponseSite::ZwdRaimErase);
+                    traces.emitEvent(se.time, "ZWD", "raim_prior", std::string(),
+                                     stations[r.station].name, std::nullopt, std::nullopt,
+                                     "erase", "no_prior_next_epoch");
+                } else {
+                    ++prior_tally.zwd_no_entry;
+                }
+                prior_event("prior_zwd", c, erased ? "erase" : "no_entry", "");
             }
             for (std::size_t c : prior_sel.unwired)
                 prior_event("prior_unwired", c, "none", "");

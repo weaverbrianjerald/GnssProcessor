@@ -102,7 +102,7 @@ enum class ResponseSite : int {
     ZwdGapSkip,            ///< a wet delay past the gap horizon not folded
     ZwdGapPrune,           ///< a wet delay unseen past the horizon erased
     ZwdSlipErase,          ///< float vehicle: a station's carried wet delay erased at a slip latch of the station (its column folds no prior this epoch)
-    ZwdRaimErase,          ///< float vehicle: a station's carried wet delay erased at a RAIM per-arc attribution of the station (its column folds no prior next epoch)
+    ZwdRaimErase,          ///< float vehicle: a station's carried wet delay erased at a RAIM per-arc attribution of the station, or at a prior-channel flag on its own block row (its column folds no prior next epoch; ZwdCarryCounters splits the two)
     // --- Satellite clock (prev_carry, clock_osc) ---------------------------------------
     ClkDeparted,           ///< folded with its column departed (marginalized)
     ClkPark,               ///< parked at its column's departure (READMIT)
