@@ -198,3 +198,8 @@ verbatim on 2026-11-07 under the 60 KB bar. Entries are in pre-registration orde
   response (slip latch, RAIM per-arc attribution), off and byte-identical by default. At q 5e-8 the field wet delay moves 0.73 mm per epoch
   (was 2.59), the slip-epoch excursions are gone, user and census unchanged; the sim truth bar fails (hours 4 to 6 rms 6.4 mm against 4,
   NEES to 2.8; 0.77 to 0.86 with the phase colour state); no integer gain. Not recommended for arming alone; the colour pairing is owed.
+- [SMX2](SMX2_scenario_matrix_current_golden_2026-11-09.md): open, 2026-11-09: card SMX's version-1 matrix re-run on fresh
+  seeds of the postures as armed on main `27d6ece` (the keys of 2026-11-07 included), as armed and with
+  `network.emit_pb_hold_trip_generation`, read cell by cell against labels `smx1` and `crs2b`; card SLV's seam clause S1 for the
+  100 m2 floor re-graded with card CRS2's resume keys, and its guard question at steps the control's guard catches; a
+  default-off narrowing of the trip generation to the classified clock event, built only if no other session has taken it up.
