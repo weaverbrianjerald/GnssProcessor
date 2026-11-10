@@ -77,7 +77,7 @@ Card IRD carries its own step list (IRD-1 onward: bundle A0, decisions D0 and D-
 consumer veto IRD-7). Only work outside it is listed.
 
 - **Held phase bias under an eq34 shift.** The one open item of PRM3 step 2 (257 / 188 family-epochs); it matters for IRD's eq34 bundle. [PRM3](../refound/PRM3_responses_2026-10-02.md)
-- **The author's rulings of 2026-11-09.** D0: the receiver phase-bias floor goes off on the arm going forward. Stage S0 of the integer route: the chain first, the replacement of the emission freeze second, the emission-side transform declined. Owed: the floor off in `scripts/ird_make_arms.py` with the event rows' I-b read again, and the receiver phase bias carried as a column of the station block (the time link's double count). [IRDF §9](../refound/IRDF_d0_receiver_floor_redecided_2026-11-07.md), [ARR §7](../refound/ARR_integer_ambiguity_review_2026-11-07.md)
+- **The author's rulings of 2026-11-09.** D0: the receiver phase-bias floor goes off on the arm going forward. Stage S0 of the integer route: the chain first, the replacement of the emission freeze second, the emission-side transform declined. Owed: the floor off in `scripts/ird_make_arms.py` with the event rows' I-b read again, and the receiver phase bias carried as a column of the station block (the time link's double count); both are card [IRDG](../refound/IRDG_floor_off_rpb_in_block_2026-11-09.md), pre-registered 2026-11-09. [IRDF §9](../refound/IRDF_d0_receiver_floor_redecided_2026-11-07.md), [ARR §7](../refound/ARR_integer_ambiguity_review_2026-11-07.md)
 
 ## L5 (SEQUENCED, never closed)
 
