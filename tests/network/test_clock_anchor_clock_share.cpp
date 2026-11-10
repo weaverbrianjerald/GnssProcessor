@@ -458,7 +458,8 @@ TEST(ClockAnchorClockShare, AKeyCarriedShiftTripsWithoutTheRequirement) {
     f.epoch(f.truth, keyShifted(f.truth));
     EXPECT_EQ(f.ctx.counters.cta_trip_phi, 1);
     EXPECT_FALSE(f.ctx.carry.clk_anchor.sat.at("G03").anchored);
-    EXPECT_EQ(f.ctx.carry.clk_anchor.stepped, (std::set<std::string>{"G03"}));
+    EXPECT_EQ(f.ctx.carry.clk_anchor.stepped,
+              (std::map<std::string, ClockStepCause>{{"G03", ClockStepCause::TestTrip}}));
     EXPECT_EQ(f.ctx.counters.cta_phi_withheld, 0);
     EXPECT_TRUE(f.events("phi_withheld").empty());
     EXPECT_EQ(f.decisions("G03"), (std::vector<std::string>{"trip"}));
@@ -503,7 +504,8 @@ TEST(ClockAnchorClockShare, ATrueSatelliteClockStepStillTripsWithTheRequirement)
     EXPECT_EQ(C.cta_trip_phi, 1);
     EXPECT_EQ(C.cta_phi_withheld, 0);
     EXPECT_FALSE(f.ctx.carry.clk_anchor.sat.at("G03").anchored);
-    EXPECT_EQ(f.ctx.carry.clk_anchor.stepped, (std::set<std::string>{"G03"}));
+    EXPECT_EQ(f.ctx.carry.clk_anchor.stepped,
+              (std::map<std::string, ClockStepCause>{{"G03", ClockStepCause::TestTrip}}));
     EXPECT_EQ(f.decisions("G03"), (std::vector<std::string>{"trip"}));
     const auto rows = f.events("cta_decouple");
     ASSERT_EQ(rows.size(), 1u);
