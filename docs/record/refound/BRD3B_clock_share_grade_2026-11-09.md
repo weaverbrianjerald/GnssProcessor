@@ -5,14 +5,14 @@
 - **id:** BRD3B
 - **topic:** network-vehicle
 - **status:** closed
-- **summary:** Card BRD3's continuation (that file nears the 60 KB bar): the build card BRD3 pre-registered in its section 4, graded against the gates frozen there on 2026-11-06; card BRD3 keeps the mechanism, the gates, the build's description and how the gates are read on the current main (its sections 4, 8.1 and 8.2). `network.clock_anchor_clock_k` withholds a phase-statistic trip whose clock-space statistic is below the value. At 2.0 on card BRD's tracked posture, rebuilt on the 2026-11-07 golden, it takes 0, 0, 1 and 0 trips on DOY 129 to 132 and withholds 1, 7, 1 and 28. The three days without a trip are byte-identical to the test-off arm; DOY 131 meets the day bars; 8 of 64 site-days are worse against the GPS golden (bar 20 %). The injected clock step still trips (|w_clk| 7.92), the sim legs are byte-identical with and without the key, and storm `c` withholds exactly its 8 key-carried trips. X-U0 and X0 to X4 pass; X5 fails on all three clauses in its letter (two of 28 withheld trips under a 0.9 keys' share, two over 20 mm of clock innovation, 28 withheld against 26). Nothing armed.
+- **summary:** Card BRD3's continuation (that file nears the 60 KB bar): the build card BRD3 pre-registered in its section 4, graded against the gates frozen there on 2026-11-06; card BRD3 keeps the mechanism, the gates, the build's description and how the gates are read on the current main (its sections 4, 8.1 and 8.2). `network.clock_anchor_clock_k` withholds a phase-statistic trip whose clock-space statistic is below the value. At 2.0 on card BRD's tracked posture, rebuilt on the 2026-11-07 golden, it takes 0, 0, 1 and 0 trips on DOY 129 to 132 and withholds 1, 7, 1 and 28. The three days without a trip are byte-identical to the test-off arm; DOY 131 meets the day bars; 8 of 64 site-days are worse against the GPS golden (bar 20 %). The injected clock step still trips (|w_clk| 7.92), the sim legs are byte-identical with and without the key, and storm `c` withholds exactly its 8 key-carried trips. X-U0 and X0 to X4 pass; X5 fails on all three clauses in its letter (two of 28 withheld trips under a 0.9 keys' share, two over 20 mm of clock innovation, 28 withheld against 26). Recommended on 2026-11-10 (section 6): against the same posture without it, 0 of 64 site-days worse by 2 cm, 12 better and 1 worse by 1 cm, DOY 132's census median -0.0147 m; ledger row RECOMMEND_SCOPED with the broadcast-referenced posture as its regime and a run-start posture row; no golden carries it (refused at their q).
 - **source:** card [BRD3](BRD3_anchor_decoupling_clock_share_2026-11-06.md) sections 2.3 (the clock-space share of every trip), 4 (the mechanism, the gates, what is not built), 5.1 (the step legs and their seeds), 5.2 (the 26 trips of DOY 132 read apart) and 8 (the build and how the gates are read); card [BRD2](BRD2_broadcast_remainder_hold_days_2026-11-03.md) sections 4 and 5.5 (gate D, the test-off posture); card [BRD](BRD_broadcast_referenced_level_2026-11-02.md) (the tracked posture); card [SMX](../../refound/SMX_scenario_matrix_2026-10-24.md) (the matrix); standing invariants 1, 4 and 7 of `CLAUDE.md`
-- **knobs / posture:** `network.clock_anchor_clock_k` (default 0 = off; ledger row UNVALIDATED, parent `network.clock_anchor_guard_space`). Graded posture: card BRD's T2 recipe on the 2026-11-07 golden (card BRD3 section 8.2), the key at 2.0
+- **knobs / posture:** `network.clock_anchor_clock_k` (default 0 = off; ledger row RECOMMEND_SCOPED since 2026-11-10, regime the anchor in phase mode at q of at least 1e-6, parent `network.clock_anchor_guard_space`). Graded posture: card BRD's T2 recipe on the 2026-11-07 golden (card BRD3 section 8.2), the key at 2.0
 - **dates in the text:** 2026-11-09, 2026-11-10
-- **hashes / run dirs:** branch `brd3/clock-share` from main `27d6ece`, worktree `D:/GnssProcessorSupport/worktrees/brd3k`; exes `gnss_processor_brd3kb.exe` (the base, sha256[:16] `5c2d8cc06c27acc7`) and `gnss_processor_brd3k.exe` (the key, `2134f60773a4de43`); arms `D:/GnssProcessorSupport/runs_nom/_rap_brd3k_{c129_2,s0_2,t132_2}{b,n}`, `_rap_brd3k_{x,tk,g}{129,130,131,132}_6`, `_rap_brd3k_rx{131,132}_6`, `_rap_brd3k_{x,g}132_24`; census replays `_rap_b3{x,tk,g}<doy>_<site>` and `_rap_b3{x,g}24_<site>`; sim labels `brd3kx` and `brd3k0` (`D:/GnssProcessorSupport/gates/smx/`, legs `evleg_smx_brd3k{x,0}_*`); day configs `D:/GnssProcessorSupport/runs_nom/_brd3k_cfg/`; tools in `D:/GnssProcessorSupport/worktrees/brd3k_tools/` (outside the repository): `make_arms.sh`, `ident.py`, `x_read.py`, `brd_census.py`, `brd_census24.py`, `brd_pool.py`, `brd_run.py`
+- **hashes / run dirs:** branch `brd3/clock-share` from main `27d6ece`, worktree `D:/GnssProcessorSupport/worktrees/brd3k`; exes `gnss_processor_brd3kb.exe` (the base, sha256[:16] `5c2d8cc06c27acc7`) and `gnss_processor_brd3k.exe` (the key, `2134f60773a4de43`); arms `D:/GnssProcessorSupport/runs_nom/_rap_brd3k_{c129_2,s0_2,t132_2}{b,n}`, `_rap_brd3k_{x,tk,g}{129,130,131,132}_6`, `_rap_brd3k_rx{131,132}_6`, `_rap_brd3k_{x,g}132_24`, `_rap_brd3k_tn{129,130,131,132}_6` and the smokes `_rap_brd3k_ps{n,k}` (section 6, exe `gnss_processor_brd3kp.exe`, `ee0ff7c5e432df2c`, the posture row added); census replays `_rap_b3{x,tk,tn,g}<doy>_<site>` and `_rap_b3{x,g}24_<site>`; sim labels `brd3kx` and `brd3k0` (`D:/GnssProcessorSupport/gates/smx/`, legs `evleg_smx_brd3k{x,0}_*`); day configs `D:/GnssProcessorSupport/runs_nom/_brd3k_cfg/`; tools in `D:/GnssProcessorSupport/worktrees/brd3k_tools/` (outside the repository): `make_arms.sh`, `ident.py`, `x_read.py`, `brd_census.py`, `brd_census24.py`, `brd_pool.py`, `brd_run.py`
 - **gates (frozen at pre-registration):** card BRD3 section 4.2 (2026-11-06), read as card BRD3 section 8.2 states
 
-**Outcome.** Question: does the clock-share requirement withhold the clock anchor's key-carried trips on the broadcast-referenced posture while keeping a real satellite clock step? Yes. On the tracked posture the key takes 1 trip in four days (DOY 131's G22, at a clock share of 2.06) and withholds 37, every one with |w_clk| at most 1.10; the days pass their bars and the pooled share (12 %). The injected step still trips, and the storm withholds only its key-carried trips. Gate X5 fails in its letter. Nothing armed.
+**Outcome.** Question: does the clock-share requirement withhold the clock anchor's key-carried trips on the broadcast-referenced posture while keeping a real satellite clock step? Yes. On the tracked posture the key takes 1 trip in four days (DOY 131's G22, at a clock share of 2.06) and withholds 37, every one with |w_clk| at most 1.10; the days pass their bars and the pooled share (12 %). The injected step still trips, and the storm withholds only its key-carried trips. Gate X5 fails in its letter. Against the same posture without it the key worsens no site-day by 2 cm and improves 12 by 1 cm; it is recommended on that posture (section 6), which no golden is.
 
 ## 1. The question and the method
 
@@ -198,3 +198,48 @@ golden change and the merge are the author's decisions.
   a counting choice for the author, with no effect on the solve.
 - **The GPS + Galileo broadcast posture** with the re-seed key and the clock share (card BRD3 section 4.2's unbarred item),
   not run here.
+
+## 6. Recommended on the broadcast-referenced posture (2026-11-10)
+
+The author's direction of 2026-11-10: arm the key if it is an improvement, with look-here notes for the testing not yet
+finished (the arming rule of 2026-11-07). Where it can be armed is fixed by card BRD3 section 4.1: the loader refuses the key
+at the goldens' `clock_anchor_q` (2.9e-8, where a 0.5 m step reads |w_clk| 0.15 and the requirement would withhold every
+real clock step), so no golden carries it and the generated goldens are unchanged. Its regime is the anchor in phase mode
+at a q of at least 1e-6: card BRD's broadcast-referenced posture, a recipe over the field golden, not a golden.
+
+The improvement question was read on that posture against itself without the key (the anchor's statistic test on), which
+section 2 did not run: `brd3k_tn{129..132}_6`, the final exe, configurations that differ from the key arms `brd3k_x*_6`
+only in the key, census replays `b3tn<doy>_<site>`. Hours 2 to 6, paired per site as in section 2.
+
+| day | trips without the key | key against the posture without it: census median; better / worse by 1 cm; worse by 2 cm | WTZZ00DEU hours 2 to 6, key against without | without the key against the GPS golden: census median (worse by 2 cm) |
+| --- | --- | --- | --- | --- |
+| 129 | 1 (G11, \|w_clk\| 0.01) | +0.0000 m; 0 / 0; 0 | 0.0151 against 0.0151 m (+0.0000) | -0.0004 m (1) |
+| 130 | 7 | -0.0003 m; 2 / 0; 0 | 0.0295 against 0.0384 m (-0.0089) | +0.0038 m (5) |
+| 131 | 2 (G22 at 2.06, G12 at 0.12) | +0.0000 m; 0 / 0; 0 | 0.0310 against 0.0243 m (+0.0067) | +0.0022 m (2) |
+| 132 | 26 | -0.0147 m; 10 / 1; 0 | 0.0164 against 0.0309 m (-0.0145) | +0.0110 m (5) |
+| pooled | 36 | -0.0000 m; **12 / 1; 0 of 64** | | +0.0026 m (13 of 64, 20 %) |
+
+Without the key the posture trips on the satellites and epochs section 2.3 read (1, 7, 2 and 26 statistic trips, all
+taken). DOY 129's products differ (G11 decoupled at 2.90 h) but no site moves by 1 cm. On DOY 130 the key improves
+ASCG00SHN (-0.027 m) and HARB00ZAF (-0.010 m). On DOY 132, where the 26 key-carried trips are withheld, it improves 10 sites
+by more than 1 cm (HARB00ZAF -0.079, WUH200CHN -0.046, KOKB00USA -0.034, POHN00FSM -0.032, BADG00RUS -0.027, DAV100ATA -0.020,
+ARHT00ATA -0.020, QUIN00USA -0.016, CEDU00AUS -0.013, ANMG00MYS -0.012 m) and loses one (UTQI00USA +0.011 m). The one loss
+at the held-out receiver is DOY 131: WTZZ00DEU reads 0.037 and 0.038 m in hours 5 and 6 against 0.023 and 0.019 m, after
+G12's withheld trip at 3.99 h (|w_clk| 0.12); the census does not move. Against the GPS golden the posture without the key
+has 13 of 64 site-days worse by 2 cm (20 %, at gate D's pooled bar), the key 8 (12 %).
+
+**Verdict: an improvement on the posture where it acts.** No site-day is worse by 2 cm, 12 are better and 1 worse by 1 cm,
+and the cost of DOY 132's key-carried decouplings is removed; the step is still detected (X3).
+
+**What is armed.** Ledger row `network.clock_anchor_clock_k`: RECOMMEND_SCOPED, regime `on("network.clock_temporal_anchor")
+and val("network.clock_anchor_guard_space", "clock") == "phase" and val("network.clock_anchor_q", 1e-4) >= 1e-6`, armed
+when the value is positive, not fingerprinted; a SCOPED row with the same predicate in the run-start posture readout
+(`src/core/config/GnssConfigNetworkPosture.cpp`). A broadcast-referenced configuration without the key now reports it as an
+unarmed recommendation at run start and in `python scripts/config_posture_check.py --tier scoped`: 10-epoch smokes
+`brd3k_ps{n,k}` on DOY 132 (exe `gnss_processor_brd3kp.exe`, sha256[:16] `ee0ff7c5e432df2c`) read SCOPED tier 52 of 56
+armed without the key and 53 of 56 with it, and the offline check agrees on the knob-off and key arms. On the three goldens
+the row is out of regime; `make_golden_config.py --verify` passes with the goldens unchanged. The loader default stays 0 (a
+default flip is a migration). Look-here notes in the ledger row: DOY 131's held-out receiver (+0.0067 m), UTQI00USA on DOY
+132 (+0.011 m against the posture without the key), and the steps not yet run (24 h on DOY 129, DOY 128, a real-time run,
+the unhealthy G01, the GPS + Galileo broadcast posture). A later arm of card BRD's T2 recipe carries the key at 2.0; the
+posture readout reports it when it does not. The scenario matrix's posture `c` (`scripts/scenario_matrix.py`) is not edited here.

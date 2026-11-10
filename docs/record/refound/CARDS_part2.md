@@ -147,7 +147,10 @@ verbatim on 2026-11-07 under the 60 KB bar. Entries are in pre-registration orde
   131 meets gate D's bars, and 8 of 64 site-days are worse against the GPS golden (bar 20 %). The injected 0.5 m step still trips
   (|w_clk| 7.92), every sim step leg is byte-identical with and without the key, and storm c withholds exactly its 8 key-carried
   trips. X-U0 and X0 to X4 pass; X5 fails on its three clauses as written (two withheld trips under a 0.9 keys' share, two over 20 mm,
-  28 withheld against 26). 24 h on DOY 132: no trip, census +0.0032 m over hours 2 to 24. Nothing armed.
+  28 withheld against 26). 24 h on DOY 132: no trip, census +0.0032 m over hours 2 to 24. 2026-11-10 (section 6): against the
+  same posture without the key, 0 of 64 site-days worse by 2 cm, 12 better and 1 worse by 1 cm (DOY 132 census median -0.0147 m);
+  recommended (RECOMMEND_SCOPED) on the broadcast-referenced posture with look-here notes; refused at the goldens' q, so no golden
+  carries it.
 - [ICL](ICL_inter_constellation_level_2026-11-03.md): closed, 2026-11-03 (pre-registered the same day): the GPS-to-Galileo level of card
   BRD's broadcast-referenced posture, held for receivers whose inter-system offset is frozen. Measured before building: each
   constellation's phase-visible level is its clock pivot's a priori error (under the tracked a priori a random walk, 188 and 193 mm over

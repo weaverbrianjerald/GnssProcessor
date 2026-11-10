@@ -123,7 +123,9 @@ in section 8 and graded in card BRD3B; measure-only trace columns and the tracke
 BRD3's frozen gates (closed, 2026-11-10: on the tracked posture rebuilt on the 2026-11-07 golden the key at 2.0 takes 0, 0, 1 and 0
 trips on DOY 129 to 132 and withholds 1, 7, 1 and 28, three days byte-identical to the test-off arm, 8 of 64 site-days worse against
 the GPS golden; the injected step still trips at |w_clk| 7.92 and the sim legs are byte-identical with and without it; storm c
-withholds exactly its 8 key-carried trips; X-U0 and X0 to X4 pass, X5 fails in its letter; nothing armed).
+withholds exactly its 8 key-carried trips; X-U0 and X0 to X4 pass, X5 fails in its letter; 2026-11-10: against the same
+posture without it 0 of 64 site-days worse by 2 cm and 12 better by 1 cm, recommended RECOMMEND_SCOPED on the
+broadcast-referenced posture with look-here notes, no golden carries it).
 
 [ICL](refound/ICL_inter_constellation_level_2026-11-03.md), the GPS-to-Galileo level of the broadcast-referenced network for receivers
 whose inter-system offset is frozen (closed, 2026-11-03: each constellation's phase-visible level is its clock pivot's a priori error, a
