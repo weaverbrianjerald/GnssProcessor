@@ -33,7 +33,7 @@ namespace GnssProcessor {
  */
 struct SsrHeader {
     GnssTime epoch_time{0, 0.0};        ///< SSR epoch time (GPS time scale).
-    int      update_interval_index{0};  ///< 4-bit indicator (DF391 / table-coded seconds).
+    int      update_interval_index{0};  ///< 4-bit update-interval indicator (DF391 / IDF004); seconds via @ref ssrUpdateIntervalSeconds.
     bool     multi_message{false};      ///< More SSR sub-messages follow for this epoch.
     int      iod_ssr{0};                ///< 4-bit IOD-SSR (DF413).
     int      provider_id{0};            ///< 16-bit provider identifier (DF414).
@@ -42,6 +42,50 @@ struct SsrHeader {
     int      mw_consistency{0};              ///< Phase-bias messages only: 1-bit Melbourne-Wübbena consistency indicator, read once per message after the dispersive-bias indicator (0 for every other body).
     System   system{System::Unknown};   ///< GNSS system this header applies to.
 };
+
+/**
+ * @brief Seconds of an SSR update-interval indicator (RTCM DF391, IGS-SSR IDF004).
+ *
+ * The 16 indicators of IGS SSR Format v1.00 Table 7 (IDF004), the same table as
+ * RTCM 10403.3 DF391: 1, 2, 5, 10, 15, 30, 60, 120, 240, 300, 600, 900, 1800,
+ * 3600, 7200 and 10800 s.  The update interval is not the transmission rate: it
+ * names the interval, aligned to 00:00:00 GPS time, whose parameters belong
+ * together, and the parameters stay valid for at least that long.
+ *
+ * @param index The 4-bit indicator as decoded.
+ * @return The update interval in seconds; 0 for an index outside 0..15.
+ */
+inline double ssrUpdateIntervalSeconds(int index) {
+    constexpr double kSeconds[16] = {1, 2, 5, 10, 15, 30, 60, 120, 240, 300,
+                                     600, 900, 1800, 3600, 7200, 10800};
+    return (index >= 0 && index < 16) ? kSeconds[index] : 0.0;
+}
+
+/**
+ * @brief Reference time t0 of an SSR orbit or clock correction.
+ *
+ * IGS SSR Format v1.00 sec. 4: the reference time of the correction terms is the
+ * SSR epoch time plus half the update interval, except for indicator 0 (1 s),
+ * which uses the epoch time itself.  The orbit rates and the clock polynomial are
+ * evaluated at dt = t - t0.  An interval of 1 s or less, including the 0 that
+ * in-process network records carry (they declare no interval), leaves t0 at the
+ * epoch.
+ *
+ * @param epoch_time        SSR epoch time from the message header.
+ * @param update_interval_s Update interval of the message (@ref ssrUpdateIntervalSeconds).
+ * @return t0 on the GPS time scale.
+ */
+inline GnssTime ssrReferenceTime(const GnssTime& epoch_time, double update_interval_s) {
+    if (update_interval_s <= 1.0) return epoch_time;
+    GnssTime t0 = epoch_time;
+    t0.tow += 0.5 * update_interval_s;
+    constexpr double kSecondsInWeek = static_cast<double>(TimeUtils::SECONDS_IN_WEEK);
+    if (t0.tow >= kSecondsInWeek) {
+        t0.tow  -= kSecondsInWeek;
+        t0.week += 1;
+    }
+    return t0;
+}
 
 /**
  * @brief Satellite reference point an SSR orbit correction is expressed for.
@@ -80,8 +124,9 @@ struct SsrOrbitCorrection {
     int             iode{-1};           ///< Issue of Data, Ephemeris (DF071), in the IGS-SSR matching convention; -1 = unknown, for which iodeMatches() is permissive.  Decoders always set it explicitly, so the default affects only unstamped test and product constructions (RTF-2/RT0-1 sibling).
     Eigen::Vector3d delta_rac{Eigen::Vector3d::Zero()};      ///< Radial/Along/Cross delta (meters).
     Eigen::Vector3d delta_rac_dot{Eigen::Vector3d::Zero()};  ///< Time derivatives (meters/sec).
-    GnssTime        received_time{0, 0.0};                   ///< When the correction was received (wall-clock; staleness gate).
-    GnssTime        epoch_time{0, 0.0};                      ///< SSR content reference epoch (dt base for delta_rac_dot propagation).
+    GnssTime        received_time{0, 0.0};                   ///< When the correction was received (host clock on the GPS time scale; staleness gate).
+    GnssTime        epoch_time{0, 0.0};                      ///< SSR epoch time from the message header.  The dt base of delta_rac_dot is the reference time @ref ssrReferenceTime(epoch_time, update_interval_s).
+    double          update_interval_s{0.0};                  ///< Update interval of the message (s); 0 = none declared (in-process network records), so the reference time is the epoch.
     int             iod_ssr{0};                              ///< Provider IOD-SSR at receive time.
     /// Satellite reference point of the corrected orbit: @c APC for legacy
     /// 1057/1240-series decodes, @c CoM for IGS-SSR 4076.  The default @c CoM
@@ -95,7 +140,8 @@ struct SsrOrbitCorrection {
  * @brief Per-satellite clock correction (polynomial in time-from-epoch).
  *
  * The clock correction in meters at time @p t is:
- *     dC(t) = c0 + c1·dt + c2·dt²,  dt = t - epoch_time
+ *     dC(t) = c0 + c1·dt + c2·dt²,  dt = t - t0,
+ *     t0 = ssrReferenceTime(epoch_time, update_interval_s)
  * Apply by adding to the broadcast clock bias (also in meters).
  */
 struct SsrClockCorrection {
@@ -103,9 +149,20 @@ struct SsrClockCorrection {
     double      c0{0.0};                ///< Polynomial offset (meters).
     double      c1{0.0};                ///< Polynomial drift (m/s).
     double      c2{0.0};                ///< Polynomial drift rate (m/s^2).
-    GnssTime    received_time{0, 0.0};  ///< Wall-clock receive time (staleness gate).
-    GnssTime    epoch_time{0, 0.0};     ///< SSR content reference epoch: dt base for dC(t)=c0+c1·dt+c2·dt² (dt = t − epoch_time).
+    GnssTime    received_time{0, 0.0};  ///< Host-clock receive time on the GPS time scale (staleness gate).
+    GnssTime    epoch_time{0, 0.0};     ///< SSR epoch time from the message header; the polynomial's dt base is @ref ssrReferenceTime(epoch_time, update_interval_s).
+    double      update_interval_s{0.0}; ///< Update interval of the message (s); 0 = none declared (in-process network records), so the reference time is the epoch.
     int         iod_ssr{0};
+    /// True when the clock was computed against the orbit correction of its own SSR
+    /// solution, as every RTCM and IGS-SSR clock message is (IGS SSR Format v1.00
+    /// sec. 4: orbit and clock corrections of one IOD-SSR belong together).  Such a
+    /// clock applies only together with a fresh orbit correction of the same
+    /// IOD-SSR (@c SsrCorrectionStore::getOrbitClock): on the uncorrected broadcast
+    /// orbit it leaves the orbit correction out of the range while counting the
+    /// satellite as corrected.  The SSR decoder sets it.  False for a clock that is
+    /// defined against the orbit the user already holds (the network producer's
+    /// records, which carry no orbit correction), which applies on its own.
+    bool        needs_orbit_correction{false};
     /// Network clock discontinuity counter, an internal extension populated only
     /// by @c NetworkProductEmitter.  It is 0 for RTCM/IGS-SSR-decoded clocks (the
     /// wire standard has no such field) and whenever the network producer's
@@ -171,8 +228,9 @@ struct SsrCombinedCorrection {
     double          c0{0.0};
     double          c1{0.0};
     double          c2{0.0};
-    GnssTime        received_time{0, 0.0};  ///< Wall-clock receive time (staleness gate).
-    GnssTime        epoch_time{0, 0.0};     ///< SSR content reference epoch (shared orbit+clock dt base).
+    GnssTime        received_time{0, 0.0};  ///< Host-clock receive time on the GPS time scale (staleness gate).
+    GnssTime        epoch_time{0, 0.0};     ///< SSR epoch time from the message header; the shared orbit and clock dt base is @ref ssrReferenceTime(epoch_time, update_interval_s).
+    double          update_interval_s{0.0}; ///< Update interval of the message (s); 0 = none declared, so the reference time is the epoch.
     int             iod_ssr{0};
     /// Satellite reference point of the corrected orbit: @c APC for legacy
     /// 1060/1243-series decodes, @c CoM for IGS-SSR 4076.  The default @c CoM
@@ -184,8 +242,10 @@ struct SsrCombinedCorrection {
 /**
  * @brief Per-satellite code biases (one entry per signal).
  *
- * Bias is in meters; subtract from the corresponding observed pseudorange.
- * Signal keys are RINEX 3 observation codes (e.g. "C1C", "C2W").
+ * Bias is in meters: the satellite bias present in the observed pseudorange, so it is
+ * subtracted from the observation (added to the modelled range).  The RTCM and IGS-SSR
+ * wire value is the correction added to the pseudorange, the negative of this; the
+ * decoder negates it.  Signal keys are RINEX 3 observation codes (e.g. "C1C", "C2W").
  */
 struct SsrCodeBias {
     std::string                    sat;
@@ -216,7 +276,7 @@ struct SsrCodeBias {
  * ambiguity and when the bias jumped (which forces an ambiguity reset).
  */
 struct SsrPhaseBiasEntry {
-    double bias_m{0.0};                 ///< Phase bias (meters); subtract from the carrier-phase observable.
+    double bias_m{0.0};                 ///< Phase bias (meters) present in the carrier phase; subtract from the observable.  The negative of the RTCM / IGS-SSR wire value, which is added.
     bool   signal_integer{false};       ///< Bias preserves integer ambiguity (per IGS-SSR).
     int    wide_lane_integer{0};        ///< Wide-lane integer indicator (2 bits).
     int    discontinuity_counter{0};    ///< Increments on bias discontinuity (forces AR reset).
@@ -316,13 +376,18 @@ struct SsrSlantIono {
  * @brief Per-satellite high-rate clock correction (RTCM 1062/1068/etc, IGS-SSR sub-type 4).
  *
  * High-rate clocks are an additive delta on top of the standard clock
- * polynomial, updated more frequently (typically 1 s vs 5-30 s).  Apply
- * after the standard clock correction.
+ * polynomial, updated more frequently (typically 1 s vs 5-30 s).  A delta
+ * refines one clock message: the one with the same IOD-SSR whose update
+ * interval contains the high-rate epoch (IGS SSR Format v1.00 sec. 4 and 4.2).
+ * Once a newer clock message replaces that polynomial, the delta no longer
+ * applies; @c SsrCorrectionStore::getOrbitClock pairs the two.
  */
 struct SsrHighRateClock {
     std::string sat;
     double      dc{0.0};                ///< Additive clock correction delta (meters).
-    GnssTime    received_time{0, 0.0};
+    GnssTime    received_time{0, 0.0};  ///< Host-clock receive time on the GPS time scale (staleness gate).
+    GnssTime    epoch_time{0, 0.0};     ///< SSR epoch time from the message header (pairs the delta with its clock message).
+    double      update_interval_s{0.0}; ///< Update interval of the high-rate message (s); 0 = none declared.
     int         iod_ssr{0};
 };
 

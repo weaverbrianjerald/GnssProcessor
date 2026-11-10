@@ -17,6 +17,8 @@
 #include "products/BroadcastEphemerisTypes.hpp"   // BroadcastEphemeris
 #include "rinex/RinexParser.hpp"   // RinexObservation
 #include <filesystem>
+#include <map>
+#include <utility>
 #include <vector>
 #include <cstdint>
 
@@ -227,6 +229,17 @@ private:
 
     bool logged_1033_{false};  ///< 1033 content logged once per parser at info (RTB-2(d)).
     bool logged_1230_{false};  ///< 1230 content logged once per parser at info (RTB-2(d)).
+
+    /// Update-interval indicator last logged per SSR message kind, keyed by
+    /// (message type, IGS-SSR message number; 0 for legacy SSR).  The interval
+    /// sets each correction's reference time, so it is logged at info when a
+    /// kind is first seen and whenever it changes.
+    std::map<std::pair<int, int>, int> ssr_update_interval_logged_;
+
+    /// Log the update interval of a decoded SSR message on first sight of its
+    /// kind and on any change (see @c ssr_update_interval_logged_).
+    void noteSsrUpdateInterval(int msg_type, const char* body, int igs_message_number,
+                               const SsrHeader& header);
 
     std::vector<RinexObservation>      observations_;
     std::vector<SsrOrbitCorrection>    ssr_orbits_;

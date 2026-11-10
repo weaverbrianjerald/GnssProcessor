@@ -21,7 +21,6 @@
 #include "rtcm/RtcmSatId.hpp"
 #include "rtcm/RtcmSignalMap.hpp"
 #include "math/TimeUtils.hpp"
-#include <chrono>
 #include <cmath>
 #include <cstdio>
 
@@ -90,6 +89,21 @@ LegacyClassification classify(uint16_t msg_type) {
     if (msg_type >= 1252 && msg_type <= 1257) return withOffset(kSbas,    1252, msg_type);
     if (msg_type >= 1258 && msg_type <= 1263) return withOffset(kBeidou,  1258, msg_type);
     return {};
+}
+
+// Name of a message body, for log lines.
+const char* bodyName(LegacyBody body) {
+    switch (body) {
+    case LegacyBody::Orbit:     return "orbit";
+    case LegacyBody::Clock:     return "clock";
+    case LegacyBody::CodeBias:  return "code bias";
+    case LegacyBody::Combined:  return "combined";
+    case LegacyBody::Ura:       return "URA";
+    case LegacyBody::HighRate:  return "high-rate clock";
+    case LegacyBody::PhaseBias: return "phase bias";
+    case LegacyBody::Unknown:   break;
+    }
+    return "";
 }
 
 // Format an SVN-style satellite identifier from a system and the raw
@@ -189,22 +203,13 @@ bool decodeSsrHeader(RtcmBitReader& r, const SystemDescriptor& sys,
 }
 
 // ---------------------------------------------------------------------------
-// Receive-time stamp from the system clock at decode, used for staleness checks.
+// Receive-time stamp from the host clock at decode, used for staleness checks.
+// The freshness gate compares it with the observation epoch, which is GPS time,
+// so the stamp carries the GPS-UTC leap seconds too (TimeUtils::nowGpsTime,
+// realtime.leap_seconds).  A UTC-scale stamp made every record read 18 s old.
 // ---------------------------------------------------------------------------
 GnssTime nowReceiveTime() {
-    using namespace std::chrono;
-    const auto now      = system_clock::now();
-    const auto since    = duration_cast<seconds>(now.time_since_epoch()).count();
-    // GPS epoch (Jan 6 1980) = 315964800 Unix.  The GPS-UTC leap-second offset
-    // (18 s) is ignored: the stamp is used only for staleness and ordering.
-    constexpr int64_t kGpsEpochUnix = 315964800;
-    const int64_t since_gps = since - kGpsEpochUnix;
-    if (since_gps <= 0) return GnssTime{0, 0.0};
-    constexpr int kSecPerWeek = 7 * 24 * 3600;
-    return GnssTime{
-        static_cast<int>(since_gps / kSecPerWeek),
-        static_cast<double>(since_gps % kSecPerWeek)
-    };
+    return TimeUtils::nowGpsTime();
 }
 
 // ---------------------------------------------------------------------------
@@ -247,7 +252,8 @@ void decodeOrbitBody(RtcmBitReader& r, const SystemDescriptor& sys,
     o.delta_rac       = Eigen::Vector3d{dr, da, dc};
     o.delta_rac_dot   = Eigen::Vector3d{drd, dad, dcd};
     o.received_time   = rx;
-    o.epoch_time      = hdr.epoch_time;     // content reference epoch (orbit dt base)
+    o.epoch_time      = hdr.epoch_time;     // SSR epoch; the dt base adds half the update interval
+    o.update_interval_s = ssrUpdateIntervalSeconds(hdr.update_interval_index);
     o.iod_ssr         = hdr.iod_ssr;
     o.reference_point = ref_point;          // legacy=APC, 4076=CoM (RTB-5(b))
     out.push_back(std::move(o));
@@ -268,8 +274,10 @@ void decodeClockBody(RtcmBitReader& r, const SystemDescriptor& sys,
     c.c1             = c1;
     c.c2             = c2;
     c.received_time  = rx;
-    c.epoch_time     = hdr.epoch_time;     // content reference epoch (clock polynomial dt base)
+    c.epoch_time     = hdr.epoch_time;     // SSR epoch; the dt base adds half the update interval
+    c.update_interval_s = ssrUpdateIntervalSeconds(hdr.update_interval_index);
     c.iod_ssr        = hdr.iod_ssr;
+    c.needs_orbit_correction = true;       // computed against the stream's own orbit correction
     out.push_back(std::move(c));
 }
 
@@ -299,12 +307,19 @@ void decodeCombinedBody(RtcmBitReader& r, const SystemDescriptor& sys,
     cb.c1              = c1;
     cb.c2              = c2;
     cb.received_time   = rx;
-    cb.epoch_time      = hdr.epoch_time;    // content reference epoch (orbit + clock dt base)
+    cb.epoch_time      = hdr.epoch_time;    // SSR epoch; the dt base adds half the update interval
+    cb.update_interval_s = ssrUpdateIntervalSeconds(hdr.update_interval_index);
     cb.iod_ssr         = hdr.iod_ssr;
     cb.reference_point = ref_point;         // legacy=APC, 4076=CoM (RTB-5(b))
     out.push_back(std::move(cb));
 }
 
+// SSR code and phase biases on the wire (legacy and IGS-SSR) are corrections ADDED to the
+// observation; the store holds the bias present in the observation, which the model adds
+// to the clean range (kSatBiasSign, ObservationEquation.hpp) and the network emitter
+// writes.  The two differ in sign, so both bias bodies negate the wire value.  Reference:
+// cssrlib pppssr.py forms the model as range - cbias and range - pbias with the wire values
+// of RTCM3_SSR and IGS_SSR, and negates Bias-SINEX OSBs instead.
 void decodeCodeBiasBody(RtcmBitReader& r, const SystemDescriptor& sys,
                         const SsrHeader& hdr, const GnssTime& rx,
                         std::vector<SsrCodeBias>& out) {
@@ -318,12 +333,12 @@ void decodeCodeBiasBody(RtcmBitReader& r, const SystemDescriptor& sys,
 
     for (int i = 0; i < n_sigs; ++i) {
         const int    sig_id = static_cast<int>(r.u(5));
-        const double bias_m = r.s(14) * 0.01;           // 0.01 m
+        const double wire_m = r.s(14) * 0.01;           // 0.01 m, added to the pseudorange
         if (!r.ok()) return;
         // SSR bias numbering, which differs from the MSM one (RtcmSignalMap.hpp).
         const std::string suffix = RtcmSignalMap::ssrToRinexSuffix(sys.system, sig_id);
         if (!suffix.empty()) {
-            cb.bias_per_signal["C" + suffix] = bias_m;
+            cb.bias_per_signal["C" + suffix] = -wire_m;  // the bias present in the pseudorange
         }
     }
     out.push_back(std::move(cb));
@@ -355,6 +370,8 @@ void decodeHighRateBody(RtcmBitReader& r, const SystemDescriptor& sys,
     h.sat            = formatSat(sys, sat_raw);
     h.dc             = dc;
     h.received_time  = rx;
+    h.epoch_time     = hdr.epoch_time;     // pairs the delta with the clock message it refines
+    h.update_interval_s = ssrUpdateIntervalSeconds(hdr.update_interval_index);
     h.iod_ssr        = hdr.iod_ssr;
     out.push_back(std::move(h));
 }
@@ -384,13 +401,13 @@ void decodePhaseBiasBody(RtcmBitReader& r, const SystemDescriptor& sys,
         const bool   sig_int     = r.boolean();
         const int    wl_int      = static_cast<int>(r.u(2));
         const int    disc        = static_cast<int>(r.u(4));
-        const double bias_m      = r.s(20) * 1e-4;             // 0.1 mm
+        const double wire_m      = r.s(20) * 1e-4;             // 0.1 mm, added to the phase
         if (!r.ok()) return;
         // SSR bias numbering, which differs from the MSM one (RtcmSignalMap.hpp).
         const std::string suffix = RtcmSignalMap::ssrToRinexSuffix(sys.system, sig_id);
         if (suffix.empty()) continue;
         SsrPhaseBiasEntry e;
-        e.bias_m                = bias_m;
+        e.bias_m                = -wire_m;                     // the bias present in the phase
         e.signal_integer        = sig_int;
         e.wide_lane_integer     = wl_int;
         e.discontinuity_counter = disc;
@@ -424,6 +441,7 @@ DecodeResult decodeLegacy(
     if (cls.body == LegacyBody::Unknown || cls.sys.system == System::Unknown) {
         return result;
     }
+    result.body = bodyName(cls.body);
 
     RtcmBitReader r(payload, len_bytes);
     r.skip(12); // DF002 already extracted by parseHeader.
@@ -529,6 +547,8 @@ DecodeResult decodeIgs4076(
     const SystemDescriptor* sys_ptr = nullptr;
     LegacyBody body = LegacyBody::Unknown;
     if (!classifyIgsIm(im, sys_ptr, body)) return result;
+    result.body               = bodyName(body);
+    result.igs_message_number = im;
 
     // IGS-SSR (RTCM 4076) uses one per-satellite layout for every constellation,
     // unlike the legacy per-system SSR widths in the SystemDescriptor table.  Per

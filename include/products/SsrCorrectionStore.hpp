@@ -129,9 +129,9 @@ public:
         double          c0{0.0};                                  ///< Clock C0 (m).
         double          c1{0.0};                                  ///< Clock C1 (m/s).
         double          c2{0.0};                                  ///< Clock C2 (m/s^2).
-        double          hr_clock{0.0};                            ///< High-rate clock delta (m); 0 if not present.
-        GnssTime        epoch_time{0, 0.0};                       ///< SSR content reference epoch of the clock correction; dt base for applyClockToBias.
-        GnssTime        orbit_epoch_time{0, 0.0};                 ///< SSR content reference epoch of the orbit correction; dt base for applyOrbitToPosition (equals epoch_time for a combined record).
+        double          hr_clock{0.0};                            ///< High-rate clock delta (m) of the high-rate message that refines the merged clock message (same IOD-SSR, epoch inside its update interval); 0 otherwise.
+        GnssTime        epoch_time{0, 0.0};                       ///< Reference time t0 of the clock correction (@ref ssrReferenceTime: SSR epoch plus half the update interval); dt base for applyClockToBias.
+        GnssTime        orbit_epoch_time{0, 0.0};                 ///< Reference time t0 of the orbit correction (@ref ssrReferenceTime); dt base for applyOrbitToPosition (equals epoch_time for a combined record).
         int             iode{-1};                                 ///< Broadcast IODE the orbit applies to; -1 = unknown, which keeps iodeMatches() permissive. A standalone clock subtype carries no orbit IODE and leaves this at -1 (see getOrbitClock; RT0-1).
         /// Broadcast IODE the clock C0 is referenced to (IGS-SSR matching
         /// convention).  Distinct from @c iode, the orbit anchor.  A standard SSR
@@ -186,6 +186,15 @@ public:
 
     /**
      * @brief Look up the merged orbit+clock correction for a satellite.
+     *
+     * A separate clock record that was computed against its stream's orbit
+     * correction (@c SsrClockCorrection::needs_orbit_correction, every RTCM and
+     * IGS-SSR clock) is merged only together with a fresh orbit record of the same
+     * IOD-SSR; until that orbit arrives (after a correction outage, at start-up)
+     * the clock is withheld, so the satellite is never modelled with a corrected
+     * clock on the uncorrected broadcast orbit.  Network clock records apply on
+     * their own.
+     *
      * @param sat        Satellite ID (e.g. "G01").
      * @param query_time Reference time of the query, used for the staleness check.
      * @param max_age_s  Maximum acceptable age (query_time - record received_time)
@@ -484,18 +493,20 @@ public:
      * Unlike censusSummary(), which tallies the whole store, this counts only
      * @p sats (the satellites modeled this epoch), so the realtime engine can log
      * how many satellites in the solution have a fresh SSR orbit / clock and a
-     * code / phase bias.  Orbit and clock count when a record is fresh within
-     * @p max_age_s; code and phase biases count on presence alone, without an
-     * age check.  Whether the orbit/clock also applies depends on the IODE gate
-     * (see getSatelliteClockCorrection), so the engine pairs this with the
-     * clock-applied (cm-grade) count.
+     * code / phase bias.  Every kind counts when its record is fresh within
+     * @p max_age_s; a code- or phase-bias record counts only when it also holds
+     * at least one bias (a stream can send bias messages with empty satellite
+     * blocks).  Whether the orbit/clock also applies depends on the IODE gate
+     * (see getSatelliteClockCorrection) and on the clock's pairing with its orbit
+     * (see getOrbitClock), so the engine pairs this with the clock-applied
+     * (cm-grade) count.
      */
     struct Coverage {
         int total      = 0;   ///< Satellites queried.
         int orbit      = 0;   ///< With a fresh SSR orbit (or combined) record.
-        int clock      = 0;   ///< With a fresh SSR clock (or combined / high-rate) record.
-        int code_bias  = 0;   ///< With a code-bias record.
-        int phase_bias = 0;   ///< With a phase-bias record.
+        int clock      = 0;   ///< With a fresh SSR clock (or combined) record; a high-rate clock alone does not count.
+        int code_bias  = 0;   ///< With a fresh code-bias record holding at least one bias.
+        int phase_bias = 0;   ///< With a fresh phase-bias record holding at least one bias.
     };
     Coverage coverageFor(const std::vector<std::string>& sats,
                          const GnssTime& time, double max_age_s = 60.0) const;

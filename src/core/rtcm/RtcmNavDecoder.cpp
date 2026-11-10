@@ -17,7 +17,6 @@
 #include "rtcm/RtcmBitReader.hpp"
 #include "common/Constants.hpp"
 #include "math/TimeUtils.hpp"
-#include <chrono>
 #include <cmath>
 #include <cstdio>
 
@@ -48,15 +47,10 @@ int resolveWeek(int current_full_week, int wn, int n_bits) {
     return wk;
 }
 
-// System clock as a GPS-scale GnssTime (staleness stamp; leap drift ignored).
+// Host clock on the GPS time scale, leap seconds included (TimeUtils::nowGpsTime),
+// like the SBF receipt stamps and the epochs it is compared with.
 GnssTime nowReceiveTime() {
-    using namespace std::chrono;
-    const auto since = duration_cast<seconds>(system_clock::now().time_since_epoch()).count();
-    constexpr int64_t kGpsEpochUnix = 315964800;
-    const int64_t s = since - kGpsEpochUnix;
-    if (s <= 0) return GnssTime{0, 0.0};
-    constexpr int kSecPerWeek = 7 * 24 * 3600;
-    return GnssTime{static_cast<int>(s / kSecPerWeek), static_cast<double>(s % kSecPerWeek)};
+    return TimeUtils::nowGpsTime();
 }
 
 // ---------------------------------------------------------------------------
