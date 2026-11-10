@@ -205,3 +205,5 @@ verbatim on 2026-11-07 under the 60 KB bar. Entries are in pre-registration orde
   (WTZZ00DEU within 0.4 mm by hour, census 0.0 mm, wet delay 0.69 against 2.55 mm per epoch) except one count clause (G7d, T4 rows
   2 against 3) and fails the sim accuracy bar (G4: hours 4 to 6 5.1 to 5.5 mm against 4, NEES 0.76 to 0.86 from hour 3, 0.61 in
   hour 2); card LGM's reading unchanged. Recommended for arming as a pair, never the link alone; nothing armed.
+  2026-11-09, section 8: armed as a pair on both goldens and the BeiDou lineage at the author's decision (branch
+  `ztl/colour-pairing`); health check passes on DOY 129, 130, 132, the sim and BeiDou; look here: DOY 130 census hours 2 and 3.

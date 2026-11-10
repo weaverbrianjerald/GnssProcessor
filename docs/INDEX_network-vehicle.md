@@ -101,7 +101,7 @@ paired median -0.8 to -3.8 mm, no site worse than +2.9 mm, ARHT00ATA -0.08 to -0
 (closed, 2026-11-09: the in-block wet delay reachable under `float_kf` with an erase-and-rebirth event response, identity rows at its
 re-coupling edge and the two erase gaps closed, default off and identical off; alone over-confident on the sim (NEES 2.3 to 2.8); paired
 with the phase colour state it passes the field (user within 0.4 mm, census 0.0 mm) and fails the 4 mm sim bar and one count clause;
-recommended for arming as a pair; nothing armed).
+armed as a pair on both goldens and the BeiDou lineage on 2026-11-09 at the author's decision, health check passed on five beds).
 
 [BRD](refound/BRD_broadcast_referenced_level_2026-11-02.md), the network referenced to the broadcast clock, SP3 orbits the only precise product
 (closed, 2026-11-03: the cost against the CODE-anchored GPS golden reproduced, +0.021 and +0.027 m at WTZZ00DEU over hours 2 to 6 on DOY 129

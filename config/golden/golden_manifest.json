@@ -72,7 +72,8 @@
   "(network.sbasis_values_first).  Each is identical to its serial path (each key alone and the four together against off on",
   "both goldens over 2 h, and at 305 stations), so the baseline pair stands; main against the four keys reads -41.5 % (field)",
   "and -34.8 % (sim) on the loop.",
-  "2026-11-07 (same rule, the review builds of card SRN): network.second_code_system_aware (card SCC2), network.vcf and network.vcf_apply (card VCF) pinned on both goldens; receiver.troposphere_apriori_source gpt3 (card TRP) on the field golden, so on the BeiDou lineage; the sim golden keeps standard_atmosphere (exception). Kept off: card ZTL's wet-delay link (sim NEES 2.8 alone) and network.vcf_apply_phase (KEEP_OFF). Fresh convergence only (second_code_system_aware is fingerprinted)."
+  "2026-11-07 (same rule, the review builds of card SRN): network.second_code_system_aware (card SCC2), network.vcf and network.vcf_apply (card VCF) pinned on both goldens; receiver.troposphere_apriori_source gpt3 (card TRP) on the field golden, so on the BeiDou lineage; the sim golden keeps standard_atmosphere (exception). Kept off: card ZTL's wet-delay link (sim NEES 2.8 alone) and network.vcf_apply_phase (KEEP_OFF). Fresh convergence only (second_code_system_aware is fingerprinted).",
+  "2026-11-09 (rule of 2026-11-07, the author's decision on card ZTL section 7): the station wet delay's time link on the float vehicle armed as a pair with the phase colour state on both goldens, and so on the BeiDou lineage: network.carry_zwd and network.carry_zwd_in_block with network.zwd_carry_q 5e-8, and network.phase_colour_state (card LGM's state at its default parameters). Never the link alone (sim NEES 2.3 to 2.8 without the colour state). Solve-affecting; fresh convergence only (carry_zwd_in_block and zwd_carry_q are fingerprinted)."
  ],
  "goldens": [
   {
@@ -164,7 +165,12 @@
     "network.cycle_slip.mw_reflag_skip": true,
 
     "network.block_baarda_estimable": true,
-    "network.readmit_seed_mirrors": true
+    "network.readmit_seed_mirrors": true,
+
+    "network.carry_zwd": true,
+    "network.carry_zwd_in_block": true,
+    "network.zwd_carry_q": 5e-8,
+    "network.phase_colour_state": true
    },
    "unset": [
     "network.mw_wl",
@@ -287,7 +293,12 @@
     "model_corrections.otl_from_sif": true,
     "model_corrections.otl_nodal_corrections": true,
     "model_corrections.otl_remove_diurnal_translation": true,
-    "processing.enable_noon_turn_attitude": true
+    "processing.enable_noon_turn_attitude": true,
+
+    "network.carry_zwd": true,
+    "network.carry_zwd_in_block": true,
+    "network.zwd_carry_q": 5e-8,
+    "network.phase_colour_state": true
    },
    "unset": [
     "network.mw_wl",
