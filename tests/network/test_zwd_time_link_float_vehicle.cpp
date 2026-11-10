@@ -14,8 +14,9 @@
  *     plus q times the gap) and the harvested cross terms;
  *   - the event response's two helpers: the slip-latch station set (re-entry-only latches are
  *     not a feed) and the erase of one station's carried entry;
- *   - off: on both goldens the route and the response are disarmed and their response sites
- *     are not declared.
+ *   - the goldens: both arm the route, its q and the response, and declare both response
+ *     sites (armed 2026-11-09, card ZTL section 8); with the keys removed the route and the
+ *     response are disarmed and the sites are not declared.
  */
 
 #include <gtest/gtest.h>
@@ -32,6 +33,7 @@
 #include "network/state/RunContext.hpp"
 
 #include <Eigen/Dense>
+#include <nlohmann/json.hpp>
 
 #include <filesystem>
 #include <fstream>
@@ -101,6 +103,17 @@ bool loadGolden(const std::string& bed, GnssConfig& cfg) {
     const fs::path p = fs::path(GNSS_PROJECT_ROOT) / "config" / "golden" /
                        ("golden_" + bed + "_refound.json");
     return cfg.loadFromJson(p, log);
+}
+
+/// The golden of @p bed with the wet-delay link and the phase colour state removed (the
+/// posture before 2026-11-09), loaded into @p cfg.
+bool loadGoldenPairOff(const std::string& bed, GnssConfig& cfg) {
+    std::ifstream in(fs::path(GNSS_PROJECT_ROOT) / "config" / "golden" /
+                     ("golden_" + bed + "_refound.json"));
+    nlohmann::json j = nlohmann::json::parse(in, nullptr, true, /*ignore_comments=*/true);
+    for (const char* key : {"carry_zwd", "carry_zwd_in_block", "zwd_carry_q", "phase_colour_state"})
+        j["network"].erase(key);
+    return loadInto("pair_off_" + bed, j.dump(2), cfg);
 }
 
 // --- seam fixture (a registered estimator, as in test_carry_zwd_in_block.cpp) ---------
@@ -321,18 +334,38 @@ TEST(ZwdTimeLinkFloatVehicleTest, ResponseSitesAreDeclaredWhenArmed) {
 }
 
 // =============================================================================
-// (5) Off: both goldens keep the wet delay white and declare neither response site
+// (5) The goldens: both arm the route, its q and the response (2026-11-09); with the keys
+//     removed the wet delay is white and neither response site is declared
 // =============================================================================
 
-TEST(ZwdTimeLinkFloatVehicleTest, GoldensKeepTheRouteAndTheResponseOff) {
+TEST(ZwdTimeLinkFloatVehicleTest, GoldensArmTheRouteAndTheResponse) {
     for (const char* bed : {"field", "sim"}) {
         GnssConfig cfg;
         ASSERT_TRUE(loadGolden(bed, cfg)) << bed;
         const NetworkKnobs k = NetworkKnobs::snapshot(cfg, cfg.getNetworkConfig());
         EXPECT_TRUE(k.amb_float_kf) << bed;
+        EXPECT_TRUE(k.zwd_on) << bed;
+        EXPECT_TRUE(k.zwd_in_block) << bed;
+        EXPECT_TRUE(k.zwd_blk_on) << bed;
+        EXPECT_TRUE(k.zwd_event_on) << bed;
+        EXPECT_DOUBLE_EQ(k.zwd_q, 5e-8) << bed;
+        EXPECT_TRUE(k.pc_on) << bed;   // its pair, the phase colour state
+        EXPECT_TRUE(cfg.networkCycleSlipRelevelFreeEpoch()) << bed;
+        EXPECT_TRUE(responseSiteArmed(ResponseSite::ZwdSlipErase, k, cfg)) << bed;
+        EXPECT_TRUE(responseSiteArmed(ResponseSite::ZwdRaimErase, k, cfg)) << bed;
+    }
+}
+
+TEST(ZwdTimeLinkFloatVehicleTest, GoldensWithThePairOffKeepTheRouteAndTheResponseOff) {
+    for (const char* bed : {"field", "sim"}) {
+        GnssConfig cfg;
+        ASSERT_TRUE(loadGoldenPairOff(bed, cfg)) << bed;
+        const NetworkKnobs k = NetworkKnobs::snapshot(cfg, cfg.getNetworkConfig());
+        EXPECT_TRUE(k.amb_float_kf) << bed;
         EXPECT_FALSE(k.zwd_on) << bed;
         EXPECT_FALSE(k.zwd_blk_on) << bed;
         EXPECT_FALSE(k.zwd_event_on) << bed;
+        EXPECT_FALSE(k.pc_on) << bed;
         EXPECT_FALSE(responseSiteArmed(ResponseSite::ZwdSlipErase, k, cfg)) << bed;
         EXPECT_FALSE(responseSiteArmed(ResponseSite::ZwdRaimErase, k, cfg)) << bed;
     }

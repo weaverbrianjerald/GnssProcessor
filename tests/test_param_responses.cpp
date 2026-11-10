@@ -26,6 +26,7 @@
 
 #include <cmath>
 #include <filesystem>
+#include <fstream>
 #include <limits>
 #include <map>
 #include <memory>
@@ -33,6 +34,10 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+
+#include <nlohmann/json.hpp>
+
+#include "support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 using namespace GnssProcessor;
 
@@ -44,6 +49,24 @@ bool loadGolden(const std::string& bed, GnssConfig& cfg) {
         std::filesystem::path(GNSS_PROJECT_ROOT) / "config" / "golden" /
         ("golden_" + bed + "_refound.json");
     return cfg.loadFromJson(p, log);
+}
+
+/// The golden of @p bed with the wet-delay link and the phase colour state removed (the
+/// posture before 2026-11-09), loaded into @p cfg.
+bool loadGoldenPairOff(const std::string& bed, GnssConfig& cfg) {
+    const std::filesystem::path src = std::filesystem::path(GNSS_PROJECT_ROOT) / "config" /
+                                      "golden" / ("golden_" + bed + "_refound.json");
+    std::ifstream in(src);
+    nlohmann::json j = nlohmann::json::parse(in, nullptr, true, /*ignore_comments=*/true);
+    for (const char* key : {"carry_zwd", "carry_zwd_in_block", "zwd_carry_q", "phase_colour_state"})
+        j["network"].erase(key);
+    const std::filesystem::path p = gnss_test::tempDir() / ("responses_pair_off_" + bed + ".json");
+    { std::ofstream out(p); out << j.dump(2); }
+    LogManager log;
+    const bool ok = cfg.loadFromJson(p, log);
+    std::error_code ec;
+    std::filesystem::remove(p, ec);
+    return ok;
 }
 
 bool has(std::uint32_t mask, ResponsePolicy p) { return (mask & responsePolicyBit(p)) != 0; }
@@ -168,7 +191,8 @@ TEST(ParamResponses, ArmingFollowsTheCodesOwnGates) {
 }
 
 // The goldens' declared posture (the float vehicle with RAIM's attribution, the gross screen,
-// the phase-anchor re-reference, READMIT, the clock anchor and the handover S-transform):
+// the phase-anchor re-reference, READMIT, the clock anchor and the handover S-transform, and
+// since 2026-11-09 the wet delay's time link and the phase colour state in the station block):
 // what each kind does on each event, as the inventory of 2026-10-02 read it in the code.
 TEST(ParamResponses, GoldensDeclareTheFloatVehiclesResponses) {
     for (const char* bed : {"field", "sim"}) {
@@ -205,12 +229,50 @@ TEST(ParamResponses, GoldensDeclareTheFloatVehiclesResponses) {
         // The receiver code bias in the block: erased on a step, skipped and pruned on a gap.
         EXPECT_TRUE(has(on(r, K::RxCodeBias, E::Slip), P::EraseAndRebirth)) << bed;
         EXPECT_TRUE(has(on(r, K::RxCodeBias, E::Gap), P::GapPrune)) << bed;
+        // The wet delay in the block: erased on a station's slip latch or RAIM attribution,
+        // skipped and pruned across a gap; nothing else.
+        const auto ev = [](E e) { return static_cast<std::size_t>(e); };
+        for (std::size_t e = 0; e < kParamEvents; ++e) {
+            const std::uint32_t zwd = e == ev(E::Slip) ? responsePolicyBit(P::EraseAndRebirth)
+                                    : e == ev(E::Gap)  ? (responsePolicyBit(P::GapSkip)
+                                                          | responsePolicyBit(P::GapPrune))
+                                                       : 0u;
+            EXPECT_EQ(r.spec(K::Zwd).on[e], zwd) << bed << " zwd " << paramEventName(static_cast<E>(e));
+        }
+        // The phase colour: erased on RAIM's attribution and by the gross screen, pruned
+        // past its horizon; nothing else.
+        for (std::size_t e = 0; e < kParamEvents; ++e) {
+            const std::uint32_t pc = (e == ev(E::Slip) || e == ev(E::Decouple))
+                                         ? responsePolicyBit(P::EraseAndRebirth)
+                                   : e == ev(E::Gap) ? responsePolicyBit(P::GapPrune)
+                                                     : 0u;
+            EXPECT_EQ(r.spec(K::PhaseColour).on[e], pc)
+                << bed << " phase_colour " << paramEventName(static_cast<E>(e));
+        }
         // Not carried on this posture: no response declared.
-        for (const K kind : {K::Zwd, K::SlantIono, K::RxClock, K::RxPhaseBias, K::PhaseColour})
+        for (const K kind : {K::SlantIono, K::RxClock, K::RxPhaseBias})
             for (std::size_t e = 0; e < kParamEvents; ++e)
                 EXPECT_EQ(r.spec(kind).on[e], 0u) << bed << " " << paramKindName(kind)
                                                   << " " << paramEventName(static_cast<E>(e));
         // The response table names every kind once.
+        EXPECT_EQ(r.responseTable().size(), kNetworkParamKindCount) << bed;
+    }
+}
+
+// The off path: with the two keys removed the wet delay and the phase colour declare no
+// response, and the table still names every kind once.
+TEST(ParamResponses, GoldensWithThePairOffDeclareNoWetDelayOrColourResponse) {
+    for (const char* bed : {"field", "sim"}) {
+        GnssConfig cfg;
+        ASSERT_TRUE(loadGoldenPairOff(bed, cfg)) << bed;
+        const NetworkKnobs k = NetworkKnobs::snapshot(cfg, cfg.getNetworkConfig());
+        const NetworkParamRegistry r = NetworkParamRegistry::build(k, cfg);
+        expectMasksFromTheTables(r, k, cfg, bed);
+        using K = NetworkParamKind;
+        for (const K kind : {K::Zwd, K::PhaseColour})
+            for (std::size_t e = 0; e < kParamEvents; ++e)
+                EXPECT_EQ(r.spec(kind).on[e], 0u) << bed << " " << paramKindName(kind) << " "
+                                                  << paramEventName(static_cast<ParamEvent>(e));
         EXPECT_EQ(r.responseTable().size(), kNetworkParamKindCount) << bed;
     }
 }

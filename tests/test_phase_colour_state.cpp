@@ -125,8 +125,18 @@ TEST(PhaseColourState, LoaderAcceptsTheGoldenPostureAndRefusesTheLevelVehicle) {
         j["network"]["phase_colour_tau_s"] = 0.0;
     }, bad_tau, "badtau"));
 
+    // The committed golden arms the state at its defaults (card ZTL section 8, 2026-11-09).
+    GnssConfig golden;
+    ASSERT_TRUE(loadGoldenWith([](nlohmann::json&) {}, golden, "golden"));
+    EXPECT_TRUE(golden.getNetworkConfig().phase_colour_state);
+    EXPECT_DOUBLE_EQ(golden.getNetworkConfig().phase_colour_tau_s, 300.0);         // default
+    EXPECT_DOUBLE_EQ(golden.getNetworkConfig().phase_colour_sigma_zen_m, 0.005);   // default
+
+    // The off path: the golden with the key set off loads, and the state is off.
     GnssConfig off;
-    ASSERT_TRUE(loadGoldenWith([](nlohmann::json&) {}, off, "off"));
+    ASSERT_TRUE(loadGoldenWith([](nlohmann::json& j) {
+        j["network"]["phase_colour_state"] = false;
+    }, off, "off"));
     EXPECT_FALSE(off.getNetworkConfig().phase_colour_state);
 }
 
