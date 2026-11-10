@@ -153,6 +153,16 @@ struct SsrClockCorrection {
     GnssTime    epoch_time{0, 0.0};     ///< SSR epoch time from the message header; the polynomial's dt base is @ref ssrReferenceTime(epoch_time, update_interval_s).
     double      update_interval_s{0.0}; ///< Update interval of the message (s); 0 = none declared (in-process network records), so the reference time is the epoch.
     int         iod_ssr{0};
+    /// True when the clock was computed against the orbit correction of its own SSR
+    /// solution, as every RTCM and IGS-SSR clock message is (IGS SSR Format v1.00
+    /// sec. 4: orbit and clock corrections of one IOD-SSR belong together).  Such a
+    /// clock applies only together with a fresh orbit correction of the same
+    /// IOD-SSR (@c SsrCorrectionStore::getOrbitClock): on the uncorrected broadcast
+    /// orbit it leaves the orbit correction out of the range while counting the
+    /// satellite as corrected.  The SSR decoder sets it.  False for a clock that is
+    /// defined against the orbit the user already holds (the network producer's
+    /// records, which carry no orbit correction), which applies on its own.
+    bool        needs_orbit_correction{false};
     /// Network clock discontinuity counter, an internal extension populated only
     /// by @c NetworkProductEmitter.  It is 0 for RTCM/IGS-SSR-decoded clocks (the
     /// wire standard has no such field) and whenever the network producer's

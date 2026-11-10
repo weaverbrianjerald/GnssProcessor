@@ -64,6 +64,19 @@ bool highRateRefinesClock(const SsrHighRateClock& hr, const ClockMessage& clock)
     return since_clock_epoch >= 0.0 && since_clock_epoch < interval_s;
 }
 
+// A separate clock record applies only when the orbit it was computed against is
+// applied with it.  An RTCM or IGS-SSR clock (needs_orbit_correction) belongs to the
+// orbit correction of the same IOD-SSR (IGS SSR Format v1.00 sec. 4); a stream that
+// sends the two in separate messages (CAS) can deliver the clock before the orbit,
+// after an outage or at start-up, and that clock on the uncorrected broadcast orbit
+// leaves the orbit correction out of the range.  A clock defined against the orbit
+// the user already holds (the network producer's records) applies on its own.
+bool clockHasItsOrbit(const SsrClockCorrection& clock, bool orbit_applied,
+                      int applied_orbit_iod_ssr) {
+    if (!clock.needs_orbit_correction) return true;
+    return orbit_applied && applied_orbit_iod_ssr == clock.iod_ssr;
+}
+
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -203,7 +216,11 @@ SsrCorrectionStore::getOrbitClock(const std::string& sat,
             out.has_orbit        = true;
             out.orbit_reference_point = rec_copy.orbit->reference_point;  // RTB-5(b)
         }
-        if (rec_copy.clock && freshEnough(rec_copy.clock->received_time, query_time, max_age_s)) {
+        // A clock waiting for its orbit (clockHasItsOrbit) is not applied: the
+        // satellite then has an orbit part or nothing, and stays broadcast-grade
+        // until the orbit of the clock's IOD-SSR arrives.
+        if (rec_copy.clock && freshEnough(rec_copy.clock->received_time, query_time, max_age_s)
+            && clockHasItsOrbit(*rec_copy.clock, out.has_orbit, out.applied_orbit_iod_ssr)) {
             out.c0         = rec_copy.clock->c0;
             out.c1         = rec_copy.clock->c1;
             out.c2         = rec_copy.clock->c2;

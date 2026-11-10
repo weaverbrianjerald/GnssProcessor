@@ -277,6 +277,7 @@ void decodeClockBody(RtcmBitReader& r, const SystemDescriptor& sys,
     c.epoch_time     = hdr.epoch_time;     // SSR epoch; the dt base adds half the update interval
     c.update_interval_s = ssrUpdateIntervalSeconds(hdr.update_interval_index);
     c.iod_ssr        = hdr.iod_ssr;
+    c.needs_orbit_correction = true;       // computed against the stream's own orbit correction
     out.push_back(std::move(c));
 }
 

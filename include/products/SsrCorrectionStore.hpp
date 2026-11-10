@@ -186,6 +186,15 @@ public:
 
     /**
      * @brief Look up the merged orbit+clock correction for a satellite.
+     *
+     * A separate clock record that was computed against its stream's orbit
+     * correction (@c SsrClockCorrection::needs_orbit_correction, every RTCM and
+     * IGS-SSR clock) is merged only together with a fresh orbit record of the same
+     * IOD-SSR; until that orbit arrives (after a correction outage, at start-up)
+     * the clock is withheld, so the satellite is never modelled with a corrected
+     * clock on the uncorrected broadcast orbit.  Network clock records apply on
+     * their own.
+     *
      * @param sat        Satellite ID (e.g. "G01").
      * @param query_time Reference time of the query, used for the staleness check.
      * @param max_age_s  Maximum acceptable age (query_time - record received_time)

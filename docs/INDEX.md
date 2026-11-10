@@ -377,6 +377,7 @@ against all four keys 41.5 % (field) and 34.8 % (sim) shorter).
 | [SSR-SIG-ID](cards/realtime/SSR-SIGNAL-ID.md) | SSR bias signal ids read through the MSM observation table: only Galileo E1C reached its own signal; fixed, unit-tested; live AR candidates on GPS and Galileo, but 0 fixes in a 30-minute session (floats carry no integer information, cause open) | closed | 2026-10-29 |
 | [SSR-BIAS-SIGN](cards/realtime/SSR-BIAS-SIGN.md) | SSR code and phase biases applied with the OSB sign (the wire value is the correction added): fixed in the decoder; live code misfit 0.58 to 0.05 m, wide-lane integer, narrow-lane not, still 0 fixes | open | 2026-10-29 |
 | [SSR-TIME](cards/realtime/SSR-TIMING.md) | SSR timing against IGS SSR v1.00: polynomials ran from the epoch, not epoch + half the update interval; high-rate clock not paired with its clock message; receipt stamps 18 s behind GPS time; fixed, unit-tested; live check owed | open | 2026-10-29 |
+| [SSR-CLK-ORB](cards/realtime/SSR-CLOCK-ORBIT.md) | an SSR clock applied without its orbit correction when the clock message arrives first (CAS, separate messages: after an outage, at start-up): fixed in the store, a decoded clock waits for a fresh orbit of its IOD-SSR; unit-tested | open | 2026-11-09 |
 
 Standing documents (not split this pass):
 

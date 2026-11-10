@@ -701,6 +701,7 @@ add_executable(gnss_tests
     tests/test_rtcm.cpp
     tests/test_rtcm_ssr_phase_bias.cpp
     tests/test_ssr_reference_time.cpp
+    tests/test_ssr_clock_orbit_pairing.cpp
     tests/test_rtcm_stream_dating.cpp
     tests/test_epoch_cadence.cpp
     tests/test_realtime_defects.cpp
