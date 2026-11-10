@@ -157,3 +157,128 @@ Windows `_rap_smx2_d_t1on_ev` and `_rap_smx2_d_t1onA_ev` (today's field golden w
 The control of today's golden already carries about half of ALD's event (the keys armed on 2026-11-07 are the difference; not isolated here). The four 2 h arms of gate (5) (`_rap_smx2_d_{ctl,A,t1on,t1onA}_f2`) are queued after label `smx2t`.
 
 **Attribution label (written 2026-11-09 before it runs; read without a bar).** Label `smx2x`: rows `slip100`, `slip2sig` and `anc_cold` on `c` and `n`, with `network.raim_prior_channel` false (not fingerprinted), to attribute the consumer moves of those cells between `crs2b` and `smx2a` (section 5.4).
+
+### 5.4 Stage A: the matrix today
+
+Labels `smx2a` (the postures as armed) and `smx2t` (plus `network.emit_pb_hold_trip_generation`), exe `gnss_processor_smx2.exe` (sha256[:16] `1335d935c990529c`), matrix version 1 (sha256[:16] `bfd6c00e0f0b7dec`, unchanged), seeds `evseed_smx2_*` from `ep0485`. Targets as in cards SMX and CRS2: `G25` on every posture (no GPS clock pivot at the snapshot); the `L2W` anchor of `G25` is `S24000SIM` on `g` and `c` and `S14000SIM` on `n` and `gx`; the storm draws the same 646 slips. Gate outputs `D:/GnssProcessorSupport/gates/smx/{smx2a,smx2t,smx2actl}/` (`plan.json`, `grades.json`, `report.md`; `smx2t/table_4labels.md`).
+
+- **A1 passes.** `smx2a`: 65 legs, all exit 0 (56 to 661 s), every cell graded: **23 of 55 cells pass**.
+- **A2 passes.** `smx2t`: 65 legs, all exit 0, every cell graded: **24 of 55 cells pass**.
+- **A3 passes.** `smx2actl` (rows `slip100`, `sta_out`, `step1m` on `g` and `c`, own nulls) against `smx2a`: IDENTICAL, every measured value and spread equal in the 6 shared cells. The AVX2 build with the parallel stages is deterministic on these legs.
+- **A4 passes.** Five of the seven null legs of `smx2t` write a `products.txt` identical to their `smx2a` twin (`null60_g`, `null60_c`, `null60_gx`, `null240_g`, `null240_c`). On `n` only G05's phase-bias records differ (36 in `null60_n`, 396 in `null240_n`), each after a `PB_HOLD gen_start` with cause `trip` at a `phi` trip (TOW 276900, and 282120 in the 240-epoch null) that the `smx2a` twin has as well: the designed response, and the trip card SCR found in its `n` null.
+
+**The verdict table.** Verdict and failing channels per cell; `smx1` and `crs2b` ran on SSE2 builds of earlier code, so verdicts and magnitudes are compared, not bytes.
+
+| row | posture | smx1 | crs2b | smx2a | smx2t | change |
+|---|---|---|---|---|---|---|
+| slip1 | g | PASS | PASS | PASS | PASS |  |
+| slip1 | c | PASS | PASS | PASS | PASS |  |
+| slip1 | n | PASS | PASS | PASS | PASS |  |
+| slip100 | g | FAIL zwd,iono | FAIL zwd,iono | FAIL zwd,iono | FAIL zwd,iono |  |
+| slip100 | c | FAIL zwd,iono | FAIL zwd,iono | FAIL zwd,iono | FAIL zwd,iono |  |
+| slip100 | n | FAIL zwd,iono | FAIL zwd,iono | FAIL cons_peak,cons_plat,zwd,iono | FAIL cons_peak,cons_plat,zwd,iono |  |
+| slip2sig | g | FAIL zwd,iono | FAIL zwd,iono | FAIL zwd,iono | FAIL zwd,iono |  |
+| slip2sig | c | FAIL zwd,iono | FAIL zwd,iono | FAIL zwd,iono | FAIL zwd,iono |  |
+| slip2sig | n | FAIL zwd,iono | FAIL zwd,iono | FAIL zwd,iono | FAIL zwd,iono |  |
+| storm | g | FAIL clk,pb,cons_peak,cons_plat,zwd,iono | FAIL clk,pb,zwd,iono | FAIL clk,pb,zwd,iono | FAIL clk,pb,zwd,iono |  |
+| storm | c | FAIL clk,pb,cons_peak,cons_plat,zwd,iono | FAIL clk,pb,cons_peak,cons_plat,zwd,iono | FAIL clk,pb,cons_peak,cons_plat,zwd,iono | FAIL clk,pb,cons_peak,cons_plat,zwd,iono |  |
+| storm | n | FAIL clk,pb,cons_peak,cons_plat,zwd,iono | FAIL clk,pb,cons_peak,cons_plat,zwd,iono | FAIL clk,pb,cons_peak,cons_plat,zwd,iono | FAIL clk,cons_peak,cons_plat,zwd,iono |  |
+| lol | g | PASS | PASS | PASS | PASS |  |
+| lol | c | PASS | PASS | PASS | PASS |  |
+| lol | n | PASS (no effect) | PASS (no effect) | PASS (no effect) | PASS (no effect) |  |
+| sat_out | g | PASS | PASS | PASS | PASS |  |
+| sat_out | c | PASS | PASS | PASS | PASS |  |
+| sat_out | n | PASS | PASS | PASS | PASS |  |
+| sta_out | g | FAIL zwd,iono | FAIL zwd,iono | FAIL zwd,iono | FAIL zwd,iono |  |
+| sta_out | c | FAIL zwd,iono | FAIL zwd,iono | FAIL zwd,iono | FAIL zwd,iono |  |
+| sta_out | n | FAIL zwd,iono | FAIL zwd,iono | FAIL zwd,iono | FAIL zwd,iono |  |
+| sat_clk | g | FAIL clk,cons_peak,cons_plat,zwd,iono | FAIL clk,zwd,iono | PASS | PASS | crs2b->smx2a PASS |
+| sat_clk | c | FAIL clk,cons_peak,cons_plat,zwd,iono | FAIL clk,cons_peak,cons_plat,zwd,iono | FAIL cons_peak,cons_plat | FAIL cons_peak,cons_plat |  |
+| sat_clk | n | FAIL clk,cons_peak,cons_plat,zwd,iono | FAIL clk,cons_peak,cons_plat,zwd,iono | FAIL pb,cons_peak,cons_plat | PASS | smx2a->smx2t PASS |
+| rx_clk1m | g | PASS | PASS | PASS | PASS |  |
+| rx_clk1m | c | PASS | PASS | PASS | PASS |  |
+| rx_clk1m | n | PASS | PASS | PASS | PASS |  |
+| rx_clk1ms | g | FAIL zwd,iono | FAIL zwd,iono | FAIL zwd,iono | FAIL zwd,iono |  |
+| rx_clk1ms | c | FAIL zwd,iono | FAIL zwd,iono | FAIL zwd,iono | FAIL zwd,iono |  |
+| rx_clk1ms | n | FAIL zwd,iono | FAIL zwd,iono | FAIL zwd,iono | FAIL zwd,iono |  |
+| anc_cont | g | FAIL iono | FAIL iono | FAIL iono | FAIL iono |  |
+| anc_cont | c | FAIL iono | FAIL iono | FAIL iono | FAIL iono |  |
+| anc_cont | n | FAIL zwd | FAIL zwd | FAIL zwd | FAIL zwd |  |
+| anc_cold | g | FAIL zwd,iono | FAIL zwd,iono | FAIL zwd,iono | FAIL zwd,iono |  |
+| anc_cold | c | FAIL zwd,iono | FAIL zwd,iono | FAIL cons_peak,cons_plat,zwd,iono | FAIL cons_peak,cons_plat,zwd,iono |  |
+| anc_cold | n | FAIL cons_peak,cons_plat,zwd,iono | FAIL cons_peak,cons_plat,zwd,iono | FAIL cons_peak,cons_plat,zwd,iono | FAIL cons_peak,cons_plat,zwd,iono |  |
+| arc_erase | g | PASS | PASS | PASS | PASS |  |
+| arc_erase | c | PASS | PASS | PASS | PASS |  |
+| arc_erase | n | PASS | PASS | PASS | PASS |  |
+| health | g | PASS (no effect) | PASS (no effect) | PASS (no effect) | PASS (no effect) |  |
+| health | c | PASS (no effect) | PASS (no effect) | PASS (no effect) | PASS (no effect) |  |
+| health | n | PASS (no effect) | PASS (no effect) | PASS (no effect) | PASS (no effect) |  |
+| health | gx | FAIL cons_peak,cons_plat,zwd,iono | FAIL zwd,iono | FAIL zwd,iono | FAIL zwd,iono |  |
+| step1cm | g | FAIL zwd | FAIL zwd | FAIL zwd | FAIL zwd |  |
+| step1cm | c | PASS | PASS | PASS | PASS |  |
+| step1cm | n | PASS | PASS | PASS | PASS |  |
+| step10cm | g | FAIL zwd,iono | FAIL zwd,iono | FAIL zwd,iono | FAIL zwd,iono |  |
+| step10cm | c | FAIL zwd,iono | FAIL zwd,iono | FAIL zwd,iono | FAIL zwd,iono |  |
+| step10cm | n | FAIL zwd | FAIL zwd | FAIL zwd | FAIL zwd |  |
+| step1m | g | FAIL zwd,iono | FAIL zwd,iono | FAIL zwd,iono | FAIL zwd,iono |  |
+| step1m | c | FAIL cons_peak,cons_plat,zwd,iono | FAIL cons_peak,cons_plat,zwd,iono | FAIL cons_peak,cons_plat,zwd,iono | FAIL cons_peak,cons_plat,zwd,iono |  |
+| step1m | n | FAIL zwd,iono | FAIL zwd,iono | FAIL zwd,iono | FAIL zwd,iono |  |
+| clkdrift | g | FAIL cons_p50 | FAIL cons_p50 | FAIL cons_p50 | FAIL cons_p50 |  |
+| clkdrift | c | PASS | PASS | PASS | PASS |  |
+| clkdrift | n | PASS | PASS | PASS | PASS |  |
+
+**Every verdict change, explained.**
+
+1. **`sat_clk` on `g`, FAIL (`crs2b`) to PASS (`smx2a`).** The clock-event rule, armed since 2026-11-07, classifies `G25` at the step epoch (one `sat_clock_event`, 15 of 15 non-reference flags kept, the reference reset kept at one station), the fold takes the anchored clock LOOSE and the guard declares `slip_clk`; no `G25` arc is refloated, so the station states are not disturbed. Wire clock 0.6 mm (`crs2b` 28.4), ZWD 13.2 mm (57.4; bar 16.1), slant ionosphere 19.1 mm (658.5), consumer peak 12.9 mm and plateau 0.3 mm (bar 18.3). The producer channels reproduce card SCR's fold-side route (`sckb1`: 0.5, 12.1 and 17.8 mm) within 1.3 mm. The row passes on the golden as armed, without the trip generation: on the phase-clock posture the consumer meets the bar although `G25`'s hold keeps its first generation.
+2. **`sat_clk` on `n`, FAIL (`smx2a`) to PASS (`smx2t`).** In `smx2a` every producer channel but `pb` passes (wire clock 0.2 mm, ZWD 1.0, ionosphere 1.5; `pb` 88.9 against 87.7 mm, the smoothed hold's bridge withdrawn twice more than in the null), and the consumer sits 1.05 to 1.25 m off for the whole leg (peak 1247.8 mm, plateau 1221.4): the step is on the clock, the hold moves `G25`'s phase biases with it, no generation is declared, and the consumer takes 0.5 m as a phase innovation. With the trip generation, generation 2 opens on `G25`'s two keys at the `slip_clk` trip, the consumer resets both (`HOLD generation 2 -> 3: reset G25 L1C`, `L2W`), and its difference from the null peaks at 19.7 mm at +2 and +9 (plateau 14.5; bar 28.2). Card CRS2's `crs2bscr` read 157.8 and 152.6 mm on this cell; the improvement is the 2026-11-07 armed set, the review builds or the build, not isolated here.
+
+**Moves inside cells whose verdict did not change** (measured / bar in mm; each cell already failed on another channel):
+
+- `sat_clk` on `c`: `smx2a` passes every producer channel (wire clock 0.3, ZWD 1.6, ionosphere 0.9) and misses the consumer by a metre (1283.4 / 1257.5 against 26.7), as on `n`. `smx2t` brings it to 69.6 / 65.6: the consumer resets `G25` at the step and stays within 10 to 22 mm for three epochs, then drifts about 1.3 mm per epoch to 69 mm at +45. Card CRS2's `crs2bscr` peaked at 30.6 mm at +2 and decayed (plateau 7.4). Not attributed here; a one-change label (`smx2xt`, the prior channel off) is queued (section 5.5).
+- `slip100` on `n`: the consumer channels now fail (72.8 / 68.6 against 28.2; `crs2b` 14.8 / 8.9). `G25`'s clock moves about 3 cm in both labels; in `smx2a` the RAIM prior channel (`network.raim_prior_channel`, armed 2026-11-07) releases `G10` and `G25` at S48000SIM at the event epoch and `G25` again at +1, where `crs2b` released `G10` and `G25` once each through the post-solve attribution, and the consumer drifts linearly to 73 mm. `slip100` on `c` (23.7 / 22.0 against 26.7; `crs2b` 3.4), `slip2sig` on `n` (23.2; `crs2b` 3.6), `anc_cold` on `c` (35.1 / 32.1, now over 26.7; `crs2b` 24.3) and on `n` (78.6; `crs2b` 61.6) move the same way. Label `smx2x` (section 5.5) arms the prior channel off on those cells.
+- The event station's ZWD transient on `g` is larger: `slip100` 274.1 (`crs2b` 190.1), `slip2sig` 67.0 (46.4), `sta_out` 156.8 (137.6); the ZWD bar on `g` rose with the null's spread (14.7 to 16.1).
+- `storm`: section 5.4.1.
+
+#### 5.4.1 The two rows that failed on every posture
+
+**`sat_clk`** (+0.5 m on every code and phase of `G25` at every station, TOW 275910). Measured / bar in mm, X over the bar:
+
+| posture | label | clk | pb | cons_peak | cons_plat | zwd | iono | emit | cell |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| g | crs2b | 28.4 / 5.0 X | 94.6 / 135.8 | 12.8 / 18.2 | 0.3 / 18.2 | 57.4 / 14.7 X | 658.5 / 234.5 X | 0 | FAIL |
+| g | crs2bscr | 0.5 / 5.0 | 0.3 / 135.8 | 4.6 / 18.2 | 1.0 / 18.2 | 12.1 / 14.7 | 17.8 / 234.5 | 0 | PASS |
+| g | smx2a | 0.6 / 5.0 | 67.5 / 135.7 | 12.9 / 18.3 | 0.3 / 18.3 | 13.2 / 16.1 | 19.1 / 234.3 | 0 | **PASS** |
+| g | smx2t | 0.6 / 5.0 | 0.3 / 135.7 | 4.7 / 18.3 | 1.0 / 18.3 | 13.2 / 16.1 | 19.1 / 234.3 | 0 | **PASS** |
+| c | crs2b | 35.1 / 5.0 X | 122.5 / 142.9 | 57.3 / 26.4 X | 32.0 / 26.4 X | 121.1 / 18.6 X | 642.4 / 230.2 X | 0 | FAIL |
+| c | crs2bscr | 0.2 / 5.0 | 0.3 / 142.9 | 30.6 / 26.4 X | 7.4 / 26.4 | 1.1 / 18.6 | 1.0 / 230.2 | 0 | FAIL |
+| c | smx2a | 0.3 / 5.5 | 89.8 / 143.7 | 1283.4 / 26.7 X | 1257.5 / 26.7 X | 1.6 / 20.6 | 0.9 / 230.1 | 0 | FAIL |
+| c | smx2t | 0.3 / 5.5 | 0.2 / 143.7 | 69.6 / 26.7 X | 65.6 / 26.7 X | 1.6 / 20.6 | 0.9 / 230.1 | 0 | FAIL |
+| n | crs2b | 83.0 / 37.1 X | 16.3 / 84.9 | 1139.0 / 28.3 X | 1110.8 / 28.3 X | 138.8 / 19.0 X | 814.9 / 222.4 X | 0 | FAIL |
+| n | crs2bscr | 0.2 / 37.1 | 0.1 / 85.2 | 157.8 / 28.3 X | 152.6 / 28.3 X | 0.8 / 19.0 | 0.9 / 222.4 | 0 | FAIL |
+| n | smx2a | 0.2 / 37.2 | 88.9 / 87.7 X | 1247.8 / 28.2 X | 1221.4 / 28.2 X | 1.0 / 21.0 | 1.5 / 222.2 | 0 | FAIL |
+| n | smx2t | 0.2 / 37.2 | 0.1 / 88.0 | 19.7 / 28.2 | 14.5 / 28.2 | 1.0 / 21.0 | 1.5 / 222.2 | 0 | **PASS** |
+
+The response, event leg minus null, is the same on the three postures and in both labels: one `sat_clock_event`, 15 `sat_clock_keep`, one `refsat_clock_keep`, one `cta_decouple` with reason `slip_clk` at the step, one re-coupling; no refloat of `G25`, no handover. The wire carries the step on the clock to 0.2 to 0.6 mm (the de-commoned clock difference reads -0.496 to -0.504 m from the step epoch on). What separates the postures is the consumer: on `g` it meets the bar with or without a generation; on `c` and `n` it needs the generation to be told (a metre without it), and with it `n` passes and `c` drifts to 69 mm. The trip generation opens two generations (`G25` L1C and L2W) in every `sat_clk` leg and none at a statistical trip there.
+
+**`storm`** (646 GPS slips at all 60 stations, 240 epochs). Measured / bar in mm:
+
+| posture | label | clk | pb | cons_peak | cons_plat | zwd | iono | keys regenerated |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| g | crs2b | 782.8 / 11.2 X | 996.1 / 96.3 X | 14.8 / 20.0 | 5.2 / 20.0 | 4276.2 / 9.3 X | 24083.6 / 221.5 X | |
+| g | smx2a | 179.8 / 11.2 X | 1224.2 / 96.1 X | 13.6 / 20.0 | 2.9 / 20.0 | 3277.7 / 9.8 X | 20330.4 / 221.6 X | 0 |
+| g | smx2t | 179.8 / 11.2 X | 1293.4 / 96.1 X | 12.7 / 20.0 | 1.9 / 20.0 | 3277.7 / 9.8 X | 20330.4 / 221.6 X | 12 |
+| c | crs2b | 299.2 / 9.0 X | 1553.5 / 85.5 X | 500.8 / 32.9 X | 380.6 / 32.9 X | 6052.7 / 12.4 X | 21506.7 / 262.5 X | |
+| c | smx2a | 425.5 / 9.4 X | 1734.5 / 86.9 X | 546.0 / 33.0 X | 326.6 / 33.0 X | 5584.3 / 13.1 X | 20466.1 / 262.5 X | 0 |
+| c | smx2t | 425.5 / 9.4 X | 3335.4 / 86.9 X | 376.5 / 33.0 X | 299.9 / 33.0 X | 5584.3 / 13.1 X | 20466.1 / 262.5 X | 48 |
+| n | crs2b | 490.7 / 36.4 X | 962.4 / 111.0 X | 369.6 / 36.8 X | 123.3 / 36.8 X | 15713.0 / 13.3 X | 47449.2 / 261.1 X | |
+| n | smx2a | 680.1 / 36.5 X | 965.8 / 112.7 X | 404.8 / 36.8 X | 294.6 / 36.8 X | 22390.2 / 13.9 X | 37272.9 / 261.1 X | 0 |
+| n | smx2t | 680.1 / 36.5 X | 103.6 / 112.6 | 1829.1 / 36.8 X | 372.3 / 36.8 X | 22390.2 / 13.9 X | 37272.9 / 261.1 X | 58 |
+
+Responses in `smx2a`, event minus null over the leg: the IF-TD pool flags 540 to 544 samples and resets 83 to 84 reference chains, and classifies no satellite clock event; the RAIM prior channel releases 714 to 777 arcs and the post-solve attribution 139 to 178; the gross-LOS screen declares 49 to 58 rows and marks 617 to 853 emission discontinuities; the guard trips 18 clocks on `phi` on `g` (all 18 deferred by card ARS's key, the reason the `g` wire clock is 180 mm here against 783 in `crs2b`), 74 on `c` and 62 on `n` (none deferred). The trip generation opens 36 (`g`), 148 (`c`) and 124 (`n`) key generations at those statistical trips, and the consumer resets 2, 24 and 24 keys. It costs the `n` consumer 4.5 times (404.8 to 1829.1 mm peak) and the `c` phase-bias channel twice, and helps the `c` consumer (546.0 to 376.5 mm); on `n` the `pb` channel passes only because 58 keys left the same-generation comparison. The storm fails on the producer channels on every posture in every label: wire clock 180 to 680 mm, phase bias, station ZWD and slant ionosphere by metres. Its `g` consumer has passed since card CRS2.
+
+#### 5.4.2 Predictions against results
+
+- **P-A1.** Producer channels passing on every posture in both labels: held, except `pb` on `n` in `smx2a` (88.9 against 87.7 mm). The `c` and `n` consumers failing in `smx2a`: held (a metre each). `smx2t` reading as `crs2bscr`: held on `g`; refuted on `c` (69.6 mm against `crs2bscr`'s 30.6, still a fail) and on `n` (19.7 mm, a pass, against `crs2bscr`'s 157.8).
+- **P-A2.** The storm failing everywhere: held. With the trip generation the `n` consumer worse: held (4.5 times); the `pb` channel worse: held on `g` and `c`, refuted on `n` (its regenerated keys leave the comparison).
+- **P-A3.** No verdict change outside `sat_clk` between `crs2b` and `smx2a`: held; at least 22 cells pass: held (23). The slip rows moved on `zwd` as predicted, and also on the consumer channels on `c` and `n`, which was not predicted.
+- **P-A4.** Held (G05 on `n`).
