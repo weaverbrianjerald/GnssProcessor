@@ -101,3 +101,44 @@ The narrowing: one new default-off key on the hold's side, read only where `netw
 ## 5. Results
 
 **Stage D added (2026-11-09, before any leg ran).** By the author's ruling of 2026-11-09 ("Close ALD, and test one thing before choosing"), one three-band event-window test of `network.amb_float_drop_var_m2` 100 runs after stage B on this card's exe. It is pre-registered, with its frozen bar (card ALD section 5, gate 4), in [L5B](L5B_band5_receiver_delay_2026-10-10.md) section 15, and its result is appended there.
+
+**Departure (2026-11-09, recorded before any matrix reading).** The first run of label `smx2a` was aborted and deleted unread: a driver stopped earlier in the session had left its own child process alive, so after the seeds two drivers made and ran the label into the same leg directories at once (four of this card's processes, two writers per leg). Every `smx2a` leg, its events and its plan were deleted, the label was made again and run by one driver; every number below comes from that second run. No seed was affected (each seed was written by one process).
+
+### 5.1 Seeds (gates A0 and B0)
+
+**A0 passes.** The four 10-epoch smokes exit 0 (`evseed_smx2_{g,c,n,gx}_smoke`, 74 to 165 s). The four 4.5 h seeds exit 0 (1196 to 1462 s), each with 9 history snapshots; the snapshot at index 8 is `ep0485` (TOW 275580) on every posture, as in cards SMX and CRS2, and carries 114, 64, 62 and 108 `PH` rows on `g`, `c`, `n` and `gx` (card CRS2 read 114, 64, 62 and 108), its consumer snapshot four `I` rows. **B0 passes.** Both field smokes and both 10 h seeds exit 0 (4145 and 4163 s), 1201 emitted epochs each, with snapshots `ep0182`, `ep0363` and `ep1148`, the suffixes card SLV used.
+
+### 5.2 Stage B: the floor at the seam and against a step the guard can see
+
+Exe `gnss_processor_smx2.exe` (sha256[:16] `1335d935c990529c`); 20 legs, every one exits 0 (87 to 112 s). Graders: card SLV's `slv_seam.py`, unchanged, and `smx2_k.py` (card SLV's `slv_k.py` with the sharpened K1 response and the step size as the reference of e_k), in `D:/GnssProcessorSupport/worktrees/smx2_tools/`.
+
+**S1 and S2 pass.** Null legs from `ep0363` against each seed's own continuation, leg epochs 6 to 60:
+
+| | control `f132` | floor `f132A` | bar | verdict |
+| --- | --- | --- | --- | --- |
+| S1, median position difference at WTZZ00DEU (m) | 0.0001 (max 0.0013) | 0.0001 (max 0.0003) | control + 0.005 | pass |
+| S2, median clock difference, per-constellation median removed (m) | 0.0092 (p90 0.044) | 0.0060 (p90 0.025) | control + 0.002 | pass |
+| drops in the first 5 leg epochs (on arcs folded before); variance after the drop, p50 | 50 (36); 0.109 m2 | 51 (37); 100 m2 | | |
+
+Card SLV read S1 at 0.459 m (control) and 0.560 m (floor) through a leg consumer that resumed 0.31 m off its seed. With card CRS2's hold and latch restores the leg consumer continues its seed's to a tenth of a millimetre in both arms, and the floor's +0.10 m is gone: it was the broken warm start meeting the floor's seam drops, not a cost of the floor. The floor still sets every seam drop to 100 m2 (51 of 51), as card SLV found. Reported without a bar: the 1.51 h nulls read S1 0.0005 m (control) and 0.0000 m (floor), S2 0.015 and 0.006 m; the 9.56 h nulls read S1 0.100 and 0.102 m, but every leg of the guard test carries the IF-TD centring, which the seeds do not, so those two nulls are not seam measurements (at 1.51 h the centring changes nothing the consumer sees, at 9.56 h it moves the consumer 0.10 m in both arms alike).
+
+**The guard: K1 read on 4 satellite-steps, 3 pass and 1 FAILS.**
+
+| satellite, snapshot, step | control: guard at the step epoch (`e_phi`, `sqrtS_phi`, decision) | floor: guard at the step epoch | K1 | K2 median e_k, control / floor (m) | K2 |
+| --- | --- | --- | --- | --- | --- |
+| G01, 9.56 h, 0.5 m | -0.086, 0.020, ok | -0.075, 0.020, ok | unread | 0.336 / 0.341 | **fail** |
+| G01, 9.56 h, 1.0 m | -0.170, 0.020, trip (deferred) | -0.148, 0.020, trip (deferred) | pass | 0.050 / 0.069 | **fail** |
+| E02, 9.56 h, 0.5 m | -0.207, 0.020, trip (deferred) | -0.202, 0.020, trip (deferred) | pass | 0.029 / 0.021 | pass |
+| E02, 9.56 h, 1.0 m | -0.414, 0.020, trip (deferred) | -0.405, 0.020, trip (deferred) | pass | 0.060 / 0.040 | pass |
+| E34, 1.51 h, 0.5 m | +0.579, 0.423, ok | -0.065, 0.125, ok | unread | 0.405 / 0.442 | **fail** |
+| E34, 1.51 h, 1.5 m | +1.375, 0.423, ok | -0.145, 0.125, ok | unread | 1.243 / 1.329 | **fail** |
+| E34, 1.51 h, 3.0 m | +2.568, 0.423, trip (deferred) | -0.264, 0.125, ok | **fail** | 0.344 / 2.737 | **fail** |
+
+No null leg has a guard response on the stepped satellite; no leg has a satellite clock event (the centring leaves the classification nothing to classify); the IF-TD flags name G01 at 3 stations, E02 at none and E34 at 1, equal in both arms.
+
+- **Where the guard has the statistic at its floor (9.56 h), the floor does not desensitise it.** G01 at 1.0 m and E02 at both sizes trip in both arms at the step epoch, the trip deferred to the next epoch (card ARS's key, armed since 2026-11-07), and the wire then carries 0.92 to 1.06 times the step. The floor's statistic reads 87 to 98 % of the control's.
+- **Where the floor's state differs (E34 at 1.51 h), the floor lets through a step the control catches.** The control's statistic grows with the step (+0.58, +1.38, +2.57 m for 0.5, 1.5 and 3.0 m: 0.86 m per metre) and trips at 3.0 m against its bound of 2.54 m; the wire then carries 2.72 m of the 3.0 m by epoch 10. Under the floor the statistic moves the other way and ten times less (-0.065, -0.145, -0.264 m: about -0.09 m per metre) against a bound of 0.75 m, so the guard never trips and the wire has carried 0.47 m of the 3.0 m by epoch 10. Card SLV measured a five-fold loss at 0.5 m and could not read K1 because its control did not trip; this card's larger steps read it, and it fails.
+- **What the miss is not.** E34's 14 arcs carry the same variances in both legs at the epoch before the step (p50 0.125 m2, largest 0.436 m2; none at the floor). At the step epoch both legs free the same five E34 arcs (one IF-TD flag at MRC100USA, four post-solve attribution drops at SAVO00BRA and BOGT00COL); the control keeps their variances (1.9e-4 to 1.0e-3 m2), the floor sets them to 100 m2. The step lands on the second epoch after the resume, when the floor's 51 seam drops of other arcs are also at 100 m2; whether a run that never resumed misses it the same way is not measured by these legs (addendum below).
+- **K2.** The floor follows a step worse wherever the control follows it at all, except on E02, where it follows 8 to 20 mm better.
+
+**Addendum, pre-registered 2026-11-09 before any run below (the seam caveat of K1).** Two fresh runs of the DOY 132 configuration of section 3, from its start to TOW 524190 (10 epochs past the step), each with `network.cycle_slip.if_phase_td_sat_centre` and a 3.0 m `sat_clock_step` on E34 at TOW 523890 through `network.inject`: `_rap_smx2_kf_c` (the golden as armed) and `_rap_smx2_kf_A` (plus the floor), and their two null runs without the step (`_rap_smx2_kf_cn`, `_rap_smx2_kf_An`), same exe. Bar K1-fresh: if the control's guard responds to E34 within 2 epochs of the step, the floor's does too. K2-fresh as K2, against the fresh nulls. If the control does not respond, K1-fresh is unread and the seam caveat stands.
