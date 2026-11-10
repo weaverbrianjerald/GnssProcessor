@@ -368,7 +368,7 @@ def cmd_stop(a):
     """The stop rule's event-free chords (ird_frame_census.py stop): per-band p50 of |wrap|."""
     for tag in a.tags:
         text = cached("stop_%s.txt" % tag, [sys.executable, HERE + "/ird_frame_census.py", "stop", run_dir(tag)], a.fresh)
-        v = re.findall(r"^\s+(L\w+)\s+n (\d+): p50 ([0-9.]+) [<>]=? ?[0-9.]+: (PASS|FAIL)", text, flags=re.M)
+        v = re.findall(r"^\s+(L\w+)\s+n (\d+): p50 ([0-9.]+) [<>]=? ?[0-9.]+: (ok|PASS|FAIL)", text, flags=re.M)
         print("%-18s event-free chords: %s" % (tag, "; ".join("%s p50 %s (n %s) %s" % (b, p, n, w) for b, n, p, w in v)
                                                 or text.strip().splitlines()[-1][:200]))
     return 0
