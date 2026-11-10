@@ -2684,6 +2684,20 @@ namespace GnssProcessor {
         network_config_.emit_pb_hold_trip_generation =
             jval<bool>(json, "network.emit_pb_hold_trip_generation",
                        "emit_pb_hold_trip_generation", false);
+        // Which of the guard's declarations open a generation.  Refused when unknown: the
+        // trigger changes the emitted product, so a typo never falls back silently.
+        {
+            const std::string s = jval<std::string>(json, "network.emit_pb_hold_trip_generation_trigger",
+                                                    "emit_pb_hold_trip_generation_trigger",
+                                                    std::string{"any_trip"});
+            if (s == "any_trip")
+                network_config_.emit_pb_hold_trip_trigger = NetworkPbHoldTripTrigger::AnyTrip;
+            else if (s == "clock_event")
+                network_config_.emit_pb_hold_trip_trigger = NetworkPbHoldTripTrigger::ClockEvent;
+            else
+                throw std::runtime_error("network.emit_pb_hold_trip_generation_trigger = '" + s +
+                                         "' is not one of any_trip, clock_event");
+        }
         if (network_config_.emit_pb_hold) {
             log->info("Network: network.emit_pb_hold = true — the emitted phase bias "
                       "of each (satellite, signal) is HELD at the first value of its generation "
@@ -2711,6 +2725,15 @@ namespace GnssProcessor {
                 log->warn("Network: network.emit_pb_hold_trip_generation is armed without "
                           "network.emit_pb_hold.  There is no hold to open a generation in: "
                           "the knob is INERT.");
+            else if (network_config_.emit_pb_hold_trip_trigger == NetworkPbHoldTripTrigger::ClockEvent)
+                log->info("Network: network.emit_pb_hold_trip_generation = true, trigger "
+                          "clock_event: every phase-bias key of a satellite the IF-TD pools "
+                          "read as a satellite clock event (slip_clk, slip_clk_late) starts a "
+                          "new hold generation at that epoch, the edge a gap opens "
+                          "(PB_HOLD/gen_start, cause 'trip').  A trip of the guard's test "
+                          "(statistic or absolute backstop) opens none and is counted at run "
+                          "end.  Frame retirements (gap, datum, external) do not.  Inert "
+                          "without network.clock_temporal_anchor.");
             else
                 log->info("Network: network.emit_pb_hold_trip_generation = true: every "
                           "phase-bias key of a satellite whose clock the anchor guard's test "

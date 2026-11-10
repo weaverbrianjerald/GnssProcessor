@@ -247,6 +247,8 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.emit_pb_hold_max_gap_s = config_.getNetworkConfig().emit_pb_hold_max_gap_s;
     k.emit_pb_hold_trip_gen  = config_.getNetworkConfig().emit_pb_hold_trip_generation
                                && config_.getNetworkConfig().emit_pb_hold;
+    k.emit_pb_hold_trip_clock_event_only = config_.getNetworkConfig().emit_pb_hold_trip_trigger
+                                           == NetworkPbHoldTripTrigger::ClockEvent;
     k.emit_pb_hold_phase_clock = config_.getNetworkConfig().emit_pb_hold_phase_clock;
     k.emit_pb_hold_smoothed    = config_.getNetworkConfig().emit_pb_hold_smoothed;
     // Guarded temporal clock anchor.  `cta_on` is resolved against the clock_model

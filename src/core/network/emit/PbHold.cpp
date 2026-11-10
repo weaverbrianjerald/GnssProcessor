@@ -180,8 +180,15 @@ void networkPbHold(NetworkRunContext& ctx,
             // the satellite's clock moved apart from its prior: its keys start a generation
             // at this epoch, the edge a gap opens.  The set is empty unless the knob's
             // guard recorded a trip, and the knob snapshot is false with the knob off.
-            const bool trip_gen = ctx.knobs.emit_pb_hold_trip_gen
-                                  && ctx.carry.clk_anchor.stepped.count(s.sat) > 0;
+            // Under the clock_event trigger only a satellite clock event opens one; a test
+            // trip is counted per key and the key stays in its generation.
+            const auto stp      = ctx.carry.clk_anchor.stepped.find(s.sat);
+            const bool declared = ctx.knobs.emit_pb_hold_trip_gen
+                                  && stp != ctx.carry.clk_anchor.stepped.end();
+            const bool test_only = declared && ctx.knobs.emit_pb_hold_trip_clock_event_only
+                                   && stp->second == ClockStepCause::TestTrip;
+            const bool trip_gen = declared && !test_only;
+            if (test_only && !first && !gap) ++ctx.counters.n_pbh_trip_test_skipped;
 
             if (first || gap || trip_gen) {
                 // Re-coupling edge: a generation starts here.  The current estimate

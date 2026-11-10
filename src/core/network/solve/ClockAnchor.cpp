@@ -518,7 +518,7 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
                  stp != sat_clock_step.end() ? std::optional<double>(std::abs(stp->second))
                                              : std::optional<double>{},
                  std::nullopt, "IF-TD satellite clock event; folded LOOSE");
-        anchor.stepped.insert(sat);
+        anchor.stepped[sat] = ClockStepCause::ClockEvent;
     }
     if (datum_changed) {
         for (const std::string& sat : registered_clock_sats) {
@@ -783,7 +783,10 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
                                 : fmt::format("e={:.4f};med={:.4f};sqrtS={:.4f};pass={}",
                                               r.e, med[systemOfSat(r.sat)], std::sqrt(r.S), pass));
                 trip.insert(r.sat);
-                anchor.stepped.insert(r.sat);
+                // The backstop of a clock event is a clock event; the test's own trip
+                // never overwrites one.
+                if (forced) anchor.stepped[r.sat] = ClockStepCause::ClockEvent;
+                else        anchor.stepped.try_emplace(r.sat, ClockStepCause::TestTrip);
                 // Admission screen for the same-epoch value correction only; the
                 // decouple and the mark are unconditional.
                 const double redun = (r.var_eff > 0.0)

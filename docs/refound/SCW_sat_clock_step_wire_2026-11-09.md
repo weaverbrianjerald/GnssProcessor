@@ -199,3 +199,20 @@ Every quiet-day trip that opened a generation is a phase-statistic trip of the a
 `network.emit_pb_hold_trip_generation` improves the response to a satellite clock step and is measured harmful on quiet days (DOY 132 census, the sim's hour 3 and census site s60). Kept off: ledger row KEEP_OFF, with a look-here note. The goldens are unchanged (`make_golden_config.py --verify` passes).
 
 The data point to a narrower trigger: every injected step decoupled with `reason=slip_clk`, every quiet-day trip with `reason=phi`. A generation started only on the declared clock events (`slip_clk`, `slip_clk_late`; the two insertion sites into `ClockAnchorState::stepped` in `src/core/network/solve/ClockAnchor.cpp`, read only by the phase-bias hold) would keep section 6.1's response and leave these three quiet days without a trip generation. It is not built; it needs the event legs and the 6 h health check again before it can be armed.
+
+## 7. A trip generation on clock events only (pre-registered 2026-11-09, before any run of this section)
+
+The author approved building section 6.3's narrower trigger ("Yes, build it"). New key `network.emit_pb_hold_trip_generation_trigger` (`any_trip`, the default and the rule as built; `clock_event`). The guard's per-epoch set `ClockAnchorState::stepped` now carries each satellite's cause (`ClockStepCause::TestTrip` for `phi`, `nis` and `abs`; `ClockStepCause::ClockEvent` for `slip_clk` and `slip_clk_late`); under `clock_event` the phase-bias hold opens a generation only on a clock event and counts the held keys of a test-tripped satellite (`n_pbh_trip_test_skipped`, on the run-end PBH line). Default off and byte-identical when off: only the hold reads the set, and only with `network.emit_pb_hold_trip_generation` armed. An unknown trigger is refused by the loader. Unit tests: four new cases in `tests/network/test_pb_hold_trip_generation.cpp`.
+
+Arm `scwt_lc`: the golden plus `network.emit_pb_hold_trip_generation` true and the trigger `clock_event`, on the exe built from this branch. The event legs repeat section 6.1 (seed `evseed_scwt_f129`, snapshot `ep0242`, step at the tenth epoch, 60 epochs; G13, E09, G22 and a null). That arm's legs and null contain four `phi` decouplings each (14 trip-generation keys in the null), so `clock_event` is tested against test trips inside the legs as well.
+
+Gates, frozen here:
+
+- **E1.** Each `scwt_lc` step leg passes R1 to R4 of section 4. Its trip generations are exactly the stepped satellite's keys at the step epoch; its null has none.
+- **E2.** On each of G13, E09 and G22 the peak in-loop consumer error, leg minus its own null, is below the golden's (section 6.1: +8.9, +16.3, +5.3 mm).
+- **E3.** The `scwt_lc` null's wire (C, B and P records) equals the golden null's (`evleg_scwt_l0_n`) record for record. A difference is reported with its size: the exe differs, so the gate also tests build reproducibility.
+- **H1.** The 6 h arms on the field (DOY 129), the sim, the BeiDou lineage and DOY 132, each the golden plus the two keys, exit 0 with 720 of 720 epochs emitted.
+- **H2.** None of the four opens a trip generation, and the run-end PBH line reports the test-trip keys held (non-zero on DOY 132 and the sim, where section 6.2 counted 168 and 170).
+- **H3.** Each arm's wire equals its control's record for record (`_rap_srn_{f6,s6,b6}` and `_rap_scwt_g6c`, the exe of baseline `_rf0hv18`). If a build difference breaks equality, same-exe controls and the three censuses of section 6.2 run, with section 6.2's +10 mm bars on the settled in-loop hours and the worst census site.
+
+Verdict rule: E1 to E3 and H1 to H3 pass, then both keys are armed in the goldens under the 2026-11-07 rule (H3 means no quiet-day output moves, so the `_rf0hv18` numbers stand). A failed gate is reported and nothing is armed.

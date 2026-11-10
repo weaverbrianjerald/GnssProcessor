@@ -359,7 +359,8 @@ TEST(ClockAnchorSlipClk, AFoldedLooseEventSatelliteIsDecoupledByTheGuardWithoutA
     EXPECT_TRUE(f.ctx.carry.clk_anchor.sat.at("G04").anchored);
     EXPECT_TRUE(net::hasSat(f.ctx.entities.sats, "G03", net::Disc::ClockAnchor)) << "wire-marked";
     EXPECT_EQ(f.ctx.counters.cta_marks, 1);
-    EXPECT_EQ(f.ctx.carry.clk_anchor.stepped, (std::set<std::string>{"G03"}));
+    EXPECT_EQ(f.ctx.carry.clk_anchor.stepped,
+              (std::map<std::string, ClockStepCause>{{"G03", ClockStepCause::ClockEvent}}));
     EXPECT_EQ(f.ctx.carry.clk_anchor.tripped.count("G03"), 1u);
     EXPECT_TRUE(f.ctx.carry.clk_anchor.sat.at("G03").slip_clk_pending)
         << "the pending mark stays until the next epoch's begin";
@@ -417,7 +418,8 @@ TEST(ClockAnchorSlipClk, AnAnchoredEventSatelliteTheFoldMissedIsTrippedByTheBack
     EXPECT_FALSE(f.ctx.carry.clk_anchor.sat.at("G03").anchored);
     EXPECT_TRUE(net::hasSat(f.ctx.entities.sats, "G03", net::Disc::ClockAnchor));
     EXPECT_EQ(f.ctx.counters.cta_resolves, 1);
-    EXPECT_EQ(f.ctx.carry.clk_anchor.stepped, (std::set<std::string>{"G03"}));
+    EXPECT_EQ(f.ctx.carry.clk_anchor.stepped,
+              (std::map<std::string, ClockStepCause>{{"G03", ClockStepCause::ClockEvent}}));
 }
 
 /// A LOOSE satellite is not tripped (there is nothing to decouple): its in-band run is reset, so
@@ -444,8 +446,9 @@ TEST(ClockAnchorSlipClk, ALooseSatelliteInTheEventMapHasItsInBandRunReset) {
     }
 }
 
-/// A genuine statistical trip lands in `stepped` too (the hold treats the two alike), and the
-/// next epoch's begin clears it with the trip set.
+/// A genuine statistical trip lands in `stepped` too, with its own cause (the hold treats the
+/// two alike unless its trigger is clock_event), and the next epoch's begin clears it with the
+/// trip set.
 TEST(ClockAnchorSlipClk, AStatisticalTripIsRecordedAndTheNextEpochClearsIt) {
     Fixture f("stat");
     f.truth = {0.0, 1.0, -0.5 + 3.0, 2.0};   // G03's clock really steps by 3 m
@@ -454,6 +457,7 @@ TEST(ClockAnchorSlipClk, AStatisticalTripIsRecordedAndTheNextEpochClearsIt) {
     EXPECT_EQ(f.ctx.counters.cta_trip_slip_clk, 0) << "no event map, so not an event trip";
     EXPECT_EQ(f.ctx.counters.cta_trip_slip_clk_late, 0);
     EXPECT_EQ(f.ctx.carry.clk_anchor.stepped.count("G03"), 1u);
+    EXPECT_EQ(f.ctx.carry.clk_anchor.stepped.at("G03"), ClockStepCause::TestTrip);
     clockAnchorBeginEpoch(f.ctx);
     EXPECT_TRUE(f.ctx.carry.clk_anchor.stepped.empty());
     EXPECT_TRUE(f.ctx.carry.clk_anchor.tripped.empty());

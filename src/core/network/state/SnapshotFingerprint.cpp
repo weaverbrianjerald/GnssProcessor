@@ -602,7 +602,7 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         //                           cycle_slip.if_phase_td_reseed_on_flag (the
         //                           IF-TD gradient chains are never serialized),
         //                           cycle_slip.if_phase_td_sat_clock_{event,min_stations,
-        //                           min_fraction,coherence} and emit_pb_hold_trip_generation
+        //                           min_fraction,coherence} and emit_pb_hold_trip_generation{,_trigger}
         //                           (each acts only on an event of its own epoch and
         //                           leaves no state behind)
         //   resume response         zwd_seam_reseed, resume_frame_restore,

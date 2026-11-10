@@ -18,7 +18,11 @@
  *     its first value and counts nothing;
  *   - a key past the gap bar that is also tripped counts and reports as a gap, once;
  *   - a first sighting of a tripped satellite is a first generation, not a trip;
- *   - the loader parses the key, and the knob snapshot needs the hold as well.
+ *   - the loader parses the key, and the knob snapshot needs the hold as well;
+ *   - under `network.emit_pb_hold_trip_generation_trigger = clock_event`, a satellite the
+ *     guard's test tripped stays in its generation and counts in `n_pbh_trip_test_skipped`,
+ *     while a satellite clock event opens generation 2 as before;
+ *   - the trigger defaults to any_trip, and an unknown trigger is refused by the loader.
  */
 
 #include <gtest/gtest.h>
@@ -99,8 +103,13 @@ struct TripHarness {
     std::unique_ptr<NetworkRunTraces>      traces;
     std::unique_ptr<NetworkProductEmitter> emitter;
     SyncedEpoch                            se;
+    bool                                   loaded = false;
 
-    TripHarness(bool hold_on, bool trip_on, const char* tag, double max_gap_s = 300.0) {
+    TripHarness(bool hold_on, bool trip_on, const char* tag, double max_gap_s = 300.0,
+                const char* trigger = nullptr, bool expect_load = true) {
+        const std::string trigger_line =
+            trigger ? std::string("    \"emit_pb_hold_trip_generation_trigger\": \"") + trigger + "\",\n"
+                    : std::string{};
         const std::string body = std::string("{\n") +
             "  \"processing\": {\n"
             "    \"mode\": \"ppp-rtk-network\",\n"
@@ -110,7 +119,8 @@ struct TripHarness {
             "  \"network\": {\n"
             "    \"emit_pb_hold\": " + (hold_on ? "true" : "false") + ",\n"
             "    \"emit_pb_hold_trip_generation\": " + (trip_on ? "true" : "false") + ",\n"
-            "    \"emit_pb_hold_max_gap_s\": " + std::to_string(max_gap_s) + ",\n"
+            "    \"emit_pb_hold_max_gap_s\": " + std::to_string(max_gap_s) + ",\n" +
+            trigger_line +
             "    \"stations\": [\n"
             "      { \"name\": \"AAAA\", \"position_ecef\": [ -2493304.99, -4655214.79, 3565497.67 ] },\n"
             "      { \"name\": \"BBBB\", \"position_ecef\": [ -2281621.75, -1453585.08, 5756964.89 ] }\n"
@@ -119,7 +129,9 @@ struct TripHarness {
             "}\n";
         cfg_path = gnss_test::tempDir() / ("pbh_trip_cfg_" + std::string(tag) + ".json");
         { std::ofstream f(cfg_path); f << body; }
-        EXPECT_TRUE(cfg.loadFromJson(cfg_path, log_mgr));
+        loaded = cfg.loadFromJson(cfg_path, log_mgr);
+        EXPECT_EQ(loaded, expect_load);
+        if (!loaded) return;
         EXPECT_EQ(cfg.getNetworkConfig().emit_pb_hold_trip_generation, trip_on);
         ctx = std::make_unique<NetworkRunContext>(cfg, cfg.getNetworkConfig());
         EXPECT_EQ(ctx->knobs.emit_pb_hold_trip_gen, hold_on && trip_on)
@@ -131,8 +143,12 @@ struct TripHarness {
     }
     ~TripHarness() { std::error_code ec; fs::remove(cfg_path, ec); }
 
-    /// The guard's trip set for the epoch about to be held.
-    void tripped(const std::set<std::string>& sats) { ctx->carry.clk_anchor.stepped = sats; }
+    /// The guard's trip set for the epoch about to be held, every satellite with one cause.
+    void tripped(const std::set<std::string>& sats,
+                 ClockStepCause cause = ClockStepCause::TestTrip) {
+        ctx->carry.clk_anchor.stepped.clear();
+        for (const auto& sat : sats) ctx->carry.clk_anchor.stepped[sat] = cause;
+    }
 
     void step(NetworkSolutionEpoch& sol) {
         se.time = sol.epoch_time;
@@ -219,6 +235,60 @@ TEST(PbHoldTripGeneration, TheKnobIsInertWithoutTheHold) {
     EXPECT_EQ(genOf(step, "G32", "L1W"), 0u) << "no hold, no generation";
     EXPECT_DOUBLE_EQ(pbOf(step, "G32", "L1W"), 0.60);
     EXPECT_EQ(h.ctx->counters.n_pbh_gen_trip, 0);
+}
+
+TEST(PbHoldTripGeneration, TheClockEventTriggerHoldsATestTripAndCountsIt) {
+    TripHarness h(/*hold_on=*/true, /*trip_on=*/true, "ce_test", 300.0, "clock_event");
+    ASSERT_TRUE(h.loaded);
+    EXPECT_EQ(h.cfg.getNetworkConfig().emit_pb_hold_trip_trigger, NetworkPbHoldTripTrigger::ClockEvent);
+    EXPECT_TRUE(h.ctx->knobs.emit_pb_hold_trip_clock_event_only);
+    auto seed = tripEpoch(259200.0, 0.10, 0.20);
+    h.step(seed);
+    auto step = tripEpoch(259230.0, 0.60, 0.70);
+    h.tripped({"G32"}, ClockStepCause::TestTrip);
+    h.step(step);
+    EXPECT_EQ(genOf(step, "G32", "L1W"), 1u) << "a test trip opens no generation under clock_event";
+    EXPECT_EQ(genOf(step, "G32", "L2W"), 1u);
+    EXPECT_DOUBLE_EQ(pbOf(step, "G32", "L1W"), 0.10) << "still the first value";
+    EXPECT_EQ(h.ctx->counters.n_pbh_gen_trip, 0);
+    EXPECT_EQ(h.ctx->counters.n_pbh_trip_test_skipped, 2) << "one per held key";
+}
+
+TEST(PbHoldTripGeneration, TheClockEventTriggerOpensAGenerationOnAClockEvent) {
+    TripHarness h(/*hold_on=*/true, /*trip_on=*/true, "ce_event", 300.0, "clock_event");
+    ASSERT_TRUE(h.loaded);
+    auto seed = tripEpoch(259200.0, 0.10, 0.20);
+    h.step(seed);
+    auto step = tripEpoch(259230.0, 0.60, 0.70);
+    h.tripped({"G32"}, ClockStepCause::ClockEvent);
+    h.step(step);
+    EXPECT_EQ(genOf(step, "G32", "L1W"), 2u);
+    EXPECT_EQ(genOf(step, "G32", "L2W"), 2u);
+    EXPECT_DOUBLE_EQ(pbOf(step, "G32", "L1W"), 0.60);
+    EXPECT_EQ(genOf(step, "G12", "L1W"), 1u);
+    EXPECT_EQ(h.ctx->counters.n_pbh_gen_trip, 2);
+    EXPECT_EQ(h.ctx->counters.n_pbh_trip_test_skipped, 0);
+}
+
+TEST(PbHoldTripGeneration, TheAnyTripTriggerIsTheDefaultAndOpensOnATestTrip) {
+    TripHarness h(/*hold_on=*/true, /*trip_on=*/true, "any_default");
+    ASSERT_TRUE(h.loaded);
+    EXPECT_EQ(h.cfg.getNetworkConfig().emit_pb_hold_trip_trigger, NetworkPbHoldTripTrigger::AnyTrip);
+    EXPECT_FALSE(h.ctx->knobs.emit_pb_hold_trip_clock_event_only);
+    auto seed = tripEpoch(259200.0, 0.10, 0.20);
+    h.step(seed);
+    auto step = tripEpoch(259230.0, 0.60, 0.70);
+    h.tripped({"G32"}, ClockStepCause::TestTrip);
+    h.step(step);
+    EXPECT_EQ(genOf(step, "G32", "L1W"), 2u);
+    EXPECT_EQ(h.ctx->counters.n_pbh_gen_trip, 2);
+    EXPECT_EQ(h.ctx->counters.n_pbh_trip_test_skipped, 0);
+}
+
+TEST(PbHoldTripGeneration, AnUnknownTriggerIsRefused) {
+    TripHarness h(/*hold_on=*/true, /*trip_on=*/true, "bad_trigger", 300.0, "statistic",
+                  /*expect_load=*/false);
+    EXPECT_FALSE(h.loaded);
 }
 
 }  // namespace GnssProcessor

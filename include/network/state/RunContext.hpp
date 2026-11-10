@@ -768,6 +768,7 @@ namespace GnssProcessor {
         bool   emit_pb_hold{};             ///< Hold each (sat, signal) emitted phase bias at the first value of its generation (network.emit_pb_hold); state in NetworkCarryState::pb_hold.
         double emit_pb_hold_max_gap_s{};   ///< Arc gap (s) beyond which a returning key starts a new generation (network.emit_pb_hold_max_gap_s).  Inert unless emit_pb_hold.
         bool   emit_pb_hold_trip_gen{};    ///< A satellite the anchor guard's test tripped starts a new hold generation (network.emit_pb_hold_trip_generation && emit_pb_hold).  Acts only on an event.
+        bool   emit_pb_hold_trip_clock_event_only{}; ///< Only a satellite clock event opens a trip generation, never a test trip (network.emit_pb_hold_trip_generation_trigger = clock_event).  Inert unless emit_pb_hold_trip_gen.
         bool   emit_pb_hold_phase_clock{}; ///< Hold the phase-visible clock instead of the phase bias (network.emit_pb_hold_phase_clock).  Inert unless emit_pb_hold.
         bool   emit_pb_hold_smoothed{};    ///< The smoothed hold (network.emit_pb_hold_smoothed): the held phase bias follows the clock clone c(t0|t); LAH's transfer after a clone dies.  Inert unless emit_pb_hold.
         // --- Guarded temporal clock anchor ---

@@ -102,7 +102,10 @@ struct SyncedEpoch;
  *    @c gap.  With @c network.emit_pb_hold_trip_generation armed, a key of a satellite
  *    the clock anchor guard's test tripped at this epoch
  *    (@c ctx.carry.clk_anchor.stepped) starts a generation the same way, with action
- *    @c trip (a key that is also past the gap counts and reports as a gap).
+ *    @c trip (a key that is also past the gap counts and reports as a gap).  With
+ *    @c network.emit_pb_hold_trip_generation_trigger = @c clock_event only a satellite
+ *    clock event of the IF-TD pools does; a test trip is counted in
+ *    @c n_pbh_trip_test_skipped and the key is held as usual.
  *  - otherwise: overwrite @c NetworkPhaseBias::bias_m with the held value and record
  *    |estimate - held| into the run-end distribution.  With the level-aware hold
  *    (@c network.emit_pb_hold_phase_clock) armed, the held value is shifted by the
@@ -236,6 +239,7 @@ struct PbHoldCounters {
     long long n_pbh_gen_first      = 0;  ///< generations started by a first sighting
     long long n_pbh_gen_gap        = 0;  ///< generations started by a gap > emit_pb_hold_max_gap_s
     long long n_pbh_gen_trip       = 0;  ///< generations started by a tripped clock (network.emit_pb_hold_trip_generation); 0 with the knob off
+    long long n_pbh_trip_test_skipped = 0;  ///< held keys of a satellite the guard's test tripped that opened no generation under the clock_event trigger; 0 under any_trip
     long long n_pbh_held_emissions = 0;  ///< emissions whose value the hold overwrote
     long long n_pbh_coupled_marks  = 0;  ///< coupled clock+phase-bias marks reaching a held key
     // --- Level-aware hold (network.emit_pb_hold_phase_clock) ---

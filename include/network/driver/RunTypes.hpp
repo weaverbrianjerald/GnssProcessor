@@ -1694,6 +1694,12 @@ struct ClockAnchorSat {
     bool   slip_clk_pending{false}; ///< the fold took an ANCHORED satellite LOOSE because the IF-TD pools read a satellite clock event this epoch (network.cycle_slip.if_phase_td_sat_clock_event); the guard owns the state transition, event, wire mark and trip record, as for stale_pending
 };
 
+/// Why the clock anchor guard declared a satellite's clock moved at an epoch.
+enum class ClockStepCause : std::uint8_t {
+    TestTrip,    ///< The guard's test tripped: the statistic (phi or nis) or the absolute backstop (abs).
+    ClockEvent,  ///< The IF-TD pools read a satellite clock event: decoupled as slip_clk, or tripped as slip_clk_late.
+};
+
 /// Run state of the guarded temporal clock anchor.  Lives in
 /// NetworkCarryState.  Not snapshotted, by design (an exemption from the three-place
 /// rule): a warm resume is an invariant #1 event (the F1 rule), so every satellite must
@@ -1709,10 +1715,12 @@ struct ClockAnchorState {
     /// satellite clock event (@c slip_clk, the fold having taken the anchored clock LOOSE), or
     /// tripped by the test's backstop for such a satellite (@c slip_clk_late).  Never a gap,
     /// datum or external decoupling, which retire a frame rather than state that the
-    /// satellite's clock moved.  Cleared with @ref tripped
-    /// at the start of every epoch; read by the phase-bias hold, which starts a new
-    /// generation on the satellite's keys under @c network.emit_pb_hold_trip_generation.
-    std::set<std::string> stepped;
+    /// satellite's clock moved.  Each satellite carries its cause; a clock event wins over a
+    /// test trip of the same epoch.  Cleared with @ref tripped at the start of every epoch;
+    /// read by the phase-bias hold, which starts a new generation on the satellite's keys
+    /// under @c network.emit_pb_hold_trip_generation (on a clock event only, with
+    /// @c network.emit_pb_hold_trip_generation_trigger = clock_event).
+    std::map<std::string, ClockStepCause> stepped;
 };
 
 /// Per-satellite window sums of the level innovation instrument,

@@ -1476,6 +1476,27 @@ namespace GnssProcessor {
     };
 
     /**
+     * @brief Which declarations of the clock anchor guard open a phase-bias hold
+     *        generation under @c network.emit_pb_hold_trip_generation
+     *        (@c network.emit_pb_hold_trip_generation_trigger).
+     *
+     * The guard declares a satellite's clock moved for two kinds of cause.  A test trip
+     * (the statistic, @c phi or @c nis, or the absolute backstop, @c abs) is the guard's own
+     * reading of the clock against its carried prior; on quiet days it fires as a
+     * constellation-wide decoupling with a common phase-space residual, which is a frame move
+     * the hold's de-commoning already keeps on the clock.  A satellite clock event (@c slip_clk,
+     * and its backstop @c slip_clk_late) is the IF-TD slip pools reading one satellite's code
+     * and phase step together at every station: the clock moved and the held phase bias must
+     * not absorb it.  Measured on the field golden: every injected 0.5 m step was a clock
+     * event, every quiet-day trip a @c phi trip, and a generation on every trip degraded the
+     * DOY 132 census (one site +50 mm).
+     */
+    enum class NetworkPbHoldTripTrigger {
+        AnyTrip,    ///< (default) every satellite the guard declared moved: a test trip or a satellite clock event.  The original rule, byte-identical.
+        ClockEvent  ///< Only a satellite clock event of the IF-TD pools (slip_clk, slip_clk_late); a test trip opens no generation.
+    };
+
+    /**
      * @brief The network producer's time-linked parameter classes: the key space
      *        of the @c network.process_noise table.
      *
@@ -3203,9 +3224,23 @@ namespace GnssProcessor {
          *
          * Emit side only.  Not fingerprinted: it acts only on an event.  Inert unless
          * @ref emit_pb_hold and @c network.clock_temporal_anchor (the guard records the
-         * trip) are armed.
+         * trip) are armed.  Which declarations count is @ref emit_pb_hold_trip_trigger.
          */
         bool emit_pb_hold_trip_generation{ false };
+        /**
+         * @brief Which of the guard's declarations open a generation
+         *        (@c network.emit_pb_hold_trip_generation_trigger: @c any_trip, the default,
+         *        or @c clock_event).
+         *
+         * @c any_trip keeps the rule of @ref emit_pb_hold_trip_generation as built: a test
+         * trip or a satellite clock event.  @c clock_event opens a generation only on a
+         * satellite clock event of the IF-TD pools (@c slip_clk, @c slip_clk_late); a test
+         * trip leaves the satellite in its generation and is counted at run end.  See
+         * @ref NetworkPbHoldTripTrigger.  An unknown value is refused (it would change the
+         * emitted product).  Emit side only, not fingerprinted; inert unless
+         * @ref emit_pb_hold_trip_generation acts.
+         */
+        NetworkPbHoldTripTrigger emit_pb_hold_trip_trigger{ NetworkPbHoldTripTrigger::AnyTrip };
         /**
          * @brief Hold the phase-visible clock instead of the phase bias
          *        (@c network.emit_pb_hold_phase_clock, default false).

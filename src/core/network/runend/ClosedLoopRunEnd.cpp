@@ -160,7 +160,11 @@ int networkClosedLoopRunEnd(const NetworkRunEndView& v) {
                   "p90 {:.4f} / max {:.4f} m over {} samples (what the hold HIDES)",
                   k.n_pbh_keys, k.n_pbh_gen_first + k.n_pbh_gen_gap + k.n_pbh_gen_trip,
                   k.n_pbh_gen_first, k.n_pbh_gen_gap,
-                  trip_gen ? fmt::format(" / trip {}", k.n_pbh_gen_trip) : std::string{},
+                  !trip_gen ? std::string{}
+                  : ctx.knobs.emit_pb_hold_trip_clock_event_only
+                      ? fmt::format(" / trip {}, clock events only, {} test-trip key(s) held",
+                                    k.n_pbh_gen_trip, k.n_pbh_trip_test_skipped)
+                      : fmt::format(" / trip {}", k.n_pbh_gen_trip),
                   config_.getNetworkConfig().emit_pb_hold_max_gap_s,
                   k.n_pbh_held_emissions, d50, d90, dmax,
                   ctx.carry.pb_hold_dev_abs_m.size());
