@@ -207,3 +207,4 @@ verbatim on 2026-11-07 under the 60 KB bar. Entries are in pre-registration orde
   hour 2); card LGM's reading unchanged. Recommended for arming as a pair, never the link alone; nothing armed.
   2026-11-09, section 8: armed as a pair on both goldens and the BeiDou lineage at the author's decision (branch
   `ztl/colour-pairing`); health check passes on DOY 129, 130, 132, the sim and BeiDou; look here: DOY 130 census hours 2 and 3.
+  2026-11-10, section 9: DOY 130 attributed; BAKE is one borderline clock-anchor phase-test trip either key re-sorts, DAV1 the link.
