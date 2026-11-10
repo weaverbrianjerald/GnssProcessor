@@ -3,7 +3,7 @@
 Operator guide for running the PPP-RTK network producer as a long-lived service: the health surface, the
 product-level `H` heartbeat, the emission guards, trace rotation, and restart/supervision.  Consumer-facing product
 semantics (URA, discontinuity counters, S contract) are out of scope — see the product docs and
-`docs/network_ambiguity_resolution_design.md`.  The RT *service program* record (conventions, brdc_rts cards,
+`docs/record/network_ambiguity_resolution_design.md`.  The RT *service program* record (conventions, brdc_rts cards,
 streaming front-end, open RTF cards) is `docs/rt_service_conventions.md`.
 
 ## 1. The operator health CSV — `network_service_health.csv`
@@ -99,7 +99,7 @@ Both bolded tiers are **default OFF and must stay off**; both now carry a DOY-12
   epochs withheld (278/600)**, **239 consecutive**, swallowing both event windows *and* the pre-event baseline: its
   a₀₀ band is a **datum-coupled** quantity (standing invariant #5) differing **~25 TECU between two realizations of
   the same day**.  The only KEEP_OFF-because-FALSIFIED knob in its family.  Its degrade-instead-of-withhold path
-  also **DEADLOCKS** as wired (`docs/SPEC_day129_frame_guards.md` Part C5(1)): NetworkSolPrep early-returns on
+  also **DEADLOCKS** as wired (`docs/record/SPEC_day129_frame_guards.md` Part C5(1)): NetworkSolPrep early-returns on
   `sh_gate_engaged` while the URA-ramp lift and `++n_emitted` are both downstream, so arming `warmup_ura_floor_m`
   with this gate means the floor can never lift.  A fix is specified — gate on field SHAPE (rms over degrees ≥ 1 as
   a RATIO to a frozen converged-window median) — but unbuilt.
@@ -159,12 +159,12 @@ the line is a WARN saying the gate is untested in that run — do not read a cle
 it can be armed, disarmed or retuned across a bounce and still resume **warm**.
 
 > **Note, 2026-10-30.** The SH health gate was deleted with its code on 2026-10-14 (card
-> [RKD](refound/RKD_retired_key_deletion_2026-10-14.md), commit `b216f55`). `network.sh_health_gate`,
+> [RKD](record/refound/RKD_retired_key_deletion_2026-10-14.md), commit `b216f55`). `network.sh_health_gate`,
 > `network.sh_gate_min_epochs` and `network.sh_gate_rms_max_tecu` are no longer read, and the producer writes no
 > `SH_GATE` event, no `sh_gate_withheld` disposition and no `withheld_sh` heartbeat; the consumer still reads
 > `withheld_sh` in archived product files. This section and the SH gate row of the tier table above describe the tier
 > as it was. A configuration that still sets one of the three keys loads with a warning naming it (card
-> [RKT](refound/RKT_retired_key_tombstone_2026-10-30.md)).
+> [RKT](record/refound/RKT_retired_key_tombstone_2026-10-30.md)).
 
 ### 3.3 CB-excursion reinit — `network.cb_excursion_reinit`
 

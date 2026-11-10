@@ -126,7 +126,7 @@
  * holds neither group writes the v1 bytes unchanged.
  *
  * The RS-3 datum records (@c EQD / @c EQP / @c EQS / @c EQT / @c EQE / @c EQR and
- * @c CBP / @c CBS / @c CBI, docs/SPEC_event_harness.md §21.7) do not advance the header
+ * @c CBP / @c CBS / @c CBI, docs/record/SPEC_event_harness.md §21.7) do not advance the header
  * literal.  Like the optional @c var_first field of the @c L record, they are a
  * knob-gated addition whose absence leaves every existing byte unchanged, so an RS-3
  * A/B can diff two snapshots and see only the new rows.  The cost is that a binary
@@ -136,7 +136,7 @@
  * Written only under @c network.state_snapshot_datum_capture, so a run that does not
  * arm it writes the v1/v2/v3 bytes unchanged.
  *
- * The RS-5 emit-layer records (@c ER, docs/SPEC_event_harness.md §21.10) follow the
+ * The RS-5 emit-layer records (@c ER, docs/record/SPEC_event_harness.md §21.10) follow the
  * RS-3 precedent: rows under the existing header, written only under
  * @c network.state_snapshot_emit_capture.  They hold the state of the output-only
  * engine @c NetworkEmitRebase, its emission frame.  The @c PF / @c PS rows of the removed
@@ -157,7 +157,7 @@
  * consumer ignores on a held key by design.  Nothing in this group enters the
  * warm-resume fingerprint: the hold writes the wire only, the solve does not read it.
  *
- * The RS-8 canonical-signal records (@c CN, docs/SPEC_event_harness.md §21.16) follow the
+ * The RS-8 canonical-signal records (@c CN, docs/record/SPEC_event_harness.md §21.16) follow the
  * same precedent, written only under @c network.state_snapshot_signal_capture.  They
  * hold @c PppModel's per-station, per-(constellation, band, obs-type) canonical signal,
  * which the model decides from one epoch's satellite counts and then locks for the
@@ -801,7 +801,7 @@ public:
      * as warm.  Every refusal path (a missing file, a parse failure, a fingerprint
      * mismatch, a non-positive age, a stale age, a failed emitter restore) goes
      * through this function, so "require" means the same thing on every branch
-     * (docs/SPEC_event_harness.md §6b).
+     * (docs/record/SPEC_event_harness.md §6b).
      *
      * @param require  @c network.state_snapshot_require.
      * @param why      The refusal class.

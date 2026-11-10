@@ -296,7 +296,7 @@ struct SbasisContract {
     /// @c checkContract keep it for products written before the retirement.  The value
     /// is @c "<s1>-<s2>", the same pair as @ref cb_pin_pair (the GF row was built on
     /// the IF pin's @c sig1/@c sig2), or the per-channel-family form
-    /// (@c "C1C-C5Q+C1X-C5X", see @c docs/SPEC_family_gf_datum.md), which the parser
+    /// (@c "C1C-C5Q+C1X-C5X", see @c docs/record/SPEC_family_gf_datum.md), which the parser
     /// accepts as a value extension rather than a new token.
     ///
     /// Why the pair is on the wire: under the GF datum, IF+GF together span the

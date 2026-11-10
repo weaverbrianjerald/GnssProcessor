@@ -1,6 +1,6 @@
 /**
  * @file test_sim_network_fixture.cpp
- * @brief Unit tests for the synthetic minimum-network fixture (docs/SPEC_synthetic_minimum_network.md).
+ * @brief Unit tests for the synthetic minimum-network fixture (docs/record/SPEC_synthetic_minimum_network.md).
  *
  * Product-free and processor-free, like the rest of `gnss_simulator_selftest`.
  * These tests cover the pieces that give a multi-station fixture its meaning;

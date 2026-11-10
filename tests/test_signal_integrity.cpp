@@ -1,6 +1,6 @@
 /**
  * @file test_signal_integrity.cpp
- * @brief Tests for flicker/gap signal integrity (docs/SPEC_flicker_gap_integrity.md):
+ * @brief Tests for flicker/gap signal integrity (docs/record/SPEC_flicker_gap_integrity.md):
  *        the per-line-of-sight band-state classifier, the demotion of unvetted phase,
  *        the regain refloat and the re-vet window.
  *

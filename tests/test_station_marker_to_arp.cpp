@@ -12,7 +12,7 @@
  * the two paths agree exactly for the same inputs and the producer and the
  * grader share one frame.
  *
- * Covered here (spec docs/refound/UPO_consumer_up_offset_2026-09-22.md §4, U4):
+ * Covered here (spec docs/record/refound/UPO_consumer_up_offset_2026-09-22.md §4, U4):
  *
  *   1. the roster-site reduction takes the header fields in RINEX (H, E, N)
  *      order, at a real roster site with a large eccentricity (GRAZ00AUT,

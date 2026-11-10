@@ -1,7 +1,7 @@
 /**
  * @file test_rt_state_snapshot_latches.cpp
  * @brief Unit gates for the initializer's seed latches in the RT filter-state snapshot
- *        (card CRS2, docs/refound/CRS2_resume_hold_and_latches_2026-11-06.md): the @c I
+ *        (card CRS2, docs/record/refound/CRS2_resume_hold_and_latches_2026-11-06.md): the @c I
  *        record round-trips, an unknown or duplicated latch fails the strict parse, a
  *        file without the rows restores nothing, the scope rule of the restore, and the
  *        loader's side of the two keys (@c realtime.state_snapshot_latch_capture,

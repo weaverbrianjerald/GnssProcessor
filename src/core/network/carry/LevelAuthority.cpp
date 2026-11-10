@@ -1,7 +1,7 @@
 /**
  * @file LevelAuthority.cpp
  * @brief LV-6 census implementation; see the header and
- *        `docs/SPEC_level_authority_internal.md` §3/§5.
+ *        `docs/record/SPEC_level_authority_internal.md` §3/§5.
  */
 
 #include "network/carry/LevelAuthority.hpp"

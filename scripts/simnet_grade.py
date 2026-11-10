@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Synthetic minimum network: the truth grader (docs/SPEC_synthetic_minimum_network.md §4).
+"""Synthetic minimum network: the truth grader (docs/record/SPEC_synthetic_minimum_network.md §4).
 
 This is the absolute grade of the network producer.  The other grades in this
 repo are internal (self-consistency, datum invariance, cross-instrument
@@ -249,7 +249,7 @@ def parse_s_line(p):
 # Truth loading
 # --------------------------------------------------------------------------- #
 
-# Optional grading window (oracle pin, docs/SPEC_oracle_pin.md).
+# Optional grading window (oracle pin, docs/record/SPEC_oracle_pin.md).
 #
 # The pin legs need every channel graded over two short windows of one 60-epoch
 # leg, which `--settle-frac` (a leading fraction to discard) cannot express.  The

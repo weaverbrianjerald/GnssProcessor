@@ -1,6 +1,6 @@
 /**
  * @file test_prior_residual_census.cpp
- * @brief Prior-residual census (docs/SPEC_prior_residual_census.md): the stale-carry
+ * @brief Prior-residual census (docs/record/SPEC_prior_residual_census.md): the stale-carry
  *        test of D5, generalized to every carried stiff prior.
  *
  * The census applies the residual of prior information and its dispersion (LASER
@@ -34,7 +34,7 @@
  *
  * ## Cases 13-18: the constraint-aware global variance component (the rider)
  *
- * docs/SPEC_prior_residual_census.md §14: the other half of LASER 5-74, which pools
+ * docs/record/SPEC_prior_residual_census.md §14: the other half of LASER 5-74, which pools
  * the same rows into the global scale
  * @f$\hat\sigma_0^2 = (\tilde e^\top P\tilde e + \tilde e_0^\top P_0 \tilde e_0)
  *                     /(n-m+l)@f$.  The rider uses the census accumulator, so its
@@ -107,7 +107,7 @@ NetworkPriorResidual::Input row(double e, double fold_var, double post_var,
 }
 
 /// A census with the constraint-aware global variance component armed
-/// (docs/SPEC_prior_residual_census.md §14).  By default the warm-up threshold is
+/// (docs/record/SPEC_prior_residual_census.md §14).  By default the warm-up threshold is
 /// out of reach: the rider's sums do not depend on the σ̂₀ calibration, and keeping
 /// the ladder side raw-formal keeps the two concerns separate.
 NetworkPriorResidual makeGlobalCensus(double min_rows = 1e18) {
@@ -582,7 +582,7 @@ TEST(PriorResidualCensusTest, IdentityBufferCapNeverThinsTheLadder) {
 
 // ===========================================================================
 //  The constraint-aware global variance component
-//  (docs/SPEC_prior_residual_census.md §14): the other half of LASER 5-74
+//  (docs/record/SPEC_prior_residual_census.md §14): the other half of LASER 5-74
 // ===========================================================================
 
 // ---------------------------------------------------------------------------

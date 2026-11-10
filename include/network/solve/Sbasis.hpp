@@ -103,7 +103,7 @@ struct EpochEvents;   // network/driver/Epoch.hpp
  *                       both), with all three satellite-frame branches sharing
  *                       the nadir handedness.
  *
- * @see docs/SPEC_phase_windup_sign.md
+ * @see docs/record/SPEC_phase_windup_sign.md
  */
 inline constexpr const char* kWindUpYawModelId = "nominal-wu93";
 
@@ -224,7 +224,7 @@ struct SbasisDeclaration {
     /// and are in a different phase frame: their satellite clocks and phase biases
     /// absorbed +2*phi_wu.  The changed token is what makes a pairing of a
     /// corrected producer with an uncorrected consumer detectable; see
-    /// docs/SPEC_phase_windup_sign.md section 8 item 2.
+    /// docs/record/SPEC_phase_windup_sign.md section 8 item 2.
     std::string windup_yaw_model_id{ kWindUpYawModelId };
     /// True when the network emits its own satellite code bias (OSB): W6,
     /// network.estimate_sat_code_bias.  V1 emits satellite clock and phase bias only.
@@ -347,7 +347,7 @@ public:
         int anchored{0};       ///< Rows (pair and extra) anchored at the absolute target.
     };
 
-    /// The two arms of the family clock datum (docs/refound/GFC_galileo_family_clock_datum_2026-10-10.md),
+    /// The two arms of the family clock datum (docs/record/refound/GFC_galileo_family_clock_datum_2026-10-10.md),
     /// handed to @ref buildCodeBiasDatumRows.  Both refine the time-linked code datum and
     /// are read only when the builder's @c cb_time_linked argument is set; with both false
     /// (the default) the builder's output is the earlier output.
@@ -815,7 +815,7 @@ public:
         std::vector<FamilyBirthSkipRecord> family_birth_skips;
     };
 
-    /// A receiver channel family tag (FAMILY-GF, docs/SPEC_family_gf_datum.md §3.1).
+    /// A receiver channel family tag (FAMILY-GF, docs/record/SPEC_family_gf_datum.md §3.1).
     /// It is not the raw RINEX attribute character: the Galileo primary family is
     /// C1C/C5Q/C7Q, whose attributes are 'C', 'Q', 'Q', so keying on the character
     /// would split one family in two (and on GPS would split C2W from C2L on a
@@ -842,7 +842,7 @@ public:
      *  - Galileo ('E'): the pair (band 1, band 5) and nothing else;
      *  - every other constellation: the pair (band 1, band 2), the RF-0c rule
      *    unchanged (for BeiDou that band-digit test does not name the pair its
-     *    TGD1 describes; see the owed list of docs/refound/GAL_gps_galileo_dual_2026-09-22.md).
+     *    TGD1 describes; see the owed list of docs/record/refound/GAL_gps_galileo_dual_2026-09-22.md).
      * A pair outside the rule gets a zero target and its own counter.
      *
      * @param sat   RINEX satellite id ("G05", "E11").
@@ -1470,7 +1470,7 @@ public:
 
     /**
      * @brief The structural per-constellation clock null direction @f$v_c@f$
-     *        (queue 1(b), docs/SPEC_pivot_visibility_gauge_defect.md §8.1 rule 1).
+     *        (queue 1(b), docs/record/SPEC_pivot_visibility_gauge_defect.md §8.1 rule 1).
      *
      * The clock gauge of a constellation is the direction documented in this
      * file's header: *adding a constant to every satellite clock of a
@@ -1511,7 +1511,7 @@ public:
      * @brief Build the loose Kaula / physical-bound priors on the admitted
      *        satellite code-bias (OSB) columns.
      *
-     * The conditional second lever of docs/SPEC_beidou_w6_datum.md.  Its trigger
+     * The conditional second lever of docs/record/SPEC_beidou_w6_datum.md.  Its trigger
      * is a residual below-cutoff direction that the calibrated rank gate
      * and the phase drop-and-heal leave behind: a `CB`+`CLK` direction
      * with zero phase-bias weight, out of reach of the drop-and-heal, which anchors
@@ -1907,7 +1907,7 @@ struct SbasisCounters {
     // consumer's discontinuity channel.
     size_t n_extra_band_free = 0, n_extra_band_carried = 0, n_extra_band_held = 0;
     size_t n_s2z_reseed_rows = 0, n_s2z_reseed_sats = 0;
-    /// Family clock datum (docs/refound/GFC_galileo_family_clock_datum_2026-10-10.md): the pin
+    /// Family clock datum (docs/record/refound/GFC_galileo_family_clock_datum_2026-10-10.md): the pin
     /// pair holds and changes per constellation
     /// (@c network.code_datum_pair_continuity) and the
     /// secondary-family level realizations per (constellation, band digit)

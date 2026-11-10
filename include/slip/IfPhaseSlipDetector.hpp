@@ -256,7 +256,7 @@ namespace GnssProcessor {
             /// = 0, so dd(ref) = 0 every epoch).  The network pool arm excludes
             /// these structural zeros from its robust scale: they sit at the
             /// centre of the distribution and deflate the MAD
-            /// (docs/SPEC_amb_iono_split_overcount.md §6.14.5, defect 2).  They
+            /// (docs/record/SPEC_amb_iono_split_overcount.md §6.14.5, defect 2).  They
             /// carry no information about the noise the threshold tracks, and
             /// the pool arm cannot flag the reference in any case (its deviation
             /// is about 0), so a separate per-station reference gate covers it
@@ -353,7 +353,7 @@ namespace GnssProcessor {
 
         /**
          * @brief Hardened reference-satellite slip gate (
-         *        docs/SPEC_slip_qc_hardening.md §2).
+         *        docs/record/SPEC_slip_qc_hardening.md §2).
          *
          * The legacy gate is the last non-empirical decision in the IF-TD chain:
          * it fires whenever |median(non-ref ΔΔ)| exceeds a fixed 0.5·λ_IF with
@@ -527,7 +527,7 @@ namespace GnssProcessor {
             /// here is hardened-gate telemetry only.  Without these two the
             /// reference arm's flags do not appear in `network_flag_rates.csv`,
             /// whose T1 tier covers only the pool arm (standing invariant #4;
-            /// docs/SPEC_amb_iono_split_overcount.md §6.14.5, defect 1).
+            /// docs/record/SPEC_amb_iono_split_overcount.md §6.14.5, defect 1).
             long long gate_opportunities{0};     ///< Station-epoch-chains (one chain per constellation by default) on which the arm ran with a family of n ≥ 2 finite non-reference DDs; gated epochs (position or model nuisance) are excluded because flagging is suppressed there.
             long long gate_flags{0};             ///< …of those, the ones that fired (legacy condition, or the hardened verdict when armed).
             /// @}

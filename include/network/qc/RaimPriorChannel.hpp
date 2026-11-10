@@ -2,7 +2,7 @@
 /**
  * @file RaimPriorChannel.hpp
  * @brief The post-fit RAIM's prior channel (@c network.raim_prior_channel,
- *        docs/refound/RPC_raim_prior_channel_2026-10-30.md): each carried-prior row of a
+ *        docs/record/refound/RPC_raim_prior_channel_2026-10-30.md): each carried-prior row of a
  *        station block tested once, in the cell of its own column, with the T4 isolated-arc
  *        test.
  *

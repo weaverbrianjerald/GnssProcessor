@@ -377,7 +377,7 @@ void networkElectPhaseAnchors(
     };
 
     // ---- Ledger usability predicate: one definition, two readers --------------
-    // Cold anchor fallback (docs/SPEC_event_harness.md §15).  The continuous branch
+    // Cold anchor fallback (docs/record/SPEC_event_harness.md §15).  The continuous branch
     // further down decides whether a successor's carried value may serve as the
     // datum; the candidacy pass asks the same question of every candidate before
     // one is elected.  Both must read one predicate: a screen that diverged from
@@ -474,7 +474,7 @@ void networkElectPhaseAnchors(
     }
 
     // ---- Satellite clause (iteration 2) ----------------------------------------
-    // docs/SPEC_event_harness.md §15.8.  A per-family screen (iteration 1) lets each
+    // docs/record/SPEC_event_harness.md §15.8.  A per-family screen (iteration 1) lets each
     // band of a satellite elect the host whose carry is best for that band.  Each
     // band is then correct on its own, but the bands are referenced to different
     // stations, an inter-frequency inconsistency the per-band producer instruments
@@ -699,7 +699,7 @@ void networkElectPhaseAnchors(
                     return {i, true};
             return {static_cast<size_t>(-1), false};
         };
-        // Cold anchor fallback, first pass (docs/SPEC_event_harness.md §15).
+        // Cold anchor fallback, first pass (docs/record/SPEC_event_harness.md §15).
         // Entered only where a handover is about to happen: an incumbent exists for
         // this key and the sticky branch did not keep it (absent, lost the key,
         // banned, or deposed by a basis flag).  A key without an incumbent has no
@@ -913,7 +913,7 @@ void networkElectPhaseAnchors(
             if (dir) ++dir->n_no_successor;
             continue;
         }
-        // Two-edge continuous handover (docs/SPEC_pivot_visibility_gauge_defect.md).
+        // Two-edge continuous handover (docs/record/SPEC_pivot_visibility_gauge_defect.md).
         //
         // The gauge is "this anchor's ambiguity for `amb` = target".  Pinning a new
         // anchor at 0 realizes a different frame: the whole (sat,signal) family

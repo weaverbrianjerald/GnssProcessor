@@ -19,7 +19,7 @@
  * (@c network.stations[].fixed), reported once for the whole array.
  *
  * The rows are the 150 network keys deleted from the loader with their code on 2026-10-14
- * (main 4c0e731 to 8409b43; the record is docs/refound/RKD_retired_key_deletion_2026-10-14.md,
+ * (main 4c0e731 to 8409b43; the record is docs/record/refound/RKD_retired_key_deletion_2026-10-14.md,
  * id "RKD"): the 141 REMOVE rows of the configuration ledger at main 4bdd693, the three
  * @c lane_carry keys deleted with the WL-3 carry, the five @c mw_wl keys the lane layer
  * orphaned, and @c iono_constraint_deweight_stations, which had no ledger row.  Each flat

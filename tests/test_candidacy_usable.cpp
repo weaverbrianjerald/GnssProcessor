@@ -1,7 +1,7 @@
 /**
  * @file test_candidacy_usable.cpp
  * @brief Cold anchor fallback (network.phase_datum_candidacy_usable,
- *        docs/SPEC_event_harness.md §15): the candidacy screen, its skip reasons,
+ *        docs/record/SPEC_event_harness.md §15): the candidacy screen, its skip reasons,
  *        and the byte-identity with the knob off of the election it sits in front of.
  *
  * The defect is one of ordering, and it leaves no trace at the site where it

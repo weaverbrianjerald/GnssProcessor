@@ -1,4 +1,4 @@
-# Card Q3 ladder-leg arm runner (docs/SPEC_clock_temporal_anchor.md §8).
+# Card Q3 ladder-leg arm runner (docs/record/SPEC_clock_temporal_anchor.md §8).
 #
 # Serialized: refuses to start while any gnss_processor* is alive, because every
 # comparison in this leg is same-build + same-config-chain + non-overlapping, and

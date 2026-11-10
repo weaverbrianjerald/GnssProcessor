@@ -1,7 +1,7 @@
 /**
  * @file ClockEmitRebase.cpp
  * @brief Implementation of the clock emission re-base (
- *        docs/SPEC_clock_emit_rebase.md).
+ *        docs/record/SPEC_clock_emit_rebase.md).
  */
 
 #include "network/emit/ClockEmitRebase.hpp"

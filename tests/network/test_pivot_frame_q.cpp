@@ -1,4 +1,4 @@
-// Unit gate U0 of the pivot-frame process noise (docs/refound/PFQ_pivot_frame_process_noise_2026-10-08.md):
+// Unit gate U0 of the pivot-frame process noise (docs/record/refound/PFQ_pivot_frame_process_noise_2026-10-08.md):
 // the carried satellite clocks' process noise in the pivot frame.
 //
 // The clock datum pins one satellite clock per constellation, so a carried clock is

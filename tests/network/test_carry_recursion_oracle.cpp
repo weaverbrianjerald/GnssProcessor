@@ -1,7 +1,7 @@
 /**
  * @file test_carry_recursion_oracle.cpp
  * @brief A multi-epoch oracle of the shipped carry recursion across arc events
- *        (docs/refound/CRO_carry_recursion_oracle_2026-11-07.md).
+ *        (docs/record/refound/CRO_carry_recursion_oracle_2026-11-07.md).
  *
  * One synthetic network (five satellites, three stations, two bands of phase and code, a free
  * receiver clock per station and epoch and a free slant ionosphere per line of sight and epoch,

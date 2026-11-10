@@ -1,8 +1,8 @@
 /**
  * @file test_handover_stransform.cpp
  * @brief Handover S-transform (network.handover_stransform, queue 1(b);
- *        docs/SPEC_pivot_visibility_gauge_defect.md §8, measured motivation in
- *        docs/SPEC_event_harness.md §19): the structural direction, the rank-1
+ *        docs/record/SPEC_pivot_visibility_gauge_defect.md §8, measured motivation in
+ *        docs/record/SPEC_event_harness.md §19): the structural direction, the rank-1
  *        kernel, its exactness, and the loader interlocks.
  *
  * The mechanism rests on the claim that a clock-pivot handover moves a gauge, not the

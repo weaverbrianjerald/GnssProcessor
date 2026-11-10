@@ -2,7 +2,7 @@
  * @file test_aiding_source.cpp
  * @brief Unit tests for the aiding-source abstraction (nav-readiness item 1).
  *
- * Scope (Steps 0-2 of docs/aiding_source_abstraction_design.md; the later
+ * Scope (Steps 0-2 of docs/record/aiding_source_abstraction_design.md; the later
  * sections cover streaming IMU ingest (Step 5), appendAidingRow and the ZUPT
  * source (Step 6)):
  *   - AidingSourceRegistry: kind<->token mapping, availability (IMU and ZUPT

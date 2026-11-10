@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Oracle pin grader: gates G1..G4 of docs/SPEC_oracle_pin.md.
+"""Oracle pin grader: gates G1..G4 of docs/record/SPEC_oracle_pin.md.
 
 Every cell comes from a truth grader, never a raw wire step (standing invariant
 #5 / the Psychas single-realization mandate): a raw step confounds benign frame

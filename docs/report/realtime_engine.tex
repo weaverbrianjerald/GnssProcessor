@@ -198,7 +198,7 @@ therefore leaves the record self-consistent while its last $16$ bits, which
 carry low-order bits of $\sqrt{A}$, IDOT, $C_{rs}$, $a_{f1}$ and $a_{f2}$, are
 wrong, and the orbit is off by up to about \SI{300}{\metre}, with the SSR
 correction applied on top of it
-(\texttt{docs/cards/realtime/INAV-ODD-PAGE.md}).
+(\texttt{docs/record/cards/realtime/INAV-ODD-PAGE.md}).
 
 The top-level \texttt{RtcmParser} (\texttt{src/core/rtcm/RtcmParser.cpp})
 reads the 12-bit message type DF002 from the first 12 bits of the
@@ -944,7 +944,7 @@ the pivot.  A configuration with precise orbits and live clocks
 satellites is not from the broadcast store.  The response is not armed: over a
 6\,h real replay it saw 377 record changes, the largest \SI{0.83}{\metre}, and
 wrote nothing, and it is not yet graded on a real jump
-(\texttt{docs/cards/realtime/EPH-JUMP-RESEED.md}).
+(\texttt{docs/record/cards/realtime/EPH-JUMP-RESEED.md}).
 
 \subsection{Filter-state snapshot and warm resume}\label{sec:rt-snapshot}
 
@@ -996,7 +996,7 @@ applied-value map of the phase-bias carry and translation
 (\dcref{sec:ssr-pbstep}{the SSR phase-bias step section}).  The setting is
 UNVALIDATED in the ledger: it was built for warm-resumed closed-loop runs, and
 no benefit was graded on a continuous product stream
-(\texttt{docs/cards/consumer/CC-declared-step-carry.md}).
+(\texttt{docs/record/cards/consumer/CC-declared-step-carry.md}).
 
 \subsection{Assessing a real-time run}\label{sec:rt-assess}
 

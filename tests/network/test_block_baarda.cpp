@@ -1,7 +1,7 @@
 /**
  * @file test_block_baarda.cpp
  * @brief Tests for the (station, satellite) LOS block outlier census (BLOCKFORMAL,
- *        docs/SPEC_redundancy_census.md), starting with the residual-cofactor kernel
+ *        docs/record/SPEC_redundancy_census.md), starting with the residual-cofactor kernel
  *        (BB-INC-0).
  *
  * LASER Guide v2.7 slide 5-98 notes that there is "not necessarily a one-to-one

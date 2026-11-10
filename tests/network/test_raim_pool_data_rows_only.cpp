@@ -2,7 +2,7 @@
  * @file test_raim_pool_data_rows_only.cpp
  * @brief The carried-phase RAIM pools restricted to observation phase rows
  *        (@c network.raim_pool_data_rows_only,
- *        docs/refound/RPA_raim_pool_data_rows_2026-10-08.md).
+ *        docs/record/refound/RPA_raim_pool_data_rows_2026-10-08.md).
  *
  * The contracts:
  *  - the pools' admission predicate (@c raimPoolAdmitsRow) with the knob off is the

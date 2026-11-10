@@ -248,10 +248,10 @@ DOC_HUNKS = (
 
     # --- NetworkRunContext.hpp ----------------------------------------------------------------
     DocHunk(RUNCTX,
-            " * (decomposition INC-4; see docs/network_decomposition_plan.md).  The run loop in\n"
+            " * (decomposition INC-4; see docs/record/network_decomposition_plan.md).  The run loop in\n"
             " * ApplicationNetwork.cpp binds `auto& X = ctx.carry.X;` / `const T X = ctx.knobs.X;`\n"
             " * aliases under those names, so the use sites read as before.\n",
-            " * (decomposition INC-4; see docs/network_decomposition_plan.md).  The epoch function\n"
+            " * (decomposition INC-4; see docs/record/network_decomposition_plan.md).  The epoch function\n"
             " * (ApplicationNetworkEpoch.cpp) and the preamble of each seam in its epoch form bind\n"
             " * `auto& X = ctx.carry.X;` / `const T X = ctx.knobs.X;` aliases under those names (the\n"
             " * run loop in ApplicationNetwork.cpp did until card NOM3 step EP1), so the use sites read\n"

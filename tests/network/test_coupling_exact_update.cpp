@@ -1,6 +1,6 @@
 /**
  * @file test_coupling_exact_update.cpp
- * @brief Unit gate of the exact coupling time update (docs/refound/CTU_coupling_time_update_2026-09-28.md,
+ * @brief Unit gate of the exact coupling time update (docs/record/refound/CTU_coupling_time_update_2026-09-28.md,
  *        section 9.2): the exact conditional time update of the carried coupling rows.
  *
  * The time-update fixture (test_network_estimator.cpp, ConditionalCarryTimeUpdateRecursiveEqualsBatch)
@@ -20,7 +20,7 @@
  * its level is reported against the batch.  A third recursion applies the scalar
  * kappa at the legacy clock rate, and must be seen to lock the level.
  *
- * The self-contained clock level (docs/refound/SCL_self_contained_clock_level_2026-10-03.md, sections 4.1 and 6)
+ * The self-contained clock level (docs/record/refound/SCL_self_contained_clock_level_2026-10-03.md, sections 4.1 and 6)
  * makes the clock walk a test parameter (the broadcast grade, 5e-6 m^2/s), rotates the phase
  * datum (each satellite anchored at its own station, as the producer's prioritized datum
  * elects anchors), and adds the one-epoch clock clone in two harvest forms: U1 (the

@@ -1,7 +1,7 @@
 /**
  * @file test_second_phase_channel.cpp
  * @brief Contract tests for the second phase channel (see
- *        docs/refound/SID_signal_identity_2026-09-22.md section 4).
+ *        docs/record/refound/SID_signal_identity_2026-09-22.md section 4).
  *
  * With `network.second_phase_channel` a network station contributes, as ordinary
  * float-ambiguity phase rows, every allow-listed band-1 carrier phase it reports

@@ -1,7 +1,7 @@
 /**
  * @file test_phase_colour_state.cpp
  * @brief The per-line-of-sight phase nuisance state's column family, its loader
- *        interlocks and its prior law (docs/refound/LGM_los_phase_nuisance_2026-10-01.md
+ *        interlocks and its prior law (docs/record/refound/LGM_los_phase_nuisance_2026-10-01.md
  *        section 4.1).
  *
  * The state is a band-common, phase-only Gauss-Markov column per (station, satellite).

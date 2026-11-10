@@ -795,7 +795,7 @@ void foldAndDumpCouplingRows(bool carry_cpl_cond,
                 // direction has weight +1 on each).  A gauge-invariant row has this
                 // sum equal to minus its local's gauge weight: 0 for a local with no
                 // gauge weight, −1 for a local moved by +1 under that constellation's
-                // gauge (docs/SPEC_card1_coupling_carry.md §1).
+                // gauge (docs/record/SPEC_card1_coupling_carry.md §1).
                 std::map<char, double> gsum;
                 for (const auto& [col, d] : cpl_col2desc_dbg)
                     if (d.kind != SharedParamKind::VtecSh && col < Rc.A_s.cols()
@@ -1152,7 +1152,7 @@ void networkStationLocalBlock(StationCarryFrame& carry) {
     // serially at the post-solve harvest).
     const bool   zwd_seam_live = ctx.carry.zwd_seam_ep_left > 0;
     // The ZWD carry's effective RW q for this epoch's folds (RS-10b,
-    // docs/SPEC_event_harness.md §21.21).  network.zwd_carry_q is in the warm-resume
+    // docs/record/SPEC_event_harness.md §21.21).  network.zwd_carry_q is in the warm-resume
     // fingerprint (a continuous carry q must cold-start), while the seam response
     // that borrows its weight is not, by design, so without a separate knob the seam
     // window's stiffness could not be tuned on a resume leg.

@@ -50,7 +50,7 @@ std::string withinEpochCulpritQuietReason(bool pl_on, long long pool_walks, long
             " (the tier's phase pool admitted no row in {} assessment(s): under "
             "network.carry_invariant the assembly fills no leveling ambiguity column, so the "
             "tier cannot name a satellite or arc culprit and the withhold is structurally idle "
-            "until the within-epoch pool is re-hosted, docs/SPEC_raim_pool_rehost.md deferral "
+            "until the within-epoch pool is re-hosted, docs/record/SPEC_raim_pool_rehost.md deferral "
             "D1)",
             pool_walks);
     return "";

@@ -7,7 +7,7 @@
  *        (NetworkServiceCounters), bundled as NetworkRunContext.
  *
  * The members keep the names and types of the run-loop locals they replaced
- * (decomposition INC-4; see docs/network_decomposition_plan.md).  The epoch function
+ * (decomposition INC-4; see docs/record/network_decomposition_plan.md).  The epoch function
  * (ApplicationNetworkEpoch.cpp) and the preamble of each seam in its epoch form bind
  * `auto& X = ctx.carry.X;` / `const T X = ctx.knobs.X;` aliases under those names (the
  * run loop in ApplicationNetwork.cpp did until the run took ownership), so the use sites read
@@ -208,7 +208,7 @@ namespace GnssProcessor {
         bool pl_blk_from_vehicle{};
         /// network.ambiguity_vehicle == "float_kf": the float state with a carried joint
         /// covariance, a floored birth prior, and a bounded drop as the slip response
-        /// (docs/refound/RF-1_float_ambiguities_design.md §7.1).  Read by the slip
+        /// (docs/record/refound/RF-1_float_ambiguities_design.md §7.1).  Read by the slip
         /// response (@c networkAmbFloatApplyDrops drops a flagged arc's carried prior to
         /// its birth variance, and the inject folds that arc instead of skipping it), by
         /// the RAIM attribution path (a bounded drop instead of an erase), by the declared
@@ -609,7 +609,7 @@ namespace GnssProcessor {
         /// so an in-gap slip still has a detector.  0 = off.  Not fingerprinted.
         int    resume_slip_warmup_ep{};
         bool carry_vce{};
-        bool vce_apply_on{};   ///< LASER 5-95 variance-factor apply (M2 v2, docs/SPEC_carry_vce_apply.md).  Affects the solve; loader guarantees carry_vce.
+        bool vce_apply_on{};   ///< LASER 5-95 variance-factor apply (M2 v2, docs/record/SPEC_carry_vce_apply.md).  Affects the solve; loader guarantees carry_vce.
         bool ura_on{};
         double ura_alpha{};
         bool ura_retro{};
@@ -670,7 +670,7 @@ namespace GnssProcessor {
         /// byte-identical.  Not fingerprinted (a QC knob).
         bool raim_prior_channel{};
         /// The gross line-of-sight screen is armed for this run (
-        /// docs/SPEC_event_harness.md §24.18).  Resolved once from
+        /// docs/record/SPEC_event_harness.md §24.18).  Resolved once from
         /// @c network.gross_los_screen so the driver, the assembly, the seam and the
         /// teardown all read one bool and cannot disagree about whether the state exists.
         /// It affects the solve.  Off: the seam is never called, no LOS state is
@@ -846,13 +846,13 @@ namespace GnssProcessor {
         bool phase_datum_eq34{};
         bool carry_invariant{};
         /// @c network.carry_invariant_pd_safe, resolved against its @c carry_invariant
-        /// prerequisite (docs/SPEC_pd_safe_dd_fold.md).  Fingerprinted: the DD z-store a
+        /// prerequisite (docs/record/SPEC_pd_safe_dd_fold.md).  Fingerprinted: the DD z-store a
         /// pd_safe run writes comes from a different (repaired, product-form) recursion
         /// whose blocks are PD by construction, so a resume across the flip must
         /// cold-start rather than mix the two arithmetics in one lineage.
         bool carry_invariant_pd_safe{};
         /// @c network.carry_aware_covariance, resolved against its @c carry_invariant
-        /// prerequisite (docs/SPEC_carry_aware_covariance.md).  Not fingerprinted: its only
+        /// prerequisite (docs/record/SPEC_carry_aware_covariance.md).  Not fingerprinted: its only
         /// consumers are @c dd_sigma_cyc and the log-only AR probe, which feed nothing
         /// back, so on and off agree byte for byte on the solve artifacts and differ in
         /// exactly two trace files.  A solve-affecting successor would need its own
@@ -933,7 +933,7 @@ namespace GnssProcessor {
         /// rail.  0.0 = off (absolute ceiling only); resolved with pd_handover_continuous.
         double pd_handover_max_var_ratio{};
         /// PHASE_ANCHOR carry re-reference, resolved for the run (queue item 1(d);
-        /// docs/SPEC_pivot_visibility_gauge_defect.md §5.07.5 R1).  On an anchor handover,
+        /// docs/record/SPEC_pivot_visibility_gauge_defect.md §5.07.5 R1).  On an anchor handover,
         /// the (sat, signal) family's shared PB carry is marginalized for one epoch and its
         /// phase-leveling local carries are erased at every station: the eq34_reref
         /// treatment applied to the anchored election, which closes the carry-side edge
@@ -942,7 +942,7 @@ namespace GnssProcessor {
         /// resolved the same way as pd_handover_continuous.
         bool   pa_carry_reref{};
         /// Cold anchor fallback, resolved for the run (network.phase_datum_candidacy_usable,
-        /// docs/SPEC_event_harness.md §15): at a handover the successor is chosen from the
+        /// docs/record/SPEC_event_harness.md §15): at a handover the successor is chosen from the
         /// coverage-ranked candidates whose carry is usable by the continuous branch's own
         /// predicate, instead of from the first tracker of the key.  Already ANDed with
         /// `pd_handover_continuous` (with no ledger there is nothing to screen against),
@@ -1409,7 +1409,7 @@ namespace GnssProcessor {
         // eq34_reref_total, eq34_erase_total, eq34_shift_total, eq34_cpl_sprev_total,
         // eq34_gap_repin_total, eq34_mismatch_epochs: moved to NetworkServiceCounters (
         // decision D6).
-        // Chain-pin audit of the eq34 datum (docs/SPEC_synthetic_minimum_network.md §14 T1; measured
+        // Chain-pin audit of the eq34 datum (docs/record/SPEC_synthetic_minimum_network.md §14 T1; measured
         // record §12.8): this epoch's declared chain-gauge dimension per (constellation,
         // signal) group, keyed "<cons>|<signal>" (the election's dr_key), value Σ over the
         // group's components of (n_c + m_c).  eq34_epoch_bridged counts the hygiene INC-2
@@ -1442,7 +1442,7 @@ namespace GnssProcessor {
         // wire.  Always empty when eq34 is off.
         // eq34_reref: moved to EpochEvents::PhaseDatum (network/driver/Epoch.hpp).
         // PHASE_ANCHOR carry re-reference (queue item 1(d);
-        // docs/SPEC_pivot_visibility_gauge_defect.md §5.07.5 R1).  Per-epoch (sat, signal)
+        // docs/record/SPEC_pivot_visibility_gauge_defect.md §5.07.5 R1).  Per-epoch (sat, signal)
         // set of the anchor election's handovers: cleared and rebuilt at each anchor
         // election, and read (1) by the local-carry erase right after the election and (2)
         // by the D2/C1 shared-carry consume, which marginalizes the re-referenced PB keys
@@ -2290,7 +2290,7 @@ namespace GnssProcessor {
 
         // --- Canonical-pair admission ---
         // The per-(station, satellite) admission memory of
-        // docs/refound/CPA_canonical_pair_admission_2026-09-20.md, parked here rather
+        // docs/record/refound/CPA_canonical_pair_admission_2026-09-20.md, parked here rather
         // than in the seam because the rule's whole content is a value that must survive
         // to the next epoch (the INC-12 rule: a seam owns no state).  Not snapshotted and
         // not in the warm-resume fingerprint, the same forward-only posture as the other
@@ -2565,7 +2565,7 @@ namespace GnssProcessor {
         /// run is byte-identical.
         NetworkInjectState     inject;
         /// The per-epoch signal roster and its run-scope caches (see
-        /// docs/refound/SID_signal_identity_2026-09-22.md section 5).  Kept outside the
+        /// docs/record/refound/SID_signal_identity_2026-09-22.md section 5).  Kept outside the
         /// warm-resume fingerprint and the state snapshot on purpose: nothing here is read by
         /// the solve, so a resumed run re-seats every cell at its first post-resume epoch,
         /// the right posture for a fresh observer.  Built on every network run

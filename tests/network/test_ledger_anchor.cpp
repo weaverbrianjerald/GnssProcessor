@@ -1,7 +1,7 @@
 /**
  * @file test_ledger_anchor.cpp
  * @brief The anchor election's re-entry rule
- *        (@c network.ledger_anchor, docs/refound/SID_signal_identity_2026-09-22.md).
+ *        (@c network.ledger_anchor, docs/record/refound/SID_signal_identity_2026-09-22.md).
  *
  * The election decides "first sighting or return" by one test: whether the key had
  * an incumbent at the previous epoch.  A family the coverage gate dropped loses its

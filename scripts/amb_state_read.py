@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """RF-1 step 2: the four pre-registered reads of ``network_amb_state.csv``.
 
-Card: ``docs/refound/RF-1_float_ambiguities_design.md`` §7.4, under
+Card: ``docs/record/refound/RF-1_float_ambiguities_design.md`` §7.4, under
 ``docs/refound/NETWORK_REFOUNDING_2026-09-14.md``. The trace is written by
 ``network.trace_amb_state`` and this script implements §7.4's reads verbatim, so the
 RF-0 baseline and every later arm are read the same way::

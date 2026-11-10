@@ -1,7 +1,7 @@
 /**
  * @file test_resume_border_restore.cpp
  * @brief Contract tests for the RS-7 dense-border continuity mechanism
- *        (docs/SPEC_event_harness.md §21.14): the read knob
+ *        (docs/record/SPEC_event_harness.md §21.14): the read knob
  *        @c network.resume_border_restore, its interlocks, and the restore
  *        convention it applies to the snapshot's @c QK / @c QP records.
  *

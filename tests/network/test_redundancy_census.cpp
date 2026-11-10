@@ -1,6 +1,6 @@
 /**
  * @file test_redundancy_census.cpp
- * @brief The redundancy / testability census (docs/SPEC_redundancy_census.md): the
+ * @brief The redundancy / testability census (docs/record/SPEC_redundancy_census.md): the
  *        statistical monitor for parked bad measurements.
  *
  * A measurement can be arbitrarily wrong and at the same time invisible to every

@@ -2,7 +2,7 @@
  * @file test_sd_ewl_prereduce.cpp
  * @brief Tests for the SD pre-reduce EWL constraint: coefficient algebra, correlated-R
  *        whitening, pivot-election determinism, and the config contract.
- *        See docs/SPEC_sd_ewl_prereduce.md.
+ *        See docs/record/SPEC_sd_ewl_prereduce.md.
  *
  * Suite names owned by this file only (the suite-per-file rule):
  *   SdEwlAlgebraTest, SdEwlWhiteningTest, SdEwlPivotElectionTest, SdEwlConfigTest,

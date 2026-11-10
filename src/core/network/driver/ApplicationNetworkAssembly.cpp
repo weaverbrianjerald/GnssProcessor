@@ -6,7 +6,7 @@
  *        produce/consume.
  *
  * The bodies originate in ApplicationNetwork.cpp and were moved here by the
- * network decomposition (docs/network_decomposition_plan.md, INC-7).  Former
+ * network decomposition (docs/record/network_decomposition_plan.md, INC-7).  Former
  * run-TU [&] lambdas are private Application member functions; their ambient
  * captures are explicit parameters or member reads (the capture-to-parameter map
  * is recorded in the INC-7 cut spec).  The include block mirrors

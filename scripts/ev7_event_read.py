@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """EV7-read: the all-satellite clock-anchor decouple of TOW 278520 (a diagnostic).
 
-Pre-registered in ``docs/refound/EV7_all_sat_clock_decouple_2026-09-21.md``.  Trace-only: it
+Pre-registered in ``docs/record/refound/EV7_all_sat_clock_decouple_2026-09-21.md``.  Trace-only: it
 reads a finished run directory and writes nothing but stdout (no plotting, no run, no solve).
 The frozen windows of the card's section 3 are all expressed relative to the trip epoch
 ``--tow`` (default 278520), so an arm that moved the event is read with the same instrument by

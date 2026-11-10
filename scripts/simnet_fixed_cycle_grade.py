@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Truth grade of the fixed-cycle fold (card FCF, docs/refound/FCF_fixed_cycle_fold_2026-10-11.md).
+"""Truth grade of the fixed-cycle fold (card FCF, docs/record/refound/FCF_fixed_cycle_fold_2026-10-11.md).
 
 Two reads, on sim fixtures only:
 

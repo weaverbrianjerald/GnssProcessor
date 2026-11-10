@@ -13,7 +13,7 @@ Fixes the second/third-order ionosphere coefficients (May 2026):
      too large (hundreds of metres instead of millimetres).
 
 Fixes the I2 sign (October 2026, card I2S,
-docs/refound/I2S_second_order_iono_sign_2026-10-01.md):
+docs/record/refound/I2S_second_order_iono_sign_2026-10-01.md):
 
   3. theta is the angle between B and the PROPAGATION direction k_hat
      (satellite to receiver), not the receiver-to-satellite line of sight.

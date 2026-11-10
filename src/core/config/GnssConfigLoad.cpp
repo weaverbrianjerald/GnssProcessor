@@ -940,7 +940,7 @@ namespace GnssProcessor {
                 rinex_types_.find('D') != std::string::npos ? "doppler " : "",
                 rinex_types_.find('S') != std::string::npos ? "snr "     : "");
         }
-        // RINEX 3 zero-sentinel guard (docs/SPEC_rinex_zero_sentinel.md): a written
+        // RINEX 3 zero-sentinel guard (docs/record/SPEC_rinex_zero_sentinel.md): a written
         // 0.0 is the standard's missing-observation sentinel, not a measurement.
         // Default false = legacy ingest (byte-identity); arm in new configs.
         rinex_skip_zero_values_ = jval<bool>(json, "processing.rinex_skip_zero_values",
@@ -1291,7 +1291,7 @@ namespace GnssProcessor {
         // Soft-LLI bridge: hold AR-able dual-freq ambiguities across a short
         // LLI gap and let the bridge integer-repair them instead of an
         // immediate full reset.  Default off (baseline unchanged); see
-        // CycleSlipConfig doc + docs/turbo_edit_lli_bridge_design.md.
+        // CycleSlipConfig doc + docs/record/turbo_edit_lli_bridge_design.md.
         cycle_slip_.turbo_edit_bridge_lli =
             jval<bool>(json, "estimation.cycle_slip.turbo_edit_bridge_lli",
                        "cycle_slip_turbo_edit_bridge_lli", false);
@@ -1863,7 +1863,7 @@ namespace GnssProcessor {
             "estimation.global_vtec_sh.rep_error_tau_s", "global_vtec_sh_rep_error_tau_s", 0.0);
         if (global_vtec_sh_.rep_error_tau_s < 0.0) global_vtec_sh_.rep_error_tau_s = 0.0;
         // Common-mode de-mean of the carried prior, the anti-ratchet (Iono-2 v3;
-        // docs/SPEC_iono2_mechB_v3.md).  Inert without the GM deviation itself.
+        // docs/record/SPEC_iono2_mechB_v3.md).  Inert without the GM deviation itself.
         global_vtec_sh_.rep_error_demean = jval<bool>(json,
             "estimation.global_vtec_sh.rep_error_demean", "global_vtec_sh_rep_error_demean", false);
         // Erase-policy split (Iono-2 v3k): a raw-confirmed slip erases; a D5-only
@@ -2458,7 +2458,7 @@ namespace GnssProcessor {
                       "estimation.accumulate_phase_windup is absent/false.  Each "
                       "half-cycle crossing steps the correction by exactly one "
                       "cycle mid-pass (MW-blind staircase; see "
-                      "docs/SPEC_phase_windup_sign.md §7).  Set "
+                      "docs/record/SPEC_phase_windup_sign.md §7).  Set "
                       "estimation.accumulate_phase_windup: true on any "
                       "fresh-convergence lineage.");
         }
@@ -2897,7 +2897,7 @@ namespace GnssProcessor {
         // parsed above, and the estimation section runs before this one.  An
         // explicit estimation.aiding.imu always wins.  The AidingSourceManager is
         // live (predictAided / collectPredict in Application::run and
-        // RealTimeEngine::run); see docs/aiding_source_abstraction_design.md.
+        // RealTimeEngine::run); see docs/record/aiding_source_abstraction_design.md.
         {
             aiding_.imu    = jval<bool>(json, "estimation.aiding.imu",    "aiding_imu",    imu_config_.enabled);
             aiding_.zupt   = jval<bool>(json, "estimation.aiding.zupt",   "aiding_zupt",   false);

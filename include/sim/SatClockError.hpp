@@ -23,7 +23,7 @@
  * ## Determinism contract
  *
  * A synthetic network is synthesized as N independent processes, one per station
- * (see docs/SPEC_synthetic_minimum_network.md §1).  Every satellite-side quantity
+ * (see docs/record/SPEC_synthetic_minimum_network.md §1).  Every satellite-side quantity
  * must therefore be a pure function of (satellite, time) that reproduces
  * bit-for-bit across processes.  Two properties provide that:
  *

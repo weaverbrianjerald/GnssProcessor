@@ -209,7 +209,7 @@ const std::vector<std::string> kDeletedBesideThem = {
 };
 
 // The deletion commits in order with their key counts: the family table of the deletion's
-// record (docs/refound/RKD_retired_key_deletion_2026-10-14.md section 1, plan commits C2 to
+// record (docs/record/refound/RKD_retired_key_deletion_2026-10-14.md section 1, plan commits C2 to
 // C29), the six orphaned keys counted under the commits that deleted them (365edfe five,
 // 158b9b2 one).
 const std::vector<std::pair<std::string, std::size_t>> kKeysPerCommit = {

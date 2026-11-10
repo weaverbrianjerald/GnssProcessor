@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """LV-6 gate G2: censusOperator{GIM}, the sampling-matched GIM reference.
 
-`docs/SPEC_level_authority_internal.md` §4 G2 / §5.2.  The gate is
+`docs/record/SPEC_level_authority_internal.md` §4 G2 / §5.2.  The gate is
 
     settled  L_cs(t) - censusOperator{GIM}(t)  stable within +/- 2 TECU
     and the offset in the raw-realization window  -10 .. -20 vertical TECU

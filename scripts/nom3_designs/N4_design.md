@@ -1,7 +1,7 @@
 # Card NOM steps N4 and N5: entity tables own the run state, then `EpochEvents` (build design)
 
-- **Steps:** card NOM steps N4 and N5 (`docs/refound/NOM_network_object_model_2026-10-08.md` sections 3.5, 3.6,
-  5, 6 and 8), carried by card NOM4 (`docs/refound/NOM4_network_object_model_finish_2026-10-15.md`).
+- **Steps:** card NOM steps N4 and N5 (`docs/record/refound/NOM_network_object_model_2026-10-08.md` sections 3.5, 3.6,
+  5, 6 and 8), carried by card NOM4 (`docs/record/refound/NOM4_network_object_model_finish_2026-10-15.md`).
 - **Measured at:** branch `nom/wave3` at `4816d1d` (main plus NOM3 steps EP2 to EP4, SG, PB1a/b, HV1 and NOM step
   N3b; suite 3042 run, 3018 passed, 24 fixture-gated skips).
 - **Status:** designed and pre-registered; no code. Every default in section 8 is the author's standing default.

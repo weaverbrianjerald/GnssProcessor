@@ -17,7 +17,7 @@
  * Scope: the Keplerian constellations on their legacy navigation
  * messages: GPS LNAV, Galileo I/NAV (and F/NAV, same record layout), BeiDou
  * D1/D2, QZSS LNAV.  GLONASS and SBAS records are skipped (GLONASS
- * ephemeris anchoring is deferred per @c docs/glonass_enablement_plan.md / plan D8);
+ * ephemeris anchoring is deferred per @c docs/record/glonass_enablement_plan.md / plan D8);
  * RINEX 4 CNAV/CNV1/CNV2 records (different orbit-line layout) are skipped.
  *
  * Units: RINEX navigation files already store angles in radians and rates in

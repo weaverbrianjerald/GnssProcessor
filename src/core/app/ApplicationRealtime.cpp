@@ -560,7 +560,7 @@ int Application::runRealTime() {
             // product (windup_id "nominal") absorbed +2*phi_wu into its satellite
             // clocks and phase biases; consuming it with the corrected model is a
             // phase-frame mismatch with no other symptom, and this pin is the only
-            // check that reports it.  See docs/SPEC_phase_windup_sign.md section 8
+            // check that reports it.  See docs/record/SPEC_phase_windup_sign.md section 8
             // item 2.
             contract_expectation.decl.windup_yaw_model_id = kWindUpYawModelId;
             // The wind-up mode is pinned the same way, to the mode this consumer runs:
@@ -692,7 +692,7 @@ int Application::runRealTime() {
                     // are never checked.  One warning is logged: a pre-fix
                     // product (windup_id "nominal", +2*phi_wu absorbed into its
                     // clocks and phase biases) cannot be told apart on such a
-                    // wire.  See docs/SPEC_phase_windup_sign.md §8.
+                    // wire.  See docs/record/SPEC_phase_windup_sign.md §8.
                     if (last_contract_fp.empty() && !warned_contract_absent) {
                         warned_contract_absent = true;
                         log->warn("Network products: stream carries no S-basis "

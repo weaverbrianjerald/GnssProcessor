@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Readings of card IRDG (docs/refound/IRDG_floor_off_rpb_in_block_2026-11-09.md) from the run
+"""Readings of card IRDG (docs/record/refound/IRDG_floor_off_rpb_in_block_2026-11-09.md) from the run
 directories of its arms (scripts/irdg_run.py).  One line per arm; every reading prints its sample
 size.  Run with an interpreter that has numpy (py -3.14).
 

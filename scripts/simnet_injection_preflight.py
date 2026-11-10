@@ -16,7 +16,7 @@ hosted on no longer exists. The producer's own startup banner states this:
 
 Injecting a fault at a superseded mechanism produces the worst possible outcome:
 the run completes, the counters read zero, and the result reads as the guard
-failing to catch the fault when the guard was never wired (docs/SPEC_raim_pool_rehost.md
+failing to catch the fault when the guard was never wired (docs/record/SPEC_raim_pool_rehost.md
 documents two such kills on post-fit RAIM; eq34 INC-2 is a third, 537 framed
 re-hosts with byte-identical output). Standing invariant #4 covers the weaker
 version of this ("0 driven / 0 folded means the wiring is inert"); the

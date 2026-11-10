@@ -1,6 +1,6 @@
 /**
  * @file test_measurement_admission.cpp
- * @brief Product-referenced measurement admission (docs/SPEC_measurement_admission.md):
+ * @brief Product-referenced measurement admission (docs/record/SPEC_measurement_admission.md):
  *        the corrupt-channel screen.  Covers the statistic, the admission decision
  *        at birth and at a warm-resume restore, the mid-arc onset and heal, and the
  *        station guard on an untrusted median.

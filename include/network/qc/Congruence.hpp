@@ -2,7 +2,7 @@
 /**
  * @file Congruence.hpp
  * @brief Station congruence screen: detection of station-coordinate faults in
- *        position space (docs/SPEC_redundancy_census.md, CG-INC-1..3).  This header
+ *        position space (docs/record/SPEC_redundancy_census.md, CG-INC-1..3).  This header
  *        holds the statistic and its bookkeeping.
  *
  * Measure-only, off by default and fingerprint-safe; with it off, the output is

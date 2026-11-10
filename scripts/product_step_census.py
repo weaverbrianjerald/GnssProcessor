@@ -74,7 +74,7 @@ def census(path, pb_step, clk_common, clk_dev):
                 clk_prev[sat] = v
 
     clk_common_ep, clk_outl_ep = {}, {}
-    # Card Q3 (docs/SPEC_clock_temporal_anchor.md) grades the dev channel: the
+    # Card Q3 (docs/record/SPEC_clock_temporal_anchor.md) grades the dev channel: the
     # per-satellite common-removed step, which is the datum-invariant estimable
     # content the anchor is meant to quieten.  Keep the whole population (and
     # its per-satellite split) rather than only the outlier epochs: the card's

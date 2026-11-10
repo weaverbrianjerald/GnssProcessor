@@ -189,7 +189,7 @@ bool withinEpochCulpritReportArmed(bool carry_invariant, bool raim_within_epoch)
  * @c network.carry_invariant the assembly fills none of them, so the pool admits no row and
  * the tier cannot name such a culprit: on that lineage the withhold is structurally idle
  * until the within-epoch pool is re-hosted onto the carry-neutral census, as the post-fit
- * pool was (docs/SPEC_raim_pool_rehost.md, deferral D1).  The clause tells the three quiet
+ * pool was (docs/record/SPEC_raim_pool_rehost.md, deferral D1).  The clause tells the three quiet
  * cases apart, so a structurally idle withhold is not read as a quiet field (standing
  * invariant 4): the tier never assessed, it assessed an empty pool every time, or it
  * assessed rows and named no culprit.

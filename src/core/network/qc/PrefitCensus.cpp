@@ -371,7 +371,7 @@ void networkPrefitCensus(NetworkRunContext& ctx, const GnssConfig& config_,
     // Structure summaries for this epoch (INC-3 presence, INC-4 kinds and ties).
     std::set<std::pair<int, std::string>>           present_now;
     /// Vet trigger for measurement admission (its INC-4,
-    /// docs/SPEC_measurement_admission.md §10): the (station index, satellite)
+    /// docs/record/SPEC_measurement_admission.md §10): the (station index, satellite)
     /// cells whose worst established @c obs_code deviation exceeded
     /// @ref pc_event_sigma this epoch.  Published below into
     /// `ctx.carry.prefit_code_flag`.  The admission seam runs earlier in the epoch

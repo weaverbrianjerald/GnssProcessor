@@ -38,7 +38,7 @@ least this fast", never as "the truth moves only this fast".  Card Q3 avoided
 that circularity with the phase-derived TDCP shadow; the code side has no such
 independent instrument, so the bound is stated rather than hidden.  The
 companion upper-side estimate comes from the prior-residual census (``cb``
-family variance factor); see docs/SPEC_cb_carry_physical_q.md.
+family variance factor); see docs/record/SPEC_cb_carry_physical_q.md.
 
 Usage:
   python scripts/cb_structure_function.py <run_dir_or_products.txt> [...]

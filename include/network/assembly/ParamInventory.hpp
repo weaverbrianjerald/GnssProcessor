@@ -5,7 +5,7 @@
  *        parameter set, and every shared parameter a gate withheld from it, as a parameter
  *        instance with a declared disposition, and the "parameters as armed"
  *        table (
- *        docs/refound/NOM_network_object_model_2026-10-08.md sections 11.2 and 13).
+ *        docs/record/refound/NOM_network_object_model_2026-10-08.md sections 11.2 and 13).
  *
  * ### What it answers
  *

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """EV6-read: the hour-6 Q3 mass-decouple event on the RF-0hv float vehicle (a diagnostic).
 
-Pre-registered in ``docs/refound/EV6_hour6_decouple_event_2026-09-15.md``. Trace-only: it reads a
+Pre-registered in ``docs/record/refound/EV6_hour6_decouple_event_2026-09-15.md``. Trace-only: it reads a
 finished run directory and writes nothing but stdout (no plotting, no run, no solve).
 
 Five sections, in the order the card's read (a)-(d) asks for them:

@@ -145,7 +145,7 @@ public:
      *        (@c network.carry_coupling_shared_history); idempotent; returns its column.
      *
      * A history column is one constant direction of the clones' shared conditional
-     * carried across stations (docs/refound/SCL2_level_residue_under_the_clone_2026-10-06.md,
+     * carried across stations (docs/record/refound/SCL2_level_residue_under_the_clone_2026-10-06.md,
      * sections 4, 5 and 9): the harvest compresses the carried rows' terms on the clones
      * and on the previous history into at most k columns per cloned clock, each row keeps
      * its coefficients on them, and the next epoch folds each column with the prior
@@ -383,7 +383,7 @@ public:
      * directions, so a tolerance below the config's own gauge depth stops
      * counting the declared gauges and withholds a correctly specified config
      * ("over-specified").  A value chosen without a measured spectrum violates
-     * the spec: see docs/SPEC_beidou_w6_datum.md §2 (DG3).
+     * the spec: see docs/record/SPEC_beidou_w6_datum.md §2 (DG3).
      *
      * @param tol Relative eigenvalue tolerance (> 0).  The loader rejects a value
      *            that is not > 0 and raises one below 1e-16 to 1e-16, since a
@@ -848,7 +848,7 @@ public:
     /// that layer (~1e-3 absolute) and the declared clock gauges (~1e-9 absolute);
     /// a per-config value placed in that gap again counts only the gauges.  See
     /// @ref setRankGateTol for the binding placement rule and
-    /// docs/SPEC_beidou_w6_datum.md §0.2.
+    /// docs/record/SPEC_beidou_w6_datum.md §0.2.
     static constexpr double kNullSpaceTol = 1e-9;
 
     /// One reported near-null direction of an @ref EstimabilityDump: its
@@ -1051,7 +1051,7 @@ public:
     /**
      * @brief Fold (or withdraw) the clones' walk factors as one joint factor with a full
      *        walk covariance (pivot-frame process noise on the clock clone,
-     *        docs/refound/PFQ_pivot_frame_process_noise_2026-10-08.md section 6).
+     *        docs/record/refound/PFQ_pivot_frame_process_noise_2026-10-08.md section 6).
      *
      * With the pivot-frame clock noise (@c network.clock_pivot_frame_q) the walks of two
      * clocks of a constellation share the pinned pivot's walk, so the walk vector
@@ -1165,7 +1165,7 @@ public:
 
     /**
      * @brief Withdraw already-folded diagonal shared priors
-     *        (docs/SPEC_clock_temporal_anchor.md §2.4) so the epoch can be
+     *        (docs/record/SPEC_clock_temporal_anchor.md §2.4) so the epoch can be
      *        re-solved with those states refloated.
      *
      * The exact inverse of @ref addSharedPrior for the listed (identity, value,
@@ -1395,7 +1395,7 @@ public:
     /// @return Number of DD-prior blocks folded this epoch.
     std::size_t numDdPriorBlocks() const { return neq_.numDdPriorBlocks(); }
 
-    // --- PD-safe invariant-DD fold forwarders (docs/SPEC_pd_safe_dd_fold.md) ---
+    // --- PD-safe invariant-DD fold forwarders (docs/record/SPEC_pd_safe_dd_fold.md) ---
 
     /// Arm the PD-safe DD-prior fold arithmetic (@c network.carry_invariant_pd_safe;
     /// @ref NetworkNormalEquations::setDdFoldPdSafe).  Set once before the epoch loop;
@@ -1412,7 +1412,7 @@ public:
     /// @return DD-prior block @p b's relative pivot d_min/d_max at the fold.
     double ddPriorBlockMinPivotRel(std::size_t b) const { return neq_.ddPriorBlockMinPivotRel(b); }
 
-    // --- Carry-aware covariance readback (docs/SPEC_carry_aware_covariance.md) ---
+    // --- Carry-aware covariance readback (docs/record/SPEC_carry_aware_covariance.md) ---
 
     /// @return Whether this epoch's fold left a DD-prior block for a @c carry_aware
     ///         readback to correct (@ref NetworkNormalEquations::hasCarryCovCorrection).

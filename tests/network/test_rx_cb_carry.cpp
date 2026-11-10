@@ -1,7 +1,7 @@
 /**
  * @file test_rx_cb_carry.cpp
  * @brief Unit gates for the receiver code-bias carry's inject-time decision
- *        (@ref rxCbInjectGate, docs/SPEC_rx_cb_carry.md).
+ *        (@ref rxCbInjectGate, docs/record/SPEC_rx_cb_carry.md).
  *
  * The gate is the read-only half of the carry's event response: the produce
  * phase is parallel, so a breach is answered by withholding the fold, and the

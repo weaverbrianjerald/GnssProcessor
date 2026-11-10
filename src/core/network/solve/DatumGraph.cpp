@@ -1,7 +1,7 @@
 /**
  * @file DatumGraph.cpp
  * @brief The datum graph census.  The design argument is in DatumGraph.hpp
- *        (docs/SPEC_datum_graph_census.md).
+ *        (docs/record/SPEC_datum_graph_census.md).
  *
  * Measure-only.  Nothing here writes a weight, a state, a datum row or a
  * decision: the file reads the epoch's registration sets and admitted support,
@@ -667,7 +667,7 @@ int networkDatumGraphRunEnd(const NetworkRunEndView& v) {
     const NetworkRunContext& ctx = v.ctx;
     const std::shared_ptr<spdlog::logger>& log = v.log;
 
-    // Datum graph census run-end telemetry (docs/SPEC_datum_graph_census.md).  The
+    // Datum graph census run-end telemetry (docs/record/SPEC_datum_graph_census.md).  The
     // reading expected when nothing is wrong, "k = 1 everywhere, zero predictions", is
     // also exactly what a seam that was never called produces (invariant #4).  So both
     // `epochs` and `epochs_quiet` are printed, and a run that walked zero support edges
@@ -732,7 +732,7 @@ int networkDatumGraphRunEnd(const NetworkRunEndView& v) {
 /// The datum graph census's spectral half, with direction identities, before completion (Doxygen at the declaration).
 void networkDatumGraphSpectralHandoff(NetworkRunContext& ctx, const NetworkSbasis::GaugeCompletion& sbc,
                                       const NetworkSbasis::Plan& plan) {
-    // --- Datum graph census hand-off (docs/SPEC_datum_graph_census.md) -----
+    // --- Datum graph census hand-off (docs/record/SPEC_datum_graph_census.md) -----
     // The spectral half of the census's contingency, with direction identities,
     // is captured here: this is the only place in the run where the realized
     // near-null count is measured before completion and its directions still

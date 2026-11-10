@@ -1,7 +1,7 @@
 /**
  * @file test_resume_carry_rebase.cpp
  * @brief The linearization frame of the carry blob (RS-2,
- *        docs/SPEC_event_harness.md §21.4): @c network.state_snapshot_carry_lin
+ *        docs/record/SPEC_event_harness.md §21.4): @c network.state_snapshot_carry_lin
  *        (the @c ZL row), and the post-resume D5 warm-up window (RS-2b).
  *
  * ## The case this file pins

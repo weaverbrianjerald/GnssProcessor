@@ -1,6 +1,6 @@
 # NOM3 step HV1: the local-carry harvest cut by carried kind (buildable design)
 
-Read-only design for card NOM3 step HV1 (`docs/refound/NOM3_network_giants_2026-10-09.md`,
+Read-only design for card NOM3 step HV1 (`docs/record/refound/NOM3_network_giants_2026-10-09.md`,
 section 3 "HV", gates of section 5, order of section 6). No repository file was changed.
 Evidence and scripts beside this file, in `nextsteps/hv1/`: `main.cpp` and `post.cpp` (the
 harvest file at main and after the REMOVE-key deletion), `sec.py`, `secm.py`, `names.py`

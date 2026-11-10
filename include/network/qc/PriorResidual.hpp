@@ -2,7 +2,7 @@
 /**
  * @file PriorResidual.hpp
  * @brief Prior-residual census: the stale-carry test of the D5 innovation gate,
- *        generalized to every carried stiff prior (docs/SPEC_prior_residual_census.md).
+ *        generalized to every carried stiff prior (docs/record/SPEC_prior_residual_census.md).
  *
  * Measure-only and off by default.  The census is not fingerprinted: it is a
  * forward-only readout with no stored state and no effect on the solve (the
@@ -104,7 +104,7 @@
  * ## The rider: a constraint-aware global variance component
  *
  * The rider is the other half of LASER 5-74 (see
- * @c docs/SPEC_prior_residual_census.md §14 for its design).  The ladder tests
+ * @c docs/record/SPEC_prior_residual_census.md §14 for its design).  The ladder tests
  * each carried prior on its own; the rider pools the same rows into a global
  * variance component, with the prior residuals in the numerator and the
  * constraints in the redundancy:
@@ -513,7 +513,7 @@ public:
 
     // ---------------------------------------------------------------------
     //  The constraint-aware global variance component: the rider on this
-    //  accumulator (docs/SPEC_prior_residual_census.md §14)
+    //  accumulator (docs/record/SPEC_prior_residual_census.md §14)
     // ---------------------------------------------------------------------
 
     /**
@@ -917,7 +917,7 @@ public:
         }
 
         // --- the constraint-aware global variance component (the rider) -------
-        // docs/SPEC_prior_residual_census.md §14.2.  Folded rows only: an
+        // docs/record/SPEC_prior_residual_census.md §14.2.  Folded rows only: an
         // unfolded prior is not a stochastic constraint in this epoch's solve, so
         // it is in neither LASER's ẽ₀ᵀP₀ẽ₀ nor its `l`.  Three skips, each
         // counted (a one-sided row would bias the ratio with nothing to show it):
@@ -967,7 +967,7 @@ public:
     /**
      * @brief Fold one data row into the data side of the global variance component.
      *
-     * The rider's other half (docs/SPEC_prior_residual_census.md §14.2).  Called
+     * The rider's other half (docs/record/SPEC_prior_residual_census.md §14.2).  Called
      * from the post-fit RAIM Pass-1 row walk, which already holds @p w and, with
      * `network.raim_redundancy_normalize`, the per-row Baarda redundancy @p r, so
      * this costs a multiply and two adds and needs no covariance access, no
@@ -1040,7 +1040,7 @@ public:
      * CLEAN/RESPONDED/FRAME rows, they put an artifact at the top of every ladder
      * and of the run-end "worst |t|" line: on one field run they were 927 of the
      * 957 rows above |t| = 1e4, with a worst |t| of 2.5e8
-     * (docs/cards/raim-qc/RNEG-REPARTITION.md).  The σ̂₀_global rider drops them
+     * (docs/record/cards/raim-qc/RNEG-REPARTITION.md).  The σ̂₀_global rider drops them
      * for the same reason (@ref kGlobalRnegDrop), and the label ladders exclude
      * them.
      *

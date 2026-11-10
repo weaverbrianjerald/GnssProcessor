@@ -1,7 +1,7 @@
 /**
  * @file test_resume_station_restore.cpp
  * @brief Contract tests for the RS-6 station-layer continuity
- *        (docs/SPEC_event_harness.md §21.13): the snapshot's format-forward
+ *        (docs/record/SPEC_event_harness.md §21.13): the snapshot's format-forward
  *        station-layer records (@c RC: the rx-CB carry, one receiver code-bias
  *        posterior per (station roster index, CB state key); @c SD: the
  *        T5 / Iono-2 per-LOS SH representation-error deviation carry, one

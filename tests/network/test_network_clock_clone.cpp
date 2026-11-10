@@ -1,7 +1,7 @@
 /**
  * @file test_network_clock_clone.cpp
  * @brief Unit gates of the clock clone (@c network.carry_coupling_clock_clone,
- *        docs/refound/SCL_self_contained_clock_level_2026-10-03.md, section 6, U2).
+ *        docs/record/refound/SCL_self_contained_clock_level_2026-10-03.md, section 6, U2).
  *
  * 1. Estimator: a clone column is registered after every other column, keyed
  *    @c "sat|CLKC" and labelled @c "CLKC:<sat>", never emitted by @c toSolutionEpoch, and

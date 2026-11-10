@@ -350,7 +350,7 @@ void passASecondCode(const PassAView& v) {
     const int n_sta_total = v.n_sta_total;
 
     // --- Second code channel, per-epoch bookkeeping, R7 --------------
-    // (docs/refound/SCC_second_code_channel_2026-09-21.md.)  Serial and in station
+    // (docs/record/refound/SCC_second_code_channel_2026-09-21.md.)  Serial and in station
     // order, so the counters and the event rows are deterministic and the edges are
     // diffed against a set only this thread touches.  Placed after present[] is
     // final (an absent station's cells close, which is the decoupling edge) and
@@ -454,7 +454,7 @@ void passASecondPhase(const PassAView& v) {
     const int n_sta_total = v.n_sta_total;
 
     // --- Second phase channel, per-epoch bookkeeping --------
-    // (docs/refound/SID_signal_identity_2026-09-22.md section 4, R7 + R8.)  Same
+    // (docs/record/refound/SID_signal_identity_2026-09-22.md section 4, R7 + R8.)  Same
     // placement and the same reasons as the block above: serial, in station order,
     // after present[] is final (an absent station's cells close, which is the
     // decoupling edge) and before any later reader of `modeled`; this block only
@@ -650,7 +650,7 @@ void passARawObservables(const PassAView& v) {
     SlipQcChannel& qc = v.qc;
     const int n_sta_total = v.n_sta_total;
 
-    // Shared raw slip observables (docs/SPEC_slip_qc_hardening.md §1), computed once
+    // Shared raw slip observables (docs/record/SPEC_slip_qc_hardening.md §1), computed once
     // per epoch, here: after present[] is final and before both the drains (the LLI corroboration
     // needs the evidence) and the observability pre-filter (a satellite about to be
     // pruned must still be measured, which is the trace writer's contract).  Nothing

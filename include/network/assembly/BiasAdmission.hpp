@@ -56,7 +56,7 @@
  * with a warning and the legacy gate is used.
  *
  * Sibling of @ref NetworkSbasis / @ref NetworkPhaseDatum.  See
- * docs/SPEC_cb_admission_card.md.
+ * docs/record/SPEC_cb_admission_card.md.
  */
 
 #include <cstddef>

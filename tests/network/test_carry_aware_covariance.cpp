@@ -1,7 +1,7 @@
 /**
  * @file test_carry_aware_covariance.cpp
  * @brief Gates for the carry-aware (rank-K) covariance readback
- *        (docs/SPEC_carry_aware_covariance.md).
+ *        (docs/record/SPEC_carry_aware_covariance.md).
  *
  * @c foldReducedDdPriors is a per-block rank-K Woodbury update on the pristine per-station
  * factors, i.e. exactly the Schur complement of

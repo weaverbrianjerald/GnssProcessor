@@ -355,7 +355,7 @@ int Application::run() {
         // 0xC0000409 and no reason in the log, where the last line is the
         // preceding cold-start warning.  The handler logs e.what() as a single
         // error line and returns 1.  A successful run never reaches it, so its
-        // output is byte-identical.  See docs/SPEC_event_harness.md §6b (HB-1).
+        // output is byte-identical.  See docs/record/SPEC_event_harness.md §6b (HB-1).
         try {
             return runNetwork();
         } catch (const std::exception& e) {

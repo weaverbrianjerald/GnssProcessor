@@ -2,7 +2,7 @@
  * @file AidingSourceManager.cpp
  * @brief Owns the config-selected aiding-source set (CycleSlipManager analog).
  *
- * @see docs/aiding_source_abstraction_design.md
+ * @see docs/record/aiding_source_abstraction_design.md
  */
 
 #include "aiding/AidingSourceManager.hpp"

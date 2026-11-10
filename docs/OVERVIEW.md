@@ -256,7 +256,7 @@ scripts/            Python utilities (bootstrap, ATX refresh, layout migration, 
 pyviz/              Python visualization toolkit (traces, maps, reports).
 third_party/sofa/   Vendored IAU SOFA (ANSI C) for the CIO frame transform.
 data/               Local cache for internal-mode fixtures (git-ignored; see "Data & products").
-docs/               Design notes, config reference, operational runbooks; start at docs/INDEX.md.  docs/attic/ holds retired records.
+docs/               Design notes, config reference, operational runbooks; start at docs/INDEX.md.  docs/record/attic/ holds retired records.
 ```
 
 ## Capabilities in depth
@@ -330,7 +330,7 @@ superseded.)
 
 ## Documentation
 
-**Start at [`docs/INDEX.md`](INDEX.md)**: the single entry point for the `docs/` tree ([`docs/README.md`](README.md) is the older generated index it superseded).
+**Start at [`docs/INDEX.md`](INDEX.md)**: the single entry point for the `docs/` tree ([`docs/README.md`](record/README.md) is the older generated index it superseded).
 Entry points worth naming:
 
 - [`CLAUDE.md`](../CLAUDE.md): build/layout/conventions overview and the standing invariants.
@@ -340,8 +340,8 @@ Entry points worth naming:
 - [`docs/test_suite.md`](test_suite.md): the real-data truth-graded harness.
 - [`docs/rt_service_conventions.md`](rt_service_conventions.md) / [`docs/rt_service_operations.md`](rt_service_operations.md):
   real-time service runbooks.
-- [`docs/network_ambiguity_resolution_design.md`](network_ambiguity_resolution_design.md) and
-  [`docs/SPEC_sbasis_realization_contract.md`](SPEC_sbasis_realization_contract.md): representative subsystem deep-dives.
+- [`docs/network_ambiguity_resolution_design.md`](record/network_ambiguity_resolution_design.md) and
+  [`docs/SPEC_sbasis_realization_contract.md`](record/SPEC_sbasis_realization_contract.md): representative subsystem deep-dives.
 - Doxygen (`--target docs`): API reference from the in-source comments.
 
 ## License

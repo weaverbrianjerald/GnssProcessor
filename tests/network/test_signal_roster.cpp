@@ -1,7 +1,7 @@
 /**
  * @file test_signal_roster.cpp
  * @brief The per-station signal roster
- *        (docs/refound/SID_signal_identity_2026-09-22.md section 5, P5).
+ *        (docs/record/refound/SID_signal_identity_2026-09-22.md section 5, P5).
  *
  * The roster reproduces the rules that already decide which signal stands for a
  * band; it does not re-derive them.  Phase 1's armed byte-identity protects the

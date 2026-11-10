@@ -1681,7 +1681,7 @@ TEST(CodeBiasNetworkConfig, PhaseDatumEq34SlipAwareElectionParsesAndNeedsEq34) {
     }
 }
 
-// PD-safe invariant-DD fold (docs/SPEC_pd_safe_dd_fold.md §4): default off (the fold's
+// PD-safe invariant-DD fold (docs/record/SPEC_pd_safe_dd_fold.md §4): default off (the fold's
 // arithmetic is byte-identical), and inert without network.carry_invariant, where there
 // is no DD-prior fold to make PD-safe.  The response is a warning plus disarm, not a load
 // failure, on purpose: a config that carries the knob for a later leg is not an error.
@@ -1727,7 +1727,7 @@ TEST(CodeBiasNetworkConfig, CarryInvariantPdSafeContract) {
     }
 }
 
-// Carry-aware covariance readback (docs/SPEC_carry_aware_covariance.md §6): default off
+// Carry-aware covariance readback (docs/record/SPEC_carry_aware_covariance.md §6): default off
 // (every readback expression is the earlier one, verbatim) and inert without
 // network.carry_invariant (with no folded DD priors the rank-K correction is identically
 // zero).  The prerequisite check lives in the cross-knob pass for the same loader-ordering

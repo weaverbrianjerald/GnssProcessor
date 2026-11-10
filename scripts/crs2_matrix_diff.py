@@ -11,7 +11,7 @@ only the consumer's resume changed, and that cons_peak, cons_plat and cons_p50 d
 
     python scripts/crs2_matrix_diff.py --a smx1 --b crs2 [--tol-mm 0.05] [--md out.md]
 
-Card: docs/refound/CRS2_resume_hold_and_latches_2026-11-06.md.
+Card: docs/record/refound/CRS2_resume_hold_and_latches_2026-11-06.md.
 """
 import argparse
 import json

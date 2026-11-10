@@ -1,7 +1,7 @@
 /**
  * @file test_rinex3_blank_prn.cpp
  * @brief RINEX 3 blank-padded satellite numbers (
- *        docs/refound/RXP_rinex3_blank_prn_2026-09-21.md).
+ *        docs/record/refound/RXP_rinex3_blank_prn_2026-09-21.md).
  *
  * A RINEX 3 record may write its satellite number blank-padded, "G 7" for "G07";
  * 16 of the 310 DOY-129 observation files do.  Taken verbatim, such an identifier

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """T3-class null calibration: diagnose the statistic, not the threshold.
 
-QUEUE item 4 (`docs/QUEUE_principled_replacements.md`): the bandaid being
+QUEUE item 4 (`docs/record/QUEUE_principled_replacements.md`): the bandaid being
 replaced is a Gaussian 6-sigma quantile applied to
 
     S_c = max_{i∈c} |z_i|  /  max(floor, 1.4826 · median_{j∈P} |z_j|)

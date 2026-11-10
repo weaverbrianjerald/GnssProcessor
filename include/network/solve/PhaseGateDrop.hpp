@@ -11,7 +11,7 @@
  * surviving station's ambiguity is a carried state at a centimetre prior, so it
  * absorbs the whole removed bias in one epoch with no refloat, no re-seed and no
  * variance inflation, and the remainder reaches the emitted satellite clocks
- * (measured in docs/refound/EV7_all_sat_clock_decouple_2026-09-21.md §5.3).
+ * (measured in docs/record/refound/EV7_all_sat_clock_decouple_2026-09-21.md §5.3).
  *
  * The return edge already has a response: a family with no incumbent is inserted
  * into the election's re-reference set, and @ref networkApplyPhaseAnchorCarryReref

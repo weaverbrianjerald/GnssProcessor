@@ -1,7 +1,7 @@
 /**
  * @file HandoverStransform.cpp
  * @brief Implementation of the clock-pivot handover S-transform (queue 1(b),
- *        docs/SPEC_pivot_visibility_gauge_defect.md §8).
+ *        docs/record/SPEC_pivot_visibility_gauge_defect.md §8).
  */
 
 #include "network/solve/HandoverStransform.hpp"

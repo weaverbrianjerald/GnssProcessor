@@ -137,9 +137,9 @@ if (brdc_rts) {
             // terms, and a row's functional u = r + Mᵀs is frame-consistent only when all
             // carried references move together.  The cut-over epoch's own rows were built in
             // PASS B, before this point, on the references before the shift (the structure
-            // docs/refound/PRM_parameter_registry_2026-09-29.md section 15.3 records for the handover); every later epoch reads them
+            // docs/record/refound/PRM_parameter_registry_2026-09-29.md section 15.3 records for the handover); every later epoch reads them
             // moved.  The sites the re-level does not move are declared in the mechanism table
-            // (docs/refound/CLV_clock_level_2026-09-22.md section 6.4 item 6).
+            // (docs/record/refound/CLV_clock_level_2026-09-22.md section 6.4 item 6).
             CarrySiteCounts prm_cc;
             ephCutoverShiftCarry(ctx.carry, entities, sat, d, carry_cpl_cond, &prm_cc,
                                  ctx.knobs.rebase_complete);

@@ -749,7 +749,7 @@ namespace GnssProcessor {
                                     double value = std::stod(value_str);
                                     // RINEX 3 zero-sentinel guard, armed by
                                     // processing.rinex_skip_zero_values (off by
-                                    // default; docs/SPEC_rinex_zero_sentinel.md): the
+                                    // default; docs/record/SPEC_rinex_zero_sentinel.md): the
                                     // standard writes missing observations "as 0.0 or
                                     // blanks", so a written zero means data not
                                     // available, not a measurement.  The 2.x branch

@@ -1,6 +1,6 @@
 /**
  * @file test_rinex_zero_sentinel.cpp
- * @brief RINEX 3 written-0.0 sentinel guard (docs/SPEC_rinex_zero_sentinel.md).
+ * @brief RINEX 3 written-0.0 sentinel guard (docs/record/SPEC_rinex_zero_sentinel.md).
  *
  * Per RINEX 3.0x §6, missing observations are written "as 0.0 or blanks"; some
  * receivers (Trimble ALLOY on DOY-129: GOPE/GOP6) write literal 0.0 phase

@@ -6,7 +6,7 @@
  *        (@c network.trace_amb_state -> @c network_amb_state.csv), and the vehicle's
  *        operators (joint-block fold, drop, anchor S-transform).
  *
- * Design: docs/refound/RF-1_float_ambiguities_design.md (steps 1 to 5 of §7.3's commit
+ * Design: docs/record/refound/RF-1_float_ambiguities_design.md (steps 1 to 5 of §7.3's commit
  * order), under docs/refound/NETWORK_REFOUNDING_2026-09-14.md.
  *
  * Motivation (design §1.8): on the level vehicle a network ambiguity is a per-epoch
@@ -725,7 +725,7 @@ TEST(AmbFloatVehicleTest, BirthFloorIsElevationMappedLikeTheCodeWeights) {
 
 // =============================================================================
 // (7b) The drop-only floor (RF-3a;
-//      docs/refound/RF-3_code_row_qc_2026-09-22.md §4 A1/A4).
+//      docs/record/refound/RF-3_code_row_qc_2026-09-22.md §4 A1/A4).
 //
 // This section separates two populations that the birth floor treats as one.  A drop
 // hands back a variance the level no longer supports (an arc can restore a variance

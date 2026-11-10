@@ -1,7 +1,7 @@
 /**
  * @file test_extra_band_code_sigma.cpp
  * @brief Contract tests for `network.extra_band_code_sigma_scale` (
- *        docs/refound/L5P_l5_phase_posture_2026-09-21.md knob B).
+ *        docs/record/refound/L5P_l5_phase_posture_2026-09-21.md knob B).
  *
  * In the network solve, the code rows of a signal whose band is neither band of
  * the constellation's ionosphere-free pin pair fold at sigma x scale.  With the scaling

@@ -5,7 +5,7 @@
  *        (@c network.rank_gate_tol → NetworkEstimator::setRankGateTol).
  *
  * The gate decides whether a whole epoch is emitted or withheld.  This file pins
- * the three properties the design relies on (docs/SPEC_beidou_w6_datum.md §2):
+ * the three properties the design relies on (docs/record/SPEC_beidou_w6_datum.md §2):
  *
  *  - The default is NetworkEstimator::kNullSpaceTol and the gate semantics are
  *    unchanged: exact equality against the declared S-basis dimension, throwing

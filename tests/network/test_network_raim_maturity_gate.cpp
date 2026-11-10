@@ -35,7 +35,7 @@
  * Not certified here: that networkPostFitRaim passes these functions the right arguments.
  * The seam is not a unit-testable one (it needs a solved network); the wiring is certified
  * by a 2 h field arm with the gate on, whose counters, events and `acted` values are read
- * against the arm of an exe without this telemetry (docs/refound/MGT_maturity_gate_telemetry_2026-10-30.md).
+ * against the arm of an exe without this telemetry (docs/record/refound/MGT_maturity_gate_telemetry_2026-10-30.md).
  *
  * The five suite names are owned by this file alone (suite-hygiene rule in CLAUDE.md).
  */

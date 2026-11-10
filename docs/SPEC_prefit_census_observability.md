@@ -6,7 +6,7 @@
 **Status**: SPEC'd 2026-08-01 (the session that root-caused era-2); built and field-gated the
 same day (§15–§18).  Known-answer gates (§12) from `runs/ft63_leg19_rhsat`.
 **Memory context**: `project_ft63_fast_tier` (era-2 root cause + the rhs_attrib instrument),
-`docs/SPEC_deweight_release_hygiene.md` (the cause-level fix; §12 declares the interaction discipline).
+`docs/record/SPEC_deweight_release_hygiene.md` (the cause-level fix; §12 declares the interaction discipline).
 **Scope discipline**: every increment default-OFF, OFF structurally byte-identical, NONE
 fingerprinted (observability / forward-only policy — the adaptive_iono_q / eq34-hygiene precedent),
 so shared-snapshot replay legs stay A/B-legal.
@@ -76,7 +76,7 @@ effectively a between-satellite single difference, receiver-clock-free by constr
 This is the always-on tripwire: era-2 would have printed `PREFIT obs_code BSHM00ISR G07 s=2.6e5`
 every epoch of the park.  **Scope note**: the census flags magnitude; it cannot distinguish "parked
 garbage" from "storm extreme on a well-checked cell".  That discrimination is the companion
-redundancy card's cross-flag (`docs/SPEC_redundancy_census.md`).  Census = free trigger;
+redundancy card's cross-flag (`docs/record/SPEC_redundancy_census.md`).  Census = free trigger;
 redundancy = targeted verdict.
 
 ## 4. INC-2: structural fuse (`network.prefit_fuse_sigma`, double, default 0 = off)
@@ -120,7 +120,7 @@ Deliverable beyond the guard: the locator for the open **188-km seed co-defect**
 (SPEC_deweight_release_hygiene §6).  ⚠ **SUPERSEDED BY §17 GATE 6: it is NOT a seed-path defect.**
 INC-3 fired at the arc's first epoch and the trace against products showed the initializer
 faithfully seeding a **corrupt C1C pseudorange**; the class was handed to
-`docs/SPEC_measurement_admission.md`.  What INC-3 bought stands — it dates the onset to the arc's
+`docs/record/SPEC_measurement_admission.md`.  What INC-3 bought stands — it dates the onset to the arc's
 FIRST epoch, ruling out mid-arc poisoning, so neither the seed card nor the hygiene card's INC-2
 park bound owns it.
 
@@ -275,7 +275,7 @@ first).  Keep this table here until the user wants it promoted to its own doc.
 
 ## 14. Deferral triage (pre-declared)
 
-- Full MDB/testability statistics: `docs/SPEC_redundancy_census.md` (companion card, spec'd same
+- Full MDB/testability statistics: `docs/record/SPEC_redundancy_census.md` (companion card, spec'd same
   day) — INC-1's census is the cheap tripwire; redundancy answers "where CAN'T the census see".
 - Consumer/RT paths: producer-only for now (port the census pattern after producer validation).
 - Per-row census persistence (a rows CSV every epoch): rejected — events + scalars suffice; the
@@ -379,7 +379,7 @@ Harness: `scripts/pc_make_arms.py`, `scripts/pc_run_arms.ps1`, `scripts/pc_gate_
 
 3. **`prefit_fuse_require_uncheckable` is parsed and force-disabled with a WARN.**  §4 makes it
    conditional on the redundancy census, which HAS since landed
-   (`docs/SPEC_redundancy_census.md`) — but that census is POST-solve and the fuse acts
+   (`docs/record/SPEC_redundancy_census.md`) — but that census is POST-solve and the fuse acts
    PRE-`addStation`, so the cross-flag would have to reach the fuse through a persistent
    uncheckable-cell set that neither card builds.  Failing loudly beats silently fusing on magnitude
    alone under a knob whose name promises otherwise.  The composition also wants care in the other
@@ -487,9 +487,9 @@ onset to the arc's FIRST epoch, **ruling out mid-arc poisoning**, so neither the
 hygiene card's INC-2 park bound owns this.
 
 **This wanted a new owner: measurement admission — and it got one,
-`docs/SPEC_measurement_admission.md`.**  The producer accepted a pseudorange 198 km from its own
+`docs/record/SPEC_measurement_admission.md`.**  The producer accepted a pseudorange 198 km from its own
 orbit+clock products with no mechanism that could notice, because the only cell able to absorb it was
-unconstrained.  `docs/SPEC_rinex_zero_sentinel.md §7` is RETRACTED (do-not-build; its motivating
+unconstrained.  `docs/record/SPEC_rinex_zero_sentinel.md §7` is RETRACTED (do-not-build; its motivating
 mass-dropout observation was a parsing artifact) and its retraction note explicitly REOPENED the
 era-1/era-2 root cause; the admission card owns that reopened question.
 
@@ -524,7 +524,7 @@ the combined 39 ms/epoch measured on the smoke leg.  Signal-to-noise of the code
   σ̂₀): the run-end counters for those tiers are not emitted in a form this harness parses.  The
   epoch-status timeline was compared instead.
 - **⚠ INC-1's PHASE statistic is degenerate on truth-clean data, and this section did not know it.**
-  Measured on a **fault-free** fixture (full table: `docs/SPEC_t3_null_derivation.md` §11.1) —
+  Measured on a **fault-free** fixture (full table: `docs/record/SPEC_t3_null_derivation.md` §11.1) —
   `pc_phase_max_s` median **1.024e5 σ** against `pc_code_max_s` 75.1 σ, four to five orders out with
   no faults present: the same arc-specific mechanism deviation 2c measured.  `trace_prefit_census` is
   in the standard armed set, so this column is published network-wide; it is **operationally inert
@@ -548,4 +548,4 @@ requires of every valve in that table.
 
 ## Appended 2026-10-30: the retired keys (card RKD)
 
-Card [RKD](refound/RKD_retired_key_deletion_2026-10-14.md) deleted these keys of this document with their code on 2026-10-14: `network.prefit_fuse_require_uncheckable` (the parse-only and loader-forced keys, commit `4c0e731`); `network.adaptive_iono_q` (the network adaptive iono q, commit `1d35585`). The text above records them as they stood. A configuration that still sets one runs without it, and the loader names each such key in one warning (card [RKT](refound/RKT_retired_key_tombstone_2026-10-30.md)).
+Card [RKD](record/refound/RKD_retired_key_deletion_2026-10-14.md) deleted these keys of this document with their code on 2026-10-14: `network.prefit_fuse_require_uncheckable` (the parse-only and loader-forced keys, commit `4c0e731`); `network.adaptive_iono_q` (the network adaptive iono q, commit `1d35585`). The text above records them as they stood. A configuration that still sets one runs without it, and the loader names each such key in one warning (card [RKT](record/refound/RKT_retired_key_tombstone_2026-10-30.md)).

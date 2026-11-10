@@ -301,7 +301,7 @@ TEST(NiellMappingTest, MatchesCanonicalReference) {
 //      η·STEC².  The STEC² form is about 2.3e5 times too large.
 //   3. The I₂ sign: B is projected on the propagation direction k̂ (satellite
 //      to receiver), not on the receiver-to-satellite line of sight (
-//      docs/refound/I2S_second_order_iono_sign_2026-10-01.md).  Here B points
+//      docs/record/refound/I2S_second_order_iono_sign_2026-10-01.md).  Here B points
 //      north and down at the 40° N pierce point and k̂ points mostly down, so
 //      B·k̂ > 0 and the code I₂ is a positive delay; the line-of-sight form
 //      flips every I₂ golden below.

@@ -1195,7 +1195,7 @@ namespace GnssProcessor {
 
         // -------------------------------------------------------------------
         // Phase-colour states (network.phase_colour_state;
-        // docs/refound/LGM_los_phase_nuisance_2026-10-01.md section 4.1).
+        // docs/record/refound/LGM_los_phase_nuisance_2026-10-01.md section 4.1).
         //
         // One band-common, phase-only Gauss-Markov nuisance state per satellite of this
         // station: the line of sight's time-correlated phase error, which enters every

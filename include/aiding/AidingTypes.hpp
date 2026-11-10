@@ -19,7 +19,7 @@
  *   - @c StateBlockSpec describes the state block a source owns (a one-shot
  *     reservation receipt, not a durable index cache; see the field doc).
  *
- * @see docs/aiding_source_abstraction_design.md
+ * @see docs/record/aiding_source_abstraction_design.md
  */
 
 #include "common/PppTypes.hpp"   // GnssTime

@@ -2,7 +2,7 @@
 """simnet_seam_tools.py: seam and wire-realization instruments for gnss_network_product v2.
 
 Seven read-only instruments over the producer wire (products.txt) and the
-closed-loop consumer trace.  docs/SPEC_synthetic_minimum_network.md section
+closed-loop consumer trace.  docs/record/SPEC_synthetic_minimum_network.md section
 18.9 quotes their output, so the computations must reproduce those numbers.
 One shared wire parser (records E / C / B / P / R / U / H), one shared
 frequency table, stdlib only.

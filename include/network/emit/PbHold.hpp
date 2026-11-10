@@ -18,7 +18,7 @@
  * a frame move, a change that is mostly not one.  An identity-passing contract,
  * like the @c iode= ephemeris cutover, states that the value has not changed and
  * names the epoch at which that statement restarts.  See
- * docs/refound/PBH_phase_bias_hold_2026-09-19.md §1.
+ * docs/record/refound/PBH_phase_bias_hold_2026-09-19.md §1.
  *
  * ### Ordering contract
  *

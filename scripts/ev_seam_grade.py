@@ -8,7 +8,7 @@ The seed run is continuous through the leg's whole window (the leg resumes from 
 snapshot the seed dropped mid-run), so the seed's traces at the matched tows are
 the reference a warm resume is supposed to reproduce. Everything here is
 leg-minus-seed at the same tow; nothing is truth and nothing is a verdict beyond
-the pre-registered pass/fail rows of ``docs/SPEC_event_harness.md`` §21.3.
+the pre-registered pass/fail rows of ``docs/record/SPEC_event_harness.md`` §21.3.
 
 Epoch axis ``k = 1 + (tow - first_tow)/30`` with ``first_tow`` from the leg's
 ``leg_meta.json``, so ``+1`` is the leg's first processed epoch, the one the

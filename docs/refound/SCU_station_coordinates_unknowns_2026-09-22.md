@@ -6,7 +6,7 @@
 - **topic:** network-vehicle
 - **status:** parked
 - **summary:** PARKED 2026-09-22 (the author's decision): MIZU00JPN, held 1.6 m from its data, is DROPPED from the field roster; constrained coordinate states are deferred until the network works.
-- **source:** the author's question of 2026-09-22; [UPO](UPO_consumer_up_offset_2026-09-22.md) sections 5.7 and 6 (the site-specific offsets left open, the congruence table)
+- **source:** the author's question of 2026-09-22; [UPO](../record/refound/UPO_consumer_up_offset_2026-09-22.md) sections 5.7 and 6 (the site-specific offsets left open, the congruence table)
 - **knobs / posture:** none built. Proposed: `network.station_position_estimate`, `network.station_position_sigma_m`, `network.station_position_free`, `network.station_position_release_t` (section 6). Posture: the RF-0hv working bases as armed on 2026-09-22 (baseline pair `runs/_rf0hv7_{field,sim}6`; after the drop, field `runs/_rf0hv8_field6`, 58 stations in `config/refound/field_gps_dual_rf0hv.json`)
 - **dates in the text:** 2026-09-22
 - **hashes / run dirs:** `runs/_rap_u4_s10` (identical to `runs/_rf0hv7_field6`), `runs/_rap_m1_drop_mizu`, `runs/_rap_m2_mizu_moved`, `runs/_rap_m3_drop_maju_lck4`, `runs/_rap_m4_drop_solo_ulab` (leave-out keys `lo3`, `lo4`), roster replays `runs/_rap_ros_<station>_<key>` with keys `ros6`, `ros7u`, `ros7`, `rosm1`, `rosm2`, census key `m2`; exe `gnss_processor_upo.exe` (`E2E177AB...`); instrument `runs/_msc/scripts/msc_roster_audit.py`. The drop: `runs/_rf0hv8_field6`, exe `gnss_processor_rf7.exe` (`97547306...`), census key `rf8`; 12 h `runs/_rap_a8_field12` against `runs/_rap_a7_field12`
@@ -101,7 +101,7 @@ census: a second disturbance in that region that this error partly masked. Unrea
 
 ## 4. The detector that was already armed
 
-The station-congruence screen (`docs/SPEC_redundancy_census.md`; measure-only, in every
+The station-congruence screen (`docs/record/SPEC_redundancy_census.md`; measure-only, in every
 run of this program) tests each station's post-fit rows for a coherent coordinate error
 and prints a run-end table to `stdout.txt`. Run-median statistic geo(t); the roster
 median is 0.87 to 0.91 in all four runs:

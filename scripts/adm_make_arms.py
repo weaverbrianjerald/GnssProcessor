@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the validation arm configs for docs/SPEC_measurement_admission.md.
+"""Build the validation arm configs for docs/record/SPEC_measurement_admission.md.
 
 Every arm derives from one base so the estimation configuration is identical
 across arms and only this card's knobs differ. The spec's §7 interaction

@@ -1,7 +1,7 @@
 /**
  * @file test_network_mdb.cpp
  * @brief Baarda reliability numbers (MDB) on the network path
- *        (docs/SPEC_redundancy_census.md).
+ *        (docs/record/SPEC_redundancy_census.md).
  *
  * The redundancy census says whether a row is checkable; the MDB says how large a
  * fault could hide in it this epoch, in metres.  An error here produces no visible

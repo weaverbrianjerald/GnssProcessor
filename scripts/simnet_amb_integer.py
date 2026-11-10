@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Synthetic minimum network: the ambiguity-integer grader
-(docs/SPEC_synthetic_minimum_network.md §13.6 (method rules §13.8); SPEC_synthetic_minimum_network §13).
+(docs/record/SPEC_synthetic_minimum_network.md §13.6 (method rules §13.8); SPEC_synthetic_minimum_network §13).
 
 Grades the absolute DD ambiguity against truth.  On field data only the
 fractional part of a DD ambiguity is measurable (a uniform med|frac| near 0.25
@@ -269,7 +269,7 @@ def read_manifest_warmup(run_dir):
     return None
 
 
-# Optional grading window on the DD trace (oracle pin, docs/SPEC_oracle_pin.md).
+# Optional grading window on the DD trace (oracle pin, docs/record/SPEC_oracle_pin.md).
 # `--last-frac` can only express a trailing fraction, and the pin legs grade two
 # short windows inside one 60-epoch leg.  The filter is applied at the two points
 # the DD trace is read (the epoch prescan and the pass-1 stream), so the epoch
@@ -1013,7 +1013,7 @@ def build_parser():
     ap.add_argument("--stride", type=int, default=4, help="--iono-join epoch stride (default 4)")
     ap.add_argument("--gal-lanes", action="store_true", help="Galileo lanes EWL(5,7) and WL(1,5)")
     # Grade only DD rows inside [tow-min, tow-max] (inclusive; oracle pin,
-    # docs/SPEC_oracle_pin.md).  `--last-frac` can only name a trailing fraction;
+    # docs/record/SPEC_oracle_pin.md).  `--last-frac` can only name a trailing fraction;
     # the pin legs grade two short windows inside one 60-epoch leg.  Omitted, no
     # row is filtered and the behaviour is unchanged.
     ap.add_argument("--tow-min", type=float, default=None)

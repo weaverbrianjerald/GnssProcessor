@@ -9,7 +9,7 @@
  *
  * The network's pre-solve slip layer has two time-difference detectors, MW and the
  * pooled IF-phase triple difference (IF-TD), plus the receiver's LLI.  Three slip
- * classes pass all of them (docs/refound/ARL_integer_ambiguity_ladder_2026-10-09.md,
+ * classes pass all of them (docs/record/refound/ARL_integer_ambiguity_ladder_2026-10-09.md,
  * section 12, the slip ladder):
  *   - an equal count on both bands, (1,1): MW does not move, and the IF step,
  *     0.1070 m, sits exactly on the IF-TD floor (rung S4b, detected about half the

@@ -1,7 +1,7 @@
 /**
  * @file ClockAnchor.cpp
  * @brief Implementation of the guarded temporal clock anchor (
- *        docs/SPEC_clock_temporal_anchor.md).  The design rationale, the two exact
+ *        docs/record/SPEC_clock_temporal_anchor.md).  The design rationale, the two exact
  *        identities the guard rests on, and the invariant #1 and #7 contract are in
  *        the header's file comment.
  */
@@ -1395,7 +1395,7 @@ void networkClockAnchorGuardEpoch(NetworkRun& run, const NetworkEpoch& ep, const
     const std::set<std::string>& clock_refloat_sats = handoff.clock_refloat_sats;
     const EpochEvents& events = ep.events;
     // ---- End of the bindings ----
-    // --- Guarded temporal clock anchor (docs/SPEC_clock_temporal_anchor.md) ---
+    // --- Guarded temporal clock anchor (docs/record/SPEC_clock_temporal_anchor.md) ---
     // Must run here: after the primary solve and before the within-epoch adaptation
     // below.  A stiff clock prior fighting a real step pushes the tension into the
     // residuals and raises σ̂0, and the adaptation would then attribute a prior fault to

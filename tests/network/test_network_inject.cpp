@@ -455,7 +455,7 @@ TEST(NetworkInjectEpoch, DecisionKindsStageAOneEpochDirective) {
 }
 
 TEST(NetworkInjectEpoch, ArcEraseStudy1ModeAndBandScope) {
-    // docs/SPEC_event_harness.md §9: the diagnostic sub-knobs are parsed onto
+    // docs/record/SPEC_event_harness.md §9: the diagnostic sub-knobs are parsed onto
     // the staged directive, free_epoch is routed away from the T4 block
     // (isErase() false), and a ";"-separated `signal` narrows the band scope.
     nlohmann::json ij = {{"events", nlohmann::json::array({

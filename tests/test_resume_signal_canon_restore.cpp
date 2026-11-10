@@ -1,7 +1,7 @@
 /**
  * @file test_resume_signal_canon_restore.cpp
  * @brief Contract tests for the RS-8 canonical-signal continuity
- *        (docs/SPEC_event_harness.md §21.16): the snapshot's format-forward
+ *        (docs/record/SPEC_event_harness.md §21.16): the snapshot's format-forward
  *        @c CN records (one per (station roster index, constellation, band,
  *        C|L), naming the locked RINEX code), the loader's side of the write
  *        knob (@c network.state_snapshot_signal_capture) and the read knob

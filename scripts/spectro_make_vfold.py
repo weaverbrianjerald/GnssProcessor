@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generate the S2 virtual-fold legs of the lane-spectrometer campaign.
 
-docs/SPEC_lane_spectrometer.md §4: from the S1 run's snapshot, resume paired legs
+docs/record/SPEC_lane_spectrometer.md §4: from the S1 run's snapshot, resume paired legs
 that are identical except ``network.sd_ewl.fix_enable``, and read the between-leg
 state delta, which is the single-epoch constrained-update redistribution, exact,
 per constraint, with no dynamics and no QC feedback.

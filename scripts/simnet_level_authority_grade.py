@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """LV-6 G1 grader: the census operator applied to truth.
 
-`docs/SPEC_level_authority_internal.md` §4 G1 / §5 item 5. The gate is
+`docs/record/SPEC_level_authority_internal.md` §4 G1 / §5 item 5. The gate is
 
     corr(L_cs(t), censusOperator{truth}(t)) >= +0.8   settled
     offset ~ the median of the injected biases

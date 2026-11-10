@@ -4,7 +4,7 @@
  * @file ClockLevel.hpp
  * @brief The satellite clock level read from the code alone: the level monitor,
  *        its innovation instrument and the G5 restore raise
- *        (docs/refound/CTU_coupling_time_update_2026-09-28.md section 9.3).
+ *        (docs/record/refound/CTU_coupling_time_update_2026-09-28.md section 9.3).
  *
  * The level direction of satellite s moves its clock column and every one of its
  * phase-bias columns by the same amount.  The station row builder (StationRows.cpp) writes the satellite
@@ -152,7 +152,7 @@ void networkClockLevelRestoreRaise(NetworkRun& run);
 /**
  * @brief The level monitor and bound raise
  *        (@c network.clock_level_monitor, @c network.clock_level_bound_raise;
- *        docs/refound/CTU_coupling_time_update_2026-09-28.md section 9.3).
+ *        docs/record/refound/CTU_coupling_time_update_2026-09-28.md section 9.3).
  *
  * Reads the level (the pin pair's post-fit ionosphere-free code, the two-way fit, see
  * the file banner): per satellite it accumulates the code-only level information I_L,

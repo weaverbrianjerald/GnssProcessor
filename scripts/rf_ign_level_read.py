@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """RF-IGN: read the ignition-born zero-q level evidence out of a network run.
 
-Card: docs/refound/RF-IGN_ignition_born_levels_2026-09-15.md
+Card: docs/record/refound/RF-IGN_ignition_born_levels_2026-09-15.md
 
 Reads for standing invariant #1. After RF-PD-fix
 (``network.station_prior_before_pd``) the RF-0g field golden emits from epoch 1

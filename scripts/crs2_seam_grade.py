@@ -21,7 +21,7 @@ arm A0).  Per leg, this prints:
 
     python scripts/crs2_seam_grade.py --seed <seed dir> --leg <leg dir> [--json out.json]
 
-Card: docs/refound/CRS2_resume_hold_and_latches_2026-11-06.md.
+Card: docs/record/refound/CRS2_resume_hold_and_latches_2026-11-06.md.
 """
 import argparse
 import csv

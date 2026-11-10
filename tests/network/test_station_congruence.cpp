@@ -1,7 +1,7 @@
 /**
  * @file test_station_congruence.cpp
  * @brief The station congruence screen: coordinate-fault detection in position space
- *        (docs/SPEC_redundancy_census.md), CG-INC-0..3.
+ *        (docs/record/SPEC_redundancy_census.md), CG-INC-0..3.
  *
  * Station coordinates are held in the network producer, and a wrong held coordinate
  * is a fault class that no other armed tier sees: median polish removes the station

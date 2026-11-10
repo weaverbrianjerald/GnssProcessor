@@ -1,7 +1,7 @@
 /**
  * @file test_code_datum_family.cpp
  * @brief One clock datum per constellation across Galileo's two code families
- *        (docs/refound/GFC_galileo_family_clock_datum_2026-10-10.md).
+ *        (docs/record/refound/GFC_galileo_family_clock_datum_2026-10-10.md).
  *
  * This feature adds two default-off arms to the time-linked code-bias datum, both built in
  * @c NetworkSbasis::buildCodeBiasDatumRows and read only under its @c cb_time_linked

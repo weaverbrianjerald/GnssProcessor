@@ -43,7 +43,7 @@
  *     attribution.  Fires on one epoch per run; the solution is untouched.
  *
  * Relocated out of Application::runNetwork's SB_NETAR block at decomposition INC-9b
- * (see docs/network_decomposition_plan.md, the SOLVE-REGION decomposition).  Owns no
+ * (see docs/record/network_decomposition_plan.md, the SOLVE-REGION decomposition).  Owns no
  * state.  The caller keeps the @c networkSubBegin/End(SB_NETAR) brackets.
  */
 
@@ -371,7 +371,7 @@ struct ProducerArCounters {
     long long netar_fix_epochs = 0;   ///< …of those, epochs the acceptance battery passed (full or partial)
     long long netar_dd_fixed   = 0;   ///< Σ fixed DDs over the run (kept.size() summed)
     long long netar_rows       = 0;   ///< trace rows written: P1 for the trace (0 with the trace armed = dead wiring)
-    bool      netar_carry_aware = false; ///< covariance mode the search consumed (docs/SPEC_carry_aware_covariance.md §4); part of the reading, not a footnote
+    bool      netar_carry_aware = false; ///< covariance mode the search consumed (docs/record/SPEC_carry_aware_covariance.md §4); part of the reading, not a footnote
     std::vector<double> netar_n_dd;      ///< per-epoch full DD-basis size
     std::vector<double> netar_n_search;  ///< per-epoch searched subset size (== n_dd when uncapped)
     std::vector<double> netar_ratio;     ///< per-epoch accepted-fix ratio

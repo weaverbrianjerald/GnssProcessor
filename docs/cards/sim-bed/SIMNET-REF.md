@@ -10,9 +10,9 @@
 - **knobs / posture:** `processing.signal_priorities`, `network.closed_loop.replay_products_path`, `network.health_interval_s`, `network.product_flush_per_epoch`, `network.trace_sat_bias_states`, `network.trace_rx_states`, `network.apriori_source`
 - **hashes named in the text** (commit / exe / byte-cert): none
 - **run dirs named in the text:** `runs/simnet300_wsh`, `runs/simnet50_mwblind2`, `runs/simnet60_tri`, `runs/cbq_12h_ctl`, `runs/simnet24_inject_` (the §0 provenance note places every cited `runs/` path under `D:\GnssProcessor_archive\2026-08-12\runs\`)
-- **source:** `docs/archive/SPEC_synthetic_minimum_network.md` (preamble), §0 to §8, the G-A / G-B / G-C gates of §6, §9, §10
+- **source:** `docs/record/archive/SPEC_synthetic_minimum_network.md` (preamble), §0 to §8, the G-A / G-B / G-C gates of §6, §9, §10
 
-**Outcome.** The document specifies the sim truth bed: N processes with per-station seeds and a station-aware ambiguity hash, truth transformed into the producer's realized basis before any vf, a rank check beyond the self-consistent gate, the QC tiers inert at small n, and a 16-entry trap register. Its §0 error class stands: an instrument's silence is not a negative result until it was armed, had opportunities and records that outcome. The measured record (§9.5 to §15.8) lives in the cards the [routing stub](../../SPEC_synthetic_minimum_network.md) names; the sim golden now runs a 60-station fixture ([SFR](../../refound/SFR_sim_fixture_coloured_phase_2026-10-01.md)).
+**Outcome.** The document specifies the sim truth bed: N processes with per-station seeds and a station-aware ambiguity hash, truth transformed into the producer's realized basis before any vf, a rank check beyond the self-consistent gate, the QC tiers inert at small n, and a 16-entry trap register. Its §0 error class stands: an instrument's silence is not a negative result until it was armed, had opportunities and records that outcome. The measured record (§9.5 to §15.8) lives in the cards the [routing stub](../../record/SPEC_synthetic_minimum_network.md) names; the sim golden now runs a 60-station fixture ([SFR](../../record/refound/SFR_sim_fixture_coloured_phase_2026-10-01.md)).
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

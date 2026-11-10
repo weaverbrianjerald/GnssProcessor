@@ -1,7 +1,7 @@
 /**
  * @file test_network_second_code_scope.cpp
  * @brief Contract tests for the second code channel (
- *        docs/refound/SCC_second_code_channel_2026-09-21.md).
+ *        docs/record/refound/SCC_second_code_channel_2026-09-21.md).
  *
  * With `network.second_code_channel` a network station contributes, as code-only
  * rows, every allow-listed band-1 code it reports besides the one its canonical

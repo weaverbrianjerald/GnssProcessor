@@ -4,7 +4,7 @@ Companion to product_step_census.py: that script reports what the producer shipp
 this one reports what the consumer did about it, and whether the two count the same
 events.
 
-Three readouts (docs/HANDOFF_edge_response_queue.md edge 1):
+Three readouts (docs/record/HANDOFF_edge_response_queue.md edge 1):
 
   1. Wire and threshold split.  Mid-arc phase-bias steps, classified against both
      thresholds: the producer's per-lambda gate (network.disc_threshold_frac_cycles)

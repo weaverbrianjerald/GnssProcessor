@@ -2,12 +2,12 @@
 /**
  * @file Responses.hpp
  * @brief The responses of the network's carried parameters, declared and counted
- *        (docs/refound/PRM_parameter_registry_2026-09-29.md section 4.5).
+ *        (docs/record/refound/PRM_parameter_registry_2026-09-29.md section 4.5).
  *
  * A carried instance (a border entry of @c prev_carry, a station-local carry) responds to
  * events: a slip, a gap, a datum handover, a decouple, a re-admission.  Each response was
  * written where its mechanism needed it, and the run end reported some of them, under the
- * mechanism's own words, and not others: the float-ambiguity design (docs/refound/RF-1_float_ambiguities_design.md, section 1.5) names four paths
+ * mechanism's own words, and not others: the float-ambiguity design (docs/record/refound/RF-1_float_ambiguities_design.md, section 1.5) names four paths
  * for one ambiguity and counts two of them only in aggregate.  This header declares every
  * site that changes a carried instance in response to an event, one row per (kind, event,
  * policy, site) (@ref ResponseSite), with the condition under which the site can act on

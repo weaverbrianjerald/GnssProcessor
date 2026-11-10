@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Condition the DD fractional part on its formal sigma: the payoff test of
-``docs/SPEC_carry_aware_covariance.md``.
+``docs/record/SPEC_carry_aware_covariance.md``.
 
 Why this script exists
 -----------------------
-``docs/RUNQUEUE_pdfix_reask.md`` P6(b) is the strongest negative result in the
+``docs/record/RUNQUEUE_pdfix_reask.md`` P6(b) is the strongest negative result in the
 DOY-129 campaign: six hours on a working fold, 55-epoch chord lifetimes, and
 ``med|frac|`` flat at 0.246-0.254 (the uniform-distribution value) in every
 hour and every age bin, reproduced on GPS+Galileo by P4. It is recorded as

@@ -11,7 +11,7 @@
  * about 80 % white (14 mm) with a weak 5-minute multipath, where the field's is
  * about 90 % a first-order Gauss-Markov process (5 to 7 mm at the class median,
  * correlation time 80 to 120 s, strongest in the tropics) over about 2 mm of
- * white noise (docs/refound/SFR_sim_fixture_coloured_phase_2026-10-01.md,
+ * white noise (docs/record/refound/SFR_sim_fixture_coloured_phase_2026-10-01.md,
  * section 1).  This class supplies the missing coloured component.
  *
  * ## The model

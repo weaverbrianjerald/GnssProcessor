@@ -1,7 +1,7 @@
 /**
  * @file test_channel_mode_all.cpp
  * @brief Contract tests for `processing.channel_mode: all` on the network path
- *        (docs/refound/SID_signal_identity_2026-09-22.md).
+ *        (docs/record/refound/SID_signal_identity_2026-09-22.md).
  *
  * Under the widening, every admitted code and phase attribute of every selected
  * band is modelled at every station.  The widening subsumes the second-code scope (the second

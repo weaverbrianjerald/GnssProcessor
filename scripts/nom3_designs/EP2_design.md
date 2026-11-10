@@ -1,6 +1,6 @@
 # NOM3 step EP2: pre-registration (the inline blocks move to their concerns)
 
-Card: `docs/refound/NOM3_network_giants_2026-10-09.md` section 3, EP2. Base: main `7141240` (EP1
+Card: `docs/record/refound/NOM3_network_giants_2026-10-09.md` section 3, EP2. Base: main `7141240` (EP1
 landed). Frozen text: `git show 7141240:src/core/app/ApplicationNetworkEpoch.cpp` (1 611 lines;
 `Application::networkProcessEpoch_` is lines 154 to 1609). Branch `nom/ep2`. Pure relocation:
 output byte-identical (gate G-EP, 23 whole-run arms, run by the orchestrator).

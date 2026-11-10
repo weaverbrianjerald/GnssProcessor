@@ -949,7 +949,7 @@ ArEpochFixes networkProducerAr(NetworkRun& run, const NetworkEpoch& ep) {
                 }
             } else {
                 Eigen::MatrixXd cov_undiff;
-                // Carry-aware readback (docs/SPEC_carry_aware_covariance.md §6).  With the
+                // Carry-aware readback (docs/record/SPEC_carry_aware_covariance.md §6).  With the
                 // knob off (default), Q_cyc, and with it FFR, ADOP and the partial-AR
                 // ordering below, is built from a covariance the solve does not use; that
                 // expression is kept unchanged.  With it on, the probe uses the
@@ -1119,7 +1119,7 @@ ArEpochFixes networkProducerAr(NetworkRun& run, const NetworkEpoch& ep) {
                     se.time.tow);
                 // The covariance mode is logged on the same line because med_DD_sigma
                 // and every ratio/p_succ derived from the covariance mean different
-                // things under the two forms (docs/SPEC_carry_aware_covariance.md §4).
+                // things under the two forms (docs/record/SPEC_carry_aware_covariance.md §4).
                 log->info("Network AR (Phase 2, log-only): TOW {:.1f} — {} DD / {} undiff-amb / "
                           "{} (const,signal); fixed {}{} of {} searched{} (ratio {:.2f}, "
                           "p_succ {:.4f}, med_DD_sigma {:.4f} cyc, med_DD_frac {:.3f}, "
@@ -1319,7 +1319,7 @@ int networkProducerArRunEnd(const NetworkRunEndView& v) {
     // --- Producer-AR Phase-2 diagnostic run-end readout ------------------------------
     // Run-level summary of the producer AR search.  The per-epoch spdlog line describes
     // one epoch; this readout describes the run, following §4.1 of the 2026-09-10 note in
-    // docs/network_ambiguity_resolution_design.md ("a fix count is not a grade").
+    // docs/record/network_ambiguity_resolution_design.md ("a fix count is not a grade").
     // `netar_epochs == 0` on an armed run means the search never reached the ILS and
     // every number below is structurally empty; that case gets its own warning
     // (invariant #4).
@@ -1369,7 +1369,7 @@ int networkProducerArRunEnd(const NetworkRunEndView& v) {
                       "CARRY-BLIND covariance (network.carry_aware_covariance is OFF), "
                       "so every gate the fix passed — FFR, ratio, the per-pair frac cap "
                       "— was computed from a covariance the SOLVE never used "
-                      "(docs/SPEC_carry_aware_covariance.md §4).  A WRONG fix at "
+                      "(docs/record/SPEC_carry_aware_covariance.md §4).  A WRONG fix at "
                       "p_succ >= min_success_rate falsifies that covariance as a gate "
                       "input; grade the integers against truth before reading the fix "
                       "rate as a success.", c.netar_fix_epochs);

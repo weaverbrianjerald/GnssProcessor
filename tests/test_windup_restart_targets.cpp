@@ -1,7 +1,7 @@
 /**
  * @file test_windup_restart_targets.cpp
  * @brief @c networkWindupRestartTargets, the arcs a wind-up accumulator
- *        restart steps (docs/refound/WUP_windup_accumulated_promotion_2026-10-01.md).
+ *        restart steps (docs/record/refound/WUP_windup_accumulated_promotion_2026-10-01.md).
  *
  * ## Why this exists
  *

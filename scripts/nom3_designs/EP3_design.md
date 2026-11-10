@@ -1,6 +1,6 @@
 # NOM3 step EP3: pre-registration (the epoch observers as a declared table)
 
-Card: `docs/refound/NOM3_network_giants_2026-10-09.md` section 3, EP3. Base: branch `nom/wave1` `8f4f1db`
+Card: `docs/record/refound/NOM3_network_giants_2026-10-09.md` section 3, EP3. Base: branch `nom/wave1` `8f4f1db`
 (main `7141240` plus EP2, SG1-SG3, PB1a). Frozen text: `git show 8f4f1db:src/core/app/ApplicationNetworkEpoch.cpp`
 (728 lines; `Application::networkProcessEpoch_` lines 155 to 726). Branch `nom/ep3`. Pure refactor: output
 byte-identical (gate G-EP, run by the orchestrator). No printed text moves, so no `reverse.sed`.

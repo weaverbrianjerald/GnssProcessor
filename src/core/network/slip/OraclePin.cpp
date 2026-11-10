@@ -357,7 +357,7 @@ std::unique_ptr<NetworkOraclePin> networkOraclePinLoad(
               "station(s), carrying {} truth slip(s); {} arc(s) dropped with no "
               "wavelength.  [{}]  This run's products are a DIAGNOSTIC FIXTURE, never a "
               "solution: the pin is field-inert by construction and must never appear in "
-              "a golden or the promotion ledger.  docs/SPEC_oracle_pin.md",
+              "a golden or the promotion ledger.  docs/record/SPEC_oracle_pin.md",
               pin->scopes.size(), pin->truth_root, n_arcs, stations.size(), n_slips,
               n_nolam, list);
     return pin;
@@ -784,7 +784,7 @@ void networkOraclePinPriors(StationCarryFrame& carry) {
     // --- Simulation-only oracle ambiguity pin (filter/NetworkOraclePin) --
     // One diagonal local prior row per pinned ambiguity column, of the same
     // shape as pl_emit_row's diagonal branch: a real (Λ, η) pair, never an
-    // `x_lin` shift (docs/SPEC_lane_slip_response.md §7.2: a shift of x_lin
+    // `x_lin` shift (docs/record/SPEC_lane_slip_response.md §7.2: a shift of x_lin
     // alone is an exact solve no-op, which is why the pin does not also
     // write LocalCarry::value_abs).
     //

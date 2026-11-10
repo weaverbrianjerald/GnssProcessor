@@ -1,4 +1,4 @@
-"""Card CLK-R G3 grader (docs/SPEC_clock_emit_rebase.md §4).
+"""Card CLK-R G3 grader (docs/record/SPEC_clock_emit_rebase.md §4).
 
 Grades the 12 h A/B (runs/clkr_12h_ctl vs runs/clkr_12h_on) against the stored
 denominator runs/golden63_12h_internal, in four checks:

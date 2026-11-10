@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """windup_ab_linearity.py: decide the carrier-phase wind-up sign defect on real data.
 
-docs/SPEC_phase_windup_sign.md section 8 item 1. The simulator is structurally blind
+docs/record/SPEC_phase_windup_sign.md section 8 item 1. The simulator is structurally blind
 to the defect (it injects wind-up through the same computePhaseWindUp), so the only
 decisive evidence is a real-data three-arm ladder:
 

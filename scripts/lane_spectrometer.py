@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Lane-ladder spectrometer: project the network's own float DDs onto the MW/EWL
-lane ladder and grade them against the MW integers (docs/SPEC_lane_spectrometer.md §3).
+lane ladder and grade them against the MW integers (docs/record/SPEC_lane_spectrometer.md §3).
 
 Read-only instrument: it folds nothing and changes no estimate (increment S1).  A
 fold-in test mixes the injected tension with the QC response (D5 flags, refloats), so

@@ -13,7 +13,7 @@
  * that removed these records from the RINEX files increased the number of epochs
  * below a decimetre on the dual-frequency field network and on the triple-frequency
  * network with L5 at all 59 stations, and lowered the dual network's first-hour
- * error (docs/refound/GRS_gap_reentry_per_signal_2026-09-20.md §5 and §6).  This
+ * error (docs/record/refound/GRS_gap_reentry_per_signal_2026-09-20.md §5 and §6).  This
  * seam applies that rule inside the producer.
  *
  * ### The rule

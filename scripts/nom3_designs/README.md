@@ -1,6 +1,6 @@
 # Card NOM3: the step designs (inputs to the generators)
 
-The buildable specifications of card NOM3's next steps (`docs/refound/NOM3_network_giants_2026-10-09.md`).
+The buildable specifications of card NOM3's next steps (`docs/record/refound/NOM3_network_giants_2026-10-09.md`).
 The card holds each step's binding summary, its frozen gates and its decisions; these files hold the detail a
 generator and its verifier are built from: types in code, every cut range, every binding, every gate arm.
 

@@ -113,7 +113,7 @@ double computeBootstrapSuccessRate(const Eigen::VectorXd& d);
  *
  * Mirrors the relevant fields of @c AmbiguityResolverConfig so the user path
  * and the network path drive the identical battery.  Network defaults are
- * stricter (see @c docs/network_ambiguity_resolution_design.md §5):
+ * stricter (see @c docs/record/network_ambiguity_resolution_design.md §5):
  * @c min_success_rate=0.9999, @c nl_max_per_pair_frac=0.10,
  * @c enable_partial_ar=true.
  */

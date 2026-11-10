@@ -164,7 +164,7 @@ void networkAmbStateNote(StationCarryFrame& carry, const std::string& sat,
 // columns are collected first and then folded as one block, or built per
 // column in the same visiting order on a factorization fallback.
 //
-// M2 v2 (docs/SPEC_carry_vce_apply.md §2): the LASER 5-95 variance
+// M2 v2 (docs/record/SPEC_carry_vce_apply.md §2): the LASER 5-95 variance
 // factor, applied last ("the hand model evaluated as today, then × α²").
 // Read-only O(1) array lookup, safe in this parallel produce phase; the
 // table is refreshed once per epoch by the serial step at the end of
@@ -670,7 +670,7 @@ void networkHarvestAmbiguityStation(NetworkRun& run, const NetworkEpoch& ep, Har
             LocalCarry nlc{value_abs, var, pl_now_s, std::move(coupling)};
             nlc.var_first = var_first;
             // The birth prior in force (RF-1 §3.3(b),
-            // docs/refound/RF-1_float_ambiguities_design.md): var_first floored by
+            // docs/record/refound/RF-1_float_ambiguities_design.md): var_first floored by
             // the posture's code-noise scale, set once at birth and kept across
             // every re-stash and re-level as var_first is (an erase-and-rebirth
             // restarts it, because the entry is gone).  The floor defaults to 0.0,

@@ -133,7 +133,7 @@ labels are load-bearing — `include/config/GnssConfig.hpp:1655` cites **D6** by
   current/previous retention absorbs producer/consumer cutover skew); `iodeMatches(brdc_iode, clock_iode)` remains
   the drop gate when the pinned version is no longer held.  Mirrors `pickForSsr` for the orbit overlay.
 - **D8 — GLONASS is OUT OF SCOPE.**  Producer stamps `clock_iode = -1` for R sats (permissive gate, today's
-  behavior); GLONASS eph-anchor semantics belong to `docs/glonass_enablement_plan.md` (note there: `iodeMatches`
+  behavior); GLONASS eph-anchor semantics belong to `docs/record/glonass_enablement_plan.md` (note there: `iodeMatches`
   permissive-on-(-1) masking is a known caveat).
 - **D9 — SSR-orbit ingest into runNetwork replay = injection seam only.**  A `setSsrStore`-style seam on the network
   driver with an orbit-only accept filter (reuse the RTA-8 `ssrPushAction` machinery), so recorded/live RTS orbits
@@ -668,7 +668,7 @@ of `δ₀·σ/√r` + **URA-monotonicity**.
 
 - **Live RTS-orbit transport into the producer** — RTF-3 territory; **D9 seam only**.
 - **RTCM-4076 encoder / Tier-2 wire** (§4) — **no card until an external rover exists.**
-- **GLONASS eph anchoring** (D8) → `docs/glonass_enablement_plan.md`.
+- **GLONASS eph anchoring** (D8) → `docs/record/glonass_enablement_plan.md`.
 - **Producer-side datum re-leveling across pivot handover (RTF-5) — a DIFFERENT mechanism; do NOT conflate it with
   the Card-6 EPH re-level.**
 - **Consumer AR changes** — RTF-7.
@@ -699,8 +699,8 @@ AND PathResolver must not auto-glob or download one for the day**.
    in §7 is the proof: a green suite hid a total producer outage.)
 2. **Byte-identity is proven by a WRITTEN REDUCTION ARGUMENT, not asserted from a green suite.**  Show every guard.
 
-**Lineage.**  §6–§8 absorb `docs/attic/rtf12_brdc_rts_plan.md` (D1–D10, Cards 1–8 plan) and
-`docs/attic/rtf_card8_runbook.md` (the armed validation).  §10 and the §7 deviations absorb
-`docs/attic/rtf_opus_first_handoff.md`.  §9 absorbs `docs/attic/SPEC_rtf3_streaming_frontend.md`.  Sibling docs NOT
+**Lineage.**  §6–§8 absorb `docs/record/attic/rtf12_brdc_rts_plan.md` (D1–D10, Cards 1–8 plan) and
+`docs/record/attic/rtf_card8_runbook.md` (the armed validation).  §10 and the §7 deviations absorb
+`docs/record/attic/rtf_opus_first_handoff.md`.  §9 absorbs `docs/record/attic/SPEC_rtf3_streaming_frontend.md`.  Sibling docs NOT
 part of this record: `docs/rt_service_operations.md` (shipped operator surfaces) and
 `docs/rt_seam_decomposition.md` (the `RealTimeEngine.cpp` source-refactor gate report).

@@ -39,7 +39,7 @@
  * |dN·λ| into the KF phase innovation when the signal rejoins, and the reset
  * happens one epoch late.  Everything is gated by
  * @c estimation.cycle_slip.turbo_edit_bridge_lli (default off).  See
- * docs/turbo_edit_lli_bridge_design.md.
+ * docs/record/turbo_edit_lli_bridge_design.md.
  */
 
 #include "common/PppTypes.hpp"

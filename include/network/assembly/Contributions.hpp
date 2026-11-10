@@ -2,8 +2,8 @@
 /**
  * @file Contributions.hpp
  * @brief Every contribution to the network producer's normal equations has a declared
- *        kind (docs/refound/NOM_network_object_model_2026-10-08.md
- *        sections 3.4 and 17; docs/refound/NOM2_network_object_model_rows_2026-10-09.md).
+ *        kind (docs/record/refound/NOM_network_object_model_2026-10-08.md
+ *        sections 3.4 and 17; docs/record/refound/NOM2_network_object_model_rows_2026-10-09.md).
  *
  * ### What it answers
  *

@@ -108,7 +108,7 @@ namespace GnssProcessor {
      *        non-empty STATION field).
      *
      * External receiver DCBs are the final rung of the EXT-CB ladder (item 0b,
-     * docs/SPEC_level_information_budget.md §17): they are the one soft-bias
+     * docs/record/SPEC_level_information_budget.md §17): they are the one soft-bias
      * absorber the network cannot determine by itself, and the S2H verdict found
      * the a₀₀ anchor's authority insufficient in both carry postures, which makes
      * this record class the blocker for the level endpoint.  The parser keeps

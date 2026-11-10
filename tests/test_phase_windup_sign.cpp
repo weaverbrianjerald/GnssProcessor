@@ -112,7 +112,7 @@
  * production function.  The two satellite-frame branch cases at the end of the
  * file (case 9) are not part of that four-arm measurement.
  *
- * @see docs/SPEC_phase_windup_sign.md
+ * @see docs/record/SPEC_phase_windup_sign.md
  * @see test_site_displacement.cpp   sibling GnssCorrections geometry coverage
  */
 

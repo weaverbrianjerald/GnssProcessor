@@ -33,7 +33,7 @@ namespace GnssProcessor {
         // The code term is therefore +7527·c·STEC·(B·k̂)/f³ and changes sign
         // with B·k̂.  POINT (Project_Vector, BtJ) dots B with the receiver-to-
         // satellite vector and carries the opposite sign; the document
-        // (docs/refound/I2S_second_order_iono_sign_2026-10-01.md) has the
+        // (docs/record/refound/I2S_second_order_iono_sign_2026-10-01.md) has the
         // derivation, a numerical eigenmode check and the references.
         constexpr double kI2CodeCoeff = 7527.0 * Constants::SPEED_OF_LIGHT;
 

@@ -1,7 +1,7 @@
 /**
  * @file test_galileo_network.cpp
  * @brief GPS and Galileo dual frequency on the network path
- *        (docs/refound/GAL_gps_galileo_dual_2026-09-22.md).
+ *        (docs/record/refound/GAL_gps_galileo_dual_2026-09-22.md).
  *
  * What the Galileo network path builds and these cases pin:
  *

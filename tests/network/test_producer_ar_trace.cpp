@@ -1,6 +1,6 @@
 /**
  * @file test_producer_ar_trace.cpp
- * @brief Producer-AR phase-2 trace (docs/network_ambiguity_resolution_design.md,
+ * @brief Producer-AR phase-2 trace (docs/record/network_ambiguity_resolution_design.md,
  *        the 2026-09-10 note §4.1): the cap-permutation mapping, the header
  *        contract, and inertness with the trace off.
  *

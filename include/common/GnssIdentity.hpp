@@ -5,7 +5,7 @@
  * @brief Typed identities of the GNSS entities the network producer models: the
  *        constellation's traits, a satellite, a tracking signal, an observable, a
  *        signal pair, a station, a line of sight and an arc (
- *        docs/refound/NOM_network_object_model_2026-10-08.md section 11.1).
+ *        docs/record/refound/NOM_network_object_model_2026-10-08.md section 11.1).
  *
  * ### Why this header exists
  *

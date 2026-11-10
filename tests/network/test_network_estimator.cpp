@@ -1494,7 +1494,7 @@ TEST(NetworkEstimatorTest, Eq34ExtendOnlyGapRerouteFlagsReref) {
 // jointConditionalCovariance (the between-station DD ambiguity covariance
 // primitive for producer-side network AR) must match a dense brute-force full
 // inverse of the bordered normal system conditioned on the datum.  This is the
-// risk-#1 correctness check from docs/network_ambiguity_resolution_design.md §7:
+// risk-#1 correctness check from docs/record/network_ambiguity_resolution_design.md §7:
 // getting the conditional covariance wrong feeds LAMBDA a wrong Q → spurious
 // fixes.  Exercises cross-station blocks (the term reconstructStationCovariance
 // does not carry) and same-station off-diagonals.
@@ -1852,7 +1852,7 @@ TEST(NetworkEstimatorTest, DensePriorWithDiagonalCovMatchesScalarPath) {
 }
 
 // ---------------------------------------------------------------------------
-// Post-solve refloat primitives (docs/SPEC_clock_temporal_anchor.md §2.4).
+// Post-solve refloat primitives (docs/record/SPEC_clock_temporal_anchor.md §2.4).
 // Both let an epoch be re-solved with one carried prior withdrawn, which turns the
 // clock anchor's guard from an annotation into a correction (adapt-and-emit).
 // Their contract is exactness: after the withdrawal the system is in the state it
@@ -2423,7 +2423,7 @@ TEST(NetworkEstimatorTest, ConditionalCarryContractionTrace) {
 
     // Kappa shrink: `fixed` arms inject each coupling row with the border time update
     // (per-column κ shrink + M²κq inflation, q ladder = the border carry's own
-    // {q_clk, q_pb, q_sh}), the fix in docs/SPEC_card1_coupling_carry.md.
+    // {q_clk, q_pb, q_sh}), the fix in docs/record/SPEC_card1_coupling_carry.md.
     struct Trace { std::vector<double> single_sig, dd_sig, err_ratio; };
     auto run_trace = [&](bool correlated_iono, bool fixed) -> Trace {
         NetworkEstimator est;
@@ -2925,7 +2925,7 @@ inline Batch runBatch(const Fixture& fx, int s) {
 // With the large-q moving clock border, the κ-fixed recursion equals the
 // hand-built batch (values and formal variances) while the raw recursion
 // fails grossly; a moderate q exercises κ away from both limits (kappa-shrink gate).
-// See docs/SPEC_card1_coupling_carry.md.
+// See docs/record/SPEC_card1_coupling_carry.md.
 TEST(NetworkEstimatorTest, ConditionalCarryTimeUpdateRecursiveEqualsBatch) {
     using namespace conditional_carry_fixture;
     for (const double q : {1e4, 1.0}) {

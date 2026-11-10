@@ -1908,7 +1908,7 @@ namespace GnssProcessor {
         // '+' onto this file's y_r = +east changes only one of the two lines, and
         // the result matches neither the model nor its negative: a band-common
         // error distributed uniformly over a full cycle.  See
-        // docs/SPEC_phase_windup_sign.md section 3.
+        // docs/record/SPEC_phase_windup_sign.md section 3.
         Eigen::Vector3d k_raw = rx_pos - sat_pos;
         double k_raw_norm = k_raw.norm();
         if (k_raw_norm < 1e-3) {

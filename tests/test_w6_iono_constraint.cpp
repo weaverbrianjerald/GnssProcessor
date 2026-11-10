@@ -3,7 +3,7 @@
  * @brief @c network.w6_iono_constraint, the self-contained W6 posture, and
  *        the datum mechanisms built on it (RF-0c, RF-0d, RF-0e, RF-0f).
  *
- * Reference: docs/refound/RF-0_baseline_2026-09-14.md, Finding 2.  Under GPS-only dual
+ * Reference: docs/record/refound/RF-0_baseline_2026-09-14.md, Finding 2.  Under GPS-only dual
  * frequency, without this option, the producer has no posture that avoids external
  * ionosphere data: the co-estimated SH field is off, the loader forces
  * @c ionosphere_weighting on, and the run hard-errors without a `.INX`.

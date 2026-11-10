@@ -1,7 +1,7 @@
 /**
  * @file RedundancyCensus.cpp
  * @brief Redundancy and testability census.  The design argument is in
- *        RedundancyCensus.hpp (docs/SPEC_redundancy_census.md).
+ *        RedundancyCensus.hpp (docs/record/SPEC_redundancy_census.md).
  *
  * Measure-only.  Nothing here writes a weight, a state or a decision; the
  * translation unit reads the solved system and emits counters and events.
@@ -316,20 +316,20 @@ void networkRedundancyCensus(NetworkRun& run, const NetworkEpoch& nep, EpochEven
     const double escal_sig  = nc.redundancy_escalate_sigma;
     const int    stride     = nc.redundancy_census_stride;
     const int    holdoff    = std::max(0, nc.redundancy_event_holdoff_ep);
-    // MDB rider on this sweep's r_i (docs/SPEC_redundancy_census.md MDB-INC-0).
+    // MDB rider on this sweep's r_i (docs/record/SPEC_redundancy_census.md MDB-INC-0).
     // Swept-row MDB uses the census's stride and escalation unchanged: no extra
     // sweep, no second covariance product, one division per swept row.
     const bool   mdb_on     = ctx.knobs.mdb_on && ctx.knobs.mdb_from_census;
     const double mdb_delta0 = baardaDelta0(config_.dataSnoopingCritical());
     // BlockFormal (block-Baarda) rider on this sweep's swept stations
-    // (docs/SPEC_redundancy_census.md BB-INC-1).  It inherits the stride, the
+    // (docs/record/SPEC_redundancy_census.md BB-INC-1).  It inherits the stride, the
     // targeted escalation and the trip-forced full sweep; SPEC §4 requires no new
     // scheduler, which is why it runs here rather than in a seam of its own.  It
     // needs the post-fit residual, so an empty x_s disarms it; run on the prefit
     // innovation it would produce a plausible ladder of the wrong quantity.
     const bool bb_on = ctx.knobs.bb_on && ctx.carry.bb.enabled() && x_s.size() > 0;
     // Congruence rider, the second rider on this sweep: the coordinate-fault screen
-    // in position space (docs/SPEC_redundancy_census.md CG-INC-1).  Same host, same
+    // in position space (docs/record/SPEC_redundancy_census.md CG-INC-1).  Same host, same
     // stride, same post-fit residual (formed once below and passed to both riders),
     // and the same empty-x_s disarm: run on the prefit innovation it would produce
     // a plausible delta_hat of the wrong quantity.
@@ -600,7 +600,7 @@ void networkRedundancyCensus(NetworkRun& run, const NetworkEpoch& nep, EpochEven
         counters.redun_mass        += sta_sum_r;
 
         // ---- BlockFormal rider: the (station, satellite) LOS blocks ---------
-        // docs/SPEC_redundancy_census.md BB-INC-1.  It uses the station, rows,
+        // docs/record/SPEC_redundancy_census.md BB-INC-1.  It uses the station, rows,
         // hoisted covariance and kernel slot the row census just used, so the
         // added cost is one back-substitution, two GEMVs and a b×b solve per
         // block, with b ≤ 8.
@@ -612,7 +612,7 @@ void networkRedundancyCensus(NetworkRun& run, const NetworkEpoch& nep, EpochEven
             // the D0 cov_consumers_ms line and SPEC §5's budget stays checkable.
             //
             // Both riders read the residual and it is formed once per station: the
-            // congruence screen (docs/SPEC_redundancy_census.md) needs the same
+            // congruence screen (docs/record/SPEC_redundancy_census.md) needs the same
             // y − A_s x_s − A_r x_r over the same station, and a second
             // reconstructStation call would double the most expensive call in
             // either rider's budget.
@@ -665,7 +665,7 @@ void networkRedundancyCensus(NetworkRun& run, const NetworkEpoch& nep, EpochEven
                 }
 
                 // ---- Congruence rider: the station's coordinates -------------
-                // docs/SPEC_redundancy_census.md CG-INC-1.  Runs after the block
+                // docs/record/SPEC_redundancy_census.md CG-INC-1.  Runs after the block
                 // sweep: INC-3's separability join needs to know whether the
                 // per-LOS tier flagged anything at this station in this epoch, and
                 // the growth of bb_hits across the block sweep is that verdict.
@@ -770,7 +770,7 @@ int networkRedundancyCensusRunEnd(const NetworkRunEndView& v) {
     const NetworkConfig& nc = v.config.getNetworkConfig();
 
     // --- Redundancy / testability census run-end telemetry --------------------
-    // (docs/SPEC_redundancy_census.md).  The census claims that the cross-flag has
+    // (docs/record/SPEC_redundancy_census.md).  The census claims that the cross-flag has
     // essentially zero false-positive surface, and a reader can check that only with
     // the denominators next to the findings (invariant #4): passes, sweeps, rows,
     // uncheckable rows, and uncheckable rows that were also hot.  Zero hot cells over

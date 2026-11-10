@@ -142,7 +142,7 @@ shrinks pure noise from 0.251 to 0.145 cycle, so a wrapped grade is quoted as a 
 to a size-matched null, never as a raw number.}
 \takeaway{Double differences are estimable, but a grade built on one reference
 element inherits that element; grade reference-free.}
-\src{\texttt{docs/cards/sim-bed/DD-TRACE-REF-SAT.md} lines 41 to 48, 107 to 110, 143
+\src{\texttt{docs/record/cards/sim-bed/DD-TRACE-REF-SAT.md} lines 41 to 48, 107 to 110, 143
 to 159; \texttt{CLAUDE.md}, ``Grading traps that still apply''.}
 \end{answer}
 
@@ -171,7 +171,7 @@ epoch's signal.}
 turns that into a time constant.}
 \src{\texttt{config/golden/golden\_sim\_refound.json} line 323;
 \texttt{include/network/solve/ClockAnchor.hpp} lines 35 to 36;
-\texttt{docs/cards/clock/Q3-PHYSICAL-FLOOR.md} lines 29 to 32; card SCB lines 29 to 35.}
+\texttt{docs/record/cards/clock/Q3-PHYSICAL-FLOOR.md} lines 29 to 32; card SCB lines 29 to 35.}
 \end{answer}
 
 \begin{answer}{tau}
@@ -198,8 +198,8 @@ rate, with a coefficient of about 35~min''.}
 \takeaway{A precise clock needs either a precise a priori clock to follow, or a
 larger $q$ that tracks the truth; the self-contained regime takes the second
 route.}
-\src{\texttt{docs/cards/clock/Q3-ANCHOR-DESIGN.md} lines 47 to 56; card SCB lines 124,
-128; \texttt{docs/cards/raim-qc/DAY129-FRAME-ANATOMY.md} lines 139 to 143;
+\src{\texttt{docs/record/cards/clock/Q3-ANCHOR-DESIGN.md} lines 47 to 56; card SCB lines 124,
+128; \texttt{docs/record/cards/raim-qc/DAY129-FRAME-ANATOMY.md} lines 139 to 143;
 \texttt{scripts/simnet\_clock\_truth\_grade.py} line 151.}
 \chk
 \begin{cmd}
@@ -367,7 +367,7 @@ effect.}
 several such terms can be larger.}
 \takeaway{Without integers, the ionosphere is known 22 times too loosely to see L1
 integers; a complete set of integers would close the gap (\cref{q:oracle}).}
-\src{\texttt{docs/cards/raim-qc/T3-IONO-MECHANISM.md} lines 326 to 331;
+\src{\texttt{docs/record/cards/raim-qc/T3-IONO-MECHANISM.md} lines 326 to 331;
 \texttt{docs/SPEC\_oracle\_pin.md} lines 514 to 517, 541 to 546.}
 \end{answer}
 
@@ -497,7 +497,7 @@ faulty; what lasts is the state they leave in the network (\cref{q:basis}).}
 \takeaway{Always say whether a number is graded from a run's start or from a grading
 origin; the two differ (\cref{q:basis}).}
 \src{\texttt{include/math/TimeUtils.hpp} lines 416 to 448;
-\texttt{docs/cards/queues/QPR-ITEMS-5-8.md} lines 239, 256;
+\texttt{docs/record/cards/queues/QPR-ITEMS-5-8.md} lines 239, 256;
 \texttt{src/core/model/ModelGeometry.cpp} line 1204;
 \texttt{docs/refound/CTU2\_level\_recursion\_followup\_2026-09-29.md} lines 29 to 43.}
 \chk

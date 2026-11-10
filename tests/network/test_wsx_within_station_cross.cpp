@@ -2,7 +2,7 @@
  * @file test_wsx_within_station_cross.cpp
  * @brief Unit gates of the exact cross term (@c network.carry_coupling_exact_cross): the exact time
  *        update's bracket between two carried rows of a station, added in the station's
- *        whitened local block (docs/refound/WSX_within_station_cross_terms_2026-09-30.md).
+ *        whitened local block (docs/record/refound/WSX_within_station_cross_terms_2026-09-30.md).
  *
  * 1. With the knob, every pair of rows that both took the exact route gets
  *    @f$M_i^\top B M_k@f$ (@ref GnssProcessor::couplingExactCross over the rows'

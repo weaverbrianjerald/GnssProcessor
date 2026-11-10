@@ -1,6 +1,6 @@
 # NOM3 step PB1: the station assembly as stages and a declared step table (buildable design)
 
-Read-only design for card NOM3 step PB (`docs/refound/NOM3_network_giants_2026-10-09.md`, section 3 "PB", gates of section 5, order of section 6). No repository file was changed, nothing was built or run. The method is card NOM2 step TD (sections 6 to 8): parameter groups first, then a generated character-exact cut walked by a declared table, verified by a relocation verifier and gated on identical output.
+Read-only design for card NOM3 step PB (`docs/record/refound/NOM3_network_giants_2026-10-09.md`, section 3 "PB", gates of section 5, order of section 6). No repository file was changed, nothing was built or run. The method is card NOM2 step TD (sections 6 to 8): parameter groups first, then a generated character-exact cut walked by a declared table, verified by a relocation verifier and gated on identical output.
 
 **Bases and measurements.**
 - Main `31c393f` ("main" below). Every "main N" line is `src/core/app/ApplicationNetworkAssembly.cpp` at that commit unless another file is named.

@@ -1,6 +1,6 @@
 # scripts/nom_ep1/: the EP1 seam conversion
 
-Tooling of card NOM3 step EP1 (`docs/refound/NOM3_network_giants_2026-10-09.md`, section 3
+Tooling of card NOM3 step EP1 (`docs/record/refound/NOM3_network_giants_2026-10-09.md`, section 3
 "EP" and the gates of section 5). Step EP1 moves the network producer's per-epoch lambda
 `processSyncedEpoch` out of `Application::runNetwork` into
 `Application::networkProcessEpoch_(NetworkRun&, const SyncedEpoch&)` and converts the 62

@@ -11,7 +11,7 @@
  * ambiguity for this key = target".  Every mechanism that moves r* re-pins the
  * successor at 0, which realizes a different frame: the whole family steps by the
  * inter-station ambiguity difference and the satellite clock absorbs the step
- * (docs/SPEC_pivot_visibility_gauge_defect.md has the fixture measurement).
+ * (docs/record/SPEC_pivot_visibility_gauge_defect.md has the fixture measurement).
  *
  * The continuous handover pins the successor at its own value in the outgoing frame,
  * so the gauge change is an S-transform and nothing steps.  Each case below names
@@ -429,7 +429,7 @@ TEST(PhaseDatumHandover, MissingVarianceIsRefused) {
 
 // ---------------------------------------------------------------------------
 // The PHASE_ANCHOR carry re-reference (QUEUE item 1(d);
-// docs/SPEC_pivot_visibility_gauge_defect.md §5.07.5 R1)
+// docs/record/SPEC_pivot_visibility_gauge_defect.md §5.07.5 R1)
 // ---------------------------------------------------------------------------
 
 /// The re-reference set marks every pin not continuously inherited from an

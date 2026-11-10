@@ -4,7 +4,7 @@
  *        decision, the per-satellite elapsed-time staleness guard, the
  *        LOOSE/ANCHORED state machine, the guard's in-epoch refloat and
  *        re-solve, the gauge-free fold, and the loader contract (
- *        docs/SPEC_clock_temporal_anchor.md).
+ *        docs/record/SPEC_clock_temporal_anchor.md).
  *
  * Properties pinned here:
  *

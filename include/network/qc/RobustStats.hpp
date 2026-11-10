@@ -6,7 +6,7 @@
  *
  * The original helpers were moved unchanged out of the ApplicationNetwork.cpp
  * anonymous namespace (decomposition INC-2; see
- * docs/network_decomposition_plan.md).  Header-only: the pure
+ * docs/record/network_decomposition_plan.md).  Header-only: the pure
  * helpers are @c inline / templates with no state, so they are independently
  * unit-testable (tests/network/test_network_robust_stats.cpp).
  */

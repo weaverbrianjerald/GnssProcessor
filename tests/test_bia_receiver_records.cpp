@@ -1,7 +1,7 @@
 /**
  * @file test_bia_receiver_records.cpp
  * @brief Tests for the BIA parser's receiver bias records (Item 0b,
- *        docs/SPEC_level_information_budget.md §17, §28).
+ *        docs/record/SPEC_level_information_budget.md §17, §28).
  *
  * The BIA parser reads station-bearing lines into a receiver bias vector, separate
  * from the satellite vector, and accepts receiver DSB records.  The COD MGX OSB

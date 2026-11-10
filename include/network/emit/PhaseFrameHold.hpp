@@ -3,7 +3,7 @@
  * @file PhaseFrameHold.hpp
  * @brief The emitted phase-visible clock in a per-constellation held frame
  *        (@c network.emit_phase_frame_hold,
- *        docs/refound/ICL_inter_constellation_level_2026-11-03.md).
+ *        docs/record/refound/ICL_inter_constellation_level_2026-11-03.md).
  *
  * ## Problem addressed
  *
@@ -58,7 +58,7 @@
  * while the clock frame hold takes the code side to the median of the tracked ones, so each
  * constellation's code-visible and phase-visible levels drift apart (20 to 25 mm per 120 epochs
  * on the broadcast posture with the track;
- * docs/refound/ICL2_frame_day_one_level_2026-11-03.md).  In this mode each satellite votes on
+ * docs/record/refound/ICL2_frame_day_one_level_2026-11-03.md).  In this mode each satellite votes on
  * w = C - P_IF - M, M the phase-bias hold's accumulated median step of its constellation's
  * emitted clocks (@c pb_hold_frz_M, the level the phase-clock hold keeps on code and phase
  * alike).  The phase-clock hold writes each satellite's de-commoned clock step into its held
@@ -77,7 +77,7 @@
  * constellation: on DOY 129 of 2024, 18 of 22 Galileo satellites were marked, 3 of the 4 left
  * carried an excursion of +0.45 m that decayed within 4 epochs, and the frame took it for the common
  * move, leaving the whole constellation's phase-visible level 0.40 m off for good, unmarked
- * (docs/refound/ICL3_frame_quorum_2026-11-05.md).  With the quorum armed, the plain vote stands when
+ * (docs/record/refound/ICL3_frame_quorum_2026-11-05.md).  With the quorum armed, the plain vote stands when
  * its voters reach max(min_voters, ceil(quorum x n)), n the constellation's satellites with a sample;
  * below that the satellites forced by their own bump alone vote too, if they continue in their
  * generation, and the frame moves by the median of the wider set when it reaches the same number, else

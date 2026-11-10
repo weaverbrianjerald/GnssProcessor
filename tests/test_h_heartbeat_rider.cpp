@@ -1,6 +1,6 @@
 /**
  * @file test_h_heartbeat_rider.cpp
- * @brief The H-heartbeat rider (docs/HANDOFF_edge_response_queue.md §1.6 item 3):
+ * @brief The H-heartbeat rider (docs/record/HANDOFF_edge_response_queue.md §1.6 item 3):
  *        (a) the batch product read returns every H record, so the replay
  *        consumer's producer-status channel sees the same heartbeats as the
  *        live tail; (b) the census-fed σ̂₀'s wire self-description (S-line

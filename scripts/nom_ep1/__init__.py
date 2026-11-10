@@ -1,4 +1,4 @@
-"""The canonical table of card NOM3 step EP1 (docs/refound/NOM3_network_giants_2026-10-09.md).
+"""The canonical table of card NOM3 step EP1 (docs/record/refound/NOM3_network_giants_2026-10-09.md).
 
 The package holds what the EP1 generator (scripts/nom_ep1_cut.py) and the relocation verifier
 read: the row type, the fold grammar and the realization tables (model.py), the declared

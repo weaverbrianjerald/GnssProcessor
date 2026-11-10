@@ -293,7 +293,7 @@ different arc and registers cold. The clock-only variant
 triple-frequency simulated network: the clock tails returned. The
 code-bias seeds fix the split between clock and code bias at the return;
 without them the cold code-bias realisation relocates into the clock
-(\texttt{docs/cards/network-vehicle/READMIT-EDGE.md}).
+(\texttt{docs/record/cards/network-vehicle/READMIT-EDGE.md}).
 
 \paragraph{Seed mirrors.}
 The epoch-tail snapshots that pair each folded border prior with its
@@ -568,7 +568,7 @@ magnitude test of its own; the step test lives at the emission-preparation
 tier and drives the forced path, which a replay reproduces from the
 serialised \texttt{R} records. A clock step that reaches the product without
 being declared is a contract violation, so the test must be armed
-(\texttt{docs/cards/clock/CS-clock-step-signalling.md}).
+(\texttt{docs/record/cards/clock/CS-clock-step-signalling.md}).
 
 \paragraph{Clock discontinuity counter (\texttt{network.emit\_clock\_disc}).}
 With the setting on, a clock-pivot handover bumps the clock counters of the
@@ -866,12 +866,12 @@ the derived configuration of the in-process user is in
 
 Armed on both reference configurations through the promotion ledger
 (\texttt{docs/CONFIG\_promotion\_ledger.json}): gap re-entry per row
-(\texttt{docs/cards/slip/CARD-G-GAP-REENTRY-RELEVEL.md}), per signal
+(\texttt{docs/record/cards/slip/CARD-G-GAP-REENTRY-RELEVEL.md}), per signal
 (\texttt{docs/refound/GRS\_gap\_reentry\_per\_signal\_2026-09-20.md}) and with
 the tracker's band naming
 (\texttt{GRK\_gap\_reentry\_key\_mismatch\_2026-09-22.md}); the MW re-flag
 skip; the re-admission horizon and its mirrors
-(\texttt{docs/cards/network-vehicle/READMIT-EDGE.md}); accumulated wind-up
+(\texttt{docs/record/cards/network-vehicle/READMIT-EDGE.md}); accumulated wind-up
 with its restart response; the gross line-of-sight screen with its cold bound;
 the generation hold in its phase-clock mode; the held clock frame, the clock
 step test, the clock discontinuity counter and the quality channel; the

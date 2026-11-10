@@ -1,7 +1,7 @@
 /**
  * @file PhaseVisibleDiag.hpp
  * @brief The phase-visible consistency instrument (
- *        docs/refound/PVN_phase_visible_nees_2026-09-29.md), a measure-only diagnostic seam.
+ *        docs/record/refound/PVN_phase_visible_nees_2026-09-29.md), a measure-only diagnostic seam.
  *
  * The smoothed phase-bias hold fails because the estimator states the
  * ionosphere-free phase-visible clock of each satellite, @f$D = c - \sum_j w_j p_j@f$ (one

@@ -92,7 +92,7 @@ std::string chomp(std::string line) {
 }
 
 /// Equilibrated positive-definiteness screen of §4(b), applied to a bare carried
-/// @f$P^z@f$ (no data information @f$B@f$ yet).  See docs/SPEC_pd_safe_dd_fold.md §5c
+/// @f$P^z@f$ (no data information @f$B@f$ yet).  See docs/record/SPEC_pd_safe_dd_fold.md §5c
 /// (PD-safe INC-2c).
 ///
 /// It has the same form as the fold's screen, so the two agree on what "PD" means: scale

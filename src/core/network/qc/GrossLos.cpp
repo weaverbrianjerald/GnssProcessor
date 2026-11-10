@@ -1,7 +1,7 @@
 /**
  * @file GrossLos.cpp
  * @brief Implementation of the gross line-of-sight screen (
- *        docs/SPEC_event_harness.md §24.18).  GrossLos.hpp gives the
+ *        docs/record/SPEC_event_harness.md §24.18).  GrossLos.hpp gives the
  *        rationale and the contract.
  *
  * The row walk below uses the same walk and the same family classification as
@@ -255,7 +255,7 @@ void networkGrossLosScreen(NetworkRun& run, const NetworkEpoch& ep, GrossLosPhas
     const int    holdoff      = nc.gross_los_event_holdoff_ep;
     const int    warmup_ep    = nc.gross_los_warmup_epochs;
     const double max_sta_frac = nc.gross_los_max_station_frac;
-    // --- Whole-satellite stand-down (GL-2, docs/SPEC_event_harness.md §24.19).
+    // --- Whole-satellite stand-down (GL-2, docs/record/SPEC_event_harness.md §24.19).
     const bool   gl2_on       = ctx.knobs.gl2_on;
     const int    gl2_min_sta  = nc.gross_los_sat_min_stations;
     const bool   gl2_wire     = nc.gross_los_sat_wire_withhold;
@@ -1184,7 +1184,7 @@ static int networkGrossLosScreenRunEnd(const NetworkRunEndView& v) {
     const std::vector<NetStation>& stations = v.setup.stations;
 
     // --- Gross line-of-sight screen run-end telemetry ---------------------------
-    // (docs/SPEC_event_harness.md §24.18.)  These counters are the ON-path
+    // (docs/record/SPEC_event_harness.md §24.18.)  These counters are the ON-path
     // telemetry (invariant #4).  The denominators come first so that four outcomes that
     // all look like "the screen found nothing" stay distinguishable: the seam never
     // ran, no code row reached it, nothing cleared the bar, or the evidence never
@@ -1250,7 +1250,7 @@ static int networkGrossLosScreenRunEnd(const NetworkRunEndView& v) {
             log->info("Network (gross-LOS screen): on the float vehicle the T4 attribution "
                       "drops a carried arc instead of erasing it, so the gross screen's erase is "
                       "the stronger response of the two.");
-        // --- Per-rule readout (docs/refound/RF-3_code_row_qc_2026-09-22.md §4 B5,
+        // --- Per-rule readout (docs/record/refound/RF-3_code_row_qc_2026-09-22.md §4 B5,
         //     requirement F6; RF-3b).  Every line prints in both states of the sub-knob
         //     it reports on.  The populations a rule targets (B1's short-row count over
         //     the bar, B2's largest folded |v|, releases and expiries) are counted in both

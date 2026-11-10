@@ -1,6 +1,6 @@
 """Plateau decomposition for the post-relevel-fix stationary ZWD/iono plateau (QUEUE 8b).
 
-Promoted from the 2026-08-20 session scratch join (docs/SPEC_iono_carry_8b.md s2).
+Promoted from the 2026-08-20 session scratch join (docs/record/SPEC_iono_carry_8b.md s2).
 Join gates: on runs/camp60_f2 this reproduces grade.json's settled ZWD rms
 (2.8451), the SPEC s8 hourly table, and simnet_iono_interaction's settled
 interaction rms (3.5678) byte-for-byte before reporting anything new.

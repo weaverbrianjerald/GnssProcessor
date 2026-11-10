@@ -131,7 +131,7 @@ void networkEmitStore(NetworkRun& run, const NetworkEpoch& ep, NetworkSolutionEp
     int& cl_first_fix_week = cl_tally.first_fix_week;
     std::deque<double>& cl_recent_err3d = cl_tally.recent_err3d;
 
-    // Emit-layer frame re-base (docs/SPEC_card4_invariant_carry.md §10 §1)
+    // Emit-layer frame re-base (docs/record/SPEC_card4_invariant_carry.md §10 §1)
     // Under carry_invariant the eq34 datum is re-realized freely, so the raw
     // emitted per-(sat,σ) phase bias changes every epoch by a gauge element (a common
     // per-component fractional + a per-sat integer×λ).  That element leaves user DDs
@@ -219,7 +219,7 @@ void networkEmitStore(NetworkRun& run, const NetworkEpoch& ep, NetworkSolutionEp
                 if (it != rb_out.end()) npb.bias_m = it->second;
             }
     }
-    // Clock emission re-base (docs/SPEC_clock_emit_rebase.md): the
+    // Clock emission re-base (docs/record/SPEC_clock_emit_rebase.md): the
     // per-constellation common-mode frame hold (stage 1) and the census-aligned
     // per-sat step marks (stage 2).  Written into sol before emitToStore and the
     // on-disk write, so the in-process consumer and a NetworkProductIO replay both
@@ -312,7 +312,7 @@ void networkEmitStore(NetworkRun& run, const NetworkEpoch& ep, NetworkSolutionEp
             }
         }
     }
-    // Emit-side phase-bias hold (docs/refound/PBH_phase_bias_hold_2026-09-19.md §5).
+    // Emit-side phase-bias hold (docs/record/refound/PBH_phase_bias_hold_2026-09-19.md §5).
     // It is the last writer of the emitted phase bias; only read-only
     // steps (the warm-resume seam census below, the SID capture and declaration build)
     // follow it before emitToStore.

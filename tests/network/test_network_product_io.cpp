@@ -1200,7 +1200,7 @@ TEST(NetworkProductIoTest, CbPinPairTravelsInContractAndChecks) {
 // records are, not only about their frame); a consumer that declares nothing
 // never mismatches; and a single-layer producer writes no token, so its S line
 // is unchanged byte-for-byte.  The parser also accepts the '+'-joined
-// per-family value form (docs/SPEC_family_gf_datum.md) verbatim, so a
+// per-family value form (docs/record/SPEC_family_gf_datum.md) verbatim, so a
 // multi-family product round-trips through the current reader.
 TEST(NetworkProductIoTest, GfPinPairTravelsInContractAndChecks) {
     const std::string path = tempFile("gnss_netprod_gfpin.txt");
@@ -1609,7 +1609,7 @@ static_assert(static_cast<int>(SbasisDeclaration::AmbDatum::SingleReceiverChain)
 // ContractRoundTripEnsembleAmbDatum above, which covers the ensemble datum; this
 // test covers the eq34 datum.  The serialized contract has its own eq34 branch,
 // separate from the per-solve declaration; without it an eq34 product declares the
-// legacy pivot datum it does not use (docs/SPEC_sbasis_realization_contract.md §D).
+// legacy pivot datum it does not use (docs/record/SPEC_sbasis_realization_contract.md §D).
 TEST(NetworkProductIoTest, ContractRoundTripEq34AmbDatum) {
     const std::string path = tempFile("gnss_netprod_contract_eq34amb.txt");
     std::filesystem::remove(path);

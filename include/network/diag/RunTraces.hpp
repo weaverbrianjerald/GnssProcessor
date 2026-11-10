@@ -7,7 +7,7 @@
  *        counter POD.
  *
  * The stream members and the startup open logic were moved unchanged out of
- * ApplicationNetwork.cpp (decomposition INC-3; see docs/network_decomposition_plan.md).
+ * ApplicationNetwork.cpp (decomposition INC-3; see docs/record/network_decomposition_plan.md).
  * The writers that read per-epoch or run state (health heartbeat, epoch-status and
  * event rows, the L15 run manifest, the run-end flag-rate and run-summary CSVs)
  * followed in INC-4 and receive that state as NetworkRunContext parts
@@ -77,7 +77,7 @@ namespace GnssProcessor {
         "week,tow,hour,family,const,n_rows,n_eff,robust_floor_m2,mean_floor_m2,"
         "mean_floor_std,rate_m2ps,rate_std,cond,rate_frozen,cfg_floor_m2,"
         "robust_ratio,mean_ratio,floor_clamp,rate_clamp\n";
-    /// network_carry_vce_apply.csv header (docs/SPEC_carry_vce_apply.md, M2 v2).
+    /// network_carry_vce_apply.csv header (docs/record/SPEC_carry_vce_apply.md, M2 v2).
     /// One row per (carry family x constellation) per emitted epoch: the per-epoch
     /// trajectory of the LASER 5-95 variance factor rather than an hourly digest.
     /// Acceptance is graded on this file.
@@ -101,7 +101,7 @@ namespace GnssProcessor {
         "alpha2,sigma_hat_post,frozen,at_ceiling,at_unit,"
         "n_steps,n_frozen,n_slew_up,n_slew_down,n_ceiling_ep,n_unit_ep,alpha2_max,"
         "robust_var_r_m2,hand_fold_var_r_m2,rbar,n_eff_r\n";
-    /// network_prior_residual.csv header (docs/SPEC_prior_residual_census.md INC-1).
+    /// network_prior_residual.csv header (docs/record/SPEC_prior_residual_census.md INC-1).
     /// One row per (family x label) per censused epoch that saw at least one row.
     ///
     /// `n_gt_*` count the rows whose |t| exceeds each rung of the fixed ladder
@@ -158,7 +158,7 @@ namespace GnssProcessor {
         "rneg_n_rows,rneg_n_raw_formal,rneg_n_no_sigma0,rneg_max_abs_e_m,"
         "rneg_station,rneg_sat,rneg_signal,rneg_mech,rneg_max_abs_t,"
         "rneg_fold_var_m2,rneg_post_var_m2,rneg_gap_s\n";
-    /// network_producer_ar.csv header (docs/network_ambiguity_resolution_design.md,
+    /// network_producer_ar.csv header (docs/record/network_ambiguity_resolution_design.md,
     /// §4.1 of the 2026-09-10 note: a fix count is not a grade).
     ///
     /// One row per DD in the Phase-2 basis per searched epoch, so the search can be
@@ -170,7 +170,7 @@ namespace GnssProcessor {
     /// `float_cyc` is the DD float in cycles (dd_m/λ) and `sigma_cyc` = √Q_aa from the
     /// covariance the search consumed (-1 when that diagonal is not positive).  That
     /// covariance is carry-blind unless `network.carry_aware_covariance` is armed
-    /// (docs/SPEC_carry_aware_covariance.md §4), one of the two confounds the design
+    /// (docs/record/SPEC_carry_aware_covariance.md §4), one of the two confounds the design
     /// note asks a grader to record.
     ///
     /// `in_subset` = 1 when the DD entered the `ils_max_dim` lowest-σ search subset
@@ -311,7 +311,7 @@ namespace GnssProcessor {
     /// n1 / n2; run_ep is the length of the folded run that ended (offset) or 0.
     inline constexpr const char* kFixedCycleEventsHeader =
         "week,tow,event,cons,sig1,sig2,sat_j,ref_sat,sta_r,ref_sta,n1,n2,run_ep,cause,detail\n";
-    /// network_block_baarda.csv header (docs/SPEC_redundancy_census.md BB-INC-1..3).
+    /// network_block_baarda.csv header (docs/record/SPEC_redundancy_census.md BB-INC-1..3).
     /// One row per (constellation family x label) per epoch that swept a block.
     ///
     /// The unit of `t_B` is a variance ratio, not a sigma.  T_B carries the 1/b, so
@@ -340,7 +340,7 @@ namespace GnssProcessor {
         "n_gt_100,n_gt_200,"
         "max_t,max_T,max_row_t,max_b,max_station,max_sat,max_block_only,"
         "c_hi_noev,c_hi_flat,c_hi_step,c_lo_noev,c_lo_flat,c_lo_step\n";
-    /// network_congruence.csv header (docs/SPEC_redundancy_census.md CG-INC-1..3).
+    /// network_congruence.csv header (docs/record/SPEC_redundancy_census.md CG-INC-1..3).
     /// One row per swept station per epoch, not a ladder as in the two censuses
     /// above: SPEC §7.2 grades a per-station run-median of `d_e` and §7.3's MDB table
     /// is a per-station, per-direction quantity, and neither survives aggregation.
@@ -374,7 +374,7 @@ namespace GnssProcessor {
         "d_e,d_n,d_u,T_raw,t,sigma0,raw_formal,sigma0_warm,sigma0_neff,"
         "mdb_e,mdb_n,mdb_u,mdb_s_e,mdb_s_n,mdb_s_u,"
         "eig_min,eig_max,null_e,null_n,null_u,block_flag,reported\n";
-    /// network_datum_graph.csv header (docs/SPEC_datum_graph_census.md INC-2).
+    /// network_datum_graph.csv header (docs/record/SPEC_datum_graph_census.md INC-2).
     /// One row per (epoch × constellation) the census touched: tier 1 saw the
     /// constellation, or a tier-2 cell or a contingency identity named it.  The
     /// pseudo-constellation `?` collects directions whose participants carry no
@@ -438,7 +438,7 @@ namespace GnssProcessor {
     inline constexpr const char* kArcLedgerHeader =
         "week,tow,station,sat,signal,from,to,generation,gap_ep,reason,role,"
         "side,adm_state,adm_gap_ep\n";
-    /// network_mdb.csv header (docs/SPEC_redundancy_census.md MDB-INC-1).
+    /// network_mdb.csv header (docs/record/SPEC_redundancy_census.md MDB-INC-1).
     /// One row per (constellation x row class) per epoch that binned a row.
     ///
     /// `n_rows` = `n_inf` + `n_finite`.  The order statistics are over the finite rows
@@ -734,7 +734,7 @@ namespace GnssProcessor {
         std::ofstream carry_vce_trace;
         const std::filesystem::path carry_vce_trace_path;
         /// The LASER 5-95 variance-factor trajectory (M2 v2;
-        /// docs/SPEC_carry_vce_apply.md): one row per (family, constellation) per
+        /// docs/record/SPEC_carry_vce_apply.md): one row per (family, constellation) per
         /// emitted epoch with α², its target, the σ̂²-under-used-weights convergence
         /// readout, and the clamp and freeze state.  Per-epoch because the hourly
         /// monitor digest beside it cannot show a slew ramp or a clamp excursion, and
@@ -744,7 +744,7 @@ namespace GnssProcessor {
         std::ofstream carry_vce_apply_trace;
         const std::filesystem::path carry_vce_apply_trace_path;
         /// Prior-residual census (network.prior_residual_census;
-        /// docs/SPEC_prior_residual_census.md INC-1), the headline product: one
+        /// docs/record/SPEC_prior_residual_census.md INC-1), the headline product: one
         /// row per (family x label) per censused epoch with the fixed |t| exceedance
         /// ladder, the row population, the chi2-corrected geometric mean of t^2, the
         /// per-family sigma0 with its warm-up state, the worst row's full identity and
@@ -753,11 +753,11 @@ namespace GnssProcessor {
         /// (byte-identical when off: no file opened, no rows written).
         std::ofstream prior_residual_trace;
         const std::filesystem::path prior_residual_trace_path;
-        std::ofstream block_baarda_trace;                       ///< docs/SPEC_redundancy_census.md BB-INC-1..3 ladder rows.
+        std::ofstream block_baarda_trace;                       ///< docs/record/SPEC_redundancy_census.md BB-INC-1..3 ladder rows.
         const std::filesystem::path block_baarda_trace_path;
-        std::ofstream congruence_trace;                         ///< docs/SPEC_redundancy_census.md CG-INC-1..3 per-station coordinate-offset rows (the MDB table's source).
+        std::ofstream congruence_trace;                         ///< docs/record/SPEC_redundancy_census.md CG-INC-1..3 per-station coordinate-offset rows (the MDB table's source).
         const std::filesystem::path congruence_trace_path;
-        /// Baarda reliability (MDB) census (network.mdb; docs/SPEC_redundancy_census.md
+        /// Baarda reliability (MDB) census (network.mdb; docs/record/SPEC_redundancy_census.md
         /// MDB-INC-1), the headline product: one row per (constellation x row
         /// class) per epoch that binned a row, with the formal MDB distribution (median
         /// / p95 / max, metres), the count of uncheckable rows whose MDB is +infinity,
@@ -775,7 +775,7 @@ namespace GnssProcessor {
         std::ofstream vcf_trace;
         const std::filesystem::path vcf_trace_path;
         /// Datum-graph census (network.datum_graph_census;
-        /// docs/SPEC_datum_graph_census.md INC-2), the headline product: one row
+        /// docs/record/SPEC_datum_graph_census.md INC-2), the headline product: one row
         /// per (epoch × constellation) with the tier-1 component multiplicity and its
         /// roster, the tier-2 channel-family predictions, and the predicted-vs-observed
         /// contingency against the epoch's spectral near-null count.  The null-space
@@ -1009,7 +1009,7 @@ namespace GnssProcessor {
         double es_sigma0_trigger_   = 0.0;
         double es_withhold_ceiling_ = 0.0;
         /// Whether the two product-referenced admission census columns are part of
-        /// this run's epoch-status schema (L1; docs/SPEC_measurement_admission.md
+        /// this run's epoch-status schema (L1; docs/record/SPEC_measurement_admission.md
         /// INC-3): true when network.adm_trace or network.adm_screen is set.  Captured
         /// in openAll() because @ref emitEpochStatus receives neither the config nor the
         /// run context.  The off contract is structural byte-identity: appending
@@ -1018,7 +1018,7 @@ namespace GnssProcessor {
         /// comparisons its §7 gates depend on.
         bool es_adm_columns_ = false;
         /// Whether the five prior-residual census columns are part of this run's
-        /// epoch-status schema (L1; docs/SPEC_prior_residual_census.md): true when
+        /// epoch-status schema (L1; docs/record/SPEC_prior_residual_census.md): true when
         /// network.prior_residual_census is set.  Captured in openAll() for the same
         /// reason as @ref es_adm_columns_: the census's off contract is structural
         /// byte-identity and its §9.1 gate is a same-build A/B comparison of this file,
@@ -1026,7 +1026,7 @@ namespace GnssProcessor {
         bool es_prires_columns_ = false;
 
         /// Whether the three constraint-aware global-σ̂₀ columns are part of this run's
-        /// epoch-status schema (L1; docs/SPEC_prior_residual_census.md §14): true when
+        /// epoch-status schema (L1; docs/record/SPEC_prior_residual_census.md §14): true when
         /// network.prior_residual_census and network.prior_residual_global_sigma0 are
         /// both set.  A separate flag rather than three more columns under the census's
         /// own arm (@ref es_prires_columns_), because the census's §9.1 gate is a
@@ -1036,7 +1036,7 @@ namespace GnssProcessor {
 
         /// Whether the four within-epoch-tier observability columns (sigma0_first,
         /// n_we_refloat_sats, we_clk_move_max_m, we_clk_move_max_sat) are part of this
-        /// run's epoch-status schema (L1 / R0; docs/SPEC_pivot_visibility_gauge_defect.md
+        /// run's epoch-status schema (L1 / R0; docs/record/SPEC_pivot_visibility_gauge_defect.md
         /// §5.07.5).  Present iff network.raim_within_epoch is armed after loading (the
         /// loader also enables the tier when network.raim_withhold_sigma0 > 0).  This
         /// follows the adm/prires precedent (a run with the tier off keeps structural

@@ -8,7 +8,7 @@
  * is absent on purpose: if a config selects it before it is finished and added
  * to CMakeLists.txt, @c createEnabled warns and skips it.
  *
- * @see docs/aiding_source_abstraction_design.md
+ * @see docs/record/aiding_source_abstraction_design.md
  */
 
 #include "aiding/AidingSourceRegistry.hpp"

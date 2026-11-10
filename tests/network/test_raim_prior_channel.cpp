@@ -1,7 +1,7 @@
 /**
  * @file test_raim_prior_channel.cpp
  * @brief The post-fit RAIM's prior channel (@c network.raim_prior_channel,
- *        docs/refound/RPC_raim_prior_channel_2026-10-30.md).
+ *        docs/record/refound/RPC_raim_prior_channel_2026-10-30.md).
  *
  * The contracts:
  *  - the subject of a carried-prior row follows its kind and its own column: a line of

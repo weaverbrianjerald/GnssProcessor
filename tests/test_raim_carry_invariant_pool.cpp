@@ -1,7 +1,7 @@
 /**
  * @file test_raim_carry_invariant_pool.cpp
  * @brief Config-contract tests for the RAIM pool re-host
- *        (docs/SPEC_raim_pool_rehost.md).
+ *        (docs/record/SPEC_raim_pool_rehost.md).
  *
  * Without the re-host, post-fit network RAIM does nothing on an
  * invariant-carry lineage, for two independent reasons, neither of them a

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Event harness: the slip-dose grader (Study 4, docs/SPEC_event_harness.md §12).
+"""Event harness: the slip-dose grader (Study 4, docs/record/SPEC_event_harness.md §12).
 
 ``scripts/event_grade.py`` prices one event on one arc; ``event_frame_grade.py``
 prices what that one event did to the station the arc belongs to.  A dose leg

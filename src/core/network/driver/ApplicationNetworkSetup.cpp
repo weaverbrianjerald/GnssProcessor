@@ -28,7 +28,7 @@
  * declared minimum-constraint S-basis.  The products are emitted in IGS-SSR
  * convention for the companion PPP_RTK_User consumer.
  *
- * See docs/SPEC_sbasis_realization_contract.md §F7 and the approved design plan
+ * See docs/record/SPEC_sbasis_realization_contract.md §F7 and the approved design plan
  * for the full architecture and the staged build-out (W1..W8).
  *
  * ===========================================================================
@@ -620,7 +620,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
     } else if (config_.estimateNetworkSatCodeBias()
                && config_.getNetworkConfig().w6_iono_constraint
                       == NetworkW6IonoConstraint::None) {
-        // Self-contained W6 posture (RF-0b; docs/refound/RF-0_baseline_2026-09-14.md
+        // Self-contained W6 posture (RF-0b; docs/record/refound/RF-0_baseline_2026-09-14.md
         // Finding 2).  It leaves each satellite's geometry-free bias free and lets the
         // per-(constellation, signal) sum-to-zero rows realize the IGS convention, which
         // makes the posture reachable under processing.frequency_mode = dual.
@@ -901,7 +901,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
     std::map<std::string, std::map<std::string, std::vector<std::string>>> atx_src_by_sys;
     // --- Marker → ARP roster reduction ----------------------------
     // Marker → antenna-reference-point reduction of the roster's configured
-    // coordinates (docs/refound/UPO_consumer_up_offset_2026-09-22.md §4).  The
+    // coordinates (docs/record/refound/UPO_consumer_up_offset_2026-09-22.md §4).  The
     // eccentricities are read in both knob states (standing invariant #4: a run
     // with the knob off still reports the size of the error it does not correct);
     // the reduction is applied only when network.station_marker_to_arp is armed.
@@ -1144,7 +1144,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
             // Every station's detector shares one logger, whose records are keyed
             // only by <sat>_<sig1>_<sig2>; the label is what lets the MWDEC / MWSKIP
             // decision lines be read per station.  Log text only; nothing else reads
-            // the label.  Design: §14.10 of docs/SPEC_event_harness.md.
+            // the label.  Design: §14.10 of docs/record/SPEC_event_harness.md.
             st.mw_slip->setStationLabel(st.name);
             st.mw_slip->setCorrections(&st.model->getCorrections());
             // The TurboEdit MW+GF integer repair resolver is built only for turbo_edit
@@ -1174,11 +1174,11 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
             // pair, each on its own gradient chain, instead of only the first two
             // signals of each satellite.  The default `first` leaves the detector as it
             // was, so the off path is byte-identical; `all` closes the equal-count trap
-            // on the pairs no chain watched.  Design: §14.10 of docs/SPEC_event_harness.md.
+            // on the pairs no chain watched.  Design: §14.10 of docs/record/SPEC_event_harness.md.
             st.if_slip->setAllPairs(
                 config_.networkCycleSlipIfPhaseTdPairs() == NetworkIfPhaseTdPairs::All);
             // Push the hardened reference-satellite gate
-            // (docs/SPEC_slip_qc_hardening.md §2); it is pushed only here, so the staged
+            // (docs/record/SPEC_slip_qc_hardening.md §2); it is pushed only here, so the staged
             // user/kinematic path keeps the legacy gate (spec R5).  With
             // network.cycle_slip.if_phase_td_ref_gate off, rg.enable is false and the
             // gate is disabled (byte-identical).
@@ -1330,7 +1330,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                   "their observations refer to the antenna. Each such station misfits every "
                   "range by about H*sin(elev); its zenith wet delay absorbs roughly a quarter "
                   "of H and the remainder reaches the satellite clocks regionally "
-                  "(docs/refound/UPO_consumer_up_offset_2026-09-22.md). Set "
+                  "(docs/record/refound/UPO_consumer_up_offset_2026-09-22.md). Set "
                   "network.station_marker_to_arp to reduce them.",
                   n_ecc_over_1cm, stations.size(), ecc_max_abs, ecc_max_h,
                   ecc_max_h_station.empty() ? "<none>" : ecc_max_h_station);

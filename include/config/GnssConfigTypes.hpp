@@ -420,7 +420,7 @@ namespace GnssProcessor {
     /// signal), so an undifferenced cross-signal bias difference is not estimable
     /// (the per-component constants c_b1 − c_b2 are free).  The between-satellite SD
     /// cancels them and leaves exactly the EWL integer lattice {lam_b1*m − lam_b2*n}.
-    /// See docs/SPEC_sd_ewl_prereduce.md §2.
+    /// See docs/record/SPEC_sd_ewl_prereduce.md §2.
     ///
     /// Increment 1 folds float rows.  Increments 2a and 2b (@ref fix_enable below)
     /// decide and fold the integer; the zero-q hold (increment 2c) is not built.  The
@@ -434,8 +434,8 @@ namespace GnssProcessor {
         int    max_rows_per_station{ 0 };     ///< 0 = unlimited; else keep the lowest-variance rows first (drops counted).
         bool   trace{ false };                ///< Log-only per-row CSV (logs/network_sd_ewl.csv).  Does not change the solve.
 
-        // --- Increments 2a and 2b: fix the EWL integer (docs/SPEC_sd_ewl_prereduce.md
-        // §8, as amended by docs/SPEC_sd_ewl_prereduce.md §10).  Increment 2c (the
+        // --- Increments 2a and 2b: fix the EWL integer (docs/record/SPEC_sd_ewl_prereduce.md
+        // §8, as amended by docs/record/SPEC_sd_ewl_prereduce.md §10).  Increment 2c (the
         // zero-q hold) is not built, by design: the decision is re-derived every epoch,
         // so there is no stiff cross-epoch carry that would need a slip response.
         /// Master switch for the integer path.  On: @ref networkSdEwlAr decides this
@@ -477,7 +477,7 @@ namespace GnssProcessor {
     };
 
     /**
-     * @brief Slip-QC hardening knobs (docs/SPEC_slip_qc_hardening.md).
+     * @brief Slip-QC hardening knobs (docs/record/SPEC_slip_qc_hardening.md).
      *
      * Three independent mechanisms, each off by default, that qualify existing slip
      * decisions.  They never drop a station, satellite or observation (project
@@ -563,7 +563,7 @@ namespace GnssProcessor {
         // --- Gap re-entry response: mark a slipped re-entry at the re-entry ---
         /**
          * @brief Master arm (@c network.cycle_slip.gap_reentry_relevel) for the gap
-         *        re-entry slip response (docs/SPEC_slip_qc_hardening.md §G3/W1, the
+         *        re-entry slip response (docs/record/SPEC_slip_qc_hardening.md §G3/W1, the
          *        follow-up that the earlier decision rule called for).
          *
          * Solve-affecting, unlike @ref gap_instrument: it marks ambiguities slipped,
@@ -604,7 +604,7 @@ namespace GnssProcessor {
         // --- Re-entry keyed on the signal -----------------------
         /**
          * @brief Per-signal rider (@c network.cycle_slip.gap_reentry_per_signal) of
-         *        @ref gap_reentry (docs/refound/GRS_gap_reentry_per_signal_2026-09-20.md).
+         *        @ref gap_reentry (docs/record/refound/GRS_gap_reentry_per_signal_2026-09-20.md).
          *
          * The row-level response reacts to a raw row that went absent, and the row
          * is rebuilt each epoch from whichever phase signals have a matching code.
@@ -675,7 +675,7 @@ namespace GnssProcessor {
         /**
          * @brief Arm (@c network.cycle_slip.tracker_modeled_first) for the
          *        arc-level tracker's per-band signal choice
-         *        (docs/refound/GRK_gap_reentry_key_mismatch_2026-09-22.md).
+         *        (docs/record/refound/GRK_gap_reentry_key_mismatch_2026-09-22.md).
          *
          * Unarmed, the arc-level tracker builds its primary pair from
          * @c raw_observed as the lexically lowest phase per band that has a
@@ -931,7 +931,7 @@ namespace GnssProcessor {
 
     /**
      * @brief Flicker / gap signal-integrity knobs
-     *        (docs/SPEC_flicker_gap_integrity.md).
+     *        (docs/record/SPEC_flicker_gap_integrity.md).
      *
      * ## Rationale
      *
@@ -1070,7 +1070,7 @@ namespace GnssProcessor {
      * default; the float product is bit-identical until @c enable is set.  The
      * gates are stricter than on the single-station user path because a wrong
      * network fix corrupts the product for every downstream user (see
-     * @c docs/network_ambiguity_resolution_design.md §5).
+     * @c docs/record/network_ambiguity_resolution_design.md §5).
      */
     struct NetworkArConfig {
         bool   enable{ false };               ///< Master switch; off leaves the float product unchanged.
@@ -1206,7 +1206,7 @@ namespace GnssProcessor {
          * @brief Per-DD trace of the Phase-2 search (@c logs/network_producer_ar.csv).
          *
          * Without it, the Phase-2 diagnostic writes one spdlog line per epoch with a
-         * fix count, which is not a grade (docs/network_ambiguity_resolution_design.md,
+         * fix count, which is not a grade (docs/record/network_ambiguity_resolution_design.md,
          * 2026-09-10 note §4.1).  With it, every DD in the basis gets a row with its
          * identity (constellation / signal / sat_j / ref_sat / sta_r / ref_sta), its
          * float value and formal σ in cycles, whether it entered the ils_max_dim
@@ -1295,7 +1295,7 @@ namespace GnssProcessor {
     /**
      * @brief Hard per-satellite geometry-free code-bias datum
      *        (@c network.sat_gf_datum) (
-     *        docs/refound/RF-0b_dcb_datum_2026-09-15.md, last section).
+     *        docs/record/refound/RF-0b_dcb_datum_2026-09-15.md, last section).
      *
      * RF-0b measured the gap this closes.  Under @ref NetworkW6IonoConstraint::None each
      * satellite keeps one geometry-free direction (Odijk et al. 2016 rank deficiency 3b:
@@ -1342,7 +1342,7 @@ namespace GnssProcessor {
     /**
      * @brief Ionosphere constraint of the W6 satellite code-bias slice
      *        (@c network.w6_iono_constraint) (
-     *        docs/refound/RF-0_baseline_2026-09-14.md).
+     *        docs/record/refound/RF-0_baseline_2026-09-14.md).
      *
      * The satellite DCB (the geometry-free part of the satellite code bias) is collinear
      * with each station's free per-(receiver, satellite) slant ionosphere: shifting
@@ -1363,7 +1363,7 @@ namespace GnssProcessor {
      * geometry-free lump, so a consumer must apply the emitted ionosphere and the
      * emitted code biases as a pair.
      *
-     * @warning Read §5 of docs/refound/RF-0b_dcb_datum_2026-09-15.md before grading a product from this posture.  The
+     * @warning Read §5 of docs/record/refound/RF-0b_dcb_datum_2026-09-15.md before grading a product from this posture.  The
      *          sum-to-zero rows close exactly one direction per (constellation, signal),
      *          the constellation-wide level, and cannot see the n_sat-1
      *          between-satellite directions that the GIM's common-mode-free R closes
@@ -1382,7 +1382,7 @@ namespace GnssProcessor {
 
     /**
      * @brief Which vehicle carries a network ambiguity between epochs
-     *        (@c network.ambiguity_vehicle, docs/refound/RF-1_float_ambiguities_design.md §7.1).
+     *        (@c network.ambiguity_vehicle, docs/record/refound/RF-1_float_ambiguities_design.md §7.1).
      *
      * The re-founding program names the ambiguity's carry as the first mechanism to
      * replace.  Under @c Level an ambiguity is a per-epoch free parameter made
@@ -1412,7 +1412,7 @@ namespace GnssProcessor {
 
     /**
      * @brief How the gross-LOS screen reads @c network.gross_los_min_rows (RF-3b B1)
-     *        (docs/refound/RF-3_code_row_qc_2026-09-22.md §4, requirement F1).
+     *        (docs/record/refound/RF-3_code_row_qc_2026-09-22.md §4, requirement F1).
      *
      * The constant's rationale ("a gross line of sight is wrong on every code band at
      * once; one heavy-tailed row is one band's multipath") holds for a line of sight
@@ -1715,7 +1715,7 @@ namespace GnssProcessor {
     /**
      * @brief One scripted producer-side fault, from @c network.inject.events[].
      *
-     * Event harness (docs/SPEC_event_harness.md): converge once into a state
+     * Event harness (docs/record/SPEC_event_harness.md): converge once into a state
      * snapshot, then resume for a few tens of epochs with exactly one of these
      * armed, so that a single event's response can be read against a null leg in
      * minutes instead of a day-long run.  Fields a @c kind does not use are
@@ -1785,7 +1785,7 @@ namespace GnssProcessor {
         double      north_m{ 0.0 };   ///< @c station_step: North component (m).
         double      up_m{ 0.0 };      ///< @c station_step: Up component (m).
         /// @c oracle_pin only: which arcs are held at the fixture's true integers
-        /// (include/network/slip/OraclePin.hpp, docs/SPEC_oracle_pin.md).  One of
+        /// (include/network/slip/OraclePin.hpp, docs/record/SPEC_oracle_pin.md).  One of
         ///   - @c all                        : every carried non-anchor arc;
         ///   - @c band:<sig>[+<sig>…]        : e.g. `band:L1C+L2W`;
         ///   - @c station:<name>             : one roster station;
@@ -1826,15 +1826,15 @@ namespace GnssProcessor {
      */
     struct NetworkConfig {
         std::vector<StationConfig> stations;  ///< Peer stations (>=2); each needs a known ECEF (held fixed).
-        NetworkInjectConfig inject;           ///< Event-harness fault injector (network.inject.*; absent => off, byte-identical; docs/SPEC_event_harness.md).
+        NetworkInjectConfig inject;           ///< Event-harness fault injector (network.inject.*; absent => off, byte-identical; docs/record/SPEC_event_harness.md).
         std::string clock_datum_station;      ///< Pivot receiver whose clock defines network time ("" => first station).
         std::string clock_datum_satellite;    ///< Optional reference satellite pinned for the clock gauge ("" => auto: highest-elevation tracked, per constellation).
         double epoch_sync_tolerance_s{ 0.01 };///< Max time-tag difference when matching epochs across stations.
         ClosedLoopConfig closed_loop;         ///< Optional closed-loop integer-recovery harness (held-out consumer).
         NetworkArConfig  ambiguity_resolution;///< Producer-side integer fixing (default off: float product).
-        SdEwlConfig      sd_ewl;              ///< SD pre-reduce EWL constraint (default off, byte-identical; docs/SPEC_sd_ewl_prereduce.md).
-        SlipQcConfig     slip_qc;             ///< Slip-QC hardening (network.cycle_slip.*; every master default off, byte-identical; docs/SPEC_slip_qc_hardening.md).
-        SignalIntegrityConfig signal_integrity; ///< Flicker/gap signal integrity: band-state classifier, degraded-phase demotion and re-vet (network.signal_integrity.*; default off, byte-identical; docs/SPEC_flicker_gap_integrity.md).
+        SdEwlConfig      sd_ewl;              ///< SD pre-reduce EWL constraint (default off, byte-identical; docs/record/SPEC_sd_ewl_prereduce.md).
+        SlipQcConfig     slip_qc;             ///< Slip-QC hardening (network.cycle_slip.*; every master default off, byte-identical; docs/record/SPEC_slip_qc_hardening.md).
+        SignalIntegrityConfig signal_integrity; ///< Flicker/gap signal integrity: band-state classifier, degraded-phase demotion and re-vet (network.signal_integrity.*; default off, byte-identical; docs/record/SPEC_flicker_gap_integrity.md).
         NetworkStreamingConfig streaming;     ///< Multi-station streaming front-end (RTF-3; network.streaming.*; default off: batch epoch source, byte-identical).
         NetworkProcessNoise process_noise;    ///< Scoped per-parameter-class process-noise table (network.process_noise). Always live; every class defaults to its legacy key's default => byte-identical unless a value is edited.
         std::string product_output_path;      ///< Optional path: serialize each emitted NetworkSolutionEpoch (+ datum-change flag) here for replay (empty => disabled).  Used verbatim (absolute, or relative to the working directory).
@@ -1925,7 +1925,7 @@ namespace GnssProcessor {
         // reduction inside @ref NetworkNormalEquations::foldReducedDdPriors, and the
         // posterior-covariance readback of @ref NetworkInvariantCarryDriver::installPosterior.
         // With K ≈ 8k carried DD chords on a 305-station network that dense algebra is
-        // ~80 % of the epoch (measured; see docs/SPEC_dev_tier_perf_cards.md).  When
+        // ~80 % of the epoch (measured; see docs/record/SPEC_dev_tier_perf_cards.md).  When
         // armed, buildDdPriors and installPosterior thread their large dense GEMMs
         // through an Eigen un-pin, while foldReducedDdPriors (whose cost is the
         // per-station reduction with small inner-dimension matmuls and a serial LDLT,
@@ -2038,7 +2038,7 @@ namespace GnssProcessor {
         bool sat_isc_state{ false };
         /// Leave an extra-band satellite code-bias column free where the data determine
         /// it, and let its (constellation, signal) channel carry the level with its
-        /// sum-to-zero row (docs/refound/B5D_band5_code_datum_2026-09-20.md).
+        /// sum-to-zero row (docs/record/refound/B5D_band5_code_datum_2026-09-20.md).
         ///
         /// Why: RF-0d pins every registered code column beyond the ionosphere-free pair
         /// through its geometry-free combination `(d_k - d_ref)/(mu_k - 1) = c*T_GD`, an
@@ -2121,7 +2121,7 @@ namespace GnssProcessor {
         bool estimate_rx_extra_band_code_delay{ false };
         /// A network station contributes, as code-only rows, every allow-listed band-1
         /// code it reports for a satellite besides the code its canonical latch selected
-        /// (docs/refound/SCC_second_code_channel_2026-09-21.md, R1).
+        /// (docs/record/refound/SCC_second_code_channel_2026-09-21.md, R1).
         ///
         /// Why: with one canonical code per station and band, a satellite's C1W code
         /// bias is supported only by the stations that latched C1W (under the
@@ -2181,7 +2181,7 @@ namespace GnssProcessor {
         /// A network station contributes, as ordinary float-ambiguity phase rows, every
         /// allow-listed band-1 carrier phase it reports for a satellite besides the
         /// phase its canonical latch selected (see
-        /// docs/refound/SID_signal_identity_2026-09-22.md §4; the phase counterpart of
+        /// docs/record/refound/SID_signal_identity_2026-09-22.md §4; the phase counterpart of
         /// the second code channel).
         ///
         /// Why: with one phase per station and band, a satellite's L1W phase bias is
@@ -2247,7 +2247,7 @@ namespace GnssProcessor {
         /// Floor (m²) applied at a drop only, so the restored prior is
         /// @c max(var_birth, var_first, amb_float_birth_var_m2, amb_float_drop_var_m2),
         /// elevation-mapped exactly as @ref amb_float_birth_var_m2 is (RF-3a,
-        /// docs/refound/RF-3_code_row_qc_2026-09-22.md §4).  The birth stash is
+        /// docs/record/refound/RF-3_code_row_qc_2026-09-22.md §4).  The birth stash is
         /// untouched, which is the reason for a separate knob: a birth floor of 4 m²
         /// removes the post-drop walk (post-fit code rows above 3 m at full weight fell
         /// from 404 to 101, and the settled consumer improved by about 1 cm in hours 3
@@ -2293,7 +2293,7 @@ namespace GnssProcessor {
         /// @c false is byte-identical.  Acts only under @c FloatKf.
         bool amb_float_declared_handover{ false };
         /// The per-line-of-sight phase nuisance state (
-        /// docs/refound/LGM_los_phase_nuisance_2026-10-01.md section 4.1): one band-common,
+        /// docs/record/refound/LGM_los_phase_nuisance_2026-10-01.md section 4.1): one band-common,
         /// phase-only Gauss-Markov state per (station, satellite), +1 on every phase row
         /// of the line of sight and nothing on code rows, carried in the station's
         /// whitened local block with transition phi = exp(-gap / tau), born at
@@ -2388,7 +2388,7 @@ namespace GnssProcessor {
         /// 1 in @c deriveClosedLoopConsumerConfig: this is a producer-side lever, and
         /// the consumer's own code weighting is a separate graded variable.
         double extra_band_code_sigma_scale{ 1.0 };
-        /// Anchor-slip handover (docs/SPEC_event_harness.md §12.7): when a slip
+        /// Anchor-slip handover (docs/record/SPEC_event_harness.md §12.7): when a slip
         /// response frees the arc that anchors a (sat, signal) phase-bias family, stage
         /// the one-epoch candidacy ban so that the same epoch's election hands the
         /// family to a successor at the successor's own carried @c value_abs, instead
@@ -2570,7 +2570,7 @@ namespace GnssProcessor {
         bool   rhs_attrib_on_trip{ false };  ///< Flight recorder (INC-5): arm the estimator's shared-info capture recorder every epoch and fire @ref networkRhsAttribution automatically at the first trip of a QC era (A4 σ̂0 withhold, clock runaway, a₀₀-band exit), instead of at a hand-picked @ref rhs_attrib_tow.  With this armed, the next discharge of any class is attributed to its source in the run where it first happens, without a separate investigation.
         bool   rhs_attrib_on_trip_prev{ true }; ///< Also dump the retained previous epoch on a trip (INC-5).  The pre-trip frame is the informative one: it shows the weight flip that the trip epoch alone shows only as its aftermath.  Costs one epoch of retained assemblies and kernel blocks (order 100 MB at 63 stations), so it disables itself above @ref rhs_attrib_prev_max_stations.
         int    rhs_attrib_prev_max_stations{ 128 }; ///< Network size above which previous-epoch retention is disabled, with a one-shot warning (INC-5).  A trip still dumps the current epoch.
-        // --- Redundancy / testability census (docs/SPEC_redundancy_census.md;
+        // --- Redundancy / testability census (docs/record/SPEC_redundancy_census.md;
         //     filter/NetworkRedundancyCensus) --------------------------------
         // Measure-only and not fingerprinted, like the rhs_attrib block above: a
         // shared-snapshot replay leg with only these armed stays a valid A/B against
@@ -2584,7 +2584,7 @@ namespace GnssProcessor {
         double redundancy_pivot_eps{ 1e-8 };    ///< Unobservable-local floor (INC-2), relative to the station's median @f$N_{rr}@f$ LDLT pivot (the absolute scale is set by the measurement weights and varies by decades between an ambiguity column and a ZWD column).  A column below it carries essentially no information this epoch.
         double redundancy_escalate_sigma{ 0.0 };///< Free-tier escalation trigger (0 = off).  When > 0, the O(rows) centred prefit census runs on every station every epoch, and any station whose largest centred deviation exceeds this gets a targeted single-station redundancy sweep at the next epoch (~2-5 ms).  The free tier detects that something is large; the redundancy sweep tells whether it is checkable.  Works with @ref redundancy_census_stride = 0.
         int    redundancy_event_holdoff_ep{ 20 };///< Per-(station, satellite, class) event rate limit in sweep passes: a parked cell keeps logging its identity, but not 120 times per hour.
-        // --- Baarda reliability numbers / MDB (docs/SPEC_redundancy_census.md;
+        // --- Baarda reliability numbers / MDB (docs/record/SPEC_redundancy_census.md;
         //     filter/NetworkMdb) ----------------------------------------------
         // Measure-only, default-off and not fingerprinted, like the two blocks
         // above.  A port of the quartet in KalmanFilter::computeResidualQc_, not a
@@ -2596,7 +2596,7 @@ namespace GnssProcessor {
         bool   mdb{ false };                    ///< Master switch.  Requires an @f$r_i@f$ source: @ref redundancy_census_stride / @ref redundancy_escalate_sigma, or network.raim_redundancy_normalize on a live network.raim.  The loader fails with an error when neither is armed: without a redundancy source there is nothing to divide by, and the run would report zero rows, indistinguishable from a genuine negative result.
         double mdb_event_m{ 1.0 };              ///< Reporting threshold in metres (0 = no events): a finite MDB above it emits an @c MDB / @c mdb_exceedance event.  Not a gate: no deweight, admission or withhold reads it.  Per (station x row class) the worst finite row is the one named; the full above-threshold population is in the trace's @c n_over column.
         int    mdb_event_holdoff_ep{ 20 };      ///< Per-(station, satellite, class) MDB event rate limit, in flush passes (the PREFIT/redundancy holdoff convention).  MDB moves slowly (it is geometry), so an unthrottled stream would repeat the same cell every epoch for hours.
-        // --- Gross line-of-sight screen (docs/SPEC_event_harness.md §24.18;
+        // --- Gross line-of-sight screen (docs/record/SPEC_event_harness.md §24.18;
         //     filter/NetworkGrossLos) ----------------------------------------
         // The one acting mechanism among these census blocks; everything else here is
         // measure-only.  Default off, byte-identical when off, not fingerprinted.
@@ -2633,7 +2633,7 @@ namespace GnssProcessor {
         int    gross_los_sat_min_stations{ 3 }; ///< Number of stations that must have the same satellite over the bar in one epoch for the satellite stand-down to fire.  Deliberately the same number and meaning as @c network.raim_min_stations ("a satellite so flagged at >= 3 stations is refloated network-wide"): this is that rule's code-side counterpart, and the two must agree on what counts as a satellite fault.  The trigger is the over-bar count, not the declared count, so the satellite is caught on its first bad epoch rather than after the per-LOS persistence gate has spent two.
         bool   gross_los_sat_wire_withhold{ true }; ///< Whether a stood-down satellite is also pruned from the epoch's emission (a per-satellite wire withhold, never an epoch withhold: every other satellite still emits, and the epoch is still adapt-and-emit).  The consumer is informed by the retro disc bump, which lands with mark-==-land semantics at the satellite's next actual emission.  False arms the disc bump alone: the A/B that separates "the consumer needed the satellite dropped" from "the consumer needed to be told".
         int    gross_los_event_holdoff_ep{ 0 }; ///< Per-(station, satellite) rate limit on GROSSLOS events, in screened epochs.  0 = no limit, the right default here: unlike MDB/PREFIT this stream is edge-triggered (one declare and one clear per episode), so it limits itself, and every row of it is an identity the grade needs.
-        // --- Completing the screen (RF-3b; docs/refound/RF-3_code_row_qc_2026-09-22.md
+        // --- Completing the screen (RF-3b; docs/record/refound/RF-3_code_row_qc_2026-09-22.md
         //     §4, requirements F1 to F4 of runs/_msc/rf3_read_report_2026-09-22.md).
         //     Each of the four defaults to the original behaviour.
         /// How @ref gross_los_min_rows is read (RF-3b B1, F1).  @c Fixed (the original
@@ -2697,7 +2697,7 @@ namespace GnssProcessor {
         /// requires @ref gross_los_screen.
         bool   gross_los_station_tier{ false };
         /// Cold-start absolute bound, metres (see
-        /// docs/refound/ICF_ignition_code_fault_2026-10-09.md section 3).  0 (the default)
+        /// docs/record/refound/ICF_ignition_code_fault_2026-10-09.md section 3).  0 (the default)
         /// = off.  Before the maturity horizon (@ref gross_los_warmup_epochs) the screen
         /// makes no declaration on its σ-standardized bar, because a cold post-fit code
         /// residual measures the unconverged station block.  A residual of tens of metres
@@ -2730,7 +2730,7 @@ namespace GnssProcessor {
         /// storm_scale 0).  Never meaningful on real data.  0 (the default) = off,
         /// byte-identical.  Solve-affecting; not fingerprinted.
         double sim_zero_iono_sigma_m{ 0.0 };
-        // --- Datum graph census (docs/SPEC_datum_graph_census.md;
+        // --- Datum graph census (docs/record/SPEC_datum_graph_census.md;
         //     filter/NetworkDatumGraph) ----------------------------------------
         // Measure-only, default-off and fingerprint-safe, like the blocks around it.
         // The S-basis dimension is detected spectrally (the null-space gate counts
@@ -2744,7 +2744,7 @@ namespace GnssProcessor {
         // spectrum; nothing consumes its output.
         bool   datum_graph_census{ false };     ///< Master arm.  Off: the seam is never entered, no file is opened, no counter moves.  On: per epoch, union-find over the admitted (station, satellite) support graph per constellation (tier 1) plus the (satellite x channel-family) code-support partition (tier 2), joined to the epoch's spectral observation into the predicted/observed contingency.  Never feeds the gate, SBC or @c Plan::declared_dimension; acting on a prediction is left to a successor.
         int    datum_graph_event_holdoff_ep{ 20 };///< Per-identity DATUMGRAPH event rate limit, in processed epochs (the PREFIT/MDB/block-Baarda convention).  Datum topology moves slowly, so an unthrottled stream would repeat the same (sat, family) every epoch for hours; the CSV rows are never rate-limited, only the individual identities.
-        // --- Prior-residual census (docs/SPEC_prior_residual_census.md;
+        // --- Prior-residual census (docs/record/SPEC_prior_residual_census.md;
         //     filter/NetworkPriorResidual) -------------------------------------
         // Measure-only, default-off and not fingerprinted, like the two blocks above.
         // The response layer of standing invariant #1 is per mechanism (MW / LLI /
@@ -2820,7 +2820,7 @@ namespace GnssProcessor {
         // gate and every deweight stay on the median sigma0.
         bool   prior_residual_global_sigma0{ false };///< Master arm for the rider.  Requires @ref prior_residual_census (hard error otherwise).  Warns without @c network.raim_redundancy_normalize, whose per-row Baarda r_i is the only valid data-side redundancy; the r == 1 fallback is then taken and flagged in-band per epoch.  Measure-only: no gate, deweight or withhold reads it; the solve is byte-identical.
         // --- Product-referenced measurement admission
-        //     (docs/SPEC_measurement_admission.md; filter/NetworkMeasurementAdmission)
+        //     (docs/record/SPEC_measurement_admission.md; filter/NetworkMeasurementAdmission)
         // The corrupt-channel screen: the first layer of a layered defense (this
         // screen -> prefit_fuse_sigma).  A receiver can
         // emit a channel offset by ~1e5 m against SP3+CLK
@@ -3105,7 +3105,7 @@ namespace GnssProcessor {
          *
          * @c closed_loop_trace.csv carries week, tow, @c n_sats, the AR columns and the
          * position error, and nothing per satellite.  EV6
-         * (@c docs/refound/EV6_hour6_decouple_event_2026-09-15.md §9 item 1) named this
+         * (@c docs/record/refound/EV6_hour6_decouple_event_2026-09-15.md §9 item 1) named this
          * as the blocker for the hour-6 consumer events on the RF-0hv field posture:
          * without per-satellite consumer content, a float re-convergence cannot be
          * separated from the slant-iono half of the RF-0b applied pair, and an
@@ -3386,7 +3386,7 @@ namespace GnssProcessor {
         bool state_snapshot_carry_diagonal{ false };
         /// Also write each chord's linearization double-difference
         /// @f$z_\ell=\sum c\,x_{\mathrm{lin}}@f$ into the carry blob (one @c ZL row per
-        /// block, beside @c Z) (RS-2, docs/SPEC_event_harness.md §21.4).
+        /// block, beside @c Z) (RS-2, docs/record/SPEC_event_harness.md §21.4).
         ///
         /// The serialized @f$\hat z@f$ is the correction-frame DD (@f$\lambda N@f$ minus
         /// @f$\sum c\,x_{\mathrm{lin}}@f$), so it is meaningful only against the writer's
@@ -3452,7 +3452,7 @@ namespace GnssProcessor {
         /// Inert unless state_snapshot_path.
         bool state_snapshot_coupling_capture{ false };
         /// Resume datum capture (RS-3; the write side of network.resume_datum_restore,
-        /// docs/SPEC_event_harness.md §21.7): also serialize the two datum memories the
+        /// docs/record/SPEC_event_harness.md §21.7): also serialize the two datum memories the
         /// snapshot otherwise lacks: the eq34 chain datum's last-epoch spanning tree
         /// (@c EQD sticky datum receiver per (constellation,signal), @c EQP each
         /// receiver's parent-edge satellite, @c EQS each satellite's component root,
@@ -3475,7 +3475,7 @@ namespace GnssProcessor {
         /// byte-identical.  Inert unless state_snapshot_path.
         bool state_snapshot_datum_capture{ false };
         /// Resume emit-layer capture (RS-5; the write side of network.resume_emit_restore,
-        /// docs/SPEC_event_harness.md §21.10): also serialize the output-only emit
+        /// docs/record/SPEC_event_harness.md §21.10): also serialize the output-only emit
         /// engine the snapshot otherwise lacks: @c NetworkEmitRebase's emission frame
         /// (@c ER, one previous emitted bias per "sat|signal").  It is a plain run-local,
         /// so without these rows every warm resume cold-starts it, and the first
@@ -3493,7 +3493,7 @@ namespace GnssProcessor {
         /// trace stay byte-identical.  Inert unless state_snapshot_path.
         bool state_snapshot_emit_capture{ false };
         /// Resume station-layer capture (RS-6; the write side of
-        /// network.resume_station_restore, docs/SPEC_event_harness.md §21.13): also
+        /// network.resume_station_restore, docs/record/SPEC_event_harness.md §21.13): also
         /// serialize the two per-station cross-epoch memories the snapshot otherwise
         /// lacks: the rx-CB carry (@c RC, one receiver code-bias posterior per (station
         /// roster index, CB state key), with exactly the @c Z row's field set) and the
@@ -3530,7 +3530,7 @@ namespace GnssProcessor {
         /// state_snapshot_path.
         bool state_snapshot_signal_capture{ false };
         /// Code-bias linearization-point capture (RS-9; the write side of
-        /// network.resume_rxcb_lin_restore, docs/SPEC_event_harness.md §21.18): beside
+        /// network.resume_rxcb_lin_restore, docs/record/SPEC_event_harness.md §21.18): beside
         /// every @c RC row, also serialize an @c RL row holding the station
         /// @c StateManager's current @c x_lin for that code-bias state.  The @c RC row
         /// carries the rx-CB carry's numerator; this is the reference its inject gate
@@ -4621,7 +4621,7 @@ namespace GnssProcessor {
      * @c vision is staged (its .cpp is excluded from the build; the registry
      * warns and skips it if selected).
      *
-     * @see docs/aiding_source_abstraction_design.md
+     * @see docs/record/aiding_source_abstraction_design.md
      */
     struct AidingConfig {
         bool imu    = false;  ///< IMU INS error-state aiding (primary; default = enableImu()).
@@ -4721,7 +4721,7 @@ namespace GnssProcessor {
         /// epoch late, the same cost as the re-acquisition reset path.  Beyond
         /// @c turbo_edit_max_gap_s the full reset applies.  Default off (baseline
         /// unchanged).  Via @c estimation.cycle_slip.turbo_edit_bridge_lli.  See
-        /// docs/turbo_edit_lli_bridge_design.md.
+        /// docs/record/turbo_edit_lli_bridge_design.md.
         bool turbo_edit_bridge_lli = false;
         /// WL-settle deferral cap (s) for the gap-bridge joint solve (effective only
         /// with @c turbo_edit, @c turbo_edit_bridge_lli and a non-zero
@@ -4868,9 +4868,9 @@ namespace GnssProcessor {
         double layer2_mean_vtec_prior_tecu = 3.0;       ///< Layer-2 a₀₀ climatology mean (TECU).
         double layer2_mean_vtec_prior_sigma_tecu = 5.0; ///< Layer-2 a₀₀ prior σ (TECU), deliberately tight (split constraint).
         int    row_decimation_epochs = 0;      ///< Temporal treatment of the quasi-static SH pseudo-obs constraint (T1b; 0/1 = off = the original behaviour).  The sun-fixed field is quasi-static, so re-applying the SH↔slant rows as independent white observations every epoch is a data-incest channel (it collapses the formal σ without new information).  Mechanism: the rows are still applied every epoch (so the satellite-code-bias observability they provide is preserved and no epoch is withheld; pure row-skipping instead makes the observability gate withhold every skipped epoch), but their variance is inflated by N (σ × √N), so each epoch's white row carries only 1/N of the information, matching the information rate of one full look per N epochs.
-        double rep_error_tau_s = 0.0;          ///< Correlated per-(station,sat) SH representativeness-error deviation (T5/Iono-2, v2 exact harvest).  0 = off, byte-identical.  When > 0, the SH↔slant pin row `ι − SH·c = 0 + ε(white)` becomes `ι − SH·c = d̂ₖ|ₖ₋₁ + ε(floor² + Pₖ|ₖ₋₁)`, where d is a per-LOS Gauss–Markov deviation (τ = this value, steady-state σ = representation_sigma_tecu, carried in vertical TECU so that level and variance are elevation-stationary).  v2 replaces the v1 scalar filter (falsified as circular) with the exact joint-posterior harvest: d̂ = d_pred + [P/(P+f²)]·(û − d_pred), with û/V̂ the solved posterior mean/variance of the pin functional (one NetworkEstimator::stationRegression per LOS plus the datum-frame shared covariance), and P⁺ = P·(U+f²)/(U+P+f²), with the data-only information U recovered from V̂ (see docs/SPEC_iono2_mechB_v3.md §6-§10).  This is the per-LOS iono temporal accumulation channel that the per-epoch producer otherwise lacks (the NL-AR representation lever; the single-layer surface leaves ~70 % of LOS residuals > 3σ at any degree, per the T4 A/B).  Slip handling: the C3c PASS-A funnel (carry_slipped_ambs, per-signal → per-sat projection) erases the entry (reset rather than repair, cold re-tap at σ_ss).  Supersedes row_decimation_epochs when set.
-        bool rep_error_d5_keep = false;        ///< Erase-policy split for the deviation carry's slip response (Iono-2 v3k).  Default false = v2/v3 behaviour (every C3c-funnel entry erases the (station,sat) deviation).  When true, only slips confirmed by a raw detector (MW/LLI/IF-TD firing this epoch: the carry_slipped_raw provenance set captured at PASS-A insertion) erase; D5-only re-taps (the prior-epoch innovation drain, of which 97 % were measured to coincide with no raw observable step, i.e. iono-representation tension; docs/SPEC_slip_qc_hardening.md §8.2 F3 and SPEC_iono2_mechB_v3) keep the accumulated level and re-tap the variance to steady state (shDevD5Retap: var → var_ss, mean held).  Motivation: with every D5 re-tap erasing, the mean deviation lifetime measured ≈ 0.7·τ, so the accumulation channel never matures.  Safety: the weak re-tapped prior lets a genuinely missed small slip be re-estimated away within a few harvests, and the v3 de-mean removes any common mode of the kept levels (arm with rep_error_demean).  Inert without rep_error_tau_s.
-        bool rep_error_demean = false;         ///< Once per epoch, remove the information-weighted global mean and the per-station means from the carried deviation priors (serial PASS-B pre-pass, after slip erase and GM aging) (Iono-2 v3).  A common vertical-TECU deviation has the row signature M(el)·tecu_to_m, identical to the a00 column, so the pair is quasi-null, and the harvest → age → re-assert alternation ratchets it (measured: a00 from 25 to 104 TECU in 3 h with mechanism B alone, 207–255 with the dual layer amplifying ~2.2×; docs/SPEC_iono2_mechB_v3.md).  The de-mean enforces the deviation state's contract (per-LOS structure not representable by SH plus receiver lumps): the common component stays with a00 / the receiver DCB, where the data put it each epoch, and the carry never re-asserts it as independent prior information.  Variances unchanged (conservative).  Inert unless rep_error_tau_s > 0.  Default false (standing invariant #6).
+        double rep_error_tau_s = 0.0;          ///< Correlated per-(station,sat) SH representativeness-error deviation (T5/Iono-2, v2 exact harvest).  0 = off, byte-identical.  When > 0, the SH↔slant pin row `ι − SH·c = 0 + ε(white)` becomes `ι − SH·c = d̂ₖ|ₖ₋₁ + ε(floor² + Pₖ|ₖ₋₁)`, where d is a per-LOS Gauss–Markov deviation (τ = this value, steady-state σ = representation_sigma_tecu, carried in vertical TECU so that level and variance are elevation-stationary).  v2 replaces the v1 scalar filter (falsified as circular) with the exact joint-posterior harvest: d̂ = d_pred + [P/(P+f²)]·(û − d_pred), with û/V̂ the solved posterior mean/variance of the pin functional (one NetworkEstimator::stationRegression per LOS plus the datum-frame shared covariance), and P⁺ = P·(U+f²)/(U+P+f²), with the data-only information U recovered from V̂ (see docs/record/SPEC_iono2_mechB_v3.md §6-§10).  This is the per-LOS iono temporal accumulation channel that the per-epoch producer otherwise lacks (the NL-AR representation lever; the single-layer surface leaves ~70 % of LOS residuals > 3σ at any degree, per the T4 A/B).  Slip handling: the C3c PASS-A funnel (carry_slipped_ambs, per-signal → per-sat projection) erases the entry (reset rather than repair, cold re-tap at σ_ss).  Supersedes row_decimation_epochs when set.
+        bool rep_error_d5_keep = false;        ///< Erase-policy split for the deviation carry's slip response (Iono-2 v3k).  Default false = v2/v3 behaviour (every C3c-funnel entry erases the (station,sat) deviation).  When true, only slips confirmed by a raw detector (MW/LLI/IF-TD firing this epoch: the carry_slipped_raw provenance set captured at PASS-A insertion) erase; D5-only re-taps (the prior-epoch innovation drain, of which 97 % were measured to coincide with no raw observable step, i.e. iono-representation tension; docs/record/SPEC_slip_qc_hardening.md §8.2 F3 and SPEC_iono2_mechB_v3) keep the accumulated level and re-tap the variance to steady state (shDevD5Retap: var → var_ss, mean held).  Motivation: with every D5 re-tap erasing, the mean deviation lifetime measured ≈ 0.7·τ, so the accumulation channel never matures.  Safety: the weak re-tapped prior lets a genuinely missed small slip be re-estimated away within a few harvests, and the v3 de-mean removes any common mode of the kept levels (arm with rep_error_demean).  Inert without rep_error_tau_s.
+        bool rep_error_demean = false;         ///< Once per epoch, remove the information-weighted global mean and the per-station means from the carried deviation priors (serial PASS-B pre-pass, after slip erase and GM aging) (Iono-2 v3).  A common vertical-TECU deviation has the row signature M(el)·tecu_to_m, identical to the a00 column, so the pair is quasi-null, and the harvest → age → re-assert alternation ratchets it (measured: a00 from 25 to 104 TECU in 3 h with mechanism B alone, 207–255 with the dual layer amplifying ~2.2×; docs/record/SPEC_iono2_mechB_v3.md).  The de-mean enforces the deviation state's contract (per-LOS structure not representable by SH plus receiver lumps): the common component stays with a00 / the receiver DCB, where the data put it each epoch, and the carry never re-asserts it as independent prior information.  Variances unchanged (conservative).  Inert unless rep_error_tau_s > 0.  Default false (standing invariant #6).
     };
 
     /**

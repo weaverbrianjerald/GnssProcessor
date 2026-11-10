@@ -80,7 +80,7 @@ def recipe(a):
     config/sim/<name>.json with a provenance comment (the run length is the 24 h recipe's)."""
     r = json.load(open(RECIPE, encoding='utf-8'))
     r['_comment'] = [
-        f'Card SFR (docs/refound/SFR_sim_fixture_coloured_phase_2026-10-01.md) re-base recipe, written by '
+        f'Card SFR (docs/record/refound/SFR_sim_fixture_coloured_phase_2026-10-01.md) re-base recipe, written by '
         f'scripts/clock_level/sfr_calib.py recipe {" ".join(sys.argv[2:])}.',
         'Identical to config/sim/simnet60_quiet_24h.json (commit 2306134) except the white phase noise, the '
         'multipath phase amplitude, the phase_colour block and the per-station phase_colour overrides by latitude '

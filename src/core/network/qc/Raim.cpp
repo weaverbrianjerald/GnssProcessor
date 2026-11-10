@@ -95,14 +95,14 @@ void networkPostFitRaim(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitH
     const int    raim_maturity_epochs = ctx.knobs.raim_maturity_epochs;  // maturity horizon (T2d)
     const bool   raim_redun    = ctx.knobs.raim_redun; // Baarda per-row r_i normalization of the RAIM residual (B2)
     const bool   raim_redun_trace = ctx.knobs.raim_redun_trace; // compute r_i for the census without applying it (§7.1)
-    // MDB rider on the B2 r_i (docs/SPEC_redundancy_census.md, MDB-INC-0): a
+    // MDB rider on the B2 r_i (docs/record/SPEC_redundancy_census.md, MDB-INC-0): a
     // measure-only addition made after the move, reading the (w, r_i) pairs the
     // Pass-1 row walk already visits.  mdb_on is the master switch and
     // mdb_from_raim selects this seam as the feed site; both must be set.
     const bool   mdb_on        = ctx.knobs.mdb_on && ctx.knobs.mdb_from_raim;
     const double mdb_delta0    = baardaDelta0(config_.dataSnoopingCritical());
     // Data side of the constraint-aware global variance component
-    // (docs/SPEC_prior_residual_census.md §14.2).  Also a measure-only addition made
+    // (docs/record/SPEC_prior_residual_census.md §14.2).  Also a measure-only addition made
     // after the move: it reads the same (w, v, r_i) triples the Pass-1 walk visits,
     // and nothing in this seam reads its result back.  globalOn() already requires
     // a live census, so one bool suffices here.
@@ -121,7 +121,7 @@ void networkPostFitRaim(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitH
     // ambiguity column present this epoch and not gauge-pinned, whichever carry
     // owns it.  (The continuous phase-datum handover also fills R.qc_amb.)  With
     // both off, R.qc_amb is empty and ambPool() returns R.pl_amb, so those runs are
-    // unchanged.  Design: docs/SPEC_raim_pool_rehost.md.
+    // unchanged.  Design: docs/record/SPEC_raim_pool_rehost.md.
     const bool raim_ci_on      = ctx.knobs.raim_ci_on;
     auto ambPool = [&](const StationAssembly& R) -> const std::vector<PlAmb>& {
         return R.qc_amb.empty() ? R.pl_amb : R.qc_amb;
@@ -257,7 +257,7 @@ void networkPostFitRaim(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitH
         // sentinel, never 0).
         const bool staf_here = staf_on && row_r.size() == R.A_r.rows();
         const bool redun_trace_here = raim_redun_out.is_open();
-        // --- MDB rider (docs/SPEC_redundancy_census.md MDB-INC-0) ------------
+        // --- MDB rider (docs/record/SPEC_redundancy_census.md MDB-INC-0) ------------
         // Every row this loop visits already has (w, r_i) in hand, so its minimal
         // detectable bias costs one division.  The loop below is keyed on ambiguity
         // columns, not rows, so a row touched by two carried ambiguities is visited
@@ -881,7 +881,7 @@ void networkPostFitRaim(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitH
             for (const auto& x : v) o += (o.empty() ? "" : ";") + x;
             return o;
         };
-        // Diagnostic sub-knob for Study 1 (docs/SPEC_event_harness.md SS9):
+        // Diagnostic sub-knob for Study 1 (docs/record/SPEC_event_harness.md SS9):
         // (station idx, sat) -> the injected mode.  Consulted only for arcs this
         // injector staged; a real attribution's arcs are absent from the map and
         // take the production path unchanged.
@@ -1561,7 +1561,7 @@ static int networkRaimPoolRunEnd(const NetworkRunEndView& v) {
     }
 
     // --- RAIM pool re-host run-end telemetry -----------------------------------
-    // (docs/SPEC_raim_pool_rehost.md).  Without the re-host, post-fit RAIM shows as
+    // (docs/record/SPEC_raim_pool_rehost.md).  Without the re-host, post-fit RAIM shows as
     // armed in the loader summary on a carry_invariant run while screening nothing, so
     // an inert tier is the failure this readout has to expose (invariant #4).  The
     // denominators come first so that four outcomes that otherwise look identical can
@@ -1777,12 +1777,12 @@ StationStep networkRaimColumnCensus(StationBuild& build) {
     // The alias lines of networkPassB_ this function reads, verbatim.
     auto& stations = setup.stations;
     const bool phase_datum_prioritized = ctx.knobs.phase_datum_prioritized;
-    // RAIM pool re-host (docs/SPEC_raim_pool_rehost.md): build the carry-neutral
+    // RAIM pool re-host (docs/record/SPEC_raim_pool_rehost.md): build the carry-neutral
     // checkable-column census `qc_amb` alongside (not instead of) the carry's pl_amb.
     // Already ANDed with raim_on and the resolved carry_invariant when the knobs were
     // snapshotted, so this is a single bool here.  Off: qc_amb is never allocated.
     const bool raim_ci_on              = ctx.knobs.raim_ci_on;
-    // Two-edge continuous handover (docs/SPEC_pivot_visibility_gauge_defect.md): a
+    // Two-edge continuous handover (docs/record/SPEC_pivot_visibility_gauge_defect.md): a
     // second consumer of the carry-neutral `qc_amb` census.  The handover ledger
     // needs each candidate anchor's absolute ambiguity estimate, and the census is
     // already the right population: columns present in A_r and unpinned, i.e. every
@@ -1793,7 +1793,7 @@ StationStep networkRaimColumnCensus(StationBuild& build) {
     const bool pd_handover_continuous  = ctx.knobs.pd_handover_continuous;
     // ---- End of the bindings ----
 
-    // --- RAIM pool re-host (docs/SPEC_raim_pool_rehost.md) ----------------
+    // --- RAIM pool re-host (docs/record/SPEC_raim_pool_rehost.md) ----------------
     // The checkable-column census.  Its own block, above and outside
     // `legacy_local_inject` (carry_warm, which needs phase_leveling) and
     // outside `do_amb_carry` (which needs !carry_invariant): under

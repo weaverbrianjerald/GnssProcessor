@@ -348,7 +348,7 @@ void requireFactorPd(const Eigen::LDLT<Eigen::MatrixXd>& ldlt,
     }
 }
 
-// --- PD-safe invariant-DD fold (docs/SPEC_pd_safe_dd_fold.md §4) --------------
+// --- PD-safe invariant-DD fold (docs/record/SPEC_pd_safe_dd_fold.md §4) --------------
 // The DD-prior fold inverts M = (Pᶻ+B)⁻¹, and a corrupted carry shows up there.  The
 // joint [band-1; band-2] lane block is near-singular at birth, because same-chord rows
 // of the two bands are near-duplicates through shared geometry.  Operand scales range
@@ -2261,7 +2261,7 @@ void NetworkNormalEquations::applyDdPriorCorrection(std::size_t station,
 }
 
 // ---------------------------------------------------------------------------------
-// Carry-aware covariance readback (docs/SPEC_carry_aware_covariance.md §5a).
+// Carry-aware covariance readback (docs/record/SPEC_carry_aware_covariance.md §5a).
 //
 // The fold is the Schur complement of  Ã⁻¹ = N_rr⁻¹ − Σ_b Y_b M_b Y_bᵀ  (Y_b = N_rr⁻¹C_bᵀ),
 // so a consistent readback subtracts the same rank-K term the reduced shared normals

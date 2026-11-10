@@ -2,7 +2,7 @@
  * @file test_handover_stransform_dense.cpp
  * @brief The dense clock-pivot S-transform, build B2
  *        (@c network.handover_stransform_dense,
- *        docs/refound/SCL_self_contained_clock_level_2026-10-03.md, sections 5 and 6, U2).
+ *        docs/record/refound/SCL_self_contained_clock_level_2026-10-03.md, sections 5 and 6, U2).
  *
  * At a clock-pivot handover the diagonal kernel moves the carried clock values and adds
  * var_q to each carried clock variance, and leaves the dense block in the outgoing frame.

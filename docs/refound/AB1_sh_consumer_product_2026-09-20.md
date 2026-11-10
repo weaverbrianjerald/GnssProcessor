@@ -6,7 +6,7 @@
 - **topic:** ionosphere
 - **status:** parked
 - **summary:** PARKED: the frozen rule FAILS (sim with truth: a causal SH product beats the consumer's own ionosphere only through arc age 2), so the consumer constraint is KEEP_OFF and the field is SPECIFIED, not built.
-- **source:** [NETWORK_REFOUNDING](NETWORK_REFOUNDING_2026-09-14.md) (the add-back list); [PBH](PBH_phase_bias_hold_2026-09-19.md) section 8 (the baseline pair); code census of 2026-09-20
+- **source:** [NETWORK_REFOUNDING](NETWORK_REFOUNDING_2026-09-14.md) (the add-back list); [PBH](../record/refound/PBH_phase_bias_hold_2026-09-19.md) section 8 (the baseline pair); code census of 2026-09-20
 - **knobs / posture:** none built; `closed_loop.consume_network_iono` stays armed and dead (no supply without `sh_model`); RF-0hv working bases at main `bbb2663`; baseline pair `runs/_rf0hv3_{field,sim}6`. The product as specified: causal, degree 6, 25 degree mask, per-satellite and per-station bias terms, 0.45 m vertical sigma
 - **dates in the text:** 2026-09-20
 - **hashes / run dirs:** `runs/_rf0hv3_{field,sim}6` (wire `bbaa7fd6...` field, `ea3a646f...` sim); `runs/_ab1_proto_20260920/`; diagnostic arm `runs/_diag_field6_noBSHM` (exe `gnss_processor_pbh1.exe`)
@@ -46,7 +46,7 @@ consumer levels its own slant ionosphere with the same wire code biases and
 estimates its own receiver GF bias, so a receiver-common level offset is absorbed.
 One term is not representable by an SH field: the estimable slant ionosphere absorbs
 each satellite's true DCB deviation from its broadcast T_GD
-([RF-0b](RF-0b_dcb_datum_2026-09-15.md)), a per-satellite constant with no pierce-point
+([RF-0b](../record/refound/RF-0b_dcb_datum_2026-09-15.md)), a per-satellite constant with no pierce-point
 dependence. The consumer books the same constant. The product therefore needs a
 per-satellite bias term beside the field: slant(s) = mf(e) VTEC(ipp) + b_s.
 
@@ -55,7 +55,7 @@ interaction RMS from 0.706 to 0.669 m against free slant on the older posture
 (QPR item 8a: the limit is the representation). Low-elevation code contamination
 dominated the old in-solve a00, and a 25 degree mask was the measured remedy.
 `sh_health_gate` is KEEP_OFF in the ledger (two realizations of one day differ by
-about 25 TECU in a00). `docs/topics/ionosphere.md` and the project instructions are
+about 25 TECU in a00). `docs/record/topics/ionosphere.md` and the project instructions are
 stale on one point: `network_ionosphere.csv` now carries `iono_total_m`, the absolute
 slant ionosphere.
 
@@ -215,4 +215,4 @@ start offset exists for the closed-loop consumer today.
 
 ## Appended 2026-10-30: the retired keys (card RKD)
 
-Card [RKD](RKD_retired_key_deletion_2026-10-14.md) deleted these keys of this card with their code on 2026-10-14: `network.sh_gate_min_epochs`, `network.sh_gate_rms_max_tecu` and `network.sh_health_gate` (the SH health gate, commit `b216f55`). The text above records them as they stood. A configuration that still sets one runs without it, and the loader names each such key in one warning (card [RKT](RKT_retired_key_tombstone_2026-10-30.md)).
+Card [RKD](../record/refound/RKD_retired_key_deletion_2026-10-14.md) deleted these keys of this card with their code on 2026-10-14: `network.sh_gate_min_epochs`, `network.sh_gate_rms_max_tecu` and `network.sh_health_gate` (the SH health gate, commit `b216f55`). The text above records them as they stood. A configuration that still sets one runs without it, and the loader names each such key in one warning (card [RKT](../record/refound/RKT_retired_key_tombstone_2026-10-30.md)).

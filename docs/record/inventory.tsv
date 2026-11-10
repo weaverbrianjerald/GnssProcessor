@@ -1,0 +1,611 @@
+path	action	new path	reason	live citers	code citers	other citers
+docs/CLOCK_HADAMARD_CALIB_2026-07-14.md	move	docs/record/CLOCK_HADAMARD_CALIB_2026-07-14.md	document not cited by an active file		0	7
+docs/CONFIG.md	stay		document cited by an active file (keep-list)	CONTRIBUTING.md, README.md	3	5
+docs/CONFIG_promotion_ledger.json	stay		the config ledger	CLAUDE.md, docs/onboarding/claude_md_history.md, docs/topics/config-ledger.md	96	19
+docs/CONFIG_promotion_ledger.md	stay		the ledger view generated from the JSON	docs/REORG_PLAN.md, docs/onboarding/claude_md_history.md, docs/refound/IRD_integer_recovering_datum_2026-10-13.md, docs/status/OPEN_ITEMS_BUILT_OFF.md, docs/status/OPEN_ITEMS_CODE_DEFECTS.md, docs/topics/config-ledger.md	8	43
+docs/HANDOFF_edge_response_queue.md	move	docs/record/HANDOFF_edge_response_queue.md	document not cited by an active file		7	5
+docs/HANDOFF_seam_frame_restore_2026-09-03.md	move	docs/record/HANDOFF_seam_frame_restore_2026-09-03.md	document not cited by an active file		0	3
+docs/INDEX.md	stay		the entry point (rewritten to the active set)	CLAUDE.md, README.md, docs/onboarding/claude_md_history.md, docs/refound/DRF_docs_record_folder_2026-11-09.md, docs/refound/IRD_integer_recovering_datum_2026-10-13.md, docs/topics/config-ledger.md	7	56
+docs/INDEX_network-vehicle.md	move	docs/record/INDEX_network-vehicle.md	document not cited by an active file		0	1
+docs/OVERVIEW.md	stay		document cited by an active file (keep-list)	README.md	0	2
+docs/QUEUE_principled_replacements.md	move	docs/record/QUEUE_principled_replacements.md	routing stub of a frozen monolith		4	5
+docs/README.md	move	docs/record/README.md	the generated pre-2026-09-14 index, superseded by INDEX.md		3	4
+docs/REORG_MAPPING.md	move	docs/record/REORG_MAPPING.md	mapping of the 2026-09-14 split	docs/REORG_PLAN.md	1	2
+docs/REORG_PLAN.md	move	docs/record/REORG_PLAN.md	plan of the 2026-09-14 split; this move is its last item	docs/status/OPEN_ITEMS.md	2	3
+docs/RUNQUEUE_pdfix_reask.md	move	docs/record/RUNQUEUE_pdfix_reask.md	document not cited by an active file		14	5
+docs/SPEC_amb_iono_split_overcount.md	move	docs/record/SPEC_amb_iono_split_overcount.md	routing stub of a frozen monolith		4	6
+docs/SPEC_beidou_w6_datum.md	move	docs/record/SPEC_beidou_w6_datum.md	document not cited by an active file		5	8
+docs/SPEC_c1_clock_rate_validation.md	move	docs/record/SPEC_c1_clock_rate_validation.md	document not cited by an active file		1	7
+docs/SPEC_card1_coupling_carry.md	move	docs/record/SPEC_card1_coupling_carry.md	routing stub of a frozen monolith		5	5
+docs/SPEC_card4_invariant_carry.md	move	docs/record/SPEC_card4_invariant_carry.md	document not cited by an active file		4	7
+docs/SPEC_carry_aware_covariance.md	move	docs/record/SPEC_carry_aware_covariance.md	document not cited by an active file		17	5
+docs/SPEC_carry_factored_pz_C2.md	move	docs/record/SPEC_carry_factored_pz_C2.md	document not cited by an active file		0	7
+docs/SPEC_carry_vce_apply.md	move	docs/record/SPEC_carry_vce_apply.md	document not cited by an active file		12	5
+docs/SPEC_cb_admission_card.md	move	docs/record/SPEC_cb_admission_card.md	document not cited by an active file		3	10
+docs/SPEC_cb_carry_physical_q.md	move	docs/record/SPEC_cb_carry_physical_q.md	document not cited by an active file		10	3
+docs/SPEC_clock_emit_rebase.md	move	docs/record/SPEC_clock_emit_rebase.md	document not cited by an active file		21	11
+docs/SPEC_clock_temporal_anchor.md	move	docs/record/SPEC_clock_temporal_anchor.md	routing stub of a frozen monolith		24	10
+docs/SPEC_d5_churn_limit_cycle.md	move	docs/record/SPEC_d5_churn_limit_cycle.md	document not cited by an active file		4	9
+docs/SPEC_datum_graph_census.md	move	docs/record/SPEC_datum_graph_census.md	document not cited by an active file		7	5
+docs/SPEC_day129_frame_guards.md	move	docs/record/SPEC_day129_frame_guards.md	routing stub of a frozen monolith		2	8
+docs/SPEC_dev_tier_perf_cards.md	move	docs/record/SPEC_dev_tier_perf_cards.md	document not cited by an active file		1	5
+docs/SPEC_deweight_release_hygiene.md	move	docs/record/SPEC_deweight_release_hygiene.md	document not cited by an active file		0	6
+docs/SPEC_eq34_reattach_hygiene.md	stay		document cited by an active file (keep-list)	docs/refound/IRD_integer_recovering_datum_2026-10-13.md	6	7
+docs/SPEC_eq34_seed_round.md	stay		document cited by an active file (keep-list)	docs/refound/IRDB_integer_recovering_datum_continued_2026-10-30.md, docs/refound/IRD_integer_recovering_datum_2026-10-13.md	10	8
+docs/SPEC_event_harness.md	move	docs/record/SPEC_event_harness.md	routing stub of a frozen monolith	docs/REORG_PLAN.md, docs/refound/NETWORK_REFOUNDING_2026-09-14.md	42	4
+docs/SPEC_ewl_wl_cascade_card.md	move	docs/record/SPEC_ewl_wl_cascade_card.md	document not cited by an active file		0	5
+docs/SPEC_family_gf_datum.md	move	docs/record/SPEC_family_gf_datum.md	document not cited by an active file		3	8
+docs/SPEC_fast_clock_split_cadence.md	move	docs/record/SPEC_fast_clock_split_cadence.md	document not cited by an active file		1	7
+docs/SPEC_flicker_gap_integrity.md	move	docs/record/SPEC_flicker_gap_integrity.md	document not cited by an active file		4	8
+docs/SPEC_inc8b_election_split.md	move	docs/record/SPEC_inc8b_election_split.md	document not cited by an active file		1	5
+docs/SPEC_iono2_mechB_v3.md	move	docs/record/SPEC_iono2_mechB_v3.md	document not cited by an active file		3	5
+docs/SPEC_iono_carry_8b.md	move	docs/record/SPEC_iono_carry_8b.md	document not cited by an active file		2	3
+docs/SPEC_lane_carry_card.md	move	docs/record/SPEC_lane_carry_card.md	document not cited by an active file		0	5
+docs/SPEC_lane_slip_response.md	move	docs/record/SPEC_lane_slip_response.md	routing stub of a frozen monolith		2	5
+docs/SPEC_lane_spectrometer.md	move	docs/record/SPEC_lane_spectrometer.md	document not cited by an active file		9	7
+docs/SPEC_latex_doc_refresh_2026-07-17.md	move	docs/record/SPEC_latex_doc_refresh_2026-07-17.md	document not cited by an active file		0	3
+docs/SPEC_level_authority_internal.md	move	docs/record/SPEC_level_authority_internal.md	document not cited by an active file		7	7
+docs/SPEC_level_information_budget.md	move	docs/record/SPEC_level_information_budget.md	routing stub of a frozen monolith		12	8
+docs/SPEC_measurement_admission.md	move	docs/record/SPEC_measurement_admission.md	routing stub of a frozen monolith		12	5
+docs/SPEC_mw_wl_card.md	move	docs/record/SPEC_mw_wl_card.md	document not cited by an active file		0	5
+docs/SPEC_noncausal_slip_bridge.md	move	docs/record/SPEC_noncausal_slip_bridge.md	document not cited by an active file		0	4
+docs/SPEC_o2_carry_invariant_accumulator.md	move	docs/record/SPEC_o2_carry_invariant_accumulator.md	document not cited by an active file		0	4
+docs/SPEC_oracle_pin.md	move	docs/record/SPEC_oracle_pin.md	document not cited by an active file		9	6
+docs/SPEC_pd_safe_dd_fold.md	move	docs/record/SPEC_pd_safe_dd_fold.md	document not cited by an active file		16	9
+docs/SPEC_phase_windup_sign.md	move	docs/record/SPEC_phase_windup_sign.md	routing stub of a frozen monolith		8	3
+docs/SPEC_pivot_visibility_gauge_defect.md	move	docs/record/SPEC_pivot_visibility_gauge_defect.md	routing stub of a frozen monolith		13	7
+docs/SPEC_prefit_census_observability.md	stay		document cited by an active file (keep-list)	CLAUDE.md, docs/status/OPEN_ITEMS.md	18	9
+docs/SPEC_prior_residual_census.md	move	docs/record/SPEC_prior_residual_census.md	routing stub of a frozen monolith		19	8
+docs/SPEC_product_cbpin_contract.md	move	docs/record/SPEC_product_cbpin_contract.md	document not cited by an active file		0	8
+docs/SPEC_raim_pool_rehost.md	move	docs/record/SPEC_raim_pool_rehost.md	document not cited by an active file		12	10
+docs/SPEC_redundancy_census.md	move	docs/record/SPEC_redundancy_census.md	routing stub of a frozen monolith	docs/refound/SCU_station_coordinates_unknowns_2026-09-22.md	20	9
+docs/SPEC_rinex_zero_sentinel.md	move	docs/record/SPEC_rinex_zero_sentinel.md	document not cited by an active file		4	5
+docs/SPEC_rx_cb_carry.md	move	docs/record/SPEC_rx_cb_carry.md	document not cited by an active file		5	6
+docs/SPEC_sbasis_realization_contract.md	move	docs/record/SPEC_sbasis_realization_contract.md	routing stub of a frozen monolith		4	12
+docs/SPEC_sd_ewl_prereduce.md	move	docs/record/SPEC_sd_ewl_prereduce.md	document not cited by an active file		9	8
+docs/SPEC_slip_qc_hardening.md	move	docs/record/SPEC_slip_qc_hardening.md	routing stub of a frozen monolith		22	15
+docs/SPEC_slip_relevel_walk.md	stay		document cited by an active file (keep-list)	CLAUDE.md	1	11
+docs/SPEC_synthetic_minimum_network.md	move	docs/record/SPEC_synthetic_minimum_network.md	routing stub of a frozen monolith		39	9
+docs/SPEC_t3_null_derivation.md	move	docs/record/SPEC_t3_null_derivation.md	routing stub of a frozen monolith		0	6
+docs/SPEC_uwl_card.md	move	docs/record/SPEC_uwl_card.md	document not cited by an active file		0	5
+docs/SPEC_warm_resume_event_card.md	move	docs/record/SPEC_warm_resume_event_card.md	document not cited by an active file		0	6
+docs/SPEC_withhold_era_release.md	move	docs/record/SPEC_withhold_era_release.md	routing stub of a frozen monolith		0	5
+docs/aiding_source_abstraction_design.md	move	docs/record/aiding_source_abstraction_design.md	document not cited by an active file		13	3
+docs/archive/QUEUE_principled_replacements.md	move	docs/record/archive/QUEUE_principled_replacements.md	frozen monolith		0	7
+docs/archive/SPEC_amb_iono_split_overcount.md	move	docs/record/archive/SPEC_amb_iono_split_overcount.md	frozen monolith		0	16
+docs/archive/SPEC_card1_coupling_carry.md	move	docs/record/archive/SPEC_card1_coupling_carry.md	frozen monolith		0	6
+docs/archive/SPEC_clock_temporal_anchor.md	move	docs/record/archive/SPEC_clock_temporal_anchor.md	frozen monolith		0	8
+docs/archive/SPEC_day129_frame_guards.md	move	docs/record/archive/SPEC_day129_frame_guards.md	frozen monolith		0	6
+docs/archive/SPEC_event_harness.md	move	docs/record/archive/SPEC_event_harness.md	frozen monolith	docs/REORG_PLAN.md	0	42
+docs/archive/SPEC_lane_slip_response.md	move	docs/record/archive/SPEC_lane_slip_response.md	frozen monolith		0	5
+docs/archive/SPEC_level_information_budget.md	move	docs/record/archive/SPEC_level_information_budget.md	frozen monolith		0	19
+docs/archive/SPEC_measurement_admission.md	move	docs/record/archive/SPEC_measurement_admission.md	frozen monolith		0	5
+docs/archive/SPEC_phase_windup_sign.md	move	docs/record/archive/SPEC_phase_windup_sign.md	frozen monolith		0	7
+docs/archive/SPEC_pivot_visibility_gauge_defect.md	move	docs/record/archive/SPEC_pivot_visibility_gauge_defect.md	frozen monolith		0	7
+docs/archive/SPEC_prior_residual_census.md	move	docs/record/archive/SPEC_prior_residual_census.md	frozen monolith		0	5
+docs/archive/SPEC_redundancy_census.md	move	docs/record/archive/SPEC_redundancy_census.md	frozen monolith		0	6
+docs/archive/SPEC_sbasis_realization_contract.md	move	docs/record/archive/SPEC_sbasis_realization_contract.md	frozen monolith		0	5
+docs/archive/SPEC_slip_qc_hardening.md	move	docs/record/archive/SPEC_slip_qc_hardening.md	frozen monolith		0	8
+docs/archive/SPEC_synthetic_minimum_network.md	move	docs/record/archive/SPEC_synthetic_minimum_network.md	frozen monolith		0	22
+docs/archive/SPEC_t3_null_derivation.md	move	docs/record/archive/SPEC_t3_null_derivation.md	frozen monolith		0	5
+docs/archive/SPEC_withhold_era_release.md	move	docs/record/archive/SPEC_withhold_era_release.md	frozen monolith		0	5
+docs/attic/CONTRACT_level_authority.md	move	docs/record/attic/CONTRACT_level_authority.md	attic		0	3
+docs/attic/HANDOFF_card4_phaseD.md	move	docs/record/attic/HANDOFF_card4_phaseD.md	attic		0	2
+docs/attic/HANDOFF_carry_driver_perf.md	move	docs/record/attic/HANDOFF_carry_driver_perf.md	attic		0	4
+docs/attic/HANDOFF_carry_rigor_card1b.md	move	docs/record/attic/HANDOFF_carry_rigor_card1b.md	attic		0	2
+docs/attic/HANDOFF_cb_admission_card.md	move	docs/record/attic/HANDOFF_cb_admission_card.md	attic		0	4
+docs/attic/HANDOFF_clock_model_revival.md	move	docs/record/attic/HANDOFF_clock_model_revival.md	attic		0	3
+docs/attic/HANDOFF_ext_cb_iono_level.md	move	docs/record/attic/HANDOFF_ext_cb_iono_level.md	attic		0	4
+docs/attic/HANDOFF_iono2_card.md	move	docs/record/attic/HANDOFF_iono2_card.md	attic		0	3
+docs/attic/HANDOFF_lane_carry_card.md	move	docs/record/attic/HANDOFF_lane_carry_card.md	attic		0	2
+docs/attic/HANDOFF_mw_wl_card.md	move	docs/record/attic/HANDOFF_mw_wl_card.md	attic		0	2
+docs/attic/HANDOFF_rate_transferable_windows.md	move	docs/record/attic/HANDOFF_rate_transferable_windows.md	attic		0	2
+docs/attic/HANDOFF_selfar_producer_m5.md	move	docs/record/attic/HANDOFF_selfar_producer_m5.md	attic		0	2
+docs/attic/HANDOFF_slant_triple_next.md	move	docs/record/attic/HANDOFF_slant_triple_next.md	attic		0	4
+docs/attic/HANDOFF_wsh_chain_slant.md	move	docs/record/attic/HANDOFF_wsh_chain_slant.md	attic		0	3
+docs/attic/NIGHTRUN_REPORT_2026-07-15.md	move	docs/record/attic/NIGHTRUN_REPORT_2026-07-15.md	attic		0	3
+docs/attic/REPORT_fc1_split_cadence.md	move	docs/record/attic/REPORT_fc1_split_cadence.md	attic		0	4
+docs/attic/REPORT_mwwl_conditioning_day129.md	move	docs/record/attic/REPORT_mwwl_conditioning_day129.md	attic		0	2
+docs/attic/REPORT_night305_day129_investigation.md	move	docs/record/attic/REPORT_night305_day129_investigation.md	attic		0	2
+docs/attic/SESSION_overnight_2026-08-07.md	move	docs/record/attic/SESSION_overnight_2026-08-07.md	attic		0	2
+docs/attic/SPEC_block_baarda.md	move	docs/record/attic/SPEC_block_baarda.md	attic		0	3
+docs/attic/SPEC_day129_gate_policy.md	move	docs/record/attic/SPEC_day129_gate_policy.md	attic		0	2
+docs/attic/SPEC_handover_stransform.md	move	docs/record/attic/SPEC_handover_stransform.md	attic		0	2
+docs/attic/SPEC_ingest_structural_guard.md	move	docs/record/attic/SPEC_ingest_structural_guard.md	attic		0	2
+docs/attic/SPEC_lane_fold_perf_card.md	move	docs/record/attic/SPEC_lane_fold_perf_card.md	attic		0	2
+docs/attic/SPEC_network_mdb_reliability.md	move	docs/record/attic/SPEC_network_mdb_reliability.md	attic		0	3
+docs/attic/SPEC_rtf3_streaming_frontend.md	move	docs/record/attic/SPEC_rtf3_streaming_frontend.md	attic		0	4
+docs/attic/SPEC_sd_ewl_integer_hold.md	move	docs/record/attic/SPEC_sd_ewl_integer_hold.md	attic		0	4
+docs/attic/SPEC_sigma0_constraint_aware.md	move	docs/record/attic/SPEC_sigma0_constraint_aware.md	attic		0	2
+docs/attic/SPEC_sim_injection_bench.md	move	docs/record/attic/SPEC_sim_injection_bench.md	attic		0	3
+docs/attic/SPEC_slip_qc_followups.md	move	docs/record/attic/SPEC_slip_qc_followups.md	attic		0	2
+docs/attic/SPEC_station_congruence.md	move	docs/record/attic/SPEC_station_congruence.md	attic		0	3
+docs/attic/network_code_bias_m1_cc_scope_2026-06-29.md	move	docs/record/attic/network_code_bias_m1_cc_scope_2026-06-29.md	attic		0	2
+docs/attic/network_decomposition_addendum_2026-07-16.md	move	docs/record/attic/network_decomposition_addendum_2026-07-16.md	attic		0	2
+docs/attic/noncausal_smoother_ar_feedback_addendum.md	move	docs/record/attic/noncausal_smoother_ar_feedback_addendum.md	attic		0	2
+docs/attic/noncausal_smoother_jumpfit_scope.md	move	docs/record/attic/noncausal_smoother_jumpfit_scope.md	attic		0	2
+docs/attic/rtf12_brdc_rts_plan.md	move	docs/record/attic/rtf12_brdc_rts_plan.md	attic		0	3
+docs/attic/rtf_card8_runbook.md	move	docs/record/attic/rtf_card8_runbook.md	attic		0	3
+docs/attic/rtf_opus_first_handoff.md	move	docs/record/attic/rtf_opus_first_handoff.md	attic		0	3
+docs/attic/slip_qc_d5a_report_2026-07-22.md	move	docs/record/attic/slip_qc_d5a_report_2026-07-22.md	attic		0	2
+docs/attic/slip_qc_hardening_report_2026-07-21.md	move	docs/record/attic/slip_qc_hardening_report_2026-07-21.md	attic		0	2
+docs/attic/slip_repair_audit_2026-06-10.md	move	docs/record/attic/slip_repair_audit_2026-06-10.md	attic		0	3
+docs/attic/slip_repair_audit_2026-06-10_pass2_results.json	move	docs/record/attic/slip_repair_audit_2026-06-10_pass2_results.json	attic		0	2
+docs/attic/ssystem_conformance_2026-06-15.md	move	docs/record/attic/ssystem_conformance_2026-06-15.md	attic		0	2
+docs/attic/ssystem_theory_reference_2026-07-09.md	move	docs/record/attic/ssystem_theory_reference_2026-07-09.md	attic		0	2
+docs/cards/clock/CS-clock-step-signalling.md	move	docs/record/cards/clock/CS-clock-step-signalling.md	card closed	docs/report/network_wire.tex	0	9
+docs/cards/clock/FIELD-WANDER-PROBE.md	move	docs/record/cards/clock/FIELD-WANDER-PROBE.md	card closed		0	4
+docs/cards/clock/Q3-ANCHOR-DESIGN.md	move	docs/record/cards/clock/Q3-ANCHOR-DESIGN.md	card closed	docs/onboarding/workbook/answers_5_9.tex	0	7
+docs/cards/clock/Q3-ANCHOR-RESULTS.md	move	docs/record/cards/clock/Q3-ANCHOR-RESULTS.md	card closed		0	6
+docs/cards/clock/Q3-F-self-contained-time-link.md	move	docs/record/cards/clock/Q3-F-self-contained-time-link.md	card closed		0	11
+docs/cards/clock/Q3-FLOOR-GOVERNED-LADDER.md	move	docs/record/cards/clock/Q3-FLOOR-GOVERNED-LADDER.md	card closed		0	7
+docs/cards/clock/Q3-G4-SIM-HALF.md	move	docs/record/cards/clock/Q3-G4-SIM-HALF.md	card closed		0	7
+docs/cards/clock/Q3-PHYSICAL-FLOOR.md	move	docs/record/cards/clock/Q3-PHYSICAL-FLOOR.md	card closed	docs/onboarding/workbook/answers_5_9.tex	0	7
+docs/cards/code-bias/S2H-HARVEST.md	move	docs/record/cards/code-bias/S2H-HARVEST.md	card closed		0	11
+docs/cards/consumer/CC-declared-step-carry.md	move	docs/record/cards/consumer/CC-declared-step-carry.md	card closed	docs/report/realtime_engine.tex	0	8
+docs/cards/consumer/CI-census-wire-vs-code.md	move	docs/record/cards/consumer/CI-census-wire-vs-code.md	card closed		0	6
+docs/cards/consumer/CI-consumer-instrument.md	move	docs/record/cards/consumer/CI-consumer-instrument.md	card closed		0	5
+docs/cards/consumer/CONSUMER-AR-BLUNDER.md	move	docs/record/cards/consumer/CONSUMER-AR-BLUNDER.md	card closed		0	7
+docs/cards/harness/CARD-AB-require-and-rx-clock-step.md	move	docs/record/cards/harness/CARD-AB-require-and-rx-clock-step.md	card closed		0	9
+docs/cards/harness/FIELD-HARNESS.md	move	docs/record/cards/harness/FIELD-HARNESS.md	card closed		0	7
+docs/cards/harness/HARNESS-REF.md	stay		reference card cited by an active file (keep-list)	docs/refound/SMX_scenario_matrix_2026-10-24.md	0	8
+docs/cards/harness/HARNESS-SEEDS.md	stay		reference card cited by an active file (keep-list)	docs/refound/SMX_scenario_matrix_2026-10-24.md	0	6
+docs/cards/harness/ORACLE-PIN-stub.md	move	docs/record/cards/harness/ORACLE-PIN-stub.md	card superseded		0	5
+docs/cards/harness/STUDY-1-erase-vs-refloat.md	move	docs/record/cards/harness/STUDY-1-erase-vs-refloat.md	card closed		0	5
+docs/cards/harness/STUDY-2-rx-clock-carry.md	move	docs/record/cards/harness/STUDY-2-rx-clock-carry.md	card closed		0	4
+docs/cards/ionosphere/AMB-IONO-0910-AFTERNOON.md	move	docs/record/cards/ionosphere/AMB-IONO-0910-AFTERNOON.md	card closed		0	6
+docs/cards/ionosphere/AMB-IONO-0910-MORNING.md	move	docs/record/cards/ionosphere/AMB-IONO-0910-MORNING.md	card closed		0	5
+docs/cards/ionosphere/AMB-IONO-0910-SECOND-HALF.md	move	docs/record/cards/ionosphere/AMB-IONO-0910-SECOND-HALF.md	card closed		0	8
+docs/cards/ionosphere/AMB-IONO-F3-24H.md	move	docs/record/cards/ionosphere/AMB-IONO-F3-24H.md	card superseded		0	5
+docs/cards/ionosphere/AMB-IONO-F3-PREDICTIONS.md	move	docs/record/cards/ionosphere/AMB-IONO-F3-PREDICTIONS.md	card closed		0	4
+docs/cards/ionosphere/AMB-IONO-OPEN-QUESTIONS.md	move	docs/record/cards/ionosphere/AMB-IONO-OPEN-QUESTIONS.md	card closed	docs/status/OPEN_ITEMS.md	0	7
+docs/cards/ionosphere/AMB-IONO-SPLIT.md	move	docs/record/cards/ionosphere/AMB-IONO-SPLIT.md	card closed		0	4
+docs/cards/ionosphere/ELEV-CUTOFF-AB.md	move	docs/record/cards/ionosphere/ELEV-CUTOFF-AB.md	card closed		0	6
+docs/cards/ionosphere/IONO-FIELD-AGREEMENT.md	move	docs/record/cards/ionosphere/IONO-FIELD-AGREEMENT.md	card closed		0	5
+docs/cards/ionosphere/LV-1-BIAS-FREE-SEEDING.md	move	docs/record/cards/ionosphere/LV-1-BIAS-FREE-SEEDING.md	card closed		0	4
+docs/cards/ionosphere/LV-2-RXCB-DEMEAN.md	move	docs/record/cards/ionosphere/LV-2-RXCB-DEMEAN.md	card closed		0	4
+docs/cards/ionosphere/LV-3-LEVEL-AUTHORITY.md	move	docs/record/cards/ionosphere/LV-3-LEVEL-AUTHORITY.md	card closed		0	4
+docs/cards/ionosphere/LV-4-FRAME-INVARIANT-SCREEN.md	move	docs/record/cards/ionosphere/LV-4-FRAME-INVARIANT-SCREEN.md	card closed		0	6
+docs/cards/ionosphere/LV-5-MU-WITHIN-EPOCH.md	move	docs/record/cards/ionosphere/LV-5-MU-WITHIN-EPOCH.md	card closed		0	5
+docs/cards/ionosphere/LV-CORRECTION-AND-12H.md	move	docs/record/cards/ionosphere/LV-CORRECTION-AND-12H.md	card closed	docs/onboarding/claude_md_history.md	0	8
+docs/cards/ionosphere/LV-EXTCB-CAMPAIGN.md	move	docs/record/cards/ionosphere/LV-EXTCB-CAMPAIGN.md	card closed		0	4
+docs/cards/ionosphere/LV-EXTCB-DEFECT2.md	move	docs/record/cards/ionosphere/LV-EXTCB-DEFECT2.md	card closed		0	4
+docs/cards/ionosphere/LV-IMPL-RECORD.md	move	docs/record/cards/ionosphere/LV-IMPL-RECORD.md	card closed		0	6
+docs/cards/ionosphere/LV-ITEM1-FALSIFIED.md	move	docs/record/cards/ionosphere/LV-ITEM1-FALSIFIED.md	card superseded		0	4
+docs/cards/ionosphere/LV-MASK-STUDY.md	move	docs/record/cards/ionosphere/LV-MASK-STUDY.md	card closed		0	8
+docs/cards/ionosphere/LV-REF.md	move	docs/record/cards/ionosphere/LV-REF.md	reference card not cited by an active file		0	7
+docs/cards/ionosphere/LV-RESIDUAL-EXTRAPOLATION.md	move	docs/record/cards/ionosphere/LV-RESIDUAL-EXTRAPOLATION.md	card closed		0	5
+docs/cards/ionosphere/LV-ROADMAP.md	move	docs/record/cards/ionosphere/LV-ROADMAP.md	card superseded		0	5
+docs/cards/ionosphere/LV-SEED-per-los-level.md	move	docs/record/cards/ionosphere/LV-SEED-per-los-level.md	card closed		0	6
+docs/cards/ionosphere/LV-TRACKING-PIN.md	move	docs/record/cards/ionosphere/LV-TRACKING-PIN.md	card closed		0	5
+docs/cards/network-vehicle/CARD-1B-JOINT-WHITENING.md	move	docs/record/cards/network-vehicle/CARD-1B-JOINT-WHITENING.md	card closed		0	6
+docs/cards/network-vehicle/CARD-1D-COUPLING-CARRY.md	move	docs/record/cards/network-vehicle/CARD-1D-COUPLING-CARRY.md	card closed		0	5
+docs/cards/network-vehicle/CARD-1F-1G-TRUNCATED-ROW-GAUGE.md	move	docs/record/cards/network-vehicle/CARD-1F-1G-TRUNCATED-ROW-GAUGE.md	card closed		0	6
+docs/cards/network-vehicle/CE-chain-era-bisect.md	move	docs/record/cards/network-vehicle/CE-chain-era-bisect.md	card closed		0	5
+docs/cards/network-vehicle/CHAIN-PIN-AUDIT.md	move	docs/record/cards/network-vehicle/CHAIN-PIN-AUDIT.md	card closed		0	7
+docs/cards/network-vehicle/CHAIN-SLANT-ODIJK.md	move	docs/record/cards/network-vehicle/CHAIN-SLANT-ODIJK.md	card closed	docs/refound/IRD_integer_recovering_datum_2026-10-13.md	0	4
+docs/cards/network-vehicle/CM-code-model-consistency.md	move	docs/record/cards/network-vehicle/CM-code-model-consistency.md	card closed		0	6
+docs/cards/network-vehicle/CM2-leveling-vehicle.md	move	docs/record/cards/network-vehicle/CM2-leveling-vehicle.md	card closed		0	6
+docs/cards/network-vehicle/COLD-FB-anchor-fallbacks.md	move	docs/record/cards/network-vehicle/COLD-FB-anchor-fallbacks.md	card superseded		0	5
+docs/cards/network-vehicle/COLD-FB-iterations-2-4.md	move	docs/record/cards/network-vehicle/COLD-FB-iterations-2-4.md	card superseded		0	7
+docs/cards/network-vehicle/D5-V5-carried-only.md	move	docs/record/cards/network-vehicle/D5-V5-carried-only.md	card superseded		0	6
+docs/cards/network-vehicle/DATUM-WANDER.md	move	docs/record/cards/network-vehicle/DATUM-WANDER.md	card closed		0	6
+docs/cards/network-vehicle/EQ34-D4-S-TRANSFORM-FIX.md	move	docs/record/cards/network-vehicle/EQ34-D4-S-TRANSFORM-FIX.md	card closed		0	4
+docs/cards/network-vehicle/F3-FIELD-ARM-RESULTS.md	move	docs/record/cards/network-vehicle/F3-FIELD-ARM-RESULTS.md	card closed		0	7
+docs/cards/network-vehicle/F3-FIELD-ARM.md	move	docs/record/cards/network-vehicle/F3-FIELD-ARM.md	card closed		0	4
+docs/cards/network-vehicle/HANDOVER-STRANSFORM-SPEC.md	move	docs/record/cards/network-vehicle/HANDOVER-STRANSFORM-SPEC.md	card closed		0	6
+docs/cards/network-vehicle/PIVOT-CARRY-REREF-R0-1D.md	move	docs/record/cards/network-vehicle/PIVOT-CARRY-REREF-R0-1D.md	card closed		0	7
+docs/cards/network-vehicle/PIVOT-DEPARTURE.md	move	docs/record/cards/network-vehicle/PIVOT-DEPARTURE.md	card closed		0	9
+docs/cards/network-vehicle/PIVOT-ELECTION-QUEUE2.md	move	docs/record/cards/network-vehicle/PIVOT-ELECTION-QUEUE2.md	card closed		0	5
+docs/cards/network-vehicle/PIVOT-GAUGE-DEFECT.md	move	docs/record/cards/network-vehicle/PIVOT-GAUGE-DEFECT.md	card closed		0	7
+docs/cards/network-vehicle/PIVOT-R2-STICKY.md	move	docs/record/cards/network-vehicle/PIVOT-R2-STICKY.md	card superseded		0	5
+docs/cards/network-vehicle/PV-vehicle-test.md	move	docs/record/cards/network-vehicle/PV-vehicle-test.md	card closed		0	6
+docs/cards/network-vehicle/READMIT-EDGE.md	move	docs/record/cards/network-vehicle/READMIT-EDGE.md	card closed	docs/onboarding/claude_md_history.md, docs/report/network_wire.tex	0	8
+docs/cards/network-vehicle/SBASIS-CONFORMANCE-F.md	move	docs/record/cards/network-vehicle/SBASIS-CONFORMANCE-F.md	reference card not cited by an active file		0	4
+docs/cards/network-vehicle/SBASIS-CONTRACT.md	move	docs/record/cards/network-vehicle/SBASIS-CONTRACT.md	reference card not cited by an active file		0	8
+docs/cards/network-vehicle/SBASIS-THEORY-E.md	stay		reference card cited by an active file (keep-list)	docs/onboarding/workbook/answers_1_4.tex, docs/refound/IRD_integer_recovering_datum_2026-10-13.md	0	4
+docs/cards/network-vehicle/WINDUP-FIELD-LADDER.md	move	docs/record/cards/network-vehicle/WINDUP-FIELD-LADDER.md	card closed		0	7
+docs/cards/network-vehicle/WINDUP-SIGN-DEFECT.md	move	docs/record/cards/network-vehicle/WINDUP-SIGN-DEFECT.md	card closed		0	5
+docs/cards/network-vehicle/ZP-station-block-parameterization.md	move	docs/record/cards/network-vehicle/ZP-station-block-parameterization.md	card closed		0	5
+docs/cards/queues/CAF-COMMENT-AUDIT-FINDINGS.md	move	docs/record/cards/queues/CAF-COMMENT-AUDIT-FINDINGS.md	card closed	docs/status/OPEN_ITEMS.md, docs/status/OPEN_ITEMS_CODE_DEFECTS.md, docs/status/OPEN_ITEMS_CONSUMER_REALTIME.md	0	6
+docs/cards/queues/QPR-00-CHARTER.md	move	docs/record/cards/queues/QPR-00-CHARTER.md	card superseded		0	4
+docs/cards/queues/QPR-BLOCKED-AND-CLOSED.md	move	docs/record/cards/queues/QPR-BLOCKED-AND-CLOSED.md	card superseded		0	4
+docs/cards/queues/QPR-ITEM-4-T3-NULLS.md	move	docs/record/cards/queues/QPR-ITEM-4-T3-NULLS.md	card superseded		0	8
+docs/cards/queues/QPR-ITEMS-0-3.md	move	docs/record/cards/queues/QPR-ITEMS-0-3.md	card closed		0	6
+docs/cards/queues/QPR-ITEMS-5-8.md	move	docs/record/cards/queues/QPR-ITEMS-5-8.md	card superseded	docs/onboarding/workbook/answers_5_9.tex, docs/status/OPEN_ITEMS_CODE_DEFECTS.md	0	7
+docs/cards/raim-qc/BLOCK-BAARDA-RIDER-B.md	move	docs/record/cards/raim-qc/BLOCK-BAARDA-RIDER-B.md	card closed		0	7
+docs/cards/raim-qc/CONGRUENCE-RIDER-C.md	move	docs/record/cards/raim-qc/CONGRUENCE-RIDER-C.md	card closed		0	6
+docs/cards/raim-qc/DAY129-DEFECTS-ABC.md	move	docs/record/cards/raim-qc/DAY129-DEFECTS-ABC.md	card closed		0	6
+docs/cards/raim-qc/DAY129-FRAME-ANATOMY.md	move	docs/record/cards/raim-qc/DAY129-FRAME-ANATOMY.md	card closed	docs/onboarding/workbook/answers_5_9.tex, docs/onboarding/workbook/lessons_5_9.tex	0	4
+docs/cards/raim-qc/DAY129-PHASES.md	move	docs/record/cards/raim-qc/DAY129-PHASES.md	card closed		0	7
+docs/cards/raim-qc/GL-2-whole-satellite-standdown.md	move	docs/record/cards/raim-qc/GL-2-whole-satellite-standdown.md	card closed		0	7
+docs/cards/raim-qc/GL-gross-los-screen.md	move	docs/record/cards/raim-qc/GL-gross-los-screen.md	card closed		0	4
+docs/cards/raim-qc/GLOBAL-SIGMA0-RIDER.md	move	docs/record/cards/raim-qc/GLOBAL-SIGMA0-RIDER.md	card closed		0	6
+docs/cards/raim-qc/MDB-RIDER-A.md	move	docs/record/cards/raim-qc/MDB-RIDER-A.md	card closed		0	6
+docs/cards/raim-qc/MEAS-ADMISSION-IMPL.md	move	docs/record/cards/raim-qc/MEAS-ADMISSION-IMPL.md	card closed		0	7
+docs/cards/raim-qc/MEAS-ADMISSION-INC4-REENTRY.md	move	docs/record/cards/raim-qc/MEAS-ADMISSION-INC4-REENTRY.md	card closed		0	8
+docs/cards/raim-qc/MEAS-ADMISSION.md	move	docs/record/cards/raim-qc/MEAS-ADMISSION.md	card closed		0	7
+docs/cards/raim-qc/PRIOR-RESIDUAL-CENSUS.md	move	docs/record/cards/raim-qc/PRIOR-RESIDUAL-CENSUS.md	card closed		0	5
+docs/cards/raim-qc/REDUNDANCY-CENSUS.md	move	docs/record/cards/raim-qc/REDUNDANCY-CENSUS.md	card closed	docs/status/OPEN_ITEMS_CODE_DEFECTS.md	0	9
+docs/cards/raim-qc/RNEG-REPARTITION.md	move	docs/record/cards/raim-qc/RNEG-REPARTITION.md	card closed		1	5
+docs/cards/raim-qc/T3-FIELD-AND-COLLATERALS.md	move	docs/record/cards/raim-qc/T3-FIELD-AND-COLLATERALS.md	card closed		0	8
+docs/cards/raim-qc/T3-IONO-MECHANISM.md	move	docs/record/cards/raim-qc/T3-IONO-MECHANISM.md	card closed	docs/onboarding/workbook/answers_5_9.tex, docs/onboarding/workbook/lessons_5_9.tex	0	4
+docs/cards/raim-qc/T3-NULL-DERIVATION.md	move	docs/record/cards/raim-qc/T3-NULL-DERIVATION.md	card closed		0	6
+docs/cards/raim-qc/WITHHOLD-CLIFF-RETIREMENT.md	move	docs/record/cards/raim-qc/WITHHOLD-CLIFF-RETIREMENT.md	card closed		0	7
+docs/cards/raim-qc/WITHHOLD-ERA-RELEASE.md	move	docs/record/cards/raim-qc/WITHHOLD-ERA-RELEASE.md	card closed		0	8
+docs/cards/realtime/EPH-JUMP-RESEED.md	move	docs/record/cards/realtime/EPH-JUMP-RESEED.md	card closed	docs/report/realtime_engine.tex	0	3
+docs/cards/realtime/INAV-ODD-PAGE.md	move	docs/record/cards/realtime/INAV-ODD-PAGE.md	card closed	docs/report/realtime_engine.tex	1	3
+docs/cards/realtime/SSR-BIAS-COVERAGE.md	move	docs/record/cards/realtime/SSR-BIAS-COVERAGE.md	card closed	docs/status/OPEN_ITEMS_CONSUMER_REALTIME.md	0	2
+docs/cards/realtime/SSR-BIAS-SIGN.md	stay		card open	docs/status/OPEN_ITEMS_CONSUMER_REALTIME.md	0	2
+docs/cards/realtime/SSR-CLOCK-ORBIT.md	move	docs/record/cards/realtime/SSR-CLOCK-ORBIT.md	card closed	docs/status/OPEN_ITEMS_CONSUMER_REALTIME.md	0	2
+docs/cards/realtime/SSR-PB-HEADER.md	move	docs/record/cards/realtime/SSR-PB-HEADER.md	card closed	docs/status/OPEN_ITEMS_CONSUMER_REALTIME.md	0	4
+docs/cards/realtime/SSR-SIGNAL-ID.md	move	docs/record/cards/realtime/SSR-SIGNAL-ID.md	card closed	docs/cards/realtime/SSR-BIAS-SIGN.md, docs/status/OPEN_ITEMS_CONSUMER_REALTIME.md	0	3
+docs/cards/realtime/SSR-TIMING.md	move	docs/record/cards/realtime/SSR-TIMING.md	card closed	docs/cards/realtime/SSR-BIAS-SIGN.md, docs/status/OPEN_ITEMS_CONSUMER_REALTIME.md	0	4
+docs/cards/resume-seam/RESUME-COUPLING-RESTORE.md	move	docs/record/cards/resume-seam/RESUME-COUPLING-RESTORE.md	card closed		0	5
+docs/cards/resume-seam/RESUME-DENSE-BORDER-E2.md	move	docs/record/cards/resume-seam/RESUME-DENSE-BORDER-E2.md	card closed	docs/status/OPEN_ITEMS.md	0	9
+docs/cards/resume-seam/RESUME-FRAME-RESTORE.md	move	docs/record/cards/resume-seam/RESUME-FRAME-RESTORE.md	card closed		0	7
+docs/cards/resume-seam/RS-2-writer-frame-rebase.md	move	docs/record/cards/resume-seam/RS-2-writer-frame-rebase.md	card closed		0	6
+docs/cards/resume-seam/RS-3-to-RS-5-datum-and-emit-layer.md	move	docs/record/cards/resume-seam/RS-3-to-RS-5-datum-and-emit-layer.md	card closed		0	7
+docs/cards/resume-seam/RS-6a-station-layer-memories.md	move	docs/record/cards/resume-seam/RS-6a-station-layer-memories.md	card closed		0	7
+docs/cards/resume-seam/RS-7-to-RS-9-border-and-rxcb-frame.md	move	docs/record/cards/resume-seam/RS-7-to-RS-9-border-and-rxcb-frame.md	card closed		0	9
+docs/cards/resume-seam/RS-8-to-RS-10b-latch-and-close-out.md	move	docs/record/cards/resume-seam/RS-8-to-RS-10b-latch-and-close-out.md	card closed		0	8
+docs/cards/sim-bed/DD-TRACE-REF-SAT.md	move	docs/record/cards/sim-bed/DD-TRACE-REF-SAT.md	card closed	CLAUDE.md, docs/onboarding/workbook/answers_5_9.tex	0	9
+docs/cards/sim-bed/SIM-INJECTION-BENCH.md	move	docs/record/cards/sim-bed/SIM-INJECTION-BENCH.md	card closed		0	5
+docs/cards/sim-bed/SIMNET-50STA-QC-TIERS.md	move	docs/record/cards/sim-bed/SIMNET-50STA-QC-TIERS.md	card closed		0	8
+docs/cards/sim-bed/SIMNET-60STA-CAMPAIGN.md	move	docs/record/cards/sim-bed/SIMNET-60STA-CAMPAIGN.md	card closed		0	4
+docs/cards/sim-bed/SIMNET-DASHBOARD.md	move	docs/record/cards/sim-bed/SIMNET-DASHBOARD.md	card closed		0	4
+docs/cards/sim-bed/SIMNET-GA-NULL-TEST.md	move	docs/record/cards/sim-bed/SIMNET-GA-NULL-TEST.md	card closed		0	4
+docs/cards/sim-bed/SIMNET-GB-CLOCK-STEP.md	move	docs/record/cards/sim-bed/SIMNET-GB-CLOCK-STEP.md	card closed		0	4
+docs/cards/sim-bed/SIMNET-REF.md	stay		reference card cited by an active file (keep-list)	docs/onboarding/workbook/answers_5_9.tex	0	5
+docs/cards/sim-bed/SIMNET-SLANT-TRIPLE.md	move	docs/record/cards/sim-bed/SIMNET-SLANT-TRIPLE.md	card closed		0	6
+docs/cards/sim-bed/SIMNET-W6SH-ARM.md	move	docs/record/cards/sim-bed/SIMNET-W6SH-ARM.md	card closed		0	6
+docs/cards/sim-bed/SIMNET-W6SH-BRIEF.md	move	docs/record/cards/sim-bed/SIMNET-W6SH-BRIEF.md	card superseded		0	4
+docs/cards/sim-bed/STABILITY-CAMPAIGN.md	move	docs/record/cards/sim-bed/STABILITY-CAMPAIGN.md	card closed		0	7
+docs/cards/sim-bed/ZWD-SINK-CENSUS.md	move	docs/record/cards/sim-bed/ZWD-SINK-CENSUS.md	card closed		1	7
+docs/cards/slip/CARD-G-GAP-REENTRY-RELEVEL.md	move	docs/record/cards/slip/CARD-G-GAP-REENTRY-RELEVEL.md	card closed	docs/report/network_wire.tex	0	8
+docs/cards/slip/CARD-ORACLE-RELEVEL.md	move	docs/record/cards/slip/CARD-ORACLE-RELEVEL.md	card closed		0	6
+docs/cards/slip/D5A-RETAP-ATTRIBUTION.md	move	docs/record/cards/slip/D5A-RETAP-ATTRIBUTION.md	card closed		0	5
+docs/cards/slip/IFTD-F2-lli-shadow.md	move	docs/record/cards/slip/IFTD-F2-lli-shadow.md	card closed		0	5
+docs/cards/slip/IFTD-F3-lli-epoch.md	move	docs/record/cards/slip/IFTD-F3-lli-epoch.md	card closed		0	6
+docs/cards/slip/IFTD-PAIRS.md	move	docs/record/cards/slip/IFTD-PAIRS.md	card closed		0	6
+docs/cards/slip/IFTD-REF-GATE-FOLLOWUP.md	move	docs/record/cards/slip/IFTD-REF-GATE-FOLLOWUP.md	card closed		0	7
+docs/cards/slip/IFTD-REF-GATE.md	move	docs/record/cards/slip/IFTD-REF-GATE.md	card closed		0	10
+docs/cards/slip/LANE-SLIP-RESPONSE.md	move	docs/record/cards/slip/LANE-SLIP-RESPONSE.md	card closed		0	4
+docs/cards/slip/LANE-SNAP-RUNG3.md	move	docs/record/cards/slip/LANE-SNAP-RUNG3.md	card closed	CLAUDE.md	0	5
+docs/cards/slip/REF-ARC-CLAUSE.md	move	docs/record/cards/slip/REF-ARC-CLAUSE.md	card closed		0	6
+docs/cards/slip/REF-FAN.md	move	docs/record/cards/slip/REF-FAN.md	card closed	docs/status/OPEN_ITEMS.md	0	8
+docs/cards/slip/SLIPQC-FOLLOWUPS.md	move	docs/record/cards/slip/SLIPQC-FOLLOWUPS.md	card closed		0	5
+docs/cards/slip/SLIPQC-IMPL-2026-07-21.md	move	docs/record/cards/slip/SLIPQC-IMPL-2026-07-21.md	card closed		0	6
+docs/cards/slip/SLIPQC-REF.md	move	docs/record/cards/slip/SLIPQC-REF.md	reference card not cited by an active file		0	7
+docs/cards/slip/STUDY-3-band-scoped-responses.md	move	docs/record/cards/slip/STUDY-3-band-scoped-responses.md	card closed		0	6
+docs/cards/slip/STUDY-4-slip-dose.md	move	docs/record/cards/slip/STUDY-4-slip-dose.md	card closed		0	8
+docs/cards/slip/STUDY-5-detector-coverage-l5.md	move	docs/record/cards/slip/STUDY-5-detector-coverage-l5.md	card closed		0	7
+docs/cards/slip/STUDY-6-common-band-scope.md	move	docs/record/cards/slip/STUDY-6-common-band-scope.md	card superseded		0	5
+docs/cards/slip/STUDY-7-common-band-narrowing.md	move	docs/record/cards/slip/STUDY-7-common-band-narrowing.md	card closed		0	10
+docs/cards/slip/T4-LANE-RESTORE-SPEC.md	move	docs/record/cards/slip/T4-LANE-RESTORE-SPEC.md	card superseded		0	5
+docs/cards/slip/WINDUP-FRACTIONAL-CENSUS.md	move	docs/record/cards/slip/WINDUP-FRACTIONAL-CENSUS.md	card closed	docs/onboarding/claude_md_history.md	0	6
+docs/cards/wire-contract/LEVEL-CONTRACT.md	move	docs/record/cards/wire-contract/LEVEL-CONTRACT.md	card closed		0	5
+docs/cards/wire-contract/LEVEL-HEALTH-CHANNEL.md	move	docs/record/cards/wire-contract/LEVEL-HEALTH-CHANNEL.md	card superseded		0	6
+docs/css/doxygen-awesome-sidebar-only.css	stay		folder stays: css		0	0
+docs/css/doxygen-awesome.css	stay		folder stays: css		0	0
+docs/datum_transformation_reference_2026-08-07.md	move	docs/record/datum_transformation_reference_2026-08-07.md	document not cited by an active file		0	3
+docs/decisions/DEC-day129-gate-policy.md	move	docs/record/decisions/DEC-day129-gate-policy.md	decision record		0	7
+docs/decisions/DEC-field-vehicle-posture.md	move	docs/record/decisions/DEC-field-vehicle-posture.md	decision record		0	4
+docs/glonass_enablement_plan.md	move	docs/record/glonass_enablement_plan.md	document not cited by an active file		1	7
+docs/network_ambiguity_resolution_design.md	move	docs/record/network_ambiguity_resolution_design.md	document not cited by an active file		9	8
+docs/network_decomposition_plan.md	move	docs/record/network_decomposition_plan.md	document not cited by an active file		15	8
+docs/network_global_sh_iono_design_2026-06-29.md	move	docs/record/network_global_sh_iono_design_2026-06-29.md	document not cited by an active file		1	3
+docs/onboarding/01_setup.md	stay		folder stays: onboarding	README.md, docs/onboarding/02_code_tour.md, docs/onboarding/README.md	1	1
+docs/onboarding/02_code_tour.md	stay		folder stays: onboarding	CONTRIBUTING.md, docs/onboarding/01_setup.md, docs/onboarding/06_first_tasks.md, docs/onboarding/README.md	4	4
+docs/onboarding/03_worked_example.md	stay		folder stays: onboarding	CONTRIBUTING.md, docs/onboarding/01_setup.md, docs/onboarding/02_code_tour.md, docs/onboarding/04_git_workflow.md, docs/onboarding/06_first_tasks.md, docs/onboarding/README.md	1	1
+docs/onboarding/04_git_workflow.md	stay		folder stays: onboarding	docs/onboarding/03_worked_example.md, docs/onboarding/README.md	0	1
+docs/onboarding/05_debugging.md	stay		folder stays: onboarding	docs/onboarding/01_setup.md, docs/onboarding/README.md	0	2
+docs/onboarding/06_first_tasks.md	stay		folder stays: onboarding	docs/onboarding/05_debugging.md, docs/onboarding/07_network_tour.md, docs/onboarding/README.md	0	1
+docs/onboarding/07_network_tour.md	stay		folder stays: onboarding	docs/onboarding/02_code_tour.md, docs/onboarding/08_adding_a_network_parameter.md, docs/onboarding/README.md	2	4
+docs/onboarding/08_adding_a_network_parameter.md	stay		folder stays: onboarding	CLAUDE.md, docs/onboarding/07_network_tour.md, docs/onboarding/README.md, docs/onboarding/where_new_code_goes.md, docs/status/OPEN_ITEMS.md	1	3
+docs/onboarding/README.md	stay		folder stays: onboarding	CLAUDE.md, CONTRIBUTING.md, README.md	0	4
+docs/onboarding/build_toolchain.md	stay		folder stays: onboarding	CLAUDE.md, docs/onboarding/README.md, docs/onboarding/claude_md_history.md	0	1
+docs/onboarding/claude_md_history.md	stay		folder stays: onboarding	CLAUDE.md, docs/onboarding/README.md	0	1
+docs/onboarding/data_files.md	stay		folder stays: onboarding	CLAUDE.md, docs/onboarding/README.md, docs/onboarding/claude_md_history.md	0	1
+docs/onboarding/where_new_code_goes.md	stay		folder stays: onboarding	CLAUDE.md, docs/onboarding/07_network_tour.md, docs/onboarding/README.md, docs/onboarding/claude_md_history.md	0	1
+docs/onboarding/workbook/.gitignore	stay		folder stays: onboarding		0	0
+docs/onboarding/workbook/answers_1_4.tex	stay		folder stays: onboarding		0	0
+docs/onboarding/workbook/answers_5_9.tex	stay		folder stays: onboarding		0	0
+docs/onboarding/workbook/figures/clock_against_gfz.png	stay		folder stays: onboarding		0	0
+docs/onboarding/workbook/figures/clock_structure_function.png	stay		folder stays: onboarding		0	0
+docs/onboarding/workbook/figures/five_days.png	stay		folder stays: onboarding		0	0
+docs/onboarding/workbook/figures/galileo_change_per_station.png	stay		folder stays: onboarding		0	0
+docs/onboarding/workbook/figures/observation_graph_cycle.png	stay		folder stays: onboarding		0	0
+docs/onboarding/workbook/figures/per_epoch_arrowhead.png	stay		folder stays: onboarding		0	0
+docs/onboarding/workbook/figures/ppp_convergence.png	stay		folder stays: onboarding		0	0
+docs/onboarding/workbook/figures/pull_in_regions.png	stay		folder stays: onboarding		0	0
+docs/onboarding/workbook/figures/rank_gate_eigenvalues.png	stay		folder stays: onboarding		0	0
+docs/onboarding/workbook/figures/schur_equals_direct.png	stay		folder stays: onboarding		0	0
+docs/onboarding/workbook/figures/sim_clock_level_update.png	stay		folder stays: onboarding		0	0
+docs/onboarding/workbook/figures/sim_network_map.png	stay		folder stays: onboarding		0	0
+docs/onboarding/workbook/figures/sim_user_from_start.png	stay		folder stays: onboarding		0	0
+docs/onboarding/workbook/figures/sim_user_restarted.png	stay		folder stays: onboarding		0	0
+docs/onboarding/workbook/figures/sixteen_stations.png	stay		folder stays: onboarding		0	0
+docs/onboarding/workbook/figures/test_station_by_hour.png	stay		folder stays: onboarding		0	0
+docs/onboarding/workbook/figures/toy_network_arrowhead.png	stay		folder stays: onboarding		0	0
+docs/onboarding/workbook/figures/toy_network_three_pins.png	stay		folder stays: onboarding		0	0
+docs/onboarding/workbook/figures/undetermined_directions.png	stay		folder stays: onboarding		0	0
+docs/onboarding/workbook/latexmkrc	stay		folder stays: onboarding		0	0
+docs/onboarding/workbook/lessons_1_4.tex	stay		folder stays: onboarding		0	0
+docs/onboarding/workbook/lessons_5_9.tex	stay		folder stays: onboarding		0	0
+docs/onboarding/workbook/workbook.pdf	stay		folder stays: onboarding	docs/onboarding/README.md	0	1
+docs/onboarding/workbook/workbook.tex	stay		folder stays: onboarding		0	1
+docs/refound/AB1_sh_consumer_product_2026-09-20.md	stay		card parked	docs/status/OPEN_ITEMS.md	1	3
+docs/refound/AB2_l5_third_frequency_2026-09-20.md	move	docs/record/refound/AB2_l5_third_frequency_2026-09-20.md	card superseded	docs/refound/AB3_lanes_2026-09-20.md, docs/refound/NETWORK_REFOUNDING_2026-09-14.md	5	13
+docs/refound/AB3_lanes_2026-09-20.md	stay		card open	docs/status/OPEN_ITEMS.md, docs/status/OPEN_ITEMS_BUILT_OFF.md	1	5
+docs/refound/AGTB_arc_graph_continued_2026-10-10.md	move	docs/record/refound/AGTB_arc_graph_continued_2026-10-10.md	card closed	docs/refound/IRD_integer_recovering_datum_2026-10-13.md	0	6
+docs/refound/AGT_arc_graph_shared_tree_2026-10-10.md	move	docs/record/refound/AGT_arc_graph_shared_tree_2026-10-10.md	card closed	docs/refound/IRD_integer_recovering_datum_2026-10-13.md	1	5
+docs/refound/AIL_ambiguity_information_loss_2026-10-01.md	move	docs/record/refound/AIL_ambiguity_information_loss_2026-10-01.md	card closed		0	5
+docs/refound/ALC-ARC_reset_generation_2026-09-16.md	move	docs/record/refound/ALC-ARC_reset_generation_2026-09-16.md	card closed	docs/refound/NETWORK_REFOUNDING_2026-09-14.md	0	3
+docs/refound/ALC-BAND_window_scope_review_2026-09-17.md	move	docs/record/refound/ALC-BAND_window_scope_review_2026-09-17.md	card closed	docs/refound/NETWORK_REFOUNDING_2026-09-14.md	0	3
+docs/refound/ALC-STAT_statistics_audit_2026-09-17.md	move	docs/record/refound/ALC-STAT_statistics_audit_2026-09-17.md	card closed	docs/refound/NETWORK_REFOUNDING_2026-09-14.md	0	5
+docs/refound/ALC2_restart_policy_adoption_2026-09-19.md	move	docs/record/refound/ALC2_restart_policy_adoption_2026-09-19.md	card closed	docs/refound/NETWORK_REFOUNDING_2026-09-14.md	0	7
+docs/refound/ALC_amb_level_check_2026-09-15.md	move	docs/record/refound/ALC_amb_level_check_2026-09-15.md	card superseded	docs/refound/NETWORK_REFOUNDING_2026-09-14.md	0	5
+docs/refound/ALD_anchor_level_datum_2026-10-23.md	move	docs/record/refound/ALD_anchor_level_datum_2026-10-23.md	card closed	docs/status/OPEN_ITEMS.md, docs/status/OPEN_ITEMS_BUILT_OFF.md	0	4
+docs/refound/ARHT_consumer_mechanism_2026-11-06.md	move	docs/record/refound/ARHT_consumer_mechanism_2026-11-06.md	card closed		0	3
+docs/refound/ARL_integer_ambiguity_ladder_2026-10-09.md	move	docs/record/refound/ARL_integer_ambiguity_ladder_2026-10-09.md	card closed	docs/refound/AB3_lanes_2026-09-20.md, docs/refound/IRD_integer_recovering_datum_2026-10-13.md, docs/status/OPEN_ITEMS.md, docs/status/OPEN_ITEMS_BUILT_OFF.md	1	13
+docs/refound/ARR_integer_ambiguity_review_2026-11-07.md	move	docs/record/refound/ARR_integer_ambiguity_review_2026-11-07.md	card closed	docs/status/OPEN_ITEMS.md	0	2
+docs/refound/ARS_anchor_resolve_coupling_2026-10-26.md	move	docs/record/refound/ARS_anchor_resolve_coupling_2026-10-26.md	card closed	docs/refound/SCR_sat_clock_step_response_2026-10-26.md	0	7
+docs/refound/AV2_avx2_build_measurement_2026-11-07.md	move	docs/record/refound/AV2_avx2_build_measurement_2026-11-07.md	card closed		0	2
+docs/refound/B5D_band5_code_datum_2026-09-20.md	move	docs/record/refound/B5D_band5_code_datum_2026-09-20.md	card superseded	docs/refound/L5B_band5_receiver_delay_2026-10-10.md, docs/status/OPEN_ITEMS.md	2	6
+docs/refound/BBE_block_baarda_estimable_2026-10-18.md	move	docs/record/refound/BBE_block_baarda_estimable_2026-10-18.md	card closed	docs/status/OPEN_ITEMS.md	0	4
+docs/refound/BCL_previous_border_on_clones_2026-10-08.md	stay		card parked		4	4
+docs/refound/BDG_beidou_third_golden_2026-11-02.md	move	docs/record/refound/BDG_beidou_third_golden_2026-11-02.md	card closed	docs/status/OPEN_ITEMS.md, docs/status/OPEN_ITEMS_BUILT_OFF.md	0	5
+docs/refound/BDS305_beidou_305_stations_6h_2026-10-29.md	move	docs/record/refound/BDS305_beidou_305_stations_6h_2026-10-29.md	card closed		0	3
+docs/refound/BDSB_beidou_continued_2026-10-19.md	move	docs/record/refound/BDSB_beidou_continued_2026-10-19.md	card closed	docs/status/OPEN_ITEMS.md	0	6
+docs/refound/BDS_beidou_third_constellation_2026-10-18.md	move	docs/record/refound/BDS_beidou_third_constellation_2026-10-18.md	card closed		0	6
+docs/refound/BOF_built_off_follow_through_2026-10-28.md	move	docs/record/refound/BOF_built_off_follow_through_2026-10-28.md	card closed	docs/onboarding/claude_md_history.md, docs/status/OPEN_ITEMS_BUILT_OFF.md	0	13
+docs/refound/BRD2_broadcast_remainder_hold_days_2026-11-03.md	move	docs/record/refound/BRD2_broadcast_remainder_hold_days_2026-11-03.md	card closed	docs/status/OPEN_ITEMS.md	0	7
+docs/refound/BRD3B_clock_share_grade_2026-11-09.md	move	docs/record/refound/BRD3B_clock_share_grade_2026-11-09.md	card closed	docs/status/OPEN_ITEMS.md	0	5
+docs/refound/BRD3_anchor_decoupling_clock_share_2026-11-06.md	move	docs/record/refound/BRD3_anchor_decoupling_clock_share_2026-11-06.md	card closed	docs/status/OPEN_ITEMS.md	0	3
+docs/refound/BRD_broadcast_referenced_level_2026-11-02.md	move	docs/record/refound/BRD_broadcast_referenced_level_2026-11-02.md	card closed	docs/status/OPEN_ITEMS.md	0	9
+docs/refound/CARDS.md	move	docs/record/refound/CARDS.md	card list: moves with its closed entries; open entries go to a new refound/CARDS.md	CLAUDE.md, docs/onboarding/claude_md_history.md, docs/refound/NETWORK_REFOUNDING_2026-09-14.md, docs/status/OPEN_ITEMS.md	1	5
+docs/refound/CARDS_part2.md	move	docs/record/refound/CARDS_part2.md	card list: moves with its closed entries; open entries go to a new refound/CARDS.md		1	2
+docs/refound/CC-arm_pb_disc_carry_rf0hv_2026-09-15.md	move	docs/record/refound/CC-arm_pb_disc_carry_rf0hv_2026-09-15.md	card superseded	docs/refound/NETWORK_REFOUNDING_2026-09-14.md	0	5
+docs/refound/CLV2_clock_level_batch2_2026-09-25.md	move	docs/record/refound/CLV2_clock_level_batch2_2026-09-25.md	card superseded		1	8
+docs/refound/CLV_clock_level_2026-09-22.md	move	docs/record/refound/CLV_clock_level_2026-09-22.md	card superseded		2	9
+docs/refound/CPA_canonical_pair_admission_2026-09-20.md	move	docs/record/refound/CPA_canonical_pair_admission_2026-09-20.md	card closed		4	5
+docs/refound/CRO_carry_recursion_oracle_2026-11-07.md	move	docs/record/refound/CRO_carry_recursion_oracle_2026-11-07.md	card closed		1	1
+docs/refound/CRS2_resume_hold_and_latches_2026-11-06.md	move	docs/record/refound/CRS2_resume_hold_and_latches_2026-11-06.md	card closed	docs/refound/SCR_sat_clock_step_response_2026-10-26.md, docs/status/OPEN_ITEMS_BUILT_OFF.md	4	8
+docs/refound/CRS_leg_consumer_resume_2026-10-26.md	move	docs/record/refound/CRS_leg_consumer_resume_2026-10-26.md	card closed		0	3
+docs/refound/CSL_canonical_signal_latch_2026-09-20.md	move	docs/record/refound/CSL_canonical_signal_latch_2026-09-20.md	card closed		1	10
+docs/refound/CST_consumer_sat_trace_2026-09-15.md	move	docs/record/refound/CST_consumer_sat_trace_2026-09-15.md	card closed	docs/refound/NETWORK_REFOUNDING_2026-09-14.md	0	7
+docs/refound/CTU2_level_recursion_followup_2026-09-29.md	move	docs/record/refound/CTU2_level_recursion_followup_2026-09-29.md	card closed	docs/status/OPEN_ITEMS.md	0	12
+docs/refound/CTU_coupling_time_update_2026-09-28.md	move	docs/record/refound/CTU_coupling_time_update_2026-09-28.md	card closed	docs/refound/BCL_previous_border_on_clones_2026-10-08.md	5	23
+docs/refound/CVF_conditional_variance_frame_2026-10-29.md	move	docs/record/refound/CVF_conditional_variance_frame_2026-10-29.md	card closed	docs/refound/PES_parallel_epoch_stages_2026-10-29.md	0	3
+docs/refound/DRF_docs_record_folder_2026-11-09.md	stay		card open		0	1
+docs/refound/EV6_hour6_decouple_event_2026-09-15.md	move	docs/record/refound/EV6_hour6_decouple_event_2026-09-15.md	card closed	docs/refound/NETWORK_REFOUNDING_2026-09-14.md	3	4
+docs/refound/EV7_all_sat_clock_decouple_2026-09-21.md	move	docs/record/refound/EV7_all_sat_clock_decouple_2026-09-21.md	card closed	docs/status/OPEN_ITEMS.md	11	9
+docs/refound/EXL_exact_update_lah_promotion_2026-10-01.md	move	docs/record/refound/EXL_exact_update_lah_promotion_2026-10-01.md	card closed		2	21
+docs/refound/FCFB_fixed_cycle_fold_continued_2026-10-11.md	move	docs/record/refound/FCFB_fixed_cycle_fold_continued_2026-10-11.md	card closed		0	5
+docs/refound/FCFC_fixed_cycle_ledger_2026-10-11.md	move	docs/record/refound/FCFC_fixed_cycle_ledger_2026-10-11.md	card closed	docs/refound/AB3_lanes_2026-09-20.md, docs/refound/IRD_integer_recovering_datum_2026-10-13.md	0	6
+docs/refound/FCF_fixed_cycle_fold_2026-10-11.md	move	docs/record/refound/FCF_fixed_cycle_fold_2026-10-11.md	card closed		1	6
+docs/refound/FWS_field_walk_share_sources_2026-10-01.md	move	docs/record/refound/FWS_field_walk_share_sources_2026-10-01.md	card closed		0	8
+docs/refound/FXA_field_excess_phase_visible_motion_2026-09-30.md	move	docs/record/refound/FXA_field_excess_phase_visible_motion_2026-09-30.md	card closed		0	7
+docs/refound/GAD_galileo_adoption_2026-10-13.md	move	docs/record/refound/GAD_galileo_adoption_2026-10-13.md	card closed	docs/onboarding/claude_md_history.md, docs/refound/NETWORK_REFOUNDING_2026-09-14.md, docs/status/OPEN_ITEMS.md, docs/topics/config-ledger.md	0	16
+docs/refound/GAL2_galileo_on_the_exact_update_2026-10-08.md	move	docs/record/refound/GAL2_galileo_on_the_exact_update_2026-10-08.md	card closed		0	6
+docs/refound/GAL_gps_galileo_dual_2026-09-22.md	move	docs/record/refound/GAL_gps_galileo_dual_2026-09-22.md	card superseded		3	7
+docs/refound/GFC_galileo_family_clock_datum_2026-10-10.md	move	docs/record/refound/GFC_galileo_family_clock_datum_2026-10-10.md	card closed		2	4
+docs/refound/GRB_golden_rebase_2026-09-22.md	move	docs/record/refound/GRB_golden_rebase_2026-09-22.md	card closed		0	26
+docs/refound/GRK_gap_reentry_key_mismatch_2026-09-22.md	move	docs/record/refound/GRK_gap_reentry_key_mismatch_2026-09-22.md	card closed		8	5
+docs/refound/GRS_gap_reentry_per_signal_2026-09-20.md	move	docs/record/refound/GRS_gap_reentry_per_signal_2026-09-20.md	card closed		11	8
+docs/refound/HLT_broadcast_health_2026-09-25.md	move	docs/record/refound/HLT_broadcast_health_2026-09-25.md	card closed	docs/refound/PIV_pivot_election_coverage_2026-10-17.md, docs/status/OPEN_ITEMS.md, docs/status/OPEN_ITEMS_BUILT_OFF.md	0	5
+docs/refound/I2S_second_order_iono_sign_2026-10-01.md	move	docs/record/refound/I2S_second_order_iono_sign_2026-10-01.md	card closed		5	2
+docs/refound/ICF_ignition_code_fault_2026-10-09.md	move	docs/record/refound/ICF_ignition_code_fault_2026-10-09.md	card closed		3	6
+docs/refound/ICL2_frame_day_one_level_2026-11-03.md	move	docs/record/refound/ICL2_frame_day_one_level_2026-11-03.md	card closed	docs/status/OPEN_ITEMS.md	2	6
+docs/refound/ICL3_frame_quorum_2026-11-05.md	move	docs/record/refound/ICL3_frame_quorum_2026-11-05.md	card closed	docs/status/OPEN_ITEMS.md	2	7
+docs/refound/ICL4_post_flag_slip_scatter_2026-11-06.md	move	docs/record/refound/ICL4_post_flag_slip_scatter_2026-11-06.md	card closed	docs/status/OPEN_ITEMS.md, docs/status/OPEN_ITEMS_BUILT_OFF.md	0	4
+docs/refound/ICL5_reseed_key_over_a_day_2026-11-06.md	move	docs/record/refound/ICL5_reseed_key_over_a_day_2026-11-06.md	card closed	docs/status/OPEN_ITEMS.md, docs/status/OPEN_ITEMS_BUILT_OFF.md	0	5
+docs/refound/ICL6_anchor_trip_family_shift_2026-11-06.md	move	docs/record/refound/ICL6_anchor_trip_family_shift_2026-11-06.md	card closed	docs/status/OPEN_ITEMS.md, docs/status/OPEN_ITEMS_BUILT_OFF.md	0	4
+docs/refound/ICL_inter_constellation_level_2026-11-03.md	move	docs/record/refound/ICL_inter_constellation_level_2026-11-03.md	card closed	docs/status/OPEN_ITEMS.md	2	6
+docs/refound/IRDB_integer_recovering_datum_continued_2026-10-30.md	stay		card open	docs/refound/IRDC_integer_recovering_datum_events_2026-11-02.md, docs/refound/IRDE_integer_recovering_datum_slip_2026-11-06.md, docs/refound/IRD_integer_recovering_datum_2026-10-13.md, docs/status/OPEN_ITEMS.md	0	4
+docs/refound/IRDC_integer_recovering_datum_events_2026-11-02.md	stay		card open	docs/refound/IRDB_integer_recovering_datum_continued_2026-10-30.md, docs/refound/IRDD_integer_recovering_datum_rows_2026-11-03.md, docs/refound/IRDE_integer_recovering_datum_slip_2026-11-06.md, docs/refound/IRD_integer_recovering_datum_2026-10-13.md, docs/status/OPEN_ITEMS.md	0	5
+docs/refound/IRDD_integer_recovering_datum_rows_2026-11-03.md	stay		card open	docs/refound/IRDC_integer_recovering_datum_events_2026-11-02.md, docs/refound/IRDE_integer_recovering_datum_slip_2026-11-06.md, docs/refound/IRD_integer_recovering_datum_2026-10-13.md, docs/status/OPEN_ITEMS.md	0	2
+docs/refound/IRDE_integer_recovering_datum_slip_2026-11-06.md	stay		card open	docs/refound/IRDD_integer_recovering_datum_rows_2026-11-03.md, docs/refound/IRDE_integer_recovering_datum_slip_2026-11-06_part2.md, docs/refound/IRD_integer_recovering_datum_2026-10-13.md, docs/status/OPEN_ITEMS.md	0	5
+docs/refound/IRDE_integer_recovering_datum_slip_2026-11-06_part2.md	stay		card open	docs/refound/IRDE_integer_recovering_datum_slip_2026-11-06.md	0	0
+docs/refound/IRDF_d0_receiver_floor_redecided_2026-11-07.md	move	docs/record/refound/IRDF_d0_receiver_floor_redecided_2026-11-07.md	card closed	docs/status/OPEN_ITEMS.md	0	3
+docs/refound/IRDG_floor_off_rpb_in_block_2026-11-09.md	move	docs/record/refound/IRDG_floor_off_rpb_in_block_2026-11-09.md	card closed	docs/status/OPEN_ITEMS.md	2	4
+docs/refound/IRD_integer_recovering_datum_2026-10-13.md	stay		card open	docs/refound/IRDB_integer_recovering_datum_continued_2026-10-30.md, docs/refound/IRDC_integer_recovering_datum_events_2026-11-02.md, docs/refound/IRDD_integer_recovering_datum_rows_2026-11-03.md, docs/refound/IRDE_integer_recovering_datum_slip_2026-11-06.md, docs/status/OPEN_ITEMS.md, docs/status/OPEN_ITEMS_BUILT_OFF.md	0	10
+docs/refound/JT_pb_jump_test_decommon_2026-09-15.md	move	docs/record/refound/JT_pb_jump_test_decommon_2026-09-15.md	card superseded	docs/refound/NETWORK_REFOUNDING_2026-09-14.md	0	3
+docs/refound/L2Q_l2c_l2w_quarter_cycle_2026-11-06.md	move	docs/record/refound/L2Q_l2c_l2w_quarter_cycle_2026-11-06.md	card closed		0	4
+docs/refound/L5B_band5_receiver_delay_2026-10-10.md	stay		card open	docs/refound/AB3_lanes_2026-09-20.md, docs/refound/SMX_scenario_matrix_2026-10-24.md, docs/status/OPEN_ITEMS.md, docs/status/OPEN_ITEMS_BUILT_OFF.md	0	12
+docs/refound/L5P_l5_phase_posture_2026-09-21.md	move	docs/record/refound/L5P_l5_phase_posture_2026-09-21.md	card superseded	docs/refound/AB3_lanes_2026-09-20.md, docs/refound/L5B_band5_receiver_delay_2026-10-10.md	3	7
+docs/refound/L5R_l5_return_on_the_exact_update_2026-10-08.md	move	docs/record/refound/L5R_l5_return_on_the_exact_update_2026-10-08.md	card superseded	docs/refound/L5B_band5_receiver_delay_2026-10-10.md	0	3
+docs/refound/LAH_level_aware_hold_2026-09-29.md	move	docs/record/refound/LAH_level_aware_hold_2026-09-29.md	card closed	docs/status/OPEN_ITEMS_CONSUMER_REALTIME.md	0	16
+docs/refound/LGM_los_phase_nuisance_2026-10-01.md	move	docs/record/refound/LGM_los_phase_nuisance_2026-10-01.md	card closed	docs/status/OPEN_ITEMS.md	3	9
+docs/refound/LSR_long_scale_remainder_2026-10-01.md	move	docs/record/refound/LSR_long_scale_remainder_2026-10-01.md	card closed		0	5
+docs/refound/MDAY_multiday_candidate_2026-10-19.md	move	docs/record/refound/MDAY_multiday_candidate_2026-10-19.md	card closed		0	9
+docs/refound/MDR_multiday_replay_2026-10-05.md	move	docs/record/refound/MDR_multiday_replay_2026-10-05.md	card closed	docs/status/OPEN_ITEMS_CONSUMER_REALTIME.md	0	4
+docs/refound/MGT_maturity_gate_telemetry_2026-10-30.md	move	docs/record/refound/MGT_maturity_gate_telemetry_2026-10-30.md	card closed	docs/status/OPEN_ITEMS_BUILT_OFF.md	1	3
+docs/refound/MRF_mw_reflag_skip_2026-10-28.md	move	docs/record/refound/MRF_mw_reflag_skip_2026-10-28.md	card closed		0	4
+docs/refound/MSC_multi_site_consumer_2026-09-21.md	move	docs/record/refound/MSC_multi_site_consumer_2026-09-21.md	card closed	docs/status/OPEN_ITEMS.md, docs/status/OPEN_ITEMS_CONSUMER_REALTIME.md	0	9
+docs/refound/NBP_native_broadcast_clock_posture_2026-10-07.md	move	docs/record/refound/NBP_native_broadcast_clock_posture_2026-10-07.md	card closed	docs/status/OPEN_ITEMS.md, docs/status/OPEN_ITEMS_BUILT_OFF.md, docs/status/OPEN_ITEMS_CONSUMER_REALTIME.md	1	11
+docs/refound/NETCOSTB_gps_galileo_cost_continued_2026-10-18.md	move	docs/record/refound/NETCOSTB_gps_galileo_cost_continued_2026-10-18.md	card closed	docs/status/OPEN_ITEMS.md	0	3
+docs/refound/NETCOST_gps_galileo_cost_attribution_2026-10-18.md	move	docs/record/refound/NETCOST_gps_galileo_cost_attribution_2026-10-18.md	card closed	docs/refound/PES_parallel_epoch_stages_2026-10-29.md	0	4
+docs/refound/NETWORK_REFOUNDING_2026-09-14.md	stay		the current program	CLAUDE.md, docs/refound/AB1_sh_consumer_product_2026-09-20.md, docs/refound/AB3_lanes_2026-09-20.md, docs/status/OPEN_ITEMS.md	8	58
+docs/refound/NIS_consumer_innovation_screen_2026-10-17.md	move	docs/record/refound/NIS_consumer_innovation_screen_2026-10-17.md	card closed	docs/status/OPEN_ITEMS.md, docs/status/OPEN_ITEMS_CONSUMER_REALTIME.md	0	6
+docs/refound/NOM2_network_object_model_rows_2026-10-09.md	move	docs/record/refound/NOM2_network_object_model_rows_2026-10-09.md	card closed	docs/status/OPEN_ITEMS.md	5	5
+docs/refound/NOM3_network_giants_2026-10-09.md	move	docs/record/refound/NOM3_network_giants_2026-10-09.md	card closed	docs/status/OPEN_ITEMS.md	10	3
+docs/refound/NOM4_network_object_model_finish_2026-10-15.md	move	docs/record/refound/NOM4_network_object_model_finish_2026-10-15.md	card closed	docs/status/OPEN_ITEMS.md	1	5
+docs/refound/NOM5_station_parameter_set_tail_2026-10-30.md	move	docs/record/refound/NOM5_station_parameter_set_tail_2026-10-30.md	card closed	docs/status/OPEN_ITEMS.md, docs/status/OPEN_ITEMS_BUILT_OFF.md	0	5
+docs/refound/NOM_network_object_model_2026-10-08.md	move	docs/record/refound/NOM_network_object_model_2026-10-08.md	card closed	CLAUDE.md, docs/refound/L5B_band5_receiver_delay_2026-10-10.md, docs/status/OPEN_ITEMS.md	8	10
+docs/refound/NSD_network_small_defects_2026-10-17.md	move	docs/record/refound/NSD_network_small_defects_2026-10-17.md	card closed	docs/status/OPEN_ITEMS.md	0	7
+docs/refound/NSP_census_neutral_spread_2026-10-29.md	move	docs/record/refound/NSP_census_neutral_spread_2026-10-29.md	card closed	docs/refound/PIV_pivot_election_coverage_2026-10-17.md, docs/status/OPEN_ITEMS_BUILT_OFF.md	0	5
+docs/refound/NTA_noon_turn_attitude_2026-10-16.md	move	docs/record/refound/NTA_noon_turn_attitude_2026-10-16.md	card closed	docs/status/OPEN_ITEMS.md	0	5
+docs/refound/OTL_ocean_tide_loading_source_2026-10-16.md	move	docs/record/refound/OTL_ocean_tide_loading_source_2026-10-16.md	card closed	docs/status/OPEN_ITEMS.md	0	6
+docs/refound/OWD_owed_defects_2026-09-22.md	move	docs/record/refound/OWD_owed_defects_2026-09-22.md	card closed		0	9
+docs/refound/PAC_common_drift_pivot_clock_2026-10-01.md	move	docs/record/refound/PAC_common_drift_pivot_clock_2026-10-01.md	card closed	docs/refound/PIV_pivot_election_coverage_2026-10-17.md, docs/status/OPEN_ITEMS.md, docs/status/OPEN_ITEMS_BUILT_OFF.md	0	8
+docs/refound/PBF_pb_hold_presence_edges_2026-09-28.md	move	docs/record/refound/PBF_pb_hold_presence_edges_2026-09-28.md	card closed		2	8
+docs/refound/PBH_phase_bias_hold_2026-09-19.md	move	docs/record/refound/PBH_phase_bias_hold_2026-09-19.md	card closed	docs/refound/AB1_sh_consumer_product_2026-09-20.md, docs/refound/NETWORK_REFOUNDING_2026-09-14.md, docs/status/OPEN_ITEMS.md	7	24
+docs/refound/PBT-AUDIT_translation_premise_2026-09-16.md	move	docs/record/refound/PBT-AUDIT_translation_premise_2026-09-16.md	card closed	docs/refound/NETWORK_REFOUNDING_2026-09-14.md	0	5
+docs/refound/PBT_consumer_pb_translate_2026-09-15.md	move	docs/record/refound/PBT_consumer_pb_translate_2026-09-15.md	card superseded	docs/refound/NETWORK_REFOUNDING_2026-09-14.md	0	9
+docs/refound/PES_parallel_epoch_stages_2026-10-29.md	stay		card open	docs/status/OPEN_ITEMS.md	0	5
+docs/refound/PFQ_pivot_frame_process_noise_2026-10-08.md	move	docs/record/refound/PFQ_pivot_frame_process_noise_2026-10-08.md	card closed	docs/refound/BCL_previous_border_on_clones_2026-10-08.md	4	4
+docs/refound/PIV_pivot_election_coverage_2026-10-17.md	stay		card open	docs/status/OPEN_ITEMS.md, docs/status/OPEN_ITEMS_BUILT_OFF.md	0	9
+docs/refound/PLANT_planted_coordinate_offsets_2026-10-19.md	move	docs/record/refound/PLANT_planted_coordinate_offsets_2026-10-19.md	card closed	docs/refound/SMX_scenario_matrix_2026-10-24.md	0	2
+docs/refound/PRM3_responses_2026-10-02.md	move	docs/record/refound/PRM3_responses_2026-10-02.md	card closed	docs/refound/IRD_integer_recovering_datum_2026-10-13.md, docs/status/OPEN_ITEMS.md	0	5
+docs/refound/PRM_parameter_registry_2026-09-29.md	move	docs/record/refound/PRM_parameter_registry_2026-09-29.md	card closed		5	18
+docs/refound/PVN_phase_visible_nees_2026-09-29.md	move	docs/record/refound/PVN_phase_visible_nees_2026-09-29.md	card closed		3	12
+docs/refound/QPV_anchor_q_phase_visible_2026-09-30.md	move	docs/record/refound/QPV_anchor_q_phase_visible_2026-09-30.md	card closed		0	6
+docs/refound/R1D_station_level_datum_2026-10-23.md	move	docs/record/refound/R1D_station_level_datum_2026-10-23.md	card closed	docs/refound/SMX_scenario_matrix_2026-10-24.md, docs/status/OPEN_ITEMS.md	0	2
+docs/refound/RCG_refloat_cutting_keys_2026-10-29.md	move	docs/record/refound/RCG_refloat_cutting_keys_2026-10-29.md	card closed	docs/status/OPEN_ITEMS_BUILT_OFF.md	0	1
+docs/refound/REV_revision_member_replay_2026-09-30.md	move	docs/record/refound/REV_revision_member_replay_2026-09-30.md	card closed		0	8
+docs/refound/RF-0_baseline_2026-09-14.md	move	docs/record/refound/RF-0_baseline_2026-09-14.md	card closed	docs/refound/NETWORK_REFOUNDING_2026-09-14.md	4	4
+docs/refound/RF-0b_dcb_datum_2026-09-15.md	move	docs/record/refound/RF-0b_dcb_datum_2026-09-15.md	card closed	docs/refound/AB1_sh_consumer_product_2026-09-20.md, docs/refound/NETWORK_REFOUNDING_2026-09-14.md	1	4
+docs/refound/RF-0c_gf_pin_2026-09-15.md	move	docs/record/refound/RF-0c_gf_pin_2026-09-15.md	card closed	docs/refound/NETWORK_REFOUNDING_2026-09-14.md	0	8
+docs/refound/RF-0d_per_signal_pin_2026-09-15.md	move	docs/record/refound/RF-0d_per_signal_pin_2026-09-15.md	card closed	docs/refound/NETWORK_REFOUNDING_2026-09-14.md	0	3
+docs/refound/RF-0e_level_datum_2026-09-15.md	move	docs/record/refound/RF-0e_level_datum_2026-09-15.md	card closed	docs/refound/NETWORK_REFOUNDING_2026-09-14.md	0	4
+docs/refound/RF-0f_isc_state_2026-09-15.md	move	docs/record/refound/RF-0f_isc_state_2026-09-15.md	card closed	docs/refound/NETWORK_REFOUNDING_2026-09-14.md	0	6
+docs/refound/RF-0g_roster_cut_2026-09-15.md	move	docs/record/refound/RF-0g_roster_cut_2026-09-15.md	card closed	docs/refound/NETWORK_REFOUNDING_2026-09-14.md	2	3
+docs/refound/RF-0hv_working_posture_2026-09-15.md	move	docs/record/refound/RF-0hv_working_posture_2026-09-15.md	card closed	docs/refound/NETWORK_REFOUNDING_2026-09-14.md	8	7
+docs/refound/RF-1_decision_2026-09-14.md	move	docs/record/refound/RF-1_decision_2026-09-14.md	card closed	docs/refound/NETWORK_REFOUNDING_2026-09-14.md	0	2
+docs/refound/RF-1_float_ambiguities_design.md	move	docs/record/refound/RF-1_float_ambiguities_design.md	card closed	docs/refound/NETWORK_REFOUNDING_2026-09-14.md	8	21
+docs/refound/RF-1_steps12_read_2026-09-15.md	move	docs/record/refound/RF-1_steps12_read_2026-09-15.md	card closed	docs/refound/NETWORK_REFOUNDING_2026-09-14.md	0	2
+docs/refound/RF-1_steps345_mechanism_2026-09-15.md	move	docs/record/refound/RF-1_steps345_mechanism_2026-09-15.md	card closed	docs/refound/AB3_lanes_2026-09-20.md, docs/refound/NETWORK_REFOUNDING_2026-09-14.md	3	6
+docs/refound/RF-2_held_basis_2026-09-15.md	move	docs/record/refound/RF-2_held_basis_2026-09-15.md	card closed	docs/refound/NETWORK_REFOUNDING_2026-09-14.md	1	8
+docs/refound/RF-2b_election_fix_2026-09-15.md	move	docs/record/refound/RF-2b_election_fix_2026-09-15.md	card closed	docs/refound/NETWORK_REFOUNDING_2026-09-14.md	0	3
+docs/refound/RF-3-prep_golden_rebase_2026-09-15.md	move	docs/record/refound/RF-3-prep_golden_rebase_2026-09-15.md	card closed	docs/refound/NETWORK_REFOUNDING_2026-09-14.md	4	19
+docs/refound/RF-3-read_handover_frame_2026-09-15.md	move	docs/record/refound/RF-3-read_handover_frame_2026-09-15.md	card closed	docs/refound/NETWORK_REFOUNDING_2026-09-14.md	2	5
+docs/refound/RF-3_code_row_qc_2026-09-22.md	move	docs/record/refound/RF-3_code_row_qc_2026-09-22.md	card closed	docs/status/OPEN_ITEMS.md	9	11
+docs/refound/RF-IGN_ignition_born_levels_2026-09-15.md	move	docs/record/refound/RF-IGN_ignition_born_levels_2026-09-15.md	card closed	docs/refound/NETWORK_REFOUNDING_2026-09-14.md	1	5
+docs/refound/RF-NS-b_vehicle_obs_loss_2026-09-15.md	move	docs/record/refound/RF-NS-b_vehicle_obs_loss_2026-09-15.md	card superseded	docs/refound/NETWORK_REFOUNDING_2026-09-14.md	0	2
+docs/refound/RF-NS_null_space_read_2026-09-15.md	move	docs/record/refound/RF-NS_null_space_read_2026-09-15.md	card closed	docs/refound/NETWORK_REFOUNDING_2026-09-14.md	0	4
+docs/refound/RF-PD-fix_station_prior_before_pd_2026-09-15.md	move	docs/record/refound/RF-PD-fix_station_prior_before_pd_2026-09-15.md	card closed	docs/refound/NETWORK_REFOUNDING_2026-09-14.md, docs/status/OPEN_ITEMS.md	0	9
+docs/refound/RF-PD_station_rejection_2026-09-15.md	move	docs/record/refound/RF-PD_station_rejection_2026-09-15.md	card closed	docs/refound/NETWORK_REFOUNDING_2026-09-14.md	3	4
+docs/refound/RF0HV18B_reduced_candidate_2026-11-07.md	move	docs/record/refound/RF0HV18B_reduced_candidate_2026-11-07.md	card closed		0	3
+docs/refound/RF0HV18_combined_candidate_2026-11-06.md	move	docs/record/refound/RF0HV18_combined_candidate_2026-11-06.md	card closed		0	3
+docs/refound/RKD_retired_key_deletion_2026-10-14.md	move	docs/record/refound/RKD_retired_key_deletion_2026-10-14.md	card closed	CLAUDE.md, docs/refound/AB1_sh_consumer_product_2026-09-20.md, docs/refound/AB3_lanes_2026-09-20.md, docs/refound/NETWORK_REFOUNDING_2026-09-14.md, docs/status/OPEN_ITEMS.md, docs/topics/config-ledger.md	2	38
+docs/refound/RKT_retired_key_tombstone_2026-10-30.md	move	docs/record/refound/RKT_retired_key_tombstone_2026-10-30.md	card closed	docs/refound/AB1_sh_consumer_product_2026-09-20.md, docs/refound/AB3_lanes_2026-09-20.md, docs/refound/NETWORK_REFOUNDING_2026-09-14.md, docs/status/OPEN_ITEMS.md, docs/topics/config-ledger.md	0	37
+docs/refound/RPA_raim_pool_data_rows_2026-10-08.md	move	docs/record/refound/RPA_raim_pool_data_rows_2026-10-08.md	card closed	docs/status/OPEN_ITEMS.md	2	8
+docs/refound/RPC_raim_prior_channel_2026-10-30.md	move	docs/record/refound/RPC_raim_prior_channel_2026-10-30.md	card closed	docs/status/OPEN_ITEMS_BUILT_OFF.md	3	3
+docs/refound/RPD_replay_station_prior_2026-10-01.md	move	docs/record/refound/RPD_replay_station_prior_2026-10-01.md	card closed		0	5
+docs/refound/RXP_rinex3_blank_prn_2026-09-21.md	move	docs/record/refound/RXP_rinex3_blank_prn_2026-09-21.md	card closed	docs/status/OPEN_ITEMS.md	1	3
+docs/refound/SCB_sim_clock_error_bed_2026-10-24.md	move	docs/record/refound/SCB_sim_clock_error_bed_2026-10-24.md	card closed	docs/refound/SMX_scenario_matrix_2026-10-24.md	0	2
+docs/refound/SCC2_companion_weight_system_aware_2026-11-07.md	move	docs/record/refound/SCC2_companion_weight_system_aware_2026-11-07.md	card closed		0	3
+docs/refound/SCC_second_code_channel_2026-09-21.md	move	docs/record/refound/SCC_second_code_channel_2026-09-21.md	card closed	docs/status/OPEN_ITEMS.md	7	9
+docs/refound/SCK_sat_clock_step_2026-10-25.md	move	docs/record/refound/SCK_sat_clock_step_2026-10-25.md	card closed	docs/refound/SCR_sat_clock_step_response_2026-10-26.md	0	4
+docs/refound/SCL2B_shared_history_with_the_hold_2026-10-07.md	move	docs/record/refound/SCL2B_shared_history_with_the_hold_2026-10-07.md	card closed	docs/status/OPEN_ITEMS.md, docs/status/OPEN_ITEMS_BUILT_OFF.md	0	7
+docs/refound/SCL2_level_residue_under_the_clone_2026-10-06.md	move	docs/record/refound/SCL2_level_residue_under_the_clone_2026-10-06.md	card closed	docs/refound/BCL_previous_border_on_clones_2026-10-08.md, docs/status/OPEN_ITEMS.md	5	10
+docs/refound/SCL_self_contained_clock_level_2026-10-03.md	move	docs/record/refound/SCL_self_contained_clock_level_2026-10-03.md	card closed	docs/refound/BCL_previous_border_on_clones_2026-10-08.md, docs/status/OPEN_ITEMS.md	5	13
+docs/refound/SCR_sat_clock_step_response_2026-10-26.md	stay		card open		0	11
+docs/refound/SCU_station_coordinates_unknowns_2026-09-22.md	stay		card parked	docs/status/OPEN_ITEMS.md	2	7
+docs/refound/SCW_sat_clock_step_wire_2026-11-09.md	move	docs/record/refound/SCW_sat_clock_step_wire_2026-11-09.md	card closed		0	4
+docs/refound/SEA_seasonal_term_outside_window_2026-10-16.md	move	docs/record/refound/SEA_seasonal_term_outside_window_2026-10-16.md	card closed		0	2
+docs/refound/SFR_sim_fixture_coloured_phase_2026-10-01.md	move	docs/record/refound/SFR_sim_fixture_coloured_phase_2026-10-01.md	card closed		8	14
+docs/refound/SID_signal_identity_2026-09-22.md	move	docs/record/refound/SID_signal_identity_2026-09-22.md	card closed	docs/status/OPEN_ITEMS.md	12	7
+docs/refound/SMC_smoothed_hold_common_step_removed_2026-10-01.md	move	docs/record/refound/SMC_smoothed_hold_common_step_removed_2026-10-01.md	card closed		0	11
+docs/refound/SMD_smoothed_hold_block_member_2026-09-30.md	move	docs/record/refound/SMD_smoothed_hold_block_member_2026-09-30.md	card closed		0	7
+docs/refound/SMH_smoothed_hold_clone_2026-09-29.md	move	docs/record/refound/SMH_smoothed_hold_clone_2026-09-29.md	card closed		0	16
+docs/refound/SMX2_scenario_matrix_current_golden_2026-11-09.md	move	docs/record/refound/SMX2_scenario_matrix_current_golden_2026-11-09.md	card closed	docs/refound/L5B_band5_receiver_delay_2026-10-10.md	0	1
+docs/refound/SMX_scenario_matrix_2026-10-24.md	stay		card open		3	7
+docs/refound/SNXB_sinex_roster_arms_2026-10-19.md	move	docs/record/refound/SNXB_sinex_roster_arms_2026-10-19.md	card closed	docs/status/OPEN_ITEMS_BUILT_OFF.md	0	4
+docs/refound/SNX_sinex_station_coordinates_2026-10-19.md	move	docs/record/refound/SNX_sinex_station_coordinates_2026-10-19.md	card closed	docs/status/OPEN_ITEMS_CODE_DEFECTS.md	0	4
+docs/refound/SOI_second_order_ionosphere_leak_2026-10-01.md	move	docs/record/refound/SOI_second_order_ionosphere_leak_2026-10-01.md	card closed		0	4
+docs/refound/SRN_scientific_review_network_2026-11-06.md	move	docs/record/refound/SRN_scientific_review_network_2026-11-06.md	card closed		0	7
+docs/refound/TBI_three_band_ignition_2026-09-20.md	move	docs/record/refound/TBI_three_band_ignition_2026-09-20.md	card closed		1	5
+docs/refound/TRP_gpt3_apriori_troposphere_2026-11-07.md	move	docs/record/refound/TRP_gpt3_apriori_troposphere_2026-11-07.md	card closed		0	3
+docs/refound/UOMB_user_object_model_continued_2026-10-31.md	move	docs/record/refound/UOMB_user_object_model_continued_2026-10-31.md	card closed	docs/status/OPEN_ITEMS_CODE_DEFECTS.md	0	2
+docs/refound/UOM_n6_user_side_edits_2026-10-17.md	move	docs/record/refound/UOM_n6_user_side_edits_2026-10-17.md	card closed (follows UOM_user_object_model_2026-10-13.md)		0	2
+docs/refound/UOM_user_object_model_2026-10-13.md	move	docs/record/refound/UOM_user_object_model_2026-10-13.md	card closed	docs/status/OPEN_ITEMS_CODE_DEFECTS.md	1	3
+docs/refound/UPO_consumer_up_offset_2026-09-22.md	move	docs/record/refound/UPO_consumer_up_offset_2026-09-22.md	card closed	docs/refound/SCU_station_coordinates_unknowns_2026-09-22.md	3	8
+docs/refound/VCF_variance_factor_calibration_2026-11-07.md	move	docs/record/refound/VCF_variance_factor_calibration_2026-11-07.md	card closed		0	3
+docs/refound/VIN_validation_instruments_2026-11-07.md	move	docs/record/refound/VIN_validation_instruments_2026-11-07.md	card closed		0	2
+docs/refound/WGB2_attempt_tables.md	move	docs/record/refound/WGB2_attempt_tables.md	reference card not cited by an active file		0	3
+docs/refound/WGB2_windup_bridge_current_golden_day_2026-10-31.md	move	docs/record/refound/WGB2_windup_bridge_current_golden_day_2026-10-31.md	card closed	docs/status/OPEN_ITEMS.md	0	5
+docs/refound/WGB_windup_gap_bridge_2026-10-17.md	move	docs/record/refound/WGB_windup_gap_bridge_2026-10-17.md	card closed	docs/status/OPEN_ITEMS.md	0	6
+docs/refound/WSL_walk_share_stations_link_2026-10-01.md	move	docs/record/refound/WSL_walk_share_stations_link_2026-10-01.md	card closed		0	3
+docs/refound/WSX_within_station_cross_terms_2026-09-30.md	move	docs/record/refound/WSX_within_station_cross_terms_2026-09-30.md	card closed		2	7
+docs/refound/WUP_windup_accumulated_promotion_2026-10-01.md	move	docs/record/refound/WUP_windup_accumulated_promotion_2026-10-01.md	card closed	docs/status/OPEN_ITEMS.md	3	10
+docs/refound/ZTL_zwd_time_link_float_vehicle_2026-11-07.md	move	docs/record/refound/ZTL_zwd_time_link_float_vehicle_2026-11-07.md	card closed	docs/status/OPEN_ITEMS.md	1	2
+docs/report/README.md	stay		folder stays: report		0	1
+docs/report/ambiguity_resolution.pdf	stay		folder stays: report		0	0
+docs/report/ambiguity_resolution.tex	stay		folder stays: report		0	1
+docs/report/atmosphere.pdf	stay		folder stays: report		0	0
+docs/report/atmosphere.tex	stay		folder stays: report		0	2
+docs/report/bssd_dd.tex	stay		folder stays: report		0	1
+docs/report/build.ps1	stay		folder stays: report		0	0
+docs/report/build.sh	stay		folder stays: report		0	0
+docs/report/estimator_infrastructure.pdf	stay		folder stays: report		0	0
+docs/report/estimator_infrastructure.tex	stay		folder stays: report		0	1
+docs/report/foundations.pdf	stay		folder stays: report		0	0
+docs/report/foundations.tex	stay		folder stays: report		0	1
+docs/report/frames_time.pdf	stay		folder stays: report		0	0
+docs/report/frames_time.tex	stay		folder stays: report		0	0
+docs/report/generated_tables.pdf	stay		folder stays: report		0	0
+docs/report/generated_tables.tex	stay		folder stays: report		1	1
+docs/report/gnssreport.sty	stay		folder stays: report		0	0
+docs/report/imu_aiding.pdf	stay		folder stays: report		0	0
+docs/report/imu_aiding.tex	stay		folder stays: report		0	2
+docs/report/kalman_smoother.pdf	stay		folder stays: report		0	0
+docs/report/kalman_smoother.tex	stay		folder stays: report		0	1
+docs/report/latexmkrc	stay		folder stays: report		0	0
+docs/report/linear_algebra.pdf	stay		folder stays: report		0	0
+docs/report/linear_algebra.tex	stay		folder stays: report		1	0
+docs/report/main.bbl-SAVE-ERROR	stay		folder stays: report	docs/refound/DRF_docs_record_folder_2026-11-09.md	0	0
+docs/report/main.pdf	stay		folder stays: report	README.md, docs/onboarding/03_worked_example.md	0	1
+docs/report/main.tex	stay		folder stays: report		0	2
+docs/report/network.pdf	stay		folder stays: report		0	0
+docs/report/network.tex	stay		folder stays: report		0	1
+docs/report/network_carry.pdf	stay		folder stays: report		0	0
+docs/report/network_carry.tex	stay		folder stays: report		0	1
+docs/report/network_example.pdf	stay		folder stays: report		0	0
+docs/report/network_example.tex	stay		folder stays: report		0	1
+docs/report/network_vehicle.pdf	stay		folder stays: report		0	0
+docs/report/network_vehicle.tex	stay		folder stays: report		0	1
+docs/report/network_wire.pdf	stay		folder stays: report		0	0
+docs/report/network_wire.tex	stay		folder stays: report		0	1
+docs/report/notation.tex	stay		folder stays: report		0	1
+docs/report/observation_equations.tex	stay		folder stays: report		0	2
+docs/report/observation_physics.pdf	stay		folder stays: report		0	0
+docs/report/observation_physics.tex	stay		folder stays: report		0	2
+docs/report/pipeline_diagrams.pdf	stay		folder stays: report		0	0
+docs/report/pipeline_diagrams.tex	stay		folder stays: report		0	1
+docs/report/product_evaluation.pdf	stay		folder stays: report		0	0
+docs/report/product_evaluation.tex	stay		folder stays: report		0	1
+docs/report/realtime_engine.pdf	stay		folder stays: report		0	0
+docs/report/realtime_engine.tex	stay		folder stays: report		0	1
+docs/report/reference_frames.pdf	stay		folder stays: report		0	0
+docs/report/reference_frames.tex	stay		folder stays: report		0	1
+docs/report/references.bib	stay		folder stays: report		0	0
+docs/report/site_displacement.pdf	stay		folder stays: report		0	0
+docs/report/site_displacement.tex	stay		folder stays: report		0	1
+docs/report/slip_detection.pdf	stay		folder stays: report		0	0
+docs/report/slip_detection.tex	stay		folder stays: report		0	0
+docs/report/ssr_corrections.pdf	stay		folder stays: report		0	0
+docs/report/ssr_corrections.tex	stay		folder stays: report		0	0
+docs/report/state_vector.tex	stay		folder stays: report		0	1
+docs/report/stochastic_qc.pdf	stay		folder stays: report	docs/onboarding/03_worked_example.md	0	0
+docs/report/stochastic_qc.tex	stay		folder stays: report	CONTRIBUTING.md, docs/onboarding/03_worked_example.md	1	1
+docs/rt_seam_decomposition.md	stay		document cited by an active file (keep-list)	CLAUDE.md, docs/onboarding/where_new_code_goes.md	1	4
+docs/rt_seam_manifest.json	stay		read by scripts/rt_seamcut.py		2	1
+docs/rt_service_conventions.md	stay		document cited by an active file (keep-list)	docs/status/OPEN_ITEMS_CONSUMER_REALTIME.md	6	10
+docs/rt_service_operations.md	stay		document cited by an active file (keep-list)	README.md	5	9
+docs/slip_comparison_report.md	move	docs/record/slip_comparison_report.md	document not cited by an active file		0	4
+docs/status/OPEN_ITEMS.md	stay		folder stays: status	docs/REORG_PLAN.md, docs/onboarding/claude_md_history.md, docs/refound/AB1_sh_consumer_product_2026-09-20.md, docs/refound/AB3_lanes_2026-09-20.md, docs/refound/NETWORK_REFOUNDING_2026-09-14.md, docs/refound/PIV_pivot_election_coverage_2026-10-17.md (+4)	1	47
+docs/status/OPEN_ITEMS_BUILT_OFF.md	stay		folder stays: status	docs/status/OPEN_ITEMS.md	0	8
+docs/status/OPEN_ITEMS_CODE_DEFECTS.md	stay		folder stays: status	docs/status/OPEN_ITEMS.md	0	3
+docs/status/OPEN_ITEMS_CONSUMER_REALTIME.md	stay		folder stays: status	docs/cards/realtime/SSR-BIAS-SIGN.md, docs/status/OPEN_ITEMS.md	0	2
+docs/test_suite.md	stay		document cited by an active file (keep-list)	CLAUDE.md, docs/onboarding/claude_md_history.md	2	4
+docs/topics/build-infra.md	move	docs/record/topics/build-infra.md	topic page of the closed material		0	1
+docs/topics/clock.md	move	docs/record/topics/clock.md	topic page of the closed material		1	2
+docs/topics/code-bias.md	move	docs/record/topics/code-bias.md	topic page of the closed material		1	1
+docs/topics/config-ledger.md	stay		the ledger's own page	CLAUDE.md	2	3
+docs/topics/consumer.md	move	docs/record/topics/consumer.md	topic page of the closed material		1	1
+docs/topics/harness.md	move	docs/record/topics/harness.md	topic page of the closed material		1	2
+docs/topics/history.md	move	docs/record/topics/history.md	topic page of the closed material		0	1
+docs/topics/ionosphere.md	move	docs/record/topics/ionosphere.md	topic page of the closed material	docs/refound/AB1_sh_consumer_product_2026-09-20.md	1	3
+docs/topics/network-vehicle.md	move	docs/record/topics/network-vehicle.md	topic page of the closed material		1	6
+docs/topics/perf.md	move	docs/record/topics/perf.md	topic page of the closed material		1	1
+docs/topics/queues.md	move	docs/record/topics/queues.md	topic page of the closed material		0	2
+docs/topics/raim-qc.md	move	docs/record/topics/raim-qc.md	topic page of the closed material		1	7
+docs/topics/realtime.md	move	docs/record/topics/realtime.md	topic page of the closed material	docs/status/OPEN_ITEMS.md	1	2
+docs/topics/resume-seam.md	move	docs/record/topics/resume-seam.md	topic page of the closed material		1	1
+docs/topics/sim-bed.md	move	docs/record/topics/sim-bed.md	topic page of the closed material		1	2
+docs/topics/slip.md	move	docs/record/topics/slip.md	topic page of the closed material		1	3
+docs/topics/wire-contract.md	move	docs/record/topics/wire-contract.md	topic page of the closed material		1	3
+docs/turbo_edit_lli_bridge_design.md	move	docs/record/turbo_edit_lli_bridge_design.md	document not cited by an active file		3	3

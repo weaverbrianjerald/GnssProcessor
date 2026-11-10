@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Scorecard for the D5 churn-card arms (docs/SPEC_d5_churn_limit_cycle.md).
+"""Scorecard for the D5 churn-card arms (docs/record/SPEC_d5_churn_limit_cycle.md).
 
 Two of the card's four grading axes, side by side across arms:
 

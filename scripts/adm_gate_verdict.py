@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Grade the docs/SPEC_measurement_admission.md §7 gates from the arm run dirs.
+"""Grade the docs/record/SPEC_measurement_admission.md §7 gates from the arm run dirs.
 
 Companion to ``adm_make_arms.py``.  Reads only committed artifacts
 (``network_events.csv``, ``network_epoch_status.csv``, ``main_log.log``) so a

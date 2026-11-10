@@ -600,7 +600,7 @@ int networkSdEwlRunEnd(const NetworkRunEndView& v) {
                   "no-detector count means phase_leveling / cycle_slip.mw_detect "
                   "are off or every station is the clock datum.)", lead);
     }
-    // --- Integer path, increments 2a and 2b (docs/SPEC_sd_ewl_prereduce.md §8) ------
+    // --- Integer path, increments 2a and 2b (docs/record/SPEC_sd_ewl_prereduce.md §8) ------
     if (config_.getNetworkConfig().sd_ewl.fix_enable) {
         const auto& K = ctx.counters;
         log->info("Network (SD EWL integer fix, 2a decision): {} epoch(s), {} "
@@ -703,7 +703,7 @@ StationStep networkSdEwlStationRows(StationBuild& build) {
     std::map<int, int>& h2local = R.h2local;
     // ---- End of the bindings ----
 
-    // --- SD pre-reduce EWL constraint (docs/SPEC_sd_ewl_prereduce.md) --------
+    // --- SD pre-reduce EWL constraint (docs/record/SPEC_sd_ewl_prereduce.md) --------
     // Appended after the iono rows and before the block reaches
     // addStationObservations, so it folds into N_rr/N_sr/N_ss pre-reduce and
     // composes exactly with the post-reduce DD fold.  Off by default;
@@ -718,7 +718,7 @@ StationStep networkSdEwlStationRows(StationBuild& build) {
     return StationStep::Next;
 }
 
-// SD pre-reduce EWL constraint (docs/SPEC_sd_ewl_prereduce.md): the between-satellite
+// SD pre-reduce EWL constraint (docs/record/SPEC_sd_ewl_prereduce.md): the between-satellite
 // single-differenced extra-wide-lane MW statistic as a pseudo-observation row in this
 // station's own pre-reduce block.  The declaration in app/Application.hpp documents the
 // algebra and the thread-safety contract.  Off by default: the function then returns

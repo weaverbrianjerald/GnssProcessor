@@ -22,7 +22,7 @@
  * over the sphere, a_00 is the global mean VTEC of the field.
  *
  * This header provides three reusable, filter-free pieces (Stage 0 of
- * docs/network_global_sh_iono_design_2026-06-29.md):
+ * docs/record/network_global_sh_iono_design_2026-06-29.md):
  *   1. @ref computeIppGeometry: the single-layer pierce-point geometry
  *      (elevation, thin-shell mapping, IPP lat/lon), shared by the SH model and
  *      the legacy @ref GlobalIonosphereMap so both use one implementation.

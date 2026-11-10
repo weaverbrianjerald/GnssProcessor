@@ -526,7 +526,7 @@ namespace GnssProcessor {
          * The flat, container-free row shape of @c constellation_canonical_, so a
          * caller (the network producer's state snapshot) can carry the latch across
          * a process boundary without naming the nested map type.  RS-8,
-         * docs/SPEC_event_harness.md §21.16.
+         * docs/record/SPEC_event_harness.md §21.16.
          */
         struct CanonicalSignal {
             std::string constellation;   /**< System display name, e.g. "GPS". */

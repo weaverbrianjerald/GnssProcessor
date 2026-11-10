@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Oracle-pin driver: the leg matrix for docs/SPEC_oracle_pin.md.
+"""Oracle-pin driver: the leg matrix for docs/record/SPEC_oracle_pin.md.
 
 The card (SPEC_event_harness.md §17): hold some or all of the producer's float
 ambiguities at the fixture's true integers and grade the remaining parameters

@@ -1,7 +1,7 @@
 /**
  * @file test_resume_hold_restore.cpp
  * @brief Contract tests for the emit-side phase-bias hold across the resume seam
- *        (card CRS2, docs/refound/CRS2_resume_hold_and_latches_2026-11-06.md): the
+ *        (card CRS2, docs/record/refound/CRS2_resume_hold_and_latches_2026-11-06.md): the
  *        snapshot's hold records (@c PH per held key, @c PHM per constellation, @c PHC /
  *        @c PHF per satellite), their entity round trips, the loader's side of the two
  *        knobs (@c network.state_snapshot_hold_capture, @c network.resume_hold_restore),

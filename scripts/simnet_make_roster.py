@@ -60,7 +60,7 @@ import sys
 # --------------------------------------------------------------------------- #
 # The §29.5 empirical receiver-GF-bias model
 # --------------------------------------------------------------------------- #
-# docs/SPEC_level_information_budget.md §29.5 measured the field's receiver
+# docs/record/SPEC_level_information_budget.md §29.5 measured the field's receiver
 # C1C-C2W geometry-free hardware biases over the 61-station ext63 roster:
 #
 #     network mean     ~ -5 ns  ~ -1.55 m of GF code  ~ -15 slant TECU

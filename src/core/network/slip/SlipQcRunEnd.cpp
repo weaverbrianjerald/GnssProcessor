@@ -55,7 +55,7 @@ static int networkSlipMwRelevelRunEnd(const NetworkRunEndView& v) {
     const std::shared_ptr<spdlog::logger>& log = v.log;
     const SlipQcChannel& slip_qc = v.run.engines.slip_qc;
 
-    // --- Slip-QC hardening run-end telemetry (docs/SPEC_slip_qc_hardening.md) ---
+    // --- Slip-QC hardening run-end telemetry (docs/record/SPEC_slip_qc_hardening.md) ---
     // All-zero counters on an armed run mean a miswire, not a quiet run (invariant #4).
     // The MW-detect line prints whenever mw_detect is on and counts detections as well as
     // refloats, because a refloat-only count makes the funnel wiring look dead on a cold
@@ -340,7 +340,7 @@ static int networkSlipWindupMwRunEnd(const NetworkRunEndView& v) {
             log->info("Network (wind-up gap bridge): {} further attempt(s) not listed.", b.attempts - printed);
     }
 
-    // ---- Anchor-slip handover (docs/SPEC_event_harness.md §12.7) ------------
+    // ---- Anchor-slip handover (docs/record/SPEC_event_harness.md §12.7) ------------
     // These counters are the ON-path telemetry (invariant #4).  A slip that lands on a
     // gauge arc is a different event from one that lands anywhere else, so an armed run
     // reporting 0 staged on a lineage whose detectors fired has not shown the network

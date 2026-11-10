@@ -2,7 +2,7 @@
  * @file test_network_slip_qc.cpp
  * @brief Unit coverage of the shared raw slip-observable seam
  *        (slip/NetworkRawObservables) that the LLI qualification and the gap instrument of the slip-QC
- *        hardening decide on: docs/SPEC_slip_qc_hardening.md §3 (requirement M6)
+ *        hardening decide on: docs/record/SPEC_slip_qc_hardening.md §3 (requirement M6)
  *        and §5 (requirement G1).
  *
  * Three layers are exercised, bottom-up:

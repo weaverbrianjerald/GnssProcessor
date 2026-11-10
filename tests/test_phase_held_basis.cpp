@@ -4,7 +4,7 @@
  *        (@c network.phase_datum_held_basis, @c phase_anchor_min_age_ep,
  *        @c phase_anchor_flag_quiet_ep).
  *
- * Document: docs/refound/RF-1_steps345_mechanism_2026-09-15.md, last section.
+ * Document: docs/record/refound/RF-1_steps345_mechanism_2026-09-15.md, last section.
  *
  * Rationale.  Under RF-1 every network ambiguity is a float state with a
  * covariance, including the one ambiguity that realizes each satellite's

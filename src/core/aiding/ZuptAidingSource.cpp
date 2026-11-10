@@ -2,7 +2,7 @@
  * @file ZuptAidingSource.cpp
  * @brief Zero-velocity-update aiding source (row-contributing client).
  *
- * @see docs/aiding_source_abstraction_design.md
+ * @see docs/record/aiding_source_abstraction_design.md
  */
 
 #include "aiding/ZuptAidingSource.hpp"

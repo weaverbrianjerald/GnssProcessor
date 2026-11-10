@@ -8,7 +8,7 @@
  * RealTimeEngine::processEpoch); KalmanFilter::predictImu has no call sites
  * outside its own definition.
  *
- * @see docs/aiding_source_abstraction_design.md
+ * @see docs/record/aiding_source_abstraction_design.md
  */
 
 #include "aiding/ImuAidingSource.hpp"

@@ -2,8 +2,8 @@
  * @file test_sat_gf_extra_band_free.cpp
  * @brief Tests for @c network.sat_gf_extra_band_free, the band-5 code datum.
  *
- * Document: docs/refound/B5D_band5_code_datum_2026-09-20.md (requirements R1..R3, R7);
- * evidence: docs/refound/TBI_three_band_ignition_2026-09-20.md section 5.
+ * Document: docs/record/refound/B5D_band5_code_datum_2026-09-20.md (requirements R1..R3, R7);
+ * evidence: docs/record/refound/TBI_three_band_ignition_2026-09-20.md section 5.
  *
  * RF-0d pins every registered code column beyond the ionosphere-free pair through its
  * geometry-free combination at @c c*T_GD, which asserts an inter-signal correction of

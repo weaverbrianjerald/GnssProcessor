@@ -3,14 +3,14 @@
     python scripts/parse_carry_psd.py <snapshot.bin> [more_snapshots ...] [--fresh 1e6]
                                       [--top N] [--json OUT.json] [--quiet]
 
-docs/SPEC_pd_safe_dd_fold.md §7.1.  Positive-definiteness of the carried Pz is an
+docs/record/SPEC_pd_safe_dd_fold.md §7.1.  Positive-definiteness of the carried Pz is an
 algebraic invariant of the exact invariant-carry recursion: independent chords give a
 full-row-rank projection W, so W·PSD·Wᵀ plus a fresh diagonal is PD, and the exact
 posterior of a PD prior is PD.  It can therefore break only numerically, and when it does
 the fold's `M := 0` branch freezes the whole block silently and permanently.  A frozen
 block still reports PD (its rows never move enough to go non-finite or negative), so a
 large share of a lineage's carried state can sit frozen without failing a naive PD check;
-see docs/SPEC_pd_safe_dd_fold.md §7.1 for the field measurement that motivated this gate.
+see docs/record/SPEC_pd_safe_dd_fold.md §7.1 for the field measurement that motivated this gate.
 
 The gate, per block:
   * PD            : the correlation-normalized spectrum is strictly positive.  Graded

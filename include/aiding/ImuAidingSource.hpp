@@ -20,7 +20,7 @@
  * StateManager indices are resolved live each epoch (no cached indices), per the
  * design.
  *
- * Migration staging (docs/aiding_source_abstraction_design.md, "IMU migration
+ * Migration staging (docs/record/aiding_source_abstraction_design.md, "IMU migration
  * plan"): the contributions implemented here are the live path via
  * predictAided / collectPredict; the IMU-only KalmanFilter predict they replaced
  * no longer exists.

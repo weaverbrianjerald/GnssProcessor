@@ -1,4 +1,4 @@
-// Unit tests for NetworkCarryVceApply (M2 v2, docs/SPEC_carry_vce_apply.md): the
+// Unit tests for NetworkCarryVceApply (M2 v2, docs/record/SPEC_carry_vce_apply.md): the
 // LASER variance-factor iteration (NGS LASER Guide v2.7 slides 5-93..5-95; Koch 1999
 // sections 3.6.1-3.6.2) driven over the M2 monitor.
 //

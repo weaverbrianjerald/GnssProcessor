@@ -61,7 +61,7 @@ struct ScriptedSlip {
 
 /**
  * @brief A per-observable receiver bias injected as truth
- *        (docs/SPEC_synthetic_minimum_network.md §3, §4.5).
+ *        (docs/record/SPEC_synthetic_minimum_network.md §3, §4.5).
  *
  * Without these records the only receiver-side bias in the simulator is the
  * scalar GPS->Galileo ISB, added identically to Galileo code and phase, so every
@@ -87,7 +87,7 @@ struct RxBias {
  * The network driver does not synthesize stations in-process: it re-invokes the
  * executable once per station as a child process (the mechanism the `all`
  * subcommand already uses for `spp-reference`).  An in-process loop is unsafe
- * (docs/SPEC_synthetic_minimum_network.md §1) for two reasons: a second
+ * (docs/record/SPEC_synthetic_minimum_network.md §1) for two reasons: a second
  * @c EphemerisProvider re-registers the spdlog logger name and the catch handler
  * re-throws out of the process, and a shared provider carries three
  * station-dependent quantities with no per-station setter (the phase wind-up
@@ -180,7 +180,7 @@ struct SimConfig {
     } multipath;
 
     /// Coloured carrier-phase error (
-    /// docs/refound/SFR_sim_fixture_coloured_phase_2026-10-01.md section 2): one
+    /// docs/record/refound/SFR_sim_fixture_coloured_phase_2026-10-01.md section 2): one
     /// unit-variance first-order Gauss-Markov process per line of sight, scaled by
     /// @c sigma_zen_m and the white phase noise's elevation factor
     /// (1/sin(max(el, floor))), with a stationary start and phi = exp(-dt/tau) across

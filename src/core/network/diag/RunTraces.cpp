@@ -4,7 +4,7 @@
  *        (paths and CSV headers), the row writers, CSV rotation, the run manifest,
  *        the run-summary and flag-rate CSVs, and the teardown close list.  The open
  *        logic was relocated verbatim from ApplicationNetwork.cpp (decomposition
- *        INC-3; see docs/network_decomposition_plan.md).
+ *        INC-3; see docs/record/network_decomposition_plan.md).
  */
 
 #include "network/diag/RunTraces.hpp"
@@ -320,7 +320,7 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
             // ambiguities under the prioritized one.
             // sigma_carry_aware is appended (readers read columns by name): 1 =
             // dd_sigma_cyc comes from the carry-aware readback
-            // (docs/SPEC_carry_aware_covariance.md), 0 = the carry-blind N_rr⁻¹ form.
+            // (docs/record/SPEC_carry_aware_covariance.md), 0 = the carry-blind N_rr⁻¹ form.
             // Without the flag a reader cannot tell a σ from a covariance that includes
             // the carry from one that does not.
             dd_frac_trace << "week,tow,cons,signal,sat_i,ref_sat,sta_a,sta_b,"
@@ -403,16 +403,16 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
                       slip_raw_trace_path.string());
         }
     }
-    // Measurement-admission census schema flag (docs/SPEC_measurement_admission.md
+    // Measurement-admission census schema flag (docs/record/SPEC_measurement_admission.md
     // INC-3), decided once, here, so the header below and every row written by
     // emitEpochStatus agree by construction.  Screening implies the columns
     // (spec §5).
     es_adm_columns_ = nc.adm_trace || nc.adm_screen;
-    // Prior-residual census schema flag (docs/SPEC_prior_residual_census.md),
+    // Prior-residual census schema flag (docs/record/SPEC_prior_residual_census.md),
     // decided at the same single point for the same reason; unarmed, the
     // epoch-status file is structurally byte-identical.
     es_prires_columns_ = nc.prior_residual_census;
-    // Constraint-aware global σ̂₀ (docs/SPEC_prior_residual_census.md §14) has a
+    // Constraint-aware global σ̂₀ (docs/record/SPEC_prior_residual_census.md §14) has a
     // schema flag of its own, so a census-only run keeps the census columns alone
     // and the census's §9.1 A/B stays a valid comparison.
     es_s0g_columns_ = nc.prior_residual_census && nc.prior_residual_global_sigma0;
@@ -447,7 +447,7 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
                                   "n_d5_flags,n_d5_retaps,n_chord_births,n_slip_refloats,"
                                   "n_dw_engaged,n_dw_zero,dw_min_w,dw_mean_w,"
                                   "sigma0_pf,sigma0_pf_code,sigma0_pf_phase,n_pf_rows,"
-                                  // docs/SPEC_redundancy_census.md INC-1/INC-2:
+                                  // docs/record/SPEC_redundancy_census.md INC-1/INC-2:
                                   // blank on epochs the census did not sweep.
                                   "n_redun_rows,n_uncheckable_rows,uncheckable_max_s,"
                                   "n_unobservable_local,"
@@ -459,7 +459,7 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
                                   "pc_phase_max_s,pc_phase_p99_s,pc_phase_n10,pc_phase_n1k,"
                                   "pc_other_max_s,pc_other_p99_s,pc_other_n10,pc_other_n1k,"
                                   "pc_sh_max_s,pc_sh_p99_s,pc_sh_n10,pc_sh_n1k,"
-                                  // docs/SPEC_pd_safe_dd_fold.md INC-0: the DD-prior
+                                  // docs/record/SPEC_pd_safe_dd_fold.md INC-0: the DD-prior
                                   // fold's PD screen, which observes the branch that
                                   // sets `M := 0` on a non-PD Pᶻ+B.  Unconditional,
                                   // like the redundancy and prefit columns and unlike
@@ -468,7 +468,7 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
                                   // the invariant carry did not fold on.
                                   "ddfold_degen_blocks,ddfold_degen_rows,"
                                   "ddfold_min_pivot_rel"
-                               // docs/SPEC_measurement_admission.md INC-3: the
+                               // docs/record/SPEC_measurement_admission.md INC-3: the
                                // absolute, product-referenced |z| census.  Appended
                                // only when the admission census is armed, unlike the two
                                // censuses above, whose unconditional columns change
@@ -482,7 +482,7 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
                                // events).
                                << (es_adm_columns_
                                        ? ",adm_sta_worst_z,adm_net_worst_z" : "")
-                               // docs/SPEC_prior_residual_census.md: the per-epoch
+                               // docs/record/SPEC_prior_residual_census.md: the per-epoch
                                // summary of the carry-prior census.  Appended only
                                // when the prior-residual census is armed (as for adm, unlike the
                                // redundancy and prefit columns), because its
@@ -496,7 +496,7 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
                                        ? ",prires_rows,prires_rows_resp,prires_rows_frame,"
                                          "prires_n_reported,prires_max_t"
                                        : "")
-                               // docs/SPEC_prior_residual_census.md §14: the
+                               // docs/record/SPEC_prior_residual_census.md §14: the
                                // constraint-aware global variance component.
                                // sigma0_global is the LASER 5-74 scale (prior
                                // residuals in the numerator, constraints in the
@@ -513,7 +513,7 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
                                // (SPEC_pivot_visibility_gauge_defect §5.07.5, R0),
                                // present iff the tier is armed.  sigma0_first is the
                                // pre-adaptation σ̂₀, the null sample needed by item 4
-                               // of docs/QUEUE_principled_replacements.md;
+                               // of docs/record/QUEUE_principled_replacements.md;
                                // n_we_refloat_sats is the tier's own whole-sat
                                // refloat count (n_refloat_sats is the clock-couple
                                // set, empty unless clock_monitor_couple_raim);
@@ -778,7 +778,7 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
                       arc_ledger_trace_path.string());
     }
     if (nc.trace_phase_anchor) {
-        // Anchor partition (docs/SPEC_lane_spectrometer.md §3.3, S1).  One row per
+        // Anchor partition (docs/record/SPEC_lane_spectrometer.md §3.3, S1).  One row per
         // gauge-pinned ambiguity: `anchor_sta` is the station whose ambiguity pin
         // realizes the phase datum for that (constellation, signal, satellite)
         // freedom.  Under the legacy single-pivot datum every freedom is pinned at the
@@ -897,7 +897,7 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
                       carry_vce_apply_trace_path.string());
     }
     if (nc.prior_residual_census) {
-        // docs/SPEC_prior_residual_census.md INC-1: the exceedance ladder, the
+        // docs/record/SPEC_prior_residual_census.md INC-1: the exceedance ladder, the
         // census's main product.  Durability: the census seam flushes this stream on
         // each content-hour roll, so a killed run keeps every completed content
         // hour.  (Of the streams owned here, only health_trace, armed by
@@ -910,7 +910,7 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
                       prior_residual_trace_path.string());
     }
     if (nc.block_baarda) {
-        // docs/SPEC_redundancy_census.md BB-INC-1: the per-(family x label) exceedance
+        // docs/record/SPEC_redundancy_census.md BB-INC-1: the per-(family x label) exceedance
         // ladder over t_B, the census's main product.  Nothing flushes this stream
         // before teardown (network.health_interval_s flushes only health_trace), so
         // a killed run loses the rows still buffered.
@@ -922,7 +922,7 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
                       block_baarda_trace_path.string());
     }
     if (nc.congruence_screen) {
-        // docs/SPEC_redundancy_census.md CG-INC-1: one row per swept station per
+        // docs/record/SPEC_redundancy_census.md CG-INC-1: one row per swept station per
         // epoch.  This file is the census's main product: the spec's §7.2 perturbed
         // arm is graded on a per-station run median of `d_e`, and its §7.3 MDB table
         // is built from `mdb_*`; neither survives aggregation into a ladder.  As
@@ -936,7 +936,7 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
                       congruence_trace_path.string());
     }
     if (nc.mdb) {
-        // docs/SPEC_redundancy_census.md MDB-INC-1: the per-(constellation x
+        // docs/record/SPEC_redundancy_census.md MDB-INC-1: the per-(constellation x
         // class) MDB distribution, the census's main product.  Not flushed before
         // teardown either (network.health_interval_s flushes only health_trace).
         mdb_trace.open(mdb_trace_path);
@@ -955,7 +955,7 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
             log->warn("Network (VCF): failed to open trace {}", vcf_trace_path.string());
     }
     if (nc.datum_graph_census) {
-        // docs/SPEC_datum_graph_census.md INC-2: the predicted-versus-observed
+        // docs/record/SPEC_datum_graph_census.md INC-2: the predicted-versus-observed
         // S-basis dimension contingency, the census's main product.  Not flushed
         // before teardown either (network.health_interval_s flushes only
         // health_trace).
@@ -1130,7 +1130,7 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
         station_factor_trace.open(station_factor_trace_path);
         if (station_factor_trace)
             // Per-station variance factor (SPEC_t3_null_derivation §6/§7.5; R2 of
-            // item 4 in docs/QUEUE_principled_replacements.md).  factor = the
+            // item 4 in docs/record/QUEUE_principled_replacements.md).  factor = the
             // per-epoch trimmed variance component Σw·v²/Σr_i (−1 = no checkable
             // redundancy this epoch; unavailable is not 0); ewma = the slow
             // declared channel; ratio = ewma / network median of ewmas (the
@@ -1366,7 +1366,7 @@ void NetworkRunTraces::emitEpochStatus(const GnssTime& t, const char* dispositio
         // only when the tier is armed (see the header write in openAll).  Blank on
         // an epoch the tier did not assess (unavailable is not 0).  The distinction
         // matters here: a genuine σ̂₀_first value is a sample of the null that item 4
-        // of docs/QUEUE_principled_replacements.md fits, and a written 0 would
+        // of docs/record/QUEUE_principled_replacements.md fits, and a written 0 would
         // corrupt that fit.
         if (es_we_columns_) {
             o << ',';
@@ -1896,7 +1896,7 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                                      nc.extra_band_code_sigma_scale)
                        : std::string())
                // The ambiguity vehicle is part of the product's provenance, so the
-               // manifest records it (RF-1; docs/refound/RF-1_float_ambiguities_design.md
+               // manifest records it (RF-1; docs/record/refound/RF-1_float_ambiguities_design.md
                // §7.1).  Emitted only when the posture is non-default (as for
                // trace_postfit_rows and trace_station_block above), so an unarmed run's
                // manifest bytes are unchanged.
@@ -1982,7 +1982,7 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                << ((nc.gross_los_cold_bound_m > 0.0)
                        ? fmt::format("\"gross_los_cold_bound_m\":{},", nc.gross_los_cold_bound_m)
                        : std::string())
-               // docs/SPEC_measurement_admission.md: the arm provenance a §7 grader
+               // docs/record/SPEC_measurement_admission.md: the arm provenance a §7 grader
                // needs to tell a screened leg from its control without re-reading the
                // config and, because `adm_screen` affects the solve, to know that the
                // two legs are not like for like.  Emitted only when armed, so an
@@ -2027,7 +2027,7 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                                          return k;
                                      }())
                        : std::string())
-               // docs/SPEC_redundancy_census.md: the arm provenance a §11.6 grader
+               // docs/record/SPEC_redundancy_census.md: the arm provenance a §11.6 grader
                // needs to tell a reliability leg from its control without re-reading
                // the config.  Emitted only when armed, so an unarmed run's manifest
                // bytes are unchanged (as for adm_screen; the decomposition golden
@@ -2226,7 +2226,7 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                        ? fmt::format("\"resume_d5_warmup_ep\":{},",
                                      config_.networkResumeD5WarmupEp())
                        : std::string())
-               // The gap re-entry response (docs/SPEC_slip_qc_hardening.md
+               // The gap re-entry response (docs/record/SPEC_slip_qc_hardening.md
                // §G3/W1) affects the solve, so an archived logs/ folder has to be able
                // to say which side of the response its products came from.  Emitted
                // only when armed (as for adm_screen and mdb), so an unarmed run's

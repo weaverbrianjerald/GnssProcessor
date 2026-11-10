@@ -33,7 +33,7 @@
  * @c PredictContribution with @c valid==false), the same signals the no-source
  * fast path keys on, so simple sources (ZUPT, baro) implement almost nothing.
  *
- * @see docs/aiding_source_abstraction_design.md
+ * @see docs/record/aiding_source_abstraction_design.md
  */
 
 #include "aiding/AidingTypes.hpp"

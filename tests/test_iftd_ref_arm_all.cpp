@@ -2,7 +2,7 @@
  * @file test_iftd_ref_arm_all.cpp
  * @brief Gates for the reference-satellite slip arm on the additional IF-TD gradient
  *        chains (`network.cycle_slip.if_phase_td_ref_arm_all`,
- *        docs/SPEC_event_harness.md §22.6, REF-FAN), and for the fan-out it removes.
+ *        docs/record/SPEC_event_harness.md §22.6, REF-FAN), and for the fan-out it removes.
  *
  * ### The fan-out
  *

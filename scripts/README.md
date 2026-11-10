@@ -49,7 +49,7 @@ The split, its hash proof, and the index gate. See `docs/INDEX.md`.
 | --- | --- | --- |
 | `docs_index_check.py` | Gate for the docs/ topic tree. Run it before any docs commit. | 6 |
 | `docs_split.py` | Split a docs/ monolith into one-card-per-file, VERBATIM and verifiably. | 6 |
-| `gen_docs_index.py` | Generate docs/README.md — a navigable index of the docs/ corpus. python scripts/gen_docs_index.py # write docs/README.md python scripts/gen_docs_inde… | 1 |
+| `gen_docs_index.py` | Generate docs/record/README.md — a navigable index of the docs/ corpus. python scripts/gen_docs_index.py # write docs/record/README.md python scripts/gen_docs_inde… | 1 |
 
 ## Config generation and posture
 
@@ -96,17 +96,17 @@ Fetching, converting and laying out inputs.
 
 ## Event harness
 
-Leg launch and grading for `docs/topics/harness.md`.
+Leg launch and grading for `docs/record/topics/harness.md`.
 
 | script | purpose | refs |
 | --- | --- | --- |
 | `ev_coldfb_census.py` | COLD ANCHOR-FALLBACK card, STEP 1 — the family-selection census (no runs). Answers, from a seed run's OWN traces, the question the card's harness leg… | 2 |
 | `ev_consumer_invariant_grade.py` | The DATUM-INVARIANT consumer census (SPEC_event_harness §15.10). Why it exists. The storm arms of the cold anchor-fallback card were graded on the cl… | 6 |
-| `ev_dose_legs.py` | EVENT HARNESS — slip-DOSE legs (Study 4, docs/SPEC_event_harness.md §12). The single-event legs price ONE event. A dose leg prices a SCHEDULE: a conv… | 6 |
+| `ev_dose_legs.py` | EVENT HARNESS — slip-DOSE legs (Study 4, docs/record/SPEC_event_harness.md §12). The single-event legs price ONE event. A dose leg prices a SCHEDULE: a conv… | 6 |
 | `ev_launch.ps1` | Detached run launcher for the event harness: runs the producer with cwd=rundir (so ./logs/ cannot collide with a concurrent run) and always writes ex… | 9 |
 | `ev_mw_detect_census.py` | EVENT HARNESS — census of 'MW slip detected' lines in mw_slip_detector*.log: lane wavelength, arc age, evidence ratio \|dev\|/thresh, integer known?,… | 2 |
-| `ev_oracle_pin_grade.py` | ORACLE PIN grader — gates G1..G4 of docs/SPEC_oracle_pin.md. Every cell comes from a TRUTH grader, never a raw wire step (standing invariant #5 / the… | 2 |
-| `ev_oracle_pin_legs.py` | ORACLE PIN driver — the leg matrix for docs/SPEC_oracle_pin.md. The card (SPEC_event_harness.md §17): hold some or all of the producer's float ambigu… | 2 |
+| `ev_oracle_pin_grade.py` | ORACLE PIN grader — gates G1..G4 of docs/record/SPEC_oracle_pin.md. Every cell comes from a TRUTH grader, never a raw wire step (standing invariant #5 / the… | 2 |
+| `ev_oracle_pin_legs.py` | ORACLE PIN driver — the leg matrix for docs/record/SPEC_oracle_pin.md. The card (SPEC_event_harness.md §17): hold some or all of the producer's float ambigu… | 2 |
 | `ev_seam_grade.py` | WARM-RESUME SEAM grader (card RS-2) — a NULL leg against its own SEED's traces. python scripts/ev_seam_grade.py runs/evleg_rs_null_nocarry \ --seed r… | 7 |
 | `ev_slip_census.py` | EVENT HARNESS — detector-coverage census over injected slips (SPEC_event_harness §13.1): for each schedule row, what caught it (within +0..+2 epochs,… | 2 |
 | `ev_slot.py` | Box-wide PRODUCER SLOT locks for the event harness (standing cap: 2 concurrent gnss_processor runs). python scripts/ev_slot.py claim <worker> [--max-… | 3 |
@@ -115,7 +115,7 @@ Leg launch and grading for `docs/topics/harness.md`.
 | `ev_study3_legs.py` | EVENT HARNESS Study 3 driver — the BAND-SCOPED response leg matrix (§Z). Study 1 measured that the persistent ~0.45-cycle level floor an erase or a w… | 3 |
 | `ev_study3_table.py` | EVENT HARNESS Study 3 — the BAND-SCOPED response summary table (§Z). Same reduction as ``ev_study1_table.py`` (which it reuses wholesale), over the S… | 2 |
 | `ev_study7_gates.py` | Study 7 storm-arm gates (SPEC_event_harness s16.4-s16.5; promoted from the manager scratchpad 2026-09-11) W1/W2/G4/W3(handovers) for arm B against A … | 3 |
-| `event_dose_grade.py` | EVENT HARNESS — the slip-DOSE grader (Study 4, docs/SPEC_event_harness.md §12). ``scripts/event_grade.py`` prices ONE event on ONE arc; ``event_frame… | 5 |
+| `event_dose_grade.py` | EVENT HARNESS — the slip-DOSE grader (Study 4, docs/record/SPEC_event_harness.md §12). ``scripts/event_grade.py`` prices ONE event on ONE arc; ``event_frame… | 5 |
 | `event_field_grade.py` | FIELD EVENT-HARNESS grader — truth-free, everything is EVENT minus NULL. python scripts/event_field_grade.py runs/evleg_fld_e1_off \ --null runs/evle… | 6 |
 | `event_frame_grade.py` | EVENT HARNESS — the STATION-FRAME channels (Study 2's instrument). ``scripts/event_grade.py`` grades the injected ARC and the WIRE. This grades the s… | 13 |
 | `event_grade.py` | EVENT HARNESS grader — one injected event, read against its NULL leg. python scripts/event_grade.py runs/evleg_<name> --null runs/evleg_<null> \ --fi… | 19 |
@@ -123,29 +123,29 @@ Leg launch and grading for `docs/topics/harness.md`.
 
 ## Simulated truth bed (simnet)
 
-Fixture build, truth grading, reporting — `docs/topics/sim-bed.md`.
+Fixture build, truth grading, reporting — `docs/record/topics/sim-bed.md`.
 
 | script | purpose | refs |
 | --- | --- | --- |
 | `s2z_p2_grade.py` | SPEC_s2z_realization_ab Phase-2 grading — P1(a,c) + P2 (wire damage). All statistics datum-invariant (standing invariant #5 is doubly binding: the tw… | 1 |
 | `s2z_smoke_check.py` | SPEC_s2z_realization_ab Phase-0/1 smoke assertions (staged-cadence gate). Run against the 10-epoch s2z smoke (runs/s2z_ab/smoke) BEFORE the 6 h seed … | 1 |
-| `simnet_amb_integer.py` | SYNTHETIC MINIMUM NETWORK — the ambiguity-INTEGER grader (docs/SPEC_synthetic_minimum_network.md §13.6 (method rules §13.8); SPEC_synthetic_minimum_n… | 307 |
+| `simnet_amb_integer.py` | SYNTHETIC MINIMUM NETWORK — the ambiguity-INTEGER grader (docs/record/SPEC_synthetic_minimum_network.md §13.6 (method rules §13.8); SPEC_synthetic_minimum_n… | 307 |
 | `simnet_bridge_truth.py` | Truth audit of relevel delta-bridge REPLACE events against the sim fixture. Joins a run's ``bridge_replace`` event rows (logs/network_events.csv, tie… | 2 |
-| `simnet_common_mode.py` | SYNTHETIC NETWORK — fleet-common C-record wander extractor / A-B comparator. docs/SPEC_synthetic_minimum_network.md §9.8 (the datum-wander arm). On t… | 5 |
+| `simnet_common_mode.py` | SYNTHETIC NETWORK — fleet-common C-record wander extractor / A-B comparator. docs/record/SPEC_synthetic_minimum_network.md §9.8 (the datum-wander arm). On t… | 5 |
 | `simnet_dd_reref.py` | REFERENCE-SATELLITE re-referencing of the DD-integer grade (SPEC_amb_iono_split_overcount §6.12, 2026-09-06). The producer's DD trace (network_dd_fra… | 27 |
 | `simnet_drift_age.py` | simnet_drift_age.py -- STABILITY target 1: settled late drift vs carry age. The 12 h quiet flagship (_camp60wu_quiet12h_r2q3) rises h7->h11 in settle… | 3 |
-| `simnet_exchange.py` | SYNTHETIC W6+SH ARM — the clock <-> receiver-DCB <-> ionosphere EXCHANGE signature. docs/SPEC_synthetic_minimum_network.md §11 item 4. WHY THIS TOOL … | 14 |
-| `simnet_grade.py` | SYNTHETIC MINIMUM NETWORK — the truth grader (docs/SPEC_synthetic_minimum_network.md §4). The first ABSOLUTE grade the network producer has ever had.… | 56 |
+| `simnet_exchange.py` | SYNTHETIC W6+SH ARM — the clock <-> receiver-DCB <-> ionosphere EXCHANGE signature. docs/record/SPEC_synthetic_minimum_network.md §11 item 4. WHY THIS TOOL … | 14 |
+| `simnet_grade.py` | SYNTHETIC MINIMUM NETWORK — the truth grader (docs/record/SPEC_synthetic_minimum_network.md §4). The first ABSOLUTE grade the network producer has ever had.… | 56 |
 | `simnet_inject_arms.py` | Build the FAULT arm of a slip-injection bench from an already-synthesized NULL arm. null fixture --(this script)--> fault sim config + injection mani… | 13 |
 | `simnet_inject_grade.py` | Grade a NULL/FAULT injection arm pair: detection, latency, false alarms, MDB. python scripts/simnet_inject_grade.py \\ --null-run runs/inj_null/run -… | 7 |
 | `simnet_injection_preflight.py` | Injection PRE-FLIGHT: is the mechanism you are about to inject at even ALIVE? A synthetic event-injection bench answers "does the response mechanism … | 6 |
 | `simnet_iono_interaction.py` | Per-LOS ionosphere interaction grade — the SPEC_t3_null_derivation §7.8 decomposition, promoted from the scratch join that produced the 0.764 m numbe… | 13 |
 | `simnet_lane_slip_age.py` | simnet_lane_slip_age.py -- WHERE does the lane-integer slip cost live? Follow-up to the wu93 campaign finding (SPEC_slip_relevel_walk.md section 9): … | 5 |
-| `simnet_level_authority_grade.py` | LV-6 G1 grader — the census operator applied to TRUTH. `docs/SPEC_level_authority_internal.md` §4 G1 / §5 item 5. The gate is corr(L_cs(t), censusOpe… | 2 |
+| `simnet_level_authority_grade.py` | LV-6 G1 grader — the census operator applied to TRUTH. `docs/record/SPEC_level_authority_internal.md` §4 G1 / §5 item 5. The gate is corr(L_cs(t), censusOpe… | 2 |
 | `simnet_make_seam_leg.py` | Generate a warm-resume BRANCH LEG of the 24 h quiet bed from its .ep snapshot library. STABILITY campaign (SPEC_synthetic_minimum_network §18.7 / §18… | 13 |
 | `simnet_oracle_grade.py` | ORACLE SLIP-RESPONSE REPAIR-EFFECT CENSUS — did the truth-fed repair actuate? `network.cycle_slip.oracle_relevel` (include/slip/SlipOracle.hpp… | 2 |
 | `simnet_plateau_decompose.py` | Plateau decomposition for the post-relevel-fix stationary ZWD/iono plateau (QUEUE 8b). Promoted from the 2026-08-20 session scratch join (docs/SPEC_i… | 8 |
-| `simnet_producer_ar_grade.py` | TRUTH GRADE of the producer's Phase-2 AR search (docs/network_ambiguity_resolution_design.md, the 2026-09-10 note §4.1: "a fix count is not a grade")… | 11 |
+| `simnet_producer_ar_grade.py` | TRUTH GRADE of the producer's Phase-2 AR search (docs/record/network_ambiguity_resolution_design.md, the 2026-09-10 note §4.1: "a fix count is not a grade")… | 11 |
 | `simnet_report.py` | One-command HTML dashboard for a SIMULATED NETWORK run. Chains the two halves that already exist, in the order the artifacts flow: 1. ``scripts/simne… | 7 |
 | `simnet_sat_clock_census.py` | simnet_sat_clock_census.py -- STABILITY target 3: per-sat settled clock tails. The 12 h quiet bed shows metre-class SETTLED clock tails on a few sate… | 13 |
 | `simnet_seam_tools.py` | simnet_seam_tools.py -- seam / wire-realization instruments for gnss_network_product v2. Seven read-only instruments over the producer wire (products… | 7 |
@@ -156,7 +156,7 @@ Fixture build, truth grading, reporting — `docs/topics/sim-bed.md`.
 
 ## Network vehicle, datum and the card drivers
 
-`docs/topics/network-vehicle.md`.
+`docs/record/topics/network-vehicle.md`.
 
 | script | purpose | refs |
 | --- | --- | --- |
@@ -177,7 +177,7 @@ Fixture build, truth grading, reporting — `docs/topics/sim-bed.md`.
 | `fp1_refslip_census.py` | REFERENCE-SLIP FAN-OUT census for the FP-1 field matrix. python scripts/fp1_refslip_census.py [--runs C:/GnssProcessor/runs] [--prefix fp1] [--json o… | 4 |
 | `fp2_leg_verify.py` | FP-2 per-leg PROVENANCE verification — the checks a gate table cannot do. python scripts/fp2_leg_verify.py [--runs C:/GnssProcessor/runs] [--prefix f… | 1 |
 | `grade_agu_arms.py` | Tabulate held-out consumer performance across runs / replay arms. Reads each run's ``logs/closed_loop_trace.csv`` and reports the FINAL-HOUR median e… | 1 |
-| `grade_pdfix_arms.py` | Side-by-side arm comparator for the PD-safe re-ask queue (docs/RUNQUEUE_pdfix_reask.md). python scripts/grade_pdfix_arms.py <run_dir> [<run_dir> ...]… | 8 |
+| `grade_pdfix_arms.py` | Side-by-side arm comparator for the PD-safe re-ask queue (docs/record/RUNQUEUE_pdfix_reask.md). python scripts/grade_pdfix_arms.py <run_dir> [<run_dir> ...]… | 8 |
 | `neq_svd.py` | Offline spectral analysis of a network NEQ export (logs/neq_export/). Usage: python neq_svd.py <export_dir> [n_weak] 1. Loads the full arrowhead (bor… | 3 |
 | `pv_consumer_read.py` | Card PV consumer read (SPEC_event_harness s24.11, the s24.3 instrument): the held-out closed-loop consumer's error against the roster position it alr… | 1 |
 | `tropo_arc_wander.py` | The FOURTH member: does the per-epoch ZWD state close the two-band budget of the DD-ambiguity/iono co-motion? (SPEC_amb_iono §6.15.3a item 5, peer de… | 3 |
@@ -185,7 +185,7 @@ Fixture build, truth grading, reporting — `docs/topics/sim-bed.md`.
 
 ## Warm resume and the seam
 
-`docs/topics/resume-seam.md`.
+`docs/record/topics/resume-seam.md`.
 
 | script | purpose | refs |
 | --- | --- | --- |
@@ -196,7 +196,7 @@ Fixture build, truth grading, reporting — `docs/topics/sim-bed.md`.
 
 ## Clock
 
-`docs/topics/clock.md`.
+`docs/record/topics/clock.md`.
 
 | script | purpose | refs |
 | --- | --- | --- |
@@ -210,20 +210,20 @@ Fixture build, truth grading, reporting — `docs/topics/sim-bed.md`.
 | `q3_ladder_grade.py` | Card Q3 ladder leg — one table per arm, scraped from the run console (SPEC §8). Everything here is an ON-PATH COUNTER or a run-end statistic the prod… | 4 |
 | `q3_ladder_queue.ps1` | Card Q3 ladder leg — the serialized 3 h arm queue (SPEC §8). | 2 |
 | `q3_ladder_queue2.ps1` | Card Q3 ladder leg — phase 2: the §3 k-CALIBRATION arms, then the consumer REPLAY of every graded arm (SPEC §8.4 gates 3 and 6). | 2 |
-| `q3_ladder_run.ps1` | Card Q3 ladder-leg arm runner (docs/SPEC_clock_temporal_anchor.md §8). | 15 |
+| `q3_ladder_run.ps1` | Card Q3 ladder-leg arm runner (docs/record/SPEC_clock_temporal_anchor.md §8). | 15 |
 | `q3_make_replay.py` | Generate consumer-REPLAY configs for Card Q3 ladder arms (SPEC §8.4 gate 3). The live closed-loop consumer runs inside the producer arm and is one in… | 3 |
 | `q3_mark_tieout.py` | Card Q3 §3 — the wire-mark TIE-OUT for one arm (SPEC §8.4 gate 5). A trip is graded as a POPULATION, and clause (b) of that grading is "it lands a wi… | 4 |
 | `q5_make_replay_arm.py` | Generate a Q5 consumer-replay arm config (SPEC_day129_frame_guards Phase 0). The replay driver (`Application::runConsumerReplay`, armed by `network.c… | 3 |
-| `q5_reanchor_hourly.py` | Re-anchor an already-run Q5 consumer-replay arm onto a different truth ECEF. Phase 0 of ``docs/SPEC_day129_frame_guards.md`` graded consumer NRMG00NC… | 4 |
+| `q5_reanchor_hourly.py` | Re-anchor an already-run Q5 consumer-replay arm onto a different truth ECEF. Phase 0 of ``docs/record/SPEC_day129_frame_guards.md`` graded consumer NRMG00NC… | 4 |
 
 ## Ionosphere and the level
 
-`docs/topics/ionosphere.md`.
+`docs/record/topics/ionosphere.md`.
 
 | script | purpose | refs |
 | --- | --- | --- |
 | `analyze_net_sh.py` | Analyze a 305-station global SH-VTEC network run for field divergence. Reads logs/network_vtec_sh.csv (week,tow,n,m,trig,value_tecu,std_tecu) and log… | 2 |
-| `census_gim_operator.py` | LV-6 gate G2 — censusOperator{GIM}, the sampling-matched GIM reference. `docs/SPEC_level_authority_internal.md` §4 G2 / §5.2. The gate is settled L_c… | 2 |
+| `census_gim_operator.py` | LV-6 gate G2 — censusOperator{GIM}, the sampling-matched GIM reference. `docs/record/SPEC_level_authority_internal.md` §4 G2 / §5.2. The gate is settled L_c… | 2 |
 | `extcb_gim_verdict.py` | GIM-referenced closing analysis for DEFECT 2. Per LOS (29 stations x ~10 sats x 5 epochs, el>20): y_tecu = [(P2W-osb2)-(P1C-osb1)]/KGF/M_TECU (slant … | 14 |
 | `extcb_raw_if_check.py` | Estimator-free per-satellite IF code residuals from raw RINEX + COD products. resid(sta,sat) = IF(C1C-osb, C2W-osb) - [ \|r_rx - r_apc\| - c*dt_CLK -… | 6 |
 | `field_apriori_clk_probe.py` | FIELD WIRE — a-priori CLK common-drift probe (SPEC_synthetic_minimum_network §9.9.1). §9.9 eliminated the receiver-code driver of the field wire's co… | 3 |
@@ -238,17 +238,17 @@ Fixture build, truth grading, reporting — `docs/topics/sim-bed.md`.
 
 ## Code bias and admission
 
-`docs/topics/code-bias.md`.
+`docs/record/topics/code-bias.md`.
 
 | script | purpose | refs |
 | --- | --- | --- |
-| `adm_gate_verdict.py` | Grade the docs/SPEC_measurement_admission.md §7 gates from the arm run dirs. Companion to ``adm_make_arms.py``. Reads only committed artifacts (``net… | 2 |
-| `adm_make_arms.py` | Build the validation arm configs for docs/SPEC_measurement_admission.md. Every arm derives from ONE base so the estimation configuration is identical… | 4 |
+| `adm_gate_verdict.py` | Grade the docs/record/SPEC_measurement_admission.md §7 gates from the arm run dirs. Companion to ``adm_make_arms.py``. Reads only committed artifacts (``net… | 2 |
+| `adm_make_arms.py` | Build the validation arm configs for docs/record/SPEC_measurement_admission.md. Every arm derives from ONE base so the estimation configuration is identical… | 4 |
 | `cb_structure_function.py` | Card CB-Q -- floor-vs-walk split of the EMITTED satellite code-bias wire. The CB analogue of ``q3_clock_structure_function.py``. For each (constellat… | 7 |
 
 ## Cycle slips, lanes and DD fractions
 
-`docs/topics/slip.md`.
+`docs/record/topics/slip.md`.
 
 | script | purpose | refs |
 | --- | --- | --- |
@@ -264,28 +264,28 @@ Fixture build, truth grading, reporting — `docs/topics/sim-bed.md`.
 | `grade_dd_spillway.py` | Spillway forensics on network_dd_fractional.csv — the 2026-08-02 root-cause kit. Four analyses on the traced between-station DDs (all datum-invariant… | 13 |
 | `grade_ddfrac.py` | Grade a network producer run's DATUM-INVARIANT double-differenced ambiguities. This is the go/no-go instrument for producer-side (and downstream user… | 41 |
 | `grade_ddfrac_perhour.py` | Per-hour + per-bucket DD-step breakdown for the Card-4 D5 acceptance. Reuses grade_ddfrac's EXACT methodology (epoch-adjacent \|ΔDD\| within a fixed … | 7 |
-| `grade_ddfrac_sigma_conditioned.py` | Condition the DD fractional part on its FORMAL sigma — the payoff test of ``docs/SPEC_carry_aware_covariance.md``. WHY THIS SCRIPT EXISTS -----------… | 6 |
+| `grade_ddfrac_sigma_conditioned.py` | Condition the DD fractional part on its FORMAL sigma — the payoff test of ``docs/record/SPEC_carry_aware_covariance.md``. WHY THIS SCRIPT EXISTS -----------… | 6 |
 | `grade_lane_trace.py` | **Archive-only** (card RKD deleted the mechanism it grades; it reads archived runs). Grade the WL-2 lane trace (F-B instrument): injected/held-cycle circR vs control. Input: logs/network_wl_lane_trace.csv from a run with network.mw_wl… | 7 |
 | `grade_slip_agreement.py` | Grade the network slip layer by CROSS-CHECKING its two detectors against each other and against the raw observables. The network producer runs two in… | 12 |
 | `lane_spectrometer.py` | Lane-ladder spectrometer — project the network's own float DDs onto the MW/EWL lane ladder and grade them against the MW integers (docs/SPEC_lane_spe… | 24 |
 | `mw_census.py` | Estimator-free WL integer census: MW combination from raw RINEX, first N epochs. Median MW per (station,sat) arc -> star-basis DD within same band-2 … | 15 |
 | `mw_census_allpairs.py` | Estimator-free ALL-PAIRS MW census (UWL-1 ladder survey, Jul-16 2026). Every channel combination across DISTINCT frequency bands, per constellation (… | 7 |
 | `mwwl_event_census.py` | Estimator-free lane-information census across an EVENT WINDOW (DOY-129 19:26 detonation). Settles one question that needs NO estimator run: when the … | 3 |
-| `spectro_grade_vfold.py` | Grade the S2 VIRTUAL FOLD — the between-leg state delta per state class. docs/SPEC_lane_spectrometer.md §4 / §12.4. Reads the four legs emitted by ``… | 1 |
-| `spectro_make_vfold.py` | Generate the S2 VIRTUAL-FOLD legs of the lane-spectrometer campaign. docs/SPEC_lane_spectrometer.md §4: from the S1 run's snapshot, resume paired leg… | 6 |
-| `windup_ab_linearity.py` | windup_ab_linearity.py -- decide the carrier-phase wind-up SIGN defect on real data. docs/SPEC_phase_windup_sign.md section 8 item 1. The simulator i… | 4 |
+| `spectro_grade_vfold.py` | Grade the S2 VIRTUAL FOLD — the between-leg state delta per state class. docs/record/SPEC_lane_spectrometer.md §4 / §12.4. Reads the four legs emitted by ``… | 1 |
+| `spectro_make_vfold.py` | Generate the S2 VIRTUAL-FOLD legs of the lane-spectrometer campaign. docs/record/SPEC_lane_spectrometer.md §4: from the S1 run's snapshot, resume paired leg… | 6 |
+| `windup_ab_linearity.py` | windup_ab_linearity.py -- decide the carrier-phase wind-up SIGN defect on real data. docs/record/SPEC_phase_windup_sign.md section 8 item 1. The simulator i… | 4 |
 | `windup_ab_slice.py` | windup_ab_slice.py -- the SPEC_phase_windup_sign.md §8 item 1 decisive arm. Real-data A/B the sim structurally cannot provide (the sim injects wind-u… | 3 |
 | `windup_dd_regress.py` | THE WIND-UP DISCRIMINATOR for the band-common DD error (SPEC_synthetic §13.8.2 finding 4, owed since 2026-08). Finding 4: the per-band DDs of the pos… | 3 |
 
 ## RAIM, QC and the censuses
 
-`docs/topics/raim-qc.md`.
+`docs/record/topics/raim-qc.md`.
 
 | script | purpose | refs |
 | --- | --- | --- |
 | `churn_run_arms.ps1` | Wipe BOTH the traces and every snapshot: a stale logs/ dir makes an A/B | 2 |
 | `edge_reaction_correlate.py` | Consumer-side datum-break REACTION census, and the v1-contract threshold audit. Companion to product_step_census.py. That script asks what the produc… | 2 |
-| `grade_churn_arms.py` | Scorecard for the D5 churn-card arms (docs/SPEC_d5_churn_limit_cycle.md). Two of the card's four grading axes, side by side across arms: CHURN -- n_c… | 3 |
+| `grade_churn_arms.py` | Scorecard for the D5 churn-card arms (docs/record/SPEC_d5_churn_limit_cycle.md). Two of the card's four grading axes, side by side across arms: CHURN -- n_c… | 3 |
 | `grade_d5_algebra.py` | Take the D5 innovation gate's standardized number APART. `network_d5_flags.csv` has always carried `std_innov` = \|v\| / sqrt(Cov(v)_ii). A populatio… | 1 |
 | `p2_gate_verdict.py` | SPEC_day129_frame_guards Phase-2 validation-gate verdict. Grades the ARMED leg (runs/day129_guards/leg01) against the spec's Phase-2 gates: (ii) ON-p… | 4 |
 | `pc_gate_verdict.py` | Grade the §12 known-answer gates of docs/SPEC_prefit_census_observability.md. Every check is a KNOWN ANSWER from the standing FT63 leg-19 replay (``r… | 2 |
@@ -293,14 +293,14 @@ Fixture build, truth grading, reporting — `docs/topics/sim-bed.md`.
 | `pc_run_arms.ps1` | Arm -> snapshot index (matches scripts/pc_make_arms.py). | 2 |
 | `pf_rows_attrib.py` | SPEC_event_harness §24.6 — the per-LOS CODE-RESIDUAL attribution, read off the producer's own SIGNED post-fit residual rows (`network.trace_postfit_r… | 6 |
 | `qc_dashboard.py` | Self-contained per-epoch QC dashboard for any network producer run. Reduces the run's standard trace CSVs to time-series and writes ONE static HTML f… | 1 |
-| `raim_gate_grade.py` | Field-gate grader for the RAIM pool re-host card (docs/SPEC_raim_pool_rehost.md). The card's whole point is that a QC tier read ARMED and screened no… | 2 |
-| `raimp_batch.py` | RAIM POWER leg batch driver (docs/SPEC_raim_pool_rehost.md §7.2 + the P0' extension). python scripts/raimp_batch.py [--extension] [--only name,name] … | 3 |
-| `raimp_grade.py` | RAIM POWER leg grader — docs/SPEC_raim_pool_rehost.md §7.2, the pre-registered P0–P3 bars, plus the manager's P0' extension (n = 1 re-drawn at three … | 2 |
-| `t3_null_fit.py` | T3-class null calibration: diagnose the statistic, not the threshold. QUEUE item 4 (`docs/QUEUE_principled_replacements.md`) — the bandaid being repl… | 9 |
+| `raim_gate_grade.py` | Field-gate grader for the RAIM pool re-host card (docs/record/SPEC_raim_pool_rehost.md). The card's whole point is that a QC tier read ARMED and screened no… | 2 |
+| `raimp_batch.py` | RAIM POWER leg batch driver (docs/record/SPEC_raim_pool_rehost.md §7.2 + the P0' extension). python scripts/raimp_batch.py [--extension] [--only name,name] … | 3 |
+| `raimp_grade.py` | RAIM POWER leg grader — docs/record/SPEC_raim_pool_rehost.md §7.2, the pre-registered P0–P3 bars, plus the manager's P0' extension (n = 1 re-drawn at three … | 2 |
+| `t3_null_fit.py` | T3-class null calibration: diagnose the statistic, not the threshold. QUEUE item 4 (`docs/record/QUEUE_principled_replacements.md`) — the bandaid being repl… | 9 |
 
 ## The product wire
 
-`docs/topics/wire-contract.md`.
+`docs/record/topics/wire-contract.md`.
 
 | script | purpose | refs |
 | --- | --- | --- |
@@ -316,7 +316,7 @@ Fixture build, truth grading, reporting — `docs/topics/sim-bed.md`.
 
 ## The closed-loop consumer
 
-`docs/topics/consumer.md`.
+`docs/record/topics/consumer.md`.
 
 | script | purpose | refs |
 | --- | --- | --- |
@@ -326,7 +326,7 @@ Fixture build, truth grading, reporting — `docs/topics/sim-bed.md`.
 
 ## Performance, chains and campaign drivers
 
-`docs/topics/perf.md`.
+`docs/record/topics/perf.md`.
 
 | script | purpose | refs |
 | --- | --- | --- |
@@ -334,13 +334,13 @@ Fixture build, truth grading, reporting — `docs/topics/sim-bed.md`.
 | `chain_run_day129.ps1` | _(no header comment — read the source)_ | 1 |
 | `chain_stability.py` | Stability / convergence assessment for a DOY-129-style continuous network run. WHAT THIS GRADES, AND WHY IT CHANGED ---------------------------------… | 16 |
 | `parse_carry_psd.py` | Carry-PSD audit of a network state snapshot — THE gate of the PD-safe fold card. python scripts/parse_carry_psd.py <snapshot.bin> [more_snapshots ...… | 12 |
-| `run_decomp_arm.py` | Run one decomposition golden-matrix arm into a fresh run directory. Companion to compare_network_run.py (see docs/network_decomposition_plan.md §9). … | 5 |
+| `run_decomp_arm.py` | Run one decomposition golden-matrix arm into a fresh run directory. Companion to compare_network_run.py (see docs/record/network_decomposition_plan.md §9). … | 5 |
 | `run_inc4_gate.ps1` | INC-4 full fast-matrix gate: 8 arms + snap_resume + obs vs goldens. Usage: powershell -File scripts/run_inc4_gate.ps1 | 5 |
 | `stage_brdc_only_root.ps1` | _(no header comment — read the source)_ | 3 |
 
 ## Real-time engine
 
-`docs/topics/realtime.md`.
+`docs/record/topics/realtime.md`.
 
 | script | purpose | refs |
 | --- | --- | --- |
@@ -358,7 +358,7 @@ Rendering for papers, dashboards and reviews.
 | script | purpose | refs |
 | --- | --- | --- |
 | `agu_figure.py` | Compose the 4-tile AGU26 abstract figure from one network run. (a) network geometry + the network's OWN estimated ionosphere, as ionospheric pierce p… | 1 |
-| `compare_network_run.py` | compare_network_run.py Field-aware byte-identity harness for the ApplicationNetwork.cpp decomposition series (see docs/network_decomposition_plan.md,… | 11 |
+| `compare_network_run.py` | compare_network_run.py Field-aware byte-identity harness for the ApplicationNetwork.cpp decomposition series (see docs/record/network_decomposition_plan.md,… | 11 |
 | `gen_report_tables.py` | Generate LaTeX reference tables for docs/report from authoritative source. This is the "Tier 3" half of the GnssProcessor documentation tooling: smal… | 7 |
 | `view_network_dd_fractional.py` | Fractional-cycle histogram of the network cross-station DD ambiguities (B5). The network producer, with ``network.trace_dd_fractional`` on, writes ``… | 2 |
 
@@ -434,7 +434,7 @@ import of a sibling script no longer resolves; edit before running one, or read 
 | `archive/d5v5_same_realization_ab.py` | SAME-REALIZATION A/B for the D5 v5 card: two legs off ONE snapshot, arm-to-arm. Why this is not ``d5v5_seam_ab.py``. That script grades each arm agai… | 0 |
 | `archive/fp2_fanout_window.py` | FP-2 FAN-OUT CENSUS on the pre-registered §20.2 window: k in [-1, +2]. python scripts/fp2_fanout_window.py [--runs C:/GnssProcessor/runs] [--prefix … | 0 |
 | `archive/fp2_wire_step_census.py` | UNDECLARED WIRE-STEP census across an FP-2 leg matrix. python scripts/fp2_wire_step_census.py [--runs C:/GnssProcessor/runs] [--prefix fp2] [--tol 0.… | 0 |
-| `archive/clkr_grade_g3.py` | Card CLK-R G3 grader (docs/SPEC_clock_emit_rebase.md §4). Grades the 12 h A/B (runs/clkr_12h_ctl vs runs/clkr_12h_on) against the stored denominator … | 0 |
+| `archive/clkr_grade_g3.py` | Card CLK-R G3 grader (docs/record/SPEC_clock_emit_rebase.md §4). Grades the 12 h A/B (runs/clkr_12h_ctl vs runs/clkr_12h_on) against the stored denominator … | 0 |
 | `archive/clkr_run_arm.ps1` | Card CLK-R arm runner: serialized producer run + trace harvest. Usage: .\clkr_run_arm.ps1 -Config <config.json> -RunDir <runs/name> Redirects console… | 0 |
 | `archive/q3_consumer_hours.py` | Hourly LEVEL bands of the in-process closed-loop consumer, for Card Q3 A/B arms. Grades ``logs/closed_loop_trace.csv`` (the live WTZZ holdout) as hou… | 0 |
 | `archive/cbq305_readfirst.py` | Card CB-Q leg C: the invariant-#4 read-first sheet for a 2-signal arm. Reads the ON-PATH counters BEFORE any quality number, because the failure mod… | 0 |

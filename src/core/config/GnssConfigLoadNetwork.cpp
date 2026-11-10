@@ -3,7 +3,7 @@
  * \brief JSON configuration loading for the PPP-RTK @c network section.
  *
  * Split out of @c GnssConfigLoad.cpp (decomposition INC-1; see
- * docs/network_decomposition_plan.md).  @c loadNetworkSection_ is a thin
+ * docs/record/network_decomposition_plan.md).  @c loadNetworkSection_ is a thin
  * orchestrator that calls one helper per JSON subsection, the idiom the eleven
  * top-level section loaders in @c GnssConfigLoad.cpp use.  Most features add knobs
  * to this file, and per-subsection helpers keep concurrent edits by different
@@ -196,7 +196,7 @@ namespace GnssProcessor {
                 "the carry, the search, the DD trace, post-fit QC and every emitted sigma stay "
                 "float.  This is a measurement "
                 "arm of fixed-cycle fold decision D1 on a sim fixture, not a product: the producer AR "
-                "record (docs/network_ambiguity_resolution_design.md) stands until the author "
+                "record (docs/record/network_ambiguity_resolution_design.md) stands until the author "
                 "rules.  Search gates: min_epochs={}, FFR>={:.4f}, ratio>={:.1f}, trace {}.",
                 ar.fixed_cycle_sigma_cyc, ar.fixed_cycle_unit_alpha, ar.fixed_cycle_gate_alpha,
                 ar.min_epochs, ar.min_success_rate, ar.ratio_threshold, ar.trace ? "ON" : "off");
@@ -539,7 +539,7 @@ namespace GnssProcessor {
             network_cycle_slip_relevel_free_epoch_ = false;
             network_cycle_slip_relevel_delta_bridge_ = false;
         }
-        // Gap re-entry response interlocks (docs/SPEC_slip_qc_hardening.md
+        // Gap re-entry response interlocks (docs/record/SPEC_slip_qc_hardening.md
         // §G3/W1), placed here for the load-order reason above: network.carry_invariant
         // is parsed after the cycle_slip block, and the relevel_free_epoch disarm it
         // drives has just run, so this is the first point where the flags of both
@@ -592,7 +592,7 @@ namespace GnssProcessor {
                             "reset)"
                           : "");
         // Per-signal rider interlock (
-        // docs/refound/GRS_gap_reentry_per_signal_2026-09-20.md).  It warns and leaves
+        // docs/record/refound/GRS_gap_reentry_per_signal_2026-09-20.md).  It warns and leaves
         // the knob armed but inert: the per-signal tier skips any satellite that
         // produced a row-level resumption in the same epoch, and that list is
         // collected only when the row-level response is armed, so the rider alone would
@@ -664,7 +664,7 @@ namespace GnssProcessor {
                       network_config_.slip_qc.gap_reentry_per_signal_unmeasurable ? "ON"
                                                                                    : "OFF");
         // Tracker-key interlock (
-        // docs/refound/GRK_gap_reentry_key_mismatch_2026-09-22.md).  The knob changes
+        // docs/record/refound/GRK_gap_reentry_key_mismatch_2026-09-22.md).  The knob changes
         // which signal the arc-level tracker names per band.  With no gap consumer
         // armed, that choice reaches only the slip_raw trace and the MW/GF detections,
         // so the warning states that the response half of the fix is not in this
@@ -1305,7 +1305,7 @@ namespace GnssProcessor {
      * The gates are stricter than on the user path (FFR 0.9999, per-pair frac 0.10,
      * partial AR on) because a wrong network fix corrupts every downstream user.  The
      * default @c enable=false skips the AR block entirely, so the float product is
-     * byte-identical (docs/network_ambiguity_resolution_design.md).
+     * byte-identical (docs/record/network_ambiguity_resolution_design.md).
      *
      * @param json  Parsed root config object.
      * @param log   The "gnss_config" logger.
@@ -1423,7 +1423,7 @@ namespace GnssProcessor {
             // Per-DD trace of the search (logs/network_producer_ar.csv).  A fix count
             // is not a grade: without the per-DD identities the epoch log line cannot
             // be joined to truth_ambiguities.csv, and that join is what re-running
-            // Phase 2 is for (docs/network_ambiguity_resolution_design.md, 2026-09-10
+            // Phase 2 is for (docs/record/network_ambiguity_resolution_design.md, 2026-09-10
             // §4.1).
             ar.trace = jval<bool>(json, "network.ambiguity_resolution.trace",
                                   "network_ar_trace", false);
@@ -1701,7 +1701,7 @@ namespace GnssProcessor {
      */
     void GnssConfig::loadNetworkLaneLayers_(const nlohmann::json& json,
                                             const std::shared_ptr<spdlog::logger>& log) {
-        // --- SD pre-reduce EWL constraint (docs/SPEC_sd_ewl_prereduce.md) ---------
+        // --- SD pre-reduce EWL constraint (docs/record/SPEC_sd_ewl_prereduce.md) ---------
         // Adds the between-satellite SD extra-wide-lane MW statistic as a pseudo-obs
         // row in each station's own pre-reduce block, so it reaches the shared
         // satellite phase and code bias columns directly instead of through a DD
@@ -1941,7 +1941,7 @@ namespace GnssProcessor {
         }
 
         // Per-(cons, signal, sat) -> anchor station map for the spectrometer's anchor
-        // partition (S1; docs/SPEC_lane_spectrometer.md §3.3).  Trace-only, with no
+        // partition (S1; docs/record/SPEC_lane_spectrometer.md §3.3).  Trace-only, with no
         // stride: the row count scales with gauge freedoms (sats x signals), not with
         // station pairs.
         network_config_.trace_phase_anchor =
@@ -2160,7 +2160,7 @@ namespace GnssProcessor {
                           "for the retained previous frame (it holds no solve x_s); arm "
                           "network.rhs_attrib_tow to decompose a chosen epoch.");
         }
-        // Redundancy / testability census (docs/SPEC_redundancy_census.md).
+        // Redundancy / testability census (docs/record/SPEC_redundancy_census.md).
         // Measure-only and not fingerprinted, the same class as the rhs_attrib block
         // above, so it can be armed on a warm resume against an untraced snapshot.
         network_config_.redundancy_census_stride =
@@ -2366,7 +2366,7 @@ namespace GnssProcessor {
                               : "");
         }
         // --- Product-referenced measurement admission
-        //     (docs/SPEC_measurement_admission.md).  Same class as the two blocks
+        //     (docs/record/SPEC_measurement_admission.md).  Same class as the two blocks
         //     above: default off, structurally byte-identical when off, and not
         //     fingerprinted.  It is a forward-only admission policy (RAIM-class) that
         //     re-references no carried quantity and changes the meaning of no
@@ -3256,7 +3256,7 @@ namespace GnssProcessor {
                       "station's estimated ZWD + datum-conditioned formal sigma each emitted epoch.");
         // The shared (satellite) and receiver bias-state traces (L14 / L14b).  They
         // exist because the B product record carries no sigma in any configuration
-        // (docs/SPEC_synthetic_minimum_network.md §4.8), so the satellite code-bias
+        // (docs/record/SPEC_synthetic_minimum_network.md §4.8), so the satellite code-bias
         // variance factor cannot be obtained from the product, and the receiver DCB,
         // which the W6 slice force-arms, appears nowhere as an estimate with a sigma.
         // Both are trace-only: no product grammar change, and byte-identical when off
@@ -3396,7 +3396,7 @@ namespace GnssProcessor {
         }
 
         // --- Ionosphere-constraint selector of the W6 slice (RF-0b) --------------
-        // docs/refound/RF-0_baseline_2026-09-14.md Finding 2.  Parsed here, before the
+        // docs/record/refound/RF-0_baseline_2026-09-14.md Finding 2.  Parsed here, before the
         // W6 chain, because it selects which posture the chain arms.  "auto" is the
         // selection from before the knob existed (SH field / external GIM) and is
         // byte-identical; "none" removes the ionosphere constraint and leaves the
@@ -4378,7 +4378,7 @@ namespace GnssProcessor {
         network_phase_leveling_local_block_ =
             jval<bool>(json, "network.phase_leveling_local_block", "phase_leveling_local_block", false);
         // ---- The ambiguity vehicle and its supporting knobs (RF-1;
-        //      docs/refound/RF-1_float_ambiguities_design.md §7.1).
+        //      docs/record/refound/RF-1_float_ambiguities_design.md §7.1).
         //
         // String enum on the established loader pattern (network.trace_dd_fractional_ref):
         // an unknown value is logged as an error naming
@@ -4439,7 +4439,7 @@ namespace GnssProcessor {
         if (network_config_.amb_float_birth_var_m2 < 0.0)
             throw std::runtime_error("network.amb_float_birth_var_m2 must be >= 0 "
                                      "(0 = use the arc's own first-stash variance unfloored)");
-        // Drop-only floor (RF-3a; docs/refound/RF-3_code_row_qc_2026-09-22.md §4 A1).
+        // Drop-only floor (RF-3a; docs/record/refound/RF-3_code_row_qc_2026-09-22.md §4 A1).
         // Separate from the birth floor because the defect is the re-coupling edge of
         // the slip and gap re-entry response, not the birth: a birth floor removes the
         // post-drop walk but also slows every birth (hour 1 0.56 -> 0.66 m at
@@ -4857,7 +4857,7 @@ namespace GnssProcessor {
             jval<bool>(json, "network.zwd_seam_reseed", "zwd_seam_reseed", false);
         network_zwd_seam_reseed_epochs_ =
             jval<int>(json, "network.zwd_seam_reseed_epochs", "zwd_seam_reseed_epochs", 480);
-        // The seam window's own stiffness (RS-10b; docs/SPEC_event_harness.md §21.21).
+        // The seam window's own stiffness (RS-10b; docs/record/SPEC_event_harness.md §21.21).
         // network.zwd_carry_q is in the warm-resume fingerprint (a continuous carry q
         // must cold-start), while the seam response that borrows its weight is not, so
         // without this knob the one parameter the response exists to tune could not be
@@ -5108,7 +5108,7 @@ namespace GnssProcessor {
         network_readmit_seed_mirrors_ =
             jval<bool>(json, "network.readmit_seed_mirrors", "readmit_seed_mirrors", false);
         // Canonical-pair admission (
-        // docs/refound/CPA_canonical_pair_admission_2026-09-20.md).  Default off =
+        // docs/record/refound/CPA_canonical_pair_admission_2026-09-20.md).  Default off =
         // byte-identical; not fingerprinted.  The tolerance is clamped rather than
         // refused: 0 is a meaningful arm (admit only the epochs that hold the pair),
         // and a negative value has no other reading.
@@ -5355,7 +5355,7 @@ namespace GnssProcessor {
                           "response policy).",
                           GnssConfig::kResumePbSeamMarkFraction * 100.0);
         }
-        // rx-CB carry (docs/SPEC_rx_cb_carry.md): carry receiver code biases across
+        // rx-CB carry (docs/record/SPEC_rx_cb_carry.md): carry receiver code biases across
         // epochs.  Independent of the phase-leveling gate by construction.
         network_carry_rx_code_bias_ =
             jval<bool>(json, "network.carry_rx_code_bias", "carry_rx_code_bias", false);
@@ -5387,7 +5387,7 @@ namespace GnssProcessor {
             jval<std::string>(json, "network.carry_vce_components", "carry_vce_components", "pl");
         network_carry_vce_window_epochs_ =
             jval<int>(json, "network.carry_vce_window_epochs", "carry_vce_window_epochs", 60);
-        // Variance-factor apply (M2 v2; docs/SPEC_carry_vce_apply.md): LASER 5-95's
+        // Variance-factor apply (M2 v2; docs/record/SPEC_carry_vce_apply.md): LASER 5-95's
         // variance-factor iteration.  Every carry fold variance is multiplied by a
         // per-(family × constellation) α² that tracks the monitor's measured
         // robust_floor / hand_fold_var, inflate-only and slew-limited.  Unlike the
@@ -5445,7 +5445,7 @@ namespace GnssProcessor {
                 log->warn("Network (M2 v2): network.carry_vce_apply_families includes a SHARED "
                           "carry family (pb/cb).  The M2 field record puts the pb mean/robust gap "
                           "at ~200-1000x (it carries the metre-scale ensemble-datum re-level "
-                          "tail), and docs/SPEC_carry_vce_apply.md defers pb/cb behind the pl "
+                          "tail), and docs/record/SPEC_carry_vce_apply.md defers pb/cb behind the pl "
                           "gate for exactly that reason — the robust/mean split has not been "
                           "re-examined on those families.  Wired and countable, but UNVALIDATED.");
             log->info("Network producer (M2 v2 / LASER 5-95): carry variance-FACTOR apply ENABLED "
@@ -5475,7 +5475,7 @@ namespace GnssProcessor {
                       "into the solve (calibration/honesty instrument; solution byte-identical).",
                       network_carry_vce_components_, network_carry_vce_window_epochs_);
 
-        // Prior-residual census (docs/SPEC_prior_residual_census.md).  The M2 monitor
+        // Prior-residual census (docs/record/SPEC_prior_residual_census.md).  The M2 monitor
         // above pools the per-row partial redundancies into a variance component; this
         // census tests them one by one and reports the empirical exceedance ladder per
         // (family × label).  Same hook, same arithmetic, no new solve, and, like the
@@ -5505,7 +5505,7 @@ namespace GnssProcessor {
                 jval<bool>(json, "network.prior_residual_corroborate",
                            "prior_residual_corroborate", false);
             // Constraint-aware global variance component
-            // (docs/SPEC_prior_residual_census.md §14), a rider on the census
+            // (docs/record/SPEC_prior_residual_census.md §14), a rider on the census
             // accumulator, parsed with it because it shares its rows.  The
             // raim_redundancy_normalize tripwire cannot live here: loadNetworkQcTiers_
             // runs after this helper and has not resolved that flag yet, so the
@@ -5583,7 +5583,7 @@ namespace GnssProcessor {
                           pnc.prior_residual_corroborate ? "on" : "off");
                 if (pnc.prior_residual_global_sigma0)
                     log->info("Network producer (constraint-aware global σ̂₀, "
-                              "docs/SPEC_prior_residual_census.md §14): ARMED — per epoch "
+                              "docs/record/SPEC_prior_residual_census.md §14): ARMED — per epoch "
                               "σ̂₀²_global = (Σw·v² + Σw·ê²)/(Σr_data + Σr_prior), i.e. LASER 5-74's "
                               "prior residuals in the NUMERATOR and the constraints in the "
                               "REDUNDANCY, with Σw·ê²/Σw·v² ('how much of the epoch's tension lives "
@@ -5900,7 +5900,7 @@ namespace GnssProcessor {
             network_cycle_slip_relevel_bridge_gf_ = false;
         }
 
-        // --- Slip-QC hardening knobs (docs/SPEC_slip_qc_hardening.md) ---
+        // --- Slip-QC hardening knobs (docs/record/SPEC_slip_qc_hardening.md) ---
         // Three independent, default-off qualifications of decisions the detector
         // arms above already make.  None of them drops a station, satellite or
         // observation (project rule 5), and none derives a threshold from the
@@ -6355,7 +6355,7 @@ namespace GnssProcessor {
                           sq.lli_ewma_alpha, sq.lli_chatter_frac_hi, sq.lli_chatter_frac_lo,
                           sq.lli_min_epochs);
             // Auto-arm for the prior-residual census (INC-3;
-            // docs/SPEC_prior_residual_census.md §4).  loadNetworkCarries_ resolved
+            // docs/record/SPEC_prior_residual_census.md §4).  loadNetworkCarries_ resolved
             // prior_residual_corroborate one helper earlier; the flag it needs is parsed
             // here, so per this section's load-order rule the forcing lives at this end
             // of the chain.  gap_instrument makes networkQualifyRawObservables run and
@@ -6406,7 +6406,7 @@ namespace GnssProcessor {
         }
 
         // Datum-station slip detection and network re-reference
-        // (docs/SPEC_synthetic_minimum_network.md §9.7.10).  Under the legacy
+        // (docs/record/SPEC_synthetic_minimum_network.md §9.7.10).  Under the legacy
         // single-pivot datum every slip loop starts at i_lo = 1, so the datum station,
         // the one receiver whose ambiguity is inside every emitted phase bias, has no
         // slip exposure (§9.7.4, proven by roster reorder).  This arms MW/LLI detection
@@ -6504,7 +6504,7 @@ namespace GnssProcessor {
             jval<bool>(json, "network.station_marker_to_arp",
                        "network_station_marker_to_arp", false);
         // The arc ledger's trace switch (see
-        // docs/refound/SID_signal_identity_2026-09-22.md section 5).
+        // docs/record/refound/SID_signal_identity_2026-09-22.md section 5).
         // The per-station signal roster, the arc ledger and their census are
         // built on every network run, and this key only decides whether the ledger's
         // trace is written (logs/network_arc_ledger.csv and the ARC event rows of the
@@ -6610,7 +6610,7 @@ namespace GnssProcessor {
         }
         network_raim_attribution_ =
             jval<bool>(json, "network.raim_attribution", "network_raim_attribution", false);
-        // RAIM pool re-host (docs/SPEC_raim_pool_rehost.md).  Parsed here with the rest
+        // RAIM pool re-host (docs/record/SPEC_raim_pool_rehost.md).  Parsed here with the rest
         // of the RAIM family; the inert guards come later, because they read
         // network_carry_invariant_, which is populated in loadNetworkDatumSignalling_.
         network_raim_carry_invariant_ =
@@ -6839,7 +6839,7 @@ namespace GnssProcessor {
                       "pool, σ̂0_adapt and the A4 ceiling are unchanged.",
                       network_raim_we_code_trigger_, network_raim_we_iono_trigger_);
 
-        // Gross line-of-sight screen (docs/SPEC_event_harness.md §24.18).
+        // Gross line-of-sight screen (docs/record/SPEC_event_harness.md §24.18).
         // Parsed here, next to the post-fit tiers whose blind spot it closes: each of
         // them pools carried-ambiguity phase rows, so a code-only gross error on one
         // line of sight is invisible to all of them (the `|A_r(row, amb_col)| > 0.5`
@@ -6871,7 +6871,7 @@ namespace GnssProcessor {
                 jval<int>(json, "network.gross_los_event_holdoff_ep",
                           "gross_los_event_holdoff_ep", 0);
             // --- The four sub-rules that complete the screen (RF-3b;
-            // docs/refound/RF-3_code_row_qc_2026-09-22.md §4).  All default to the
+            // docs/record/refound/RF-3_code_row_qc_2026-09-22.md §4).  All default to the
             // behavior from before the sub-rules, so an existing arm's bytes are
             // unchanged.
             {
@@ -7154,7 +7154,7 @@ namespace GnssProcessor {
             }
         }
 
-        // Baarda reliability numbers / MDB (docs/SPEC_redundancy_census.md).  Parsed
+        // Baarda reliability numbers / MDB (docs/record/SPEC_redundancy_census.md).  Parsed
         // here, next to the B2 redundancy knob it rides, and after
         // loadNetworkObservabilityAndSnapshot_ has resolved the redundancy-census
         // arming, so the precondition below reads final values of both r_i sources.
@@ -7257,7 +7257,7 @@ namespace GnssProcessor {
         }
 
         // Block-Baarda census (BLOCKFORMAL): the (station, satellite) LOS block outlier
-        // census (docs/SPEC_redundancy_census.md).  Parsed here, next to the MDB
+        // census (docs/record/SPEC_redundancy_census.md).  Parsed here, next to the MDB
         // precondition and for the same load-order reason: it rides the redundancy
         // census's swept stations, and loadNetworkObservabilityAndSnapshot_ has already
         // resolved that census's arming, so the precondition below reads a final value.
@@ -7414,7 +7414,7 @@ namespace GnssProcessor {
                 // dominated by them comes back uncheckable by construction, not because
                 // of data quality.
                 log->info("Network producer (block-Baarda census, "
-                          "docs/SPEC_redundancy_census.md): ARMED (families='{}', window={} ep, "
+                          "docs/record/SPEC_redundancy_census.md): ARMED (families='{}', window={} ep, "
                           "min_blocks={}, report={:g}·t_B, corroborate={}).  Per (station, "
                           "satellite) LOS block of the redundancy census's SWEPT stations: "
                           "T_B = ẽ_Bᵀ Q_ẽ,B⁻¹ ẽ_B / b over the b ≤ 8 code+phase rows of one "
@@ -7449,7 +7449,7 @@ namespace GnssProcessor {
         }
 
         // Station congruence: coordinate-fault detection in position space
-        // (docs/SPEC_redundancy_census.md).  Parsed here, right after the block census
+        // (docs/record/SPEC_redundancy_census.md).  Parsed here, right after the block census
         // and for the same load-order reason: it rides the same redundancy-census
         // sweep, whose arming loadNetworkObservabilityAndSnapshot_ has already
         // resolved, so the precondition below reads a final value.  Measure-only and
@@ -7522,7 +7522,7 @@ namespace GnssProcessor {
                 // regime.  The MDB table at run end is measured, not predicted, and
                 // settles it.
                 log->info("Network producer (station congruence, "
-                          "docs/SPEC_redundancy_census.md): ARMED (report={:g}·t, "
+                          "docs/record/SPEC_redundancy_census.md): ARMED (report={:g}·t, "
                           "holdoff={} ep).  Per SWEPT station of the redundancy census: "
                           "δ̂ = M⁺H_BᵀP_Bẽ_B over its code+phase rows with M = "
                           "H_BᵀP_BQ_ẽ,BP_BH_B, tested as T = δ̂ᵀMδ̂/(q·σ̂₀²) and reported "
@@ -7548,7 +7548,7 @@ namespace GnssProcessor {
             }
         }
 
-        // Constraint-aware global σ̂₀ (docs/SPEC_prior_residual_census.md §14.4).  The
+        // Constraint-aware global σ̂₀ (docs/record/SPEC_prior_residual_census.md §14.4).  The
         // knob itself is parsed in loadNetworkCarries_, next to the census it rides;
         // this is the data-side precondition, and it lives here because network_raim_
         // and network_raim_redundancy_normalize_ are resolved earlier in this helper
@@ -8148,7 +8148,7 @@ namespace GnssProcessor {
                 network_phase_datum_eq34_slip_aware_election_ = false;
             } else {
                 log->warn("Network: SLIP-AWARE eq34 election ON — ⚠ MEASURED "
-                          "NET-HARMFUL, see docs/SPEC_d5_churn_limit_cycle.md.  The MECHANISM "
+                          "NET-HARMFUL, see docs/record/SPEC_d5_churn_limit_cycle.md.  The MECHANISM "
                           "works: on a 3 h 63-sta DOY-129 leg it de-seeded 102 slipped "
                           "incumbents against only 9 unavoidable re-admissions (ratio 0.09 — the "
                           "graph nearly always had an alternative) and cut chord refloats 48%.  "
@@ -8372,7 +8372,7 @@ namespace GnssProcessor {
                           "run-end born-skipped counter.");
             }
         }
-        // PD-safe DD fold (docs/SPEC_pd_safe_dd_fold.md).  Parse only: the
+        // PD-safe DD fold (docs/record/SPEC_pd_safe_dd_fold.md).  Parse only: the
         // "set without carry_invariant" advisory lives in the cross-knob validation pass
         // (@ref validateNetworkDatumCoherence_), where every flag is settled.
         // network_carry_invariant_ happens to be parsed above this block, but a check
@@ -8381,7 +8381,7 @@ namespace GnssProcessor {
         network_carry_invariant_pd_safe_ =
             jval<bool>(json, "network.carry_invariant_pd_safe",
                        "network_carry_invariant_pd_safe", false);
-        // Carry-aware covariance readback (docs/SPEC_carry_aware_covariance.md).  Same
+        // Carry-aware covariance readback (docs/record/SPEC_carry_aware_covariance.md).  Same
         // parse-only discipline and for the same reason as the line above.
         network_carry_aware_covariance_ =
             jval<bool>(json, "network.carry_aware_covariance",
@@ -8611,7 +8611,7 @@ namespace GnssProcessor {
      */
     void GnssConfig::loadNetworkSignalIntegrity_(const nlohmann::json& json,
                                                  const std::shared_ptr<spdlog::logger>& log) {
-        // --- Flicker / gap signal integrity (docs/SPEC_flicker_gap_integrity.md) --
+        // --- Flicker / gap signal integrity (docs/record/SPEC_flicker_gap_integrity.md) --
         // Placed here because the inert guards below need network_carry_invariant_ and
         // network_phase_leveling_ (the two slip-funnel feeds INC-3's refloat uses) and
         // the cycle-slip block (parsed far above) to be resolved already.  Default off;
@@ -8921,7 +8921,7 @@ namespace GnssProcessor {
                 network_config_.state_snapshot_carry_lin = false;
             }
         }
-        // Clock emission re-base (docs/SPEC_clock_emit_rebase.md): stage 1
+        // Clock emission re-base (docs/record/SPEC_clock_emit_rebase.md): stage 1
         // holds the per-constellation common mode at emission (the re-realization class
         // seen in 613 of 1440 census epochs), stage 2 marks the surviving per-sat step
         // class through the R-record retro-bump.  Both outputs-only, independent,
@@ -9028,7 +9028,7 @@ namespace GnssProcessor {
                           "(~70+/h) and storms the consumer with resets.",
                           network_clock_disc_jump_m_);
         }
-        // Guarded temporal clock anchor (docs/SPEC_clock_temporal_anchor.md).
+        // Guarded temporal clock anchor (docs/record/SPEC_clock_temporal_anchor.md).
         // Solve-affecting and fingerprinted; every knob is inert unless
         // network.clock_temporal_anchor is on, so an unarmed run is byte-identical.
         network_clock_temporal_anchor_ =
@@ -9258,7 +9258,7 @@ namespace GnssProcessor {
             // mechanism, the defect recorded against this knob pair.  It lives in
             // the P3 post-arming re-validation block instead.
         }
-        // Coupling time update (docs/refound/CTU_coupling_time_update_2026-09-28.md section 9.3): the
+        // Coupling time update (docs/record/refound/CTU_coupling_time_update_2026-09-28.md section 9.3): the
         // measure-only level monitor and the raise of the stashed block to its bound.
         network_clock_level_monitor_ =
             jval<bool>(json, "network.clock_level_monitor", "network_clock_level_monitor", false);
@@ -9418,7 +9418,7 @@ namespace GnssProcessor {
         network_phase_datum_sticky_ =
             jval<bool>(json, "network.phase_datum_sticky",
                        "network_phase_datum_sticky", true);
-        // Two-edge continuous handover (docs/SPEC_pivot_visibility_gauge_defect.md).
+        // Two-edge continuous handover (docs/record/SPEC_pivot_visibility_gauge_defect.md).
         // Stickiness minimizes the number of handovers; this makes the ones that still
         // happen frame-preserving.  The two are complementary, not alternatives: sticky
         // alone still re-realizes on every handover it cannot avoid, which is what
@@ -9427,7 +9427,7 @@ namespace GnssProcessor {
             jval<bool>(json, "network.phase_datum_handover_continuous",
                        "network_phase_datum_handover_continuous", false);
         // ---- The phase datum as a held S-basis (RF-2;
-        //      docs/refound/RF-1_steps345_mechanism_2026-09-15.md).  RF-1 made every
+        //      docs/record/refound/RF-1_steps345_mechanism_2026-09-15.md).  RF-1 made every
         //      ambiguity a float state, including the one that is the satellite phase
         //      bias's datum; in the textbook formulation the S-basis ambiguities are
         //      constants, not states.
@@ -9447,7 +9447,7 @@ namespace GnssProcessor {
             throw std::runtime_error("network.phase_anchor_flag_quiet_ep must be >= 0 "
                                      "(0 = no quiet-window gate)");
         // ---- The held-basis handover in its own frame algebra (RF-2d;
-        //      docs/refound/RF-3-read_handover_frame_2026-09-15.md): release a cold
+        //      docs/record/refound/RF-3-read_handover_frame_2026-09-15.md): release a cold
         //      family's retired-frame carries, and declare exactly the cold handovers.
         network_phase_datum_held_cold_release_ =
             jval<bool>(json, "network.phase_datum_held_cold_release",
@@ -9487,7 +9487,7 @@ namespace GnssProcessor {
                        network_phase_datum_handover_max_var_ratio_);
             return false;
         }
-        // Cold anchor fallback (docs/SPEC_event_harness.md §15 + §16.8).  The two knobs
+        // Cold anchor fallback (docs/record/SPEC_event_harness.md §15 + §16.8).  The two knobs
         // above decide what target a handover's successor is pinned at; this one decides
         // which station reaches that decision.  Without it the election takes the first
         // coverage-ranked tracker and only then discovers that its carry is unusable, so
@@ -9517,7 +9517,7 @@ namespace GnssProcessor {
             return false;
         }
         // Carry re-reference at the PHASE_ANCHOR handover (queue item 1(d);
-        // docs/SPEC_pivot_visibility_gauge_defect.md §5.07.5 R1).  The handover knob
+        // docs/record/SPEC_pivot_visibility_gauge_defect.md §5.07.5 R1).  The handover knob
         // above acts on the design-matrix side of the edge (what target the incoming
         // pin gets); this one acts on the carry side (the retired-frame prior is
         // marginalized for one epoch instead of being folded against the re-realized
@@ -9543,7 +9543,7 @@ namespace GnssProcessor {
             return false;
         }
         // Drop edge of the coverage gate (see
-        // docs/refound/EV7_all_sat_clock_decouple_2026-09-21.md §5.3).  The gate above
+        // docs/record/refound/EV7_all_sat_clock_decouple_2026-09-21.md §5.3).  The gate above
         // assumes the tracking stations' float ambiguities absorb the removed bias; on
         // the float vehicle that float is a carried state at a centimetre prior, so it
         // absorbs the whole bias in one epoch and the satellite clocks pay for it.
@@ -9552,7 +9552,7 @@ namespace GnssProcessor {
         network_phase_datum_gate_drop_erase_ =
             jval<bool>(json, "network.phase_datum_gate_drop_erase",
                        "network_phase_datum_gate_drop_erase", false);
-        // The conditional second lever (docs/SPEC_beidou_w6_datum.md §4),
+        // The conditional second lever (docs/record/SPEC_beidou_w6_datum.md §4),
         // behind the DG rank-gate calibration and the PA drop-and-heal.  Default off;
         // inert without estimate_sat_code_bias (no OSB columns exist).
         network_cb_kaula_prior_ =
@@ -9589,7 +9589,7 @@ namespace GnssProcessor {
                           1.0 / (network_cb_kaula_sigma_m_ * network_cb_kaula_sigma_m_));
         }
         // The shared-border null-space rank gate's relative eigenvalue tolerance as a
-        // per-config calibration parameter (docs/SPEC_beidou_w6_datum.md §2).
+        // per-config calibration parameter (docs/record/SPEC_beidou_w6_datum.md §2).
         // Default 1e-9 == NetworkEstimator::kNullSpaceTol (which stays the single source
         // of that default), so an unset key sends the identical double through the
         // identical arithmetic: byte-identical.  The resolved value is handed to
@@ -9671,7 +9671,7 @@ namespace GnssProcessor {
                       "tier GATE) instead of withholding or column anchoring.",
                       network_sbasis_complete_max_);
         }
-        // Datum graph census (docs/SPEC_datum_graph_census.md).  Parsed here, next to
+        // Datum graph census (docs/record/SPEC_datum_graph_census.md).  Parsed here, next to
         // SBC, because it mirrors SBC: SBC measures the realized S-basis dimension
         // spectrally and closes it, and this census predicts the same dimension from
         // the epoch's support topology (LASER 5-62/5-63) and reconciles the two.
@@ -11643,7 +11643,7 @@ namespace GnssProcessor {
                       network_phase_leveling_, network_carry_invariant_,
                       network_carry_conditional_coupling_);
         // ---- Ambiguity-vehicle interlocks (RF-1;
-        //      docs/refound/RF-1_float_ambiguities_design.md §7.1).  Placed here because
+        //      docs/record/refound/RF-1_float_ambiguities_design.md §7.1).  Placed here because
         //      network_carry_invariant_ is populated only by loadNetworkDatumSignalling_,
         //      which runs after the carries.
         //
@@ -11809,7 +11809,7 @@ namespace GnssProcessor {
                       network_config_.amb_float_birth_var_m2,
                       network_config_.amb_float_declared_handover);
         // Post-parse inert guard for the `pl` apply family (M2 v2;
-        // docs/SPEC_carry_vce_apply.md); network_carry_invariant_ is populated by this
+        // docs/record/SPEC_carry_vce_apply.md); network_carry_invariant_ is populated by this
         // point.
         //
         // The phase-leveling ambiguity carry is folded only when carry_warm (which
@@ -12205,7 +12205,7 @@ namespace GnssProcessor {
                        "carried ambiguity of a station as one whitened block, so the diagonal "
                        "wet-delay row would assert the station-common direction the block already "
                        "asserts (the double count that falsified the diagonal carry, "
-                       "docs/cards/sim-bed/ZWD-SINK-CENSUS.md).  Arm network.carry_zwd_in_block "
+                       "docs/record/cards/sim-bed/ZWD-SINK-CENSUS.md).  Arm network.carry_zwd_in_block "
                        "with it, or leave network.carry_zwd off.");
             return false;
         }
@@ -12498,7 +12498,7 @@ namespace GnssProcessor {
                           "product effect (every non-pivot ambiguity is re-estimated free each "
                           "epoch in the absolute solve).");
         }
-        // Inert guards for the RAIM pool re-host (docs/SPEC_raim_pool_rehost.md).
+        // Inert guards for the RAIM pool re-host (docs/record/SPEC_raim_pool_rehost.md).
         // Post-parse, because network_carry_invariant_ is populated only in
         // loadNetworkDatumSignalling_.  Follows the eq34-hygiene / M2-v2 precedent: an arm
         // that cannot change anything is disabled here rather than discovered after a
@@ -13596,7 +13596,7 @@ namespace GnssProcessor {
                 } else if (ev.kind == "arc_erase") {
                     if (!need(!ev.station.empty(), "a station")) return false;
                     if (!need(!ev.sat.empty(), "a sat")) return false;
-                    // Diagnostic sub-knob (docs/SPEC_event_harness.md §9): which of
+                    // Diagnostic sub-knob (docs/record/SPEC_event_harness.md §9): which of
                     // the erase path's four extra actions the injected event performs.
                     // The default is the production path, so an event that names no
                     // mode performs the production erase.
@@ -13700,7 +13700,7 @@ namespace GnssProcessor {
             log->warn("Config: network.inject is ARMED ({} event(s)).  This run's input "
                       "is deliberately corrupted; its products are an EVENT HARNESS "
                       "fixture, never a solution.  An armed event that never fires is a "
-                      "HARD run-end error.  docs/SPEC_event_harness.md",
+                      "HARD run-end error.  docs/record/SPEC_event_harness.md",
                       ic.events.size());
             if (!network_config_.trace_events)
                 log->warn("Config: network.inject is armed but network.trace_events is "
@@ -13733,7 +13733,7 @@ namespace GnssProcessor {
                 log->warn("Config: network.inject arms {} 'oracle_pin' event(s) — the "
                           "producer's float ambiguities in scope will be HELD AT TRUTH "
                           "from '{}'.  This run's products are a DIAGNOSTIC FIXTURE, "
-                          "never a solution.  docs/SPEC_oracle_pin.md",
+                          "never a solution.  docs/record/SPEC_oracle_pin.md",
                           [&] {
                               int n = 0;
                               for (const auto& e : ic.events)

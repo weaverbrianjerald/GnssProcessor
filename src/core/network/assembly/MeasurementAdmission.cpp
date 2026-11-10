@@ -892,7 +892,7 @@ int networkMeasurementAdmissionRunEnd(const NetworkRunEndView& v) {
     const std::shared_ptr<spdlog::logger>& log = v.log;
 
     // --- Product-referenced measurement admission run-end telemetry -----------
-    // (docs/SPEC_measurement_admission.md).  The screen is absolute: it sees a class of
+    // (docs/record/SPEC_measurement_admission.md).  The screen is absolute: it sees a class of
     // fault that every differential check passes by construction, and a reader can
     // check that from a log only with the denominators next to the findings
     // (invariant #4).  Zero rejections over zero screened channels says nothing about

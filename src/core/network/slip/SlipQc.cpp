@@ -7,7 +7,7 @@
  *
  * The first three drains were moved here from the SB_SLIP block of
  * ApplicationNetwork.cpp at decomposition INC-6 (see
- * docs/network_decomposition_plan.md).  The PASS-A parallel scan that fills
+ * docs/record/network_decomposition_plan.md).  The PASS-A parallel scan that fills
  * PassABuffers, and the calls into the drains below, live in
  * Application::networkPassASlipScan_ (ApplicationNetworkAssembly.cpp, INC-7);
  * the SB_SLIP D0b timer bracket in ApplicationNetwork.cpp wraps that call.

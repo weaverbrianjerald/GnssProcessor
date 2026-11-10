@@ -1,7 +1,7 @@
 /**
  * @file test_resume_rxcb_lin_restore.cpp
  * @brief Contract tests for the rx-CB linearization-point restore (
- *        docs/SPEC_event_harness.md §21.18): the snapshot's format-forward
+ *        docs/record/SPEC_event_harness.md §21.18): the snapshot's format-forward
  *        @c RL record (one code-bias @c x_lin per (station roster index, CB
  *        state key), written beside the RS-6 @c RC row), the loader's side of
  *        the write knob (@c network.state_snapshot_rxcb_lin_capture) and the

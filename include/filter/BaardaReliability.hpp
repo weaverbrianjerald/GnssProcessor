@@ -6,7 +6,7 @@
  *        shared unchanged by the PPP path and the network path.
  *
  * Origin: NGS LASER Guide v2.7 slide 5-97 (PDF p. 409), Snow (2002); Baarda
- * (1968) reliability theory.  See docs/SPEC_redundancy_census.md.
+ * (1968) reliability theory.  See docs/record/SPEC_redundancy_census.md.
  *
  * ## Meaning
  *
@@ -29,7 +29,7 @@
  *  - @f$\beta = 0.20@f$ (80 % power), i.e. @f$\Phi^{-1}(0.80) = 0.8416@f$.  The
  *    project uses one power convention so that a PPP MDB and a network MDB are
  *    directly comparable; there is no @f$\alpha/\beta@f$ knob
- *    (docs/SPEC_redundancy_census.md §11.7 records the deferral).
+ *    (docs/record/SPEC_redundancy_census.md §11.7 records the deferral).
  *  - The a-priori variance of unit weight is @f$\sigma_0^2 = 1@f$: every weight
  *    in this tree is absolute (@f$w = 1/\sigma^2@f$ in metres@f$^{-2}@f$), so no
  *    variance factor multiplies the formula.  The empirical inflation is applied

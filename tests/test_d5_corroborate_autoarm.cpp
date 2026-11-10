@@ -19,7 +19,7 @@
  * arms (the LV-6 census arming the CS advance does that), which changes the solve
  * through a knob that was not touched.  The loader therefore does not count
  * @c trace_slip_raw as a sufficient consumer.  See
- * @c docs/SPEC_level_authority_internal.md §5.3.
+ * @c docs/record/SPEC_level_authority_internal.md §5.3.
  *
  * Assertions are on post-load state, not on log text: @c loadFromJson takes a
  * @c LogManager& and obtains its own logger internally, and a default-constructed

@@ -84,7 +84,7 @@ concise, technical register:
 - Statements are checked against the code before they are written down: commands are
   run, file names are confirmed to exist, numbers come from an actual run.
 
-Existing research records under `docs/cards/`, `docs/archive/` and `docs/refound/` are
+Existing research records under `docs/cards/`, `docs/record/archive/` and `docs/refound/` are
 never reworded to fit this style; they are the scientific record.
 
 ## AI coding assistants
@@ -111,7 +111,7 @@ hand-written work:
 
 The repository also holds a multi-station network producer research program. Unless a
 task concerns it, the following can be skipped: `docs/refound/`, `docs/cards/`,
-`docs/archive/`, `config/archive/`, `config/golden/`, `config/test_suite/`, every
+`docs/record/archive/`, `config/archive/`, `config/golden/`, `config/test_suite/`, every
 file under `include/network/`, `src/core/network/` and `tests/network/`, and most of `scripts/`.
 `CLAUDE.md` is the operating manual for that program and for AI coding assistants. It
 becomes useful later.

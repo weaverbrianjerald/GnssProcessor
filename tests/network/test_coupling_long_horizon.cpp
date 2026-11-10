@@ -1,6 +1,6 @@
 /**
  * @file test_coupling_long_horizon.cpp
- * @brief Gate U1 of the level-residue study (docs/refound/SCL2_level_residue_under_the_clone_2026-10-06.md,
+ * @brief Gate U1 of the level-residue study (docs/record/refound/SCL2_level_residue_under_the_clone_2026-10-06.md,
  *        sections 3.6, 4, 5 and 6): the satellite clock level of the coupling recursions at
  *        long horizons, in the unit network of test_coupling_exact_update.cpp at runtime size.
  *

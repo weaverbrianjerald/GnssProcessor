@@ -1,0 +1,308 @@
+# ARL: the integer-ambiguity ladder on the simulated network
+
+**STATUS**
+
+- **id:** ARL
+- **topic:** network-vehicle
+- **status:** closed
+- **summary:** CLOSED 2026-10-31: the ladder is answered and its remaining work continues in other cards (section 15). Question: can the network producer recover the true integer ambiguities, and what stops it? A ladder on the simulated network, one layer of complexity per rung, 2 h runs, graded against truth. Rung 0 (clean data) with the golden posture's free slant ionosphere: floats 0.24 cycle from truth and no epoch fixed; with the estimator told the ionosphere is zero (`network.sim_zero_iono_sigma_m`, test-only): 0.006 cycle, 110 of 110 settled epochs fixed, 13 037 of 13 037 kept fixes correct once each arc's wind-up branch is counted (section 4). Rung 1 (satellite and receiver code and phase biases): unchanged, every fix correct. Rung 2 (ionosphere on and free, no GIM): the wide-lane and ionosphere-free parts of the floats are precise (0.06 and 0.04 cycle) but the entry-by-entry search fixes nothing; a partial fix in the decorrelated space (`network.ambiguity_resolution.decorrelated_partial`) determines 5 572 of 13 138 settled single-signal integers (42 %), every one correct; the pairs left float are limited by arc age, and a Melbourne-Wubbena wide lane is no better than the float's own (section 7). Rung 3: troposphere neutral; phase colour cuts the pairs fixed from 42 % to 19 %; one unflagged 25-cycle slip is detected at its epoch (section 8). A spanning-tree basis with one search per baseline (sections 9 and 10) fixes 48 to 49 % of the pairs in the settled hour with no wrong fix (36 212 integers on rung 3c, 109 of 120 first-hour epochs fixed), and at 300 stations 312 218 settled integers, 70.6 % of the pairs, every one correct, for 0.24 s per epoch (section 11). Slip ladder (section 12): ten of eleven slips are flagged at their epoch; the blind (+4, +5) slip made 6 wrong single-signal fixes until three default-off fixes (section 13) removed them (36 096 of 36 096 correct). The 6 h field arm of fixes 1 and 2 (section 14) leaves users within 0.2 mm; fix 1 triples the slip re-levels (1011 to 3100); both stay off. No wrong fix on any rung with the fixes on.
+- **source:** the author's request (2026-10-09): "turn off all iono, hardware bias, etc., then we can easily check if integer ambiguities are recoverable"; [project memory on network AR] the September carry-blind covariance finding (14.5 % wrong fixes on the retired triple-frequency posture); the L1/L2 geometry (a narrow-lane integer is 99.3 % ionosphere)
+- **knobs / posture:** `config/golden/golden_sim_refound.json` pointed at the rung fixtures (`config/sim/arl/arl_r0_producer.json`), with `network.ambiguity_resolution.enable` and `.trace` (the producer's search, log-only: nothing is written back); `network.sim_zero_iono_sigma_m` (new, test-only, default 0); simulator `corrections.signal_bias_scope` (new, test-only, default `both`: `code` or `phase` stages the satellite OSB one side at a time); `network.ambiguity_resolution.decorrelated_partial` and `.decorrelated_determined_sigma_cyc` (new, default off and 0.05); the search instruments `network.ambiguity_resolution.tree_basis`, `.block_search` and `.suspect_epochs` (log-only; ledger TRACE); the slip fixes `network.cycle_slip.gf_arc_jump` (with `_k` 6 and `_m` 0.04) and `network.cycle_slip.if_phase_td_reseed_on_flag` (ledger UNVALIDATED, default off, kept off by section 14)
+- **dates in the text:** 2026-10-09, 2026-10-10, 2026-10-28, 2026-10-31
+- **hashes / run dirs:** fixture `runs/simarl_r0` (`config/sim/arl/arl_r0_clean_2h.json`); runs `runs/_rap_arl_r0`, `_rap_arl_r0b`, `_rap_arl_r0z`; off identity `runs/_rap_arl_off_f2` against `runs/_rap_g15_f2`; rung 1 fixtures `runs/simarl_r1{a,b,c}` (`config/sim/arl/arl_r1{a,b,c}_2h.json`), runs `runs/_rap_arl_r1{a,b,c}` (`config/sim/arl/arl_r1{a,b,c}_producer.json`); rung 2 fixture `runs/simarl_r2` (`config/sim/arl/arl_r2_2h.json`), runs `runs/_rap_arl_r2a`, `_rap_arl_r0ca`, `_rap_arl_r2dp`, `_rap_arl_r0zdp`, off identity `_rap_arl_r2off` against `_rap_arl_r2a` (exe `gnss_processor_arl2.exe`); pair columns `runs/_rap_arl_r2dp3` (exe `gnss_processor_arl3.exe`); rung 3 fixtures `runs/simarl_r3{a,b,c}` (`config/sim/arl/arl_r3{a,b,c}_2h.json`), runs `runs/_rap_arl_r3{a,b,c}dp`
+- **gates (frozen at pre-registration):** section 2
+
+**Outcome.** Question: can the network producer recover the true integer ambiguities on the simulated network, and what stops it? Result: on clean data yes, once the estimator's ionosphere matches the data; with the slant ionosphere free the entry-by-entry search fixes nothing, and a partial fix in the decorrelated space, then a spanning-tree basis with one search per baseline, fixes 48 % of the settled pairs (70.6 % at 300 stations) with no wrong fix on any rung. Verdict: answered; the one blind slip class needed three fixes that stay off. Standing: closed; the work continues in cards IRD and IRDB, AB3 and the FCF family (section 15).
+
+## 1. The ladder
+
+One change per rung, on both sides when a layer needs a matching model: the fixture first (`gnss_simulator synth-network`, 60 stations and the held-out SZZ000SIM, GPS L1/L2, 2 h from 00:30:30), then the producer. Each rung is graded by `scripts/simnet_producer_ar_grade.py <fixture> --run <run> --settle-h 1`: the float double differences against truth, the share rounding would get right, the search's fix rate and its correct-fix rate (a wrong fix accepted at a reported success rate of 1 is the failure that matters).
+
+- **Rung 0:** white noise only (code 0.3 m, phase 0.5 mm at zenith). No ionosphere (analytic background at 0 TECU, storm 0), no ZWD, no satellite or receiver signal biases, no code or phase multipath, no phase colour, no slips.
+- **Rung 1:** satellite and receiver hardware biases on (they cancel in a double difference).
+- **Rung 2:** ionosphere on; the estimator's slant ionosphere free, then constrained (how much absolute ionosphere information the integers need: the field's question).
+- **Rung 3 and on:** troposphere, phase colour, slips (today's golden bed).
+
+## 2. Gates (frozen)
+
+- Each rung: the float error, the rounding ceiling, the fix rate and the correct-fix rate, in the settled hour and over the run; every wrong fix listed with its identity.
+- The knob: off byte-identical in products and traces on the field golden; on, its rows counted by the "contributions as armed" table.
+
+<!-- Results are appended below this line under dated headings. -->
+
+## 3. 2026-10-09: rung 0
+
+Fixture `runs/simarl_r0`: the ionosphere is zero in every truth record (`truth_atmo.csv`: slant TEC 0 everywhere), GPS observations C1C, L1C, C2W, L2W. Producer exe `gnss_processor_arl.exe` (main `03461e4` plus the knob).
+
+| arm | settled hour: float error p50, within 0.25 cycle | fix rate | correct among kept | whole 2 h: float p50 |
+| --- | --- | --- | --- | --- |
+| `_rap_arl_r0`: golden posture (slant ionosphere free) | 0.241 cycle, 62.9 % (std 0.80) | 0 of 110 epochs (ratio p50 1.08) | none kept | 0.431 cycle |
+| `_rap_arl_r0b`: + slant-ionosphere carry, q 1e-12 | 0.242 cycle, 62.9 % | 0 | none kept | unchanged |
+| `_rap_arl_r0z`: + `network.sim_zero_iono_sigma_m` 0.001 | **0.006 cycle, 100.0 % (std 0.037)** | **110 of 110 (ratio p50 11.5)** | **13 023 of 13 037 = 99.89 %** | 0.026 cycle, 100 % correct over the first window |
+
+- **The free slant ionosphere is what hides the integers.** With L1/L2 a narrow-lane integer is 99.3 % ionosphere, so a free per-line-of-sight ionosphere leaves the floats converging at the code rate; the clean data alone did not help. The carry of arm `r0b` acts only at relevels on this posture (74 priors in 2 h) and changes nothing.
+- **The zero-ionosphere rows** (`network.sim_zero_iono_sigma_m`, one row per slant-ionosphere column aimed at absolute zero; 484 rows per epoch, counted as `sim_zero_iono` in the contributions table) make the floats integer to 0.006 cycle and the search fixes every epoch.
+- **The 14 wrong fixes are one double difference:** S03000SIM/G20 against S01000SIM/G29, both bands, from TOW 267180 to 267360, the float itself one cycle off (e = -0.98) at a reported sigma of 0.011 to 0.015 cycle. A whole-cycle error in a float with a 0.01-cycle sigma is a carried-state defect (a re-seed, a reference change or a carry hand-off), not noise. Owed: its attribution, before rung 1.
+- **The knob off** (`runs/_rap_arl_off_f2` against `runs/_rap_g15_f2`, field 2 h): `products.txt` and every CSV identical; the run log and manifest differ only by the new kind's line in the contributions table (0 rows).
+
+## 4. 2026-10-09: the one-cycle double difference is a wind-up branch, not a defect
+
+The 14 wrong fixes of section 3 all belong to S03000SIM/G20. Read from `network_amb_state.csv`, `network_pf_rows.csv` and the fixture's truth:
+
+- G20 rises at S03000SIM at TOW 264810 (the simulator's 10 degree mask) and enters the producer's solve at 265890, at 15.01 degrees (the producer's mask). The carried ambiguity is born there, already off by -0.94 cycle on L1C and -0.95 on L2W (-0.179 m and -0.232 m: a ratio of 1.30, the wavelength ratio 1.28, an equal number of cycles on both bands, not an ionosphere-shaped error), with a birth variance of 0.0016 m2 (determined by the station's other carried phase arcs), and it never moves. Every other S03000SIM satellite and every other station's G20 is within 0.06 cycle.
+- The simulator accumulates G20's wind-up at S03000SIM continuously from the rise: -0.471 cycle at 264810, **-0.501 at 265890**, -0.530 at the end (`truth_windup.csv`). The producer starts its own accumulator (`estimation.accumulate_phase_windup`) at the arc's first epoch with the wrapped value, so -0.501 becomes +0.499: one cycle above the simulator's branch, on both bands. The float absorbs -1 cycle from the first epoch, exactly the error measured.
+- The fixed integers (-40 on L1C, +5 on L2W against the simulator's -39 and +6) are therefore the right integers in the producer's own wind-up convention; the grader's truth carries the simulator's branch. An integer absorbed into one station's ambiguity is invisible to the products' consumers.
+
+**Rung 0, corrected: every kept fix correct (13 037 of 13 037 once the arc's branch is counted).** Owed to the grader (`scripts/simnet_producer_ar_grade.py`): count the wind-up branch of each arc at the producer's first epoch (the nearest integer to the producer's wrapped start minus the simulator's accumulated value), so a branch crossing near the mask is not graded as a wrong fix. The producer is not changed.
+
+## 5. 2026-10-09: the grader's wind-up branch, and rung 1 (hardware biases)
+
+**The grader** (`scripts/simnet_producer_ar_grade.py`, commit `540d8b5`) now grades each arc against the producer's integer, N_sim + k with k = round(wu_sim(t0)), the simulator's accumulated wind-up at the arc's first producer epoch. The arc start is read from `logs/network_slip_raw.csv` (one row per modelled dual-frequency phase line of sight, from the run's first epoch; a gap over the accumulator's 300 s horizon starts a new arc). `logs/network_amb_state.csv` is the wrong source: an arc is carried there later than its wind-up starts (S09000SIM/G11 at 261210 against 261030), and with it 30 arcs were shifted and 92 good fixes graded wrong. `--no-windup-branch` keeps the raw integers; the selftest covers both. Rung 0 regraded (`runs/_rap_arl_r0z`): 15 of 730 arcs on a shifted branch (S03000SIM/G20 and 14 G12 returns at 267720), 13 037 of 13 037 kept fixes correct in the settled hour, 13 957 of 13 957 in the first.
+
+**The simulator** gains `corrections.signal_bias_scope` (`both`, the default; `code`; `phase`): with `corrections.signal_bias` the day's COD MGX OSB reaches only the named observables, and `truth_bias.csv` records 0 for the other. The rung-0 fixture regenerated with the new simulator is byte-identical (610 RINEX and truth files).
+
+**Rung 1.** One fixture per layer, each rung 0 plus the biases named; the producer is the rung-0 zero-ionosphere arm (`network.sim_zero_iono_sigma_m` 0.001) pointed at the fixture, exe `gnss_processor_arl.exe`. Satellite biases: the COD MGX OSB product (GPS C1C, C2W, L1C, L2W; G01 for example C1C -1.906 m, C2W -2.800 m, L1C -0.192 m, L2W -0.285 m). Receiver code biases: the golden bed's per-station values (`simnet60_quiet_col_24h.json`, C2W up to about 0.5 m). Receiver phase biases: deterministic per station, L1C 0.08 sin(0.7 i) m and L2W 0.09 cos(1.3 i) m (fractions of a cycle). The producer does not apply the product OSB (`enable_code_phase_bias` false); it estimates the biases.
+
+| arm | biases | settled hour: float p50, within 0.25 cycle | fix rate | correct among kept | first hour: correct among kept |
+| --- | --- | --- | --- | --- | --- |
+| `_rap_arl_r0z` | none | 0.006 cycle, 100.0 % | 110 of 110 (ratio p50 11.5) | 13 037 of 13 037 | 13 957 of 13 957 |
+| `_rap_arl_r1a` | code (satellite and receiver) | 0.006 cycle, 100.0 % | 110 of 110 (11.4) | 13 037 of 13 037 | 13 965 of 13 965 |
+| `_rap_arl_r1b` | phase (satellite and receiver) | 0.006 cycle, 100.0 % | 110 of 110 (11.6) | 13 037 of 13 037 | 13 965 of 13 965 |
+| `_rap_arl_r1c` | code and phase | 0.006 cycle, 100.0 % | 110 of 110 (11.5) | 13 037 of 13 037 | 13 966 of 13 966 |
+
+- **The hardware biases do not touch the integers.** Every rung fixes every settled epoch with no wrong fix; the float double differences are unchanged to the third decimal (unwrapped std 0.018 cycle on all four arms). The satellite and receiver phase biases are absorbed by the carried ambiguities and phase-bias states and cancel in the double difference, as they must.
+- **The code biases make the code fit better, not worse.** Settled per-station post-fit code rms (`network_pf_keyed.csv`, normalised) p50 1.06 on rung 1a against 1.60 on rungs 0 and 1b. The producer pins each satellite's geometry-free code bias at the broadcast group delay (`sat_gf_datum broadcast_tgd`); a fixture with no code bias contradicts that pin by the whole group delay, while the product's real biases nearly match it. Rung 0's code residuals carried that contradiction; it did not reach the integers.
+- Next, rung 2: the ionosphere on in the fixture, with the estimator's slant ionosphere free and then constrained.
+
+## 6. 2026-10-09: rung 2 (the ionosphere), and a partial fix in the decorrelated space
+
+**Fixture** `runs/simarl_r2` (`config/sim/arl/arl_r2_2h.json`): rung 1c (all hardware biases) plus the golden bed's ionosphere block verbatim (the simulator draws the slant TEC from the day's GIM at each pierce point: slant TEC p50 35, max 80 TECU at S02000SIM). The GIM shapes the simulator's truth only; the producer has no GIM, no ionosphere weighting and a free slant ionosphere per line of sight. The ionosphere is in the observations (G01 at S02000SIM: L1 code +8.7 m, L1 phase about -53 cycles against rung 1c's file).
+
+**The golden posture** (`_rap_arl_r2a`: the rung-0 producer on this fixture, ionosphere free): identical to rung 0's free-ionosphere arm to the third decimal (float p50 0.241 cycle, 0 of 110 epochs fixed, ratio p50 1.08). A free slant ionosphere per line of sight absorbs any ionosphere exactly, so the field's source and shape do not reach this posture.
+
+**Where the integers are.** The single-signal float errors split into their dual-frequency parts (`scripts/simnet_producer_ar_lanes.py`, a grading lens; the producer stays uncombined). Settled hour, `_rap_arl_r2a`:
+
+| part | p50 error | p90 | within 0.25 |
+| --- | --- | --- | --- |
+| L1 single-signal | 0.214 cycle | 0.834 | 54.7 % |
+| wide lane, L1 - L2 (86 cm) | 0.060 cycle | 0.235 | 91.0 % |
+| ionosphere-free part, in narrow-lane cycles (10.7 cm) | 0.040 cycle | 0.151 | 97.0 % |
+
+The floats carry the integers; the search does not reach them. Its formal per-band sigma is honest (L1 p50 0.310 cycle against the 0.214 error), and the carry-aware covariance (`_rap_arl_r0ca`, `network.carry_aware_covariance`) changes nothing. Two gates of the entry-by-entry search (`ils::ilsFix` with `ils::selectFixableSubset`) cannot pass under a free ionosphere: the fallback drops the single-signal DD of largest variance one at a time, which breaks the L1/L2 pairs the information is in, and the 0.10-cycle per-entry cap (`nl_max_per_pair_frac`) rejects every correct fix whose single-signal float sits 0.2 to 0.3 cycle from its integer.
+
+**The build** (`ils::ilsFixDecorrelatedPartial`, `network.ambiguity_resolution.decorrelated_partial`, default off). The covariance is decorrelated (Q = Lt D L and the MLAMBDA reduction); the largest trailing set of decorrelated components whose bootstrap success rate is at least `min_success_rate` (0.9999) is searched, shrunk by one component while the ratio test (3.0) fails; the single-signal floats are conditioned on the fixed components; a single-signal DD is reported fixed when its conditional sigma is at most `decorrelated_determined_sigma_cyc` (0.05) and its conditional value lies within `nl_max_per_pair_frac` of an integer. The per-DD trace and the grader are unchanged. Unit tests `tests/test_ils_decorrelated_partial.cpp` (4 cases: the free-ionosphere pair geometry recovers every integer where `ilsFix` fixes none; imprecise floats fix nothing; one precise pair beside one imprecise pair fixes only the precise one). Off: products and every trace of `_rap_arl_r2off` identical to `_rap_arl_r2a` except the wall-clock timing columns.
+
+| arm | settled hour: epochs with a fix | single-signal DDs fixed | correct | first hour: epochs, fixed, correct |
+| --- | --- | --- | --- | --- |
+| `_rap_arl_r2a`, entry-by-entry (golden) | 0 of 110 | 0 | n/a | 0 of 120 |
+| `_rap_arl_r2dp`, decorrelated | **94 of 110** (ratio p50 3.13) | **5 572 of 13 138 (42 %)**, 2 786 per band | **5 572** | 59 of 120; 1 770; 1 770 |
+| `_rap_arl_r0z`, zero ionosphere, entry-by-entry | 110 of 110 | 13 037 | 13 037 | 120 of 120; 13 957; 13 957 |
+| `_rap_arl_r0zdp`, zero ionosphere, decorrelated | 110 of 110 | 13 084 | 13 084 | 120 of 120; 16 610; 16 610 |
+
+- **Single-signal integers come out of the uncombined float with the ionosphere free**, with no ionosphere constraint and no external product: 42 % of the settled double differences, every one correct, L1 and L2 always together (a single-signal integer is determined only when both its wide-lane and ionosphere-free directions are fixed). Per epoch the search fixes 82 of about 112 decorrelated components at the median (0 to 114).
+- **The ratio test is the binding gate** (p50 3.13 against the 3.0 threshold on fixed epochs); the bootstrap rate of the fixed set is 1.0000.
+- On clean data the decorrelated search fixes a little more than the entry-by-entry one (13 084 against 13 037 settled; 16 610 against 13 957 in the first hour) with no wrong fix.
+- Open: the 58 % left float and the first hour (49 % of epochs); then the troposphere, phase colour and slips (rung 3), where the float's wide-lane and ionosphere-free precision is the question.
+
+## 7. 2026-10-09: the pairs left float, and whether a Melbourne-Wubbena wide lane would fix them
+
+**Instrument.** With `decorrelated_partial` armed, the per-DD trace gains four pair columns (`include/logging/NetworkRunTraces.hpp`, `kProducerArHeaderDecorrelated`; `netar::pairLaneColumns`): the pair's wide-lane formal sigma before the fix, its wide lane conditioned on the fixed decorrelated components (value and sigma), and the conditioned narrow-lane sigma ((f1 a1 - f2 a2) / (f1 - f2) narrow-lane cycles). Off, the header and rows are unchanged; on, the first 19 columns and the products of `runs/_rap_arl_r2dp3` are identical to `_rap_arl_r2dp`. Two unit tests (suite `ProducerArPairLanes`). `scripts/simnet_producer_ar_pairs.py` sorts every pair-epoch against truth; `scripts/simnet_mw_widelane.py` forms the double-differenced Melbourne-Wubbena wide lane from the fixture's RINEX, averaged causally over each producer arc, for the same pair-epochs.
+
+**The pairs** (settled hour, 6 569 pair-epochs; a wide lane is fixed when its conditional sigma is at most 0.05 cycle):
+
+| class | share | integer correct | float truth error p50 / p90: wide lane, narrow lane (cycles) |
+| --- | --- | --- | --- |
+| single-signal integers fixed | 42.4 % | 2 786 of 2 786 | |
+| wide lane fixed, narrow lane not | 25.4 % | 1 670 of 1 670 (wide lane) | 0.052 / 0.141, 0.068 / 0.201 |
+| wide lane not fixed | 32.2 % | | 0.148 / 0.484, 0.062 / 0.193 |
+
+Over the whole run (first hour included) the shares are 24.6 %, 21.9 % and 50.3 %, with 3.3 % of pair-epochs on epochs that fixed nothing.
+
+**The Melbourne-Wubbena wide lane** (geometry, clocks, troposphere, ionosphere and wind-up cancel; every hardware bias cancels in the double difference; undifferenced scatter 0.559 wide-lane cycle per epoch):
+
+| class | MW error p50 / p90 | MW rounds to truth | MW formal sigma p50 | float wide lane error p50 / p90 |
+| --- | --- | --- | --- | --- |
+| single-signal integers fixed | 0.054 / 0.133 | 100.0 % | 0.089 | 0.041 / 0.128 |
+| wide lane fixed only | 0.075 / 0.174 | 100.0 % | 0.109 | 0.052 / 0.141 |
+| wide lane not fixed | 0.145 / 0.487 | 90.8 % | 0.238 | 0.148 / 0.484 |
+
+- **An MW wide-lane input would not help.** Where the search leaves the wide lane free, the arc-averaged MW wide lane is as poor as the float's own (0.145 against 0.148 cycle p50, 0.487 against 0.484 p90); where the wide lane is fixed, the float is better than MW. The uncombined filter already holds every bit of code information MW carries. (Earlier MW work on this project carried the wide lane as filter states, the lane layer; this measures MW only as an input to the search.)
+- **The limit is arc age.** The MW formal sigma is the per-epoch double-difference noise over the square root of the youngest of the four arcs; its medians correspond to about 22 epochs (11 min) on the youngest arc of a "wide lane not fixed" pair, about 105 (53 min) for "wide lane fixed only" and about 158 (79 min) for a fixed pair. A wide lane needs roughly a quarter to half an hour of arc at this code noise (0.3 m at zenith), and the narrow lane about an hour; rising satellites keep a steady share of young arcs in every epoch.
+- **What the narrow-lane class lacks is precision, not bias:** its narrow-lane float error (0.068 p50) is as small as that of the pairs whose wide lane is still free (0.062), and every wide lane in the class is correct. The bootstrap rate of 0.9999 and the ratio test (p50 3.13 on fixed epochs) hold it back until the arc lengthens.
+- Next: rung 3 (troposphere, phase colour, slips), where the question is whether this time scale holds; and, separately, whether an ionosphere constraint between neighbouring stations shortens it (a slant-ionosphere prior narrows the ionosphere direction that both lanes share).
+
+## 8. 2026-10-09: rung 3 (troposphere, phase colour, one slip)
+
+Three cumulative fixtures, each the previous plus one layer from the golden bed (`simnet60_quiet_col_24h.json`, copied verbatim): **3a** the troposphere (ZWD 0.12 m, random walk 0.01 m, tau 3600 s); **3b** the coloured phase error (band-common Gauss-Markov, tau 300 s, 4.4 to 6.0 mm at zenith by latitude class); **3c** one scripted slip, S43000SIM / G22 / L1C +25 cycles at TOW 261930 (15 minutes into the run, G22 at 76 degrees), no LLI flag. Producer: the rung-2 arm with `decorrelated_partial` (exe `gnss_processor_arl3.exe`).
+
+| rung | settled epochs with a fix | single-signal DDs fixed, correct | pairs: fixed / WL only / WL free | narrow-lane float error p50 (WL-only class) |
+| --- | --- | --- | --- | --- |
+| 2 (`_rap_arl_r2dp3`) | 94 of 110 | 5 572, 5 572 | 42.4 / 25.4 / 32.2 % | 0.068 |
+| 3a troposphere | 94 of 110 | 5 574, 5 574 | 42.4 / 25.5 / 32.1 % | 0.068 |
+| 3b + phase colour | 75 of 110 | 2 434, 2 434 | 18.5 / 33.9 / 47.6 % | 0.098 |
+| 3c + one slip | 75 of 110 | 2 496, 2 496 | 19.0 / 33.4 / 47.6 % | 0.100 |
+
+- **The troposphere is neutral**: the estimated ZWD absorbs it.
+- **Phase colour is the costly layer**: the share of pairs fixed falls from 42 % to 19 %, the narrow-lane float error in the wide-lane-only class grows from 0.068 to 0.098 cycle, and among pairs with the wide lane free the narrow-lane error grows from 0.062 to 0.147. No fix is wrong: the gates hold the fixing back rather than accepting coloured floats.
+- **The slip is handled.** At TOW 261930 the producer flags G22 at S43000SIM by the Melbourne-Wubbena test (`T0_mw_detect`) and the ionosphere-free time difference (`T1_if_slip`), refloats both bands (band scope `common_band`, no exoneration of L2W), and the arc re-converges. Graded against the truth that includes the +25 cycles, the arc's double differences after the slip have float error p50 0.074 (L1C) and 0.103 cycle (L2W), and all 86 fixes on it are correct.
+- **The search sees a fifth of the network.** The arc enters the search basis only at TOW 262980, when the reference station changes to one that sees G22. The basis is a star per (constellation, signal): one reference satellite and one reference station, one DD per (station, satellite) that both the station and the reference station track. At TOW 264000 it holds 136 DDs from 190 undifferenced ambiguities, while the network carries 460 ambiguities per band; about 370 per band are independent (ambiguities minus stations minus satellites plus one). Every fix rate on this card is a share of the star's 68 per band. Building a full independent basis (a spanning tree of baselines, each with its own common reference satellite) is the step that makes the search a network search.
+
+## 9. 2026-10-09: a spanning-tree basis for the search (first version)
+
+`network.ambiguity_resolution.tree_basis` (new, default off; the star is unchanged when off): per (constellation, signal) a greedy spanning tree of station baselines, rooted at the station with the most satellites; each outside station is attached to the in-tree station it shares the most satellites with (at least two), and the baseline contributes one DD per common satellite against the first common one. Each baseline brings in a new station's ambiguities, so the set is independent by construction. Exe `gnss_processor_arl4.exe`, with `decorrelated_partial`; runs `runs/_rap_arl_r2tree`, `runs/_rap_arl_r3ctree`.
+
+| settled hour | star (`_r2dp3` / `_r3cdp`) | tree |
+| --- | --- | --- |
+| DDs searched, both bands, p50 | 112 | 682 |
+| rung 2: epochs with a fix; single-signal DDs fixed, correct | 94 of 110; 5 572, 5 572 | 110 of 110; 6 508, 6 508 |
+| rung 3c: epochs with a fix; single-signal DDs fixed, correct | 75 of 110; 2 496, 2 496 | 110 of 110; 3 854, 3 854 |
+| first hour, rung 3c: epochs; fixed, correct | 53 of 120; 772, 772 | 76 of 120; 1 540, 1 540 |
+| run time, 2 h of data | about 105 s | about 560 s |
+
+- Six times the basis, more integers fixed in absolute terms, every epoch fixing, and no wrong fix. The share of pairs fixed is lower (rung 2: 8.6 % fixed, 19.1 % wide lane only, 72.2 % wide lane free; rung 3c: 5.1 / 13.2 / 81.7 %): the tree reaches the young and long baselines the star never saw, and one joint ratio test over about 680 dimensions is stricter than over 112.
+- Open: the shares (a ratio test per baseline or per block, or a lower joint threshold, against the 0.9999 bootstrap bar), the run time of the larger search, one owner shared with the chain datum, then the harder slips.
+
+## 10. 2026-10-09: the search block by block (one block per baseline)
+
+`network.ambiguity_resolution.block_search` (new, default off; with `decorrelated_partial`): the search rows of one baseline (its L1 and L2 DDs, keyed by constellation, sta_r and ref_sta) are fixed together by `ils::ilsFixDecorrelatedPartial` on their marginal covariance, each block with its own bootstrap (0.9999) and ratio test (3.0), in `netar::blockDecorrelatedFix`. The trace's ratio is the smallest accepted block ratio and its p_succ the product of the accepted blocks' bootstrap rates. Two unit tests (suite `BlockDecorrelatedFix`). Exe `gnss_processor_arl5.exe`; runs `runs/_rap_arl_r2blk`, `runs/_rap_arl_r3cblk` (tree basis, decorrelated, block search).
+
+| settled hour | tree, one joint search (section 9) | tree, block search |
+| --- | --- | --- |
+| rung 2: single-signal DDs fixed, correct | 6 508, 6 508 | **37 072, 37 072** |
+| rung 2: pairs fixed / WL only / WL free | 8.6 / 19.1 / 72.2 % | **49.2 / 27.6 / 23.2 %** |
+| rung 3c: single-signal DDs fixed, correct | 3 854, 3 854 | **36 212, 36 212** |
+| rung 3c: pairs fixed / WL only / WL free | 5.1 / 13.2 / 81.7 % | **48.1 / 28.3 / 23.7 %** |
+| rung 3c first hour: epochs with a fix; fixed, correct | 76 of 120; 1 540, 1 540 | 109 of 120; 10 128, 10 128 |
+| run time, 2 h of data | about 560 s | about 189 s |
+
+- **One weak baseline no longer refuses the network.** On the realistic rung (phase colour and a slip) about half of all the tree's pairs are fixed in the settled hour, against 19 % of the star's much smaller basis (section 8), with no wrong fix in 46 340 kept integers over the run.
+- **Faster**: the cost of the joint search (one ~680-dimensional search, shrunk one component at a time on a failed ratio test) is gone; what remains is the covariance readback and the rest of the run (the star without the decorrelated search ran about 190 s).
+- **Caveat**: each block is fixed on its marginal covariance, ignoring the correlation with the other baselines. Each block's bootstrap rate is at least 0.9999, so an epoch's bound is the product (about 60 blocks: about 0.994); the run's zero wrong fixes are the measurement, not a guarantee.
+- Open: the shared owner with the chain datum; the harder slips; feeding the fixes back (Phase 3).
+
+## 11. 2026-10-10: 300 stations, and the search made cheap
+
+**Fixture** `runs/simarl_n300` (`config/sim/arl/arl_n300_2h.json`): rung 3b (every hardware bias, the GIM-shaped ionosphere, the troposphere, phase colour; no slip) on the 300-station roster of `simnet300_quiet_12h.json` plus its held-out consumer; receiver phase biases as on the 60-station rungs; one network-level phase colour (5.0 mm at zenith, tau 300 s). Producer `config/sim/arl/arl_n300_producer.json` (`scripts/simnet_make_producer_config.py` from the rung-3c block arm; elected datum station S14801SIM), with `decorrelated_partial`, `tree_basis` and `block_search`.
+
+**Integers at 300 stations** (`runs/_rap_arl_n300blk`, settled hour): 4 022 DDs searched per epoch (p50) from about 5 000 undifferenced ambiguities; 110 of 110 epochs fixed; **312 218 single-signal integers fixed, every one correct** (first hour: 117 of 120 epochs, 108 744, all correct). Pairs: 70.6 % fixed, 5.3 % wide lane only, 24.1 % wide lane free (60 stations: 48.1 / 28.3 / 23.7 %): the denser network gives shorter baselines.
+
+**Cost.** Two changes, both with identical decisions (every trace row: 938 094 at 300 stations, 159 036 at 60; the 60-station products and trace byte-identical):
+
+- `NetworkNormalEquations::blockConditionalCovariances` (and its `NetworkEstimator` wrapper): in block mode the producer reads back only each baseline's block of the joint conditional covariance (the same uncorrected expression, with Cov_free M formed as one product) and differences it in place, instead of the full k x k readback (k about 5 000) and two dense products with a 4 000 x 5 000 differencing matrix. Used when `block_search` is armed without the carry-aware covariance and without `ils_max_dim`.
+- The spanning tree is built by Prim's algorithm on satellite bitmasks (each outside station keeps its best in-tree partner), O(stations^2) popcounts, with the same tie-breaking as the exhaustive scan.
+
+| 2 h, ms per epoch | 60 stations | 300 stations |
+| --- | --- | --- |
+| producer, search off | not run | 863 (`_rap_arl_n300off`) |
+| tree + blocks, full readback | 633 (`_r3cblk`) | 39 624 (`_n300blk`) |
+| + block readback | 302 (`_r3cblk6`) | 7 678 (`_n300blk6`) |
+| + Prim tree | 286 (`_r3cblk7`) | **1 106** (`_n300blk7`) |
+
+At 300 stations the integer step now costs about 0.24 s per epoch on top of the producer's 0.86 s (exes `gnss_processor_arl6.exe`, `gnss_processor_arl7.exe`). (At 60 stations no search-off arm was run; `_rap_arl_r2off`, 663 ms per epoch, ran the entry-by-entry search on the star.)
+
+## 12. 2026-10-10: the slip ladder (eleven slips, the search log-only)
+
+Each rung is rung 3b plus one scripted slip at epoch 31 (TOW 261930), paired exactly with the no-slip control `runs/simarl_r3b` (scripted slips use no random stream: only the slipped station's RINEX differs and every trace is identical before the slip). Fixtures `runs/simarl_{s1,s2,s3,s3b,s4,s4b,s5,s6a,s6b,s7,s8}` (`config/sim/arl/arl_<rung>_2h.json`); runs `runs/_rap_arl_<rung>` and the control `runs/_rap_arl_r3bblk7`, all with the tree basis, the decorrelated fix and the block search (exe `gnss_processor_slips.exe`, a copy of `gnss_processor_arl7.exe`). Targets were chosen off the hidden roles: G14 at S43000SIM is not the MW pivot, the IF-TD reference, its phase anchor or the search's reference satellite. Analysed by one analyst and one independent skeptic per rung (workflow `arl-slip-ladder`); the numbers below are the skeptic-corrected ones.
+
+| rung: slip | detected by, latency | response | slipped arc after; wrong fixes (kept, 2 h) |
+| --- | --- | --- | --- |
+| S1: G14 L1C +25, no LLI, 57 deg | IF-TD pool arm (12.1 m against 0.107 m), 0 epochs; an MW echo refloats the arc again one epoch later | both bands, twice | ionosphere-shaped offset -0.25 / -0.31 cycle decaying to -0.07 at 95 min; 0 wrong (46 408) |
+| S2: G14 L1C +1 | IF-TD pool arm (4.6x the floor), 0 epochs; MW silent | both bands (L2W freed though clean) | offset peaks -0.61 / -0.78 cycle at +6 epochs; 0 wrong (46 406) |
+| S3: G14 L2W +1 with LLI | LLI drain corroborated by the raw GF step, plus IF-TD, 0 epochs | L2W only (rule F3) | within 0.007 cycle of the control; 0 wrong (46 440) |
+| S3b: false LLI on L2W, no slip | LLI drain on station credibility alone (every witness flat), 0 epochs | L2W freed with no slip | within 0.007 cycle; 0 wrong (46 440) |
+| S4: (+2, +2), MW-blind | IF-TD pool arm (2.0x), 0 epochs | both bands | offset decays over 1 to 2 h; 0 wrong (46 406) |
+| S4b: (+1, +1), IF step equal to the floor | IF-TD pool arm at 1.035x (this epoch's noise); replayed on control noise the detection rate is 41 to 47 %, 18 % at 15 to 20 deg | both bands | offset -0.27 / -0.35 cycle; 0 wrong (46 406) |
+| S5: G26 at S29000SIM (+2, +2), 17 deg | IF-TD pool arm (2.0x), 0 epochs | both bands; a receiver-DCB gauge move at two stations | 0 wrong (46 406) |
+| S6a: G22 L1C +1 (the IF-TD reference and MW pivot) | IF-TD reference gate (8.9x), 0 epochs | both bands; 4 dropped MW verdicts on clean arcs (pivot fan-out) | wide lane re-determined at +4 epochs; 0 wrong (46 446) |
+| S6b: G17 L1C +1 on a phase-datum anchor arc at the clock datum station | IF-TD pool arm (4.4x), 0 epochs | both bands; continuous anchor handover to S33000SIM in the slip epoch | first fix 6 epochs later than the control; 0 wrong (48 538) |
+| S7: G14 L1C +2 twice (the second in the post-flag epoch) | first: IF-TD, 0 epochs; second: no IF-TD sample (chain reset), MW silent, caught after the solve by RAIM T4 | second response also drops G05 and G13 at the station (no slip) | 0 wrong (46 348) |
+| **S8: (+4, +5), blind to MW and IF-TD** | **nothing before the solve**: IF-TD 0.51x the floor, MW flag at +3 epochs dropped as an unknown integer, raw GF step -0.46 m wired to nothing | none | **6 wrong single-signal fixes** (one pair, S43000SIM/G14 against S30000SIM/G05, fixed (-120, +3) against true (-117, +7) at 261990 to 262050) and 16 wrong wide-lane determinations up to +450 s |
+
+- **The ordinary detection path works.** Ten of the eleven slips are flagged at their epoch on the right arc, and the search makes no wrong fix on them.
+- **The one failure is the class every pre-solve detector is blind to.** On S8 the free slant ionosphere absorbs -0.709 of the -0.711 m dispersive step; the float moves only about half a cycle while the truth moves four and five, and lands near a wrong lattice point that looks more fixable than the control's float did. The search's own gates cannot tell (identical sigma, ratio 3.2 to 3.45 against a correct-fix median of 3.21). A held integer there would lock about 0.63 m of slant-ionosphere error into the station's clock and phase biases.
+- **Defects ranked before any hold** (analysis section 3): (1) no pre-solve trigger for slips under the IF-TD floor and MW-blind (an arc-scoped geometry-free jump test, r = dGF(t) - dGF(last clean step) above 0.04 m, flags every slipped rung at its epoch including S8, S4b and S7's second repetition, with 0 flags in 115 901 clean sim samples; on the field the fixed 0.04 m test flags 1.2 % of samples, 72 % of them at SCTB00ATA and CAS100ATA, so the field needs a per-arc noise scale); (2) the IF-TD chain reset leaves a blind epoch after every flag; (3) the search reads no slip state; (4) RAIM T4 attribution spreads through the whitened carried-prior row to clean arcs at the station (S7: G05, G13); (5) MW duplicate, late and false releases (S1 echo, the pivot fan-out in S6a, two false refloats on the clean control at S35000SIM); (6) both bands released on single-band slips and a false LLI released unconditionally; (7) no single complete release seam (T4 drops outside the relevel latch, anchor arcs respond as births); (8) a release moves the gauge and creates information; (9) telemetry (the per-epoch refloat columns read 0 in every run).
+- Untested: the (1,1) rate over many events, the settled-hour twins (no rung released a held single integer: every slip came before the arc's first fix), the bridged gap of 120 to 300 s, and the variants (3,4), (7,9) and the S8 shape on an anchor arc.
+
+## 13. 2026-10-10: three slip fixes before any hold (all default off)
+
+Built for the first three defects of section 12, each by one implementer and checked by an independent reviewer who re-ran the gates (workflow `arl-slip-fixes`; notes in the session scratchpad). Each knob is default off; off, the products and every non-timing CSV are identical to the control `runs/_rap_arl_r3bblk7` (re-checked on the final tree: `runs/_rap_sfx_off_r3b`, exe `gnss_processor_slipfix.exe`).
+
+**1. Arc geometry-free jump trigger** (`network.cycle_slip.gf_arc_jump`; riders `gf_arc_jump_m` 0.04, `gf_arc_jump_k` 0 = scale term off, `gf_arc_jump_window` 20, `gf_arc_jump_min_count` 10; `slip/NetworkGfArcJump`). Per (station, satellite) dual-frequency arc, r(t) = dGF(t) - dGF(last clean step); a flag when |r| exceeds max(gf_arc_jump_m, k x 1.4826 x MAD of the arc's last clean r). A flagged step never becomes the reference (which keeps a repeated equal step visible); after two consecutive flags the reference re-seeds; a gap, pair change or span change restarts the arc, and a non-finite sample leaves it empty. It runs in PASS A after the IF-TD driver, frees both bands through `relevel.free_ambs` under a new cause bit (`kCauseGfJump`, 128; the mask is now full), respects the common-band verdict, writes one `T1_gf_jump` event per flag and a run-end report (row 108).
+
+| arm | flags | outcome |
+| --- | --- | --- |
+| control, k 0 (`_rap_gfj_on_r3b`) | 0 of 115 901 tests (largest r 0.0344 m) | identical to off |
+| S8, S4b, S7 | flagged on the slipped arc at the slip epoch (S8 r -0.465 m, S4b -0.059, S7 second repetition +0.379) | S8: the 6 wrong single-signal fixes and 16 wrong wide lanes are gone; S7: RAIM T4's collateral drops of G05 and G13 no longer occur |
+| S1 to S6b | coincident with the drain that had already freed the arc | byte-identical to off |
+| field, 2 h, 58 stations, k 0 | 1 525 of 112 798 (1.35e-2), 72 % at SCTB00ATA and CAS100ATA | consumer within 1.1 mm |
+| field, k 6 | 250 of 113 261 (2.21e-3), 128 of the 172 GF-only refloats on young arcs before the scale term applies | |
+| field, k 8 | 223 (1.97e-3) | |
+
+Offline replay of (1,1) detection at 15 to 20 deg: 98.9 % (k 0), 90.1 % (k 6), 70.5 % (k 8); 100 % at 30 deg and above for k up to 6. Recommended: k 6 with the 0.04 m floor. The field's real-slip share is unknown (no truth); a 6 h field arm is owed before any promotion.
+
+**2. IF-TD re-seed on flag** (`network.cycle_slip.if_phase_td_reseed_on_flag`). A flag re-seeds the satellite's gradient from the flag epoch instead of erasing it, so the next epoch has a triple difference. S7's second repetition is flagged by IF-TD at 261960 (0.964 m against 0.107 m, detail `post_flag`); on S1 to S6b the restored evaluation is clean; control 0 flags. Field: 56 flags against 44 in 2 h, 10 of the 12 new ones at MAC100AUS; a one-epoch spike is now answered twice (its return reads with the opposite sign), so 10 more refloats per 2 h on the field, whose level-channel cost is unmeasured. The reference-gate path (S6a) keeps its own blind epoch.
+
+**3. Search suspect-corner mask** (`network.ambiguity_resolution.suspect_epochs`, log-only; `filter/NetworkArSuspect`). A DD is left out of the search while any corner was freed (any `free_ambs` cause), dropped or re-levelled (LocalCarry stamps), dropped by RAIM T3/T4, flagged by MW and dropped as an unknown integer, or flagged by the GF trigger within the last N epochs; masked DDs stay in the trace. Both edges are counted (the reviewer's major finding: the release edge was bare; it now logs the corners and DDs released and the grader checks every re-entered pair). With 10 epochs: every rung with all three fixes on has every kept fix and every wide lane correct; the control loses 0.23 % of settled fixes (1 168 of 159 036 DDs masked); at 300 stations 1 091 ms per epoch against 1 096 off, all 311 398 settled fixes correct. With the GF trigger off the mask alone cuts S8 from 6 wrong fixes to 2 (the residue sits before the late MW flag and after the time-only release): the mask is a backstop, not a detector, and its release is field-blocking for any solve-affecting use until it re-validates.
+
+**Together** (`runs/_rap_sfx_all_s8`: all three on, k 6): S8 settled 36 096 of 36 096 and first hour 10 192 of 10 192 correct. Unit tests: 21 GF-trigger cases (one added for the non-finite sample), 10 re-seed cases, 26 mask cases; full suite passes. Reviewer minors left open: the GF drain does not consult `refloat_band_scope: implicated` (KEEP_OFF anyway), the re-seed run-end report has no unit test, and the mask's stamps overstate distinct suspect events.
+
+## 14. 2026-10-28: the 6 h field arm of slip fixes 1 and 2
+
+Field golden, 6 h, one key per arm, against `runs/_rf0hv16_field6` (the golden pair of card MRF); exe
+`build/x64-Release/gnss_processor_bof.exe` (the Release build of main `ef9f75d`, sha256[:16] 2d84a326fd00fd04); arms
+`D:/GnssProcessorSupport/runs_nom/_rap_bof_gfaj_f6` (`network.cycle_slip.gf_arc_jump` true, `gf_arc_jump_k` 6) and
+`_rap_bof_rsof_f6` (`network.cycle_slip.if_phase_td_reseed_on_flag` true). Gates in
+`D:/GnssProcessorSupport/runs_nom/bof_reports/preregistration.md`; grade in `.../bof_reports/grade_6h_nsd_arl_piv130.md`.
+
+| quantity | control | arc-jump (fix 1) | re-seed on flag (fix 2) |
+|---|---:|---:|---:|
+| GF arc-jump flags | 0 | 1215 (1056 freed, 2095 bands) | 0 |
+| IF-TD flags / refloats | 111 / 107 | 111 / 107 | 149 / 143 (149 re-seeded, 0 reset) |
+| slip re-level free-epoch latches | 1011 | 3100 | 1080 |
+| anchor-slip handovers (cold fallback) | 5 (0) | 57 (29) | 5 (0) |
+| WTZZ00DEU, mean hourly p50 hours 2 to 6, change | | -0.05 mm | -0.03 mm |
+| 16-site census, paired median, hours 2 to 6 | | -0.2 mm (largest +4.4 mm, CHTI00NZL) | 0.0 mm (largest +1.7 mm, KOKB00USA) |
+
+Both fixes pass the consumer and census bars (A2, A3). Fix 1 is not free on real data: 1215 arc-jump flags in 6 h at
+58 stations triple the slip re-levels and take the anchor-slip handovers from 5 to 57. Fix 2 adds 38 IF-TD flags and 36
+refloats. Neither moves a user. Both serve the fixed-cycle emit posture, which is not armed; on this evidence they stay
+off, and the 6 h field arm owed by the ledger rows is done.
+
+## 15. 2026-10-31: closed
+
+The ladder is answered (sections 3 to 14). Its open items, the defects and the untested classes of sections 12 and 13 are mapped below to where they landed or are triaged under standing invariant 3. Statements about the tree and the register were read on 2026-10-31.
+
+**Where the work continues.** Card [IRD](../../refound/IRD_integer_recovering_datum_2026-10-13.md) (the integer-recovering datum on the eq34 chain, observatory first; open) and its continuation IRDB (not yet on main); card [AB3](../../refound/AB3_lanes_2026-09-20.md) (the wide-lane constraint on the float states, SEQUENCED after L5: section 7's finding that a Melbourne-Wubbena input adds nothing the uncombined float lacks bears on its design); and the fixed-cycle fold family, cards [FCF](FCF_fixed_cycle_fold_2026-10-11.md), [FCFB](FCFB_fixed_cycle_fold_continued_2026-10-11.md) and [FCFC](FCFC_fixed_cycle_ledger_2026-10-11.md) (the detached fix and hold, closed: decisions D1 and D2 FAILED and the hold, FCF-4, is unbuilt). The shared arc-graph module that the search's basis, the lattice and the datum census read is cards [AGT](AGT_arc_graph_shared_tree_2026-10-10.md) and [AGTB](AGTB_arc_graph_continued_2026-10-10.md). A further ARL section dated 2026-10-24, the July 2026 producer-AR falsification chain and its DO NOT BUILD verdict for the wide-lane cascade and the Phase-3 re-pin, exists only on the unmerged branch `claude/inspiring-torvalds-fc823e` (commit `f2d852e`, a docs compression); it is cited here and not landed, since landing that branch is the author's decision as a whole.
+
+| open item | where it landed |
+| --- | --- |
+| section 6: the remaining 58 % of the settled integers, and the first hour | section 7 (arc age, not missing wide-lane information, limits the pairs left float; an MW wide lane adds nothing), sections 9 and 10 (tree basis, then one search per baseline: 48 to 49 % of pairs fixed; first hour 109 of 120 epochs fixed, 10 128 integers, all correct), section 11 (300 stations: 70.6 % of pairs, 312 218 settled integers, all correct) |
+| section 8: the star basis reaches a fifth of the integers | section 9 (spanning tree, 682 against 112 DDs searched) and section 10 |
+| sections 9 to 12: run time, the owner shared with the chain datum, the harder slips, feeding the fixes back | run time in sections 10 and 11 (189 s per 2 h at 60 stations; 1 106 ms per epoch at 300); the shared owner is cards AGT and AGTB; the harder slips are section 13; feeding the fixes back is card FCF (D1 and D2 FAILED, the hold unbuilt) |
+| section 13: a 6 h field arm of the slip fixes before any promotion | section 14 (2026-10-28). Both fixes pass the consumer and census bars and stay off: fix 1 is not free on real data (1 215 flags, slip re-levels 1 011 to 3 100, anchor-slip handovers 5 to 57); they serve the fixed-cycle emit posture, which is not armed. The ledger rows are returned with this close; the register line "GF arc-jump trigger on the field" leaves the register |
+| section 1, rung 2: the estimator's slant ionosphere "then constrained" | Retired. A constraint on the slant ionosphere's level needs an ionosphere from outside the network (a GIM, a regional map or an external spherical-harmonic model), and the goldens are self-contained (a free per-line-of-sight slant ionosphere, no GIM, no spherical-harmonic constraint). The bound is already measured by the zero-ionosphere instrument (section 3: 0.006 cycle, every epoch fixed) and the free-ionosphere result stands in sections 6 to 11. Section 7's closing remark, a constraint between neighbouring stations, falls under the same posture. The author can reopen it; the field's question, how much absolute ionosphere the integers need, is then a new card |
+| the register item "L2C against L2W quarter-cycle alignment" (unexamined across receiver types; a prerequisite before integer work moves from the sim ladder to the field) | re-filed to card IRD in the register (line returned with this close); the sim ladder has one signal per band, so no ARL section can examine it |
+
+**Section 12, defects 4 to 9** (defects 1 to 3 are the three fixes of section 13). None was fixed by the ladder; each is triaged.
+
+| defect | landed or triage, with data |
+| --- | --- |
+| 4. RAIM T4 attribution spreads through the whitened carried-prior row to clean arcs (S7: G05, G13) | Landed as a declared rule and answered by card [RPA](RPA_raim_pool_data_rows_2026-10-08.md): the pool admits the carried-prior rows by a stated rule (eleven kinds, counters; card NOM2 section 3), and the data-rows-only pool FAILED its clock bar (clock wire +69 %: ledger `network.raim_pool_data_rows_only`, KEEP_OFF), because the prior rows were the only check of a G07 clock runaway in the cold start, driven by a faulty L1 channel at BSHM00ISR (card RPA section 5). The S7 collateral drops are gone with the arc-jump flag (section 13). A property of the armed pool, closed by RPA |
+| 5. MW duplicate, late and false releases (S1 echo, S6a pivot fan-out, two false refloats on the clean control at S35000SIM) | Duplicate: card [MRF](MRF_mw_reflag_skip_2026-10-28.md), `network.cycle_slip.mw_reflag_skip` ARMED in both goldens (ledger RECOMMEND_ON). Late: the blind classes are caught by the arc-jump flag (section 13). False and pivot fan-out: bounded by the ladder itself (S6a lost 4 MW verdicts on clean arcs with 0 wrong fixes in 46 446; two clean-arc MW refloats per 2 h at 60 stations, card FCFC section 6); field-inert on the float vehicle, which holds no integer; field-blocking only for the hold, whose clean-arc release bar FAILED (D2 part d: 30 and 779 against 2 and 5) and is recorded in card FCFC section 7 |
+| 6. Both bands released on single-band slips; a false LLI released unconditionally | Band scope: `network.cycle_slip.common_band_scope` frees only the bands the MW and IF-TD evidence names, ARMED in both goldens (ledger RECOMMEND_ON). The false LLI frees one band on station credibility alone (S3b) and costs one band's carry on a clean arc: within 0.007 cycle of the control, 0 wrong fixes in 46 440. Field-inert for accuracy by that bound |
+| 7. No single complete release seam (T4 drops outside the relevel latch, anchor arcs respond as births) | Two seams are built: the slip funnel (`network/slip/SlipFunnel`: the epoch's slipped arcs, read by the carried quantities' responses, standing invariants 1 and 7) and the fixed-cycle release seam (card FCFC, default off, under Observe). Residue named by card AGT section 6: T3 and T4 drops and gross-LOS erases land after the search and are seen one epoch later. Field-inert while no integer is held; field-blocking for any hold or emit posture, which stays with the FCF family |
+| 8. A release moves the gauge and creates information | Open in card IRD (a frame-preserving event algebra for the eq34 chain) and card ALD (an anchor's level held in the datum); no new action here |
+| 9. Telemetry: the per-epoch refloat columns read 0 in every run | Partly answered. On the 6 h field baseline `runs/_rf0hv17_field6`, `network_epoch_status.csv` reads `n_arc_refloat` 55 (live: the isolated-arc RAIM refloats) while `n_slip_refloats` (the difference of the carry driver's slip-kill counter, `InstallCarry.cpp`) and `n_refloat_sats` (the clock-couple set) read 0 over the run. The slip responses are counted by the response table: the manifest record `param_responses` reads `amb_drop_latch_slip` 456 over the same run, with a run-end site table (standing invariant 4). The two columns that stay 0 are a trace nit, not a register item |
+
+**Section 12, the Untested list.** Each class belongs to the hold posture, not to the float vehicle. Triage: field-inert while the fixed-cycle posture is unarmed (the loader refuses Emit without the slip set of section 13, card FCFB section 5); the classes return with the hold under card FCFC section 7's conditions.
+
+| class | state |
+| --- | --- |
+| the (1, 1) detection rate over many events | the offline replay of section 13 (98.9 % at k 0, 90.1 % at k 6, 70.5 % at k 8 at 15 to 20 degrees; 100 % from 30 degrees) and the injected (1, 1) leg of card FCFC section 8; a field rate has no truth |
+| the settled-hour twins (a slip after the arc's first fix) | run by card FCFC (the planted (7, 9) slip on a settled held arc, `runs/_rap_rvf3_s79_p0`, and the S8 twin); the result is in that card's sections 5 and 8 |
+| the bridged gap of 120 to 300 s | the gap re-entry tier covers returns after 2 to 30 missed epochs; its census reads 63 compared and 0 disagreeing on the 2 h field golden and 50 and 0 on the GPS + Galileo arm (card NOM2 section 5, site `gap_reentry`). The gaps of 300 to 900 s are card WGB's |
+| the variants (3, 4) and the S8 shape on an anchor arc | untested; S6b ((1, 1) on an anchor arc) and S8 are run, and the arc-jump flag catches the S8 shape (section 13) |
+
+**Section 13, the reviewer's minors.** (i) The arc-jump drain does not consult `refloat_band_scope: implicated`: moot, the key no longer exists (no match in `src/core`, 2026-10-31). (ii) The re-seed run-end report has no unit test of its text: the detector and the driver have ten cases (`tests/test_if_td_reseed_on_flag.cpp`); the key stays off, so the report line prints on no golden; a test is owed with any arming. (iii) The suspect mask's stamps overstate distinct suspect events: the mask is log-only (`suspect_epochs`, ledger TRACE), products unchanged.
+
+Nothing else is owed on this card.

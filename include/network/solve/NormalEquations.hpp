@@ -183,7 +183,7 @@ public:
      * The order matters for a station whose observation-only block is
      * rank-deficient in the direction its own datum row gauges (the receiver-DCB ↔
      * slant-iono ↔ ambiguity confound described in
-     * @c docs/refound/RF-PD_station_rejection_2026-09-15.md): with the prior
+     * @c docs/record/refound/RF-PD_station_rejection_2026-09-15.md): with the prior
      * applied afterwards, the test rejects the block, the station is dropped for
      * the epoch, and the @ref addStationPrior call that would make it full-rank is
      * never reached.
@@ -910,7 +910,7 @@ public:
      * A block that folds inertly (@f$M:=0@f$) takes no data, so its carried
      * sub-state stays at the prior, and the downstream readings (`dd_sigma_cyc`, the
      * D5 gate, the AR probe) do not show it.  These counters make that branch
-     * visible (standing invariant #4; docs/SPEC_pd_safe_dd_fold.md).  They are
+     * visible (standing invariant #4; docs/record/SPEC_pd_safe_dd_fold.md).  They are
      * solve-neutral (reads of the factor already computed) and therefore always on.
      *
      * Per fold, not cumulative: a within-epoch RAIM re-solve re-folds and overwrites
@@ -954,7 +954,7 @@ public:
      * byte-identical (standing invariant #6): a plain LDLᵀ of @f$P^z+B@f$, the
      * absolute @c minCoeff()<=0 screen, and the subtractive posterior
      * @f$P^z-P^zMP^z@f$.  On, all three are replaced by algebraically identical forms
-     * that round differently (docs/SPEC_pd_safe_dd_fold.md §4):
+     * that round differently (docs/record/SPEC_pd_safe_dd_fold.md §4):
      *  - (a) the product-form posterior
      *        @f$\mathrm{sym}(P^zMB)+(P^zMG^\top)\Sigma(P^zMG^\top)^\top@f$, whose operands
      *        follow the scale of the result instead of subtracting two operands of
@@ -974,7 +974,7 @@ public:
 
     /**
      * @brief Telemetry for the carry-aware covariance readback
-     *        (docs/SPEC_carry_aware_covariance.md §5b/§5c).
+     *        (docs/record/SPEC_carry_aware_covariance.md §5b/§5c).
      *
      * Cumulative over the run: @ref reset does not clear it (like the section
      * timers), because the readback is a per-consumer opt-in and a per-epoch view
@@ -1438,7 +1438,7 @@ public:
     /**
      * @brief The @c b×b residual cofactor of a block of one station's rows: the
      *        counterpart of @ref rowRedundancy that keeps the off-diagonal terms
-     *        (BlockFormal, Baarda block data snooping; @c docs/SPEC_redundancy_census.md
+     *        (BlockFormal, Baarda block data snooping; @c docs/record/SPEC_redundancy_census.md
      *        INC-0).
      *
      * For a row subset @f$B@f$ of one station (the sweep's block is one
@@ -1485,7 +1485,7 @@ public:
      *       @f$w_i@f$ gives an infinite diagonal entry and a negative @f$w_i@f$ a
      *       negative one, and neither is screened here.
      * @note No @c carry_aware flag, for the same reason @ref rowRedundancy has none
-     *       (@c docs/SPEC_carry_aware_covariance.md §9): both feed detection
+     *       (@c docs/record/SPEC_carry_aware_covariance.md §9): both feed detection
      *       thresholds, and the carry correction moves them.  That is a QC change,
      *       which needs a QC gate, not a side effect of a census kernel.
      *
@@ -1841,7 +1841,7 @@ private:
         /// Filled only on the PD-safe path (INC-1a); empty unless @ref setDdFoldPdSafe.
         /// It is not recomputed as @c Minv − @c Pz at readback, because that subtraction
         /// reintroduces the cancellation between operands of order 1e6 that the product
-        /// form avoids (docs/SPEC_pd_safe_dd_fold.md §4(a)).
+        /// form avoids (docs/record/SPEC_pd_safe_dd_fold.md §4(a)).
         Eigen::MatrixXd B;
         // --- per-block PD-screen diagnostics (INC-0; always filled; solve-neutral) ---
         bool   degenerate{false};    ///< the PD screen tripped, so this block folded inertly (M = 0).
@@ -1877,7 +1877,7 @@ private:
                                 Eigen::VectorXd& x_r) const;
     /**
      * @brief The batched rank-K carry correction for a request set
-     *        (@ref hasCarryCovCorrection; docs/SPEC_carry_aware_covariance.md §5a).
+     *        (@ref hasCarryCovCorrection; docs/record/SPEC_carry_aware_covariance.md §5a).
      *
      * Given each request's station and its @f$n_i=N_{rr}^{-1}e_{c_i}@f$ (the solve the
      * blind path already performs), fills

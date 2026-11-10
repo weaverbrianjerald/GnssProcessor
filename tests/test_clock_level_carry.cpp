@@ -2,7 +2,7 @@
  * @file test_clock_level_carry.cpp
  * @brief Tests for the satellite clock level read from the code alone, and for its
  *        declaration on the wire.  Suite @c ClockLevelCarryTest (
- *        docs/refound/CLV_clock_level_2026-09-22.md; the producer's re-base was removed,
+ *        docs/record/refound/CLV_clock_level_2026-09-22.md; the producer's re-base was removed,
  *        the level read stays for the clock-level monitor and the wire's lvl= token stays).
  *
  * What is pinned here:

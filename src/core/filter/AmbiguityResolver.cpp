@@ -1921,7 +1921,7 @@ AmbiguityResolution AmbiguityResolver::resolveWlOnly(
     // `wl_max_frac`, a point test on the running residual that cannot bound
     // P(the integer is wrong), and its `ratio` is only the "+inf = no LAMBDA
     // ran" sentinel.  An ungated 5-constraint fix put the held-out consumer
-    // 35 m off (docs/SPEC_clock_temporal_anchor.md §8.11).
+    // 35 m off (docs/record/SPEC_clock_temporal_anchor.md §8.11).
     //
     // The gate applies the bootstrap functional of the LAMBDA tier over the
     // distinct arcs backing the set and eliminates the weakest arc until the

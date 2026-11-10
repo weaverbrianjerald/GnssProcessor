@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Field-gate grader for the RAIM pool re-host card (docs/SPEC_raim_pool_rehost.md).
+"""Field-gate grader for the RAIM pool re-host card (docs/record/SPEC_raim_pool_rehost.md).
 
 The card's premise is that a QC tier read as armed and screened nothing, so the
 denominators are the deliverable (SPEC §5, standing invariant #4).  This

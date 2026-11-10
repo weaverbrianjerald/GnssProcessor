@@ -2,7 +2,7 @@
  * @file test_zwd_seam_reseed_q.cpp
  * @brief @c network.zwd_seam_reseed_q: the random-walk process noise of the seam
  *        window, separate from the fingerprinted continuous carry parameter
- *        (docs/SPEC_event_harness.md §21.21).
+ *        (docs/record/SPEC_event_harness.md §21.21).
  *
  * The knob resolves a policy conflict, not an arithmetic one.
  * @c network.zwd_carry_q is in the warm-resume fingerprint ("carry q's … must

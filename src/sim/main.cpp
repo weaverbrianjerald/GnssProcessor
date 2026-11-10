@@ -3336,7 +3336,7 @@ int main(int argc, char** argv) {
     }
     if (cmd == "synth-network") {
         // ---- The synthetic minimum network fixture ----------------------------
-        // docs/SPEC_synthetic_minimum_network.md.  Fans the roster out as N child
+        // docs/record/SPEC_synthetic_minimum_network.md.  Fans the roster out as N child
         // processes, one per station, because an in-process loop cannot work: a second
         // EphemerisProvider re-registers the spdlog logger name and the catch handler
         // re-throws out of the process, and a shared provider carries three

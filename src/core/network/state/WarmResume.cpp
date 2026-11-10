@@ -139,7 +139,7 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
             "network.carry_vce_apply (M2 v2) is armed and a state snapshot exists at '"
             + snap_path.string() + "' — a WARM RESUME is refused.  The carry variance factor "
             "alpha2 is cross-epoch, solve-affecting and deliberately NOT snapshotted "
-            "(docs/SPEC_carry_vce_apply.md section 8), so resuming would fold the restored "
+            "(docs/record/SPEC_carry_vce_apply.md section 8), so resuming would fold the restored "
             "carries at alpha2 = 1 and re-converge across the seam.  v1 is "
             "fresh-convergence-only: run this arm from a cold start (move or delete the "
             "snapshot, or clear network.state_snapshot_path).");

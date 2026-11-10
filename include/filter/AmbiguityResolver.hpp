@@ -53,7 +53,7 @@ struct AmbiguityResolution {
     /// @warning `+inf` is a sentinel meaning "no LAMBDA ratio test ran".  The WL-only
     /// and MW-WL-constraint paths set it, because they fix by applying MW integers
     /// directly.  It is not a large ratio and must not be graded as one; an ungated
-    /// 35 m wrong fix passed review that way (`docs/SPEC_clock_temporal_anchor.md`
+    /// 35 m wrong fix passed review that way (`docs/record/SPEC_clock_temporal_anchor.md`
     /// §8.11).  Grade those fixes on @ref p_succ, and see
     /// @ref AmbiguityResolverConfig::wl_only_ffr.
     double ratio{ 0.0 };
@@ -171,7 +171,7 @@ struct AmbiguityResolverConfig {
      *
      * On by default.  With it off, an ungated 5-constraint WL-only fix put a
      * held-out consumer 35 m off while `ratio` reported the "no LAMBDA ran"
-     * sentinel `+inf` (`docs/SPEC_clock_temporal_anchor.md` §8.11).  Set false to
+     * sentinel `+inf` (`docs/record/SPEC_clock_temporal_anchor.md` §8.11).  Set false to
      * reproduce the ungated behaviour exactly.
      */
     bool   wl_only_ffr{ true };
@@ -197,7 +197,7 @@ struct AmbiguityResolverConfig {
      * widelane is in the .BIA frame, while a network-bias consumer's ambiguities
      * are in the consumed phase-bias frame (the conflict `setArIgnoreMwWl` exists
      * to avoid).  Asserting across that gap put a held-out consumer 35 m off with
-     * `p_succ = 1.0` (`docs/SPEC_clock_temporal_anchor.md` §8.11).
+     * `p_succ = 1.0` (`docs/record/SPEC_clock_temporal_anchor.md` §8.11).
      *
      * Default 0.5 cycle: half a widelane is the largest disagreement that can
      * still be a rounding question rather than a frame question.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Truth grade of the producer's Phase-2 AR search (docs/network_ambiguity_resolution_design.md,
+"""Truth grade of the producer's Phase-2 AR search (docs/record/network_ambiguity_resolution_design.md,
 the 2026-09-10 note §4.1: "a fix count is not a grade").
 
 `NetworkProducerAr` forms between-station double differences of the network's float ambiguities

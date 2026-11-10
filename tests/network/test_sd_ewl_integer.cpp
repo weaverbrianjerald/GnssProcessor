@@ -3,7 +3,7 @@
  * @brief SD EWL integer path (increments 2a and 2b): Route-B DD rounding, the A2
  *        DD-to-SD datum propagation, the standing-invariant-#1 flip response, the
  *        fixed-row design and correction frame, and the A1 weight accounting.
- *        See docs/SPEC_sd_ewl_prereduce.md §8 (increment 2) and §10 (the amendments).
+ *        See docs/record/SPEC_sd_ewl_prereduce.md §8 (increment 2) and §10 (the amendments).
  *
  * Suite names owned by this file only (the suite-per-file rule):
  *   SdEwlDatumTest, SdEwlFfrTest, SdEwlFlipTest, SdEwlFixedRowTest, SdEwlBandTableTest,

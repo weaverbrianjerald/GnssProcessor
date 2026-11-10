@@ -956,7 +956,7 @@ std::string NetworkStateSnapshotIO::warmResumeRefusalMessage(bool require,
               "previous run overwrote its own seed at its first emitted epoch, so the "
               "snapshot now IS the epoch you are resuming to.  Re-seed from the pristine "
               "snapshot with `python scripts/event_leg.py rerun <legdir>` "
-              "(docs/SPEC_event_harness.md §6b) — never relaunch the exe on an existing "
+              "(docs/record/SPEC_event_harness.md §6b) — never relaunch the exe on an existing "
               "leg.json."
             : "  Fix the snapshot/config pair, or clear network.state_snapshot_require to "
               "accept a cold start.";

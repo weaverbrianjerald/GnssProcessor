@@ -18,7 +18,7 @@
  * whenever the trace is off; a copy in each drain would give several independent
  * definitions of "the raw step".  The trace writer is a pure consumer: when it is
  * the only consumer, its rows are byte-identical to those of the former inline
- * computation (docs/SPEC_slip_qc_hardening.md).
+ * computation (docs/record/SPEC_slip_qc_hardening.md).
  *
  * ## Threading contract
  *
@@ -28,7 +28,7 @@
  * a satellite that the pre-filter is about to prune is still measured, as the
  * original trace writer required.
  *
- * ## Empirical-threshold discipline (project rule 4, docs/SPEC_slip_qc_hardening.md §1)
+ * ## Empirical-threshold discipline (project rule 4, docs/record/SPEC_slip_qc_hardening.md §1)
  *
  * Every gate in this file derives from the observable stream itself: a robust
  * per-station scale of that station's own epoch-to-epoch steps (1.4826·median of
@@ -129,7 +129,7 @@ struct RawSlipObs {
 
 /**
  * @brief Carrier-smoothed GF-code slant-iono authority (CS-GF) for one line of
- *        sight (successor to QUEUE 8b; docs/SPEC_iono_carry_8b.md §6.2).
+ *        sight (successor to QUEUE 8b; docs/record/SPEC_iono_carry_8b.md §6.2).
  *
  * A Hatch-class recursive estimate of the slant ionosphere, in metres at the
  * primary band and in the code channel's realization ι̃ = ι + d_r,GF − d^s_GF.
@@ -235,7 +235,7 @@ struct GapResumption {
     /// lookup in `modeled` would be a second definition of "the LLI of this arc at
     /// re-entry".  A slipped return can carry LLI on both bands while no MW or IF
     /// detector fires at that epoch (the DOY-129 worked case in
-    /// docs/SPEC_slip_qc_hardening.md §12.1).
+    /// docs/record/SPEC_slip_qc_hardening.md §12.1).
     int         lli1{0};
     int         lli2{0};          ///< …for @ref sig2 (0 when the return row is single-band).
 };
@@ -719,7 +719,7 @@ struct SlipQcCounters {
 
     // --- Arc resumptions across a tracking break ---
     //
-    // Units (spec-followups N3/H2, docs/SPEC_slip_qc_hardening.md §9).  The two
+    // Units (spec-followups N3/H2, docs/record/SPEC_slip_qc_hardening.md §9).  The two
     // units are not interchangeable, and the summary line keeps them apart:
     //   * the first three counters count resumptions: one per (station, satellite)
     //     re-entry, the unit the raw MW/GF level shift is measured in;
@@ -768,7 +768,7 @@ struct SlipQcCounters {
     // counts arcs with something to protect (a @c LocalCarry entry still inside
     // @c phase_leveling_max_gap_s, or the carry_invariant DD vehicle), and
     // @ref gap_reentry_no_carry counts the rest (the inject would not bridge those
-    // anyway).  See docs/SPEC_slip_qc_hardening.md §12.3.
+    // anyway).  See docs/record/SPEC_slip_qc_hardening.md §12.3.
     //
     // @ref gap_reentry_state_absent and @ref gap_reentry_dd_marked are both
     // orthogonal to the closure above: the first is a sub-count of
@@ -939,7 +939,7 @@ struct SlipQcCounters {
     /// reverse map is skipped here; the producer warns once).  The number of arcs the
     /// C3c funnel actually re-taps is @ref d5_retap_ambs.  The counter stays
     /// row-based for continuity with the headline of the hardening report
-    /// (docs/SPEC_slip_qc_hardening.md §8); the grader and the run-end line state
+    /// (docs/record/SPEC_slip_qc_hardening.md §8); the grader and the run-end line state
     /// both.
     long long d5_retaps{0};
     long long d5_retaps_stepped{0};     ///< …flag rows coincident with a raw step at the same (station, satellite, epoch); the same evidence the v3 corroboration gate reads.

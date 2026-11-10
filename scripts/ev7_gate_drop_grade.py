@@ -3,7 +3,7 @@
 
 Trace-only and stdout-only: nothing under the run directory is written or moved.
 
-The defect (docs/refound/EV7_all_sat_clock_decouple_2026-09-21.md section 5.3): the
+The defect (docs/record/refound/EV7_all_sat_clock_decouple_2026-09-21.md section 5.3): the
 coverage gate network.phase_datum_min_stations removes a (satellite, signal)
 phase-bias column when it thins below the threshold. On the float vehicle the
 surviving station's ambiguity is a carried state, so it absorbs the whole removed

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """First-principles check of the SIGN of the second-order ionospheric term (I2), card I2S.
 
-Card: docs/refound/I2S_second_order_iono_sign_2026-10-01.md.  The engine
+Card: docs/record/refound/I2S_second_order_iono_sign_2026-10-01.md.  The engine
 (HigherOrderIonosphere::slantHigherOrderComponents) and its oracle
 (scripts/higher_order_iono_reference.py) model the code term as
 +7527 c STEC (B.k)/f^3 with k the PROPAGATION direction (satellite to

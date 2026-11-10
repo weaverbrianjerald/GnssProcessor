@@ -1,7 +1,7 @@
 /**
  * @file test_arc_ledger.cpp
  * @brief Tests for the arc lifecycle state machine
- *        (docs/refound/SID_signal_identity_2026-09-22.md section 5, P5).
+ *        (docs/record/refound/SID_signal_identity_2026-09-22.md section 5, P5).
  *
  * The ledger is the single state machine that the 29 arc-keyed containers of the
  * audit can later read, so it has to be correct before anything reads it.  The

@@ -24,7 +24,7 @@
  * The functions were relocated unchanged out of ApplicationNetwork.cpp at
  * decomposition INC-8 (the soft-anchor) and INC-8b (the census and the anchor
  * election; the eq34 chain election went to the sibling
- * @ref NetworkChainDatum).  See docs/SPEC_inc8b_election_split.md.  They own no
+ * @ref NetworkChainDatum).  See docs/record/SPEC_inc8b_election_split.md.  They own no
  * state: every carry and workspace object is an explicit reference into the
  * caller's NetworkRunContext / EpochWorkspace.
  *
@@ -301,7 +301,7 @@ struct PhaseGateDrop {
 
 /**
  * @brief Cold anchor-fallback inputs (@c network.phase_datum_candidacy_usable,
- *        docs/SPEC_event_harness.md §15): a read-only view shaped like
+ *        docs/record/SPEC_event_harness.md §15): a read-only view shaped like
  *        @ref AnchorHygiene, so an election handed a default instance behaves as it
  *        does without the anchor hygiene.
  *
@@ -393,7 +393,7 @@ struct AnchorCandidacyUsable {
  *                          as handover churn.
  * @param this_epoch_anchor [out] read at the emit site for handover signalling.
  * @param handover          Two-edge continuous handover
- *                          (docs/SPEC_pivot_visibility_gauge_defect.md §5.1).
+ *                          (docs/record/SPEC_pivot_visibility_gauge_defect.md §5.1).
  *                          @c nullptr (the default) is the election without the
  *                          anchor hygiene: every pin target is 0.0.  When supplied, a
  *                          handover pins the incoming anchor at its own absolute
@@ -424,7 +424,7 @@ struct AnchorCandidacyUsable {
  *                          so the churn of an unarmed arm can be measured before
  *                          the fix is armed.
  * @param reref_out         [out, optional] queue item 1(d)
- *                          (docs/SPEC_pivot_visibility_gauge_defect.md §5.07.5 R1):
+ *                          (docs/record/SPEC_pivot_visibility_gauge_defect.md §5.07.5 R1):
  *                          the (sat, signal) families, inserted, whose pin this
  *                          epoch is not continuously inherited from an incumbent,
  *                          so their carried state may belong to a retired frame.
@@ -458,7 +458,7 @@ struct AnchorCandidacyUsable {
  *                      re-reference path.  The directive records which station it
  *                      retired and which was elected.
  * @param cand_usable   Cold anchor fallback (@c network.phase_datum_candidacy_usable,
- *                      docs/SPEC_event_harness.md §15), or @c nullptr / a default
+ *                      docs/record/SPEC_event_harness.md §15), or @c nullptr / a default
  *                      instance, which leaves the election unchanged.
  *
  *                      When @c on, and only where a handover is about to happen (an
@@ -560,7 +560,7 @@ void networkElectPhaseAnchors(
  * election re-elects the slipped incumbent, and the gauge is re-realized from an arc
  * whose level is about to be re-drawn from one epoch of code.  The error then spreads
  * to healthy arcs at other stations and to the station and satellite clocks; a
- * handover in the same epoch avoids it (docs/SPEC_event_harness.md §12.6/§12.7
+ * handover in the same epoch avoids it (docs/record/SPEC_event_harness.md §12.6/§12.7
  * has the measurements).
  *
  * The staging is expressed as the injector's candidacy ban (a directive in

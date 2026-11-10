@@ -276,7 +276,7 @@ FUNCTIONS = [
        "The datum graph census's spectral half, with direction identities, before completion",
        {"ctx": "NetworkRunContext& ctx", "sbc": "const NetworkSbasis::GaugeCompletion& sbc",
         "plan": "const NetworkSbasis::Plan& plan"},
-       [P("    // --- Datum graph census hand-off (docs/SPEC_datum_graph_census.md)",
+       [P("    // --- Datum graph census hand-off (docs/record/SPEC_datum_graph_census.md)",
           ("close_of", ("from", "// --- Datum graph census hand-off", "if (ctx.knobs.dg_on) {")),
           delta=0, row="R19b")]),
     # ---- R17 + R20: the rank gate -----------------------------------------------------------

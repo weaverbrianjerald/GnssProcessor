@@ -2,7 +2,7 @@
 /**
  * @file CarryDisposition.hpp
  * @brief The decided-once fold disposition of the carried border (see
- *        docs/refound/PRM_parameter_registry_2026-09-29.md sections 4.3, 4.4 and 15).
+ *        docs/record/refound/PRM_parameter_registry_2026-09-29.md sections 4.3, 4.4 and 15).
  *
  * The D2 fold (`networkInjectD2CarryPrior`) decides, for every carried border entry, whether
  * it folds, at which process noise, and under which rule: a frame re-reference, the clock

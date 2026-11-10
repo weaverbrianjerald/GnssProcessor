@@ -439,7 +439,7 @@ TEST(GnssIdentityTest, FrequencyAgreesWithPppUtilsExceptTheRecordedCases) {
     // Recorded for step N0b, not fixed here: BeiDou digit 1 with an I or Q attribute
     // (the RINEX 3.02 spelling of B1I).  classifySignal and this function give B1I,
     // 1561.098 MHz; PppUtils::getFrequency matches the digit alone and gives B1C,
-    // 1575.42 MHz (docs/refound/NOM_network_object_model_2026-10-08.md section 7 item 7).
+    // 1575.42 MHz (docs/record/refound/NOM_network_object_model_2026-10-08.md section 7 item 7).
     const std::set<std::string> expected = {"CC1I", "CC1Q"};
     EXPECT_EQ(disagree, expected);
     EXPECT_DOUBLE_EQ(nominalCarrierFrequencyHz(FrequencyBand::BdsB1I), 1561.098e6);

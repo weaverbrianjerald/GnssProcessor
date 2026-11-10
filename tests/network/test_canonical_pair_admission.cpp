@@ -2,7 +2,7 @@
  * @file test_canonical_pair_admission.cpp
  * @brief The canonical-pair admission state machine and its two knobs.
  *
- * (docs/refound/CPA_canonical_pair_admission_2026-09-20.md §1 and §2.4.)  The rule
+ * (docs/record/refound/CPA_canonical_pair_admission_2026-09-20.md §1 and §2.4.)  The rule
  * the producer runs per (station, satellite) is a pure function of three inputs:
  * whether this epoch holds the station's canonical phase and code on band digits 1
  * and 2, the processed-epoch index, and the tolerance.  Everything else in the seam

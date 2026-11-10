@@ -38,7 +38,7 @@
  * engine member), alias-free (the bodies are new code, not relocations).
  *
  * @see include/realtime/RtStateSnapshot.hpp for the file format,
- *      docs/SPEC_synthetic_minimum_network.md §17 for the validation record.
+ *      docs/record/SPEC_synthetic_minimum_network.md §17 for the validation record.
  */
 
 #include "realtime/RealTimeEngine.hpp"

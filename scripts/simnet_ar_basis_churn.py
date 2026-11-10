@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Churn, L1/L2 agreement and coverage of the producer AR search's DD basis (card AGT,
-docs/refound/AGT_arc_graph_shared_tree_2026-10-10.md, section 1 and section 7).
+docs/record/refound/AGT_arc_graph_shared_tree_2026-10-10.md, section 1 and section 7).
 
 The producer AR search (filter/NetworkProducerAr) rebuilds its basis of between-station double
 differences every epoch.  With `network.ambiguity_resolution.trace` armed, every DD of the basis

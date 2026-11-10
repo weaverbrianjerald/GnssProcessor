@@ -6,7 +6,7 @@
  *        (@c network.phase_datum_gate_drop_erase).  Requirement F3.
  *
  * The defect produces no signal at the site where it happens
- * (docs/refound/EV7_all_sat_clock_decouple_2026-09-21.md §5.3).  The coverage gate
+ * (docs/record/refound/EV7_all_sat_clock_decouple_2026-09-21.md §5.3).  The coverage gate
  * removes a (satellite, signal) phase-bias column when it thins to one tracker, on
  * the assumption that each station's float ambiguity absorbs the bias.  On the float
  * vehicle that float is a carried state, so it absorbs the whole removed bias in one

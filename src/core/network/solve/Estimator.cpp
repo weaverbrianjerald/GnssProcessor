@@ -1676,7 +1676,7 @@ int networkCarryAwareCovarianceRunEnd(const NetworkRunEndView& v) {
     const std::shared_ptr<spdlog::logger>& log = v.log;
     const NetworkEstimator& est = v.run.engines.est;
 
-    // --- Carry-aware covariance readback (docs/SPEC_carry_aware_covariance.md §4) -----
+    // --- Carry-aware covariance readback (docs/record/SPEC_carry_aware_covariance.md §4) -----
     // Printed on every carry_invariant run, armed or not: a σ published without its
     // covariance mode cannot be read, and the run that most needs to be told its σ is
     // carry-blind is the one that did not arm network.carry_aware_covariance.

@@ -2,7 +2,7 @@
  * @file test_network_shared_history.cpp
  * @brief Gate U3 of build X2, the shared history
  *        (@c network.carry_coupling_shared_history,
- *        docs/refound/SCL2_level_residue_under_the_clone_2026-10-06.md, sections 5, 6 and 9).
+ *        docs/record/refound/SCL2_level_residue_under_the_clone_2026-10-06.md, sections 5, 6 and 9).
  *
  * 1. The compression (@c sharedHistoryCompress) equals the uncompressed shared term
  *    @f$R\,\Sigma\,R^\top@f$ to 1e-9 when its rank is within the cap; when the cap truncates,

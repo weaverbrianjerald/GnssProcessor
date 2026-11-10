@@ -2,7 +2,7 @@
 """compare_network_run.py
 
 Field-aware byte-identity harness for the ApplicationNetwork.cpp decomposition
-series (see docs/network_decomposition_plan.md, INC 0).
+series (see docs/record/network_decomposition_plan.md, INC 0).
 
 The decomposition moves ~7,300 lines of ``runNetwork()`` verbatim across
 translation units. Correctness is proven not by unit tests (none reach

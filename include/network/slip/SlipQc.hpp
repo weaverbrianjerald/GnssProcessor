@@ -9,7 +9,7 @@
  *
  * ifElevMap and parseIfPairResetKey moved here at decomposition INC-2, and the
  * serial drains of the SB_SLIP block moved here from ApplicationNetwork.cpp at
- * INC-6 (see docs/network_decomposition_plan.md).  The PASS-A parallel scan that
+ * INC-6 (see docs/record/network_decomposition_plan.md).  The PASS-A parallel scan that
  * fills PassABuffers (network/slip/PassASlipScan) and the calls into the drains
  * (network/slip/PassASlipDrains) are driven, stage by stage, by
  * Application::networkPassASlipScan_ (ApplicationNetworkAssembly.cpp, INC-7);
@@ -842,7 +842,7 @@ void networkSlipDrainWindupRestart(const GnssConfig& config_,
  * @brief Gap re-entry response: mark the arcs that re-entered across a tracking
  *        break slipped, in the same epoch, so the PASS-B leveling inject sees a
  *        free arc instead of bridging a stale zero-q level across the break
- *        (docs/SPEC_slip_qc_hardening.md §G3/W1).
+ *        (docs/record/SPEC_slip_qc_hardening.md §G3/W1).
  *
  * ## Why
  *
@@ -1003,7 +1003,7 @@ void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
 
 /**
  * @brief The gap re-entry response keyed on the signal instead of the row
- *        (docs/refound/GRS_gap_reentry_per_signal_2026-09-20.md).
+ *        (docs/record/refound/GRS_gap_reentry_per_signal_2026-09-20.md).
  *
  * ## Population
  *
@@ -1351,7 +1351,7 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
  *
  * The T4 attribution erase and a detector refloat are two different responses
  * to an arc level that is not trusted, and the harness measured their effects
- * 11× apart on the same clean arc (docs/SPEC_event_harness.md §9).  This drain
+ * 11× apart on the same clean arc (docs/record/SPEC_event_harness.md §9).  This drain
  * makes the detector response injectable: an @c arc_erase event carrying
  * @c "mode": "free_epoch" is routed here instead of to the T4 block, and does
  * what @c refloat_signal does for a detected slip: the C3c funnel insert under

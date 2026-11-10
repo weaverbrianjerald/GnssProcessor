@@ -1,7 +1,7 @@
 /**
  * @file test_network_gross_los.cpp
  * @brief The gross line-of-sight screen's two pure rules, its act half and its
- *        config gate (docs/SPEC_event_harness.md §24.18).
+ *        config gate (docs/record/SPEC_event_harness.md §24.18).
  *
  * The screen exists because every post-fit tier of this producer pools
  * carried-ambiguity phase rows: networkPostFitRaim (Raim.cpp) admits a
@@ -524,7 +524,7 @@ TEST(NetworkGrossLosConfig, NonsenseKnobsAreClampedLoudly) {
 
 // ===========================================================================
 // Completing the screen: four sub-rules, each defaulting to the legacy behaviour
-// (RF-3b; docs/refound/RF-3_code_row_qc_2026-09-22.md §4).
+// (RF-3b; docs/record/refound/RF-3_code_row_qc_2026-09-22.md §4).
 // ===========================================================================
 
 // The fixed min_rows rationale holds for a line of sight that has several code rows and

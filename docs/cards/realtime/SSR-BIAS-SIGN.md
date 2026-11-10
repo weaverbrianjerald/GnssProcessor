@@ -11,7 +11,7 @@
 - **code:** `src/core/rtcm/RtcmSsrDecoder.cpp` (`decodeCodeBiasBody`, `decodePhaseBiasBody`), `include/rtcm/RtcmTypes.hpp` (`SsrCodeBias`, `SsrPhaseBiasEntry::bias_m`), `include/measurement/ObservationEquation.hpp` (`kSatBiasSign` documentation), `tests/test_rtcm_ssr_phase_bias.cpp` (`RtcmSsrSignalIdTest.WireBiasIsTheNegativeOfTheStoredBias`, the negated expectations)
 - **run dirs:** `D:\GnssProcessorSupport\runs\rt_pbhdr_2026-10-29\live_ge_static_ar` (before, exe `gnss_processor_ssrsig.exe`, sha256[:16] dc447feab9d92b7e); `D:\GnssProcessorSupport\runs\rt_pbhdr_2026-10-29\{smoke_sign,live_ge_static_ar_sign}` (after, exe `gnss_processor_ssrsign_wt.exe`, sha256[:16] 9cfeeba869cf3ba2, built in the worktree `D:\GnssProcessorSupport\worktrees\ssr-bias-sign` from 1527cf9 plus this change only)
 - **reference:** cssrlib `pppssr.py` (model `range - cbias` and `range - pbias` with the wire values for `RTCM3_SSR` and `IGS_SSR`; Bias-SINEX OSBs negated, "IGS uses sign convention different with RTCM"); `rtcm.py` `decode_cssr_cbias` / `decode_cssr_pbias` keep the wire value
-- **source:** card [SSR-SIG-ID](SSR-SIGNAL-ID.md) section 7 (0 fixes, float fractions uniform)
+- **source:** card [SSR-SIG-ID](../../record/cards/realtime/SSR-SIGNAL-ID.md) section 7 (0 fixes, float fractions uniform)
 
 **Outcome.** Why did the live float ambiguities carry no integer information once every bias reached its own signal? The streamed biases were applied with the wrong sign: the decoder kept the wire value, a correction added to the observation, where the store expects the bias present in it. A same-band code test showed the misfit (C1C minus C1W between satellites, 0.25 to 1.12 m and constant), and it collapsed to 0.05 m after the decoder negated the biases. The wide-lane became integer; the ionosphere-free narrow-lane did not, so the slant ionosphere is not the binding limit at 30 minutes and AR still fixed nothing. Open: the narrow-lane (section 6).
 
@@ -116,4 +116,4 @@ base, so the hunks apply verbatim, and they equal the bias-sign hunks that sat u
 working tree beside the SSR timing fix of card SSR-TIME. This card file is the branch's, unchanged above
 this section. The register entry it narrowed is now in `docs/status/OPEN_ITEMS_CONSUMER_REALTIME.md`
 (split from OPEN_ITEMS.md on 2026-11-07). The unit suite and the producer comparison of the branch are in
-card [SSR-TIME](SSR-TIMING.md) section 7. The narrow-lane (section 6) stays open.
+card [SSR-TIME](../../record/cards/realtime/SSR-TIMING.md) section 7. The narrow-lane (section 6) stays open.

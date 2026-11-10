@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Synthetic W6+SH arm: the clock, receiver-DCB and ionosphere exchange signature.
 
-docs/SPEC_synthetic_minimum_network.md §11 item 4.
+docs/record/SPEC_synthetic_minimum_network.md §11 item 4.
 
 The field campaign attributed the ~1.3 m detrended wander of the emitted wire to the
 estimator rather than the input products (§9.9/§9.9.1: the a-priori product frame is

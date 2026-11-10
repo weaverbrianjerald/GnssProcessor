@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Generate docs/README.md, a navigable index of the docs/ corpus.
+Generate docs/record/README.md, a navigable index of the docs/ corpus.
 
-    python scripts/gen_docs_index.py            # write docs/README.md
+    python scripts/gen_docs_index.py            # write docs/record/README.md
     python scripts/gen_docs_index.py --check     # exit 1 if out of date (CI-able)
     python scripts/gen_docs_index.py --stdout    # print, don't write
 
@@ -18,7 +18,7 @@ Each row carries the three facts needed to decide whether to open a doc:
            code and scripts, and CLAUDE.md/README. This is the load-bearing
            count: a doc cited by many source files (for example
            SPEC_day129_frame_guards) must not be renamed or merged. A finished
-           doc with IN = 0 is an archive candidate (docs/attic/).
+           doc with IN = 0 is an archive candidate (docs/record/attic/).
   COMMIT   last commit date touching the file, or "uncommitted".
 
 Two counting rules:
@@ -174,7 +174,7 @@ def build():
              "updating its referrers, because code cites these by name and "
              "section (e.g. `// gotcha in SPEC_day129_frame_guards §6.`). "
              "A finished doc with `in` = 0 is an archive candidate for "
-             "`docs/attic/`.")
+             "`docs/record/attic/`.")
     L.append("")
 
     # summary
@@ -222,7 +222,7 @@ def build():
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--check", action="store_true",
-                    help="exit 1 if docs/README.md is stale")
+                    help="exit 1 if docs/record/README.md is stale")
     ap.add_argument("--stdout", action="store_true")
     a = ap.parse_args()
     text = build()
@@ -231,9 +231,9 @@ if __name__ == "__main__":
     elif a.check:
         cur = OUT.read_text(encoding="utf-8") if OUT.exists() else ""
         if cur != text:
-            print("docs/README.md is STALE — run: python scripts/gen_docs_index.py")
+            print("docs/record/README.md is STALE — run: python scripts/gen_docs_index.py")
             sys.exit(1)
-        print("docs/README.md is up to date")
+        print("docs/record/README.md is up to date")
     else:
         OUT.write_text(text, encoding="utf-8")
         print(f"wrote {OUT}")

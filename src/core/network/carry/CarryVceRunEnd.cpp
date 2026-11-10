@@ -62,7 +62,7 @@ int networkCarryVceRunEnd(const NetworkRunEndView& v) {
     }
     if (ctx.knobs.vce_apply_on) {
         // ON-path telemetry of the carry variance factor (M2 v2,
-        // docs/SPEC_carry_vce_apply.md §9.4).  "0 steps" means the wiring is inert however
+        // docs/record/SPEC_carry_vce_apply.md §9.4).  "0 steps" means the wiring is inert however
         // clean the log reads (invariant #4), so the step / freeze split is printed against
         // a denominator, per group, and a run that never left warm-up says so in one line
         // rather than leaving it to be inferred from a missing effect.

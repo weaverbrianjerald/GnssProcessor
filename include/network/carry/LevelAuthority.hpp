@@ -2,7 +2,7 @@
 /**
  * @file LevelAuthority.hpp
  * @brief Internal per-epoch level-authority census
- *        (`network.level_authority_csgf`; `docs/SPEC_level_authority_internal.md`; LV-6).
+ *        (`network.level_authority_csgf`; `docs/record/SPEC_level_authority_internal.md`; LV-6).
  *
  * Measure-only.  Reduces the mature CS-GF states of the current epoch
  * (`ctx.carry.iono_cs`, looked up from the `modeled[i]` rows; the map itself is

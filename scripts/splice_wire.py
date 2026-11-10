@@ -14,8 +14,8 @@ A cold consumer replayed on a leg's wire alone starts every key at its own first
 sighting, so a per-key level offset across the seam is structurally invisible to
 it (SPEC_event_harness §21.10, RS-4). The consumer a seam card is about
 is the stateful one, and the only way to put the replay driver in that state is
-to feed it a spliced wire. Named in docs/SPEC_synthetic_minimum_network.md §18.14
-and docs/SPEC_event_harness.md §21.10.
+to feed it a spliced wire. Named in docs/record/SPEC_synthetic_minimum_network.md §18.14
+and docs/record/SPEC_event_harness.md §21.10.
 
 ## The §18.14 replay-arm offset trap
 

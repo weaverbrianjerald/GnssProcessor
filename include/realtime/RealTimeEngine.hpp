@@ -224,7 +224,7 @@ public:
      * interval.  No-op when no IMU source is configured, so a GNSS-only stream
      * is unaffected.  The real-time IMU path is wired end to end but not yet
      * validated against live IMU data (the rooftop AsteRx-U is GNSS-only); see
-     * docs/aiding_source_abstraction_design.md.
+     * docs/record/aiding_source_abstraction_design.md.
      *
      * @param sample Streaming aiding sample (kind == Imu).
      */

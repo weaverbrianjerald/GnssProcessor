@@ -7,7 +7,7 @@
  * the receiver's GALNav block reports; see SubframeAssemblerTest in test_sbf.cpp).
  * The corrupted variant changes sqrt(A) by 0.02 m^1/2, the size of the SBF odd-page
  * decode error that put Galileo E23 about 270 m off on 2026-10-23
- * (docs/cards/realtime/INAV-ODD-PAGE.md).
+ * (docs/record/cards/realtime/INAV-ODD-PAGE.md).
  */
 
 #include <gtest/gtest.h>

@@ -24,7 +24,7 @@ void networkOraclePinArm(NetworkRun& run, LogManager& log_manager_) {
     std::vector<NetStation>& stations = run.setup.stations;
     // ---- End of the bindings ----
     // Oracle ambiguity pin, simulation only (`network.inject.events[] kind
-    // "oracle_pin"`, include/network/slip/OraclePin.hpp, docs/SPEC_oracle_pin.md):
+    // "oracle_pin"`, include/network/slip/OraclePin.hpp, docs/record/SPEC_oracle_pin.md):
     // holds the float ambiguities in scope at the fixture's true integers so the
     // remaining error can be located.  It is constructed only when such an event
     // is armed; every call site tests the pointer, so the off path is structurally

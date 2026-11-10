@@ -619,7 +619,7 @@ parseReceiverPhaseBiasKey(std::string_view key) {
 //            ("GPS", "Galileo", "BeiDou", "QZSS", ...).
 //   signal : full RINEX code-observation signal code (3 chars).
 //
-// Second-code channel (docs/refound/SCC_second_code_channel_2026-09-21.md, R2).  With
+// Second-code channel (docs/record/refound/SCC_second_code_channel_2026-09-21.md, R2).  With
 // `network.second_code_channel` a station contributes every allow-listed band-1
 // code it tracks, not only its latched canonical one (with
 // `processing.channel_mode: all`, any admitted non-canonical code on any band).

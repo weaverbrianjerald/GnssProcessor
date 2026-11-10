@@ -1,6 +1,6 @@
 # N3b: the readers on the roster, and the decision list
 
-Card NOM step N3b (`docs/refound/NOM2_network_object_model_rows_2026-10-09.md` section 4; the
+Card NOM step N3b (`docs/record/refound/NOM2_network_object_model_rows_2026-10-09.md` section 4; the
 sites are card NOM section 18, groups A to G). Branch `nom/n3b` from `nom/wave2`. No decision is
 taken by the build: a site whose counter is 0 on every arm reads the roster or the arc ledger,
 and every other site keeps its rule and is listed below with its counts.

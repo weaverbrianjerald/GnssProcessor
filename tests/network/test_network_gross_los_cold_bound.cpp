@@ -2,7 +2,7 @@
  * @file test_network_gross_los_cold_bound.cpp
  * @brief The gross line-of-sight screen's cold-start bound
  *        (@c network.gross_los_cold_bound_m;
- *        docs/refound/ICF_ignition_code_fault_2026-10-09.md).
+ *        docs/record/refound/ICF_ignition_code_fault_2026-10-09.md).
  *
  * Inside the screen's maturity horizon the σ-bar declarations are held, and a faulty
  * receiver channel there (BSHM00ISR G07 on the field golden) moves a satellite clock by

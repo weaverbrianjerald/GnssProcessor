@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""RAIM POWER leg grader (docs/SPEC_raim_pool_rehost.md §7.2, the pre-registered P0-P3 bars,
+"""RAIM POWER leg grader (docs/record/SPEC_raim_pool_rehost.md §7.2, the pre-registered P0-P3 bars,
 plus the manager's P0' extension: n = 1 re-drawn at three more event epochs).
 
     python scripts/raimp_grade.py [--runs C:/GnssProcessor/runs] [--json out.json]

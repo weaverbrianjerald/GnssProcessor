@@ -1135,7 +1135,7 @@ namespace GnssProcessor {
                 // receiver vector, so consumers of the satellite vector are unaffected;
                 // nothing consumes them yet (estimation is a separate default-off change).
                 // A COD MGX file holds about 6797 receiver records per day.  Item 0b,
-                // docs/SPEC_level_information_budget.md §17.
+                // docs/record/SPEC_level_information_budget.md §17.
                 if (!station.empty()) {
                     if (obs1.empty() || start.empty() || end.empty() || unit.empty()
                         || bias_str.empty() || station.length() < 4) {

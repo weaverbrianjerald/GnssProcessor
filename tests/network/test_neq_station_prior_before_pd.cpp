@@ -11,7 +11,7 @@
  *  1. **Admission.**  A station whose observation-only local block is singular in
  *     exactly one direction, the direction its own loose prior row gauges, is
  *     rejected with the prior empty (the behaviour with the knob off; see
- *     `docs/refound/RF-PD_station_rejection_2026-09-15.md`) and admitted with the
+ *     `docs/record/refound/RF-PD_station_rejection_2026-09-15.md`) and admitted with the
  *     same rows handed to `addStation`.  The synthetic block is the design's §5
  *     mechanism in miniature: a code/phase pair per band and satellite over
  *     `{receiver DCB, slant iono, L1 amb, L2 amb}` whose one null direction is the

@@ -146,7 +146,7 @@ void RealTimeEngine::traceSsrConsumer(RtEpochContext& ctx) {
 // ones, so that a declared reset appears as variance re-inflation in the row of
 // the epoch that applied it.
 //
-// Purpose (docs/refound/EV6_hour6_decouple_event_2026-09-15.md §9 item 1):
+// Purpose (docs/record/refound/EV6_hour6_decouple_event_2026-09-15.md §9 item 1):
 // closed_loop_trace.csv carries position and n_sats only, so from it a
 // consumer-side float re-convergence cannot be separated from the slant-iono half
 // of the RF-0b applied pair, and an undeclared wire step arriving at the consumer

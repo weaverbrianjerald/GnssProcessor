@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Grade the S2 virtual fold: the between-leg state delta per state class.
 
-docs/SPEC_lane_spectrometer.md §4 / §12.4.  Reads the four legs emitted by
+docs/record/SPEC_lane_spectrometer.md §4 / §12.4.  Reads the four legs emitted by
 ``scripts/spectro_make_vfold.py`` (``ctl`` / ``off`` / ``on`` / ``inert``) and reports:
 
  1. Validity, before any number is interpreted:
@@ -228,7 +228,7 @@ def main(argv):
     args = ap.parse_args(argv[1:])
     root = args.root
 
-    print('== S2 VIRTUAL FOLD (docs/SPEC_lane_spectrometer.md §4) ==')
+    print('== S2 VIRTUAL FOLD (docs/record/SPEC_lane_spectrometer.md §4) ==')
     print('root %s' % root)
     for leg in LEGS:
         d = logdir(root, leg)

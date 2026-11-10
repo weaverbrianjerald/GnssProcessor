@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """R-CL, the clock-level read: does the ramp reset at a basis handover, or run through it?
 
-Card: docs/refound/RF-2_held_basis_2026-09-15.md (RF-2b item c).
+Card: docs/record/refound/RF-2_held_basis_2026-09-15.md (RF-2b item c).
 
     python scripts/clock_level_read.py <run_dir> [<run_dir> ...] [--window 10] [--json out.json]
 

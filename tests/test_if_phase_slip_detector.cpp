@@ -2,7 +2,7 @@
  * @file test_if_phase_slip_detector.cpp
  * @brief Unit tests for IfPhaseSlipDetector, the between-satellite,
  *        between-epoch IF phase slip detector, focused on the reference-gate
- *        hardening (docs/SPEC_slip_qc_hardening.md §2, requirement R7).
+ *        hardening (docs/record/SPEC_slip_qc_hardening.md §2, requirement R7).
  *
  * Spec requirement R7 calls for this dedicated coverage of the chain.
  * Every case drives the public detect() API with synthetic uncombined
@@ -175,7 +175,7 @@ OmcState sixSatOmc() {
 /// legacy lineage they are the only reference-arm telemetry.  Including them
 /// here would make the gate-off cases require them to stay zero, the
 /// invariant-#4 gap this pair exists to close
-/// (docs/SPEC_amb_iono_split_overcount.md §6.14.5 defect 1).  The positive
+/// (docs/record/SPEC_amb_iono_split_overcount.md §6.14.5 defect 1).  The positive
 /// assertion is in FlagRateCountersCountTheLegacyArmToo below.
 void expectAllCountersZero(const IfPhaseSlipDetector::RefGateCounters& c) {
     EXPECT_EQ(c.legacy_candidates, 0);

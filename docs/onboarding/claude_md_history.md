@@ -13,24 +13,24 @@ Heading of the original: "Retired network rules (full pre-2026-10-13 text: `git 
 - MW/WL lane layer cost and retention (AGU-26, 63 and 305 stations): card AB3; the `lane_carry.*`
   and `mw_wl.*` keys were deleted by card RKD (rows: `git show 4bdd693:docs/CONFIG_promotion_ledger.json`).
 - Lane slip responses (`relevel_retap_*`, `relevel_lane_snap`, lane-preserving refloat):
-  `docs/cards/slip/`; the keys were deleted by card RKD (rows at `4bdd693`, as above).
+  `docs/record/cards/slip/`; the keys were deleted by card RKD (rows at `4bdd693`, as above).
 - SH and GIM ionosphere level (GIM mean series, DEFECT 2, rx-CB carry memory, SH gate release):
-  `docs/cards/ionosphere/LV-CORRECTION-AND-12H.md`, card AB1.
+  `docs/record/cards/ionosphere/LV-CORRECTION-AND-12H.md`, card AB1.
 - Pre-golden armed set (the Jul-28 guard list, `scripts/p2_make_guard_configs.py`,
   `cb_excursion_reinit` chains, `raim_we_code_iono`): the goldens and the ledger.
 - Clock-datum candidates (`clock_datum_broadcast_anchored`, `clock_datum_sum_to_zero`, pivot
   election): ledger rows; pivot election is a queued build (`docs/status/OPEN_ITEMS.md`).
 - Wind-up accumulation (fractional census, inverted horizon, restart response): card WUP,
-  `docs/cards/slip/WINDUP-FRACTIONAL-CENSUS.md`.
+  `docs/record/cards/slip/WINDUP-FRACTIONAL-CENSUS.md`.
 - Re-admission edge (`readmit_seed_horizon_s` 3900 pinned; its KEEP_OFF siblings):
-  `docs/cards/network-vehicle/READMIT-EDGE.md`.
+  `docs/record/cards/network-vehicle/READMIT-EDGE.md`.
 - Golden re-bases 2026-09-15 to 2026-10-01 (RF-3-prep, GRB, RF-3, PBF, WUP, SFR, EXL; baselines
   `_rf0hv9` to `_rf0hv14`): the cards in `docs/refound/CARDS.md`.
 
 ## Baseline: cards BOF, MRF and GAD, paragraph at full length
 
-**Baseline: card BOF (2026-10-28, `docs/refound/BOF_built_off_follow_through_2026-10-28.md`), after
-card MRF, on card GAD's Galileo posture (2026-10-13, `docs/refound/GAD_galileo_adoption_2026-10-13.md`).**
+**Baseline: card BOF (2026-10-28, `docs/record/refound/BOF_built_off_follow_through_2026-10-28.md`), after
+card MRF, on card GAD's Galileo posture (2026-10-13, `docs/record/refound/GAD_galileo_adoption_2026-10-13.md`).**
 Card BOF armed ocean tide loading (four keys) and the noon-turn attitude on the field golden, and the
 estimable block-Baarda test and the readmit-seed mirrors on both; pair `runs/_rf0hv17_{field,sim}6` (exe
 `gnss_processor_bofarm.exe`, sha256[:16] 91143c81de9a9547): field WTZZ00DEU 0.059 0.012 0.023 0.012 0.017
@@ -72,9 +72,9 @@ docs/INDEX.md                    entry point: topics, cards, the rules
 docs/refound/                    the current program (RF-0..RF-3) — not split, not moved
 docs/cards/<topic>/<CARD-ID>.md  one card per file: STATUS block + verbatim text
 docs/topics/<topic>.md           a short living page per topic (17 topics)
-docs/decisions/                  posture rulings whose text is self-contained
+docs/record/decisions/                  posture rulings whose text is self-contained
 docs/status/OPEN_ITEMS.md        everything owed, with its evidence pointer
-docs/archive/<monolith>.md       the pre-split originals, byte-for-byte, FROZEN
+docs/record/archive/<monolith>.md       the pre-split originals, byte-for-byte, FROZEN
 docs/<monolith>.md               a routing stub: section -> card, so an existing
                                  citation ("SPEC_event_harness §24.10") still resolves
 ```
@@ -149,4 +149,4 @@ Use the wrapper — it encodes every trap below:
 
 Replaced on 2026-11-07 by the `_rf0hv18` paragraph (the AVX2 build). Text as it stood:
 
-**Baseline: card BOF (2026-10-28, `docs/refound/BOF_built_off_follow_through_2026-10-28.md`), after card MRF, on card GAD's Galileo posture (2026-10-13).** Pair `runs/_rf0hv17_{field,sim}6` (exe `gnss_processor_bofarm.exe`, sha256[:16] 91143c81de9a9547): field WTZZ00DEU 0.059 0.012 0.023 0.012 0.017 0.012 m by hour; sim products identical to `_rf0hv16_sim6`. The armed keys of cards GAL2, GFC, MRF and BOF, the earlier pairs (`_rf0hv16`, `_rf0hv15`), the census against GPS only and the open items: the cards, and the paragraph at full length in `docs/onboarding/claude_md_history.md`. ⚠ Every golden arm is GPS + Galileo and 2 to 6 times slower. Constellation-blind graders pool the systems: `rapid_arm.py score` counts E5a as band 5, `ftc_step_attrib.py` R3 needs `--systems G,E`, and `census6h.py` / `simcensus6h.py` default to GPS-only bases (use `gcensus.py`, or `SIMCENSUS_BASE` = the wire's arm).
+**Baseline: card BOF (2026-10-28, `docs/record/refound/BOF_built_off_follow_through_2026-10-28.md`), after card MRF, on card GAD's Galileo posture (2026-10-13).** Pair `runs/_rf0hv17_{field,sim}6` (exe `gnss_processor_bofarm.exe`, sha256[:16] 91143c81de9a9547): field WTZZ00DEU 0.059 0.012 0.023 0.012 0.017 0.012 m by hour; sim products identical to `_rf0hv16_sim6`. The armed keys of cards GAL2, GFC, MRF and BOF, the earlier pairs (`_rf0hv16`, `_rf0hv15`), the census against GPS only and the open items: the cards, and the paragraph at full length in `docs/onboarding/claude_md_history.md`. ⚠ Every golden arm is GPS + Galileo and 2 to 6 times slower. Constellation-blind graders pool the systems: `rapid_arm.py score` counts E5a as band 5, `ftc_step_attrib.py` R3 needs `--systems G,E`, and `census6h.py` / `simcensus6h.py` default to GPS-only bases (use `gcensus.py`, or `SIMCENSUS_BASE` = the wire's arm).

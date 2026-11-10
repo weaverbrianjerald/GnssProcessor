@@ -1,7 +1,7 @@
 /**
  * @file BlockBaarda.cpp
  * @brief BlockFormal: the (station, satellite) LOS block sweep and its emission
- *        (docs/SPEC_redundancy_census.md BB-INC-1..3).  BlockBaarda.hpp holds
+ *        (docs/record/SPEC_redundancy_census.md BB-INC-1..3).  BlockBaarda.hpp holds
  *        the design and the two corrections to SPEC §3's recipe.
  *
  * Measure-only.  Nothing here writes a weight, a state or a decision; this
@@ -712,7 +712,7 @@ int networkBlockBaardaRunEnd(const NetworkRunEndView& v) {
     const NetworkSetupResult& setup = v.setup;
 
     // --- BlockFormal LOS-block census run-end telemetry ----------------------
-    // (docs/SPEC_redundancy_census.md §10.4).  "The block tier found no smearing" and
+    // (docs/record/SPEC_redundancy_census.md §10.4).  "The block tier found no smearing" and
     // "there was never a block to smear across" produce identical ladders
     // (invariant #4), so the block-size histogram is reported before any occupancy,
     // and INC-3's fraction comes last, with its denominator.  The body is in

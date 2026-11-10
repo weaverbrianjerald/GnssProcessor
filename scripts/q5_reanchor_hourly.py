@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Re-anchor an already-run Q5 consumer-replay arm onto a different truth ECEF.
 
-Phase 0 of ``docs/SPEC_day129_frame_guards.md`` graded consumer NRMG00NCL against
+Phase 0 of ``docs/record/SPEC_day129_frame_guards.md`` graded consumer NRMG00NCL against
 the RINEX header ``APPROX POSITION XYZ``.  That coordinate is stale by about 12
 years of plate motion (0.632 m; see ``scripts/q5_make_replay_arm.py``), so the
 absolute levels in the Phase-0 / Q5 tables carried it as a constant bias.  This

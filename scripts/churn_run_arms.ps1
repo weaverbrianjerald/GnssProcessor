@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Run the D5 churn-card arms (docs/SPEC_d5_churn_limit_cycle.md).
+  Run the D5 churn-card arms (docs/record/SPEC_d5_churn_limit_cycle.md).
 
 .DESCRIPTION
   Three COLD arms over the same 63-station DOY-129 base, differing by exactly one

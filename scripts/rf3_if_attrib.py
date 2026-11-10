@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """RF-3-read: what moves the per-satellite IF correction a consumer applies (a diagnostic).
 
-Pre-registered in docs/refound/RF-3-prep_golden_rebase_2026-09-15.md s5.  For every satellite the
+Pre-registered in docs/record/refound/RF-3-prep_golden_rebase_2026-09-15.md s5.  For every satellite the
 consumer's code correction is ``x_s(t) = -clk + a1*b(C1C) + a2*b(C2W)`` (refound_grade.if_dispersion's
 quantity).  Its network-common change cancels in the consumer clock, so each epoch-to-epoch change is
 de-commoned by the median change over the satellites present at both epochs:

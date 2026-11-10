@@ -5,7 +5,7 @@
  *        generalized-LS network filter time-links (phase B).
  *
  * Core numerics of the "invariant-function carry" (design handoff
- * `docs/SPEC_card4_invariant_carry.md`; foundations: Teunissen/Khodabandeh/
+ * `docs/record/SPEC_card4_invariant_carry.md`; foundations: Teunissen/Khodabandeh/
  * Psychas 2021 J Geod 95:108, generalized Kalman filter, and Hou & Zhang 2025
  * J Geod 99:3, generalized-LS filter).  The 2021 paper leaves open how to
  * construct the transition @f$\Phi^z@f$ of the time-linked functions

@@ -1,7 +1,7 @@
 /**
  * @file PriorResidual.cpp
  * @brief Emission and run-end readout of the prior-residual census
- *        (docs/SPEC_prior_residual_census.md).
+ *        (docs/record/SPEC_prior_residual_census.md).
  *
  * The statistic lives entirely in the header-only accumulator
  * (@ref NetworkPriorResidual) so it can be unit-tested with no run coupling;
@@ -106,7 +106,7 @@ void networkPriorResidualEmit(NetworkRunContext& ctx, const GnssConfig& config_,
     q.prires_hits_dropped += prires.hitsDropped();
 
     // --- the constraint-aware global variance component (the rider) -----------
-    // docs/SPEC_prior_residual_census.md §14.  Drained here and nowhere else,
+    // docs/record/SPEC_prior_residual_census.md §14.  Drained here and nowhere else,
     // because this is the one point at which both sides are complete: the prior
     // side from the five census feeds and the data side from the post-fit RAIM
     // row walk in SB_RAIM, which precedes SB_STASH_STATUS.  Measure-only: nothing
@@ -599,7 +599,7 @@ void networkPriorResidualRunEnd(const NetworkRunContext& ctx,
                   q.prires_rneg_max_id.empty() ? std::string("-") : q.prires_rneg_max_id);
 
     // --- the constraint-aware global variance component -----------------------
-    // docs/SPEC_prior_residual_census.md §14.2/§14.6.  Invariant #4: the
+    // docs/record/SPEC_prior_residual_census.md §14.2/§14.6.  Invariant #4: the
     // denominators and the degradation mode are logged before any number,
     // because sigma0_global means nothing without knowing whether its data
     // side was r ≡ 1 or empty.
@@ -730,7 +730,7 @@ int networkPriorResidualRunEnd(const NetworkRunEndView& v) {
     const NetworkPriorResidual& prires_est = v.run.engines.prires;
 
     // --- Prior-residual census run-end telemetry ------------------------------
-    // (docs/SPEC_prior_residual_census.md §6).  The ladder is the telemetry
+    // (docs/record/SPEC_prior_residual_census.md §6).  The ladder is the telemetry
     // (invariant #4), and a family with n_rows = 0 has to read as "ran, saw nothing"
     // rather than "never ran".  The body is in network/qc/PriorResidual.cpp, next
     // to the emission that feeds it.

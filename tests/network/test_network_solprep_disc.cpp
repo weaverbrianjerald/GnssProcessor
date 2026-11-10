@@ -1,7 +1,7 @@
 /**
  * @file test_network_solprep_disc.cpp
  * @brief The emit-site landings of per-satellite discontinuities in
- *        networkSolPrep: the Q3 trap-1 rule (docs/SPEC_clock_temporal_anchor.md)
+ *        networkSolPrep: the Q3 trap-1 rule (docs/record/SPEC_clock_temporal_anchor.md)
  *        applied to the sibling landing sites eph_cutover, cb_excursion, the IF-pin
  *        re-selection (T3c), and the CB re-seed queue.
  *

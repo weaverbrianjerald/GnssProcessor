@@ -19,7 +19,7 @@
  * others (a different S-transform).  Only the @c enforcePsd guard is shared with
  * DD; its transform stays in @c DdPivotManager.
  *
- * Guarding (docs/SPEC_sbasis_realization_contract.md §F8.7): the single-receiver
+ * Guarding (docs/record/SPEC_sbasis_realization_contract.md §F8.7): the single-receiver
  * user BSSD path (@c PivotManager) runs without the guard on purpose.  At user
  * scale the groups are small (~8–12 states) and handovers are rare, so FP error
  * in T·P·Tᵀ does not accumulate.  A minimum-constraint network producer, whose

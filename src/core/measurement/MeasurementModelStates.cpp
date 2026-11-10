@@ -512,7 +512,7 @@ namespace GnssProcessor {
             //
             // The lane is measured in the carry instead (local_carry.value_abs
             // = x_lin + back-substituted Δx, an absolute metre level in the
-            // epoch's realized gauge).  See docs/SPEC_lane_slip_response.md
+            // epoch's realized gauge).  See docs/record/SPEC_lane_slip_response.md
             // §7.2.
 
         }

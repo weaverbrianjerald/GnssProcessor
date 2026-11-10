@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Event harness: slip-dose legs (Study 4, docs/SPEC_event_harness.md §12).
+"""Event harness: slip-dose legs (Study 4, docs/record/SPEC_event_harness.md §12).
 
 The single-event legs price one event.  A dose leg prices a schedule: a converged
 snapshot is resumed and a scripted sequence of true slips is injected at a chosen

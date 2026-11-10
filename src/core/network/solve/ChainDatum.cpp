@@ -2269,7 +2269,7 @@ void applyCarryShift(ChainElection& el) {
     // priors).  Variances untouched: this is an exact basis change,
     // not a refloat.  Runs before PASS B consumes any carry.
     //
-    // Coupling references move with the carries (docs/SPEC_card1_coupling_carry.md
+    // Coupling references move with the carries (docs/record/SPEC_card1_coupling_carry.md
     // §9): D4 shifts `lc.value_abs` below and also every coupling `s_prev` on a
     // shifted PB column (SPEC_card1_coupling_carry §14).  A coupling row's RHS is
     // y = (value_abs − x_lin) + Σ_j M_j·ŝ_prev,j , and `CoupledShared::s_prev` and
@@ -2763,7 +2763,7 @@ int networkChainDatumRunEnd(const NetworkRunEndView& v) {
                       c.eq34_mg_asbuilt_zero, c.eq34_mg_asbuilt_whole, c.eq34_mg_asbuilt_frac,
                       c.eq34_mg_asbuilt_unknown);
     }
-    // Chain-pin audit (docs/SPEC_synthetic_minimum_network.md §14 T1, measured record
+    // Chain-pin audit (docs/record/SPEC_synthetic_minimum_network.md §14 T1, measured record
     // §12.8): declared → folded → landed per (constellation, signal).  The election's
     // per-epoch cross-check only proves that the election recorded Σ (n_c + m_c) pins;
     // foldAmb/foldRpb return early without a message (no state, no live phase row), and

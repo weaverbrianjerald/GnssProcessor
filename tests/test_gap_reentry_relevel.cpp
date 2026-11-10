@@ -3,7 +3,7 @@
  * @brief Gap re-entry response: @c networkSlipDrainGapReentry, the wired invariant-#1
  *        response to an arc that re-enters across a tracking break while its stiff
  *        zero-q leveling level is still bridged
- *        (docs/SPEC_slip_qc_hardening.md §G3/W1).
+ *        (docs/record/SPEC_slip_qc_hardening.md §G3/W1).
  *
  * ## What is under test, and what is not
  *

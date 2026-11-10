@@ -1,4 +1,4 @@
-"""Side-by-side arm comparator for the PD-safe re-ask queue (docs/RUNQUEUE_pdfix_reask.md).
+"""Side-by-side arm comparator for the PD-safe re-ask queue (docs/record/RUNQUEUE_pdfix_reask.md).
 
     python scripts/grade_pdfix_arms.py <run_dir> [<run_dir> ...]
 

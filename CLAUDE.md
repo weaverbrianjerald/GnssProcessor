@@ -138,13 +138,13 @@ The rules — **all seven are enforced or checked**:
 
 1. **One card = one file** under `docs/cards/<topic>/`. Pre-register it as a file.
 2. **Results are appended to the CARD's file only** — never to a topic page, never to
-   `docs/archive/`, never to a monolith.
+   `docs/record/archive/`, never to a monolith.
 3. **The INDEX line is updated twice:** at pre-registration, and at close.
 4. **No non-archive file over ~60 KB.** Split by topic as one approaches it. The one
    exemption is the generated ledger view `CONFIG_promotion_ledger.md`, named in
    `SIZE_EXEMPT` in `scripts/docs_index_check.py`.
 5. **Every card file starts with the STATUS block** (`id`, `topic`, `status`, `summary`, `source`) and an **Outcome** paragraph (about 90 words); `status` ∈ {`open`, `closed`, `parked`, `superseded`, `reference`}. The header is revised as results land; the body never is (field details: `docs/INDEX.md`, rule 5).
-6. **The monoliths are frozen.** `docs/archive/` is read-only; the old path is a stub.
+6. **The monoliths are frozen.** `docs/record/archive/` is read-only; the old path is a stub.
 7. **`python scripts/docs_index_check.py` must pass before a docs commit** (reachability
    from INDEX, dangling links, STATUS blocks, the 60 KB bar, the archive banners, the
    generated ledger view).
@@ -183,7 +183,7 @@ owner per concept, typed identities, declared properties, run-start tables a hum
 short functions with a linear story. On refactors, a clear structure outranks byte identity:
 the same-build golden comparison still runs, and any output move is explained before it
 lands. The network producer is being reorganized under card NOM
-(`docs/refound/NOM_network_object_model_2026-10-08.md`): new network code takes its
+(`docs/record/refound/NOM_network_object_model_2026-10-08.md`): new network code takes its
 identities from `common/GnssIdentity.hpp` (constellation traits, `SatId`, `SignalId`,
 `LosId`, `ArcId`; no new `sat[0]` / `sig[1]` parsing), and every station state column has a
 declared disposition in `network/assembly/ParamInventory.hpp` (the "parameters as armed" table
@@ -196,7 +196,7 @@ made in Y", not "you change X"); imperatives only inside numbered procedures. No
 dashes: use a period, colon, comma or parentheses. No personal names as points of
 contact ("a maintainer"). Claims are verified against the code or a run before they
 are written. This does NOT license rewording the existing scientific record
-(`docs/cards/`, `docs/archive/`, `docs/refound/`, this file's older sections). AI
+(`docs/cards/`, `docs/record/archive/`, `docs/refound/`, this file's older sections). AI
 assistants are permitted on this project under the rules in `CONTRIBUTING.md`
 (section "AI coding assistants"); licensing and credit are in `LICENSE` and
 `CITATION.cff` (interim OSU notice, credit to Brian Weaver, to be replaced by a
@@ -321,7 +321,7 @@ SH constraint or seams.
   Response doctrine: adapt and EMIT within the detected epoch; a
   withhold is the backstop, graded as an adaptation failure unless the epoch is provably
   unrecoverable. Not armed: `prefit_fuse_sigma`. Deleted from the code on 2026-10-14 (card RKD,
-  `docs/refound/RKD_retired_key_deletion_2026-10-14.md`): `sh_health_gate`, the old lane layer
+  `docs/record/refound/RKD_retired_key_deletion_2026-10-14.md`): `sh_health_gate`, the old lane layer
   (`mw_wl.*`, `lane_carry.*`; lanes return only as card AB3's new build) and `emit_pb_filter*`.
 
 **Baseline: `_rf0hv18` (2026-11-07), the first on the AVX2 build, after the 2026-11-07 arming rule and the review builds (card RF0HV18B, sections "Arming under the 2026-11-07 rule" and 6; card AV2 section 7).** Runs `D:/GnssProcessorSupport/runs_avx2def/_rap_srn_{f6,s6,b6}` (exe `gnss_processor_srnint.exe`, sha256[:16] 64543d2d89994cae, branch `int/srn-builds`): field WTZZ00DEU 0.058 0.013 0.021 0.012 0.017 0.013 m by hour; sim SZZ000SIM 0.197 0.109 0.028 0.019 0.029 0.018 m; BeiDou lineage 0.033 0.015 0.020 0.019 0.020 0.015 m; census keys `c18a` (field, 16 sites) and `s18a` (sim). The same build on the goldens before the review keys: `_rap_rf0hv18_{field6,sim6,bds6}` (census `c18f`, `s18`), every user within 0.10 mm of the SSE2 build of those keys. An SSE2 build (`wt_build.ps1 -Arch SSE2`) reproduces the earlier pairs; the earlier pairs (`_rf0hv17`, `_rf0hv16`) and their paragraphs: `docs/onboarding/claude_md_history.md`. ⚠ Every golden arm is GPS + Galileo and 2 to 6 times slower. Constellation-blind graders pool the systems: `rapid_arm.py score` counts E5a as band 5, `ftc_step_attrib.py` R3 needs `--systems G,E`, and `census6h.py` / `simcensus6h.py` default to GPS-only bases (use `gcensus.py`, or `SIMCENSUS_BASE` = the wire's arm).
@@ -337,11 +337,11 @@ SH constraint or seams.
 - **Wrapped-fraction nulls.** Subtracting a group's own circular median shrinks |residual| about
   42 % on uniform noise: quote the gap to a size-matched null. A triangle-closure null carries the
   DD structure. A truth-free wrapped grade means something only for sub-cycle errors
-  (`docs/cards/sim-bed/DD-TRACE-REF-SAT.md`).
+  (`docs/record/cards/sim-bed/DD-TRACE-REF-SAT.md`).
 - **`network_ionosphere.csv`:** grade `iono_total_m` (= `x_lin + x_r`, absolute slant); `iono_m`
   is the correction `x_r` to the allocation seed.
 - **An `x_lin` shift on a carried column is an exact solve no-op** (the carried RHS absorbs it): a
-  mechanism whose only write is `x_lin` cannot actuate (`docs/cards/slip/LANE-SNAP-RUNG3.md`).
+  mechanism whose only write is `x_lin` cannot actuate (`docs/record/cards/slip/LANE-SNAP-RUNG3.md`).
 - **Seams (an add-back):** grade with a cold-consumer replay (`scripts/splice_wire.py`), never the
   seam-epoch diff alone; it cannot see an integrated, unsignalled drift.
 

@@ -162,7 +162,7 @@ void networkStashStatus(NetworkRun& run, const NetworkEpoch& ep, EpochEvents& ev
         }
     }
 
-    // Prior-residual census (docs/SPEC_prior_residual_census.md §6): the same
+    // Prior-residual census (docs/record/SPEC_prior_residual_census.md §6): the same
     // pre-clear prior snapshot, widened to the kinds the monitor above skips.  Those
     // skips are correct for estimating a variance component and wrong for a
     // detector, because they remove the rows a screen exists to find.
@@ -193,7 +193,7 @@ void networkStashStatus(NetworkRun& run, const NetworkEpoch& ep, EpochEvents& ev
     std::map<std::string, PriresSharedPrior> prires_shared_prior;
     const bool prires_pb = ctx.knobs.prires_pb && prires_est.enabled();
     const bool prires_cb = ctx.knobs.prires_cb && prires_est.enabled();
-    // The satellite-clock family (docs/SPEC_clock_temporal_anchor.md §3).
+    // The satellite-clock family (docs/record/SPEC_clock_temporal_anchor.md §3).
     // The VCE monitor above excludes it ("Clock / VtecSh out of scope (own
     // models)"), which suits a carry that is not being calibrated; the clock anchor
     // derives its q from the measured dispersion of this prior, so the census
@@ -497,7 +497,7 @@ void networkStashStatus(NetworkRun& run, const NetworkEpoch& ep, EpochEvents& ev
     if (prires_est.enabled())
         networkPriorResidualEmit(ctx, config_, log, traces, se, stations, prires_est, events);
 
-    // One LASER 5-95 factor iteration per epoch (docs/SPEC_carry_vce_apply.md §2,
+    // One LASER 5-95 factor iteration per epoch (docs/record/SPEC_carry_vce_apply.md §2,
     // M2 v2).  It must run here: after the last feed into the monitor (SB_LEVELING's
     // pl harvest, then the pb/cb feed above) and before any fold of the next epoch.
     // That placement makes the contract hold:
@@ -595,7 +595,7 @@ void networkStashStatus(NetworkRun& run, const NetworkEpoch& ep, EpochEvents& ev
             es.sigma0_pf_phase = ctx.carry.ep_sigma0_pf_phase;
             es.n_pf_rows       = ctx.carry.ep_pf_rows;
         }
-        // Redundancy census (docs/SPEC_redundancy_census.md): the seam stamps the
+        // Redundancy census (docs/record/SPEC_redundancy_census.md): the seam stamps the
         // TOW it computed for, so a strided run leaves these blank on the epochs
         // between sweeps instead of repeating the last sweep's numbers.  The census
         // seam runs in SB_FRAMEDIAG, before this block, every epoch.
@@ -618,7 +618,7 @@ void networkStashStatus(NetworkRun& run, const NetworkEpoch& ep, EpochEvents& ev
             }
             es.prefit_census = pc;
         }
-        // Measurement-admission census (docs/SPEC_measurement_admission.md INC-3):
+        // Measurement-admission census (docs/record/SPEC_measurement_admission.md INC-3):
         // the seam runs before assembly, well before this block, and stamps the TOW
         // it screened.  An epoch it skipped (every station under adm_min_sats, or
         // the feature disarmed) leaves the columns blank rather than repeating the
@@ -627,7 +627,7 @@ void networkStashStatus(NetworkRun& run, const NetworkEpoch& ep, EpochEvents& ev
             es.adm_sta_worst_z = admission_ev.ep_adm_sta_worst_z;
             es.adm_net_worst_z = admission_ev.ep_adm_net_worst_z;
         }
-        // PD-safe DD fold (docs/SPEC_pd_safe_dd_fold.md INC-0): read directly off the
+        // PD-safe DD fold (docs/record/SPEC_pd_safe_dd_fold.md INC-0): read directly off the
         // kernel, which by this point holds the accepted solve's fold (a within-epoch RAIM
         // re-solve re-folds and overwrites, and NetworkEstimator::beginEpoch resets it once
         // per epoch).  `blocks == 0` means no fold ran this epoch (carry off, no chords),
@@ -641,7 +641,7 @@ void networkStashStatus(NetworkRun& run, const NetworkEpoch& ep, EpochEvents& ev
             es.ddfold_degen_rows    = dfs.degen_rows;
             es.ddfold_min_pivot_rel = dfs.min_pivot_rel;
         }
-        // Prior-residual census (docs/SPEC_prior_residual_census.md): the emission
+        // Prior-residual census (docs/record/SPEC_prior_residual_census.md): the emission
         // seam ran above in this epoch and stamped the TOW it drained, so an epoch
         // the census did not reach leaves the columns blank rather than repeating
         // stale numbers.  A genuine 0-row epoch (every carry family absent) still
@@ -653,7 +653,7 @@ void networkStashStatus(NetworkRun& run, const NetworkEpoch& ep, EpochEvents& ev
             es.prires_rows_frame = status_ev.ep_prires_frame;
             es.prires_n_reported = status_ev.ep_prires_reported;
             es.prires_max_t      = status_ev.ep_prires_max_t;
-            // Constraint-aware global σ̂₀ (docs/SPEC_prior_residual_census.md §14):
+            // Constraint-aware global σ̂₀ (docs/record/SPEC_prior_residual_census.md §14):
             // same TOW stamp, same "unavailable is not 0" convention.  The flags are
             // written whenever the rider ran, including as 0, so a clean epoch and an
             // un-run one are distinguishable from this file alone; the two values

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Synthetic network: fleet-common C-record wander extractor / A-B comparator.
 
-docs/SPEC_synthetic_minimum_network.md §9.8 (the datum-wander arm).
+docs/record/SPEC_synthetic_minimum_network.md §9.8 (the datum-wander arm).
 
 On the quiet fixture the a-priori CLK product is the truth (§4.2), so each
 epoch's C record is pure estimator error, and its fleet-common component (the

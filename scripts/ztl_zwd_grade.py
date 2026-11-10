@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The wet-delay grade of card ZTL (docs/refound/ZTL_zwd_time_link_float_vehicle_2026-11-07.md).
+"""The wet-delay grade of card ZTL (docs/record/refound/ZTL_zwd_time_link_float_vehicle_2026-11-07.md).
 
 usage: ztl_zwd_grade.py <run dir> [<run dir> ...] [--t0 TOW] [--hours N] [--truth FIXTURE_DIR]
 

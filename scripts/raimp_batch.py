@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""RAIM POWER leg batch driver (docs/SPEC_raim_pool_rehost.md §7.2 + the P0' extension).
+"""RAIM POWER leg batch driver (docs/record/SPEC_raim_pool_rehost.md §7.2 + the P0' extension).
 
     python scripts/raimp_batch.py [--extension] [--only name,name] [--dry-run]
                                   [--status-json PATH]

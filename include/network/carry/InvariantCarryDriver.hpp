@@ -5,7 +5,7 @@
  *        through the network producer solve (M1, phase C3b).
  *
  * The driver is the factored, unit-drivable core of the "invariant-function carry"
- * (design handoff `docs/SPEC_card4_invariant_carry.md`).  Phase B built the z-store
+ * (design handoff `docs/record/SPEC_card4_invariant_carry.md`).  Phase B built the z-store
  * data structure, the fundamental-cycle algebra and the lifecycle transforms
  * (`ZStore.hpp`, gates 1–3); phase C built the producer-side fold
  * (`NetworkNormalEquations::foldReducedDdPriors` with `ddPriorPosteriorMean` /
@@ -168,7 +168,7 @@ public:
          * Off: byte-identical.  Inert unless @c innov_gate.
          */
         bool   innov_carried_only{false};
-        // --- PD-safe invariant-DD fold (docs/SPEC_pd_safe_dd_fold.md §5). ---
+        // --- PD-safe invariant-DD fold (docs/record/SPEC_pd_safe_dd_fold.md §5). ---
         /**
          * @brief PD-safe carry policy (@c network.carry_invariant_pd_safe), driver half.
          *
@@ -189,7 +189,7 @@ public:
          * not touched.  Off: byte-identical.
          */
         bool   pd_safe{false};
-        // --- Linearization-frame carry (docs/SPEC_event_harness.md §21.4; RS-2). ---
+        // --- Linearization-frame carry (docs/record/SPEC_event_harness.md §21.4; RS-2). ---
         /**
          * @brief Capture each chord's linearization DD @f$z_\ell=\sum c\,x_{\rm lin}@f$
          *        (@c network.state_snapshot_carry_lin), the write half.
@@ -233,7 +233,7 @@ public:
         int  est_station{-1};    ///< estimator station index of this arc's ambiguity (−1 = unresolvable this epoch).
         int  local_col{-1};      ///< A_r local ambiguity column of this arc (−1 = unresolvable).
         bool slipped{false};     ///< a cycle slip or refloat invalidated this arc's carried ambiguity this epoch (its pre-slip DD would be a stiff wrong prior).  The caller sets it from the network's slip funnel (MW wide-lane, LLI, IF-phase TD, RAIM culprit).  The arc is treated as absent from A_old, so any new cycle whose support includes it is re-tapped fresh (data-only), the birth path; a carried chord lost this way is counted in @ref Counters::slip_kills (C3c).
-        double x_lin{0.0};       ///< this arc's ambiguity linearization value (m), the value the kernel takes its corrections about.  Read only under @ref Config::carry_lin; otherwise left 0 and unused, so the off path costs nothing (RS-2, docs/SPEC_event_harness.md §21.4).
+        double x_lin{0.0};       ///< this arc's ambiguity linearization value (m), the value the kernel takes its corrections about.  Read only under @ref Config::carry_lin; otherwise left 0 and unused, so the off path costs nothing (RS-2, docs/record/SPEC_event_harness.md §21.4).
     };
 
     /// One (const,signal) group's arcs this epoch.  Groups are independent z-store
@@ -279,7 +279,7 @@ public:
         //     census counters (the solve never reads it, so output is byte-identical); the
         //     run-end line reads it only when the timers are armed. ---
         long long comp_kc_hist[10]{};     ///< #emitted components with fold-dim d in log2 buckets: [0]=0, [1]=1, [2]=2..3, [3]=4..7, [4]=8..15, [5]=16..31, [6]=32..63, [7]=64..127, [8]=128..255, [9]=≥256.
-        // --- PD-safe invariant-DD fold (docs/SPEC_pd_safe_dd_fold.md) ---------------
+        // --- PD-safe invariant-DD fold (docs/record/SPEC_pd_safe_dd_fold.md) ---------------
         /**
          * @brief Chord rows the D5 gate could not test because @f$\mathrm{Cov}(v)_{ii}@f$
          *        was not strictly positive: the @c if(!(var>0.0)) skip in both gate bodies
@@ -672,7 +672,7 @@ public:
      * report 1.00 this way: a frozen carry block's innovations are small against its
      * diffuse Cov(v), which drove the raw σ̂₀² to 0.0099 in one measured lineage, and the
      * floor paired with @ref kInflationFactorCap clamped it back up to 1, so the gate ran
-     * v1 without the run-end line showing it (docs/SPEC_pd_safe_dd_fold.md §10, finding 2).
+     * v1 without the run-end line showing it (docs/record/SPEC_pd_safe_dd_fold.md §10, finding 2).
      *
      * Standing invariant #4: an armed knob that reports its neutral value may be inert
      * rather than benign, and the instrument has to say which.

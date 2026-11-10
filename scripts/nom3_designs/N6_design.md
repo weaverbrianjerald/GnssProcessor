@@ -1,6 +1,6 @@
 # Card NOM step N6: the network owns its local parameter set; one observation equation serves producer, consumer and seeds (design)
 
-- **Step:** card NOM step N6 (`docs/refound/NOM_network_object_model_2026-10-08.md` sections 3.3, 5, 8: "the network
+- **Step:** card NOM step N6 (`docs/record/refound/NOM_network_object_model_2026-10-08.md` sections 3.3, 5, 8: "the network
   owns its local parameter set (no borrowed user `StateManager`) and one observation-equation function, returning its
   term list, serves the producer's H, the consumer's H and the seeds"; behaviour-changing, its own card, graded on both
   beds). `docs/onboarding/08_adding_a_network_parameter.md` ("Known rough edges") names the same gap.
@@ -255,7 +255,7 @@ Each body step is byte-identical on the gate set and re-surveys its files first.
 | N6j | close: tests re-pointed (12 files in `tests/network`, `test_measurement_model_prepass.cpp`, 4 `PppModel` constructor sites), page 8 and the network tour rewritten, `CLAUDE.md` routing, `OPEN_ITEMS`, `nom_epoch_lint` | docs, tests | none | 1 |
 
 Order. N6.0 alone first. N6a and N6b edit user-side files that the user-side organization work
-(`docs/refound/UOM_user_object_model_2026-10-13.md`) also edits; N6a announces its file list there. N6c to N6f are
+(`docs/record/refound/UOM_user_object_model_2026-10-13.md`) also edits; N6a announces its file list there. N6c to N6f are
 sequential; N6d sub-steps touch disjoint files. N6g to N6i wait for N6f and are graded separately.
 
 ## 5. Gates

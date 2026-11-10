@@ -867,7 +867,7 @@ struct LosState {
     /// ambiguity.  Not snapshotted: a warm resume cold-starts it.  Was
     /// @c NetworkCarryState::iono_blk_carry.  ColdStart.
     std::optional<LocalCarry> iono_blk;
-    /// The gross line-of-sight disposition (docs/SPEC_event_harness.md section
+    /// The gross line-of-sight disposition (docs/record/SPEC_event_harness.md section
     /// 24.18): the streaks of every screened line of sight and the declared subset, pruned on
     /// the absent-satellite edge (network.gross_los_max_gap_s).  Empty unless knobs.gl_on.
     /// Not snapshotted and not fingerprinted (two epochs of evidence, re-earned).  Was

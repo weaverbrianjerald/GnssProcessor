@@ -35,7 +35,7 @@ That is standing invariant #7 with an unbounded decoupling edge: nothing bounds
 what the clock can absorb when the column goes, and the re-coupling edge (each
 station's ambiguity refloating) is unmanaged and staggered over several epochs.
 
-## Measured (docs/SPEC_pivot_visibility_gauge_defect.md)
+## Measured (docs/record/SPEC_pivot_visibility_gauge_defect.md)
 
 24-station sim fixture, truth-clean, `phase_datum_prioritized` off:
 

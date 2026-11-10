@@ -7,7 +7,7 @@
  *
  * Support header for the network run loop, not a public API; each type carries its
  * own documentation.  The types came from the anonymous namespace of
- * ApplicationNetwork.cpp (INC-2; see docs/network_decomposition_plan.md).  The
+ * ApplicationNetwork.cpp (INC-2; see docs/record/network_decomposition_plan.md).  The
  * former file-static helper @ref sharedCarryKey is @c inline with external linkage.
  */
 
@@ -73,7 +73,7 @@ struct NetStation {
     // branch in PASS A).
     std::unique_ptr<MwSlipDetector>   mw_slip;
 
-    /// SD pre-reduce EWL constraint (docs/SPEC_sd_ewl_prereduce.md): per-station
+    /// SD pre-reduce EWL constraint (docs/record/SPEC_sd_ewl_prereduce.md): per-station
     /// eligibility tallies for `Application::networkAppendSdEwlRows_`.  They are held
     /// on the station rather than in a shared accumulator because the row build runs
     /// inside the parallel produce phase; the run-end readout sums them over stations
@@ -192,7 +192,7 @@ struct NetStation {
     // network.phase_datum_eq34_seed_round is on; cleared and rebuilt with the pins.
     std::map<std::string, double> pinned_amb_seed_lambda;
 
-    // --- flicker/gap signal integrity (docs/SPEC_flicker_gap_integrity.md, INC-2) ---
+    // --- flicker/gap signal integrity (docs/record/SPEC_flicker_gap_integrity.md, INC-2) ---
     // Per-satellite σ multiplier for this station's phase rows while that line of
     // sight is unvetted: not @c Stable because it re-entered, flickered, degraded or is
     // new, which places it inside the structural window where no time-difference
@@ -209,7 +209,7 @@ struct NetStation {
     // PASS-B produce reads it (station-local, so thread-safe).
     std::map<std::string, double> phase_sigma_scale;
     /// Per-satellite sigma scale for this station's code rows while that line of sight
-    /// is declared gross (docs/SPEC_event_harness.md §24.18).  The code-row
+    /// is declared gross (docs/record/SPEC_event_harness.md §24.18).  The code-row
     /// counterpart of @ref phase_sigma_scale above, under the same contract: the fold
     /// divides the row's information by scale^2 (sigma multiplied by scale); phase rows
     /// are untouched, because they have their own responses (the erase and pending
@@ -247,7 +247,7 @@ struct NetStation {
     /// report.  Untouched unless the knob is effective.
     RxIfbStationState l5b;
 
-    // --- second code channel (docs/refound/SCC_second_code_channel_2026-09-21.md)
+    // --- second code channel (docs/record/refound/SCC_second_code_channel_2026-09-21.md)
     /// This epoch's companion cells at this station, as "<satellite>|<signal>" keys
     /// (the shape of @c StateKeys::makeSatBiasKey).  Republished serially from the
     /// PASS-A observations before the parallel PASS-B produce reads it (station-local,
@@ -287,7 +287,7 @@ struct NetStation {
     /// on; summed into the run-end report at teardown, like @c scc_rows.
     long long scc_other_system_rows{ 0 };
 
-    // --- second phase channel (docs/refound/SID_signal_identity_2026-09-22.md)
+    // --- second phase channel (docs/record/refound/SID_signal_identity_2026-09-22.md)
     /// This epoch's second-phase cells at this station, as
     /// @c StateKeys::makeSatPhaseBiasKey keys.  Republished serially from the PASS-A
     /// observations before the parallel PASS-B produce reads it (station-local, so
@@ -717,7 +717,7 @@ struct LocalCarry {
     /// is made idempotent by the drop's variance test.
     long long dropped_ep{0};
     /// Per-arc phase of the walk metric (RF-3a A2,
-    /// docs/refound/RF-3_code_row_qc_2026-09-22.md §4).  A drop sets it to 1.  The next
+    /// docs/record/refound/RF-3_code_row_qc_2026-09-22.md §4).  A drop sets it to 1.  The next
     /// harvest of the arc records @c |value_abs(after) − value_abs(before)| as the
     /// change that the first fold after the drop absorbed and advances it to 2; the
     /// harvest after that records the same quantity as the residual walk and clears it.
@@ -1031,7 +1031,7 @@ struct PlAmb {
 };
 
 /// ---------------------------------------------------------------------------
-/// Two-edge anchor handover (docs/SPEC_pivot_visibility_gauge_defect.md §5.1)
+/// Two-edge anchor handover (docs/record/SPEC_pivot_visibility_gauge_defect.md §5.1)
 /// ---------------------------------------------------------------------------
 /// The phase-bias gauge is one constraint per (sat, signal): "station r*'s ambiguity
 /// for this key = 0".  When r* changes (the clock pivot stopped seeing the
@@ -1305,7 +1305,7 @@ struct StationAssembly {
     // held apart from the carry above so that they can be handed to addStation and
     // folded into N_rr/u_r before its positive-definiteness test.  Otherwise the test
     // judges a station without the only row that gauges its receiver DCB, and drops it
-    // for lacking that row (docs/refound/RF-PD_station_rejection_2026-09-15.md).  A row
+    // for lacking that row (docs/record/refound/RF-PD_station_rejection_2026-09-15.md).  A row
     // lands in exactly one of the two vectors: with the knob off, the RXCB-DATUM rows
     // stay in carry_* at their existing position in the coalesce (byte-identical); with
     // it on they move here and are withheld from the later addStationPrior call, which
@@ -1485,7 +1485,7 @@ struct StationAssembly {
     std::vector<PlAmb>        pl_amb;       ///< Present non-pivot ambiguities, for the post-solve stash.  A carry-eligible subset: filled only when the phase-leveling ambiguity carry is the live vehicle (`carry_warm && !carry_invariant`), because it doubles as that carry's inject/harvest record.  QC tiers must not key on it; see `qc_amb`.
     /// Census of the ambiguity columns that are present and unpinned, and therefore
     /// checkable, this epoch, independent of the carry vehicle (RAIM pool re-host,
-    /// docs/SPEC_raim_pool_rehost.md).  The same (col, sat, signal, x_lin, key) tuple as
+    /// docs/record/SPEC_raim_pool_rehost.md).  The same (col, sat, signal, x_lin, key) tuple as
     /// @c pl_amb, built by the same walk, but without the two carry gates that leave
     /// @c pl_amb empty under carry_invariant (`legacy_local_inject`'s carry_warm, and
     /// `do_amb_carry`'s `!carry_invariant`).
@@ -1517,7 +1517,7 @@ struct StationAssembly {
     /// block's columns.  Same tuple shape as pl_rpb.  Empty unless
     /// network.carry_iono_in_block is on.
     std::vector<std::tuple<std::string, Eigen::Index, double>> pl_iono;
-    /// rx-CB carry (docs/SPEC_rx_cb_carry.md): present receiver code-bias columns
+    /// rx-CB carry (docs/record/SPEC_rx_cb_carry.md): present receiver code-bias columns
     /// (state key, A_r col, x_lin) recorded for the post-solve harvest.  Filled only
     /// under network.carry_rx_code_bias; same tuple shape as pl_rpb.
     std::vector<std::tuple<std::string, Eigen::Index, double>> pl_cb;
@@ -1535,7 +1535,7 @@ struct StationAssembly {
         int pl_cb_injected{0};     ///< rx-CB priors folded this epoch (produce-phase local; summed serially).
     int pl_cb_innov_skips{0};  ///< rx-CB priors withheld by the innovation gate (receiver-reset response).
     /// Per-row position partial @f$\partial y_i/\partial\delta p@f$ for the station
-    /// congruence screen (docs/SPEC_redundancy_census.md CG-INC-0), expressed in the
+    /// congruence screen (docs/record/SPEC_redundancy_census.md CG-INC-0), expressed in the
     /// station's local ENU frame: @c m_data × 3, row-aligned with the first @c m_data
     /// rows of @c A_s / @c A_r / @c w / @c y.
     ///
@@ -1566,14 +1566,14 @@ struct StationAssembly {
     /// byte-identity A/B checks.
     Eigen::MatrixXd           row_pos_enu;
     /// Pre-formatted `network_sd_ewl.csv` rows for this station-epoch (SD pre-reduce
-    /// EWL, docs/SPEC_sd_ewl_prereduce.md, @c network.sd_ewl.trace): one per satellite
+    /// EWL, docs/record/SPEC_sd_ewl_prereduce.md, @c network.sd_ewl.trace): one per satellite
     /// visit, carrying the elected signal pair, the arc outcome, and the row's z/σ.
     /// Buffered here rather than written in place because the row build runs in the
     /// parallel produce phase; PASS B's serial consume drains them in station order, so
     /// the file is deterministic for any thread count.  Empty unless the trace is armed
     /// (log-only; it changes no solve).
     std::vector<std::string>  sd_ewl_trace;
-    /// Chain-pin audit (docs/SPEC_synthetic_minimum_network.md §14 T1, measured
+    /// Chain-pin audit (docs/record/SPEC_synthetic_minimum_network.md §14 T1, measured
     /// record §12.8): per (constellation, signal) fold tallies for this station-epoch's
     /// elected datum pins, keyed `"<cons>|<signal>"` (the election's @c dr_key), with
     /// value {folded, miss_state, miss_row} counting @c foldAmb / @c foldRpb outcomes.
@@ -1682,7 +1682,7 @@ struct ClockOsc {
 struct ClockOscPred { double x0, x1, p00, p01, p11; };
 
 /// Per-satellite state of the guarded temporal clock anchor (
-/// docs/SPEC_clock_temporal_anchor.md).  Two states: ANCHORED (the clock's D2 carry
+/// docs/record/SPEC_clock_temporal_anchor.md).  Two states: ANCHORED (the clock's D2 carry
 /// folds at @c network.clock_anchor_q) and LOOSE (it folds at the legacy
 /// @c filter.process_noise.sat_clock_q, the behaviour without the anchor, which is
 /// what bounds a decoupled satellite; standing invariant #7).
@@ -1838,7 +1838,7 @@ inline std::pair<double, double> shDevExactUpdate(double d_pred, double p_pred,
     return {d_post, p_pred * (U + floor2) / (U + a)};
 }
 
-/// @brief The gap horizon of the receiver code-bias carry (s; docs/SPEC_rx_cb_carry.md
+/// @brief The gap horizon of the receiver code-bias carry (s; docs/record/SPEC_rx_cb_carry.md
 ///        section 3): a carried receiver code bias unseen longer than this is not folded
 ///        (@ref rxCbInjectGate's @c max_gap_s on both routes), is not judged by the block
 ///        harvest's step test, and is pruned at the harvest.
@@ -1849,7 +1849,7 @@ inline std::pair<double, double> shDevExactUpdate(double d_pred, double p_pred,
 inline constexpr double kRxCbMaxGapS = 900.0;
 
 /// Inject-time decision for one carried receiver code-bias prior (rx-CB carry,
-/// docs/SPEC_rx_cb_carry.md).  Read-only with respect to the carry map: the produce
+/// docs/record/SPEC_rx_cb_carry.md).  Read-only with respect to the carry map: the produce
 /// phase is parallel, so a breach is answered by withholding the fold, and the serial
 /// post-solve harvest then overwrites the stale entry with the fresh posterior (an
 /// implicit, race-free drop).  The innovation gate is the invariant #1 event response
@@ -1892,7 +1892,7 @@ inline RxCbInjectAction rxCbInjectGate(double gap_s, double max_gap_s,
 inline void shDevD5Retap(ShDevCarry& dc) { dc.var = dc.var_ss; }
 
 /// Iono-2 v3 result of one de-mean pass over the deviation carry
-/// (docs/SPEC_iono2_mechB_v3.md; see @c shDevDemean).
+/// (docs/record/SPEC_iono2_mechB_v3.md; see @c shDevDemean).
 struct ShDevDemeanStats {
     bool   applied{false};  ///< Global mean removed this epoch (n_used ≥ min_global_los).
     int    n_used{0};       ///< Warm entries that participated.
@@ -1996,7 +1996,7 @@ struct EpochStatusRow {
     std::optional<double> sigma0_pf_code;   ///< …code rows only
     std::optional<double> sigma0_pf_phase;  ///< …phase rows only
     std::optional<long long> n_pf_rows;     ///< rows in the pooled statistic (0 ⇒ inert)
-    // --- redundancy census (docs/SPEC_redundancy_census.md INC-1/INC-2) -------
+    // --- redundancy census (docs/record/SPEC_redundancy_census.md INC-1/INC-2) -------
     // Present only on an epoch the census swept (strided, escalated or trip-forced).
     // A non-sweep epoch leaves all four blank rather than repeating the last sweep's
     // numbers: the timeline viewers must be able to see where the sweeps were, and a
@@ -2022,7 +2022,7 @@ struct EpochStatusRow {
         long long n_gt_1000[4]{};  ///< rows with s > 1000 (the fault regime)
     };
     std::optional<PrefitCensusStats> prefit_census;
-    // --- measurement-admission census (docs/SPEC_measurement_admission.md INC-3)
+    // --- measurement-admission census (docs/record/SPEC_measurement_admission.md INC-3)
     // The absolute, product-referenced |z| population, which the prefit census
     // cannot provide: its statistic subtracts the filter state and therefore reads ~0
     // on a cell that was wrong from birth.  The two columns exist in the schema only
@@ -2031,7 +2031,7 @@ struct EpochStatusRow {
     // worst-|z| and a skipped epoch mean different things).
     std::optional<double> adm_sta_worst_z;  ///< median over screened stations of each station's worst |z| (m): the typical level across the network
     std::optional<double> adm_net_worst_z;  ///< network maximum |z| (m): the extreme; its identity goes to the ADMISSION events
-    // --- PD-safe invariant-DD fold (docs/SPEC_pd_safe_dd_fold.md INC-0) -------
+    // --- PD-safe invariant-DD fold (docs/record/SPEC_pd_safe_dd_fold.md INC-0) -------
     // The per-epoch view of the fold's PD screen, so that the branch these columns
     // observe (`M := 0` on a non-PD Pᶻ+B) is visible epoch by epoch.  Always on and
     // solve-neutral: they are reads of a factorization the fold already computed.
@@ -2041,7 +2041,7 @@ struct EpochStatusRow {
     std::optional<long long> ddfold_degen_blocks;  ///< blocks that folded inertly this epoch (PD screen tripped ⇒ M=0)
     std::optional<long long> ddfold_degen_rows;    ///< Σ K over those blocks: the carried dimension that took no data
     std::optional<double>    ddfold_min_pivot_rel; ///< worst relative pivot d_min/d_max this epoch (≤ 0 ⇒ indefinite)
-    // --- prior-residual census (docs/SPEC_prior_residual_census.md) -----------
+    // --- prior-residual census (docs/record/SPEC_prior_residual_census.md) -----------
     // The per-epoch view of the carried-prior census.  In the schema only when
     // network.prior_residual_census is armed (as for adm: with the census off, the
     // schema and output stay structurally byte-identical), and blank on an epoch the
@@ -2053,7 +2053,7 @@ struct EpochStatusRow {
     std::optional<long long> prires_rows_frame;  ///< of those, FRAME (datum handover / reref / inflate-q / hold): the invariant #7 edges
     std::optional<long long> prires_n_reported;  ///< of those, |t| above network.prior_residual_report_sigma (a trace threshold; nothing acted)
     std::optional<double>    prires_max_t;       ///< the worst |t| this epoch
-    // --- constraint-aware global σ̂₀ (docs/SPEC_prior_residual_census.md §14) ----
+    // --- constraint-aware global σ̂₀ (docs/record/SPEC_prior_residual_census.md §14) ----
     // A schema flag separate from the five above, by design: the census's own §9.1
     // A/B arms compare network_epoch_status.csv across builds, so a census-only run
     // must keep the schema it has without this rider.  Present only when

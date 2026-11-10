@@ -415,7 +415,7 @@ NetworkSolPrepResult networkSolPrep(NetworkRun& run, const NetworkEpoch& ep, Epo
         // emission anyway (RT0-5 already quarantined them, or they have no solution
         // satellites): nothing is pruned here, and it is not the diffuse case either.
     }
-    // --- Per-satellite wire withhold (GL-2, docs/SPEC_event_harness.md §24.19) ---
+    // --- Per-satellite wire withhold (GL-2, docs/record/SPEC_event_harness.md §24.19) ---
     // A satellite the gross-LOS screen stood down (over its bar at >= N stations in one
     // epoch, which indicates a satellite fault rather than N line-of-sight faults) is
     // pruned from this epoch's emission with the swap-prune the RT0-5 runaway
@@ -448,7 +448,7 @@ NetworkSolPrepResult networkSolPrep(NetworkRun& run, const NetworkEpoch& ep, Epo
         }
     }
     // --- Declared line of sight leaves the contributor set (RF-3b B3,
-    // docs/refound/RF-3_code_row_qc_2026-09-22.md §4): for the epoch it is declared,
+    // docs/record/refound/RF-3_code_row_qc_2026-09-22.md §4): for the epoch it is declared,
     // the line of sight no longer counts in its satellite's contributor set.  Both
     // outcomes are exact and land on this epoch, because the screen's decision half
     // runs before this seam:
@@ -824,7 +824,7 @@ NetworkSolPrepResult networkSolPrep(NetworkRun& run, const NetworkEpoch& ep, Epo
     }
     // Land the per-satellite discontinuity for a satellite whose temporal clock anchor
     // decoupled, which makes the decoupling edge of invariant #7 visible on the wire
-    // (docs/SPEC_clock_temporal_anchor.md §2.4): in the same epoch its clock
+    // (docs/record/SPEC_clock_temporal_anchor.md §2.4): in the same epoch its clock
     // changed temporal regime (stiff to loose) and, on a resolved trip, value, so a
     // consumer integrating across it would cross a regime change it cannot see.  The
     // present/pending split is the same as in the blocks above (mark == land), so a
@@ -1290,7 +1290,7 @@ NetworkSolPrepResult networkSolPrep(NetworkRun& run, const NetworkEpoch& ep, Epo
 
     // --- Satellite bias-state trace (L14, network.trace_sat_bias_states) -------------
     // Closes the one export gap of the truth-graded synthetic fixture
-    // (docs/SPEC_synthetic_minimum_network.md §4.8): the B product record's legend is
+    // (docs/record/SPEC_synthetic_minimum_network.md §4.8): the B product record's legend is
     // `# B,sat,signal,code_bias_m[,code_disc]`, with no sigma field in any
     // configuration, so the code-bias variance factor (vf) cannot be formed from the
     // product.  A `sigma=` token in the B record would change the product grammar and

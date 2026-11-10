@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Arms of card IRDG (docs/refound/IRDG_floor_off_rpb_in_block_2026-11-09.md): the table of its arms,
+"""Arms of card IRDG (docs/record/refound/IRDG_floor_off_rpb_in_block_2026-11-09.md): the table of its arms,
 made through scripts/ird_make_arms.py and scripts/rapid_arm.py.
 
     python scripts/irdg_run.py list [--group G ...]

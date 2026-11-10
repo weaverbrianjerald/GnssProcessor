@@ -1,6 +1,6 @@
 /**
  * @file test_pd_safe_fold.cpp
- * @brief Gates for the PD-safe invariant-DD fold (docs/SPEC_pd_safe_dd_fold.md).
+ * @brief Gates for the PD-safe invariant-DD fold (docs/record/SPEC_pd_safe_dd_fold.md).
  *
  * The invariant-carry recursion is correct in design: its small well-conditioned blocks
  * reach σ = 2.7 cm = 0.14 L1 cycles over 3 h through the same code.  The fault is in the

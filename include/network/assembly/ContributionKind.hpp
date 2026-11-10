@@ -3,8 +3,8 @@
  * @file ContributionKind.hpp
  * @brief The kind of a contribution to the network producer's normal equations, and the
  *        estimator's log of one epoch's shared folds (
- *        docs/refound/NOM_network_object_model_2026-10-08.md sections 3.4 and 17;
- *        docs/refound/NOM2_network_object_model_rows_2026-10-09.md).
+ *        docs/record/refound/NOM_network_object_model_2026-10-08.md sections 3.4 and 17;
+ *        docs/record/refound/NOM2_network_object_model_rows_2026-10-09.md).
  *
  * The small half of the contribution vocabulary: @c NetworkEstimator records the kind of
  * every shared fold and needs nothing else, so the estimator includes this header only.

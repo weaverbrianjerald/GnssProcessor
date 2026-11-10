@@ -1,7 +1,7 @@
 /**
  * @file ExtraBandScope.hpp
  * @brief The extra-band primitive shared by the two knobs of the L5 phase posture
- *        (docs/refound/L5P_l5_phase_posture_2026-09-21.md).
+ *        (docs/record/refound/L5P_l5_phase_posture_2026-09-21.md).
  *
  * A three-band lineage carries one signal per band per station (the canonical
  * latch), so "the station's primary pair" and "the pair whose two signals are

@@ -1,7 +1,7 @@
 /**
  * @file test_anchor_slip_handover.cpp
  * @brief Tests for the anchor-slip handover (network.cycle_slip.anchor_slip_handover,
- *        docs/SPEC_event_harness.md §12.6/§12.7): the staging seam, the
+ *        docs/record/SPEC_event_harness.md §12.6/§12.7): the staging seam, the
  *        directive precedence contract and the one-epoch lifetime.
  *
  * A slip response frees an arc.  When that arc realizes the gauge of a (sat, signal)

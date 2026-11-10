@@ -51,7 +51,7 @@
  * first post-restore epoch records the applied value.
  *
  * @see src/core/realtime/RealTimeEngineStateSnap.cpp (the engine seam that
- *      writes / stages / applies), docs/SPEC_synthetic_minimum_network.md §17.
+ *      writes / stages / applies), docs/record/SPEC_synthetic_minimum_network.md §17.
  */
 #pragma once
 

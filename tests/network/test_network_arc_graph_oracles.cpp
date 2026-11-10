@@ -2984,7 +2984,7 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
     // priors).  Variances untouched: this is an exact basis change,
     // not a refloat.  Runs before PASS B consumes any carry.
     //
-    // Coupling references move with the carries (docs/SPEC_card1_coupling_carry.md
+    // Coupling references move with the carries (docs/record/SPEC_card1_coupling_carry.md
     // §9): D4 shifts `lc.value_abs` below and also every coupling `s_prev` on a
     // shifted PB column (SPEC_card1_coupling_carry §14).  A Card-1 coupling row's RHS is
     // y = (value_abs − x_lin) + Σ_j M_j·ŝ_prev,j , and `CoupledShared::s_prev` and

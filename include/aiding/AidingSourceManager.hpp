@@ -15,7 +15,7 @@
  * @c detectors_ + @c mw_ split.
  *
  * The gap-policy query @c anySourceBridgesGaps has no caller yet.  See
- * docs/aiding_source_abstraction_design.md.
+ * docs/record/aiding_source_abstraction_design.md.
  */
 
 #include "aiding/IAidingSource.hpp"

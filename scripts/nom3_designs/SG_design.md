@@ -1,6 +1,6 @@
 # NOM3 step SG: the buildable design (the solve as a linear orchestrator)
 
-Read-only design for card NOM3 step SG (`docs/refound/NOM3_network_giants_2026-10-09.md`, section 3 "SG,
+Read-only design for card NOM3 step SG (`docs/record/refound/NOM3_network_giants_2026-10-09.md`, section 3 "SG,
 the solve", findings 2 and 3 of section 2, the frozen gates of section 5, the order of section 6, and
 the EP1 pre-registration at the end of the card). No repository file was changed, nothing was built
 or run. Precedent method: card NOM2 sections 6 to 8 (step TD: groups first, a generated

@@ -3,7 +3,7 @@
 /**
  * @file ClockClone.hpp
  * @brief The one-epoch clock clone of the self-contained clock level (@c network.carry_coupling_clock_clone,
- *        docs/refound/SCL_self_contained_clock_level_2026-10-03.md, sections 4, 4.1 and 5).
+ *        docs/record/refound/SCL_self_contained_clock_level_2026-10-03.md, sections 4, 4.1 and 5).
  *
  * The exact coupling rule re-expresses each station's carried row on the moved border
  * separately and drops the time-update covariance between rows,

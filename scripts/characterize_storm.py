@@ -81,7 +81,7 @@ Usage
 Cross-check
 -----------
 ``--cross-check`` re-derives the recorded control-arm numbers of the 2026-07-22
-CB-ADM investigation (docs/SPEC_cb_admission_card.md §10.6) from the first input
+CB-ADM investigation (docs/record/SPEC_cb_admission_card.md §10.6) from the first input
 and reports each as PASS/FAIL.  A disagreement means either the emitter's label
 formats moved or the classifier changed; the arithmetic here has no free
 parameters beyond --sig and the band edges.  Oracle (control arm,
@@ -783,7 +783,7 @@ def _diff_row(name, a, b, na, nb, u):
 # Cross-check against the recorded control-arm numbers (A4)
 # ---------------------------------------------------------------------------
 ORACLE = {
-    'source': 'docs/SPEC_cb_admission_card.md §10.6, 305 CONTROL arm '
+    'source': 'docs/record/SPEC_cb_admission_card.md §10.6, 305 CONTROL arm '
               '(_maxnet_305_gpsgalbds_d15_5ep_ctl.json), 2026-07-22',
     'n_dumps': 6,
     'n_below_across_dumps': 135,

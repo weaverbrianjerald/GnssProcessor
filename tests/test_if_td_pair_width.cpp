@@ -1,7 +1,7 @@
 /**
  * @file test_if_td_pair_width.cpp
  * @brief IF-TD pair width (`network.cycle_slip.if_phase_td_pairs`,
- *        docs/SPEC_event_harness.md §14.10): one pair per satellite against every
+ *        docs/record/SPEC_event_harness.md §14.10): one pair per satellite against every
  *        pair, and the independence that makes the widening a pure addition.
  *
  * ### The defect
@@ -355,7 +355,7 @@ TEST(IfTdPairWidth, FirstPairSamplesAreIdenticalInBothModes) {
 /// (L1C,L2W) while its λ_IF is 0.1248 m, so the legacy candidate condition
 /// |median| > 0.5·λ_IF is met by noise).  On a quiet 60-station null, per-chain
 /// reference tests multiplied the reference fires with no extra flags from the
-/// pooled arm; §14.10.4 of docs/SPEC_event_harness.md has the figures.
+/// pooled arm; §14.10.4 of docs/record/SPEC_event_harness.md has the figures.
 TEST(IfTdPairWidth, ReferenceArmRunsOnceWhateverThePairWidth) {
     PairHarness a(/*all_pairs=*/false), b(/*all_pairs=*/true);
     const auto elev = sixSatElevations();

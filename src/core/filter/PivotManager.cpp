@@ -443,7 +443,7 @@ void PivotManager::applyCovarianceReReference(
     // for the network producer too, which does not call it yet).  The
     // user-side path applies no PSD guard: at user scale the groups are small
     // and handovers rare (see CovarianceReReference.hpp /
-    // docs/SPEC_sbasis_realization_contract.md §F8.7).  A network caller would
+    // docs/record/SPEC_sbasis_realization_contract.md §F8.7).  A network caller would
     // pair applyBssd with CovReReference::enforcePsd.
     CovReReference::applyBssd(group_indices, pivot_idx, P);
 }

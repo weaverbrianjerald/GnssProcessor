@@ -161,7 +161,7 @@ public:
                                           ///  depend on α², so the apply loop has no feedback lag
                                           ///  (see CarryVceApply.hpp §"why the target is
                                           ///  lag-free").  Falls back to @c seedFloor() with no rows.
-                                          ///  (M2 v2, docs/SPEC_carry_vce_apply.md)
+                                          ///  (M2 v2, docs/record/SPEC_carry_vce_apply.md)
         std::array<double, kNumComponents> sigma{{0.0, 0.0}};  ///< arithmetic-mean LS-VCE σ̂ (Floor m², Rate m²/s); includes event rows.
         std::array<double, kNumComponents> std{{0.0, 0.0}};    ///< formal 1σ of the mean σ̂ (√ of 2·N⁻¹ diag).
         double        cond      = 0.0;    ///< condition number of the data normal matrix (Rate separability).

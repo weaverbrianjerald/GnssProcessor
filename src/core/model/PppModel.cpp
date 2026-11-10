@@ -563,7 +563,7 @@ std::vector<std::string> activeFrequencyBands(
             // restored entries this tally would have decided differently.  That
             // audit is the only record that a resume would have re-decided the
             // latch.  It is unreachable without a restore, so every other run takes
-            // the original guard unchanged.  See docs/SPEC_event_harness.md §21.16
+            // the original guard unchanged.  See docs/record/SPEC_event_harness.md §21.16
             // (RS-8).
             const bool already_decided = constellation_canonical_decided_.count(cons) > 0;
             const bool audit_only = already_decided
@@ -1486,7 +1486,7 @@ std::vector<std::string> activeFrequencyBands(
         // satellite families compete for the same roster instead of sharing it.
         // Add, as code-only rows, every allow-listed band-1 code this station
         // reports for this satellite besides the one the band map already selected.
-        // See docs/refound/SCC_second_code_channel_2026-09-21.md (R1).
+        // See docs/record/refound/SCC_second_code_channel_2026-09-21.md (R1).
         //
         // Why not the channel_mode=All widening above: it also adds the phase
         // channels (each with its own ambiguity and phase-bias column) and every
@@ -1559,10 +1559,10 @@ std::vector<std::string> activeFrequencyBands(
         // The phase counterpart of the block above.  One carrier phase per station
         // and band means a satellite's L1W phase bias rests only on the stations that
         // latched L1W, which leaves it thinly supported (the coverage figures,
-        // including the coverage-gate drop edges, are in docs/refound/SID_signal_identity_2026-09-22.md).  Add, as
+        // including the coverage-gate drop edges, are in docs/record/refound/SID_signal_identity_2026-09-22.md).  Add, as
         // ordinary phase rows, every allow-listed band-1 phase this station reports
         // for this satellite besides the one the latch already selected.  See
-        // docs/refound/SID_signal_identity_2026-09-22.md section 4 (R1).
+        // docs/record/refound/SID_signal_identity_2026-09-22.md section 4 (R1).
         //
         // What the added key becomes: everything downstream of `selected_signals` is
         // per signal.  The measurement model allocates an ordinary float ambiguity

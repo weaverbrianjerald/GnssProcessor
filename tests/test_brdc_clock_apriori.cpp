@@ -3,7 +3,7 @@
  * @brief Native broadcast clock gates U1 to U3: the ORBIT-7 parse, the native broadcast clock
  *        selector and continuous a priori against the bed, and the per-IODE wire.
  *
- * Gates (docs/refound/NBP_native_broadcast_clock_posture_2026-10-07.md section 5):
+ * Gates (docs/record/refound/NBP_native_broadcast_clock_posture_2026-10-07.md section 5):
  *   U1  ORBIT-7 parsed on the DOY-129 file: 465 GPS records, transmission lead p50 7182 s.
  *   U2  The selected record equals the ttom pick of scripts/clock_level/scl_brdc_clk.py on
  *       100 % of the 30 s grid (G01 excluded by health); a_s(t) equals the bed's CLK value

@@ -3,7 +3,7 @@
 /**
  * @file SharedHistory.hpp
  * @brief The shared history (@c network.carry_coupling_shared_history,
- *        docs/refound/SCL2_level_residue_under_the_clone_2026-10-06.md, sections 4, 5, 6 and 9).
+ *        docs/record/refound/SCL2_level_residue_under_the_clone_2026-10-06.md, sections 4, 5, 6 and 9).
  *
  * The clock clone (B1, filter/NetworkClockClone) marginalizes the clones out of every
  * carried row at the harvest, one station at a time: each row takes the clones' conditional

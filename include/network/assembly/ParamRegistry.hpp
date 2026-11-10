@@ -1,7 +1,7 @@
 /**
  * @file ParamRegistry.hpp
  * @brief The network producer's parameter registry: one declared property set per
- *        parameter kind (docs/refound/PRM_parameter_registry_2026-09-29.md).
+ *        parameter kind (docs/record/refound/PRM_parameter_registry_2026-09-29.md).
  *
  * The PPP path has a registry (the filter owns the layout, @c StateKeySchema every
  * key format).  The network path had identities without properties: a border parameter
@@ -214,7 +214,7 @@ public:
     double q(SharedParamKind kind) const;
 
     /**
-     * @brief The "model as armed" table: a header line and one line per kind (docs/refound/PRM_parameter_registry_2026-09-29.md
+     * @brief The "model as armed" table: a header line and one line per kind (docs/record/refound/PRM_parameter_registry_2026-09-29.md
      *        section 6).
      *
      * Columns: kind, estimated, carried, q with its units and rule, the anchored rate,

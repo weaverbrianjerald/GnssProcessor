@@ -2,7 +2,7 @@
  * @file test_datum_graph_census.cpp
  * @brief Tests for the datum graph census: the structural S-basis dimension,
  *        predicted from topology and reconciled against the spectrum
- *        (docs/SPEC_datum_graph_census.md §5).
+ *        (docs/record/SPEC_datum_graph_census.md §5).
  *
  * The census is a predictor placed next to a detector, and each of its failure
  * modes produces plausible output rather than an error:
@@ -433,7 +433,7 @@ TEST(NetworkDatumGraphCensus, DirectionIdentitiesComeFromTheSbcAttribution) {
 // The join is many-to-many, so the two partitions are over different
 // populations and each is exact on its own.  Combining them into a single 2x2
 // would double-count one side, the accounting error that §5.4 of
-// docs/SPEC_datum_graph_census.md rules out.
+// docs/record/SPEC_datum_graph_census.md rules out.
 TEST(NetworkDatumGraphCensus, TheThreeCellsPartitionBothPopulationsExactly) {
     const std::vector<std::string> pred{"E03/X", "E08/Q", "E14/X"};
     const std::vector<NetDatumGraphDir> dirs{

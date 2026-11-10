@@ -2,7 +2,7 @@
 /**
  * @file CouplingExact.hpp
  * @brief The exact conditional time update of the carried coupling rows (
- *        docs/refound/CTU_coupling_time_update_2026-09-28.md, sections 4 and 9.1).
+ *        docs/record/refound/CTU_coupling_time_update_2026-09-28.md, sections 4 and 9.1).
  *
  * A carried local (a float ambiguity, a ZWD, a slant ionosphere) is stashed at the
  * harvest as a conditional row on the shared border s, @f$l = r + M^\top s + e@f$ with

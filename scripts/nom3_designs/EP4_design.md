@@ -1,6 +1,6 @@
 # NOM3 step EP4: pre-registration (setup becomes builders in their concerns' files)
 
-Card: `docs/refound/NOM3_network_giants_2026-10-09.md` section 3, EP4. Base: `nom/wave1`
+Card: `docs/record/refound/NOM3_network_giants_2026-10-09.md` section 3, EP4. Base: `nom/wave1`
 `8f4f1db` (main `7141240` plus EP2, SG1 to SG3, PB1a). Frozen text:
 `git show 8f4f1db:src/core/app/ApplicationNetwork.cpp` (847 lines; `Application::runNetwork` is
 lines 193 to 845, 653 lines). Branch `nom/ep4`. Pure relocation: output byte-identical (gate

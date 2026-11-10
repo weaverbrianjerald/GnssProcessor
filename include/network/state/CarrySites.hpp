@@ -2,7 +2,7 @@
 /**
  * @file CarrySites.hpp
  * @brief The carried references of the network's border parameters, and one traversal
- *        over them (docs/refound/PRM_parameter_registry_2026-09-29.md
+ *        over them (docs/record/refound/PRM_parameter_registry_2026-09-29.md
  *        section 5).
  *
  * A border parameter (a satellite clock, phase bias, code bias or SH coefficient) is
