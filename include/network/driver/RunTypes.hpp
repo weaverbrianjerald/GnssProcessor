@@ -1453,6 +1453,15 @@ struct StationAssembly {
     /// @c pl_blk_col_refused): pushed, but never rows of the block.  Read only by the
     /// fold count of the band-5 receiver delay, which counts a column as folded only when it is absent here.
     std::vector<Eigen::Index> rxcb_refused;
+    // The station's eq34 receiver phase-bias columns carried inside the same local block
+    // (network.phase_datum_eq34_rpb_in_block).  As for the receiver code bias there is no
+    // diagonal fallback row: the diagonal time link at the conditional variance counts the
+    // block's information again every epoch, so a column whose block fails to factorize
+    // carries nothing that epoch and is counted.
+    long long                 pl_blk_rxpb_cols{0};           ///< Receiver phase-bias columns admitted into the block build this station-epoch (they passed the scalar screen and became rows of Sigma).  A block that then failed to factorize still counts here; read it against @c pl_blk_rxpb_not_folded.
+    long long                 pl_blk_rxpb_not_folded{0};     ///< Receiver phase-bias columns pushed but not folded: the block was non-SPD this station-epoch and there is no diagonal row to fall back to.
+    long long                 pl_blk_rxpb_missing_cross{0};  ///< (receiver phase-bias, other) pairs zeroed for a missing harvest cross term: a subset of @c pl_blk_pair_missing.
+    long long                 pl_rxpb_no_block_skip{0};      ///< Carried receiver phase-bias entries without a harvest-block row (their harvest gathered no cross terms), left out of the block and harvested again this epoch.
     long long                 pl_blk_hist[5]{0, 0, 0, 0, 0}; ///< Block dimension histogram <10 / 10–24 / 25–49 / 50–74 / ≥75 (F3).
     long long                 pl_blk_max_dim{0};       ///< Largest block dimension this station-epoch (F3).
     // The ZWD column carried inside the F3 block (B9-in-block, network.carry_zwd_in_block).

@@ -138,6 +138,7 @@ enum class SharedHistoryMap : int {
     Iono,      ///< @c iono_blk_carry, key (station, satellite)
     RxClk,     ///< @c rx_clk_carry, key (station, kind)
     RxCb,      ///< @c rx_cb_carry, key (station, code-bias key)
+    RxPb,      ///< @c rpb_carry, key (station, receiver phase-bias key), the in-block route
     Pc,        ///< @c pc_carry, key (station, satellite)
 };
 
@@ -250,7 +251,7 @@ void sharedHistoryRowTerms(const SharedHistoryState& shx, const LocalCarry& lc,
  * Armed, with a compression held of the stash the rows' epoch belongs to
  * (@c ctx.carry.cxu_stash_s; otherwise nothing is registered and the rows marginalize):
  * each kept direction that at least one carried row references (a valid nonzero
- * coefficient of that compression in any of the six carry maps) gets column
+ * coefficient of that compression in any of the seven carry maps) gets column
  * @c "HIST|j"; an unreferenced one is counted and not registered.  No-op off.
  */
 void networkSharedHistoryRegister(NetworkRunContext& ctx, NetworkEstimator& est);

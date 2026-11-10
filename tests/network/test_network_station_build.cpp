@@ -98,8 +98,9 @@ TEST(NetworkStationBuildTable, TopLevelStepsInWalkOrder) {
 
 TEST(NetworkStationBuildTable, CarryStepsInWalkOrder) {
     const std::vector<std::string> want = {
-        "ambiguity", "slant_iono_block", "rx_clock_block", "rx_cb_block", "phase_colour_block",
-        "local_block", "oracle_pin", "zwd", "rx_cb", "coupling_region", "prior_finalize"};
+        "ambiguity", "slant_iono_block", "rx_clock_block", "rx_cb_block", "rx_pb_block",
+        "phase_colour_block", "local_block", "oracle_pin", "zwd", "rx_cb", "coupling_region",
+        "prior_finalize"};
     EXPECT_EQ(carryNames(), want);
 }
 
@@ -156,7 +157,8 @@ TEST(NetworkStationBuildOrder, BlockColumnsAreCollectedBeforeTheBlock) {
     EXPECT_LT(carryIndex("ambiguity"), carryIndex("slant_iono_block"));
     EXPECT_LT(carryIndex("slant_iono_block"), carryIndex("rx_clock_block"));
     EXPECT_LT(carryIndex("rx_clock_block"), carryIndex("rx_cb_block"));
-    EXPECT_LT(carryIndex("rx_cb_block"), carryIndex("phase_colour_block"));
+    EXPECT_LT(carryIndex("rx_cb_block"), carryIndex("rx_pb_block"));
+    EXPECT_LT(carryIndex("rx_pb_block"), carryIndex("phase_colour_block"));
     EXPECT_LT(carryIndex("phase_colour_block"), carryIndex("local_block"));
     EXPECT_LT(carryIndex("local_block"), carryIndex("coupling_region"));
 }

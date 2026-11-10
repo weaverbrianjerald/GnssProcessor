@@ -8111,6 +8111,12 @@ namespace GnssProcessor {
             log->info("Network: eq34 receiver phase-bias floor BIRTH-ONLY: the zero-mean floor "
                       "folds only while a bias has no time-linked carry (birth, erase, a gap past "
                       "the horizon); the time link carries it from there.");
+        // The receiver phase bias inside the station block.  Its interlocks need the carry
+        // keys that load after this section, so they are checked beside the receiver code
+        // bias's in-block interlocks.
+        network_phase_datum_eq34_rpb_in_block_ =
+            jval<bool>(json, "network.phase_datum_eq34_rpb_in_block",
+                       "network_phase_datum_eq34_rpb_in_block", false);
         network_phase_datum_eq34_carry_shift_ =
             jval<bool>(json, "network.phase_datum_eq34_carry_shift",
                        "network_phase_datum_eq34_carry_shift", false);
@@ -11813,6 +11819,42 @@ namespace GnssProcessor {
                           "the carry_invariant lineage).",
                           network_rx_cb_carry_q_);
             }
+        }
+        // The receiver phase bias inside the station block: interlocks.  Every refusal is a
+        // hard error, as for the receiver code bias below: an armed key that rides the
+        // diagonal time link would measure the double count it exists to remove.
+        if (network_phase_datum_eq34_rpb_in_block_) {
+            const bool float_kf =
+                network_config_.ambiguity_vehicle == NetworkAmbiguityVehicle::FloatKf;
+            if (!network_phase_datum_eq34_ || !(network_phase_datum_eq34_rpb_q_m2s_ > 0.0)) {
+                log->error("Network: network.phase_datum_eq34_rpb_in_block requires "
+                           "network.phase_datum_eq34 with network.phase_datum_eq34_rpb_q_m2s > 0 "
+                           "(the receiver phase bias's carry; the key changes its route).");
+                return false;
+            }
+            if (network_carry_invariant_) {
+                log->error("Network: network.phase_datum_eq34_rpb_in_block is refused under "
+                           "network.carry_invariant (the receiver phase bias is not carried there).");
+                return false;
+            }
+            if (!network_carry_conditional_coupling_) {
+                log->error("Network: network.phase_datum_eq34_rpb_in_block requires "
+                           "network.carry_conditional_coupling (the block rows are the "
+                           "coupling rows, whitened per station).");
+                return false;
+            }
+            if (!float_kf && !network_phase_leveling_local_block_) {
+                log->error("Network: network.phase_datum_eq34_rpb_in_block needs a local "
+                           "block: network.ambiguity_vehicle float_kf, or "
+                           "network.phase_leveling_local_block.");
+                return false;
+            }
+            log->info("Network (RPB-IN-BLOCK): eq34 receiver phase-bias carry folded INSIDE each "
+                      "station's whitened local block as conditional coupling rows (border "
+                      "regression + cross covariances to the station's carried columns), not as "
+                      "the diagonal time link at the conditional variance.  No diagonal fallback: "
+                      "before the leveling carry is warm and on a non-SPD block the columns "
+                      "carry nothing (counted).  The root row reads the same carried entry.");
         }
         // RXCB-IN-BLOCK: interlocks, after the carry's own guard.
         // Every refusal is a hard error: an armed knob that silently rides the diagonal

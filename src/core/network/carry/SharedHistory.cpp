@@ -39,13 +39,16 @@ LocalCarry* shxFindEntry(NetworkRunContext& ctx, const SharedHistoryHarvest::Han
         case SharedHistoryMap::RxCb:
             return net::get(ctx.entities.stations, StationId{hd.sta}, &net::StationState::signals,
                             hd.sat, &net::StationSignalState::rx_cb);
+        case SharedHistoryMap::RxPb:
+            return net::get(ctx.entities.stations, StationId{hd.sta}, &net::StationState::signals,
+                            hd.sat, &net::StationSignalState::rpb);
         case SharedHistoryMap::Pc:
             return net::getLos(ctx.entities.los, hd.sta, hd.sat, &net::LosState::pc);
     }
     return nullptr;
 }
 
-/// Visit every entry of the six carry maps that can hold history coefficients.
+/// Visit every entry of the seven carry maps that can hold history coefficients.
 template <typename Fn>
 void shxForEachEntry(const NetworkRunContext& ctx, Fn&& fn) {
     net::forEach(ctx.entities.arcs, &net::ArcState::amb,
@@ -59,6 +62,9 @@ void shxForEachEntry(const NetworkRunContext& ctx, Fn&& fn) {
                  [&](const StationId&, const std::string&, const LocalCarry& lc) { fn(lc); });
     net::forEach(ctx.entities.stations, &net::StationState::signals,
                  &net::StationSignalState::rx_cb,
+                 [&](const StationId&, const std::string&, const LocalCarry& lc) { fn(lc); });
+    net::forEach(ctx.entities.stations, &net::StationState::signals,
+                 &net::StationSignalState::rpb,
                  [&](const StationId&, const std::string&, const LocalCarry& lc) { fn(lc); });
     net::forEach(ctx.entities.los, &net::LosState::pc,
                  [&](const LosId&, const LocalCarry& lc) { fn(lc); });

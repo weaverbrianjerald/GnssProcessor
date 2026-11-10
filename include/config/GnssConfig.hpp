@@ -4921,6 +4921,32 @@ namespace GnssProcessor {
         double networkPhaseDatumEq34RpbQ() const { return network_phase_datum_eq34_rpb_q_m2s_; }
 
         /**
+         * @brief Carry the eq34 chain's receiver phase bias inside the station's whitened
+         *        local block (@c network.phase_datum_eq34_rpb_in_block).
+         *
+         * Off (default), the receiver phase bias's time link folds a diagonal prior toward
+         * the carried value at the column's conditional variance
+         * (@ref networkPhaseDatumEq34RpbQ).  The station's block already carries the
+         * ambiguities, the slant ionosphere and the receiver code bias with their cross
+         * covariances, which hold the same information, so the diagonal fold counts it
+         * again every epoch and the bias's formal sigma collapses.  On, each unpinned
+         * receiver phase-bias column is harvested with its border regression and its row
+         * of the station's harvest block and folds, at the next epoch, as a column of the
+         * same whitened block; the diagonal time-link row is not built (no diagonal
+         * fallback).  The carried entry is the one the chain's root row reads, so a new
+         * datum receiver is still pinned at its carried value.
+         *
+         * Requires @ref networkPhaseDatumEq34 with a positive
+         * @ref networkPhaseDatumEq34RpbQ, the conditional coupling carry and a local block
+         * (the float vehicle, or @c network.phase_leveling_local_block); the loader refuses
+         * it otherwise.  Off, every output is unchanged.
+         *
+         * @return True when the key is set.
+         * @see networkPhaseDatumEq34RpbQ, networkCarryRxCodeBiasInBlock
+         */
+        bool networkPhaseDatumEq34RpbInBlock() const { return network_phase_datum_eq34_rpb_in_block_; }
+
+        /**
          * @brief Experimental: on an eq34 pin displacement, S-transform the
          *        carried values into the new frame instead of the erase/skip
          *        hygiene (@c network.phase_datum_eq34_carry_shift).
@@ -9251,6 +9277,7 @@ namespace GnssProcessor {
         double network_phase_datum_eq34_rpb_prior_sigma_m_{1.0}; ///< Loose per-epoch zero-mean prior σ (m) on every RPB column: the station-local information floor for the near-null RPB↔ambiguity split (field A/B instrument); 0 disables. Inert unless network_phase_datum_eq34_.
         bool   network_phase_datum_eq34_rpb_prior_birth_only_{false}; ///< Fold that floor only while the RPB has no time-linked carry (see networkPhaseDatumEq34RpbPriorBirthOnly).
         double network_phase_datum_eq34_rpb_q_m2s_{3E-06};       ///< q (m²/s) of the local δ_{r,σ} time-linking carry (D6 v2, local form), which suppresses the per-epoch RPB re-estimation bounce that corrupts the individual-float phase-leveling carries; 0 = v1 fresh re-estimation. Inert unless network_phase_datum_eq34_.
+        bool   network_phase_datum_eq34_rpb_in_block_{false};    ///< Carry the eq34 receiver phase-bias columns inside the station's whitened local block with their border regression and cross covariances, instead of the diagonal time link at the conditional variance, which counts the block's information again every epoch.  Requires phase_datum_eq34 with phase_datum_eq34_rpb_q_m2s > 0, carry_conditional_coupling and a local block.  Off = byte-identical.
         bool   network_phase_datum_eq34_carry_shift_{false};     ///< Experimental: S-transform carried values on pin displacement instead of erase/skip (exact in the chain algebra; in the field it injects error through the weakly held δ split, DD step 86 against 11–15 cyc/epoch for erase-based hygiene; root cause open). Off = erase-based hygiene. Inert unless network_phase_datum_eq34_.
         bool   network_phase_datum_eq34_longevity_election_{false}; ///< Grow the eq34 spanning tree's new edges by arc longevity (rising arcs first, then high elevation; high-coverage receivers first) instead of lexical order, so tree edges are chosen to outlive the epoch, which reduces b_s re-reference churn at the source (the preference of spec D2 step 3). Incumbent-edge seed untouched; deterministic tie-break; off = legacy lexical growth (B9 baseline). Inert unless network_phase_datum_eq34_.
         bool   network_phase_datum_eq34_extend_only_{false};       ///< Extend-only membership (de Jonge §3.5): retain a tree edge's sticky identity (parents/root/pinned integer) across a momentary row gap while its local_carry is alive (age-stamped to phase_leveling_max_gap_s), so a returning arc re-pins to its pre-gap integer (step ≈0) instead of silently re-leveling to a first-sighting 0. Tree growth unchanged (live arcs only); reroute/handover out of scope. Off = legacy wholesale replace (B9 baseline). Inert unless network_phase_datum_eq34_.

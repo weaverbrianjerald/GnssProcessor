@@ -220,8 +220,21 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   satellites on its side keep their frame and carries (undeclared integer steps at the handover 0 against 235
   to 262) and the consumer holds its bound; I-b FAILED on the fractional bar, at the size the same pairs reach
   at quiet epochs. Continued in IRDE.
-- [IRDF](IRDF_d0_receiver_floor_redecided_2026-11-07.md): open, 2026-11-07: decision D0 (the receiver floor) re-decided at the author's word with every event
-  row armed, after IRDE section 9. Pre-registered; the rule and bars are card IRD's, unchanged.
+- [IRDG](IRDG_floor_off_rpb_in_block_2026-11-09.md): closed, 2026-11-09: the D0 ruling enacted (the receiver floor off on arm A1 and its
+  descendants in `scripts/ird_make_arms.py`, a named floor-on variant kept). With the floor off no IRD-4 event row passes
+  I-b on every bed (two cells pass; the misses sit at the quiet epochs' level, except the merge of `ird_msr`), and the
+  hold of IRDC section 7.3 is not released (863 wrong would-be certifications on the microscope). The fix of the time
+  link's double count is built: `network.phase_datum_eq34_rpb_in_block` (default off) carries the receiver phase bias as
+  a column of the station block. It removes the double count on both beds (formal sigma 1.99 and 1.96 m against 0.018,
+  DCB error 0.538 m, 0 wrong would-be fixes) and a root handover keeps its target; the held-out consumer clause FAILED
+  on the golden sim in hour 1 (+24 %) and I-b's counts rise against the link arm on 17 of 24 cells. Adoption on the
+  research arm is the author's ruling.
+- [IRDF](IRDF_d0_receiver_floor_redecided_2026-11-07.md): closed, 2026-11-09: decision D0 (the receiver floor) re-decided at the author's word with every event
+  row armed, after IRDE section 9. As written neither candidate passes (the DCB bar; floor off also r3c hour 1): the
+  floor stays and the GF-datum defect is recorded. The bar lies below the true DCB spread, the floor-off spread is the
+  receiver phase-bias time link's double count, and at held-out sites and a 40 degree mask the floor costs. The
+  author ruled the floor off on 2026-11-09 (section 9), with the DCB clause read against truth and the consumer clause
+  at the held-out sites.
 - [IRDE](IRDE_integer_recovering_datum_slip_2026-11-06.md): open, 2026-11-06: card IRDD's continuation, from IRD-4's `slip` row on. The row
   LANDED default off: an arc in the free-epoch latch leaves the tree at the slip epoch, the fragment re-attaches through
   a new edge under the rehost row, and a slipped arc no other route can replace takes the cut release. As built the cycle

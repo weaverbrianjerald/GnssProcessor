@@ -232,7 +232,8 @@ TEST(NetworkContributionsTest, CouplingRegionKindsAreTheAppendedOnes) {
         if (contributionInCouplingRegion(s.kind)) in.insert(s.kind);
     EXPECT_EQ(in, (std::set<CK>{CK::CouplingScalar, CK::BlockAmbiguityCarry,
                                 CK::BlockZwdCarry, CK::BlockIonoCarry, CK::BlockRxClockCarry,
-                                CK::BlockRxCbCarry, CK::BlockPhaseColourCarry}));
+                                CK::BlockRxCbCarry, CK::BlockRxPbCarry,
+                                CK::BlockPhaseColourCarry}));
     EXPECT_FALSE(contributionInCouplingRegion(CK::Unset));
 }
 
@@ -294,6 +295,8 @@ TEST(NetworkContributionsTest, BlockRowKindFollowsTheColumnFamilyFlags) {
     EXPECT_EQ(localBlockColKind(c), CK::BlockRxClockCarry);
     c = LocalBlockCol{}; c.is_rx_cb = true;
     EXPECT_EQ(localBlockColKind(c), CK::BlockRxCbCarry);
+    c = LocalBlockCol{}; c.is_rx_pb = true;
+    EXPECT_EQ(localBlockColKind(c), CK::BlockRxPbCarry);
     c = LocalBlockCol{}; c.is_pc = true;
     EXPECT_EQ(localBlockColKind(c), CK::BlockPhaseColourCarry);
 }

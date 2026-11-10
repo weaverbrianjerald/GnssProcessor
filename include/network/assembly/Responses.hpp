@@ -98,6 +98,7 @@ enum class ResponseSite : int {
     RpbEq34Erase,          ///< the eq34 chain's re-reference erased a receiver phase bias
     RpbGapSkip,            ///< a receiver phase bias past the gap horizon not folded
     RpbGapPrune,           ///< a receiver phase bias unseen past the horizon erased
+    RpbStepErase,          ///< the in-block harvest's step test erased a carried receiver phase bias
     // --- Wet delay (zwd_carry) ---------------------------------------------------------
     ZwdGapSkip,            ///< a wet delay past the gap horizon not folded
     ZwdGapPrune,           ///< a wet delay unseen past the horizon erased
@@ -141,7 +142,7 @@ enum class ResponseSite : int {
 };
 
 /// Number of @ref ResponseSite values (array sizing).
-inline constexpr int kResponseSites = 70;
+inline constexpr int kResponseSites = 71;
 
 static_assert(static_cast<int>(ResponseSite::ShRetire) + 1 == kResponseSites,
               "kResponseSites must follow the ResponseSite enum");

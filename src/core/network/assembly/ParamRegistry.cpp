@@ -238,9 +238,10 @@ NetworkParamRegistry NetworkParamRegistry::build(const NetworkKnobs& k, const Gn
         s.var_floor_m2 = 0.0;
         s.birth_var_m2 = kNaN;
         s.gap_horizon_s = k.pl_max_gap_s;   // the RPB carry rides the leveling carry's horizon
-        s.route = s.carried ? ParamRoute::PriorRow : ParamRoute::NotCarried;
-        s.source = "network.phase_datum_eq34_rpb_q_m2s; network.phase_datum_eq34; "
-                   "gap network.phase_leveling_max_gap_s";
+        s.route = !s.carried ? ParamRoute::NotCarried
+                : k.rpb_blk_on ? ParamRoute::LocalBlock : ParamRoute::PriorRow;
+        s.source = "network.phase_datum_eq34_rpb_q_m2s; network.phase_datum_eq34, "
+                   "network.phase_datum_eq34_rpb_in_block; gap network.phase_leveling_max_gap_s";
         set(NetworkParamKind::RxPhaseBias, std::move(s));
     }
     {

@@ -136,6 +136,12 @@ struct LocalBlockCol {
     /// The column's signal, where it has one (an ambiguity's phase signal, a receiver code
     /// bias's code signal).
     SignalId          signal{};
+    /// The entry is one of the station's carried eq34 receiver phase-bias columns
+    /// (@c network.phase_datum_eq34_rpb_in_block).  Telemetry only, like @c is_rx_cb: it
+    /// splits @c pl_blk_rxpb_cols / @c pl_blk_rxpb_missing_cross out of the ambiguity
+    /// population and names the row's kind.  Last member and default false, so every existing
+    /// brace-init keeps its meaning.
+    bool              is_rx_pb{false};
 };
 
 /**
@@ -144,7 +150,7 @@ struct LocalBlockCol {
  *        already reads).
  * @param c The block column.
  * @return @c BlockZwdCarry, @c BlockIonoCarry, @c BlockRxClockCarry (an ISB included),
- *         @c BlockRxCbCarry, @c BlockPhaseColourCarry, or @c BlockAmbiguityCarry for a
+ *         @c BlockRxCbCarry, @c BlockRxPbCarry, @c BlockPhaseColourCarry, or @c BlockAmbiguityCarry for a
  *         column with no flag.
  */
 ContributionKind localBlockColKind(const LocalBlockCol& c);
@@ -425,7 +431,7 @@ enum class StationStep : std::uint8_t;     // network/assembly/StationBuild.hpp
  *
  * Step `local_block` of kStationCarrySteps (network/assembly/StationBuild.hpp); its kinds:
  * BlockAmbiguityCarry, BlockZwdCarry, BlockIonoCarry, BlockRxClockCarry, BlockRxCbCarry,
- * BlockPhaseColourCarry, CouplingScalar. It returns at once unless
+ * BlockRxPbCarry, BlockPhaseColourCarry, CouplingScalar. It returns at once unless
  * legacy_local_inject && do_amb_carry. Records: pl_blk_*, pl_zwd*, pl_cb_injected,
  * pc_folded, pc_*_folds; st.l5b.blk_folds.
  * @param carry The station's carry frame (the build, the priors, the coupling builder, the
@@ -438,7 +444,7 @@ void networkStationLocalBlock(StationCarryFrame& carry);
  *
  * Step `coupling_region` of kStationCarrySteps (network/assembly/StationBuild.hpp); its kinds:
  * CouplingScalar, BlockAmbiguityCarry, BlockZwdCarry, BlockIonoCarry, BlockRxClockCarry,
- * BlockRxCbCarry, BlockPhaseColourCarry. It returns at once unless `carry_cpl_cond`. Records:
+ * BlockRxCbCarry, BlockRxPbCarry, BlockPhaseColourCarry. It returns at once unless `carry_cpl_cond`. Records:
  * cpl_row_start.
  * @param carry The station's carry frame (the build, the priors, the coupling builder, the
  *              block columns).

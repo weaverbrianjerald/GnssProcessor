@@ -514,6 +514,10 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // when armed.
         if (ctx.knobs.rxcb_blk)
             add(fmt::format("rxcbblk={}", ctx.knobs.rxcb_blk));
+        // The in-block receiver phase bias changes what a carried receiver phase-bias entry
+        // is, in the same way; appended only when armed.
+        if (ctx.knobs.rpb_blk)
+            add(fmt::format("rpbblk={}", ctx.knobs.rpb_blk));
         // A drop that decouples at birth strength changes the carried state; appended
         // only when armed.
         if (ctx.knobs.amb_drop_decouple_always)

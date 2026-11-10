@@ -21,6 +21,11 @@ rapid.json gains an "ird" block (golden revision and sha256, bed, arm, knob sets
 Field arms are refused before IRD-6 (invariant 1), except arm G, the golden unchanged (the
 negative control of section 13, not an ON arm).
 
+Decision D0 (the receiver phase-bias floor) was ruled off by the author on 2026-11-09 (card IRDF section 9):
+arm A1 and every arm derived from it (A1k .. A1krhRsm) set network.phase_datum_eq34_rpb_prior_sigma_m=0, and
+each keeps a floor-on variant <arm>_floor.  An A1-family arm made before that date carried the floor; every
+arm's own knob list is in the "ird" block of its rapid.json.
+
 An arm is refused when it sets a key the config loader does not read (a quoted literal in
 src/core/config/*.cpp): the loader ignores an unknown key without a word, so such an arm would
 silently be its base.
@@ -84,6 +89,13 @@ MICROSCOPE = ["network.sim_zero_iono_sigma_m=0.001"]
 # Card IRD section 13.4: the ARL beds are GPS-only (card ARL's record); the golden beds keep
 # the golden's GPS + Galileo, with Galileo unclaimed.
 ARL_GPS_ONLY = ['processing.active_systems=["GPS"]']
+# Decision D0 as the author ruled it on 2026-11-09 (card IRDF section 9, enacted in card IRDG): the receiver
+# phase-bias floor is off on the arm going forward, A1 and every arm derived from it.  Each of those arms
+# keeps a floor-on variant, <arm>_floor, with the floor written out at its default of 1 m: the arm as it
+# was defined before the ruling.  The A0 family is unchanged (A0 keeps the floor, A0f has it off).
+FLOOR_OFF = ["network.phase_datum_eq34_rpb_prior_sigma_m=0"]
+FLOOR_ON = ["network.phase_datum_eq34_rpb_prior_sigma_m=1.0"]
+A1_FAMILY = ("A1", "A1k", "A1kr", "A1krh", "A1krhR", "A1krhRs", "A1krhRsm")
 
 # name -> (knob list on top of the base, what it is)
 ARMS = {
@@ -97,14 +109,15 @@ ARMS = {
             "A0 with both emission holds off"),
     "A0f": (SLIP_SET + SEARCH_LOG + IRD_TRACES + BUNDLE_A0
             + ["network.phase_datum_eq34_rpb_prior_sigma_m=0"], "A0 with the RPB floor off"),
-    # Card IRD section 6, IRD-3: the pair family on bundle A0.  D0 keeps the RPB floor (A0 already
-    # has it) and D-S keeps seed-round off (A0 already has it off), so A1 less A0 is the family knob.
-    "A1": (SLIP_SET + SEARCH_LOG + IRD_TRACES + BUNDLE_A0 + ["network.phase_datum_eq34_family=pair"],
-           "A0 + the pair family (IRD-3; D0 keeps the floor, D-S keeps seed-round off)"),
+    # Card IRD section 6, IRD-3: the pair family on bundle A0, with decision D0 as ruled on 2026-11-09
+    # (the RPB floor off) and D-S (seed-round off, as A0 already has it).  A1 less A0 is the family knob
+    # and the floor; A1_floor (below the table) is A1 as defined before the ruling.
+    "A1": (SLIP_SET + SEARCH_LOG + IRD_TRACES + BUNDLE_A0 + ["network.phase_datum_eq34_family=pair"] + FLOOR_OFF,
+           "A0 + the pair family + the RPB floor off (IRD-3; D0 as ruled 2026-11-09, D-S keeps seed-round off)"),
     # Card IRD section 6, IRD-4: the event rows armed cumulatively on A1 in table order.  The first is
     # the kept row.  The value is a JSON array (rapid_arm.py reads a --set value as JSON).
     "A1k": (SLIP_SET + SEARCH_LOG + IRD_TRACES + BUNDLE_A0
-            + ["network.phase_datum_eq34_family=pair", 'network.phase_datum_eq34_event_rows=["kept"]'],
+            + ["network.phase_datum_eq34_family=pair", 'network.phase_datum_eq34_event_rows=["kept"]'] + FLOOR_OFF,
             "A1 + the kept row (IRD-4)"),
     # The kept row's causal reading (card IRDC section 3): the flips were traced on A0f, so A0fk less
     # A0f is the kept row alone.
@@ -114,7 +127,7 @@ ARMS = {
     # The second row in table order: the returning row armed beside the kept row.  Each arm is its parent
     # (A1k, A0fk) with the event-row list extended and nothing else.
     "A1kr": (SLIP_SET + SEARCH_LOG + IRD_TRACES + BUNDLE_A0
-             + ["network.phase_datum_eq34_family=pair", 'network.phase_datum_eq34_event_rows=["kept","returning"]'],
+             + ["network.phase_datum_eq34_family=pair", 'network.phase_datum_eq34_event_rows=["kept","returning"]'] + FLOOR_OFF,
              "A1k + the returning row (IRD-4)"),
     "A0fkr": (SLIP_SET + SEARCH_LOG + IRD_TRACES + BUNDLE_A0
               + ["network.phase_datum_eq34_rpb_prior_sigma_m=0",
@@ -124,7 +137,7 @@ ARMS = {
     # parent (A1kr, A0fkr) with the event-row list extended and nothing else.
     "A1krh": (SLIP_SET + SEARCH_LOG + IRD_TRACES + BUNDLE_A0
               + ["network.phase_datum_eq34_family=pair",
-                 'network.phase_datum_eq34_event_rows=["kept","returning","rehost"]'],
+                 'network.phase_datum_eq34_event_rows=["kept","returning","rehost"]'] + FLOOR_OFF,
               "A1kr + the rehost row (IRD-4)"),
     "A0fkrh": (SLIP_SET + SEARCH_LOG + IRD_TRACES + BUNDLE_A0
                + ["network.phase_datum_eq34_rpb_prior_sigma_m=0",
@@ -135,7 +148,7 @@ ARMS = {
     # parent (A1krh, A0fkrh, A0fkr) with the event-row list extended and nothing else.
     "A1krhR": (SLIP_SET + SEARCH_LOG + IRD_TRACES + BUNDLE_A0
                + ["network.phase_datum_eq34_family=pair",
-                  'network.phase_datum_eq34_event_rows=["kept","returning","rehost","root"]'],
+                  'network.phase_datum_eq34_event_rows=["kept","returning","rehost","root"]'] + FLOOR_OFF,
                "A1krh + the root row (IRD-4)"),
     "A0fkrhR": (SLIP_SET + SEARCH_LOG + IRD_TRACES + BUNDLE_A0
                 + ["network.phase_datum_eq34_rpb_prior_sigma_m=0",
@@ -151,7 +164,7 @@ ARMS = {
     # nothing else.
     "A1krhRs": (SLIP_SET + SEARCH_LOG + IRD_TRACES + BUNDLE_A0
                 + ["network.phase_datum_eq34_family=pair",
-                   'network.phase_datum_eq34_event_rows=["kept","returning","rehost","root","slip"]'],
+                   'network.phase_datum_eq34_event_rows=["kept","returning","rehost","root","slip"]'] + FLOOR_OFF,
                 "A1krhR + the slip row (IRD-4)"),
     "A0fkrhRs": (SLIP_SET + SEARCH_LOG + IRD_TRACES + BUNDLE_A0
                  + ["network.phase_datum_eq34_rpb_prior_sigma_m=0",
@@ -165,7 +178,7 @@ ARMS = {
     # rehost row (A0fkrRsm, the row alone).  Each arm is its parent with the event-row list extended and nothing else.
     "A1krhRsm": (SLIP_SET + SEARCH_LOG + IRD_TRACES + BUNDLE_A0
                  + ["network.phase_datum_eq34_family=pair",
-                    'network.phase_datum_eq34_event_rows=["kept","returning","rehost","root","slip","merge_split"]'],
+                    'network.phase_datum_eq34_event_rows=["kept","returning","rehost","root","slip","merge_split"]'] + FLOOR_OFF,
                  "A1krhRs + the merge and split row (IRD-4)"),
     "A0fkrhRsm": (SLIP_SET + SEARCH_LOG + IRD_TRACES + BUNDLE_A0
                   + ["network.phase_datum_eq34_rpb_prior_sigma_m=0",
@@ -186,6 +199,11 @@ ARMS = {
     "eq34c": (["network.phase_datum_eq34=true", "network.phase_datum_eq34_carry_shift=true",
                "network.carry_rebase_complete=true"], "card PRM's eq34c posture"),
 }
+# The floor-on variants of the A1 family (card IRDG section 3): the same arm with the floor at 1 m.
+for _name in A1_FAMILY:
+    _sets, _what = ARMS[_name]
+    ARMS[_name + "_floor"] = ([kv for kv in _sets if kv not in FLOOR_OFF] + FLOOR_ON,
+                              _what + ", with the floor on at 1 m (the arm as defined before 2026-11-09)")
 # Card IRD section 6 fixtures.  The slip fixtures are generated under FIXTURES_ROOT; the gap fixtures
 # are rung 3b with one station blanked; the one-band fixture of IRD-3 (card IRDC section 5) is rung 3b
 # with one station's L2 blanked.  TOW = 261030 + 30 (epoch - 1).
@@ -500,9 +518,22 @@ def selftest():
         and set(compose("R1C", "microscope")) - set(compose("R1", "microscope"))
         == set(CHAIN_ON + FLOAT_REPIN_OFF), "R1C is R1 + the chain, A0 less every held knob")
     a1 = compose("A1", "r3c")
-    chk(set(a1) - set(compose("A0", "r3c")) == {"network.phase_datum_eq34_family=pair"}
-        and set(compose("A0", "r3c")) <= set(a1) and len(a1) == len(compose("A0", "r3c")) + 1,
-        "A1 is A0 plus exactly the pair family knob")
+    chk(set(a1) - set(compose("A0", "r3c")) == {"network.phase_datum_eq34_family=pair"} | set(FLOOR_OFF)
+        and set(compose("A0", "r3c")) <= set(a1) and len(a1) == len(compose("A0", "r3c")) + 2,
+        "A1 is A0 plus the pair family knob and the RPB floor off (D0 as ruled 2026-11-09)")
+    chk(all(FLOOR_OFF[0] in compose(n, "r3c") and FLOOR_ON[0] not in compose(n, "r3c") for n in A1_FAMILY),
+        "every arm of the A1 family has the RPB floor off")
+    chk(all(set(compose(n + "_floor", "r3c")) - set(compose(n, "r3c")) == set(FLOOR_ON)
+            and set(compose(n, "r3c")) - set(compose(n + "_floor", "r3c")) == set(FLOOR_OFF)
+            and len(compose(n + "_floor", "r3c")) == len(compose(n, "r3c")) for n in A1_FAMILY)
+        and sorted(n for n in ARMS if n.endswith("_floor")) == sorted(n + "_floor" for n in A1_FAMILY),
+        "each A1-family arm has a floor-on variant that differs in the floor's value alone, and no other arm has one")
+    chk(set(compose("A1_floor", "r3c")) - set(compose("A0", "r3c"))
+        == {"network.phase_datum_eq34_family=pair"} | set(FLOOR_ON),
+        "A1_floor is A0 plus the pair family knob, the floor written out at its default (A1 before the ruling)")
+    chk(set(compose("A1krhRsm", "r3c")) - set(compose("A0fkrhRsm", "r3c")) == {"network.phase_datum_eq34_family=pair"}
+        and set(compose("A0fkrhRsm", "r3c")) <= set(compose("A1krhRsm", "r3c")),
+        "A1krhRsm is A0fkrhRsm plus exactly the pair family knob")
     a1k = compose("A1k", "r3c")
     chk(set(a1k) - set(a1) == {'network.phase_datum_eq34_event_rows=["kept"]'}
         and set(a1) <= set(a1k) and len(a1k) == len(a1) + 1,

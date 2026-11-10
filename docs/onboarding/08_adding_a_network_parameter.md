@@ -121,8 +121,8 @@ The parallel contract (header of `StationBuild.hpp`): one OpenMP iteration per
 station; a step gets its own station and slot writable (`StationBuild::st`, `::R`) and
 everything else const. Entity tables are read in a step and written by serial code only
 (`nom_n4_verify.py`, check V5). The normal equations sum in a fixed order, local-block
-columns as ambiguity, wet delay, slant ionosphere, receiver clock, receiver code bias, phase
-colour; `tests\network\test_network_station_build.cpp` pins it.
+columns as ambiguity, wet delay, slant ionosphere, receiver clock, receiver code bias, receiver
+phase bias, phase colour; `tests\network\test_network_station_build.cpp` pins it.
 
 ## 4. The carry (WHEN CARRIED)
 

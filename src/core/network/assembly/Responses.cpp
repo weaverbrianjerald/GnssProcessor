@@ -110,9 +110,12 @@ const std::array<ResponseSiteSpec, kResponseSites> kTable{{
     {R::RpbEq34Erase, "rpb_eq34_erase", K::RxPhaseBias, E::Handover, P::EraseAndRebirth, Src::Increment, kNoDisp,
      "ChainDatum.cpp eq34 re-reference", "receiver phase biases erased"},
     {R::RpbGapSkip, "rpb_gap_skip", K::RxPhaseBias, E::Gap, P::GapSkip, Src::Increment, kNoDisp,
-     "PhaseDatum.cpp the eq34 receiver phase-bias gap gate", "receiver phase biases not folded"},
+     "PhaseDatum.cpp the time link's gap gate; RxPhaseBiasCarry.cpp the block columns' gap gate",
+     "receiver phase biases not folded"},
     {R::RpbGapPrune, "rpb_gap_prune", K::RxPhaseBias, E::Gap, P::GapPrune, Src::Increment, kNoDisp,
      "ChainDatum.cpp harvest prune", "receiver phase biases erased"},
+    {R::RpbStepErase, "rpb_step_erase", K::RxPhaseBias, E::Slip, P::EraseAndRebirth, Src::Increment, kNoDisp,
+     "RxPhaseBiasCarry.cpp in-block harvest step test", "receiver phase biases erased"},
     // --- Wet delay ---------------------------------------------------------------------
     {R::ZwdGapSkip, "zwd_gap_skip", K::Zwd, E::Gap, P::GapSkip, Src::Increment, kNoDisp,
      "ZwdCarry.cpp PASS B inject gap gates", "wet delays not folded"},
@@ -346,6 +349,8 @@ bool responseSiteArmed(ResponseSite s, const NetworkKnobs& k, const GnssConfig& 
             return k.phase_datum_eq34 && k.pl_on && k.eq34_rpb_q > 0.0;
         case R::RpbGapSkip:           return k.pl_on && k.eq34_rpb_q > 0.0;
         case R::RpbGapPrune:          return k.pl_on && k.eq34_rpb_q > 0.0;
+        case R::RpbStepErase:
+            return k.pl_on && k.eq34_rpb_q > 0.0 && k.rpb_blk && k.pl_local_block && k.carry_cpl_cond;
         case R::ZwdGapSkip:           return k.pl_on && (k.zwd_on || k.zwd_seam_on);
         case R::ZwdGapPrune:          return k.pl_on && (k.zwd_on || k.zwd_capture || k.zwd_seam_on);
         // The wet delay's event response: the float vehicle's in-block route only.

@@ -327,6 +327,7 @@ add_library(gnss_core STATIC
     src/core/network/carry/PhaseColourCarry.cpp
     src/core/network/carry/RxClockCarry.cpp
     src/core/network/carry/RxCodeBiasCarry.cpp
+    src/core/network/carry/RxPhaseBiasCarry.cpp
     src/core/network/carry/SlantIonoCarry.cpp
     src/core/network/assembly/StationAnchors.cpp
     src/core/network/assembly/StationCarry.cpp
@@ -452,6 +453,11 @@ if(MSVC)
     # run-context headers it includes; the chain-frame observatory's counters
     # (network/solve/ChainFrameCounters.hpp) tipped it over (C1128).
     set_source_files_properties(tests/network/test_network_arc_graph_oracles.cpp
+        PROPERTIES COMPILE_FLAGS "/bigobj")
+    # tests/test_code_datum_family.cpp sat at the Debug section limit through the run-context
+    # headers it includes; the receiver phase bias's in-block counters and declarations
+    # (network/carry/RxPhaseBiasCarry.hpp) tipped it over (C1128).
+    set_source_files_properties(tests/test_code_datum_family.cpp
         PROPERTIES COMPILE_FLAGS "/bigobj")
 endif()
 target_link_libraries(gnss_core PUBLIC Eigen3::Eigen spdlog::spdlog netCDF::netcdf CURL::libcurl ZLIB::ZLIB)
@@ -615,6 +621,7 @@ add_executable(gnss_tests
     tests/network/test_network_invariant_carry_driver.cpp
     tests/network/test_shdev_carry.cpp
     tests/network/test_rx_cb_carry.cpp
+    tests/network/test_rx_pb_carry.cpp
     tests/network/test_network_phase_datum.cpp
     tests/test_eq34_reattach_hygiene.cpp
     tests/test_signal_integrity.cpp
