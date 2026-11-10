@@ -140,7 +140,7 @@ verbatim on 2026-11-07 under the 60 KB bar. Entries are in pre-registration orde
   bridge; with `network.clock_anchor_k` 1e6 it vanishes and all four days pass (census pooled +0.0021 m, 17 %), pending a satellite clock
   step test (field-blocking). The phase-clock hold on the tracked a priori (`network.apriori_clock_track_phase_clock_hold`, KEEP_OFF) walks
   112 to 116 mm per 120 epochs and costs users 0.3 to 0.6 m. Nothing armed.
-- [BRD3](BRD3_anchor_decoupling_clock_share_2026-11-06.md): open, pre-registered 2026-11-06: card BRD2's remainder read apart against
+- [BRD3](BRD3_anchor_decoupling_clock_share_2026-11-06.md): closed 2026-11-10 (the build graded in card BRD3B), pre-registered 2026-11-06: card BRD2's remainder read apart against
   CODE. The smoothed hold's bridge follows the a priori while a clock is decoupled and drops the correction's motion D over the bridge;
   D is the LOOSE clock's own excursion plus the a priori's drift, the a priori-following bridge is the right member on the CODE regime
   (lasting phase-visible error 6 against 13 mm) and a coin flip on the tracked a priori (15 against 13.5 mm, 12 of 26), so the bridge
@@ -149,6 +149,14 @@ verbatim on 2026-11-07 under the 60 KB bar. Entries are in pre-registration orde
   bars: `network.clock_anchor_clock_k`, a clock-share requirement on the phase statistic's trip, refused below q 1e-6. Built here,
   measure-only: the guard trace's statistic parts, the matrix postures `t` and `tk`; run here: the injected clock step on the tracked
   posture with the test on and off, the instrumented DOY-132 rerun, short arms around card ICL5's lone trips. Nothing armed.
+- [BRD3B](BRD3B_clock_share_grade_2026-11-09.md): closed, 2026-11-10: card BRD3's continuation, `network.clock_anchor_clock_k` graded
+  against the gates card BRD3 froze. A phase-statistic trip of the clock anchor is withheld when its clock-space statistic is below
+  the key. At 2.0 on card BRD's tracked posture, rebuilt on the 2026-11-07 golden, it takes 0, 0, 1 and 0 trips on DOY 129 to 132
+  (DOY 131's G22 at |w_clk| 2.06) and withholds 1, 7, 1 and 28; the days without a trip are byte-identical to the test-off arm, DOY
+  131 meets gate D's bars, and 8 of 64 site-days are worse against the GPS golden (bar 20 %). The injected 0.5 m step still trips
+  (|w_clk| 7.92), every sim step leg is byte-identical with and without the key, and storm c withholds exactly its 8 key-carried
+  trips. X-U0 and X0 to X4 pass; X5 fails on its three clauses as written (two withheld trips under a 0.9 keys' share, two over 20 mm,
+  28 withheld against 26). 24 h on DOY 132: no trip, census +0.0032 m over hours 2 to 24. Nothing armed.
 - [ICL](ICL_inter_constellation_level_2026-11-03.md): closed, 2026-11-03 (pre-registered the same day): the GPS-to-Galileo level of card
   BRD's broadcast-referenced posture, held for receivers whose inter-system offset is frozen. Measured before building: each
   constellation's phase-visible level is its clock pivot's a priori error (under the tracked a priori a random walk, 188 and 193 mm over
