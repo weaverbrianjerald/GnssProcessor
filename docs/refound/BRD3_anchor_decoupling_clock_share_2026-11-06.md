@@ -466,3 +466,64 @@ Nothing is armed; arming, any golden change and the merge are the author's decis
 - **The warm-resume seam on the tracked posture:** four statistic trips at the first resumed epoch of every `t` leg
   (the guard re-earning the anchor), none on `tk`; a seam question for the resume cards, not a field one.
 - **GPS + Galileo** with the re-seed key and the clock share, once the ICL branches and this one meet.
+
+## 8. The build and its grade (2026-11-09)
+
+Branch `brd3/clock-share` from main `27d6ece` (the 2026-11-07 arming, the AVX2 default build), worktree
+`D:/GnssProcessorSupport/worktrees/brd3k`. Exes, Release from the worktree, renamed: `gnss_processor_brd3kb.exe` (the
+branch's base, main `27d6ece` unchanged, sha256[:16] `5c2d8cc06c27acc7`) and `gnss_processor_brd3k.exe` (the key built,
+`2134f60773a4de43`). Arms under `D:/GnssProcessorSupport/runs_nom` as `_rap_brd3k_*`, census replays as `_rap_b3<arm><doy>_<site>`,
+sim legs under the labels `brd3kx` (the key at 2.0) and `brd3k0` (without it) in `D:/GnssProcessorSupport/gates/smx`; tools in
+`D:/GnssProcessorSupport/worktrees/brd3k_tools/` (outside the repository).
+
+### 8.1 What is built
+
+`network.clock_anchor_clock_k` (double, default 0 = off), exactly section 4.1's mechanism. The loader reads it after the
+guard space and refuses a positive value with the anchor off, outside phase mode (clock and shadow) and with
+`network.clock_anchor_q` below 1e-6, and a negative value; it is not in the snapshot fingerprint. The knob snapshot holds
+it only when the anchor is on in phase mode (`NetworkKnobs::cta_clock_k`). The decision is one function,
+`clockAnchorPhaseTripVerdict` (`include/network/solve/ClockAnchor.hpp`): a phase statistic over k is a trip when no clock
+share is required or when |w_clk| >= the key, and is withheld otherwise. In the guard the requirement acts on the trip of
+an ANCHORED row only: a withheld row keeps its prior, is not marked, is not re-solved and does not enter the trip sets the
+phase-bias hold reads; the absolute backstop and the satellite clock event's forced trip decide as before (a withheld row
+that one of them trips is a trip of that cause, not a withhold); a LOOSE row's re-validation reads the phase statistic as
+before; the clock mode and the shadow mode are untouched. Each withheld trip is an event at its epoch, `CLK_ANCHOR
+phi_withheld` (statistic |w_phi|, bar k, detail: w_clk, the key, the pair, e_phi, sqrt(S_phi), dclk, the keys' share of e_phi
+and each chosen key's share), once per satellite and epoch over the guard's passes, and the guard trace's decision column
+reads `withheld`. The withhold is a gate on which information reaches the clock, so its episode has two edges (standing
+invariant 7): a satellite's run of consecutive withheld epochs is held in `ClockAnchorSat::phi_withheld_run` (not
+snapshotted, as the anchor's state is not), and the first epoch without a withhold closes it with `CLK_ANCHOR
+phi_withheld_end` (`epochs=N;end=clear` when the satellite is still anchored, `end=decoupled` when it decoupled in that
+epoch for any cause). Run-end clause (standing invariant 4): withheld trips, episodes opened, closed clear, closed by a
+decoupling and open at the end, the longest episode, the largest |w_phi| and |w_clk| among the withheld, and the phase trips
+taken. Ledger row UNVALIDATED at build, parent `network.clock_anchor_guard_space`.
+
+### 8.2 How the gates are read on the current main (written before any arm of this section was read)
+
+The bars of section 4.2 are unchanged. Three facts of the current main decide how they are read:
+
+- **The references named in X0 and X2 cannot be reproduced.** Card BRD2's `brd2_c129_2`, `brd2_s0_2`, `brd2_t132_2` and
+  `brd2_tk{129,130,132}_6` ran on the 2026-11-03 golden and the SSE2 build; since then the goldens were re-armed (2026-11-07:
+  among others the IF-TD re-seed key, the IF-TD satellite clock event, the RAIM prior channel, VCF, TRP, the deferral of
+  coupled re-solves) and AVX2 became the default build, whose outputs differ from SSE2's by a neutral spread. No exe of the
+  current main reproduces those runs byte for byte. Each reference is therefore its same-exe twin on today's golden: X0
+  compares the final exe with the key off against the base exe (`gnss_processor_brd3kb.exe`) on the 2 h field golden, the 2 h
+  sim golden from 00:30:15 and the tracked posture, 2 h, DOY 132; X2's byte clause compares each day's key arm against the
+  test-off arm (`network.clock_anchor_k` 1e6) run on the final exe; X2's census bars are read against the GPS golden of the
+  day run on the final exe, the 16 sites and WTZZ00DEU replayed with `scripts/clock_level/gcensus.py` as card BRD2 did.
+- **The tracked posture is card BRD's T2 recipe on today's golden.** Every arm is a golden copy: the field golden (DOY 129) or
+  the field golden re-dated by `scripts/mday_golden_config.py` (DOY 130 to 132, observations from
+  `D:/GnssProcessorSupport/data_mday`), plus card BRD's fifteen keys (GPS only, `clock_anchor_q` 5e-6, the smoothed hold in
+  place of the phase-clock hold, the clock clone, the dense S-transform, the datum keep, the level and phase-visible monitors,
+  the shared history at rank 1, `sp3_brdc_clock` with `ttom`, card BRD's data roots, the two-way centring, the tracked a
+  priori), and then the key under test. The key arm adds `network.clock_anchor_clock_k` 2.0; the test-off arm
+  `network.clock_anchor_k` 1e6; the GPS golden `processing.active_systems` GPS. A 10-epoch smoke of the tracked posture on
+  DOY 132 ran on the base exe (exit 0).
+- **Section 2.3's counts were measured on the 2026-11-03 golden.** With the re-seed key and the satellite clock event now in
+  the golden, the trip population of the tracked posture can differ from the 26 trips of DOY 132 and the 1 of DOY 131 the
+  gates predict. No bar depends on the count except X5's last clause ("the run-end clause counts 26 withheld"), which is read
+  as written.
+
+The sim legs of X3 and X4 resume this card's seeds `evseed_smx_{c,n,t}` (written 2026-11-06 under that day's golden; a leg
+inherits its seed's config), event minus null on one exe (the final exe) and one seed, with the matrix's rows and bars
+(`matrix.json` version 1). The key is refused at the sim golden's q (posture g, X1), so no leg of the golden carries it.
