@@ -5286,6 +5286,27 @@ namespace GnssProcessor {
          *        Set from the @c phase_shadow ladder.
          */
         double networkClockAnchorPhaseSigmaFloorM() const { return network_clock_anchor_phase_sigma_floor_m_; }
+
+        /**
+         * @brief The clock-share requirement on the phase statistic's trip,
+         *        @c network.clock_anchor_clock_k (default 0 = off).
+         *
+         * In phase mode (@ref networkClockAnchorGuardSpace 2) a statistic trip of an anchored
+         * satellite requires, besides |w_phi| above @ref networkClockAnchorK, that the
+         * clock-space statistic the guard computes beside it carries a share of the event:
+         * |w_clk| >= this value.  A phase trip with the clock still (every one measured on the
+         * broadcast regime's DOY 132 was carried by the phase-bias keys: |w_clk| at most 0.57,
+         * where a 0.5 m satellite clock step at q 5e-6 reads 7.9) is withheld: the satellite
+         * stays anchored, and the withhold is an event and a counter.  The absolute backstop,
+         * the satellite clock event's forced trip and every other decoupling cause are
+         * unchanged, and so is the clock-space mode.  The loader refuses a positive value when
+         * the anchor is off, when the guard is not in phase mode, or when
+         * @c network.clock_anchor_q is below 1e-6 m^2/s (an anchored clock that cannot move
+         * within an epoch reads a step as w_clk 0.15).  Acts only on a trip, so it is not
+         * fingerprinted.
+         * @return The |w_clk| a phase trip needs (0 = no requirement).
+         */
+        double networkClockAnchorClockK() const { return network_clock_anchor_clock_k_; }
         /// Consecutive in-band epochs a decoupled satellite must serve before the
         /// anchor re-engages: the re-coupling re-validation of invariant #7.
         int    networkClockAnchorRecoupleEpochs() const { return network_clock_anchor_recouple_epochs_; }
@@ -9315,6 +9336,7 @@ namespace GnssProcessor {
         double network_clock_anchor_sigma_floor_m_{0.02};  ///< Floor on √S (m). A weak-data epoch removes no information (P⁺ → P⁻ ⇒ S → 0) and would otherwise yield a 0/0 statistic that false-trips exactly the lowest-confidence satellites; the floor makes it read w ≈ 0 instead. A lower bound on the denominator, never an addition to it (the addition form, used before B3, double-counts the data). Default 2 cm = the measured physical per-30 s change. Inert unless network_clock_temporal_anchor_.
         int    network_clock_anchor_guard_space_{0};          ///< Q3 guard statistic space: 0 clock, 1 phase_shadow, 2 phase.
         double network_clock_anchor_phase_sigma_floor_m_{0.02};  ///< Floor on the phase-space statistic's sqrt(S) (m).
+        double network_clock_anchor_clock_k_{0.0};              ///< |w_clk| a phase-mode statistic trip requires (network.clock_anchor_clock_k); 0 = off. Acts only on a trip; not fingerprinted.
         int    network_clock_anchor_recouple_epochs_{4};   ///< Consecutive in-band epochs a decoupled satellite must serve before the anchor re-engages: the re-coupling edge must re-validate or re-seed what it reconnects (invariant #7). The re-engaged fold also re-seeds (its first variance is cp.var + q·Δt off the LOOSE posterior, not the steady-state tight value). Inert unless network_clock_temporal_anchor_.
         bool   network_clock_anchor_mark_{true};           ///< Wire-mark the decoupling edge (markSatDiscontinuity → R record + per-sat phase/code/clock counters, the chain Q4 proved end-to-end). A satellite whose clock changed both temporal regime and value must not be integrated across. Unlike CLK-R stage 2, whose marked population was ~98 % churn and cost the quiet-day consumer, this population is by construction not churn (the churn is what the anchor removes), but the rate discipline still applies, and the knob exists so a 12 h A/B can bisect hold vs marks as CLK-R's did. Inert unless network_clock_temporal_anchor_.
         bool   network_clock_anchor_gauge_free_{false};    ///< Fold the clock prior with the per-constellation clock gauge direction marginalized out (Λ ← Λ − Λu(uᵀΛu)⁻¹uᵀΛ; diagonally this is "anchor each clock to its carried value minus the information-weighted mean", i.e. anchor the differences). Applied to the joint dense block, so the clock↔code-bias off-diagonals the C1 carry retains are preserved; only the gauge is removed. A constellation with < 2 carried clocks contributes nothing (its lone key is the gauge). Solve-affecting; part of the anchor's fingerprint. Inert unless network_clock_temporal_anchor_.

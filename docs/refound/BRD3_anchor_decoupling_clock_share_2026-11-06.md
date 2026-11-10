@@ -4,15 +4,15 @@
 
 - **id:** BRD3
 - **topic:** network-vehicle
-- **status:** open
-- **summary:** Pre-registered 2026-11-06, from card BRD2's remainder. Measured offline against CODE first: the smoothed hold's bridge follows the a priori while the clock is decoupled, so it drops the clock correction's motion D over the bridge; D is the LOOSE clock's own departure from truth plus the a priori's drift, and on the CODE a priori the bridge is the right member (its lasting phase-visible error 6 mm against 13 mm for a clock-following bridge), on the tracked a priori a coin flip (15 against 13.5 mm, better on 12 of 26). The bridge member is refuted as the lever; the decoupling is the carrier. Every statistic trip on DOY 132 is carried by the phase-bias keys (clock-space |w| at most 0.57 over 59 trips on both postures; a true 0.5 m step at the same q reads 7.9). The next build, pre-registered here with frozen bars: a clock-share requirement on the phase statistic's trip (`network.clock_anchor_clock_k`), valid at the broadcast regime's q. Run here: the injected clock step on the tracked sim posture passes every matrix channel with the test on and off (the column takes 0.494 m, no refloat, no trip, the wire -0.499 m); the instrumented DOY-132 rerun is byte-identical to card BRD's and reads 24 of its 26 trips as at least 90 % key-carried; cold short arms do not reproduce card ICL5's lone trips, so an instrumented 24 h pair runs in their place. Measure-only: the guard trace's statistic parts and the tracked sim postures. Nothing armed.
+- **status:** closed
+- **summary:** Pre-registered 2026-11-06, from card BRD2's remainder. Measured offline against CODE first: the smoothed hold's bridge follows the a priori while the clock is decoupled, so it drops the clock correction's motion D over the bridge; D is the LOOSE clock's own departure from truth plus the a priori's drift, and on the CODE a priori the bridge is the right member (its lasting phase-visible error 6 mm against 13 mm for a clock-following bridge), on the tracked a priori a coin flip (15 against 13.5 mm, better on 12 of 26). The bridge member is refuted as the lever; the decoupling is the carrier. Every statistic trip on DOY 132 is carried by the phase-bias keys (clock-space |w| at most 0.57 over 59 trips on both postures; a true 0.5 m step at the same q reads 7.9). The next build, pre-registered here with frozen bars: a clock-share requirement on the phase statistic's trip (`network.clock_anchor_clock_k`), valid at the broadcast regime's q. Run here: the injected clock step on the tracked sim posture passes every matrix channel with the test on and off (the column takes 0.494 m, no refloat, no trip, the wire -0.499 m); the instrumented DOY-132 rerun is byte-identical to card BRD's and reads 24 of its 26 trips as at least 90 % key-carried; cold short arms do not reproduce card ICL5's lone trips, so an instrumented 24 h pair runs in their place. Measure-only: the guard trace's statistic parts and the tracked sim postures. Built 2026-11-09 (section 8) and graded in the continuation card BRD3B: `network.clock_anchor_clock_k` at 2.0 takes 0, 0, 1 and 0 trips on DOY 129 to 132 of the tracked posture rebuilt on the 2026-11-07 golden (1, 7, 1 and 28 withheld), the three days without a trip byte-identical to the test-off arm, 8 of 64 site-days worse against the GPS golden (12 %); the injected step still trips (|w_clk| 7.92); X-U0 and X0 to X4 pass, X5 fails on all three clauses in its letter. Nothing armed.
 - **source:** card [BRD2](BRD2_broadcast_remainder_hold_days_2026-11-03.md) sections 2.4, 5.3, 6 and 7 (the remainder as the statistic decouplings through the bridge; the step test owed); card [BRD](BRD_broadcast_referenced_level_2026-11-02.md) (the posture); card [SMH](SMH_smoothed_hold_clone_2026-09-29.md) sections 9 and 12 (the bridge); card [LAH](LAH_level_aware_hold_2026-09-29.md) (the transfer); cards [SCK](SCK_sat_clock_step_2026-10-25.md), [SCR](SCR_sat_clock_step_response_2026-10-26.md) and [ARS](ARS_anchor_resolve_coupling_2026-10-26.md) (the step on the three postures, the guard's re-solve); cards ICL to ICL5 (branch `icl5/reseed-key-day`: the re-seed key, the frame's quorum, the lone trips of ICL5 section 4.3); standing invariants 1 and 7 of `CLAUDE.md`
-- **knobs / posture:** no knob built or changed in this card. Measure-only: nine trailing columns of `logs/network_anchor_guard.csv` (section 3.1); the matrix postures `t` and `tk` of `scripts/scenario_matrix.py` (section 3.2). Pre-registered for the next build, default off: `network.clock_anchor_clock_k` (section 4). The graded posture is card BRD's T2 posture (the GPS broadcast-referenced posture of card NBP with `network.cycle_slip.if_phase_td_sat_centre` and `network.apriori_clock_track`); its sim twin is posture `t`.
-- **dates in the text:** 2026-11-06
-- **hashes / run dirs:** branch `level/anchor-decouple` from `brdc/brd2` (`4a0f554`, unmerged; `icl5/reseed-key-day` not merged, its runs read in place), worktree `D:/GnssProcessorSupport/worktrees/level_anchor`; exe `gnss_processor_lva1.exe` (sha256[:16] `e0a2aa899d2fa05b`, Release from the worktree: the trace columns and nothing else in the solve); the seeds' exe is card BRD2's `gnss_processor_b2k.exe` (`e44e043908d07826`, the branch's base source). Runs read: card BRD's `_rap_brd_{nt,r}{129,132}_6`, card BRD2's `_rap_brd2_{t,r,tk,rk}{130,131,132}_6`, card ICL2's `_rap_icl2_{p,c}{129,132}_24`, card ICL5's `_rap_icl5_{b,g}{129,132}_24`, card SMX's legs `evleg_smx_sck0b_storm_{n,c,g}`, `evleg_smx_ars0_storm_c`, `evleg_smx_smx1_sat_clk_{g,c,n}` (all under `D:/GnssProcessorSupport/runs_nom`). This card's runs: seeds `evseed_smx_t`, `evseed_smx_tk`; legs `evleg_smx_lvat_*`, `evleg_smx_lvatk_*` (labels `lvat`, `lvatk` under `D:/GnssProcessorSupport/gates/smx`); arms `_rap_lva_nt132_6`, `_rap_lva_g132s_{c,k}`, `_rap_lva_g132_24{c,k}` (the DOY-129 short arms `_rap_lva_g129s_{c,k}` were made and not run, section 5.3). Tools in `D:/GnssProcessorSupport/worktrees/lva_tools/` (outside the repository): `bridge_table.py`, `trip_share.py`, `patch_guard_trace.py`. Truth for every "against CODE" number: `COD0MGXFIN_2024{129,132}0000_01D_30S_CLK.CLK` under `C:/GnssProcessor/data`.
-- **gates (frozen at pre-registration):** section 4.2, for the next build; this card's own predictions, written before their runs were read, in section 5
+- **knobs / posture:** built in section 8 (2026-11-09): `network.clock_anchor_clock_k` (default 0 = off; ledger row UNVALIDATED), graded in card BRD3B. Before it, no knob built or changed in this card. Measure-only: nine trailing columns of `logs/network_anchor_guard.csv` (section 3.1); the matrix postures `t` and `tk` of `scripts/scenario_matrix.py` (section 3.2). Pre-registered for the next build, default off: `network.clock_anchor_clock_k` (section 4). The graded posture is card BRD's T2 posture (the GPS broadcast-referenced posture of card NBP with `network.cycle_slip.if_phase_td_sat_centre` and `network.apriori_clock_track`); its sim twin is posture `t`.
+- **dates in the text:** 2026-11-06, 2026-11-09, 2026-11-10
+- **hashes / run dirs:** branch `level/anchor-decouple` from `brdc/brd2` (`4a0f554`, unmerged; `icl5/reseed-key-day` not merged, its runs read in place), worktree `D:/GnssProcessorSupport/worktrees/level_anchor`; exe `gnss_processor_lva1.exe` (sha256[:16] `e0a2aa899d2fa05b`, Release from the worktree: the trace columns and nothing else in the solve); the seeds' exe is card BRD2's `gnss_processor_b2k.exe` (`e44e043908d07826`, the branch's base source). Runs read: card BRD's `_rap_brd_{nt,r}{129,132}_6`, card BRD2's `_rap_brd2_{t,r,tk,rk}{130,131,132}_6`, card ICL2's `_rap_icl2_{p,c}{129,132}_24`, card ICL5's `_rap_icl5_{b,g}{129,132}_24`, card SMX's legs `evleg_smx_sck0b_storm_{n,c,g}`, `evleg_smx_ars0_storm_c`, `evleg_smx_smx1_sat_clk_{g,c,n}` (all under `D:/GnssProcessorSupport/runs_nom`). This card's runs: seeds `evseed_smx_t`, `evseed_smx_tk`; legs `evleg_smx_lvat_*`, `evleg_smx_lvatk_*` (labels `lvat`, `lvatk` under `D:/GnssProcessorSupport/gates/smx`); arms `_rap_lva_nt132_6`, `_rap_lva_g132s_{c,k}`, `_rap_lva_g132_24{c,k}` (the DOY-129 short arms `_rap_lva_g129s_{c,k}` were made and not run, section 5.3). Tools in `D:/GnssProcessorSupport/worktrees/lva_tools/` (outside the repository): `bridge_table.py`, `trip_share.py`, `patch_guard_trace.py`. Truth for every "against CODE" number: `COD0MGXFIN_2024{129,132}0000_01D_30S_CLK.CLK` under `C:/GnssProcessor/data`. Section 8: branch `brd3/clock-share` from main `27d6ece`, worktree `D:/GnssProcessorSupport/worktrees/brd3k`, exes `gnss_processor_brd3kb.exe` (`5c2d8cc06c27acc7`) and `gnss_processor_brd3k.exe` (`2134f60773a4de43`); its runs are listed in card BRD3B.
+- **gates (frozen at pre-registration):** section 4.2, for the next build (graded in card [BRD3B](BRD3B_clock_share_grade_2026-11-09.md) as section 8.2 reads them: X-U0 and X0 to X4 pass, X5 fails); this card's own predictions, written before their runs were read, in section 5
 
-**Outcome.** Question: why does the smoothed hold's bridge lose centimetres of clock motion at a statistic decoupling, is there a hold or a test that keeps satellite clock step detection without that loss, and how do the re-seed key and the frame's quorum bear on it? Against CODE the bridge drops the LOOSE clock's own excursion as much as the a priori's drift, and on the CODE regime it is the right member: no bridge member recovers the remainder. The decoupling is the carrier, and every one of DOY 132's trips is a phase-bias-key event with a clock-space statistic below 0.6, where a true step reads 8. The next build is a clock-share requirement on the trip, pre-registered with its bars. The injected step on the tracked posture passes every channel with the test on and off, carried by the column and the track, and the instrumented rerun reads the trips as key events. Nothing armed.
+**Outcome.** Question: why does the smoothed hold's bridge lose centimetres of clock motion at a statistic decoupling, and is there a test that keeps satellite clock step detection without that loss? No bridge member recovers it: the decoupling is the carrier, and every DOY-132 trip is a phase-bias-key event with a clock-space statistic below 0.6, where a true step reads 8. The clock-share requirement built on that reading (section 8, graded in card BRD3B) withholds those trips and keeps the step: one trip taken in four days, the day bars and the pooled share met, X5 failed in its letter. Nothing armed.
 
 > Results are appended TO THIS FILE, below the text.
 
@@ -466,3 +466,72 @@ Nothing is armed; arming, any golden change and the merge are the author's decis
 - **The warm-resume seam on the tracked posture:** four statistic trips at the first resumed epoch of every `t` leg
   (the guard re-earning the anchor), none on `tk`; a seam question for the resume cards, not a field one.
 - **GPS + Galileo** with the re-seed key and the clock share, once the ICL branches and this one meet.
+
+## 8. The build and its grade (2026-11-09)
+
+Branch `brd3/clock-share` from main `27d6ece` (the 2026-11-07 arming, the AVX2 default build), worktree
+`D:/GnssProcessorSupport/worktrees/brd3k`. Exes, Release from the worktree, renamed: `gnss_processor_brd3kb.exe` (the
+branch's base, main `27d6ece` unchanged, sha256[:16] `5c2d8cc06c27acc7`) and `gnss_processor_brd3k.exe` (the key built,
+`2134f60773a4de43`). Arms under `D:/GnssProcessorSupport/runs_nom` as `_rap_brd3k_*`, census replays as `_rap_b3<arm><doy>_<site>`,
+sim legs under the labels `brd3kx` (the key at 2.0) and `brd3k0` (without it) in `D:/GnssProcessorSupport/gates/smx`; tools in
+`D:/GnssProcessorSupport/worktrees/brd3k_tools/` (outside the repository).
+
+### 8.1 What is built
+
+`network.clock_anchor_clock_k` (double, default 0 = off), exactly section 4.1's mechanism. The loader reads it after the
+guard space and refuses a positive value with the anchor off, outside phase mode (clock and shadow) and with
+`network.clock_anchor_q` below 1e-6, and a negative value; it is not in the snapshot fingerprint. The knob snapshot holds
+it only when the anchor is on in phase mode (`NetworkKnobs::cta_clock_k`). The decision is one function,
+`clockAnchorPhaseTripVerdict` (`include/network/solve/ClockAnchor.hpp`): a phase statistic over k is a trip when no clock
+share is required or when |w_clk| >= the key, and is withheld otherwise. In the guard the requirement acts on the trip of
+an ANCHORED row only: a withheld row keeps its prior, is not marked, is not re-solved and does not enter the trip sets the
+phase-bias hold reads; the absolute backstop and the satellite clock event's forced trip decide as before (a withheld row
+that one of them trips is a trip of that cause, not a withhold); a LOOSE row's re-validation reads the phase statistic as
+before; the clock mode and the shadow mode are untouched. Each withheld trip is an event at its epoch, `CLK_ANCHOR
+phi_withheld` (statistic |w_phi|, bar k, detail: w_clk, the key, the pair, e_phi, sqrt(S_phi), dclk, the keys' share of e_phi
+and each chosen key's share), once per satellite and epoch over the guard's passes, and the guard trace's decision column
+reads `withheld`. The withhold is a gate on which information reaches the clock, so its episode has two edges (standing
+invariant 7): a satellite's run of consecutive withheld epochs is held in `ClockAnchorSat::phi_withheld_run` (not
+snapshotted, as the anchor's state is not), and the first epoch without a withhold closes it with `CLK_ANCHOR
+phi_withheld_end` (`epochs=N;end=clear` when the satellite is still anchored, `end=decoupled` when it decoupled in that
+epoch for any cause). Run-end clause (standing invariant 4): withheld trips, episodes opened, closed clear, closed by a
+decoupling and open at the end, the longest episode, the largest |w_phi| and |w_clk| among the withheld, and the phase trips
+taken. Ledger row UNVALIDATED at build, parent `network.clock_anchor_guard_space`.
+
+### 8.2 How the gates are read on the current main (written before any arm of this section was read)
+
+The bars of section 4.2 are unchanged. Three facts of the current main decide how they are read:
+
+- **The references named in X0 and X2 cannot be reproduced.** Card BRD2's `brd2_c129_2`, `brd2_s0_2`, `brd2_t132_2` and
+  `brd2_tk{129,130,132}_6` ran on the 2026-11-03 golden and the SSE2 build; since then the goldens were re-armed (2026-11-07:
+  among others the IF-TD re-seed key, the IF-TD satellite clock event, the RAIM prior channel, VCF, TRP, the deferral of
+  coupled re-solves) and AVX2 became the default build, whose outputs differ from SSE2's by a neutral spread. No exe of the
+  current main reproduces those runs byte for byte. Each reference is therefore its same-exe twin on today's golden: X0
+  compares the final exe with the key off against the base exe (`gnss_processor_brd3kb.exe`) on the 2 h field golden, the 2 h
+  sim golden from 00:30:15 and the tracked posture, 2 h, DOY 132; X2's byte clause compares each day's key arm against the
+  test-off arm (`network.clock_anchor_k` 1e6) run on the final exe; X2's census bars are read against the GPS golden of the
+  day run on the final exe, the 16 sites and WTZZ00DEU replayed with `scripts/clock_level/gcensus.py` as card BRD2 did.
+- **The tracked posture is card BRD's T2 recipe on today's golden.** Every arm is a golden copy: the field golden (DOY 129) or
+  the field golden re-dated by `scripts/mday_golden_config.py` (DOY 130 to 132, observations from
+  `D:/GnssProcessorSupport/data_mday`), plus card BRD's fifteen keys (GPS only, `clock_anchor_q` 5e-6, the smoothed hold in
+  place of the phase-clock hold, the clock clone, the dense S-transform, the datum keep, the level and phase-visible monitors,
+  the shared history at rank 1, `sp3_brdc_clock` with `ttom`, card BRD's data roots, the two-way centring, the tracked a
+  priori), and then the key under test. The key arm adds `network.clock_anchor_clock_k` 2.0; the test-off arm
+  `network.clock_anchor_k` 1e6; the GPS golden `processing.active_systems` GPS. A 10-epoch smoke of the tracked posture on
+  DOY 132 ran on the base exe (exit 0).
+- **Section 2.3's counts were measured on the 2026-11-03 golden.** With the re-seed key and the satellite clock event now in
+  the golden, the trip population of the tracked posture can differ from the 26 trips of DOY 132 and the 1 of DOY 131 the
+  gates predict. No bar depends on the count except X5's last clause ("the run-end clause counts 26 withheld"), which is read
+  as written.
+
+The sim legs of X3 and X4 resume this card's seeds `evseed_smx_{c,n,t}` (written 2026-11-06 under that day's golden; a leg
+inherits its seed's config), event minus null on one exe (the final exe) and one seed, with the matrix's rows and bars
+(`matrix.json` version 1). The key is refused at the sim golden's q (posture g, X1), so no leg of the golden carries it.
+
+### 8.3 Results: card BRD3B (2026-11-10)
+
+This file nears the 60 KB bar, so the gate-by-gate results, the reports without a bar (the regime on CODE with the key, 24 h
+on DOY 132), the verdict and what remains are in the continuation card [BRD3B](BRD3B_clock_share_grade_2026-11-09.md). In one
+line: X-U0 and X0 to X4 pass and X5 fails on all three of its clauses as written; on the tracked posture the key takes 0, 0, 1
+and 0 trips on DOY 129 to 132, 8 of 64 site-days are worse against the GPS golden, and the injected step still trips. Nothing
+is armed.

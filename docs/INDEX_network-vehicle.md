@@ -109,11 +109,16 @@ site-days worse; the DOY-132 remainder is the clock anchor's statistic decouplin
 all four days pass, pooled +0.0021 m, pending a satellite clock step test; the phase-clock hold on the tracked a priori fails, users +0.3 to
 +0.6 m; nothing armed).
 [BRD3](refound/BRD3_anchor_decoupling_clock_share_2026-11-06.md), card BRD2's remainder read apart: the smoothed hold's bridge, the
-clock-space share of the statistic trips, and the injected clock step on the tracked posture (open, pre-registered 2026-11-06: against
-CODE the bridge drops the LOOSE clock's own excursion as much as the a priori's drift and is the right member on the CODE regime, so no
-bridge member recovers the remainder, the decoupling is the carrier; every trip of DOY 132 is a phase-bias-key event with clock-space
-|w| at most 0.57 where a true step reads 7.9; the next build, a clock-share requirement on the trip, pre-registered with frozen bars;
-measure-only trace columns and the tracked sim postures built; nothing armed).
+clock-space share of the statistic trips, and the injected clock step on the tracked posture (closed, 2026-11-10, pre-registered
+2026-11-06: against CODE the bridge drops the LOOSE clock's own excursion as much as the a priori's drift and is the right member on
+the CODE regime, so no bridge member recovers the remainder, the decoupling is the carrier; every trip of DOY 132 is a phase-bias-key
+event with clock-space |w| at most 0.57 where a true step reads 7.9; the clock-share requirement pre-registered with frozen bars, built
+in section 8 and graded in card BRD3B; measure-only trace columns and the tracked sim postures built; nothing armed).
+[BRD3B](refound/BRD3B_clock_share_grade_2026-11-09.md), card BRD3's continuation: `network.clock_anchor_clock_k` graded against card
+BRD3's frozen gates (closed, 2026-11-10: on the tracked posture rebuilt on the 2026-11-07 golden the key at 2.0 takes 0, 0, 1 and 0
+trips on DOY 129 to 132 and withholds 1, 7, 1 and 28, three days byte-identical to the test-off arm, 8 of 64 site-days worse against
+the GPS golden; the injected step still trips at |w_clk| 7.92 and the sim legs are byte-identical with and without it; storm c
+withholds exactly its 8 key-carried trips; X-U0 and X0 to X4 pass, X5 fails in its letter; nothing armed).
 
 [ICL](refound/ICL_inter_constellation_level_2026-11-03.md), the GPS-to-Galileo level of the broadcast-referenced network for receivers
 whose inter-system offset is frozen (closed, 2026-11-03: each constellation's phase-visible level is its clock pivot's a priori error, a

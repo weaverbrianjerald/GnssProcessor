@@ -1701,6 +1701,7 @@ struct ClockAnchorSat {
     bool   folded_anchored{false};  ///< …and it was the ANCHORED variance
     bool   stale_pending{false};    ///< the fold found the carry older than the staleness bound and fell back to the LOOSE variance; the guard owns the state transition, event and mark, so every decoupling edge goes through one path
     bool   slip_clk_pending{false}; ///< the fold took an ANCHORED satellite LOOSE because the IF-TD pools read a satellite clock event this epoch (network.cycle_slip.if_phase_td_sat_clock_event); the guard owns the state transition, event, wire mark and trip record, as for stale_pending
+    int    phi_withheld_run{0};     ///< consecutive guard epochs up to the last one whose phase trip the clock-share requirement withheld (network.clock_anchor_clock_k); > 0 = a withhold episode is open, and the first epoch without a withhold closes it with an event.  0 with the knob off
 };
 
 /// Why the clock anchor guard declared a satellite's clock moved at an epoch.

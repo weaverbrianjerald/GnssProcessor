@@ -854,7 +854,9 @@ namespace GnssProcessor {
         /// variance, @c nis = nu^2 / (P + R).
         /// The Q3 guard's two statistics side by side (
         /// @c network.clock_anchor_guard_space not @c clock): one row per tested satellite
-        /// per pass-0 epoch.
+        /// per pass-0 epoch.  The decision column reads @c trip, @c out (a LOOSE row over
+        /// the bar), @c ok, or @c withheld (a phase trip the clock-share requirement
+        /// @c network.clock_anchor_clock_k withheld).
         std::ofstream anchor_guard_trace;
         const std::filesystem::path anchor_guard_trace_path;
         std::ofstream level_innov_trace;

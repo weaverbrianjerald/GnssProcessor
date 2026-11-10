@@ -649,6 +649,7 @@ add_executable(gnss_tests
     tests/network/test_clock_emit_rebase.cpp
     tests/network/test_clock_anchor.cpp
     tests/network/test_clock_anchor_slip_clk.cpp
+    tests/network/test_clock_anchor_clock_share.cpp
     tests/network/test_clock_anchor_coupled_resolve.cpp
     tests/network/test_network_solprep_disc.cpp
     tests/test_eq34_consumer_integer.cpp
