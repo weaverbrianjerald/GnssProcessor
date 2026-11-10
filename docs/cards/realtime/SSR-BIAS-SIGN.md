@@ -106,3 +106,14 @@ epoch 0.13 to 0.20 m west and 0.13 to 0.18 m north in each), under a formal sigm
   RTCM-SSR CoM). The stream used here, SSRC01CAS1, is IGS-SSR CoM and is treated correctly; a stream of the
   other combinations would get the wrong point. cssrlib treats both formats as referring to the L1 APC.
 - The phase wind-up accumulator is seeded with the absolute angle and unwrapped (checked); not a candidate.
+
+## 7. Landed, 2026-11-09
+
+The change of section 4 is commit f0edfeb on branch `fix/ssr-live` (worktree
+`D:\GnssProcessorSupport\worktrees\ssrlive`, based on main 27d6ece), carried from branch
+`fix/ssr-bias-sign` (48ad9a2, based on 1527cf9): the four code files are unchanged on main since that
+base, so the hunks apply verbatim, and they equal the bias-sign hunks that sat uncommitted in the main
+working tree beside the SSR timing fix of card SSR-TIME. This card file is the branch's, unchanged above
+this section. The register entry it narrowed is now in `docs/status/OPEN_ITEMS_CONSUMER_REALTIME.md`
+(split from OPEN_ITEMS.md on 2026-11-07). The unit suite and the producer comparison of the branch are in
+card [SSR-TIME](SSR-TIMING.md) section 7. The narrow-lane (section 6) stays open.
