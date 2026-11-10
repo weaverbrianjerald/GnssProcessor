@@ -62,13 +62,14 @@ constexpr ParamKindSet kPhaseRow = bit(PK::SatClock) | bit(PK::SatPhaseBias) | b
                                  | bit(PK::RxClock) | bit(PK::RxPhaseBias) | bit(PK::PhaseColour);
 // A whitened local block row spans its own column and every block column pushed before it
 // (L⁻¹ is lower triangular); the push order is ambiguity, wet delay, ionosphere, receiver
-// clock, receiver code bias, phase colour (ApplicationNetworkAssembly.cpp, PASS B).
+// clock, receiver code bias, receiver phase bias, phase colour (networkStationLocalBlock).
 constexpr ParamKindSet kBlkAmb   = kBorder | bit(PK::Ambiguity);
 constexpr ParamKindSet kBlkZwd   = kBlkAmb | bit(PK::Zwd);
 constexpr ParamKindSet kBlkIono  = kBlkZwd | bit(PK::SlantIono);
 constexpr ParamKindSet kBlkRxClk = kBlkIono | bit(PK::RxClock);
 constexpr ParamKindSet kBlkRxCb  = kBlkRxClk | bit(PK::RxCodeBias);
-constexpr ParamKindSet kBlkPc    = kBlkRxCb | bit(PK::PhaseColour);
+constexpr ParamKindSet kBlkRxPb  = kBlkRxCb | bit(PK::RxPhaseBias);
+constexpr ParamKindSet kBlkPc    = kBlkRxPb | bit(PK::PhaseColour);
 
 constexpr const char* kSplit = "networkStationRows (StationRows.cpp), networkSplitStation (StationSplit.cpp), station step data_rows";
 constexpr const char* kPinFold = "networkPhaseDatumPinRows (PhaseDatum.cpp), station step phase_datum_pins";
@@ -197,6 +198,8 @@ constexpr std::array<ContributionSpec, kContributionKinds> kSpecs = {{
      CU::Rows, kBlkRxClk, kBlockW, kBlock, false, nullptr},
     {CK::BlockRxCbCarry, "block_rx_cb_carry", CC::StationRows, CG::BeforeGate, CS::Station,
      CU::Rows, kBlkRxCb, kBlockW, kBlock, false, nullptr},
+    {CK::BlockRxPbCarry, "block_rx_pb_carry", CC::StationRows, CG::BeforeGate, CS::Station,
+     CU::Rows, kBlkRxPb, kBlockW, kBlock, false, nullptr},
     {CK::BlockPhaseColourCarry, "block_phase_colour_carry", CC::StationRows, CG::BeforeGate,
      CS::StationLos, CU::Rows, kBlkPc, kBlockW, kBlock, false, nullptr},
     // --- Station phase-colour prior rows ---
@@ -457,6 +460,7 @@ bool contributionInCouplingRegion(ContributionKind k) {
         case CK::BlockIonoCarry:
         case CK::BlockRxClockCarry:
         case CK::BlockRxCbCarry:
+        case CK::BlockRxPbCarry:
         case CK::BlockPhaseColourCarry:
             return true;
         default:
@@ -596,7 +600,7 @@ StationTagCheck checkStationTags(const StationAssembly& R) {
     differ(at(CK::PhaseColourBirth), R.pc_birth_rows);
     differ(at(CK::PhaseColourBackstop), R.pc_backstop_rows);
     differ(at(CK::BlockAmbiguityCarry) + at(CK::BlockZwdCarry) + at(CK::BlockIonoCarry)
-               + at(CK::BlockRxClockCarry) + at(CK::BlockRxCbCarry)
+               + at(CK::BlockRxClockCarry) + at(CK::BlockRxCbCarry) + at(CK::BlockRxPbCarry)
                + at(CK::BlockPhaseColourCarry),
            R.pl_blk_rows);
     differ(at(CK::SdEwl), R.sd_ewl_rows);

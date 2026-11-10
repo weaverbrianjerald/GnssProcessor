@@ -674,7 +674,8 @@ struct GlobalVtecShConfig;
  *        phase-bias rows.
  *
  * Step `phase_datum_pins` of kStationBuildSteps (network/assembly/StationBuild.hpp); its kinds:
- * AmbiguityPin, Eq34RpbPin, Eq34RpbRankFloor, Eq34RpbTimeLink. Records: np, pin_audit,
+ * AmbiguityPin, Eq34RpbPin, Eq34RpbRankFloor, Eq34RpbTimeLink (no time-link row under
+ * network.phase_datum_eq34_rpb_in_block: the block-column step folds the carry). Records: np, pin_audit,
  * pin_seed_targets, pl_rpb, prm_rpb_gap_skip. The frozen text of networkPassB_'s produce loop
  * below its bindings.
  * @param build One station's build: the station and its slot writable, the run read only.

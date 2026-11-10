@@ -65,6 +65,7 @@ namespace GnssProcessor {
         BlockIonoCarry,           ///< Whitened local carry block row whose primary column is a slant ionosphere (I-in-block).
         BlockRxClockCarry,        ///< Whitened local carry block row whose primary column is the receiver clock or an ISB (RX-CLK-in-block).
         BlockRxCbCarry,           ///< Whitened local carry block row whose primary column is a receiver code bias (RXCB-IN-BLOCK).
+        BlockRxPbCarry,           ///< Whitened local carry block row whose primary column is an eq34 receiver phase bias (network.phase_datum_eq34_rpb_in_block).
         BlockPhaseColourCarry,    ///< Whitened local carry block row whose primary column is a phase colour.
         // --- Station phase-colour prior rows --------------------------------
         PhaseColourBirth,         ///< The stationary prior row of a phase-colour column with no live carry.

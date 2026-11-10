@@ -1358,6 +1358,7 @@ const std::vector<EntityWriterRow> kEntityWriters = {
     {"networkHarvestRxClock", "network/carry/RxClockCarry.cpp", "stations"},
     {"networkHarvestRxCbBlock", "network/carry/RxCodeBiasCarry.cpp", "stations"},
     {"networkHarvestRxCbCarry", "network/carry/RxCodeBiasCarry.cpp", "stations"},
+    {"networkHarvestRxPbBlock", "network/carry/RxPhaseBiasCarry.cpp", "stations"},
     {"networkHarvestSlantIonoBlock", "network/carry/SlantIonoCarry.cpp", "los"},
     {"networkHarvestZwd", "network/carry/ZwdCarry.cpp", "stations"},
     {"networkZwdEventResponse", "network/carry/ZwdCarry.cpp", "stations"},

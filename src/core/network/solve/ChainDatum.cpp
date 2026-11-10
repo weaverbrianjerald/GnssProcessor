@@ -2989,6 +2989,9 @@ void networkHarvestRxPhaseBias(NetworkRun& run, const NetworkEpoch& ep) {
     double pl_now_s = ep.clock.pl_now_s;
     net::StationTable& sta_rows = ctx.entities.stations;   // the station carries
     const double eq34_rpb_q = ctx.knobs.eq34_rpb_q;
+    // network.phase_datum_eq34_rpb_in_block: the stash happened in the block harvest
+    // (networkHarvestRxPbBlock), with the border regression and the block row.
+    const bool rpb_blk_on = ctx.knobs.rpb_blk_on;
     // ---- End of the bindings ----
     // --- RPB carry (eq34): harvest δ̂_{r,σ}, stash and prune ----------
     // Mirrors the ZWD harvest.  There is no coupling harvest for RPB
@@ -2997,7 +3000,9 @@ void networkHarvestRxPhaseBias(NetworkRun& run, const NetworkEpoch& ep) {
     // exclusions); the diagonal conditional variance keeps the carry strictly
     // local and conservative.
     if (!(eq34_rpb_q > 0.0)) return;
-    for (size_t i = 0; i < stations.size(); ++i) {
+    // The in-block route stashed its entries in the block harvest; a diagonal entry written
+    // here would have no regression and no block row.  The prune below serves both routes.
+    for (size_t i = 0; i < stations.size() && !rpb_blk_on; ++i) {
         if (est_index_of[i] < 0) continue;
         const StationAssembly& R = asm_res[i];
         if (R.pl_rpb.empty()) continue;

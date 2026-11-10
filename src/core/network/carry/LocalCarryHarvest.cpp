@@ -17,6 +17,7 @@
 #include "network/carry/PhaseColourCarry.hpp"
 #include "network/carry/RxClockCarry.hpp"
 #include "network/carry/RxCodeBiasCarry.hpp"
+#include "network/carry/RxPhaseBiasCarry.hpp"
 #include "network/carry/SlantIonoCarry.hpp"
 #include "network/carry/ZwdCarry.hpp"
 
@@ -85,6 +86,7 @@ void networkHarvestLocalCarries(NetworkRun& run, const NetworkEpoch& ep, EpochEv
         networkHarvestSlantIonoBlock(run, ep, border, blocks);
         networkHarvestRxClock(run, ep, border, blocks);
         networkHarvestRxCbBlock(run, ep, border, blocks);
+        networkHarvestRxPbBlock(run, ep, border, blocks);
         networkHarvestZwd(run, ep, border, blocks);
         networkHarvestBorderEnd(run, ep, border);
         networkHarvestRxPhaseBias(run, ep);
@@ -355,6 +357,10 @@ StationHarvestBlock networkHarvestStationBlock(NetworkRun& run, const NetworkEpo
     // border regression and block row here; the standalone diagonal harvest then
     // skips its stash.  Off => `cols` is untouched (byte-identical).
     const bool   rxcb_blk_on   = ctx.knobs.rxcb_blk_on;
+    // The eq34 receiver phase bias in the local block (network.phase_datum_eq34_rpb_in_block):
+    // the unpinned receiver phase-bias columns join the same harvest block.  Off => `cols` is
+    // untouched (byte-identical).
+    const bool   rpb_blk_on    = ctx.knobs.rpb_blk_on;
     ClockCloneHarvest& ccl_h = border.ccl_h;
     // ---- End of the bindings ----
     StationHarvestBlock sb;
@@ -379,6 +385,7 @@ StationHarvestBlock networkHarvestStationBlock(NetworkRun& run, const NetworkEpo
     if (R.pl_amb.empty() && !(iono_blk_on && !R.pl_iono.empty())
         && !(rxclk_blk_on && !R.pl_rxclk.empty())
         && !(rxcb_blk_on && !R.pl_cb.empty())
+        && !(rpb_blk_on && !R.pl_rpb.empty())
         && !(ctx.knobs.pc_on && !R.pl_pc.empty())) return sb;
     const std::size_t est_idx = static_cast<std::size_t>(est_index_of[i]);
     std::vector<Eigen::Index> cols;
@@ -416,8 +423,15 @@ StationHarvestBlock networkHarvestStationBlock(NetworkRun& run, const NetworkEpo
     const bool rxcb_in_cols = rxcb_blk_on && !R.pl_cb.empty();
     if (rxcb_in_cols)
         for (const auto& t : R.pl_cb) cols.push_back(std::get<1>(t));
+    // The eq34 receiver phase bias in the local block: every unpinned receiver phase-bias
+    // column with a live phase row (PASS B's record, pl_rpb), carried or cold, so each is
+    // stashed with its cross terms to the station's other columns.
+    const Eigen::Index rxpb_row0 = static_cast<Eigen::Index>(cols.size());
+    const bool rxpb_in_cols = rpb_blk_on && !R.pl_rpb.empty();
+    if (rxpb_in_cols)
+        for (const auto& t : R.pl_rpb) cols.push_back(std::get<1>(t));
     // The station's present phase-colour columns, after the receiver
-    // code bias and before the ZWD (which keeps its last-row slot).
+    // biases and before the ZWD (which keeps its last-row slot).
     const Eigen::Index pc_row0 = static_cast<Eigen::Index>(cols.size());
     const bool pc_in_cols = ctx.knobs.pc_on && !R.pl_pc.empty();
     if (pc_in_cols)
@@ -451,7 +465,7 @@ StationHarvestBlock networkHarvestStationBlock(NetworkRun& run, const NetworkEpo
     }
     // ---- The station's layout, recorded once ----
     sb.ok   = true;
-    sb.span = harvestBlockSpans(iono_row0, rxclk_row0, rxcb_row0, pc_row0,
+    sb.span = harvestBlockSpans(iono_row0, rxclk_row0, rxcb_row0, rxpb_row0, pc_row0,
                                 static_cast<Eigen::Index>(cols.size()), zwd_in_cols);
     sb.cols = std::move(cols);
     sb.xr   = std::move(xr);
@@ -478,12 +492,13 @@ void networkHarvestBorderEnd(NetworkRun& run, const NetworkEpoch& ep, HarvestBor
 
 std::array<BlockSpan, kBlockSegmentCount> harvestBlockSpans(
     Eigen::Index iono_row0, Eigen::Index rxclk_row0, Eigen::Index rxcb_row0,
-    Eigen::Index pc_row0, Eigen::Index n_cols, bool zwd_in_cols) {
+    Eigen::Index rxpb_row0, Eigen::Index pc_row0, Eigen::Index n_cols, bool zwd_in_cols) {
     const Eigen::Index z = n_cols - (zwd_in_cols ? 1 : 0);
     return {{BlockSpan{0, iono_row0},
              BlockSpan{iono_row0, rxclk_row0 - iono_row0},
              BlockSpan{rxclk_row0, rxcb_row0 - rxclk_row0},
-             BlockSpan{rxcb_row0, pc_row0 - rxcb_row0},
+             BlockSpan{rxcb_row0, rxpb_row0 - rxcb_row0},
+             BlockSpan{rxpb_row0, pc_row0 - rxpb_row0},
              BlockSpan{pc_row0, z - pc_row0},
              BlockSpan{z, zwd_in_cols ? Eigen::Index{1} : Eigen::Index{0}}}};
 }

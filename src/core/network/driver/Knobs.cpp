@@ -367,6 +367,10 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     // Birth-only needs both the floor and the time link it hands the bias over to.
     k.eq34_rpb_birth_only = k.eq34_rpb_prior_w > 0.0 && k.eq34_rpb_q > 0.0
                          && config_.networkPhaseDatumEq34RpbPriorBirthOnly();
+    // The receiver phase bias inside the station block: the key, the live block predicate and
+    // a carried bias (the chain with a positive q).
+    k.rpb_blk    = config_.networkPhaseDatumEq34RpbInBlock();
+    k.rpb_blk_on = k.rpb_blk && k.pl_blk_on && k.eq34_rpb_q > 0.0;
     k.eq34_shift_on = k.phase_datum_eq34 && config_.networkPhaseDatumEq34CarryShift() && !k.carry_invariant;
     k.eq34_longevity = k.phase_datum_eq34 && config_.networkPhaseDatumEq34LongevityElection();
     k.eq34_extend_only = k.phase_datum_eq34 && config_.networkPhaseDatumEq34ExtendOnly();

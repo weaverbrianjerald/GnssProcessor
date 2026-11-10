@@ -104,7 +104,7 @@ struct NetworkRunEndRow {
 };
 
 /// The number of rows of @ref kNetworkRunEndReports.
-inline constexpr std::size_t kNetworkRunEndReportCount = 88;
+inline constexpr std::size_t kNetworkRunEndReportCount = 89;
 
 /// The run-end reports in print order (defined in network/runend/RunEnd.cpp).
 extern const std::array<NetworkRunEndRow, kNetworkRunEndReportCount> kNetworkRunEndReports;

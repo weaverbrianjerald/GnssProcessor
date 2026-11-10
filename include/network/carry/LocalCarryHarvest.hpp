@@ -23,6 +23,7 @@
  *   receiver code bias (rx_cb_carry)    networkHarvestRxCbBlock,                 filter/NetworkRxCodeBiasCarry
  *                                       networkRxCbDatumGaugeCensus,
  *                                       networkHarvestRxCbCarry
+ *   eq34 receiver phase bias, in block  networkHarvestRxPbBlock                  network/carry/RxPhaseBiasCarry
  *   zenith wet delay (zwd_carry)        networkHarvestZwd, networkZwdSeamWindowStep  filter/NetworkZwdCarry
  *   eq34 receiver phase bias (rpb)      networkHarvestRxPhaseBias                filter/NetworkChainDatum
  *   the first post-resume harvest       networkResumeCouplingCensusRow,          app/NetworkWarmResume
@@ -34,7 +35,7 @@
  *   2. Per station: the block layout, the ambiguity rows, the ionosphere-free trace (it reads
  *      the rows just written), then phase colour.  The shared-history notes therefore run
  *      ambiguities then phase colour per station, then kind by kind (every station's
- *      ionosphere, then receiver clock, receiver code bias and ZWD); the shared history's compression
+ *      ionosphere, then receiver clock, receiver code bias, receiver phase bias and ZWD); the shared history's compression
  *      is sensitive to that order.
  *   3. The ambiguity rows read the pending-reseed mark before they clear it; RAIM and the
  *      gross line-of-sight screen run after the harvest because they set new marks.
@@ -104,8 +105,8 @@ struct HarvestBorder {
 /// block build (the carry steps of network/assembly/StationBuild.hpp) must
 /// open a block on the same station-epochs; it pairs entries by block identity and row
 /// index, not by this order.
-enum class BlockSegment : int { Amb, Iono, RxClock, RxCodeBias, PhaseColour, Zwd };
-inline constexpr std::size_t kBlockSegmentCount = 6;
+enum class BlockSegment : int { Amb, Iono, RxClock, RxCodeBias, RxPhaseBias, PhaseColour, Zwd };
+inline constexpr std::size_t kBlockSegmentCount = 7;
 
 /// One segment's rows of the block: its first row and its column count (0: absent).
 struct BlockSpan { Eigen::Index row0{0}; Eigen::Index n{0}; };
@@ -116,6 +117,7 @@ struct BlockSpan { Eigen::Index row0{0}; Eigen::Index n{0}; };
  * @param iono_row0   First row of the ionosphere segment (= the ambiguity count).
  * @param rxclk_row0  First row of the receiver-clock segment.
  * @param rxcb_row0   First row of the receiver code-bias segment.
+ * @param rxpb_row0   First row of the receiver phase-bias segment.
  * @param pc_row0     First row of the phase-colour segment.
  * @param n_cols      The block's column count, the ZWD column included.
  * @param zwd_in_cols The ZWD column is the block's last.
@@ -123,7 +125,7 @@ struct BlockSpan { Eigen::Index row0{0}; Eigen::Index n{0}; };
  */
 std::array<BlockSpan, kBlockSegmentCount> harvestBlockSpans(
     Eigen::Index iono_row0, Eigen::Index rxclk_row0, Eigen::Index rxcb_row0,
-    Eigen::Index pc_row0, Eigen::Index n_cols, bool zwd_in_cols);
+    Eigen::Index rxpb_row0, Eigen::Index pc_row0, Eigen::Index n_cols, bool zwd_in_cols);
 
 /**
  * @brief The run's observed spacing between two carry stamps, in seconds, or 0 when it is not a

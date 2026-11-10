@@ -104,7 +104,7 @@ const std::array<CarrySiteSpec, kCarrySites> kSites{{
      "moves with the receiver's chain frame", nullptr, "cold-started"},
     {S::RxPhaseBiasCoupling, "rx_phase_bias_coupling", "rpb_carry",
      "(station, sys_RPB_signal)", R::Regression,
-     "the receiver phase bias's regression terms (none are harvested)",
+     "the receiver phase bias's regression terms (the in-block route; none on the diagonal route)",
      "s_prev moves with its column", nullptr, "cold-started"},
     {S::RxCodeBiasValue, "rx_code_bias_value", "rx_cb_carry", "(station, code-bias key)",
      R::LocalValue, "the carried receiver code bias (value_abs), in the code-bias datum's frame",

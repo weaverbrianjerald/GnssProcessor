@@ -1476,6 +1476,9 @@ StationStep networkPhaseDatumPinRows(StationBuild& build) {
     const double eq34_rpb_prior_w = ctx.knobs.eq34_rpb_prior_w;
     const double eq34_rpb_q = ctx.knobs.eq34_rpb_q;
     const bool eq34_rpb_birth_only = ctx.knobs.eq34_rpb_birth_only;
+    // network.phase_datum_eq34_rpb_in_block: the carried bias folds as a column of the station's
+    // block (step rx_pb_block), so the diagonal time-link row is not built here.
+    const bool rpb_blk_on = ctx.knobs.rpb_blk_on;
     const net::StationTable& sta_rows = ctx.entities.stations;   // rpb: read-only in the parallel build
     // ---- End of the bindings ----
 
@@ -1648,7 +1651,9 @@ StationStep networkPhaseDatumPinRows(StationBuild& build) {
                     // per-epoch re-estimate lacks.  The carry map is
                     // read-only here (parallel build); stash happens
                     // post-solve, erase at the election dirty walk.
-                    const LocalCarry* rc = net::get(
+                    // In the block route the column is recorded below and folds, with its
+                    // gap gate and its count, in the block-column step.
+                    const LocalCarry* rc = rpb_blk_on ? nullptr : net::get(
                         sta_rows, StationId{static_cast<int>(i)}, &net::StationState::signals,
                         rpb_key, &net::StationSignalState::rpb);
                     if (rc != nullptr) {

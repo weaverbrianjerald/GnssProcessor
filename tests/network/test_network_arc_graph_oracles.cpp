@@ -6455,6 +6455,75 @@ TEST(NetworkArcGraphOracle, RootRowKeepsTheTargetOfARootThatStaysAndMovesTheMemo
     EXPECT_EQ(bed.ctx->counters.eq34_mismatch_epochs, 0);
 }
 
+// The carried bias of the in-block route (network.phase_datum_eq34_rpb_in_block) is the same entry, with a
+// regression on the border and a row of the station's harvest block.  The root row reads its value: the new root
+// is pinned at it and the entry, its regression and its block row are left as they are.  With no entry (the time
+// link switched off stashes nothing, on either route) the handover is left as built, at the zero target.
+TEST(NetworkArcGraphOracle, RootRowPinsANewRootAtTheCarriedBiasOfTheBlockRouteAndAtZeroWithNoCarry) {
+    LogManager lm;
+    const std::vector<std::string> names{"AAAA", "BBBB", "CCCC"};
+    for (const bool carried : {true, false}) {
+        const std::string what = carried ? "an in-block entry" : "no entry";
+        KeptBed bed = makeRowsBed(lm, {"root"}, 8640 + (carried ? 1 : 0), names);
+        ASSERT_TRUE(bed.cfg && bed.ctx) << what;
+        bed.ctx->knobs.rpb_blk = true;      // the route; the election reads the entry, not the knob
+        bed.ctx->knobs.rpb_blk_on = true;
+        bed.elect(arcsChainEpoch(3, kPathArcs));
+        auto blk = std::make_shared<PlHarvestBlock>();
+        blk->C = Eigen::MatrixXd::Identity(2, 2) * 4.0;
+        if (carried) {
+            LocalCarry lc{};
+            lc.value_abs   = 12.375;   // a bias in the chain's frame: metres, not a fraction of a cycle
+            lc.var         = 4.0;      // the block's own variance, not the collapsed one of the time link
+            lc.last_seen_s = 0.0;
+            lc.coupling    = {CoupledShared{SharedParamKind::PhaseBias, "G02", "L1C", 0, 0, 'C',
+                                            /*sh_layer=*/0, /*coeff=*/-1.0, /*s_prev=*/0.25, /*p_prev=*/0.01}};
+            lc.blk     = blk;
+            lc.blk_idx = 1;
+            net::put(bed.ctx->entities.stations, StationId{1}, &net::StationState::signals, gpsRpbKey(),
+                     &net::StationSignalState::rpb) = lc;
+        }
+        const ChainRun r = bed.elect(arcsChainEpoch(3, kRootGone));
+        ASSERT_TRUE(r.events.phase_datum.chain) << what;
+        EXPECT_TRUE(r.stations[1].pinned_rpb_keys.count(gpsRpbKey())) << what;   // B is the datum receiver
+        const auto c = rootCounters(*bed.ctx);
+        EXPECT_EQ(c[kRootHandovers], 1) << what;
+        const ChainRootObs* ro = rootRecord(*r.events.phase_datum.chain);
+        ASSERT_TRUE(ro) << what;
+        if (!carried) {
+            EXPECT_TRUE(r.stations[1].pinned_rpb_targets.empty()) << what;   // the pin at zero
+            EXPECT_EQ(c[kRootPinned], 0) << what;
+            EXPECT_EQ(c[kRootNotCarry], 1) << what;
+            EXPECT_EQ(ro->outcome, ChainRootOutcome::NoCarry) << what;
+            EXPECT_EQ(rootTargetOf(*bed.ctx, 1), nullptr) << what;
+            continue;
+        }
+        ASSERT_EQ(r.stations[1].pinned_rpb_targets.size(), 1u) << what;
+        EXPECT_EQ(r.stations[1].pinned_rpb_targets.at(gpsRpbKey()), 12.375) << what;
+        EXPECT_EQ(c[kRootPinned], 1) << what;
+        EXPECT_EQ(c[kRootNotCarry], 0) << what;
+        EXPECT_EQ(ro->outcome, ChainRootOutcome::Pinned) << what;
+        EXPECT_EQ(ro->target_m, 12.375) << what;
+        EXPECT_NEAR(ro->sigma_m, 2.0, 1e-15) << what;
+        ASSERT_TRUE(rootTargetOf(*bed.ctx, 1)) << what;
+        EXPECT_EQ(*rootTargetOf(*bed.ctx, 1), 12.375) << what;
+        // The entry is read, not consumed: its value, its regression and its block row stay.
+        const LocalCarry* e = net::get(bed.ctx->entities.stations, StationId{1}, &net::StationState::signals,
+                                       gpsRpbKey(), &net::StationSignalState::rpb);
+        ASSERT_TRUE(e) << what;
+        EXPECT_EQ(e->value_abs, 12.375) << what;
+        EXPECT_EQ(e->blk, blk) << what;
+        EXPECT_EQ(e->blk_idx, 1) << what;
+        ASSERT_EQ(e->coupling.size(), 1u) << what;
+        EXPECT_EQ(e->coupling[0].coeff, -1.0) << what;
+        // The root stays: the target is the memory's, whatever the stale entry reads later.
+        const ChainRun r2 = bed.elect(arcsChainEpoch(3, kRootGone));
+        ASSERT_EQ(r2.stations[1].pinned_rpb_targets.size(), 1u) << what;
+        EXPECT_EQ(r2.stations[1].pinned_rpb_targets.at(gpsRpbKey()), 12.375) << what;
+        EXPECT_EQ(bed.ctx->counters.eq34_mismatch_epochs, 0) << what;
+    }
+}
+
 // A new root with no carried bias (no carry, or one past the horizon) is left as built: no target, the satellites
 // unknown, the handover counted by its cause.  A carry exactly at the horizon is inside it.
 TEST(NetworkArcGraphOracle, RootRowLeavesAHandoverWithNoCarryInsideTheHorizonAsBuilt) {

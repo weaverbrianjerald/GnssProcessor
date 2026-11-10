@@ -210,6 +210,8 @@ const std::array<NetworkRunEndRow, kNetworkRunEndReportCount> kNetworkRunEndRepo
      "network/diag/ShDevVtec.cpp", networkShDevCarryRunEnd},
     {"the carried receiver code biases and their family",
      "network/carry/RxCodeBiasCarryRunEnd.cpp", networkRxCodeBiasCarryRunEnd},
+    {"the eq34 receiver phase bias carried in the station block",
+     "network/carry/RxPhaseBiasCarry.cpp", networkRxPhaseBiasCarryRunEnd},
     {"the S-basis datum arms and the code-datum family arms",
      "network/solve/Sbasis.cpp", networkSbasisRunEnd},
     {"the CB-excursion guard (Phase 2.1)",

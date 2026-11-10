@@ -166,8 +166,8 @@ TEST(NetworkRowClassifyTest, RaimPoolAdmitsThePhaseRowsAndTheRowsOnAmbiguitiesOn
                                 CK::CouplingScalar,
                                 CK::BlockAmbiguityCarry, CK::BlockZwdCarry,
                                 CK::BlockIonoCarry,     CK::BlockRxClockCarry,
-                                CK::BlockRxCbCarry,     CK::BlockPhaseColourCarry,
-                                CK::SdEwl};
+                                CK::BlockRxCbCarry,     CK::BlockRxPbCarry,
+                                CK::BlockPhaseColourCarry, CK::SdEwl};
     for (const CK k : allKinds())
         EXPECT_EQ(raimPoolAdmitsKind(k), admitted.count(k) > 0) << contributionKindName(k);
     EXPECT_FALSE(raimPoolAdmitsKind(CK::Unset));

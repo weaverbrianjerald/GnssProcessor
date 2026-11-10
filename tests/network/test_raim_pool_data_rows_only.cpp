@@ -105,7 +105,8 @@ TEST(RaimPoolDataRowsOnly, OnAdmitsTheOwnPhaseRowsOnly) {
     // The carried-prior rows the off rule admits are refused, whatever they clear.
     for (const CK k : {CK::CouplingScalar, CK::BlockAmbiguityCarry,
                        CK::BlockZwdCarry, CK::BlockIonoCarry, CK::BlockRxClockCarry,
-                       CK::BlockRxCbCarry, CK::BlockPhaseColourCarry, CK::SdEwl}) {
+                       CK::BlockRxCbCarry, CK::BlockRxPbCarry, CK::BlockPhaseColourCarry,
+                       CK::SdEwl}) {
         EXPECT_TRUE(raimPoolAdmitsRow(makeRowTag(k, "G05", "L1W"), true, col, false))
             << contributionKindName(k);
         EXPECT_FALSE(raimPoolAdmitsRow(makeRowTag(k, "G05", "L1W"), true, col, true))

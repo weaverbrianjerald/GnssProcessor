@@ -327,6 +327,7 @@ add_library(gnss_core STATIC
     src/core/network/carry/PhaseColourCarry.cpp
     src/core/network/carry/RxClockCarry.cpp
     src/core/network/carry/RxCodeBiasCarry.cpp
+    src/core/network/carry/RxPhaseBiasCarry.cpp
     src/core/network/carry/SlantIonoCarry.cpp
     src/core/network/assembly/StationAnchors.cpp
     src/core/network/assembly/StationCarry.cpp
@@ -615,6 +616,7 @@ add_executable(gnss_tests
     tests/network/test_network_invariant_carry_driver.cpp
     tests/network/test_shdev_carry.cpp
     tests/network/test_rx_cb_carry.cpp
+    tests/network/test_rx_pb_carry.cpp
     tests/network/test_network_phase_datum.cpp
     tests/test_eq34_reattach_hygiene.cpp
     tests/test_signal_integrity.cpp

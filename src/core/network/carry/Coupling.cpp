@@ -168,6 +168,7 @@ ContributionKind localBlockColKind(const LocalBlockCol& c) {
     if (c.is_iono)   return ContributionKind::BlockIonoCarry;
     if (c.is_rx_clk) return ContributionKind::BlockRxClockCarry;
     if (c.is_rx_cb)  return ContributionKind::BlockRxCbCarry;
+    if (c.is_rx_pb)  return ContributionKind::BlockRxPbCarry;
     if (c.is_pc)     return ContributionKind::BlockPhaseColourCarry;
     return ContributionKind::BlockAmbiguityCarry;
 }
@@ -504,6 +505,7 @@ bool CouplingRowBuilder::buildLocalBlock(const std::vector<LocalBlockCol>& cols)
             if (c.is_rx_isb) ++R.pl_blk_rxclk_isb_cols;
         }
         if (c.is_rx_cb) ++R.pl_blk_rxcb_cols;   // RXCB-IN-BLOCK, same rule
+        if (c.is_rx_pb) ++R.pl_blk_rxpb_cols;   // the receiver phase bias in the block, same rule
         ing.push_back(std::move(g));
     }
     const Eigen::Index n = static_cast<Eigen::Index>(ing.size());
@@ -568,6 +570,7 @@ bool CouplingRowBuilder::buildLocalBlock(const std::vector<LocalBlockCol>& cols)
                 // partitions pl_blk_pair_missing.
                 if (ci.is_rx_clk || cj.is_rx_clk) ++R.pl_blk_rxclk_missing_cross;
                 if (ci.is_rx_cb || cj.is_rx_cb) ++R.pl_blk_rxcb_missing_cross;   // RXCB-IN-BLOCK
+                if (ci.is_rx_pb || cj.is_rx_pb) ++R.pl_blk_rxpb_missing_cross;   // the receiver phase bias
                 continue;
             }
             if (ci.vce_fac != 1.0 || cj.vce_fac != 1.0) v *= std::sqrt(ci.vce_fac * cj.vce_fac);
@@ -1050,6 +1053,11 @@ void networkLocalBlockTally(NetworkRunContext& ctx,
             ctx.counters.n_pl_blk_rxcb_not_folded     += Rc.pl_blk_rxcb_not_folded;
             ctx.counters.n_pl_blk_rxcb_missing_cross  += Rc.pl_blk_rxcb_missing_cross;
             ctx.counters.n_rxcb_blk_restored_skip     += Rc.pl_rxcb_restored_skip;
+            // The receiver phase bias in the block: the same discipline.
+            ctx.counters.n_pl_blk_rxpb_cols           += Rc.pl_blk_rxpb_cols;
+            ctx.counters.n_pl_blk_rxpb_not_folded     += Rc.pl_blk_rxpb_not_folded;
+            ctx.counters.n_pl_blk_rxpb_missing_cross  += Rc.pl_blk_rxpb_missing_cross;
+            ctx.counters.n_rxpb_blk_no_block_skip     += Rc.pl_rxpb_no_block_skip;
             ctx.counters.n_rxclk_carry_gap_drop       += Rc.pl_blk_rxclk_gap_drop;
             for (int b = 0; b < 5; ++b)
                 ctx.counters.n_pl_blk_hist[b] += Rc.pl_blk_hist[b];
@@ -1120,6 +1128,7 @@ void networkStationLocalBlock(StationCarryFrame& carry) {
     std::vector<LocalBlockCol>& rxclk_bc = carry.rxclk_bc;
     std::vector<LocalBlockCol>& rxcb_bc = carry.rxcb_bc;
     std::vector<char>& rxcb_ifb = carry.rxcb_ifb;
+    std::vector<LocalBlockCol>& rpb_bc = carry.rpb_bc;
     std::vector<LocalBlockCol>& pc_bc = carry.pc_bc;
     // The alias lines of networkPassB_ this function reads, verbatim.
     const double pl_max_gap_s  = ctx.knobs.pl_max_gap_s;
@@ -1172,7 +1181,7 @@ void networkStationLocalBlock(StationCarryFrame& carry) {
     // jointly among themselves, which is the correct prior, and the
     // pl_pend-driven code below is a no-op on an empty pl_pend.
     if (!pl_pend.empty() || !iono_bc.empty() || !rxclk_bc.empty()
-        || !rxcb_bc.empty() || !pc_bc.empty()) {
+        || !rxcb_bc.empty() || !rpb_bc.empty() || !pc_bc.empty()) {
         bool blk_done = false;
         if (pl_blk_on) {
             // Local block (F3, network.phase_leveling_local_block,
@@ -1285,6 +1294,9 @@ void networkStationLocalBlock(StationCarryFrame& carry) {
             for (const LocalBlockCol& rc : rxclk_bc) bc.push_back(rc);
             // RXCB-IN-BLOCK: the receiver code-bias columns last.
             for (const LocalBlockCol& cc : rxcb_bc) bc.push_back(cc);
+            // The eq34 receiver phase-bias columns after them (empty without
+            // network.phase_datum_eq34_rpb_in_block).
+            for (const LocalBlockCol& pb : rpb_bc) bc.push_back(pb);
             // The phase-colour columns last.
             for (const LocalBlockCol& pc : pc_bc) bc.push_back(pc);
             blk_done = bc.empty() ? true : cb.buildLocalBlock(bc);
@@ -1342,6 +1354,10 @@ void networkStationLocalBlock(StationCarryFrame& carry) {
                                      rxcb_bc[k].col) == R.rxcb_refused.end())
                         ++st.l5b.blk_folds;
             }
+            // The receiver phase bias's degrade edge: no diagonal row to fall back to,
+            // by design, so a non-SPD block means its carry did not act this station-epoch.
+            if (!blk_done && !rpb_bc.empty())
+                R.pl_blk_rxpb_not_folded += static_cast<long long>(rpb_bc.size());
             // A phase-colour column folded through the block unless the
             // scalar screen refused it; on a non-SPD block each column takes the
             // per-column route with the same predicted copy.  A column that folds

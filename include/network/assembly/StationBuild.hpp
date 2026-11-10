@@ -192,6 +192,7 @@ struct StationCarryFrame {
     std::vector<LocalCarry>    rxclk_pred;         ///< Their drift-predicted carries (rxclk_bc points here; reserved before the first push).
     std::vector<LocalBlockCol> rxcb_bc;            ///< The receiver code-bias block columns.
     std::vector<char>          rxcb_ifb;           ///< Which rxcb_bc columns are receiver IFBs.
+    std::vector<LocalBlockCol> rpb_bc;             ///< The eq34 receiver phase-bias block columns.
     std::vector<LocalBlockCol> pc_bc;              ///< The phase-colour block columns.
     std::vector<LocalCarry>    pc_pred;            ///< Their predicted carries (pc_bc points here; reserved before the first push).
 };
@@ -206,7 +207,7 @@ struct StationCarryStep {
     ContributionKindSet kinds;   ///< The row and prior kinds this step can create.
     StationCarryFn      build;   ///< Gates itself at its first line.
 };
-inline constexpr std::size_t kStationCarryStepCount = 11;
+inline constexpr std::size_t kStationCarryStepCount = 12;
 /// The carried-prior section, in walk order.
 extern const std::array<StationCarryStep, kStationCarryStepCount> kStationCarrySteps;
 

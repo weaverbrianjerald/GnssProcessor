@@ -31,6 +31,7 @@
 #include "network/qc/Raim.hpp"
 #include "network/carry/RxClockCarry.hpp"
 #include "network/carry/RxCodeBiasCarry.hpp"
+#include "network/carry/RxPhaseBiasCarry.hpp"
 #include "network/ar/SdEwlAr.hpp"
 #include "network/carry/SlantIonoCarry.hpp"
 #include "network/assembly/StationAnchors.hpp"
@@ -152,7 +153,7 @@ const StationBuildSteps kStationBuildSteps = {{
     {"carried_priors", "filter/NetworkStationCarry",
      kindBit(CK::PriorAmbiguityCarry) | kindBit(CK::CouplingScalar) |
      kindBit(CK::BlockAmbiguityCarry) | kindBit(CK::BlockZwdCarry) | kindBit(CK::BlockIonoCarry) |
-     kindBit(CK::BlockRxClockCarry) | kindBit(CK::BlockRxCbCarry) |
+     kindBit(CK::BlockRxClockCarry) | kindBit(CK::BlockRxCbCarry) | kindBit(CK::BlockRxPbCarry) |
      kindBit(CK::BlockPhaseColourCarry) | kindBit(CK::PriorAmbiguityOraclePin) |
      kindBit(CK::PriorZwdCarry) | kindBit(CK::PriorRxCbDatum) | kindBit(CK::PriorRxCbDatumPrePd) |
      kindBit(CK::PriorRxCbCarry),
@@ -178,12 +179,15 @@ const std::array<StationCarryStep, kStationCarryStepCount> kStationCarrySteps = 
     {"rx_cb_block", "filter/NetworkRxCodeBiasCarry",
      0,
      &networkRxCbBlockColumns},
+    {"rx_pb_block", "filter/NetworkRxPhaseBiasCarry",
+     0,
+     &networkRxPbBlockColumns},
     {"phase_colour_block", "filter/NetworkPhaseColourCarry",
      0,
      &networkPhaseColourBlockColumns},
     {"local_block", "filter/NetworkCoupling",
      kindBit(CK::BlockAmbiguityCarry) | kindBit(CK::BlockZwdCarry) | kindBit(CK::BlockIonoCarry) |
-     kindBit(CK::BlockRxClockCarry) | kindBit(CK::BlockRxCbCarry) |
+     kindBit(CK::BlockRxClockCarry) | kindBit(CK::BlockRxCbCarry) | kindBit(CK::BlockRxPbCarry) |
      kindBit(CK::BlockPhaseColourCarry) | kindBit(CK::CouplingScalar),
      &networkStationLocalBlock},
     {"oracle_pin", "filter/NetworkOraclePin",
@@ -198,7 +202,7 @@ const std::array<StationCarryStep, kStationCarryStepCount> kStationCarrySteps = 
     {"coupling_region", "filter/NetworkCoupling",
      kindBit(CK::CouplingScalar) | kindBit(CK::BlockAmbiguityCarry) | kindBit(CK::BlockZwdCarry) |
      kindBit(CK::BlockIonoCarry) | kindBit(CK::BlockRxClockCarry) | kindBit(CK::BlockRxCbCarry) |
-     kindBit(CK::BlockPhaseColourCarry),
+     kindBit(CK::BlockRxPbCarry) | kindBit(CK::BlockPhaseColourCarry),
      &networkCouplingRegionRows},
     {"prior_finalize", "filter/NetworkStationCarry",
      0,

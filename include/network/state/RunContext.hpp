@@ -91,6 +91,7 @@
 #include "network/diag/AmbStateTrace.hpp"                    // AmbStateTraceCounters
 #include "network/carry/SlantIonoCarry.hpp"                  // SlantIonoCarryCounters
 #include "network/carry/RxCodeBiasCarry.hpp"                 // RxCodeBiasCarryCounters
+#include "network/carry/RxPhaseBiasCarry.hpp"                // RxPhaseBiasCarryCounters
 #include "network/state/WarmResumeCounters.hpp"              // WarmResumeCounters
 #include "network/carry/RxClockCarry.hpp"                    // RxClockCarryCounters
 #include "network/carry/ZwdCarry.hpp"                        // ZwdCarryCounters
@@ -373,6 +374,7 @@ namespace GnssProcessor {
         bool rxclk_isb{};           ///< Carry the per-system ISB columns too (pure RW, no drift state).
         bool rx_cb_on{};      ///< rx-CB carry (SPEC_rx_cb_carry); loader guarantees code_datum_time_linked.
         bool rxcb_blk{};      ///< RXCB-IN-BLOCK (network.carry_rx_code_bias_in_block): the rx-CB columns fold inside the station's whitened local block; loader guarantees rx_cb_on + coupling + a local block.
+        bool rpb_blk{};       ///< network.phase_datum_eq34_rpb_in_block: the eq34 receiver phase-bias columns fold inside the station's whitened local block; loader guarantees the chain, a positive q, coupling and a local block.
         /// The live F3 block predicate: @ref pl_local_block and @ref carry_cpl_cond (the block's
         /// rows are coupling rows).  Read by networkPassB_ (the produce's block route and the
         /// tally's F3 telemetry) and, through the four predicates below, by the harvest
@@ -396,6 +398,10 @@ namespace GnssProcessor {
         /// The receiver code-bias columns join the F3 block: @ref rxcb_blk, @ref pl_blk_on and
         /// @ref rx_cb_on.  Read by networkPassB_ and networkLocalCarryHarvest.
         bool rxcb_blk_on{};
+        /// The eq34 receiver phase-bias columns join the F3 block: @ref rpb_blk, @ref pl_blk_on
+        /// and a carried bias (@ref eq34_rpb_q above 0).  Read by the pin step (no diagonal time
+        /// link then), the block-column step and the harvest.
+        bool rpb_blk_on{};
         /// network.cycle_slip.relevel_free_epoch: the produce consults the latched free-epoch
         /// set and the tally folds its skips (SPEC_slip_relevel_walk).  Read by networkPassB_.
         bool relevel_free_on{};
@@ -2354,6 +2360,7 @@ namespace GnssProcessor {
     ///   AmbStateTraceCounters              network/diag/AmbStateTrace.hpp
     ///   SlantIonoCarryCounters             network/carry/SlantIonoCarry.hpp
     ///   RxCodeBiasCarryCounters            network/carry/RxCodeBiasCarry.hpp
+    ///   RxPhaseBiasCarryCounters           network/carry/RxPhaseBiasCarry.hpp
     ///   WarmResumeCounters                 network/state/WarmResumeCounters.hpp
     ///   RxClockCarryCounters               network/carry/RxClockCarry.hpp
     ///   ZwdCarryCounters                   network/carry/ZwdCarry.hpp
@@ -2441,6 +2448,7 @@ namespace GnssProcessor {
           AmbStateTraceCounters,
           SlantIonoCarryCounters,
           RxCodeBiasCarryCounters,
+          RxPhaseBiasCarryCounters,
           WarmResumeCounters,
           RxClockCarryCounters,
           ZwdCarryCounters,
