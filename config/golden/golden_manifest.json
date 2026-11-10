@@ -72,7 +72,8 @@
   "(network.sbasis_values_first).  Each is identical to its serial path (each key alone and the four together against off on",
   "both goldens over 2 h, and at 305 stations), so the baseline pair stands; main against the four keys reads -41.5 % (field)",
   "and -34.8 % (sim) on the loop.",
-  "2026-11-07 (same rule, the review builds of card SRN): network.second_code_system_aware (card SCC2), network.vcf and network.vcf_apply (card VCF) pinned on both goldens; receiver.troposphere_apriori_source gpt3 (card TRP) on the field golden, so on the BeiDou lineage; the sim golden keeps standard_atmosphere (exception). Kept off: card ZTL's wet-delay link (sim NEES 2.8 alone) and network.vcf_apply_phase (KEEP_OFF). Fresh convergence only (second_code_system_aware is fingerprinted)."
+  "2026-11-07 (same rule, the review builds of card SRN): network.second_code_system_aware (card SCC2), network.vcf and network.vcf_apply (card VCF) pinned on both goldens; receiver.troposphere_apriori_source gpt3 (card TRP) on the field golden, so on the BeiDou lineage; the sim golden keeps standard_atmosphere (exception). Kept off: card ZTL's wet-delay link (sim NEES 2.8 alone) and network.vcf_apply_phase (KEEP_OFF). Fresh convergence only (second_code_system_aware is fingerprinted).",
+  "2026-11-10 (same rule, card SCW section 7): network.emit_pb_hold_trip_generation with network.emit_pb_hold_trip_generation_trigger clock_event pinned on both goldens, so on the BeiDou lineage: a satellite clock event of the IF-TD pools opens a phase-bias hold generation (the consumer re-bases instead of reinflating); a trip of the guard's test opens none. The four 6 h arms are identical to the baseline pair record for record, so _rf0hv18 stands. Not fingerprinted (emit side, event only)."
  ],
  "goldens": [
   {
@@ -129,6 +130,8 @@
     "network.vcf": true,
     "network.vcf_apply": true,
    "network.emit_pb_hold": true,
+    "network.emit_pb_hold_trip_generation": true,
+    "network.emit_pb_hold_trip_generation_trigger": "clock_event",
     "network.gross_los_screen": true,
     "network.gross_los_min_rows_rule": "available",
     "network.gross_los_emit_exclude": true,
@@ -247,6 +250,8 @@
     "network.vcf_apply": true,
     "receiver.troposphere_apriori_source": "gpt3",
    "network.emit_pb_hold": true,
+    "network.emit_pb_hold_trip_generation": true,
+    "network.emit_pb_hold_trip_generation_trigger": "clock_event",
     "network.gross_los_screen": true,
     "network.gross_los_min_rows_rule": "available",
     "network.gross_los_emit_exclude": true,
