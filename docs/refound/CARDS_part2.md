@@ -198,3 +198,5 @@ verbatim on 2026-11-07 under the 60 KB bar. Entries are in pre-registration orde
   response (slip latch, RAIM per-arc attribution), off and byte-identical by default. At q 5e-8 the field wet delay moves 0.73 mm per epoch
   (was 2.59), the slip-epoch excursions are gone, user and census unchanged; the sim truth bar fails (hours 4 to 6 rms 6.4 mm against 4,
   NEES to 2.8; 0.77 to 0.86 with the phase colour state); no integer gain. Not recommended for arming alone; the colour pairing is owed.
+  2026-11-09: section 6 pre-registered: the pairing with the phase colour state graded on both beds (field bars G7), identity rows
+  at the re-coupling edge (G8, G9: an injected outage and slip) and the two erase gaps of section 5 closed.
