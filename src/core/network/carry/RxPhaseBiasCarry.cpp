@@ -43,6 +43,17 @@ bool rxPbStepExceeds(double value_now, double var_now, double value_carried, dou
     return std::isfinite(step) && step > kRxPbStepSigma * std::sqrt(var);
 }
 
+RxPbBlockAction rxPbBlockGate(double gap_s, double max_gap_s, double var, double q_m2s,
+                              bool has_block_row, bool others_pending, bool block_shared,
+                              double& var_eff) {
+    if (!(gap_s >= 0.0 && gap_s <= max_gap_s)) return RxPbBlockAction::SkipGap;
+    if (!has_block_row || (others_pending && !block_shared)) return RxPbBlockAction::SkipNoBlock;
+    const double v = var + q_m2s * gap_s;
+    if (!(v > 0.0) || !std::isfinite(v)) return RxPbBlockAction::SkipVariance;
+    var_eff = v;
+    return RxPbBlockAction::Fold;
+}
+
 // ---- PASS B station steps ----
 
 void networkRxPbBlockColumns(StationCarryFrame& carry) {
@@ -89,17 +100,20 @@ void networkRxPbBlockColumns(StationCarryFrame& carry) {
                                         &net::StationSignalState::rpb);
         if (rc == nullptr) continue;   // cold: the harvest seeds it
         const double gap = pl_now_s - rc->last_seen_s;
-        if (!(gap >= 0.0 && gap <= pl_max_gap_s)) {
+        const bool has_row = rc->blk && rc->blk_idx >= 0;
+        double var_eff = 0.0;
+        const RxPbBlockAction act = rxPbBlockGate(gap, pl_max_gap_s, rc->var, eq34_rpb_q, has_row, others,
+                                                  has_row && others && shared(rc->blk), var_eff);
+        if (act == RxPbBlockAction::SkipGap) {
             // The decoupling edge of a gap: past the horizon the entry does not fold.
             if (carryPastHorizon(pl_now_s, rc->last_seen_s, pl_max_gap_s)) ++R.prm_rpb_gap_skip;
             continue;
         }
-        if (!rc->blk || rc->blk_idx < 0 || (others && !shared(rc->blk))) {
+        if (act == RxPbBlockAction::SkipNoBlock) {
             ++R.pl_rxpb_no_block_skip;
             continue;
         }
-        const double var_eff = rc->var + eq34_rpb_q * gap;
-        if (!(var_eff > 0.0) || !std::isfinite(var_eff)) continue;
+        if (act != RxPbBlockAction::Fold) continue;
         LocalBlockCol col{rcol, rx_lin, rc, var_eff, gap, /*vce_fac=*/1.0};
         col.is_rx_pb = true;
         if (const auto sig = receiverPhaseBiasSignal(rpb_key)) col.signal = *sig;   // its block row's tag

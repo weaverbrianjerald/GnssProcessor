@@ -4,6 +4,7 @@ directories of its arms (scripts/irdg_run.py).  One line per arm; every reading 
 size.  Run with an interpreter that has numpy (py -3.14).
 
     py -3.14 scripts/irdg_grade.py ib TAG [...]         I-b per event class (simnet_chain_frame_grade.py)
+    py -3.14 scripts/irdg_grade.py ibcmp A B [A B ...]  I-b of two arms on one bed, class by class
     py -3.14 scripts/irdg_grade.py sigma TAG [...]      the receiver phase bias's formal sigma by time
     py -3.14 scripts/irdg_grade.py dcb TAG [...]        the receiver DCB against truth at the last epoch
     py -3.14 scripts/irdg_grade.py fixes TAG [...]      the search's would-be fixes against truth
@@ -12,6 +13,8 @@ size.  Run with an interpreter that has numpy (py -3.14).
     py -3.14 scripts/irdg_grade.py hold TAG [...]       the would-be certification and the certifier reading
     py -3.14 scripts/irdg_grade.py event FIX CTL --tow T  one event epoch's undeclared pairs against a control
     py -3.14 scripts/irdg_grade.py identity A B         nom_td_gate.py --whole, and the lines in one run only
+    py -3.14 scripts/irdg_grade.py zwd | stop | reref TAG [...]   readings without a bar: the wet delay against
+                                                        truth, the stop rule's chords, the reference-free DD error
     py -3.14 scripts/irdg_grade.py summary TAG [...]    emission, rank, loop time, the key's counters
     py -3.14 scripts/irdg_grade.py root TAG [...]       the root handovers and their pins
     py -3.14 scripts/irdg_grade.py --selftest
@@ -130,6 +133,40 @@ def cmd_ib(a):
     return 0
 
 
+def ib_rows(tag, fresh=False):
+    """(parse_ib, parse_ib_stats, mode) of a tag's cached frame grade."""
+    fx, mode = fixture_of(tag)
+    text = cached("ib_%s.txt" % tag,
+                  [sys.executable, HERE + "/simnet_chain_frame_grade.py", fx, "--run", run_dir(tag),
+                   "--source", "prehold", "--mode", mode], fresh)
+    return parse_ib(text), parse_ib_stats(text), mode
+
+
+def cmd_ibcmp(a):
+    """I-b of two arms on one bed, class by class: the integer steps and the pairs over the bar's channel
+    (card IRDG bar G7: the second arm no higher than the first)."""
+    for i in range(0, len(a.tags) - 1, 2):
+        ta, tb = a.tags[i], a.tags[i + 1]
+        (ra, sa, mode), (rb, sb, _) = ib_rows(ta, a.fresh), ib_rows(tb, a.fresh)
+        ch = "E1" if mode == "microscope" else "WL"
+        for cls in sorted(set(ra) | set(rb)):
+            if a.classes and cls not in a.classes:
+                continue
+            xa, xb = ra.get(cls), rb.get(cls)
+            if not xa or not xb:
+                print("%-14s %-13s only in %s" % (bed_of(ta), cls, ta if xa else tb))
+                continue
+            pa, pb = xa["max"].get(ch, (0.0, 0)), xb["max"].get(ch, (0.0, 0))
+            worse = xb["integer"] > xa["integer"] or pb[1] > pa[1]
+            print("%-6s %-5s %-13s n %3d/%3d  integer %5d -> %5d  %s pairs over the bar %5d -> %5d (max %.3f -> %.3f, p50 %.4f -> %.4f)  %s/%s  %s"
+                  % (bed_of(ta), mode[:5], cls, xa["n"], xb["n"], xa["integer"], xb["integer"], ch, pa[1], pb[1],
+                     pa[0] if pa[1] else sa.get((cls, ch), {}).get("max", 0.0),
+                     pb[0] if pb[1] else sb.get((cls, ch), {}).get("max", 0.0),
+                     sa.get((cls, ch), {}).get("p50", float("nan")), sb.get((cls, ch), {}).get("p50", float("nan")),
+                     xa["verdict"], xb["verdict"], "HIGHER" if worse else "no higher"))
+    return 0
+
+
 # ----------------------------------------------------------------------------- formal sigma
 def rpb_sigma_p50(tag, times=SIGMA_TIMES):
     """time offset -> (p50 of sigma_m over unpinned receiver columns, n)."""
@@ -206,6 +243,10 @@ def search_fixes(tag, fresh=False):
     text = cached("fixes_%s.txt" % tag,
                   [sys.executable, HERE + "/simnet_producer_ar_grade.py", fixture_of(tag)[0], "--run", run_dir(tag)],
                   fresh)
+    at = text.find("---- h0_12 window")
+    if at < 0:
+        return None
+    text = text[at:]
     kept = re.search(r"CORRECT-FIX RATE among kept: (\d+)/(\d+)", text)
     ceil = re.search(r"FIXABILITY CEILING.*= +([0-9.]+)%", text)
     wrong = re.search(r"WRONG FIXES \((\d+)\)", text)
@@ -284,6 +325,65 @@ def cmd_heldout(a):
         if a.sites:
             for n in sorted(s):
                 print("    %-10s %.3f %.3f" % (n, s[n][0], s[n][1]))
+    return 0
+
+
+# ----------------------------------------------------------------------------- readings without a bar
+def zwd_error(tag):
+    """(p50, p90, p99, max, n) of |estimated wet delay - truth| over all receivers and epochs after hour 1."""
+    fx = fixture_of(tag)[0]
+    truth = {}
+
+    def truth_of(name):
+        if name not in truth:
+            p = "%s/%s/truth_tropo.csv" % (fx, name)
+            truth[name] = ({round(float(r["tow_s"]), 3): float(r["zwd_m"]) for r in csv.DictReader(open(p, newline=""))}
+                           if os.path.exists(p) else {})
+        return truth[name]
+
+    rows = list(csv.DictReader(open(run_dir(tag) + "/logs/network_zwd.csv", newline="")))
+    t0 = min(float(r["tow"]) for r in rows)
+    err = []
+    for r in rows:
+        t = float(r["tow"])
+        tz = truth_of(r["station"]).get(round(t, 3))
+        if t >= t0 + 3600.0 and tz is not None:
+            err.append(abs(float(r["zwd_m"]) - tz))
+    err.sort()
+    if not err:
+        return None
+    q = lambda f: err[min(len(err) - 1, int(f * len(err)))]
+    return q(0.50), q(0.90), q(0.99), err[-1], len(err)
+
+
+def cmd_zwd(a):
+    for tag in a.tags:
+        r = zwd_error(tag)
+        print("%-18s %s" % (tag, "no wet-delay truth" if r is None else
+                            "wet delay error after hour 1: p50 %.3f, p90 %.3f, p99 %.3f, max %.2f m (n %d)" % r))
+    return 0
+
+
+def cmd_stop(a):
+    """The stop rule's event-free chords (ird_frame_census.py stop): per-band p50 of |wrap|."""
+    for tag in a.tags:
+        text = cached("stop_%s.txt" % tag, [sys.executable, HERE + "/ird_frame_census.py", "stop", run_dir(tag)], a.fresh)
+        v = re.findall(r"^\s+(L\w+)\s+n (\d+): p50 ([0-9.]+) [<>]=? ?[0-9.]+: (PASS|FAIL)", text, flags=re.M)
+        print("%-18s event-free chords: %s" % (tag, "; ".join("%s p50 %s (n %s) %s" % (b, p, n, w) for b, n, p, w in v)
+                                                or text.strip().splitlines()[-1][:200]))
+    return 0
+
+
+def cmd_reref(a):
+    """The reference-free double-difference error by hour (simnet_dd_reref.py, L1C)."""
+    for tag in a.tags:
+        text = cached("reref_%s.txt" % tag,
+                      [sys.executable, HERE + "/simnet_dd_reref.py", fixture_of(tag)[0], run_dir(tag), "--stride", "1"],
+                      a.fresh)
+        rows = re.findall(r"^\s*(\d+)\s+G\s+(\d+)\s+([0-9.]+)\s+[0-9.]+ \|\s+[0-9.]+ \|\s+([0-9.]+)\s+([0-9.]+)", text, flags=re.M)
+        print("%-18s reference-free DD error, L1C, by hour: %s"
+              % (tag, "; ".join("h%d %s cycle, %s %% rounding to 0 (n %s; as traced %s)" % (int(h) + 1, rf, r0, n, tr)
+                                for h, n, tr, rf, r0 in rows) or "no row"))
     return 0
 
 
@@ -530,12 +630,14 @@ def selftest():
 
 
 def main():
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(errors="replace")   # a console code page that lacks a log line's character
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--selftest", action="store_true")
     sub = ap.add_subparsers(dest="cmd")
-    cmds = {"ib": cmd_ib, "sigma": cmd_sigma, "dcb": cmd_dcb, "fixes": cmd_fixes, "consumer": cmd_consumer,
+    cmds = {"ib": cmd_ib, "ibcmp": cmd_ibcmp, "sigma": cmd_sigma, "dcb": cmd_dcb, "fixes": cmd_fixes, "consumer": cmd_consumer,
             "heldout": cmd_heldout, "hold": cmd_hold, "event": cmd_event, "identity": cmd_identity,
-            "summary": cmd_summary, "root": cmd_root}
+            "zwd": cmd_zwd, "stop": cmd_stop, "reref": cmd_reref, "summary": cmd_summary, "root": cmd_root}
     for name in cmds:
         p = sub.add_parser(name)
         p.add_argument("tags", nargs="+")
@@ -546,7 +648,7 @@ def main():
             p.add_argument("--sites", action="store_true")
         if name == "summary":
             p.add_argument("--lines", action="append", help="also print the stdout lines matching this regex")
-        if name == "ib":
+        if name in ("ib", "ibcmp"):
             p.add_argument("--classes", nargs="*", default=[], help="print these event classes only")
         if name == "identity":
             p.add_argument("--show", type=int, default=0, help="print up to this many differing lines per side")

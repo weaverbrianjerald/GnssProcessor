@@ -170,6 +170,43 @@ TEST(RxPhaseBiasCarry, StepRuleComparesTwoHarvestsAgainstTheirVariancesTheWalkAn
     EXPECT_FALSE(rxPbStepExceeds(99.0, nan, 10.0, 0.0, q, 0.0, horizon));
 }
 
+// 1b: the block-column step's decision: the gap gate, the block rule and the variance
+TEST(RxPhaseBiasCarry, BlockGateFoldsAnEntryInsideTheHorizonWithASharedBlockRow) {
+    const double q = 3e-6, horizon = 900.0;
+    double var_eff = -1.0;
+    // The ordinary case: 30 s old, a block row the station's ambiguities share.
+    EXPECT_EQ(rxPbBlockGate(30.0, horizon, 4.0, q, true, true, true, var_eff), RxPbBlockAction::Fold);
+    EXPECT_DOUBLE_EQ(var_eff, 4.0 + q * 30.0);
+    // Exactly at the horizon is inside it; the walk over the gap is in the variance.
+    EXPECT_EQ(rxPbBlockGate(horizon, horizon, 4.0, q, true, true, true, var_eff), RxPbBlockAction::Fold);
+    EXPECT_DOUBLE_EQ(var_eff, 4.0 + q * 900.0);
+    // No other column pending: the bias's columns fold among themselves, whatever the block.
+    EXPECT_EQ(rxPbBlockGate(30.0, horizon, 4.0, q, true, false, false, var_eff), RxPbBlockAction::Fold);
+}
+
+TEST(RxPhaseBiasCarry, BlockGateDoesNotFoldPastTheHorizonOrWithoutASharedBlockRow) {
+    const double q = 3e-6, horizon = 900.0;
+    double var_eff = -1.0;
+    // The gap's decoupling edge: past the horizon, or stamped in the future.
+    EXPECT_EQ(rxPbBlockGate(900.1, horizon, 4.0, q, true, true, true, var_eff), RxPbBlockAction::SkipGap);
+    EXPECT_EQ(rxPbBlockGate(-30.0, horizon, 4.0, q, true, true, true, var_eff), RxPbBlockAction::SkipGap);
+    EXPECT_EQ(rxPbBlockGate(std::numeric_limits<double>::quiet_NaN(), horizon, 4.0, q, true, true, true, var_eff),
+              RxPbBlockAction::SkipGap);
+    // No block row: the entry would fold as a diagonal prior.
+    EXPECT_EQ(rxPbBlockGate(30.0, horizon, 4.0, q, false, true, false, var_eff), RxPbBlockAction::SkipNoBlock);
+    EXPECT_EQ(rxPbBlockGate(30.0, horizon, 4.0, q, false, false, false, var_eff), RxPbBlockAction::SkipNoBlock);
+    // A block row no pending column shares (a datum receiver that lost its seat, with a stale
+    // entry beside freshly harvested ambiguities): every cross term would be zeroed.
+    EXPECT_EQ(rxPbBlockGate(30.0, horizon, 4.0, q, true, true, false, var_eff), RxPbBlockAction::SkipNoBlock);
+    // The gap gate is read first: a stale entry with no block is the gap's.
+    EXPECT_EQ(rxPbBlockGate(1200.0, horizon, 4.0, q, false, true, false, var_eff), RxPbBlockAction::SkipGap);
+    // A variance that is not a positive number folds nothing.
+    EXPECT_EQ(rxPbBlockGate(0.0, horizon, 0.0, q, true, true, true, var_eff), RxPbBlockAction::SkipVariance);
+    EXPECT_EQ(rxPbBlockGate(30.0, horizon, std::numeric_limits<double>::quiet_NaN(), q, true, true, true, var_eff),
+              RxPbBlockAction::SkipVariance);
+    EXPECT_DOUBLE_EQ(var_eff, -1.0);   // written on Fold only
+}
+
 // 2: the loader's interlocks: the key needs the chain's carried bias and a local block
 TEST(RxPhaseBiasCarry, LoaderRefusesTheKeyWithoutTheChainItsCarryOrALocalBlock) {
     const std::string key = "    \"phase_datum_eq34_rpb_in_block\": true,\n";

@@ -650,7 +650,11 @@ struct StationSignalState {
     /// matrix build (fold), written at the serial post-solve stash, erased for dirty
     /// receiver vertices at the election (their chain frame stepped), and pruned on gap
     /// like local_carry.  Inert unless network.phase_datum_eq34 with
-    /// phase_datum_eq34_rpb_q_m2s > 0.
+    /// phase_datum_eq34_rpb_q_m2s > 0.  With network.phase_datum_eq34_rpb_in_block the same
+    /// entry also holds the bias's regression on the border and its row of the station's
+    /// harvest block, and folds as a column of the station's block instead of a diagonal
+    /// prior (network/carry/RxPhaseBiasCarry.hpp); the chain's root row reads its value on
+    /// either route.
     /// Key: the receiver phase-bias state key ("sys_RPB_signal").  Was
     /// @c NetworkCarryState::rpb_carry.  ColdStart.
     std::optional<LocalCarry> rpb;

@@ -454,6 +454,11 @@ if(MSVC)
     # (network/solve/ChainFrameCounters.hpp) tipped it over (C1128).
     set_source_files_properties(tests/network/test_network_arc_graph_oracles.cpp
         PROPERTIES COMPILE_FLAGS "/bigobj")
+    # tests/test_code_datum_family.cpp sat at the Debug section limit through the run-context
+    # headers it includes; the receiver phase bias's in-block counters and declarations
+    # (network/carry/RxPhaseBiasCarry.hpp) tipped it over (C1128).
+    set_source_files_properties(tests/test_code_datum_family.cpp
+        PROPERTIES COMPILE_FLAGS "/bigobj")
 endif()
 target_link_libraries(gnss_core PUBLIC Eigen3::Eigen spdlog::spdlog netCDF::netcdf CURL::libcurl ZLIB::ZLIB)
 if(WIN32)

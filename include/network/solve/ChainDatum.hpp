@@ -336,6 +336,10 @@ struct StationHarvestBlock;                 // network/carry/LocalCarryHarvest.h
  *        coupling, by design), then the prune. No-op unless NetworkKnobs::eq34_rpb_q > 0
  *        (network.phase_datum_eq34_rpb_q_m2s; forced to 0 when eq34 is off or carry_invariant is on).
  *
+ * With network.phase_datum_eq34_rpb_in_block the stash is the block harvest's
+ * (networkHarvestRxPbBlock, network/carry/RxPhaseBiasCarry.hpp), which runs before this
+ * function; only the prune runs here, for both routes.
+ *
  * @param run The run: its context (carry, counters, knobs), setup (stations) and engines.
  * @param ep This epoch after the solve (the solution, the assembly, the columns and the clock are
  *           read; nothing is written).

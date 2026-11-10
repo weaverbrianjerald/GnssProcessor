@@ -74,6 +74,38 @@ inline constexpr double kRxPbStepGuardVarM2 = 0.0025;
 bool rxPbStepExceeds(double value_now, double var_now, double value_carried, double var_carried,
                      double q_m2s, double gap_s, double max_gap_s);
 
+/// What the block-column step does with one carried receiver phase bias.
+enum class RxPbBlockAction {
+    Fold,          ///< The entry folds as a column of the station's block.
+    SkipGap,       ///< Its gap is outside [0, horizon]: the decoupling edge of a gap (rpb_gap_skip past the horizon).
+    SkipNoBlock,   ///< It holds no row of a harvest block that the station's pending columns share.
+    SkipVariance,  ///< Its variance plus the walk is not a positive number.
+};
+
+/**
+ * @brief The block-column step's decision for one carried receiver phase bias (a pure function,
+ *        so the gap gate and the block rule are tested apart from the station build).
+ *
+ * An entry folds when its gap is inside the horizon, it holds a row of a harvest block and
+ * that block is shared by another pending column of the station (or no other column is
+ * pending), and its variance plus the random walk over the gap is positive. An entry whose
+ * block no pending column shares would fold with every cross term zeroed, that is, as a
+ * diagonal prior at the conditional variance: the double count the route removes.
+ *
+ * @param gap_s           This epoch's time less the entry's stash time (s).
+ * @param max_gap_s       The carry's gap horizon (s).
+ * @param var             The entry's conditional variance (m^2).
+ * @param q_m2s           The bias's random-walk process noise (m^2/s).
+ * @param has_block_row   The entry holds a row of a harvest block.
+ * @param others_pending  Another carried column of the station is pending for the block.
+ * @param block_shared    One of those columns was harvested into the entry's block.
+ * @param var_eff         Written on Fold: @p var + @p q_m2s * @p gap_s (m^2).
+ * @return The action.
+ */
+RxPbBlockAction rxPbBlockGate(double gap_s, double max_gap_s, double var, double q_m2s,
+                              bool has_block_row, bool others_pending, bool block_shared,
+                              double& var_eff);
+
 // ---- PASS B station steps, declarations ----
 
 /**

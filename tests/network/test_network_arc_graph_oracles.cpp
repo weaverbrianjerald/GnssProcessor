@@ -6466,8 +6466,7 @@ TEST(NetworkArcGraphOracle, RootRowPinsANewRootAtTheCarriedBiasOfTheBlockRouteAn
         const std::string what = carried ? "an in-block entry" : "no entry";
         KeptBed bed = makeRowsBed(lm, {"root"}, 8640 + (carried ? 1 : 0), names);
         ASSERT_TRUE(bed.cfg && bed.ctx) << what;
-        bed.ctx->knobs.rpb_blk = true;      // the route; the election reads the entry, not the knob
-        bed.ctx->knobs.rpb_blk_on = true;
+        // The election reads the entry, not the route's key: the entry's form is what differs.
         bed.elect(arcsChainEpoch(3, kPathArcs));
         auto blk = std::make_shared<PlHarvestBlock>();
         blk->C = Eigen::MatrixXd::Identity(2, 2) * 4.0;
