@@ -142,3 +142,18 @@ No null leg has a guard response on the stepped satellite; no leg has a satellit
 - **K2.** The floor follows a step worse wherever the control follows it at all, except on E02, where it follows 8 to 20 mm better.
 
 **Addendum, pre-registered 2026-11-09 before any run below (the seam caveat of K1).** Two fresh runs of the DOY 132 configuration of section 3, from its start to TOW 524190 (10 epochs past the step), each with `network.cycle_slip.if_phase_td_sat_centre` and a 3.0 m `sat_clock_step` on E34 at TOW 523890 through `network.inject`: `_rap_smx2_kf_c` (the golden as armed) and `_rap_smx2_kf_A` (plus the floor), and their two null runs without the step (`_rap_smx2_kf_cn`, `_rap_smx2_kf_An`), same exe. Bar K1-fresh: if the control's guard responds to E34 within 2 epochs of the step, the floor's does too. K2-fresh as K2, against the fresh nulls. If the control does not respond, K1-fresh is unread and the seam caveat stands.
+
+### 5.3 Stage D: the freed arc's variance floor at the three-band event (card L5B section 15)
+
+Windows `_rap_smx2_d_t1on_ev` and `_rap_smx2_d_t1onA_ev` (today's field golden with the `t1on` keys, 33 epochs, TOW 259200 to 260160), both exit 0 with 33 emitted (213 and 216 s). Grader `smx2_d.py`, which reproduces card ALD's control and H1 readings to the digit on ALD's own windows (`_rap_ald_t1on_ev`: -7.02, +17.66, +13.13 m, 21 decouples). **Gate (4) passes**: MAJU00MHL moves -0.10, +0.26 and +0.15 m (GPS_DCB, GPS_IFB5, GPS_ISC_C1W) against the control's -3.54, +9.12 and +6.22 m, with 0 decouples at TOW 260040 against 14. GPS code-bias steps above 0.5 m from 260010 to 260040:
+
+| key | control (`t1on`) | `t1on` plus the floor |
+| --- | --- | --- |
+| GPS_DCB | 11 stations: LCK400IND +4.17, MAJU00MHL -3.54, CAS100ATA +1.63, DARW00AUS +1.62, SCTB00ATA +1.58, WARK00NZL +1.25, NYA200NOR -1.17, GCGO00USA -1.08, SVTL00RUS -1.07, MBAR00UGA -0.83, JPLM00USA -0.68 | none |
+| GPS_IFB5 | 16 stations: LCK400IND -10.92, MAJU00MHL +9.12, CAS100ATA -4.52, DARW00AUS -4.53, SCTB00ATA -4.40, WARK00NZL -3.53, NYA200NOR +3.37, SVTL00RUS +3.02, GCGO00USA +2.97, MBAR00UGA +2.35, JPLM00USA +1.85, YKRO00CIV -1.16, BSHM00ISR -0.92, MAC100AUS +0.81, BOGT00COL +0.70, STHL00GBR +0.53 | LCK400IND -1.21 |
+| GPS_ISC_C1C | 4 stations: SVTL00RUS +1.86, GCGO00USA +1.58, MBAR00UGA +1.45, YKRO00CIV -0.50 | none |
+| GPS_ISC_C1W | 6 stations: MAJU00MHL +6.22, DARW00AUS -2.45, NYA200NOR +1.66, JPLM00USA +1.15, BSHM00ISR -0.83, MAC100AUS +0.60 | none |
+
+The control of today's golden already carries about half of ALD's event (the keys armed on 2026-11-07 are the difference; not isolated here). The four 2 h arms of gate (5) (`_rap_smx2_d_{ctl,A,t1on,t1onA}_f2`) are queued after label `smx2t`.
+
+**Attribution label (written 2026-11-09 before it runs; read without a bar).** Label `smx2x`: rows `slip100`, `slip2sig` and `anc_cold` on `c` and `n`, with `network.raim_prior_channel` false (not fingerprinted), to attribute the consumer moves of those cells between `crs2b` and `smx2a` (section 5.4).
