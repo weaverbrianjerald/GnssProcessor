@@ -282,3 +282,16 @@ Responses in `smx2a`, event minus null over the leg: the IF-TD pool flags 540 to
 - **P-A2.** The storm failing everywhere: held. With the trip generation the `n` consumer worse: held (4.5 times); the `pb` channel worse: held on `g` and `c`, refuted on `n` (its regenerated keys leave the comparison).
 - **P-A3.** No verdict change outside `sat_clk` between `crs2b` and `smx2a`: held; at least 22 cells pass: held (23). The slip rows moved on `zwd` as predicted, and also on the consumer channels on `c` and `n`, which was not predicted.
 - **P-A4.** Held (G05 on `n`).
+
+### 5.6 Stage D: gate (5), the 2 h arms (2026-11-09)
+
+`_rap_smx2_d_{ctl,A,t1on,t1onA}_f2`, today's field golden from its start, 240 of 240 epochs each, exit 0 (197 to 248 s). Grader `smx2_d2.py` (card ALD's tools: `scripts/ftc_step_attrib.py --r3 --systems G,E`, row `e_clk`, hour 2; `scripts/clock_level/band5_offsets.py`, hour 2), which reproduces ALD's dual control on its own run (`_rap_ald_ctl_f2`, clock wire 0.0233 m).
+
+| arm | WTZZ00DEU, hours 1 and 2 (m) | GPS clock wire, all / tracked (m) | GPS band 1 / 2 / 5 offsets, stations (median \|mean\|, m) | decouples (at 260040) | MAJU00MHL, 260010 to 260040: GPS_DCB / GPS_IFB5 (m) |
+| --- | --- | --- | --- | --- | --- |
+| dual control | 0.058 0.013 | 0.0372 / 0.0089 | 1 (0.014) / 0 (0.013) / - | 3 (2) | -0.17 / - |
+| dual plus the floor | 0.057 0.012 | 0.0382 / 0.0087 | 1 (0.015) / 0 (0.014) / - | 0 (0) | -0.10 / - |
+| `t1on` | 0.075 0.039 | 0.0435 / 0.0088 | 2 (0.023) / 2 (0.017) / 4 (0.028) | 17 (14) | -3.54 / +9.12 |
+| `t1on` plus the floor | 0.079 0.038 | 0.0166 / 0.0094 | 1 (0.017) / 0 (0.016) / 5 (0.025) | 0 (0) | -0.10 / +0.26 |
+
+The dual bar passes (WTZZ00DEU within 0.001 m, clock wire 1.03 and 0.98 times). The three-band bars of card R1D (B), each three-band arm against the dual control: `t1on` fails (clock wire 1.17 times, band 2 offsets +2 stations; WTZZ00DEU +0.017 and +0.026 m within 0.03); `t1on` plus the floor passes (WTZZ00DEU +0.021 and +0.025 m, clock wire 0.45 and 1.06 times, band 1 and 2 offsets +0 and +0). **Stage D: the floor passes gates (4) and (5) as frozen in card L5B section 15.** The hypothesis that the three-band event is the freed arc's stale level holds on this day's event and its 2 h arms. Not read here: hours 3 to 6, a census, a second day, the sim, and the floor's other measured costs (card SLV: H4 and DOY 132's H5 without the re-seed key, R2 at the 00:00 sim start, the walk metric; this card section 5.2: the guard's miss on E34 at 1.51 h).
