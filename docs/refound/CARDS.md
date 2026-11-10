@@ -220,11 +220,12 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   satellites on its side keep their frame and carries (undeclared integer steps at the handover 0 against 235
   to 262) and the consumer holds its bound; I-b FAILED on the fractional bar, at the size the same pairs reach
   at quiet epochs. Continued in IRDE.
-- [IRDF](IRDF_d0_receiver_floor_redecided_2026-11-07.md): open, 2026-11-07: decision D0 (the receiver floor) re-decided at the author's word with every event
+- [IRDF](IRDF_d0_receiver_floor_redecided_2026-11-07.md): closed, 2026-11-09: decision D0 (the receiver floor) re-decided at the author's word with every event
   row armed, after IRDE section 9. As written neither candidate passes (the DCB bar; floor off also r3c hour 1): the
   floor stays and the GF-datum defect is recorded. The bar lies below the true DCB spread, the floor-off spread is the
   receiver phase-bias time link's double count, and at held-out sites and a 40 degree mask the floor costs. The
-  author's ruling is owed.
+  author ruled the floor off on 2026-11-09 (section 9), with the DCB clause read against truth and the consumer clause
+  at the held-out sites.
 - [IRDE](IRDE_integer_recovering_datum_slip_2026-11-06.md): open, 2026-11-06: card IRDD's continuation, from IRD-4's `slip` row on. The row
   LANDED default off: an arc in the free-epoch latch leaves the tree at the slip epoch, the fragment re-attaches through
   a new edge under the rehost row, and a slipped arc no other route can replace takes the cut release. As built the cycle

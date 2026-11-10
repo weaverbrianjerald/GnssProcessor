@@ -4,15 +4,15 @@
 
 - **id:** IRDF
 - **topic:** network-vehicle
-- **status:** open
-- **summary:** Pre-registered and graded 2026-11-07. Card IRD's decision D0 (the receiver phase-bias floor) re-decided at the author's word on the arm going forward (every event row armed), after card IRDE section 9 traced the floor as the cause of A1's wet-delay state. As written neither candidate passes (the DCB bar on both beds; floor off also the float consumer in r3c hour 1), so the floor stays and the GF-datum defect is recorded. The readings bear on the rule: the DCB bar lies below the fixture's true spread, the floor-off spread is the receiver phase-bias time link's double count, the hour-1 gain is one site's, and at held-out sites and at a 40 degree mask the floor costs. The author's ruling is owed (section 7); nothing is armed.
+- **status:** closed
+- **summary:** Pre-registered and graded 2026-11-07. Card IRD's decision D0 (the receiver phase-bias floor) re-decided at the author's word on the arm going forward (every event row armed), after card IRDE section 9 traced the floor as the cause of A1's wet-delay state. As written neither candidate passes (the DCB bar on both beds; floor off also the float consumer in r3c hour 1), so the floor stays and the GF-datum defect is recorded. The readings bear on the rule: the DCB bar lies below the fixture's true spread, the floor-off spread is the receiver phase-bias time link's double count, the hour-1 gain is one site's, and at held-out sites and at a 40 degree mask the floor costs. RULED 2026-11-09 (section 9): the floor goes off on the arm going forward, with the DCB clause read against truth and the consumer clause at the held-out sites; nothing is armed.
 - **source:** [IRD](IRD_integer_recovering_datum_2026-10-13.md) section 10 (D0) and C3; [IRDB](IRDB_integer_recovering_datum_continued_2026-10-30.md) section 3.5 (the first verdict); [IRDC](IRDC_integer_recovering_datum_events_2026-11-02.md) section 7.3 (the hold that waits on D0); [IRDE](IRDE_integer_recovering_datum_slip_2026-11-06.md) section 9 (the mechanism)
 - **knobs / posture:** `network.phase_datum_eq34_rpb_prior_sigma_m`, `network.phase_datum_eq34_rpb_prior_birth_only`; the base arm A1krhRsm of `scripts/ird_make_arms.py`; added readings: `network.phase_datum_eq34_rpb_q_m2s` 0 (the mechanism test) and `processing.elevation_mask_deg` 40 (the rank test). No golden change
-- **dates in the text:** 2026-11-07
+- **dates in the text:** 2026-11-07, 2026-11-09
 - **hashes / run dirs:** exe `D:/GnssProcessorSupport/gates/exe/x64-Release/gnss_processor_ird4ms.exe` (sha256[:16] `4547066185234026`); arms `_rap_ird4z_*` and the r3c floor-on reference `_rap_ird4ms_a1krhRsm_r3c`, replays `_rap_d0c_*`; added after pre-registration: held-out wires `_rap_d0w_*` and their replays `_rap_d0h_*`, the no-link arms `_rap_ird4z_off_q0_*`, the 40 degree mask arms `_rap_ird4z_m40_*`; all under `D:/GnssProcessorSupport/runs_nom/`
 - **gates (frozen at pre-registration):** section 2; the bars are card IRD's, unchanged
 
-**Outcome.** Question: with every event row armed, does the receiver floor stay, go off or change? Decisive result: neither of the rule's candidates passes as written (DCB sd 0.40 to 0.70 m with the floor off and 5.3 to 6.6 m birth only, against 0.17 m; floor off +55 % at the float consumer in r3c hour 1). Verdict: the floor stays and the GF-datum defect is recorded. Standing: the bar lies below the fixture's true DCB spread (0.538 m), the floor-off spread is the time link's double count, and at held-out sites floor off equals the no-chain wire; the author's ruling is owed ([section 7](#7-for-the-author)).
+**Outcome.** Question: with every event row armed, does the receiver floor stay, go off or change? Decisive result: neither of the rule's candidates passes as written (DCB sd 0.40 to 0.70 m with the floor off and 5.3 to 6.6 m birth only, against 0.17 m; floor off +55 % at the float consumer in r3c hour 1). Verdict: the floor stays and the GF-datum defect is recorded. Standing: the bar lies below the fixture's true DCB spread (0.538 m), the floor-off spread is the time link's double count, and at held-out sites floor off equals the no-chain wire; the author ruled the floor off on 2026-11-09 ([section 9](#9-2026-11-09-the-authors-ruling)).
 
 ## 1. Why
 
@@ -209,3 +209,13 @@ As written the floor stays. The evidence that the rule should be read otherwise:
 Open: the author's ruling on section 7. Until then A1 keeps the floor (`scripts/ird_make_arms.py`), the GF-datum defect stays recorded and blocks the ionosphere follow-up, and the hold of card IRDC section 7.3 stands. Nothing is armed.
 
 **Not covered.** Two sim beds and 2 h; one fixture at a 40 degree mask; the held-out replay was not run for sigma 3, sigma 100 or the no-link arms; no field arm (card IRD section 6). The time link's double count is shown by the formal sigma and the no-link arms; the build that would remove it is not designed here.
+
+## 9. 2026-11-09: the author's ruling
+
+"Yes, D0 floor off." On 2026-11-09 the author accepted the recommendation of section 7:
+
+- The floor goes off (`network.phase_datum_eq34_rpb_prior_sigma_m` 0, the rule's own switch) on the arm going forward.
+- D0's DCB clause is read against truth, with the bar's own factor (three times the no-chain arm's error), and its consumer clause at the held-out sites, as items 1 and 2 of section 7 state. The verdict as written (section 3) stays in the record.
+- The GF-datum defect stays recorded, as the time link's double count (section 5.1), and still blocks the ionosphere follow-up. Its fix, the receiver phase bias carried as a column of the station block, is the build owed before that follow-up.
+
+Not changed by the ruling: neither golden runs the chain, and a field pair (chain on, floor on and off) stays the author's to allow after IRD-6. Owed: the floor off in the arm definitions (`scripts/ird_make_arms.py`), the event rows' I-b read again on that arm, and the in-block build. Until the arm definitions change, A1's recorded numbers are the floor-on ones.
