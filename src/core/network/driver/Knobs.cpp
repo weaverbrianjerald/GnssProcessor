@@ -264,7 +264,8 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.cta_sigma_floor_m  = config_.networkClockAnchorSigmaFloorM();
     k.cta_space          = config_.networkClockAnchorGuardSpace();
     k.cta_phi_floor_m    = config_.networkClockAnchorPhaseSigmaFloorM();
-    k.cta_recouple_ep    = config_.networkClockAnchorRecoupleEpochs();
+    k.cta_clock_k        = (k.cta_on && k.cta_space == 2) ? config_.networkClockAnchorClockK() : 0.0;
+    k.cta_recouple_ep   = config_.networkClockAnchorRecoupleEpochs();
     k.cta_mark           = config_.networkClockAnchorMark();
     k.cta_resolve        = config_.networkClockAnchorResolve();
     k.cta_defer_coupled  = config_.networkClockAnchorDeferCoupled() && k.cta_resolve;

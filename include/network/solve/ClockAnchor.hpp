@@ -212,6 +212,44 @@ std::vector<double> clockAnchorPhaseClockWeights(const std::vector<double>& alph
  */
 std::string clockAnchorGuardPartsCsv(const ClockAnchorPhiRow* row);
 
+/// What the phase-mode statistic test decides for one anchored row.
+enum class ClockAnchorPhaseVerdict {
+    InBand,    ///< no phase statistic, or |w_phi| within k
+    Trip,      ///< |w_phi| over k, and the clock carries a share (or no share is required)
+    Withheld,  ///< |w_phi| over k with the clock still: the clock-share requirement withholds the trip
+};
+
+/**
+ * @brief The phase-mode statistic test with the clock-share requirement
+ *        (@c network.clock_anchor_clock_k).
+ *
+ * A phase statistic over @p k is a trip when @p clock_k is 0 (the requirement off: the
+ * decision as before) or when the clock-space statistic carries a share of the event,
+ * |w_clk| >= @p clock_k.  A phase statistic over @p k with |w_clk| below @p clock_k is a
+ * phase-bias-key event with the clock still, and is withheld.  The absolute backstop and the
+ * satellite clock event's forced trip are decided apart and are not inputs here.
+ *
+ * @param phi_ok   The row has a phase statistic this pass.
+ * @param w_phi    The phase statistic e_phi / sqrt(S_phi).
+ * @param w_clk    The clock-space statistic (e - med) / sqrt(S) of the same row.
+ * @param k        @c network.clock_anchor_k.
+ * @param clock_k  @c network.clock_anchor_clock_k (0 = no requirement).
+ * @return InBand, Trip or Withheld.
+ */
+ClockAnchorPhaseVerdict clockAnchorPhaseTripVerdict(bool phi_ok, double w_phi, double w_clk,
+                                                    double k, double clock_k);
+
+/**
+ * @brief The phase-bias keys' share of a phase statistic, (-sum_j w_j dpb_j) / e_hat
+ *        (measure-only: the withheld trip's event detail).
+ *
+ * e = dclk - sum_j w_j dpb_j, so the keys' part is -sum_j w_j dpb_j; the share is read
+ * against the median-removed e_hat the test standardized, as the guard trace's parts are.
+ * @param row  The satellite's phase row (its @c w, @c dpb and @c e_hat).
+ * @return The share, or 0 when e_hat is zero or the parts are missing.
+ */
+double clockAnchorPhaseKeysShare(const ClockAnchorPhiRow& row);
+
 std::map<std::string, ClockAnchorPhiRow> clockAnchorPhaseStatistic(
     const NetworkEstimator& est, const Eigen::VectorXd& x_s,
     const std::vector<NetworkEstimator::SharedPrior>& keys, const Eigen::MatrixXd& cov,
@@ -500,6 +538,15 @@ struct ClockAnchorCounters {
     long long cta_x_clk_only = 0;        ///< …on the clock statistic only (the level's motion)
     long long cta_x_phi_only = 0;        ///< …on the phase statistic only
     long long cta_trip_phi = 0;          ///< decouples decided by the phase statistic (phase mode)
+    // The clock-share requirement (network.clock_anchor_clock_k).  0 everywhere with the knob off;
+    // "0 withheld" is also the normal reading of an armed quiet day, not inert wiring.
+    long long cta_phi_withheld = 0;          ///< (sat, epoch) phase trips withheld (|w_phi| over k, |w_clk| below clock_k, no other trip cause)
+    long long cta_phi_withheld_episodes = 0; ///< withhold episodes opened: a satellite's first withheld epoch after one without
+    long long cta_phi_withheld_end_band = 0; ///< episodes closed with the satellite still anchored (the phase statistic back within k, or no row that epoch)
+    long long cta_phi_withheld_end_trip = 0; ///< episodes closed by a decoupling of the satellite in the closing epoch (a trip with a clock share, the backstop or another cause)
+    int       cta_phi_withheld_max_run = 0;  ///< the longest episode (consecutive withheld epochs)
+    double    cta_phi_withheld_max_w_phi = 0.0;  ///< the largest |w_phi| among the withheld trips
+    double    cta_phi_withheld_max_w_clk = 0.0;  ///< the largest |w_clk| among the withheld trips (below clock_k by construction)
     double    cta_sum_w2 = 0.0;          ///< Σ w², so √(Σw²/n) is the guard's own σ̂₀, a same-statistic cross-check on the census's σ̂₀_clk
     long long n_readmit_seed_moved    = 0;  ///< nis/abs trips of the anchor guard within kReadmitVerifyWindowS of a clock seed: the data rejected the seed
 };

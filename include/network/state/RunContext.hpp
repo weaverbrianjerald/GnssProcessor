@@ -783,6 +783,7 @@ namespace GnssProcessor {
         double cta_sigma_floor_m{};  ///< network.clock_anchor_sigma_floor_m: √S floor, so a weak-data epoch gives w ≈ 0 instead of 0/0
         int    cta_space{};          ///< network.clock_anchor_guard_space: 0 clock, 1 phase_shadow, 2 phase
         double cta_phi_floor_m{};    ///< network.clock_anchor_phase_sigma_floor_m: sqrt(S) floor of the phase-space statistic (m)
+        double cta_clock_k{};        ///< network.clock_anchor_clock_k: the |w_clk| a phase-mode statistic trip requires; a phase trip below it is withheld (0 = off; phase mode only).  Acts only on a trip.
         int    cta_recouple_ep{};    ///< network.clock_anchor_recouple_epochs: consecutive in-band epochs a loose satellite must serve before the anchor re-engages (the re-validation of invariant #7)
         bool   cta_mark{};           ///< network.clock_anchor_mark: wire-mark the decoupling edge (per-sat disc through the B1 retro-bump chain)
         /// The one resolved gauge-free predicate that every fold, withdraw and replay site

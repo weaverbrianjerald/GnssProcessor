@@ -123,6 +123,21 @@ std::string clockAnchorGuardPartsCsv(const ClockAnchorPhiRow* row) {
     return out;
 }
 
+ClockAnchorPhaseVerdict clockAnchorPhaseTripVerdict(bool phi_ok, double w_phi, double w_clk,
+                                                    double k, double clock_k) {
+    if (!phi_ok || !(std::abs(w_phi) > k)) return ClockAnchorPhaseVerdict::InBand;
+    if (clock_k > 0.0 && !(std::abs(w_clk) >= clock_k)) return ClockAnchorPhaseVerdict::Withheld;
+    return ClockAnchorPhaseVerdict::Trip;
+}
+
+double clockAnchorPhaseKeysShare(const ClockAnchorPhiRow& row) {
+    if (!(std::abs(row.e_hat) > 0.0) || row.w.size() != row.dpb.size() || row.dpb.empty())
+        return 0.0;
+    double keys = 0.0;
+    for (std::size_t j = 0; j < row.dpb.size(); ++j) keys -= row.w[j] * row.dpb[j];
+    return keys / row.e_hat;
+}
+
 std::map<std::string, ClockAnchorPhiRow> clockAnchorPhaseStatistic(
         const NetworkEstimator& est, const Eigen::VectorXd& x_s,
         const std::vector<NetworkEstimator::SharedPrior>& keys, const Eigen::MatrixXd& cov,
@@ -475,6 +490,66 @@ bool decouple(NetworkRunContext& ctx, NetworkRunTraces& traces, const GnssTime& 
     return true;
 }
 
+/// A phase trip the clock-share requirement withheld (network.clock_anchor_clock_k): the event
+/// with the evidence that decided it (both statistics, the pair, the clock's own innovation and
+/// each key's share of the phase statistic) and the counters.  The satellite stays anchored.
+void clockAnchorWithhold(NetworkRunContext& ctx, NetworkRunTraces& traces, const GnssTime& t,
+                         const std::string& sat, const ClockAnchorPhiRow& row, double w_phi,
+                         double w_clk, double k, int pass) {
+    auto& C = ctx.counters;
+    ++C.cta_phi_withheld;
+    C.cta_phi_withheld_max_w_phi = std::max(C.cta_phi_withheld_max_w_phi, std::abs(w_phi));
+    C.cta_phi_withheld_max_w_clk = std::max(C.cta_phi_withheld_max_w_clk, std::abs(w_clk));
+    // Each chosen key's share of e_hat (-w_j dpb_j / e_hat), in the order of the pair.
+    std::string shares;
+    std::size_t pos = 0;
+    for (std::size_t j = 0; j < row.dpb.size() && j < row.w.size(); ++j) {
+        const std::size_t end = row.sigs.find('+', pos);
+        const std::string sig = row.sigs.substr(pos, end == std::string::npos ? std::string::npos
+                                                                               : end - pos);
+        pos = (end == std::string::npos) ? row.sigs.size() : end + 1;
+        const double sh = (std::abs(row.e_hat) > 0.0) ? -row.w[j] * row.dpb[j] / row.e_hat : 0.0;
+        shares += fmt::format("{}{}:{:.3f}", j ? "|" : "", sig, sh);
+    }
+    traces.emitEvent(t, "CLK_ANCHOR", "phi_withheld", sat, "", std::abs(w_phi), k, "withhold",
+                     fmt::format("w_clk={:.3f};clock_k={:.2f};pair={};e_phi={:.4f};"
+                                 "sqrtS_phi={:.4f};dclk={:.5f};keys_share={:.3f};shares={};"
+                                 "pass={}",
+                                 w_clk, ctx.knobs.cta_clock_k, row.sigs, row.e_hat,
+                                 std::sqrt(row.S), row.dclk, clockAnchorPhaseKeysShare(row),
+                                 shares, pass));
+}
+
+/// The withhold episodes' edges at the end of the guard's epoch (standing invariant 7): a
+/// satellite withheld this epoch opens an episode or extends it; an open episode closes at the
+/// first epoch without a withhold, with an event naming how it closed (the satellite decoupled
+/// this epoch, or it is clear: still anchored with its phase statistic within k, or not tested).
+/// A satellite withheld and then decoupled on a later pass of the same epoch closes at once.
+void clockAnchorWithheldEdges(NetworkRunContext& ctx, NetworkRunTraces& traces,
+                              const GnssTime& t, const std::set<std::string>& withheld_now) {
+    auto& anchor = ctx.carry.clk_anchor;
+    auto& C = ctx.counters;
+    for (auto& [sat, st] : anchor.sat) {
+        const bool now       = withheld_now.count(sat) > 0;
+        const bool decoupled = anchor.tripped.count(sat) > 0;
+        if (now) {
+            if (st.phi_withheld_run == 0) ++C.cta_phi_withheld_episodes;
+            ++st.phi_withheld_run;
+            C.cta_phi_withheld_max_run = std::max(C.cta_phi_withheld_max_run, st.phi_withheld_run);
+            if (!decoupled) continue;
+        }
+        if (st.phi_withheld_run == 0) continue;
+        if (decoupled) ++C.cta_phi_withheld_end_trip;
+        else           ++C.cta_phi_withheld_end_band;
+        traces.emitEvent(t, "CLK_ANCHOR", "phi_withheld_end", sat, "",
+                         static_cast<double>(st.phi_withheld_run), std::nullopt,
+                         decoupled ? "decoupled" : "clear",
+                         fmt::format("epochs={};end={}", st.phi_withheld_run,
+                                     decoupled ? "decoupled" : "clear"));
+        st.phi_withheld_run = 0;
+    }
+}
+
 }  // namespace
 
 void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
@@ -575,6 +650,9 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
     const bool gf         = ctx.knobs.carry_gauge_free;     // the fold (what a withdraw must un-fold)
     const bool proj_post  = ctx.knobs.cta_stat_proj_post;   // the denominator's posterior half
     const bool proj_prior = ctx.knobs.cta_stat_proj_prior;  // …and its prior half
+    // Satellites whose phase trip the clock-share requirement withheld this epoch, on any pass
+    // (network.clock_anchor_clock_k; empty with it off).  A satellite is withheld once per epoch.
+    std::set<std::string> withheld_now;
     int pass = 0;
     for (; pass < kCtaMaxPasses; ++pass) {
         const Eigen::MatrixXd& cov = est.sharedCovariance();
@@ -695,11 +773,20 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
                 ctx.counters.cta_max_w_sat = r.sat;
             }
             const bool bad_clk = aw > k;
+            // The clock-share requirement (network.clock_anchor_clock_k, phase mode): the phase
+            // trip of an ANCHORED row also needs |w_clk| >= clock_k, so a phase-bias-key event
+            // with the clock still is withheld.  A LOOSE row's re-validation reads the phase
+            // statistic as before.  Off (clock_k 0) the verdict never withholds.
+            const bool withhold = ctx.knobs.cta_space == 2 && r.anchored
+                               && clockAnchorPhaseTripVerdict(phi_ok, w_phi, w, k,
+                                                              ctx.knobs.cta_clock_k)
+                                      == ClockAnchorPhaseVerdict::Withheld;
             // Phase mode: the phase-visible statistic decides the NIS trip (the level
             // cannot trip it); a row without one is tested on the absolute backstop only.
             // Shadow and clock modes: the clock statistic decides, as before.
-            const bool bad_nis = (ctx.knobs.cta_space == 2) ? (phi_ok && std::abs(w_phi) > k)
-                                                            : bad_clk;
+            const bool bad_nis = (ctx.knobs.cta_space == 2)
+                                     ? (phi_ok && std::abs(w_phi) > k && !withhold)
+                                     : bad_clk;
             const bool bad_abs = abs_m > 0.0 && std::abs(eh) > abs_m;
             // A satellite the slip layer read as a clock event: its fold took it LOOSE and the
             // loop above declared the edge, so a row here is LOOSE.  A LOOSE row has its
@@ -734,7 +821,9 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
                     << (phi_ok ? fmt::format("{:.5f},{:.5f},{:.3f},{}", pit->second.e_hat,
                                              std::sqrt(pit->second.S), w_phi, pit->second.n_pb)
                                : std::string(",,,0"))
-                    << ',' << ((bad_nis || bad_abs || forced) ? (r.anchored ? "trip" : "out") : "ok")
+                    << ',' << ((bad_nis || bad_abs || forced) ? (r.anchored ? "trip" : "out")
+                               : withhold                     ? "withheld"
+                                                              : "ok")
                     << ',' << clockAnchorGuardPartsCsv(phi_ok ? &pit->second : nullptr)
                     << '\n';
             // The k derivation of §3 needs the realized distribution, not only its
@@ -756,7 +845,14 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
                     if (std::abs(eh) >= kCtaELadder[b]) ++ctx.counters.cta_e_ge[b];
             }
             if (r.anchored) {
-                if (!bad_nis && !bad_abs && !forced) continue;
+                if (!bad_nis && !bad_abs && !forced) {
+                    // A withheld phase trip: the satellite stays anchored; the withhold is an
+                    // event with its evidence and a counter, once per satellite and epoch.
+                    if (withhold && withheld_now.insert(r.sat).second)
+                        clockAnchorWithhold(ctx, traces, se_time, r.sat, pit->second, w_phi, w,
+                                            k, pass);
+                    continue;
+                }
                 if (forced) {
                     ++ctx.counters.cta_trip_slip_clk_late;
                     trip_backstop.insert(r.sat);
@@ -1015,6 +1111,7 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
                   "withdrawn and the epoch RE-SOLVED before emission (pass {}).",
                   se_time.tow, trip_resolve.size(), joinSats(trip_resolve), pass + 1);
     }
+    if (ctx.knobs.cta_clock_k > 0.0) clockAnchorWithheldEdges(ctx, traces, se_time, withheld_now);
     if (pass >= kCtaMaxPasses)
         log->warn("Network (clock anchor): TOW {:.1f} hit the {}-pass in-epoch refloat cap — any "
                   "further clock-anchor trip this epoch is decoupled and marked but not "
@@ -1089,6 +1186,23 @@ int networkClockAnchorRunEnd(const NetworkRunEndView& v) {
                   c.cta_phi_rows > 0 ? std::sqrt(c.cta_phi_sum_w2
                                                  / static_cast<double>(c.cta_phi_rows)) : 0.0,
                   c.cta_x_both, c.cta_x_clk_only, c.cta_x_phi_only, c.cta_trip_phi, wl, el);
+    }
+    if (ctx.knobs.cta_clock_k > 0.0) {
+        // The clock-share requirement's ON-path telemetry (invariant #4).  "0 withheld" is the
+        // normal reading of a quiet day: the requirement acts only where a phase trip happens.
+        const long long open = c.cta_phi_withheld_episodes - c.cta_phi_withheld_end_band
+                             - c.cta_phi_withheld_end_trip;
+        log->info("Network (clock-share requirement, network.clock_anchor_clock_k {:.2f}): {} "
+                  "phase trip(s) WITHHELD (|w_phi| over k {:.2f} with |w_clk| below {:.2f}) in {} "
+                  "episode(s): {} closed clear, {} closed by a decoupling, {} open at the end; "
+                  "longest {} epoch(s); largest |w_phi| {:.2f} and |w_clk| {:.2f} among them.  "
+                  "{} phase trip(s) taken with a clock share.  0 withheld is the normal reading "
+                  "of a quiet day, not inert wiring.",
+                  ctx.knobs.cta_clock_k, c.cta_phi_withheld, ctx.knobs.cta_k,
+                  ctx.knobs.cta_clock_k, c.cta_phi_withheld_episodes,
+                  c.cta_phi_withheld_end_band, c.cta_phi_withheld_end_trip, open,
+                  c.cta_phi_withheld_max_run, c.cta_phi_withheld_max_w_phi,
+                  c.cta_phi_withheld_max_w_clk, c.cta_trip_phi);
     }
     if (ctx.knobs.carry_gauge_free) {
         // Denominator of the gauge-free step (§2.1).  `gf_keys = 0` on an armed run

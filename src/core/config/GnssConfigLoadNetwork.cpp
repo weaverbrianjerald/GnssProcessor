@@ -9044,6 +9044,48 @@ namespace GnssProcessor {
                 return false;
             }
         }
+        // The clock-share requirement on the phase statistic's trip.  Valid only where the
+        // anchored clock can move within an epoch (the broadcast regime's q): at the goldens'
+        // q a satellite clock step reads w_clk 0.15 and the requirement would mask it.
+        network_clock_anchor_clock_k_ =
+            jval<double>(json, "network.clock_anchor_clock_k", "clock_anchor_clock_k", 0.0);
+        if (!(network_clock_anchor_clock_k_ >= 0.0)) {
+            log->error("Network: network.clock_anchor_clock_k = {} must be >= 0 (0 = off).",
+                       network_clock_anchor_clock_k_);
+            return false;
+        }
+        if (network_clock_anchor_clock_k_ > 0.0) {
+            if (!network_clock_temporal_anchor_) {
+                log->error("Network: network.clock_anchor_clock_k = {:.2f} needs "
+                           "network.clock_temporal_anchor: there is no anchor whose trip it "
+                           "could withhold.", network_clock_anchor_clock_k_);
+                return false;
+            }
+            if (network_clock_anchor_guard_space_ != 2) {
+                log->error("Network: network.clock_anchor_clock_k = {:.2f} needs "
+                           "network.clock_anchor_guard_space = phase: it is a requirement on "
+                           "the phase statistic's trip, and the clock statistic already "
+                           "decides in the other modes.", network_clock_anchor_clock_k_);
+                return false;
+            }
+            if (network_clock_anchor_q_ < 1e-6) {
+                log->error("Network: network.clock_anchor_clock_k = {:.2f} with "
+                           "network.clock_anchor_q = {:.3e} m^2/s is refused: below 1e-6 the "
+                           "anchored clock cannot move within an epoch, so a satellite clock "
+                           "step reads a clock-space statistic near 0.15 and the requirement "
+                           "would withhold every step.  It is valid at the broadcast regime's "
+                           "q (5e-6).", network_clock_anchor_clock_k_, network_clock_anchor_q_);
+                return false;
+            }
+            log->info("Network (clock anchor): network.clock_anchor_clock_k = {:.2f}: a phase "
+                      "statistic trip also needs |w_clk| >= {:.2f}; a phase trip with the clock "
+                      "still is WITHHELD (the satellite stays anchored; event "
+                      "CLK_ANCHOR phi_withheld at each withheld epoch and phi_withheld_end when "
+                      "the episode closes).  The absolute backstop, the satellite clock event "
+                      "and every other decoupling cause are unchanged.  Acts only on a trip; "
+                      "not fingerprinted.",
+                      network_clock_anchor_clock_k_, network_clock_anchor_clock_k_);
+        }
         network_clock_anchor_recouple_epochs_ =
             jval<int>(json, "network.clock_anchor_recouple_epochs",
                       "network_clock_anchor_recouple_epochs", 4);
