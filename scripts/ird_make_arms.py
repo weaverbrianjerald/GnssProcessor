@@ -26,6 +26,12 @@ arm A1 and every arm derived from it (A1k .. A1krhRsm) set network.phase_datum_e
 each keeps a floor-on variant <arm>_floor.  An A1-family arm made before that date carried the floor; every
 arm's own knob list is in the "ird" block of its rapid.json.
 
+The receiver phase bias in the station block was adopted on the arm going forward by the author on 2026-11-10
+(card IRDG section 8): the same arms set network.phase_datum_eq34_rpb_in_block=true.  <arm>_link is the arm
+without the key (the diagonal time link, the arm as defined on 2026-11-09), and <arm>_floor stays the arm as
+defined before 2026-11-09 (the floor at 1 m, the time link).  The loader refuses the key with a zero
+network.phase_datum_eq34_rpb_q_m2s, so a no-link reading (q 0) is made on <arm>_link.
+
 An arm is refused when it sets a key the config loader does not read (a quoted literal in
 src/core/config/*.cpp): the loader ignores an unknown key without a word, so such an arm would
 silently be its base.
@@ -95,7 +101,12 @@ ARL_GPS_ONLY = ['processing.active_systems=["GPS"]']
 # was defined before the ruling.  The A0 family is unchanged (A0 keeps the floor, A0f has it off).
 FLOOR_OFF = ["network.phase_datum_eq34_rpb_prior_sigma_m=0"]
 FLOOR_ON = ["network.phase_datum_eq34_rpb_prior_sigma_m=1.0"]
-A1_FAMILY = ("A1", "A1k", "A1kr", "A1krh", "A1krhR", "A1krhRs", "A1krhRsm")
+# The receiver phase bias carried as a column of the station's block, in place of the diagonal time link that
+# counted the block's information twice (card IRDG).  Adopted on the arm going forward by the author's ruling
+# of 2026-11-10 (card IRDG section 8), A1 and every arm derived from it.  Each of those arms keeps a variant
+# on the time link, <arm>_link: the arm as it was defined on 2026-11-09.
+RPB_IN_BLOCK = ["network.phase_datum_eq34_rpb_in_block=true"]
+A1_FAMILY =("A1", "A1k", "A1kr", "A1krh", "A1krhR", "A1krhRs", "A1krhRsm")
 
 # name -> (knob list on top of the base, what it is)
 ARMS = {
@@ -110,14 +121,16 @@ ARMS = {
     "A0f": (SLIP_SET + SEARCH_LOG + IRD_TRACES + BUNDLE_A0
             + ["network.phase_datum_eq34_rpb_prior_sigma_m=0"], "A0 with the RPB floor off"),
     # Card IRD section 6, IRD-3: the pair family on bundle A0, with decision D0 as ruled on 2026-11-09
-    # (the RPB floor off) and D-S (seed-round off, as A0 already has it).  A1 less A0 is the family knob
-    # and the floor; A1_floor (below the table) is A1 as defined before the ruling.
-    "A1": (SLIP_SET + SEARCH_LOG + IRD_TRACES + BUNDLE_A0 + ["network.phase_datum_eq34_family=pair"] + FLOOR_OFF,
-           "A0 + the pair family + the RPB floor off (IRD-3; D0 as ruled 2026-11-09, D-S keeps seed-round off)"),
+    # (the RPB floor off) and D-S (seed-round off, as A0 already has it), and with the receiver phase bias in
+    # the station block as adopted on 2026-11-10.  A1 less A0 is the family knob, the floor and the in-block
+    # key; A1_link and A1_floor (below the table) are A1 as defined before each ruling.
+    "A1": (SLIP_SET + SEARCH_LOG + IRD_TRACES + BUNDLE_A0 + ["network.phase_datum_eq34_family=pair"] + FLOOR_OFF + RPB_IN_BLOCK,
+           "A0 + the pair family + the RPB floor off + the RPB in the station block (IRD-3; D0 as ruled 2026-11-09, "
+           "the in-block carry as adopted 2026-11-10, D-S keeps seed-round off)"),
     # Card IRD section 6, IRD-4: the event rows armed cumulatively on A1 in table order.  The first is
     # the kept row.  The value is a JSON array (rapid_arm.py reads a --set value as JSON).
     "A1k": (SLIP_SET + SEARCH_LOG + IRD_TRACES + BUNDLE_A0
-            + ["network.phase_datum_eq34_family=pair", 'network.phase_datum_eq34_event_rows=["kept"]'] + FLOOR_OFF,
+            + ["network.phase_datum_eq34_family=pair", 'network.phase_datum_eq34_event_rows=["kept"]'] + FLOOR_OFF + RPB_IN_BLOCK,
             "A1 + the kept row (IRD-4)"),
     # The kept row's causal reading (card IRDC section 3): the flips were traced on A0f, so A0fk less
     # A0f is the kept row alone.
@@ -127,7 +140,7 @@ ARMS = {
     # The second row in table order: the returning row armed beside the kept row.  Each arm is its parent
     # (A1k, A0fk) with the event-row list extended and nothing else.
     "A1kr": (SLIP_SET + SEARCH_LOG + IRD_TRACES + BUNDLE_A0
-             + ["network.phase_datum_eq34_family=pair", 'network.phase_datum_eq34_event_rows=["kept","returning"]'] + FLOOR_OFF,
+             + ["network.phase_datum_eq34_family=pair", 'network.phase_datum_eq34_event_rows=["kept","returning"]'] + FLOOR_OFF + RPB_IN_BLOCK,
              "A1k + the returning row (IRD-4)"),
     "A0fkr": (SLIP_SET + SEARCH_LOG + IRD_TRACES + BUNDLE_A0
               + ["network.phase_datum_eq34_rpb_prior_sigma_m=0",
@@ -137,7 +150,7 @@ ARMS = {
     # parent (A1kr, A0fkr) with the event-row list extended and nothing else.
     "A1krh": (SLIP_SET + SEARCH_LOG + IRD_TRACES + BUNDLE_A0
               + ["network.phase_datum_eq34_family=pair",
-                 'network.phase_datum_eq34_event_rows=["kept","returning","rehost"]'] + FLOOR_OFF,
+                 'network.phase_datum_eq34_event_rows=["kept","returning","rehost"]'] + FLOOR_OFF + RPB_IN_BLOCK,
               "A1kr + the rehost row (IRD-4)"),
     "A0fkrh": (SLIP_SET + SEARCH_LOG + IRD_TRACES + BUNDLE_A0
                + ["network.phase_datum_eq34_rpb_prior_sigma_m=0",
@@ -148,7 +161,7 @@ ARMS = {
     # parent (A1krh, A0fkrh, A0fkr) with the event-row list extended and nothing else.
     "A1krhR": (SLIP_SET + SEARCH_LOG + IRD_TRACES + BUNDLE_A0
                + ["network.phase_datum_eq34_family=pair",
-                  'network.phase_datum_eq34_event_rows=["kept","returning","rehost","root"]'] + FLOOR_OFF,
+                  'network.phase_datum_eq34_event_rows=["kept","returning","rehost","root"]'] + FLOOR_OFF + RPB_IN_BLOCK,
                "A1krh + the root row (IRD-4)"),
     "A0fkrhR": (SLIP_SET + SEARCH_LOG + IRD_TRACES + BUNDLE_A0
                 + ["network.phase_datum_eq34_rpb_prior_sigma_m=0",
@@ -164,7 +177,7 @@ ARMS = {
     # nothing else.
     "A1krhRs": (SLIP_SET + SEARCH_LOG + IRD_TRACES + BUNDLE_A0
                 + ["network.phase_datum_eq34_family=pair",
-                   'network.phase_datum_eq34_event_rows=["kept","returning","rehost","root","slip"]'] + FLOOR_OFF,
+                   'network.phase_datum_eq34_event_rows=["kept","returning","rehost","root","slip"]'] + FLOOR_OFF + RPB_IN_BLOCK,
                 "A1krhR + the slip row (IRD-4)"),
     "A0fkrhRs": (SLIP_SET + SEARCH_LOG + IRD_TRACES + BUNDLE_A0
                  + ["network.phase_datum_eq34_rpb_prior_sigma_m=0",
@@ -178,7 +191,7 @@ ARMS = {
     # rehost row (A0fkrRsm, the row alone).  Each arm is its parent with the event-row list extended and nothing else.
     "A1krhRsm": (SLIP_SET + SEARCH_LOG + IRD_TRACES + BUNDLE_A0
                  + ["network.phase_datum_eq34_family=pair",
-                    'network.phase_datum_eq34_event_rows=["kept","returning","rehost","root","slip","merge_split"]'] + FLOOR_OFF,
+                    'network.phase_datum_eq34_event_rows=["kept","returning","rehost","root","slip","merge_split"]'] + FLOOR_OFF + RPB_IN_BLOCK,
                  "A1krhRs + the merge and split row (IRD-4)"),
     "A0fkrhRsm": (SLIP_SET + SEARCH_LOG + IRD_TRACES + BUNDLE_A0
                   + ["network.phase_datum_eq34_rpb_prior_sigma_m=0",
@@ -199,11 +212,15 @@ ARMS = {
     "eq34c": (["network.phase_datum_eq34=true", "network.phase_datum_eq34_carry_shift=true",
                "network.carry_rebase_complete=true"], "card PRM's eq34c posture"),
 }
-# The floor-on variants of the A1 family (card IRDG section 3): the same arm with the floor at 1 m.
+# The named variants of the A1 family, each the arm as it was defined before one of the two rulings.
+# <arm>_link (card IRDG section 8): the arm without the in-block key, so the receiver phase bias is carried on
+# its diagonal time link.  <arm>_floor (card IRDG section 3): that arm with the floor at 1 m.
 for _name in A1_FAMILY:
-    _sets, _what = ARMS[_name]
-    ARMS[_name + "_floor"] = ([kv for kv in _sets if kv not in FLOOR_OFF] + FLOOR_ON,
-                              _what + ", with the floor on at 1 m (the arm as defined before 2026-11-09)")
+    _link = [kv for kv in ARMS[_name][0] if kv not in RPB_IN_BLOCK]
+    ARMS[_name + "_link"] = (_link, "%s as defined on 2026-11-09: the RPB on its diagonal time link, no in-block key"
+                             % _name)
+    ARMS[_name + "_floor"] = ([kv for kv in _link if kv not in FLOOR_OFF] + FLOOR_ON,
+                              "%s as defined before 2026-11-09: the RPB floor on at 1 m, the time link" % _name)
 # Card IRD section 6 fixtures.  The slip fixtures are generated under FIXTURES_ROOT; the gap fixtures
 # are rung 3b with one station blanked; the one-band fixture of IRD-3 (card IRDC section 5) is rung 3b
 # with one station's L2 blanked.  TOW = 261030 + 30 (epoch - 1).
@@ -408,6 +425,19 @@ def compose(arm, bed, knob=None):
     return sets
 
 
+def no_link_refused(arm, knob):
+    """True when `knob` sets the receiver phase bias's walk (network.phase_datum_eq34_rpb_q_m2s) to 0 on an
+    arm that carries the bias in the station block.  The loader refuses that pair (the walk is the block
+    column's own process noise), so the no-link reading is made on the arm's time-link variant."""
+    if not knob or RPB_IN_BLOCK[0] not in ARMS[arm][0]:
+        return False
+    key, value = knob.split("=", 1)
+    try:
+        return key == "network.phase_datum_eq34_rpb_q_m2s" and float(value) == 0.0
+    except ValueError:
+        return False
+
+
 def field_allowed(arm, knob):
     """Before IRD-6 the only field arm is G with no knob (the golden unchanged, section 13)."""
     return arm == "G" and not knob
@@ -422,6 +452,9 @@ def duration_sets(base, hours):
 
 def make(a):
     which, fixture, _, _, rinex = BEDS[a.bed]
+    if no_link_refused(a.arm, a.knob):
+        raise SystemExit("refused: the loader does not take network.phase_datum_eq34_rpb_in_block with a zero "
+                         "network.phase_datum_eq34_rpb_q_m2s; the no-link reading is made on arm %s_link" % a.arm)
     sets = compose(a.arm, a.bed, a.knob)
     base = json.loads(golden_bytes(which))
     if rinex:
@@ -518,22 +551,41 @@ def selftest():
         and set(compose("R1C", "microscope")) - set(compose("R1", "microscope"))
         == set(CHAIN_ON + FLOAT_REPIN_OFF), "R1C is R1 + the chain, A0 less every held knob")
     a1 = compose("A1", "r3c")
-    chk(set(a1) - set(compose("A0", "r3c")) == {"network.phase_datum_eq34_family=pair"} | set(FLOOR_OFF)
-        and set(compose("A0", "r3c")) <= set(a1) and len(a1) == len(compose("A0", "r3c")) + 2,
-        "A1 is A0 plus the pair family knob and the RPB floor off (D0 as ruled 2026-11-09)")
-    chk(all(FLOOR_OFF[0] in compose(n, "r3c") and FLOOR_ON[0] not in compose(n, "r3c") for n in A1_FAMILY),
-        "every arm of the A1 family has the RPB floor off")
-    chk(all(set(compose(n + "_floor", "r3c")) - set(compose(n, "r3c")) == set(FLOOR_ON)
-            and set(compose(n, "r3c")) - set(compose(n + "_floor", "r3c")) == set(FLOOR_OFF)
-            and len(compose(n + "_floor", "r3c")) == len(compose(n, "r3c")) for n in A1_FAMILY)
+    chk(set(a1) - set(compose("A0", "r3c")) == {"network.phase_datum_eq34_family=pair"} | set(FLOOR_OFF + RPB_IN_BLOCK)
+        and set(compose("A0", "r3c")) <= set(a1) and len(a1) == len(compose("A0", "r3c")) + 3,
+        "A1 is A0 plus the pair family knob, the RPB floor off (D0 as ruled 2026-11-09) and the in-block key "
+        "(adopted 2026-11-10)")
+    chk(all(FLOOR_OFF[0] in compose(n, "r3c") and FLOOR_ON[0] not in compose(n, "r3c")
+            and RPB_IN_BLOCK[0] in compose(n, "r3c") for n in A1_FAMILY),
+        "every arm of the A1 family has the RPB floor off and the RPB in the station block")
+    chk(all(set(compose(n, "r3c")) - set(compose(n + "_link", "r3c")) == set(RPB_IN_BLOCK)
+            and set(compose(n + "_link", "r3c")) <= set(compose(n, "r3c"))
+            and len(compose(n + "_link", "r3c")) == len(compose(n, "r3c")) - 1 for n in A1_FAMILY)
+        and sorted(n for n in ARMS if n.endswith("_link")) == sorted(n + "_link" for n in A1_FAMILY),
+        "each A1-family arm has a time-link variant that is the arm less the in-block key alone, and no other arm has one")
+    chk(all(set(compose(n + "_floor", "r3c")) - set(compose(n + "_link", "r3c")) == set(FLOOR_ON)
+            and set(compose(n + "_link", "r3c")) - set(compose(n + "_floor", "r3c")) == set(FLOOR_OFF)
+            and len(compose(n + "_floor", "r3c")) == len(compose(n + "_link", "r3c")) for n in A1_FAMILY)
         and sorted(n for n in ARMS if n.endswith("_floor")) == sorted(n + "_floor" for n in A1_FAMILY),
-        "each A1-family arm has a floor-on variant that differs in the floor's value alone, and no other arm has one")
+        "each A1-family arm has a floor-on variant that differs from its time-link variant in the floor's value alone, "
+        "and no other arm has one")
+    chk(not any(kv.startswith("network.phase_datum_eq34_rpb_in_block") for n in ARMS if n not in A1_FAMILY
+                for kv in compose(n, "r3c")),
+        "no arm outside the A1 family sets the in-block key (the A0 family and the variants keep the time link)")
     chk(set(compose("A1_floor", "r3c")) - set(compose("A0", "r3c"))
         == {"network.phase_datum_eq34_family=pair"} | set(FLOOR_ON),
-        "A1_floor is A0 plus the pair family knob, the floor written out at its default (A1 before the ruling)")
-    chk(set(compose("A1krhRsm", "r3c")) - set(compose("A0fkrhRsm", "r3c")) == {"network.phase_datum_eq34_family=pair"}
-        and set(compose("A0fkrhRsm", "r3c")) <= set(compose("A1krhRsm", "r3c")),
-        "A1krhRsm is A0fkrhRsm plus exactly the pair family knob")
+        "A1_floor is A0 plus the pair family knob, the floor written out at its default (A1 before the rulings)")
+    chk(set(compose("A1krhRsm_link", "r3c")) - set(compose("A0fkrhRsm", "r3c")) == {"network.phase_datum_eq34_family=pair"}
+        and set(compose("A0fkrhRsm", "r3c")) <= set(compose("A1krhRsm_link", "r3c")),
+        "A1krhRsm_link is A0fkrhRsm plus exactly the pair family knob")
+    chk(compose("A1krhRsm_link", "r3c", knob=RPB_IN_BLOCK[0]) == compose("A1krhRsm", "r3c"),
+        "A1krhRsm is its time-link variant with the in-block key as the one knob (the key arm card IRDG graded)")
+    chk(not no_link_refused("A1krhRsm_link", "network.phase_datum_eq34_rpb_q_m2s=0")
+        and not no_link_refused("A1krhRsm", None)
+        and no_link_refused("A1krhRsm", "network.phase_datum_eq34_rpb_q_m2s=0")
+        and not no_link_refused("A1krhRsm", "network.phase_datum_eq34_rpb_q_m2s=1e-6")
+        and not no_link_refused("A0f", "network.phase_datum_eq34_rpb_q_m2s=0"),
+        "a no-link knob (q 0) is refused on an arm with the in-block key and taken on its time-link variant")
     a1k = compose("A1k", "r3c")
     chk(set(a1k) - set(a1) == {'network.phase_datum_eq34_event_rows=["kept"]'}
         and set(a1) <= set(a1k) and len(a1k) == len(a1) + 1,

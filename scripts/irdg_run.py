@@ -9,10 +9,13 @@ made through scripts/ird_make_arms.py and scripts/rapid_arm.py.
     python scripts/irdg_run.py queue --file Q [--jobs 2]     run the arms a queue file lists, two at a time
     python scripts/irdg_run.py --selftest
 
-A tag is irdg_<arm>_<bed>.  Arm codes: f0 the floor-off arm A1krhRsm (the receiver phase bias's time link
-as built), fl its floor-on variant A1krhRsm_floor, r1 the no-chain reference R1, q0 the floor-off arm with
-network.phase_datum_eq34_rpb_q_m2s=0 (no link), b the floor-off arm with
-network.phase_datum_eq34_rpb_in_block=true (the key of card IRDG).  Groups:
+A tag is irdg_<arm>_<bed>.  Arm codes: f0 the floor-off arm on the receiver phase bias's time link as built
+(A1krhRsm_link), fl its floor-on variant A1krhRsm_floor, r1 the no-chain reference R1, q0 the floor-off arm
+with network.phase_datum_eq34_rpb_q_m2s=0 (no link), b the floor-off arm with
+network.phase_datum_eq34_rpb_in_block=true (the key of card IRDG) as its one knob, ad an arm of the A1 family
+as defined since the adoption of 2026-11-10 (card IRDG section 8), which carries the key itself.  The card
+graded f0, q0 and b when arm A1krhRsm was still the time-link arm; A1krhRsm_link is that arm, knob for knob,
+and A1krhRsm is now arm b.  Groups:
 
     part1    the floor-off arm on the two beds of card IRDF, the microscope, r2 and the row fixtures with
              their controls (card IRDG section 3)
@@ -21,6 +24,8 @@ network.phase_datum_eq34_rpb_in_block=true (the key of card IRDG).  Groups:
              with --suffix)
     key      the key on every bed of part1
     wires    the held-out wires: r1, f0 and b on r3c and the golden sim without the eight held-out sites
+    adopted  the seven arms of the A1 family as now defined, 0.1 h on r3c (a smoke: the loader takes each),
+             and A1krhRsm for 2 h on r3c (it reproduces the key arm irdg_bx_r3c)
 
 A queue file holds one arm per line, "<Release exe> <tag>", and may grow while the queue runs; the line
 END stops the queue once every listed arm has an exit code.  An arm that already has one is skipped; an arm
@@ -44,8 +49,11 @@ RUNS = (os.environ.get("RAPID_RUNS_ROOT") or (ROOT + "/runs")).replace("\\", "/"
 KEY = "network.phase_datum_eq34_rpb_in_block=true"
 NO_LINK = "network.phase_datum_eq34_rpb_q_m2s=0"
 # arm code -> (arm of ird_make_arms.py, the one knob under test or None)
-ARM = {"f0": ("A1krhRsm", None), "fl": ("A1krhRsm_floor", None), "r1": ("R1", None),
-       "q0": ("A1krhRsm", NO_LINK), "b": ("A1krhRsm", KEY), "g": ("G", None)}
+ARM = {"f0": ("A1krhRsm_link", None), "fl": ("A1krhRsm_floor", None), "r1": ("R1", None),
+       "q0": ("A1krhRsm_link", NO_LINK), "b": ("A1krhRsm_link", KEY), "g": ("G", None)}
+# The A1 family of ird_make_arms.py as defined since the adoption, and the one arm of it that runs for 2 h.
+ADOPTED = ("A1", "A1k", "A1kr", "A1krh", "A1krhR", "A1krhRs", "A1krhRsm")
+ADOPTED_2H = "A1krhRsm"
 # bed code -> bed of ird_make_arms.py
 BED = {"r3c": "r3c", "gs": "golden", "gf": "field", "mic": "microscope", "r2": "r2", "r3b": "r3b",
        "rv16": "ird_rv16", "rg": "ird_rg", "rgm": "ird_rg_mic", "t1": "ird_t1", "tr": "ird_tr",
@@ -63,6 +71,7 @@ GROUPS = {
     "golden": [("g", "gs"), ("g", "gf")],
     "key": [("b", b) for b in ROW_BEDS + CONTROL_BEDS],
     "wires": [(a, b) for b in ("r3c", "gs") for a in ("r1", "f0", "b")],
+    "adopted": [],                               # made by adopted_rows(): arms by their own names, not by a code
 }
 
 
@@ -84,9 +93,23 @@ def make_cmd(arm, bed, tag, drop=()):
     return cmd
 
 
+def adopted_rows():
+    """The A1 family as defined since the adoption, on r3c: each arm for 0.1 h (tag irdg_ads_<arm>_r3c: the
+    loader takes the arm and its block columns fold) and A1krhRsm for 2 h (irdg_ad_a1krhrsm_r3c: the arm
+    card IRDG graded as its key arm)."""
+    out = []
+    for name, hours in [(a, 0.1) for a in ADOPTED] + [(ADOPTED_2H, 2.0)]:
+        t = "irdg_ad%s_%s_r3c" % ("s" if hours < 1.0 else "", name.lower())
+        out.append((t, [sys.executable, HERE + "/ird_make_arms.py", "make", "--arm", name, "--bed", "r3c",
+                        "--tag", t, "--hours", str(hours)]))
+    return out
+
+
 def rows(groups, suffix=""):
     out = []
     for g in groups:
+        if g == "adopted":
+            out += adopted_rows()
         for arm, bed in GROUPS[g]:
             if g == "wires":
                 out.append((wire_tag(arm, bed), make_cmd(arm, bed, wire_tag(arm, bed), HELD_OUT)))
@@ -204,11 +227,21 @@ def selftest():
         and {a for a, _ in GROUPS["part1"]} == {"f0"} and {a for a, _ in GROUPS["key"]} == {"b"},
         "the key runs on the beds of part 1, bed for bed")
     c = make_cmd("b", "r3c", "x")
-    chk(c[c.index("--arm") + 1] == "A1krhRsm" and c[c.index("--knob") + 1] == KEY,
-        "the key arm is the floor-off arm with the key as its one knob")
+    chk(c[c.index("--arm") + 1] == "A1krhRsm_link" and c[c.index("--knob") + 1] == KEY,
+        "the key arm is the floor-off time-link arm with the key as its one knob")
     c = make_cmd("q0", "rg", "x")
-    chk(c[c.index("--knob") + 1] == NO_LINK and c[c.index("--bed") + 1] == "ird_rg",
-        "the no-link arm sets the time link's q to 0")
+    chk(c[c.index("--arm") + 1] == "A1krhRsm_link" and c[c.index("--knob") + 1] == NO_LINK
+        and c[c.index("--bed") + 1] == "ird_rg",
+        "the no-link arm sets the time link's q to 0 on the time-link arm (the loader refuses q 0 with the key)")
+    import ird_make_arms
+    chk(all(ird_make_arms.compose(ARM["b"][0], BED[b], knob=KEY) == ird_make_arms.compose(ADOPTED_2H, BED[b])
+            for _, b in GROUPS["key"]),
+        "on every bed of the card, arm A1krhRsm as now defined is the key arm b, knob for knob")
+    ad = adopted_rows()
+    chk(len(ad) == len(ADOPTED) + 1 and [cmd[cmd.index("--hours") + 1] for _, cmd in ad] == ["0.1"] * len(ADOPTED) + ["2.0"]
+        and ad[-1][0] == "irdg_ad_a1krhrsm_r3c" and len({t for t, _ in ad}) == len(ad)
+        and all("--knob" not in cmd for _, cmd in ad),
+        "the adopted group smokes each arm of the A1 family and runs A1krhRsm for 2 h, no knob on any")
     w = rows(["wires"])
     chk(len(w) == 6 and all(cmd.count("--drop-station") == 8 for _, cmd in w),
         "six held-out wires, each without the eight held-out sites")
