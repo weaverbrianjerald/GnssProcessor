@@ -201,6 +201,19 @@ RaimPriorSelection raimPriorChannelSelect(const std::vector<RaimPriorRow>& rows,
     return sel;
 }
 
+void raimPriorWireZwd(RaimPriorSelection& sel, const std::vector<RaimPriorRow>& rows) {
+    std::vector<std::size_t> still_unwired;
+    for (const std::size_t c : sel.unwired) {
+        if (rows[sel.cell_row[c]].kind == ContributionKind::BlockZwdCarry) {
+            sel.zwd.push_back(c);
+            sel.acted_cells.insert({std::get<0>(sel.cells[c]), std::get<1>(sel.cells[c])});
+        } else {
+            still_unwired.push_back(c);
+        }
+    }
+    sel.unwired = std::move(still_unwired);
+}
+
 void raimPriorChannelNoteSelection(const RaimPriorSelection& sel, bool any_rows,
                                    RaimPriorChannelTally& tally) {
     ++tally.passes;
@@ -213,6 +226,7 @@ void raimPriorChannelNoteSelection(const RaimPriorSelection& sel, bool any_rows,
     tally.held      += static_cast<long long>(sel.isolated.held.size());
     tally.arcs_both += static_cast<long long>(sel.arcs_both.size());
     tally.unwired   += static_cast<long long>(sel.unwired.size());
+    tally.zwd_flags += static_cast<long long>(sel.zwd.size());
 }
 
 std::string raimPriorEventDetail(const RaimPriorRow& r, double scale) {
@@ -288,6 +302,11 @@ std::vector<RaimPriorReportLine> raimPriorChannelReport(const RaimPriorChannelTa
         "{} unwired.",
         t.flags, t.held, t.arcs, t.arcs_ambiguities, t.arcs_empty, t.arcs_both, t.rxcb_resets,
         t.rxcb_no_entry, t.unwired)});
+    if (t.zwd_flags > 0)
+        out.push_back({false, fmt::format(
+            "{} flag(s) on the station wet delay's block row took the wet delay's event response: "
+            "{} carried wet delay(s) erased, {} with no carried entry.",
+            t.zwd_flags, t.zwd_erases, t.zwd_no_entry)});
     if (t.unwired > 0)
         out.push_back({true, fmt::format(
             "{} flag(s) on a carry the channel has no response for (the wet delay or the receiver "

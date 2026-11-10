@@ -12,11 +12,14 @@
  * networkHarvestLocalCarries (network/carry/LocalCarryHarvest.hpp, its table of contents).
  */
 
+#include "network/carry/ZwdEdge.hpp"    // ZwdEdgeTally (the re-coupling counts by cause)
 #include "network/state/Entities.hpp"   // net::StationTable
 
 #include <cstdint>
 #include <cstddef>
+#include <optional>
 #include <set>
+#include <string>
 #include <vector>
 
 namespace GnssProcessor {
@@ -94,6 +97,62 @@ std::set<int> zwdSlipLatchStations(const RelevelEpochState& relevel);
  * @return True when an entry was erased; false when the station carried none.
  */
 bool zwdEventDrop(net::StationTable& sta_rows, int station);
+
+struct ZwdCarryCounters;                    // below
+struct NetworkRunTraces;                    // network/diag/RunTraces.hpp
+struct GnssTime;                            // common/GnssTypes.hpp
+
+/**
+ * @brief The station's wet-delay edge record (@c net::StationState::zwd_edge,
+ *        network/carry/ZwdEdge.hpp), with the row created when absent.  Serial code only.
+ * @param sta_rows The station table.
+ * @param station  Station roster index.
+ * @return The record (empty when no edge is open).
+ */
+std::optional<ZwdCoupleEdge>& zwdEdgeOf(net::StationTable& sta_rows, int station);
+
+/**
+ * @brief The decoupling edge of an event erase: erases the station's carried wet delay and
+ *        opens its edge record (@ref zwdEdgeDecouple).
+ *
+ * A re-created entry erased before its first fold is counted in
+ * @c ZwdCarryCounters::n_zwd_superseded_by under the cause of the edge it supersedes.  The
+ * caller counts its own feed and writes its own events-trace row.
+ *
+ * @param sta_rows The station table (written: the station's zwd entry and zwd_edge record).
+ * @param station  Station roster index.
+ * @param cause    The feed (@c SlipLatch, @c RaimArc or @c RaimPrior).
+ * @param now_s    Continuous-GPS second of the erase.
+ * @param counters The run's counters (written: n_zwd_superseded_by).
+ * @param sat      The satellite of a RAIM per-arc erase (empty otherwise).
+ * @param via      The drop cause of a RAIM per-arc erase (empty otherwise).
+ * @return True when an entry was erased; false when the station carried none (nothing written).
+ */
+bool zwdEventErase(net::StationTable& sta_rows, int station, ZwdEdgeCause cause, double now_s,
+                   ZwdCarryCounters& counters, const std::string& sat = {},
+                   const std::string& via = {});
+
+/**
+ * @brief The re-coupling edge: counts one closed edge by cause and writes its identity row.
+ *
+ * The row is tier @c ZWD of @c network_events.csv: event @c first_fold for a first sighting
+ * (a birth, not a re-coupling) and @c recouple for every other cause; the statistic is the
+ * change of the wet delay at the fold (the posterior minus the carried value folded, m) and
+ * the threshold the folded prior's standard deviation (m), so their ratio is the re-coupling's
+ * normalized step; the detail names the cause, the seconds away and, for a RAIM per-arc erase,
+ * the satellite and the drop cause.
+ *
+ * @param counters   The run's counters (written: n_zwd_recouple_by, n_zwd_recouple).
+ * @param traces     The run's trace streams (the events trace).
+ * @param t          The epoch.
+ * @param station    The station's name.
+ * @param rc         The closed edge (@ref zwdEdgeFold).
+ * @param step_m     The wet delay's change at the fold (m).
+ * @param fold_sd_m  The folded prior's standard deviation (m).
+ */
+void zwdNoteRecouple(ZwdCarryCounters& counters, NetworkRunTraces& traces, const GnssTime& t,
+                     const std::string& station, const ZwdRecouple& rc, double step_m,
+                     double fold_sd_m);
 
 /**
  * @brief The slip-latch feed of the event response: erases the carried wet delay of every
@@ -174,10 +233,21 @@ struct ZwdCarryCounters {
 
     // --- Event response of the float vehicle's in-block route (NetworkKnobs::zwd_event_on) ---
     // Both edges of the response (standing invariant 7).  The decoupling edge is split by
-    // feed; the re-coupling edge counts the first fold of every re-created entry.
+    // feed; the re-coupling edge is split by the cause of the edge it closes (the station
+    // record net::StationState::zwd_edge, network/carry/ZwdEdge.hpp).  Every decoupling ends
+    // in a re-coupling, a supersession or a record still open at the run end.
     long long n_zwd_event_drop_slip   = 0;  ///< stations whose carried wet delay was erased at a slip latch (this epoch's fold had no prior)
-    long long n_zwd_event_drop_raim   = 0;  ///< stations whose carried wet delay was erased at a RAIM per-arc attribution (the next epoch's fold had no prior)
-    long long n_zwd_recouple          = 0;  ///< first folds of a re-created wet-delay entry (after a first sighting, a gap prune or an event erase)
+    long long n_zwd_event_drop_raim   = 0;  ///< stations whose carried wet delay was erased at a RAIM per-arc attribution or a prior-channel line-of-sight flag (the next epoch's fold had no prior)
+    long long n_zwd_event_drop_prior  = 0;  ///< stations whose carried wet delay was erased at a prior-channel flag on its own block row (the next epoch's fold had no prior)
+    long long n_zwd_recouple          = 0;  ///< re-coupling folds, every cause (the sum of n_zwd_recouple_by without its first-sighting cell)
+    /// Folds that closed an open edge, by the edge's cause (ZwdEdgeCause): the first fold of an
+    /// entry re-created after an erase or a gap prune, a fold after an absence within the
+    /// horizon (Return), and, in the FirstSighting cell, the first fold of a station's first
+    /// entry (a birth, never a re-coupling).
+    ZwdEdgeTally n_zwd_recouple_by{};
+    /// Re-created entries removed again before their first fold, by the cause of the edge that
+    /// lost its re-coupling.
+    ZwdEdgeTally n_zwd_superseded_by{};
 };
 
 } // namespace GnssProcessor

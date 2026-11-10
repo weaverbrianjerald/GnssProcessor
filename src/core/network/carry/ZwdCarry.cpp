@@ -282,6 +282,34 @@ bool zwdEventDrop(net::StationTable& sta_rows, int station) {
     return net::drop(sta_rows, StationId{station}, &net::StationState::zwd) > 0;
 }
 
+std::optional<ZwdCoupleEdge>& zwdEdgeOf(net::StationTable& sta_rows, int station) {
+    return sta_rows[StationId{station}].zwd_edge;
+}
+
+bool zwdEventErase(net::StationTable& sta_rows, int station, ZwdEdgeCause cause, double now_s,
+                   ZwdCarryCounters& counters, const std::string& sat, const std::string& via) {
+    if (!zwdEventDrop(sta_rows, station)) return false;   // nothing carried, nothing to erase
+    // The decoupling edge opens the station's record; a re-created entry that had not folded
+    // yet loses its re-coupling to this erase.
+    if (const std::optional<ZwdEdgeCause> lost =
+            zwdEdgeDecouple(zwdEdgeOf(sta_rows, station), cause, now_s, sat, via))
+        ++counters.n_zwd_superseded_by[static_cast<std::size_t>(*lost)];
+    return true;
+}
+
+void zwdNoteRecouple(ZwdCarryCounters& counters, NetworkRunTraces& traces, const GnssTime& t,
+                     const std::string& station, const ZwdRecouple& rc, double step_m,
+                     double fold_sd_m) {
+    ++counters.n_zwd_recouple_by[static_cast<std::size_t>(rc.cause)];
+    const bool first = rc.cause == ZwdEdgeCause::FirstSighting;
+    if (!first) ++counters.n_zwd_recouple;   // a first sighting's first fold is a birth
+    std::string detail = fmt::format("cause={};away_s={:.1f}", zwdEdgeCauseName(rc.cause),
+                                     rc.away_s);
+    if (!rc.via.empty()) detail += ";via=" + rc.via;
+    traces.emitEvent(t, "ZWD", first ? "first_fold" : "recouple", rc.sat, station, step_m,
+                     fold_sd_m, "fold", detail);
+}
+
 void networkZwdEventResponse(NetworkRun& run, const NetworkEpoch& ep, const EpochEvents& events) {
     // ---- From the run, the epoch and the events ----
     NetworkRunContext& ctx = run.ctx;
@@ -289,16 +317,18 @@ void networkZwdEventResponse(NetworkRun& run, const NetworkEpoch& ep, const Epoc
     const std::vector<NetStation>& stations = run.setup.stations;
     NetworkRunTraces& traces = run.traces;
     const SyncedEpoch& se = ep.se;
+    const double pl_now_s = ep.clock.pl_now_s;
     const RelevelEpochState& relevel = events.slip.relevel;
     // ---- End of the bindings ----
     if (!ctx.knobs.zwd_event_on) return;
     // The decoupling edge for a slip latch: the station's carried wet delay is erased before
     // PASS B builds its block, so the column folds no prior this epoch (its birth state: the
     // column has no a priori row), and this epoch's harvest re-creates the entry from this
-    // epoch's posterior. The re-coupling edge is that entry's first fold, counted at the
-    // harvest (n_zwd_recouple).
+    // epoch's posterior. The re-coupling edge is that entry's first fold, counted and
+    // identified at the harvest (zwdNoteRecouple) from the record the erase opens.
     for (const int i : zwdSlipLatchStations(relevel)) {
-        if (!zwdEventDrop(sta_rows, i)) continue;   // nothing carried, nothing to erase
+        if (!zwdEventErase(sta_rows, i, ZwdEdgeCause::SlipLatch, pl_now_s, ctx.counters))
+            continue;   // nothing carried, nothing to erase
         ++ctx.counters.n_zwd_event_drop_slip;
         prmRespond(ctx.counters.prm_resp, ResponseSite::ZwdSlipErase);
         traces.emitEvent(se.time, "ZWD", "slip_latch", std::string(),
@@ -341,9 +371,13 @@ void networkHarvestZwd(NetworkRun& run, const NetworkEpoch& ep, HarvestBorder& b
     // Seam window (network.zwd_seam_reseed): open for a bounded run of epochs after
     // a warm resume.
     const bool   zwd_seam_live = ctx.carry.zwd_seam_ep_left > 0;
-    // The float vehicle's event response: stamp each entry this harvest creates, so the
-    // next harvest can count its first fold as the re-coupling edge.
+    // The float vehicle's event response: the harvest keeps each station's edge record
+    // (network/carry/ZwdEdge.hpp), stamping the entries it creates and closing the open edge
+    // at an entry's first fold, with its counts and identity row.
     const bool   zwd_event_on = ctx.knobs.zwd_event_on;
+    const double dt_s = ep.clock.dt;
+    NetworkRunTraces& traces = run.traces;
+    const SyncedEpoch& se = ep.se;
     SharedHistoryHarvest& shx_h = border.shx_h;
     // ---- End of the bindings ----
     // Harvest the posterior ZWD and stash it. This is its own loop, beside the
@@ -443,25 +477,33 @@ void networkHarvestZwd(NetworkRun& run, const NetworkEpoch& ep, HarvestBorder& b
                 networkResumeCouplingCensusRow(run, *zold, coupling);
             }
         }
-        // Re-coupling edge of the event response, read before the stash replaces the entry:
-        // an entry created at the previous harvest (relevel_s stamped there) that folded this
-        // epoch has re-coupled. Every creation counts (a first sighting, a gap prune, an
-        // event erase); the run-end line prints the three populations beside it.
-        bool zwd_reborn = false;
+        // Both edges of the event response at the harvest, read before the stash replaces
+        // the entry (measure-only: nothing on the solve path reads the record).  A station
+        // with no entry has it re-created here, and its record stamps the creation (a station
+        // with no open record is a first sighting).  A station with an entry closes its open
+        // edge at the entry's first fold, or re-couples after an absence within the horizon;
+        // the fold's step (this posterior minus the carried value) over the folded prior's
+        // sigma is the re-coupling's normalized step.
         if (zwd_event_on) {
-            const auto* zprev = net::get(sta_rows, StationId{static_cast<int>(i)},
-                                         &net::StationState::zwd);
-            zwd_reborn = (zprev == nullptr);
-            if (zprev != nullptr && zprev->relevel_s != 0.0 && R.pl_zwd_injected)
-                ++ctx.counters.n_zwd_recouple;
+            const int sta = static_cast<int>(i);
+            const LocalCarry* zprev = net::get(sta_rows, StationId{sta}, &net::StationState::zwd);
+            if (zprev == nullptr) {
+                zwdEdgeCreate(zwdEdgeOf(sta_rows, sta), pl_now_s);
+            } else {
+                const double zgap = pl_now_s - zprev->last_seen_s;
+                if (const std::optional<ZwdRecouple> rc =
+                        zwdEdgeFold(zwdEdgeOf(sta_rows, sta), R.pl_zwd_injected, zgap, dt_s,
+                                    pl_now_s)) {
+                    const double fold_var =
+                        zprev->var + ctx.knobs.zwdQEff(zwd_seam_live) * std::max(0.0, zgap);
+                    zwdNoteRecouple(ctx.counters, traces, se.time, stations[i].name, *rc,
+                                    value_abs - zprev->value_abs,
+                                    std::sqrt(std::max(0.0, fold_var)));
+                }
+            }
         }
         net::put(sta_rows, StationId{static_cast<int>(i)}, &net::StationState::zwd) =
             LocalCarry{value_abs, var, pl_now_s, std::move(coupling)};
-        // An ordinary re-stash leaves relevel_s at 0; only the stash that creates the entry
-        // stamps it (measure-only: nothing on the solve path reads the wet delay's stamp).
-        if (zwd_reborn)
-            net::put(sta_rows, StationId{static_cast<int>(i)}, &net::StationState::zwd)
-                .relevel_s = pl_now_s;
         networkSharedHistoryNoteEntry(shx_h, est_idx, R.pl_zwd.col, SharedHistoryMap::Zwd,
                                       static_cast<int>(i));   // shared history; no-op when off
         // In-block route: the last row of the station's harvest block is the ZWD
@@ -482,11 +524,25 @@ void networkHarvestZwd(NetworkRun& run, const NetworkEpoch& ep, HarvestBorder& b
     }
     // The horizon comes from the parameter registry (network.phase_leveling_max_gap_s,
     // the same value as pl_max_gap_s).
+    // Under the event response the prune is a decoupling edge too: it opens the station's
+    // record and writes its identity row, so the returning station's first fold is a
+    // re-coupling of cause gap_prune, never a first sighting.
     carryGapPrune(sta_rows, &net::StationState::zwd, pl_now_s,
                   ctx.params.spec(NetworkParamKind::Zwd).gap_horizon_s,
-                  [&](const auto&, const auto&) {
+                  [&](const StationId& id, const LocalCarry& lc) {
                       ++ctx.counters.n_cr_zwd_gap_prune;   // same gap test as the inject
                       prmRespond(ctx.counters.prm_resp, ResponseSite::ZwdGapPrune);
+                      if (!zwd_event_on) return;
+                      if (const std::optional<ZwdEdgeCause> lost = zwdEdgeDecouple(
+                              zwdEdgeOf(sta_rows, id.index), ZwdEdgeCause::GapPrune, pl_now_s))
+                          ++ctx.counters.n_zwd_superseded_by[static_cast<std::size_t>(*lost)];
+                      traces.emitEvent(se.time, "ZWD", "gap_prune", std::string(),
+                                       (id.index >= 0
+                                        && id.index < static_cast<int>(stations.size()))
+                                           ? stations[static_cast<std::size_t>(id.index)].name
+                                           : std::string(),
+                                       pl_now_s - lc.last_seen_s, std::nullopt, "prune",
+                                       "no_prior_until_return");
                   });
     networkZwdSeamWindowStep(run, ep);
 }

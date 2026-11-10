@@ -345,6 +345,9 @@ struct RaimPriorChannelTally {
     long long rxcb_resets{0};          ///< Receiver code-bias flags that erased the carried entry.
     long long rxcb_no_entry{0};        ///< Receiver code-bias flags whose carry held no entry to erase.
     long long unwired{0};              ///< Flags on an unwired subject: counted and written, no response.
+    long long zwd_flags{0};            ///< Flags on the station wet delay's block row that took the wet delay's event response (0 unless it is armed).
+    long long zwd_erases{0};           ///< ...of those, carried wet delays erased.
+    long long zwd_no_entry{0};         ///< ...of those, stations that carried no wet delay to erase.
     double      max_statistic{0.0};    ///< The largest row statistic of the run.
     double      max_tow{-1.0};         ///< Its epoch (GPS TOW, s); < 0 = never set.
     std::string max_station;           ///< Its station.

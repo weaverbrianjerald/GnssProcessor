@@ -74,6 +74,7 @@
 #include "network/assembly/SignalIntegrity.hpp"   // SignalIntegrityArc
 #include "network/slip/RawObservables.hpp"   // IonoCsState
 #include "network/driver/RunTypes.hpp"   // LocalCarry, SdEwlFix
+#include "network/carry/ZwdEdge.hpp"   // ZwdCoupleEdge (the wet delay's edge record)
 #include "model/PppModel.hpp"           // PppModel::CanonicalSignal
 
 namespace GnssProcessor {
@@ -723,6 +724,16 @@ struct StationState {
     /// snapshot serializes Z rows regardless of carry_zwd.
     /// Was @c NetworkCarryState::zwd_carry.  Record Z.
     std::optional<LocalCarry> zwd;
+    /// The open edge of the station's carried wet delay under the float vehicle's event
+    /// response (network/carry/ZwdEdge.hpp): why the entry last stopped folding (a slip-latch,
+    /// RAIM per-arc or prior-channel erase, a gap prune, or the first sighting) and when, until
+    /// the first fold of the entry the harvest re-creates.  Measure-only: written while
+    /// NetworkKnobs::zwd_event_on is armed, read by the harvest's re-coupling count and its
+    /// identity rows and by the run-end report; nothing on the solve path reads it.  Not
+    /// serialized: a warm resume restores the entries without their records, so a restored
+    /// entry's first fold after the seam is a re-coupling of cause return_in_horizon.  New with
+    /// the re-coupling identity rows (card ZTL).  ColdStart.
+    std::optional<ZwdCoupleEdge> zwd_edge;
     /// The station-level gross line-of-sight disposition (the struct documents it).  Was
     /// @c NetworkCarryState::gl_sta_state.  ColdStart.
     std::optional<GrossLosStationState> gross_los;
