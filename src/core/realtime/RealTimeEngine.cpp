@@ -153,7 +153,8 @@ RealTimeEngine::combinedOrbitPart(const SsrCombinedCorrection& rec) {
     orb.delta_rac       = rec.delta_rac;
     orb.delta_rac_dot   = rec.delta_rac_dot;
     orb.received_time   = rec.received_time;
-    orb.epoch_time      = rec.epoch_time;    // shared orbit+clock content epoch → orbit dt base
+    orb.epoch_time      = rec.epoch_time;    // shared orbit+clock SSR epoch
+    orb.update_interval_s = rec.update_interval_s;  // with the epoch, the orbit dt base
     orb.iod_ssr         = rec.iod_ssr;
     orb.reference_point = rec.reference_point;  // the orbit part keeps its dialect tag (RTB-5(b))
     // c0/c1/c2 are discarded: the decomposition exists so that no clock content

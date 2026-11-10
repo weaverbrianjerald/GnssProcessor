@@ -8,6 +8,7 @@
 #include "math/TimeUtils.hpp"
 #include "common/Constants.hpp"
 #include <spdlog/spdlog.h>
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdio>
@@ -39,6 +40,28 @@ bool freshEnough(const GnssTime& record, const GnssTime& query, double max_age_s
     if (age < -max_age_s) return false;  // record far in the future of the query: reject
     if (age < 0.0) return true;          // slightly negative (drift, jitter): accept
     return age <= max_age_s;
+}
+
+// The clock message that a merged correction's clock part came from (a clock or a
+// combined record), as a high-rate clock names it: SSR epoch, update interval and
+// IOD-SSR.
+struct ClockMessage {
+    GnssTime epoch_time;
+    double   update_interval_s;
+    int      iod_ssr;
+};
+
+// A high-rate clock refines one clock message: the one with the same IOD-SSR whose
+// update interval contains the high-rate epoch (IGS SSR Format v1.00 sec. 4 and
+// 4.2).  A delta from an earlier interval refines a polynomial that a newer clock
+// message has replaced; a delta from a later one refines a clock message not yet
+// received.  Neither is added.  A clock that declares no interval is taken as a 1 s
+// one.
+bool highRateRefinesClock(const SsrHighRateClock& hr, const ClockMessage& clock) {
+    if (hr.iod_ssr != clock.iod_ssr) return false;
+    const double since_clock_epoch = secondsBetween(hr.epoch_time, clock.epoch_time);
+    const double interval_s        = std::max(clock.update_interval_s, 1.0);
+    return since_clock_epoch >= 0.0 && since_clock_epoch < interval_s;
 }
 
 } // namespace
@@ -133,10 +156,17 @@ SsrCorrectionStore::getOrbitClock(const std::string& sat,
     }
 
     OrbitClockCorrection out;
+    std::optional<ClockMessage> clock_message;   // the message the clock part came from
 
     // Combined record (RTCM 1060/1066/...) wins over separate orbit + clock
     // because it guarantees IOD coherence within one message.
     if (rec_copy.combined && freshEnough(rec_copy.combined->received_time, query_time, max_age_s)) {
+        // Orbit and clock share one reference time in a combined message: the SSR
+        // epoch plus half the update interval (ssrReferenceTime), not received_time.
+        // The clock polynomial and RAC rates are defined relative to it, so
+        // applyClockToBias / applyOrbitToPosition propagate over the true age.
+        const GnssTime t0 = ssrReferenceTime(rec_copy.combined->epoch_time,
+                                             rec_copy.combined->update_interval_s);
         out.delta_rac     = rec_copy.combined->delta_rac;
         out.delta_rac_dot = rec_copy.combined->delta_rac_dot;
         out.c0            = rec_copy.combined->c0;
@@ -144,31 +174,31 @@ SsrCorrectionStore::getOrbitClock(const std::string& sat,
         out.c2            = rec_copy.combined->c2;
         out.iode             = rec_copy.combined->iode;
         // A combined message guarantees IOD coherence, so the clock shares the
-        // orbit IOD, and the orbit echo is the record's own IOD-SSR and content
-        // epoch (the consumer's echo check then agrees by construction).
+        // orbit IOD, and the orbit echo is the record's own IOD-SSR and reference
+        // time (the consumer's echo check then agrees by construction).
         // (RTF-2)
         out.clock_iode       = rec_copy.combined->iode;
         out.orbit_iod_ssr    = rec_copy.combined->iod_ssr;
-        out.orbit_epoch      = rec_copy.combined->epoch_time;
+        out.orbit_epoch      = t0;
         // Identity of the applied orbit.  For a combined record it equals the echo
         // above by construction (in-message coherence), so the consumer echo check
         // returns Match without a second lookup.
         out.applied_orbit_iod_ssr = rec_copy.combined->iod_ssr;
-        // Orbit and clock share one content epoch in a combined message.  The dt
-        // base is the SSR content reference epoch, not received_time: the clock
-        // polynomial and RAC rates are defined relative to the provider's epoch,
-        // so applyClockToBias / applyOrbitToPosition propagate over the true age.
-        out.epoch_time       = rec_copy.combined->epoch_time;
-        out.orbit_epoch_time = rec_copy.combined->epoch_time;
+        out.epoch_time       = t0;
+        out.orbit_epoch_time = t0;
         out.has_orbit        = true;
         out.has_clock        = true;
         out.orbit_reference_point = rec_copy.combined->reference_point;  // RTB-5(b)
+        clock_message = ClockMessage{rec_copy.combined->epoch_time,
+                                     rec_copy.combined->update_interval_s,
+                                     rec_copy.combined->iod_ssr};
     } else {
         if (rec_copy.orbit && freshEnough(rec_copy.orbit->received_time, query_time, max_age_s)) {
             out.delta_rac        = rec_copy.orbit->delta_rac;
             out.delta_rac_dot    = rec_copy.orbit->delta_rac_dot;
             out.iode             = rec_copy.orbit->iode;
-            out.orbit_epoch_time = rec_copy.orbit->epoch_time;   // orbit dt base (content epoch)
+            out.orbit_epoch_time = ssrReferenceTime(rec_copy.orbit->epoch_time,      // orbit dt base
+                                                    rec_copy.orbit->update_interval_s);
             out.applied_orbit_iod_ssr = rec_copy.orbit->iod_ssr; // applied-orbit identity for the echo check
             out.has_orbit        = true;
             out.orbit_reference_point = rec_copy.orbit->reference_point;  // RTB-5(b)
@@ -178,11 +208,15 @@ SsrCorrectionStore::getOrbitClock(const std::string& sat,
             out.c1         = rec_copy.clock->c1;
             out.c2         = rec_copy.clock->c2;
             // Separate orbit and clock subtypes (the IGS-SSR norm) can carry
-            // different content epochs.  The clock polynomial uses the clock epoch
-            // (its dt enters through c1 and c2), independent of any orbit record's
-            // epoch.
-            out.epoch_time = rec_copy.clock->epoch_time;
+            // different epochs and update intervals.  The clock polynomial uses the
+            // clock message's own reference time (its dt enters through c1 and c2),
+            // independent of any orbit record's.
+            out.epoch_time = ssrReferenceTime(rec_copy.clock->epoch_time,
+                                              rec_copy.clock->update_interval_s);
             out.has_clock  = true;
+            clock_message  = ClockMessage{rec_copy.clock->epoch_time,
+                                          rec_copy.clock->update_interval_s,
+                                          rec_copy.clock->iod_ssr};
             // out.iode (the orbit anchor) stays as the orbit branch set it, or at
             // the -1 "unknown" default for a standalone clock: network and IGS-SSR
             // clock streams carry no orbit IODE (RT0-1).
@@ -209,8 +243,12 @@ SsrCorrectionStore::getOrbitClock(const std::string& sat,
         }
     }
 
-    // High-rate clock is additive on top of the polynomial.
-    if (rec_copy.hrclock && freshEnough(rec_copy.hrclock->received_time, query_time, max_age_s)) {
+    // High-rate clock is additive on top of the polynomial of the clock message it
+    // refines, and only that one (highRateRefinesClock).  Without a clock part there
+    // is nothing for it to refine.
+    if (clock_message && rec_copy.hrclock
+        && freshEnough(rec_copy.hrclock->received_time, query_time, max_age_s)
+        && highRateRefinesClock(*rec_copy.hrclock, *clock_message)) {
         out.hr_clock = rec_copy.hrclock->dc;
     }
 
@@ -417,7 +455,9 @@ SsrCorrectionStore::OrbitEchoVerdict SsrCorrectionStore::classifyOrbitEcho(
         return OrbitEchoVerdict::IodSsrMismatch;
     // Same IOD-SSR: compare orbit content epochs, only when the budget is armed.
     // With max_skew_s == 0 the epoch clause is off (the "default 0 = check off"
-    // contract); the IOD identity check above still applies.
+    // contract); the IOD identity check above still applies.  The applied side is
+    // a reference time; the echo is stamped only by the network producer, whose
+    // records declare no update interval, so there the two coincide with the epoch.
     if (max_skew_s > 0.0
         && std::abs(secondsBetween(applied->orbit_epoch_time, rec.orbit_epoch))
                > max_skew_s)
@@ -606,12 +646,12 @@ SsrCorrectionStore::coverageFor(const std::vector<std::string>& sats,
         const SatRecord& rec = it->second;
         // Orbit and clock are high-rate, so they are gated on freshness (a combined
         // record takes precedence, as in getOrbitClock).  Biases update slowly, so
-        // presence is enough.
+        // presence is enough.  A high-rate clock alone is not clock coverage: it
+        // refines a clock message and is not applied without one.
         const bool comb = rec.combined && freshEnough(rec.combined->received_time, time, max_age_s);
         if (comb || (rec.orbit && freshEnough(rec.orbit->received_time, time, max_age_s)))
             ++cov.orbit;
-        if (comb || (rec.clock && freshEnough(rec.clock->received_time, time, max_age_s))
-                 || (rec.hrclock && freshEnough(rec.hrclock->received_time, time, max_age_s)))
+        if (comb || (rec.clock && freshEnough(rec.clock->received_time, time, max_age_s)))
             ++cov.clock;
         if (rec.code_bias)  ++cov.code_bias;
         if (rec.phase_bias) ++cov.phase_bias;

@@ -33,6 +33,8 @@ namespace GnssProcessor::RtcmSsr {
 struct DecodeResult {
     bool ok{false};                ///< False on truncated payload, unsupported sub-type, etc.
     SsrHeader header{};            ///< Decoded common header fields.
+    const char* body{""};          ///< Message body ("orbit", "clock", "combined", "code bias", "phase bias", "URA", "high-rate clock"); "" until classified.
+    int igs_message_number{0};     ///< IGS-SSR message number (IDF002) of a 4076 message; 0 for legacy SSR.
 };
 
 /**

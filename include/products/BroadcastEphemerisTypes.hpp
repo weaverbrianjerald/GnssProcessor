@@ -113,7 +113,7 @@ struct BroadcastEphemeris {
     /// bit 9 for (E5b, E1).  −1 for every other system and for a record whose source
     /// carries no such word (the RTCM decoders).
     int         data_source{-1};
-    GnssTime    received_time{0, 0.0};      ///< Wall-clock receive time (GPS scale) for staleness.
+    GnssTime    received_time{0, 0.0};      ///< Receive time on the GPS scale, leap seconds included (host clock for RTCM, receiver time for SBF; file loads leave it unset).
     /// GPS / QZSS issue of data, clock (RINEX ORBIT-6 field 4); −1 for every other
     /// system and for a record decoded from a stream that carries no such field.
     int         iodc{-1};

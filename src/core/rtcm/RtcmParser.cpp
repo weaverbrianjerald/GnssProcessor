@@ -19,10 +19,12 @@
 #include "rtcm/RtcmMsmDecoder.hpp"
 #include "rtcm/RtcmNavDecoder.hpp"
 #include "rtcm/RtcmBitReader.hpp"
+#include "common/GnssIdentity.hpp"
 #include "math/TimeUtils.hpp"
 #include "logging/SafeLogger.hpp"
 #include <chrono>
 #include <fstream>
+#include <string>
 
 namespace GnssProcessor {
 
@@ -252,7 +254,10 @@ bool RtcmParser::decodeLegacySsr(const uint8_t* payload, std::size_t len, uint16
     if (!result.ok) {
         rtcmLog()->warn("RTCM {}: legacy SSR decode incomplete (truncated payload?)", msg_type);
     }
-    if (result.ok) updateTimeAnchor(result.header.epoch_time);
+    if (result.ok) {
+        updateTimeAnchor(result.header.epoch_time);
+        noteSsrUpdateInterval(msg_type, result.body, result.igs_message_number, result.header);
+    }
     return result.ok;
 }
 
@@ -265,8 +270,32 @@ bool RtcmParser::decodeIgsSsr4076(const uint8_t* payload, std::size_t len) {
     if (!result.ok) {
         rtcmLog()->trace("RTCM 4076: IGS-SSR decode incomplete or unsupported sub-type");
     }
-    if (result.ok) updateTimeAnchor(result.header.epoch_time);
+    if (result.ok) {
+        updateTimeAnchor(result.header.epoch_time);
+        noteSsrUpdateInterval(4076, result.body, result.igs_message_number, result.header);
+    }
     return result.ok;
+}
+
+void RtcmParser::noteSsrUpdateInterval(int msg_type, const char* body, int igs_message_number,
+                                       const SsrHeader& header) {
+    const int index = header.update_interval_index;
+    const auto [it, first] = ssr_update_interval_logged_.try_emplace(
+        std::make_pair(msg_type, igs_message_number), index);
+    if (!first && it->second == index) return;
+    const std::string kind = igs_message_number > 0
+        ? "RTCM 4076 IM " + std::to_string(igs_message_number)
+        : "RTCM " + std::to_string(msg_type);
+    if (first) {
+        rtcmLog()->info("SSR update interval: {} {} ({}) {:.0f} s (indicator {})",
+                        systemName(header.system), body, kind,
+                        ssrUpdateIntervalSeconds(index), index);
+    } else {
+        rtcmLog()->info("SSR update interval changed: {} {} ({}) {:.0f} s -> {:.0f} s",
+                        systemName(header.system), body, kind,
+                        ssrUpdateIntervalSeconds(it->second), ssrUpdateIntervalSeconds(index));
+        it->second = index;
+    }
 }
 
 // ---------------------------------------------------------------------------

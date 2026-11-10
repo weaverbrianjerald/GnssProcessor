@@ -129,9 +129,9 @@ public:
         double          c0{0.0};                                  ///< Clock C0 (m).
         double          c1{0.0};                                  ///< Clock C1 (m/s).
         double          c2{0.0};                                  ///< Clock C2 (m/s^2).
-        double          hr_clock{0.0};                            ///< High-rate clock delta (m); 0 if not present.
-        GnssTime        epoch_time{0, 0.0};                       ///< SSR content reference epoch of the clock correction; dt base for applyClockToBias.
-        GnssTime        orbit_epoch_time{0, 0.0};                 ///< SSR content reference epoch of the orbit correction; dt base for applyOrbitToPosition (equals epoch_time for a combined record).
+        double          hr_clock{0.0};                            ///< High-rate clock delta (m) of the high-rate message that refines the merged clock message (same IOD-SSR, epoch inside its update interval); 0 otherwise.
+        GnssTime        epoch_time{0, 0.0};                       ///< Reference time t0 of the clock correction (@ref ssrReferenceTime: SSR epoch plus half the update interval); dt base for applyClockToBias.
+        GnssTime        orbit_epoch_time{0, 0.0};                 ///< Reference time t0 of the orbit correction (@ref ssrReferenceTime); dt base for applyOrbitToPosition (equals epoch_time for a combined record).
         int             iode{-1};                                 ///< Broadcast IODE the orbit applies to; -1 = unknown, which keeps iodeMatches() permissive. A standalone clock subtype carries no orbit IODE and leaves this at -1 (see getOrbitClock; RT0-1).
         /// Broadcast IODE the clock C0 is referenced to (IGS-SSR matching
         /// convention).  Distinct from @c iode, the orbit anchor.  A standard SSR
@@ -493,7 +493,7 @@ public:
     struct Coverage {
         int total      = 0;   ///< Satellites queried.
         int orbit      = 0;   ///< With a fresh SSR orbit (or combined) record.
-        int clock      = 0;   ///< With a fresh SSR clock (or combined / high-rate) record.
+        int clock      = 0;   ///< With a fresh SSR clock (or combined) record; a high-rate clock alone does not count.
         int code_bias  = 0;   ///< With a code-bias record.
         int phase_bias = 0;   ///< With a phase-bias record.
     };
