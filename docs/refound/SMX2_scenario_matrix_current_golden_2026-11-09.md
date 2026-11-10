@@ -295,3 +295,17 @@ Responses in `smx2a`, event minus null over the leg: the IF-TD pool flags 540 to
 | `t1on` plus the floor | 0.079 0.038 | 0.0166 / 0.0094 | 1 (0.017) / 0 (0.016) / 5 (0.025) | 0 (0) | -0.10 / +0.26 |
 
 The dual bar passes (WTZZ00DEU within 0.001 m, clock wire 1.03 and 0.98 times). The three-band bars of card R1D (B), each three-band arm against the dual control: `t1on` fails (clock wire 1.17 times, band 2 offsets +2 stations; WTZZ00DEU +0.017 and +0.026 m within 0.03); `t1on` plus the floor passes (WTZZ00DEU +0.021 and +0.025 m, clock wire 0.45 and 1.06 times, band 1 and 2 offsets +0 and +0). **Stage D: the floor passes gates (4) and (5) as frozen in card L5B section 15.** The hypothesis that the three-band event is the freed arc's stale level holds on this day's event and its 2 h arms. Not read here: hours 3 to 6, a census, a second day, the sim, and the floor's other measured costs (card SLV: H4 and DOY 132's H5 without the re-seed key, R2 at the 00:00 sim start, the walk metric; this card section 5.2: the guard's miss on E34 at 1.51 h).
+
+### 5.7 The K1 addendum: the same step in runs that never resumed (2026-11-09)
+
+The four fresh runs of the addendum of section 5.2 (`_rap_smx2_kf_{c,A,cn,An}`, the DOY 132 configuration from its start with the IF-TD centring, 194 epochs to TOW 524190, exit 0, 152 to 157 s each); the step runs write one `INJECT` row each.
+
+| run | guard on E34 at the step epoch (`e_phi`, `sqrtS_phi`, decision) | response within 2 epochs | d_k, epochs 0 to 10 (m) | K2 median e_k (m) |
+| --- | --- | --- | --- | --- |
+| control `kf_c` | +8.817, 1.115, trip (bound 6.69) | `cta_decouple` `phi`, deferred | -0.135, -0.226, ... -0.308 | 2.717 |
+| floor `kf_A` | +2.510, 0.870, ok (bound 5.22) | none | -0.069, -0.088, ... -0.113 | 2.899 |
+| nulls `kf_cn`, `kf_An` | -0.003 and -0.004, ok | none | | |
+
+**K1-fresh FAILS and K2-fresh FAILS.** In a run that never resumed, the control's guard trips on the 3.0 m step and the floor's does not: its statistic reads 28 % of the control's at 78 % of the control's predicted size. The seam caveat of section 5.2 is removed: the floor desensitises the guard to a step on E34 at 1.51 h whether or not the run resumed there. K2-fresh: neither wire follows the step in these runs (the control carries 0.31 m of the 3.0 m by epoch 10 although its guard tripped and deferred the correction, the floor 0.11 m); the floor is 0.18 m worse. Why the control's wire follows 2.72 m on the resumed leg and 0.31 m here, after the same deferred trip, is not read: the two runs differ by 1.5 h of centring before the step.
+
+**Answer to card SLV's guard question.** Where the guard's predicted size sits at its floor (9.56 h, G01 and E02), the floor trips wherever the control trips. On E34 at 1.51 h, where the two states differ, the control's guard catches a 3.0 m step that the floor's guard lets through, on a resumed leg and in a continuous run alike. The floor can make the anchor guard blind to a satellite clock step of metres on a satellite whose phase statistic it has damped. On the golden, which does not arm the centring, a step that the IF-TD pool flags at most of the satellite's stations is routed to the clock by the armed clock-event rule before the guard's statistic is needed (section 5.4.1; card SCW section 5.1 for E34 on the field); the exposure is a step the rule does not classify (too few stations in a signal pair, or a step below the IF-TD thresholds).
