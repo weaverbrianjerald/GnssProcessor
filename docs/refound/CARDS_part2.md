@@ -226,3 +226,4 @@ verbatim on 2026-11-07 under the 60 KB bar. Entries are in pre-registration orde
   consumer (S1 passes), but the floor's guard misses a 3 m clock step the control catches (K1 fails, resumed or not). The narrowed
   trigger is card SCW section 7's (not built here). The floor removes card L5B's three-band event and passes card ALD's gates (4) and
   (5) (card L5B section 15). Nothing armed.
+- [DRF](DRF_docs_record_folder_2026-11-09.md): open, 2026-11-09: the docs working set and one record folder: `scripts/docs_record.py` moves closed cards and uncited documents into `docs/record/` (old layout mirrored, links re-pointed, nothing rewritten); 145 of 602 files stay; rehearsed on branch `docs/record-folder`, every docs check passes; landing and the rule text wait for the author.

@@ -37,6 +37,10 @@ Mapping files
       ]
     }
 
+Optional keys ``archive`` and ``stub`` give the docs-relative paths of the frozen
+monolith and its routing stub; they default to ``archive/<doc>`` and ``<doc>`` (the
+layout before the record move, which put both under ``record/``).
+
 Each group is ``[anchor, target, id, status, summary]``. ``anchor`` is a
 prefix of exactly one heading line (``##`` or ``###``) in the monolith, or the
 literal ``__preamble__`` for the text above the first heading (which must be
@@ -116,6 +120,16 @@ def write_if_changed(path: str, text: str) -> None:
 
 def sha(text: str) -> str:
     return hashlib.sha256(text.encode('utf-8')).hexdigest()
+
+
+def archive_rel(m) -> str:
+    """docs-relative path of a monolith's frozen archive copy."""
+    return m.get('archive') or f"archive/{m['doc']}"
+
+
+def stub_rel(m) -> str:
+    """docs-relative path of a monolith's routing stub."""
+    return m.get('stub') or m['doc']
 
 
 def load_maps(only: str | None):
@@ -233,7 +247,7 @@ def target_topic(tgt, fallback):
     return parts[1] if parts[0] == 'cards' and len(parts) > 2 else fallback
 
 
-def build_target(doc, topic, tgt, entries, text):
+def build_target(doc, topic, tgt, entries, text, arch='archive/{doc}'):
     """Render one card / decision file."""
     topic = target_topic(tgt, topic)
     body = ''.join(text[e['start']:e['end']] for e in entries)
@@ -271,7 +285,7 @@ def build_target(doc, topic, tgt, entries, text):
         f"- **hashes named in the text** (commit / exe / byte-cert): "
         f"{fmt_list(f['commits'], 8)}",
         f"- **run dirs named in the text:** {fmt_list(f['runs'], 8)}",
-        f"- **source:** `docs/archive/{doc}` — "
+        f"- **source:** `docs/{arch.format(doc=doc)}` — "
         f"{', '.join(labels) if labels else '(see body)'}",
         '',
         '> Results are appended TO THIS FILE, below the verbatim text. The '
@@ -283,7 +297,14 @@ def build_target(doc, topic, tgt, entries, text):
     return '\n'.join(head) + '\n' + body
 
 
-def build_stub(doc, topic, title, ordered):
+def build_stub(doc, topic, title, ordered, stub='', arch=''):
+    stub = stub or doc
+    arch = arch or f'archive/{doc}'
+    here = os.path.dirname(stub)
+
+    def to(p):
+        return os.path.relpath(p, here).replace(os.sep, '/') if here else p
+
     rows = []
     for e in ordered:
         rel = '../' * 0  # stubs live in docs/, targets under docs/
@@ -299,18 +320,18 @@ def build_stub(doc, topic, title, ordered):
         f'# {title} — SPLIT',
         '',
         f'`docs/{doc}` was split on 2026-09-14 — the original is '
-        f'[archive/{doc}](archive/{doc}); sections map as follows.',
+        f'[{arch}]({to(arch)}); sections map as follows.',
         '',
         f'The archived copy is **frozen**: it is kept byte-for-byte as proof '
         f'and is never appended to. New results go in the card file named '
-        f'below. See [INDEX.md](INDEX.md) for the whole tree and the rules, '
-        f'and [topics/{topic}.md](topics/{topic}.md) for this subject.',
+        f'below. See [INDEX.md]({to("INDEX.md")}) for the whole tree and the rules, '
+        f'and [topics/{topic}.md]({to("topics/" + topic + ".md")}) for this subject.',
         '',
         '| section | card id | file |',
         '| --- | --- | --- |',
     ]
     for label, target, cid in rows:
-        out.append(f'| {label} | {cid} | [{target}]({target}) |')
+        out.append(f'| {label} | {cid} | [{target}]({to(target)}) |')
     out.append('')
     return '\n'.join(out)
 
@@ -319,8 +340,8 @@ def do_build(maps, dry):
     report = []
     for m in maps:
         doc, topic = m['doc'], m['topic']
-        src = os.path.join(DOCS, doc)
-        arch_path = os.path.join(DOCS, 'archive', doc)
+        src = os.path.join(DOCS, stub_rel(m))
+        arch_path = os.path.join(DOCS, archive_rel(m))
         if os.path.exists(arch_path):
             # already split once: the archive is the source of truth, never the
             # stub that now sits at the old path.  Keeps --build idempotent.
@@ -336,7 +357,8 @@ def do_build(maps, dry):
         sizes = []
         marker = MARKER.format(doc=doc)
         for tgt, entries in by_target.items():
-            content = build_target(doc, topic, tgt, entries, text)
+            content = build_target(doc, topic, tgt, entries, text,
+                                   archive_rel(m).replace(doc, '{doc}'))
             # Since 2026-10-07 the header above the marker (title, STATUS,
             # Outcome) is maintained by hand, and rule 2 appends results
             # below the body.  An existing card is never re-rendered; one
@@ -356,11 +378,16 @@ def do_build(maps, dry):
             if not dry:
                 write_if_changed(p, content)
 
-        stub = build_stub(doc, topic, m['title'], ordered)
+        stub = build_stub(doc, topic, m['title'], ordered, stub_rel(m), archive_rel(m))
         arch = ARCHIVE_BANNER + '\n' + text
         if not dry:
-            write_if_changed(os.path.join(DOCS, 'archive', doc), arch)
-            write_if_changed(src, stub)
+            # An existing archive or stub is never re-rendered: once the record exists,
+            # scripts/docs_record.py maintains the stub's link targets.
+            fresh = not os.path.exists(arch_path)
+            if fresh:
+                write_if_changed(arch_path, arch)
+            if fresh or not os.path.exists(src):
+                write_if_changed(src, stub)
 
         sizes.sort(reverse=True)
         report.append((doc, len(text.encode('utf-8')), len(by_target),
@@ -390,7 +417,7 @@ def do_verify(maps):
     bad = 0
     for m in maps:
         doc, topic = m['doc'], m['topic']
-        arch_path = os.path.join(DOCS, 'archive', doc)
+        arch_path = os.path.join(DOCS, archive_rel(m))
         if not os.path.exists(arch_path):
             print(f'MISSING ARCHIVE  {doc}')
             bad += 1
@@ -458,9 +485,9 @@ def do_verify(maps):
 def do_tables(maps):
     for m in maps:
         doc, topic = m['doc'], m['topic']
-        text = read_lf(os.path.join(DOCS, doc))
+        text = read_lf(os.path.join(DOCS, stub_rel(m)))
         if text.startswith('# ') and ' — SPLIT' in text.split('\n', 1)[0]:
-            text = read_lf(os.path.join(DOCS, 'archive', doc)).split('\n', 1)[1]
+            text = read_lf(os.path.join(DOCS, archive_rel(m))).split('\n', 1)[1]
         ordered = resolve_groups(text, m['groups'])
         nb = len(text.encode('utf-8'))
         print(f'\n### `docs/{doc}` → `docs/cards/{topic}/` '

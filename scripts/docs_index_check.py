@@ -17,10 +17,17 @@ Checks, all of them exit-code-bearing:
      ``scripts/ledger_render.py``).  An exempt file that has gone missing is an error.
   6. LEDGER: ``CONFIG_promotion_ledger.md`` matches its JSON
      (``scripts/ledger_render.py --check``).
-  5. FROZEN: every file in ``docs/archive/`` still carries its
-     read-only banner.
+  5. FROZEN: every file in ``docs/archive/`` (``docs/record/archive/`` once the
+     record exists) still carries its read-only banner.
+  7. RECORD: once ``docs/record/`` exists, no card whose STATUS is ``closed`` or
+     ``superseded`` remains outside it (``python scripts/docs_record.py close <card>``
+     moves one).
 
-What is deliberately not link-checked: ``docs/archive/`` and ``docs/attic/``
+The record (``docs/record/``) mirrors the old layout, so every rule that names a folder
+(``cards/``, ``archive/``, ...) applies to the same folder inside the record.
+
+What is deliberately not link-checked: ``docs/archive/`` and ``docs/attic/`` (and their
+record copies)
 (frozen historical text), the verbatim body of a card (same text, relocated;
 its links were written against the old location and must not be "fixed"), and
 the standing documents that have not been split yet (pre-existing files this
@@ -46,6 +53,7 @@ DOCS = os.path.join(ROOT, 'docs')
 
 MAX_BYTES = 60 * 1024
 FROZEN_DIRS = ('archive/', 'attic/')
+RECORD = 'record/'          # docs/record/: the closed material, in the old layout
 
 #: Registers exempt from the 60 KB bar, by name, with a reason.
 #:
@@ -81,14 +89,22 @@ def all_docs():
     return sorted(out)
 
 
+def unrecord(r):
+    """The path a record file had before the move (``record/cards/x`` -> ``cards/x``)."""
+    return r[len(RECORD):] if r.startswith(RECORD) else r
+
+
 def owned(r):
     """Files whose links this tree is responsible for."""
-    if r.startswith(FROZEN_DIRS):
+    if r == RECORD + 'INDEX.md':
+        return True
+    u = unrecord(r)
+    if u.startswith(FROZEN_DIRS):
         return False
-    return (r == 'INDEX.md'
-            or r.startswith(('topics/', 'status/', 'cards/', 'decisions/',
+    return (u == 'INDEX.md'
+            or u.startswith(('topics/', 'status/', 'cards/', 'decisions/',
                              'refound/'))
-            or r in ('REORG_PLAN.md', 'REORG_MAPPING.md')
+            or u in ('REORG_PLAN.md', 'REORG_MAPPING.md')
             or is_stub(r))
 
 
@@ -100,7 +116,7 @@ def is_stub(r):
         return _stub_cache[r]
     p = os.path.join(DOCS, r)
     ok = False
-    if os.path.isfile(p) and '/' not in r:
+    if os.path.isfile(p) and '/' not in unrecord(r):
         first = read_lf(p).split('\n', 1)[0]
         ok = first.endswith('— SPLIT')
     _stub_cache[r] = ok
@@ -132,7 +148,7 @@ def main():
     for p in files:
         r = rel(p)
         n = os.path.getsize(p)
-        if r.startswith('archive/') or r in SIZE_EXEMPT:
+        if unrecord(r).startswith('archive/') or r in SIZE_EXEMPT:
             continue
         if n > MAX_BYTES:
             errors.append(f'SIZE      {r} is {n} bytes (> {MAX_BYTES})')
@@ -144,19 +160,21 @@ def main():
                   f'({os.path.getsize(os.path.join(DOCS, r)) // 1024} KB) — {why}')
 
     # -------------------------------------------------------------- frozen
-    adir = os.path.join(DOCS, 'archive')
-    if os.path.isdir(adir):
+    for sub in ('archive', RECORD + 'archive'):
+        adir = os.path.join(DOCS, sub)
+        if not os.path.isdir(adir):
+            continue
         for f in sorted(os.listdir(adir)):
             if not f.endswith('.md'):
                 continue
             first = read_lf(os.path.join(adir, f)).split('\n', 1)[0]
             if 'FROZEN' not in first or 'READ-ONLY' not in first:
-                errors.append(f'FROZEN    archive/{f} lost its READ-ONLY banner')
+                errors.append(f'FROZEN    {sub}/{f} lost its READ-ONLY banner')
 
     # -------------------------------------------------------------- status
     for p in files:
         r = rel(p)
-        if not r.startswith(('cards/', 'decisions/')):
+        if not unrecord(r).startswith(('cards/', 'decisions/')):
             continue
         t = read_lf(p)
         head = t.split(VERBATIM)[0]
@@ -182,7 +200,7 @@ def main():
             graph[r] = []
             continue
         t = read_lf(p)
-        if r.startswith(('cards/', 'decisions/')):
+        if unrecord(r).startswith(('cards/', 'decisions/')):
             t = t.split(VERBATIM)[0]   # never police the verbatim body
         out = []
         for raw, tgt in link_targets(p, t):
@@ -213,6 +231,20 @@ def main():
     for r in sorted(rels - seen):
         errors.append(f'REACH     {r} is not reachable from INDEX.md')
 
+    # -------------------------------------------------------------- record
+    if os.path.isdir(os.path.join(DOCS, RECORD)):
+        for p in files:
+            r = rel(p)
+            if r.startswith(RECORD) or unrecord(r).startswith(FROZEN_DIRS):
+                continue
+            head = read_lf(p).split(VERBATIM)[0]
+            if '**STATUS**' not in head:
+                continue
+            m = re.search(r'^- \*\*status:\*\*\s*[`*]*([A-Za-z]+)', head, re.M)
+            if m and m.group(1).lower() in ('closed', 'superseded'):
+                errors.append(f'RECORD    {r} is {m.group(1).lower()} but outside the record: '
+                              f'python scripts/docs_record.py close {r}')
+
     # -------------------------------------------------------------- ledger
     sys.path.insert(0, HERE)
     import ledger_render
@@ -226,10 +258,11 @@ def main():
                       'python scripts/ledger_render.py')
 
     # ------------------------------------------------------------- report
-    print(f'docs/: {len(files)} markdown files, '
-          f'{sum(1 for r in rels if r.startswith("cards/"))} cards, '
-          f'{sum(1 for r in rels if r.startswith("decisions/"))} decisions, '
-          f'{sum(1 for r in rels if r.startswith("archive/"))} frozen, '
+    n_rec = sum(1 for r in rels if r.startswith(RECORD))
+    print(f'docs/: {len(files)} markdown files ({n_rec} in the record), '
+          f'{sum(1 for r in rels if unrecord(r).startswith("cards/"))} cards, '
+          f'{sum(1 for r in rels if unrecord(r).startswith("decisions/"))} decisions, '
+          f'{sum(1 for r in rels if unrecord(r).startswith("archive/"))} frozen, '
           f'{len(seen)} reachable from INDEX.md')
     if verbose:
         big = sorted(((os.path.getsize(p), rel(p)) for p in files),
@@ -243,7 +276,7 @@ def main():
             print('  ' + e)
         return 1
     print('OK — reachability, links, STATUS blocks, sizes, the frozen '
-          'banners and the generated ledger all pass.')
+          'banners, the record and the generated ledger all pass.')
     return 0
 
 
