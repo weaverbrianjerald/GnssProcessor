@@ -130,33 +130,53 @@ Anything that genuinely belongs to *every* TU lives in `common/`; everything els
 got pulled into a category dir.  When adding a new file, prefer the most
 specific subdir that fits — resist the urge to drop new headers into `common/`.
 
-## Documentation — the topic tree (standing user directive, 2026-09-14)
+## Documentation: the working set and the record (standing user directives, 2026-09-14 and 2026-11-09)
 
-**`docs/INDEX.md` is the single entry point, and `docs/refound/` is the current program.** The author's directive: *"We need a method to organize our whole project, rather than simply appending to these massive files."*
+**`docs/INDEX.md` is the single entry point.** The working set of `docs/` holds only what is
+active: the current program (`docs/refound/NETWORK_REFOUNDING_2026-09-14.md`, its open and parked
+cards, and their list `docs/refound/CARDS.md`), the known-issue registers (`docs/status/`), the
+config ledger, the onboarding pages, the mathematical reference (`docs/report/`) and a keep-list
+of references an active file cites. Everything closed is in **`docs/record/`**, which mirrors the
+old layout (`docs/refound/X.md` became `docs/record/refound/X.md`);
+`python scripts/docs_record.py resolve <old path>` finds a moved file. The author's directives:
+*"We need a method to organize our whole project, rather than simply appending to these massive
+files"* (2026-09-14) and *"we should eliminate clutter in this project and only keep the active
+or known-issue parts"* (2026-11-09).
 
-The rules — **all seven are enforced or checked**:
+The rules, all enforced or checked:
 
-1. **One card = one file** under `docs/cards/<topic>/`. Pre-register it as a file.
-2. **Results are appended to the CARD's file only** — never to a topic page, never to
-   `docs/record/archive/`, never to a monolith.
-3. **The INDEX line is updated twice:** at pre-registration, and at close.
-4. **No non-archive file over ~60 KB.** Split by topic as one approaches it. The one
-   exemption is the generated ledger view `CONFIG_promotion_ledger.md`, named in
-   `SIZE_EXEMPT` in `scripts/docs_index_check.py`.
-5. **Every card file starts with the STATUS block** (`id`, `topic`, `status`, `summary`, `source`) and an **Outcome** paragraph (about 90 words); `status` ∈ {`open`, `closed`, `parked`, `superseded`, `reference`}. The header is revised as results land; the body never is (field details: `docs/INDEX.md`, rule 5).
-6. **The monoliths are frozen.** `docs/record/archive/` is read-only; the old path is a stub.
-7. **`python scripts/docs_index_check.py` must pass before a docs commit** (reachability
-   from INDEX, dangling links, STATUS blocks, the 60 KB bar, the archive banners, the
-   generated ledger view).
+1. **One card = one file**: a program card in `docs/refound/`, any other in
+   `docs/cards/<topic>/`. Pre-register it as a file, with its entry in `docs/refound/CARDS.md`.
+2. **Results are appended to the card's file only**, below its text under a dated heading;
+   never to a register, a list or the archive. A closed card in the record still takes results.
+3. **The entry is written twice:** at pre-registration and at close. **A card closes in one
+   commit:** its STATUS becomes `closed` or `superseded`, and
+   `python scripts/docs_record.py close <card>` moves the file and its entry into the record and
+   re-points every link to it.
+4. **No file over ~60 KB** outside `docs/record/archive/`; split by topic as one approaches it.
+   The one exemption is the generated ledger view `CONFIG_promotion_ledger.md` (`SIZE_EXEMPT` in
+   `scripts/docs_index_check.py`).
+5. **Every card file starts with the STATUS block** (`id`, `topic`, `status`, `summary`,
+   `source`) and an **Outcome** paragraph (about 90 words); `status` ∈ {`open`, `closed`,
+   `parked`, `superseded`, `reference`}. The header is revised as results land; the body never
+   is (field details: `docs/INDEX.md`, rule 5).
+6. **The record is not rewritten.** It changes by moves into it, results appended to its cards
+   and link targets the tool re-points. The frozen monoliths (`docs/record/archive/`) are kept
+   byte for byte.
+7. **`python scripts/docs_record.py verify` must pass before a docs commit.** It runs
+   `scripts/docs_index_check.py` (reachability from the index, dangling links, STATUS blocks, the
+   60 KB bar, the frozen banners, the generated ledger view, no closed card outside the record),
+   `scripts/docs_split.py --verify`, `scripts/ledger_render.py --check` and
+   `scripts/make_golden_config.py --verify`.
 
-**Never rewrite, shorten or reflow existing section text** — the docs are the scientific
-record; a superseded result is annotated, not deleted. A card's history sits below its
-`<!-- BEGIN VERBATIM: … -->` marker; append new results under a dated heading *below* it,
-and do not "fix" the links inside it (they were written against the old location and are
-deliberately not link-checked). `python scripts/docs_split.py --verify` proves the
-existing split is byte-exact (results appended below a body are reported, not failed);
-`--build` renders missing cards from `scripts/docs_map/*.json` and never re-renders an
-existing card, whose header is maintained by hand.
+**Never rewrite, shorten or reflow existing section text.** The docs are the scientific record; a
+superseded result is annotated, not deleted, and a move changes where the record lives, not what
+it says. A card's history from the 2026-09-14 split sits below its `<!-- BEGIN VERBATIM: … -->`
+marker: new results go under a dated heading below it, and the links inside it are left as
+written (they name the old locations and are deliberately not checked).
+`python scripts/docs_split.py --verify` proves the split byte for byte (results appended below a
+body are reported, not failed); `--build` renders a missing card from `scripts/docs_map/*.json`
+and never re-renders an existing card or stub.
 
 ⚠ **The config ledger is `docs/CONFIG_promotion_ledger.json`** (one verdict per config key; `docs/topics/config-ledger.md`). A ledger change is a JSON edit, a re-render and the two verifies; a new knob gets its row in the same commit.
 
@@ -196,7 +216,7 @@ made in Y", not "you change X"); imperatives only inside numbered procedures. No
 dashes: use a period, colon, comma or parentheses. No personal names as points of
 contact ("a maintainer"). Claims are verified against the code or a run before they
 are written. This does NOT license rewording the existing scientific record
-(`docs/cards/`, `docs/record/archive/`, `docs/refound/`, this file's older sections). AI
+(`docs/record/`, the cards in `docs/refound/` and `docs/cards/`, this file's older sections). AI
 assistants are permitted on this project under the rules in `CONTRIBUTING.md`
 (section "AI coding assistants"); licensing and credit are in `LICENSE` and
 `CITATION.cff` (interim OSU notice, credit to Brian Weaver, to be replaced by a
