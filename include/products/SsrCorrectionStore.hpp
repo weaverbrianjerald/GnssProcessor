@@ -493,18 +493,20 @@ public:
      * Unlike censusSummary(), which tallies the whole store, this counts only
      * @p sats (the satellites modeled this epoch), so the realtime engine can log
      * how many satellites in the solution have a fresh SSR orbit / clock and a
-     * code / phase bias.  Orbit and clock count when a record is fresh within
-     * @p max_age_s; code and phase biases count on presence alone, without an
-     * age check.  Whether the orbit/clock also applies depends on the IODE gate
-     * (see getSatelliteClockCorrection), so the engine pairs this with the
-     * clock-applied (cm-grade) count.
+     * code / phase bias.  Every kind counts when its record is fresh within
+     * @p max_age_s; a code- or phase-bias record counts only when it also holds
+     * at least one bias (a stream can send bias messages with empty satellite
+     * blocks).  Whether the orbit/clock also applies depends on the IODE gate
+     * (see getSatelliteClockCorrection) and on the clock's pairing with its orbit
+     * (see getOrbitClock), so the engine pairs this with the clock-applied
+     * (cm-grade) count.
      */
     struct Coverage {
         int total      = 0;   ///< Satellites queried.
         int orbit      = 0;   ///< With a fresh SSR orbit (or combined) record.
         int clock      = 0;   ///< With a fresh SSR clock (or combined) record; a high-rate clock alone does not count.
-        int code_bias  = 0;   ///< With a code-bias record.
-        int phase_bias = 0;   ///< With a phase-bias record.
+        int code_bias  = 0;   ///< With a fresh code-bias record holding at least one bias.
+        int phase_bias = 0;   ///< With a fresh phase-bias record holding at least one bias.
     };
     Coverage coverageFor(const std::vector<std::string>& sats,
                          const GnssTime& time, double max_age_s = 60.0) const;

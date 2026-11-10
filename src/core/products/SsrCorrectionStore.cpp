@@ -77,6 +77,17 @@ bool clockHasItsOrbit(const SsrClockCorrection& clock, bool orbit_applied,
     return orbit_applied && applied_orbit_iod_ssr == clock.iod_ssr;
 }
 
+// A code- or phase-bias record is coverage only when it holds at least one bias and
+// is fresh.  A stream can send bias messages whose satellite blocks carry no bias
+// (BKG and GFZ phase biases, 2026-11-03), and a record that stops being refreshed
+// stays in the store; on presence alone both read as full coverage.
+template <typename BiasRecord>
+bool holdsFreshBias(const std::optional<BiasRecord>& rec, const GnssTime& time,
+                    double max_age_s) {
+    return rec && !rec->bias_per_signal.empty()
+        && freshEnough(rec->received_time, time, max_age_s);
+}
+
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -661,17 +672,17 @@ SsrCorrectionStore::coverageFor(const std::vector<std::string>& sats,
         const auto it = by_sat_.find(sat);
         if (it == by_sat_.end()) continue;
         const SatRecord& rec = it->second;
-        // Orbit and clock are high-rate, so they are gated on freshness (a combined
-        // record takes precedence, as in getOrbitClock).  Biases update slowly, so
-        // presence is enough.  A high-rate clock alone is not clock coverage: it
-        // refines a clock message and is not applied without one.
+        // Every kind is gated on freshness (a combined record takes precedence, as
+        // in getOrbitClock).  A high-rate clock alone is not clock coverage: it
+        // refines a clock message and is not applied without one.  A bias record
+        // counts only when it holds a bias (holdsFreshBias).
         const bool comb = rec.combined && freshEnough(rec.combined->received_time, time, max_age_s);
         if (comb || (rec.orbit && freshEnough(rec.orbit->received_time, time, max_age_s)))
             ++cov.orbit;
         if (comb || (rec.clock && freshEnough(rec.clock->received_time, time, max_age_s)))
             ++cov.clock;
-        if (rec.code_bias)  ++cov.code_bias;
-        if (rec.phase_bias) ++cov.phase_bias;
+        if (holdsFreshBias(rec.code_bias, time, max_age_s))  ++cov.code_bias;
+        if (holdsFreshBias(rec.phase_bias, time, max_age_s)) ++cov.phase_bias;
     }
     return cov;
 }

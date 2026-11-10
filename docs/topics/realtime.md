@@ -35,6 +35,7 @@ Status is one of `open`, `closed`, `parked`, `superseded`, `reference`; the verd
 | [SSR-BIAS-SIGN](../cards/realtime/SSR-BIAS-SIGN.md) | SSR code and phase biases applied with the OSB sign (the wire value is the correction added): fixed in the decoder; live code misfit 0.58 to 0.05 m, wide-lane integer, narrow-lane not, still 0 fixes | open | 2026-10-29 |
 | [SSR-TIME](../cards/realtime/SSR-TIMING.md) | SSR timing against IGS SSR v1.00: polynomials ran from the epoch, not epoch + half the update interval; high-rate clock not paired with its clock message; receipt stamps 18 s behind GPS time; fixed, unit-tested; live check owed | open | 2026-10-29 |
 | [SSR-CLK-ORB](../cards/realtime/SSR-CLOCK-ORBIT.md) | an SSR clock applied without its orbit correction when the clock message arrives first (CAS, separate messages: after an outage, at start-up): fixed in the store, a decoded clock waits for a fresh orbit of its IOD-SSR; unit-tested | open | 2026-11-09 |
+| [SSR-BIAS-COV](../cards/realtime/SSR-BIAS-COVERAGE.md) | SSR bias coverage counted on presence: empty or stale bias records read as coverage (BKG and GFZ phase biases 100 % while empty); fixed, a fresh record with at least one bias counts; unit-tested | open | 2026-11-09 |
 
 **Standing documents** (still at their original paths, indexed not moved):
 
