@@ -23,6 +23,9 @@ and [record/refound/CARDS_part2.md](../record/refound/CARDS_part2.md).
   2026-10-23 (sections 10 to 14): GPS L5 and every sim channel stable on the GPS + Galileo sim golden; on the field
   Galileo E5b clean at 2 h and GPS L5 still the MAJU00MHL event; the jump is in the anchored solve, the station's
   receiver code states are set by the shared feedback, and the DCB-only datum barely holds the GPS level. Successor: R1D.
+- [L5B6](L5B6_l5_six_hour_read_2026-11-10.md): open, 2026-11-10: continuation of L5B (pre-registered): the floor
+  `network.amb_float_drop_var_m2` 100 with and without GPS L5 over 6 h on field DOY 129 and 132 and the sim, the 2 h
+  result repeated on main `b6bbea7`; then L5 at the user (measure only). Run keys only, nothing armed.
 - [IRD](IRD_integer_recovering_datum_2026-10-13.md): open, 2026-10-13: the integer-recovering datum on the eq34
   chain (a frame-preserving event algebra on the float vehicle, observatory first, proven end to end on the sim);
   S-basis derivation, event table, bundle A0, every bar and decision rule frozen. IRD-0 STOPPED by its negative
