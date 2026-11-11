@@ -26,6 +26,8 @@ and [record/refound/CARDS_part2.md](../record/refound/CARDS_part2.md).
 - [L5B6](L5B6_l5_six_hour_read_2026-11-10.md): open, 2026-11-10: continuation of L5B (pre-registered): the floor
   `network.amb_float_drop_var_m2` 100 with and without GPS L5 over 6 h on field DOY 129 and 132 and the sim, the 2 h
   result repeated on main `b6bbea7`; then L5 at the user (measure only). Run keys only, nothing armed.
+  Stage A (2026-11-10): 2 h holds; at 6 h the floor removes the event, dual and 16 sites neutral; three-band still
+  fails one clause per field day (tracked clock wire 1.17x DOY 129; user hours 1-2 DOY 132), users -7 to -11 mm. SEQUENCED.
 - [IRD](IRD_integer_recovering_datum_2026-10-13.md): open, 2026-10-13: the integer-recovering datum on the eq34
   chain (a frame-preserving event algebra on the float vehicle, observatory first, proven end to end on the sim);
   S-basis derivation, event table, bundle A0, every bar and decision rule frozen. IRD-0 STOPPED by its negative

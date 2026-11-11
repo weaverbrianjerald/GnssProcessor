@@ -5,14 +5,14 @@
 - **id:** L5B6
 - **topic:** network-vehicle
 - **status:** open
-- **summary:** PRE-REGISTERED 2026-11-10. Continuation of card [L5B](L5B_band5_receiver_delay_2026-10-10.md) (that file stands at the 60 KB bar; its section 16 points here). Stage A: the four 2 h field runs of L5B section 15 repeated on the goldens of main `b6bbea7`, then 6 h on field DOY 129, field DOY 132 and the sim: dual control, dual plus `network.amb_float_drop_var_m2` 100, the three-band `t1on` keys, `t1on` plus the floor. Stage B (measure only): the three-band user on stage A's corrections and the roof receiver's band-5 drop. Nothing armed; run keys only; no C++ change.
+- **summary:** PRE-REGISTERED 2026-11-10. Continuation of card [L5B](L5B_band5_receiver_delay_2026-10-10.md) (that file stands at the 60 KB bar; its section 16 points here). Stage A: the four 2 h field runs of L5B section 15 repeated on the goldens of main `b6bbea7`, then 6 h on field DOY 129, field DOY 132 and the sim: dual control, dual plus `network.amb_float_drop_var_m2` 100, the three-band `t1on` keys, `t1on` plus the floor. Stage B (measure only): the three-band user on stage A's corrections and the roof receiver's band-5 drop. Nothing armed; run keys only; no C++ change. Stage A result (section 4): the 2 h result holds; at 6 h the floor keeps the event away on DOY 129, passes the dual bar on both days and the sim with the 16 sites neutral, but the three-band runs still fail one clause each (DOY 129 tracked clock wire 1.17 times, with or without the floor; DOY 132 user +0.057 and +0.032 m in hours 1 and 2), and the three-band users at the 16 sites lose 7 to 11 mm in hours 2 to 6. L5 SEQUENCED.
 - **source:** card L5B sections 12 to 15 (the `t1on` keys, the event at TOW 260040, the floor's 2 h pass); card [SMX2](../record/refound/SMX2_scenario_matrix_current_golden_2026-11-09.md) sections 5.3, 5.6 and 6 (the 2 h grader, the floor's costs K1 and card SLV's); card [ALD](../record/refound/ALD_anchor_level_datum_2026-10-23.md) section 5 (gates 4 and 5); card [R1D](../record/refound/R1D_station_level_datum_2026-10-23.md) (the three-band bars (B)); the author's directive that L5 is never closed
 - **knobs / posture:** the goldens of main `b6bbea7` (`config/golden/golden_field_refound.json`, `config/golden/golden_sim_refound.json`); the `t1on` keys (`processing.frequency_mode` triple, the GPS band-5 types C5Q, C5X, C5I, L5Q, L5X, L5I and their D and S types appended to `processing.signal_priorities.GPS`, `network.sat_gf_extra_band_free`, `network.estimate_rx_extra_band_code_delay`); the floor `network.amb_float_drop_var_m2` 100. DOY 132 from `scripts/mday_golden_config.py` (obs root `D:/GnssProcessorSupport/data_mday`). Sim runs with `network.start_offset_hours` 0.504167.
 - **dates in the text:** 2026-11-10
 - **hashes / run dirs:** branch `l5/six-hour-read` (docs only) from main `b6bbea7`; exe `gnss_processor_l5read.exe`, a renamed copy of `D:/GnssProcessorSupport/gates/exe_keep/int1110/gnss_processor_int1110b.exe` (sha256[:16] `28e4286ee0805093`); runs `D:/GnssProcessorSupport/runs_nom/_rap_l56_<arm>_<bed>` (arms `ctl`, `A`, `t1on`, `t1onA`; beds `f2` DOY 129 2 h, `f6` DOY 129 6 h, `g6` DOY 132 6 h, `s6` sim 6 h from 00:30:15)
 - **gates (frozen at pre-registration):** section 2
 
-**Outcome.** Pre-registered; no result yet.
+**Outcome.** Question: does the floor's 2 h pass for three-band GPS hold over 6 h on two field days and the sim? The 2 h repeat on main `b6bbea7` holds. At 6 h the floor removes the DOY 129 event, halves the anchor decouples on DOY 132, and is neutral on the dual network and the 16 sites. The three-band runs still miss: the tracked clock wire on DOY 129 (1.17 times, with or without the floor) and the user in hours 1 and 2 on DOY 132; three-band users at the 16 sites are 7 to 11 mm worse. The sim passes and barely exercises the floor. L5 SEQUENCED; stage B separates network and user.
 
 > Results are appended TO THIS FILE, below the text.
 
@@ -46,3 +46,74 @@ Every bar is reported passed or failed; every receiver that gets worse is listed
 ## 3. Stage B: L5 at the user (measure only)
 
 (a) A three-band and a two-band user on each stage A correction file at WTZZ00DEU (and the 16 sites where stage A's census already holds the three-band user): does it run, does GPS L5 enter the solution, what changes by hour. (b) The roof receiver (AsteRx-U, LEIAR25 NONE) on the recorded session of 2026-11-10 (`D:/GnssProcessorSupport/runs/rt_agu_2026-11-10/relay_cas/`): confirm that GPS L5 is dropped for want of a G05 calibration under `require_atx_coverage`, and state what a fallback from the G02 calibration would use. The smallest change for each is proposed, not built.
+
+## 4. 2026-11-10: stage A results
+
+All 15 runs exit 0 with every epoch emitted (240 of 240 at 2 h, 720 of 720 at 6 h) and none withheld; the 136 replays of the 16 sites exit 0. Graders: `grade_l56.py` (card SMX2 section 5.6's grader over N hours) and `offs_names.py` (the offset stations by name), session scratchpad folder `l56/`; the 16 sites `scripts/clock_level/gcensus.py`, keys `l56c_<arm>_<bed>` (runs `_rap_l56c_<arm>_<bed>_<site>`); sim clock truth `scripts/simnet_clock_truth_grade.py --fixture runs/simnet60_quiet_col_24h`. Wall times are not read (two other sessions shared the machine).
+
+### 4.1 The 2 h repeat on main `b6bbea7` (`f2`)
+
+| run | user, hours 1 and 2 (m) | GPS clock wire, all / tracked (m) | GPS band 1 / 2 / 5 offsets, stations (median \|mean\|, m) | decouples (at 260040) | MAJU00MHL, 260010 to 260040: GPS_DCB / GPS_IFB5 (m) |
+| --- | --- | --- | --- | --- | --- |
+| `_rap_l56_ctl_f2` | 0.0585 0.0126 | 0.0349 / 0.0087 | 1 (0.014) / 0 (0.012) / - | 3 (2) | -0.17 / - |
+| `_rap_l56_A_f2` | 0.0555 0.0127 | 0.0362 / 0.0081 | 1 (0.014) / 0 (0.013) / - | 0 (0) | -0.09 / - |
+| `_rap_l56_t1on_f2` | 0.0762 0.0393 | 0.0401 / 0.0080 | 2 (0.023) / 2 (0.016) / 3 (0.029) | 18 (15) | -3.84 / +9.98 |
+| `_rap_l56_t1onA_f2` | 0.0794 0.0391 | 0.0171 / 0.0084 | 1 (0.017) / 0 (0.015) / 3 (0.024) | 0 (0) | -0.10 / +0.26 |
+
+Bars: (D) `A` PASS (user -0.0030 and +0.0001 m, clock wire 1.04 and 0.93 times); (T) `t1on` FAIL (clock wire 1.15 times all, band 1 / 2 +1 / +2 stations), `t1onA` PASS (user +0.0209 and +0.0265 m, clock wire 0.49 and 0.97 times, offsets +0 / +0); event: `t1onA` 0 decouples at 260040, MAJU00MHL move ratios 0.025 (DCB) and 0.026 (IFB5) of `t1on`'s (bars 3 and 0.10). **(H2) holds:** the 2 h result of card L5B section 15 stands on today's goldens, within a few millimetres of every number.
+
+### 4.2 Field DOY 129, 6 h (`f6`; control `_rap_int1110b_f6`)
+
+| run | user by hour 1 to 6 (m) | clock wire, all / tracked (m) | band 1 / 2 / 5 offsets, stations | decouples (at 260040) |
+| --- | --- | --- | --- | --- |
+| `_rap_int1110b_f6` | 0.0585 0.0126 0.0205 0.0117 0.0171 0.0132 | 0.0568 / 0.0103 | 0 / 0 / - | 59 (2) |
+| `_rap_l56_A_f6` | 0.0555 0.0127 0.0187 0.0113 0.0172 0.0142 | 0.0570 / 0.0098 | 0 / 0 / - | 55 (0) |
+| `_rap_l56_t1on_f6` | 0.0762 0.0393 0.0308 0.0141 0.0232 0.0188 | 0.1172 / 0.0120 | 5 / 2 / 3 | 74 (15) |
+| `_rap_l56_t1onA_f6` | 0.0794 0.0391 0.0331 0.0142 0.0222 0.0176 | 0.0529 / 0.0120 | 1 / 0 / 2 | 55 (0) |
+
+Bars: (D) `A` PASS (user within 0.0030 m in every hour, clock wire 1.00 and 0.95 times). (T) `t1on` FAIL (clock wire 2.06 and 1.17 times, band 1 / 2 +5 / +2 stations: band 1 CAS100ATA, GAMB00PYF, GCGO00USA, LCK400IND -0.648 m, MAJU00MHL +0.308 m; band 2 LCK400IND, MAJU00MHL). `t1onA` FAILS one clause: tracked clock wire 1.17 times (bar 1.10); user within 0.0265 m in every hour (bar 0.03), clock wire all 0.93 times, band 1 / 2 +1 / +0 (NIUM00NIU -0.103 m on band 1, also above 0.10 m on DOY 132's dual control). The tracked clock wire is 0.0120 m on both three-band runs: it comes with band 5, not with the floor.
+
+### 4.3 Field DOY 132, 6 h (`g6`; 56 stations, MAC100AUS and LCK400IND have no RINEX that day)
+
+| run | user by hour 1 to 6 (m) | clock wire, all / tracked (m) | band 1 / 2 / 5 offsets, stations | decouples |
+| --- | --- | --- | --- | --- |
+| `_rap_l56_ctl_g6` | 0.0711 0.0161 0.0152 0.0181 0.0198 0.0086 | 0.0502 / 0.0125 | 1 / 0 / - | 103 |
+| `_rap_l56_A_g6` | 0.0616 0.0185 0.0114 0.0115 0.0155 0.0080 | 0.0469 / 0.0114 | 1 / 0 / - | 56 |
+| `_rap_l56_t1on_g6` | 0.1424 0.0457 0.0161 0.0239 0.0226 0.0234 | 0.0531 / 0.0133 | 1 / 0 / 1 | 134 |
+| `_rap_l56_t1onA_g6` | 0.1282 0.0478 0.0193 0.0143 0.0190 0.0226 | 0.0492 / 0.0118 | 1 / 0 / 0 | 56 |
+
+Bars: (D) `A` PASS (user -0.0095 to +0.0024 m by hour, clock wire 0.93 and 0.91 times). (T) `t1on` FAIL (user +0.0713 m in hour 1; clock wire 1.06 and 1.06 times, offsets +0 / +0). `t1onA` FAILS the user clause: +0.0571 m in hour 1 and +0.0316 m in hour 2 (bar 0.03); hours 3 to 6 within 0.0140 m; clock wire 0.98 and 0.94 times, offsets +0 / +0. The band-1 station on every DOY 132 run is NIUM00NIU.
+
+### 4.4 Sim, 6 h from 00:30:15 (`s6`)
+
+| run | SZZ000SIM by hour 1 to 6 (m) | clock wire, all / tracked (m) | satellite clock against truth, level rms by hour (m) | per-satellite mean rms, hours 2 to 6 (m) |
+| --- | --- | --- | --- | --- |
+| `_rap_l56_ctl_s6` | 0.0994 0.0320 0.0396 0.0161 0.0183 0.0149 | 0.0177 / 0.0062 | 0.0808 0.0283 0.0219 0.0193 0.0178 0.0166 | 0.0177 |
+| `_rap_l56_A_s6` | equal to the control at 4 decimals | 0.0177 / 0.0062 | equal to the control | 0.0177 |
+| `_rap_l56_t1on_s6` | 0.0989 0.0360 0.0435 0.0156 0.0176 0.0163 | 0.0180 / 0.0062 | 0.0806 0.0284 0.0221 0.0201 0.0182 0.0167 | 0.0181 |
+| `_rap_l56_t1onA_s6` | equal to `t1on` at 4 decimals | 0.0180 / 0.0062 | equal to `t1on` | 0.0181 |
+
+Bars: (D) PASS; (T) PASS for both (user within 0.0040 m in every hour, clock wire 1.02 and 1.00 times, offsets 0 / 0). The products of `A` and the control first differ at line 75 097, those of `t1onA` and `t1on` at line 89 165: on this fixture (no gaps, no real slips) the floor is close to inert.
+
+### 4.5 The 16 sites (C)
+
+Paired change of each site's mean hourly p50 over hours 2 to 6, against the day's dual control. Every user of a three-band key is three-band (the run's own configuration), so these numbers mix the network's share and the user's; stage B separates them.
+
+| key | 16-site median by hour (m) | hours 2 to 6: median, better / worse at 1 cm | hour 1: median, better / worse | sites worse by more than 1 cm, hours 2 to 6 (m) |
+| --- | --- | --- | --- | --- |
+| `l56c_ctl_f6` | 0.132 0.045 0.033 0.028 0.031 0.027 | | | |
+| `l56c_A_f6` | 0.125 0.043 0.033 0.028 0.032 0.027 | +0.0000, 0 / 0 | -0.0023, 3 / 0 | none |
+| `l56c_t1on_f6` | 0.136 0.058 0.040 0.036 0.035 0.043 | +0.0082, 1 / 5 | -0.0032, 7 / 4 | CHTI +0.023, SCRZ +0.037, STPM +0.013, KOKB +0.044, BAKE +0.015 |
+| `l56c_t1onA_f6` | 0.137 0.059 0.042 0.038 0.034 0.043 | +0.0072, 1 / 7 | -0.0024, 7 / 6 | CHTI +0.022, SCRZ +0.096, QUIN +0.011, STPM +0.013, CEDU +0.017, KOKB +0.046, BAKE +0.014 |
+| `l56c_ctl_g6` | 0.103 0.056 0.045 0.028 0.036 0.028 | | | |
+| `l56c_A_g6` | 0.100 0.060 0.046 0.028 0.036 0.027 | -0.0009, 1 / 0 | -0.0009, 1 / 2 | none |
+| `l56c_t1on_g6` | 0.095 0.066 0.047 0.049 0.045 0.043 | +0.0109, 1 / 9 | -0.0020, 7 / 7 | SCRZ +0.107, ANMG +0.011, QUIN +0.017, HARB +0.013, POHN +0.015, BADG +0.014, CEDU +0.012, ARHT +0.016, BAKE +0.011 |
+| `l56c_t1onA_g6` | 0.090 0.067 0.048 0.049 0.046 0.046 | +0.0098, 1 / 8 | -0.0070, 8 / 7 | SCRZ +0.129, ANMG +0.016, QUIN +0.016, POHN +0.015, BADG +0.013, KOKB +0.011, ARHT +0.014, BAKE +0.012 |
+
+The one site better by more than 1 cm in each three-band key: POHN (-0.015 and -0.016 m) on DOY 129, UTQI (-0.016 and -0.014 m) on DOY 132.
+
+### 4.6 Reading (stage A)
+
+- **For the floor.** At 6 h as at 2 h it removes the three-band event at TOW 260040 (0 decouples; MAJU00MHL's move 3 % of the run without it). On DOY 129 it brings the three-band clock wire from 2.06 to 0.93 times the control and the band 1 / 2 offset stations from +5 / +2 to +1 / +0. It halves the clock-anchor decouples on DOY 132 (dual 103 to 56, three-band 134 to 56). It passes the dual bar on both field days and the sim, with the 16 sites neutral on both days (0 worse).
+- **Against the floor, or not answered here.** It does not make the three-band network pass at 6 h: on DOY 129 the tracked clock wire stays at 1.17 times (equal with or without it); on DOY 132 the three-band user misses by 0.027 and 0.002 m in hours 1 and 2. It does not change the 16-site cost of the three-band keys (median +0.0072 against +0.0082 m on DOY 129, +0.0098 against +0.0109 m on DOY 132). The sim does not exercise it. Card SMX2's K1 (the guard's miss of a 3 m clock step on E34) and card SLV's open failures were not tested here and stand.
+- **GPS L5 at 6 h.** With the floor, the three-band network is stable on two field days and the sim (no event, no offset growth, clock wire within the bar on all satellites). The remaining field cost sits at the three-band users (+7 to +10 mm at the 16 sites, SCRZ +0.10 to +0.13 m), in the tracked clock wire on DOY 129, and in hours 1 and 2 on DOY 132. Card L5B section 7 put the three-band user's cost on the Block IIF L5 phase; whether that is still the share is stage B's question. L5 SEQUENCED, not yet: the return plan is stage B (separate the network's and the user's share; then the user's IIF L5 phase and the roof receiver's band-5 drop).
