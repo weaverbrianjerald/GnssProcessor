@@ -8,7 +8,7 @@
  * The loader ignores a key it does not know without a word.  A configuration that still sets
  * a key deleted from the loader therefore runs on the code as it now stands, and nothing in
  * the log says the key had no effect.  This header declares every deleted key.  The network
- * section loader passes the merged document (after @c extends) to @ref warnRetiredConfigKeys,
+ * section loader passes the merged document (after @c extends) to @ref GnssProcessor::warnRetiredConfigKeys "warnRetiredConfigKeys",
  * which logs one warning per retired key the document sets, naming the key and the deletion.
  * The scan reads the document and changes nothing else: a configuration loads to the same
  * values with or without its retired keys.
@@ -63,65 +63,97 @@ struct RetiredConfigKey {
 };
 
 /// @brief A family of the deletion of 2026-10-14 (record "RKD").
+/// @param commit Short hash of the commit on main that deleted the keys and their code.
+///               The view must outlive the family; the table passes string literals.
+/// @param what   What the keys armed, in the record's words; same lifetime rule.
+/// @return The family, carrying record id "RKD", date "2026-10-14", @p commit and @p what.
 constexpr RetiredKeyFamily retiredOn20261014(std::string_view commit, std::string_view what) {
     return RetiredKeyFamily{"RKD", "2026-10-14", commit, what};
 }
 
 // The deletion of 2026-10-14, one family per commit on main, in commit order.
+/// Family of the parse-only and loader-forced keys.
 inline constexpr RetiredKeyFamily kRetiredParseOnly =
     retiredOn20261014("4c0e731", "the parse-only and loader-forced keys");
+/// Family of the WL-1 MW-seeded wide-lane row keys and the F6 dump keys.
 inline constexpr RetiredKeyFamily kRetiredWl1 =
     retiredOn20261014("f1ea3de", "the WL-1 MW-seeded wide-lane rows and the F6 dump");
+/// Family of the WL-3 lane-coordinate carry keys and the UWL family-pair keys.
 inline constexpr RetiredKeyFamily kRetiredWl3 =
     retiredOn20261014("c5be295", "the WL-3 lane-coordinate carry and the UWL family pairs");
+/// Family of the UWL-1 per-constellation lane tier keys.
 inline constexpr RetiredKeyFamily kRetiredUwl1 =
     retiredOn20261014("819f4a6", "the UWL-1 per-constellation lane tiers");
+/// Family of the WL-2 EWL lane, WL inject, GF bridge and lane layer keys.
 inline constexpr RetiredKeyFamily kRetiredWl2 =
     retiredOn20261014("365edfe", "the WL-2 EWL lane, the WL inject, the GF bridge and the lane layer");
+/// Family of the lane slip response keys (bridge v3 EWL slot, statistical retap, its corroboration, lane snap).
 inline constexpr RetiredKeyFamily kRetiredLaneSlip =
     retiredOn20261014("f48868c", "the lane slip responses (bridge v3 EWL slot, statistical retap, its corroboration, lane snap)");
+/// Family of the FC-1 split-cadence fast clock keys.
 inline constexpr RetiredKeyFamily kRetiredFastClock =
     retiredOn20261014("1de8b9b", "the FC-1 split-cadence fast clock");
+/// Family of the finite-difference C1 clock rate keys.
 inline constexpr RetiredKeyFamily kRetiredClockRate =
     retiredOn20261014("2ba604a", "the finite-difference C1 clock rate");
+/// Family of the CLV out-of-solve clock-level re-base keys.
 inline constexpr RetiredKeyFamily kRetiredClv =
     retiredOn20261014("b326c8c", "the CLV out-of-solve clock-level re-base");
+/// Family of the ensemble phase datum and its hold keys.
 inline constexpr RetiredKeyFamily kRetiredEnsembleDatum =
     retiredOn20261014("7914263", "the ensemble phase datum and its hold");
+/// Family of the PB emission-continuity filter keys.
 inline constexpr RetiredKeyFamily kRetiredPbFilter =
     retiredOn20261014("6d719e4", "the PB emission-continuity filter");
+/// Family of the smoothed hold's block-member key.
 inline constexpr RetiredKeyFamily kRetiredSmoothedBlock =
     retiredOn20261014("08cd639", "the smoothed hold's block member");
+/// Family of the SH health gate keys.
 inline constexpr RetiredKeyFamily kRetiredShGate =
     retiredOn20261014("b216f55", "the SH health gate");
+/// Family of the station iono deweight gate keys and its release hygiene keys.
 inline constexpr RetiredKeyFamily kRetiredDeweight =
     retiredOn20261014("158b9b2", "the station iono deweight gate and its release hygiene");
+/// Family of the network adaptive iono q key.
 inline constexpr RetiredKeyFamily kRetiredAdaptiveIonoQ =
     retiredOn20261014("1d35585", "the network adaptive iono q");
+/// Family of the T1d SH-convergence latch keys.
 inline constexpr RetiredKeyFamily kRetiredT1dLatch =
     retiredOn20261014("09e3151", "the T1d SH-convergence latch");
+/// Family of the diagonal slant-iono carry keys.
 inline constexpr RetiredKeyFamily kRetiredIonoCarry =
     retiredOn20261014("f4be1a8", "the diagonal slant-iono carry");
+/// Family of the level tool keys (LV-1, LV-2, LV-4, LV-5 and S2H).
 inline constexpr RetiredKeyFamily kRetiredLevelTools =
     retiredOn20261014("15b927c", "the level tools LV-1, LV-2, LV-4, LV-5 and S2H");
+/// Family of the retired code-bias datum option keys and the clock signal-basis hold key.
 inline constexpr RetiredKeyFamily kRetiredCodeBiasDatum =
     retiredOn20261014("d1cd9ea", "the retired code-bias datum options and the clock signal-basis hold");
+/// Family of the age-aware young-arc inflate keys.
 inline constexpr RetiredKeyFamily kRetiredYoungInflate =
     retiredOn20261014("1068750", "the age-aware young-arc inflate");
+/// Family of the F1 keys and the F3 age gate keys.
 inline constexpr RetiredKeyFamily kRetiredF1F3AgeGate =
     retiredOn20261014("34793c9", "F1 and the F3 age gate");
+/// Family of the coupling carry's SH marginalize, joint whitening and gauge-free closure keys.
 inline constexpr RetiredKeyFamily kRetiredCouplingVariants =
     retiredOn20261014("e7e470b", "the coupling carry's SH marginalize, joint whitening and gauge-free closure");
+/// Family of the retired warm-resume keys (RS-2 re-base, RS-6 shdev switch, seam re-inflate, resume shock).
 inline constexpr RetiredKeyFamily kRetiredResumeKnobs =
     retiredOn20261014("98df220", "the retired warm-resume knobs (RS-2 re-base, RS-6 shdev switch, seam re-inflate, resume shock)");
+/// Family of the parallel Schur reduce fan key.
 inline constexpr RetiredKeyFamily kRetiredParallelReduce =
     retiredOn20261014("6e86437", "the parallel Schur reduce fan");
+/// Family of the study-3 band-scoped response keys.
 inline constexpr RetiredKeyFamily kRetiredStudy3 =
     retiredOn20261014("dab7d80", "the study-3 band-scoped responses");
+/// Family of the de-commoned phase jump test key.
 inline constexpr RetiredKeyFamily kRetiredJumpDecommon =
     retiredOn20261014("475b587", "the de-commoned phase jump test (card JT)");
+/// Family of the unmatched-antenna phase-bias exclude key.
 inline constexpr RetiredKeyFamily kRetiredUnmatchedAntenna =
     retiredOn20261014("159f846", "the unmatched-antenna phase-bias exclude");
+/// Family of the RAIM carry-invariant refloat actuator key.
 inline constexpr RetiredKeyFamily kRetiredRaimRefloat =
     retiredOn20261014("8409b43", "the RAIM carry-invariant refloat actuator");
 
@@ -322,7 +354,7 @@ struct RetiredKeyHit {
 /**
  * @brief Every retired key that a configuration sets.
  * @param root The merged configuration document.
- * @return One hit per row of @ref kRetiredConfigKeys that @p root sets under either spelling,
+ * @return One hit per row of @ref GnssProcessor::kRetiredConfigKeys "kRetiredConfigKeys" that @p root sets under either spelling,
  *         in table order.  When both spellings are present the value is the dotted path's,
  *         the one the old loader read.
  */
@@ -330,7 +362,7 @@ std::vector<RetiredKeyHit> findRetiredConfigKeys(const nlohmann::json& root);
 
 /**
  * @brief The warning text for one hit.
- * @param hit A hit of @ref findRetiredConfigKeys.
+ * @param hit A hit of @ref GnssProcessor::findRetiredConfigKeys "findRetiredConfigKeys".
  * @return One line naming the key, the spellings found, the value, and the record, date, family
  *         and commit of the deletion.
  */

@@ -59,6 +59,10 @@ struct BaselineFixturePreset {
  * Keys are lower-case so case-insensitive lookup is a single
  * @c toLower + @c find pair.  Returned by const reference; the
  * underlying static is initialised on first call (Meyers singleton).
+ *
+ * @return Preset catalogue keyed by lower-case preset name (for example
+ *         @c "osu_campus"); the map is never empty and lives for the whole
+ *         process, so the reference and any pointer into it stay valid.
  */
 inline const std::map<std::string, BaselineFixturePreset>& baselineFixturePresets() {
     static const std::map<std::string, BaselineFixturePreset> kPresets = {
