@@ -23,12 +23,12 @@ struct NetworkSetupResult;
 
 /**
  * @brief The clock datum's declaration the epoch's election reads
- *        (@ref NetworkSbasis::buildSharedDatum): the reference receiver, the self-described
+ *        (@ref GnssProcessor::NetworkSbasis::buildSharedDatum "NetworkSbasis::buildSharedDatum"): the reference receiver, the self-described
  *        code-bias and phase-bias frames, and the clock gauge (broadcast-anchored,
  *        sum-to-zero, or a configured pivot satellite).
  *
- * One implementation, read by the election in @ref networkClockDatum and by the handover
- * preview before PASS B (@ref networkHandoverStransformBeforeRows), so the
+ * One implementation, read by the election in @ref GnssProcessor::networkClockDatum "networkClockDatum" and by the handover
+ * preview before PASS B (@ref GnssProcessor::networkHandoverStransformBeforeRows "networkHandoverStransformBeforeRows"), so the
  * two elect from the same declaration.
  * @param ctx              the run context (the knobs).
  * @param config_          the configuration (the network block).
@@ -53,15 +53,22 @@ SbasisDeclaration networkClockDatumDeclaration(const NetworkRunContext& ctx,
 class NetworkPivotElectionEpoch {
 public:
     /**
+     * @brief Bind the ranker to the epoch time and snapshot the standby pivots.
      * @param ctx   The run context (the knob, the entity tables).
      * @param setup The setup result (the predictor).
      * @param t     The epoch time.
      */
     NetworkPivotElectionEpoch(const NetworkRunContext& ctx, const NetworkSetupResult& setup,
                               const GnssTime& t);
+    /** @brief Deleted: the election points into this object's standby map, so a copy would dangle. */
     NetworkPivotElectionEpoch(const NetworkPivotElectionEpoch&) = delete;
+    /**
+     * @brief Deleted: the election points into this object's standby map, so assignment is unsafe.
+     * @return Never returns; the member is deleted.
+     */
     NetworkPivotElectionEpoch& operator=(const NetworkPivotElectionEpoch&) = delete;
 
+    /// @brief The election handle for the epoch's shared-datum build.
     /// @return The election for @ref NetworkSbasis::buildSharedDatum, or null when the knob is off.
     const NetworkSbasis::PivotElection* get() const { return active_ ? &election_ : nullptr; }
 

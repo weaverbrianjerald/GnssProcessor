@@ -65,7 +65,7 @@ struct AnchorDropMemo {
     /// (admitted-alive arcs only: Tracking or Reentered).
     std::map<int, int> generation;
     /// Arc states at the edge, for the S2 readout: Tracking, Gap (includes Reentered), Dead.
-    int n_tracking{ 0 }, n_gap{ 0 }, n_dead{ 0 };
+    int n_tracking{ 0 }, n_gap{ 0 }, /**< arcs in the Gap state at the edge (includes Reentered) */ n_dead{ 0 };   ///< arcs in the Dead state at the edge
     bool returned{ false };             ///< the family has already been seen to return.
 };
 
@@ -76,7 +76,12 @@ enum class AnchorReentryClass {
     NewGeneration    ///< the family returned, but not as the arcs that left.
 };
 
-/// @brief Human-readable name of a classification, for the events and the table.
+/**
+ * @brief Human-readable name of a classification, for the events and the table.
+ * @param c  The classification.
+ * @return A static string: "no_memory", "same_generation" or "new_generation"; "?" for a value
+ *         outside the enum.  Never null.
+ */
 const char* anchorReentryClassName(AnchorReentryClass c);
 
 /**
@@ -88,7 +93,7 @@ struct AnchorFirstSighting {
     long long   since_incumbent_ep{ -1 };  ///< epochs since the family last had an incumbent (-1 = never).
     int         n_returning{ 0 }; ///< arcs of the family in Reentered or Gap.
     int         n_tracking{ 0 };  ///< arcs of the family in Tracking.
-    AnchorReentryClass cls{ AnchorReentryClass::NoMemory };
+    AnchorReentryClass cls{ AnchorReentryClass::NoMemory };   ///< how the return classifies against the drop memo.
     std::string prev_anchor;      ///< the incumbent the drop memo remembers, or empty.
     bool        restored{ false };///< set when B1 acted and the previous incumbent was elected.
     const char* refused{ "" };    ///< why a same-generation restore did not happen.
@@ -157,6 +162,7 @@ struct AnchorReentry {
  * @param sta_index  Station name -> index, for resolving the memo's incumbent.
  * @param out_station Optional: receives the incumbent's station index on
  *                    @c SameGeneration, or -1.
+ * @return @c NoMemory, @c SameGeneration or @c NewGeneration, by the rule above.
  */
 AnchorReentryClass anchorReentryClassify(const ArcLedger& led,
                                          const AnchorDropMemo& memo,
@@ -219,6 +225,7 @@ void anchorReentryNoteDrop(AnchorReentryState& st, const ArcLedger& led,
  * @param led    The ledger (read-only).
  * @param key    The arc.
  * @param now_ep The ledger's own epoch index.
+ * @return The age in epochs (0 or more), or -1 when no age can be stated (see above).
  */
 long long anchorLedgerArcAge(const ArcLedger& led, const ArcLedger::Key& key,
                              long long now_ep);

@@ -110,22 +110,22 @@ struct NetworkPostFitHandoff {
  *        are default (the caller ends the epoch before reading them).
  */
 struct NetworkSolveGlueResult {
-    Eigen::VectorXd                                  x_s;
-    NetworkSbasis::Plan                              plan;
-    std::set<char>                                   changed_consts;
-    bool                                             datum_changed{false};
-    bool                                             clk_model_warm{false};
+    Eigen::VectorXd                                  x_s;   ///< The shared satellite-parameter estimate that stands after the solve and any within-epoch re-solves: one entry per shared column, in the column's own unit (metres for clocks and biases).
+    NetworkSbasis::Plan                              plan;   ///< The S-basis plan of the epoch: pins or constraint rows, the declared dimension and the pivots.
+    std::set<char>                                   changed_consts;   ///< The constellations whose clock pivot changed this epoch, for the scoped response.
+    bool                                             datum_changed{false};   ///< A clock-pivot handover was signalled this epoch.
+    bool                                             clk_model_warm{false};   ///< The clock model is armed and past its warmup horizon.
     NetworkPostFitHandoff                            handoff;   ///< The post-fit hand-off (clock_refloat_sats, retro_flag_sats, n_arc_refloat_epoch), which RAIM and clock QC extend.
-    bool                                             retro_feed{false};
-    int                                              n_adapt{0};
-    double                                           sigma0_adapt{0.0};
-    bool                                             perconst_active{false};
-    std::set<char>                                   perconst_publish;
-    std::set<char>                                   perconst_dec_withhold;
-    std::map<char, NetworkEstimator::PerConstSigma0> perconst_stats;
-    bool                                             we_t2_opp{false};
-    bool                                             we_t2_flag{false};
-    EpochAction                                      action{EpochAction::Proceed};
+    bool                                             retro_feed{false};   ///< The retro-bump path is armed for the run.
+    int                                              n_adapt{0};   ///< Within-epoch re-solves that landed.
+    double                                           sigma0_adapt{0.0};   ///< The final within-epoch sigma0; 0 when the tier did not assess.
+    bool                                             perconst_active{false};   ///< A publishable per-constellation subset exists after the sigma0 ceiling.
+    std::set<char>                                   perconst_publish;   ///< Constellations kept in the emission by the sigma0 ceiling decision.
+    std::set<char>                                   perconst_dec_withhold;   ///< Constellations the sigma0 ceiling decision withheld.
+    std::map<char, NetworkEstimator::PerConstSigma0> perconst_stats;   ///< Per-constellation sigma0 and row count behind that decision.
+    bool                                             we_t2_opp{false};   ///< The flag-rate opportunity of the within-epoch tier, committed at the emit site.
+    bool                                             we_t2_flag{false};   ///< The first-assessment sigma0 exceeded the within-epoch trigger.
+    EpochAction                                      action{EpochAction::Proceed};   ///< Proceed, or SkipEpoch at one of the early exits (bookkeeping done in the solve).
     /// The landed within-epoch replay's culprits, copied from the epoch
     /// workspace's culprit sets (@ref EpochWorkspace::we_culprits) before the T2 block clears
     /// them; empty without a replay.  Read by the fixed-cycle ledger only (its evidence,
@@ -327,7 +327,7 @@ NetworkSolveGlueResult networkSolveGlue(NetworkRun& run, const NetworkEpoch& ep,
 
 /// @brief Run-scope counters of SolveGlue, a base of NetworkServiceCounters (network/state/RunContext.hpp).
 struct SolveGlueCounters {
-    int n_cpl_solve_dump = 8;  // debug budget of the time update: one-shot full-precision solve-checksum dump
+    int n_cpl_solve_dump = 8;  ///< debug budget of the time update: one-shot full-precision solve-checksum dump
     long long ddfold_degen_blocks  = 0;  ///< Σ blocks that folded inertly (the PD screen tripped, so M = 0).
     long long ddfold_degen_rows    = 0;  ///< Σ K over those blocks: the carried dimension that took no data.
 };

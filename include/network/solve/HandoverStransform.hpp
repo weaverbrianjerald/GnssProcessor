@@ -7,10 +7,10 @@
  * ## Problem
  *
  * The clock gauge of each constellation is fixed by a hard (Dirichlet) pin on one
- * satellite's clock column (@ref NetworkSbasis::buildSharedDatum, `Pin{…, 0.0}`).
+ * satellite's clock column (@ref GnssProcessor::NetworkSbasis::buildSharedDatum "NetworkSbasis::buildSharedDatum", `Pin{…, 0.0}`).
  * When that satellite sets, the pin moves to a successor and the estimable clock
  * solution of the whole constellation is re-referenced.  Without this transform the
- * producer skips the shared-carry prior fold (@ref networkInjectD2CarryPrior) for the
+ * producer skips the shared-carry prior fold (@ref GnssProcessor::networkInjectD2CarryPrior "networkInjectD2CarryPrior") for the
  * affected keys for one epoch.  Stiff states (clock levels, code bias with zero process
  * noise, phase bias) then solve from data alone once, re-level, and are stashed again in the new
  * datum.  That one-epoch re-level is the product discontinuity.
@@ -20,7 +20,7 @@
  * of magnitude at a handover and decay over about 30 minutes, and the downstream product
  * user (the consumer) is told to reset that constellation's code-bias and phase-bias
  * keys.  This is not a datum move: the code-bias and phase-bias gauges are
- * realized independently of the clock pivot (@ref NetworkSbasis::clockNullDirection),
+ * realized independently of the clock pivot (@ref GnssProcessor::NetworkSbasis::clockNullDirection "NetworkSbasis::clockNullDirection"),
  * and their mean steps are about 1e-6 m.  The carry is being discarded when it should
  * be re-expressed.
  *
@@ -45,7 +45,7 @@
  *
  * Two rules govern the implementation:
  *
- *  1. **@f$v_c@f$ is the structural direction that @ref NetworkSbasis owns.**  It is
+ *  1. **@f$v_c@f$ is the structural direction that @ref GnssProcessor::NetworkSbasis "NetworkSbasis" owns.**  It is
  *     not written out here and is not an eigenvector (eigenvectors of equal eigenvalue
  *     mix, while structural membership is exact and keeps per-satellite identity).
  *     Only the constellation's satellite-clock columns have a nonzero component, so the
@@ -55,9 +55,9 @@
  *     @f$x_i - v_i c_0@f$ is @f$\mathrm{var}_i + v_i^2\mathrm{var}_q -
  *     2 v_i \mathrm{cov}(i,q)@f$.  Clocks are positively correlated in the dominant
  *     common-mode case, so omitting the cross term overstates the variance.  The
- *     diagonal kernel (@ref applyClockStransform) omits it.  The dense build
+ *     diagonal kernel (@ref GnssProcessor::applyClockStransform "applyClockStransform") omits it.  The dense build
  *     (@c network.handover_stransform_dense, default off) is the full transform:
- *     @ref applyClockStransformDense re-expresses the values and the dense covariance
+ *     @ref GnssProcessor::applyClockStransformDense "applyClockStransformDense" re-expresses the values and the dense covariance
  *     block together by @f$S P S^\top@f$, with the diagonal kernel as its fallback.
  *
  * ## The release
@@ -67,7 +67,7 @@
  * @c EpochEvents::Handover::sts_consts.  For exactly those constellations, the skips
  * that @c network.scoped_handover_response applies to a datum-changed constellation
  * (the @c handover_affects test) are released in
- *  - @ref networkInjectD2CarryPrior (diagonal and dense branches, plus the drop of
+ *  - @ref GnssProcessor::networkInjectD2CarryPrior "networkInjectD2CarryPrior" (diagonal and dense branches, plus the drop of
  *    parked entries by re-admission continuity, @c network.readmit_seed_horizon_s), and
  *  - @c networkStashStatus (the variance component estimation (VCE) monitor and the `folded` bit of
  *    the prior-residual census).
@@ -112,7 +112,7 @@
 
 namespace GnssProcessor {
 
-/// Outcome of @ref applyClockStransform: the values the seam counts and writes as events.
+/// Outcome of @ref GnssProcessor::applyClockStransform "applyClockStransform": the values the seam counts and writes as events.
 struct ClockStransformResult {
     bool      applied{false};       ///< false: nothing was changed (q absent from v_c or with a zero coefficient, no carried level for q, or no rows)
     double    c0{0.0};              ///< the coefficient applied (m)
@@ -134,14 +134,14 @@ inline constexpr double kStsDenseContrastTolRel = 1e-10;
 
 /**
  * @brief The rank-1 S-transform kernel, applied through the traversal of carried
- *        references (@ref forEachCarriedReference); no context, no I/O.
+ *        references (@ref GnssProcessor::forEachCarriedReference "forEachCarriedReference"); no context, no I/O.
  *
  * Applies @f$x_i \leftarrow x_i - v_c[i] c_0@f$ and @f$\mathrm{var}_i \leftarrow
  * \mathrm{var}_i + v_c[i]^2 \mathrm{var}_q@f$, with @f$c_0 = x_q/v_c[q]@f$, to the
  * satellite-clock references at the sites of @p mech.  @c x_q and @c var_q are read from
  * the incoming pivot's carried clock entry before anything moves.  Entries of other kinds
  * are not touched: their component along the clock null direction is zero (see
- * @ref NetworkSbasis::clockNullDirection).
+ * @ref GnssProcessor::NetworkSbasis::clockNullDirection "NetworkSbasis::clockNullDirection").
  *
  * The sites depend on @p mech:
  *  - @c CarryMechanism::Handover (the transform after PASS B, the per-station row build):
@@ -193,7 +193,7 @@ struct ClockStransformDenseResult {
  * @brief The exact clock-pivot S-transform of the carried values and the dense block
  *        together (@c network.handover_stransform_dense); no context, no I/O.
  *
- * The diagonal kernel (@ref applyClockStransform) moves the carried clock values, adds
+ * The diagonal kernel (@ref GnssProcessor::applyClockStransform "applyClockStransform") moves the carried clock values, adds
  * @f$\mathrm{var}_q@f$ to each carried clock variance, and leaves the dense side-car
  * @c prev_carry_cov in the outgoing frame.  This kernel applies @f$S = I - u e_q^\top@f$
  * to both.  Here @f$u_i = 1@f$ on every clock row of constellation @p c in the block
@@ -218,7 +218,7 @@ struct ClockStransformDenseResult {
  * block row takes @f$\mathrm{var} = P'_{ii}@f$.  One without a block row (a parked
  * re-admission entry) takes the diagonal rule @f$x - c_0@f$, @f$\mathrm{var} + P_{qq}@f$.
  * The value moves go through the traversal of carried references
- * (@ref forEachCarriedReference, the @c Handover sites), so the carried-reference tallies
+ * (@ref GnssProcessor::forEachCarriedReference "forEachCarriedReference", the @c Handover sites), so the carried-reference tallies
  * count them.
  *
  * Every between-satellite contrast @f$a@f$ with @f$a^\top u = 0@f$ keeps its variance
@@ -247,7 +247,7 @@ ClockStransformDenseResult applyClockStransformDense(NetworkCarryState& carry, n
                                                      const std::string& p_out);
 
 /**
- * @brief Undo a transform that @ref applyClockStransform applied with
+ * @brief Undo a transform that @ref GnssProcessor::applyClockStransform "applyClockStransform" applied with
  *        @c CarryMechanism::HandoverBeforeRows.
  *
  * Every clock reference of the constellation moves back by @p c0, and every re-expressed
@@ -275,19 +275,19 @@ struct EpochEvents;             // network/driver/Epoch.hpp
  * @brief The handover's S-transform before the coupling rows
  *        (@c network.handover_stransform_before_rows).
  *
- * Called once per epoch before the fold decision (@ref networkCarryDecide) and PASS B.
+ * Called once per epoch before the fold decision (@ref GnssProcessor::networkCarryDecide "networkCarryDecide") and PASS B.
  * The preview record @c events.handover.sts_pre is empty with the knob off, and never
  * holds an earlier epoch's entries.
  *
  * With the knob armed, the call previews this epoch's clock datum election and handover
  * test.  Both are pure: the election reads only the registered clock columns, the datum
  * declaration, the sticky pivot baseline and the health filter, none of which PASS B
- * changes.  The one declaration is @ref networkClockDatumDeclaration, which reads the
+ * changes.  The one declaration is @ref GnssProcessor::networkClockDatumDeclaration "networkClockDatumDeclaration", which reads the
  * broadcast anchor sigma from @c ctx.knobs.clk_anchor_sigma.  For each constellation
  * whose pivot changed, the call re-expresses every clock reference the rows read through
- * @ref applyClockStransform with @c CarryMechanism::HandoverBeforeRows.  The fold
+ * @ref GnssProcessor::applyClockStransform "applyClockStransform" with @c CarryMechanism::HandoverBeforeRows.  The fold
  * decision, the exact coupling update's prepare step and the rows then read the
- * re-expressed carry.  The solve glue's @ref networkHandoverStransform does the
+ * re-expressed carry.  The solve glue's @ref GnssProcessor::networkHandoverStransform "networkHandoverStransform" does the
  * bookkeeping (counters, events, the fold release) from the record and does not
  * transform again.
  *
@@ -296,7 +296,7 @@ struct EpochEvents;             // network/driver/Epoch.hpp
  * unadopted and the record set.  When the next election chooses the same pivot, the
  * handover is detected again and released without a second transform.  When it chooses
  * another (the outgoing pivot again, or a third one), the transform is undone first
- * (@ref undoClockStransform), so the carry is back in the outgoing datum before anything
+ * (@ref GnssProcessor::undoClockStransform "undoClockStransform"), so the carry is back in the outgoing datum before anything
  * else moves it.  A failing election (an exception) is left to the solve glue, which
  * skips the epoch.
  *
@@ -320,7 +320,7 @@ void networkHandoverStransformBeforeRows(NetworkRun& run, const NetworkEpoch& ep
  *
  * Called once per epoch from the solve glue, after the ephemeris cut-over re-level and
  * before any fold reads @c ctx.carry.prev_carry (that is, before
- * @ref networkInjectD2CarryPrior).  The release set (@c sts_consts, @c sts_c0) lives in
+ * @ref GnssProcessor::networkInjectD2CarryPrior "networkInjectD2CarryPrior").  The release set (@c sts_consts, @c sts_c0) lives in
  * @p events, which is built empty with each epoch, so a release cannot carry over into a
  * later epoch.
  *
@@ -342,7 +342,7 @@ void networkHandoverStransformBeforeRows(NetworkRun& run, const NetworkEpoch& ep
  * @param datum_changed         Whether any pivot re-referenced this epoch.
  * @param changed_consts        The constellations whose pivot changed.
  * @param registered_clock_sats This epoch's registered satellite-clock set (the
- *                              same vector @ref NetworkSbasis::buildSharedDatum
+ *                              same vector @ref GnssProcessor::NetworkSbasis::buildSharedDatum "NetworkSbasis::buildSharedDatum"
  *                              receives), used to build @f$v_c@f$.
  * @param events                The epoch's events.  Writes events.handover (the release
  *                              set, c0 and the dense record); reads its preview

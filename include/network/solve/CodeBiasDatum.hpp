@@ -99,16 +99,16 @@ struct CodeBiasDatumCounters {
     // code columns), and one with n_w6_iono_none_s2z_rows == 0 folded the IF pin
     // against nothing; in both cases the satellite code biases have no datum at all,
     // which a clean-looking log would not reveal.
-    size_t n_w6_iono_none_epochs = 0, n_w6_iono_none_s2z_rows = 0;
-    size_t n_sat_gf_tgd = 0, n_sat_gf_tgd0 = 0, n_sat_gf_fallback = 0;
+    size_t n_w6_iono_none_epochs = 0, /**< epochs that folded the code-bias datum with no ionosphere constraint */ n_w6_iono_none_s2z_rows = 0;   ///< sum-to-zero (constellation, signal) rows folded in those epochs, cumulative
+    size_t n_sat_gf_tgd = 0, /**< geometry-free rows pinned at a non-zero broadcast group delay (c*T_GD, or c*BGD for Galileo) */ n_sat_gf_tgd0 = 0, /**< geometry-free rows whose satellite broadcasts a group delay of exactly zero */ n_sat_gf_fallback = 0;   ///< geometry-free rows that fell back to a zero target (no navigation record, or a pin pair other than L1/L2)
     // The per-signal extension.  `extra` counts the rows beyond the
     // ionosphere-free pair (which make a sparse channel's level a datum), `isc0` how
     // many of those asserted a zero inter-signal correction the navigation message
     // never stated, `sameband` the columns deliberately left estimable, and
     // `s2z_suppressed` the sum-to-zero rows dropped because the datum already pins
     // every column of that channel.
-    size_t n_sat_gf_extra = 0, n_sat_gf_isc0 = 0;
-    size_t n_sat_gf_sameband = 0, n_sat_gf_s2z_suppressed = 0;
+    size_t n_sat_gf_extra = 0, /**< extra per-signal geometry-free rows beyond the ionosphere-free pair */ n_sat_gf_isc0 = 0;   ///< extra rows that asserted a zero inter-signal correction the navigation message never stated
+    size_t n_sat_gf_sameband = 0, /**< columns deliberately left estimable (a same-band channel of the reference) */ n_sat_gf_s2z_suppressed = 0;   ///< sum-to-zero rows dropped because the geometry-free datum already pins every column of the channel
     /// The geometry-free datum counters split per constellation letter,
     /// accumulated from @c NetworkSbasis::CodeBiasDatumRows::sat_gf_by_const beside the
     /// global counters.  Read only by the Galileo run-end line.

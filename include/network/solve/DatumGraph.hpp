@@ -89,7 +89,7 @@
  * directly, and the trade direction does not exist, yet the literal predicate would
  * fire on every (sat, family) cell.  Both predicates are therefore held off, and the
  * cell is counted, for a constellation that registered no code-bias column this
- * epoch (@ref NetDatumGraphPrediction::cb_layer).
+ * epoch (@ref GnssProcessor::NetDatumGraphPrediction::cb_layer "NetDatumGraphPrediction::cb_layer").
  *
  * ## Cost, and why the support source is `modeled` and not the row stacks
  *
@@ -100,7 +100,7 @@
  * Jacobian.  The census walks @c modeled[station] instead: the per-station modeled
  * observation list, whose `observed` map is keyed by full RINEX-3 code and from
  * which the measurement admission screen has already removed every rejected
- * observable.  That is O(#observations) with the satellite and signal code in hand:
+ * observable.  That is O(\#observations) with the satellite and signal code in hand:
  * about 1300 map entries at 63 stations, against about 7500 rows × 950 columns.
  *
  * The proxy has one gap: an observable present in `modeled` can still fail to
@@ -181,7 +181,7 @@ struct NetDatumGraphConsCensus {
 /**
  * @brief Union-find the admitted support graph, per constellation.
  *
- * On the shared @ref arcgraph::Dsu (path compression without union by
+ * On the shared @ref GnssProcessor::arcgraph::Dsu "arcgraph::Dsu" (path compression without union by
  * size, so O(E log V) amortized at worst), which links the station under the
  * satellite; every output depends on the partition alone.  Vertices with no edge are
  * not created: a satellite no station tracks and a station that folded nothing
@@ -190,7 +190,7 @@ struct NetDatumGraphConsCensus {
  *
  * @param edges Admitted support edges, in any order (the result does not depend
  *              on the order, and the component order is made deterministic by
- *              the sort documented on @ref NetDatumGraphConsCensus::comps).
+ *              the sort documented on @ref GnssProcessor::NetDatumGraphConsCensus::comps "NetDatumGraphConsCensus::comps").
  * @return Per-constellation census, keyed by the satellite id's first
  *         character.  A constellation with no edges is absent, not present with
  *         @f$k = 0@f$.
@@ -219,7 +219,8 @@ netDatumGraphComponents(const std::vector<NetDatumGraphEdge>& edges);
  *
  * @param signal Full observation code, e.g. "L5X" / "C1C".  A code shorter than
  *               three characters, or one whose third character is not a letter,
- *               has no attribute and maps to @ref kDatumGraphNoFamily.
+ *               has no attribute and maps to @ref GnssProcessor::kDatumGraphNoFamily "kDatumGraphNoFamily".
+ * @return The attribute letter as a one-character string, or @ref GnssProcessor::kDatumGraphNoFamily "kDatumGraphNoFamily".
  */
 std::string netDatumGraphFamily(std::string_view signal);
 
@@ -232,15 +233,17 @@ inline constexpr const char* kDatumGraphFamilyRest = "rest";
  * @brief The receiver channel family of a satellite's observation code, under either
  *        definition (@c network.n3c_channel_family).
  *
- * With @p x_rule false this is @ref netDatumGraphFamily (the attribute letter). With it
+ * With @p x_rule false this is @ref GnssProcessor::netDatumGraphFamily "netDatumGraphFamily" (the attribute letter). With it
  * true the family is "X against the rest" as @c NetworkSbasis::channelFamilyOf defines it
- * for the satellite's constellation: @ref kDatumGraphFamilyX for the combined I+Q signals,
- * @ref kDatumGraphFamilyRest for every other signal. A code with no tracking attribute
- * still maps to @ref kDatumGraphNoFamily under both definitions.
+ * for the satellite's constellation: @ref GnssProcessor::kDatumGraphFamilyX "kDatumGraphFamilyX" for the combined I+Q signals,
+ * @ref GnssProcessor::kDatumGraphFamilyRest "kDatumGraphFamilyRest" for every other signal. A code with no tracking attribute
+ * still maps to @ref GnssProcessor::kDatumGraphNoFamily "kDatumGraphNoFamily" under both definitions.
  *
  * @param sat    RINEX satellite id, whose constellation decides the definition.
  * @param signal Full observation code, e.g. "L5X" / "C1C".
  * @param x_rule true for "X against the rest".
+ * @return The family name: the attribute letter, @ref GnssProcessor::kDatumGraphFamilyX "kDatumGraphFamilyX",
+ *         @ref GnssProcessor::kDatumGraphFamilyRest "kDatumGraphFamilyRest", or @ref GnssProcessor::kDatumGraphNoFamily "kDatumGraphNoFamily".
  */
 std::string netDatumGraphFamilyOf(std::string_view sat, std::string_view signal, bool x_rule);
 
@@ -258,8 +261,9 @@ struct NetDatumGraphPrediction {
     bool cb_layer{false};          ///< this constellation registered ≥1 satellite code-bias column this epoch, the precondition of both predicates (see the file banner).  False ⇒ both are held off and the cell is counted in cells_no_cb_layer.
     bool zero_keys{false};         ///< strict predicate: @c cb_layer, @c n_pb > 0 and @c n_cb == 0.
     bool zero_support{false};      ///< companion predicate: @c cb_layer, @c n_pb > 0 and @c n_code_support == 0 (implied by @ref zero_keys).
-    /// "SAT/FAMILY": the join key, the event identity and the CSV token, spelled
-    /// the same way everywhere.
+    /// @brief The cell's identity string: the join key, the event identity and the CSV token,
+    ///        spelled the same way everywhere.
+    /// @return "SAT/FAMILY", the satellite id and the channel family joined by a slash.
     std::string id() const { return sat + "/" + family; }
 };
 
@@ -274,13 +278,15 @@ struct NetDatumGraphPrediction {
  *                            columns.
  * @param code_support        Admitted code-observable counts keyed by
  *                            @c "SAT|FAMILY" (see
- *                            @ref netDatumGraphSupportKey), restricted to
+ *                            @ref GnssProcessor::netDatumGraphSupportKey "netDatumGraphSupportKey"), restricted to
  *                            observables with a registered code column.  A cell
  *                            absent from the map has zero support.
  * @return Every (sat, family) cell that carries at least one registered PB
- *         column, in ascending order of @ref NetDatumGraphPrediction::id.  Cells
+ *         column, in ascending order of @ref GnssProcessor::NetDatumGraphPrediction::id "NetDatumGraphPrediction::id".  Cells
  *         with no phase bias cannot host a b↔I trade and are not cells of this
  *         census.
+ * @param x_rule              true for the "X against the rest" family definition
+ *                            (@ref GnssProcessor::netDatumGraphFamilyOf "netDatumGraphFamilyOf"); false keeps the attribute letter.
  */
 std::vector<NetDatumGraphPrediction> netDatumGraphChannelFamilies(
     const std::set<std::string>& shared_phase_keys,
@@ -288,7 +294,10 @@ std::vector<NetDatumGraphPrediction> netDatumGraphChannelFamilies(
     const std::map<std::string, int>& code_support,
     bool x_rule = false);
 
-/// Key convention of the @c code_support map: @c "SAT|FAMILY".
+/// @brief Key convention of the @c code_support map: @c "SAT|FAMILY".
+/// @param sat    Satellite id (e.g. "E03").
+/// @param family Channel family of the cell (@ref GnssProcessor::netDatumGraphFamilyOf "netDatumGraphFamilyOf").
+/// @return The satellite id, a vertical bar and the family, as one string.
 inline std::string netDatumGraphSupportKey(std::string_view sat,
                                            std::string_view family) {
     std::string k(sat);
@@ -331,6 +340,7 @@ struct NetDatumGraphSpectral {
     int  observed{-1};      ///< realized near-null count before completion (SBC's own count when SBC is armed, else the gate's first evaluation).
     int  declared{0};       ///< @c NetworkSbasis::Plan::declared_dimension for the epoch.
     std::vector<NetDatumGraphDir> dirs;   ///< observed extra directions (SBC's constrained ones and its skipped orphans alike).
+    /// @brief Reset to the unobserved state (valid false, observed -1, declared 0, no directions).
     void clear() {
         valid = false;
         from_sbc = false;
@@ -338,9 +348,11 @@ struct NetDatumGraphSpectral {
         declared = 0;
         dirs.clear();
     }
-    /// Extra directions the spectrum carried beyond the declared dimension, by
-    /// count.  Never negative: @c observed < @c declared is the gate's
-    /// "over-specified" verdict, a different finding, and is not an extra.
+    /// @brief Extra directions the spectrum carried beyond the declared dimension, by
+    ///        count.  Never negative: @c observed < @c declared is the gate's
+    ///        "over-specified" verdict, a different finding, and is not an extra.
+    /// @return observed - declared when observed is known (non-negative) and exceeds declared,
+    ///         else 0.
     int extras() const {
         return (observed >= 0 && observed > declared) ? observed - declared : 0;
     }
@@ -361,8 +373,9 @@ struct NetDatumGraphSpectral {
  * when the census is off.  The inherited limit is SBC's six-participant cap: a
  * widely spread direction is identified by its heaviest six participants.
  *
+ * @param detail SBC's attribution string as described above (empty yields no identity).
  * @param x_rule true for the "X against the rest" family definition
- *               (@ref netDatumGraphFamilyOf); default the attribute letter.
+ *               (@ref GnssProcessor::netDatumGraphFamilyOf "netDatumGraphFamilyOf"); default the attribute letter.
  * @return Unique "SAT/FAMILY" identities, ascending.
  */
 std::vector<std::string> netDatumGraphDetailIds(std::string_view detail, bool x_rule = false);
@@ -390,16 +403,20 @@ struct NetDatumGraphContingency {
     int n_obs_matched{0};                   ///< observed directions naming ≥1 prediction.
 };
 
-/// Event name for a `predicted only` identity.  With KP armed the direction
+/// @brief Event name for a `predicted only` identity.  With KP armed the direction
 /// exists structurally and @c network.cb_kaula_prior holds it above the rank
 /// cutoff, so the cell is the KP-load-bearing map; without KP
 /// nothing lifts it and the same cell is a finding about the predictor.  One
 /// function supplies the label so that it always matches the arming it describes.
+/// @param kp_armed true when the code-bias Kaula prior is armed for the run.
+/// @return A static string: "dg_kp_load_bearing" when armed, else "dg_predicted_only".
 inline const char* netDatumGraphPredOnlyEvent(bool kp_armed) {
     return kp_armed ? "dg_kp_load_bearing" : "dg_predicted_only";
 }
 
-/// Action field paired with @ref netDatumGraphPredOnlyEvent, under the same contract.
+/// @brief Action field paired with @ref GnssProcessor::netDatumGraphPredOnlyEvent "netDatumGraphPredOnlyEvent", under the same contract.
+/// @param kp_armed true when the code-bias Kaula prior is armed for the run.
+/// @return A static string: "kp_lifted" when armed, else "over_predict".
 inline const char* netDatumGraphPredOnlyAction(bool kp_armed) {
     return kp_armed ? "kp_lifted" : "over_predict";
 }
@@ -410,6 +427,8 @@ inline const char* netDatumGraphPredOnlyAction(bool kp_armed) {
  * @param predicted_ids "SAT/FAMILY" identities predicted this epoch (any order;
  *                      duplicates are collapsed).
  * @param dirs          The epoch's observed extra directions.
+ * @return The three contingency cells (predicted observed, predicted only, observed only)
+ *         and the count of directions that named at least one prediction.
  */
 NetDatumGraphContingency netDatumGraphReconcile(
     const std::vector<std::string>& predicted_ids,

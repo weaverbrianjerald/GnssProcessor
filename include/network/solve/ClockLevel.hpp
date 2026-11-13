@@ -18,13 +18,13 @@
  * The read, after every kept epoch:
  *  1. the post-fit ionosphere-free code residual of each (station, satellite) pair of
  *     full-weight code rows on the constellation's pin bands is formed
- *     (@ref clockLevelIfResidual, @ref clockLevelIfInformation);
+ *     (@ref GnssProcessor::clockLevelIfResidual "clockLevelIfResidual", @ref GnssProcessor::clockLevelIfInformation "clockLevelIfInformation");
  *  2. a two-way least-squares fit separates one level effect per satellite from one
  *     offset per (station, constellation) (what the receiver clocks absorbed), the
- *     satellite effects summing to zero per constellation (@ref clockLevelTwoWay).
+ *     satellite effects summing to zero per constellation (@ref GnssProcessor::clockLevelTwoWay "clockLevelTwoWay").
  * The monitor compares the code-only information with the carried border's variance
  * along each satellite's level direction and, armed, raises the border to that bound
- * (@ref networkClockLevelMonitor); it never moves a value.
+ * (@ref GnssProcessor::networkClockLevelMonitor "networkClockLevelMonitor"); it never moves a value.
  *
  * Seam contract: free functions over @c NetworkRunContext that own no state; every
  * persistent value is a reference into @c ctx.carry (the @c clm_* members).
@@ -211,9 +211,9 @@ int networkClockLevelMonitorRunEnd(const NetworkRunEndView& v);
 struct ClockLevelCounters {
     // Clock-level monitor and raise.  Ratios are counted for a satellite from its
     // second epoch of code information on (its first solve is the code-only batch).
-    long long clm_epochs = 0, clm_skip_datum = 0, clm_rows = 0, clm_below1 = 0,
-              clm_no_clock = 0, clm_raised = 0;
-    double    clm_min_ratio = 0.0, clm_raised_sum = 0.0, clm_raised_max = 0.0;
+    long long clm_epochs = 0, /**< epochs the monitor ran (knob on) */ clm_skip_datum = 0, /**< epochs skipped because the clock datum changed */ clm_rows = 0, /**< satellite-epochs with a counted ratio */ clm_below1 = 0,   ///< counted rows whose ratio is below 1: the carried level variance is under the code-only bound
+              clm_no_clock = 0, /**< satellite-epochs skipped because the satellite's clock is not in the carried block (the pinned pivot, or a clock not carried) */ clm_raised = 0;   ///< satellite-epochs on which the level variance was raised to the code-only bound
+    double    clm_min_ratio = 0.0, /**< smallest counted ratio of carried level variance to the code-only bound */ clm_raised_sum = 0.0, /**< variance added by the raises, summed (m^2) */ clm_raised_max = 0.0;   ///< largest single raise (m^2)
     std::vector<double> clm_ratios;        ///< every counted ratio (the run-end median)
     std::map<std::string, long long> clm_raised_by_sat;   ///< raises per satellite (invariant 7)
     // Level innovation instrument.

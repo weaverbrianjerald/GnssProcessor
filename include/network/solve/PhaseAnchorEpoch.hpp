@@ -83,10 +83,12 @@ struct PhaseAnchorEpochCounters {
     /// bridged or pruned column).  Armed with staged = 0 on a run whose detectors fired
     /// does not prove a quiet network; it is the first thing to check.
     /// staged > 0 with handed, no_successor and inert all 0 is dead wiring.
-    long long n_anc_slip_staged = 0, n_anc_slip_handed = 0,
-              n_anc_slip_continuous = 0, n_anc_slip_cold = 0,
-              n_anc_slip_no_successor = 0, n_anc_slip_inert = 0,
-              n_anc_slip_epochs = 0;
+    long long n_anc_slip_staged = 0, n_anc_slip_handed = 0,   ///< staged directives the election re-hosted
+              n_anc_slip_continuous = 0,   ///< handed families whose successor was pinned at its own carried value_abs
+              n_anc_slip_cold = 0,   ///< handed families whose successor was pinned at 0 (no usable ledger entry survived the variance gates)
+              n_anc_slip_no_successor = 0,   ///< directives for which the ban left no candidate, so the family went unpinned for the epoch
+              n_anc_slip_inert = 0,   ///< directives that matched no family in the epoch's union (gated, bridged or pruned column)
+              n_anc_slip_epochs = 0;   ///< epochs on which at least one directive was staged
     /// Split-referenced satellite census, always on and independent of the
     /// knob: per processed epoch, how many satellites have >= 2 anchored phase-bias
     /// families whose anchors sit at different stations.  Those satellites'
@@ -95,8 +97,9 @@ struct PhaseAnchorEpochCounters {
     /// the same with the scope off, which is why it is not knob-gated.  Sum and epochs
     /// give the mean; the max is the worst epoch; the mean of multi_sum is the
     /// population that can split.
-    long long n_cb_split_sats_sum = 0, n_cb_split_sats_max = 0,
-              n_cb_split_multi_sum = 0, n_cb_split_epochs = 0;
+    long long n_cb_split_sats_sum = 0, n_cb_split_sats_max = 0,   ///< the largest per-epoch count of split-referenced satellites (the worst epoch)
+              n_cb_split_multi_sum = 0,   ///< the per-epoch count of satellites with two or more anchored families, summed over epochs
+              n_cb_split_epochs = 0;   ///< epochs censused (every processed epoch)
     // The coverage gate's drop edge (network.phase_datum_gate_drop_erase;
     // the rule is network/solve/PhaseGateDrop.hpp).  Counted in both knob states, so an
     // off run reports the size of the class and an armed run reports how much of it the
@@ -115,7 +118,7 @@ struct PhaseAnchorEpochCounters {
     size_t n_pd_gate_drop_arcs = 0;
     // Run-scope totals of the anchor carry re-reference, as for eq34_reref_total: families marginalized
     // and phase-leveling local carries erased over the run.
-    long long pa_reref_total = 0, pa_reref_erase_total = 0;
+    long long pa_reref_total = 0, /**< (satellite, signal) families marginalized by the anchor carry re-reference */ pa_reref_erase_total = 0;   ///< phase-leveling local carries erased by it
 };
 
 } // namespace GnssProcessor

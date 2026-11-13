@@ -22,9 +22,9 @@
  * inputs (the sums are integer counts, ties go to the lexically first satellite), so the
  * preview before the rows and the solve glue, which both elect, always agree.
  *
- * Layout: the ranking itself (@ref rankPivotCandidates) is a free function over plain
- * scores, the predictor (@ref NetworkPivotCoverage) turns an orbit product, a roster and a
- * Sun function into those scores, and @ref networkPivotCoverageArm builds the predictor once
+ * Layout: the ranking itself (@ref GnssProcessor::rankPivotCandidates "rankPivotCandidates") is a free function over plain
+ * scores, the predictor (@ref GnssProcessor::NetworkPivotCoverage "NetworkPivotCoverage") turns an orbit product, a roster and a
+ * Sun function into those scores, and @ref GnssProcessor::networkPivotCoverageArm "networkPivotCoverageArm" builds the predictor once
  * per run from the product cache.
  */
 
@@ -49,6 +49,8 @@ struct PivotCoverageParams {
     double elevation_mask_deg{10.0};  ///< A station counts a satellite from this elevation up.
     double shadow_scale{1.0};         ///< Earth-radius multiplier of the cylindrical umbra test (1 = geometric umbra).
 
+    /// @brief Number of look-ahead samples (horizon_s / step_s + 1), capped at 2000;
+    ///        1 when step_s is not positive or horizon_s is negative.
     /// @return The number of samples of the horizon, the first at the election epoch.
     std::size_t sampleCount() const;
 };
@@ -60,6 +62,7 @@ struct PivotCandidateScore {
     long long   station_samples{0};  ///< Count of (station, sample) pairs with the satellite at or above the mask.
     double      umbra_in_s{-1.0};  ///< Seconds from the election epoch to the first sample inside the umbra; negative when none inside the horizon.
 
+    /// @brief Whether the satellite is in the Earth's umbra at any horizon sample.
     /// @return True when the satellite is inside the umbra at some sample of the horizon.
     bool entersUmbra() const { return umbra_in_s >= 0.0; }
 };
@@ -74,11 +77,15 @@ struct PivotRanking {
     bool        all_shadowed{false};  ///< Every candidate with an orbit enters the umbra inside the horizon.
     std::vector<PivotCandidateScore> table;   ///< The candidates in the order given.
 
+    /// @brief Mean station count of a candidate: its station_samples divided by the samples
+    ///        of the horizon (0 when the ranking has no samples).
     /// @param s A candidate's score.
     /// @return The mean number of roster stations tracking the satellite over the horizon.
     double meanStations(const PivotCandidateScore& s) const;
+    /// @brief The table row of the elected satellite.
     /// @return The score of the elected satellite, or null when none was elected.
     const PivotCandidateScore* winner() const;
+    /// @brief Human-readable summary of the election for the run log.
     /// @return One line naming the pick, its mean station count, the runner-up and what was passed over.
     std::string describe() const;
 };
@@ -121,6 +128,7 @@ public:
     using SunFn = std::function<Eigen::Vector3d(double t_gps_s)>;
 
     /**
+     * @brief Build the predictor from the settings, the roster and the orbit nodes.
      * @param params       The settings.
      * @param stations     Roster station ECEF positions (m).
      * @param orbits       Per satellite, orbit product nodes sorted by time.
@@ -145,6 +153,8 @@ public:
     PivotRanking rank(double t_gps_s, const std::string& constellation,
                       const std::vector<std::string>& candidates) const;
 
+    /// @brief The most recent ranking made for a constellation (the memo of rank()).
+    /// @param constellation Constellation key ("G").
     /// @return The most recent ranking made for the constellation, or null when none.
     const PivotRanking* last(const std::string& constellation) const;
 
@@ -156,15 +166,20 @@ public:
      */
     std::optional<Eigen::Vector3d> positionAt(const std::string& sat, double t_gps_s) const;
 
-    /// Record an election for the run-end table (called once per election that made a pick).
+    /// @brief Record an election for the run-end table (called once per election that made a pick).
+    /// @param ranking The election that made the pick, copied into the record list.
     void noteElection(const PivotRanking& ranking);
+    /// @brief The recorded elections, for the run-end table.
     /// @return The elections made so far, in order.
     const std::vector<PivotElectionRecord>& elections() const { return elections_; }
 
+    /// @brief The election settings the predictor was built with.
     /// @return The settings.
     const PivotCoverageParams& params() const { return params_; }
+    /// @brief Roster size the coverage counts run over.
     /// @return The number of roster stations.
     std::size_t stationCount() const { return stations_.size(); }
+    /// @brief Size of the orbit table.
     /// @return The number of satellites with orbit nodes.
     std::size_t orbitSatelliteCount() const { return orbits_.size(); }
 

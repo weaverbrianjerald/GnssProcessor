@@ -33,18 +33,18 @@
  *
  * ### Where the pieces live
  *
- *  - @ref anchorLevelDirections: the data-only null space of a block and its split into one
+ *  - @ref GnssProcessor::anchorLevelDirections "anchorLevelDirections": the data-only null space of a block and its split into one
  *    direction per constellation (pure linear algebra, unit-tested).
- *  - @ref anchorLevelHoldRow: the row from a direction, the carried mask and the two values.
- *  - @ref networkAnchorLevelHoldRows: the station step (kStationBuildSteps, right after the
+ *  - @ref GnssProcessor::anchorLevelHoldRow "anchorLevelHoldRow": the row from a direction, the carried mask and the two values.
+ *  - @ref GnssProcessor::networkAnchorLevelHoldRows "networkAnchorLevelHoldRows": the station step (kStationBuildSteps, right after the
  *    pins): classifies the block's columns, reads the carried values through the entity tables
  *    (read only, the parallel produce), appends the rows and records what it did in the
  *    station's slot.
- *  - @ref networkAnchorLevelHoldTally: the serial tally after the produce: the counters, the
+ *  - @ref GnssProcessor::networkAnchorLevelHoldTally "networkAnchorLevelHoldTally": the serial tally after the produce: the counters, the
  *    per-station memo and the hold's edges as events (standing invariant 7): @c hold_start,
  *    @c hold_end and, when one station's hold of a constellation ends in the epoch another's
  *    starts, @c hold_handover, all on the @c ANCHOR_LEVEL tier of network_events.csv.
- *  - @ref networkAnchorLevelHoldRunEnd: the run-end report.
+ *  - @ref GnssProcessor::networkAnchorLevelHoldRunEnd "networkAnchorLevelHoldRunEnd": the run-end report.
  *
  * Off (@c network.phase_datum_anchor_level_hold false): no row, no record, no event, no line.
  */
@@ -104,10 +104,10 @@ struct LevelDirections {
  * @brief The data-only level directions of a station block.
  *
  * Forms the weighted normals of the data rows, takes their null space (eigenvalues below
- * @ref kAnchorLevelNullTol times the largest) and, for each wanted constellation, the one
+ * @ref GnssProcessor::kAnchorLevelNullTol "kAnchorLevelNullTol" times the largest) and, for each wanted constellation, the one
  * direction of that space that vanishes outside the constellation's level columns (its slant
  * ionospheres, ambiguities and receiver code biases): the right singular vector of the basis
- * restricted to the other columns at a singular value below @ref kAnchorLevelSplitTol.  A
+ * restricted to the other columns at a singular value below @ref GnssProcessor::kAnchorLevelSplitTol "kAnchorLevelSplitTol".  A
  * constellation with none of those singular values has no level direction in the null space;
  * one with more than one has no unique direction.  The direction is normalized, its entries
  * outside the constellation set to exactly zero, and its sign chosen so that the mean of its
@@ -137,7 +137,7 @@ struct LevelHoldRow {
 
 /**
  * @brief The hold row of one direction.
- * @param c       The unit level direction (@ref LevelDirections::Entry::c).
+ * @param c       The unit level direction (@ref GnssProcessor::LevelDirections::Entry::c "LevelDirections::Entry::c").
  * @param carried Per local column: non-zero when the column carries a previous posterior.
  * @param x_prev  Per local column: the carried value (read only where @p carried).
  * @param x_lin   Per local column: this epoch's linearization point.
@@ -146,7 +146,12 @@ struct LevelHoldRow {
 LevelHoldRow anchorLevelHoldRow(const Eigen::VectorXd& c, const std::vector<char>& carried,
                                 const Eigen::VectorXd& x_prev, const Eigen::VectorXd& x_lin);
 
-/// The name of a skip reason, for the event rows and the run-end report.
+/**
+ * @brief The name of a skip reason, for the event rows and the run-end report.
+ * @param s  The skip reason.
+ * @return A static string: "none", "no_columns", "no_data", "no_null_direction", "not_unique",
+ *         "no_carried_column" or "non_finite"; "?" for a value outside the enum.  Never null.
+ */
 const char* levelHoldSkipName(LevelHoldSkip s);
 
 // ---- PASS B station step ----
@@ -162,7 +167,7 @@ const char* levelHoldSkipName(LevelHoldSkip s);
  * this epoch (an ambiguity with a leveling-carry entry that is not gauge-pinned, not freed,
  * not pending a re-seed and not dropped this epoch; a slant ionosphere with its in-block carry
  * inside its horizon; a receiver code bias with its carry inside its horizon) and appends one
- * row at the pins' weight aimed at the carried level.  Records one @ref LevelHoldRecord per
+ * row at the pins' weight aimed at the carried level.  Records one @ref GnssProcessor::LevelHoldRecord "LevelHoldRecord" per
  * constellation considered in the station's slot (@c StationAssembly::level_hold) and counts
  * the rows in @c level_hold_rows.
  *

@@ -41,7 +41,7 @@
  * @c network.clock_anchor_k or when the median-removed residual exceeds the absolute
  * backstop (`clock_anchor_abs_m`).  The per-constellation median removal is required:
  * the clock common mode is a free per-epoch gauge.  With @c network.clock_anchor_guard_space
- * `phase`, the |w| test reads the statistic of @ref clockAnchorPhaseStatistic instead.
+ * `phase`, the |w| test reads the statistic of @ref GnssProcessor::clockAnchorPhaseStatistic "clockAnchorPhaseStatistic" instead.
  *
  * A trip decouples the satellite and, when it can, withdraws the offending prior and
  * re-solves the epoch before emission (adapt and emit; never a withhold, never a
@@ -54,7 +54,7 @@
  * machinery runs.
  *
  * Cost: a shared-border information delta passes through the Schur reduction
- * unchanged (@ref NetworkNormalEquations::addSharedInfo's reduction-preserving fast
+ * unchanged (@ref GnssProcessor::NetworkNormalEquations::addSharedInfo "NetworkNormalEquations::addSharedInfo"'s reduction-preserving fast
  * path), so the re-solve is one datum plus a factorization of the reduced K×K system,
  * with no re-reduction and no re-assembly.
  *
@@ -95,7 +95,7 @@
  * analogue of the phase-bias and code-bias floors (@c network.shared_carry_var_floor_pb_m2
  * and @c network.shared_carry_var_floor_cb_m2, which exclude the clock).  A
  * refloat marginalizes the key out of the carried block and never conditions on it,
- * the treatment that @ref NetworkEstimator::addSharedPriorDense documents as exact
+ * the treatment that @ref GnssProcessor::NetworkEstimator::addSharedPriorDense "NetworkEstimator::addSharedPriorDense" documents as exact
  * for a departed key.
  */
 
@@ -155,21 +155,22 @@ std::vector<double> clockAnchorGaugeProject(const Eigen::MatrixXd& cov,
 
 /// @brief The same functional for a diagonal covariance supplied directly: the prior
 ///        side, where C = diag(@p var).  Reduces to `v_s − 2·v_s/n + (Σ v_t)/n²`.
+/// @param var  the diagonal of the covariance: one variance per member (m^2)
 /// @return one projected variance per member, or empty when n < 2.
 std::vector<double> clockAnchorGaugeProjectDiag(const std::vector<double>& var);
 
-/// Rungs of the guard's dimensionless |w| ladder (@ref NetworkServiceCounters::cta_w_ge).
+/// Rungs of the guard's dimensionless |w| ladder (@c NetworkServiceCounters::cta_w_ge).
 /// Spans the k value in use (6, the default) and the tail beyond it, so one armed run
 /// reports how many rows each candidate threshold k would have tripped.
 inline constexpr std::array<double, 8> kCtaWLadder{1.0, 2.0, 3.0, 4.0, 6.0, 8.0, 12.0, 20.0};
 
 /// One satellite's phase-space guard statistic.
 struct ClockAnchorPhiRow {
-    bool   ok{false};
+    bool   ok{false};    ///< the statistic is usable: the floored variance @c S and @c e_hat are finite
     double e{0.0};       ///< the phase clock's innovation, (c - mu_c) - sum_j w_j (p_j - mu_pj) (m)
     double e_hat{0.0};   ///< …with the constellation median removed (the clock gauge)
     double S{0.0};       ///< P- - P+ of the contrast, floored (m^2)
-    bool   floored{false};
+    bool   floored{false};   ///< the raw contrast variance P- - P+ was not above the floor, so @c S is the floor
     int    n_pb{0};      ///< phase-bias columns in the functional
     // The same functional read as a state (the phase-visible instrument); the
     // guard reads none of these.
@@ -192,18 +193,15 @@ struct ClockAnchorPhiRow {
     std::vector<double> pb_sd;   ///< each chosen key's folded standard deviation (m)
 };
 
-/// Minimum-norm weights w over a satellite's phase-bias signals with sum w = 1 (blind to
+/// @brief Minimum-norm weights w over a satellite's phase-bias signals with sum w = 1 (blind to
 /// the level) and sum w alpha = 0 (alpha_j = lambda_j^2: blind to the ionosphere direction).
 /// Two bands give the ionosphere-free pair (GPS L1/L2: 2.5457, -1.5457).  Empty when all
 /// signals share one band.
+/// @param alpha  per signal, the squared carrier wavelength lambda_j^2 (m^2)
+/// @return one weight per signal, in the order of @p alpha (dimensionless); empty when there
+///         are fewer than two signals or all of them share one band
 std::vector<double> clockAnchorPhaseClockWeights(const std::vector<double>& alpha);
 
-/// The phase-space statistic of every satellite with a clock and two or more phase-bias
-/// keys in the folded dense block (@p keys / @p cov, the fold's capture): the innovation
-/// of the ionosphere-free phase clock against the folded prior means, its variance
-/// P- - P+ (the folded block and the posterior, projected on the constellation contrast)
-/// floored at @p floor_m^2, and the constellation median removed.  A constellation with
-/// fewer than two such satellites has no contrast and yields no rows.
 /**
  * @brief The phase statistic's parts as the guard trace's trailing columns (measure-only).
  *
@@ -250,12 +248,30 @@ ClockAnchorPhaseVerdict clockAnchorPhaseTripVerdict(bool phi_ok, double w_phi, d
  */
 double clockAnchorPhaseKeysShare(const ClockAnchorPhiRow& row);
 
+/**
+ * @brief The phase-space statistic of every satellite with a clock and two or more phase-bias
+ * keys in the folded dense block (@p keys / @p cov, the fold's capture): the innovation
+ * of the ionosphere-free phase clock against the folded prior means, its variance
+ * P- - P+ (the folded block and the posterior, projected on the constellation contrast)
+ * floored at @p floor_m^2, and the constellation median removed.  A constellation with
+ * fewer than two such satellites has no contrast and yields no rows.
+ * @param est    the estimator holding this epoch's solved system (its shared covariance is the
+ *               posterior side and its column lookups place each key)
+ * @param x_s    the shared solution of that solve (the posterior values)
+ * @param keys   the dense fold's captured keys (a clone key is not a satellite's clock)
+ * @param cov    the fold's captured prior covariance over @p keys (m^2); a size that does not
+ *               match @p keys yields no rows
+ * @param floor_m  the floor of the contrast variance S = P- - P+, as a standard deviation (m);
+ *               the variance is floored at its square
+ * @return satellite id to its statistic row.  A satellite without a clock, with fewer than two
+ *         usable bands, or alone in its constellation has no entry.
+ */
 std::map<std::string, ClockAnchorPhiRow> clockAnchorPhaseStatistic(
     const NetworkEstimator& est, const Eigen::VectorXd& x_s,
     const std::vector<NetworkEstimator::SharedPrior>& keys, const Eigen::MatrixXd& cov,
     double floor_m);
 
-/// Rungs of the guard's absolute |ê| ladder in metres (@ref NetworkServiceCounters::cta_e_ge).
+/// Rungs of the guard's absolute |ê| ladder in metres (@c NetworkServiceCounters::cta_e_ge).
 /// The top rung is the `clock_anchor_abs_m` default (2 m), so the last column gives the
 /// backstop's own realized rate.
 inline constexpr std::array<double, 8> kCtaELadder{0.005, 0.01, 0.02, 0.05, 0.10, 0.30, 1.00, 2.00};
@@ -282,15 +298,15 @@ struct ClockAnchorFold {
     /// @c inc_m2 = @c rate_m2ps · @c dt_s.  The pivot-frame process noise reads them: a carried clock's
     /// pivot-frame term is the pivot's rate over this clock's own interval.
     double dt_s{0.0};
-    double rate_m2ps{0.0};
+    double rate_m2ps{0.0};   ///< the rate of @c inc_m2 over @c dt_s (m^2/s)
 };
 
 /// @brief Decide the satellite clock's carried-prior variance for this epoch, and
-///        advance the per-satellite anchor bookkeeping: @ref clockAnchorFoldDecide
-///        followed by @ref clockAnchorFoldCommit.
+///        advance the per-satellite anchor bookkeeping: @ref GnssProcessor::clockAnchorFoldDecide "clockAnchorFoldDecide"
+///        followed by @ref GnssProcessor::clockAnchorFoldCommit "clockAnchorFoldCommit".
 ///
 /// The carry fold does not call it: the decision is made before
-/// PASS B (@ref networkCarryDecide), read by the coupling rows and by both fold branches
+/// PASS B (@ref GnssProcessor::networkCarryDecide "networkCarryDecide"), read by the coupling rows and by both fold branches
 /// (the diagonal one and the dense block's `cov_eff` diagonal, so the marginal prior on
 /// the clock is the same either way, which makes the guard statistic independent of the
 /// fold path), and committed at the fold.  This call is the two halves together, for a
@@ -320,22 +336,32 @@ ClockAnchorFold clockAnchorFoldVariance(NetworkRunContext& ctx,
 
 /// @brief The anchor's decision for this satellite this epoch, read from the current state
 ///        without advancing it: the decision half of
-///        @ref clockAnchorFoldVariance.
+///        @ref GnssProcessor::clockAnchorFoldVariance "clockAnchorFoldVariance".
 ///
 /// The coupling rows are built in PASS B, before the carry fold runs, and the exact time update
 /// (network.carry_coupling_exact_update) has to use the fold's own inflation, so the decision
 /// is made there and committed at the fold.  Evaluates the anchor's rule on a copy of the
-/// per-satellite state with `stale_pending` taken as cleared (@ref clockAnchorBeginEpoch
+/// per-satellite state with `stale_pending` taken as cleared (@ref GnssProcessor::clockAnchorBeginEpoch "clockAnchorBeginEpoch"
 /// clears it before the fold) and returns the decision with its increment
-/// (@ref ClockAnchorFold::inc_m2) and the variance on @p prev_var.  Writes nothing: no state,
-/// no counter.  @ref clockAnchorFoldCommit applies it.
+/// (@ref GnssProcessor::ClockAnchorFold::inc_m2 "ClockAnchorFold::inc_m2") and the variance on @p prev_var.  Writes nothing: no state,
+/// no counter.  @ref GnssProcessor::clockAnchorFoldCommit "clockAnchorFoldCommit" applies it.
 /// @param ctx run context (read only); the other parameters as for the fold.
+/// @param sat           satellite id
+/// @param prev_var      the stashed posterior variance (m^2)
+/// @param dt_epoch      the driver's inter-epoch gap (s), the legacy inflation basis
+/// @param pl_now_s      continuous GPS seconds of this epoch
+/// @param seed_horizon_s  re-admission continuity horizon (s), as for
+///        @ref GnssProcessor::clockAnchorFoldVariance "clockAnchorFoldVariance"; 0 keeps the unchanged rule.
 /// @param slip_clk the IF-TD pools read a satellite clock event for @p sat this epoch
 ///        (@c EpochEvents::Slip::sat_clock_step).  An ANCHORED satellite then folds LOOSE
 ///        exactly as a stale carry does (the legacy increment, no floor) with
-///        @ref ClockAnchorFold::decoupled and @ref ClockAnchorFold::slip_clk set, so the
+///        @ref GnssProcessor::ClockAnchorFold::decoupled "ClockAnchorFold::decoupled" and @ref GnssProcessor::ClockAnchorFold::slip_clk "ClockAnchorFold::slip_clk" set, so the
 ///        stiff prior never meets the step and nothing has to be withdrawn.  A LOOSE
 ///        satellite is unchanged.  false (the default) is the unchanged rule.
+/// @return the decision: the increment over @p prev_var with its interval and rate, the
+///         resulting @c var_eff, and @c decoupled / @c slip_clk when a stale anchored carry or
+///         a satellite clock event takes it LOOSE.  With the anchor disarmed it is the legacy
+///         increment, @c var_eff = @p prev_var plus the clock process noise times @p dt_epoch.
 ClockAnchorFold clockAnchorFoldDecide(const NetworkRunContext& ctx, const std::string& sat,
                                       double prev_var, double dt_epoch, double pl_now_s,
                                       double seed_horizon_s = 0.0, bool slip_clk = false);
@@ -355,7 +381,7 @@ ClockAnchorFold clockAnchorFoldAt(const NetworkRunContext& ctx, const ClockAncho
                                   double prev_var);
 
 /// @brief Apply the anchor's fold decision @p f to the per-satellite state and counters,
-///        the bookkeeping half of @ref clockAnchorFoldVariance.
+///        the bookkeeping half of @ref GnssProcessor::clockAnchorFoldVariance "clockAnchorFoldVariance".
 ///
 /// Marks a decoupling (`stale_pending`, or `slip_clk_pending` for a satellite clock event; the
 /// guard turns either into the edge), counts the fold
@@ -364,7 +390,7 @@ ClockAnchorFold clockAnchorFoldAt(const NetworkRunContext& ctx, const ClockAncho
 /// epoch that ends before the fold advances nothing.  A no-op with the anchor disarmed.
 /// @param ctx      run context (state and counters mutated)
 /// @param sat      satellite id
-/// @param f        the fold on the variance the fold folds (@ref clockAnchorFoldAt)
+/// @param f        the fold on the variance the fold folds (@ref GnssProcessor::clockAnchorFoldAt "clockAnchorFoldAt")
 /// @param pl_now_s continuous GPS seconds of this epoch
 /// @param value    the carried value being folded (recorded for the guard)
 void clockAnchorFoldCommit(NetworkRunContext& ctx, const std::string& sat,
@@ -376,6 +402,8 @@ void clockAnchorFoldCommit(NetworkRunContext& ctx, const std::string& sat,
 /// Call once per epoch before the carry fold.  Separate from the fold call because a
 /// satellite absent from `prev_carry` folds nothing and must not be tested by the
 /// guard.
+/// @param ctx  run context (the per-satellite folded and pending marks and the trip sets are
+///             reset; a no-op unless the anchor is armed)
 void clockAnchorBeginEpoch(NetworkRunContext& ctx);
 
 /// @brief The guard: test every folded satellite's generalized predicted
@@ -409,7 +437,7 @@ void clockAnchorBeginEpoch(NetworkRunContext& ctx);
 ///                            constellations and dense record, and the satellites the
 ///                            IF-TD pools read as a clock event
 ///                            (@c events.slip.sat_clock_step).  The fold already took an
-///                            anchored such satellite LOOSE (@ref clockAnchorFoldDecide), and
+///                            anchored such satellite LOOSE (@ref GnssProcessor::clockAnchorFoldDecide "clockAnchorFoldDecide"), and
 ///                            the guard decouples it with reason @c slip_clk before the test
 ///                            (counted in @c cta_trip_slip_clk, no re-solve).  In the test a
 ///                            LOOSE such satellite has its in-band run reset, and an anchored
@@ -466,7 +494,7 @@ void networkFoldColdClockAnchor(NetworkRun& run, const NetworkEpoch& ep, EpochWo
 
 /**
  * @brief Stage 12 of the network solve: the clock anchor guard between the primary solve and
- *        the within-epoch tier, one call to @ref networkClockAnchorGuard.
+ *        the within-epoch tier, one call to @ref GnssProcessor::networkClockAnchorGuard "networkClockAnchorGuard".
  * @param run     The run: the estimator may re-solve; ctx carry and the traces are written.
  * @param ep      The epoch, read: se, columns (registered_clock_sats).
  * @param datum   The clock datum (read: plan, datum_changed, changed_consts).

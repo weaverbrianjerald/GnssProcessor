@@ -4,7 +4,7 @@
  * @brief Pure detector for a PPP-RTK network clock-pivot datum re-reference (A1/A2).
  *
  * The network's per-constellation clock gauge is realized by pinning one satellite's
- * clock per constellation (@ref NetworkSbasis::buildSharedDatum).  When that pinned
+ * clock per constellation (@ref GnssProcessor::NetworkSbasis::buildSharedDatum "NetworkSbasis::buildSharedDatum").  When that pinned
  * pivot satellite changes, the whole constellation's estimable clock / phase-bias /
  * code-bias solution re-references to a new datum, and the emitted product must
  * signal a discontinuity so that a consumer resets the ambiguities that integrated
@@ -83,7 +83,7 @@ inline bool pivotHandoverSignalled(
  * the D2 shared-carry priors, clears the two-state clock oscillators, suppresses
  * the clock-monitor jump baseline).  The legacy response is global; the scoped
  * response applies it only to keys of the constellation(s) whose datum changed,
- * using the same @p changed_consts set that @ref pivotHandoverSignalled records
+ * using the same @p changed_consts set that @ref GnssProcessor::pivotHandoverSignalled "pivotHandoverSignalled" records
  * for the A2 emit-bump scoping (one source, never re-derived).
  *
  * A key's constellation is read from its satellite id (@c systemOfSat, compared as its
@@ -99,7 +99,7 @@ inline bool pivotHandoverSignalled(
  *
  * @param sat            Satellite id of the carried key ("" = constellation-less).
  * @param changed_consts Leading chars of the constellations whose pivot changed
- *                       this epoch (from @ref pivotHandoverSignalled).
+ *                       this epoch (from @ref GnssProcessor::pivotHandoverSignalled "pivotHandoverSignalled").
  * @param scoped         @c network.scoped_handover_response; false = global
  *                       response (always affected).
  * @return true iff the key's carried state must be treated as retired-datum.

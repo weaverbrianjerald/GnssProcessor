@@ -59,12 +59,12 @@
  *     rank gate (an SVD of the pre-constraint reduced normals; the count of small
  *     singular values must equal the declared S-basis dimension).
  *
- * NetworkSbasis drives this kernel in this order: @ref reduce; inspect and
- * constrain a copy of @ref reducedSharedNormals / @ref reducedSharedRhs (hard
- * pins or a guarded S-transform); @ref solveSharedConstrained; then
- * @ref reconstructStation per station.  Soft physical priors and additive
+ * NetworkSbasis drives this kernel in this order: @ref GnssProcessor::NetworkNormalEquations::reduce "reduce"; inspect and
+ * constrain a copy of @c reducedSharedNormals / @ref GnssProcessor::NetworkNormalEquations::reducedSharedRhs "reducedSharedRhs" (hard
+ * pins or a guarded S-transform); @ref GnssProcessor::NetworkNormalEquations::solveSharedConstrained "solveSharedConstrained"; then
+ * @c reconstructStation per station.  Soft physical priors and additive
  * exact-gauge pins on the shared border can also be applied before the reduction
- * through @ref addSharedInfo; they carry through the Schur reduction unchanged.
+ * through @ref GnssProcessor::NetworkNormalEquations::addSharedInfo "addSharedInfo"; they carry through the Schur reduction unchanged.
  */
 
 #pragma once
@@ -128,7 +128,7 @@ public:
      * Afterwards the per-epoch system (normals, RHS, stations, cached reduction,
      * folded gauges and DD priors, and the last fold's @ref DdFoldStats) is as if
      * `NetworkNormalEquations(n_shared)` had been constructed, but the per-station
-     * blocks are not freed: the @ref stations_ pool is retained (its active count
+     * blocks are not freed: the @c stations_ pool is retained (its active count
      * reset to zero), and each epoch's @ref addStation overwrites a pooled
      * @c Station's dense buffers in place.  Without the pool, the process heap
      * retains the per-epoch allocate/free churn of large blocks as committed
@@ -201,7 +201,8 @@ public:
         std::vector<Eigen::Index> cols;  ///< Local columns, in ascending order (determinism).
         Eigen::VectorXd dNrr;            ///< Per-column information increments @f$\Lambda_i\ge0@f$.
         Eigen::VectorXd dur;             ///< Per-column RHS increments @f$\eta_i@f$.
-        /// True when there is nothing to fold (the OFF path, and the default).
+        /// @brief True when there is nothing to fold (the OFF path, and the default).
+        /// @return true when @c cols is empty (@c dNrr and @c dur are then not read).
         bool empty() const { return cols.empty(); }
     };
 
@@ -280,8 +281,19 @@ public:
 
     /**
      * @brief Overload taking a diagonal weight (per-observation variances⁻¹).
+     *
+     * Forms the same normal-equation blocks as the full-weight form with
+     * @c W = diag(@p w_diag) and forwards to @ref addStation.
+     *
+     * @param A_s Jacobian wrt the shared parameters (@c m × @c n_shared).
+     * @param A_r Jacobian wrt this station's locals (@c m × @c n_local).
      * @param w_diag Diagonal weights, length @c m (each = 1/σ²).
-     * @copydetails addStationObservations
+     * @param y   Prefit residual (observed − computed), length @c m.
+     * @param prior Optional diagonal prior rows folded into @f$N_{rr}@f$ /
+     *              @f$u_r@f$ before the PD test; see @ref StationPrior.  Empty: no prior.
+     * @return The 0-based station index.
+     * @throws std::invalid_argument on a dimension mismatch, and whatever
+     *         @ref addStation throws.
      */
     std::size_t addStationObservations(const Eigen::MatrixXd& A_s,
                                        const Eigen::MatrixXd& A_r,
@@ -353,6 +365,9 @@ public:
      * With this on, a station costs the work of its nonzero entries.  A shape the sparse formation
      * does not cover takes the dense path for that station.  Configuration level: set once; it
      * survives @ref reset.  Default off: the dense products, byte-identical.
+     *
+     * @param on true to form the station normals from the nonzero entries (the formation
+     *           still declines shapes it cannot reproduce, per station); false for the dense products.
      */
     void setSparseStationNormals(bool on) { sparse_station_normals_ = on; }
 
@@ -374,15 +389,16 @@ public:
     /// shape (on a build where @ref sparseFormationOnThisBuild is false, every station).  Counted by
     /// @ref addStationObservations and by @ref commitStation, once per station that reaches the
     /// formation (inputs that fail a dimension check reach neither); nothing is counted while the
-    /// option is off.  Not cleared by @ref reset: the run-end telemetry of the option.
+    /// option is off.  Not cleared by @c reset: the run-end telemetry of the option.
     struct StationFormationCounts {
         long long sparse{0};   ///< stations whose normal blocks the sparse formation formed
         long long dense{0};    ///< stations it declined, formed by the dense products
     };
+    /// @brief How many stations the sparse formation formed and how many it declined, run-cumulative.
     /// @return The counts of @ref StationFormationCounts.
     const StationFormationCounts& stationFormationCounts() const { return formation_counts_; }
 
-    /// One station's inputs to @ref formStations: the arguments of the diagonal-weight
+    /// One station's inputs to @c formStations: the arguments of the diagonal-weight
     /// @ref addStationObservations, by pointer (the caller keeps them alive until the commit).
     struct StationObservations {
         const Eigen::MatrixXd* A_s{nullptr};    ///< Jacobian wrt the shared parameters (@c m × @c n_shared)
@@ -424,7 +440,7 @@ public:
     void formStations(const std::vector<StationObservations>& in, int n_threads);
 
     /**
-     * @brief Commit slot @p k of the last @ref formStations: the second half of
+     * @brief Commit slot @p k of the last @c formStations: the second half of
      *        @ref addStationObservations.
      *
      * A slot that holds a failure records a positive-definiteness rejection (when that was the
@@ -542,7 +558,7 @@ public:
      * Calls @ref reduce first when the reduction is stale, then folds; a second
      * call within the same reduction is a no-op.  Call after any @ref reduce that
      * rebuilt the reduced system and before the null-space gate reads
-     * @ref reducedSharedNormals: the fold fixes the phase gauge, so the gate's
+     * @c reducedSharedNormals: the fold fixes the phase gauge, so the gate's
      * declared dimension stays equal to the clock deficiency count, as in the
      * anchor mode, whose local pins enter before the reduction.  A later
      * @ref reduce recompute or @ref reset clears the stored gauges (the rebuilt
@@ -558,11 +574,11 @@ public:
      */
     void foldReducedSumZeroGauges(const std::vector<SumZeroGauge>& gauges);
 
+    /// @brief Count of folded sum-to-zero gauges.
     /// @return Number of sum-to-zero gauges folded into the current reduced system
     ///         (0 when none folded since the last @ref reduce or @ref reset; a skipped
     ///         degenerate gauge is not counted).  Read by
     ///         @ref NetworkEstimator::solveHeldDetached, which refuses a folded system
-    ///.
     std::size_t numSumZeroGauges() const { return sumzero_gauges_.size(); }
 
     /// The rank-K double-difference prior of one connected (const,signal)
@@ -576,6 +592,7 @@ public:
     /// cycles share tree edges, so the DDs are correlated and the block is folded
     /// jointly (rank K), not as K independent rank-1 folds.
     struct DdPriorBlock {
+        /// @brief One signed coefficient of a DD row on a station's local ambiguity column.
         struct Term {
             std::size_t   station;    ///< station index (from @ref addStation).
             Eigen::Index  local_col;  ///< ambiguity column within that station's @c A_r.
@@ -735,7 +752,7 @@ public:
      *
      * The DD carry's coarse slip layer (MW, LLI, IF-TD) is deliberately relaxed; the
      * finer slips the estimator has to catch appear as an inflated innovation on the
-     * carried DD.  Per block, from the cached fold factors (@ref FoldedDdPrior) and
+     * carried DD.  Per block, from the cached fold factors (FoldedDdPrior (@c GnssProcessor::NetworkNormalEquations::FoldedDdPrior)) and
      * the datum-as-known shared covariance @f$\Sigma_{ss}@f$ (@p cov_free_xs, the
      * frame @ref ddPriorPosteriorCovariance also uses):
      * @f[
@@ -766,6 +783,7 @@ public:
                            const Eigen::MatrixXd& cov_free_xs,
                            Eigen::VectorXd& v, Eigen::MatrixXd& cov_v) const;
 
+    /// @brief Count of DD-prior block slots held by the last fold.
     /// @return Number of DD-prior blocks (== the input count of the last
     ///         @ref foldReducedDdPriors; degenerate/chordless blocks are inert slots).
     std::size_t numDdPriorBlocks() const { return dd_priors_.size(); }
@@ -935,13 +953,18 @@ public:
         /// the block folds inertly and is left to the install-side rebirth (INC-2a).
         double repair_worst{0.0};
     };
+    /// @brief PD-screen diagnostics of the last DD-prior fold (overwritten by every fold).
     /// @return The last fold's PD-screen diagnostics (@ref DdFoldStats).
     const DdFoldStats& ddFoldStats() const { return dd_fold_stats_; }
+    /// @brief Whether a DD-prior block folded inertly at the PD screen.
+    /// @param b Input block index (input order is preserved; see @ref ddPriorPosteriorMean).
     /// @return Whether DD-prior block @p b folded inertly (its @f$P^z+B@f$ failed the PD
     ///         screen, so @f$M=0@f$ and the posterior equals the prior).  False for a
     ///         chordless K=0 slot.  The install-side rebirth keys on this.
     /// @throws std::out_of_range on a bad index.
     bool ddPriorBlockDegenerate(std::size_t b) const;
+    /// @brief Conditioning of a DD-prior block at the fold, as a relative pivot.
+    /// @param b Input block index (input order is preserved; see @ref ddPriorPosteriorMean).
     /// @return DD-prior block @p b's relative pivot @f$d_{\min}/d_{\max}@f$ at the fold
     ///         (0 for a chordless slot or a factorization that never completed).
     /// @throws std::out_of_range on a bad index.
@@ -967,8 +990,11 @@ public:
      *        the bar given at @ref DdFoldStats::repair_worst).
      *
      * Set once before the epoch loop; it survives @ref reset, like @ref setPerfTiming.
+     *
+     * @param on true for the PD-safe forms (a), (b) and (c); false for the original arithmetic.
      */
     void setDdFoldPdSafe(bool on) { dd_fold_pd_safe_ = on; }
+    /// @brief Whether the PD-safe DD-prior fold arithmetic is armed.
     /// @return Whether the PD-safe fold arithmetic is armed (@ref setDdFoldPdSafe).
     bool ddFoldPdSafe() const { return dd_fold_pd_safe_; }
 
@@ -1041,6 +1067,7 @@ public:
      *         Chordless K=0 slots count as slots but contribute no correction.
      */
     bool hasCarryCovCorrection() const { return !dd_priors_.empty(); }
+    /// @brief Run-cumulative telemetry of the carry-aware covariance readbacks.
     /// @return Run-cumulative carry-aware readback telemetry (@ref CarryCovStats).
     const CarryCovStats& carryCovStats() const { return carry_cov_stats_; }
     /// Clear @ref CarryCovStats (for tests or a deliberate per-leg re-zero; @ref reset does not).
@@ -1257,7 +1284,7 @@ public:
         const Eigen::MatrixXd& cov_free_xs, bool carry_aware = false) const;
 
     /**
-     * @brief The border-known form of @ref reconstructStationCovarianceDiag:
+     * @brief The border-known form of @ref GnssProcessor::NetworkNormalEquations::reconstructStationCovarianceDiag "reconstructStationCovarianceDiag":
      *        @f$(N_{rr}^{-1})_{cc}@f$ for each requested local column, the whole
      *        shared border treated as known.
      *
@@ -1460,7 +1487,7 @@ public:
      * row tier rather than duplicating it.
      *
      * Same inputs, same station-local marginalization identity and same datum frame
-     * as @ref rowRedundancy: this is the bilinear polarization of that method's
+     * as @c rowRedundancy: this is the bilinear polarization of that method's
      * quadratic form,
      * @f[
      *   a_i^\top \mathrm{Cov}\, a_j =
@@ -1507,22 +1534,34 @@ public:
                                           const Eigen::VectorXd& w_rows,
                                           const Eigen::MatrixXd& cov_free_xs) const;
 
+    /// @brief Reduced shared normals after the Schur elimination of every station block.
     /// @return The reduced shared normal matrix @f$\tilde N_{ss}@f$ (after @ref reduce).
+    ///         Square, @c n_shared × @c n_shared, symmetric, information units (1/m^2 for the
+    ///         satellite parameters in metres); valid while @ref isReduced is true.
     const Eigen::MatrixXd& reducedSharedNormals() const { return reduced_N_ss_; }
-    /// @return The reduced shared RHS @f$\tilde u_s@f$ (after @ref reduce).
+    /// @brief Reduced shared right-hand side, the companion of @ref reducedSharedNormals.
+    /// @return The reduced shared RHS @f$\tilde u_s@f$ (after @ref reduce), length @c n_shared.
     const Eigen::VectorXd& reducedSharedRhs() const { return reduced_u_s_; }
 
+    /// @brief Shared normals before the Schur reduction: the border accumulated so far.
     /// @return The accumulated (pre-reduction) shared normals @f$N_{ss}=\sum_r N_{ss}^r + \text{priors}@f$.
+    ///         Square, @c n_shared × @c n_shared, symmetric.
     const Eigen::MatrixXd& sharedNormals() const { return N_ss_; }
-    /// @return The accumulated (pre-reduction) shared RHS @f$u_s@f$.
+    /// @brief Shared right-hand side before the Schur reduction, the companion of @ref sharedNormals.
+    /// @return The accumulated (pre-reduction) shared RHS @f$u_s@f$, length @c n_shared.
     const Eigen::VectorXd& sharedRhs() const { return u_s_; }
 
+    /// @brief Width of the shared border.
     /// @return Shared-block dimension @c n_shared.
     Eigen::Index numShared() const { return n_shared_; }
+    /// @brief Stations added since the last reset.
     /// @return Number of stations added this epoch (the active pool count).
     std::size_t numStations() const { return n_active_; }
+    /// @brief Width of one station's private nuisance block.
+    /// @param station Index returned by @ref addStation; must be below @ref numStations.
     /// @return Local dimension of station @p station.
     Eigen::Index numLocal(std::size_t station) const;
+    /// @brief Whether the cached Schur reduction is current.
     /// @return Whether the cached reduction is current (set by @ref reduce, kept
     ///         current by @ref addSharedInfo, cleared by @ref addStation /
     ///         @ref addStationPrior with a positive weight / @ref reset).
@@ -1531,6 +1570,10 @@ public:
     /**
      * @brief Read-only access to station @p station's shared↔local cross block
      *        @f$N_{sr}@f$ (@ref numShared × @ref numLocal), for the NEQ export.
+     * @param station Index returned by @ref addStation.
+     * @return The cross block @f$A_s^\top W A_r@f$ of the station, @ref numShared rows by
+     *         @ref numLocal columns (a reference into the station pool: not to be held across
+     *         an add or a @ref reset).
      * @throws std::out_of_range if @p station ≥ @ref numStations.
      */
     const Eigen::MatrixXd& stationCrossBlock(std::size_t station) const;
@@ -1538,6 +1581,10 @@ public:
     /**
      * @brief Read-only access to station @p station's local RHS @f$u_r@f$
      *        (@ref numLocal), for the NEQ export.
+     * @param station Index returned by @ref addStation.
+     * @return The local RHS @f$A_r^\top W y@f$ of the station, length @ref numLocal, including
+     *         any prior RHS folded through @ref addStation or @ref addStationPrior (a reference
+     *         into the station pool: not to be held across an add or a @ref reset).
      * @throws std::out_of_range if @p station ≥ @ref numStations.
      */
     const Eigen::VectorXd& stationLocalRhs(std::size_t station) const;
@@ -1549,6 +1596,9 @@ public:
      *        through @ref addStation or @ref addStationPrior.  Exact up to
      *        factorization round-off; intended for the offline NEQ export, not for
      *        per-epoch use.
+     * @param station Index returned by @ref addStation.
+     * @return The symmetric @ref numLocal × @ref numLocal local normals @f$N_{rr}@f$ (a copy;
+     *         empty for a station without locals).
      * @throws std::out_of_range if @p station ≥ @ref numStations.
      */
     Eigen::MatrixXd stationLocalNormals(std::size_t station) const;
@@ -1568,10 +1618,14 @@ public:
      * state that carries almost no information this epoch (the state-side
      * complement of a zero-redundancy row).
      *
+     * @param station Index returned by @ref addStation.
+     * @return The @ref numLocal pivots, entry @c k for local column @c k (information units of
+     *         that column; empty for a station without locals).
      * @throws std::out_of_range if @p station ≥ @ref numStations.
      */
     Eigen::VectorXd stationLocalPivots(std::size_t station) const;
 
+    /// @brief Count of real Schur recomputes since the last reset.
     /// @return How many times @ref reduce has recomputed the per-station Schur loop
     ///         since the last @ref reset (no-op returns on a current reduction do not
     ///         count).  Reset to 0 by @ref reset.  Serves to assert the
@@ -1597,15 +1651,15 @@ public:
 
     /// Per-section wall-clock accumulators + call counts (see @ref sectionTimers).
     struct SectionTimers {
-        double add_station_ms{0.0};    ///< @ref addStationObservations: forming @f$A_s^\top W A_s@f$ etc. + the @f$N_{rr}@f$ LDLᵀ factorization (the assembly/scatter primitive).
-        double reduce_ms{0.0};         ///< @ref reduce: the per-station Schur elimination onto the shared border (timed only on a real recompute).
-        double solve_ms{0.0};          ///< @ref solveSharedConstrained: the constrained factorization + the point solve for @c x_s.
-        double cov_inverse_ms{0.0};    ///< @ref solveSharedConstrained: the explicit full inverse for the shared covariance (@f$\tilde N_{ss}^{-1}@f$), the direct cost that the D1 selected-inverse option targets.
+        double add_station_ms{0.0};    ///< @ref GnssProcessor::NetworkNormalEquations::addStationObservations "addStationObservations": forming @f$A_s^\top W A_s@f$ etc. + the @f$N_{rr}@f$ LDLᵀ factorization (the assembly/scatter primitive).
+        double reduce_ms{0.0};         ///< @ref GnssProcessor::NetworkNormalEquations::reduce "reduce": the per-station Schur elimination onto the shared border (timed only on a real recompute).
+        double solve_ms{0.0};          ///< @ref GnssProcessor::NetworkNormalEquations::solveSharedConstrained "solveSharedConstrained": the constrained factorization + the point solve for @c x_s.
+        double cov_inverse_ms{0.0};    ///< @ref GnssProcessor::NetworkNormalEquations::solveSharedConstrained "solveSharedConstrained": the explicit full inverse for the shared covariance (@f$\tilde N_{ss}^{-1}@f$), the direct cost that the D1 selected-inverse option targets.
         double cov_consumers_ms{0.0};  ///< The per-station covariance back-propagations (the D1 per-station option): reconstructStation (+ ...Covariance / ...Diag / jointConditionalCovariance / rowRedundancy / stationRegression).  Timed at the @ref NetworkEstimator wrapper layer (via @ref accumulateCovConsumer), so the span also includes that layer's copy of the shared covariance and its datum-column zeroing: the per-call @f$O(n_s^2)@f$ overhead the D1 selected-inverse rewrite removes.
         std::size_t add_station_calls{0};   ///< #@ref addStationObservations calls timed.
-        std::size_t reduce_recomputes{0};   ///< #real @ref reduce recomputes timed (mirrors @ref reduceRecomputeCount but gated on timing).
+        std::size_t reduce_recomputes{0};   ///< \#real @ref reduce recomputes timed (mirrors @ref reduceRecomputeCount but gated on timing).
         std::size_t solve_calls{0};         ///< #@ref solveSharedConstrained calls timed.
-        std::size_t cov_consumer_calls{0};  ///< #covariance-consumer calls timed (all methods above pooled).
+        std::size_t cov_consumer_calls{0};  ///< \#covariance-consumer calls timed (all methods above pooled).
         // Diagnostic for parallel_carry (P0b): the three parts of the per-block algebra
         // of @ref foldReducedDdPriors, so the dominant cost (per-station reduction, K×K
         // middle inverse, or Woodbury GMGᵀ) is measured before choosing the axis to
@@ -1616,9 +1670,11 @@ public:
         double fold_gmg_ms{0.0};       ///< the Woodbury fold onto the reduced shared system (G M Gᵀ, G M (z_free−ẑ)).
     };
 
-    /// Arm or disarm the section timers (@c network.trace_section_timers).  Configuration
+    /// @brief Arm or disarm the section timers (@c network.trace_section_timers).  Configuration
     /// level: set once before the epoch loop; it survives @ref reset (like
     /// @ref setStationPdMedianScale).  Default off: no clock reads, byte-identical output.
+    /// @param on true to read the wall clock in the instrumented methods and accumulate into
+    ///           @ref SectionTimers; false for no clock reads.
     void setPerfTiming(bool on) { perf_timing_ = on; }
 
     /// Zero the section-timer accumulators (see @ref SectionTimers).
@@ -1634,10 +1690,11 @@ public:
         long long schur_split{0};      ///< reduces taken by the column split
         long long schur_declined{0};   ///< reduces the armed split declined (the serial loop ran)
     };
+    /// @brief Run-cumulative counts of the parallel stages, for the run-end telemetry.
     /// @return The counts of @ref ParallelStageCounts.
     const ParallelStageCounts& parallelStageCounts() const { return par_counts_; }
 
-    /// Put back accumulators read earlier from @ref sectionTimers, discarding whatever was
+    /// @brief Put back accumulators read earlier from @ref sectionTimers, discarding whatever was
     /// timed since.  For a caller whose solves are not the float path's own: the detached
     /// held solve (@ref NetworkEstimator::solveHeldDetached) restores them on exit,
     /// so the D0 run-end line and the driver's per-bracket accounting count the float solves
@@ -1645,21 +1702,24 @@ public:
     /// @param saved Accumulators previously returned by @ref sectionTimers.
     void restoreSectionTimers(const SectionTimers& saved) const { timers_ = saved; }
 
+    /// @brief Read the section-timer accumulators (milliseconds and call counts).
     /// @return The section-timer accumulators (cumulative since construction /
     ///         the last @ref resetSectionTimers).  Meaningful only when
     ///         @ref setPerfTiming was armed.
     const SectionTimers& sectionTimers() const { return timers_; }
 
+    /// @brief Whether the section timers are armed.
     /// @return Whether the section timers are armed (@ref setPerfTiming).  Lets the
     ///         @ref NetworkEstimator covariance wrappers decide, per call, whether to
     ///         read the clock before accumulating via @ref accumulateCovConsumer.
     bool perfTiming() const { return perf_timing_; }
 
-    /// Add @p ms to @ref SectionTimers::cov_consumers_ms and bump its call count.
+    /// @brief Add @p ms to @ref SectionTimers::cov_consumers_ms and bump its call count.
     /// Called by the @ref NetworkEstimator covariance wrappers so the measured span
     /// includes their copy of the shared covariance and its datum-column zeroing, not
     /// only this kernel's propagation.  The caller guards on @ref perfTiming; this
     /// mutates only the (mutable) diagnostic accumulators, hence @c const.
+    /// @param ms Wall-clock span of one covariance-consumer call, in milliseconds.
     void accumulateCovConsumer(double ms) const {
         timers_.cov_consumers_ms += ms;
         ++timers_.cov_consumer_calls;
@@ -1681,12 +1741,14 @@ public:
      * a truly singular direction (a pivot many orders below the block's typical
      * scale).  Configuration level: set once; it survives @ref reset.  Default
      * off: the legacy max-pivot test, byte-identical.
+     *
+     * @param on true for the median |pivot| reference scale; false for the maximum.
      */
     void setStationPdMedianScale(bool on) { station_pd_median_scale_ = on; }
 
     /**
      * @brief Spectral read of the last positive-definiteness rejection in
-     *        @ref addStation: the null direction that the pivot test reports only
+     *        @c addStation: the null direction that the pivot test reports only
      *        as a number.
      *
      * The rejection message gives a pivot magnitude, not a column.  LDLᵀ pivots are
@@ -1713,7 +1775,7 @@ public:
         double        d_max{0.0};        ///< largest |LDLᵀ pivot|
         double        ev_min{0.0};       ///< smallest eigenvalue of N_rr_r (the null direction's)
         double        ev_max{0.0};       ///< largest eigenvalue (the block's spectral scale)
-        int           n_eig_below{0};    ///< #eigenvalues with |λ| < 1e-12 * ev_max (the multiplicity of the null)
+        int           n_eig_below{0};    ///< \#eigenvalues with |λ| < 1e-12 * ev_max (the multiplicity of the null)
         Eigen::VectorXd null_vec;        ///< unit eigenvector of ev_min, in local column order
     };
 
@@ -1728,9 +1790,13 @@ public:
      * the null direction and does not admit the station.  Configuration level: set
      * once before the epoch loop; it survives @ref reset (like
      * @ref setStationPdMedianScale).
+     *
+     * @param on true to fill @ref StationPdFailure with the spectral read on each PD rejection;
+     *           false for no read (the rejection itself is unchanged).
      */
     void setStationPdNullTrace(bool on) { station_pd_null_trace_ = on; }
 
+    /// @brief Spectral record of the most recent station PD rejection.
     /// @return The spectral record of the most recent @ref addStation PD rejection
     ///         (see @ref StationPdFailure).  @c valid is true only if
     ///         @ref setStationPdNullTrace was armed at that rejection.  An accepted
@@ -1748,7 +1814,7 @@ private:
     };
 
     /// The body of @ref addStation.  @p N_ss_dense is the station's dense @f$N_{ss}@f$, or null
-    /// when the sparse formation (@ref formStationNormalsSparse) supplied it in @ref sparse_nss_,
+    /// when the sparse formation (@ref formStationNormalsSparse) supplied it in sparse_nss_ (@c GnssProcessor::NetworkNormalEquations::sparse_nss_),
     /// with @p border naming the shared columns it is nonzero on; the symmetry check then uses the
     /// numbers the formation took and the border update visits the square of those columns only, with
     /// the same values, messages and order of checks as on the dense matrix.
@@ -1758,14 +1824,14 @@ private:
                                 const Eigen::VectorXd& u_s_r, const Eigen::VectorXd& u_r_r,
                                 const StationPrior& prior);
 
-    /// The checks of @ref addStationImpl_ that run before a pool slot is taken: the block
+    /// The checks of addStationImpl_ (@c GnssProcessor::NetworkNormalEquations::addStationImpl_) that run before a pool slot is taken: the block
     /// dimensions, their symmetry and the prior's contract.  Throws as @ref addStation throws.
     void checkStationBlocks_(const Eigen::MatrixXd* N_ss_dense, const SparseBorder* border,
                              const Eigen::MatrixXd& N_sr_r, const Eigen::MatrixXd& N_rr_r,
                              const Eigen::VectorXd& u_s_r, const Eigen::VectorXd& u_r_r,
                              const StationPrior& prior) const;
 
-    /// The local block of @ref addStationImpl_ built into @p st: the prior folded into a copy of
+    /// The local block of addStationImpl_ (@c GnssProcessor::NetworkNormalEquations::addStationImpl_) built into @p st: the prior folded into a copy of
     /// @p N_rr_r, the LDLᵀ factor and the positive-definiteness test, then (accepted) the cross
     /// block, the local RHS and the prior's RHS half.  A rejection writes its spectral record to
     /// @p pd_record (@ref lastStationPdFailure on the serial path), sets @p pd_rejected and throws.
@@ -1883,7 +1949,7 @@ private:
      * blind path already performs), fills
      * @f$\texttt{local\_corr}(i,j)=\sum_b Y^{(i)\top}_bM_bY^{(j)}_b@f$ (@c k×k) and
      * @f$\texttt{m\_corr}(:,i)=\sum_b G_bM_bY^{(i)}_b@f$ (@c n_shared×k), both of which
-     * the caller subtracts.  One sparse pass over @ref station_ddprior_ builds every
+     * the caller subtracts.  One sparse pass over station_ddprior_ (@c GnssProcessor::NetworkNormalEquations::station_ddprior_) builds every
      * block's @f$Y@f$ columns, then three matrix products per block
      * (@f$M_bY_b@f$, @f$Y_b^\top(M_bY_b)@f$, @f$G_b(M_bY_b)@f$), so the cost is
      * @f$O(\sum_b K_b\,k\,(K_b+k+n_s))@f$ in BLAS-3 rather than @f$k@f$ separate
@@ -1908,12 +1974,12 @@ private:
         if (r < carry_cov_stats_.ratio_min) carry_cov_stats_.ratio_min = r;
         if (r > carry_cov_stats_.ratio_max) carry_cov_stats_.ratio_max = r;
     }
-    mutable CarryCovStats carry_cov_stats_;  ///< run-cumulative readback telemetry (survives reset(), like @ref timers_)
+    mutable CarryCovStats carry_cov_stats_;  ///< run-cumulative readback telemetry (survives reset(), like timers_ (@c GnssProcessor::NetworkNormalEquations::timers_))
     bool ddprior_folded_{false};             ///< guards double-folding the DD priors within one reduce
-    std::size_t reduce_recompute_count_{0}; ///< #full reduce() recomputes since reset() (reduce-once invariant)
+    std::size_t reduce_recompute_count_{0}; ///< \#full reduce() recomputes since reset() (reduce-once invariant)
     bool sparse_station_normals_{false};    ///< form a station's normals from its nonzero entries (network.sparse_station_normals); survives reset()
-    Eigen::MatrixXd sparse_nss_;            ///< the sparse formation's @f$N_{ss}@f$ scratch; all zero between stations (only the square of the columns in @ref sparse_border_ is ever nonzero, and each station restores that)
-    SparseBorder sparse_border_;            ///< the touched columns of @ref sparse_nss_ for the station in hand
+    Eigen::MatrixXd sparse_nss_;            ///< the sparse formation's @f$N_{ss}@f$ scratch; all zero between stations (only the square of the columns in sparse_border_ (@c GnssProcessor::NetworkNormalEquations::sparse_border_) is ever nonzero, and each station restores that)
+    SparseBorder sparse_border_;            ///< the touched columns of sparse_nss_ (@c GnssProcessor::NetworkNormalEquations::sparse_nss_) for the station in hand
     StationFormationCounts formation_counts_;   ///< run-cumulative sparse / dense formations (@ref stationFormationCounts)
     std::vector<StationForm> forms_;       ///< the form pool of @ref formStations (buffers persist across epochs)
     int schur_column_threads_{1};           ///< threads of the column-split Schur reduce (@ref setSchurColumnThreads); 1 = serial

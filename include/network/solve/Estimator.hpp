@@ -4,23 +4,23 @@
  *        producer (W4-S2): shared satellite-parameter layout, explicit datum, and
  *        mapping to the emittable @c NetworkSolutionEpoch.
  *
- * @ref NetworkNormalEquations is pure linear algebra over abstract shared and
+ * @ref GnssProcessor::NetworkNormalEquations "NetworkNormalEquations" is pure linear algebra over abstract shared and
  * local blocks.  @c NetworkEstimator gives each shared column its GNSS meaning, a
  * (satellite, parameter kind, signal) triple, and drives one solution epoch:
  *
  *   1. register the shared satellite parameters (satellite clock, code bias,
  *      phase bias), which fixes the shared column layout;
- *   2. @ref beginEpoch: open a fresh arrowhead system of that width;
- *   3. @ref addStation per station: pre-formed local-vs-shared design rows, built
+ *   2. @c beginEpoch: open a fresh arrowhead system of that width;
+ *   3. @c addStation per station: pre-formed local-vs-shared design rows, built
  *      by the caller from each station's single-receiver row builder (the
  *      network applies no receiver-side differencing);
- *   4. @ref solve with an explicit minimum-constraint @ref Datum.  The reduced
+ *   4. @c solve with an explicit minimum-constraint @c Datum.  The reduced
  *      shared satellite system is rank-deficient by the gauge freedoms (overall
  *      clock, the per-constellation phase-bias↔ambiguity datum, ISB), and the
  *      datum pins exactly those.  The pins are applied to a copy of the reduced
  *      system through the kernel's @c solveSharedConstrained seam, so the
  *      kernel's own reduced normals never carry them;
- *   5. @ref toSolutionEpoch: map the shared estimate to a @c NetworkSolutionEpoch,
+ *   5. @ref GnssProcessor::NetworkEstimator::toSolutionEpoch "toSolutionEpoch": map the shared estimate to a @c NetworkSolutionEpoch,
  *      which @c NetworkProductEmitter serializes in IGS-SSR convention.
  *
  * Scope (W4-S2a): the single-epoch estimator core, validated on a synthetic
@@ -29,13 +29,13 @@
  * the per-station design rows from the station row builder, the between-epoch
  * time update, the config flags); the `SbasisDeclaration` and the null-space rank
  * gate in @c NetworkSbasis (W5), which formalize the minimal pin set that
- * @ref Datum carries here; and cross-station QC (network RAIM).
+ * @c Datum carries here; and cross-station QC (network RAIM).
  *
  * Datum elements local to one station's block (for example the pivot receiver's
  * ambiguity or clock pin that the emitted phase bias absorbs, Odijk Eq. 4/9) are
  * realized by the caller as tight priors on that station's local block (prior
- * rows in the design passed to @ref addStation, or @ref addStationPrior).  Only
- * the shared-block gauges go through @ref Datum.
+ * rows in the design passed to @c addStation, or @c addStationPrior).  Only
+ * the shared-block gauges go through @c Datum.
  */
 
 #pragma once
@@ -83,20 +83,41 @@ public:
     /// The explicit minimum-constraint datum applied to the reduced shared system.
     using Datum = std::vector<Pin>;
 
+    /// @brief Construct an empty estimator: no registered columns, default settings.
     NetworkEstimator() = default;
 
     // --- Shared-parameter layout (call before beginEpoch) -------------------
 
-    /// Register a satellite clock column (idempotent); returns its column index.
+    /// @brief Register a satellite clock column (idempotent); returns its column index.
+    /// @param sat Satellite id (e.g. "G05"); the key is @c "sat|CLK".
+    /// @return The shared-block column of the satellite clock (@c x_s in metres), in
+    ///         registration order; the existing column when already registered.
+    /// @throws std::logic_error after @ref beginEpoch, like every registration.
     Eigen::Index registerClock(const std::string& sat);
-    /// Register a per-signal satellite code-bias column (idempotent).
+    /// @brief Register a per-signal satellite code-bias column (idempotent).
+    /// @param sat   Satellite id (e.g. "E11").
+    /// @param signal Observation code of the biased signal (e.g. "C1C"); the key is @c "sat|CB|signal".
+    /// @return The shared-block column of the satellite code bias (@c x_s in metres); the
+    ///         existing column when already registered.
+    /// @throws std::logic_error after @ref beginEpoch, like every registration.
     Eigen::Index registerCodeBias(const std::string& sat, const std::string& signal);
-    /// Register a per-signal satellite phase-bias column (idempotent).
+    /// @brief Register a per-signal satellite phase-bias column (idempotent).
+    /// @param sat   Satellite id (e.g. "E11").
+    /// @param signal Observation code of the biased signal (e.g. "L1C"); the key is @c "sat|PB|signal".
+    /// @return The shared-block column of the satellite phase bias (@c x_s in metres); the
+    ///         existing column when already registered.
+    /// @throws std::logic_error after @ref beginEpoch, like every registration.
     Eigen::Index registerPhaseBias(const std::string& sat, const std::string& signal);
-    /// Register a global SH-VTEC coefficient column (n,m,trig) (idempotent).
+    /// @brief Register a global SH-VTEC coefficient column (n,m,trig) (idempotent).
     /// @p trig is 'C' (cosine, m>=0) or 'S' (sine, m>=1); @p layer selects the
     /// shell: 0 = legacy single layer, keyed "SH|n|m|t"; 1 = the dual-layer second
     /// shell, keyed "SH2|n|m|t", so both shells coexist on the border.
+    /// @param n     Spherical-harmonic degree.
+    /// @param m     Spherical-harmonic order (0 <= m <= n).
+    /// @param trig  'C' for the cosine coefficient, 'S' for the sine coefficient.
+    /// @param layer Shell index: 0 legacy single layer, 1 the second shell of the dual-layer model.
+    /// @return The shared-block column of the coefficient; the existing column when already registered.
+    /// @throws std::logic_error after @ref beginEpoch, like every registration.
     Eigen::Index registerVtecCoeff(int n, int m, char trig, int layer = 0);
     /**
      * @brief Register the one-epoch clock clone column of @p sat (
@@ -115,6 +136,9 @@ public:
      * @ref numClockClones columns.  A clone is never emitted (@ref toSolutionEpoch),
      * never grouped as a satellite clock of the gauge-free downdate, and never
      * marginalized by the temporal clock anchor's clock refloat (@ref refoldSharedPriorDenseDroppingClocks).
+     * @param sat Satellite id whose previous-epoch clock the clone carries.
+     * @return The shared-block column of the clone (after every column registered so far);
+     *         the existing column when the clone is already registered.
      * @throws std::logic_error after @ref beginEpoch, like every registration.
      */
     Eigen::Index registerClockClone(const std::string& sat);
@@ -135,6 +159,8 @@ public:
      * @param kind   Clock, PhaseBias or CodeBias.
      * @param sat    the satellite.
      * @param signal the signal (ignored for a clock).
+     * @return The shared-block column of the clone; the existing column when the clone is
+     *         already registered.
      * @throws std::invalid_argument for an SH-VTEC kind; std::logic_error after
      *         @ref beginEpoch, like every registration.
      */
@@ -156,33 +182,61 @@ public:
      * after every other column, the clones included, so no existing index moves and the
      * clones and the history occupy the last @ref numBorderNuisance columns.  A history
      * column is never emitted (@ref toSolutionEpoch), never stashed and never snapshotted.
+     * @param j History column index; the key is @c "HIST|j".
+     * @return The shared-block column of the history column; the existing column when
+     *         already registered.
      * @throws std::logic_error after @ref beginEpoch, like every registration.
      */
     Eigen::Index registerHistoryColumn(int j);
 
+    /// @brief Look up the shared column of a satellite clock.
+    /// @param sat Satellite id.
     /// @return The clock column for @p sat. @throws std::out_of_range if absent.
     Eigen::Index clockColumn(const std::string& sat) const;
+    /// @brief Look up the shared column of a satellite code bias.
+    /// @param sat    Satellite id.
+    /// @param signal Observation code of the biased signal.
     /// @return The code-bias column for (@p sat, @p signal). @throws if absent.
     Eigen::Index codeBiasColumn(const std::string& sat, const std::string& signal) const;
+    /// @brief Look up the shared column of a satellite phase bias.
+    /// @param sat    Satellite id.
+    /// @param signal Observation code of the biased signal.
     /// @return The phase-bias column for (@p sat, @p signal). @throws if absent.
     Eigen::Index phaseBiasColumn(const std::string& sat, const std::string& signal) const;
+    /// @brief Look up the shared column of an SH-VTEC coefficient.
+    /// @param n     Spherical-harmonic degree.
+    /// @param m     Spherical-harmonic order.
+    /// @param trig  'C' (cosine) or 'S' (sine).
+    /// @param layer Shell index (0 legacy single layer, 1 second shell).
     /// @return The SH-VTEC coefficient column for (n,m,trig) of @p layer.
     /// @throws if absent.
     Eigen::Index vtecCoeffColumn(int n, int m, char trig, int layer = 0) const;
+    /// @brief Look up the shared column of a satellite's clock clone.
+    /// @param sat Satellite id.
     /// @return The clock clone column of @p sat (@ref registerClockClone).
     /// @throws std::out_of_range if absent.
     Eigen::Index clockCloneColumn(const std::string& sat) const;
+    /// @brief Look up the shared column of a clone of any kind.
+    /// @param kind   Clock, PhaseBias or CodeBias.
+    /// @param sat    Satellite id.
+    /// @param signal Observation code (ignored for a clock).
     /// @return The clone column of (@p kind, @p sat, @p signal) (
     ///         @ref registerClone). @throws std::out_of_range if absent.
     Eigen::Index cloneColumn(SharedParamKind kind, const std::string& sat,
                              const std::string& signal) const;
+    /// @brief Test whether a shared column is a clone.
+    /// @param col Shared column index.
     /// @return Whether shared column @p col is a clone of any kind;
     ///         false when
     ///         @p col is out of range.
     bool isClockClone(Eigen::Index col) const;
+    /// @brief Look up the shared column of a shared-history column.
+    /// @param j History column index given to @ref registerHistoryColumn.
     /// @return The shared-history column @p j (@ref registerHistoryColumn).
     /// @throws std::out_of_range if absent.
     Eigen::Index historyColumn(int j) const;
+    /// @brief Test whether a shared column is a shared-history column.
+    /// @param col Shared column index.
     /// @return Whether shared column @p col is a shared-history column;
     ///         false when @p col is out of range.
     bool isHistoryColumn(Eigen::Index col) const;
@@ -201,19 +255,23 @@ public:
      */
     bool sharedColumnIdentity(Eigen::Index col, SharedParamKind& kind, std::string& sat,
                               std::string& signal) const;
+    /// @brief Count of clone columns in the layout.
     /// @return The number of clone columns registered this epoch (the clock clone's clocks and
     ///         the border clones' biases and departed keys); they are the last columns of the
     ///         layout before the history.  0 whenever the knobs are off.
     Eigen::Index numClockClones() const { return n_clones_; }
+    /// @brief Count of shared-history columns in the layout.
     /// @return The number of shared-history columns registered this epoch;
     ///         they follow the clones.  0 whenever the knob is off.
     Eigen::Index numHistoryColumns() const { return n_hist_; }
+    /// @brief Count of the trailing border-nuisance columns (clones plus history).
     /// @return The border's nuisance columns, the clones and the history:
     ///         @ref numClockClones + @ref numHistoryColumns, the trailing columns of the
     ///         layout that the gate view marginalizes and the harvest regresses away.
     ///         Equals @ref numClockClones whenever the shared history is off.
     Eigen::Index numBorderNuisance() const { return n_clones_ + n_hist_; }
 
+    /// @brief Width of the shared border.
     /// @return Number of registered shared columns.
     Eigen::Index numShared() const { return static_cast<Eigen::Index>(columns_.size()); }
 
@@ -229,10 +287,13 @@ public:
      * @c "HIST:<j>" (a shared-history column).  Intended for the NEQ export and other offline attribution
      * tooling; labels are stable across epochs for an unchanged registration order.
      *
+     * @param col Shared column index, 0 to @ref numShared minus one.
+     * @return The label string in the format of the column's kind (for example @c "CLK:G05").
      * @throws std::out_of_range if @p col is not a registered column.
      */
     std::string sharedColumnLabel(Eigen::Index col) const;
 
+    /// @brief The arrowhead kernel behind the estimator.
     /// @return Read-only access to the current epoch's arrowhead kernel (for the
     ///         NEQ export; see @ref NetworkNormalEquations accessors).
     const NetworkNormalEquations& normals() const { return neq_; }
@@ -244,7 +305,7 @@ public:
      *
      * Call at the top of each epoch, before re-registering the shared parameters,
      * when the estimator is hoisted out of the epoch loop.  Empties the layout
-     * (@ref index_ / @ref columns_), the shared covariance, the sum-to-zero phase
+     * (index_ (@c GnssProcessor::NetworkEstimator::index_) / columns_ (@c GnssProcessor::NetworkEstimator::columns_)), the shared covariance, the sum-to-zero phase
      * gauges, the DD priors and the per-epoch flags, and keeps the underlying
      * @ref NetworkNormalEquations station-block pool, so the per-station Schur
      * buffers are reused across epochs instead of being freed and reallocated.
@@ -255,7 +316,7 @@ public:
      */
     void reset();
 
-    /// Open a fresh arrowhead system over the current shared layout.  Freezes the
+    /// @brief Open a fresh arrowhead system over the current shared layout.  Freezes the
     /// layout for this epoch: registration throws from here until the next
     /// @ref reset.  Reuses the kernel's retained allocations (see
     /// @ref NetworkNormalEquations::reset).
@@ -275,7 +336,7 @@ public:
      *            (@c network.station_prior_before_pd).  See
      *            @ref NetworkNormalEquations::StationPrior.  Empty (the default)
      *            keeps the legacy path, byte-identical.  A row passed here must
-     *            not also be passed to @ref addStationPrior: the two paths are
+     *            not also be passed to @c addStationPrior: the two paths are
      *            alternatives for one prior.
      * @return The 0-based station index for @ref reconstructStation.
      * @throws std::logic_error if called before @ref beginEpoch or after
@@ -286,7 +347,16 @@ public:
                            const NetworkNormalEquations::StationPrior& prior =
                                NetworkNormalEquations::StationPrior{});
 
-    /// Overload with a diagonal weight (per-observation variances⁻¹).
+    /// @brief Overload with a diagonal weight (per-observation variances⁻¹).
+    /// @param A_s    Jacobian wrt the shared columns (@c m × @ref numShared).
+    /// @param A_r    Jacobian wrt this station's private nuisances (@c m × n_local).
+    /// @param w_diag Diagonal of the weight, length @c m, each entry 1/σ² (1/m²).
+    /// @param y      Prefit residual (observed − computed, m), length @c m; any local datum pins
+    ///               are folded in by the caller as in the full-weight overload.
+    /// @param prior  Optional diagonal prior rows folded into the station's local normals before
+    ///               the positive-definiteness test (see the full-weight overload).  Empty by default.
+    /// @return The 0-based station index for @ref reconstructStation.
+    /// @throws std::logic_error if called before @ref beginEpoch or after @ref solve.
     std::size_t addStation(const Eigen::MatrixXd& A_s, const Eigen::MatrixXd& A_r,
                            const Eigen::VectorXd& w_diag, const Eigen::VectorXd& y,
                            const NetworkNormalEquations::StationPrior& prior =
@@ -308,7 +378,7 @@ public:
                       int n_threads);
 
     /**
-     * @brief Commit slot @p k of the last @ref formStations: the second half of the
+     * @brief Commit slot @p k of the last @c formStations: the second half of the
      *        diagonal-weight @ref addStation, with the same result and the same exceptions
      *        (@ref NetworkNormalEquations::commitStation).
      * @param k Slot index (the position of the station in the @p in of @ref formStations).
@@ -342,7 +412,7 @@ public:
      *
      * The fold's dominant cost is the per-station reduction (measured at about 44 %
      * of the epoch), which Eigen's GEMM threading does not speed up.
-     * @ref foldReducedDdPriors fans it across threads instead, with per-thread
+     * @ref GnssProcessor::NetworkNormalEquations::foldReducedDdPriors "foldReducedDdPriors" fans it across threads instead, with per-thread
      * partials combined in ascending order (ULP-level differences against the
      * serial fold), and column-parallelizes the K×K middle inverse (byte-identical).
      * Eigen stays pinned to one thread (the driver does not un-pin it around
@@ -391,12 +461,14 @@ public:
      */
     void setRankGateTol(double tol) { rank_gate_tol_ = tol; }
 
-    /// The resolved rank-gate tolerance (@ref setRankGateTol); @ref kNullSpaceTol
+    /// @brief The resolved rank-gate tolerance (@ref setRankGateTol); @ref kNullSpaceTol
     /// until the driver sets it.  Read by the gate call sites, the estimability
     /// dump and the drop-and-heal; no consumer keeps a private tolerance.
+    /// @return The relative eigenvalue tolerance (dimensionless), applied against max(λmax, 1)
+    ///         of the reduced shared normals.
     double rankGateTol() const { return rank_gate_tol_; }
 
-    /// Relative-pivot bound of the dense border fold (@ref addSharedPriorDense and the
+    /// @brief Relative-pivot bound of the dense border fold (@ref addSharedPriorDense and the
     /// refolds that share its terms): the correlation-scaled carried block is accepted
     /// when its smallest LDLT pivot is at least this fraction of the largest
     /// (@c network.dense_fold_kappa; the class default is the historical 1e-6, the config
@@ -405,34 +477,43 @@ public:
     /// about 1e-8 of one between a clock and its phase biases, which 1e-6 rejects (the fold
     /// then falls back to the diagonal carry for that epoch).  The
     /// absolute folded-information budget is unchanged.
+    /// @param k Relative pivot bound (dimensionless, smallest over largest LDLT pivot of the
+    ///          correlation-scaled carried block); a block below it is refused.
     void setDenseFoldKappa(double k) { dense_fold_kappa_ = k; }
-    /// The resolved dense-fold pivot bound (@ref setDenseFoldKappa).
+    /// @brief The resolved dense-fold pivot bound (@ref setDenseFoldKappa).
+    /// @return The relative pivot bound (dimensionless).
     double denseFoldKappa() const { return dense_fold_kappa_; }
 
-    /// Pin-aware station PD guard passthrough
+    /// @brief Pin-aware station PD guard passthrough
     /// (@ref NetworkNormalEquations::setStationPdMedianScale;
     /// @c network.station_pd_pin_aware).  Configuration-level: set once before
     /// the epoch loop; survives @ref beginEpoch / @ref reset.
+    /// @param on true for the median |pivot| as the reference scale of the station PD test;
+    ///           false for the maximum.
     void setStationPdMedianScale(bool on) { neq_.setStationPdMedianScale(on); }
 
-    /// Sparse station normals passthrough
+    /// @brief Sparse station normals passthrough
     /// (@ref NetworkNormalEquations::setSparseStationNormals;
     /// @c network.sparse_station_normals).  Configuration-level: set once before
     /// the epoch loop; survives @ref beginEpoch / @ref reset.
+    /// @param on true to form station normals from the nonzero entries; false for the dense products.
     void setSparseStationNormals(bool on) { neq_.setSparseStationNormals(on); }
 
-    /// Column-split Schur reduce passthrough
+    /// @brief Column-split Schur reduce passthrough
     /// (@ref NetworkNormalEquations::setSchurColumnThreads;
     /// @c network.parallel_schur_columns).  Configuration-level: set once before
     /// the epoch loop; survives @ref beginEpoch / @ref reset.
+    /// @param n_threads Threads for the column split of the Schur subtraction; 1 or less keeps
+    ///                  the serial loop.
     void setSchurColumnThreads(int n_threads) { neq_.setSchurColumnThreads(n_threads); }
 
-    /// Passthrough for the station PD null-direction read
+    /// @brief Passthrough for the station PD null-direction read
     /// (@ref NetworkNormalEquations::setStationPdNullTrace;
     /// @c network.trace_station_pd_null).  Configuration-level: set
     /// once before the epoch loop; survives @ref beginEpoch / @ref reset.  The
     /// record itself is read through @ref normals() →
     /// @ref NetworkNormalEquations::lastStationPdFailure in the caller's @c catch.
+    /// @param on true to fill the spectral record on each station PD rejection; false for none.
     void setStationPdNullTrace(bool on) { neq_.setStationPdNullTrace(on); }
 
     /**
@@ -539,7 +620,6 @@ public:
     /**
      * @brief Fold blocks of fixed integer cycles onto a copy of the last solve's reduced
      *        normals, pin with @p datum and solve once; the estimator is not modified
-     *.
      *
      * The steps: (1) copy the cached reduced normals and RHS, pin the unfolded copy with
      * @ref applyDatumPins and measure @c float_repro_rel from @p x_float; (2) form the
@@ -586,13 +666,22 @@ public:
      *        local block; forwards to @ref NetworkNormalEquations::addStationPrior.
      *
      * Call after @ref addStation (the station must already be in this epoch's
-     * arrowhead) and before @ref solve / @ref reducedSharedNormals: a local-block
+     * arrowhead) and before @ref solve / @c reducedSharedNormals: a local-block
      * change must be folded before the Schur reduction, and there is no
      * post-reduce fast path.  @p local_cols are columns within that station's
      * @c A_r; @p delta_Nrr_diag are the per-column information weights
      * (@f$1/\text{var}_\text{eff}@f$) and @p delta_ur the matching information-RHS
      * increments.  See the kernel method for the ordering/determinism contract.
      *
+     * @param station        Index returned by @ref addStation.
+     * @param local_cols     Local columns (within the station's @c A_r) receiving a prior; pass
+     *                       them in a fixed (for example ascending) order for determinism.
+     * @param delta_Nrr_diag Per-column information increments @f$\Lambda_i \ge 0@f$
+     *                       (@f$1/\text{var}_\text{eff}@f$, the inverse square of the column's own
+     *                       unit), one per entry of @p local_cols.
+     * @param delta_ur       Per-column information-form RHS increments @f$\eta_i=\Lambda_i\cdot\text{target}@f$,
+     *                       the target in the station's correction frame (carried value minus the
+     *                       current linearization point), one per entry of @p local_cols.
      * @throws std::logic_error if called before @ref beginEpoch or after @ref solve.
      */
     void addStationPrior(std::size_t station,
@@ -600,7 +689,12 @@ public:
                          const Eigen::VectorXd& delta_Nrr_diag,
                          const Eigen::VectorXd& delta_ur);
 
-    /// Back-substitute a station's nuisance estimate given the shared solution.
+    /// @brief Back-substitute a station's nuisance estimate given the shared solution.
+    /// @param station Index returned by @ref addStation.
+    /// @param x_s     The shared estimate from @ref solve (length @ref numShared).
+    /// @return The station's nuisance correction @f$x_r=(N_{rr})^{-1}(u_r-N_{rs}x_s)@f$, length
+    ///         n_local (empty for a station without locals), with any folded sum-to-zero gauge
+    ///         or DD-prior correction applied.  A correction to the linearization point.
     Eigen::VectorXd reconstructStation(std::size_t station,
                                        const Eigen::VectorXd& x_s) const;
 
@@ -620,6 +714,11 @@ public:
      *
      * @param station Index from @ref addStation.
      * @param datum   The same datum passed to @ref solve (its pinned columns).
+     * @param carry_aware Include the folded DD priors' rank-K term
+     *                (@ref NetworkNormalEquations::hasCarryCovCorrection).  @c false (the
+     *                default) is the earlier expression, unchanged; with it on, a corrected
+     *                diagonal entry that is not positive and finite makes the whole matrix
+     *                fall back to the uncorrected one.
      * @return The station's local covariance (@c n_local × @c n_local); empty if
      *         the station has no locals.  Requires a prior @ref solve.
      */
@@ -682,6 +781,11 @@ public:
      * @param station    Index from @ref addStation.
      * @param local_cols Local columns whose conditional variance is wanted.
      * @param datum      The same datum passed to @ref solve (its pinned columns).
+     * @param carry_aware Include the folded DD priors' rank-K term
+     *                   (@ref NetworkNormalEquations::hasCarryCovCorrection).  @c false (the
+     *                   default) is the earlier expression, unchanged; with it on, a corrected
+     *                   variance that is not positive and finite is replaced, per column, by the
+     *                   uncorrected one.
      * @return One conditional variance per requested column (empty if the station
      *         has no locals or @p local_cols is empty).  Requires a prior @ref solve.
      */
@@ -704,6 +808,11 @@ public:
      * @ref NetworkNormalEquations::stationConditionalVarianceDiag, which returns the
      * border-inclusive form's bits for an all-zero shared covariance without that
      * product.  Requires a prior @ref solve.
+     *
+     * @param station    Index from @ref addStation.
+     * @param local_cols Local columns whose border-known variance is wanted.
+     * @return One variance per requested column, in the squared unit of that column (empty if
+     *         the station has no locals or @p local_cols is empty).
      */
     Eigen::VectorXd pureConditionalLocalVarianceDiag(
         std::size_t station, const std::vector<Eigen::Index>& local_cols) const;
@@ -713,7 +822,7 @@ public:
      *        conditional variance: the ingredients of the rigorous between-epoch
      *        conditional carry (@c network.carry_conditional_coupling).
      *
-     * Thin forward to @ref NetworkNormalEquations::stationRegression: returns
+     * Thin forward to @ref GnssProcessor::NetworkNormalEquations::stationRegression "NetworkNormalEquations::stationRegression": returns
      * @f$M_r=N_{sr}N_{rr}^{-1}e_r@f$ (the shared-border regression row) and
      * @f$(N_{rr}^{-1})_{rr}=\mathrm{Var}(x_r\mid x_s)@f$ (the conditional variance
      * given the whole shared border, distinct from the marginal that
@@ -726,6 +835,10 @@ public:
      *
      * @param station   Index from @ref addStation.
      * @param local_col Local column within that station's @c A_r block.
+     * @param carry_aware Include the folded DD priors' rank-K term
+     *                  (@ref NetworkNormalEquations::hasCarryCovCorrection) in both outputs;
+     *                  @c false (the default) keeps the original expressions unchanged.  Forwarded
+     *                  unchanged; see @ref NetworkNormalEquations::stationRegression.
      * @param cross_cols Optional local columns at which the same
      *                  @f$N_{rr}^{-1}e_r@f$ solve is also read (the conditional cross
      *                  covariances; F3, network.phase_leveling_local_block), forwarded
@@ -749,6 +862,15 @@ public:
      * Requires a prior @ref solve.  A low value marks a lightly checked measurement
      * whose residual barely responds to a fault; such a row needs the
      * @f$/\sqrt{r_i}@f$ standardization to be flaggable.
+     *
+     * @param station  Index from @ref addStation.
+     * @param A_s_rows Shared-border design rows (@c m × @ref numShared).
+     * @param A_r_rows Local design rows (@c m × n_local of the station).
+     * @param w_rows   Per-row information weights (@c 1/σ², 1/m²; length @c m).
+     * @param datum    The same datum passed to @ref solve (its pinned columns are zeroed in the
+     *                 shared covariance).
+     * @return One redundancy number per row (length @c m), each in [0,1]: 1 for a row that is
+     *         fully checked by the others, near 0 for a row that alone determines a parameter.
      */
     Eigen::VectorXd rowRedundancy(std::size_t station,
                                   const Eigen::MatrixXd& A_s_rows,
@@ -756,6 +878,7 @@ public:
                                   const Eigen::VectorXd& w_rows,
                                   const Datum& datum) const;
 
+    /// @brief Count of real Schur recomputes in the current epoch.
     /// @return The kernel's reduce-once instrumentation
     ///         (@ref NetworkNormalEquations::reduceRecomputeCount) for the current
     ///         epoch, which shows whether the carried prior forced a second reduction.
@@ -770,8 +893,14 @@ public:
     /// Off (default) ⇒ no clock reads, numerically byte-identical.  See
     /// @ref NetworkNormalEquations::SectionTimers.
     /// @{
+
+    /// @brief Arm or disarm the kernel's section timers.
+    /// @param on true to read the wall clock in the instrumented kernel methods; false for none.
     void setPerfTiming(bool on) { neq_.setPerfTiming(on); }
+    /// @brief Zero the kernel's section-timer accumulators.
     void resetSectionTimers() const { neq_.resetSectionTimers(); }
+    /// @brief Read the kernel's section-timer accumulators (milliseconds and call counts).
+    /// @return The run-cumulative accumulators; meaningful only when @ref setPerfTiming was armed.
     const NetworkNormalEquations::SectionTimers& sectionTimers() const {
         return neq_.sectionTimers();
     }
@@ -787,6 +916,10 @@ public:
      * carry-forward (the W4-S2b D2 prior): the posterior (value, variance) per
      * shared parameter seeds the next epoch's prior via @ref
      * NetworkNormalEquations::addSharedInfo.  Empty until @ref solve is called.
+     *
+     * @return The @ref numShared × @ref numShared symmetric covariance (m² for metre-valued
+     *         columns), ordered like the shared columns; a reference, replaced by the next
+     *         @ref solve.
      */
     const Eigen::MatrixXd& sharedCovariance() const { return shared_cov_; }
 
@@ -826,6 +959,9 @@ public:
      *        pins (any sum-to-zero phase gauges are already folded).  Non-const:
      *        updates the kernel's internal reduction cache (idempotent; @ref solve
      *        reuses it).
+     *
+     * @return The @ref numShared × @ref numShared symmetric reduced normals (information, the
+     *         inverse square of each column's unit), a reference into the kernel's cache.
      */
     const Eigen::MatrixXd& reducedSharedNormals();
 
@@ -851,7 +987,7 @@ public:
     /// docs/record/SPEC_beidou_w6_datum.md §0.2.
     static constexpr double kNullSpaceTol = 1e-9;
 
-    /// One reported near-null direction of an @ref EstimabilityDump: its
+    /// One reported near-null direction of an @ref GnssProcessor::NetworkEstimator::EstimabilityDump "EstimabilityDump": its
     /// eigenvalue plus the (column label, |component|) pairs of the ≤ 5
     /// heaviest-spanning shared columns; the machine-readable twin of the
     /// "dir spanned by [...]" warn line.
@@ -903,7 +1039,7 @@ public:
      *                     "CB|sat|sig", "SH|n|m|trig") built by the Assembly
      *                     column registration when armed; missing or empty
      *                     entries fall back to "colN".  Intentionally not
-     *                     @ref sharedColumnLabel: the formats differ, and the
+     *                     @ref GnssProcessor::NetworkEstimator::sharedColumnLabel "sharedColumnLabel": the formats differ, and the
      *                     trace text is golden-gated.
      * @param log          Main logger: one warn line with the spectrum tail, then
      *                     one per dumped direction.
@@ -950,6 +1086,11 @@ public:
      * current epoch's layout (the satellite set) is skipped.  Call after
      * @ref beginEpoch and before @ref solve.
      *
+     * @param priors One diagonal prior per entry: identity (@c kind, @c sat, @c signal or the
+     *               SH indices), prior mean @c value and information @c info (the inverse
+     *               variance, in the inverse square of the parameter's unit; metres for clocks
+     *               and biases).  An entry with @c info not positive, or whose parameter is not
+     *               in this epoch's layout, is skipped.
      * @see addSharedPriorDense for the C1 full-covariance form of the same carry.
      */
     void addSharedPrior(const std::vector<SharedPrior>& priors);
@@ -1040,6 +1181,8 @@ public:
      * @f$a a^\top/q@f$, right-hand side @f$a\,\text{mean}/q@f$.  A factor whose clock, clone
      * or reference clone is absent from the layout, or whose @c q is not positive and
      * finite, is skipped.
+     * @param walks The walk factors; each names a satellite whose clock (or border key) and clone
+     *              are both registered, a mean (m) and a variance @c q (m²).
      * @param sign +1 folds, -1 withdraws exactly what +1 folded (the temporal clock anchor's refloat, which
      *             may call it after @ref solve, as it calls @ref withdrawSharedPrior, and
      *             folds a factor back with +1 when its re-solve throws).
@@ -1139,6 +1282,8 @@ public:
      * Non-clock priors in @p priors are folded exactly as @ref addSharedPrior
      * folds them.
      *
+     * @param priors Diagonal priors (@ref SharedPrior) of the carried clocks and any other
+     *               shared parameters; @c value and @c info as for @ref addSharedPrior.
      * @return Number of clock keys whose information was downdated (0 ⇒ the
      *         gauge-free step was inert for this fold).
      */
@@ -1146,7 +1291,7 @@ public:
 
     /**
      * @brief Gauge-free diagonal analogue of
-     *        @ref refoldSharedPriorDenseDroppingClocks: re-fold a gauge-free
+     *        @ref GnssProcessor::NetworkEstimator::refoldSharedPriorDenseDroppingClocks "refoldSharedPriorDenseDroppingClocks": re-fold a gauge-free
      *        clock prior set with @p drop_sats refloated.
      *
      * A gauge-free block is not diagonal, so @ref withdrawSharedPrior cannot undo
@@ -1155,6 +1300,8 @@ public:
      * (with and without the refloated keys) and folds the difference.  Only
      * @ref SharedParamKind::Clock entries of @p priors are touched.
      *
+     * @param priors    The gauge-free clock prior set originally folded (identity, value, info).
+     * @param drop_sats Satellites whose clock keys are to be refloated (dropped from the block).
      * @param restore Fold the inverse delta: the exact undo, for the path where
      *                the re-solve throws and the anchored solve must survive.
      * @return Number of clock keys refloated (0 ⇒ nothing folded).
@@ -1318,8 +1465,12 @@ public:
         if (n > 0) noteFold_(ck, n);
     }
 
-    /// Posterior mean of DD-prior block @p b given the solved shared estimate
+    /// @brief Posterior mean of DD-prior block @p b given the solved shared estimate
     /// @p x_s: the value the z-store carries forward (forwards to the kernel).
+    /// @param b   DD-prior block index (input order of @ref setDdPriors).
+    /// @param x_s The solved shared estimate (length @ref numShared).
+    /// @return The K posterior DD values of the block in metres (empty for a chordless K=0 slot;
+    ///         the prior mean unchanged for an inert degenerate block).
     Eigen::VectorXd ddPriorPosteriorMean(std::size_t b, const Eigen::VectorXd& x_s) const {
         return neq_.ddPriorPosteriorMean(b, x_s);
     }
@@ -1329,13 +1480,15 @@ public:
      *        carries forward (M1 phase C3b).
      *
      * Builds the datum-as-known shared covariance @c cov_free from the last solve's
-     * @c shared_cov_ (@ref datumFrameSharedCov: the datum-pinned columns zeroed as
+     * @c shared_cov_ (@ref GnssProcessor::NetworkEstimator::datumFrameSharedCov "datumFrameSharedCov": the datum-pinned columns zeroed as
      * exact gauges, the same frame as @ref conditionalLocalCovariance) and forwards
      * to @ref NetworkNormalEquations::ddPriorPosteriorCovariance.  The DD is
      * gauge-free, so the K×K result is datum-invariant.
      *
      * @param b     DD-prior block index (input order; see @ref ddPriorPosteriorMean).
      * @param datum The same minimum-constraint datum passed to @ref solve.
+     * @return The K×K symmetric posterior DD covariance in m² (the prior covariance unchanged for
+     *         an inert degenerate block; empty for a chordless K=0 slot).
      */
     Eigen::MatrixXd ddPriorPosteriorCovariance(std::size_t b, const Datum& datum) const;
 
@@ -1367,6 +1520,10 @@ public:
      * builds it once and passes it to the matrix overloads below instead of
      * rebuilding the n_shared² copy per block per readout.  Byte-identical to the
      * per-call builds.
+     *
+     * @param datum The same minimum-constraint datum passed to @ref solve (its pinned columns are zeroed).
+     * @return A copy of the last solve's shared covariance (@ref numShared square, m²) with the
+     *         datum-pinned and phase-gauge rows and columns zeroed.
      */
     Eigen::MatrixXd datumFrameSharedCov(const Datum& datum) const;
 
@@ -1382,41 +1539,61 @@ public:
         return datumFrame_(datum, scratch);
     }
 
-    /// Matrix overloads that take a pre-built @ref datumFrameSharedCov (skip the copy).
+    /// @brief Matrix overloads that take a pre-built @ref datumFrameSharedCov (skip the copy).
+    /// @param b        DD-prior block index (input order; see @ref ddPriorPosteriorMean).
+    /// @param cov_free The datum-frame shared covariance from @ref datumFrameSharedCov
+    ///                 (@ref numShared square).
+    /// @return The K×K symmetric posterior DD covariance in m², as for the datum overload.
     Eigen::MatrixXd ddPriorPosteriorCovariance(std::size_t b, const Eigen::MatrixXd& cov_free) const {
         return neq_.ddPriorPosteriorCovariance(b, cov_free);
     }
+    /// @brief Innovation and its H0 covariance for DD-prior block @p b from a pre-built frame.
+    /// @param b        DD-prior block index (input order; see @ref ddPriorPosteriorMean).
+    /// @param x_s      The solved shared estimate.
+    /// @param cov_free The datum-frame shared covariance from @ref datumFrameSharedCov.
+    /// @param[out] v     The K innovations in metres (empty for a K=0 slot).
+    /// @param[out] cov_v The K×K H0 innovation covariance in m² (empty for a K=0 slot).
     void ddPriorInnovation(std::size_t b, const Eigen::VectorXd& x_s,
                            const Eigen::MatrixXd& cov_free,
                            Eigen::VectorXd& v, Eigen::MatrixXd& cov_v) const {
         neq_.ddPriorInnovation(b, x_s, cov_free, v, cov_v);
     }
 
+    /// @brief Count of DD-prior blocks folded this epoch.
     /// @return Number of DD-prior blocks folded this epoch.
     std::size_t numDdPriorBlocks() const { return neq_.numDdPriorBlocks(); }
 
     // --- PD-safe invariant-DD fold forwarders (docs/record/SPEC_pd_safe_dd_fold.md) ---
 
-    /// Arm the PD-safe DD-prior fold arithmetic (@c network.carry_invariant_pd_safe;
+    /// @brief Arm the PD-safe DD-prior fold arithmetic (@c network.carry_invariant_pd_safe;
     /// @ref NetworkNormalEquations::setDdFoldPdSafe).  Set once before the epoch loop;
     /// it survives @ref reset, like @ref setPerfTiming.  Off ⇒ byte-identical.
+    /// @param on true for the PD-safe fold arithmetic; false for the original one.
     void setDdFoldPdSafe(bool on) { neq_.setDdFoldPdSafe(on); }
+    /// @brief Whether the PD-safe DD-prior fold arithmetic is armed.
     /// @return Whether the PD-safe fold arithmetic is armed.
     bool ddFoldPdSafe() const { return neq_.ddFoldPdSafe(); }
+    /// @brief PD-screen diagnostics of the last DD-prior fold.
     /// @return Diagnostics of the last DD-prior fold's PD screen (INC-0).  They are
     ///         per fold, so a within-epoch RAIM re-solve overwrites them, and the
     ///         install seam reads the accepted solve.  @ref NetworkNormalEquations::DdFoldStats.
     const NetworkNormalEquations::DdFoldStats& ddFoldStats() const { return neq_.ddFoldStats(); }
+    /// @brief Whether a DD-prior block folded inertly at the PD screen.
+    /// @param b DD-prior block index (input order of @ref setDdPriors).
     /// @return Whether DD-prior block @p b folded inertly (PD screen tripped ⇒ M = 0).
     bool ddPriorBlockDegenerate(std::size_t b) const { return neq_.ddPriorBlockDegenerate(b); }
+    /// @brief Conditioning of a DD-prior block at the fold, as a relative pivot.
+    /// @param b DD-prior block index (input order of @ref setDdPriors).
     /// @return DD-prior block @p b's relative pivot d_min/d_max at the fold.
     double ddPriorBlockMinPivotRel(std::size_t b) const { return neq_.ddPriorBlockMinPivotRel(b); }
 
     // --- Carry-aware covariance readback (docs/record/SPEC_carry_aware_covariance.md) ---
 
+    /// @brief Whether a carry-aware readback has a DD-prior correction to apply.
     /// @return Whether this epoch's fold left a DD-prior block for a @c carry_aware
     ///         readback to correct (@ref NetworkNormalEquations::hasCarryCovCorrection).
     bool hasCarryCovCorrection() const { return neq_.hasCarryCovCorrection(); }
+    /// @brief Run-cumulative telemetry of the carry-aware covariance readbacks.
     /// @return Run-cumulative carry-aware readback telemetry
     ///         (@ref NetworkNormalEquations::CarryCovStats): the run-end readout,
     ///         which also measures the fold's cross-block approximation error.
@@ -1446,13 +1623,17 @@ public:
      * clears the captures but keeps the armed flag, so a within-epoch re-solve leaves
      * only the final build's captures (matching the kernel state the attribution
      * reads).  Disarmed (the default), the recorder costs one branch per call.
+     *
+     * @param on true to arm the recorder (and clear any earlier captures); false to disarm it.
      */
     void attribArm(bool on) {
         attrib_armed_ = on;
         if (on) attrib_shared_.clear();
     }
+    /// @brief Whether the shared-info capture recorder is armed.
     /// @return Whether the capture recorder is armed this epoch.
     bool attribArmed() const { return attrib_armed_; }
+    /// @brief The captured shared-info RHS increments of this epoch.
     /// @return This epoch's captured shared-info RHS increments (armed builds only).
     const std::vector<AttribCapture>& attribCaptures() const { return attrib_shared_; }
 
@@ -1525,8 +1706,10 @@ public:
         if (on) ++contrib_log_.replay_builds;
     }
 
+    /// @brief The log of this epoch's shared folds.
     /// @return This epoch's shared folds, with their kinds (cleared by @ref reset).
     const SharedFoldLog& sharedFoldLog() const { return contrib_log_; }
+    /// @brief The DD-prior blocks as they were set this epoch.
     /// @return The input DD-prior blocks set by @ref setDdPriors this epoch: the
     ///         (station, local column, coefficient) structure the attribution
     ///         recompute needs, which the kernel's folded factors do not retain.
@@ -1538,7 +1721,9 @@ public:
      * @brief Map a shared estimate to an emittable @c NetworkSolutionEpoch.
      * @param x_s        The shared estimate from @ref solve.
      * @param epoch_time SSR content reference epoch stamped on the solution.
-     * @param iod_ssr / provider_id / solution_id IGS-SSR stamps (pass-through).
+     * @param iod_ssr    IGS-SSR issue-of-data stamp (pass-through).
+     * @param provider_id IGS-SSR provider identifier stamp (pass-through).
+     * @param solution_id IGS-SSR solution identifier stamp (pass-through).
      * @return One epoch of satellite-side solutions (clock C0 + per-signal code /
      *         phase bias) keyed by RINEX sat id, ready for `NetworkProductEmitter`.
      *         SH-VTEC columns are not mapped, nor are clock clone columns (
@@ -1610,7 +1795,7 @@ private:
     static std::string key_(const std::string& sat, SharedParamKind kind,
                             const std::string& signal);
     /// The layout key of a prior: the SH key for VtecSh, @c "HIST|j" for a shared-history
-    /// column, @c "sat|CLKC" for a clock clone, @ref key_
+    /// column, @c "sat|CLKC" for a clock clone, key_ (@c GnssProcessor::NetworkEstimator::key_)
     /// otherwise (the same string as before for every other prior).
     static std::string priorKey_(const SharedPrior& p);
     /// The layout key of a clone (clock clone or border clone): @c "sat|CLKC" for a clock,
@@ -1643,7 +1828,7 @@ private:
     /// Zero, in place, the rows and columns of @p cov that the datum-as-known frame
     /// treats as exact (variance 0): the @p datum-pinned shared columns and the
     /// ensemble phase-gauge columns (@ref zeroPhaseGaugeColumns).  The one definition
-    /// of that frame, used by @ref solve and @ref datumFrame_.
+    /// of that frame, used by @ref solve and datumFrame_ (@c GnssProcessor::NetworkEstimator::datumFrame_).
     void zeroDatumFrame_(Eigen::MatrixXd& cov, const Datum& datum) const;
 
     /// The datum-as-known frame of @c shared_cov_ for @p datum: the frame @ref solve
@@ -1660,8 +1845,8 @@ private:
     NetworkNormalEquations neq_{0};               ///< current-epoch arrowhead
     Eigen::MatrixXd shared_cov_;                  ///< covariance of x_s from the last solve() (for the D2 carry-forward prior)
     /// @c shared_cov_ in the datum-as-known frame of the last solve's datum
-    /// (@ref zeroDatumFrame_), built once per @ref solve and read by every covariance
-    /// consumer whose datum pins the same columns (@ref datumFrame_).  Written only by
+    /// (zeroDatumFrame_ (@c GnssProcessor::NetworkEstimator::zeroDatumFrame_)), built once per @ref solve and read by every covariance
+    /// consumer whose datum pins the same columns (datumFrame_ (@c GnssProcessor::NetworkEstimator::datumFrame_)).  Written only by
     /// the non-const @ref solve, so concurrent const readers see immutable data.
     Eigen::MatrixXd datum_frame_cov_;
     std::vector<Eigen::Index> datum_frame_cols_;  ///< the pinned columns of the datum @c datum_frame_cov_ was built for, in datum order
@@ -1680,7 +1865,7 @@ private:
     void noteCapture_(ContributionKind k, const Eigen::VectorXd& delta_rhs) {
         if (attrib_armed_) attrib_shared_.push_back(AttribCapture{k, delta_rhs});
     }
-    /// Record one shared fold of dimension @p dim in @ref contrib_log_ (a replay's re-fold
+    /// Record one shared fold of dimension @p dim in contrib_log_ (@c GnssProcessor::NetworkEstimator::contrib_log_) (a replay's re-fold
     /// counts apart).
     void noteFold_(ContributionKind k, long long dim) {
         if (contrib_replay_) {

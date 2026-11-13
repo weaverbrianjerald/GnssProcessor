@@ -15,7 +15,7 @@
  * from a float estimate steps the frame by a fraction, and no consumer can recover that.
  *
  * The observatory records, for every tree edge of every epoch, which row of the chain-event
- * table (@ref kChainEventSpec) the edge took part in, what the as-built (legacy) rule did to it,
+ * table (@ref GnssProcessor::kChainEventSpec "kChainEventSpec") the edge took part in, what the as-built (legacy) rule did to it,
  * and what the integer rule of that row would have needed: for a re-host, an integer certified
  * from the previous epoch's chord table.  A row's integer rule is switched on by its entry of
  * @c network.phase_datum_eq34_event_rows and applied by the election itself (the kept row: an
@@ -35,15 +35,15 @@
  *
  *  1. The election (@c networkElectChainDatum), with @c network.trace_chain_datum armed, records
  *     each tree edge with its legacy facts, each component, the legacy shift and re-reference
- *     sets, and each chord's fundamental cycle into the epoch's @ref ChainEpochObs
+ *     sets, and each chord's fundamental cycle into the epoch's @ref GnssProcessor::ChainEpochObs "ChainEpochObs"
  *     (@c EpochEvents::PhaseDatum::chain).
- *  2. After the solve and the harvests (the StashTail observer slot), @ref networkChainFrameObserve
+ *  2. After the solve and the harvests (the StashTail observer slot), @ref GnssProcessor::networkChainFrameObserve "networkChainFrameObserve"
  *     classifies each edge against the observatory's memory of the last observed epoch (its
  *     vertices, components and chord table), certifies the re-hosts from that chord table, writes
  *     @c network_chain_edges.csv and the CHAIN rows of @c network_events.csv, builds this
  *     epoch's chord table (@c network_chain_frame.csv) and replaces the memory.  With
  *     @c network.trace_rpb_states armed it also writes @c network_rpb_states.csv.
- *  3. The run end (@ref networkChainFrameRunEnd) prints the census.
+ *  3. The run end (@ref GnssProcessor::networkChainFrameRunEnd "networkChainFrameRunEnd") prints the census.
  *
  * An epoch the run skips after the election leaves the memory at the last observed epoch, so
  * the next classification compares against that epoch; the chord table records its epoch.
@@ -53,9 +53,9 @@
  * A re-host moves a vertex's parent edge onto an arc that was a chord at the last observed epoch.
  * That chord's integer in the incumbent frame is read from the chord table: its two-band float
  * (the arc's band-1 and band-2 ambiguities in cycles) and their 2x2 conditional covariance, scaled
- * by @ref kChainCertSigmaScale in sigma, are fixed with @c ils::ilsFixDecorrelatedPartial and
+ * by @ref GnssProcessor::kChainCertSigmaScale "kChainCertSigmaScale" in sigma, are fixed with @c ils::ilsFixDecorrelatedPartial and
  * the producer search's acceptance gates; the band's integer is certified when it is determined
- * (conditional sigma at most @ref kChainCertDeterminedSigmaCyc) and kept.  When the producer's
+ * (conditional sigma at most @ref GnssProcessor::kChainCertDeterminedSigmaCyc "kChainCertDeterminedSigmaCyc") and kept.  When the producer's
  * lattice of fixed cycles (@c network.ambiguity_resolution.trace_lattice) implies the chord's
  * integer, it is a cross-check: a disagreement is a conflict and counts as uncertified.
  */
@@ -148,20 +148,20 @@ extern const std::array<ChainEventSpec, kChainEventRowCount> kChainEventSpec;
 /**
  * @brief The table row of a class.
  * @param r The class.
- * @return Its row of @ref kChainEventSpec.
+ * @return Its row of @ref GnssProcessor::kChainEventSpec "kChainEventSpec".
  */
 const ChainEventSpec& chainEventSpec(ChainEventRow r);
 
 /**
  * @brief The entries of @c network.phase_datum_eq34_event_rows: the distinct non-empty
- *        @c rows_entry of @ref kChainEventSpec, in table order.
+ *        @c rows_entry of @ref GnssProcessor::kChainEventSpec "kChainEventSpec", in table order.
  * @return @c kept, @c returning, @c rehost, @c root, @c slip, @c merge_split.
  */
 std::vector<std::string> chainEventRowEntries();
 
 /**
  * @brief Whether the integer rule of an entry of @c network.phase_datum_eq34_event_rows is built.
- * @param entry An entry from @ref chainEventRowEntries.
+ * @param entry An entry from @ref GnssProcessor::chainEventRowEntries "chainEventRowEntries".
  * @return True when every row of the table that names @p entry is built or held and at least one
  *         is built; false for an entry the table does not name.
  */
@@ -178,11 +178,26 @@ bool chainEventRowEntryBuilt(const std::string& entry);
  */
 bool chainEventRowArmed(const NetworkKnobs& k, ChainEventRow r);
 
-/// The name of a @ref ChainStep value ("Zero", "New", "ZeroOrCutRelease", "CutRelease").
+/**
+ * @brief The name of a @ref GnssProcessor::ChainStep "ChainStep" value ("Zero", "New", "ZeroOrCutRelease", "CutRelease").
+ * @param s  The step.
+ * @return The enumerator's own spelling as a static string; "?" for a value outside the enum.
+ *         Never null.
+ */
 const char* chainStepName(ChainStep s);
-/// The name of a @ref ChainCarry value.
+/**
+ * @brief The name of a @ref GnssProcessor::ChainCarry "ChainCarry" value.
+ * @param c  The carry action.
+ * @return The enumerator's own spelling ("Keep", "KeepOrCutRelease", "CutRelease", "ReleaseArc") as
+ *         a static string; "?" for a value outside the enum.  Never null.
+ */
 const char* chainCarryName(ChainCarry c);
-/// The name of a @ref ChainWire value.
+/**
+ * @brief The name of a @ref GnssProcessor::ChainWire "ChainWire" value.
+ * @param w  The wire declaration.
+ * @return The enumerator's own spelling ("None", "NewKey", "NoneOrDeclareMoved", "DeclareMoved",
+ *         "ComponentChange") as a static string; "?" for a value outside the enum.  Never null.
+ */
 const char* chainWireName(ChainWire w);
 
 // ---- What the legacy rule did to one pin --------------------------------------------------------
@@ -199,7 +214,12 @@ enum class ChainLegacyCause : std::uint8_t {
     RootHandover,   ///< The satellite's remembered root differs from this epoch's: an unknown step.
 };
 
-/// The name of a @ref ChainLegacyCause value ("same_edge", "first_sighting", ...).
+/**
+ * @brief The name of a @ref GnssProcessor::ChainLegacyCause "ChainLegacyCause" value ("same_edge", "first_sighting", ...).
+ * @param c  The cause.
+ * @return The lower-case snake_case name of the cause ("rehost_carry", "seed_step",
+ *         "root_handover", ...) as a static string; "?" for a value outside the enum.  Never null.
+ */
 const char* chainLegacyCauseName(ChainLegacyCause c);
 
 /// Which source certified a re-host's integer.
@@ -209,7 +229,12 @@ enum class ChainCertSource : std::uint8_t {
     Lattice,  ///< The producer's lattice of fixed cycles.
 };
 
-/// The name of a @ref ChainCertSource value ("none", "pair", "lattice").
+/**
+ * @brief The name of a @ref GnssProcessor::ChainCertSource "ChainCertSource" value ("none", "pair", "lattice").
+ * @param s  The certification source.
+ * @return "none", "pair" or "lattice" as a static string; "?" for a value outside the enum.
+ *         Never null.
+ */
 const char* chainCertSourceName(ChainCertSource s);
 
 /// Sigma scale of the chord covariance in the certification (the measured optimism of the
@@ -290,7 +315,12 @@ enum class ChainRootOutcome : std::uint8_t {
     NoCarry,     ///< Left as built: the new root has no receiver phase-bias carry inside the horizon.
 };
 
-/// The name of a @ref ChainRootOutcome value ("pinned", "not_vertex", "not_keeper", "no_carry").
+/**
+ * @brief The name of a @ref GnssProcessor::ChainRootOutcome "ChainRootOutcome" value ("pinned", "not_vertex", "not_keeper", "no_carry").
+ * @param o  The root row's outcome.
+ * @return One of the four names above as a static string; "?" for a value outside the enum.
+ *         Never null.
+ */
 const char* chainRootOutcomeName(ChainRootOutcome o);
 
 /**
@@ -345,7 +375,12 @@ enum class ChainReleaseRow : std::uint8_t {
     Merge,      ///< The merge and split row: the edge joins two trees of the last election.
 };
 
-/// The name of a @ref ChainReleaseRow value ("returning", "rehost", "slip", "merge").
+/**
+ * @brief The name of a @ref GnssProcessor::ChainReleaseRow "ChainReleaseRow" value ("returning", "rehost", "slip", "merge").
+ * @param r  The releasing event row.
+ * @return One of the four names above as a static string; "?" for a value outside the enum.
+ *         Never null.
+ */
 const char* chainReleaseRowName(ChainReleaseRow r);
 
 /**
@@ -437,16 +472,16 @@ struct ChainChordRow {
     double      float_cyc_1{0.0};   ///< Band-1 ambiguity (cycles).
     double      float_cyc_2{0.0};   ///< Band-2 ambiguity (cycles).
     double      q11{0.0};        ///< Its conditional covariance (cycles^2), unscaled.
-    double      q12{0.0};
-    double      q22{0.0};
+    double      q12{0.0};        ///< The band-1 and band-2 ambiguities' conditional covariance (cycles^2), unscaled.
+    double      q22{0.0};        ///< The band-2 ambiguity's conditional variance (cycles^2), unscaled.
     bool        have_int_1{false};  ///< The two-band fix determined band 1.
     bool        have_int_2{false};  ///< ... band 2.
-    long long   int_1{0};
-    long long   int_2{0};
+    long long   int_1{0};        ///< The integer (cycles) the two-band fix gave band 1; read only when @c have_int_1.
+    long long   int_2{0};        ///< The integer (cycles) the two-band fix gave band 2; read only when @c have_int_2.
     bool        have_lat_1{false};  ///< The lattice implies band 1's chord integer.
-    bool        have_lat_2{false};
-    long long   lat_1{0};
-    long long   lat_2{0};
+    bool        have_lat_2{false};  ///< The lattice implies band 2's chord integer.
+    long long   lat_1{0};        ///< The chord integer (cycles) the lattice implies for band 1; read only when @c have_lat_1.
+    long long   lat_2{0};        ///< The chord integer (cycles) the lattice implies for band 2; read only when @c have_lat_2.
     bool        conflict{false};    ///< The pair and the lattice disagree on a band.
 };
 
@@ -518,11 +553,11 @@ struct ChainEpochClass {
  * Split in a split-off piece, unless the merge and split row marked it inside an absorbed side (it
  * stays Kept).  With that row off, an edge that joins two components through a child with a parent
  * reads as a re-host and the kept edges of the absorbed side as a root handover: the component event
- * (@ref ChainComponentEvent::merged) is what counts the merge.
+ * (@ref GnssProcessor::ChainComponentEvent::merged "ChainComponentEvent::merged") is what counts the merge.
  * Every count of @p cnt that the classification determines is accumulated, an edge
  * an armed row decided (@c row_armed) also in @c cf_rows_armed, the epoch's cut releases
- * (@ref ChainEpochObs::releases) in the cut and declared counts and its de-seated edges
- * (@ref ChainEpochObs::deseats) in @c cf_sl_deseats.
+ * (@ref GnssProcessor::ChainEpochObs::releases "ChainEpochObs::releases") in the cut and declared counts and its de-seated edges
+ * (@ref GnssProcessor::ChainEpochObs::deseats "ChainEpochObs::deseats") in @c cf_sl_deseats.
  *
  * @param obs        The epoch's chain record.
  * @param mem        The memory of the last observed epoch.
@@ -568,9 +603,9 @@ void chainRememberEpoch(const ChainEpochObs& obs, const ChainEpochClass& cls,
  * change for the as-built rule, whose displacement (the target less the new host's carry) does
  * not depend on any previous target.
  *
- * @param e          A classified edge the kept row held (@ref ChainEdgeObs::row_armed).
+ * @param e          A classified edge the kept row held (@ref GnssProcessor::ChainEdgeObs::row_armed "ChainEdgeObs::row_armed").
  * @param remembered The as-built target (m) drafted for the arc at the last observed epoch if the
- *                   kept row held it then (@ref ChainFrameMemory::kept_as_built_target), else null.
+ *                   kept row held it then (@ref GnssProcessor::ChainFrameMemory::kept_as_built_target "ChainFrameMemory::kept_as_built_target"), else null.
  * @return NaN when the as-built step was unknown (@c legacy_known false); for a reversed arc, or
  *         when @p remembered is null, the draft's own displacement (@c legacy_pinmove_m); else
  *         the as-built target (@c legacy_target_m) less @p remembered.
@@ -583,13 +618,13 @@ double chainKeptAsBuiltStep(const ChainEdgeObs& e, const double* remembered);
  * The observer writes a @c kept event row only for such an edge, once per move.  A held arc whose
  * as-built target differs from its frozen target keeps differing at every election until the two
  * agree, but the as-built rule would have moved the edge only at the election its target changed,
- * so the persistent difference is one event at its onset (@ref chainKeptAsBuiltStep) and held
+ * so the persistent difference is one event at its onset (@ref GnssProcessor::chainKeptAsBuiltStep "chainKeptAsBuiltStep") and held
  * edges the as-built rule would have left alone are the common case.
  *
  * @param e          A classified edge.
  * @param remembered The as-built target (m) drafted for the arc at the last observed epoch if the
- *                   kept row held it then, else null (@ref chainKeptAsBuiltStep).
- * @return True when @ref ChainEdgeObs::row_armed and the arc reversed direction
+ *                   kept row held it then, else null (@ref GnssProcessor::chainKeptAsBuiltStep "chainKeptAsBuiltStep").
+ * @return True when @ref GnssProcessor::ChainEdgeObs::row_armed "ChainEdgeObs::row_armed" and the arc reversed direction
  *         (@c incumbent_flipped), the as-built step was unknown (@c legacy_known false) or the
  *         as-built step is nonzero.
  */
@@ -600,35 +635,35 @@ bool chainKeptEdgeMoved(const ChainEdgeObs& e, const double* remembered);
  *
  * Observer of the StashTail slot.  Gate: network.trace_chain_datum (the chain trace and the
  * memory) or network.trace_rpb_states (the receiver phase-bias trace), on an eq34 run.  Writes
- * only its traces, its CHAIN event rows and @ref ChainFrameCounters.  An edge the kept row
- * held, where the as-built rule would have moved it at this election (@ref chainKeptEdgeMoved),
+ * only its traces, its CHAIN event rows and @ref GnssProcessor::ChainFrameCounters "ChainFrameCounters".  An edge the kept row
+ * held, where the as-built rule would have moved it at this election (@ref GnssProcessor::chainKeptEdgeMoved "chainKeptEdgeMoved"),
  * writes a @c kept row: one row, action @c hold, or for an arc that reversed direction two,
  * @c leave (the incumbent orientation) and @c join (this epoch's).  A difference between the
  * as-built target and the frozen one that persists is written once, at the election the
  * as-built target changed.
  *
  *
- * An edge the rehost row released (@ref ChainEdgeObs::row_armed, classified RehostCertified or
+ * An edge the rehost row released (@ref GnssProcessor::ChainEdgeObs::row_armed "ChainEdgeObs::row_armed", classified RehostCertified or
  * RehostUncertified) keeps its @c leave and @c join rows and appends the as-built tokens the
  * returning rows carry (@c legacy_cause, @c legacy_known, @c legacy_pinmove_m, @c legacy_target_cyc).
  *
- * An edge the returning row released (@ref ChainEdgeObs::row_armed, classified Returning) writes
+ * An edge the returning row released (@ref GnssProcessor::ChainEdgeObs::row_armed "ChainEdgeObs::row_armed", classified Returning) writes
  * two @c returning rows, @c leave (the vertex and the parent it had when it was last seen) and
  * @c join (the new edge), each with its @c gap_s, @c child and @c parent.  Each release of the
- * epoch (@ref ChainEpochObs::releases) then writes one @c cut_release row (action @c release,
+ * epoch (@ref GnssProcessor::ChainEpochObs::releases "ChainEpochObs::releases") then writes one @c cut_release row (action @c release,
  * with the counts the release took) and one @c declared_keys row per satellite of its moved side
  * (its @c cause token names the row that released: @c returning or @c rehost), which the frame
  * grader reads as the keys the producer declares moved.  A returning edge no row
  * decided writes the one @c join row it always has.
  *
  * With the root row armed the @c root_handover leave and join rows of a component whose root
- * changed append @c outcome (the row's @ref ChainRootOutcome name) and, for a pinned handover,
+ * changed append @c outcome (the row's @ref GnssProcessor::ChainRootOutcome "ChainRootOutcome" name) and, for a pinned handover,
  * @c rpb_target_m and @c rpb_sigma_m (the carried value the new root is pinned at and its standard
  * deviation).  The edges the row kept are in the edge trace with @c row_armed set; no per-edge
  * event rows are added.  With the merge and split row armed the @c split rows of a piece that split
  * off append the same tokens.
  *
- * An edge the merge and split row released (@ref ChainEdgeObs::merge_released) writes two @c merge
+ * An edge the merge and split row released (@ref GnssProcessor::ChainEdgeObs::merge_released "ChainEdgeObs::merge_released") writes two @c merge
  * rows: @c leave names the absorbed tree's old root and @c join the new edge, each with @c old_root,
  * @c into_root, @c child, @c parent and the as-built tokens.  Its release writes the same
  * @c cut_release and @c declared_keys rows as the others (@c cause=merge).  With the row off an edge

@@ -67,7 +67,7 @@ struct RankGateCounters {
     // and the near-null phase-bias soft anchor recovered it, and the total columns
     // anchored.  Without these a run that recovers every epoch would look successful
     // with no trace (the success log line is at debug level).
-    size_t n_healed_epochs = 0, n_healed_cols = 0;
+    size_t n_healed_epochs = 0, /**< epochs where the gate threw and the near-null phase-bias soft anchor recovered it */ n_healed_cols = 0;   ///< phase-bias columns anchored by those recoveries, in total
     // The same quantities counted on every fired attempt, recovered or not.  The pair
     // above counts successes only, so an attempt that fires every epoch and never
     // rescues the gate would read as "0 healed"; the withhold warning in
@@ -76,8 +76,8 @@ struct RankGateCounters {
     // the attempt is counted separately: attempts > 0 with recoveries == 0 is the
     // signature of an attempt that aims at the right columns but cannot resolve the
     // residual alone (the insufficiency criterion, PA5).
-    size_t n_heal_attempt_epochs = 0, n_heal_attempt_cols = 0;
-    int    spectrum_diag_budget = 6;    // estimability spectrum dump: the first N gate evaluations (a budget rather than one shot, because a rows epoch needs a later firing than epoch 1).  Seeded from network.trace_estimability_budget by the NetworkRunContext ctor (default 6 = this constant; RF-NS); under network.trace_estimability_deficit_only a clean epoch does not spend it.
+    size_t n_heal_attempt_epochs = 0, /**< epochs on which a drop-and-heal attempt fired, recovered or not */ n_heal_attempt_cols = 0;   ///< columns anchored across all fired attempts, recovered or not
+    int    spectrum_diag_budget = 6;    ///< estimability spectrum dump: the first N gate evaluations (a budget rather than one shot, because a rows epoch needs a later firing than epoch 1).  Seeded from network.trace_estimability_budget by the NetworkRunContext ctor (default 6 = this constant; RF-NS); under network.trace_estimability_deficit_only a clean epoch does not spend it.
 
     // Rank-gate calibration telemetry.  The gate is an exact-equality test that throws
     // in both directions, so "withheld" alone hides which failure happened.

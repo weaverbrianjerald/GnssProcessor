@@ -41,7 +41,7 @@ struct HandoverStransformCounters {
     /// edge, transform armed or not, so an off run states the population an on run
     /// acts on.
     std::map<char, long long> pivot_handovers;
-    long long prm_ref_calls[kCarryMechanisms]{};
+    long long prm_ref_calls[kCarryMechanisms]{};   ///< calls of each carried-reference mechanism over the run, indexed by @c CarryMechanism
 };
 
 } // namespace GnssProcessor

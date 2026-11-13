@@ -121,7 +121,7 @@ struct SolveStationsCounters {
         bool      ever_in_solve = false;  ///< distinguishes a return from a first sighting
         long long absent_streak = 0;      ///< consecutive consume epochs out of the solve
     };
-    std::map<std::string, StationSolveTrack> sta_solve_track;
+    std::map<std::string, StationSolveTrack> sta_solve_track;   ///< Per station name: whether it has been in the solve and its current absence streak.
     long long sta_in_solve_epochs = 0;       ///< number of epochs the above was recorded for (denominator)
     int       sta_in_solve_min = -1;         ///< min over the run (−1 = never recorded)
     double    sta_in_solve_min_tow = 0.0;    ///< …its epoch

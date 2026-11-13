@@ -14,7 +14,7 @@
  * (measured in docs/record/refound/EV7_all_sat_clock_decouple_2026-09-21.md §5.3).
  *
  * The return edge already has a response: a family with no incumbent is inserted
- * into the election's re-reference set, and @ref networkApplyPhaseAnchorCarryReref
+ * into the election's re-reference set, and @ref GnssProcessor::networkApplyPhaseAnchorCarryReref "networkApplyPhaseAnchorCarryReref"
  * erases every station's carried ambiguity of it.  The drop edge is the decoupling
  * edge of standing invariant #7, which must bound what the decoupled states can
  * accumulate.  This header holds only that edge's rule:

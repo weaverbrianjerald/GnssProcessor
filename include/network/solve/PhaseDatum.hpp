@@ -7,7 +7,7 @@
  *        the anchor-slip handover staging, the re-reference carry erase, and the
  *        near-null phase-bias soft-anchor.
  *
- * Near-null soft-anchor (@ref healNearNullPhaseBias).  The prioritized union registers
+ * Near-null soft-anchor (@ref GnssProcessor::healNearNullPhaseBias "healNearNullPhaseBias").  The prioritized union registers
  * a phase-bias column for every (sat,signal) that any two stations track.  Two cases
  * can leave such a column below the rank-gate cutoff, and the gate would then
  * withhold the whole epoch, losing every well-anchored satellite to one column:
@@ -24,7 +24,7 @@
  * The functions were relocated unchanged out of ApplicationNetwork.cpp at
  * decomposition INC-8 (the soft-anchor) and INC-8b (the census and the anchor
  * election; the eq34 chain election went to the sibling
- * @ref NetworkChainDatum).  See docs/record/SPEC_inc8b_election_split.md.  They own no
+ * @c NetworkChainDatum).  See docs/record/SPEC_inc8b_election_split.md.  They own no
  * state: every carry and workspace object is an explicit reference into the
  * caller's NetworkRunContext / EpochWorkspace.
  *
@@ -77,9 +77,9 @@ struct PhaseHealEvent {
  *        normals and soft-anchor those columns toward 0 (σ = 1 m), so that
  *        one weak column does not withhold the whole epoch.
  *
- * The cutoff is @ref NetworkEstimator::rankGateTol · max(λmax, 1), the same
+ * The cutoff is @ref GnssProcessor::NetworkEstimator::rankGateTol "NetworkEstimator::rankGateTol" · max(λmax, 1), the same
  * resolved cutoff as the rank gate this function protects (it defaults to
- * @ref NetworkEstimator::kNullSpaceTol).  Reading the gate's own value matters: with
+ * @ref GnssProcessor::NetworkEstimator::kNullSpaceTol "NetworkEstimator::kNullSpaceTol").  Reading the gate's own value matters: with
  * an armed (deeper) tolerance, the families the calibration moved above the cutoff
  * are weak but real, and soft-anchoring them would put prior information on real
  * parameters.  A direction is a target when a phase-bias column spans it with
@@ -103,7 +103,7 @@ struct PhaseHealEvent {
  *                                see the EpochWorkspace writer-site contract in
  *                                network/driver/RunTypes.hpp).
  * @param healed_out              [out, optional] per-column attribution
- *                                (@ref PhaseHealEvent), appended, for the caller's
+ *                                (@ref GnssProcessor::PhaseHealEvent "PhaseHealEvent"), appended, for the caller's
  *                                trace_events rows.  @c nullptr (the default)
  *                                records nothing.  Observational only: it does not
  *                                change which columns are selected or what prior
@@ -157,7 +157,7 @@ int healNearNullPhaseBias(NetworkEstimator& est,
  * @param n_gated_key_epochs  [in/out] ctx.counters run-end telemetry.
  * @param gap_ledger          The arc ledger, only under @c network.n3c_ledger_lifecycle:
  *                            a station whose admitted arc of a key is in Gap counts as
- *                            tracking it (@ref networkPhaseGateCountGapTrackers).  Null
+ *                            tracking it (@ref GnssProcessor::networkPhaseGateCountGapTrackers "networkPhaseGateCountGapTrackers").  Null
  *                            (the default): the gate counts present stations only,
  *                            byte-identical.
  */
@@ -371,10 +371,19 @@ struct AnchorCandidacyUsable {
  * retained incumbent re-pinned at its held-basis value.  A key with no tracker is
  * left out of @p shared_phase_keys, so every shared key other than a bridged one
  * (see @p hyg) has exactly one pin.  A key whose pin still fails to fold is
- * orphaned, which is a case @ref healNearNullPhaseBias exists to catch.
+ * orphaned, which is a case @ref GnssProcessor::healNearNullPhaseBias "healNearNullPhaseBias" exists to catch.
  *
  * @param sticky            network.phase_datum_sticky (passed as a scalar so
  *                          this header needs no GnssConfig definition).
+ * @param[in,out] stations  The station roster.  Every station's @c pinned_amb_targets is cleared,
+ *                          then the elected anchor's pin (ambiguity key to target, m) is written
+ *                          to its own table.
+ * @param present           This epoch's presence mask, one entry per station (only a present
+ *                          station can be elected or kept as incumbent).
+ * @param cnd               Candidate census, read only: each station's anchorable keys
+ *                          (@c usable_keys), the coverage-gated union of keys (@c union_keys), the
+ *                          per-constellation coverage (@c cover) and candidate stations
+ *                          (@c cand_set).
  * @param hyg               eq34 reattach hygiene verdicts (see
  *                          network/solve/AnchorHygiene.hpp).  Default-constructed
  *                          (inactive), it leaves the election unchanged.  When
@@ -391,7 +400,14 @@ struct AnchorCandidacyUsable {
  *                          be the run's ctx.carry instance: a copy degrades the
  *                          election to a fresh one every epoch, which shows only
  *                          as handover churn.
+ * @param[in,out] anchor_pin_target  Sticky continuous-handover targets: ambiguity key to the
+ *                          pin target (m) of the incumbent that took over continuously.  Read to
+ *                          re-apply the target every epoch the incumbent stays; replaced at the
+ *                          end by this epoch's targets.  Must be the run's persistent map.
  * @param this_epoch_anchor [out] read at the emit site for handover signalling.
+ * @param[out] shared_phase_keys  The phase-bias keys of the elected union, cleared on entry and
+ *                          refilled: a key with no tracker is left out, so each other key (a
+ *                          bridged one aside) has exactly one pin.
  * @param handover          Two-edge continuous handover
  *                          (docs/record/SPEC_pivot_visibility_gauge_defect.md §5.1).
  *                          @c nullptr (the default) is the election without the
@@ -416,13 +432,16 @@ struct AnchorCandidacyUsable {
  *                          network that never handed over is byte-identical even
  *                          with the ledger supplied.
  * @param handovers_out     [out, optional] per-handover attribution
- *                          (@ref AnchorHandoverEvent), appended, for the caller's
+ *                          (@ref GnssProcessor::AnchorHandoverEvent "AnchorHandoverEvent"), appended, for the caller's
  *                          @c trace_events rows; one record holds both edges.
  *                          Observational only: it does not change which station is
  *                          elected or what target is pinned.  Filled whenever it
  *                          is non-null, including when @p handover is @c nullptr,
  *                          so the churn of an unarmed arm can be measured before
  *                          the fix is armed.
+ * @param max_var           Absolute variance ceiling (m^2) on a successor's ledger entry for a
+ *                          continuous handover: an entry above it is refused and the handover
+ *                          pins at 0 (cold).  Used only with @p handover.
  * @param reref_out         [out, optional] queue item 1(d)
  *                          (docs/record/SPEC_pivot_visibility_gauge_defect.md §5.07.5 R1):
  *                          the (sat, signal) families, inserted, whose pin this
@@ -441,16 +460,20 @@ struct AnchorCandidacyUsable {
  *                          ctx.carry.phase_anchor_reref, where the D2/C1
  *                          shared-carry consume marginalizes those PB keys for one
  *                          epoch (as for @c eq34_reref) and
- *                          @ref networkApplyPhaseAnchorCarryReref erases the
+ *                          @ref GnssProcessor::networkApplyPhaseAnchorCarryReref "networkApplyPhaseAnchorCarryReref" erases the
  *                          families' phase-leveling local carries.  @c nullptr
  *                          (the default, and the knob-off path) is byte-identical:
  *                          nothing is inserted and nothing downstream fires.
  *                          Unlike @p handovers_out this output is not
  *                          observational: its consumers change which priors fold.
+ * @param max_var_ratio     Ceiling on a successor's ledger variance relative to its first-stash
+ *                          variance (dimensionless): an entry above @p max_var_ratio times its
+ *                          first variance is refused like one above @p max_var.  0 (the default)
+ *                          disables the ratio test.
  * @param inject        Event-harness directive set (network/carry/Inject.hpp), or
  *                      @c nullptr, which is the normal path and every unarmed run.
  *                      It also carries the anchor-slip handovers staged by
- *                      @ref networkStageAnchorSlipHandovers.  When a staged
+ *                      @ref GnssProcessor::networkStageAnchorSlipHandovers "networkStageAnchorSlipHandovers".  When a staged
  *                      @c anchor_handover covers a family, the incumbent is
  *                      excluded from candidacy for this epoch only (forcing a
  *                      successor).  In @c cold mode the continuous-handover branch
@@ -497,6 +520,10 @@ struct AnchorCandidacyUsable {
  *                      the continuous/cold decision and every target computation
  *                      are unchanged; the pass changes only which station reaches
  *                      the continuous branch.
+ * @param held          Held S-basis settings and counters (@c network.phase_datum_held_basis),
+ *                      or @c nullptr, which leaves the election unchanged.  When @c on, a
+ *                      candidate must pass the arc-age and screen-flag gates and candidates are
+ *                      ranked by elevation; refusals and depositions are counted in it.
  * @param gate_drop     Coverage-gate drop edge
  *                      (@c network.phase_datum_gate_drop_erase), or @c nullptr, which
  *                      leaves the election unchanged.  When supplied, this epoch's
@@ -508,7 +535,7 @@ struct AnchorCandidacyUsable {
  *                      @p reref_out, so the family takes the path the return edge
  *                      already takes: the D2/C1 shared-carry consume marginalizes
  *                      its PB key for one epoch and
- *                      @ref networkApplyPhaseAnchorCarryReref erases every
+ *                      @ref GnssProcessor::networkApplyPhaseAnchorCarryReref "networkApplyPhaseAnchorCarryReref" erases every
  *                      station's carried ambiguity of it before assembly, in the
  *                      same epoch.  Otherwise the surviving stations' carried
  *                      floats absorb the removed bias whole (EV7 §5.3).
@@ -522,6 +549,10 @@ struct AnchorCandidacyUsable {
  *                      election's loop, so it cannot be a handover or a first
  *                      sighting in the same epoch: the drop-edge marks and the
  *                      §5.07.5 R1 marks are disjoint populations.
+ * @param reentry       Anchor re-entry view (the ledger and the drop-edge memory), or
+ *                      @c nullptr, which leaves the election unchanged.  Its first-sighting rows
+ *                      and counters are written; with its restore half armed, a family whose
+ *                      previous incumbent returned in the same generation restores it.
  */
 void networkElectPhaseAnchors(
         bool sticky,
@@ -555,7 +586,7 @@ void networkElectPhaseAnchors(
  *        slip response freed this epoch.
  *
  * Each phase-bias family is realized at one station's ambiguity: the anchor
- * @ref networkElectPhaseAnchors elected and keeps electing while it is sticky.  When
+ * @ref GnssProcessor::networkElectPhaseAnchors "networkElectPhaseAnchors" elected and keeps electing while it is sticky.  When
  * a detector drain frees that arc, nothing else hands the family over: the sticky
  * election re-elects the slipped incumbent, and the gauge is re-realized from an arc
  * whose level is about to be re-drawn from one epoch of code.  The error then spreads
@@ -571,7 +602,7 @@ void networkElectPhaseAnchors(
  * forces the event, not the outcome.
  *
  * Call it after every PASS-A slip drain (both freed sets must be complete) and
- * immediately before @ref networkElectPhaseAnchors, whose @p inject argument must
+ * immediately before @ref GnssProcessor::networkElectPhaseAnchors "networkElectPhaseAnchors", whose @p inject argument must
  * then be non-null whenever this function returned a positive count.
  *
  * @param stations            The station roster; only @c name is read.  Index
@@ -705,6 +736,15 @@ StationStep networkPhaseDatumPinRows(StationBuild& build);
  *
  * A free function (formerly Application::networkIsGaugePinned_), so the station
  * steps in the family files can call it.
+ *
+ * @param stations                The station roster (read only).
+ * @param phase_datum_prioritized True for the prioritized (per-(sat, signal)) datum, false for the
+ *                                legacy pivot-station datum.
+ * @param i                       Index of the station in @p stations.
+ * @param sat                     Satellite id of the ambiguity.
+ * @param signal                  Signal id of the ambiguity.
+ * @return Under the legacy datum, whether station @p i is the pivot; under the prioritized datum,
+ *         whether the station's elected @c pinned_amb_targets holds this (sat, signal) ambiguity.
  */
 bool networkIsGaugePinned(const std::vector<NetStation>& stations, bool phase_datum_prioritized,
                           size_t i, const std::string& sat, const std::string& signal);
@@ -715,10 +755,10 @@ bool networkIsGaugePinned(const std::vector<NetStation>& stations, bool phase_da
     struct PhaseDatumCounters {
         // Coverage-threshold union gate (network.phase_datum_min_stations): epochs on
         // which >=1 thin column was excluded, and the cumulative column-epoch count.
-        size_t n_gated_epochs = 0, n_gated_key_epochs = 0;
+        size_t n_gated_epochs = 0, /**< epochs on which at least one thin column was excluded from the union */ n_gated_key_epochs = 0;   ///< cumulative column-epoch count of those exclusions
         // Column-epochs the gate kept because the ledger held an admitted arc of the key in
         // Gap (network.n3c_ledger_lifecycle): keys below the bar on present stations alone.
-        size_t n_gated_gap_kept = 0;
+        size_t n_gated_gap_kept = 0;   ///< column-epochs kept because the ledger held an admitted arc of the key in Gap
     };
 
 } // namespace GnssProcessor

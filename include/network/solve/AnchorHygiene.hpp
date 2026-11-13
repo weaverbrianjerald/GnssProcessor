@@ -80,7 +80,7 @@
  * It owns no state. Arc ages live in @c net::ArcState::anchor_arc_age, open bridges and
  * harvested levels in @c net::SatSignalState::pin_bridge and @c pb_level_prev, the
  * hold-out set in @c NetworkCarryState::anchor_blocked, and every counter in
- * @ref NetworkServiceCounters. With `ctx.knobs.anchor_hygiene_on` false the seam resets
+ * @ref GnssProcessor::NetworkServiceCounters "NetworkServiceCounters". With `ctx.knobs.anchor_hygiene_on` false the seam resets
  * the output verdicts to their default and returns, allocating no map and folding no
  * row.
  */
@@ -325,7 +325,7 @@ struct AnchorHygieneCounters {
     // set (the eq34 chain datum counts it only while that knob is set), because the
     // handover and re-reference run-end sections use it as their denominator. All are
     // reported by networkAnchorHygieneRunEnd (network/solve/AnchorHygiene.cpp).
-    NetworkAnchorTallies hyg;
+    NetworkAnchorTallies hyg;   ///< The anchor-hygiene family's run tallies (@ref NetworkAnchorTallies).
 };
 
 } // namespace GnssProcessor

@@ -245,6 +245,10 @@ void eq34ShiftCarry(NetworkCarryState& carry, net::NetworkEntities& entities,
  *                      roots (a bridged satellite is grounded by its shared
  *                      pseudo-obs row instead of a parent edge) and (c) supplies the
  *                      σ multiplier for pins the eligible pass could not avoid.
+ * @param carry_slipped_ambs  This epoch's complete slip funnel as (station index, ambiguity
+ *                      key), read only under @c network.phase_datum_eq34_slip_aware_election;
+ *                      a slipped arc is then kept out of the spanning tree where the graph
+ *                      allows it.  Not modified.
  * @param shared_phase_keys [out] the post-gate union's phase-bias keys.
  * @param events The epoch's events; writes phase_datum.
  * @param now_s  This epoch in continuous GPS seconds (the root row's carry age); 0 when omitted.
@@ -363,9 +367,9 @@ struct ChainDatumCounters {
     //                 mass-refloat, and a large share here means the topology, not the
     //                 election, is the binding constraint (so "deseeded > 0" does not
     //                 mean "no tree edge slipped").
-    long long eq34_slip_deseeded   = 0;
-    long long eq34_slip_demoted    = 0;
-    long long eq34_slip_readmitted = 0;
+    long long eq34_slip_deseeded   = 0;   ///< slipped incumbents denied their sticky tree seat
+    long long eq34_slip_demoted    = 0;   ///< slipped arcs whose arcLife ranking was pushed below the clean band (once per arc per epoch)
+    long long eq34_slip_readmitted = 0;   ///< slipped arcs that became tree edges anyway, the component having no other route to the vertex
     // Run tallies of the chain-pin audit, keyed "<cons>|<signal>" (the election's dr_key).
     // A pin can leak silently from a three-stage pipeline: declared (the election's
     // per-group Σ (n_c + m_c) gauge dimension), folded (foldAmb/foldRpb built the 1e10
@@ -377,6 +381,9 @@ struct ChainDatumCounters {
     // like a working one.  Accumulated serially after PASS B's
     // consume; logged once by networkChainDatumRunEnd.  All zero unless
     // network.phase_datum_eq34.
+    /// @brief Run tallies of the eq34 chain-pin audit per "cons|signal" group: pins declared by
+    ///        the election, folded into station rows, landed on accepted stations, or lost on
+    ///        the way, with the epochs that fell short.
     struct Eq34PinAudit {
         std::map<std::string, long long> declared;         ///< Σ per-epoch gauge dim (n_c+m_c)
         std::map<std::string, long long> bridged;          ///< Σ hygiene bridge pins (shared-side)
@@ -388,7 +395,7 @@ struct ChainDatumCounters {
         std::map<std::string, int>       short_epochs;     ///< epochs with landed < declared − bridged
         std::map<std::string, int>       worst_short;      ///< max per-epoch shortfall
         int epochs = 0;                                    ///< audited (consumed, non-aborted) epochs
-    } eq34_pin_audit;
+    } eq34_pin_audit;   ///< The run's chain-pin audit tallies.
     // Run tallies of the seed round.  The audit asserts |pin innovation| ≤ λ/2
     // at all times, so a max_abs_y above λ_max/2 is a logic error.  `pins` counts
     // election-side targets (the state existed at election time); `deferred` counts
@@ -396,11 +403,11 @@ struct ChainDatumCounters {
     // `target_steps` counts same-station target changes between epochs (the reref
     // pressure this knob generates; about 0 expected on static receivers).  All zero
     // unless network.phase_datum_eq34_seed_round.
-    long long seed_round_pins         = 0;
-    long long seed_round_deferred     = 0;
+    long long seed_round_pins         = 0;   ///< election-side targets (the ambiguity state existed at election time)
+    long long seed_round_deferred     = 0;   ///< fold-computed targets (state allocated in PASS B: cold start and new arcs)
     long long seed_round_frozen       = 0;   ///< targets reused verbatim from eq34_prev_target, so the frame is realized once
-    long long seed_round_target_steps = 0;
-    double    seed_round_max_abs_y_m  = 0.0;
+    long long seed_round_target_steps = 0;   ///< same-station target changes between epochs (the reref pressure the knob generates)
+    double    seed_round_max_abs_y_m  = 0.0; ///< largest |pin innovation| (target minus float, m); above half the longest wavelength is a logic error
     // Re-host tallies.  `framed` = re-hosts whose frame step was computed
     // from the new host's own state and therefore stayed shiftable (the carried PB
     // prior is S-transformed, not marginalized); `cold` = re-hosts that could
@@ -410,9 +417,9 @@ struct ChainDatumCounters {
     // frame-consistent, so a large value signals that the solution at the new host had
     // drifted off the realized frame: read it as a diagnostic of the runaway the audit
     // probes, never as a quality bound.
-    long long seed_round_rehost_framed  = 0;
-    long long seed_round_rehost_cold    = 0;
-    double    seed_round_rehost_max_step_m = 0.0;
+    long long seed_round_rehost_framed  = 0;   ///< re-hosts whose frame step was computed from the new host's own state (stayed shiftable)
+    long long seed_round_rehost_cold    = 0;   ///< re-hosts that could not be framed (no allocated state): the legacy unknown-step reref
+    double    seed_round_rehost_max_step_m = 0.0;   ///< largest |frame step| any framed re-host applied (m); a diagnostic, not a quality bound
 
     // One-solve frame skips: the frame stepped, so the carried value is stale in the
     // old gauge; the same epoch's harvest re-stashes any still-tracked arc, so the
@@ -424,15 +431,15 @@ struct ChainDatumCounters {
     // signal) family that a phase-bias shift moved (the eq34 shift, the declared anchor
     // handover) and that stayed in the old frame: PbHold is exempt from both shifts with or
     // without network.carry_rebase_complete.  Measure-only.
-    long long prm_pbhold_unmoved_at_shift = 0;
+    long long prm_pbhold_unmoved_at_shift = 0;   ///< held phase-bias emissions of a shifted (satellite, signal) family that stayed in the old frame
     // Run-scope observability counters of the eq34 datum, logged once in the run-end producer
     // summary (the per-epoch reref/erase lines are debug-only, so these totals are the
     // only non-debug record of the reref volume).  Untouched on non-eq34 runs.
-    long long eq34_reref_total = 0, eq34_erase_total = 0;
-    long long eq34_shift_total = 0;   // carry values S-transformed over the run
-    long long eq34_cpl_sprev_total = 0;   // coupling s_prev references re-based with those shifts; structurally 0 with coupling off, since the stashes are empty
-    long long eq34_gap_repin_total = 0;   // tree edges resumed from a carry-alive gap, re-pinned to their pre-gap integer instead of re-leveling from 0
-    int eq34_mismatch_epochs = 0;
+    long long eq34_reref_total = 0, /**< (satellite, signal) re-references over the run */ eq34_erase_total = 0;   ///< local ambiguity carries erased for those re-references
+    long long eq34_shift_total = 0;   ///< carry values S-transformed over the run
+    long long eq34_cpl_sprev_total = 0;   ///< coupling s_prev references re-based with those shifts; structurally 0 with coupling off, since the stashes are empty
+    long long eq34_gap_repin_total = 0;   ///< tree edges resumed from a carry-alive gap, re-pinned to their pre-gap integer instead of re-leveling from 0
+    int eq34_mismatch_epochs = 0;   ///< epochs whose recorded pin count differed from the gauge dimension (the rank cross-check)
     // The pair family (network.phase_datum_eq34_family "pair"); all four stay 0 with the knob off.
     // A pair family that is elected but never attaches a band-only vertex is the ordinary case on a
     // bed where every arc carries both bands, so the last two are read against the bed, not alone.

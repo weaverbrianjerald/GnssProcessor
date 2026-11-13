@@ -4,10 +4,10 @@
  *        (W4-S2b, W5): the datum declaration, the shared-block clock datum
  *        builder, the satellite code-bias datum rows, a null-space rank gate and
  *        the per-epoch S-basis completion (SBC,
- *        @ref NetworkSbasis::completeSbasisDimension).
+ *        @ref GnssProcessor::NetworkSbasis::completeSbasisDimension "NetworkSbasis::completeSbasisDimension").
  *
- * @ref NetworkEstimator owns the per-epoch shared satellite-parameter column
- * layout and @ref NetworkNormalEquations is the pure Schur kernel; this class
+ * @ref GnssProcessor::NetworkEstimator "NetworkEstimator" owns the per-epoch shared satellite-parameter column
+ * layout and @ref GnssProcessor::NetworkNormalEquations "NetworkNormalEquations" is the pure Schur kernel; this class
  * holds the S-system datum: which gauges are fixed, to what, and how the choice
  * is declared so that the emitted product is self-describing and a consumer can
  * check compatibility (Teunissen–Khodabandeh covariance).
@@ -19,20 +19,20 @@
  *    satellite clock of a constellation and to the receivers' clock/ISB of that
  *    constellation cancels on every row.  Every constellation, GPS included, is
  *    gauged the same way, by one of three configurable realizations
- *    (@ref SbasisDeclaration::IsbDatum):
+ *    (@ref GnssProcessor::SbasisDeclaration::IsbDatum "SbasisDeclaration::IsbDatum"):
  *      * a shared hard pin on one satellite's clock column per constellation
- *        (@ref NetworkEstimator::Datum), the legacy anchor-based "pivot" datum;
+ *        (@ref GnssProcessor::NetworkEstimator::Datum "NetworkEstimator::Datum"), the legacy anchor-based "pivot" datum;
  *      * a per-constellation sum-to-zero over that constellation's satellite
  *        clocks (@c network.clock_datum_sum_to_zero), folded as a tight all-ones
  *        gauge row like the code-bias sum-to-zero rows of
- *        @ref NetworkSbasis::buildCodeBiasDatumRows; anchor-free, so there is no
+ *        @ref GnssProcessor::NetworkSbasis::buildCodeBiasDatumRows "NetworkSbasis::buildCodeBiasDatumRows"; anchor-free, so there is no
  *        pivot and no handover seam; or
  *      * a soft anchor of each satellite clock to its own a-priori clock
  *        (@c network.clock_datum_broadcast_anchored), one single-entry row per
  *        satellite.
- *    In the two constraint-realized modes the shared @ref Datum is empty: the
+ *    In the two constraint-realized modes the shared @c Datum is empty: the
  *    folded rows pin the clock gauge before the rank gate, so the reduced shared
- *    system is full-rank, @ref Plan::declared_dimension is 0, and @ref Plan
+ *    system is full-rank, @ref GnssProcessor::NetworkSbasis::Plan::declared_dimension "Plan::declared_dimension" is 0, and @ref GnssProcessor::NetworkSbasis::Plan "Plan"
  *    carries the constraint rows instead.
  *    No system is anchored to a receiver clock; each station's receiver
  *    clock/ISB stays a free local state that absorbs the constellation's lump.
@@ -44,13 +44,13 @@
  *    pivot receiver's ambiguities, so the estimable phase bias carries the
  *    pivot-receiver ambiguity lump (Odijk Eq. 4); the driver folds these pins into
  *    the pivot station's design rows, where they enter the Schur reduction.
- *    @ref SbasisDeclaration::AmbDatum lists the other conventions.  None of them
- *    appears in the shared @ref NetworkEstimator::Datum produced here.
+ *    @ref GnssProcessor::SbasisDeclaration::AmbDatum "SbasisDeclaration::AmbDatum" lists the other conventions.  None of them
+ *    appears in the shared @ref GnssProcessor::NetworkEstimator::Datum "NetworkEstimator::Datum" produced here.
  *
  * In the pin datum, therefore, the shared datum this builder emits is exactly the
  * per-constellation clock pins: once the local ambiguity pins are eliminated, the
- * reduced shared normals have exactly @c #constellations residual deficiencies,
- * which the @ref assertNullSpaceRank gate verifies before the solve.  In the
+ * reduced shared normals have exactly @c \#constellations residual deficiencies,
+ * which the @ref GnssProcessor::NetworkSbasis::assertNullSpaceRank "assertNullSpaceRank" gate verifies before the solve.  In the
  * constraint-realized datums the folded rows pin the clock gauges instead, so the
  * reduced shared normals are full-rank and the gate's declared dimension is 0.
  *
@@ -152,7 +152,7 @@ struct SbasisDeclaration {
     ///    @c NetworkProductReader::checkContract, as intended.
     enum class AmbDatum { PivotReceiverZeroAmbiguity, SumToZeroPerReceiver,
                           SingleReceiverChain }
-        amb_datum{ AmbDatum::PivotReceiverZeroAmbiguity };
+        amb_datum{ AmbDatum::PivotReceiverZeroAmbiguity };   ///< The ambiguity datum convention the product declares (@c AmbDatum); the pivot-receiver form by default.
     /// Inter-system / clock-gauge datum.  Every constellation, GPS included, has
     /// its clock gauge fixed on that constellation's own satellite clocks; no
     /// system is anchored to a receiver clock, and each station's receiver
@@ -199,7 +199,7 @@ struct SbasisDeclaration {
     ///    the consumer absorbs into its receiver clock.
     enum class IsbDatum { PerConstellationSatClockPin, SumToZeroPerConstellation,
                           BroadcastAnchoredPerSatellite }
-        isb_datum{ IsbDatum::PerConstellationSatClockPin };
+        isb_datum{ IsbDatum::PerConstellationSatClockPin };   ///< The clock-gauge (inter-system) datum convention the product declares (@c IsbDatum); the per-constellation satellite clock pin by default.
     /// Used by BroadcastAnchoredPerSatellite only: 1σ (m) of the per-satellite clock
     /// anchor pseudo-observation that realizes the clock gauge.  The driver
     /// resolves it from @c network.apriori_clock_anchor_sigma_m, or the brdc_rts
@@ -207,7 +207,7 @@ struct SbasisDeclaration {
     double broadcast_anchor_sigma_m{ 3.0 };
     /// SingleReceiverChain diagnostic: the component-0 datum receiver r1,
     /// whose RPB was pinned.  Serialized as the optional S-line token
-    /// @c pdr=<station> when non-empty.  Diagnostic only (Odijk §6: the user never
+    /// @c pdr=\<station\> when non-empty.  Diagnostic only (Odijk §6: the user never
     /// needs the network pivot) and not part of the compatibility check in
     /// @c NetworkProductReader::checkContract.  Empty means unset: nothing is
     /// written, so replay and older readers are unaffected, as with @c gid=.
@@ -236,7 +236,7 @@ struct SbasisDeclaration {
     /// absolute level that the GIM common-mode-free iono weighting leaves free).
     /// Recorded so a consumer can check compatibility.
     enum class CodeBiasDatum { SumToZeroPerConstellation }
-        code_bias_datum{ CodeBiasDatum::SumToZeroPerConstellation };
+        code_bias_datum{ CodeBiasDatum::SumToZeroPerConstellation };   ///< The satellite code-bias datum convention the product declares (@c CodeBiasDatum).
 };
 
 /**
@@ -248,7 +248,7 @@ public:
     /// One shared solution epoch's datum plan.
     struct Plan {
         NetworkEstimator::Datum shared_datum;            ///< Shared hard pins: one satellite-clock pin per constellation in pin mode; empty in the sum-to-zero and broadcast-anchored modes.
-        int declared_dimension{ 0 };                     ///< Expected residual shared null-space dimension: #constellations in pin mode (= shared_datum.size()); 0 in the sum-to-zero and broadcast-anchored modes (clock gauges folded before the gate).
+        int declared_dimension{ 0 };                     ///< Expected residual shared null-space dimension: \#constellations in pin mode (= shared_datum.size()); 0 in the sum-to-zero and broadcast-anchored modes (clock gauges folded before the gate).
         std::map<std::string, std::string> clock_pivot;  ///< Constellation char -> chosen pivot satellite (for the declaration and handover detection).  Empty in the sum-to-zero and broadcast-anchored modes (no pivot).
         /// Constraint-realized clock datums only: gauge rows that the driver folds
         /// onto the shared border via @ref NetworkEstimator::addSharedConstraintRows
@@ -294,7 +294,7 @@ public:
 
     /// Tight gauge-row information weight (= 1/σ²) for the per-epoch S-basis
     /// completion rows (@ref completeSbasisDimension, SBC).  Equal by design to its
-    /// siblings @ref kClockGaugeWeight and @ref kCodeBiasGaugeWeight: a completion
+    /// siblings @ref kClockGaugeWeight and @ref GnssProcessor::NetworkSbasis::kCodeBiasGaugeWeight "kCodeBiasGaugeWeight": a completion
     /// row pins a measured (near-)null direction, so like the other two it fixes a
     /// gauge without biasing the estimable structure.  The completion emits no rows
     /// when this weight would not clear the armed rank-gate cutoff by at least two
@@ -463,9 +463,12 @@ public:
         Dependent,      ///< Sum-to-zero kept: every satellite the family row would span has its secondary column pinned by a geometry-free row or an extra-band hold, so the row would be a combination of those rows and add no rank.
     };
 
-    /// The name of a @ref FamilyRowOutcome as the log and the event rows print it
+    /// @brief The name of a @ref FamilyRowOutcome as the log and the event rows print it
     /// ("family_veteran", "family_reseed", "bridged", "no_common", "no_partner",
     /// "dependent").
+    /// @param o The outcome to name.
+    /// @return A static, null-terminated lower-case name, one per enumerator ("unknown" for a
+    ///         value outside the enumeration).
     static const char* familyRowOutcomeName(FamilyRowOutcome o);
 
     /// One secondary-family code channel's level realization in one epoch.
@@ -474,7 +477,9 @@ public:
         std::string      partner;   ///< The chosen same-band primary-family partner ("C1C"); empty for @ref FamilyRowOutcome::NoPartner.
         FamilyRowOutcome outcome{FamilyRowOutcome::NoPartner};  ///< Which row, and why.
         int              reseed_sats{0};  ///< Satellites a @ref FamilyRowOutcome::FamilyReseed marked for a discontinuity (the channel's satellites seen before, or all of them on a resumed run).
-        /// Whether the family-difference row (not the sum-to-zero row) took the slot.
+        /// @brief Whether the family-difference row (not the sum-to-zero row) took the slot.
+        /// @return true for @ref FamilyRowOutcome::FamilyVeteran and
+        ///         @ref FamilyRowOutcome::FamilyReseed; false when the sum-to-zero row was kept.
         bool familyRow() const {
             return outcome == FamilyRowOutcome::FamilyVeteran
                 || outcome == FamilyRowOutcome::FamilyReseed;
@@ -482,7 +487,7 @@ public:
     };
 
     /// Per-(constellation, band) counters of the family-difference arm, summed
-    /// once per kept epoch by @ref networkCodeDatumFamilyKeptEpoch: one count per channel
+    /// once per kept epoch by @ref GnssProcessor::networkCodeDatumFamilyKeptEpoch "networkCodeDatumFamilyKeptEpoch": one count per channel
     /// and kept epoch, by @ref FamilyRowOutcome.
     struct CodeDatumFamilyCounts {
         int family_veteran{0};  ///< @ref FamilyRowOutcome::FamilyVeteran.
@@ -492,11 +497,13 @@ public:
         int no_common{0};       ///< @ref FamilyRowOutcome::NoCommon.
         int no_partner{0};      ///< @ref FamilyRowOutcome::NoPartner.
         int dependent{0};       ///< @ref FamilyRowOutcome::Dependent.
-        /// Count one channel's realization.
+        /// @brief Count one channel's realization.
+        /// @param r The channel's realization this epoch; its outcome selects the counter and
+        ///          its @c reseed_sats adds to @ref reseed_sats.
         void add(const FamilyRowRealization& r);
     };
 
-    /// Result of @ref codeFamilyDiffTimeLink: the time-linked family-difference row for
+    /// Result of @ref GnssProcessor::NetworkSbasis::codeFamilyDiffTimeLink "codeFamilyDiffTimeLink": the time-linked family-difference row for
     /// one secondary-family channel and its partner.
     struct CodeFamilyDiffTimeLink {
         std::vector<std::string> jac_sats;  ///< Satellites with +1 on the secondary column and -1 on the partner's: the veterans when one exists, else every common satellite.
@@ -536,8 +543,11 @@ public:
         Both,       ///< Neither column continues (a rising satellite seen by both families, a return past the seed horizon, or the run's first epoch).
     };
 
-    /// The name of a @ref FamilyBirthSide as the event rows print it in their action
+    /// @brief The name of a @ref FamilyBirthSide as the event rows print it in their action
     /// column ("x_born", "partner_born", "both_born").
+    /// @param s The side to name.
+    /// @return A static, null-terminated lower-case name, one per enumerator ("unknown" for a
+    ///         value outside the enumeration).
     static const char* familyBirthSideName(FamilyBirthSide s);
 
     /// How this epoch's D2 carry folds one satellite code-bias column, as the first-sighting
@@ -562,7 +572,9 @@ public:
         std::string     sat;                               ///< RINEX satellite id.
         FamilyBirthSide side{FamilyBirthSide::Secondary};  ///< The column(s) born.
         bool            loosened{false};                   ///< A born column has a previous value, but the carry folds it @ref CodeBiasCarry::Loosened.
-        /// Field-wise equality (the unit tests compare plans).
+        /// @brief Field-wise equality (the unit tests compare plans).
+        /// @param o The birth to compare against.
+        /// @return true when @c sat, @c side and @c loosened all match.
         bool operator==(const FamilyBirth& o) const {
             return sat == o.sat && side == o.side && loosened == o.loosened;
         }
@@ -575,8 +587,11 @@ public:
         NoReference,  ///< Born, but with no realized family mean to target: no veteran, and the family row does not re-seed the offset this epoch (@ref FamilyRowOutcome::Bridged, or Dependent with no veteran).
     };
 
-    /// The name of a @ref FamilyBirthSkip as the run-end line and the event rows print it
+    /// @brief The name of a @ref FamilyBirthSkip as the run-end line and the event rows print it
     /// ("seeded", "carried", "no_reference").
+    /// @param s The skip reason to name.
+    /// @return A static, null-terminated lower-case name, one per enumerator ("unknown" for a
+    ///         value outside the enumeration).
     static const char* familyBirthSkipName(FamilyBirthSkip s);
 
     /// Result of @ref codeFamilyBirthPriors for one secondary-family channel and its
@@ -688,9 +703,12 @@ public:
         int no_reference{0};  ///< Born satellites with no realized family mean to target (@ref FamilyBirthSkip::NoReference): no row.
         double max_abs_mu_m{0.0};      ///< The largest |target| folded, metres.
         std::set<std::string> sats;    ///< The satellites that received at least one row.
-        /// Count one folded row.
+        /// @brief Count one folded row.
+        /// @param b The folded row's record: its birth side selects the counter, and @c mu_m
+        ///          feeds @ref max_abs_mu_m.
         void add(const FamilyBirthPrior& b);
-        /// Count one skip.
+        /// @brief Count one skip.
+        /// @param s The skipped satellite's record; its reason selects the counter.
         void add(const FamilyBirthSkipRecord& s);
     };
 
@@ -721,7 +739,7 @@ public:
     static const char* pinPairContinuityBlocker(NetworkSatGfDatum sat_gf_datum,
                                                 bool sat_gf_datum_time_linked);
 
-    /// Result of @ref buildCodeBiasDatumRows: stacked W6 gauge rows for the driver
+    /// Result of @ref GnssProcessor::NetworkSbasis::buildCodeBiasDatumRows "buildCodeBiasDatumRows": stacked W6 gauge rows for the driver
     /// to fold via NetworkEstimator::addSharedConstraintRows at
     /// @ref kCodeBiasGaugeWeight (and mirror into the RAIM-replay cap channel).
     struct CodeBiasDatumRows {
@@ -737,7 +755,7 @@ public:
         int n_sat_gf_tgd_hits{0};  ///< Of those rows, the ones pinned at a non-zero `c*T_GD` (c*BGD for Galileo) from the navigation message (RF-0c, `broadcast_tgd`).
         int n_sat_gf_tgd_zero{0};  ///< Rows whose satellite has a navigation record that broadcasts `T_GD = 0` exactly: physically pinned, numerically identical to `zero` (RF-0c, `broadcast_tgd`).  Kept apart from the fallbacks so that a broadcast zero is never read as a missing value.
         int n_sat_gf_tgd_missing{0}; ///< Rows whose satellite had no navigation record and fell back to a zero target (RF-0c, `broadcast_tgd`).
-        int n_sat_gf_pair_not_l1l2{0}; ///< Rows whose ionosphere-free pin pair is not one the latched broadcast group delay describes (@ref broadcastGroupDelayDescribesPair: (L1, L2) for every constellation but Galileo, (E1, E5a) for Galileo), so no broadcast value applies and the row falls back to a zero target rather than assert a delay for a pair the navigation message never referenced (RF-0c, `broadcast_tgd`).  The name predates the Galileo rule and is kept for the log and trace readers that key on it.
+        int n_sat_gf_pair_not_l1l2{0}; ///< Rows whose ionosphere-free pin pair is not one the latched broadcast group delay describes (@ref GnssProcessor::NetworkSbasis::broadcastGroupDelayDescribesPair "broadcastGroupDelayDescribesPair": (L1, L2) for every constellation but Galileo, (E1, E5a) for Galileo), so no broadcast value applies and the row falls back to a zero target rather than assert a delay for a pair the navigation message never referenced (RF-0c, `broadcast_tgd`).  The name predates the Galileo rule and is kept for the log and trace readers that key on it.
         int n_sat_gf_extra_rows{0};   ///< Extra per-signal geometry-free rows, one per registered code column outside the ionosphere-free pair whose band differs from the reference, unless RF-0f or B5D frees or holds it (RF-0d).  They make a sparse channel's level (GPS C2X) a datum rather than a quantity determined by the few stations that track it.
         int n_sat_gf_isc_zero{0};     ///< Extra rows folded under `broadcast_tgd`, carried ones included (RF-0d).  RINEX navigation carries no ISC for GPS (only T_GD), so an extra row anchored at the broadcast target asserts an inter-signal correction of zero.  Counted because that assertion is invisible on the wire: it is the part of a "broadcast" datum that the navigation message does not state.
         int n_sat_gf_sameband_free{0};///< Registered columns left unpinned on purpose (RF-0d): a channel in the reference's band has no geometry-free combination against it (the divisor is zero), and its difference is a pure ISC, observable without any ionosphere at any coverage.  Pinning it would discard estimable content.
@@ -795,7 +813,7 @@ public:
         /// The first-sighting family prior rows (
         /// @c network.code_family_birth_prior_sigma_m): one row per born satellite, +1 on
         /// its secondary-family column and −1 on its partner's, in channel-key order and,
-        /// within a channel, in the order of the channel's satellites.  NOT part of @ref H:
+        /// within a channel, in the order of the channel's satellites.  NOT part of @c H:
         /// these are soft priors on estimable differences, not gauge rows, so the driver
         /// folds them by their own call (@ref foldFamilyBirthRows, at
         /// @ref family_birth_weight under @c ContributionKind::CbFamilyBirth) and captures
@@ -1225,6 +1243,18 @@ public:
      * @param sat_gf_datum_time_linked  Carry each geometry-free row's RHS from the
      *                                  previous kept epoch, using the absolute target
      *                                  only at first sighting (RF-0e e2).
+     * @param sat_isc_state             @c network.sat_isc_state: leave the pin pair's
+     *                                  band-2 same-band companion unpinned where the
+     *                                  data determine its inter-signal correction (the
+     *                                  columns of @p isc_bridged), instead of pinning it
+     *                                  like any other extra column.  Off: every
+     *                                  companion is pinned, byte-identical.
+     * @param isc_bridged               The @c "sat|signal" keys of the companion columns
+     *                                  whose inter-signal correction the present
+     *                                  stations determine this epoch (some station tracks
+     *                                  both signals of the satellite).  Built by the
+     *                                  driver, which alone sees the stations; empty
+     *                                  unless @p sat_isc_state is armed.
      * @param sat_gf_extra_band_free    Fold no geometry-free row for an extra-band
      *                                  column (a registered signal whose band digit is
      *                                  neither of the pin pair's) that
@@ -1260,6 +1290,9 @@ public:
      *                                  keys (@ref codeFamilyBirthPriors).  The driver
      *                                  passes it only with the prior armed; empty, the
      *                                  test reads the previous-value map alone.
+     * @return The stacked gauge rows (@c H over the shared columns, targets @c z in
+     *         metres, one contribution kind per row), the side-channel rows of the family
+     *         arms and the per-datum counters; @c H has no rows when nothing folds.
      */
     static CodeBiasDatumRows buildCodeBiasDatumRows(
         const NetworkEstimator& est,
@@ -1345,7 +1378,7 @@ public:
         const std::function<double(const std::string&)>& freqOf,
         const std::pair<std::string, std::string>& reference = {});
 
-    /// Result of @ref codeS2zTimeLink: the time-linked sum-to-zero target for one
+    /// Result of @ref GnssProcessor::NetworkSbasis::codeS2zTimeLink "codeS2zTimeLink": the time-linked sum-to-zero target for one
     /// (constellation,signal) code-bias channel (@c network.code_datum_time_linked).
     struct CodeS2zTimeLink {
         std::vector<std::string> jac_sats;  ///< satellites getting @c +1 in the sum-to-zero row: the veterans when ≥1 exists, else every present satellite.
@@ -1619,11 +1652,11 @@ public:
      * (and no attribution for the refused extras), and the caller falls through to
      * the unchanged gate (→ withhold), because folding would be worse than
      * withholding:
-     *  - @ref GaugeCompletion::capped: more than @p max_extra separated extras.  A
+     *  - @ref GnssProcessor::NetworkSbasis::GaugeCompletion::capped "GaugeCompletion::capped": more than @p max_extra separated extras.  A
      *    mass deficiency is a pathological epoch (or a mis-set tolerance counting
      *    real directions as null), and pinning dozens of directions without notice
      *    would fabricate a solution.  Counted, never silent (standing invariant #3).
-     *  - @ref GaugeCompletion::weight_marginal: @ref kSbasisCompleteWeight is less
+     *  - @ref GnssProcessor::NetworkSbasis::GaugeCompletion::weight_marginal "GaugeCompletion::weight_marginal": @ref kSbasisCompleteWeight is less
      *    than two decades above the armed cutoff (K2 anti-fragility: the CB-ADM
      *    study rejected the prior-at-the-cutoff configuration).  Checked before the
      *    cap.
@@ -1742,7 +1775,7 @@ struct NetworkRunContext;
  * Reads the fold decision of every @c SharedParamKind::CodeBias entry of
  * @c ctx.carry.prev_carry, which @c networkCarryDecide makes once per loop epoch before
  * PASS B, so it is current at the builder (SB_SOLVEGLUE): Folded is
- * @ref NetworkSbasis::CodeBiasCarry::Carried, Seeded (a READMIT park inside the seed
+ * @c NetworkSbasis::CodeBiasCarry::Carried, Seeded (a READMIT park inside the seed
  * horizon whose column is back) is @c Seeded, Reinit (the clock monitor's soft refloat)
  * is @c Loosened, and every other disposition (Parked: the column absent or past the
  * horizon) leaves the column out.  An entry not decided this epoch (none on any current
@@ -1792,7 +1825,7 @@ NetworkSbasis::CodeBiasCarryMap networkCodeBiasCarryMap(const NetworkRunContext&
  * (@c events.code_datum.this_epoch_cb_family_births) is counted in
  * @c ctx.counters.cb_family_birth_by_band and declared as one "CB_DATUM" /
  * "family_birth_prior" event (statistic its target mu, threshold its sigma, action the
- * @ref NetworkSbasis::familyBirthSideName of the born column, detail the satellite, the
+ * @ref GnssProcessor::NetworkSbasis::familyBirthSideName "NetworkSbasis::familyBirthSideName" of the born column, detail the satellite, the
  * column born beside its partner, mu with its veteran count, and sigma).  Each skip
  * (@c events.code_datum.this_epoch_cb_family_birth_skips: a satellite a READMIT seed or the D2
  * fold continues without a previous value, or a birth with no realized family mean) is
@@ -1849,7 +1882,7 @@ int networkSbasisRunEnd(const NetworkRunEndView& v);
  * continued satellites, declared anyway (the emitted baseline was not the pair the
  * builder continued from, or a re-seed was pending) and deferred (the satellite was
  * outside the emission).  Family difference (@c network.code_datum_family_difference):
- * per constellation and band, the channel-epochs on each @ref
+ * per constellation and band, the channel-epochs on each @c
  * NetworkSbasis::FamilyRowOutcome and the row switches declared.  First-sighting family
  * prior (@c network.code_family_birth_prior_sigma_m, step 2): per constellation and band,
  * the soft rows folded and the satellites they reached, split by the column born, with
@@ -1859,7 +1892,7 @@ int networkSbasisRunEnd(const NetworkRunEndView& v);
  * with no realized family mean).  An arm the run cannot read is reported as INERT with
  * every missing prerequisite named: @c network.code_datum_time_linked,
  * @c network.estimate_sat_code_bias, for pair continuity a datum row that re-asserts an
- * absolute target (@ref NetworkSbasis::pinPairContinuityBlocker), and for the prior
+ * absolute target (@ref GnssProcessor::NetworkSbasis::pinPairContinuityBlocker "NetworkSbasis::pinPairContinuityBlocker"), and for the prior
  * @c network.code_datum_family_difference.  Prints nothing when every arm is off.
  *
  * Called by its row of the run-end table (the overload taking the view, below); a unit
@@ -1884,17 +1917,17 @@ struct SbasisCounters {
     // whose pinned pair is not (L1, L2).  The split matters because all three look
     // identical on the wire: only the fallback count says the run pinned a value the
     // navigation message never asserted.
-    size_t n_sat_gf_epochs = 0, n_sat_gf_rows = 0;
+    size_t n_sat_gf_epochs = 0, /**< epochs on which the hard per-satellite geometry-free datum folded */ n_sat_gf_rows = 0;   ///< geometry-free datum rows folded, cumulative
     // e2's split of geometry-free rows into carried (a change pin on the previous
     // solved value) and anchored (first sighting, the absolute broadcast target),
     // RF-0e.  The anchored count is the only place the broadcast frame is re-asserted
     // under e2, so a run with 0 of them has carried its frame from epoch 1 and never
     // re-checked it.
-    size_t n_sat_gf_carried = 0, n_sat_gf_anchored = 0;
+    size_t n_sat_gf_carried = 0, /**< geometry-free rows carried as a change pin on the previous solved value */ n_sat_gf_anchored = 0;   ///< geometry-free rows anchored at the absolute broadcast target (first sighting)
     // Band-2 companion columns left free because a station bridged the two signals,
     // and those pinned at 0 because none did (RF-0f).  The pinned ones are the part of a
     // C2X product that is asserted rather than estimated, and they are not emitted.
-    size_t n_isc_observed = 0, n_isc_pinned = 0;
+    size_t n_isc_observed = 0, /**< band-2 companion columns left free because a station bridged the two signals */ n_isc_pinned = 0;   ///< band-2 companion columns pinned at 0 because no station bridged the two signals
     // The three dispositions of an extra-band code-bias column under
     // `network.sat_gf_extra_band_free`: freed, because some station's cell
     // carried the pin pair's two bands and the signal; carried at its own previous
@@ -1905,8 +1938,8 @@ struct SbasisCounters {
     // (invariant #7) on the level the freed channels now stand on: the re-seeds of the
     // veteran-linked sum-to-zero row, and the satellites they marked for the
     // consumer's discontinuity channel.
-    size_t n_extra_band_free = 0, n_extra_band_carried = 0, n_extra_band_held = 0;
-    size_t n_s2z_reseed_rows = 0, n_s2z_reseed_sats = 0;
+    size_t n_extra_band_free = 0, /**< extra-band columns freed because some station's cell carried the pin pair's two bands and the signal */ n_extra_band_carried = 0, /**< extra-band columns carried at their own previous geometry-free combination */ n_extra_band_held = 0;   ///< extra-band columns held by a level row in the channel's own frame at a first sighting (withheld from the wire)
+    size_t n_s2z_reseed_rows = 0, /**< re-seeds of the veteran-linked sum-to-zero row (the channel's level re-references) */ n_s2z_reseed_sats = 0;   ///< satellites those re-seeds marked for the consumer's discontinuity channel
     /// Family clock datum (docs/record/refound/GFC_galileo_family_clock_datum_2026-10-10.md): the pin
     /// pair holds and changes per constellation
     /// (@c network.code_datum_pair_continuity) and the
@@ -1915,7 +1948,7 @@ struct SbasisCounters {
     /// @c networkCodeDatumFamilyKeptEpoch.  Read only by
     /// @c networkCodeDatumFamilyRunEnd; empty unless an arm is effective.
     std::map<System, NetworkSbasis::CodeDatumPairCounts> cb_pair_by_const;
-    std::map<std::pair<System, char>, NetworkSbasis::CodeDatumFamilyCounts> cb_family_by_band;
+    std::map<std::pair<System, char>, NetworkSbasis::CodeDatumFamilyCounts> cb_family_by_band;   ///< Secondary-family level realizations per (constellation, band digit), by outcome.
     /// The first-sighting family prior rows, and the satellites given no row, per
     /// (constellation, band digit) (
     /// @c network.code_family_birth_prior_sigma_m), counted once per kept epoch
@@ -1926,7 +1959,7 @@ struct SbasisCounters {
     /// denominator of the family-difference run-end line, and the switches of a
     /// channel between the family-difference row and the sum-to-zero row (or between
     /// partners) declared as "CB_DATUM"/"family_row" events.
-    size_t n_cb_family_epochs = 0, n_cb_family_switches = 0;
+    size_t n_cb_family_epochs = 0, n_cb_family_switches = 0;   ///< switches of a channel between the family-difference row and the sum-to-zero row (or between partners)
 };
 
 } // namespace GnssProcessor
