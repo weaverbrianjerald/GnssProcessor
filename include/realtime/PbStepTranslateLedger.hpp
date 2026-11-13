@@ -21,7 +21,7 @@
  * declared the step, and it holds for a move common to every tracked satellite,
  * which is then absorbed uniformly with no de-commoning and no change to the wire.
  *
- * The declared-step carry (@ref PbDiscCarryLedger) performs the same translation, but only on the
+ * The declared-step carry (@ref GnssProcessor::PbDiscCarryLedger "PbDiscCarryLedger") performs the same translation, but only on the
  * cells the producer declared.  Two populations measured on the RF-0hv field
  * lineage fall outside that gate:
  *   - 451 of 545 de-commoned phase-bias steps > 0.10 m are undeclared and land in
@@ -46,7 +46,7 @@
  * nothing.
  *
  * Counter closure (standing invariant #4): every visited (key, epoch) cell takes
- * exactly one outcome, so @ref Counters::closureHolds sums to @c cells.
+ * exactly one outcome, so @c Counters::closureHolds sums to @c cells.
  */
 #pragma once
 
@@ -92,11 +92,17 @@ public:
         uint64_t refused_undeclared{ 0 };     ///< Undeclared step blocked by a refusal class (no-op).
         uint64_t no_pair{ 0 };                ///< Undeclared cell with no usable (k−1, k) applied pair.
 
-        /// Σ of the four declared-reset counters.
+        /**
+         * @brief Σ of the four declared-reset counters.
+         * @return Declared cells that took the existing reset instead of a translation.
+         */
         uint64_t resets() const {
             return reset_first_sight + reset_basis + reset_bssd + reset_unknown_key;
         }
-        /// The closure identity: every visited cell took exactly one outcome.
+        /**
+         * @brief The closure identity: every visited cell took exactly one outcome.
+         * @return True when the outcome counters sum to @c cells; false flags an accounting defect.
+         */
         bool closureHolds() const {
             return translate_declared + translate_undeclared + skipped_eps + resets()
                        + refused_undeclared + no_pair
@@ -106,7 +112,7 @@ public:
 
     /// Outcome of one @ref react call.
     struct Decision {
-        Action action{ Action::None };
+        Action action{ Action::None };  ///< What was done for the key this epoch.
         double delta_m{ 0.0 };   ///< Δ = applied_now − applied_prev (m); valid when translated or skipped.
     };
 
@@ -139,24 +145,45 @@ public:
      * Call after @ref react for the key in the same epoch.  This epoch's Δ is taken
      * against the previous record, and the next epoch's Δ must be taken against the
      * value that the measurement update following the reaction applies.
+     *
+     * @param key           Ledger key ("sat|signal", e.g. "G32|L1W").
+     * @param applied_now   The model applies a phase bias this epoch.
+     * @param applied_now_m The value it applies (m); meaningless when @p applied_now is false.
      */
     void record(const std::string& key, bool applied_now, double applied_now_m) {
         applied_[key] = Applied{ applied_now, applied_now_m };
     }
 
-    /// The recorded applied value for @p key, if the key was recorded and a bias was applied.
+    /**
+     * @brief The recorded applied value for @p key, if the key was recorded and a bias was applied.
+     * @param key Ledger key ("sat|signal").
+     * @return The value (m) stored by the last @c record; @c std::nullopt when the key was
+     *         never recorded or its last record had no phase bias applied.
+     */
     std::optional<double> recorded(const std::string& key) const {
         const auto it = applied_.find(key);
         if (it == applied_.end() || !it->second.applied) return std::nullopt;
         return it->second.value_m;
     }
 
-    /// Number of keys with a record (applied or not).
+    /**
+     * @brief Number of keys with a record (applied or not).
+     * @return The count of distinct keys recorded so far.
+     */
     std::size_t size() const { return applied_.size(); }
 
+    /**
+     * @brief The run-end counters.
+     * @return Const reference to the live counters; they only increase.
+     */
     const Counters& counters() const { return ctr_; }
 
-    /// Stable name for logs / the CST trace / tests.
+    /**
+     * @brief Stable name for logs / the CST trace / tests.
+     * @param a The action.
+     * @return A static lowercase string such as "translate_disc", "translate_undeclared" or
+     *         "translate_skip_eps"; "?" for an out-of-range value.  Never null.
+     */
     static const char* actionName(Action a);
 
 private:

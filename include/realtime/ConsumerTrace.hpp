@@ -17,7 +17,7 @@
  *  - ambiguity resolution: `ar_ran,ar_success,num_fixed,num_candidates,ratio`
  *  - actual error against the configured truth coordinate (m):
  *    `pos_err_3d_m,east_m,north_m,up_m`
- *  - `ar_gate` (which gate stopped AR, see @ref consumerArGateLabel) and `p_succ`
+ *  - `ar_gate` (which gate stopped AR, see @ref GnssProcessor::consumerArGateLabel "consumerArGateLabel") and `p_succ`
  *  - formal 1-sigma of the same position from the filter covariance, in the local
  *    east / north / up frame at the truth coordinate (m):
  *    `sig_e_m,sig_n_m,sig_u_m`, and `sig_3d_m`, the root of the covariance trace
@@ -130,7 +130,7 @@ Eigen::Vector3d enuSigmaFromEcefCovariance(const Eigen::Matrix3d& p_ecef,
 double sigma3dFromCovariance(const Eigen::Matrix3d& p_ecef);
 
 /**
- * @brief Format one @ref ConsumerTraceRow as a CSV line for @ref kConsumerTraceHeader.
+ * @brief Format one @ref GnssProcessor::ConsumerTraceRow "ConsumerTraceRow" as a CSV line for @ref GnssProcessor::kConsumerTraceHeader "kConsumerTraceHeader".
  *
  * Pure (no I/O, no engine state), so the schema is unit-testable on its own
  * (tests/test_consumer_trace.cpp).  Precision: 3 dp for tow, 2 dp for ratio, 4 dp

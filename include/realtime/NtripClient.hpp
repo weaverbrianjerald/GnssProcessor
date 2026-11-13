@@ -61,22 +61,45 @@ struct NtripConfig {
  */
 class NtripClient {
 public:
+    /**
+     * @brief Builds an idle client; no connection is made until @c start().
+     *
+     * @param config      Caster, mountpoint and login settings; copied.
+     * @param log_manager Log sink for the client's diagnostics; must outlive the client.
+     */
     explicit NtripClient(const NtripConfig& config, LogManager& log_manager);
+
+    /** @brief Stops the receive thread (calls @c stop()) before the client is destroyed. */
     ~NtripClient();
 
-    /// Start the background receive thread.  Returns immediately.
+    /**
+     * @brief Start the background receive thread.  Returns immediately.
+     *
+     * @return True when the thread is running (including when it already was); false, with
+     *         nothing started, when the host or the mountpoint is not configured.  A true
+     *         value does not mean the caster has been reached: the thread retries on failure.
+     */
     bool start();
 
     /// Stop the background thread and close the connection.
     void stop();
 
-    /// True while a transfer attempt is in progress.  The flag is set just before
-    /// the transfer starts, so it also covers the connect phase.
+    /**
+     * @brief True while a transfer attempt is in progress.  The flag is set just before
+     *        the transfer starts, so it also covers the connect phase.
+     *
+     * @return True while the receive thread is connecting or streaming; false between
+     *         attempts, before @c start() and after @c stop().
+     */
     bool isConnected() const { return connected_.load(); }
 
-    /// True from start() until stop(): the client's intent to run, independent of
-    /// the momentary connection state.  The realtime poll loop uses it so that a
-    /// stream not yet established or transiently dropped stays "active".
+    /**
+     * @brief True from start() until stop(): the client's intent to run, independent of
+     *        the momentary connection state.  The realtime poll loop uses it so that a
+     *        stream not yet established or transiently dropped stays "active".
+     *
+     * @return True between a successful @c start() and @c stop().
+     */
     bool isRunning() const { return running_.load(); }
 
     /**
@@ -97,6 +120,13 @@ public:
      * starve the other.  Waits up to @p timeout_ms for data to arrive (no wait when
      * @p timeout_ms <= 0); returns 0 on timeout, on stop, or when no data is
      * buffered after the wait.
+     *
+     * @param[out] out        Destination buffer; replaced by the bytes read, cleared when
+     *                        none are available.
+     * @param      max_bytes  Maximum number of bytes to return.
+     * @param      timeout_ms Longest wait for data, in milliseconds; a value of 0 or less
+     *                        does not wait.
+     * @return Number of bytes placed in @p out (0 on timeout, stop, or an empty buffer).
      */
     size_t tryRead(std::vector<uint8_t>& out, size_t max_bytes, int timeout_ms);
 

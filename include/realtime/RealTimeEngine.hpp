@@ -82,9 +82,11 @@ public:
      */
     RealTimeEngine(GnssConfig& config, LogManager& log_manager);
 
-    /// Out-of-line (RealTimeEngine.cpp): the staged_rt_snap_ unique_ptr holds a
-    /// forward-declared RtStateSnapshot, so the destructor must be emitted where
-    /// the complete type is visible.
+    /**
+     * @brief Out-of-line (RealTimeEngine.cpp): the staged_rt_snap_ unique_ptr holds a
+     *        forward-declared RtStateSnapshot, so the destructor must be emitted where
+     *        the complete type is visible.
+     */
     ~RealTimeEngine();
 
     /**
@@ -100,7 +102,7 @@ public:
     /**
      * @brief Per-stream SSR ingest accept policy (RTA-8(b)).
      *
-     * Applied per frame on the SSR push path in @ref feedRtcmFrame: the driver
+     * Applied per frame on the SSR push path in @ref GnssProcessor::RealTimeEngine::feedRtcmFrame "feedRtcmFrame": the driver
      * (@c Application::runRealTime) passes the policy of the stream the frame
      * came from, so each stream can have its own filter.  Configured per
      * corrections/ephemeris stream with the @c corrections_accept key
@@ -144,6 +146,11 @@ public:
      * Clock/CodeBias/PhaseBias/HighRateClock.  The high-rate clock is clock
      * content (an additive delta on the clock polynomial), so it is dropped
      * with the rest of the clock family.
+     *
+     * @param policy The accept policy of the stream the record came from.
+     * @param kind   The kind of decoded SSR record being routed.
+     * @return @c Push, @c Drop or @c DecomposeOrbit: what the push site does with a record of
+     *         @p kind under @p policy.
      */
     static SsrPushAction ssrPushAction(SsrAcceptPolicy policy, SsrRecordKind kind);
 
@@ -156,6 +163,10 @@ public:
      * record whose @c getOrbitClock merge reports @c has_orbit=true,
      * @c has_clock=false.  The decomposition happens at the push site; the
      * store's combined-wins preference is left unchanged.
+     *
+     * @param rec The decoded combined orbit+clock record (not modified).
+     * @return A new orbit-only correction carrying the orbit fields of @p rec; the clock
+     *         polynomial is left out.
      */
     static SsrOrbitCorrection combinedOrbitPart(const SsrCombinedCorrection& rec);
 
@@ -165,6 +176,11 @@ public:
      * @c "all" (or empty, the unset default) → @c All; @c "orbit_only" →
      * @c OrbitOnly; anything else → @c All with @p recognized (when non-null)
      * set false so the caller can warn once.  Case-insensitive.
+     *
+     * @param value      The configured string (@c "all", @c "orbit_only" or empty).
+     * @param[out] recognized Optional flag set true for a recognized value (including empty)
+     *                   and false otherwise; may be null.
+     * @return The parsed policy; @c All for an empty or unrecognized string.
      */
     static SsrAcceptPolicy parseSsrAcceptPolicy(const std::string& value,
                                                 bool* recognized = nullptr);
@@ -305,23 +321,39 @@ public:
                      bool consume_clock = true, bool consume_bias = true,
                      SsrOrbitSource orbit_source = SsrOrbitSource::FollowClock);
 
-    /// Result of the ambiguity-resolution attempt at the most recent epoch that
-    /// reached the estimation tail (closed-loop harness metric).  @ref lastArRan
-    /// reports whether AR ran at that epoch (resolver present and a float update
-    /// committed).
+    /**
+     * @brief Result of the ambiguity-resolution attempt at the most recent epoch that
+     *        reached the estimation tail (closed-loop harness metric).  @ref lastArRan
+     *        reports whether AR ran at that epoch (resolver present and a float update
+     *        committed).
+     *
+     * @return Const reference to the engine-held result; meaningful only when
+     *         @ref lastArRan is true, and overwritten by the next epoch that runs AR.
+     */
     const AmbiguityResolution& lastArResult() const { return last_ar_result_; }
+
+    /**
+     * @brief Whether AR ran at the most recent epoch that reached the estimation tail.
+     *
+     * @return True when the resolver was present and a float update committed at that
+     *         epoch, so @ref lastArResult describes it; false otherwise.
+     */
     bool lastArRan() const { return last_ar_ran_; }
 
-    /// Suppress the MW wide-lane feed into ambiguity resolution, so AR runs plain
-    /// MLAMBDA on the Kalman float.  The network closed-loop validation uses this
-    /// with full LAMBDA: the KF float carries the consumed network satellite phase
-    /// bias, while the MW detector's WL integers are in the separate .BIA frame,
-    /// and feeding them would re-inject a conflicting WL datum.  Default false
-    /// (normal AR uses the MW WL to halve the search).  JSON keys (RTA-7):
-    /// @c processing.ar_ignore_mw_wl (standalone) and the
-    /// @c processing.network_consumer profile (see
-    /// @c GnssConfig::networkConsumerArIgnoreMwWl), applied in
-    /// @c Application::runRealTime.
+    /**
+     * @brief Suppress the MW wide-lane feed into ambiguity resolution, so AR runs plain
+     *        MLAMBDA on the Kalman float.  The network closed-loop validation uses this
+     *        with full LAMBDA: the KF float carries the consumed network satellite phase
+     *        bias, while the MW detector's WL integers are in the separate .BIA frame,
+     *        and feeding them would re-inject a conflicting WL datum.  Default false
+     *        (normal AR uses the MW WL to halve the search).  JSON keys (RTA-7):
+     *        @c processing.ar_ignore_mw_wl (standalone) and the
+     *        @c processing.network_consumer profile (see
+     *        @c GnssConfig::networkConsumerArIgnoreMwWl), applied in
+     *        @c Application::runRealTime.
+     *
+     * @param ignore True to ignore the MW wide-lane integers in AR; false for normal AR.
+     */
     void setArIgnoreMwWl(bool ignore) { ar_ignore_mw_wl_ = ignore; }
 
     /// @brief Arm consumption of the network's undifferenced per-satellite slant
@@ -338,6 +370,8 @@ public:
     /// store).  Off by default; while off, no pseudo-observation is built and the
     /// epoch is byte-identical.  Set by the closed-loop harness from
     /// @c closed_loop.consume_network_iono.
+    ///
+    /// @param on True to arm the slant-ionosphere prior; false (the default) to disarm it.
     void setConsumeNetworkIono(bool on) { consume_network_iono_ = on; }
 
     /**
@@ -392,8 +426,12 @@ public:
     const std::vector<ConsumerSatRow>& consumerSatRows() const { return consumer_sat_rows_; }
 
     // --- Observe-mode integer search (network.closed_loop.ar_observe) ----
-    /// True iff the observe-mode integer search is armed on this engine's config (the
-    /// closed-loop harness derives it from @c network.closed_loop.ar_observe).
+    /**
+     * @brief True iff the observe-mode integer search is armed on this engine's config (the
+     *        closed-loop harness derives it from @c network.closed_loop.ar_observe).
+     *
+     * @return True when the observe-mode integer search is armed; false when it is off.
+     */
     bool arObserveArmed() const { return config_.arObserve(); }
 
     /**
@@ -410,7 +448,12 @@ public:
      * @param ctx The declarations.
      */
     void setWireChainContext(const WireChainContext& ctx) { wire_chain_ = ctx; }
-    /// The declarations last set by @ref setWireChainContext.
+    /**
+     * @brief The declarations last set by @ref setWireChainContext.
+     *
+     * @return Const reference to the engine-held copy; the declare-nothing default until a
+     *         context is set.
+     */
     const WireChainContext& wireChainContext() const { return wire_chain_; }
 
     /**
@@ -418,7 +461,7 @@ public:
      *        completed.
      *
      * Rows, summary and the integer search's own result, written by
-     * @ref observeIntegerSearch_ and read by the harness right after @c processEpoch
+     * observeIntegerSearch_ (@c GnssProcessor::RealTimeEngine::observeIntegerSearch_) and read by the harness right after @c processEpoch
      * returns (the same hand-off as @ref consumerSatRows).  The buffer is cleared at the
      * top of every epoch, so an epoch that ends before the estimation tail, or whose
      * measurement update was not applied, leaves an empty epoch with @c valid false, never
@@ -428,7 +471,11 @@ public:
      * @return Const reference to the engine-owned buffer.
      */
     const ArObserveEpoch& arObserveEpoch() const { return ar_observe_epoch_; }
-    /// Run totals of the observe-mode search; all zero with the mode off.
+    /**
+     * @brief Run totals of the observe-mode search; all zero with the mode off.
+     *
+     * @return Const reference to the live totals, accumulated epoch by epoch.
+     */
     const ArObserveCounters& arObserveCounters() const { return ar_observe_counters_; }
     /**
      * @brief Log the observe-mode totals as one line on the @c rt_engine logger.
@@ -440,7 +487,12 @@ public:
      */
     void logArObserveSummary(const char* tag) const;
 
-    /// Get the current receiver position (ECEF, meters).
+    /**
+     * @brief Get the current receiver position (ECEF, meters).
+     *
+     * @return The position of the engine's PPP state: the filter's position after the most
+     *         recent processed epoch, or the seed position before the first one.
+     */
     Eigen::Vector3d getPosition() const;
 
     /**
@@ -455,10 +507,20 @@ public:
      */
     Eigen::Matrix3d getPositionCovariance() const;
 
-    /// Get the current receiver clock bias (meters).
+    /**
+     * @brief Get the current receiver clock bias (meters).
+     *
+     * @return The receiver clock of the engine's PPP state, in metres (c times the clock
+     *         offset), as of the most recent processed epoch.
+     */
     double getClockBias() const;
 
-    /// Get the current ZWD estimate (meters).
+    /**
+     * @brief Get the current ZWD estimate (meters).
+     *
+     * @return The zenith wet delay of the engine's PPP state, in metres, as of the most
+     *         recent processed epoch.
+     */
     double getTroposphereZwd() const;
 
     /**
@@ -474,45 +536,81 @@ public:
      */
     std::map<std::string, std::pair<double, double>> getSystemTimeOffsets() const;
 
-    /// Get the full PPP state.
+    /**
+     * @brief Get the full PPP state.
+     *
+     * @return Const reference to the engine-held state (position, clock, troposphere and
+     *         the other extracted quantities), refreshed from the filter at the end of
+     *         each processed epoch.
+     */
     const PppState& getState() const { return ppp_state_; }
 
-    /// Number of epochs processed so far.
+    /**
+     * @brief Number of epochs processed so far.
+     *
+     * @return The count of epochs that completed the estimation tail; epochs stopped by an
+     *         admission gate are not counted.
+     */
     uint64_t epochCount() const { return epoch_count_; }
 
-    /// True once the processing.max_duration_s data-time budget has been
-    /// reached (latched).  The real-time poll loop checks this to end the
-    /// session cleanly, mirroring how post-processing breaks its epoch loop.
-    /// Always false when max_duration_s is 0 (the default, unlimited).
+    /**
+     * @brief True once the processing.max_duration_s data-time budget has been
+     *        reached (latched).  The real-time poll loop checks this to end the
+     *        session cleanly, mirroring how post-processing breaks its epoch loop.
+     *        Always false when max_duration_s is 0 (the default, unlimited).
+     *
+     * @return True from the epoch that reaches the budget onward; false before that and
+     *         whenever the budget is unlimited.
+     */
     bool maxDurationReached() const { return max_duration_reached_; }
 
     // --- Declared-step ambiguity carry readout ------------------
-    /// True iff @c processing.ssr_phase_bias_disc_carry is armed on this engine's
-    /// config (the closed-loop harness derives it from
-    /// @c network.closed_loop.pb_disc_carry).
+    /**
+     * @brief True iff @c processing.ssr_phase_bias_disc_carry is armed on this engine's
+     *        config (the closed-loop harness derives it from
+     *        @c network.closed_loop.pb_disc_carry).
+     *
+     * @return True when the declared-step ambiguity carry is armed; false when it is off.
+     */
     bool pbDiscCarryArmed() const { return config_.ssrPhaseBiasDiscCarry(); }
-    /// Run-end counters of the carry.  All zero, and never printed, with the
-    /// knob off, so the off path stays byte-identical.
+    /**
+     * @brief Run-end counters of the carry.  All zero, and never printed, with the
+     *        knob off, so the off path stays byte-identical.
+     *
+     * @return Const reference to the live counters of the declared-step carry ledger.
+     */
     const PbDiscCarryLedger::Counters& pbDiscCarryCounters() const {
         return pb_disc_carry_.counters();
     }
 
     // --- Phase-bias step translation readout -------------------
-    /// True iff @c processing.ssr_phase_bias_step_translate is armed on this
-    /// engine's config (the closed-loop harness derives it from
-    /// @c network.closed_loop.pb_step_translate).
+    /**
+     * @brief True iff @c processing.ssr_phase_bias_step_translate is armed on this
+     *        engine's config (the closed-loop harness derives it from
+     *        @c network.closed_loop.pb_step_translate).
+     *
+     * @return True when the phase-bias step translation is armed; false when it is off.
+     */
     bool pbStepTranslateArmed() const { return config_.ssrPhaseBiasStepTranslate(); }
-    /// Run-end counters of the step translation.  All zero, and never printed,
-    /// with the knob off, so the off path stays byte-identical.
+    /**
+     * @brief Run-end counters of the step translation.  All zero, and never printed,
+     *        with the knob off, so the off path stays byte-identical.
+     *
+     * @return Const reference to the live counters of the step-translate ledger.
+     */
     const PbStepTranslateLedger::Counters& pbStepTranslateCounters() const {
         return pb_step_translate_.counters();
     }
 
     // --- Consumer phase-bias hold reaction readout ----------------
-    /// Run-end counters of the reaction to a held phase bias.  All zero on an
-    /// unheld product, so a consumer can read back that the producer's hold was
-    /// inert (invariant #4): @c cells == 0 on a clean wire means nothing was
-    /// held, not that the hold worked.
+    /**
+     * @brief Run-end counters of the reaction to a held phase bias.  All zero on an
+     *        unheld product, so a consumer can read back that the producer's hold was
+     *        inert (invariant #4): @c cells == 0 on a clean wire means nothing was
+     *        held, not that the hold worked.
+     *
+     * @return Const reference to the live counters of the hold ledger.
+     */
     const PbHoldLedger::Counters& pbHoldCounters() const { return pb_hold_.counters(); }
 
     /**
@@ -532,7 +630,11 @@ public:
         std::size_t answered{ 0 };   ///< Edges that took the A5 reaction (knob armed).
         std::size_t suppressed{ 0 }; ///< Edges left alone by the declared-roster rule.
     };
-    /// Run-end counters of the held-key presence edges.
+    /**
+     * @brief Run-end counters of the held-key presence edges.
+     *
+     * @return Const reference to the live counters; they only increase.
+     */
     const PbHoldPresenceCounters& pbHoldPresenceCounters() const { return pb_hold_presence_; }
 
     /**
@@ -562,8 +664,8 @@ public:
 
         // --- Freshness flips, with identity (E3) ----------------------------
         long long flips{ 0 };             ///< freshness flips seen (denominator).
-        long long flips_phase{ 0 };
-        long long flips_code{ 0 };
+        long long flips_phase{ 0 };       ///< of those, on carrier phase biases.
+        long long flips_code{ 0 };        ///< of those, on code biases.
         long long flip_to_stale{ 0 };     ///< of those, fresh -> stale.
         long long flip_to_fresh{ 0 };     ///< of those, stale -> fresh.
         /// The three-way attribution of a flip, in the order the split is read:
@@ -572,60 +674,105 @@ public:
         long long flip_stale{ 0 };        ///< a record exists and the gate refused it on age: a genuine staleness.
         long long flip_no_decl{ 0 };      ///< no declaration was held, so the flip cannot be attributed at all.
         long long flip_events{ 0 };       ///< ARC rows written for the flips (up to a per-run cap; the rest count in flip_events_suppressed).
-        long long flip_events_suppressed{ 0 };
+        long long flip_events_suppressed{ 0 };  ///< flips whose ARC row was not written because the per-run cap was reached.
         // --- Responses the declaration changed (C2) --------------------------
         long long flip_suppressed{ 0 };   ///< flips whose reset / re-inflation was withheld by the declared roster.
     };
-    /// The consumer's declaration census.  On a wire that
-    /// carries no declaration (every producer before the declared roster), @c epochs_declared
-    /// and @c decl_changes stay zero and every flip counts as @c flip_no_decl.
+    /**
+     * @brief The consumer's declaration census.  On a wire that
+     *        carries no declaration (every producer before the declared roster), @c epochs_declared
+     *        and @c decl_changes stay zero and every flip counts as @c flip_no_decl.
+     *
+     * @return Const reference to the live counters of the declared-roster consumer.
+     */
     const RosterConsumerCounters& rosterConsumerCounters() const {
         return roster_consumer_;
     }
-    /// The consumer's latch against the declaration, as the model counted it.
-    /// @c compared 0 means no declaration reached the latch.
+    /**
+     * @brief The consumer's latch against the declaration, as the model counted it.
+     *        @c compared 0 means no declaration reached the latch.
+     *
+     * @return Const reference to the counters held by the engine's PPP model.
+     */
     const PppModel::DeclaredLatchCounters& declaredLatchCounters() const;
-    /// One INFO block with both censuses.  Silent when no
-    /// declaration was ever seen and @c network.closed_loop.roster_latch is off,
-    /// so a consumer of a wire without a declaration prints nothing.
+    /**
+     * @brief One INFO block with both censuses.  Silent when no
+     *        declaration was ever seen and @c network.closed_loop.roster_latch is off,
+     *        so a consumer of a wire without a declaration prints nothing.
+     *
+     * @param tag Where the line comes from (for example "closed loop", "end of replay").
+     */
     void logRosterConsumerSummary(const char* tag) const;
 
     // --- Consumer ambiguity level check readout --------------------
-    /// True iff @c processing.amb_level_check is armed on this engine's config
-    /// (the closed-loop harness derives it from
-    /// @c network.closed_loop.amb_level_check).
+    /**
+     * @brief True iff @c processing.amb_level_check is armed on this engine's config
+     *        (the closed-loop harness derives it from
+     *        @c network.closed_loop.amb_level_check).
+     *
+     * @return True when the ambiguity level check is armed; false when it is off.
+     */
     bool ambLevelCheckArmed() const { return config_.ambLevelCheck(); }
-    /// Run-end counters of the level check.  All zero, and never printed, with
-    /// the knob off, so the off path stays byte-identical.
+    /**
+     * @brief Run-end counters of the level check.  All zero, and never printed, with
+     *        the knob off, so the off path stays byte-identical.
+     *
+     * @return Const reference to the live counters of the level check.
+     */
     const AmbLevelCheck::Counters& ambLevelCheckCounters() const {
         return amb_level_check_.counters();
     }
-    /// This epoch's AMB_LEVEL events (trips and refloats), for the harness to
-    /// drain into @c network_events.csv.  Cleared at the top of every
-    /// @c processEpoch; empty on an unarmed engine.
+    /**
+     * @brief This epoch's AMB_LEVEL events (trips and refloats), for the harness to
+     *        drain into @c network_events.csv.  Cleared at the top of every
+     *        @c processEpoch; empty on an unarmed engine.
+     *
+     * @return Const reference to the engine-owned event buffer of the latest epoch.
+     */
     const std::vector<AmbLevelEvent>& ambLevelEvents() const { return amb_level_events_; }
-    /// This epoch's full-window evaluations (@c n_amb_level_checks), for the same
-    /// drain.  0 on an unarmed engine and on any epoch that did not update.
+    /**
+     * @brief This epoch's full-window evaluations (@c n_amb_level_checks), for the same
+     *        drain.  0 on an unarmed engine and on any epoch that did not update.
+     *
+     * @return The number of full-window level checks run at the latest epoch.
+     */
     uint64_t ambLevelEpochChecks() const { return amb_level_epoch_checks_; }
 
     // --- Consumer innovation screen readout ------------------------------
-    /// True iff @c processing.innovation_screen is armed on this engine's config
-    /// (the closed-loop harness derives it from
-    /// @c network.closed_loop.innovation_screen).
+    /**
+     * @brief True iff @c processing.innovation_screen is armed on this engine's config
+     *        (the closed-loop harness derives it from
+     *        @c network.closed_loop.innovation_screen).
+     *
+     * @return True when the innovation screen is armed; false when it is off.
+     */
     bool innovationScreenArmed() const { return config_.innovationScreen(); }
-    /// Run-end counters of the screen. All zero, and never printed, with the knob
-    /// off, so the off path stays byte-identical.
+    /**
+     * @brief Run-end counters of the screen. All zero, and never printed, with the knob
+     *        off, so the off path stays byte-identical.
+     *
+     * @return Const reference to the live counters of the innovation screen.
+     */
     const InnovationScreen::Counters& innovationScreenCounters() const {
         return innovation_screen_.counters();
     }
-    /// One INFO block with the screen's counters, the epoch-maximum histogram and the
-    /// exclusion-episode closure. Silent unless armed. The closed-loop harness and the
-    /// replay driver never call @c flush(), so both call this at their own tails.
+    /**
+     * @brief One INFO block with the screen's counters, the epoch-maximum histogram and the
+     *        exclusion-episode closure. Silent unless armed. The closed-loop harness and the
+     *        replay driver never call @c flush(), so both call this at their own tails.
+     *
+     * @param tag Where the line comes from (for example "closed loop", "end of replay").
+     */
     void logInnovationScreenSummary(const char* tag) const;
 
     // --- Harness-driven snapshot write and restore readout ------
-    /// Epoch time of the last epoch that ran the full estimation tail (the
-    /// epoch the live filter memory is "as of"); nullopt before the first.
+    /**
+     * @brief Epoch time of the last epoch that ran the full estimation tail (the
+     *        epoch the live filter memory is "as of"); nullopt before the first.
+     *
+     * @return The epoch time (GPS scale), or @c std::nullopt before any epoch reached the
+     *         estimation tail.
+     */
     std::optional<GnssTime> lastProcessedEpochTime() const {
         if (!has_processed_epoch_) return std::nullopt;
         return last_processed_epoch_;
@@ -653,9 +800,16 @@ public:
                               const GnssTime* expected_epoch = nullptr,
                               std::string* err = nullptr);
 
-    /// Path of the consumer snapshot that sits beside a network history copy
-    /// `<network_snapshot_path>.ep<NNNN>`: `<network_snapshot_path>.consumer.ep<NNNN>`
-    /// (the same zero-padded @c n_emitted suffix the network copy uses).
+    /**
+     * @brief Path of the consumer snapshot that sits beside a network history copy
+     *        `<network_snapshot_path>.ep<NNNN>`: `<network_snapshot_path>.consumer.ep<NNNN>`
+     *        (the same zero-padded @c n_emitted suffix the network copy uses).
+     *
+     * @param network_snapshot_path The network snapshot file the history copies derive from.
+     * @param n_emitted             Count of emitted network epochs that numbers the copy.
+     * @return @p network_snapshot_path with the consumer suffix appended; nothing is
+     *         created on disk.
+     */
     static std::filesystem::path consumerSnapshotHistoryPath(
         const std::filesystem::path& network_snapshot_path, unsigned long long n_emitted);
 
@@ -663,20 +817,27 @@ public:
     /// so a harness or test can tell a restore from a cold start without parsing
     /// the log.
     struct RtSnapshotRestoreStatus {
+        /// What the one-shot staged restore did.
         enum class Outcome {
             NotStaged,   ///< No snapshot was staged (path empty, file absent or unparsable); the engine starts cold.
             Restored,    ///< The staged snapshot was applied at the top of the first processEpoch call.
             Discarded    ///< The staged snapshot was refused (age, fingerprint or layout gate); the engine starts cold.
         };
-        Outcome     outcome{ Outcome::NotStaged };
+        Outcome     outcome{ Outcome::NotStaged };  ///< The result of the staged restore; NotStaged until one is attempted.
         int         week{ 0 };            ///< Snapshot epoch (valid when Restored).
-        double      tow{ 0.0 };
+        double      tow{ 0.0 };           ///< GPS time of week of the snapshot epoch (s; valid when Restored).
         std::size_t n_states{ 0 };        ///< Snapshot state size (Restored).
         std::size_t n_dynamic{ 0 };       ///< Snapshot dynamic-state count (Restored).
         std::string scope;                ///< "core" | "full" (Restored).
         std::size_t n_latches{ 0 };       ///< Initializer seed latches set by the restore (Restored; card CRS2).
         std::string reason;               ///< The refusal reason (Discarded).
     };
+    /**
+     * @brief The outcome of the one-shot staged warm resume.
+     *
+     * @return Const reference to the engine-held status: @c NotStaged until a restore is
+     *         attempted, then @c Restored or @c Discarded (with the refusal reason).
+     */
     const RtSnapshotRestoreStatus& stateSnapshotRestoreStatus() const { return rt_snap_restore_; }
 
 private:
@@ -809,7 +970,7 @@ private:
         EpochMeasurement meas_update{};      ///< Committed measurement update (residual/DOP traces read it).
         bool update_applied{ false };        ///< A float update committed; gates AR and the trace "have_applied" flag.
 
-        /// The "sat|code" keys @ref RealTimeEngine::reactToPbHold_ already handled
+        /// The "sat|code" keys RealTimeEngine::reactToPbHold_ (@c GnssProcessor::RealTimeEngine::reactToPbHold_) already handled
         /// this epoch.  A held key is judged afresh every epoch, so the
         /// set is per-epoch and belongs here, not in a member.  The three
         /// phase-bias reactions skip these keys, so exactly one seam reacts per
@@ -850,9 +1011,9 @@ private:
     void logSsrCoverage(RtEpochContext& ctx);    ///< Per-epoch SSR coverage summary line.
     void traceSsrConsumer(RtEpochContext& ctx);  ///< Consumer-side SSR-application CSV (L10).
     /// Harvest this epoch's per-(sat, raw phase signal) rows into
-    /// @ref consumer_sat_rows_.  Runs at the processEpoch tail
+    /// consumer_sat_rows_ (@c GnssProcessor::RealTimeEngine::consumer_sat_rows_).  Runs at the processEpoch tail
     /// (post-update, post-AR) so the states and residuals it reads are the
-    /// committed ones; no-op unless @ref consumer_sat_trace_.
+    /// committed ones; no-op unless consumer_sat_trace_ (@c GnssProcessor::RealTimeEngine::consumer_sat_trace_).
     void traceConsumerSat_(RtEpochContext& ctx);
     /// Record what a reaction (an SSR datum-break reaction or the level check)
     /// did to one key, for this epoch's rows.  @p key is
@@ -893,7 +1054,7 @@ private:
      *         @c ctx.meas_update holds the first pass.
      */
     bool screenInnovations_(RtEpochContext& ctx, std::set<std::string>& excluded);
-    /// Resolve the screen's knobs from the config onto @ref innovation_screen_ once.
+    /// Resolve the screen's knobs from the config onto innovation_screen_ (@c GnssProcessor::RealTimeEngine::innovation_screen_) once.
     void configureInnovationScreen_();
     /// Test @p mu against the predicted covariance and return the epoch's decisions.
     /// Reads the state covariance and the screen's episode ledger; writes only the ledger.
@@ -1002,10 +1163,10 @@ private:
      * For each satellite of this epoch whose orbit came from the live broadcast store
      * (@c PppObservation::live_orbit; an SP3-modelled satellite is not tested), the
      * broadcast record its geometry uses (the selection @c Geometry makes: the version
-     * matching the SSR orbit IOD when held) is handed to @ref eph_jump_.  A change of the record's orbit or clock content is
+     * matching the SSR orbit IOD when held) is handed to eph_jump_ (@c GnssProcessor::RealTimeEngine::eph_jump_).  A change of the record's orbit or clock content is
      * logged with both sources and the modelled-range change Δρ.  When |Δρ| exceeds
      * the threshold, the states that absorbed the old record's range are re-seeded
-     * (@ref reseedAfterEphemerisJump_): the satellite itself, or, when it is a
+     * (reseedAfterEphemerisJump_ (@c GnssProcessor::RealTimeEngine::reseedAfterEphemerisJump_)): the satellite itself, or, when it is a
      * between-satellite pivot, every other satellite of its constellation, whose
      * single-differenced states all carry the pivot's range.  Runs before the
      * measurement update, so this epoch's rows re-determine the states.  No-op when
@@ -1113,7 +1274,7 @@ private:
     void resolveAmbiguities(RtEpochContext& ctx);       ///< Integer ambiguity resolution (MLAMBDA).
     /**
      * @brief The observe-mode integer search (RealTimeEngineArObserve.cpp), called first by
-     *        @ref resolveAmbiguities.
+     *        resolveAmbiguities (@c GnssProcessor::RealTimeEngine::resolveAmbiguities).
      *
      * Self-gated on @c network.closed_loop.ar_observe (derived as
      * @c GnssConfig::arObserve) and on an applied update.  It forms the epoch's
@@ -1258,21 +1419,21 @@ private:
 
     // --- Per-satellite consumer readout (network.trace_consumer_sat) ---
     /// Armed by @ref setConsumerSatTrace.  Gates both the tail harvest and the
-    /// per-key event recording (@ref noteConsumerSatEvent_), so an unarmed
+    /// per-key event recording (noteConsumerSatEvent_ (@c GnssProcessor::RealTimeEngine::noteConsumerSatEvent_)), so an unarmed
     /// engine does no allocation and no map write anywhere on the epoch path.
     bool consumer_sat_trace_{ false };
     /// This epoch's harvested rows (cleared at the top of every processEpoch).
     std::vector<ConsumerSatRow> consumer_sat_rows_;
     /// This epoch's consumer reactions, "<sat>|<signal>" or "<sat>|CLK" -> the
-    /// action name(s).  Filled by @ref noteConsumerSatEvent_ from the datum-break
+    /// action name(s).  Filled by noteConsumerSatEvent_ (@c GnssProcessor::RealTimeEngine::noteConsumerSatEvent_) from the datum-break
     /// seams (which run before the measurement update) and from the level check
-    /// (at the tail, before the harvest), and drained by @ref traceConsumerSat_;
+    /// (at the tail, before the harvest), and drained by traceConsumerSat_ (@c GnssProcessor::RealTimeEngine::traceConsumerSat_);
     /// cleared with the row buffer.
     std::map<std::string, std::string> consumer_sat_events_;
 
     // --- Observe-mode integer search (network.closed_loop.ar_observe) ---
     /// The latest epoch's search output: cleared by the first admission seam of every epoch
-    /// (@ref admitBacklogAndSync) and filled by the search stage (@ref arObserveEpoch).
+    /// (admitBacklogAndSync (@c GnssProcessor::RealTimeEngine::admitBacklogAndSync)) and filled by the search stage (@ref arObserveEpoch).
     ArObserveEpoch ar_observe_epoch_;
     /// Run totals of the search (printed by @ref logArObserveSummary).
     ArObserveCounters ar_observe_counters_;
@@ -1282,7 +1443,7 @@ private:
     bool ar_observe_gate_warned_{ false };  ///< One-shot warning that the chain gate admitted nothing.
 
     /// The declared code-level step totals last read per satellite
-    /// (@ref reactToDeclaredLevelSteps_), and its counters.
+    /// (reactToDeclaredLevelSteps_ (@c GnssProcessor::RealTimeEngine::reactToDeclaredLevelSteps_)), and its counters.
     std::map<std::string, SsrCorrectionStore::DeclaredLevelSteps> level_steps_seen_;
     long long level_step_events_{ 0 };     ///< (sat, epoch) declared code steps above the dead band
     long long level_step_inflated_{ 0 };   ///< …answered by an inflation
@@ -1291,7 +1452,7 @@ private:
     double    level_step_sigma_max_{ 0.0 };///< largest answered sigma (m)
 
     /// The broadcast record each satellite used last and the range-jump test
-    /// (@ref reactToEphemerisJumps_), with its response counters.  Not part of the RT
+    /// (reactToEphemerisJumps_ (@c GnssProcessor::RealTimeEngine::reactToEphemerisJumps_)), with its response counters.  Not part of the RT
     /// snapshot: after a restore, each satellite's first record is a first sighting.
     EphemerisJumpLedger eph_jump_;
     long long eph_jump_pivot_{ 0 };        ///< jumps of a between-satellite pivot
@@ -1339,7 +1500,7 @@ private:
     // re-inflated on the flip.
     std::map<std::string, bool> ssr_code_bias_applied_;
     /// The producer's declared signal roster as this consumer last read it out
-    /// of the SSR store (@ref refreshDeclaredRoster_).
+    /// of the SSR store (refreshDeclaredRoster_ (@c GnssProcessor::RealTimeEngine::refreshDeclaredRoster_)).
     /// @c present is false on every wire that carries none, which leaves every
     /// use site inert and the engine byte-identical.
     NetworkSignalDeclaration ssr_declared_roster_;
@@ -1396,7 +1557,7 @@ private:
     /// on the first armed epoch (@c amb_level_configured_); untouched, and never
     /// sampled, with @c processing.amb_level_check off.
     AmbLevelCheck amb_level_check_;
-    bool          amb_level_configured_{ false };   ///< The three knobs have been resolved onto @ref amb_level_check_.
+    bool          amb_level_configured_{ false };   ///< The three knobs have been resolved onto amb_level_check_ (@c GnssProcessor::RealTimeEngine::amb_level_check_).
     /// This epoch's AMB_LEVEL rows; cleared at the top of @c processEpoch, like
     /// the CST buffers, and drained by the closed-loop harness afterwards.
     std::vector<AmbLevelEvent> amb_level_events_;
@@ -1410,7 +1571,7 @@ private:
     /// (the streak that triggers a re-float); they are not part of the RT snapshot, so a
     /// restored consumer starts with no open episode.
     InnovationScreen innovation_screen_;
-    bool             innovation_screen_configured_{ false };   ///< The knobs have been resolved onto @ref innovation_screen_.
+    bool             innovation_screen_configured_{ false };   ///< The knobs have been resolved onto innovation_screen_ (@c GnssProcessor::RealTimeEngine::innovation_screen_).
     /// Generations of the two selected ambiguity signals at the last ALC sample.
     /// StateManager assigns unique IDs across births, resets and translations,
     /// so this also detects a signal-pair change or removal/rebirth of a key.
@@ -1428,7 +1589,7 @@ private:
     GnssTime  prev_epoch_time_{ 0, 0.0 };
     /// Spacings of the epochs accepted so far.  With @c processing.data_gap_tolerance_s
     /// at 0 the data-gap threshold is 1.5 times their median, at least 1 s; see
-    /// @ref stepTimeAndDetectGap.
+    /// stepTimeAndDetectGap (@c GnssProcessor::RealTimeEngine::stepTimeAndDetectGap).
     EpochCadence epoch_cadence_;
     uint64_t  backlog_warn_ctr_{ 0 };          ///< Throttle counter for the obs-backlog warning (every Nth lagging epoch).
 

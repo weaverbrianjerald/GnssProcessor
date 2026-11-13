@@ -53,30 +53,61 @@ struct TcpConfig {
  */
 class TcpClient {
 public:
+    /**
+     * @brief Builds an idle client; no connection is made until @c start().
+     *
+     * @param cfg Host, port and timing settings; copied.
+     * @param lm  Log sink for the client's diagnostics; must outlive the client.
+     */
     TcpClient(const TcpConfig& cfg, LogManager& lm);
+
+    /** @brief Stops the receive thread and closes the socket (calls @c stop()). */
     ~TcpClient();
 
-    /// Start the background receive thread.
+    /**
+     * @brief Start the background receive thread.
+     *
+     * @return True when the thread is running (including when it already was); false, with
+     *         nothing started, when the host is empty or the port is not positive.  A true
+     *         value does not mean the peer has been reached: the thread keeps redialing.
+     */
     bool start();
 
     /// Stop the thread, close the socket.
     void stop();
 
-    /// True while the connection is established.
+    /**
+     * @brief True while the connection is established.
+     *
+     * @return True between a successful dial and the loss or close of that connection;
+     *         false before @c start(), while redialing, and after @c stop().
+     */
     bool isConnected() const { return connected_.load(); }
 
-    /// Connections dropped because the peer sent nothing for
-    /// @c TcpConfig::silent_timeout_s.  Always 0 with the timeout off.
+    /**
+     * @brief Connections dropped because the peer sent nothing for
+     *        @c TcpConfig::silent_timeout_s.  Always 0 with the timeout off.
+     *
+     * @return Count since construction.
+     */
     std::uint64_t silentDrops() const { return silent_drops_.load(); }
 
-    /// Connections established since start(), the first one included.
+    /**
+     * @brief Connections established since start(), the first one included.
+     *
+     * @return The number of successful dials; 0 until the first connection is made.
+     */
     std::uint64_t connectionCount() const { return connections_.load(); }
 
-    /// True from start() until stop(): the client's intent to run, independent of
-    /// the momentary connection state.  The realtime poll loop treats a socket
-    /// source as active while it is running (drops are handled by the internal
-    /// auto-reconnect), so a transient disconnect or a connection not yet
-    /// established at startup does not end the session.
+    /**
+     * @brief True from start() until stop(): the client's intent to run, independent of
+     *        the momentary connection state.  The realtime poll loop treats a socket
+     *        source as active while it is running (drops are handled by the internal
+     *        auto-reconnect), so a transient disconnect or a connection not yet
+     *        established at startup does not end the session.
+     *
+     * @return True between a successful @c start() and @c stop().
+     */
     bool isRunning() const { return running_.load(); }
 
     /**
@@ -85,6 +116,13 @@ public:
      *
      * Same contract as @c NtripClient::tryRead; used by the multi-stream
      * realtime polling loop.
+     *
+     * @param[out] out        Destination buffer; replaced by the bytes read, cleared when
+     *                        none are available.
+     * @param      max_bytes  Maximum number of bytes to return.
+     * @param      timeout_ms Longest wait for data, in milliseconds; a value of 0 or less
+     *                        does not wait.
+     * @return Number of bytes placed in @p out (0 on timeout, stop, or an empty buffer).
      */
     std::size_t tryRead(std::vector<uint8_t>& out, std::size_t max_bytes, int timeout_ms);
 

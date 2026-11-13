@@ -12,11 +12,11 @@
  *
  * The data-gap threshold is the configured @c processing.data_gap_tolerance_s
  * when it is positive, and otherwise 1.5 nominal intervals, the same default the
- * post-processing path applies, but never below @ref kFloorToleranceS.  The floor
+ * post-processing path applies, but never below @ref GnssProcessor::EpochCadence::kFloorToleranceS "kFloorToleranceS".  The floor
  * is the fixed 1 s the engine used before the interval was measured: a stream of
  * 1.5 Hz or faster keeps that threshold, so one dropped epoch at 10 Hz is not a
  * gap that re-seeds the receiver clock from a single epoch of code.  The
- * threshold is @ref kFloorToleranceS too until a first spacing has been measured.
+ * threshold is @ref GnssProcessor::EpochCadence::kFloorToleranceS "kFloorToleranceS" too until a first spacing has been measured.
  */
 
 #include <algorithm>
@@ -60,7 +60,10 @@ public:
         if (count_ < kWindow) ++count_;
     }
 
-    /// Number of spacings currently in the window (at most @ref kWindow).
+    /**
+     * @brief Number of spacings currently in the window (at most @ref kWindow).
+     * @return The count of valid observed spacings; 0 before the first @c observe.
+     */
     std::size_t sampleCount() const { return count_; }
 
     /**

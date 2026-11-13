@@ -99,29 +99,43 @@ struct ConsumerSatRow {
     double      elev_deg{ 0.0 };  ///< Satellite elevation (deg) from the consumer's own modeled obs.
     int         n_sig{ 0 };       ///< Raw phase signals this satellite contributes this epoch.
 
-    bool   have_clk{ false }; double clk_m{ 0.0 };  ///< Applied satellite clock correction (m).
-    bool   have_cb{ false };  double cb_m{ 0.0 };   ///< Applied satellite code bias on @ref code_sig (m).
-    bool   have_pb{ false };  double pb_m{ 0.0 };   ///< Applied satellite phase bias on @ref sig (m).
+    bool   have_clk{ false }; ///< True when the SSR clock overlay supplied a correction this epoch (blank CSV field otherwise).
+    double clk_m{ 0.0 };  ///< Applied satellite clock correction (m).
+    bool   have_cb{ false };  ///< True when a satellite code bias was applied on @ref code_sig this epoch (blank CSV field otherwise).
+    double cb_m{ 0.0 };   ///< Applied satellite code bias on @ref code_sig (m).
+    bool   have_pb{ false };  ///< True when a satellite phase bias was applied on @ref sig this epoch (blank CSV field otherwise).
+    double pb_m{ 0.0 };   ///< Applied satellite phase bias on @ref sig (m).
 
-    bool   have_clk_disc{ false }; int clk_disc{ 0 };  ///< Producer clock discontinuity counter.
-    bool   have_cb_disc{ false };  int cb_disc{ 0 };   ///< Producer code-bias discontinuity counter on @ref code_sig.
-    bool   have_pb_disc{ false };  int pb_disc{ 0 };   ///< Producer phase-bias discontinuity counter on @ref sig.
+    bool   have_clk_disc{ false }; ///< True when the clock channel carries a discontinuity counter (blank CSV field otherwise).
+    int clk_disc{ 0 };  ///< Producer clock discontinuity counter.
+    bool   have_cb_disc{ false };  ///< True when the code-bias channel carries a discontinuity counter (blank CSV field otherwise).
+    int cb_disc{ 0 };   ///< Producer code-bias discontinuity counter on @ref code_sig.
+    bool   have_pb_disc{ false };  ///< True when the phase-bias channel carries a discontinuity counter (blank CSV field otherwise).
+    int pb_disc{ 0 };   ///< Producer phase-bias discontinuity counter on @ref sig.
 
     std::string ev_pb{ "none" };   ///< Consumer reaction to the phase-bias declaration this epoch.
     std::string ev_cb{ "none" };   ///< Consumer reaction to the code-bias declaration this epoch.
     std::string ev_clk{ "none" };  ///< Consumer reaction to the clock declaration this epoch.
 
-    bool   have_innov_code{ false };  double innov_code_m{ 0.0 };   ///< Pre-fit innovation, code row (m).
-    bool   have_innov_phase{ false }; double innov_phase_m{ 0.0 };  ///< Pre-fit innovation, phase row (m).
-    bool   have_res_code{ false };    double res_code_m{ 0.0 };     ///< Post-fit residual, code row (m).
-    bool   have_res_phase{ false };   double res_phase_m{ 0.0 };    ///< Post-fit residual, phase row (m).
+    bool   have_innov_code{ false };  ///< True when the epoch's update held a code row for this satellite and signal (blank CSV field otherwise).
+    double innov_code_m{ 0.0 };   ///< Pre-fit innovation, code row (m).
+    bool   have_innov_phase{ false }; ///< True when the epoch's update held a phase row for this satellite and signal (blank CSV field otherwise).
+    double innov_phase_m{ 0.0 };  ///< Pre-fit innovation, phase row (m).
+    bool   have_res_code{ false };    ///< True when a post-fit code residual exists for this row (blank CSV field otherwise).
+    double res_code_m{ 0.0 };     ///< Post-fit residual, code row (m).
+    bool   have_res_phase{ false };   ///< True when a post-fit phase residual exists for this row (blank CSV field otherwise).
+    double res_phase_m{ 0.0 };    ///< Post-fit residual, phase row (m).
 
-    bool   have_amb{ false };  double amb_m{ 0.0 };  double amb_var{ 0.0 };   ///< Ambiguity state value (m) + variance (m²).
-    bool   have_iono{ false }; double iono_m{ 0.0 }; double iono_var{ 0.0 };  ///< Slant-iono state value (m) + variance (m²).
+    bool   have_amb{ false };  ///< True when the filter holds an ambiguity state for this satellite and signal (blank CSV fields otherwise).
+    double amb_m{ 0.0 };  ///< Ambiguity state value (m).
+    double amb_var{ 0.0 };   ///< Ambiguity state variance (m²).
+    bool   have_iono{ false }; ///< True when the filter holds a slant-iono state for this satellite (blank CSV fields otherwise).
+    double iono_m{ 0.0 }; ///< Slant-iono state value (m).
+    double iono_var{ 0.0 };  ///< Slant-iono state variance (m²).
 };
 
 /**
- * @brief Format one @ref ConsumerSatRow as a CSV line for @ref kConsumerSatTraceHeader.
+ * @brief Format one @ref GnssProcessor::ConsumerSatRow "ConsumerSatRow" as a CSV line for @ref GnssProcessor::kConsumerSatTraceHeader "kConsumerSatTraceHeader".
  *
  * Pure (no I/O, no engine state), so the schema is unit-testable on its own
  * (tests/test_consumer_sat_trace.cpp).  Fixed precision per column group: 3 dp for

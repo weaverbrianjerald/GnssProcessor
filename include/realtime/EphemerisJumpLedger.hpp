@@ -17,7 +17,7 @@
  * states then hold a value the new model no longer explains.
  *
  * This ledger only measures.  It remembers the record each satellite used last, reports
- * an @ref Event when the orbit or clock content of the record changes, and decides
+ * an @c Event when the orbit or clock content of the record changes, and decides
  * whether the change is a jump (|Δρ| above the threshold).  The response (re-seeding the
  * satellite's states) is the engine's: @c RealTimeEngine::reactToEphemerisJumps_.
  *
@@ -26,7 +26,7 @@
  * new record is recorded either way.
  *
  * Counter closure: every reported change is exactly one of undecided, jump or
- * below the threshold, so @ref Counters::closureHolds sums to @c record_changes.
+ * below the threshold, so @c Counters::closureHolds sums to @c record_changes.
  */
 #pragma once
 
@@ -54,7 +54,10 @@ public:
         double range_jump_m{0.0};           ///< Δρ, new minus old (m); valid when decided.
         bool   jump{false};                 ///< decided and |Δρ| above the threshold.
 
-        /// The record moved between the IGS stream and the receiver's navigation message.
+        /**
+         * @brief The record moved between the IGS stream and the receiver's navigation message.
+         * @return True when @c old_from_igs and @c new_from_igs differ.
+         */
         bool sourceSwitched() const { return old_from_igs != new_from_igs; }
     };
 
@@ -68,19 +71,32 @@ public:
         double   max_abs_jump_m{0.0};       ///< Largest decided |Δρ| (m).
         std::string max_jump_satellite;     ///< The satellite of that largest |Δρ|.
 
-        /// Every change took exactly one outcome.
+        /**
+         * @brief Every change took exactly one outcome.
+         * @return True when @c undecided + @c below_threshold + @c jumps equals
+         *         @c record_changes; false flags an accounting defect.
+         */
         bool closureHolds() const {
             return undecided + below_threshold + jumps == record_changes;
         }
     };
 
-    /// @param threshold_m |Δρ| above which a change is a jump (m, positive).
+    /**
+     * @brief Builds an empty ledger with the given jump threshold.
+     * @param threshold_m |Δρ| above which a change is a jump (m, positive).
+     */
     explicit EphemerisJumpLedger(double threshold_m = 10.0) : threshold_m_(threshold_m) {}
 
-    /// Set the jump threshold (m, positive).
+    /**
+     * @brief Set the jump threshold (m, positive).
+     * @param threshold_m |Δρ| above which a change is a jump (m).
+     */
     void setThreshold(double threshold_m) { threshold_m_ = threshold_m; }
 
-    /// The jump threshold (m).
+    /**
+     * @brief The jump threshold (m).
+     * @return The threshold in force: |Δρ| strictly above it makes a decided change a jump.
+     */
     double threshold() const { return threshold_m_; }
 
     /**
@@ -115,13 +131,21 @@ public:
                                            const GnssTime& time,
                                            const Eigen::Vector3d& receiver_ecef);
 
-    /// True when the orbit and clock elements of two records are equal.
+    /**
+     * @brief True when the orbit and clock elements of two records are equal.
+     * @param a First broadcast record.
+     * @param b Second broadcast record.
+     * @return True when the orbit and clock elements match; false when any differs.
+     */
     static bool sameOrbitAndClock(const BroadcastEphemeris& a, const BroadcastEphemeris& b);
 
     /// Drop every remembered record (the counters are kept).
     void clear() { last_.clear(); }
 
-    /// The run-end counters.
+    /**
+     * @brief The run-end counters.
+     * @return Const reference to the live counters; they only increase.
+     */
     const Counters& counters() const { return counters_; }
 
 private:

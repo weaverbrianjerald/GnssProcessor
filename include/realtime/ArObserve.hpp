@@ -18,7 +18,7 @@
  * ## The SD ambiguities
  *
  * Candidates are grouped by (constellation, signal), and by chain component as well when
- * the wire's components are used (@ref ArObserveOptions::split_by_component).  The
+ * the wire's components are used (@ref GnssProcessor::ArObserveOptions::split_by_component "ArObserveOptions::split_by_component").  The
  * highest-elevation member of a group is its reference and every other member forms one SD
  * with it.  With D the SD rows on the state (+1 on the satellite, -1 on the reference) and
  * lambda the carrier wavelength of the satellite's signal:
@@ -44,7 +44,7 @@
  *        x_c = x_pos + Q_xa Q_aa^-1 (a_cond - a_hat)
  *
  *    A row is determined when its conditional sigma is at most the bar
- *    (@ref ArObserveOptions::determined_sigma_cyc) and kept when the search lists it.
+ *    (@ref GnssProcessor::ArObserveOptions::determined_sigma_cyc "ArObserveOptions::determined_sigma_cyc") and kept when the search lists it.
  *
  * The gates are the five of the producer's search, built by the same assignment, so the
  * same numbers make the same call.
@@ -64,7 +64,7 @@
  * The integer search of an unconverged float can take unbounded time (the ambiguity
  * covariance is wide in many directions and the enumeration grows with it), which is why the
  * resolver waits for a 3D position sigma below a bar.  The observe mode waits for a bar too
- * (@ref ArObserveOptions::max_position_sigma_m): above it an epoch records its float position,
+ * (@ref GnssProcessor::ArObserveOptions::max_position_sigma_m "ArObserveOptions::max_position_sigma_m"): above it an epoch records its float position,
  * forms no rows and runs no search, and is counted as gated.
  *
  * ## Measure-only
@@ -140,12 +140,12 @@ enum class ArSearchMode {
     DecorrelatedPartial  ///< @c ils::ilsFixDecorrelatedPartial, conditioned on the fixed components.
 };
 
-/// The mode a search name selects.
+/// @brief The mode a search name selects.
 /// @param name "full" or "decorrelated_partial"; anything else reads as Full (the loader refuses it).
 /// @return The mode.
 ArSearchMode arSearchModeOf(const std::string& name);
 
-/// The name of a mode, as the configuration spells it.
+/// @brief The name of a mode, as the configuration spells it.
 /// @param mode The mode.
 /// @return "full" or "decorrelated_partial".
 const char* arSearchModeName(ArSearchMode mode);
@@ -188,7 +188,7 @@ struct ArSdProblem {
  *
  * Candidates with an out-of-range state index or a non-positive wavelength are left out.
  * The groups are (constellation letter, signal), and also the chain component when
- * @ref ArObserveOptions::split_by_component is set; a group of one forms nothing.  The
+ * @ref GnssProcessor::ArObserveOptions::split_by_component "ArObserveOptions::split_by_component" is set; a group of one forms nothing.  The
  * reference of a group is its highest-elevation member (the first of equals in satellite
  * order); the SDs run in group order, then satellite order, so the output is deterministic.
  *
@@ -284,8 +284,12 @@ struct ArObserveCounters {
     long long wl_kept{ 0 };          ///< ...wide-lane rows among them.
     long long cond_failed{ 0 };      ///< Epochs whose conditioning solve failed.
 
-    /// The run-end identity: every candidate was admitted or refused, and a kept row is a
-    /// determined row of a searched epoch.
+    /**
+     * @brief The run-end identity: every candidate was admitted or refused, and a kept row is a
+     *        determined row of a searched epoch.
+     * @return True when the counters satisfy the identity (the epoch, candidate and row
+     *         counts are mutually consistent); false flags an accounting defect.
+     */
     bool closureHolds() const {
         return candidates == eligible + gated_out && kept <= determined
             && kept == band_kept + wl_kept && epochs_accepted <= epochs_searched

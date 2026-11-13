@@ -37,7 +37,7 @@ enum class NtripCredentialOrigin {
 struct NtripCredentials {
     std::string           username;                  ///< Empty: connect without authentication.
     std::string           password;                  ///< Empty with a non-empty username: authenticate with an empty password.
-    NtripCredentialOrigin origin{ NtripCredentialOrigin::Config };
+    NtripCredentialOrigin origin{ NtripCredentialOrigin::Config };  ///< Which source the login came from, or why the netrc gave none.
     std::filesystem::path netrc_file;                ///< The file that was read; empty when none was.
 };
 
@@ -59,7 +59,18 @@ NtripCredentials resolveNtripCredentials(const std::string& host,
                                          const std::filesystem::path& netrc_path,
                                          const std::filesystem::path& home);
 
-/// @overload Uses the user's home directory (@c HOME, else @c USERPROFILE).
+/**
+ * @brief Resolve the login of one NTRIP stream, taking the home directory from the user's
+ *        environment (@c HOME, else @c USERPROFILE).
+ *
+ * Same resolution as the overload with an explicit home directory.
+ *
+ * @param host       Caster host name, the key of the netrc entry.
+ * @param username   Login from the config (may be empty).
+ * @param password   Password from the config (may be empty).
+ * @param netrc_path Configured netrc file (@c data_download.netrc_path), or empty.
+ * @return The login to use and its origin.
+ */
 NtripCredentials resolveNtripCredentials(const std::string& host,
                                          const std::string& username,
                                          const std::string& password,
@@ -70,7 +81,7 @@ NtripCredentials resolveNtripCredentials(const std::string& host,
  *
  * Names the netrc file but never the login or the password.
  *
- * @param credentials Result of @ref resolveNtripCredentials.
+ * @param credentials Result of @ref GnssProcessor::resolveNtripCredentials "resolveNtripCredentials".
  * @return The phrase, or an empty string when the config's own login was used as written.
  */
 std::string describeNtripCredentials(const NtripCredentials& credentials);

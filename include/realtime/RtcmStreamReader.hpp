@@ -28,10 +28,17 @@ namespace GnssProcessor {
  */
 class RtcmStreamReader {
 public:
-    /// Push raw bytes into the internal buffer.
+    /**
+     * @brief Push raw bytes into the internal buffer.
+     * @param data Pointer to the first byte; the bytes are copied, so the caller keeps ownership.
+     * @param len  Number of bytes to append (0 is allowed).
+     */
     void feed(const uint8_t* data, size_t len);
 
-    /// Convenience overload.
+    /**
+     * @brief Convenience overload.
+     * @param data Bytes to append to the internal buffer (copied).
+     */
     void feed(const std::vector<uint8_t>& data) { feed(data.data(), data.size()); }
 
     /**
@@ -42,13 +49,24 @@ public:
      */
     std::optional<std::vector<uint8_t>> nextFrame();
 
-    /// Number of raw bytes currently buffered.
+    /**
+     * @brief Number of raw bytes currently buffered.
+     * @return Bytes fed and not yet returned in a frame or discarded.
+     */
     size_t buffered() const { return buf_.size(); }
 
-    /// Total frames successfully extracted since construction.
+    /**
+     * @brief Total frames successfully extracted since construction.
+     * @return The count of frames returned by @c nextFrame().
+     */
     uint64_t framesExtracted() const { return frames_extracted_; }
 
-    /// Total bytes discarded while scanning for the preamble.
+    /**
+     * @brief Total bytes discarded while scanning for the preamble.
+     * @return The count of bytes dropped since construction: bytes ahead of a preamble, and
+     *         a preamble byte whose length field is impossible or whose checksum failed
+     *         (dropped one byte at a time while the scan resumes).
+     */
     uint64_t bytesDiscarded() const { return bytes_discarded_; }
 
     /**
@@ -64,6 +82,8 @@ public:
      * @c RealTimeEngine::feedRtcmFrame).  A steady clock is used so that latency
      * intervals are unaffected by wall-clock steps.  Default-constructed (clock
      * epoch) until the first frame is extracted.
+     *
+     * @return The steady-clock instant of that feed(); the clock epoch before any frame.
      */
     std::chrono::steady_clock::time_point lastFrameReceipt() const {
         return last_frame_receipt_;

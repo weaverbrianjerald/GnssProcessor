@@ -15,7 +15,7 @@
  * engine's existing reactions, with no additional mechanism.
  *
  * Format: line-tagged text like the RTB-7 network snapshot, with strict
- * full-consumption parses, an END,<count> truncation guard (the count of record
+ * full-consumption parses, an END,\<count\> truncation guard (the count of record
  * lines between the header and END) and atomic temp-file + rename writes.
  * Doubles are written round-trip exact ("{:.17g}").
  *
@@ -38,7 +38,7 @@
  * in which a restored consumer re-ran its first-epoch seeds on the states it restored),
  * and a binary that predates them fails the parse on the unknown tag, the documented
  * cold-start signal.  Whether a resume applies them is the read knob
- * realtime.state_snapshot_latch_restore (@ref rtSnapshotLatchesToApply for the scope
+ * realtime.state_snapshot_latch_restore (@ref GnssProcessor::rtSnapshotLatchesToApply "rtSnapshotLatchesToApply" for the scope
  * rule).  Not in the fingerprint: the rows change what the first epoch does, not what a
  * serialized state means.
  *
@@ -70,9 +70,9 @@ namespace GnssProcessor {
 /// In-memory image of one RT filter-state snapshot.
 struct RtStateSnapshot {
     // --- M: meta -----------------------------------------------------------
-    int         snap_week{ 0 };
-    double      snap_tow{ 0.0 };
-    std::string wall_utc;               ///< Informational only.
+    int         snap_week{ 0 };         ///< GPS week of the epoch the snapshot was taken at.
+    double      snap_tow{ 0.0 };        ///< GPS time of week of that epoch (s).
+    std::string wall_utc;              ///< Informational only.
     uint64_t    fingerprint{ 0 };       ///< FNV-1a over the config facts that fix what the state means.
     std::size_t core_size{ 0 };         ///< Fixed core block length at serialization.
     std::size_t state_size{ 0 };        ///< Total state length at serialization.
@@ -82,12 +82,13 @@ struct RtStateSnapshot {
     uint64_t epoch_count{ 0 };          ///< Processed-epoch counter (AR min-epoch gates).
 
     // --- K: dynamic layout (ascending index) ------------------------------
+    /// One dynamic state of the layout: its slot in the state vector and the key that owns it.
     struct DynState {
-        std::size_t idx{ 0 };
+        std::size_t idx{ 0 };           ///< Index of the state in the state vector (at or beyond @c core_size).
         std::string kind;               ///< A family's snapshot tag (kStateFamilies, filter/StateFamily.hpp).
         std::string key;                ///< The owning map's key, verbatim.
     };
-    std::vector<DynState> dyn;
+    std::vector<DynState> dyn;          ///< The dynamic states in ascending index order, one per state beyond the core block.
 
     // --- X/P: the filter memory -------------------------------------------
     Eigen::VectorXd x;                  ///< State vector (state_size).
@@ -113,7 +114,7 @@ inline constexpr const char* kRtSnapshotLatchNames[4] = {"isb", "phase_clock", "
 /**
  * @brief The latches a restore sets (card CRS2).
  *
- * Every latch @p latches holds true, in the order of @ref kRtSnapshotLatchNames, except
+ * Every latch @p latches holds true, in the order of @ref GnssProcessor::kRtSnapshotLatchNames "kRtSnapshotLatchNames", except
  * that @c code_bias is set under the full restore scope only: the core scope re-creates
  * the receiver code-bias states per epoch, and a state created after the restore needs
  * its first-epoch seed.  Pure, so the rule has a unit test of its own.
@@ -127,19 +128,41 @@ std::vector<std::string> rtSnapshotLatchesToApply(const std::map<std::string, bo
 /// Serializer / strict parser / atomic file IO for @ref RtStateSnapshot.
 class RtStateSnapshotIO {
 public:
-    /// Serialize @p snap to @p os (header through END line, '\n' terminated).
+    /**
+     * @brief Serialize @p snap to @p os (header through END line, '\n' terminated).
+     * @param[in,out] os   Output stream; written to, not flushed or closed here.
+     * @param         snap The snapshot to write; its @c wall_utc is written as given.
+     */
     static void serialize(std::ostream& os, const RtStateSnapshot& snap);
 
-    /// Strict parse (full-consumption fields, END count check).  On failure
-    /// returns false and, when @p err is non-null, a one-line reason.
+    /**
+     * @brief Strict parse (full-consumption fields, END count check).  On failure
+     *        returns false and, when @p err is non-null, a one-line reason.
+     * @param[in,out] is  Input stream positioned at the header line; consumed up to the END line.
+     * @param[out]    out The parsed snapshot; assigned only on success, left unchanged on failure.
+     * @param[out]    err Optional one-line failure reason; may be null, untouched on success.
+     * @return True when the whole text parsed and the END count matched; false otherwise.
+     */
     static bool parse(std::istream& is, RtStateSnapshot& out, std::string* err);
 
-    /// Atomic write: temp file beside @p path + rename (binary mode, so the
-    /// on-disk bytes match serialize() on every platform).
+    /**
+     * @brief Atomic write: temp file beside @p path + rename (binary mode, so the
+     *        on-disk bytes match serialize() on every platform).
+     * @param path        Destination file; replaced as a whole, never partially written.
+     * @param snap        The snapshot to write; an empty @c wall_utc is stamped with the current UTC time.
+     * @param[out] err    Optional one-line failure reason; may be null.
+     * @return True when the file was written and moved into place; false on any I/O failure.
+     */
     static bool write(const std::filesystem::path& path, const RtStateSnapshot& snap,
                       std::string* err);
 
-    /// Read + parse @p path.
+    /**
+     * @brief Read + parse @p path.
+     * @param path     Snapshot file to open (binary mode).
+     * @param[out] out The parsed snapshot; assigned only on success.
+     * @param[out] err Optional one-line failure reason (cannot open, or the parse reason); may be null.
+     * @return True when the file opened and parsed; false otherwise.
+     */
     static bool read(const std::filesystem::path& path, RtStateSnapshot& out,
                      std::string* err);
 };

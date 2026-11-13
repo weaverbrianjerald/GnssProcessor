@@ -136,9 +136,16 @@ public:
         std::string sat;        ///< Satellite of the row.
         std::string signal;     ///< Observation code of the row (for example "L1W" or "C1C").
         bool        eligible{ true };   ///< Takes part in the screen and may be excluded; a false row is marginalized out of S, so a fault in it cannot make an eligible row look wrong.
-        /// True for a carrier phase row.
+        /**
+         * @brief True for a carrier phase row.
+         * @return True when @c signal starts with 'L' (a phase observation code); false for
+         *         code rows and for an empty signal.
+         */
         bool phase() const { return !signal.empty() && signal[0] == 'L'; }
-        /// The exclusion key the measurement model reads: "<sat>_<signal>".
+        /**
+         * @brief The exclusion key the measurement model reads: "<sat>_<signal>".
+         * @return The satellite id, an underscore and the observation code (for example "G09_L1W").
+         */
         std::string key() const { return sat + "_" + signal; }
     };
 
@@ -153,10 +160,10 @@ public:
 
     /// One decoupling or re-coupling event with its identity.
     struct Event {
-        EventKind   kind{ EventKind::Exclude };
-        std::string sat;
-        std::string signal;
-        double      w{ 0.0 };            ///< Conditional statistic at the event (0 for Lost and Released).
+        EventKind   kind{ EventKind::Exclude };  ///< What happened to the key.
+        std::string sat;                         ///< Satellite of the key.
+        std::string signal;                      ///< Observation code of the key (for example "L1W").
+        double      w{ 0.0 };          ///< Conditional statistic at the event (0 for Lost and Released).
         double      sigma{ 0.0 };        ///< Conditional standard deviation of the row (m).
         double      innovation{ 0.0 };   ///< Innovation of the row (m).
         int         streak{ 0 };         ///< Consecutive flagged epochs including this one; for Readmit, Lost and Released the length that just ended.
@@ -164,14 +171,18 @@ public:
 
     /// The decisions for one epoch.
     struct Outcome {
-        Abstain abstain{ Abstain::None };
+        Abstain abstain{ Abstain::None };            ///< Why the epoch was not screened; None when it was.
         bool    acted{ false };              ///< Mode was Act, so @c exclude and @c refloat are to be applied.
         int     flagged_before_abstain{ 0 }; ///< Rows removed before the screen gave up (TooMany and TooFew).
         double  max_abs_w{ 0.0 };            ///< Largest |w| over the eligible rows of the first, full-set pass.
         std::vector<std::string> exclude;                            ///< Keys ("<sat>_<signal>") to hold out of the update; empty unless acted.
         std::vector<std::pair<std::string, std::string>> refloat;    ///< (sat, signal) of the ambiguities to re-float; empty unless acted.
         std::vector<Event> events;                                   ///< Every event of the epoch, in the order they were decided.
-        /// True when the update must be built again.
+        /**
+         * @brief True when the update must be built again.
+         * @return True when at least one key is excluded or one ambiguity is to be re-floated;
+         *         false when the update stands as assembled.
+         */
         bool changesUpdate() const { return !exclude.empty() || !refloat.empty(); }
     };
 
@@ -210,24 +221,46 @@ public:
         /// below 2, 2 to 3, 3 to 4, 4 to 5, 5 to 6, 6 to 10, 10 to 100, 100 and above.
         std::array<uint64_t, kHistBuckets> hist{};
 
-        /// Epochs that abstained, all reasons.
+        /**
+         * @brief Epochs that abstained, all reasons.
+         * @return The sum of the three abstain counters.
+         */
         uint64_t abstained() const { return abstain_many + abstain_few + abstain_numeric; }
-        /// Exclusion episodes still open.
+        /**
+         * @brief Exclusion episodes still open.
+         * @return Episodes opened less those closed by readmission, refloat, loss or release.
+         */
         uint64_t open() const { return episodes - readmitted - refloated - lost - released; }
-        /// Episode and epoch closure; false only after a bookkeeping bug.
+        /**
+         * @brief Episode and epoch closure; false only after a bookkeeping bug.
+         * @return True when no more episodes were closed than opened and every epoch flagged
+         *         or abstained is also an epoch counted.
+         */
         bool closureHolds() const {
             return episodes >= readmitted + refloated + lost + released
                 && epochs >= epochs_flagged + abstained();
         }
     };
 
-    /// Set the knobs. Does not clear the counters or the open episodes.
+    /**
+     * @brief Set the knobs. Does not clear the counters or the open episodes.
+     * @param c The resolved knobs; copied.
+     */
     void configure(const Config& c) { cfg_ = c; }
-    /// The knobs in force.
+    /**
+     * @brief The knobs in force.
+     * @return Const reference to the configuration last passed to @c configure (defaults before that).
+     */
     const Config& config() const { return cfg_; }
-    /// Run-end counters.
+    /**
+     * @brief Run-end counters.
+     * @return Const reference to the live counters.
+     */
     const Counters& counters() const { return counters_; }
-    /// Number of exclusion episodes currently open.
+    /**
+     * @brief Number of exclusion episodes currently open.
+     * @return The count of keys excluded now and not yet readmitted, refloated, lost or released.
+     */
     size_t openEpisodes() const { return open_.size(); }
 
     /**
@@ -254,9 +287,19 @@ public:
      */
     static Statistics leaveOneOut(const Eigen::MatrixXd& S, const Eigen::VectorXd& nu);
 
-    /// Name of an abstain reason, for logs.
+    /**
+     * @brief Name of an abstain reason, for logs.
+     * @param a The abstain reason.
+     * @return A static lowercase string: "none", "too_many_rows_flagged", "too_few_rows" or
+     *         "numerical".  Never null.
+     */
     static const char* abstainName(Abstain a);
-    /// Name of an event kind, for logs.
+    /**
+     * @brief Name of an event kind, for logs.
+     * @param k The event kind.
+     * @return A static lowercase string: "exclude", "readmit", "refloat", "lost" or
+     *         "released".  Never null.
+     */
     static const char* eventName(EventKind k);
 
 private:

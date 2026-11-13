@@ -21,7 +21,7 @@
  * This class owns the two things the carry needs that the seam does not already
  * hold: the per-key record of the value the model applied at the last update
  * (0.0 = not applied or absent; presence of the key = recorded), and the
- * counters.  The decision and the state mutation live in @ref react, so every
+ * counters.  The decision and the state mutation live in @c react, so every
  * refusal branch is unit-testable against a bare @c StateManager; the engine
  * seam (@c RealTimeEngine::carryOnPhaseBiasDisc_, RealTimeEngineSsrBreaks.cpp)
  * computes the inputs, calls it, and logs.
@@ -77,17 +77,23 @@ public:
         uint64_t reset_bssd{ 0 };         ///< Refused: BSSD consumer.
         uint64_t reset_unknown_key{ 0 };  ///< Refused: ambiguity key not in the state.
 
-        /// Σ of the four reset counters.
+        /**
+         * @brief Σ of the four reset counters.
+         * @return Events that took the existing reset instead of a carry.
+         */
         uint64_t resets() const {
             return reset_first_sight + reset_basis + reset_bssd + reset_unknown_key;
         }
-        /// The closure identity: carried + resets == events.
+        /**
+         * @brief The closure identity: carried + resets == events.
+         * @return True when every event took exactly one outcome; false flags an accounting defect.
+         */
         bool closureHolds() const { return disc_carried + flip_carried + resets() == events; }
     };
 
     /// Outcome of one @ref react call.
     struct Decision {
-        Action action{ Action::None };
+        Action action{ Action::None };  ///< What was done for the key this epoch.
         double delta_m{ 0.0 };   ///< Δ = applied_now − applied_prev (m); valid when carried.
     };
 
@@ -120,22 +126,42 @@ public:
      * against the value the model applied in this epoch.  The engine calls it at
      * the tail of the per-key loop in @c carryOnPhaseBiasDisc_, before the
      * measurement update that applies this value.
+     *
+     * @param key          Ledger key ("sat|signal", e.g. "G24|L5X").
+     * @param applied_now_m The bias value the model applies in this epoch (m; 0 = not applied).
      */
     void record(const std::string& key, double applied_now_m) { applied_m_[key] = applied_now_m; }
 
-    /// The recorded applied value for @p key, if any.
+    /**
+     * @brief The recorded applied value for @p key, if any.
+     * @param key Ledger key ("sat|signal").
+     * @return The bias value (m) stored by the last @c record for @p key; @c std::nullopt
+     *         when the key was never recorded.
+     */
     std::optional<double> recorded(const std::string& key) const {
         const auto it = applied_m_.find(key);
         if (it == applied_m_.end()) return std::nullopt;
         return it->second;
     }
 
-    /// Number of keys with a recorded value.
+    /**
+     * @brief Number of keys with a recorded value.
+     * @return The count of distinct keys recorded so far.
+     */
     std::size_t size() const { return applied_m_.size(); }
 
+    /**
+     * @brief The run-end counters.
+     * @return Const reference to the live counters; they only increase.
+     */
     const Counters& counters() const { return ctr_; }
 
-    /// Stable name for logs / tests.
+    /**
+     * @brief Stable name for logs / tests.
+     * @param a The action.
+     * @return A static lowercase string such as "carried_disc" or "reset_basis"; "?" for an
+     *         out-of-range value.  Never null.
+     */
     static const char* actionName(Action a);
 
 private:

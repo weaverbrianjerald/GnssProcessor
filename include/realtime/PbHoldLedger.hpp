@@ -23,7 +23,7 @@
  *
  * The decision is kept separate from the engine seam
  * (@c RealTimeEngine::reactToPbHold_, RealTimeEngineSsrBreaks.cpp), as in the declared-step carry
- * and the step-translate ledger: the seam computes the inputs, calls @ref react, and performs the reset
+ * and the step-translate ledger: the seam computes the inputs, calls @c react, and performs the reset
  * and the logging, so every branch is unit-testable without a live engine.  The
  * ledger modifies only its own memory and counters.
  *
@@ -59,13 +59,17 @@ public:
         std::uint64_t refloats{ 0 };      ///< Generation changes that re-floated an ambiguity.
         std::uint64_t disc_ignored{ 0 };  ///< Disc-counter changes suppressed because the value could not have stepped.
 
-        /// The closure identity: every visited cell took exactly one branch.
+        /**
+         * @brief The closure identity: every visited cell took exactly one branch.
+         * @return True when @c first_sight + @c held + @c refloats equals @c cells; false
+         *         flags an accounting defect.
+         */
         bool closureHolds() const { return first_sight + held + refloats == cells; }
     };
 
     /// Outcome of one @ref react call.
     struct Decision {
-        Action        action{ Action::NotHeld };
+        Action        action{ Action::NotHeld };         ///< What was decided for the key this epoch.
         std::uint32_t previous_generation{ 0 };  ///< The generation held before this cell (0 = none).
     };
 
@@ -113,19 +117,36 @@ public:
         return d;
     }
 
-    /// The generation recorded for @p key, if the key has ever been seen held.
+    /**
+     * @brief The generation recorded for @p key, if the key has ever been seen held.
+     * @param key Ledger key ("sat|signal", e.g. "G24|L1W").
+     * @return The hold generation adopted by the last @c react for @p key; @c std::nullopt
+     *         when the key was never seen held.
+     */
     std::optional<std::uint32_t> recorded(const std::string& key) const {
         const auto it = gen_.find(key);
         if (it == gen_.end()) return std::nullopt;
         return it->second;
     }
 
-    /// Number of keys with a recorded generation.
+    /**
+     * @brief Number of keys with a recorded generation.
+     * @return The count of distinct keys ever seen held.
+     */
     std::size_t size() const { return gen_.size(); }
 
+    /**
+     * @brief The run-end counters.
+     * @return Const reference to the live counters; they only increase.
+     */
     const Counters& counters() const { return ctr_; }
 
-    /// Stable lowercase name for logs and tests.
+    /**
+     * @brief Stable lowercase name for logs and tests.
+     * @param a The action.
+     * @return "not_held", "first_sight", "held" or "refloat"; "unknown" for an out-of-range
+     *         value.  Never null.
+     */
     static const char* actionName(Action a) {
         switch (a) {
             case Action::NotHeld:    return "not_held";

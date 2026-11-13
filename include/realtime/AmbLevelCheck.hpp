@@ -60,7 +60,7 @@
  *
  * ## The window restart (and why a translated epoch cannot trip)
  *
- * This class restarts a window only when told to (@ref restart).  The engine
+ * This class restarts a window only when told to (@ref GnssProcessor::AmbLevelCheck::restart "restart").  The engine
  * owns the restart rule, and the guarantee lives there: see
  * @c RealTimeEngine::checkAmbiguityLevel_ (RealTimeEngineEstimate.cpp).
  *
@@ -126,9 +126,9 @@ public:
         double sigma{ 0.0 };           ///< sigma_level of the tripping statistic.
         int    n{ 0 };                 ///< Samples behind it.
         double wl_mean{ 0.0 };         ///< Both statistics, set whenever @c tested (the trace carries the non-tripping one too).
-        double wl_sigma{ 0.0 };
-        double if_mean{ 0.0 };
-        double if_sigma{ 0.0 };
+        double wl_sigma{ 0.0 };        ///< Floored standard error of the WL mean (cycles); set whenever @c tested.
+        double if_mean{ 0.0 };         ///< Mean of the IF statistic over the window (metres); set whenever @c tested.
+        double if_sigma{ 0.0 };        ///< Floored standard error of the IF mean (metres); set whenever @c tested.
     };
 
     /// Run-end counters.
@@ -147,12 +147,21 @@ public:
     /// sigma_level floor, IF test (metres); see the class banner.
     static constexpr double kSigmaFloorIfM = 0.05;
 
-    /// Resolve the knobs (called once, from the engine's first armed epoch).
+    /**
+     * @brief Resolve the knobs (called once, from the engine's first armed epoch).
+     * @param c The resolved window length, trip multiplier and mode; copied.
+     */
     void configure(const Config& c) { cfg_ = c; }
+
+    /**
+     * @brief The knobs in force.
+     * @return Const reference to the configuration last passed to @c configure (defaults before that).
+     */
     const Config& config() const { return cfg_; }
 
     /**
      * @brief Clear @p sat's window at a translation, carry, reset or birth epoch.
+     * @param sat Satellite id (e.g. "G09").
      * @return true iff a non-empty window existed and was cleared (counted in
      *         @c restarts).
      */
@@ -175,9 +184,17 @@ public:
     /// Record that a trip was acted on (the engine refloated both bands).
     void noteRefloat() { ++ctr_.refloats; }
 
+    /**
+     * @brief The run-end counters.
+     * @return Const reference to the live counters; they only increase.
+     */
     const Counters& counters() const { return ctr_; }
 
-    /// Live window depth for @p sat (0 when it holds none), for tests and traces.
+    /**
+     * @brief Live window depth for @p sat (0 when it holds none), for tests and traces.
+     * @param sat Satellite id (e.g. "G09").
+     * @return Number of paired samples currently held for @p sat.
+     */
     std::size_t depth(const std::string& sat) const;
 
     /**
@@ -192,6 +209,9 @@ public:
      * @param lambda_wl  c / (f1 - f2) (m).
      * @param ip1,ip2    Pre-fit phase innovations, band 1 / band 2 (m).
      * @param ic1,ic2    Pre-fit code innovations, band 1 / band 2 (m).
+     * @return The WL level minus state, in WL cycles: the statistic the WL test averages
+     *         (see the file banner).  Near zero, apart from noise, when the float
+     *         ambiguities agree with the code level.
      */
     static double wlLevelMinusState(double f1, double f2, double lambda_wl,
                                     double ip1, double ip2, double ic1, double ic2) {
@@ -203,6 +223,12 @@ public:
     /**
      * @brief Ionosphere-free level minus state, in metres, from the same four
      *        pre-fit innovations: the IF combination of the ambiguity errors.
+     *
+     * @param f1,f2      Carrier frequencies (Hz), f1 != f2.
+     * @param ip1,ip2    Pre-fit phase innovations, band 1 / band 2 (m).
+     * @param ic1,ic2    Pre-fit code innovations, band 1 / band 2 (m).
+     * @return The IF level minus state in metres: the statistic the IF test averages
+     *         (see the file banner).
      */
     static double ifLevelMinusState(double f1, double f2,
                                     double ip1, double ip2, double ic1, double ic2) {
@@ -210,7 +236,11 @@ public:
         return (g1 * (ip1 - ic1) - g2 * (ip2 - ic2)) / (g1 - g2);
     }
 
-    /// Stable name of a test for logs, events and tests.
+    /**
+     * @brief Stable name of a test for logs, events and tests.
+     * @param t The test.
+     * @return "wl" or "if"; the empty string for @c Test::None.  Static storage, never null.
+     */
     static const char* testName(Test t);
 
 private:
