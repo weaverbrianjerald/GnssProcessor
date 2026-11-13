@@ -61,7 +61,12 @@ public:
     ImuAidingSource(const GnssConfig& config, LogManager& log_manager);
 
     // ---- identity --------------------------------------------------------
+    /// @brief Modality tag of this source.
+    /// @return Always @c AidingSourceKind::Imu.
     AidingSourceKind kind() const override { return AidingSourceKind::Imu; }
+
+    /// @brief Human-readable name (for logs/traces).
+    /// @return The fixed string "IMU (INS error-state aiding)".
     std::string name() const override { return "IMU (INS error-state aiding)"; }
 
     // ---- (a) state -------------------------------------------------------
@@ -73,6 +78,12 @@ public:
      * StateManager already reserved under its @c enableImu() carve-out.  It
      * allocates nothing, so the state layout is bit-for-bit unchanged.  Returns
      * std::nullopt if IMU error states are not present.
+     *
+     * @param sm State-layout owner; kept as a non-owning pointer for live index
+     *           lookups, so it must outlive this source's use.
+     * @return Descriptor of the 9-state attitude/accel-bias/gyro-bias block (a
+     *         reservation receipt; its @c start_index is not a durable cache), or
+     *         std::nullopt when IMU error states are absent.
      */
     std::optional<StateBlockSpec> reserveStates(StateManager& sm) override;
 
@@ -86,14 +97,21 @@ public:
      * contribution.  Returns an invalid contribution (KF keeps the baseline) on
      * the first epoch, when not yet wired (no StateManager/owner), with no data,
      * or when integration yields no valid samples.
+     *
+     * @param ctx Epoch interval [t_prev, t_now], current nominal state vector and
+     *            first-epoch flag; the state is read, not modified.
+     * @return Predict contribution (15-slot ins_map, Phi/Q and nominal write-backs),
+     *         or an invalid one (@c valid==false) in the cases listed above.
      */
     PredictContribution contributePredict(const AidingEpochContext& ctx) override;
 
     // ---- (c) measurement -------------------------------------------------
     /// @brief TC-IMU re-parameterizes GNSS rows (column-write seam) under tight coupling.
+    /// @return True when the IMU is configured tightly coupled; false for loose coupling.
     bool reparameterizesGnssRows() const override { return tightly_coupled_; }
 
     /// @brief Tightly-coupled IMU folds nominal feedback into C_b_e_ -> naive IEKF.
+    /// @return True when the IMU is configured tightly coupled; false for loose coupling.
     bool requiresNaiveRelinearization() const override { return tightly_coupled_; }
 
     // ---- lifecycle -------------------------------------------------------
@@ -105,15 +123,24 @@ public:
      * @c ImuSample and appended via @c ImuIntegrator::addSample; the next
      * epoch's @c contributePredict integrates the buffered samples over its
      * interval.  Samples of other kinds are ignored.
+     *
+     * @param sample One streaming sample; its @c time, @c accel (m/s^2, body frame)
+     *               and @c gyro (rad/s, body frame) are copied into an @c ImuSample.
      */
     void ingestSample(const AidingSample& sample) override;
 
+    /// @brief Whether the wrapped integrator holds IMU data.
+    /// @return True when the integrator exists and holds samples (loaded file or ingested
+    ///         stream); false after a failed load with no streaming samples.
     bool hasData() const override { return integrator_ && integrator_->hasData(); }
 
     /// @brief The IMU bridges full GNSS outages (INS dead-reckoning); this replaces
     ///        the earlier @c enableImu() queries for gap and MW tolerance.
+    /// @return Always true.
     bool bridgesGaps() const override { return true; }
 
+    /// @brief Typed down-cast hook: this source is the IMU.
+    /// @return @c this (non-owning).
     ImuAidingSource* asImu() override { return this; }
 
     // ---- IMU-specific API (recovered via asImu()) ------------------------
@@ -123,6 +150,9 @@ public:
      *
      * The IMU reads and writes C_b_e_ through this owner and does not own the
      * nominal attitude itself (state-vector discipline: one off-vector owner).
+     *
+     * @param filter Filter that owns C_b_e_; stored as a non-owning pointer, so it
+     *               must outlive this source's use.
      */
     void attachFilter(KalmanFilter& filter) { filter_ = &filter; }
 
@@ -136,10 +166,14 @@ public:
      * and the StateManager/owner handles are attached.  The computation was moved
      * here from its two copies in Application::run; the setImuState arithmetic and
      * the model's partials are unchanged.
+     *
+     * @param[in,out] model Measurement model that receives the attitude and body
+     *                      specific force through @c setImuState.
      */
     void applyTcJacobianInputs(MeasurementModel& model) const;
 
     /// @brief Access the wrapped integrator (null only if construction failed).
+    /// @return Non-owning pointer to the integrator, owned by this source; nullptr if absent.
     const ImuIntegrator* integrator() const { return integrator_.get(); }
 
 private:

@@ -53,11 +53,19 @@ public:
     ZuptAidingSource(const GnssConfig& config, LogManager& log_manager);
 
     // ---- identity --------------------------------------------------------
+    /// @brief Modality tag of this source.
+    /// @return Always @c AidingSourceKind::Zupt.
     AidingSourceKind kind() const override { return AidingSourceKind::Zupt; }
+
+    /// @brief Human-readable name (for logs/traces).
+    /// @return The fixed string "ZUPT (zero-velocity update)".
     std::string name() const override { return "ZUPT (zero-velocity update)"; }
 
     // ---- (a) State -------------------------------------------------------
     /// @brief Owns no states; stores the StateManager to read the velocity index each epoch.
+    /// @param sm State-layout owner; kept as a non-owning pointer, so it must outlive
+    ///           this source's use.
+    /// @return Always std::nullopt (no state block is owned).
     std::optional<StateBlockSpec> reserveStates(StateManager& sm) override;
 
     // ---- (c) Measurement -------------------------------------------------
@@ -67,11 +75,17 @@ public:
      * Returns three rows (vx/vy/vz) pinning the velocity states to zero, or
      * none when velocity states are absent or @c reserveStates has not been
      * called.
+     *
+     * @param ctx Epoch context; the current nominal state supplies the velocity
+     *            innovation and its size sets the Jacobian length.
+     * @return Three rows labelled ZUPT_vx/ZUPT_vy/ZUPT_vz (variance sigma^2 in
+     *         (m/s)^2), or an empty set in the cases above.
      */
     MeasurementRows contributeMeasurement(const AidingEpochContext& ctx) override;
 
     // ---- lifecycle -------------------------------------------------------
     /// @brief Always true: ZUPT is a constraint, not a sensor feed.
+    /// @return Always true.
     bool hasData() const override { return true; }
 
 private:

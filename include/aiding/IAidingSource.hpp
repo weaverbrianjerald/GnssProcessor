@@ -61,14 +61,17 @@ class ImuAidingSource;  // forward decl: typed down-cast target (the privileged 
  */
 class IAidingSource {
 public:
+    /// @brief Virtual destructor: sources are owned and destroyed through this base pointer.
     virtual ~IAidingSource() = default;
 
     // ---- identity --------------------------------------------------------
 
     /// @brief Modality tag (registry key / provenance tag / config token).
+    /// @return The @c AidingSourceKind this source implements (constant for the instance).
     virtual AidingSourceKind kind() const = 0;
 
     /// @brief Human-readable name (for logs/traces).
+    /// @return Descriptive name, e.g. for the registry's "source enabled" log line.
     virtual std::string name() const = 0;
 
     // ---- (a) State: establish a block through StateManager ---------------
@@ -135,6 +138,9 @@ public:
      * the Doppler row).  Such sources are routed through the host's column-write
      * seam, not the row-append seam.  This is the one capability that cannot be
      * inferred from an empty return.  Default false.
+     *
+     * @return True when this source routes through the column-write seam; false when
+     *         it appends rows (or contributes none).
      */
     virtual bool reparameterizesGnssRows() const { return false; }
 
@@ -149,6 +155,8 @@ public:
      * estimator queries this (via @c AidingSourceManager) instead of hard-coding
      * @c tightlyCoupledImu().  Default false: a source without nominal feedback
      * can use the prior-anchored IEKF.
+     *
+     * @return True when this source forces the naive relinearization path.
      */
     virtual bool requiresNaiveRelinearization() const { return false; }
 
@@ -161,10 +169,15 @@ public:
      * samples until the next GNSS epoch boundary defines the interval.  In
      * post-processing the whole timeline is loaded up front, so the base
      * default does nothing.
+     *
+     * @param sample One streaming sample; a source consumes only its own
+     *               @c AidingSample::kind and ignores the rest.
      */
     virtual void ingestSample(const AidingSample& sample) { (void)sample; }
 
     /// @brief Whether this source has data ready (mirrors ImuIntegrator::hasData()).
+    /// @return True when the source can contribute this epoch (loaded or buffered data,
+    ///         or a constraint source that needs none).
     virtual bool hasData() const = 0;
 
     /**
@@ -173,6 +186,8 @@ public:
      * Lets the gap-recovery policy (classifyDynamicsMode / handleGap) and the MW
      * arc-reset tolerance query the abstraction instead of @c enableImu().
      * Default false (baro or ZUPT does not bridge a full GNSS outage).
+     *
+     * @return True when the source can propagate the state through a full GNSS outage.
      */
     virtual bool bridgesGaps() const { return false; }
 
@@ -180,11 +195,15 @@ public:
     virtual void reset() {}
 
     /// @brief Enable CSV trace output for this source.
+    /// @param log_dir Directory that receives the source's trace files.
+    /// @return True when tracing was enabled; the default (a source with no trace
+    ///         output) returns false.
     virtual bool enableTracing(const std::filesystem::path& log_dir) {
         (void)log_dir; return false;
     }
 
     /// @brief Whether tracing is currently active.
+    /// @return True after a successful @c enableTracing; default false.
     virtual bool isTracingEnabled() const { return false; }
 
     /**
@@ -194,6 +213,8 @@ public:
      * recover the IMU's source-specific API (TC Jacobian inputs, attitude) from a
      * registry-built handle without RTTI, as
      * @c ISlipDetector::asMelbourneWubbena() does, and keeps that API off the base.
+     *
+     * @return Non-owning pointer to this source when it is the IMU, else nullptr.
      */
     virtual ImuAidingSource* asImu() { return nullptr; }
 };

@@ -71,9 +71,14 @@ public:
                                                  LogManager& log_manager);
 
     /// @brief Whether a kind can be constructed in this build.
+    /// @param kind Source kind to query.
+    /// @return True when a creator is registered for @p kind; false for a kind with no
+    ///         implementation yet (Nhc, WheelOdom, Baro, Vision), for which @c create
+    ///         returns nullptr.
     static bool isAvailable(AidingSourceKind kind);
 
     /// @brief All kinds with a registered creator (build-available).
+    /// @return Registered kinds in @c AidingSourceKind order (the registry map's key order).
     static std::vector<AidingSourceKind> availableKinds();
 
     /**

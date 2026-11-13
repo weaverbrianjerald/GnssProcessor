@@ -46,9 +46,14 @@ enum class AidingSourceKind {
 };
 
 /// @brief Canonical lower-case token ("imu","zupt","nhc","wheel","baro","vision").
+/// @param kind The aiding source kind.
+/// @return The canonical token of @p kind, the spelling the configuration and the log use.
 std::string toString(AidingSourceKind kind);
 
 /// @brief Parse a (case-insensitive) token into a kind; std::nullopt on miss.
+/// @param token Token to parse; the canonical spellings of @c toString and a few aliases
+///        (for example "ins", "odometer", "barometer") are accepted in any letter case.
+/// @return The matching kind, or @c std::nullopt when the token names no known kind.
 std::optional<AidingSourceKind> aidingKindFromString(const std::string& token);
 
 /**
@@ -123,7 +128,7 @@ using MeasurementRows = std::vector<AidingMeasurementRow>;
  * real-time IMU in @c RealTimeEngine.  Unused in pre-loaded replay.
  */
 struct AidingSample {
-    AidingSourceKind kind{ AidingSourceKind::Imu };
+    AidingSourceKind kind{ AidingSourceKind::Imu };   ///< Modality of the sample; a source consumes only its own kind.
     GnssTime time;                                    ///< GPS time of the sample.
     Eigen::Vector3d accel{ Eigen::Vector3d::Zero() }; ///< IMU specific force, body frame (m/s^2).
     Eigen::Vector3d gyro{ Eigen::Vector3d::Zero() };  ///< IMU angular rate, body frame (rad/s).

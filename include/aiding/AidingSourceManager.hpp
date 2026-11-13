@@ -49,6 +49,9 @@ public:
      * Calls @c reserveStates on each source once after the core state is laid
      * out (stashes the StateManager for live index resolution; reserves tier-2
      * blocks).  Must be called before per-epoch contribution collection.
+     *
+     * @param sm Single owner of the state layout; each source keeps a non-owning
+     *           pointer to it, so it must outlive the manager's use of the sources.
      */
     void reserveAllStates(StateManager& sm);
 
@@ -57,17 +60,26 @@ public:
      *
      * Each source consumes samples of its own kind and ignores the rest
      * (the IMU buffers @c AidingSourceKind::Imu samples).  No-op when empty.
+     *
+     * @param sample One streaming sample; @c AidingSample::kind selects the
+     *               source that consumes it.
      */
     void ingestSample(const AidingSample& sample);
 
     /// @brief Whether no aiding source is active (the GNSS-only fast path).
+    /// @return True when no source is active.
     bool empty() const { return sources_.empty(); }
 
     /// @brief Number of active aiding sources.
+    /// @return Count of owned sources (0 on the GNSS-only path).
     std::size_t size() const { return sources_.size(); }
 
     /// @brief Non-owning typed handle to the IMU source (nullptr if none active).
+    /// @return The IMU source owned by this manager, or nullptr when the IMU is not enabled.
     ImuAidingSource* imu() { return imu_; }
+
+    /// @brief Non-owning typed handle to the IMU source (nullptr if none active), const overload.
+    /// @return The IMU source owned by this manager, or nullptr when the IMU is not enabled.
     const ImuAidingSource* imu() const { return imu_; }
 
     /**
@@ -77,6 +89,9 @@ public:
      * arc-reset-tolerance queries: true iff some source's @c bridgesGaps() is
      * true (IMU true; ZUPT false).  No caller uses it yet; those queries still
      * read @c enableImu().
+     *
+     * @return True when at least one active source bridges full GNSS outages;
+     *         false for an empty set or a ZUPT-only set.
      */
     bool anySourceBridgesGaps() const;
 
@@ -123,6 +138,9 @@ public:
      *
      * Replaces the @c tightlyCoupledImu() check in the IEKF dispatch: true iff
      * some source applies error-state nominal feedback (the tightly-coupled IMU).
+     *
+     * @return True when the naive relinearization path is required; false for an
+     *         empty set or sources without nominal feedback.
      */
     bool anySourceRequiresNaiveRelinearization() const;
 
