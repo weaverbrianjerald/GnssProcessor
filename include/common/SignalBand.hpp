@@ -123,6 +123,12 @@ namespace GnssProcessor {
      *
      * Convenience wrapper for call sites that only have the satellite id
      * (e.g. "G02", "E11") rather than the constellation string.
+     *
+     * @param satellite  Satellite id whose first character names the system
+     *                   ('G', 'E', 'R', 'C', 'J', 'S' or 'I').
+     * @param rinex_code Three-character RINEX-3 observation code (e.g. "C2W").
+     * @return Classification result as @c classifySignal returns it; @c band==Unknown for an
+     *         empty or unrecognized satellite id.
      */
     SignalClassification classifySignalForSat(const std::string& satellite,
                                               const std::string& rinex_code);
@@ -158,6 +164,10 @@ namespace GnssProcessor {
      *
      * Used in logs, diagnostics, and (optionally) DD ambiguity keys
      * when band-level keying is desired over RINEX-code keying.
+     *
+     * @param band Frequency band to label.
+     * @return Static NUL-terminated label such as "GPS_L1" or "GAL_E5a"; "UNKNOWN" for
+     *         @c FrequencyBand::Unknown. Never null; the pointer stays valid for the program lifetime.
      */
     const char* bandLabel(FrequencyBand band);
 

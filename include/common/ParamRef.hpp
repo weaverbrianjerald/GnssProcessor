@@ -6,14 +6,14 @@
  *
  * ### The identities
  *
- *  - @ref NetworkParamKind: the parameter kinds the network estimates (the registry
+ *  - @ref GnssProcessor::NetworkParamKind "NetworkParamKind": the parameter kinds the network estimates (the registry
  *    declares one property set per kind, network/assembly/ParamRegistry.hpp).
- *  - @ref ParamForm: the shape of an instance where one kind has more than one.
- *  - @ref ParamClass: one line of the "parameters as armed" table (kind, form, constellation,
+ *  - @ref GnssProcessor::ParamForm "ParamForm": the shape of an instance where one kind has more than one.
+ *  - @ref GnssProcessor::ParamClass "ParamClass": one line of the "parameters as armed" table (kind, form, constellation,
  *    signals or bands).
- *  - @ref ParamInstanceId: a class plus the subject fields a table line sums over
+ *  - @ref GnssProcessor::ParamInstanceId "ParamInstanceId": a class plus the subject fields a table line sums over
  *    (satellite, GLONASS slot, station).
- *  - @ref ParamRef: one parameter without its station, the identity the observation equation
+ *  - @ref GnssProcessor::ParamRef "ParamRef": one parameter without its station, the identity the observation equation
  *    names its terms by.
  *
  * They live in common/ so that code on the user side of the estimator, which must include no
@@ -29,10 +29,10 @@
  * not: the names order as "GLONASS" < "GPS" < "Galileo", the letters as 'E' < 'G' < 'R'.
  * The families that open with a name, and the typed key and comparator that reproduces each:
  *
- *  - inter-system bias, key "Galileo": @c System ordered by @ref SystemNameOrder;
- *  - receiver phase bias, key "GPS_RPB_L1C": @c SignalId ordered by @ref SignalNameOrder;
+ *  - inter-system bias, key "Galileo": @c System ordered by @ref GnssProcessor::SystemNameOrder "SystemNameOrder";
+ *  - receiver phase bias, key "GPS_RPB_L1C": @c SignalId ordered by @ref GnssProcessor::SignalNameOrder "SignalNameOrder";
  *  - receiver code bias, keys "GPS_DCB", "GPS_IFB5", "GLONASS_IFB1_k-4", "GPS_ISC_C1W":
- *    @ref RxCbKey;
+ *    @ref GnssProcessor::RxCbKey "RxCbKey";
  *  - ambiguity, satellite bias and satellite phase bias, keys "G05_L1C", "G05|C1C",
  *    "G05|L1C|PB": @c SatSignalId (GnssIdentity.hpp);
  *  - slant ionosphere, phase colour and satellite clock, keys "G05", "G05", "G05|SC":
@@ -41,7 +41,7 @@
  * The receiver code-bias keys sort by name, then DCB before the IFB keys before the ISC
  * keys, the IFB keys by band digit with the per-band key ahead of its per-slot keys, and the
  * per-slot keys by the text of the signed slot ("+0" ... "+6" before "-1" ... "-7"): the
- * order of the declared form (@ref ParamForm) alone does not give this.  The tests in
+ * order of the declared form (@ref GnssProcessor::ParamForm "ParamForm") alone does not give this.  The tests in
  * tests/test_param_ref.cpp compare every order above with the string order over the signals
  * of the golden configurations and over every classified signal.
  *
@@ -109,7 +109,7 @@ const char* paramKindName(NetworkParamKind kind);
  * both; likewise the receiver code bias and the ambiguity forms.  The inventory tells
  * the shapes apart, so a table line is never "inter-system bias | rx_clock".  The
  * (kind, form) pair decides which fields a class carries (the table in
- * @ref ParamClass).
+ * @ref GnssProcessor::ParamClass "ParamClass").
  */
 enum class ParamForm : std::uint8_t {
     None = 0,    ///< The kind's plain form.
@@ -225,7 +225,7 @@ bool operator==(const ParamInstanceId& a, const ParamInstanceId& b);
  * @brief Order of two constellations by name: "BeiDou" < "GLONASS" < "GPS" < "Galileo" <
  *        "QZSS" < "SBAS", the string order of a state key that opens with the name.
  *
- * Differs from the order of @ref SatId, which follows the RINEX letter (BeiDou 'C', Galileo
+ * Differs from the order of @ref GnssProcessor::SatId "SatId", which follows the RINEX letter (BeiDou 'C', Galileo
  * 'E', GPS 'G', GLONASS 'R').  Equal to the order of the full keys because no constellation
  * name is a prefix of another.
  *
@@ -341,7 +341,7 @@ bool operator<(const RxCbKey& a, const RxCbKey& b);
  * equation that only a user configuration switches on; it is named here so that the equation
  * names every column it can write.  Every network term has @c None.  The troposphere gradients
  * were user-only too until the network took them as a kind of its own
- * (@ref NetworkParamKind::TropoGradient).  The columns of the Doppler rows (velocity, clock
+ * (@c NetworkParamKind::TropoGradient).  The columns of the Doppler rows (velocity, clock
  * rate, the IMU states) are not terms of the shared equation.
  */
 enum class UserCore : std::uint8_t {
@@ -425,9 +425,11 @@ std::string describe(const ParamRef& r);
  * @return The reference (kind rx_position).
  */
 ParamRef rxPositionRef(std::uint8_t axis);
-/// @return The zenith wet delay of the receiver.
+/// @brief The zenith wet delay of the receiver.
+/// @return The reference (kind zwd).
 ParamRef zwdRef();
-/// @return The receiver clock.
+/// @brief The receiver clock.
+/// @return The reference (kind rx_clock).
 ParamRef rxClockRef();
 /**
  * @brief The inter-system bias of a constellation against the time reference.
@@ -435,7 +437,8 @@ ParamRef rxClockRef();
  * @return The reference (kind rx_clock, form isb).
  */
 ParamRef isbRef(System sys);
-/// @return The receiver phase-clock offset (user-only).
+/// @brief The receiver phase-clock offset (user-only).
+/// @return The reference (kind rx_clock, core phase clock).
 ParamRef phaseClockRef();
 /**
  * @brief A troposphere gradient.
@@ -535,7 +538,7 @@ ParamRef phaseColourRef(SatId sat);
  * @brief The instance of a reference: the class, satellite and GLONASS slot a table line
  *        and a record are made of.
  *
- * Fills the fields the reference's (kind, form) carries (the table of @ref ParamClass) and
+ * Fills the fields the reference's (kind, form) carries (the table of @ref GnssProcessor::ParamClass "ParamClass") and
  * leaves the others at their defaults: the constellation of the class is the satellite's for a
  * satellite-keyed kind and the reference's own otherwise.
  *

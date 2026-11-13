@@ -35,8 +35,6 @@ namespace GnssProcessor {
      * @brief Construct a new PppUtils instance.
      *
      * Stores a reference to the application's LogManager for internal logging.
-     *
-     * @param log_mgr Reference to LogManager used by this utility.
      */
     PppUtils::PppUtils(LogManager& log_mgr) : log_manager_(log_mgr) {
         log_manager_.getLogger("ppp_utils")->debug("PppUtils initialized");
@@ -44,8 +42,6 @@ namespace GnssProcessor {
 
     /**
      * @brief Set GLONASS frequency slot (channel) assignments.
-     *
-     * @param slots Map of satellite ID to frequency channel number.
      */
     void PppUtils::setGlonassSlots(const std::map<std::string, int>& slots) {
         glonass_slots_ = slots;
@@ -57,7 +53,6 @@ namespace GnssProcessor {
      *
      * Looks up the slot map from setGlonassSlots() first, then the default table.
      *
-     * @param satellite Satellite identifier (e.g., "R01").
      * @return FDMA channel k from the slot map or the default table; the
      *         sentinel -999 if the satellite is unknown (getFrequency()
      *         treats -999 as out-of-range and skips the satellite).
@@ -87,7 +82,6 @@ namespace GnssProcessor {
      *
      * The identity layer's @c systemName, as a @c std::string.
      *
-     * @param system System enum value.
      * @return std::string Human-readable name (e.g. "GPS", "Galileo", "Unknown").
      */
     std::string PppUtils::getSystemString(System system) {
@@ -101,7 +95,6 @@ namespace GnssProcessor {
      * constellation is read from the first character of the satellite ID (e.g., "G01"
      * -> "GPS", "E11" -> "Galileo").
      *
-     * @param satellite Satellite identifier string (e.g., "G01", "E11", "R05").
      * @return std::string Human-readable system name, or "Unknown" for an empty ID and
      *         for a first character outside the traits table (IRNSS 'I' included).
      */
@@ -124,9 +117,6 @@ namespace GnssProcessor {
      * The band is found by searching @p freq_type for any of C, L, D or S followed
      * by the band digit.
      *
-     * @param freq_type Observable or signal string (e.g. "C1", "L1", "C5").
-     * @param system GNSS system enumeration value.
-     * @param satellite Satellite identifier (required for GLONASS FDMA frequencies).
      * @return double Frequency in Hz on success, 0.0 on unknown/unsupported input.
      */
     double PppUtils::getFrequency(const std::string& freq_type, System system, const std::string& satellite) const {
@@ -239,8 +229,6 @@ namespace GnssProcessor {
      * Use this for logging, records, or when satellite-specific frequency is not needed.
      * For other systems it forwards to getFrequency() to return the nominal carrier frequency.
      *
-     * @param freq_type Observable or signal string (e.g. "C1", "L1", "C5").
-     * @param system GNSS system enumeration value.
      * @return double Reference frequency in Hz, or 0.0 if unknown/invalid.
      */
     double PppUtils::getReferenceFrequency(const std::string& freq_type, System system) const {
@@ -287,9 +275,6 @@ namespace GnssProcessor {
      * For GLONASS, computes the satellite-specific wavelength from the FDMA frequency.
      * Wavelength is computed as Constants::SPEED_OF_LIGHT / frequency.
      *
-     * @param system GNSS system enumeration value.
-     * @param freq_type Observable or signal identifier (e.g. "L1", "C5").
-     * @param satellite Satellite identifier (required for GLONASS).
      * @return double Wavelength in meters on success, 0.0 on invalid input.
      */
     double PppUtils::getWavelength(System system, const std::string& freq_type, const std::string& satellite) const {
@@ -328,8 +313,6 @@ namespace GnssProcessor {
      * For non-GLONASS systems.  For GLONASS, use the overload with the satellite ID:
      * without one, the FDMA bands resolve no channel and return 0.0.
      *
-     * @param system GNSS system enumeration value.
-     * @param freq_type Observable or signal identifier (e.g. "L1", "C5").
      * @return double Wavelength in meters on success, 0.0 on invalid input.
      */
     double PppUtils::getWavelength(System system, const std::string& freq_type) const {

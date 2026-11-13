@@ -11,7 +11,7 @@
  * dropped before the Kalman update.  The first two are used throughout RINEX
  * parsing, the measurement model, the Kalman filter and trace logging.
  *
- * The header has no dependencies beyond @c <string> (no Eigen, no LogManager),
+ * The header has no dependencies beyond @c \<string\> (no Eigen, no LogManager),
  * so any header in any subdirectory can include it without heavier transitive
  * dependencies.  The inline @c classifyMeasurement helper dispatches on the
  * leading character of a RINEX-style observable key.

@@ -28,18 +28,18 @@
  * Every comparator reproduces the @c std::string order of the key it will replace, so a
  * container re-keyed from a string to one of these types keeps its iteration order (the
  * network's rank-1 inject order and fold order depend on it):
- *  - @ref SatId compares (RINEX letter, PRN): with the PRN rendered as two zero-padded
+ *  - @ref GnssProcessor::SatId "SatId" compares (RINEX letter, PRN): with the PRN rendered as two zero-padded
  *    digits this is the lexical order of "C01" < "E05" < "G05" < "G10" < "J01" < "R01".
  *    The letter, not the @c System enum value, orders it (the enum puts GLONASS before
  *    BeiDou, the letters put 'C' before 'R').
- *  - @ref SignalId compares (letter, band digit, attribute): the order of "1C" < "1W" <
+ *  - @ref GnssProcessor::SignalId "SignalId" compares (letter, band digit, attribute): the order of "1C" < "1W" <
  *    "2W" < "5Q" within one constellation.
- *  - @ref ObservableId compares (letter, observation type, digit, attribute): the order of
+ *  - @ref GnssProcessor::ObservableId "ObservableId" compares (letter, observation type, digit, attribute): the order of
  *    "C1C" < "C2W" < "L1C" within one constellation.
- *  - @ref StationId, @ref LosId and @ref ArcId compare member by member in declaration
+ *  - @c StationId, @ref GnssProcessor::LosId "LosId" and @ref GnssProcessor::ArcId "ArcId" compare member by member in declaration
  *    order.
  *
- * The comparators read the letter from @ref traitsOf, which is an inline @c constexpr
+ * The comparators read the letter from @ref GnssProcessor::traitsOf "traitsOf", which is an inline @c constexpr
  * table in this header, so a comparison compiles to table reads in the caller's own
  * translation unit (no out-of-line call per comparison in a hot ordered map).
  *
@@ -47,21 +47,21 @@
  *
  * New types only: no existing call site reads them yet (step N0b migrates the call sites).
  * IRNSS has no @c System value: its letter 'I' maps to @c System::Unknown here, and
- * @ref SatId::parse refuses it.  Adding IRNSS to the enum is a user-side decision that
+ * @ref GnssProcessor::SatId::parse "SatId::parse" refuses it.  Adding IRNSS to the enum is a user-side decision that
  * is out of scope here.
  *
  * ### Step N0b additions
  *
  * The small helpers the network call sites need to read these types in one line:
- * @ref systemOfSat (the one place a satellite string's constellation is read until step
- * N4 re-keys the containers by @ref SatId) and @ref letterOfSat (its RINEX letter, the
- * key of the containers keyed by a constellation character), @ref rinexLetter and
- * @ref systemName (the two renderings of a @c System), @ref constellationKey (the
+ * @ref GnssProcessor::systemOfSat "systemOfSat" (the one place a satellite string's constellation is read until step
+ * N4 re-keys the containers by @ref GnssProcessor::SatId "SatId") and @ref GnssProcessor::letterOfSat "letterOfSat" (its RINEX letter, the
+ * key of the containers keyed by a constellation character), @ref GnssProcessor::rinexLetter "rinexLetter" and
+ * @ref GnssProcessor::systemName "systemName" (the two renderings of a @c System), @ref GnssProcessor::constellationKey "constellationKey" (the
  * one-letter string key of the containers that stay string-keyed until N4),
- * @ref obsTypeOf (the observation type of a code), @ref SignalId::wavelengthM and
- * @ref ionoDelayMetresPerTecu (frequency-derived values, written so that each reproduces
- * the expression it replaces bit for bit).  The letter reads (@ref systemFromLetter,
- * @ref systemOfSat, @ref letterOfSat) are inline @c constexpr, like @ref traitsOf: they
+ * @ref GnssProcessor::obsTypeOf "obsTypeOf" (the observation type of a code), @ref GnssProcessor::SignalId::wavelengthM "SignalId::wavelengthM" and
+ * @ref GnssProcessor::ionoDelayMetresPerTecu "ionoDelayMetresPerTecu" (frequency-derived values, written so that each reproduces
+ * the expression it replaces bit for bit).  The letter reads (@ref GnssProcessor::systemFromLetter "systemFromLetter",
+ * @ref GnssProcessor::systemOfSat "systemOfSat", @ref GnssProcessor::letterOfSat "letterOfSat") are inline @c constexpr, like @ref GnssProcessor::traitsOf "traitsOf": they
  * run per coupling term and per carried ambiguity.
  */
 
@@ -95,7 +95,7 @@ namespace GnssProcessor {
         FrequencyBand band{FrequencyBand::Unknown}; ///< The physical band.
     };
 
-    /// Size of @ref ConstellationTraits::bands: the largest number of physical bands one
+    /// Size of @ref GnssProcessor::ConstellationTraits::bands "ConstellationTraits::bands": the largest number of physical bands one
     /// constellation has (BeiDou: B1C, B1I, B2a, B3, B2I, B2b, B2ab).
     inline constexpr std::size_t kMaxConstellationBands = 7;
 
@@ -139,9 +139,9 @@ namespace GnssProcessor {
          * @param letter Its RINEX letter.
          * @param name   Its name.
          * @param fdma   True for an FDMA constellation.
-         * @param bands  Its bands, in RINEX digit order (at most @ref kMaxConstellationBands).
+         * @param bands  Its bands, in RINEX digit order (at most @ref GnssProcessor::kMaxConstellationBands "kMaxConstellationBands").
          * @param time_reference True for the time and inter-system-bias reference
-         *                       constellation (see @ref ConstellationTraits::time_reference).
+         *                       constellation (see @ref GnssProcessor::ConstellationTraits::time_reference "ConstellationTraits::time_reference").
          * @return The row.
          */
         constexpr ConstellationTraits makeTraits(System sys, char letter, const char* name, bool fdma,
@@ -157,16 +157,20 @@ namespace GnssProcessor {
             return t;
         }
 
+        /// Short alias for @c FrequencyBand, used to keep the band lists below on one line.
         using FB = FrequencyBand;
 
+        /// Traits row of GPS (L1, L2, L5; the time and inter-system-bias reference).
         inline constexpr ConstellationTraits kGps = makeTraits(
             System::GPS, 'G', "GPS", false,
             {{'1', FB::GpsL1}, {'2', FB::GpsL2}, {'5', FB::GpsL5}},
             /*time_reference=*/true);   // the one time and inter-system-bias reference
+        /// Traits row of Galileo (E1, E5a, E6, E5b, E5).
         inline constexpr ConstellationTraits kGalileo = makeTraits(
             System::Galileo, 'E', "Galileo", false,
             {{'1', FB::GalE1}, {'5', FB::GalE5a}, {'6', FB::GalE6}, {'7', FB::GalE5b},
              {'8', FB::GalE5}});
+        /// Traits row of GLONASS (FDMA: G1 and G2 carriers depend on the frequency slot).
         inline constexpr ConstellationTraits kGlonass = makeTraits(
             System::GLONASS, 'R', "GLONASS", true,
             {{'1', FB::GloG1}, {'2', FB::GloG2}, {'3', FB::GloG3}, {'4', FB::GloG1a},
@@ -174,16 +178,20 @@ namespace GnssProcessor {
         // BeiDou digit '1' is B1C (1575.42 MHz) and digit '2' is B1I (1561.098 MHz), as in
         // RINEX 3.04.  The RINEX 3.02 spelling of B1I (C1I, C1Q) is told apart by its
         // attribute in SignalId::band, never by aliasing the digit onto B1I.
+        /// Traits row of BeiDou (B1C, B1I, B2a, B3, B2I, B2b, B2ab).
         inline constexpr ConstellationTraits kBeiDou = makeTraits(
             System::BeiDou, 'C', "BeiDou", false,
             {{'1', FB::BdsB1C}, {'2', FB::BdsB1I}, {'5', FB::BdsB2a}, {'6', FB::BdsB3},
              {'7', FB::BdsB2I}, {'7', FB::BdsB2b}, {'8', FB::BdsB2ab}});
+        /// Traits row of QZSS (L1, L2, L5, L6).
         inline constexpr ConstellationTraits kQzss = makeTraits(
             System::QZSS, 'J', "QZSS", false,
             {{'1', FB::QzsL1}, {'2', FB::QzsL2}, {'5', FB::QzsL5}, {'6', FB::QzsL6}});
+        /// Traits row of SBAS (L1, L5).
         inline constexpr ConstellationTraits kSbas = makeTraits(
             System::SBAS, 'S', "SBAS", false,
             {{'1', FB::SbsL1}, {'5', FB::SbsL5}});
+        /// Traits row returned for @c System::Unknown and for any value outside the table (no bands).
         inline constexpr ConstellationTraits kUnknown = makeTraits(
             System::Unknown, '?', "Unknown", false, {});
 
@@ -213,7 +221,7 @@ namespace GnssProcessor {
     /**
      * @brief Whether a constellation is the time and inter-system-bias reference.
      *
-     * Reads @ref ConstellationTraits::time_reference.  The reference constellation defines
+     * Reads @ref GnssProcessor::ConstellationTraits::time_reference "ConstellationTraits::time_reference".  The reference constellation defines
      * the receiver clock datum and holds no inter-system bias; every other constellation
      * holds one relative to it.  Declaring the role in the table keeps the choice of
      * reference in one place instead of one comparison per use.
@@ -226,7 +234,7 @@ namespace GnssProcessor {
     /**
      * @brief The constellation that is the time and inter-system-bias reference.
      *
-     * The row of the traits table that sets @ref ConstellationTraits::time_reference.
+     * The row of the traits table that sets @ref GnssProcessor::ConstellationTraits::time_reference "ConstellationTraits::time_reference".
      *
      * @return The reference constellation (GPS).
      */
@@ -245,7 +253,7 @@ namespace GnssProcessor {
      * BeiDou digits name more than one band, and a digit alone cannot tell them apart
      * (only a signal's attribute can): digit '7' is B2I and B2b, which share one carrier
      * (1207.14 MHz), and reads as B2I; digit '1' reads as B1C (the RINEX 3.02 spelling of
-     * B1I, C1I or C1Q, needs the attribute; see @ref SignalId::band).
+     * B1I, C1I or C1Q, needs the attribute; see @ref GnssProcessor::SignalId::band "SignalId::band").
      *
      * @param sys   The constellation.
      * @param digit The RINEX frequency digit ('1', '2', '5', ...).
@@ -261,7 +269,7 @@ namespace GnssProcessor {
 
     /**
      * @brief The RINEX frequency digit that names a physical band for a constellation: the
-     *        inverse of @ref bandOfDigit.
+     *        inverse of @ref GnssProcessor::bandOfDigit "bandOfDigit".
      *
      * Reads the traits table: the digit of the first entry of @p sys whose band is @p band.
      * BeiDou B2I and B2b share digit '7', so @c bandOfDigit(BeiDou, digitOfBand(BeiDou, B2b))
@@ -304,8 +312,8 @@ namespace GnssProcessor {
     /**
      * @brief The constellation of a name or a letter.
      *
-     * Accepts the names of @ref ConstellationTraits::name ("GPS", "Galileo", ...) and the
-     * one-letter strings of @ref systemFromLetter ("G", "E", ...), case-sensitive, as
+     * Accepts the names of @ref GnssProcessor::ConstellationTraits::name "ConstellationTraits::name" ("GPS", "Galileo", ...) and the
+     * one-letter strings of @ref GnssProcessor::systemFromLetter "systemFromLetter" ("G", "E", ...), case-sensitive, as
      * @c classifySignal does.
      *
      * @param name_or_letter The text.
@@ -317,13 +325,13 @@ namespace GnssProcessor {
      * @brief The constellation of a satellite id string, read from its first character.
      *
      * The one place a satellite string's constellation is read, until step N4 re-keys the
-     * network's containers by @ref SatId: call sites that hold a satellite as a string
+     * network's containers by @ref GnssProcessor::SatId "SatId": call sites that hold a satellite as a string
      * ("G05") call this instead of testing @c sat[0] or @c sat.front() against a letter.
      *
      * Tolerant on purpose: only the first character is read, through
-     * @ref systemFromLetter (the single letter policy), so the non-normalized spellings
+     * @ref GnssProcessor::systemFromLetter "systemFromLetter" (the single letter policy), so the non-normalized spellings
      * "G 5" and "G5" read as GPS as "G05" does, and the rest of the string is not
-     * validated (@ref SatId::parse is the validating parser).  An empty string, a leading
+     * validated (@ref GnssProcessor::SatId::parse "SatId::parse" is the validating parser).  An empty string, a leading
      * blank, a lower-case letter and every letter outside the table (IRNSS 'I' included)
      * give @c System::Unknown, never GPS.
      *
@@ -338,7 +346,7 @@ namespace GnssProcessor {
      * @brief The RINEX satellite-id letter of a constellation.
      *
      * @param sys The constellation.
-     * @return @ref ConstellationTraits::letter: 'G', 'E', 'R', 'C', 'J', 'S'; '?' for
+     * @return @ref GnssProcessor::ConstellationTraits::letter "ConstellationTraits::letter": 'G', 'E', 'R', 'C', 'J', 'S'; '?' for
      *         @c System::Unknown.
      */
     constexpr char rinexLetter(System sys) { return traitsOf(sys).letter; }
@@ -363,7 +371,7 @@ namespace GnssProcessor {
      *        configuration spell it.
      *
      * @param sys The constellation.
-     * @return @ref ConstellationTraits::name: "GPS", "Galileo", "GLONASS", "BeiDou",
+     * @return @ref GnssProcessor::ConstellationTraits::name "GPS":, "Galileo", "GLONASS", "BeiDou",
      *         "QZSS", "SBAS"; "Unknown" for @c System::Unknown.  A pointer into the
      *         constant table (static storage).
      */
@@ -374,7 +382,7 @@ namespace GnssProcessor {
      *
      * A bridge for the containers that stay keyed by a constellation string until step N4
      * re-keys them by @c System (maps keyed "G", composite keys such as "G|L1C").
-     * Rendered from @ref rinexLetter, so @c System::Unknown gives "?".  Equal to the
+     * Rendered from @ref GnssProcessor::rinexLetter "rinexLetter", so @c System::Unknown gives "?".  Equal to the
      * first character of a satellite id for the six constellations of the table; for an
      * empty id or a letter outside the table, @c constellationKey(systemOfSat(sat)) is
      * "?" where the first character itself would have been "" or, for IRNSS, "I".
@@ -396,7 +404,7 @@ namespace GnssProcessor {
      * slot offset (G1 = 1602 MHz + k 0.5625 MHz, G2 = 1246 MHz + k 0.4375 MHz); every
      * other band ignores @p glo_slot.  The slot has no default on purpose: an FDMA caller
      * that does not know its slot must say so (pass 0, or call
-     * @ref nominalCarrierFrequencyHz) rather than get slot 0 silently.  IRNSS L5 shares
+     * @ref GnssProcessor::nominalCarrierFrequencyHz "nominalCarrierFrequencyHz") rather than get slot 0 silently.  IRNSS L5 shares
      * 1176.45 MHz.
      *
      * @param band     The physical band.
@@ -415,13 +423,13 @@ namespace GnssProcessor {
      * satellite.
      *
      * @param band The physical band.
-     * @return @ref carrierFrequencyHz at slot 0.
+     * @return @ref GnssProcessor::carrierFrequencyHz "carrierFrequencyHz" at slot 0.
      */
     double nominalCarrierFrequencyHz(FrequencyBand band);
 
     /**
      * @brief The carrier wavelength of a physical band (m): speed of light over
-     *        @ref carrierFrequencyHz.
+     *        @ref GnssProcessor::carrierFrequencyHz "carrierFrequencyHz".
      *
      * @param band     The physical band.
      * @param glo_slot GLONASS FDMA channel number k (read for @c GloG1 and @c GloG2 only).
@@ -431,7 +439,7 @@ namespace GnssProcessor {
 
     /**
      * @brief The nominal carrier wavelength of a physical band (m): speed of light over
-     *        @ref nominalCarrierFrequencyHz (GLONASS G1 and G2 at slot 0).
+     *        @ref GnssProcessor::nominalCarrierFrequencyHz "nominalCarrierFrequencyHz" (GLONASS G1 and G2 at slot 0).
      *
      * @param band The physical band.
      * @return Wavelength in metres, or 0.0 where the frequency is 0.0.
@@ -442,10 +450,10 @@ namespace GnssProcessor {
      * @brief The nominal carrier frequency (Hz) that a RINEX frequency digit declares for a
      *        constellation, from the digit alone.
      *
-     * The digit is read through @ref bandOfDigit and the band through
-     * @ref nominalCarrierFrequencyHz.  For BeiDou, digit '1' is B1C (1575.42 MHz) and digit
+     * The digit is read through @ref GnssProcessor::bandOfDigit "bandOfDigit" and the band through
+     * @ref GnssProcessor::nominalCarrierFrequencyHz "nominalCarrierFrequencyHz".  For BeiDou, digit '1' is B1C (1575.42 MHz) and digit
      * '2' is B1I (1561.098 MHz); digit '1' is never aliased to B1I.  A caller that holds
-     * the full signal, with its attribute, reads @ref SignalId::band instead.
+     * the full signal, with its attribute, reads @ref GnssProcessor::SignalId::band "SignalId::band" instead.
      *
      * @param sys   The constellation.
      * @param digit The RINEX frequency digit ('1', '2', '5', ...).
@@ -455,7 +463,7 @@ namespace GnssProcessor {
 
     /**
      * @brief The nominal carrier wavelength (m) that a RINEX frequency digit declares for a
-     *        constellation: speed of light over @ref nominalCarrierFrequencyOfDigitHz.
+     *        constellation: speed of light over @ref GnssProcessor::nominalCarrierFrequencyOfDigitHz "nominalCarrierFrequencyOfDigitHz".
      *
      * @param sys   The constellation.
      * @param digit The RINEX frequency digit ('1', '2', '5', ...).
@@ -471,9 +479,9 @@ namespace GnssProcessor {
      * 40.3 TEC / f^2 metres.  The expression is evaluated term for term as the network
      * code wrote it at each of its sites, @c 40.3 * 1.0e16 / (f * f), so that a site
      * reading this function gets the same double bit for bit (the GPS L1 value,
-     * f = @ref nominalCarrierFrequencyHz of @c GpsL1, is about 0.1624 m per TECU).
+     * f = @ref GnssProcessor::nominalCarrierFrequencyHz "nominalCarrierFrequencyHz" of @c GpsL1, is about 0.1624 m per TECU).
      *
-     * @param carrier_hz Carrier frequency (Hz), e.g. from @ref carrierFrequencyHz.
+     * @param carrier_hz Carrier frequency (Hz), e.g. from @ref GnssProcessor::carrierFrequencyHz "carrierFrequencyHz".
      * @return Metres per TECU; not finite when @p carrier_hz is 0.0.
      */
     double ionoDelayMetresPerTecu(double carrier_hz);
@@ -559,7 +567,7 @@ namespace GnssProcessor {
      * only the first character is read, as those tests read it, so the text of an
      * ionosphere-free pair ("C1C_C2W") reads as @c ObsType::Code.  A code whose
      * constellation is known and whose form must be checked is parsed with
-     * @ref ObservableId::parse instead.
+     * @ref GnssProcessor::ObservableId::parse "ObservableId::parse" instead.
      *
      * @param code The code, e.g. "C1C" or "L2W".
      * @return @c Code, @c Phase, @c Doppler or @c Snr for a first character 'C', 'L',
@@ -957,8 +965,8 @@ namespace GnssProcessor {
      * "raw signal only"), equal to it for every input: an empty label is false, a label with
      * two separators ("L1C_L2W_L5Q") is true, and the double-difference row label of an
      * ionosphere-free combination ("L1C+L2W") holds no '_' and is false, as it is at those
-     * sites.  Nothing else is checked: @ref IonoFreePairLabel::parse is the stricter reading
-     * (a '_' with text on both sides) and @ref SignalPair::parse the validating parser.
+     * sites.  Nothing else is checked: @ref GnssProcessor::IonoFreePairLabel::parse "IonoFreePairLabel::parse" is the stricter reading
+     * (a '_' with text on both sides) and @ref GnssProcessor::SignalPair::parse "SignalPair::parse" the validating parser.
      *
      * @param label The signal label, e.g. "L1C" or "L1C_L2W".
      * @return True when @p label contains '_'.
@@ -1039,8 +1047,8 @@ namespace GnssProcessor {
          * before the first '-', the whole id without one) and the baseline DD statistics
          * take the pivot (the text after the first '-', when there is any).  Equal to
          * @ref parse except where the first '-' is the first or the last character:
-         * "-G05" gives "" and "G05" (@ref parse: "-G05" and ""), "G01-" gives "G01" and ""
-         * (@ref parse: "G01-" and ""), "-" gives two empty members (@ref parse: "-" and "").
+         * "-G05" gives "" and "G05" (-G05 (@c parse): and ""), "G01-" gives "G01" and ""
+         * (G01- (@c parse): and ""), "-" gives two empty members (- (@c parse): and "").
          *
          * @param row_id The row id.
          * @return The text before and after the first '-'.
@@ -1073,7 +1081,7 @@ namespace GnssProcessor {
 
     /**
      * @brief True when a row id holds a '-' anywhere: a between-satellite difference row
-     *        (see @ref SatPairId).
+     *        (see @ref GnssProcessor::SatPairId "SatPairId").
      *
      * The test the real-time engine's single-satellite reads write as
      * @c row_id.find('-') @c != @c npos to skip the difference rows, equal to it for every
@@ -1095,7 +1103,7 @@ namespace GnssProcessor {
      * a carrier f reads it with the coefficient (f_ref / f)^2, f_ref being
      * @c nominalCarrierFrequencyHz(kIonoReferenceBand), which equals
      * @c Constants::GPS_L1_FREQ bit for bit.  The GIM pseudo-observation is queried at
-     * f_ref, and a TECU converts to metres at f_ref (@ref ionoDelayMetresPerTecu).  The
+     * f_ref, and a TECU converts to metres at f_ref (@ref GnssProcessor::ionoDelayMetresPerTecu "ionoDelayMetresPerTecu").  The
      * observation equation's ionosphere column and the ionosphere and code-bias seeds name
      * the band through this constant; the GIM pseudo-observation of the PPP driver and the
      * real-time declared level step still read @c Constants::GPS_L1_FREQ, the same value.
@@ -1113,8 +1121,8 @@ namespace GnssProcessor {
      * @c systemName(systemOfSat(sat)) on three inputs, each kept as the copies have it:
      * IRNSS 'I' gives "IRNSS" (there is no @c System value for it), any other letter
      * outside the traits table gives that letter as a one-character string ("X"), and an
-     * empty id gives "" (@ref systemName gives "Unknown" for all three).  The six
-     * constellations of the table give @ref systemName.
+     * empty id gives "" (@ref GnssProcessor::systemName "systemName" gives "Unknown" for all three).  The six
+     * constellations of the table give @ref GnssProcessor::systemName "systemName".
      *
      * @param sat The satellite id, e.g. "G05"; only its first character is read.
      * @return "GPS", "Galileo", "GLONASS", "BeiDou", "QZSS", "SBAS", "IRNSS", the first

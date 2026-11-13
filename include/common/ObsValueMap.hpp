@@ -65,11 +65,14 @@ namespace GnssProcessor {
         std::unordered_map<std::string, int> code_to_index;  ///< obs code → index
         std::vector<int> sorted;                             ///< indices ordered by code (std::map iteration order)
 
-        /** @brief Number of distinct codes in the layout. */
+        /** @brief Number of distinct codes in the layout. @return Entry count of @c codes. */
         std::size_t size() const { return codes.size(); }
 
         /**
          * @brief Index of @p code, or -1 if not in the layout.
+         *
+         * @param code Obs code string, RINEX 3 form (for example @c "C1C").
+         * @return Position of @p code in @c codes, or -1 when absent.
          */
         int find(const std::string& code) const {
             const auto it = code_to_index.find(code);
@@ -83,6 +86,9 @@ namespace GnssProcessor {
          * Only the rare ad-hoc/streaming producer path grows a layout here; the
          * RINEX bulk path pre-builds the layout from the header so every write
          * hits an existing index and never mutates the shared table.
+         *
+         * @param code Obs code string, RINEX 3 form (for example @c "L1C").
+         * @return Index of @p code in @c codes, existing or newly assigned.
          */
         int getOrAdd(const std::string& code) {
             const auto it = code_to_index.find(code);
@@ -106,6 +112,7 @@ namespace GnssProcessor {
          * @brief Build a shared layout from an ordered list of obs codes.
          * @param cs Declared (already v3-translated) obs codes, in header order.
          *           Duplicates are dropped, keeping the first occurrence.
+         * @return Newly allocated layout, never null, with @c sorted already built.
          */
         static std::shared_ptr<ObsCodeIndex> fromCodes(const std::vector<std::string>& cs) {
             auto p = std::make_shared<ObsCodeIndex>();
@@ -132,12 +139,26 @@ namespace GnssProcessor {
      * present even when its value is 0.
      */
     template <typename T> struct ObsAbsent;
+    /** @brief Sentinel and presence test for the @c double channels (measurement, variance). */
     template <> struct ObsAbsent<double> {
+        /** @brief Absent marker for measurement and variance channels. @return Quiet NaN. */
         static double value() { return std::numeric_limits<double>::quiet_NaN(); }
+        /**
+         * @brief Presence test for a @c double channel slot.
+         * @param v Stored slot value.
+         * @return True when @p v is not NaN (a real value is stored).
+         */
         static bool present(double v) { return !std::isnan(v); }
     };
+    /** @brief Sentinel and presence test for the @c int channel (LLI flag). */
     template <> struct ObsAbsent<int> {
+        /** @brief Absent marker for the LLI channel. @return @c INT_MIN, outside the 0..9 flag range. */
         static int value() { return INT_MIN; }
+        /**
+         * @brief Presence test for an @c int channel slot.
+         * @param v Stored slot value.
+         * @return True when @p v differs from @c INT_MIN (a real flag is stored).
+         */
         static bool present(int v) { return v != INT_MIN; }
     };
 
@@ -155,12 +176,13 @@ namespace GnssProcessor {
     template <typename T>
     class ObsValueMap {
     public:
-        using mapped_type = T;
-        using Absent = ObsAbsent<T>;
+        using mapped_type = T;          ///< Value type held per obs code (matches @c std::map::mapped_type).
+        using Absent = ObsAbsent<T>;    ///< Sentinel and presence test for this value type.
 
         std::shared_ptr<ObsCodeIndex> layout;  ///< Shared code↔index table (null until first use).
         std::vector<T> vals;                   ///< Values indexed by layout index; @c Absent for holes.
 
+        /** @brief Construct an empty map with no layout attached (the layout is created on first write). */
         ObsValueMap() = default;
 
         /**
@@ -169,19 +191,22 @@ namespace GnssProcessor {
          *
          * After this, @c operator[] for any declared code hits an existing index
          * with no layout growth and no per-observation string allocation.
+         *
+         * @param shared Layout shared with the other observations of the same system;
+         *               a null pointer leaves the map empty with no layout.
          */
         void attachLayout(std::shared_ptr<ObsCodeIndex> shared) {
             layout = std::move(shared);
             vals.assign(layout ? layout->size() : 0u, Absent::value());
         }
 
-        /** @brief True when no code is present. */
+        /** @brief True when no code is present. @return True when every slot is absent (or no layout is attached). */
         bool empty() const {
             for (const T& v : vals) if (Absent::present(v)) return false;
             return true;
         }
 
-        /** @brief Number of present codes (matches @c std::map::size). */
+        /** @brief Number of present codes (matches @c std::map::size). @return Count of non-absent slots. */
         std::size_t size() const {
             std::size_t n = 0;
             for (const T& v : vals) if (Absent::present(v)) ++n;
@@ -191,7 +216,11 @@ namespace GnssProcessor {
         /** @brief Mark every slot absent (matches @c std::map::clear semantics for callers that only re-test presence). */
         void clear() { std::fill(vals.begin(), vals.end(), Absent::value()); }
 
-        /** @brief 1 if @p code is present, else 0. */
+        /**
+         * @brief 1 if @p code is present, else 0.
+         * @param code Obs code string, RINEX 3 form.
+         * @return 1 when @p code is in the layout and holds a non-absent value, otherwise 0.
+         */
         std::size_t count(const std::string& code) const {
             const int i = idxOf(code);
             return (i >= 0 && Absent::present(vals[static_cast<std::size_t>(i)])) ? 1u : 0u;
@@ -199,6 +228,8 @@ namespace GnssProcessor {
 
         /**
          * @brief Reference to the value for @p code.
+         * @param code Obs code string, RINEX 3 form.
+         * @return Stored value for @p code, read-only.
          * @throws std::out_of_range if @p code is not present (matches @c std::map::at).
          */
         const T& at(const std::string& code) const {
@@ -207,7 +238,13 @@ namespace GnssProcessor {
                 return vals[static_cast<std::size_t>(i)];
             throw std::out_of_range("ObsValueMap::at: code '" + code + "' not present");
         }
-        /** @overload */
+        /**
+         * @overload
+         * @brief Mutable access to the value for @p code.
+         * @param code Obs code string, RINEX 3 form.
+         * @return Writable reference to the stored value for @p code.
+         * @throws std::out_of_range if @p code is not present.
+         */
         T& at(const std::string& code) {
             const int i = idxOf(code);
             if (i >= 0 && Absent::present(vals[static_cast<std::size_t>(i)]))
@@ -221,6 +258,11 @@ namespace GnssProcessor {
          * If @p code is absent it is inserted with a value-initialised (0) mapped
          * value (creating a private layout when none is attached), and a
          * reference to that slot is returned.
+         *
+         * @param code Obs code string, RINEX 3 form.  A code missing from a shared
+         *             layout triggers a private copy of the layout before it is added.
+         * @return Writable reference to the slot for @p code; valid until the next
+         *         call that grows the value store.
          */
         T& operator[](const std::string& code) {
             if (!layout) layout = std::make_shared<ObsCodeIndex>();
@@ -246,6 +288,9 @@ namespace GnssProcessor {
         /**
          * @brief Materialise a real @c std::map, for the sinks that still hold
          *        @c std::map channels (for example @c PppObservation).
+         *
+         * @return Copy of the present entries keyed by obs code (sorted); empty when no
+         *         layout is attached or no code is present.
          */
         std::map<std::string, T> toStdMap() const {
             std::map<std::string, T> out;
@@ -259,15 +304,35 @@ namespace GnssProcessor {
         // -------------------------------------------------------------------
         // Forward iteration in sorted code order, skipping absent slots.
         // -------------------------------------------------------------------
+        /**
+         * @brief Forward iterator over the present entries in sorted code order.
+         *
+         * Dereferences to a @c (code, value) pair so range-for and @c it->first /
+         * @c it->second behave like a @c std::map iterator.
+         *
+         * @tparam Const True for the read-only iterator, false for the mutable one.
+         */
         template <bool Const>
         class Iter {
         public:
+            /// Map type iterated; const-qualified for the read-only iterator.
             using container = typename std::conditional<Const, const ObsValueMap, ObsValueMap>::type;
+            /// Reference type of the mapped value.
             using value_ref = typename std::conditional<Const, const T&, T&>::type;
+            /// Dereferenced element: the obs code and a reference to its value.
             using pair_type = std::pair<const std::string&, value_ref>;
 
+            /**
+             * @brief Position the iterator at or after @p pos, skipping absent slots.
+             * @param m Map to iterate; must outlive the iterator.
+             * @param pos Starting index into the sorted view of the layout.
+             */
             Iter(container* m, std::size_t pos) : m_(m), pos_(pos) { skipForward(); }
 
+            /**
+             * @brief Current element as a @c (code, value) pair.
+             * @return Pair of references into the layout and the value store; valid until the map is modified.
+             */
             pair_type operator*() const {
                 const int idx = m_->layout->sorted[pos_];
                 return pair_type(m_->layout->codes[static_cast<std::size_t>(idx)],
@@ -276,13 +341,29 @@ namespace GnssProcessor {
 
             /** Arrow proxy so @c it->first / @c it->second resolve like a map iterator. */
             struct ArrowProxy {
-                pair_type p;
+                pair_type p;  ///< Copy of the dereferenced pair that @c operator-> exposes.
+                /** @brief Expose the held pair. @return Pointer to @c p, valid for the lifetime of the proxy. */
                 const pair_type* operator->() const { return &p; }
             };
+            /**
+             * @brief Member access to the current element.
+             * @return Proxy holding the current pair (chains to @c ArrowProxy::operator->).
+             */
             ArrowProxy operator->() const { return ArrowProxy{ **this }; }
 
+            /** @brief Advance to the next present entry in sorted order. @return This iterator after advancing. */
             Iter& operator++() { ++pos_; skipForward(); return *this; }
+            /**
+             * @brief Equality by position in the sorted view.
+             * @param o Iterator to compare with; must refer to the same map.
+             * @return True when both iterators are at the same sorted position.
+             */
             bool operator==(const Iter& o) const { return pos_ == o.pos_; }
+            /**
+             * @brief Inequality by position in the sorted view.
+             * @param o Iterator to compare with; must refer to the same map.
+             * @return True when the iterators are at different sorted positions.
+             */
             bool operator!=(const Iter& o) const { return pos_ != o.pos_; }
 
         private:
@@ -301,19 +382,34 @@ namespace GnssProcessor {
             std::size_t pos_;
         };
 
-        using const_iterator = Iter<true>;
-        using iterator = Iter<false>;
+        using const_iterator = Iter<true>;   ///< Read-only forward iterator in sorted code order.
+        using iterator = Iter<false>;        ///< Mutable forward iterator in sorted code order.
 
+        /** @brief Start of the sorted iteration. @return Read-only iterator at the first present code, or @c end() when empty. */
         const_iterator begin() const { return const_iterator(this, 0); }
+        /** @brief End of the sorted iteration. @return Read-only past-the-end iterator. */
         const_iterator end() const { return const_iterator(this, endPos()); }
+        /** @brief Start of the sorted iteration. @return Mutable iterator at the first present code, or @c end() when empty. */
         iterator begin() { return iterator(this, 0); }
+        /** @brief End of the sorted iteration. @return Mutable past-the-end iterator. */
         iterator end() { return iterator(this, endPos()); }
+        /** @brief Start of the sorted iteration, always read-only. @return Same as the const @c begin(). */
         const_iterator cbegin() const { return begin(); }
+        /** @brief End of the sorted iteration, always read-only. @return Same as the const @c end(). */
         const_iterator cend() const { return end(); }
 
-        /** @brief Iterator at @p code, or @c end() if absent (matches @c std::map::find). */
+        /**
+         * @brief Iterator at @p code, or @c end() if absent (matches @c std::map::find).
+         * @param code Obs code string, RINEX 3 form.
+         * @return Read-only iterator at @p code, or @c end() when @p code is not present.
+         */
         const_iterator find(const std::string& code) const { return makeFind<const_iterator>(this, code); }
-        /** @overload */
+        /**
+         * @overload
+         * @brief Mutable lookup of @p code.
+         * @param code Obs code string, RINEX 3 form.
+         * @return Mutable iterator at @p code, or @c end() when @p code is not present.
+         */
         iterator find(const std::string& code) { return makeFind<iterator>(this, code); }
 
     private:
