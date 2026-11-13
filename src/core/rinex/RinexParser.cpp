@@ -163,9 +163,6 @@ namespace GnssProcessor {
     /**
      * @brief Construct a RinexParser.
      *
-     * @param config Reference to the global GNSS processing configuration.
-     * @param log_manager Reference to a LogManager used for logging parser events.
-     * @param product_parser Reference to a ProductParser used to access auxiliary products.
      *
      * @details
      * - Initializes the header and state members to defaults (version 0.0, time
@@ -1222,8 +1219,6 @@ namespace GnssProcessor {
      * - Logs diagnostic messages at debug level for invalid formats, unknown systems,
      *   or unsupported codes.
      *
-     * @param[in] code   Observation code string to validate (e.g., "C1C").
-     * @param[in] system GNSS system enum indicating which system's valid set to check.
      * @return std::optional<std::string> containing the observation code, unchanged,
      *         on success, or std::nullopt if the code is syntactically invalid or not
      *         permitted for the given system.  The header parse keeps a rejected

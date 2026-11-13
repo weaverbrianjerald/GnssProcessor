@@ -77,6 +77,10 @@ namespace GnssProcessor {
          * existing index with no per-observation string allocation and no
          * mutation of the shared layout.  Streaming producers (SBF/RTCM) skip
          * this and let @c operator[] grow a private layout on first write.
+         *
+         * @param layout Shared obs-code index of the observation's constellation; the same
+         *        pointer is given to every observation of that system, so the layout
+         *        outlives this observation.
          */
         void attachLayout(const std::shared_ptr<ObsCodeIndex>& layout) {
             measurements.attachLayout(layout);
@@ -215,7 +219,11 @@ namespace GnssProcessor {
          * Receiver/antenna metadata accessors
          */
 
-        /** @brief Get receiver antenna type string from header. */
+        /**
+         * @brief Get receiver antenna type string from header.
+         * @return Copy of the antenna type (RINEX `ANT # / TYPE`, or the value seeded by
+         *         @c setReceiverAntennaType); empty before @c parse() or when none is known.
+         */
         std::string getReceiverAntennaType() const { return header_.antenna_type; }
 
         /**
@@ -232,7 +240,12 @@ namespace GnssProcessor {
          */
         void setReceiverAntennaType(const std::string& type) { header_.antenna_type = type; }
 
-        /** @brief Get antenna H/E/N offsets as Eigen vector (meters). */
+        /**
+         * @brief Get antenna H/E/N offsets as Eigen vector (meters).
+         * @return Antenna eccentricity (x = height, y = east, z = north) in metres from the
+         *         `ANTENNA: DELTA H/E/N` record; zero when the record is absent (see
+         *         @c hasAntennaDeltaHen).
+         */
         Eigen::Vector3d getAntennaDeltaHen() const {
             return Eigen::Vector3d(header_.antenna_delta_hen[0], header_.antenna_delta_hen[1], header_.antenna_delta_hen[2]);
         }
@@ -251,22 +264,42 @@ namespace GnssProcessor {
          */
         bool hasAntennaDeltaHen() const { return header_.has_antenna_delta_hen; }
 
-        /** @brief Get antenna azimuth (degrees) from header. */
+        /**
+         * @brief Get antenna azimuth (degrees) from header.
+         * @return Antenna azimuth orientation in degrees; 0 when the header does not give one.
+         */
         double getReceiverAntennaAzimuthDeg() const { return header_.antenna_azimuth_deg; }
 
-        /** @brief Get antenna elevation (degrees) from header. */
+        /**
+         * @brief Get antenna elevation (degrees) from header.
+         * @return Antenna elevation orientation in degrees; 0 when the header does not give one.
+         */
         double getReceiverAntennaElevationDeg() const { return header_.antenna_elevation_deg; }
 
-        /** @brief Get receiver type/model string from header. */
+        /**
+         * @brief Get receiver type/model string from header.
+         * @return Receiver type (RINEX `REC # / TYPE / VERS`, trailing blanks removed, e.g.
+         *         "TRIMBLE NETR9"); empty when the record is absent.
+         */
         std::string getReceiverType() const { return header_.receiver_type; }
 
-        /** @brief Get receiver serial number parsed from header (if present). */
+        /**
+         * @brief Get receiver serial number parsed from header (if present).
+         * @return Serial number field of `REC # / TYPE / VERS` (trailing blanks removed);
+         *         empty when the record is absent.
+         */
         std::string getReceiverSerialNo() const { return receiver_serial_no_; }
 
-        /** @brief Get marker name from header. */
+        /**
+         * @brief Get marker name from header.
+         * @return Marker name (station identifier) from `MARKER NAME`; empty when absent.
+         */
         std::string getMarkerName() const { return header_.marker_name; }
 
-        /** @brief Get marker number from header. */
+        /**
+         * @brief Get marker number from header.
+         * @return Marker number from `MARKER NUMBER`; empty when absent.
+         */
         std::string getMarkerNumber() const { return header_.marker_number; }
 
         /** @brief Get approximate receiver ECEF position (meters).
@@ -275,6 +308,9 @@ namespace GnssProcessor {
          * convention is the marker (monument), not the antenna.  Use
          * @c getArpPositionXyz for anything that seeds or is compared against a
          * position state.
+         *
+         * @return Marker ECEF position (meters); zero vector when the header carried no
+         *         `APPROX POSITION XYZ`.
          */
         Eigen::Vector3d getApproxPositionXyz() const {
             return Eigen::Vector3d(header_.approx_position[0], header_.approx_position[1], header_.approx_position[2]);
@@ -295,7 +331,12 @@ namespace GnssProcessor {
          */
         Eigen::Vector3d getArpPositionXyz() const;
 
-        /** @brief Get the time of the first parsed observation epoch. */
+        /**
+         * @brief Get the time of the first parsed observation epoch.
+         * @return Time of the first epoch record, in the header's time system; before any epoch
+         *         is read it holds the `TIME OF FIRST OBS` header value if present, and
+         *         week 0, TOW 0.0 when neither exists.
+         */
         GnssTime getTimeOfFirstObs() const { return time_of_first_obs_; }
 
         /**

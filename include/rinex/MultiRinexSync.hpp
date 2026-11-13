@@ -114,7 +114,10 @@ namespace GnssProcessor {
          */
         bool synchronize();
 
-        /// Access the synchronized epoch vector populated by @c synchronize().
+        /// @brief Access the synchronized epoch vector populated by @c synchronize().
+        /// @return Reference to the epochs in reference-station time order; empty before a
+        ///         successful @c synchronize().  Valid for the lifetime of this object, and
+        ///         the @c retainSystems / @c removeObservationsIf instance overloads edit it in place.
         const std::vector<SyncedEpoch>& getSyncedEpochs() const { return synced_; }
 
         /**
@@ -139,7 +142,7 @@ namespace GnssProcessor {
         static std::map<std::string, std::size_t> retainSystems(
             std::vector<SyncedEpoch>& epochs, const std::vector<std::string>& active);
 
-        /// @ref retainSystems applied to this instance's synced epochs.
+        /// @brief @ref retainSystems applied to this instance's synced epochs.
         /// @param active The active system names.
         /// @return The number of observations removed per system name.
         std::map<std::string, std::size_t> retainSystems(const std::vector<std::string>& active) {
@@ -160,7 +163,7 @@ namespace GnssProcessor {
             std::vector<SyncedEpoch>& epochs,
             const std::function<bool(const GnssTime&, const RinexObservation&)>& drop);
 
-        /// @ref removeObservationsIf applied to this instance's synced epochs.
+        /// @brief @ref removeObservationsIf applied to this instance's synced epochs.
         /// @param drop Called with the epoch time and each observation; true removes it.
         /// @return The number of observations removed.
         std::size_t removeObservationsIf(
@@ -168,16 +171,23 @@ namespace GnssProcessor {
             return removeObservationsIf(synced_, drop);
         }
 
-        /// Access the parsed RINEX header for a station (by name).
+        /// @brief Access the parsed RINEX header for a station (by name).
+        /// @param station Station name as given in the baseline or network roster.
+        /// @return The station's header; a shared empty header when the station is unknown.
+        ///         Valid for the lifetime of this object.
         const RinexHeader& headerOf(const std::string& station) const;
 
-        /// Access the underlying RinexParser for a station (by name).
+        /// @brief Access the underlying RinexParser for a station (by name).
         /// Returns nullptr when the station is unknown or not loaded.
         /// Exposed so downstream consumers (e.g. Geometry) can reach per-station
         /// header metadata such as the GLONASS frequency slot table.
+        /// @param station Station name as given in the baseline or network roster.
+        /// @return The station's parser (owned by this object), or nullptr when the station
+        ///         is unknown or failed to load.
         const RinexParser* parserOf(const std::string& station) const;
 
-        /// Reference station name (convenience accessor).
+        /// @brief Reference station name (convenience accessor).
+        /// @return Reference to the reference station's name in the baseline config.
         const std::string& referenceName() const { return baseline_config_.reference.name; }
 
     private:
