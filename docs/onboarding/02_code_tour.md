@@ -9,7 +9,7 @@ multi-station network producer is a separate research program and is
 [out of scope here](#what-to-skip).
 
 The single-receiver code was reorganized in October 2026 (card UOM,
-`docs\refound\UOM_user_object_model_2026-10-13.md`): every long function became a short
+`docs\record\refound\UOM_user_object_model_2026-10-13.md`): every long function became a short
 driver over named stages, each stage in the file of its concern. This page follows the
 drivers. A function a step names is the place to read; its file is given beside it.
 
@@ -552,7 +552,7 @@ the Kalman chapter with `KalmanFilter`, and so on.
 Everything that belongs to the network producer is out of scope until a task requires
 it: `include\network\`, `src\core\network\` and `tests\network\` (the network producer),
 `config\archive\`, `config\golden\`, `config\test_suite\`,
-`docs\refound\`, `docs\cards\`, `docs\archive\`, and most of `scripts\`. That is about
+`docs\refound\`, `docs\cards\`, `docs\record\`, and most of `scripts\`. That is about
 two thirds of the repository. It is a careful research record, not clutter, but it is
 not the starting point. When a task requires it, [7 · Network tour](07_network_tour.md)
 reads one network run from its tables and walks its eight stages.

@@ -473,10 +473,10 @@ Both settings are off in the reference configurations
 \texttt{config/golden/golden\_sim\_refound.json}) and carry the ledger
 verdict KEEP\_OFF. The declared-step carry is exact and does not move the
 emitted product, but failed two of five bars in its re-grade
-(\texttt{docs/refound/CC-arm\_pb\_disc\_carry\_rf0hv\_2026-09-15.md}). The
+(\texttt{docs/record/refound/CC-arm\_pb\_disc\_carry\_rf0hv\_2026-09-15.md}). The
 every-step translation was superseded by the network's phase-bias hold,
 which changes what the product declares
-(\texttt{docs/refound/PBH\_phase\_bias\_hold\_2026-09-19.md};
+(\texttt{docs/record/refound/PBH\_phase\_bias\_hold\_2026-09-19.md};
 \dcref{sec:net-wire-pb}{the emitted phase bias}). The reset is the phase-bias
 counterpart of the orbit and clock IOD gate \eqref{eq:ssr-iode-gate}: both
 protect state continuity across correction-set boundaries, one by declining a
@@ -681,7 +681,7 @@ stream may run ahead of lagging corrections) is described in
 the correction mathematics can be analysed and tested in isolation. The
 estimator-side warm-up gate
 \texttt{estimation.defer\_until\_corrections\_ready.enabled}
-(\texttt{config/GnssConfigLoad.cpp}; default OFF, real-time only) defers
+(\texttt{src/core/config/GnssConfigLoad.cpp}; default OFF, real-time only) defers
 estimation until a quorum of satellites is centimetre-grade from broadcast
 plus SSR (by default at least 5 in total and 4 per constellation). The
 filter then seeds code and phase together, instead of cold-starting on

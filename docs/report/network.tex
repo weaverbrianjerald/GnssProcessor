@@ -150,7 +150,7 @@ for the datum build could not bound where it was \emph{not}. It was
 decomposed into single-concern \emph{seams}, first by verbatim
 relocation gated on byte-identical output against the pre-cut binary
 (per-increment records:
-\texttt{docs/network\_decomposition\_plan.md}), then into one source
+\texttt{docs/record/network\_decomposition\_plan.md}), then into one source
 folder per concern under \texttt{src/core/network/} and
 \texttt{include/network/}: \texttt{driver}, \texttt{state},
 \texttt{assembly}, \texttt{carry}, \texttt{solve}, \texttt{qc},
@@ -921,8 +921,8 @@ family's veteran mean difference and $0$ without a veteran. The
 option \texttt{network.code\_datum\_pair\_continuity}, which holds the
 ionosphere-free pin pair through a gap, is off: it preserved the two
 families' birth realisations and worsened pilot-family users
-(\texttt{docs/refound/GFC\_galileo\_family\_clock\_datum\_2026-10-10.md},
-\texttt{docs/refound/GAD\_galileo\_adoption\_2026-10-13.md}).
+(\texttt{docs/record/refound/GFC\_galileo\_family\_clock\_datum\_2026-10-10.md},
+\texttt{docs/record/refound/GAD\_galileo\_adoption\_2026-10-13.md}).
 
 \subsection{The rank gate and the S-basis completion}\label{sec:net-rankgate}
 
@@ -1066,7 +1066,7 @@ replaces an $n_s\times n_s$ product and symmetry check per station and
 epoch. The equality is gated against Eigen's own product in
 \texttt{tests/network/test\_neq\_sparse\_station\_normals.cpp} and was
 checked on whole runs
-(\texttt{docs/refound/NETCOST\_gps\_galileo\_cost\_attribution\_2026-10-18.md}).
+(\texttt{docs/record/refound/NETCOST\_gps\_galileo\_cost\_attribution\_2026-10-18.md}).
 
 \paragraph{The datum frame, and the covariance of the locals.}
 The covariance of the shared estimate is the inverse of the
@@ -1115,7 +1115,7 @@ all-zero $n_s\times n_s$ matrix. The result is bit-identical to the
 product form: with $m_c = \Nsr n_c$ finite, $m_c^\Tr\bm{0}\,m_c = \pm 0$
 leaves a nonzero variance unchanged, and the two cases where the sum
 could differ (a zero variance, a non-finite $m_c$) take the product
-itself (\texttt{docs/refound/CVF\_conditional\_variance\_frame\_2026-10-29.md}).
+itself (\texttt{docs/record/refound/CVF\_conditional\_variance\_frame\_2026-10-29.md}).
 
 \begin{remark}
 This arrowhead topology with exact reduction mirrors the NGS M-PAGES
@@ -1153,7 +1153,7 @@ constellation's satellite clocks by a common constant, which the receiver
 clock absorbs for the reference constellation but which lands on the
 near-frozen inter-system bias of any other, so the user re-inflates that
 bias on a consumed clock-datum discontinuity
-(\texttt{docs/refound/GAD\_galileo\_adoption\_2026-10-13.md}).
+(\texttt{docs/record/refound/GAD\_galileo\_adoption\_2026-10-13.md}).
 
 \paragraph{Free slant ionosphere.}
 The ionosphere of the network posture is the free per-line-of-sight
@@ -1192,8 +1192,8 @@ event (\texttt{network/assembly/SecondBandAdmission}). The time-reference
 constellation is outside the rule. With BeiDou on B1I and B3I the rule
 reproduces the subtraction of the single-band stations; the setting is
 unvalidated and not armed
-(\texttt{docs/refound/BDS\_beidou\_third\_constellation\_2026-10-18.md},
-\texttt{docs/refound/BDS305\_beidou\_305\_stations\_6h\_2026-10-29.md}).
+(\texttt{docs/record/refound/BDS\_beidou\_third\_constellation\_2026-10-18.md},
+\texttt{docs/record/refound/BDS305\_beidou\_305\_stations\_6h\_2026-10-29.md}).
 
 \paragraph{Third band: the receiver band-5 code delay.}
 When the satellite code biases are estimated, the receiver
@@ -1226,7 +1226,7 @@ that underpins the explicit-bias S-system
 common to a constellation's satellites. The per-frequency GLONASS
 inter-channel bias breaks that assumption and would corrupt the phase
 datum. GLONASS is therefore excluded from the network \emph{phase}-bias
-product by design (\texttt{docs/attic/ssystem\_conformance\_2026-06-15.md});
+product by design (\texttt{docs/record/attic/ssystem\_conformance\_2026-06-15.md});
 the user side excludes it from ambiguity resolution for the same reason.
 A \emph{code-only} GLONASS mode is available behind
 \texttt{network.estimate\_glonass} (\texttt{enableGlonassNetwork},

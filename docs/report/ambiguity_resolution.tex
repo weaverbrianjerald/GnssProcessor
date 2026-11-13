@@ -628,12 +628,12 @@ Network-side ambiguity resolution is not built for the emitted product.  The
 integer search makes no wrong fix at 300 stations (the sticky cycle basis of
 \Cref{sec:ar-arcgraph} settles 45\,026 and 365\,566 integers at 60 and 300
 stations on the simulated network, none wrong:
-\texttt{docs/refound/AGTB\_arc\_graph\_continued\_2026-10-10.md}).  Holding
+\texttt{docs/record/refound/AGTB\_arc\_graph\_continued\_2026-10-10.md}).  Holding
 the fixes then failed: a held solve of the shared parameters neither reaches
 nor helps the user on the reference configuration, and a slip that no
 detector flags leaves the zero-process-noise float on the wrong integer,
 which the held solve cannot see
-(\texttt{docs/refound/FCFC\_fixed\_cycle\_ledger\_2026-10-11.md}, section~9).
+(\texttt{docs/record/refound/FCFC\_fixed\_cycle\_ledger\_2026-10-11.md}, section~9).
 Every mechanism below is therefore off in the loader.  The search, the ledger
 and the fold are measure-only instruments, the SD extra-wide-lane rows act on
 the solve only when armed, and the emitted network product is float.  The
@@ -936,7 +936,7 @@ exactly with the post-reduction double-difference fold.  The float rows add
 no rank: the MW row is a linear combination of observables already in the
 epoch's normal equations, and at a realistic row noise they raised the
 soft-end eigenvalue of the normal equations by 0.51 per cent, below the bar
-set for them (\texttt{docs/SPEC\_sd\_ewl\_prereduce.md}).  The only new information a row
+set for them (\texttt{docs/record/SPEC\_sd\_ewl\_prereduce.md}).  The only new information a row
 can carry is integrality.  Rounding the SD statistic directly is circular,
 because it requires the satellite bias difference
 $B^s_{\mathrm{EWL}} - B^p_{\mathrm{EWL}}$ that the network estimates.  Route B

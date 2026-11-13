@@ -41,6 +41,11 @@ standalone builds). Convenience wrappers are also provided:
 ./build.sh           # Unix;  --regen / --clean
 ```
 
+The four table fragments in `generated/` are produced from the code by
+`scripts/gen_report_tables.py`, are git-ignored, and are created automatically on the
+first build (by `latexmkrc`, `build.ps1` and `build.sh`); `-Regen` / `--regen`
+refreshes them after the code changes.
+
 `latexmk` runs `pdflatex` / `biber` / `pdflatex` as needed to resolve
 cross-references and citations. Clean intermediates with `latexmk -c`;
 clean intermediates **and** PDFs with `latexmk -C`.

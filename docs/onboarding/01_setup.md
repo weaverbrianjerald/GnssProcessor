@@ -137,12 +137,29 @@ documentation and are worth reading.
 ## Step 8: Run the unit tests
 
 ```powershell
-build\x64-Debug\gnss_tests.exe                                   # full suite, ~90 s
+build\x64-Debug\gnss_tests.exe                                   # full suite, about 43 min on a loaded machine (2026-11-13)
 build\x64-Debug\gnss_tests.exe --gtest_filter=StochasticModel*   # one suite, < 1 s
 ```
 
-**Check:** the last line reads `[  PASSED  ]`, and the only skipped test (if any) is
-`FixtureSmokeTest.Sp3HeaderTimeConversionMatches`.
+**Check:** the last line reads `[  PASSED  ]`, and the only skipped tests (if any) are
+the fixture-gated ones: 4 on 2026-11-13. One needs the bootstrap SP3 file
+(`FixtureSmokeTest.Sp3HeaderTimeConversionMatches`), three skip because the AVX2 build
+forms every station densely (`NeqSparseStationNormalsTest`).
+
+## Step 9 (optional): Build the API reference
+
+Doxygen renders the header comments as HTML. The `docs` target exists only when CMake
+found [Doxygen](https://www.doxygen.nl/) at configure time; [Graphviz](https://graphviz.org/download/)
+adds class, collaboration and include graphs. Doxygen installed after the first configure
+is picked up with `-Reconfigure`.
+
+```powershell
+C:\GnssProcessor\scripts\vs2026_build.ps1 -Config x64-Release -Target docs
+```
+
+**Check:** `build\x64-Release\html\index.html` opens on the repository README, styled by
+the theme in `docs\css`. With Graphviz the build took 29 min on 2026-11-13; without it,
+about a minute.
 
 The development setup is complete. IDE debugging is covered on [page 5](05_debugging.md). The next page is the [code tour](02_code_tour.md).
 

@@ -554,7 +554,7 @@ leaves $c$ to the code. The shrunk row gives $c + \alpha_j I = r_j - \phi_j
 + \rho + T + dt_r$ for $j = 1,2$, which fixes the satellite clock level at
 phase precision at every station and epoch. The level is estimable from
 code only; stated at phase precision, it freezes
-(\texttt{docs/refound/CTU\_coupling\_time\_update\_2026-09-28.md}).
+(\texttt{docs/record/refound/CTU\_coupling\_time\_update\_2026-09-28.md}).
 
 \paragraph{The exact update.}
 \texttt{network.carry\_coupling\_exact\_update}
@@ -620,7 +620,7 @@ Under the scalar update with the loose clock rate, a young arc's ambiguity
 information is discarded at every inject; under the exact update the steady
 loss is the anchored clock's walk. The per-arc accounting of the variance
 budget is an open item
-(\texttt{docs/refound/AIL\_ambiguity\_information\_loss\_2026-10-01.md}).
+(\texttt{docs/record/refound/AIL\_ambiguity\_information\_loss\_2026-10-01.md}).
 
 \paragraph{Receiver code bias in the block.}
 The diagonal receiver code-bias carry folded each column at its
@@ -717,7 +717,7 @@ that arms them unless \texttt{network.ctu\_switch\_on\_resume} (default
 off). That seam failed its gate: the restored ambiguities, and the
 slant ionosphere they tie, had absorbed the frozen level error and hold it;
 the ambiguity-side response is not built
-(\texttt{docs/refound/CTU2\_level\_recursion\_followup\_2026-09-29.md}).
+(\texttt{docs/record/refound/CTU2\_level\_recursion\_followup\_2026-09-29.md}).
 
 % ============================================================
 \subsection{Status}
@@ -726,7 +726,7 @@ the ambiguity-side response is not built
 The float vehicle with the held basis, the station prior before the PD
 test, the exact update with its companions and the level-aware hold are
 armed on both reference configurations. Their record is in
-\texttt{docs/refound/RF-1\_decision\_2026-09-14.md},
+\texttt{docs/record/refound/RF-1\_decision\_2026-09-14.md},
 \texttt{RF-2\_held\_basis\_2026-09-15.md},
 \texttt{GRB\_golden\_rebase\_2026-09-22.md},
 \texttt{CTU\_coupling\_time\_update\_2026-09-28.md} and
@@ -735,7 +735,7 @@ the per-epoch fold decision are consolidations that change no output
 (\texttt{PRM\_parameter\_registry\_2026-09-29.md}).
 
 The baseline after the latest arming
-(\texttt{docs/refound/BOF\_built\_off\_follow\_through\_2026-10-28.md}), over
+(\texttt{docs/record/refound/BOF\_built\_off\_follow\_through\_2026-10-28.md}), over
 a 6~h run on the reference configurations: the test station WTZZ00DEU on
 real data, which the network does not use, has a median 3-D position error
 per hour of 0.059, 0.012, 0.023, 0.012, 0.017 and 0.012~m; on the
@@ -748,7 +748,7 @@ seam's ambiguity-side response and the guard's answer to a phase-bias event;
 the information budget; the residual non-finite-input station rejections;
 and the station level under three frequency bands, for which the anchor's
 level directions held in the phase datum are derived offline and not built
-(\texttt{docs/refound/R1D\_station\_level\_datum\_2026-10-23.md},
+(\texttt{docs/record/refound/R1D\_station\_level\_datum\_2026-10-23.md},
 \texttt{ALD\_anchor\_level\_datum\_2026-10-23.md}). The register of open
 items is \texttt{docs/status/OPEN\_ITEMS.md}.
 

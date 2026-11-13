@@ -3,6 +3,7 @@
 #
 #   ./build.ps1            # build combined volume + all standalone PDFs
 #   ./build.ps1 -Regen     # regenerate the code-derived tables first
+#                          # (done automatically when generated/ is missing)
 #   ./build.ps1 -Clean     # clean intermediates and PDFs, then build
 #
 # Requires a TeX distribution with latexmk + biber on PATH (MiKTeX or
@@ -15,9 +16,13 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-Location $PSScriptRoot
 
-if ($Regen) {
-    Write-Host '== regenerating code-derived tables =='
+$fragments = 'processing_modes', 'config_toggles', 'slip_detectors', 'state_keys' |
+    ForEach-Object { "generated/$_.tex" }
+$missing = $fragments | Where-Object { -not (Test-Path $_) }
+if ($Regen -or $missing) {
+    Write-Host '== generating code-derived tables =='
     python ../../scripts/gen_report_tables.py
+    if ($LASTEXITCODE -ne 0) { throw 'gen_report_tables.py failed' }
 }
 if ($Clean) {
     Write-Host '== cleaning =='

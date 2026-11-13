@@ -49,6 +49,13 @@ full unit suite under the new toolchain):
   archived pre-migration exe is a different source revision, and current
   source was not rebuilt with 2022 per the retirement directive.
 - `vswhere.exe not recognized` from the cmd subshell remains benign noise.
+- **Update 2026-11-12 (commit `70f9d6f`).** The wrappers moved from the Enterprise
+  edition to Visual Studio 2026 Community (`18\Community`, same compiler). They run
+  `vcvars64.bat -vcvars_ver=14.51` and stop with a message when the component "MSVC
+  Build Tools v14.51 for x64/x86" is missing, so the compiler stays that of every
+  baseline. The IDE configures its own trees, `build\ide-x64-Debug` and
+  `build\ide-x64-Release`, apart from the wrapper trees. The paths above name
+  `18\Enterprise` as recorded on 2026-08-12. Current setup: [`01_setup.md`](01_setup.md).
 
 ## Disk placement: hardware background (owner request, 2026-10-13)
 

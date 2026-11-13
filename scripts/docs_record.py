@@ -125,6 +125,8 @@ SELF_FILES = {'scripts/docs_record.py', 'scripts/docs_index_check.py', 'scripts/
 RE_LINK = re.compile(r'(\[[^\]\n]*\]\()(<?)([^)\s>]+)(>?)((?:\s+"[^"\n]*")?\))')
 RE_REFDEF = re.compile(r'^(\s*\[[^\]\n]+\]:\s*)(\S+)', re.M)
 RE_PATH = re.compile(r'(?<![\w.\-])docs/[\w.\-/]+')
+#: The same in a .tex file, where LaTeX writes an underscore as ``\_``.
+RE_PATH_TEX = re.compile(r'(?<![\w.\-])docs/(?:[\w.\-/]|\\_)+')
 RE_STATUS = re.compile(r'^- \*\*status:\*\*\s*[`*]*([A-Za-z]+)', re.M)
 RE_ENTRY_LINK = re.compile(r'^- \[[^\]]*\]\(([^)#\s]+)')
 
@@ -291,11 +293,12 @@ def link_targets(path, text):
     return out
 
 
-def path_strings(text):
+def path_strings(text, tex=False):
+    r"""``docs/...`` path strings in ``text``; in a .tex file ``\_`` reads as ``_``."""
     out = set()
-    for m in RE_PATH.finditer(text):
+    for m in (RE_PATH_TEX if tex else RE_PATH).finditer(text):
         p = m.group(0).rstrip('.-/')
-        out.add(p)
+        out.add(p.replace('\\_', '_') if tex else p)
     return out
 
 
@@ -306,7 +309,7 @@ def citations(path, text):
         got |= link_targets(path, text)
         got |= path_strings(head_tail(text)[0])
     else:
-        got |= path_strings(text)
+        got |= path_strings(text, tex=path.endswith('.tex'))
     return got
 
 
@@ -474,6 +477,7 @@ def rewrite(path, newpath, text, pmap, dmap, exists, strings):
     head, tail = head_tail(text) if path.endswith('.md') else (text, '')
     old_dir, new_dir = posixpath.dirname(path), posixpath.dirname(newpath)
     n_links = n_paths = 0
+    tex = path.endswith('.tex')
 
     def fix_target(t):
         nonlocal n_links
@@ -501,6 +505,9 @@ def rewrite(path, newpath, text, pmap, dmap, exists, strings):
         def sub(m):
             nonlocal n_paths
             s = m.group(0)
+            escaped = tex and '\\_' in s       # \texttt{} escapes; \url{} and \path{} do not
+            if escaped:                        # match with the escape, resolve without it
+                s = s.replace('\\_', '_')
             core = s
             trail = ''
             while core and core not in pmap and core.rstrip('/') not in dmap \
@@ -513,9 +520,9 @@ def rewrite(path, newpath, text, pmap, dmap, exists, strings):
                     new += '/'
                 if new != core:
                     n_paths += 1
-                return new + trail
-            return s
-        return RE_PATH.sub(sub, seg)
+                return (new + trail).replace('_', '\\_') if escaped else new + trail
+            return m.group(0)
+        return (RE_PATH_TEX if tex else RE_PATH).sub(sub, seg)
 
     if path.endswith('.md'):
         out, pos = [], 0
