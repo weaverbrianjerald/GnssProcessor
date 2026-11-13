@@ -23,11 +23,6 @@ namespace GnssProcessor {
      * Initializes the geometry helper, takes the Klobuchar coefficients from
      * ProductCache, and parses them from the configured RNX product when the
      * cache holds none.
-     *
-     * @param config Read-only reference to configuration.
-     * @param log_mgr Reference to LogManager for logging.
-     * @param parser ProductParser; not used by this constructor.
-     * @param rinex RinexParser reference passed to the geometry helper.
      */
     Ionosphere::Ionosphere(const GnssConfig& config, LogManager& log_mgr, ProductParser& parser, const RinexParser& rinex)
         : log_manager_(log_mgr), config_(config),
@@ -155,10 +150,6 @@ namespace GnssProcessor {
      * beta[4]) there is no model to evaluate, and the delay is 0 m, the same
      * answer @c PppModel gives when it has none.
      *
-     * @param time GNSS epoch (GPS week/tow).
-     * @param rx_pos Receiver ECEF position in meters.
-     * @param sat_pos Satellite ECEF position in meters.
-     * @param frequency Signal frequency in Hz (used for frequency scaling).
      * @return Estimated ionospheric delay in meters; 0 when the 8 coefficients are not loaded.
      */
     double Ionosphere::computeKlobucharDelay(const GnssTime& time,
@@ -224,8 +215,6 @@ namespace GnssProcessor {
      * factor, no pierce-point offset) and returns it in meters. Without them,
      * returns a default of 5 meters.
      *
-     * @param time GNSS epoch (GPS week/tow).
-     * @param rx_pos Receiver ECEF position in meters.
      * @return Estimated zenith ionospheric delay in meters.
      */
     double Ionosphere::computeInitialIonoDelay(const GnssTime& time, const Eigen::Vector3d& rx_pos) const {

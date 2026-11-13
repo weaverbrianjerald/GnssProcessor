@@ -64,6 +64,10 @@ namespace GnssProcessor {
          *
          * Exposed for testing and for callers that compute the dot
          * product @c m̂·k̂ themselves (for example, for diagnostics).
+         *
+         * @return Unit vector (dimensionless, norm 1) from the geocentre toward the
+         *         geographic location of the geomagnetic north pole, the same dipole
+         *         axis @c fieldAtEcef uses.
          */
         static Eigen::Vector3d dipoleAxisEcef();
     };

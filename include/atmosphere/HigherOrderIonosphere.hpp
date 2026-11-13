@@ -118,10 +118,34 @@ namespace GnssProcessor {
          * applied for the given @c meas_type).
          */
         struct Components {
-            double i2_m = 0.0;
-            double i3_m = 0.0;
-            bool   valid = false;
+            double i2_m = 0.0;      ///< Second-order (I2) term (m), sign convention above.
+            double i3_m = 0.0;      ///< Third-order (I3) term (m), sign convention above.
+            bool   valid = false;   ///< False when an input was degenerate or a term was not finite.
         };
+
+        /**
+         * @brief Compute the I2 and I3 terms separately, for diagnostics and tracing.
+         *
+         * Same model and input checks as @c slantHigherOrderDelay, which is this
+         * result summed.  A degenerate input (frequency at or below zero, non-finite
+         * STEC, non-positive or non-finite IPP radius, receiver-satellite distance
+         * below 1 m, @p meas_type other than 'C' or 'L') returns both terms zero with
+         * @c valid false; a non-finite term also leaves @c valid false.
+         *
+         * @param rx_pos_ecef       Receiver ECEF position (m).
+         * @param sat_pos_ecef      Satellite ECEF position (m).
+         * @param ipp_lat_rad       Latitude of the IPP on the shell (rad), as produced
+         *                          by @c GimQuery::ipp_lat_rad.
+         * @param ipp_lon_rad       Longitude of the IPP on the shell (rad).
+         * @param ipp_radius_m      Distance of the IPP from geocentre (m).
+         * @param stec_tecu         Absolute slant TEC at the IPP (TECU).
+         * @param frequency_hz      Carrier frequency the correction is wanted at (Hz).
+         * @param meas_type         @c 'C' for code or @c 'L' for phase; the sign and
+         *                          the 1/2, 1/3 scaling follow @c slantHigherOrderDelay.
+         * @return @c Components with @c i2_m and @c i3_m in metres, signed so that
+         *         each is added to the modeled value, and @c valid set when both
+         *         are finite.
+         */
         Components slantHigherOrderComponents(const Eigen::Vector3d& rx_pos_ecef,
                                               const Eigen::Vector3d& sat_pos_ecef,
                                               double ipp_lat_rad,

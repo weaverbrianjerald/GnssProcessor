@@ -14,7 +14,7 @@
  *                            · [ a_nm cos(m s) + b_nm sin(m s) ]   [TECU]
  *
  * where β is the latitude of the ionospheric pierce point (IPP; see the
- * convention note on @ref IppGeometry), s is the sun-fixed longitude
+ * convention note on @ref GnssProcessor::IppGeometry "IppGeometry"), s is the sun-fixed longitude
  * (λ_ipp − λ_mean_sun), and P̄_nm are normalized associated Legendre functions
  * chosen so the real surface harmonics {P̄_nm cos(mλ), P̄_nm sin(mλ)} are
  * orthonormal under (1/4π)∫dΩ (a Gram-matrix test in the unit suite checks this
@@ -23,16 +23,16 @@
  *
  * This header provides three reusable, filter-free pieces (Stage 0 of
  * docs/record/network_global_sh_iono_design_2026-06-29.md):
- *   1. @ref computeIppGeometry: the single-layer pierce-point geometry
+ *   1. @ref GnssProcessor::computeIppGeometry "computeIppGeometry": the single-layer pierce-point geometry
  *      (elevation, thin-shell mapping, IPP lat/lon), shared by the SH model and
- *      the legacy @ref GlobalIonosphereMap so both use one implementation.
- *   2. @ref meanSunLongitude: the sub-solar geographic longitude, used to rotate
+ *      the legacy @ref GnssProcessor::GlobalIonosphereMap "GlobalIonosphereMap" so both use one implementation.
+ *   2. @ref GnssProcessor::meanSunLongitude "meanSunLongitude": the sub-solar geographic longitude, used to rotate
  *      the field into a sun-fixed frame.
- *   3. @ref SphericalHarmonicIonosphere: the basis (P̄_nm), VTEC synthesis, and
+ *   3. @ref GnssProcessor::SphericalHarmonicIonosphere "SphericalHarmonicIonosphere": the basis (P̄_nm), VTEC synthesis, and
  *      the analytic partials ∂VTEC/∂coeff used by the network row builder.
  *
  * The class owns no estimator state; the SH coefficients live in
- * @ref NetworkEstimator's shared border (SharedParamKind::VtecSh).
+ * @ref GnssProcessor::NetworkEstimator "NetworkEstimator"'s shared border (SharedParamKind::VtecSh).
  */
 
 #include <Eigen/Dense>
@@ -80,7 +80,7 @@ struct IppGeometry {
 /**
  * @brief Single-layer ionospheric pierce-point geometry.
  *
- * This is the geometry @ref GlobalIonosphereMap::slantIonoDelay uses (it calls
+ * This is the geometry @ref GnssProcessor::GlobalIonosphereMap::slantIonoDelay "GlobalIonosphereMap::slantIonoDelay" uses (it calls
  * this function, so the two share one implementation): the satellite elevation /
  * azimuth in the receiver's local ENU frame, the thin-shell mapping
  * @f$1/\cos z'@f$ with @f$\sin z' = \frac{R_e}{R_e+H}\cos(el)@f$, and the IPP
@@ -132,14 +132,26 @@ public:
         char trig;  ///< 'C' (cosine; includes m=0) or 'S' (sine; m≥1 only).
     };
 
-    /// @param max_degree Truncation degree N (≥ 0).
+    /**
+     * @brief Build the triangular coefficient enumeration for a truncation degree.
+     * @param max_degree Truncation degree N (≥ 0).
+     */
     explicit SphericalHarmonicIonosphere(int max_degree);
 
-    /// Truncation degree N.
+    /**
+     * @brief Truncation degree N.
+     * @return The degree given at construction.
+     */
     int maxDegree() const { return max_degree_; }
-    /// Number of real coefficients = (N+1)².
+    /**
+     * @brief Number of real coefficients = (N+1)².
+     * @return Length of @c coeffs() and of every basis or coefficient vector.
+     */
     int numCoeffs() const { return static_cast<int>(coeffs_.size()); }
-    /// The coefficient enumeration (fixed order; matches the basis() output order).
+    /**
+     * @brief The coefficient enumeration (fixed order; matches the basis() output order).
+     * @return Reference to the (n, m, trig) list; owned by this object, valid for its lifetime.
+     */
     const std::vector<Coeff>& coeffs() const { return coeffs_; }
 
     /**

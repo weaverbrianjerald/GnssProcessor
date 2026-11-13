@@ -93,6 +93,7 @@ namespace GnssProcessor {
 
         /**
          * @brief @c true once @c load() has populated the grid.
+         * @return True after a successful @c load(); false before any load or after a failed one.
          */
         bool isLoaded() const { return loaded_; }
 

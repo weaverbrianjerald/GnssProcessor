@@ -20,6 +20,15 @@ namespace GnssProcessor {
 	 * It also declares getTroposphereMapping(), which has no definition; the
 	 * tropospheric mapping in use is Troposphere::getTroposphereMapping.
 	 */
+
+	/**
+	 * @class Ionosphere
+	 * @brief Klobuchar broadcast ionosphere model and a coarse initial iono delay for PPP.
+	 *
+	 * Holds the geometry helper and the 8 Klobuchar coefficients (alpha[4], beta[4])
+	 * taken from the product cache or the navigation header.  Without coefficients the
+	 * Klobuchar delay is 0 and the initial estimate falls back to a fixed 5 m.
+	 */
 	class Ionosphere {
 	public:
 		/**

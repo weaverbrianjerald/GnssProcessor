@@ -58,6 +58,8 @@ namespace GnssProcessor {
 
         /**
          * @brief Whether a usable IONEX file was loaded.
+         * @return True when the file parsed and holds at least one map; false for an empty
+         *         path or a failed parse (every query then returns an invalid @c GimQuery).
          */
         bool isLoaded() const { return data_.valid && !data_.maps.empty(); }
 
@@ -68,6 +70,9 @@ namespace GnssProcessor {
          * epoch outside the span is clamped to the endpoint map without any warning
          * (the longitude is still rotated), so a caller that must not extrapolate
          * checks the span itself.
+         *
+         * @return Reference to the parsed IONEX content (maps, epochs, grid definition).
+         *         Owned by this object; valid for its lifetime.
          */
         const IonexData& data() const { return data_; }
 
