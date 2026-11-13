@@ -72,7 +72,7 @@ inline double ssrUpdateIntervalSeconds(int index) {
  * epoch.
  *
  * @param epoch_time        SSR epoch time from the message header.
- * @param update_interval_s Update interval of the message (@ref ssrUpdateIntervalSeconds).
+ * @param update_interval_s Update interval of the message (@ref GnssProcessor::ssrUpdateIntervalSeconds "ssrUpdateIntervalSeconds").
  * @return t0 on the GPS time scale.
  */
 inline GnssTime ssrReferenceTime(const GnssTime& epoch_time, double update_interval_s) {
@@ -125,7 +125,7 @@ struct SsrOrbitCorrection {
     Eigen::Vector3d delta_rac{Eigen::Vector3d::Zero()};      ///< Radial/Along/Cross delta (meters).
     Eigen::Vector3d delta_rac_dot{Eigen::Vector3d::Zero()};  ///< Time derivatives (meters/sec).
     GnssTime        received_time{0, 0.0};                   ///< When the correction was received (host clock on the GPS time scale; staleness gate).
-    GnssTime        epoch_time{0, 0.0};                      ///< SSR epoch time from the message header.  The dt base of delta_rac_dot is the reference time @ref ssrReferenceTime(epoch_time, update_interval_s).
+    GnssTime        epoch_time{0, 0.0};                      ///< SSR epoch time from the message header.  The dt base of delta_rac_dot is the reference time @ref GnssProcessor::ssrReferenceTime "ssrReferenceTime(epoch_time, update_interval_s)".
     double          update_interval_s{0.0};                  ///< Update interval of the message (s); 0 = none declared (in-process network records), so the reference time is the epoch.
     int             iod_ssr{0};                              ///< Provider IOD-SSR at receive time.
     /// Satellite reference point of the corrected orbit: @c APC for legacy
@@ -150,9 +150,9 @@ struct SsrClockCorrection {
     double      c1{0.0};                ///< Polynomial drift (m/s).
     double      c2{0.0};                ///< Polynomial drift rate (m/s^2).
     GnssTime    received_time{0, 0.0};  ///< Host-clock receive time on the GPS time scale (staleness gate).
-    GnssTime    epoch_time{0, 0.0};     ///< SSR epoch time from the message header; the polynomial's dt base is @ref ssrReferenceTime(epoch_time, update_interval_s).
+    GnssTime    epoch_time{0, 0.0};     ///< SSR epoch time from the message header; the polynomial's dt base is @ref GnssProcessor::ssrReferenceTime "ssrReferenceTime(epoch_time, update_interval_s)".
     double      update_interval_s{0.0}; ///< Update interval of the message (s); 0 = none declared (in-process network records), so the reference time is the epoch.
-    int         iod_ssr{0};
+    int         iod_ssr{0};             ///< IOD-SSR of the message header (DF413), which binds this clock to the orbit and bias messages of the same solution.
     /// True when the clock was computed against the orbit correction of its own SSR
     /// solution, as every RTCM and IGS-SSR clock message is (IGS SSR Format v1.00
     /// sec. 4: orbit and clock corrections of one IOD-SSR belong together).  Such a
@@ -221,17 +221,17 @@ struct SsrClockCorrection {
  * Packed in one message so orbit and clock share a consistent IOD.
  */
 struct SsrCombinedCorrection {
-    std::string     sat;
+    std::string     sat;                ///< Satellite identifier (e.g. "G01", "E11").
     int             iode{-1};           ///< Issue of Data, Ephemeris; -1 = unknown, treated as permissive (decoders set it explicitly; RTF-2/RT0-1 sibling).
-    Eigen::Vector3d delta_rac{Eigen::Vector3d::Zero()};
-    Eigen::Vector3d delta_rac_dot{Eigen::Vector3d::Zero()};
-    double          c0{0.0};
-    double          c1{0.0};
-    double          c2{0.0};
+    Eigen::Vector3d delta_rac{Eigen::Vector3d::Zero()};      ///< Radial/Along/Cross orbit delta (meters).
+    Eigen::Vector3d delta_rac_dot{Eigen::Vector3d::Zero()};  ///< Time derivatives of the orbit delta (meters/sec).
+    double          c0{0.0};            ///< Clock polynomial offset (meters).
+    double          c1{0.0};            ///< Clock polynomial drift (m/s).
+    double          c2{0.0};            ///< Clock polynomial drift rate (m/s^2).
     GnssTime        received_time{0, 0.0};  ///< Host-clock receive time on the GPS time scale (staleness gate).
-    GnssTime        epoch_time{0, 0.0};     ///< SSR epoch time from the message header; the shared orbit and clock dt base is @ref ssrReferenceTime(epoch_time, update_interval_s).
+    GnssTime        epoch_time{0, 0.0};     ///< SSR epoch time from the message header; the shared orbit and clock dt base is @ref GnssProcessor::ssrReferenceTime "ssrReferenceTime(epoch_time, update_interval_s)".
     double          update_interval_s{0.0}; ///< Update interval of the message (s); 0 = none declared, so the reference time is the epoch.
-    int             iod_ssr{0};
+    int             iod_ssr{0};             ///< IOD-SSR of the message header (DF413).
     /// Satellite reference point of the corrected orbit: @c APC for legacy
     /// 1060/1243-series decodes, @c CoM for IGS-SSR 4076.  The default @c CoM
     /// leaves every non-decoder construction unchanged.  The clock part does not
@@ -248,7 +248,7 @@ struct SsrCombinedCorrection {
  * decoder negates it.  Signal keys are RINEX 3 observation codes (e.g. "C1C", "C2W").
  */
 struct SsrCodeBias {
-    std::string                    sat;
+    std::string                    sat;                 ///< Satellite identifier (e.g. "G01", "E11").
     std::map<std::string, double>  bias_per_signal;     ///< RINEX obs code -> meters.
     /// RINEX obs code -> network code-bias discontinuity counter.
     ///
@@ -263,8 +263,8 @@ struct SsrCodeBias {
     /// deterministically from the per-epoch satellite-set composition, as on the
     /// phase path.
     std::map<std::string, int>     disc_per_signal;
-    GnssTime                       received_time{0, 0.0};
-    int                            iod_ssr{0};
+    GnssTime                       received_time{0, 0.0};  ///< Staleness-gate time stamp: host-clock receive time on the GPS time scale for a decoded record, the solution epoch for an in-process network record.
+    int                            iod_ssr{0};             ///< IOD-SSR of the message header (DF413).
 };
 
 /**
@@ -324,14 +324,14 @@ struct SsrPhaseBiasEntry {
  * compensate phase wind-up consistently with the network.
  */
 struct SsrPhaseBias {
-    std::string sat;
-    std::map<std::string, SsrPhaseBiasEntry> bias_per_signal;
+    std::string sat;                          ///< Satellite identifier (e.g. "G01", "E11").
+    std::map<std::string, SsrPhaseBiasEntry> bias_per_signal;  ///< RINEX phase obs code (e.g. "L1C") -> bias entry.
     int      dispersive_bias_consistency{0};  ///< 1 bit (DF490); a message-header field, copied from SsrHeader onto every record of the message.
     int      mw_consistency{0};               ///< 1 bit (DF491); a message-header field, copied from SsrHeader onto every record of the message.
     double   yaw_angle_deg{0.0};              ///< Network's modelled satellite yaw (degrees).
     double   yaw_rate_deg_per_s{0.0};         ///< Network's modelled satellite yaw rate.
-    GnssTime received_time{0, 0.0};
-    int      iod_ssr{0};
+    GnssTime received_time{0, 0.0};           ///< Staleness-gate time stamp: host-clock receive time on the GPS time scale for a decoded record, the solution epoch for an in-process network record.
+    int      iod_ssr{0};                      ///< IOD-SSR of the message header (DF413).
 };
 
 /**
@@ -342,10 +342,10 @@ struct SsrPhaseBias {
  * rover's stochastic model.
  */
 struct SsrUra {
-    std::string sat;
-    double      ura_m{0.0};
-    GnssTime    received_time{0, 0.0};
-    int         iod_ssr{0};
+    std::string sat;                        ///< Satellite identifier (e.g. "G01", "E11").
+    double      ura_m{0.0};                 ///< 1-sigma user range accuracy (meters) decoded from the 6-bit index; 0 for index 0.
+    GnssTime    received_time{0, 0.0};      ///< Staleness-gate time stamp: host-clock receive time on the GPS time scale for a decoded record, the solution epoch for an in-process network record.
+    int         iod_ssr{0};                 ///< IOD-SSR of the message header (DF413).
 };
 
 /**
@@ -365,11 +365,11 @@ struct SsrUra {
  * the on-disk product stream.
  */
 struct SsrSlantIono {
-    std::string sat;
+    std::string sat;                     ///< Satellite identifier (e.g. "G01", "E11").
     double      iono_m{0.0};             ///< Slant ionospheric delay on GPS L1 (m), undifferenced.
     double      sigma_m{0.0};            ///< Per-LOS representativeness 1σ (m).
-    GnssTime    received_time{0, 0.0};
-    int         iod_ssr{0};
+    GnssTime    received_time{0, 0.0};   ///< Time stamp that the freshness gate of this channel reads; the network producer sets it to the epoch the value was computed for.
+    int         iod_ssr{0};              ///< IOD-SSR tag; the network producer leaves it 0 here (the store keeps the epoch's IOD-SSR in its header).
 };
 
 /**
@@ -383,12 +383,12 @@ struct SsrSlantIono {
  * applies; @c SsrCorrectionStore::getOrbitClock pairs the two.
  */
 struct SsrHighRateClock {
-    std::string sat;
+    std::string sat;                    ///< Satellite identifier (e.g. "G01", "E11").
     double      dc{0.0};                ///< Additive clock correction delta (meters).
     GnssTime    received_time{0, 0.0};  ///< Host-clock receive time on the GPS time scale (staleness gate).
     GnssTime    epoch_time{0, 0.0};     ///< SSR epoch time from the message header (pairs the delta with its clock message).
     double      update_interval_s{0.0}; ///< Update interval of the high-rate message (s); 0 = none declared.
-    int         iod_ssr{0};
+    int         iod_ssr{0};             ///< IOD-SSR of the message header (DF413); matches the clock message that this delta refines.
 };
 
 /**
@@ -398,10 +398,10 @@ struct SsrHighRateClock {
  * 1006 carries an antenna height in addition to the ARP.
  */
 struct RtcmStationCoords {
-    int             reference_station_id{0};
+    int             reference_station_id{0};             ///< 12-bit reference station id (DF003).
     Eigen::Vector3d arp_ecef{Eigen::Vector3d::Zero()};   ///< Antenna Reference Point ECEF (m).
     double          antenna_height{0.0};                 ///< 1006 only; 1005 leaves this 0.
-    bool            has_height{false};
+    bool            has_height{false};                   ///< True for message 1006 (antenna height decoded), false for 1005.
 };
 
 /**

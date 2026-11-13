@@ -42,7 +42,10 @@ struct DecodeResult {
     double glonass_tod_s{-1.0};
 };
 
-/// True for the broadcast-ephemeris message types this decoder handles.
+/// @brief True for the broadcast-ephemeris message types this decoder handles.
+/// @param msg_type The 12-bit DF002 message-type value.
+/// @return True for 1019 (GPS), 1020 (GLONASS), 1042 (BeiDou), 1044 (QZSS) and 1046 (Galileo
+///         I/NAV); false for every other type.
 bool isBroadcastEphemerisType(uint16_t msg_type);
 
 /**

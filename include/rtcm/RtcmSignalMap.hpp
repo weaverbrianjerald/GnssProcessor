@@ -29,7 +29,7 @@ namespace GnssProcessor::RtcmSignalMap {
 /**
  * @brief Translate an MSM signal ID (cell signal-mask position) to a RINEX-3 suffix.
  *
- * For MSM observation messages only; SSR bias messages use @ref ssrToRinexSuffix.
+ * For MSM observation messages only; SSR bias messages use @ref GnssProcessor::RtcmSignalMap::ssrToRinexSuffix "ssrToRinexSuffix".
  *
  * @param sys       GNSS constellation.
  * @param signal_id MSM signal ID (0..31).  Many IDs are reserved/unassigned.
@@ -43,7 +43,7 @@ std::string msmToRinexSuffix(System sys, int signal_id);
 /**
  * @brief Map a RINEX-3 suffix back to its MSM signal ID for a given system.
  *
- * The inverse of @ref msmToRinexSuffix, used for round-tripping and in unit tests.
+ * The inverse of @ref GnssProcessor::RtcmSignalMap::msmToRinexSuffix "msmToRinexSuffix", used for round-tripping and in unit tests.
  *
  * @param sys          GNSS constellation.
  * @param rinex_suffix Two-character RINEX-3 suffix (e.g. "2W").
@@ -57,7 +57,7 @@ int msmFromRinexSuffix(System sys, const std::string& rinex_suffix);
  * @brief Translate an SSR bias signal ID to a RINEX-3 suffix.
  *
  * For the signal field of SSR code- and phase-bias messages, legacy and IGS-SSR
- * alike; MSM observation messages use @ref msmToRinexSuffix.
+ * alike; MSM observation messages use @ref GnssProcessor::RtcmSignalMap::msmToRinexSuffix "msmToRinexSuffix".
  *
  * @param sys       GNSS constellation.
  * @param signal_id SSR signal and tracking mode identifier (0..31).
@@ -71,7 +71,7 @@ std::string ssrToRinexSuffix(System sys, int signal_id);
 /**
  * @brief Map a RINEX-3 suffix back to its SSR bias signal ID for a given system.
  *
- * The inverse of @ref ssrToRinexSuffix, used by tests that hand-build SSR messages.
+ * The inverse of @ref GnssProcessor::RtcmSignalMap::ssrToRinexSuffix "ssrToRinexSuffix", used by tests that hand-build SSR messages.
  *
  * @param sys          GNSS constellation.
  * @param rinex_suffix Two-character RINEX-3 suffix (e.g. "5Q").

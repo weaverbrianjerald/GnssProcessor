@@ -81,7 +81,8 @@ public:
     /// Drop all history (e.g. across a deliberate session restart).
     void clear() { last_lock_ms_.clear(); }
 
-    /// Number of tracked (station, sat, signal) keys (diagnostics/tests).
+    /// @brief Number of tracked (station, sat, signal) keys (diagnostics/tests).
+    /// @return Count of distinct keys with a stored lock time; 0 initially and after @c clear().
     std::size_t size() const { return last_lock_ms_.size(); }
 
 private:

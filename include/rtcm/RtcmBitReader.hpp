@@ -44,7 +44,13 @@ public:
     RtcmBitReader(const uint8_t* data, std::size_t len_bytes)
         : data_(data), len_bits_(static_cast<std::size_t>(len_bytes) * 8u) {}
 
-    /// Read @p n bits (1..32) as an unsigned integer.
+    /// @brief Read @p n bits (1..32) as an unsigned integer.
+    ///
+    /// @param n Field width in bits, for example 12 for the station id DF003.  Outside 1..32,
+    ///        or with fewer than @p n bits left, the read fails: the error flag is set (see
+    ///        @c ok), the position still advances by @p n when @p n is positive (clamped to the
+    ///        end of the buffer) and 0 is returned.
+    /// @return The field value, MSB first (the first bit read is the most significant); 0 on failure.
     uint32_t u(int n) {
         if (n <= 0 || n > 32 || !canRead(n)) { error_ = true; skip(n); return 0; }
         uint32_t v = 0;
@@ -58,7 +64,13 @@ public:
         return v;
     }
 
-    /// Read @p n bits (1..32) as a two's-complement signed integer.
+    /// @brief Read @p n bits (1..32) as a two's-complement signed integer.
+    ///
+    /// @param n Field width in bits, for example 22 for the SSR radial orbit delta (0.1 mm per
+    ///        count) or 16 for a GLONASS code-phase bias of message 1230 (0.02 m per count).
+    ///        Failure behaviour as for @c u.
+    /// @return The value sign-extended from bit @p n - 1 (negative when that bit is set);
+    ///         0 on failure.
     int32_t s(int n) {
         const uint32_t raw = u(n);
         if (n <= 0 || n > 32) return 0;
@@ -71,8 +83,15 @@ public:
         return static_cast<int32_t>(raw);
     }
 
-    /// Read @p n bits (>=2) as a sign-magnitude signed integer.
+    /// @brief Read @p n bits (>=2) as a sign-magnitude signed integer.
     /// Bit layout: [sign(1)] [magnitude(n-1)].  Returns -magnitude if sign bit set.
+    ///
+    /// @param n Total field width in bits including the sign bit, for example 24 for the
+    ///        GLONASS satellite velocity component DF110 or 22 for the clock offset tau_n DF123 of
+    ///        message 1020.  The magnitude (@p n - 1 bits, at most 32) is read with @c u.
+    ///        For @p n < 2 the error flag is set, nothing is consumed and 0 is returned.
+    /// @return +magnitude, or -magnitude when the sign bit is set (a negative zero reads as 0);
+    ///         0 on failure.
     int32_t sm(int n) {
         if (n < 2) { error_ = true; return 0; }
         const uint32_t sign = u(1);
@@ -81,7 +100,11 @@ public:
         return sign ? -v : v;
     }
 
-    /// Read @p n bits (1..64) as an unsigned 64-bit integer.
+    /// @brief Read @p n bits (1..64) as an unsigned 64-bit integer.
+    ///
+    /// @param n Field width in bits, for fields wider than the 32 bits that @c u accepts.
+    ///        Outside 1..64, or with fewer than @p n bits left, the read fails as for @c u.
+    /// @return The field value, MSB first; 0 on failure.
     uint64_t u64(int n) {
         if (n <= 0 || n > 64 || !canRead(n)) { error_ = true; skip(n); return 0; }
         uint64_t v = 0;
@@ -95,7 +118,12 @@ public:
         return v;
     }
 
-    /// Read @p n bits (1..64) as a two's-complement signed 64-bit integer.
+    /// @brief Read @p n bits (1..64) as a two's-complement signed 64-bit integer.
+    ///
+    /// @param n Field width in bits, for example 38 for each ECEF coordinate of messages
+    ///        1005 / 1006 (0.0001 m per count).  Failure behaviour as for @c u64.
+    /// @return The value sign-extended from bit @p n - 1 (negative when that bit is set);
+    ///         0 on failure.
     int64_t s64(int n) {
         const uint64_t raw = u64(n);
         if (n <= 0 || n > 64) return 0;
@@ -107,7 +135,12 @@ public:
         return static_cast<int64_t>(raw);
     }
 
-    /// Read @p n bits (>=2) as a sign-magnitude signed 64-bit integer.
+    /// @brief Read @p n bits (>=2) as a sign-magnitude signed 64-bit integer.
+    ///
+    /// @param n Total field width in bits including the sign bit.  The magnitude (@p n - 1 bits,
+    ///        at most 64) is read with @c u64.  For @p n < 2 the error flag is set, nothing is
+    ///        consumed and 0 is returned.
+    /// @return +magnitude, or -magnitude when the sign bit is set; 0 on failure.
     int64_t sm64(int n) {
         if (n < 2) { error_ = true; return 0; }
         const uint64_t sign = u64(1);
@@ -116,23 +149,33 @@ public:
         return sign ? -v : v;
     }
 
-    /// Read 1 bit as a boolean.
+    /// @brief Read 1 bit as a boolean.
+    /// @return true when the bit is 1; false when it is 0 or the read fails (see @c ok).
     bool boolean() { return u(1) != 0; }
 
-    /// Advance past @p n bits without producing a value.
+    /// @brief Advance past @p n bits without producing a value.
+    /// @param n Number of bits to skip, for example 12 for the DF002 message number at the start
+    ///        of a payload.  Zero or negative is a no-op.  Skipping past the end of the buffer
+    ///        sets the error flag and leaves the position at the end.
     void skip(int n) {
         if (n <= 0) return;
         bit_offset_ += static_cast<std::size_t>(n);
         if (bit_offset_ > len_bits_) { error_ = true; bit_offset_ = len_bits_; }
     }
 
-    /// Number of bits consumed so far.
+    /// @brief Number of bits consumed so far.
+    /// @return Bit offset from the start of the buffer, counting skipped bits; at most the buffer
+    ///         length in bits.  A decoder compares it with the payload length to detect a decode
+    ///         that under-consumed the message.
     std::size_t pos() const { return bit_offset_; }
 
-    /// Number of bits remaining in the buffer.
+    /// @brief Number of bits remaining in the buffer.
+    /// @return Buffer length in bits minus @c pos(); 0 once the end has been reached.
     std::size_t remaining() const { return (bit_offset_ < len_bits_) ? (len_bits_ - bit_offset_) : 0; }
 
-    /// True iff every read has succeeded (no over-read, no out-of-range N).
+    /// @brief True iff every read has succeeded (no over-read, no out-of-range N).
+    /// @return false once any read or skip has overrun the buffer or requested an invalid
+    ///         width; the flag is sticky and never clears.
     bool ok() const { return !error_; }
 
 private:

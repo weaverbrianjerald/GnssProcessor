@@ -9,7 +9,7 @@
  * (identifier = PRN - 119), while RINEX, and every observation and navigation
  * record in this project, names a SBAS satellite by its PRN minus 100 ("S20"
  * for PRN 120).  Every RTCM decoder that produces SBAS satellite strings goes
- * through @ref RtcmSatId::sbas so that a decoded record matches the same
+ * through @ref GnssProcessor::RtcmSatId::sbas "RtcmSatId::sbas" so that a decoded record matches the same
  * satellite read from RINEX or SBF.
  */
 

@@ -76,7 +76,11 @@ public:
      */
     bool parseFrame(const uint8_t* frame, std::size_t len);
 
-    /// Convenience overload accepting std::vector.
+    /// @brief Convenience overload accepting std::vector.
+    ///
+    /// @param frame One complete, CRC-verified frame (preamble 0xD3, 10-bit length, payload,
+    ///        24-bit CRC-24Q); its size is the frame length passed to the pointer overload.
+    /// @return As for the pointer overload: true if the frame was recognised and decoded.
     bool parseFrame(const std::vector<uint8_t>& frame) {
         return parseFrame(frame.data(), frame.size());
     }
@@ -90,7 +94,7 @@ public:
      */
     bool parse();
 
-    /// Drop all accumulated decoded outputs and reset lastMessageType().  The
+    /// @brief Drop all accumulated decoded outputs and reset lastMessageType().  The
     /// stream-time tracker, the last SSR header and the GLONASS ephemerides still
     /// waiting for a stream epoch are kept.
     void clear();
@@ -100,24 +104,111 @@ public:
     // until clear() is invoked.
     // ---------------------------------------------------------------------
 
+    /**
+     * @brief Observations decoded from Multi-Signal Messages (MSM4, MSM5 and MSM7 of every
+     *        system, for example 1074 / 1075 / 1077 for GPS).
+     * @return One @c RinexObservation per (satellite, epoch) that has a valid rough range and at
+     *         least one measurement, in decode order, under RINEX 3 observation codes ("C1C",
+     *         "L1C", "S1C", "D1C").  Empty when none decoded.  The reference stays valid until the
+     *         next @c parseFrame or @c clear().
+     */
     const std::vector<RinexObservation>&      getObservations()      const { return observations_; }
+    /**
+     * @brief SSR orbit corrections: legacy RTCM 1057 (GPS), 1063 (GLONASS), 1240 (Galileo),
+     *        1246 (QZSS), 1252 (SBAS), 1258 (BeiDou) and the IGS-SSR 4076 orbit sub-types.
+     * @return One record per satellite in decode order: radial / along / cross delta in metres
+     *         (22-bit field at 0.1 mm, 20-bit fields at 0.4 mm) and its rate in m/s, relative to
+     *         the broadcast ephemeris named by the record's IODE.  Legacy records refer to the
+     *         antenna phase center, 4076 records to the center of mass.  Empty when none decoded.
+     *         Valid until the next @c parseFrame or @c clear().
+     */
     const std::vector<SsrOrbitCorrection>&    getSsrOrbits()         const { return ssr_orbits_; }
+    /**
+     * @brief SSR clock corrections: legacy RTCM 1058 (GPS), 1064 (GLONASS), 1241 (Galileo),
+     *        1247 (QZSS), 1253 (SBAS), 1259 (BeiDou) and the IGS-SSR 4076 clock sub-types.
+     * @return One record per satellite in decode order: the polynomial c0 (22-bit, 0.1 mm), c1
+     *         (21-bit, 0.001 mm/s) and c2 (27-bit, 0.00002 mm/s^2), converted to metres,
+     *         m/s and m/s^2.  Empty when none decoded.  Valid until the next @c parseFrame or
+     *         @c clear().
+     */
     const std::vector<SsrClockCorrection>&    getSsrClocks()         const { return ssr_clocks_; }
+    /**
+     * @brief SSR combined orbit-and-clock corrections: legacy RTCM 1060 (GPS), 1066 (GLONASS),
+     *        1243 (Galileo), 1249 (QZSS), 1255 (SBAS), 1261 (BeiDou) and the IGS-SSR 4076
+     *        combined sub-types.
+     * @return One record per satellite in decode order, carrying the orbit fields of
+     *         @c getSsrOrbits and the clock polynomial of @c getSsrClocks under one IOD-SSR.
+     *         Empty when none decoded.  Valid until the next @c parseFrame or @c clear().
+     */
     const std::vector<SsrCombinedCorrection>& getSsrCombined()       const { return ssr_combined_; }
+    /**
+     * @brief SSR code biases: legacy RTCM 1059 (GPS), 1065 (GLONASS), 1242 (Galileo), 1248 (QZSS),
+     *        1254 (SBAS), 1260 (BeiDou) and the IGS-SSR 4076 code-bias sub-types.
+     * @return One record per satellite in decode order, holding a bias per signal keyed by RINEX 3
+     *         code ("C1C", ...), in metres (14-bit field, 0.01 m per count).  The decoder negates
+     *         the wire value, so the stored bias is the one present in the pseudorange.  Empty
+     *         when none decoded.  Valid until the next @c parseFrame or @c clear().
+     */
     const std::vector<SsrCodeBias>&           getSsrCodeBiases()     const { return ssr_code_biases_; }
+    /**
+     * @brief SSR phase biases: legacy RTCM 1265 (GPS), 1266 (GLONASS), 1267 (Galileo), 1268 (QZSS),
+     *        1269 (SBAS), 1270 (BeiDou) and the IGS-SSR 4076 phase-bias sub-types.
+     * @return One record per satellite in decode order, holding a bias per signal keyed by RINEX 3
+     *         code ("L1C", ...), in metres (20-bit field, 0.1 mm per count, wire value negated),
+     *         with the integer and discontinuity indicators and the satellite yaw angle (9 bits,
+     *         180/256 degree per count) and yaw rate (8 bits, 180/8192 degree/s per count).
+     *         Empty when none decoded.  Valid until the next @c parseFrame or @c clear().
+     */
     const std::vector<SsrPhaseBias>&          getSsrPhaseBiases()    const { return ssr_phase_biases_; }
+    /**
+     * @brief SSR user range accuracy: legacy RTCM 1061 (GPS), 1067 (GLONASS), 1244 (Galileo),
+     *        1250 (QZSS), 1256 (SBAS), 1262 (BeiDou) and the IGS-SSR 4076 URA sub-types.
+     * @return One record per satellite in decode order, with the 6-bit URA index decoded to a
+     *         1-sigma value in metres (0 for index 0).  Empty when none decoded.  Valid until the
+     *         next @c parseFrame or @c clear().
+     */
     const std::vector<SsrUra>&                getSsrUras()           const { return ssr_uras_; }
+    /**
+     * @brief SSR high-rate clock corrections: legacy RTCM 1062 (GPS), 1068 (GLONASS), 1245 (Galileo),
+     *        1251 (QZSS), 1257 (SBAS), 1263 (BeiDou) and the IGS-SSR 4076 high-rate sub-types.
+     * @return One record per satellite in decode order, with the additive clock delta in metres
+     *         (22-bit field, 0.1 mm per count).  Empty when none decoded.  Valid until the next
+     *         @c parseFrame or @c clear().
+     */
     const std::vector<SsrHighRateClock>&      getSsrHighRateClocks() const { return ssr_hrclocks_; }
+    /**
+     * @brief Reference-station coordinates from RTCM 1005 and 1006.
+     * @return One record per decoded message: station id, antenna reference point in ECEF metres
+     *         (three 38-bit signed fields, 0.0001 m per count) and, for 1006 only, the antenna
+     *         height (16-bit, 0.0001 m per count).  Empty when none decoded.  Valid until the
+     *         next @c parseFrame or @c clear().
+     */
     const std::vector<RtcmStationCoords>&     getStationCoords()     const { return station_coords_; }
+    /**
+     * @brief Broadcast ephemerides from RTCM 1019 (GPS), 1020 (GLONASS), 1042 (BeiDou),
+     *        1044 (QZSS) and 1046 (Galileo I/NAV).
+     * @return One record per decoded message, in decode order.  A GLONASS 1020 record that arrived
+     *         before the stream time was known is not listed until the frame that sets the
+     *         tracker dates it.  Empty when none decoded.  Valid until the next @c parseFrame or
+     *         @c clear().
+     */
     const std::vector<BroadcastEphemeris>&    getBroadcastEphemeris() const { return broadcast_eph_; }
-    /// Decoded 1033 receiver and antenna descriptor blocks (RTB-2(d)).  Exposed for
+    /// @brief Decoded 1033 receiver and antenna descriptor blocks (RTB-2(d)).  Exposed for
     /// a future SIF (station-info) cross-check; not consumed anywhere yet.
+    /// @return One record per decoded 1033 message: station id, antenna descriptor and serial,
+    ///         setup id, and receiver type, firmware and serial strings.  Empty when none decoded.
+    ///         Valid until the next @c parseFrame or @c clear().
     const std::vector<RtcmReceiverAntennaDescriptor>& getReceiverDescriptors() const { return receiver_descriptors_; }
-    /// Decoded 1230 GLONASS code-phase bias blocks (RTB-2(d)).  Exposed only; not
+    /// @brief Decoded 1230 GLONASS code-phase bias blocks (RTB-2(d)).  Exposed only; not
     /// wired into the GLONASS IFB path (see RtcmGlonassBias).
+    /// @return One record per decoded 1230 message: station id, alignment indicator, signal mask
+    ///         and the L1 C/A, L1 P, L2 C/A and L2 P biases in metres (16-bit fields, 0.02 m per
+    ///         count).  Empty when none decoded.  Valid until the next @c parseFrame or @c clear().
     const std::vector<RtcmGlonassBias>&       getGlonassBiases()     const { return glonass_biases_; }
 
-    /// The message type of the most recently decoded frame, or -1 if none.
+    /// @brief The message type of the most recently decoded frame, or -1 if none.
+    /// @return The 12-bit DF002 message number of the last frame whose header parsed, whether or
+    ///         not its body decoded; -1 before any frame and after @c clear().
     int lastMessageType() const { return last_msg_type_; }
 
     /// Most GLONASS 1020 records held before a stream epoch is known (see the class
@@ -132,6 +223,9 @@ public:
      * subsequent mod-week epoch field is promoted by nearest continuation to
      * this value (RTB-1(a)).  Negative until the first time-bearing frame
      * (cold start pending).  Exposed for tests and diagnostics.
+     *
+     * @return Continuous GPS seconds (week * 604800 + time of week) of the tracker; negative
+     *         until the first time-bearing frame has been parsed.
      */
     double timeAnchorGpsSeconds() const { return time_anchor_gps_s_; }
 
@@ -143,6 +237,9 @@ public:
      * so on the realtime path, which reuses one parser and calls @c clear() before
      * each frame, it still refers to the last SSR frame after a non-SSR frame.
      * Default-constructed until an SSR message has been decoded.
+     *
+     * @return Reference to the parser's stored header (SSR epoch time, update-interval index,
+     *         IOD-SSR, provider and solution ids, system); it changes with the next SSR frame.
      */
     const SsrHeader& getLastSsrHeader() const { return last_ssr_header_; }
 

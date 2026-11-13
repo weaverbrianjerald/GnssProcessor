@@ -63,7 +63,7 @@ struct DecodeResult {
  * the solution id and before the satellite count; they are returned in
  * @c DecodeResult::header and copied onto every @c SsrPhaseBias record.  The
  * satellite block starts directly at the satellite id.  The same header layout
- * applies to the IGS-SSR phase-bias subtypes (@ref decodeIgs4076).
+ * applies to the IGS-SSR phase-bias subtypes (@ref GnssProcessor::RtcmSsr::decodeIgs4076 "decodeIgs4076").
  *
  * @param payload     Pointer to the message payload (excluding 3-byte header
  *                    and 3-byte CRC).  The first 12 bits are DF002 (message
@@ -79,6 +79,17 @@ struct DecodeResult {
  *                    host clock only at cold start (RTB-1(a)).  With a value
  *                    ≤ 0, @c epoch_time.week stays zero (for GLONASS the
  *                    whole epoch is {0, 0}).
+ *
+ * @param[out] orbits       Receives the orbit correction records of an orbit message
+ *                    (appended; existing entries are not touched).
+ * @param[out] clocks       Receives the clock correction records of a clock message.
+ * @param[out] combined     Receives the records of a combined orbit and clock message.
+ * @param[out] code_biases  Receives the satellite code-bias records of a code-bias message.
+ * @param[out] phase_biases Receives the satellite phase-bias records of a phase-bias message.
+ * @param[out] uras         Receives the user range accuracy records of a URA message.
+ * @param[out] hrclocks     Receives the high-rate clock records of a high-rate clock message.
+ *                    Only the vector that matches @p msg_type is appended to; the other six
+ *                    are left unchanged.
  *
  * @return @c DecodeResult.ok = true if the entire message decoded without
  *         truncation.  The @c header field is populated whenever the shared
@@ -131,7 +142,17 @@ DecodeResult decodeLegacy(
  * @param len_bytes        Payload length in bytes.
  * @param anchor_gps_seconds Continuous GPS seconds of a known nearby epoch,
  *                         used for nearest-continuation week promotion of the
- *                         20-bit TOW epoch as in @ref decodeLegacy (RTB-1(a)).
+ *                         20-bit TOW epoch as in @ref GnssProcessor::RtcmSsr::decodeLegacy "decodeLegacy" (RTB-1(a)).
+ *
+ * @param[out] orbits       Receives the records of an orbit subtype (IM offset 1).
+ * @param[out] clocks       Receives the records of a clock subtype (IM offset 2).
+ * @param[out] combined     Receives the records of a combined subtype (IM offset 3).
+ * @param[out] hrclocks     Receives the records of a high-rate clock subtype (IM offset 4).
+ * @param[out] code_biases  Receives the records of a code-bias subtype (IM offset 5).
+ * @param[out] phase_biases Receives the records of a phase-bias subtype (IM offset 6).
+ * @param[out] uras         Receives the records of a URA subtype (IM offset 7).
+ *                    Records are appended to the one vector the message selects; the other
+ *                    six are left unchanged.
  *
  * @return @c DecodeResult.ok = true if the entire message decoded cleanly.
  */
@@ -154,6 +175,14 @@ DecodeResult decodeIgs4076(
  * (units 0.0001 m).  Only the station ID, ECEF position, and (for 1006)
  * antenna height are populated; receiver-type / station-type / GNSS-bits
  * fields are skipped.
+ *
+ * @param payload    Pointer to the message payload (DF002 included).
+ * @param len_bytes  Payload length in bytes.
+ * @param msg_type   The DF002 message-type value, 1005 or 1006.
+ * @param[out] out   Receives the station id, ECEF position and (for 1006) antenna height.
+ *                   Left unchanged when the function returns false.
+ * @return True when the message type is 1005 or 1006 and the payload holds the full record;
+ *         false for any other type or a truncated payload.
  */
 bool decodeStationCoords(
     const uint8_t*       payload,

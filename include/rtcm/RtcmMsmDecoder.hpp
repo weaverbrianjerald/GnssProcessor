@@ -39,14 +39,14 @@ namespace GnssProcessor::RtcmMsm {
  * @brief Result of a single MSM message decode.
  */
 struct MsmDecodeResult {
-    bool      ok{false};
-    System    system{System::Unknown};
+    bool      ok{false};                 ///< True iff the message type matched the variant and the whole message decoded without truncation.
+    System    system{System::Unknown};   ///< System of the message type; Unknown when the type does not match the variant.
     int       msm_subtype{0};            ///< 4, 5 or 7 for MSM4, MSM5, MSM7.
-    int       station_id{0};
-    GnssTime  epoch_time{0, 0.0};
-    bool      multi_message{false};
-    int       n_satellites{0};
-    int       n_signals{0};
+    int       station_id{0};             ///< 12-bit reference station id from the header.
+    GnssTime  epoch_time{0, 0.0};        ///< Message epoch on the GPS time scale (30-bit ms-of-week; GLONASS from its time of day; BeiDou shifted from BDT by 14 s); week is 0 when no anchor was supplied.
+    bool      multi_message{false};      ///< Multiple-message bit: true when further MSM messages for the same epoch follow.
+    int       n_satellites{0};           ///< Number of satellites flagged in the 64-bit satellite mask.
+    int       n_signals{0};              ///< Number of signals flagged in the 32-bit signal mask.
     int       n_cells{0};                ///< popcount of the cell mask.
 
     /// Bits consumed by the decoder from the payload (the bit reader position
@@ -102,7 +102,17 @@ MsmDecodeResult decodeMsm7(
  * integer-dB-Hz CNR (vs 10-bit 1/16 dB-Hz), and no range-rate fields
  * (no Doppler observable).  Septentrio receivers commonly emit MSM4 on
  * bandwidth-constrained NTRIP links: the same observation set as MSM7 at
- * lower precision.  Parameters as @ref decodeMsm7.
+ * lower precision.  Parameters as @ref GnssProcessor::RtcmMsm::decodeMsm7 "decodeMsm7".
+ *
+ * @param payload          Pointer to the message payload (DF002 included).
+ * @param len_bytes        Payload length in bytes.
+ * @param msg_type         The DF002 message-type value (selects the constellation).
+ * @param anchor_gps_seconds Continuous GPS seconds of a known nearby epoch, used to
+ *                         promote the epoch field into a full @c GnssTime; see decodeMsm7.
+ * @param[out] observations  One @c RinexObservation appended per satellite with a valid
+ *                         rough range and at least one decoded measurement.
+ * @return Populated result struct; @c ok=true iff the message type is an MSM4 type and the
+ *         entire message was decoded without truncation.
  */
 MsmDecodeResult decodeMsm4(
     const uint8_t* payload,
@@ -122,7 +132,17 @@ MsmDecodeResult decodeMsm4(
  * ranges, DF399 rough range rate (14 bits, m/s), and DF419 extended
  * satellite info (present in MSM5/MSM7 for every system; GLONASS FCN).
  * Emits the same observable set as MSM7 (C/L/S/D) at MSM4 precision.
- * Parameters as @ref decodeMsm7.
+ * Parameters as @ref GnssProcessor::RtcmMsm::decodeMsm7 "decodeMsm7".
+ *
+ * @param payload          Pointer to the message payload (DF002 included).
+ * @param len_bytes        Payload length in bytes.
+ * @param msg_type         The DF002 message-type value (selects the constellation).
+ * @param anchor_gps_seconds Continuous GPS seconds of a known nearby epoch, used to
+ *                         promote the epoch field into a full @c GnssTime; see decodeMsm7.
+ * @param[out] observations  One @c RinexObservation appended per satellite with a valid
+ *                         rough range and at least one decoded measurement.
+ * @return Populated result struct; @c ok=true iff the message type is an MSM5 type and the
+ *         entire message was decoded without truncation.
  */
 MsmDecodeResult decodeMsm5(
     const uint8_t* payload,
