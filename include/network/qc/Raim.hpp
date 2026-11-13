@@ -223,6 +223,8 @@ struct RaimIsolatedArcs {
 
     /**
      * @brief Whether T4 refloats the arc (@p station, @p sat) this epoch.
+     * @param station Roster index of the arc's station.
+     * @param sat     The arc's satellite id (e.g. "G07").
      * @return True for an arc in @c refloat; false for an arc held by either gate or not
      *         flagged.  The `acted` column of an ARC row of network_raim_attrib.csv reads this.
      */
@@ -234,7 +236,7 @@ struct RaimIsolatedArcs {
  *
  * A pure function of its arguments: the order of the tests is the T4 attribution block's
  * order (bar, wholesale satellite, maturity gate, persistence gate), so the unit tests pin
- * the seam's behaviour.  See @ref RaimIsolatedArcs for the gates.
+ * the seam's behaviour.  See @ref GnssProcessor::RaimIsolatedArcs "RaimIsolatedArcs" for the gates.
  *
  * @param cells          The (station, satellite, value) table the median polish was taken over.
  * @param interaction    The polish's interaction per cell (parallel to @p cells).
@@ -366,6 +368,7 @@ struct RaimPriorChannelTally {
     void noteRow(ContributionKind kind, double statistic, bool other_dominant,
                  const std::string& station, const std::string& label, double tow);
 
+    /// @brief Total of the per-kind row counts, the @c Unset cell included.
     /// @return The rows tested over every kind.
     long long rowsTested() const;
 };
@@ -602,7 +605,7 @@ struct RaimCounters {
     long long n_t3_untestable_cells   = 0;
 
     // The processed-epoch count (epochs decimated out are not counted).
-    std::size_t n_loop_epochs = 0;
+    std::size_t n_loop_epochs = 0;  ///< Epochs processed so far; an epoch decimated out is not counted.
 };
 
 } // namespace GnssProcessor

@@ -60,6 +60,8 @@ EpochAction networkWithinEpochAdapt(NetworkRun& run, const NetworkEpoch& ep, con
 
 /// The culprit the adaptation loop drops next: its granularity and identity.
 struct WeChoice {
+    /// Granularity of the culprit: @c Arc a single (station, satellite) arc, @c Sat a whole
+    /// satellite, @c Sta a whole station, @c None when nothing clears the gate.
     enum class Kind { None, Arc, Sat, Sta };
     Kind        kind{Kind::None};  ///< None when nothing clears the gate.
     int         arc_sta{-1};       ///< Arc culprit: the station.

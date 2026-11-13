@@ -16,7 +16,7 @@
  * double differences, so the rebuild treats every carried ambiguity a culprit names as
  * slipped and re-taps the chord, instead of folding the stale carried value again.
  *
- * The sets travel through the epoch: one @ref WithinEpochCulprits lives in the epoch's
+ * The sets travel through the epoch: one @ref GnssProcessor::WithinEpochCulprits "WithinEpochCulprits" lives in the epoch's
  * workspace (@c EpochWorkspace::we_culprits, network/driver/RunTypes.hpp), the T2 block is
  * its only writer, and the driver's rebuild callback reads that member of the same
  * workspace.  The block clears the sets when it starts and when it ends (after copying the
@@ -30,8 +30,8 @@
  * sets, while the rebuild callback read the driver's pointers, which stayed null: no
  * rebuild withheld a culprit from then until the rebuild wiring was fixed.  Nothing counted the withhold, so
  * the dead wiring was invisible (standing invariant 4).  Both ends are now counted
- * (@ref WithinEpochCulpritTally) and the run end reads them against each other
- * (@ref withinEpochCulpritVerdict).
+ * (@ref GnssProcessor::WithinEpochCulpritTally "WithinEpochCulpritTally") and the run end reads them against each other
+ * (@ref GnssProcessor::withinEpochCulpritVerdict "withinEpochCulpritVerdict").
  *
  * ## Off
  *
@@ -210,7 +210,7 @@ std::string withinEpochCulpritQuietReason(bool pl_on, long long pool_walks, long
  * @brief Run-end report: the culprit withhold on the DD carry, both ends of the hand-off
  *        and the verdict (one line).
  *
- * Gate: @ref withinEpochCulpritReportArmed on the effective @c network.carry_invariant and
+ * Gate: @ref GnssProcessor::withinEpochCulpritReportArmed "withinEpochCulpritReportArmed" on the effective @c network.carry_invariant and
  * @c network.raim_within_epoch; returns 0 at once when it is false.  The row follows the
  * within-epoch RAIM report in the run-end table.
  *

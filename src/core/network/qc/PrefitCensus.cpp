@@ -373,7 +373,7 @@ void networkPrefitCensus(NetworkRunContext& ctx, const GnssConfig& config_,
     /// Vet trigger for measurement admission (its INC-4,
     /// docs/record/SPEC_measurement_admission.md §10): the (station index, satellite)
     /// cells whose worst established @c obs_code deviation exceeded
-    /// @ref pc_event_sigma this epoch.  Published below into
+    /// @c pc_event_sigma this epoch.  Published below into
     /// `ctx.carry.prefit_code_flag`.  The admission seam runs earlier in the epoch
     /// than this walk, so it reads the flags one epoch late; the census flagged
     /// exposed re-entries 1-4 epochs before their |z| crossed the admission bound,

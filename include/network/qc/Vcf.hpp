@@ -39,8 +39,8 @@
  *
  * ## Identifiability
  *
- * A class is identifiable when its redundancy per row is at least @ref kVcfMinRedundancyPerRow
- * and it pooled at least @ref kVcfMinClassRows rows.  That is necessary, not sufficient, on
+ * A class is identifiable when its redundancy per row is at least @ref GnssProcessor::kVcfMinRedundancyPerRow "kVcfMinRedundancyPerRow"
+ * and it pooled at least @ref GnssProcessor::kVcfMinClassRows "kVcfMinClassRows" rows.  That is necessary, not sufficient, on
  * phase: with a free slant ionosphere per line of sight the geometry-free direction of a phase
  * pair has no redundancy, and the coloured part of the phase noise is absorbed by the carried
  * ambiguities, so a phase factor is a measurement only where a bed with a known phase law
@@ -51,15 +51,15 @@
  * The rows are fed by the redundancy-census sweep (network.redundancy_census_stride), which
  * already holds every swept row's redundancy and, with the block census armed, its residual:
  * no second sweep and no second covariance product.  The per-row work is a few branches, two
- * map lookups and two additions.  The flush (@ref networkVcfFlush) runs once per epoch after the
+ * map lookups and two additions.  The flush (@ref GnssProcessor::networkVcfFlush "networkVcfFlush") runs once per epoch after the
  * census.
  *
  * ## Stage 2: the applying scales
  *
  * With network.vcf_apply the robust aggregate code EWMA becomes the URA's scale, and with
  * network.vcf_apply_phase as well the robust aggregate phase EWMA divides each statistic of the
- * within-epoch and the post-fit RAIM pools (@ref networkVcfApplyScale).  A scale is 1 (the a
- * priori model) until its class is identifiable and has @ref kVcfApplyMinSweeps sweeps.  The
+ * within-epoch and the post-fit RAIM pools (@ref GnssProcessor::networkVcfApplyScale "networkVcfApplyScale").  A scale is 1 (the a
+ * priori model) until its class is identifiable and has @ref GnssProcessor::kVcfApplyMinSweeps "kVcfApplyMinSweeps" sweeps.  The
  * solve's weights and the carried variances are never touched.
  */
 
@@ -107,6 +107,8 @@ enum class VcfKind : unsigned char {
     PhaseSecond,     ///< A second phase channel's rows (counted, outside the nominal model).
 };
 
+/// @brief The trace word of a class kind.
+/// @param k  The class kind.
 /// @return The trace word of @p k ("code", "phase", "code_companion", "phase_second").
 const char* vcfKindName(VcfKind k);
 
@@ -132,7 +134,7 @@ std::string vcfSignalClassKey(char sys, const std::string& signal);
 
 /// One class's sums over one swept epoch.
 struct NetworkVcfClassAcc {
-    VcfKind   kind = VcfKind::Code;
+    VcfKind   kind = VcfKind::Code;  ///< observation kind of the class (code, phase, code companion, phase second).
     char      sys = '*';            ///< constellation letter, '*' for an aggregate.
     std::string signal;             ///< observation code, "" for an aggregate.
     long long n = 0;                ///< rows pooled (w > 0, finite residual, not deweighted).
@@ -156,15 +158,16 @@ struct NetworkVcfEpoch {
     long long rows_skipped = 0;     ///< observation rows dropped for a non-positive weight or a non-finite value.
     long long stations = 0;         ///< stations fed this epoch.
 
-    /// Clear every class and re-stamp.
+    /// @brief Clear every class and re-stamp.
+    /// @param new_tow GPS time of week (s) of the epoch about to accumulate; becomes the stamp.
     void reset(double new_tow);
 };
 
 /// One class's run state: its EWMAs and the material of the run-end table.
 struct NetworkVcfClassState {
-    VcfKind   kind = VcfKind::Code;
-    char      sys = '*';
-    std::string signal;
+    VcfKind   kind = VcfKind::Code;  ///< observation kind of the class.
+    char      sys = '*';             ///< constellation letter, '*' for an aggregate.
+    std::string signal;              ///< observation code, "" for an aggregate.
     double    ewma_f = 0.0;         ///< EWMA of the redundancy-weighted factor.
     double    ewma_g = 0.0;         ///< EWMA of the robust factor.
     long long sweeps = 0;           ///< sweeps that entered the EWMA (n >= kVcfMinClassRows).
@@ -219,6 +222,8 @@ struct VcfCounters {
 class NetworkVcfStationFeed {
 public:
     /**
+     * @brief Open a per-station feed on the epoch accumulator.
+     *
      * @param acc The epoch accumulator (re-stamped here when @p tow is new).
      * @param tow This epoch's TOW, the accumulator's stamp.
      */
@@ -273,7 +278,7 @@ double networkVcfEwma(double prev, double x, double alpha, bool seeded);
 
 /**
  * @brief The stage-2 scale of one aggregate kind: sqrt of its robust EWMA when the class is
- *        identifiable and has @ref kVcfApplyMinSweeps sweeps, else 1.
+ *        identifiable and has @ref GnssProcessor::kVcfApplyMinSweeps "kVcfApplyMinSweeps" sweeps, else 1.
  * @param st   The run state.
  * @param kind @c VcfKind::Code or @c VcfKind::Phase (any other kind returns 1).
  * @return The scale, a sigma ratio.

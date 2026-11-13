@@ -16,17 +16,17 @@
  * is decomposed exactly by class (every class is read from a
  * contribution tag or kind, network/assembly/Contributions.hpp):
  *
- *  - a station's rows by their tags' row class (@ref classifyRow, @ref rowClassName):
+ *  - a station's rows by their tags' row class (@ref GnssProcessor::classifyRow "classifyRow", @ref GnssProcessor::rowClassName "rowClassName"):
  *    @c obs_code, @c obs_phase, @c iono_sh_row, @c pivot_pin, @c local_pin_row,
  *    @c cpl_row, and @c obs_other for an unclassified row;
- *  - a station's prior entries by their kinds' names (@ref contributionKindName), from
+ *  - a station's prior entries by their kinds' names (@ref GnssProcessor::contributionKindName "contributionKindName"), from
  *    both channels the kernel folds: the pre-PD prior folded with the block (for
  *    example @c prior_rx_cb_datum_pre_pd) and the post-PD diagonal prior when the
  *    consume folded it (@c prior_ambiguity_carry, @c prior_zwd_carry,
  *    @c prior_rx_cb_carry, @c prior_rx_cb_datum,
  *    @c prior_ambiguity_oracle_pin);
  *  - each shared fold the estimator captured, by its kind: @c "shared:" and the kind's
- *    name (@ref rhsAttribSharedClass; for example @c shared:border_carry_dense,
+ *    name (@ref GnssProcessor::rhsAttribSharedClass "rhsAttribSharedClass"; for example @c shared:border_carry_dense,
  *    @c shared:cb_if_pin);
  *  - the invariant-carry DD folds (@c dd_fold).  The dump reports each class's load on the target
  * shared columns (the two-layer SH means @c SH:C:0:0 / @c SH2:C:0:0), and the
@@ -59,8 +59,8 @@
  *    every (station, contribution kind), every (station, kind, satellite, signal),
  *    every shared fold kind, the DD folds and the datum pins, the reduced-RHS
  *    contribution at each named column and its solution share there
- *    (@ref networkRhsAttribColumnShares), with the kind totals, the full solution and
- *    a closure line per column (@ref networkRhsAttribDump documents the records).
+ *    (@ref GnssProcessor::networkRhsAttribColumnShares "networkRhsAttribColumnShares"), with the kind totals, the full solution and
+ *    a closure line per column (@ref GnssProcessor::networkRhsAttribDump "networkRhsAttribDump" documents the records).
  *  - `loc_<tow>.csv` (only when @c network.rhs_attrib_columns names station-local
  *    columns, `LOC:<station>:<key>`, and only at the dumps whose frame holds the solve's
  *    @c x_s: the armed dumps and a trip's current-epoch dump, not a retained previous
@@ -68,7 +68,7 @@
  *    @f$x_r(k)@f$ into one share per data row of the station, one per local fold kind,
  *    the shared feedback (split by station and satellite, with each station's net) and
  *    the constraint corrections, with closure lines and two checks of the single parts
- *    (@ref networkRhsAttribLocalShares).  The station's geometry-free level
+ *    (@ref GnssProcessor::networkRhsAttribLocalShares "networkRhsAttribLocalShares").  The station's geometry-free level
  *    direction is decomposed the same way when the station's data-only block has a
  *    one-dimensional null space.
  *
@@ -81,7 +81,7 @@
  *    `LOC:<station>:<key>`, e.g. `"LOC:MAJU00MHL:GPS_DCB"`; default empty = no `cols_`
  *    or `loc_` file): the named columns of the solution-share readouts (the shared labels
  *    and the station-local ones; the key
- *    spellings are those of @ref rhsAttribResolveLocalKey).
+ *    spellings are those of @ref GnssProcessor::rhsAttribResolveLocalKey "rhsAttribResolveLocalKey").
  *    Diagnostics only, not fingerprinted, read at every dump (armed or trip).
  *  - @c network.rhs_attrib_on_trip (bool, default false): the INC-5 flight
  *    recorder (docs/SPEC_prefit_census_observability.md §7).  Arms the capture
@@ -95,7 +95,7 @@
  * (reused by the DD and per-satellite passes) plus the per-station @f$N_{rr}@f$
  * rebuild at capture.  Disarmed, the cost is one double compare per epoch.  The
  * INC-5 retention channel also copies one epoch's assemblies and kernel blocks
- * (tens to hundreds of MB; see @ref NetworkAttribFrame) and disables itself
+ * (tens to hundreds of MB; see @ref GnssProcessor::NetworkAttribFrame "NetworkAttribFrame") and disables itself
  * above @c network.rhs_attrib_prev_max_stations.
  */
 
@@ -145,8 +145,8 @@ struct NetworkRunTraces;    // network/diag/RunTraces.hpp, included in the .cpp 
  */
 struct NetworkAttribFrame {
     bool                     valid{false};   ///< A usable reduced system was captured.
-    int                      week{0};
-    double                   tow{0.0};
+    int                      week{0};        ///< GPS week of the captured epoch.
+    double                   tow{0.0};       ///< GPS time of week of the captured epoch (s).
     Eigen::Index             n{0};           ///< shared-column count.
     std::vector<std::string> label;          ///< shared-column labels (size @ref n).
     std::vector<NetColFam>   fam;            ///< shared-column families (size @ref n), from the column identity.
@@ -191,14 +191,16 @@ struct NetworkAttribFrame {
     /// terms apart (@c NetworkNormalEquations::reconstructStationParts).
     std::vector<NetworkNormalEquations::StationReconstructionParts> local_parts;
 
-    /// Approximate retained heap footprint in bytes (run-end telemetry).
+    /// @brief Approximate retained heap footprint in bytes (run-end telemetry).
+    /// @return Estimated bytes held by the frame's matrices, vectors and owned assemblies;
+    ///         an estimate for telemetry, not an exact allocator figure.
     std::size_t bytes() const;
     /// Release everything (used when retention is disabled mid-run).
     void clear();
 };
 
 /**
- * @brief Capture one epoch into a @ref NetworkAttribFrame.
+ * @brief Capture one epoch into a @ref GnssProcessor::NetworkAttribFrame "NetworkAttribFrame".
  *
  * @param out            [out] frame, overwritten wholesale.
  * @param se             this epoch (week/tow stamp).
@@ -210,15 +212,15 @@ struct NetworkAttribFrame {
  * @param own_assemblies deep-copy the assemblies into the frame (retention);
  *                       false = point at @p asm_res, valid only until it changes.
  * @param x_s            optional: the solve's shared estimate, copied into
- *                       @ref NetworkAttribFrame::x_s when its size matches the shared
+ *                       @ref GnssProcessor::NetworkAttribFrame::x_s "NetworkAttribFrame::x_s" when its size matches the shared
  *                       width; nullptr (the default) leaves it empty.
  * @param local_readout  also record, when @p x_s was copied, every item's local-column
  *                       names (from the station's parameter set, when it has one) and the
  *                       kernel's reconstruction parts at @p x_s
- *                       (@ref NetworkAttribFrame::local_names,
- *                       @ref NetworkAttribFrame::local_parts), which the station-local
+ *                       (@ref GnssProcessor::NetworkAttribFrame::local_names "NetworkAttribFrame::local_names",
+ *                       @ref GnssProcessor::NetworkAttribFrame::local_parts "NetworkAttribFrame::local_parts"), which the station-local
  *                       readout reads.  The callers pass
- *                       @ref rhsAttribNamesLocalColumns of @c network.rhs_attrib_columns;
+ *                       @ref GnssProcessor::rhsAttribNamesLocalColumns "rhsAttribNamesLocalColumns" of @c network.rhs_attrib_columns;
  *                       false (the default) records nothing for it.
  */
 void networkAttribCaptureFrame(NetworkAttribFrame& out, const SyncedEpoch& se,
@@ -235,7 +237,7 @@ void networkAttribCaptureFrame(NetworkAttribFrame& out, const SyncedEpoch& se,
  * @brief The attribution class of a shared fold: the one map from a contribution kind
  *        to the class the dump writes.
  *
- * The class is @c "shared:" followed by the kind's name (@ref contributionKindName), so
+ * The class is @c "shared:" followed by the kind's name (@ref GnssProcessor::contributionKindName "contributionKindName"), so
  * each fold site names one thing: the kind it hands the estimator.  A fold whose site
  * named no kind reads @c shared:unset (the within-epoch replay's single re-fold of the
  * captured priors, which are of several kinds).  These strings are written to the
@@ -276,14 +278,14 @@ struct NetworkRhsAttribDecomposition {
  * @brief Decompose one captured frame by class, exactly (no file is written).
  *
  * Iterates the channels the kernel folds, in its order: per station the block's rows
- * (classed by @ref classifyRow), the pre-PD prior entries (@c prior_cols, folded with the
+ * (classed by @ref GnssProcessor::classifyRow "classifyRow"), the pre-PD prior entries (@c prior_cols, folded with the
  * block) and, when @c carry_prior_folded, the post-PD entries (@c carry_cols), each
  * entry classed by its tag's kind; each part is reduced through the station's final
- * @f$N_{sr}N_{rr}^{-1}@f$.  Then the captured shared folds (@ref rhsAttribSharedClass)
+ * @f$N_{sr}N_{rr}^{-1}@f$.  Then the captured shared folds (@ref GnssProcessor::rhsAttribSharedClass "rhsAttribSharedClass")
  * and the DD folds.  The classes sum to the kernel's reduced RHS up to rounding unless a
  * within-epoch replay rebuilt the kernel after the captures, which the closure reports.
  *
- * @param f A frame captured by @ref networkAttribCaptureFrame.
+ * @param f A frame captured by @ref GnssProcessor::networkAttribCaptureFrame "networkAttribCaptureFrame".
  * @return The decomposition; @c valid false for a frame without a reduced system.
  */
 NetworkRhsAttribDecomposition networkRhsAttribDecompose(const NetworkAttribFrame& f);
@@ -371,15 +373,15 @@ struct NetworkRhsColumnShares {
  *        every shared fold kind, the DD folds and the datum at the named columns (no
  *        file is written).
  *
- * See @ref NetworkRhsColumnShares for the operator.  The station parts follow the
- * channels @ref networkRhsAttribDecompose iterates (rows by their tags' kinds, the
+ * See @ref GnssProcessor::NetworkRhsColumnShares "NetworkRhsColumnShares" for the operator.  The station parts follow the
+ * channels @ref GnssProcessor::networkRhsAttribDecompose "networkRhsAttribDecompose" iterates (rows by their tags' kinds, the
  * pre-PD prior entries, the post-PD entries when folded), keyed by kind instead of
- * class; the shared folds are @ref NetworkAttribFrame::captures grouped by
- * @ref rhsAttribSharedClass; the DD folds are @p dec's recomputed blocks.  A label that
+ * class; the shared folds are @ref GnssProcessor::NetworkAttribFrame::captures "NetworkAttribFrame::captures" grouped by
+ * @ref GnssProcessor::rhsAttribSharedClass "rhsAttribSharedClass"; the DD folds are @p dec's recomputed blocks.  A label that
  * names no shared column this epoch keeps its slot with @c col -1 and zeros.
  *
- * @param f      A frame captured by @ref networkAttribCaptureFrame.
- * @param dec    @ref networkRhsAttribDecompose of the same frame (its DD parts are reused).
+ * @param f      A frame captured by @ref GnssProcessor::networkAttribCaptureFrame "networkAttribCaptureFrame".
+ * @param dec    @ref GnssProcessor::networkRhsAttribDecompose "networkRhsAttribDecompose" of the same frame (its DD parts are reused).
  * @param labels The named columns (shared-column labels, "CLK:G07").
  * @return The shares; @c valid false for a frame without a reduced system or a
  *         constrained system that does not factorize.
@@ -408,15 +410,15 @@ bool isRhsAttribLocalLabel(const std::string& label);
 
 /**
  * @brief Whether a label list names any station-local column (the capture's
- *        @c local_readout switch, @ref networkAttribCaptureFrame).
+ *        @c local_readout switch, @ref GnssProcessor::networkAttribCaptureFrame "networkAttribCaptureFrame").
  * @param labels The labels of @c network.rhs_attrib_columns.
- * @return true when @ref isRhsAttribLocalLabel holds for one of them.
+ * @return true when @ref GnssProcessor::isRhsAttribLocalLabel "isRhsAttribLocalLabel" holds for one of them.
  */
 bool rhsAttribNamesLocalColumns(const std::vector<std::string>& labels);
 
 /**
  * @brief Split a station-local label into station and key.
- * @param label A label for which @ref isRhsAttribLocalLabel holds.
+ * @param label A label for which @ref GnssProcessor::isRhsAttribLocalLabel "isRhsAttribLocalLabel" holds.
  * @return The parts; station and key empty when either part is missing
  *         (`LOC:`, `LOC:MAJU00MHL`, `LOC::GPS_DCB`), which the readout reports as
  *         unresolved.
@@ -425,13 +427,13 @@ RhsAttribLocalLabel parseRhsAttribLocalLabel(const std::string& label);
 
 /**
  * @brief The names of a station's local columns: for each column of @c R.A_r, the
- *        station's state label (@ref stateLabel) of the parameter the assembly's
+ *        station's state label (@ref GnssProcessor::stateLabel "stateLabel") of the parameter the assembly's
  *        @c h2local map puts there.
  *
  * The labels are the parameter set's: the fixed core by name (@c CLK, @c ZWD,
  * @c ISB_<system>, @c PHASE_CLK, ...) and the dynamic maps with a category prefix
- * (@c CBIAS:<key> for the receiver code biases, @c IONO:<sat>, @c AMB:<key>,
- * @c RPB:<key>, @c PCOL:<sat>, ...).  A column no state claims keeps an empty name.
+ * (@c CBIAS:\<key\> for the receiver code biases, @c IONO:\<sat\>, @c AMB:\<key\>,
+ * @c RPB:\<key\>, @c PCOL:\<sat\>, ...).  A column no state claims keeps an empty name.
  *
  * @param R   The station's assembly (its @c h2local map and local width).
  * @param set The station's parameter set, built at the epoch of the assembly.
@@ -448,7 +450,7 @@ std::vector<std::string> rhsAttribLocalColumnNames(const StationAssembly& R,
  * part after its category prefix, when exactly one column has that part (@c "GPS_DCB",
  * @c "GPS_IFB5", @c "GPS_ISC_C1W" for the receiver code biases, @c "G08_L1C" for an
  * ambiguity).  So the receiver code-bias keys are written as the parameter set keys
- * them, and every other column as @ref rhsAttribLocalColumnNames names it.
+ * them, and every other column as @ref GnssProcessor::rhsAttribLocalColumnNames "rhsAttribLocalColumnNames" names it.
  *
  * @param names The station's local-column names.
  * @param key   The label's key.
@@ -573,7 +575,7 @@ Eigen::Index rhsAttribResolveLocalKey(const std::vector<std::string>& names,
  *
  * ## The geometry-free level direction
  *
- * For each station with a resolved `LOC:` label a target @c GFDIR:<station> decomposes
+ * For each station with a resolved `LOC:` label a target @c GFDIR:\<station\> decomposes
  * the station's geometry-free level direction the same way.  The direction is the null
  * space of the station's data-only local normals @f$\sum_{\text{data}} w_i a_i a_i^\top@f$
  * (the slant ionospheres, receiver code biases, receiver clock and ambiguities moving
@@ -618,12 +620,12 @@ struct NetworkRhsLocalShares {
     };
     /// One named local column, or one station's level direction.
     struct Target {
-        std::string  label;      ///< The requested label (@c LOC:...), or @c GFDIR:<station>.
+        std::string  label;      ///< The requested label (@c LOC:...), or @c GFDIR:\<station\>.
         std::string  station;    ///< The station.
         std::string  key;        ///< The label's key (@c GFDIR for the level direction).
         std::string  name;       ///< The resolved column's name, or the direction's loadings; empty when unresolved.
         std::string  note;       ///< Why the target is unresolved; empty when resolved.
-        bool         resolved{false};
+        bool         resolved{false};  ///< The label named a column (or level direction) present in the frame; when false, @c note says why.
         Eigen::Index local_col{-1};   ///< The local column (-1 for @c GFDIR and when unresolved).
         Eigen::Index n_local{0};      ///< The station's local width (0 when the station is not in the frame).
         std::vector<Part> parts;      ///< @c ROW, @c FOLD, @c FOLDLOS, @c KIND, the whole-station terms, then @c FBCOL, @c FBSTA, @c FBLOS, @c FBFOLD, @c NETSTA, @c NETSAT, @c REFINE, @c PERTURB.
@@ -652,13 +654,13 @@ struct NetworkRhsLocalShares {
 
 /**
  * @brief Decompose the named station-local solved increments of one frame (no file is
- *        written).  See @ref NetworkRhsLocalShares.
+ *        written).  See @ref GnssProcessor::NetworkRhsLocalShares "NetworkRhsLocalShares".
  *
- * @param f      A frame captured by @ref networkAttribCaptureFrame with the solve's
+ * @param f      A frame captured by @ref GnssProcessor::networkAttribCaptureFrame "networkAttribCaptureFrame" with the solve's
  *               @c x_s and @c local_readout (the armed dumps and a trip's current-epoch
  *               dump when a `LOC:` label is named); a frame without that capture yields
  *               @c valid false and every target unresolved.
- * @param dec    @ref networkRhsAttribDecompose of the same frame (its DD parts feed the
+ * @param dec    @ref GnssProcessor::networkRhsAttribDecompose "networkRhsAttribDecompose" of the same frame (its DD parts feed the
  *               feedback's network split).
  * @param labels The `LOC:` labels, in the order the readout keeps them; a label that does
  *               not resolve keeps its slot with a note.
@@ -676,17 +678,17 @@ NetworkRhsLocalShares networkRhsAttribLocalShares(const NetworkAttribFrame& f,
  * Writes `attrib_<tow>.csv`, `rows_<tow>.csv` and `vec_<tow>.csv` under @p dir,
  * in the same format for hand-armed and trip dumps, including the closure row.
  * `rows_<tow>.csv` ends with the column @c kind, the row's contribution kind
- * (@ref contributionKindName of its tag; @c unset for a row without a tag).
+ * (@ref GnssProcessor::contributionKindName "contributionKindName" of its tag; @c unset for a row without a tag).
  *
  * With @p columns non-empty it also writes `cols_<tow>.csv`
- * (@ref networkRhsAttribColumnShares): header
+ * (@ref GnssProcessor::networkRhsAttribColumnShares "networkRhsAttribColumnShares"): header
  * `week,tow,record,station,kind,sat,signal,n` followed by `rhs[<label>],sol[<label>]`
  * for each named column, one line per record:
  *
  *  - @c COLUMN: the field pair holds the shared column index (empty when absent) and 1
  *    when the datum pins it, else 0;
  *  - @c STAKIND, @c STALOS, @c SHARED, @c DDFOLD, @c DATUMPIN, @c KIND: the parts
- *    (@ref NetworkRhsColumnShares::Part);
+ *    (@ref GnssProcessor::NetworkRhsColumnShares::Part "NetworkRhsColumnShares::Part");
  *  - @c TOTAL: the sums (@c rhs without, @c sol with the datum pin);
  *  - @c FULL: the kernel's reduced RHS and the recomputed constrained solution;
  *  - @c SOLVE: the driver's solution (the @c sol field; empty when the frame holds none);
@@ -695,7 +697,7 @@ NetworkRhsLocalShares networkRhsAttribLocalShares(const NetworkAttribFrame& f,
  * Every value is written with ten significant digits.  An empty @p columns writes
  * nothing beyond the three class-based files, whose bytes do not depend on it.  The
  * `cols_` file holds the shared labels of @p columns only; the `LOC:` labels go to
- * `loc_<tow>.csv` (@ref networkRhsAttribLocalShares), written when the frame holds the
+ * `loc_<tow>.csv` (@ref GnssProcessor::networkRhsAttribLocalShares "networkRhsAttribLocalShares"), written when the frame holds the
  * station-local capture (the armed dumps and a trip's current-epoch dump; a retained
  * previous frame does not, and the labels are then named once in the log), with the header
  * `week,tow,label,station,name,local_col,record,channel,from_station,row,kind,sat,signal,obs,n,w,y,v_post,a_col,share,share_shared,check`
@@ -706,9 +708,9 @@ NetworkRhsLocalShares networkRhsAttribLocalShares(const NetworkAttribFrame& f,
  *    unresolved target has this line only, with its note in @c kind;
  *  - @c ROW (one per data row, with @c w, @c y, @c v_post and @c a_col), @c FOLD,
  *    @c FOLDLOS, @c KIND, @c FEEDBACK, @c SUMZERO, @c DDPRIOR: the parts
- *    (@ref NetworkRhsLocalShares::Part);
+ *    (@ref GnssProcessor::NetworkRhsLocalShares::Part "NetworkRhsLocalShares::Part");
  *  - @c UNATTRIBUTED, @c TOTAL, @c SOLVED, @c CLOSURE_ABS, @c CLOSURE_REL in @c share;
- *  - the feedback's split (@ref NetworkRhsLocalShares): @c FBCOL, @c FBSTA, @c FBLOS,
+ *  - the feedback's split (@ref GnssProcessor::NetworkRhsLocalShares "NetworkRhsLocalShares"): @c FBCOL, @c FBSTA, @c FBLOS,
  *    @c FBFOLD, then @c FBTOTAL and @c FBCLOSURE in @c share;
  *  - the station nets, each sorted by |net|: @c NETSTA, @c NETSAT (@c share the net,
  *    @c share_shared its shared-path part);
@@ -718,7 +720,7 @@ NetworkRhsLocalShares networkRhsAttribLocalShares(const NetworkAttribFrame& f,
  * A value the readout does not have (a shared-path share when the constrained operator did
  * not factorize, a post-fit residual without @c x_s) is an empty cell.
  *
- * @param f       A frame captured by @ref networkAttribCaptureFrame.
+ * @param f       A frame captured by @ref GnssProcessor::networkAttribCaptureFrame "networkAttribCaptureFrame".
  * @param log     Run logger (closure-violation warning and the dump line).
  * @param dir     Output directory (created if absent).
  * @param kind    Short tag naming the reason for the dump ("armed",
@@ -785,7 +787,7 @@ void networkRhsAttribution(NetworkRun& run, const NetworkEpoch& ep);
  * @brief INC-5 flight recorder: consume a pending trip, then refresh the
  *        retained previous-epoch frame.
  *
- * Called from the SB_FRAMEDIAG slot right after @ref networkRhsAttribution, and
+ * Called from the SB_FRAMEDIAG slot right after @ref GnssProcessor::networkRhsAttribution "networkRhsAttribution", and
  * from the solve glue on the A4 withhold path, whose epoch never reaches
  * SB_FRAMEDIAG.  Two independent jobs, in this order:
  *

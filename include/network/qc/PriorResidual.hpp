@@ -30,7 +30,7 @@
  * @f$d = KN^{-1}K^\top@f$ and posterior variance @f$v = pd/(p+d)@f$,
  * @f[ D\{\hat e\} = \frac{p^2}{p+d} = r\cdot\text{fold\_var},\qquad r = 1 - wv, @f]
  * with @f$w = 1/\text{fold\_var}@f$.  This @f$r@f$ is the partial redundancy that
- * @ref NetworkCarryVce::addRow already forms from its @c (post_var_m2, fold_var_m2)
+ * @ref GnssProcessor::NetworkCarryVce::addRow "NetworkCarryVce::addRow" already forms from its @c (post_var_m2, fold_var_m2)
  * arguments (@c CarryVce.hpp:266): LASER's dispersion and the VCE's
  * partial redundancy are the same quantity.  The census needs no new algebra, no
  * new solve and no covariance sweep.  Where the VCE pools these numbers into a
@@ -55,7 +55,7 @@
  * @f$r\cdot p@f$ under any network coupling.  With the fold out, the prior and
  * the solve are independent and the variances add.  The folded form applied to
  * an unfolded row is anti-conservative by orders of magnitude: a refloated
- * ambiguity has @f$v \gg p@f$, so @f$r@f$ is clamped at @ref kRedundancyFloor
+ * ambiguity has @f$v \gg p@f$, so @f$r@f$ is clamped at @c kRedundancyFloor
  * (@f$\varepsilon@f$) and @f$|t|@f$ inflates by
  * @f$\sqrt{(p+v)/(\varepsilon p)}@f$, about 3.2e6 for a 1e-4 m² carry against a
  * 1 m² refloat.  Every RESPONDED row would then land in the top ladder bin by
@@ -85,19 +85,19 @@
  * LASER's @f$t(\alpha/2, n-q)@f$ and @f$F(\alpha,1,r)@f$ critical values assume
  * Gaussian errors; on this data the measured tail exceeds the Gaussian one by
  * three orders of magnitude.  This class therefore reports an empirical
- * exceedance ladder per family (@ref ladder), on which "alpha" is a quantile
+ * exceedance ladder per family (@c ladder), on which "alpha" is a quantile
  * position, not a table lookup.  A t-table critical value (LASER 5-100/5-102)
  * applied to this data reproduces D5 v1.  Test 3 reproduces that failure mode,
  * so that it is recognized as a property of the data and not taken for a bug.
  *
  * ## Three populations, never pooled
  *
- * The @ref NetworkCarryVce feed deliberately skips contaminated rows.  That is
+ * The @ref GnssProcessor::NetworkCarryVce "NetworkCarryVce" feed deliberately skips contaminated rows.  That is
  * correct for estimating a variance component and backwards for a detector,
  * because the skipped rows are the ones a screen exists to find.  The census
  * therefore runs on every qualifying row, labels it
- * @ref PriorResidualLabel::Clean, @ref PriorResidualLabel::Responded or
- * @ref PriorResidualLabel::Frame, and keeps one ladder per (family x label).
+ * @c PriorResidualLabel::Clean, @c PriorResidualLabel::Responded or
+ * @c PriorResidualLabel::Frame, and keeps one ladder per (family x label).
  * Pooling the three populations, as the NetworkCarryVce monitor pools the rows
  * it admits, would make the output uninterpretable.
  *
@@ -131,7 +131,7 @@
  * @f$E[w \hat e^2] = w\cdot r\cdot p = r@f$, so each row contributes its own
  * redundancy both to the expectation of the numerator and to the denominator.
  * A row with vanishing @f$r@f$ (the stiffest carries) contributes about 0 to
- * each and cannot bias the ratio.  The @ref kRedundancyFloor clamp, which
+ * each and cannot bias the ratio.  The @c kRedundancyFloor clamp, which
  * matters for @f$|t|@f$, therefore barely matters here.
  *
  * Slide 5-85 is the reason for the restriction to folded rows.  For a minimal
@@ -145,14 +145,14 @@
  *
  * The rider is also measure-only: the A4 @c raim_withhold_sigma0 guard and every
  * gate and deweight stay on the median sigma0, and nothing reads
- * @ref GlobalResult back.  sigma0_global is a scale, not a test statistic, and
+ * @ref GnssProcessor::NetworkPriorResidual::GlobalResult "GlobalResult" back.  sigma0_global is a scale, not a test statistic, and
  * it inherits the same heavy tail the ladders measure.
  *
  * ## Isolation and testing
  *
- * Pure numeric leaf class in the @ref NetworkCarryVce / @c NeqAccumulator mould:
+ * Pure numeric leaf class in the @ref GnssProcessor::NetworkCarryVce "NetworkCarryVce" / @c NeqAccumulator mould:
  * header-only, no @c ApplicationNetwork coupling, no station state, no I/O.
- * It takes @ref Input rows and returns ladders; @c tests/network/test_prior_residual_census.cpp
+ * It takes @c Input rows and returns ladders; @c tests/network/test_prior_residual_census.cpp
  * drives it directly with synthetic rows of known truth.  The per-epoch trace,
  * event and aggregate emission lives in @c network/qc/PriorResidual.cpp, the
  * only translation unit that knows about traces.
@@ -184,9 +184,12 @@ enum class PriorResidualLabel : int {
     Responded = 1,  ///< An independent mechanism already fired (pending reseed, slip refloat, D5, RAIM exclusion, rx-CB innovation withhold).  The positive control: a statistic with power must show a shifted |t| distribution here.
     Frame     = 2   ///< A datum handover, eq34 or anchored-election re-reference, inflated-q reinit or Q3 anchor refloat.  A frame step, not noise, and an invariant #7 re-coupling edge whose |t| measures how much the edge moves.
 };
+/// Number of @ref PriorResidualLabel values: the size of every per-label array.
 inline constexpr int kPriorResidualLabels = 3;
 
-/// Human-readable label name (trace / log column).
+/// @brief Human-readable label name (trace / log column).
+/// @param l Label to name.
+/// @return Static string "CLEAN", "RESPONDED" or "FRAME"; "?" for a value outside the enum.
 inline const char* priorResidualLabelName(PriorResidualLabel l) {
     switch (l) {
         case PriorResidualLabel::Clean:     return "CLEAN";
@@ -199,7 +202,7 @@ inline const char* priorResidualLabelName(PriorResidualLabel l) {
 /**
  * @brief Raw-observable verdict joined onto a census row (INC-3).
  *
- * The same tri-state the slip-QC pass already adjudicates (@ref RawSlipVerdict):
+ * The same tri-state the slip-QC pass already adjudicates (@ref GnssProcessor::RawSlipVerdict "RawSlipVerdict"):
  * absence of evidence is evidence neither of a slip nor of its absence.
  */
 enum class PriorResidualCorrob : int {
@@ -207,9 +210,12 @@ enum class PriorResidualCorrob : int {
     Flat       = 1,  ///< A step could be measured and the raw MW/GF level did not move.  On a flagged row this is the b-cell; on the DD family it measured 97 %.
     Stepped    = 2   ///< The raw MW/GF level moved beyond the empirical gate: positive raw-observable evidence.
 };
+/// Number of @ref PriorResidualCorrob values: the column count of every contingency table.
 inline constexpr int kPriorResidualCorrobs = 3;
 
-/// Human-readable corroboration name (trace / log column).
+/// @brief Human-readable corroboration name (trace / log column).
+/// @param c Verdict to name.
+/// @return Static string "no_evidence", "raw_flat" or "raw_stepped"; "?" for a value outside the enum.
 inline const char* priorResidualCorrobName(PriorResidualCorrob c) {
     switch (c) {
         case PriorResidualCorrob::NoEvidence: return "no_evidence";
@@ -282,10 +288,15 @@ struct PriorResidualEvidence {
  * among flagged rows, so the rule can only raise the b-cell, the census's
  * reported finding.  The rule is a correctness fix, not evidence, and the
  * resulting b-cell means something only next to a measure of how much the rule
- * moved.  @ref Ladder::n_corrob_or_stepped (what the saturating OR would have
- * returned) and @ref Ladder::sum_corrob_domain (the mean domain size) are
+ * moved.  @ref GnssProcessor::NetworkPriorResidual::Ladder::n_corrob_or_stepped "Ladder::n_corrob_or_stepped" (what the saturating OR would have
+ * returned) and @ref GnssProcessor::NetworkPriorResidual::Ladder::sum_corrob_domain "Ladder::sum_corrob_domain" (the mean domain size) are
  * therefore carried beside every contingency table, in the trace and in the
  * run-end line.  A b-cell quoted without them is not auditable.
+ *
+ * @param ev Domain counts for one carried prior: members with a measurable step and members
+ *           that stepped.
+ * @return NoEvidence when nothing was measured; the member's own verdict for one measured
+ *         member; Stepped for a strict majority of two or more, else Flat.
  */
 inline PriorResidualCorrob priorResidualConsensus(const PriorResidualEvidence& ev) {
     if (ev.n_measured <= 0) return PriorResidualCorrob::NoEvidence;
@@ -296,8 +307,11 @@ inline PriorResidualCorrob priorResidualConsensus(const PriorResidualEvidence& e
                                               : PriorResidualCorrob::Flat;
 }
 
-/// v1's saturating OR, kept only as the audit baseline against which the run-end
+/// @brief v1's saturating OR, kept only as the audit baseline against which the run-end
 /// line reports the consensus.  Never used for a contingency cell.
+/// @param ev Domain counts for one carried prior (members measured and members stepped).
+/// @return NoEvidence when nothing was measured; Stepped when any measured member stepped,
+///         else Flat.
 inline PriorResidualCorrob priorResidualOrVerdict(const PriorResidualEvidence& ev) {
     if (ev.n_measured <= 0) return PriorResidualCorrob::NoEvidence;
     return ev.n_stepped > 0 ? PriorResidualCorrob::Stepped
@@ -308,7 +322,7 @@ inline PriorResidualCorrob priorResidualOrVerdict(const PriorResidualEvidence& e
  * @brief Per-row prior-residual census over the carried stiff priors (v1).
  *
  * One instance per producer run, with the same lifetime and ownership as
- * @ref NetworkCarryVce: an engine the run owns (run.engines.prires, network/driver/Run.hpp;
+ * @ref GnssProcessor::NetworkCarryVce "NetworkCarryVce": an engine the run owns (run.engines.prires, network/driver/Run.hpp;
  * a run-TU local passed by reference until the per-epoch seam refactor; see the note on engine
  * objects in the @c network/state/RunContext.hpp banner).
  */
@@ -328,6 +342,9 @@ public:
      * response is wired to it, and the answer is comparable across families and
      * runs only if the rungs never move.  A family whose 4-sigma0 bin holds 17 %
      * per epoch has the heavy tail D5 had.
+     *
+     * @return Reference to the process-wide rung table: @c kLadderBins ascending, dimensionless
+     *         thresholds on @f$|t|@f$ (1, 2, 3, 4, 6, 8, 12, 20, 50, 100, 200).
      */
     static const std::array<double, kLadderBins>& ladder() {
         static const std::array<double, kLadderBins> kL{
@@ -365,13 +382,13 @@ public:
         double      max_abs_t = 0.0; ///< largest |t| seen (on an rneg ladder, the |t| of the largest-|ê| row).
         double      max_e     = 0.0; ///< its innovation (m).
         double      max_disp  = 0.0; ///< its D{e} (m^2).
-        double      max_fold_var = 0.0;
-        double      max_post_var = 0.0;
-        double      max_gap_s = 0.0;
+        double      max_fold_var = 0.0;  ///< its prior variance (m^2).
+        double      max_post_var = 0.0;  ///< its posterior variance after the solve (m^2).
+        double      max_gap_s = 0.0;     ///< its arc / carry gap the fold variance was inflated over (s).
         /// Largest |ê| (metres) seen by this ladder.  It is the headline of the
         /// rneg class, where |t| is not meaningful: the dispersion is formed from
         /// a (prior, posterior) pair that does not describe one fold, so `r` is
-        /// clamped at @ref kRedundancyFloor and |t| inflates by √((p+v)/(εp)).
+        /// clamped at @c kRedundancyFloor and |t| inflates by √((p+v)/(εp)).
         /// Kept on every ladder (it costs one compare) so that both classes are
         /// read the same way, but only the rneg readout quotes it.  The identity
         /// fields (every max_* field except this one) follow the |ê| winner on an
@@ -411,29 +428,35 @@ public:
         /// ordering mid-run.
         bool      keepsMaxByE = false;
 
+        /// @brief Tail-robust convergence readout of the empirical scale calibration.
         /// @return chi2-corrected geometric mean of t^2 (1.0 = the empirical
         /// scale calibration has converged).  This can sit at 1 while the
         /// 4-sigma bin is heavily over-occupied, because a scale calibration
-        /// cannot flatten a non-Gaussian tail (test 3).
+        /// cannot flatten a non-Gaussian tail (test 3).  0 when no row has been folded
+        /// (@c n_geo = 0).
         double geoT2() const {
             if (n_geo <= 0) return 0.0;
             return std::exp(sum_log_t2 / static_cast<double>(n_geo)) / kChi2GeoMean;
         }
-        /// Mean corroboration-domain size (0 when the join was not armed).  It
+        /// @brief Mean corroboration-domain size (0 when the join was not armed).  It
         /// detects roster dependence: on the shared families it grows from 1 to
         /// about 300 with the roster, which is what saturated v1's OR.
+        /// @return @c sum_corrob_domain divided by @c n_corrob_rows, in members per row
+        ///         (at least 1 when defined); 0 when no row carried evidence.
         double meanCorrobDomain() const {
             return n_corrob_rows > 0 ? static_cast<double>(sum_corrob_domain)
                                      / static_cast<double>(n_corrob_rows)
                                      : 0.0;
         }
-        /// Fraction of rows above ladder rung @p k (0 when empty).
+        /// @brief Fraction of rows above ladder rung @p k (0 when empty).
+        /// @param k Rung index into @c ladder(), 0 to @c kLadderBins-1; any other value returns 0.
+        /// @return @c bins[k] divided by @c n_rows, in [0,1].
         double frac(int k) const {
             if (n_rows <= 0 || k < 0 || k >= kLadderBins) return 0.0;
             return static_cast<double>(bins[static_cast<std::size_t>(k)])
                  / static_cast<double>(n_rows);
         }
-        /// Clear every accumulator.  @ref keepsMaxByE is class identity, not
+        /// @brief Clear every accumulator.  @ref keepsMaxByE is class identity, not
         /// content, so it survives the reset: an epoch reset that returned an
         /// rneg ladder to |t| ordering would change the meaning of its identity
         /// columns from epoch 2 onward, with nothing in the output to show it.
@@ -469,7 +492,7 @@ public:
         double post_var  = 0.0;      ///< the posterior variance of that state after the solve (m^2).
         double gap_s     = 0.0;      ///< arc / carry gap the fold variance was inflated over (s).
         bool   folded    = true;     ///< Did the prior enter this epoch's solve?  Selects the dispersion branch (see the file banner).
-        PriorResidualLabel label = PriorResidualLabel::Clean;
+        PriorResidualLabel label = PriorResidualLabel::Clean;  ///< which independent mechanism, if any, had already fired on this prior; selects the ladder.
         /// Feed this row's `s` into the per-family sigma0 accumulator?  True for
         /// every ordinary row, including above-threshold ones.  D5 v2's rule
         /// applies unchanged: above-threshold rows have to feed sigma0, because
@@ -493,16 +516,26 @@ public:
     /// The buffer is bounded per epoch (@ref kMaxHitsPerEpoch), so an epoch
     /// with many flagged rows cannot grow it without limit.
     struct Hit {
-        int         family_idx = -1;
-        PriorResidualLabel label = PriorResidualLabel::Clean;
-        int         station = -1;
-        std::string sat;
-        std::string signal;
-        double      e = 0.0, fold_var = 0.0, post_var = 0.0, gap_s = 0.0;
-        double      disp = 0.0, r = 0.0, s = 0.0, t = 0.0, sigma0 = 1.0;
-        bool        folded = false, raw_formal = false, r_clamped = false, r_negative = false;
-        PriorResidualCorrob corrob = PriorResidualCorrob::NoEvidence;
-        const char* mech = "";
+        int         family_idx = -1;  ///< resolved family index (see @ref familyIndex).
+        PriorResidualLabel label = PriorResidualLabel::Clean;  ///< label the feed site assigned to the row.
+        int         station = -1;     ///< app station index; -1 for a shared (satellite-level) prior.
+        std::string sat;              ///< satellite id; empty for a station-level prior.
+        std::string signal;           ///< signal / carry key; empty when not applicable.
+        double      e = 0.0,         ///< residual of prior information (m).
+                    fold_var = 0.0,  ///< prior variance (m^2).
+                    post_var = 0.0,  ///< posterior variance after the solve (m^2).
+                    gap_s = 0.0;     ///< arc / carry gap the fold variance was inflated over (s).
+        double      disp = 0.0,      ///< dispersion D{e} (m^2).
+                    r = 0.0,         ///< partial redundancy (folded branch only; 0 on the unfolded branch).
+                    s = 0.0,         ///< formally standardized residual.
+                    t = 0.0,         ///< empirically standardized residual.
+                    sigma0 = 1.0;    ///< per-family sigma0 the row was standardized by (1.0 when raw formal).
+        bool        folded = false,      ///< the prior entered this epoch's solve (selects the dispersion branch).
+                    raw_formal = false,  ///< reported with t == s (below warm-up, or nominal fold variance).
+                    r_clamped = false,   ///< the partial redundancy was clamped to its numerical range.
+                    r_negative = false;  ///< post_var exceeded fold_var.
+        PriorResidualCorrob corrob = PriorResidualCorrob::NoEvidence;  ///< raw-observable verdict joined to the row.
+        const char* mech = "";        ///< mechanism tag for the trace (never null).
     };
 
     /// Per-epoch buffer cap for @ref Hit.  Rows beyond it are still counted in
@@ -540,6 +573,7 @@ public:
         long long n_prior_unfolded = 0;///< census rows skipped: the prior did not enter this epoch's solve, so it is not a constraint and moves neither sum.
         long long n_prior_nominal  = 0;///< census rows skipped: the fold variance is a nominal recompute the mechanism never used, so w = 1/fold_var does not describe the fold (the `cta_refloat` and rx-CB `gap` populations).
         long long n_prior_rneg     = 0;///< census rows skipped: post_var > fold_var, a (prior, posterior) pair that does not describe one fold.  The numerator term is real and the redundancy is not; admitting one without the other is the bias the rider exists to remove.
+        /// @brief Zero every sum and exclusion counter.
         void reset() { *this = GlobalSums{}; }
     };
 
@@ -566,9 +600,14 @@ public:
         GlobalSums s{};               ///< the sums it was formed from.
     };
 
-    /// Form the global variance component from a set of sums.  Static and pure:
+    /// @brief Form the global variance component from a set of sums.  Static and pure:
     /// the unit test calls it on hand-built sums, and the epoch / run / family
     /// readouts below are the same three lines applied to different windows.
+    /// @param s Sums of one accumulation window (an epoch, a family's prior half or the run).
+    /// @return The formed statistic: @c sigma0_global is the square root of
+    ///         (wv2 + we2) / (r_data + r_prior), and @c prior_tension is we2 / wv2.  When the
+    ///         denominator is not positive and finite, @c formed is false and the
+    ///         @c kGlobalDegenerate flag is set; every degradation is also flagged in @c flags.
     static GlobalResult computeGlobal(const GlobalSums& s) {
         GlobalResult g;
         g.s = s;
@@ -645,23 +684,33 @@ public:
         }
     }
 
+    /// @brief Whether the census is live.
     /// @return true when at least one family is requested (the census is live).
     bool enabled() const { return !families_.empty(); }
+    /// @brief The requested families.
     /// @return the requested family list (run-end "armed but never ran" check).
     const std::vector<std::string>& families() const { return families_; }
+    /// @brief Map a family name to its index.
+    /// @param f Family name ("pl", "pb", "cb", "zwd", "rxcb").
     /// @return the resolved family index, or -1 when not requested.
     int familyIndex(std::string_view f) const {
         for (std::size_t i = 0; i < families_.size(); ++i)
             if (families_[i] == f) return static_cast<int>(i);
         return -1;
     }
+    /// @brief Whether a family is requested.
+    /// @param f Family name ("pl", "pb", "cb", "zwd", "rxcb").
     /// @return true when @p f is one of the requested families.
     bool wants(std::string_view f) const { return familyIndex(f) >= 0; }
+    /** @brief Per-row report threshold. @return Threshold on @f$|t|@f$ in sigma0 units; 0 disables reporting. */
     double reportSigma() const { return report_sigma_; }
+    /** @brief Warm-up bar of the sigma0 calibration. @return Effective row count a family needs before its sigma0 is used; at least 0. */
     double minRows()     const { return min_rows_; }
+    /** @brief Whether the raw-observable corroboration join is armed. @return True when corroboration was requested. */
     bool   corroborating() const { return corroborate_; }
-    /// Is the constraint-aware global variance component armed?  This is the
+    /// @brief Is the constraint-aware global variance component armed?  This is the
     /// only predicate that gates the RAIM data-side feed (read once, tested per row).
+    /// @return True when the rider was requested and at least one family is live.
     bool   globalOn()      const { return global_on_ && enabled(); }
 
     /**
@@ -747,6 +796,13 @@ public:
      * reconstruct and no sweep: @c post_var and @c fold_var are already in hand
      * at every feed site, which keeps the census far cheaper than the redundancy
      * census (measured at 6.1 ms per station sweep).
+     *
+     * @param in One carried prior's residual and variances as the feed site presents them
+     *           (see @ref Input); @c e in metres, variances in m^2.
+     * @return What was computed for the row, so the caller can trace it.  @c accepted is false
+     *         (and the ladders untouched) when the census is inert, the family is not requested,
+     *         an input is not finite, @c fold_var is not positive, @c post_var is negative, or the
+     *         dispersion is not positive or the standardized residual is not finite.
      */
     RowStat addRow(const Input& in) {
         RowStat out;
@@ -1015,15 +1071,25 @@ public:
     // ---------------------------------------------------------------------
     //  Readout
     // ---------------------------------------------------------------------
-    /// This epoch's ladder for one (family index, label).
+    /// @brief This epoch's ladder for one (family index, label).
+    /// @param f Family index from @ref familyIndex, 0 to @c families().size()-1; not range-checked.
+    /// @param l Label of the rows.
+    /// @return Reference to the live ladder, whose counters beginEpoch() clears each epoch.
     const Ladder& epochLadder(int f, PriorResidualLabel l) const {
         return state_[static_cast<std::size_t>(f)].epoch[static_cast<std::size_t>(l)];
     }
-    /// The run-cumulative ladder for one (family index, label).
+    /// @brief The run-cumulative ladder for one (family index, label).
+    /// @param f Family index from @ref familyIndex, 0 to @c families().size()-1; not range-checked.
+    /// @param l Label of the rows.
+    /// @return Reference to the live ladder, accumulated since construction.
     const Ladder& runLadder(int f, PriorResidualLabel l) const {
         return state_[static_cast<std::size_t>(f)].run[static_cast<std::size_t>(l)];
     }
-    /// This epoch's rneg ladder for one (family index, label).
+    /// @brief This epoch's rneg ladder for one (family index, label).
+    /// @param f Family index from @ref familyIndex, 0 to @c families().size()-1; not range-checked.
+    /// @param l Label of the rows.
+    /// @return Reference to the live rneg ladder (rows with post_var above fold_var), cleared by
+    ///         beginEpoch().
     const Ladder& rnegEpochLadder(int f, PriorResidualLabel l) const {
         return state_[static_cast<std::size_t>(f)].rneg_epoch[static_cast<std::size_t>(l)];
     }
@@ -1035,7 +1101,7 @@ public:
      * documented coupling-carry case in which the harvested posterior is a
      * conditional variance, but their |t| is not a standardized residual: the
      * dispersion `r·fold_var` is formed from a (prior, posterior) pair that does
-     * not describe one fold, so `r` is clamped at @ref kRedundancyFloor and |t|
+     * not describe one fold, so `r` is clamped at @c kRedundancyFloor and |t|
      * inflates by @f$\sqrt{(p+v)/(\varepsilon p)}@f$.  Pooled with the
      * CLEAN/RESPONDED/FRAME rows, they put an artifact at the top of every ladder
      * and of the run-end "worst |t|" line: on one field run they were 927 of the
@@ -1045,83 +1111,119 @@ public:
      * them.
      *
      * Read this class on @ref Ladder::max_abs_e (metres), not on
-     * @ref Ladder::max_abs_t: its @ref Ladder::keepsMaxByE is set, so its
+     * @ref GnssProcessor::NetworkPriorResidual::Ladder::max_abs_t "Ladder::max_abs_t": its @ref Ladder::keepsMaxByE is set, so its
      * identity columns follow the |ê| winner.
+     *
+     * @param f Family index from @ref familyIndex, 0 to @c families().size()-1; not range-checked.
+     * @param l Label of the rows.
+     * @return Reference to the live rneg ladder, accumulated since construction.
      */
     const Ladder& rnegRunLadder(int f, PriorResidualLabel l) const {
         return state_[static_cast<std::size_t>(f)].rneg_run[static_cast<std::size_t>(l)];
     }
-    /// rneg rows of this family over the run, summed across labels.
+    /// @brief rneg rows of this family over the run, summed across labels.
+    /// @param f Family index from @ref familyIndex; not range-checked.
+    /// @return Run-cumulative count of rows with post_var above fold_var.
     long long rnegRunRows(int f) const {
         long long n = 0;
         for (const auto& l : state_[static_cast<std::size_t>(f)].rneg_run) n += l.n_rows;
         return n;
     }
-    /// The sigma0 frozen for this epoch (1.0 while below warm-up).
+    /// @brief The sigma0 frozen for this epoch (1.0 while below warm-up).
+    /// @param f Family index from @ref familyIndex; not range-checked.
+    /// @return Dimensionless scale that standardizes @f$s@f$ into @f$t@f$ for the family.
     double sigma0(int f) const { return state_[static_cast<std::size_t>(f)].sigma0; }
-    /// Is that sigma0 an actual calibration (true) or the warm-up fallback (false)?
+    /// @brief Is that sigma0 an actual calibration (true) or the warm-up fallback (false)?
+    /// @param f Family index from @ref familyIndex; not range-checked.
+    /// @return True when the calibration cleared the warm-up bar; false when sigma0 is the raw-formal 1.0.
     bool   sigma0Warm(int f) const { return state_[static_cast<std::size_t>(f)].warm; }
-    /// Forgetting-weighted rows behind the calibration.
+    /// @brief Forgetting-weighted rows behind the calibration.
+    /// @param f Family index from @ref familyIndex; not range-checked.
+    /// @return Effective row count in the sigma0 accumulator at the last beginEpoch().
     double sigma0Neff(int f) const { return state_[static_cast<std::size_t>(f)].n_eff; }
-    /// Undecayed rows fed to the calibration over the run.
+    /// @brief Undecayed rows fed to the calibration over the run.
+    /// @param f Family index from @ref familyIndex; not range-checked.
+    /// @return Row count with no forgetting applied, as of the last beginEpoch().
     long long sigma0Rows(int f) const { return state_[static_cast<std::size_t>(f)].n_cal_rows; }
 
-    /// Rows of this family over the run, summed across labels (invariant #4:
+    /// @brief Rows of this family over the run, summed across labels (invariant #4:
     /// 0 must read as "ran, saw nothing", never as "never ran").  Includes the
     /// rneg class: a family whose rows were all r_negative still ran, and
     /// reporting it as having seen zero rows would send a reader to check the
     /// carry's arming knob for a condition of the covariance, not the wiring.
+    /// @param f Family index from @ref familyIndex; not range-checked.
+    /// @return Run-cumulative row count of the family, all labels and the rneg class.
     long long runRows(int f) const {
         long long n = 0;
         for (const auto& l : state_[static_cast<std::size_t>(f)].run)      n += l.n_rows;
         for (const auto& l : state_[static_cast<std::size_t>(f)].rneg_run) n += l.n_rows;
         return n;
     }
-    /// Rows of the whole census over the run.
+    /// @brief Rows of the whole census over the run.
+    /// @return Run-cumulative row count over every family.
     long long runRowsTotal() const {
         long long n = 0;
         for (std::size_t f = 0; f < state_.size(); ++f) n += runRows(static_cast<int>(f));
         return n;
     }
-    /// Epochs @ref beginEpoch has advanced (the seam-ran denominator).
+    /// @brief Epochs @ref beginEpoch has advanced (the seam-ran denominator).
+    /// @return Count since construction; 0 when inert.
     long long epochs() const { return n_epochs_; }
-    /// Above-threshold rows over the run.
+    /// @brief Above-threshold rows over the run.
+    /// @return Count of rows with @f$|t|@f$ above @ref reportSigma, including those whose identity was dropped.
     long long reportedRows() const { return n_reported_run_; }
 
     // --- this epoch's aggregates (the epoch-status columns) ------------------
+    /** @brief Rows folded this epoch. @return Count over every family, label and the rneg class. */
     long long epochRows()      const { return ep_rows_; }
+    /** @brief RESPONDED rows this epoch. @return Count of rows labelled Responded (the positive control). */
     long long epochRowsResp()  const { return ep_rows_resp_; }
+    /** @brief FRAME rows this epoch. @return Count of rows labelled Frame (datum handovers and re-references). */
     long long epochRowsFrame() const { return ep_rows_frame_; }
+    /** @brief Above-threshold rows this epoch. @return Count with @f$|t|@f$ above @ref reportSigma. */
     long long epochReported()  const { return ep_reported_; }
-    /// The worst |t| this epoch, excluding the rneg class (see @ref rnegRunLadder).
+    /// @brief The worst |t| this epoch, excluding the rneg class (see @ref rnegRunLadder).
+    /// @return Largest @f$|t|@f$ (dimensionless) among this epoch's label-class rows; 0 when none.
     double    epochMaxAbsT()   const { return ep_max_abs_t_; }
-    /// This epoch's rneg rows (already included in @ref epochRows).
+    /// @brief This epoch's rneg rows (already included in @ref epochRows).
+    /// @return Count of rows with post_var above fold_var.
     long long epochRowsRneg()  const { return ep_rows_rneg_; }
-    /// The worst |ê| (m) among this epoch's rneg rows, their readable extremum.
+    /// @brief The worst |ê| (m) among this epoch's rneg rows, their readable extremum.
+    /// @return Largest absolute innovation in metres; 0 when the epoch had no rneg row.
     double    epochRnegMaxAbsE() const { return ep_rneg_max_abs_e_; }
 
-    /// Above-threshold rows buffered this epoch (identities for the event tier).
+    /// @brief Above-threshold rows buffered this epoch (identities for the event tier).
+    /// @return Buffered rows in arrival order, at most @ref kMaxHitsPerEpoch; cleared by beginEpoch().
     const std::vector<Hit>& hits() const { return hits_; }
-    /// Rows that exceeded the threshold but overflowed @ref kMaxHitsPerEpoch.
+    /// @brief Rows that exceeded the threshold but overflowed @ref kMaxHitsPerEpoch.
+    /// @return Count dropped from the buffer this epoch (they remain counted in every ladder).
     long long hitsDropped() const { return hits_dropped_; }
 
     // --- the constraint-aware global variance component ----------------------
-    /// This epoch's raw sums (both sides).
+    /// @brief This epoch's raw sums (both sides).
+    /// @return Reference to the live sums, cleared by beginEpoch().
     const GlobalSums& globalEpochSums() const { return global_epoch_; }
-    /// The run-cumulative sums (both sides).
+    /// @brief The run-cumulative sums (both sides).
+    /// @return Reference to the live sums, accumulated since construction.
     const GlobalSums& globalRunSums()   const { return global_run_; }
-    /// One family's prior-side contribution this epoch (data half always zero).
+    /// @brief One family's prior-side contribution this epoch (data half always zero).
+    /// @param f Family index from @ref familyIndex; not range-checked.
+    /// @return Reference to the live per-family sums, cleared by beginEpoch().
     const GlobalSums& familyGlobalEpoch(int f) const {
         return state_[static_cast<std::size_t>(f)].g_epoch;
     }
-    /// One family's prior-side contribution over the run (data half always zero).
+    /// @brief One family's prior-side contribution over the run (data half always zero).
+    /// @param f Family index from @ref familyIndex; not range-checked.
+    /// @return Reference to the live per-family sums, accumulated since construction.
     const GlobalSums& familyGlobalRun(int f) const {
         return state_[static_cast<std::size_t>(f)].g_run;
     }
-    /// σ̂₀_global + prior tension for this epoch (the epoch-status columns).
+    /// @brief σ̂₀_global + prior tension for this epoch (the epoch-status columns).
+    /// @return The statistic formed by @ref computeGlobal from this epoch's sums.
     GlobalResult epochGlobal() const { return computeGlobal(global_epoch_); }
-    /// The run-pooled variance component: Σ over every epoch's rows, not a mean
+    /// @brief The run-pooled variance component: Σ over every epoch's rows, not a mean
     /// of per-epoch ratios.  The two differ, and this is the estimator.
+    /// @return The statistic formed by @ref computeGlobal from the run-cumulative sums.
     GlobalResult runGlobal()   const { return computeGlobal(global_run_); }
 
     /**
@@ -1148,19 +1250,31 @@ public:
         if (g.tension_defined) hist_tension_.push_back(g.prior_tension);
     }
 
-    /// Drained epochs the rider formed a result for (formed or not).
+    /// @brief Drained epochs the rider formed a result for (formed or not).
+    /// @return Count of recordEpochGlobal() calls while the rider was armed.
     long long globalEpochs()           const { return n_global_epochs_; }
+    /** @brief Recorded epochs flagged kGlobalApprox. @return Count of epochs with a data row entered at r = 1. */
     long long globalEpochsApprox()     const { return n_global_approx_; }
+    /** @brief Recorded epochs flagged kGlobalNoData. @return Count of epochs with no data-side row. */
     long long globalEpochsNoData()     const { return n_global_no_data_; }
+    /** @brief Recorded epochs flagged kGlobalNoPrior. @return Count of epochs with no folded census row. */
     long long globalEpochsNoPrior()    const { return n_global_no_prior_; }
+    /** @brief Recorded epochs flagged kGlobalDegenerate. @return Count of epochs whose statistic could not be formed. */
     long long globalEpochsDegenerate() const { return n_global_degenerate_; }
-    /// Per-epoch samples retained for the quantiles (and those dropped to the cap).
+    /// @brief Per-epoch samples retained for the quantiles (and those dropped to the cap).
+    /// @return Number of retained per-epoch sigma0_global samples (epochs where the statistic was formed).
     std::size_t globalSampleCount()    const { return hist_s0g_.size(); }
+    /** @brief Retained prior-tension samples. @return Number of epochs where the tension ratio was defined. */
     std::size_t tensionSampleCount()   const { return hist_tension_.size(); }
+    /** @brief Samples lost to the history cap. @return Count of formed epochs dropped past @ref kMaxGlobalSamples. */
     long long   globalSamplesDropped() const { return hist_dropped_; }
-    /// Quantile @p q ∈ [0,1] of the per-epoch σ̂₀_global (NaN when empty).
+    /// @brief Quantile @p q ∈ [0,1] of the per-epoch σ̂₀_global (NaN when empty).
+    /// @param q Quantile level in [0,1]; values outside are clamped to the ends.
+    /// @return Nearest-rank quantile of the retained samples (dimensionless sigma0); NaN when there are none.
     double globalQuantile(double q)  const { return quantile_(hist_s0g_, q); }
-    /// Quantile @p q ∈ [0,1] of the per-epoch prior-tension ratio (NaN when empty).
+    /// @brief Quantile @p q ∈ [0,1] of the per-epoch prior-tension ratio (NaN when empty).
+    /// @param q Quantile level in [0,1]; values outside are clamped to the ends.
+    /// @return Nearest-rank quantile of the retained tension ratios (dimensionless); NaN when there are none.
     double tensionQuantile(double q) const { return quantile_(hist_tension_, q); }
 
 private:
@@ -1169,7 +1283,7 @@ private:
         std::array<Ladder, kPriorResidualLabels> run{};
         /// The rneg class: rows whose posterior exceeds their prior
         /// (post_var > fold_var ⇒ r < 0 before the floor).  Parallel to
-        /// @ref epoch / @ref run and keyed by the same label, but kept out of
+        /// @c epoch / @c run and keyed by the same label, but kept out of
         /// them (see @ref rnegRunLadder for why).
         std::array<Ladder, kPriorResidualLabels> rneg_epoch{};
         std::array<Ladder, kPriorResidualLabels> rneg_run{};
@@ -1270,11 +1384,11 @@ struct NetStation;          // network/driver/RunTypes.hpp   (included in the .c
  * @brief Drain this epoch's census into the traces, the events and the counters.
  *
  * Call once per censused epoch, after every family's feed and before the
- * epoch-status row is written: from @ref networkStashStatus, between the pb/cb
+ * epoch-status row is written: from @ref GnssProcessor::networkStashStatus "networkStashStatus", between the pb/cb
  * feed and the L1 trace block.  That is the only point at which all five feeds
  * have run and the epoch-status row has not yet been emitted; called from the
  * driver instead, it would publish the census columns one epoch late.  (For the
- * same reason @ref networkStashCarry is called from that seam rather than from
+ * same reason @ref GnssProcessor::networkStashCarry "networkStashCarry" is called from that seam rather than from
  * the driver.)
  *
  * Writes the per-(family x label) ladder rows of `network_prior_residual.csv`,
@@ -1305,6 +1419,14 @@ void networkPriorResidualEmit(NetworkRunContext& ctx, const GnssConfig& config_,
  * Standing invariant #4 applied to the ladders: a family with @c n_rows = 0
  * must read as "ran, saw nothing" and not as "never ran", so the readout
  * reports the epoch denominator first and the ladders against it.
+ *
+ * @param ctx      The run context: the prior-residual run totals are read.
+ * @param config_  The run's configuration; the @c network.prior_residual_* settings (report
+ *                 threshold, event holdoff) are read from it.
+ * @param log      The network logger the readout is written to.
+ * @param stations The station roster, read only to name the station of each ladder's largest
+ *                 statistic.
+ * @param prires   The run accumulator (per-family, per-label ladders and the epoch count), read.
  */
 void networkPriorResidualRunEnd(const NetworkRunContext& ctx,
                                 const GnssConfig& config_,
@@ -1361,7 +1483,7 @@ struct PriorResidualCounters {
     long long prires_events = 0;            ///< PRIORRES events emitted (after the per-cell holdoff).
     long long prires_hits_dropped = 0;      ///< above-threshold rows whose individual identity was dropped to the per-epoch buffer cap.  Never affects a ladder, but a nonzero value means the event stream is a sample, and a truncated stream must not read as a quiet run.
     double    prires_max_t = 0.0;           ///< the worst |t| over the whole run, any family, any label, excluding the RNEG class (see below).
-    std::string prires_max_id;              ///< its (family/label/station/sat/signal @tow) identity.
+    std::string prires_max_id;              ///< its (family/label/station/sat/signal \@tow) identity.
     // --- The RNEG class (post_var > fold_var), partitioned out of the ladders.  Its |t|
     // is not a standardized residual: the dispersion is formed from a (prior,
     // posterior) pair that does not describe one fold, so r hits the redundancy floor
@@ -1369,7 +1491,7 @@ struct PriorResidualCounters {
     // run-end |t| extremum; the readable extremum for it is |ê| in metres.
     long long prires_rneg_rows = 0;         ///< RNEG rows over the run (a subset of prires_rows).
     double    prires_rneg_max_e = 0.0;      ///< the worst |ê| (m) over the whole run's RNEG class.
-    std::string prires_rneg_max_id;         ///< its (family/label/station/sat/signal @tow) identity.
+    std::string prires_rneg_max_id;         ///< its (family/label/station/sat/signal \@tow) identity.
     double    prires_wall_ms = 0.0;         ///< run-total wall time inside the emission seam (the §5 cost claim; the per-row addRow cost rides the carry harvests and cannot be separated).
 
     // --- constraint-aware global σ̂₀ ---

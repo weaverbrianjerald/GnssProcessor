@@ -228,6 +228,9 @@ struct StationPrefitCensus {
  *                       cross-flagged here either.  The centring pools still use every
  *                       data row; a masked row only gets no @c s.  The default covers
  *                       every class.
+ * @return The station's census: @c s holds one centred standardized residual per row (NaN
+ *         where not applicable) and the per-pool medians, populations and largest value are
+ *         set.  With no rows the result is default-constructed (@c s empty, @c max_row -1).
  */
 StationPrefitCensus stationPrefitCensus(const std::vector<NetRowClass>& cls,
                                         const StationAssembly& R,
@@ -247,6 +250,9 @@ StationPrefitCensus stationPrefitCensus(const std::vector<NetRowClass>& cls,
  *                   the magnitude half was not measurable this epoch).
  * @param eps        Uncheckable threshold (@c network.redundancy_eps).
  * @param hot_sigma  Magnitude threshold (@c network.redundancy_hot_sigma).
+ * @return True when @p s is finite, @p r is below @p eps and @p s is above @p hot_sigma: an
+ *         uncheckable row carrying a large deviation.  False in every other case, including a
+ *         NaN @p s.
  */
 inline bool isUncheckableHotCell(double r, double s, double eps, double hot_sigma) {
     return std::isfinite(s) && r < eps && s > hot_sigma;
@@ -261,6 +267,9 @@ inline bool isUncheckableHotCell(double r, double s, double eps, double hot_sigm
  * @param stride @c network.redundancy_census_stride (≤ 0 ⇒ escalation-only).
  * @param trip   A flight-recorder trip epoch, which always forces a full sweep
  *               so the attribution dump and the census describe the same epoch.
+ * @return True when this pass runs the full sweep: a trip epoch, or a stride phase pass
+ *         (@p ep a multiple of a positive @p stride).  False sweeps only the stations the cheap
+ *         tier flagged on the previous epoch.
  */
 inline bool censusSweepsThisEpoch(long long ep, int stride, bool trip) {
     return trip || (stride > 0 && (ep % stride) == 0);
@@ -296,8 +305,8 @@ std::vector<Eigen::Index> unobservableLocalColumns(const Eigen::VectorXd& pivots
  *        local (A_r) column to label.
  *
  * Read from the station's parameter set through the assembly's state-index to local-column
- * map (@c h2local).  The labels: @c iono:<sat>, @c amb:<key> (the ambiguity's state key,
- * "G05_L1C"), @c rxcb:<key>, @c rpb:<key>, @c zwd and @c rx_clock.  A column nothing here
+ * map (@c h2local).  The labels: @c iono:\<sat\>, @c amb:\<key\> (the ambiguity's state key,
+ * "G05_L1C"), @c rxcb:\<key\>, @c rpb:\<key\>, @c zwd and @c rx_clock.  A column nothing here
  * names (an inter-system bias, a phase colour) is absent: the census reports it by position
  * (@c loc<column>).
  *
@@ -365,9 +374,9 @@ struct RedundancyCensusCounters {
     double    redun_closure_min_slack = 0.0;///< worst (smallest) n_free − trace(H); must stay >= 0.
     long long redun_closure_neg = 0;        ///< sweeps whose slack went negative (a covariance/row-stack defect, not a data finding).
     double    redun_max_hot_s = 0.0;        ///< largest cross-flagged centred deviation over the run.
-    std::string redun_max_hot_id;           ///< its (station/sat/class @tow) identity.
+    std::string redun_max_hot_id;           ///< its (station/sat/class \@tow) identity.
     double    redun_max_cold_s = 0.0;       ///< largest centred deviation on an uncheckable row that stayed below the cross-flag.
-    std::string redun_max_cold_id;          ///< its (station/sat/class @tow) identity.
+    std::string redun_max_cold_id;          ///< its (station/sat/class \@tow) identity.
     double    redun_wall_ms = 0.0;          ///< run-total wall time inside the census seam (the cost claim).
 
     // Redundancy / testability census: the stride phase and event clock, and the

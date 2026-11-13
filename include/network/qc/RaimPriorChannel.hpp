@@ -24,16 +24,16 @@
  *    @c network.raim_redundancy_normalize, the pools' convention);
  *  - it belongs to its own column (@c cpl_row_local_cols), whose subject is a line-of-sight
  *    carry, a receiver code bias or a station carry with no response here
- *    (@ref RaimPriorSubjectKind);
+ *    (@ref GnssProcessor::RaimPriorSubjectKind "RaimPriorSubjectKind");
  *  - the table has one cell per (station, subject), the largest statistic of the subject's
- *    rows, and the T4 isolated-arc test runs on it (@ref raimSelectIsolatedArcs) against a
+ *    rows, and the T4 isolated-arc test runs on it (@ref GnssProcessor::raimSelectIsolatedArcs "raimSelectIsolatedArcs") against a
  *    robust scale of the channel's own.
  *
  * The residual of row @c k is the standardized innovation of column @c k given the columns
  * pushed before it (the Cholesky-order decomposition), so a fault in column @c j also reaches
  * every later row in proportion to @f$(L^{-1})_{kj}@f$.  The cells are per line of sight, so a
  * spread between the bands of one satellite stays in its cell; the coefficient check
- * (@ref RaimPriorRow::own_coef against @ref RaimPriorRow::max_other_coef) counts the rows
+ * (@ref GnssProcessor::RaimPriorRow::own_coef "RaimPriorRow::own_coef" against @ref GnssProcessor::RaimPriorRow::max_other_coef "RaimPriorRow::max_other_coef") counts the rows
  * whose largest coefficient is on another column, the size of the remaining spread.
  *
  * The pieces here are pure functions of their arguments, unit-tested on synthetic blocks
@@ -66,6 +66,8 @@ enum class RaimPriorSubjectKind : std::uint8_t {
     Unwired,      ///< A station carry with no response in the channel (the wet delay, the receiver clock, or a row whose subject does not resolve): counted only.
 };
 
+/// @brief The name of a prior-subject kind, as written in the run-end text and the event detail.
+/// @param k  The subject kind.
 /// @return The subject kind's name in the run-end text and the event detail ("los", "rxcb", "unwired").
 const char* raimPriorSubjectKindName(RaimPriorSubjectKind k);
 
@@ -115,6 +117,7 @@ struct RaimPriorRow {
     double           max_other_coef{0.0};              ///< The largest |A_r(row, c)| over the station's other carried columns (0 when none).
     Eigen::Index     max_other_col{-1};                ///< That column (-1 when none).
 
+    /// @brief Whether the row is dominated by a carried column other than its own.
     /// @return Whether the row's largest coefficient is on another carried column than its own.
     bool otherDominant() const { return max_other_coef > own_coef; }
 };
@@ -176,7 +179,10 @@ struct RaimPriorSelection {
     /// the observation channel in the same pass) and a receiver code bias reset.
     std::set<std::pair<int, std::string>> acted_cells;
 
+    /// @brief Flag statistic of one prior-table cell, the quantity compared with the bar.
+    /// @param cell Index into @c cells (and @c interaction); not range-checked.
     /// @return The flag statistic of a cell: its interaction over the scale.
+    ///         Dimensionless, in units of the channel's robust scale.
     double flagStatistic(std::size_t cell) const { return interaction[cell] / scale; }
 
     /**
@@ -193,10 +199,10 @@ struct RaimPriorSelection {
  * @brief The channel's test on one pass (pure).
  *
  * Builds the prior table from @p rows, its median polish and robust scale, runs the T4
- * isolated-arc test on it (@ref raimSelectIsolatedArcs, with no persistence gate) and sorts the
+ * isolated-arc test on it (@ref GnssProcessor::raimSelectIsolatedArcs "raimSelectIsolatedArcs", with no persistence gate) and sorts the
  * flags into responses by subject.
  *
- * @param rows        The pass's tested rows (@ref raimPriorChannelCollect).
+ * @param rows        The pass's tested rows (@ref GnssProcessor::raimPriorChannelCollect "raimPriorChannelCollect").
  * @param s0_floor    The floor of the scale (@c network.raim_s0_floor).
  * @param k_sigma     The bar, in the scale (@c network.raim_k_sigma).
  * @param caught_sats Satellites the observation channel caught wholesale this pass: their
@@ -220,7 +226,7 @@ RaimPriorSelection raimPriorChannelSelect(const std::vector<RaimPriorRow>& rows,
  * attribution (the station's carried wet delay is erased), so they are neither unwired nor
  * counted as such.  Every other unwired flag stays where it is.
  *
- * @param sel  [in/out] The selection (@ref raimPriorChannelSelect).
+ * @param sel  [in/out] The selection (@ref GnssProcessor::raimPriorChannelSelect "raimPriorChannelSelect").
  * @param rows The pass's tested rows the selection indexes.
  */
 void raimPriorWireZwd(RaimPriorSelection& sel, const std::vector<RaimPriorRow>& rows);
@@ -266,7 +272,7 @@ std::vector<RaimPriorReportLine> raimPriorChannelReport(const RaimPriorChannelTa
  * @brief Run-end section: the prior channel (@c network.raim_prior_channel).
  *
  * A section of the RAIM subsystem's report (@c networkRaimRunEnd); prints
- * @ref raimPriorChannelReport.  Gate: @c ctx.knobs.raim_prior_channel.
+ * @ref GnssProcessor::raimPriorChannelReport "raimPriorChannelReport".  Gate: @c ctx.knobs.raim_prior_channel.
  *
  * @param v The run at its end (network/runend/RunEnd.hpp).
  * @return 0 (this report does not set the exit code).

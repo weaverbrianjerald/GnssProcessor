@@ -20,7 +20,7 @@
  *     state.  This detects a single satellite whose clock locks onto a wrong value
  *     for hours, which the stiff sat-clock carry keeps invisible to the σ̂0 RAIM.
  *
- * It then calls @ref networkRetroUraBookkeeping (the retro-flag / URA-inflate feed),
+ * It then calls @ref GnssProcessor::networkRetroUraBookkeeping "networkRetroUraBookkeeping" (the retro-flag / URA-inflate feed),
  * and last runs the network-wide common-mode clock-excursion detector
  * (nc.cb_excursion_reinit, SPEC_day129_frame_guards Phase 2.1), which reinitializes
  * the pivot's code-bias carry when the median one-epoch clock change exceeds
@@ -37,7 +37,7 @@
  * NIS/monitor culprits into @p clock_refloat_sats (consumed by the epoch stash,
  * which drops or loosens a refloated satellite's carried shared state) and
  * @p retro_flag_sats.  Call it on the post-fit @p x_s after the post-fit RAIM
- * (@ref networkPostFitRaim, whose consensus/attribution culprits arrive in
+ * (@ref GnssProcessor::networkPostFitRaim "networkPostFitRaim", whose consensus/attribution culprits arrive in
  * @p clock_refloat_sats) and before the epoch stash/status tail.  The caller keeps
  * the @c networkSubBegin/End(SB_CLOCKUPD) brackets.
  */

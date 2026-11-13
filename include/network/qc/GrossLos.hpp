@@ -38,16 +38,16 @@
  * denominator:
  *
  *  - **Statistic.**  @f$r_i = |v_i|\sqrt{w_i}@f$ with @f$w_i = 1/\sigma_i^2@f$:
- *    each code row is standardized by its own σ, so the bar @ref
+ *    each code row is standardized by its own σ, so the bar @c
  *    NetworkConfig::gross_los_k means "this observation missed by k of its own
  *    sigmas".  The pooled robust σ̂₀ is not the denominator: while a station is
  *    degrading, the pool inflates, and a screen normalized by it would lose
  *    sensitivity when it is needed.  (The same property makes RAIM's σ̂₀ the right
  *    normalization for ambient phase misfit and the wrong one here.)
- *  - **Declaration.**  At least @ref NetworkConfig::gross_los_min_rows of the
+ *  - **Declaration.**  At least @ref GnssProcessor::NetworkConfig::gross_los_min_rows "NetworkConfig::gross_los_min_rows" of the
  *    LOS's own code rows over the bar in the same epoch (under
  *    @c network.gross_los_min_rows_rule = available, at least
- *    min(gross_los_min_rows, the LOS's code rows)), for @ref
+ *    min(gross_los_min_rows, the LOS's code rows)), for @c
  *    NetworkConfig::gross_los_epochs consecutive epochs.  A gross line of sight is
  *    wrong on every code band at once (a range error, not a dispersive one); a
  *    single heavy-tailed row is one band's multipath.  Absence resets the streak:
@@ -60,18 +60,18 @@
  *    iono is re-drawn rather than carried from a value estimated jointly with
  *    a level that is no longer trusted), and mark its ambiguities pending-reseed.
  *    Under @c network.gross_los_bound those entries are held at their
- *    pre-declaration values instead of erased (see @ref networkGrossLosAct).
- *    From the next assembly on, the LOS's code rows fold at σ × @ref
+ *    pre-declaration values instead of erased (see @ref GnssProcessor::networkGrossLosAct "networkGrossLosAct").
+ *    From the next assembly on, the LOS's code rows fold at σ × @c
  *    NetworkConfig::gross_los_deweight.  This is a cap, not a drop: the row
  *    keeps its sign and still re-anchors the float if the LOS's phase side goes
  *    away.  Phase rows are untouched; they have their own responses.
- *  - **Release (the re-coupling edge).**  The LOS's worst code row under @ref
- *    NetworkConfig::gross_los_clear_sigma for @ref
+ *  - **Release (the re-coupling edge).**  The LOS's worst code row under @c
+ *    NetworkConfig::gross_los_clear_sigma for @c
  *    NetworkConfig::gross_los_clear_epochs consecutive epochs lifts the deweight,
  *    with its own event.  The gap between the two bars is the hysteresis; the
  *    loader warns if it is absent.
  *  - **Expiry (the absent-satellite edge).**  A declared LOS unseen
- *    for longer than @ref NetworkConfig::gross_los_max_gap_s expires with its own
+ *    for longer than @ref GnssProcessor::NetworkConfig::gross_los_max_gap_s "NetworkConfig::gross_los_max_gap_s" expires with its own
  *    event.  The next sighting is a new arc with a new ambiguity, and the old
  *    evidence does not apply to it; without the expiry, a deweight set once would
  *    carry over to a fresh arc unnoticed.
@@ -89,9 +89,9 @@
  * the first 120 epochs of the 2 h goldens.
  *
  *  - **Declaration.**  Inside the horizon, a line of sight whose largest post-fit code
- *    |v| (metres, @ref GrossLosVerdict::v_abs_max) exceeds the bound is declared at
+ *    |v| (metres, @ref GnssProcessor::GrossLosVerdict::v_abs_max "GrossLosVerdict::v_abs_max") exceeds the bound is declared at
  *    once: one epoch, no row count, no persistence.  The response is the screen's own
- *    (the erase, pending-reseed and code fold below); @ref GrossLosState::cold records
+ *    (the erase, pending-reseed and code fold below); @ref GnssProcessor::GrossLosState::cold "GrossLosState::cold" records
  *    which path declared it.  A station with more than
  *    @c gross_los_max_station_frac of its lines of sight over the bound declares none
  *    of them (a station fault, as for the σ bar), with its own event.
@@ -108,7 +108,7 @@
  *    rows (the re-coupling edge re-seeds what it reconnects).
  *
  * The cold path's edges are counted apart from the σ-bar path's (@c cold_* in
- * @ref NetworkGrossLosTallies) and reported by @ref networkGrossLosColdBoundRunEnd.
+ * @ref GnssProcessor::NetworkGrossLosTallies "NetworkGrossLosTallies") and reported by @ref GnssProcessor::networkGrossLosColdBoundRunEnd "networkGrossLosColdBoundRunEnd".
  * Off (bound 0, the default), nothing on this path runs and the run is byte-identical.
  *
  * The epoch always emits: this is adapt-and-emit, and an epoch withhold would be
@@ -131,7 +131,7 @@
  * @c NetworkRunContext.  The response half must run after the joint solve and
  * the carry harvest, for the same reason as RAIM: erasing a carried entry
  * is the refloat, and an entry erased before the harvest would be re-stashed.  The
- * caller places that call immediately after @ref networkPostFitRaim inside its
+ * caller places that call immediately after @ref GnssProcessor::networkPostFitRaim "networkPostFitRaim" inside its
  * @c SB_RAIM bracket.  The erases are idempotent, so a second visit to a line of
  * sight that RAIM already refloated this epoch has no further effect.
  */
@@ -324,7 +324,7 @@ struct GrossLosVerdict {
  *                    than the constant is reachable while one with more keeps the
  *                    multi-band corroboration
  *                    (@c network.gross_los_min_rows_rule).
- *                    @ref GrossLosVerdict::short_over is filled under either rule.
+ *                    @ref GnssProcessor::GrossLosVerdict::short_over "GrossLosVerdict::short_over" is filled under either rule.
  * @return The verdict.
  */
 GrossLosVerdict networkGrossLosAssess(const std::vector<GrossLosSample>& rows,
@@ -345,7 +345,7 @@ struct GrossLosState {
     /// The origin of the per-episode latency, so a declaration states how long the
     /// evidence stood before the response acted, not only when it acted.
     double first_over_tow{0.0};
-    /// Over-bar screened epochs since @ref first_over_tow: the same latency in epochs.
+    /// Over-bar screened epochs since @ref GnssProcessor::GrossLosState::first_over_tow "first_over_tow": the same latency in epochs.
     int    first_over_age_ep{0};
     /// The standing declaration was taken under the cold-start bound.
     /// While set, each epoch over the bound re-erases the carried ambiguity, and the
@@ -353,7 +353,7 @@ struct GrossLosState {
     bool   cold{false};
 };
 
-/// The edge a @ref networkGrossLosStep transition produced.
+/// The edge a @ref GnssProcessor::networkGrossLosStep "networkGrossLosStep" transition produced.
 enum class GrossLosEdge {
     None,       ///< No edge this epoch.
     Declare,    ///< Decoupling edge: the LOS became gross.
@@ -397,7 +397,7 @@ GrossLosEdge networkGrossLosStep(GrossLosState& s, const GrossLosVerdict& v,
                                  int declare_epochs, int clear_epochs, double tow,
                                  bool allow_declare = true);
 
-/// The edge a @ref networkGrossLosColdStep transition produced.
+/// The edge a @ref GnssProcessor::networkGrossLosColdStep "networkGrossLosColdStep" transition produced.
 enum class GrossLosColdEdge {
     None,     ///< The cold-start bound does not act on this line of sight this epoch.
     Declare,  ///< Decoupling edge: the line of sight is declared under the bound.
@@ -410,7 +410,7 @@ enum class GrossLosColdEdge {
  *        (@c network.gross_los_cold_bound_m).
  *
  * Called for an epoch in which the line of sight produced code rows, before
- * @ref networkGrossLosStep.  A @c Declare edge replaces that step for the epoch; the
+ * @ref GnssProcessor::networkGrossLosStep "networkGrossLosStep".  A @c Declare edge replaces that step for the epoch; the
  * other edges leave it to run (it owns the release test of every declaration).
  *
  *  - A bound of 0 or less is off: @c None, whatever the residual.
@@ -426,7 +426,7 @@ enum class GrossLosColdEdge {
  * not evidence, the screen's rule).
  *
  * @param s             [in/out] the line of sight's carried state.
- * @param v             This epoch's verdict (@ref GrossLosVerdict::v_abs_max is the statistic).
+ * @param v             This epoch's verdict (@ref GnssProcessor::GrossLosVerdict::v_abs_max "GrossLosVerdict::v_abs_max" is the statistic).
  * @param bound_m       The bound, metres (0 = off).
  * @param in_hold       True while the maturity horizon has not opened.
  * @param allow_declare False when the cold station guard holds new cold declarations at
@@ -525,8 +525,8 @@ struct NetworkEpoch;            // network/driver/Epoch.hpp
  * assembly reads through @c NetStation::gl_code_sigma_scale.
  * The response must therefore run after the carry harvest and before the epoch
  * stash tail; the caller places the @c Full or @c Act call immediately after
- * @ref networkPostFitRaim inside the @c SB_RAIM bracket.  A @c Decide call runs
- * earlier, before the emission (see @ref GrossLosPhase).
+ * @ref GnssProcessor::networkPostFitRaim "networkPostFitRaim" inside the @c SB_RAIM bracket.  A @c Decide call runs
+ * earlier, before the emission (see @ref GnssProcessor::GrossLosPhase "GrossLosPhase").
  *
  * No-op (not even a state allocation) unless @c ctx.knobs.gl_on.
  *

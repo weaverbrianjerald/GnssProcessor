@@ -22,17 +22,24 @@
 
 namespace GnssProcessor {
 
-/// Median of a copy (upper-middle for even counts, matching this file's convention).
+/// @brief Median of a copy (upper-middle for even counts, matching this file's convention).
+/// @param v Sample values, taken by value so the caller's order is untouched.  No finiteness check.
+/// @return Element @c n/2 of the partially sorted copy, in the unit of the samples; 0.0 for an empty
+///         pool (a sentinel, not NaN).
 inline double medianCopy(std::vector<double> v) {
     if (v.empty()) return 0.0;
     std::nth_element(v.begin(), v.begin() + v.size() / 2, v.end());
     return v[v.size() / 2];
 }
 
-/// Robust prominence of each entry in @p eff: how many robust sigmas its effect sits
+/// @brief Robust prominence of each entry in @p eff: how many robust sigmas its effect sits
 /// above the median of all entries (z = (effect − median) / (1.4826·MAD); a zero MAD is
 /// replaced by 1).  Used to attribute a network residual spike to a bad satellite,
 /// station or signal.
+/// @tparam KeyT Ordered key type of the entries (a satellite, station or signal identity).
+/// @param eff Effect value per entry, in any one unit; an empty map yields an empty result.
+/// @return Map with the same keys holding the dimensionless robust z-score of each entry
+///         (positive above the median of all entries).
 template <class KeyT>
 std::map<KeyT, double> robustProminence(const std::map<KeyT, double>& eff) {
     std::vector<double> vals;
@@ -72,6 +79,9 @@ struct StationFactorRow {
  * E[w·v²] = r_i identity intact for the surviving rows.
  * @p trim_above ≤ 0 disables the trim.
  *
+ * @param rows       The station's post-fit RAIM phase rows.
+ * @param trim_above Trim bar on each row's pooled statistic @c r_std (in sigma units); rows above it
+ *                   leave both sums.  Zero or negative disables the trim.
  * @return the variance factor (≈1 when the stochastic model matches the data), or
  *         -1 as a sentinel when the station has no checkable redundancy this
  *         epoch (Σr_i ≤ 1e-9); callers treat that as unavailable, not as 0.
@@ -134,18 +144,23 @@ inline std::optional<LevelAuthorityResult> levelAuthorityReduce(
 /// Result of a Tukey 2-way median polish: value ≈ overall + row_eff[row] + col_eff[col]
 /// + interaction (parallel to the input cell order).
 struct MedianPolish {
-    double overall{0.0};
-    std::map<int, double> row_eff;          ///< per-row (station) effect
+    double overall{0.0};                    ///< grand effect: the common level of the table, in the unit of the cell values
+    std::map<int, double> row_eff;         ///< per-row (station) effect
     std::map<std::string, double> col_eff;  ///< per-column (satellite) effect
     std::vector<double> interaction;        ///< leftover per cell (isolated arc anomaly)
 };
 
-/// Robust additive decomposition of a sparse (row=int, col=string) → value table by
+/// @brief Robust additive decomposition of a sparse (row=int, col=string) → value table by
 /// alternately sweeping out row and column medians (Tukey median polish).  Because the
 /// sweeps use medians, a minority of large cells (the real outliers) does not distort the
 /// additive row/column effects.  This separates a bad satellite, which raises a whole
 /// column, from a bad station, which raises a whole row, and leaves isolated
 /// (station,sat) arc slips in the interaction term.  O(iters · cells); no re-solve.
+/// @param cells (row index, column name, value) triples, one per occupied cell; a station is
+///              the row and a satellite the column in the RAIM attribution.
+/// @param iters Number of sweep rounds, each a row sweep followed by a column sweep (default 5).
+/// @return The decomposition: grand effect, per-row and per-column effects, and the leftover
+///         interaction per cell in the input order.  Empty input gives an empty result.
 inline MedianPolish medianPolish2Way(
         const std::vector<std::tuple<int, std::string, double>>& cells, int iters = 5) {
     MedianPolish mp;

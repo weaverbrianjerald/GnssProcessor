@@ -10,7 +10,7 @@
  *        (the prior ephemeris version is no longer held), it forces a per-satellite
  *        discontinuity instead.
  *
- * Moved unchanged out of @ref networkSolveGlue as the separate emit-region block the
+ * Moved unchanged out of @ref GnssProcessor::networkSolveGlue "networkSolveGlue" as the separate emit-region block the
  * INC-9/10 cuts left in place (see the ClockQc.hpp banner).  Owns no state: every
  * carry object is a reference into the caller's NetworkRunContext.
  *
@@ -19,7 +19,7 @@
  *          lock-step) and before the D2 / clock-osc prior injection and the solve.
  *          Shifting the prior is exact for any prior weight; a post-solve x_s shift is
  *          not.  Mutates the satellite table (relevel_iode, the Disc::EphCutover bit) and, through
- *          @ref ephCutoverShiftCarry, the sites of CarryMechanism::EphRelevel (clock_osc,
+ *          @ref GnssProcessor::ephCutoverShiftCarry "ephCutoverShiftCarry", the sites of CarryMechanism::EphRelevel (clock_osc,
  *          prev_carry, prev_clk, the local_carry and zwd_carry coupling; with
  *          network.carry_rebase_complete also its owed sites).  Acts only when
  *          brdc_rts is true, the only mode in which relevel_iode is meaningful.

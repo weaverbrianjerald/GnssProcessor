@@ -71,7 +71,7 @@
  * The rows at @f$\infty@f$ form a subset of the census's `redun_uncheckable`
  * population.  The two are governed by different thresholds:
  *
- *  - MDB is @f$\infty@f$ at @f$r_i \le@f$ @ref kBaardaRedundancyFloor (1e-6), the
+ *  - MDB is @f$\infty@f$ at @f$r_i \le@f$ @ref GnssProcessor::kBaardaRedundancyFloor "kBaardaRedundancyFloor" (1e-6), the
  *    arithmetic floor below which the division has no meaning;
  *  - the census calls a row uncheckable at @f$r_i <@f$ `network.redundancy_eps`
  *    (0.05 by default), a policy floor four decades looser.
@@ -90,7 +90,7 @@
  * plus two @c nth_element calls per non-empty (constellation x class) bin per epoch.
  * The RAIM pool is small (carried-ambiguity phase rows only); the census sweep is
  * large but strided, and its own cost is 100 to 300 ms/epoch at 63 stations, so the
- * added cost stays small beside it.  @ref NetworkMdbTallies::wall_ms times the
+ * added cost stays small beside it.  @ref GnssProcessor::NetworkMdbTallies::wall_ms "NetworkMdbTallies::wall_ms" times the
  * flush only; the per-row cost is inside the host loops and cannot be separated
  * (the prior-residual census has the same limitation for the same reason).
  *
@@ -126,12 +126,17 @@ struct NetworkRunTraces;    // network/diag/RunTraces.hpp, included in the .cpp 
 /// dropped, so the join against the census still counts it.
 inline constexpr int kNetMdbConstellations = 8;
 
+/// @brief Constellation bin of a RINEX system letter.
+/// @param sys RINEX system letter: 'G', 'R', 'E', 'C', 'J', 'I' or 'S'; any other character
+///            selects the catch-all bin.
 /// @return Bin index of a RINEX system letter (7 = unknown/other).
 inline constexpr int netMdbConstIndex(char sys) {
     return sys == 'G' ? 0 : sys == 'R' ? 1 : sys == 'E' ? 2 : sys == 'C' ? 3
          : sys == 'J' ? 4 : sys == 'I' ? 5 : sys == 'S' ? 6 : 7;
 }
 
+/// @brief Wire letter of a constellation bin.
+/// @param i Bin index from @ref GnssProcessor::netMdbConstIndex "netMdbConstIndex", 0 to 7; any other value gives the catch-all.
 /// @return The wire letter of bin @p i ('?' for the catch-all).  Never null.
 inline constexpr char netMdbConstChar(int i) {
     return i == 0 ? 'G' : i == 1 ? 'R' : i == 2 ? 'E' : i == 3 ? 'C'
@@ -165,7 +170,7 @@ struct NetworkMdbBin {
     std::string worst_station;      ///< its station.
     std::string worst_sat;          ///< its satellite ("" when unlabelled).
 
-    /// Clear the counters and the value pool, keeping the pool's capacity (the
+    /// @brief Clear the counters and the value pool, keeping the pool's capacity (the
     /// bin is refilled every census sweep; releasing the buffer would make the
     /// feed allocate tens of thousands of doubles per sweep).
     void reset();
@@ -173,8 +178,8 @@ struct NetworkMdbBin {
 
 /// One event candidate: the worst finite row of one (station x class) block.
 struct NetworkMdbCandidate {
-    std::string station;
-    std::string sat;
+    std::string station;       ///< station name.
+    std::string sat;           ///< satellite id of the row ("" when unlabelled).
     int    cls = 0;            ///< NetRowClass as an int (data classes only).
     double mdb = 0.0;          ///< metres.
     double r = 0.0;            ///< local redundancy of that row.
@@ -195,7 +200,7 @@ struct NetworkMdbEpoch {
     double tow = -1.0;               ///< stamp of the epoch currently accumulating.
     bool   fed_raim = false;         ///< the RAIM pool contributed this epoch.
     bool   fed_census = false;       ///< the census sweep contributed this epoch.
-    NetworkMdbBin bin[kNetMdbConstellations][kNetDataClasses];
+    NetworkMdbBin bin[kNetMdbConstellations][kNetDataClasses];  ///< distributions indexed [constellation bin][data class index].
     std::vector<NetworkMdbCandidate> cand;   ///< per (station x class) worst finite rows.
     long long rows_raim = 0;         ///< rows binned from the RAIM pool this epoch.
     long long rows_census = 0;       ///< rows binned from the census sweep this epoch.
@@ -204,7 +209,8 @@ struct NetworkMdbEpoch {
     long long census_unchk = 0;      ///< …with r < network.redundancy_eps (must equal the census's own count).
     long long skipped_weight = 0;    ///< rows dropped for a non-positive / non-finite weight.
 
-    /// Reset every bin, the candidate list and the join counters, and re-stamp.
+    /// @brief Reset every bin, the candidate list and the join counters, and re-stamp.
+    /// @param new_tow GPS time of week (s) of the epoch about to accumulate; becomes the stamp.
     void reset(double new_tow);
 };
 
@@ -252,7 +258,7 @@ struct NetworkMdbTallies {
  * @brief Per-station MDB feed: constructed once per station inside a host loop
  *        that already holds @f$r_i@f$, fed once per row, finished once.
  *
- * A small value type with an inline @ref add: the census feed site walks tens of
+ * A small value type with an inline @c add: the census feed site walks tens of
  * thousands of rows per sweep, so a per-row map lookup or string build would
  * be too costly on its own.  The per-row work is a few branches, one
  * division and one @c push_back; the only string work is the rare assignment when
@@ -261,6 +267,8 @@ struct NetworkMdbTallies {
 class NetworkMdbStationFeed {
 public:
     /**
+     * @brief Open a per-station feed on the epoch accumulator.
+     *
      * @param acc         The epoch accumulator (re-stamped here if @p tow is new).
      * @param tow         This epoch's TOW, the accumulator's stamp.
      * @param delta_0     @c baardaDelta0 of the run's data-snooping critical value.
@@ -391,6 +399,12 @@ void networkMdbFlush(NetworkRun& run, const NetworkEpoch& ep);
  * the teardown TU, so the numbers and the text that interprets them stay together.
  * Called by its row of the run-end table (the overload taking the view, below) under
  * @c ctx.knobs.mdb_on.
+ *
+ * @param ctx      The run context: the MDB accumulator and counters are read.
+ * @param config_  The run's configuration; the network settings, the data-snooping critical
+ *                 value (which sets the non-centrality @f$\delta_0@f$ printed) and the
+ *                 carry-invariant switch are read from it.
+ * @param log      The network logger the telemetry is written to.
  */
 void networkMdbRunEnd(const NetworkRunContext& ctx, const GnssConfig& config_,
                       const std::shared_ptr<spdlog::logger>& log);
@@ -402,15 +416,19 @@ void networkMdbRunEnd(const NetworkRunContext& ctx, const GnssConfig& config_,
 /// Order statistics of one finite MDB pool.  All three are 0 for an empty pool;
 /// the caller reports the pool's population alongside, so an empty bin cannot be
 /// read as a bin of zeros.
-struct NetworkMdbStats { double med = 0.0, p95 = 0.0, max = 0.0; };
+struct NetworkMdbStats {
+    double med = 0.0,  ///< median of the finite MDB pool (metres).
+           p95 = 0.0,  ///< 95th percentile of the pool (metres).
+           max = 0.0;  ///< largest value of the pool (metres).
+};
 
 /// The empirical inflation available for one data class and, when it is not
 /// available, which of the four reasons applies.  @c have == false means the
 /// scaled columns are blank; @c src is the reason string written to the trace.
 struct NetworkMdbScale {
-    bool   have = false;
-    double sigma0 = 1.0;
-    const char* src = "absent";
+    bool   have = false;        ///< the scale is available; false leaves the scaled columns blank.
+    double sigma0 = 1.0;        ///< the per-family @f$\hat\sigma_0@f$ (dimensionless); meaningful only when @c have.
+    const char* src = "absent"; ///< reason string written to the trace; static storage, never null.
 };
 
 /**
@@ -442,6 +460,9 @@ struct NetworkMdbScale {
  * @param pf_phase_rows @c ctx.carry.ep_pf_phase_rows.
  * @param s0_code       @c ctx.carry.ep_sigma0_pf_code.
  * @param s0_phase      @c ctx.carry.ep_sigma0_pf_phase.
+ * @return The scale: @c have true with @c sigma0 set when the class has a usable, nonzero
+ *         family @f$\hat\sigma_0@f$ (its @c src may still carry a deflating tag); @c have false
+ *         with @c src naming which of the four reasons applies, so the scaled columns are blank.
  */
 NetworkMdbScale networkMdbFamilyScale(int cls, long long pf_rows,
                                       long long pf_code_rows, long long pf_phase_rows,

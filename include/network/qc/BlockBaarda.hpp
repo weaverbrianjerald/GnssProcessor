@@ -18,7 +18,7 @@
  * per-row w-tests below it, station-level median polish above it.  Neither can
  * name the line of sight that carried the fault.
  *
- * The primitive is @ref NetworkNormalEquations::blockResidualCofactor (INC-0), the
+ * The primitive is @ref GnssProcessor::NetworkNormalEquations::blockResidualCofactor "NetworkNormalEquations::blockResidualCofactor" (INC-0), the
  * @f$b\times b@f$ residual cofactor @f$Q_{\tilde e,B}@f$ with its off-diagonals
  * kept.  This class computes the statistic and keeps its bookkeeping:
  * @f[
@@ -34,7 +34,7 @@
  *
  * ## Reading the ladder: @f$t_B@f$ is a variance ratio, not a sigma
  *
- * The rungs are shared with the prior-residual census (@ref
+ * The rungs are shared with the prior-residual census (@c
  * NetworkPriorResidual::ladder, SPEC §4's "census bins"), so both write one
  * file format with one reader.  The unit differs.  In that census @f$|t|@f$ is a
  * standardized residual, and rung 4 means four sigma.  Here @f$T_B@f$ includes the
@@ -45,12 +45,12 @@
  *
  * ## Two corrections to SPEC §3's recipe
  *
- * SPEC §3 defines @f$\hat\sigma_{0,f}@f$ as a @ref NetworkCarryVce instance fed
+ * SPEC §3 defines @f$\hat\sigma_{0,f}@f$ as a @ref GnssProcessor::NetworkCarryVce "NetworkCarryVce" instance fed
  * @f$T_B@f$ per family with unit variance, following the D5 v2 pattern.  Taken
  * literally, that recipe is wrong in two ways, and each would produce a plausible
  * but mis-scaled ladder with no visible error:
  *
- * 1. **@ref NetworkCarryVce assumes one degree of freedom.**
+ * 1. **@ref GnssProcessor::NetworkCarryVce "NetworkCarryVce" assumes one degree of freedom.**
  *    @c estimate() returns @c geo_mean(e^2)/kChi2GeoMean with
  *    @c kChi2GeoMean = 0.2807297418 = @f$2e^{\psi(1/2)}@f$, the geometric mean of
  *    a @f$\chi^2_1@f$ variate (CarryVce.hpp, @c kChi2GeoMean).  Under
@@ -60,7 +60,7 @@
  *    up to about 3x, and the bias changes with the constellation's band plan.
  *    The correction is one factor: feed
  *    @f[ u_B = \sqrt{\;T_B\,b\;\frac{2e^{\psi(1/2)}}{2e^{\psi(b/2)}}\;} @f]
- *    (@ref blockChi2GeoMean), which is @f$\chi^2_1@f$-equivalent by construction,
+ *    (@ref GnssProcessor::blockChi2GeoMean "blockChi2GeoMean"), which is @f$\chi^2_1@f$-equivalent by construction,
  *    so @c robust_floor reads back as @f$\hat\sigma_0^2@f$ for any mix of block
  *    sizes.  At @f$b=1@f$ the D5 call stays byte-identical.
  * 2. **@c seed_floor_m2 is passed as 1.0 explicitly.**  NetworkCarryVce replaces a
@@ -71,7 +71,7 @@
  *    same reason.
  *
  * The rest of the D5 v2 contract holds unchanged.  Predict, then update:
- * @ref beginEpoch freezes each family's @f$\hat\sigma_0@f$ through the previous
+ * @c beginEpoch freezes each family's @f$\hat\sigma_0@f$ through the previous
  * epoch before decaying the accumulator, so no block is standardized by a
  * calibration it contributed to.  No censoring: every checkable block feeds the
  * calibration before any threshold is consulted; feeding the above-threshold
@@ -82,7 +82,7 @@
  *
  * ## Uncheckable blocks
  *
- * @ref NetworkNormalEquations::blockResidualCofactor does not clamp, so a
+ * @ref GnssProcessor::NetworkNormalEquations::blockResidualCofactor "NetworkNormalEquations::blockResidualCofactor" does not clamp, so a
  * fully-leveraged block comes back singular (the block analogue of
  * @f$r<\varepsilon@f$).  Such a block is counted with its identity and never
  * inverted (SPEC §3).  SPEC §3 allows a pseudo-inverse or a drop, counted either
@@ -119,7 +119,7 @@
  * @f]
  * Under the null this is @f$\sigma_0^2\chi^2_m@f$ with the kept count @f$m@f$ as its
  * degrees of freedom, which is what a plain pseudo-inverse lacks.  The scale
- * correction of @ref blockChi2GeoMean is then taken at @f$m@f$.  When nothing is
+ * correction of @ref GnssProcessor::blockChi2GeoMean "blockChi2GeoMean" is then taken at @f$m@f$.  When nothing is
  * dropped the statistic is the whole-block one.  A fault that lies wholly in a
  * dropped direction (an additive slant-ionosphere change is the example) is
  * absorbed by the column that makes the direction null; no test of the block can
@@ -130,9 +130,9 @@
  *
  * ## Isolation and testing
  *
- * A pure numeric leaf, like @ref NetworkCarryVce and @ref NetworkPriorResidual:
+ * A pure numeric leaf, like @ref GnssProcessor::NetworkCarryVce "NetworkCarryVce" and @ref GnssProcessor::NetworkPriorResidual "NetworkPriorResidual":
  * header-only, with no ApplicationNetwork coupling, no station state and no I/O.
- * It takes @ref Input blocks and returns ladders; @c tests/network/test_block_baarda.cpp
+ * It takes @c Input blocks and returns ladders; @c tests/network/test_block_baarda.cpp
  * drives it directly with synthetic blocks of known truth.  The per-epoch trace,
  * event and aggregate emission is in @c network/qc/BlockBaarda.cpp, the only
  * translation unit of this census that touches traces.
@@ -166,8 +166,8 @@ namespace GnssProcessor {
 class NetworkNormalEquations;
 
 /// Geometric mean of a @f$\chi^2_1@f$ variate: the constant hard-coded in
-/// @ref NetworkCarryVce, repeated here so the rescaling in
-/// @ref NetworkBlockBaarda::addBlock cancels exactly at @f$b=1@f$ (keeping the D5
+/// @ref GnssProcessor::NetworkCarryVce "NetworkCarryVce", repeated here so the rescaling in
+/// @ref GnssProcessor::NetworkBlockBaarda::addBlock "NetworkBlockBaarda::addBlock" cancels exactly at @f$b=1@f$ (keeping the D5
 /// call byte-identical) rather than to nine digits.
 inline constexpr double kBlockChi2GeoMean1 = 0.2807297418;
 
@@ -175,12 +175,13 @@ inline constexpr double kBlockChi2GeoMean1 = 0.2807297418;
  * @brief Geometric mean of a @f$\chi^2_b@f$ variate, @f$2e^{\psi(b/2)}@f$.
  *
  * The scale correction that lets a population of mixed block sizes feed a
- * @ref NetworkCarryVce, whose own constant is the @f$b=1@f$ case.  Computed with
+ * @ref GnssProcessor::NetworkCarryVce "NetworkCarryVce", whose own constant is the @f$b=1@f$ case.  Computed with
  * the recurrence @f$\psi(x+1)=\psi(x)+1/x@f$ from the closed forms
  * @f$\psi(1)=-\gamma@f$ and @f$\psi(1/2)=-\gamma-2\ln 2@f$, so it is exact for
  * every integer @p b; there is no table that could clamp.
  *
- * @param b Degrees of freedom (block size); @c b<=1 returns @ref kBlockChi2GeoMean1.
+ * @param b Degrees of freedom (block size); @c b<=1 returns @ref GnssProcessor::kBlockChi2GeoMean1 "kBlockChi2GeoMean1".
+ * @return @f$2e^{\psi(b/2)}@f$, dimensionless and positive; 0.2807 at @c b=1, 1.123 at @c b=2.
  */
 inline double blockChi2GeoMean(int b) {
     if (b <= 1) return kBlockChi2GeoMean1;                 // 2 exp(psi(1/2))
@@ -212,7 +213,17 @@ public:
     /// bins") so both CSVs have one shape and one reader.  The unit differs;
     /// see the file banner before comparing occupancies.
     static constexpr int kLadderBins   = NetworkPriorResidual::kLadderBins;
+    /// Index of the rung at 4 (@c ladder()[3]); the rung whose occupancy is the default report threshold.
     static constexpr int kLadder4Sigma = NetworkPriorResidual::kLadder4Sigma;
+    /**
+     * @brief The fixed exceedance rungs, the same table as the prior-residual census.
+     *
+     * Rung @c k counts blocks whose @f$t_B@f$ (a variance ratio, see the file banner)
+     * exceeds @c ladder()[k].
+     *
+     * @return Reference to the process-wide rung table: @c kLadderBins ascending,
+     *         dimensionless thresholds on @f$t_B@f$.
+     */
     static const std::array<double, kLadderBins>& ladder() {
         return NetworkPriorResidual::ladder();
     }
@@ -249,13 +260,16 @@ public:
         double      max_tow   = -1.0; ///< its TOW.
         bool        max_block_only = false;  ///< whether the worst block was invisible per row.
 
-        /// Fraction of blocks above ladder rung @p k (0 when empty).
+        /// @brief Fraction of blocks above ladder rung @p k (0 when empty).
+        /// @param k Rung index into @c ladder(), 0 to @c kLadderBins-1; any other value returns 0.
+        /// @return @c bins[k] divided by @c n_blocks, in [0,1]; uncheckable blocks stay in the
+        ///         denominator and never in a bin.
         double frac(int k) const {
             if (n_blocks <= 0 || k < 0 || k >= kLadderBins) return 0.0;
             return static_cast<double>(bins[static_cast<std::size_t>(k)])
                  / static_cast<double>(n_blocks);
         }
-        /// Tail-robust calibration indicator: the geometric mean of the
+        /// @brief Tail-robust calibration indicator: the geometric mean of the
         /// @f$\chi^2_1@f$-equivalent standardized block statistic.  A value of 1.0
         /// means the scale has converged, for any mix of block sizes.
         ///
@@ -267,16 +281,24 @@ public:
         /// equivalent by @ref kBlockChi2GeoMean1 removes that dependence, which
         /// makes this column comparable across families, runs and block sizes.  It
         /// plays the role of @c NetworkPriorResidual::Ladder::geoT2.
+        ///
+        /// @return Dimensionless geometric-mean ratio (1.0 when the scale has converged);
+        ///         0 when no block has been folded into the geometric channel (@c n_geo = 0).
         double geoT() const {
             if (n_geo <= 0) return 0.0;
             return std::exp(sum_log_t / static_cast<double>(n_geo)) / kBlockChi2GeoMean1;
         }
+        /// @brief Fraction of reported blocks that no row-level test flags.
+        ///
         /// block_only / blocks_flagged, the headline number of INC-3.  Per SPEC
         /// §8.4, this number decides whether a response is worth writing.
+        ///
+        /// @return @c n_block_only divided by @c n_reported, in [0,1]; 0 when no block was reported.
         double blockOnlyFraction() const {
             if (n_reported <= 0) return 0.0;
             return static_cast<double>(n_block_only) / static_cast<double>(n_reported);
         }
+        /// @brief Clear every counter and the worst-block identity to a default-constructed ladder.
         void reset() { *this = Ladder{}; }
     };
 
@@ -311,10 +333,12 @@ public:
         double row_t      = 0.0;    ///< the loudest row's @f$t_i@f$.
         double sigma0     = 1.0;    ///< the frozen @f$\hat\sigma_0@f$ this block was scaled by.
         int    family     = -1;     ///< family index (constellation bin), -1 if not live.
-        PriorResidualCorrob corrob = PriorResidualCorrob::NoEvidence;
+        PriorResidualCorrob corrob = PriorResidualCorrob::NoEvidence;  ///< raw-observable verdict joined to the block; NoEvidence unless corroboration is armed and a resolver is installed.
     };
 
     /**
+     * @brief Construct the block census for a set of constellation families.
+     *
      * @param families      Family names: constellation letters ("G", "E", ...).
      *                      SPEC §4 asks for ladders "per (family x label)".  The
      *                      prior-residual census's families are carry families
@@ -354,16 +378,24 @@ public:
                      /*seed_floor_m2=*/1.0, /*seed_rate_m2ps=*/0.0),
           state_(families_.size()) {}
 
+    /// @brief Whether the census is armed.
     /// @return Whether any family is live (an unarmed instance is inert).
     bool enabled() const { return !families_.empty(); }
+    /** @brief Family names, indexed by family index. @return The list given at construction; empty when inert. */
     const std::vector<std::string>& families() const { return families_; }
+    /** @brief Report threshold on @f$t_B@f$. @return Dimensionless variance ratio; positive (4.0 when unset). */
     double reportSigma() const { return report_sigma_; }
+    /** @brief Whether the raw-observable corroboration join is armed. @return True when corroboration was requested. */
     bool   corroborating() const { return corroborate_; }
+    /// @brief Whether the estimable form of the block test is selected.
     /// @return Whether the sweep tests the estimable part of each block (the file banner).
     bool   estimable() const { return estimable_eps_ > 0.0; }
+    /// @brief Redundancy-number floor of the estimable form.
     /// @return The floor on a kept direction's redundancy number; 0 when not estimable.
     double estimableEps() const { return estimable_eps_; }
 
+    /// @brief Family index of a satellite's constellation.
+    /// @param sat Satellite id such as "G07"; an empty view maps to -1.
     /// @return Family index for @p sat, or -1 when its constellation was not
     ///         requested.  A family is named by its constellation's one-letter key
     ///         ("G", "E", ...).
@@ -375,10 +407,16 @@ public:
         return -1;
     }
 
-    /// Install the raw-observable verdict resolver (INC-2).  Injected rather than
+    /// @brief Install the raw-observable verdict resolver (INC-2).
+    ///
+    /// Injected rather than
     /// passed through the call chain, as in the prior-residual census: the slip-QC
     /// channel is a local of the driver translation unit, and threading it through
     /// the census seam would add a diagnostic dependency to four signatures.
+    ///
+    /// @param fn Resolver from (station index, satellite id) to the block's
+    ///           @ref PriorResidualCorrob verdict; called once per accepted block, and only
+    ///           while corroboration is armed.
     void setCorroborator(std::function<PriorResidualCorrob(int, std::string_view)> fn) {
         corroborator_ = std::move(fn);
     }
@@ -393,6 +431,10 @@ public:
      * contributed to.  @c clean is always true: a datum-changed epoch is a FRAME
      * population to measure, not one to drop (the prior-residual census passes
      * true for the same reason).
+     *
+     * @param content_time_s Epoch content time (continuous GPS s); drives the forgetting of
+     *                       the calibration accumulator.
+     * @param tow            Epoch GPS time of week (s); stamps the worst-block identity.
      */
     void beginEpoch(double content_time_s, double tow) {
         if (!enabled()) return;
@@ -426,6 +468,8 @@ public:
     /**
      * @brief Update step: fold one (station, satellite) block.
      *
+     * @param in One block as the feed site presents it, every value raw (no
+     *           @f$\hat\sigma_0@f$ applied); scaling by the frozen family sigma0 happens here.
      * @return The outcome, for the caller's events and counters.
      */
     BlockStat addBlock(const Input& in) {
@@ -539,47 +583,96 @@ public:
     }
 
     // --- readout ----------------------------------------------------------
+    /**
+     * @brief This epoch's ladder for one (family, label).
+     * @param f Family index from @ref familyIndex, 0 to @c families().size()-1; not range-checked.
+     * @param l Label the feed site assigned to the blocks.
+     * @return Reference to the live ladder, whose counters beginEpoch() clears each epoch.
+     */
     const Ladder& epochLadder(int f, PriorResidualLabel l) const {
         return state_[static_cast<std::size_t>(f)].epoch[static_cast<std::size_t>(l)];
     }
+    /**
+     * @brief The run-cumulative ladder for one (family, label).
+     * @param f Family index from @ref familyIndex, 0 to @c families().size()-1; not range-checked.
+     * @param l Label the feed site assigned to the blocks.
+     * @return Reference to the live ladder, accumulated since construction.
+     */
     const Ladder& runLadder(int f, PriorResidualLabel l) const {
         return state_[static_cast<std::size_t>(f)].run[static_cast<std::size_t>(l)];
     }
+    /**
+     * @brief The family's @f$\hat\sigma_0@f$ frozen for this epoch.
+     * @param f Family index; not range-checked.
+     * @return Dimensionless scale that standardizes @f$T_B@f$ into @f$t_B@f$; 1.0 while the
+     *         family is below warm-up.
+     */
     double    sigma0(int f) const     { return state_[static_cast<std::size_t>(f)].sigma0; }
+    /**
+     * @brief Whether the family's sigma0 is a calibration or the warm-up fallback.
+     * @param f Family index; not range-checked.
+     * @return True when enough blocks have been folded for @ref sigma0 to be trusted; false when
+     *         it is the raw-formal value 1.0.
+     */
     bool      sigma0Warm(int f) const { return state_[static_cast<std::size_t>(f)].warm; }
+    /**
+     * @brief Forgetting-weighted block count behind the family's calibration.
+     * @param f Family index; not range-checked.
+     * @return Effective number of blocks (not rows) in the sigma0 accumulator at the last beginEpoch().
+     */
     double    sigma0Neff(int f) const { return state_[static_cast<std::size_t>(f)].n_eff; }
+    /** @brief Epochs beginEpoch() has advanced. @return Count since construction (the seam-ran denominator); 0 when inert. */
     long long epochs() const          { return n_epochs_; }
+    /** @brief Blocks folded this epoch. @return Count including uncheckable blocks, over all families. */
     long long epochBlocks() const     { return ep_blocks_; }
+    /** @brief Uncheckable blocks this epoch. @return Count of blocks whose cofactor was singular or non-finite. */
     long long epochUncheckable() const{ return ep_uncheckable_; }
+    /** @brief Blocks over the report threshold this epoch. @return Count with @f$t_B@f$ above @ref reportSigma. */
     long long epochReported() const   { return ep_reported_; }
+    /** @brief Block-only blocks this epoch. @return Count of reported blocks whose every row was individually quiet. */
     long long epochBlockOnly() const  { return ep_block_only_; }
+    /** @brief Worst checkable block this epoch. @return Largest @f$t_B@f$ (dimensionless); 0 when no checkable block was folded. */
     double    epochMaxT() const       { return ep_max_t_; }
+    /** @brief Time of the latest epoch. @return GPS time of week (s) given to beginEpoch(); -1 before the first call. */
     double    lastTow() const         { return last_tow_; }
 
-    /// Run-cumulative block-size histogram; index k counts blocks with b = k+1,
+    /// @brief Run-cumulative block-size histogram; index k counts blocks with b = k+1,
     /// and the last cell is the "> kBlockBaardaMaxB" overflow.
+    /// @return Reference to the @c kBlockBaardaMaxB+1 cell array of block counts; all zero before the first block.
     const std::array<long long, kBlockBaardaMaxB + 1>& sizeHistogram() const {
         return b_hist_;
     }
+    /** @brief Blocks mixing code and phase rows. @return Run-cumulative count of blocks with both kinds of row. */
     long long runMixedBlocks() const     { return n_mixed_; }
+    /** @brief Blocks made only of code rows. @return Run-cumulative count. */
     long long runCodeOnlyBlocks() const  { return n_code_only_; }
+    /** @brief Blocks made only of phase rows. @return Run-cumulative count. */
     long long runPhaseOnlyBlocks() const { return n_phase_only_; }
 
-    /// Run-cumulative count of blocks of @p b rows (the overflow cell for @p b above
+    /// @brief Run-cumulative count of blocks of @p b rows (the overflow cell for @p b above
     /// @ref kBlockBaardaMaxB) that kept @p dof directions.  Filled only by the estimable
     /// form; 0 for a whole-block run and for any index out of range.
+    /// @param b   Block size in rows, at least 1; larger than @c kBlockBaardaMaxB selects the overflow cell.
+    /// @param dof Directions kept by the estimable form, 0 to @c kBlockBaardaMaxB.
+    /// @return Number of blocks in that (rows, kept directions) cell.
     long long rankHistogram(int b, int dof) const {
         if (b < 1 || dof < 0 || dof > kBlockBaardaMaxB) return 0;
         return rank_hist_[static_cast<std::size_t>(std::min(b, kBlockBaardaMaxB + 1) - 1)]
                          [static_cast<std::size_t>(dof)];
     }
-    /// Blocks of @p b rows whose whitened-cofactor spectrum was recorded.
+    /// @brief Blocks of @p b rows whose whitened-cofactor spectrum was recorded.
+    /// @param b Block size in rows, at least 1; larger than @c kBlockBaardaMaxB selects the overflow cell.
+    /// @return Number of recorded spectra (estimable form only); 0 for @p b below 1.
     long long spectrumCount(int b) const {
         if (b < 1) return 0;
         return spectrum_n_[static_cast<std::size_t>(std::min(b, kBlockBaardaMaxB + 1) - 1)];
     }
-    /// Mean of the @p k-th smallest redundancy number (0-based) over the blocks of @p b
+    /// @brief Mean of the @p k-th smallest redundancy number (0-based) over the blocks of @p b
     /// rows: the typical shape of the cofactor's spectrum, absorbed directions first.
+    /// @param b Block size in rows, at least 1; larger than @c kBlockBaardaMaxB selects the overflow cell.
+    /// @param k Zero-based position in the ascending eigenvalue list, 0 to @c kBlockBaardaMaxB-1.
+    /// @return Mean eigenvalue of the whitened cofactor (a redundancy number in [0,1]); 0 when
+    ///         no spectrum was recorded for @p b or @p k is out of range.
     double spectrumMean(int b, int k) const {
         const long long n = spectrumCount(b);
         if (n <= 0 || k < 0 || k >= kBlockBaardaMaxB) return 0.0;
@@ -587,13 +680,16 @@ public:
                             [static_cast<std::size_t>(k)] / static_cast<double>(n);
     }
 
-    /// Blocks over the whole run in one family, all labels.
+    /// @brief Blocks over the whole run in one family, all labels.
+    /// @param f Family index from @ref familyIndex; not range-checked.
+    /// @return Run-cumulative block count of the family, uncheckable blocks included.
     long long runBlocks(int f) const {
         long long n = 0;
         for (int l = 0; l < kPriorResidualLabels; ++l)
             n += runLadder(f, static_cast<PriorResidualLabel>(l)).n_blocks;
         return n;
     }
+    /** @brief Blocks over the whole run in every family and label. @return Run-cumulative block count. */
     long long runBlocksTotal() const {
         long long n = 0;
         for (std::size_t f = 0; f < families_.size(); ++f) n += runBlocks(static_cast<int>(f));
@@ -652,19 +748,20 @@ private:
 /// identity is what makes the finding usable (invariant #4): a ladder occupancy
 /// without a name cannot be acted on or refuted.
 struct BlockBaardaHit {
-    int                 station = -1;
-    std::string         sat;
-    int                 b = 0;
+    int                 station = -1;  ///< station index (roster index, not a name).
+    std::string         sat;           ///< satellite id, e.g. "G07".
+    int                 b = 0;         ///< block size (rows in the block).
     int                 dof = 0;       ///< directions tested when the estimable form dropped some; 0 = all @ref b.
     double              t = 0.0;       ///< @f$t_B@f$.
     double              row_t = 0.0;   ///< the loudest single row's @f$t_i@f$ (the row tier's view).
     double              T = 0.0;       ///< raw @f$T_B@f$ (before @f$\hat\sigma_0@f$).
-    double              sigma0 = 1.0;
-    int                 n_code = 0, n_phase = 0;
+    double              sigma0 = 1.0;  ///< the frozen family @f$\hat\sigma_0@f$ the block was scaled by (1.0 when raw formal).
+    int                 n_code = 0,   ///< code rows in the block.
+                        n_phase = 0;  ///< phase rows in the block.
     bool                block_only = false;  ///< loud block, every row individually quiet (INC-3).
     bool                raw_formal = false;  ///< family had not warmed up.
-    PriorResidualLabel  label  = PriorResidualLabel::Clean;
-    PriorResidualCorrob corrob = PriorResidualCorrob::NoEvidence;
+    PriorResidualLabel  label  = PriorResidualLabel::Clean;  ///< label assigned at the feed site.
+    PriorResidualCorrob corrob = PriorResidualCorrob::NoEvidence;  ///< raw-observable verdict joined to the block (NoEvidence unless corroboration is armed).
 };
 
 /// Run-total tallies (standing invariant #4, statistical form).  Without
@@ -712,7 +809,7 @@ struct BlockEstimableForm {
  * squared standardized components.  A pure function of its arguments, so the unit
  * tests drive it with cofactors of known spectrum.
  *
- * @param Q    The @f$b\times b@f$ residual cofactor (@ref NetworkNormalEquations::blockResidualCofactor).
+ * @param Q    The @f$b\times b@f$ residual cofactor (@ref GnssProcessor::NetworkNormalEquations::blockResidualCofactor "NetworkNormalEquations::blockResidualCofactor").
  * @param w    The block's row information weights, @f$1/\sigma_i^2@f$.
  * @param e    The block's post-fit residuals.
  * @param eps  Floor on a kept direction's redundancy number; use the row census's.
@@ -745,8 +842,8 @@ struct BlockBaardaCofactor {
  * excluded because, on a within-epoch re-solve, the assembly's coupling rows are
  * re-whitened in a copy and no longer describe the system that was solved.
  *
- * @param acc             The run accumulator (@ref NetworkBlockBaarda::beginEpoch already called).
- * @param kernel          Solved arrowhead kernel (@ref NetworkNormalEquations::blockResidualCofactor).
+ * @param acc             The run accumulator (@ref GnssProcessor::NetworkBlockBaarda::beginEpoch "NetworkBlockBaarda::beginEpoch" already called).
+ * @param kernel          Solved arrowhead kernel (@ref GnssProcessor::NetworkNormalEquations::blockResidualCofactor "NetworkNormalEquations::blockResidualCofactor").
  * @param slot            This station's kernel slot (@c est_index_of, never the roster index).
  * @param station_index   Roster index, for identity only.
  * @param R               The station assembly (row stack).
@@ -765,7 +862,7 @@ struct BlockBaardaCofactor {
  *                        precedence, per SPEC §4's "union of its rows' labels" rule.
  * @param tallies         [in/out] run totals.
  * @param hits            [out] reportable blocks, appended.
- * @param cofactors       The station's cofactors from @ref networkBlockBaardaCofactors, or null
+ * @param cofactors       The station's cofactors from @ref GnssProcessor::networkBlockBaardaCofactors "networkBlockBaardaCofactors", or null
  *                        (the default) to compute each block's cofactor here.
  */
 void networkBlockBaardaSweepStation(NetworkBlockBaarda& acc,
@@ -783,7 +880,7 @@ void networkBlockBaardaSweepStation(NetworkBlockBaarda& acc,
                                     const std::vector<BlockBaardaCofactor>* cofactors = nullptr);
 
 /**
- * @brief The residual cofactors @ref networkBlockBaardaSweepStation needs for one station,
+ * @brief The residual cofactors @ref GnssProcessor::networkBlockBaardaSweepStation "networkBlockBaardaSweepStation" needs for one station,
  *        computed ahead of the sweep (@c network.parallel_redundancy_census).
  *
  * The same blocks, in the same order, and the same @c blockResidualCofactor call the sweep makes:
@@ -792,7 +889,17 @@ void networkBlockBaardaSweepStation(NetworkBlockBaarda& acc,
  * (@p acc through const queries), so the census can compute several stations at once; the sweep
  * then reads the list through its @p cofactors argument and is otherwise unchanged.
  *
- * @return One entry per tested block, in the sweep's block order.
+ * @param acc       The run accumulator, read through const queries (whether it is armed and
+ *                  which families are requested).
+ * @param kernel    Solved arrowhead kernel (@ref GnssProcessor::NetworkNormalEquations::blockResidualCofactor "NetworkNormalEquations::blockResidualCofactor").
+ * @param slot      This station's kernel slot (@c est_index_of, never the roster index).
+ * @param R         The station assembly (row stack).
+ * @param cls       Per-row classes from the census's classifier.
+ * @param sat       Per-row satellite from the same classifier ("" = unnamed).
+ * @param resid     Post-fit residuals @f$y - A_s x_s - A_r x_r@f$, in @c R.y's row order.
+ * @param cov_free  Datum-frame shared covariance, built once by the census.
+ * @return One entry per tested block, in the sweep's block order.  Empty when the accumulator is
+ *         not armed or the residual, class or satellite vectors do not cover the rows.
  */
 std::vector<BlockBaardaCofactor> networkBlockBaardaCofactors(const NetworkBlockBaarda& acc,
                                                              const NetworkNormalEquations& kernel,
@@ -807,18 +914,21 @@ std::vector<BlockBaardaCofactor> networkBlockBaardaCofactors(const NetworkBlockB
  * @brief Whether a block's residual cofactor is safe to invert.
  *
  * The uncheckable test of SPEC §3, exposed so the unit tests can drive it
- * directly.  @ref NetworkNormalEquations::blockResidualCofactor does not clamp, so
+ * directly.  @ref GnssProcessor::NetworkNormalEquations::blockResidualCofactor "NetworkNormalEquations::blockResidualCofactor" does not clamp, so
  * a fully-leveraged block arrives singular and is counted rather than inverted.
  *
  * @param Q          The @f$b\times b@f$ residual cofactor.
  * @param rcond_eps  Relative conditioning floor on the LDLᵀ pivots.
  * @param singular   [out] set when the conditioning test rejected it.
  * @param nonfinite  [out] set when an entry was not finite.
+ * @return true when the cofactor is square, finite and every LDLᵀ pivot is positive with the
+ *         smallest above @p rcond_eps times the largest; false when it is singular, ill
+ *         conditioned or not finite (@p singular or @p nonfinite then say which).
  */
 bool blockCofactorIsCheckable(const Eigen::MatrixXd& Q, double rcond_eps,
                               bool* singular, bool* nonfinite);
 
-/// Relative pivot floor for @ref blockCofactorIsCheckable.  A block whose smallest
+/// Relative pivot floor for @ref GnssProcessor::blockCofactorIsCheckable "blockCofactorIsCheckable".  A block whose smallest
 /// LDLᵀ pivot is more than 10 decades below its largest is numerically
 /// rank-deficient at double precision, and its @f$T_B@f$ would be dominated by
 /// round-off in the direction the data does not constrain.
@@ -853,9 +963,13 @@ struct NetworkEpoch;            // network/driver/Epoch.hpp
  */
 void networkBlockBaardaEmit(NetworkRun& run, const NetworkEpoch& ep);
 
-/// Run-end readout (invariant #4): denominators first, then the ladders, then the
+/// @brief Run-end readout (invariant #4): denominators first, then the ladders, then the
 /// INC-3 fraction, which SPEC §8.4 makes the number that decides whether a response
 /// is worth writing.
+/// @param ctx       The run context: the block-Baarda accumulator and tallies are read.
+/// @param log       The network logger the readout is written to.
+/// @param stations  The station roster, read only to name the station of the largest block
+///                  statistic.
 void networkBlockBaardaRunEnd(const NetworkRunContext& ctx,
                               const std::shared_ptr<spdlog::logger>& log,
                               const std::vector<NetStation>& stations);

@@ -35,7 +35,7 @@
  * A cell is the rows of one satellite (one line of sight, LOS) at one station.
  * Rows of class @c iono_sh_row tie the spherical-harmonic (SH) ionosphere model to
  * the slant ionosphere states.  They carry no receiver clock and are not centred
- * (m ≡ 0).  A type with fewer than @ref kNetPrefitMinTypeRows rows has no
+ * (m ≡ 0).  A type with fewer than @ref GnssProcessor::kNetPrefitMinTypeRows "kNetPrefitMinTypeRows" rows has no
  * trustworthy centre: the type is skipped for that station-epoch and the skip is
  * counted (it is never treated as m = 0).
  *
@@ -147,7 +147,7 @@ unsigned parseDataClassMask(const std::string& spec,
 
 /// @brief Human-readable rendering of a DATA-class mask, as the class names joined
 ///        by `+` ("obs_code+iono_sh_row"), or "none" for an empty mask.
-/// @param mask A class mask (see @ref dataClassBit).
+/// @param mask A class mask (see @ref GnssProcessor::dataClassBit "dataClassBit").
 /// @return The rendering.
 std::string dataClassMaskName(unsigned mask);
 
@@ -226,10 +226,10 @@ struct PrefitStationCentres {
  * @brief Per-type robust centres of one station's DATA rows.
  *
  * Centred types are @c obs_code / @c obs_phase / @c obs_other (median of @c y,
- * requiring @ref kNetPrefitMinTypeRows rows); @c iono_sh_row is not centred
+ * requiring @ref GnssProcessor::kNetPrefitMinTypeRows "kNetPrefitMinTypeRows" rows); @c iono_sh_row is not centred
  * (m ≡ 0) because it carries no receiver clock, and it has a usable centre
  * whenever it has one finite row.  Rows with a non-finite y or w never enter a
- * median.  The rows are classified from their tags (@ref classifyRow).
+ * median.  The rows are classified from their tags (@ref GnssProcessor::classifyRow "classifyRow").
  *
  * @param R The station's assembled block, with its row tags.
  * @return The per-type centres.
@@ -239,7 +239,7 @@ PrefitStationCentres prefitStationCentres(const StationAssembly& R);
 /// @brief Standardized prefit deviation @f$s = |y - m|\sqrt{\max(w,0)}@f$.
 /// @param y Prefit innovation of the row.
 /// @param w Information weight of the row.
-/// @param m Robust centre of the row's type (see @ref prefitStationCentres).
+/// @param m Robust centre of the row's type (see @ref GnssProcessor::prefitStationCentres "prefitStationCentres").
 /// @return s.  Non-finite inputs yield 0 (the caller counts those separately
 ///         instead of propagating a NaN into a maximum).
 double prefitStandardizedDeviation(double y, double w, double m);
@@ -258,7 +258,7 @@ double prefitStandardizedDeviation(double y, double w, double m);
  *  - @c obs_phase should stay out of the mask (the default of
  *    @c network.h_sigma0_classes is "code,sh,other"): phase prefit innovations are
  *    arc-specific, not a common-mode population;
- *  - pin-regime rows (w ≥ @ref kNetPrefitPinWeight) are excluded;
+ *  - pin-regime rows (w ≥ @ref GnssProcessor::kNetPrefitPinWeight "kNetPrefitPinWeight") are excluded;
  *  - rows of a type with no usable centre are excluded (the census walk counts
  *    these);
  *  - cells born this epoch are excluded where the row's tag names the satellite
@@ -269,7 +269,7 @@ double prefitStandardizedDeviation(double y, double w, double m);
  *    excluded this way, although their tags name their lines of sight: they are
  *    structural rows, not per-cell births.
  *
- * It runs before the solve (see @ref networkCensusSigma0), so every H site,
+ * It runs before the solve (see @ref GnssProcessor::networkCensusSigma0 "networkCensusSigma0"), so every H site,
  * including the pre-solve observability-gate withhold, reads the same per-epoch
  * value.  Returns 0.0 on an empty pool, which the H record reads as "unavailable".
  * Measure-only: reads @p asm_res, writes nothing.
@@ -279,7 +279,7 @@ double prefitStandardizedDeviation(double y, double w, double m);
  * @param est          The estimator (shared-column count).
  * @param asm_res      The epoch's station assemblies.
  * @param est_index_of Station index to estimator slot (-1 = not folded this epoch).
- * @param class_mask   DATA classes to pool (see @ref parseDataClassMask).
+ * @param class_mask   DATA classes to pool (see @ref GnssProcessor::parseDataClassMask "parseDataClassMask").
  * @return The pooled σ̂₀, or 0.0 when no row qualifies.
  */
 double networkPrefitSigma0(const NetworkRunContext& ctx,
@@ -292,12 +292,12 @@ double networkPrefitSigma0(const NetworkRunContext& ctx,
 /**
  * @brief Structural fuse: cap the weight of one station's over-threshold DATA rows.
  *
- * Called from the serial stage @ref networkPrefitFuseEpoch, the one point where
+ * Called from the serial stage @ref GnssProcessor::networkPrefitFuseEpoch "networkPrefitFuseEpoch", the one point where
  * every row appender has finished writing @c R.w and the station is not yet added
  * to the estimator.  The event order is therefore deterministic and independent of
  * the thread count.
  *
- * Exclusions, all counted: rows with @c w >= @ref kNetPrefitPinWeight (pin /
+ * Exclusions, all counted: rows with @c w >= @ref GnssProcessor::kNetPrefitPinWeight "kNetPrefitPinWeight" (pin /
  * constraint regime), rows whose type had no usable centre, and rows whose class
  * is outside @c network.prefit_fuse_classes.  Single-frequency cells are not
  * excluded as a class: a 10³σ common-removed excursion is ≳1800 TECU per 30 s
@@ -311,7 +311,7 @@ double networkPrefitSigma0(const NetworkRunContext& ctx,
  *                 another width is skipped.
  * @param station  Station name (event identity).
  * @param R        [in/out] the station's assembled block; only @c w is written.  Its
- *                 rows are classified from their tags (@ref classifyRow).
+ *                 rows are classified from their tags (@ref GnssProcessor::classifyRow "classifyRow").
  * @param s_fuse   The threshold @f$S_\text{fuse}@f$ (> 0; the caller gates on it).
  * @return         Rows capped.
  */

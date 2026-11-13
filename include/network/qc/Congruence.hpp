@@ -20,9 +20,9 @@
  *
  *  - the prefit census's median polish removes the station's common effect, which
  *    is most of what a coordinate error is;
- *  - per-row w-tests (@ref NetworkPriorResidual, RAIM) see only what remains after
+ *  - per-row w-tests (@ref GnssProcessor::NetworkPriorResidual "NetworkPriorResidual", RAIM) see only what remains after
  *    the receiver clock, the ZWD and the ambiguities have absorbed what they can;
- *  - the (station, satellite) block test (@ref NetworkBlockBaarda) pools one line
+ *  - the (station, satellite) block test (@ref GnssProcessor::NetworkBlockBaarda "NetworkBlockBaarda") pools one line
  *    of sight, while a coordinate error is spread across all of them, so its
  *    per-block share is small;
  *  - the measurement-admission screen tests observations, not geometry.
@@ -40,10 +40,10 @@
  * ## The statistic
  *
  * For station @f$i@f$ on a swept epoch let @f$B@f$ be its `obs_code` + `obs_phase`
- * rows (@ref NetRowClass 0–1; an SH↔slant tie has no position dependence),
+ * rows (@ref GnssProcessor::NetRowClass "NetRowClass" 0–1; an SH↔slant tie has no position dependence),
  * @f$\tilde e_B@f$ the post-fit residuals, @f$P_B=\mathrm{diag}(w)@f$,
  * @f$Q_{\tilde e,B}@f$ the @f$b\times b@f$ residual cofactor
- * (@ref NetworkNormalEquations::blockResidualCofactor, the kernel the block test
+ * (@ref GnssProcessor::NetworkNormalEquations::blockResidualCofactor "NetworkNormalEquations::blockResidualCofactor", the kernel the block test
  * uses, applied here to an arbitrary row set of one station; @f$b@f$ is 30–200
  * here, against @f$\le 8@f$ in the block test), and @f$H_B@f$ the @f$b\times 3@f$
  * position Jacobian in ENU:
@@ -81,7 +81,7 @@
  *    freedom, so the absorption is measured.  (SPEC §2 writes the denominator as
  *    @f$3\hat\sigma_0^2@f$; @f$q@f$ equals 3 when the geometry is full-rank and is
  *    the correct generalization when it is not: dividing by 3 on a rank-2 station
- *    would leave @f$T@f$ one third too small.  @ref CongruenceSolve::dof carries
+ *    would leave @f$T@f$ one third too small.  @ref GnssProcessor::CongruenceSolve::dof "CongruenceSolve::dof" carries
  *    @f$q@f$, so each row states its regime.)
  * 3. **Phase rows need no special case.**  Under `carry_invariant` their
  *    @f$Q_{\tilde e}@f$ rows are @f$\approx 0@f$ (a free ambiguity fits its own
@@ -111,7 +111,7 @@
  * ## Reading the ladder: @f$t_i@f$ is a variance ratio, not a sigma
  *
  * The rungs are shared with the prior-residual and block-Baarda censuses
- * (@ref NetworkPriorResidual::ladder) so one reader handles all three files, but
+ * (@ref GnssProcessor::NetworkPriorResidual::ladder "NetworkPriorResidual::ladder") so one reader handles all three files, but
  * the unit differs.  In those censuses @f$|t|@f$ is a standardized residual, so
  * rung 4 means four sigma.  Here @f$T_i@f$ includes the @f$1/q@f$, so
  * @f$E[t_i]=1@f$ under @f$H_0@f$ for every @f$q@f$, and rung 4 means the station's
@@ -119,11 +119,11 @@
  *
  * ## @f$\hat\sigma_0@f$: one network-wide family
  *
- * @ref NetworkCarryVce, predict-then-update, never censored, with the block test's
+ * @ref GnssProcessor::NetworkCarryVce "NetworkCarryVce", predict-then-update, never censored, with the block test's
  * two corrections applied unchanged because both are required for @f$b>1@f$:
  * the accumulator inverts the geometric mean of a @f$\chi^2_1@f$ variate
  * (@c kChi2GeoMean), so a @f$\chi^2_q@f$ statistic is fed as its
- * @f$\chi^2_1@f$-equivalent via @ref blockChi2GeoMean; and @c seed_floor_m2 is
+ * @f$\chi^2_1@f$-equivalent via @ref GnssProcessor::blockChi2GeoMean "blockChi2GeoMean"; and @c seed_floor_m2 is
  * passed as 1.0 (the 0.0 default becomes 1e-6, which gives
  * @f$\hat\sigma_0=10^{-3}@f$ on an unwarmed family and inflates every @f$t_i@f$ by
  * @f$10^6@f$).
@@ -137,9 +137,9 @@
  *
  * ## Isolation and testing
  *
- * Pure numeric leaf in the style of @ref NetworkCarryVce and @ref NetworkBlockBaarda:
+ * Pure numeric leaf in the style of @ref GnssProcessor::NetworkCarryVce "NetworkCarryVce" and @ref GnssProcessor::NetworkBlockBaarda "NetworkBlockBaarda":
  * header-only, no ApplicationNetwork coupling, no station state, no I/O.  The
- * statistic (@ref congruenceStatistic) is a free function over dense matrices, so
+ * statistic (@ref GnssProcessor::congruenceStatistic "congruenceStatistic") is a free function over dense matrices, so
  * `tests/network/test_station_congruence.cpp` drives it against an independent dense-GLS
  * oracle.  The per-epoch trace, event and aggregate emission lives in
  * @c network/qc/Congruence.cpp, the only translation unit here that knows about
@@ -180,7 +180,7 @@ class NetworkNormalEquations;
 /// Relative eigenvalue floor on @f$M@f$: a direction whose eigenvalue is more than
 /// ten decades below the largest carries no information at double precision and is
 /// reported as unobservable rather than inverted.  Same decade, for the same
-/// reason, as @ref kBlockCofactorRcondEps.
+/// reason, as @ref GnssProcessor::kBlockCofactorRcondEps "kBlockCofactorRcondEps".
 inline constexpr double kCongruenceEigenRelEps = 1e-10;
 
 /// How much of an ENU axis may lie in @f$M@f$'s null space before that axis's MDB
@@ -219,7 +219,7 @@ inline constexpr const char* kCongruenceFamily = "net";
 // ===========================================================================
 
 /// Datum-frame label of one station-epoch.  Separate from
-/// @ref PriorResidualLabel on purpose: its @c Responded tier is an arc-level
+/// @ref GnssProcessor::PriorResidualLabel "PriorResidualLabel" on purpose: its @c Responded tier is an arc-level
 /// estimator response with no station-level meaning, and a third ladder here would
 /// always be empty.  SPEC §3 (INC-2) specifies this split, and standing invariant
 /// #7 motivates it: a datum re-realization is an event at both edges, so its
@@ -229,7 +229,9 @@ enum class CongruenceLabel : unsigned char { Clean = 0, Frame = 1 };
 /// Number of @ref CongruenceLabel values.
 inline constexpr int kCongruenceLabels = 2;
 
-/// Stable wire name of a @ref CongruenceLabel.  Never null.
+/// @brief Stable wire name of a @ref GnssProcessor::CongruenceLabel "CongruenceLabel".  Never null.
+/// @param l Label to name.
+/// @return Static string "FRAME" for @c Frame and "CLEAN" for every other value.
 inline const char* congruenceLabelName(CongruenceLabel l) {
     return (l == CongruenceLabel::Frame) ? "FRAME" : "CLEAN";
 }
@@ -274,13 +276,13 @@ struct CongruenceSolve {
  *                  sign convention in the file banner.
  * @param w         per-row information weights @f$1/\sigma^2@f$ (length @c b).
  * @param Q         @f$b\times b@f$ residual cofactor
- *                  (@ref NetworkNormalEquations::blockResidualCofactor).  Used
+ *                  (@ref GnssProcessor::NetworkNormalEquations::blockResidualCofactor "NetworkNormalEquations::blockResidualCofactor").  Used
  *                  forward only and never inverted, so a rank-deficient @p Q is
  *                  admissible (and common).
  * @param e         post-fit residuals @f$y - A_s x_s - A_r x_r@f$ (length @c b).
- * @param delta_0   Baarda non-centrality from @ref baardaDelta0.
- * @param eig_eps   relative eigenvalue floor (@ref kCongruenceEigenRelEps).
- * @param axis_tol  null-projection tolerance (@ref kCongruenceAxisNullTol).
+ * @param delta_0   Baarda non-centrality from @ref GnssProcessor::baardaDelta0 "baardaDelta0".
+ * @param eig_eps   relative eigenvalue floor (@ref GnssProcessor::kCongruenceEigenRelEps "kCongruenceEigenRelEps").
+ * @param axis_tol  null-projection tolerance (@ref GnssProcessor::kCongruenceAxisNullTol "kCongruenceAxisNullTol").
  * @return The solve; @c ok is false when the inputs are unusable or @f$M@f$ has
  *         no observable direction at all.
  */
@@ -365,7 +367,10 @@ inline CongruenceSolve congruenceStatistic(
     return out;
 }
 
-/// Median of @p v.  Reorders @p v (partial sort).  NaN for an empty pool.
+/// @brief Median of @p v.  Reorders @p v (partial sort).  NaN for an empty pool.
+/// @param[in,out] v Sample pool, no finiteness check; reordered by @c std::nth_element.
+/// @return The middle value (mean of the two middle values for an even count), in the unit of
+///         the samples; NaN when @p v is empty.
 inline double congruenceMedian(std::vector<double>& v) {
     if (v.empty()) return std::numeric_limits<double>::quiet_NaN();
     const std::size_t n = v.size();
@@ -378,11 +383,15 @@ inline double congruenceMedian(std::vector<double>& v) {
     return 0.5 * (lo + hi);
 }
 
-/// Median absolute deviation of @p v about @p med, scaled to a Gaussian sigma
+/// @brief Median absolute deviation of @p v about @p med, scaled to a Gaussian sigma
 /// (× 1.4826).  The D-family robust convention.  SPEC §3 (INC-2) makes the
 /// median/MAD pair the reported uncertainty because no @f$\sqrt N@f$ reduction
 /// applies: D1 measured @f$K_{eff}(30)\approx 2@f$ on this network, so per-epoch
 /// @f$\hat\delta@f$ samples do not average as white noise.
+/// @param v   Sample pool; non-finite entries are skipped.
+/// @param med Centre to measure deviations from, normally @ref GnssProcessor::congruenceMedian "congruenceMedian" of @p v.
+/// @return Scaled MAD in the unit of the samples; NaN when @p v is empty, @p med is not finite
+///         or no sample is finite.
 inline double congruenceMad(const std::vector<double>& v, double med) {
     if (v.empty() || !std::isfinite(med))
         return std::numeric_limits<double>::quiet_NaN();
@@ -412,7 +421,17 @@ public:
     /// differs (see "Reading the ladder" in the file banner), which matters when
     /// comparing occupancies.
     static constexpr int kLadderBins   = NetworkPriorResidual::kLadderBins;
+    /// Index of the rung at 4 (@c ladder()[3]); the rung whose occupancy is the default report threshold.
     static constexpr int kLadder4Sigma = NetworkPriorResidual::kLadder4Sigma;
+    /**
+     * @brief The fixed exceedance rungs, the same table as the prior-residual census.
+     *
+     * Rung @c k counts station-epochs whose @f$t_i@f$ (a variance ratio, see the file
+     * banner) exceeds @c ladder()[k].
+     *
+     * @return Reference to the process-wide rung table: @c kLadderBins ascending,
+     *         dimensionless thresholds on @f$t_i@f$.
+     */
     static const std::array<double, kLadderBins>& ladder() {
         return NetworkPriorResidual::ladder();
     }
@@ -425,7 +444,7 @@ public:
         long long n_null       = 0;  ///< …with @f$q=0@f$: no direction observable, so no statistic (counted, never inverted).
         long long n_raw_formal = 0;  ///< …reported against @f$\hat\sigma_0=1@f$ because the family had not warmed up (@f$t_i\equiv T_i@f$; flagged in the output).
         long long n_reported   = 0;  ///< …with @f$t_i>@f$ report threshold.
-        std::array<long long, kLadderBins> bins{};  ///< cumulative exceedance: bins[k] = #station-epochs with t_i > ladder()[k].
+        std::array<long long, kLadderBins> bins{};  ///< cumulative exceedance: bins[k] = \#station-epochs with t_i > ladder()[k].
         double    sum_log_t    = 0.0;///< sum of the log of the calibrated @f$\chi^2_1@f$-equivalent (see @ref geoT), not of @f$t_i@f$.
         long long n_geo        = 0;  ///< station-epochs in @ref sum_log_t.
         /// Separability table (INC-3).  Rows: [0] = @f$t_i>@f$ threshold, [1] =
@@ -442,22 +461,28 @@ public:
         Eigen::Vector3d max_delta = Eigen::Vector3d::Zero();  ///< its @f$\hat\delta@f$ (m, ENU).
         int    max_dof = 0;     ///< its observable dimension.
 
-        /// Fraction of station-epochs above ladder rung @p k (0 when empty).
+        /// @brief Fraction of station-epochs above ladder rung @p k (0 when empty).
+        /// @param k Rung index into @c ladder(), 0 to @c kLadderBins-1; any other value returns 0.
+        /// @return @c bins[k] divided by @c n_epochs, in [0,1]; null-geometry station-epochs
+        ///         stay in the denominator and never in a bin.
         double frac(int k) const {
             if (n_epochs <= 0 || k < 0 || k >= kLadderBins) return 0.0;
             return static_cast<double>(bins[static_cast<std::size_t>(k)])
                  / static_cast<double>(n_epochs);
         }
-        /// Tail-robust calibration indicator: the geometric mean of the
+        /// @brief Tail-robust calibration indicator: the geometric mean of the
         /// @f$\chi^2_1@f$-equivalent, standardized statistic, divided by its null
         /// value.  1.0 means the scale has converged, for any mix of @f$q@f$.  The
         /// geometric mean of @f$t_i@f$ itself is not used because its null value
         /// @f$2e^{\psi(q/2)}/q@f$ depends on @f$q@f$, which makes it unreadable
         /// across a population that mixes rank-3 and rank-2 stations.
+        /// @return Dimensionless geometric-mean ratio (1.0 when the scale has converged);
+        ///         0 when no station-epoch has been folded into the geometric channel (@c n_geo = 0).
         double geoT() const {
             if (n_geo <= 0) return 0.0;
             return std::exp(sum_log_t / static_cast<double>(n_geo)) / kBlockChi2GeoMean1;
         }
+        /// @brief Clear every counter and the worst-station-epoch identity to a default-constructed ladder.
         void reset() { *this = Ladder{}; }
     };
 
@@ -470,8 +495,8 @@ public:
 
     /// One station's run state.
     struct StationState {
-        std::array<Ladder, kCongruenceLabels>              run{};
-        std::array<std::vector<Sample>, kCongruenceLabels> samples{};
+        std::array<Ladder, kCongruenceLabels>              run{};  ///< run-cumulative ladder per label.
+        std::array<std::vector<Sample>, kCongruenceLabels> samples{};  ///< retained station-epochs per label, at most @ref kCongruenceMaxSamples each.
         std::array<long long, kCongruenceLabels>           dropped{{0, 0}};  ///< samples past @ref kCongruenceMaxSamples; counted and reported.
     };
 
@@ -500,6 +525,8 @@ public:
     };
 
     /**
+     * @brief Construct the congruence accumulator.
+     *
      * @param armed         whether the screen runs at all (an unarmed instance is
      *                      inert and allocates nothing).
      * @param window_epochs @f$\hat\sigma_0@f$ forgetting window
@@ -528,8 +555,10 @@ public:
                      window_epochs, /*split_by_const=*/false,
                      /*seed_floor_m2=*/1.0, /*seed_rate_m2ps=*/0.0) {}
 
+    /// @brief Whether the screen is armed.
     /// @return Whether the screen is armed (an unarmed instance is inert).
     bool   enabled() const      { return armed_; }
+    /** @brief Report threshold on @f$t_i@f$. @return Dimensionless variance ratio; positive (4.0 when unset). */
     double reportSigma() const  { return report_sigma_; }
 
     /**
@@ -541,6 +570,10 @@ public:
      * station is never standardized by a calibration it contributed to.  @c clean
      * is always true: a datum-changed epoch is a Frame population to be measured,
      * not dropped, and the label split exists to keep it separate.
+     *
+     * @param content_time_s Epoch content time (continuous GPS s); drives the forgetting of
+     *                       the calibration accumulator.
+     * @param tow            Epoch GPS time of week (s); stamps the worst-station-epoch identity.
      */
     void beginEpoch(double content_time_s, double tow) {
         if (!armed_) return;
@@ -568,6 +601,9 @@ public:
 
     /**
      * @brief Update step: fold one station-epoch.
+     * @param in One station-epoch as the feed site presents it: the raw solve (no
+     *           @f$\hat\sigma_0@f$ applied), its row composition and its label.  A negative
+     *           @c station is ignored.
      * @return What happened, for the caller's events and counters.
      */
     StationStat addStation(const Input& in) {
@@ -669,23 +705,39 @@ public:
     }
 
     // --- readout ----------------------------------------------------------
+    /** @brief The network-wide @f$\hat\sigma_0@f$ frozen for this epoch. @return Dimensionless scale that standardizes @f$T_i@f$ into @f$t_i@f$; 1.0 while below warm-up. */
     double    sigma0() const      { return sigma0_; }
+    /** @brief Whether sigma0 is a calibration or the warm-up fallback. @return True once the calibration cleared the warm-up bar; false while sigma0 is the raw-formal 1.0. */
     bool      sigma0Warm() const  { return warm_; }
+    /** @brief Forgetting-weighted station-epochs behind the calibration. @return Effective count at the last beginEpoch(). */
     double    sigma0Neff() const  { return n_eff_; }
+    /** @brief Epochs beginEpoch() has advanced. @return Count since construction (the seam-ran denominator); 0 when unarmed. */
     long long epochs() const      { return n_epochs_; }
+    /** @brief Station-epochs folded this epoch. @return Count including null-geometry ones. */
     long long epochStations() const   { return ep_stations_; }
+    /** @brief Degenerate station-epochs this epoch. @return Count with fewer than three observable directions (@f$q<3@f$). */
     long long epochDegenerate() const { return ep_degenerate_; }
+    /** @brief Reported station-epochs this epoch. @return Count with @f$t_i@f$ above @ref reportSigma. */
     long long epochReported() const   { return ep_reported_; }
+    /** @brief Worst station-epoch of this epoch. @return Largest @f$t_i@f$ (dimensionless); 0 when none was folded. */
     double    epochMaxT() const   { return ep_max_t_; }
+    /** @brief Time of the latest epoch. @return GPS time of week (s) given to beginEpoch(); -1 before the first call. */
     double    lastTow() const     { return last_tow_; }
+    /** @brief Code rows contracted over the run. @return Run-cumulative count over accepted, non-null station-epochs. */
     long long runCodeRows() const { return n_code_; }
+    /** @brief Phase rows contracted over the run. @return Run-cumulative count over accepted, non-null station-epochs. */
     long long runPhaseRows() const{ return n_phase_; }
+    /** @brief Station-epochs that joined the separability table. @return Count with a block-census verdict; 0 when the block census was not armed. */
     long long separabilityKnown() const { return sep_known_; }
 
-    /// Stations that have been folded at least once, in ascending roster order
+    /// @brief Stations that have been folded at least once, in ascending roster order
     /// (std::map, so the run-end table is reproducible across A/B arms).
+    /// @return Map from station roster index to its run state; empty before the first fold.
     const std::map<int, StationState>& stations() const { return state_; }
 
+    /// @brief Run ladder of one station and label.
+    /// @param sta Station roster index.
+    /// @param l   Label of the station-epochs.
     /// @return Station @p sta's ladder for @p l, or a static empty one.
     const Ladder& runLadder(int sta, CongruenceLabel l) const {
         static const Ladder kEmpty{};
@@ -694,7 +746,9 @@ public:
         return it->second.run[static_cast<std::size_t>(l)];
     }
 
-    /// Station-epochs folded for @p sta over both labels.
+    /// @brief Station-epochs folded for @p sta over both labels.
+    /// @param sta Station roster index.
+    /// @return Count of folded station-epochs (null-geometry ones included); 0 for a station never folded.
     long long stationEpochs(int sta) const {
         long long n = 0;
         for (int l = 0; l < kCongruenceLabels; ++l)
@@ -702,7 +756,10 @@ public:
         return n;
     }
 
-    /// Network-wide 2x2 separability table, summed over stations and labels.
+    /// @brief Network-wide 2x2 separability table, summed over stations and labels.
+    /// @return Counts indexed [row][column]: row 0 = @f$t_i@f$ above the report threshold, row 1 =
+    ///         below; column 0 = the block census flagged no line of sight of the station that
+    ///         epoch, column 1 = it flagged at least one.  All zero unless the block census is armed.
     std::array<std::array<long long, 2>, 2> separability() const {
         std::array<std::array<long long, 2>, 2> c{};
         for (const auto& kv : state_)
@@ -716,8 +773,10 @@ public:
         return c;
     }
 
-    /// Samples past the cap, over every station and label.  Reported at run end so
+    /// @brief Samples past the cap, over every station and label.  Reported at run end so
     /// a truncated median never reads as a whole-run one.
+    /// @return Count of station-epochs not retained for the median/MAD readout because a pool
+    ///         had reached @ref kCongruenceMaxSamples.
     long long droppedSamples() const {
         long long n = 0;
         for (const auto& kv : state_)
@@ -729,10 +788,15 @@ public:
     /// Per-component median and MAD of @f$\hat\delta@f$ for one (station, label).
     /// NaN components when the pool is empty.
     struct DeltaStats {
-        long long n = 0;
-        Eigen::Vector3d med = Eigen::Vector3d::Constant(std::numeric_limits<double>::quiet_NaN());
-        Eigen::Vector3d mad = Eigen::Vector3d::Constant(std::numeric_limits<double>::quiet_NaN());
+        long long n = 0;  ///< retained samples behind the statistics.
+        Eigen::Vector3d med = Eigen::Vector3d::Constant(std::numeric_limits<double>::quiet_NaN());  ///< median of @f$\hat\delta@f$ per ENU component (m).
+        Eigen::Vector3d mad = Eigen::Vector3d::Constant(std::numeric_limits<double>::quiet_NaN());  ///< scaled median absolute deviation per ENU component (m, Gaussian-sigma scale).
     };
+    /// @brief Median and MAD of the retained @f$\hat\delta@f$ samples of one station and label.
+    /// @param sta Station roster index.
+    /// @param l   Label of the station-epochs.
+    /// @return Per-ENU-component median and MAD in metres; @c n is 0 and every component NaN
+    ///         when the station is unknown or has no retained sample.
     DeltaStats deltaStats(int sta, CongruenceLabel l) const {
         DeltaStats o;
         const auto it = state_.find(sta);
@@ -758,10 +822,16 @@ public:
     /// depending on the sort, so the unobservable epochs are reported as their own
     /// count (the rule the MDB analysis follows).
     struct MdbStats {
-        long long n = 0;
-        Eigen::Vector3d med = Eigen::Vector3d::Constant(std::numeric_limits<double>::quiet_NaN());
-        std::array<long long, 3> n_inf{{0, 0, 0}};
+        long long n = 0;  ///< retained samples behind the statistics.
+        Eigen::Vector3d med = Eigen::Vector3d::Constant(std::numeric_limits<double>::quiet_NaN());  ///< median formal MDB per ENU component over the finite samples (m).
+        std::array<long long, 3> n_inf{{0, 0, 0}};  ///< per ENU component, samples whose MDB was infinite (direction not estimable).
     };
+    /// @brief Median formal MDB of the retained samples of one station and label.
+    /// @param sta Station roster index.
+    /// @param l   Label of the station-epochs.
+    /// @return Per-ENU-component median MDB in metres over the finite samples, with the
+    ///         infinite ones counted in @c n_inf; @c n is 0 and every median NaN when the
+    ///         station is unknown or has no retained sample.
     MdbStats mdbStats(int sta, CongruenceLabel l) const {
         MdbStats o;
         const auto it = state_.find(sta);
@@ -810,17 +880,18 @@ private:
 /// product (SPEC §7.3's MDB table is built from it), and the event stream is a
 /// rate-limited alarm on top of it.
 struct CongruenceHit {
-    int             station = -1;
-    CongruenceSolve solve{};
-    int             n_code = 0, n_phase = 0;
+    int             station = -1;   ///< station roster index (not a name).
+    CongruenceSolve solve{};        ///< the raw statistic (no @f$\hat\sigma_0@f$ applied).
+    int             n_code = 0,     ///< code rows contracted.
+                    n_phase = 0;    ///< phase rows contracted.
     double          t = 0.0;        ///< @f$t_i@f$.
-    double          sigma0 = 1.0;
-    bool            raw_formal = false;
-    bool            reported = false;
-    bool            null_geom = false;
-    CongruenceLabel label = CongruenceLabel::Clean;
-    bool            block_known = false;
-    bool            block_flagged = false;
+    double          sigma0 = 1.0;   ///< the frozen @f$\hat\sigma_0@f$ the station-epoch was scaled by (1.0 when raw formal).
+    bool            raw_formal = false;  ///< the family had not warmed up: @f$t_i \equiv T_i@f$.
+    bool            reported = false;    ///< @f$t_i@f$ cleared the report threshold.
+    bool            null_geom = false;   ///< @f$q=0@f$: no direction observable, so no statistic.
+    CongruenceLabel label = CongruenceLabel::Clean;  ///< datum-frame label assigned at the feed site.
+    bool            block_known = false;    ///< the block census was armed, so its verdict exists.
+    bool            block_flagged = false;  ///< the block census flagged at least one line of sight of this station this epoch.
 };
 
 /// Run-total tallies (standing invariant #4).  Without denominators, "the screen
@@ -872,7 +943,7 @@ struct CongruenceCofactor {
  * redundancy sweep it rides") within reach.  The sweep is timed here, and
  * @c tallies.wall_ms is the figure to check against that budget.
  *
- * @param acc            The run accumulator (already @ref NetworkCongruence::beginEpoch'd).
+ * @param acc            The run accumulator (already @c NetworkCongruence::beginEpoch'd).
  * @param kernel         Solved arrowhead kernel.
  * @param slot           This station's kernel slot (@c est_index_of, never the roster index).
  * @param station_index  Roster index, for identity only.
@@ -880,7 +951,7 @@ struct CongruenceCofactor {
  * @param cls            Per-row classes from the census's classifier.
  * @param resid          post-fit residuals @f$y - A_s x_s - A_r x_r@f$, in @c R.y's row order.
  * @param cov_free       Datum-frame shared covariance, built once by the census.
- * @param delta_0        Baarda non-centrality (@ref baardaDelta0) for the MDB.
+ * @param delta_0        Baarda non-centrality (@ref GnssProcessor::baardaDelta0 "baardaDelta0") for the MDB.
  * @param datum_changed  This epoch re-realized the datum, so the station-epoch is
  *                       labelled Frame (invariant #7).
  * @param block_known    The block census was armed, so the INC-3 join has a verdict.
@@ -888,7 +959,7 @@ struct CongruenceCofactor {
  *                       this epoch.
  * @param tallies        [in/out] run totals.
  * @param hits           [out] this epoch's station records, appended.
- * @param cofactor       The station's cofactor from @ref networkCongruenceCofactor, or null (the
+ * @param cofactor       The station's cofactor from @ref GnssProcessor::networkCongruenceCofactor "networkCongruenceCofactor", or null (the
  *                       default) to compute it here.
  */
 void networkCongruenceSweepStation(NetworkCongruence& acc,
@@ -905,12 +976,23 @@ void networkCongruenceSweepStation(NetworkCongruence& acc,
                                    const CongruenceCofactor* cofactor = nullptr);
 
 /**
- * @brief The residual cofactor @ref networkCongruenceSweepStation needs for one station, computed
+ * @brief The residual cofactor @ref GnssProcessor::networkCongruenceSweepStation "networkCongruenceSweepStation" needs for one station, computed
  *        ahead of the sweep (@c network.parallel_redundancy_census).
  *
  * The same rows and the same @c blockResidualCofactor call the sweep makes.  @c formed is false
  * when the sweep would stop before its cofactor (the screen off, no rows); @c ok is false when the
  * call throws.  Reads only its arguments, so the census can compute several stations at once.
+ *
+ * @param acc       The run accumulator, read through const queries (whether the screen is armed).
+ * @param kernel    Solved arrowhead kernel (@ref GnssProcessor::NetworkNormalEquations::blockResidualCofactor "NetworkNormalEquations::blockResidualCofactor").
+ * @param slot      This station's kernel slot (@c est_index_of, never the roster index).
+ * @param R         The station assembly (row stack).
+ * @param cls       Per-row classes from the census's classifier.
+ * @param resid     Post-fit residuals @f$y - A_s x_s - A_r x_r@f$, in @c R.y's row order.
+ * @param cov_free  Datum-frame shared covariance, built once by the census.
+ * @return The station's cofactor record: @c formed false (and nothing else set) when the screen
+ *         is off or no row qualifies; @c formed true with @c ok false when the cofactor call threw;
+ *         otherwise @c Q holds the residual cofactor of the screened rows.
  */
 CongruenceCofactor networkCongruenceCofactor(const NetworkCongruence& acc,
                                              const NetworkNormalEquations& kernel,
@@ -949,9 +1031,12 @@ struct NetworkEpoch;            // network/driver/Epoch.hpp
  */
 void networkCongruenceEmit(NetworkRun& run, const NetworkEpoch& ep);
 
-/// Run-end readout (invariant #4).  Denominators first; then the MDB table (SPEC
+/// @brief Run-end readout (invariant #4).  Denominators first; then the MDB table (SPEC
 /// §7.3's service deliverable: the smallest coordinate fault this network can see,
 /// per station and per direction); then the ladders; then the INC-3 2×2 table.
+/// @param ctx       The run context: the congruence accumulator and tallies are read.
+/// @param log       The network logger the readout is written to.
+/// @param stations  The station roster, read only to name stations in the tables.
 void networkCongruenceRunEnd(const NetworkRunContext& ctx,
                              const std::shared_ptr<spdlog::logger>& log,
                              const std::vector<NetStation>& stations);
