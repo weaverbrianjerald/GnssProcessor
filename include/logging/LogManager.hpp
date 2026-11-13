@@ -206,6 +206,8 @@ namespace GnssProcessor {
          * field prints a placeholder of matching width
          * (@c "----, --------- (---------- --:--:------)") for boot-time
          * and pre-epoch messages.
+         *
+         * @param t Epoch of the iteration about to be processed (GPS time scale).
          */
         static void setCurrentEpochTime(const GnssTime& t);
 

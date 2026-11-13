@@ -110,8 +110,6 @@ namespace GnssProcessor {
      * to a console-only logger that is not guaranteed to be registered, and returns false.  Re-initializing an
      * initialized instance calls spdlog::drop_all() first.
      *
-     * @param log_dir Filesystem path to the directory where log files will be created.
-     * @param level Initial logging level to apply to the created logger(s).
      * @return true on success; false if an exception forced the console-only fallback.
      */
     bool LogManager::initialize(const std::filesystem::path& log_dir, LogLevel level) {
@@ -205,8 +203,6 @@ namespace GnssProcessor {
      * @brief Set the current log level for all managed loggers.
      *
      * If LogManager has not been initialized this call is a no-op.
-     *
-     * @param level New LogLevel to apply.
      */
     void LogManager::setLogLevel(LogLevel level) {
         if (!initialized_) {
@@ -269,7 +265,6 @@ namespace GnssProcessor {
      * (5 MB, 3 files) + console logger. If creation throws spdlog_ex (for example when the
      * file sink cannot be opened), the default `gnss_processor` logger is returned.
      *
-     * @param logger_name Name of the logger to retrieve/create.
      * @return Shared pointer to the requested spdlog::logger.
      */
     std::shared_ptr<spdlog::logger> LogManager::getLogger(const std::string& logger_name) {
@@ -376,7 +371,6 @@ namespace GnssProcessor {
     /**
      * @brief Convert project LogLevel to spdlog's level enum.
      *
-     * @param level LogLevel value to convert.
      * @return Equivalent spdlog::level::level_enum value.
      */
     spdlog::level::level_enum LogManager::toSpdlogLevel(LogLevel level) const {

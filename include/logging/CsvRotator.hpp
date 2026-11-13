@@ -67,7 +67,7 @@ bool rotateCsvSuffixes(const std::filesystem::path& file, int keep);
  *
  * When @p threshold_mb > 0, @p os is open, and the stream's write position has
  * reached <tt>threshold_mb · 2^20</tt> bytes: flush + close @p os, shift the
- * suffix chain via @ref rotateCsvSuffixes, reopen @p path fresh (truncate) and
+ * suffix chain via @ref GnssProcessor::rotateCsvSuffixes "rotateCsvSuffixes", reopen @p path fresh (truncate) and
  * re-write @p header so the new live file is independently parseable.  The
  * write position (@c tellp) is the size probe: the traces are opened truncated
  * and only appended, so it equals the file size without a filesystem stat per
@@ -86,7 +86,7 @@ bool rotateCsvSuffixes(const std::filesystem::path& file, int keep);
  * @param header       Full CSV header line including the trailing newline,
  *                     re-written into every fresh live file.
  * @param threshold_mb Rotation threshold in MiB; <= 0 disables (no-op).
- * @param keep         Rolled generations to retain (see @ref rotateCsvSuffixes).
+ * @param keep         Rolled generations to retain (see @ref GnssProcessor::rotateCsvSuffixes "rotateCsvSuffixes").
  * @return true iff a rotation was performed (fresh live file, header written).
  */
 bool maybeRotateCsv(std::ofstream& os, const std::filesystem::path& path,

@@ -43,6 +43,7 @@ namespace GnssProcessor {
  */
 class GatedSink : public spdlog::sinks::sink {
 public:
+    /// @brief What log() does with each message: forward it now or hold it for replay.
     enum class Policy {
         Passthrough,  ///< Forward every message to inner sinks immediately.
         Buffer        ///< Hold every message in the in-memory buffer.
@@ -55,20 +56,33 @@ public:
     explicit GatedSink(std::vector<spdlog::sink_ptr> inner_sinks);
 
     // spdlog::sinks::sink overrides
+    /// @brief Forward the message to every inner sink (Passthrough) or store an owned copy (Buffer).
+    /// @param msg Message from the owning logger; in Buffer mode its text is copied, so it
+    ///            may be replayed after the originating call returns.
     void log(const spdlog::details::log_msg& msg) override;
+    /// @brief Flush every inner sink.  Buffered messages are not affected.
     void flush() override;
+    /// @brief Apply a pattern string to every inner sink.
+    /// @param pattern spdlog pattern string.
     void set_pattern(const std::string& pattern) override;
+    /// @brief Install a formatter on every inner sink.
+    /// @param formatter Formatter to install; ownership is taken and each inner sink
+    ///                  receives its own clone, since formatters are not shareable.
     void set_formatter(std::unique_ptr<spdlog::formatter> formatter) override;
 
-    /// Switch the gating policy. Lock-free; subsequent log() calls observe
+    /// @brief Switch the gating policy. Lock-free; subsequent log() calls observe
     /// the new policy.
+    /// @param p Passthrough to forward immediately, Buffer to hold messages.
     void setPolicy(Policy p);
 
     /// Discard every message currently in the buffer. Inner sinks unaffected.
     void clearBuffer();
 
-    /// Forward every buffered message to the inner sinks. The buffer is
+    /// @brief Forward every buffered message to the inner sinks. The buffer is
     /// retained; call @c clearBuffer afterward to start an empty one.
+    ///
+    /// Works on a snapshot taken under the buffer mutex, so messages buffered by other
+    /// threads during the replay are not forwarded by this call.
     void replayBuffer();
 
 private:

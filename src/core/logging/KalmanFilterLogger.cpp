@@ -56,10 +56,6 @@ KalmanFilterLogger::~KalmanFilterLogger() {
  *
  * Writes a prefixed labeled block containing each element of the vector on its
  * own line with fixed precision.
- *
- * @param x Vector to log (Mx1).
- * @param label Human-readable label for this vector (defaults to "State Vector").
- * @param epoch_info Optional epoch or context string to include in the prefix.
  */
 void KalmanFilterLogger::logStateVector(const Eigen::VectorXd& x, const std::string& label,
     const std::string& epoch_info) {
@@ -77,10 +73,6 @@ void KalmanFilterLogger::logStateVector(const Eigen::VectorXd& x, const std::str
  *
  * The matrix is written row-by-row with each element formatted in a fixed-width
  * column for easier human inspection.
- *
- * @param P Matrix to log.
- * @param label Human-readable label for this matrix (defaults to "Covariance Matrix").
- * @param epoch_info Optional epoch or context string to include in the prefix.
  */
 void KalmanFilterLogger::logCovarianceMatrix(const Eigen::MatrixXd& P, const std::string& label,
     const std::string& epoch_info) {
@@ -100,10 +92,6 @@ void KalmanFilterLogger::logCovarianceMatrix(const Eigen::MatrixXd& P, const std
  * @brief Log the Kalman gain matrix.
  *
  * This implementation forwards to the generic matrix logger.
- *
- * @param K Kalman gain matrix to log.
- * @param label Human-readable label for this matrix (defaults to "Kalman Gain").
- * @param epoch_info Optional epoch or context string to include in the prefix.
  */
 void KalmanFilterLogger::logKalmanGain(const Eigen::MatrixXd& K, const std::string& label,
     const std::string& epoch_info) {
@@ -114,10 +102,6 @@ void KalmanFilterLogger::logKalmanGain(const Eigen::MatrixXd& K, const std::stri
  * @brief Generic matrix logger used by other helpers.
  *
  * Writes the matrix with a prefixed header and fixed precision formatting.
- *
- * @param matrix Matrix to log.
- * @param label Human-readable label for the matrix.
- * @param epoch_info Optional epoch or context string to include in the prefix.
  */
 void KalmanFilterLogger::logMatrix(const Eigen::MatrixXd& matrix, const std::string& label,
     const std::string& epoch_info) {
@@ -137,10 +121,6 @@ void KalmanFilterLogger::logMatrix(const Eigen::MatrixXd& matrix, const std::str
  * @brief Generic vector logger used by other helpers.
  *
  * Writes each element of the vector on its own line with a labeled header.
- *
- * @param vector Vector to log (Mx1).
- * @param label Human-readable label for the vector.
- * @param epoch_info Optional epoch or context string to include in the prefix.
  */
 void KalmanFilterLogger::logVector(const Eigen::VectorXd& vector, const std::string& label,
     const std::string& epoch_info) {
