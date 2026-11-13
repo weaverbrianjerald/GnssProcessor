@@ -6,19 +6,19 @@
  *        afterwards (standing invariant 7: a returning station is a re-coupling, never a first
  *        sighting).
  *
- * The record (@ref ZwdCoupleEdge, the station field @c net::StationState::zwd_edge) follows one
+ * The record (@ref GnssProcessor::ZwdCoupleEdge "ZwdCoupleEdge", the station field @c net::StationState::zwd_edge) follows one
  * station's carried wet delay through four moments:
  *
  * | moment                          | writer                                            | record                                   |
  * | ------------------------------- | ------------------------------------------------- | ---------------------------------------- |
- * | decoupling edge (entry removed) | slip-latch erase, RAIM per-arc erase, prior-channel erase, gap prune | @ref zwdEdgeDecouple: cause, second, satellite |
- * | the harvest re-creates the entry | @c networkHarvestZwd                             | @ref zwdEdgeCreate: creation second (a station with no record is a first sighting) |
- * | the entry's first fold          | @c networkHarvestZwd (the fold is PASS B's record) | @ref zwdEdgeFold: the re-coupling, record cleared |
- * | a fold after an absence          | @c networkHarvestZwd                             | @ref zwdEdgeFold: cause @c Return (the entry was kept within the gap horizon) |
+ * | decoupling edge (entry removed) | slip-latch erase, RAIM per-arc erase, prior-channel erase, gap prune | @ref GnssProcessor::zwdEdgeDecouple "zwdEdgeDecouple": cause, second, satellite |
+ * | the harvest re-creates the entry | @c networkHarvestZwd                             | @ref GnssProcessor::zwdEdgeCreate "zwdEdgeCreate": creation second (a station with no record is a first sighting) |
+ * | the entry's first fold          | @c networkHarvestZwd (the fold is PASS B's record) | @ref GnssProcessor::zwdEdgeFold "zwdEdgeFold": the re-coupling, record cleared |
+ * | a fold after an absence          | @c networkHarvestZwd                             | @ref GnssProcessor::zwdEdgeFold "zwdEdgeFold": cause @c Return (the entry was kept within the gap horizon) |
  *
  * A re-created entry that is removed again before its first fold never re-coupled: the second
- * decoupling supersedes the first, and @ref zwdEdgeDecouple reports it.  A record still waiting
- * at the run end is counted by @ref zwdEdgePendingByCause.  Every decoupling therefore ends in
+ * decoupling supersedes the first, and @ref GnssProcessor::zwdEdgeDecouple "zwdEdgeDecouple" reports it.  A record still waiting
+ * at the run end is counted by @ref GnssProcessor::zwdEdgePendingByCause "zwdEdgePendingByCause".  Every decoupling therefore ends in
  * exactly one of: a re-coupling, a supersession, or a pending record at the run end.
  *
  * Measure-only: nothing on the solve path reads the record.  Written only while the response is

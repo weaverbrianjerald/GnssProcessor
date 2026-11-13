@@ -75,9 +75,9 @@
  * The caller decides which rows are clean.  Contaminated carries (cycle slip or
  * refloat, datum re-reference, pivot or datum handover, RAIM exclusion) must be
  * withheld, or their re-level inflates @f$\hat e^2@f$ and biases @f$\hat\sigma@f$
- * upward.  @ref beginEpoch takes a @c clean flag (false: every @ref addRow call of
- * that epoch is ignored), and the caller calls @ref addRow only for carries that
- * are clean per row.  @ref beginEpoch also advances the exponential forgetting, so
+ * upward.  @c beginEpoch takes a @c clean flag (false: every @c addRow call of
+ * that epoch is ignored), and the caller calls @c addRow only for carries that
+ * are clean per row.  @c beginEpoch also advances the exponential forgetting, so
  * the estimate tracks a trailing window of emitted epochs.
  *
  * ## Isolation and testing
@@ -216,7 +216,10 @@ public:
         phi_ = (window_epochs > 0.0) ? std::pow(0.5, 1.0 / window_epochs) : 1.0;
     }
 
-    /// @return true when at least one family is requested (monitor is live).
+    /**
+     * @brief Whether the monitor accumulates anything.
+     * @return true when at least one family is requested (monitor is live).
+     */
     bool enabled() const { return !families_.empty(); }
 
     /**
@@ -376,6 +379,12 @@ public:
      * condition number and clamp flags.  When the data condition number is at or
      * above kCondMax (1e6), solves for the Floor alone with the Rate held at its
      * a-priori.  Never throws.
+     *
+     * @param family Carry kind of the accumulator ("pl", "pb" or "cb").
+     * @param sat    Satellite id whose constellation letter selects the bucket (any id, or empty,
+     *               when the monitor was built without constellation splitting).
+     * @return The estimate of that accumulator; an accumulator never fed returns the a-priori
+     *         seeds with @c n_eff and @c n_rows equal to 0.
      */
     Estimate estimate(const std::string& family, const std::string& sat) const {
         Estimate out;
@@ -467,7 +476,11 @@ public:
         return out;
     }
 
-    /// @return every (family, constellation) key accumulated so far (sorted).
+    /**
+     * @brief The accumulators that hold data, as (family, constellation letter) pairs.
+     * @return every (family, constellation) key accumulated so far (sorted).  The second element
+     *         is empty when the monitor pools all satellites.
+     */
     std::vector<std::pair<std::string, std::string>> keys() const {
         std::vector<std::pair<std::string, std::string>> out;
         out.reserve(accum_.size());
@@ -480,11 +493,23 @@ public:
         return out;
     }
 
+    /**
+     * @brief The a-priori Floor variance component the monitor was built with.
+     * @return Seed Floor (m^2): the constructor's @c seed_floor_m2, or 1e-6 m^2 when that was not positive.
+     */
     double seedFloor() const { return seed_floor_; }
+    /**
+     * @brief The a-priori Rate variance component the monitor was built with.
+     * @return Seed Rate (m^2/s): the constructor's @c seed_rate_m2ps, or 0 when that was negative.
+     */
     double seedRate()  const { return seed_rate_;  }
 
-    /// Parse a comma- or semicolon-separated component list ("pl,pb,cb") into
-    /// families; spaces and tabs around each token are trimmed, empty tokens dropped.
+    /**
+     * @brief Parse a comma- or semicolon-separated component list ("pl,pb,cb") into
+     *        families; spaces and tabs around each token are trimmed, empty tokens dropped.
+     * @param csv The list text, tokens separated by commas or semicolons.
+     * @return The trimmed non-empty tokens in order of appearance (empty when @p csv holds none).
+     */
     static std::vector<std::string> parseComponents(const std::string& csv) {
         std::vector<std::string> out;
         std::string tok;
@@ -519,6 +544,14 @@ private:
         double l0  = 0.0, l1  = 0.0;              ///< LS-VCE right-hand side l.
         double n_eff = 0.0;                        ///< forgetting-weighted row count.
         long long n_rows = 0;                      ///< undecayed total rows.
+        /**
+         * @brief Apply one epoch of exponential forgetting to every decaying statistic.
+         *
+         * Scales the log sums, the normal matrix, the right-hand side and the effective row
+         * counts; the undecayed total @c n_rows is left alone.
+         *
+         * @param phi Per-epoch forgetting factor in (0, 1] (1 leaves the statistics unchanged).
+         */
         void decay(double phi) {
             sum_log_e2 *= phi;
             sum_log_fv *= phi;

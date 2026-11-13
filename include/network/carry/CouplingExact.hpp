@@ -31,7 +31,7 @@
  * @f$P_{SS}-P_{SS}FP_{SS} = P_{SS}FQ_S@f$.  The producer applies the per-row form (the design note above,
  * section 9.1 item 3): each row gets its own @f$M^\top BM@f$, and the time-update
  * covariance between rows is dropped, across stations and within a station alike.  The
- * same split gives that covariance (@ref couplingExactCross); the unit gate uses it for
+ * same split gives that covariance (@ref GnssProcessor::couplingExactCross "couplingExactCross"); the unit gate uses it for
  * its joint reference recursion, which equals the batch.  Adding it inside the station
  * blocks was measured on the sim bed (2026-09-28) and drove a level drift through the
  * S-basis completion, so the producer does not use it.
@@ -89,7 +89,7 @@ struct CouplingExactCounters {
     /// |rho| of the added term against the pair's diagonal, by class: [0] two ambiguity
     /// rows, [1] a pair with a receiver code-bias row.
     long long cross_rho_hist[2][kCrossRhoBins]{};
-    double    cross_rho_max[2]{};
+    double    cross_rho_max[2]{};    ///< largest |rho| seen per class, indexed as @c cross_rho_hist
     double    cross_abs_sum{0.0};    ///< summed |M_i'BM_k| over the pairs (m^2)
     // Clock clones (network.carry_coupling_clock_clone): the rows' terms on the clock clones.
     long long rows_clone{0};         ///< exact rows with at least one term on a clock clone
@@ -101,7 +101,12 @@ struct CouplingExactCounters {
     long long terms_hist_marg{0};    ///< history coefficients marginalized
     double    hist_marg_var{0.0};    ///< their summed squares (m^2), added to the rows' variance
 
-    /// The |rho| bin of the within-station cross-term histogram.
+    /**
+     * @brief The |rho| bin of the within-station cross-term histogram.
+     * @param r |rho| of the added cross term against the pair's diagonal (non-negative).
+     * @return Bin index in 0 to @c kCrossRhoBins - 1: the number of bin edges (0.01, 0.03, 0.1, 0.2,
+     *         0.3, 0.5, 0.8) at or below @p r, so 0 is below 0.01 and the last bin is 0.8 and above.
+     */
     static int crossRhoBin(double r) {
         static constexpr double kEdges[kCrossRhoBins - 1] = {0.01, 0.03, 0.1, 0.2, 0.3, 0.5, 0.8};
         int b = 0;
@@ -109,6 +114,13 @@ struct CouplingExactCounters {
         return b;
     }
 
+    /**
+     * @brief Fold another set of counters into this one (the per-station to per-run sum).
+     *
+     * Counts and sums add; the per-class maxima @c cross_rho_max take the larger value.
+     *
+     * @param o The counters to add (typically one station's).
+     */
     void add(const CouplingExactCounters& o) {
         rows_exact += o.rows_exact; rows_stale += o.rows_stale;
         rows_unfactored += o.rows_unfactored; terms_s += o.terms_s;
@@ -179,16 +191,23 @@ struct CouplingExactEpoch {
     /// Empty on the exact update's own epoch and whenever the knob is off; read only by the counters.
     std::vector<char> clone_s;
 
-    /// Number of S columns.
+    /**
+     * @brief Number of S columns.
+     * @return Count of stashed border columns carried into this epoch with a finite inflation
+     *         (0 for an empty or default-constructed epoch).
+     */
     Eigen::Index nS() const { return static_cast<Eigen::Index>(p_of_s.size()); }
 };
 
-/// Factor @f$P_{SS}+Q_S@f$ of an epoch whose index maps, @c q_s and @c P are filled, in
+/// @brief Factor @f$P_{SS}+Q_S@f$ of an epoch whose index maps, @c q_s and @c P are filled, in
 /// correlation scaling (as the dense fold does, @c NetworkEstimator::addSharedPriorDense),
 /// and set @c ok.  An empty S is a valid epoch (every stashed column re-attributes or
 /// departs).
+/// @param[in,out] ep  The epoch: its index maps, @c q_s, @c shat_s and @c P are read; @c F,
+///         @c ok and @c inverse_split are written.  An epoch whose per-S vectors are not
+///         all of length @c nS() is refused (@c ok false).
 /// @param solve_threads Threads for the inverse's column blocks (network.parallel_coupling_prepare,
-///         @ref ldltInverseColumns); 1 takes the whole solve.  Sets @c inverse_split.
+///         @ref GnssProcessor::ldltInverseColumns "ldltInverseColumns"); 1 takes the whole solve.  Sets @c inverse_split.
 /// @return false (and @c ok false) when the scaled matrix is not positive definite or a
 ///         diagonal is not positive.
 bool couplingExactFactor(CouplingExactEpoch& ep, int solve_threads = 1);
@@ -216,7 +235,7 @@ Eigen::MatrixXd ldltInverseColumns(const Eigen::LDLT<Eigen::MatrixXd>& f, Eigen:
 
 /// The exact update of one row's stashed terms (the one rule of the exact coupling update).
 struct CouplingExactRow {
-    bool ok{false};
+    bool ok{false};                           ///< the update was computed and every output is finite
     Eigen::VectorXd m_new;                    ///< new coefficients over S
     Eigen::VectorXd z;                        ///< F P_{S,D} M_D (the re-attributed part of m_new)
     Eigen::VectorXd u_d;                      ///< P_{S,D} M_D
@@ -233,15 +252,25 @@ struct CouplingExactRow {
     int n_d_route[kCouplingExactRoutes]{};    ///< the row's stashed terms in D, by route
 };
 
-/// Update one row.  @p terms are (P row, harvested coefficient) pairs, one per stashed
+/// @brief Update one row.  @p terms are (P row, harvested coefficient) pairs, one per stashed
 /// term of the row (a repeated P row is summed).  @p ep must be @c ok.
+/// @param ep     The factored epoch of this solve (read only).
+/// @param terms  The row's stashed terms: (row of the stashed block @c P, harvested coefficient).
+///               A row index out of range, a zero or a non-finite coefficient is skipped.
+/// @return The row's update.  @c ok is false when @p ep is not @c ok (the vectors are then
+///         zero) or an output is not finite; otherwise @c m_new holds the new coefficients over
+///         S and @c var_add the inflation @f$M^\top B M@f$ (m^2, clamped at 0).
 CouplingExactRow couplingExactRow(const CouplingExactEpoch& ep,
                                   const std::vector<std::pair<int, double>>& terms);
 
-/// The time-update covariance @f$M_a^\top B M_b@f$ of two rows updated against the same
+/// @brief The time-update covariance @f$M_a^\top B M_b@f$ of two rows updated against the same
 /// epoch.  Equals @c a.var_raw for @p a == @p b.  The producer's per-row form drops it;
 /// @c network.carry_coupling_exact_cross adds it between two rows of a
 /// station's local block, and the unit gate's joint reference recursion uses it.
+/// @param ep  The epoch both rows were updated against (read only).
+/// @param a   The first row's update.
+/// @param b   The second row's update.
+/// @return The covariance (m^2); 0 when either row's update is not @c ok.
 double couplingExactCross(const CouplingExactEpoch& ep, const CouplingExactRow& a,
                           const CouplingExactRow& b);
 
@@ -272,7 +301,7 @@ struct CouplingExactRunCounters {
     // were built from the shared decision: keys in S that a
     // clock-pivot handover re-expressed (the S-transform) or retired, on the handover
     // epochs the fold counts.
-    CouplingExactCounters cxu{};
+    CouplingExactCounters cxu{};   ///< the exact update's run totals, summed over the stations
 };
 
 struct NetworkRunContext;   // network/state/RunContext.hpp

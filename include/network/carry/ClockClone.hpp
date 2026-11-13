@@ -16,26 +16,26 @@
  *
  * - Registration: each satellite clock with a row in the stashed dense block gets a clone
  *   column @f$c_s(t-1)@f$, registered after every other column
- *   (@ref networkClockCloneRegister), so no existing index moves and the clones are the
+ *   (@ref GnssProcessor::networkClockCloneRegister "networkClockCloneRegister"), so no existing index moves and the clones are the
  *   last columns.
  * - The rows' epoch: a copy of the exact coupling epoch with each clock whose walk is positive on
- *   its clone at @f$Q=0@f$ (@ref networkClockClonePrepare); a row's harvested clock
+ *   its clone at @f$Q=0@f$ (@ref GnssProcessor::networkClockClonePrepare "networkClockClonePrepare"); a row's harvested clock
  *   coefficient stays where it was harvested.  The exact coupling epoch itself is unchanged: the
  *   fold's counters read it, and the smoothed-hold clone builds its own copy with the clocks whose clones
  *   stood in at the fold on their clones (@c pbHoldCloneOnClones), reading the exact coupling epoch's Q for
  *   its walk share, then marginalizes its rows' clone terms with this epoch's regression
  *   (@c pbHoldCloneMarginalizeClones).
- * - The joint fold, in information form (@ref networkClockCloneDenseFold): the stashed
+ * - The joint fold, in information form (@ref GnssProcessor::networkClockCloneDenseFold "networkClockCloneDenseFold"): the stashed
  *   block over the stand-ins (each cloned clock stood in for by its clone at the stashed
  *   variance, every other key on its own column at its decided variance), and for each
  *   cloned clock the walk factor @f$c_s(t) - c_s(t-1)@f$ at the fold's own variance
  *   @f$Q_s = \mathrm{var}_{\mathrm{eff}} - P_{ss}@f$.  The marginal of this prior over the
  *   epoch's own columns is the exact coupling epoch's prior exactly.
- * - The gate (@ref networkClockCloneGateView): the rank gate, the S-basis completion and
+ * - The gate (@ref GnssProcessor::networkClockCloneGateView "networkClockCloneGateView"): the rank gate, the S-basis completion and
  *   the datum-direction ratio judge the border with every referenced clone marginalized
  *   (a Schur complement, which keeps the declared clock gauge null) and every idle clone
  *   dropped; a clone has a prior and coupling rows, not observations.
- * - The harvest (@ref networkClockCloneHarvestRow): a carried row's coefficients on the
+ * - The harvest (@ref GnssProcessor::networkClockCloneHarvestRow "networkClockCloneHarvestRow"): a carried row's coefficients on the
  *   clones are regressed onto the rest of the border through the posterior, and the
  *   clones' conditional covariance is added to the row (and within a station to the F3
  *   block); the cross-station half is dropped, the second-order term of the design
@@ -83,8 +83,8 @@ struct ClockCloneActive {
 
 /// The identity of one border clone (its key's kind, satellite and signal).
 struct BorderCloneId {
-    SharedParamKind kind{SharedParamKind::Clock};
-    std::string sat;
+    SharedParamKind kind{SharedParamKind::Clock};   ///< the shared parameter's kind (clock, phase bias, code bias)
+    std::string sat;                                ///< the satellite id
     std::string signal;   ///< empty for a clock
 };
 
@@ -92,7 +92,7 @@ struct BorderCloneId {
 /// (docs/refound/BCL_previous_border_on_clones_2026-10-08.md): a walking bias (BCL-a, with a
 /// walk) or a key the exact coupling update would re-attribute (BCL-d, a time t-1 state with no walk).
 struct BorderCloneActive {
-    BorderCloneId id;
+    BorderCloneId id;        ///< the key's identity (kind, satellite, signal)
     int          p{-1};      ///< its row of the stashed dense block
     int          s{-1};      ///< its S index in the rows' epoch
     Eigen::Index col{-1};    ///< its clone column
@@ -244,6 +244,13 @@ struct ClockCloneCounters {
  * re-attributed (BCL-d: a clock the clock clone did not cover; without BCL-a, a bias whose column is
  * absent, whose phase-bias frame is re-referenced or held, or which is parked), in
  * @c ccl.xcol.  No-op off.
+ * @param[in,out] ctx  The run context: the knobs, the previous epoch's carried priors and the
+ *                     stashed dense block are read; @c ctx.carry.ccl and the clone counters are
+ *                     written.
+ * @param[in,out] est  The estimator on which the clone columns are registered, after every
+ *                     other column.
+ * @param registered_clock_sats  Satellites (ids) whose clock column is registered this epoch;
+ *                     only these can receive a clock clone.
  * @param events The epoch's events, read: the chain election's re-referenced (sat, signal) set.
  */
 void networkClockCloneRegister(NetworkRunContext& ctx, NetworkEstimator& est,
@@ -251,10 +258,9 @@ void networkClockCloneRegister(NetworkRunContext& ctx, NetworkEstimator& est,
 
 /**
  * @brief Build the rows' epoch: the exact coupling epoch with each cloned clock on its clone
- *.
  *
  * Called at the end of @c networkCouplingExactPrepare once the exact coupling epoch is built.  A
- * clock in S whose walk @f$Q_s@f$ is positive (and above @ref kClockCloneMinQRel of its
+ * clock in S whose walk @f$Q_s@f$ is positive (and above @ref GnssProcessor::kClockCloneMinQRel "kClockCloneMinQRel" of its
  * stashed variance), with a registered clone, no reinit mark and no switch-on seam noise,
  * moves onto its clone: column = the clone, @f$Q = 0@f$, mean = the stashed value.  The
  * off-diagonal process noise pairs touching a moved clock are dropped, and the epoch is
@@ -264,6 +270,9 @@ void networkClockCloneRegister(NetworkRunContext& ctx, NetworkEstimator& est,
  * clone, joins S on its clone at Q = 0 (mean its carried value), so no term is
  * re-attributed; when that epoch does not factor it is rebuilt without those keys (counted).
  * Always resets the previous epoch's rows' epoch; a no-op beyond that when off.
+ * @param[in,out] ctx  The run context: the exact coupling epoch (@c ctx.carry.cxu_epoch) and the
+ *                     registered clones are read; the rows' epoch and the active sets in
+ *                     @c ctx.carry.ccl and the clone counters are written.
  * @param cp_of_p the carried entry of each stashed dense row (null for none), as the
  *                prepare resolved it.
  */
@@ -285,6 +294,10 @@ void networkClockClonePrepare(NetworkRunContext& ctx,
  * Shared history: the columns, registered after the clones, are marginalized
  * with them (the trailing @c numBorderNuisance columns), and an epoch with history columns
  * and no clone forms the view too.
+ * @param[in,out] ctx  The run context: the clone epoch is read; the gate census counters are
+ *                     written (once per epoch).
+ * @param est  The estimator whose reduced shared normals and border nuisance column counts are
+ *             read.
  * @param[out] out the view (left untouched when false is returned).
  * @return false when off, when no clone is registered, or when the eigensolve fails; the
  *         caller then reads @c est.reducedSharedNormals() as before.
@@ -292,17 +305,26 @@ void networkClockClonePrepare(NetworkRunContext& ctx,
 bool networkClockCloneGateView(NetworkRunContext& ctx, NetworkEstimator& est,
                                Eigen::MatrixXd& out);
 
-/// Pad gauge rows formed over the gate view (@ref networkClockCloneGateView) with zero
-/// clone columns, to the full width @p n_shared.
+/**
+ * @brief Pad gauge rows formed over the gate view (@ref GnssProcessor::networkClockCloneGateView "networkClockCloneGateView") with zero
+ *        clone columns, to the full width @p n_shared.
+ * @param H         Gauge rows over the gate view's columns (one gauge row per matrix row; may
+ *                  have no rows).
+ * @param n_shared  Full shared width, clone columns included.
+ * @return A matrix of @c H.rows() by @p n_shared: the leading columns copied from @p H (at most
+ *         @p n_shared of them), the remaining columns zero.
+ */
 Eigen::MatrixXd networkClockClonePadRows(const Eigen::MatrixXd& H, Eigen::Index n_shared);
 
 /**
  * @brief Record which clones carry row information, at the entry of the D2 fold
- *.
  *
  * At that point only the coupling rows have written to a clone column (no data row and
  * no pre-gate prior touches one), so a clone column of the reduced normals that is not
  * exactly zero is referenced.  Resets this epoch's stand-in set.  No-op off.
+ * @param[in,out] ctx  The run context: the clone epoch's referenced and stand-in sets in
+ *                     @c ctx.carry.ccl are reset and refilled.
+ * @param est  The estimator whose reduced shared normals are read.
  */
 void networkClockCloneFoldBegin(NetworkRunContext& ctx, NetworkEstimator& est);
 
@@ -346,6 +368,23 @@ void networkClockCloneFoldBegin(NetworkRunContext& ctx, NetworkEstimator& est);
  * block, against a current clock of a dense-transformed constellation less the incoming
  * pivot's row, zero against a reinit key, and no walk.  A block that does not factor with
  * them is folded without them (counted); with no walk left the function then returns false.
+ * @param[in,out] ctx  The run context: the clone epoch, the stashed dense block and its
+ *        exact coupling epoch copy are read; the stand-in sets and the clone counters are written.
+ * @param[in,out] ws   The epoch workspace: receives the joint fold's capture (the
+ *        @c cap_ccl_keys, @c cap_ccl_cov and walk members) when @p within_epoch_armed.
+ * @param[in,out] est  The estimator the stand-in block and the walk factors are folded into.
+ * @param dkeys  The dense-eligible shared keys of this epoch, one per carried prior (the keys of
+ *        the exact coupling update's dense fold).
+ * @param drow   Row of each @p dkeys entry in the stashed dense block, in the same order.
+ * @param dvar_eff  Decided variance of each key (m^2: the anchor's decision with its floors and
+ *        seam noise), in the same order.
+ * @param dinflate  Per key, non-zero when the carried prior was re-initialized (it folds
+ *        decorrelated at the reinit variance), in the same order.
+ * @param dreexp    Per key, non-zero when the carried entry moved since the decision
+ *        (re-expressed), in the same order.
+ * @param cov_eff   Decided covariance of the dense keys (m^2), @p dkeys by @p dkeys.
+ * @param within_epoch_armed  True when the within-epoch replay is armed, so the joint fold is
+ *        captured in the workspace for the replay.
  * @param clk_prior_info B7 trace (null when closed): the folded @f$\Lambda(c,c)@f$ of each
  *        clock, 1/Q for a cloned clock (its column appears only in its walk factor).
  * @return true when the joint fold ran (the caller then skips the exact coupling update's fold); false when
@@ -362,7 +401,11 @@ bool networkClockCloneDenseFold(NetworkRunContext& ctx, EpochWorkspace& ws,
                                 const Eigen::MatrixXd& cov_eff, bool within_epoch_armed,
                                 std::map<std::string, double>* clk_prior_info, const EpochEvents& events);
 
-/// Count one dense-fold fallback on a clone epoch (the clones are then free or isolated).
+/**
+ * @brief Count one dense-fold fallback on a clone epoch (the clones are then free or isolated).
+ * @param[in,out] ctx  The run context: @c fold_fallback is incremented when the knob is on and the
+ *                     rows' epoch was used.
+ */
 void networkClockCloneNoteFallback(NetworkRunContext& ctx);
 
 /**
@@ -373,6 +416,13 @@ void networkClockCloneNoteFallback(NetworkRunContext& ctx);
  *        solve no-op on every other state and keeps the normals definite).  Captured for
  *        the replay with @p within_epoch_armed.  Border clones: the same, by key,
  *        skipping those the joint fold gave a stand-in or a stashed prior.  No-op off.
+ * @param[in,out] ctx  The run context: the clone epoch's referenced and stand-in sets and the
+ *                     stashed block are read; the clone counters are written.
+ * @param[in,out] ws   The epoch workspace: the isolated priors are captured in
+ *                     @c cap_ccl_idle when @p within_epoch_armed.
+ * @param[in,out] est  The estimator the isolated clone priors are folded into.
+ * @param within_epoch_armed  True when the within-epoch replay is armed (the isolated priors are
+ *                     captured for it).
  */
 void networkClockCloneFoldEnd(NetworkRunContext& ctx, EpochWorkspace& ws,
                               NetworkEstimator& est, bool within_epoch_armed);
@@ -381,6 +431,10 @@ void networkClockCloneFoldEnd(NetworkRunContext& ctx, EpochWorkspace& ws,
  * @brief Re-fold the clone fold on the within-epoch replay's fresh arrowhead.
  * Folds the idle clones' isolated priors, and, when the joint fold was captured, the
  * stand-in block and the walk factors.
+ * @param ctx  The run context (the clone knob is read).
+ * @param ws   The workspace holding the captured fold (@c cap_ccl_idle, @c cap_ccl_keys,
+ *             @c cap_ccl_cov, @c cap_ccl_walk, @c cap_ccl_walkQ), read.
+ * @param[in,out] est  The estimator re-folded on its fresh arrowhead.
  * @return true when the joint fold was replayed (the caller then skips
  *         @c cap_dense_keys); false otherwise, and always when off.
  */
@@ -392,14 +446,26 @@ bool networkClockCloneReplayFold(const NetworkRunContext& ctx, const EpochWorksp
  *        @p restore, re-fold) the walk factors of the dropped satellites and marginalize
  *        any other dropped clock out of the stand-in block.  The clones stay: the rows
  *        still reference them, and the refloat frees the clock, not its previous value.
+ * @param[in,out] ctx  The run context: the withdrawn-walk counter is written (not on a restore).
+ * @param ws   The epoch workspace holding the captured joint fold (keys, covariance and walk
+ *             factors), read.
+ * @param[in,out] est  The estimator the withdrawals (or restores) are folded into.
+ * @param drop_sats  Satellites (ids) whose clocks the refloat frees.
+ * @param restore    False withdraws the dropped satellites' walk factors; true re-folds them
+ *                   (the restore after a failed re-solve).
  * @return true when the joint fold was captured this epoch (the caller then skips its own
  *         refold of @c cap_dense_keys); false otherwise.
  */
 bool networkClockCloneRefloat(NetworkRunContext& ctx, EpochWorkspace& ws, NetworkEstimator& est,
                               const std::set<std::string>& drop_sats, bool restore);
 
-/// Keep the joint fold's capture in step with a successful refloat: remove the
-/// dropped satellites' walk factors and marginalize their stand-in-block keys.
+/**
+ * @brief Keep the joint fold's capture in step with a successful refloat: remove the
+ *        dropped satellites' walk factors and marginalize their stand-in-block keys.
+ * @param[in,out] ws  The epoch workspace: the captured walks, their covariance and the stand-in
+ *                    block are trimmed.  No-op when no joint fold was captured.
+ * @param drop_sats   Satellites (ids) whose clocks were refloated.
+ */
 void networkClockCloneRefloatTrim(EpochWorkspace& ws, const std::set<std::string>& drop_sats);
 
 /// The harvest's clone marginalization for one epoch (see
@@ -418,9 +484,9 @@ struct ClockCloneHarvest {
     std::map<std::pair<std::size_t, Eigen::Index>, Eigen::VectorXd> rc;   ///< (station, local column) -> the row's clone coefficients (X2: its Y coefficients)
     /// One station's F3 block, for the within-station term.
     struct Blk {
-        std::size_t est_idx{0};
-        std::shared_ptr<PlHarvestBlock> blk;
-        std::vector<Eigen::Index> cols;
+        std::size_t est_idx{0};                   ///< the station's estimator index
+        std::shared_ptr<PlHarvestBlock> blk;      ///< the station's F3 harvest block
+        std::vector<Eigen::Index> cols;           ///< the block's local columns
     };
     std::vector<Blk> blocks;   ///< the stations' F3 blocks this epoch
 };
@@ -431,9 +497,18 @@ struct ClockCloneHarvest {
  *        (@c NetworkEstimator::cloneConditional), once per epoch, and the clock
  *        constellations the gauge restore needs.  Records the stand-in clones' posterior
  *        standard deviations.  Inert (@c on false) off.
+ * @param[in,out] ctx  The run context: the clone epoch (registered columns and stand-ins) is
+ *                 read; the harvest counters and the stand-in posterior standard deviations are
+ *                 written.
+ * @param est      The estimator whose clone regression (@c cloneConditional) and column counts
+ *                 are read.
  * @param datum    The datum the solve applied (its pins get no coefficient and take the
  *                 clock-family deficit).
  * @param col2desc The harvest's column descriptors (column -> kind and satellite).
+ * @return The epoch's harvest state: @c on true when the regression is available (rows are
+ *         marginalized); @c noreg true when clones are registered but the regression is not
+ *         (clone terms are dropped and counted); both false (inert) when the knob is off or no
+ *         border nuisance column exists.
  */
 ClockCloneHarvest networkClockCloneHarvestBegin(NetworkRunContext& ctx,
                                                 const NetworkEstimator& est,
@@ -458,25 +533,52 @@ ClockCloneHarvest networkClockCloneHarvestBegin(NetworkRunContext& ctx,
  *        part in the clock-family deficit (it is no gauge member), and
  *        @f$r_Y^\top \Sigma_{Y\mid s} r_Y@f$ is not added (the history's compression keeps
  *        it shared and adds the row's remainder).
+ * @param[in,out] h  The epoch's harvest state: the row's clone coefficients are recorded in
+ *                   @c h.rc, keyed by (@p est_idx, @p local_col), for the within-station term.
+ * @param[in,out] ctx  The run context: the harvest counters are written.
+ * @param est_idx    The station's estimator index.
+ * @param local_col  The row's local column within that station's block.
+ * @param[in,out] row  The carried row's coefficients over the shared columns (width
+ *                   @c h.n_shared; other widths leave it untouched).  The clone coefficients are
+ *                   zeroed, their regression is added to the other columns, and the
+ *                   clock-family deficit goes onto the constellation's pinned clock column.
+ * @param[in,out] cond_var  The row's conditional variance (m^2), raised by the clone terms'
+ *                   conditional variance (not added with the shared history).
  */
 void networkClockCloneHarvestRow(ClockCloneHarvest& h, NetworkRunContext& ctx,
                                  std::size_t est_idx, Eigen::Index local_col,
                                  Eigen::VectorXd& row, double& cond_var);
 
-/// Register a station's F3 harvest block for the within-station term.  No-op
-/// when @p h is inert or @p blk is null.
+/**
+ * @brief Register a station's F3 harvest block for the within-station term.  No-op
+ *        when @p h is inert or @p blk is null.
+ * @param[in,out] h  The epoch's harvest state: the block is appended to @c h.blocks.
+ * @param est_idx    The station's estimator index.
+ * @param blk        The station's F3 harvest block; its covariance is raised later by
+ *                   @ref GnssProcessor::networkClockCloneHarvestEnd "networkClockCloneHarvestEnd".  May be null.
+ * @param cols       The block's local columns, in the block's order.
+ */
 void networkClockCloneHarvestBlock(ClockCloneHarvest& h, std::size_t est_idx,
                                    const std::shared_ptr<PlHarvestBlock>& blk,
                                    const std::vector<Eigen::Index>& cols);
 
-/// Add the within-station half of the clones' conditional covariance to each registered
-/// F3 block: @f$C(a,b) \mathrel{+}= r_{C,a}^\top B' r_{C,b}@f$ over the pairs
-/// whose rows both had clone terms (the diagonal is the stashed variance, already raised
-/// by @ref networkClockCloneHarvestRow).  No-op when @p h is inert, and with the shared history
-/// (@c h.shx), whose compression adds the remainder's within-station term instead.
+/**
+ * @brief Add the within-station half of the clones' conditional covariance to each registered
+ *        F3 block: @f$C(a,b) \mathrel{+}= r_{C,a}^\top B' r_{C,b}@f$ over the pairs
+ *        whose rows both had clone terms (the diagonal is the stashed variance, already raised
+ *        by @ref GnssProcessor::networkClockCloneHarvestRow "networkClockCloneHarvestRow").  No-op when @p h is inert, and with the shared history
+ *        (@c h.shx), whose compression adds the remainder's within-station term instead.
+ * @param[in,out] h  The epoch's harvest state: the registered blocks' covariances (@c C) are
+ *                   raised in place.
+ * @param[in,out] ctx  The run context: the F3 pair counter is written.
+ */
 void networkClockCloneHarvestEnd(ClockCloneHarvest& h, NetworkRunContext& ctx);
 
-/// The run-end line of the clock clone and its INERT warning (invariant 4).  No-op off.
+/**
+ * @brief The run-end line of the clock clone and its INERT warning (invariant 4).  No-op off.
+ * @param ctx  The run context: the clone counters and the knobs are read.
+ * @param log  The network logger the lines are written to.
+ */
 void networkClockCloneRunEnd(const NetworkRunContext& ctx,
                                const std::shared_ptr<spdlog::logger>& log);
 

@@ -18,19 +18,19 @@
  *   @f$Y = [\text{clones}; \text{history}]@f$ the border's trailing nuisance columns, each
  *   carried row's coefficients @f$r_Y@f$ are regressed onto the free border through
  *   @f$K_Y = -J_{YY}^{-1}J_{YS'}@f$ (@c NetworkEstimator::cloneConditional over Y), and
- *   @f$r_Y@f$ is kept (@ref networkSharedHistoryNoteEntry records where its entry is
+ *   @f$r_Y@f$ is kept (@ref GnssProcessor::networkSharedHistoryNoteEntry "networkSharedHistoryNoteEntry" records where its entry is
  *   written) instead of adding @f$r_Y^\top \Sigma_{Y\mid s} r_Y@f$ to the row.
- * - The compression (@ref networkSharedHistoryHarvestEnd, once every carried row of the
+ * - The compression (@ref GnssProcessor::networkSharedHistoryHarvestEnd "networkSharedHistoryHarvestEnd", once every carried row of the
  *   network is harvested): @f$L = \mathrm{chol}(\Sigma_{Y\mid s})@f$, @f$F_r = r_Y^\top L@f$,
  *   the Gram @f$F^\top F = V \Lambda V^\top@f$, @f$k_t = \min(k\,n_{\text{clones}},
  *   \text{rank})@f$.  Each row's history coefficients become @f$F_r V_{k_t}@f$; the
  *   remainder @f$F_r V_{\text{rest}}@f$ is added to the row's variance and, within a
  *   station, to the F3 block; the remainder's cross-station part is dropped and counted.
- *   Exact when the shared term's rank is within the cap (@ref sharedHistoryCompress).
- * - The next epoch (@ref networkSharedHistoryRegister, @ref networkSharedHistoryFold): the
+ *   Exact when the shared term's rank is within the cap (@ref GnssProcessor::sharedHistoryCompress "sharedHistoryCompress").
+ * - The next epoch (@ref GnssProcessor::networkSharedHistoryRegister "networkSharedHistoryRegister", @ref GnssProcessor::networkSharedHistoryFold "networkSharedHistoryFold"): the
  *   referenced history directions are registered after every other column (after B1's
  *   clones), keyed @c "HIST|j", and folded by identity with the prior N(0, 1), independent of
- *   the border; the rows emit their history terms (@ref sharedHistoryRowTerms, the exact
+ *   the border; the rows emit their history terms (@ref GnssProcessor::sharedHistoryRowTerms "sharedHistoryRowTerms", the exact
  *   route of the coupling update).  A history column is read by the gate view and the S-basis
  *   completion as nuisance (marginalized with the clones), never emitted, never stashed and
  *   never snapshotted.
@@ -131,7 +131,7 @@ struct SharedHistoryCounters {
     std::vector<double> hold_rem_share;    ///< per projected hold row: remainder share
 };
 
-/// The carry map a noted entry was written to (@ref networkSharedHistoryNoteEntry).
+/// The carry map a noted entry was written to (@ref GnssProcessor::networkSharedHistoryNoteEntry "networkSharedHistoryNoteEntry").
 enum class SharedHistoryMap : int {
     Amb = 0,   ///< @c local_carry, key (station, satellite, signal)
     Zwd,       ///< @c zwd_carry, key station
@@ -150,14 +150,14 @@ struct SharedHistoryHarvest {
     /// @c ClockCloneHarvest::rc.  An identity, not a pointer: entries can be erased between
     /// their write and the compression.
     struct Handle {
-        SharedHistoryMap map{SharedHistoryMap::Amb};
-        int          sta{-1};
-        std::string  sat;
-        std::string  sig;
-        std::size_t  est_idx{0};
-        Eigen::Index col{-1};
+        SharedHistoryMap map{SharedHistoryMap::Amb};  ///< the carry map the entry was written to
+        int          sta{-1};   ///< the station (roster index) of the entry's key
+        std::string  sat;       ///< the key's second part: a satellite id, or the clock kind or bias key of a receiver map (unread by the ZWD map)
+        std::string  sig;       ///< the key's signal part (read by the ambiguity map only)
+        std::size_t  est_idx{0};  ///< the estimator station index of the row
+        Eigen::Index col{-1};   ///< the row's local column in that station's block
     };
-    std::vector<Handle> handles;
+    std::vector<Handle> handles;   ///< one handle per harvested row, in harvest order
 };
 
 /// The compression of one epoch's shared term (@ref sharedHistoryCompress).
@@ -222,10 +222,14 @@ SharedHistoryCompression sharedHistoryCompress(const Eigen::MatrixXd& R,
 SharedHistoryProjection sharedHistoryProject(const Eigen::VectorXd& r, const Eigen::MatrixXd& L,
                                              const Eigen::MatrixXd& V, int kt);
 
+/// @brief Whether a carried entry holds usable history coefficients.
+/// @param lc  The carried entry (its @c shx_coef, @c shx_stash_s and @c last_seen_s are read).
 /// @return Whether @p lc holds history coefficients of the compression it was last stashed
 ///         at: non-empty and @c shx_stash_s equal to @c last_seen_s.
 bool sharedHistoryCoefValid(const LocalCarry& lc);
 
+/// @brief The marginal variance of a carried entry, history terms included.
+/// @param lc  The carried entry (its @c var and valid history coefficients are read).
 /// @return The marginal variance of @p lc: @c var plus the squared norm of
 ///         its valid history coefficients, @c var otherwise.  What the snapshot writes.
 double sharedHistoryMarginalVar(const LocalCarry& lc);
@@ -239,6 +243,16 @@ double sharedHistoryMarginalVar(const LocalCarry& lc);
  * route, @p emit null; a stale generation; a column not registered) the coefficient's
  * square is added to @p marg_var: the term is marginalized at its harvest variance, the
  * conservative direction.  Counted in @p X.  No-op on a row with no valid coefficient.
+ * @param shx       The shared-history state: this epoch's registered columns and the stash
+ *                  stamp of the compression they belong to (read).
+ * @param lc        The carried entry whose history coefficients are applied.
+ * @param[out] emit  The row's emitted history terms, by this epoch's shared column; each
+ *                  coefficient is added on its registered column.  Null selects the
+ *                  marginalizing route.
+ * @param[in,out] marg_var  The row's marginalized variance (m^2), raised by the squared
+ *                  coefficients that were not emitted.
+ * @param[in,out] X  The exact-coupling counters (history rows and terms emitted or
+ *                  marginalized).
  */
 void sharedHistoryRowTerms(const SharedHistoryState& shx, const LocalCarry& lc,
                            std::map<Eigen::Index, double>* emit, double& marg_var,
@@ -253,6 +267,9 @@ void sharedHistoryRowTerms(const SharedHistoryState& shx, const LocalCarry& lc,
  * each kept direction that at least one carried row references (a valid nonzero
  * coefficient of that compression in any of the seven carry maps) gets column
  * @c "HIST|j"; an unreferenced one is counted and not registered.  No-op off.
+ * @param[in,out] ctx  The run context: the carry maps and the held compression are read;
+ *                     @c ctx.carry.shx (the registered columns) and the counters are written.
+ * @param[in,out] est  The estimator on which the history columns are registered.
  */
 void networkSharedHistoryRegister(NetworkRunContext& ctx, NetworkEstimator& est);
 
@@ -260,12 +277,24 @@ void networkSharedHistoryRegister(NetworkRunContext& ctx, NetworkEstimator& est)
  * @brief Fold the registered history columns' priors: N(0, 1) on each,
  *        independent of the border, by identity.  Call after @c networkClockCloneFoldEnd.
  *        Captured in @c ws.cap_shx with @p within_epoch_armed.  No-op off.
+ * @param[in,out] ctx  The run context: the registered columns are read; the fold counter is
+ *                     written.
+ * @param[in,out] ws   The epoch workspace: receives the folded priors in @c cap_shx when
+ *                     @p within_epoch_armed.
+ * @param[in,out] est  The estimator the priors are folded into.
+ * @param within_epoch_armed  True when the within-epoch replay is armed (the priors are
+ *                     captured for it).
  */
 void networkSharedHistoryFold(NetworkRunContext& ctx, EpochWorkspace& ws, NetworkEstimator& est,
                               bool within_epoch_armed);
 
-/// Re-fold the captured history priors on the within-epoch replay's fresh arrowhead.
-/// No-op off and when nothing was captured.
+/**
+ * @brief Re-fold the captured history priors on the within-epoch replay's fresh arrowhead.
+ *        No-op off and when nothing was captured.
+ * @param ctx  The run context (the knob is read).
+ * @param ws   The workspace holding the captured priors (@c cap_shx), read.
+ * @param[in,out] est  The estimator the priors are re-folded into.
+ */
 void networkSharedHistoryReplayFold(const NetworkRunContext& ctx, const EpochWorkspace& ws,
                                     NetworkEstimator& est);
 
@@ -273,20 +302,31 @@ void networkSharedHistoryReplayFold(const NetworkRunContext& ctx, const EpochWor
  * @brief Open the harvest's history record.  Inert (@c on false) off and when
  *        B1's regression is not available this epoch (B1 then drops the rows' Y terms, as
  *        it drops its clone terms; counted when history was registered).
+ * @param[in,out] ctx  The run context: the no-regression counter is written.
  * @param h B1's harvest record, formed by @c networkClockCloneHarvestBegin over Y.
+ * @return The epoch's harvest-side record, with no handles yet; @c on is true only when the
+ *         knob is armed and @p h has its regression.
  */
 SharedHistoryHarvest networkSharedHistoryHarvestBegin(NetworkRunContext& ctx,
                                                       const ClockCloneHarvest& h);
 
-/// Note where a harvested row's entry was written: call after each of the six
+/// @brief Note where a harvested row's entry was written: call after each of the six
 /// carry-map writes of the harvest.  No-op when @p H is inert.
+/// @param[in,out] H  The epoch's harvest record: a handle is appended to @c H.handles.
+/// @param est_idx  The estimator station index of the row.
+/// @param col      The row's local column in that station's block.
+/// @param map      The carry map the entry was written to.
+/// @param sta      The station (roster index) of the entry's key.
+/// @param sat      The key's second part: a satellite id, or the clock kind or bias key of a
+///                 receiver map (empty for the ZWD map).
+/// @param sig      The key's signal part (read by the ambiguity map only; empty otherwise).
 void networkSharedHistoryNoteEntry(SharedHistoryHarvest& H, std::size_t est_idx, Eigen::Index col,
                                    SharedHistoryMap map, int sta, const std::string& sat = "",
                                    const std::string& sig = "");
 
 /**
  * @brief The compression, once every carried row of the network is harvested:
- *        the rows' Y coefficients through @ref sharedHistoryCompress at the cap
+ *        the rows' Y coefficients through @ref GnssProcessor::sharedHistoryCompress "sharedHistoryCompress" at the cap
  *        @c rank x the clones registered this epoch, each noted entry's history
  *        coefficients and stamp written, its remainder added to its variance, the
  *        within-station remainder added to the F3 blocks B1 registered, the cross-station
@@ -294,6 +334,11 @@ void networkSharedHistoryNoteEntry(SharedHistoryHarvest& H, std::size_t est_idx,
  *        the next epoch.  On a failed compression every row takes B1's per-station term
  *        (counted).  Call in place of @c networkClockCloneHarvestEnd's role (that function
  *        returns at once under X2).  No-op when @p H is inert.
+ * @param H     This epoch's harvest record: the handles of the noted entries, read.
+ * @param h     B1's harvest record: the rows' Y coefficients (@c rc), the conditional covariance
+ *              of Y (@c B) and the registered F3 blocks, whose covariances are raised in place.
+ * @param[in,out] ctx  The run context: the carry entries named by the handles are updated, the
+ *              held compression (@c ctx.carry.shx) and the counters are written.
  * @param now_s the harvest's continuous-GPS second (the entries' @c last_seen_s).
  */
 void networkSharedHistoryHarvestEnd(SharedHistoryHarvest& H, const ClockCloneHarvest& h,
@@ -304,12 +349,14 @@ void networkSharedHistoryHarvestEnd(SharedHistoryHarvest& H, const ClockCloneHar
  *
  * Every live clone row (the smoothed-hold clone's clock rows; the smoothed-hold block member's clock and phase-visible rows) that
  * kept its Y coefficients pending at this epoch's update (@c PbHoldCloneShx::rc, stamped with
- * @c n_loop_epochs) is projected onto @p X's kept directions (@ref sharedHistoryProject): its
+ * @c n_loop_epochs) is projected onto @p X's kept directions (@ref GnssProcessor::sharedHistoryProject "sharedHistoryProject"): its
  * history coefficients are stamped @p now_s (emitted with the history columns at the next
  * update) and its remainder is added to its variance.  With @p X null or not formed, or a
  * width mismatch, the row takes the per-row term instead (B1's form, counted as a projection
  * failure).  The rows never steer the compression.  No-op unless the shared history and the
  * smoothed hold are both armed.
+ * @param[in,out] ctx  The run context: the hold rows' variances and history records are
+ *              updated, the counters are written.
  * @param X     this epoch's compression, or null when none was formed.
  * @param now_s the harvest's continuous-GPS second (the compression's stamp).
  */
@@ -321,10 +368,19 @@ void networkSharedHistoryProjectHoldRows(NetworkRunContext& ctx, const SharedHis
  *        (B1's form, counted as a projection failure).  Called at the hold's re-harvest,
  *        after the harvest's end, so a row whose epoch never reached the compression (an
  *        early-returning harvest) keeps its marginal; a no-op when every row was projected.
+ * @param[in,out] ctx  The run context: the pending hold rows' variances and history records
+ *                     are updated, the counters are written.
+ * @param ep  The loop epoch (@c n_loop_epochs): a row pending from this epoch or an earlier one
+ *            takes the per-row term.
  */
 void networkSharedHistoryFinalizeHoldRows(NetworkRunContext& ctx, long long ep);
 
-/// The run-end line of the shared history and its INERT warning (invariant 4).  No-op off.
+/**
+ * @brief The run-end line of the shared history and its INERT warning (invariant 4).  No-op off.
+ * @param ctx  The run context: the shared-history and exact-coupling counters and the knobs
+ *             are read.
+ * @param log  The network logger the lines are written to.  A null logger writes nothing.
+ */
 void networkSharedHistoryRunEnd(const NetworkRunContext& ctx,
                                   const std::shared_ptr<spdlog::logger>& log);
 

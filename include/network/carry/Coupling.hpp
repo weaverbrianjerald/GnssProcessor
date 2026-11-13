@@ -14,15 +14,15 @@
  * This removes the double count of shared information, so the recursion equals the
  * batch solve.  The time update (carry_coupling_time_update) shrinks each present column by
  * @f$\kappa_j=P_{\text{prev}}/(P_{\text{prev}}+q_j\Delta t)@f$ and re-projects the
- * shrink gauge-orthogonally (@ref CouplingRowBuilder::tuGaugeRestore).  The gauge projection
+ * shrink gauge-orthogonally (@ref GnssProcessor::CouplingRowBuilder::tuGaugeRestore "CouplingRowBuilder::tuGaugeRestore").  The gauge projection
  * (carry_coupling_gauge_project) extends the same re-projection to the truncated
  * columns, whose deletion breaks the row's gauge invariance.
  *
- * @ref CouplingRowBuilder is constructed fresh per station inside the PASS-B OpenMP
+ * @ref GnssProcessor::CouplingRowBuilder "CouplingRowBuilder" is constructed fresh per station inside the PASS-B OpenMP
  * produce loop.  It holds the per-station scratch (the pending-row container
  * @c crows) and owns no cross-epoch state.  The coupling type vocabulary
- * (@ref CoupledShared, @ref CplRowRaw, @ref kCouplingSparsifyRelThresh) and the
- * per-station slot @ref StationAssembly are defined in network/driver/RunTypes.hpp,
+ * (@ref GnssProcessor::CoupledShared "CoupledShared", @ref GnssProcessor::CplRowRaw "CplRowRaw", @ref GnssProcessor::kCouplingSparsifyRelThresh "kCouplingSparsifyRelThresh") and the
+ * per-station slot @ref GnssProcessor::StationAssembly "StationAssembly" are defined in network/driver/RunTypes.hpp,
  * which this header @c \#includes.
  */
 
@@ -53,10 +53,10 @@ struct SharedHistoryState;   // network/carry/SharedHistory.hpp; pointer member 
 /// already marginalized into @c w.  Buffered per station in @ref CouplingRowBuilder and
 /// batch-appended by @ref CouplingRowBuilder::appendCouplingRows.
 struct PendCplRow {
-    Eigen::Index local_col{0};
+    Eigen::Index local_col{0};  ///< A_r column of the carried local state the row constrains (a block row's primary column).
     std::vector<std::pair<Eigen::Index, double>> shared;  ///< (present free shared col, M_rj)
-    double y{0.0};
-    double w{0.0};
+    double y{0.0};  ///< Row right-hand side: (r̂_prev − r_lin) + Σ_present M_rj ŝ_prev,j (m); the whitened counterpart on a block row.
+    double w{0.0};  ///< Row weight: 1/σ² on a scalar-path row, 1 on a whitened block row.
     /// Local coefficients of a whitened block row (network.phase_leveling_local_block).
     /// When non-empty, these (A_r column, coefficient) pairs replace the scalar path's
     /// single +1 at @c local_col, and @c local_col then names the row's primary column
@@ -233,14 +233,23 @@ struct CouplingRowBuilder {
     /// off (byte-identical).
     const SharedHistoryState*                shx{nullptr};
 
-    /// True (and counted) when @p cs sits on a satellite inside its re-admission window.
+    /// @brief Whether a coupling term takes the departed route because its satellite was re-admitted recently.
+    /// @param cs The carried coupling term (a SH term or one with no satellite is never diverted).
+    /// @return True (and counted) when @p cs sits on a satellite inside its re-admission window.
+    ///         False when @c sats is null, the window has expired, or the term does not qualify.
     bool readmitDiverted(const CoupledShared& cs);
-    /// Resolve @p cs to its shared-border column this epoch, or −1 if it has departed.
+    /// @brief Resolve @p cs to its shared-border column this epoch, or −1 if it has departed.
+    /// @param cs The carried coupling term (its kind, satellite and signal, or SH indices, name the parameter).
+    /// @return Column index of the shared parameter in this epoch's estimator layout; -1 when the
+    ///         parameter is not registered this epoch.
     Eigen::Index resolveSharedCol(const CoupledShared& cs) const;
-    /// Per-kind border process noise (m²/s): the dense-fold q ladder, and the per-degree
+    /// @brief Per-kind border process noise (m²/s): the dense-fold q ladder, and the per-degree
     /// SH value.
+    /// @param cs The carried coupling term (its kind selects the rate; SH terms also use degree and layer).
+    /// @return Process-noise rate of the term's shared parameter: @c q_clock, @c q_cb or @c q_pb by kind;
+    ///         for an SH coefficient the layer's per-degree value, divided by the degree squared above degree 0.
     double couplingQ(const CoupledShared& cs) const;
-    /// Gauge re-projection: hold each (constellation, kind) coefficient
+    /// @brief Gauge re-projection: hold each (constellation, kind) coefficient
     /// sum at the value the harvest regression had, so that the row observes the datum
     /// gauge exactly as much as its @f$A_r=+1@f$ local requires, and no more.
     ///
@@ -267,18 +276,29 @@ struct CouplingRowBuilder {
     /// counted (@c R.cpl_gauge_orphan) and left uncorrected.
     void tuGaugeRestore(std::vector<TuEnt>& ents,
                         const std::map<std::pair<char, int>, double>* trunc_sum) const;
-    /// True when the (kind, sat[, signal]) column was reinit-folded after @p since_s
-    /// (q = ∞, marginalize).  Always false with both @c carry_cpl_tu and
-    /// @c carry_cpl_reinit off.
+    /// @brief Whether a coupling term's shared column was re-realized after the row was harvested.
+    /// @param cs      The carried coupling term (its kind, satellite and signal select the history key).
+    /// @param since_s Content time (s) at which the row was last seen; only reinit marks later than this count.
+    /// @return True when the (kind, sat[, signal]) column was reinit-folded after @p since_s
+    ///         (q = ∞, marginalize).  Always false with both @c carry_cpl_tu and
+    ///         @c carry_cpl_reinit off.
     bool tuReinitSince(const CoupledShared& cs, double since_s) const;
-    /// Build one coupling row for carried local column @p col (buffered, not yet appended).
+    /// @brief Build one coupling row for carried local column @p col (buffered, not yet appended).
+    ///
     /// @p sat and @p signal name the column (the row's tag carries them, with
     /// the kind @c CouplingScalar, which the builder sets); the defaults name none (a column
     /// with no satellite, the wet delay).
+    /// @param col       A_r column of the carried local state the row constrains.
+    /// @param x_lin_val This epoch's linearization point of that state (m).
+    /// @param lc        The carry entry (carried absolute value, coupling terms, last-seen time).
+    /// @param var_eff   Final prior variance of the column: var + q·gap, floored, times the variance factor (m²).
+    /// @param gap       Clamped inter-epoch gap (s); the Δt of the κ time update.
+    /// @param sat       The column's satellite for the row's tag (default: none).
+    /// @param signal    The column's signal for the row's tag (default: none).
     void buildCplRow(Eigen::Index col, double x_lin_val,
                      const LocalCarry& lc, double var_eff, double gap,
                      const SatId& sat = SatId{}, const SignalId& signal = SignalId{});
-    /// Scalar-path ingredients of one coupling row: the loop body of
+    /// @brief Scalar-path ingredients of one coupling row: the loop body of
     /// @ref buildCplRow's scalar path, factored out so that the local-block path shares the
     /// same predicate chain.  Fills @p row's @c local_col / @c shared / @c y and returns
     /// through @p sigma2 the row's σ² = var_eff + Σ_departed M²P_prev + Σ_present M²κqΔt.
@@ -289,14 +309,23 @@ struct CouplingRowBuilder {
     /// With @c cxu armed and the row harvested at its stash, the row takes the exact
     /// route (@ref exactRowIngredients) instead.  A row the exact route cannot take is
     /// counted (@c R.cxu.rows_stale / @c rows_unfactored) and built as before.
+    /// @param col       A_r column of the carried local state the row constrains.
+    /// @param x_lin_val This epoch's linearization point of that state (m).
+    /// @param lc        The carry entry (carried absolute value, coupling terms, last-seen time).
+    /// @param var_eff   Final prior variance of the column: var + q·gap, floored, times the variance factor (m²).
+    /// @param gap       Clamped inter-epoch gap (s); the Δt of the κ time update.
+    /// @param[out] row  The pending row to fill: @c local_col, @c shared and @c y (not @c w).
+    /// @param[out] sigma2 The row's variance σ² (m²) on success.
     /// @param xr_keep  when non-null and the row took the exact route, receives that route's
     ///        @ref CouplingExactRow (its pair term); left untouched (@c ok false)
     ///        on any other route.
+    /// @return True when the row was built.  False when σ² ≤ 0 or the RHS is non-finite
+    ///         (the row is not emitted).
     bool scalarRowIngredients(Eigen::Index col, double x_lin_val,
                               const LocalCarry& lc, double var_eff, double gap,
                               PendCplRow& row, double& sigma2,
                               CouplingExactRow* xr_keep = nullptr);
-    /// The exact route of one row.  Terms on a stashed dense key go
+    /// @brief The exact route of one row.  Terms on a stashed dense key go
     /// through @ref couplingExactRow (S updated, D re-attributed through P); a datum-pinned
     /// term (@c p_prev = 0) is kept as harvested; a present term with no dense row takes
     /// the time update's kappa at the fold's own inflation (@c cxu->q_outside); a departed or
@@ -305,11 +334,22 @@ struct CouplingRowBuilder {
     /// σ² = var_eff + Σ_departed M²P_prev + Σ_scalar M²κqΔt + M'BM, the per-row form (the
     /// time-update covariance between rows is added only by the block term, from
     /// @p xr_keep).  Same return and counter contract as @ref scalarRowIngredients.
+    /// @param col       A_r column of the carried local state the row constrains.
+    /// @param x_lin_val This epoch's linearization point of that state (m).
+    /// @param lc        The carry entry (carried absolute value, coupling terms, last-seen time).
+    /// @param var_eff   Final prior variance of the column: var + q·gap, floored, times the variance factor (m²).
+    /// @param gap       Clamped inter-epoch gap (s); the Δt of the κ time update.
+    /// @param[out] row  The pending row to fill: @c local_col, @c shared and @c y (not @c w).
+    /// @param[out] sigma2 The row's variance σ² (m²) on success.
+    /// @param[out] xr_keep When non-null, receives the row's exact-route result (its pair term) for the block's cross terms.
+    /// @return True when the row was built.  False when σ² ≤ 0 or the RHS is non-finite
+    ///         (the row is not emitted).
     bool exactRowIngredients(Eigen::Index col, double x_lin_val, const LocalCarry& lc,
                              double var_eff, double gap, PendCplRow& row, double& sigma2,
                              CouplingExactRow* xr_keep = nullptr);
-    /// Build this station's injectable carried columns as one jointly whitened local
+    /// @brief Build this station's injectable carried columns as one jointly whitened local
     /// block instead of independent rows (network.phase_leveling_local_block).
+    ///
     /// Per column, the scalar-path ingredients
     /// (@ref scalarRowIngredients) supply the +1 local, the present-shared regressor
     /// row, the RHS and σ² (the diagonal of Σ).  The off-diagonals are the harvested
@@ -326,12 +366,17 @@ struct CouplingRowBuilder {
     /// buffered, and the caller falls back to per-column rows and counts the fallback.
     /// Returns true with nothing buffered when no column survives.  Columns refused by
     /// the scalar screen are dropped from the block and counted.
+    /// @param cols The station's injectable carried columns (every admission predicate already
+    ///             applied; a column absent here is marginalized out of the block).
+    /// @return True when the block was built, or when no column survived (nothing buffered).
+    ///         False when the factor is non-SPD after the ridge retry (nothing buffered; the
+    ///         caller falls back to per-column rows).
     bool buildLocalBlock(const std::vector<LocalBlockCol>& cols);
-    /// Batch-append the buffered rows into @c R (scalar per-row rows and whitened block rows).
+    /// @brief Batch-append the buffered rows into @c R (scalar per-row rows and whitened block rows).
     void appendCouplingRows();
 };
 
-/// Serial post-produce coupling observability, called once per epoch after the
+/// @brief Serial post-produce coupling observability, called once per epoch after the
 /// PASS-B produce loop, unconditionally (the @c carry_cpl_cond guards are internal).
 /// (1) Fold each station's @c cpl_terms_* and gauge/diversion counts into the run
 /// totals; log one line per epoch that has gauge-projection orphans, naming the
@@ -340,6 +385,33 @@ struct CouplingRowBuilder {
 /// coupling rows of the run (weight, RHS, A_s sparsity, gauge sums: what
 /// @c addStation receives, for A/B-arm comparison); the budget is decremented across
 /// epochs.  Log-only; reads @c est and @c asm_res without modifying them.
+/// @param carry_cpl_cond  The conditional-coupling knob (@c network.carry_conditional_coupling);
+///                        false skips both the totals and the dump.
+/// @param asm_res         The stations' assembled blocks of this epoch (per-station counters and
+///                        coupling rows), read.
+/// @param est             The estimator, read: its shared column lookups label the columns of the dump.
+/// @param registered_clock_sats  Satellites (ids) with a registered clock column this epoch.
+/// @param shared_phase_keys      Registered satellite phase-bias state keys this epoch.
+/// @param registered_code_keys   Registered (satellite, signal) code-bias columns this epoch.
+/// @param tow             Epoch GPS time of week (s), printed in the log lines.
+/// @param log             The network logger.
+/// @param[in,out] n_cpl_terms_present   Run total of coupling terms kept as present terms (added to).
+/// @param[in,out] n_cpl_terms_departed  Run total of terms marginalized as departed (added to).
+/// @param[in,out] n_cpl_terms_shrunk    Run total of present terms kappa-shrunk by the border time update (added to).
+/// @param[in,out] n_cpl_gauge_held      Run total of (constellation, kind) families restored to
+///                                      their harvest coefficient sum (added to).
+/// @param[in,out] n_cpl_gauge_orphan    Run total of families with truncated mass and no present
+///                                      recipient (added to).
+/// @param[in,out] n_cpl_reinit_diverted Run total of terms diverted to the departed route by the
+///                                      widened reinit-sources probe (added to).
+/// @param[in,out] n_cpl_readmit_diverted  Run total of terms diverted to the departed route by the
+///                                      post-re-admission marginalization window (added to).
+/// @param[in,out] n_cpl_row_dump        Remaining budget of assembled coupling rows to dump for the
+///                                      run; decremented by each row dumped.
+/// @param[in,out] cpl_orphan_fam_total  Optional run total of the orphan attribution, by
+///                                      (constellation letter, @c SharedParamKind as int): orphan
+///                                      count and summed |truncated mass| (coefficient mass,
+///                                      dimensionless).  Null skips it.
 void foldAndDumpCouplingRows(bool carry_cpl_cond,
                              const std::vector<StationAssembly>& asm_res,
                              const NetworkEstimator& est,
@@ -359,7 +431,7 @@ void foldAndDumpCouplingRows(bool carry_cpl_cond,
                              std::map<std::pair<char,int>, std::pair<long long,double>>*
                                  cpl_orphan_fam_total = nullptr);
 
-/// The step a satellite phase-bias shift applies to one carried reference of the column
+/// @brief The step a satellite phase-bias shift applies to one carried reference of the column
 /// (sat, signal): its carried value or a coupling term's @c s_prev (the eq34 chain datum,
 /// combined with the coupling carry, and the float vehicle's declared anchor
 /// handover).  @c CoupledShared::s_prev and @c CarryPrior::value are the same number for the
@@ -455,14 +527,18 @@ void networkCouplingRegionRows(StationCarryFrame& carry);
 
 /// @brief Run-scope counters of Coupling, a base of NetworkServiceCounters (network/state/RunContext.hpp).
 struct CouplingCounters {
-    long long n_cpl_terms_present = 0, n_cpl_terms_departed = 0, n_cpl_terms_shrunk = 0;
+    /// Run totals of coupling terms by route: kept as present terms, marginalized as departed, and
+    /// κ-shrunk by the border time update.
+    long long n_cpl_terms_present = 0, n_cpl_terms_departed = 0, /**< Run total of coupling terms marginalized as departed. */ n_cpl_terms_shrunk = 0;   /**< Run total of coupling terms shrunk by the border time update. */
     // On-path telemetry for the departed-column gauge defect.  `held` counts
     // (constellation, kind) families whose coefficient sum was restored to its harvest
     // value against a truncated column; `orphan` counts families whose truncated mass
     // had no present recipient, i.e. the rows the projection could not make
     // gauge-invariant.  Armed with both at 0 means no row was
     // ever truncated, so the projection is inert, not clean.
-    long long n_cpl_gauge_held = 0, n_cpl_gauge_orphan = 0;
+    /// Run totals of the gauge projection: (constellation, kind) families restored to the harvest
+    /// sum (held), and families with truncated mass but no present recipient (orphan).
+    long long n_cpl_gauge_held = 0, n_cpl_gauge_orphan = 0;   /**< Run total of families with truncated mass but no present recipient (the rows the projection could not make gauge-invariant). */
     /// Orphan attribution: run totals per (constellation, SharedParamKind), as the
     /// orphan count and the summed |truncated mass| left gauge-dirty.  Structurally a
     /// channel of two or more constellations (a row's minority family can lose all its

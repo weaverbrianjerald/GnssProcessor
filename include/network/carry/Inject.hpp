@@ -154,6 +154,9 @@ namespace GnssProcessor {
         std::string signal{ "all" };///< "all", or one RINEX-3 phase code.
         bool        cold{ false };  ///< Force the cold branch (re-realize and re-reference).
         /// @brief True when @p amb ("<sat>_<signal>") is in this directive's scope.
+        /// @param amb Ambiguity key: the satellite id, an underscore, then the phase signal code.
+        /// @return True when @p amb names this directive's satellite and the directive's signal is
+        ///         empty or "all" or equals the key's signal; false otherwise.
         bool matches(const std::string& amb) const {
             if (amb.size() <= sat.size() || amb.compare(0, sat.size(), sat) != 0
                 || amb[sat.size()] != '_')
@@ -181,7 +184,7 @@ namespace GnssProcessor {
         /// not entered), so the PHASE_ANCHOR handover row is unchanged on an
         /// unarmed run.
         mutable int n_cand_skipped{ 0 };
-        mutable std::string cand_first_unusable;
+        mutable std::string cand_first_unusable;   ///< First station the usable-first pass skipped (empty when none).
     };
 
     /**
@@ -218,10 +221,13 @@ namespace GnssProcessor {
         std::set<std::string> signals;
         std::size_t ev_index{ 0 };    ///< Index into @c NetworkInjectState::events (ledger updates).
         /// @brief True when @p sig is in this directive's band scope.
+        /// @param sig RINEX-3 phase signal code.
+        /// @return True when @c signals is empty (every signal of the satellite) or contains @p sig.
         bool coversSignal(const std::string& sig) const {
             return signals.empty() || signals.count(sig) != 0;
         }
         /// @brief True for every mode that runs the RAIM attribution erase path (i.e. not @c free_epoch).
+        /// @return True unless @c mode is "free_epoch".
         bool isErase() const { return mode != "free_epoch"; }
     };
 
@@ -273,8 +279,8 @@ namespace GnssProcessor {
         /// it applied (m), and the coordinate and position linearization points it found
         /// (x, y, z each), which the closing edge restores to the bit.
         std::vector<int> station_index;
-        std::vector<std::array<double, 3>> station_shift;
-        std::vector<std::array<double, 6>> station_orig;
+        std::vector<std::array<double, 3>> station_shift;   ///< Per event: the ECEF shift applied (x, y, z; m).
+        std::vector<std::array<double, 6>> station_orig;    ///< Per event: the coordinate then the position linearization point found (x, y, z each), restored at the closing edge.
         /// The readers of the broadcast health series on this run ("exclude", "pivot",
         /// "pivot_election", comma-joined), or "none" when nothing reads a sat_health flip.
         std::string health_readers{ "none" };
@@ -318,6 +324,11 @@ namespace GnssProcessor {
         /// @c anchor_handover for a family the production path also staged gets the
         /// scripted directive (its @c cold mode is what such a leg tests), and the
         /// election reads exactly one directive per family.
+        ///
+        /// @param amb Ambiguity key: the satellite id, an underscore, then the phase signal code.
+        /// @return Pointer to the first matching staged directive (scripted first, then production),
+        ///         or null when none covers @p amb.  Valid until the directives are cleared at the top
+        ///         of the next epoch.
         const InjectAnchorDirective* anchorFor(const std::string& amb) const {
             for (const auto& d : anchor_now)
                 if (d.matches(amb)) return &d;
@@ -326,6 +337,7 @@ namespace GnssProcessor {
             return nullptr;
         }
         /// @brief True when at least one event fired at least once.
+        /// @return True when some event's applied-epoch count is above zero; false for an unarmed or unfired schedule.
         bool anyFired() const {
             for (long long n : n_applied) if (n > 0) return true;
             return false;
@@ -375,6 +387,9 @@ namespace GnssProcessor {
     /**
      * @brief Run-end summary and the never-fired hard error.
      *
+     * @param ctx  The run context: the injector's schedule, per-event fire counts and counters
+     *             are read.
+     * @param log  The network logger the summary (and the never-fired error) is written to.
      * @return 0 when every armed event fired at least once (or the injector is
      *         unarmed), 1 when at least one armed event never fired; the caller
      *         (the run-end table's row, the overload below) returns it as its verdict,

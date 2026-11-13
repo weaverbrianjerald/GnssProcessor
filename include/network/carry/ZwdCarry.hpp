@@ -40,7 +40,6 @@ enum class StationStep : std::uint8_t;     // network/assembly/StationBuild.hpp
  * Step `zwd_capture` of kStationBuildSteps (network/assembly/StationBuild.hpp); its kinds: none
  * (it records only). It returns at once unless `zwd_capture && !R.pl_zwd_present`. Records:
  * pl_zwd, pl_zwd_present. The frozen text of networkPassB_'s produce loop below its bindings
- *.
  * @param build One station's build: the station and its slot writable, the run read only.
  * @return StationStep::Next.
  */
@@ -113,7 +112,7 @@ std::optional<ZwdCoupleEdge>& zwdEdgeOf(net::StationTable& sta_rows, int station
 
 /**
  * @brief The decoupling edge of an event erase: erases the station's carried wet delay and
- *        opens its edge record (@ref zwdEdgeDecouple).
+ *        opens its edge record (@ref GnssProcessor::zwdEdgeDecouple "zwdEdgeDecouple").
  *
  * A re-created entry erased before its first fold is counted in
  * @c ZwdCarryCounters::n_zwd_superseded_by under the cause of the edge it supersedes.  The
@@ -146,7 +145,7 @@ bool zwdEventErase(net::StationTable& sta_rows, int station, ZwdEdgeCause cause,
  * @param traces     The run's trace streams (the events trace).
  * @param t          The epoch.
  * @param station    The station's name.
- * @param rc         The closed edge (@ref zwdEdgeFold).
+ * @param rc         The closed edge (@ref GnssProcessor::zwdEdgeFold "zwdEdgeFold").
  * @param step_m     The wet delay's change at the fold (m).
  * @param fold_sd_m  The folded prior's standard deviation (m).
  */

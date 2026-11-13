@@ -79,7 +79,7 @@ struct EpochDdBuild;            // network/driver/Epoch.hpp
  *     split uses the same idiom. Read only under network.carry_invariant_innov_retap_only.
  *   - @p we_culprits = ep.ws.we_culprits: The within-epoch RAIM tier's culprit sets:
  *     every carried ambiguity of a culprit satellite or arc is treated as
- *     slipped. The epoch workspace's member (@ref EpochWorkspace::we_culprits), naming
+ *     slipped. The epoch workspace's member (@ref GnssProcessor::EpochWorkspace::we_culprits "EpochWorkspace::we_culprits"), naming
  *     something only on a T2 re-solve's rebuild; each rebuild that reads a culprit is counted,
  *     with what it withheld, in @c NetworkServiceCounters::we_culprit_withhold.
  */
@@ -103,7 +103,7 @@ struct DdPriorBuildCounters {
 
     // Invariant-carry driver counters (decomposition INC-4), mirrored from
     // carry_driver.counters() at the install; the one-time GLONASS warn latch.
-    bool carry_glonass_warned = false;   // one-time WARN when a GLONASS ambiguity is excluded (FDMA)
+    bool carry_glonass_warned = false;   ///< one-time WARN when a GLONASS ambiguity is excluded (FDMA)
     // Carry arcs whose membership kill was suppressed by the D5 v4 flat set
     // (NetworkCarryState::carry_innov_pending_flat).  The tripwire of
     // invariant #4 for the knob: 0 with it armed means nothing reached it.  Counted per
@@ -111,7 +111,7 @@ struct DdPriorBuildCounters {
     // twice (the same convention as the driver's chords_born / slip_kills).  Only an
     // arc that survives the call counts: one a T2 culprit kills in the re-solve does
     // not (it is counted in we_culprit_withhold.ambs).
-    long long carry_innov_kill_suppressed = 0;
+    long long carry_innov_kill_suppressed = 0;   ///< carry arcs whose membership kill the D5 flat set suppressed (run total)
 };
 
 } // namespace GnssProcessor

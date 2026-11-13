@@ -30,15 +30,20 @@
 
 namespace GnssProcessor {
 
-/// The pivot-frame diagonal addition of a carried clock: @f$r_p\,\Delta t_j@f$ (m^2).
+/// @brief The pivot-frame diagonal addition of a carried clock: @f$r_p\,\Delta t_j@f$ (m^2).
 /// @param rate_p the pivot's own process-noise rate (m^2/s).
 /// @param dt_j   the interval the clock's own increment covers (s); a negative value is 0.
+/// @return The variance added to the carried clock's prior (m^2); 0 when @p rate_p is not positive.
 inline double pivotFrameDiag(double rate_p, double dt_j) {
     return (rate_p > 0.0) ? rate_p * std::max(0.0, dt_j) : 0.0;
 }
 
-/// The pivot-frame covariance of two carried clocks of the pivot's constellation:
-/// @f$r_p \min(\Delta t_a, \Delta t_b)@f$ (m^2).  Equals @ref pivotFrameDiag for a = b.
+/// @brief The pivot-frame covariance of two carried clocks of the pivot's constellation:
+/// @f$r_p \min(\Delta t_a, \Delta t_b)@f$ (m^2).  Equals @ref GnssProcessor::pivotFrameDiag "pivotFrameDiag" for a = b.
+/// @param rate_p the pivot's own process-noise rate (m^2/s).
+/// @param dt_a   the interval the first clock's own increment covers (s); a negative value is 0.
+/// @param dt_b   the interval the second clock's own increment covers (s); a negative value is 0.
+/// @return The covariance between the two clocks' increments (m^2); 0 when @p rate_p is not positive.
 inline double pivotFrameCross(double rate_p, double dt_a, double dt_b) {
     return (rate_p > 0.0) ? rate_p * std::max(0.0, std::min(dt_a, dt_b)) : 0.0;
 }

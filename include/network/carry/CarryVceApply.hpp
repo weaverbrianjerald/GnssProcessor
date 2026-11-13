@@ -4,7 +4,7 @@
  * @brief LASER's variance-factor iteration applied to the network carry-row
  *        stochastic model (@c network.carry_vce_apply).
  *
- * The monitor (@ref NetworkCarryVce) measures the carry residuals against the
+ * The monitor (@ref GnssProcessor::NetworkCarryVce "NetworkCarryVce") measures the carry residuals against the
  * hand carry floors, and on quiet epochs finds those floors optimistic by more than
  * an order of magnitude.  Varying the floor showed that the formal DD sigma then
  * follows the floor rather than the data (a 40× floor change moved the formal dd_σ
@@ -113,7 +113,7 @@
  *
  * ## Isolation / testing
  *
- * Pure numeric leaf class over @ref NetworkCarryVce, with no @c ApplicationNetwork
+ * Pure numeric leaf class over @ref GnssProcessor::NetworkCarryVce "NetworkCarryVce", with no @c ApplicationNetwork
  * coupling and no state it does not own.  Tested directly in
  * @c tests/network/test_carry_vce_apply.cpp against a monitor fed synthetic rows of known
  * truth, following the standalone-class pattern of @c test_network_carry_vce.
@@ -189,18 +189,20 @@ public:
 
     /// One clamp / freeze edge (both edges are reported, with identity).
     struct Edge {
-        int         family = -1;
-        char        sys    = '\0';
+        int         family = -1;   ///< @ref Family slot of the group (-1: unset).
+        char        sys    = '\0'; ///< RINEX constellation letter of the group; '\0' = pooled.
         const char* what   = "";   ///< "ceiling" | "unit" | "freeze".
-        bool        entered = false;
-        double      alpha2 = 1.0;
-        double      target = 1.0;
+        bool        entered = false; ///< True when the group enters the state named by @c what; false when it leaves it.
+        double      alpha2 = 1.0;  ///< The group's variance factor α² at the edge.
+        double      target = 1.0;  ///< The group's last formed target (robust_var_r / hand_fold_var_r) at the edge.
         const char* reason = "";   ///< freeze reason on a freeze edge; "" otherwise.
     };
 
-    /// Inert until @ref configure: the factor table is unity, so a fold site that
-    /// multiplies by @ref factor unconditionally is byte-identical to one that
-    /// does not.
+    /**
+     * @brief Inert until @c configure: the factor table is unity, so a fold site that
+     *        multiplies by @ref factor unconditionally is byte-identical to one that
+     *        does not.
+     */
     NetworkCarryVceApply() { for (auto& row : alpha2_) row.fill(1.0); }
 
     /**
@@ -227,10 +229,17 @@ public:
         for (auto& row : alpha2_) row.fill(1.0);
     }
 
-    /// @return true when at least one family is armed (the apply path is live).
+    /**
+     * @brief Whether the apply path is live.
+     * @return true when at least one family is armed (the apply path is live).
+     */
     bool enabled() const { return any_; }
 
-    /// @return true when @p family (slot) is scaled by this instance.
+    /**
+     * @brief Whether a carry family is scaled by this instance.
+     * @param family_slot @ref Family value (a slot outside 0 to @c kNumFamilies - 1 is never wanted).
+     * @return true when @p family (slot) is scaled by this instance.
+     */
     bool wants(int family_slot) const {
         return any_ && family_slot >= 0 && family_slot < kNumFamilies
             && wanted_[static_cast<std::size_t>(family_slot)];
@@ -248,6 +257,8 @@ public:
      *
      * @param family_slot @ref Family value.
      * @param sys         RINEX constellation letter of the carried key.
+     * @return The live factor α² (dimensionless, at least 1) of the group; exactly 1.0 for an
+     *         unarmed family, an unknown slot or a letter outside the ASCII table.
      */
     double factor(int family_slot, char sys) const {
         if (!wants(family_slot)) return 1.0;
@@ -256,7 +267,13 @@ public:
         return alpha2_[static_cast<std::size_t>(family_slot)][c];
     }
 
-    /// Convenience overload: takes the satellite id and uses its constellation letter.
+    /**
+     * @brief Convenience overload: takes the satellite id and uses its constellation letter.
+     * @param family_slot @ref Family value.
+     * @param sat         Satellite id of the carried key (empty gives factor 1.0).
+     * @return The live factor α² for the satellite's constellation; exactly 1.0 as for the
+     *         character overload, and for an empty @p sat.
+     */
     double factor(int family_slot, const std::string& sat) const {
         return sat.empty() ? 1.0 : factor(family_slot, letterOfSat(sat));
     }
@@ -370,23 +387,51 @@ public:
         }
     }
 
-    /// Every group seen so far, in (family, constellation) order.
+    /**
+     * @brief Every group seen so far, in (family, constellation) order.
+     * @return Map keyed by the group key (family name, then a bar, then the constellation letter;
+     *         no letter for a pooled group); empty before the first @ref stepEpoch with a fed monitor.
+     */
     const std::map<std::string, Group>& groups() const { return groups_; }
 
-    /// Epochs @ref stepEpoch was called (the denominator for every tally).
+    /**
+     * @brief Epochs @ref stepEpoch was called (the denominator for every tally).
+     * @return Count of calls that ran with at least one family armed.
+     */
     long long epochs() const { return n_epochs_; }
 
+    /**
+     * @brief The configured per-epoch limit on the factor step.
+     * @return Maximum multiplicative step (dimensionless, above 1), or 0 for no limit.
+     */
     double slew()      const { return slew_; }
+    /**
+     * @brief The configured ceiling on the variance factor.
+     * @return Largest allowed α² (dimensionless, at least 1).
+     */
     double alpha2Max() const { return alpha2_max_; }
+    /**
+     * @brief The configured warm-up threshold below which a group is frozen.
+     * @return Minimum forgetting-weighted count of monitor rows with redundancy (0 for no threshold).
+     */
     double minRows()   const { return min_rows_; }
 
-    /// Family name ↔ slot.  @return -1 for an unknown name.
+    /**
+     * @brief Family name ↔ slot.
+     * @param f Family name ("pl", "pb" or "cb").
+     * @return -1 for an unknown name.
+     */
     static int familySlot(const std::string& f) {
         if (f == "pl") return kPl;
         if (f == "pb") return kPb;
         if (f == "cb") return kCb;
         return -1;
     }
+    /**
+     * @brief Family slot to its name (the inverse of @ref familySlot).
+     * @param slot @ref Family value.
+     * @return Static string "pl", "pb" or "cb"; "?" for a slot outside the table.
+     */
     static const char* familyName(int slot) {
         switch (slot) {
             case kPl: return "pl";
@@ -395,6 +440,12 @@ public:
             default:  return "?";
         }
     }
+    /**
+     * @brief Freeze reason to its trace name.
+     * @param f The freeze state of a group.
+     * @return Static string "epoch_dirty", "warmup" or "no_target"; "" for @c Freeze::kNone
+     *         (the group stepped).
+     */
     static const char* freezeName(Freeze f) {
         switch (f) {
             case Freeze::kEpochDirty: return "epoch_dirty";

@@ -112,8 +112,10 @@ struct RxCodeBiasCarryCounters {
     long long n_rxcb_blk_step_reset = 0;             ///< receiver code-bias entries erased at the harvest by the frame-invariant step test (10 sigma of the two harvested variances, the walk and a 0.5 m guard): the event response to a jump in the carried value
     long long n_rxcb_blk_no_block = 0;               ///< receiver code-bias entries stashed without a harvest-block row (cross terms to the station's other columns missing next epoch)
     // rx-CB carry run counters (armed-only run-end line).
-    long long rx_cb_injected_total = 0, rx_cb_innov_skips_total = 0,
-              rx_cb_harvested_total = 0;
+    /// Run totals of the rx-CB carry: receiver code-bias priors folded, priors withheld by the
+    /// 10-sigma innovation gate (the receiver-reset response), and harvests (entries stashed).
+    long long rx_cb_injected_total = 0, rx_cb_innov_skips_total = 0, /**< Run total of priors withheld by the 10-sigma innovation gate (the receiver-reset response). */
+              rx_cb_harvested_total = 0;   /**< Run total of rx-CB harvests (entries stashed). */
     /// Per-station fold/withhold tally of the rx-CB carry, kept on
     /// every run where the carry is armed; trace-class, with byte-identical products.
     /// It shows what the pooled "N folded, M withheld" line hides.  Keyed by station
@@ -131,7 +133,7 @@ struct RxCodeBiasCarryCounters {
     // Zero-mean receiver code-bias prior rows folded over the run, one per
     // station-epoch per constellation.  0 with the toggle armed means
     // that no receiver DCB column ever existed.
-    size_t n_rxcb_gauges = 0;
+    size_t n_rxcb_gauges = 0;   ///< zero-mean receiver code-bias prior rows folded over the run
 };
 
 } // namespace GnssProcessor

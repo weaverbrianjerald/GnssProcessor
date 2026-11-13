@@ -13,17 +13,17 @@
  * two each epoch:
  *
  *   1. It receives the eq34 election's spanning-tree/chord partition of this epoch's
- *      (const,signal) observation graph: the @ref GroupInput list, one resolvable arc
+ *      (const,signal) observation graph: the @ref GnssProcessor::NetworkInvariantCarryDriver::GroupInput "GroupInput" list, one resolvable arc
  *      per present ambiguity, each tagged tree edge or chord and resolved to its
  *      estimator (station, local ambiguity column).
  *   2. It reconciles the carried DD estimate to this epoch's basis with one
  *      change-of-basis projection @f$W@f$ per connected component, which subsumes the
  *      phase-B lifecycle events (tree pivot = unimodular @f$T@f$, chord death =
  *      marginalization, chord birth = tap-off, component merge/split = block
- *      re-partition), and emits one @ref NetworkNormalEquations::DdPriorBlock per
- *      component for the producer to fold (@ref buildDdPriors).
+ *      re-partition), and emits one @ref GnssProcessor::NetworkNormalEquations::DdPriorBlock "NetworkNormalEquations::DdPriorBlock" per
+ *      component for the producer to fold (@ref GnssProcessor::NetworkInvariantCarryDriver::buildDdPriors "buildDdPriors").
  *   3. After the solve it installs the posterior (mean and covariance, the closed form
- *      added in phase C) back into the carry (@ref installPosterior).
+ *      added in phase C) back into the carry (@ref GnssProcessor::NetworkInvariantCarryDriver::installPosterior "installPosterior").
  *
  * ## The reconcile is a projection, validated against the phase-B lifecycle
  *
@@ -40,7 +40,7 @@
  *   - a pure tree change (same arcs, no slip): every new chord is carried and @f$W@f$ is
  *     the composed unimodular pivot (basis change, exact, integer);
  *   - a dead chord's arc vanishes: its column of @f$W@f$ is zero and it is marginalized
- *     (= @ref ZComponent::killChord, the covariance sub-block);
+ *     (= @ref GnssProcessor::ZComponent::killChord "ZComponent::killChord", the covariance sub-block);
  *   - a chord whose cycle uses a newly born arc is fresh: it gets a diffuse prior (no
  *     information added to the solve; its posterior is the data-only tap-off, GKF
  *     Eq. 22);
@@ -198,7 +198,7 @@ public:
          * from the linearization it was harvested against.  When armed, @ref buildDdPriors
          * computes @f$z_\ell@f$ per emitted chord from @ref ArcInput::x_lin over the same
          * fundamental cycle that builds the fold rows, @ref installPosterior stores it in
-         * @ref CarriedBlock::zl, and @ref serializeCarry writes one @c ZL row per block.
+         * CarriedBlock::zl (@c GnssProcessor::NetworkInvariantCarryDriver::CarriedBlock::zl), and @ref serializeCarry writes one @c ZL row per block.
          * Nothing in the solve reads it, so turning it on is byte-identical on every
          * product and trace; only the snapshot grows.
          */
@@ -240,8 +240,8 @@ public:
     /// partitions; a DD never crosses a group.  @c key is a caller-stable id for the
     /// group (e.g. a hash of constellation+signal) used only to bucket the carry.
     struct GroupInput {
-        int key{0};
-        std::vector<ArcInput> arcs;
+        int key{0};                  ///< Caller-stable group id: the same id each epoch for the same (const,signal) group.
+        std::vector<ArcInput> arcs;  ///< The group's resolvable arcs this epoch, tree edges and chords.
     };
 
     /// Lifecycle tallies for the run-end line (spec D5).  Tallies made in
@@ -278,7 +278,7 @@ public:
         //     (matching @ref max_component_kc).  Always on, like the
         //     census counters (the solve never reads it, so output is byte-identical); the
         //     run-end line reads it only when the timers are armed. ---
-        long long comp_kc_hist[10]{};     ///< #emitted components with fold-dim d in log2 buckets: [0]=0, [1]=1, [2]=2..3, [3]=4..7, [4]=8..15, [5]=16..31, [6]=32..63, [7]=64..127, [8]=128..255, [9]=≥256.
+        long long comp_kc_hist[10]{};     ///< \#emitted components with fold-dim d in log2 buckets: [0]=0, [1]=1, [2]=2..3, [3]=4..7, [4]=8..15, [5]=16..31, [6]=32..63, [7]=64..127, [8]=128..255, [9]=≥256.
         // --- PD-safe invariant-DD fold (docs/record/SPEC_pd_safe_dd_fold.md) ---------------
         /**
          * @brief Chord rows the D5 gate could not test because @f$\mathrm{Cov}(v)_{ii}@f$
@@ -314,10 +314,10 @@ public:
          */
         long long d5_calib_epochs{0};
         long long d5_calib_off_epochs{0};     ///< of those, @ref InflationState::Off (calibration not armed).
-        long long d5_calib_warmup_epochs{0};  ///< of those, @ref InflationState::WarmUp: armed, gate running v1.
-        long long d5_calib_floored_epochs{0}; ///< of those, @ref InflationState::Floored: armed and warm, but the gate still runs v1, and σ̂₀ alone does not show it.
-        long long d5_calib_capped_epochs{0};  ///< of those, @ref InflationState::Capped: σ̂₀² pinned at the cap.
-        long long d5_calib_active_epochs{0};  ///< of those, @ref InflationState::Active: calibrated.
+        long long d5_calib_warmup_epochs{0};  ///< of those, @c InflationState::WarmUp: armed, gate running v1.
+        long long d5_calib_floored_epochs{0}; ///< of those, @c InflationState::Floored: armed and warm, but the gate still runs v1, and σ̂₀ alone does not show it.
+        long long d5_calib_capped_epochs{0};  ///< of those, @c InflationState::Capped: σ̂₀² pinned at the cap.
+        long long d5_calib_active_epochs{0};  ///< of those, @c InflationState::Active: calibrated.
         /// Smallest raw (unclamped) σ̂₀² estimated past warm-up.  A value below 1 with a
         /// reported σ̂₀ of 1.00 shows the floor clamp was in effect.
         double d5_calib_raw_min{std::numeric_limits<double>::infinity()};
@@ -336,15 +336,24 @@ public:
     /// many threads, and @c parallel_carry already routes the install through the serial
     /// path.
     struct PerfTimers {
-        double time_update_ms{0.0};   ///< @ref beginEpoch: the q_z·Δt inflate of the carried Pᶻ (diagonal).
-        double basis_project_ms{0.0}; ///< @ref buildDdPriors: construction of the change-of-basis projection W plus W·Pᶻ_old·Wᵀ and W·z_old per emitted component (the dense K² materialization that INC-C2 targets).
-        double post_mean_ms{0.0};     ///< @ref installPosterior: the @c ddPriorPosteriorMean read-back (K-vector shrink).
-        double post_cov_ms{0.0};      ///< @ref installPosterior: the @c ddPriorPosteriorCovariance read-back (the dense K×K posterior install, the other dense K² materialization).
-        double d5_gate_ms{0.0};       ///< @ref installPosterior: the D5 @c ddPriorInnovation plus the per-chord standardized gate (0 unless @c Config::innov_gate).
+        double time_update_ms{0.0};   ///< @c beginEpoch: the q_z·Δt inflate of the carried Pᶻ (diagonal).
+        double basis_project_ms{0.0}; ///< @ref GnssProcessor::NetworkInvariantCarryDriver::buildDdPriors "buildDdPriors": construction of the change-of-basis projection W plus W·Pᶻ_old·Wᵀ and W·z_old per emitted component (the dense K² materialization that INC-C2 targets).
+        double post_mean_ms{0.0};     ///< @ref GnssProcessor::NetworkInvariantCarryDriver::installPosterior "installPosterior": the @c ddPriorPosteriorMean read-back (K-vector shrink).
+        double post_cov_ms{0.0};      ///< @ref GnssProcessor::NetworkInvariantCarryDriver::installPosterior "installPosterior": the @c ddPriorPosteriorCovariance read-back (the dense K×K posterior install, the other dense K² materialization).
+        double d5_gate_ms{0.0};       ///< @ref GnssProcessor::NetworkInvariantCarryDriver::installPosterior "installPosterior": the D5 @c ddPriorInnovation plus the per-chord standardized gate (0 unless @c Config::innov_gate).
         long long build_epochs{0};    ///< #@ref buildDdPriors calls, counted at entry, so a chordless epoch that never reaches the timed projection still counts (for per-epoch averages).
-        long long install_epochs{0};  ///< #serial @ref installPosterior calls timed.
+        long long install_epochs{0};  ///< \#serial @ref installPosterior calls timed.
     };
 
+    /**
+     * @brief Construct the driver with its tuning; the carry starts empty.
+     *
+     * The pooled sigma0-squared accumulator of the D5 gate is allocated only when
+     * @c Config::innov_calibrate is set.
+     *
+     * @param cfg Tuning (see @ref Config).  The default leaves every gate off, holds the DDs
+     *            constant between slips and gives a fresh chord a diffuse prior.
+     */
     explicit NetworkInvariantCarryDriver(Config cfg = {}) : cfg_(cfg) {
         // One pooled "dd" accumulator (no per-constellation split) whose robust
         // geometric-mean floor of the standardized innovations is σ̂₀²: the innovations
@@ -378,7 +387,7 @@ public:
      *
      * @ref serializeCarry writes a self-delimited text blob from a @c "CARRY,v2,<n>"
      * header (@c "CARRY,v3,<n>" with @p diagonal_only) to @c "CEND".  Each component is a
-     * @c B header, a @c Z mean row, an optional @c ZL row (@ref CarriedBlock::zl), one
+     * @c B header, a @c Z mean row, an optional @c ZL row (CarriedBlock::zl (@c GnssProcessor::NetworkInvariantCarryDriver::CarriedBlock::zl)), one
      * @c P covariance row per carried DD (one @c PD row in v3), and @c H chord, @c X vertex
      * and @c A arc index rows; the format mirrors the emitter blob that the snapshot
      * already stores verbatim.  @ref restoreCarry consumes it and replaces the current
@@ -441,6 +450,21 @@ public:
      *        byte-identical to the format before RTB-7(e).
      */
     void serializeCarry(std::ostream& os, bool diagonal_only = false) const;
+    /**
+     * @brief Install a carry blob written by @ref serializeCarry, replacing the current carry.
+     *
+     * After the header check the driver is reset and its counters are zeroed (see the notes at
+     * @ref serializeCarry).  The new carry is installed, and the resume telemetry set, only when
+     * the whole blob parses through its @c "CEND" line.  A lane pair block is refused; with
+     * @ref Config::pd_safe a block whose covariance is not positive definite is rebirthed.
+     *
+     * @param is  Source stream positioned at the @c "CARRY," header line.
+     * @param err Optional destination for a one-line reason on failure; null reports nothing.
+     * @return True when a complete blob was parsed and installed.  False on an empty stream, a bad
+     *         header, a malformed or truncated row, a refused lane pair block or a missing
+     *         @c "CEND".  A failure after the header check leaves the carry empty; a bad header
+     *         leaves it unchanged.
+     */
     bool restoreCarry(std::istream& is, std::string* err = nullptr);
 
     /**
@@ -467,28 +491,49 @@ public:
 
     // --- Resume telemetry (RTB-7(d) RE-4).  Inert wiring is visible only through ---
     // --- counters (invariant #4); the run-end line reports these verbatim. ----------
-    bool   resumeCarryRestored() const { return resume_restored_; }        ///< a carry blob was installed this run.
-    long long resumeCarryChords() const { return resume_chords_; }         ///< carried DD count at restore (0 if none).
-    bool   resumeSigma0Seeded()  const { return resume_sigma0_seeded_; }   ///< the σ̂₀² accumulator was seeded from the blob's `S,` line (v2 or later).
-    double resumeSigma0Value()   const { return resume_sigma0_value_; }    ///< the seeded σ̂₀ (1.0 when not seeded).
-    /// Blocks restored from a diagonal-only @f$P^z@f$ (@c PD row, v3): their chord
+    /**
+     * @brief A carry blob was installed this run.
+     * @return True once @ref restoreCarry has succeeded; false on a cold start.
+     */
+    bool   resumeCarryRestored() const { return resume_restored_; }
+    /**
+     * @brief Carried DD count at restore (0 if none).
+     * @return Total carried DD dimension right after the last successful @ref restoreCarry.
+     */
+    long long resumeCarryChords() const { return resume_chords_; }
+    /**
+     * @brief The σ̂₀² accumulator was seeded from the blob's `S,` line (v2 or later).
+     * @return True when the restore seeded the accumulator; see @ref resumeSigma0Status for the
+     *         reason when false.
+     */
+    bool   resumeSigma0Seeded()  const { return resume_sigma0_seeded_; }
+    /**
+     * @brief The seeded σ̂₀ (1.0 when not seeded).
+     * @return The square root of the restored σ̂₀² (dimensionless factor on the standardized innovation).
+     */
+    double resumeSigma0Value()   const { return resume_sigma0_value_; }
+    /// @brief Blocks restored from a diagonal-only @f$P^z@f$ (@c PD row, v3): their chord
     /// cross-covariances were not in the blob and start at zero.  0 on a v1/v2
     /// (full-@f$P^z@f$) blob.  Without this count a diagonal resume would not be visible:
     /// the run looks warm and the counters look normal while the branch geometry is gone
     /// (invariant #4; RTB-7(e)).
+    /// @return Number of blocks read from a @c PD row at the last restore.
     long long resumeCarryDiagonalBlocks() const { return resume_carry_diag_blocks_; }
-    /// True when any restored block came from a diagonal-only blob (RTB-7(e)).
+    /// @brief Whether the restored carry came from a diagonal-only blob.
+    /// @return True when any restored block came from a diagonal-only blob (RTB-7(e)).
     bool   resumeCarryDiagonal() const { return resume_carry_diag_blocks_ > 0; }
-    /// Blocks rebirthed at @ref restoreCarry because the blob's @f$P^z@f$ failed the
+    /// @brief Blocks rebirthed at @ref restoreCarry because the blob's @f$P^z@f$ failed the
     /// equilibrated PD screen: the means were kept and the covariance reset to the fresh
     /// diffuse diagonal.  0 unless @c Config::pd_safe.  Snapshots written before the
     /// PD-safe fix can hold a corrupt block, so a non-zero count on the first
     /// resume from one is expected; a non-zero count on a resume from a pd_safe-armed
     /// writer indicates a new defect (PD-safe INC-2c).
+    /// @return Number of blocks rebirthed at the last restore.
     long long resumeCarryRebirthBlocks() const { return resume_carry_rebirth_blocks_; }
-    /// Blocks restored with a @c ZL row: the writer captured its linearization DD.  0 on a
+    /// @brief Blocks restored with a @c ZL row: the writer captured its linearization DD.  0 on a
     /// blob whose writer computed no linearization DDs (@c network.state_snapshot_carry_lin
     /// off, or written before the row existed) (RS-2).
+    /// @return Number of blocks read with a @c ZL row at the last restore.
     long long resumeCarryLinBlocks() const { return resume_carry_lin_blocks_; }
 
     /**
@@ -509,21 +554,24 @@ public:
         NotRestored,     ///< no carry blob was installed this run (cold start), so there was nothing to seed from.  @ref resumeCarryRestored is false.
         CalibrationOff,  ///< @c Config::innov_calibrate is false, so no σ̂₀² accumulator exists and any `S,` line in the blob was not consulted.  The gate is raw-formal by config, not pending a warm-up count.
         NoSeedLine,      ///< a blob was restored but carried no `S,` line: a v1/legacy blob, or a v2/v3 blob whose writer had calibration off or no positive σ̂₀² estimate yet.
-        Rejected,        ///< the blob's `S,` line parsed but failed the @c seed_sigma0_sq>0 && @c seed_rows>0 guard in @ref restoreCarry: a writer-side defect, not a legacy blob.
+        Rejected,        ///< the blob's `S,` line parsed but failed the @c seed_sigma0_sq>0 && @c seed_rows>0 guard in @ref GnssProcessor::NetworkInvariantCarryDriver::restoreCarry "restoreCarry": a writer-side defect, not a legacy blob.
         Seeded,          ///< the accumulator was seeded; @ref resumeSigma0Value is the seeded σ̂₀.
     };
     /// The seed outcome plus the numbers behind it (@ref resumeSigma0Status) (RTB-7(d) RE-1).
     struct ResumeSeedStatus {
-        ResumeSeedState state{ResumeSeedState::NotRestored};
+        ResumeSeedState state{ResumeSeedState::NotRestored};  ///< why the accumulator was or was not seeded.
         double sigma0{1.0};          ///< the σ̂₀ actually seeded, identical to @ref resumeSigma0Value (1.0 unless @c Seeded).
         double blob_sigma0_sq{0.0};  ///< the σ̂₀² the restored blob's `S,` line carried (0 when it carried none).
         double blob_rows{0.0};       ///< the n_eff that `S,` line carried (0 when it carried none).
     };
-    /// @ref resumeSigma0Seeded with its provenance (RTB-7(d) RE-1).  Report this rather than
+    /// @brief @ref resumeSigma0Seeded with its provenance (RTB-7(d) RE-1).  Report this rather than
     /// the bare bool: @c false alone cannot say which of the four suppressing conditions held.
+    /// @return The seed state plus the sigma0 and the blob's `S,` line values behind it.
     ResumeSeedStatus resumeSigma0Status() const;
-    /// Human-readable @ref ResumeSeedState tag for logs
+    /// @brief Human-readable @ref ResumeSeedState tag for logs
     /// (`cold` / `calib-off` / `no-S-line` / `rejected` / `seeded`).
+    /// @param s The seed state.
+    /// @return Static string, one of the five tags above; `?` for a value outside the enum.
     static const char* resumeSeedStateName(ResumeSeedState s);
 
     /**
@@ -576,14 +624,21 @@ public:
     void installPosterior(const NetworkEstimator& est, const Eigen::VectorXd& x_s,
                           const NetworkEstimator::Datum& datum, int n_threads = 1);
 
+    /**
+     * @brief The lifecycle tallies for the run-end line.
+     * @return Reference to the live counters; they survive @ref reset and are zeroed by @ref restoreCarry.
+     */
     const Counters& counters() const { return counters_; }
 
-    /// Arm or disarm the per-op timers (@c network.trace_section_timers) (INC-C0).  Set
+    /// @brief Arm or disarm the per-op timers (@c network.trace_section_timers) (INC-C0).  Set
     /// once before the epoch loop; the setting survives @ref reset, like the kernel's
     /// @c setPerfTiming.  Default off: no clock reads, byte-identical.
+    /// @param on True arms the timers; false disarms them.
     void setPerfTiming(bool on) { perf_timing_ = on; }
+    /// @brief Whether the per-op timers are armed.
     /// @return Whether the per-op timers are armed (@ref setPerfTiming).
     bool perfTiming() const { return perf_timing_; }
+    /// @brief The per-op wall-clock accumulators (ms).
     /// @return The per-op wall-clock accumulators (cumulative since construction or the
     ///         last @ref resetPerfTimers; not zeroed by @ref reset).  Meaningful only when
     ///         armed.
@@ -591,12 +646,13 @@ public:
     /// Zero the per-op timer accumulators.
     void resetPerfTimers() { perf_timers_ = PerfTimers{}; }
 
-    /// The (group, chord arc) pairs the innovation gate flagged as slipped at the last
+    /// @brief The (group, chord arc) pairs the innovation gate flagged as slipped at the last
     /// @ref installPosterior, one entry per flagged row.  The caller maps each back to its
     /// (station, ambiguity) and feeds it into the next epoch's slip funnel (the C3c
     /// membership-exclusion re-tap), except the entries that
     /// @ref lastInnovWarmupSuppressed marks.  Empty unless @c Config::innov_gate;
     /// refreshed every @ref installPosterior (D5).
+    /// @return Flagged (group id, chord arc) pairs in (block, chord) order; empty when nothing was flagged.
     const std::vector<std::pair<int, ArcKey>>& lastInnovFlags() const { return last_innov_flags_; }
 
     /**
@@ -630,11 +686,16 @@ public:
      * threshold appends nothing; a warm-up flag does append), refreshed every
      * @ref installPosterior.
      */
-    struct InnovTerms { double zhat{0.0}, v{0.0}, var_v{0.0}, sigma0{1.0}, z_post{0.0}; };
+    struct InnovTerms { double zhat{0.0}, /**< The carried prior mean the fold used, before this epoch's data (m). */ v{0.0}, /**< The post-fit innovation, already shrunk by the fold's border absorption (m). */ var_v{0.0}, /**< The formal innovation variance Cov(v)_ii (m^2). */ sigma0{1.0}, /**< The sigma-hat-0 in force at this install, through the previous epoch (unitless; 1.0 until set). */ z_post{0.0}; /**< The value installed for the chord (m): zhat + v for a re-tapped flag, the ordinary posterior mean for a warm-up-suppressed one. */ };
+    /**
+     * @brief The terms behind each flag of @ref lastInnovFlags.
+     * @return One entry per flagged row, index-aligned with @ref lastInnovFlags; empty when nothing
+     *         was flagged.  Refreshed every @ref installPosterior.
+     */
     const std::vector<InnovTerms>& lastInnovFlagTerms() const { return last_innov_terms_; }
 
     /**
-     * @brief One block rebirthed at the last @ref installPosterior: the identity payload
+     * @brief One block rebirthed at the last @ref GnssProcessor::NetworkInvariantCarryDriver::installPosterior "installPosterior": the identity payload
      *        of the @c DD_FOLD_REBIRTH event the seam writes (PD-safe INC-2a).
      *
      * The fold's @f$M:=0@f$ branch decouples a block from the data, and the rebirth is the
@@ -648,19 +709,21 @@ public:
         double      min_pivot_rel{0.0}; ///< the fold's relative pivot for the block (≤ 0 ⇒ indefinite).
         ArcKey      chord0{};        ///< the block's first chord, a stable-enough identity for the ledger.
     };
-    /// The blocks rebirthed at the last @ref installPosterior (empty unless
+    /// @brief The blocks rebirthed at the last @ref installPosterior (empty unless
     /// @c Config::pd_safe, and empty on an epoch with no degenerate block).  Refreshed
     /// every install (PD-safe INC-2a).
+    /// @return The rebirth records in emitted-block order; empty when no block was rebirthed.
     const std::vector<FoldRebirth>& lastFoldRebirths() const { return last_fold_rebirths_; }
 
-    /// The current empirical innovation-inflation σ̂₀ (= √σ̂₀², the factor the standardized
-    /// innovation is divided by), clamped to [1, 1000] (σ̂₀² ∈ [1, @ref kInflationFactorCap]);
+    /// @brief The current empirical innovation-inflation σ̂₀ (= √σ̂₀², the factor the standardized
+    /// innovation is divided by), clamped to [1, 1000] (σ̂₀² ∈ [1, @c kInflationFactorCap]);
     /// 1.0 when calibration is off, still in warm-up, or floored.  Run-end telemetry: how far the
     /// formal Cov(v) was off (D5 v2).
     ///
     /// @warning A returned 1.0 is ambiguous: it does not say which state produced it.
     ///          Telemetry reports @ref innovInflationStatus instead; do not publish this
     ///          value alone.
+    /// @return The factor σ̂₀ (dimensionless, at least 1).
     double innovInflationSigma0() const;
 
     /**
@@ -671,7 +734,7 @@ public:
      * three the gate runs the raw formal (v1) test.  A run with calibration armed can
      * report 1.00 this way: a frozen carry block's innovations are small against its
      * diffuse Cov(v), which drove the raw σ̂₀² to 0.0099 in one measured lineage, and the
-     * floor paired with @ref kInflationFactorCap clamped it back up to 1, so the gate ran
+     * floor paired with kInflationFactorCap (@c GnssProcessor::NetworkInvariantCarryDriver::kInflationFactorCap) clamped it back up to 1, so the gate ran
      * v1 without the run-end line showing it (docs/record/SPEC_pd_safe_dd_fold.md §10, finding 2).
      *
      * Standing invariant #4: an armed knob that reports its neutral value may be inert
@@ -679,27 +742,32 @@ public:
      */
     enum class InflationState {
         Off,      ///< @c Config::innov_calibrate is false: the gate is v1 by config.
-        WarmUp,   ///< armed, but n_eff < @ref kInflationWarmupRows (or no positive floor), so v1 is in effect.
+        WarmUp,   ///< armed, but n_eff < kInflationWarmupRows (@c GnssProcessor::NetworkInvariantCarryDriver::kInflationWarmupRows) (or no positive floor), so v1 is in effect.
         Floored,  ///< armed and warm, but the raw σ̂₀² < 1 and the clamp raised it to 1, so v1 is in effect.
-        Capped,   ///< armed and warm; the raw σ̂₀² > @ref kInflationFactorCap and the clamp lowered it to the cap.
+        Capped,   ///< armed and warm; the raw σ̂₀² > kInflationFactorCap (@c GnssProcessor::NetworkInvariantCarryDriver::kInflationFactorCap) and the clamp lowered it to the cap.
         Active,   ///< armed, warm and unclamped: the reported σ̂₀ is the estimate.  The only calibrated state.
     };
     /// The σ̂₀ readout plus the state that produced it (@ref InflationState) (D5 v2).
     struct InflationStatus {
-        InflationState state{InflationState::Off};
+        InflationState state{InflationState::Off};  ///< which condition produced @c sigma0.
         double raw_sigma0_sq{0.0};  ///< the unclamped σ̂₀² the accumulator holds (0 when Off or with no estimate).
         double sigma0{1.0};         ///< the σ̂₀ in force, identical to @ref innovInflationSigma0.
         double n_eff{0.0};          ///< forgetting-weighted effective row count behind the estimate.
     };
-    /// @ref innovInflationSigma0 with its provenance (D5 v2).  Report this rather than the
+    /// @brief @ref innovInflationSigma0 with its provenance (D5 v2).  Report this rather than the
     /// bare σ̂₀.
+    /// @return The state, the raw and the clamped σ̂₀ and the effective row count.
     InflationStatus innovInflationStatus() const;
-    /// Human-readable @ref InflationState tag for logs (`off` / `warmup` / `floored` / `capped` / `active`).
+    /// @brief Human-readable @ref InflationState tag for logs (`off` / `warmup` / `floored` / `capped` / `active`).
+    /// @param s The inflation state.
+    /// @return Static string, one of the five tags above; `?` for a value outside the enum.
     static const char* inflationStateName(InflationState s);
 
-    /// Total carried DD dimension right now (across all components).
+    /// @brief Total carried DD dimension right now (across all components).
+    /// @return Sum of the carried chord counts over every block (0 with no carry).
     Eigen::Index totalZDim() const;
-    /// Number of DD-prior blocks emitted by the last @ref buildDdPriors.
+    /// @brief Number of DD-prior blocks emitted by the last @ref buildDdPriors.
+    /// @return Block count (0 before the first build or when nothing carries).
     std::size_t numBlocks() const { return block_meta_.size(); }
 
     /**
@@ -716,6 +784,9 @@ public:
      *
      * Leaving this unset is safe and inert: an empty set suppresses nothing, so the gate
      * falls back to D5 v2 rather than to no gate.
+     *
+     * @param flat (group id, chord arc) pairs measured and flat this epoch; taken by value and
+     *             moved into the driver.
      */
     void setInnovFlatChords(std::set<std::pair<int, ArcKey>> flat) {
         innov_flat_ = std::move(flat);
@@ -731,6 +802,9 @@ public:
      * Writes the Config field so both gate bodies read one flag.  Unlike the flat set, the
      * flag is not cleared at install: it holds until the next call, and the seam sets it
      * before every install.
+     *
+     * @param on True runs the next installs' D5 gate diagnostic-only (flags recorded, chords not
+     *           re-tapped); false restores the normal re-tap behaviour.
      */
     void setInnovDiagnosticOnly(bool on) { cfg_.innov_diagnostic_only = on; }
 
@@ -741,24 +815,38 @@ public:
      * Consult this before folding a flag into the next epoch's slip funnel: a suppressed
      * trip is a measurement, and marking its arc slipped would refloat the chord the
      * warm-up exists to hold.  Empty when the gate is off.
+     *
+     * @return One flag per entry of @ref GnssProcessor::NetworkInvariantCarryDriver::lastInnovFlags "lastInnovFlags": 1 when the post-resume warm-up suppressed
+     *         the trip, 0 when it was acted on.
      */
     const std::vector<char>& lastInnovWarmupSuppressed() const {
         return last_innov_warmup_;
     }
 
-    /// The carried DD mean and variance of @p chord in @p group (false if not carried), read
+    /// @brief The carried DD mean and variance of @p chord in @p group (false if not carried), read
     /// by the driver's gap-resumption classifier.  Same as @ref carriedDdForTest, named for
     /// production use.
+    /// @param group    The (const,signal) group id.
+    /// @param chord    The chord arc.
+    /// @param[out] z   The carried DD mean (carried-DD state units); written only when found.
+    /// @param[out] var The carried DD variance (state units squared); written only when found.
+    /// @return True when @p chord is carried in @p group; false otherwise (@p z and @p var untouched).
     bool carriedChordValue(int group, const ArcKey& chord, double& z, double& var) const {
         return carriedDdForTest(group, chord, z, var);
     }
 
-    /// The (const,signal) group id of DD-prior block @p b from the last @ref buildDdPriors.
+    /// @brief The (const,signal) group id of DD-prior block @p b from the last @ref buildDdPriors.
+    /// @param b Block index in the order @ref buildDdPriors returned (must be below @ref numBlocks).
+    /// @return The group id of that block.
+    /// @throws std::out_of_range if @p b is not a valid block index.
     int blockGroup(std::size_t b) const { return block_meta_.at(b).group; }
-    /// The first chord of DD-prior block @p b, a per-block identity for the PD-safe fold's
+    /// @brief The first chord of DD-prior block @p b, a per-block identity for the PD-safe fold's
     /// degenerate/recovery ledger: block indices change as components merge and split, and
     /// the first chord is stable enough to follow a block (a large block keeps its leading
     /// chord).  A default @ref ArcKey for a chordless block.
+    /// @param b Block index in the order @ref buildDdPriors returned (must be below @ref numBlocks).
+    /// @return The block's first chord arc, or the default arc for a chordless block.
+    /// @throws std::out_of_range if @p b is not a valid block index.
     ArcKey blockFirstChord(std::size_t b) const {
         const auto& c = block_meta_.at(b).chords;
         return c.empty() ? ArcKey{} : c.front();
@@ -766,33 +854,59 @@ public:
 
     // --- test seams (numeric leaf; the NetworkZStore::setEstimate precedent) -----
 
-    /// Directly install one component's carry: the gate's seed for a known
+    /// @brief Directly install one component's carry: the gate's seed for a known
     /// @f$\hat z,P^z@f$ over a chord basis (bypasses a solve).
+    /// @param group    The (const,signal) group id the block is filed under.
+    /// @param chords   The chord arcs, in z-vector order.
+    /// @param z        Carried DD means, one per chord.
+    /// @param Pz       Carried DD covariance, one row and column per chord.
+    /// @param vertices The component's vertex ids.
+    /// @param arcs     Every arc of the component (tree edges and chords).
     void seedCarriedForTest(int group, const std::vector<ArcKey>& chords,
                             const Eigen::VectorXd& z, const Eigen::MatrixXd& Pz,
                             const std::set<int>& vertices, const std::set<ArcKey>& arcs);
-    /// Test hook: attach a linearization DD @p zl (the value @ref serializeCarry writes as
+    /// @brief Test hook: attach a linearization DD @p zl (the value @ref serializeCarry writes as
     /// the block's @c ZL row) to the most recently seeded block of @p group.  Production
     /// never calls this; the harvest (@ref buildDdPriors → @ref installPosterior) owns @c zl
     /// end to end (RS-2).
+    /// @param group The (const,signal) group id; no effect when no block of that group is carried.
+    /// @param zl    The linearization DD per chord, same length and order as the block's means.
     void seedCarriedLinForTest(int group, const Eigen::VectorXd& zl);
-    /// The chord order of DD-prior block @p b returned by the last @ref buildDdPriors
+    /// @brief The chord order of DD-prior block @p b returned by the last @ref buildDdPriors
     /// (== the fold-row order, so a gate can map block rows to chord arcs).
+    /// @param b Block index in the order @ref buildDdPriors returned (must be below @ref numBlocks).
+    /// @return The block's chord arcs in fold-row order.
+    /// @throws std::out_of_range if @p b is not a valid block index.
     const std::vector<ArcKey>& blockChordsForTest(std::size_t b) const {
         return block_meta_.at(b).chords;
     }
-    /// The carried DD mean+variance of @p chord in @p group (false if not carried).
+    /// @brief The carried DD mean+variance of @p chord in @p group (false if not carried).
+    /// @param group    The (const,signal) group id.
+    /// @param chord    The chord arc.
+    /// @param[out] z   The carried DD mean; written only when found.
+    /// @param[out] var The carried DD variance; written only when found.
+    /// @return True when @p chord is carried in @p group; false otherwise.
     bool carriedDdForTest(int group, const ArcKey& chord, double& z, double& var) const;
 
-    /// The carried DD cross-covariance between @p a and @p b in @p group (false unless
+    /// @brief The carried DD cross-covariance between @p a and @p b in @p group (false unless
     /// both are chords of the same carried component).  The Fable §2.5 probe that the
     /// multi-birth joint fold coupled them (a per-chord-independent fold gives 0).
+    /// @param group     The (const,signal) group id.
+    /// @param a         One chord arc.
+    /// @param b         The other chord arc.
+    /// @param[out] cov  The covariance entry (state units squared); written only when found.
+    /// @return True when both chords are carried in one component of @p group; false otherwise.
     bool carriedCrossForTest(int group, const ArcKey& a, const ArcKey& b, double& cov) const;
 
-    /// Read a gauge-free estimable double difference straight from the carry: the
+    /// @brief Read a gauge-free estimable double difference straight from the carry: the
     /// value @f$\sum_j \chi_{\text{target}}(\text{arc}_j)\,\hat z_j@f$ over the carried
     /// chords of the component that carries @p target_cycle's arcs (NaN if none does).
     /// Independent of any network solve: the basis-invariance probe.
+    /// @param group        The (const,signal) group id.
+    /// @param target_cycle Signed fundamental-cycle coefficients (arc to -1, 0 or +1) of the wanted
+    ///                     double difference.
+    /// @return The double difference (carried-DD state units), or NaN when no component of
+    ///         @p group shares a vertex with the cycle's arcs.
     double carriedEstimableForTest(int group, const std::map<ArcKey, int>& target_cycle) const;
 
 private:
@@ -804,11 +918,11 @@ private:
         Eigen::MatrixXd Pz;           ///< carried DD covariance (dense, per component).
         std::set<int> vertices;       ///< the component's vertices.
         std::set<ArcKey> arcs;        ///< every arc present (tree ∪ chords): A_old for the carried test.
-        /// The linearization DD @f$z_\ell=\sum c\,x_{\rm lin}@f$ that the means in @ref z are
-        /// relative to: same length and row order as @ref z, over the same fundamental cycle.
+        /// The linearization DD @f$z_\ell=\sum c\,x_{\rm lin}@f$ that the means in @c z are
+        /// relative to: same length and row order as @c z, over the same fundamental cycle.
         /// Empty unless @ref Config::carry_lin was armed at the install that built the block,
         /// or the block was restored from a blob's @c ZL row; @ref serializeCarry writes the
-        /// row when it is sized like @ref z (RS-2).
+        /// row when it is sized like @c z (RS-2).
         Eigen::VectorXd zl;
     };
     /// Per-emitted-block metadata (parallel to the returned blocks) for the install.
@@ -825,8 +939,8 @@ private:
                                       ///< born chord's diffuse Cov(v) would pull σ̂₀² down).  One entry
                                       ///< per graph chord (K) (D5 v2).
         /// This epoch's linearization DD @f$z_\ell=\sum c\,x_{\rm lin}@f$ per emitted fold row
-        /// (same length and row order as @ref zhat), computed over the same fundamental cycle
-        /// that built the rows.  @ref installPosterior copies it into @ref CarriedBlock::zl so
+        /// (same length and row order as @c zhat), computed over the same fundamental cycle
+        /// that built the rows.  @ref installPosterior copies it into CarriedBlock::zl (@c GnssProcessor::NetworkInvariantCarryDriver::CarriedBlock::zl) so
         /// the stored means stay self-describing.  Empty unless @ref Config::carry_lin (RS-2).
         Eigen::VectorXd  zl;
     };
@@ -900,13 +1014,18 @@ int networkInvariantCarryDriverRunEnd(const NetworkRunEndView& v);
 struct InvariantCarryDriverCounters {
     long long ddfold_rebirths      = 0;  ///< blocks rebirthed at install, INC-2a (0 unless pd_safe).
     long long ddfold_rebirth_rows  = 0;  ///< Σ carried rows re-seeded by those rebirths.
-    long long carry_epochs = 0, carry_born_total = 0, carry_marg_total = 0,
-              carry_merges_total = 0, carry_splits_total = 0, carry_swaps_total = 0,
-              carry_zdim_last = 0, carry_slipkills_total = 0, carry_dropped_total = 0;
+    /// Run totals of the carry driver's @ref NetworkInvariantCarryDriver::Counters, copied for the
+    /// run-end line: epochs built, chords born, whole blocks marginalized, merges, splits, tree
+    /// swaps (basis re-expressions), the carried dimension at the last epoch, chords refloated
+    /// by a slip and chords dropped for an unresolvable arc.
+    long long carry_epochs = 0, carry_born_total = 0, /**< Chords born fresh (diffuse prior, data-only tap-off). */ carry_marg_total = 0, /**< Chords of previous blocks marginalized whole because no component used them. */
+              carry_merges_total = 0, /**< Components formed from two or more previous components. */ carry_splits_total = 0, /**< Previous components spread across two or more new components. */ carry_swaps_total = 0, /**< Components whose carry was re-expressed in a different fundamental-cycle basis. */
+              carry_zdim_last = 0, /**< Total carried DD dimension at the end of the last epoch. */ carry_slipkills_total = 0, /**< Chords refloated fresh because a slip or RAIM culprit invalidated an arc of their cycle. */ carry_dropped_total = 0;   /**< Chords skipped because a cycle arc was unresolvable (a data-gap refloat, distinct from a slip). */
 
     // D5 innovation gate counters.
-    long long carry_innov_flags_total = 0, carry_innov_retaps_total = 0;
-    long long carry_innov_map_miss = 0;   // reverse-map misses from a D5 flag to its ambiguity (should stay 0)
+    /// Run totals of the D5 gate: chord rows flagged and chord rows re-tapped fresh.
+    long long carry_innov_flags_total = 0, carry_innov_retaps_total = 0;   /**< Run total of flagged chord rows re-tapped fresh at install (flags minus the post-resume warm-up suppressions). */
+    long long carry_innov_map_miss = 0;   ///< reverse-map misses from a D5 flag to its ambiguity (should stay 0)
 };
 
 }  // namespace GnssProcessor

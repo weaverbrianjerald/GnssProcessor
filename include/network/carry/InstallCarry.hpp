@@ -14,7 +14,6 @@
  *
  * Owns no state: every carry object is an explicit reference into the caller's
  * NetworkRunContext.  The D5 gate switch (carry_innov_gate) is read from NetworkKnobs
- *.
  */
 
 #include "network/solve/Estimator.hpp"          // NetworkEstimator

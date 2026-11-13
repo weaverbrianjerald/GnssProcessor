@@ -106,10 +106,12 @@ struct HarvestBorder {
 /// open a block on the same station-epochs; it pairs entries by block identity and row
 /// index, not by this order.
 enum class BlockSegment : int { Amb, Iono, RxClock, RxCodeBias, RxPhaseBias, PhaseColour, Zwd };
+/// Number of @ref BlockSegment values (array sizing of the per-segment spans).
 inline constexpr std::size_t kBlockSegmentCount = 7;
 
 /// One segment's rows of the block: its first row and its column count (0: absent).
-struct BlockSpan { Eigen::Index row0{0}; Eigen::Index n{0}; };
+/// @c row0 is the segment's first block row; @c n is its column (row) count.
+struct BlockSpan { Eigen::Index row0{0}; /**< First block row of the segment. */ Eigen::Index n{0}; /**< Column (row) count of the segment; 0 when the segment is absent. */ };
 
 /**
  * @brief The segment spans of one station's block, from the station layout's row offsets
@@ -155,11 +157,16 @@ struct StationHarvestBlock {
     Eigen::VectorXd           vard;       ///< The legacy diagonal variances (empty under the coupling carry).
     std::shared_ptr<PlHarvestBlock> blk;  ///< The F3 block; null without one this station-epoch.
 
-    /// The block a segment's rows go to: blk when the segment has columns, else null.
+    /// @brief The block a segment's rows go to: blk when the segment has columns, else null.
+    /// @param s The segment.
+    /// @return The shared F3 block when the segment holds at least one column; null for an absent segment.
     std::shared_ptr<PlHarvestBlock> segmentBlock(BlockSegment s) const {
         return span[static_cast<std::size_t>(s)].n > 0 ? blk : nullptr;
     }
-    /// The segment's first block row.
+    /// @brief The segment's first block row.
+    /// @param s The segment.
+    /// @return Zero-based index of the segment's first row in the block; for an absent segment
+    ///         (no columns) the row where it would start.
     Eigen::Index rowOf(BlockSegment s) const { return span[static_cast<std::size_t>(s)].row0; }
 };
 

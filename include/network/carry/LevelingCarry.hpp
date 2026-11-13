@@ -32,6 +32,15 @@ enum class StationStep : std::uint8_t;     // network/assembly/StationBuild.hpp
  *        coupling row, as a function of the station's carry frame.  Called directly by the
  *        ambiguity and local-block steps.
  * @param carry The station's carry frame (network/assembly/StationBuild.hpp).
+ * @param col          The ambiguity's local column in the station block (A_r), the column the
+ *                     prior or the coupling row constrains.
+ * @param amb_idx      The ambiguity's index in the station's linearization point @c x_lin.
+ * @param lc           The carry entry (carried absolute value, coupling terms, last-seen time).
+ * @param var_eff      Final prior variance of the column (m^2).  A value that is not positive
+ *                     emits nothing.
+ * @param gap_clamped  Clamped inter-epoch gap (s), the time step of the coupling row's time update.
+ * @param sat          The ambiguity's satellite id, for the row tag (empty: untagged).
+ * @param signal       The ambiguity's signal id, for the row tag (empty: untagged).
  */
 void networkAmbCarryEmitRow(StationCarryFrame& carry, Eigen::Index col, int amb_idx,
                             const LocalCarry& lc, double var_eff, double gap_clamped,
@@ -41,6 +50,11 @@ void networkAmbCarryEmitRow(StationCarryFrame& carry, Eigen::Index col, int amb_
  * @brief Records the variance and the route a folded ambiguity took, as a function of the
  *        station's carry frame.  Called directly by the ambiguity and local-block steps.
  * @param carry The station's carry frame (network/assembly/StationBuild.hpp).
+ * @param sat     The ambiguity's satellite id.
+ * @param signal  The ambiguity's signal id.
+ * @param var_eff The variance the fold actually used (m^2).
+ * @param route   The route the fold took (diagonal prior or scalar coupling row).  Recorded only
+ *                when the amb-state trace is armed; otherwise nothing is written.
  */
 void networkAmbStateNote(StationCarryFrame& carry, const std::string& sat,
                          const std::string& signal, double var_eff, AmbFoldRoute route);
@@ -50,6 +64,10 @@ void networkAmbStateNote(StationCarryFrame& carry, const std::string& sat,
  *        function of the station's carry frame.  Called directly by the ambiguity and
  *        local-block steps.
  * @param carry The station's carry frame (network/assembly/StationBuild.hpp).
+ * @param var_eff The carried ambiguity's variance before the floor and the factor (m^2).
+ * @param sat     The satellite id, which selects the carry variance factor.
+ * @return @p var_eff raised to the lock-in floor (when one is set), times the satellite's carry
+ *         variance factor (exactly 1 when that path is off) (m^2).
  */
 double networkAmbCarryFinishVar(const StationCarryFrame& carry, double var_eff,
                                 const std::string& sat);
@@ -176,12 +194,18 @@ struct LevelingCarryCounters {
     // carry degrades to diagonal rows without a signal (or never runs) cannot be told
     // apart from a working one, and a byte-identical A/B would hide it.
     // Logged once at run end when the mechanism is armed.
-    size_t n_cpl_stash = 0, n_cpl_stash_empty = 0, n_cpl_harvest_fail = 0;
+    /// Harvest-side stash counts of the coupling carry: entries stashed with a non-empty regression,
+    /// entries stashed with an empty regression (degraded to a plain diagonal row), and outright
+    /// harvest failures.
+    size_t n_cpl_stash = 0, n_cpl_stash_empty = 0, /**< Entries stashed with an empty regression (degraded to a plain diagonal row). */ n_cpl_harvest_fail = 0;   /**< Outright coupling harvest failures. */
+    /// Arcs dropped in an epoch (any outcome) that the gap prune erased in the same epoch.
     long long prm_pruned_after_drop = 0;
     // network.parallel_carry_harvest: the carried columns computed ahead of the walk, those the
     // walk read, and the stations of the handover ledger computed ahead of its walk.  A column
     // computed and not read is one the walk skipped (a non-finite value).
-    long long n_harvest_ahead_cols = 0, n_harvest_ahead_read = 0, n_harvest_ahead_ledger = 0;
+    /// Carried columns computed ahead of the walk, those the walk then read, and the stations of the
+    /// handover ledger computed ahead of its walk.
+    long long n_harvest_ahead_cols = 0, n_harvest_ahead_read = 0, /**< Carried columns computed ahead that the walk then read. */ n_harvest_ahead_ledger = 0;   /**< Stations of the handover ledger computed ahead of its walk. */
 };
 
 struct NetworkRunContext;   // network/state/RunContext.hpp
