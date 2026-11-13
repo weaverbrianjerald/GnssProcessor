@@ -67,6 +67,11 @@ namespace GnssProcessor {
         /**
          * @brief Construct with handles to config (for the handover toggle)
          *        and the shared log manager.
+         *
+         * @param config      Processing configuration; stored by reference, so it must
+         *                    outlive this manager.  Read for the baseline pivot-handover toggle.
+         * @param log_manager Shared logging facility; stored by reference, so it must
+         *                    outlive this manager.
          */
         DdPivotManager(const GnssConfig& config, LogManager& log_manager);
 
@@ -102,6 +107,11 @@ namespace GnssProcessor {
          *
          * Returns the result of the most recent @c selectPivots() call,
          * or an empty map before the first call (or after @c reset()).
+         *
+         * @return Reference to the sticky pivot map: constellation name to pivot
+         *         satellite.  Empty means no pivot has been chosen yet.  The reference
+         *         stays valid, but its contents change on the next @c selectPivots()
+         *         or @c reset().
          */
         const std::map<std::string, std::string>& getPivots() const { return sticky_; }
 

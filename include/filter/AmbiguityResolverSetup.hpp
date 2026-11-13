@@ -1,7 +1,7 @@
 /**
  * @file AmbiguityResolverSetup.hpp
  * @brief The one builder of an @ref GnssProcessor::AmbiguityResolverConfig from a
- *        @ref GnssProcessor::GnssConfig.
+ *        @c GnssProcessor::GnssConfig.
  *
  * Three call sites construct an ambiguity resolver: the post-processing PPP / PPP-RTK
  * driver, each baseline rover, and the real-time engine (and with it the closed-loop
@@ -25,7 +25,7 @@ namespace GnssProcessor {
 class GnssConfig;
 
 /**
- * @brief Fill an @ref AmbiguityResolverConfig from the ambiguity-resolution settings of a
+ * @brief Fill an @ref GnssProcessor::AmbiguityResolverConfig "AmbiguityResolverConfig" from the ambiguity-resolution settings of a
  *        configuration.
  *
  * Copies every field of the resolver's configuration: the mode, the ratio test and its

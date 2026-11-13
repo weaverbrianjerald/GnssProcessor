@@ -171,9 +171,16 @@ struct IlsResult {
     /// any combination's conditional value and variance from them (the
     /// wide lane and the narrow lane of an L1/L2 pair).
     Eigen::VectorXd a_cond;
-    Eigen::MatrixXd Q_cond;
+    Eigen::MatrixXd Q_cond;  ///< Covariance of @c a_cond (cycles^2); empty unless @c z_fixed > 0.
 };
 
+/**
+ * @brief Outcome of the greedy partial-resolution search selectFixableSubset().
+ *
+ * @c kept indexes into the caller's input set and @c afix_cycles follows the
+ * same order.  The scalar fields describe the accepted subset only, not the
+ * full set (the full-set evaluation is reported by IlsResult).
+ */
 struct PartialFix {
     bool success = false;        ///< True if a fixable subset (≥1 entry) was found.
     std::vector<int> kept;       ///< Indices (into the input set) that survived and were fixed.
@@ -230,7 +237,7 @@ IlsResult ilsFix(const Eigen::VectorXd& a_hat_cycles,
  * Integer-ambiguity ladder.  With a free slant ionosphere the
  * uncombined L1/L2 double differences are each imprecise (about 0.3 cycle) while
  * combinations of a pair (the wide lane, the ionosphere-free part) are precise, so
- * a subset chosen entry by entry (@ref selectFixableSubset) finds nothing and the
+ * a subset chosen entry by entry (@ref GnssProcessor::ils::selectFixableSubset "selectFixableSubset") finds nothing and the
  * per-entry fraction cap rejects correct fixes.  This routine works on the
  * decorrelated ambiguities instead:
  *

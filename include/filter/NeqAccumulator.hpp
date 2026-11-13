@@ -55,6 +55,7 @@ namespace GnssProcessor {
      */
     class NeqAccumulator {
     public:
+        /** @brief Default constructor: an empty accumulator with no parameters or observations. */
         NeqAccumulator() = default;
 
         /**
@@ -96,7 +97,7 @@ namespace GnssProcessor {
         Solution solve() const;
 
         /**
-         * @brief Write @c <stem>.asc (human-readable) and @c <stem>.neq (compact,
+         * @brief Write @c \<stem\>.asc (human-readable) and @c \<stem\>.neq (compact,
          *        round-trippable) for the supplied solution.
          * @param stem Output path without extension (e.g. the navigation-solution stem).
          * @param sol  Result of solve().
@@ -104,10 +105,13 @@ namespace GnssProcessor {
          */
         bool writeFiles(const std::filesystem::path& stem, const Solution& sol) const;
 
+        /// @brief Whether any observation rows have been accumulated.
         /// @return True if no observations have been accumulated yet.
         bool empty() const { return n_obs_ == 0; }
+        /// @brief Size of the retained (global) parameter set.
         /// @return Number of retained (global) parameters.
         std::size_t numParameters() const { return static_cast<std::size_t>(N_.rows()); }
+        /// @brief Total observation rows accumulated over all epochs.
         /// @return Total observation rows accumulated.
         std::size_t numObservations() const { return n_obs_; }
 

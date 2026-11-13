@@ -108,7 +108,12 @@ struct AmbiguityKeyParts {
     std::string signal;     ///< RINEX signal code or IF combo, e.g. "L1C".
 };
 
-/// Build a PPP ambiguity key.
+/// @brief Build a PPP ambiguity key.
+/// @param satellite Full RINEX satellite ID, e.g. "G01" or "E11".
+/// @param signal    RINEX signal code or iono-free combination, e.g. "L1C" or "L1C_L5Q"
+///                  (may itself contain underscores).
+/// @return The key in the form "G01_L1C": satellite, one underscore, signal.  No validation
+///         is done; an empty field yields a key that @c parseAmbiguityKey rejects.
 inline std::string makeAmbiguityKey(std::string_view satellite,
                                     std::string_view signal) {
     std::string out;
@@ -119,10 +124,12 @@ inline std::string makeAmbiguityKey(std::string_view satellite,
     return out;
 }
 
-/// Parse a PPP ambiguity key.  Splits on the first underscore so that an
+/// @brief Parse a PPP ambiguity key.  Splits on the first underscore so that an
 /// iono-free signal combination stays whole in @c signal.
 /// Returns @c std::nullopt if the delimiter is missing or either side
 /// would be empty.
+/// @param key Ambiguity key as built by @c makeAmbiguityKey, e.g. "G01_L1C" or "G01_L1C_L5Q".
+/// @return The satellite and signal fields, or @c std::nullopt for a malformed key.
 inline std::optional<AmbiguityKeyParts>
 parseAmbiguityKey(std::string_view key) {
     const auto sep = key.find(kAmbiguityDelimiter);
@@ -181,7 +188,11 @@ struct WlAmbiguityKeyParts {
     char        band_b;     ///< Higher-numbered RINEX band digit.
 };
 
-/// Build an NL ambiguity key.
+/// @brief Build an NL ambiguity key.
+/// @param satellite Full RINEX satellite ID, e.g. "G01".
+/// @param band      RINEX band digit of the reference band the satellite's NL state is tied
+///                  to, e.g. '1'.
+/// @return The key in the form "G01_NL_1".  No validation is done on the arguments.
 inline std::string makeNlAmbiguityKey(std::string_view satellite, char band) {
     std::string out;
     out.reserve(satellite.size() + 2 + kNlInfix.size() + 1);
@@ -193,9 +204,13 @@ inline std::string makeNlAmbiguityKey(std::string_view satellite, char band) {
     return out;
 }
 
-/// Build a WL ambiguity key.  @p band_a and @p band_b are sorted into
+/// @brief Build a WL ambiguity key.  @p band_a and @p band_b are sorted into
 /// canonical ascending order on the way in, so the caller does not need
 /// to pre-order them.
+/// @param satellite Full RINEX satellite ID, e.g. "G01".
+/// @param band_a    RINEX band digit of one carrier of the wide lane, e.g. '1'.
+/// @param band_b    RINEX band digit of the other carrier, e.g. '2'.
+/// @return The key in the form "G01_WL_1_2", with the lower band digit first.
 inline std::string makeWlAmbiguityKey(std::string_view satellite,
                                       char band_a, char band_b) {
     if (band_a > band_b) {
@@ -215,8 +230,11 @@ inline std::string makeWlAmbiguityKey(std::string_view satellite,
     return out;
 }
 
-/// Cheap predicate: does @p key match the "<sat>_NL_<digit>" shape?
+/// @brief Cheap predicate: does @p key match the "<sat>_NL_<digit>" shape?
 /// Lets a scan of the mixed ambiguity map skip non-NL entries quickly.
+/// @param key State key to test.
+/// @return True when the key ends in an underscore, "NL", an underscore and one digit,
+///         and is at least 6 characters long.  The satellite part is not inspected.
 inline bool isNlAmbiguityKey(std::string_view key) {
     // Minimum: 1-char sat + "_NL_" + 1-char band = 6 chars.
     if (key.size() < 6) return false;
@@ -230,7 +248,10 @@ inline bool isNlAmbiguityKey(std::string_view key) {
         && key[n - 2] == kAmbiguityDelimiter;
 }
 
-/// Cheap predicate: does @p key match the "<sat>_WL_<digit>_<digit>" shape?
+/// @brief Cheap predicate: does @p key match the "<sat>_WL_<digit>_<digit>" shape?
+/// @param key State key to test.
+/// @return True when the key ends in "_WL_", a digit, an underscore and a digit, and is at
+///         least 8 characters long.  The satellite part is not inspected.
 inline bool isWlAmbiguityKey(std::string_view key) {
     // Minimum: 1-char sat + "_WL_" + "<d>_<d>" = 8 chars.
     if (key.size() < 8) return false;
@@ -244,8 +265,10 @@ inline bool isWlAmbiguityKey(std::string_view key) {
         && key[n - 4] == kAmbiguityDelimiter;
 }
 
-/// Parse an NL ambiguity key.  Returns @c std::nullopt if the shape does
+/// @brief Parse an NL ambiguity key.  Returns @c std::nullopt if the shape does
 /// not match @c "<sat>_NL_<digit>" or the satellite field is empty.
+/// @param key Key as built by @c makeNlAmbiguityKey, e.g. "G01_NL_1".
+/// @return The satellite ID and reference band digit, or @c std::nullopt for a malformed key.
 inline std::optional<NlAmbiguityKeyParts>
 parseNlAmbiguityKey(std::string_view key) {
     if (!isNlAmbiguityKey(key)) return std::nullopt;
@@ -257,8 +280,11 @@ parseNlAmbiguityKey(std::string_view key) {
     };
 }
 
-/// Parse a WL ambiguity key.  Returns @c std::nullopt if the shape does
+/// @brief Parse a WL ambiguity key.  Returns @c std::nullopt if the shape does
 /// not match @c "<sat>_WL_<digit>_<digit>" or the satellite field is empty.
+/// @param key Key as built by @c makeWlAmbiguityKey, e.g. "G01_WL_1_2".
+/// @return The satellite ID and the two band digits in key order, or @c std::nullopt for a
+///         malformed key.
 inline std::optional<WlAmbiguityKeyParts>
 parseWlAmbiguityKey(std::string_view key) {
     if (!isWlAmbiguityKey(key)) return std::nullopt;
@@ -295,7 +321,12 @@ struct DdAmbiguityKeyParts {
     std::string pivot;      ///< Pivot (reference) satellite ID.
 };
 
-/// Build a DD ambiguity key.
+/// @brief Build a DD ambiguity key.
+/// @param cons  Constellation name, e.g. "GPS", "Galileo", "BeiDou".
+/// @param sat_i Non-pivot satellite ID, e.g. "G05".
+/// @param code  The rover's RINEX-3 phase observation code, e.g. "L1C".
+/// @param pivot Pivot (reference) satellite ID, e.g. "G01".
+/// @return The key in the form "DD|GPS|G05|L1C|G01".  No validation is done on the arguments.
 inline std::string makeDdAmbiguityKey(std::string_view cons,
                                       std::string_view sat_i,
                                       std::string_view code,
@@ -315,17 +346,23 @@ inline std::string makeDdAmbiguityKey(std::string_view cons,
     return out;
 }
 
-/// Test whether a key string is in the DD-ambiguity namespace, without
+/// @brief Test whether a key string is in the DD-ambiguity namespace, without
 /// fully parsing it.  Cheap and intentional: code that scans a mixed
 /// ambiguity map can fast-skip non-DD entries before paying for parse.
+/// @param key State key to test.
+/// @return True when the key starts with "DD|" and has at least one more character; the
+///         remaining fields are not validated (@c parseDdAmbiguityKey does that).
 inline bool isDdAmbiguityKey(std::string_view key) {
     if (key.size() <= kDdAmbiguityPrefix.size() + 1) return false;
     return key.substr(0, kDdAmbiguityPrefix.size()) == kDdAmbiguityPrefix
         && key[kDdAmbiguityPrefix.size()] == kPipeDelimiter;
 }
 
-/// Parse a DD ambiguity key.  Returns @c std::nullopt if the prefix or
+/// @brief Parse a DD ambiguity key.  Returns @c std::nullopt if the prefix or
 /// any of the four pipes are missing, or if any field would be empty.
+/// @param key Key as built by @c makeDdAmbiguityKey, e.g. "DD|GPS|G05|L1C|G01".
+/// @return The constellation, non-pivot satellite, observation code and pivot satellite, or
+///         @c std::nullopt for a malformed key.
 inline std::optional<DdAmbiguityKeyParts>
 parseDdAmbiguityKey(std::string_view key) {
     if (!isDdAmbiguityKey(key)) return std::nullopt;
@@ -366,9 +403,11 @@ parseDdAmbiguityKey(std::string_view key) {
 // Stored in:       StateManager::ionosphere_indices_
 // ===========================================================================
 
-/// Build a per-satellite ionosphere key.  Returns the satellite ID unchanged;
+/// @brief Build a per-satellite ionosphere key.  Returns the satellite ID unchanged;
 /// the function exists for symmetry and so that <tt>grep makeIonosphereKey</tt>
 /// finds every site.
+/// @param satellite Full RINEX satellite ID, e.g. "G01".
+/// @return A copy of @p satellite, which is the key itself.
 inline std::string makeIonosphereKey(std::string_view satellite) {
     return std::string(satellite);
 }
@@ -392,7 +431,10 @@ inline std::string makeIonosphereKey(std::string_view satellite) {
 // Stored in:       StateManager::code_bias_indices_
 // ===========================================================================
 
-/// Build an inter-frequency receiver bias key.
+/// @brief Build an inter-frequency receiver bias key.
+/// @param system System name string from @c PppUtils::getSystemString(), e.g. "GPS", "Galileo".
+/// @param band   RINEX frequency-band digit, e.g. '2' or '5'.
+/// @return The key in the form "GPS_IFB2".  No validation is done on the arguments.
 inline std::string makeIfbKey(std::string_view system, char band) {
     std::string out;
     out.reserve(system.size() + 1 + kIfbInfix.size() + 1);
@@ -403,7 +445,9 @@ inline std::string makeIfbKey(std::string_view system, char band) {
     return out;
 }
 
-/// Build a receiver differential code bias key.
+/// @brief Build a receiver differential code bias key.
+/// @param system System name string from @c PppUtils::getSystemString(), e.g. "GPS".
+/// @return The key in the form "GPS_DCB".  No validation is done on the argument.
 inline std::string makeDcbKey(std::string_view system) {
     std::string out;
     out.reserve(system.size() + 1 + kDcbInfix.size());
@@ -445,7 +489,12 @@ struct GlonassPerSlotIfbKeyParts {
     std::string system{};
 };
 
-/// Build a per-FCN-slot GLONASS receiver IFB key, e.g. "GLONASS_IFB1_k-4".
+/// @brief Build a per-FCN-slot GLONASS receiver IFB key, e.g. "GLONASS_IFB1_k-4".
+/// @param system   System name string, "GLONASS" in practice.
+/// @param band     FDMA band digit, '1' (G1) or '2' (G2).
+/// @param fcn_slot GLONASS FDMA channel number k, in [-7,+6]; printed with an explicit sign
+///                 (non-negative slots get a leading '+').  The range is not checked.
+/// @return The key in the form "GLONASS_IFB1_k-4" or "GLONASS_IFB2_k+5".
 inline std::string makeGlonassPerSlotIfbKey(std::string_view system,
                                             char band, int fcn_slot) {
     std::string out;
@@ -461,10 +510,13 @@ inline std::string makeGlonassPerSlotIfbKey(std::string_view system,
     return out;
 }
 
-/// Cheap predicate: is @p key a per-slot GLONASS IFB key (the IFB infix
+/// @brief Cheap predicate: is @p key a per-slot GLONASS IFB key (the IFB infix
 /// followed somewhere by the "_k" FCN marker)?  The per-band IFB/DCB keys lack
 /// "_k" and return false, which lets BssdTransform / StateManager tell the
 /// SD-surviving per-slot columns from the receiver-common ones.
+/// @param key State key to test.
+/// @return True when the key contains "IFB" followed later by "_k"; the rest of the key is
+///         not validated (@c parseGlonassPerSlotIfbKey does that).
 inline bool isGlonassPerSlotIfbKey(std::string_view key) {
     const auto ifb = key.find(kIfbInfix);
     if (ifb == std::string_view::npos) return false;
@@ -472,10 +524,13 @@ inline bool isGlonassPerSlotIfbKey(std::string_view key) {
            != std::string_view::npos;
 }
 
-/// Parse a per-slot GLONASS IFB key "<system>_IFB<band>_k<±slot>".  From the
+/// @brief Parse a per-slot GLONASS IFB key "<system>_IFB<band>_k<±slot>".  From the
 /// first "IFB" onward the key must hold one band char, "_k", an optional sign
 /// and one or more digits; otherwise returns @c std::nullopt.  The text before
 /// "IFB" and the slot range are not checked.
+/// @param key Key as built by @c makeGlonassPerSlotIfbKey, e.g. "GLONASS_IFB1_k-4".
+/// @return The band digit, signed FCN slot and system name (empty when the key does not open
+///         with a system and an underscore before "IFB"), or @c std::nullopt for a malformed key.
 inline std::optional<GlonassPerSlotIfbKeyParts>
 parseGlonassPerSlotIfbKey(std::string_view key) {
     const auto ifb = key.find(kIfbInfix);
@@ -510,7 +565,7 @@ struct IfbKeyParts {
     char        band;    ///< RINEX frequency-band digit
 };
 
-/// Parse a receiver-common per-band IFB key "<system>_IFB<band>".  Returns
+/// @brief Parse a receiver-common per-band IFB key "<system>_IFB<band>".  Returns
 /// @c std::nullopt for the per-slot GLONASS form ("<system>_IFB<band>_k<±slot>",
 /// which carries its own central-channel datum) and for any key where "IFB" is
 /// not preceded by '_' or not followed by exactly one band char.  Inverse of
@@ -518,6 +573,8 @@ struct IfbKeyParts {
 /// @c parseGlonassPerSlotIfbKey: a caller uses it to select the receiver-common
 /// code-bias columns (the ones a network common-mode pin / S-basis datum acts on)
 /// and skip the SD-surviving per-slot GLONASS columns.
+/// @param key Key as built by @c makeIfbKey, e.g. "GPS_IFB2".
+/// @return The system name and band digit, or @c std::nullopt for any other form.
 inline std::optional<IfbKeyParts> parseIfbKey(std::string_view key) {
     if (isGlonassPerSlotIfbKey(key)) return std::nullopt;   // per-slot, not per-band
     const auto ifb = key.find(kIfbInfix);
@@ -528,9 +585,11 @@ inline std::optional<IfbKeyParts> parseIfbKey(std::string_view key) {
     return IfbKeyParts{ std::string(key.substr(0, ifb - 1)), key[band_pos] };
 }
 
-/// Parse a receiver DCB key "<system>_DCB".  Returns the system name string, or
+/// @brief Parse a receiver DCB key "<system>_DCB".  Returns the system name string, or
 /// @c std::nullopt unless @p key is exactly "<system>_DCB".  Inverse of
 /// @c makeDcbKey.
+/// @param key Key as built by @c makeDcbKey, e.g. "GPS_DCB".
+/// @return The system name (e.g. "GPS"), or @c std::nullopt for any other form.
 inline std::optional<std::string> parseDcbKey(std::string_view key) {
     const auto dcb = key.find(kDcbInfix);
     if (dcb == std::string_view::npos || dcb == 0) return std::nullopt;
@@ -572,7 +631,10 @@ struct ReceiverPhaseBiasKeyParts {
     std::string signal;  ///< full RINEX signal code (e.g. "L1C").
 };
 
-/// Build a receiver phase-bias key "<system>_RPB_<signal>".
+/// @brief Build a receiver phase-bias key "<system>_RPB_<signal>".
+/// @param system System name string from @c PppUtils::getSystemString(), e.g. "GPS", "Galileo".
+/// @param signal Full RINEX phase signal code (3 characters), e.g. "L1C"; raw phase signals only.
+/// @return The key in the form "GPS_RPB_L1C".  No validation is done on the arguments.
 inline std::string makeReceiverPhaseBiasKey(std::string_view system,
                                             std::string_view signal) {
     std::string out;
@@ -585,7 +647,10 @@ inline std::string makeReceiverPhaseBiasKey(std::string_view system,
     return out;
 }
 
-/// True iff @p key carries the "_RPB_" infix (cheap namespace test).
+/// @brief True iff @p key carries the "_RPB_" infix (cheap namespace test).
+/// @param key State key to test.
+/// @return True when "_RPB_" occurs with at least one character before it and at least one
+///         after it; nothing else is validated.
 inline bool isReceiverPhaseBiasKey(std::string_view key) {
     // Need "<sys>_RPB_<sig>": at least one char of system before "_RPB_" and
     // at least one signal char after it.
@@ -596,8 +661,10 @@ inline bool isReceiverPhaseBiasKey(std::string_view key) {
         && pos + needle.size() < key.size();
 }
 
-/// Parse a receiver phase-bias key.  Returns @c std::nullopt unless the key
+/// @brief Parse a receiver phase-bias key.  Returns @c std::nullopt unless the key
 /// has the exact form "<system>_RPB_<signal>" with non-empty system and signal.
+/// @param key Key as built by @c makeReceiverPhaseBiasKey, e.g. "GPS_RPB_L1C".
+/// @return The system name and signal code, or @c std::nullopt for a malformed key.
 inline std::optional<ReceiverPhaseBiasKeyParts>
 parseReceiverPhaseBiasKey(std::string_view key) {
     const std::string_view needle = "_RPB_";
@@ -659,7 +726,10 @@ struct ReceiverIscKeyParts {
     std::string signal;  ///< full RINEX code signal (e.g. "C1W").
 };
 
-/// Build a receiver inter-signal code-bias key "<system>_ISC_<signal>".
+/// @brief Build a receiver inter-signal code-bias key "<system>_ISC_<signal>".
+/// @param system System name string from @c PppUtils::getSystemString(), e.g. "GPS".
+/// @param signal Full RINEX code-observation signal code (3 characters), e.g. "C1W".
+/// @return The key in the form "GPS_ISC_C1W".  No validation is done on the arguments.
 inline std::string makeReceiverIscKey(std::string_view system,
                                       std::string_view signal) {
     std::string out;
@@ -672,8 +742,11 @@ inline std::string makeReceiverIscKey(std::string_view system,
     return out;
 }
 
-/// True iff @p key carries the "_ISC_" infix with a non-empty system and signal
+/// @brief True iff @p key carries the "_ISC_" infix with a non-empty system and signal
 /// on either side (cheap namespace test, the @c isReceiverPhaseBiasKey twin).
+/// @param key State key to test.
+/// @return True when "_ISC_" occurs with at least one character before it and at least one
+///         after it; nothing else is validated.
 inline bool isReceiverIscKey(std::string_view key) {
     const std::string_view needle = "_ISC_";
     const auto pos = key.find(needle);
@@ -682,9 +755,11 @@ inline bool isReceiverIscKey(std::string_view key) {
         && pos + needle.size() < key.size();
 }
 
-/// Parse a receiver inter-signal code-bias key.  Returns @c std::nullopt unless
+/// @brief Parse a receiver inter-signal code-bias key.  Returns @c std::nullopt unless
 /// the key has the exact form "<system>_ISC_<signal>" with non-empty system and
 /// signal.  Inverse of @c makeReceiverIscKey.
+/// @param key Key as built by @c makeReceiverIscKey, e.g. "GPS_ISC_C1W".
+/// @return The system name and signal code, or @c std::nullopt for a malformed key.
 inline std::optional<ReceiverIscKeyParts>
 parseReceiverIscKey(std::string_view key) {
     const std::string_view needle = "_ISC_";
@@ -719,7 +794,10 @@ struct SatBiasKeyParts {
     std::string signal;     ///< Full RINEX signal code.
 };
 
-/// Build a per-satellite signal-bias key.
+/// @brief Build a per-satellite signal-bias key.
+/// @param satellite Full RINEX satellite ID, e.g. "G01".
+/// @param signal    Full RINEX signal code (3 characters), e.g. "C1W".
+/// @return The key in the form "G01|C1W".  No validation is done on the arguments.
 inline std::string makeSatBiasKey(std::string_view satellite,
                                   std::string_view signal) {
     std::string out;
@@ -730,8 +808,11 @@ inline std::string makeSatBiasKey(std::string_view satellite,
     return out;
 }
 
-/// Parse a per-satellite signal-bias key.  Returns @c std::nullopt if
+/// @brief Parse a per-satellite signal-bias key.  Returns @c std::nullopt if
 /// the delimiter is missing or either side is empty.
+/// @param key Key as built by @c makeSatBiasKey, e.g. "G01|C1W".
+/// @return The satellite ID and signal code (split at the first pipe), or @c std::nullopt for
+///         a malformed key.
 inline std::optional<SatBiasKeyParts>
 parseSatBiasKey(std::string_view key) {
     const auto bar = key.find(kPipeDelimiter);
@@ -743,9 +824,11 @@ parseSatBiasKey(std::string_view key) {
     };
 }
 
-/// Extract the satellite prefix from a sat-bias key.  A key with no pipe
+/// @brief Extract the satellite prefix from a sat-bias key.  A key with no pipe
 /// (legacy or malformed) is returned whole, which keeps the lenient behavior of
 /// the StateManager::getProcessNoiseMatrix loop.
+/// @param key Sat-bias key, e.g. "G01|C1W".
+/// @return The text before the first pipe (e.g. "G01"), or the whole key when it has no pipe.
 inline std::string satelliteFromSatBiasKey(std::string_view key) {
     const auto bar = key.find(kPipeDelimiter);
     return std::string(bar != std::string_view::npos
@@ -777,7 +860,10 @@ inline std::string satelliteFromSatBiasKey(std::string_view key) {
 /// Trailing discriminator separating a phase-bias key from a code-bias key.
 inline constexpr std::string_view kSatPhaseBiasSuffix = "|PB";
 
-/// Build a per-satellite signal phase-bias key.
+/// @brief Build a per-satellite signal phase-bias key.
+/// @param satellite Full RINEX satellite ID, e.g. "G01".
+/// @param signal    Full RINEX phase signal code (3 characters), e.g. "L1C".
+/// @return The key in the form "G01|L1C|PB".  No validation is done on the arguments.
 inline std::string makeSatPhaseBiasKey(std::string_view satellite,
                                        std::string_view signal) {
     std::string out;
@@ -789,14 +875,19 @@ inline std::string makeSatPhaseBiasKey(std::string_view satellite,
     return out;
 }
 
-/// True iff @p key is a satellite phase-bias key (cheap trailing-suffix test).
+/// @brief True iff @p key is a satellite phase-bias key (cheap trailing-suffix test).
+/// @param key State key to test.
+/// @return True when the key ends in "|PB" and has at least one character before it.
 inline bool isSatPhaseBiasKey(std::string_view key) {
     return key.size() > kSatPhaseBiasSuffix.size()
         && key.substr(key.size() - kSatPhaseBiasSuffix.size()) == kSatPhaseBiasSuffix;
 }
 
-/// Parse a per-satellite signal phase-bias key.  Returns @c std::nullopt unless
+/// @brief Parse a per-satellite signal phase-bias key.  Returns @c std::nullopt unless
 /// the key has the form "<sat>|<signal>|PB" with non-empty satellite and signal.
+/// @param key Key as built by @c makeSatPhaseBiasKey, e.g. "G01|L1C|PB".
+/// @return The satellite ID and signal code (the "|PB" suffix is dropped), or @c std::nullopt
+///         for a malformed key.
 inline std::optional<SatBiasKeyParts>
 parseSatPhaseBiasKey(std::string_view key) {
     if (!isSatPhaseBiasKey(key)) return std::nullopt;
@@ -810,8 +901,10 @@ parseSatPhaseBiasKey(std::string_view key) {
     };
 }
 
-/// Extract just the satellite prefix from a sat-phase-bias key (first-pipe split,
+/// @brief Extract just the satellite prefix from a sat-phase-bias key (first-pipe split,
 /// matching satelliteFromSatBiasKey's lenient fallback).
+/// @param key Sat-phase-bias key, e.g. "G01|L1C|PB".
+/// @return The text before the first pipe (e.g. "G01"), or the whole key when it has no pipe.
 inline std::string satelliteFromSatPhaseBiasKey(std::string_view key) {
     const auto bar = key.find(kPipeDelimiter);
     return std::string(bar != std::string_view::npos
@@ -842,7 +935,9 @@ inline std::string satelliteFromSatPhaseBiasKey(std::string_view key) {
 /// Trailing discriminator marking a per-satellite clock key.
 inline constexpr std::string_view kSatClockSuffix = "|SC";
 
-/// Build a per-satellite clock key "<satellite>|SC".
+/// @brief Build a per-satellite clock key "<satellite>|SC".
+/// @param satellite Full RINEX satellite ID, e.g. "G01".
+/// @return The key in the form "G01|SC".  No validation is done on the argument.
 inline std::string makeSatClockKey(std::string_view satellite) {
     std::string out;
     out.reserve(satellite.size() + kSatClockSuffix.size());
@@ -851,22 +946,30 @@ inline std::string makeSatClockKey(std::string_view satellite) {
     return out;
 }
 
-/// True iff @p key is a per-satellite clock key (cheap trailing-suffix test).
+/// @brief True iff @p key is a per-satellite clock key (cheap trailing-suffix test).
+/// @param key State key to test.
+/// @return True when the key ends in "|SC" and has at least one character before it; the
+///         satellite part is not validated.
 inline bool isSatClockKey(std::string_view key) {
     return key.size() > kSatClockSuffix.size()
         && key.substr(key.size() - kSatClockSuffix.size()) == kSatClockSuffix;
 }
 
-/// Extract the satellite from a sat-clock key.  A key without the "|SC" suffix
+/// @brief Extract the satellite from a sat-clock key.  A key without the "|SC" suffix
 /// is returned whole.
+/// @param key Sat-clock key, e.g. "G01|SC".
+/// @return The key without its "|SC" suffix (e.g. "G01"), or the whole key when it has no
+///         such suffix.
 inline std::string satelliteFromSatClockKey(std::string_view key) {
     if (!isSatClockKey(key)) return std::string(key);
     return std::string(key.substr(0, key.size() - kSatClockSuffix.size()));
 }
 
-/// Parse a per-satellite clock key.  Returns the satellite, or std::nullopt
+/// @brief Parse a per-satellite clock key.  Returns the satellite, or std::nullopt
 /// unless the key has the form "<sat>|SC" with a non-empty satellite that
 /// contains no pipe.
+/// @param key Key as built by @c makeSatClockKey, e.g. "G01|SC".
+/// @return The satellite ID (e.g. "G01"), or @c std::nullopt for a malformed key.
 inline std::optional<std::string> parseSatClockKey(std::string_view key) {
     if (!isSatClockKey(key)) return std::nullopt;
     const std::string_view sat = key.substr(0, key.size() - kSatClockSuffix.size());
@@ -885,8 +988,11 @@ inline std::optional<std::string> parseSatClockKey(std::string_view key) {
 // Stored in:       StateManager::system_time_offset_indices_
 // ===========================================================================
 
-/// Build a system-time-offset key.  Returns the system name unchanged; the
+/// @brief Build a system-time-offset key.  Returns the system name unchanged; the
 /// function exists for symmetry.
+/// @param system System name string, e.g. "Galileo", "GLONASS", "BeiDou" (GPS is the
+///               reference and has no offset state).
+/// @return A copy of @p system, which is the key itself.
 inline std::string makeSystemTimeOffsetKey(std::string_view system) {
     return std::string(system);
 }
@@ -907,7 +1013,11 @@ inline std::string makeSystemTimeOffsetKey(std::string_view system) {
 // Used as:         lookup key in the pivot_abs_seeds map (no parse path).
 // ===========================================================================
 
-/// Build a BSSD pivot-seed key.
+/// @brief Build a BSSD pivot-seed key.
+/// @param cons Constellation string, the same one used in DD ambiguity keys, e.g. "GPS".
+/// @param band Band label, joined as given: a full phase signal code ("L1C"), "NL", or
+///             "WL|1_2" under the NL/WL basis.
+/// @return The key in the form "GPS|L1C".  No validation is done on the arguments.
 inline std::string makePivotSeedKey(std::string_view cons,
                                     std::string_view band) {
     std::string out;
@@ -957,10 +1067,16 @@ struct VtecShKeyParts {
     int  layer = 0;  ///< Shell index: 0 = legacy "SH" layer, 1 = "SH2" second shell.
 };
 
-/// Build a global SH-VTEC coefficient key "SH|<n>|<m>|<C|S>" (layer 0) or
+/// @brief Build a global SH-VTEC coefficient key "SH|<n>|<m>|<C|S>" (layer 0) or
 /// "SH2|<n>|<m>|<C|S>" (layer 1; any @p layer > 0 selects "SH2").  Layer 0
 /// output is byte-identical to the single-layer three-argument form that
 /// preceded the layer parameter.
+/// @param n     Spherical-harmonic degree (0..N).
+/// @param m     Spherical-harmonic order (0..n).
+/// @param trig  'C' for the cosine term (includes m=0) or 'S' for the sine term (m>=1).
+/// @param layer Shell index; 0 (the default) selects the "SH" prefix, any positive value the
+///              "SH2" prefix.
+/// @return The key in the form "SH|4|2|C" or "SH2|1|0|C".  The argument ranges are not checked.
 inline std::string makeVtecShKey(int n, int m, char trig, int layer = 0) {
     std::string out;
     out.append(layer > 0 ? kVtecSh2Prefix : kVtecShPrefix);
@@ -973,9 +1089,12 @@ inline std::string makeVtecShKey(int n, int m, char trig, int layer = 0) {
     return out;
 }
 
-/// Cheap predicate: does @p key open with an SH-VTEC prefix ("SH" or "SH2") and
+/// @brief Cheap predicate: does @p key open with an SH-VTEC prefix ("SH" or "SH2") and
 /// a pipe?  True for both layers, so layer-agnostic call sites (kind tests,
 /// trace filters) work unchanged on dual-layer keys.
+/// @param key Key to test.
+/// @return True when the key starts with "SH|" or "SH2|" followed by at least one more
+///         character; the remaining fields are not validated (@c parseVtecShKey does that).
 inline bool isVtecShKey(std::string_view key) {
     if (key.size() > kVtecSh2Prefix.size() + 1
         && key.substr(0, kVtecSh2Prefix.size()) == kVtecSh2Prefix
@@ -986,9 +1105,12 @@ inline bool isVtecShKey(std::string_view key) {
         && key[kVtecShPrefix.size()] == kPipeDelimiter;
 }
 
-/// Parse a global SH-VTEC coefficient key.  Returns @c std::nullopt unless the
+/// @brief Parse a global SH-VTEC coefficient key.  Returns @c std::nullopt unless the
 /// key has the exact form "SH|<n>|<m>|<C|S>" (layer 0) or "SH2|<n>|<m>|<C|S>"
 /// (layer 1) with non-negative integer n, m and a 'C' or 'S' trig tag.
+/// @param key Key as built by @c makeVtecShKey, e.g. "SH|4|2|C".
+/// @return The degree, order, trig tag and shell index (0 for "SH", 1 for "SH2"), or
+///         @c std::nullopt for a malformed key.
 inline std::optional<VtecShKeyParts>
 parseVtecShKey(std::string_view key) {
     if (!isVtecShKey(key)) return std::nullopt;

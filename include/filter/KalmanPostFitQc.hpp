@@ -200,7 +200,7 @@ namespace kalman {
 
     /**
      * @brief Test one group for the coherent-offset signature of @p spec (criteria 1 to 4
-     *        of @ref PivotDetectorSpec, in that order).
+     *        of @c PivotDetectorSpec, in that order).
      *
      * Pure: no state, no logging.  The wavelength floor, the report and the response are
      * the caller's (KalmanFilter::testPivotGroup_).

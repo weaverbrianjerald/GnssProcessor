@@ -10,7 +10,7 @@
  * a removal, the state labels, the RT snapshot's restore kinds, its writer and
  * its reader) reads this header, so the lists cannot drift apart.  It is the
  * one list: a reader finds every
- * family in @ref kStateFamilies with its label prefix and snapshot tag, its
+ * family in @ref GnssProcessor::kStateFamilies "kStateFamilies" with its label prefix and snapshot tag, its
  * re-inflation counter, its gap response, the rule that names the satellite of
  * a key and its process-noise rule, the configuration that arms its
  * birth, the source of its initial variance and the events wired to it (printed at run start by `StateManager::logFamiliesAsArmed`), and a new
@@ -37,7 +37,7 @@ namespace GnssProcessor {
     /**
      * @brief One dynamic state family, i.e. one key->index map of `StateManager`.
      *
-     * The enumerator order is the table order of @ref kStateFamilies and the
+     * The enumerator order is the table order of @ref GnssProcessor::kStateFamilies "kStateFamilies" and the
      * order in which the RT snapshot writer harvests the maps.
      */
     enum class StateFamily : std::uint8_t {
@@ -58,7 +58,7 @@ namespace GnssProcessor {
     /**
      * @brief The variance re-inflations, in the order of the run-end line.
      *
-     * Six belong to a dynamic family (that family's @ref StateFamilySpec::reinflation);
+     * Six belong to a dynamic family (that family's @ref GnssProcessor::StateFamilySpec::reinflation "StateFamilySpec::reinflation");
      * the inter-system time offset is a core state.  `StateManager::Reinflation`
      * names this type.
      */
@@ -77,7 +77,7 @@ namespace GnssProcessor {
     inline constexpr Reinflation kNoReinflation = Reinflation::Count;
 
     /// The stable short names of the re-inflations in the run-end lines, indexed by
-    /// @ref Reinflation; the grading scripts parse them.
+    /// @c Reinflation; the grading scripts parse them.
     inline constexpr std::array<const char*, static_cast<std::size_t>(Reinflation::Count)>
         kReinflationNames{{ "code_bias", "isb", "iono", "iono_rate", "sat_bias",
                             "sat_phase_bias", "sat_clock" }};
@@ -132,7 +132,7 @@ namespace GnssProcessor {
      * @brief Where a family's initial variance comes from.
      */
     enum class InitialStdRule : std::uint8_t {
-        ConfigField,     ///< filter.initial_std.<field> (@ref StateFamilySpec::initial_std).
+        ConfigField,     ///< filter.initial_std.\<field\> (@ref StateFamilySpec::initial_std).
         AmbiguityStd,    ///< GnssConfig::getAmbiguityStd() (1000 m, no JSON key) unless the caller
                          ///< passes an override.
         CallerSupplied,  ///< The creating code passes the variance (network.phase_colour_sigma_zen_m).
@@ -179,7 +179,7 @@ namespace GnssProcessor {
     };
 
     /**
-     * @brief Every dynamic state family, in @ref StateFamily order.
+     * @brief Every dynamic state family, in @ref GnssProcessor::StateFamily "StateFamily" order.
      *
      * Label prefixes and snapshot tags are serialized contracts: the labels key
      * the normal-equation accumulators and the RHS attribution
@@ -244,7 +244,7 @@ namespace GnssProcessor {
     /**
      * @brief The table row of one family.
      * @param f The family.
-     * @return Its row of @ref kStateFamilies.
+     * @return Its row of @ref GnssProcessor::kStateFamilies "kStateFamilies".
      */
     inline constexpr const StateFamilySpec& specOf(StateFamily f) {
         return kStateFamilies[static_cast<std::size_t>(f)];
@@ -268,7 +268,7 @@ namespace GnssProcessor {
      * @c BeforePipe reads the satellite with @c StateKeys::satelliteFromSatBiasKey;
      * @c StateKeys::satelliteFromSatPhaseBiasKey is the same first-pipe split.
      *
-     * @param rule The family's rule (@ref StateFamilySpec::sat_of_key).
+     * @param rule The family's rule (@ref GnssProcessor::StateFamilySpec::sat_of_key "StateFamilySpec::sat_of_key").
      * @param key  A key of that family.
      * @return The satellite ID, or nullopt when the key names none.
      */

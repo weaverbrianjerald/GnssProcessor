@@ -29,8 +29,8 @@ namespace kalman {
      * blocks); the order is the column order of the dense row.
      */
     struct SparseHRow {
-        std::vector<int>    cols;
-        std::vector<double> vals;
+        std::vector<int>    cols;  ///< Column indices of the retained non-zeros, ascending.
+        std::vector<double> vals;  ///< Values of the retained non-zeros, parallel to @c cols.
     };
 
     /**

@@ -157,20 +157,33 @@ namespace GnssProcessor {
             std::size_t streak    = 0;     ///< Current consecutive-rejection streak.
         };
 
+        /**
+         * @brief Construct a tracker from its configuration.
+         *
+         * Logs the active settings once at info level when @c cfg.enabled is true.
+         *
+         * @param cfg     Tracker settings (copied).
+         * @param log_mgr Logging facility; held by reference, so it must outlive the tracker.
+         */
         ResidualHistoryTracker(const Config& cfg, LogManager& log_mgr);
 
-        /// Whether the tracker is enabled in its config.  Hot-path callers
+        /// @brief Whether the tracker is enabled in its config.  Hot-path callers
         /// can short-circuit on this without touching the maps.
+        /// @return True when @c Config::enabled is set; when false every record, reset and
+        ///         evaluate call is a no-op.
         bool isEnabled() const { return cfg_.enabled; }
 
-        /// Push a post-fit residual into the (@p sat, @p signal) history.
+        /// @brief Push a post-fit residual into the (@p sat, @p signal) history.
         /// No-op when the tracker is disabled or @p residual_m is not
         /// finite.  Also clears the row's consecutive-rejection streak:
         /// a row with a post-fit residual was kept this epoch, so any
         /// earlier streak is broken.
+        /// @param sat        Primary satellite ID of the row (e.g. "G01"; the non-pivot side of a BSSD row).
+        /// @param signal     Signal-type string of the row, as carried in the measurement's signal types.
+        /// @param residual_m Post-fit residual of the row (m).
         void record(const std::string& sat, const std::string& signal, double residual_m);
 
-        /// Increment the consecutive-rejection counter for (@p sat, @p signal).
+        /// @brief Increment the consecutive-rejection counter for (@p sat, @p signal).
         /// Called by the Kalman filter's outlier handler whenever a
         /// code row is excluded; the streak is read back through
         /// @c evaluateStuckBias.  No-op when the tracker is disabled.
@@ -180,25 +193,35 @@ namespace GnssProcessor {
         /// streak), so in practice the counter accumulates only on
         /// code rows.  The API stays signal-agnostic so the tracker
         /// does not depend on a signal-type convention.
+        /// @param sat    Primary satellite ID of the rejected row (e.g. "G01").
+        /// @param signal Signal-type string of the rejected row.
         void recordRejection(const std::string& sat, const std::string& signal);
 
-        /// Evaluate @p residual_m against the current (@p sat, @p signal)
+        /// @brief Evaluate @p residual_m against the current (@p sat, @p signal)
         /// statistics.  Returns @c warmed_up=false and @c is_outlier=false
         /// when the tracker is disabled or the row has not accumulated
         /// enough samples.
+        /// @param sat        Primary satellite ID of the row (e.g. "G01").
+        /// @param signal     Signal-type string of the row.
+        /// @param residual_m Post-fit residual to test (m); a non-finite value gives the default result.
+        /// @return Evaluation holding the z-score against the row's EWMA mean and standard deviation,
+        ///         and whether it exceeds @c Config::z_threshold.  The tracker state is not changed.
         Evaluation evaluate(const std::string& sat,
                             const std::string& signal,
                             double residual_m) const;
 
-        /// Reset all (@p sat, *) entries, for a satellite-wide reset.
+        /// @brief Reset all (@p sat, *) entries, for a satellite-wide reset.
         /// No-op for unknown satellites.
+        /// @param sat Primary satellite ID whose entries (every signal) are dropped, e.g. "G01".
         void resetSatellite(const std::string& sat);
 
-        /// Reset a single (@p sat, @p signal) entry, after a
+        /// @brief Reset a single (@p sat, @p signal) entry, after a
         /// per-(sat, signal) cycle slip.  No-op for unknown rows.
+        /// @param sat    Primary satellite ID of the entry, e.g. "G01".
+        /// @param signal Signal-type string of the entry to drop.
         void resetSatSignal(const std::string& sat, const std::string& signal);
 
-        /// Reset every (sat, signal) entry whose @c sat starts with the
+        /// @brief Reset every (sat, signal) entry whose @c sat starts with the
         /// given constellation prefix character ('G', 'E', 'C', 'R',
         /// 'J', 'S') and whose signal matches @p signal.  Called on a
         /// pivot handover, where every BSSD residual in the affected
@@ -207,17 +230,23 @@ namespace GnssProcessor {
         /// An empty @p signal matches every signal and clears the whole
         /// constellation, for a handover that affects all bands of the
         /// constellation at once.
+        /// @param constellation_prefix First character of the satellite IDs to reset, e.g. 'G' for GPS.
+        /// @param signal               Signal-type string to match exactly; empty matches every signal.
         void resetConstellationSignal(char constellation_prefix,
                                       const std::string& signal);
 
-        /// Drop everything.
+        /// @brief Drop everything.
         void resetAll();
 
-        /// Get current statistics for one row, if any have accumulated.
+        /// @brief Get current statistics for one row, if any have accumulated.
+        /// @param sat    Primary satellite ID of the row, e.g. "G01".
+        /// @param signal Signal-type string of the row.
+        /// @return The row's sample count, EWMA mean and standard deviation, and rejection streak;
+        ///         empty (@c std::nullopt) when the row has no entry.
         std::optional<Stats> getStats(const std::string& sat,
                                        const std::string& signal) const;
 
-        /// Evaluate whether the (@p sat, @p signal) row's bias state
+        /// @brief Evaluate whether the (@p sat, @p signal) row's bias state
         /// looks stuck.  Returns @c stuck=true when either the
         /// consecutive-rejection streak has reached @p min_streak
         /// (≥ 1; 0 disables the streak trigger) or the warmed-up
@@ -225,6 +254,11 @@ namespace GnssProcessor {
         /// disables the mean-drift trigger).  Returns a zero-filled
         /// result when the tracker is disabled or the row has no
         /// entry; callers treat that as "not stuck".
+        /// @param sat        Primary satellite ID of the row, e.g. "G01".
+        /// @param signal     Signal-type string of the row.
+        /// @param floor_m    Magnitude (m) the warmed-up EWMA mean must exceed to trigger; zero or negative disables.
+        /// @param min_streak Consecutive-rejection count that triggers; 0 disables.
+        /// @return StuckBiasEvaluation with the trigger result and the row's streak and EWMA statistics.
         StuckBiasEvaluation evaluateStuckBias(const std::string& sat,
                                                const std::string& signal,
                                                double      floor_m,
@@ -244,11 +278,16 @@ namespace GnssProcessor {
             double      median_std  = 0.0; ///< Median of per-entry σ across all entries (m).
             double      max_std     = 0.0; ///< Max per-entry σ across all entries (m).
         };
+        /// @brief Compute the aggregate digest over every tracked (sat, signal) entry.
+        /// @return Summary of entry count, warmed-up count and the median and maximum per-entry
+        ///         standard deviation (m); all zero when nothing has been recorded.
         Summary summarize() const;
 
-        /// Read-only access to the configured group-level fraction
+        /// @brief Read-only access to the configured group-level fraction
         /// threshold; the consumer combines it with its own
         /// group-membership data.
+        /// @return @c Config::fraction_threshold: the fraction of a candidate pivot-slip group's
+        ///         warmed-up rows that must be temporal outliers for the tracker to corroborate it.
         double fractionThreshold() const { return cfg_.fraction_threshold; }
 
     private:

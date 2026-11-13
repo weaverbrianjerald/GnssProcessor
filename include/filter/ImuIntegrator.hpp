@@ -104,6 +104,7 @@ namespace GnssProcessor {
 
         /**
          * @brief Number of loaded IMU samples.
+         * @return Count of samples currently held (file-loaded plus streamed); 0 when no data is loaded.
          */
         size_t sampleCount() const { return samples_.size(); }
 

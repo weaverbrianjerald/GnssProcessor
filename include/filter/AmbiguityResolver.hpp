@@ -133,7 +133,7 @@ struct AmbiguityResolverConfig {
      * in 85.5 % of epochs, and the full-set ratio test failed in 98 % of epochs.
      *
      * Read only by the WL-constrained N_1 search
-     * (@ref AmbiguityResolver::resolveWlConstrained), on the higher-frequency arcs of
+     * (AmbiguityResolver::resolveWlConstrained (@c GnssProcessor::AmbiguityResolver::resolveWlConstrained)), on the higher-frequency arcs of
      * the non-pivot satellite and the pivot.  The per-band, baseline DD and WL-only
      * paths do not apply it.
      *
@@ -159,8 +159,8 @@ struct AmbiguityResolverConfig {
      * `wl_max_frac` is a point test on each arc's running residual: it says the
      * locked integer looks self-consistent this epoch.  It cannot bound
      * P(the integer is wrong), which is the quantity an acceptance decision has to
-     * control.  With this on, @ref AmbiguityResolver::resolveWlOnly and
-     * @ref AmbiguityResolver::applyMwWlConstraintsNlWl_ evaluate the same
+     * control.  With this on, AmbiguityResolver::resolveWlOnly (@c GnssProcessor::AmbiguityResolver::resolveWlOnly) and
+     * AmbiguityResolver::applyMwWlConstraintsNlWl_ (@c GnssProcessor::AmbiguityResolver::applyMwWlConstraintsNlWl_) evaluate the same
      * `erf(1/(2√2·σ))` bootstrap product as the LAMBDA tier
      * (@ref ils::computeBootstrapSuccessRate) against @ref min_success_rate,
      * dropping the weakest arc until the set passes.
@@ -205,7 +205,7 @@ struct AmbiguityResolverConfig {
     double wl_only_max_innov_cyc{ 0.5 };
     double nl_max_per_pair_frac{ 0.15 }; ///< Max |N_1_float − N_1_fixed| per NL pair / DD; rejects marginal fixes.
     bool   nl_iono_free_row{ false };
-        ///< Search functional for the WL-constrained N_1 step (@ref
+        ///< Search functional for the WL-constrained N_1 step (@c
         ///< AmbiguityResolver::resolveWlConstrained).  Both choices target the
         ///< same integer N_1 and differ only in which row of the (L1,L2) plane
         ///< is used to observe it:
@@ -233,7 +233,7 @@ struct AmbiguityResolverConfig {
         ///< acceptance gates, retry by greedy backward elimination (drop the least
         ///< fixable ambiguity, re-validate ratio/bootstrap/frac) and accept the first
         ///< subset that passes, so a few noisy satellites do not force the whole
-        ///< epoch back to float (@ref AmbiguityResolver::selectFixableSubset_).
+        ///< epoch back to float (@c AmbiguityResolver::selectFixableSubset_).
         ///< Complements (does not replace) the full-set FFR/ratio/Joseph-hold
         ///< validation; bit-identical to the legacy path when off.
     std::vector<std::string> ar_active_systems;
@@ -302,6 +302,12 @@ public:
 
     /**
      * @brief Attempt to resolve integer ambiguities (no WL constraint).
+     *
+     * @param state_manager   Current filter state (provides ambiguity indices).
+     * @param observations    Modeled observations for this epoch (for elevation, satellite info).
+     * @return AmbiguityResolution; @c success=false (the caller keeps the float
+     *         state) when AR is disabled, a convergence guard is still active,
+     *         there are no candidates, or an acceptance gate fails.
      */
     AmbiguityResolution resolve(const StateManager& state_manager,
                                 const std::vector<PppObservation>& observations);
@@ -379,10 +385,16 @@ public:
     void holdAmbiguitiesDd(StateManager& state_manager,
                            const AmbiguityResolution& resolution);
 
-    /// Get the current AR configuration.
+    /**
+     * @brief Get the current AR configuration.
+     * @return Reference to the stored configuration; valid for the lifetime of this resolver.
+     */
     const AmbiguityResolverConfig& getConfig() const { return config_; }
 
-    /// Update the AR configuration.
+    /**
+     * @brief Update the AR configuration.
+     * @param config New AR configuration; copied, and used from the next resolve call on.
+     */
     void setConfig(const AmbiguityResolverConfig& config) { config_ = config; }
 
 private:
@@ -392,9 +404,9 @@ private:
     // without widening the public API; it has no effect on production
     // translation units (the type is only ever defined in the test binary).
     friend struct MlambdaTestAccess;
-    /// Test seam for @ref nlRowCoefficients (tests/test_nl_search_row.cpp).
+    /// Test seam for nlRowCoefficients (@c GnssProcessor::AmbiguityResolver::nlRowCoefficients) (tests/test_nl_search_row.cpp).
     friend struct NlRowTestAccess;
-    /// Test seam for @ref wlArcSuccessRate_ (tests/test_wl_only_ffr.cpp).  A field
+    /// Test seam for wlArcSuccessRate_ (@c GnssProcessor::AmbiguityResolver::wlArcSuccessRate_) (tests/test_wl_only_ffr.cpp).  A field
     /// run can show only that nothing went wrong, not that the WL-only acceptance
     /// gate fails safe, so a unit test pins that behaviour.
     friend struct WlFfrTestAccess;
@@ -407,9 +419,9 @@ private:
      * @brief Coefficients that define which row of the (L1,L2) ambiguity plane
      *        observes the narrow-lane integer N_1, once the widelane is known.
      *
-     * All four are exact functions of the frequency pair.  @ref t_1 / @ref t_2
-     * carry DD ambiguities from metres into search cycles; @ref shift and
-     * @ref bt_2 undo the known-widelane displacement in each direction.
+     * All four are exact functions of the frequency pair.  t_1 (@c GnssProcessor::AmbiguityResolver::NlRowCoefficients::t_1) / t_2 (@c GnssProcessor::AmbiguityResolver::NlRowCoefficients::t_2)
+     * carry DD ambiguities from metres into search cycles; @c shift and
+     * bt_2 (@c GnssProcessor::AmbiguityResolver::NlRowCoefficients::bt_2) undo the known-widelane displacement in each direction.
      */
     struct NlRowCoefficients {
         double t_1;    ///< Row entry on the higher-frequency DD [1/m].
@@ -619,11 +631,11 @@ private:
         double info{ 0.0 };   ///< Sum of sin^2(elevation) over those epochs.
     };
 
-    /// Per-ambiguity-key arc maturity, maintained by @ref refreshArcAges_.
+    /// Per-ambiguity-key arc maturity, maintained by refreshArcAges_ (@c GnssProcessor::AmbiguityResolver::refreshArcAges_).
     std::map<std::string, ArcState> arcs_;
 
     /**
-     * @brief Bump/expire @ref arcs_ against the state vector.  Call once per
+     * @brief Bump/expire @c arcs_ against the state vector.  Call once per
      *        epoch, before any candidate is built.
      *
      * An arc ends in two ways, and each resets the counter:
@@ -771,15 +783,21 @@ private:
      * zero-covariance and the row reduces to a single state (the diagonal WL
      * constraint of the Phase 4 design).  The @c wl_max_frac gate (one arc),
      * the @c wl_only_ffr gate and the @c wl_only_max_innov_cyc screen apply as
-     * in @ref resolveWlOnly.
+     * in resolveWlOnly (@c GnssProcessor::AmbiguityResolver::resolveWlOnly).
      *
      * @param state_manager   Filter state holding NL/WL ambiguity entries.
      * @param x               Float state vector (working copy).
      * @param P               Float covariance matrix (working copy).
      * @param wl_ambiguities  MW-resolved SD WL integers keyed by
      *                        @c "<sat>_<sig_a>_<sig_b>" stats keys.
+     * @param wl_fractions    Worst-case fractional WL residual (WL cycles) of each
+     *                        locked arc, same keys; an arc without an entry reads as 0.
+     *                        Compared with @c wl_max_frac by the single-arc gate.
      * @param observations    Per-satellite observations (for elevation
      *                        and constellation lookup).
+     * @param wl_quality      Per-arc WL lock quality (sigma of the arc mean and sample
+     *                        count) from the MW detector, same keys; bounds the joint
+     *                        rounding success rate of the constraint set.
      * @return AmbiguityResolution containing the WL-constrained float
      *         state and covariance; @c success=true when at least one
      *         constraint was applied.  @c ratio is set to +∞ as a

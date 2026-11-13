@@ -117,10 +117,17 @@ namespace GnssProcessor {
          *
          * Written by setAttitude() (the IMU aiding source, after each aided
          * prediction) and by attitude error-state feedback after GNSS updates.
+         *
+         * @return Reference to the stored 3x3 rotation matrix (body frame to ECEF);
+         *         identity until first set.  Valid for the lifetime of the filter.
          */
         const Eigen::Matrix3d& getAttitude() const { return C_b_e_; }
 
-        /** @brief Set the body-to-ECEF attitude matrix. */
+        /**
+         * @brief Set the body-to-ECEF attitude matrix.
+         * @param C Rotation matrix C_b^e (3x3, body frame to ECEF); copied without any
+         *          orthonormality check.
+         */
         void setAttitude(const Eigen::Matrix3d& C) { C_b_e_ = C; }
 
         /**
@@ -175,10 +182,17 @@ namespace GnssProcessor {
          * non-tightly-coupled path.  Being the state the primary update ran on,
          * it already reflects this epoch's ambiguity augmentation and outlier
          * resets, so its dimension matches.  Empty until the first such update.
+         *
+         * @return Reference to the captured prior state vector (n); size 0 when none has
+         *         been captured.  Overwritten by the next such update.
          */
         const Eigen::VectorXd& getLastUpdatePriorX() const { return last_update_prior_x_; }
 
-        /** @brief Prior covariance P⁻ paired with @ref getLastUpdatePriorX. */
+        /**
+         * @brief Prior covariance P⁻ paired with @ref getLastUpdatePriorX.
+         * @return Reference to the captured prior covariance (n x n); empty when none has
+         *         been captured.  Overwritten by the next such update.
+         */
         const Eigen::MatrixXd& getLastUpdatePriorP() const { return last_update_prior_P_; }
 
         /**
@@ -218,9 +232,9 @@ namespace GnssProcessor {
          *
          * @param meas_update Measurement used for the update (flags may be set).
          * @param[in,out] x_prev Pre-update state estimate; edited in place on the
-         *        outlier path (@ref handlePhaseOutlier).
+         *        outlier path (handlePhaseOutlier (@c GnssProcessor::KalmanFilter::handlePhaseOutlier)).
          * @param[in,out] P_prev Pre-update covariance; edited in place on the
-         *        outlier path (@ref handlePhaseOutlier, or a full covariance reset).
+         *        outlier path (handlePhaseOutlier (@c GnssProcessor::KalmanFilter::handlePhaseOutlier), or a full covariance reset).
          * An ordered driver over the private stages S0 to S9 declared below,
          * which share one working value; include/filter/KalmanPostFitQc.hpp
          * lists them with the four exits.
@@ -312,6 +326,10 @@ namespace GnssProcessor {
          *
          * Valid after update() returns NeedsMeasurementRebuild; lets the caller
          * clear dependent per-satellite state such as cycle-slip history.
+         *
+         * @return Reference to the list of primary satellite IDs (e.g. "G01") reset by the
+         *         most recent update() call; empty when none were.  Cleared at the start of the
+         *         next update() call.
          */
         const std::vector<std::string>& getLastResetSatellites() const { return last_reset_satellites_; }
 
@@ -323,12 +341,20 @@ namespace GnssProcessor {
          * not slip.  A path that resets without identifying the signal appends
          * only to the satellite list, and consumers fall back to a sat-wide
          * reset.
+         *
+         * @return Reference to the (satellite, signal) pairs reset by the most recent update()
+         *         call, satellite first; empty when none were.  Cleared at the start of the
+         *         next update() call.
          */
         const std::vector<std::pair<std::string, std::string>>& getLastResetSignals() const {
             return last_reset_signals_;
         }
 
-        /** @brief True if the last update performed a complete filter reset. */
+        /**
+         * @brief True if the last update performed a complete filter reset.
+         * @return True when the post-fit residual validation of the most recent update() call
+         *         reported a complete reset; false otherwise, and before the first update.
+         */
         bool wasCompleteReset() const { return was_complete_reset_; }
 
         /**
@@ -362,7 +388,10 @@ namespace GnssProcessor {
          */
         void logQcCounters();
 
-        /** @brief The post-fit QC event counters since the last print. */
+        /**
+         * @brief The post-fit QC event counters since the last print.
+         * @return Reference to the live counters; they are reset by logQcCounters().
+         */
         const KalmanQcCounters& getQcCounters() const { return qc_counters_; }
 
         /**
@@ -421,6 +450,9 @@ namespace GnssProcessor {
          * Lets the Application driver reset history in lockstep with external
          * resets (cycle slips, pivot handovers, satellite drops).  isEnabled()
          * is false when the feature is off in config.
+         *
+         * @return Reference to the tracker owned by this filter; always valid, and valid for
+         *         the lifetime of the filter.
          */
         ResidualHistoryTracker& getResidualHistoryTracker() { return residual_history_; }
 
@@ -584,7 +616,7 @@ namespace GnssProcessor {
             const std::string& epoch_prefix);
 
         /**
-         * @brief Baseline-mode (DD) variant of @ref handlePhaseOutlier.
+         * @brief Baseline-mode (DD) variant of handlePhaseOutlier (@c GnssProcessor::KalmanFilter::handlePhaseOutlier).
          *
          * DD ambiguities are keyed "DD|<cons>|<sat_i>|<rov_code>|<pivot>", not
          * the PPP/BSSD "<sat>_<sig>" form.  Exactly one exists per (sat_i,
@@ -697,7 +729,7 @@ namespace GnssProcessor {
          *        grouped by (pivot, full signal) and pooled by pivot across bands.
          *
          * Skips pivot rows, rows whose ATX correction was frequency-substituted
-         * (@ref rowAtxSubstituted_) and, for code, combined (ionosphere-free) signals.
+         * (rowAtxSubstituted_ (@c GnssProcessor::KalmanFilter::rowAtxSubstituted_)) and, for code, combined (ionosphere-free) signals.
          *
          * @param w        Work value (read only).
          * @param obs_type @c ObsType::Phase for phase rows, @c ObsType::Code for code rows

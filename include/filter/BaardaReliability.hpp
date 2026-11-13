@@ -39,7 +39,7 @@
  *
  * ## The @f$r \to 0@f$ convention
  *
- * At or below @ref kBaardaRedundancyFloor the row is uncheckable and its MDB is
+ * At or below @ref GnssProcessor::kBaardaRedundancyFloor "kBaardaRedundancyFloor" the row is uncheckable and its MDB is
  * @c +infinity, neither a large finite number nor a clamp.  No residual-based
  * test (post-fit RAIM, @f$\hat\sigma_0@f$, robust weighting) can see that row's
  * misfit at any magnitude, so a finite value would be misleading to a consumer.
@@ -86,11 +86,11 @@ inline double baardaDelta0(double critical_value) {
  *
  * @param sigma_i    A-priori standard deviation of the row (@f$\sqrt{R_{ii}}@f$
  *                   on the PPP path, @f$1/\sqrt{w_i}@f$ on the network path;
- *                   see @ref baardaSigmaFromWeight).
+ *                   see @ref GnssProcessor::baardaSigmaFromWeight "baardaSigmaFromWeight").
  * @param redundancy Local redundancy @f$r_i@f$ of the row, in [0,1].
- * @param delta_0    Non-centrality from @ref baardaDelta0.
+ * @param delta_0    Non-centrality from @ref GnssProcessor::baardaDelta0 "baardaDelta0".
  * @return @f$\sigma_i \delta_0/\sqrt{r_i}@f$, or @c +infinity when
- *         @f$r_i \le@f$ @ref kBaardaRedundancyFloor.
+ *         @f$r_i \le@f$ @ref GnssProcessor::kBaardaRedundancyFloor "kBaardaRedundancyFloor".
  */
 inline double baardaMinimalDetectableBias(double sigma_i, double redundancy,
                                           double delta_0) {

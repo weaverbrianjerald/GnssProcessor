@@ -10,7 +10,7 @@
  * hide (they set the kalman_filter level to warn).  Each event of the post-fit screen and
  * of its responses increments one member where it happens, and
  * KalmanFilter::logKalmanFilterTimings prints the block once at the end of the run, beside
- * the timing summary, from the rows of @ref kKalmanQcCounterRows.
+ * the timing summary, from the rows of @ref GnssProcessor::kKalmanQcCounterRows "kKalmanQcCounterRows".
  *
  * Plain value types and a constant table; the counting lives in the KalmanFilter files.
  */
@@ -68,7 +68,7 @@ namespace GnssProcessor {
 
     /**
      * @brief The counters as the run-end block: a title line, then one row per entry of
-     *        @ref kKalmanQcCounterRows ("  <label padded to 30> : <count>").
+     *        @ref GnssProcessor::kKalmanQcCounterRows "kKalmanQcCounterRows" ("  <label padded to 30> : <count>").
      *
      * @param c The counters.
      * @return The block, rows separated by newlines, without a trailing newline.

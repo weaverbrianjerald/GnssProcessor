@@ -189,10 +189,10 @@ namespace GnssProcessor {
             size_t pos_idx{ 0 };       ///< Index of position (x,y,z).
             size_t clock_idx{ 0 };     ///< Index of receiver clock bias.
             size_t tropo_idx{ 0 };     ///< Index of tropo ZWD.
-            size_t velocity_idx{ std::numeric_limits<size_t>::max() };
-            size_t phase_clock_idx{ std::numeric_limits<size_t>::max() };
-            size_t gradient_n_idx{ std::numeric_limits<size_t>::max() };
-            size_t gradient_e_idx{ std::numeric_limits<size_t>::max() };
+            size_t velocity_idx{ std::numeric_limits<size_t>::max() };      ///< First velocity component, max() if absent.
+            size_t phase_clock_idx{ std::numeric_limits<size_t>::max() };   ///< Phase clock offset, max() if absent.
+            size_t gradient_n_idx{ std::numeric_limits<size_t>::max() };    ///< Tropo north gradient, max() if absent.
+            size_t gradient_e_idx{ std::numeric_limits<size_t>::max() };    ///< Tropo east gradient, max() if absent.
 
             bool smoothed{ false };    ///< True if the backward recursion updated this epoch, or if the epoch kept its forward values and has a posterior (last epoch, segment boundary, empty common subspace, inversion fallback).
         };

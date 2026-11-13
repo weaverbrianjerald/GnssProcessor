@@ -91,7 +91,7 @@ namespace GnssProcessor {
          * velocity, clock-rate, phase-clock, tropo gradients, IMU
          * attitude/biases, differential ZWD, inter-system time/rate offsets)
          * with the keys of every dynamic family, each behind its family's label
-         * prefix (@ref kStateFamilies: slant ionosphere, ionosphere rate,
+         * prefix (@ref GnssProcessor::kStateFamilies "kStateFamilies": slant ionosphere, ionosphere rate,
          * ambiguity, receiver code bias, satellite code bias, satellite phase
          * bias, receiver phase bias, phase colour, satellite clock).
          *
@@ -271,11 +271,15 @@ namespace GnssProcessor {
          * @c std::numeric_limits<size_t>::max() when not present: in PPP and
          * PPP-RTK modes, and in baseline mode with the flag off, where the wet
          * delay is assumed to cancel in BRSD.
+         *
+         * @return Zero-based index of the differential ZWD state, or
+         *         @c std::numeric_limits<size_t>::max() if not present.
          */
         size_t getDifferentialTropoIndex() const;
 
         /**
          * @brief Check whether the differential ZWD state is active.
+         * @return True if a differential ZWD state exists in the state vector.
          */
         bool hasDifferentialTropo() const;
 
@@ -462,7 +466,7 @@ namespace GnssProcessor {
         using ReinflateCounters =
             std::array<ReinflateCounter, static_cast<std::size_t>(Reinflation::Count)>;
 
-        /// This state manager's re-inflation counters since construction.
+        /// @brief This state manager's re-inflation counters since construction.
         /// @return The counters, indexed by @ref Reinflation.
         const ReinflateCounters& reinflateCounters() const { return reinflate_counters_; }
 
@@ -622,6 +626,11 @@ namespace GnssProcessor {
          * re-realization re-inflates every registered ISB via
          * @ref reinflateSystemTimeOffsetVariance, which needs the full map rather
          * than a per-name probe.
+         *
+         * @return Map from system name (e.g. "Galileo") to the state index of its
+         *         inter-system time offset; empty when none is allocated (GPS-only runs, and
+         *         BSSD).  Valid for the lifetime of the manager, but its contents change as
+         *         states are added or removed.
          */
         const std::map<std::string, size_t>& getSystemTimeOffsetStates() const {
             return system_time_offset_indices_;
@@ -783,6 +792,9 @@ namespace GnssProcessor {
          * then fires the existing ambiguity-reset reaction at the first
          * post-resume sighting, instead of being recorded as a first sighting
          * with no reset (the consumer-gap silent-frame-swap class).
+         *
+         * @return Map from the "sat|signal" key to the last-seen SSR discontinuity counter
+         *         (a 4-bit field, so it wraps); empty before any sighting.
          */
         const std::map<std::string, int>& getSsrDiscontinuityMemory() const {
             return last_ssr_discontinuity_;
@@ -791,6 +803,9 @@ namespace GnssProcessor {
         /**
          * @brief Replace the SSR discontinuity-counter memory wholesale (RT
          *        warm resume only; see @ref getSsrDiscontinuityMemory).
+         *
+         * @param mem New memory, "sat|signal" key to last-seen counter; moved in, and it
+         *            replaces every existing entry.
          */
         void setSsrDiscontinuityMemory(std::map<std::string, int> mem) {
             last_ssr_discontinuity_ = std::move(mem);
@@ -1134,14 +1149,25 @@ namespace GnssProcessor {
         // -------------------------------------------------------------------
 
         /// @brief Index of a satellite phase-bias state, or -1 if absent.
+        /// @param key Satellite phase-bias key, built with @c StateKeys::makeSatPhaseBiasKey
+        ///            (e.g. "G01|L1C|PB").
+        /// @return Zero-based index of the state, or -1 if no such state exists.
         int getSatPhaseBiasIndex(const std::string& key) const;
 
         /// @brief Read-only map "satellite|signal|PB" -> state index.
+        /// @return The key-to-index map of the satellite phase-bias family; empty outside the
+        ///         network producer.  Valid for the lifetime of the manager, but its contents
+        ///         change as states are added or pruned.
         const std::map<std::string, size_t>& getSatPhaseBiasStates() const;
 
         /// @brief Append a satellite phase-bias state at cold-start variance
         ///        (@c initial_std.sat_phase_bias²).  Idempotent if the key
         ///        already exists.  Returns the state index.
+        /// @param key           Satellite phase-bias key, built with
+        ///                      @c StateKeys::makeSatPhaseBiasKey.
+        /// @param initial_value Initial state value (m); ignored when the key already exists.
+        /// @return Zero-based index of the new state, or of the existing one when the key was
+        ///         already present.
         size_t addSatPhaseBiasState(const std::string& key, double initial_value);
 
         /// @brief Re-inflate the variances of all phase-bias states for a
@@ -1156,6 +1182,9 @@ namespace GnssProcessor {
 
         /// @brief Prune satellite phase-bias states whose keys are not in
         ///        @p keep_keys (no warm-restart cache yet; see W4).
+        /// @param keep_keys Satellite phase-bias keys to retain; every other state of this family
+        ///                  is removed from the state vector, which shifts the indices of all
+        ///                  later states down.
         void pruneSatPhaseBiasStatesExcept(const std::set<std::string>& keep_keys);
 
         // -------------------------------------------------------------------
@@ -1178,19 +1207,33 @@ namespace GnssProcessor {
         // -------------------------------------------------------------------
 
         /// @brief Index of a receiver phase-bias state, or -1 if absent.
+        /// @param key Receiver phase-bias key, built with @c StateKeys::makeReceiverPhaseBiasKey
+        ///            (e.g. "GPS_RPB_L1C").
+        /// @return Zero-based index of the state, or -1 if no such state exists.
         int getReceiverPhaseBiasIndex(const std::string& key) const;
 
         /// @brief Read-only map "system_RPB_signal" -> state index.
+        /// @return The key-to-index map of the receiver phase-bias family; empty outside the
+        ///         network producer.  Valid for the lifetime of the manager, but its contents
+        ///         change as states are added or pruned.
         const std::map<std::string, size_t>& getReceiverPhaseBiasStates() const;
 
         /// @brief Append a receiver phase-bias state at cold-start variance
         ///        (@c initial_std.sat_phase_bias²).  Idempotent if the key
         ///        already exists.  Returns the state index.
+        /// @param key           Receiver phase-bias key, built with
+        ///                      @c StateKeys::makeReceiverPhaseBiasKey.
+        /// @param initial_value Initial state value (m); ignored when the key already exists.
+        /// @return Zero-based index of the new state, or of the existing one when the key was
+        ///         already present.
         size_t addReceiverPhaseBiasState(const std::string& key, double initial_value);
 
         /// @brief Prune receiver phase-bias states whose keys are not in
         ///        @p keep_keys (no warm-restart cache: the states are re-estimated
         ///        fresh).
+        /// @param keep_keys Receiver phase-bias keys to retain; every other state of this family
+        ///                  is removed from the state vector, which shifts the indices of all
+        ///                  later states down.
         void pruneReceiverPhaseBiasStatesExcept(const std::set<std::string>& keep_keys);
 
         // -------------------------------------------------------------------
@@ -1208,24 +1251,42 @@ namespace GnssProcessor {
         // -------------------------------------------------------------------
 
         /// @brief Index of a satellite's phase-colour state, or -1 if absent.
+        /// @param satellite Satellite identifier (bare ID, e.g. "G01").
+        /// @return Zero-based index of the state, or -1 if the satellite has none.
         int getPhaseColourIndex(const std::string& satellite) const;
 
         /// @brief Read-only map satellite -> phase-colour state index.
+        /// @return The satellite-to-index map of the phase-colour family; empty outside the
+        ///         network producer.  Valid for the lifetime of the manager, but its contents
+        ///         change as states are added or pruned.
         const std::map<std::string, size_t>& getPhaseColourStates() const;
 
         /// @brief Append a phase-colour state for @p satellite at value 0 and variance
         ///        @p initial_var_m2.  Idempotent if the satellite already has one.
+        /// @param satellite      Satellite identifier (bare ID, e.g. "G01").
+        /// @param initial_var_m2 Initial variance of the state (m²); ignored when the satellite
+        ///                       already has a state.
         /// @return The state index.
         size_t addPhaseColourState(const std::string& satellite, double initial_var_m2);
 
         /// @brief Prune the phase-colour states of satellites not in @p keep_sats.
+        /// @param keep_sats Satellite IDs whose phase-colour states are retained; every other
+        ///                  state of this family is removed from the state vector (together
+        ///                  with its recorded elevation), which shifts the indices of all
+        ///                  later states down.
         void prunePhaseColourStatesExcept(const std::set<std::string>& keep_sats);
 
         /// @brief Record the satellite's elevation (deg) for the state's prior law.
+        /// @param satellite     Satellite identifier (bare ID, e.g. "G01").
+        /// @param elevation_deg Satellite elevation (deg); stored whether or not the satellite
+        ///                      currently has a phase-colour state.
         void setPhaseColourElevation(const std::string& satellite, double elevation_deg);
 
         /// @brief Last recorded elevation (deg) of the satellite's phase-colour state,
         ///        or NaN when none was recorded.
+        /// @param satellite Satellite identifier (bare ID, e.g. "G01").
+        /// @return Elevation (deg) last passed to @c setPhaseColourElevation, or NaN when none
+        ///         was recorded for the satellite.
         double getPhaseColourElevation(const std::string& satellite) const;
 
         // -------------------------------------------------------------------
@@ -1244,14 +1305,24 @@ namespace GnssProcessor {
         // -------------------------------------------------------------------
 
         /// @brief Index of a satellite clock state, or -1 if absent.
+        /// @param key Satellite clock key, built with @c StateKeys::makeSatClockKey
+        ///            (e.g. "G01|SC").
+        /// @return Zero-based index of the state, or -1 if no such state exists.
         int getSatClockIndex(const std::string& key) const;
 
         /// @brief Read-only map "satellite|SC" -> state index.
+        /// @return The key-to-index map of the satellite clock family; empty outside the
+        ///         network producer.  Valid for the lifetime of the manager, but its contents
+        ///         change as states are added or pruned.
         const std::map<std::string, size_t>& getSatClockStates() const;
 
         /// @brief Append a satellite clock state at cold-start variance
         ///        (@c initial_std.sat_clock²).  Idempotent if the key already
         ///        exists.  Returns the state index.
+        /// @param key           Satellite clock key, built with @c StateKeys::makeSatClockKey.
+        /// @param initial_value Initial clock correction (m); ignored when the key already exists.
+        /// @return Zero-based index of the new state, or of the existing one when the key was
+        ///         already present.
         size_t addSatClockState(const std::string& key, double initial_value);
 
         /// @brief Re-inflate the variance of a satellite's clock state, skipping
@@ -1265,6 +1336,9 @@ namespace GnssProcessor {
 
         /// @brief Prune satellite clock states whose keys are not in
         ///        @p keep_keys (no warm-restart cache yet; see W4).
+        /// @param keep_keys Satellite clock keys to retain; every other state of this family is
+        ///                  removed from the state vector, which shifts the indices of all
+        ///                  later states down.
         void pruneSatClockStatesExcept(const std::set<std::string>& keep_keys);
 
         // -------------------------------------------------------------------
@@ -1658,7 +1732,7 @@ namespace GnssProcessor {
          *        optional differential ZWD.
          *
          * The ambiguity random walk takes the per-key overrides and, unlike
-         * @ref addAmbiguityQ_, skips no frozen pivot (baseline has no BSSD pivot).
+         * addAmbiguityQ_ (@c GnssProcessor::StateManager::addAmbiguityQ_), skips no frozen pivot (baseline has no BSSD pivot).
          *
          * @param Q          The process noise matrix being built.
          * @param pn         The configured process noise.
