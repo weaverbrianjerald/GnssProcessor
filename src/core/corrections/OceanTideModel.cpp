@@ -194,8 +194,6 @@ namespace GnssProcessor {
      *   Ω    Longitude of ascending node of Moon (F5)
      *   GMST Greenwich Mean Sidereal Time
      *
-     * @param t_centuries Julian centuries of TT from J2000.0.
-     * @param ut1_frac Unused: GMST is computed from @p t_centuries.
      * @return Array of 6 arguments in radians.
      */
     std::array<double, 6> OceanTideModel::computeFundamentalArguments(double t_centuries, double ut1_frac) const {
@@ -281,7 +279,6 @@ namespace GnssProcessor {
      * the s column of DOODSON_MULTIPLIERS, so n1 multiplies (GMST + π) directly.
      * The result is normalized to [0, 2π).
      *
-     * @param fund_args Array [l, l', F, D, Ω, GMST].
      * @return Array of 11 tidal arguments in radians.
      */
     std::array<double, 11> OceanTideModel::computeTidalArguments(const std::array<double, 6>& fund_args) const {

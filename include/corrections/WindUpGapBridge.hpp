@@ -126,6 +126,8 @@ struct Counters {
     long long samples{0};           ///< Virtual epochs evaluated, over all attempts.
 
     /// @brief Gaps the walk refused, over all reasons.
+    /// @return Sum of the five @c refused_* counters (no state, umbra, noon turn, step, closure);
+    ///         gaps beyond the horizon are not attempted and so not included.
     long long refused() const {
         return refused_no_state + refused_umbra + refused_noon_turn + refused_step + refused_closure;
     }

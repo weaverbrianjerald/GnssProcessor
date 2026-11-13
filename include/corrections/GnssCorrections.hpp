@@ -522,9 +522,12 @@ namespace GnssProcessor {
         void setSatStateProvider(SatStateProvider provider) { sat_state_provider_ = std::move(provider); }
 
         /// @brief Counters of the gap bridge (all zero unless computePhaseWindUp ran with a bridge).
+        /// @return Reference to this instance's (per-receiver) bridge counters; valid for its lifetime.
         const WindUpBridge::Counters& windUpBridgeCounters() const { return wu_bridge_counters_; }
 
         /// @brief The first @c WindUpBridge::kMaxEvents bridging attempts, named, in order of occurrence.
+        /// @return Reference to the event list, oldest first; empty when no bridge was attempted.
+        ///         Valid for the instance's lifetime.
         const std::vector<WindUpBridge::Event>& windUpBridgeEvents() const { return wu_bridge_events_; }
 
         /**
@@ -808,6 +811,7 @@ namespace GnssProcessor {
             wu_census_carry_gap_s_ = carry_gap_s;
         }
         /// @brief The census counters (all zero unless @ref enableWindUpCensus ran).
+        /// @return Reference to this instance's census; valid for its lifetime.
         const WindUpCensus& windUpCensus() const { return wu_census_; }
 
         /**
@@ -820,7 +824,7 @@ namespace GnssProcessor {
          *        (absent station) can refuse the stale entry instead of acting on
          *        an old restart.
          */
-        struct WuRestart { double gap_s{0.0}; double epoch_s{0.0}; };
+        struct WuRestart { double gap_s{0.0}; /**< Gap that tripped the horizon (s); negative for an out-of-order epoch. */ double epoch_s{0.0}; /**< Continuous GPS seconds at which the restart happened. */ };
         /**
          * @brief The restart ledger: filled only in accumulated mode (fractional
          *        mode has no restart decision), keyed by satellite, overwritten
@@ -829,6 +833,10 @@ namespace GnssProcessor {
          *        (@c network.cycle_slip.windup_restart_refloat) reads and clears
          *        it each epoch; with no consumer it holds the last restart per
          *        satellite.
+         *
+         * @return Reference to the ledger, keyed by satellite identifier; empty when
+         *         no restart is pending (always empty in fractional mode).  Valid for
+         *         the instance's lifetime; @c clearWuRestarts empties it.
          */
         const std::map<std::string, WuRestart>& wuRestarts() const { return wu_restarts_; }
         /// @brief Clear the restart ledger (called by the consumer's drain).

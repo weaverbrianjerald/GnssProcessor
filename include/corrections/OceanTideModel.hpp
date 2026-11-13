@@ -99,7 +99,7 @@ namespace GnssProcessor {
      * checks @c has_otl first.
      *
      * @param station    SIF station record (amplitudes in metres, phases in degrees).
-     * @param horizontal Horizontal mapping, see @ref SifOtlHorizontal.
+     * @param horizontal Horizontal mapping, see @ref GnssProcessor::SifOtlHorizontal "SifOtlHorizontal".
      * @return Coefficients in the model's Up / West / South convention, M2..Ssa order.
      */
     OtlStationCoefficients otlCoefficientsFromSif(const StationInfo& station,
@@ -127,7 +127,7 @@ namespace GnssProcessor {
      * north = -south). The semidiurnal and long-period constituents are not changed.
      *
      * The table holds for the SIF it was fitted to; the function is meant for the
-     * coefficients @ref otlCoefficientsFromSif returns from that registry, not for BLQ files
+     * coefficients @ref GnssProcessor::otlCoefficientsFromSif "otlCoefficientsFromSif" returns from that registry, not for BLQ files
      * or the EOT20 grid.
      *
      * @param[in,out] coeffs       Coefficients of one station (Up / West / South convention).
