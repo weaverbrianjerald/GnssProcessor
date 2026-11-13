@@ -62,6 +62,17 @@ namespace GnssProcessor {
      *    variance of one row (a free function, measurement/RowRules.hpp).
      *  - MeasurementModelDd.cpp: the baseline double-difference build, as stages.
      */
+
+    /**
+     * @class MeasurementModel
+     * @brief Builds the per-epoch measurement update (innovation, design matrix H, noise R) for the Kalman filter.
+     *
+     * One class serves single-receiver PPP, PPP-RTK (optionally with the BSSD S-transform) and
+     * the baseline double-difference build.  It runs the state pre-pass that births and prunes
+     * the dynamic states, applies the first-epoch seeding latches, owns the pivot managers, and
+     * assembles one row per usable (satellite, signal).  The file banner above lists how the
+     * implementation is split across source files.
+     */
     class MeasurementModel {
     public:
         /**
@@ -83,11 +94,11 @@ namespace GnssProcessor {
          *
          * Runs, in order: the first-epoch inter-system bias and phase-clock
          * seeds (@c StateInitializer), the differencing strategy's pivot pass,
-         * the state pre-pass @ref ensureRequiredStates (births, seeds and
+         * the state pre-pass ensureRequiredStates (@c GnssProcessor::MeasurementModel::ensureRequiredStates) (births, seeds and
          * prunes of every dynamic state category), the first-epoch receiver
          * code-bias seed, the strategy's pivot covariance freeze, then one row
          * per usable (satellite, signal): the Jacobian and predicted observable
-         * (@ref buildJacobianRow), the innovation, and the row variance; last,
+         * (buildJacobianRow (@c GnssProcessor::MeasurementModel::buildJacobianRow)), the innovation, and the row variance; last,
          * the strategy's differencing transform (BSSD) on the assembled update.
          *
          * @param observations  This epoch's modeled observations (one per satellite).
@@ -166,6 +177,9 @@ namespace GnssProcessor {
          * plus any co-disturbed satellites) so the new pivot is clean; existing DD
          * ambiguities are S-transformed onto it by @c DdPivotManager (integer
          * cycles preserved).  No-op for PPP / PPP-RTK.
+         *
+         * @param cons         Constellation name (e.g. "GPS") whose pivot is re-ranked.
+         * @param exclude_sats Satellite IDs (e.g. "G09") barred from the re-rank candidates.
          */
         void requestBaselinePivotRerank(const std::string& cons,
                                         const std::set<std::string>& exclude_sats) {
@@ -286,17 +300,41 @@ namespace GnssProcessor {
 
         /**
          * @brief Get the current BSSD pivot satellite for each constellation.
+         *
+         * @return Const reference to the pivot map, keyed by constellation name (e.g. "GPS"),
+         *         valued by the pivot satellite ID (e.g. "G09").  Empty before any pivot is
+         *         selected.  A live view: its contents change when pivots are re-selected.
          */
         const std::map<std::string, std::string>& getBssdPivotSatellites() const {
             return pivot_manager_.getPivotSatellites();
         }
 
-        /// Access the pivot manager (for external components that need pivot info).
+        /**
+         * @brief Access the pivot manager (for external components that need pivot info).
+         *
+         * @return Mutable reference to the model's @c PivotManager; owned by this model.
+         */
         PivotManager& getPivotManager() { return pivot_manager_; }
+
+        /**
+         * @brief Read-only access to the pivot manager.
+         *
+         * @return Const reference to the model's @c PivotManager; owned by this model.
+         */
         const PivotManager& getPivotManager() const { return pivot_manager_; }
 
-        /// Access the state initializer (for shared helpers like resolveReceiverBias).
+        /**
+         * @brief Access the state initializer (for shared helpers like resolveReceiverBias).
+         *
+         * @return Mutable reference to the model's @c StateInitializer; owned by this model.
+         */
         StateInitializer& getStateInitializer() { return state_initializer_; }
+
+        /**
+         * @brief Read-only access to the state initializer.
+         *
+         * @return Const reference to the model's @c StateInitializer; owned by this model.
+         */
         const StateInitializer& getStateInitializer() const { return state_initializer_; }
 
         /**
@@ -540,7 +578,7 @@ namespace GnssProcessor {
          * @brief Seed the receiver DCB and IFB states from the cross-band code residual
          *        differences, or from the warm resume's restored linearization points.
          *
-         * Must run after @ref ensureRequiredStates has created the states and seeded the
+         * Must run after ensureRequiredStates (@c GnssProcessor::MeasurementModel::ensureRequiredStates) has created the states and seeded the
          * slant ionosphere.  Counts each covered key of the restore on the state
          * initializer's out-slots.
          *
@@ -821,7 +859,7 @@ namespace GnssProcessor {
          * producer's satellite phase bias, receiver phase bias and satellite clock,
          * the SSR satellite bias (no state; not on the network producer), the
          * ambiguity (phase; per band, or lambda_b (NL - s WL) on the NL/WL basis)
-         * and the network's phase colour.  Doppler rows (@ref buildDopplerRow):
+         * and the network's phase colour.  Doppler rows (buildDopplerRow (@c GnssProcessor::MeasurementModel::buildDopplerRow)):
          * velocity, clock rate, inter-system rate and the tightly coupled IMU
          * partials.  At trace level a code or phase row prints its decomposition
          * (@c traceRowDecomposition, measurement/RowTrace.hpp).
@@ -912,7 +950,7 @@ namespace GnssProcessor {
          * strategy.  See that overload's documentation for parameter/return
          * semantics.  Owns the process-wide first-call diagnostic flag (a
          * function-local static shared by every instance, reset on every normal
-         * exit) and runs the stages through @ref ddRunStages.
+         * exit) and runs the stages through ddRunStages (@c GnssProcessor::MeasurementModel::ddRunStages).
          */
         EpochMeasurement buildDdMeasurement(
             const std::vector<PppObservation>& rov_modeled,
@@ -940,7 +978,7 @@ namespace GnssProcessor {
          *        kept row), leaving @p em as built so far.
          * @param rov_modeled           Rover output, one PppObservation per satellite.
          * @param ref_modeled           Reference output.
-         * @param current_state         The caller's state snapshot (see @ref ddInnovations).
+         * @param current_state         The caller's state snapshot (see ddInnovations (@c GnssProcessor::MeasurementModel::ddInnovations)).
          * @param excluded_measurements The rebuild loop's excluded row signatures.
          * @param dd                    The working value.
          * @param em                    The update being built.

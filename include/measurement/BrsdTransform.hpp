@@ -62,7 +62,7 @@ namespace GnssProcessor {
         Eigen::Vector3d los_rov{ Eigen::Vector3d::Zero() };///< Rover-side LOS unit vector.
         double elevation_rov{ 0.0 };                      ///< Rover-side elevation (degrees).
 
-        GnssTime time{};
+        GnssTime time{};                                  ///< Epoch of the rover observation set the pair was formed from.
     };
 
     /**

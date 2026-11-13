@@ -12,7 +12,7 @@
  * Before this file the equation was written out twice for that purpose
  * (@c StateInitializer::computeRawResidual and @c StateManager::computeAmbiguitySeed), each
  * leaving out different terms.  Both now read the term list of
- * measurement/ObservationEquation.hpp, built with the effects of a @ref SeedMask:
+ * measurement/ObservationEquation.hpp, built with the effects of a @ref GnssProcessor::SeedMask "SeedMask":
  *
  * | effect              | residual (ISB, clock, phase clock, code bias) | ambiguity |
  * |---------------------|-----------------------------------------------|-----------|
@@ -27,21 +27,21 @@
  * | satellite code bias | yes                                           | no        |
  * | range, satellite phase bias, satellite clock, SSR bias, phase colour, ambiguity | no | no |
  *
- * @ref kLegacySeedMask is exactly this table; the omitted terms are zero for a network
+ * @ref GnssProcessor::kLegacySeedMask "kLegacySeedMask" is exactly this table; the omitted terms are zero for a network
  * producer's birth (shared states at 0, no SSR term, range correction 0) and non-zero for a
- * consumer's.  The terms are subtracted in the order of @ref kSeedOrder, which is the order the
+ * consumer's.  The terms are subtracted in the order of @ref GnssProcessor::kSeedOrder "kSeedOrder", which is the order the
  * two copies subtracted them in (the inter-system bias before the gradients, not after, as in
  * the equation's sum), so that the numbers are the same bit for bit.
  *
- * @ref kFullSeedMask (@c estimation.seed_full_equation) subtracts every known term of the row:
+ * @ref GnssProcessor::kFullSeedMask "kFullSeedMask" (@c estimation.seed_full_equation) subtracts every known term of the row:
  * the table's terms, then the range correction, the satellite phase bias, the satellite clock,
  * the SSR bias and the phase colour, in that order after the legacy terms.  Only the parameter
  * being born stays in the residual: the ambiguity, and in the residual form also the phase
- * clock (the residual seeds include the phase clock's own).  @ref seedMasksOf picks the pair.
+ * clock (the residual seeds include the phase clock's own).  @ref GnssProcessor::seedMasksOf "seedMasksOf" picks the pair.
  *
  * ### Pure
  *
- * The functions read the observations, a @ref ParamLookup and an @ref ObsInput (the
+ * The functions read the observations, a @ref GnssProcessor::ParamLookup "ParamLookup" and an @ref GnssProcessor::ObsInput "ObsInput" (the
  * configuration, the model's product tables, the frequency helper, the receiver code-bias
  * resolver and the .BIA clock-reference observables), and return values; they write no state,
  * log nothing and read no process-wide cache.  The ionosphere seed also takes the .BIA
@@ -57,8 +57,8 @@
  * tests/test_seeds.cpp).  With the legacy masks the seeds keep the number each copy used: the
  * residuals take the frequency helper of @c StateInitializer (whose GLONASS channels are the
  * default table, never the receiver's), the ambiguity seed takes channel 0.  With the full
- * masks every seed takes the rows' rule, the satellite's own channel.  @ref residualSeedInput
- * and @ref ambiguitySeedInput of @c MeasurementModel, and @c residualSeedObsInput and
+ * masks every seed takes the rows' rule, the satellite's own channel.  @ref GnssProcessor::MeasurementModel::residualSeedInput "residualSeedInput"
+ * and @ref GnssProcessor::MeasurementModel::ambiguitySeedInput "ambiguitySeedInput" of @c MeasurementModel, and @c residualSeedObsInput and
  * @c ambiguitySeedObsInput of a network station (network/assembly/StationRows.hpp), build the
  * inputs under either rule.
  *
@@ -133,7 +133,7 @@ inline constexpr SeedMasks kFullSeedMask{
 /**
  * @brief The effects a seed can subtract, in the order it subtracts them.
  *
- * The receiver clock stands for the clock group when @ref SeedMask::group_clocks is set.  An
+ * The receiver clock stands for the clock group when @ref GnssProcessor::SeedMask::group_clocks "SeedMask::group_clocks" is set.  An
  * effect outside this list is never subtracted, whatever a mask says.  The first eight are the
  * legacy terms in the order the pre-N6 copies subtracted them; the rest are the terms only the
  * full masks hold, so the legacy seeds keep their numbers bit for bit.
@@ -149,7 +149,7 @@ inline constexpr std::array<ObsEffect, 13> kSeedOrder{
 /**
  * @brief The seed masks a configuration asks for.
  * @param config The configuration.
- * @return @ref kFullSeedMask under @c estimation.seed_full_equation, else @ref kLegacySeedMask.
+ * @return @ref GnssProcessor::kFullSeedMask "kFullSeedMask" under @c estimation.seed_full_equation, else @ref GnssProcessor::kLegacySeedMask "kLegacySeedMask".
  */
 const SeedMasks& seedMasksOf(const GnssConfig& config);
 
@@ -160,7 +160,7 @@ const SeedMasks& seedMasksOf(const GnssConfig& config);
 /**
  * @brief The observation less the masked terms of its equation.
  *
- * The terms are subtracted left to right in @ref kSeedOrder.  A term the equation does not hold
+ * The terms are subtracted left to right in @ref GnssProcessor::kSeedOrder "kSeedOrder".  A term the equation does not hold
  * (its parameter does not exist) is skipped, which is the same as subtracting zero.
  *
  * @param eq       The row's equation (usable), built with at least the effects of @p mask.
@@ -209,7 +209,7 @@ double seedAmbiguity(const ObsInput& in, const ParamLookup& params, const PppObs
 /**
  * @brief The ambiguity seed over the single-receiver state.
  *
- * @ref seedAmbiguity with the lookup of a @c StateManager evaluated at @p x.
+ * @ref GnssProcessor::seedAmbiguity "seedAmbiguity" with the lookup of a @c StateManager evaluated at @p x.
  *
  * @param in       Equation inputs (the ambiguity input).
  * @param states   The state layout.
@@ -252,7 +252,7 @@ using BiasPresence = std::function<bool(const std::string& satellite, const std:
  * @brief The slant ionosphere of a satellite from its dual-frequency code.
  *
  * Only code signals the .BIA product corrects are used: a signal with an entry (@p has_entry),
- * and only when the configuration counts an entry as applied (@ref biaEntryApplies).  For any
+ * and only when the configuration counts an entry as applied (@ref GnssProcessor::biaEntryApplies "biaEntryApplies").  For any
  * other signal the observed minus modeled carries the satellite's raw code bias, which would
  * put tens of metres into the seed.  The first pair of distinct bands whose seed is finite and
  * below 200 m in magnitude is returned.  Reads no state.
@@ -317,7 +317,10 @@ struct ColdClockSeed {
     double           value_m{0.0};    ///< The seed (m); read for Seeded.
     std::size_t      n_obs{0};        ///< Time-reference satellites in the median; read for Seeded.
 
-    /// @return False only for NoReference: the caller latches the seed otherwise.
+    /**
+     * @brief Whether the seed attempt is finished for this run.
+     * @return False only for NoReference: the caller latches the seed otherwise.
+     */
     bool settled() const { return outcome != ColdClockOutcome::NoReference; }
 };
 

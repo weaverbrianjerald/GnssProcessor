@@ -6,9 +6,9 @@
  *        becomes a user-side state key.
  *
  * The observation equation (measurement/ObservationEquation.hpp) names its parameters by
- * @ref ParamRef.  The single-receiver filter keeps them in @c StateManager under string keys
- * (filter/StateKeySchema.hpp) and at fixed columns.  @ref UserParamView maps one to the
- * other, and @ref userKey is the only function that renders a typed identity as a user-side
+ * @ref GnssProcessor::ParamRef "ParamRef".  The single-receiver filter keeps them in @c StateManager under string keys
+ * (filter/StateKeySchema.hpp) and at fixed columns.  @ref GnssProcessor::UserParamView "UserParamView" maps one to the
+ * other, and @ref GnssProcessor::userKey "userKey" is the only function that renders a typed identity as a user-side
  * key, so a key format is written in one place on this side.
  *
  * Plain value types and free functions.

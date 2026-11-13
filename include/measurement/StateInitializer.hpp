@@ -11,9 +11,9 @@
  * equation in measurement/Seeds.hpp; the single-receiver model applies them to its
  * @c StateManager (MeasurementModelSeeds.cpp).  StateInitializer keeps what is not a function
  * of the observations and the parameters: which seeds have run (the latches), which receiver
- * code-bias state and coefficient a signal maps to (@ref resolveReceiverBias), the rule that
+ * code-bias state and coefficient a signal maps to (@c resolveReceiverBias), the rule that
  * decides whether a restored linearization point replaces the median code-bias seed
- * (@ref resolveCodeBiasSeedOverride), and the frequency helper the seeds scale the ionosphere
+ * (@ref GnssProcessor::StateInitializer::resolveCodeBiasSeedOverride "resolveCodeBiasSeedOverride"), and the frequency helper the seeds scale the ionosphere
  * by.  It holds no state vector.  The single-receiver model never receives a restore: the
  * network producer's warm resume installs its points on the station's parameter set
  * (@c StationParams::rx_cb_restore, network/state/StationParams.hpp).
@@ -47,6 +47,16 @@ namespace GnssProcessor {
  */
 class StateInitializer {
 public:
+    /**
+     * @brief Builds the latches (all clear) and the receiver code-bias resolver.
+     *
+     * The arguments are handed to the resolver, which keeps references: all three must
+     * outlive this object.
+     *
+     * @param config      Processing configuration (not owned).
+     * @param ppp_model   The receiver's PPP model: its band latches and GLONASS channels (not owned).
+     * @param log_manager Logging, used by the frequency helper (not owned).
+     */
     StateInitializer(const GnssConfig& config,
                      const PppModel& ppp_model,
                      LogManager& log_manager);
@@ -55,14 +65,22 @@ public:
     // Initialization flags (queried/set by MeasurementModel orchestrator)
     // -------------------------------------------------------------------
 
+    /** @brief Whether the first-epoch inter-system bias seed has settled. @return True once marked. */
     bool isIsbInitialized()        const { return isb_initialized_; }
+    /** @brief Whether the first-epoch phase-clock seed has settled. @return True once marked. */
     bool isPhaseClockInitialized() const { return phase_clock_initialized_; }
+    /** @brief Whether the first-epoch receiver code-bias seed has settled. @return True once marked. */
     bool isCodeBiasInitialized()   const { return code_bias_initialized_; }
+    /** @brief Whether the cold receiver-clock seed has settled. @return True once marked. */
     bool isClockSeedInitialized()  const { return clock_seed_initialized_; }
 
+    /** @brief Latches the inter-system bias seed as done; it is never cleared afterwards. */
     void markIsbInitialized()        { isb_initialized_ = true; }
+    /** @brief Latches the phase-clock seed as done; it is never cleared afterwards. */
     void markPhaseClockInitialized() { phase_clock_initialized_ = true; }
+    /** @brief Latches the receiver code-bias seed as done; it is never cleared afterwards. */
     void markCodeBiasInitialized()   { code_bias_initialized_ = true; }
+    /** @brief Latches the cold receiver-clock seed as done; it is never cleared afterwards. */
     void markClockSeedInitialized()  { clock_seed_initialized_ = true; }
 
     // -------------------------------------------------------------------
@@ -91,7 +109,11 @@ public:
         return resolver_.resolveReceiverBias(obs_signal, system, satellite, clock_refs);
     }
 
-    /// The resolver itself (what the observation equation holds a pointer to).
+    /**
+     * @brief The resolver itself (what the observation equation holds a pointer to).
+     *
+     * @return Const reference to the resolver owned by this object; valid for its lifetime.
+     */
     const ReceiverBiasResolver& resolver() const { return resolver_; }
 
     /**
@@ -140,6 +162,11 @@ public:
      * carry entry, and therefore that the inject gate differences something
      * against this key's @c x_lin.  A key the seeding loop reaches that is absent
      * here is not a miss: it is a code-bias family that nothing carries.
+     *
+     * @param overrides The installed map of restored linearization points, keyed by code-bias state key.
+     * @param key       Code-bias state key being seeded.
+     * @return True when @p overrides has an entry for @p key, finite or not; false otherwise
+     *         (always false for an empty map).
      */
     static bool codeBiasSeedOverrideCovers(const std::map<std::string, double>& overrides,
                                            const std::string& key) {
@@ -148,11 +175,19 @@ public:
 
     /**
      * @brief Map a System enum to its constellation name for ISB lookup.
+     *
+     * @param system The constellation.
+     * @return The constellation name that keys its inter-system bias state; the empty string
+     *         for the time-reference constellation (it carries no such state) and for an
+     *         unknown system.
      */
     static std::string systemToIsbName(System system);
 
     /**
      * @brief Map a System enum to the single-char BIA clock reference identifier.
+     *
+     * @param system The constellation.
+     * @return The RINEX constellation letter; the NUL character for an unknown system.
      */
     static char systemToClockRefChar(System system);
 

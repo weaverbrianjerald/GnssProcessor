@@ -5,11 +5,11 @@
  *        functions of configuration, product tables and one observation.
  *
  * Three rules sit beside the observation equation and read no state vector:
- *  - usability (@ref isUsableMeasurement): whether an observation's signal becomes a row;
- *  - product coverage (@ref ifCombHasFullBia, @ref biaCoversSignal, @ref ssrCoversCodeSignal,
- *    @ref ssrCoversPhaseSignal, @ref phaseBiasCoveredForAr, @ref ifCombHasFullRxAtx): whether
+ *  - usability (@ref GnssProcessor::isUsableMeasurement "isUsableMeasurement"): whether an observation's signal becomes a row;
+ *  - product coverage (@ref GnssProcessor::ifCombHasFullBia "ifCombHasFullBia", @ref GnssProcessor::biaCoversSignal "biaCoversSignal", @ref GnssProcessor::ssrCoversCodeSignal "ssrCoversCodeSignal",
+ *    @ref GnssProcessor::ssrCoversPhaseSignal "ssrCoversPhaseSignal", @ref GnssProcessor::phaseBiasCoveredForAr "phaseBiasCoveredForAr", @ref GnssProcessor::ifCombHasFullRxAtx "ifCombHasFullRxAtx"): whether
  *    a .BIA product, the SSR stream or a receiver antenna entry already corrects a signal;
- *  - the row variance (@ref rowVariance): the stochastic-model variance plus the consumer's
+ *  - the row variance (@ref GnssProcessor::rowVariance "rowVariance"): the stochastic-model variance plus the consumer's
  *    network-correction terms, times the no-BIA code downweight.
  *
  * They were members of @c MeasurementModel, which holds a @c StateManager, although none of
@@ -153,7 +153,7 @@ bool ssrCoversCodeSignal(const RowProducts& products, const std::string& satelli
  *
  * True, except when @c model_corrections.bias_coverage_requires_apply is on, the mode is not
  * the network producer's and @c enable_code_phase_bias is off, so that the entry is loaded but
- * not folded into @c obs.modeled.  The half of @ref biaCoversSignal that reads the
+ * not folded into @c obs.modeled.  The half of @ref GnssProcessor::biaCoversSignal "biaCoversSignal" that reads the
  * configuration; a caller that has the presence of the entries by other means (the slant
  * ionosphere seed) applies it directly.
  *
@@ -165,7 +165,7 @@ bool biaEntryApplies(const GnssConfig& config);
 /**
  * @brief Whether a .BIA entry counts as bias coverage for the "already corrected?" gates:
  *        code rows (sat-bias absorber allocation, no-BIA code downweight) and phase rows (AR
- *        eligibility via @ref phaseBiasCoveredForAr).
+ *        eligibility via @ref GnssProcessor::phaseBiasCoveredForAr "phaseBiasCoveredForAr").
  *
  * Legacy semantics (default): a pure @c hasBiasEntry presence check.  A .BIA that is loaded
  * but not applied (@c enable_code_phase_bias false, e.g. forced off by
@@ -188,7 +188,7 @@ bool biaCoversSignal(const RowProducts& products, const std::string& satellite,
  * @brief Whether the live SSR stream supplies a phase bias for this exact (satellite, raw
  *        signal), i.e. whether the phase SSR bias term will correct the row.
  *
- * Phase-channel counterpart of @ref ssrCoversCodeSignal: false in the network producer mode
+ * Phase-channel counterpart of @ref GnssProcessor::ssrCoversCodeSignal "ssrCoversCodeSignal": false in the network producer mode
  * (which estimates satellite phase biases as states rather than importing them); otherwise a
  * presence check via @c SsrCorrectionStore::getPhaseBias, age-gated with the same effective
  * stale-hold limit as the apply site when the staleness gate is on.  Post-processing leaves
@@ -215,10 +215,10 @@ bool ssrCoversPhaseSignal(const RowProducts& products, const std::string& satell
  * With the toggle off, or with no such bias in the store, the checks below decide unchanged.
  *
  * Legacy semantics (default, @c model_corrections.bias_coverage_requires_apply off): raw
- * .BIA presence (@ref ifCombHasFullBia for IF-combined keys, @c hasBiasEntry for raw
+ * .BIA presence (@ref GnssProcessor::ifCombHasFullBia "ifCombHasFullBia" for IF-combined keys, @c hasBiasEntry for raw
  * signals), unchanged from the original gate.  With the toggle on, a signal is covered iff
- * the .BIA entry is actually applied (@ref biaCoversSignal) or a live network/SSR phase bias
- * corrects the row (@ref ssrCoversPhaseSignal); for an IF key, both components must be
+ * the .BIA entry is actually applied (@ref GnssProcessor::biaCoversSignal "biaCoversSignal") or a live network/SSR phase bias
+ * corrects the row (@ref GnssProcessor::ssrCoversPhaseSignal "ssrCoversPhaseSignal"); for an IF key, both components must be
  * covered by the same source.  This lets the closed-loop PPP-RTK consumer, which inherits
  * @c enable_code_phase_bias=false from the producer, key AR eligibility on the network phase
  * biases it applies rather than on a .BIA it does not apply.

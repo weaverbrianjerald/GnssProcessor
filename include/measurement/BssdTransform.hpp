@@ -125,6 +125,16 @@ namespace GnssProcessor {
      */
     class BssdTransform {
     public:
+        /**
+         * @brief Binds the transform to the configuration, state layout and pivot map.
+         *
+         * The transform stores references only: all four arguments must outlive it.
+         *
+         * @param config        Processing configuration (read when @c apply() runs).
+         * @param state_manager State layout, used to locate the columns that @c apply() zeroes.
+         * @param pivot_manager Sticky per-constellation pivot satellites that define the differencing groups.
+         * @param log_manager   Log sink for the transform's diagnostics.
+         */
         BssdTransform(const GnssConfig& config,
                       const StateManager& state_manager,
                       const PivotManager& pivot_manager,

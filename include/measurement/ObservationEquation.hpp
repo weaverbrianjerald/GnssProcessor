@@ -14,20 +14,20 @@
  *               + receiver code bias + satellite code bias + satellite phase bias
  *               + satellite clock + SSR bias (+ ambiguity (+ phase colour)).
  *
- * @ref observationEquation returns that sum as a list of @ref ObsAddend, in the order of the
- * sum.  A term that reads parameters carries, for each, the identity (@ref ParamRef), the
- * partial derivative, and the column and value the caller's @ref ParamLookup answered with.
+ * @ref GnssProcessor::observationEquation "observationEquation" returns that sum as a list of @ref GnssProcessor::ObsAddend "ObsAddend", in the order of the
+ * sum.  A term that reads parameters carries, for each, the identity (@ref GnssProcessor::ParamRef "ParamRef"), the
+ * partial derivative, and the column and value the caller's @ref GnssProcessor::ParamLookup "ParamLookup" answered with.
  * A term that reads none (the modeled value, the SSR bias) carries its value.  The same list
  * serves every consumer of the row:
- *  - @ref evaluate adds the terms up and returns the predicted observable;
- *  - @ref scatterDense writes the partials into a dense Jacobian row.
+ *  - @c evaluate adds the terms up and returns the predicted observable;
+ *  - @ref GnssProcessor::scatterDense "scatterDense" writes the partials into a dense Jacobian row.
  *
  * ### Bit-exact summation
  *
  * The filter's numbers depend on the order of the floating-point operations.  The list keeps
  * the grouping of the sum it replaces: the terms are added left to right in the order above
  * (a term that is absent is absent from the list, which is the same as adding zero); a term
- * with a factor keeps the factor (@ref ObsAddend::scale) outside the sum of its parts, as
+ * with a factor keeps the factor (@ref GnssProcessor::ObsAddend::scale "ObsAddend::scale") outside the sum of its parts, as
  * @c mf_grad * (cos * x_n + sin * x_e) and @c lambda * (x_nl - s * x_wl) are written; the
  * satellite phase bias and the receiver phase bias are one term of two parts; and the range
  * correction is evaluated from its line of sight and linearization point as the dot product
@@ -35,8 +35,8 @@
  *
  * ### Who answers for the parameters
  *
- * The caller owns the parameters.  It passes a @ref ParamLookup, which answers for one
- * @ref ParamRef with the parameter's column and linearization value, or with a negative
+ * The caller owns the parameters.  It passes a @ref GnssProcessor::ParamLookup "ParamLookup", which answers for one
+ * @ref GnssProcessor::ParamRef "ParamRef" with the parameter's column and linearization value, or with a negative
  * column when the parameter does not exist.  The single-receiver filter answers from its
  * state vector (measurement/UserParamView.hpp).  A term whose parameter does not exist is
  * left out of the list, as the row has always left it out.
@@ -46,7 +46,7 @@
  * The network producer estimates the satellite biases and clocks as states; the closed-loop
  * consumer takes the same quantities as known terms.  The two agree only if the partial of the
  * producer's state and the multiplier of the consumer's known term are the same number.  They
- * are one constant each, @ref kSatBiasSign and @ref kSatClockPartial, used by both sides.
+ * are one constant each, @ref GnssProcessor::kSatBiasSign "kSatBiasSign" and @ref GnssProcessor::kSatClockPartial "kSatClockPartial", used by both sides.
  *
  * Doppler rows are not part of this equation (velocity, clock rate and the IMU states are
  * columns only a single-receiver configuration has).  Plain value types and free functions.
@@ -139,15 +139,27 @@ inline constexpr std::size_t kObsEffectCount = 15;
 struct ObsEffects {
     std::uint32_t bits{0};  ///< Bit @c k set when the effect with value @c k is in the set.
 
-    /// @return True when @p effect is in the set.
+    /**
+     * @brief Membership test.
+     * @param effect The effect to look for.
+     * @return True when @p effect is in the set.
+     */
     constexpr bool has(ObsEffect effect) const {
         return ((bits >> static_cast<unsigned>(effect)) & 1u) != 0u;
     }
-    /// @return The set with @p effect added.
+    /**
+     * @brief The set with one effect added; this set is not modified.
+     * @param effect The effect to add (no change when already present).
+     * @return The set with @p effect added.
+     */
     constexpr ObsEffects with(ObsEffect effect) const {
         return ObsEffects{bits | (1u << static_cast<unsigned>(effect))};
     }
-    /// @return The set with @p effect removed.
+    /**
+     * @brief The set with one effect removed; this set is not modified.
+     * @param effect The effect to remove (no change when absent).
+     * @return The set with @p effect removed.
+     */
     constexpr ObsEffects without(ObsEffect effect) const {
         return ObsEffects{bits & ~(1u << static_cast<unsigned>(effect))};
     }
@@ -294,7 +306,7 @@ struct ObsTermValues {
  *
  * Only the slant ionosphere term scales by a carrier frequency.  The row builder takes the
  * frequency of each satellite's own channel from the frequency helper.  The ambiguity seed has
- * always taken channel 0 for every satellite; @ref Zero keeps that number until the seeds'
+ * always taken channel 0 for every satellite; Zero (@c GnssProcessor::Zero) keeps that number until the seeds'
  * frequency rule is decided.  Every other band has one frequency and does not depend on the rule.
  */
 enum class FdmaChannel : std::uint8_t {

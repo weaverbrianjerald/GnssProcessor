@@ -65,9 +65,15 @@ DifferencingMode differencingModeFor(const GnssConfig& config);
  */
 class MeasurementDifferencingStrategy {
 public:
+    /** @brief Virtual destructor so a strategy is safely deleted through the base pointer. */
     virtual ~MeasurementDifferencingStrategy() = default;
 
-    /// @brief The regime this strategy implements.
+    /**
+     * @brief The regime this strategy implements.
+     *
+     * @return @c None, @c BetweenSatellite or @c DoubleDifference, the value of
+     *         @c DifferencingMode this strategy was built for.
+     */
     virtual DifferencingMode mode() const = 0;
 
     /**
@@ -145,6 +151,7 @@ public:
  */
 class UndifferencedMeasurementBuilder : public MeasurementDifferencingStrategy {
 public:
+    /** @brief Regime of this strategy. @return Always @c DifferencingMode::None (plain PPP). */
     DifferencingMode mode() const override { return DifferencingMode::None; }
 };
 
@@ -157,6 +164,7 @@ public:
  */
 class BssdMeasurementBuilder : public MeasurementDifferencingStrategy {
 public:
+    /** @brief Regime of this strategy. @return Always @c DifferencingMode::BetweenSatellite. */
     DifferencingMode mode() const override { return DifferencingMode::BetweenSatellite; }
 
     void preparePivots(MeasurementModel& model,
@@ -180,6 +188,7 @@ public:
  */
 class DdMeasurementBuilder : public MeasurementDifferencingStrategy {
 public:
+    /** @brief Regime of this strategy. @return Always @c DifferencingMode::DoubleDifference. */
     DifferencingMode mode() const override { return DifferencingMode::DoubleDifference; }
 
     EpochMeasurement buildDoubleDifference(

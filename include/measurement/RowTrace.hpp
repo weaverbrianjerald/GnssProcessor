@@ -61,11 +61,11 @@ class LogManager;
  *        @c measurement_model logger is at trace level.
  *
  * The callers ask this before evaluating a row, so that the term values are collected only
- * when a line will be written (@c evaluate fills an @ref ObsTermValues on request).
+ * when a line will be written (@c evaluate fills an @ref GnssProcessor::ObsTermValues "ObsTermValues" on request).
  *
  * @param log Logging; the @c measurement_model logger is read.
  * @param obs The satellite's modeled observation.
- * @return True when @ref traceRowDecomposition would write a line.
+ * @return True when @ref GnssProcessor::traceRowDecomposition "traceRowDecomposition" would write a line.
  */
 bool wantsRowDecomposition(LogManager& log, const PppObservation& obs);
 
