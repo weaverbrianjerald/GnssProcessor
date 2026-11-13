@@ -48,7 +48,7 @@ namespace sim {
  * @c loadSimConfig; this struct is a plain resolved record.
  */
 struct ScriptedSlip {
-    std::string sat;            ///< "G05"; ^[GE]\d\d$, must be in the signal plan.
+    std::string sat;            ///< "G05"; ^[GE]\\d\\d$, must be in the signal plan.
     std::string signal;         ///< Phase code, e.g. "L2W": GPS L1C|L2W|L5Q, Galileo L1C|L5Q|L7Q (third band if enabled).
     int    epoch{ 0 };          ///< Form A: 1-based epoch; 0 = unset (use the elevation window).
     double elev_lo_deg{ -1.0 }; ///< Form B: window low bound (deg); <0 = unset.
@@ -115,7 +115,7 @@ struct NetworkStation {
     /// declared per station rather than derived from the salt so that the truth is
     /// stated explicitly.
     std::vector<RxBias> rx_code_bias;
-    std::vector<RxBias> rx_phase_bias;
+    std::vector<RxBias> rx_phase_bias;   ///< Per-station receiver phase biases; a non-empty list replaces the base config's list.
     /// Per-station override of @c SimConfig::PhaseColour::sigma_zen_m (m; JSON roster
     /// key @c phase_colour_sigma_zen_m, finite and >= 0).  NaN (the default) = absent:
     /// the station inherits the network-level @c phase_colour block.  The coloured
@@ -150,7 +150,7 @@ struct SimConfig {
     struct StationId {
         std::string name{};             ///< Marker + filename prefix; empty = legacy "SARV".
         std::uint64_t seed_salt{ 0 };   ///< Mixed into the station's RNG seeds and into ambN; 0 = legacy.
-    } station;
+    } station;   ///< Identity of the receiver this invocation synthesizes (default = legacy single station).
 
     /// Peer roster for `synth-network`.  Empty (the default) = single-station
     /// synthesis; the other subcommands ignore it entirely.
@@ -162,7 +162,7 @@ struct SimConfig {
         double phase_sigma_zen_m{ 0.003 };     ///< Carrier phase sigma at zenith (m).
         double elev_factor_floor_deg{ 5.0 };   ///< Floor on elevation in the 1/sin(el) noise/slip amplification.
         std::uint64_t seed{ 20240315ULL };     ///< RNG seed for the white noise stream (must be >= 0).
-    } noise;
+    } noise;   ///< White measurement-noise block.
 
     /// Marine multipath: per-(sat,band) Gauss-Markov, elevation-amplified.  Band-
     /// specific code amplitudes do not cancel in the iono-free combination.
@@ -177,7 +177,7 @@ struct SimConfig {
         double tau_s{ 300.0 };              ///< Gauss-Markov correlation time (s).
         double elev_factor_cap_deg{ 20.0 }; ///< 1/sin(el) amplification is clamped below this.
         std::uint64_t seed{ 20240315ULL ^ 0xA17EC0DEull }; ///< RNG seed for the multipath+slip stream (must be >= 0).
-    } multipath;
+    } multipath;   ///< Marine multipath block.
 
     /// Coloured carrier-phase error (
     /// docs/record/refound/SFR_sim_fixture_coloured_phase_2026-10-01.md section 2): one
@@ -210,7 +210,7 @@ struct SimConfig {
         /// Resolve with @ref SimConfig::phaseColourElevFloorDeg.
         double elev_factor_floor_deg{ std::numeric_limits<double>::quiet_NaN() };
         std::uint64_t seed{ 20240315ULL ^ 0xC0105EEDull }; ///< Dedicated RNG seed (must be >= 0); distinct from every other stream.
-    } phase_colour;
+    } phase_colour;   ///< Coloured carrier-phase error block (off by default).
 
     /**
      * @brief The phase-colour elevation floor in effect (deg).
@@ -260,7 +260,7 @@ struct SimConfig {
         /// requires @c corrections.signal_bias, because the synthetic OSB is injected
         /// at the same site as the product OSB; the loader rejects it otherwise.
         std::map<std::string, double> synth_osb_amp_m;
-    } signals;
+    } signals;   ///< Optional extra signals per constellation (third bands, synthetic OSB).
 
     /// Cycle slips: integer phase jumps, rate ~rate_base/sin^2(el) below max_elev.
     struct CycleSlips {
@@ -276,7 +276,7 @@ struct SimConfig {
         /// absent or empty "scripted" key reproduces the random-only dataset
         /// byte-for-byte.  See @c ScriptedSlip and SPEC_scripted_slips.md.
         std::vector<ScriptedSlip> scripted;
-    } slips;
+    } slips;   ///< Random and scripted cycle-slip block.
 
     /// Magnitude regime the arc-constant integer ambiguities are drawn from.
     ///
@@ -332,7 +332,7 @@ struct SimConfig {
         double zwd_rw_tau_s{ 3600.0 };         ///< Gauss-Markov correlation time (s); must be > 0.
         double zwd_min_m{ 0.01 };              ///< Floor (m); a wet delay cannot go negative.
         std::uint64_t seed{ 20240315ULL ^ 0x7A0D51DEull }; ///< Dedicated tropo RNG seed (must be >= 0).
-    } atmosphere;
+    } atmosphere;   ///< Truth troposphere (wet delay) block.
 
     /// Inter-system / receiver biases injected as truth states.
     struct Biases {
@@ -348,7 +348,7 @@ struct SimConfig {
         /// is a stated fact in @c truth_datum.json rather than an unexamined default,
         /// even though the fixture normally leaves it empty.
         std::vector<RxBias> rx_phase_bias;
-    } biases;
+    } biases;   ///< Inter-system and receiver bias block.
 
     /// Full IERS/IGS correction stack (M7).  Each enabled term is injected into the
     /// synthesized observation by reusing the processor's own model, so a
@@ -463,12 +463,12 @@ struct SimConfig {
         /// the satellite antenna and OSB terms.  Truth per (epoch, satellite) is written
         /// to @c truth_windup.csv.
         bool phase_windup{ false };
-    } corrections;
+    } corrections;   ///< Switches and parameters of the injected IERS/IGS correction stack.
 
     /// Visibility screen.
     struct Geometry {
         double elevation_mask_deg{ 10.0 }; ///< Satellites below this elevation are dropped.
-    } geometry;
+    } geometry;   ///< Visibility screen block.
 
     /// Ionospheric storm.  Amplitudes are pre-storm_scale; the window is placed as
     /// a fraction of the arc so it tracks trajectory length automatically.
@@ -504,7 +504,7 @@ struct SimConfig {
         /// even with an absolute anchor.  Use the SED blob for spatially structured
         /// network ionosphere.
         double center_lat_deg{ std::numeric_limits<double>::quiet_NaN() };
-        double center_lon_deg{ std::numeric_limits<double>::quiet_NaN() };
+        double center_lon_deg{ std::numeric_limits<double>::quiet_NaN() };   ///< Absolute storm-centre longitude (deg); see @c center_lat_deg.
         // Travelling-Ionospheric-Disturbance geometry.
         double tid_wavelength_km{ 300.0 };       ///< TID horizontal wavelength (km).
         double tid_period_s{ 1200.0 };           ///< TID period (s).
@@ -512,7 +512,7 @@ struct SimConfig {
         double tid_period_start_s{ 0.0 };        ///< TID chirp start period (high-rate); <=0 => tid_period_s.
         double tid_period_end_s{ 0.0 };          ///< TID chirp end period (low-rate); <=0 => tid_period_s.
         // --- Optional pulse-train TID (0 defaults keep the legacy continuous chirp) ---
-        int    tid_pulse_count{ 0 };             ///< #raised-cosine TID bumps across the window (0 = continuous).
+        int    tid_pulse_count{ 0 };             ///< Number of raised-cosine TID bumps across the window (0 = continuous).
         double tid_pulse_duration_s{ 600.0 };    ///< Each TID bump's width (s); ~600 = 10 min.
         double tid_fast_period_s{ 0.0 };         ///< Rapid carrier period (s) for tid_fast_sat only; ~60 = Nyquist of 30 s data.
         /// Explicit satellites that carry the TID overlay (e.g. {"E13","G18","G23"}).
@@ -536,7 +536,7 @@ struct SimConfig {
             double period_s{ 0.0 };              ///< Carrier period inside the bump (s); <=0 => smooth bump.
             double duration_s{ 600.0 };          ///< Bump full width (s); ~600 = 10 min.
         };
-        std::vector<TidPulse> tid_pulses{};
+        std::vector<TidPulse> tid_pulses{};   ///< Explicit TID pulses (see @c TidPulse); empty = none.
         /// Treat the SED blob as a bulk field: every ray sees it according to its own
         /// pierce point, not according to the storm-gain hash (which explicit tid_pulses
         /// pin to the pulse satellites alone).  false = legacy gating, byte-identical.
@@ -573,9 +573,9 @@ struct SimConfig {
         /// loop is unaffected by this choice.  The loader rejects any other value.
         std::string background_source{ "klobuchar" };
         /// IONEX path for background_source="gim"; empty => derive from SimConfig::date
-        /// as <internal_root>/data/<YYYY-DOY>/products/COD0OPSFIN_<YYYYDOY>0000_01D_01H_GIM.INX.
+        /// as \<internal_root\>/data/<YYYY-DOY>/products/COD0OPSFIN_\<YYYYDOY\>0000_01D_01H_GIM.INX.
         std::string gim_path{};
-    } iono;
+    } iono;   ///< Ionospheric storm block.
 
     /**
      * @brief One scripted satellite-clock step at a known epoch (a G-B event).
@@ -587,7 +587,7 @@ struct SimConfig {
      * @c step_m or @c ramp_mps; the loader rejects an event that injects nothing.
      */
     struct ScriptedSatClockStep {
-        std::string sat;         ///< "G05"; ^[GE]\d\d$.
+        std::string sat;         ///< "G05"; ^[GE]\\d\\d$.
         int    epoch{ 0 };       ///< 1-based epoch index the step is applied from (inclusive); [1, n_epochs].
         double step_m{ 0.0 };    ///< Signed jump in metres of range.
         double ramp_mps{ 0.0 };  ///< Optional additional ramp (m/s) accumulating after @c epoch.
@@ -635,7 +635,7 @@ struct SimConfig {
         std::uint64_t seed{ 20240315ULL ^ 0x5A7C10CBull }; ///< Dedicated stream (must be >= 0).
         /// Deterministic hand-authored clock steps layered on top (G-B events).
         std::vector<ScriptedSatClockStep> steps;
-    } sat_clock;
+    } sat_clock;   ///< Synthetic satellite-clock error block (all zero = off).
 
     /// Fixture date.  Selects which bundled single-day product set (SP3 / CLK / nav /
     /// GIM) the synth runs against, and therefore the GPS week and the day-start tow
@@ -651,7 +651,7 @@ struct SimConfig {
     struct Date {
         int year{ 2024 };   ///< Calendar year of the fixture products.
         int doy{ 129 };     ///< Day of year (1-366).
-    } date;
+    } date;   ///< Fixture date (year and day of year).
 
     /// Truth trajectory (a subset of TrajectoryConfig; kinematic flag comes from
     /// the synth-static/synth-kinematic subcommand, not the file).
@@ -722,7 +722,7 @@ struct SimConfig {
         /// Optional intermediate waypoints (lat_deg, lon_deg): landfall path becomes
         /// a smooth spline start -> waypoints... -> dest.  Empty => straight drift.
         std::vector<std::array<double, 2>> waypoints;
-    } trajectory;
+    } trajectory;   ///< Truth trajectory block.
 
     /// RINEX header realism / leak knobs (SPEC_student_handout.md R2).  Every default
     /// reproduces today's header byte-for-byte: an absent @c rinex section, or one whose
@@ -765,7 +765,7 @@ struct SimConfig {
         /// @c gps_utc_leap_s), formatted "YYYYMMDD HHMMSS UTC" like the DATE field.
         std::string file_date_mode{ "build" };
         int gps_utc_leap_s{ 18 };  ///< GPS-UTC leap offset for "collection_end".
-    } rinex;
+    } rinex;   ///< RINEX header realism and leak knobs (defaults reproduce the historical header).
 };
 
 /**
@@ -794,6 +794,9 @@ bool loadSimConfig(const std::filesystem::path& path, SimConfig& cfg,
  * Never returns 0: 0 is the sentinel meaning "legacy single-station, leave every
  * seed untouched", and a station that landed on it would share the unsalted
  * realization with any other station that did the same.
+ *
+ * @param name Station name (the roster key); the same string always gives the same salt.
+ * @return A non-zero salt of at most 53 bits.
  */
 std::uint64_t stationSeedSalt(const std::string& name);
 
@@ -824,6 +827,8 @@ std::uint64_t stationSeedSalt(const std::string& name);
  * @param anchor_lon_deg  Absolute storm-centre longitude (deg).
  * @param out_path        Child config path to write.
  * @param err             Optional: set to a human-readable reason on failure.
+ * @return True when the child config was written; false when the base config cannot be
+ *         opened or parsed, or the output cannot be written (@p err then says why).
  */
 bool writeStationConfig(const std::filesystem::path& base_config,
                         const NetworkStation& st,

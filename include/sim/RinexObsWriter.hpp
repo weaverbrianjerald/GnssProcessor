@@ -87,8 +87,14 @@ struct SatObs {
  */
 class RinexObsWriter {
 public:
+    /// @brief Construct a closed writer; call @c open before @c writeEpoch.
     RinexObsWriter() = default;
+
+    /// @brief Deleted: the writer owns an @c std::ofstream, so it is not copyable.
     RinexObsWriter(const RinexObsWriter&) = delete;
+
+    /// @brief Deleted: the writer owns an @c std::ofstream, so it is not assignable.
+    /// @return Never produced; the operator is deleted.
     RinexObsWriter& operator=(const RinexObsWriter&) = delete;
 
     /**
@@ -123,7 +129,10 @@ public:
     /** @brief Flush and close the underlying stream. */
     void close();
 
-    /** @brief True while the output stream is open. */
+    /**
+     * @brief True while the output stream is open.
+     * @return True between a successful @c open and @c close; false before or after.
+     */
     bool isOpen() const { return out_.is_open(); }
 
 private:

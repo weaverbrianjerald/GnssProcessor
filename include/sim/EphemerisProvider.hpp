@@ -77,12 +77,21 @@ public:
                       const std::filesystem::path& log_dir,
                       const std::filesystem::path& nav_path = {},
                       const std::string& rx_antenna_type = {});
+
+    /// @brief Destroys the provider together with the parser, geometry and models it owns.
     ~EphemerisProvider();
 
+    /// @brief Deleted: the provider owns a LogManager, a parser and a geometry, so it is not copyable.
     EphemerisProvider(const EphemerisProvider&) = delete;
+
+    /// @brief Deleted: the provider owns a LogManager, a parser and a geometry, so it is not assignable.
+    /// @return Never produced; the operator is deleted.
     EphemerisProvider& operator=(const EphemerisProvider&) = delete;
 
-    /** @brief True if the product chain set up successfully. */
+    /**
+     * @brief True if the product chain set up successfully.
+     * @return False after a failed setup; the provider is then not usable for queries.
+     */
     bool ok() const { return ok_; }
 
     /**
@@ -92,18 +101,36 @@ public:
      * the same process fails to initialize.  Any additional parser in this process
      * (e.g. the RinexParser of spp-reference over the emitted hero RINEX) must reuse
      * this one instead of creating its own.
+     *
+     * @return Reference to the provider's own LogManager, valid for the provider's lifetime.
      */
     LogManager& logManager() { return log_; }
 
-    /** @brief Number of SP3 orbit nodes loaded into the shared cache. */
+    /**
+     * @brief Number of SP3 orbit nodes loaded into the shared cache.
+     * @return Node count over all satellites (0 when no SP3 was loaded).
+     */
     std::size_t orbitNodeCount() const;
-    /** @brief Number of CLK clock samples loaded into the shared cache. */
+
+    /**
+     * @brief Number of CLK clock samples loaded into the shared cache.
+     * @return Sample count over all satellites (0 when no CLK was loaded).
+     */
     std::size_t clockSampleCount() const;
-    /** @brief Number of ERP (polar-motion / UT1) entries loaded into the shared cache. */
+
+    /**
+     * @brief Number of ERP (polar-motion / UT1) entries loaded into the shared cache.
+     * @return Entry count (0 when no ERP was loaded).
+     */
     std::size_t erpNodeCount() const;
 
     /**
      * @brief Interpolated satellite ECEF position/velocity at @p t.
+     *
+     * @param sat Satellite id ("G05"/"E11"), as keyed in the loaded products.
+     * @param t   Epoch of the query (GPS time).
+     * @param[out] pos Satellite ECEF position (m); written even when the query fails.
+     * @param[out] vel Satellite ECEF velocity (m/s); written even when the query fails.
      * @return False if no valid orbit covers @p t for @p sat.
      */
     bool positionVelocity(const std::string& sat, const GnssTime& t,
@@ -111,6 +138,8 @@ public:
 
     /**
      * @brief Precise satellite clock bias (seconds) at @p t.
+     * @param sat Satellite id ("G05"/"E11"), as keyed in the loaded products.
+     * @param t   Epoch of the query (GPS time).
      * @param broadcast Optional out-param: set true if the clock is only
      *        broadcast-grade (no precise CLK / SSR backing).
      * @return Clock bias in seconds (0 if unavailable).
@@ -122,17 +151,29 @@ public:
      *
      * Uses the processor's own @c Troposphere model with the same config, so the
      * ZHD matches the value the verifier subtracts (cancels by construction).
+     *
+     * @param rx Receiver ECEF position (m).
+     * @param t  Epoch of the query (GPS time).
+     * @return Zenith hydrostatic delay in metres; 0 when the troposphere model is not set up.
      */
     double tropoZhd(const Eigen::Vector3d& rx, const GnssTime& t) const;
 
     /**
      * @brief GMF hydrostatic/wet mapping functions at a satellite elevation.
      * @param elev_deg Satellite elevation (degrees).
+     * @param rx   Receiver ECEF position (m).
+     * @param t    Epoch of the query (GPS time).
+     * @param[out] mf_d Hydrostatic mapping factor (dimensionless).
+     * @param[out] mf_w Wet mapping factor (dimensionless); both fall back to 1/sin(elevation)
+     *                  when the troposphere model is not set up.
      */
     void tropoMapping(double elev_deg, const Eigen::Vector3d& rx, const GnssTime& t,
                       double& mf_d, double& mf_w) const;
 
-    /** @brief True if a broadcast Klobuchar field (GPSA/GPSB) was loaded. */
+    /**
+     * @brief True if a broadcast Klobuchar field (GPSA/GPSB) was loaded.
+     * @return True when @c klobucharDelayMetres returns a real delay, false when it returns 0.
+     */
     bool hasKlobuchar() const { return has_klobuchar_; }
 
     /**
@@ -142,6 +183,12 @@ public:
      * broadcast GPSA/GPSB coefficients, so the quiet background the simulator injects
      * is exactly what a single-frequency user removes with Klobuchar: it cancels, and
      * only the storm remains.  Returns 0 if no Klobuchar field is available.
+     *
+     * @param rx       Receiver ECEF position (m).
+     * @param sat_pos  Satellite ECEF position (m).
+     * @param t        Epoch of the query (GPS time).
+     * @param freq_hz  Carrier frequency (Hz) at which the delay is expressed.
+     * @return Slant ionospheric delay in metres at @p freq_hz; 0 when no Klobuchar field is loaded.
      */
     double klobucharDelayMetres(const Eigen::Vector3d& rx, const Eigen::Vector3d& sat_pos,
                                 const GnssTime& t, double freq_hz) const;
@@ -156,11 +203,16 @@ public:
      * map's thin-shell mapping function.  Unlike the Klobuchar background, this does
      * not cancel against a broadcast correction applied by the user; that residual is
      * intended.
+     * @param inx_path Path to the IONEX file; a previously loaded map is discarded first,
+     *                 and an empty or non-existent path leaves no map loaded.
      * @return true if the IONEX parsed and the map stood up.
      */
     bool loadGim(const std::filesystem::path& inx_path);
 
-    /** @brief True if an IONEX was parsed and the GIM is usable. */
+    /**
+     * @brief True if an IONEX was parsed and the GIM is usable.
+     * @return True after a successful @c loadGim; false otherwise.
+     */
     bool hasGim() const { return gim_ != nullptr; }
 
     /**
@@ -173,6 +225,12 @@ public:
      * background because it cancels, and the Verifier does not read truth_atmo.csv).
      * A negative map STEC is clamped to 0 and returned as valid.
      *
+     * @param rx       Receiver ECEF position (m).
+     * @param sat_pos  Satellite ECEF position (m).
+     * @param t        Epoch of the query (GPS time).
+     * @param[out] stec_tecu Slant STEC (TECU), clamped to be non-negative.
+     * @param[out] std_tecu  Map-reported STEC standard deviation (TECU); 0 when the map
+     *        gives none.
      * @param[out] ipp_lat_deg,ipp_lon_deg  GIM pierce point (deg); the longitude is
      *        wrapped to [-180, 180) because the map returns it unwrapped.  They use the
      *        same construction as IonoSample's IPP (both propagate spherically from the
@@ -193,6 +251,8 @@ public:
      * a warning, and still applies the longitude rotation, so an arc running past the
      * last map receives a map rotated by up to 90 deg.  The resulting truth is wrong,
      * so the caller must fail instead of using it.
+     * @param[out] first Epoch of the first map in the file.
+     * @param[out] last  Epoch of the last map in the file.
      * @return false if no GIM is loaded or it carries no epochs.
      */
     bool gimEpochSpan(GnssTime& first, GnssTime& last) const;
@@ -204,20 +264,39 @@ public:
     // cancels it back to the truth.
 
     /** @brief Relativistic periodic clock term as a range delay (m): -c*dtr, where
-     *  dtr = computeRelativisticCorrection at the emission-time (pre-Sagnac) state. */
+     *  dtr = computeRelativisticCorrection at the emission-time (pre-Sagnac) state.
+     *  @param sat        Satellite id ("G05"/"E11").
+     *  @param sat_pos_em Emission-frame (unrotated) satellite ECEF position (m).
+     *  @param sat_vel_em Emission-frame satellite ECEF velocity (m/s).
+     *  @return Range delay in metres (signed, as carried by the observation); 0 when the
+     *          geometry is not set up. */
     double relativityMetres(const std::string& sat, const Eigen::Vector3d& sat_pos_em,
                             const Eigen::Vector3d& sat_vel_em) const;
 
-    /** @brief Shapiro gravitational path delay (m, >=0), reception-frame sat pos. */
+    /** @brief Shapiro gravitational path delay (m, >=0), reception-frame sat pos.
+     *  @param sat     Satellite id ("G05"/"E11").
+     *  @param rx      Receiver ECEF position (m).
+     *  @param sat_pos Reception-frame (Sagnac-rotated) satellite ECEF position (m).
+     *  @return Path delay in metres; 0 when the geometry is not set up. */
     double shapiroMetres(const std::string& sat, const Eigen::Vector3d& rx,
                          const Eigen::Vector3d& sat_pos) const;
 
     /** @brief IERS 2010 solid-earth tide LOS displacement (m), using the geometry
-     *  pipeline's own cached Sun/Moon so that it cancels bit-for-bit. */
+     *  pipeline's own cached Sun/Moon so that it cancels bit-for-bit.
+     *  @param rx      Receiver ECEF position (m).
+     *  @param sat_pos Reception-frame satellite ECEF position (m).
+     *  @param t       Epoch of the query (GPS time).
+     *  @return Displacement projected on the line of sight, in metres; 0 when the
+     *          geometry is not set up. */
     double solidEarthTideMetres(const Eigen::Vector3d& rx, const Eigen::Vector3d& sat_pos,
                                 const GnssTime& t) const;
 
-    /** @brief Pole-tide site displacement projected onto the LOS (m); 0 if no ERP. */
+    /** @brief Pole-tide site displacement projected onto the LOS (m); 0 if no ERP.
+     *  @param rx      Receiver ECEF position (m).
+     *  @param sat_pos Reception-frame satellite ECEF position (m).
+     *  @param t       Epoch of the query (GPS time).
+     *  @return Displacement along the satellite-to-receiver direction, in metres; 0 if
+     *          the geometry is not set up or no ERP is loaded. */
     double poleTideMetres(const Eigen::Vector3d& rx, const Eigen::Vector3d& sat_pos,
                           const GnssTime& t) const;
 
@@ -229,6 +308,8 @@ public:
      * @c Model::Geometry::loadData does from the RINEX @c APPROX POSITION XYZ.  Both
      * sides then evaluate the same frozen 11-constituent coefficient set, so the term
      * cancels exactly, even for a moving vessel.
+     * @param eot20_nc  Path to the EOT20 load-grid NetCDF file (EOT20_load.nc).
+     * @param site_ecef ECEF position (m) at which the coefficients are evaluated and frozen.
      * @return true if the grid was read and coefficients were installed.
      */
     bool loadOceanTide(const std::filesystem::path& eot20_nc, const Eigen::Vector3d& site_ecef);
@@ -236,7 +317,7 @@ public:
     /**
      * @brief Install an ocean-loading field that varies along the track.
      *
-     * The alternative to @ref loadOceanTide: instead of freezing the coefficients at
+     * The alternative to @ref GnssProcessor::sim::EphemerisProvider::loadOceanTide "loadOceanTide": instead of freezing the coefficients at
      * @p frozen_site as the processor does, this samples the EOT20 field at anchors
      * along @p track and interpolates between them, so the injected loading is the one
      * at the vessel's actual position at each epoch.  The processor still models the
@@ -256,13 +337,22 @@ public:
                                  double anchor_spacing_km,
                                  const Eigen::Vector3d& frozen_site);
 
-    /** @brief True if ocean-tidal-loading coefficients are installed. */
+    /**
+     * @brief True if ocean-tidal-loading coefficients are installed.
+     * @return True after a successful @c loadOceanTide or @c loadOceanTideAlongTrack.
+     */
     bool hasOceanTide() const { return has_ocean_tide_; }
 
-    /** @brief True if the injected OTL varies along the track (it does not cancel). */
+    /**
+     * @brief True if the injected OTL varies along the track (it does not cancel).
+     * @return True when an along-track field is installed; false for the frozen set or none.
+     */
     bool hasOceanTideAlongTrack() const { return otl_field_ != nullptr; }
 
-    /** @brief Number of EOT20 anchors in the along-track field (0 if frozen). */
+    /**
+     * @brief Number of EOT20 anchors in the along-track field (0 if frozen).
+     * @return Anchor count; 0 when no along-track field is installed.
+     */
     std::size_t oceanTideAnchorCount() const;
 
     /**
@@ -270,6 +360,10 @@ public:
      *
      * Along-track when a field is installed, frozen otherwise.  Truth bookkeeping
      * only; the observation model goes through @ref oceanTideMetres.
+     *
+     * @param rx Receiver ECEF position (m).
+     * @param t  Epoch of the query (GPS time).
+     * @return Site displacement in ECEF (m); zero when no ocean loading is installed.
      */
     Eigen::Vector3d oceanTideDisplacementEcef(const Eigen::Vector3d& rx, const GnssTime& t) const;
 
@@ -279,23 +373,35 @@ public:
      * Always the frozen APPROX POSITION coefficients, rotated at @p rx.  The
      * difference from @ref oceanTideDisplacementEcef is what the run leaves
      * unmodelled; it is identically zero unless an along-track field is installed.
+     *
+     * @param rx Receiver ECEF position (m).
+     * @param t  Epoch of the query (GPS time).
+     * @return Modelled site displacement in ECEF (m); zero when no ocean loading is installed.
      */
     Eigen::Vector3d oceanTideModeledEcef(const Eigen::Vector3d& rx, const GnssTime& t) const;
 
     /**
      * @brief Ocean tidal loading site displacement projected on the LOS (m).
      *
-     * Identical in form to @ref poleTideMetres: the processor computes
+     * Identical in form to @ref GnssProcessor::sim::EphemerisProvider::poleTideMetres "poleTideMetres": the processor computes
      * @c otl_corr = otl_ecef.dot(-los) (ModelGeometry) and adds it to the modeled value
      * (@c PppModel::computeBaseModeledValue "+ geom.otl_corr"), so adding this to the
      * synthesized code+phase and enabling @c model_corrections.enable_ocean_tide_loading
      * cancels it back to truth (except for the along-track residual when an
      * along-track field is installed).  Returns 0 when no coefficients are loaded.
+     *
+     * @param rx      Receiver ECEF position (m).
+     * @param sat_pos Reception-frame satellite ECEF position (m).
+     * @param t       Epoch of the query (GPS time).
+     * @return Loading displacement along the satellite-to-receiver direction, in metres.
      */
     double oceanTideMetres(const Eigen::Vector3d& rx, const Eigen::Vector3d& sat_pos,
                            const GnssTime& t) const;
 
-    /** @brief True if an ATX was loaded and the satellite-antenna model stood up. */
+    /**
+     * @brief True if an ATX was loaded and the satellite-antenna model stood up.
+     * @return False when @c antennaMetres returns 0 for every signal.
+     */
     bool hasAntenna() const { return has_antenna_; }
 
     /**
@@ -339,16 +445,26 @@ public:
      *                 the processor's @c geom.sat_vel (used for the yaw-steering
      *                 attitude frame only).
      * @param elev_deg,az_deg Receiver topocentric elevation/azimuth (degrees).
+     * @param t        Epoch of the query (GPS time); selects the Sun position used for the
+     *                 satellite yaw-steering attitude.
+     * @return Combined PCO/PCV correction in metres, to be added to the synthesized code and
+     *         phase of this signal; 0 when no ATX was loaded or the system prefix is unhandled.
      */
     double antennaMetres(const std::string& sat, const std::string& code,
                          const Eigen::Vector3d& rx, const Eigen::Vector3d& sat_pos,
                          const Eigen::Vector3d& sat_vel,
                          double elev_deg, double az_deg, const GnssTime& t) const;
 
-    /** @brief True if a receiver antenna type was supplied (receiver PCO/PCV injected). */
+    /**
+     * @brief True if a receiver antenna type was supplied (receiver PCO/PCV injected).
+     * @return True when the constructor received a non-empty @c rx_antenna_type.
+     */
     bool hasReceiverAntenna() const { return !rx_antenna_type_.empty(); }
 
-    /** @brief True if a Bias-SINEX (.BIA) OSB product was loaded into the shared cache. */
+    /**
+     * @brief True if a Bias-SINEX (.BIA) OSB product was loaded into the shared cache.
+     * @return False when @c signalBiasMetres returns 0 for every signal.
+     */
     bool hasSignalBias() const { return has_signal_bias_; }
 
     /**
@@ -380,6 +496,7 @@ public:
      *
      * @param sat   Satellite id ("G05"/"E11"); matched verbatim against the product PRN.
      * @param code  RINEX observable code being emitted (e.g. "C1C", "L1C", "C2W", "L5Q").
+     * @param t     Epoch of the query (GPS time), matched against the product's validity window.
      * @return The OSB in metres, or 0 when no .BIA was loaded, no @c geometry_, or the
      *         product has no entry for this (satellite, observable) in the epoch window.
      */

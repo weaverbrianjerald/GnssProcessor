@@ -40,7 +40,7 @@
  * to code.  The ionosphere-free combination therefore keeps all of it (its
  * coefficients sum to one) and the geometry-free combination none of it, so the
  * estimator's free slant ionosphere cannot absorb it, which is the property the
- * field residual shows.  @ref PhaseColourGenerator::sample returns the stored
+ * field residual shows.  @ref GnssProcessor::sim::PhaseColourGenerator::sample "PhaseColourGenerator::sample" returns the stored
  * value without a new draw when called again for the same line of sight at the
  * same instant, so a per-band call site still injects one realization per
  * satellite and epoch.
@@ -48,7 +48,7 @@
  * ## Byte-identity
  *
  * With @c sigma_zen_m @c == @c 0 (the default) the generator is inactive:
- * @ref PhaseColourGenerator::sample returns a literal @c 0.0 and draws nothing.
+ * @ref GnssProcessor::sim::PhaseColourGenerator::sample "PhaseColourGenerator::sample" returns a literal @c 0.0 and draws nothing.
  * The stream is dedicated, so even an active block cannot shift the white-noise,
  * multipath/slip, troposphere or receiver-clock realizations.
  */
@@ -122,7 +122,10 @@ public:
         : sigma_zen_m_(sigma_zen_m), tau_s_(tau_s), elev_floor_deg_(elev_floor_deg),
           rng_(seed), gauss_(0.0, 1.0) {}
 
-    /** @brief True when the block injects anything (@c sigma_zen_m > 0). */
+    /**
+     * @brief True when the block injects anything (@c sigma_zen_m > 0).
+     * @return False for the inactive generator, whose @c sample returns 0.0 and draws nothing.
+     */
     bool active() const noexcept { return sigma_zen_m_ > 0.0; }
 
     /**
@@ -157,20 +160,40 @@ public:
         return sigma_zen_m_ * phaseColourElevFactor(elev_deg, elev_floor_deg_) * last_u_;
     }
 
-    /** @brief Unit process value returned with the most recent @ref sample (0 if none). */
+    /**
+     * @brief Unit process value returned with the most recent @ref sample (0 if none).
+     * @return Unit-variance process value @f$u@f$ (dimensionless), before the sigma and elevation scaling.
+     */
     double lastUnit() const noexcept { return last_u_; }
 
-    /** @brief Standard-normal draws taken from the stream so far (0 while inactive). */
+    /**
+     * @brief Standard-normal draws taken from the stream so far (0 while inactive).
+     * @return Cumulative draw count; a start and each advance across a positive time step take one.
+     */
     std::uint64_t draws() const noexcept { return n_draws_; }
 
-    /** @brief Lines of sight started (first-sight stationary starts) so far. */
+    /**
+     * @brief Lines of sight started (first-sight stationary starts) so far.
+     * @return Count of distinct line-of-sight keys sampled since construction.
+     */
     std::uint64_t starts() const noexcept { return n_starts_; }
 
-    /** @brief Zenith 1-sigma (m). */
+    /**
+     * @brief Zenith 1-sigma (m).
+     * @return The @c sigma_zen_m given at construction.
+     */
     double sigmaZenM() const noexcept { return sigma_zen_m_; }
-    /** @brief Correlation time (s). */
+
+    /**
+     * @brief Correlation time (s).
+     * @return The @c tau_s given at construction.
+     */
     double tauS() const noexcept { return tau_s_; }
-    /** @brief Elevation floor of the amplification (deg). */
+
+    /**
+     * @brief Elevation floor of the amplification (deg).
+     * @return The @c elev_floor_deg given at construction.
+     */
     double elevFloorDeg() const noexcept { return elev_floor_deg_; }
 
 private:

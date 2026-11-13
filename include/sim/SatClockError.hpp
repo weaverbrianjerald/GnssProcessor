@@ -109,7 +109,10 @@ public:
                const GnssTime& t0, double interval_s, int n_epochs,
                std::string* err = nullptr);
 
-    /** @brief True when any error channel is armed (otherwise @c metres() is 0.0). */
+    /**
+     * @brief True when any error channel is armed (otherwise @c metres() is 0.0).
+     * @return False for a default-constructed or all-zero configuration.
+     */
     bool active() const { return active_; }
 
     /**
@@ -118,6 +121,12 @@ public:
      * Linear interpolation of the pre-generated grid, clamped at both ends (the
      * emission time of the first epoch lies slightly before @c t0).  Returns 0.0
      * for an unknown satellite or an inactive object.
+     *
+     * @param sat Satellite id (e.g. "G05"), as listed at @c build.
+     * @param t   Time at which to evaluate (GPS time); typically the emission time of
+     *            the ray, which is slightly before the epoch.
+     * @return Clock error as metres of clock offset, @c c*(dt_true - dt_product); see the
+     *         sign convention in the file banner.
      */
     double metres(const std::string& sat, const GnssTime& t) const;
 
@@ -127,13 +136,23 @@ public:
      * Columns: `week,tow_s,satellite,clk_err_m,clk_err_s`.  Written only when the
      * object is active: an absent file states "this channel was not simulated",
      * which an empty one cannot (standing invariant #4: blank is never 0).
+     *
+     * @param path Output CSV path.
+     * @return True on success, including the inactive case where no file is written;
+     *         false when the file could not be opened.
      */
     bool writeTruth(const std::filesystem::path& path) const;
 
-    /** @brief Largest |error| over the whole table (m); 0 when inactive. */
+    /**
+     * @brief Largest |error| over the whole table (m); 0 when inactive.
+     * @return Peak absolute clock error in metres over all satellites and epochs.
+     */
     double peakAbsMetres() const;
 
-    /** @brief Number of satellites carrying a series. */
+    /**
+     * @brief Number of satellites carrying a series.
+     * @return Count of satellites in the pre-generated table (0 when inactive).
+     */
     std::size_t satelliteCount() const { return table_.size(); }
 
 private:

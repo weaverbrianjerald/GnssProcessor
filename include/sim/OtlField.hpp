@@ -23,7 +23,7 @@
  *
  * This class synthesizes that field.  It samples the EOT20 coefficients at anchor
  * points spaced along the truth trajectory and interpolates between them, so
- * @ref displacementEcef returns the loading at the vessel's current position
+ * @ref GnssProcessor::sim::OtlField::displacementEcef "displacementEcef" returns the loading at the vessel's current position
  * rather than at its starting position.  The residual left in the data is
  *
  *     d_unmodelled(t) = d(x(t), t) - d(x0, t)
@@ -104,17 +104,26 @@ public:
 
     /** @brief An EOT20 sample: the coefficients synthesized at one track point. */
     struct Anchor {
-        GnssTime time{};
+        GnssTime time{};   ///< Epoch of the track sample at which the anchor was placed.
         /// Monotone lookup key = week*604800 + tow.  Plain tow runs backwards at a week
         /// rollover mid-arc, which would clamp the whole remainder to one anchor.
         double gps_s{ 0.0 };
-        Eigen::Vector3d ecef{ Eigen::Vector3d::Zero() };
-        OtlStationCoefficients coeffs{};
+        Eigen::Vector3d ecef{ Eigen::Vector3d::Zero() };   ///< Truth receiver ECEF (m) at the anchor.
+        OtlStationCoefficients coeffs{};   ///< EOT20 coefficients synthesized at @c ecef.
     };
 
+    /**
+     * @brief Construct an empty field; @c ready() stays false until @c build succeeds.
+     * @param log Log facility used by @c build and held by reference, so it must
+     *            outlive this object.
+     */
     explicit OtlField(LogManager& log);
 
+    /// @brief Deleted: the field owns an evaluator bound to a @c LogManager reference.
     OtlField(const OtlField&) = delete;
+
+    /// @brief Deleted: the field owns an evaluator bound to a @c LogManager reference.
+    /// @return Never produced; the operator is deleted.
     OtlField& operator=(const OtlField&) = delete;
 
     /**
@@ -140,13 +149,23 @@ public:
                double anchor_spacing_km,
                const Eigen::Vector3d& frozen_site);
 
-    /** @brief True if @ref build succeeded and the field can be queried. */
+    /**
+     * @brief True if @ref build succeeded and the field can be queried.
+     * @return True when at least one anchor and the frozen set are installed.
+     */
     bool ready() const { return !anchors_.empty() && frozen_.valid; }
 
-    /** @brief The anchors, in track order (diagnostics / probe output). */
+    /**
+     * @brief The anchors, in track order (diagnostics / probe output).
+     * @return Reference to the stored anchors, ascending in time; empty before a
+     *         successful @c build.
+     */
     const std::vector<Anchor>& anchors() const { return anchors_; }
 
-    /** @brief The frozen coefficient set the processor will use. */
+    /**
+     * @brief The frozen coefficient set the processor will use.
+     * @return Reference to the coefficients synthesized at the frozen site.
+     */
     const OtlStationCoefficients& frozenCoefficients() const { return frozen_; }
 
     /**
@@ -158,6 +177,11 @@ public:
      * would misplace the vessel wherever its speed is not constant.  Clamped outside
      * the anchor span.  Memoized on the (epoch, position) pair, so the per-satellite
      * calls within one epoch cost one blend, not one per observation.
+     *
+     * @param t  Epoch (week + tow); selects the bracketing anchor pair.
+     * @param rx Truth receiver ECEF (m); sets the blend fraction within that pair.
+     * @return Reference to the blended coefficient set, valid until the next query
+     *         that changes the memo; the frozen set when no anchors are installed.
      */
     const OtlStationCoefficients& coefficientsAt(const GnssTime& t, const Eigen::Vector3d& rx);
 
@@ -165,6 +189,7 @@ public:
      * @brief Loading displacement (ECEF, m) at the vessel's current position.
      * @param rx Truth receiver ECEF (m); also supplies the ENU->ECEF rotation.
      * @param t  Epoch.
+     * @return Site displacement in ECEF (m) from the coefficients blended for (@p t, @p rx).
      */
     Eigen::Vector3d displacementEcef(const Eigen::Vector3d& rx, const GnssTime& t);
 
@@ -174,6 +199,10 @@ public:
      * This is the term the processor models.  It uses the same rotation point as
      * @ref displacementEcef, so the difference of the two is the unmodelled
      * along-track term.
+     *
+     * @param rx Truth receiver ECEF (m); supplies the ENU->ECEF rotation.
+     * @param t  Epoch.
+     * @return Site displacement in ECEF (m) from the frozen coefficient set.
      */
     Eigen::Vector3d frozenDisplacementEcef(const Eigen::Vector3d& rx, const GnssTime& t);
 

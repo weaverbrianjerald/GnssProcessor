@@ -42,8 +42,10 @@ namespace sim {
  */
 class ScriptedSlipSchedule {
 public:
-    /// Build a schedule from a (validated) event list; the order is preserved and
+    /// @brief Build a schedule from a (validated) event list; the order is preserved and
     /// used as the reported @c event_index.
+    /// @param events Hand-authored slip events from the simulator configuration; copied
+    ///               into per-event replay state, so the list need not outlive the schedule.
     explicit ScriptedSlipSchedule(const std::vector<ScriptedSlip>& events);
 
     /// One firing of one event this epoch.
@@ -66,11 +68,13 @@ public:
     std::vector<Fired> onEpoch(const std::string& sat, const std::string& phase_code,
                                int epoch_counter, double elev_deg);
 
-    /// Human-readable descriptions of events that never fired or ended a run
+    /// @brief Human-readable descriptions of events that never fired or ended a run
     /// mid-@c repeat (one string per problem; empty when the schedule completed).
+    /// @return One description per unfinished event; empty when every event completed.
     std::vector<std::string> unfinished() const;
 
-    /// True when there are no scripted events at all (the byte-identity case).
+    /// @brief True when there are no scripted events at all (the byte-identity case).
+    /// @return True for an empty event list, where the schedule never fires.
     bool empty() const { return events_.empty(); }
 
 private:

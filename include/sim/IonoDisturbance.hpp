@@ -39,30 +39,30 @@ namespace sim {
 /** @brief Parameters of the ionospheric field (vertical-TEC amplitudes). */
 struct IonoConfig {
     // Raised-cosine storm window (GPS-scale TOW seconds).
-    double window_start_tow_s{ 0.0 };
-    double window_duration_s{ 1800.0 };
+    double window_start_tow_s{ 0.0 };     ///< Storm window start (GPS time of week, s).
+    double window_duration_s{ 1800.0 };   ///< Storm window length (s) of the raised-cosine weight.
 
     // Storm-Enhanced-Density blob (vertical TECU), centre drifting with the eye.
-    double sed_amp_tecu{ 15.0 };
-    double sed_sigma_lat_deg{ 6.0 };
-    double sed_sigma_lon_deg{ 8.0 };
-    double center_lat0_deg{ -18.5 };
-    double center_lon0_deg{ -178.0 };
-    double drift_lat_deg_per_min{ -0.15 };
-    double drift_lon_deg_per_min{ 0.30 };
+    double sed_amp_tecu{ 15.0 };          ///< Peak vertical SED amplitude (TECU) at the blob centre and window peak.
+    double sed_sigma_lat_deg{ 6.0 };      ///< Gaussian 1-sigma extent of the blob in latitude (deg).
+    double sed_sigma_lon_deg{ 8.0 };      ///< Gaussian 1-sigma extent of the blob in longitude (deg, scaled by cos latitude).
+    double center_lat0_deg{ -18.5 };      ///< Blob centre latitude at the window start (deg).
+    double center_lon0_deg{ -178.0 };     ///< Blob centre longitude at the window start (deg).
+    double drift_lat_deg_per_min{ -0.15 }; ///< Latitude drift rate of the blob centre (deg/min).
+    double drift_lon_deg_per_min{ 0.30 }; ///< Longitude drift rate of the blob centre (deg/min).
 
     // Travelling Ionospheric Disturbance (vertical TECU).
-    double tid_amp_tecu{ 4.0 };
-    double tid_wavelength_km{ 300.0 };
-    double tid_period_s{ 1200.0 };
+    double tid_amp_tecu{ 4.0 };           ///< TID vertical amplitude (TECU).
+    double tid_wavelength_km{ 300.0 };    ///< Horizontal wavelength of the TID (km).
+    double tid_period_s{ 1200.0 };        ///< Temporal period of the TID (s); the period when no chirp is set.
     double tid_azimuth_deg{ 135.0 }; ///< Propagation heading from north (SE-ward).
     // Optional linear chirp of the TID temporal period across the storm window: the
     // instantaneous period sweeps linearly from _start (high rate) to _end (low
     // rate).  Each value <=0 => tid_period_s, so with
     // both unset there is no chirp and the field is unchanged for scenarios that omit
     // them.
-    double tid_period_start_s{ 0.0 };
-    double tid_period_end_s{ 0.0 };
+    double tid_period_start_s{ 0.0 };     ///< TID period at the window start (s); <=0 => tid_period_s.
+    double tid_period_end_s{ 0.0 };       ///< TID period at the window end (s); <=0 => tid_period_s.
 
     // Optional pulse-train envelope for the TID.  When tid_pulse_count>0 the TID is a
     // train of up to that many raised-cosine bumps, each tid_pulse_duration_s wide,
@@ -73,21 +73,21 @@ struct IonoConfig {
     // are byte-identical.  A per-ray temporal carrier period can be passed to
     // evaluate() (tid_period_override_s) so a single satellite fluctuates rapidly
     // inside the bumps while the others carry only the smooth pulse.
-    int    tid_pulse_count{ 0 };
-    double tid_pulse_duration_s{ 600.0 };
+    int    tid_pulse_count{ 0 };            ///< Number of raised-cosine TID pulses; 0 = continuous wave.
+    double tid_pulse_duration_s{ 600.0 };   ///< Width of each TID pulse (s).
 
     // When >0, the pulses are dealt out round-robin to this many satellites (by the
     // per-ray tid_slot passed to evaluate()): pulse i belongs only to the satellite
     // whose slot == i % tid_n_sats.  The bumps are therefore staggered in time across
     // satellites, usually with one satellite disturbed at a time, instead of every TID
     // satellite pulsing together.  0 (default) = every TID satellite gets every pulse.
-    int    tid_n_sats{ 0 };
+    int    tid_n_sats{ 0 };   ///< Satellites sharing the pulses round-robin; 0 = every TID satellite gets every pulse.
 
     // Extra low-elevation emphasis on the storm disturbance (SED + internal TID model):
     // the slant term is multiplied by obliquity^sed_elev_exp on top of the standard
     // vertical->slant obliquity, so low-elevation rays are disturbed far more than
     // high-elevation ones (0 = no extra emphasis, i.e. plain obliquity mapping).
-    double sed_elev_exp{ 0.0 };
+    double sed_elev_exp{ 0.0 };   ///< Exponent of the extra obliquity factor on the storm terms; 0 = none.
 
     // --- Epoch-to-epoch ionospheric turbulence (see IonoDisturbance::turbVtec) ---
     // A storm-roughened field: irregular STEC changes between consecutive epochs on a
@@ -109,7 +109,7 @@ struct IonoConfig {
     // ray sees the blob according to its own IPP (storm_gain is dropped from the SED
     // term only).  Default false keeps the existing gating and every existing scenario
     // byte-identical; the TID term stays gated either way.
-    bool sed_bulk{ false };
+    bool sed_bulk{ false };   ///< true = every ray sees the SED blob by its own pierce point; false = gated by storm_gain.
 
     std::vector<std::string> turb_sats{};   ///< PRNs carrying turbulence ({} = none).
     double turb_sigma_tecu{ 0.0 };          ///< Vertical 1-sigma (TECU) at the window peak; 0 = off.
@@ -121,21 +121,21 @@ struct IonoConfig {
     // 0.5*(1-cos), which pulses between 0 and the amplitude, instead of the bipolar
     // sin, so the TID only enhances the ionosphere and never depletes it.  Default
     // false = bipolar sin.  (evaluate() also floors the total slant TEC at zero.)
-    bool tid_positive{ false };
+    bool tid_positive{ false };   ///< true = positive-definite TID 0.5*(1-cos); false = bipolar sin.
 
     // Quiet background (vertical TECU) for the analytic background source, and the
     // fallback when no broadcast Klobuchar field is available.  The caller maps it to
     // slant and passes it to evaluate() as quiet_slant_stec_tecu; the Klobuchar and GIM
     // backgrounds are computed by the caller.
-    double quiet_vtec_tecu{ 25.0 };
+    double quiet_vtec_tecu{ 25.0 };   ///< Analytic quiet-background vertical TEC (TECU).
 
     // Scintillation phase-noise envelope.
-    double scint_sigma_phi_max_rad{ 0.6 };
-    double scint_elev_clamp_deg{ 10.0 };
+    double scint_sigma_phi_max_rad{ 0.6 };   ///< Phase 1-sigma scale (rad) at the storm core and window peak, before the elevation factor.
+    double scint_elev_clamp_deg{ 10.0 };     ///< Elevation floor (deg) applied before the 1/sin(elevation) factor.
 
     // Thin-shell geometry.
-    double shell_height_km{ 350.0 };
-    double earth_radius_km{ 6371.0 };
+    double shell_height_km{ 350.0 };   ///< Height of the ionospheric thin shell above the surface (km).
+    double earth_radius_km{ 6371.0 };  ///< Earth radius used for the pierce-point geometry (km).
 };
 
 /** @brief Evaluated ionospheric quantities for one ray at one epoch. */
@@ -143,7 +143,7 @@ struct IonoSample {
     /// Pierce point on the storm shell (deg), spherically propagated from the
     /// receiver's geodetic latitude (the same construction as GnssProcessor's
     /// computeIppGeometry), so it is not itself a geodetic latitude.
-    double ipp_lat_deg{ 0.0 }, ipp_lon_deg{ 0.0 };
+    double ipp_lat_deg{ 0.0 }, ipp_lon_deg{ 0.0 };   ///< Pierce-point longitude (deg), wrapped to [-180, 180).
     double obliquity{ 1.0 };          ///< Vertical->slant mapping factor (1/cos z').
     double stec_quiet_tecu{ 0.0 };    ///< Slant quiet background (TECU).
     double dstec_sed_tecu{ 0.0 };     ///< Slant SED disturbance (TECU).
@@ -152,18 +152,24 @@ struct IonoSample {
     double stec_total_tecu{ 0.0 };    ///< Slant total (TECU), floored at 0.
     double time_window{ 0.0 };        ///< Raised-cosine weight in [0,1].
     double spatial_weight{ 0.0 };     ///< SED Gaussian in [0,1] (scintillation co-location).
-    bool in_storm_window{ false };
+    bool in_storm_window{ false };    ///< True when the epoch lies inside the storm window (weight may still be 0 at its edges).
 };
 
 /** @brief Builds the slant-TEC field; stateless apart from its config. */
 class IonoDisturbance {
 public:
+    /**
+     * @brief Construct the field from its parameters.
+     * @param cfg Field parameters; copied, so the argument need not outlive this object.
+     */
     explicit IonoDisturbance(const IonoConfig& cfg) : cfg_(cfg) {}
 
     /**
      * @brief Evaluate the slant TEC field for a ray at epoch @p t.
      * @param rx_lat_deg,rx_lon_deg Receiver geodetic latitude/longitude (deg).
      * @param az_deg,el_deg         Satellite azimuth (from north) and elevation (deg).
+     * @param t Epoch of the ray (GPS time); the time of week selects the storm window,
+     *        pulse and turbulence timing.
      * @param quiet_slant_stec_tecu Slant quiet-background STEC (TECU) supplied by the
      *        caller, typically backed out of the reused broadcast Klobuchar L1 delay so
      *        that a single-frequency student removes it exactly.  The SED/TID storm is
@@ -192,6 +198,8 @@ public:
      *        from turbVtec(): a caller-supplied signed value, mapped to slant by the
      *        standard obliquity only (not scaled by storm_gain, sed_elev_exp or the
      *        storm window).  0 (default) = no turbulence.
+     * @return Pierce point, obliquity and the quiet, SED, TID and turbulence slant
+     *         contributions (TECU), with the total floored at 0.
      */
     IonoSample evaluate(double rx_lat_deg, double rx_lon_deg,
                         double az_deg, double el_deg, const GnssTime& t,
@@ -221,6 +229,13 @@ public:
      * noise/multipath/slip realisation.
      *
      * Only satellites listed in @c cfg.turb_sats are affected; everything else returns 0.
+     *
+     * @param prn Satellite id (e.g. "G05"); matched against @c cfg.turb_sats and hashed
+     *            into the value.
+     * @param t   Epoch (GPS week and time of week); hashed at millisecond resolution and
+     *            compared with the turbulence window.
+     * @return Signed vertical turbulence amplitude (TECU); 0 when turbulence is off or
+     *         @p prn is not listed.
      */
     double turbVtec(const std::string& prn, const GnssTime& t) const;
 
@@ -230,12 +245,27 @@ public:
      * Positive return = code group delay (+I); carrier-phase advance is the
      * negative of this value (-I).  Convert phase to cycles by dividing the
      * metric phase term by the wavelength.  Returns 0 for @p f_hz <= 0.
+     *
+     * @param stec_tecu Slant total electron content (TECU).
+     * @param f_hz      Carrier frequency (Hz).
+     * @return Group delay in metres (40.3e16 * STEC / f^2); 0 for a non-positive frequency.
      */
     static double slantDelayMetres(double stec_tecu, double f_hz);
 
-    /** @brief Scintillation phase 1-sigma (radians) for a ray in the storm core. */
+    /**
+     * @brief Scintillation phase 1-sigma (radians) for a ray in the storm core.
+     * @param s      Evaluated sample of the ray; its SED spatial weight and time window
+     *               scale the result.
+     * @param el_deg Satellite elevation (deg); floored at @c cfg.scint_elev_clamp_deg
+     *               before the 1/sin(elevation) factor.
+     * @return Phase noise 1-sigma in radians; 0 when the sample is outside the storm window.
+     */
     double scintSigmaPhiRad(const IonoSample& s, double el_deg) const;
 
+    /**
+     * @brief The field parameters this object was built with.
+     * @return Reference to the stored configuration, valid for this object's lifetime.
+     */
     const IonoConfig& config() const { return cfg_; }
 
 private:

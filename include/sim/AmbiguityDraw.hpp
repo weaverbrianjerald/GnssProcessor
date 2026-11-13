@@ -18,7 +18,7 @@
  * so every existing fixture regenerates byte-identically.
  *
  * @c AmbiguityRegime::Field draws @f$N \in [-W, +W]@f$ with @f$W@f$ =
- * @ref AmbiguityDrawConfig::half_width_cycles.
+ * @ref GnssProcessor::sim::AmbiguityDrawConfig::half_width_cycles "AmbiguityDrawConfig::half_width_cycles".
  *
  * ## Why the field regime exists (measured)
  *
@@ -75,7 +75,7 @@ enum class AmbiguityRegime {
 
 /** @brief Resolved ambiguity-draw knobs (see the file banner for the rationale). */
 struct AmbiguityDrawConfig {
-    AmbiguityRegime regime{ AmbiguityRegime::Legacy };
+    AmbiguityRegime regime{ AmbiguityRegime::Legacy };   ///< Magnitude regime of the drawn integers; Legacy keeps fixture byte-identity.
     /// Half-width @f$W@f$ of the @c Field regime, in cycles.  Ignored under
     /// @c Legacy, where the loader rejects an explicit value.  Default 48 is calibrated
     /// against the measured IGS spread tabulated in the file banner.
@@ -85,7 +85,7 @@ struct AmbiguityDrawConfig {
 /**
  * @brief splitmix64 over (system letter, PRN, band index, station salt).
  *
- * Exposed separately from @ref drawAmbiguity so a test can assert the avalanche
+ * Exposed separately from @ref GnssProcessor::sim::drawAmbiguity "drawAmbiguity" so a test can assert the avalanche
  * and the salt dependence without also pinning the range mapping.
  *
  * @param sat       Satellite ID, e.g. "G05"; only @c sat[0] (the system letter)
