@@ -37,7 +37,7 @@ namespace GnssProcessor {
 /// Helpers shared by the TurboEdit step files (formerly file-local).
 namespace turbo_edit {
 
-/// Satellite id from an MW result (prefer the field; fall back to amb_key prefix).
+/// @brief Satellite id from an MW result (prefer the field; fall back to amb_key prefix).
 /// @param sr An MW slip result.
 /// @return The satellite id ("G01"), or the whole key when it has no '_'.
 inline std::string satOf(const MwSlipResult& sr) {
@@ -46,6 +46,8 @@ inline std::string satOf(const MwSlipResult& sr) {
     return (p != std::string::npos) ? sr.amb_key.substr(0, p) : sr.amb_key;
 }
 
+/// @brief Elevation weight 1/sin(el) of the cross-sat TD2 pool, with el clamped at 10 deg.
+///
 /// Elevation shaping for the cross-sat TD2 pool: 1/sin(el), with el clamped at
 /// 10° so a near-horizon arc cannot produce an unbounded weight.  Mirrors the MW
 /// detector's mwElevationWeight.  The pool stores zenith-normalized values and
@@ -61,7 +63,8 @@ inline double gfElevWeight(double elev_deg) {
     return 1.0 / std::sin(el * kDegToRad);
 }
 
-/// Receiver-declared loss of lock on either phase signal of a pair.
+/// @brief Receiver-declared loss of lock on either phase signal of a pair.
+///
 /// Mirrors MwSlipDetector::hasAnyPhaseLockLoss's `lli != 0` convention.
 /// A set LLI corroborates that integer continuity broke, so the code-domain
 /// veto does not apply; the caller's LLI handling governs.
@@ -100,8 +103,8 @@ struct TurboEditResolver::MwFlag {
  */
 struct TurboEditResolver::PairEpoch {
     const PppObservation* obs;  ///< The pair's observation (an element of the epoch's input).
-    std::string key, sig1, sig2;  ///< Arc key "G01_L1C_L2W"; the pair, higher frequency first.
-    double gf{ 0.0 }, td2{ 0.0 }, lambda1{ 0.0 }, lambda2{ 0.0 };  ///< GF (m), TD2 or across-gap jump (m), wavelengths (m).
+    std::string key, /**< Arc key. */ sig1, /**< Higher-frequency signal. */ sig2;  ///< Arc key "G01_L1C_L2W"; the pair, higher frequency first.
+    double gf{ 0.0 }, /**< GF (m). */ td2{ 0.0 }, /**< TD2 or jump (m). */ lambda1{ 0.0 }, /**< sig1 wavelength (m). */ lambda2{ 0.0 };  ///< GF (m), TD2 or across-gap jump (m), wavelengths (m).
     double thresh{ std::numeric_limits<double>::quiet_NaN() };  ///< Detection gate on |td2| (m; gap-widened when bridged).
     double thresh_unfloored{ std::numeric_limits<double>::quiet_NaN() };  ///< kσ·MAD, no floor (trace diagnostic)
     bool   gf_exceeds{ false };  ///< |TD2| > thresh (outlier, ignoring cooldown)
@@ -192,14 +195,14 @@ struct TurboEditResolver::EpochWork {
     std::map<char, double> ivi_by_cons;
 
     // --- R5: pass 2 staging ------------------------------------------------------
-    // Per-(sat, signal) integer candidates, reconciled across a sat's pairs.
+    /// Per-(sat, signal) integer candidates, reconciled across a sat's pairs.
     std::map<std::string, std::map<std::string, StagedInteger>> cand;
-    // Bridged-moot markers: the staged integer is the signal's true
-    // across-gap slip (so cross-pair consistency checks stay valid), but the
-    // signal missed an epoch during the gap.  Its ambiguity was pruned and
-    // reseeded and already absorbs the slip, so emission moves it from
-    // repairs to EpochResolution::moot_signals (mandate suppression, no state
-    // action).
+    /// Bridged-moot markers: the staged integer is the signal's true
+    /// across-gap slip (so cross-pair consistency checks stay valid), but the
+    /// signal missed an epoch during the gap.  Its ambiguity was pruned and
+    /// reseeded and already absorbs the slip, so emission moves it from
+    /// repairs to EpochResolution::moot_signals (mandate suppression, no state
+    /// action).
     std::map<std::string, std::set<std::string>> cand_moot;
     std::set<std::string> conflict_sats;  ///< Satellites whose pairs staged different integers for one signal.
 };
@@ -245,7 +248,7 @@ struct TurboEditResolver::RowWork {
 
     // --- A2, A3: the decision (traced by A4, applied to the arc by A5) --------------
     bool did_slip = false;        ///< treat as discontinuity → reset arc + cooldown
-    int  dN1 = 0, dN2 = 0;        ///< Per-signal integers of the decision (dN1 on sig1, dN2 on sig2); traced.
+    int  dN1 = 0, /**< Integer on sig1 (cycles). */ dN2 = 0;        ///< Per-signal integers of the decision (dN1 on sig1, dN2 on sig2); traced.
     double frac2 = 0.0;           ///< Rounding residual of the split; traced.
     int  dN_wl_trace = 0;         ///< WL integer the decision used; traced.
     bool wl_known_trace = true;   ///< Whether that integer was known; traced.
@@ -262,7 +265,7 @@ struct TurboEditResolver::BridgeSolve {
     bool k_published = false;     ///< k is the MW-published integer.
     bool k_settled   = false;     ///< k is the settled across-gap estimate (a deferral epoch).
     // --- The candidate that survives the gates (selectBridgeCandidate) ----------------
-    int    best_k = 0, best_dN2 = 0;   ///< The best surviving candidate and its dN2.
+    int    best_k = 0, /**< WL integer k of the best candidate (cycles). */ best_dN2 = 0;   ///< The best surviving candidate and its dN2.
     double best_frac = 1.0;           ///< Its rounding residual.
     int    n_acceptable = 0;          ///< Candidates that passed every gate (1 = unique).
     int    n_sibling_pruned = 0;      ///< Candidates pruned by the sibling-pair affirmation.

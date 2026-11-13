@@ -416,6 +416,7 @@ public:
     bool enableTracing(const std::filesystem::path& log_dir);
 
     /// @brief Whether tracing is currently active.
+    /// @return True while the trace file is open (after a successful @c enableTracing).
     bool isTracingEnabled() const { return trace_file_.is_open(); }
 
 private:

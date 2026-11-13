@@ -127,6 +127,10 @@ namespace GnssProcessor {
          *        but suppresses slip flagging to avoid false detections from
          *        differential geometric error during pre-convergence.
          *        Pass 0.0 or omit it to turn this gate off (the original behaviour).
+         * @param receiver_position Receiver ECEF position (m) of this epoch.  Its
+         *        epoch-to-epoch change feeds the geometry correction of the OMC.  A
+         *        near-zero vector (norm below 1e-6 m, the default) means unknown: no
+         *        correction is applied and the stored previous position is not updated.
          * @param model_nuisance_m Magnitude (m) of the epoch-to-epoch change in
          *        the modelled part of the OMC that does not cancel in the
          *        between-satellite and between-epoch differencing: in practice
@@ -288,12 +292,14 @@ namespace GnssProcessor {
          * holds every pair.  Used by the network producer's deferred-flagging
          * path: the driver pools these between-epoch double differences across
          * all stations by signal pair to form a robust per-pair MAD, then
-         * thresholds (max(k·MAD, floor)) and refloats, instead of each station
          * thresholding its own handful of satellites.  Keyed by satellite id.
+         *
+         * @return Satellite id to its @c IfJumpInfo; empty before the first
+         *         @c detect call or when no satellite formed a jump.
          */
         const std::map<std::string, IfJumpInfo>& getLastIfJumps() const { return last_if_jumps_; }
 
-        /// Key of @ref getLastIfJumpsAllPairs: (satellite, "&lt;sig1&gt;_&lt;sig2&gt;").
+        /// Key of @ref GnssProcessor::IfPhaseSlipDetector::getLastIfJumpsAllPairs "getLastIfJumpsAllPairs": (satellite, "&lt;sig1&gt;_&lt;sig2&gt;").
         using SatPairKey = std::pair<std::string, std::string>;
 
         /**
@@ -370,7 +376,7 @@ namespace GnssProcessor {
          *      s_eff is an empirical-Bayes blend of this chain's EWMA of the
          *      non-reference DD dispersion (before this epoch's fold) with a
          *      cold prior, the physical floor divided by k (see
-         *      @ref updateRefDispersion).  Same shape as the network pool arm;
+         *      updateRefDispersion (@c GnssProcessor::IfPhaseSlipDetector::updateRefDispersion)).  Same shape as the network pool arm;
          *      no stochastic-model σ enters.
          *   2. Coherence: a genuine reference slip is a common step, so every
          *      non-reference double difference moves together and the family's
@@ -455,7 +461,7 @@ namespace GnssProcessor {
             /// close to it, so for its first epochs the hardened gate reduces to
             /// the legacy fixed floor.  That is deliberate: it keeps the scale
             /// from being contaminated by the epoch's own dispersion (see
-            /// @ref updateRefDispersion).  The consequence is that every cold run
+            /// updateRefDispersion (@c GnssProcessor::IfPhaseSlipDetector::updateRefDispersion)).  The consequence is that every cold run
             /// starts on the 3σ bar (0.5·λ_IF) that the hardened gate is meant to
             /// replace.  In those epochs `carry_warm` is false (n_emitted below
             /// `network.phase_leveling_warmup_epochs`, default 6), so a detection
@@ -552,9 +558,11 @@ namespace GnssProcessor {
             FireNoRebase    ///< A multi-satellite station event: reset the reference, but do not claim the median as its slip.
         };
 
-        /// Install the reference-gate parameters; only network setup calls this.
+        /// @brief Install the reference-gate parameters; only network setup calls this.
+        /// @param p Reference-gate parameters; copied into the detector.
         void setRefGate(const RefGateParams& p) { ref_gate_ = p; }
-        /// Reference-gate run telemetry for the run-end summary.
+        /// @brief Reference-gate run telemetry for the run-end summary.
+        /// @return Counters accumulated over the run so far (all chains summed).
         const RefGateCounters& refGateCounters() const { return ref_gate_counters_; }
 
         /**
@@ -588,7 +596,9 @@ namespace GnssProcessor {
             long long fanout_suppressed{ 0 };  ///< Non-reference DDs above the physical floor before the rebase and below it after: the rows the reference step would otherwise have placed on other satellites' arcs (a floor-crossing count, not what the pool would have flagged).
         };
 
-        /// Reference-arm run telemetry per gradient chain (§22.6).
+        /// @brief Reference-arm run telemetry per gradient chain (§22.6).
+        /// @return Chain key ("GPS", "GPS|L2W_L5X") to that chain's counters; empty until the
+        ///         reference arm has screened a chain.
         const std::map<std::string, RefArmChainCounters>& refArmChainCounters() const {
             return ref_arm_chain_counters_;
         }
@@ -618,7 +628,7 @@ namespace GnssProcessor {
          * `network.cycle_slip.if_phase_td_pairs = all` and
          * `network.cycle_slip.if_phase_td_ref_gate` are both set.
          *
-         * Nothing changes on the first chain, with @ref all_pairs_ off, or with
+         * Nothing changes on the first chain, with all_pairs_ (@c GnssProcessor::IfPhaseSlipDetector::all_pairs_) off, or with
          * this off.
          *
          * @param all True to run the arm on every chain.
@@ -662,7 +672,7 @@ namespace GnssProcessor {
         /** Run the reference arm on the additional chains too (§22.6): through
          *  the hardened gate on an own-elected reference, by inheritance on an
          *  adopted one; see @ref setRefArmAllChains.  Inert unless
-         *  @ref all_pairs_ is on and the hardened gate is enabled. */
+         *  all_pairs_ (@c GnssProcessor::IfPhaseSlipDetector::all_pairs_) is on and the hardened gate is enabled. */
         bool ref_arm_all_{ false };
 
         /** Minimum elevation (degrees) at which the current reference is kept.
@@ -725,15 +735,15 @@ namespace GnssProcessor {
             /** EWMA of the non-reference DD dispersion, 1.4826·MAD (raw m; the
              *  zenith-equivalent disp·⟨sin el⟩ under @ref RefGateParams::elev_norm). */
             double ref_scale_ewma{ 0.0 };
-            /** Samples folded into @ref ref_scale_ewma (shrinkage weight). */
+            /** Samples folded into ref_scale_ewma (@c GnssProcessor::IfPhaseSlipDetector::ConstellationState::ref_scale_ewma) (shrinkage weight). */
             long ref_scale_count{ 0 };
             /** Reference satellite of the most recent fire (run-length identity). */
             std::string ref_fire_sat;
             /** Detector epoch index of the most recent fire (−1 = never). */
             long long ref_last_fire_epoch{ -1 };
-            /** Consecutive fires on @ref ref_fire_sat. */
+            /** Consecutive fires on ref_fire_sat (@c GnssProcessor::IfPhaseSlipDetector::ConstellationState::ref_fire_sat). */
             int ref_consec_fires{ 0 };
-            /** Set by an escalation: force @ref selectReference to re-elect. */
+            /** Set by an escalation: force selectReference (@c GnssProcessor::IfPhaseSlipDetector::selectReference) to re-elect. */
             bool ref_force_reselect{ false };
             /** Satellite the escalation excludes from the next election. */
             std::string ref_exclude;
@@ -771,8 +781,8 @@ namespace GnssProcessor {
         std::map<std::string, IfJumpInfo> last_if_jumps_;
 
         /** The same cache keyed by (satellite, pair label), holding every
-         *  evaluated pair (§14.10): a superset of @ref last_if_jumps_ that holds
-         *  the same samples while @ref all_pairs_ is off. */
+         *  evaluated pair (§14.10): a superset of last_if_jumps_ (@c GnssProcessor::IfPhaseSlipDetector::last_if_jumps_) that holds
+         *  the same samples while all_pairs_ (@c GnssProcessor::IfPhaseSlipDetector::all_pairs_) is off. */
         std::map<SatPairKey, IfJumpInfo> last_if_jumps_all_;
         /// Reference reset key to the reference arm's step (m) of the last detect()
         /// call (@ref getLastRefFireMedians).
@@ -826,7 +836,7 @@ namespace GnssProcessor {
         /**
          * @brief Group observations into gradient chains and extract IF phase OMC data.
          *
-         * With @ref all_pairs_ off there is one chain per system, and each
+         * With all_pairs_ (@c GnssProcessor::IfPhaseSlipDetector::all_pairs_) off there is one chain per system, and each
          * satellite contributes its first band pair.  With it on, each satellite
          * also contributes every other pair of its phase bands with distinct
          * frequencies, each to a chain of its own keyed
@@ -842,7 +852,7 @@ namespace GnssProcessor {
 
         /**
          * @brief One uncombined observation's rows: the IF phase OMC of its first
-         *        band pair (bare-system chain) and, under @ref all_pairs_, of every
+         *        band pair (bare-system chain) and, under all_pairs_ (@c GnssProcessor::IfPhaseSlipDetector::all_pairs_), of every
          *        other pair with distinct frequencies (one chain each).
          * @param obs    The observation (raw phase signals, observed and modeled).
          * @param result Chain key -> rows; the observation's rows are appended.
@@ -986,7 +996,7 @@ namespace GnssProcessor {
          * @brief STAGED: this epoch's gate: the position uncertainty or the model
          *        nuisance exceeds its threshold (IfPhaseStagedUserPath.cpp).
          *
-         * Sets @ref epoch_gated_, the one definition processDoubleDifferences
+         * Sets epoch_gated_ (@c GnssProcessor::IfPhaseSlipDetector::epoch_gated_), the one definition processDoubleDifferences
          * reads.  The network passes position_sigma_3d = 0 and never arms the
          * nuisance gate, so there the gate is always open.
          *
@@ -1055,7 +1065,7 @@ namespace GnssProcessor {
          * Called only when the legacy condition (|median| > floor_frac·λ_IF,
          * n ≥ 2) already holds and @ref RefGateParams::enable is set.  Updates
          * the persistence and escalation state, increments
-         * @ref ref_gate_counters_, and returns whether and how the reference
+         * ref_gate_counters_ (@c GnssProcessor::IfPhaseSlipDetector::ref_gate_counters_), and returns whether and how the reference
          * slip fires.
          *
          * @param cs            Constellation state (mutated: fire run, escalation flags).
@@ -1111,7 +1121,7 @@ namespace GnssProcessor {
         double nuisance_max_m_{ 0.0 };
 
         /// This epoch's combined gating verdict (position or model nuisance),
-        /// computed once in @ref detect.  @ref processDoubleDifferences reads
+        /// computed once in @ref detect.  processDoubleDifferences (@c GnssProcessor::IfPhaseSlipDetector::processDoubleDifferences) reads
         /// this flag instead of re-deriving the predicate from
         /// `position_sigma_3d`, so the reference gate and the flagging share
         /// one definition; a check on `position_sigma_3d` alone would miss the

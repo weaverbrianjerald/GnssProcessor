@@ -185,50 +185,73 @@ public:
         StateManager& state_manager,
         const MeasurementModel& meas_model);
 
-    /// Get resolved WL ambiguities (forwarded from MW detector).
+    /// @brief Get resolved WL ambiguities (forwarded from MW detector).
+    /// @return Map from MW arc key ("G01_L1C_L2W") to the rounded SD WL integer
+    ///         (cycles) of every locked arc; empty when no MW detector is active.
     std::map<std::string, int> getResolvedWlAmbiguities() const;
 
-    /// Get fractional residuals of currently-locked WL arcs (forwarded from MW detector).
+    /// @brief Get fractional residuals of currently-locked WL arcs (forwarded from MW detector).
+    /// @return Map from MW arc key to the worst-case fractional residual of the locked
+    ///         arc (WL cycles); empty when no MW detector is active.
     std::map<std::string, double> getResolvedWlFractions() const;
 
-    /// Per-arc MW wide-lane lock quality (σ of the arc mean + sample count),
+    /// @brief Per-arc MW wide-lane lock quality (σ of the arc mean + sample count),
     /// the input the WL-only AR acceptance gate needs to bound each arc's
     /// rounding failure rate.  Empty when no MW detector is active.
+    /// @return Map from MW arc key to its @c WlLockQuality; empty when no MW detector is active.
     std::map<std::string, MwSlipDetector::WlLockQuality> getResolvedWlQuality() const;
 
-    /// Reset satellite state in all detectors and in the TurboEdit resolver.
+    /// @brief Reset satellite state in all detectors and in the TurboEdit resolver.
+    /// @param satellite Satellite identifier (e.g. "G01").
     void resetSatellite(const std::string& satellite);
 
-    /// Reset arc state for one (satellite, signal) only, in every detector and
+    /// @brief Reset arc state for one (satellite, signal) only, in every detector and
     /// in the TurboEdit resolver.  In the MW detector, arcs on signal pairs that
     /// do not involve the specified signal are preserved.  Use when the upstream
     /// caller knows which signal slipped (e.g. via the KF's per-(sat, signal)
     /// outlier dispatch).
+    /// @param satellite Satellite identifier (e.g. "G01").
+    /// @param signal    Signal identifier of the slipped signal (e.g. "L2W").
     void resetSatelliteSignal(const std::string& satellite,
                               const std::string& signal);
 
-    /// Provide bias corrections to every detector (MW and EWL use them; the
+    /// @brief Provide bias corrections to every detector (MW and EWL use them; the
     /// others ignore them) and to the TurboEdit resolver, if enabled.
+    /// @param corrections Bias source; nullptr disables bias correction.  Not owned: it
+    ///                    must outlive the detectors' use of it.
     void setCorrections(const GnssCorrections* corrections);
 
-    /// Enable MW trace logging.
+    /// @brief Enable MW trace logging.
+    /// @param log_dir Directory in which the MW trace file is created.
+    /// @return True if the trace file was opened; false when the MW detector is disabled
+    ///         or the file could not be opened.
     bool enableMwTracing(const std::filesystem::path& log_dir);
 
-    /// Enable the TurboEdit per-pair joint-solve trace (no-op if turbo_edit
+    /// @brief Enable the TurboEdit per-pair joint-solve trace (no-op if turbo_edit
     /// is disabled).  Returns true if the trace file was opened.
+    /// @param log_dir Directory in which the trace file is created.
+    /// @return True if the trace file was opened; false when TurboEdit is disabled or the
+    ///         file could not be opened.
     bool enableTurboEditTracing(const std::filesystem::path& log_dir);
 
-    /// Provide the effective observation sampling interval (s) used to gate the
+    /// @brief Provide the effective observation sampling interval (s) used to gate the
     /// high-rate-only TurboEdit GF repair (the resolver warns once when the
     /// interval is coarser than 1 s).  Also forwards the interval to the
     /// soft-LLI bridge and sets the TurboEdit GF-arc gap tolerance to 1.5 times
     /// the cadence.
+    /// @param interval_s Effective sampling interval in seconds.  A value of 0 or less
+    ///                   leaves the TurboEdit gap tolerance unchanged.
     void setSampleInterval(double interval_s);
 
-    /// Access the MW detector for its wider API (WL-lock queries, per-sat
+    /// @brief Access the MW detector for its wider API (WL-lock queries, per-sat
     /// quality scoring, pivot hints), or nullptr if the MW detector is
     /// disabled via @c estimation.cycle_slip.mw.
+    /// @return The MW detector (owned by the manager), or nullptr when it is disabled.
     MwSlipDetector* mwDetector() { return mw_; }
+    /**
+     * @brief Read-only access to the MW detector.
+     * @return The MW detector (owned by the manager), or nullptr when it is disabled.
+     */
     const MwSlipDetector* mwDetector() const { return mw_; }
 
     /**
@@ -262,6 +285,9 @@ public:
      * @c excluded_measurements with these so the held, still-slipped
      * ambiguities do not contaminate shared states across the MW one-epoch
      * confirmation delay.  Empty unless @c turbo_edit_bridge_lli.
+     *
+     * @return Set of "SAT_SIGNAL" measurement keys with an active hold; empty when
+     *         nothing is held or the bridge is disabled.
      */
     std::set<std::string> getHeldPendingBridgeKeys() const;
 

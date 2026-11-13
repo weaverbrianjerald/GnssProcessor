@@ -12,11 +12,11 @@
  * constructor's log line and comes from @c GnssConfig.
  *
  *   - The constants table, grouped by the decision each constant serves.
- *   - @ref mw::MwArcStats: one MW arc's running statistics, windows, lock and pending
+ *   - @ref GnssProcessor::mw::MwArcStats "mw::MwArcStats": one MW arc's running statistics, windows, lock and pending
  *     TD confirmation.
- *   - @ref mw::DemotedArcLevel: the pre-jump level a demoted arc leaves for the
+ *   - @ref GnssProcessor::mw::DemotedArcLevel "mw::DemotedArcLevel": the pre-jump level a demoted arc leaves for the
  *     across-gap settle estimate.
- *   - @ref mw::EstimatedBias: the in-house phase-bias estimate of one arc key.
+ *   - @ref GnssProcessor::mw::EstimatedBias "mw::EstimatedBias": the in-house phase-bias estimate of one arc key.
  */
 
 #include <array>
@@ -225,7 +225,7 @@ namespace GnssProcessor {
             size_t count{ 0 };             /**< Number of MW samples accumulated. */
             /** Lagged snapshot of {mean, M2, count} as of the end of the previous
              *  processed epoch (copied at the top of the per-epoch statistics
-             *  update).  @ref arcZdMean serves these, so a same-epoch consumer
+             *  update).  @c arcZdMean serves these, so a same-epoch consumer
              *  (the SD pre-reduce EWL rows) never re-ingests the current epoch's
              *  observations (SPEC_mw_wl_card §3.3, the guard against counting 1/n
              *  of the information twice).  Frame rule: every constant-shift
@@ -250,8 +250,8 @@ namespace GnssProcessor {
              *  consumer must guess it from the phase attribute.  Short RINEX-3
              *  codes ("C2W") fit in std::string's small buffer, so the per-epoch
              *  @c arc_snapshots_ copy stays allocation-free. */
-            std::string code1, code2;
-            double last_dev{ 0.0 };         /**< Active-reference deviation at the most recent epoch (meters). */
+            std::string code1, /**< RINEX code observable consumed on the arc's first signal (e.g. "C1W"). */ code2;  ///< Code observable on the second signal (e.g. "C2W").
+            double last_dev{ 0.0 };        /**< Active-reference deviation at the most recent epoch (meters). */
             double last_sigma{ std::numeric_limits<double>::quiet_NaN() }; /**< Active-reference sigma at the most recent epoch (meters). */
             std::array<double, kMwLocalWindowCap> mw_window{}; /**< Ring of recent accepted raw MW values (meters); valid entries are [0, mw_window_size). */
             size_t mw_window_head{ 0 };    /**< Next ring write slot (wraps at the configured window length). */

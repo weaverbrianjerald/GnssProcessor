@@ -70,27 +70,41 @@ public:
                                        const std::string& sat,
                                        const std::string& signal)>;
 
+    /**
+     * @brief Construct the bridge helper.
+     * @param config      Processing configuration; the cycle-slip section is read on each
+     *                    call, so it must outlive the bridge.
+     * @param log_manager Logging facility (the "cycle_slip_manager" logger is used); must
+     *                    outlive the bridge.
+     */
     SoftLliBridge(const GnssConfig& config, LogManager& log_manager);
 
     /// @brief Whether the soft-LLI bridge is enabled (toggle on).
+    /// @return True when TurboEdit and @c turbo_edit_bridge_lli are on and
+    ///         @c turbo_edit_max_gap_s is positive.
     bool enabled() const;
 
     /// @brief Forward the effective observation sampling interval (s); 0 =
     ///        unknown (SBF/RTCM streams), in which case the measured spacing
     ///        to the previous epoch gates the high-rate requirement.
+    /// @param interval_s Effective sampling interval in seconds, or 0 when unknown.
     void setSampleInterval(double interval_s) { sample_interval_s_ = interval_s; }
 
     /// @brief Roll the "last good" snapshot from the converged float posterior.
     ///        Call once per epoch after the KF update and before AR fix-and-hold.
     ///        Only keys below the converged-variance ceiling update, so a fresh
     ///        reset never overwrites the pre-gap anchor.  No-op unless enabled.
+    /// @param state_manager Filter state to snapshot from (ambiguity values and variances).
+    /// @param epoch_now_s   Continuous GPS seconds of this epoch (recency stamp of the snapshot).
     void recordSnapshot(const StateManager& state_manager, double epoch_now_s);
 
     /// @brief Phase-measurement keys ("G03_L2W") currently held.  The caller
     ///        seeds the KF update's @c excluded_measurements with these.
+    /// @return Set of "SAT_SIGNAL" keys with an outstanding hold; empty when none.
     std::set<std::string> heldKeys() const;
 
     /// @brief True if there are no outstanding holds (skip the resolve pass).
+    /// @return True when no key is held.
     bool empty() const { return held_pending_bridge_.empty(); }
 
     /// @brief Whether a satellite's LLI is held for a bridge repair instead of
@@ -98,6 +112,11 @@ public:
     ///        most 1 s (the declared interval when known, else the measured
     ///        spacing), and a non-GLONASS satellite.  The caller is responsible
     ///        for the BSSD-pivot exclusion (it owns the pivot map).
+    /// @param sat_id       Satellite identifier (e.g. "G05"); an empty string never qualifies.
+    /// @param epoch_now_s  Continuous GPS seconds of this epoch (measured-spacing source
+    ///                     when no sampling interval was declared).
+    /// @return True when the satellite's LLI should be held for a bridge repair;
+    ///         false when it should be reset immediately.
     bool qualifies(const std::string& sat_id, double epoch_now_s) const;
 
     /// @brief Register a soft-LLI hold: snapshot the satellite's recently
@@ -106,6 +125,13 @@ public:
     ///        for measurement exclusion, and mark them held-continuous in
     ///        @p resolver.  The caller must not reset @p resolver's arc for
     ///        this satellite, because the bridge needs the pre-gap level.
+    /// @param sat_id        Satellite identifier (e.g. "G05").
+    /// @param amb_keys      Ambiguity keys ("G05_L2W") of the satellite in the LLI reset set.
+    /// @param[in,out] resolver Gap-bridge resolver in which the held signals are marked
+    ///                      held-continuous.
+    /// @param epoch_now_s   Continuous GPS seconds of this epoch (hold start and snapshot
+    ///                      recency gate).
+    /// @param epoch_prefix  Log prefix.
     void registerHold(const std::string& sat_id,
                       const std::set<std::string>& amb_keys,
                       TurboEditResolver& resolver,
@@ -200,6 +226,7 @@ public:
 
     /// @brief Advance the previous-epoch marker (measured-spacing gate source).
     ///        Call once per epoch that carried observations.
+    /// @param epoch_now_s Continuous GPS seconds of this epoch; a value of 0 or less is ignored.
     void advanceEpoch(double epoch_now_s) {
         if (epoch_now_s > 0.0) prev_epoch_s_ = epoch_now_s;
     }

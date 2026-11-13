@@ -95,34 +95,34 @@ struct SlipEpochWork {
     // --- S3: working sets of the MW, TurboEdit and soft-LLI paths --------------
     /// Satellites already reset or repaired this epoch; S15 and S16 skip them.
     std::set<std::string> reset_sats;
-    // Satellites whose soft-LLI-held ambiguities were integer-repaired by the
-    // bridge this epoch (snapshot+dN·λ restore in the pre-pass below).  The MW
-    // per-sat reset loop skips these, since their slip is already handled.
+    /// Satellites whose soft-LLI-held ambiguities were integer-repaired by the
+    /// bridge this epoch (snapshot+dN·λ restore in the pre-pass below).  The MW
+    /// per-sat reset loop skips these, since their slip is already handled.
     std::set<std::string> soft_lli_repaired;
 
-    // TurboEdit (MW+GF joint repair) resolution for this epoch.  A member of
-    // the epoch work because it is consumed in two places: the MW per-satellite
-    // loop (where it supplies per-signal integers for the dual-frequency case
-    // cross-consistency cannot split) and the GF-only pass after the loop (the
-    // MW dN1==dN2 blind spot).  resolve() also rolls the GF jump arcs forward,
-    // so it runs every epoch, including epochs with no MW slips.
+    /// TurboEdit (MW+GF joint repair) resolution for this epoch.  A member of
+    /// the epoch work because it is consumed in two places: the MW per-satellite
+    /// loop (where it supplies per-signal integers for the dual-frequency case
+    /// cross-consistency cannot split) and the GF-only pass after the loop (the
+    /// MW dN1==dN2 blind spot).  resolve() also rolls the GF jump arcs forward,
+    /// so it runs every epoch, including epochs with no MW slips.
     TurboEditResolver::EpochResolution te;
-    std::map<std::string, std::set<std::string>>  te_culprits_by_sat; // sat -> culprit signals
-    std::map<std::string, std::map<std::string, int>> te_slips_by_sat; // sat -> signal -> dN
-    // sat -> signals the resolver adjudicated as needing no state action.  Three
-    // sources share one caller behaviour (suppress the MW mandate, touch
-    // nothing):
-    //  - code-event signals (MW flag with an affirmatively stable GF; the
-    //    event is in the code observable);
-    //  - gap-bridge moot signals (the across-gap slip is already absorbed by
-    //    the prune-and-reseed on the signal's return);
-    //  - clean_signals (dN == 0 from a confident joint solve; the documented
-    //    contract is that converged precision is kept.  For repair satellites
-    //    the culprit branch consumes them first, so they reach this set only
-    //    for clean-without-repair adjudications, such as the clean partner of
-    //    a bridged moot pair).
-    // Disjoint from te.reset_sats by resolver contract (conflicting
-    // evidence withdraws the adjudications).
+    std::map<std::string, std::set<std::string>>  te_culprits_by_sat; ///< sat -> culprit signals
+    std::map<std::string, std::map<std::string, int>> te_slips_by_sat; ///< sat -> signal -> dN (integer slip, cycles of that signal)
+    /// sat -> signals the resolver adjudicated as needing no state action.  Three
+    /// sources share one caller behaviour (suppress the MW mandate, touch
+    /// nothing):
+    ///  - code-event signals (MW flag with an affirmatively stable GF; the
+    ///    event is in the code observable);
+    ///  - gap-bridge moot signals (the across-gap slip is already absorbed by
+    ///    the prune-and-reseed on the signal's return);
+    ///  - clean_signals (dN == 0 from a confident joint solve; the documented
+    ///    contract is that converged precision is kept.  For repair satellites
+    ///    the culprit branch consumes them first, so they reach this set only
+    ///    for clean-without-repair adjudications, such as the clean partner of
+    ///    a bridged moot pair).
+    /// Disjoint from te.reset_sats by resolver contract (conflicting
+    /// evidence withdraws the adjudications).
     std::map<std::string, std::set<std::string>> te_suppress_by_sat;
 
     // --- S4: MW / LLI detection -----------------------------------------------
@@ -140,22 +140,22 @@ struct SlipEpochWork {
     // --- S8: mandates (only when the MW detector reported anything) -----------
     /// Every distinct mandated ambiguity key, grouped by satellite.
     std::map<std::string, std::set<std::string>> reset_keys_by_sat;
-    // Satellites carrying a receiver-declared loss of lock this
-    // epoch (signal-less reset entries).  LLI is authoritative:
-    // integer continuity is broken arbitrarily, so culprit repairs
-    // do not override the mandated resets.  This applies in
-    // particular to TurboEdit's GF-only resolution, whose equal-slip
-    // premise cannot be checked when the LLI branch suppressed all
-    // MW pair evidence.  The real-time engine also treats LLI
-    // entries as unconditional resets.
+    /// Satellites carrying a receiver-declared loss of lock this
+    /// epoch (signal-less reset entries).  LLI is authoritative:
+    /// integer continuity is broken arbitrarily, so culprit repairs
+    /// do not override the mandated resets.  This applies in
+    /// particular to TurboEdit's GF-only resolution, whose equal-slip
+    /// premise cannot be checked when the LLI branch suppressed all
+    /// MW pair evidence.  The real-time engine also treats LLI
+    /// entries as unconditional resets.
     std::set<std::string> lli_sats;
-    // Ambiguity keys reset during this epoch's slip phase (full
-    // resets, targeted culprit resets, residual resets).  A reset
-    // reseeds from the current observations, in the post-slip frame,
-    // so the clean-peer pass of the in-place pivot handling below
-    // does not apply an additional -dN_pivot shift to such a key (the
-    // fresh seed is already consistent with the slipped pivot's
-    // carrier).
+    /// Ambiguity keys reset during this epoch's slip phase (full
+    /// resets, targeted culprit resets, residual resets).  A reset
+    /// reseeds from the current observations, in the post-slip frame,
+    /// so the clean-peer pass of the in-place pivot handling below
+    /// does not apply an additional -dN_pivot shift to such a key (the
+    /// fresh seed is already consistent with the slipped pivot's
+    /// carrier).
     std::set<std::string> epoch_reset_amb_keys;
 
     // --- S9: pivot culprits ---------------------------------------------------
@@ -164,13 +164,13 @@ struct SlipEpochWork {
     std::set<std::pair<std::string, std::string>> pivot_affected_cons_sig;
 
     // --- S10: the deferred queues (filled by S11, drained by S12 and S13) -----
-    // Deferred state for pivot-affected (sat, signal) culprits.
-    // Populated by the per-sat loop below; drained after the
-    // loop by the force-handover + post-handover repair block.
+    /// Deferred state for pivot-affected (sat, signal) culprits.
+    /// Populated by the per-sat loop below; drained after the
+    /// loop by the force-handover + post-handover repair block.
     std::vector<DeferredIntegerRepair> deferred_integer_repairs;
-    // Pivot-affected sats whose slip integer was inconsistent
-    // across pairs: no integer to apply, so they are reset after
-    // the handover.
+    /// Pivot-affected sats whose slip integer was inconsistent
+    /// across pairs: no integer to apply, so they are reset after
+    /// the handover.  Entries are (satellite, signal) pairs.
     std::vector<std::pair<std::string, std::string>> deferred_resets;
 };
 

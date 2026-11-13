@@ -114,6 +114,7 @@ namespace GnssProcessor {
 
         /**
          * @brief Check if tracing is currently enabled.
+         * @return True while the trace file is open (after a successful @c enableTracing).
          */
         bool isTracingEnabled() const { return trace_file_.is_open(); }
 

@@ -170,7 +170,7 @@ namespace GnssProcessor {
         /// LLI shadow (SPEC_event_harness.md §14.11): one of this pair's bands
         /// carried a receiver loss-of-lock bit at the previous epoch, so the
         /// pair's previous sample was withheld.  The uncombined LLI branch of
-        /// @ref detectLargeMwResets schedules the ambiguity resets and skips
+        /// @ref GnssProcessor::MwSlipDetector::detectLargeMwResets "detectLargeMwResets" schedules the ambiguity resets and skips
         /// the satellite (`continue`) while preserving the MW arc on purpose:
         /// the MW combination depends on raw observations alone, so a short
         /// LLI gap does not invalidate the arc statistics.  The arc is not
@@ -187,7 +187,7 @@ namespace GnssProcessor {
     /**
      * @brief A per-arc Melbourne-Wubbena Welford summary in a ZD-consistent frame.
      *
-     * The frame reconstruction (see @ref arcZdMean) makes @c mean_m a
+     * The frame reconstruction (see @ref GnssProcessor::MwSlipDetector::arcZdMean "arcZdMean") makes @c mean_m a
      * zero-differenced per-(station,satellite) MW value regardless of whether the
      * arc is stored single-differenced (a non-pivot BIA arc) or undifferenced (a
      * pivot arc / no-BIA fallback), so a sign-weighted sum around a closed
@@ -213,13 +213,13 @@ namespace GnssProcessor {
         bool        exists{ false };
         /// The RINEX code observables the MW combination consumed on
         /// (@c sig1, @c sig2): @c matchChannel's same-tracking-attribute pick, with
-        /// its in-band fallback (see @ref collectUncombinedPairs).  Served because a
+        /// its in-band fallback (see @c collectUncombinedPairs).  Served because a
         /// consumer that models the arc's satellite code bias must name the same
         /// per-signal OSB column the observable carries.  Deriving "C"+band+attribute
         /// from the phase key is right only when the fallback did not fire, and a
         /// mis-attributed OSB column is a modelling error nothing downstream detects.
         /// Empty on an arc fed before this was recorded (never within one run).
-        std::string code1, code2;
+        std::string code1, /**< Code observable consumed on @c sig1 (e.g. "C1W"). */ code2;  ///< Code observable consumed on @c sig2 (e.g. "C2W").
     };
 
 } // namespace GnssProcessor

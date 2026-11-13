@@ -10,7 +10,7 @@
  *
  * Given a flagged reset boundary, this kernel re-derives geometry-free (GF) and
  * Melbourne-Wübbena (MW) series on both sides of the boundary from the resident
- * raw RINEX record, fits each with the @ref JumpGapFitter, and attributes the
+ * raw RINEX record, fits each with the @ref GnssProcessor::JumpGapFitter "JumpGapFitter", and attributes the
  * carrier-phase step to a per-frequency integer slip @f$(dN_1, dN_2)@f$.  This
  * is the offline (non-causal) analogue of the causal MW/TurboEdit detectors: it
  * uses epochs after the boundary, which a streaming detector cannot, and is
@@ -76,6 +76,7 @@ public:
         bool ok{false};                 ///< True iff all four windows are non-empty.
     };
 
+    /// @brief Construct the kernel around a frequency/wavelength provider.
     /// @param ppp_utils Borrowed frequency/wavelength provider (FDMA slots set).
     explicit SlipBridgeKernel(const PppUtils& ppp_utils) : ppp_utils_(ppp_utils) {}
 

@@ -990,8 +990,15 @@ namespace GnssProcessor {
          * @param arc_count Number of epochs in the current arc.
          * @param lambda_wl Wide-lane wavelength (meters).
          * @param thresh_m Threshold in meters.
+         * @param cross_sat_floor_m Cross-satellite warm-up floor (meters; diagnostic column,
+         *                 NaN when not evaluated for this row).
          * @param is_slip True if this observation triggered a slip detection.
          * @param is_lli True if loss-of-lock was detected.
+         * @param bia_corrected True when the arc runs on bias-corrected (single-differenced)
+         *                 MW values rather than the undifferenced receiver frame.
+         * @param sat_mw_bias_m Satellite MW bias recorded for this row (meters; 0 when none).
+         * @param rounded_wl Rounded wide-lane integer of the arc (cycles; 0 when not locked).
+         * @param wl_locked True when the arc has locked a wide-lane integer.
          * @param mw_pivot SD pivot satellite for this row's (constellation,
          *                 signal-pair) group; empty for undifferenced arcs.
          * @param local_ref_m Local-median reference level (meters; NaN when
@@ -1148,9 +1155,9 @@ namespace GnssProcessor {
          * (drift demotion, TD confirmation) reports an unknown integer, so the caller resets.
          *
          * @param obs     Observation (the epoch time, the elevation, tracing metadata).
-         * @param lane    The satellite and signal pair (@ref MwLane).
-         * @param sample  The MW value and its frame flags (@ref MwSample).
-         * @param frame   The single-difference frame (@ref MwSdFrame); default undifferenced.
+         * @param lane    The satellite and signal pair (MwLane (@c GnssProcessor::MwSlipDetector::MwLane)).
+         * @param sample  The MW value and its frame flags (MwSample (@c GnssProcessor::MwSlipDetector::MwSample)).
+         * @param frame   The single-difference frame (MwSdFrame (@c GnssProcessor::MwSlipDetector::MwSdFrame)); default undifferenced.
          * @return The verdict when a slip was flagged (the caller generates reset keys);
          *         empty otherwise.
          */
@@ -1480,12 +1487,12 @@ namespace GnssProcessor {
          *  @c processMwSample: once right after the gap check, so an arc that
          *  leaves through an early return is still recorded, and again once the
          *  adaptive threshold and flag verdict exist.  Cleared alongside
-         *  @ref epoch_clean_pairs_. */
+         *  epoch_clean_pairs_ (@c GnssProcessor::MwSlipDetector::epoch_clean_pairs_). */
         std::map<std::string, EpochPairStatus> epoch_pair_status_;
 
         /** LLI shadow memory (SPEC_event_harness.md §14.11): satellite → the phase
          *  bands that carried a receiver loss-of-lock bit, for the previous epoch
-         *  (@ref prev_lli_bands_) and the one being processed (@ref cur_lli_bands_).
+         *  (prev_lli_bands_ (@c GnssProcessor::MwSlipDetector::prev_lli_bands_)) and the one being processed (cur_lli_bands_ (@c GnssProcessor::MwSlipDetector::cur_lli_bands_)).
          *  Rotated once at the top of @c detectLargeMwResets, so a sample stamped
          *  during this epoch reads the previous epoch's flags.  The LLI epoch
          *  itself is withheld (the detector skips the satellite with `continue`),

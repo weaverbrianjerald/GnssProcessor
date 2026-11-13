@@ -123,7 +123,12 @@ struct SlipEpochContext {
     double position_sigma_3d{ 0.0 };                 ///< 3-D position std (m); 0 = unknown (IF detector gate).
     Eigen::Vector3d receiver_position{ Eigen::Vector3d::Zero() }; ///< Receiver ECEF (m) (IF detector).
 
-    /// Convenience constructor for the common observations-only case.
+    /**
+     * @brief Convenience constructor for the common observations-only case.
+     * @param obs Modeled observations of this epoch; stored by reference, so it must
+     *            outlive the context.  @c position_sigma_3d and @c receiver_position
+     *            keep their defaults.
+     */
     explicit SlipEpochContext(const std::vector<PppObservation>& obs) : observations(obs) {}
 };
 
@@ -139,6 +144,7 @@ struct SlipEpochContext {
  */
 class ISlipDetector {
 public:
+    /** @brief Virtual destructor, so a detector can be destroyed through an @c ISlipDetector pointer. */
     virtual ~ISlipDetector() = default;
 
     /**
@@ -180,10 +186,16 @@ public:
      */
     virtual void setCorrections(const GnssCorrections* corrections) { (void)corrections; }
 
-    /// @brief Algorithm tag for this detector.
+    /**
+     * @brief Algorithm tag for this detector.
+     * @return The @c SlipDetectorKind of the concrete detector; also the @c source of its events.
+     */
     virtual SlipDetectorKind kind() const = 0;
 
-    /// @brief Human-readable detector name (for logs/traces).
+    /**
+     * @brief Human-readable detector name (for logs/traces).
+     * @return Short fixed name of the concrete detector (for example "MelbourneWubbena").
+     */
     virtual std::string name() const = 0;
 
     /**
@@ -193,6 +205,9 @@ public:
      * @c CycleSlipManager uses it to reach the MW detector's full API
      * (WL-lock queries, pivot hints, quality scoring) from a registry-built
      * @c ISlipDetector handle without RTTI.
+     *
+     * @return The MW detector (this object, not owned by the caller), or nullptr when
+     *         the detector is not an @c MwSlipDetector.
      */
     virtual MwSlipDetector* asMelbourneWubbena() { return nullptr; }
 };

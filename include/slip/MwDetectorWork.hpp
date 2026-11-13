@@ -70,16 +70,20 @@ namespace GnssProcessor {
     //
     // Keyed by (constellation_char + "_" + phase1 + "_" + phase2).
     // -----------------------------------------------------------------
+    /**
+     * @brief One satellite's MW sample of one signal pair, staged for the
+     *        between-satellite differencing of its (constellation, pair) group.
+     */
     struct MwSlipDetector::SatMwEntry {
-        const PppObservation* obs;
-        UncombinedPair pair;
-        double mw_raw;          // raw MW in meters
-        double mw_bia;          // MW after subtracting satellite BIA bias (meters)
-        double sat_mw_bias;     // satellite BIA MW bias that was subtracted (meters)
-        bool   has_bia;         // true if satellite BIA was available
-        double lambda_wl;       // WL wavelength (meters)
-        bool   is_combined;     // true if this came from the combined (PPP) path
-        std::string if_phase_key; // IF phase label for combined reset keys (e.g. "L1C_L2W")
+        const PppObservation* obs;  ///< Observation the sample was formed from (an element of the epoch's input; not owned).
+        UncombinedPair pair;        ///< Phase and code signals of the pair the MW value was formed from.
+        double mw_raw;          ///< raw MW in meters
+        double mw_bia;          ///< MW after subtracting satellite BIA bias (meters)
+        double sat_mw_bias;     ///< satellite BIA MW bias that was subtracted (meters)
+        bool   has_bia;         ///< true if satellite BIA was available
+        double lambda_wl;       ///< WL wavelength (meters)
+        bool   is_combined;     ///< true if this came from the combined (PPP) path
+        std::string if_phase_key; ///< IF phase label for combined reset keys (e.g. "L1C_L2W")
     };
 
     /**
@@ -118,7 +122,7 @@ namespace GnssProcessor {
         /// sample was kept (@c MwSlipDetector::prev_lli_mw_).  Read by the step-epoch
         /// stamp in S8.
         double lli_epoch_s = 0.0;
-        double lli_move_m = std::numeric_limits<double>::quiet_NaN();
+        double lli_move_m = std::numeric_limits<double>::quiet_NaN();  ///< Raw MW change (m) since the LLI epoch's sample; NaN as above.
         /// The arc's step epoch (@c MwArcStats::step_epoch_s) after this sample: copied
         /// here at S1 (so a flag at S2 or S3 reads it before an erase) and restamped at
         /// S8.  Every verdict reports it (@c MwVerdict::step_epoch_s).
@@ -134,9 +138,9 @@ namespace GnssProcessor {
         double td2 = std::numeric_limits<double>::quiet_NaN();                 ///< TD2, NaN until formed.
         bool use_local = false;      ///< The local-median reference governs.
         bool use_td = false;         ///< A time-difference reference governs.
-        double dev = 0.0;             // deviation the gate tests
-        double mode_sigma = 0.0;      // mature spread of the same statistic (NaN → warmup floors)
-        int    detect_mode_code = 0;  // trace tag: 0=hatch, 1=local, 2=td1, 3=td2
+        double dev = 0.0;             ///< deviation the gate tests (meters)
+        double mode_sigma = 0.0;      ///< mature spread of the same statistic (meters; NaN → warmup floors)
+        int    detect_mode_code = 0;  ///< trace tag: 0=hatch, 1=local, 2=td1, 3=td2
 
         // --- S7 gate_ --------------------------------------------------------------------
         double thresh = 0.0;         ///< The adaptive threshold (meters).
