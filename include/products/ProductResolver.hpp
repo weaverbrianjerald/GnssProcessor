@@ -86,7 +86,7 @@ public:
      * 6 h with file-name start hours 00/06/12/18 UTC.
      *
      * Span-convention assumption (the candidate ordering depends on it; also
-     * stated at @ref resolveUltOrbits): the 48 h span is 24 h observed
+     * stated at resolveUltOrbits (@c GnssProcessor::ProductResolver::resolveUltOrbits)): the 48 h span is 24 h observed
      * followed by 24 h predicted; the file-name epoch @c YYYYDDDHHMM is the
      * start of the observed half, and the file is released about 27 h after
      * that epoch (3 h of processing latency after the observed half ends).
@@ -134,7 +134,7 @@ public:
     /**
      * @brief Build the IGS long-name ULT orbit filename (compressed form).
      *
-     * Grammar: @c <SRC>0OPSULT_<YYYYDDDHHMM>_02D_<SMP>_ORB.SP3.gz with
+     * Grammar: @c \<SRC\>0OPSULT_\<YYYYDDDHHMM\>_02D_\<SMP\>_ORB.SP3.gz with
      * @c MM always "00" (ultra-rapids start on the hour).
      *
      * @param product_source 3-char analysis-centre prefix (e.g. "COD").
@@ -195,6 +195,9 @@ private:
 
     /**
      * @brief Build CDDIS product URL for a given product tag and YYYYDOY.
+     * @param tag Product tag (for example the orbit, clock or ERP product name).
+     * @param yyyydoy Four-digit year and three-digit day of year, concatenated.
+     * @param gps_week GPS week of the product's directory on the server.
      * @param type_override When non-empty, use this product-latency code
      *        (FIN/RAP/ULT) instead of @c config_.product_type. Used to fetch a
      *        rapid ERP in a live real-time session whose orbit product is final.
@@ -203,6 +206,8 @@ private:
                                 int gps_week, const std::string& type_override = {}) const;
 
     /** @brief Build the expected filename for a product tag and YYYYDOY.
+     *  @param tag Product tag, as for @c buildProductUrl.
+     *  @param yyyydoy Four-digit year and three-digit day of year, concatenated.
      *  @param type_override See @c buildProductUrl. */
     std::string buildProductFilename(const std::string& tag,
                                      const std::string& yyyydoy,
@@ -221,6 +226,10 @@ private:
     static int gpsWeekFromDate(int year, int doy);
 
     /** @brief Resolve a single product type over a list of YYYYDOY strings.
+     *  @param tag Product tag, as for @c buildProductUrl.
+     *  @param yyyydoy_list Days to resolve, each a year and day of year concatenated.
+     *  @param gps_weeks GPS week of each day, index-matched to @p yyyydoy_list (a missing
+     *         entry reads as week 0).
      *  @param type_override See @c buildProductUrl. */
     std::vector<std::filesystem::path> resolveProduct(
         const std::string& tag,

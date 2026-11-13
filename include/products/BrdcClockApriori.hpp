@@ -187,16 +187,34 @@ public:
      */
     double clockSeconds(int rec, double t_s) const;
 
-    /// The record at index @p i (as handed in).
+    /**
+     * @brief The record at index @p i (as handed in).
+     * @param i Record index, as carried by @c Evaluation::record and @c Segment::record;
+     *          valid range 0 to recordCount() - 1 (anything else throws @c std::out_of_range).
+     * @return Reference to the stored record; valid for the lifetime of this object.
+     */
     const BroadcastEphemeris& record(int i) const { return records_.at(static_cast<std::size_t>(i)); }
 
-    /// Number of records handed in.
+    /**
+     * @brief Number of records handed in.
+     * @return Count of stored records, so valid indices for record() are 0 to count - 1.
+     */
     std::size_t recordCount() const { return records_.size(); }
 
-    /// The segments of @p sat in time order, or @c nullptr when it has none.
+    /**
+     * @brief The segments of @p sat in time order, or @c nullptr when it has none.
+     * @param sat Satellite identifier.
+     * @return Pointer to the satellite's segment list (ordered by @c Segment::start_s,
+     *         valid for the lifetime of this object), or @c nullptr when the satellite has
+     *         no selectable record anywhere in the navigation set.
+     */
     const std::vector<Segment>* segments(const std::string& sat) const;
 
-    /// Build counts and offset range.
+    /**
+     * @brief Build counts and offset range.
+     * @return The statistics fixed at construction (record counts, switch count, offset
+     *         range in metres, table origin and last node); valid for the lifetime of this object.
+     */
     const BuildStats& stats() const { return stats_; }
 
     /**
@@ -216,7 +234,11 @@ public:
      */
     std::size_t feedStore(LiveEphemerisStore& store, double now_s);
 
-    /// Records fed to the store so far.
+    /**
+     * @brief Records fed to the store so far.
+     * @return Total number of records inserted by all feedStore() calls (the sum of their
+     *         return values); never exceeds the number of healthy staged records.
+     */
     std::size_t fedCount() const { return feed_cursor_; }
 
     /**

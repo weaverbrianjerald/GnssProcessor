@@ -48,9 +48,19 @@ public:
     static ProductCache& getInstance();
 
     // Delete copy/move operations for singleton
+    /** @brief Deleted: the cache is a singleton, so a second copy of the data must not exist. */
     ProductCache(const ProductCache&) = delete;
+    /**
+     * @brief Deleted: copy assignment would duplicate the singleton.
+     * @return Not applicable; the operator cannot be called.
+     */
     ProductCache& operator=(const ProductCache&) = delete;
+    /** @brief Deleted: the singleton instance cannot be moved from. */
     ProductCache(ProductCache&&) = delete;
+    /**
+     * @brief Deleted: move assignment would empty the singleton.
+     * @return Not applicable; the operator cannot be called.
+     */
     ProductCache& operator=(ProductCache&&) = delete;
 
     /**
@@ -80,12 +90,48 @@ public:
     void clearCache();
 
     // Const accessors for cached products (deref the shared owner; always non-null).
+    /**
+     * @brief Cached precise-orbit records (one per satellite and epoch).
+     * @return Reference to the shared vector; empty before loadProducts(), and invalidated
+     *         by clearCache() unless a getOrbitsShared() handle is held.
+     */
     const std::vector<OrbitData>& getOrbits() const { return *orbits_; }
+    /**
+     * @brief Cached precise satellite clock records.
+     * @return Reference to the shared vector; empty before loadProducts(), and invalidated
+     *         by clearCache() unless a getClocksShared() handle is held.
+     */
     const std::vector<ClockData>& getClocks() const { return *clocks_; }
+    /**
+     * @brief Cached antenna models (phase center offsets and variations).
+     * @return Reference to the shared vector; empty before loadProducts(), and invalidated
+     *         by clearCache() unless a getAntennasShared() handle is held.
+     */
     const std::vector<AntennaData>& getAntennas() const { return *antennas_; }
+    /**
+     * @brief Cached satellite bias records.
+     * @return Reference to the shared vector; empty before loadProducts(), and invalidated
+     *         by clearCache() unless a getBiasesShared() handle is held.
+     */
     const std::vector<BiasData>& getBiases() const { return *biases_; }
+    /**
+     * @brief Cached Earth rotation parameter records.
+     * @return Reference to the shared vector; empty before loadProducts(), and invalidated
+     *         by clearCache() unless a getErpsShared() handle is held.
+     */
     const std::vector<ErpData>& getErps() const { return *erps_; }
+    /**
+     * @brief Cached GPS Klobuchar ionosphere coefficients.
+     * @return Reference to the 8 coefficients (alpha0..alpha3, then beta0..beta3), or an
+     *         empty vector when none were parsed or after clearCache().
+     */
     const std::vector<double>& getKlobucharCoeffs() const { return klobuchar_coeffs_; }
+    /**
+     * @brief Cached per-system satellite clock reference signal pairs.
+     * @return Reference to the map from system character ('G', 'E', ...) to the two code
+     *         signals that system's satellite clock refers to; empty when no bias file
+     *         description was parsed.  Not reset by clearCache().
+     */
     const ClockRefMap& getClockRefSignals() const { return clock_ref_signals_; }
 
     // Shared owners. Per-instance model components (Geometry, GnssCorrections) hold
@@ -94,17 +140,42 @@ public:
     // holds one copy per station (about 0.5 GB × N stations). The vectors are const,
     // so sharing is safe; an SSR consumer that overrides clocks rebinds its own
     // shared_ptr.
+    /**
+     * @brief Shared owner of the cached orbit records.
+     * @return Never null; keeps the vector alive after clearCache() until released.
+     */
     std::shared_ptr<const std::vector<OrbitData>>   getOrbitsShared() const { return orbits_; }
+    /**
+     * @brief Shared owner of the cached clock records.
+     * @return Never null; keeps the vector alive after clearCache() until released.
+     */
     std::shared_ptr<const std::vector<ClockData>>   getClocksShared() const { return clocks_; }
+    /**
+     * @brief Shared owner of the cached antenna models.
+     * @return Never null; keeps the vector alive after clearCache() until released.
+     */
     std::shared_ptr<const std::vector<AntennaData>> getAntennasShared() const { return antennas_; }
+    /**
+     * @brief Shared owner of the cached satellite bias records.
+     * @return Never null; keeps the vector alive after clearCache() until released.
+     */
     std::shared_ptr<const std::vector<BiasData>>    getBiasesShared() const { return biases_; }
+    /**
+     * @brief Shared owner of the cached Earth rotation parameter records.
+     * @return Never null; keeps the vector alive after clearCache() until released.
+     */
     std::shared_ptr<const std::vector<ErpData>>     getErpsShared() const { return erps_; }
 
     // Get product counts for diagnostics
+    /** @brief Number of cached orbit records. @return Size of getOrbits(); 0 if not loaded. */
     size_t getOrbitCount() const { return orbits_->size(); }
+    /** @brief Number of cached clock records. @return Size of getClocks(); 0 if not loaded. */
     size_t getClockCount() const { return clocks_->size(); }
+    /** @brief Number of cached antenna models. @return Size of getAntennas(); 0 if not loaded. */
     size_t getAntennaCount() const { return antennas_->size(); }
+    /** @brief Number of cached bias records. @return Size of getBiases(); 0 if not loaded. */
     size_t getBiasCount() const { return biases_->size(); }
+    /** @brief Number of cached ERP records. @return Size of getErps(); 0 if not loaded. */
     size_t getErpCount() const { return erps_->size(); }
 
     // Delete copy constructor and assignment operator

@@ -137,7 +137,10 @@ namespace GnssProcessor {
         double block_start_year{ 0.0 };     ///< Evaluated block's window start [decimal year] (0 when none).
         double block_end_year{ 0.0 };       ///< Evaluated block's window end [decimal year] (9999.0 = open-ended; 0 when none).
 
-        /// True iff a block was evaluated outside its window (BeforeFirst, AfterLast or InGap).
+        /**
+         * @brief True iff a block was evaluated outside its window (BeforeFirst, AfterLast or InGap).
+         * @return True for those three reach cases; false for NotEvaluated and Covered.
+         */
         bool extrapolated() const {
             return reach == SifPeriodicReach::BeforeFirst || reach == SifPeriodicReach::AfterLast
                 || reach == SifPeriodicReach::InGap;
@@ -231,7 +234,7 @@ namespace GnssProcessor {
      * @c extrapolation_years, and the antenna / receiver change flags over the
      * gap).  Callers that consume the coordinate log a warning in that case,
      * and another when the periodic block is extrapolated
-     * (@ref describePeriodicExtrapolation).
+     * (@ref GnssProcessor::describePeriodicExtrapolation "describePeriodicExtrapolation").
      *
      * Equipment-change rule over the gap: the antenna (respectively receiver)
      * windows are ordered by start; a window other than the first whose start
@@ -323,10 +326,16 @@ namespace GnssProcessor {
                                 const Eigen::Vector3d* approx_ecef = nullptr,
                                 double max_prefix_distance_m = SIF_MAX_PREFIX_DISTANCE_M) const;
 
-        /** @brief Number of stations currently held. */
+        /**
+         * @brief Number of stations currently held.
+         * @return Count of loaded station records; 0 before the first successful load().
+         */
         std::size_t size() const { return stations_.size(); }
 
-        /** @brief True if no stations have been loaded. */
+        /**
+         * @brief True if no stations have been loaded.
+         * @return True when size() is 0, false once any station has been ingested.
+         */
         bool empty() const { return stations_.empty(); }
 
     private:
@@ -340,7 +349,7 @@ namespace GnssProcessor {
     /**
      * @brief A network-roster station coordinate resolved from a SIF (RTA-12).
      *
-     * Result carrier for @ref resolveRosterCoordinate: the survey-grade ECEF at
+     * Result carrier for @ref GnssProcessor::resolveRosterCoordinate "resolveRosterCoordinate": the survey-grade ECEF at
      * the requested run date plus that date, which is the propagation epoch a
      * product contract declares as @c coord_epoch, and the extrapolation
      * diagnostics of the underlying @c ResolvedStationCoord (same meaning).
@@ -361,7 +370,7 @@ namespace GnssProcessor {
      * @brief Resolve a network-roster station's fixed ECEF by name at a run date (RTA-12).
      *
      * Composes @c StationInfoFile::find (9-char ID / DOMES / 4-char prefix,
-     * case-insensitive) with @ref resolveStationCoordinate, periodic and
+     * case-insensitive) with @ref GnssProcessor::resolveStationCoordinate "resolveStationCoordinate", periodic and
      * post-seismic terms enabled, which evaluates the full SIF coordinate function
      * @f$ x(t) = x_{ref} + v\,(t - t_{ref}) + \sum \text{periodic}(t) + \sum [\text{PSD}(t) - \text{PSD}(t_{ref})] @f$
      * at @p decimal_year.  The config loader calls it when
@@ -404,7 +413,7 @@ namespace GnssProcessor {
     static constexpr double SIF_ECCENTRICITY_TOLERANCE_M = 1e-3;
 
     /**
-     * @brief Origin of the marker -> ARP eccentricity in a @ref SifArpReduction.
+     * @brief Origin of the marker -> ARP eccentricity in a @ref GnssProcessor::SifArpReduction "SifArpReduction".
      */
     enum class SifEccentricitySource {
         RinexHeader,       ///< The RINEX `ANTENNA: DELTA H/E/N` record.

@@ -13,16 +13,16 @@
  * forces every consumer through a global datum break and a fresh convergence
  * transient, even after an outage of a few seconds.
  *
- * This module provides the warm path.  @ref NetworkStateSnapshot is a plain-data
+ * This module provides the warm path.  @ref GnssProcessor::NetworkStateSnapshot "NetworkStateSnapshot" is a plain-data
  * capture of both state layers (driver and emitter) plus metadata, and
- * @ref NetworkStateSnapshotIO serializes it to, and parses it from, a versioned,
+ * @ref GnssProcessor::NetworkStateSnapshotIO "NetworkStateSnapshotIO" serializes it to, and parses it from, a versioned,
  * line-oriented text file that can be read for debugging.  Doubles are written in
  * the shortest round-trippable decimal form (fmt's default formatting, as in
  * @c NetworkProductIO).  The file is replaced atomically on write, so a crash during
  * a write leaves the previous good snapshot intact (the one non-atomic fallback is
- * described at @ref NetworkStateSnapshotIO::write).
+ * described at @ref GnssProcessor::NetworkStateSnapshotIO::write "NetworkStateSnapshotIO::write").
  *
- * Warm-vs-cold decision (@ref NetworkStateSnapshotIO::warmResumeAllowed): a resume is
+ * Warm-vs-cold decision (@ref GnssProcessor::NetworkStateSnapshotIO::warmResumeAllowed "NetworkStateSnapshotIO::warmResumeAllowed"): a resume is
  * warm only when (1) the snapshot's config fingerprint matches the live run's (a
  * resume under a changed datum-relevant config must cold-start), and (2) the
  * snapshot's product-time age at the first live epoch is within the carry-validity
@@ -115,7 +115,7 @@
  * (@c network.state_snapshot_carry).  The @c END line holds the number of lines
  * between the '#' header and itself, blob lines included; a missing or mismatching
  * @c END fails the parse, which the caller treats as the cold-start signal.  Where a
- * record carries @c <station_idx>, station identity is the roster index, valid only
+ * record carries @c \<station_idx\>, station identity is the roster index, valid only
  * under an identical station roster, which the config fingerprint guarantees.
  *
  * The header literal carries the format version: @c v3 when any coupling record
@@ -429,7 +429,7 @@ struct NetworkStateSnapshot {
     /// network.shared_carry_full_cov posture, and restored behind
     /// network.resume_coupling_restore.  Empty on every other file.
     std::vector<std::string> carry_cov_keys;
-    std::vector<std::vector<double>> carry_cov_rows;
+    std::vector<std::vector<double>> carry_cov_rows;  ///< Lower triangle of P, one vector per row of @ref carry_cov_keys (row i holds P(i,0..i); @c QP records).
     // --- Datum memories (RS-3; SPEC_event_harness §21.7) ---------------------
     /// The eq34 chain datum's spanning tree at the last epoch, written under
     /// @c network.state_snapshot_datum_capture and restored behind
@@ -466,9 +466,9 @@ struct NetworkStateSnapshot {
     /// the satellites that actually re-seed instead of every satellite.  Empty unless
     /// network.code_datum_time_linked was armed on the writer.
     std::map<std::string, std::map<std::string, double>> code_bias_prev;
-    std::set<std::string> code_bias_sat_seen;
+    std::set<std::string> code_bias_sat_seen;  ///< Satellites whose code-bias split has ever been harvested (the second container of the lifecycle described for @ref code_bias_prev).
     /// The IF-pin reference pair (satellite -> {sig1, sig2}) that produced the values in
-    /// @ref code_bias_prev: the third container of the same kept-epoch lifecycle, and the
+    /// @c code_bias_prev: the third container of the same kept-epoch lifecycle, and the
     /// one that gates the IF-pin half of the datum.  The datum's RHS is a continuity term
     /// only when the pair is unchanged from the last kept epoch and both signals had a
     /// previous value (`pair_same` in Sbasis.cpp), so an empty map reads as "the
@@ -479,10 +479,12 @@ struct NetworkStateSnapshot {
     /// is the writer's last kept epoch), and a pair that did change still trips the test
     /// and still bumps.
     std::map<std::string, std::pair<std::string, std::string>> code_bias_ifpin_pair;
-    /// True when any RS-3 datum record is present.  A predicate of its own, like
-    /// @ref hasCouplingState: the restore site reports and warns about the two halves
+    /// @brief True when any RS-3 datum record is present.  A predicate of its own, like
+    /// @ref GnssProcessor::NetworkStateSnapshot::hasCouplingState "hasCouplingState": the restore site reports and warns about the two halves
     /// (eq34 tree, code-bias memory) separately, and each half is judged inert from its
     /// own records only.
+    ///
+    /// @return True when any eq34 datum map or any code-bias memory container is non-empty.
     bool hasDatumState() const {
         return !eq34_datum_rx.empty() || !eq34_rx_parent.empty()
             || !eq34_sat_root.empty() || !eq34_prev_target.empty()
@@ -490,7 +492,7 @@ struct NetworkStateSnapshot {
             || !code_bias_prev.empty() || !code_bias_sat_seen.empty()
             || !code_bias_ifpin_pair.empty();
     }
-    /// True when any coupling record is present (the writer then emits the v3 header).
+    /// @brief True when any coupling record is present (the writer then emits the v3 header).
     ///
     /// @warning Kept separate from @ref hasFrameState, which also gates the resume-side
     ///          frame restore (networkTryWarmResume, WarmResume.cpp).  Widening
@@ -499,12 +501,17 @@ struct NetworkStateSnapshot {
     ///          proceed with an empty @c anchor_incumbent, the QUEUE-1(d) erase would still
     ///          fire and remove the restored carries, and the coupling restore would have
     ///          no effect.
+    ///
+    /// @return True when the coupling dictionary, the coupling rows (L or Z), the clock
+    ///         refloat set or the dense covariance keys are non-empty.
     bool hasCouplingState() const {
         return !coupling_dict.empty() || !coupling_rows.empty()
             || !coupling_zrows.empty() || !clock_refloat_sats.empty()
             || !carry_cov_keys.empty();
     }
-    /// True when any frame record is present (the writer then emits the v2 header).
+    /// @brief True when any frame record is present (the writer then emits the v2 header).
+    /// @return True when the anchor incumbent or pin target, the clock anchor, or the clock
+    ///         frame accumulator, previous-frame record or epoch count is non-empty or positive.
     bool hasFrameState() const {
         return !anchor_incumbent.empty() || !anchor_pin_target.empty()
             || !clock_anchor.empty() || !clk_frame_acc.empty()
@@ -524,11 +531,13 @@ struct NetworkStateSnapshot {
     /// Mirror of @c NetworkEmitRebase::last_emit_: "sat|signal" -> previous re-based
     /// emitted bias (m), the emission frame the next epoch re-bases onto (@c ER rows).
     std::map<std::string, double> emit_rebase_last;
-    /// True when any RS-5 emit-layer record is present.  A predicate of its own, like
-    /// @ref hasDatumState and @ref hasCouplingState: the restore site judges the re-base
-    /// frame inert from its own records only.  Not folded into @ref hasFrameState: that
+    /// @brief True when any RS-5 emit-layer record is present.  A predicate of its own, like
+    /// @ref hasDatumState and @ref GnssProcessor::NetworkStateSnapshot::hasCouplingState "hasCouplingState": the restore site judges the re-base
+    /// frame inert from its own records only.  Not folded into @ref GnssProcessor::NetworkStateSnapshot::hasFrameState "hasFrameState": that
     /// predicate gates the resume-side frame restore, and widening it would let an
     /// emit-only snapshot claim frame state it does not have.
+    ///
+    /// @return True when the emit re-base map @c emit_rebase_last is non-empty.
     bool hasEmitState() const {
         return !emit_rebase_last.empty();
     }
@@ -560,8 +569,10 @@ struct NetworkStateSnapshot {
     std::map<std::string, double> pb_hold_frz_M;      ///< constellation letter -> M (@c PHM rows).
     std::map<std::string, double> pb_hold_prev_clock_m;  ///< sat -> clock at its previous emission (@c PHC rows).
     std::map<std::string, double> pb_hold_frz_prev_clk;  ///< sat -> clock at the previous emitted epoch (@c PHF rows).
-    /// True when any hold record is present.  A predicate of its own, like
-    /// @ref hasEmitState: the restore site judges the hold inert from its own records only.
+    /// @brief True when any hold record is present.  A predicate of its own, like
+    /// @ref GnssProcessor::NetworkStateSnapshot::hasEmitState "hasEmitState": the restore site judges the hold inert from its own records only.
+    ///
+    /// @return True when any of the four phase-bias hold maps (PH, PHM, PHC, PHF rows) is non-empty.
     bool hasHoldState() const {
         return !pb_hold.empty() || !pb_hold_frz_M.empty()
             || !pb_hold_prev_clock_m.empty() || !pb_hold_frz_prev_clk.empty();
@@ -623,10 +634,12 @@ struct NetworkStateSnapshot {
     /// whenever the level monitor (network.clock_level_monitor) ran; read back by a leg's
     /// raise on restore (network.clock_level_restore_raise).  Empty otherwise.
     std::map<std::string, std::pair<double, int>> level_info;
-    /// True when any RS-6 station-layer record is present.  A predicate of its own, like
-    /// @ref hasEmitState / @ref hasDatumState / @ref hasCouplingState: the restore site
+    /// @brief True when any RS-6 station-layer record is present.  A predicate of its own, like
+    /// @ref hasEmitState / @ref hasDatumState / @ref GnssProcessor::NetworkStateSnapshot::hasCouplingState "hasCouplingState": the restore site
     /// reports and warns about the two halves (rx-CB carry, deviation carry) separately,
     /// and each half is judged inert from its own records only.
+    ///
+    /// @return True when the receiver code-bias carry or the per-LOS deviation carry is non-empty.
     bool hasStationState() const {
         return !rx_cb_carry.empty() || !sh_dev_carry.empty();
     }
@@ -654,9 +667,11 @@ struct NetworkStateSnapshot {
     /// guaranteed by the roster fields inside the config fingerprint, as for
     /// @ref local_carry / @ref zwd_carry / @ref rx_cb_carry.
     std::map<int, std::vector<CanonSignal>> canonical_signals;
-    /// True when any RS-8 canonical-signal record is present.  A predicate of its own,
-    /// like @ref hasStationState / @ref hasEmitState: an absent group reads as inert for
+    /// @brief True when any RS-8 canonical-signal record is present.  A predicate of its own,
+    /// like @ref hasStationState / @ref GnssProcessor::NetworkStateSnapshot::hasEmitState "hasEmitState": an absent group reads as inert for
     /// itself alone and never takes another group's verdict.
+    ///
+    /// @return True when at least one station has a locked canonical signal pick.
     bool hasCanonicalSignalState() const { return !canonical_signals.empty(); }
     // --- Emitter layer -----------------------------------------------------
     /// Verbatim @c NetworkProductEmitter::serializeState blob (its own
@@ -673,7 +688,7 @@ struct NetworkStateSnapshot {
  * A machine-readable companion to the gate's prose, so that the
  * `network.state_snapshot_require` policy is decided on the class rather than on
  * a substring of an error message, and so that the one refusal with a
- * harness-specific remedy (@ref WarmResumeRefusal::NonPositiveAge: a leg
+ * harness-specific remedy (@c WarmResumeRefusal::NonPositiveAge: a leg
  * relaunched in place after it overwrote its own seed) can name that remedy.
  */
 enum class WarmResumeRefusal {
@@ -814,11 +829,16 @@ public:
     static std::string warmResumeRefusalMessage(bool require, WarmResumeRefusal why,
                                                 const std::string& detail);
 
-    /// 64-bit FNV-1a hash of @p s: the config-fingerprint hash primitive, with the
+    /// @brief 64-bit FNV-1a hash of @p s: the config-fingerprint hash primitive, with the
     /// same constants as the L15 manifest's config-bytes hash.
+    ///
+    /// @param s Byte string to hash (each byte is mixed in as unsigned char).
+    /// @return The 64-bit FNV-1a value, starting from the standard offset basis; deterministic
+    ///         across runs and platforms.
     static uint64_t fnv1a64(const std::string& s);
 
-    /// Current wall-clock UTC as "YYYY-MM-DDTHH:MM:SSZ" (snapshot metadata).
+    /// @brief Current wall-clock UTC as "YYYY-MM-DDTHH:MM:SSZ" (snapshot metadata).
+    /// @return The timestamp text; it reads the system clock, so it differs from call to call.
     static std::string utcNowIso();
 };
 

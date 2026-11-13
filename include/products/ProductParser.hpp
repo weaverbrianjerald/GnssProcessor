@@ -195,6 +195,10 @@ namespace GnssProcessor {
          * unaffected.  Populated by @ref parseBia (appended per call, never cleared);
          * empty before the first call, and a satellite-only file adds nothing.  No production
          * code consumes these yet; estimating receiver biases is separate work.
+         *
+         * @return Const reference to the internal vector of @ref ReceiverBiasData (bias and
+         *         standard deviation in metres); empty when no bias file with station
+         *         records has been parsed.
          */
         const std::vector<ReceiverBiasData>& getReceiverBiases() const { return receiver_biases_; }
 
@@ -207,36 +211,46 @@ namespace GnssProcessor {
 
         /**
         * @brief Move orbits out of parser. Parser's orbits_ will be empty after call.
+        * @return The orbit records (@ref OrbitData), now owned by the caller.
         */
         std::vector<OrbitData> moveOrbits() { return std::move(orbits_); }
 
         /**
          * @brief Move clocks out of parser. Parser's clocks_ will be empty after call.
+         * @return The satellite clock records (@ref ClockData), now owned by the caller.
          */
         std::vector<ClockData> moveClocks() { return std::move(clocks_); }
 
         /**
          * @brief Move antennas out of parser. Parser's antennas_ will be empty after call.
+         * @return The antenna models (@ref AntennaData), now owned by the caller.
          */
         std::vector<AntennaData> moveAntennas() { return std::move(antennas_); }
 
         /**
          * @brief Move biases out of parser. Parser's biases_ will be empty after call.
+         * @return The satellite bias records (@ref BiasData), now owned by the caller.
          */
         std::vector<BiasData> moveBiases() { return std::move(biases_); }
 
         /**
          * @brief Move clock reference signal map out of parser.
+         * @return Map from system character ('G', 'E', ...) to the two code signals the
+         *         satellite clock of that system refers to; empty when no bias file with a
+         *         description block was parsed.  The parser's map is left empty.
          */
         ClockRefMap moveClockRefSignals() { return std::move(clock_refs_); }
 
         /**
          * @brief Move ERPs out of parser. Parser's erps_ will be empty after call.
+         * @return The Earth rotation parameter records (@ref ErpData), now owned by the caller.
          */
         std::vector<ErpData> moveErps() { return std::move(erps_); }
 
         /**
          * @brief Move Klobuchar coefficients out of parser.
+         * @return The 8 GPS coefficients (alpha0..alpha3, then beta0..beta3), or an empty
+         *         vector when none were read.  The parser's vector is left empty.
          */
         std::vector<double> moveKlobucharCoeffs() { return std::move(klobuchar_coeffs_); }
 

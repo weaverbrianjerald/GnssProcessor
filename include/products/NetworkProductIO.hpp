@@ -130,8 +130,8 @@ class GnssConfig;   // forward declaration: windUpModeOf takes a const reference
 /// epochs.  They differ by whole cycles per satellite and signal, which a float
 /// ambiguity absorbs without any residual trace.
 inline constexpr const char* kWindUpModeOff         = "off";
-inline constexpr const char* kWindUpModeFractional  = "fractional";
-inline constexpr const char* kWindUpModeAccumulated = "accumulated";
+inline constexpr const char* kWindUpModeFractional  = "fractional";   ///< Wind-up applied as the wrapped fractional-cycle angle of each epoch.
+inline constexpr const char* kWindUpModeAccumulated = "accumulated";  ///< Wind-up applied as an angle unwrapped across epochs.
 
 /**
  * @brief The wind-up mode a run's configuration applies.
@@ -143,8 +143,8 @@ inline constexpr const char* kWindUpModeAccumulated = "accumulated";
  * replay or real-time consumer pins its own expectation to it.
  *
  * @param config Run configuration (the producer's, or the consumer's own).
- * @return One of @ref kWindUpModeOff, @ref kWindUpModeFractional,
- *         @ref kWindUpModeAccumulated.
+ * @return One of @ref GnssProcessor::kWindUpModeOff "kWindUpModeOff", @ref GnssProcessor::kWindUpModeFractional "kWindUpModeFractional",
+ *         @ref GnssProcessor::kWindUpModeAccumulated "kWindUpModeAccumulated".
  */
 std::string windUpModeOf(const GnssConfig& config);
 
@@ -282,7 +282,7 @@ struct SbasisContract {
     /// mixed pair (one signal in, one out); the mixed pair is worst because the
     /// consumer's receiver code-bias state must absorb a between-channel
     /// differential against the moving satellite OSBs.  Serialized as repeated
-    /// trailing @c cbpin=<const>:<s1>-<s2> S-line fields only when non-empty
+    /// trailing @c cbpin=\<const\>:\<s1\>-\<s2\> S-line fields only when non-empty
     /// (byte-identical otherwise).  An interpretation hint, not a replay-emitter
     /// parameter: @c makeReplayEmitter ignores it and @c checkContract compares it
     /// only for constellations the consumer declares (the @c clock_pivot_sat
@@ -311,7 +311,7 @@ struct SbasisContract {
     /// half of that pair is not serialized anywhere: the consumer estimates its own,
     /// which this token tells it to do.
     ///
-    /// Serialized as repeated trailing @c gfpin=<const>:<s1>-<s2> S-line fields only
+    /// Serialized as repeated trailing @c gfpin=\<const\>:\<s1\>-\<s2\> S-line fields only
     /// when non-empty (byte-identical otherwise).  An interpretation hint, not a
     /// replay-emitter parameter: @c makeReplayEmitter ignores it (the datum does not
     /// change how emitted values reconstruct into the store) and @c checkContract
@@ -332,7 +332,7 @@ struct SbasisContract {
     /// contract; a consumer that does not know `sat_gf_datum=` skips it as an
     /// unknown field, as the grammar intends.
     ///
-    /// Serialized as a single trailing @c sat_gf_datum=<mode> S-line field only when
+    /// Serialized as a single trailing @c sat_gf_datum=\<mode\> S-line field only when
     /// non-empty, so a producer without it writes the pre-RF-0d S line byte for byte.
     /// An interpretation hint, not a replay-emitter parameter: @c makeReplayEmitter
     /// ignores it (the datum does not change how emitted values reconstruct into the
@@ -352,7 +352,7 @@ struct SbasisContract {
     /// and signal.  A float ambiguity absorbs that difference, so no residual
     /// shows it and only the contract can.
     ///
-    /// Serialized as a trailing @c wumode=<mode> S-line field only when non-empty.
+    /// Serialized as a trailing @c wumode=\<mode\> S-line field only when non-empty.
     /// The producer always sets it, so every product it writes declares the mode;
     /// a contract built by hand and left empty writes the S line without the
     /// token.  A reader that predates the token skips it as an unknown field.
@@ -394,9 +394,10 @@ struct NetworkProductRecord {
         std::map<std::string, int> clock;  ///< "sat"        -> clock disc counter (C field 5).
         std::map<std::string, int> code;   ///< "sat|signal" -> code disc counter  (B field 5).
         std::map<std::string, int> phase;  ///< "sat|signal" -> phase disc counter (P field 7).
+        /** @brief Whether the record carries any serialized counter. @return True when at least one of the three maps is non-empty. */
         bool any() const { return !clock.empty() || !code.empty() || !phase.empty(); }
     };
-    SerializedDiscCounters serialized_disc;
+    SerializedDiscCounters serialized_disc;   ///< Counters this epoch's C / B / P records carried; all three maps empty when the file has none.
     /// The S-contract state as of this epoch (RTA-5): set (present=true) when an
     /// S line immediately preceded this epoch's E line (the deferred v2 header S
     /// counts for the first epoch; a mid-file re-broadcast counts for the epoch it
@@ -432,21 +433,31 @@ struct NetworkProductRecord {
  */
 class NetworkProductWriter {
 public:
-    /// Open @p path for writing (truncate) and emit the v1 format header.
+    /// @brief Open @p path for writing (truncate) and emit the v1 format header.
+    ///
+    /// @param path Output product file.  Missing parent directories are created.  A failed
+    ///        open leaves the writer inert (see @ref good).
     explicit NetworkProductWriter(const std::string& path);
 
-    /// Open @p path and emit a v2 header carrying @p contract (S-basis declaration,
+    /// @brief Open @p path and emit a v2 header carrying @p contract (S-basis declaration,
     /// a-priori product identity, disc threshold) before any epoch (B6).  The
     /// per-epoch E/C/B/P records are unchanged; only the header differs from v1.
+    ///
+    /// @param path     Output product file.  Missing parent directories are created.  A failed
+    ///        open leaves the writer inert (see @ref good).
+    /// @param contract S-basis contract written as the header's S line; read during
+    ///        construction only, not retained.
     NetworkProductWriter(const std::string& path, const SbasisContract& contract);
 
-    /// True iff the output stream is open and healthy.
+    /// @brief True iff the output stream is open and healthy.
+    /// @return True while writes will reach the file; false after a failed open or stream error.
     bool good() const { return static_cast<bool>(out_); }
 
-    /// Path the writer was constructed with (for diagnostics).
+    /// @brief Path the writer was constructed with (for diagnostics).
+    /// @return The output path exactly as passed to the constructor.
     const std::string& path() const { return path_; }
 
-    /// Append one epoch.  @p datum_changed records a clock-pivot handover this
+    /// @brief Append one epoch.  @p datum_changed records a clock-pivot handover this
     /// epoch so a replay can reproduce the forced discontinuity bump.
     /// @p datum_consts (A2) is the set of constellations whose clock datum
     /// re-referenced; it is appended as E-line field 8 only when non-empty, so a
@@ -463,21 +474,33 @@ public:
     /// absent) so the clock counter sits at a fixed position.  nullptr (default)
     /// writes the pre-RTA-4 field counts verbatim.
     /// No-op if the stream is not @c good().
+    ///
+    /// @param sol           The epoch to write (E line plus its per-satellite records).
+    /// @param datum_changed True when the driver declared a clock-pivot handover this epoch
+    ///        (E-line field 7).
+    /// @param datum_consts  RINEX constellation letters whose clock datum re-referenced
+    ///        (E-line field 8); empty omits the field.
+    /// @param retro_sats    Satellite ids flagged by the retro-bump this epoch (R record);
+    ///        empty omits the record.
+    /// @param disc_source   Emitter to query for the post-emit discontinuity counters, or
+    ///        nullptr (default) to write none.  Not retained.
     void write(const NetworkSolutionEpoch& sol, bool datum_changed = false,
                const std::set<char>& datum_consts = {},
                const std::set<std::string>& retro_sats = {},
                const NetworkProductEmitter* disc_source = nullptr);
 
 
-    /// Append a current machine-parseable "S" contract line mid-file (the periodic /
+    /// @brief Append a current machine-parseable "S" contract line mid-file (the periodic /
     /// datum-change contract re-broadcast, RTA-5).  Same grammar as the header S line,
     /// including the optional @c gid= / @c stale= trailing fields.  The caller writes
     /// it before the epoch block it describes, so a positional reader updates its
     /// contract state for the epochs that follow.  No-op if the stream is not
     /// @c good().
+    ///
+    /// @param contract The contract to broadcast; serialized immediately, not retained.
     void writeContract(const SbasisContract& contract);
 
-    /// Append one positional epoch-status heartbeat line (RTA-10;
+    /// @brief Append one positional epoch-status heartbeat line (RTA-10;
     /// @c H,week,tow,status,sigma0,n_sats_published,withheld, see the file banner).
     /// The producer driver writes it before the epoch block on an emit (as for the S
     /// line) and standalone at the gate / σ̂0 withhold sites, which otherwise emit
@@ -485,9 +508,12 @@ public:
     /// empty @p status.withheld is written as "-".  The caller owns the per-epoch
     /// flush (@c network.product_flush_per_epoch), as for epoch blocks.  No-op if
     /// the stream is not @c good().
+    ///
+    /// @param status The heartbeat to write: content epoch, disposition, global sigma0,
+    ///        number of satellites published and the withheld-constellation text.
     void writeEpochStatus(const NetworkProducerStatus& status);
 
-    /// Append the producer's declared signal roster as a contiguous block of @c N
+    /// @brief Append the producer's declared signal roster as a contiguous block of @c N
     /// records (see @c products/SignalDeclaration.hpp for the
     /// grammar).  The caller writes it before the epoch block it describes, as for
     /// the S line, and only when the declaration changed, so an unarmed producer
@@ -499,7 +525,7 @@ public:
     /// @return The number of records written.
     std::size_t writeSignalDeclaration(const NetworkSignalDeclaration& decl);
 
-    /// Flush the output stream to disk (RTA-6).  The producer driver calls this once
+    /// @brief Flush the output stream to disk (RTA-6).  The producer driver calls this once
     /// per epoch under @c network.product_flush_per_epoch so a live tail consumer
     /// (@ref NetworkProductTail) sees each epoch block as soon as it is written
     /// rather than at ofstream-buffer boundaries (without it, an epoch block larger
@@ -540,7 +566,7 @@ public:
     static std::vector<NetworkProductRecord> read(const std::string& path,
                                                   bool* ok = nullptr);
 
-    /// Overload that also returns the parsed S-basis contract (the v2 "S" header
+    /// @brief Overload that also returns the parsed S-basis contract (the v2 "S" header
     /// line; B6).  @p contract_out->present is false for a v1 file or an absent "S"
     /// line (backward-compatible: @p ok stays true and replay is unaffected).
     ///
@@ -553,12 +579,21 @@ public:
     /// @c replay; the caller decides what to do with the statuses (the
     /// consumer-replay driver forwards them to
     /// @c SsrCorrectionStore::setProducerStatus, mirroring the RT service loop).
+    ///
+    /// @param path         Product file written by @c NetworkProductWriter.
+    /// @param[out] contract_out Receives the parsed S contract; reset to a default contract
+    ///        (present false) before parsing.  May be null when the contract is not wanted.
+    /// @param[out] ok      Set false on an open failure or any malformed line (parsing
+    ///        continues past a bad line), true otherwise.  May be null.
+    /// @param[out] statuses_out Receives every H heartbeat in file order, cleared first.
+    ///        Null (default) skips status collection.
+    /// @return Records in file order (epoch order).  Empty if the file cannot be opened.
     static std::vector<NetworkProductRecord> read(const std::string& path,
                                                   SbasisContract* contract_out,
                                                   bool* ok,
                                                   std::vector<NetworkProducerStatus>* statuses_out = nullptr);
 
-    /// Cross-check a file's S-basis contract against the consumer's @p expected
+    /// @brief Cross-check a file's S-basis contract against the consumer's @p expected
     /// convention (B6).  Returns true if compatible; on any mismatch returns false
     /// and (if @p mismatches non-null) appends a human-readable line per differing
     /// field.  The caller decides whether a mismatch is a warning or a hard error.
@@ -570,16 +605,26 @@ public:
     /// phase-bias hold flags and the wind-up mode.  The wind-up mode is compared
     /// only when both sides declare it (see @c SbasisContract::windup_mode); a
     /// file that does not is accepted, since its mode cannot be verified.
+    ///
+    /// @param file       Contract parsed from the product file (see @c read).  A contract
+    ///        with @c present false is itself reported as a mismatch.
+    /// @param expected   The consumer's expected convention.
+    /// @param[out] mismatches Optional: one human-readable line is appended per differing
+    ///        field.  Null (default) collects nothing.
+    /// @return true when every compared field agrees; false on any mismatch.
     static bool checkContract(const SbasisContract& file, const SbasisContract& expected,
                               std::vector<std::string>* mismatches = nullptr);
 
-    /// Replace every ',' with ';' so an arbitrary string is safe to write into a
+    /// @brief Replace every ',' with ';' so an arbitrary string is safe to write into a
     /// single CSV field of @c network_contract_check.csv (L14).  Defensive: the
     /// current checkContract mismatch strings are comma-free, but this keeps the
     /// check output robust to future message edits.
+    ///
+    /// @param s Any text, for example one mismatch line from @ref checkContract.
+    /// @return A copy of @p s with each comma replaced by a semicolon.
     static std::string csvSanitize(const std::string& s);
 
-    /// Construct an emitter configured as the producer that wrote @p contract, from
+    /// @brief Construct an emitter configured as the producer that wrote @p contract, from
     /// the seven replay-emitter construction parameters the contract carries
     /// (@c disc_threshold_m, @c emit_clock_disc, @c staleness_horizon_s,
     /// @c code_bias_jump_test, @c clock_disc_on_set_change,
@@ -589,11 +634,13 @@ public:
     /// yields the default emitter, reproducing the pre-B6 replay behavior.  Feed the
     /// same instance to every @c replay call of one file (the emitter carries the
     /// cross-epoch counter state).
+    ///
+    /// @param contract The S contract parsed from the file (see @c read).
+    /// @return A fresh emitter with empty stream state, returned by value.
     static NetworkProductEmitter makeReplayEmitter(const SbasisContract& contract);
 
     /**
      * @brief Whether a consumer may replay a wire that carries this contract
-     *.
      *
      * The S contract line is part of every wire written since the line became mandatory: it carries
      * the replay emitter's construction (@ref makeReplayEmitter), the
@@ -620,6 +667,12 @@ public:
      *        @c emitToStore.  The consumer interleaves this with its own per-epoch
      *        processing as @c runNetwork does live, so the store always reflects the
      *        just-replayed epoch.
+     *
+     * @param rec     One parsed epoch record (see @c read).
+     * @param[in,out] store   Destination store; receives the epoch's declared signal roster
+     *                (when the record carries one) and the emitted SSR records.
+     * @param[in,out] emitter Replay emitter carrying the cross-epoch discontinuity state.  Pass
+     *                the same instance for every record of one file, in file order.
      */
     static void replay(const NetworkProductRecord& rec,
                        SsrCorrectionStore& store,
@@ -685,40 +738,58 @@ public:
      *                     without RTA-4 serialized values.
      */
     explicit NetworkProductTail(const std::string& path, bool start_at_end = false);
+    /** @brief Destroy the tail; no file handle is held between polls, so nothing is left open. */
     ~NetworkProductTail();
+    /** @brief Deleted: the tail owns file-follow and parse state and is not copyable. */
     NetworkProductTail(const NetworkProductTail&)            = delete;
+    /**
+     * @brief Deleted: the tail owns file-follow and parse state and is not copy-assignable.
+     * @return Not applicable (the operation does not exist).
+     */
     NetworkProductTail& operator=(const NetworkProductTail&) = delete;
 
-    /// Path the tail was constructed with (for diagnostics).
+    /// @brief Path the tail was constructed with (for diagnostics).
+    /// @return The followed product file path exactly as passed to the constructor.
     const std::string& path() const;
 
-    /// Current S-basis contract state: the v2 header S line or the most recent
+    /// @brief Current S-basis contract state: the v2 header S line or the most recent
     /// RTA-5 re-broadcast consumed so far.  @c present is false until any S line
     /// has been seen (v1 files, or a mid-file join before the next re-broadcast).
+    ///
+    /// @return Reference to the tail's own contract; valid until the next @ref poll or
+    ///         @ref pollInto, which may update it.
     const SbasisContract& contract() const;
 
-    /// The most recent epoch-status heartbeat (H record, RTA-10) consumed so far,
+    /// @brief The most recent epoch-status heartbeat (H record, RTA-10) consumed so far,
     /// or @c std::nullopt if none (pre-RTA-10 files, heartbeat off, or a mid-file
     /// join before the next H).  Updates on every consumed H line, including the
     /// standalone heartbeat of a fully withheld epoch, which completes no product
     /// record, so a live consumer can read the producer's last status and its time
     /// whether or not products flowed.  Reset by a rotation reopen.
+    ///
+    /// @return A copy of the latest heartbeat, or @c std::nullopt when none has been consumed.
     std::optional<NetworkProducerStatus> lastStatus() const;
 
-    /// True while every consumed line has parsed cleanly (the incremental
+    /// @brief True while every consumed line has parsed cleanly (the incremental
     /// equivalent of @c NetworkProductReader::read's @c ok flag; sticky, reset
     /// on a rotation reopen).  A mid-file join's first torn line does not count:
     /// it is discarded before parsing.
+    ///
+    /// @return false once any consumed line was malformed, until a rotation reopen.
     bool healthy() const;
 
-    /// Number of epochs replayed into a store via @ref pollInto since
+    /// @brief Number of epochs replayed into a store via @ref pollInto since
     /// construction or the last rotation reopen.
+    ///
+    /// @return Count of records replayed; @ref poll alone does not advance it.
     std::size_t epochsDelivered() const;
 
     /**
      * @brief Parse-only poll: consume newly appended complete lines and return
      *        the epochs completed since the last poll (each exactly once, in
      *        file order).  Does not touch any store or the owned emitter.
+     * @return The newly completed records; empty when nothing new completed, when the file
+     *         does not exist yet, or when it has not grown.
      */
     std::vector<NetworkProductRecord> poll();
 
@@ -726,6 +797,8 @@ public:
      * @brief Poll and replay each newly completed epoch into @p store via the
      *        owned replay emitter (@c NetworkProductReader::replay, shared
      *        logic, RTA-4 counter adoption included).
+     * @param[in,out] store Consumer store that receives each replayed epoch; also receives the
+     *                combined-sigma age coefficient once a contract has been seen.
      * @return The completed records, so the caller can inspect per-epoch
      *         metadata (contract refreshes, generation id) without re-parsing.
      */
@@ -770,7 +843,7 @@ inline constexpr const char* kNbpAprioriPrefix = "sp3+brdc:";
 /**
  * @brief Whether an S line's a priori identity declares the native broadcast clock.
  * @param apriori_product_id The S line's a priori identity.
- * @return True when it starts with @ref kNbpAprioriPrefix.
+ * @return True when it starts with @ref GnssProcessor::kNbpAprioriPrefix "kNbpAprioriPrefix".
  */
 inline bool isNbpAprioriId(const std::string& apriori_product_id) {
     return apriori_product_id.rfind(kNbpAprioriPrefix, 0) == 0;

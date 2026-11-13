@@ -84,7 +84,7 @@ struct NetworkPhaseBias {
     /// token; a change of it is the declaration on which a consumer refloats.
     std::uint32_t hold_generation{0};
     /// Component of the chain datum that this satellite phase bias belongs to, as a
-    /// P-record @c cmp=<n> token declares it (a truth wire carries @c cmp=1).  Two phase
+    /// P-record @c cmp=\<n\> token declares it (a truth wire carries @c cmp=1).  Two phase
     /// biases of one signal share an integer frame only when their components are equal,
     /// so a consumer pairs satellites within a component.  0 means the record carries
     /// no token (every wire written before the token existed, every golden wire).  Read
@@ -207,6 +207,9 @@ public:
     /// GPS L1 cycle (~0.19 m), so cycle-level bias jumps trip it and noise does not.
     static constexpr double kDefaultDiscThresholdM = 0.05;
 
+    /// @brief Construct an emitter with empty stream state; every parameter is a
+    ///        bookkeeping option whose default reproduces the legacy behaviour.
+    ///
     /// @param disc_threshold_m Phase-bias jump (m) that counts as a discontinuity.
     ///        Defaults to @ref kDefaultDiscThresholdM.
     /// @param emit_clock_disc When true (A2), the emitter maintains a per-satellite
@@ -296,9 +299,12 @@ public:
         DiscChannel suppressed{kDiscChanClock};  ///< The channel that was not bumped.
     };
 
-    /// Suppressed marks of the last @ref emitToStore call, cleared at the top of every
+    /// @brief Suppressed marks of the last @ref emitToStore call, cleared at the top of every
     /// emit.  Always empty under the legacy satellite scope, so a run with
     /// the knob off allocates nothing and the driver's drain is a no-op.
+    ///
+    /// @return One row per (satellite, channel) whose mark was withheld; empty when nothing was
+    ///         suppressed.  A reference into the emitter, valid until the next emit.
     const std::vector<MarkScopeEvent>& markScopeEvents() const { return mark_scope_events_; }
 
     /// Number of marks this emit applied to each channel, indexed by
@@ -309,10 +315,14 @@ public:
         long long cb{0};    ///< (sat, signal) code-bias cells a mark bumped.
         long long pb{0};    ///< (sat, signal) phase-bias cells a mark bumped.
     };
-    /// Applied-mark tally of the last @ref emitToStore call.
+    /// @brief Applied-mark tally of the last @ref emitToStore call.
+    /// @return Counts of marks applied per channel; all zero under the legacy satellite scope.
+    ///         A reference into the emitter, valid until the next emit.
     const MarkChannelTally& markChannelTally() const { return mark_channel_tally_; }
 
-    /// Whether the per-channel mark scope is armed on this emitter.
+    /// @brief Whether the per-channel mark scope is armed on this emitter.
+    /// @return True when constructed with @c disc_mark_scope_channel; false is the legacy
+    ///         satellite-wide scope.
     bool discMarkScopeChannel() const { return disc_mark_scope_channel_; }
 
     /**
@@ -337,14 +347,25 @@ public:
      */
     unsigned pendingMarkChannels(const std::string& sat) const;
 
-    /// The jump-test threshold (m) for a given (sat, signal): frac·λ when the
+    /// @brief The jump-test threshold (m) for a given (sat, signal): frac·λ when the
     /// fractional-cycle mode is armed and λ resolves, else the flat metre gate.  Public
     /// so the hold can read an estimator step against the bar the emitter applies to
     /// the wire (the smoothed-hold block member's unmarked steps).
+    ///
+    /// @param sat    RINEX satellite id ("G01"); selects the constellation for the band lookup.
+    /// @param signal RINEX observation code of the signal ("L1C").
+    /// @return Threshold in metres.  The flat @c disc_threshold_m when the fractional-cycle
+    ///         mode is off or the signal's nominal wavelength is unknown (0); otherwise
+    ///         @c disc_threshold_frac_cycles times the nominal wavelength in metres.
     double discThresholdM(const std::string& sat, const std::string& signal) const;
 
-    /// Stable lowercase name of one channel ("clk" / "cb" / "pb"), for trace events
+    /// @brief Stable lowercase name of one channel ("clk" / "cb" / "pb"), for trace events
     /// and tests.
+    ///
+    /// @param c A single channel bit.
+    /// @return Pointer to a string literal (static storage, never null): "clk", "cb" or "pb"
+    ///         for the three single channels, "?" for any other value (including
+    ///         @ref kDiscChanAll).
     static const char* discChannelName(DiscChannel c);
 
     /// @brief Number of phase-bias value-jump tests whose raw step exceeded the bar
@@ -361,10 +382,16 @@ public:
     /// @return the run count (0 unless the wire declares a follow step).
     long long clvCbJumpExcluded() const { return clv_cb_jump_excluded_; }
 
-    /// Serialize @p sol into @p store (Sink A: in-process, no wire bytes).
+    /// @brief Serialize @p sol into @p store (Sink A: in-process, no wire bytes).
+    ///
+    /// @param sol Epoch of the network joint solution to serialize; read only.  Its per-satellite
+    ///        clock, code-bias and phase-bias entries become SSR records, stamped with the
+    ///        emitter's current discontinuity counters.
+    /// @param[in,out] store Destination store that receives the pushed clock, URA, code-bias and
+    ///        phase-bias records (an owned, non-singleton instance in the closed loop).
     void emitToStore(const NetworkSolutionEpoch& sol, SsrCorrectionStore& store);
 
-    /// Force a discontinuity bump at the next emit, scoped to the given constellation
+    /// @brief Force a discontinuity bump at the next emit, scoped to the given constellation
     /// chars (e.g. {'G','E'}): a per-constellation pivot handover or S-basis
     /// re-declaration.  An empty set forces every constellation (the
     /// backward-compatible global bump, matching the pre-A2 single-flag behavior).
@@ -380,9 +407,12 @@ public:
     /// emitted epoch sequence and the markDatumChange calls, both of which the product
     /// file reproduces (E-line datum_consts on the trigger epoch, and the same pruned
     /// epochs).
+    ///
+    /// @param constellations RINEX constellation letters to bump ('G', 'E', 'C', ...).  The
+    ///        default empty set forces every constellation.
     void markDatumChange(const std::set<char>& constellations = {});
 
-    /// Force a discontinuity bump at the next emit, scoped to the given satellite ids
+    /// @brief Force a discontinuity bump at the next emit, scoped to the given satellite ids
     /// (e.g. {"G13","E09"}).  This is the B1 retro-bump: a post-emit QC tier flagged
     /// these satellites' corrections as contaminated, so the consumer must reset the
     /// ambiguity that integrated the one bad epoch.  Unlike @c markDatumChange (a
@@ -402,7 +432,7 @@ public:
     void markSatDiscontinuity(const std::set<std::string>& satellites,
                               unsigned channels = kDiscChanAll);
 
-    /// One constellation's tally in a @ref pbSeamCensus: how many of its phase-bias
+    /// One constellation's tally in a @ref GnssProcessor::NetworkProductEmitter::pbSeamCensus "pbSeamCensus": how many of its phase-bias
     /// keys the jump test would examine this epoch, and how many of those exceed
     /// @c discThresholdM (RS-4, SPEC_event_harness §21.9).
     struct PbSeamConstTally {
@@ -415,7 +445,7 @@ public:
      * @brief Census of this epoch's emitted phase biases against the current
      *        per-key baselines, without mutating any emitter state (RS-4).
      *
-     * Read-only twin of the jump test inside @ref emitToStore: same population (a key
+     * Read-only twin of the jump test inside @ref GnssProcessor::NetworkProductEmitter::emitToStore "emitToStore": same population (a key
      * with a baseline that is not stale under the staleness horizon), same threshold
      * (@c discThresholdM), same key spelling.  Call it before @ref emitToStore; after
      * that call every baseline holds this epoch's value and the census is trivially
@@ -434,14 +464,28 @@ public:
     std::map<char, PbSeamConstTally>
     pbSeamCensus(const NetworkSolutionEpoch& sol) const;
 
-    /// Current phase-bias discontinuity counter for a (sat, signal), or 0 if untracked.
+    /// @brief Current phase-bias discontinuity counter for a (sat, signal), or 0 if untracked.
+    ///
+    /// @param sat    RINEX satellite id ("G01").
+    /// @param signal RINEX observation code of the signal ("L1C").
+    /// @return The counter stamped on that key's phase-bias records; increments on each declared
+    ///         discontinuity and never resets.  0 when the key has not been tracked.
     int discontinuityCounter(const std::string& sat, const std::string& signal) const;
 
-    /// Current code-bias discontinuity counter for a (sat, signal), or 0 if untracked.
+    /// @brief Current code-bias discontinuity counter for a (sat, signal), or 0 if untracked.
+    ///
+    /// @param sat    RINEX satellite id ("G01").
+    /// @param signal RINEX observation code of the signal ("C1C").
+    /// @return The counter stamped on that key's code-bias records; increments on each declared
+    ///         discontinuity and never resets.  0 when the key has not been tracked.
     int codeBiasDiscontinuityCounter(const std::string& sat, const std::string& signal) const;
 
-    /// Current clock discontinuity counter for a satellite, or 0 if untracked.
+    /// @brief Current clock discontinuity counter for a satellite, or 0 if untracked.
     /// Always 0 unless the emitter was constructed with @c emit_clock_disc (A2).
+    ///
+    /// @param sat RINEX satellite id ("G01").
+    /// @return The counter stamped on that satellite's clock records; increments on each declared
+    ///         clock discontinuity and never resets.  0 when untracked.
     int clockDiscontinuityCounter(const std::string& sat) const;
 
     /**
@@ -462,12 +506,20 @@ public:
      */
     bool isPhaseFirstSighting(const std::string& sat, const std::string& signal) const;
 
-    /// Code-bias twin of @ref isPhaseFirstSighting.
+    /// @brief Code-bias twin of @ref isPhaseFirstSighting.
+    ///
+    /// @param sat    Satellite id.
+    /// @param signal RINEX signal.
+    /// @return true when the emitter has no last-emitted code-bias baseline for this key.
     bool isCodeFirstSighting(const std::string& sat, const std::string& signal) const;
 
-    /// Clock twin of @ref isPhaseFirstSighting.  Always true
+    /// @brief Clock twin of @ref isPhaseFirstSighting.  Always true
     /// unless the emitter was constructed with @c emit_clock_disc (A2), which is what
     /// fills @c seen_clock_sats_.
+    ///
+    /// @param sat Satellite id.
+    /// @return true when this satellite's clock has not been emitted yet (always true when
+    ///         clock discontinuity tracking is off).
     bool isClockFirstSighting(const std::string& sat) const;
 
     /**
@@ -592,8 +644,8 @@ private:
     // emit.
     std::set<std::string> forced_bump_sats_;
     /// Channel mask that each marked satellite was marked with (a bit-or of
-    /// @ref DiscChannel), kept in step with @ref forced_bump_sats_ and cleared with it
-    ///.  Populated only under @ref disc_mark_scope_channel_, so the legacy
+    /// @ref DiscChannel), kept in step with forced_bump_sats_ (@c GnssProcessor::NetworkProductEmitter::forced_bump_sats_) and cleared with it
+    ///.  Populated only under disc_mark_scope_channel_ (@c GnssProcessor::NetworkProductEmitter::disc_mark_scope_channel_), so the legacy
     /// scope allocates nothing and the emit path never reads it.
     std::map<std::string, unsigned> forced_bump_chan_;
     /// Per-emit scratch: the marks this emit withheld from a channel, and the marks

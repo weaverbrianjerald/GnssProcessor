@@ -51,12 +51,25 @@ namespace GnssProcessor {
  */
 class LiveEphemerisStore {
 public:
-    /// Returns the singleton instance, constructed on the first call.
+    /**
+     * @brief Returns the singleton instance, constructed on the first call.
+     * @return Reference to the one process-wide store; never null, valid for the program lifetime.
+     */
     static LiveEphemerisStore& getInstance();
 
+    /** @brief Deleted: the singleton is not copy-constructible. */
     LiveEphemerisStore(const LiveEphemerisStore&)            = delete;
+    /**
+     * @brief Deleted: the singleton is not copy-assignable.
+     * @return Not applicable (the operation does not exist).
+     */
     LiveEphemerisStore& operator=(const LiveEphemerisStore&) = delete;
+    /** @brief Deleted: the singleton is not move-constructible. */
     LiveEphemerisStore(LiveEphemerisStore&&)                 = delete;
+    /**
+     * @brief Deleted: the singleton is not move-assignable.
+     * @return Not applicable (the operation does not exist).
+     */
     LiveEphemerisStore& operator=(LiveEphemerisStore&&)      = delete;
 
     /// Computed satellite state from a broadcast ephemeris.
@@ -85,6 +98,12 @@ public:
      * a cutover.  The default @c true keeps single-source callers
      * (post-processing, tests, the all-RTCM IGS-station config, the network
      * path) on plain freshest-toe behaviour.
+     *
+     * @param eph      Decoded broadcast record (GPS / Galileo / BeiDou / QZSS / GLONASS); the store
+     *                 keeps a copy.  A record with an empty satellite id or an unknown system is
+     *                 ignored.
+     * @param from_igs True (default) when the record came from a dedicated IGS broadcast-nav
+     *                 stream, false when it is the receiver's own decoded nav.
      */
     void insert(const BroadcastEphemeris& eph, bool from_igs = true);
 
@@ -167,7 +186,7 @@ public:
      * This is the driver's deterministic eph-cutover re-level; it emits no
      * discontinuity bump because the consumer reconstructs @c brdc(new_iode)+C0.
      *
-     * Uses the same pinned-version retention as @ref computeSatelliteClock:
+     * Uses the same pinned-version retention as @ref GnssProcessor::LiveEphemerisStore::computeSatelliteClock "computeSatelliteClock":
      * @c bias_new comes from the default selection (the held record whose toe is
      * closest to @p time, normally the newest), and @c bias_old from the record
      * whose SSR-match IODE equals @p old_iode (current or previous).  Both biases
@@ -193,6 +212,12 @@ public:
     /// pivot selector to avoid seating a satellite whose ephemeris is much staler
     /// than its constellation peers as the pivot.  |age| is the broadcast
     /// extrapolation magnitude; smaller is a better pivot anchor.
+    ///
+    /// @param sat  Satellite identifier (e.g. "G01").
+    /// @param time Query epoch (GPS time scale).
+    /// @return Query time minus the toe of the held record closest in toe to @p time, in seconds
+    ///         (positive when the record is older than the query); @c std::nullopt when no
+    ///         ephemeris is held for @p sat.  No fit-window limit is applied.
     std::optional<double> toeAgeSeconds(const std::string& sat, const GnssTime& time) const;
 
     /**
@@ -259,21 +284,28 @@ public:
      */
     static bool withinFitWindow(const BroadcastEphemeris& eph, const GnssTime& time);
 
-    /// True iff no ephemeris has been inserted.
+    /// @brief True iff no ephemeris has been inserted.
+    /// @return True when no satellite has a held record (initially, and after @ref clear).
     bool isEmpty() const;
 
-    /// Number of satellites with at least one ephemeris.
+    /// @brief Number of satellites with at least one ephemeris.
+    /// @return Count of distinct satellites held (one per satellite, whether or not a previous
+    ///         record is also retained); 0 when @ref isEmpty is true.
     std::size_t size() const;
 
     /// Drop every record.
     void clear();
 
-    /// Snapshot of the GLONASS FDMA channel assignments currently held
+    /// @brief Snapshot of the GLONASS FDMA channel assignments currently held
     /// (satellite id "R01" → channel k, -7..+6) from the broadcast
     /// @c freq_channel of each GLONASS satellite's current record.  The real-time engine feeds this to
     /// @c PppModel so per-satellite GLONASS wavelengths resolve from the live
     /// stream rather than the hard-coded default table.  Empty when no GLONASS
     /// ephemeris is held.
+    ///
+    /// @return Map keyed by GLONASS satellite id (e.g. "R01") to its FDMA frequency channel
+    ///         number k; a copy, so it stays valid after later inserts.  Empty when no GLONASS
+    ///         ephemeris is held.
     std::map<std::string, int> glonassFreqChannels() const;
 
 private:

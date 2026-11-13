@@ -44,12 +44,17 @@ namespace GnssProcessor {
 /// satellite carries no code bias; @c phase is empty when no code signal has a
 /// matching phase sibling (then @c rho is absent, and a combined code σ is still emitted).
 struct CombinedCodeRef {
+    /// Reference code observation key (a RINEX 3 code such as C1W); empty when none.
     std::string code;
+    /// Phase sibling of @c code (the same code with the leading letter swapped to L, such as
+    /// L1W); empty when no code signal has a phase pair.
     std::string phase;
 };
 
-/// Select the reference (code, phase) pair for @ref computeCombinedCorrectionSigma's
-/// per-sat combined-code channel.  Prefers the first code signal whose phase sibling is
+/// @brief Select the reference (code, phase) pair for @ref GnssProcessor::computeCombinedCorrectionSigma "computeCombinedCorrectionSigma"'s
+/// per-sat combined-code channel.
+///
+/// Prefers the first code signal whose phase sibling is
 /// present, so @c rho pairs a real code/phase observable; otherwise falls back to the
 /// first code signal alone (no phase pair, so rho is absent).  The phase sibling is the
 /// RINEX observation-type swap of the leading char (code @c C1W → phase @c L1W): a RINEX 3
@@ -58,6 +63,14 @@ struct CombinedCodeRef {
 /// never matches the phase-key set (disjoint 'C…' and 'L…' namespaces), so the swap is
 /// required.  @p code_signals is scanned in order (pass a sorted container for
 /// deterministic selection); @p phase_signals is the set of the satellite's phase keys.
+///
+/// @param code_signals  The satellite's code observation keys (RINEX 3 codes such as C1W),
+///                      scanned in order; empty strings are skipped.
+/// @param phase_signals The satellite's phase observation keys (such as L1W), matched against
+///                      the leading-letter swap of each code.
+/// @return The chosen pair: @c code empty when @p code_signals holds no non-empty key,
+///         @c phase empty when no code has a sibling in @p phase_signals (the first code is
+///         then returned alone).
 inline CombinedCodeRef selectCombinedCodeRef(const std::vector<std::string>& code_signals,
                                              const std::set<std::string>&    phase_signals) {
     CombinedCodeRef ref;
@@ -75,7 +88,7 @@ inline CombinedCodeRef selectCombinedCodeRef(const std::vector<std::string>& cod
     return ref;
 }
 
-/// Result of @ref computeCombinedCorrectionSigma: the three M4 wire quantities.
+/// Result of @ref GnssProcessor::computeCombinedCorrectionSigma "computeCombinedCorrectionSigma": the three M4 wire quantities.
 /// A quantity stays 0 when its inputs are unavailable or degenerate (a missing
 /// column, a non-positive or non-finite variance).  0 is the "absent" wire value, so
 /// an unresolved key emits no token and the consumer falls back to v1.
@@ -85,8 +98,14 @@ struct CombinedCorrectionSigma {
     double rho{0.0};    ///< Correlation of the combined code & combined phase corrections (σ0 cancels).
 };
 
-/// Variance of the sum of two shared estimates from a covariance matrix:
+/// @brief Variance of the sum of two shared estimates from a covariance matrix:
 /// Var(x_i + x_j) = cov(i,i) + cov(j,j) + 2·cov(i,j).  The caller guards the indices.
+///
+/// @param cov Dense shared posterior covariance (symmetric); read only.
+/// @param i   Row/column index of the first estimate (must lie inside @p cov).
+/// @param j   Row/column index of the second estimate (must lie inside @p cov).
+/// @return The variance of the sum, in the units of the entries of @p cov (not checked for
+///         positivity or finiteness here; the caller does that).
 inline double combinedSumVariance(const Eigen::MatrixXd& cov,
                                   Eigen::Index i, Eigen::Index j) {
     return cov(i, i) + cov(j, j) + 2.0 * cov(i, j);

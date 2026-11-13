@@ -59,6 +59,7 @@ struct NetrcLocation {
         UnderscoreNetrc   ///< @c ~/_netrc
     };
 
+    /// Which place the file was found in; @c None when no searched place holds one.
     Origin                origin{ Origin::None };
     std::filesystem::path path;                 ///< The file to read; empty when @c origin is None.
     bool                  configured_missing{ false };  ///< A configured path was given but does not exist.
@@ -76,7 +77,14 @@ struct NetrcLocation {
 NetrcLocation locateNetrcFile(const std::filesystem::path& configured,
                               const std::filesystem::path& home);
 
-/// @overload Uses @ref homeDirectory().
+/**
+ * @brief Find the netrc file, taking the home directory from homeDirectory().
+ *
+ * Overload of the two-argument form. Uses @ref GnssProcessor::homeDirectory "homeDirectory()".
+ *
+ * @param configured Path from the config (@c data_download.netrc_path), or empty.
+ * @return Where the file is, or @c Origin::None.
+ */
 NetrcLocation locateNetrcFile(const std::filesystem::path& configured = {});
 
 /// One @c machine entry of a netrc file.
@@ -103,7 +111,7 @@ std::vector<NetrcEntry> parseNetrc(const std::string& text);
  * An entry is usable when it has a login and a password.  Host names compare without
  * regard to case; logins compare exactly.
  *
- * @param entries Entries from @ref parseNetrc.
+ * @param entries Entries from @ref GnssProcessor::parseNetrc "parseNetrc".
  * @param machine Host name to look up.
  * @param login   When not empty, only an entry with exactly this login matches (the
  *                config names the account, the file supplies the secret).
@@ -122,6 +130,7 @@ enum class NetrcReadStatus {
 
 /// The result of reading one netrc file.
 struct NetrcContents {
+    /// Outcome of the read; @c Ok means the file was read and parsed.
     NetrcReadStatus        status{ NetrcReadStatus::Unreadable };
     std::vector<NetrcEntry> entries;   ///< Empty unless @c status is Ok.
 };

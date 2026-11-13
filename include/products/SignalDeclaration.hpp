@@ -68,12 +68,24 @@ namespace GnssProcessor {
         std::string              datum_phase;///< The phase the S-basis pinned, or empty.
         std::string              datum_code; ///< The code the S-basis pinned, or empty.
 
+        /**
+         * @brief Member-wise equality of the three signal lists and the two datum signals.
+         * @param o Row to compare with.
+         * @return True when @c phase, @c code and @c companion hold the same signals in the
+         *         same order and @c datum_phase and @c datum_code match.
+         */
         bool operator==(const SignalDeclarationBand& o) const {
             return phase == o.phase && code == o.code && companion == o.companion
                    && datum_phase == o.datum_phase && datum_code == o.datum_code;
         }
+        /**
+         * @brief Negation of @c operator==.
+         * @param o Row to compare with.
+         * @return True when the two rows differ in any list or datum signal.
+         */
         bool operator!=(const SignalDeclarationBand& o) const { return !(*this == o); }
         /// @brief True when the row names nothing at all (never written to the wire).
+        /// @return True when all three lists and both datum signals are empty.
         bool empty() const {
             return phase.empty() && code.empty() && companion.empty()
                    && datum_phase.empty() && datum_code.empty();
@@ -89,18 +101,34 @@ namespace GnssProcessor {
      * predates the declaration and nothing may be inferred from it.
      */
     struct NetworkSignalDeclaration {
-        bool present{ false };
-        std::map<std::string, std::map<char, SignalDeclarationBand>> bands;
+        bool present{ false };   ///< True when a declaration was parsed or built; false means none was ever seen (see the struct description).
+        std::map<std::string, std::map<char, SignalDeclarationBand>> bands;   ///< Constellation display name (e.g. "GPS") -> RINEX band digit char -> declared row.
 
+        /**
+         * @brief Equality of the presence flag and every declared row.
+         * @param o Declaration to compare with.
+         * @return True when @c present and the whole @c bands map are equal.
+         */
         bool operator==(const NetworkSignalDeclaration& o) const {
             return present == o.present && bands == o.bands;
         }
+        /**
+         * @brief Negation of @c operator==.
+         * @param o Declaration to compare with.
+         * @return True when the presence flag or any declared row differs.
+         */
         bool operator!=(const NetworkSignalDeclaration& o) const { return !(*this == o); }
 
         /// @brief The row for one (constellation, band digit), or nullptr.
+        /// @param cons Constellation display name as keyed in @c bands (e.g. "GPS", "Galileo").
+        /// @param band RINEX band digit as a character (e.g. '1', '2', '5').
+        /// @return Pointer to the stored row, or nullptr when that constellation or band is not
+        ///         declared.  Valid until this declaration is modified or destroyed.
         const SignalDeclarationBand* find(const std::string& cons, char band) const;
 
         /// @brief True when the declaration names this constellation at all.
+        /// @param cons Constellation display name as keyed in @c bands (e.g. "GPS", "Galileo").
+        /// @return True when @p cons has an entry in @c bands.
         bool knowsConstellation(const std::string& cons) const {
             return bands.find(cons) != bands.end();
         }
@@ -112,10 +140,19 @@ namespace GnssProcessor {
          * A false answer on a declaration whose @c present is true is a positive
          * statement: the producer carries no phase-bias family for that signal,
          * so its absence from the wire is structural rather than a staleness.
+         *
+         * @param cons   Constellation display name as keyed in @c bands (e.g. "GPS").
+         * @param signal RINEX phase observation (e.g. "L1W", "L5Q").
+         * @return True when @p signal is listed as a modelled phase signal on any band of
+         *         @p cons; false when it is not, or when @p cons is not declared at all.
          */
         bool declaresPhase(const std::string& cons, const std::string& signal) const;
 
         /// @brief The code twin of @ref declaresPhase.  A second-code companion counts.
+        /// @param cons   Constellation display name as keyed in @c bands (e.g. "GPS").
+        /// @param signal RINEX code observation (e.g. "C1C", "C2W").
+        /// @return True when @p signal is listed as a modelled code or as a companion code on
+        ///         any band of @p cons; false otherwise.
         bool declaresCode(const std::string& cons, const std::string& signal) const;
     };
 
@@ -146,13 +183,16 @@ namespace GnssProcessor {
                                       NetworkSignalDeclaration& out);
 
     /// @brief A one-line human summary of a declaration, for log text.
+    /// @param decl The declaration to describe.
+    /// @return "(absent)" when @c decl.present is false, "(empty)" when it is present with no
+    ///         rows, otherwise one "constellation band ph[...] co[...]" item per row, joined by "; ".
     std::string signalDeclarationSummary(const NetworkSignalDeclaration& decl);
 
     /**
      * @brief Why a consumer's correction for one signal stopped being applied.
      *
      * The values are tested in declaration order, and each applies only when the
-     * ones before it did not.  Only @ref Undeclared states that the network
+     * ones before it did not.  Only Undeclared (@c GnssProcessor::Undeclared) states that the network
      * carries nothing for the signal by construction, which is the class the
      * phase 5b response keys on.
      */
@@ -164,6 +204,9 @@ namespace GnssProcessor {
     };
 
     /// @brief Human-readable name of an attribution, for the trace and the table.
+    /// @param a The attribution class.
+    /// @return Static lowercase text ("no_declaration", "undeclared", "off_wire" or "stale");
+    ///         "?" for a value outside the enum.  Never null.
     const char* flipAttributionName(FlipAttribution a);
 
     /**
@@ -176,6 +219,10 @@ namespace GnssProcessor {
      * @param is_phase true for a phase bias, false for a code bias.
      * @param on_wire  Whether a store read without the age gate finds a record
      *                 for this key.
+     * @return @c FlipAttribution::NoDeclaration when @p decl is not present;
+     *         @c FlipAttribution::Undeclared when it names no family for the signal;
+     *         otherwise @c FlipAttribution::Stale when @p on_wire is true, or
+     *         @c FlipAttribution::OffWire when it is false.
      */
     FlipAttribution signalDeclarationAttributeFlip(const NetworkSignalDeclaration& decl,
                                                    const std::string& cons,

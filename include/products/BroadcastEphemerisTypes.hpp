@@ -154,7 +154,7 @@ inline double brdcTocGpsSeconds(const BroadcastEphemeris& e) {
  * @brief A Keplerian record's transmission time on the continuous GPS time scale.
  *
  * week x 604800 + seconds of week of @c BroadcastEphemeris::transmission_time, with the
- * BeiDou shift of @ref brdcTocGpsSeconds.  Meaningful only when
+ * BeiDou shift of @ref GnssProcessor::brdcTocGpsSeconds "brdcTocGpsSeconds".  Meaningful only when
  * @c has_transmission_time is true.  The availability instant of a record under the
  * broadcast clock a priori (@c network.brdc_select ttom).
  *

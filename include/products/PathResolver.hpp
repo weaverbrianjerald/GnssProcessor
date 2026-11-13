@@ -29,7 +29,7 @@
  *     cache/<YYYY-DOY>/          (production-mode only) raw .gz / .crx
  * @endcode
  *
- * @c <root> is @c GnssConfig::getInternalDataRoot() in internal mode
+ * @c \<root\> is @c GnssConfig::getInternalDataRoot() in internal mode
  * and @c data_download.data_root in production mode; the two may point at
  * the same directory or at separate ones.  Because the layout is identical,
  * a directory populated by the internal-mode bootstrap is a valid
@@ -57,7 +57,7 @@
  *     baseline mode, the reference @c rinex_path, then each rover's).
  *  2. @c data_download.year / @c data_download.doy, which serve as a
  *     generic date hint in either mode.
- *  3. The earliest @c <YYYY-DOY>/ subdir under @c <root> (lex sort).
+ *  3. The earliest @c <YYYY-DOY>/ subdir under @c \<root\> (lex sort).
  *
  * ## Path precedence
  *
@@ -110,6 +110,10 @@ public:
     };
 
     /**
+     * @brief Construct a resolver bound to one configuration and one logger.
+     *
+     * Both arguments are held by reference, so each must outlive the resolver.
+     *
      * @param config Loaded GnssConfig, read-only here; the resolver
      *               does not mutate state.  The caller applies the
      *               returned paths to the config.
@@ -158,7 +162,7 @@ private:
 
     /**
      * @brief Pick a RINEX observation file for @p station_name from
-     *        @c <obs_root>/<station>/.
+     *        @c \<obs_root\>/\<station\>/.
      *
      * Used by internal-mode resolution to map a configured station
      * identifier to the corresponding obs file inside the date-first

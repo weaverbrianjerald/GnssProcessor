@@ -61,6 +61,7 @@ public:
                             const std::filesystem::path& netrc_path = {},
                             bool keep_zip_after_unzip = false);
 
+    /** @brief Destroy the downloader; the log manager given at construction is only borrowed. */
     ~DataDownloader();
 
     /**
