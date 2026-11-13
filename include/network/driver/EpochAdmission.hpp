@@ -70,9 +70,9 @@ EpochAdmission networkAdmitEpoch(NetworkRun& run, const NetworkEpoch& ep);
 
 /// @brief Run-scope counters of EpochAdmission, a base of NetworkServiceCounters (network/state/RunContext.hpp).
 struct EpochAdmissionCounters {
-    double max_dur_anchor_s = 0.0;
-    bool   max_dur_anchored = false;
-    std::size_t decim_counter = 0;   // counts post-offset raw epochs for epoch_decimation_n (T2e)
+    double max_dur_anchor_s = 0.0;   ///< Continuous GPS time (s) of the first epoch seen under processing.max_duration_s; valid once @c max_dur_anchored is set.
+    bool   max_dur_anchored = false; ///< The max-duration anchor has been taken (the first epoch with the limit armed).
+    std::size_t decim_counter = 0;   ///< counts post-offset raw epochs for epoch_decimation_n (T2e)
 };
 
 } // namespace GnssProcessor

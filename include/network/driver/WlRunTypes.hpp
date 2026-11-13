@@ -17,14 +17,24 @@
 
 namespace GnssProcessor {
 
+/// @brief RAII scope that applies an Eigen thread count and restores the previous count on exit.
 struct CarryEigenScope {
-    bool active;
-    int  saved;
+    bool active;  ///< The scope changed Eigen's thread count and will restore it.
+    int  saved;   ///< Eigen's thread count at construction, restored on destruction.
+    /**
+     * @brief Optionally set Eigen's thread count for the lifetime of the scope.
+     * @param on       True to apply @p nthreads; false leaves the thread count untouched.
+     * @param nthreads Eigen thread count to apply when @p on is true.
+     */
     CarryEigenScope(bool on, int nthreads) : active(on), saved(Eigen::nbThreads()) {
         if (active) Eigen::setNbThreads(nthreads);
     }
+    /** @brief Restores the thread count saved at construction (when the scope was active). */
     ~CarryEigenScope() { if (active) Eigen::setNbThreads(saved); }
+    /** @brief Deleted: the scope owns a thread-count restore and must not be duplicated. */
     CarryEigenScope(const CarryEigenScope&) = delete;
+    /** @brief Deleted: the scope is not copy-assignable.
+     *  @return Not applicable: the operator is deleted. */
     CarryEigenScope& operator=(const CarryEigenScope&) = delete;
 };
 
@@ -33,18 +43,19 @@ struct CarryEigenScope {
 // sections), D0b.  Kept here, like CarryEigenScope, as a former runNetwork()-local type
 // that the run-timing report (networkRunTimingRunEnd) needs; the run totals are
 // NetworkRunTiming::sub_blocks (network/driver/RunGroups.hpp).
+/// @brief Run-cumulative timing of one D0b sub-block: driver wall time against the estimator's timed sections.
 struct SubBlockTimer {
-    double      wall_ms{0.0};    // driver wall time bracketing the block (run cumulative)
-    double      timed_ms{0.0};   // Δ(reduce+solve+cov-inv+cov-consumers) inside it (subtract for net)
-    double      covcon_ms{0.0};  // cov-consumers share of timed_ms, reported separately (item D1)
-    std::size_t covcalls{0};     // cov-consumer calls inside it
+    double      wall_ms{0.0};    ///< driver wall time bracketing the block (run cumulative)
+    double      timed_ms{0.0};   ///< Δ(reduce+solve+cov-inv+cov-consumers) inside it (subtract for net)
+    double      covcon_ms{0.0};  ///< cov-consumers share of timed_ms, reported separately (item D1)
+    std::size_t covcalls{0};     ///< cov-consumer calls inside it
 };
 
 /// The D0b sub-blocks of the epoch loop (network.trace_section_timers): the disjoint
 /// brackets the epoch function opens and closes with networkSubBegin / networkSubEnd
 /// (runNetwork's subBegin / subEnd closures until the epoch function replaced them), which tile the loop body
 /// between the assembly wall and the emitted-epoch readout.  The value indexes
-/// NetworkRunTiming::sub_blocks and @ref kSubBlockNames.  Moved here from runNetwork with
+/// NetworkRunTiming::sub_blocks and @ref GnssProcessor::kSubBlockNames "kSubBlockNames".  Moved here from runNetwork with
 /// its names so the driver's per-epoch line and the run-end ranking
 /// read one table.
 enum SubBlock {
@@ -77,7 +88,7 @@ enum SubBlock {
     SB_COUNT
 };
 
-/// The printed name of each @ref SubBlock, in enum order: the driver's per-epoch D0b line
+/// The printed name of each @ref GnssProcessor::SubBlock "SubBlock", in enum order: the driver's per-epoch D0b line
 /// and the run-end D0b ranking.
 inline constexpr const char* kSubBlockNames[SB_COUNT] = {
     "slip-scans", "pre-asm", "gauge-build", "dd-build", "solve-glue", "install-post",

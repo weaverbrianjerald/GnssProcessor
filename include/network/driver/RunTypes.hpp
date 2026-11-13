@@ -47,10 +47,10 @@ namespace GnssProcessor {
 /// satellite border; each station's columns are its own set.  Coordinates are held fixed at
 /// @c ecef.
 struct NetStation {
-    std::string                       name;
-    Eigen::Vector3d                   ecef{Eigen::Vector3d::Zero()};
-    bool                              is_pivot{false};
-    std::unique_ptr<PppModel>         model;
+    std::string                       name;                         ///< The station's name (its roster identifier).
+    Eigen::Vector3d                   ecef{Eigen::Vector3d::Zero()};  ///< The station's fixed coordinates (ECEF, m).
+    bool                              is_pivot{false};              ///< True for the legacy single pivot station, which pins the whole shared set.
+    std::unique_ptr<PppModel>         model;                        ///< The station's observation model (computeModels builds its modelled observations).
     /// What the station's births and rows read besides its observations and its set
     /// (network/assembly/StationRows.hpp).
     std::unique_ptr<StationRowInputs> rows;
@@ -61,7 +61,7 @@ struct NetStation {
     /// parameters; read by the carried priors, the slip drains, the admissions, the datum rows
     /// and the diagnostics.
     StationParams                     params;
-    PppState                          pstate;
+    PppState                          pstate;   ///< The state snapshot handed to the model: position held at @c ecef, epoch time set each epoch.
     // MW cycle-slip arc state, persistent per station.  Built when
     // network.phase_leveling and (network.cycle_slip.turbo_edit or
     // network.cycle_slip.mw_detect) are on, for non-pivot stations and also for the
@@ -71,7 +71,7 @@ struct NetStation {
     // data) is built only for turbo_edit; under mw_detect the same detector drives a
     // detect-then-refloat with no resolver (a null turbo_edit selects the refloat
     // branch in PASS A).
-    std::unique_ptr<MwSlipDetector>   mw_slip;
+    std::unique_ptr<MwSlipDetector>   mw_slip;  ///< The station's MW cycle-slip detector; null when no MW detection runs here.
 
     /// SD pre-reduce EWL constraint (docs/record/SPEC_sd_ewl_prereduce.md): per-station
     /// eligibility tallies for `Application::networkAppendSdEwlRows_`.  They are held
@@ -104,6 +104,11 @@ struct NetStation {
         long long fix_datum_only{ 0 };          ///< arcs demoted to the float group because their whole fixed group held only datum values (frame choices, no rounding decision).  A hard constraint with no integer information is not worth a removed degree of freedom, and admitting it would make the feature impossible to disarm through its own gates.
         long long fix_lone_arc{ 0 };            ///< exactly one arc of a constellation had an integer, with nothing to difference it against, so it was demoted to the float group.  It keeps the fix sigma floor, which can only deweight.
 
+        /**
+         * @brief Add another station's tallies member by member (the run-end readout sums the
+         *        stations serially).
+         * @param o The tallies to add.
+         */
         void operator+=(const SdEwlCounters& o) {
             sat_seen += o.sat_seen;
             rows_built += o.rows_built;
@@ -129,23 +134,24 @@ struct NetStation {
         }
     };
     SdEwlCounters sd_ewl_ctr;   ///< accumulated across this run for this station.
-    std::unique_ptr<TurboEditResolver> turbo_edit;
+    std::unique_ptr<TurboEditResolver> turbo_edit;  ///< The MW+GF integer-repair resolver (built only for turbo_edit); null selects the detect-then-refloat branch.
     // IF-phase triple-difference slip detection: persistent per-station
     // between-satellite, between-epoch IF-phase OMC state.  Built when
     // network.cycle_slip.if_phase_td is on, for non-pivot stations and, under
     // network.phase_datum_prioritized, for the pivot too; null otherwise (no detection
     // runs).  Station-local, so parallel-safe with no shared write.
-    std::unique_ptr<IfPhaseSlipDetector> if_slip;
+    std::unique_ptr<IfPhaseSlipDetector> if_slip;  ///< The station's IF-phase time-difference slip detector; null when no detection runs here.
     // IF-phase slip thresholding: per-signal-pair EWMA of the elevation-normalized
     // robust noise scale for this station, with a clean-sample counter that drives the
     // shrinkage from the network pool toward the per-station value.  Persists across
     // epochs; keyed by the IF pair "sig1_sig2" (e.g. "L1W_L2W").  See the PASS-A
     // IF-phase block.
+    /// @brief The elevation-normalized noise scale of one IF signal pair at this station.
     struct IfPairScale {
         double ewma_scale{0.0};  ///< EWMA of 1.4826·median(|z|), z = residual·sin(el) (m, zenith-equiv).
         long   count{0};         ///< Clean samples folded in (shrinkage weight vs the network pool).
     };
-    std::map<std::string, IfPairScale> if_pair_scale;
+    std::map<std::string, IfPairScale> if_pair_scale;  ///< IF pair "sig1_sig2" -> this station's noise scale.
     // Prioritized phase-bias anchor (network.phase_datum_prioritized) and eq34 chain
     // (network.phase_datum_eq34): the "sat_signal" ambiguity keys this station
     // gauge-pins this epoch, each mapped to its integer pin target (m).  Each such
@@ -159,7 +165,7 @@ struct NetStation {
     // where the pivot pins the whole shared set via is_pivot.  A station gauges some
     // (sat, signal) pairs and is an ordinary carry-eligible station for the rest:
     // membership is per (sat, signal), never a station-level role.
-    std::map<std::string, double> pinned_amb_targets;
+    std::map<std::string, double> pinned_amb_targets;  ///< "sat_signal" ambiguity key -> its pin target (m), for the keys this station gauge-pins this epoch.
     // eq34 only: the "<sys>_RPB_<σ>" receiver-phase-bias keys for which this
     // station is the datum receiver r1 this epoch, each folded as a 1e10 pin on the
     // RPB column in this station's own block (δ_{r1,σ} = the key's target in
@@ -167,12 +173,12 @@ struct NetStation {
     // single-receiver-chain gauge).  Cleared and rebuilt every epoch by the chain
     // election.  Empty except at an eq34 component's datum receiver, and always empty
     // when network.phase_datum_eq34 is off.
-    std::set<std::string> pinned_rpb_keys;
+    std::set<std::string> pinned_rpb_keys;  ///< Receiver-phase-bias keys (system, RPB and signal) this station pins as the eq34 datum receiver this epoch.
     // eq34 root row only: the absolute value (m) the fold pins a key of @ref pinned_rpb_keys at,
     // when it is not 0 (a new datum receiver pinned at its carried phase bias).  A key with no
     // entry is pinned at 0.  Cleared and rebuilt every epoch by the chain election; always empty
     // unless network.phase_datum_eq34_event_rows holds "root".
-    std::map<std::string, double> pinned_rpb_targets;
+    std::map<std::string, double> pinned_rpb_targets;  ///< Key of @c pinned_rpb_keys -> the absolute value (m) it is pinned at, when not 0.
     // Per-pin σ multiplier for the few entries of @ref pinned_amb_targets that had to
     // be pinned on a host younger than the eligibility threshold (eq34 reattach
     // hygiene, docs/SPEC_eq34_reattach_hygiene.md, INC-3).  The fold divides the 1e10
@@ -182,7 +188,7 @@ struct NetStation {
     // absent key means scale 1 and the legacy 1e10 weight, so a run with the feature
     // off never reads this map and the fold is byte-identical.  Cleared and rebuilt
     // with the pins.
-    std::map<std::string, double> pinned_amb_sigma_scale;
+    std::map<std::string, double> pinned_amb_sigma_scale;  ///< "sat_signal" key of @c pinned_amb_targets -> sigma multiplier of its pin (absent means 1).
     // Seed-round, fold-deferred path (docs/SPEC_eq34_seed_round.md §3.2):
     // the wavelength of each elected pin whose ambiguity state did not exist at
     // election time (a cold start, or a new arc that PASS B's pre-pass allocates), so
@@ -190,7 +196,7 @@ struct NetStation {
     // from this map and reports the realized target back through
     // StationAssembly::pin_seed_targets.  Empty unless
     // network.phase_datum_eq34_seed_round is on; cleared and rebuilt with the pins.
-    std::map<std::string, double> pinned_amb_seed_lambda;
+    std::map<std::string, double> pinned_amb_seed_lambda;  ///< "sat_signal" key of an elected pin without an ambiguity state yet -> its wavelength (m).
 
     // --- flicker/gap signal integrity (docs/record/SPEC_flicker_gap_integrity.md, INC-2) ---
     // Per-satellite σ multiplier for this station's phase rows while that line of
@@ -207,7 +213,7 @@ struct NetStation {
     // with the feature off never reads this map and the assembly is byte-identical.
     // Cleared and rebuilt each epoch by @ref networkSignalIntegrity before the parallel
     // PASS-B produce reads it (station-local, so thread-safe).
-    std::map<std::string, double> phase_sigma_scale;
+    std::map<std::string, double> phase_sigma_scale;  ///< Satellite -> sigma multiplier of this station's phase rows while the line of sight is unvetted (absent means 1).
     /// Per-satellite sigma scale for this station's code rows while that line of sight
     /// is declared gross (docs/record/SPEC_event_harness.md §24.18).  The code-row
     /// counterpart of @ref phase_sigma_scale above, under the same contract: the fold
@@ -251,7 +257,7 @@ struct NetStation {
     /// This epoch's companion cells at this station, as "<satellite>|<signal>" keys
     /// (the shape of @c StateKeys::makeSatBiasKey).  Republished serially from the
     /// PASS-A observations before the parallel PASS-B produce reads it (station-local,
-    /// so thread-safe).  It lets @ref Application::networkSplitStation_ tell a
+    /// so thread-safe).  It lets @c Application::networkSplitStation_ tell a
     /// companion row from a fallback row: both route through the receiver inter-signal
     /// state, and only the companion arrived beside its canonical code.  Empty on every
     /// unarmed posture, so the split never reads it and the assembly is byte-identical.
@@ -291,7 +297,7 @@ struct NetStation {
     /// This epoch's second-phase cells at this station, as
     /// @c StateKeys::makeSatPhaseBiasKey keys.  Republished serially from the PASS-A
     /// observations before the parallel PASS-B produce reads it (station-local, so
-    /// thread-safe).  It lets @ref Application::networkSplitStation_ tell a
+    /// thread-safe).  It lets @c Application::networkSplitStation_ tell a
     /// second-phase row from the latched one; nothing else distinguishes them, because
     /// the second phase channel builds no receiver state that a row could be keyed on.  Empty
     /// on every unarmed posture, so the split never reads it and the assembly is
@@ -345,7 +351,8 @@ inline StationRowContext rowContextOf(const GnssConfig& config, const NetStation
 /// assert an integer derived from a different bias frame.
 struct SdEwlFix {
     long long   n_cyc{ 0 };        ///< propagated SD-frame integer, in cycles of lambda_EWL.
-    std::string sig1, sig2;        ///< the network-common phase pair it was decided on.
+    std::string sig1,              ///< first signal of the network-common phase pair it was decided on.
+                sig2;              ///< second signal of that pair.
     double      frac_cyc{ 0.0 };   ///< |fractional residue| of the DD that produced it (0 for the link or reference satellite, whose value is a datum choice, not a measurement).
     double      ffr{ 1.0 };        ///< rounding success probability of that DD (1 for the link/reference satellite).
     bool        usable{ false };   ///< passed the frac and FFR gates and was not vetoed by a flip this epoch.
@@ -363,7 +370,7 @@ struct SdEwlFix {
 
 /// What the D2 fold does with one carried border entry this epoch
 /// (section 4.4).  Decided once per epoch, before PASS B, by
-/// @ref networkCarryDecide, and read by every consumer of the decision: the exact
+/// @ref GnssProcessor::networkCarryDecide "networkCarryDecide", and read by every consumer of the decision: the exact
 /// coupling update's rows (through @c cxu_epoch), the fold itself and the run-end
 /// tally.  The design's seven names map as: Anchored and Loose (a satellite clock under
 /// the Q3 anchor), Reinit, Reref and Parked as named; the design's Skipped is split into
@@ -389,7 +396,11 @@ enum class CarryDisposition : int {
 /// Number of @ref CarryDisposition values (array sizing of the run-end tally).
 inline constexpr int kCarryDispositions = 12;
 
-/// Short lower-case name of a disposition, for the run-end table and the manifest.
+/**
+ * @brief Short lower-case name of a disposition, for the run-end table and the manifest.
+ * @param d The disposition.
+ * @return A static string such as "folded" or "on_oscillator"; "?" for a value outside the enum.
+ */
 inline const char* carryDispositionName(CarryDisposition d) {
     switch (d) {
         case CarryDisposition::Undecided:    return "undecided";
@@ -421,7 +432,7 @@ inline const char* carryDispositionName(CarryDisposition d) {
  * before any reader runs.
  */
 struct CarryFoldDecision {
-    CarryDisposition disposition{CarryDisposition::Undecided};
+    CarryDisposition disposition{CarryDisposition::Undecided};  ///< What the fold does with the entry this epoch (Undecided until the decision pass).
     /// The increment over the carried variance before any floor (m^2): q·gap of the kind,
     /// or for a clock under the armed anchor its own increment (cta_q·dt_sat anchored,
     /// the legacy q over the gap loose).  0 for the dispositions that do not fold.
@@ -436,7 +447,7 @@ struct CarryFoldDecision {
     /// The interval the increment covers (s) and its rate (m^2/s), q_applied_m2 = rate·dt
     /// before the pivot-frame process noise term.  Set for a folding disposition.
     double dt_applied_s{0.0};
-    double rate_m2ps{0.0};
+    double rate_m2ps{0.0};      ///< The rate of that increment (m^2/s).
     /// Pivot-frame process noise (network.clock_pivot_frame_q): the pivot's rate this clock's term uses
     /// (m^2/s), 0 when the clock takes no term (the knob off, the pivot itself, a reinit, a
     /// non-folding disposition, another kind).  The term r_p·dt_applied_s is inside
@@ -452,15 +463,15 @@ struct CarryFoldDecision {
 /// variance, re-keyed by (kind, sat, signal) identity so it survives layout
 /// changes (a satellite blinking in/out).
 struct CarryPrior {
-    SharedParamKind kind;
-    std::string     sat;
-    std::string     signal;
+    SharedParamKind kind;        ///< The shared parameter kind (Clock, PhaseBias, CodeBias or VtecSh).
+    std::string     sat;         ///< Satellite id (Clock, PhaseBias and CodeBias).
+    std::string     signal;      ///< Signal id (PhaseBias and CodeBias).
     int             sh_n{-1};    ///< VtecSh degree (VtecSh only)
     int             sh_m{-1};    ///< VtecSh order  (VtecSh only)
     char            sh_trig{0};  ///< VtecSh 'C'/'S' (VtecSh only)
     int             sh_layer{0}; ///< VtecSh shell index (VtecSh only; 0 = legacy layer)
-    double          value;
-    double          var;
+    double          value;       ///< The carried value (the kind's state, in its own units).
+    double          var;         ///< The carried posterior variance (the value's units squared).
     bool            inflate_q{false};  ///< set when the clock monitor flagged this satellite: the next epoch folds it with the large reinit variance instead of the stiff process noise (a soft large-q reinitialization that lets a frozen clock move toward the data while keeping a weak anchor).
     /// Continuous-GPS second at which this entry's shared column left the layout
     /// (0 = live; READMIT continuity, the E2 seed-first re-admission,
@@ -487,14 +498,18 @@ struct CarryPrior {
 /// clock seed is attributed to the seed, meaning the data rejected it (the
 /// mark-if-moved rule of invariant #7).  @c kReadmitSeedK: the standardized-residual
 /// threshold of the stash-side seed-vs-solve check (telemetry only).
-inline constexpr long long kReadmitMinGapEp      = 3;
-inline constexpr double    kReadmitVerifyWindowS = 300.0;
-inline constexpr double    kReadmitSeedK         = 6.0;
+inline constexpr long long kReadmitMinGapEp      = 3;      ///< Minimum absence of a re-admission, in loop epochs.
+inline constexpr double    kReadmitVerifyWindowS = 300.0;  ///< Window (s) after a clock seed in which a Q3 nis/abs trip is attributed to the seed.
+inline constexpr double    kReadmitSeedK         = 6.0;    ///< Standardized-residual threshold of the stash-side seed-vs-solve check (telemetry only).
 
-/// Identity key of a dense-carried shared parameter (C1).  Mirrors the internal key
+/// @brief Identity key of a dense-carried shared parameter (C1).  Mirrors the internal key
 /// construction of NetworkEstimator so that the stash and the fold agree.  SH-VTEC
 /// never enters the dense block (its carry is the diagonal pre-gate fold), so the
 /// (n, m, trig) family needs no key here.
+/// @param kind   Clock, CodeBias or PhaseBias (any other kind returns the bare satellite id).
+/// @param sat    Satellite id.
+/// @param signal Signal id (read for CodeBias and PhaseBias only).
+/// @return @c "sat|CLK", @c "sat|CB|signal" or @c "sat|PB|signal"; @p sat alone for any other kind.
 inline std::string sharedCarryKey(SharedParamKind kind, const std::string& sat,
                                   const std::string& signal) {
     switch (kind) {
@@ -520,6 +535,7 @@ inline std::string sharedCarryKey(SharedParamKind kind, const std::string& sat,
 struct SharedCarryCov {
     std::map<std::string, std::size_t> row;  ///< identity key → row/col in P
     Eigen::MatrixXd P;                       ///< dense posterior covariance (m²)
+    /// @brief Empty the block: no rows and a 0 x 0 covariance (the fold then falls back per key to the diagonal path).
     void clear() { row.clear(); P.resize(0, 0); }
 };
 
@@ -639,7 +655,7 @@ struct LocalCarry {
     /// is ≥ 1), survives the `!= 0` first-stash test, and reads as mature at every age
     /// reader (all of which test `> 0`).
     static constexpr long long kBirthEpRestored = -1;
-    /// Restored-arc sentinel for @ref birth_s: the seconds counterpart of
+    /// Restored-arc sentinel for @c birth_s: the seconds counterpart of
     /// @ref kBirthEpRestored, under the same rule (a real stamp is a continuous-GPS
     /// second, so it is always ≫ 0).
     static constexpr double    kBirthSRestored  = -1.0;
@@ -697,7 +713,7 @@ struct LocalCarry {
     /// §7.4): the abscissa of the D1 variance-trajectory fit (@c log var = a − b·log n
     /// over the first 30 folds) and the bucket key of the D4 σ̂₀(pl)-by-arc-age read.
     ///
-    /// It cannot be derived from @ref birth_ep: an arc's age counts every epoch since
+    /// It cannot be derived from @c birth_ep: an arc's age counts every epoch since
     /// its first stash, while the fold count skips the epochs in which the carry did
     /// not act (the free-epoch latch, the gap cliff, a pending reseed, a non-finite
     /// @c x_lin), which are the epochs RF-1 studies.  Incremented at the harvest when
@@ -773,23 +789,23 @@ struct AmbStateRow {
     std::string signal;             ///< RINEX signal (e.g. L1C).
     double      value_abs_m{0.0};   ///< The carried absolute float ambiguity after this epoch's harvest (m).  On an erase row, the value the entry held when it was deleted.
     double      var_m2{0.0};        ///< The carried posterior variance after this epoch's harvest (m²); the conditional variance under the conditional coupling.
-    double      var_first_m2{0.0};  ///< @ref LocalCarry::var_first: the arc's first-stash variance, unfloored.
-    double      var_birth_m2{0.0};  ///< @ref LocalCarry::var_birth: the floored birth prior that the drop restores (RF-1 step 4).
+    double      var_first_m2{0.0};  ///< @ref GnssProcessor::LocalCarry::var_first "LocalCarry::var_first": the arc's first-stash variance, unfloored.
+    double      var_birth_m2{0.0};  ///< @ref GnssProcessor::LocalCarry::var_birth "LocalCarry::var_birth": the floored birth prior that the drop restores (RF-1 step 4).
     double      fold_var_m2{0.0};   ///< The variance the fold used this epoch (0 when @ref folded is false).
     long long   n_folds{0};         ///< @ref LocalCarry::n_folds after this epoch (the D1 abscissa).
     long long   age_ep{0};          ///< Loop epochs since the arc's first stash (−1 = warm-resume-restored; 0 = born this epoch, or an unstamped entry on an erase or drop row).
     long long   age_since_relevel_ep{0}; ///< Epochs since @ref LocalCarry::relevel_s (−1 = unstamped, read as mature; erase rows always carry −1 and drop rows 0).
     bool        folded{false};      ///< Did a carried prior actually act on this column this epoch?
     AmbFoldRoute route{AmbFoldRoute::None}; ///< …and through which route (@ref AmbFoldRoute).
-    std::string event;              ///< "" | birth | drop:<cause> | erase:<cause> | stransform.
+    std::string event;              ///< "" | birth | drop:\<cause\> | erase:\<cause\> | stransform.
 };
 
-/// One carried-ambiguity entry as a warm resume restores it from a snapshot's
+/// @brief One carried-ambiguity entry as a warm resume restores it from a snapshot's
 /// `L` / `Z` row.  This is the one place where the restored-arc age convention is
 /// applied.
 ///
 /// The snapshot does not serialize the arc's birth, by design (see
-/// @ref LocalCarry::birth_ep): the contract is that a restored entry reads as mature,
+/// @ref GnssProcessor::LocalCarry::birth_ep "LocalCarry::birth_ep"): the contract is that a restored entry reads as mature,
 /// because its true birth is at least as old as the snapshot, and refusing it would
 /// refuse the whole network for @c min_age epochs after every resume.  Leaving the
 /// fields at their 0 default does not deliver that contract: the harvest's
@@ -803,7 +819,7 @@ struct AmbStateRow {
 /// @param var         Carried posterior variance (m²), the snapshot's field.
 /// @param last_seen_s Continuous-GPS seconds of the stash that wrote the row.
 /// @param var_first   First-stash variance if the row carried one (0 = absent).
-/// @return A @ref LocalCarry with both birth stamps at their restored sentinels.
+/// @return A @ref GnssProcessor::LocalCarry "LocalCarry" with both birth stamps at their restored sentinels.
 inline LocalCarry makeRestoredLocalCarry(double value_abs, double var,
                                         double last_seen_s,
                                         double var_first = 0.0) {
@@ -814,14 +830,14 @@ inline LocalCarry makeRestoredLocalCarry(double value_abs, double var,
     return lc;
 }
 
-/// True when this carried entry is younger than the maturity bar.  One definition
+/// @brief True when this carried entry is younger than the maturity bar.  One definition
 /// with two readers, both in NetworkPhaseDatum: the held S-basis age gate
 /// `network.phase_anchor_min_age_ep` and the cold anchor-fallback candidacy bar
 /// `network.phase_datum_candidacy_min_age_ep`.
 ///
 /// The restored-arc age convention: an entry whose @c birth_ep is not positive has no
 /// usable age, whether it is 0 (never stashed, or restored without the sentinel) or
-/// @ref LocalCarry::kBirthEpRestored (warm-resume-restored), and it is never young.
+/// @ref GnssProcessor::LocalCarry::kBirthEpRestored "LocalCarry::kBirthEpRestored" (warm-resume-restored), and it is never young.
 /// The conservative direction is to let the variance ceiling decide rather than
 /// refuse a carry that the ledger says has converged.
 ///
@@ -836,12 +852,12 @@ inline bool localCarryYoung(const LocalCarry& lc, long long now_ep,
            && (now_ep - lc.birth_ep) < static_cast<long long>(min_age_ep);
 }
 
-/// Stamp @p fresh with the arc's birth under the first-stash-wins rule; the one
+/// @brief Stamp @p fresh with the arc's birth under the first-stash-wins rule; the one
 /// definition of the rule that the phase-leveling harvest applies at every stash.
 ///
 /// The "already stamped" test is `!= 0`, not `> 0` (SPEC_event_harness §15.4).  Both
 /// non-zero states mean that the arc's birth is settled: a positive stamp is a real
-/// first stash, and @ref LocalCarry::kBirthEpRestored marks a warm-resume entry that
+/// first stash, and @ref GnssProcessor::LocalCarry::kBirthEpRestored "LocalCarry::kBirthEpRestored" marks a warm-resume entry that
 /// is older than this run, with its true age not snapshotted, and therefore mature.
 /// A `> 0` test cannot tell the sentinel from an unstashed 0, and would let the first
 /// harvest after a resume re-stamp every restored arc as born at the resume epoch.
@@ -861,7 +877,7 @@ inline void localCarryStampBirth(LocalCarry& fresh, const LocalCarry* prev,
     fresh.birth_s  = (prev && prev->birth_s != 0.0) ? prev->birth_s : now_s;
 }
 
-/// The stamp rule of @ref LocalCarry::relevel_s, the arc's re-level clock; the one
+/// @brief The stamp rule of @ref GnssProcessor::LocalCarry::relevel_s "LocalCarry::relevel_s", the arc's re-level clock; the one
 /// definition that the phase-leveling harvest applies at every stash.
 ///
 /// Two events, and only these two, stamp the arc with the harvest's time: the entry is
@@ -869,7 +885,7 @@ inline void localCarryStampBirth(LocalCarry& fresh, const LocalCarry* prev,
 /// deleted the entry), or the arc was freed this epoch, so this harvest re-levelled it
 /// from one epoch of code.  Every other re-stash keeps the previous stamp, so the age
 /// keeps growing while the arc matures.  A re-level does not reset @c birth_s
-/// (@ref localCarryStampBirth), and an ordinary re-stash does not reset this.
+/// (@ref GnssProcessor::localCarryStampBirth "localCarryStampBirth"), and an ordinary re-stash does not reset this.
 ///
 /// @param prev_relevel_s  The previous entry's stamp (0 when there was no entry).
 /// @param created         True when no previous entry existed: a first stash, or the
@@ -889,7 +905,9 @@ inline double localCarryStampRelevel(double prev_relevel_s, bool created, bool f
 /// bridge; collected in @ref RelevelEpochState::mw_cands (SPEC_slip_relevel_walk §6).
 struct MwBridgeCand {
     int         sta{-1};          ///< Station index.
-    std::string sat, sig1, sig2;  ///< Satellite + the MW pair's phase signals.
+    std::string sat,              ///< Satellite.
+                sig1,             ///< First of the MW pair's phase signals.
+                sig2;             ///< Second of the MW pair's phase signals.
     int         dn_wl{0};         ///< Confident ZD wide-lane integer (cycles).
     double      sigma_wl_cyc{0};  ///< WL confidence (cycles; MW frac, floored).
     double      lambda_wl{0};     ///< WL wavelength (m).
@@ -907,12 +925,15 @@ struct MwBridgeCand {
 /// while the interim free level sits within about 2 cycles of truth, so agreement
 /// with it separates the two populations.
 struct RelevelPend {
-    double pre1{0}, pre_var1{0};   ///< Pre-slip carry (band 1): value_abs (m), var (m²).
-    double pre2{0}, pre_var2{0};   ///< Pre-slip carry (band 2).
+    double pre1{0},                ///< Pre-slip carry (band 1): value_abs (m).
+           pre_var1{0};            ///< Pre-slip carry (band 1): var (m²).
+    double pre2{0},                ///< Pre-slip carry (band 2): value_abs (m).
+           pre_var2{0};            ///< Pre-slip carry (band 2): var (m²).
     double dif_m{0};               ///< T1-measured IF step, common-mode removed (m).
     double sigma_if_m{0};          ///< Its 1σ (m).
     double lambda_if{0};           ///< (1,1) IF wavelength (m).
-    std::string sig1, sig2;        ///< The pair's phase signals.
+    std::string sig1,              ///< First of the pair's phase signals.
+                sig2;              ///< Second of the pair's phase signals.
     double tow_s{0};               ///< Continuous-GPS-s of the flag (expiry base).
     bool   has_dn{false};          ///< The MW integer has arrived.
     int    dn_wl{0};               ///< Confident ZD wide-lane integer (cycles).
@@ -929,7 +950,7 @@ struct RelevelPend {
     // the (1,2) plane at 0.15–0.3 cycles without waiting for MW: whenever
     // σ_gf ≲ 0.75·σ_IF the GF row is worth as much as a correct WL integer, without
     // the risk of a wrong integer.
-    bool   has_gf{false};
+    bool   has_gf{false};          ///< The GF-phase TD row was captured at pend creation.
     double dgf_m{0};               ///< T1-measured ΔGF across the slip epoch (m).
     double sigma_gf_m{0};          ///< Its 1σ (m; empirical, floored).
 };
@@ -982,6 +1003,7 @@ struct RelevelEpochState {
     /// harvest-side statistics guard (excluded from LS-VCE, relabelled in prires).
     std::set<std::tuple<int, std::string, std::string>> bridged;
 
+    /// @brief Empties every set and map (called at the next epoch's PASS-A entry).
     void clear() {
         free_ambs.clear(); free_cause.clear(); mw_cands.clear(); bridged.clear();
     }
@@ -1015,6 +1037,8 @@ struct RpbTraceCol {
     double       tl_var{std::numeric_limits<double>::quiet_NaN()};    ///< Its variance, carried plus q times the gap (m^2; NaN: no time link).
 };
 
+/// @brief One present, carry-eligible (non-pivot) ambiguity of a station-epoch, recorded in PASS B
+/// for the post-solve harvest and stash: its A_r column, identity and linearization point.
 struct PlAmb {
     Eigen::Index col;     ///< A_r column of this ambiguity (= h2local[amb_idx]).
     std::string  sat;     ///< RINEX satellite id.
@@ -1063,11 +1087,11 @@ struct AnchorHandoverLedger {
     /// residual spike one epoch later.  Invariant #7's re-coupling edge must
     /// re-validate what it reconnects, and the variance makes that check possible.
     struct Entry {
-        double value{0.0};
+        double value{0.0};  ///< The absolute ambiguity estimate from the previous epoch's solve, in that epoch's realized frame (m).
         double var{-1.0};   ///< < 0 = unavailable, treated as unusable.
         double var_first{0.0};  ///< the arc's first-stash conditional variance (m²; 0 = unknown, which the ratio ceiling refuses); the denominator of network.phase_datum_handover_max_var_ratio.
     };
-    std::map<std::pair<int, std::string>, Entry> value_abs;
+    std::map<std::pair<int, std::string>, Entry> value_abs;  ///< Previous epoch's estimates by (station index, "sat_signal" ambiguity key); see @c Entry.
     /// True once a harvest has run, so the election can tell "armed but the
     /// first epoch has no history yet" from "not armed".
     bool primed{false};
@@ -1117,7 +1141,7 @@ struct AnchorHandoverEvent {
     /// (the pass is not entered).  Recorded so that a cold-handover census can be
     /// re-run from the trace alone instead of from a second run.
     int         cand_skipped{0};
-    std::string cand_first_unusable{};
+    std::string cand_first_unusable{};  ///< The first higher-ranked candidate the pass skipped (empty when none).
 };
 
 /// One present station ZWD column this epoch (B9): its A_r column and the ZWD
@@ -1140,7 +1164,7 @@ struct RxClkPred {
     double var{0.0};   ///< var + q*gap_ep + rate_var*gap^2  (m^2)
 };
 
-/// Propagate a carried receiver clock over @p gap_s seconds (RX-CLK-in-block).
+/// @brief Propagate a carried receiver clock over @p gap_s seconds (RX-CLK-in-block).
 ///
 /// The state is (bias, drift).  The bias is a random walk of @p q_m2 per epoch.  The
 /// gap is supplied in epochs (@p gap_ep) as well as in seconds because the knob's
@@ -1171,7 +1195,7 @@ inline RxClkPred rxClockPredict(double value_abs, double var, double rate,
     return p;
 }
 
-/// Scalar Kalman update of the carried drift from one harvested increment
+/// @brief Scalar Kalman update of the carried drift from one harvested increment
 /// (RX-CLK-in-block).
 ///
 /// @param rate      [in,out] the drift estimate (m/s).
@@ -1254,8 +1278,10 @@ struct StationAssembly {
     bool             empty_innov{false};   ///< networkStationRows yielded no rows.
     bool             state_mismatch{false};///< H column count != state size.
     bool             threw{false};         ///< networkStationRows / splitStation threw.
-    Eigen::MatrixXd  A_s, A_r;             ///< Shared-border + local-nuisance Jacobian.
-    Eigen::VectorXd  w, y;                 ///< Per-row information weights + innovations.
+    Eigen::MatrixXd  A_s,                  ///< Shared-border part of the Jacobian (one row per data or constraint row).
+                     A_r;                  ///< Local-nuisance part of the Jacobian (same rows).
+    Eigen::VectorXd  w,                    ///< Per-row information weights.
+                     y;                    ///< Per-row innovations.
     int              np{0};                ///< Pivot ambiguity pins folded in (pivot only).
     std::map<int,int> h2local;             ///< H-column -> A_r-column map (back-substitute the slant-iono nuisance for the viz trace).
     /// One contribution tag per row of @c A_s / @c A_r, in row order
@@ -1290,7 +1316,7 @@ struct StationAssembly {
     /// rows it appended (the tag check compares it with the @c AnchorLevelHold tags).  Both
     /// empty on every unarmed run.
     std::vector<LevelHoldRecord> level_hold;
-    long long level_hold_rows{0};
+    long long level_hold_rows{0};  ///< Rows the anchor-level hold appended this station-epoch.
     /// The station's parameter inventory of this epoch: every state column
     /// classified, with the disposition networkSplitStation_ gave it.  Written by this
     /// station's produce iteration only, drained serially after PASS B
@@ -1319,21 +1345,21 @@ struct StationAssembly {
     // index of the coupling block (−1 when none); cpl_row_local_cols = the carried local
     // column each coupling row targets, in append order (so that a refloated column's
     // row can be zeroed).
-    Eigen::Index              cpl_row_start{-1};
-    std::vector<Eigen::Index> cpl_row_local_cols;
+    Eigen::Index              cpl_row_start{-1};   ///< First A_s/A_r row index of the coupling block (-1 when none).
+    std::vector<Eigen::Index> cpl_row_local_cols;  ///< The carried local column each coupling row targets, in append order.
     // Coupling-term counts of this station-epoch's injected rows (coupling and κ-shrink
     // observability): layout-present terms, departed (marginalized) terms, and present
     // terms κ-shrunk by the border time update.  Summed serially into run totals.
-    long long                 cpl_terms_present{0};
-    long long                 cpl_terms_departed{0};
-    long long                 cpl_terms_shrunk{0};
+    long long                 cpl_terms_present{0};   ///< Coupling terms whose shared column is present in the layout.
+    long long                 cpl_terms_departed{0};  ///< Coupling terms whose shared column departed (marginalized).
+    long long                 cpl_terms_shrunk{0};    ///< Present terms kappa-shrunk by the border time update.
     /// (constellation, kind) families whose coefficient sum was held at its harvest
     /// value against a truncated column, and families with truncated mass but no present
     /// recipient to carry it, which leaves the row gauge-dirty for that family this
     /// epoch (network.carry_coupling_gauge_project).  Both stay 0 with the
     /// knob off, so a nonzero pair shows that the wiring ran.
     long long                 cpl_gauge_held{0};
-    long long                 cpl_gauge_orphan{0};
+    long long                 cpl_gauge_orphan{0};  ///< Families with truncated mass but no present recipient (gauge-dirty this epoch).
     /// Orphan attribution: per (constellation, SharedParamKind) family, the orphan
     /// count and the summed |truncated mass| left gauge-dirty.  There is no recipient
     /// fallback, by decision: the coefficient sums are realized per constellation
@@ -1597,7 +1623,7 @@ struct StationAssembly {
     std::vector<std::tuple<std::string, double, double>> pin_seed_targets;
 };
 
-/// Whiten one station's phase-leveling carry block over its kept columns, i.e. those
+/// @brief Whiten one station's phase-leveling carry block over its kept columns, i.e. those
 /// whose @c local_col is not in @p skip (the within-epoch RAIM refloat drop-set; empty
 /// for the primary build) (F3, network.phase_leveling_local_block).  The dropped
 /// columns are marginalized (their rows and columns are deleted from Σ before the
@@ -1614,6 +1640,17 @@ struct StationAssembly {
 /// callers (the builder's primary build and the run-TU refloat re-whiten) must share
 /// one codegen, so that the re-whitened survivors are the rows the primary build would
 /// have emitted for that column set.
+///
+/// @param blk     The station's pre-whitening block ingredients (per-column rows and the joint prior Sigma).
+/// @param skip    Local columns to marginalize out (the within-epoch RAIM refloat drop-set); empty for the primary build.
+/// @param ncol_r  Number of local (A_r) columns, the column count of @p Hr.
+/// @param nshared Number of shared columns, the column count of @p Hs.
+/// @param[out] Hr Whitened local-column rows (m x @p ncol_r), resized and overwritten.
+/// @param[out] Hs Whitened shared-column rows (m x @p nshared), resized and overwritten.
+/// @param[out] z  Whitened right-hand side (length m), resized and overwritten.
+/// @param[out] kept Indices into @c blk.rows of the surviving rows, in output-row order.
+/// @return True on success, including an empty kept set; false when @c blk.Sigma is not n x n or the
+///         factor is non-SPD after the ridge retry.
 inline bool whitenLocalBlock(const PlBlockRaw& blk,
                              const std::set<Eigen::Index>& skip,
                              Eigen::Index ncol_r, Eigen::Index nshared,
@@ -1679,7 +1716,13 @@ struct ClockOsc {
 };
 
 /// One-step predicted ClockOsc (the carry-prior mean and variance): Φ·x and Φ·P·Φᵀ + Q(dt).
-struct ClockOscPred { double x0, x1, p00, p01, p11; };
+struct ClockOscPred {
+    double x0,   ///< Predicted clock offset (m).
+           x1,   ///< Predicted clock drift (m/s).
+           p00,  ///< Predicted cov(offset, offset).
+           p01,  ///< Predicted cov(offset, drift).
+           p11;  ///< Predicted cov(drift, drift).
+};
 
 /// Per-satellite state of the guarded temporal clock anchor (
 /// docs/record/SPEC_clock_temporal_anchor.md).  Two states: ANCHORED (the clock's D2 carry
@@ -1716,7 +1759,7 @@ enum class ClockStepCause : std::uint8_t {
 /// re-earn the anchor from LOOSE after a resume rather than inherit a stiffness whose
 /// evidence was not carried across.
 struct ClockAnchorState {
-    std::map<std::string, ClockAnchorSat> sat;
+    std::map<std::string, ClockAnchorSat> sat;  ///< Per-satellite anchor state, keyed by satellite id.
     /// Satellites decoupled this epoch (the guard's output for the epoch), consumed by
     /// the wire-mark queue and the event/counter tier.
     std::set<std::string> tripped;
@@ -1746,7 +1789,12 @@ struct ClockLevelInnovWin {
     double s_nub{0.0};    ///< sum of the odd-station half's innovation (m)
 };
 
-/// Predict a ClockOsc forward by @p dt with white-FM @p q1 and random-walk-FM @p q2.
+/// @brief Predict a ClockOsc forward by @p dt with white-FM @p q1 and random-walk-FM @p q2.
+/// @param s  The oscillator state to predict from (not modified).
+/// @param dt Prediction interval (s).
+/// @param q1 White-FM diffusion coefficient (m^2/s).
+/// @param q2 Random-walk-FM diffusion coefficient (m^2/s^3).
+/// @return The predicted offset, drift and covariance: Phi x and Phi P Phi^T + Q(dt).
 inline ClockOscPred clockOscPredict(const ClockOsc& s, double dt, double q1, double q2) {
     const double q11 = q1 * dt + q2 * dt * dt * dt / 3.0;
     const double q12 = q2 * dt * dt / 2.0;
@@ -1760,7 +1808,7 @@ inline ClockOscPred clockOscPredict(const ClockOsc& s, double dt, double q1, dou
     return p;
 }
 
-/// Measurement update of @p s from prediction @p pr with a network-solved offset @p z
+/// @brief Measurement update of @p s from prediction @p pr with a network-solved offset @p z
 /// (variance @p r).  H = [1 0].  The update uses the raw innovation z − x0 (the carry
 /// follows the raw clock).  Returns S, the innovation variance, so that the caller can
 /// form the normalized innovation innov/√S (the dynamics-fault statistic), where innov is
@@ -1768,6 +1816,11 @@ inline ClockOscPred clockOscPredict(const ClockOsc& s, double dt, double q1, dou
 /// @note Retained for reference: the clock-model carry sets the oscillator state directly
 ///       from the joint-solve posterior (the B3 data-incest fix), so this scalar KF update
 ///       is not wired.
+/// @param[in,out] s The oscillator state, overwritten with the updated state (and marked initialized).
+/// @param pr        The one-step prediction of @p s (see @ref GnssProcessor::clockOscPredict "clockOscPredict").
+/// @param z         The network-solved clock offset (m).
+/// @param r         The variance of @p z (m^2).
+/// @return S, the innovation variance (m^2) of the raw innovation @p z minus the predicted offset.
 [[maybe_unused]] inline double clockOscUpdate(ClockOsc& s, const ClockOscPred& pr, double z, double r) {
     const double S  = pr.p00 + r;
     const double dz = z - pr.x0;                 // raw innovation (carry follows the raw clock)
@@ -1800,9 +1853,15 @@ inline ClockOscPred clockOscPredict(const ClockOsc& s, double dt, double q1, dou
 // is race-free by construction.  t_s = 0 marks a never-harvested (cold) entry.  With
 // the carry off, the output is byte-identical.  (The map instance @c sh_dev_carry
 // lives in NetworkCarryState.)
-struct ShDevCarry { double dev{0.0}; double var{0.0}; double var_ss{0.0}; double t_s{0.0}; };
+/// @brief The Gauss-Markov deviation carry of one (station, satellite) line of sight.
+struct ShDevCarry {
+    double dev{0.0};     ///< Carried deviation (vertical TECU).
+    double var{0.0};     ///< Its variance (TECU^2).
+    double var_ss{0.0};  ///< Steady-state variance, representation_sigma_tecu squared (TECU^2).
+    double t_s{0.0};     ///< Continuous-GPS seconds of the last harvest; 0 marks a never-harvested (cold) entry.
+};
 
-/// Exact scalar posterior update of one GM deviation d from the solved pin
+/// @brief Exact scalar posterior update of one GM deviation d from the solved pin
 /// functional (Iono-2).  It replaces the T5 v1 scalar filter, falsified as circular:
 /// v1 re-consumed the pin-regularized residual as an independent floor-noise
 /// observation, which collapses P to floor² after one update.
@@ -1840,7 +1899,7 @@ inline std::pair<double, double> shDevExactUpdate(double d_pred, double p_pred,
 
 /// @brief The gap horizon of the receiver code-bias carry (s; docs/record/SPEC_rx_cb_carry.md
 ///        section 3): a carried receiver code bias unseen longer than this is not folded
-///        (@ref rxCbInjectGate's @c max_gap_s on both routes), is not judged by the block
+///        (@ref GnssProcessor::rxCbInjectGate "rxCbInjectGate"'s @c max_gap_s on both routes), is not judged by the block
 ///        harvest's step test, and is pruned at the harvest.
 ///
 /// A constant, not a knob.  The one definition read by every one of those sites and by
@@ -1865,6 +1924,26 @@ inline constexpr double kRxCbMaxGapS = 900.0;
 /// frame-free gap and variance sanity checks; the in-block route passes false, and its
 /// block harvest's step test owns the event response there.
 enum class RxCbInjectAction { Fold, SkipGap, SkipInnov };
+/**
+ * @brief Decide whether one carried receiver code-bias prior is folded this epoch.
+ *
+ * Applies the frame-free gap and variance checks, then the innovation gate when
+ * @p innov_test is set (see the decision description above @c RxCbInjectAction).
+ *
+ * @param gap_s        Time since the entry was last seen (s); a negative gap adds no process noise.
+ * @param max_gap_s    Gap horizon (s), normally @c kRxCbMaxGapS; a longer gap skips the fold.
+ * @param var          Carried variance (m^2).
+ * @param q_m2s        Process-noise rate (m^2/s).
+ * @param innov_m      The carried value minus the linearization point of the column (m).
+ * @param k_sigma      Gate half-width in standard deviations.
+ * @param guard_var_m2 Guard variance added to the effective variance under the gate (m^2).
+ * @param[out] var_eff_out The effective variance var + q*gap (m^2); written for Fold and SkipInnov,
+ *                         left untouched for SkipGap.
+ * @param innov_test   False disables the innovation gate (the in-block route passes false).
+ * @return Fold when the prior is to be folded; SkipGap when the gap exceeds @p max_gap_s or the
+ *         effective variance is non-positive, non-finite or at least 1e30; SkipInnov when the
+ *         innovation lies outside the gate.
+ */
 inline RxCbInjectAction rxCbInjectGate(double gap_s, double max_gap_s,
                                        double var, double q_m2s, double innov_m,
                                        double k_sigma, double guard_var_m2,
@@ -1881,7 +1960,7 @@ inline RxCbInjectAction rxCbInjectGate(double gap_s, double max_gap_s,
     return RxCbInjectAction::Fold;
 }
 
-/// The D5-only slip response (Iono-2 v3k, erase-policy split): keep the accumulated
+/// @brief The D5-only slip response (Iono-2 v3k, erase-policy split): keep the accumulated
 /// deviation level and re-tap the confidence to the GM steady state.  Applied when a
 /// (station, sat) LOS is in the C3c funnel without a raw-detector confirmation this
 /// epoch.  Most D5 re-taps (97 % measured) show no raw observable step: they are
@@ -1889,6 +1968,7 @@ inline RxCbInjectAction rxCbInjectGate(double gap_s, double max_gap_s,
 /// erasing on them caps the mean deviation lifetime at about 0.7·τ.  Raw-confirmed
 /// slips still erase (invariant #1 unchanged); see the PASS-B pre-pass.  Idempotent
 /// under the subsequent GM aging step (λ²·σ_ss² + (1−λ²)·σ_ss² = σ_ss²).
+/// @param[in,out] dc The deviation carry of the line of sight; its variance is set to the steady-state variance.
 inline void shDevD5Retap(ShDevCarry& dc) { dc.var = dc.var_ss; }
 
 /// Iono-2 v3 result of one de-mean pass over the deviation carry
@@ -1900,7 +1980,7 @@ struct ShDevDemeanStats {
     int    n_sta{0};        ///< Stations whose per-station mean was also removed.
 };
 
-/// Contract-enforcing de-mean of the carried deviation priors, which prevents a
+/// @brief Contract-enforcing de-mean of the carried deviation priors, which prevents a
 /// ratchet (Iono-2 v3).  A component of the deviation field that is common in vertical
 /// TECU across LOS has the row signature M(el)·tecu_to_m, identical to the a00
 /// column's, so the data cannot separate that common deviation from a00, and the
@@ -1967,28 +2047,30 @@ inline ShDevDemeanStats shDevDemean(std::map<std::string, ShDevCarry>& carry,
 // scope at a given disposition site are left blank (std::nullopt), not zero: the
 // pyviz timeline viewers (L5) distinguish "unavailable" from a real 0.  The writer
 // body is NetworkRunTraces::emitEpochStatus (decomposition INC-4).
+/// @brief One row of the epoch-status trace: the disposition-time values of one processed epoch,
+/// each blank when not in scope.
 struct EpochStatusRow {
-    std::optional<double> sigma0;
-    std::optional<int>    n_adapt;
-    std::optional<int>    n_present;
-    std::optional<int>    n_clock_sats;
-    std::optional<double> clock_median_m;
-    std::optional<double> clock_std_m;
-    std::string           worst_sat;        // empty string => blank
-    std::optional<double> worst_dev_m;
-    std::optional<int>    n_refloat_sats;
-    std::optional<int>    n_retro_applied;
-    std::optional<int>    datum_changed;
+    std::optional<double> sigma0;           ///< Within-epoch RAIM sigma0 of the epoch (0 unless that RAIM ran).
+    std::optional<int>    n_adapt;          ///< Within-epoch re-solves that landed this epoch.
+    std::optional<int>    n_present;        ///< Stations present in the solve.
+    std::optional<int>    n_clock_sats;     ///< Registered satellite clock columns.
+    std::optional<double> clock_median_m;   ///< Median of the solved satellite clocks over the registered ones (m).
+    std::optional<double> clock_std_m;      ///< Root-mean-square spread of those clocks about their median (m).
+    std::string           worst_sat;        ///< Satellite whose clock lies farthest from the median; empty string => blank.
+    std::optional<double> worst_dev_m;      ///< That satellite's absolute deviation from the median (m).
+    std::optional<int>    n_refloat_sats;   ///< Size of the clock-couple refloat set this epoch.
+    std::optional<int>    n_retro_applied;  ///< Satellites given a retroactive bump at this emit.
+    std::optional<int>    datum_changed;    ///< 1 when the clock datum changed this epoch, else 0.
     std::optional<int>    n_arc_refloat;   ///< Isolated-arc RAIM refloats this epoch (the churn metric; distinct from n_refloat_sats, which is the clock-refloat set; T2d).
     // --- per-epoch carry churn (SPEC_day129_frame_guards P1-1) -----------------
     // The run-end log line reports run totals only, which cannot show whether
     // the churn spiked at a given epoch.  These are the same quantities differenced
     // per epoch (NetworkInstallCarry).  Appended columns; existing positions are
     // preserved (as for T2d).
-    std::optional<long long> n_d5_flags;
-    std::optional<long long> n_d5_retaps;
-    std::optional<long long> n_chord_births;
-    std::optional<long long> n_slip_refloats;
+    std::optional<long long> n_d5_flags;       ///< Chord rows the post-solve innovation gate flagged this epoch.
+    std::optional<long long> n_d5_retaps;      ///< Flagged chord rows re-tapped fresh at install this epoch.
+    std::optional<long long> n_chord_births;   ///< DD chords born fresh this epoch.
+    std::optional<long long> n_slip_refloats;  ///< Carried chords refloated fresh this epoch because a slip invalidated an arc.
     // --- measure-only post-fit variance factor on the emit path (P1-4) --------
     // Present only under network.trace_postfit_sigma0.  sigma0 (above) is the
     // within-epoch RAIM's statistic and is 0.0000 whenever that RAIM is off.
@@ -2015,13 +2097,14 @@ struct EpochStatusRow {
     // parked cell does not.  Present only under network.trace_prefit_census and on
     // an epoch that classified rows; blank otherwise (the "unavailable is not 0"
     // convention).
+    /// @brief The prefit census statistic per data class: its extremes and its two exceedance counts.
     struct PrefitCensusStats {
         double    max_s[4]{};      ///< largest s in the class this epoch
         double    p99_s[4]{};      ///< 99th percentile of s in the class
         long long n_gt_10[4]{};    ///< rows with s > 10   (the storm-sea shoulder)
         long long n_gt_1000[4]{};  ///< rows with s > 1000 (the fault regime)
     };
-    std::optional<PrefitCensusStats> prefit_census;
+    std::optional<PrefitCensusStats> prefit_census;  ///< The prefit census of this epoch; blank when no rows were classified.
     // --- measurement-admission census (docs/record/SPEC_measurement_admission.md INC-3)
     // The absolute, product-referenced |z| population, which the prefit census
     // cannot provide: its statistic subtracts the filter state and therefore reads ~0
@@ -2071,10 +2154,10 @@ struct EpochStatusRow {
     // clock-couple set, empty unless clock_monitor_couple_raim).  we_clk_move_* is the
     // §5.07.2 impulse-channel meter: how far the within-epoch re-solves moved a
     // satellite clock away from the primary solve (0.0 = tier assessed, no re-solve).
-    std::optional<double> sigma0_first;
-    std::optional<int>    n_we_refloat_sats;
-    std::optional<double> we_clk_move_max_m;
-    std::string           we_clk_move_max_sat;   // empty = blank
+    std::optional<double> sigma0_first;         ///< First-assess sigma0 of the within-epoch tier (pre-adaptation).
+    std::optional<int>    n_we_refloat_sats;    ///< Whole-satellite refloats the within-epoch tier settled this epoch.
+    std::optional<double> we_clk_move_max_m;    ///< Largest |final - primary| satellite clock move of the within-epoch re-solves (m).
+    std::string           we_clk_move_max_sat;   ///< Satellite of that largest move; empty = blank
 };
 
 /// Disposition of a relocated epoch-loop phase, consumed at the runNetwork call site
@@ -2085,6 +2168,9 @@ struct EpochStatusRow {
 /// max-duration break stays in the prologue.
 enum class EpochAction { Proceed, SkipEpoch, StopRun };
 
+/// @brief Per-epoch workspace of the network run loop: the RAIM-replay capture channel, the
+/// clock maps and the within-epoch culprit sets, built fresh every epoch.
+///
 /// @internal Per-epoch workspace of Application::runNetwork (decomposition INC-4).
 /// Constructed fresh at the top of every epoch iteration and never hoisted for
 /// reuse: fresh construction is the per-epoch reset.  Its scope is the RAIM-replay
@@ -2138,20 +2224,20 @@ enum class EpochAction { Proceed, SkipEpoch, StopRun };
 /// marginalizes them out of cap_dense_keys / cap_dense_cov (and, on a clock clone
 /// epoch, removes their walk factors from cap_ccl_walk).
 struct EpochWorkspace {
-    Eigen::MatrixXd cap_H;
-    Eigen::VectorXd cap_z;
-    double cap_constraint_weight = 0.0;
-    bool   cap_has_constraint = false;
+    Eigen::MatrixXd cap_H;                  ///< The W6 satellite code-bias datum constraint rows (see the writer-site list).
+    Eigen::VectorXd cap_z;                  ///< Their targets.
+    double cap_constraint_weight = 0.0;     ///< The weight the captured constraint rows are re-applied at.
+    bool   cap_has_constraint = false;      ///< A constraint was captured this epoch.
     std::vector<ContributionKind> cap_row_kinds;   ///< One kind per row of cap_H (the W6 builder's row kinds)
     Eigen::MatrixXd cap_birth_H;          ///< The first-sighting family prior rows (see writer-site list)
     Eigen::VectorXd cap_birth_z;          ///< Their targets
     double          cap_birth_weight = 0.0;  ///< Their weight, 1/sigma^2
     Eigen::MatrixXd cap_sbc_H;   ///< SBC completion rows (see writer-site list)
     Eigen::VectorXd cap_sbc_z;   ///< SBC completion targets
-    std::vector<NetworkEstimator::SharedPrior> cap_priors;
+    std::vector<NetworkEstimator::SharedPrior> cap_priors;  ///< The captured shared priors, concatenated over the writer sites (see the writer-site list).
     std::vector<ContributionKind> cap_prior_kinds;   ///< One kind per entry of cap_priors: the kind its fold site named (see @ref networkCapturePriors)
-    std::vector<NetworkEstimator::SharedPrior> cap_dense_keys;
-    Eigen::MatrixXd cap_dense_cov;
+    std::vector<NetworkEstimator::SharedPrior> cap_dense_keys;  ///< The keys of the captured C1 dense shared-carry fold.
+    Eigen::MatrixXd cap_dense_cov;                              ///< Its covariance block.
     bool cap_ccl_on = false;                                       ///< the joint fold below was captured (the replay folds it in place of cap_dense_*)
     std::vector<NetworkEstimator::SharedPrior> cap_ccl_keys;       ///< the stand-in block's keys (the cloned clocks as their clones)
     Eigen::MatrixXd cap_ccl_cov;                                   ///< the stand-in block's covariance
@@ -2182,12 +2268,11 @@ struct EpochWorkspace {
 
 /**
  * @brief Append a fold's priors to the RAIM-replay capture with the kind the fold named
- *.
  *
  * Appends @p priors to @p cap_priors and one @p kind per prior to @p cap_prior_kinds, so
  * the two stay in step (the replay names the kinds to its single re-fold of the captured
  * priors through @c NetworkEstimator::contributionPriorKinds).  The writers are listed in
- * the @ref EpochWorkspace contract.
+ * the @ref GnssProcessor::EpochWorkspace "EpochWorkspace" contract.
  *
  * @param cap_priors      The capture (@c EpochWorkspace::cap_priors).
  * @param cap_prior_kinds Its kinds (@c EpochWorkspace::cap_prior_kinds).

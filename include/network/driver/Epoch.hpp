@@ -115,13 +115,13 @@ struct EpochPassA {
 
 /// The shared columns registered for this epoch (written once, by networkAssemblyRegisterColumns_).
 struct EpochColumns {
-    std::vector<std::string>                         registered_clock_sats;
-    std::vector<std::pair<std::string, std::string>> registered_code_keys;
+    std::vector<std::string>                         registered_clock_sats;  ///< Satellites whose clock column was registered, in first-seen order.
+    std::vector<std::pair<std::string, std::string>> registered_code_keys;   ///< (satellite, signal) of each registered code-bias column.
     std::vector<std::string>                         col_desc;   ///< One readable descriptor per shared column.
-    int n_clock{0};
-    int n_pb{0};
-    int n_cb{0};
-    int n_present{0};
+    int n_clock{0};    ///< Registered clock columns (the size of @c registered_clock_sats).
+    int n_pb{0};       ///< Registered phase-bias columns (the size of the shared phase-key set).
+    int n_cb{0};       ///< Registered code-bias columns (the size of @c registered_code_keys).
+    int n_present{0};  ///< Stations present in the solve this epoch.
 };
 
 /// The station blocks PASS B assembled.
@@ -135,7 +135,7 @@ struct EpochAssembly {
 /// The DD build's reverse map (carry group -> chord -> ambiguity key); the last build before
 /// the accepted solve wins; read by networkInstallCarry.
 struct EpochDdBuild {
-    std::map<int, std::map<ArcKey, std::string>> carry_arc_amb_key;
+    std::map<int, std::map<ArcKey, std::string>> carry_arc_amb_key;  ///< Carry group -> chord (ArcKey) -> ambiguity key.
 };
 
 /**
@@ -257,7 +257,13 @@ struct EpochEvents {
     /// The solve's re-admission seeds and the within-epoch RAIM tier's observability.
     struct Solve {
         /// One re-admission seed, checked against the solve at the stash.
-        struct ReadmitSeed { SharedParamKind kind; std::string sat, signal; double value, var_eff; };
+        struct ReadmitSeed {
+            SharedParamKind kind;    ///< The seeded kind: the satellite clock or the satellite code bias.
+            std::string     sat,     ///< Satellite of the seeded column.
+                            signal;  ///< Signal of a code-bias seed (not used for a clock).
+            double          value,   ///< The value the column was seeded with (m).
+                            var_eff; ///< The effective prior variance of the seed (m^2).
+        };
         std::vector<ReadmitSeed> readmit_seed_check;   ///< This epoch's seeds.
         double      ep_sigma0_first = -1.0;      ///< First-assess sigma0 (pre-adaptation); < 0 when not assessed.
         int         ep_we_refloat_sats = -1;     ///< Whole-satellite refloats settled this epoch; < 0 when not assessed.
@@ -266,7 +272,10 @@ struct EpochEvents {
     };
     /// The carry install's churn, differenced from the driver's run totals.
     struct Install {
-        long long ep_chord_births = 0, ep_slip_refloats = 0, ep_d5_flags = 0, ep_d5_retaps = 0;
+        long long ep_chord_births = 0,   ///< DD chords born fresh this epoch (the driver's chords_born delta).
+                  ep_slip_refloats = 0,  ///< Carried chords refloated fresh this epoch because a slip invalidated an arc (slip_kills delta).
+                  ep_d5_flags = 0,       ///< Chord rows the post-solve innovation gate flagged this epoch.
+                  ep_d5_retaps = 0;      ///< Flagged chord rows re-tapped fresh at install this epoch.
     };
     /// The gross-LOS screen's decisions, deferred to its act half and the emit prep.
     struct Gross {
@@ -318,28 +327,45 @@ struct EpochEvents {
         int       ep_s0g_flags = 0;           ///< NetworkPriorResidual::GlobalFlag bitmask.
     };
 
-    Slip        slip;
-    Admission   admission;
-    PhaseDatum  phase_datum;
-    Handover    handover;
-    CodeDatum   code_datum;
-    Solve       solve;
-    Install     install;
-    Gross       gross;
-    Qc          qc;
-    Harvest     harvest;
-    Census      census;
-    Status      status;
+    Slip        slip;         ///< PASS A's slip scans and the slip funnel.
+    Admission   admission;    ///< The measurement admission's epoch summary.
+    PhaseDatum  phase_datum;  ///< The phase-datum election.
+    Handover    handover;     ///< The clock-pivot handover's S-transform.
+    CodeDatum   code_datum;   ///< The code-bias datum the solve built.
+    Solve       solve;        ///< The solve's re-admission seeds and the within-epoch RAIM tier's observability.
+    Install     install;      ///< The carry install's churn.
+    Gross       gross;        ///< The gross-LOS screen's decisions.
+    Qc          qc;           ///< Quality-control events.
+    Harvest     harvest;      ///< Rows the carry harvest buffers for later writers.
+    Census      census;       ///< The FrameDiag censuses.
+    Status      status;       ///< The prior-residual census of the stash.
 };
 
+/**
+ * @brief One processed epoch of the network producer: the admitted observations and one group
+ *        per stage that writes values for later stages.
+ *
+ * The file banner lists, for every member, when it is available and which stage writes it.
+ * Built once per epoch and destroyed at its end; neither copyable nor movable.
+ */
 struct NetworkEpoch {
-    /// @param se The admitted epoch: the source's epoch, or a scratch copy the epoch function
-    ///           owns and declares before this object (the injector's, the screen's).
+    /**
+     * @brief Build the epoch over an admitted observation set; every group starts empty.
+     * @param se The admitted epoch: the source's epoch, or a scratch copy the epoch function
+     *           owns and declares before this object (the injector's, the screen's).
+     */
     explicit NetworkEpoch(const SyncedEpoch& se) : se(se) {}
+    /** @brief Deleted: @c se is held by reference, so an epoch cannot bind a temporary. */
     NetworkEpoch(const SyncedEpoch&&) = delete;
+    /** @brief Deleted: an epoch is not copyable (it holds a reference and per-epoch state). */
     NetworkEpoch(const NetworkEpoch&) = delete;
+    /** @brief Deleted: an epoch is not copy-assignable (it holds a reference member).
+     *  @return Not applicable: the operator is deleted. */
     NetworkEpoch& operator=(const NetworkEpoch&) = delete;
+    /** @brief Deleted: an epoch is not movable. */
     NetworkEpoch(NetworkEpoch&&) = delete;
+    /** @brief Deleted: an epoch is not move-assignable.
+     *  @return Not applicable: the operator is deleted. */
     NetworkEpoch& operator=(NetworkEpoch&&) = delete;
 
     const SyncedEpoch&     se;            ///< The admitted observations.
@@ -357,9 +383,13 @@ struct NetworkEpoch {
     bool                   emitted{false};///< This epoch's solution reached the wire (networkEmitStore counted an emission).
     EpochEvents            events;        ///< The epoch's events, one group per writing stage.
 
-    /// The solution the wire carries: the held vector when the fixed-cycle fold emits, else
-    /// the float solve.  Read by solution prep and the emitter; every other seam
-    /// reads solve.x_s.
+    /**
+     * @brief The solution the wire carries: the held vector when the fixed-cycle fold emits, else
+     * the float solve.  Read by solution prep and the emitter; every other seam
+     * reads solve.x_s.
+     * @return Reference to @c fixed_cycles.x_held when @c fixed_cycles.emit is true, else to
+     *         @c solve.x_s; valid for the lifetime of this epoch.
+     */
     const Eigen::VectorXd& x_emit() const { return fixed_cycles.emit ? fixed_cycles.x_held : solve.x_s; }
 };
 

@@ -6,18 +6,18 @@
  * Two pure building blocks, free of transport and threads so that the dispatch
  * semantics can be unit-tested with injected clocks:
  *
- *  - @ref NetworkStreamAligner collects per-station observation batches into
+ *  - @ref GnssProcessor::NetworkStreamAligner "NetworkStreamAligner" collects per-station observation batches into
  *    per-epoch buckets and dispatches each bucket as a @c SyncedEpoch (the same
  *    record the batch @c MultiRinexSync produces, so the network epoch-loop body
  *    consumes streamed epochs unchanged).  Dispatch follows the RTF-3
  *    wait-budget design: an epoch leaves at T_first_arrival + @c wait_budget_s
  *    with the stations that have arrived by then.  There is no early dispatch
- *    when every expected lane has reported (see @ref collectReady).  Stations
+ *    when every expected lane has reported (see @ref GnssProcessor::NetworkStreamAligner::collectReady "collectReady").  Stations
  *    that miss the window are absent from @c by_station, which downstream code
  *    treats as normal; their late batches are dropped and counted, never merged
  *    into the dispatched epoch.
  *
- *  - @ref SyncedEpochQueue is the ingest→solve hand-off with epoch-granular
+ *  - @ref GnssProcessor::SyncedEpochQueue "SyncedEpochQueue" is the ingest→solve hand-off with epoch-granular
  *    backpressure: a bounded deque of whole @c SyncedEpoch records whose
  *    overflow policy drops the oldest queued epoch.  No part of the front-end
  *    drops bytes, because a byte-granular drop-oldest policy desynchronizes the
@@ -107,6 +107,11 @@ public:
      * the same bucket is appended (merged): an MSM epoch spans several frames
      * (one per constellation, same tow), so replace semantics would discard
      * every constellation but the last.
+     *
+     * @param station Name of the station the batch came from (the roster key).
+     * @param t       Epoch time tag shared by every observation of @p obs.
+     * @param obs     The station's observations for that epoch; moved from.
+     * @param now     Arrival instant of the batch (sets the bucket's deadline when it opens a bucket).
      */
     void add(const std::string& station, const GnssTime& t,
              std::vector<RinexObservation>&& obs,
@@ -125,6 +130,7 @@ public:
      * card's "T + 0.3-1 s with whoever arrived").  Gate-dropped buckets
      * (station floor or datum) still advance the monotonic floor.
      *
+     * @param now The current instant against which bucket deadlines are compared.
      * @return Ready epochs in strictly increasing time order (possibly empty).
      */
     std::vector<SyncedEpoch> collectReady(std::chrono::steady_clock::time_point now);
@@ -132,13 +138,20 @@ public:
     /**
      * @brief Stream-end drain: dispatch every pending bucket regardless of
      *        deadline (still subject to the station-floor and datum gates).
+     * @return The epochs dispatched, in strictly increasing time order (possibly empty).
      */
     std::vector<SyncedEpoch> flush();
 
-    /// Run counters (see @ref Counters).
+    /**
+     * @brief Run counters (see @ref Counters).
+     * @return Reference to the live counters, valid for the lifetime of the aligner.
+     */
     const Counters& counters() const { return c_; }
 
-    /// Pending (not yet dispatched) bucket count; the heartbeat gauge.
+    /**
+     * @brief Pending (not yet dispatched) bucket count; the heartbeat gauge.
+     * @return Number of buckets still waiting for their deadline.
+     */
     std::size_t pendingBuckets() const { return pending_.size(); }
 
 private:
@@ -177,17 +190,24 @@ private:
  */
 class SyncedEpochQueue {
 public:
+    /**
+     * @brief Construct a queue of bounded depth.
+     * @param depth Maximum number of queued epochs; 0 is treated as 1.
+     */
     explicit SyncedEpochQueue(std::size_t depth) : depth_(depth ? depth : 1) {}
 
     /**
      * @brief Enqueue one epoch; drop the oldest on overflow.  A push after
      *        @ref close is discarded without counting.
+     * @param se The epoch to enqueue; moved from.
      * @return Number of epochs discarded to make room (0 or 1).
      */
     std::size_t push(SyncedEpoch&& se);
 
     /**
      * @brief Dequeue the next epoch, waiting up to @p timeout_ms.
+     * @param[out] out       Receives the dequeued epoch when the call returns true.
+     * @param      timeout_ms Longest wait for an epoch to arrive (ms).
      * @return True with @p out filled; false on timeout, or once the queue is
      *         closed and drained (the terminal condition; callers distinguish
      *         the two through @ref closed).
@@ -197,13 +217,22 @@ public:
     /// Producer-side terminal signal: no further pushes will arrive.
     void close();
 
-    /// True once close() has been called (pending epochs may still drain).
+    /**
+     * @brief True once close() has been called (pending epochs may still drain).
+     * @return True after close(); false before it.
+     */
     bool closed() const;
 
-    /// Current queue depth (heartbeat gauge).
+    /**
+     * @brief Current queue depth (heartbeat gauge).
+     * @return Number of epochs currently queued.
+     */
     std::size_t size() const;
 
-    /// Total epochs discarded by the overflow policy (run-end telemetry).
+    /**
+     * @brief Total epochs discarded by the overflow policy (run-end telemetry).
+     * @return Count of epochs dropped since construction.
+     */
     std::uint64_t dropped() const;
 
 private:

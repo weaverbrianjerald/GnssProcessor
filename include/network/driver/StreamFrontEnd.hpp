@@ -83,7 +83,7 @@ public:
     /// Per-lane run statistics (run-end telemetry; invariant #4: these counters,
     /// not the absence of crashes, show that the streaming path did work).
     struct LaneStats {
-        std::string   station;
+        std::string   station;                ///< Roster station name of the lane.
         std::uint64_t frames{ 0 };            ///< Complete RTCM frames decoded.
         std::uint64_t obs{ 0 };               ///< Observations tagged + delivered to the aligner.
         std::uint64_t nav_records{ 0 };       ///< Broadcast-eph records pushed to LiveEphemerisStore.
@@ -92,10 +92,21 @@ public:
         bool          active{ false };        ///< Lane transport still live at last sweep.
     };
 
+    /**
+     * @brief Construct the front end; no transport is opened until @ref start.
+     * @param config      The configuration (roster, station transports and the streaming block);
+     *                    held by reference, so it must outlive the front end.
+     * @param log_manager The logging manager (the main log); held by reference, so it must
+     *                    outlive the front end.
+     */
     NetworkStreamFrontEnd(const GnssConfig& config, LogManager& log_manager);
+    /** @brief Stops the transports and joins the ingest thread (see @ref stop). */
     ~NetworkStreamFrontEnd();
 
+    /** @brief Deleted: the front end owns transports and a running thread. */
     NetworkStreamFrontEnd(const NetworkStreamFrontEnd&)            = delete;
+    /** @brief Deleted: the front end is not copy-assignable.
+     *  @return Not applicable: the operator is deleted. */
     NetworkStreamFrontEnd& operator=(const NetworkStreamFrontEnd&) = delete;
 
     /**
@@ -122,22 +133,38 @@ public:
      * session that stays connected but silent blocks here indefinitely by
      * design.  The heartbeat log is where an operator sees the staleness, and
      * @c processing.max_duration_s is the supported session bound.
+     *
+     * @param[out] out Receives the next aligned epoch when the call returns true.
+     * @return True with @p out filled; false once the front end is terminal (every lane ended,
+     *         the aligner flushed and the queue drained), which ends the streaming pump.
      */
     bool next(SyncedEpoch& out);
 
     /// Stop transports, join the ingest thread, close the queue.  Idempotent.
     void stop();
 
-    /// Run-end one-liner block: per-lane stats + aligner counters + queue drops.
+    /**
+     * @brief Run-end one-liner block: per-lane stats + aligner counters + queue drops.
+     * @param log The logger the summary lines are written to.
+     */
     void logRunEndSummary(const std::shared_ptr<spdlog::logger>& log) const;
 
-    /// Aligner counters (teardown + tests).
+    /**
+     * @brief Aligner counters (teardown + tests).
+     * @return Reference to the aligner's live counters, valid for the lifetime of the front end.
+     */
     const NetworkStreamAligner::Counters& alignerCounters() const;
 
-    /// Per-lane stats snapshot (teardown + tests).
+    /**
+     * @brief Per-lane stats snapshot (teardown + tests).
+     * @return One entry per lane, in lane order; empty before @ref start.
+     */
     std::vector<LaneStats> laneStats() const;
 
-    /// Epochs discarded by solve-queue backpressure (teardown).
+    /**
+     * @brief Epochs discarded by solve-queue backpressure (teardown).
+     * @return Count of epochs the bounded queue dropped since construction.
+     */
     std::uint64_t queueDropped() const { return queue_.dropped(); }
 
     /**
@@ -179,9 +206,22 @@ private:
         std::ifstream                 file;
         bool                          file_eof{ false };
 
+        /**
+         * @brief Is the transport still live?
+         * @return For a file, true until end of file; for an NTRIP or TCP client, true while it is
+         *         running (a transient disconnect does not end the lane, since the client reconnects).
+         */
         bool        active() const;
+        /**
+         * @brief Read up to @p max_bytes of the stream.
+         * @param[out] out       Receives the bytes read (resized to the count read).
+         * @param      max_bytes Upper bound on the bytes to read.
+         * @param      timeout_ms Longest wait for data on a network transport (ms); unused for a file.
+         * @return Number of bytes read (0 when none arrived in time, or at end of file).
+         */
         std::size_t read(std::vector<std::uint8_t>& out, std::size_t max_bytes,
                          int timeout_ms);
+        /** @brief Stop the transport: stop the NTRIP and TCP clients and close the file. */
         void        stop();
     };
 

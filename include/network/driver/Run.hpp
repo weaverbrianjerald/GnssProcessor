@@ -41,9 +41,26 @@ struct NetworkRunContext;
 struct NetworkRunTraces;
 struct NetworkSetupResult;
 
+/**
+ * @brief The network run as the epoch loop sees it: the run's references and the groups it
+ *        owns (engines, emit engines, timing, closed-loop tally).
+ *
+ * Passed as @c NetworkRun& to every seam; neither copyable nor movable (see the file banner).
+ */
 struct NetworkRun {
-    /// Binds the references and builds the owned groups from @p spec, each member at its
-    /// final address (no engine is copied or moved).
+    /**
+     * @brief Binds the references and builds the owned groups from @p spec, each member at its
+     * final address (no engine is copied or moved).
+     *
+     * @param ctx     The run context (knobs, cross-epoch carry state, service counters); must outlive the run.
+     * @param config  The configuration; never written during the run.
+     * @param nc      The configuration's network block (@c config.getNetworkConfig()).
+     * @param log     The main logger.
+     * @param traces  The trace owner: every trace stream and the run manifest.
+     * @param setup   The setup result (stations, sync, emitter, product writer, consumer).
+     * @param log_dir The log directory (the producer AR's export root).
+     * @param spec    The engines' constructor arguments, from @c networkEngineSpec.
+     */
     NetworkRun(NetworkRunContext& ctx, const GnssConfig& config, const NetworkConfig& nc,
                const std::shared_ptr<spdlog::logger>& log, NetworkRunTraces& traces,
                NetworkSetupResult& setup, const std::filesystem::path& log_dir,
@@ -51,9 +68,15 @@ struct NetworkRun {
         : ctx(ctx), config(config), nc(nc), log(log), traces(traces), setup(setup),
           log_dir(log_dir), engines(spec),
           emit{ NetworkEmitRebase{}, NetworkClockEmitRebase(spec.clk_rebase_cfg) } {}
+    /** @brief Deleted: the run holds references and address-captured engines (see the file banner). */
     NetworkRun(const NetworkRun&) = delete;
+    /** @brief Deleted: the run is not copy-assignable (reference members).
+     *  @return Not applicable: the operator is deleted. */
     NetworkRun& operator=(const NetworkRun&) = delete;
+    /** @brief Deleted: the run must stay at its address, so it is not movable. */
     NetworkRun(NetworkRun&&) = delete;
+    /** @brief Deleted: the run is not move-assignable.
+     *  @return Not applicable: the operator is deleted. */
     NetworkRun& operator=(NetworkRun&&) = delete;
 
     // --- The run's references ----------------------------------------------------------
@@ -78,19 +101,29 @@ struct NetworkRun {
 static_assert(!std::is_copy_constructible_v<NetworkRun> && !std::is_move_constructible_v<NetworkRun>);
 static_assert(!std::is_copy_assignable_v<NetworkRun> && !std::is_move_assignable_v<NetworkRun>);
 
-/// The engines' constructor arguments, a pure function of the configuration and the knobs
+/// @brief The engines' constructor arguments, a pure function of the configuration and the knobs
 /// (no log line, no trace, no setup read).  Its body is the setup statements that built
 /// them, cut character-exact from runNetwork; step EP4 splits it into
 /// its concerns' builders.  Defined in src/core/network/driver/Run.cpp.
+/// @param config_ The run's configuration (carry, variance-component and clock re-base settings).
+/// @param nc      The configuration's network block (@c config_.getNetworkConfig()).
+/// @param ctx     The run context; only its knob snapshot is read.
+/// @return The spec that constructs @c NetworkRunEngines and the clock emission re-base: a plain
+///         value, built fresh on each call.
 NetworkEngineSpec networkEngineSpec(const GnssConfig& config_, const NetworkConfig& nc,
                                     const NetworkRunContext& ctx);
 
-/// Opens D0b sub-block @p b: records the wall clock and the estimator's section timers.
+/// @brief Opens D0b sub-block @p b: records the wall clock and the estimator's section timers.
 /// No-op unless network.trace_section_timers (NetworkKnobs::sec_timers_on).  Formerly the
 /// driver closure subBegin; the body is unchanged.
+/// @param run The run: the estimator's section timers are read and the sub-block's start stamps
+///            in its timing group are written.
+/// @param b   The sub-block being opened.
 void networkSubBegin(NetworkRun& run, SubBlock b);
-/// Closes D0b sub-block @p b: adds its wall and timed deltas to NetworkRunTiming::sub_blocks.
+/// @brief Closes D0b sub-block @p b: adds its wall and timed deltas to NetworkRunTiming::sub_blocks.
 /// Formerly the driver closure subEnd; the body is unchanged.
+/// @param run The run: the sub-block's totals in its timing group are written.
+/// @param b   The sub-block being closed; the one last passed to @c networkSubBegin.
 void networkSubEnd(NetworkRun& run, SubBlock b);
 
 struct NetworkEpoch;

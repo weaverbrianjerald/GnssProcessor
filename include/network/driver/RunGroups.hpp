@@ -69,6 +69,10 @@ struct NetworkEngineSpec {
 /// NetworkRun from a NetworkEngineSpec; setup then configures the members through references
 /// (slip-QC parameters, corroborators, release tracking, estimator settings, warm resume).
 struct NetworkRunEngines {
+    /**
+     * @brief Builds every engine in place from the spec (members are constructed in declaration order).
+     * @param s The engines' constructor arguments, from @c networkEngineSpec.
+     */
     explicit NetworkRunEngines(const NetworkEngineSpec& s)
         : slip_qc(),
           carry_vce(s.vce_families, s.vce_window_epochs, /*split_by_const=*/true,
@@ -77,7 +81,10 @@ struct NetworkRunEngines {
                  s.prires_report_sigma, s.prires_corrob, s.prires_s0g),
           carry_driver(s.carry_cfg),
           est() {}
+    /** @brief Deleted: two corroborators hold the address of @c slip_qc, so the engines are not copyable. */
     NetworkRunEngines(const NetworkRunEngines&) = delete;
+    /** @brief Deleted: the engines are not copy-assignable.
+     *  @return Not applicable: the operator is deleted. */
     NetworkRunEngines& operator=(const NetworkRunEngines&) = delete;
 
     /// The slip-QC channel.  Declared first, so it is destroyed last: two corroborators capture its address.

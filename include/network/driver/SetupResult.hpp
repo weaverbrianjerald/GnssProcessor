@@ -43,19 +43,28 @@
 
 namespace GnssProcessor {
 
-    /// Availability instant of a staged broadcast nav record: toc on the
+    /// @brief Availability instant of a staged broadcast nav record: toc on the
     /// GPS-continuous scale (a BDS toc in native BDT is shifted to the GPS scale,
     /// following LiveEphemerisStore's toe convention).  One shared definition for
     /// the setup-side staging sort and the epoch-loop feed, so the sort order and
     /// the feed cannot diverge (replay parity).
+    /// @param e The broadcast navigation record.
+    /// @return The record's time of clock on the GPS-continuous scale (s).
     inline double navAvailabilityGpsSeconds(const BroadcastEphemeris& e) {
         return brdcTocGpsSeconds(e);   // one definition, shared with the group-delay latch
     }
 
+    /// @brief The handoff aggregate of the network setup phases: everything the run loop reads
+    /// from the setup (the member order is normative, see the file banner).
+    ///
     /// @internal See the file banner.  Plain aggregate.
     struct NetworkSetupResult {
+        /** @brief Default constructor: every member starts empty or at its stated default. */
         NetworkSetupResult() = default;
+        /** @brief Deleted: run-long references pin the member addresses (see the file banner). */
         NetworkSetupResult(const NetworkSetupResult&) = delete;
+        /** @brief Deleted: the setup result is not copy-assignable (address-pinned members).
+         *  @return Not applicable: the operator is deleted. */
         NetworkSetupResult& operator=(const NetworkSetupResult&) = delete;
 
         /// Phase 2: sync roster (clock-datum station as reference).  sync holds a
@@ -66,13 +75,13 @@ namespace GnssProcessor {
         /// class deletes its assignments (reference members) and its ctor needs
         /// the finished roster.
         std::unique_ptr<MultiRinexSync> sync;
-        bool closed_loop_on = false;
-        bool brdc_rts = false;
+        bool closed_loop_on = false;  ///< The held-out closed-loop consumer is armed (network.closed_loop enabled with a station named).
+        bool brdc_rts = false;        ///< The a-priori orbit and clock source is the broadcast ephemeris (network.apriori_source brdc_rts).
         /// Staged broadcast nav records and the progressive feed cursor (brdc_rts
         /// only; empty otherwise).  The epoch loop's LiveEphemerisStore catch-up feed
         /// advances the cursor.
         std::vector<BroadcastEphemeris> brdc_nav_staged;
-        std::size_t brdc_nav_cursor = 0;
+        std::size_t brdc_nav_cursor = 0;  ///< Index of the next staged record the epoch loop has yet to feed.
         /// Under @c network.apriori_source @c sp3_brdc_clock: the native broadcast
         /// clock a priori (selector, offset table from 00:00 of the observation day,
         /// transmission-time store feed, wire stamp), built in Phase 3 from the navigation
@@ -95,8 +104,8 @@ namespace GnssProcessor {
         /// epoch).  Read by the group-delay latch (the records in force during the
         /// run) and by the S contract's a-priori identity (the product files in force
         /// during the run).
-        double window_t0_s = 0.0;
-        double window_t1_s = 0.0;
+        double window_t0_s = 0.0;  ///< Start of the processing window (continuous GPS seconds).
+        double window_t1_s = 0.0;  ///< End of the processing window (continuous GPS seconds, exclusive).
         /// Under @c network.sat_health or @c network.pivot_election: every satellite's
         /// broadcast health over time, built at setup from the navigation file.  Read by
         /// the synced-epoch door ("exclude") and by the clock-pivot election ("pivot" and
@@ -123,11 +132,11 @@ namespace GnssProcessor {
         std::vector<NetStation> stations;
         // Per-station compute parallelism knobs (seam_on / hw_max_threads are
         // setup-internal and not exported).
-        int  n_sta_total  = 0;
-        bool parallel_on  = false;
-        int  n_threads    = 1;
-        int  seam_threads = 1;
-        bool carry_par    = false;
+        int  n_sta_total  = 0;      ///< Producer stations built (the size of @c stations).
+        bool parallel_on  = false;  ///< The per-station parallel produce is in use (network.parallel_stations set, more stations than the configured minimum, and more than one hardware thread).
+        int  n_threads    = 1;      ///< Threads of the per-station parallel produce (1 when @c parallel_on is false).
+        int  seam_threads = 1;      ///< Threads of the post-solve carry-fold and innovation-gate seam (1 runs the serial path).
+        bool carry_par    = false;  ///< The invariant-carry dense algebra is Eigen-threaded (needs @c parallel_on and network.parallel_carry).
         /// Owned product sink, kept separate from the SsrCorrectionStore singleton
         /// for closed-loop isolation.  The type is non-movable (mutex), and the
         /// consumer retains &network_store for the whole run; this member is why the
@@ -140,9 +149,9 @@ namespace GnssProcessor {
         std::optional<NetworkProductEmitter> emitter;
         /// Optional on-disk product serialization + deferred v2 S-basis contract.
         std::unique_ptr<NetworkProductWriter> product_writer;
-        std::filesystem::path prod_path;
-        SbasisContract pending_contract;
-        bool           contract_pending = false;
+        std::filesystem::path prod_path;  ///< Product file path (network.product_output_path; a relative path lies under the log directory); empty when no product file is written.
+        SbasisContract pending_contract;  ///< The S-basis contract fields known at setup; the realized pivots merge in at the first emit.
+        bool           contract_pending = false;  ///< Gates the one-shot deferred construction of the product writer at the first emit.
         /// H heartbeats for withheld epochs that precede the deferred writer's open.
         /// Without them, a leg that opens inside a withhold era
         /// writes nothing for the whole era, which leaves "withheld" and "producer
@@ -158,7 +167,7 @@ namespace GnssProcessor {
         /// consumer_config (address-pinned), so consumer_config is declared before
         /// consumer and outlives it.
         GnssConfig consumer_config;
-        std::unique_ptr<RealTimeEngine> consumer;
+        std::unique_ptr<RealTimeEngine> consumer;  ///< The held-out closed-loop consumer engine; null when the closed loop is off or its initialization failed.
         /// Closed-loop truth, reduced into the frame the consumer estimates.
         /// `network.closed_loop.station.position_ecef` is a published coordinate
         /// (IGS SSC / SIF / surveyed RINEX header) and therefore
@@ -179,7 +188,7 @@ namespace GnssProcessor {
         /// which the run-end readout and the run manifest read.
         /// @{
         /// Loaded roster stations whose header carries a nonzero eccentricity.
-        int n_marker_arp_ecc       = 0;
+        int n_marker_arp_ecc       = 0;  ///< Count of roster stations with a nonzero header eccentricity.
         /// Of those, the ones reduced to the ARP (0 with the knob off).
         int n_marker_arp_reduced   = 0;
         /// Of those, the ones with |H|, |E| or |N| above 0.01 m.

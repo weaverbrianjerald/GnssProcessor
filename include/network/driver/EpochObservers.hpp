@@ -25,8 +25,8 @@
  * arms it, on its first line after its bindings, so an unarmed observer returns at once.
  *
  * The spine (Application::networkProcessEpoch_, network/driver/ApplicationNetworkEpoch.cpp) calls
- * @ref networkObserveEpoch at each spine point, a @ref NetworkObserverSlot, and that walks
- * the rows of @ref kNetworkEpochObservers in that slot in table order.  The table in
+ * @ref GnssProcessor::networkObserveEpoch "networkObserveEpoch" at each spine point, a @ref GnssProcessor::NetworkObserverSlot "NetworkObserverSlot", and that walks
+ * the rows of @ref GnssProcessor::kNetworkEpochObservers "kNetworkEpochObservers" in that slot in table order.  The table in
  * network/driver/EpochObservers.cpp lists every row with what it measures and its home file,
  * in spine order, so it reads as the epoch's table of instruments.
  *
@@ -139,8 +139,7 @@ extern const std::array<NetworkEpochObserverRow, kNetworkEpochObserverCount> kNe
  * @param run   The run (the observers write their own instrument state in it).
  * @param ep    The epoch, read only.
  * @param slot  The spine point the caller stands at.
- * @param events The epoch's events; written by the recorder rows (the census group).
- * @param events The epoch's events; written: census, through the recorder rows.
+ * @param[in,out] events The epoch's events; written: census, through the recorder rows.
  */
 void networkObserveEpoch(NetworkRun& run, const NetworkEpoch& ep, NetworkObserverSlot slot, EpochEvents& events);
 
