@@ -68,6 +68,10 @@ namespace GnssProcessor {
          * the frozen sea-level pressure/temperature pair
          * (@c StandardAtmosphere) or queries the GPT3 5° grid at the
          * receiver lat/lon/h/doy (@c Gpt3).
+         *
+         * @return The source selected by @c receiver.troposphere_apriori_source:
+         *         @c StandardAtmosphere (default; also the fallback for an unknown
+         *         spelling) or @c Gpt3.
          */
         TroposphereAprioriSource getTroposphereAprioriSource() const { return tropo_apriori_source_; }
 
@@ -76,17 +80,27 @@ namespace GnssProcessor {
          *
          * Empty if not configured.  Required when
          * @c getTroposphereAprioriSource() == @c TroposphereAprioriSource::Gpt3.
+         *
+         * @return Path of the grid file, from @c receiver.gpt3_grid_path or
+         *         set by @c setGpt3GridPath; empty when neither supplied one.
          */
         const std::filesystem::path& getGpt3GridPath() const { return gpt3_grid_path_; }
 
         /**
          * @brief Set the GPT3 grid path (used by @c PathResolver to inject
          *        the auto-discovered location in internal mode).
+         *
+         * @param p Path of @c gpt3_5.grd; replaces any configured value.
          */
         void setGpt3GridPath(const std::filesystem::path& p) { gpt3_grid_path_ = p; }
 
         /**
          * @brief Gets the tropospheric mapping function selection.
+         *
+         * @return The function selected by @c receiver.troposphere_mapping_function:
+         *         @c Nmf (Niell 1996; default, also the fallback for an unknown
+         *         spelling, and the meaning of the legacy value "gmf") or @c Vmf3
+         *         (empirical VMF3 from the GPT3 grid).
          */
         TroposphereMappingFunction getTroposphereMappingFunction() const { return tropo_mapping_function_; }
 
@@ -111,7 +125,7 @@ namespace GnssProcessor {
         /**
          * @brief Derive a held-out consumer config from this network producer config.
          *
-         * Returns a copy passed through @ref applyNetworkConsumerCouplings:
+         * Returns a copy passed through @ref GnssProcessor::GnssConfig::applyNetworkConsumerCouplings "applyNetworkConsumerCouplings":
          * @c ProcessingMode::PPP_RTK (uncombined PPP-RTK user), the
          * network-forced shared-state estimation flags turned back off (the
          * consumer takes those satellite products from the injected SSR store
@@ -195,15 +209,19 @@ namespace GnssProcessor {
          */
         void applyNetworkConsumerProfile(LogManager& log_manager);
 
-        /// The @c processing.network_consumer profile block (see
+        /// @brief The @c processing.network_consumer profile block (see
         /// @c NetworkConsumerConfig).  @c enable defaults to false (inert).
+        /// @return The parsed profile block; its @c enable member is false unless
+        ///         the config sets @c processing.network_consumer.enable.
         const NetworkConsumerConfig& getNetworkConsumerConfig() const { return network_consumer_config_; }
 
-        /// Standalone @c processing.ar_ignore_mw_wl toggle (default false):
+        /// @brief Standalone @c processing.ar_ignore_mw_wl toggle (default false):
         /// suppresses the MW wide-lane feed into ambiguity resolution so AR runs
         /// pure MLAMBDA on the Kalman float (@c RealTimeEngine::setArIgnoreMwWl).
         /// Needed whenever the float carries network satellite phase biases
         /// while the MW WL integers are in the separate .BIA frame.
+        /// @return True when the MW wide-lane feed into AR is suppressed; false
+        ///         (default) leaves the MW wide-lane feed active.
         bool arIgnoreMwWl() const { return ar_ignore_mw_wl_; }
 
         /**
@@ -218,6 +236,10 @@ namespace GnssProcessor {
          * true), ORed with the standalone @c processing.ar_ignore_mw_wl key.  An
          * explicit @c processing.network_consumer.ar_ignore_mw_wl overrides both.
          * With the profile disabled this is the standalone key.
+         *
+         * @return True when the MW wide-lane feed into ambiguity resolution is to
+         *         be suppressed (pure MLAMBDA on the Kalman float); false leaves
+         *         the feed active.
          */
         bool networkConsumerArIgnoreMwWl() const {
             const NetworkConsumerConfig& nc = network_consumer_config_;
@@ -307,6 +329,9 @@ namespace GnssProcessor {
          *
          * Prefer @c getResolvedMwFrequencyMode at call sites that need a
          * concrete @c FrequencyMode; this raw form is for diagnostics.
+         *
+         * @return The configured scope: @c Mirror (default, follow the KF),
+         *         @c Dual, @c Triple or @c All (override the KF).
          */
         MwFrequencyMode getMwFrequencyMode() const { return mw_frequency_mode_; }
 
@@ -315,6 +340,9 @@ namespace GnssProcessor {
          *
          * Prefer @c getResolvedMwChannelMode at call sites that need a
          * concrete @c ChannelMode.
+         *
+         * @return The configured scope: @c Mirror (default, follow the KF),
+         *         @c Single or @c All (override the KF).
          */
         MwChannelMode getMwChannelMode() const { return mw_channel_mode_; }
 
@@ -325,6 +353,9 @@ namespace GnssProcessor {
          * use this run: if @c mw_frequency_mode_ is @c Mirror, returns
          * the KF's @c frequency_mode_; otherwise returns the
          * corresponding @c FrequencyMode for the override value.
+         *
+         * @return Concrete band scope for the MW detector (@c Dual, @c Triple or
+         *         @c All); never a Mirror sentinel.
          */
         FrequencyMode getResolvedMwFrequencyMode() const {
             switch (mw_frequency_mode_) {
@@ -338,6 +369,9 @@ namespace GnssProcessor {
 
         /**
          * @brief Resolve the MW channel mode against the KF setting.
+         *
+         * @return Concrete channel scope for the MW detector (@c Single or
+         *         @c All); under @c Mirror, the KF's @c ChannelMode.
          */
         ChannelMode getResolvedMwChannelMode() const {
             switch (mw_channel_mode_) {
@@ -606,15 +640,22 @@ namespace GnssProcessor {
          * orbit/clock/SSR corrections.  Default off (opt-in).  It assumes an
          * NTP-synced host, since the lag is measured against the system clock.
          * Configured via @c processing.enable_obs_skip_to_latest.
+         *
+         * @return True when lagging observation epochs are dropped in real time;
+         *         false (default) processes every epoch in arrival order.
          */
         bool enableObsSkipToLatest() const { return enable_obs_skip_to_latest_; }
 
         /// @brief Max obs lag (s) behind wall-clock GPS before skip-to-latest
         ///        drops the epoch (real-time only).  Config @c processing.obs_skip_max_lag_s.
+        /// @return Lag threshold in seconds; default 5, a non-positive configured
+        ///         value is replaced by 5 at load.
         double obsSkipMaxLagS() const { return obs_skip_max_lag_s_; }
 
         /// @brief Warn-only real-time obs-backlog threshold (s); ≤0 disables the
         ///        warning (e.g. deliberate file replay).  Config @c processing.rt_backlog_warn_s.
+        /// @return Backlog warning threshold in seconds; default 5, zero or
+        ///         negative disables the warning.
         double rtBacklogWarnSeconds() const { return rt_backlog_warn_s_; }
 
         /**
@@ -631,6 +672,9 @@ namespace GnssProcessor {
          * (RAIM/QC epochs that emit nothing for a satellite) can exceed the
          * cadence; @ref getSsrClockStaleHoldFactor adds margin for those
          * without loosening this base gate.
+         *
+         * @return Age limit in seconds; default 30, a non-positive configured
+         *         value is replaced by 30 at load.
          */
         double getSsrMaxAge() const { return ssr_max_age_s_; }
 
@@ -654,6 +698,10 @@ namespace GnssProcessor {
          * the store's freshness gate.  0 (default) is byte-identical; values in
          * (0, 1] clamp to 1 (no hold).  The factor is sized against producer
          * withhold gaps; see @ref getSsrMaxAge for the cadence rule.
+         *
+         * @return Dimensionless multiple of @ref getSsrMaxAge; 0 (default) turns the
+         *         hold rung off, and a configured value in (0, 1] is clamped to 1
+         *         (no hold) at load.
          */
         double getSsrClockStaleHoldFactor() const { return ssr_clock_stale_hold_factor_; }
 
@@ -672,6 +720,10 @@ namespace GnssProcessor {
          * @c SsrCorrectionStore::biasAttributeMismatchCounts).
          * Armed on the singleton by @c RealTimeEngine::initialize and on the
          * owned network-product store by @c Application::runRealTime.
+         *
+         * @return True when a same-band, different-attribute SSR code bias may
+         *         stand in for a missing exact-code bias; false (default) requires
+         *         an exact code match.
          */
         bool ssrBiasBandFallback() const { return ssr_bias_band_fallback_; }
 
@@ -679,11 +731,16 @@ namespace GnssProcessor {
         ///        overlay is rejected (A5).  Config @c processing.ssr_bias_max_age_s
         ///        (default matches @ref getSsrMaxAge).  Only enforced when
         ///        @ref enableSsrBiasMaxAge; the code/phase-bias getters otherwise never gate.
+        /// @return Age limit in seconds; defaults to the value of @ref getSsrMaxAge,
+        ///         and a non-positive configured value is replaced by that value at load.
         double getSsrBiasMaxAge() const { return ssr_bias_max_age_s_; }
 
         /// @brief Whether the SSR code/phase-bias staleness gate is enforced
         ///        (@c processing.enable_ssr_bias_max_age, A5).  Default false =
         ///        the bias getters never gate on age (byte-identical).
+        /// @return True when a bias older than the limit of @ref getSsrBiasMaxAge
+        ///         (times the hold factor) is rejected; false (default) never gates
+        ///         on bias age.
         bool enableSsrBiasMaxAge() const { return enable_ssr_bias_max_age_; }
 
         /// @brief Stale-hold factor for the SSR bias staleness gate (A5).  The
@@ -698,6 +755,8 @@ namespace GnssProcessor {
         ///        @c processing.ssr_max_age_s, is independent of this factor).
         ///        1.0 = no hold (drop exactly at max age).  Config
         ///        @c processing.ssr_bias_stale_hold_factor, default 2.0; clamped to ≥ 1.
+        /// @return Dimensionless multiple of @ref getSsrBiasMaxAge, at least 1;
+        ///         default 2.0, and 1.0 means no hold.
         double getSsrBiasStaleHoldFactor() const { return ssr_bias_stale_hold_factor_; }
 
         /// @brief Carry the float ambiguity across a declared SSR phase-bias step
@@ -708,6 +767,8 @@ namespace GnssProcessor {
         ///        closed-loop harness derives it from
         ///        @c network.closed_loop.pb_disc_carry.
         ///        See @c RealTimeEngine::carryOnPhaseBiasDisc_.
+        /// @return True when the float ambiguity is translated by the declared
+        ///         phase-bias step; false (default) resets it instead.
         bool ssrPhaseBiasDiscCarry() const { return ssr_phase_bias_disc_carry_; }
 
         /// @brief Translate the float ambiguity by @c −Δ on every change in the
@@ -724,6 +785,9 @@ namespace GnssProcessor {
         ///        replaces both the reset and the declared-step carry reactions, so a
         ///        declared step is translated exactly once.
         ///        See @c RealTimeEngine::translatePhaseBiasStep_.
+        /// @return True when every change in the applied phase bias is translated
+        ///         into the ambiguity; false (default) keeps the reset and
+        ///         declared-step carry paths.
         bool ssrPhaseBiasStepTranslate() const { return ssr_phase_bias_step_translate_; }
 
         /// @brief Answer a presence edge of a HELD phase bias like any other A5 edge
@@ -743,6 +807,9 @@ namespace GnssProcessor {
         /// arms under consumption.  The closed-loop harness derives it from
         /// @c network.closed_loop.pb_hold_presence_flip.
         /// See @c RealTimeEngine::resetOnPhaseBiasDisc.
+        ///
+        /// @return True when a presence edge of a held phase bias runs the A5
+        ///         edge reaction; false (default) keeps the phase-bias-hold dispatch.
         bool ssrPbHoldPresenceFlip() const { return ssr_pb_hold_presence_flip_; }
         /**
          * @brief Run the observe-mode integer search on this engine's float
@@ -803,12 +870,14 @@ namespace GnssProcessor {
         /// @return the threshold in metres (positive).
         double ephemerisJumpThresholdM() const { return ephemeris_jump_threshold_m_; }
 
-        /// @brief Dead band of @ref ssrPhaseBiasStepTranslate: a
+        /// @brief Dead band of @ref GnssProcessor::GnssConfig::ssrPhaseBiasStepTranslate "ssrPhaseBiasStepTranslate": a
         ///        step at or below this magnitude (m) is left for the filter to
         ///        absorb as noise and nothing is written to the state
         ///        (@c processing.ssr_phase_bias_step_translate_eps_m, default 0.005).
         ///        An empty declaration (a generation bump with no product motion)
         ///        falls in the dead band and therefore costs nothing.
+        /// @return Dead-band magnitude in metres; default 0.005, a negative
+        ///         configured value is replaced by 0.005 at load.
         double getSsrPhaseBiasStepTranslateEpsM() const {
             return ssr_phase_bias_step_translate_eps_m_;
         }
@@ -830,20 +899,29 @@ namespace GnssProcessor {
         /// first-sighting/reset path.  The closed-loop harness derives it from
         /// @c network.closed_loop.amb_level_check.
         /// See @c RealTimeEngine::checkAmbiguityLevel_ and @ref AmbLevelCheck.
+        ///
+        /// @return True when the ambiguity level check runs; false (default) measures
+        ///         and writes nothing.
         bool ambLevelCheck() const { return amb_level_check_; }
 
         /// @brief Samples per satellite before the level test may run
         ///        (@c processing.amb_level_check_window_ep, default 20 = 10 min at
         ///        30 s).
+        /// @return Window length in epochs (samples); default 20, a configured
+        ///         value below 2 is replaced by 20 at load.
         int getAmbLevelCheckWindowEp() const { return amb_level_check_window_ep_; }
 
         /// @brief Level-test trip threshold, |state − level| > k · σ_level
         ///        (@c processing.amb_level_check_k, default 4.0).
+        /// @return Trip threshold in multiples of the level sigma (dimensionless);
+        ///         default 4.0, a non-positive configured value is replaced by 4.0 at load.
         double getAmbLevelCheckK() const { return amb_level_check_k_; }
 
         /// @brief Action on a level-test trip: @c "act" (refloat both
         ///        of the satellite's ambiguities) or @c "observe" (count only,
         ///        nothing written).  @c processing.amb_level_check_mode, default @c "act".
+        /// @return Either @c "act" (default) or @c "observe"; any other configured
+        ///         value is replaced by @c "act" at load.
         const std::string& getAmbLevelCheckMode() const { return amb_level_check_mode_; }
 
         /// @brief Screen the consumer's innovations against the predicted state before
@@ -863,30 +941,42 @@ namespace GnssProcessor {
         /// re-floated.  The closed-loop harness derives it from
         /// @c network.closed_loop.innovation_screen.
         /// See @c RealTimeEngine::screenInnovations_ and @ref InnovationScreen.
+        ///
+        /// @return True when the pre-update innovation screen runs; false (default)
+        ///         measures and writes nothing.
         bool innovationScreen() const { return innovation_screen_; }
 
         /// @brief Flag threshold on the conditional normalized innovation |w|
         ///        (@c processing.innovation_screen_k, default 6.0; non-positive reads as 6.0).
+        /// @return Threshold in standard deviations of the row's predicted innovation
+        ///         (dimensionless); always positive.
         double getInnovationScreenK() const { return innovation_screen_k_; }
 
         /// @brief Action on a flagged row: @c "act" (hold the row out of the update,
         ///        re-float a persistent phase row) or @c "observe" (count only, nothing
         ///        written).  @c processing.innovation_screen_mode, default @c "act".
+        /// @return Either @c "act" (default) or @c "observe"; any other configured
+        ///         value is replaced by @c "act" at load.
         const std::string& getInnovationScreenMode() const { return innovation_screen_mode_; }
 
         /// @brief Which rows may be excluded: @c "all", @c "phase" or @c "code"
         ///        (@c processing.innovation_screen_rows, default @c "all").  Rows of the
         ///        other kind take no part in the screen.
+        /// @return One of @c "all" (default), @c "phase" or @c "code"; any other
+        ///         configured value is replaced by @c "all" at load.
         const std::string& getInnovationScreenRows() const { return innovation_screen_rows_; }
 
         /// @brief Abstain when more than this fraction of an epoch's rows is flagged
         ///        (@c processing.innovation_screen_max_fraction, default 0.25): a screen
         ///        that excludes most of an epoch has found the prior wrong, not the rows.
+        /// @return Fraction of an epoch's rows, in (0, 1]; default 0.25, a value
+        ///         outside that range is replaced by 0.25 at load.
         double getInnovationScreenMaxFraction() const { return innovation_screen_max_fraction_; }
 
         /// @brief Consecutive flagged epochs after which a phase row's ambiguity is
         ///        re-floated (@c processing.innovation_screen_refloat_ep, default 3;
         ///        values below 1 read as 3).
+        /// @return Count of consecutive epochs, at least 1; default 3.
         int getInnovationScreenRefloatEp() const { return innovation_screen_refloat_ep_; }
 
         /// @brief Model-error floor added to the carrier-phase rows' noise in the screen's
@@ -896,10 +986,14 @@ namespace GnssProcessor {
         ///        a healthy consumer spread over decimetres (product clock and orbit error,
         ///        ionosphere, multipath), so the formal statistic flags ordinary rows; the
         ///        floor puts the unmodelled error budget into S for the screen only.
+        /// @return Phase noise floor in metres; default 0.3, 0 means no floor, and a
+        ///         negative configured value is replaced by 0.3 at load.
         double getInnovationScreenPhaseFloorM() const { return innovation_screen_phase_floor_m_; }
 
         /// @brief The same floor for the code rows (m;
         ///        @c processing.innovation_screen_code_floor_m, default 1.0).
+        /// @return Code noise floor in metres; default 1.0, 0 means no floor, and a
+        ///         negative configured value is replaced by 1.0 at load.
         double getInnovationScreenCodeFloorM() const { return innovation_screen_code_floor_m_; }
 
         /**
@@ -918,12 +1012,18 @@ namespace GnssProcessor {
          * Default off; opt-in via @c processing.enable_obs_ssr_sync.  Inert
          * unless the run uses a live orbit/clock source
          * (@c realtimeUsesLiveOrbitClockSource).
+         *
+         * @return True when observation epochs ahead of the SSR stream are held
+         *         until the corrections catch up; false (default) leaves obs pacing
+         *         unchanged.
          */
         bool enableObsSsrSync() const { return enable_obs_ssr_sync_; }
 
         /// @brief Max seconds to hold an obs epoch waiting for SSR before falling
         ///        back to degraded (broadcast-grade) processing: the obs↔SSR
         ///        sync liveness bound.  Config @c processing.obs_ssr_sync_max_hold_s.
+        /// @return Hold limit in seconds; default 30, a non-positive configured
+        ///         value is replaced by 30 at load.
         double getObsSsrSyncMaxHoldS() const { return obs_ssr_sync_max_hold_s_; }
 
         /**
@@ -976,6 +1076,9 @@ namespace GnssProcessor {
          * mask.  Default false keeps the 3.x path byte-identical; new configs
          * arm it via @c processing.rinex_skip_zero_values (see
          * docs/record/SPEC_rinex_zero_sentinel.md; promotion-ledger candidate).
+         *
+         * @return True when the RINEX 3 parser drops cells written as 0.0; false
+         *         (default) ingests them as observations.
          */
         bool rinexSkipZeroValues() const { return rinex_skip_zero_values_; }
 
@@ -1110,6 +1213,9 @@ namespace GnssProcessor {
          * csc²(θ), so 1.0 is the right default.
          *
          * Configurable via @c filter.code_elevation_power.
+         *
+         * @return The power @c p (dimensionless) applied to sin(elevation) for code
+         *         rows; default 1.0.
          */
         double getCodeElevationPower() const { return code_elevation_power_; }
 
@@ -1131,6 +1237,9 @@ namespace GnssProcessor {
          * low elevation.
          *
          * Configurable via @c filter.phase_elevation_power.
+         *
+         * @return The power @c p (dimensionless) applied to sin(elevation) for phase
+         *         rows; default 1.0.
          */
         double getPhaseElevationPower() const { return phase_elevation_power_; }
 
@@ -1311,7 +1420,7 @@ namespace GnssProcessor {
         /**
          * @brief Gets the S1/S2 atmospheric-tide load grid path.
          * @return Explicit grid path, or empty to use the internal static default
-         *         (<internal_data_root>/static/apl/).
+         *         (\<internal_data_root\>/static/apl/).
          */
         std::filesystem::path getAtmTideGridPath() const { return atm_tide_grid_path_; }
 
@@ -1515,7 +1624,7 @@ namespace GnssProcessor {
         /**
          * @brief Optional python interpreter override for the auto report.
          * @return Explicit interpreter path, or "" to use the baked
-         *         @c <project_root>/venv interpreter (falling back to PATH).
+         *         @c \<project_root\>/venv interpreter (falling back to PATH).
          */
         const std::string& reportPython() const { return report_python_; }
 
@@ -1556,6 +1665,9 @@ namespace GnssProcessor {
          * converged, |Δpos| drops to sub-cm and the second-pass H matrix
          * is essentially identical to the first.  Even a relaxed 1 m
          * threshold relinearizes only during early convergence.
+         *
+         * @return Threshold in metres on the position change of the first update;
+         *         default 1.0 (@c processing.relinearize_dpos_threshold_phase_m).
          */
         double relinearizeDposThresholdPhaseM() const { return relinearize_dpos_threshold_phase_m_; }
 
@@ -1567,6 +1679,9 @@ namespace GnssProcessor {
          * jitter even after convergence, so a low threshold would fire
          * every epoch.  100 m skips relinearization on routine epochs
          * and only fires on large jumps (e.g. cold start).
+         *
+         * @return Threshold in metres on the position change of the first update;
+         *         default 100.0 (@c processing.relinearize_dpos_threshold_code_only_m).
          */
         double relinearizeDposThresholdCodeOnlyM() const { return relinearize_dpos_threshold_code_only_m_; }
 
@@ -1579,6 +1694,9 @@ namespace GnssProcessor {
          * every epoch and double the per-epoch cost for the whole run.
          * After the cap is reached, relinearization is silently skipped for
          * the rest of the run.
+         *
+         * @return Maximum number of relinearization passes in a run; -1 (default)
+         *         is unlimited (@c processing.relinearize_max_count).
          */
         int relinearizeMaxCount() const { return relinearize_max_count_; }
 
@@ -1594,6 +1712,9 @@ namespace GnssProcessor {
          * Applied once during @c Application::run() via
          * @c Eigen::setNbThreads().  The build still links OpenMP, so threading
          * can be re-enabled at runtime by editing the config, without a rebuild.
+         *
+         * @return Thread count from @c processing.eigen_threads; default 1, 0 leaves
+         *         the OpenMP runtime default.
          */
         int eigenThreads() const { return eigen_threads_; }
 
@@ -1804,6 +1925,10 @@ namespace GnssProcessor {
          * GPS+Galileo+BeiDou already provide 30+ satellites, more than
          * enough for a clean PPP-RTK solution.  Activation needs this flag
          * and @c estimate_sat_biases=true.
+         *
+         * @return True when GLONASS satellites may enter BSSD (JSON
+         *         @c estimation.between_satellite_sd.enable_glonass); false
+         *         (default) drops GLONASS at the three gates.
          */
         bool enableGlonassBssd() const { return enable_glonass_bssd_; }
 
@@ -1821,6 +1946,10 @@ namespace GnssProcessor {
          *
          * Requires @c estimate_ifb=true and uncombined PPP-RTK; default false
          * keeps the GLONASS path byte-identical.  See M-PAGES backlog item #4.
+         *
+         * @return True when per-FCN-slot GLONASS receiver code IFB states are
+         *         estimated (JSON @c estimation.glonass_ifb.enable); false (default)
+         *         leaves the GLONASS path unchanged.
          */
         bool enableGlonassIfb() const { return enable_glonass_ifb_; }
 
@@ -1842,6 +1971,10 @@ namespace GnssProcessor {
          * products), and rejects the config unless GLONASS is in
          * @c active_systems with a @c processing.signal_priorities entry.
          * Default false keeps the GPS+Galileo network byte-identical.
+         *
+         * @return True when GLONASS joins the network producer solve (JSON
+         *         @c network.estimate_glonass); false (default) leaves the
+         *         network GPS+Galileo.
          */
         bool enableGlonassNetwork() const { return enable_glonass_network_; }
 
@@ -1865,6 +1998,10 @@ namespace GnssProcessor {
          * @ref networkCbAdmission for the run-latched admission census that
          * gates which OSB columns become shared (vs kept as station-local
          * sponges); the census is the remedy for BeiDou sparsity.
+         *
+         * @return True when the network estimates and emits satellite code biases
+         *         (JSON @c network.estimate_sat_code_bias); false (default) keeps the
+         *         clock and phase-bias-only network.
          */
         bool estimateNetworkSatCodeBias() const { return estimate_network_sat_code_bias_; }
 
@@ -1885,6 +2022,9 @@ namespace GnssProcessor {
          * immutable for the run.  Default false ⇒ the legacy per-epoch path is
          * byte-identical.
          * @see network/assembly/BiasAdmission.hpp, docs/record/SPEC_cb_admission_card.md
+         *
+         * @return True when the startup admission census runs; false (default)
+         *         keeps the per-epoch station-count gate.
          */
         bool networkCbAdmission() const { return network_cb_admission_; }
 
@@ -1897,6 +2037,9 @@ namespace GnssProcessor {
          * 2 is the hard estimability floor, and the census-roster clamp keeps
          * small dev rosters runnable.  A station "supports" a pair when it supplies a
          * usable raw code observation in >= ceil(K_eff/2) of the census epochs.
+         *
+         * @return Station count as configured (default 4); the census applies it
+         *         through @c effective_min.
          */
         int networkCbAdmissionMinStations() const { return network_cb_admission_min_stations_; }
 
@@ -1908,6 +2051,8 @@ namespace GnssProcessor {
          * is the first epoch the run loop processes (post @c start_offset_hours
          * fast-forward).  Clamped to the available span, so a short smoke run
          * still classifies (over K_eff <= K epochs).
+         *
+         * @return Census window length K in epochs (default 15).
          */
         int networkCbAdmissionCensusEpochs() const { return network_cb_admission_census_epochs_; }
 
@@ -1923,6 +2068,10 @@ namespace GnssProcessor {
          * from the external-GIM target to the co-estimated SH field.  Mutually
          * exclusive with loading an external GIM for the same purpose (no
          * double-apply).  Default false keeps the external-GIM W6 path byte-identical.
+         *
+         * @return True when the network co-estimates its own SH-VTEC field (JSON
+         *         @c network.estimate_iono_sh); false (default) keeps the
+         *         external-GIM path.
          */
         bool estimateNetworkIonoSh() const { return estimate_network_iono_sh_; }
 
@@ -1952,6 +2101,10 @@ namespace GnssProcessor {
          * the toggle is inert (warned).  Default false ⇒ byte-identical.
          *
          * @see networkRxCodeBiasDatumSigmaM
+         *
+         * @return True when the sum-to-zero prior on the receiver code biases is
+         *         applied; false (default) leaves the receiver code-bias common mode
+         *         ungauged.
          */
         bool networkRxCodeBiasDatum() const { return network_rx_code_bias_datum_; }
 
@@ -1967,6 +2120,8 @@ namespace GnssProcessor {
          * rank-gate cutoff (@f$\approx 10^{-9}\lambda_{\max}@f$): 10 m gives 0.01,
          * about 45× the cutoff measured on a 63-station EXT-CB arm.  Same
          * loose-physical-bound role as @ref networkCbKaulaSigmaM on the satellite side.
+         *
+         * @return Prior standard deviation in metres; default 10.0.
          */
         double networkRxCodeBiasDatumSigmaM() const { return network_rx_code_bias_datum_sigma_m_; }
 
@@ -1996,6 +2151,9 @@ namespace GnssProcessor {
          * byte-identical.  Enabling it changes bytes for every fixture whose
          * receiver clock ≠ 0, so byte-identity is guaranteed by the toggle,
          * not by a threshold.
+         *
+         * @return True when each cold station clock is pre-seeded from GPS code;
+         *         false (default) never calls the seeder.
          */
         bool networkColdClockSeed() const { return network_cold_clock_seed_; }
 
@@ -2014,6 +2172,9 @@ namespace GnssProcessor {
          * orthogonal to @c network.service_mode (an input-source selection, not a
          * bundled toggle); @c service_mode does not arm it.  Read by the network
          * producer setup (RTF-1).
+         *
+         * @return @c Sp3 (default; also the fallback for an unknown spelling),
+         *         @c BrdcRts or @c Sp3BrdcClock.
          */
         NetworkAprioriSource networkAprioriSource() const { return network_apriori_source_; }
 
@@ -2087,6 +2248,9 @@ namespace GnssProcessor {
          * per @c docs/rt_service_conventions.md §6 D6).  An explicit positive value
          * overrides the auto in both modes.  Parsed and stored here; the producer
          * reads it through @ref resolveNetworkAprioriClockAnchorSigmaM (RTF-1).
+         *
+         * @return The configured anchor sigma in metres; 0.0 (default, also the
+         *         replacement for a negative value) means auto.
          */
         double networkAprioriClockAnchorSigmaM() const { return network_apriori_clock_anchor_sigma_m_; }
 
@@ -2133,6 +2297,9 @@ namespace GnssProcessor {
          * the datum gauge, so it sharpens the locals without touching the
          * minimum-constraint S-basis.  Default false keeps the per-epoch absolute
          * snapshot solve byte-identical.
+         *
+         * @return True when station ambiguities are carried across epochs; false
+         *         (default) solves each epoch from an absolute snapshot.
          */
         bool networkPhaseLeveling() const { return network_phase_leveling_; }
 
@@ -2154,6 +2321,9 @@ namespace GnssProcessor {
          * across a gap without dropping it); it also caps steady-state
          * accumulation at @c ~q_amb·Δt and so gives up part of the precision
          * gain.
+         *
+         * @return Process noise in m^2/s (non-negative), at the default stated above;
+         *         0 gives a zero-q carry between slips.
          */
         double networkPhaseLevelingQAmb() const { return network_phase_leveling_q_amb_; }
 
@@ -2165,6 +2335,8 @@ namespace GnssProcessor {
          * converged); carrying an ambiguity before then would freeze a contaminated
          * value.  No carry is stashed or injected until this many product epochs
          * have been emitted.
+         *
+         * @return Number of emitted product epochs before the carry starts; default 6.
          */
         int networkPhaseLevelingWarmupEpochs() const { return network_phase_leveling_warmup_epochs_; }
 
@@ -2176,6 +2348,8 @@ namespace GnssProcessor {
          * satellite returns after a long outage, where a slip is likely and may go
          * undetected.  A housekeeping drop, distinct from the slip-driven refloat
          * and drop responses.
+         *
+         * @return Maximum unseen gap in seconds; default 120.
          */
         double networkPhaseLevelingMaxGapS() const { return network_phase_leveling_max_gap_s_; }
 
@@ -2190,6 +2364,8 @@ namespace GnssProcessor {
          * information (@c var_eff ≥ floor ⇒ @c Λ ≤ 1/floor) so fresh data can
          * always pull a slowly biasing ambiguity back.  Default 0 disables it
          * (no cap, behaviour unchanged); it is an opt-in for longer runs.
+         *
+         * @return Variance floor in m^2; 0 (default) means no floor.
          */
         double networkPhaseLevelingVarFloorM2() const { return network_phase_leveling_var_floor_m2_; }
 
@@ -2236,6 +2412,9 @@ namespace GnssProcessor {
          * over the survivors.  The run-end marginalized-column and refloat
          * re-whiten counters show whether that response acted; the absence of a
          * warning does not.
+         *
+         * @return True when each station's carried ambiguity columns are injected as
+         *         one whitened block; false (default) keeps the per-column rows.
          */
         bool networkPhaseLevelingLocalBlock() const { return network_phase_leveling_local_block_; }
 
@@ -2243,9 +2422,11 @@ namespace GnssProcessor {
         ///        (@c network.shared_carry_var_floor_pb_m2, B4).  Caps the carry's
         ///        information so a stiff zero-q phase-bias carry cannot lock a biased
         ///        product in, while preserving the FCB time-averaging; 0 = off.
+        /// @return Variance floor in m^2; default 0 (no floor).
         double networkSharedCarryVarFloorPbM2() const { return network_shared_carry_var_floor_pb_m2_; }
         /// @brief Floor (m²) on the D2 satellite code-bias carried prior variance
         ///        (@c network.shared_carry_var_floor_cb_m2, B4); 0 = off.
+        /// @return Variance floor in m^2; default 0 (no floor).
         double networkSharedCarryVarFloorCbM2() const { return network_shared_carry_var_floor_cb_m2_; }
 
         /**
@@ -2286,6 +2467,9 @@ namespace GnssProcessor {
          *
          * @see networkSharedCarryVarFloorPbM2, networkClockMonitorReinitSigmaM,
          *      NetworkEstimator::addSharedPriorDense
+         *
+         * @return True when the dense border covariance is carried; false (default)
+         *         keeps the per-key diagonal carry.
          */
         bool networkSharedCarryFullCov() const { return network_shared_carry_full_cov_; }
 
@@ -2323,6 +2507,9 @@ namespace GnssProcessor {
          *
          * @see networkSharedCarryFullCov, networkPhaseLeveling, networkCarryZwd,
          *      NetworkEstimator::stationRegression
+         *
+         * @return True when local carries are injected as conditional coupling rows;
+         *         false (default) keeps the legacy diagonal carry.
          */
         bool networkCarryConditionalCoupling() const { return network_carry_conditional_coupling_; }
 
@@ -2362,6 +2549,9 @@ namespace GnssProcessor {
          * otherwise).  Default false = the raw harvested rows (byte-identical).
          *
          * @see networkCarryConditionalCoupling, networkSharedCarryFullCov
+         *
+         * @return True when the border time update is applied to each coupling row
+         *         at injection; false (default) injects the raw harvested rows.
          */
         bool networkCarryCouplingTimeUpdate() const { return network_carry_coupling_time_update_; }
 
@@ -2391,6 +2581,10 @@ namespace GnssProcessor {
          * Requires @ref networkCarryCouplingTimeUpdate and
          * @ref networkSharedCarryFullCov (hard errors at load).  Fingerprinted.
          * Default false = the scalar-κ rows (byte-identical).
+         *
+         * @return True when the coupling rows are re-expressed by the exact conditional time
+         *         update (@c network.carry_coupling_exact_update); false (default) keeps the
+         *         scalar-kappa rows.
          */
         bool networkCarryCouplingExactUpdate() const { return network_carry_coupling_exact_update_; }
 
@@ -2414,6 +2608,9 @@ namespace GnssProcessor {
          * fold), and refuses the anchor-free clock datums (sum-to-zero, broadcast-anchored)
          * and @c network.clock_model, which have no pivot or no carried clock (hard errors
          * at load).  Fingerprinted.  Default false (byte-identical).
+         *
+         * @return True when carried satellite clocks take their process noise in the pivot
+         *         frame (@c network.clock_pivot_frame_q); false (default) is byte-identical.
          */
         bool networkClockPivotFrameQ() const { return network_clock_pivot_frame_q_; }
 
@@ -2434,6 +2631,10 @@ namespace GnssProcessor {
          *
          * Requires @ref networkCarryCouplingExactUpdate (hard error at load).
          * Fingerprinted.  Default false = the per-row form (byte-identical).
+         *
+         * @return True when the exact update's covariance between two carried rows of one
+         *         station is added to the station's whitened local block
+         *         (@c network.carry_coupling_exact_cross); false (default) keeps the per-row form.
          */
         bool networkCarryCouplingExactCross() const { return network_carry_coupling_exact_cross_; }
 
@@ -2470,6 +2671,10 @@ namespace GnssProcessor {
          * load.  Fingerprinted (armed-only token).  Default false = the exact update's per-row
          * form (byte-identical).
          * UNVALIDATED: built for the broadcast-grade clock walk; not recommended.
+         *
+         * @return True when the previous epoch's satellite clocks are carried as one-epoch clone
+         *         columns in the shared border (@c network.carry_coupling_clock_clone); false
+         *         (default) keeps the exact update's per-row form.
          */
         bool networkCarryCouplingClockClone() const { return network_carry_coupling_clock_clone_; }
 
@@ -2498,6 +2703,10 @@ namespace GnssProcessor {
          * Requires @ref networkCarryCouplingClockClone (hard error at load).  Fingerprinted
          * (armed-only token with the rank); fresh convergence only.  Default false = the
          * clock-clone per-station harvest (byte-identical).  UNVALIDATED.
+         *
+         * @return True when the clock clones' shared conditional is carried as history columns
+         *         (@c network.carry_coupling_shared_history); false (default) keeps the
+         *         clock-clone per-station harvest.
          */
         bool networkCarryCouplingSharedHistory() const { return network_carry_coupling_shared_history_; }
 
@@ -2509,6 +2718,8 @@ namespace GnssProcessor {
          * The compression keeps at most this many directions times the clones registered in
          * the epoch.  Default 1, gate U2's decision; range [1, 8],
          * checked at load whether or not the knob is armed.
+         *
+         * @return Maximum history columns per cloned clock, a count in [1, 8] (default 1).
          */
         int networkCarryCouplingSharedHistoryRank() const { return network_carry_coupling_shared_history_rank_; }
 
@@ -2531,6 +2742,10 @@ namespace GnssProcessor {
          * Requires @ref networkCarryCouplingClockClone (hard error at load).  Fingerprinted
          * (armed-only token).  Default false = the biases on the exact per-row update
          * (byte-identical).  UNVALIDATED.
+         *
+         * @return True when satellite phase and code biases are carried on one-epoch clone
+         *         columns like the clocks (@c network.carry_coupling_bias_clone); false (default)
+         *         leaves the biases on the exact per-row update.
          */
         bool networkCarryCouplingBiasClone() const { return network_carry_coupling_bias_clone_; }
 
@@ -2553,6 +2768,10 @@ namespace GnssProcessor {
          * Requires @ref networkCarryCouplingClockClone (hard error at load).  Fingerprinted
          * (armed-only token).  Default false = the exact update's re-attribution (byte-identical).
          * UNVALIDATED.
+         *
+         * @return True when every stashed key the exact update would re-attribute is carried on
+         *         a one-epoch clone (@c network.carry_coupling_departed_clone); false (default)
+         *         keeps the exact update's re-attribution.
          */
         bool networkCarryCouplingDepartedClone() const { return network_carry_coupling_departed_clone_; }
 
@@ -2582,6 +2801,10 @@ namespace GnssProcessor {
          * Default false (byte-identical).  Requires `carry_conditional_coupling`.
          *
          * @see networkCarryCouplingReinitSources, networkCarryCouplingTimeUpdate
+         *
+         * @return True when a truncated coupling row's per-(constellation, kind) coefficient
+         *         sum is held at its harvest value (@c network.carry_coupling_gauge_project);
+         *         false (default) is byte-identical.
          */
         bool networkCarryCouplingGaugeProject() const { return network_carry_coupling_gauge_project_; }
 
@@ -2609,6 +2832,10 @@ namespace GnssProcessor {
          * Default false (byte-identical).  Requires `carry_conditional_coupling`.
          *
          * @see networkCarryCouplingGaugeProject
+         *
+         * @return True when the coupling reinit feed covers every realization-step source and
+         *         is decoupled from kappa (@c network.carry_coupling_reinit_sources); false
+         *         (default) is byte-identical.
          */
         bool networkCarryCouplingReinitSources() const { return network_carry_coupling_reinit_sources_; }
 
@@ -2624,6 +2851,10 @@ namespace GnssProcessor {
          * @ref networkZwdCarryQ.  Slant iono is left white.  Reuses the phase-leveling
          * warmup / max-gap housekeeping (so it is inert unless @ref networkPhaseLeveling).
          * Default false keeps the per-epoch absolute snapshot solve byte-identical.
+         *
+         * @return True when per-station ZWD is carried across epochs as a diagonal random-walk
+         *         prior (@c network.carry_zwd); false (default) keeps the per-epoch absolute
+         *         snapshot solve.
          */
         bool networkCarryZwd() const { return network_carry_zwd_; }
 
@@ -2654,6 +2885,11 @@ namespace GnssProcessor {
          * When the block does not factorize the ZWD degrades to the existing B9 diagonal
          * row (counted, @c pl_blk_zwd_fallback_diag).  Default false = byte-identical
          * (the harvest @c cols set, and therefore @c C's dimension, is unchanged).
+         *
+         * @return True when the ZWD column joins the station's jointly whitened local block
+         *         instead of a separate diagonal row (@c network.carry_zwd_in_block); false
+         *         (default) leaves the harvest column set unchanged.  Armed only with
+         *         @c networkCarryZwd and @c networkPhaseLevelingLocalBlock.
          */
         bool networkCarryZwdInBlock() const { return network_carry_zwd_in_block_; }
 
@@ -2704,6 +2940,10 @@ namespace GnssProcessor {
          * under @ref networkCarryInvariant (F3 is structurally inert there).  Default
          * false = byte-identical
          * (the harvest @c cols set, and therefore @c C's dimension, is unchanged).
+         *
+         * @return True when the per-LOS slant-ionosphere columns are carried inside the station's
+         *         jointly whitened local block (@c network.carry_iono_in_block); false (default)
+         *         leaves the harvest column set unchanged.
          */
         bool networkCarryIonoInBlock() const { return network_carry_iono_in_block_; }
 
@@ -2730,6 +2970,9 @@ namespace GnssProcessor {
          * Default 2.5e-3 m² ⇒ σ ≈ 5 cm of L1 slant delay per 30 s epoch: loose enough
          * that the carry never resists a real ionospheric gradient, tight enough that
          * it supplies the between-epoch continuity a per-epoch white iono column lacks.
+         *
+         * @return Random-walk process noise per epoch in m^2 of slant delay at the GPS L1
+         *         frequency (default 2.5e-3); not per second.
          */
         double networkCarryIonoInBlockQM2() const { return network_carry_iono_in_block_q_m2_; }
 
@@ -2740,12 +2983,15 @@ namespace GnssProcessor {
          * A LOS not seen for longer than this is dropped (counted,
          * @c n_iono_blk_gap_drop) rather than folded: the event response for the
          * absent-satellite edge (invariant #1) and the decoupling edge (invariant #7).
-         * Defaults to @ref networkPhaseLevelingMaxGapS: the iono carry rides the same
+         * Defaults to @ref GnssProcessor::GnssConfig::networkPhaseLevelingMaxGapS "networkPhaseLevelingMaxGapS": the iono carry rides the same
          * block the leveling carry does, so a horizon longer than the block's own would
          * keep an entry alive with no block to join (the QUEUE-8(b) knob ran longer
          * than the leveling gap on purpose, because its diagonal row needed no block).
          * A JSON value ≤ 0 is the "use the leveling gap" sentinel; a positive value
          * overrides.
+         *
+         * @return Staleness bound in seconds.  The JSON value 0 (default) is resolved at load to
+         *         @c networkPhaseLevelingMaxGapS, so the getter reports effective seconds.
          */
         double networkCarryIonoInBlockMaxGapS() const { return network_carry_iono_in_block_max_gap_s_; }
 
@@ -2802,6 +3048,11 @@ namespace GnssProcessor {
          * under @ref networkCarryInvariant (F3 is structurally inert there); a hard error
          * on a negative q / gap / rate variance.  Default false = byte-identical (the
          * harvest @c cols set, and therefore @c C's dimension, is unchanged).
+         *
+         * @return True when the station receiver clock is carried inside the station's jointly
+         *         whitened local block as a random walk about a carried drift
+         *         (@c network.carry_rx_clock_in_block); false (default) leaves the harvest column
+         *         set unchanged.
          */
         bool networkCarryRxClockInBlock() const { return network_carry_rx_clock_in_block_; }
 
@@ -2810,7 +3061,7 @@ namespace GnssProcessor {
          *        bias, m² (@c network.carry_rx_clock_q_m2).
          *
          * Per epoch, not per second (@ref networkZwdCarryQ is m²/s), matching
-         * @ref networkCarryIonoInBlockQM2: the gap is converted to
+         * @ref GnssProcessor::GnssConfig::networkCarryIonoInBlockQM2 "networkCarryIonoInBlockQM2": the gap is converted to
          * epochs with the run's own observed inter-epoch spacing (the current PASS-B time
          * minus the previous harvest stamp), floored at one epoch, so the knob means the
          * same thing at 1 s and at 30 s cadence and needs no nominal-rate config.
@@ -2823,6 +3074,9 @@ namespace GnssProcessor {
          * sim truth bed's detrended increment std (0.2988 m, lag-1 correlation −0.004:
          * a white random walk about the drift line).  A field receiver's short-term
          * Allan deviation sets the field value; 0.09 does not necessarily transfer.
+         *
+         * @return Random-walk process variance of the carried clock bias per epoch in m^2
+         *         (default 0.09); not per second.
          */
         double networkCarryRxClockQM2() const { return network_carry_rx_clock_q_m2_; }
 
@@ -2837,6 +3091,10 @@ namespace GnssProcessor {
          * carry rides the same block the leveling carry does, so a longer horizon would
          * keep an entry alive with no block to join.  It is also the horizon over which
          * the extrapolated drift term @f$\hat d\,\Delta t@f$ is trusted at all.
+         *
+         * @return Staleness bound of the clock carry in seconds.  The JSON value 0 (default) is
+         *         resolved at load to @c networkPhaseLevelingMaxGapS, so the getter reports
+         *         effective seconds.
          */
         double networkCarryRxClockMaxGapS() const { return network_carry_rx_clock_max_gap_s_; }
 
@@ -2853,6 +3111,8 @@ namespace GnssProcessor {
          * on purpose, so a station whose drift is not yet known is never given a stiff
          * wrong clock.  Lowering it needs evidence; raising it costs only one more
          * near-free epoch.
+         *
+         * @return Initial variance of the drift state in m^2/s^2 (default 1.0); must be >= 0.
          */
         double networkCarryRxClockRateVar0() const { return network_carry_rx_clock_rate_var0_; }
 
@@ -2865,6 +3125,9 @@ namespace GnssProcessor {
          * typical receiver drift, so the rate filter tracks slow drift changes without
          * chasing the bias jitter.  0 gives a strictly constant-drift model (valid on the
          * sim bed, whose drift is exactly linear).
+         *
+         * @return Random-walk process variance of the drift state per epoch in m^2/s^2
+         *         (default 1e-10); 0 gives a strictly constant-drift model.
          */
         double networkCarryRxClockRateQ() const { return network_carry_rx_clock_rate_q_; }
 
@@ -2884,6 +3147,9 @@ namespace GnssProcessor {
          * the two epochs after a jump inject a near-free prior rather than a stale one.
          * Default 10.0 σ: loose enough that ordinary RW jitter never trips it (a 10σ
          * event on a Gaussian is ~1e-23), tight enough that a 1 ms step (1e6 σ) always does.
+         *
+         * @return Innovation gate in sigma units (default 10.0); must be > 0.  A normalized
+         *         innovation above it restarts the clock bias and drift state.
          */
         double networkCarryRxClockJumpK() const { return network_carry_rx_clock_jump_k_; }
 
@@ -2902,6 +3168,10 @@ namespace GnssProcessor {
          * is not an alarm (a BSSD or GPS-only posture allocates no ISB state at all).
          * Default true: the ISB is a local column of the same block, and leaving it white
          * while pricing the clock would move the sink one column over.
+         *
+         * @return True (default) when the station's inter-system bias columns are carried in the
+         *         same block as the clock, as a pure random walk; false leaves them white each
+         *         epoch.  Applies only with @c networkCarryRxClockInBlock.
          */
         bool networkCarryRxClockIsb() const { return network_carry_rx_clock_isb_; }
 
@@ -2912,6 +3182,9 @@ namespace GnssProcessor {
          * @c var_eff = var + q·Δt_since_last_seen.  ZWD is a slow random walk (τ ~ hours),
          * so a small positive q (default 1e-9 m²/s ≈ 1.9 mm/√h) models the between-epoch
          * drift.  Must be @c >= 0.  Used only when @ref networkCarryZwd is on.
+         *
+         * @return Process noise in m^2/s added to the carried ZWD variance per second of gap
+         *         (default 1e-9); must be >= 0.
          */
         double networkZwdCarryQ() const { return network_zwd_carry_q_; }
 
@@ -2932,6 +3205,10 @@ namespace GnssProcessor {
          * relevel_free_epoch exemption class) that changes what a resumed run does with
          * restored Z rows, re-references nothing retroactively, and changes the meaning
          * of no serialized state.  Default false = byte-identical.
+         *
+         * @return True when a warm resume that restored Z rows folds the carried ZWD for the
+         *         first @c networkZwdSeamReseedEpochs emitted epochs after the seam
+         *         (@c network.zwd_seam_reseed); false (default) is byte-identical.
          */
         bool networkZwdSeamReseed() const { return network_zwd_seam_reseed_; }
 
@@ -2945,6 +3222,9 @@ namespace GnssProcessor {
          * cold-resume re-convergence and below the ≥ 6–8 h onset of the
          * continuous-carry double-memory failure; 720 epochs has also been validated
          * as safe.  Only used when @ref networkZwdSeamReseed is on.
+         *
+         * @return Number of emitted epochs after the seam during which the restored ZWD is
+         *         folded (default 480, which is 4 h at 30 s).
          */
         int networkZwdSeamReseedEpochs() const { return network_zwd_seam_reseed_epochs_; }
 
@@ -2973,6 +3253,10 @@ namespace GnssProcessor {
          * Must be @c > 0 when set; @c 0 is rejected at load (it would make the
          * inflation a no-op while reading as "armed").  A negative value means
          * "borrow @c network.zwd_carry_q".
+         *
+         * @return Seam-window process noise in m^2/s.  A negative value (default -1) means unset
+         *         and the seam fold borrows @c networkZwdCarryQ; a positive value replaces it
+         *         inside the seam window only; 0 is rejected at load.
          */
         double networkZwdSeamReseedQ() const { return network_zwd_seam_reseed_q_; }
         /**
@@ -2995,6 +3279,10 @@ namespace GnssProcessor {
          * the warm-resume fingerprint (forward-only resume response policy, the
          * exemption class of @ref networkZwdSeamReseed).  Default false =
          * byte-identical.
+         *
+         * @return True when a warm resume restores the snapshot's realization-frame rows
+         *         (phase-anchor incumbents, clock anchor state, held frame) before the first
+         *         election (@c network.resume_frame_restore); false (default) is byte-identical.
          */
         bool networkResumeFrameRestore() const { return network_resume_frame_restore_; }
         /**
@@ -3030,6 +3318,10 @@ namespace GnssProcessor {
          * a pre-v3 or uncaptured file the restore is inert and warns (inert, not
          * clean).  Deliberately not in the warm-resume fingerprint (forward-only
          * resume response policy).  Default false = byte-identical.
+         *
+         * @return True when a warm resume rebuilds each carry's coupling regression verbatim
+         *         from the snapshot (@c network.resume_coupling_restore); false (default) leaves
+         *         warm-resumed rows with an empty regression.
          */
         bool networkResumeCouplingRestore() const { return network_resume_coupling_restore_; }
         /**
@@ -3069,12 +3361,16 @@ namespace GnssProcessor {
          * from the file, that half behaves as if off and one warning is logged (inert,
          * not clean).
          *
-         * The loader requires @ref networkResumeFrameRestore: the satellite-side parents
+         * The loader requires @ref GnssProcessor::GnssConfig::networkResumeFrameRestore "networkResumeFrameRestore": the satellite-side parents
          * are the other half of the same tree, and without them the first election runs
          * without incumbents and re-references every family before these maps can
          * matter.  Deliberately not in the warm-resume fingerprint (the forward-only
          * resume-response exemption class of @ref networkResumeFrameRestore and
          * @ref networkResumeCouplingRestore).  Default false = byte-identical.
+         *
+         * @return True when a warm resume restores the eq34 chain election maps and the
+         *         time-linked code-bias datum memory (@c network.resume_datum_restore); false
+         *         (default) is byte-identical.
          */
         bool networkResumeDatumRestore() const { return network_resume_datum_restore_; }
         /**
@@ -3089,13 +3385,17 @@ namespace GnssProcessor {
          * epoch carries the whole accumulated re-base (metres per (sat,signal)).
          *
          * Inert and logged when its rows are absent (as in RS-3).  The loader requires
-         * @ref networkResumeFrameRestore: an emit layer restored on top of a
+         * @ref GnssProcessor::GnssConfig::networkResumeFrameRestore "networkResumeFrameRestore": an emit layer restored on top of a
          * re-elected realization frame would re-base this run's biases onto a frame
          * the writer never emitted.  Outputs-only: no estimate moves.  Deliberately
          * not in the warm-resume fingerprint (the forward-only resume-response
          * exemption class of @ref networkResumeFrameRestore,
          * @ref networkResumeDatumRestore and @ref networkResumeCouplingRestore).
          * Default false = byte-identical.
+         *
+         * @return True when a warm resume restores the emit engine's emission-frame rows before
+         *         the first emit (@c network.resume_emit_restore); false (default) is
+         *         byte-identical.  Outputs only: no estimate moves.
          */
         bool networkResumeEmitRestore() const { return network_resume_emit_restore_; }
         /**
@@ -3121,6 +3421,10 @@ namespace GnssProcessor {
          * in the warm-resume fingerprint (the forward-only resume-response exemption
          * class of @ref networkResumeFrameRestore and @ref networkResumeEmitRestore).
          * Default false = byte-identical.
+         *
+         * @return True when a warm resume restores the emit-side phase-bias hold before the
+         *         first emit (@c network.resume_hold_restore); false (default) is
+         *         byte-identical.  Outputs only: no estimate moves.
          */
         bool networkResumeHoldRestore() const { return network_resume_hold_restore_; }
         /**
@@ -3138,13 +3442,17 @@ namespace GnssProcessor {
          *
          * Each half is inert and logged when its rows are absent (as in RS-3 / RS-5,
          * neither half borrows the other's verdict).  The loader requires
-         * @ref networkResumeFrameRestore: both memories are expressed in the
+         * @ref GnssProcessor::GnssConfig::networkResumeFrameRestore "networkResumeFrameRestore": both memories are expressed in the
          * realization frame underneath them, so restoring them onto a re-elected frame
          * would re-assert a level the writer never held.  Deliberately not in the
          * warm-resume fingerprint (the forward-only resume-response exemption class of
          * @ref networkResumeFrameRestore, @ref networkResumeDatumRestore,
          * @ref networkResumeEmitRestore and @ref networkResumeCouplingRestore).
          * Default false = byte-identical.
+         *
+         * @return True when a warm resume restores the per-station rx-CB carry and the per-LOS
+         *         deviation carry before the first epoch (@c network.resume_station_restore);
+         *         false (default) is byte-identical.
          */
         bool networkResumeStationRestore() const { return network_resume_station_restore_; }
         /**
@@ -3155,6 +3463,9 @@ namespace GnssProcessor {
          * so one leg of the attribution matrix can restore the T5 deviation half alone
          * (§21.13 gate P8c: the half that moves a channel owns it).  Not a posture knob:
          * the default is true, so an ordinary armed resume restores both halves.
+         *
+         * @return True (default) to restore the rx-CB half when @c networkResumeStationRestore
+         *         is armed; false restores the per-LOS deviation half alone.
          */
         bool networkResumeStationRestoreRxCb() const { return network_resume_station_restore_rxcb_; }
         /**
@@ -3173,13 +3484,17 @@ namespace GnssProcessor {
          * metres at the first post-resume epoch.
          *
          * A snapshot without @c CN rows is inert and logged (as in RS-3 / RS-5 /
-         * RS-6).  The loader requires @ref networkResumeFrameRestore: the arcs the
+         * RS-6).  The loader requires @ref GnssProcessor::GnssConfig::networkResumeFrameRestore "networkResumeFrameRestore": the arcs the
          * restored realization frame names are those of the writer's canonical
          * signals.  Deliberately not in the warm-resume fingerprint (the forward-only
          * resume-response exemption class of @ref networkResumeFrameRestore,
          * @ref networkResumeDatumRestore, @ref networkResumeEmitRestore,
          * @ref networkResumeStationRestore and @ref networkResumeCouplingRestore).
          * Default false = byte-identical.
+         *
+         * @return True when a warm resume restores each station's per-(constellation, band,
+         *         obs-type) canonical-signal latch (@c network.resume_signal_canon_restore);
+         *         false (default) is byte-identical.
          */
         bool networkResumeSignalCanonRestore() const { return network_resume_signal_canon_restore_; }
         /**
@@ -3216,6 +3531,10 @@ namespace GnssProcessor {
          * @ref networkResumeDatumRestore, @ref networkResumeEmitRestore,
          * @ref networkResumeCouplingRestore and @ref networkResumeStationRestore).
          * Default false = byte-identical.
+         *
+         * @return True when a warm resume rebuilds the shared border's cross-covariance from the
+         *         snapshot and folds it dense from the first warm epoch
+         *         (@c network.resume_border_restore); false (default) is byte-identical.
          */
         bool networkResumeBorderRestore() const { return network_resume_border_restore_; }
         /**
@@ -3255,6 +3574,10 @@ namespace GnssProcessor {
          * @ref networkResumeDatumRestore, @ref networkResumeEmitRestore,
          * @ref networkResumeStationRestore and @ref networkResumeBorderRestore).
          * Default false = byte-identical.
+         *
+         * @return True when a warm resume restores the rx-CB linearization point that the inject
+         *         gate judges the restored carry against (@c network.resume_rxcb_lin_restore);
+         *         false (default) is byte-identical.
          */
         bool networkResumeRxCbLinRestore() const { return network_resume_rxcb_lin_restore_; }
         /**
@@ -3286,6 +3609,11 @@ namespace GnssProcessor {
          * fingerprint (the forward-only resume-response exemption class of
          * @ref networkResumeFrameRestore, @ref networkResumeDatumRestore and
          * @ref networkResumeCouplingRestore). Default false = byte-identical.
+         *
+         * @return True when the first emit after a warm resume declares the seam on the wire for
+         *         each constellation whose phase biases re-realized
+         *         (@c network.resume_pb_seam_mark); false (default) is byte-identical.  Outputs
+         *         only: no estimate moves.
          */
         bool networkResumePbSeamMark() const { return network_resume_pb_seam_mark_; }
         /// Fraction of a constellation's fresh-baseline phase-bias keys that must exceed
@@ -3320,6 +3648,9 @@ namespace GnssProcessor {
          * Default 0 = off, byte-identical (nothing is ever parked).  Not fingerprinted:
          * parking adds entries and changes no carried value's meaning; a snapshot never
          * carries a parked entry (a seam inside an absence gives the cold return).
+         *
+         * @return Parking horizon in seconds for a departing satellite's clock and code-bias
+         *         carry; 0 (default) is off, and a negative value is rejected at load.
          */
         double networkReadmitSeedHorizonS() const { return network_readmit_seed_horizon_s_; }
         /**
@@ -3335,6 +3666,10 @@ namespace GnssProcessor {
          * evented (`READMIT readmit` / `marg_expired`) and the diverted-term count is the
          * run-end denominator.  Requires the coupling rows (inert otherwise,
          * loader-warned).  Default 0 = off, byte-identical.
+         *
+         * @return Number of epochs after a satellite clock returns from an absence of 3 or more
+         *         loop epochs during which its coupling terms take the departed route; 0 (default)
+         *         is off, and a negative value is rejected at load.
          */
         int networkReadmitCouplingMargEp() const { return network_readmit_coupling_marg_ep_; }
         /**
@@ -3352,6 +3687,10 @@ namespace GnssProcessor {
          * improvement: the IF-pair code-bias seeds anchor the clock-vs-code-bias split at
          * the return, and without them the clock tails return (promotion ledger row for
          * @c network.readmit_seed_code_bias, RECOMMEND_SCOPED with the default true).
+         *
+         * @return True (default) to park and seed the satellite code-bias columns together with
+         *         the clock; false seeds the clock alone.  Inert without
+         *         @c networkReadmitSeedHorizonS.
          */
         bool networkReadmitSeedCodeBias() const { return network_readmit_seed_code_bias_; }
         /**
@@ -3372,6 +3711,11 @@ namespace GnssProcessor {
          * feeds the fold (@c network.carry_vce_apply); the census is a trace and a
          * calibration, not a fold input. Not fingerprinted: neither accumulator is part of a
          * state snapshot. Network mode only.
+         *
+         * @return True when a parked seed that the fold applied is also a row of the carry
+         *         LS-VCE monitor and of the prior-residual census (@c network.readmit_seed_mirrors);
+         *         false (default) skips every parked entry there.  Inert without
+         *         @c networkReadmitSeedHorizonS.
          */
         bool networkReadmitSeedMirrors() const { return network_readmit_seed_mirrors_; }
         /**
@@ -3398,6 +3742,11 @@ namespace GnssProcessor {
          * (docs/record/refound/CPA_canonical_pair_admission_2026-09-20.md).  Default false =
          * byte-identical (the seam returns the caller's own epoch, no copy).  Not
          * fingerprinted.
+         *
+         * @return True when a (station, satellite) epoch enters the network path only while the
+         *         station holds its canonical phase and code signals on band digits 1 and 2
+         *         (@c network.canonical_pair_admission); false (default) returns the caller's
+         *         epoch unchanged.
          */
         bool networkCanonicalPairAdmission() const { return network_canonical_pair_admission_; }
         /**
@@ -3412,6 +3761,10 @@ namespace GnssProcessor {
          * 461 epochs below a decimetre against N = 0's 288, because with three bands a
          * satellite without its band-2 phase is still a two-band satellite and deleting
          * it costs information; on the dual field bed the two were equal.
+         *
+         * @return Tolerance in processed epochs (default 3): a record without its canonical pair
+         *         is still admitted while the last good epoch is at most this many epochs back;
+         *         0 admits only the epochs that hold the pair.
          */
         int networkCanonicalPairKeepEpochs() const { return network_canonical_pair_keep_epochs_; }
         /**
@@ -3433,11 +3786,19 @@ namespace GnssProcessor {
          * Default false = byte-identical (the epoch is returned as it came, no copy and
          * no walk). Not fingerprinted: a forward-only admission policy. The held-out
          * closed-loop consumer is never screened.
+         *
+         * @return True when a constellation other than the time reference enters the network
+         *         path at a station only while the station holds it on two modelled bands
+         *         (@c network.second_band_admission); false (default) returns the epoch as it
+         *         came.
          */
         bool networkSecondBandAdmission() const { return network_second_band_admission_; }
         /**
          * @brief What the second-band admission tests (@c network.second_band_scope:
          *        "station" or "satellite"; inert without @ref networkSecondBandAdmission).
+         *
+         * @return @c SecondBandScope::Station (default) tests the constellation at the station;
+         *         @c SecondBandScope::Satellite tests each satellite at the station.
          */
         SecondBandScope networkSecondBandScope() const { return network_second_band_scope_; }
         /**
@@ -3446,6 +3807,9 @@ namespace GnssProcessor {
          *        satellites of a constellation that must be on two modelled bands at a
          *        station for the constellation to be admitted there. Clamped at 1 by the
          *        loader.
+         *
+         * @return Number of satellites that must be on two modelled bands (default 1, at least 1
+         *         after the loader clamp); used only under station scope.
          */
         int networkSecondBandMinSats() const { return network_second_band_min_sats_; }
         /**
@@ -3460,6 +3824,9 @@ namespace GnssProcessor {
          * detections are logged, not acted on); the T1 IF-TD and wind-up drains are
          * untouched, so a real in-gap slip keeps a live response.  0 = off.  Not
          * fingerprinted.
+         *
+         * @return Number of processed epochs after a warm resume during which the MW/LLI drain is
+         *         diagnostic-only; 0 (default) is off, and a negative value is rejected at load.
          */
         int networkResumeSlipWarmupEp() const { return network_resume_slip_warmup_ep_; }
 
@@ -3489,6 +3856,10 @@ namespace GnssProcessor {
          * only at a warm resume; a cold start never sets it.  0 = off = byte-identical.
          * Not fingerprinted (forward-only resume response policy, the same exemption
          * class as @ref networkResumeSlipWarmupEp).
+         *
+         * @return Number of processed epochs after a warm resume during which the D5 gate is
+         *         diagnostic-only; 0 (default) is off and byte-identical, and a negative value is
+         *         rejected at load.
          */
         int networkResumeD5WarmupEp() const { return network_resume_d5_warmup_ep_; }
 
@@ -3513,6 +3884,11 @@ namespace GnssProcessor {
          * Event response (invariant #1): an inject-time innovation gate withholds the
          * fold at receiver-reset scale and the harvest overwrites the stale entry.
          * Default false = byte-identical.
+         *
+         * @return True when each station's receiver code-bias columns are carried across epochs
+         *         as diagonal random-walk priors (@c network.carry_rx_code_bias); false (default)
+         *         is byte-identical.  Forced off with a warning unless
+         *         @c networkCodeDatumTimeLinked is on.
          */
         bool networkCarryRxCodeBias() const { return network_carry_rx_code_bias_; }
 
@@ -3541,6 +3917,10 @@ namespace GnssProcessor {
          * and a local block (the float_kf vehicle, or
          * @ref networkPhaseLevelingLocalBlock).  Fingerprinted.  Default false =
          * byte-identical.
+         *
+         * @return True when the receiver code-bias columns are carried as conditional coupling
+         *         rows inside the station's whitened local block
+         *         (@c network.carry_rx_code_bias_in_block); false (default) is byte-identical.
          */
         bool networkCarryRxCodeBiasInBlock() const { return network_carry_rx_code_bias_in_block_; }
 
@@ -3557,6 +3937,10 @@ namespace GnssProcessor {
          * stale value went into the satellite clocks (field, BSHM00ISR G07 L2W at epoch 8:
          * metre-scale level jumps on six satellites).  Default false = byte-identical.
          * Inert without the float_kf vehicle.
+         *
+         * @return True when a float-vehicle ambiguity drop always clears the arc's border
+         *         regression and block row, even if the variance is already at birth strength
+         *         (@c network.amb_float_drop_decouple_always); false (default) is byte-identical.
          */
         bool networkAmbFloatDropDecoupleAlways() const { return network_amb_float_drop_decouple_always_; }
 
@@ -3573,6 +3957,8 @@ namespace GnssProcessor {
          * values (2 h, both beds); the exact-update posture's clean start is unchanged or
          * better on the level gates and the phase-visible monitor, and the smoothed hold's clones survive
          * the engagement.  1e-6 restores the historical behaviour.
+         *
+         * @return Dimensionless relative-pivot bound in (0, 1e-6] (default 1e-12).
          */
         double networkDenseFoldKappa() const { return network_dense_fold_kappa_; }
 
@@ -3585,6 +3971,9 @@ namespace GnssProcessor {
          * temperature-scale drift while remaining far stiffer than the per-epoch
          * white re-estimate.  Must be @c >= 0.  Used only when
          * @ref networkCarryRxCodeBias is on.
+         *
+         * @return Process noise in m^2/s added to the carried rx code-bias variance per second
+         *         since last seen (default 1e-9); must be >= 0.
          */
         double networkRxCbCarryQ() const { return network_rx_cb_carry_q_; }
 
@@ -3603,6 +3992,10 @@ namespace GnssProcessor {
          * solution is byte-identical to the monitor-off run.
          * Foundation: Teunissen & Amiri-Simkooei 2008 (LS-VCE), residual form.
          * Default false = no accumulator, no logging (byte-identical).
+         *
+         * @return True when the LS-VCE carry-row variance-component monitor runs
+         *         (@c network.carry_vce); false (default) accumulates and logs nothing.  The
+         *         monitor never feeds back into the solve.
          */
         bool networkCarryVce() const { return network_carry_vce_; }
 
@@ -3622,6 +4015,10 @@ namespace GnssProcessor {
          * hard run error (v1 is fresh-convergence-only; α² restarting at 1
          * mid-chain would change the solve across the seam).  Requires
          * @ref networkCarryVce.  Default false = no factor, byte-identical.
+         *
+         * @return True when the measured sigma-hat is fed back as a variance factor on the carry
+         *         fold (@c network.carry_vce_apply); false (default) applies no factor.  Requires
+         *         @c networkCarryVce; solve-affecting when on.
          */
         bool networkCarryVceApply() const { return network_carry_vce_apply_; }
 
@@ -3632,6 +4029,9 @@ namespace GnssProcessor {
          * Must be a subset of @ref networkCarryVceComponents (a family that is
          * not monitored has no σ̂ to apply; a hard load error, not a silent
          * no-op).  Only used when @ref networkCarryVceApply.
+         *
+         * @return Comma list of carry families scaled by the apply path (default "pl"); each
+         *         must also be monitored by @c networkCarryVceComponents.
          */
         const std::string& networkCarryVceApplyFamilies() const { return network_carry_vce_apply_families_; }
 
@@ -3642,6 +4042,9 @@ namespace GnssProcessor {
          * Keeps the solve's conditioning quiet while the factor tracks.  It is not
          * the safety argument (a configured rate limit did not prevent the era-2
          * discharge); the inflate-only clamp is.  @c <=1 disables the limiter.
+         *
+         * @return Dimensionless per-epoch step limit (default 1.05); a value <= 1 disables the
+         *         limiter.
          */
         double networkCarryVceApplySlew() const { return network_carry_vce_apply_slew_; }
 
@@ -3650,6 +4053,9 @@ namespace GnssProcessor {
          *
          * Entry and exit are events (invariant #7).  The floor is 1 by
          * construction (inflate-only) and is not configurable.
+         *
+         * @return Dimensionless ceiling on the variance factor (default 1000); the loader
+         *         raises a value below 1 to 1.
          */
         double networkCarryVceApplyMax() const { return network_carry_vce_apply_max_; }
 
@@ -3658,6 +4064,9 @@ namespace GnssProcessor {
          *        its factor may move (@c network.carry_vce_apply_min_rows, 200).
          *
          * Below it the group freezes at its current α² and the trace flags it.
+         *
+         * @return Effective monitor rows required before a group's factor may move (default
+         *         200); the loader raises a negative value to 0.
          */
         int networkCarryVceApplyMinRows() const { return network_carry_vce_apply_min_rows_; }
 
@@ -3669,6 +4078,9 @@ namespace GnssProcessor {
          * @c pb / @c cb = the D2 shared satellite phase-/code-bias carries.  Each
          * requested family is estimated per constellation.  Only used when
          * @ref networkCarryVce.
+         *
+         * @return Comma list of the carry families the monitor accumulates (default "pl"; also
+         *         "pb" and "cb").
          */
         const std::string& networkCarryVceComponents() const { return network_carry_vce_components_; }
 
@@ -3679,6 +4091,9 @@ namespace GnssProcessor {
          * The running σ̂ tracks a trailing window of this many emitted epochs;
          * @c <=0 accumulates over the whole run.  Clamped to @c >=1 at load.
          * Only used when @ref networkCarryVce.
+         *
+         * @return Forgetting window in emitted epochs (default 60); a value below 1 accumulates
+         *         over the whole run with no forgetting.
          */
         int networkCarryVceWindowEpochs() const { return network_carry_vce_window_epochs_; }
 
@@ -3694,6 +4109,11 @@ namespace GnssProcessor {
          * carry.  Refloat/drop of unrepairable slips and pivot-slip handover belong
          * to other mechanisms (later increments).  Default false keeps the
          * carry-only path (Increment 1) byte-identical.
+         *
+         * @return True when each non-pivot station runs a persistent MW + GF TurboEdit detector
+         *         pair and applies confident integer slip repairs to the carried ambiguity
+         *         (@c network.cycle_slip.turbo_edit); false (default) keeps the carry-only path.
+         *         Effective only with @c networkPhaseLeveling.
          */
         bool networkCycleSlipTurboEdit() const { return network_cycle_slip_turbo_edit_; }
 
@@ -3712,6 +4132,9 @@ namespace GnssProcessor {
          * the products.  The lock-in of a rare real but rejected slip is bounded by
          * @ref networkPhaseLevelingVarFloorM2 / the max-gap drop and is resolved by
          * the cross-station RAIM consensus (Increment 3).  Default 0.15.
+         *
+         * @return Largest accepted rounding residual of the integer, in cycles (0 = exact
+         *         integer, 0.5 = worst; default 0.15).
          */
         double networkCycleSlipTurboEditFracMax() const { return network_cycle_slip_turbo_edit_frac_max_; }
 
@@ -3725,6 +4148,8 @@ namespace GnssProcessor {
          * untrustworthy and left untouched (carry kept) rather than shifted, so only
          * small, confident integers move the carry.  Default 50 cycles; it can be
          * raised once external BIA makes the wide-lane integer trustworthy.
+         *
+         * @return Largest accepted slip magnitude |dN| in cycles (default 50).
          */
         int networkCycleSlipTurboEditDnMax() const { return network_cycle_slip_turbo_edit_dn_max_; }
 
@@ -3747,6 +4172,11 @@ namespace GnssProcessor {
          * the refloat is meaningful only with @ref networkPhaseLeveling on
          * (without it, the detector is diagnostic).  Default false
          * keeps the solve byte-identical.
+         *
+         * @return True when the MW detector runs on the network and refloats an ambiguity on a
+         *         confident wide-lane jump or an LLI flag (@c network.cycle_slip.mw_detect); false
+         *         (default) keeps the solve byte-identical.  The refloat is meaningful only with
+         *         @c networkPhaseLeveling on.
          */
         bool networkCycleSlipMwDetect() const { return network_cycle_slip_mw_detect_; }
 
@@ -3772,6 +4202,11 @@ namespace GnssProcessor {
          * disables it otherwise) and is inert under
          * @ref networkPhaseDatumPrioritized (station 0 is an ordinary station
          * there).  Default false keeps the solve byte-identical.
+         *
+         * @return True when MW/LLI slip detection also covers the datum station with a network
+         *         re-reference response (@c network.cycle_slip.datum_station_detect); false
+         *         (default) keeps the solve byte-identical.  The loader disables it without
+         *         @c networkCycleSlipMwDetect.
          */
         bool networkCycleSlipDatumStationDetect() const {
             return network_cycle_slip_datum_station_detect_;
@@ -3791,6 +4226,10 @@ namespace GnssProcessor {
          * only with @ref networkPhaseLeveling on; with the carry off the detector
          * runs as a pure diagnostic.  Non-pivot stations
          * only.  Default false keeps the snapshot/carry solve byte-identical.
+         *
+         * @return True when the network IF-phase triple-difference slip detector is on
+         *         (@c network.cycle_slip.if_phase_td); false (default) keeps the snapshot/carry
+         *         solve byte-identical.
          */
         bool networkCycleSlipIfPhaseTd() const { return network_cycle_slip_if_phase_td_; }
 
@@ -3801,6 +4240,8 @@ namespace GnssProcessor {
          * 1.4826\cdot\mathrm{MAD},\ \mathrm{floor})@f$, the MAD pooled network-wide per
          * signal pair.  Deliberately loose (8–12); a per-epoch post-estimation phase
          * validation is the intended sharper second pass.  Default 8.
+         *
+         * @return Dimensionless multiplier k of the pooled MAD gate (default 8).
          */
         double networkCycleSlipIfPhaseTdKMad() const { return network_cycle_slip_if_phase_td_k_mad_; }
 
@@ -3815,6 +4256,9 @@ namespace GnssProcessor {
          * itself: flags jumps at or above the smallest integer slip; a clean network's
          * pooled MAD is ~mm, so this floor binds and the k·MAD term is dormant).  A
          * value near 0.7 catches a bare (1,1) reliably at the cost of more flags.
+         *
+         * @return Dimensionless fraction of the (1,1) ionosphere-free phase jump (about 10.7 cm
+         *         for GPS L1/L2) below which the MAD gate is never allowed to fall (default 1.0).
          */
         double networkCycleSlipIfPhaseTdFloorFrac() const { return network_cycle_slip_if_phase_td_floor_frac_; }
 
@@ -3826,6 +4270,8 @@ namespace GnssProcessor {
          * per signal pair per epoch, so the per-epoch cross-satellite MAD is robust and
          * replaces between-epoch temporal variability.  Advisory: pairs under this count
          * are logged (their MAD is less reliable).  Default 30.
+         *
+         * @return Minimum pooled sample count per signal pair, in samples; 30 by default.
          */
         int networkCycleSlipIfPhaseTdMinPool() const { return network_cycle_slip_if_phase_td_min_pool_; }
 
@@ -3838,6 +4284,9 @@ namespace GnssProcessor {
          * the recency weight per epoch: scale ← (1−α)·scale + α·scale_epoch.  Smaller =
          * longer memory (steadier), larger = faster tracking of a changing multipath
          * environment.  Default 0.15 (~13-epoch memory).
+         *
+         * @return Weight of the newest epoch in the per-(station, signal-pair) noise-scale EWMA,
+         *         dimensionless; 0.15 by default (about 13 epochs of memory).
          */
         double networkCycleSlipIfPhaseTdEwmaAlpha() const { return network_cycle_slip_if_phase_td_ewma_alpha_; }
 
@@ -3852,6 +4301,9 @@ namespace GnssProcessor {
          * data-driven scale.  κ is the clean-sample count at which the two are weighted
          * equally.  Default 20 (a dense pair, ~10 sats/epoch, becomes station-dominated
          * within a few epochs; a sparse pair leans on the pool longer, as intended).
+         *
+         * @return Clean-sample count at which a station pair's own EWMA scale and the network-pooled
+         *         scale carry equal weight, in samples; 20 by default.
          */
         double networkCycleSlipIfPhaseTdShrinkKappa() const { return network_cycle_slip_if_phase_td_shrink_kappa_; }
 
@@ -4050,7 +4502,7 @@ namespace GnssProcessor {
         /**
          * @brief Whether non-canonical phase rows exist this run.
          *
-         * The phase twin of @ref networkSecondCodeRowsActive: the second phase channel's own
+         * The phase twin of @ref GnssProcessor::GnssConfig::networkSecondCodeRowsActive "networkSecondCodeRowsActive": the second phase channel's own
          * knob, or the phase-6b subsumption.
          *
          * @return True when a second-phase row may be present.
@@ -4112,6 +4564,9 @@ namespace GnssProcessor {
         ///        stale pre-slip level injects at converged weight (the measured
         ///        cause of the level walk).  Default off; byte-identical off;
         ///        fingerprint-exempt (forward-only response policy).
+        /// @return True when a detector-marked arc's free epoch is latched where the leveling-carry
+        ///         inject can see it (@c network.cycle_slip.relevel_free_epoch); false (default)
+        ///         leaves the stale pre-slip level to inject at converged weight.
         bool networkCycleSlipRelevelFreeEpoch() const { return network_cycle_slip_relevel_free_epoch_; }
         /// @brief Anchor-slip handover (docs/record/SPEC_event_harness.md §12.6/§12.7):
         ///        when a slip response frees the arc that currently anchors a
@@ -4127,6 +4582,9 @@ namespace GnssProcessor {
         ///        fingerprint-exempt (forward-only response policy: it changes
         ///        only what a run does after a slip, never the state a snapshot
         ///        restores).
+        /// @return True when the one-epoch candidacy ban on a freed anchor arc is staged
+        ///         (@c network.cycle_slip.anchor_slip_handover); false (default) lets the sticky
+        ///         election keep the slipped incumbent.
         bool networkCycleSlipAnchorSlipHandover() const { return network_config_.cycle_slip_anchor_slip_handover; }
         /// @brief MW evidence refloat: admit a strong, mature, bias-free-lane
         ///        Melbourne-Wubbena detection to the network's detect-only refloat
@@ -4160,15 +4618,19 @@ namespace GnssProcessor {
         /// admission counters are collected whether or not the knob is armed, so
         /// the run-end line of a run with it off already reports what the rule
         /// would have admitted.  Fingerprint-exempt (forward-only response policy).
+        /// @return True when strong, mature, bias-free-lane Melbourne-Wubbena detections are admitted
+        ///         to the refloat path regardless of integer cleanliness
+        ///         (@c network.cycle_slip.mw_evidence_refloat); false (default) keeps the
+        ///         integer-repair admission gate alone.
         bool networkCycleSlipMwEvidenceRefloat() const { return network_config_.cycle_slip_mw_evidence_refloat; }
-        /// @brief Evidence gate for @ref networkCycleSlipMwEvidenceRefloat: the
+        /// @brief Evidence gate for @ref GnssProcessor::GnssConfig::networkCycleSlipMwEvidenceRefloat "networkCycleSlipMwEvidenceRefloat": the
         ///        minimum |deviation| / threshold at the flag.  Default 3.0, the
         ///        value the false-alarm census was taken at (every mature
         ///        bias-free detection at or above it on a quiet 240-epoch
         ///        60-station leg was a real slip).
         /// @return Minimum evidence ratio, dimensionless.
         double networkCycleSlipMwEvidenceRatioMin() const { return network_config_.cycle_slip_mw_evidence_ratio_min; }
-        /// @brief Evidence gate for @ref networkCycleSlipMwEvidenceRefloat: the
+        /// @brief Evidence gate for @ref GnssProcessor::GnssConfig::networkCycleSlipMwEvidenceRefloat "networkCycleSlipMwEvidenceRefloat": the
         ///        minimum arc sample count at the flag (arc maturity).  Default
         ///        10.  A young arc's level is still converging, so its deviation
         ///        is measured against a threshold that is itself unsettled; the
@@ -4227,7 +4689,7 @@ namespace GnssProcessor {
         /// is consulted).  Fingerprint-exempt (forward-only response policy).
         /// @return True when the common-band scope is armed.
         bool networkCycleSlipCommonBandScope() const { return network_config_.cycle_slip_common_band_scope; }
-        /// @brief Exoneration maturity gate for @ref networkCycleSlipCommonBandScope:
+        /// @brief Exoneration maturity gate for @ref GnssProcessor::GnssConfig::networkCycleSlipCommonBandScope "networkCycleSlipCommonBandScope":
         ///        the minimum MW arc sample count at which a silent pair may
         ///        exonerate its two bands.  Default 10.
         ///
@@ -4271,23 +4733,31 @@ namespace GnssProcessor {
         ///        freeing the arc, so the level survives the slip at phase
         ///        precision.  Requires relevel_free_epoch (fallbacks land there),
         ///        mw_detect + if_phase_td; mutually exclusive with turbo_edit.
+        /// @return True when a measured slip shifts the carried level in place instead of freeing the
+        ///         arc (@c network.cycle_slip.relevel_delta_bridge); false (default) frees the arc.
         bool networkCycleSlipRelevelDeltaBridge() const { return network_cycle_slip_relevel_delta_bridge_; }
         /// @brief Bridge reject: either |ΔN_band| above this (cycles) falls back
         ///        to the free epoch (detector-confusion guard).
+        /// @return Largest accepted per-band integer step, in cycles; 200 by default.
         double networkCycleSlipRelevelBridgeMaxCycles() const { return network_cycle_slip_relevel_bridge_max_cycles_; }
         /// @brief Bridge reject: either propagated σ(ΔN_band) above this
         ///        (cycles) falls back to the free epoch.
+        /// @return Largest accepted propagated 1-sigma of the per-band step, in cycles; 0.50 by default.
         double networkCycleSlipRelevelBridgeMaxSigmaCyc() const { return network_cycle_slip_relevel_bridge_max_sigma_cyc_; }
         /// @brief Floor on the wide-lane integer's 1σ (cycles) entering the
         ///        bridge variance (the MW frac can read implausibly small).
+        /// @return Floor on the wide-lane integer's 1-sigma, in cycles; 0.02 by default.
         double networkCycleSlipRelevelBridgeWlSigmaFloorCyc() const { return network_cycle_slip_relevel_bridge_wl_sigma_floor_cyc_; }
         /// @brief Floor on the IF-TD step's 1σ (metres) entering the bridge
         ///        variance (the pooled scale can read implausibly small early).
+        /// @return Floor on the IF-TD step's 1-sigma, in metres; 0.005 by default.
         double networkCycleSlipRelevelBridgeIfSigmaFloorM() const { return network_cycle_slip_relevel_bridge_if_sigma_floor_m_; }
         /// @brief Bridge v2 corroboration gate (cycles per band): the bridged
         ///        level must agree with the interim free re-level within this.
+        /// @return Corroboration tolerance, in cycles per band; 3.0 by default.
         double networkCycleSlipRelevelBridgeCorrobCyc() const { return network_cycle_slip_relevel_bridge_corrob_cyc_; }
         /// @brief Bridge v2 pend expiry window (s) awaiting the MW integer.
+        /// @return Pend expiry window, in seconds; 120 by default.
         double networkCycleSlipRelevelBridgePendWindowS() const { return network_cycle_slip_relevel_bridge_pend_window_s_; }
         /// @brief Bridge v3, E4 (@c network.cycle_slip.relevel_bridge_gf): capture
         ///        the same-pair GF-phase TD at the flag epoch and let the kernel
@@ -4297,8 +4767,11 @@ namespace GnssProcessor {
         ///        station's own clean-step EWMA), floored at
         ///        @ref networkCycleSlipRelevelBridgeGfSigmaFloorM.  Rider on
         ///        relevel_delta_bridge; default false is byte-identical.
+        /// @return True when the same-pair GF-phase step is captured at the flag epoch and closes
+        ///         the (1,2) plane in that epoch; false (default) does not capture it.
         bool networkCycleSlipRelevelBridgeGf() const { return network_cycle_slip_relevel_bridge_gf_; }
         /// @brief Floor on the GF-TD step's 1σ (metres) entering the v3 kernel.
+        /// @return Floor on the GF-TD step's 1-sigma, in metres; 0.01 by default.
         double networkCycleSlipRelevelBridgeGfSigmaFloorM() const { return network_cycle_slip_relevel_bridge_gf_sigma_floor_m_; }
         /**
          * @brief Wired response to a wind-up accumulator restart
@@ -4316,6 +4789,10 @@ namespace GnssProcessor {
          * disarms it (warn) without @c estimation.accumulate_phase_windup
          * (the verdict does not exist in fractional mode, a structural zero)
          * or without @c network.phase_leveling (nothing stale to refloat).
+         *
+         * @return True when the wind-up restart ledger is drained at PASS-A serial time and the
+         *         stepped (station, satellite) takes the free-epoch refloat; false (default) gives a
+         *         restart no response.
          */
         bool networkCycleSlipWindupRestartRefloat() const { return network_cycle_slip_windup_restart_refloat_; }
 
@@ -4342,6 +4819,9 @@ namespace GnssProcessor {
          * detector uses).
          * Meaningful only with @ref networkPhaseLeveling on.  Default false keeps the
          * carry solve byte-identical.
+         *
+         * @return True when the post-fit network RAIM backstop runs; false (default) keeps the carry
+         *         solve byte-identical.
          */
         bool networkRaim() const { return network_raim_; }
 
@@ -4355,6 +4835,9 @@ namespace GnssProcessor {
          * re-referenced.  When on, a persistent last-ever-pivot map catches that case
          * and forces the same discontinuity bump.  Default false = byte-identical
          * (only the adjacent-epoch change signals).
+         *
+         * @return True when a returning constellation's changed pivot forces a datum discontinuity;
+         *         false (default) signals only the adjacent-epoch pivot change.
          */
         bool networkPivotVanishReturnSignal() const { return network_pivot_vanish_return_signal_; }
 
@@ -4373,6 +4856,9 @@ namespace GnssProcessor {
          *       the retro-bump's clock-counter step is a silent no-op without this
          *       channel, so arming the retro-bump arms the channel, and with it the
          *       per-constellation handover-bump scoping above.
+         *
+         * @return True when the per-satellite clock discontinuity channel and the per-constellation
+         *         bump scoping are on; false (default) emits no such channel and bumps globally.
          */
         bool networkEmitClockDisc() const { return network_emit_clock_disc_; }
 
@@ -4391,6 +4877,9 @@ namespace GnssProcessor {
          * instead of dragging them.  Travels in the
          * S-contract (@c cbjump=) so file replay reproduces the counters.
          * Default false = structural triggers only (byte-identical).
+         *
+         * @return True when the code-bias discontinuity counter also bumps on a fresh-baseline value
+         *         jump beyond the phase threshold; false (default) uses the structural triggers only.
          */
         bool networkCodeBiasDiscJumpTest() const { return network_code_bias_disc_jump_test_; }
 
@@ -4407,6 +4896,9 @@ namespace GnssProcessor {
          * legacy 0.05 m, L2 6.1 cm, L5/E5a 6.37 cm).  Travels in the S-contract
          * (@c discfrac=) so file replay reproduces the counters.  Default 0.0 = the
          * legacy flat-metre gate (byte-identical).
+         *
+         * @return Threshold as a fraction of a carrier cycle, dimensionless (the threshold is this
+         *         fraction times the signal wavelength); 0.0 (default) keeps the flat 0.05 m gate.
          */
         double networkDiscThresholdFracCycles() const { return network_disc_threshold_frac_cycles_; }
 
@@ -4426,6 +4918,9 @@ namespace GnssProcessor {
          * frozen ISB).  Requires @c network.clock_datum_sum_to_zero (the only
          * datum whose gauge moves with membership) and arms
          * @c network.emit_clock_disc.  Default false (byte-identical).
+         *
+         * @return True when a change of a constellation's clock-satellite set steps its clock
+         *         discontinuity counters; false (default) derives no discontinuity from set changes.
          */
         bool networkClockDiscOnSetChange() const { return network_clock_disc_on_set_change_; }
 
@@ -4448,6 +4943,9 @@ namespace GnssProcessor {
          * intent, so the pinned satellite reclaims the datum on its return (that
          * flip-back is deliberate and still signalled as a handover).  Default
          * false = the legacy per-epoch lexical selection (byte-identical).
+         *
+         * @return True when the incumbent pivot is kept while still registered; false (default)
+         *         re-picks the lexically smallest registered satellite every epoch.
          */
         bool networkStickyPivot() const { return network_sticky_pivot_; }
 
@@ -4471,7 +4969,7 @@ namespace GnssProcessor {
          * the clock_pivot map and shared hard-pin datum stay empty, and the datum is
          * defined for any epoch with ≥1 clock satellite per constellation.  The
          * emitted product self-describes the change via the S-basis contract's
-         * @c isb_datum field (@ref SbasisDeclaration::IsbDatum::SumToZeroPerConstellation),
+         * @c isb_datum field (@c SbasisDeclaration::IsbDatum::SumToZeroPerConstellation),
          * and a per-constellation @c clock_datum_satellite pin is ignored (there is
          * no pivot to place).  The two datums differ only by a per-constellation
          * constant a consumer absorbs into its receiver clock (a pure S-transform of
@@ -4480,6 +4978,8 @@ namespace GnssProcessor {
          * Default false = the legacy per-constellation pivot pin (byte-identical).
          *
          * @see networkStickyPivot, NetworkSbasis, SbasisDeclaration::IsbDatum
+         * @return True when the clock gauge is the per-constellation sum-to-zero over satellite
+         *         clocks; false (default) pins one pivot satellite per constellation.
          */
         bool networkClockDatumSumToZero() const { return network_clock_datum_sum_to_zero_; }
 
@@ -4500,13 +5000,15 @@ namespace GnssProcessor {
          * wander with membership; it stays bound to the broadcast reference the
          * consumer already reconstructs against.  The product self-describes
          * via the S-contract
-         * @ref SbasisDeclaration::IsbDatum::BroadcastAnchoredPerSatellite.
+         * @c SbasisDeclaration::IsbDatum::BroadcastAnchoredPerSatellite.
          * Requires @c apriori_source=brdc_rts and is mutually exclusive with
          * @c network.clock_datum_sum_to_zero (both fail-loud at load).  Default
          * false = unchanged (byte-identical).
          *
          * @see networkClockDatumSumToZero, resolveNetworkAprioriClockAnchorSigmaM,
          *      NetworkSbasis, SbasisDeclaration::IsbDatum
+         * @return True when per-satellite broadcast anchors realize the clock gauge (needs the
+         *         @c brdc_rts a priori source); false (default) leaves the gauge unchanged.
          */
         bool networkClockDatumBroadcastAnchored() const { return network_clock_datum_broadcast_anchored_; }
 
@@ -4559,6 +5061,8 @@ namespace GnssProcessor {
          *
          * @see estimateNetworkSatCodeBias, NetworkSbasis::codeS2zTimeLink,
          *      NetworkSbasis::selectIfPinPair
+         * @return True when the code-bias datum targets the change from the previous epoch's solved
+         *         values; false (default) re-imposes the zero-target datum every epoch.
          */
         bool networkCodeDatumTimeLinked() const { return network_code_datum_time_linked_; }
 
@@ -4628,6 +5132,9 @@ namespace GnssProcessor {
          * epoch and the re-seed at every pair change (byte-identical).
          *
          * @see networkCodeDatumFamilyDifference, NetworkSbasis::buildCodeBiasDatumRows
+         * @return True when the clock is continued across an ionosphere-free pin pair change (hold,
+         *         then continue); false (default) re-selects the pair every epoch and re-seeds the
+         *         pin at each change.
          */
         bool networkCodeDatumPairContinuity() const { return network_code_datum_pair_continuity_; }
 
@@ -4670,6 +5177,8 @@ namespace GnssProcessor {
          * (byte-identical).
          *
          * @see networkCodeDatumPairContinuity, NetworkSbasis::channelFamilyOf
+         * @return True when the inter-family code offset is realized as a family difference; false
+         *         (default) keeps the sum-to-zero row.
          */
         bool networkCodeDatumFamilyDifference() const { return network_code_datum_family_difference_; }
 
@@ -4722,6 +5231,8 @@ namespace GnssProcessor {
          * sub-centimetre value is refused at load.
          *
          * @see networkCodeDatumFamilyDifference, NetworkSbasis::codeFamilyBirthPriors
+         * @return Standard deviation of the first-sighting family prior, in metres; 0 (default)
+         *         folds no row.
          */
         double networkCodeFamilyBirthPriorSigmaM() const { return network_code_family_birth_prior_sigma_m_; }
 
@@ -4756,6 +5267,8 @@ namespace GnssProcessor {
          * (byte-identical product + traces).
          *
          * @see networkPhaseDatumPrefElevDeg, networkPhaseDatumSticky
+         * @return True when each (satellite,signal) phase-bias gauge pin sits at a prioritized anchor
+         *         receiver; false (default) pins on the single clock-pivot station.
          */
         bool networkPhaseDatumPrioritized() const { return network_phase_datum_prioritized_; }
 
@@ -4785,6 +5298,8 @@ namespace GnssProcessor {
          *
          * @see networkPhaseDatumEq34Receiver, networkPhaseDatumEq34PinRound,
          *      networkPhaseDatumPrioritized
+         * @return True when the Eq-34 single-receiver-chain datum realizes the phase-bias gauge; false
+         *         (default) keeps the prioritized-anchor or legacy pin datum.
          */
         bool networkPhaseDatumEq34() const { return network_phase_datum_eq34_; }
 
@@ -4797,6 +5312,9 @@ namespace GnssProcessor {
          * picks the highest-coverage candidate.  Sticky-incumbent selection still
          * wins over this preference while the incumbent remains present (fewest
          * handovers).  Inert unless @ref networkPhaseDatumEq34.
+         *
+         * @return Station identifier of the preferred datum receiver; empty (default) selects the
+         *         highest-coverage candidate.
          */
         const std::string& networkPhaseDatumEq34Receiver() const {
             return network_phase_datum_eq34_receiver_;
@@ -4814,6 +5332,8 @@ namespace GnssProcessor {
          * frame).  Inert unless @ref networkPhaseDatumEq34.
          *
          * @see networkPhaseDatumEq34
+         * @return True (default) when a re-pin targets the carried float rounded to whole cycles;
+         *         false always pins to 0.
          */
         bool networkPhaseDatumEq34PinRound() const { return network_phase_datum_eq34_pin_round_; }
 
@@ -4828,6 +5348,9 @@ namespace GnssProcessor {
          *        N ∈ [1e5,1e6) cycles and without this pays a km-scale GF discharge;
          *        SPEC_synthetic_minimum_network §12.8).  Default off; refused without
          *        @c network.phase_datum_eq34.
+         *
+         * @return True when otherwise-zero pin targets are rounded to whole cycles of the value the
+         *         ambiguity state holds; false (default) keeps the cold absolute 0.
          */
         bool networkPhaseDatumEq34SeedRound() const { return network_phase_datum_eq34_seed_round_; }
 
@@ -4858,6 +5381,9 @@ namespace GnssProcessor {
          * Default off; refused without @c network.phase_datum_eq34_seed_round.
          *
          * @see networkPhaseDatumEq34SeedRound, networkPhaseDatumEq34CarryShift
+         * @return True when a re-hosted pin takes its frame step from the new host's own ambiguity
+         *         state and S-transforms the carried quantities; false (default) declares the step
+         *         unknown and re-references the (satellite, signal).
          */
         bool networkPhaseDatumEq34SeedRoundRehostFrame() const { return network_phase_datum_eq34_seed_round_rehost_frame_; }
 
@@ -4880,6 +5406,8 @@ namespace GnssProcessor {
          * @ref networkPhaseDatumEq34.
          *
          * @see networkPhaseDatumEq34, networkStationPdPinAware
+         * @return Standard deviation of the zero-mean receiver phase-bias prior, in metres; 1.0 by
+         *         default, 0 disables.
          */
         double networkPhaseDatumEq34RpbPriorSigmaM() const { return network_phase_datum_eq34_rpb_prior_sigma_m_; }
 
@@ -4917,6 +5445,8 @@ namespace GnssProcessor {
          * 0 disables (v1 behaviour).  Inert unless @ref networkPhaseDatumEq34.
          *
          * @see networkPhaseDatumEq34, networkPhaseDatumEq34RpbPriorSigmaM
+         * @return Process noise of the receiver phase-bias time link, in m^2/s; 3e-6 by default, 0
+         *         disables the carry (fresh re-estimation each epoch).
          */
         double networkPhaseDatumEq34RpbQ() const { return network_phase_datum_eq34_rpb_q_m2s_; }
 
@@ -4960,6 +5490,9 @@ namespace GnssProcessor {
          * weakly held δ_{r,σ} split absorbing part of the pin move that the walk
          * attributes to b_s).  Default false = erase-based hygiene.  Inert unless
          * @ref networkPhaseDatumEq34.
+         *
+         * @return True when carried values are S-transformed into the new frame on a pin
+         *         displacement; false (default) uses the erase-based hygiene.
          */
         bool networkPhaseDatumEq34CarryShift() const { return network_phase_datum_eq34_carry_shift_; }
 
@@ -4987,6 +5520,8 @@ namespace GnssProcessor {
          * @ref networkPhaseDatumEq34.
          *
          * @see networkPhaseDatumEq34
+         * @return True when new spanning-tree edges are ordered by arc longevity; false (default)
+         *         grows the tree in lexical satellite and station order.
          */
         bool networkPhaseDatumEq34LongevityElection() const {
             return network_phase_datum_eq34_longevity_election_;
@@ -5018,38 +5553,66 @@ namespace GnssProcessor {
          * baseline).  Inert unless @ref networkPhaseDatumEq34.
          *
          * @see networkPhaseDatumEq34, networkPhaseLevelingMaxGapS
+         * @return True when a tree edge keeps its sticky identity while its phase-leveling carry is
+         *         alive; false (default) replaces the tree wholesale.
          */
         bool networkPhaseDatumEq34ExtendOnly() const {
             return network_phase_datum_eq34_extend_only_;
         }
 
-        /// Time-link the DD cycle-basis invariant carry (@c network.carry_invariant).
+        /// @brief Time-link the DD cycle-basis invariant carry (@c network.carry_invariant).
+        /// @return True when the invariant carry is time-linked through the producer solve (requires
+        ///         the eq34 datum); false (default) allocates no z-store.
         bool networkCarryInvariant() const { return network_carry_invariant_; }
-        /// Z process noise m²/s (@c network.carry_invariant_qz).
+        /// @brief Z process noise m²/s (@c network.carry_invariant_qz).
+        /// @return Process noise of the carried DDs, in m^2/s; 0.0 (default) holds them constant.
         double networkCarryInvariantQz() const { return network_carry_invariant_qz_; }
-        /// Emit-layer frame re-basing (@c network.carry_invariant_emit_rebase).
+        /// @brief Emit-layer frame re-basing (@c network.carry_invariant_emit_rebase).
+        /// @return True (default) when the emitted per-key biases are re-based onto the previous
+        ///         emission frame (outputs only); false leaves them un-re-based.
         bool networkCarryInvariantEmitRebase() const { return network_carry_invariant_emit_rebase_; }
-        /// Estimation-side fine-slip innovation gate (@c network.carry_invariant_innov_gate).
+        /// @brief Estimation-side fine-slip innovation gate (@c network.carry_invariant_innov_gate).
+        /// @return True when a chord whose standardized innovation exceeds the threshold is re-tapped
+        ///         fresh; false (default) installs the posterior unconditionally.
         bool networkCarryInvariantInnovGate() const { return network_carry_invariant_innov_gate_; }
-        /// Innovation-gate per-chord standardized threshold (@c network.carry_invariant_innov_k).
+        /// @brief Innovation-gate per-chord standardized threshold (@c network.carry_invariant_innov_k).
+        /// @return Threshold on the standardized innovation, dimensionless (sigma multiples); 4.0 by
+        ///         default.
         double networkCarryInvariantInnovK() const { return network_carry_invariant_innov_k_; }
-        /// LS-VCE-calibrated innovation gate (@c network.carry_invariant_innov_calibrate).
+        /// @brief LS-VCE-calibrated innovation gate (@c network.carry_invariant_innov_calibrate).
+        /// @return True when the gate standardizes by the LS-VCE-estimated innovation variance; false
+        ///         (default) uses the raw formal covariance.
         bool networkCarryInvariantInnovCalibrate() const { return network_carry_invariant_innov_calibrate_; }
-        /// σ̂₀² forgetting half-life in epochs (@c network.carry_invariant_innov_calibrate_window).
+        /// @brief σ̂₀² forgetting half-life in epochs (@c network.carry_invariant_innov_calibrate_window).
+        /// @return Half-life in emitted epochs; 60 by default.
         double networkCarryInvariantInnovCalibrateWindow() const { return network_carry_invariant_innov_calibrate_window_; }
-        /// Require raw-observable corroboration before a D5 re-tap (@c network.carry_invariant_innov_corroborate).
+        /// @brief Require raw-observable corroboration before a D5 re-tap (@c network.carry_invariant_innov_corroborate).
+        /// @return True when a re-tap is suppressed where the raw observables measured the arc as
+        ///         continuous; false (default) re-taps every flagged chord.
         bool networkCarryInvariantInnovCorroborate() const { return network_carry_invariant_innov_corroborate_; }
-        /// Magnitude backstop for the corroboration gate (@c network.carry_invariant_innov_corroborate_backstop_k).
+        /// @brief Magnitude backstop for the corroboration gate (@c network.carry_invariant_innov_corroborate_backstop_k).
+        /// @return Multiple of the gate threshold above which a chord re-taps regardless of
+        ///         corroboration, dimensionless; 0.0 (default) is inert.
         double networkCarryInvariantInnovCorroborateBackstopK() const { return network_carry_invariant_innov_corroborate_backstop_k_; }
-        /// A D5 flag re-taps its chord in-epoch only and does not also refloat the arc next epoch (@c network.carry_invariant_innov_retap_only).
+        /// @brief A D5 flag re-taps its chord in-epoch only and does not also refloat the arc next epoch (@c network.carry_invariant_innov_retap_only).
+        /// @return True when the in-epoch re-tap is the whole response for an arc measured as
+        ///         continuous; false (default) also excludes the arc from the next epoch's membership.
         bool networkCarryInvariantInnovRetapOnly() const { return network_carry_invariant_innov_retap_only_; }
-        /// Gate only chords carried into the epoch; a born chord has no H0 to test (@c network.carry_invariant_innov_carried_only).
+        /// @brief Gate only chords carried into the epoch; a born chord has no H0 to test (@c network.carry_invariant_innov_carried_only).
+        /// @return True when only chords carried into the epoch are tested; false (default) also
+        ///         tests chords born this epoch.
         bool networkCarryInvariantInnovCarriedOnly() const { return network_carry_invariant_innov_carried_only_; }
-        /// PD-safe DD fold: scale-following posterior/factorization, counted repair, and bounded degenerate-block rebirth (@c network.carry_invariant_pd_safe).
+        /// @brief PD-safe DD fold: scale-following posterior/factorization, counted repair, and bounded degenerate-block rebirth (@c network.carry_invariant_pd_safe).
+        /// @return True when the PD-safe fold replaces the original DD fold (inert unless the
+        ///         invariant carry is on); false (default) keeps the original fold.
         bool networkCarryInvariantPdSafe() const { return network_carry_invariant_pd_safe_; }
-        /// Carry-aware covariance readback: dd_sigma_cyc and the AR probe read Cov(x_r) from the model the solve used (@c network.carry_aware_covariance).
+        /// @brief Carry-aware covariance readback: dd_sigma_cyc and the AR probe read Cov(x_r) from the model the solve used (@c network.carry_aware_covariance).
+        /// @return True when those readbacks use the carry-aware covariance of the solve; false
+        ///         (default) reads the covariance without the carry.
         bool networkCarryAwareCovariance() const { return network_carry_aware_covariance_; }
-        /// Keep this epoch's slipped arcs out of the eq34 spanning tree, so a slip costs one chord, not every cycle through a tree edge (@c network.phase_datum_eq34_slip_aware_election).
+        /// @brief Keep this epoch's slipped arcs out of the eq34 spanning tree, so a slip costs one chord, not every cycle through a tree edge (@c network.phase_datum_eq34_slip_aware_election).
+        /// @return True when slipped arcs are kept out of the tree wherever the graph allows it; false
+        ///         (default) elects without regard to slips.
         bool networkPhaseDatumEq34SlipAwareElection() const { return network_phase_datum_eq34_slip_aware_election_; }
 
         /**
@@ -5074,7 +5637,9 @@ namespace GnssProcessor {
          */
         const std::string& networkPhaseDatumEq34Family() const { return network_phase_datum_eq34_family_; }
 
-        /// True when @ref networkPhaseDatumEq34Family is @c "pair" (the loader's fallbacks applied; still inert unless @ref networkPhaseDatumEq34).
+        /// @brief True when @ref networkPhaseDatumEq34Family is @c "pair" (the loader's fallbacks applied; still inert unless @ref networkPhaseDatumEq34).
+        /// @return True for one spanning forest per constellation over its two phase signals; false
+        ///         for one spanning tree per (constellation, phase signal).
         bool networkPhaseDatumEq34PairFamily() const { return network_phase_datum_eq34_family_ == "pair"; }
 
         /**
@@ -5113,12 +5678,14 @@ namespace GnssProcessor {
                    != network_phase_datum_eq34_event_rows_.end();
         }
 
-        /// Emit the satellite clocks in a per-constellation held frame:
+        /// @brief Emit the satellite clocks in a per-constellation held frame:
         /// the per-epoch common-mode innovation (median vs the previous
         /// emitted values) is accumulated into a frame offset that never re-enters
         /// the wire.  Outputs-only (solve byte-identical); the removed
         /// direction is the clock-ensemble gauge a consumer's per-epoch receiver
         /// clock absorbs, and between-satellite differences are preserved exactly.
+        /// @return True when the emitted satellite clocks are held in a per-constellation frame
+        ///         (@c network.emit_clock_frame_hold); false (default) emits them as solved.
         bool networkEmitClockFrameHold() const { return network_emit_clock_frame_hold_; }
 
         /**
@@ -5188,23 +5755,30 @@ namespace GnssProcessor {
          * @return The share; 0 when off.
          */
         double networkPhaseFrameQuorum() const { return network_phase_frame_quorum_; }
-        /// |frame accumulator| bound (m) beyond which the constellation re-anchors
+        /// @brief |frame accumulator| bound (m) beyond which the constellation re-anchors
         /// to the solve frame with a datum mark (markDatumChange): the marked
         /// re-coupling edge (invariant #7).
+        /// @return Re-anchor bound, in metres (@c network.clock_frame_leash_m); 50.0 by default.
+        ///         Inert unless @ref networkEmitClockFrameHold.
         double networkClockFrameLeashM() const { return network_clock_frame_leash_m_; }
-        /// Mark per-satellite common-removed clock steps beyond
+        /// @brief Mark per-satellite common-removed clock steps beyond
         /// networkClockDiscJumpM() via the markSatDiscontinuity retro-bump (R record
         /// + per-sat counters, the proven consumer reset chain).
+        ///
         /// Independent of the frame hold: alone it marks the raw wire with the
         /// census's own statistic.  The emitter's clock counter keeps no internal
         /// magnitude test; this test lives at the emission-prep tier.
+        /// @return True when clock steps beyond the jump threshold are marked
+        ///         (@c network.clock_disc_jump_test); false (default) marks none.
         bool networkClockDiscJumpTest() const { return network_clock_disc_jump_test_; }
-        /// Flat per-sat step threshold (m).  Empirical
+        /// @brief Flat per-sat step threshold (m).  Empirical
         /// default 1.5 ≈ 16 σ of the measured per-epoch walk step (SPEC
         /// clock_emit_rebase §1): ~7 marks/h on the reference internal lineage;
         /// the census outlier floor (0.5 m) would mark ~10× as often.
+        /// @return Step threshold, in metres (@c network.clock_disc_jump_m); 1.5 by default.
+        ///         Inert unless @ref networkClockDiscJumpTest.
         double networkClockDiscJumpM() const { return network_clock_disc_jump_m_; }
-        /// On a return after more than max_gap_s, test the common-removed step
+        /// @brief On a return after more than max_gap_s, test the common-removed step
         /// against the retained pre-gap baseline with this threshold (m)
         /// (@c network.clock_disc_gap_jump_m).  0 (default)
         /// = off: a stale return stays an untested first sighting, which leaves
@@ -5213,6 +5787,7 @@ namespace GnssProcessor {
         /// Q3-armed postures cta_disc_landed already marks those returns; this knob
         /// covers postures without clock_temporal_anchor + clock_anchor_mark (the
         /// current goldens arm both).  Inert without networkClockDiscJumpTest().
+        /// @return Step threshold for a stale return, in metres; 0 (default) is off.
         double networkClockDiscGapJumpM() const { return network_clock_disc_gap_jump_m_; }
 
         /// @name Guarded temporal clock anchor
@@ -5226,38 +5801,52 @@ namespace GnssProcessor {
         /// response that stiffness requires (invariant #1).
         /// Solve-affecting and fingerprinted: fresh convergence only.
         /// @{
-        /// Arm the anchor.  Off (default) ⇒ the clock carry is byte-identical to
+
+        /// @brief Arm the anchor.  Off (default) ⇒ the clock carry is byte-identical to
         /// the legacy fold and none of the per-satellite state is allocated.
+        /// @return True when the guarded temporal clock anchor is armed
+        ///         (@c network.clock_temporal_anchor); false (default) keeps the legacy fold.
         bool   networkClockTemporalAnchor() const { return network_clock_temporal_anchor_; }
-        /// The anchor's random-walk rate (m²/s).  The emitted per-satellite walk
+        /// @brief The anchor's random-walk rate (m²/s).  The emitted per-satellite walk
         /// is √(q·Δt) once the carry binds (an exact steady-state identity), so
         /// this knob is the walk target: 1e-4 → 5.5 cm, 3e-5 → 3.0, 1e-5 → 1.7.
+        /// @return Random-walk rate, in m^2/s (@c network.clock_anchor_q); 1e-4 by default.
+        ///         Inert unless @ref GnssProcessor::GnssConfig::networkClockTemporalAnchor "networkClockTemporalAnchor".
         double networkClockAnchorQ() const { return network_clock_anchor_q_; }
-        /// Consistency floor on the folded carry variance (m²), the clock
+        /// @brief Consistency floor on the folded carry variance (m²), the clock
         /// analogue of the B4 @c phase_bias_var_floor / @c code_bias_var_floor.
         /// Caps the folded prior information at 1/floor so an independence-
         /// assuming carry cannot accumulate unbounded information against a
         /// time-correlated error floor (assessment deviation #1, ranked-plan
         /// item 3).  0 = no floor.
+        /// @return Floor on the folded carry variance, in m^2 (@c network.clock_anchor_var_floor_m2);
+        ///         0 (default) is no floor.
         double networkClockAnchorVarFloorM2() const { return network_clock_anchor_var_floor_m2_; }
-        /// Per-satellite staleness bound (s).  Beyond it the carried clock is not
+        /// @brief Per-satellite staleness bound (s).  Beyond it the carried clock is not
         /// folded at the anchor; the satellite decouples.  Load-bearing: the
         /// driver's @c dt is the inter-epoch gap and every skip path advances it
         /// while the carry survives, so without a per-satellite elapsed time a
         /// stiff prior would fold an arbitrarily old value as if it were 30 s old.
+        /// @return Staleness bound, in seconds (@c network.clock_anchor_max_gap_s); 120 by default.
         double networkClockAnchorMaxGapS() const { return network_clock_anchor_max_gap_s_; }
-        /// Trip threshold on |w|, the standardized generalized predicted residual
+        /// @brief Trip threshold on |w|, the standardized generalized predicted residual
         /// (posterior − prior, common-mode removed, over √(P⁻ − P⁺)).  Empirical:
         /// read off the measured prior-residual ladder, never from the stochastic
         /// model.
+        /// @return Trip threshold on the standardized residual, dimensionless
+        ///         (@c network.clock_anchor_k); 6.0 by default.
         double networkClockAnchorK() const { return network_clock_anchor_k_; }
-        /// Absolute backstop on |ê| (m): trips even if the standardizing variance
+        /// @brief Absolute backstop on |ê| (m): trips even if the standardizing variance
         /// were mis-set.  0 = off.
+        /// @return Absolute backstop, in metres (@c network.clock_anchor_abs_m); 2.0 by default,
+        ///         0 is off.
         double networkClockAnchorAbsM() const { return network_clock_anchor_abs_m_; }
-        /// Floor on √S (m) so a weak-data epoch (where the data removed no
+        /// @brief Floor on √S (m) so a weak-data epoch (where the data removed no
         /// information, P⁺ → P⁻) yields w ≈ 0 instead of a 0/0 blow-up that would
         /// false-trip the lowest-confidence satellites.  Same reasoning as the
         /// two-state model's B3 @c clock_model_meas_std_m floor.
+        /// @return Floor on the standardizing sqrt(S), in metres (@c network.clock_anchor_sigma_floor_m);
+        ///         0.02 by default.
         double networkClockAnchorSigmaFloorM() const { return network_clock_anchor_sigma_floor_m_; }
 
         /**
@@ -5284,6 +5873,9 @@ namespace GnssProcessor {
          * @brief Floor on the phase-space statistic's sqrt(S) (m),
          *        @c network.clock_anchor_phase_sigma_floor_m (default 0.02).
          *        Set from the @c phase_shadow ladder.
+         *
+         * @return Floor on the phase statistic's sqrt(S), in metres; 0.02 by default (the loader
+         *         refuses a value that is not positive).
          */
         double networkClockAnchorPhaseSigmaFloorM() const { return network_clock_anchor_phase_sigma_floor_m_; }
 
@@ -5307,22 +5899,28 @@ namespace GnssProcessor {
          * @return The |w_clk| a phase trip needs (0 = no requirement).
          */
         double networkClockAnchorClockK() const { return network_clock_anchor_clock_k_; }
-        /// Consecutive in-band epochs a decoupled satellite must serve before the
+        /// @brief Consecutive in-band epochs a decoupled satellite must serve before the
         /// anchor re-engages: the re-coupling re-validation of invariant #7.
+        /// @return Epochs of in-band service required before re-engagement
+        ///         (@c network.clock_anchor_recouple_epochs, default 4).
         int    networkClockAnchorRecoupleEpochs() const { return network_clock_anchor_recouple_epochs_; }
-        /// Wire-mark the decoupling edge (per-satellite discontinuity through the
+        /// @brief Wire-mark the decoupling edge (per-satellite discontinuity through the
         /// B1 retro-bump chain: R record + phase/code/clock counters).  A satellite
         /// whose clock just changed both temporal regime and value must not be
         /// integrated across.
+        /// @return True (@c network.clock_anchor_mark, default true) when the decoupling edge is
+        ///         written to the wire; false leaves it wire-invisible.
         bool   networkClockAnchorMark() const { return network_clock_anchor_mark_; }
-        /// Adapt-and-emit: on a trip, withdraw the offending prior and re-solve the
+        /// @brief Adapt-and-emit: on a trip, withdraw the offending prior and re-solve the
         /// epoch before emission, so the trip epoch publishes the data's value
         /// rather than the stale anchor's.  The re-solve reuses the already-reduced
         /// normals (no re-reduction, no re-assembly).  Off degrades to
         /// detect + mark + decouple-next-epoch, which is correct but ships one
         /// anchor-distorted epoch per event.
+        /// @return True (@c network.clock_anchor_resolve, default true) when a trip epoch is
+        ///         re-solved before emission; false defers the decoupling to the next epoch.
         bool   networkClockAnchorResolve() const { return network_clock_anchor_resolve_; }
-        /// Defer the value correction of a tripped clock whose own column the exact coupling
+        /// @brief Defer the value correction of a tripped clock whose own column the exact coupling
         /// rows reference (@c network.clock_anchor_defer_coupled, default false).  The
         /// rows were re-expressed in PASS B with the clock's anchored inflation, and the
         /// same-epoch re-solve withdraws only the shared prior after those rows were folded
@@ -5332,8 +5930,10 @@ namespace GnssProcessor {
         /// rows re-expressed for that decision.  A clock whose rows reference its clone keeps
         /// the clone withdrawal.  Acts only on a trip, so it is not fingerprinted; inert
         /// without @c network.clock_anchor_resolve and the exact coupling update.
+        /// @return True when such a tripped satellite is decoupled and marked but not withdrawn or
+        ///         re-solved in the epoch; false (default) keeps the same-epoch withdrawal.
         bool   networkClockAnchorDeferCoupled() const { return network_clock_anchor_defer_coupled_; }
-        /// Fold the clock prior gauge-free: marginalize the
+        /// @brief Fold the clock prior gauge-free: marginalize the
         /// per-constellation satellite-clock common direction out of the folded
         /// information (rank-1 downdate Λ ← Λ − Λu(uᵀΛu)⁻¹uᵀΛ), so the anchor
         /// constrains only the estimable between-satellite differences and leaves
@@ -5343,6 +5943,8 @@ namespace GnssProcessor {
         /// gauge's work, which violates invariant #5 at the mechanism level (datum
         /// invariance: an estimator should constrain estimable functions, not
         /// gauges).
+        /// @return True when the clock prior is folded gauge-free
+        ///         (@c network.clock_anchor_gauge_free, default false = the plain anchor on the raw state).
         bool   networkClockAnchorGaugeFree() const { return network_clock_anchor_gauge_free_; }
         /// @brief Which denominator the anchor guard and the census's @c clk family
         ///        standardize by (@c network.clock_anchor_gauge_free_stat).
@@ -5352,6 +5954,9 @@ namespace GnssProcessor {
         /// over 3 h) cannot be apportioned; this selects the denominator
         /// independently of the fold.  @c Auto is the shipped pairing and is
         /// byte-identical to runs made before the knob existed.
+        /// @return @c Auto (default, follow the fold: @c Post under gauge-free, @c Raw otherwise),
+        ///         @c Raw (both halves raw marginals), @c Post (posterior half projected, prior half
+        ///         raw) or @c Proj (both halves projected onto the contrast).
         NetworkClockAnchorStat networkClockAnchorGaugeFreeStat() const {
             return network_clock_anchor_gauge_free_stat_;
         }
@@ -5364,6 +5969,7 @@ namespace GnssProcessor {
         /// leaves every phase row invariant and moves every code row of s: the level is a
         /// code-only quantity.  These knobs read it from the code (network/solve/ClockLevel.hpp).
         /// @{
+
         /// @brief Measure-only level monitor (@c network.clock_level_monitor).
         ///
         /// Runs the level read (the pair build and the two-way fit of the post-fit
@@ -5377,6 +5983,7 @@ namespace GnssProcessor {
         /// truth-free consistency instrument for the level (logs/network_level_bound.csv
         /// under @c network.trace_events; run-end line).  Trace class: the solve is
         /// byte-identical.  Requires @c network.shared_carry_full_cov.
+        /// @return True when the level monitor runs (default false; the solve is unchanged either way).
         bool   networkClockLevelMonitor() const { return network_clock_level_monitor_; }
         /// @brief Raise the stashed border block to the code-only level bound (
         ///        @c network.clock_level_bound_raise).
@@ -5388,6 +5995,8 @@ namespace GnssProcessor {
         /// per satellite with the raised amount (invariant 7: the re-coupling of the level
         /// to the code).  Requires @ref networkClockLevelMonitor.  Solve-affecting and
         /// fingerprinted.
+        /// @return True when the stashed border block is raised to the code-only level bound
+        ///         (default false = no raise).
         bool   networkClockLevelBoundRaise() const { return network_clock_level_bound_raise_; }
 
         /**
@@ -5398,6 +6007,8 @@ namespace GnssProcessor {
          * trace class): per epoch the innovation of the ionosphere-free code along each
          * satellite's level and its NIS, per window the mean innovation's chi2(1)
          * statistic and the split-half truth-free level NEES.  Must be >= 2.
+         *
+         * @return Window length in epochs (default 60).
          */
         int    networkClockLevelInnovWindowEp() const { return network_clock_level_innov_window_ep_; }
 
@@ -5414,11 +6025,15 @@ namespace GnssProcessor {
          * state NEES is graded offline from them).  Trace @c logs/network_phase_visible.csv
          * and a run-end line.  Requires @c network.raim_within_epoch (its fold capture is
          * the prior).  The solve and every product are byte-identical to off.
+         *
+         * @return True when the phase-visible instrument runs (default false; measure-only).
          */
         bool   networkPhaseVisibleMonitor() const { return network_phase_visible_monitor_; }
         /**
          * @brief Window of the phase-visible instrument's run-end means, epochs
          *        (@c network.phase_visible_window_ep, default 60).  Must be >= 2.
+         *
+         * @return Window length in epochs (default 60).
          */
         int    networkPhaseVisibleWindowEp() const { return network_phase_visible_window_ep_; }
 
@@ -5437,6 +6052,9 @@ namespace GnssProcessor {
          * rows: the level loosens to its code-only variance and every phase-visible
          * combination keeps its variance (a raise, never a set; no information is added).
          * Requires @ref networkClockLevelMonitor.  Default false = byte-identical.
+         *
+         * @return True when the restored border block is raised once at the first leg epoch
+         *         after a warm resume; false leaves the restored block unchanged.
          */
         bool   networkClockLevelRestoreRaise() const { return network_clock_level_restore_raise_; }
         /**
@@ -5461,6 +6079,8 @@ namespace GnssProcessor {
          * variance k epochs of the writer's average code information would leave; a small
          * k re-opens an inherited level that is wrong beyond its own information (the
          * lineages before the exact update) to the code at the seam.
+         *
+         * @return Credited epochs k; 0 (default) credits all of the snapshot's epochs.
          */
         int    networkClockLevelRestoreCreditEp() const { return network_clock_level_restore_credit_ep_; }
         /// @}
@@ -5505,10 +6125,12 @@ namespace GnssProcessor {
 
         /// @brief Look-ahead (s) of the coverage election's station count and umbra test
         ///        (@c network.pivot_election_horizon_s). Inert unless @ref networkPivotElection.
+        /// @return Look-ahead in seconds (default 7200); at least the sample step when the election is armed.
         double networkPivotElectionHorizonS() const { return network_pivot_election_horizon_s_; }
 
         /// @brief Sample step (s) inside that horizon (@c network.pivot_election_step_s).
         ///        Inert unless @ref networkPivotElection.
+        /// @return Sample step in seconds (default 300); must be positive when the election is armed.
         double networkPivotElectionStepS() const { return network_pivot_election_step_s_; }
 
         /**
@@ -5522,6 +6144,8 @@ namespace GnssProcessor {
          * tracker of a setting satellite can still anchor it (any usable ambiguity
          * qualifies); the preference only orders the candidates.  Inert unless
          * @ref networkPhaseDatumPrioritized.  Default 15°.
+         *
+         * @return Elevation threshold in degrees (default 15).
          */
         double networkPhaseDatumPrefElevDeg() const { return network_phase_datum_pref_elev_deg_; }
 
@@ -5536,6 +6160,9 @@ namespace GnssProcessor {
          * satellite.  This minimizes anchor-handover discontinuities; it is the
          * analogue of @ref networkStickyPivot for the phase-bias gauge.  Inert
          * unless @ref networkPhaseDatumPrioritized.  Default true.
+         *
+         * @return True (default) when an incumbent anchor is kept while it still tracks the
+         *         satellite with a usable ambiguity; false re-elects on a coverage change.
          */
         bool networkPhaseDatumSticky() const { return network_phase_datum_sticky_; }
 
@@ -5586,6 +6213,9 @@ namespace GnssProcessor {
          *
          * @see networkPhaseDatumSticky, networkPhaseDatumPrioritized,
          *      docs/record/SPEC_pivot_visibility_gauge_defect.md
+         *
+         * @return True when the election pins the incoming anchor at its own ledger estimate
+         *         in the outgoing frame (default false = pin at 0, a re-realization).
          */
         bool networkPhaseDatumHandoverContinuous() const {
             return network_phase_datum_handover_continuous_;
@@ -5699,6 +6329,8 @@ namespace GnssProcessor {
          * (σ = 1 m): still an order of magnitude better than the metre-to-tens-of-
          * metres step a re-zeroing handover produces, while refusing a code-seeded
          * fresh arc outright.
+         *
+         * @return Variance ceiling in m^2 (default 1.0); must be positive.
          */
         double networkPhaseDatumHandoverMaxVarM2() const {
             return network_phase_datum_handover_max_var_m2_;
@@ -5726,6 +6358,9 @@ namespace GnssProcessor {
          *
          * Inert unless @ref networkPhaseDatumHandoverContinuous.  0 (default) = off:
          * the absolute ceiling alone, byte-identical.
+         *
+         * @return Dimensionless ratio of the conditional variance to the arc's first-stash
+         *         variance (default 0 = off).
          */
         double networkPhaseDatumHandoverMaxVarRatio() const {
             return network_phase_datum_handover_max_var_ratio_;
@@ -5768,6 +6403,9 @@ namespace GnssProcessor {
          *
          * @see networkPhaseDatumCandidacyMinAgeEp, networkPhaseDatumHandoverMaxVarM2,
          *      docs/record/SPEC_event_harness.md §15
+         *
+         * @return True when the election first screens the coverage-ranked candidates for a
+         *         usable carried value (default false = unscreened sweep).
          */
         bool networkPhaseDatumCandidacyUsable() const {
             return network_phase_datum_candidacy_usable_;
@@ -5804,6 +6442,9 @@ namespace GnssProcessor {
          *      grade agree by construction.
          *
          * Off is exactly iteration 1 (per-family), so the A/B is a single knob.
+         *
+         * @return True (default) when a satellite's families hand over jointly to one
+         *         successor; false elects each (satellite, signal) family on its own.
          */
         bool networkPhaseDatumCandidacySatellite() const {
             return network_phase_datum_candidacy_satellite_;
@@ -5827,6 +6468,8 @@ namespace GnssProcessor {
          * without reaching into the continuous one.
          *
          * Inert unless @ref networkPhaseDatumCandidacyUsable.
+         *
+         * @return Minimum age in loop epochs (default 60; 0 = no age test).
          */
         int networkPhaseDatumCandidacyMinAgeEp() const {
             return network_phase_datum_candidacy_min_age_ep_;
@@ -5864,6 +6507,9 @@ namespace GnssProcessor {
          *
          * @see networkPhaseDatumHandoverContinuous, networkPhaseDatumPrioritized,
          *      docs/record/QUEUE_principled_replacements.md item 1(d)
+         *
+         * @return True when a handed-over (satellite, signal) family's retired-frame carries are
+         *         marginalized for one epoch (default false = byte-identical).
          */
         bool networkPhaseAnchorCarryReref() const {
             return network_phase_anchor_carry_reref_;
@@ -5899,6 +6545,9 @@ namespace GnssProcessor {
          * @ref networkPhaseDatumPrioritized.
          *
          * @see networkPhaseDatumPrioritized, networkPhaseDatumSticky
+         *
+         * @return Minimum number of tracking stations per (satellite, signal) key (default 1 =
+         *         no gating); the loader refuses a value below 1.
          */
         int networkPhaseDatumMinStations() const { return network_phase_datum_min_stations_; }
 
@@ -5937,6 +6586,9 @@ namespace GnssProcessor {
          * meaning.
          *
          * @see networkPhaseDatumMinStations, networkPhaseAnchorCarryReref
+         *
+         * @return True when a coverage-gate drop edge adds the family to the re-reference set
+         *         (default false: edges are counted and traced only).
          */
         bool networkPhaseDatumGateDropErase() const {
             return network_phase_datum_gate_drop_erase_;
@@ -5983,6 +6635,9 @@ namespace GnssProcessor {
          * cannot silently turn the gate off.
          *
          * @see networkTraceEstimability, NetworkEstimator::setRankGateTol
+         *
+         * @return Dimensionless relative eigenvalue tolerance (default 1e-9, at least 1e-16 after
+         *         the loader's clamp); the cutoff is this value times max(lambda_max, 1).
          */
         double networkRankGateTol() const { return network_rank_gate_tol_; }
 
@@ -6004,6 +6659,9 @@ namespace GnssProcessor {
          *
          * Inert unless @ref estimateNetworkSatCodeBias (there are no OSB columns
          * otherwise).  @see networkCbKaulaSigmaM for the σ and its placement rule.
+         *
+         * @return True when the prior is applied to every admitted satellite code-bias column
+         *         (default false).
          */
         bool networkCbKaulaPrior() const { return network_cb_kaula_prior_; }
 
@@ -6030,6 +6688,9 @@ namespace GnssProcessor {
          * the epoch still withholds); too tight starts biasing well-observed OSBs
          * toward zero, which is a product error rather than a datum one.  10 m
          * sits deliberately at the loose end of the physical bound.
+         *
+         * @return Prior standard deviation in metres (default 10); must be positive when
+         *         @ref networkCbKaulaPrior is on.
          */
         double networkCbKaulaSigmaM() const { return network_cb_kaula_sigma_m_; }
 
@@ -6063,6 +6724,9 @@ namespace GnssProcessor {
          * @see NetworkSbasis::completeSbasisDimension for the derivation and
          *      the refusal contract; @c NetworkSbasis::kSbasisCompleteWeight
          *      for the row weight and its K2 margin rule.
+         *
+         * @return True when one minimum-constraint gauge row is folded per residual near-null
+         *         direction each epoch (default false = byte-identical).
          */
         bool networkSbasisComplete() const { return network_sbasis_complete_; }
 
@@ -6079,6 +6743,9 @@ namespace GnssProcessor {
          * trips is never silent).  Measured need on a GPS+Galileo field arm: 1–3
          * extras per firing epoch, so 6 leaves headroom without admitting a
          * burst; ≤ 0 removes the cap (diagnostic only).
+         *
+         * @return Maximum number of directions completed in one epoch (default 6; 0 or less
+         *         = no cap).
          */
         int networkSbasisCompleteMax() const { return network_sbasis_complete_max_; }
 
@@ -6107,6 +6774,9 @@ namespace GnssProcessor {
          *
          * @see networkPhaseDatumPrioritized, networkPhaseDatumMinStations,
          *      NetworkNormalEquations::setStationPdMedianScale
+         *
+         * @return True when the positive-definiteness reference scale is the median |pivot|;
+         *         false (default) keeps the maximum-pivot test.
          */
         bool networkStationPdPinAware() const { return network_station_pd_pin_aware_; }
 
@@ -6129,6 +6799,9 @@ namespace GnssProcessor {
          * SH prior fold).  The emitter-side datum bump is already scoped by
          * @ref networkEmitClockDisc and is unaffected by this toggle.  Default
          * false = the global internal response (byte-identical).
+         *
+         * @return True when the internal handover response applies only to the constellation(s)
+         *         whose pivot changed; false (default) applies it to every constellation.
          */
         bool networkScopedHandoverResponse() const { return network_scoped_handover_response_; }
 
@@ -6144,7 +6817,7 @@ namespace GnssProcessor {
          * (docs/record/SPEC_pivot_visibility_gauge_defect.md §8.2).  When on, at the
          * switch epoch the carried shared means of that constellation are
          * transformed along the structural clock null direction
-         * @ref NetworkSbasis::clockNullDirection: @f$c_0 = x_q/v_c[q]@f$ with q
+         * @ref GnssProcessor::NetworkSbasis::clockNullDirection "NetworkSbasis::clockNullDirection": @f$c_0 = x_q/v_c[q]@f$ with q
          * the incoming pivot, @f$x \leftarrow x - v_c c_0@f$, @f$\mathrm{var}
          * \leftarrow \mathrm{var} + v_c[i]^2\,\mathrm{var}_q@f$ (the conservative
          * diagonal dispersion bump of §8.1; the full @f$SDS^\top@f$ is deferred by
@@ -6162,6 +6835,10 @@ namespace GnssProcessor {
          * fingerprint is unchanged): it changes which priors fold, so fresh
          * convergence only, and it must not be flipped mid-chain.  Default false =
          * the carry is skipped (byte-identical).
+         *
+         * @return True when the changed constellation's carried shared state is transformed
+         *         along the clock null direction at the switch epoch; false (default) skips the
+         *         carry for one epoch.
          */
         bool networkHandoverStransform() const { return network_handover_stransform_; }
 
@@ -6191,6 +6868,9 @@ namespace GnssProcessor {
          * direction and its carried value is not re-expressed.  Fingerprinted when armed
          * (armed-only token): fresh convergence only.  Default false = the transform after
          * PASS B (byte-identical).
+         *
+         * @return True when the transform runs before the coupling rows are built; false
+         *         (default) runs it after PASS B.
          */
         bool networkHandoverStransformBeforeRows() const {
             return network_handover_stransform_before_rows_;
@@ -6227,6 +6907,9 @@ namespace GnssProcessor {
          * clock sits on the clock direction and its carried value is not re-expressed).
          * Fingerprinted when armed (armed-only token): fresh convergence only.  Default
          * false = the diagonal kernel (byte-identical).
+         *
+         * @return True when the stashed dense border is re-expressed exactly by S P S^T; false
+         *         (default) applies the diagonal bump.
          */
         bool networkHandoverStransformDense() const { return network_handover_stransform_dense_; }
 
@@ -6249,8 +6932,12 @@ namespace GnssProcessor {
          * diagonal kernel the decouple stays: that fold is not exact.
          *
          * Inert (forced false, warned) without @ref networkHandoverStransformDense or
-         * without @ref networkClockTemporalAnchor.  Fingerprinted when armed (armed-only
+         * without @ref GnssProcessor::GnssConfig::networkClockTemporalAnchor "networkClockTemporalAnchor".  Fingerprinted when armed (armed-only
          * token).  Default false = the decouple (byte-identical).
+         *
+         * @return True when the guard skips the datum decouple for a satellite re-expressed
+         *         exactly by the dense kernel; false (default) decouples every anchored clock of
+         *         the changed constellation.
          */
         bool networkClockAnchorDatumKeep() const { return network_clock_anchor_datum_keep_; }
 
@@ -6301,6 +6988,9 @@ namespace GnssProcessor {
          * code-bias states); an absent id (old product / RTCM stream) never
          * triggers a reaction.  Default false ⇒ no @c I record, store generation
          * unset, byte-identical.
+         *
+         * @return True when the producer stamps the generation id on every emitted epoch
+         *         (default false: no @c I record).
          */
         bool networkEmitGenerationId() const { return network_emit_generation_id_; }
 
@@ -6320,6 +7010,9 @@ namespace GnssProcessor {
          * into the reconstructed store records, keeping the replay recompute as a
          * self-check (warn on mismatch).  Old files (fields absent) parse
          * unchanged; default false ⇒ the file is byte-identical.
+         *
+         * @return True when the post-emit discontinuity counter values are written on the
+         *         clock, code-bias and phase-bias records (default false).
          */
         bool networkSerializeDiscCounters() const { return network_serialize_disc_counters_; }
 
@@ -6341,6 +7034,9 @@ namespace GnssProcessor {
          * the replay emitter, so replay stays deterministic.  The S contract itself
          * is always written.  Default 0 ⇒ a single header S line,
          * byte-identical.
+         *
+         * @return Re-broadcast interval in seconds of product time (default 0 = a single header
+         *         S line).
          */
         double networkContractRebroadcastS() const { return network_contract_rebroadcast_s_; }
 
@@ -6362,6 +7058,9 @@ namespace GnssProcessor {
          * the serialized S contract (@c stale= field) so @c makeReplayEmitter
          * reproduces identical counters with no out-of-band knowledge.  Default 0 ⇒
          * the legacy keep-forever baseline, byte-identical.
+         *
+         * @return Gap in seconds of product time beyond which a returning key is a first
+         *         sighting (default 0 = baselines never expire).
          */
         double networkEmitterStalenessHorizonS() const { return network_emitter_staleness_horizon_s_; }
 
@@ -6383,6 +7082,9 @@ namespace GnssProcessor {
          * provenance only: the L15 run manifest (and operator tooling) records
          * that the run's toggle set came from the bundle rather than
          * hand-assembly.  Default false ⇒ nothing armed (byte-identical).
+         *
+         * @return True when the run's toggle set came from the service bundle (provenance only
+         *         at runtime; default false).
          */
         bool networkServiceMode() const { return network_service_mode_; }
 
@@ -6395,6 +7097,8 @@ namespace GnssProcessor {
          * multi-cycle slip leaking metres into the shared clock) sits far above the
          * mm-level phase noise, so a wide default (6σ) catches catastrophic misses
          * while leaving routine 1-cycle slips to the pre-processors.  Default 6.
+         *
+         * @return Threshold in standardized-residual units (sigma, dimensionless; default 6).
          */
         double networkRaimKSigma() const { return network_raim_k_sigma_; }
 
@@ -6402,7 +7106,11 @@ namespace GnssProcessor {
          *  RAIM gate (@c effect/σ̂0 > raim_k).  Default 1.0 (never trust the fit tighter
          *  than the a-priori stochastic model).  A lower value (e.g. 0) lets σ̂0 fall
          *  below 1 when the network fits inside its a-priori σ; diagnostic only, and it
-         *  tightens the gate. */
+         *  tightens the gate.
+         *
+         *  @return Dimensionless floor on σ̂0 (default 1.0; configured by
+         *          @c network.raim_sigma0_floor).
+         */
         double networkRaimSigma0Floor() const { return network_raim_sigma0_floor_; }
 
         /**
@@ -6414,6 +7122,9 @@ namespace GnssProcessor {
          * whose slip is hidden in the shared clock).  The consensus rejects
          * single-station noise; a directly-flagged (station, satellite) is also
          * refloated on its own.  Default 3.
+         *
+         * @return Minimum number of flagging stations for a network-wide refloat of a satellite
+         *         (default 3).
          */
         int networkRaimMinStations() const { return network_raim_min_stations_; }
 
@@ -6440,12 +7151,18 @@ namespace GnssProcessor {
          * consecutive epochs, etc.  The per-arc counter resets after a refloat
          * (so a persistent arc refloats at most once per K epochs) and on any
          * epoch the arc is not flagged.
+         *
+         * @return Consecutive flagged epochs required before an isolated arc is refloated
+         *         (default 1 = act on the first spike).
          */
         int networkRaimArcPersistEpochs() const { return network_raim_arc_persist_epochs_; }
 
         /// @brief Gate isolated-arc RAIM refloats on filter maturity (@c network.raim_refloat_maturity_gate; T2d).
+        /// @return True when an isolated-arc refloat is held until the maturity horizon has passed
+        ///         (default false; inert without @c network.raim and @c network.raim_attribution).
         bool networkRaimRefloatMaturityGate() const { return network_raim_refloat_maturity_gate_; }
         /// @brief Emitted-epoch maturity horizon for the isolated-arc refloat gate (@c network.raim_refloat_maturity_epochs; T2d).
+        /// @return Horizon in emitted epochs (default 0; a negative configured value is clamped to 0).
         int networkRaimRefloatMaturityEpochs() const { return network_raim_refloat_maturity_epochs_; }
 
         /**
@@ -6464,6 +7181,9 @@ namespace GnssProcessor {
          * (e.g. L1W excluded ⇒ L1C).  Applies to @c PPP_RTK_Network mode only.
          * Default 0 = off (admit every tracked channel; byte-identical).  A
          * typical strict value is 0.5.
+         *
+         * @return Minimum fraction (0 to 1) of a constellation's observing stations that must
+         *         track the signal (default 0 = no gate).
          */
         double networkSignalMinStationFraction() const { return network_signal_min_station_fraction_; }
 
@@ -6471,7 +7191,7 @@ namespace GnssProcessor {
          * @brief Minimum network-station-coverage fraction for a signal to get an
          *        estimated satellite phase bias (@c network.phase_bias_min_station_fraction).
          *
-         * The softer sibling of @ref networkSignalMinStationFraction: instead of
+         * The softer sibling of @ref GnssProcessor::GnssConfig::networkSignalMinStationFraction "networkSignalMinStationFraction": instead of
          * dropping a sparsely tracked signal, it keeps the observation but
          * estimates no per-(satellite,signal) phase-bias state for it.  The float
          * ambiguity then absorbs the bias, so the signal still contributes its
@@ -6484,6 +7204,9 @@ namespace GnssProcessor {
          * geometrically useful.  Applies to @c PPP_RTK_Network mode only.  Default
          * 0 = off (every tracked phase signal gets a bias state; byte-identical).  A
          * typical strict value is 0.5.
+         *
+         * @return Minimum station-coverage fraction (0 to 1) for an estimated phase-bias state
+         *         (default 0 = every tracked phase signal gets one).
          */
         double networkPhaseBiasMinStationFraction() const { return network_phase_bias_min_station_fraction_; }
 
@@ -6494,7 +7217,7 @@ namespace GnssProcessor {
          *        (@c network.exclude_unmodeled_antenna_stations).
          *
          * A policy-level backstop.
-         * The always-on type-preserving radome→NONE fallback (@ref Antenna::findReceiverAntennaEntry)
+         * The always-on type-preserving radome→NONE fallback (@c Antenna::findReceiverAntennaEntry)
          * already recovers every station whose only problem is an uncalibrated radome
          * code on an otherwise-known antenna; a station that still fails to match has an
          * unknown antenna type, so its receiver PCO/PCV is entirely unmodelled.  Unlike
@@ -6513,6 +7236,9 @@ namespace GnssProcessor {
          * antenna of unknown type.
          *
          * @see Antenna::hasReceiverAntennaMatch
+         *
+         * @return True when a station with no ATX model match is dropped at station-build time
+         *         (default false: every station that loads is built).
          */
         bool networkExcludeUnmodeledAntennaStations() const { return network_exclude_unmodeled_antenna_stations_; }
 
@@ -6556,6 +7282,9 @@ namespace GnssProcessor {
          * different place, so a warm resume across the flip cold-starts.
          *
          * @see Coordinates::markerToArp, RinexParser::hasAntennaDeltaHen
+         *
+         * @return True when each roster station's configured coordinate is reduced from the
+         *         monument to the antenna reference point at setup (default false).
          */
         bool networkStationMarkerToArp() const { return network_station_marker_to_arp_; }
 
@@ -6595,6 +7324,9 @@ namespace GnssProcessor {
          * Not fingerprinted: no carried quantity changes meaning across the flip, so
          * the key is legal on a warm resume (the trace-class knob precedent).
          * Network mode only.  Default false.
+         *
+         * @return True when the arc ledger's trace (@c logs/network_arc_ledger.csv and the
+         *         @c ARC event rows) is written; false leaves the solve and products unchanged.
          */
         bool networkSignalRoster() const { return network_signal_roster_; }
 
@@ -6664,6 +7396,9 @@ namespace GnssProcessor {
          * Not fingerprinted: the tracker's own history is exempt from the state
          * snapshot and no carried quantity changes meaning
          * across the flip.  Network mode only.  Default false.
+         *
+         * @return True when the tracker names each band by the roster's modelled signal (default
+         *         false = the lexical rule or the station latch).
          */
         bool networkRosterTracker() const { return network_roster_tracker_; }
 
@@ -6692,6 +7427,9 @@ namespace GnssProcessor {
          * Fingerprinted (armed-only append): a warm resume
          * across the flip would restore carried levels that the other side of the
          * flip would have refloated. Network mode only. Default false.
+         *
+         * @return True when the ledger's Gap to Reentered arcs define the re-entry response
+         *         population (default false = the raw tiers' own resumption verdicts).
          */
         bool networkLedgerReentry() const { return network_ledger_reentry_; }
 
@@ -6705,6 +7443,9 @@ namespace GnssProcessor {
          * conservative response: the arc is treated as unmeasurable, which the existing
          * @c network.cycle_slip.gap_reentry_relevel_unmeasurable sub-knob then
          * decides. Inert without @ref networkLedgerReentry.
+         *
+         * @return @c Bridge (default: leave the arc to the PASS-B inject, counted and evented) or
+         *         @c Refloat (treat the arc as unmeasurable).
          */
         LedgerReentryNoVerdict networkLedgerReentryNoVerdict() const {
             return network_ledger_reentry_no_verdict_;
@@ -6728,6 +7469,9 @@ namespace GnssProcessor {
          * wire and every graded trace are byte-identical armed and disarmed
          * (invariant #6 in both states). The ledger it folds into is built on every
          * network run. Not fingerprinted. Network mode only.
+         *
+         * @return True when every row, satellite and station screen records its removed arcs and
+         *         reason bit into the ledger (default false; the solve is unchanged either way).
          */
         bool networkLedgerScreens() const { return network_ledger_screens_; }
 
@@ -6749,6 +7493,9 @@ namespace GnssProcessor {
          * and it is fingerprinted (armed-only append).
          * Refused (error plus disarm) without @ref networkLedgerScreens.
          * Network mode only.
+         *
+         * @return True when a returning family with same-generation arcs restores its previous
+         *         incumbent as the anchor candidate (default false = elected afresh).
          */
         bool networkLedgerAnchor() const { return network_ledger_anchor_; }
 
@@ -6772,6 +7519,9 @@ namespace GnssProcessor {
          * the only difference in @c products.txt is the @c N records. Its two
          * inputs, the roster and the ledger, are built on every network run.
          * Not fingerprinted. Network mode only.
+         *
+         * @return True when the emitter is read against the ledger and the producer writes the
+         *         @c N roster declaration records (default false).
          */
         bool networkLedgerEmit() const { return network_ledger_emit_; }
 
@@ -6790,6 +7540,9 @@ namespace GnssProcessor {
          * Solve-affecting when armed (the pinned combination, and with it the datum of
          * the emitted code biases, moves from C1C to C1W), so it is graded as a
          * behaviour change and it is fingerprinted (armed-only append). Network mode only.
+         *
+         * @return True when the ionosphere-free pin pair is the bias product's clock-reference
+         *         pair (default false = the lexically first pair on distinct frequencies).
          */
         bool networkN3cBiaPinPair() const { return network_n3c_bia_pin_pair_; }
 
@@ -6806,6 +7559,9 @@ namespace GnssProcessor {
          *
          * Reaches the datum graph census only, which is measure-only: the solve and
          * the wire are unchanged armed. Not fingerprinted. Network mode only.
+         *
+         * @return True when the datum graph census groups bias keys by "X against the rest"
+         *         (default false = by tracking attribute letter).
          */
         bool networkN3cChannelFamily() const { return network_n3c_channel_family_; }
 
@@ -6822,6 +7578,9 @@ namespace GnssProcessor {
          *
          * Solve-affecting when armed together with the admission, so it is graded as a
          * behaviour change and it is fingerprinted (armed-only append). Network mode only.
+         *
+         * @return True when the canonical pair is the first two bands of each constellation's
+         *         traits (default false = band digits 1 and 2 for every constellation).
          */
         bool networkN3cCanonicalPairTraits() const { return network_n3c_canonical_pair_traits_; }
 
@@ -6843,6 +7602,9 @@ namespace GnssProcessor {
          * Solve-affecting when armed (the slip detectors see fewer rows), so it is
          * graded as a behaviour change and it is fingerprinted (armed-only append).
          * Network mode only.
+         *
+         * @return True when the slip tracker takes each band's signal from the roster's Modelled
+         *         role only (default false = the lexical pick where no role is read).
          */
         bool networkN3cBandSignal() const { return network_n3c_band_signal_; }
 
@@ -6862,6 +7624,9 @@ namespace GnssProcessor {
          *
          * Changes the wire (and so the closed-loop consumer), so it is graded as a
          * behaviour change and it is fingerprinted (armed-only append). Network mode only.
+         *
+         * @return True when every satellite with a clock record gets a phase-bias and a code-bias
+         *         record per modelled signal (default false).
          */
         bool networkN3cWirePerSignal() const { return network_n3c_wire_per_signal_; }
 
@@ -6885,6 +7650,9 @@ namespace GnssProcessor {
          *
          * Solve-affecting when armed, so it is graded as a behaviour change and it is
          * fingerprinted (armed-only append). Network mode only.
+         *
+         * @return True when the arc ledger owns the arc lifecycle at the anchor election and the
+         *         coverage gate (default false).
          */
         bool networkN3cLedgerLifecycle() const { return network_n3c_ledger_lifecycle_; }
 
@@ -6905,6 +7673,9 @@ namespace GnssProcessor {
          * Inert (logged once) when the wire carries no declaration, which is every
          * producer that did not arm @ref networkLedgerEmit. Derived onto the
          * closed-loop consumer config; the producer run is untouched.
+         *
+         * @return True when the consumer's band latch follows the producer's declared roster
+         *         (@c network.closed_loop.roster_latch, default false).
          */
         bool consumerRosterLatch() const { return consumer_roster_latch_; }
 
@@ -6919,6 +7690,9 @@ namespace GnssProcessor {
          * that (station, sat), instead of refloating every station of any
          * consensus-flagged satellite.  The gate is @c effect/σ̂0 > @ref networkRaimKSigma per dimension.
          * Default false keeps the per-satellite consensus behaviour.
+         *
+         * @return True when refloats are targeted by satellite, station or isolated-arc
+         *         prominence attribution; false (default) uses the per-satellite consensus.
          */
         bool networkRaimAttribution() const { return network_raim_attribution_; }
 
@@ -6969,6 +7743,9 @@ namespace GnssProcessor {
          * falls through to @c pl_amb whenever @c qc_amb is empty.
          *
          * @see docs/record/SPEC_raim_pool_rehost.md
+         *
+         * @return True when the post-fit RAIM screen runs on the invariant-carry lineage
+         *         (default false; not emission-neutral, see the warning above).
          */
         bool networkRaimCarryInvariant() const { return network_raim_carry_invariant_; }
 
@@ -7054,6 +7831,9 @@ namespace GnssProcessor {
          * singularity).  A whole-station culprit (a data-quality problem, not a slip) is instead
          * excluded.  @ref networkRaim and @ref networkRaimAttribution are auto-enabled alongside
          * this flag as the complementary post-fit tier (catching slips below the σ̂0 trigger).
+         *
+         * @return True when an epoch whose σ̂0 exceeds the trigger is adapted within the epoch
+         *         (default false; the loader can also arm it when a σ̂0 withhold is set).
          */
         bool networkRaimWithinEpoch() const { return network_raim_within_epoch_; }
 
@@ -7063,6 +7843,8 @@ namespace GnssProcessor {
          *
          * σ̂0 = max(1, 1.4826·median|v·√w|) is the network-wide robust residual level: 1 on a
          * clean epoch, several on an all-move-together contamination.  Default 3.0.
+         *
+         * @return Dimensionless σ̂0 trigger level (default 3.0).
          */
         double networkRaimSigma0Trigger() const { return network_raim_sigma0_trigger_; }
 
@@ -7077,6 +7859,10 @@ namespace GnssProcessor {
          * stash, epoch skipped) so the contaminated solve never enters the store or the
          * carry.  0 (default) = off: the epoch is emitted anyway with a warning.  A
          * sensible value is ~2× @ref networkRaimSigma0Trigger.
+         *
+         * @return Ceiling on the within-epoch adapted sigma0 (dimensionless, in units of the
+         *         a priori sigma); 0 (default) = off, the epoch is emitted anyway with a warning.
+         *         A nonzero value at or below 1 is reset to 0 at load.
          */
         double networkRaimWithholdSigma0() const { return network_raim_withhold_sigma0_; }
 
@@ -7095,6 +7881,9 @@ namespace GnssProcessor {
          * culprits still clearing the k-gate.  0 (default) = off (byte-identical).  Values in (0, 5]
          * are rejected to 0 at load (an "escalation" at or below the stock budget is a
          * no-op that would read as armed).  Inert without a withhold ceiling.
+         *
+         * @return Maximum number of drop-culprit/re-solve iterations on withhold-era epochs;
+         *         0 (default) = off. A value of 5 or below (the stock cap) is reset to 0 at load.
          */
         int networkRaimWithholdAdaptEscalate() const { return network_raim_withhold_adapt_escalate_; }
 
@@ -7115,6 +7904,10 @@ namespace GnssProcessor {
          * delta-bridged bands are structurally excluded (removed from the latch before
          * this site).  Requires @c cycle_slip.relevel_free_epoch and a withhold
          * ceiling; off = byte-identical.
+         *
+         * @return true to erase the freed leveling carries at the withhold site; false (default)
+         *         leaves that site unchanged. Forced to false at load when no withhold ceiling is
+         *         armed or @c cycle_slip.relevel_free_epoch is off.
          */
         bool networkRaimWithholdFreeErase() const { return network_raim_withhold_free_erase_; }
 
@@ -7135,6 +7928,10 @@ namespace GnssProcessor {
          * satellite's code rows are de-weighted network-wide (σ×10, a fallback, not
          * a drop).  The phase pool, σ̂0_adapt, and the A4 ceiling are unchanged; off
          * (default) is byte-identical everywhere.
+         *
+         * @return true to pool the code rows and the iono-constraint rows into two additional
+         *         within-epoch sigma0 statistics; false (default) screens the carried-ambiguity
+         *         phase rows only.
          */
         bool networkRaimWeCodeIono() const { return network_raim_we_code_iono_; }
 
@@ -7146,6 +7943,8 @@ namespace GnssProcessor {
          * ~2.5–4.7 with q99 ≈ 8, while three events read 17.8, 28.0 and 288.2, so
          * the default 10.0 separates them cleanly.  Per-pool statistic:
          * the code rows' own 1.4826·median|v·√w| (B2-normalized when armed).
+         *
+         * @return Trigger on the code-pool robust sigma0 (dimensionless, sigma units); default 10.0.
          */
         double networkRaimWeCodeTrigger() const { return network_raim_we_code_trigger_; }
 
@@ -7158,6 +7957,8 @@ namespace GnssProcessor {
          * conservative first placement; the run-end WE-CI telemetry reports the
          * maximum observed pool σ̂0 so the trigger can be calibrated from the
          * first armed run (MW-thresholds discipline: empirical, never σ-model).
+         *
+         * @return Trigger on the iono-pool robust sigma0 (dimensionless, sigma units); default 12.0.
          */
         double networkRaimWeIonoTrigger() const { return network_raim_we_iono_trigger_; }
 
@@ -7177,6 +7978,10 @@ namespace GnssProcessor {
          * unchanged.  The rank/observability gate keeps whole-epoch semantics (a rank
          * deficiency is an invalid datum, so no healthy subset exists).  Default off ⇒
          * the A4 withhold is all-or-nothing (byte-identical).
+         *
+         * @return true to publish the constellations that individually pass the withhold ceiling
+         *         when the whole-epoch withhold trips; false (default) keeps the A4 withhold
+         *         all-or-nothing.
          */
         bool networkPerConstWithhold() const { return network_per_const_withhold_; }
 
@@ -7188,6 +7993,9 @@ namespace GnssProcessor {
          * A constellation with fewer rows in the σ̂0 pool has too little redundancy
          * for its σ̂0_c to certify cleanliness under a globally-contaminated epoch, so
          * it is withheld rather than published unjudged.  Default 20.
+         *
+         * @return Minimum number of standardized-residual rows per constellation; default 20,
+         *         values below 1 are clamped to 1 at load.
          */
         int networkPerConstWithholdMinRows() const { return network_per_const_withhold_min_rows_; }
 
@@ -7204,6 +8012,9 @@ namespace GnssProcessor {
          * line it is positional and never feeds the replay emitter.  Coverage starts
          * at the first emit (the deferred product writer opens then).  Default off ⇒
          * no H records (byte-identical product file).
+         *
+         * @return true to write one positional @c H record per epoch (withheld epochs included)
+         *         into the product file; false (default) writes no @c H records.
          */
         bool networkEmitEpochStatusRecord() const { return network_emit_epoch_status_record_; }
 
@@ -7234,6 +8045,10 @@ namespace GnssProcessor {
          * census walk's lag-1 presence map); the loader forces this knob off
          * with a warning when either is missing.  Changes product-file bytes when
          * armed (H field 5 and the S line's hsig token), so the default is false.
+         *
+         * @return true to feed the H record's sigma0 field from the prefit census's pooled robust
+         *         sigma0; false (default) feeds it from the within-epoch RAIM sigma0. Forced to
+         *         false at load when the H records or the prefit census trace are not enabled.
          */
         bool networkHSigma0PrefitCensus() const { return network_h_sigma0_prefit_census_; }
 
@@ -7247,6 +8062,9 @@ namespace GnssProcessor {
          * innovations are arc-specific, not a common-mode population (census
          * deviation 2c), and pooling them would dilute the statistic with arc
          * geometry.  Only used when @ref networkHSigma0PrefitCensus is on.
+         *
+         * @return Comma-separated data-class tokens (code, phase, other, sh, all, none); default
+         *         @c code,sh,other.
          */
         const std::string& networkHSigma0Classes() const { return network_h_sigma0_classes_; }
 
@@ -7262,6 +8080,10 @@ namespace GnssProcessor {
          * A low-redundancy arc (few checking stations), whose residual response is only
          * @f$r_i\cdot\text{fault}@f$, is otherwise systematically under-flagged.  Default
          * false reproduces the plain @f$|v|\sqrt{w}@f$ standardization bit-for-bit.
+         *
+         * @return true to divide each carried-ambiguity phase row's residual by
+         *         @f$\sigma_i\sqrt{r_i}@f$ before the sigma0 pooling and attribution; false
+         *         (default) uses the plain @f$|v|\sqrt{w}@f$ standardization.
          */
         bool networkRaimRedundancyNormalize() const { return network_raim_redundancy_normalize_; }
 
@@ -7279,6 +8101,10 @@ namespace GnssProcessor {
          * 0.11–2.55 m per-station iono error inside the noise model; that option,
          * R1, is held).  Computes r_i via the solve-neutral rowRedundancy read (the
          * census disjunct).  Requires @ref networkRaim; off = byte-identical.
+         *
+         * @return true to measure, trace and declare the per-station variance factor (measure-only,
+         *         the solve is unchanged); false (default) leaves it unmeasured. Forced to false at
+         *         load when @c network.raim is off.
          */
         bool networkRaimStationFactor() const { return network_raim_station_factor_; }
 
@@ -7288,6 +8114,9 @@ namespace GnssProcessor {
          * §12.1b: the slow factor must track (half-to-half transferability falls with
          * window length), and the right constant is not yet measured; this knob
          * exists to measure it.  Default 1800 s (the settled-warmup scale).
+         *
+         * @return EWMA time constant in seconds; default 1800 s, a value of 0 or below is reset
+         *         to 1800 at load.
          */
         double networkRaimStationFactorTauS() const { return network_raim_station_factor_tau_s_; }
 
@@ -7299,6 +8128,9 @@ namespace GnssProcessor {
          * Default 6.0, above the 4.7× model-error spread measured in §4, so the
          * declaration flags genuine station departures, not the (declared,
          * traced) heterogeneity itself.
+         *
+         * @return Departure threshold as a dimensionless ratio of a station's EWMA factor to the
+         *         network median; default 6.0, a value of 1 or below is reset to 6.0 at load.
          */
         double networkRaimStationFactorRatio() const { return network_raim_station_factor_ratio_; }
 
@@ -7370,6 +8202,10 @@ namespace GnssProcessor {
          * conditional rate against an unconditional α.  Requires
          * @ref networkRaim + trace_flag_rates (the counters it corrects);
          * off = byte-identical.
+         *
+         * @return true to apply the two measure-only accounting fixes to the flag-rate telemetry;
+         *         false (default) leaves the counters as before. Forced to false at load when
+         *         @c network.raim or the flag-rate trace is off.
          */
         bool networkRaimRateHygiene() const { return network_raim_rate_hygiene_; }
 
@@ -7388,16 +8224,21 @@ namespace GnssProcessor {
          * `decisionInstrumentArmed()` is equal across the pair (§5.3: the qualify pass's
          * verdicts feed dormant D5 consumers on corroborate-armed lineages).
          * Off = byte-identical; on = solve-byte-identical (trace only).
+         *
+         * @return true to compute and trace the per-epoch fleet level L_cs(t) (measure-only, folds
+         *         nothing); false (default) runs no census.
          */
         bool networkLevelAuthorityCsgf() const { return network_level_authority_csgf_; }
 
-        /// Minimum CS-GF sample count for a LOS to enter the census
+        /// @brief Minimum CS-GF sample count for a LOS to enter the census
         /// (@c network.level_authority_min_n, default 10: the kernel's √K
         /// maturity, ~5 min at 30 s).
+        /// @return Minimum sample count; default 10, a value below 2 is reset to 10 at load.
         int networkLevelAuthorityMinN() const { return network_level_authority_min_n_; }
 
-        /// Minimum qualifying LOS for a station to enter the fleet median
+        /// @brief Minimum qualifying LOS for a station to enter the fleet median
         /// (@c network.level_authority_min_los, default 4).
+        /// @return Minimum number of qualifying lines of sight per station; default 4.
         int networkLevelAuthorityMinLos() const { return network_level_authority_min_los_; }
 
         /**
@@ -7424,6 +8265,10 @@ namespace GnssProcessor {
          * FLEET/STA rows stay byte-identical and G3's certification is untouched.
          * Trace-only and O(stations x LOS) per epoch; inert unless
          * @ref networkLevelAuthorityCsgf.
+         *
+         * @return true to write @c network_level_authority_los.csv; false (default) writes no
+         *         dump. Forced to false at load when the census (@c network.level_authority_csgf)
+         *         is off.
          */
         bool networkLevelAuthorityLosDump() const { return network_level_authority_los_dump_; }
 
@@ -7439,6 +8284,10 @@ namespace GnssProcessor {
          * chosen when its effect exceeds the best satellite/arc candidate by @ref
          * networkRaimStationDropBias.  Off reproduces the coarse satellite-vs-whole-station
          * peel (no arc granularity, no station de-rating) for A/B comparison.
+         *
+         * @return true (default) lets the within-epoch re-solve peel a single station-satellite arc
+         *         or satellite before a whole station; false reproduces the coarse
+         *         satellite-versus-whole-station peel.
          */
         bool networkRaimSurgicalStation() const { return network_raim_surgical_station_; }
 
@@ -7453,6 +8302,8 @@ namespace GnssProcessor {
          * this factor, still dominates, i.e. it must be @c raim_station_drop_bias× worse than
          * any single satellite or arc before the whole station is dropped.  Must be ≥ 1;
          * 1 disables the bias (station competes at face value).  Default 1.5.
+         *
+         * @return Dimensionless bias factor, at least 1; default 1.5, 1 disables the bias.
          */
         double networkRaimStationDropBias() const { return network_raim_station_drop_bias_; }
 
@@ -7478,6 +8329,9 @@ namespace GnssProcessor {
          * satellite the within-epoch / post-fit RAIM already flagged, so a slip that leaked
          * into the shared clock reinitializes the clock too, not just the ambiguity.  Default
          * false ⇒ byte-identical (no clock carry is ever reinitialized).
+         *
+         * @return true to flag and reinitialize satellites whose carried clock violates the
+         *         bounds; false (default) never reinitializes a clock carry.
          */
         bool networkClockMonitor() const { return network_clock_monitor_; }
 
@@ -7490,6 +8344,8 @@ namespace GnssProcessor {
          * healthy precise-product clock sits sub-metre to a few metres de-meaned; the lock-in
          * satellite reaches hundreds.  Default 20 m (well clear of the ordinary few-metre
          * spread, far below a lock-in).
+         *
+         * @return De-meaned clock magnitude bound in metres; default 20 m.
          */
         double networkClockMonitorAbsMaxM() const { return network_clock_monitor_abs_max_m_; }
 
@@ -7501,6 +8357,8 @@ namespace GnssProcessor {
          * the lock-in onset is a single-epoch jump of hundreds of metres.  Tested only across
          * adjacent epochs of a stable datum (skipped on a pivot handover and right after a
          * refloat, which re-baselines).  Default 10 m (~100× a healthy epoch step).
+         *
+         * @return One-epoch clock jump bound in metres; default 10 m.
          */
         double networkClockMonitorJumpMaxM() const { return network_clock_monitor_jump_max_m_; }
 
@@ -7517,6 +8375,9 @@ namespace GnssProcessor {
          * absolute/jump bounds regardless.  Off ⇒ the monitor acts only on its own bounds, so a
          * clean window is byte-identical to @ref networkClockMonitor off.  Used only when @ref
          * networkClockMonitor.
+         *
+         * @return true to also reinitialize the carried clock of RAIM-flagged satellites; false
+         *         (default) acts only on the monitor's own absolute and jump bounds.
          */
         bool networkClockMonitorCoupleRaim() const { return network_clock_monitor_couple_raim_; }
 
@@ -7533,6 +8394,9 @@ namespace GnssProcessor {
          * to walk a frozen clock back toward truth.  Larger = closer to a hard refloat; smaller =
          * gentler (more smoothing).  A value ≤ 0 restores the hard skip-stash refloat (no prior at
          * all).  Default 30 m.
+         *
+         * @return Reinitialization standard deviation in metres; default 30 m, a value of 0 or
+         *         below selects the hard skip-stash refloat.
          */
         double networkClockMonitorReinitSigmaM() const { return network_clock_monitor_reinit_sigma_m_; }
 
@@ -7549,6 +8413,9 @@ namespace GnssProcessor {
          * magnitude; the clock monitor then flags on that per-satellite normalized innovation
          * (@ref networkClockModelKSigma), with the per-constellation datum common-mode removed,
          * instead of the hand-tuned absolute/jump bounds.  Default false ⇒ the scalar carry.
+         *
+         * @return true to carry the satellite clock as the two-state offset and drift model;
+         *         false (default) keeps the scalar random-walk carry.
          */
         bool networkClockModel() const { return network_clock_model_; }
 
@@ -7559,6 +8426,8 @@ namespace GnssProcessor {
          * The white-frequency-modulation term of the process noise; contributes q1·dt to the
          * predicted offset variance.  For the residual Δδtˢ (network clock vs the precise
          * product) this is typically negligible (RWFM-dominated); default 0.
+         *
+         * @return White-FM diffusion coefficient in m^2/s; default 0.
          */
         double networkClockModelQ1() const { return network_clock_model_q1_; }
 
@@ -7570,6 +8439,8 @@ namespace GnssProcessor {
          * predicted offset variance and q2·dt to the drift variance.  It is obtained by inverting the
          * clock's Allan/Hadamard deviation (Var of the second difference over dt = 2·q2·dt³/3).
          * Default 1.5e-7 (empirical GPS≈1.1e-7 / Galileo≈1.8e-7 for the network Δδtˢ residual).
+         *
+         * @return Random-walk-FM diffusion coefficient in m^2/s^3; default 1.5e-7.
          */
         double networkClockModelQ2() const { return network_clock_model_q2_; }
 
@@ -7580,6 +8451,9 @@ namespace GnssProcessor {
          * The dynamics-fault statistic is |innovation − per-constellation-median-innovation| / √S,
          * S the predicted innovation variance.  A healthy clock sits near 1; a lock-in reaches
          * hundreds to thousands.  Default 6.
+         *
+         * @return Flagging threshold on the normalized innovation (dimensionless, sigma units);
+         *         default 6.
          */
         double networkClockModelKSigma() const { return network_clock_model_k_sigma_; }
 
@@ -7589,6 +8463,8 @@ namespace GnssProcessor {
          *
          * The R in the model's measurement update, i.e. how tightly the model tracks each
          * epoch's solved clock.  Default 0.05 m (the per-epoch solved-clock precision on a dense network).
+         *
+         * @return Measurement standard deviation in metres; default 0.05 m.
          */
         double networkClockModelMeasStdM() const { return network_clock_model_meas_std_m_; }
 
@@ -7603,12 +8479,16 @@ namespace GnssProcessor {
          * rate for one epoch after a vanish-return.  Defaults to @ref networkPhaseLevelingMaxGapS
          * so existing clock-model configs are byte-identical; an independent value gives the
          * (slower-varying) clock a longer carry horizon than the ambiguities.
+         *
+         * @return Maximum unseen gap in seconds; defaults to the phase-leveling max gap. A value
+         *         of 0 or below is replaced at load (by that gap, or by 120 s when it is also invalid).
          */
         double networkClockModelMaxGapS() const { return network_clock_model_max_gap_s_; }
 
         /// @brief Emit a per-satellite URA quality channel from the network product
         ///        (@c network.emit_ura, B1).  URA = EWMA(σ̂0) × formal clock σ (from the
         ///        shared covariance).  Default off ⇒ the product is byte-identical.
+        /// @return true to emit the per-satellite URA channel; false (default) emits none.
         bool networkEmitUra() const { return network_emit_ura_; }
         /// @brief Producer: stamp each emitted epoch with a wall-clock time of generation
         ///        (@c network.emit_generation_time, RT0-4), serialized as an optional @c G
@@ -7616,6 +8496,8 @@ namespace GnssProcessor {
         ///        Default off ⇒ no @c G record ⇒ the product is byte-identical.  The stamp
         ///        is wall-clock and therefore non-deterministic, so a byte-reproducible
         ///        (regression) run must leave this off.
+        /// @return true to stamp each emitted epoch with a wall-clock @c G record; false (default)
+        ///         emits no @c G record.
         bool networkEmitGenerationTime() const { return network_emit_generation_time_; }
         /// @brief Producer: per-constellation clock-runaway quarantine (@c network.clock_runaway_check,
         ///        RT0-5).  When on, a constellation whose median |clock − global median| exceeds
@@ -7624,25 +8506,34 @@ namespace GnssProcessor {
         ///        so a runaway (e.g. a BeiDou clock divergence) reduces scope (one constellation)
         ///        instead of contaminating the whole product.  Default off ⇒ every
         ///        constellation emitted ⇒ byte-identical.
+        /// @return true to drop a runaway constellation from the epoch's emission; false (default)
+        ///         emits every constellation.
         bool networkClockRunawayCheck() const { return network_clock_runaway_check_; }
         /// @brief Per-constellation median clock-magnitude ceiling in meters (RT0-5).  Inert unless
         ///        @ref networkClockRunawayCheck.  Default 1000 m: far above a healthy few-metre
         ///        spread, below the runaway hundreds-of-km regime.
+        /// @return Median clock-magnitude ceiling in metres; default 1000 m.
         double networkClockRunawayMagM() const { return network_clock_runaway_mag_m_; }
         /// @brief Per-constellation median clock-rate ceiling in m/s (RT0-5).  Inert unless
         ///        @ref networkClockRunawayCheck and the two-state clock model emits a drift
         ///        (@c network.clock_model).  Default 10 m/s: far above a healthy sub-0.1 m/s drift.
+        /// @return Median clock-rate ceiling in m/s; default 10 m/s.
         double networkClockRunawayRateMps() const { return network_clock_runaway_rate_m_s_; }
         /// @brief EWMA smoothing factor α for the network-wide σ̂0 that scales the URA
         ///        (@c network.ura_ewma_alpha, B1).  Default 0.1.
+        /// @return EWMA weight of a new sigma0 sample (dimensionless); default 0.1.
         double networkUraEwmaAlpha() const { return network_ura_ewma_alpha_; }
         /// @brief Consumer: inflate measurement R by the network URA on rows using that
         ///        satellite's corrections (@c network.consume_ura, B1).  Default off ⇒ R byte-identical.
+        /// @return true to inflate the measurement variance by the network URA; false (default)
+        ///         leaves the variance unchanged.
         bool networkConsumeUra() const { return network_consume_ura_; }
         /// @brief Consumer: ZOH clock-staleness q² (m²/s³) folded as q²·dt³/3 into the
         ///        applied clock variance (@c network.ura_staleness_q2, B1).  The loader
         ///        defaults it to @ref networkClockModelQ2 (P1-3), not 0, so it is active
         ///        whenever @c network.consume_ura is on; an explicit 0 disables the inflation.
+        /// @return Staleness coefficient q2 in m^2/s^3; defaults to the clock-model q2 (1.5e-7),
+        ///         0 disables the inflation, a negative value is reset to 0 at load.
         double networkUraStalenessQ2() const { return network_ura_staleness_q2_; }
         /// @brief Producer: emit a per-(sat,signal) 1σ for the satellite phase-bias
         ///        corrections (@c network.emit_phase_bias_sigma, B1b).  σ = EWMA(σ̂0) ×
@@ -7654,12 +8545,16 @@ namespace GnssProcessor {
         ///        analogue of the clock URA: without it the consumer applies phase-bias
         ///        corrections as if exact, so this transmits the diagonal of Qŷ_B1 for the
         ///        phase-bias block (the named defect-2 driver, 6–69 cm differential wander).
+        /// @return true to emit the per-(satellite, signal) phase-bias sigma; false (default)
+        ///         leaves sigma at 0.
         bool networkEmitPhaseBiasSigma() const { return network_emit_phase_bias_sigma_; }
         /// @brief Consumer: inflate the measurement R of a phase row by the network
         ///        phase-bias correction σ² (@c network.consume_phase_bias_sigma, B1b), so a
         ///        wandering phase-bias correction is down-weighted instead of trusted as
         ///        exact.  Per-(sat,signal) via @c getPhaseBias; IF rows carry no per-signal
         ///        bias and are untouched.  Default off ⇒ R byte-identical.
+        /// @return true to inflate a phase row's variance by the phase-bias correction sigma
+        ///         squared; false (default) leaves the variance unchanged.
         bool networkConsumePhaseBiasSigma() const { return network_consume_phase_bias_sigma_; }
 
         /// @brief Producer emits the per-key combined-correction σ
@@ -7671,18 +8566,22 @@ namespace GnssProcessor {
         ///        @c rho= wire tokens.  Off ⇒ every value 0 ⇒ no token ⇒ product/store
         ///        byte-identical.  (Zhang 2021 / Psychas 2024b: the combined σ is mm-level
         ///        where the individual clock/bias σ are cm-level during rise-reconvergence.)
+        /// @return true to emit the combined-correction sigma tokens; false (default) emits none.
         bool networkEmitCombinedSigma() const { return network_emit_combined_sigma_; }
         /// @brief Age-scaling coefficient the producer advertises on the S-line
         ///        (@c network.combined_sigma_agek; M4, contract v2).  A consumer inflates the combined
         ///        variance as σc²·(1 + agek·Δt_age²) (correction content age Δt_age in s),
         ///        replacing the ad-hoc URA staleness ramp for network-corrected rows.
         ///        Default 0 ⇒ no @c agek= token ⇒ no age inflation (byte-identical).
+        /// @return Age-scaling coefficient in 1/s^2; default 0 (no age inflation).
         double networkCombinedSigmaAgek() const { return network_combined_sigma_agek_; }
         /// @brief Consumer folds the combined-correction σ (age-inflated) into a
         ///        network-corrected row's measurement variance instead of the URA +
         ///        phase-bias-σ RSS (@c closed_loop.consume_combined_sigma; M4, contract v2).  Convenience
         ///        accessor onto the closed-loop sub-config so measurement-side callers match
         ///        the flat B1b getter style.  Default off ⇒ v1 weighting (byte-identical).
+        /// @return true to weight rows by the age-inflated combined sigma; false (default) keeps
+        ///         the v1 weighting.
         bool networkConsumeCombinedSigma() const {
             return getNetworkConfig().closed_loop.consume_combined_sigma;
         }
@@ -7690,6 +8589,8 @@ namespace GnssProcessor {
         /// @brief Gate consumer AR eligibility on the product's @c signal_integer flag
         ///        (@c network.require_signal_integer_for_ar; T3a).  Off = coverage-only gate
         ///        (byte-identical).
+        /// @return true to require the product's @c signal_integer flag for AR eligibility; false
+        ///         (default) gates on coverage only.
         bool networkRequireSignalIntegerForAr() const { return network_require_signal_integer_for_ar_; }
         /// @brief Producer: retro-bump a flagged satellite's discontinuity counter on the
         ///        next emit after a post-emit QC flag (@c network.ura_retro_bump, B1): a
@@ -7699,15 +8600,19 @@ namespace GnssProcessor {
         ///        constellation; it needs at least one flag-producing QC tier armed
         ///        (@c network.raim / @c raim_within_epoch / @c clock_monitor /
         ///        @c clock_model) or it can never fire (loader warns).
+        /// @return true to retro-bump a flagged satellite's discontinuity counter at the next
+        ///         emit; false (default) leaves the counters unchanged.
         bool networkUraRetroBump() const { return network_ura_retro_bump_; }
-        /// Mark an IF-TD reference-path slip as a per-satellite discontinuity (R
+        /// @brief Mark an IF-TD reference-path slip as a per-satellite discontinuity (R
         /// record) so the consumer resets that satellite's ambiguity (Edge-1 piece 2).
         /// Targets the subset the emitter's value-jump test cannot see (SPEC 25.3:
         /// excursion onsets are refsat_reset-enriched 5.0x with PB value steps = 0).
         /// Default off; product-affecting when armed.
+        /// @return true to emit the discontinuity record for such a slip; false (default) does not.
         bool networkMarkRefsatResetDisc() const { return network_mark_refsat_reset_disc_; }
         /// @brief Producer: URA multiplier on a flagged satellite for the phase-leveling
         ///        warmup horizon after a refloat (@c network.ura_refloat_inflate, B1).  1 = off.
+        /// @return Dimensionless URA multiplier; 1 (default) = off.
         double networkUraRefloatInflate() const { return network_ura_refloat_inflate_; }
 
         /**
@@ -7726,6 +8631,9 @@ namespace GnssProcessor {
          * time, to the millisecond, is at least the offset.  An offset that lies on an epoch
          * (1.0 on a 30 s schedule) starts the run on that epoch; an offset between two epochs
          * starts it on the later one.
+         *
+         * @return Offset in hours from the first synced epoch; default 0 (process from the
+         *         start), a negative value is clamped to 0 at load.
          */
         double networkStartOffsetHours() const { return network_start_offset_hours_; }
 
@@ -8232,6 +9140,9 @@ namespace GnssProcessor {
          * queried against per-(sat, signal) EWMA residual statistics
          * and the joint signal is logged as high-confidence vs
          * spatial-only.  See @c filter/ResidualHistoryTracker.hpp.
+         *
+         * @return Const reference to the residual-history tracker config; its @c enabled flag is
+         *         false by default.
          */
         const ResidualHistoryConfig& getResidualHistoryConfig() const { return residual_history_; }
 
@@ -8368,11 +9279,16 @@ namespace GnssProcessor {
         /**
          * @brief Convenience predicate: true when running against the
          *        internal data tree.
+         *
+         * @return true when @c data_source is @c DataSource::Internal (the default).
          */
         bool isInternalDataSource() const { return data_source_ == DataSource::Internal; }
 
         /**
          * @brief Convenience predicate: true when running with auto-download.
+         *
+         * @return true when @c data_source is @c DataSource::Production (products downloaded on
+         *         demand); false in the default internal mode.
          */
         bool isProductionDataSource() const { return data_source_ == DataSource::Production; }
 
@@ -8383,10 +9299,12 @@ namespace GnssProcessor {
          *  - If @c files.internal_data_root is set in the JSON, that
          *    value is used; relative paths are resolved against the
          *    config file's parent directory.
-         *  - Otherwise it falls back to @c <project_root>/data, where
+         *  - Otherwise it falls back to @c \<project_root\>/data, where
          *    @c project_root is the CMake-baked @c GNSS_PROJECT_ROOT.
          *
          * Always an absolute path (never empty after a successful load).
+         *
+         * @return Absolute directory that is globbed for inputs in internal mode.
          */
         const std::filesystem::path& getInternalDataRoot() const { return internal_data_root_; }
 
@@ -8530,6 +9448,8 @@ namespace GnssProcessor {
          * look confident but are invalid.  10 epochs at 30 s rate ≈ 5 minutes
          * is the minimum reasonable gate; 30+ minutes is conservative.  Skipped
          * epochs return @c success=false from resolve().
+         *
+         * @return Minimum number of filter epochs before AR runs; default 10.
          */
         int getArMinEpochs() const { return ar_min_epochs_; }
 
@@ -8541,6 +9461,8 @@ namespace GnssProcessor {
          * Default 5 cm: once the filter is this confident in position, the
          * float ambiguity covariance is also typically converged enough for
          * a meaningful integer search.
+         *
+         * @return Maximum 3D formal position sigma in metres; default 0.05 m.
          */
         double getArMaxPositionSigma() const { return ar_max_position_sigma_m_; }
 
@@ -8554,6 +9476,8 @@ namespace GnssProcessor {
          * effectively infinite.  Such fixes look highly confident but are
          * mathematically suspect, so they are rejected and the solution
          * stays float.
+         *
+         * @return Upper bound on the LAMBDA ratio (dimensionless); default 1e4.
          */
         double getArRatioUpperBound() const { return ar_ratio_upper_bound_; }
 
@@ -8566,6 +9490,9 @@ namespace GnssProcessor {
          * verification stage before the full WL+NL LAMBDA pipeline:
          * WL via MW is robust even when the float NL covariance has not
          * converged enough for safe integer rounding.
+         *
+         * @return true to apply only the MW-resolved WL integers as pseudo-observations and skip
+         *         the LAMBDA NL search; false (default) runs the full WL+NL pipeline.
          */
         bool getArWlOnly() const { return ar_wl_only_; }
 
@@ -8579,6 +9506,9 @@ namespace GnssProcessor {
          * noisy satellites do not force the whole epoch back to float.
          * Complements (does not replace) the full-set validation; the AR trace
          * is bit-identical to the legacy path when off.
+         *
+         * @return true to retry a failed full-set fix on smaller subsets; false (default) keeps
+         *         the full-set validation only.
          */
         bool getArEnablePartialAr() const { return ar_enable_partial_ar_; }
 
@@ -8588,16 +9518,22 @@ namespace GnssProcessor {
          * Default 1e-4 cycle² = (0.01 cycle)² σ.  MW-resolved WL integers
          * are typically locked to within a small fraction of a cycle, so
          * the constraint can be tight.
+         *
+         * @return Pseudo-observation variance in cycles^2; default 1e-4.
          */
         double getArWlOnlyPseudoVar() const { return ar_wl_only_pseudo_var_; }
         /// @brief Apply the bootstrap FFR gate to the WL-only / MW-WL constraint paths.
         /// Those paths assert MW integers without any LAMBDA search, so their `ratio` is
         /// the `+inf` "no ratio test ran" sentinel and the only confidence number
         /// available is the bootstrap success rate.  Default on.
+        /// @return true (default) applies the bootstrap success-rate gate to those paths; false
+        ///         skips it.
         bool   getArWlOnlyFfr() const { return ar_wl_only_ffr_; }
-        /// Minimum MW arc sample count admissible under @ref getArWlOnlyFfr.
+        /// @brief Minimum MW arc sample count admissible under @ref getArWlOnlyFfr.
+        /// @return Minimum number of MW arc samples; default 10.
         int    getArWlOnlyMinArcCount() const { return ar_wl_only_min_arc_count_; }
-        /// Max innovation (cycles) a WL-only constraint may assert against the float.
+        /// @brief Max innovation (cycles) a WL-only constraint may assert against the float.
+        /// @return Maximum innovation in cycles; default 0.5, 0 disables the check.
         double getArWlOnlyMaxInnovCyc() const { return ar_wl_only_max_innov_cyc_; }
 
         /**
@@ -8623,6 +9559,8 @@ namespace GnssProcessor {
          * A tighter value (e.g. 0.30) gives stricter AR; a looser one (e.g.
          * 0.45) helps when AR is starved.  Values < 0.20 admit only very
          * mature, clean locks (which can take many epochs of averaging).
+         *
+         * @return Maximum worst-case fractional residual in cycles; default 0.40.
          */
         double getArWlMaxFrac() const { return ar_wl_max_frac_; }
 
@@ -8646,9 +9584,13 @@ namespace GnssProcessor {
          * wrong-integer fix.  0.9999 suits safety-critical
          * applications; 0.99 suits cases where integrity is less
          * critical and acceptance latency matters.
+         *
+         * @return Minimum bootstrap success rate (probability, dimensionless); default 0.999.
          */
         double getArMinSuccessRate() const { return ar_min_success_rate_; }
         /// @brief Per-candidate AR arc-maturity gate (@c estimation.ambiguity_resolution.min_arc_info), in zenith-epoch-equivalents; 0 = off.
+        /// @return Minimum accumulated arc information of a candidate, in zenith-epoch-equivalents;
+        ///         0 (default) = gate off.
         double getArMinArcInfo() const { return ar_min_arc_info_; }
 
         /**
@@ -8665,6 +9607,8 @@ namespace GnssProcessor {
          * Default 0.15 cyc.  0.10 suits runs that show wrong-fix
          * symptoms (ratio collapse on the next epoch); 0.20 suits runs
          * where AR rejects too many otherwise-good fixes.
+         *
+         * @return Maximum per-pair |float - fixed| residual in cycles; default 0.15.
          */
         double getArNlMaxPerPairFrac() const { return ar_nl_max_per_pair_frac_; }
 
@@ -8691,6 +9635,9 @@ namespace GnssProcessor {
          * cycles rather than 0.438.  Arm this only alongside a hardened
          * widelane; on its own it converts an ionospheric bias into
          * deterministic wrong integers.  Default false (byte-identical).
+         *
+         * @return true to search the N_1 integer on the exact iono-free row; false (default)
+         *         uses the narrowlane row.
          */
         bool getArNlIonoFreeRow() const { return ar_nl_iono_free_row_; }
 
@@ -8714,6 +9661,9 @@ namespace GnssProcessor {
          *
          * Configured via @c estimation.ambiguity_resolution.active_systems
          * as a JSON list of system names: ["GPS"], ["GPS","Galileo"], etc.
+         *
+         * @return System names (for example "GPS", "Galileo") eligible for AR; empty (default)
+         *         means every active system is eligible.
          */
         const std::vector<std::string>& getArActiveSystems() const { return ar_active_systems_; }
 
@@ -8882,7 +9832,7 @@ namespace GnssProcessor {
         bool loadNetworkInject_(const nlohmann::json& nw,
                                 const std::shared_ptr<spdlog::logger>& log);
         /// The fixed-cycle fold's interlocks, on the resolved values of the knobs
-        /// they read (several are parsed after @ref loadNetworkProducerAr_).  Throws
+        /// they read (several are parsed after @c loadNetworkProducerAr_).  Throws
         /// std::runtime_error on a refused posture (loadFromJson then returns false).
         void validateNetworkFixedCycles_(const std::shared_ptr<spdlog::logger>& log) const;
         void logNetworkSummary_(const std::shared_ptr<spdlog::logger>& log) const;
@@ -9057,8 +10007,8 @@ namespace GnssProcessor {
         double code_noise_amplify_;      ///< Code noise amplification factor.
 
         std::filesystem::path otl_blq_path_;    ///< Path to BLQ ocean loading file (optional).
-        std::filesystem::path opt_grid_path_;   ///< Path to IERS ocean pole tide load grid (optional; default <data>/static/opole/).
-        std::filesystem::path atm_tide_grid_path_;  ///< Path to S1/S2 atmospheric-tide load grid (optional; default <data>/static/apl/).
+        std::filesystem::path opt_grid_path_;   ///< Path to IERS ocean pole tide load grid (optional; default \<data\>/static/opole/).
+        std::filesystem::path atm_tide_grid_path_;  ///< Path to S1/S2 atmospheric-tide load grid (optional; default \<data\>/static/apl/).
 
         bool enable_station_info_{ false };                     ///< Master toggle for the SIF subsystem (default off = byte-identical).
         std::vector<std::filesystem::path> station_info_paths_; ///< SIF JSON paths in load order (explicit or auto-discovered).
@@ -9214,7 +10164,7 @@ namespace GnssProcessor {
         double network_signal_min_station_fraction_{0.0}; ///< Network-wide signal coverage gate: a RINEX code is admitted to the producer only if ≥ this fraction of stations observing its constellation track it (drops sparse channels like L2S everywhere, unlike per-station channel_mode). 0 = off (admit all tracked channels, byte-identical). Network mode only.
         double network_phase_bias_min_station_fraction_{0.0}; ///< Phase-bias coverage gate: a signal below this network coverage keeps its observation but gets no satellite phase-bias state (float ambiguity absorbs it, signal not AR-eligible); the "float, not drop" alternative. 0 = off (every phase signal gets a bias, byte-identical). Network mode only.
         bool   network_station_marker_to_arp_{false};              ///< Reduce every roster station's configured position_ecef from the monument to the antenna reference point at setup (network.station_marker_to_arp), via Coordinates::markerToArp with that station's RINEX `ANTENNA: DELTA H/E/N`: the helper and frame the held-out consumer's truth already uses. The roster is held fixed at a published (monument) coordinate while the observations refer to the antenna and the ATX model is ARP-relative, so the station misfits every range by H·sin(elev); its zenith wet delay absorbs about a quarter of H and the rest leaks into the satellite clocks regionally. A station whose header has no eccentricity record is left unchanged and warned; a zero eccentricity is an exact no-op. Off = byte-identical (eccentricities are read and reported only). Fingerprinted (armed-only append). Network mode only.
-        std::vector<std::string> network_rhs_attrib_columns_;      ///< Named shared columns of the attribution's solution-share readout (network.rhs_attrib_columns): every attribution dump also writes logs/rhs_attrib/cols_<tow>.csv, each contribution's reduced-RHS load and solution share at these columns; a LOC:<station>:<key> label names a station-local column instead, decomposed into loc_<tow>.csv at the armed dumps and a trip's current-epoch dump. Empty (default) = no cols_ or loc_ file. Diagnostics only, not fingerprinted. Network mode only.
+        std::vector<std::string> network_rhs_attrib_columns_;      ///< Named shared columns of the attribution's solution-share readout (network.rhs_attrib_columns): every attribution dump also writes logs/rhs_attrib/cols_\<tow\>.csv, each contribution's reduced-RHS load and solution share at these columns; a LOC:\<station\>:\<key\> label names a station-local column instead, decomposed into loc_\<tow\>.csv at the armed dumps and a trip's current-epoch dump. Empty (default) = no cols_ or loc_ file. Diagnostics only, not fingerprinted. Network mode only.
         bool   network_signal_roster_{false};                      ///< Write the arc ledger's trace (network.signal_roster, a trace switch): logs/network_arc_ledger.csv and the ARC event rows of the roster's build and audit. The per-station signal roster, the arc ledger and their disagreement census are built on every network run whatever this says. Trace class. Not fingerprinted. Network mode only.
         bool   network_roster_tracker_{false};                     ///< The arc-level slip tracker (networkComputeRawObservables) names each band by the roster's modelled_phase for that (station, constellation, band) when that phase is reported with its matching code this epoch, falling back to the lexical rule only where the roster names none (network.roster_tracker). The first reader of the roster, which is built on every run; supersedes network.cycle_slip.tracker_modeled_first by construction (the roster's modelled role is that knob's latch), and both may be armed. Not fingerprinted. Network mode only.
         bool   network_ledger_reentry_{false};                     ///< The gap re-entry response takes its population from the arc ledger's admitted lifecycle (network.ledger_reentry): every arc whose admitted state goes Gap to Reentered this epoch, whose signal the roster calls Modelled, and whose gap is inside phase_leveling_max_gap_s; it looks the raw tiers' verdict up per arc instead of being driven by them. The raw tiers keep running unchanged. An arc no raw tier saw has no verdict and is handled by network.ledger_reentry_no_verdict. Solve-affecting when armed (it changes which carried levels survive a break). Refused (error + disarm) without network.roster_tracker. Fingerprinted (armed-only append). Network mode only.
@@ -9247,7 +10197,7 @@ namespace GnssProcessor {
         bool   network_emit_epoch_status_record_{false}; ///< Write one positional H heartbeat record per epoch into the product file (RTA-10), including fully withheld epochs (gate + σ̂0), which otherwise emit nothing, so a tail consumer can distinguish "withheld" from "producer died". Positional (never feeds replay). Off = no H records (byte-identical).
         bool   network_h_sigma0_prefit_census_{false};   ///< Feed the H heartbeat's sigma0 field from the prefit census's pooled robust σ̂₀ (H-rider, edge-queue §1.6 item 3a) instead of the carry_warm-gated within-epoch RAIM statistic, which is structurally 0.000 on every lineage without leveling and a degenerate constant on leveled quiet runs.  Uniform per wire: every H site carries the census statistic when armed, and the S contract says so (hsig=pc).  Never feeds the A4 withhold ceiling (that stays sigma0_adapt).  Requires emit_epoch_status_record + trace_prefit_census.  Changes H bytes ⇒ default off (byte-identical).
         std::string network_h_sigma0_classes_{"code,sh,other"};   ///< Data classes pooled into the census-fed H σ̂₀ (H-rider; token list: code/phase/other/sh/all/none).  Default matches the census event domain; phase is deliberately excluded (arc-specific innovations are not a common-mode population, census deviation 2c).  Only used when network.h_sigma0_prefit_census.
-        bool   network_raim_surgical_station_{true};   ///< Within-epoch adaptation may peel a single (station,sat) arc instead of excluding the whole station, and de-rates whole-station exclusion by @ref network_raim_station_drop_bias_; false = coarse sat-vs-whole-station peel (A/B baseline).
+        bool   network_raim_surgical_station_{true};   ///< Within-epoch adaptation may peel a single (station,sat) arc instead of excluding the whole station, and de-rates whole-station exclusion by @c network_raim_station_drop_bias_; false = coarse sat-vs-whole-station peel (A/B baseline).
         double network_raim_station_drop_bias_{1.5};   ///< A whole-station exclusion is chosen only when its median-polish row effect / this factor still beats the best satellite/arc candidate (≥1; 1 disables the bias).
         bool   network_raim_redundancy_normalize_{false}; ///< Standardize the post-fit / within-epoch RAIM residual by v_i/(σ_i·√r_i) with the Baarda redundancy r_i = 1 − w_i·a_iᵀCov(θ)a_i (B2; per row, from the cached per-station Schur factors) before σ̂0 pooling / median-polish; low-redundancy arcs are otherwise under-flagged (response ∝ r_i·fault). Off = plain |v|·√w (byte-identical); on deliberately changes the statistic.
         bool   network_raim_station_factor_{false};        ///< Declare the per-station trimmed variance component Σw·v²/Σr_i as its own EWMA-tracked statistic (QUEUE item 4 R2, SPEC_t3_null_derivation §6/§7.5): trace + both-edge events + counters, never absorbed into a denominator. Measure-only; requires raim; off = byte-identical.
