@@ -11,18 +11,18 @@
  * (for example, the coupling rows shrank a clock term at one q while the fold
  * anchored the same clock at another).
  *
- * This header declares the kinds (@ref NetworkParamKind) and one descriptor per kind
- * (@ref ParamSpec), built once at run start from the knob snapshot
- * (@ref NetworkParamRegistry::build) and held read-only on @c NetworkRunContext.  The
+ * This header declares the kinds (@ref GnssProcessor::NetworkParamKind "NetworkParamKind") and one descriptor per kind
+ * (@ref GnssProcessor::ParamSpec "ParamSpec"), built once at run start from the knob snapshot
+ * (@ref GnssProcessor::NetworkParamRegistry::build "NetworkParamRegistry::build") and held read-only on @c NetworkRunContext.  The
  * registry is read, never written, inside the epoch loop.  Per-instance runtime
  * dispositions (anchored, loose, reinit, departed) stay on the instance, decided by the
  * mechanism that decides them (principle 5).
  *
  * Phase 1 scope (byte-identical by construction): the kinds and descriptors, the single
- * process-noise lookup for the border kinds (@ref NetworkParamRegistry::q), read by the
+ * process-noise lookup for the border kinds (@ref GnssProcessor::NetworkParamRegistry::q "NetworkParamRegistry::q"), read by the
  * diagonal and dense folds, the CTU mirror, the anchor and the coupling builder in place
  * of their own per-kind selections, and the "model as armed" table
- * (@ref NetworkParamRegistry::modelTable) written at run start and in the run-end tail.
+ * (@ref GnssProcessor::NetworkParamRegistry::modelTable "NetworkParamRegistry::modelTable") written at run start and in the run-end tail.
  * The descriptor states what the configuration arms; it does not move any decision.
  */
 #pragma once
@@ -109,12 +109,24 @@ enum class ResponsePolicy : int {
 inline constexpr std::size_t kResponsePolicies = 17;
 
 /// @brief Table name of an event (e.g. "slip").
+/// @param e An event of the table.
+/// @return The lower-case name used in the run-start tables and the manifest (@c "slip", @c "gap",
+///         @c "handover", @c "decouple", @c "readmit"); @c "?" for a value outside the enum. Points to a
+///         string literal; never null.
 const char* paramEventName(ParamEvent e);
 
 /// @brief Table name of a response policy (e.g. "erase_and_rebirth").
+/// @param p A response policy of the table.
+/// @return The lower-case snake_case name of @p p as printed in the response table and the manifest;
+///         @c "?" for a value outside the enum. Points to a string literal; never null.
 const char* responsePolicyName(ResponsePolicy p);
 
-/// @brief Bit of @p p in a policy mask (@ref ParamSpec::on).
+/**
+ * @brief Bit of @p p in a policy mask (@ref GnssProcessor::ParamSpec::on "ParamSpec::on").
+ * @param p A response policy of the table.
+ * @return A mask with only the bit numbered by the underlying value of @p p set, to be OR-ed into
+ *         the per-event mask.
+ */
 inline constexpr std::uint32_t responsePolicyBit(ResponsePolicy p) {
     return std::uint32_t{1} << static_cast<int>(p);
 }
@@ -127,13 +139,13 @@ inline constexpr std::uint32_t responsePolicyBit(ResponsePolicy p) {
  * human reads can be checked against the configuration.
  */
 struct ParamSpec {
-    NetworkParamKind kind{NetworkParamKind::SatClock};
+    NetworkParamKind kind{NetworkParamKind::SatClock};  ///< The parameter kind this descriptor describes.
     const char*  name{""};          ///< Short table name (the kind's lower-case label).
     bool         estimated{false};  ///< The kind has columns on this run.
     bool         carried{false};    ///< Instances are carried across epochs on this run.
     double       q{0.0};            ///< The process-noise rate (units in @ref q_units).
     const char*  q_units{"m^2/s"};  ///< Units of @ref q.
-    ParamQRule   q_rule{ParamQRule::None};
+    ParamQRule   q_rule{ParamQRule::None};  ///< How @ref q scales across an epoch gap.
     /// The anchored rate under @c ParamQRule::AnchorElapsed (the clock anchor's
     /// network.clock_anchor_q, m²/s): the rate a held satellite clock is folded at, while
     /// @ref q is the loose rate it takes until the guard re-validates it.  NaN otherwise.
@@ -157,7 +169,7 @@ struct ParamSpec {
     /// and the border kinds, whose gap response is READMIT's park (its expiry, a GapPrune
     /// of the parked entry, runs on network.readmit_seed_horizon_s against the park time).
     double       gap_horizon_s{std::numeric_limits<double>::quiet_NaN()};
-    ParamRoute   route{ParamRoute::NotCarried};
+    ParamRoute   route{ParamRoute::NotCarried};  ///< The route a carried instance takes into the next epoch's solve.
     std::string  source;            ///< The knob(s) behind q, the floor and the route.
     /// The response policies armed for this kind on this run, per @ref ParamEvent (a mask of
     /// @ref responsePolicyBit): the union of the policies of this kind's response sites whose
@@ -250,12 +262,22 @@ private:
 };
 
 /// @brief The registry kind of a border @c SharedParamKind.
+/// @param kind A border kind of the shared (border) block.
+/// @return The matching registry kind: @c Clock gives @c SatClock, @c PhaseBias gives @c SatPhaseBias,
+///         @c CodeBias gives @c SatCodeBias and @c VtecSh gives @c VtecSh.
 NetworkParamKind paramKindOf(SharedParamKind kind);
 
 /// @brief Table name of a q rule (e.g. "rw").
+/// @param rule A process-noise rule of the table.
+/// @return The short name printed in the model table (@c "none", @c "rw", @c "rw_per_degree",
+///         @c "anchor_elapsed", @c "rw_per_epoch", @c "gauss_markov"); @c "?" for a value outside the
+///         enum. Points to a string literal; never null.
 const char* paramQRuleName(ParamQRule rule);
 
 /// @brief Table name of a route (e.g. "local_block").
+/// @param route A carry route of the table.
+/// @return The snake_case name printed in the model table (for example @c "dense_border" or
+///         @c "prior_row"); @c "?" for a value outside the enum. Points to a string literal; never null.
 const char* paramRouteName(ParamRoute route);
 
 // ---- Run-end reports (generated by scripts/nom_td_cut.py) ----

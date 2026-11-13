@@ -135,7 +135,7 @@
  *     response event named this epoch gets an ADMISSION-tier `adm_census` event
  *     (rate-limited per cell).
  *  4. The arc re-entry vet (@c network.adm_revet). An admission record outlives its
- *     arc (it is kept for @ref kAdmArcForgetEp epochs), so a channel that leaves the
+ *     arc (it is kept for @ref GnssProcessor::kAdmArcForgetEp "kAdmArcForgetEp" epochs), so a channel that leaves the
  *     model set and returns later still carries `admitted = true` from before the
  *     gap and would take the established path. It would inherit a verdict about a
  *     channel that is not necessarily the one that came back. With the vet, a
@@ -216,7 +216,7 @@
  *
  * The seam owns no state: the per-channel admission records live in
  * @c net::StationState::adm_arc (`network/state/Entities.hpp`), and every counter
- * in @ref NetworkServiceCounters.
+ * in @ref GnssProcessor::NetworkServiceCounters "NetworkServiceCounters".
  */
 #pragma once
 
@@ -370,7 +370,7 @@ struct NetworkMeasurementAdmissionTallies {
     /// 61.9 m healthy tail.
     long long revet_bound_refusals = 0;
     /// Consultations attempted: vet-window channel-epochs on the established path
-    /// with the census trigger armed.  The denominator for @ref revet_census_absent:
+    /// with the census trigger armed.  The denominator for @ref GnssProcessor::NetworkMeasurementAdmissionTallies::revet_census_absent "revet_census_absent":
     /// `absent == reads` means the census walk is off, `absent == 0` means every
     /// consultation had fresh evidence to weigh.
     long long revet_census_reads = 0;
@@ -515,7 +515,7 @@ struct MeasurementAdmissionCounters {
     // purpose: `ctx.admission` is the code-bias admission census
     // (@ref NetworkBiasAdmission, network/assembly/BiasAdmission.hpp), a different
     // mechanism, and the two are easy to confuse.
-    NetworkMeasurementAdmissionTallies adm;
+    NetworkMeasurementAdmissionTallies adm;  ///< The run tallies of the measurement admission (every field documented on its type).
 };
 
 } // namespace GnssProcessor

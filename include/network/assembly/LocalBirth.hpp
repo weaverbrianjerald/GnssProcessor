@@ -48,7 +48,7 @@ namespace GnssProcessor {
  *
  * Does nothing for an epoch with no observation.  Uses the network posture: uncombined
  * processing, one ambiguity per phase signal, no between-satellite differencing.  With
- * @ref StationParams::record_pruned the pruned ambiguities are recorded in the set.
+ * @ref GnssProcessor::StationParams::record_pruned "StationParams::record_pruned" the pruned ambiguities are recorded in the set.
  *
  * @param c            The station's references.
  * @param set          The station's set (written).

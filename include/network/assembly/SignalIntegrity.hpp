@@ -42,7 +42,7 @@
  *    single-frequency arcs, and disappearances split by whether the arc was dual.
  *    Diagnostics only.  The counts show from data whether the producer continues a
  *    degraded arc or drops it.
- *  - Classifier: @ref SignalIntegrityState.
+ *  - Classifier: @ref GnssProcessor::SignalIntegrityState "SignalIntegrityState".
  *  - Demotion: while a line of sight is unvetted, its phase rows fold at an
  *    inflated σ (`unvetted_sigma_scale`), or its phase observables are withheld for
  *    the epoch (`withhold_instead`).  Code rows are untouched: they are slip-immune
@@ -70,8 +70,8 @@
  * The PASS-B serial pre-pass does not qualify: it runs after the election.
  *
  * The seam owns no state.  The band history lives in the Los entity
- * (`net::LosState::si_arc`), the per-epoch σ map on @ref NetStation, and every
- * counter in @ref NetworkServiceCounters.  With the master switch off the seam
+ * (`net::LosState::si_arc`), the per-epoch σ map on @ref GnssProcessor::NetStation "NetStation", and every
+ * counter in @ref GnssProcessor::NetworkServiceCounters "NetworkServiceCounters".  With the master switch off the seam
  * returns at once and touches no map, row weight or observable.
  */
 #pragma once
@@ -124,7 +124,10 @@ enum class SignalIntegrityState {
     Degraded
 };
 
-/// Lowercase tag for @ref SignalIntegrityState, used in events, logs and tests.
+/// @brief Lowercase tag for @ref GnssProcessor::SignalIntegrityState "SignalIntegrityState", used in events, logs and tests.
+/// @param s A band state of one line of sight.
+/// @return @c "stable", @c "new", @c "reentry", @c "flicker_regain" or @c "degraded"; @c "?" for a value
+///         outside the enum. Points to a string literal; never null.
 const char* signalIntegrityStateName(SignalIntegrityState s);
 
 /**
@@ -360,7 +363,7 @@ struct SignalIntegrityCounters {
     // networkSignalIntegrityRunEnd.  `sig.demoted_rows` stays 0 here: the phase rows
     // fold inside the parallel produce, so each station counts them in
     // NetStation::si_rows_demoted and the report sums those into its own copy.
-    NetworkSignalIntegrityTallies sig;
+    NetworkSignalIntegrityTallies sig;  ///< The run tallies of the signal-integrity seam (every field documented on its type).
 };
 
 } // namespace GnssProcessor

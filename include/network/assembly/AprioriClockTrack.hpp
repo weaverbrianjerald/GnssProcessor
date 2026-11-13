@@ -33,7 +33,7 @@
  * time update with the control input -column.
  *
  * The wire stays the estimate against the stamped broadcast record: the broadcast wire seam adds U
- * after the hold (C_wire = C_est + O + U, @ref networkBrdcWire), so a user reconstructs
+ * after the hold (C_wire = C_est + O + U, @ref GnssProcessor::networkBrdcWire "networkBrdcWire"), so a user reconstructs
  * brdc(iode) + C_wire = a + U + C_est, the estimated clock, and the smoothed hold, which holds
  * (C - P) to the smoothed motion of the solve's own state, passes the solve's motion on top of the
  * tracked a priori exactly as it passed it on top of a(t).
@@ -49,7 +49,7 @@
  * A satellite's first tracked epoch and every resumption after an epoch without a column are
  * counted and named (a @c BRD_TRACK event: @c track_start, @c track_resume with the epochs paused);
  * every epoch without a column for a tracked satellite is counted as paused.  Run-end line: the
- * counts, the |increment| ladder and the largest |U| (@ref networkBrdcWireRunEnd).
+ * counts, the |increment| ladder and the largest |U| (@ref GnssProcessor::networkBrdcWireRunEnd "networkBrdcWireRunEnd").
  *
  * Default off; requires @c sp3_brdc_clock and the two-way centring (refused at load otherwise);
  * fingerprinted (the carried clock is on the tracked frame), fresh convergence only.

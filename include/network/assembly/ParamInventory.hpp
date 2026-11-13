@@ -24,15 +24,15 @@
  *
  * ### The vocabulary
  *
- *  - @ref ParamDisposition: what the network did with one instance on one epoch (the
+ *  - @ref GnssProcessor::ParamDisposition "ParamDisposition": what the network did with one instance on one epoch (the
  *    station split with a column, or a gate with a withheld state: @c Absorbed).  Its
  *    values are exactly the count columns of the table.
- *  - @ref ParamClass: one line of the table (registry kind, @ref ParamForm, constellation,
- *    signal or band).  @ref ParamInstanceId is a class plus the subject fields a line
+ *  - @ref GnssProcessor::ParamClass "ParamClass": one line of the table (registry kind, @ref GnssProcessor::ParamForm "ParamForm", constellation,
+ *    signal or band).  @ref GnssProcessor::ParamInstanceId "ParamInstanceId" is a class plus the subject fields a line
  *    sums over (satellite, GLONASS slot, station).
- *  - @ref RxIfbRule: the declared rule behind the receiver IFB drop.
- *  - @ref AbsorbedReason: why a gate withheld a shared satellite parameter from a station,
- *    one value per gate, with its row in the reason table @ref absorbedReasonSpec (the rule,
+ *  - @ref GnssProcessor::RxIfbRule "RxIfbRule": the declared rule behind the receiver IFB drop.
+ *  - @ref GnssProcessor::AbsorbedReason "AbsorbedReason": why a gate withheld a shared satellite parameter from a station,
+ *    one value per gate, with its row in the reason table @ref GnssProcessor::absorbedReasonSpec "absorbedReasonSpec" (the rule,
  *    the code site, what takes the withheld parameter up).  A station's withheld parameters
  *    of the epoch are in its set (@c StationShared::withheld, network/state/StationParams.hpp).
  *
@@ -49,29 +49,29 @@
  *      - serial, after the screens that remove observations: the anchored-union coverage
  *        gate (@c networkBuildPhaseDatumCandidates) and the eq34 hygiene block
  *        (@c networkAnchorHygiene), through @c noteWithheldPhaseBias.
- *  2. @c Application::networkSplitStation_ decides each column's @ref ParamDisposition
+ *  2. @c Application::networkSplitStation_ decides each column's @ref GnssProcessor::ParamDisposition "ParamDisposition"
  *     (border, local block, held coordinate, held at its seed by the run's
- *     @ref RxIfbRule, all-zero H) and reports it.
+ *     @ref GnssProcessor::RxIfbRule "RxIfbRule", all-zero H) and reports it.
  *  3. @c settleStationParams gives the set the split's dispositions and sorts the withheld
  *     parameters: one is kept only when the station still holds the column that takes it up
  *     (a satellite phase bias by the float ambiguity of the same satellite and signal, a
  *     satellite code bias by the satellite's clock), and one whose observation left before the
  *     split is counted on an integrity line instead.  A withheld parameter whose identity
  *     the constellation does not carry is listed as unclassified, never dropped.
- *  4. @ref recordStationParams reads the set inside the parallel produce phase (PASS B),
- *     writing only the station's own @ref StationParamSlot, and adds the station's absorbed
+ *  4. @ref GnssProcessor::recordStationParams "recordStationParams" reads the set inside the parallel produce phase (PASS B),
+ *     writing only the station's own @ref GnssProcessor::StationParamSlot "StationParamSlot", and adds the station's absorbed
  *     instances with disposition @c Absorbed and their reason.
- *  5. @ref networkParamInventoryDrain folds the slots serially after PASS B into the
- *     epoch's and the run's @ref ParamInventoryTally; a station the produce phase
+ *  5. @ref GnssProcessor::networkParamInventoryDrain "networkParamInventoryDrain" folds the slots serially after PASS B into the
+ *     epoch's and the run's @ref GnssProcessor::ParamInventoryTally "ParamInventoryTally"; a station the produce phase
  *     rejected after its split, and a roster station that never reached its split (no
  *     usable observations, no rows, an exception), are each counted on their own line,
  *     not in the classes.
- *  6. @ref networkParamInventoryEpochTail writes the table once after the first emitted
- *     epoch and @ref networkParamInventoryRunEnd again in the run-end tail, each with a
+ *  6. @ref GnssProcessor::networkParamInventoryEpochTail "networkParamInventoryEpochTail" writes the table once after the first emitted
+ *     epoch and @ref GnssProcessor::networkParamInventoryRunEnd "networkParamInventoryRunEnd" again in the run-end tail, each with a
  *     @c param_inventory record in the run manifest.
- *  7. Beside the table, @ref networkParamInventoryNoteSatellites counts on every
+ *  7. Beside the table, @ref GnssProcessor::networkParamInventoryNoteSatellites "networkParamInventoryNoteSatellites" counts on every
  *     processed epoch the satellite ids of the synced observations whose constellation
- *     the network does not model by its own rule (@ref SatIdentityCensus), and the
+ *     the network does not model by its own rule (@ref GnssProcessor::SatIdentityCensus "SatIdentityCensus"), and the
  *     run-end tail prints the count under the table.
  *
  * ### What is withheld but not counted as absorbed
@@ -174,7 +174,7 @@ namespace GnssProcessor {
      *
      * A withheld parameter is an instance with disposition @c Absorbed: the station's
      * observation still builds its row, and another parameter of the station takes the
-     * withheld term up.  The reason table @ref absorbedReasonSpec gives each value its rule,
+     * withheld term up.  The reason table @ref GnssProcessor::absorbedReasonSpec "absorbedReasonSpec" gives each value its rule,
      * its code site and what takes the parameter up.  The first four gates sit in
      * @c networkAdmitSharedStates (PASS A, at admission), the last two prune parameters the
      * station had admitted (serial, before PASS B).
@@ -319,7 +319,7 @@ namespace GnssProcessor {
      * @brief The receiver IFB rule of this run.
      *
      * @param config The run's configuration.
-     * @return The rule: @c estimated_by_knob from @ref rxExtraBandDelayEffective, @c drop
+     * @return The rule: @c estimated_by_knob from @ref GnssProcessor::rxExtraBandDelayEffective "rxExtraBandDelayEffective", @c drop
      *         from @c estimateNetworkSatCodeBias() unless @c estimated_by_knob, the
      *         premise from @c getIonosphereWeightingConfig().enabled and
      *         @c getNetworkConfig().w6_iono_constraint.
@@ -351,13 +351,13 @@ namespace GnssProcessor {
     /**
      * @brief Is @c network.estimate_rx_extra_band_code_delay effective on this run?  The
      *        one predicate: the loader's interlocks and posture line, the rule
-     *        (@ref RxIfbRule::estimated_by_knob), the snapshot fingerprint token and the
+     *        (@ref GnssProcessor::RxIfbRule::estimated_by_knob "RxIfbRule::estimated_by_knob"), the snapshot fingerprint token and the
      *        run-end report all read it, so none of them can call an armed knob effective
      *        where another calls it inert.
      *
      * @param config The run's configuration.
      * @return The knob armed, @c estimateNetworkSatCodeBias() (otherwise nothing is
-     *         dropped) and @ref rxExtraBandTracked for the run's frequency mode and active
+     *         dropped) and @ref GnssProcessor::rxExtraBandTracked "rxExtraBandTracked" for the run's frequency mode and active
      *         systems (otherwise no governed column exists).
      */
     bool rxExtraBandDelayEffective(const GnssConfig& config);
@@ -370,7 +370,7 @@ namespace GnssProcessor {
      *
      * A member of @c NetStation (network/driver/RunTypes.hpp), written inside the parallel
      * produce phase by the station's own split and inject, as @c eb_rows_deweighted is,
-     * and by the serial harvest; summed by @ref networkRxExtraBandDelayRunEnd.  Untouched
+     * and by the serial harvest; summed by networkRxExtraBandDelayRunEnd (@c GnssProcessor::networkRxExtraBandDelayRunEnd).  Untouched
      * unless @ref RxIfbRule::estimated_by_knob.  The split's dispositions of the governed
      * columns are not counted here: the parameter inventory owns them
      * (@c NetworkParamInventory::whole_run).
@@ -470,12 +470,12 @@ namespace GnssProcessor {
      * @brief Record a station's inventory after its split, from the station's parameter set.
      *
      * One record per slot of @p set with the disposition the split gave it, in column order,
-     * then one per withheld shared state (@ref StationShared::absorbed) with disposition
+     * then one per withheld shared state (@ref GnssProcessor::StationShared::absorbed "StationShared::absorbed") with disposition
      * @c Absorbed and its reason.  The slot's counters are the set's: the withheld states whose
-     * identity could not be typed (@ref StationParams::unclassified, listed, never dropped),
+     * identity could not be typed (@ref GnssProcessor::StationParams::unclassified "StationParams::unclassified", listed, never dropped),
      * the columns past the end of the split's dispositions (counted in @c no_disposition, never
      * given a disposition by default) and the withheld states whose absorbing column the
-     * station no longer holds (@ref StationShared::absorbed_no_absorber).  Pure per-station
+     * station no longer holds (@ref GnssProcessor::StationShared::absorbed_no_absorber "StationShared::absorbed_no_absorber").  Pure per-station
      * work: reads @p set, writes only @p slot (safe inside the parallel PASS B).
      *
      * @param set     The station's parameter set, settled after its split
@@ -601,7 +601,7 @@ namespace GnssProcessor {
     /**
      * @brief The same content as one JSON object (the run manifest's @c param_inventory
      *        record): per class the counts per disposition and the non-zero absorbed counts
-     *        per reason (@c absorbed_reasons, by @ref absorbedReasonName), the integrity
+     *        per reason (@c absorbed_reasons, by @ref GnssProcessor::absorbedReasonName "absorbedReasonName"), the integrity
      *        counts, and the reason table itself (@c reasons).
      *
      * @param tally The counts.
@@ -704,7 +704,7 @@ namespace GnssProcessor {
     /**
      * @brief Write the table once, after the first emitted epoch.
      *
-     * Logs @ref paramInventoryTable of the last epoch's tally (WARNING lines at warn
+     * Logs @ref GnssProcessor::paramInventoryTable "paramInventoryTable" of the last epoch's tally (WARNING lines at warn
      * level) and appends its @c param_inventory record to the run manifest; returns at
      * once when the table is out, when @p emitted is false, or when no station was
      * counted on the last epoch.
@@ -729,7 +729,7 @@ namespace GnssProcessor {
     /**
      * @brief Write the run's table in the run-end tail, next to the registry's model
      *        table, with its @c param_inventory record (scope "run"), and under it one
-     *        line of the satellite-id census (@ref SatIdentityCensus; a warning when an
+     *        line of the satellite-id census (@ref GnssProcessor::SatIdentityCensus "SatIdentityCensus"; a warning when an
      *        id was counted).
      *
      * @param ctx    Run context (read).
@@ -773,7 +773,7 @@ namespace GnssProcessor {
 
     /**
      * @brief The receiver extra-band code delay report as lines: the content
-     *        of @ref networkRxExtraBandDelayRunEnd, from plain inputs so that a test can
+     *        of networkRxExtraBandDelayRunEnd (@c GnssProcessor::networkRxExtraBandDelayRunEnd), from plain inputs so that a test can
      *        build it.
      *
      * Lines, in order:

@@ -43,7 +43,7 @@
  * @c SyncedEpoch, immediately after the event-harness injector and therefore
  * upstream of @c PppModel::computeModels, every T0 detector,
  * @c networkComputeRawObservables and assembly.  It uses the same site
- * and the same scratch-buffer contract as @ref networkInjectEpoch, for the same
+ * and the same scratch-buffer contract as @ref GnssProcessor::networkInjectEpoch "networkInjectEpoch", for the same
  * reason: everything downstream is derived from the @c RinexObservation, so
  * dropping the record here is equivalent to a missing RINEX record.  The row-level
  * gap re-entry tier then reads the satellite's return as a re-entry, which is what
@@ -109,7 +109,11 @@ namespace GnssProcessor {
         std::string c1;   ///< canonical code on band digit 1 (e.g. "C1W").
         std::string l2;   ///< canonical phase on band digit 2 (e.g. "L2W").
         std::string c2;   ///< canonical code on band digit 2 (e.g. "C2W").
-        /// @brief True when the latch supplied all four slots (the only case screened).
+        /**
+         * @brief True when the latch supplied all four slots (the only case screened).
+         * @return True when @c l1, @c c1, @c l2 and @c c2 are all non-empty; false when any slot is
+         *         missing, in which case the constellation is not screened.
+         */
         bool decided() const {
             return !l1.empty() && !c1.empty() && !l2.empty() && !c2.empty();
         }
@@ -156,7 +160,7 @@ namespace GnssProcessor {
      * @brief One step of the state machine, and the two edges it may have crossed.
      */
     struct CanonicalPairStep {
-        CanonicalPairAction action{ CanonicalPairAction::AdmitGood };
+        CanonicalPairAction action{ CanonicalPairAction::AdmitGood };  ///< the decision for this (station, satellite) epoch.
         bool      withhold_edge{ false }; ///< first withheld epoch of this run of withholds.
         bool      readmit_edge{ false };  ///< first admitted epoch after at least one withheld one.
         /// On a step that is not good (including a withhold edge): processed epochs
@@ -180,13 +184,22 @@ namespace GnssProcessor {
     CanonicalPairStep canonicalPairStep(CanonicalPairTrack& tr, bool good,
                                         long long epoch_idx, int keep);
 
-    /// @brief True for the two @ref CanonicalPairAction values that withhold.
+    /**
+     * @brief True for the two @ref GnssProcessor::CanonicalPairAction "CanonicalPairAction" values that withhold.
+     * @param a The action returned by the state machine.
+     * @return True for @c WithholdBeforeFirst and @c WithholdBeyondKeep; false for @c AdmitGood and
+     *         @c AdmitWithinKeep.
+     */
     inline bool canonicalPairWithholds(CanonicalPairAction a) {
         return a == CanonicalPairAction::WithholdBeforeFirst
             || a == CanonicalPairAction::WithholdBeyondKeep;
     }
 
     /// @brief The event and counter reason string for a withholding action ("" otherwise).
+    /// @param a The action returned by the state machine.
+    /// @return @c "before_first" for @c WithholdBeforeFirst, @c "beyond_keep" for
+    ///         @c WithholdBeyondKeep, and an empty string for either admit action. Points to a
+    ///         string literal; never null.
     const char* canonicalPairReason(CanonicalPairAction a);
 
     /**

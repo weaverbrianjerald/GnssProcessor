@@ -25,10 +25,10 @@
  * canonical latch draws from. Bands are physical bands (@c classifySignal), not RINEX
  * digits, so two signals of one carrier count once.
  *
- * Under @ref SecondBandScope::Station (the default) a constellation is admitted at a
+ * Under @c SecondBandScope::Station (the default) a constellation is admitted at a
  * station while at least @c network.second_band_min_sats of its satellites are on two
  * modelled bands there in the epoch. Every satellite of the constellation is then
- * admitted, on one band or two. Under @ref SecondBandScope::Satellite each satellite is
+ * admitted, on one band or two. Under @c SecondBandScope::Satellite each satellite is
  * admitted on its own while it is on two modelled bands. Either way the unit that fails is
  * withheld whole (every record of the constellation at the station, or of the satellite),
  * and the station keeps its other constellations.

@@ -24,10 +24,10 @@
  *    an extra-band signal, where the row weights are formed in
  *    @c Application::networkSplitStation_.
  *
- * @ref networkPinBandsFor is also read by network/solve/ClockLevel.cpp.
+ * @ref GnssProcessor::networkPinBandsFor "networkPinBandsFor" is also read by network/solve/ClockLevel.cpp.
  *
  * The predicates are pure and are unit-tested directly
- * (tests/test_network_extra_band_scope.cpp); only @ref networkPinBandsFor
+ * (tests/test_network_extra_band_scope.cpp); only @ref GnssProcessor::networkPinBandsFor "networkPinBandsFor"
  * touches global state, and it only reads the product cache.
  */
 #ifndef GNSS_PROCESSOR_NETWORK_EXTRA_BAND_SCOPE_HPP
@@ -50,7 +50,11 @@ struct NetworkPinBands {
     char band1{ '\0' };   ///< First pin band digit, e.g. '1'.
     char band2{ '\0' };   ///< Second pin band digit, e.g. '2'.
 
-    /// True when both digits were resolved and are distinct.
+    /**
+     * @brief True when both digits were resolved and are distinct.
+     * @return True for a usable pin pair; false for a default-constructed (unresolved) value or
+     *         when both digits are the same.
+     */
     bool valid() const {
         return band1 != '\0' && band2 != '\0' && band1 != band2;
     }
@@ -81,7 +85,7 @@ NetworkPinBands networkPinBandsFor(char system_char);
  * pre-knob behaviour instead of acting on a guess.
  *
  * @param signal RINEX observation code, e.g. "C5Q" or "L1W".
- * @param pin    The constellation's pin bands (@ref networkPinBandsFor).
+ * @param pin    The constellation's pin bands (@ref GnssProcessor::networkPinBandsFor "networkPinBandsFor").
  * @return True when the signal's band digit is neither pin band.
  */
 bool networkSignalIsExtraBand(const std::string& signal, const NetworkPinBands& pin);
@@ -98,7 +102,7 @@ bool networkSignalIsExtraBand(const std::string& signal, const NetworkPinBands& 
  *
  * @param sig1 First phase signal of the pair, e.g. "L1C".
  * @param sig2 Second phase signal of the pair, e.g. "L5Q".
- * @param pin  The constellation's pin bands (@ref networkPinBandsFor).
+ * @param pin  The constellation's pin bands (@ref GnssProcessor::networkPinBandsFor "networkPinBandsFor").
  * @return True when the pair is the primary pair (or the pin is unknown).
  */
 bool networkMwPairInPrimaryScope(const std::string& sig1, const std::string& sig2,

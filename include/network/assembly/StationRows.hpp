@@ -8,7 +8,7 @@
  * ### One equation
  *
  * A row's predicted observable is the term list of measurement/ObservationEquation.hpp.  The
- * network producer reads it through @ref NetView, which answers for each parameter with the
+ * network producer reads it through @ref GnssProcessor::NetView "NetView", which answers for each parameter with the
  * slot of the station's set (network/state/StationParams.hpp) and its linearization point.
  * The single-receiver filter and the closed-loop consumer read the same function through the
  * lookup of their state vector, so the producer's and the consumer's rows are one equation
@@ -17,10 +17,10 @@
  *
  * ### The rows
  *
- * @ref networkStationRows is the network's row loop.  It admits a satellite's signal as the
+ * @ref GnssProcessor::networkStationRows "networkStationRows" is the network's row loop.  It admits a satellite's signal as the
  * single-receiver model's rule does (@c isUsableMeasurement, the stored geometry), builds the
  * equation, evaluates it for the innovation, keeps its partials as (slot, value) pairs
- * (@ref StationDataRows) and takes the variance from the stochastic model.  A signal with no
+ * (@ref GnssProcessor::StationDataRows "StationDataRows") and takes the variance from the stochastic model.  A signal with no
  * equation (a satellite or signal text that is not a canonical RINEX identity) is left out.
  * At trace level each row also prints its decomposition (measurement/RowTrace.hpp), the line
  * the single-receiver model prints for its rows.
@@ -31,7 +31,7 @@
  * therefore hold only the entries their equations write; the split
  * (network/assembly/StationSplit.hpp) decides each slot's disposition from them and writes each
  * entry straight into the shared border or the local block.  No matrix of rows by slots is
- * formed on the network (@ref denseJacobian builds one for tests and diagnostics).
+ * formed on the network (@ref GnssProcessor::denseJacobian "denseJacobian" builds one for tests and diagnostics).
  *
  * Plain value types and free functions; no behaviour classes.
  */
@@ -86,7 +86,10 @@ struct StationDataRows {
     std::vector<std::size_t> row_start{0};   ///< Where each row's entries begin; one element more than rows.
     std::size_t              n_slots{0};     ///< Slots of the set the rows were built over (the Jacobian's columns).
 
-    /// @return The number of rows.
+    /**
+     * @brief Number of data rows of the epoch.
+     * @return The number of rows.
+     */
     Eigen::Index rows() const { return innovations.size(); }
 };
 
@@ -222,7 +225,7 @@ inline constexpr StateAmbiguityBasis kNetworkAmbiguityBasis = StateAmbiguityBasi
  * @brief The equation inputs of the data rows.
  * @param c The station's references.
  * @return Inputs whose frequency helper is the station's own, on the per-band ambiguity basis
- *         (@ref kNetworkAmbiguityBasis).
+ *         (@ref GnssProcessor::kNetworkAmbiguityBasis "kNetworkAmbiguityBasis").
  */
 ObsInput rowObsInput(const StationRowContext& c);
 

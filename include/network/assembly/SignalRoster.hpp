@@ -18,10 +18,10 @@
  * neither object unless one of those readers is armed, so building them changes no
  * product.  After the first emitted epoch whose roster carries a modelled role, and at
  * run end, a "signals as planned" table is logged and written to the run manifest
- * (@ref signalRosterPlanTable): per constellation and band, the modelled, companion,
+ * (@ref GnssProcessor::signalRosterPlanTable "signalRosterPlanTable"): per constellation and band, the modelled, companion,
  * datum and excluded signals with the number of stations holding each role, then one
  * line per decision site the census compares with the roster
- * (@ref signalRosterSiteSpecs).
+ * (@ref GnssProcessor::signalRosterSiteSpecs "signalRosterSiteSpecs").
  *
  * ### Motivation
  *
@@ -45,14 +45,14 @@
  *  - Companion: the band-1 codes carried as second-code companions.
  *  - Excluded: the signals that are present and not used, each with a reason.
  *  - Datum: the signal the S-basis pins.  Phase 1 leaves it empty.  Phase 2 makes
- *    the IF pin pair election write it (@ref networkSignalRosterDatumPin), from the
+ *    the IF pin pair election write it (@ref GnssProcessor::networkSignalRosterDatumPin "networkSignalRosterDatumPin"), from the
  *    datum seam, which runs well after the roster is built.  Nothing in the solve
  *    reads the datum fields; the wire's declaration (@c network.ledger_emit) and the
  *    tables do.
  *
  * ### Build site
  *
- * A single call, @ref networkBuildSignalRoster, in @c ApplicationNetwork.cpp,
+ * A single call, @ref GnssProcessor::networkBuildSignalRoster "networkBuildSignalRoster", in @c ApplicationNetwork.cpp,
  * directly after the canonical-pair-admission seam returns the epoch and before
  * the reduced-RHS recorder.  @c computeModels, the T0 detectors,
  * @c networkComputeRawObservables, assembly, the RAIM pools and the traces all
@@ -111,6 +111,9 @@ namespace GnssProcessor {
     };
 
     /// @brief Human-readable name of a role, for traces and log text.
+    /// @param r A signal role.
+    /// @return The role's lower-case name (@c "tracked", @c "modelled", @c "datum", @c "companion" or
+    ///         @c "excluded"); @c "?" for a value outside the enum. Points to a string literal; never null.
     const char* signalRoleName(SignalRole r);
 
     /**
@@ -262,10 +265,10 @@ namespace GnssProcessor {
     };
 
     /**
-     * @brief The declared site texts, in @ref RosterSite order (checked by
+     * @brief The declared site texts, in @ref GnssProcessor::RosterSite "RosterSite" order (checked by
      *        @c static_assert).
      *
-     * @return One @ref RosterSiteSpec per site, with static storage duration.
+     * @return One @ref GnssProcessor::RosterSiteSpec "RosterSiteSpec" per site, with static storage duration.
      */
     const std::array<RosterSiteSpec, kRosterSites>& signalRosterSiteSpecs();
 
@@ -294,7 +297,7 @@ namespace GnssProcessor {
 
     /**
      * @brief A site (groups A to G) that the census measures against the
-     *        roster or the arc ledger, beyond the eleven sites of @ref RosterSite.
+     *        roster or the arc ledger, beyond the eleven sites of @ref GnssProcessor::RosterSite "RosterSite".
      *
      * Two kinds.  A RULE site (the first six) is a selection rule the census evaluates
      * at the end of each audited epoch on that epoch's roster, through the site's own
@@ -306,7 +309,7 @@ namespace GnssProcessor {
      * have given before it read the roster or the ledger: its counter is exactly the
      * number of reads at which the switched site answers differently.
      *
-     * The table, its order and its texts are @ref signalRosterN3bSpecs.  The census is an
+     * The table, its order and its texts are @ref GnssProcessor::signalRosterN3bSpecs "signalRosterN3bSpecs".  The census is an
      * observatory: it prints at run end in its own trace-class lines and writes no
      * trace, product or manifest record.
      */
@@ -323,7 +326,7 @@ namespace GnssProcessor {
         kCount              ///< number of sites (not a site).
     };
 
-    /// @brief Number of sites in @ref RosterN3bSite.
+    /// @brief Number of sites in @ref GnssProcessor::RosterN3bSite "RosterN3bSite".
     inline constexpr std::size_t kRosterN3bSites =
         static_cast<std::size_t>(RosterN3bSite::kCount);
 
@@ -337,9 +340,9 @@ namespace GnssProcessor {
     };
 
     /**
-     * @brief The declared N3b site texts, in @ref RosterN3bSite order (checked by
+     * @brief The declared N3b site texts, in @ref GnssProcessor::RosterN3bSite "RosterN3bSite" order (checked by
      *        @c static_assert).
-     * @return One @ref RosterN3bSpec per site, with static storage duration.
+     * @return One @ref GnssProcessor::RosterN3bSpec "RosterN3bSpec" per site, with static storage duration.
      */
     const std::array<RosterN3bSpec, kRosterN3bSites>& signalRosterN3bSpecs();
 
@@ -413,7 +416,11 @@ namespace GnssProcessor {
         std::vector<RosterPlanBand> bands;  ///< constellation name order, then band digit.
         int stations{ 0 };                  ///< stations with at least one cell.
 
-        /// @brief True when at least one cell carries a modelled phase or code.
+        /**
+         * @brief True when at least one cell carries a modelled phase or code.
+         * @return True when some band of @c bands holds a modelled role at some station; false for
+         *         an empty plan or one whose cells are all unmodelled.
+         */
         bool hasModelledRole() const;
     };
 
@@ -423,7 +430,7 @@ namespace GnssProcessor {
      * @param by_station  The roster's cells, one map per station (@c SignalRoster::by_station).
      * @param datum_votes "<constellation>|<band>" -> pinned code -> satellites that
      *                    pinned it this epoch (@c SignalRoster::datum_votes).
-     * @return One @ref RosterPlanBand per (constellation, band) with a cell at any
+     * @return One @ref GnssProcessor::RosterPlanBand "RosterPlanBand" per (constellation, band) with a cell at any
      *         station, and the number of stations with a cell.
      */
     RosterPlan signalRosterPlanOf(
@@ -468,8 +475,8 @@ namespace GnssProcessor {
      * @c hdr.audited false the first line says that no epoch was audited, no band row
      * is printed and the epoch columns read "-".
      *
-     * @param plan   @ref signalRosterPlanOf of the epoch.
-     * @param epoch  The site census of that epoch (@ref signalRosterSiteDelta).
+     * @param plan   @ref GnssProcessor::signalRosterPlanOf "signalRosterPlanOf" of the epoch.
+     * @param epoch  The site census of that epoch (@ref GnssProcessor::signalRosterSiteDelta "signalRosterSiteDelta").
      * @param run    The cumulative site census.
      * @param hdr    The epoch and run the table describes.
      * @return The table's lines, without a log prefix and with no trailing blank.
@@ -491,7 +498,7 @@ namespace GnssProcessor {
      * name, group and the compared and disagreeing counts of the epoch and of the run.
      * With @c hdr.audited false, "week", "tow" and every site's "epoch" are null.
      *
-     * @param plan      @ref signalRosterPlanOf of the epoch.
+     * @param plan      @ref GnssProcessor::signalRosterPlanOf "signalRosterPlanOf" of the epoch.
      * @param epoch     The site census of that epoch.
      * @param run       The cumulative site census.
      * @param hdr       The epoch and run the record describes.
@@ -649,9 +656,9 @@ namespace GnssProcessor {
 
         /// Resolved horizon inputs, reported at run end so the number is auditable.
         double horizon_s{ 0.0 };
-        double horizon_pl_s{ 0.0 };
-        double horizon_pbhold_s{ 0.0 };
-        double horizon_readmit_s{ 0.0 };
+        double horizon_pl_s{ 0.0 };       ///< The phase-leveling carry's maximum gap, network.phase_leveling_max_gap_s (s).
+        double horizon_pbhold_s{ 0.0 };   ///< The phase-bias hold's maximum gap, @c emit_pb_hold_max_gap_s (s).
+        double horizon_readmit_s{ 0.0 };  ///< The re-admission seed horizon, network.readmit_seed_horizon_s (s).
     };
 
     /**
@@ -730,10 +737,10 @@ namespace GnssProcessor {
         long long gate_drop_edges_tracking{ 0 }; ///< of those, whose family is entirely Tracking.
 
         // --- the ledger's own transitions --------------------------------------
-        long long arc_birth{ 0 };
-        long long arc_gap{ 0 };
-        long long arc_reentry{ 0 };
-        long long arc_death{ 0 };
+        long long arc_birth{ 0 };             ///< arcs that began (Birth transitions of the ledger, raw side).
+        long long arc_gap{ 0 };               ///< arcs that entered a Gap.
+        long long arc_reentry{ 0 };           ///< arcs that returned from a Gap (Reentry).
+        long long arc_death{ 0 };             ///< arcs that died (Death).
         long long arc_events{ 0 };            ///< ARC rows written to network_events.csv (holdoff-throttled).
         long long arc_trace_rows{ 0 };        ///< rows written to network_arc_ledger.csv (one per transition).
         long long arc_live_max{ 0 };          ///< peak live arcs in one epoch.
@@ -781,14 +788,14 @@ namespace GnssProcessor {
         /// "<constellation>|<band>|<signal>" -> cells the designation was written to,
         /// summed over epochs (the same unit as @ref datum_cells).
         std::map<std::string, long long> datum_code_census;
-        std::map<std::string, long long> datum_phase_census;
+        std::map<std::string, long long> datum_phase_census;  ///< Key (constellation, band digit and signal joined by '|') -> cells the datum phase was written to, summed over epochs.
 
         // --- the admitted lifecycle -------------------------------------------
         long long adm_rows{ 0 };              ///< admitted phase rows fed to the ledger, summed over epochs.
-        long long adm_birth{ 0 };
-        long long adm_gap{ 0 };
-        long long adm_reentry{ 0 };
-        long long adm_death{ 0 };
+        long long adm_birth{ 0 };             ///< admitted arcs that began (Birth transitions of the admitted lifecycle).
+        long long adm_gap{ 0 };               ///< admitted arcs that entered a Gap.
+        long long adm_reentry{ 0 };           ///< admitted arcs that returned from a Gap (Reentry).
+        long long adm_death{ 0 };             ///< admitted arcs that died (Death).
         long long adm_trace_rows{ 0 };        ///< admitted-side rows written to network_arc_ledger.csv.
         long long adm_live_max{ 0 };          ///< peak admitted-live arcs in one epoch.
 
@@ -885,7 +892,7 @@ namespace GnssProcessor {
         /// fresh-pin ramp is armed, so a zero denominator here means the hygiene seam
         /// never ran and the class is dead wiring, not a clean agreement.
         long long age_compared{ 0 };
-        long long age_disagree{ 0 };
+        long long age_disagree{ 0 };          ///< of those compared, arcs whose counted age differs from the ledger's admitted age (clamped to the age cap).
         long long age_no_ledger{ 0 };         ///< arcs the ledger could give no admitted age for.
 
         // --- the behaviour half (B1 / B2), reported with the knob on and off ----
@@ -905,7 +912,7 @@ namespace GnssProcessor {
      *
      * One place states which counter is each site's denominator and which is its
      * disagreement, so the table, the manifest record and the unit suite read the
-     * same definition (the texts are @ref signalRosterSiteSpecs):
+     * same definition (the texts are @ref GnssProcessor::signalRosterSiteSpecs "signalRosterSiteSpecs"):
      *
      *  - canonical latch: @c latch_cells_checked, @c roster_latch_disagree;
      *  - latch rule: stations compared (@c SignalRoster::rule_reached), stations whose
@@ -993,6 +1000,9 @@ namespace GnssProcessor {
      * @param station Producer station index.
      * @param cons    Constellation name, as @c systemName gives it ("GPS").
      * @param band    RINEX band digit.
+     * @return The modelled phase signal of that cell (a RINEX observation code such as "L1C"), or an
+     *         empty string when the roster has no answer: the station index is out of range, or the
+     *         constellation or band has no cell, or the cell has no latched phase yet.
      */
     std::string signalRosterModelledPhase(const SignalRoster& rs, int station,
                                           const std::string& cons, char band);
@@ -1020,7 +1030,7 @@ namespace GnssProcessor {
      * @brief The admitted arcs whose signal the roster calls Modelled.  Pure
      *        function.
      *
-     * @ref signalRosterAdmittedArcs restricted by the roster's role.  This is the
+     * @ref GnssProcessor::signalRosterAdmittedArcs "signalRosterAdmittedArcs" restricted by the roster's role.  This is the
      * population the re-entry response is defined on: the response frees a carried
      * level, and only a modelled signal has one.  An arc whose cell the roster cannot
      * answer for (a constellation with no priority list, or the first epoch of a
@@ -1075,8 +1085,10 @@ namespace GnssProcessor {
      *        (phase 2).
      *
      * @param sr        The station's roster; modified in place.
-     * @param picks     @ref signalRosterDatumPicks output.
+     * @param picks     @ref GnssProcessor::signalRosterDatumPicks "signalRosterDatumPicks" output.
      * @param ambiguous Optional: the non-unanimous set, counted and not acted on.
+     * @return The tally of the write: cells given a datum code, those that also carry a datum phase,
+     *         those off the modelled code (and of them, the unmodelled ones), and the ambiguous ones.
      */
     SignalRosterDatumWrite signalRosterApplyDatum(
         StationRoster& sr, const std::map<std::string, std::string>& picks,
@@ -1182,7 +1194,7 @@ namespace GnssProcessor {
      * @brief Fold the election's ledger read.
      *
      * Called from the driver after @c networkElectPhaseAnchors returns and its
-     * @c gate_drop.events loop has run, where the per-epoch @ref AnchorReentry result
+     * @c gate_drop.events loop has run, where the per-epoch @ref GnssProcessor::AnchorReentry "AnchorReentry" result
      * is in scope and every other election readback is already folded.  Counts the
      * first sightings the ledger identifies as returns, emits their identity, and
      * reports phase 4b's restore decisions.  No-op when the read is not armed.
@@ -1206,7 +1218,7 @@ namespace GnssProcessor {
      * Called by the teardown beside the "parameters as armed" and "contributions as
      * armed" tables, before the run manifest's @c complete record, so that record
      * stays the manifest's last.  With no audited epoch the table says so
-     * (@ref RosterPlanHeader::audited).
+     * (@ref GnssProcessor::RosterPlanHeader::audited "RosterPlanHeader::audited").
      *
      * @param ctx     Run context (counters, roster state and ledger).
      * @param config_ The run's config (the run manifest switch, the latch rule).
@@ -1253,7 +1265,7 @@ namespace GnssProcessor {
     /**
      * @brief Run-end report: the N3b site census (network/assembly/SignalRosterSites.cpp).
      *
-     * One header line and one line per @ref RosterN3bSite: the site's compared and
+     * One header line and one line per @ref GnssProcessor::RosterN3bSite "RosterN3bSite": the site's compared and
      * disagreeing counts over the run, its fallback reads, and its most frequent
      * disagreements.  Trace class (no trace file, product or manifest record).
      *
@@ -1271,7 +1283,7 @@ namespace GnssProcessor {
     /**
      * @brief The rule sites of the N3b census, evaluated on this epoch's roster.
      *
-     * Called by @ref networkSignalRosterAudit once per audited epoch, after the IF pin
+     * Called by @ref GnssProcessor::networkSignalRosterAudit "networkSignalRosterAudit" once per audited epoch, after the IF pin
      * wrote the roster's datum role.  For each constellation with a datum this epoch:
      * the BIA clock-reference pin bands and codes, the group-delay pair of every pinned
      * satellite and the first two traits bands, each against the datum the roster

@@ -12,14 +12,14 @@
  * and only for those: a column no row writes would be an unobserved direction that the
  * null-space gate rejects.  So the set of shared parameters a station holds is the set its
  * usable observations imply, less the ones a gate withholds, and it is recomputed every epoch.
- * @ref networkAdmitSharedStates is that computation.
+ * @ref GnssProcessor::networkAdmitSharedStates "networkAdmitSharedStates" is that computation.
  *
  * ### The gates
  *
  * A gate withholds a satellite phase bias or code bias from the station; the station's phase
  * rows are still built, and its float ambiguity (or its satellite clock, for a code bias)
  * absorbs the term.  Each withheld parameter is noted with the gate in
- * @ref StationShared::withheld (and the parameter inventory counts it as absorbed after the
+ * @ref GnssProcessor::StationShared::withheld "StationShared::withheld" (and the parameter inventory counts it as absorbed after the
  * split):
  *  - GLONASS on the code-only network scope: a shared per-signal phase or code bias is
  *    unphysical under FDMA, so GLONASS phase contributes to the clock alone and its code bias
@@ -30,7 +30,7 @@
  *    phase bias.
  * Two later, serial gates withhold a parameter the station had admitted (the anchored-union
  * coverage gate and the eq34 hygiene block); they note it through
- * @ref noteWithheldPhaseBias.
+ * @ref GnssProcessor::noteWithheldPhaseBias "noteWithheldPhaseBias".
  *
  * Plain free functions over the station's set.
  */

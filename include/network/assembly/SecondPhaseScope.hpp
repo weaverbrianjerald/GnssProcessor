@@ -13,15 +13,15 @@
  * functions of their inputs and are unit-tested directly
  * (tests/network/test_second_phase_channel.cpp):
  *
- *  - @ref secondPhaseAllowEntryValid: what the loader accepts in
+ *  - @ref GnssProcessor::secondPhaseAllowEntryValid "secondPhaseAllowEntryValid": what the loader accepts in
  *    `network.second_phase_signals` (a 3-character phase type on band 1; band-2
  *    phases come in through `processing.channel_mode: all` instead);
- *  - @ref secondPhaseCompanions: which phases a station contributes for one
+ *  - @ref GnssProcessor::secondPhaseCompanions "secondPhaseCompanions": which phases a station contributes for one
  *    satellite, given what it reports, what its latch already selected, and the
  *    allow-list;
- *  - @ref secondPhaseCellEdges: the opening and closing edges of the
+ *  - @ref GnssProcessor::secondPhaseCellEdges "secondPhaseCellEdges": the opening and closing edges of the
  *    (station, satellite, signal) cells the mechanism opens and closes;
- *  - @ref secondPhaseWitness: the per-line-of-sight slip witness.
+ *  - @ref GnssProcessor::secondPhaseWitness "secondPhaseWitness": the per-line-of-sight slip witness.
  *
  * No receiver inter-signal phase state is added, by design.  The second code channel needs a
  * receiver inter-signal code state because C1C and C1W both resolve to the
@@ -213,7 +213,7 @@ struct SecondPhaseScopeCounters {
         double    witness_max = 0.0;  ///< The largest absolute change seen, in cycles.
         std::string witness_max_id;   ///< "<station>|<satellite>|<signal>@<tow>" of that change.
     };
-    SecondPhase second_phase;
+    SecondPhase second_phase;  ///< The run tallies of the second phase channel.
 };
 
 }  // namespace GnssProcessor

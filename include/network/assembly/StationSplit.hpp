@@ -69,6 +69,24 @@ StationStep networkStationDataRows(StationBuild& build);
  *
  * A free function (formerly Application::networkSplitStation_), so the station
  * steps in the family files can call it; @p config_ is the run's configuration.
+ *
+ * @param config_  The run's configuration (the weight passes and signal-integrity demotion read it).
+ * @param[in,out] st The station: its parameter set and signal cells are read, and its run-long
+ *                 row counters (signal-integrity demoted, gross-line-of-sight and extra-band
+ *                 deweighted, companion code and second-phase rows, receiver IFB estimated
+ *                 epochs) are incremented.
+ * @param est      The network estimator: the shared-border width and the border column of each
+ *                 satellite clock, phase bias and code bias.
+ * @param rows     The station's data rows in sparse form (Jacobian entries per row, slot count,
+ *                 innovations, observation variances, row identities).
+ * @param[out] A_s Shared-border design block, @c rows.rows() by the border width, reassigned.
+ * @param[out] A_r Local design block, @c rows.rows() by the number of local columns, reassigned.
+ * @param[out] w   Row information weights (1 / variance, after the weight passes), reassigned.
+ * @param[out] y   Row innovations, reassigned from @c rows.
+ * @param[in,out] h2local Station slot index to A_r column of the local block; one entry is added per
+ *                 local column.
+ * @param[out] col_disp Disposition of each slot of the station's set (pinned, border, local,
+ *                 held at seed, unobserved), indexed by slot and reassigned.
  */
 void networkSplitStation(const GnssConfig& config_, NetStation& st, const NetworkEstimator& est,
                          const StationDataRows& rows, const RxIfbRule& ifb_rule,
@@ -95,7 +113,7 @@ void networkSplitStation(const GnssConfig& config_, NetStation& st, const Networ
  * a defined case for every reader of the row weights (the block cofactor check counts
  * such a block as not checkable; the standardized residuals read zero).
  *
- * Called by @ref networkSplitStation only when @ref RxIfbRule::estimated_by_knob, inside the
+ * Called by @ref GnssProcessor::networkSplitStation "networkSplitStation" only when @ref GnssProcessor::RxIfbRule::estimated_by_knob "RxIfbRule::estimated_by_knob", inside the
  * parallel produce phase: it reads the station's parameter set and data rows and
  * writes only the station's own @p s (the rows excluded, the governed columns left with no
  * weighted row, the registration edges, and the family signals).  The set holds the columns of

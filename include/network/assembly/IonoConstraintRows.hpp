@@ -58,6 +58,18 @@ StationStep networkIonoConstraintRows(StationBuild& build);
  *
  * A free function (formerly Application::networkAppendGimIonoRows_), so the station
  * steps in the family files can call it; @p config_ is the run's configuration, @p gim_ Application::gim_.
+ *
+ * @param config_  The run's configuration; its ionosphere weighting block (enable flag,
+ *                 elevation cutoff in degrees, sigma floor and scale, common-mode sigma in m) sets the rows.
+ * @param gim_     The loaded global ionosphere map, queried read only; null or not loaded
+ *                 returns @c NoGim.
+ * @param st       The station whose block receives the rows; its ECEF position and slant-iono
+ *                 slots are read.
+ * @param sta_obs  The station's modelled observations this epoch (satellite id, elevation in
+ *                 degrees, satellite ECEF position); GLONASS entries are skipped.
+ * @param h2local  Station state index to A_r column of the station's local block this epoch; a
+ *                 slant-iono state absent from it gets no row.
+ * @param t        Epoch time at which the map is evaluated.
  */
 GimRowsOutcome networkAppendGimIonoRows(const GnssConfig& config_,
                                         const std::unique_ptr<GlobalIonosphereMap>& gim_,
@@ -84,6 +96,34 @@ GimRowsOutcome networkAppendGimIonoRows(const GnssConfig& config_,
  *
  * A free function (formerly Application::networkAppendShIonoRows_), so the station
  * steps in the family files can call it; @p config_ is the run's configuration.
+ *
+ * @param config_    The run's configuration; its ionosphere weighting block (enable flag,
+ *                   elevation cutoff in degrees, sigma floor in m, common-mode sigma in m) sets the
+ *                   rows. With the weighting off, nothing is appended.
+ * @param st         The station whose block receives the rows; its ECEF position and slant-iono
+ *                   slots are read.
+ * @param est        The network estimator, used only to look up the shared-border column of each
+ *                   SH coefficient.
+ * @param sta_obs    The station's modelled observations this epoch (satellite id, elevation in
+ *                   degrees, satellite ECEF position); GLONASS entries are skipped.
+ * @param h2local    Station state index to A_r column of the station's local block this epoch; a
+ *                   slant-iono state absent from it gets no row.
+ * @param t          Epoch time; sets the sun-fixed longitude shift when the field is sun-fixed.
+ * @param sh_model   The SH field (first shell); null appends nothing.
+ * @param sh_model2  Second shell of the dual-layer field; null on the single-layer path.
+ * @param shc        The global VTEC SH settings (Earth radius, representation sigma in TECU,
+ *                   row decimation, sun-fixed flag).
+ * @param sh_dev_on  True when the deviation carry treatment is armed: the predicted deviation
+ *                   enters the innovation and its variance replaces the representation variance.
+ * @param sh_dev_los The per-line-of-sight SH deviation carries, read only here; a missing entry is
+ *                   a cold seed (zero deviation, steady-state variance).
+ * @param sta_index  The station's index in the network, the station key into @p sh_dev_los.
+ * @param[in,out] A_s Shared-border design block of the station; rows appended in place (SH
+ *                   coefficient columns).
+ * @param[in,out] A_r Local design block of the station; rows appended in place (slant-iono
+ *                   columns).
+ * @param[in,out] w  Row weights; rows appended in place, set to one (rows are whitened).
+ * @param[in,out] y  Row innovations; rows appended in place, whitened.
  */
 void networkAppendShIonoRows(const GnssConfig& config_, NetStation& st, const NetworkEstimator& est,
                              const std::vector<PppObservation>& sta_obs,

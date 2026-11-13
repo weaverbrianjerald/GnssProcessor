@@ -20,17 +20,17 @@
  *
  * ### The vocabulary
  *
- *  - @ref ContributionKind (network/assembly/ContributionKind.hpp, the half the estimator
+ *  - @ref GnssProcessor::ContributionKind "ContributionKind" (network/assembly/ContributionKind.hpp, the half the estimator
  *    includes): one value per family, and @c Unset, the default of every tag.
- *    @ref contributionSpec gives each family its @ref ContributionSpec.
- *  - @ref RowTag: the plain tag of one row of a station block (kind, satellite, signal).
+ *    @ref GnssProcessor::contributionSpec "contributionSpec" gives each family its @ref GnssProcessor::ContributionSpec "ContributionSpec".
+ *  - @ref GnssProcessor::RowTag "RowTag": the plain tag of one row of a station block (kind, satellite, signal).
  *    @c StationAssembly holds one per row of @c A_r / @c A_s (@c row_tags), one per entry
  *    of each diagonal prior channel (@c carry_tags, @c prior_tags) and the tags of the
  *    diagonal entries the coalesce merged into another entry of the same column.
  *  - The shared folds carry their kind through the estimator: a fold site names the kind
  *    (@c NetworkEstimator::contributionKind) and the fold records it with its dimension
- *    in the estimator's per-epoch @ref SharedFoldLog.
- *  - @ref ContributionTally and @ref NetworkContributionLedger: the per-epoch and run
+ *    in the estimator's per-epoch @ref GnssProcessor::SharedFoldLog "SharedFoldLog".
+ *  - @ref GnssProcessor::ContributionTally "ContributionTally" and @ref GnssProcessor::NetworkContributionLedger "NetworkContributionLedger": the per-epoch and run
  *    tallies, and the "contributions as armed" table.
  *
  * ### The pieces, in the order an epoch passes through them
@@ -41,17 +41,17 @@
  *     ties, the SD-EWL rows, the coupling and whitened block rows through
  *     @c CouplingRowBuilder, the LGM birth rows), and every diagonal prior entry carries
  *     its tag through the sort and the coalesce.
- *  2. The end of PASS B (serial): @ref networkContributionsStationDrain counts the rows
+ *  2. The end of PASS B (serial): @ref GnssProcessor::networkContributionsStationDrain "networkContributionsStationDrain" counts the rows
  *     and entries of the stations the estimator took, per kind, and checks every
- *     assembled station's tags (@ref checkStationTags: present, set, in place, and in
+ *     assembled station's tags (@ref GnssProcessor::checkStationTags "checkStationTags": present, set, in place, and in
  *     agreement with the builders' own counters).
  *  3. The solve glue: every shared fold names its kind before the call; a within-epoch
  *     RAIM replay re-folds on a fresh arrowhead under the estimator's replay flag, and
  *     its re-folds are counted apart, so the table describes the primary build.
- *  4. The epoch tail (@ref networkContributionsEpochTail, the driver's one call): adds
+ *  4. The epoch tail (@ref GnssProcessor::networkContributionsEpochTail "networkContributionsEpochTail", the driver's one call): adds
  *     the epoch's shared folds, the clock pivots of the last solve and the gauges,
  *     merges the epoch into the run and writes the table once after the first emitted
- *     epoch; @ref networkContributionsRunEnd writes the run's table in the teardown tail.
+ *     epoch; @ref GnssProcessor::networkContributionsRunEnd "networkContributionsRunEnd" writes the run's table in the teardown tail.
  *
  * The readers: every reader that asks "what is this row" reads the
  * tag through filter/NetworkRowClassify (@c rowClassOfKind, @c classifyRow,
@@ -314,7 +314,7 @@ namespace GnssProcessor {
      * @brief The tag of a row or prior on a receiver phase bias, from its key.
      * @param kind The family.
      * @param key  The receiver phase-bias key.
-     * @return The tag with @ref rxPhaseBiasSignal of the key and no satellite.
+     * @return The tag with @ref GnssProcessor::rxPhaseBiasSignal "rxPhaseBiasSignal" of the key and no satellite.
      */
     RowTag rxPhaseBiasTag(ContributionKind kind, std::string_view key);
 
@@ -322,7 +322,7 @@ namespace GnssProcessor {
      * @brief The tag of a row or prior on a receiver code bias, from its key.
      * @param kind The family.
      * @param key  The receiver code-bias key.
-     * @return The tag with @ref rxCodeBiasSignal of the key and no satellite.
+     * @return The tag with @ref GnssProcessor::rxCodeBiasSignal "rxCodeBiasSignal" of the key and no satellite.
      */
     RowTag rxCodeBiasTag(ContributionKind kind, std::string_view key);
 
@@ -371,12 +371,12 @@ namespace GnssProcessor {
      * @brief Check one assembled station block's tags against its rows and its builders.
      *
      * Four checks, each counted on its own integrity line of the table:
-     *  - present: @ref untaggedRows;
+     *  - present: @ref GnssProcessor::untaggedRows "untaggedRows";
      *  - set: no tag is @c Unset;
      *  - in place: the split's data rows (rows @c 0 to @c n_data_rows) carry the
      *    observation kinds and no other row does; the coupling region (rows
      *    @c cpl_row_start to @c cpl_row_start + @c cpl_row_local_cols.size()) carries the
-     *    kinds of @ref contributionInCouplingRegion and no other row does; every tag's kind
+     *    kinds of @ref GnssProcessor::contributionInCouplingRegion "contributionInCouplingRegion" and no other row does; every tag's kind
      *    belongs to the channel of its vector (@c row_tags: station rows; @c carry_tags and
      *    @c carry_merged: the post-PD prior; @c prior_tags and @c prior_merged: the pre-PD
      *    prior);
@@ -481,7 +481,7 @@ namespace GnssProcessor {
      *
      * The counting rules:
      *  - a station assembled (@c ok, not @c threw) has its tags checked
-     *    (@ref checkStationTags), taken or not;
+     *    (@ref GnssProcessor::checkStationTags "checkStationTags"), taken or not;
      *  - a station the estimator took (an estimator index >= 0) has its rows counted, and
      *    its pre-PD prior entries with them (they fold in @c addStation);
      *  - its post-PD entries count only when the consume folded them
@@ -523,7 +523,7 @@ namespace GnssProcessor {
      *
      * The former parameters, by binding:
      *   - @p ctx = run.ctx: Run context (@c ctx.contributions).
-     *   - @p est = run.engines.est: The estimator (its @ref SharedFoldLog of this epoch).
+     *   - @p est = run.engines.est: The estimator (its @ref GnssProcessor::SharedFoldLog "SharedFoldLog" of this epoch).
      *   - @p log = run.log: The run logger.
      *   - @p traces = run.traces: Trace streams (the run manifest).
      *   - @p nc = run.nc: Network configuration (the manifest switch).

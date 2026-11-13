@@ -25,7 +25,6 @@ enum class StationStep : std::uint8_t;     // network/assembly/StationBuild.hpp
  * Step `glonass_anchors` of kStationBuildSteps (network/assembly/StationBuild.hpp); its kinds:
  * GloIfbAnchor, GloIonoAnchor. It returns at once unless `config_.enableGlonassNetwork()`.
  * Records: the anchor rows. The frozen text of networkPassB_'s produce loop below its bindings
- *.
  * @param build One station's build: the station and its slot writable, the run read only.
  * @return StationStep::Next.
  */
@@ -37,7 +36,6 @@ StationStep networkGlonassAnchorRows(StationBuild& build);
  * Step `sim_zero_iono` of kStationBuildSteps (network/assembly/StationBuild.hpp); its kinds:
  * SimZeroIono. It returns at once unless `config_.getNetworkConfig().sim_zero_iono_sigma_m >
  * 0.0`. Records: the rows. The frozen text of networkPassB_'s produce loop below its bindings
- *.
  * @param build One station's build: the station and its slot writable, the run read only.
  * @return StationStep::Next.
  */

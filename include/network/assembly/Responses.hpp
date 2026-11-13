@@ -10,21 +10,21 @@
  * mechanism's own words, and not others: the float-ambiguity design (docs/record/refound/RF-1_float_ambiguities_design.md, section 1.5) names four paths
  * for one ambiguity and counts two of them only in aggregate.  This header declares every
  * site that changes a carried instance in response to an event, one row per (kind, event,
- * policy, site) (@ref ResponseSite), with the condition under which the site can act on
- * the run (@ref responseSiteArmed) and the count of instances it changed
+ * policy, site) (@ref GnssProcessor::ResponseSite "ResponseSite"), with the condition under which the site can act on
+ * the run (@ref GnssProcessor::responseSiteArmed "responseSiteArmed") and the count of instances it changed
  * (@c NetworkServiceCounters::prm_resp, or the fold's disposition tally where the fold
  * already counts the response).  The registry reads the table to declare each kind's
  * policies per event (@c ParamSpec::on), and the run end writes the table with its counts
  * and a check: a site that responded on a run where it is not declared armed is a
  * declaration error, warned at the run end.
  *
- * The declared datum moves (@ref CarryMechanism) are the Stransform
+ * The declared datum moves (@ref GnssProcessor::CarryMechanism "CarryMechanism") are the Stransform
  * responses; their counts are the traversal's moved values per kind
- * (@ref carryMechanismArmed declares when each can act).
+ * (@ref GnssProcessor::carryMechanismArmed "carryMechanismArmed" declares when each can act).
  *
  * Phase 3a changes no number: the counters are increments beside the existing actions.
  * Phase 3b gives a policy one implementation where the sites already agree, byte for byte:
- * the gap test (@ref carryPastHorizon) and the gap prune (@ref carryGapPrune), against the
+ * the gap test (@ref GnssProcessor::carryPastHorizon "carryPastHorizon") and the gap prune (@ref GnssProcessor::carryGapPrune "carryGapPrune"), against the
  * horizon the registry declares per kind (@c ParamSpec::gap_horizon_s).
  * Not responses, and not in the table: the q rule's time update (the registry's q), the
  * numerical guards that decorrelate or skip a carried prior that fails a positive-definite
@@ -53,7 +53,7 @@ struct NetworkRunContext;        // network/state/RunContext.hpp
  * @brief Every site at which a carried instance responds to an event, one row per
  *        (kind, event, policy, code site).
  *
- * The names are the run-end table's; @ref responseSiteSpec gives the kind, event, policy,
+ * The names are the run-end table's; @ref GnssProcessor::responseSiteSpec "responseSiteSpec" gives the kind, event, policy,
  * the code site and what one count is.
  */
 enum class ResponseSite : int {
@@ -158,7 +158,7 @@ enum class ResponseCountSource : int {
  * @brief The declaration of one response site: a row of the run-end response table.
  */
 struct ResponseSiteSpec {
-    ResponseSite        site;
+    ResponseSite        site;         ///< the site this row declares
     const char*         name;         ///< short name (the run-end table, the manifest)
     NetworkParamKind    kind;         ///< the kind whose carried instance it changes
     ParamEvent          event;        ///< the event it responds to
@@ -169,7 +169,10 @@ struct ResponseSiteSpec {
     const char*         unit;         ///< what one count is
 };
 
-/// The declaration of @p s.
+/// @brief The declaration of @p s.
+/// @param s A response site of the table.
+/// @return The table row of @p s (kind, event, policy, count source, code site, unit); a reference to
+///         static storage that stays valid for the whole run.
 const ResponseSiteSpec& responseSiteSpec(ResponseSite s);
 
 /**
@@ -181,18 +184,33 @@ const ResponseSiteSpec& responseSiteSpec(ResponseSite s);
  * configuration otherwise.  A site that is armed may still never fire (no event on the
  * run); a site that fires on a run where it is not armed is a declaration error, which the
  * run end warns about.
+ *
+ * @param s      The response site to test.
+ * @param k      The run's knob snapshot (vehicle, readmit, clock monitor, datum and carry switches).
+ * @param config The run's configuration, for the switches the snapshot does not carry.
+ * @return True when the run's switches allow @p s to act; false when it is structurally idle.
  */
 bool responseSiteArmed(ResponseSite s, const NetworkKnobs& k, const GnssConfig& config);
 
 /**
  * @brief Whether the datum mechanism @p m can act on a run: the Stransform declaration of
  *        the kinds whose carried values it moves.
+ *
+ * @param m      The datum mechanism.
+ * @param k      The run's knob snapshot (handover and eq34 switches, the float vehicle).
+ * @param config The run's configuration (the a priori source, for the ephemeris re-level).
+ * @return True when the mechanism's switches are on, so its Stransform responses can occur.
  */
 bool carryMechanismArmed(CarryMechanism m, const NetworkKnobs& k, const GnssConfig& config);
 
 /**
  * @brief The border kinds whose carried @c prev_carry entries mechanism @p m moves
  *        (a mask of @c 1u << SharedParamKind).
+ *
+ * @param m The datum mechanism.
+ * @param k The run's knob snapshot (not consulted: the kinds a mechanism moves are fixed).
+ * @return The mask: the clock bit for the ephemeris re-level and the two handovers, the phase-bias
+ *         bit for the eq34 shift and the declared handover.
  */
 std::uint32_t carryMechanismBorderKinds(CarryMechanism m, const NetworkKnobs& k);
 
@@ -201,10 +219,22 @@ std::uint32_t carryMechanismBorderKinds(CarryMechanism m, const NetworkKnobs& k)
  *        local value site (an ambiguity, a receiver clock, a receiver phase or code bias);
  *        false otherwise (a regression term, a baseline or a pin target is a reference, not
  *        a carried instance).
+ *
+ * @param s            The carry site.
+ * @param[out] kind    The local kind (@c Ambiguity, @c RxClock, @c RxPhaseBias or @c RxCodeBias) when
+ *                     the function returns true; left unchanged otherwise.
+ * @return True when @p s holds a station-local carried value (an ambiguity value, a held ambiguity
+ *         value, or a receiver clock, phase bias or code bias value); false for any other site.
  */
 bool carrySiteLocalKind(CarrySite s, NetworkParamKind& kind);
 
-/// Add @p n responses at site @p s to a run-scope counter array.
+/**
+ * @brief Add @p n responses at site @p s to a run-scope counter array.
+ * @param[in,out] counts Run-scope response counters, indexed by @c ResponseSite (the
+ *                       @c NetworkServiceCounters::prm_resp array).
+ * @param s              The site that responded.
+ * @param n              Number of responses to add (default 1).
+ */
 inline void prmRespond(long long (&counts)[kResponseSites], ResponseSite s, long long n = 1) {
     counts[static_cast<int>(s)] += n;
 }
@@ -235,7 +265,7 @@ inline bool carryPastHorizon(double now_s, double last_seen_s, double horizon_s)
  *        instance of @p m that is past the horizon.
  *
  * Walks @p m from @c begin() to @c end() in the map's order.  For an entry that is
- * @ref carryPastHorizon at @p now_s it calls @p on_erase with the entry's iterator, then
+ * @ref GnssProcessor::carryPastHorizon "carryPastHorizon" at @p now_s it calls @p on_erase with the entry's iterator, then
  * erases the entry; any other entry is kept.  @p on_erase carries what the site does
  * beside the erase (its counters, its traces, the erase of a companion map's entry), and
  * runs while the entry is still in the map, so it may read the key and the value.  It must
@@ -268,7 +298,7 @@ long long carryGapPrune(Map& m, double now_s, double horizon_s, OnErase on_erase
 }
 
 /**
- * @brief The entity-table form of @ref carryGapPrune: walks field @p f
+ * @brief The entity-table form of @ref GnssProcessor::carryGapPrune "carryGapPrune": walks field @p f
  *        of table @p t in identity order (the order of the map it replaces) and resets each
  *        present value past the horizon, after calling @p on_erase(id, value).  The rows
  *        stay (an entity row is never erased).  @p on_erase must not insert rows.
@@ -296,7 +326,7 @@ long long carryGapPrune(T& t, std::optional<V> R::*f, double now_s, double horiz
 }
 
 /**
- * @brief The nested entity-table form of @ref carryGapPrune: field @p f of the cells of
+ * @brief The nested entity-table form of @ref GnssProcessor::carryGapPrune "carryGapPrune": field @p f of the cells of
  *        the nested map @p sub, in (identity, sub-key) order; @p on_erase(id, key, value).
  *
  * @param t         The entity table.
@@ -334,11 +364,16 @@ long long carryGapPrune(T& t, M R::*sub, std::optional<V> SR::*f, double now_s,
  */
 inline constexpr int kLatchCauses = 9;   ///< eight cause bits and "none"
 
-/// Short name of latch cause row @p i (bit order of @c RelevelEpochState, then "none").
+/// @brief Short name of latch cause row @p i (bit order of @c RelevelEpochState, then "none").
+/// @param i Cause row, 0 to @c kLatchCauses - 1 (the last row is "none").
+/// @return The cause's table name (@c "mw", @c "lli", @c "if_td", @c "t4_attrib", @c "t3_consensus",
+///         @c "windup", @c "gap_reentry", @c "gf_jump", @c "none"); @c "?" for an index out of range.
+///         Points to a string literal; never null.
 const char* latchCauseName(int i);
 
 /**
  * @brief The @c prm_disp / @c prm_departed index (@c SharedParamKind) of a border kind.
+ * @param kind The registry kind.
  * @return the index, or -1 for a station-local kind.
  */
 int responseBorderIndex(NetworkParamKind kind);
@@ -347,6 +382,9 @@ int responseBorderIndex(NetworkParamKind kind);
  * @brief The count of site @p s over the run, from its declared source.
  * @param C the run's counters
  * @param s the site
+ * @return The run total for @p s: the incremented response counter, the fold's disposition tally or
+ *         its departed tally, per the site's declared source; 0 when a tally source names a kind that
+ *         has no border index.
  */
 long long responseSiteCount(const NetworkServiceCounters& C, ResponseSite s);
 
@@ -382,10 +420,12 @@ int networkResponsesRunEnd(const NetworkRunEndView& v);
 
 /// @brief Run-scope counters of Responses, a base of NetworkServiceCounters (network/state/RunContext.hpp).
 struct ResponsesCounters {
-    long long prm_latch_keys[kLatchCauses]{};
-    long long prm_latch_carried[kLatchCauses]{};
-    long long prm_latch_unique = 0, prm_latch_unique_carried = 0, prm_latch_multi = 0;
-    long long prm_latch_epochs = 0;
+    long long prm_latch_keys[kLatchCauses]{};     ///< Latched free-epoch keys per cause (a key with several causes counts in each; the last slot is "none").
+    long long prm_latch_carried[kLatchCauses]{};  ///< Of those, the keys for which the response found a carried entry to act on.
+    long long prm_latch_unique = 0,               ///< Distinct latched keys over the run (each counted once, whatever its causes).
+              prm_latch_unique_carried = 0,       ///< Of those, the keys with a carried entry.
+              prm_latch_multi = 0;                ///< Latched keys that carried more than one cause.
+    long long prm_latch_epochs = 0;               ///< Epochs with a non-empty latch.
 };
 
 struct StationAssembly;   // network/driver/RunTypes.hpp

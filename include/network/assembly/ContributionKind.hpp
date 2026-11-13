@@ -108,7 +108,7 @@ namespace GnssProcessor {
         Unset,                    ///< No site named a kind: the default of every tag and fold record.
     };
 
-    /// Number of families: the @ref ContributionKind values before @c Unset (the size of the
+    /// Number of families: the @ref GnssProcessor::ContributionKind "ContributionKind" values before @c Unset (the size of the
     /// declaration table).
     inline constexpr std::size_t kContributionKinds =
         static_cast<std::size_t>(ContributionKind::Unset);
@@ -118,7 +118,12 @@ namespace GnssProcessor {
     using ContributionKindSet = std::uint64_t;
     static_assert(kContributionKinds <= 64, "ContributionKindSet holds one bit per kind");
 
-    /// The bit of kind @p k in a ContributionKindSet.
+    /**
+     * @brief The bit of kind @p k in a ContributionKindSet.
+     * @param k A family of the declaration table (not @c Unset, which has no bit).
+     * @return A mask with only the bit numbered by the underlying value of @p k set, for building
+     *         and testing a ContributionKindSet.
+     */
     constexpr ContributionKindSet kindBit(ContributionKind k) {
         return ContributionKindSet{1} << static_cast<unsigned>(k);
     }

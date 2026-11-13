@@ -156,11 +156,11 @@ using StationBuildFn = StationStep (*)(StationBuild& build);
 /// One row of the station build: one family of a station's contributions.
 struct StationBuildStep {
     const char*         name;    ///< Short name ("phase_datum_pins").
-    const char*         home;    ///< The family's file, by a legacy name (filter/Network<Family>), not a current path.
+    const char*         home;    ///< The family's file, by a legacy name (filter/Network\<Family\>), not a current path.
     ContributionKindSet kinds;   ///< The row and prior kinds this step can create; 0 for a record-only step.
     StationBuildFn      build;   ///< Gates itself at its first line.
 };
-inline constexpr std::size_t kStationBuildStepCount = 14;
+inline constexpr std::size_t kStationBuildStepCount = 14;  ///< Number of rows of @c kStationBuildSteps (the size of its array type).
 /// The type of a station build's step table.
 using StationBuildSteps = std::array<StationBuildStep, kStationBuildStepCount>;
 /// The station build, in walk order (src/core/network/assembly/StationBuild.cpp).
@@ -169,10 +169,13 @@ extern const StationBuildSteps kStationBuildSteps;
 /// An ambiguity column waiting for the station's local block (or its per-column fallback):
 /// written by the ambiguity step, read by the local-block step.
 struct PlPend {
-    Eigen::Index col; int amb_idx; const LocalCarry* lc;
+    Eigen::Index col;         ///< The ambiguity's column in the station's local block.
+    int amb_idx;              ///< The ambiguity's slot in the station's parameter set (the index into its linearization point).
+    const LocalCarry* lc;     ///< The carried entry the prior comes from (a pointer into the run's arc table).
     double var_eff;   ///< var + q·gap, before the tail
     double gap;   ///< clamped
-    std::string sat, signal;
+    std::string sat,          ///< RINEX satellite id of the ambiguity.
+                signal;       ///< Signal of the ambiguity's arc (RINEX observation code).
 };
 
 /// The carried-prior section of one station: the values its steps hand each other.  Built by
@@ -203,11 +206,11 @@ using StationCarryFn = void (*)(StationCarryFrame& carry);
 /// One row of the carried-prior section.
 struct StationCarryStep {
     const char*         name;    ///< Short name ("oracle_pin").
-    const char*         home;    ///< The family's file, by a legacy name (filter/Network<Family>), not a current path.
+    const char*         home;    ///< The family's file, by a legacy name (filter/Network\<Family\>), not a current path.
     ContributionKindSet kinds;   ///< The row and prior kinds this step can create.
     StationCarryFn      build;   ///< Gates itself at its first line.
 };
-inline constexpr std::size_t kStationCarryStepCount = 12;
+inline constexpr std::size_t kStationCarryStepCount = 12;  ///< Number of rows of @c kStationCarrySteps.
 /// The carried-prior section, in walk order.
 extern const std::array<StationCarryStep, kStationCarryStepCount> kStationCarrySteps;
 
@@ -382,12 +385,12 @@ struct StationBuildCounters {
     // those, keys with a carried entry at the response), the unique latched keys, the
     // keys with more than one cause, and the ambiguities the gap prune erased in the
     // epoch the stale-gap drop dropped them.
-    long long prm_resp[kResponseSites]{};
+    long long prm_resp[kResponseSites]{};  ///< Responses counted per site of the declared table (indexed by @c ResponseSite).
     /// Run total of inject-site free-epoch skips (relevel_free_epoch).  Armed with this
     /// at 0 on a slip-bearing run is a miswire: the drains latched but the inject never consulted, or no
     /// marked arc ever had a live carry.
     long long n_relevel_free_skips = 0;
-    int n_cpl_row_dump = 12;   // debug budget of the time update: one-shot assembled coupling-row dump
+    int n_cpl_row_dump = 12;   ///< debug budget of the time update: one-shot assembled coupling-row dump
 };
 
 } // namespace GnssProcessor

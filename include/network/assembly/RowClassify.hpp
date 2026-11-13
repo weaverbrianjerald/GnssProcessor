@@ -12,9 +12,9 @@
  *
  * ## Where a row's class comes from
  *
- * Every row of a station block carries a @ref RowTag, appended by the site that built
+ * Every row of a station block carries a @ref GnssProcessor::RowTag "RowTag", appended by the site that built
  * the row (network/assembly/Contributions.hpp).  The class is a function
- * of the tag's kind (@ref rowClassOfKind), read in one place.  It is not inferred from
+ * of the tag's kind (@ref GnssProcessor::rowClassOfKind "rowClassOfKind"), read in one place.  It is not inferred from
  * the row's coefficients, which filed the phase and code rows of a station-unique
  * (satellite, signal) as @c obs_other.
  *
@@ -33,11 +33,11 @@
  *  - @c pivot_pin / @c local_pin_row: the station constraint rows (ambiguity and eq34
  *    pins, GLONASS anchors, GIM and zero-ionosphere rows, SD-EWL rows) and the phase-colour prior
  *    rows: a hard gauge pin when the row's weight is at least
- *    @ref kNetPivotPinWeight, a soft local prior or anchor row otherwise.
+ *    @ref GnssProcessor::kNetPivotPinWeight "kNetPivotPinWeight", a soft local prior or anchor row otherwise.
  *  - @c cpl_row: the coupling rows and the whitened carried-prior block rows
- *    (@ref contributionInCouplingRegion); they are statements about the carry, not data.
+ *    (@ref GnssProcessor::contributionInCouplingRegion "contributionInCouplingRegion"); they are statements about the carry, not data.
  *
- * Only the four data classes feed the census and the fuse (@ref isDataRowClass).  A
+ * Only the four data classes feed the census and the fuse (@ref GnssProcessor::isDataRowClass "isDataRowClass").  A
  * healthy pivot pin has a standardized deviation of about 1e7 by design and would
  * dominate any statistic it entered.
  *
@@ -45,7 +45,7 @@
  *
  * The carried-phase RAIM pools (the post-fit pass, Raim.cpp, and the within-epoch
  * assess, RaimWithinEpoch.cpp) admit a row to the pool of an ambiguity column when its
- * coefficient on the column exceeds 0.5 and its kind is one @ref raimPoolAdmitsKind
+ * coefficient on the column exceeds 0.5 and its kind is one @ref GnssProcessor::raimPoolAdmitsKind "raimPoolAdmitsKind"
  * declares: the observation phase rows, the coupling and block carried-prior rows, and the
  * SD-EWL constraint rows.
  * The prior rows are in it on purpose until a later science decision changes that.  Every
@@ -53,7 +53,7 @@
  * row of any other kind that clears 0.5 is counted as refused (expected 0).
  *
  * The knob @c network.raim_pool_data_rows_only (default off) replaces the rule in
- * both pools by @ref raimPoolAdmitsRow's second setting: the observation phase rows only,
+ * both pools by @ref GnssProcessor::raimPoolAdmitsRow "raimPoolAdmitsRow"'s second setting: the observation phase rows only,
  * each to the pool of the column its tag names.  The refused counts then hold the
  * carried-prior and SD-EWL rows that cleared 0.5.
  */
@@ -73,7 +73,7 @@ class NetworkEstimator;
 struct StationAssembly;
 
 /// Family tag of a shared column, read once per epoch from the estimator's column
-/// identity (@ref sharedColumnFamily).  The families match the label prefixes of
+/// identity (@ref GnssProcessor::sharedColumnFamily "sharedColumnFamily").  The families match the label prefixes of
 /// NetworkEstimator::sharedColumnLabel ("SH" / "PB:" / "CB:" / "CLK:"); a clone of any
 /// kind (a clock clone "CLKC:"; a bias clone "PBC:" or "CBC:") and a
 /// shared-history column ("HIST:") are @c Other.
@@ -101,7 +101,7 @@ NetColFam sharedColumnFamily(const NetworkEstimator& est, Eigen::Index col,
                              std::string* sat = nullptr);
 
 /// Row class.  The enumerator order of the four data classes is the census's
-/// column order (@ref dataClassIndex); reordering them changes the trace header.
+/// column order (@ref GnssProcessor::dataClassIndex "dataClassIndex"); reordering them changes the trace header.
 enum class NetRowClass : unsigned char {
     ObsCode = 0,     ///< @c obs_code
     ObsPhase = 1,    ///< @c obs_phase
@@ -120,17 +120,28 @@ inline constexpr int kNetDataClasses = 4;
 /// and eq34 pins fold at 1e10.
 inline constexpr double kNetPivotPinWeight = 1e9;
 
-/// @return Whether @p c is a data class: an observation equation, an unclassified row
-///         or an SH↔slant tie row.  Pins and coupling rows are excluded.
+/**
+ * @brief Is a row class one of the four data classes of the census (@c kNetDataClasses)?
+ * @param c The row class.
+ * @return Whether @p c is a data class: an observation equation, an unclassified row
+ *         or an SH↔slant tie row.  Pins and coupling rows are excluded.
+ */
 inline constexpr bool isDataRowClass(NetRowClass c) {
     return static_cast<unsigned char>(c) < static_cast<unsigned char>(kNetDataClasses);
 }
 
-/// @return Census column index of a data class (0..3), or −1 for pins/coupling.
+/**
+ * @brief Census column of a data class.
+ * @param c The row class.
+ * @return Census column index of a data class (0..3), or −1 for pins/coupling.
+ */
 inline constexpr int dataClassIndex(NetRowClass c) {
     return isDataRowClass(c) ? static_cast<int>(c) : -1;
 }
 
+/// @brief The stable wire name of a row class: @c obs_code, @c obs_phase, @c obs_other,
+///        @c iono_sh_row, @c pivot_pin, @c local_pin_row or @c cpl_row.
+/// @param c The row class.
 /// @return The class's stable wire name (the string the attribution dumps and
 ///         the census events have always used).  Never null.
 const char* rowClassName(NetRowClass c);
@@ -160,7 +171,7 @@ bool isPhaseObservationKind(ContributionKind k);
  * | @c DataCode, @c DataCodeCompanion | @c obs_code |
  * | @c DataPhase, @c DataPhaseSecond | @c obs_phase |
  * | @c ShIonoTie | @c iono_sh_row |
- * | @c AmbiguityPin, the three eq34 rows, @c AnchorLevelHold, both GLONASS anchors, @c SimZeroIono, @c GimIono, @c SdEwl, @c PhaseColourBirth, @c PhaseColourBackstop | @c pivot_pin when @p w >= @ref kNetPivotPinWeight, else @c local_pin_row |
+ * | @c AmbiguityPin, the three eq34 rows, @c AnchorLevelHold, both GLONASS anchors, @c SimZeroIono, @c GimIono, @c SdEwl, @c PhaseColourBirth, @c PhaseColourBackstop | @c pivot_pin when @p w >= @ref GnssProcessor::kNetPivotPinWeight "kNetPivotPinWeight", else @c local_pin_row |
  * | @c CouplingScalar, the six @c Block*Carry kinds | @c cpl_row |
  * | every other kind (a diagonal prior or a shared kind, which no row should carry), and @c Unset | @c obs_other (unclassified) |
  *
@@ -198,7 +209,7 @@ std::string rowObservationCode(const RowTag& t);
  *                for a whitened row, its primary row's), written only while still empty
  *                and only when the tag names one, so a caller may pre-seed it.  Pass
  *                nullptr to skip.
- * @return @ref rowClassOfKind of the row's tag (@ref rowTagAt) and weight.
+ * @return @ref GnssProcessor::rowClassOfKind "rowClassOfKind" of the row's tag (@ref GnssProcessor::rowTagAt "rowTagAt") and weight.
  */
 NetRowClass classifyRow(const StationAssembly& R, Eigen::Index row, std::string* row_sat);
 
@@ -222,7 +233,7 @@ bool raimPoolAdmitsKind(ContributionKind k);
 
 /**
  * @brief The subject of a carried ambiguity column of a RAIM pool: its satellite and
- *        signal as a tag, for @ref raimPoolAdmitsRow.
+ *        signal as a tag, for @ref GnssProcessor::raimPoolAdmitsRow "raimPoolAdmitsRow".
  *
  * @param sat    The pool entry's RINEX satellite id (@c PlAmb::sat, "G05").
  * @param signal The pool entry's signal (@c PlAmb::signal, the ambiguity key's signal,
@@ -237,7 +248,7 @@ RowTag raimPoolColumnSubject(std::string_view sat, std::string_view signal);
  * @brief Does a row's tag name a column's satellite and signal?
  *
  * @param row    The row's tag.
- * @param column The column's subject (@ref raimPoolColumnSubject).
+ * @param column The column's subject (@ref GnssProcessor::raimPoolColumnSubject "raimPoolColumnSubject").
  * @return True when both tags name the same valid satellite and the same signal.  A
  *         default (unparsed) satellite or signal names nothing.
  */
@@ -248,10 +259,10 @@ bool rowTagNamesColumn(const RowTag& row, const RowTag& column);
  *        column, under both settings of @c network.raim_pool_data_rows_only.
  *
  *  - **Off** (today's declared rule): the row's coefficient on the column exceeds 0.5 and
- *    @ref raimPoolAdmitsKind admits its kind, so a whitened carried-prior row enters the
+ *    @ref GnssProcessor::raimPoolAdmitsKind "raimPoolAdmitsKind" admits its kind, so a whitened carried-prior row enters the
  *    pool of every column it clears.
- *  - **On**: the row is an observation phase row (@ref isPhaseObservationKind) whose tag
- *    names the column's satellite and signal (@ref rowTagNamesColumn).  The coefficient
+ *  - **On**: the row is an observation phase row (@ref GnssProcessor::isPhaseObservationKind "isPhaseObservationKind") whose tag
+ *    names the column's satellite and signal (@ref GnssProcessor::rowTagNamesColumn "rowTagNamesColumn").  The coefficient
  *    is not read: an observation phase row carries +1 on its own ambiguity column and
  *    nothing on any other, and the pools count, per phase row, every column on which the
  *    coefficient test and the tag disagree (@c RaimPoolAdmissionTally::noteOwnColumn,
@@ -260,7 +271,7 @@ bool rowTagNamesColumn(const RowTag& row, const RowTag& column);
  * @param row            The row's tag.
  * @param clears         Whether the row's coefficient on the column exceeds 0.5 in
  *                       magnitude (read with the knob off only).
- * @param column         The column's subject (@ref raimPoolColumnSubject; read with the
+ * @param column         The column's subject (@ref GnssProcessor::raimPoolColumnSubject "raimPoolColumnSubject"; read with the
  *                       knob on only).
  * @param data_rows_only The knob, as resolved for the run (@c NetworkKnobs).
  * @return Whether the row enters the column's pool.
@@ -295,6 +306,8 @@ struct SharedColumnMap {
  * @param est The estimator whose current epoch layout is being classified.
  * @param n   Shared-column count (@c est.numShared()); a non-positive value
  *            yields an empty map.
+ * @return The map for this epoch's layout: labels, families, satellites and the two SH mean
+ *         columns, all sized @p n; a default (empty, @c n = 0) map when @p n is not positive.
  */
 SharedColumnMap buildSharedColumnMap(const NetworkEstimator& est, Eigen::Index n);
 

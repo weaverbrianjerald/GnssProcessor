@@ -88,12 +88,12 @@ namespace GnssProcessor {
         /// Stations holding at least one receiver inter-signal code state, summed
         /// over epochs, and the peak count of distinct signals those states name.
         long long isc_station_epochs{ 0 };
-        long long isc_signals_max{ 0 };
+        long long isc_signals_max{ 0 };        ///< peak count of distinct signals those receiver states name.
         /// Peak distinct band digits carrying an extra code channel in one epoch, and
         /// the same peak over band digits 2 and above: the population whose satellite
         /// inter-signal correction the @c network.sat_isc_state knob decides.
         long long extra_code_bands_max{ 0 };
-        long long extra_code_bands_ge2_max{ 0 };
+        long long extra_code_bands_ge2_max{ 0 };  ///< the same peak over band digits 2 and above.
     };
 
     /**

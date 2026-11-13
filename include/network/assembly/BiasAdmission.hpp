@@ -5,7 +5,7 @@
  *        satellite code-bias (OSB) columns: admission versus station-local
  *        quarantine.
  *
- * The legacy W6 gate (@ref Application::networkAssemblyRegisterColumns_) admits
+ * The legacy W6 gate (Application::networkAssemblyRegisterColumns_ (@c GnssProcessor::Application::networkAssemblyRegisterColumns_)) admits
  * a per-(sat,signal) code-bias column whenever at least 2 present stations hold
  * its sat-bias state in the current epoch, and prunes every other pair back to a
  * station-local nuisance.  With BeiDou many (sat,signal) pairs are held by only
@@ -32,12 +32,12 @@
  *                  or rank gate.  This is the default class: pairs first seen
  *                  after the census window are quarantined automatically.
  *
- * Two admission tiers (see @ref runCensus):
+ * Two admission tiers (see @ref GnssProcessor::NetworkBiasAdmission::runCensus "runCensus"):
  *   - tier 1 (count):  a station supports a pair iff it supplies a usable raw
  *                      code observation in >= ceil(K_eff/2) census epochs (an
  *                      absolute sustained-support floor, which rejects 2-of-2
  *                      coverage from a gappy station); the pair is a candidate
- *                      iff #supporting stations >= effective_min =
+ *                      iff \#supporting stations >= effective_min =
  *                      max(2, min(min_stations, n_census_sta)).
  *   - tier 2 (IF-pin): per satellite, the tier-1 candidates must span >= 2
  *                      distinct carrier bands (the distinctness the clock IF pin
@@ -47,15 +47,15 @@
  *
  * This struct introduces no stochastic machinery: quarantined states keep the
  * existing birth seed, initial sigma, sat_code_bias_q process noise and warm
- * cache.  @ref runCensus is a pure scan over the synced-epoch vector already in
- * memory; the result is a POD latched once into @ref NetworkRunContext and read
+ * cache.  @ref GnssProcessor::NetworkBiasAdmission::runCensus "runCensus" is a pure scan over the synced-epoch vector already in
+ * memory; the result is a POD latched once into @ref GnssProcessor::NetworkRunContext "NetworkRunContext" and read
  * as a membership test at the registration site (only @c late_tracked changes
  * after the census).  Off by default (@c network.cb_admission); with the flag
  * off the census never runs (@c active stays false) and the legacy per-epoch
  * path is byte-identical.  Under @c network.streaming the census is skipped
  * with a warning and the legacy gate is used.
  *
- * Sibling of @ref NetworkSbasis / @ref NetworkPhaseDatum.  See
+ * Sibling of @ref GnssProcessor::NetworkSbasis "NetworkSbasis" / @c NetworkPhaseDatum.  See
  * docs/record/SPEC_cb_admission_card.md.
  */
 
@@ -93,7 +93,7 @@ struct NetworkBiasAdmission {
         std::string satellite;               ///< RINEX satellite id (e.g. "C21").
         std::string signal;                  ///< RINEX code obs id (e.g. "C2I").
         int         support{0};              ///< # stations supporting the pair (tier-1 sustained-support count).
-        Verdict     verdict{Verdict::LowCount};
+        Verdict     verdict{Verdict::LowCount};  ///< Census outcome for this pair (@c Admitted, or the tier that quarantined it).
     };
 
     std::set<std::string> admitted;          ///< Datum-grade "sat|sig" keys (fast membership test at the registration site).
@@ -108,7 +108,12 @@ struct NetworkBiasAdmission {
     int  sustained_floor{0};                 ///< ceil(K_eff/2): per-station epoch count a station needs to "support" a pair.
     bool active{false};                      ///< Flag armed and the census scanned >= 1 epoch.
 
-    /// @brief True iff @p key ("satellite|signal") was admitted as a shared column.
+    /**
+     * @brief True iff @p key ("satellite|signal") was admitted as a shared column.
+     * @param key Sat-bias key in the @c "satellite|signal" format of @c admitted.
+     * @return True when the key is in the admitted set; false for a quarantined or never-seen key
+     *         (and for every key while @c active is false, since the set is then empty).
+     */
     bool isAdmitted(const std::string& key) const { return admitted.count(key) != 0; }
 
     /**
@@ -211,7 +216,8 @@ struct BiasAdmissionCounters {
     // n_kp_epochs == 0 means the prior never reached a solve (no registered code
     // columns, or the W6 block never ran), which clean-looking log output would not
     // reveal.
-    size_t n_kp_epochs = 0, n_kp_cols = 0;
+    size_t n_kp_epochs = 0,   ///< Epochs on which the physical-bound prior was folded.
+           n_kp_cols = 0;     ///< Cumulative count of prior columns folded over those epochs.
     bool   kp_margin_logged = false;   ///< one-shot latch for the K2 margin check
 
     // Tallies of the W6 code-bias admission census (CB-ADM; run-end observability).
@@ -219,7 +225,9 @@ struct BiasAdmissionCounters {
     // on run with n_cb_quarantined_census == 0 is a miswire.  n_cb_late_quarantined
     // counts distinct (sat,signal) keys first seen at the registration site after the
     // census window (implicitly quarantined).
-    std::size_t n_cb_admitted = 0, n_cb_quarantined_census = 0, n_cb_late_quarantined = 0;
+    std::size_t n_cb_admitted = 0,              ///< Pairs admitted as shared columns at census close.
+                n_cb_quarantined_census = 0,    ///< Distinct pairs quarantined at census close.
+                n_cb_late_quarantined = 0;      ///< Distinct keys first seen at the registration site after the census.
 };
 
 } // namespace GnssProcessor

@@ -11,16 +11,16 @@
  * Three decisions in that mechanism are pure functions of their inputs, so they
  * are kept here and unit-tested directly (tests/network/test_network_second_code_scope.cpp):
  *
- *  - @ref secondCodeAllowEntryValid: what the loader accepts in
+ *  - @ref GnssProcessor::secondCodeAllowEntryValid "secondCodeAllowEntryValid": what the loader accepts in
  *    `network.second_code_signals` (a 3-character code type on band 1; band 2 is
  *    refused because it would activate the untested bridging
  *    path of `network.sat_isc_state`);
- *  - @ref secondCodeCompanions: which codes a station contributes for one
+ *  - @ref GnssProcessor::secondCodeCompanions "secondCodeCompanions": which codes a station contributes for one
  *    satellite, given what it reports, what it already selected, and the
  *    allow-list;
- *  - @ref secondCodeCellEdges: the opening (re-coupling) and closing (decoupling)
+ *  - @ref GnssProcessor::secondCodeCellEdges "secondCodeCellEdges": the opening (re-coupling) and closing (decoupling)
  *    edges of the (station, satellite, signal) cells the mechanism opens and closes;
- *  - @ref secondCodeIscRows: which of a station's code rows route through a receiver
+ *  - @ref GnssProcessor::secondCodeIscRows "secondCodeIscRows": which of a station's code rows route through a receiver
  *    inter-signal state, the rows the station split scales, tags and counts
  *    (tests/network/test_second_code_system_aware.cpp).
  *
@@ -195,7 +195,7 @@ struct SecondCodeScopeCounters {
         /// added rows without ever adding a column the wire did not already carry.
         long long cols_via_companion = 0;
     };
-    SecondCode second_code;
+    SecondCode second_code;  ///< The run tallies of the second code channel.
 };
 
 }  // namespace GnssProcessor
