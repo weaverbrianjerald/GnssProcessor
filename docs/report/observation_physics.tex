@@ -240,7 +240,7 @@ model applies only to GPS Block~IIF and IIR satellites and only when
 in the real-data reference configuration, listed as a documented
 exception in the simulated-network one because the simulated data carry no
 noon-turn law).  The model is described in
-\texttt{docs/refound/NTA\_noon\_turn\_attitude\_2026-10-16.md}.
+\texttt{docs/record/refound/NTA\_noon\_turn\_attitude\_2026-10-16.md}.
 
 \paragraph{Eclipse gating.}
 The body frame above assumes a known yaw angle.  That assumption fails
@@ -459,7 +459,7 @@ boresight}.  RTKLIB's $(-,+)$ pairing is stated with
 $\bm{y}_\rx = -\mathrm{East}$ and is the same construction; with the
 $+\mathrm{East}$ convention used here it becomes $(-,-)$.
 The construction with both signs negative \cite{wu1993effects} replaced a
-$(+,+)$ pairing on 2026-08-21 (\texttt{docs/SPEC\_phase\_windup\_sign.md});
+$(+,+)$ pairing on 2026-08-21 (\texttt{docs/record/SPEC\_phase\_windup\_sign.md});
 the revision is declared as \texttt{nominal-wu93} (see the paragraph on
 the shared convention below).
 
@@ -571,7 +571,7 @@ are kept with their satellite, epoch and gap.  The setting is
 UNVALIDATED in \texttt{docs/CONFIG\_promotion\_ledger.json}: in a six-hour real-data case
 the restarts fell from 139 to 91 and the refloated arcs from 116 to 23
 with no change in the test station beyond \SI{0.3}{\milli\metre}
-(\texttt{docs/refound/WGB\_windup\_gap\_bridge\_2026-10-17.md}).  The
+(\texttt{docs/record/refound/WGB\_windup\_gap\_bridge\_2026-10-17.md}).  The
 simulator injects wind-up through the same function, so no simulated data
 can grade it.
 

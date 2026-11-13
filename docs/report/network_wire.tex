@@ -138,7 +138,7 @@ and an armed skip writes an \texttt{mw\_wl\_reflag} event row with action
 \texttt{network.cycle\_slip.mw\_detect} (the loader disarms it with a
 warning otherwise), is a forward-only response policy exempt from the
 snapshot fingerprint, and is armed on both reference configurations
-(\texttt{docs/refound/MRF\_mw\_reflag\_skip\_2026-10-28.md}).
+(\texttt{docs/record/refound/MRF\_mw\_reflag\_skip\_2026-10-28.md}).
 
 \subsection{Gap re-entry, keyed per signal}\label{sec:net-wire-gap}
 
@@ -393,7 +393,7 @@ counter reports an answer that did not happen.
 \paragraph{One mode for the network and the user.}
 The measured gain of accumulation is in the user's own rows; the emitted
 product alone is neutral
-(\texttt{docs/refound/WUP\_windup\_accumulated\_promotion\_2026-10-01.md}).
+(\texttt{docs/record/refound/WUP\_windup\_accumulated\_promotion\_2026-10-01.md}).
 The S line of the emitted product declares both the wind-up construction
 (\texttt{windup\_id} = \texttt{nominal-wu93}) and the mode
 (\texttt{wumode=}: \texttt{off}, \texttt{fractional} or
@@ -490,7 +490,7 @@ EraseAndRebirth on a decouple event: this response erases where the slip
 responses drop. Phase rows keep their weight; they have their own tiers.
 The bounded variant \texttt{gross\_los\_bound} (freeze instead of erase)
 was falsified and stays off
-(\texttt{docs/refound/RF-3\_code\_row\_qc\_2026-09-22.md}).
+(\texttt{docs/record/refound/RF-3\_code\_row\_qc\_2026-09-22.md}).
 
 \paragraph{Two halves and the emission exclusion.}
 The erase must follow the carry harvest (\texttt{networkLeveling}), or
@@ -527,7 +527,7 @@ The common mode of the satellite clocks of one constellation is the
 clock-ensemble gauge: a user's receiver clock absorbs it identically on
 code and phase. The solve re-realises it freely, so the raw emitted clock
 moves by a common amount from epoch to epoch that carries no physical
-content (\texttt{docs/SPEC\_clock\_emit\_rebase.md}). For constellation $k$ let
+content (\texttt{docs/record/SPEC\_clock\_emit\_rebase.md}). For constellation $k$ let
 $c^\sat_{\mathrm{held}}(t^-)$ be the previous emitted value and $A_k$ the
 frame offset. The median innovation of the fresh, unforced keys (at least
 \texttt{min\_common} = 4 of them),
@@ -627,7 +627,7 @@ by \texttt{SsrPhaseBiasEntry::hold\_generation} in the in-process store,
 and by \texttt{pbhold=} on the S line (1 plain, 2 phase-clock mode, 3
 smoothed). The solve and the C and B records are byte-identical with the
 setting on. The premise, graded against truth
-(\texttt{docs/refound/PBH\_phase\_bias\_hold\_2026-09-19.md}): the phase-bias
+(\texttt{docs/record/refound/PBH\_phase\_bias\_hold\_2026-09-19.md}): the phase-bias
 motion within an arc is error that adds to the clock error. Like the
 \texttt{iode=} cutover, the contract states that the value has not
 changed and names the epoch at which that statement restarts; handover
@@ -698,7 +698,7 @@ drift the user's float ambiguities cannot follow. Under the phase-clock
 mode the move shifts $\tilde c^\sat$, hence $P$, by the same amount (unless
 common to the constellation): $C - P$ stays and the level reaches the code
 side only
-(\texttt{docs/refound/LAH\_level\_aware\_hold\_2026-09-29.md},
+(\texttt{docs/record/refound/LAH\_level\_aware\_hold\_2026-09-29.md},
 \texttt{EXL\_exact\_update\_lah\_promotion\_2026-10-01.md}).
 
 \paragraph{Limitation.}
@@ -839,7 +839,7 @@ sighting lacks prior state only on a new row). The update's post-fit peel
 then attributed the residual to other satellites, reset their ambiguities
 and could exclude the faulty satellite's code rows; one real-data epoch moved
 the position by about \SI{490}{m}
-(\texttt{docs/refound/PBF\_pb\_hold\_presence\_edges\_2026-09-28.md}). With
+(\texttt{docs/record/refound/PBF\_pb\_hold\_presence\_edges\_2026-09-28.md}). With
 \texttt{processing.ssr\_pb\_hold\_presence\_flip}, derived from
 \texttt{network.closed\_loop.pb\_hold\_presence\_flip}, a claimed key skips
 only the counter reaction, which the hold owns, and its freshness edge runs
@@ -867,7 +867,7 @@ the derived configuration of the in-process user is in
 Armed on both reference configurations through the promotion ledger
 (\texttt{docs/CONFIG\_promotion\_ledger.json}): gap re-entry per row
 (\texttt{docs/record/cards/slip/CARD-G-GAP-REENTRY-RELEVEL.md}), per signal
-(\texttt{docs/refound/GRS\_gap\_reentry\_per\_signal\_2026-09-20.md}) and with
+(\texttt{docs/record/refound/GRS\_gap\_reentry\_per\_signal\_2026-09-20.md}) and with
 the tracker's band naming
 (\texttt{GRK\_gap\_reentry\_key\_mismatch\_2026-09-22.md}); the MW re-flag
 skip; the re-admission horizon and its mirrors
@@ -876,7 +876,7 @@ with its restart response; the gross line-of-sight screen with its cold bound;
 the generation hold in its phase-clock mode; the held clock frame, the clock
 step test, the clock discontinuity counter and the quality channel; the
 user's presence edges. The baseline with these settings
-(\texttt{docs/refound/BOF\_built\_off\_follow\_through\_2026-10-28.md}), over a
+(\texttt{docs/record/refound/BOF\_built\_off\_follow\_through\_2026-10-28.md}), over a
 6~h run: the test station WTZZ00DEU on real data, median 3-D position error
 per hour 0.059, 0.012, 0.023, 0.012, 0.017 and 0.012~m; the test station
 SZZ000SIM on the simulated network, graded from the run start, 0.137, 0.072,

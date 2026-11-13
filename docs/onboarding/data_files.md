@@ -2,7 +2,7 @@
 
 How input files (RINEX, products, downloads) are located. The section File management of [`CLAUDE.md`](../../CLAUDE.md) keeps the rules a session needs every time (the `data_source` modes, date selection, path precedence). This page holds the full text, which moved verbatim out of `CLAUDE.md` on 2026-11-02 (from main `86f9125`; a first pass of 2026-10-24 is kept under the git tag `archive/inspiring-torvalds-2026-10-24`).
 
-Input-file location goes through one class — `PathResolver` — driven
+Input-file location goes through one class, `PathResolver`, driven
 by a single top-level config field, `data_source`.  Both modes share
 the same on-disk layout (date-first); they differ only in how files
 get there (bundled fixtures vs automatic downloads).
@@ -31,7 +31,7 @@ get there (bundled fixtures vs automatic downloads).
   `ProductResolver`, which builds IGS long-name URLs from
   `data_download.{year, doy, station, product_source, product_type}`
   and downloads any missing products from CDDIS into
-  `data_download.data_root`.  Same layout — a directory populated by
+  `data_download.data_root`.  Same layout: a directory populated by
   internal-mode bootstrap is a perfectly valid production cache and
   vice versa.
 
@@ -58,7 +58,7 @@ at the CDDIS netrc-creation guide.
 
 **crx2rnx (Hatanaka decompression).** Python data scripts decompress
 via the **`hatanaka`** library (pinned in `requirements.txt`; handles
-RINEX 2/3/**4** — standalone crx2rnx 4.0.x rejects RINEX 4), with the
+RINEX 2/3/**4**, standalone crx2rnx 4.0.x rejects RINEX 4), with the
 external exe as legacy fallback. The C++ production path shells out to
 RNXCMP `crx2rnx` (output captured; failures logged with exit code);
 exe resolution: `data_download.crx2rnx_path` → well-known dirs (incl.
@@ -71,7 +71,7 @@ Either mode produces a `PathResolver::ResolvedPaths` struct that the
 `setObservationPath` / `setNavigationPath` / `setProductPaths` /
 `setBaselineReferenceRinexPath` / `setBaselineRoverRinexPath`
 setters.  Path resolution runs once per process via
-`Application::resolveData()` — for PPP / PPP-RTK from `run()`, for
+`Application::resolveData()`: for PPP / PPP-RTK from `run()`, for
 baseline modes from `runBaseline()` (which dispatches before the
 generic resolveData call site).
 
@@ -104,17 +104,17 @@ supply manually" message at the end with the destination paths.
 reference ECEF, rover station, year/DOY) from
 `include/config/BaselineFixtures.hpp`:
 
-- `IGS_Pasadena` (default) — Caltech (CIT100USA) vs JPL (JPLM00USA),
+- `IGS_Pasadena` (default): Caltech (CIT100USA) vs JPL (JPLM00USA),
   ~10 km, 2024-DOY129.  Both stations on CDDIS daily archive;
   bootstrap fetches them automatically.
-- `OSU_Campus` — Local OSU survey (NARY ref + 233 rover), ~340 m,
+- `OSU_Campus`: Local OSU survey (NARY ref + 233 rover), ~340 m,
   2023-DOY321.  Not on any public archive; user supplies the obs
   files manually under `data/2023-321/obs/<station>/`.
-- `Custom` — disable presets entirely; every baseline field must be
+- `Custom`: disable presets entirely; every baseline field must be
   set explicitly in the JSON config.
 
 The preset only fills fields the user left blank in the
-`baseline.{reference,rover}` JSON block — explicit values always
+`baseline.{reference,rover}` JSON block: explicit values always
 win.  The preset's year/doy also seeds `data_download.{year,doy}`
 when the user hasn't typed their own.  Adding a preset:
 register it in `BaselineFixtures.hpp`, then add matching

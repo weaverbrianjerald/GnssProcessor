@@ -13,6 +13,28 @@
 $pdf_mode  = 1;     # produce PDF via pdflatex
 $bibtex_use = 2;    # run biber; remove .bbl on a full clean
 
+# The four code-derived fragments in generated/ are git-ignored and \input by
+# main.tex and generated_tables.tex.  Create them with scripts/gen_report_tables.py
+# when any is missing (a fresh clone); `build.ps1 -Regen` / `build.sh --regen`
+# refresh them on demand.
+{
+    my @fragments = map { "generated/$_.tex" }
+        qw(processing_modes config_toggles slip_detectors state_keys);
+    if (grep { !-e $_ } @fragments) {
+        my $script = '../../scripts/gen_report_tables.py';
+        my $done = 0;
+        my @tried;
+        foreach my $py ('python', 'C:/Python313/python.exe') {
+            push @tried, "$py $script";
+            if (system($py, $script) == 0) { $done = 1; last; }
+        }
+        die "latexmkrc: generated/*.tex fragments are missing and could not be created "
+          . "(tried: " . join('; ', @tried) . "). Run `python scripts/gen_report_tables.py` "
+          . "from the repository root.
+" unless $done;
+    }
+}
+
 @default_files = (
     'main.tex',                 # combined volume (built first: provides main.aux)
     'foundations.tex',

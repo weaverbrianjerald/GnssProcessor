@@ -4,7 +4,7 @@ C++17 GNSS post-processor and real-time engine. Supports PPP and PPP-RTK (uncomb
 
 ## Build
 
-**Visual Studio 2026 Enterprise (v18) + CMake + Ninja. VS 2022 is RETIRED —
+**Visual Studio 2026 Community (v18) + CMake + Ninja, compiler pinned to MSVC 14.51 (2026-11-12). VS 2022 is RETIRED —
 standing user directive, 2026-08-12. Do not invoke the 2022 toolchain even
 though it is still installed on disk.**
 
@@ -375,7 +375,7 @@ Input-file location goes through one class, `PathResolver` (`include/products/Pa
 
 ## Known state
 
-- **Test suite.** Debug `gnss_tests.exe`: 3,842 cases in 527 suites, 3,809 passed, 33 skipped (fixture-gated), 0 failed (measured 2026-11-07, card PES section 8); `gnss_simulator_selftest` 99 of 99 (measured 2026-11-02, card BDG gate G5); re-measure with the Debug build. It guards structure and non-regression (new work is developed default-OFF / byte-identical), NOT end-to-end estimation accuracy: confidence for numerical changes comes from a clean build + field runs graded on datum-invariant quantities + trace inspection. Every suite name is owned by exactly one file; prefer a new file over widening one.
+- **Test suite.** Debug `gnss_tests.exe`: 4,256 cases in 561 suites, 4,252 passed, 4 skipped (fixture-gated), 0 failed (measured 2026-11-13, 2564 s); `gnss_simulator_selftest` 99 of 99 (measured 2026-11-02, card BDG gate G5); re-measure with the Debug build. It guards structure and non-regression (new work is developed default-OFF / byte-identical), NOT end-to-end estimation accuracy: confidence for numerical changes comes from a clean build + field runs graded on datum-invariant quantities + trace inspection. Every suite name is owned by exactly one file; prefer a new file over widening one.
 
 ## Entry points worth knowing
 

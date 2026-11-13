@@ -4133,8 +4133,8 @@ namespace GnssProcessor {
         ///        path regardless of integer cleanliness.
         ///
         /// Without it, PASS A admits an MW refloat candidate only on
-        /// @code r.slip_wl_known && r.slip_wl_cycles != 0
-        ///       && r.slip_frac <= turbo_edit_frac_max @endcode, the T0 integer
+        /// `r.slip_wl_known && r.slip_wl_cycles != 0 && r.slip_frac <= turbo_edit_frac_max`,
+        /// the T0 integer
         /// repair gate, re-used on a path whose consumer (the refloat drain) never
         /// applies the integer.  How cleanly a step rounds says nothing about how
         /// far above the noise it stood: a -99 cycle L5 slip flagged at 78x its

@@ -108,6 +108,7 @@ docs/report/*.out
 docs/report/*.run.xml
 docs/report/*.toc
 docs/report/*.synctex.gz
+docs/report/*.bbl-SAVE-ERROR
 # Code-generated table fragments (scripts/gen_report_tables.py); the
 # authored generated_tables.tex wrapper that \input's them is kept.
 docs/report/generated/

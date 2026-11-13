@@ -5,7 +5,7 @@ files. After this page, a network run's tables, its stages and the place a given
 quantity lives can be found without reading the driver.
 
 Pages 1 and 2 come first. This page grows with the reorganization of the network
-producer (card NOM, `docs\refound\NOM_network_object_model_2026-10-08.md`): each step of
+producer (card NOM, `docs\record\refound\NOM_network_object_model_2026-10-08.md`): each step of
 that card adds a table or an object here, and the sections marked *in progress* say what
 is not yet organized.
 

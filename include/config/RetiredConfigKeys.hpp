@@ -30,7 +30,7 @@
  * A key deleted from the loader later gets its row here in the same commit, under a family
  * for its deletion.  A row leaves only if its name returns to the loader as a live key.
  *
- * The table is in this header, not in a src/core/config/*.cpp, on purpose:
+ * The table is in this header, not in a .cpp file of src/core/config/, on purpose:
  * scripts/loader_keys.py and scripts/comment_gate.py read every string literal of those files
  * as a key the loader reads, so a retired key spelled there would read as live and
  * scripts/rapid_arm.py make would stop refusing it.

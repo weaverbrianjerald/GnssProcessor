@@ -11,7 +11,7 @@ New contributors start at [docs/onboarding](docs/onboarding/README.md).
 
 ## Quick start
 
-Requirements: Windows, Visual Studio 2026, vcpkg at `C:\vcpkg`, Python 3.13. Details
+Requirements: Windows, Visual Studio 2026 Community (with the component "MSVC Build Tools v14.51 for x64/x86"), vcpkg at `C:\vcpkg`, Python 3.13. Details
 and troubleshooting are in [Setup](docs/onboarding/01_setup.md).
 
 ```powershell

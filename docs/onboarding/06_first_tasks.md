@@ -2,8 +2,8 @@
 
 A list of small, real, open tasks on the single-receiver PPP and real-time path. Each is
 the size of the [worked example](03_worked_example.md) or smaller, and each was checked
-against the code on 2026-09-19 and again on 2026-10-14, after the reorganization of the
-single-receiver code (card UOM). File and line references drift; the function or symbol
+against the code on 2026-09-19, again on 2026-10-14 after the reorganization of the
+single-receiver code (card UOM), and on 2026-11-13. File and line references drift; the function or symbol
 name is the reliable anchor.
 
 A task is chosen together with a maintainer, who also confirms that nobody else has

@@ -969,10 +969,13 @@ if(DOXYGEN_FOUND)
     set(DOXYGEN_PROJECT_BRIEF "A GNSS processing application for PPP and PPP-RTK.")
     set(DOXYGEN_GENERATE_HTML YES)
     set(DOXYGEN_GENERATE_LATEX NO)
+    # The doxygen-awesome theme ships in the repository (docs/css), so the HTML is
+    # styled on every machine.  The front page is the repository README.
     set(DOXYGEN_HTML_EXTRA_STYLESHEET
-        "C:/temp/doxygen/doxygen-awesome-css/doxygen-awesome.css"
-        "C:/temp/doxygen/doxygen-awesome-css/doxygen-awesome-sidebar-only.css"
+        "${CMAKE_SOURCE_DIR}/docs/css/doxygen-awesome.css"
+        "${CMAKE_SOURCE_DIR}/docs/css/doxygen-awesome-sidebar-only.css"
     )
+    set(DOXYGEN_USE_MDFILE_AS_MAINPAGE "${CMAKE_SOURCE_DIR}/README.md")
 
     # --- Tier 1: auto-generated structure graphs (Graphviz / dot) ------------
     # These are *structure* graphs (class collaboration, include/dir trees,
@@ -1017,6 +1020,7 @@ if(DOXYGEN_FOUND)
     endif()
 
     doxygen_add_docs(docs
+        ${CMAKE_SOURCE_DIR}/README.md
         ${CMAKE_SOURCE_DIR}/include
         ${CMAKE_SOURCE_DIR}/src
         COMMENT "Generating Doxygen documentation for GNSS Processor"

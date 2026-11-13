@@ -15,6 +15,12 @@ git diff main...origin/example/stochastic-model            # every line
 
 Each stage is attempted first and then compared with the branch.
 
+The branch is a frozen reading copy cut from `6f2a5d3` (2026-09-15). It is compared,
+never merged or rebased: it conflicts with current `main` in `CMakeLists.txt`,
+`GnssConfig.hpp`, `GnssConfigTypes.hpp`, `StochasticModel.hpp` and `stochastic_qc.tex`
+(1142 commits behind on 2026-11-13). `git diff main...example/stochastic-model` shows
+only the example's own changes. Line numbers on `main` differ from the branch.
+
 | Stage | Task | Time |
 | --- | --- | --- |
 | [0](#stage-0-understand-the-change) | Understand the math and locate the code | 30 min |
@@ -298,6 +304,9 @@ build\x64-Debug\gnss_tests.exe
 The run prints thousands of log lines; only the last three matter. Any `[  FAILED  ]`
 line is resolved before the next stage. `SKIPPED` tests need files from `data\`; with
 the bootstrap data in place only one or two remain.
+
+Measured 2026-11-13 on the current code: 4256 tests from 561 test suites, 4252 passed,
+4 skipped, 0 failed, 2564055 ms total (a loaded machine).
 
 **Observe one failure.** Change `2.5` to `2.6` in the test, rebuild, run, read the
 failure message, and change it back. A passing test is only trusted once its failure

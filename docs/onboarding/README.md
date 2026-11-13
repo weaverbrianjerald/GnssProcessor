@@ -50,7 +50,7 @@ These pages are looked up, not read in order.
 ## Out of scope at the start
 
 About two thirds of the repository belongs to a multi-station network research program:
-`docs\refound\`, `docs\cards\`, `docs\archive\`, most of `config\` and `scripts\`, every
+`docs\refound\`, `docs\cards\`, `docs\record\`, most of `config\` and `scripts\`, every
 file under `include\network\`, `src\core\network\` and `tests\network\`, and `CLAUDE.md`. It is a careful scientific record, but it is not
 the starting point. The [code tour](02_code_tour.md#what-to-skip) lists what to skip. When a
 task does touch the network, the [network tour](07_network_tour.md) is the entry point; the
