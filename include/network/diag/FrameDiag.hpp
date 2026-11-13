@@ -7,13 +7,13 @@
  * Two measure-only per-epoch diagnostics for explaining why a collapse of `a00`
  * (the degree-0 SH-VTEC coefficient) fires:
  *
- *  - @ref networkShSpectrum: the reduced shared-normal spectrum, with the
+ *  - @ref GnssProcessor::networkShSpectrum "networkShSpectrum": the reduced shared-normal spectrum, with the
  *    smallest direction's eigenvector mass partitioned across the clock /
  *    code-bias / phase-bias / SH-VTEC column families.  The working hypothesis is
  *    that an epoch's re-tap/release pattern momentarily releases a weakly
  *    resisted joint clock↔iono↔field mode; the direct test is whether the smallest
  *    eigenvalue drops and its direction spans both families at the collapse epoch.
- *  - @ref networkPostfitSigma0: a robust post-fit variance factor over the
+ *  - @ref GnssProcessor::networkPostfitSigma0 "networkPostfitSigma0": a robust post-fit variance factor over the
  *    residuals of every station.  The `sigma0` column of `network_epoch_status.csv`
  *    publishes `sigma0_adapt`, which is computed only inside the within-epoch RAIM
  *    block (`if (within_epoch_armed && carry_warm)`); with that RAIM off it reads
@@ -26,7 +26,7 @@
  * `SnapshotFingerprint.cpp`), so both may be armed on a resume against an untraced
  * snapshot.
  *
- * A third function, @ref networkDatumInfoRatio, runs unconditionally from the
+ * A third function, @ref GnssProcessor::networkDatumInfoRatio "networkDatumInfoRatio", runs unconditionally from the
  * rank gate; see its own documentation.
  *
  * Free functions over the run context; they own no state (every counter is a
@@ -108,7 +108,7 @@ void networkShSpectrum(NetworkRun& run, const NetworkEpoch& ep);
  * and phase pools.
  *
  * Row classification: each row's class comes from its contribution
- * tag (@c StationAssembly::row_tags, read through @ref rowClassOfKind in
+ * tag (@c StationAssembly::row_tags, read through @ref GnssProcessor::rowClassOfKind "rowClassOfKind" in
  * network/assembly/RowClassify), not from the columns it touches:
  *  - an SH-VTEC to slant-ionosphere tie row is excluded from all three pools (about
  *    70 to 90 % of those rows exceed 3σ by construction, because the single-layer SH
@@ -293,8 +293,8 @@ struct FrameDiagCounters {
     // pass visited but could attribute to neither family (not written).  All are
     // needed: "0 written under an armed trace" must be visible, and a non-zero
     // unattributed count says which rows the dump does not carry.
-    long long pf_rows_written      = 0;
-    long long pf_rows_code         = 0;   ///< …of which kind=code
+    long long pf_rows_written      = 0;   ///< data rows written to the signed per-row dump (code and phase)
+    long long pf_rows_code        = 0;   ///< …of which kind=code
     long long pf_rows_phase        = 0;   ///< …of which kind=phase
     long long pf_rows_no_elev      = 0;   ///< …written with an empty elev_deg (station absent from the modeled set, or no satellite on the row)
     long long pf_rows_unattributed = 0;   ///< rows attributed to neither family (the row tag is not an observation: pins, local prior and anchor rows, unclassified rows); counted, not written

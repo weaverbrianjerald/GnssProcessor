@@ -102,15 +102,18 @@ void networkShDevCarryAge(NetworkRun& run, const NetworkEpoch& ep);
 struct ShDevVtecCounters {
     // Run-end counters (inert wiring shows only through them): warm-prior harvests,
     // cold seeds, slip-funnel resets, and no-information harvest skips (V̂ ≥ P_pred + f²).
-    long long shdev_warm_total = 0, shdev_cold_total = 0,
-              shdev_slip_resets_total = 0, shdev_nodata_total = 0;
+    long long shdev_warm_total = 0,          ///< harvests that found a carried entry and updated it (entry time already set)
+              shdev_cold_total = 0,          ///< harvests that seeded a fresh entry at steady state (no carried entry)
+              shdev_slip_resets_total = 0,   ///< carried entries erased by a slip (raw-confirmed, or any funnel slip when the d5 keep is off)
+              shdev_nodata_total = 0;        ///< harvests carrying no information (V-hat at or above the carried variance plus floor)
     // De-mean: epochs the global de-mean applied, station-mean removals, and
     // Σ|g| for the run-end mean |g|.
-    long long shdev_demean_epochs_total = 0, shdev_demean_sta_total = 0;
-    double    shdev_demean_abs_g_sum = 0.0;
+    long long shdev_demean_epochs_total = 0,  ///< epochs in which the global de-mean applied
+              shdev_demean_sta_total = 0;     ///< station-mean removals summed over those epochs
+    double    shdev_demean_abs_g_sum = 0.0;   ///< sum over de-mean epochs of |g| (global common mode, TECU); divide by the epoch count for the mean
     // Re-taps without a raw-confirmed slip that kept the level (variance re-tap) instead of
     // erasing it.  shdev_slip_resets_total then counts actual erases only.
-    long long shdev_d5_keeps_total = 0;
+    long long shdev_d5_keeps_total = 0;   ///< entries kept (variance re-tapped to steady state) after an unconfirmed re-tap
 };
 
 } // namespace GnssProcessor

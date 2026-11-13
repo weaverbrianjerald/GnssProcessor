@@ -8,7 +8,7 @@
  * phase bias per band, @f$\sum w = 1@f$, @f$\sum w\lambda^2 = 0@f$), to a few millimetres
  * while it wanders centimetres within an arc.  This seam measures that consistency every
  * epoch, on the functional and the constellation contrast of the anchor guard's phase
- * statistic (@ref clockAnchorPhaseStatistic), read without its floor:
+ * statistic (@ref GnssProcessor::clockAnchorPhaseStatistic "clockAnchorPhaseStatistic"), read without its floor:
  *
  *  - the normalized update @f$e^2 / (S^- - S^+)@f$, where @f$e@f$ is the contrast update of
  *    @f$D@f$ against the dense fold's prior and @f$S^\mp@f$ its contrast-projected prior and
@@ -35,7 +35,7 @@ struct EpochWorkspace;
 struct NetworkRunContext;
 struct SyncedEpoch;
 
-/// The normalized update of one functional: @f$e^2 / (S^- - S^+)@f$.
+/// @brief The normalized update of one functional: @f$e^2 / (S^- - S^+)@f$.
 /// @param e_hat  the contrast update (m).
 /// @param s_m    the contrast-projected prior variance @f$S^-@f$ (m^2).
 /// @param s_p    the contrast-projected posterior variance @f$S^+@f$ (m^2).

@@ -59,7 +59,10 @@ namespace GnssProcessor {
     /// end of the run as the realized rate against the two-sided Gaussian
     /// α = P(|Z| > k) = erfc(k/√2) implied by the tier's configured k (a tier with an
     /// absolute bound reports no α).  Measurement only; never fed back into a decision.
-    struct FlagRate { long opp = 0, flag = 0; };
+    struct FlagRate {
+        long opp = 0,    ///< opportunities: the tier's decisions taken (the rate's denominator)
+             flag = 0;   ///< flags: the decisions that fired (the rate's numerator)
+    };
 
     /// network_trace.csv header (re-written verbatim on every P1 rotation reopen).
     inline constexpr const char* kTraceHeader =
@@ -122,7 +125,7 @@ namespace GnssProcessor {
     /// dependence: 1.0 on `pl`, about 12 on the receiver-level families, about
     /// n_stations on `pb`/`cb`.  `corrob_or_step` is what v1's saturating OR would have
     /// called Stepped; `corrob_step` is what the consensus rule used
-    /// (@ref priorResidualConsensus); the gap between the two is how far the rule
+    /// (@ref GnssProcessor::priorResidualConsensus "priorResidualConsensus"); the gap between the two is how far the rule
     /// moved the table.  The consensus can only move rows Stepped → Flat, i.e. only
     /// raise the b-cell, so a b-cell is auditable only together with these three
     /// columns.  `corrob_max_frac` is the sensitivity column: the highest stepped
@@ -177,7 +180,7 @@ namespace GnssProcessor {
     /// (always 1 when uncapped); `kept` = 1 when the ILS returned it.  `fixed_int` is
     /// its integer when `kept` = 1 and 0 otherwise, so read it through `kept`.
     /// `fix.kept` indexes the capped, σ-permuted search vector, not the basis; the
-    /// mapping back is @ref netar::mapFixToBasis, unit-tested in
+    /// mapping back is @ref GnssProcessor::netar::mapFixToBasis "netar::mapFixToBasis", unit-tested in
     /// tests/network/test_producer_ar_trace.cpp because an error there would mislabel which
     /// satellite was fixed without any other symptom.
     ///
@@ -481,6 +484,8 @@ namespace GnssProcessor {
         "identifiable,n_dw,n_unchk\n";
 
     /**
+     * @brief The trace streams of one network run, each with its on-disk path, and the writers that format them.
+     *
      * @internal Owns every trace stream of one runNetwork() invocation plus its
      * on-disk path.  Member names match the former runNetwork() locals, so the run
      * loop binds `auto& X = traces.X;` references and every writer use-site stays
@@ -490,10 +495,19 @@ namespace GnssProcessor {
      * (byte-identical when off).
      */
     struct NetworkRunTraces {
-        /// @param log_dir The run's log directory (streams live directly in it).
+        /**
+         * @brief Construct the set with every stream closed and every path fixed under the log directory.
+         *
+         * @param log_dir The run's log directory (streams live directly in it).
+         */
         explicit NetworkRunTraces(std::filesystem::path log_dir);
 
+        /** @brief Copying is deleted: the object owns open file streams. */
         NetworkRunTraces(const NetworkRunTraces&) = delete;
+        /**
+         * @brief Copy assignment is deleted: the object owns open file streams.
+         * @return Not applicable (deleted).
+         */
         NetworkRunTraces& operator=(const NetworkRunTraces&) = delete;
 
         /// The run's log directory (path base for every stream).
@@ -506,7 +520,7 @@ namespace GnssProcessor {
         /// Per-satellite closed-loop consumer trace (closed_loop_sat_trace.csv).
         /// Opened only when the held-out consumer is armed and
         /// @c network.trace_consumer_sat is set; the path is local to openAll().
-        /// Same ownership split as @ref cl_trace: the stream lives here, the consumer
+        /// Same ownership split as @ref GnssProcessor::NetworkRunTraces::cl_trace "cl_trace": the stream lives here, the consumer
         /// engine harvests the rows, and the emit/store seam writes them through
         /// @ref writeConsumerSatRows.
         std::ofstream cl_sat_trace;
@@ -515,11 +529,11 @@ namespace GnssProcessor {
         /// ambiguity and wide lane (closed_loop_ar_fixes.csv) and one per epoch
         /// (closed_loop_ar_epoch.csv).  Opened only when the held-out consumer is armed
         /// and both @c network.closed_loop.ar_observe and @c trace_ar_fixes are set; the
-        /// paths are local to openAll().  Same ownership split as @ref cl_trace: the
+        /// paths are local to openAll().  Same ownership split as @ref GnssProcessor::NetworkRunTraces::cl_trace "cl_trace": the
         /// engine keeps the epoch, the emit/store seam writes it through
         /// @ref writeConsumerArObserve.  Neither file is opened with the search off.
         std::ofstream cl_ar_fix_trace;
-        std::ofstream cl_ar_epoch_trace;
+        std::ofstream cl_ar_epoch_trace;   ///< closed_loop_ar_epoch.csv: one row per consumer epoch whose search stage ran
 
         /// The closed-loop consumer's receiver inter-system bias per non-GPS system
         /// (closed_loop_isb.csv).  Opened only when the held-out consumer is
@@ -530,23 +544,23 @@ namespace GnssProcessor {
 
         /// Always-on per-epoch estimability/service trace (P1-rotated).
         std::ofstream trace;
-        const std::filesystem::path trace_path;
+        const std::filesystem::path trace_path;   ///< path of network_trace.csv
         /// Per-satellite product trace: the emitted solution (long format, one row per
         /// shared parameter per epoch), so the producer's output can be inspected for
         /// per-satellite clock-Δ continuity, phase-bias stability and discontinuity
         /// bumps.  Always on (P1-rotated).
         std::ofstream soln;
-        const std::filesystem::path soln_path;
+        const std::filesystem::path soln_path;   ///< path of network_solution.csv
         /// Per-station, per-satellite back-substituted slant ionosphere (viz): one row
         /// per (station, sat) each emitted epoch, with the measured elevation/azimuth
         /// so the pyviz viewer can map each estimate to its ionospheric pierce point.
         std::ofstream iono_trace;
-        const std::filesystem::path iono_path;
+        const std::filesystem::path iono_path;   ///< path of network_ionosphere.csv
         /// Per-epoch co-estimated SH-VTEC coefficient trace (estimate_iono_sh +
         /// global_vtec_sh.trace): one row per (n,m,trig) coefficient with its value and
         /// formal std (TECU), so the estimated field is inspectable / comparable to a GIM.
         std::ofstream vtec_sh_trace;
-        const std::filesystem::path vtec_sh_path;
+        const std::filesystem::path vtec_sh_path;   ///< path of network_vtec_sh.csv
         /// Per-epoch SH-field health trace (T1a; same gate as the coefficient trace):
         /// one row per emitted epoch with the estimated mean VTEC (a₀₀ and its formal
         /// σ), the coefficient RMS by degree, the ratio of that RMS to the per-degree
@@ -555,7 +569,7 @@ namespace GnssProcessor {
         /// per-(station, sat) misfit absorbed by the ambiguities, visible and
         /// attributable.
         std::ofstream vtec_sh_health_trace;
-        const std::filesystem::path vtec_sh_health_path;
+        const std::filesystem::path vtec_sh_health_path;   ///< path of network_vtec_sh_health.csv
         /// Slip and RAIM diagnostics (network.trace_slip_events), three files: the
         /// IF-phase pre-detector's per-(station, sat, pair) ΔΔφ_IF with its full
         /// threshold decision each epoch (network_if_slip.csv); RAIM's per-(sat,
@@ -564,11 +578,11 @@ namespace GnssProcessor {
         /// (network_raim_attrib.csv).  Together they show why an IF slip called for a
         /// reset and why RAIM tripped.
         std::ofstream if_slip_trace;
-        const std::filesystem::path if_slip_trace_path;
-        std::ofstream raim_trace;
-        const std::filesystem::path raim_trace_path;
-        std::ofstream raim_attrib_trace;
-        const std::filesystem::path raim_attrib_trace_path;
+        const std::filesystem::path if_slip_trace_path;   ///< path of network_if_slip.csv
+        std::ofstream raim_trace;                         ///< RAIM per-(sat, station) standardized residual and consensus rows
+        const std::filesystem::path raim_trace_path;      ///< path of network_raim.csv
+        std::ofstream raim_attrib_trace;                  ///< log-only RAIM prominence attribution rows
+        const std::filesystem::path raim_attrib_trace_path;   ///< path of network_raim_attrib.csv
         /// Per-satellite clock-monitor diagnostics (network.trace_slip_events with
         /// network.clock_monitor or network.clock_model): one row per satellite near or
         /// over the refloat bound each epoch (every satellite under
@@ -577,21 +591,21 @@ namespace GnssProcessor {
         /// the tier that wrote the row (monitor or model); model rows reuse the columns
         /// for the model's quantities.
         std::ofstream clk_mon_trace;
-        const std::filesystem::path clk_mon_trace_path;
+        const std::filesystem::path clk_mon_trace_path;   ///< path of network_clock_monitor.csv
         /// Per-satellite information fractions of the a-priori clock anchor each
         /// emitted epoch (B7): anchor_info against the reduced-normals total_info, with
         /// the data and carry-prior shares split out, so validation can confirm that the
         /// estimable clock is determined by the data and not by the a-priori code
         /// product it is softly anchored to.  Diagnostic only (network.trace_anchor_info).
         std::ofstream anchor_info_trace;
-        const std::filesystem::path anchor_info_trace_path;
+        const std::filesystem::path anchor_info_trace_path;   ///< path of network_anchor_info.csv
         /// Cross-station between-satellite DD float ambiguities (from
         /// reconstructStation) per (const, signal), with their fractional-cycle
         /// residual (B5): a sign-convention self-check and the empirical evidence of
         /// < 0.1-cycle support that user AR needs (a gate for producer AR).  Diagnostic
         /// only (network.trace_dd_fractional).
         std::ofstream dd_frac_trace;
-        const std::filesystem::path dd_frac_trace_path;
+        const std::filesystem::path dd_frac_trace_path;   ///< path of network_dd_fractional.csv
         /// Per-DD trace of the Phase-2 producer-AR search
         /// (network.ambiguity_resolution.trace with network.ambiguity_resolution.enable):
         /// the searched DD basis with its identities, float value, formal σ, subset
@@ -600,28 +614,28 @@ namespace GnssProcessor {
         /// scripts/simnet_producer_ar_grade.py.  Columns: @ref kProducerArHeader.
         /// Diagnostic only: the emitted product is byte-identical with it on or off.
         std::ofstream producer_ar_trace;
-        const std::filesystem::path producer_ar_trace_path;
+        const std::filesystem::path producer_ar_trace_path;   ///< path of network_producer_ar.csv
         /// The producer AR search's lattice observatory (step AGT-6;
         /// network.ambiguity_resolution.trace_lattice with .enable): one row per search epoch
         /// (@ref kArLatticeHeader) and one per release or non-confirming offer
         /// (@ref kArLatticeEventsHeader).  Written by network/ar/ArLattice.cpp.
         /// Measure-only: the emitted product is byte-identical with it on or off.
         std::ofstream ar_lattice_trace;
-        const std::filesystem::path ar_lattice_trace_path;
-        std::ofstream ar_lattice_events_trace;
-        const std::filesystem::path ar_lattice_events_trace_path;
+        const std::filesystem::path ar_lattice_trace_path;   ///< path of network_ar_lattice.csv
+        std::ofstream ar_lattice_events_trace;               ///< one row per release or non-confirming offer (@c kArLatticeEventsHeader)
+        const std::filesystem::path ar_lattice_events_trace_path;   ///< path of network_ar_lattice_events.csv
         /// The fixed-cycle fold (network.ambiguity_resolution.fixed_cycles.trace
         /// with the fold armed): one row per unit-epoch (@ref kFixedCyclesHeader) and the held
         /// minus float of every emitted quantity on an accepted epoch
         /// (@ref kFixedCycleShiftHeader).  Written by network/ar/FixedCycles.cpp.
         std::ofstream fixed_cycles_trace;
-        const std::filesystem::path fixed_cycles_trace_path;
-        std::ofstream fixed_cycle_shift_trace;
-        const std::filesystem::path fixed_cycle_shift_trace_path;
+        const std::filesystem::path fixed_cycles_trace_path;   ///< path of network_fixed_cycles.csv
+        std::ofstream fixed_cycle_shift_trace;                 ///< held minus float of every emitted quantity on an accepted epoch (@c kFixedCycleShiftHeader)
+        const std::filesystem::path fixed_cycle_shift_trace_path;   ///< path of network_fixed_cycle_shift.csv
         /// The fold's edges under source lattice (
         /// @ref kFixedCycleEventsHeader).
         std::ofstream fixed_cycle_events_trace;
-        const std::filesystem::path fixed_cycle_events_trace_path;
+        const std::filesystem::path fixed_cycle_events_trace_path;   ///< path of network_fixed_cycle_events.csv
         /// Raw cycle-slip observables per (station, sat) every epoch
         /// (network.trace_slip_raw): Melbourne-Wübbena, geometry-free L1−L2, first-signal
         /// phase-minus-code (all m) and the per-band RINEX LLI, computed from
@@ -629,13 +643,13 @@ namespace GnssProcessor {
         /// satellite slipped at a station, and it is the only network CSV that carries
         /// the receiver's LLI flags.  Epoch differences are formed offline.
         std::ofstream slip_raw_trace;
-        const std::filesystem::path slip_raw_trace_path;
+        const std::filesystem::path slip_raw_trace_path;   ///< path of network_slip_raw.csv
         /// Per-epoch disposition, σ̂0 and clock-statistics trace (L1;
         /// network.trace_epoch_status).  One row per processed epoch, emitted or
         /// skipped: the disposition timeline the V1/V3/V6 validation runs are graded
         /// on.  Off by default (byte-identical when off).
         std::ofstream epoch_status_trace;
-        const std::filesystem::path epoch_status_trace_path;
+        const std::filesystem::path epoch_status_trace_path;   ///< path of network_epoch_status.csv
         /// Operator health heartbeat (RTB-6; network.health_interval_s > 0): a
         /// machine-readable @c network_service_health.csv row appended every
         /// network.health_interval_s of content time, so a long-running service can be
@@ -648,55 +662,55 @@ namespace GnssProcessor {
         /// 1.0 initial value.  Off by default (byte-identical when off: no file opened,
         /// no rows written).  Column semantics: docs/rt_service_operations.md.
         std::ofstream health_trace;
-        const std::filesystem::path health_trace_path;
+        const std::filesystem::path health_trace_path;   ///< path of network_service_health.csv
         /// Structured per-event QC log (L2; network.trace_events): one long-format row
         /// per discrete QC action across all tiers, the machine-readable alternative to
         /// scraping the spdlog text.  Off by default (byte-identical when off).
         std::ofstream events_trace;
-        const std::filesystem::path events_trace_path;
+        const std::filesystem::path events_trace_path;   ///< path of network_events.csv
         /// Per-station ZWD trace (L7; network.trace_zwd): estimated ZWD, datum-conditioned
         /// formal σ and the carried flag, per present station each emitted epoch (the V7
         /// instrument).
         std::ofstream zwd_trace;
-        const std::filesystem::path zwd_trace_path;
+        const std::filesystem::path zwd_trace_path;   ///< path of network_zwd.csv
         /// Per-station troposphere gradient trace (network.estimate_tropo_gradients): the
         /// north and east estimates and their datum-conditioned formal sigma, per present
         /// station each emitted epoch.  Open exactly when the key is armed.
         std::ofstream tgrad_trace;
-        const std::filesystem::path tgrad_trace_path;
+        const std::filesystem::path tgrad_trace_path;   ///< path of network_tropo_gradient.csv
         /// Per-(satellite, code signal) bias state (L14; network.trace_sat_bias_states):
         /// the emitted satellite code bias with its σ̂0-scaled formal σ from the
         /// gauge-nulled shared posterior covariance.  The B product record carries no σ
         /// in any configuration, so this is the only channel from which the code-bias
         /// variance factor can be formed (SPEC_synthetic_minimum_network §4.8).
         std::ofstream sat_bias_states_trace;
-        const std::filesystem::path sat_bias_states_trace_path;
+        const std::filesystem::path sat_bias_states_trace_path;   ///< path of network_sat_bias_states.csv
         /// Per-station receiver states (L14b; network.trace_rx_states): the receiver
         /// clock and every receiver code-bias (DCB/IFB) state with its datum-conditioned
         /// formal σ, on the zwd_trace pattern.  The receiver half of §4.8: the W6 slice
         /// force-arms estimate_ifb, and those columns are not exported as estimates
         /// anywhere else.
         std::ofstream rx_states_trace;
-        const std::filesystem::path rx_states_trace_path;
+        const std::filesystem::path rx_states_trace_path;   ///< path of network_rx_states.csv
         /// The eq34 chain-frame observatory (network.trace_chain_datum;
         /// network/solve/ChainFrame.hpp): every tree edge each epoch with its chain-event row,
         /// and the chord table each epoch.
         std::ofstream chain_edges_trace;
-        const std::filesystem::path chain_edges_trace_path;
-        std::ofstream chain_frame_trace;
-        const std::filesystem::path chain_frame_trace_path;
+        const std::filesystem::path chain_edges_trace_path;   ///< path of network_chain_edges.csv
+        std::ofstream chain_frame_trace;                      ///< the chord table each epoch
+        const std::filesystem::path chain_frame_trace_path;   ///< path of network_chain_frame.csv
         /// Every emitted satellite phase bias immediately before the phase-bias hold
         /// (network.trace_pb_prehold).
         std::ofstream pb_prehold_trace;
-        const std::filesystem::path pb_prehold_trace_path;
+        const std::filesystem::path pb_prehold_trace_path;   ///< path of network_pb_prehold.csv
         /// Every receiver phase-bias state of an eq34 run (network.trace_rpb_states).
         std::ofstream rpb_states_trace;
-        const std::filesystem::path rpb_states_trace_path;
+        const std::filesystem::path rpb_states_trace_path;   ///< path of network_rpb_states.csv
         /// Per-station residual field (L13; network.trace_station_residuals): every
         /// post-fit RAIM cell (non-pivot station x sat) with s_raw, s_norm and σ̂0.
         /// A heavy, opt-in trace.
         std::ofstream station_res_trace;
-        const std::filesystem::path station_res_trace_path;
+        const std::filesystem::path station_res_trace_path;   ///< path of network_station_residuals.csv
         /// Per-row Baarda redundancy census (network.trace_raim_redundancy;
         /// SPEC_t3_null_derivation §7.1): one row per post-fit RAIM phase row, keyed
         /// (station x sat x signal x row), with w, r_i, the raw residual and both
@@ -705,25 +719,25 @@ namespace GnssProcessor {
         /// Solve-neutral: r_i is computed for the trace and never used.  A heavy,
         /// opt-in trace.
         std::ofstream raim_redun_trace;
-        const std::filesystem::path raim_redun_trace_path;
+        const std::filesystem::path raim_redun_trace_path;   ///< path of network_raim_redundancy.csv
         /// The declared per-station variance factor (network.raim_station_factor;
         /// QUEUE item 4 R2): one row per (emitted epoch × present non-pivot station)
         /// with the per-epoch factor, its EWMA, the ratio to the network median of
         /// EWMAs, and the trim census.  Light (≤ n_sta rows per epoch).
         std::ofstream station_factor_trace;
-        const std::filesystem::path station_factor_trace_path;
+        const std::filesystem::path station_factor_trace_path;   ///< path of network_station_factor.csv
         /// The internal level-authority census (LV-6; network.level_authority_csgf):
         /// one FLEET row per epoch (L_cs, MAD, counts, and a00 when the SH channel
         /// exists) and one STA row per qualifying station (the tier-1 mean: the
         /// d_r,GF-class diagnostic and the sampling-matched grading population).
         /// Light (≤ 1 + n_sta rows per epoch).
         std::ofstream level_authority_trace;
-        const std::filesystem::path level_authority_trace_path;
+        const std::filesystem::path level_authority_trace_path;   ///< path of network_level_authority.csv
         /// The level-authority census's own per-LOS pierce points (LV-6 G2), in a
         /// separate file so the census CSV stays byte-identical; opened only inside the
         /// census's own gate.  @see GnssConfig::networkLevelAuthorityLosDump
         std::ofstream level_authority_los_trace;
-        const std::filesystem::path level_authority_los_trace_path;
+        const std::filesystem::path level_authority_los_trace_path;   ///< path of network_level_authority_los.csv
         /// Hourly measured carry-variance components (M2, LS-VCE; network.carry_vce):
         /// one row per (family, constellation) whenever the content hour rolls over.
         /// The *_floor_m2 columns are the measured constant-cofactor σ̂ to compare
@@ -732,7 +746,7 @@ namespace GnssProcessor {
         /// (> 1 ⇒ the hand floor is optimistic).  Off by default (byte-identical: no
         /// file, no rows).
         std::ofstream carry_vce_trace;
-        const std::filesystem::path carry_vce_trace_path;
+        const std::filesystem::path carry_vce_trace_path;   ///< path of network_carry_vce.csv
         /// The LASER 5-95 variance-factor trajectory (M2 v2;
         /// docs/record/SPEC_carry_vce_apply.md): one row per (family, constellation) per
         /// emitted epoch with α², its target, the σ̂²-under-used-weights convergence
@@ -742,7 +756,7 @@ namespace GnssProcessor {
         /// @c network.carry_vce_apply is armed (byte-identical otherwise: no file, no
         /// rows).
         std::ofstream carry_vce_apply_trace;
-        const std::filesystem::path carry_vce_apply_trace_path;
+        const std::filesystem::path carry_vce_apply_trace_path;   ///< path of network_carry_vce_apply.csv
         /// Prior-residual census (network.prior_residual_census;
         /// docs/record/SPEC_prior_residual_census.md INC-1), the headline product: one
         /// row per (family x label) per censused epoch with the fixed |t| exceedance
@@ -752,11 +766,11 @@ namespace GnssProcessor {
         /// family would cost before any response is wired to it.  Off by default
         /// (byte-identical when off: no file opened, no rows written).
         std::ofstream prior_residual_trace;
-        const std::filesystem::path prior_residual_trace_path;
+        const std::filesystem::path prior_residual_trace_path;   ///< path of network_prior_residual.csv
         std::ofstream block_baarda_trace;                       ///< docs/record/SPEC_redundancy_census.md BB-INC-1..3 ladder rows.
-        const std::filesystem::path block_baarda_trace_path;
+        const std::filesystem::path block_baarda_trace_path;    ///< path of network_block_baarda.csv
         std::ofstream congruence_trace;                         ///< docs/record/SPEC_redundancy_census.md CG-INC-1..3 per-station coordinate-offset rows (the MDB table's source).
-        const std::filesystem::path congruence_trace_path;
+        const std::filesystem::path congruence_trace_path;      ///< path of network_congruence.csv
         /// Baarda reliability (MDB) census (network.mdb; docs/record/SPEC_redundancy_census.md
         /// MDB-INC-1), the headline product: one row per (constellation x row
         /// class) per epoch that binned a row, with the formal MDB distribution (median
@@ -768,12 +782,12 @@ namespace GnssProcessor {
         /// this epoch.  Off by default (byte-identical when off: no file opened, no rows
         /// written).
         std::ofstream mdb_trace;
-        const std::filesystem::path mdb_trace_path;
+        const std::filesystem::path mdb_trace_path;   ///< path of network_mdb.csv
         /// Per-class variance factor (network.vcf; network/qc/Vcf.hpp): one row per (census
         /// sweep x class) with the two factors, their EWMAs and the redundancy per row.  Off by
         /// default (no file opened, no rows written).
         std::ofstream vcf_trace;
-        const std::filesystem::path vcf_trace_path;
+        const std::filesystem::path vcf_trace_path;   ///< path of network_vcf.csv
         /// Datum-graph census (network.datum_graph_census;
         /// docs/record/SPEC_datum_graph_census.md INC-2), the headline product: one row
         /// per (epoch × constellation) with the tier-1 component multiplicity and its
@@ -783,7 +797,7 @@ namespace GnssProcessor {
         /// why, in station and satellite identities, before the gate trips.  Off by
         /// default (byte-identical when off: no file opened, no rows written).
         std::ofstream datum_graph_trace;
-        const std::filesystem::path datum_graph_trace_path;
+        const std::filesystem::path datum_graph_trace_path;   ///< path of network_datum_graph.csv
         /// The machine-readable twin of the @c Network[estimability] WARN dump (knob
         /// network.trace_estimability).  Long format with a leading @c kind column,
         /// so three record shapes share one file:
@@ -802,7 +816,7 @@ namespace GnssProcessor {
         /// scripts/characterize_storm.py prefers this file over parsing the WARN text;
         /// the text parser remains the fallback for archived runs.
         std::ofstream estimability_trace;
-        const std::filesystem::path estimability_trace_path;
+        const std::filesystem::path estimability_trace_path;   ///< path of network_estimability.csv
         /// Per-epoch spectrum of the reduced shared normals
         /// (@c network.trace_sh_spectrum; SPEC_day129_frame_guards P1-3): the five
         /// smallest eigenvalues, with the smallest direction's eigenvector mass
@@ -812,13 +826,13 @@ namespace GnssProcessor {
         /// mode that spans both the clocks and the field (the joint near-null slide of
         /// REPORT §3.2).  Nothing is logged, so the estimability WARN text stays golden.
         std::ofstream sh_spectrum_trace;
-        const std::filesystem::path sh_spectrum_trace_path;
+        const std::filesystem::path sh_spectrum_trace_path;   ///< path of network_sh_spectrum.csv
         /// Detail file for P1-3, written every @c network.trace_sh_spectrum_stride
         /// traced epochs (opened only when that stride is > 0): the heaviest per-column
         /// participations of the smallest mode, so a spanning direction can be named and
         /// not only weighed.
         std::ofstream sh_spectrum_mode_trace;
-        const std::filesystem::path sh_spectrum_mode_trace_path;
+        const std::filesystem::path sh_spectrum_mode_trace_path;   ///< path of network_sh_spectrum_mode.csv
         /// Keyed robust post-fit pools from the P1-4 residual pass
         /// (@c network.trace_postfit_keyed; SPEC_day129_frame_guards P1-4): one row per
         /// (kind ∈ {STA, SAT, SIG}, key) per emitted epoch, with {code, phase} pools of
@@ -826,7 +840,7 @@ namespace GnssProcessor {
         /// onset: which stations (geography), which satellites, which signals
         /// (dispersive split).
         std::ofstream pf_keyed_trace;
-        const std::filesystem::path pf_keyed_trace_path;
+        const std::filesystem::path pf_keyed_trace_path;   ///< path of network_pf_keyed.csv
         /// Signed per-row post-fit residuals from the same P1-4 pass
         /// (@c network.trace_postfit_rows; SPEC_event_harness §24.6): one line per data
         /// row the pass visits and attributes to a family (kind ∈ {code, phase}), with
@@ -837,7 +851,7 @@ namespace GnssProcessor {
         /// satellite is not in that set).  It attributes per LOS, which the keyed pools
         /// cannot: they pool per STA / SAT / SIG separately and drop the sign.
         std::ofstream pf_rows_trace;
-        const std::filesystem::path pf_rows_trace_path;
+        const std::filesystem::path pf_rows_trace_path;   ///< path of network_pf_rows.csv
         /// The level monitor (@c network.clock_level_monitor under
         /// @c network.trace_events): one row per satellite per kept epoch, @c p_level_m2
         /// the stashed block's variance along the satellite's level direction,
@@ -845,7 +859,7 @@ namespace GnssProcessor {
         /// consistent estimator keeps it at or above 1), @c raised_m2 the raise applied
         /// (0 when none), @c n_code_ep the epochs of code information in I_L.
         std::ofstream level_bound_trace;
-        const std::filesystem::path level_bound_trace_path;
+        const std::filesystem::path level_bound_trace_path;   ///< path of network_level_bound.csv
         /// The level innovation instrument of the monitor: one row per
         /// satellite per epoch.  @c z_m the post-fit two-way effect (constellation
         /// contrast), @c dclk_m the contrast of this epoch's clock update, @c nu_m their
@@ -858,14 +872,14 @@ namespace GnssProcessor {
         /// the bar), @c ok, or @c withheld (a phase trip the clock-share requirement
         /// @c network.clock_anchor_clock_k withheld).
         std::ofstream anchor_guard_trace;
-        const std::filesystem::path anchor_guard_trace_path;
-        std::ofstream level_innov_trace;
-        const std::filesystem::path level_innov_trace_path;
+        const std::filesystem::path anchor_guard_trace_path;   ///< path of network_anchor_guard.csv
+        std::ofstream level_innov_trace;                       ///< the level innovation instrument: one row per satellite per epoch
+        const std::filesystem::path level_innov_trace_path;    ///< path of network_level_innov.csv
         /// The instrument's window rows: per satellite @c nubar_m (mean innovation), the two
         /// station halves' means, the white variance of the mean, the mean prior contrast
         /// variance and @c T = nubar^2 / var(nubar).
         std::ofstream level_innov_win_trace;
-        const std::filesystem::path level_innov_win_trace_path;
+        const std::filesystem::path level_innov_win_trace_path;   ///< path of network_level_innov_win.csv
         /// The phase-visible consistency instrument (
         /// @c network.phase_visible_monitor): one row per satellite per epoch.
         /// @c sigs the phase-bias signals the functional took (one per band; a change of
@@ -875,7 +889,7 @@ namespace GnssProcessor {
         /// update against the fold's prior, @c sqrt_su_m the predicted update sd
         /// sqrt(S- - S+) (empty when not positive), @c nis = e^2 / (S- - S+).
         std::ofstream phase_visible_trace;
-        const std::filesystem::path phase_visible_trace_path;
+        const std::filesystem::path phase_visible_trace_path;   ///< path of network_phase_visible.csv
         /// The native broadcast clock a priori's wire stamp (
         /// @c network.apriori_source @c sp3_brdc_clock): one row per clock record per
         /// emitted epoch.  @c iode the stamped record (-1: none selectable), @c c_est_m the
@@ -885,11 +899,11 @@ namespace GnssProcessor {
         /// the satellite's previous emission.  A grader reading the wire's C forms
         /// C - O (= c_est_m) or brdc_m + c_wire_m (= the a priori plus the estimate).
         std::ofstream brdc_offset_trace;
-        const std::filesystem::path brdc_offset_trace_path;
+        const std::filesystem::path brdc_offset_trace_path;   ///< path of network_brdc_offset.csv
         /// network.emit_phase_frame_hold: one row per emitted epoch and constellation (voters,
         /// forced, the step, the frame G, the event).
         std::ofstream phase_frame_trace;
-        const std::filesystem::path phase_frame_trace_path;
+        const std::filesystem::path phase_frame_trace_path;   ///< path of network_phase_frame.csv
         /// The smoothed hold's clock clones (@c network.emit_pb_hold_smoothed):
         /// one row per smoothed held emission.  @c age_s the clone's age, @c xfer_m the
         /// key's transfer (the phase-clock transfer minus phi),
@@ -907,7 +921,7 @@ namespace GnssProcessor {
         /// the level part Phi_c - Phi_D, the fold inflation along D, the posterior variance of
         /// the D increment, r_D = Phi_D^2 / (W_D - V_D) and the band pair ("L1C+L2W").
         std::ofstream pb_hold_clone_trace;
-        const std::filesystem::path pb_hold_clone_trace_path;
+        const std::filesystem::path pb_hold_clone_trace_path;   ///< path of network_pb_hold_clone.csv
         /// Per-station local-block audit (@c network.trace_station_block;
         /// SPEC_event_harness §24.10): one row per station per traced epoch (the
         /// first 20 emitted epochs, then every 60th) describing
@@ -921,7 +935,7 @@ namespace GnssProcessor {
         /// header.  It names which local direction is unresolved, not only that the
         /// block is ill-conditioned.
         std::ofstream station_block_trace;
-        const std::filesystem::path station_block_trace_path;
+        const std::filesystem::path station_block_trace_path;   ///< path of network_station_block.csv
         /// Per-arc ambiguity carry-state trace (@c network.trace_amb_state; RF-1 §7.4):
         /// one row per carried (station, satellite, signal) per traced epoch with what
         /// was carried (@c value_abs / @c var / @c var_first / @c var_birth), what was
@@ -936,7 +950,7 @@ namespace GnssProcessor {
         /// reader: scripts/amb_state_read.py.  Measure-only and off by default (no file,
         /// no rows: byte-identical).
         std::ofstream amb_state_trace;
-        const std::filesystem::path amb_state_trace_path;
+        const std::filesystem::path amb_state_trace_path;   ///< path of network_amb_state.csv
         /// Per-line-of-sight phase-colour state trace (
         /// @c network.trace_phase_colour with @c network.phase_colour_state): one row per
         /// harvested (station, satellite) per epoch, `week,tow,station,sat,elev_deg,x_m,
@@ -946,7 +960,7 @@ namespace GnssProcessor {
         /// buffered in @c NetworkCarryState::pc_trace_rows.  Gate G1's instrument against
         /// the sim fixture's @c truth_phase_colour.csv.  Off by default (no file).
         std::ofstream phase_colour_trace;
-        const std::filesystem::path phase_colour_trace_path;
+        const std::filesystem::path phase_colour_trace_path;   ///< path of network_phase_colour.csv
         /// The ionosphere-free ambiguity information trace
         /// (@c network.trace_amb_if): `week,tow,station,sat,age_ep,n_los,prior_var_m2,
         /// post_var_m2,prior_var_dm_m2,post_var_dm_m2`, one row per line of sight whose two
@@ -956,7 +970,7 @@ namespace GnssProcessor {
         /// the same constellation projected out, and `n_los` the number of those lines of
         /// sight.  All conditional on the border.
         std::ofstream amb_if_trace;
-        const std::filesystem::path amb_if_trace_path;
+        const std::filesystem::path amb_if_trace_path;   ///< path of network_amb_if.csv
         /// One row per gauge-pinned ambiguity per processed epoch (S1;
         /// @c network.trace_phase_anchor): @c week,tow,cons,signal,sat,anchor_sta.  It is
         /// the (constellation, signal, satellite) -> anchoring station map that realizes
@@ -966,7 +980,7 @@ namespace GnssProcessor {
         /// pinned ambiguities by construction).  Log-only: it reads the election that
         /// already ran, so the solve is identical with it armed.
         std::ofstream phase_anchor_trace;
-        const std::filesystem::path phase_anchor_trace_path;
+        const std::filesystem::path phase_anchor_trace_path;   ///< path of network_phase_anchor.csv
         /// One row per (station, epoch, satellite) visit of the SD pre-reduce EWL
         /// appender (@c network.sd_ewl.trace; SPEC_sd_ewl_prereduce §6): the elected
         /// (band1, band2) phase pair and its code channels, the MW arc outcome
@@ -978,7 +992,7 @@ namespace GnssProcessor {
         /// buffered per station in @c StationAssembly::sd_ewl_trace and drained by PASS
         /// B's serial consume, so the file order does not depend on the thread count.
         std::ofstream sd_ewl_trace;
-        const std::filesystem::path sd_ewl_trace_path;
+        const std::filesystem::path sd_ewl_trace_path;   ///< path of network_sd_ewl.csv
         /// One row per (station, satellite) the Route-B integer decision considered
         /// (increment 2a; @c network.sd_ewl.trace and @c network.sd_ewl.fix_enable): the
         /// elected network-common channel pair, the component reference station r0, the
@@ -989,7 +1003,7 @@ namespace GnssProcessor {
         /// the integer path, so an increment-1 artifact set is unchanged.  Written in
         /// place from a serial seam, so no per-station buffering is needed.
         std::ofstream sd_ewl_ar_trace;
-        const std::filesystem::path sd_ewl_ar_trace_path;
+        const std::filesystem::path sd_ewl_ar_trace_path;   ///< path of network_sd_ewl_ar.csv
         /// Arc lifecycle trace (@c network.signal_roster): one row per
         /// (station, satellite, signal) transition, written through
         /// @ref writeArcLedgerRow from @c networkBuildSignalRoster (raw rows) and
@@ -997,7 +1011,7 @@ namespace GnssProcessor {
         /// @ref kArcLedgerHeader.  The complete edge record that the @c ARC event tier
         /// only samples.  Off by default (byte-identical when off: no file, no rows).
         std::ofstream arc_ledger_trace;
-        const std::filesystem::path arc_ledger_trace_path;
+        const std::filesystem::path arc_ledger_trace_path;   ///< path of network_arc_ledger.csv
         /// Run-provenance manifest path (L15; network_run_manifest.json).
         /// writeRunManifestStartup() writes the startup record and
         /// writeRunManifestComplete() appends the end-of-run record; one member keeps
@@ -1007,7 +1021,7 @@ namespace GnssProcessor {
         /// Config echoes written into every epoch-status row (L1); the L15 manifest
         /// also records the σ̂0 trigger.  Captured once in openAll().
         double es_sigma0_trigger_   = 0.0;
-        double es_withhold_ceiling_ = 0.0;
+        double es_withhold_ceiling_ = 0.0;   ///< sigma0 withhold ceiling echoed into every epoch-status row (network.raim_withhold_sigma0)
         /// Whether the two product-referenced admission census columns are part of
         /// this run's epoch-status schema (L1; docs/record/SPEC_measurement_admission.md
         /// INC-3): true when network.adm_trace or network.adm_screen is set.  Captured
@@ -1020,7 +1034,7 @@ namespace GnssProcessor {
         /// Whether the five prior-residual census columns are part of this run's
         /// epoch-status schema (L1; docs/record/SPEC_prior_residual_census.md): true when
         /// network.prior_residual_census is set.  Captured in openAll() for the same
-        /// reason as @ref es_adm_columns_: the census's off contract is structural
+        /// reason as @ref GnssProcessor::NetworkRunTraces::es_adm_columns_ "es_adm_columns_": the census's off contract is structural
         /// byte-identity and its §9.1 gate is a same-build A/B comparison of this file,
         /// so the columns must not appear on an unarmed run.
         bool es_prires_columns_ = false;
@@ -1102,23 +1116,37 @@ namespace GnssProcessor {
         // old names.  Writers added after INC-4 follow in this section.
         // ------------------------------------------------------------------
 
-        /// L15 startup run-provenance manifest record (JSONL, truncating open).
+        /// @brief L15 startup run-provenance manifest record (JSONL, truncating open).
         /// No-op unless nc.write_run_manifest.
+        /// @param config_      Full config (the record echoes its resolved settings and
+        ///                     its config-extends chain).
+        /// @param nc           Network config section (the manifest switch and echoed settings).
+        /// @param knobs        The run's loaded knobs (the armed switches and levels echoed).
+        /// @param config_path_ Path of the configuration file; recorded, and read to embed its text.
+        /// @param n_stations   Number of stations the run loaded.
+        /// @param n_threads    Worker thread count the run resolved.
+        /// @param log          main_log logger for an open-failure warning.
         void writeRunManifestStartup(const GnssConfig& config_, const NetworkConfig& nc,
                                      const NetworkKnobs& knobs,
                                      const std::filesystem::path& config_path_,
                                      std::size_t n_stations, int n_threads,
                                      const std::shared_ptr<spdlog::logger>& log);
 
-        /// One extra manifest record (JSONL, appended after the startup record):
+        /// @brief One extra manifest record (JSONL, appended after the startup record):
         /// the @c param_model, the parameter registry as armed.  No-op unless
         /// nc.write_run_manifest.
         /// @param nc    The network config (the manifest switch).
         /// @param json  One complete JSON object, without a trailing newline.
         void appendRunManifestRecord(const NetworkConfig& nc, const std::string& json);
 
-        /// L15 end-of-run manifest record (JSONL, appended, so a crashed run keeps
+        /// @brief L15 end-of-run manifest record (JSONL, appended, so a crashed run keeps
         /// the startup record).  No-op unless nc.write_run_manifest.
+        /// @param nc      Network config section (the manifest switch).
+        /// @param counters Run-scope counters; the emitted, skipped and withheld totals and the
+        ///                roster and marker census fields are read.
+        /// @param n_synced Number of synchronized epochs the run was given (fast-forwarded
+        ///                 epochs included).
+        /// @param loop_ms  Wall time of the epoch loop (ms).
         /// @param extra_member Optional JSON member ("key":{...}) written before
         ///        `loop_ms`; empty (the default) writes nothing, so the
         ///        record of a caller that passes none is unchanged.
@@ -1127,17 +1155,35 @@ namespace GnssProcessor {
                                       std::size_t n_synced, double loop_ms,
                                       const std::string& extra_member = std::string());
 
-        /// Size-based rotation (P1) of the three unbounded service CSVs (network_trace,
+        /// @brief Size-based rotation (P1) of the three unbounded service CSVs (network_trace,
         /// network_solution, network_service_health; a closed stream is skipped).  Call
         /// once per processed epoch, before the epoch's rows are written.  With
         /// network.trace_rotate_mb at 0 (the default) nothing is touched.
+        /// @param nc  Network config section (trace_rotate_mb size threshold in MiB and
+        ///            trace_rotate_keep, the number of rolled generations kept).
+        /// @param log main_log logger for the rotation notice.
         void rotateServiceCsvs(const NetworkConfig& nc,
                                const std::shared_ptr<spdlog::logger>& log);
 
-        /// Operator health heartbeat row (RTB-6), written every nc.health_interval_s
+        /// @brief Operator health heartbeat row (RTB-6), written every nc.health_interval_s
         /// of content time while the stream is open and flushed after each row.
         /// Updates the heartbeat anchors inside @p counters (last_health_write_s and
         /// the P4(b) window anchors).
+        /// @param t              Epoch time (week / tow of the row; also the content-time clock).
+        /// @param nc             Network config section (health_interval_s, in s of content time).
+        /// @param[in,out] counters Run-scope counters; the cumulative totals are read and the
+        ///                       heartbeat anchors are advanced when a row is written.
+        /// @param t_loop_begin   Steady-clock instant the epoch loop began (wall time base).
+        /// @param ura_on         emit_ura is armed (with the next two, makes the sigma0 EWMA available).
+        /// @param raim_on        RAIM is armed.
+        /// @param pl_on          Phase leveling is armed.
+        /// @param ura_sigma0_ewma Current sigma0 EWMA; written to the row only when all three
+        ///                       flags above are set, otherwise the row carries -1.
+        /// @param last_pivot     Constellation letter to the pivot satellite of the last emitted
+        ///                       product (empty before the first emission).
+        /// @param grade_metric_s Seconds of product time from the first emission to the quality
+        ///                       ramp lift; negative (row carries -1) before the lift or when the
+        ///                       ramp is off, 0 on a warm resume.
         void writeHealthRow(const GnssTime& t, const NetworkConfig& nc,
                             NetworkServiceCounters& counters,
                             const std::chrono::steady_clock::time_point& t_loop_begin,
@@ -1146,7 +1192,11 @@ namespace GnssProcessor {
                             const std::map<std::string, std::string>& last_pivot,
                             double grade_metric_s);
 
-        /// One network_epoch_status.csv row (L1; no-op when the trace is off).
+        /// @brief One network_epoch_status.csv row (L1; no-op when the trace is off).
+        /// @param t           Epoch time (week / tow of the row).
+        /// @param disposition Short label of what became of the epoch (for example "emitted"
+        ///                    or "sync_skip"); written verbatim, so it must contain no comma.
+        /// @param r           The row's values; an unset optional is written as a blank field.
         void emitEpochStatus(const GnssTime& t, const char* disposition,
                              const EpochStatusRow& r);
 
@@ -1217,8 +1267,17 @@ namespace GnssProcessor {
                                const char* side, const char* adm_state,
                                long long adm_gap_ep);
 
-        /// One network_events.csv row for a discrete QC action (L2; no-op when off).
+        /// @brief One network_events.csv row for a discrete QC action (L2; no-op when off).
         /// Commas in @p detail become semicolons, so it stays one CSV field.
+        /// @param t         Epoch time (week / tow of the row).
+        /// @param tier      QC tier that acted (for example "GATE" or "D2_DENSE"); not sanitized.
+        /// @param event     Event name within the tier; not sanitized.
+        /// @param sat       Satellite id, or an empty string when not satellite specific.
+        /// @param station   Station name, or an empty string when not station specific.
+        /// @param statistic The decision statistic, when the event has one (blank when unset).
+        /// @param threshold The threshold the statistic was tested against (blank when unset).
+        /// @param action    What was done in response (for example "counted"); not sanitized.
+        /// @param detail    Free-text detail; commas are replaced by semicolons.
         void emitEvent(const GnssTime& t, const char* tier, const char* event,
                        const std::string& sat, const std::string& station,
                        std::optional<double> statistic, std::optional<double> threshold,
@@ -1243,36 +1302,63 @@ namespace GnssProcessor {
                                     const NetworkCarryVceApply& apply,
                                     int& hour_state);
 
-        /// The @c EPOCH record of one estimability dump (no-op when the
+        /// @brief The @c EPOCH record of one estimability dump (no-op when the
         /// trace is off).  Fed from @c NetworkEstimator::dumpEstimabilitySpectrum's
         /// return value, so the row and the WARN line carry the same numbers by
         /// construction.  Takes primitives rather than the nested
         /// @c EstimabilityDump so this header does not need the estimator include,
         /// which pulls in Eigen.
+        /// @param t           Epoch time (week of the row; the row's time of week is @p tow).
+        /// @param tow         GPS time of week of the dump (s).
+        /// @param n_shared    Dimension of the reduced shared normals.
+        /// @param declared_dim Declared S-basis (datum) dimension for this epoch.
+        /// @param ev_max      Largest eigenvalue of the reduced shared normals.
+        /// @param cutoff      Absolute eigenvalue cutoff the gate applied (rank-gate tolerance
+        ///                    times the larger of @p ev_max and 1).
+        /// @param n_below     Number of directions with eigenvalue below @p cutoff.
         void writeEstimabilityEpochRow(const GnssTime& t, double tow, int n_shared,
                                        int declared_dim, double ev_max, double cutoff,
                                        int n_below);
 
-        /// One @c DIR record: a reported near-null direction's eigenvalue
+        /// @brief One @c DIR record: a reported near-null direction's eigenvalue
         /// and its ≤5 heaviest spanning columns as (label, |component|) pairs, in the
         /// log line's order (no-op when the trace is off).
+        /// @param t   Epoch time (week / tow of the row).
+        /// @param ev  Eigenvalue of the direction.
+        /// @param top Heaviest spanning columns as (column label, |component|), in the log
+        ///            line's order; at most 8 are written and commas in a label become semicolons.
         void writeEstimabilityDirRow(const GnssTime& t, double ev,
                                      const std::vector<std::pair<std::string, double>>& top);
 
-        /// The single trailing @c RUN record with the run-wide rank-gate telemetry
+        /// @brief The single trailing @c RUN record with the run-wide rank-gate telemetry
         /// (no-op when the trace is off).  Written once at teardown, before
         /// @ref closeAll.
+        /// @param counters Run-scope counters (gate evaluations, withhold split, emitted count,
+        ///                 null-space observation range, heal attempts and heals).
         /// @param rank_gate_tol The resolved tolerance the run used
         ///                      (NetworkEstimator::rankGateTol); the calibration
         ///                      evidence cannot be read without the value it came from.
         void writeEstimabilityRunRow(const NetworkServiceCounters& counters,
                                      double rank_gate_tol);
 
-        /// Flag-rate empirical-α summary (B8; log lines and network_flag_rates.csv)
+        /// @brief Flag-rate empirical-α summary (B8; log lines and network_flag_rates.csv)
         /// and the L3 run-summary CSV.  The single knobs.trace_flag_rates gate covers
         /// both, so a run with it off writes neither.  @p fr_if_refgate is tier T1r, the
         /// IF-TD reference arm's flag rate, summed over the station detectors by the
         /// run-summary report (networkRunSummaryRunEnd) just before the call.
+        /// @param config_        Full config (the per-tier k values behind each implied alpha).
+        /// @param knobs          The run's knobs (the trace_flag_rates gate).
+        /// @param counters       Run-scope counters (the per-tier flag rates, emitted, skipped
+        ///                       and withheld totals, loop-epoch count and station-in-solve census).
+        /// @param fr_if_refgate  Tier T1r tally (IF-TD reference arm), summed by the caller.
+        /// @param n_synced       Number of synchronized epochs the run was given (fast-forwarded
+        ///                       epochs included).
+        /// @param n_stations     Roster size (stations loaded).
+        /// @param n_threads      Worker thread count the run resolved.
+        /// @param parallel_on    Whether the parallel stages ran.
+        /// @param loop_ms        Wall time of the epoch loop (ms); the run summary divides it by
+        ///                       the loop-epoch count.
+        /// @param log            main_log logger for the summary lines and open-failure warnings.
         void writeFlagRateAndRunSummary(const GnssConfig& config_, const NetworkKnobs& knobs,
                                         const NetworkServiceCounters& counters,
                                         const FlagRate& fr_if_refgate,
@@ -1280,7 +1366,7 @@ namespace GnssProcessor {
                                         int n_threads, bool parallel_on, double loop_ms,
                                         const std::shared_ptr<spdlog::logger>& log);
 
-        /// Teardown close: the streams of the former inline close list, plus later
+        /// @brief Teardown close: the streams of the former inline close list, plus later
         /// members whose tails are graded artifacts and are flushed here rather than
         /// at scope exit.  The remaining streams close in the destructor.
         void closeAll();
@@ -1309,9 +1395,9 @@ void networkRunManifestStartup(NetworkRun& run, const std::filesystem::path& con
         // previous health row, so each row reports the mean over its own window (the
         // operationally useful "is it slowing down now" signal), not a cumulative run mean
         // labelled "rolling".
-        double health_win_ms_anchor     = 0.0;
-        size_t health_win_epochs_anchor = 0;
-        FlagRate fr_if_slip;    // tier T1: per (station,sat,pair) IF-phase sample, k=if_phase_td_k_mad
+        double health_win_ms_anchor     = 0.0;   ///< wall ms of the epoch loop as of the previous health row
+        size_t health_win_epochs_anchor = 0;     ///< loop-epoch count as of the previous health row
+        FlagRate fr_if_slip;    ///< tier T1: per (station,sat,pair) IF-phase sample, k=if_phase_td_k_mad
         // Tier T1r: per (station, epoch, constellation) family of n>=2 non-ref DDs, the IF-TD
         // reference arm.  Its action drains through sta_if_resets/refsat_reset and
         // increments nothing in T1, so without its own tier the table reads T1 flags=0 while
@@ -1321,13 +1407,13 @@ void networkRunManifestStartup(NetworkRun& run, const std::filesystem::path& con
         // legacy: a bare physical floor), and merging it into T1 would hide that asymmetry
         // again.  Summed at run end from each station detector's RefGateCounters by the
         // run-summary report (networkRunSummaryRunEnd), which hands it to the writer.
-        FlagRate fr_we_trigger; // tier T2: per warm within-epoch epoch, σ̂0_first > trig, k=sigma0_trigger
-        FlagRate fr_raim_cell;  // tier T3: per (sat,station) standardized residual, k=raim_k
-        FlagRate fr_raim_sat;   // tier T3 consensus: per spiked sat (>=min_sta), k=raim_k
-        FlagRate fr_attrib;     // tier T4: per median-polish sat column, eff/σ̂0 > k and σ̂0 > trigger (B8/P1-4)
-        FlagRate fr_attrib_arc; // tier T4: per median-polish arc interaction, inter/σ̂0 > k (the acting sub-path's criterion, before the persistence/maturity gates; without this line the tier reads 0 flags while it refloats arcs, §9.7.10)
-        FlagRate fr_clk_model;  // tier T5: per sat clock-model NIS (own, !ext), k=clock_model_k
-        FlagRate fr_clk_mon;    // tier T6: per sat clock-monitor abs/jump (own, !ext), absolute bounds
+        FlagRate fr_we_trigger; ///< tier T2: per warm within-epoch epoch, σ̂0_first > trig, k=sigma0_trigger
+        FlagRate fr_raim_cell;  ///< tier T3: per (sat,station) standardized residual, k=raim_k
+        FlagRate fr_raim_sat;   ///< tier T3 consensus: per spiked sat (>=min_sta), k=raim_k
+        FlagRate fr_attrib;     ///< tier T4: per median-polish sat column, eff/σ̂0 > k and σ̂0 > trigger (B8/P1-4)
+        FlagRate fr_attrib_arc; ///< tier T4: per median-polish arc interaction, inter/σ̂0 > k (the acting sub-path's criterion, before the persistence/maturity gates; without this line the tier reads 0 flags while it refloats arcs, §9.7.10)
+        FlagRate fr_clk_model;  ///< tier T5: per sat clock-model NIS (own, !ext), k=clock_model_k
+        FlagRate fr_clk_mon;    ///< tier T6: per sat clock-monitor abs/jump (own, !ext), absolute bounds
     };
 
 } // namespace GnssProcessor

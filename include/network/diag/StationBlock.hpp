@@ -18,17 +18,17 @@
  *     N_{rr} \;=\; A_r^\top W A_r \;+\; \text{(folded station priors)} ,
  * @f]
  * with the shared states held at their solved values @f$x_s@f$.  This is the same
- * conditioning @ref NetworkEstimator::reconstructStation applies when it forms
+ * conditioning @ref GnssProcessor::NetworkEstimator::reconstructStation "NetworkEstimator::reconstructStation" applies when it forms
  * @f$x_r=N_{rr}^{-1}\!\left(u_r-N_{rs}x_s\right)@f$.  It is neither the station's
  * stand-alone normal matrix (which would carry the satellite clocks and biases as
  * unknowns) nor the reduced shared system.
  *
- * Measure-only: @ref networkStationBlock runs as an epoch observer (slot @c FrameDiag)
- * after the solve, reads @ref NetworkEstimator through const accessors, and writes one
+ * Measure-only: @ref GnssProcessor::networkStationBlock "networkStationBlock" runs as an epoch observer (slot @c FrameDiag)
+ * after the solve, reads @ref GnssProcessor::NetworkEstimator "NetworkEstimator" through const accessors, and writes one
  * CSV row per station per traced epoch.  Nothing it touches feeds @c x, @c N or the
  * order of operations, whether armed or not.
  *
- * @ref StationBlockAudit holds the numerical content as pure functions over
+ * @ref GnssProcessor::StationBlockAudit "StationBlockAudit" holds the numerical content as pure functions over
  * @c (N_rr, A_r, w, labels), so the rank, span, effective-information and redundancy
  * algebra is unit-testable without a network run.  The seam itself only builds labels
  * and writes the CSV.
@@ -185,9 +185,9 @@ Eigen::VectorXd redundancy(const Spectrum& sp, const Eigen::MatrixXd& A_r,
  *
  * Read from the station's parameter set through the assembly's state-index to local-column
  * map, so the labels are correct under both vehicles (nothing here is carry-gated).  The
- * labels: the audit's @c clk, @c zwd, @c rxcb:<key>, @c iono:<sat>, @c amb:<sat>:<signal>, plus
- * @c pos:<xyz>, @c isb:<system>, @c satbias:<key>, @c satpb:<key>, @c rxpb:<key> and
- * @c satclk:<key>.  The phase colour has no label: its column appears in a span as
+ * labels: the audit's @c clk, @c zwd, @c rxcb:\<key\>, @c iono:\<sat\>, @c amb:\<sat\>:\<signal\>, plus
+ * @c pos:\<xyz\>, @c isb:\<system\>, @c satbias:\<key\>, @c satpb:\<key\>, @c rxpb:\<key\> and
+ * @c satclk:\<key\>.  The phase colour has no label: its column appears in a span as
  * @c col<k>.
  *
  * @param R       The station's assembly of the epoch (its @c h2local).
@@ -206,7 +206,7 @@ struct NetworkEpoch;            // network/driver/Epoch.hpp
  *        (@c network.trace_station_block).
  *
  * Runs as a measure-only observer (slot @c FrameDiag), after the solve and
- * after @ref networkEmitStore, so @c ctx.counters.n_emitted already includes this
+ * after @ref GnssProcessor::networkEmitStore "networkEmitStore", so @c ctx.counters.n_emitted already includes this
  * epoch's emission.  Writes on emitted epochs 1…20 and every 60th thereafter, once
  * per emission count.  An epoch whose solution was not emitted writes nothing and is
  * not counted, so the trace describes what the consumer received.

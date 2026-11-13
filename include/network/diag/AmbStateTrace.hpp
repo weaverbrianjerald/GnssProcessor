@@ -90,12 +90,12 @@ struct EpochEvents;   // network/driver/Epoch.hpp
      *
      * @param r The row to format.
      * @return The CSV line, newline-terminated, with exactly as many cells as
-     *         @ref kAmbStateHeader.
+     *         @ref GnssProcessor::kAmbStateHeader "kAmbStateHeader".
      */
     std::string ambStateFormatRow(const AmbStateRow& r);
 
     /**
-     * @brief Capture an @c erase:<cause> row for an entry that is about to be deleted.
+     * @brief Capture an @c erase:\<cause\> row for an entry that is about to be deleted.
      *
      * The erase paths (the attribution refloat, the consensus refloat, the
      * @c phase_leveling_max_gap_s prune and the phase-anchor carry re-reference) all
@@ -126,7 +126,7 @@ struct EpochEvents;   // network/driver/Epoch.hpp
                            const char* cause);
 
     /**
-     * @brief Capture a @c drop:<cause> row for an entry whose prior was just dropped
+     * @brief Capture a @c drop:\<cause\> row for an entry whose prior was just dropped
      *        back to its birth variance.
      *
      * Taken after the drop, so the row carries the restored variance.  That is D3's
@@ -142,7 +142,7 @@ struct EpochEvents;   // network/driver/Epoch.hpp
      * @param sat     Satellite.
      * @param signal  RINEX signal.
      * @param lc      The entry as it stands immediately after the drop.
-     * @param cause   One of @ref AmbDropCause.  Written as @c "drop:<cause>".
+     * @param cause   One of @ref GnssProcessor::AmbDropCause "AmbDropCause".  Written as @c "drop:<cause>".
      */
     void ambStateNoteDrop(NetworkRunContext& ctx, long long week, double tow,
                           const std::string& station, const std::string& sat,
