@@ -22,7 +22,7 @@
  *
  * ### Ordering contract
  *
- * @ref networkPbHold is the last writer of @c NetworkPhaseBias::bias_m in an epoch.
+ * @ref GnssProcessor::networkPbHold "networkPbHold" is the last writer of @c NetworkPhaseBias::bias_m in an epoch.
  * Only read-only steps (the ledger-emit capture and the signal-roster declaration
  * build) run between it and @c NetworkProductEmitter::emitToStore.  It runs:
  *
@@ -30,7 +30,7 @@
  *    so the hold freezes its output instead of being overwritten by it;
  *  - ahead of the emitter's phase-bias value-jump test, so that test screens the held
  *    value and the declared population agrees with the payload;
- *  - after every marking site of the epoch, so @ref NetworkProductEmitter::pendingMarkChannels
+ *  - after every marking site of the epoch, so @ref GnssProcessor::NetworkProductEmitter::pendingMarkChannels "NetworkProductEmitter::pendingMarkChannels"
  *    reports the complete set of channels about to be declared, which the coupled-mark
  *    cost telemetry needs;
  *  - before the on-disk product write, which consumes the same @c sol, so the file
@@ -126,7 +126,7 @@ struct SyncedEpoch;
  *                 starts a generation).
  * @param traces   Trace sinks: the @c PB_HOLD event rows.
  * @param emitter  The product emitter, read only through
- *                 @ref NetworkProductEmitter::pendingMarkChannels for the coupled
+ *                 @ref GnssProcessor::NetworkProductEmitter::pendingMarkChannels "NetworkProductEmitter::pendingMarkChannels" for the coupled
  *                 clock+phase-bias mark census.  Not mutated.
  * @param se       The synced epoch (its @c time stamps the event rows).
  * @param sol      The epoch about to be emitted; its @c phase_bias values are the
@@ -211,7 +211,7 @@ bool pbHoldCommonClockStep(const NetworkSolutionEpoch& sol,
  * For a satellite @c s of constellation @c k with a finite emitted clock at this and the
  * previous emission, @c d_s = (c_s(k) - c_s(k-1)) - M_k, where @c M_k is the median of
  * the steps of the satellites of constellation @c k alone (an even count takes the mean of
- * the two middle values). The median is per constellation, as in @ref pbHoldCommonClockStep:
+ * the two middle values). The median is per constellation, as in @ref GnssProcessor::pbHoldCommonClockStep "pbHoldCommonClockStep":
  * each constellation's clock common mode (its pivot handover, its frame-hold re-anchor) moves
  * on its own, so one median across constellations leaves the difference of the two modes in
  * every satellite's step. What remains is the satellite-specific step, the quantity a coupled

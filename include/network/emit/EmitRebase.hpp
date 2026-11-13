@@ -25,7 +25,7 @@
  * phase-bias jump test on nearly every satellite every epoch and cause spurious
  * ambiguity resets at the consumer.  This class removes it by an emit-layer
  * S-selection applied to the outputs only: after each accepted solve (before
- * @ref NetworkProductEmitter::emitToStore) it re-bases the emitted biases onto
+ * @ref GnssProcessor::NetworkProductEmitter::emitToStore "NetworkProductEmitter::emitToStore") it re-bases the emitted biases onto
  * the previous emission frame, so the emitted @f$b_s@f$ stays continuous across
  * pure datum churn and the emitter's jump test, which remains the sole
  * discontinuity authority, fires only at genuine events.
@@ -43,7 +43,7 @@
  *      baselined keys, so a minority of slipped/reattached satellites cannot
  *      drag it), and
  *   2. removes the per-satellite integer only for keys the caller has not
- *      flagged @ref Entry::slipped.  A slip on a satellite's emission-reference
+ *      flagged @ref GnssProcessor::NetworkEmitRebase::Entry::slipped "Entry::slipped".  A slip on a satellite's emission-reference
  *      (tree-edge) arc leaves its integer step intact, so the emitter's jump
  *      test fires and the consumer resets that one ambiguity.  A first-sighting
  *      key (no baseline) also keeps @f$k_s=0@f$ (its birth is a genuine event;
@@ -125,6 +125,11 @@ public:
      */
     void rebaseEpoch(std::vector<Entry>& entries);
 
+    /**
+     * @brief Run-scope tallies of the re-base for the run-end telemetry line.
+     *
+     * @return Reference to the running counters; valid for the life of the engine.
+     */
     const Counters& counters() const { return counters_; }
 
     /**
@@ -157,12 +162,16 @@ public:
      */
     void restoreState(const std::map<std::string, double>& st) { last_emit_ = st; }
 
-    /// Drop the emission-frame memory (the counters are kept; next epoch every key
+    /// @brief Drop the emission-frame memory (the counters are kept; next epoch every key
     /// has no baseline, a first sighting).
     void reset();
 
-    /// The last re-based emitted value for (sat,signal) (test seam); false if the
+    /// @brief The last re-based emitted value for (sat,signal) (test seam); false if the
     /// key has no emission-frame memory yet.
+    /// @param sat RINEX satellite id ("G01").
+    /// @param signal RINEX phase obs code ("L1C").
+    /// @param[out] value Last re-based emitted bias (m); written only when the return is true.
+    /// @return True when the "sat|signal" key has emission-frame memory; false otherwise.
     bool lastEmittedForTest(const std::string& sat, const std::string& signal,
                             double& value) const;
 
@@ -182,7 +191,7 @@ using EmitRebaseArcs =
 
 /**
  * @brief The connected-component id of every (satellite, signal) of the emit re-base
- *        graph: the @ref NetworkEmitRebase::Entry::component the re-base groups by.
+ *        graph: the @ref GnssProcessor::NetworkEmitRebase::Entry::component "NetworkEmitRebase::Entry::component" the re-base groups by.
  *
  * Per group the arcs are united on the shared union-find (@c arcgraph::Dsu,
  * network/ar/ArcGraph.hpp): station index i is vertex i, the satellite of

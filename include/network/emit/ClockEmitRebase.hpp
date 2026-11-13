@@ -16,7 +16,7 @@
  * measurement: about 98 % of the emitted clock's epoch-to-epoch motion is producer frame
  * churn (the physical change is about 2 cm per 30 s, correlation ≈ 0), so nearly all of
  * that wire motion carries no information.  The phase-bias channel has an
- * emission-frame re-base (@ref NetworkEmitRebase), which keeps it
+ * emission-frame re-base (@ref GnssProcessor::NetworkEmitRebase "NetworkEmitRebase"), which keeps it
  * quasi-static on the same wire; this class supplies the equivalent for the clock
  * channel.
  *
@@ -37,7 +37,7 @@
  * frame hold, a satellite whose common-removed step exceeds
  * `network.clock_disc_jump_m` (default 1.5 m, about 16 σ of the measured per-epoch
  * walk step, about 7 marks/h on the reference lineage) is reported for a
- * @ref NetworkProductEmitter::markSatDiscontinuity retro-bump, the existing R-record
+ * @ref GnssProcessor::NetworkProductEmitter::markSatDiscontinuity "NetworkProductEmitter::markSatDiscontinuity" retro-bump, the existing R-record
  * chain (the per-satellite phase, code and clock counters step; the consumer resets
  * that satellite's ambiguities at the event epoch).  The emitter itself is unchanged,
  * and the rule of no magnitude test inside the clock counter still holds: the test
@@ -59,7 +59,7 @@
  *
  * - **Leash**: when @f$|A_c|@f$ exceeds `network.clock_frame_leash_m` (default 50 m;
  *   measured 12 h wander 23 m), the constellation re-anchors to the solve frame.  The
- *   caller must pair the re-anchor with @ref NetworkProductEmitter::markDatumChange so
+ *   caller must pair the re-anchor with @ref GnssProcessor::NetworkProductEmitter::markDatumChange "NetworkProductEmitter::markDatumChange" so
  *   the re-coupling edge is marked.  The leaf reports the set of re-anchored
  *   constellations for that purpose.
  * - **Forced keys** (pending per-satellite retro-bumps, datum-changed constellations)
@@ -71,9 +71,9 @@
  *
  * ## Scope and conventions
  *
- * Pure numeric leaf (like @ref NetworkEmitRebase), with no
+ * Pure numeric leaf (like @ref GnssProcessor::NetworkEmitRebase "NetworkEmitRebase"), with no
  * dependency on the estimator or the emitter.  The caller (networkEmitStore) builds one
- * Entry per emitted clock satellite, calls @ref rebaseEpoch before @c emitToStore and
+ * Entry per emitted clock satellite, calls @c rebaseEpoch before @c emitToStore and
  * the on-disk write (the transform is baked into the product; replay never re-runs it),
  * routes @c marked entries to @c markSatDiscontinuity and the R-record set, and routes
  * @c reanchored constellations to @c markDatumChange.  It changes outputs only: the
@@ -129,11 +129,18 @@ public:
         double    max_abs_acc{0.0};///< max |A_c| reached (m); the headroom against the leash.
     };
 
+    /**
+     * @brief Construct the engine with its tunables; frame state and tallies start empty.
+     *
+     * @param cfg Frame-hold, leash and step-test settings (copied).
+     */
     explicit NetworkClockEmitRebase(Config cfg) : cfg_(cfg) {}
+    /** @brief Construct with default tunables (frame hold and step test both off). */
     NetworkClockEmitRebase() = default;
 
-    /// (Re)configure.  The run constructs the engine from the loaded knobs
+    /// @brief (Re)configure.  The run constructs the engine from the loaded knobs
     /// (NetworkEngineSpec::clk_rebase_cfg).
+    /// @param cfg Tunables to adopt (copied).  Frame state and tallies are not touched.
     void configure(const Config& cfg) { cfg_ = cfg; }
 
     /**
@@ -151,9 +158,11 @@ public:
     struct FrameState {
         std::map<char, double>                          acc;     ///< constellation -> A_c (m).
         std::map<std::string, std::pair<double, double>> prev;   ///< sat -> {last held (m), last seen (s)}.
-        long long                                       epochs{0};
+        long long                                       epochs{0};   ///< Counters::epochs at export; a restored value above zero keeps the resume-seam rule from reading the first epoch as a cold start.
     };
-    /// Snapshot the frame state (cheap: a few hundred entries).
+    /// @brief Snapshot the frame state (cheap: a few hundred entries).
+    /// @return Copy of the constellation accumulators, the per-satellite previous held value
+    ///         and last-seen time, and the epoch count.
     FrameState exportFrameState() const {
         FrameState fs;
         fs.acc = acc_;
@@ -161,9 +170,11 @@ public:
         fs.epochs = counters_.epochs;
         return fs;
     }
-    /// Restore an exported frame state (a warm resume that continues the held
+    /// @brief Restore an exported frame state (a warm resume that continues the held
     /// frame).  Counters other than @c epochs restart at zero: they are run
     /// telemetry, not frame state.
+    /// @param fs State from exportFrameState(); replaces the accumulators and the
+    ///           per-satellite previous values wholesale.
     void restoreFrameState(const FrameState& fs) {
         acc_ = fs.acc;
         prev_.clear();
@@ -197,6 +208,11 @@ public:
     void rebaseEpoch(std::vector<Entry>& entries, double epoch_time_s,
                      std::set<char>& reanchored);
 
+    /**
+     * @brief Run-scope tallies of the re-base for the run-end telemetry line.
+     *
+     * @return Reference to the running counters; valid for the life of the engine.
+     */
     const Counters& counters() const { return counters_; }
 
     /// Frame-hold tallies of @ref Counters that are per constellation by
@@ -211,18 +227,26 @@ public:
         double    sum_abs_mu{0.0}; ///< Σ|μ| drained into this constellation's accumulator (m).
         double    max_abs_acc{0.0};///< max |A_c| reached (m).
     };
-    /// Per-constellation tallies (letter -> @ref ConstCounters).
+    /// @brief Per-constellation tallies (letter -> @ref ConstCounters).
+    /// @return Map keyed by the constellation letter ('G', 'E', ...); empty before the
+    ///         first entry is processed.  Reference valid for the life of the engine.
     const std::map<char, ConstCounters>& constCounters() const { return const_counters_; }
 
-    /// Test seam: the current frame accumulator A_c (m) for a constellation
+    /// @brief Test seam: the current frame accumulator A_c (m) for a constellation
     /// letter (0.0 when the constellation has no frame state yet).
+    /// @param constellation Constellation letter ('G', 'E', ...).
+    /// @return A_c in m, or 0.0 when the constellation has no frame state.
     double frameAccForTest(char constellation) const {
         const auto it = acc_.find(constellation);
         return it != acc_.end() ? it->second : 0.0;
     }
 
-    /// Test seam: the previous emitted (held-frame) value for a satellite;
+    /// @brief Test seam: the previous emitted (held-frame) value for a satellite;
     /// false when the satellite has no state yet.
+    /// @param sat Satellite id ("G01").
+    /// @param[out] value_m Previous emitted clock in the held frame (m); written only
+    ///                     when the return is true.
+    /// @return True when the satellite has state; false otherwise.
     bool prevEmittedForTest(const std::string& sat, double& value_m) const {
         const auto it = prev_.find(sat);
         if (it == prev_.end()) return false;

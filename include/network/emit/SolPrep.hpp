@@ -5,7 +5,7 @@
  *        network producer: the front half of the emit pipeline (the back half, store
  *        push + product write + closed-loop, stays in SB_EMITSTORE).
  *
- * Maps the post-fit shared estimate to a @ref NetworkSolutionEpoch and prepares it
+ * Maps the post-fit shared estimate to a @ref GnssProcessor::NetworkSolutionEpoch "NetworkSolutionEpoch" and prepares it
  * for emission:
  *   - build @c sol via @c est.toSolutionEpoch; stamp per-sat C1 drift (two-state
  *     clock_model), generation time/id, and, in
@@ -31,13 +31,13 @@
  *
  * Crossing outputs: unlike the self-contained QC seams, this block produces five
  * locals that SB_EMITSTORE (and the epoch heartbeat) consume, returned in
- * @ref NetworkSolPrepResult: @c sol (emitToStore + product write), the withheld-
+ * @ref GnssProcessor::NetworkSolPrepResult "NetworkSolPrepResult": @c sol (emitToStore + product write), the withheld-
  * constellation set (heartbeat), the datum-bump serialization (global_bump +
  * serialized_consts, product write), and the applied retro-bump set (heartbeat).
  *
  * Ordering contract: runs on the post-fit @p x_s after SB_CLOCKUPD (whose
  * @c clock_osc drift it publishes as C1) and before SB_EMITSTORE
- * (which consumes the returned @ref NetworkSolPrepResult).  It mutates persistent
+ * (which consumes the returned @ref GnssProcessor::NetworkSolPrepResult "NetworkSolPrepResult").  It mutates persistent
  * carries (the disc-pending sets, prev_pivot/last_pivot, emitted_anchor,
  * last_if_pin_sel, ura_retro_sats, the RTB-7 ramp state) and the emit-side objects
  * (@c emitter datum/disc bumps; opens @c product_writer at first emit).  The caller
@@ -156,7 +156,7 @@ struct EpochEvents;             // network/driver/Epoch.hpp
  *   - @p perconst_dec_withhold = ep.solve.perconst_dec_withhold: Constellations the σ̂0 decision withheld.
  *   - @p perconst_stats = ep.solve.perconst_stats: Per-constellation σ̂0 stats (events / log).
  *
- * @return the five crossing locals (see @ref NetworkSolPrepResult).
+ * @return the five crossing locals (see @ref GnssProcessor::NetworkSolPrepResult "NetworkSolPrepResult").
  *
  * @param events The epoch's events; written: qc (rhs_trip_pending).
  */
@@ -187,10 +187,10 @@ struct SolPrepCounters {
     // Per-run solution-generation id, minted at the first emit from that epoch's GPS
     // time: deterministic under replay (the id is serialized per epoch), and different
     // across live restarts, which make their first emit later.  0 = unset.
-    uint32_t generation_id = 0;
+    uint32_t generation_id = 0;   ///< per-run solution-generation id of the emitted product (0 = unset)
     // Product time (s) of the last written S contract line (the deferred v2 header
     // counts as the first); -1 until the contract writer opens.
-    double last_contract_emit_s = -1.0;
+    double last_contract_emit_s = -1.0;   ///< product time (s) of the last S contract line written; -1 until the contract writer opens
     long long n_resume_datum_first_reattach = 0; ///< PHASE_DATUM/eq34_reattach (tree-edge handovers) there
     long long n_resume_datum_first_cb_disc  = 0; ///< CB_DATUM/reseed_disc_landed satellites there
     /// Emit-site outcome of the continued pair changes (emit_clock_disc
@@ -200,10 +200,11 @@ struct SolPrepCounters {
     /// a satellite pruned from an earlier kept epoch's emission, or a re-seed was
     /// marked or pending); and continued satellites outside that epoch's emission,
     /// compared when they next emit (the conservative direction).
-    size_t n_if_pin_continued_undeclared = 0, n_if_pin_continued_declared = 0,
-           n_if_pin_continued_unemitted = 0;
-    size_t n_perconst_partial_epochs = 0;     // epochs published partially: the σ̂0 carve-out pruned >=1 constellation (RTA-10)
-    size_t n_perconst_diffuse_published = 0;  // epochs published in full although the global σ̂0 tripped, every constellation being individually clean: the diffuse cross-constellation edge of the per-const approximation (RTA-10)
+    size_t n_if_pin_continued_undeclared = 0,   ///< pair changes left undeclared for a continued satellite (its last emitted pair was the pair the builder continued from, and no re-seed was marked or pending)
+           n_if_pin_continued_declared = 0,   ///< pair changes declared anyway (last emitted pair differed, or a re-seed was marked or pending)
+           n_if_pin_continued_unemitted = 0;   ///< continued satellites outside that epoch's emission, compared when they next emit
+    size_t n_perconst_partial_epochs = 0;     ///< epochs published partially: the σ̂0 carve-out pruned >=1 constellation (RTA-10)
+    size_t n_perconst_diffuse_published = 0;  ///< epochs published in full although the global σ̂0 tripped, every constellation being individually clean: the diffuse cross-constellation edge of the per-const approximation (RTA-10)
     long long cb_exc_bumps           = 0;   ///< code-bias discontinuity bumps landed
     NetworkWireFillCounts wire_fill;        ///< Records added under network.n3c_wire_per_signal.
     long long wire_fill_epochs = 0;         ///< Emitted epochs on which the fill ran.

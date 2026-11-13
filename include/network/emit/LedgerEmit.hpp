@@ -40,10 +40,10 @@
  * ### Two call sites
  *
  * The two halves need state from different points of the epoch.
- * @ref networkLedgerEmitCapture runs at the emit site, before
+ * @ref GnssProcessor::networkLedgerEmitCapture "networkLedgerEmitCapture" runs at the emit site, before
  * @c NetworkProductEmitter::emitToStore overwrites the baselines, and records the
  * emitter's first-sighting answers and this epoch's hold generations.
- * @ref networkLedgerEmitFold runs after the roster's audit pass, once the ledger's
+ * @ref GnssProcessor::networkLedgerEmitFold "networkLedgerEmitFold" runs after the roster's audit pass, once the ledger's
  * admitted machine has advanced for this epoch, and does the comparison.  The capture
  * reads state that emitToStore is about to overwrite; the fold needs state that does
  * not exist until the audit pass has run.
@@ -71,8 +71,8 @@ namespace GnssProcessor {
 
     /// @brief One emitted family's state at the emit site (E1).
     struct LedgerEmitFamily {
-        std::string   satellite;
-        std::string   signal;
+        std::string   satellite;                ///< RINEX satellite id ("G01") of the emitted family.
+        std::string   signal;                   ///< Signal key of the emitted family, as the emitter keys its phase and code biases.
         std::uint32_t hold_generation{ 0 };   ///< hold generation of the phase-bias hold, 0 when the hold is not armed.
         bool          phase_first{ false };   ///< the emitter treated the phase bias as a first sighting.
         bool          has_phase{ false };     ///< the epoch carried a phase bias for this key.
@@ -106,14 +106,14 @@ namespace GnssProcessor {
         /// record's state because a birth and a Reentered-to-Tracking step leave the
         /// same state.
         std::map<ArcLedger::Key, int> prev_adm_gen;
-        bool prev_adm_gen_valid{ false };
+        bool prev_adm_gen_valid{ false };   ///< @c prev_adm_gen holds a previous fold; false until the first fold completes, so the first epoch counts no birth.
 
         /// Per-class event budget, spent over the whole run (see
         /// @ref kLedgerEmitEventCap).  Stored here rather than in the fold so the cap
         /// bounds the run and not each epoch.
         long long ev_gen_no_birth{ 0 };
-        long long ev_birth_no_gen{ 0 };
-        long long ev_first_return{ 0 };
+        long long ev_birth_no_gen{ 0 };   ///< rows spent on the class "an admitted arc birth with no hold generation change".
+        long long ev_first_return{ 0 };   ///< rows spent on the class "a first-sighting baseline seeded for a family the ledger already holds" (phase and code).
 
         /// "SAT|SIGNAL" -> admitted-alive arcs of the family at the previous fold.  A
         /// family that goes from zero to some is a family-level return, which differs
@@ -154,9 +154,9 @@ namespace GnssProcessor {
         /// so the "return" comes from the two bookkeepings meeting and is not a
         /// re-coupling edge.  Mostly the run's first epoch.
         long long first_phase_return_new{ 0 };
-        long long first_code{ 0 };
-        long long first_code_true{ 0 };
-        long long first_code_return{ 0 };
+        long long first_code{ 0 };        ///< code-bias first sightings seen (denominator).
+        long long first_code_true{ 0 };   ///< of those, with no admitted arc of the family in the ledger (expected for all of them while the ledger holds phase arcs only).
+        long long first_code_return{ 0 };///< of those, whose family already carries an admitted arc.
 
         long long events{ 0 };            ///< ARC rows written for the classes above.
         long long events_suppressed{ 0 }; ///< candidate rows the per-class cap withheld.
@@ -195,7 +195,7 @@ namespace GnssProcessor {
      * generations into @p sol) and @c NetworkProductEmitter::emitToStore (which
      * overwrites the per-family baselines).  Reads only; @p sol is const.  The E2
      * declaration is built by a separate call at the same site
-     * (@ref networkLedgerEmitBuildDeclaration).
+     * (@ref GnssProcessor::networkLedgerEmitBuildDeclaration "networkLedgerEmitBuildDeclaration").
      *
      * @param ctx     Run context.
      * @param emitter The product emitter, read only through its first-sighting
@@ -250,7 +250,7 @@ namespace GnssProcessor {
      * would be decided.  A cell the roster cannot answer therefore falls back to that
      * station's canonical latch, which is the source the roster reproduces one epoch
      * later and the same fall-back the phase-2 tracker of the signal roster uses.  The
-     * fall-backs are counted (@ref NetworkLedgerEmitCounters::decl_cells_latch), and a
+     * fall-backs are counted (@ref GnssProcessor::NetworkLedgerEmitCounters::decl_cells_latch "NetworkLedgerEmitCounters::decl_cells_latch"), and a
      * declaration that still names no modelled signal is returned with @c present
      * false, so nothing reaches the wire or the consumer store.
      *

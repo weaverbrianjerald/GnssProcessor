@@ -17,7 +17,7 @@
  *   clock with @f$M = -1@f$ (so @f$x_0 = c@f$), @f$v@f$ the stashed clock,
  *   @f$\sigma^2 = 0@f$, stamped with the stash time.
  * - Time update: each later epoch the row takes the exact route
- *   (@ref couplingExactRow over the epoch's @ref CouplingExactEpoch): S terms by the one
+ *   (@ref GnssProcessor::couplingExactRow "couplingExactRow" over the epoch's @ref GnssProcessor::CouplingExactEpoch "CouplingExactEpoch"): S terms by the one
  *   rule, D terms (departed, reinit, re-referenced) re-attributed through P, the
  *   clock-family deficit onto the stash's pinned pivot; a term on a key outside the dense
  *   block takes the fold's own kappa (exact for a diagonal key) or is marginalized.
@@ -30,7 +30,7 @@
  * - No fallback: a clone that would take the scalar-κ route (an unfactored epoch, a stale
  *   stamp, its own clock outside the dense block) is destroyed, never shrunk.
  * - Transfer: the hold writes the hold family's transfer minus the clone's frame-free passed
- *   motion (@ref PbHoldClone::phi), so the members of the hold family share one frame
+ *   motion (@ref GnssProcessor::PbHoldClone::phi "PbHoldClone::phi"), so the members of the hold family share one frame
  *   and its common-mode median and differ only by the passed motion.
  * - Lifetime: the parent clock's anchor engagement.  A LOOSE clock
  *   folds at the legacy rate, a datum device rather than a statement about motion, so a
@@ -46,7 +46,7 @@
  * clone carries, on one lifetime, a clock row and the row of the ionosphere-free phase-visible clock
  * @f$D = c - \sum_j w_j p_j@f$ over one phase bias per band, the pair fixed at birth.  The
  * exact rule is linear in a row's coefficients, so the D row is the functional of the
- * (c, p_1, p_2) block with every cross term (@ref couplingExactCross).  Its passed motion
+ * (c, p_1, p_2) block with every cross term (@ref GnssProcessor::couplingExactCross "couplingExactCross").  Its passed motion
  * @f$\Phi_D = D(t|t) - D(t_0|t)@f$ is blind to the level (@f$\sum w = 1@f$); the clone
  * retires at every declared step of its phase-bias pair (a re-reference, a new anchor
  * tenure, an emitter mark on the phase channel) and is born again on the new frame.
@@ -103,7 +103,7 @@ enum class PbHoldCloneDeath : int {
     kCount
 };
 
-/// The declared step a block clone followed by retiring (@ref PbHoldCloneDeath::Followed).
+/// The declared step a block clone followed by retiring (@c PbHoldCloneDeath::Followed).
 enum class PbHoldFollow : int {
     None = 0,
     Reref,      ///< a pair key re-referenced (the fold withheld its prior: a cold handover, an incumbent-less pin, a gate drop)
@@ -146,6 +146,9 @@ struct PbHoldCloneShx {
     double rc_var{0.0};         ///< pending: @f$r_T^\top \Sigma_{Y\mid s} r_T@f$, the per-row term a failed projection adds (m^2)
     long long rc_ep{-1};        ///< n_loop_epochs of the pending update (-1: none pending)
 
+    /// @brief The share of the row's variance still pending at an epoch (the per-row term a
+    /// failed projection adds, @ref rc_var).
+    /// @param ep Loop epoch index (n_loop_epochs) the caller is processing.
     /// @return The pending share of the row's variance at epoch @p ep (0 when none is pending).
     double pendingVar(long long ep) const { return rc_ep == ep ? rc_var : 0.0; }
 };
@@ -155,14 +158,14 @@ struct PbHoldClone {
     std::string sat;                   ///< satellite id
     std::string signal;                ///< the hold key's signal
     unsigned    generation{0};         ///< the hold generation the clone belongs to
-    bool        alive{false};
-    PbHoldCloneDeath death{PbHoldCloneDeath::None};
+    bool        alive{false};              ///< the clone is born and not yet dead (it carries its row this epoch)
+    PbHoldCloneDeath death{PbHoldCloneDeath::None};   ///< why the clone died; None while alive
     double      t0_s{0.0};             ///< birth stash time (continuous GPS s)
     double      stamp_s{0.0};          ///< the stash the terms are expressed on
     double      value{0.0};            ///< @f$x_0@f$ at the stamp (m, solve frame)
     double      c_ref{0.0};            ///< @f$c(t_0|t_0)@f$ (m, solve frame)
     double      var{0.0};              ///< the row's residual variance @f$\sigma^2@f$ (m^2)
-    std::vector<PbHoldCloneTerm> terms;
+    std::vector<PbHoldCloneTerm> terms;   ///< the clock row's terms (kind, satellite, signal, coefficient, stashed value and variance, column), revised at each update
     long long   updated_ep{-1};        ///< n_loop_epochs of the last update
     long long   queued_ep{-1};         ///< n_loop_epochs at which the birth was queued (a pending clone)
     bool        rebirth{false};        ///< queued by a disengagement within the generation, not by its start
@@ -190,8 +193,8 @@ struct PbHoldClone {
     double      pv_var{0.0};                   ///< its residual variance (m^2)
     /// @f$\Phi_D@f$, the phase-visible passed motion since birth, frame-free as @ref phi.
     double      pv_phi{0.0};
-    bool        pv_phi_ok{false};
-    double      pv_W{0.0};                     ///< sum of the fold inflation along D, g'Qg per epoch (m^2)
+    bool        pv_phi_ok{false};                  ///< as @ref phi_ok for the phase-visible row: set when an update has accumulated @ref pv_phi, cleared at birth
+    double      pv_W{0.0};                    ///< sum of the fold inflation along D, g'Qg per epoch (m^2)
     bool        pv_w_valid{true};              ///< false once a key of the functional left S
     double      pv_vpost{0.0};                 ///< posterior variance of @f$D(t) - D(t_0)@f$ (m^2)
     double      pv_step_d{0.0};                ///< this epoch's frame-free step of D (m), read at the hold against the emitter's bar
@@ -215,7 +218,7 @@ struct PbHoldClone {
 
 /// The epoch-level inputs of @ref pbHoldCloneAdvance, built once per epoch.
 struct PbHoldCloneInputs {
-    const CouplingExactEpoch* xe{nullptr};
+    const CouplingExactEpoch* xe{nullptr};   ///< the epoch's exact-coupling inputs (stash and factorization); null, or not ok, ends a row as Unfactored
     /// The epoch whose inflation @c q_s / @c q_off is the fold's walk, read only
     /// by the walk-share instrument (@c PbHoldCloneStep::dW).  Set when @c xe carries clocks
     /// on their clones at @f$Q=0@f$ (@ref pbHoldCloneOnClones): it is then the exact-coupling epoch
@@ -236,8 +239,8 @@ struct PbHoldCloneInputs {
 
 /// Outcome of one time-and-measurement step of a clone row.
 struct PbHoldCloneStep {
-    bool ok{false};
-    PbHoldCloneDeath death{PbHoldCloneDeath::None};
+    bool ok{false};                          ///< the step succeeded; false carries the cause in @c death
+    PbHoldCloneDeath death{PbHoldCloneDeath::None};   ///< the death cause when @c ok is false; None otherwise
     double value{0.0};                       ///< @f$x_0(t|t)@f$ (m)
     double var{0.0};                         ///< the new @f$\sigma^2@f$ (m^2)
     std::vector<PbHoldCloneTerm> terms;      ///< the new coefficients, with columns
@@ -257,7 +260,7 @@ struct PbHoldCloneStep {
  * Pure: reads the epoch's exact inputs and the row, writes nothing.  Fails (with the
  * death cause) when the epoch is not factored, the row's stamp is stale, the parent
  * clock's own term is outside the dense block, or the exact row is not finite.
- * @param in    the epoch's inputs (@ref PbHoldCloneInputs).
+ * @param in    the epoch's inputs (@ref GnssProcessor::PbHoldCloneInputs "PbHoldCloneInputs").
  * @param c     the clone, expressed on the previous stash.
  * @return the new value, variance and coefficients, or the death cause.
  */
@@ -265,16 +268,16 @@ PbHoldCloneStep pbHoldCloneAdvance(const PbHoldCloneInputs& in, const PbHoldClon
 
 /**
  * @brief Advance one row of any functional over one epoch: the rule of
- *        @ref pbHoldCloneAdvance with the row's own keys in place of the parent clock.
+ *        @ref GnssProcessor::pbHoldCloneAdvance "pbHoldCloneAdvance" with the row's own keys in place of the parent clock.
  *
  * Pure.  A key of @p own outside the dense block (not stashed, not pinned) is the death
  * @c ParentOutside with @c outside_own its index; @c dW is the fold inflation along the
  * functional, @f$\sum_{a,b} g_a g_b Q_{ab}@f$ over the own keys in S (the seam's
  * off-diagonal noise included), and @c parent_in_s is true when every own key is in S.
- * With @p own the clock alone (g = 1) it is @ref pbHoldCloneAdvance.
+ * With @p own the clock alone (g = 1) it is @ref GnssProcessor::pbHoldCloneAdvance "pbHoldCloneAdvance".
  * @param in      the epoch's inputs.
  * @param sat     the satellite of the own keys.
- * @param own     the row's functional (@ref PbHoldCloneOwn).
+ * @param own     the row's functional (@ref GnssProcessor::PbHoldCloneOwn "PbHoldCloneOwn").
  * @param terms   the row's terms on the previous stash.
  * @param value   the row's @f$x_0@f$ at the previous stash.
  * @param var     the row's residual variance.
@@ -291,7 +294,7 @@ PbHoldCloneStep pbHoldCloneAdvanceRow(const PbHoldCloneInputs& in, const std::st
  *
  * Per band, the phase bias with the smallest stashed variance (read once at
  * birth), and the minimum-norm weights with @f$\sum w = 1@f$ and
- * @f$\sum w \lambda^2 = 0@f$ (@ref clockAnchorPhaseClockWeights; GPS L1 / L2 2.5457 /
+ * @f$\sum w \lambda^2 = 0@f$ (@ref GnssProcessor::clockAnchorPhaseClockWeights "clockAnchorPhaseClockWeights"; GPS L1 / L2 2.5457 /
  * -1.5457).  A tie keeps the lexically first signal.
  * @param sat     the satellite (its constellation sets the bands).
  * @param pb_var  signal -> stashed variance of the satellite's phase biases with a dense row.
@@ -299,7 +302,10 @@ PbHoldCloneStep pbHoldCloneAdvanceRow(const PbHoldCloneInputs& in, const std::st
  */
 PbHoldPair pbHoldClonePickPair(const std::string& sat, const std::map<std::string, double>& pb_var);
 
-/// The functional of a block clone's phase-visible row, {clock: 1, pair: -w_j}.
+/// @brief The functional of a block clone's phase-visible row, {clock: 1, pair: -w_j}.
+/// @param pair The band pair of the satellite (see @ref GnssProcessor::pbHoldClonePickPair "pbHoldClonePickPair").
+/// @return The keys of the functional: the clock with coefficient 1, then one phase-bias key per
+///         band of @p pair with coefficient minus its weight.
 std::vector<PbHoldCloneOwn> pbHoldCloneOwnPv(const PbHoldPair& pair);
 
 /**
@@ -375,7 +381,7 @@ struct PbHoldCloneMarg {
  * @brief Marginalize a clone row's clock-clone terms through the solve's
  *        posterior regression, so the row carries no term on a clone into the next epoch.
  *
- * A clone lives one epoch.  An advanced row on @ref pbHoldCloneOnClones's epoch has its
+ * A clone lives one epoch.  An advanced row on @ref GnssProcessor::pbHoldCloneOnClones "pbHoldCloneOnClones"'s epoch has its
  * clocks' terms on the clones, @f$x_0 = v - m_{S'}^\top(s' - \hat s') - r_C^\top(c - \hat c)
  * + e@f$.  With @f$c \mid s' = \hat c + K(s' - \hat s') + \epsilon@f$,
  * @f$\epsilon \sim N(0, B')@f$ (@c NetworkEstimator::cloneConditional, the same regression as
@@ -400,7 +406,7 @@ struct PbHoldCloneMarg {
  *                    coefficients on the trailing block (Y = the clones and the shared
  *                    history) are written here, @p var is not raised, and @c var_add reports
  *                    the term that was not added (the harvest's end projects it,
- *                    @ref PbHoldCloneShx).  Null (the default): the form above, byte for byte.
+ *                    @ref GnssProcessor::PbHoldCloneShx "PbHoldCloneShx").  Null (the default): the form above, byte for byte.
  * @return the counts; @c ok false (row untouched) when @p K / @p B are not shaped for @p n0.
  */
 PbHoldCloneMarg pbHoldCloneMarginalizeClones(
@@ -469,9 +475,9 @@ struct NetworkEpoch;            // network/driver/Epoch.hpp
  * The keys and prior means are the final solve's: the dense fold's capture
  * (@c ws.cap_dense_keys, which the anchor's in-epoch refloat trims) and the diagonal priors
  * (@c ws.cap_priors).  An S key of @c ctx.carry.cxu_epoch that the solve did not fold
- * takes the Reinit route (@ref pbHoldCloneRestrictEpoch), so a withdrawn prior or an
+ * takes the Reinit route (@ref GnssProcessor::pbHoldCloneRestrictEpoch "pbHoldCloneRestrictEpoch"), so a withdrawn prior or an
  * un-carried datum re-realization never reaches a clone as a revision.  Each live clone
- * is advanced (@ref pbHoldCloneAdvance), its instruments recorded (the passed motion, the
+ * is advanced (@ref GnssProcessor::pbHoldCloneAdvance "pbHoldCloneAdvance"), its instruments recorded (the passed motion, the
  * posterior variance of the increment from the solve's covariance, the fold inflation of
  * the parent), and a clone that cannot take the exact route, or whose row lost every
  * dense term, dies.  Before any of it, a clone whose parent clock the anchor's guard
@@ -486,12 +492,12 @@ struct NetworkEpoch;            // network/driver/Epoch.hpp
  * @c network.emit_pb_hold_smoothed.
  *
  * With @c network.carry_coupling_clock_clone, on an epoch where a clone stood in at
- * the fold: every row advances on @ref pbHoldCloneOnClones's epoch (the stood-in clocks on
+ * the fold: every row advances on @ref GnssProcessor::pbHoldCloneOnClones "pbHoldCloneOnClones"'s epoch (the stood-in clocks on
  * their clones at @f$Q=0@f$; a refloat's unfolded clock whose clone stood in stays there,
  * since the clone keeps its stand-in prior), the revision reads each clone's posterior
  * against its prior mean (the stashed value the fold centred it on), the walk share reads
  * the exact-coupling epoch, and the clone terms are then marginalized
- * (@ref pbHoldCloneMarginalizeClones) through the regression the coupling rows' harvest uses,
+ * (@ref GnssProcessor::pbHoldCloneMarginalizeClones "pbHoldCloneMarginalizeClones") through the regression the coupling rows' harvest uses,
  * evaluated here on this epoch's final solve (the update precedes the harvest; the harvest
  * compares its own regression with this one, counted).  A row with clone terms and no
  * regression dies @c RowFailed.  Off, or with no clone stood in, the update is the one
@@ -528,7 +534,7 @@ void networkPbHoldCloneUpdate(NetworkRun& run, const NetworkEpoch& ep);
  * for a later stash (counted by cause, with the wait); its key carries the hold family's
  * transfer meanwhile.  A pending birth of a superseded generation is dropped.  A block clone
  * is re-harvested row by row and born under the same rule, when the stash also
- * holds a phase bias of the satellite on two bands (@ref pbHoldClonePickPair; otherwise it
+ * holds a phase bias of the satellite on two bands (@ref GnssProcessor::pbHoldClonePickPair "pbHoldClonePickPair"; otherwise it
  * waits, counted).  No-op unless @c network.emit_pb_hold_smoothed.
  *
  * Epoch form; the explicit form and its forwarding adapter
@@ -552,7 +558,7 @@ void networkPbHoldCloneHarvest(NetworkRun& run, const NetworkEpoch& ep);
  * @brief At the hold: one held key's block clone against the emitter's marks.
  *
  * A block clone of @p key and @p generation that was advanced this epoch retires
- * (@c Followed, @ref PbHoldFollow::Mark, the birth queued again) when @p pb_marked (a mark on
+ * (@c Followed, @c PbHoldFollow::Mark, the birth queued again) when @p pb_marked (a mark on
  * the satellite's phase-bias channel is pending at the emit).  One that retired at a
  * re-reference this epoch with no such mark is counted.  One that stays live has the
  * frame-free step of D this epoch (in which a level update and an ionosphere-direction

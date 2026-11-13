@@ -47,7 +47,7 @@
  * first armed epoch follows emitted products marks every constellation present the same way
  * (@c resume_seam), since the frame restarts cold.  A pending datum change leaves the
  * constellation's frame where it is (its step reaches the wire, already marked).  Run-end
- * line: @ref networkPhaseFrameHoldRunEnd; trace @c network_phase_frame.csv.
+ * line: @ref GnssProcessor::networkPhaseFrameHoldRunEnd "networkPhaseFrameHoldRunEnd"; trace @c network_phase_frame.csv.
  *
  * Outputs only: no estimate moves.  Default off; requires @c network.emit_pb_hold, whose
  * generations delimit the vote.
@@ -182,15 +182,15 @@ struct PhaseFrameStep {
  * forced and whose satellite has a stored sample of the same pair and generations, no older than
  * @c max_gap_s; their innovation is v - v_prev.  With at least @c min_voters voters the step is
  * their median (an even count takes the mean of the two middle values), set to 0 when its
- * magnitude is at most @c step_floor_m (@ref PhaseFrameStep::floored): G += step, G created at
- * 0 by the first such epoch (@ref PhaseFrameStep::started).  |G| above @c leash_m resets G to 0
- * (@ref PhaseFrameStep::reanchored).  Then @p prev is replaced by this epoch's samples.
+ * magnitude is at most @c step_floor_m (@ref GnssProcessor::PhaseFrameStep::floored "PhaseFrameStep::floored"): G += step, G created at
+ * 0 by the first such epoch (@ref GnssProcessor::PhaseFrameStep::started "PhaseFrameStep::started").  |G| above @c leash_m resets G to 0
+ * (@ref GnssProcessor::PhaseFrameStep::reanchored "PhaseFrameStep::reanchored").  Then @p prev is replaced by this epoch's samples.
  *
  * With @c quorum above 0 the voters must also reach ceil(quorum x n), n the constellation's entries
  * with a sample.  A started frame below that (no entry forced by a datum change of the constellation)
- * is @ref PhaseFrameStep::below_quorum: the entries with @ref PhaseFrameEntry::own_mark_only that pass
+ * is @ref GnssProcessor::PhaseFrameStep::below_quorum "PhaseFrameStep::below_quorum": the entries with @ref GnssProcessor::PhaseFrameEntry::own_mark_only "PhaseFrameEntry::own_mark_only" that pass
  * the same continuity tests vote too, and the frame moves by the median of the wider set if that set
- * reaches the same number (@ref PhaseFrameStep::widened), else it stays.
+ * reaches the same number (@ref GnssProcessor::PhaseFrameStep::widened "PhaseFrameStep::widened"), else it stays.
  *
  * @param entries  This epoch's satellites.
  * @param t_s      This epoch's content time (s).
@@ -209,7 +209,7 @@ std::map<char, PhaseFrameStep> phaseFrameHoldEpoch(const std::vector<PhaseFrameE
  * @brief The seam: one emitted epoch of the phase-visible frame (@c network.emit_phase_frame_hold).
  *
  * Builds each satellite's sample from @p sol after the phase-bias hold, runs
- * @ref phaseFrameHoldEpoch on the constellation table's frames (@c phase_frame_g_m) and the
+ * @ref GnssProcessor::phaseFrameHoldEpoch "phaseFrameHoldEpoch" on the constellation table's frames (@c phase_frame_g_m) and the
  * satellite table's previous samples (@c phase_frame_prev), adds each constellation's G to every
  * phase bias of its satellites, and writes the counters, the trace rows and the events.  Called
  * by networkEmitStore after networkPbHold and before networkBrdcWire.  No-op unless the knob is
