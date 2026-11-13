@@ -10,18 +10,18 @@
  * floors, the VCE factor, the switch-on seam's level noise.  The
  * coupling rows of the exact coupling update are built in PASS B, before the fold runs, and
  * need the same decision, so until now they read a mirror of the fold, clause for
- * clause, beside it.  @ref networkCarryDecide makes the decision once, before PASS B, and
- * records it on each entry (@ref CarryPrior::fold); the rows and the fold read the record.
+ * clause, beside it.  @ref GnssProcessor::networkCarryDecide "networkCarryDecide" makes the decision once, before PASS B, and
+ * records it on each entry (@ref GnssProcessor::CarryPrior::fold "CarryPrior::fold"); the rows and the fold read the record.
  *
  * The record holds the route and the process-noise increment, not the folded variance.
  * Between the decision and the fold, a clock-pivot handover re-expresses the changed
  * constellation's carried clocks (the S-transform adds @f$v_i^2\sigma_q^2@f$ to each
- * variance and moves each value) after the rows are built; @ref carryFoldVarEff forms the
+ * variance and moves each value) after the rows are built; @ref GnssProcessor::carryFoldVarEff "carryFoldVarEff" forms the
  * variance from the carried variance its caller holds, so the rows and the fold apply one
  * decision to the variance each of them sees, and the re-expression is counted, not hidden.
  * The fold keeps the one clause no earlier point can know (the handover's retired datum),
  * and the anchor's per-satellite bookkeeping is committed at the fold
- * (@ref clockAnchorFoldCommit), so an epoch that ends before the fold advances nothing.
+ * (@ref GnssProcessor::clockAnchorFoldCommit "clockAnchorFoldCommit"), so an epoch that ends before the fold advances nothing.
  */
 
 #include "network/driver/RunTypes.hpp"   // CarryPrior, CarryFoldDecision, CarryDisposition
@@ -37,7 +37,11 @@ struct GnssTime;
 
 /**
  * @brief Whether a disposition folds the entry at a variance the consumer forms
- *        (@ref carryFoldVarEff): Folded, Anchored, Loose, Reinit and Seeded.
+ *        (@ref GnssProcessor::carryFoldVarEff "carryFoldVarEff"): Folded, Anchored, Loose, Reinit and Seeded.
+ *
+ * @param d A decided disposition of a carried border entry.
+ * @return True for Folded, Anchored, Loose, Reinit and Seeded; false for Undecided, Reref,
+ *         Held, OnOscillator, Parked, Screened and Retired.
  */
 inline bool carryDispositionFolds(CarryDisposition d) {
     return d == CarryDisposition::Folded || d == CarryDisposition::Anchored
@@ -51,8 +55,12 @@ inline bool carryDispositionFolds(CarryDisposition d) {
  * A parked entry (@c t_park_s > 0) whose column returned inside the seed horizon is
  * folded as @c Seeded, at its variance plus q over the gap since the park; any other
  * parked entry does not fold. The fold records its outcome on the entry
- * (@ref CarryPrior::fold), so after the fold a seed that was retired, screened or left
+ * (@ref GnssProcessor::CarryPrior::fold "CarryPrior::fold"), so after the fold a seed that was retired, screened or left
  * parked reads as such and only an applied seed reads @c Seeded.
+ *
+ * @param cp A carried border entry, with the fold's recorded decision.
+ * @return True when the entry was parked (@c t_park_s > 0) and its recorded disposition is
+ *         @c Seeded; false otherwise.
  */
 inline bool carryFoldedSeed(const CarryPrior& cp) {
     return cp.t_park_s > 0.0 && cp.fold.disposition == CarryDisposition::Seeded;
@@ -62,8 +70,13 @@ inline bool carryFoldedSeed(const CarryPrior& cp) {
  * @brief The interval (s) the epoch-tail mirrors (the carry LS-VCE monitor's snapshot and
  *        the prior-residual census) form an entry's fold variance over.
  *
- * The gap since the park for an applied seed (@ref carryFoldedSeed), else the driver's step
+ * The gap since the park for an applied seed (@ref GnssProcessor::carryFoldedSeed "carryFoldedSeed"), else the driver's step
  * @p dt clamped at 0, which is what the mirrors used for every ordinary entry.
+ *
+ * @param cp A carried border entry, with the fold's recorded decision.
+ * @param dt The driver's inter-epoch step (s); negative values count as 0.
+ * @return Interval in s: the seed gap recorded on the decision (@c cp.fold.seed_gap_s) for an
+ *         applied seed, otherwise @p dt clamped at 0.
  */
 inline double carryMirrorGapS(const CarryPrior& cp, double dt) {
     return carryFoldedSeed(cp) ? cp.fold.seed_gap_s : (dt > 0.0 ? dt : 0.0);
@@ -75,6 +88,11 @@ inline double carryMirrorGapS(const CarryPrior& cp, double dt) {
  *
  * The one predicate for the decision's departed flag and READMIT's park and seed; the
  * estimator's column lookups throw on an absent column.
+ *
+ * @param est This epoch's estimator, layout registered.
+ * @param cp  The carried border entry (its kind, satellite and signal name the column).
+ * @return True when the entry's kind is a satellite clock, phase bias or code bias and its
+ *         column is in the layout; false when the column is absent or the kind has no shared column.
  */
 bool carryColumnPresent(const NetworkEstimator& est, const CarryPrior& cp);
 
@@ -88,7 +106,7 @@ bool carryColumnPresent(const NetworkEstimator& est, const CarryPrior& cp);
  * is back inside the seed horizon (@c Seeded, at q over the gap since the park); a clock the
  * monitor flagged is @c Reinit; otherwise the entry folds at q of its kind over the driver's
  * step, a clock under the armed anchor at the anchor's increment (@c Anchored or @c Loose,
- * through @ref clockAnchorFoldDecide).  The handover's retired-datum skip is not decided
+ * through @ref GnssProcessor::clockAnchorFoldDecide "clockAnchorFoldDecide").  The handover's retired-datum skip is not decided
  * here (it is known only after PASS B; the fold applies it and records @c Retired), and the
  * non-positive screen is the consumer's, on the variance it forms.
  * @param ctx           run context (read only)
@@ -109,7 +127,7 @@ CarryFoldDecision carryFoldDecide(const NetworkRunContext& ctx, const NetworkEst
  *
  * The fold's own chain, in its order: the reinit variance for @c Reinit; otherwise
  * @p var plus the increment, for a clock under the armed anchor through the anchor's floor
- * (@ref clockAnchorFoldAt); the B4 floor of a phase or code bias; the VCE factor; and, on
+ * (@ref GnssProcessor::clockAnchorFoldAt "clockAnchorFoldAt"); the B4 floor of a phase or code bias; the VCE factor; and, on
  * the dense fold only, the switch-on seam's level noise.  The caller screens the result
  * (`!(v > 0)` does not fold).  The coupling rows call it on the variance they were stashed
  * with and the fold on the variance it folds, so one decision gives each its own variance.
@@ -131,7 +149,7 @@ struct NetworkRun;              // network/driver/Run.hpp
 struct NetworkEpoch;            // network/driver/Epoch.hpp
 
 /**
- * @brief Decide every carried border entry for this epoch (@ref carryFoldDecide), and
+ * @brief Decide every carried border entry for this epoch (@ref GnssProcessor::carryFoldDecide "carryFoldDecide"), and
  *        record the decision on the entry.
  *
  * Called by the driver once per epoch, after the shared columns are registered and the
@@ -171,7 +189,7 @@ void networkCarryDecide(NetworkRun& run, const NetworkEpoch& ep);
  * stash skips pinned columns, so that pivot is not carried and @f$r_p@f$ is the model's
  * physical per-satellite rate: the anchor's q with the anchor armed, the legacy rate
  * without it (a carried pivot would use its own decided rate).  A reinit and a non-folding entry take no
- * term.  Called by @ref networkCarryDecide after every entry is decided; a no-op with the
+ * term.  Called by @ref GnssProcessor::networkCarryDecide "networkCarryDecide" after every entry is decided; a no-op with the
  * knob off, so the off path is byte-identical.  Counted in @c counters.pfq.
  * @param ctx run context (decisions of the carried clocks are updated)
  */
@@ -207,7 +225,7 @@ struct CarryDispositionCounters {
     // ephemeris cut-over re-level) is counted with its largest variance change: the rows
     // were built on the decided variance.  prm_undecided_at_fold: entries the fold met
     // with no decision this epoch (0 unless a path skips the pass).
-    long long prm_decide_epochs = 0;
+    long long prm_decide_epochs = 0;   ///< epochs on which the decision pass (networkCarryDecide) decided a non-empty carry
 };
 
 }  // namespace GnssProcessor

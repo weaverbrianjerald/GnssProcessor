@@ -8,7 +8,7 @@
  * of sight (station, satellite) or an arc (station, satellite, signal).  Each entity has one
  * **table**, an ordered map from the entity's typed identity (common/GnssIdentity.hpp) to
  * a **row**, a plain struct whose members are the entity's carried fields.  The six tables
- * are the members of @ref net::NetworkEntities, held by the run context as
+ * are the members of @ref GnssProcessor::net::NetworkEntities "net::NetworkEntities", held by the run context as
  * @c NetworkRunContext::entities beside the flat @c NetworkCarryState they replace one
  * entity per sub-step (scripts/nom3_designs/N4_design.md section 6).
  *
@@ -16,33 +16,33 @@
  * exactly when the old map held the key; a set membership is a @c bool.  A row is created
  * by the first write of any of its fields and is never erased (decision D8): erasing an
  * entry resets the field, and the row stays.  The free functions below are the only access
- * (no member behaviour): @ref get and @ref put replace @c find / @c operator[], @ref drop
- * and @ref dropAll replace @c erase / @c clear, @ref present replaces @c size, and
- * @ref forEach replaces a range loop.  A field keyed below the entity (a station's signals)
+ * (no member behaviour): @c get and @ref GnssProcessor::net::put "put" replace @c find / @c operator[], @c drop
+ * and @ref GnssProcessor::net::dropAll "dropAll" replace @c erase / @c clear, @c present replaces @c size, and
+ * @ref GnssProcessor::net::forEach "forEach" replaces a range loop.  A field keyed below the entity (a station's signals)
  * lives in a nested map of the row, with the same functions taking the sub-key.
  *
  * **Iteration order** (design section 4).  A table iterates in the order of its identity,
  * and every identity's comparator reproduces the string order of the key it replaced
- * (tests/test_gnss_identity.cpp), so @ref forEach visits the present rows of a field in the
- * order the old map did.  Constellations order by RINEX letter (@ref ByLetter).  A member
- * that was keyed by station NAME is iterated through @ref byStationName, which visits rows
+ * (tests/test_gnss_identity.cpp), so @ref GnssProcessor::net::forEach "forEach" visits the present rows of a field in the
+ * order the old map did.  Constellations order by RINEX letter (@ref GnssProcessor::net::ByLetter "ByLetter").  A member
+ * that was keyed by station NAME is iterated through @ref GnssProcessor::net::byStationName "byStationName", which visits rows
  * in name order; a member whose order no typed key reproduces keeps its old key inside the
  * row that owns it (O4).  No loop is fused across members (O7).
  *
- * **Persistence.**  Every moved field has one @ref FieldDecl row in its entity's field table
- * (@ref kStationFields and its siblings, src/core/network/state/Entities.cpp): its name, the
- * @c NetworkCarryState member it was, how it survives a restart (@ref Persist) and, for a
+ * **Persistence.**  Every moved field has one @ref GnssProcessor::net::FieldDecl "FieldDecl" row in its entity's field table
+ * (@ref GnssProcessor::net::kStationFields "kStationFields" and its siblings, src/core/network/state/Entities.cpp): its name, the
+ * @c NetworkCarryState member it was, how it survives a restart (@ref GnssProcessor::net::Persist "Persist") and, for a
  * snapshot record, the two functions that fill the record from the table and the table
  * from the record.  The snapshot writer and reader call those functions where the old copy
- * blocks stood; the reader keeps today's restore order (@ref kRestoreOrder).
+ * blocks stood; the reader keeps today's restore order (@ref GnssProcessor::net::kRestoreOrder "kRestoreOrder").
  *
- * **Lifecycle.**  The satellite, station and arc rows declare a @ref Lifecycle (decision
+ * **Lifecycle.**  The satellite, station and arc rows declare a @ref GnssProcessor::net::Lifecycle "Lifecycle" (decision
  * D4): a return is never read as a first sighting (standing invariant 7).  It is filled
  * where an owner computes it; a row whose owner does not yet compute it stays
- * @ref Life::Absent.
+ * @c Life::Absent.
  *
  * **Parallel access.**  The station produce runs in parallel over stations and only reads
- * the tables (@ref get on a const table is a @c std::map::find, safe against concurrent
+ * the tables (@c get on a const table is a @c std::map::find, safe against concurrent
  * readers).  Rows are inserted only by serial code (the harvests and the serial seams), so
  * no insert can race a read (verifier check V5, scripts/nom_n4_verify.py).
  *
@@ -108,7 +108,9 @@ enum class Persist : std::uint8_t {
     EngineEpoch,      ///< Rebuilt every epoch by its owner but kept in the run: the run end or a held pointer reads it.
 };
 
-/// The name of a persistence class, as the reach table prints it.
+/// @brief The name of a persistence class, as the reach table prints it.
+/// @param p The persistence class.
+/// @return Static, null-terminated name of @p p; the pointer stays valid for the whole run.
 const char* persistName(Persist p);
 
 /**
@@ -124,7 +126,7 @@ enum class Life : std::uint8_t {
 
 /// The lifecycle of one row: its state and the loop epochs of its first and latest sighting.
 struct Lifecycle {
-    Life      life{Life::Absent};
+    Life      life{Life::Absent};   ///< State at the latest epoch; a return after a departure is Returned, never a first sighting.
     long long ep_first{-1};   ///< Loop epoch of the first sighting.
     long long ep_last{-1};    ///< Loop epoch of the latest sighting.
 };
@@ -168,12 +170,19 @@ struct EntityFields {
 
 /// Constellations order by RINEX letter, the order of today's char and one-letter keys (O5).
 struct ByLetter {
+    /**
+     * @brief Strict weak order of two constellations by RINEX letter.
+     *
+     * @param a First constellation.
+     * @param b Second constellation.
+     * @return True when the RINEX letter of @p a sorts before that of @p b ('C' before 'E' before 'G').
+     */
     bool operator()(System a, System b) const { return traitsOf(a).letter < traitsOf(b).letter; }
 };
 
 /**
  * @brief The causes of a pending per-satellite wire discontinuity (decision D7): one bit of
- *        @ref SatelliteState::disc_pending per drain-on-emission queue.
+ *        @ref GnssProcessor::net::SatelliteState::disc_pending "SatelliteState::disc_pending" per drain-on-emission queue.
  */
 enum class Disc : unsigned {
     UraRetro    = 1u << 0,  ///< A post-emit QC tier's retro-bump (B1).  Record R.
@@ -183,7 +192,7 @@ enum class Disc : unsigned {
     CbReseed    = 1u << 4,  ///< A time-linked code-bias datum re-seed.
 };
 
-/// One signal family of a constellation, in @ref ConstellationState::channels: each member
+/// One signal family of a constellation, in @ref GnssProcessor::net::ConstellationState::channels "ConstellationState::channels": each member
 /// has its own key space (the signal string its old key carried after the constellation,
 /// O4), and a cell is present in a member exactly when the old map held (constellation, key).
 struct ChannelState {
@@ -463,7 +472,6 @@ struct PbHoldKey {
     /// without an emitted clock), so LAH's reference waits for the satellite's next
     /// emitted clock and starts from the last transfer (continuity of the transfer).
     /// With a reference, leaving a clone folds its passed motion into it instead
-    ///.
     bool          smh_ref_pending{false};
     /// The key's last held emission wrote its clone's transfer (so a
     /// clone that is not live now is a switch to the bridge).
@@ -625,7 +633,7 @@ struct RxClkRate {
     long long n_incr{0};       ///< Increments folded.  0 = no rate yet, so the jump gate cannot fire (there is no prediction to test).
 };
 
-/// One station's carried state below the station, in @ref StationState::signals: each
+/// One station's carried state below the station, in @ref GnssProcessor::net::StationState::signals "StationState::signals": each
 /// member has its own key space (the string its old key carried after the station index),
 /// and a cell is present in a member exactly when the old map held (station, key).
 struct StationSignalState {
@@ -823,7 +831,7 @@ struct StationState {
     std::map<std::string, StationSignalState> signals;
 };
 
-/// The event holdoff clocks of one line of sight, in @ref LosState::events: each member has
+/// The event holdoff clocks of one line of sight, in @ref GnssProcessor::net::LosState::events "LosState::events": each member has
 /// its own key space (the part of its old key besides the station and the satellite), and a
 /// cell is present in a member exactly when the old map held the key.  They thin the event
 /// streams, never the counts.
@@ -1012,7 +1020,9 @@ struct StationNames {
     std::vector<std::string>   names;    ///< Roster order: names[i] is StationId{i}.
     std::vector<int>           by_name;  ///< Roster indices in name order.
     std::map<std::string, int> index;    ///< Name to roster index.
-    /// Replaces the roster with @p roster_names (roster order).
+    /// @brief Replaces the roster with @p roster_names (roster order).
+    /// @param roster_names Station names in roster order; rebuilds @c names, @c index and
+    ///                     @c by_name from it.
     void assign(std::vector<std::string> roster_names);
 };
 
@@ -1026,7 +1036,9 @@ enum class Converter : std::uint8_t {
     Count
 };
 
-/// The name of a converter, as the reach table prints it.
+/// @brief The name of a converter, as the reach table prints it.
+/// @param c The converter.
+/// @return Static, null-terminated name of @p c; the pointer stays valid for the whole run.
 const char* converterName(Converter c);
 
 /**
@@ -1036,8 +1048,8 @@ const char* converterName(Converter c);
  */
 struct EntityReach {
     std::vector<std::size_t> max_rows;  ///< Per declared field, in the order of @ref kEntityFieldTables.
-    long long                sampled{0};
-    std::array<long long, static_cast<std::size_t>(Converter::Count)> failures{};
+    long long                sampled{0};   ///< Epochs on which the entity tables were sampled for @c max_rows.
+    std::array<long long, static_cast<std::size_t>(Converter::Count)> failures{};   ///< Round-trip failures counted per @ref Converter.
 };
 
 /**
@@ -1045,12 +1057,12 @@ struct EntityReach {
  *        reach table's state.
  */
 struct NetworkEntities {
-    ConstellationTable                          constellations;
-    SatTable                                    sats;
-    SatSignalTable                              sat_signals;
-    StationTable                                stations;
-    LosTable                                    los;
-    ArcTable                                    arcs;
+    ConstellationTable                          constellations;   ///< One row per constellation, in RINEX-letter order.
+    SatTable                                    sats;             ///< One row per satellite, in satellite order.
+    SatSignalTable                              sat_signals;      ///< One row per (satellite, signal), in that order.
+    StationTable                                stations;         ///< One row per station, in roster order.
+    LosTable                                    los;              ///< One row per (station, satellite) line of sight.
+    ArcTable                                    arcs;             ///< One row per (station, satellite, signal) arc.
     StationNames                                names;   ///< Run constant (setup).
     mutable EntityReach                         reach;   ///< Trace class.
 };
@@ -1106,6 +1118,7 @@ std::map<std::string, std::string> letterMap(const ConstellationTable& t,
  *        code-bias datum builder, @c NetworkSbasis), in (letter, signal) order.
  * @param t The constellation table.
  * @param f The channel field.
+ * @tparam V Value type held by the channel field.
  * @return "<letter>|<signal>" -> value, for every cell where the field is present.
  */
 template <class V>
@@ -1167,7 +1180,7 @@ std::optional<LosId> losOfName(const NetworkEntities& e, const std::string& stat
  * @brief The satellite signal of (satellite, signal) strings, without counting: the
  *        reader's converter (safe in the parallel produce).  The signal is a phase code
  *        ("L1C") or "", the satellite-wide @c SignalId{} (the wildcard of
- *        @ref SatSignalState::tu_reinit); a satellite "" is the no-satellite @c SatId{}.
+ *        @ref GnssProcessor::net::SatSignalState::tu_reinit "SatSignalState::tu_reinit"); a satellite "" is the no-satellite @c SatId{}.
  *        An empty component keeps its row; any other string must round-trip (O2).
  * @param sat    The satellite ("G05"), or "".
  * @param signal The phase code, or "".
@@ -1208,22 +1221,37 @@ std::optional<SatSignalId> satPhaseBiasKey(const std::string& key);
  */
 std::optional<SatSignalId> satSignalOf(const NetworkEntities& e, const std::string& key);
 
-/// The satellite string of a satellite: "" for the no-satellite @c SatId{}.
+/// @brief The satellite string of a satellite: "" for the no-satellite @c SatId{}.
+/// @param s The satellite.
+/// @return The satellite string ("G05"), or the empty string for the no-satellite id.
 std::string satKey(const SatId& s);
 
-/// The signal string of a satellite signal: its phase code, or "" for @c SignalId{}.
+/// @brief The signal string of a satellite signal: its phase code, or "" for @c SignalId{}.
+/// @param s The signal.
+/// @return The phase code ("L1C"), or the empty string for the satellite-wide signal.
 std::string signalKey(const SignalId& s);
 
-/// The ambiguity-form key "<sat>_<signal>" of a satellite signal.
+/// @brief The ambiguity-form key "<sat>_<signal>" of a satellite signal.
+/// @param id The satellite signal.
+/// @return The key text ("G05_L1C"); the satellite part is empty for the no-satellite id and
+///         the signal part is empty for the satellite-wide signal.
 inline std::string ambKey(const SatSignalId& id) { return net::satKey(id.sat) + "_" + signalKey(id.signal); }
 
-/// The hold-form key "<sat>|<signal>" of a satellite signal.
+/// @brief The hold-form key "<sat>|<signal>" of a satellite signal.
+/// @param id The satellite signal.
+/// @return The key text ("G05|L1C"); the satellite part is empty for the no-satellite id and
+///         the signal part is empty for the satellite-wide signal.
 inline std::string holdKey(const SatSignalId& id) { return net::satKey(id.sat) + "|" + signalKey(id.signal); }
 
-/// The satellite string of a line of sight's satellite: "" for the no-satellite @c SatId{}.
+/// @brief The satellite string of a line of sight's satellite: "" for the no-satellite @c SatId{}.
+/// @param s The line of sight's satellite.
+/// @return The satellite string ("G05"), or the empty string for the no-satellite id.
 std::string satKey(const SatId& s);
 
-/// The old (station index, satellite) key of a line of sight.
+/// @brief The old (station index, satellite) key of a line of sight.
+/// @param id The line of sight.
+/// @return (station roster index, satellite string); the satellite string is empty for a
+///         station's own rows (the no-satellite id).
 inline std::pair<int, std::string> losPair(const LosId& id) {
     return {id.station.index, satKey(id.sat)};
 }
@@ -1239,6 +1267,15 @@ using FieldPtr = std::conditional_t<std::is_const_v<T>, const V*, V*>;
 /**
  * @brief The value of field @p f of row @p id, or null when the row or the field is
  *        absent: the old map's @c find.
+ *
+ * @tparam T Table type (const-qualified for a read-only access).
+ * @tparam R Row type of the table; declares field @p f.
+ * @tparam V Value type held by the field.
+ * @param t  The table.
+ * @param id Identity of the row.
+ * @param f  Pointer to the optional field of the row.
+ * @return Pointer to the value (const when @p T is const), or null when the row or the field
+ *         is absent.  Never inserts a row.
  */
 template <class T, class R, class V>
 FieldPtr<T, V> get(T& t, const typename std::remove_const_t<T>::key_type& id,
@@ -1251,6 +1288,14 @@ FieldPtr<T, V> get(T& t, const typename std::remove_const_t<T>::key_type& id,
 /**
  * @brief The value of field @p f of row @p id, created with the row when absent: the old
  *        map's @c operator[].  Serial code only (it may insert a row).
+ *
+ * @tparam T Table type.
+ * @tparam R Row type of the table; declares field @p f.
+ * @tparam V Value type held by the field.
+ * @param[in,out] t The table; gains the row when @p id is absent.
+ * @param id Identity of the row.
+ * @param f  Pointer to the optional field of the row.
+ * @return Reference to the field's value, default-constructed when it was absent.
  */
 template <class T, class R, class V>
 V& put(T& t, const typename T::key_type& id, std::optional<V> R::*f) {
@@ -1259,7 +1304,14 @@ V& put(T& t, const typename T::key_type& id, std::optional<V> R::*f) {
     return *o;
 }
 
-/// Resets field @p f of row @p id; 1 when it was present: the old map's @c erase(key).
+/// @brief Resets field @p f of row @p id; 1 when it was present: the old map's @c erase(key).
+/// @tparam T Table type.
+/// @tparam R Row type of the table; declares field @p f.
+/// @tparam V Value type held by the field.
+/// @param[in,out] t The table.
+/// @param id Identity of the row.
+/// @param f  Pointer to the optional field of the row.
+/// @return 1 when the field was present and is now reset, 0 otherwise.  The row itself stays.
 template <class T, class R, class V>
 std::size_t drop(T& t, const typename T::key_type& id, std::optional<V> R::*f) {
     const auto it = t.find(id);
@@ -1268,13 +1320,24 @@ std::size_t drop(T& t, const typename T::key_type& id, std::optional<V> R::*f) {
     return 1;
 }
 
-/// Resets field @p f on every row: the old map's @c clear().
+/// @brief Resets field @p f on every row: the old map's @c clear().
+/// @tparam T Table type.
+/// @tparam R Row type of the table; declares field @p f.
+/// @tparam V Value type held by the field.
+/// @param[in,out] t The table.
+/// @param f Pointer to the optional field to reset.
 template <class T, class R, class V>
 void dropAll(T& t, std::optional<V> R::*f) {
     for (auto& kv : t) (kv.second.*f).reset();
 }
 
-/// The number of rows where field @p f is present: the old map's @c size().
+/// @brief The number of rows where field @p f is present: the old map's @c size().
+/// @tparam T Table type.
+/// @tparam R Row type of the table; declares field @p f.
+/// @tparam V Value type held by the field.
+/// @param t The table.
+/// @param f Pointer to the optional field to count.
+/// @return Number of rows whose field is present.
 template <class T, class R, class V>
 std::size_t present(const T& t, std::optional<V> R::*f) {
     std::size_t n = 0;
@@ -1285,6 +1348,15 @@ std::size_t present(const T& t, std::optional<V> R::*f) {
 /**
  * @brief Calls @p fn(id, value) for every row where field @p f is present, in identity
  *        order: the old map's range loop.  @p fn must not insert rows.
+ *
+ * @tparam T  Table type (const-qualified for a read-only walk).
+ * @tparam R  Row type of the table; declares field @p f.
+ * @tparam V  Value type held by the field.
+ * @tparam Fn Callable type of @p fn.
+ * @param t  The table.
+ * @param f  Pointer to the optional field to visit.
+ * @param fn Called as fn(id, value) with the row identity and a reference to the field's value
+ *           (const when @p T is const).
  */
 template <class T, class R, class V, class Fn>
 void forEach(T& t, std::optional<V> R::*f, Fn fn) {
@@ -1293,10 +1365,19 @@ void forEach(T& t, std::optional<V> R::*f, Fn fn) {
 }
 
 /**
- * @brief @ref forEach for a reader that also reads the row's other fields: calls
+ * @brief @ref GnssProcessor::net::forEach "forEach" for a reader that also reads the row's other fields: calls
  *        @p fn(id, value, row) for every row where field @p f is present, in identity order
  *        (one row holds an arc's ledger record and its carry, step N4f2).  @p fn must not
  *        insert rows; it may reset field @p f of the row it is given.
+ *
+ * @tparam T  Table type.
+ * @tparam R  Row type of the table; declares field @p f.
+ * @tparam V  Value type held by the field.
+ * @tparam Fn Callable type of @p fn.
+ * @param t  The table.
+ * @param f  Pointer to the optional field to visit.
+ * @param fn Called as fn(id, value, row) with the row identity, a reference to the field's
+ *           value and the whole row.
  */
 template <class T, class R, class V, class Fn>
 void forEachRow(T& t, std::optional<V> R::*f, Fn fn) {
@@ -1304,14 +1385,27 @@ void forEachRow(T& t, std::optional<V> R::*f, Fn fn) {
         if (kv.second.*f) fn(kv.first, *(kv.second.*f), kv.second);
 }
 
-/// True when the set-membership field @p f of row @p id is set: the old set's @c count.
+/// @brief True when the set-membership field @p f of row @p id is set: the old set's @c count.
+/// @tparam T Table type.
+/// @tparam R Row type of the table; declares flag @p f.
+/// @param t  The table.
+/// @param id Identity of the row.
+/// @param f  Pointer to the bool flag of the row.
+/// @return True when the row exists and the flag is set; false when the row is absent or the
+///         flag is clear.
 template <class T, class R>
 bool has(const T& t, const typename T::key_type& id, bool R::*f) {
     const auto it = t.find(id);
     return it != t.end() && it->second.*f;
 }
 
-/// Sets field @p f of row @p id; true when it was not set: the old set's @c insert().second.
+/// @brief Sets field @p f of row @p id; true when it was not set: the old set's @c insert().second.
+/// @tparam T Table type.
+/// @tparam R Row type of the table; declares flag @p f.
+/// @param[in,out] t The table; gains the row when @p id is absent.
+/// @param id Identity of the row.
+/// @param f  Pointer to the bool flag of the row.
+/// @return True when the flag was clear (the call set it), false when it was already set.
 template <class T, class R>
 bool mark(T& t, const typename T::key_type& id, bool R::*f) {
     bool& b = t[id].*f;
@@ -1320,7 +1414,13 @@ bool mark(T& t, const typename T::key_type& id, bool R::*f) {
     return inserted;
 }
 
-/// Clears field @p f of row @p id; 1 when it was set: the old set's @c erase(key).
+/// @brief Clears field @p f of row @p id; 1 when it was set: the old set's @c erase(key).
+/// @tparam T Table type.
+/// @tparam R Row type of the table; declares flag @p f.
+/// @param[in,out] t The table.
+/// @param id Identity of the row.
+/// @param f  Pointer to the bool flag of the row.
+/// @return 1 when the flag was set and is now clear, 0 otherwise.
 template <class T, class R>
 std::size_t unmark(T& t, const typename T::key_type& id, bool R::*f) {
     const auto it = t.find(id);
@@ -1329,7 +1429,12 @@ std::size_t unmark(T& t, const typename T::key_type& id, bool R::*f) {
     return 1;
 }
 
-/// The number of rows where field @p f is set: the old set's @c size().
+/// @brief The number of rows where field @p f is set: the old set's @c size().
+/// @tparam T Table type.
+/// @tparam R Row type of the table; declares flag @p f.
+/// @param t The table.
+/// @param f Pointer to the bool flag to count.
+/// @return Number of rows whose flag is set.
 template <class T, class R>
 std::size_t present(const T& t, bool R::*f) {
     std::size_t n = 0;
@@ -1339,7 +1444,19 @@ std::size_t present(const T& t, bool R::*f) {
 
 // ---- Fields keyed below the entity: a nested map of the row (a station's signals) ----
 
-/// The value of nested field @p f at (@p id, @p k), or null: the old pair-keyed map's @c find.
+/// @brief The value of nested field @p f at (@p id, @p k), or null: the old pair-keyed map's @c find.
+/// @tparam T  Table type (const-qualified for a read-only access).
+/// @tparam R  Row type of the table; declares the nested map @p sub.
+/// @tparam M  Nested map type of the row (sub-key to sub-row).
+/// @tparam SR Sub-row type of the nested map; declares field @p f.
+/// @tparam V  Value type held by the field.
+/// @param t   The table.
+/// @param id  Identity of the row.
+/// @param sub Pointer to the row's nested map.
+/// @param k   Key of the sub-row in the nested map.
+/// @param f   Pointer to the optional field of the sub-row.
+/// @return Pointer to the value (const when @p T is const), or null when the row, the sub-row
+///         or the field is absent.  Never inserts.
 template <class T, class R, class M, class SR, class V>
 FieldPtr<T, V> get(T& t, const typename std::remove_const_t<T>::key_type& id, M R::*sub,
                    const typename M::key_type& k, std::optional<V> SR::*f) {
@@ -1350,7 +1467,18 @@ FieldPtr<T, V> get(T& t, const typename std::remove_const_t<T>::key_type& id, M 
     return &*(jt->second.*f);
 }
 
-/// The value of nested field @p f at (@p id, @p k), created when absent: @c operator[].
+/// @brief The value of nested field @p f at (@p id, @p k), created when absent: @c operator[].
+/// @tparam T  Table type.
+/// @tparam R  Row type of the table; declares the nested map @p sub.
+/// @tparam M  Nested map type of the row (sub-key to sub-row).
+/// @tparam SR Sub-row type of the nested map; declares field @p f.
+/// @tparam V  Value type held by the field.
+/// @param[in,out] t The table; gains the row when @p id is absent.
+/// @param id  Identity of the row.
+/// @param sub Pointer to the row's nested map; gains the sub-row when @p k is absent.
+/// @param k   Key of the sub-row in the nested map.
+/// @param f   Pointer to the optional field of the sub-row.
+/// @return Reference to the field's value, default-constructed when it was absent.
 template <class T, class R, class M, class SR, class V>
 V& put(T& t, const typename T::key_type& id, M R::*sub, const typename M::key_type& k,
        std::optional<V> SR::*f) {
@@ -1359,7 +1487,18 @@ V& put(T& t, const typename T::key_type& id, M R::*sub, const typename M::key_ty
     return *o;
 }
 
-/// Resets nested field @p f at (@p id, @p k); 1 when it was present: @c erase(key).
+/// @brief Resets nested field @p f at (@p id, @p k); 1 when it was present: @c erase(key).
+/// @tparam T  Table type.
+/// @tparam R  Row type of the table; declares the nested map @p sub.
+/// @tparam M  Nested map type of the row (sub-key to sub-row).
+/// @tparam SR Sub-row type of the nested map; declares field @p f.
+/// @tparam V  Value type held by the field.
+/// @param[in,out] t The table.
+/// @param id  Identity of the row.
+/// @param sub Pointer to the row's nested map.
+/// @param k   Key of the sub-row in the nested map.
+/// @param f   Pointer to the optional field of the sub-row.
+/// @return 1 when the field was present and is now reset, 0 otherwise.  The sub-row stays.
 template <class T, class R, class M, class SR, class V>
 std::size_t drop(T& t, const typename T::key_type& id, M R::*sub,
                  const typename M::key_type& k, std::optional<V> SR::*f) {
@@ -1371,14 +1510,31 @@ std::size_t drop(T& t, const typename T::key_type& id, M R::*sub,
     return 1;
 }
 
-/// Resets nested field @p f everywhere: @c clear().
+/// @brief Resets nested field @p f everywhere: @c clear().
+/// @tparam T  Table type.
+/// @tparam R  Row type of the table; declares the nested map @p sub.
+/// @tparam M  Nested map type of the row (sub-key to sub-row).
+/// @tparam SR Sub-row type of the nested map; declares field @p f.
+/// @tparam V  Value type held by the field.
+/// @param[in,out] t The table.
+/// @param sub Pointer to the rows' nested map.
+/// @param f   Pointer to the optional field of the sub-row to reset.
 template <class T, class R, class M, class SR, class V>
 void dropAll(T& t, M R::*sub, std::optional<V> SR::*f) {
     for (auto& kv : t)
         for (auto& sk : kv.second.*sub) (sk.second.*f).reset();
 }
 
-/// The number of (row, sub-key) cells where nested field @p f is present: @c size().
+/// @brief The number of (row, sub-key) cells where nested field @p f is present: @c size().
+/// @tparam T  Table type.
+/// @tparam R  Row type of the table; declares the nested map @p sub.
+/// @tparam M  Nested map type of the row (sub-key to sub-row).
+/// @tparam SR Sub-row type of the nested map; declares field @p f.
+/// @tparam V  Value type held by the field.
+/// @param t   The table.
+/// @param sub Pointer to the rows' nested map.
+/// @param f   Pointer to the optional field of the sub-row to count.
+/// @return Number of cells whose field is present, summed over all rows.
 template <class T, class R, class M, class SR, class V>
 std::size_t present(const T& t, M R::*sub, std::optional<V> SR::*f) {
     std::size_t n = 0;
@@ -1387,7 +1543,17 @@ std::size_t present(const T& t, M R::*sub, std::optional<V> SR::*f) {
     return n;
 }
 
-/// True when the set-membership field @p f at (@p id, @p k) is set: the nested form of @ref has.
+/// @brief True when the set-membership field @p f at (@p id, @p k) is set: the nested form of @c has.
+/// @tparam T  Table type.
+/// @tparam R  Row type of the table; declares the nested map @p sub.
+/// @tparam M  Nested map type of the row (sub-key to sub-row).
+/// @tparam SR Sub-row type of the nested map; declares flag @p f.
+/// @param t   The table.
+/// @param id  Identity of the row.
+/// @param sub Pointer to the row's nested map.
+/// @param k   Key of the sub-row in the nested map.
+/// @param f   Pointer to the bool flag of the sub-row.
+/// @return True when the row and the sub-row exist and the flag is set; false otherwise.
 template <class T, class R, class M, class SR>
 bool has(const T& t, const typename T::key_type& id, M R::*sub, const typename M::key_type& k,
          bool SR::*f) {
@@ -1397,8 +1563,18 @@ bool has(const T& t, const typename T::key_type& id, M R::*sub, const typename M
     return jt != (it->second.*sub).end() && jt->second.*f;
 }
 
-/// Sets the set-membership field @p f at (@p id, @p k), creating the row and the cell; true when
-/// it was not set: the nested form of @ref mark.  Serial code only.
+/// @brief Sets the set-membership field @p f at (@p id, @p k), creating the row and the cell; true when
+/// it was not set: the nested form of @ref GnssProcessor::net::mark "mark".  Serial code only.
+/// @tparam T  Table type.
+/// @tparam R  Row type of the table; declares the nested map @p sub.
+/// @tparam M  Nested map type of the row (sub-key to sub-row).
+/// @tparam SR Sub-row type of the nested map; declares flag @p f.
+/// @param[in,out] t The table; gains the row when @p id is absent.
+/// @param id  Identity of the row.
+/// @param sub Pointer to the row's nested map; gains the sub-row when @p k is absent.
+/// @param k   Key of the sub-row in the nested map.
+/// @param f   Pointer to the bool flag of the sub-row.
+/// @return True when the flag was clear (the call set it), false when it was already set.
 template <class T, class R, class M, class SR>
 bool mark(T& t, const typename T::key_type& id, M R::*sub, const typename M::key_type& k,
           bool SR::*f) {
@@ -1408,8 +1584,16 @@ bool mark(T& t, const typename T::key_type& id, M R::*sub, const typename M::key
     return inserted;
 }
 
-/// The number of (row, sub-key) cells where the set-membership field @p f is set: the nested
-/// form of the bool @ref present.
+/// @brief The number of (row, sub-key) cells where the set-membership field @p f is set: the nested
+/// form of the bool @c present.
+/// @tparam T  Table type.
+/// @tparam R  Row type of the table; declares the nested map @p sub.
+/// @tparam M  Nested map type of the row (sub-key to sub-row).
+/// @tparam SR Sub-row type of the nested map; declares flag @p f.
+/// @param t   The table.
+/// @param sub Pointer to the rows' nested map.
+/// @param f   Pointer to the bool flag of the sub-row to count.
+/// @return Number of cells whose flag is set, summed over all rows.
 template <class T, class R, class M, class SR>
 std::size_t present(const T& t, M R::*sub, bool SR::*f) {
     std::size_t n = 0;
@@ -1418,8 +1602,16 @@ std::size_t present(const T& t, M R::*sub, bool SR::*f) {
     return n;
 }
 
-/// Resets field @p f on every row where @p fn(id, value) returns true, in identity order:
+/// @brief Resets field @p f on every row where @p fn(id, value) returns true, in identity order:
 /// the old map's erase-while-iterating loop.  @p fn must not insert rows.
+/// @tparam T  Table type.
+/// @tparam R  Row type of the table; declares field @p f.
+/// @tparam V  Value type held by the field.
+/// @tparam Fn Callable type of @p fn.
+/// @param[in,out] t The table.
+/// @param f  Pointer to the optional field to test and reset.
+/// @param fn Called as fn(id, value) with the row identity and a reference to the field's
+///           value; returns true to reset the field.  The row itself stays.
 template <class T, class R, class V, class Fn>
 void eraseIf(T& t, std::optional<V> R::*f, Fn fn) {
     for (auto& kv : t)
@@ -1428,14 +1620,27 @@ void eraseIf(T& t, std::optional<V> R::*f, Fn fn) {
 
 // ---- Lines of sight addressed by the old (station index, satellite) key ----
 
-/// The value of field @p f of the line of sight (@p station, @p sat), or null (no count).
+/// @brief The value of field @p f of the line of sight (@p station, @p sat), or null (no count).
+/// @tparam T Table type (const-qualified for a read-only access).
+/// @tparam V Value type held by the field.
+/// @param t       The line-of-sight table.
+/// @param station The station's roster index.
+/// @param sat     The satellite ("G05"), or "" for a station's own rows.
+/// @param f       Pointer to the optional field of the line-of-sight row.
+/// @return Pointer to the value (const when @p T is const), or null when the satellite does not
+///         round-trip, or the row or the field is absent.
 template <class T, class V>
 FieldPtr<T, V> getLos(T& t, int station, const std::string& sat, std::optional<V> LosState::*f) {
     const std::optional<LosId> id = losKey(station, sat);
     return id ? get(t, *id, f) : nullptr;
 }
 
-/// True when set-membership field @p f of (@p station, @p sat) is set (no count).
+/// @brief True when set-membership field @p f of (@p station, @p sat) is set (no count).
+/// @param t       The line-of-sight table.
+/// @param station The station's roster index.
+/// @param sat     The satellite ("G05"), or "" for a station's own rows.
+/// @param f       Pointer to the bool flag of the line-of-sight row.
+/// @return True when the satellite round-trips, the row exists and the flag is set; false otherwise.
 inline bool hasLos(const LosTable& t, int station, const std::string& sat, bool LosState::*f) {
     const std::optional<LosId> id = losKey(station, sat);
     return id && has(t, *id, f);
@@ -1445,22 +1650,46 @@ inline bool hasLos(const LosTable& t, int station, const std::string& sat, bool 
  * @brief The value of field @p f of (@p station, @p sat), created when absent: the old
  *        map's @c operator[].  Serial code only.  A satellite that does not round-trip is
  *        counted and gets a scratch value the table never holds.
+ *
+ * @tparam V Value type held by the field.
+ * @param[in,out] e The entities (the line-of-sight table, the station and satellite converters and
+ *                  their failure tally).
+ * @param station The station's roster index.
+ * @param sat     The satellite ("G05"), or "" for a station's own rows.
+ * @param f       Pointer to the optional field of the line-of-sight row.
+ * @return Reference to the field's value in the table (default-constructed when it was absent),
+ *         or to a thread-local scratch value when the satellite does not round-trip.
  */
 template <class V>
 V& putLos(NetworkEntities& e, int station, const std::string& sat, std::optional<V> LosState::*f);
 
-/// Resets field @p f of (@p station, @p sat); 1 when it was present: the old map's erase.
+/// @brief Resets field @p f of (@p station, @p sat); 1 when it was present: the old map's erase.
+/// @tparam V Value type held by the field.
+/// @param[in,out] t The line-of-sight table.
+/// @param station The station's roster index.
+/// @param sat     The satellite ("G05"), or "" for a station's own rows.
+/// @param f       Pointer to the optional field of the line-of-sight row.
+/// @return 1 when the field was present and is now reset, 0 otherwise (also 0 when the satellite
+///         does not round-trip).
 template <class V>
 std::size_t dropLos(LosTable& t, int station, const std::string& sat, std::optional<V> LosState::*f) {
     const std::optional<LosId> id = losKey(station, sat);
     return id ? drop(t, *id, f) : 0;
 }
 
-/// Replaces set-membership field @p f with @p cells: the old set's assignment.  Serial code only.
+/// @brief Replaces set-membership field @p f with @p cells: the old set's assignment.  Serial code only.
+/// @param[in,out] e The entities (the line-of-sight table and the converters).
+/// @param f     Pointer to the bool flag of the line-of-sight row.
+/// @param cells (station index, satellite) cells to set; every other row's flag is cleared.
 void assignLosFlags(NetworkEntities& e, bool LosState::*f,
                     const std::set<std::pair<int, std::string>>& cells);
 
-/// Replaces field @p f with the cells of @p m: the old map's assignment.  Serial code only.
+/// @brief Replaces field @p f with the cells of @p m: the old map's assignment.  Serial code only.
+/// @tparam V Value type held by the field.
+/// @param[in,out] e The entities (the line-of-sight table and the converters).
+/// @param f Pointer to the optional field of the line-of-sight row.
+/// @param m (station index, satellite) to value; the field is reset everywhere first, then set
+///          at these cells.
 template <class V>
 void assignLos(NetworkEntities& e, std::optional<V> LosState::*f,
                const std::map<std::pair<int, std::string>, V>& m) {
@@ -1468,8 +1697,18 @@ void assignLos(NetworkEntities& e, std::optional<V> LosState::*f,
     for (const auto& [k, v] : m) putLos(e, k.first, k.second, f) = v;
 }
 
-/// The first present cell of nested field @p f in (identity, sub-key) order, or null: the
+/// @brief The first present cell of nested field @p f in (identity, sub-key) order, or null: the
 /// old pair-keyed map's @c begin().
+/// @tparam T  Table type (const-qualified for a read-only access).
+/// @tparam R  Row type of the table; declares the nested map @p sub.
+/// @tparam M  Nested map type of the row (sub-key to sub-row).
+/// @tparam SR Sub-row type of the nested map; declares field @p f.
+/// @tparam V  Value type held by the field.
+/// @param t   The table.
+/// @param sub Pointer to the rows' nested map.
+/// @param f   Pointer to the optional field of the sub-row.
+/// @return Pointer to the first present value (const when @p T is const), or null when the field
+///         is present nowhere.
 template <class T, class R, class M, class SR, class V>
 FieldPtr<T, V> first(T& t, M R::*sub, std::optional<V> SR::*f) {
     for (auto& kv : t)
@@ -1481,6 +1720,18 @@ FieldPtr<T, V> first(T& t, M R::*sub, std::optional<V> SR::*f) {
 /**
  * @brief Calls @p fn(id, k, value) for every cell where nested field @p f is present, in
  *        (identity, sub-key) order: the old pair-keyed map's range loop.
+ *
+ * @tparam T  Table type (const-qualified for a read-only walk).
+ * @tparam R  Row type of the table; declares the nested map @p sub.
+ * @tparam M  Nested map type of the row (sub-key to sub-row).
+ * @tparam SR Sub-row type of the nested map; declares field @p f.
+ * @tparam V  Value type held by the field.
+ * @tparam Fn Callable type of @p fn.
+ * @param t   The table.
+ * @param sub Pointer to the rows' nested map.
+ * @param f   Pointer to the optional field of the sub-row.
+ * @param fn  Called as fn(id, k, value) with the row identity, the sub-key and a reference to the
+ *            field's value (const when @p T is const).
  */
 template <class T, class R, class M, class SR, class V, class Fn>
 void forEach(T& t, M R::*sub, std::optional<V> SR::*f, Fn fn) {
@@ -1491,23 +1742,39 @@ void forEach(T& t, M R::*sub, std::optional<V> SR::*f, Fn fn) {
 
 // ---- Satellites addressed by the old satellite-string key (step N4e1) ----
 
-/// The satellite of a satellite string, without counting (the reader's converter, safe in
+/// @brief The satellite of a satellite string, without counting (the reader's converter, safe in
 /// the parallel produce): "" is the no-satellite @c SatId{}; any other string must
 /// round-trip (O2).
+/// @param sat The satellite string ("G05"), or "".
+/// @return The satellite, or @c std::nullopt when the string does not round-trip.
 std::optional<SatId> satIdKey(const std::string& sat);
 
-/// The satellite of a satellite string, counting a failure under Converter::Satellite (the
+/// @brief The satellite of a satellite string, counting a failure under Converter::Satellite (the
 /// writer's converter; serial code).
+/// @param e   The entities (the converter tally).
+/// @param sat The satellite string ("G05"), or "".
+/// @return The satellite, or @c std::nullopt (counted).
 std::optional<SatId> satIdOf(const NetworkEntities& e, const std::string& sat);
 
-/// The value of field @p f of satellite @p sat, or null (no count).
+/// @brief The value of field @p f of satellite @p sat, or null (no count).
+/// @tparam T Table type (const-qualified for a read-only access).
+/// @tparam V Value type held by the field.
+/// @param t   The satellite table.
+/// @param sat The satellite ("G05").
+/// @param f   Pointer to the optional field of the satellite row.
+/// @return Pointer to the value (const when @p T is const), or null when the satellite does not
+///         round-trip, or the row or the field is absent.
 template <class T, class V>
 FieldPtr<T, V> getSat(T& t, const std::string& sat, std::optional<V> SatelliteState::*f) {
     const std::optional<SatId> id = satIdKey(sat);
     return id ? get(t, *id, f) : nullptr;
 }
 
-/// True when flag @p f of satellite @p sat is set (no count): the old set's @c count().
+/// @brief True when flag @p f of satellite @p sat is set (no count): the old set's @c count().
+/// @param t   The satellite table.
+/// @param sat The satellite ("G05").
+/// @param f   Pointer to the bool flag of the satellite row.
+/// @return True when the satellite round-trips, the row exists and the flag is set; false otherwise.
 inline bool hasSat(const SatTable& t, const std::string& sat, bool SatelliteState::*f) {
     const std::optional<SatId> id = satIdKey(sat);
     return id && has(t, *id, f);
@@ -1517,54 +1784,108 @@ inline bool hasSat(const SatTable& t, const std::string& sat, bool SatelliteStat
  * @brief The value of field @p f of satellite @p sat, created when absent: the old map's
  *        @c operator[].  Serial code only.  A satellite that does not round-trip is counted
  *        and gets a scratch value the table never holds.
+ *
+ * @tparam V Value type held by the field.
+ * @param[in,out] e The entities (the satellite table, the converter and its failure tally).
+ * @param sat The satellite ("G05").
+ * @param f   Pointer to the optional field of the satellite row.
+ * @return Reference to the field's value in the table (default-constructed when it was absent),
+ *         or to a thread-local scratch value when the satellite does not round-trip.
  */
 template <class V>
 V& putSat(NetworkEntities& e, const std::string& sat, std::optional<V> SatelliteState::*f);
 
-/// Resets field @p f of satellite @p sat; 1 when it was present: the old map's erase.
+/// @brief Resets field @p f of satellite @p sat; 1 when it was present: the old map's erase.
+/// @tparam V Value type held by the field.
+/// @param[in,out] t The satellite table.
+/// @param sat The satellite ("G05").
+/// @param f   Pointer to the optional field of the satellite row.
+/// @return 1 when the field was present and is now reset, 0 otherwise (also 0 when the satellite
+///         does not round-trip).
 template <class V>
 std::size_t dropSat(SatTable& t, const std::string& sat, std::optional<V> SatelliteState::*f) {
     const std::optional<SatId> id = satIdKey(sat);
     return id ? drop(t, *id, f) : 0;
 }
 
-/// Sets flag @p f of satellite @p sat; true when it was not set: the old set's
+/// @brief Sets flag @p f of satellite @p sat; true when it was not set: the old set's
 /// @c insert().second.  Serial code only (counted on a failed conversion).
+/// @param[in,out] e The entities (the satellite table, the converter and its failure tally).
+/// @param sat The satellite ("G05").
+/// @param f   Pointer to the bool flag of the satellite row.
+/// @return True when the flag was clear (the call set it), false when it was already set; true
+///         also when the satellite does not round-trip (counted, nothing set).
 bool markSat(NetworkEntities& e, const std::string& sat, bool SatelliteState::*f);
 
-/// Clears flag @p f of satellite @p sat; 1 when it was set: the old set's @c erase(key).
+/// @brief Clears flag @p f of satellite @p sat; 1 when it was set: the old set's @c erase(key).
+/// @param[in,out] t The satellite table.
+/// @param sat The satellite ("G05").
+/// @param f   Pointer to the bool flag of the satellite row.
+/// @return 1 when the flag was set and is now clear, 0 otherwise.
 std::size_t unmarkSat(SatTable& t, const std::string& sat, bool SatelliteState::*f);
 
-/// Flag @p f as the satellite-string set its readers and the snapshot take, in id order.
+/// @brief Flag @p f as the satellite-string set its readers and the snapshot take, in id order.
+/// @param t The satellite table.
+/// @param f Pointer to the bool flag of the satellite row.
+/// @return Satellite strings of the rows whose flag is set.
 std::set<std::string> satSet(const SatTable& t, bool SatelliteState::*f);
 
-/// Replaces flag @p f with the satellites of @p s: the old set's assignment.  Serial code only.
+/// @brief Replaces flag @p f with the satellites of @p s: the old set's assignment.  Serial code only.
+/// @param[in,out] e The entities (the satellite table and the converter).
+/// @param f Pointer to the bool flag of the satellite row.
+/// @param s Satellites whose flag is set afterwards; every other row's flag is cleared.
 void assignSatFlags(NetworkEntities& e, bool SatelliteState::*f, const std::set<std::string>& s);
 
 // ---- The discontinuity bits (decision D7): the flag forms over one bit of disc_pending ----
 
-/// True when bit @p d of satellite @p sat is set (no count): the old set's @c count().
+/// @brief True when bit @p d of satellite @p sat is set (no count): the old set's @c count().
+/// @param t   The satellite table.
+/// @param sat The satellite ("G05").
+/// @param d   The discontinuity cause (one bit of @c disc_pending).
+/// @return True when the satellite round-trips, the row exists and the bit is set; false otherwise.
 bool hasSat(const SatTable& t, const std::string& sat, Disc d);
 
-/// Sets bit @p d of satellite @p sat; true when it was not set: the old set's
+/// @brief Sets bit @p d of satellite @p sat; true when it was not set: the old set's
 /// @c insert().second.  Serial code only (counted on a failed conversion).
+/// @param[in,out] e The entities (the satellite table, the converter and its failure tally).
+/// @param sat The satellite ("G05").
+/// @param d   The discontinuity cause (one bit of @c disc_pending).
+/// @return True when the bit was clear (the call set it), false when it was already set; true
+///         also when the satellite does not round-trip (counted, nothing set).
 bool markSat(NetworkEntities& e, const std::string& sat, Disc d);
 
-/// Clears bit @p d of satellite @p sat; 1 when it was set: the old set's @c erase(key).
+/// @brief Clears bit @p d of satellite @p sat; 1 when it was set: the old set's @c erase(key).
+/// @param[in,out] t The satellite table.
+/// @param sat The satellite ("G05").
+/// @param d   The discontinuity cause (one bit of @c disc_pending).
+/// @return 1 when the bit was set and is now clear, 0 otherwise.
 std::size_t unmarkSat(SatTable& t, const std::string& sat, Disc d);
 
-/// The number of satellites with bit @p d set: the old set's @c size().
+/// @brief The number of satellites with bit @p d set: the old set's @c size().
+/// @param t The satellite table.
+/// @param d The discontinuity cause (one bit of @c disc_pending).
+/// @return Number of satellite rows with the bit set.
 std::size_t present(const SatTable& t, Disc d);
 
-/// Bit @p d as the satellite-string set its drain and the snapshot take, in id order.
+/// @brief Bit @p d as the satellite-string set its drain and the snapshot take, in id order.
+/// @param t The satellite table.
+/// @param d The discontinuity cause (one bit of @c disc_pending).
+/// @return Satellite strings of the rows with the bit set.
 std::set<std::string> satSet(const SatTable& t, Disc d);
 
-/// Replaces bit @p d with the satellites of @p s: the old set's assignment (a drain writing
+/// @brief Replaces bit @p d with the satellites of @p s: the old set's assignment (a drain writing
 /// back its still-pending satellites).  Serial code only.
+/// @param[in,out] e The entities (the satellite table and the converter).
+/// @param d The discontinuity cause (one bit of @c disc_pending).
+/// @param s Satellites with the bit set afterwards; the bit is cleared on every other row.
 void assignSatFlags(NetworkEntities& e, Disc d, const std::set<std::string>& s);
 
-/// Field @p f as the satellite-string-keyed map its readers and the snapshot take, in id
+/// @brief Field @p f as the satellite-string-keyed map its readers and the snapshot take, in id
 /// order (the string order of the keys, O1).
+/// @tparam V Value type held by the field.
+/// @param t The satellite table.
+/// @param f Pointer to the optional field of the satellite row.
+/// @return Satellite string to value, for every row where the field is present; empty when none.
 template <class V>
 std::map<std::string, V> satMap(const SatTable& t, std::optional<V> SatelliteState::*f) {
     std::map<std::string, V> out;
@@ -1572,8 +1893,12 @@ std::map<std::string, V> satMap(const SatTable& t, std::optional<V> SatelliteSta
     return out;
 }
 
-/// Replaces field @p f with the cells of the satellite-keyed map @p m: the old map's
+/// @brief Replaces field @p f with the cells of the satellite-keyed map @p m: the old map's
 /// assignment.  Serial code only.
+/// @tparam V Value type held by the field.
+/// @param[in,out] e The entities (the satellite table and the converter).
+/// @param f Pointer to the optional field of the satellite row.
+/// @param m Satellite string to value; the field is reset everywhere first, then set at these cells.
 template <class V>
 void assignSat(NetworkEntities& e, std::optional<V> SatelliteState::*f,
                const std::map<std::string, V>& m) {
@@ -1583,7 +1908,14 @@ void assignSat(NetworkEntities& e, std::optional<V> SatelliteState::*f,
 
 // ---- Satellite signals addressed by the old string keys (step N4d) ----
 
-/// The value of field @p f of the satellite signal of old key @p key, or null (no count).
+/// @brief The value of field @p f of the satellite signal of old key @p key, or null (no count).
+/// @tparam T Table type (const-qualified for a read-only access).
+/// @tparam V Value type held by the field.
+/// @param t   The satellite-signal table.
+/// @param key The old key, "sat_signal" (ambiguity form) or "sat|signal" (hold form).
+/// @param f   Pointer to the optional field of the satellite-signal row.
+/// @return Pointer to the value (const when @p T is const), or null when the key does not
+///         round-trip, or the row or the field is absent.
 template <class T, class V>
 FieldPtr<T, V> getSig(T& t, const std::string& key, std::optional<V> SatSignalState::*f) {
     const std::optional<SatSignalId> id = satSignalKey(key);
@@ -1594,31 +1926,69 @@ FieldPtr<T, V> getSig(T& t, const std::string& key, std::optional<V> SatSignalSt
  * @brief The value of field @p f of the satellite signal of old key @p key, created when
  *        absent: the old map's @c operator[].  Serial code only.  A key that does not
  *        round-trip is counted and gets a scratch value the table never holds.
+ *
+ * @tparam V Value type held by the field.
+ * @param[in,out] e The entities (the satellite-signal table, the converter and its failure tally).
+ * @param key The old key, "sat_signal" or "sat|signal".
+ * @param f   Pointer to the optional field of the satellite-signal row.
+ * @return Reference to the field's value in the table (default-constructed when it was absent),
+ *         or to a thread-local scratch value when the key does not round-trip.
  */
 template <class V>
 V& putSig(NetworkEntities& e, const std::string& key, std::optional<V> SatSignalState::*f);
 
-/// Sets field @p f of old key @p key to @p v when absent; true when it was absent: the old
+/// @brief Sets field @p f of old key @p key to @p v when absent; true when it was absent: the old
 /// map's @c emplace.  Serial code only.
+/// @tparam V Value type held by the field.
+/// @param[in,out] e The entities (the satellite-signal table, the converter and its failure tally).
+/// @param key The old key, "sat_signal" or "sat|signal".
+/// @param f   Pointer to the optional field of the satellite-signal row.
+/// @param v   Value to store when the field is absent.
+/// @return True when the field was absent and now holds @p v (also when the key does not
+///         round-trip: counted, and @p v goes to a scratch value the table never holds); false
+///         when the field was already present (left unchanged).
 template <class V>
 bool emplaceSig(NetworkEntities& e, const std::string& key, std::optional<V> SatSignalState::*f,
                 const V& v);
 
-/// The (satellite, signal) forms of @ref getSig and @ref putSig ("" is the satellite-wide
+/// @brief The (satellite, signal) forms of @ref GnssProcessor::net::getSig "getSig" and @ref GnssProcessor::net::putSig "putSig" ("" is the satellite-wide
 /// @c SignalId{}): the old (kind, sat, signal) tuple keys.
+/// @tparam T Table type (const-qualified for a read-only access).
+/// @tparam V Value type held by the field.
+/// @param t      The satellite-signal table.
+/// @param sat    The satellite ("G05").
+/// @param signal The phase code ("L1C"), or "" for the satellite-wide signal.
+/// @param f      Pointer to the optional field of the satellite-signal row.
+/// @return Pointer to the value (const when @p T is const), or null when the key does not
+///         round-trip, or the row or the field is absent.
 template <class T, class V>
 FieldPtr<T, V> getSig(T& t, const std::string& sat, const std::string& signal,
                       std::optional<V> SatSignalState::*f) {
     const std::optional<SatSignalId> id = satSignalKey(sat, signal);
     return id ? get(t, *id, f) : nullptr;
 }
+/// @brief The (satellite, signal) form of @ref GnssProcessor::net::putSig "putSig": the value of field @p f, created when absent.
+/// Serial code only.
+/// @tparam V Value type held by the field.
+/// @param[in,out] e The entities (the satellite-signal table, the converter and its failure tally).
+/// @param sat    The satellite ("G05").
+/// @param signal The phase code ("L1C"), or "" for the satellite-wide signal.
+/// @param f      Pointer to the optional field of the satellite-signal row.
+/// @return Reference to the field's value in the table (default-constructed when it was absent),
+///         or to a thread-local scratch value when the key does not round-trip.
 template <class V>
 V& putSig(NetworkEntities& e, const std::string& sat, const std::string& signal,
           std::optional<V> SatSignalState::*f) {
     return putSig(e, sat + "_" + signal, f);
 }
 
-/// Resets field @p f of old key @p key; 1 when it was present: the old map's erase.
+/// @brief Resets field @p f of old key @p key; 1 when it was present: the old map's erase.
+/// @tparam V Value type held by the field.
+/// @param[in,out] t The satellite-signal table.
+/// @param key The old key, "sat_signal" or "sat|signal".
+/// @param f   Pointer to the optional field of the satellite-signal row.
+/// @return 1 when the field was present and is now reset, 0 otherwise (also 0 when the key does
+///         not round-trip).
 template <class V>
 std::size_t dropSig(SatSignalTable& t, const std::string& key, std::optional<V> SatSignalState::*f) {
     const std::optional<SatSignalId> id = satSignalKey(key);
@@ -1632,6 +2002,8 @@ std::size_t dropSig(SatSignalTable& t, const std::string& key, std::optional<V> 
  * @param t   The table.
  * @param f   The field.
  * @param sep '_' for the ambiguity form, '|' for the hold form.
+ * @tparam V Value type held by the field.
+ * @return Key string to value, for every row where the field is present; empty when none.
  */
 template <class V>
 std::map<std::string, V> sigMap(const SatSignalTable& t, std::optional<V> SatSignalState::*f, char sep) {
@@ -1642,8 +2014,13 @@ std::map<std::string, V> sigMap(const SatSignalTable& t, std::optional<V> SatSig
     return out;
 }
 
-/// Replaces field @p f with the cells of the old-keyed map @p m: the old map's assignment
+/// @brief Replaces field @p f with the cells of the old-keyed map @p m: the old map's assignment
 /// (the election's results written back).  Serial code only.
+/// @tparam V Value type held by the field.
+/// @param[in,out] e The entities (the satellite-signal table, the converter and its failure tally).
+/// @param f Pointer to the optional field of the satellite-signal row.
+/// @param m Old key ("sat_signal" or "sat|signal") to value; the field is reset everywhere first,
+///          then set at these cells.
 template <class V>
 void assignSig(NetworkEntities& e, std::optional<V> SatSignalState::*f,
                const std::map<std::string, V>& m) {
@@ -1653,62 +2030,125 @@ void assignSig(NetworkEntities& e, std::optional<V> SatSignalState::*f,
 
 // ---- Arcs addressed by the old (station index, satellite, signal) keys (step N4f1) ----
 
-/// The arc of an old key, without counting (the reader's converter, safe in the parallel
-/// produce): the satellite and signal convert as for @ref satSignalKey ("" keeps its row as
+/// @brief The arc of an old key, without counting (the reader's converter, safe in the parallel
+/// produce): the satellite and signal convert as for @ref GnssProcessor::net::satSignalKey "satSignalKey" ("" keeps its row as
 /// @c SatId{} / @c SignalId{}; any other string must round-trip, O2).
+/// @param k The old key (station index, satellite, phase signal).
+/// @return The arc, or @c std::nullopt when the satellite or the signal does not round-trip.
 std::optional<ArcId> arcKey(const ArcTuple& k);
 
-/// The arc of an old (station index, "sat_signal") key, without counting.
+/// @brief The arc of an old (station index, "sat_signal") key, without counting.
+/// @param station The station's roster index.
+/// @param amb     The ambiguity key, "sat_signal".
+/// @return The arc, or @c std::nullopt when the key does not round-trip.
 std::optional<ArcId> arcKey(int station, const std::string& amb);
 
-/// The arc of an old key, counting a failure under Converter::Arc (the writer's
+/// @brief The arc of an old key, counting a failure under Converter::Arc (the writer's
 /// converter; serial code).
+/// @param e The entities (the converter tally).
+/// @param k The old key (station index, satellite, phase signal).
+/// @return The arc, or @c std::nullopt (counted).
 std::optional<ArcId> arcOf(const NetworkEntities& e, const ArcTuple& k);
 
-/// The arc of an old (station index, "sat_signal") key, counting a failure under
+/// @brief The arc of an old (station index, "sat_signal") key, counting a failure under
 /// Converter::Arc (serial code).
+/// @param e       The entities (the converter tally).
+/// @param station The station's roster index.
+/// @param amb     The ambiguity key, "sat_signal".
+/// @return The arc, or @c std::nullopt (counted).
 std::optional<ArcId> arcOfAmb(const NetworkEntities& e, int station, const std::string& amb);
 
-/// The old key of an arc.
+/// @brief The old key of an arc.
+/// @param id The arc.
+/// @return (station roster index, satellite string, phase signal string); empty strings stand
+///         for the no-satellite and satellite-wide identities.
 ArcTuple arcTuple(const ArcId& id);
 
-/// The old (station index, "sat_signal") key of an arc.
+/// @brief The old (station index, "sat_signal") key of an arc.
+/// @param id The arc.
+/// @return (station roster index, ambiguity key "sat_signal").
 std::pair<int, std::string> arcPair(const ArcId& id);
 
-/// The value of field @p f of the arc of old key @p k, or null (no count).
+/// @brief The value of field @p f of the arc of old key @p k, or null (no count).
+/// @tparam T Table type (const-qualified for a read-only access).
+/// @tparam V Value type held by the field.
+/// @param t The arc table.
+/// @param k The old key (station index, satellite, phase signal).
+/// @param f Pointer to the optional field of the arc row.
+/// @return Pointer to the value (const when @p T is const), or null when the key does not
+///         round-trip, or the row or the field is absent.
 template <class T, class V>
 FieldPtr<T, V> getArc(T& t, const ArcTuple& k, std::optional<V> ArcState::*f) {
     const std::optional<ArcId> id = arcKey(k);
     return id ? get(t, *id, f) : nullptr;
 }
 
-/// The value of field @p f of the arc of old key (@p station, @p amb), or null (no count).
+/// @brief The value of field @p f of the arc of old key (@p station, @p amb), or null (no count).
+/// @tparam T Table type (const-qualified for a read-only access).
+/// @tparam V Value type held by the field.
+/// @param t       The arc table.
+/// @param station The station's roster index.
+/// @param amb     The ambiguity key, "sat_signal".
+/// @param f       Pointer to the optional field of the arc row.
+/// @return Pointer to the value (const when @p T is const), or null when the key does not
+///         round-trip, or the row or the field is absent.
 template <class T, class V>
 FieldPtr<T, V> getArcAmb(T& t, int station, const std::string& amb, std::optional<V> ArcState::*f) {
     const std::optional<ArcId> id = arcKey(station, amb);
     return id ? get(t, *id, f) : nullptr;
 }
 
-/// True when flag @p f of the arc of old key (@p station, @p amb) is set (no count).
+/// @brief True when flag @p f of the arc of old key (@p station, @p amb) is set (no count).
+/// @param t       The arc table.
+/// @param station The station's roster index.
+/// @param amb     The ambiguity key, "sat_signal".
+/// @param f       Pointer to the bool flag of the arc row.
+/// @return True when the key round-trips, the row exists and the flag is set; false otherwise.
 bool hasArcAmb(const ArcTable& t, int station, const std::string& amb, bool ArcState::*f);
 
 /**
  * @brief The value of field @p f of the arc of old key @p k, created when absent: the old
  *        map's @c operator[].  Serial code only.  A key that does not round-trip is counted
  *        and gets a scratch value the table never holds.
+ *
+ * @tparam V Value type held by the field.
+ * @param[in,out] e The entities (the arc table, the converter and its failure tally).
+ * @param k The old key (station index, satellite, phase signal).
+ * @param f Pointer to the optional field of the arc row.
+ * @return Reference to the field's value in the table (default-constructed when it was absent),
+ *         or to a thread-local scratch value when the key does not round-trip.
  */
 template <class V>
 V& putArc(NetworkEntities& e, const ArcTuple& k, std::optional<V> ArcState::*f);
 
-/// @ref putArc for an old (station index, "sat_signal") key.  Serial code only.
+/// @brief @ref GnssProcessor::net::putArc "putArc" for an old (station index, "sat_signal") key.  Serial code only.
+/// @tparam V Value type held by the field.
+/// @param[in,out] e The entities (the arc table, the converter and its failure tally).
+/// @param station The station's roster index.
+/// @param amb     The ambiguity key, "sat_signal".
+/// @param f       Pointer to the optional field of the arc row.
+/// @return Reference to the field's value in the table (default-constructed when it was absent),
+///         or to a thread-local scratch value when the key does not round-trip.
 template <class V>
 V& putArcAmb(NetworkEntities& e, int station, const std::string& amb, std::optional<V> ArcState::*f);
 
-/// Sets flag @p f of the arc of old key (@p station, @p amb); true when it was not set.
+/// @brief Sets flag @p f of the arc of old key (@p station, @p amb); true when it was not set.
 /// Serial code only (counted on a failed conversion).
+/// @param[in,out] e The entities (the arc table, the converter and its failure tally).
+/// @param station The station's roster index.
+/// @param amb     The ambiguity key, "sat_signal".
+/// @param f       Pointer to the bool flag of the arc row.
+/// @return True when the flag was clear (the call set it), false when it was already set; true
+///         also when the key does not round-trip (counted, nothing set).
 bool markArcAmb(NetworkEntities& e, int station, const std::string& amb, bool ArcState::*f);
 
-/// Resets field @p f of the arc of old key @p k; 1 when it was present: the old map's erase.
+/// @brief Resets field @p f of the arc of old key @p k; 1 when it was present: the old map's erase.
+/// @tparam V Value type held by the field.
+/// @param[in,out] t The arc table.
+/// @param k The old key (station index, satellite, phase signal).
+/// @param f Pointer to the optional field of the arc row.
+/// @return 1 when the field was present and is now reset, 0 otherwise (also 0 when the key does
+///         not round-trip).
 template <class V>
 std::size_t dropArc(ArcTable& t, const ArcTuple& k, std::optional<V> ArcState::*f) {
     const std::optional<ArcId> id = arcKey(k);
@@ -1721,6 +2161,13 @@ std::size_t dropArc(ArcTable& t, const ArcTuple& k, std::optional<V> ArcState::*
  *        satellite at the station follow it in signal order; a range scan stops at the first
  *        row of another (station, satellite).  A satellite that does not round-trip has no
  *        rows: the end.
+ *
+ * @tparam T Arc table type (const-qualified for a read-only scan).
+ * @param t       The arc table.
+ * @param station The station's roster index.
+ * @param sat     The satellite ("G05").
+ * @return Iterator to the first row at or after (@p station, @p sat) in table order; the end
+ *         iterator when the satellite does not round-trip.
  */
 template <class T>
 auto arcsFrom(T& t, int station, const std::string& sat) -> decltype(t.begin()) {
@@ -1729,22 +2176,36 @@ auto arcsFrom(T& t, int station, const std::string& sat) -> decltype(t.begin()) 
     return t.lower_bound(ArcId{StationId{station}, *s, SignalId{}});
 }
 
-/// The first arc of station @p station (O8): the old
+/// @brief The first arc of station @p station (O8): the old
 /// @c lower_bound(std::make_tuple(station, std::string{}, std::string{})); a scan stops at the
 /// first row of another station.
+/// @tparam T Arc table type (const-qualified for a read-only scan).
+/// @param t       The arc table.
+/// @param station The station's roster index.
+/// @return Iterator to the first row at or after the station's first possible arc in table order
+///         (the end iterator when the station has none and no later station exists).
 template <class T>
 auto arcsOfStation(T& t, int station) -> decltype(t.begin()) {
     return t.lower_bound(ArcId{StationId{station}, SatId{}, SignalId{}});
 }
 
-/// True when @p id is an arc of (@p station, @p sat): the stop test of an @ref arcsFrom scan
+/// @brief True when @p id is an arc of (@p station, @p sat): the stop test of an @ref GnssProcessor::net::arcsFrom "arcsFrom" scan
 /// (the old @c std::get<0>(key) == station && @c std::get<1>(key) == sat).
+/// @param id      The arc identity under the scan iterator.
+/// @param station The station's roster index of the scan.
+/// @param sat     The satellite string of the scan ("" matches the no-satellite id).
+/// @return True when the arc belongs to that station and satellite; false ends the scan.
 inline bool arcOfLos(const ArcId& id, int station, const std::string& sat) {
     return id.station.index == station && satKey(id.sat) == sat;
 }
 
-/// Field @p f as the old tuple-keyed map (its pure readers, the snapshot and the tests), in
+/// @brief Field @p f as the old tuple-keyed map (its pure readers, the snapshot and the tests), in
 /// id order, which is the old key order (O1).
+/// @tparam V Value type held by the field.
+/// @param t The arc table.
+/// @param f Pointer to the optional field of the arc row.
+/// @return Old key (station index, satellite, phase signal) to value, for every row where the
+///         field is present; empty when none.
 template <class V>
 std::map<ArcTuple, V> arcMap(const ArcTable& t, std::optional<V> ArcState::*f) {
     std::map<ArcTuple, V> out;
@@ -1752,8 +2213,14 @@ std::map<ArcTuple, V> arcMap(const ArcTable& t, std::optional<V> ArcState::*f) {
     return out;
 }
 
-/// @ref putArc on a bare table (a pure function's fixture: no converter tally); a key that
+/// @brief @ref GnssProcessor::net::putArc "putArc" on a bare table (a pure function's fixture: no converter tally); a key that
 /// does not round-trip gets a scratch value the table never holds.
+/// @tparam V Value type held by the field.
+/// @param[in,out] t The arc table; gains the row when the key is new.
+/// @param k The old key (station index, satellite, phase signal).
+/// @param f Pointer to the optional field of the arc row.
+/// @return Reference to the field's value in the table (default-constructed when it was absent),
+///         or to a thread-local scratch value when the key does not round-trip.
 template <class V>
 V& putArcIn(ArcTable& t, const ArcTuple& k, std::optional<V> ArcState::*f) {
     if (const std::optional<ArcId> id = arcKey(k)) return put(t, *id, f);
@@ -1762,8 +2229,12 @@ V& putArcIn(ArcTable& t, const ArcTuple& k, std::optional<V> ArcState::*f) {
     return *scratch;
 }
 
-/// An arc table holding field @p f from the old tuple-keyed map @p m (a pure function's
+/// @brief An arc table holding field @p f from the old tuple-keyed map @p m (a pure function's
 /// fixture; a key that does not round-trip is left out, uncounted).
+/// @tparam V Value type held by the field.
+/// @param m Old key (station index, satellite, phase signal) to value.
+/// @param f Pointer to the optional field of the arc row that receives the values.
+/// @return A new arc table with one row per convertible key of @p m.
 template <class V>
 ArcTable arcTableOf(const std::map<ArcTuple, V>& m, std::optional<V> ArcState::*f) {
     ArcTable t;
@@ -1772,8 +2243,12 @@ ArcTable arcTableOf(const std::map<ArcTuple, V>& m, std::optional<V> ArcState::*
     return t;
 }
 
-/// An arc table holding field @p f from the old (station index, "sat_signal")-keyed map @p m
-/// (a fixture, as @ref arcTableOf).
+/// @brief An arc table holding field @p f from the old (station index, "sat_signal")-keyed map @p m
+/// (a fixture, as @ref GnssProcessor::net::arcTableOf "arcTableOf").
+/// @tparam V Value type held by the field.
+/// @param m Old key (station index, ambiguity key "sat_signal") to value.
+/// @param f Pointer to the optional field of the arc row that receives the values.
+/// @return A new arc table with one row per convertible key of @p m.
 template <class V>
 ArcTable arcAmbTableOf(const std::map<std::pair<int, std::string>, V>& m, std::optional<V> ArcState::*f) {
     ArcTable t;
@@ -1782,15 +2257,25 @@ ArcTable arcAmbTableOf(const std::map<std::pair<int, std::string>, V>& m, std::o
     return t;
 }
 
-/// Replaces field @p f with the cells of the old tuple-keyed map @p m: the old map's
+/// @brief Replaces field @p f with the cells of the old tuple-keyed map @p m: the old map's
 /// assignment.  Serial code only.
+/// @tparam V Value type held by the field.
+/// @param[in,out] e The entities (the arc table, the converter and its failure tally).
+/// @param f Pointer to the optional field of the arc row.
+/// @param m Old key (station index, satellite, phase signal) to value; the field is reset
+///          everywhere first, then set at these cells.
 template <class V>
 void assignArc(NetworkEntities& e, std::optional<V> ArcState::*f, const std::map<ArcTuple, V>& m) {
     dropAll(e.arcs, f);
     for (const auto& [k, v] : m) putArc(e, k, f) = v;
 }
 
-/// Field @p f as the old (station index, "sat_signal")-keyed map (the eq34 election's view).
+/// @brief Field @p f as the old (station index, "sat_signal")-keyed map (the eq34 election's view).
+/// @tparam V Value type held by the field.
+/// @param t The arc table.
+/// @param f Pointer to the optional field of the arc row.
+/// @return (station index, ambiguity key) to value, for every row where the field is present;
+///         empty when none.
 template <class V>
 std::map<std::pair<int, std::string>, V> arcAmbMap(const ArcTable& t, std::optional<V> ArcState::*f) {
     std::map<std::pair<int, std::string>, V> out;
@@ -1798,8 +2283,13 @@ std::map<std::pair<int, std::string>, V> arcAmbMap(const ArcTable& t, std::optio
     return out;
 }
 
-/// Replaces field @p f with the cells of the old (station index, "sat_signal")-keyed map
+/// @brief Replaces field @p f with the cells of the old (station index, "sat_signal")-keyed map
 /// @p m: the old map's assignment.  Serial code only.
+/// @tparam V Value type held by the field.
+/// @param[in,out] e The entities (the arc table, the converter and its failure tally).
+/// @param f Pointer to the optional field of the arc row.
+/// @param m (station index, ambiguity key) to value; the field is reset everywhere first, then
+///          set at these cells.
 template <class V>
 void assignArcAmb(NetworkEntities& e, std::optional<V> ArcState::*f,
                   const std::map<std::pair<int, std::string>, V>& m) {
@@ -1807,21 +2297,39 @@ void assignArcAmb(NetworkEntities& e, std::optional<V> ArcState::*f,
     for (const auto& [k, v] : m) putArcAmb(e, k.first, k.second, f) = v;
 }
 
-/// Flag @p f as the old (station index, "sat_signal") set.
+/// @brief Flag @p f as the old (station index, "sat_signal") set.
+/// @param t The arc table.
+/// @param f Pointer to the bool flag of the arc row.
+/// @return (station index, ambiguity key) of every arc whose flag is set; empty when none.
 std::set<std::pair<int, std::string>> arcAmbSet(const ArcTable& t, bool ArcState::*f);
 
-/// Replaces flag @p f with the arcs of the old set @p s.  Serial code only.
+/// @brief Replaces flag @p f with the arcs of the old set @p s.  Serial code only.
+/// @param[in,out] e The entities (the arc table, the converter and its failure tally).
+/// @param f Pointer to the bool flag of the arc row.
+/// @param s (station index, ambiguity key) of the arcs whose flag is set afterwards; every other
+///          arc's flag is cleared.
 void assignArcAmbFlags(NetworkEntities& e, bool ArcState::*f,
                        const std::set<std::pair<int, std::string>>& s);
 
-/// The bridge v2 pends (@ref LosState::relevel_pend) as the old (station index, sat,
+/// @brief The bridge v2 pends (@ref GnssProcessor::net::LosState::relevel_pend "LosState::relevel_pend") as the old (station index, sat,
 /// "sig1_sig2")-keyed map its drains take, in the old key order.
+/// @param t The line-of-sight table.
+/// @return Old key (station index, satellite, signal pair "sig1_sig2") to pend, for every line
+///         of sight and pair holding one; empty when none.
 std::map<ArcTuple, RelevelPend> relevelPendMap(const LosTable& t);
 
-/// Replaces the bridge v2 pends with the cells of @p m.  Serial code only.
+/// @brief Replaces the bridge v2 pends with the cells of @p m.  Serial code only.
+/// @param[in,out] e The entities (the line-of-sight table and the converters).
+/// @param m Old key (station index, satellite, signal pair) to pend; the pends are cleared
+///          everywhere first, then set at these cells.
 void assignRelevelPend(NetworkEntities& e, const std::map<ArcTuple, RelevelPend>& m);
 
-/// The flag epoch of arc (@p station, ambiguity key @p amb), or null (no count).
+/// @brief The flag epoch of arc (@p station, ambiguity key @p amb), or null (no count).
+/// @param t       The station table.
+/// @param station The station's roster index.
+/// @param amb     The ambiguity key, "sat_signal".
+/// @return Pointer to the flag epoch (loop epoch the arc was flagged), or null when the station
+///         or the arc has none.
 inline const long long* getAmbFlagEp(const StationTable& t, int station, const std::string& amb) {
     const auto it = t.find(StationId{station});
     if (it == t.end()) return nullptr;
@@ -1829,20 +2337,33 @@ inline const long long* getAmbFlagEp(const StationTable& t, int station, const s
     return jt == it->second.amb_flag_ep.end() ? nullptr : &jt->second;
 }
 
-/// The flag epoch cell of arc (@p station, @p amb), created when absent: the old map's
+/// @brief The flag epoch cell of arc (@p station, @p amb), created when absent: the old map's
 /// @c operator[].  Serial code only.
+/// @param[in,out] e The entities (the station table gains the station row and the cell).
+/// @param station The station's roster index.
+/// @param amb     The ambiguity key, "sat_signal".
+/// @return Reference to the arc's flag epoch cell (zero-initialized when it was created).
 inline long long& putAmbFlagEp(NetworkEntities& e, int station, const std::string& amb) {
     return e.stations[StationId{station}].amb_flag_ep[amb];
 }
 
-/// The arc flag epochs (@ref StationState::amb_flag_ep) as the old (station index, ambiguity
+/// @brief The arc flag epochs (@ref GnssProcessor::net::StationState::amb_flag_ep "StationState::amb_flag_ep") as the old (station index, ambiguity
 /// key)-keyed map the held basis reads, in the old key order.
+/// @param t The station table.
+/// @return (station index, ambiguity key) to flag epoch, for every station and arc holding one;
+///         empty when none.
 std::map<std::pair<int, std::string>, long long> ambFlagEpMap(const StationTable& t);
 
 /**
  * @brief Calls @p fn(id, row) for every station row in station-name order (O3): the order
  *        of a map keyed by the name, or by "<name>|..." when no name is a proper prefix of
  *        another (the reach table's station-name line counts prefix pairs).
+ *
+ * @tparam T  Station table type (const-qualified for a read-only walk).
+ * @tparam Fn Callable type of @p fn.
+ * @param t     The station table.
+ * @param names The run's station names (supplies the name order).
+ * @param fn    Called as fn(id, row) for each station row present in @p t, in name order.
  */
 template <class T, class Fn>
 void byStationName(T& t, const StationNames& names, Fn fn) {
@@ -1990,7 +2511,7 @@ void recordFromSnapshot(const char* tag, const NetworkStateSnapshot& snap, Netwo
 
 /**
  * @brief The reach sampler, an epoch observer (slot StashTail): raises each declared
- *        field's maximum present rows.  Always armed; it writes only @ref EntityReach.
+ *        field's maximum present rows.  Always armed; it writes only @ref GnssProcessor::net::EntityReach "EntityReach".
  * @param run The run.
  * @param ep  The epoch (unread).
  */

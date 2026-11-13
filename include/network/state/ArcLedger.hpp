@@ -116,14 +116,14 @@ namespace GnssProcessor {
 
     /**
      * @brief Why an arc left, as a bit mask on @c ArcRecord::reason_mask (raw
-     *        side, where only @ref kArcReasonHorizon is written) and on
+     *        side, where only @ref GnssProcessor::kArcReasonHorizon "kArcReasonHorizon" is written) and on
      *        @c ArcRecord::adm_reason_mask (admitted side).
      *
      * Every screen that removes a modelled row, a satellite or a station records
-     * the arcs it removed, with its own bit, in the per-epoch @ref ArcReasonEpoch
-     * buffer, and the fold in @ref ArcLedger::admitEpoch stamps that mask on the
+     * the arcs it removed, with its own bit, in the per-epoch @ref GnssProcessor::ArcReasonEpoch "ArcReasonEpoch"
+     * buffer, and the fold in @ref GnssProcessor::ArcLedger::admitEpoch "ArcLedger::admitEpoch" stamps that mask on the
      * admitted gap the removal opened.  An admitted gap
-     * that no writer explains carries @ref kArcReasonUnknown; that bit counts the
+     * that no writer explains carries @c kArcReasonUnknown; that bit counts the
      * phase-3 no-verdict returns that remain unexplained.
      */
     enum ArcDeathReason : unsigned {
@@ -148,9 +148,9 @@ namespace GnssProcessor {
     /**
      * @brief Bits that may explain an admitted gap.
      *
-     * @ref kArcReasonDeweight is excluded by construction: a de-weight leaves the
+     * @ref GnssProcessor::kArcReasonDeweight "kArcReasonDeweight" is excluded by construction: a de-weight leaves the
      * row in the solve, so counting it as a gap opener would attribute a removal
-     * to a screen that removed nothing.  @ref
+     * to a screen that removed nothing.  @c
      * kArcReasonUnknown is excluded because the fold writes it when this mask
      * comes out empty.
      */
@@ -164,7 +164,7 @@ namespace GnssProcessor {
      *
      * The readmit park runs inside @c networkStashStatus, downstream of the
      * roster's audit pass, so its record cannot reach the fold of its own epoch.
-     * These bits alone survive one @ref arcReasonBeginEpoch, so the gap they can
+     * These bits alone survive one @ref GnssProcessor::arcReasonBeginEpoch "arcReasonBeginEpoch", so the gap they can
      * open (at the next epoch at the earliest, since the satellite has already
      * departed) still finds them.  Every other bit is cleared, so an early writer
      * cannot attribute a gap it did not open.
@@ -172,18 +172,30 @@ namespace GnssProcessor {
     inline constexpr unsigned kArcReasonLateMask = kArcReasonReadmit;
 
     /// @brief Short name of one reason bit, for the run-end table and the events.
+    /// @param bit Exactly one reason bit (a @c kArcReason constant).
+    /// @return Static name such as "mask" or "slip"; "?" for a value that is not a single known bit.
     const char* arcReasonName(unsigned bit);
 
-    /// @brief Index of one reason bit in a @ref kArcReasonCount array, or -1.
+    /// @brief Index of one reason bit in a @ref GnssProcessor::kArcReasonCount "kArcReasonCount" array, or -1.
+    /// @param bit Exactly one reason bit.
+    /// @return Position of the bit (0-based, ascending bit order), or -1 when @p bit is not a
+    ///         single bit below @ref GnssProcessor::kArcReasonCount "kArcReasonCount".
     int arcReasonIndex(unsigned bit);
 
     /// @brief '|'-joined names of every bit in @p mask ("-" when empty).
+    /// @param mask A reason mask (bits of @c kArcReason constants).
+    /// @return The joined names in ascending bit order, or "-" when @p mask has none of the known bits.
     std::string arcReasonMaskName(unsigned mask);
 
     /// @brief Human-readable name of a state, for the trace and the events.
+    /// @param s The arc state.
+    /// @return Static lower-case name ("tracking", "gap", ...); "?" for an out-of-range value.
     const char* arcStateName(ArcState s);
 
     /// @brief Human-readable name of a transition, for the trace and the events.
+    /// @param t The transition.
+    /// @return Static event name ("arc_birth", "arc_gap", "arc_reentry", "arc_death", or "none");
+    ///         "?" for an out-of-range value.
     const char* arcTransitionName(ArcTransition t);
 
     /**
@@ -239,6 +251,12 @@ namespace GnssProcessor {
          * Returns -1 when the arc has never been admitted.  That is a different
          * statement from "admitted and gapped for 0 epochs" and stays separable,
          * because the raw side sees satellites the estimator never models.
+         *
+         * @param ep Processed-epoch index the gap is measured at (the ledger's own clock).
+         * @return @p ep minus the epoch of the last admitted row minus one: epochs missed
+         *         in between (0 when the last admitted row was at @p ep - 1).  -1 when the
+         *         arc has never been admitted (the formula also gives -1 when @p ep is
+         *         itself the last admitted epoch).
          */
         long long admittedGapEp(long long ep) const {
             return ep_last_admitted < 0 ? -1 : ep - ep_last_admitted - 1;
@@ -257,13 +275,13 @@ namespace GnssProcessor {
      * lengths without a second lookup.
      */
     struct ArcStep {
-        ArcTransition transition{ ArcTransition::None };
+        ArcTransition transition{ ArcTransition::None };   ///< the edge crossed (None when the arc stayed in its state)
         ArcState  from{ ArcState::Absent };   ///< state before the step.
         ArcState  to{ ArcState::Absent };     ///< state after the step.
         int       gap_len_ep{ 0 };            ///< epochs missed (meaningful at Reentry and Death).
         int       generation{ 0 };            ///< the generation after the step.
         int       prev_generation{ 0 };       ///< the generation before a Birth (0 = a true first sighting).
-        unsigned  reason_mask{ kArcReasonNone };
+        unsigned  reason_mask{ kArcReasonNone };   ///< reason bits of the side the step describes (@ref ArcRecord::reason_mask or @ref ArcRecord::adm_reason_mask at the step)
         ArcState  adm_state{ ArcState::Absent }; ///< the admitted state after the step.
         /// Epochs the admitted side has missed as of this epoch; -1 when the arc has
         /// never been admitted.
@@ -282,10 +300,10 @@ namespace GnssProcessor {
      * (the gap re-entry key mismatch).
      */
     struct ArcReentryArc {
-        int         station{ -1 };
-        std::string satellite;
-        std::string signal;
-        int         gap_ep{ 0 };            ///< admitted epochs missed.
+        int         station{ -1 };          ///< station index (first element of ArcLedger::Key); -1 = unset.
+        std::string satellite;              ///< RINEX satellite id ("G01").
+        std::string signal;                 ///< signal of the returning arc.
+        int         gap_ep{ 0 };          ///< admitted epochs missed.
         double      gap_s{ 0.0 };           ///< seconds since the last admitted row.
         bool        state_recreated{ false };///< the column was pruned inside the gap.
     };
@@ -365,9 +383,11 @@ namespace GnssProcessor {
         void configure(double horizon_s, long long forget_ep);
 
         /// @brief The configured horizon, in seconds.
+        /// @return Horizon from configure() in s (0 until configured; at or below zero the death edge is off).
         double horizonS() const { return horizon_s_; }
 
         /// @brief The configured forget window, in processed epochs.
+        /// @return Forget window from configure() in epochs (kArcLedgerForgetEp until configured).
         long long forgetEp() const { return forget_ep_; }
 
         /**
@@ -382,6 +402,7 @@ namespace GnssProcessor {
         void beginEpoch(long long epoch_idx, double t_s);
 
         /// @brief The epoch index of the epoch currently open.
+        /// @return The index passed to the last beginEpoch() (the ledger's own epoch clock).
         long long epochIndex() const { return epoch_idx_; }
 
         /**
@@ -412,7 +433,7 @@ namespace GnssProcessor {
         /**
          * @brief Advance the admitted lifecycle of the open epoch.
          *
-         * Called once per epoch (at most once per @ref beginEpoch: the sweep
+         * Called once per epoch (at most once per @c beginEpoch: the sweep
          * recognizes this epoch's admitted arcs by their @c ep_last_admitted stamp),
          * downstream of the raw pass, with the arcs whose
          * modelled row survived the elevation mask, the allow list and the admission
@@ -426,7 +447,7 @@ namespace GnssProcessor {
          *
          * When @p reasons is non-null and armed, the reason mask of every admitted
          * gap this call opens is stamped from it: the screens' records for that arc,
-         * narrowed to @ref kArcReasonGapMask, or @ref kArcReasonUnknown when nothing
+         * narrowed to @ref kArcReasonGapMask, or @c kArcReasonUnknown when nothing
          * explains the gap.  With @c nullptr the machine
          * behaves as in phase 3.
          *
@@ -456,18 +477,26 @@ namespace GnssProcessor {
 
         /// @brief The arc table: a row whose @c ledger field is present holds a record
         ///        the ledger still remembers (every other row is skipped by a reader).
+        /// @return The run's arc table (the one bound at construction), in (station,
+        ///         satellite, signal) order; valid while the bound entities live.
         const Table& arcs() const;
 
         /// @brief The record for one arc, or nullptr when it is unknown or forgotten.
+        /// @param key The arc (station index, satellite, signal).
+        /// @return Pointer to the arc's record, or nullptr when the ledger holds none; valid
+        ///         until the next call that advances the ledger.
         const ArcRecord* find(const Key& key) const;
 
         /// @brief Arcs currently in @c Tracking or @c Reentered.
+        /// @return Count over the raw-side state of every retained record.
         std::size_t liveCount() const;
 
         /// @brief Arcs whose admitted side is in @c Tracking or @c Reentered.
+        /// @return Count over the admitted-side state of every retained record.
         std::size_t admittedLiveCount() const;
 
         /// @brief Records retained, live plus gapped plus not-yet-forgotten dead.
+        /// @return Number of arc rows that carry a ledger record.
         std::size_t size() const;
 
         /**
@@ -551,13 +580,17 @@ namespace GnssProcessor {
      *
      * @param buf   The buffer; a no-op when it is not armed.
      * @param key   The arc the screen removed.
-     * @param bit   Exactly one @ref ArcDeathReason bit.
+     * @param bit   Exactly one @ref GnssProcessor::ArcDeathReason "ArcDeathReason" bit.
      * @param known Whether the ledger knows this arc (for the dead-wiring split).
      */
     void arcReasonRecord(ArcReasonEpoch& buf, const ArcLedger::Key& key,
                          unsigned bit, bool known = true);
 
     /// @brief The reasons recorded for @p key at the open epoch, or @c kArcReasonNone.
+    /// @param buf The buffer.
+    /// @param key The arc.
+    /// @return The reason mask: the bits recorded this epoch ored with the late bits carried
+    ///         over from the previous epoch; @c kArcReasonNone when neither exists.
     unsigned arcReasonOf(const ArcReasonEpoch& buf, const ArcLedger::Key& key);
 
     /**
@@ -575,7 +608,7 @@ namespace GnssProcessor {
      * @param station Station index, or -1 for every station.
      * @param sat     Satellite id.
      * @param signal  Signal id, or empty for every signal of the satellite.
-     * @param bit     Exactly one @ref ArcDeathReason bit.
+     * @param bit     Exactly one @ref GnssProcessor::ArcDeathReason "ArcDeathReason" bit.
      * @return The number of arcs the expansion reached.
      */
     long long arcReasonExpand(ArcReasonEpoch& buf, const ArcLedger& led,
@@ -627,6 +660,8 @@ namespace GnssProcessor {
     };
 
     /// @brief Human-readable name of an outcome, for the run-end table.
+    /// @param o The outcome.
+    /// @return Static lower-case name ("freed", "bridged_verdict", ...); "?" for an out-of-range value.
     const char* arcReentryOutcomeName(ArcReentryOutcome o);
 
     /// @brief This epoch's per-arc response outcomes (@ref ArcReentryOutcome).

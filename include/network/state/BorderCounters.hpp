@@ -39,19 +39,26 @@ struct BorderCounters {
     long long n_readmit_mirror_seed_vce_cb    = 0;  ///< code-bias seeds met by the monitor's snapshot
     long long n_readmit_mirror_seed_census_cb = 0;  ///< code-bias seeds met by the census snapshot
     long long n_readmit_mirror_seed_census_clk = 0; ///< clock seeds met by the census snapshot
-    long long cxu_inverse_split = 0, cxu_inverse_declined = 0;   ///< network.parallel_coupling_prepare: inverses split over column blocks, and those that took the whole solve
-    long long cxu_epochs = 0, cxu_epochs_built = 0, cxu_epochs_unfactored = 0,
-              cxu_epochs_nostash = 0;
-    long long cxu_keys_s = 0, cxu_keys_d[kCouplingExactRoutes]{};
+    long long cxu_inverse_split = 0,      ///< network.parallel_coupling_prepare: inverses split over column blocks
+              cxu_inverse_declined = 0;   ///< network.parallel_coupling_prepare: inverses that took the whole solve
+    long long cxu_epochs = 0,              ///< epochs the exact coupling update was armed and its inputs were attempted
+              cxu_epochs_built = 0,        ///< of those, with the factor of P_SS + Q_S built (the rows took the exact route)
+              cxu_epochs_unfactored = 0,   ///< of those, where P_SS + Q_S did not factor (the rows took the coupling-carry route)
+              cxu_epochs_nostash = 0;      ///< of those, with no valid stashed carry covariance (nothing built)
+    long long cxu_keys_s = 0,              ///< carried keys the rows treated as an S column (folded and present), summed over epochs
+              cxu_keys_d[kCouplingExactRoutes]{};   ///< carried keys re-attributed as D columns, summed over epochs, indexed by CouplingExactDRoute
     long long cxu_q_negative = 0;          ///< row inflations below 0 (a VCE factor < 1), clamped to 0
-    long long cxu_fold_handover_epochs = 0, cxu_fold_diag_fallback = 0;
+    long long cxu_fold_handover_epochs = 0,   ///< dense-fold epochs with the exact update built and a clock-datum change (pivot handover) this epoch
+              cxu_fold_diag_fallback = 0;     ///< epochs the dense carried-covariance fold failed and fell back to the diagonal carry while the exact update was armed
     long long cxu_fold_reexpressed_in_s = 0;   ///< keys in S folded on a variance a handover re-expressed after the rows
     long long cxu_fold_retired_in_s = 0;       ///< keys in S the fold retired at a handover (the rows carried them)
     long long cxu_pivot_missing = 0;       ///< built epochs with a clock constellation and no recorded pivot
-    long long prm_disp[4][kCarryDispositions]{};
-    long long prm_departed[4]{};
-    long long prm_reexpressed = 0, prm_reexpressed_epochs = 0, prm_undecided_at_fold = 0;
-    double    prm_reexpressed_max_dvar = 0.0;
+    long long prm_disp[4][kCarryDispositions]{};   ///< key-epochs by (SharedParamKind, disposition the fold applied); see CarryDispositionCounters
+    long long prm_departed[4]{};                   ///< per SharedParamKind: foldable key-epochs whose column had left the layout (the estimator marginalizes them)
+    long long prm_reexpressed = 0,                 ///< keys folded on a carried value or variance that differs from the decided one (a handover re-expressed it after the decision)
+              prm_reexpressed_epochs = 0,          ///< epochs with at least one such key
+              prm_undecided_at_fold = 0;           ///< entries the fold met with no decision this epoch (0 unless a path skips the decision pass)
+    double    prm_reexpressed_max_dvar = 0.0;      ///< largest |carried variance - decided variance| among the re-expressed keys (m^2)
 };
 
 } // namespace GnssProcessor

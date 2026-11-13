@@ -19,14 +19,17 @@ struct StateSnapshotCounters {
     long long cl_snap_written = 0;       ///< consumer snapshots written with the network copy's tow
     long long cl_snap_skipped = 0;       ///< history epochs where the consumer had not processed that tow (nothing written)
 
-    double prev_tow = -1.0;
-    int    prev_week = -1;
-    int    iod = 0;
-    size_t n_emitted = 0, n_skipped = 0, n_gate_withheld = 0, n_runaway_epochs = 0;
+    double prev_tow = -1.0;    ///< GPS time of week (s) of the previous processed epoch; -1 before the first (the step is then 0)
+    int    prev_week = -1;     ///< GPS week of the previous processed epoch; -1 before the first
+    int    iod = 0;            ///< running IOD stamp handed to each solution epoch built for emission, incremented after each
+    size_t n_emitted = 0,          ///< epochs emitted to the product
+           n_skipped = 0,          ///< epochs skipped without an emission (the sigma0 withhold ceiling's skips are a subset)
+           n_gate_withheld = 0,    ///< epochs withheld by the rank gate
+           n_runaway_epochs = 0;   ///< epochs on which the clock-runaway check pruned at least one constellation from the emission
     // Operator health-record state (network.health_interval_s > 0).
-    double last_health_write_s = -1.0;   // content time of the last health row (s)
-    double last_emit_content_s = -1.0;   // content time of the last emitted epoch (s)
-    size_t n_sigma0_withheld = 0;   // epochs skipped specifically by the σ̂0 withhold ceiling (subset of n_skipped)
+    double last_health_write_s = -1.0;   ///< content time of the last health row (s)
+    double last_emit_content_s = -1.0;   ///< content time of the last emitted epoch (s)
+    size_t n_sigma0_withheld = 0;   ///< epochs skipped specifically by the σ̂0 withhold ceiling (subset of n_skipped)
     long long n_snap_parked_excluded  = 0;  ///< parked entries excluded from written snapshots
 
     // State-snapshot writer telemetry; the path stays in NetworkCarryState.
@@ -34,26 +37,26 @@ struct StateSnapshotCounters {
     // the snapshot, so its size and shape are the only readout that shows
     // network.state_snapshot_carry_diagonal took effect: a diagonal run otherwise looks
     // like a dense one in every log line and counter.
-    long long snap_writes             = 0;      // snapshots written this run
-    long long snap_carry_bytes_last   = 0;      // bytes of the last serialized carry blob
-    bool      snap_carry_diagonal     = false;  // that blob was diagonal-only (v3)
+    long long snap_writes             = 0;      ///< snapshots written this run
+    long long snap_carry_bytes_last   = 0;      ///< bytes of the last serialized carry blob
+    bool      snap_carry_diagonal     = false;  ///< that blob was diagonal-only (v3)
     // Coupling-regressor capture (network.state_snapshot_coupling_capture): the
     // QS/QL/QZ payload is about 37x the rest of the file, so the counts of rows, terms
     // and shared columns are the only readout that shows the capture took effect.
     // rows_dropped reports a writer-side numerical problem that is otherwise invisible:
     // a row with a non-finite field is omitted whole, never in part, because a partial
     // coefficient vector breaks the gauge identity.
-    long long snap_cpl_dict_last     = 0;   // shared columns in the last snapshot's QS dictionary
-    long long snap_cpl_rows_last     = 0;   // QL rows in the last snapshot
-    long long snap_cpl_zrows_last    = 0;   // QZ rows in the last snapshot
-    long long snap_cpl_terms_last    = 0;   // regressor entries in the last snapshot
-    long long snap_cpl_rows_dropped  = 0;   // rows omitted whole for a non-finite/negative field, run total
-    long long snap_datum_rows_last   = 0;   // EQ*/CB* datum rows in the last snapshot; 0 under an armed capture on an eq34/time-linked-CB run means the capture is inert
-    long long snap_emit_rows_last    = 0;   // ER emit-layer rows in the last snapshot; 0 under an armed capture with the re-base running means the capture is inert
-    long long snap_hold_rows_last    = 0;   // PH/PHM/PHC/PHF hold rows in the last snapshot (card CRS2); 0 under an armed capture with the hold armed and keys held means the capture is inert
-    long long snap_station_rows_last = 0;   // RC/SD station-layer rows in the last snapshot; 0 under an armed capture on a run that arms carry_rx_code_bias or the SH deviation carry means the capture is inert
-    long long snap_canon_rows_last   = 0;   // CN canonical-signal rows in the last snapshot; 0 under an armed capture means no station had decided a latch yet, which on a network run past epoch 1 means the capture is inert
-    long long snap_rxcb_lin_rows_last = 0;  // RL code-bias linearization-point rows in the last snapshot; 0 under an armed capture means the capture is inert: no RC row has a finite code-bias state to pair with (for example estimate_ifb is off)
+    long long snap_cpl_dict_last     = 0;   ///< shared columns in the last snapshot's QS dictionary
+    long long snap_cpl_rows_last     = 0;   ///< QL rows in the last snapshot
+    long long snap_cpl_zrows_last    = 0;   ///< QZ rows in the last snapshot
+    long long snap_cpl_terms_last    = 0;   ///< regressor entries in the last snapshot
+    long long snap_cpl_rows_dropped  = 0;   ///< rows omitted whole for a non-finite/negative field, run total
+    long long snap_datum_rows_last   = 0;   ///< EQ*/CB* datum rows in the last snapshot; 0 under an armed capture on an eq34/time-linked-CB run means the capture is inert
+    long long snap_emit_rows_last    = 0;   ///< ER emit-layer rows in the last snapshot; 0 under an armed capture with the re-base running means the capture is inert
+    long long snap_hold_rows_last    = 0;   ///< PH/PHM/PHC/PHF hold rows in the last snapshot (card CRS2); 0 under an armed capture with the hold armed and keys held means the capture is inert
+    long long snap_station_rows_last = 0;   ///< RC/SD station-layer rows in the last snapshot; 0 under an armed capture on a run that arms carry_rx_code_bias or the SH deviation carry means the capture is inert
+    long long snap_canon_rows_last   = 0;   ///< CN canonical-signal rows in the last snapshot; 0 under an armed capture means no station had decided a latch yet, which on a network run past epoch 1 means the capture is inert
+    long long snap_rxcb_lin_rows_last = 0;  ///< RL code-bias linearization-point rows in the last snapshot; 0 under an armed capture means the capture is inert: no RC row has a finite code-bias state to pair with (for example estimate_ifb is off)
 };
 
 } // namespace GnssProcessor

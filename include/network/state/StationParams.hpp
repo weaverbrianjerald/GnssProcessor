@@ -12,13 +12,13 @@
  * station (inter-system biases, slant ionosphere and phase colour per satellite, ambiguities
  * per satellite and signal, receiver phase and code biases), together with the shared border
  * parameters the station's rows reference (satellite clocks and satellite phase and code
- * biases).  The set names each of them by a @ref ParamRef instead of a state-key string, and
+ * biases).  The set names each of them by a @ref GnssProcessor::ParamRef "ParamRef" instead of a state-key string, and
  * keeps what a reader of the column needs: the linearization point the epoch's rows are
  * evaluated at, the split's disposition, and whether an ambiguity is marked to be re-seeded.
  *
  * ### The order contract
  *
- * @ref StationParams::slots is in column order, the order of the station's state vector:
+ * @ref GnssProcessor::StationParams::slots "StationParams::slots" is in column order, the order of the station's state vector:
  * parameters are appended when they are born and survivors keep their relative order.  The
  * order is part of the contract, because the Schur kernel factorizes the local block in
  * column order and the rounding of its result follows it.  The typed maps hold a slot index
@@ -31,16 +31,16 @@
  * The set is the station's own state: no other object holds the station's columns.  It is
  * written inside the parallel produce phase by the station's own build, and by the serial
  * stages that withhold, prune or mark a station's parameters:
- *  - the station's layout at construction (@ref startStationParams): the receiver position,
+ *  - the station's layout at construction (@ref GnssProcessor::startStationParams "startStationParams"): the receiver position,
  *    clock and wet delay, and one inter-system bias per active constellation other than the
  *    time reference;
  *  - the births, re-seeds and prunes of the local families, once per epoch before the rows
  *    (network/assembly/LocalBirth.hpp);
  *  - the admission and pruning of the shared satellite parameters the station references
  *    (network/assembly/SharedAdmission.hpp and the screens that remove observations);
- *  - the re-seed marks of the ambiguities (@ref markPendingReseed), set by the slip
+ *  - the re-seed marks of the ambiguities (@ref GnssProcessor::markPendingReseed "markPendingReseed"), set by the slip
  *    detectors and the screens and consumed by the next birth;
- *  - the split's dispositions (@ref settleStationParams).
+ *  - the split's dispositions (@ref GnssProcessor::settleStationParams "settleStationParams").
  * A birth appends the parameter, so a parameter born in an epoch is the last of its station.
  * A reader asks the set by identity; none holds a state-key text for a column.
  *
@@ -214,7 +214,7 @@ struct StationParams {
  * @param set  The set (written).
  * @param slot The parameter, its linearization point and its disposition.
  * @return True when the typed map of the parameter's kind took it; false when it has no typed
- *         map or the key was taken (counted in @ref StationParams::untyped).
+ *         map or the key was taken (counted in @ref GnssProcessor::StationParams::untyped "StationParams::untyped").
  */
 bool addParam(StationParams& set, const LocalSlot& slot);
 
@@ -298,7 +298,7 @@ std::optional<RxCbKey> receiverCodeBiasKey(const std::string& key);
  *
  * For a reader whose identity is the key a carry or a snapshot row holds ("GPS_DCB",
  * "GPS_IFB5", "GPS_ISC_C1W", "GLONASS_IFB2_k-4"): the key is compared with the text of each
- * receiver code bias of the set (@ref keyText), so the lookup agrees with the key every
+ * receiver code bias of the set (@ref GnssProcessor::keyText "keyText"), so the lookup agrees with the key every
  * writer of such a row renders.
  *
  * @param set The set.
@@ -391,33 +391,47 @@ void removeSlots(StationParams& set, std::vector<int> indices);
 /**
  * @brief Remove the ambiguities that are not in a keep set.
  *
- * With @ref StationParams::record_pruned set, the removed ambiguities are appended to
- * @ref StationParams::pruned_ambiguities in key order.
+ * With @ref GnssProcessor::StationParams::record_pruned "StationParams::record_pruned" set, the removed ambiguities are appended to
+ * @ref GnssProcessor::StationParams::pruned_ambiguities "StationParams::pruned_ambiguities" in key order.
  *
  * @param set  The set (written).
  * @param keep The ambiguities to keep.
  */
 void pruneAmbiguitiesExcept(StationParams& set, const std::set<SatSignalId>& keep);
 
-/// Remove the slant ionospheres of the satellites that are not in @p keep.
+/// @brief Remove the slant ionospheres of the satellites that are not in @p keep.
+/// @param set  The set (written; the slots of the removed columns go and the rest renumber).
+/// @param keep The satellites whose slant ionosphere stays.
 void pruneSlantIonoExcept(StationParams& set, const std::set<SatId>& keep);
 
-/// Remove the phase colours of the satellites that are not in @p keep.
+/// @brief Remove the phase colours of the satellites that are not in @p keep.
+/// @param set  The set (written; the slots of the removed columns go and the rest renumber).
+/// @param keep The satellites whose phase colour stays.
 void prunePhaseColourExcept(StationParams& set, const std::set<SatId>& keep);
 
-/// Remove the receiver code biases that are not in @p keep.
+/// @brief Remove the receiver code biases that are not in @p keep.
+/// @param set  The set (written; the slots of the removed columns go and the rest renumber).
+/// @param keep The receiver code-bias keys that stay.
 void pruneReceiverCodeBiasExcept(StationParams& set, const std::set<RxCbKey>& keep);
 
-/// Remove the receiver phase biases whose signal is not in @p keep.
+/// @brief Remove the receiver phase biases whose signal is not in @p keep.
+/// @param set  The set (written; the slots of the removed columns go and the rest renumber).
+/// @param keep The phase signals whose receiver phase bias stays.
 void pruneReceiverPhaseBiasExcept(StationParams& set, const std::set<SignalId, SignalNameOrder>& keep);
 
-/// Remove the satellite clocks of the satellites that are not in @p keep.
+/// @brief Remove the satellite clocks of the satellites that are not in @p keep.
+/// @param set  The set (written; the slots of the removed columns go and the rest renumber).
+/// @param keep The satellites whose clock stays.
 void pruneSatClockExcept(StationParams& set, const std::set<SatId>& keep);
 
-/// Remove the satellite phase biases that are not in @p keep.
+/// @brief Remove the satellite phase biases that are not in @p keep.
+/// @param set  The set (written; the slots of the removed columns go and the rest renumber).
+/// @param keep The (satellite, phase signal) pairs whose phase bias stays.
 void pruneSatPhaseBiasExcept(StationParams& set, const std::set<SatSignalId>& keep);
 
-/// Remove the satellite code biases that are not in @p keep.
+/// @brief Remove the satellite code biases that are not in @p keep.
+/// @param set  The set (written; the slots of the removed columns go and the rest renumber).
+/// @param keep The (satellite, code signal) pairs whose code bias stays.
 void pruneSatCodeBiasExcept(StationParams& set, const std::set<SatSignalId>& keep);
 
 /**
@@ -449,13 +463,21 @@ void markPendingReseed(StationParams& set, const std::string& key);
  */
 bool pendingReseed(const StationParams& set, const SatSignalId& id);
 
-/// The same test by the ambiguity's text key; false for a key that does not read as an ambiguity.
+/// @brief The same test by the ambiguity's text key; false for a key that does not read as an ambiguity.
+/// @param set The set.
+/// @param key The ambiguity key ("G05_L1C").
+/// @return True when the key reads as an ambiguity and it is marked, whether or not its column
+///         exists; false otherwise.
 bool pendingReseed(const StationParams& set, const std::string& key);
 
-/// Clear the mark of an ambiguity (no effect when unmarked).
+/// @brief Clear the mark of an ambiguity (no effect when unmarked).
+/// @param set The set (written).
+/// @param id  The ambiguity.
 void clearPendingReseed(StationParams& set, const SatSignalId& id);
 
-/// The same by the ambiguity's text key; a key that does not read as an ambiguity clears nothing.
+/// @brief The same by the ambiguity's text key; a key that does not read as an ambiguity clears nothing.
+/// @param set The set (written).
+/// @param key The ambiguity key ("G05_L1C").
 void clearPendingReseed(StationParams& set, const std::string& key);
 
 /**
@@ -469,11 +491,11 @@ std::vector<SatSignalId> takePrunedAmbiguities(StationParams& set);
  * @brief Record what the split decided for each slot, and sort the withheld shared parameters.
  *
  * Slot k takes @p col_disp[k] (a slot beyond the vector is left @c Unobserved and is not
- * @ref StationParams::decided).  Each withheld shared parameter whose absorbing column the
- * station holds becomes an @ref StationShared::absorbed entry: a satellite phase bias is
+ * @ref GnssProcessor::StationParams::decided "StationParams::decided").  Each withheld shared parameter whose absorbing column the
+ * station holds becomes an @ref GnssProcessor::StationShared::absorbed "StationShared::absorbed" entry: a satellite phase bias is
  * taken up by the float ambiguity of the same satellite and signal, a satellite code bias by
  * the satellite's clock column.  One whose column is gone (the observation left before the
- * split) is counted in @ref StationShared::absorbed_no_absorber.  The unclassified list is
+ * split) is counted in @ref GnssProcessor::StationShared::absorbed_no_absorber "StationShared::absorbed_no_absorber".  The unclassified list is
  * rebuilt from the withheld parameters whose identity could not be typed.
  *
  * @param set      The set (written).

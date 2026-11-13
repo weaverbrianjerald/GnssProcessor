@@ -7,7 +7,7 @@
  *
  * A border parameter (a satellite clock, phase bias, code bias or SH coefficient) is
  * referenced by more of the carried state than its own entry in @c prev_carry: every
- * station-local carry holds a regression on it (@ref CoupledShared, with the value the
+ * station-local carry holds a regression on it (@ref GnssProcessor::CoupledShared "CoupledShared", with the value the
  * regression was taken at), the clock monitor and the hold keep the last value as the
  * baseline of a step test, an open pin bridge holds the value the bridge pins, the
  * stash records the pinned pivot's value, and an ambiguity's own carried value is
@@ -19,11 +19,11 @@
  * Until this table each such mechanism enumerated the containers by hand, and each list
  * was a different subset (the ephemeris re-level moved two
  * of the ten local carries; the phase-colour carry, added later, is in
- * no list).  This header declares the containers once (@ref CarrySite, one row per
+ * no list).  This header declares the containers once (@ref GnssProcessor::CarrySite "CarrySite", one row per
  * container and reference role, with its key form, what it holds, how a shift applies
  * and whether the warm-resume snapshot restores it), one walk over them
- * (@ref forEachCarriedReference), and, per mechanism, the sites it moves and the sites
- * it does not move with the reason (@ref carryMechanismSite).  A mechanism calls the
+ * (@ref GnssProcessor::forEachCarriedReference "forEachCarriedReference"), and, per mechanism, the sites it moves and the sites
+ * it does not move with the reason (@ref GnssProcessor::carryMechanismSite "carryMechanismSite").  A mechanism calls the
  * walk with its own site set and a visitor that applies its shift; the walk counts what
  * each visitor moved per site, and the run-end table states it.
  *
@@ -33,7 +33,7 @@
  * here or the unit test that scans the carry state's declaration fails.  Phase 3b step 2
  * closes the owed gaps behind one default-off knob, @c network.carry_rebase_complete:
  * with it, each mechanism's walk also moves the sites its row exempts as owed
- * (@ref carryMechanismOwedSites); the by-design exemptions and the phase hold's held
+ * (@ref GnssProcessor::carryMechanismOwedSites "carryMechanismOwedSites"); the by-design exemptions and the phase hold's held
  * value stay where they are.
  *
  * Containers that hold a border-frame quantity and are deliberately not sites (each
@@ -67,10 +67,10 @@ namespace net { struct NetworkEntities; }   // network/state/Entities.hpp
  *        reference of a border parameter.
  *
  * The roles: a carried border value (with its variance where it has one), a regression
- * term on a border column (@ref CoupledShared: @c s_prev with @c p_prev), a baseline (a
+ * term on a border column (@ref GnssProcessor::CoupledShared "CoupledShared": @c s_prev with @c p_prev), a baseline (a
  * previous solved or emitted value a step test or a datum reference reads), a held value,
  * a pin target, and a station-local carried value expressed in a border parameter's frame
- * (@ref LocalCarry::value_abs of an ambiguity, a receiver clock, a receiver phase or code
+ * (@ref GnssProcessor::LocalCarry::value_abs "LocalCarry::value_abs" of an ambiguity, a receiver clock, a receiver phase or code
  * bias).  A local carry map with both a value in a border frame and regression terms is
  * two sites.
  */
@@ -104,7 +104,7 @@ enum class CarrySite : int {
 /// Number of @ref CarrySite values (array sizing).
 inline constexpr int kCarrySites = 24;
 
-/// The reference role of a site (see @ref CarrySite).
+/// The reference role of a site (see @ref GnssProcessor::CarrySite "CarrySite").
 enum class CarryRefRole : int {
     Value = 0,    ///< a carried border value (and its variance)
     Regression,   ///< a regression term on a border column (s_prev, with p_prev as the variance)
@@ -123,24 +123,31 @@ enum class CarryRefRole : int {
  * membership as it is).
  */
 struct CarrySiteSpec {
-    CarrySite    site;
+    CarrySite    site;            ///< the site this row declares
     const char*  name;            ///< short name (the run-end table, the manifest)
     const char*  container;       ///< the @c NetworkCarryState member
     const char*  key;             ///< the container's key form
-    CarryRefRole role;
-    const char*  holds;           ///< what the reference is
+    CarryRefRole role;            ///< the reference role of the site (value, regression term, baseline, held, pin target or local value)
+    const char*  holds;         ///< what the reference is
     const char*  shift;           ///< how a shift of the parameter applies to it
     const char*  record;          ///< the snapshot record that restores it, or null
     const char*  snapshot_note;   ///< the capture condition, or why it is cold-started
 };
 
-/// The declaration of @p s.
+/// @brief The declaration of @p s.
+/// @param s The site.
+/// @return The site's row of the declaration table; a reference to static storage.
 const CarrySiteSpec& carrySiteSpec(CarrySite s);
 
-/// Short name of a reference role.
+/// @brief Short name of a reference role.
+/// @param r The role.
+/// @return Static name of @p r (the run-end table and the manifest print it).
 const char* carryRefRoleName(CarryRefRole r);
 
-/// Bit of @p s in a site mask.
+/// @brief Bit of @p s in a site mask.
+/// @param s The site.
+/// @return A mask with only the bit numbered by the site's enumerator value set; combine
+///         with bitwise or and test against masks such as @ref GnssProcessor::kAllCarrySites "kAllCarrySites".
 inline constexpr std::uint32_t carrySiteBit(CarrySite s) {
     return std::uint32_t{1} << static_cast<int>(s);
 }
@@ -151,8 +158,8 @@ inline constexpr std::uint32_t kAllCarrySites = (std::uint32_t{1} << kCarrySites
 /**
  * @brief The mechanisms that move a border parameter's frame through the carry.
  *
- * Each is a caller of @ref forEachCarriedReference with its own site set
- * (@ref carryMechanismSites).  @c HandoverBeforeRows is the clock-pivot handover's
+ * Each is a caller of @ref GnssProcessor::forEachCarriedReference "forEachCarriedReference" with its own site set
+ * (@ref GnssProcessor::carryMechanismSites "carryMechanismSites").  @c HandoverBeforeRows is the clock-pivot handover's
  * S-transform when it runs before the coupling rows are built: the same transform over a
  * wider site set (declared here with the kernel; the seam that runs it before PASS B is
  * a separate step).
@@ -168,7 +175,9 @@ enum class CarryMechanism : int {
 /// Number of @ref CarryMechanism values (array sizing).
 inline constexpr int kCarryMechanisms = 5;
 
-/// Short name of a mechanism (the run-end table, the manifest).
+/// @brief Short name of a mechanism (the run-end table, the manifest).
+/// @param m The mechanism.
+/// @return Static name of @p m.
 const char* carryMechanismName(CarryMechanism m);
 
 /**
@@ -177,14 +186,20 @@ const char* carryMechanismName(CarryMechanism m);
  *        parameter kinds or the role the mechanism's direction moves; @c reason null).
  */
 struct CarryMechanismSite {
-    bool        moves{false};
+    bool        moves{false};      ///< the mechanism moves the site
     const char* reason{nullptr};   ///< the exemption's reason; null when it moves or does not apply
 };
 
-/// What @p m does with @p s.
+/// @brief What @p m does with @p s.
+/// @param m The mechanism.
+/// @param s The site.
+/// @return Whether @p m moves @p s; when it does not, the exemption's reason, or a null reason
+///         when the site is outside the mechanism's direction.
 CarryMechanismSite carryMechanismSite(CarryMechanism m, CarrySite s);
 
-/// The mask of the sites @p m moves.
+/// @brief The mask of the sites @p m moves.
+/// @param m The mechanism.
+/// @return Site mask (bits from @ref GnssProcessor::carrySiteBit "carrySiteBit") of every site @p m moves.
 std::uint32_t carryMechanismSites(CarryMechanism m);
 
 /**
@@ -200,12 +215,12 @@ std::uint32_t carryMechanismSites(CarryMechanism m);
  * exempt with that reason.  The two handover mechanisms have no owed site (their walks take
  * no knob).
  * @param m the mechanism.
- * @return the owed site mask (disjoint from @ref carryMechanismSites).
+ * @return the owed site mask (disjoint from @ref GnssProcessor::carryMechanismSites "carryMechanismSites").
  */
 std::uint32_t carryMechanismOwedSites(CarryMechanism m);
 
 /**
- * @brief The site mask a walk of @p m covers on a run: @ref carryMechanismSites, with the
+ * @brief The site mask a walk of @p m covers on a run: @ref GnssProcessor::carryMechanismSites "carryMechanismSites", with the
  *        owed sites when @p complete (@c network.carry_rebase_complete).
  * @param m        the mechanism.
  * @param complete whether the owed sites are moved.
@@ -218,7 +233,7 @@ std::uint32_t carryMechanismSiteMask(CarryMechanism m, bool complete);
  * @param m        the mechanism.
  * @param s        the site.
  * @param complete @c network.carry_rebase_complete.
- * @return whether @p s is in @ref carryMechanismSiteMask.
+ * @return whether @p s is in @ref GnssProcessor::carryMechanismSiteMask "carryMechanismSiteMask".
  */
 bool carryMechanismMoves(CarryMechanism m, CarrySite s, bool complete);
 
@@ -235,13 +250,13 @@ bool carryMechanismMoves(CarryMechanism m, CarrySite s, bool complete);
  * coefficient, a prior's park stamp).
  */
 struct CarriedRef {
-    CarrySite          site;
-    SharedParamKind    kind;
-    const std::string& sat;
-    const std::string& signal;
+    CarrySite          site;      ///< the site the reference was read from
+    SharedParamKind    kind;      ///< kind of the border parameter the reference belongs to
+    const std::string& sat;       ///< satellite id of that parameter (empty for a receiver-side local value)
+    const std::string& signal;    ///< signal id of that parameter (for a receiver-side local value, the map's own key)
     int                station;   ///< the station index of a local carry site; -1 otherwise
-    double*            value;
-    double*            var;
+    double*            value;     ///< the carried double a shift moves (writable through the visitor)
+    double*            var;       ///< the variance a re-expression moves with the value (m^2); null where the site has none
     bool               parked;    ///< a parked @c prev_carry entry (READMIT, @c t_park_s > 0)
     CarryPrior*        prior;     ///< @c PrevCarry: the entry
     CoupledShared*     term;      ///< a coupling site: the term
@@ -265,15 +280,15 @@ struct CarrySiteCounts {
  *        see @c network/assembly/Responses.hpp).
  */
 struct CarryMovedTally {
-    long long site[kCarrySites][kCarryMechanisms]{};
-    long long border[4][kCarryMechanisms]{};
+    long long site[kCarrySites][kCarryMechanisms]{};   ///< references moved, indexed by [CarrySite][CarryMechanism]
+    long long border[4][kCarryMechanisms]{};           ///< carried border values moved, indexed by [SharedParamKind][CarryMechanism]
 };
 
 /**
  * @brief Walk every carried reference of the sites in @p sites, in a fixed order, and
  *        hand each to @p visit.
  *
- * The order is the order of @ref CarrySite, and within a site the container's own order
+ * The order is the order of @ref GnssProcessor::CarrySite "CarrySite", and within a site the container's own order
  * (vector order for @c prev_carry, key order for a map, term order within a local
  * carry's coupling).  A shift of a frame moves each referenced double once, so the order
  * cannot change a value; a visitor that accumulates side outputs keeps them in ordered or
@@ -282,7 +297,7 @@ struct CarryMovedTally {
  *
  * @param carry  the run's carried state.
  * @param entities the run's entity tables (the station carries).
- * @param sites  the site mask (@ref carrySiteBit, @ref carryMechanismSites).
+ * @param sites  the site mask (@ref GnssProcessor::carrySiteBit "carrySiteBit", @ref GnssProcessor::carryMechanismSites "carryMechanismSites").
  * @param visit  the visitor.
  * @param counts optional out: per-site visited and moved tallies (accumulated, not reset).
  * @return the number of references the visitor reported moved.
@@ -292,7 +307,10 @@ long long forEachCarriedReference(NetworkCarryState& carry, net::NetworkEntities
                                   const CarryRefVisitor& visit,
                                   CarrySiteCounts* counts = nullptr);
 
-/// Add one walk's moved tallies to the run-scope table.
+/// @brief Add one walk's moved tallies to the run-scope table.
+/// @param[in,out] moved Run-scope table; the column of mechanism @p m is incremented.
+/// @param m The mechanism whose walk produced @p c.
+/// @param c The walk's per-site tallies (@c moved and @c moved_border are read).
 inline void carryTallyMoved(CarryMovedTally& moved, CarryMechanism m, const CarrySiteCounts& c) {
     for (int i = 0; i < kCarrySites; ++i) moved.site[i][static_cast<int>(m)] += c.moved[i];
     for (int k = 0; k < 4; ++k) moved.border[k][static_cast<int>(m)] += c.moved_border[k];
@@ -330,7 +348,7 @@ int networkCarrySitesRunEnd(const NetworkRunEndView& v);
 struct CarrySitesCounters {
     // The carried references each mechanism moved, per site, through
     // forEachCarriedReference (filter/NetworkCarrySites), and the mechanism's calls.
-    CarryMovedTally prm_ref_moved{};
+    CarryMovedTally prm_ref_moved{};   ///< references moved per site and mechanism over the run
 };
 
 }  // namespace GnssProcessor
