@@ -4,8 +4,8 @@
  * @brief The network producer's run end as a declared table of reports.
  *
  * When the epoch loop has ended, networkTeardown (network/runend/Teardown.cpp) measures the
- * epoch-loop wall, builds one @ref NetworkRunEndView and calls every row of
- * @ref kNetworkRunEndReports in order.  A row is one report:
+ * epoch-loop wall, builds one @ref GnssProcessor::NetworkRunEndView "NetworkRunEndView" and calls every row of
+ * @ref GnssProcessor::kNetworkRunEndReports "kNetworkRunEndReports" in order.  A row is one report:
  *
  *     int networkXxxRunEnd(const NetworkRunEndView& v);
  *
@@ -19,8 +19,8 @@
  * One report per subsystem: a subsystem, the file a report lives in,
  * has one row.  A subsystem that prints several blocks writes each as a file-local section
  * (`static int networkXxxRunEnd(const NetworkRunEndView& v)`, gated on its own knob) and
- * its row's report lists them in print order with @ref networkRunEndSections.  The walk
- * (@ref networkRunEndCallRow) prints one heading line, `Network[run-end] <row name>`, ahead
+ * its row's report lists them in print order with @ref GnssProcessor::networkRunEndSections "networkRunEndSections".  The walk
+ * (@ref GnssProcessor::networkRunEndCallRow "networkRunEndCallRow") prints one heading line, `Network[run-end] <row name>`, ahead
  * of the lines of every row that prints, so the run-end log reads by subsystem.
  *
  * Adding a run-end line: it goes in its subsystem's report, or in a new section of it,
@@ -30,7 +30,7 @@
  *      the subsystem's state lives in one of the large files (network/carry/LocalCarryHarvest.cpp,
  *      network/driver/ApplicationNetworkAssembly.cpp, network/driver/ApplicationNetwork.cpp,
  *      network/solve/SolveGlue.cpp) or has no file of its own, the report goes in a
- *      <Subsystem>RunEnd.cpp beside it, added to CMakeLists.txt.
+ *      \<Subsystem\>RunEnd.cpp beside it, added to CMakeLists.txt.
  *   2. Add one row to kNetworkRunEndReports where its lines belong in the run end, and
  *      raise kNetworkRunEndReportCount by one.
  * A report is const on the run: it reads the context and writes only its log lines, its
@@ -141,7 +141,7 @@ int networkRunEndWithHeading(spdlog::logger& lg, const char* name,
                              const std::function<int()>& report);
 
 /**
- * @brief Calls one row of the table with its heading line: @ref networkRunEndWithHeading on
+ * @brief Calls one row of the table with its heading line: @ref GnssProcessor::networkRunEndWithHeading "networkRunEndWithHeading" on
  *        the view's logger with the row's name.
  *
  * @param row The row.

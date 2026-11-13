@@ -5,8 +5,8 @@
  *        reports and the process exit code.
  *
  * Application::runNetwork ends with `return networkTeardown(...);`.  The function measures
- * the epoch-loop wall once, builds the @ref NetworkRunEndView every report reads, calls each
- * row of @ref kNetworkRunEndReports in order (network/runend/RunEnd.hpp: the table, how to
+ * the epoch-loop wall once, builds the @ref GnssProcessor::NetworkRunEndView "NetworkRunEndView" every report reads, calls each
+ * row of @ref GnssProcessor::kNetworkRunEndReports "kNetworkRunEndReports" in order (network/runend/RunEnd.hpp: the table, how to
  * add a report, the order constraints), and returns the exit code.  Each report lives in the
  * file of the subsystem it reports; a new run-end line goes in its
  * subsystem's report, and a new report is one row of the table.
