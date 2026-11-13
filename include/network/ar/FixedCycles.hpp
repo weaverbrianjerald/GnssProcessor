@@ -11,7 +11,7 @@
  * half the between-station double differences (DDs) of the settled float, and the float stays
  * float.  This seam folds those integers into a SECOND solve of the shared parameters (clocks,
  * phase biases, code biases), made from a copy of the float solve's own reduced normals
- * (@ref NetworkEstimator::solveHeldDetached), beside the float solve of the same epoch.  The
+ * (@ref GnssProcessor::NetworkEstimator::solveHeldDetached "NetworkEstimator::solveHeldDetached"), beside the float solve of the same epoch.  The
  * estimator, the carried ambiguities, the search, the DD trace and post-fit QC keep the float
  * (with zero-q ambiguities the float at an epoch already holds the whole
  * history, so a hold fed back into the filter would add only cross terms and would let the hold
@@ -20,24 +20,24 @@
  *
  * ## One epoch, source epoch (step FCF-2, the same-epoch probe)
  *
- *  1. **Units** (@ref fcyc::epochUnits).  A unit is one DD identity (signal pair, sta_r,
+ *  1. **Units** (@ref GnssProcessor::fcyc::epochUnits "fcyc::epochUnits").  A unit is one DD identity (signal pair, sta_r,
  *     ref_sta, sat_j, ref_sat) of a pair family that the search determined in BOTH bands at
  *     this epoch: two integers.  A DD determined in one band only, or a band-only DD, is never a
  *     unit (its single-band test has little power).
- *  2. **The per-unit test** (@ref fcyc::scoreUnits).  T = v' Sigma_pair^-1 v, v = y - N in
+ *  2. **The per-unit test** (@ref GnssProcessor::fcyc::scoreUnits "fcyc::scoreUnits").  T = v' Sigma_pair^-1 v, v = y - N in
  *     cycles, Sigma_pair the pair's float covariance from the search's own two-by-two readback:
  *     chi-square with 2 degrees of freedom under right integers, exactly.  A unit above
  *     chi2_2(1 - @c unit_alpha) is not placed (the overall block test
  *     cannot see one wrong (1, 1) pair among the rows of a network-sized block).
- *  3. **Placement** (@ref fcyc::placeUnits).  Each unit becomes two @ref
+ *  3. **Placement** (@ref GnssProcessor::fcyc::placeUnits "fcyc::placeUnits").  Each unit becomes two @c
  *     NetworkNormalEquations::CycleRow (one per band) on the live ambiguity columns of its four
  *     band-arcs, with the target lambda N - sum c x_lin re-based on this epoch's linearization
  *     points and the hold variance (sigma lambda)^2; one block per connected station
  *     component, so no two blocks share a station.
- *  4. **The held solve** (@ref NetworkEstimator::solveHeldDetached).  A refused float
+ *  4. **The held solve** (@ref GnssProcessor::NetworkEstimator::solveHeldDetached "NetworkEstimator::solveHeldDetached").  A refused float
  *     reproduction, a non-finite held estimate, a kernel throw or a shift above
  *     @c max_shift_m on any shared column leaves the epoch float, counted.
- *  5. **Acceptance** (@ref fcyc::foldUnits).  Each block's own statistic against
+ *  5. **Acceptance** (@ref GnssProcessor::fcyc::foldUnits "fcyc::foldUnits").  Each block's own statistic against
  *     chi2_K(1 - @c gate_alpha); a failing block drops its unit of largest T and refolds, up to
  *     @c max_iter passes; a block that still fails stays float for the epoch.
  *
@@ -48,26 +48,26 @@
  * The units are the L1/L2 pairs the ledger of fixed cycles (network/ar/ArLattice.hpp)
  * implies.  The seam steps the ledger and the fold together, in this order:
  *
- *  1. **The ledger opens** (@ref arLatticeBegin): a skipped epoch releases everything; the
+ *  1. **The ledger opens** (@ref GnssProcessor::arLatticeBegin "arLatticeBegin"): a skipped epoch releases everything; the
  *     evidence releases the arcs whose life ended (the search's readings, the landed
  *     within-epoch replay, this epoch's gross-LOS Decide); a fix that contradicts the ledger
  *     releases the arcs of its cycle.
  *  2. **A planted integer** (the event harness's @c fixed_cycle_plant), when one is due.
- *  3. **Re-validation** (@ref fcyc::revalidateUnits).  Every pair whose two cycles the ledger
+ *  3. **Re-validation** (@ref GnssProcessor::fcyc::revalidateUnits "fcyc::revalidateUnits").  Every pair whose two cycles the ledger
  *     implies from rows entered before this epoch is a unit, tested against the search's float
  *     exactly as in step 2 above.  An arc shared by two or more failing units is eliminated; a
  *     failing unit with no such arc releases the arcs of its two cycles.  A passing unit whose
- *     rows those releases took is not placed (@ref UnitAction::Released).
- *  4. **Admission** (@ref fcyc::admitFixes): fixes that kept one integer for @c persist_ep
+ *     rows those releases took is not placed (@c UnitAction::Released).
+ *  4. **Admission** (@ref GnssProcessor::fcyc::admitFixes "fcyc::admitFixes"): fixes that kept one integer for @c persist_ep
  *     epochs enter the ledger; they fold from the next epoch.  A contradiction among the
  *     epoch's own fixes releases the arcs of its cycle, and a unit those arcs took is marked
  *     released here too.
- *  5. **The lapse** (@ref fcyc::markLapsed, @c lapse_ep; 0, the default, is off).  A unit whose
+ *  5. **The lapse** (@ref GnssProcessor::fcyc::markLapsed "fcyc::markLapsed", @c lapse_ep; 0, the default, is off).  A unit whose
  *     pair the search has not determined for @c lapse_ep consecutive epochs is not placed
- *     (@ref UnitAction::Lapsed); its rows stay in the ledger.
+ *     (@c UnitAction::Lapsed); its rows stay in the ledger.
  *  6. **The fold**, as for source epoch (placement, held solve, acceptance).  A unit dropped by
  *     acceptance, or in a degenerate block, releases the arcs of its cycles
- *     (@ref fcyc::foldReleases), through the ledger's one release function.
+ *     (@ref GnssProcessor::fcyc::foldReleases "fcyc::foldReleases"), through the ledger's one release function.
  *  7. **The edges**: each folded unit's onset and offset (with the cause of the offset), and
  *     the late post-fit flags (RAIM T3 / T4 and the gross-LOS Act act after the emission, so a
  *     flag on an arc of a unit folded at t is read through the life stamp at t + 1).
@@ -88,14 +88,13 @@
  * loader requires under Emit and names when missing under Observe.  Block acceptance and an
  * isolated failure blame the unit of largest T, and a stale unit's T stays small, so where the
  * zero-q carry has warped a station they can release innocent units there and keep the stale one
- *.
  *
  * ## What it writes
  *
  * Its tallies (@c ctx.counters.fixed_cycles) and its run state (@c ctx.carry.fixed_cycles, the
- * folded runs), and under @c fixed_cycles.trace the files of logs/ (@ref kFixedCyclesHeader,
- * @ref kFixedCycleShiftHeader, and under source lattice @ref kFixedCycleEventsHeader, in
- * network/diag/RunTraces.hpp) and the run-end report @ref networkFixedCyclesRunEnd.  Nothing
+ * folded runs), and under @c fixed_cycles.trace the files of logs/ (@ref GnssProcessor::kFixedCyclesHeader "kFixedCyclesHeader",
+ * @ref GnssProcessor::kFixedCycleShiftHeader "kFixedCycleShiftHeader", and under source lattice @ref GnssProcessor::kFixedCycleEventsHeader "kFixedCycleEventsHeader", in
+ * network/diag/RunTraces.hpp) and the run-end report @ref GnssProcessor::networkFixedCyclesRunEnd "networkFixedCyclesRunEnd".  Nothing
  * the solve reads.  Not snapshotted and not fingerprinted; the loader refuses
  * @c network.state_snapshot_path under Emit, so an Emit leg neither writes nor resumes a
  * snapshot.  The ledger's own files are written by network/ar/ArLattice.cpp.
@@ -147,7 +146,7 @@ struct Unit {
 /**
  * @brief This epoch's determined L1/L2 pairs as units (the source epoch).
  *
- * One unit per pair of @ref ArEpochFixes::floats twins that are both @c fixed, in basis order
+ * One unit per pair of @ref GnssProcessor::ArEpochFixes::floats "ArEpochFixes::floats" twins that are both @c fixed, in basis order
  * of the shorter-wavelength DD; band 1 is the shorter wavelength.  A twin that was not
  * determined, and a band-only DD, give no unit.
  *
@@ -179,7 +178,7 @@ void scoreUnits(std::vector<Unit>& units, const ArEpochFixes& fixes, double alph
 /**
  * @brief The units the ledger implies (source lattice; file banner, step 3).
  *
- * One unit per pair of @ref ArEpochFixes::floats twins whose two cycles the lattice implies,
+ * One unit per pair of @ref GnssProcessor::ArEpochFixes::floats "ArEpochFixes::floats" twins whose two cycles the lattice implies,
  * each from rows entered before @p ep (an added row folds from the next epoch); n1 and n2 are
  * the implied integers.  Basis order of the shorter-wavelength DD; a band-only DD gives none.
  *
@@ -201,7 +200,7 @@ std::vector<Unit> impliedUnits(const arcgraph::CycleLattice& L, const ArEpochFix
  *
  * @param units The scored units.
  * @param fixes The search's hand-over (their cycles and identities).
- * @return The releases, for @ref arLatticeRelease.
+ * @return The releases, for @ref GnssProcessor::arLatticeRelease "arLatticeRelease".
  */
 std::vector<ArLatticeReleaseEvent> localizeFailures(const std::vector<Unit>& units, const ArEpochFixes& fixes);
 
@@ -217,9 +216,9 @@ void markReleased(std::vector<Unit>& units, const arcgraph::CycleLattice& L, con
 /**
  * @brief Step 3 of a source-lattice epoch (file banner): the ledger's units, re-validated.
  *
- * The units the ledger implies (@ref impliedUnits) are scored (@ref scoreUnits); the failures'
- * releases (@ref localizeFailures) are applied through @ref arLatticeRelease; the passing units
- * whose rows they took are marked released (@ref markReleased).  @p le counts the units and the
+ * The units the ledger implies (@ref GnssProcessor::fcyc::impliedUnits "impliedUnits") are scored (@ref GnssProcessor::fcyc::scoreUnits "scoreUnits"); the failures'
+ * releases (@ref GnssProcessor::fcyc::localizeFailures "localizeFailures") are applied through @ref GnssProcessor::arLatticeRelease "arLatticeRelease"; the passing units
+ * whose rows they took are marked released (@ref GnssProcessor::fcyc::markReleased "markReleased").  @p le counts the units and the
  * failures.
  *
  * @param S     The ledger.
@@ -233,7 +232,7 @@ std::vector<Unit> revalidateUnits(ArLatticeState& S, const ArEpochFixes& fixes, 
                                   ArLatticeEpoch& le);
 
 /**
- * @brief Step 4 of a source-lattice epoch (file banner): admission (@ref arLatticeAdmit), then
+ * @brief Step 4 of a source-lattice epoch (file banner): admission (@ref GnssProcessor::arLatticeAdmit "arLatticeAdmit"), then
  *        the units a contradiction among the epoch's own fixes took are marked released, so a
  *        unit implied before admission is not folded from rows admission released.
  * @param S          The ledger.
@@ -241,7 +240,7 @@ std::vector<Unit> revalidateUnits(ArLatticeState& S, const ArEpochFixes& fixes, 
  * @param persist_ep Consecutive epochs before a fix is offered.
  * @param ep         The loop epoch.
  * @param le         The ledger epoch.
- * @param ledger_units This epoch's ledger units (@ref revalidateUnits; marked in place), or null
+ * @param ledger_units This epoch's ledger units (@ref GnssProcessor::fcyc::revalidateUnits "revalidateUnits"; marked in place), or null
  *                   when the fold does not read the ledger (@c trace_lattice alone, or source
  *                   epoch, whose units are not the ledger's).
  */
@@ -291,7 +290,7 @@ struct FoldPlan {
  * @brief Place the active units on the estimator's local ambiguity columns.
  *
  * Each band of a unit gives one row: its cycle's signed terms on the live columns of its
- * band-arcs (@ref ArEpochFixes::columns), the target lambda N - sum c x_lin (m) and the hold
+ * band-arcs (@ref GnssProcessor::ArEpochFixes::columns "ArEpochFixes::columns"), the target lambda N - sum c x_lin (m) and the hold
  * variance (@p sigma_cyc lambda)^2.  The blocks are the connected components of the rows'
  * estimator stations (union-find), ordered by their first unit, so no two blocks share a
  * station.
@@ -399,7 +398,7 @@ EpochFold foldUnits(const NetworkEstimator& est, const NetworkEstimator::Datum& 
  * @param units The units.
  * @param f     Their fold.
  * @param fixes The search's hand-over.
- * @return The releases, for @ref arLatticeRelease.
+ * @return The releases, for @ref GnssProcessor::arLatticeRelease "arLatticeRelease".
  */
 std::vector<ArLatticeReleaseEvent> foldReleases(const std::vector<Unit>& units, const EpochFold& f,
                                                 const ArEpochFixes& fixes);
@@ -472,7 +471,7 @@ struct NetworkEpoch;            // network/driver/Epoch.hpp
  *        after the gross-LOS Decide).
  *
  * Returns at once (nothing emitted, nothing counted) unless the fold is armed or the ledger
- * runs (@ref arLatticeArmed).  An epoch whose search did not run steps nothing (counted; the
+ * runs (@ref GnssProcessor::arLatticeArmed "arLatticeArmed").  An epoch whose search did not run steps nothing (counted; the
  * ledger's next step releases everything).  Otherwise it runs the file banner's steps for the
  * source in force (the ledger alone under @c trace_lattice without the fold), adds to
  * @c ctx.counters.fixed_cycles and @c netar_lattice, writes the trace files that are open, and
@@ -503,7 +502,7 @@ struct NetworkEpoch;            // network/driver/Epoch.hpp
  *   - @p x_s = ep.solve.x_s: The float shared estimate.
  *   - @p datum = ep.solve.plan.shared_datum: The datum of the float solve
  *     (@c plan.shared_datum).
- *   - @p fixes = ep.ar_fixes: The search's hand-over (@ref networkProducerAr's return).
+ *   - @p fixes = ep.ar_fixes: The search's hand-over (@ref GnssProcessor::networkProducerAr "networkProducerAr"'s return).
  *   - @p we = ep.solve.we_landed: The landed within-epoch replay's culprits
  *     (@c NetworkSolveGlueResult::we_landed).
  *   - @p stations = run.setup.stations: The network stations (names of the trace rows).

@@ -24,19 +24,19 @@
  *
  * ## Layers
  *
- *   1. **Integer ids** (opaque vertex ids, the invariant-carry driver's space): @ref ArcKey, @ref arcgraph::Dsu,
- *      @ref arcgraph::singleTreeOf, @ref arcgraph::fundamentalCycle,
- *      @ref arcgraph::promoteBridgingArcs, @ref arcgraph::chordRestriction.
+ *   1. **Integer ids** (opaque vertex ids, the invariant-carry driver's space): @ref GnssProcessor::ArcKey "ArcKey", @ref GnssProcessor::arcgraph::Dsu "arcgraph::Dsu",
+ *      @ref GnssProcessor::arcgraph::singleTreeOf "arcgraph::singleTreeOf", @ref GnssProcessor::arcgraph::fundamentalCycle "arcgraph::fundamentalCycle",
+ *      @ref GnssProcessor::arcgraph::promoteBridgingArcs "arcgraph::promoteBridgingArcs", @ref GnssProcessor::arcgraph::chordRestriction "arcgraph::chordRestriction".
  *   2. **Typed family graph**: one constellation with one band or an L1/L2 pair, stations and
- *      satellites in dense slots (@ref arcgraph::ArcGraph), and its components.
+ *      satellites in dense slots (@ref GnssProcessor::arcgraph::ArcGraph "arcgraph::ArcGraph"), and its components.
  *   3. **Spanning forests**, two named rules with one output type: the eq34 chain walk
- *      (@ref arcgraph::growChainForest) and the baseline Prim
- *      (@ref arcgraph::growBaselineForest).
- *   4. **Cycles and bases**: @ref arcgraph::fundamentalBasis and the unit-triangular short basis
- *      @ref arcgraph::shortCycleBasis.
- *   5. **Integer maps**: @ref arcgraph::cycleCoordinates, @ref arcgraph::basisChangeMap,
- *      @ref arcgraph::combineCycles.
- *   6. **The saturated lattice of fixed cycles**: @ref arcgraph::CycleLattice.
+ *      (@ref GnssProcessor::arcgraph::growChainForest "arcgraph::growChainForest") and the baseline Prim
+ *      (@ref GnssProcessor::arcgraph::growBaselineForest "arcgraph::growBaselineForest").
+ *   4. **Cycles and bases**: @ref GnssProcessor::arcgraph::fundamentalBasis "arcgraph::fundamentalBasis" and the unit-triangular short basis
+ *      @ref GnssProcessor::arcgraph::shortCycleBasis "arcgraph::shortCycleBasis".
+ *   5. **Integer maps**: @ref GnssProcessor::arcgraph::cycleCoordinates "arcgraph::cycleCoordinates", @ref GnssProcessor::arcgraph::basisChangeMap "arcgraph::basisChangeMap",
+ *      @ref GnssProcessor::arcgraph::combineCycles "arcgraph::combineCycles".
+ *   6. **The saturated lattice of fixed cycles**: @ref GnssProcessor::arcgraph::CycleLattice "arcgraph::CycleLattice".
  *
  * ## Sign convention
  *
@@ -48,8 +48,8 @@
  * ## Legacy orders
  *
  * Two helpers exist only to reproduce pre-migration orders byte for byte:
- * @ref arcgraph::legacyChainVertexRank (the eq34 string vertex order) and the
- * @ref arcgraph::ForestRules::stop_at_gap / @ref arcgraph::BasisCoverage::ParentOnly pair
+ * @ref GnssProcessor::arcgraph::legacyChainVertexRank "arcgraph::legacyChainVertexRank" (the eq34 string vertex order) and the
+ * @ref GnssProcessor::arcgraph::ForestRules::stop_at_gap "arcgraph::ForestRules::stop_at_gap" / @c arcgraph::BasisCoverage::ParentOnly pair
  * (tree_basis).  They are deleted when the retired eq34 lineage and tree_basis retire.
  */
 #include "common/GnssIdentity.hpp"   // System, StationId, SatId, SignalId, ArcId
@@ -85,16 +85,45 @@ struct ArcKey {
     int u{0};  ///< lower-id endpoint (reference-orientation tail).
     int v{0};  ///< higher-id endpoint (reference-orientation head).
 
+    /** @brief Default constructor: the arc (0, 0), to be assigned before use. */
     ArcKey() = default;
-    /// Construct in canonical (ascending) orientation from any endpoint order.
+    /**
+     * @brief Construct in canonical (ascending) orientation from any endpoint order.
+     * @param a One endpoint id.
+     * @param b The other endpoint id (either order; the smaller becomes @c u).
+     */
     ArcKey(int a, int b) : u(a < b ? a : b), v(a < b ? b : a) {}
-    /// The canonical factory (identical to the two-arg constructor; explicit for call sites).
+    /**
+     * @brief The canonical factory (identical to the two-arg constructor; explicit for call sites).
+     * @param a One endpoint id.
+     * @param b The other endpoint id (either order).
+     * @return The arc with @c u the smaller id and @c v the larger.
+     */
     static ArcKey make(int a, int b) { return ArcKey(a, b); }
 
+    /**
+     * @brief Equality of arcs.
+     * @param o The arc to compare with.
+     * @return True when both endpoints match (canonical orientation makes this order-free).
+     */
     bool operator==(const ArcKey& o) const { return u == o.u && v == o.v; }
+    /**
+     * @brief Inequality of arcs.
+     * @param o The arc to compare with.
+     * @return True when either endpoint differs.
+     */
     bool operator!=(const ArcKey& o) const { return !(*this == o); }
+    /**
+     * @brief Strict weak ordering by lower endpoint, then higher endpoint (for ordered containers).
+     * @param o The arc to compare with.
+     * @return True when this arc sorts before @p o.
+     */
     bool operator<(const ArcKey& o) const { return u != o.u ? u < o.u : v < o.v; }
-    /// The other endpoint of the arc given one endpoint (undefined if @p w is neither).
+    /**
+     * @brief The other endpoint of the arc given one endpoint (undefined if @p w is neither).
+     * @param w One endpoint id of this arc.
+     * @return @c v when @p w equals @c u, otherwise @c u.
+     */
     int other(int w) const { return w == u ? v : u; }
 };
 
@@ -316,7 +345,7 @@ struct Component {
 /**
  * @brief The components of the arcs usable in a band mask.
  *
- * Every usable arc is united in arc order with @ref dsuUnite (station vertex, satellite vertex),
+ * Every usable arc is united in arc order with @ref GnssProcessor::arcgraph::dsuUnite "dsuUnite" (station vertex, satellite vertex),
  * the legacy rule, so each root is the root the legacy union-find would give.
  *
  * @param g           The graph.
@@ -430,7 +459,7 @@ struct SpanningForest {
  *
  * The incumbent queue drains before any new edge, so a surviving old subtree re-attaches through
  * its own old edges.  New edges are tried from the popped vertex in slot order or, under
- * @ref ForestRules::by_durability, satellites by durability then slot and stations by
+ * @ref GnssProcessor::arcgraph::ForestRules::by_durability "ForestRules::by_durability", satellites by durability then slot and stations by
  * @p station_rank, then durability, then slot.  Pass 1 refuses slipped arcs and non-eligible hosts
  * as new edges when the rules say so; pass 2 runs, when vertices are still unreached, from the
  * frontier rebuilt in @p frontier_rank order and admits everything.  Incumbent arcs are not
@@ -463,10 +492,10 @@ SpanningForest growChainForest(const ArcGraph& g, const Component& c, const std:
  * not kept is counted by cause in SpanningForest::reseats.  Then each outside station joins the
  * in-tree station it shares the most satellites with (lowest slot on ties, for both the station
  * and its partner), through the first common satellite or, under
- * @ref ForestRules::by_durability, the most durable one; the first round needs
- * @ref ForestRules::min_common common satellites, the second (unless
- * @ref ForestRules::stop_at_gap) one.  Each satellite joins with the first station that reaches
- * it.  Under @ref ForestRules::refuse_slipped_first the first pass reads only clean arcs (counting,
+ * @ref GnssProcessor::arcgraph::ForestRules::by_durability "ForestRules::by_durability", the most durable one; the first round needs
+ * @ref GnssProcessor::arcgraph::ForestRules::min_common "ForestRules::min_common" common satellites, the second (unless
+ * @ref GnssProcessor::arcgraph::ForestRules::stop_at_gap "ForestRules::stop_at_gap") one.  Each satellite joins with the first station that reaches
+ * it.  Under @ref GnssProcessor::arcgraph::ForestRules::refuse_slipped_first "ForestRules::refuse_slipped_first" the first pass reads only clean arcs (counting,
  * reference and satellite attachment); a second pass then reaches the rest through slipped arcs.
  * With the legacy rules (min_common 2, stop_at_gap, no incumbent, no refusal, first common) this
  * is exactly the legacy tree_basis Prim.

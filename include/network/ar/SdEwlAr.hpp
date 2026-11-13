@@ -180,6 +180,17 @@ enum class SdEwlFlipVerdict {
  * on slip, gap and re-acquisition alike, so a falling lagged count covers every case
  * without depending on the slip funnel (which is itself `carry_invariant`-gated and
  * therefore empty in some legal configurations).
+ *
+ * @param have_prev   True when a previous decision exists for this arc.  False gives
+ *                    @c Fresh whatever the other arguments are.
+ * @param n_prev      Previous epoch's integer (cycles, r0-anchored frame); read only
+ *                    when @p have_prev.
+ * @param count_prev  The arc's lagged MW sample count at the previous decision.
+ * @param n_now       This epoch's integer (cycles, same frame as @p n_prev).
+ * @param count_now   The arc's lagged MW sample count this epoch.  A value below
+ *                    @p count_prev means the accumulator restarted.
+ * @return @c Fresh without a previous decision; @c Restart when the count fell;
+ *         otherwise @c Stable for an unchanged integer and @c Flip for a changed one.
  */
 SdEwlFlipVerdict sdEwlFlipCheck(bool have_prev, long long n_prev, std::size_t count_prev,
                                 long long n_now, std::size_t count_now);
@@ -189,6 +200,10 @@ SdEwlFlipVerdict sdEwlFlipCheck(bool have_prev, long long n_prev, std::size_t co
  *        (cycles) to the nearest integer: @f$P(|e|<1/2)=\mathrm{erf}(0.5/(\sigma\sqrt2))@f$.
  *        FFR rather than ADOP, the AR validation criterion used in this codebase.
  *        Returns 1 for a non-positive sigma.
+ *
+ * @param sigma_cyc  One-sigma noise of the scalar before rounding (cycles).
+ * @return Probability in (0, 1] that rounding recovers the true integer; 1 when
+ *         @p sigma_cyc is not positive (a noiseless scalar rounds exactly).
  */
 double sdEwlRoundingFfr(double sigma_cyc);
 
@@ -227,7 +242,7 @@ std::map<std::string, std::map<std::string, SdEwlDecision>> sdEwlPropagate(
 /**
  * @brief The extra-wide-lane band pair of a constellation, with its two nominal
  *        frequencies: the single definition shared by the integer decision
- *        (@ref networkSdEwlAr) and the row builder (@ref networkAppendSdEwlRows).
+ *        (@ref GnssProcessor::networkSdEwlAr "networkSdEwlAr") and the row builder (@ref GnssProcessor::networkAppendSdEwlRows "networkAppendSdEwlRows").
  *
  * GPS uses (L2, L5) with lambda_EWL = c/(f2-f5) = 5.861 m; Galileo uses (E5b, E5a)
  * with 9.768 m.  BeiDou is deferred (clock divergence) and GLONASS is excluded (FDMA:
@@ -354,7 +369,7 @@ StationStep networkSdEwlStationRows(StationBuild& build);
  * @f$R=\mathrm{diag}(\mathrm{var}_s)+\mathrm{var}_p\mathbf{1}\mathbf{1}^\top@f$,
  * structurally the GIM common-mode R.  R is whitened by @f$L^{-1}@f$
  * (@f$LL^\top=R@f$) into unit-information rows, as
- * @ref networkAppendGimIonoRows does.
+ * @ref GnssProcessor::networkAppendGimIonoRows "networkAppendGimIonoRows" does.
  *
  * @par Why pre-reduce
  * These rows enter the station block that reaches @c addStationObservations, so they
@@ -397,7 +412,7 @@ StationStep networkSdEwlStationRows(StationBuild& build);
  *
  * @par Folding the fixed integer
  * When @c network.sd_ewl.fix_enable published an integer for an arc (@p fix, decided
- * serially before assembly by @ref networkSdEwlAr and read-only here), the row folds
+ * serially before assembly by @ref GnssProcessor::networkSdEwlAr "networkSdEwlAr" and read-only here), the row folds
  * @f$\lambda_{EWL}\nabla N^{fixed}@f$ out of the RHS and drops its four local
  * ambiguity coefficients: the local degree of freedom is removed, not constrained.
  * A tight prior on a gauge-adjacent local column would be a stiff prior, not a rank
@@ -422,6 +437,8 @@ StationStep networkSdEwlStationRows(StationBuild& build);
  * @param station_index  This station's index into @p fix.
  *
  * @p config_ is the run's configuration.
+ * @param config_  The run's configuration; the @c network.sd_ewl settings (arc maturity,
+ *                 fixed-integer gates, trace switch) are read from it.
  */
 void networkAppendSdEwlRows(const GnssConfig& config_, NetStation& st, const NetworkEstimator& est,
                             const std::vector<PppObservation>& sta_obs,

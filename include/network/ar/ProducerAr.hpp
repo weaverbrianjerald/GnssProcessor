@@ -12,12 +12,12 @@
  *     `min_epochs`): reconstructs the per-station float ambiguities, forms an
  *     independent between-station double-difference basis (star topology per
  *     (const,signal), GPS+Galileo only), builds the exact DD covariance from
- *     @ref NetworkEstimator::jointConditionalCovariance, converts to cycles, and runs
- *     @ref ils::ilsFix only to log how many integers the network could fix (with the
+ *     @ref GnssProcessor::NetworkEstimator::jointConditionalCovariance "NetworkEstimator::jointConditionalCovariance", converts to cycles, and runs
+ *     @ref GnssProcessor::ils::ilsFix "ils::ilsFix" only to log how many integers the network could fix (with the
  *     median DD formal-σ and float-fraction convergence gauges).  The DD ambiguities
  *     are datum-invariant, so the fix attempt is independent of the phase-bias datum.
  *     With `network.ambiguity_resolution.trace` also armed it writes every DD of the
- *     basis to `logs/network_producer_ar.csv` (@ref kProducerArHeader) with its
+ *     basis to `logs/network_producer_ar.csv` (@ref GnssProcessor::kProducerArHeader "kProducerArHeader") with its
  *     identity, float value, formal σ, subset membership and returned integer, so the
  *     search can be graded against simulator truth offline
  *     (`scripts/simnet_producer_ar_grade.py`); a fix count alone is not a grade.  The
@@ -26,15 +26,15 @@
  *     With `network.ambiguity_resolution.suspect_epochs` every DD with a
  *     (station, satellite) corner that the slip layer freed, dropped or flagged in the
  *     last few epochs stays in the basis and the trace but is kept out of the search
- *     (network/ar/ArSuspect.hpp, @ref netar::maskedSearchOrder); the trace then
+ *     (network/ar/ArSuspect.hpp, @ref GnssProcessor::netar::maskedSearchOrder "netar::maskedSearchOrder"); the trace then
  *     carries the DD's suspect cause bits and its re-entry flag, and the release back
- *     into the search is counted (@ref netar::reentryOutcome).  The basis is the star
+ *     into the search is counted (@ref GnssProcessor::netar::reentryOutcome "netar::reentryOutcome").  The basis is the star
  *     unless `tree_basis` (a spanning tree of station baselines per
  *     (constellation, signal)) or `cycle_basis` (a sticky, full-coverage cycle
  *     basis per family of a constellation's signals, network/ar/ArCycleBasis.hpp,
- *     searched one block per station, @ref netar::searchBlockKey) is armed.  Under
+ *     searched one block per station, @ref GnssProcessor::netar::searchBlockKey "netar::searchBlockKey") is armed.  Under
  *     `trace_lattice` the seam returns the epoch's determined DDs as
- *     cycles with every band-arc's life reading (@ref ArEpochFixes), which the measure-only
+ *     cycles with every band-arc's life reading (@ref GnssProcessor::ArEpochFixes "ArEpochFixes"), which the measure-only
  *     lattice observatory (network/ar/ArLattice.hpp) reads next in the same bracket.
  *  2. **One-shot NEQ export** (`network.neq_export_epoch`): a post-solve, read-only dump
  *     of the assembled arrowhead normal equations (border N_ss raw and reduced, with
@@ -140,7 +140,7 @@ std::vector<DdFixLabel> mapFixToBasis(int n_dd,
                                       const std::vector<int>& kept,
                                       const Eigen::VectorXd& afix);
 
-/// One basis DD's pair identity for @ref pairLaneColumns: two DDs with the same
+/// One basis DD's pair identity for @ref GnssProcessor::netar::pairLaneColumns "pairLaneColumns": two DDs with the same
 /// @c key (constellation, sat_j, ref_sat, sta_r, ref_sta) and different
 /// wavelengths are the two bands of one pair.
 struct DdPairKey {
@@ -168,6 +168,11 @@ struct DdPairKey {
  * @param block_of Block id per search row (any integers; rows with equal ids share a block).
  * @param gates    Acceptance gates, as for @ref ils::ilsFixDecorrelatedPartial.
  * @param determined_sigma_cyc As for @ref ils::ilsFixDecorrelatedPartial.
+ * @return The merged result.  @c ok is true when at least one row was kept and
+ *         @c partial when fewer than all rows were.  When no block fixed anything
+ *         (or @p block_of is not one id per row, or the search is empty) @c kept is
+ *         empty, @c p_succ is 0 and, unless the search is empty, @c a_cond / @c Q_cond
+ *         are returned empty.
  */
 ils::IlsResult blockDecorrelatedFix(const Eigen::VectorXd& y, const Eigen::MatrixXd& Q,
                                     const std::vector<int>& block_of,
@@ -222,7 +227,7 @@ std::vector<PairLane> pairLanes(const std::vector<DdPairKey>& keys,
 std::vector<std::string> pairLaneText(const std::vector<PairLane>& lanes);
 
 /**
- * @brief @ref pairLaneText of @ref pairLanes: the trace's four pair columns per basis DD.
+ * @brief @ref pairLaneText of @ref GnssProcessor::netar::pairLanes "pairLanes": the trace's four pair columns per basis DD.
  * @param keys      One entry per basis DD.
  * @param search_of Search row ↦ basis index.
  * @param n_search  Search dimension.
@@ -310,7 +315,7 @@ struct NetworkEpoch;            // network/driver/Epoch.hpp
  *     nc.ambiguity_resolution`.
  *   - @p log = run.log: "main_log": the Phase-2 AR summary and NEQ-export info rows.
  *   - @p traces = run.traces: Trace-stream owner; the seam writes @c producer_ar_trace (one
- *     row per DD, @ref kProducerArHeader) when @c network.ambiguity_resolution.trace is armed.
+ *     row per DD, @ref GnssProcessor::kProducerArHeader "kProducerArHeader") when @c network.ambiguity_resolution.trace is armed.
  *   - @p se = ep.se: Current synced epoch (week/TOW for the log rows).
  *   - @p est = run.engines.est: Post-solve estimator (const): reconstructStation /
  *     jointConditionalCovariance / normals / column labels.

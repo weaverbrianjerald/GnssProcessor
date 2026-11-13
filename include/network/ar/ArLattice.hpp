@@ -7,7 +7,7 @@
  *
  * ## What it holds
  *
- * A fixed DD is an integer combination of band-arcs.  @ref arcgraph::CycleLattice keeps the
+ * A fixed DD is an integer combination of band-arcs.  @ref GnssProcessor::arcgraph::CycleLattice "arcgraph::CycleLattice" keeps the
  * fixed cycles in reduced echelon form with unit pivots, so every cycle in their span has
  * exactly one implied integer.  The ledger is that lattice, the streaks of fixes waiting to
  * enter it, and the epoch of its last step.  It writes nothing the solve reads.
@@ -18,10 +18,10 @@
  * the gross-LOS Decide), whenever @c trace_lattice is armed or the fold reads the lattice
  * (@c fixed_cycles.source lattice):
  *
- *  1. **Seam gap** (@ref arLatticeBegin).  A loop epoch since the last step that ran without
+ *  1. **Seam gap** (@ref GnssProcessor::arLatticeBegin "arLatticeBegin").  A loop epoch since the last step that ran without
  *     one (a withheld epoch, an epoch without a search) releases every row: the evidence of
  *     that epoch (its replay culprits, its free-epoch latch) left no stamp.
- *  2. **Evidence** (@ref arLatticeEvidenceReleases).  Every band-arc a row holds is released
+ *  2. **Evidence** (@ref GnssProcessor::arLatticeEvidenceReleases "arLatticeEvidenceReleases").  Every band-arc a row holds is released
  *     when the search did not read it (vanished), read it as a new life (first seen, freed by
  *     the free-epoch latch with its cause bits, a life-stamp change with its field bits), or
  *     when this epoch's landed within-epoch replay or gross-LOS Decide named its line of sight.
@@ -29,21 +29,21 @@
  *     integer releases the arcs of that cycle at once.
  *  4. **Re-validation** (the fold's, between steps 3 and 5: network/ar/FixedCycles.hpp).
  *     Every L1/L2 unit the lattice implies is tested against the search's float; failures are
- *     released through @ref arLatticeRelease.
- *  5. **Admission** (@ref arLatticeAdmit).  A fix enters only after @c persist_ep consecutive
+ *     released through @ref GnssProcessor::arLatticeRelease "arLatticeRelease".
+ *  5. **Admission** (@ref GnssProcessor::arLatticeAdmit "arLatticeAdmit").  A fix enters only after @c persist_ep consecutive
  *     epochs at one integer with no new life on its arcs; it is then offered (added,
  *     confirmed, or refused as not primitive).  An added row folds from the next epoch.
  *
  * The fold's own refusals (a unit dropped by block acceptance, a degenerate block) also go
- * through @ref arLatticeRelease.  Every release, whatever its cause, is one
- * @ref ArLatticeReleaseEvent from one table of causes (@ref arLatticeReleaseSpec): its name,
+ * through @ref GnssProcessor::arLatticeRelease "arLatticeRelease".  Every release, whatever its cause, is one
+ * @ref GnssProcessor::ArLatticeReleaseEvent "ArLatticeReleaseEvent" from one table of causes (@ref GnssProcessor::arLatticeReleaseSpec "arLatticeReleaseSpec"): its name,
  * its counter, its trace column and its event row.
  *
  * ## A verdict on a cycle releases its arcs
  *
  * A contradiction, a failed float test with no arc shared by another failure, and the fold's
  * refusals each put one cycle's integer in question without saying which of its band-arcs moved.
- * The release eliminates every one of its arcs (@ref arcgraph::latticeEliminateArc), so the
+ * The release eliminates every one of its arcs (@ref GnssProcessor::arcgraph::latticeEliminateArc "arcgraph::latticeEliminateArc"), so the
  * ledger keeps exactly the part of its lattice that holds none of them, and no integer it implies
  * later depends on their old integers.  Dropping only the rows behind the cycle (the rows whose
  * pivots it holds) is not enough: in reduced echelon form other rows can hold one of its arcs as
@@ -55,18 +55,18 @@
  * ## One reading of a life
  *
  * The ledger keeps no stamp of its own.  The arc-life design binds the readers of an arc's life
- * to one record, and the search's reading (@ref arcLifeStep, network/ar/ArcLife.hpp) is that
+ * to one record, and the search's reading (@ref GnssProcessor::arcLifeStep "arcLifeStep", network/ar/ArcLife.hpp) is that
  * record, with its echo rule.  Post-fit QC at epoch t (RAIM T3 / T4, the gross-LOS Act) acts
  * after the emission; its stamp is read at t + 1 (counted as late by the fold).
  *
  * ## What it writes
  *
  * Its state (@c ctx.carry.ar_lattice) and tallies (@c ctx.counters.netar_lattice); under
- * @c trace_lattice logs/network_ar_lattice.csv (one row per step, @ref kArLatticeHeader) and
+ * @c trace_lattice logs/network_ar_lattice.csv (one row per step, @ref GnssProcessor::kArLatticeHeader "kArLatticeHeader") and
  * logs/network_ar_lattice_events.csv (one row per release and per offer that is not a
- * confirmation, @ref kArLatticeEventsHeader; graded against truth by
+ * confirmation, @ref GnssProcessor::kArLatticeEventsHeader "kArLatticeEventsHeader"; graded against truth by
  * scripts/simnet_ar_lattice_grade.py and scripts/simnet_fixed_cycle_grade.py), a warning on an
- * epoch with a contradiction, and the run-end report @ref networkArLatticeRunEnd.  Not
+ * epoch with a contradiction, and the run-end report @ref GnssProcessor::networkArLatticeRunEnd "networkArLatticeRunEnd".  Not
  * snapshotted and not fingerprinted: a resumed leg starts with an empty ledger.
  *
  * ## What it cannot show
@@ -109,7 +109,7 @@ struct SyncedEpoch;          // rinex/MultiRinexSync.hpp
 struct WithinEpochCulprits;  // network/qc/WithinEpochCulprits.hpp
 
 /// Why the ledger released lattice content (the file banner's steps; one row each of
-/// @ref arLatticeReleaseSpec).
+/// @ref GnssProcessor::arLatticeReleaseSpec "arLatticeReleaseSpec").
 enum class ArLatticeRelease : std::uint8_t {
     Vanished,       ///< This search did not read the arc (it left the pool).
     FirstSeen,      ///< The last search did not read it (a gap between two searches).
@@ -159,7 +159,7 @@ struct ArLatticeReleaseSpec {
 const ArLatticeReleaseSpec& arLatticeReleaseSpec(ArLatticeRelease r);
 
 /**
- * @brief The trace name of a release cause (@ref ArLatticeReleaseSpec::name): vanished,
+ * @brief The trace name of a release cause (@ref GnssProcessor::ArLatticeReleaseSpec::name "ArLatticeReleaseSpec::name"): vanished,
  *        first_seen, freed, stamp, replay, gross, contradiction, revalidation, acceptance,
  *        degenerate, seam_gap.
  * @param r The cause.
@@ -245,7 +245,10 @@ struct ArLosScope {
      * @return Its satellite, its station or its line of sight is in the scope.
      */
     bool covers(const ArcId& a) const;
-    /// @return True when the scope names nothing.
+    /**
+     * @brief Whether the scope holds no satellite, no station and no line of sight.
+     * @return True when the scope names nothing.
+     */
     bool empty() const { return sats.empty() && stations.empty() && los.empty(); }
 };
 
@@ -275,7 +278,7 @@ ArLatticeEvidence networkArLatticeEvidence(const NetworkRunContext& ctx, const W
  * named by nothing is kept.  The events carry the reading's change bits and free causes.
  *
  * @param L    The lattice.
- * @param arcs This search's life readings (@ref ArEpochFixes::arcs).
+ * @param arcs This search's life readings (@ref GnssProcessor::ArEpochFixes::arcs "ArEpochFixes::arcs").
  * @param ev   The epoch's evidence.
  * @return The releases (not applied).
  */
@@ -312,7 +315,7 @@ void arLatticeRelease(ArLatticeState& S, std::vector<ArLatticeReleaseEvent> even
  *
  * The seam gap: when the ledger stepped before (@c S.last_step_ep at least 0) and @p ep is more
  * than one epoch later, every row is released (SeamGap).  Then the evidence releases
- * (@ref arLatticeEvidenceReleases), and the arcs this search read as a new life or the evidence
+ * (@ref GnssProcessor::arLatticeEvidenceReleases "arLatticeEvidenceReleases"), and the arcs this search read as a new life or the evidence
  * names join @c e.broken.  Then each fix of @p fixes, in basis order, whose cycle the lattice
  * implies at another integer: the offer is Contradicted (with the implied integer) and the
  * cycle's arcs are released (Contradiction) before the next fix is read.
@@ -332,7 +335,7 @@ ArLatticeEpoch arLatticeBegin(ArLatticeState& S, const ArEpochFixes& fixes, cons
  * Each fix not contradicted at this epoch continues its streak when the streak's integer is the
  * same, its last fix was the epoch before, and none of its four arcs is in @c e.broken; else its
  * streak restarts at one.  A fix whose streak reaches @p persist_ep is offered
- * (@ref arcgraph::latticeOffer at @p ep): added, confirmed or not primitive; a contradiction here
+ * (@ref GnssProcessor::arcgraph::latticeOffer "arcgraph::latticeOffer" at @p ep): added, confirmed or not primitive; a contradiction here
  * (the epoch's own fixes disagree through a row added this epoch) is released as at step 3.  The
  * rest wait.  Streaks not continued at this epoch are dropped.
  *
@@ -423,7 +426,7 @@ bool arLatticeArmed(const GnssConfig& config_);
  * field and by free-epoch cause; the units implied and failing; the cost.  Warns on any
  * contradiction and (standing invariant 4) when armed and no fix was ever offered.
  *
- * Gate: returns 0 at once unless @ref arLatticeArmed.
+ * Gate: returns 0 at once unless @ref GnssProcessor::arLatticeArmed "arLatticeArmed".
  *
  * @param v The run at its end (network/runend/RunEnd.hpp).
  * @return 0 (this report does not set the exit code).

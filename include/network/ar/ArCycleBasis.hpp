@@ -16,52 +16,52 @@
  *
  * ## One family's basis at one search
  *
- *  1. **Family** (@ref arCycleFamilies): per constellation, the two signals with the most arcs
+ *  1. **Family** (@ref GnssProcessor::arCycleFamilies "arCycleFamilies"): per constellation, the two signals with the most arcs
  *     share one graph (a pair family, bands in the pool's string order); every further signal
  *     is a one-band family.
  *  2. **Rows** (built by the seam): one arc per (station, satellite) with a present bit per
- *     band, a slipped bit per band (@ref ArcLifeStep::slipped: this epoch's free-epoch latch,
+ *     band, a slipped bit per band (@ref GnssProcessor::ArcLifeStep::slipped "ArcLifeStep::slipped": this epoch's free-epoch latch,
  *     or a change of the arc's life stamp, network/ar/ArcLife.hpp) and a durability (the
  *     epochs since the weaker band's life began).
- *  3. **Forest** (@ref arCycleBuild): per component of the arcs present in every band,
- *     @ref arcgraph::growBaselineForest under @ref arCycleForestRules (two common satellites,
+ *  3. **Forest** (@ref GnssProcessor::arCycleBuild "arCycleBuild"): per component of the arcs present in every band,
+ *     @ref GnssProcessor::arcgraph::growBaselineForest "arcgraph::growBaselineForest" under @ref GnssProcessor::arCycleForestRules "arCycleForestRules" (two common satellites,
  *     then one; slipped arcs refused in the first pass; the most durable reference satellite),
  *     seeded with the last search's links (the incumbent) unless @c cycle_basis_sticky is
  *     false.  A station whose incumbent link waits for its parent rejoins after that parent,
  *     so a re-seat moves one link and not its subtree.  The component forests are joined.
- *  4. **Basis**: @ref arcgraph::shortCycleBasis with Full coverage: one cycle per chord of
+ *  4. **Basis**: @ref GnssProcessor::arcgraph::shortCycleBasis "arcgraph::shortCycleBasis" with Full coverage: one cycle per chord of
  *     every band, a DD against the link parent (PartnerDd) or against an earlier station
  *     sharing the most satellites (BorrowedDd); band-only arcs complete each band's forest and
  *     close in their own band; a chord no DD can close is a Fundamental fallback, counted and
  *     never searched.  Each band then holds its lattice dimension, E - V + C, in cycles.  When
  *     sticky, a chord the last basis borrowed for keeps that partner and reference while they
  *     still close it, so a borrowed DD does not flip each time a common-satellite count does.
- *  5. **Map** (@ref arCycleMapStates): @ref arcgraph::basisChangeMap against the stored basis,
+ *  5. **Map** (@ref GnssProcessor::arCycleMapStates "arCycleMapStates"): @ref GnssProcessor::arcgraph::basisChangeMap "arcgraph::basisChangeMap" against the stored basis,
  *     the slipped band-arcs invalidated.  Each cycle is the same cycle as a stored one, an
  *     integer combination of stored cycles, fresh through an invalidated arc, or fresh outside
  *     the stored span (a new arc, or no stored basis).
  *
  * The seam (networkProducerAr, network/ar/ProducerAr.cpp) turns each PartnerDd and
  * BorrowedDd cycle into one search row, searches one block per station
- * (@ref netar::searchBlockKey), and stores the family's memory after the search.
+ * (@ref GnssProcessor::netar::searchBlockKey "netar::searchBlockKey"), and stores the family's memory after the search.
  *
  * ## Memory
  *
- * @c ctx.carry.ar_basis, one @ref ArBasisMemory per family, keyed by the family's bands.  Not
+ * @c ctx.carry.ar_basis, one @ref GnssProcessor::ArBasisMemory "ArBasisMemory" per family, keyed by the family's bands.  Not
  * snapshotted and not fingerprinted: the search is log-only, and a resumed leg rebuilds (a
  * build with no stored basis, counted).
  *
  * ## What one search hands the lattice observatory (step AGT-6)
  *
- * @ref ArEpochFixes: whether the cycle basis was built, the single-signal DDs the search
+ * @ref GnssProcessor::ArEpochFixes "ArEpochFixes": whether the cycle basis was built, the single-signal DDs the search
  * determined (each as its cycle, with its integer and identity), and every band-arc's life
- * reading of this search (@ref ArArcReading).  The observatory (network/ar/ArLattice.hpp)
+ * reading of this search (@ref GnssProcessor::ArArcReading "ArArcReading").  The observatory (network/ar/ArLattice.hpp)
  * releases a lattice arc on that reading, so the search and the observatory share one rule of
- * what ends a life (@ref arcLifeStep, its echo rule included) and keep no second record of it.
+ * what ends a life (@ref GnssProcessor::arcLifeStep "arcLifeStep", its echo rule included) and keep no second record of it.
  * Filled only under @c network.ambiguity_resolution.trace_lattice or an armed fixed-cycle fold
  * (network/ar/FixedCycles.hpp), which also receives every searched DD's float and
- * covariance with its L1/L2 twin (@ref SearchedCycle) and every pooled arc's live column
- * (@ref ArcColumn).
+ * covariance with its L1/L2 twin (@ref GnssProcessor::SearchedCycle "SearchedCycle") and every pooled arc's live column
+ * (@ref GnssProcessor::ArcColumn "ArcColumn").
  */
 
 #include "common/GnssIdentity.hpp"     // System, StationId, SatId, SignalId, ArcId
@@ -110,7 +110,7 @@ struct ArFamilySpec {
  *
  * The two signals with the most arcs form a pair family (ties broken by the pool's string
  * order; the pair's bands in that order); every further signal is a one-band family, in
- * pool order.  A signal @ref SignalId::fromObsCode refuses is left out.
+ * pool order.  A signal @ref GnssProcessor::SignalId::fromObsCode "SignalId::fromObsCode" refuses is left out.
  *
  * @param sys          The constellation.
  * @param signal_arcs  Per pool signal, in the pool's string order: its arc count.
@@ -151,7 +151,7 @@ struct ArCycleBuild {
  * @param in        The family's arcs.
  * @param incumbent The last search's links (empty: none, or the non-sticky control).
  * @param sticky    The last search's basis, whose borrowed closures are kept while they still
- *                  close their chords (@ref arcgraph::shortCycleBasis); null for none, or the
+ *                  close their chords (@ref GnssProcessor::arcgraph::shortCycleBasis "arcgraph::shortCycleBasis"); null for none, or the
  *                  non-sticky control.
  * @return The graph, components, joined forest, basis and invalidated arcs.
  */
@@ -235,8 +235,8 @@ struct ArCycleBasisCounters {
 
 /// One band-arc as one search read its life (the lattice observatory's release input).
 struct ArArcReading {
-    ArcLifeEdge  edge{ArcLifeEdge::None};  ///< @ref ArcLifeStep::edge: a new life (FirstSeen, Freed, StampChange) or not (None, Echo).
-    unsigned     change{0};                ///< @ref ArcLifeStep::change: the @ref ArcLifeField bits that changed since the last search.
+    ArcLifeEdge  edge{ArcLifeEdge::None};  ///< @ref GnssProcessor::ArcLifeStep::edge "ArcLifeStep::edge": a new life (FirstSeen, Freed, StampChange) or not (None, Echo).
+    unsigned     change{0};                ///< @ref GnssProcessor::ArcLifeStep::change "ArcLifeStep::change": the @ref ArcLifeField bits that changed since the last search.
     std::uint8_t free_cause{0};            ///< @c RelevelEpochState::free_cause bits of the arc's ambiguity key this epoch (0 unless freed).
 };
 

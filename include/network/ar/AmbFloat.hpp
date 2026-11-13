@@ -98,7 +98,7 @@ struct EpochEvents;   // network/driver/Epoch.hpp
      *
      * @param lc        The entry.  @c value_abs, @c var_first, @c var_birth, both birth
      *                  stamps, @c last_seen_s and @c n_folds are untouched.
-     * @param floor_m2  This LOS's birth floor from @ref ambFloatBirthFloor; the restored
+     * @param floor_m2  This LOS's birth floor from @ref GnssProcessor::ambFloatBirthFloor "ambFloatBirthFloor"; the restored
      *                  variance is @c max(var_birth, var_first, floor_m2), so a drop can
      *                  only loosen the prior, never tighten it.
      * @param now_s     Continuous-GPS seconds, the new @c relevel_s (the age clock
@@ -109,6 +109,12 @@ struct EpochEvents;   // network/driver/Epoch.hpp
      *         idempotent re-drop within one epoch, counted separately; @c relevel_s,
      *         @c dropped_ep and @c drop_walk_ph are still updated), or when the
      *         restored variance would not be positive (the entry is left unchanged).
+     * @param decouple_always When true, an idempotent drop (variance already at birth
+     *                  strength) also clears the entry's border regression and block
+     *                  row if it still has them; false leaves them in place.
+     * @param[out] decoupled_idem Optional flag, set false on entry and set true when
+     *                  the idempotent branch cleared the regression and block row.
+     *                  May be null.
      */
     bool ambFloatDrop(LocalCarry& lc, double floor_m2, double now_s, long long now_ep,
                       bool decouple_always = false, bool* decoupled_idem = nullptr);
@@ -136,7 +142,7 @@ struct EpochEvents;   // network/driver/Epoch.hpp
      *        they cannot diverge.
      *
      * The restored variance is @c max(var_birth, var_first, birth_floor, drop_floor),
-     * with both floors already elevation-mapped by @ref ambFloatBirthFloor at the call
+     * with both floors already elevation-mapped by @ref GnssProcessor::ambFloatBirthFloor "ambFloatBirthFloor" at the call
      * site (the code weights' own mapping, so a floor stated at zenith is not
      * optimistic at the low elevations that hold the metre-plus tail).  The birth stash
      * does not use @p drop_floor_m2.  A floor at birth was measured to remove the
@@ -148,6 +154,9 @@ struct EpochEvents;   // network/driver/Epoch.hpp
      * @param drop_floor_m2  This LOS's @c network.amb_float_drop_var_m2 floor (m²).
      * @param now_s         Continuous-GPS seconds, the new @c relevel_s.
      * @param now_ep        This epoch's @c n_loop_epochs, the new @c dropped_ep.
+     * @param decouple_always Forwarded to @ref GnssProcessor::ambFloatDrop "ambFloatDrop": an idempotent drop also
+     *                      clears the entry's border regression and block row (reported in
+     *                      @c AmbDropOutcome::decoupled_idem).
      * @return the outcome.
      */
     AmbDropOutcome ambFloatDropFloored(LocalCarry& lc, double birth_floor_m2,
@@ -279,7 +288,7 @@ struct EpochEvents;   // network/driver/Epoch.hpp
      * The incoming anchor's own column then reads 0, which its @f$w=10^{10}@f$ gauge pin
      * is about to assert.  That identity is checked against @c kStsExactTolM and
      * reported, never thrown (the @c selfcheck_ok pattern of
-     * @ref networkHandoverStransform).
+     * @ref GnssProcessor::networkHandoverStransform "networkHandoverStransform").
      *
      * Two defects this function must not introduce:
      *  (i) The carry S-transformation @c eq34ShiftCarry in @c ChainDatum.cpp

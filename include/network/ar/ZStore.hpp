@@ -36,25 +36,25 @@
  *
  * Graph events map to exact z-store operations:
  *
- *   - **chord death** (@ref ZComponent::killChord): drop that z row/col of
+ *   - **chord death** (@ref GnssProcessor::ZComponent::killChord "ZComponent::killChord"): drop that z row/col of
  *     @f$P^z@f$.  This is pure marginalization (the covariance sub-block is the
  *     marginal; equivalently the Schur complement of the information form).
- *   - **chord birth** (@ref ZComponent::birthChord): append a z entry
+ *   - **chord birth** (@ref GnssProcessor::ZComponent::birthChord "ZComponent::birthChord"): append a z entry
  *     initialized by tap-off @f$\hat z_{\text{new}}=f^\top\hat x@f$ (GKF Eq. 22)
  *     with its conditional variance and cross-covariance, supplied by the caller
  *     (the network solve in phase C, a reference batch in the unit gates).
- *   - **leaf growth** (@ref ZComponent::addLeafArc): a new arc that brings in a
+ *   - **leaf growth** (@ref GnssProcessor::ZComponent::addLeafArc "ZComponent::addLeafArc"): a new arc that brings in a
  *     new vertex extends the tree, adds no cycle and touches no z.
- *   - **tree-edge death**: @ref ZComponent::pivot a covering chord into the tree
+ *   - **tree-edge death**: @ref GnssProcessor::ZComponent::pivot "ZComponent::pivot" a covering chord into the tree
  *     (a unimodular basis change, @f$z'=Tz,\ P^{z\prime}=TP^zT^\top@f$), then
- *     @ref ZComponent::killChord the dead arc, which is now a chord.  If no chord
+ *     @ref GnssProcessor::ZComponent::killChord "ZComponent::killChord" the dead arc, which is now a chord.  If no chord
  *     covers the dying tree edge it is a cut edge and its death splits the
  *     component in two.  No z entry references a cut edge, so the split only
  *     re-partitions the existing blocks between the two sides (no transform).
  *     The phase-C epoch driver re-derives the component set each epoch (the eq34
  *     union-find), so this file has no split primitive; splitting is left to that
  *     driver.
- *   - **component merge** (@ref ZComponent::mergedWith): union the two z-blocks
+ *   - **component merge** (@ref GnssProcessor::ZComponent::mergedWith "ZComponent::mergedWith"): union the two z-blocks
  *     block-diagonally (they were independent), promote one bridge arc to the
  *     tree, and tap off any surplus bridges as new chords.  @f$T@f$ is the block
  *     identity on the carried z: the bridge is a cut edge, so every pre-existing
@@ -78,20 +78,20 @@
  *   - phase D: the emit-layer frame re-basing, the run-end counter line, the
  *     config toggles (`network.carry_invariant*`), and the field falsifier.
  *
- * Production use: `gnss_core` includes this header.  @ref ArcKey (defined in
+ * Production use: `gnss_core` includes this header.  @ref GnssProcessor::ArcKey "ArcKey" (defined in
  * ArcGraph.hpp, included here) keys the carry
  * maps (NetworkRunContext, NetworkDdPriorBuild, NetworkInstallCarry).  The
- * @ref NetworkZStore container, the lifecycle
+ * @ref GnssProcessor::NetworkZStore "NetworkZStore" container, the lifecycle
  * transforms and the Kalman recursion on z are exercised by the unit gates (the
  * driver's gate uses them as the phase-B oracle), not by the producer.
  *
- * The producer builds no @ref ZComponent either:
+ * The producer builds no @ref GnssProcessor::ZComponent "ZComponent" either:
  * `NetworkInvariantCarryDriver` takes its trees and fundamental cycles from
  * filter/NetworkArcGraph (`arcgraph::singleTreeOf`, `arcgraph::fundamentalCycle`).
- * @ref ZComponent stays here as the phase-B test oracle: of the z-store gates
+ * @ref GnssProcessor::ZComponent "ZComponent" stays here as the phase-B test oracle: of the z-store gates
  * (tests/network/test_network_zstore.cpp), of the driver's gate, and of the arc-graph
  * oracles that prove those two functions equal to its constructor and its
- * @ref ZComponent::fundamentalCycle (tests/network/test_network_arc_graph_oracles.cpp).
+ * @ref GnssProcessor::ZComponent::fundamentalCycle "ZComponent::fundamentalCycle" (tests/network/test_network_arc_graph_oracles.cpp).
  * Two tree-path implementations therefore coexist until the retired lineage that
  * runs the carry is deleted.
  */
@@ -117,11 +117,11 @@ namespace GnssProcessor {
  *        set (the DD basis), the carried DD means @f$\hat z@f$ and covariance
  *        @f$P^z@f$, and the spanning tree that defines the fundamental cycles.
  *
- * Invariant: @ref chords_ .size() == @ref z_ .size() == @ref Pz_ rows == cols,
- * and the tree edges (@ref treeAdj_) plus the chords are exactly the component's
+ * Invariant: chords_ (@c GnssProcessor::ZComponent::chords_) .size() == z_ (@c GnssProcessor::ZComponent::z_) .size() == Pz_ (@c GnssProcessor::ZComponent::Pz_) rows == cols,
+ * and the tree edges (treeAdj_ (@c GnssProcessor::ZComponent::treeAdj_)) plus the chords are exactly the component's
  * arcs.  The tree is stored as undirected adjacency; every arc's `ArcKey`
  * (hence its sign) is recovered from a vertex pair, so no separate edge list is
- * needed.  The z-vector index of a chord is its position in @ref chords_ .
+ * needed.  The z-vector index of a chord is its position in chords_ (@c GnssProcessor::ZComponent::chords_) .
  *
  * @note The phase-B test oracle: no production code
  *       constructs it (the carry driver's trees and cycles come from
@@ -141,6 +141,7 @@ public:
                                         ///  cannot see which chords lacked a phase row this epoch.
     };
 
+    /** @brief Default constructor: an empty component (no vertices, no tree edges, no chords). */
     ZComponent() = default;
 
     /**
@@ -163,30 +164,86 @@ public:
 
     // --- structure queries --------------------------------------------------
 
+    /**
+     * @brief Dimension of the carried DD vector.
+     * @return Number of chords, which equals the length of @c z() and the order of @c Pz().
+     */
     Eigen::Index zDim() const { return static_cast<Eigen::Index>(chords_.size()); }
+    /**
+     * @brief The chord set, which defines the z-vector layout.
+     * @return Chord arcs in z-vector order (element @c i is the chord whose DD is @c z()(i)).
+     */
     const std::vector<ArcKey>& chords() const { return chords_; }
+    /**
+     * @brief The carried DD ambiguity means.
+     * @return Reference to the z-vector (one entry per chord, in @c chords() order, in the
+     *         unit of the ambiguity state it was seeded from).
+     */
     const Eigen::VectorXd& z() const { return z_; }
+    /**
+     * @brief The covariance of the carried DD means.
+     * @return Reference to the symmetric @c zDim() by @c zDim() matrix (the unit of @c z() squared).
+     */
     const Eigen::MatrixXd& Pz() const { return Pz_; }
+    /**
+     * @brief Writable access to the z-vector (for the filter update and the unit gates).
+     * @return Mutable reference to the z-vector; the caller must keep its length at @c zDim().
+     */
     Eigen::VectorXd& zMutable() { return z_; }
+    /**
+     * @brief Writable access to the z covariance (for the filter update and the unit gates).
+     * @return Mutable reference to the covariance; the caller must keep it @c zDim() square.
+     */
     Eigen::MatrixXd& PzMutable() { return Pz_; }
+    /**
+     * @brief The component's vertex ids (receivers and satellites share one id space).
+     * @return Ordered set of every vertex of the component.
+     */
     const std::set<int>& vertices() const { return vertices_; }
+    /**
+     * @brief The lifecycle event tallies accumulated so far.
+     * @return Reference to the counters (births, deaths, swaps, tap-offs, leaf growths, predicts).
+     */
     const Counters& counters() const { return counters_; }
 
+    /**
+     * @brief Whether a vertex belongs to the component.
+     * @param w Vertex id.
+     * @return True when @p w is a vertex of the component.
+     */
     bool hasVertex(int w) const { return vertices_.count(w) != 0; }
+    /**
+     * @brief Whether an arc is currently a spanning-tree edge.
+     * @param e The arc (canonical orientation).
+     * @return True when @p e is a tree edge; false for a chord or an arc not in the component.
+     */
     bool isTreeEdge(const ArcKey& e) const {
         auto it = treeAdj_.find(e.u);
         return it != treeAdj_.end() && it->second.count(e.v) != 0;
     }
+    /**
+     * @brief Whether an arc is currently a chord (a non-tree arc with a z entry).
+     * @param c The arc (canonical orientation).
+     * @return True when @p c is in the chord set; false for a tree edge or an arc not in the component.
+     */
     bool isChord(const ArcKey& c) const {
         return std::find(chords_.begin(), chords_.end(), c) != chords_.end();
     }
-    /// Position of chord @p c in the z-vector (throws if not a chord).
+    /**
+     * @brief Position of chord @p c in the z-vector (throws if not a chord).
+     * @param c The chord.
+     * @return Zero-based index into @c z() and the rows and columns of @c Pz().
+     */
     Eigen::Index chordIndex(const ArcKey& c) const {
         auto it = std::find(chords_.begin(), chords_.end(), c);
         if (it == chords_.end()) throw std::invalid_argument("ZComponent::chordIndex: not a chord");
         return static_cast<Eigen::Index>(it - chords_.begin());
     }
-    /// The tree edges (undirected), each returned once in canonical orientation.
+    /**
+     * @brief The tree edges (undirected), each returned once in canonical orientation.
+     * @return Tree edges with @c u less than @c v, ordered by lower endpoint then higher endpoint
+     *         (empty for a component with no edges).
+     */
     std::vector<ArcKey> treeEdges() const {
         std::vector<ArcKey> out;
         for (const auto& [x, nbrs] : treeAdj_)
@@ -397,10 +454,11 @@ public:
 
     // --- lifecycle: merge (OPEN-2: T = block identity) ----------------------
 
+    /** @brief An extra arc joining the two components of a merge, tapped off as a new chord with its supplied estimate. */
     struct SurplusBridge {
-        ArcKey arc;
-        double zhat{0.0};
-        double var{1.0};
+        ArcKey arc;              ///< The joining arc that becomes the new chord.
+        double zhat{0.0};        ///< Tap-off mean of the new DD (the unit of the carried z).
+        double var{1.0};         ///< Variance of the new DD (the unit of the carried z, squared).
         Eigen::VectorXd cross;   ///< cross-cov to the merged z as it stands when this bridge is folded.
     };
     /**
@@ -532,6 +590,10 @@ public:
      * and @f$P^z=C\,\mathrm{Cov}(N)\,C^\top@f$ from the raw ambiguity mean and
      * covariance reproduce the carried store independently of the incremental
      * transforms, which is what CycleBasisUnimodular checks.
+     *
+     * @param arc_order The arcs, in the column order wanted (typically @ref allArcs).
+     * @return Matrix of @c zDim() rows by @c arc_order.size() columns holding the signed
+     *         coefficients -1, 0 or +1.
      */
     Eigen::MatrixXd cycleMatrix(const std::vector<ArcKey>& arc_order) const {
         std::map<ArcKey, Eigen::Index> col;
@@ -546,7 +608,10 @@ public:
         return C;
     }
 
-    /// All arcs (tree edges + chords), sorted, for building a @ref cycleMatrix column order.
+    /**
+     * @brief All arcs (tree edges + chords), sorted, for building a @ref cycleMatrix column order.
+     * @return Every arc of the component once, ascending by @c ArcKey ordering.
+     */
     std::vector<ArcKey> allArcs() const {
         std::vector<ArcKey> out(arcs_.begin(), arcs_.end());
         std::sort(out.begin(), out.end());
@@ -561,6 +626,10 @@ public:
      * must not be a tree edge (it closes a cycle).  Replaces the current chord
      * list, @f$\hat z@f$ and @f$P^z@f$.  Throws std::invalid_argument on a size
      * mismatch or an invalid chord.
+     *
+     * @param chord_order The chord arcs, in the z-vector order wanted.
+     * @param z           Carried DD means, one per chord in @p chord_order.
+     * @param Pz          Carried DD covariance, square, one row and column per chord.
      */
     void setEstimate(const std::vector<ArcKey>& chord_order,
                      const Eigen::VectorXd& z, const Eigen::MatrixXd& Pz) {
@@ -717,18 +786,51 @@ private:
  */
 class NetworkZStore {
 public:
+    /** @brief Per-epoch component id: the minimum satellite label of the component (see the class text). */
     using ComponentId = int;
 
+    /**
+     * @brief Access a component for in-place edits, creating an empty one when the id is new.
+     * @param id The component id.
+     * @return Mutable reference to the component stored under @p id (a default-constructed,
+     *         empty component when @p id was absent).
+     */
     ZComponent& component(ComponentId id) { return comps_[id]; }
+    /**
+     * @brief Add a component seeded from a spanning tree, with no chords.
+     * @param id         The component id.
+     * @param tree_edges The spanning-tree arcs (a connected acyclic set; see the @c ZComponent constructor).
+     * @return Mutable reference to the component stored under @p id.  When @p id already exists the
+     *         stored component is kept unchanged and returned.
+     * @throws std::invalid_argument if @p tree_edges are not a single connected tree.
+     */
     ZComponent& create(ComponentId id, const std::vector<ArcKey>& tree_edges) {
         return comps_.emplace(id, ZComponent(tree_edges)).first->second;
     }
+    /**
+     * @brief Look a component up without creating it.
+     * @param id The component id.
+     * @return Pointer to the stored component, or null when @p id is absent.
+     */
     const ZComponent* find(ComponentId id) const {
         auto it = comps_.find(id);
         return it == comps_.end() ? nullptr : &it->second;
     }
+    /**
+     * @brief Remove a component and its carried estimate.
+     * @param id The component id.
+     * @return True when a component was removed; false when @p id was absent.
+     */
     bool erase(ComponentId id) { return comps_.erase(id) != 0; }
+    /**
+     * @brief Number of components held.
+     * @return Count of stored components (0 for an empty store).
+     */
     std::size_t numComponents() const { return comps_.size(); }
+    /**
+     * @brief Read-only view of every component.
+     * @return Map from component id to component, ascending by id.
+     */
     const std::map<ComponentId, ZComponent>& components() const { return comps_; }
 
     /**
@@ -736,6 +838,11 @@ public:
      *        block-identity union and erasing @p b.  The result is stored under
      *        @p a; passing @p a = min(a, b) to keep the canonical id is the
      *        caller's contract.  Throws std::invalid_argument on an unknown id.
+     *
+     * @param a       Id of the surviving component (receives the merged result).
+     * @param b       Id of the component absorbed and erased.
+     * @param bridge  The arc promoted to a tree edge, one endpoint in each component.
+     * @param surplus Extra joining arcs tapped off as new chords (see @c ZComponent::mergedWith).
      */
     void merge(ComponentId a, ComponentId b, const ArcKey& bridge,
                const std::vector<ZComponent::SurplusBridge>& surplus = {}) {
@@ -747,15 +854,22 @@ public:
         ++merges_;
     }
 
-    /// Total carried DD dimension across all components (spec D5 z-dim meter).
+    /**
+     * @brief Total carried DD dimension across all components (spec D5 z-dim meter).
+     * @return Sum of @c ZComponent::zDim() over the stored components (0 for an empty store).
+     */
     Eigen::Index totalZDim() const {
         Eigen::Index t = 0;
         for (const auto& [id, c] : comps_) t += c.zDim();
         return t;
     }
 
-    /// Sum of the lifecycle counters of the components currently held (the
-    /// container's merge count is separate: @ref merges).
+    /**
+     * @brief Sum of the lifecycle counters of the components currently held (the
+     *        container's merge count is separate: @ref merges).
+     * @return Field-wise sum of every stored component's counters; an erased component's
+     *         tallies are no longer included.
+     */
     ZComponent::Counters aggregateCounters() const {
         ZComponent::Counters t;
         for (const auto& [id, c] : comps_) {
@@ -769,6 +883,10 @@ public:
         }
         return t;
     }
+    /**
+     * @brief Number of component merges performed through @ref merge.
+     * @return Running count since construction.
+     */
     long long merges() const { return merges_; }
 
 private:

@@ -2,7 +2,7 @@
 /**
  * @file ArcLife.hpp
  * @brief The life stamp of one band-tagged arc: the interim identity of an arc's integer
- *        ambiguity until a generation is put on @ref ArcId.
+ *        ambiguity until a generation is put on @ref GnssProcessor::ArcId "ArcId".
  *
  * ## What a life is
  *
@@ -30,7 +30,7 @@
  *
  * The arc-graph design binds the life stamp and the search's suspect-corner mask
  * (network/ar/ArSuspect.hpp) to one reader of the @c LocalCarry life fields, so that
- * neither keeps a second record of an arc's life.  That reader is @ref carryLifeOf: the
+ * neither keeps a second record of an arc's life.  That reader is @ref GnssProcessor::carryLifeOf "carryLifeOf": the
  * stamp reads it here, and the mask's per-epoch fold reads it for its drop and re-level
  * causes.
  *
@@ -41,7 +41,7 @@
  * harvest stashes the carry after it.  So the life a search begins (an arc it meets for the
  * first time, an arc freed this epoch, an arc whose stamp changed) shows up once more at the
  * next search, as the ledger catching up with the run and the harvest stashing the new
- * carry.  @ref arcLifeStep reads that one change as the event's echo and re-baselines the
+ * carry.  @ref GnssProcessor::arcLifeStep "arcLifeStep" reads that one change as the event's echo and re-baselines the
  * stamp: at the search right after the one that began a life, a change confined to the
  * ledger fields, @c birth_ep, @c relevel_s and a carry that appears is not a second life.
  * An erase (a carry that disappears), a drop or a flag is never an echo.  So each ledger
@@ -105,7 +105,7 @@ bool operator==(const ArcLifeStamp& a, const ArcLifeStamp& b);
  */
 bool operator!=(const ArcLifeStamp& a, const ArcLifeStamp& b);
 
-/// One bit per @ref ArcLifeStamp field, in member order (the release attribution).
+/// One bit per @ref GnssProcessor::ArcLifeStamp "ArcLifeStamp" field, in member order (the release attribution).
 enum ArcLifeField : unsigned {
     kArcLifeAdmGeneration = 1u << 0,  ///< @ref ArcLifeStamp::adm_generation.
     kArcLifeAdmRunStart   = 1u << 1,  ///< @ref ArcLifeStamp::adm_run_start.
@@ -153,7 +153,7 @@ ArcLifeKeys arcLifeKeys(const ArcId& arc);
 
 /**
  * @brief The current stamp of one arc, read from the run context by its source keys (a caller
- *        that reads many arcs builds each arc's keys once, @ref arcLifeKeys).
+ *        that reads many arcs builds each arc's keys once, @ref GnssProcessor::arcLifeKeys "arcLifeKeys").
  * @param ctx  The run context.
  * @param keys The arc's keys.
  * @return The stamp.
@@ -162,7 +162,7 @@ ArcLifeStamp arcLifeStamp(const NetworkRunContext& ctx, const ArcLifeKeys& keys)
 
 /**
  * @brief The current stamp of one band-tagged arc, read from the run context
- *        (@ref arcLifeStamp of @ref arcLifeKeys).
+ *        (@ref GnssProcessor::arcLifeStamp "arcLifeStamp" of @ref GnssProcessor::arcLifeKeys "arcLifeKeys").
  * @param ctx The run context.
  * @param arc The arc.
  * @return The stamp.
@@ -170,7 +170,7 @@ ArcLifeStamp arcLifeStamp(const NetworkRunContext& ctx, const ArcLifeKeys& keys)
 ArcLifeStamp arcLifeStamp(const NetworkRunContext& ctx, const ArcId& arc);
 
 /**
- * @brief Bit mask of the stamp fields that differ (@ref ArcLifeField bits).
+ * @brief Bit mask of the stamp fields that differ (@ref GnssProcessor::ArcLifeField "ArcLifeField" bits).
  * @param before The earlier stamp.
  * @param now    The later stamp.
  * @return The bits of the fields that changed; 0 when the stamps are equal.
@@ -219,14 +219,20 @@ struct ArcLifeStep {
     ArcLifeTrack track{};               ///< The arc's track after this search.
     ArcLifeEdge  edge{ArcLifeEdge::None};  ///< What this search read.
     unsigned     change{0};             ///< @ref arcLifeChange of the two stamps (0 at FirstSeen).
-    /// A new life (FirstSeen, Freed, StampChange): its durability restarts.
+    /**
+     * @brief A new life (FirstSeen, Freed, StampChange): its durability restarts.
+     * @return True for the edges FirstSeen, Freed and StampChange; false for None and Echo.
+     */
     bool newLife() const {
         return edge == ArcLifeEdge::FirstSeen || edge == ArcLifeEdge::Freed
             || edge == ArcLifeEdge::StampChange;
     }
-    /// The integer may differ from the one the last search met (Freed, StampChange): the
-    /// arc is refused as a new tree edge or link reference in the first pass, and every
-    /// stored cycle through it is invalidated.
+    /**
+     * @brief The integer may differ from the one the last search met (Freed, StampChange): the
+     *        arc is refused as a new tree edge or link reference in the first pass, and every
+     *        stored cycle through it is invalidated.
+     * @return True for the edges Freed and StampChange; false for FirstSeen, None and Echo.
+     */
     bool slipped() const { return edge == ArcLifeEdge::Freed || edge == ArcLifeEdge::StampChange; }
 };
 

@@ -20,21 +20,21 @@
  *
  * ## The ledger
  *
- * One owner, @ref ArSuspectLedger in @c NetworkCarryState (@c ctx.carry.ar_suspect),
- * keyed by @ref LosId.  Per corner it keeps, for each cause, the stamp of its last event:
+ * One owner, @ref GnssProcessor::ArSuspectLedger "ArSuspectLedger" in @c NetworkCarryState (@c ctx.carry.ar_suspect),
+ * keyed by @ref GnssProcessor::LosId "LosId".  Per corner it keeps, for each cause, the stamp of its last event:
  * the loop epoch (@c n_loop_epochs) of the FIRST SEARCH THAT CAN ACT ON IT.  A writer that
  * runs before the epoch's search (SB_NETAR) stamps this epoch; a writer that runs after it
- * stamps the next one (@ref arSuspectPostSearchEpoch).  Every cause therefore masks the
+ * stamps the next one (@ref GnssProcessor::arSuspectPostSearchEpoch "arSuspectPostSearchEpoch").  Every cause therefore masks the
  * same number of searches.  The writers, in epoch order:
  *
  * | cause                    | written where                     | stamp        | source |
  * |--------------------------|-----------------------------------|--------------|--------|
- * | @ref kArSuspectMwUnknown | PASS A, the MW admission reduce   | this epoch   | an MW verdict dropped as an unknown integer |
- * | @ref kArSuspectGfJump    | PASS A, after the GF jump drain   | this epoch   | an arc GF jump flag, whatever its action |
- * | @ref kArSuspectDrop      | SB_NETAR, @ref arSuspectFoldEpoch | this epoch   | a @c LocalCarry::dropped_ep no earlier fold has seen: the float vehicle's pre-search drops (free-epoch latch, stale gap; SB_PREASM) |
- * | @ref kArSuspectRelevel   | SB_NETAR, @ref arSuspectFoldEpoch | its epoch    | a @c LocalCarry::relevel_s no other cause owns (below) |
- * | @ref kArSuspectFree      | SB_NETAR, @ref arSuspectFoldEpoch | this epoch   | this epoch's free-epoch latch (@c RelevelEpochState::free_ambs), any detector cause |
- * | @ref kArSuspectRaim      | SB_RAIM, the T4 and T3 sites      | next epoch   | a RAIM attribution or consensus drop / erase |
+ * | @ref GnssProcessor::kArSuspectMwUnknown "kArSuspectMwUnknown" | PASS A, the MW admission reduce   | this epoch   | an MW verdict dropped as an unknown integer |
+ * | @ref GnssProcessor::kArSuspectGfJump "kArSuspectGfJump"    | PASS A, after the GF jump drain   | this epoch   | an arc GF jump flag, whatever its action |
+ * | @ref GnssProcessor::kArSuspectDrop "kArSuspectDrop"      | SB_NETAR, @ref GnssProcessor::arSuspectFoldEpoch "arSuspectFoldEpoch" | this epoch   | a @c LocalCarry::dropped_ep no earlier fold has seen: the float vehicle's pre-search drops (free-epoch latch, stale gap; SB_PREASM) |
+ * | @ref GnssProcessor::kArSuspectRelevel "kArSuspectRelevel"   | SB_NETAR, @ref GnssProcessor::arSuspectFoldEpoch "arSuspectFoldEpoch" | its epoch    | a @c LocalCarry::relevel_s no other cause owns (below) |
+ * | @ref GnssProcessor::kArSuspectFree "kArSuspectFree"      | SB_NETAR, @ref GnssProcessor::arSuspectFoldEpoch "arSuspectFoldEpoch" | this epoch   | this epoch's free-epoch latch (@c RelevelEpochState::free_ambs), any detector cause |
+ * | @ref GnssProcessor::kArSuspectRaim "kArSuspectRaim"      | SB_RAIM, the T4 and T3 sites      | next epoch   | a RAIM attribution or consensus drop / erase |
  *
  * The RAIM drop is the one post-search writer of @c dropped_ep; the fold leaves it to the
  * RAIM row, whose stamp is already the next epoch's.  @c relevel_s has three writers, and
@@ -43,7 +43,7 @@
  * @c birth_s), the float vehicle's drop (which writes @c dropped_ep in the same epoch: the
  * drop or the RAIM row), and the leveling harvest's re-stash of an arc in that epoch's
  * latch (the free row, same epoch).  The fold still reads it, as a safety net: a re-level
- * none of these explains is stamped as @ref kArSuspectRelevel at its own epoch, so a
+ * none of these explains is stamped as @ref GnssProcessor::kArSuspectRelevel "kArSuspectRelevel" at its own epoch, so a
  * non-zero relevel tally names a writer the ledger does not know.  An erase-and-rebirth
  * is a birth to the carry; the RAIM erase is caught at its own site instead.
  *
@@ -69,7 +69,7 @@
  * cause and per search.  The release is TIME-ONLY: a corner whose newest stamp is W
  * searches old is searchable again, and nothing re-validates its arc first.  It is counted,
  * not judged: a corner met suspect in a search pool and later met clean in one is a
- * release (@ref ArSuspectLedger::masking holds the corners still awaiting theirs), the DDs
+ * release (@ref GnssProcessor::ArSuspectLedger::masking "ArSuspectLedger::masking" holds the corners still awaiting theirs), the DDs
  * it brings back to the search are the re-entries, and their first search is tallied
  * (integers kept, L1/L2 pairs whose wide lane is determined while the singles are not) on
  * the epoch's log line, in the trace's @c reentry column and in the run-end report.
@@ -199,21 +199,21 @@ inline long long arSuspectPostSearchEpoch(long long now_ep) { return now_ep + 1;
  * @param L      The ledger.
  * @param los    The corner.
  * @param ep     The stamp: the loop epoch of the first search that can act on the event
- *               (> 0; @ref arSuspectPostSearchEpoch for a post-search writer).
- * @param cause  One @ref ArSuspectCause bit.
- * @param c      Counters (@ref ArSuspectCounters::stamps, @ref ArSuspectCounters::events);
+ *               (> 0; @ref GnssProcessor::arSuspectPostSearchEpoch "arSuspectPostSearchEpoch" for a post-search writer).
+ * @param cause  One @ref GnssProcessor::ArSuspectCause "ArSuspectCause" bit.
+ * @param c      Counters (@ref GnssProcessor::ArSuspectCounters::stamps "ArSuspectCounters::stamps", @ref GnssProcessor::ArSuspectCounters::events "ArSuspectCounters::events");
  *               may be null.
  */
 void arSuspectNote(ArSuspectLedger& L, const LosId& los, long long ep, std::uint8_t cause,
                    ArSuspectCounters* c);
 
 /**
- * @brief @ref arSuspectNote for a (roster index, RINEX satellite id) pair.
+ * @brief @ref GnssProcessor::arSuspectNote "arSuspectNote" for a (roster index, RINEX satellite id) pair.
  * @param L      The ledger.
  * @param sta    Station roster index.
- * @param sat    Satellite id ("G05"); a string @ref SatId::parse refuses is skipped.
- * @param ep     The stamp (as for the @ref LosId overload).
- * @param cause  One @ref ArSuspectCause bit.
+ * @param sat    Satellite id ("G05"); a string @ref GnssProcessor::SatId::parse "SatId::parse" refuses is skipped.
+ * @param ep     The stamp (as for the @ref GnssProcessor::LosId "LosId" overload).
+ * @param cause  One @ref GnssProcessor::ArSuspectCause "ArSuspectCause" bit.
  * @param c      Counters; may be null.
  * @return False when @p sat did not parse (nothing written).
  */
@@ -227,7 +227,7 @@ bool arSuspectNote(ArSuspectLedger& L, int sta, std::string_view sat, long long 
  * @param los        The corner.
  * @param now_ep     The current loop epoch.
  * @param window_ep  The window (network.ambiguity_resolution.suspect_epochs); <= 0 gives 0.
- * @return The OR of the live @ref ArSuspectCause bits; 0 = clean.
+ * @return The OR of the live @ref GnssProcessor::ArSuspectCause "ArSuspectCause" bits; 0 = clean.
  */
 std::uint8_t arSuspectBits(const ArSuspectLedger& L, const LosId& los, long long now_ep,
                            int window_ep);
@@ -238,7 +238,7 @@ std::uint8_t arSuspectBits(const ArSuspectLedger& L, const LosId& los, long long
  * Returns the epoch of the latest fold at or before @p t_s (1 ms tolerance), or 0 when
  * @p t_s precedes the oldest fold the clock still holds (outside the window).
  *
- * @param recent  @ref ArSuspectLedger::recent.
+ * @param recent  @ref GnssProcessor::ArSuspectLedger::recent "ArSuspectLedger::recent".
  * @param t_s     The second (a @c LocalCarry::relevel_s).
  * @return The loop epoch, or 0.
  */
@@ -250,11 +250,11 @@ long long arSuspectEpochOfSecond(const std::deque<std::pair<long long, double>>&
  *
  * Advances the fold clock to (@p now_ep, @p now_s), erases the corners whose newest
  * stamp has left the window, and stamps from the sources the seam reads in place, in
- * this order: the carry stamps of every @c LocalCarry entry (@ref kArSuspectDrop for a
- * @c dropped_ep newer than the previous fold, stamped @p now_ep; @ref kArSuspectRelevel
+ * this order: the carry stamps of every @c LocalCarry entry (@ref GnssProcessor::kArSuspectDrop "kArSuspectDrop" for a
+ * @c dropped_ep newer than the previous fold, stamped @p now_ep; @ref GnssProcessor::kArSuspectRelevel "kArSuspectRelevel"
  * for a @c relevel_s that is not a first stash, not the same epoch's drop and not the
  * corner's free stamp of that epoch, stamped at its own epoch), then this epoch's
- * free-epoch latch (@ref kArSuspectFree, @p now_ep).  The carry goes first so that a
+ * free-epoch latch (@ref GnssProcessor::kArSuspectFree "kArSuspectFree", @p now_ep).  The carry goes first so that a
  * harvest re-level of an arc latched in the previous epoch still finds that epoch's free
  * stamp.
  *
@@ -281,6 +281,10 @@ struct ArSuspectCornerState {
  * @brief A DD's state from its four corners: the OR of their bits and of their release
  *        flags.  The DD is masked when the bits are non-zero, and re-enters the search
  *        when they are zero and a corner is released.
+ * @param a  The state of the first corner of the DD.
+ * @param b  The state of the second corner.
+ * @param c  The state of the third corner.
+ * @param d  The state of the fourth corner.
  * @return The combined state.
  */
 ArSuspectCornerState arSuspectCombine(ArSuspectCornerState a, ArSuspectCornerState b,
@@ -323,25 +327,25 @@ ArSuspectSearch arSuspectOpenSearch(long long now_ep, int window);
 /**
  * @brief A pool corner's state at this search; records it as suspect or released.
  * @param S    This search's mask.
- * @param L    The ledger (@ref ArSuspectLedger::masking read for the release).
+ * @param L    The ledger (@ref GnssProcessor::ArSuspectLedger::masking "ArSuspectLedger::masking" read for the release).
  * @param sta  Station roster index.
- * @param sat  Satellite id; a string @ref SatId::parse refuses is clean.
+ * @param sat  Satellite id; a string @ref GnssProcessor::SatId::parse "SatId::parse" refuses is clean.
  * @return Its bits and release flag; clean while the mask is off.
  */
 ArSuspectCornerState arSuspectPoolCorner(ArSuspectSearch& S, const ArSuspectLedger& L,
                                          int sta, std::string_view sat);
 
 /**
- * @brief Split the basis: fill @ref ArSuspectSearch::masked, @c reentry, @c dd_bits and
+ * @brief Split the basis: fill @ref GnssProcessor::ArSuspectSearch::masked "ArSuspectSearch::masked", @c reentry, @c dd_bits and
  *        their counts from one state per basis DD.
  * @param S         This search's mask; a no-op while off.
- * @param dd_state  One combined state per basis DD (@ref arSuspectCombine).
+ * @param dd_state  One combined state per basis DD (@ref GnssProcessor::arSuspectCombine "arSuspectCombine").
  */
 void arSuspectMaskBasis(ArSuspectSearch& S, const std::vector<ArSuspectCornerState>& dd_state);
 
 /**
  * @brief Close a search epoch: tally both edges, move the released corners out of
- *        @ref ArSuspectLedger::masking and the masking ones in, and return the clause the
+ *        @ref GnssProcessor::ArSuspectLedger::masking "ArSuspectLedger::masking" and the masking ones in, and return the clause the
  *        epoch's log line carries.
  *
  * The clause reads ", suspect mask N DD over K corner(s) [causes], released R corner(s)",
@@ -350,7 +354,7 @@ void arSuspectMaskBasis(ArSuspectSearch& S, const std::vector<ArSuspectCornerSta
  * @param S    This search's mask.
  * @param L    The ledger.
  * @param C    The run's counters.
- * @param re   The re-entered DDs' first search (@ref netar::reentryOutcome).
+ * @param re   The re-entered DDs' first search (@ref GnssProcessor::netar::reentryOutcome "netar::reentryOutcome").
  * @param tow  This epoch's time of week (s), for the worst-epoch record.
  * @return The clause; empty while the mask is off.
  */
