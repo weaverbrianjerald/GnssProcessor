@@ -2987,8 +2987,8 @@ namespace GnssProcessor {
          * block the leveling carry does, so a horizon longer than the block's own would
          * keep an entry alive with no block to join (the QUEUE-8(b) knob ran longer
          * than the leveling gap on purpose, because its diagonal row needed no block).
-         * A JSON value ≤ 0 is the "use the leveling gap" sentinel; a positive value
-         * overrides.
+         * A JSON value of 0 is the "use the leveling gap" sentinel and a negative value
+         * is a load error; a positive value overrides.
          *
          * @return Staleness bound in seconds.  The JSON value 0 (default) is resolved at load to
          *         @c networkPhaseLevelingMaxGapS, so the getter reports effective seconds.
@@ -4089,7 +4089,8 @@ namespace GnssProcessor {
          *        VCE accumulator (@c network.carry_vce_window_epochs).
          *
          * The running σ̂ tracks a trailing window of this many emitted epochs;
-         * @c <=0 accumulates over the whole run.  Clamped to @c >=1 at load.
+         * A value below 1 accumulates over the whole run; the loader warns and keeps it
+         * (no clamp).
          * Only used when @ref networkCarryVce.
          *
          * @return Forgetting window in emitted epochs (default 60); a value below 1 accumulates
