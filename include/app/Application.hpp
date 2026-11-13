@@ -79,8 +79,8 @@ class  MultiRinexSync;       // rinex/MultiRinexSync.hpp
  * file and exposes a single `run()` method that executes the program.
  *
  * `run()` loads the configuration and dispatches on the mode: real time
- * (@ref runRealTime), baseline (@ref runBaseline), the network producer
- * (@ref runNetwork), or the PPP / PPP-RTK pipeline (@ref runPpp).  runPpp() is
+ * (runRealTime (@c GnssProcessor::Application::runRealTime)), baseline (runBaseline (@c GnssProcessor::Application::runBaseline)), the network producer
+ * (runNetwork (@c GnssProcessor::Application::runNetwork)), or the PPP / PPP-RTK pipeline (runPpp (@c GnssProcessor::Application::runPpp)).  runPpp() is
  * a short ordered list of named private stages, declared
  * below in pipeline order under the file each lives in:
  *  - the input phases (Application.cpp): logging and configuration, data
@@ -96,7 +96,7 @@ class  MultiRinexSync;       // rinex/MultiRinexSync.hpp
  *  - the epoch's records (PppEpochRecords.cpp): the smoother snapshots, the
  *    NEQ, the soft-LLI snapshot, the summary line and the CSV traces;
  *  - the run end (PppRunEnd.cpp): a declared table of reports.
- * The baseline pipeline (@ref runBaseline, ApplicationBaseline.cpp) has the
+ * The baseline pipeline (runBaseline (@c GnssProcessor::Application::runBaseline), ApplicationBaseline.cpp) has the
  * same shape: a spine over setup, per-rover and per-epoch stages.
  */
 class Application {
@@ -146,7 +146,7 @@ private:
      * paths are merged into GnssConfig: a non-empty resolved product set replaces
      * the configured one, and the navigation, observation and baseline RINEX
      * paths are filled only where the config left them empty.  Ends with
-     * @ref refreshAtxIfEnabled_.
+     * refreshAtxIfEnabled_ (@c GnssProcessor::Application::refreshAtxIfEnabled_).
      *
      * @return true on success, false when PathResolver fails.
      */
@@ -161,10 +161,10 @@ private:
      * resolved ATX path, throttled by @c atx_refresh_max_age_days.  Best-effort
      * and non-fatal: a network or validation failure logs a warning and the run
      * proceeds with the existing local ATX.  No-op when the toggle is off, so
-     * runs stay reproducible by default.  Called at the end of @ref resolveData,
+     * runs stay reproducible by default.  Called at the end of resolveData (@c GnssProcessor::Application::resolveData),
      * so it covers every mode that resolves data (post-processing, baseline,
      * real-time, network and the consumer replay) and runs before the antenna
-     * model is loaded (@ref loadInputData on the post-processing path).
+     * model is loaded (loadInputData (@c GnssProcessor::Application::loadInputData) on the post-processing path).
      */
     void refreshAtxIfEnabled_();
 
@@ -179,10 +179,10 @@ private:
      *        PPP-RTK and PPP-RTK-user modes.
      *
      * A short ordered list of named stages: the input phases
-     * (@ref resolveData, @ref loadInputData), the setup stages (PppSetup.cpp), the epoch
+     * (resolveData (@c GnssProcessor::Application::resolveData), loadInputData (@c GnssProcessor::Application::loadInputData)), the setup stages (PppSetup.cpp), the epoch
      * loop over the stages of PppEpochSteps.cpp, PppEpochUpdate.cpp and
      * PppEpochRecords.cpp with one @c PppEpochWork per epoch, and the run end
-     * (@ref reportPppRunEnd_, then @ref generateReport_).  Defined in Application.cpp.
+     * (reportPppRunEnd_ (@c GnssProcessor::Application::reportPppRunEnd_), then generateReport_ (@c GnssProcessor::Application::generateReport_)).  Defined in Application.cpp.
      *
      * @return 0 on success; 1 when an input phase or the position seed fails, or when
      *         ppp_state_ cannot be synced from the state vector.
@@ -205,7 +205,7 @@ private:
      * H/E/N offset or, when the header carries none, by the SIF antenna window's
      * ARP-minus-GRP vector (@c reduceSifCoordinateToArp).  PppModel::initializeState
      * later re-derives the position from a configured reference position or the
-     * RINEX header, so @ref initializePppState_ re-applies the SIF seed after it unless a reference
+     * RINEX header, so initializePppState_ (@c GnssProcessor::Application::initializePppState_) re-applies the SIF seed after it unless a reference
      * position is configured (@c sif_apriori_seeded_).
      *
      * @return true on success, false on unrecoverable error.
@@ -518,7 +518,7 @@ private:
      * measurement set (its outlier exclusions) fixed to the one the primary
      * update converged on; the posterior covariance is therefore (I−KH)·P⁻
      * committed once, with no double-counting.  Tightly-coupled IMU mode
-     * delegates to @ref runGeometryRelinearizationNaive (see that method and
+     * delegates to runGeometryRelinearizationNaive (@c GnssProcessor::Application::runGeometryRelinearizationNaive) (see that method and
      * @c KalmanFilter::updateFromPrior for why the IEKF is not applied there).
      *
      * @param epoch_prefix      Log prefix string.
@@ -540,7 +540,7 @@ private:
      * attitude/bias nominal feedback @ref KalmanFilter::update already applied.
      * Statistically this re-applies the same measurement information against an
      * already-tightened covariance (mild over-confidence).  Gates (|Δpos|,
-     * per-run cap) are evaluated by @ref runGeometryRelinearization before this
+     * per-run cap) are evaluated by runGeometryRelinearization (@c GnssProcessor::Application::runGeometryRelinearization) before this
      * is called.
      *
      * @param epoch_prefix      Log prefix string.
@@ -792,8 +792,8 @@ private:
      *        several rovers against one reference station).
      *
      * Dispatched from @c run() when @c ProcessingMode is @c BaselineSingle
-     * or @c BaselineMulti, before run()'s own @ref resolveData call, so it
-     * calls @ref resolveData itself.  Aligns the reference and rover RINEX
+     * or @c BaselineMulti, before run()'s own resolveData (@c GnssProcessor::Application::resolveData) call, so it
+     * calls resolveData (@c GnssProcessor::Application::resolveData) itself.  Aligns the reference and rover RINEX
      * epochs (MultiRinexSync), models the reference station each epoch with
      * its own PppModel, and processes each rover against the reference in
      * turn (a star topology for BaselineMulti): DD measurement model, DD state
@@ -917,7 +917,7 @@ private:
                                const std::string& rover_name);
 
     /**
-     * @brief The rover's trace directory (log_dir_/rover_<name> on a multi-rover run) and
+     * @brief The rover's trace directory (log_dir_/rover_\<name\> on a multi-rover run) and
      *        its TraceLogger.
      * @param run        The run's working value.
      * @param rover_name The rover.
@@ -977,7 +977,7 @@ private:
     /**
      * @brief The hard-gap reset (both stations present and dt above the data-gap
      *        tolerance, 60 s by default): drop every DD ambiguity, forget both MW arcs and
-     *        the sticky DD pivots, then the dynamics-mode policy of @ref handleGap.
+     *        the sticky DD pivots, then the dynamics-mode policy of handleGap (@c GnssProcessor::Application::handleGap).
      * @param run   The run's working value.
      * @param rover The rover's working value (n_amb_resets is counted).
      * @param ep    The epoch's working value.
@@ -1108,11 +1108,11 @@ private:
      * emits them in IGS-SSR convention for the companion @c PPP_RTK_User
      * consumer.  Implemented in @c ApplicationNetwork.cpp.
      *
-     * Order: the consumer-only replay (@ref runConsumerReplay) when
+     * Order: the consumer-only replay (runConsumerReplay (@c GnssProcessor::Application::runConsumerReplay)) when
      * @c network.closed_loop.replay_products_path is set; otherwise input
-     * validation (@ref networkValidateInputs_), @ref resolveData for products
+     * validation (networkValidateInputs_ (@c GnssProcessor::Application::networkValidateInputs_)), resolveData (@c GnssProcessor::Application::resolveData) for products
      * and navigation (a failure is logged and not fatal), setup
-     * (@ref networkSetup_), then the epoch loop over the synchronized epochs.
+     * (networkSetup_ (@c GnssProcessor::Application::networkSetup_)), then the epoch loop over the synchronized epochs.
      *
      * @return 0 on clean shutdown, non-zero on error.  A refused start (for
      *         example a refused warm resume) is thrown as an exception;
@@ -1202,7 +1202,7 @@ private:
      * The two sync_skip exits do their bookkeeping here (n_skipped, a trace row of
      * 9 zeros, an empty status row) and do not advance prev_week/prev_tow.  Under
      * the prioritized datum the pivot is modelled as an ordinary station in
-     * @ref networkPassASlipScan_, so this function does nothing and leaves
+     * networkPassASlipScan_ (@c GnssProcessor::Application::networkPassASlipScan_), so this function does nothing and leaves
      * @p shared_phase_keys empty; a missing pivot then does not cost the epoch (the
      * pivot is not a single point of failure).
      * Implemented in @c ApplicationNetworkAssembly.cpp.
@@ -1430,23 +1430,23 @@ private:
      * @brief Generate the end-of-run HTML report via the bundled pyviz tool.
      *
      * No-op unless @c config_.autoReport() is set.  Flushes the trace logger,
-     * then delegates to @ref generateReportFor_ against @c log_dir_, which shells
-     * out to @c <project_root>/pyviz/run_report.py and writes @c gnss_report.html
+     * then delegates to generateReportFor_ (@c GnssProcessor::Application::generateReportFor_) against @c log_dir_, which shells
+     * out to @c \<project_root\>/pyviz/run_report.py and writes @c gnss_report.html
      * there.  The interpreter is @c config_.reportPython() if set, else the baked
-     * @c <project_root>/venv interpreter, else @c python on PATH; the backend is
+     * @c \<project_root\>/venv interpreter, else @c python on PATH; the backend is
      * @c config_.reportBackend() (matplotlib when empty).  Always non-fatal: a
      * missing pyviz script or interpreter, or a non-zero exit, is logged as a
      * warning and processing still returns success.
      *
      * Baseline multi-rover runs (whose traces live in per-rover subdirs) call
-     * @ref generateReportFor_ directly, once per rover dir.
+     * generateReportFor_ (@c GnssProcessor::Application::generateReportFor_) directly, once per rover dir.
      */
     void generateReport_();
 
     /**
      * @brief Shell out to run_report.py for one trace directory.
      *
-     * Writes @c <trace_dir>/gnss_report.html using the configured backend /
+     * Writes @c \<trace_dir\>/gnss_report.html using the configured backend /
      * viewer subset / interpreter (sync or detached per @c config_).  Assumes
      * the caller has already checked @c autoReport() and flushed the traces.
      *
@@ -1483,7 +1483,7 @@ private:
 
     PppState ppp_state_;                      /**< Current PPP state (synced with filter).  In baseline mode this is the rover state. */
     Eigen::Vector3d initial_position_;        /**< Position used for sanity-check reversion. */
-    bool sif_apriori_seeded_{ false };        /**< True when @ref initializePosition seeded @c initial_position_ from the SIF (ARP-reduced); initializePppState_ then re-applies it after PppModel::initializeState, which re-derives the position from the RINEX header. */
+    bool sif_apriori_seeded_{ false };        /**< True when initializePosition (@c GnssProcessor::Application::initializePosition) seeded @c initial_position_ from the SIF (ARP-reduced); initializePppState_ then re-applies it after PppModel::initializeState, which re-derives the position from the RINEX header. */
 
     // Baseline-mode reference-station companions.  In baseline mode PppModel
     // runs twice per epoch (rover + reference), so per-receiver errors

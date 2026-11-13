@@ -7,13 +7,13 @@
  * Application::runPpp (src/core/app/Application.cpp) is a short ordered driver over named
  * private stages.  The values one epoch's stages hand to one another
  * were locals of the epoch loop of a single 836-line Application::run; they are now the
- * members of @ref PppEpochWork, built empty at the top of each epoch and discarded at its
+ * members of @ref GnssProcessor::PppEpochWork "PppEpochWork", built empty at the top of each epoch and discarded at its
  * end.  Each stage opens with an alias block that binds the names the code had as loop
  * locals (`const auto& current_time = w.current_time;`), so its body reads as it did;
  * the driver passes members to the helpers that take explicit arguments
  * (`handleGap(w.dt, w.long_gap, w.epoch_prefix, w.wls_result)`).
  *
- * @ref PppRunEndView is what the run-end reports (src/core/app/PppRunEnd.cpp) read beyond
+ * @ref GnssProcessor::PppRunEndView "PppRunEndView" is what the run-end reports (src/core/app/PppRunEnd.cpp) read beyond
  * the Application's own members.
  *
  * What persists across epochs is not here: it is an Application member (first_epoch_,
@@ -55,7 +55,7 @@ struct PppEpochWork {
     // week, TOW and GPS-scale datetime on every log line, so an epoch
     // prefix in the message body would duplicate it.  The variable stays,
     // empty, so the "{}..." format strings keep their argument.
-    const std::string epoch_prefix;
+    const std::string epoch_prefix;  ///< Always empty; the log pattern already stamps every line with the epoch.
 
     // --- 4b: the time step (Application::stepEpochClock_) ---
     double dt{ 0.0 };            ///< Seconds since the previous processed epoch; the nominal interval on the first.
