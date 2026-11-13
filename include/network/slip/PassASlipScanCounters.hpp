@@ -23,9 +23,11 @@ struct PassASlipScanCounters {
     /// lineage, with no run needed).  drop_loose / drop_unknown: the two refused
     /// populations, a flag with a known integer whose rounding residual exceeded
     /// turbo_edit_frac_max, and a flag with no usable integer at all.
-    long long n_mw_admit_legacy = 0, n_mw_evidence_admitted = 0,
-              n_mw_evidence_would_admit = 0, n_mw_drop_loose = 0,
-              n_mw_drop_unknown = 0;
+    long long n_mw_admit_legacy = 0,          ///< Flags admitted by the integer gate (legacy).
+              n_mw_evidence_admitted = 0,     ///< Flags admitted by the strength rule alone, with the knob armed.
+              n_mw_evidence_would_admit = 0,  ///< The same population with the knob off: what arming would change.
+              n_mw_drop_loose = 0,            ///< Refused: a known integer whose rounding residual exceeded turbo_edit_frac_max.
+              n_mw_drop_unknown = 0;          ///< Refused: no usable integer at all.
     /// Detector rows the network did not form under `primary`, summed over stations
     /// (network.cycle_slip.mw_detect_pairs).  Zero under the default `all` and
     /// on a two-band lineage; a `primary` run reporting zero on a three-band lineage is
@@ -49,11 +51,16 @@ struct PassASlipScanCounters {
     /// wide-lane cycles, a gate too loose to have excluded the slip sizes the scope
     /// responds to.  Reported, never acted on; it measures how much narrowing rests on a
     /// weak silence.
-    long long n_cb_verdicts = 0, n_cb_narrowed = 0, n_cb_all_no_exoneration = 0,
-              n_cb_all_inconsistent = 0, n_cb_bands_kept = 0,
-              n_cb_iftd_veto = 0, n_cb_immature_pairs = 0,
-              n_cb_weak_silence = 0, n_cb_anchor_colocate = 0,
-              n_cb_would_narrow = 0;
+    long long n_cb_verdicts = 0,              ///< (Station, satellite) pairs that had at least one MW pair fire.
+              n_cb_narrowed = 0,              ///< Of those, the verdicts positive exoneration restricted.
+              n_cb_all_no_exoneration = 0,    ///< Fallback to the unscoped response: nothing was exonerated.
+              n_cb_all_inconsistent = 0,      ///< Fallback to the unscoped response: every band exonerated although a pair fired.
+              n_cb_bands_kept = 0,            ///< Bands that narrowed verdicts spared (sum of the exonerated sets).
+              n_cb_iftd_veto = 0,             ///< Silent pairs refused as exonerators because the IF-TD detector flagged them.
+              n_cb_immature_pairs = 0,        ///< Silent pairs refused for arc age.
+              n_cb_weak_silence = 0,          ///< Exonerating silences whose detection threshold stood above 6 wide-lane cycles.
+              n_cb_anchor_colocate = 0,       ///< Verdicts that would have narrowed but stayed all-band because the station anchors the satellite.
+              n_cb_would_narrow = 0;          ///< Knob-off count of verdicts that would have narrowed.
     /// Silent pairs refused as exonerators because one of their bands carried a receiver
     /// LLI at the previous epoch, so the detector withheld that pair's sample and kept
     /// the arc (the count runs straight through the flagged epoch while the lane saw
@@ -66,7 +73,8 @@ struct PassASlipScanCounters {
     /// many of those restrict a drain.  Independent of the knob: an off run reports
     /// what arming would scope.  A run whose LLI drain
     /// fires with lli_verdicts 0 is dead wiring.
-    long long n_cb_lli_verdicts = 0, n_cb_lli_narrowed = 0;
+    long long n_cb_lli_verdicts = 0,   ///< Verdicts formed from the receiver's LLI bits alone.
+              n_cb_lli_narrowed = 0;   ///< Of those, the ones that restrict a drain.
     /// Of those, the ones refused because the station anchors the satellite (also
     /// counted in @ref n_cb_anchor_colocate).  Its own counter because the co-locates of
     /// the two paths must be distinguishable: attributing a split-reference
@@ -83,7 +91,7 @@ struct PassASlipScanCounters {
     /// whose event sits on a known reference arc and reports 0 here is dead wiring;
     /// the by-pair map attributes the refusals to the chains whose reference the arc is.
     long long n_cb_iftd_ref_arc = 0;
-    std::map<std::string, long long> n_cb_iftd_ref_arc_by_pair;
+    std::map<std::string, long long> n_cb_iftd_ref_arc_by_pair;  ///< Reference-arc refusals by pair kind.
 };
 
 } // namespace GnssProcessor

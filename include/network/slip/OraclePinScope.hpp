@@ -39,7 +39,7 @@ struct OraclePinScope {
     /// Which form this scope is.  @c Invalid is the parse-failure marker and is
     /// never returned by @ref oraclePinParseScope on success.
     enum class Kind { Invalid, All, Band, Station, Sat, Arc };
-    Kind                  kind{Kind::Invalid};
+    Kind                  kind{Kind::Invalid};  ///< Which form this scope is.
     std::set<std::string> signals;   ///< @c Band: the accepted RINEX-3 phase codes.
     std::string           station;   ///< @c Station / @c Arc.
     std::string           sat;       ///< @c Sat / @c Arc.
@@ -47,6 +47,9 @@ struct OraclePinScope {
 
     /**
      * @brief Does this scope cover arc (@p sta_name, @p sat_id, @p sig)?
+     * @param sta_name Roster station name of the arc.
+     * @param sat_id   Satellite id of the arc (e.g. "G08").
+     * @param sig      Phase signal code of the arc (e.g. "L1C").
      * @return true when the arc is in scope; false for @c Kind::Invalid.
      */
     bool covers(const std::string& sta_name, const std::string& sat_id,

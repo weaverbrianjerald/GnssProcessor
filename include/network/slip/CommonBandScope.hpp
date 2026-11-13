@@ -39,10 +39,10 @@
  *    built on it never engages on a single-band slip. The cleanliness set is
  *    unchanged for its TurboEdit consumer.
  *
- *  - A silence carries its own threshold (@ref CommonBandProcessed::thresh_wl).
+ *  - A silence carries its own threshold (@ref GnssProcessor::CommonBandProcessed::thresh_wl "CommonBandProcessed::thresh_wl").
  *    A pair whose gate stood at 8 wide-lane (WL) cycles did not exclude a
  *    6-cycle slip; it could not have seen one. Such silences are counted
- *    (@ref CommonBandVerdict::weak_silence) and still allowed to exonerate, so
+ *    (@ref GnssProcessor::CommonBandVerdict::weak_silence "CommonBandVerdict::weak_silence") and still allowed to exonerate, so
  *    the cost of trusting them is measured.
  *
  *  - A silent pair whose ionosphere-free time-difference (IF-TD) pair flagged
@@ -61,9 +61,9 @@
  *    satellite the double difference (dd) is 0 by construction, so
  *    `|dd - med| > thr` does not respond to a slip however large. With the
  *    clause armed, such a pair is untested
- *    (@ref CommonBandEvidence::iftd_untested) rather than silent. It is refused
+ *    (@ref GnssProcessor::CommonBandEvidence::iftd_untested "CommonBandEvidence::iftd_untested") rather than silent. It is refused
  *    as an exonerator in the same way as `immature` and `lli_shadow` pairs:
- *    counted in @ref CommonBandVerdict::iftd_ref_arc, named
+ *    counted in @ref GnssProcessor::CommonBandVerdict::iftd_ref_arc "CommonBandVerdict::iftd_ref_arc", named
  *    `iftd(<pair>)=ref_arc` (inline when the refusal branch reaches it,
  *    otherwise in the basis tail, as the flagged set is named), and never
  *    listed as `silent`. Without the clause, an equal-count L1C+L5X slip on a
@@ -75,7 +75,7 @@
  *
  *  - LLI shadow. A pair is not silent (it is treated as immature) at any epoch
  *    where one of its bands carried a receiver loss-of-lock indicator (LLI) bit
- *    at the previous epoch (@ref CommonBandProcessed::lli_shadow, exported by
+ *    at the previous epoch (@ref GnssProcessor::CommonBandProcessed::lli_shadow "CommonBandProcessed::lli_shadow", exported by
  *    @c MwSlipDetector::getEpochPairStatus). The uncombined LLI branch
  *    schedules the ambiguity resets and `continue`s while preserving the MW arc,
  *    so the count runs through the flagged epoch and the first sample after it
@@ -96,7 +96,7 @@
  * response (free every band any drain would have freed): no MW pair fired;
  * nothing was exonerated; or `implicated` came out empty although a pair fired
  * (inconsistent evidence, e.g. (1,2) firing alone while (1,5) and (2,5) are both
- * silent). The anchor clause (@ref CommonBandOutcome::AnchorColocate) also
+ * silent). The anchor clause (@c CommonBandOutcome::AnchorColocate) also
  * keeps the unscoped response.
  *
  * The verdict is formed once per epoch, before the drains, and governs every
@@ -114,7 +114,7 @@
  * with no exoneration does nothing.
  *
  * The scope is off by default, and byte-identical when off: the drains receive a
- * null verdict pointer, for which @ref commonBandMayFree answers true for every
+ * null verdict pointer, for which @ref GnssProcessor::commonBandMayFree "commonBandMayFree" answers true for every
  * signal. The counters are collected whether or not the knob is armed, so an off
  * run's run-end line already states what arming would have narrowed.
  */
@@ -234,7 +234,7 @@ struct CommonBandVerdict {
     std::set<std::string> implicated;
     /// Bands a silent, mature, un-vetoed pair positively cleared.
     std::set<std::string> exonerated;
-    CommonBandOutcome outcome{ CommonBandOutcome::NoFlag };
+    CommonBandOutcome outcome{ CommonBandOutcome::NoFlag };  ///< The verdict the rule reached (see @ref CommonBandOutcome).
     /// True only for @c CommonBandOutcome::Narrowed and for an
     /// @c CommonBandOutcome::LliOnly verdict whose flagged set is a strict subset
     /// of the live bands: the only states in which a drain skips anything.
@@ -269,7 +269,7 @@ struct CommonBandVerdict {
     /// the two refusals have different causes and only this one is a receiver
     /// report.
     int lli_shadow{ 0 };
-    /// Silent pairs whose detection threshold exceeded @ref kWeakSilenceWlCyc: a
+    /// Silent pairs whose detection threshold exceeded @ref GnssProcessor::kWeakSilenceWlCyc "kWeakSilenceWlCyc": a
     /// silence that could not have excluded a slip of that size. Reported only;
     /// the pair still exonerates. It measures how much of the narrowing rests on
     /// a threshold too loose to mean much.
@@ -307,7 +307,7 @@ inline constexpr double kWeakSilenceWlCyc = 6.0;
  * @param station_anchors_satellite  True when the station currently anchors any
  *        phase-bias family of this satellite (any band). Anchor clause: a
  *        would-be narrowing there becomes
- *        @ref CommonBandOutcome::AnchorColocate instead, so the satellite's
+ *        @c CommonBandOutcome::AnchorColocate instead, so the satellite's
  *        families are never left realized at different stations.
  * @return The verdict. @c implicated is always a set a drain can intersect
  *         with; on every non-narrowed outcome it equals @p live_bands.
@@ -319,7 +319,7 @@ CommonBandVerdict networkCommonBandVerdict(const std::set<std::string>& live_ban
 
 /**
  * @brief LLI-epoch verdict, for an epoch the main rule
- *        (@ref networkCommonBandVerdict) cannot see.
+ *        (@ref GnssProcessor::networkCommonBandVerdict "networkCommonBandVerdict") cannot see.
  *
  * Formed only when the receiver flagged at least one band of this (station,
  * satellite) and no MW pair flagged. On the uncombined path that means every MW
@@ -336,15 +336,15 @@ CommonBandVerdict networkCommonBandVerdict(const std::set<std::string>& live_ban
  *
  * @param live_bands    The arc's tracked phase bands.
  * @param ev            This epoch's evidence; only
- *                      @ref CommonBandEvidence::lli_signals is read.
+ *                      @ref GnssProcessor::CommonBandEvidence::lli_signals "CommonBandEvidence::lli_signals" is read.
  * @param station_anchors_satellite  True when the station currently anchors any
  *        phase-bias family of this satellite. The anchor clause applies here as
  *        on the normal path, for the same reason (see
- *        @ref CommonBandOutcome::AnchorColocate). Without it on this path, the
+ *        @c CommonBandOutcome::AnchorColocate). Without it on this path, the
  *        share of split-referenced satellites rose from 6.6 % to 14.4 % per
  *        epoch on the storm test data.
- * @return A @ref CommonBandOutcome::LliOnly verdict, or
- *         @ref CommonBandOutcome::AnchorColocate when the clause refuses it.
+ * @return A @c CommonBandOutcome::LliOnly verdict, or
+ *         @c CommonBandOutcome::AnchorColocate when the clause refuses it.
  *         @c narrowed is true only when the flagged set is a strict subset of
  *         @p live_bands; otherwise the scope would equal the unscoped response
  *         and there is nothing to gate. @c implicated is @p live_bands whenever
@@ -403,7 +403,7 @@ inline SplitRefCount networkSplitReferencedSats(
 /**
  * @brief This epoch's verdicts plus the census, owned by the PASS A slip scan.
  *
- * Only narrowed verdicts reach @ref narrowed_at: a drain that finds no entry
+ * Only narrowed verdicts reach @ref GnssProcessor::CommonBandEpoch::narrowed_at "narrowed_at": a drain that finds no entry
  * for its (station, satellite) runs the unscoped response, which makes the off
  * path and every fallback structurally identical.
  */

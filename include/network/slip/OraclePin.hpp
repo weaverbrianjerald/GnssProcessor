@@ -28,7 +28,7 @@
  * As with `network.cycle_slip.oracle_relevel`, the pin needs a truth root and a field
  * lineage has none.  The loader throws when network.inject is enabled, an
  * `oracle_pin` event is armed, and `network.cycle_slip.oracle_truth_root` is empty or
- * does not exist; @ref networkOraclePinLoad throws when any roster station lacks
+ * does not exist; @ref GnssProcessor::networkOraclePinLoad "networkOraclePinLoad" throws when any roster station lacks
  * `truth_ambiguities.csv` or `truth_slips.csv`.  The pin is a diagnostic: it is never
  * promoted and never appears in a golden config.
  *
@@ -61,7 +61,7 @@
  *         β_sj = t_sj − λ_j · N_{a s j} − u_{a j}.
  *
  * Both terms are solved together, once per epoch, over every carried non-anchor arc
- * (@ref networkOraclePinFit).  Eliminating `β` between an arc and its own family's
+ * (@ref GnssProcessor::networkOraclePinFit "networkOraclePinFit").  Eliminating `β` between an arc and its own family's
  * anchor leaves a pure station-offset difference, with every frame term gone:
  *
  *     g(r,s,j) = value_abs(r,s,j) − t_sj − λ_j·(N_rsj − N_{a s j})
@@ -103,13 +103,13 @@
  * Shifting `x_lin` alone is an exact solve no-op, because the carried prior's RHS
  * absorbs the shift.  The row above is a real
  * (Λ, η) pair and therefore actuates; the pin does not also write
- * @ref LocalCarry::value_abs.
+ * @ref GnssProcessor::LocalCarry::value_abs "LocalCarry::value_abs".
  *
  * σ defaults to 1e-4 m (about 0.0005 cycles, weight 1e8): stiff, but two decades
  * below the 1e10 datum pins, so the gauge stays with the anchors.
  *
  * The row is independent of the leveling carry: it is applied whether or not the arc
- * has a @ref LocalCarry entry, whether or not the slip response freed the arc this
+ * has a @ref GnssProcessor::LocalCarry "LocalCarry" entry, whether or not the slip response freed the arc this
  * epoch, and regardless of the whitened local block (`network.phase_leveling_local_block`).
  * The step runs only where `legacy_local_inject` holds (phase leveling warm).
  */
@@ -149,9 +149,14 @@ struct NetworkRunContext;
  * `ever_pinned` ledger and misreport the first-pin and release edges.
  */
 struct NetworkOraclePin {
+    /** @brief Default constructor: no truth, no armed scopes, empty ledgers. */
     NetworkOraclePin() = default;
+    /** @brief Deleted: a copy would duplicate the @c ever_pinned ledger and misreport the pin edges. */
     NetworkOraclePin(const NetworkOraclePin&) = delete;
+    /** @brief Deleted: the pin state is not copy-assignable (see the copy constructor).
+     *  @return Not applicable: the operator is deleted. */
     NetworkOraclePin& operator=(const NetworkOraclePin&) = delete;
+    /** @brief Destructor (defined where the wavelength provider type is complete). */
     ~NetworkOraclePin();
 
     /// One arc's truth: the day's pre-slip integer, the slips applied to it, and the
@@ -159,7 +164,7 @@ struct NetworkOraclePin {
     /// for FDMA through the satellite id), not the CSV's column; the CSV value is
     /// stored but not used.
     struct Truth {
-        int    n_int{0};
+        int    n_int{0};             ///< The arc's pre-slip integer ambiguity (cycles), from the truth file.
         double lambda_m{0.0};        ///< The run's wavelength (from @ref utils); the pin's metres.
         double lambda_csv_m{0.0};    ///< The fixture's own column; stored, not compared or used.
         std::vector<NetworkSlipOracle::TruthSlip> slips;   ///< Ascending in @c s.
@@ -178,23 +183,23 @@ struct NetworkOraclePin {
     /// scope, σ, tow).  An arc is pinned when any scope whose event has started covers
     /// it; the first such event (lowest event index) owns the row's σ and event index.
     struct Armed {
-        std::size_t    ev_index{0};
-        OraclePinScope scope;
-        double         sigma_m{1.0e-4};
-        double         tow{-1.0};
+        std::size_t    ev_index{0};      ///< Index of the event in @c network.inject.events.
+        OraclePinScope scope;            ///< The event's parsed scope.
+        double         sigma_m{1.0e-4};  ///< The event's prior sigma on the pinned arcs (m).
+        double         tow{-1.0};        ///< Time of week (s) at which the event starts; -1 until set.
     };
-    std::vector<Armed> scopes;
+    std::vector<Armed> scopes;  ///< The armed events, in event order.
 
     // ---- This epoch's pin table (rebuilt by networkOraclePinEpoch) -----------
     /// One pinned arc: the gauge-consistent absolute value, its prior σ, and the
     /// event that owns it.  Read-only inside PASS B.
     struct Pin {
-        double      value_m{0.0};
-        double      sigma_m{1.0e-4};
-        std::size_t ev_index{0};
+        double      value_m{0.0};       ///< The gauge-consistent absolute value the arc is pinned at (m).
+        double      sigma_m{1.0e-4};    ///< The prior sigma of the pin row (m).
+        std::size_t ev_index{0};        ///< Index of the owning event in @c network.inject.events.
         int         n_true{0};      ///< The true integer this value encodes (telemetry).
     };
-    std::map<std::tuple<int, std::string, std::string>, Pin> table;
+    std::map<std::tuple<int, std::string, std::string>, Pin> table;  ///< (station index, satellite, signal) -> the pin of this epoch.
 
     // ---- counters ----------------------------------------------------------
     long long epochs_active{0};        ///< Epochs where >= 1 event had started (table rebuilt).
@@ -243,6 +248,11 @@ networkOraclePinParseAmbCsv(const std::string& path);
  * `N(t) = N_int + Σ delta_cyc over every truth slip with s <= t`.  The bound is
  * inclusive, so a slip stamped exactly at @p now_s counts (the observation at that
  * epoch already carries it).
+ *
+ * @param t     One arc's truth: the pre-slip integer and its slips, ascending in time.
+ * @param now_s Continuous-GPS seconds of the epoch (the slips' @c s is on the same clock).
+ * @return The arc's true integer ambiguity at @p now_s (cycles): @c n_int plus the cycle jump of
+ *         every slip stamped at or before @p now_s.
  */
 int networkOraclePinTrueN(const NetworkOraclePin::Truth& t, double now_s);
 
@@ -274,7 +284,7 @@ std::unique_ptr<NetworkOraclePin> networkOraclePinLoad(
 /**
  * @brief The fit: rebuild this epoch's pin table from truth and the run's own frame.
  *
- * Separate from @ref networkOraclePinEpoch so the unit suite can drive it on a
+ * Separate from @ref GnssProcessor::networkOraclePinEpoch "networkOraclePinEpoch" so the unit suite can drive it on a
  * synthetic carry with no estimator.  Resolves the per-(station, band) offsets by the
  * rooted determination described in the file header, then writes the in-scope
  * non-anchor arcs into @c pin.table.
@@ -282,7 +292,7 @@ std::unique_ptr<NetworkOraclePin> networkOraclePinLoad(
  * @param pin        Run-scope state (table and counters are written).
  * @param stations   Roster (names, `pinned_amb_targets`).
  * @param arcs       `ctx.entities.arcs`: the fit's observations
- *                   (@ref LocalCarry::value_abs, never `x_lin`).
+ *                   (@ref GnssProcessor::LocalCarry::value_abs "LocalCarry::value_abs", never `x_lin`).
  * @param anchor_of  `ctx.carry.this_epoch_anchor`: "<sat>_<sig>" -> anchor station name.
  * @param now_s      Continuous-GPS seconds of this epoch.
  * @param active     Indices into @c pin.scopes whose event has started.
@@ -318,11 +328,13 @@ struct NetworkEpoch;            // network/driver/Epoch.hpp
 void networkOraclePinEpoch(NetworkRun& run, const NetworkEpoch& ep);
 
 /**
- * @brief Run-end clause (one log line, every counter of @ref NetworkOraclePin).
+ * @brief Run-end clause (one log line, every counter of @ref GnssProcessor::NetworkOraclePin "NetworkOraclePin").
  *
  * A run with `rows_injected == 0` has measured nothing, and the line states that
  * in-band.
  *
+ * @param pin The run's pin state; null (the off path, no @c oracle_pin event) logs nothing.
+ * @param log Run logger; the line is written at warning level.
  * @return 0 always.  An event that never fired is reported by the injector's own
  *         run-end check, in which this kind participates unchanged.
  */

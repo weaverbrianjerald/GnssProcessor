@@ -34,7 +34,7 @@
  * becomes the reference, so a slip repeated at the next epoch still differs from it
  * (rung S7), while an isolated slip flags once: the step after it is ordinary and
  * matches the reference again.  The scale term is off for k = 0, and while the arc
- * holds fewer than @ref GfArcJumpParams::min_count clean values.
+ * holds fewer than @ref GnssProcessor::GfArcJumpParams::min_count "GfArcJumpParams::min_count" clean values.
  *
  * An arc is consecutive processed epochs on the same primary pair with the same step
  * span.  A gap, a pair change or a span change restarts it: the restart sample opens
@@ -45,7 +45,7 @@
  *
  * A persistent change of the GF rate (an ionospheric front) is indistinguishable from
  * a repeated slip for one epoch, and against a locked reference it would flag every
- * epoch.  After @ref kGfArcJumpMaxFlagRun consecutive flags the reference is therefore
+ * epoch.  After @ref GnssProcessor::kGfArcJumpMaxFlagRun "kGfArcJumpMaxFlagRun" consecutive flags the reference is therefore
  * re-seeded from the next step, which bounds a rate change at that many flags.
  *
  * ## The response
@@ -112,7 +112,8 @@ struct GfArcJumpParams {
 struct GfArcJumpArc {
     long long   last_epoch{-1};  ///< Processed-epoch index of the last GF sample; -1 before the first.
     double      last_t_s{0.0};   ///< Its time (continuous GPS seconds).
-    std::string sig1, sig2;      ///< The primary pair the GF was formed on.
+    std::string sig1,            ///< First signal of the primary pair the GF was formed on.
+                sig2;            ///< Second signal of that pair.
     double      gf_m{0.0};       ///< The last GF level (m).
     bool        has_ref{false};  ///< A reference step exists (the arc's last clean step).
     double      ref_step_m{0.0}; ///< The reference step d(t_c) (m).

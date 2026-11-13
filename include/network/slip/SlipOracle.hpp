@@ -37,7 +37,7 @@
  *
  * ## Where it actuates, and where it does not
  *
- * One helper (@ref networkSlipOracleHandle) serves the detector refloat
+ * One helper (@ref GnssProcessor::networkSlipOracleHandle "networkSlipOracleHandle") serves the detector refloat
  * actuation sites in network/slip/SlipQc.cpp, which cover the four detector tiers:
  *   - `refloat_signal` (both the MW confident-wide-lane drain and the RINEX-LLI
  *     drain go through it),
@@ -63,41 +63,41 @@
  *
  * with the lower bound exclusive and the upper bound inclusive.  The three terms:
  *
- * - `now_s − window_s` (@ref NetworkSlipOracle::window_s,
+ * - `now_s − window_s` (@ref GnssProcessor::NetworkSlipOracle::window_s "NetworkSlipOracle::window_s",
  *   `network.cycle_slip.oracle_window_s`, default 90 s = three 30 s epochs) is
  *   the detector-latency bound, and the one that normally binds.  Detectors fire
  *   1 to 3 epochs after the slip (MW needs its window to fill, IF-TD needs the
  *   triple difference), which is the 90 s within which the truth census counts a
- *   slip as detected.  @ref LocalCarry::last_seen_s is not usable as the lower
+ *   slip as detected.  @ref GnssProcessor::LocalCarry::last_seen_s "LocalCarry::last_seen_s" is not usable as the lower
  *   bound, although it looks like an "already absorbed" mark: it is the previous
  *   epoch's stash time, and an intervening solve does not re-set a zero-q carried
  *   level (the stiff prior moves little against one epoch of phase), so the jump
  *   is still unabsorbed when a late detector fires.  With that bound the normal
  *   population reads as false alarms (701 kept against 88 repaired on a 60-epoch
  *   smoke), and the measured ceiling would be biased low.
- * - `carry.birth_s` (@ref LocalCarry::birth_s) is the hard floor: the
+ * - `carry.birth_s` (@ref GnssProcessor::LocalCarry::birth_s "LocalCarry::birth_s") is the hard floor: the
  *   continuous-GPS second at which the current carry entry was created.  A RAIM
  *   attribution erase deletes the entry, and the next harvest re-creates it from
  *   a fresh solve whose level already contains any earlier jump, so a truth slip
  *   stamped before the entry's birth is already absorbed, and re-applying it
  *   would inject the error this repair is meant to remove.  It is stamped once at
- *   creation and kept across re-stashes, like @ref LocalCarry::birth_ep (which is
+ *   creation and kept across re-stashes, like @ref GnssProcessor::LocalCarry::birth_ep "LocalCarry::birth_ep" (which is
  *   not usable here: it is a loop-epoch index, not seconds).  It is not
  *   snapshotted, so a warm-resume-restored entry carries
- *   @ref LocalCarry::kBirthSRestored (−1) and the
+ *   @ref GnssProcessor::LocalCarry::kBirthSRestored "LocalCarry::kBirthSRestored" (−1) and the
  *   window falls back to the latency bound alone for the arc's whole restored
  *   life, the conservative direction for a sim-only diagnostic.
- * - `last_applied_s` (@ref NetworkSlipOracle::ArcState) keeps one arc from being handled twice
+ * - `last_applied_s` (@ref GnssProcessor::NetworkSlipOracle::ArcState "NetworkSlipOracle::ArcState") keeps one arc from being handled twice
  *   before a re-harvest: two detectors firing in one epoch, or on consecutive
  *   epochs, apply the jump once.  It advances on every repair.
  *
  * A window that holds no truth slip is a false alarm (the detector fired on an
  * arc that did not jump within the latency it can see), and
- * @ref NetworkSlipOracle::false_alarm decides the response to it.
+ * @ref GnssProcessor::NetworkSlipOracle::false_alarm "NetworkSlipOracle::false_alarm" decides the response to it.
  *
  * ## Two independent policies make the census additive
  *
- * @ref NetworkSlipOracle::true_slip decides the other half: an actuation whose
+ * @ref GnssProcessor::NetworkSlipOracle::true_slip "NetworkSlipOracle::true_slip" decides the other half: an actuation whose
  * window holds a truth slip.  `repair` is the ceiling this oracle measures; `free`
  * declines the arc so the caller runs the ordinary response for it.  The pair
  * spans the 2x2 the census needs:
@@ -115,7 +115,7 @@
  * true-slip re-level is the whole lever and only the engineering build (EWL /
  * WL-MW integer estimation) can deliver it.  With `true_slip = free` the run-end
  * `applied` count is 0 by construction, so the armed-and-inert check reads
- * @ref NetworkSlipOracle::fa_kept instead.
+ * @ref GnssProcessor::NetworkSlipOracle::fa_kept "NetworkSlipOracle::fa_kept" instead.
  */
 
 #include "network/state/Entities.hpp"   // net::ArcTable
@@ -138,7 +138,7 @@ class GnssConfig;
 class LogManager;
 class PppUtils;
 
-/// What @ref networkSlipOracleHandle did with an arc, for the caller's event row.
+/// What @ref GnssProcessor::networkSlipOracleHandle "networkSlipOracleHandle" did with an arc, for the caller's event row.
 enum class OracleOutcome {
     NotHandled,   ///< The caller proceeds with the ordinary response (frees the arc).
     Repaired,     ///< The carried level was shifted by the true sum d*lambda (plus the injected noise).
@@ -158,9 +158,14 @@ enum class OracleOutcome {
  * jump be applied twice.
  */
 struct NetworkSlipOracle {
+    /** @brief Default constructor: an empty truth table and ledger, with the knob defaults below. */
     NetworkSlipOracle() = default;
+    /** @brief Deleted: a copy would reset the per-arc ledger and let the same jump apply twice. */
     NetworkSlipOracle(const NetworkSlipOracle&) = delete;
+    /** @brief Deleted: the oracle is not copy-assignable (see the copy constructor).
+     *  @return Not applicable: the operator is deleted. */
     NetworkSlipOracle& operator=(const NetworkSlipOracle&) = delete;
+    /** @brief Destructor (defined where the wavelength provider type is complete). */
     ~NetworkSlipOracle();
 
     /// Response when a detector fires on a carried arc with no truth slip in the
@@ -172,7 +177,7 @@ struct NetworkSlipOracle {
     /// Response when the window holds a truth slip.  `Repair` is the ceiling
     /// (shift the level by the true sum d*lambda); `Free` declines the arc so the
     /// caller runs the ordinary free/re-level response for it, which, paired with
-    /// @ref FalseAlarm::Keep, isolates the false-alarm cost.  See the 2x2 in the
+    /// @c FalseAlarm::Keep, isolates the false-alarm cost.  See the 2x2 in the
     /// file banner.
     enum class TrueSlip { Repair, Free };
 
@@ -186,15 +191,17 @@ struct NetworkSlipOracle {
     /// One truth jump: continuous-GPS seconds and the integer jump in that
     /// signal's own cycles (the fixture writes one row per applied jump).
     struct TruthSlip {
-        double s{0.0};
-        int    delta_cyc{0};
+        double s{0.0};        ///< Time of the jump (continuous GPS seconds).
+        int    delta_cyc{0};  ///< The integer jump, in cycles of that signal.
     };
     /// (station index, satellite, signal) -> the arc's jumps, ascending in `s`.
     std::map<std::tuple<int, std::string, std::string>, std::vector<TruthSlip>> truth;
 
     /// Per-arc application ledger: one of the three terms of the exclusive lower bound.
-    struct ArcState { double last_applied_s{-1.0e18}; };
-    std::map<std::tuple<int, std::string, std::string>, ArcState> arcs;
+    struct ArcState {
+        double last_applied_s{-1.0e18};  ///< Time (continuous GPS seconds) of the latest jump applied to the arc; -1e18 before any.
+    };
+    std::map<std::tuple<int, std::string, std::string>, ArcState> arcs;  ///< (station index, satellite, signal) -> the arc's application ledger.
 
     /// The leveling carry this oracle actuates on: `ctx.entities.arcs`.
     /// A bare pointer because the map is a sibling member of the same
@@ -286,9 +293,9 @@ std::unique_ptr<NetworkSlipOracle> networkSlipOracleLoad(
  * @param now_s      This epoch's continuous-GPS seconds (`week*604800 + tow`).
  * @param cause      The calling site's `RelevelEpochState::kCause*` bit (the
  *                   detector tier), used only to attribute a false-alarm keep
- *                   (@ref NetworkSlipOracle::fa_kept_mw and the other tiers).  It
+ *                   (@ref GnssProcessor::NetworkSlipOracle::fa_kept_mw "NetworkSlipOracle::fa_kept_mw" and the other tiers).  It
  *                   never changes a decision; an unrecognised bit lands in
- *                   @ref NetworkSlipOracle::fa_kept_other, expected to be 0.
+ *                   @ref GnssProcessor::NetworkSlipOracle::fa_kept_other "NetworkSlipOracle::fa_kept_other", expected to be 0.
  * @param[out] detail  Filled with `delta=<sum d>;n=<slips>;noise=<x>` when handled
  *                     (the caller puts it in the event row's detail column); left
  *                     untouched otherwise.
@@ -305,15 +312,27 @@ bool networkSlipOracleHandle(NetworkSlipOracle& oracle, int sta,
                              double now_s, std::uint8_t cause,
                              std::string& detail, OracleOutcome& outcome);
 
-/// Deterministic zero-mean Gaussian in cycles, seeded from
+/// @brief Deterministic zero-mean Gaussian in cycles, seeded from
 /// (station, satellite, signal, epoch), so two calls with the same key in the
 /// same run, or in a re-run, produce the same draw.  Exposed for the unit
 /// suite's determinism case.  Returns exactly 0 when @p sigma_cyc <= 0.
+/// @param sigma_cyc 1-sigma of the Gaussian (cycles); a value that is not positive gives 0.
+/// @param sta       Station index (part of the seed).
+/// @param sat       Satellite id (part of the seed).
+/// @param signal    RINEX signal code of the arc, for example "L1C" (part of the seed).
+/// @param now_s     This epoch's continuous-GPS seconds; rounded to the millisecond before it
+///                  enters the seed.
+/// @return The draw (cycles): zero-mean with standard deviation @p sigma_cyc, identical for an
+///         identical key; exactly 0 when @p sigma_cyc is not positive.
 double networkSlipOracleNoise(double sigma_cyc, int sta, const std::string& sat,
                               const std::string& signal, double now_s);
 
-/// Parse one `truth_slips.csv` into ascending-by-time per-(sat, signal) jump
+/// @brief Parse one `truth_slips.csv` into ascending-by-time per-(sat, signal) jump
 /// lists.  Split out for the unit suite (the loader wraps it per station).
+/// @param path Path of the file; its header must begin with
+///             `week,tow_s,satellite,signal,delta_cycles`, and later columns are ignored.
+/// @return (satellite, signal) -> that arc's jumps, ascending in time, each stamped in continuous-GPS
+///         seconds (week * 604800 + tow_s) with its integer cycle jump; an arc with no row is absent.
 /// @throws std::runtime_error on a malformed header or row.
 std::map<std::pair<std::string, std::string>,
          std::vector<NetworkSlipOracle::TruthSlip>>
