@@ -52,7 +52,9 @@ namespace GnssProcessor {
  */
 class Meas3Decoder {
 public:
-    /// Process-wide decoder holding the live reference-epoch cache.
+    /// @brief Process-wide decoder holding the live reference-epoch cache.
+    /// @return Reference to the single decoder, constructed on first use and alive until
+    ///         process exit; every caller shares its reference-epoch state.
     static Meas3Decoder& instance();
 
     /**

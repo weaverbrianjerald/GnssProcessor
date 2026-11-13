@@ -30,10 +30,18 @@ struct SignalInfo {
     int         glonass_fdma_band{0};       ///< 0 = fixed freq; 1 = GLONASS L1 FDMA; 2 = GLONASS L2 FDMA.
 };
 
-/// Look up the static signal info for an SBF signal number (0..39).
+/// @brief Look up the static signal info for an SBF signal number (0..39).
+/// @param signal_number SBF signal number as carried in the MeasEpoch type field.
+/// @return The system, RINEX-3 code suffix and carrier frequency of the signal; an entry with
+///         @c system == System::Unknown and an empty suffix for reserved, unmapped
+///         (NavIC, L-Band, QZSS L6) and out-of-range numbers.
 SignalInfo signalInfo(int signal_number);
 
-/// GLONASS FDMA carrier frequency [Hz] for band (1=L1, 2=L2) and channel k (−7..+13).
+/// @brief GLONASS FDMA carrier frequency [Hz] for band (1=L1, 2=L2) and channel k (−7..+13).
+/// @param band GLONASS FDMA band: 1 for G1, 2 for G2.
+/// @param k    Frequency channel number (FCN), −7 to +13.
+/// @return Carrier frequency in Hz (base frequency plus k times the channel spacing);
+///         0 when @p band is neither 1 nor 2.
 double glonassFdmaFreqHz(int band, int k);
 
 /**

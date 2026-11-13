@@ -31,10 +31,13 @@ namespace GnssProcessor {
  */
 class SbfStreamReader {
 public:
-    /// Push raw bytes into the internal buffer.
+    /// @brief Push raw bytes into the internal buffer.
+    /// @param data Pointer to the first byte; the bytes are copied, so the caller keeps ownership.
+    /// @param len  Number of bytes to append.
     void feed(const uint8_t* data, std::size_t len);
 
-    /// Convenience overload.
+    /// @brief Convenience overload.
+    /// @param data Bytes to append to the internal buffer (copied).
     void feed(const std::vector<uint8_t>& data) { feed(data.data(), data.size()); }
 
     /**
@@ -44,13 +47,16 @@ public:
      */
     std::optional<std::vector<uint8_t>> nextFrame();
 
-    /// Number of raw bytes currently buffered.
+    /// @brief Number of raw bytes currently buffered.
+    /// @return Bytes fed but not yet extracted or discarded.
     std::size_t buffered() const { return buf_.size(); }
 
-    /// Total blocks successfully extracted since construction.
+    /// @brief Total blocks successfully extracted since construction.
+    /// @return Count of blocks returned by @c nextFrame.
     uint64_t framesExtracted() const { return frames_extracted_; }
 
-    /// Total bytes discarded while scanning for a valid block.
+    /// @brief Total bytes discarded while scanning for a valid block.
+    /// @return Count of bytes dropped while resynchronising past garbage or a bad CRC.
     uint64_t bytesDiscarded() const { return bytes_discarded_; }
 
 private:

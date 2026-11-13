@@ -68,13 +68,18 @@ class SbfParser {
 public:
     /**
      * @brief Decode one complete SBF block (Sync..body).
+     * @param block Pointer to the full block as returned by @c SbfStreamReader::nextFrame,
+     *              starting at the 0x24 0x40 sync bytes.
+     * @param len   Block length in bytes; a block shorter than 14 bytes is rejected.
      * @return true if the block was recognised and decoded; false for an
      *         unsupported block number or a malformed/short block.  An unknown
      *         block is not an error: it is logged at trace level and returns false.
      */
     bool parseFrame(const uint8_t* block, std::size_t len);
 
-    /// Convenience overload.
+    /// @brief Convenience overload.
+    /// @param block Complete SBF block (Sync..body); same contract as the pointer overload.
+    /// @return true if the block was recognised and decoded; false otherwise.
     bool parseFrame(const std::vector<uint8_t>& block) {
         return parseFrame(block.data(), block.size());
     }
@@ -82,17 +87,33 @@ public:
     /// Drop all accumulated decoded outputs.
     void clear();
 
+    /// @brief Observations decoded since the last @c clear() (MeasEpoch and Meas3Ranges blocks).
+    /// @return Reference to the accumulated observations, one per satellite per epoch, in decode
+    ///         order; empty when none was decoded.  Valid until @c clear() or destruction.
     const std::vector<RinexObservation>&   getObservations()      const { return observations_; }
+    /// @brief Broadcast ephemerides decoded since the last @c clear() (GPSNav, GALNav, BDSNav,
+    ///        QZSNav, GLONav blocks).
+    /// @return Reference to the accumulated ephemerides in decode order; empty when none was
+    ///         decoded.  Valid until @c clear() or destruction.
     const std::vector<BroadcastEphemeris>& getBroadcastEphemeris() const { return broadcast_eph_; }
+    /// @brief Raw navigation messages lifted since the last @c clear() (GPSRawCA, GALRawINAV,
+    ///        BDSRaw, GLORawCA blocks).
+    /// @return Reference to the accumulated messages in decode order; empty when none was
+    ///         lifted.  Valid until @c clear() or destruction.
     const std::vector<RawNavMessage>&      getRawNavMessages()    const { return raw_nav_; }
 
-    /// Receiver ECEF position [m] from a PVTGeodetic (4007) block with a valid
+    /// @brief Receiver ECEF position [m] from a PVTGeodetic (4007) block with a valid
     /// fix, or @c std::nullopt when no such block has been parsed since the last
     /// @c clear().  Used
     /// to seed the filter a-priori on a live stream (no RINEX header available).
+    /// @return Reference to the optional position (ECEF, metres); empty when no valid fix has
+    ///         been parsed.  Valid until @c clear() or destruction.
     const std::optional<Eigen::Vector3d>&  getReceiverPositionEcef() const { return receiver_position_ecef_; }
 
-    /// Block number of the most recently parsed block, or -1.
+    /// @brief Block number of the most recently parsed block, or -1.
+    /// @return The 13-bit SBF block number (for example 4027 for MeasEpoch) of the last block
+    ///         passed to @c parseFrame, whether or not it was decoded; -1 after @c clear() or
+    ///         before the first valid block.
     int lastBlockNumber() const { return last_block_number_; }
 
 private:

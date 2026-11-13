@@ -31,10 +31,22 @@
 
 namespace GnssProcessor {
 
+/**
+ * @class SubframeAssembler
+ * @brief Buffers raw SBF navigation messages per satellite and emits a broadcast ephemeris
+ *        once a satellite's set is complete and self-consistent.
+ *
+ * Supports GPS / QZSS (LNAV), Galileo (I/NAV) and BeiDou D1; GLONASS is not assembled.  One
+ * instance serves the whole streaming session, since the subframes of one ephemeris arrive
+ * across many SBF blocks.
+ */
 class SubframeAssembler {
 public:
     /**
      * @brief Ingest one raw navigation message.
+     * @param msg Raw message from @c SbfParser::getRawNavMessages; the constellation
+     *            selects the subframe format.  A message that failed the receiver CRC
+     *            is ignored.
      * @return The ephemeris when this message completes a consistent set whose
      *         issue of data (GPS IODE, Galileo IODnav, BeiDou AODE) differs from
      *         the last one emitted for that satellite; otherwise @c std::nullopt
