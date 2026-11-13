@@ -3,9 +3,13 @@
 **Goal:** stop the program at a chosen line, inspect the filter state, and step through
 one epoch.
 
-The command-line wrapper and the IDE use the same build trees (`build\x64-Debug`,
-`build\x64-Release`) and the same CMake settings (`CMakeSettings.json`), so a tree built
-by one can be used by the other.
+The IDE configures its own build trees, `build\ide-x64-Debug` and `build\ide-x64-Release`
+(the `buildRoot` entries of `CMakeSettings.json`), with the same CMake arguments as the
+command-line wrapper. The wrapper's trees, `build\x64-Debug` and `build\x64-Release`, are
+separate because the wrapper pins the compiler to MSVC 14.51 and `CMakeSettings.json` has
+no setting that pins a compiler version: the IDE builds with the installed default
+(14.52 in Visual Studio 18.12). Debugging in the IDE is unaffected. Data runs and graded
+results use the wrapper's Release tree.
 
 ---
 

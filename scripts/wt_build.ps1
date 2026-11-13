@@ -7,9 +7,11 @@
   from a git worktree configures and builds the MAIN tree.  This wrapper is
   byte-identical to it except that the project root is resolved from the
   script's OWN location ($PSScriptRoot\..), so a worktree gets its own
-  build\x64-Debug / build\x64-Release.  Everything else -- the vcvars64 path,
-  the pinned bundled CMake 4.3.1, the configure args, the "never touch PATH
-  inside the cmd chain" rule -- is verbatim from the canonical wrapper.
+  build\x64-Debug / build\x64-Release.  Everything else -- the vcvars64 path
+  (VS 2026 Community), the pinned MSVC 14.51 compiler and the automatic
+  reconfigure of a tree built by another compiler, the pinned bundled CMake
+  4.3.1, the configure args, the "never touch PATH inside the cmd chain" rule --
+  is verbatim from the canonical wrapper.
 
   NOT a replacement for scripts\vs2026_build.ps1: the main tree keeps using
   that one.  This exists so a worktree agent never writes into
@@ -33,12 +35,16 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-$vsRoot  = 'C:\Program Files\Microsoft Visual Studio\18\Enterprise'
+$vsRoot  = 'C:\Program Files\Microsoft Visual Studio\18\Community'
+$msvcVer = '14.51'   # pinned compiler (see scripts\vs2026_build.ps1, .DESCRIPTION item 3)
 $vcvars  = "$vsRoot\VC\Auxiliary\Build\vcvars64.bat"
 $cmakeEx = "$vsRoot\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe"
 
 foreach ($p in @($vcvars, $cmakeEx)) {
-    if (-not (Test-Path $p)) { throw "Not found: $p  (is VS 2026 Enterprise installed?)" }
+    if (-not (Test-Path $p)) { throw "Not found: $p  (is VS 2026 Community installed?)" }
+}
+if (-not (Get-ChildItem "$vsRoot\VC\Tools\MSVC" -Directory -Filter "$msvcVer.*" -ErrorAction SilentlyContinue)) {
+    throw "MSVC $msvcVer is not installed in $vsRoot. Add 'MSVC Build Tools v$msvcVer for x64/x86' (Visual Studio Installer: Modify, Individual components)."
 }
 
 # THE ONE DIFFERENCE from scripts\vs2026_build.ps1: root from $PSScriptRoot.
@@ -61,6 +67,19 @@ $cfgArgs = @(
 )
 if ($Arch) { $cfgArgs += "-DGNSS_ARCH=$Arch" }
 
+# A tree configured with another compiler cannot be reused: mixing compilers in
+# one tree fails to configure or leaves objects from the other compiler.
+$cache = "$buildRoot\CMakeCache.txt"
+if (-not $Reconfigure -and (Test-Path $cache)) {
+    $hit = Select-String -Path $cache -Pattern '^CMAKE_CXX_COMPILER:\w+=(.*)$' | Select-Object -First 1
+    $have = if ($hit) { $hit.Matches[0].Groups[1].Value } else { '' }
+    $want = ("$vsRoot\VC\Tools\MSVC\$msvcVer." -replace '\\', '/')
+    if (-not $have.StartsWith($want, [StringComparison]::OrdinalIgnoreCase)) {
+        Write-Host "Tree was configured with another compiler ($have); reconfiguring for MSVC $msvcVer" -ForegroundColor Yellow
+        $Reconfigure = $true
+    }
+}
+
 if ($Reconfigure -and (Test-Path "$buildRoot\CMakeCache.txt")) {
     Write-Host "Removing stale cache: $buildRoot\CMakeCache.txt" -ForegroundColor Yellow
     Remove-Item "$buildRoot\CMakeCache.txt" -Force
@@ -73,7 +92,7 @@ $needConfigure = -not (Test-Path "$buildRoot\CMakeCache.txt")
 # cmake.  Do NOT prepend to PATH inside the chain -- cmd expands %PATH% when it
 # parses the whole `a && b` line, i.e. BEFORE vcvars runs.
 $inner = @()
-$inner += "`"$vcvars`" >nul"
+$inner += "`"$vcvars`" -vcvars_ver=$msvcVer >nul"
 if ($needConfigure) {
     $inner += "`"$cmakeEx`" -S `"$proj`" -B `"$buildRoot`" $($cfgArgs -join ' ')"
 }

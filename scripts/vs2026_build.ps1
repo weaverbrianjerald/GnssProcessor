@@ -1,15 +1,16 @@
 <#
 .SYNOPSIS
-  Configure / build GnssProcessor with Visual Studio 2026 (Enterprise, v18).
+  Configure / build GnssProcessor with Visual Studio 2026 (Community, v18),
+  compiler pinned to MSVC 14.51.
 
 .DESCRIPTION
-  Replaces the old VS 2022 vcvars64 pattern. Two things changed with the
-  2026 upgrade, and BOTH matter:
+  Replaces the old VS 2022 vcvars64 pattern. Three things matter:
 
-    1. vcvars64.bat moved:
+    1. vcvars64.bat location:
          2022: ...\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\
-         2026: ...\Microsoft Visual Studio\18\Enterprise\VC\Auxiliary\Build\
-       ("18" is the install *major version* dir, not a year.)
+         2026: ...\Microsoft Visual Studio\18\Community\VC\Auxiliary\Build\
+       ("18" is the install *major version* dir, not a year.) Enterprise was
+       used until 2026-11-12; Community carries the same compiler.
 
     2. `cmake` on PATH is the standalone 3.18.3 in C:\Program Files\CMake,
        which vcvars does NOT override. VS 2026 bundles CMake 4.3.1 and its
@@ -17,9 +18,18 @@
        CLI matches what the IDE uses -- otherwise a CLI configure and an IDE
        configure disagree on generator internals and thrash the build tree.
 
+    3. The compiler is pinned: vcvars64 runs with -vcvars_ver=14.51, the
+       compiler every baseline since 2026-08-12 was built with (cl 19.51.36263).
+       The installer's default toolset is newer (14.52 in VS 18.12); moving to
+       it changes outputs, so it is a deliberate, measured step, not an
+       install side effect. A tree configured with any other compiler (an IDE
+       configure, the old Enterprise path) is reconfigured automatically.
+
   Configure args mirror CMakeSettings.json exactly (vcpkg toolchain +
-  pinned Python 3.13), so a CLI-configured tree and an IDE-configured tree
-  are interchangeable.
+  pinned Python 3.13). The IDE configures its own trees (build\ide-x64-Debug,
+  build\ide-x64-Release, set in CMakeSettings.json): CMakeSettings.json cannot
+  pin the compiler version, so an IDE configure of these trees would move them
+  to the installer's default compiler.
 
 .EXAMPLE
   # compile check (Debug is for compile checks and gnss_tests ONLY -- never data runs)
@@ -45,13 +55,17 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-$vsRoot  = 'C:\Program Files\Microsoft Visual Studio\18\Enterprise'
+$vsRoot  = 'C:\Program Files\Microsoft Visual Studio\18\Community'
+$msvcVer = '14.51'   # pinned compiler (see .DESCRIPTION item 3)
 $vcvars  = "$vsRoot\VC\Auxiliary\Build\vcvars64.bat"
 $cmakeEx = "$vsRoot\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe"
 $ninjaEx = "$vsRoot\Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja"
 
 foreach ($p in @($vcvars, $cmakeEx)) {
-    if (-not (Test-Path $p)) { throw "Not found: $p  (is VS 2026 Enterprise installed?)" }
+    if (-not (Test-Path $p)) { throw "Not found: $p  (is VS 2026 Community installed?)" }
+}
+if (-not (Get-ChildItem "$vsRoot\VC\Tools\MSVC" -Directory -Filter "$msvcVer.*" -ErrorAction SilentlyContinue)) {
+    throw "MSVC $msvcVer is not installed in $vsRoot. Add 'MSVC Build Tools v$msvcVer for x64/x86' (Visual Studio Installer: Modify, Individual components)."
 }
 
 $proj      = 'C:\GnssProcessor'
@@ -72,6 +86,19 @@ $cfgArgs = @(
     '-DPython_FIND_STRATEGY=LOCATION'
     '-DPython_FIND_REGISTRY=NEVER'
 )
+
+# A tree configured with another compiler cannot be reused: mixing compilers in
+# one tree fails to configure or leaves objects from the other compiler.
+$cache = "$buildRoot\CMakeCache.txt"
+if (-not $Reconfigure -and (Test-Path $cache)) {
+    $hit = Select-String -Path $cache -Pattern '^CMAKE_CXX_COMPILER:\w+=(.*)$' | Select-Object -First 1
+    $have = if ($hit) { $hit.Matches[0].Groups[1].Value } else { '' }
+    $want = ("$vsRoot\VC\Tools\MSVC\$msvcVer." -replace '\\', '/')
+    if (-not $have.StartsWith($want, [StringComparison]::OrdinalIgnoreCase)) {
+        Write-Host "Tree was configured with another compiler ($have); reconfiguring for MSVC $msvcVer" -ForegroundColor Yellow
+        $Reconfigure = $true
+    }
+}
 
 if ($Reconfigure -and (Test-Path "$buildRoot\CMakeCache.txt")) {
     Write-Host "Removing stale cache: $buildRoot\CMakeCache.txt" -ForegroundColor Yellow
@@ -96,7 +123,7 @@ $needConfigure = -not (Test-Path "$buildRoot\CMakeCache.txt")
 # quoted through both PowerShell and cmd -- unquoted it truncates to
 # 'C:\Program' and CMake reports the make program missing.
 $inner = @()
-$inner += "`"$vcvars`" >nul"
+$inner += "`"$vcvars`" -vcvars_ver=$msvcVer >nul"
 if ($needConfigure) {
     $inner += "`"$cmakeEx`" -S `"$proj`" -B `"$buildRoot`" $($cfgArgs -join ' ')"
 }

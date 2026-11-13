@@ -14,7 +14,7 @@ The build scripts assume the locations below. Using them avoids editing scripts.
 
 | Tool | Required location | Notes |
 | --- | --- | --- |
-| Visual Studio **2026** Enterprise, "Desktop development with C++" workload | default install dir (`C:\Program Files\Microsoft Visual Studio\18\Enterprise`) | Provides MSVC, CMake 4.x and Ninja. A separate CMake is not needed. For the Community or Professional edition, `$vsRoot` at the top of `scripts\vs2026_build.ps1` is changed accordingly. |
+| Visual Studio **2026** Community, "Desktop development with C++" workload, plus the individual component "MSVC Build Tools v14.51 for x64/x86" | default install dir (`C:\Program Files\Microsoft Visual Studio\18\Community`) | Provides MSVC, CMake 4.x and Ninja. A separate CMake is not needed. The build wrappers pin the compiler to MSVC 14.51 (the compiler of every current baseline) and stop with a message naming the component when it is missing. For the Professional or Enterprise edition, `$vsRoot` at the top of `scripts\vs2026_build.ps1` and `scripts\wt_build.ps1` is changed accordingly. |
 | [vcpkg](https://github.com/microsoft/vcpkg) | `C:\vcpkg` | A current, full `git clone` followed by `bootstrap-vcpkg.bat`. A vcpkg tool older than Visual Studio 2026 does not detect that compiler ("Unable to find a valid Visual Studio instance"). The libraries are installed in Step 3. |
 | Python **3.13** | `C:\Python313` | Used by the build (pybind11) and by every script. |
 | Git for Windows | any | Provides `git` and Git Bash. |
