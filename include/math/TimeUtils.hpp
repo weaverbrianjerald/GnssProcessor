@@ -326,6 +326,14 @@ namespace GnssProcessor {
          * The conversion runs through a Julian-day double whose resolution is about
          * 40 microseconds, so a whole minute can come back as HH:MM:59.99996; a
          * printed stamp uses @c gpsTimeToGpsScaleCalendarMs instead.
+         *
+         * @param[in]  time   The GPS time (week, TOW) to convert.
+         * @param[out] year   Calendar year on the GPS time scale.
+         * @param[out] month  Month (1-12).
+         * @param[out] day    Day of month (1-31).
+         * @param[out] hour   Hour (0-23).
+         * @param[out] minute Minute (0-59).
+         * @param[out] second Seconds into the minute, with fraction (below 60).
          */
         static void gpsTimeToGpsScaleCalendar(const GnssTime& time, int& year, int& month,
                                               int& day, int& hour, int& minute, double& second);
@@ -462,7 +470,7 @@ namespace GnssProcessor {
          * @brief Whether the elapsed time from an anchor epoch has reached a start offset
          *        (the start-offset seek of @c network.start_offset_hours).
          *
-         * Compares on the whole-millisecond grid of @ref elapsedMs: an epoch has reached the
+         * Compares on the whole-millisecond grid of @ref GnssProcessor::TimeUtils::elapsedMs "elapsedMs": an epoch has reached the
          * offset when its elapsed time, rounded to the millisecond, is at least the offset,
          * rounded to the millisecond.  An offset that lies on an epoch (a bare hour on a 30 s
          * schedule) is therefore reached by that epoch, where a plain floating comparison
@@ -523,6 +531,8 @@ namespace GnssProcessor {
          *
          * The compiled @c LEAP_SECONDS (18) unless @ref setLeapSecondsOverride
          * replaced it (config @c realtime.leap_seconds).
+         *
+         * @return GPS-UTC offset in seconds (GPS time minus UTC), 18.0 by default.
          */
         static double currentLeapSeconds();
 

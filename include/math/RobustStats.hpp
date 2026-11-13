@@ -34,6 +34,9 @@ namespace RobustStats {
      * The source range is not modified (values are copied into a scratch
      * buffer).
      *
+     * @tparam InputIt Input iterator whose elements convert to @c double.
+     * @param first Iterator to the first value.
+     * @param last  Iterator one past the last value.
      * @return The median, or NaN if the range is empty.
      */
     template <typename InputIt>
@@ -47,6 +50,9 @@ namespace RobustStats {
     }
 
     /// @brief Median of any container exposing std::begin / std::end.
+    /// @tparam Container Container (or array) whose elements convert to @c double.
+    /// @param values Values to take the median of; not modified.
+    /// @return The median, or NaN if the container is empty.
     template <typename Container>
     inline double median(const Container& values) {
         using std::begin;
@@ -61,6 +67,9 @@ namespace RobustStats {
      * Robust to outliers (a minority of gross errors does not move the MAD).
      * The source range is not modified.
      *
+     * @tparam InputIt Input iterator whose elements convert to @c double.
+     * @param first Iterator to the first value.
+     * @param last  Iterator one past the last value.
      * @return The MAD-based sigma, or NaN if the range is empty.
      */
     template <typename InputIt>
@@ -73,6 +82,9 @@ namespace RobustStats {
     }
 
     /// @brief MAD-based sigma of any container exposing std::begin / std::end.
+    /// @tparam Container Container (or array) whose elements convert to @c double.
+    /// @param values Values to take the MAD-based sigma of; not modified.
+    /// @return The MAD-based sigma in the units of @p values, or NaN if the container is empty.
     template <typename Container>
     inline double madSigma(const Container& values) {
         using std::begin;

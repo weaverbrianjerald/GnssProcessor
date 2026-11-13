@@ -163,10 +163,6 @@ namespace GnssProcessor {
      *
      * This matches the integer-index approach used by IGS/JPL.
      *
-     * @param x Node x-coordinates (original, un-normalized).
-     * @param w Precomputed barycentric weights from barycentricWeights().
-     * @param y Node y-values (function values at nodes).
-     * @param xq Query point (original, un-normalized).
      * @return Derivative p'(xq) with respect to original x.
      */
     double Interpolate::barycentricDeriv(const std::vector<double>& x,
