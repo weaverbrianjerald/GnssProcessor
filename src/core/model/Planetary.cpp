@@ -240,9 +240,6 @@ namespace GnssProcessor {
      * the sidereal rotation over the elapsed UT1 day fraction.  The equation of
      * the equinoxes is not applied here; eci2ecef() adds it to form GAST.
      *
-     * @param t_ut1  Julian centuries of UT1 from J2000.0.
-     * @param ut1_d  Fraction of the UT1 day elapsed since 0h UT1, i.e.
-     *               frac(UT1 JD + 0.5), as computeSunMoonPosition() passes it.
      * @return GMST in radians.
      */
     double Planetary::utc2gmst(double t_ut1, double ut1_d) {
@@ -279,11 +276,6 @@ namespace GnssProcessor {
      *
      * Reference: Meeus, "Astronomical Algorithms" (1991), Ch. 25;
      *            Montenbruck & Gill, "Satellite Orbits" (2000), Ch. 3.3.2.
-     *
-     * @param t  Julian centuries of UT1 from J2000.0.
-     * @param f  Five Delaunay fundamental arguments [l, l', F, D, Omega] (radians).
-     * @param[out] rsun  Sun position in ECI (meters).
-     * @param[out] rmoon Moon position in ECI (meters).
      */
     void Planetary::sunMoonPosEci(double t, const std::array<double, 5>& f,
         Eigen::Vector3d& rsun, Eigen::Vector3d& rmoon)

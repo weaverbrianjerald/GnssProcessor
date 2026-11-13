@@ -338,11 +338,6 @@ namespace GnssProcessor {
      * (no copy, no ATX parsing here), initializes the internal helpers used to
      * compute antenna corrections, and dumps the matched receiver antenna model at
      * trace level.
-     *
-     * @param config Configuration reference (read-only).
-     * @param product_parser Product parser used to access auxiliary files.
-     * @param log_mgr Log manager used for warnings/errors and tracing.
-     * @param rinex_parser Reference to the RINEX parser for receiver metadata.
      */
     Antenna::Antenna(const GnssConfig& config, ProductParser& product_parser,
         LogManager& log_mgr, const RinexParser& rinex_parser)
@@ -511,17 +506,6 @@ namespace GnssProcessor {
      *   Receiver  PCV: rec_apc adds pcv to dot(pco,los) → add
      *   total correction = -sat_pco + sat_pcv + rx_pco + rx_pcv + wind_up
      *
-     * @param satellite Satellite identifier string (e.g. "G01", "R05").
-     * @param freq_type RINEX signal code used by processing (e.g. "L1C", "C1C"); only
-     *        the first two characters select the frequency.
-     * @param system GNSS system enum for the satellite.
-     * @param rx_pos Receiver ECEF position (meters).
-     * @param sat_pos Satellite ECEF position (meters).
-     * @param sat_vel Satellite ECEF velocity (meters/sec).
-     * @param elevation Receiver-measured elevation angle (degrees).
-     * @param azimuth Receiver-measured azimuth angle (degrees).
-     * @param rx_antenna_type Receiver antenna model/type string (from RINEX header or configuration).
-     * @param time Epoch time at which the correction is computed.
      * @return Antenna correction in meters. Positive values follow the convention used by the caller.
      */
     double Antenna::getAntennaCorrection(const std::string& satellite,
@@ -1414,12 +1398,6 @@ namespace GnssProcessor {
      * sectors; azimuth wraps around circularly.  At or beyond the last zenith
      * ring the value is held flat.
      *
-     * @param pcv_table 2D PCV table: rows=zenith rings, cols=azimuth sectors (or 1 for azimuth-independent).
-     * @param zenith Zenith (or nadir) angle in degrees, relative to ZEN1 (the caller
-     *        subtracts ZEN1); negative values are clamped to 0.
-     * @param azimuth Azimuth angle in degrees (0..360).
-     * @param dazi Azimuth spacing in degrees between PCV columns.
-     * @param dzen Zenith spacing in degrees between PCV rows; <= 0 returns 0.
      * @return Interpolated PCV value in the table's units (mm for ATX tables; the
      *         caller scales by 1e-3).  0 for an empty table.
      */

@@ -41,23 +41,23 @@ namespace GnssProcessor {
      * computeModels() / observation-helper interface self-documenting.
      */
     struct SatGeometry {
-        Eigen::Vector3d sat_pos  = Eigen::Vector3d::Zero();
-        Eigen::Vector3d sat_vel  = Eigen::Vector3d::Zero();
-        Eigen::Vector3d rx_pos   = Eigen::Vector3d::Zero();
-        Eigen::Vector3d los      = Eigen::Vector3d::Zero();
-        double elevation         = 0.0;
-        double azimuth           = 0.0;
-        double range             = 0.0;
-        double tropo_zhd         = 0.0;
-        double sat_clock         = 0.0;
-        double shapiro_delay     = 0.0;
-        double sagnac_corr       = 0.0;
+        Eigen::Vector3d sat_pos  = Eigen::Vector3d::Zero();   ///< Satellite ECEF position (m).
+        Eigen::Vector3d sat_vel  = Eigen::Vector3d::Zero();   ///< Satellite ECEF velocity (m/s).
+        Eigen::Vector3d rx_pos   = Eigen::Vector3d::Zero();   ///< Receiver ECEF position (m).
+        Eigen::Vector3d los      = Eigen::Vector3d::Zero();   ///< Line-of-sight unit vector, receiver to satellite (ECEF).
+        double elevation         = 0.0;   ///< Satellite elevation angle at the receiver (degrees).
+        double azimuth           = 0.0;   ///< Satellite azimuth at the receiver (degrees).
+        double range             = 0.0;   ///< Geometric receiver-satellite range (m).
+        double tropo_zhd         = 0.0;   ///< Saastamoinen zenith hydrostatic delay (m, not mapped to the slant); zero when the troposphere model is off.
+        double sat_clock         = 0.0;   ///< Satellite clock correction (s).
+        double shapiro_delay     = 0.0;   ///< Shapiro relativistic path delay (m).
+        double sagnac_corr       = 0.0;   ///< Sagnac correction (m); diagnostic only, the Earth rotation applied to @c sat_pos already contains it.
         double otl_corr          = 0.0;   ///< Ocean tidal loading site displacement projected onto -LOS (m).
         double apl_corr          = 0.0;   ///< Atmospheric pressure loading (S1/S2 thermal tide) projected onto -LOS (m).
-        double relativistic_corr = 0.0;
-        double solid_tide        = 0.0;
-        double mf_w              = 0.0;
-        double mf_d              = 0.0;
+        double relativistic_corr = 0.0;   ///< Periodic relativistic satellite-clock correction (s).
+        double solid_tide        = 0.0;   ///< Solid Earth tide displacement projected onto the line of sight (m).
+        double mf_w              = 0.0;   ///< Wet tropospheric mapping function (unitless).
+        double mf_d              = 0.0;   ///< Hydrostatic (dry) tropospheric mapping function (unitless).
         bool   broadcast_only    = false;   ///< Clock is broadcast-grade (metre level) → code-only (phase dropped).
     };
 
@@ -204,14 +204,21 @@ namespace GnssProcessor {
 
         /// @brief Arm the per-receiver phase wind-up census.  Telemetry only: the
         ///        solve is byte-identical with it armed.
+        /// @param wu_gap_s    Accumulator continuity horizon in force (s).
+        /// @param carry_gap_s Phase-leveling carry horizon (s), used only to bucket gaps
+        ///                    between the two horizons; 0 disables that bucketing.
         void enableWindUpCensus(double wu_gap_s, double carry_gap_s) {
             antenna_.enableWindUpCensus(wu_gap_s, carry_gap_s);
         }
         /// @brief The census counters for this model's receiver.
+        /// @return Reference to the census (all zero unless @c enableWindUpCensus ran);
+        ///         valid for the lifetime of this model.
         const GnssCorrections::WindUpCensus& windUpCensus() const {
             return antenna_.windUpCensus();
         }
         /// @brief The accumulator-restart ledger.
+        /// @return Reference to the ledger, keyed by satellite identifier; empty when no
+        ///         restart is pending.  Valid for the lifetime of this model.
         const std::map<std::string, GnssCorrections::WuRestart>& wuRestarts() const {
             return antenna_.wuRestarts();
         }
@@ -219,10 +226,13 @@ namespace GnssProcessor {
         void clearWuRestarts() { antenna_.clearWuRestarts(); }
         /// @brief The wind-up gap-bridge counters for this model's receiver (zero unless
         ///        @c estimation.phase_windup_gap_bridge is on).
+        /// @return Reference to the counters; valid for the lifetime of this model.
         const WindUpBridge::Counters& windUpBridgeCounters() const {
             return antenna_.windUpBridgeCounters();
         }
         /// @brief The named gap-bridge attempts of this model's receiver (capped).
+        /// @return Reference to the attempts, oldest first; empty when none was made.
+        ///         Valid for the lifetime of this model.
         const std::vector<WindUpBridge::Event>& windUpBridgeEvents() const {
             return antenna_.windUpBridgeEvents();
         }
@@ -365,6 +375,13 @@ namespace GnssProcessor {
          *
          * Read by the AR gate (restrict_ar_for_substituted_atx) and the
          * per-ambiguity process-noise loosening (loosen_amb_q_for_substituted_atx).
+         *
+         * @param satellite Satellite identifier (e.g. "G05").
+         * @param signal    RINEX-3 observation code (e.g. "L5Q").
+         * @param system    GNSS system.
+         * @return True when the antenna correction for the pair is derived from a
+         *         neighbouring frequency; false when coverage is strict, the fallback
+         *         is disabled, or the pair has no entries at all.
          */
         bool wasAtxSubstituted(const std::string& satellite,
                                 const std::string& signal,
@@ -495,10 +512,13 @@ namespace GnssProcessor {
          * solve (e.g. {"C1C","L1C","C2W","L2W"}).  An absent constellation or an
          * empty map admits every tracked code (the byte-identical default).  Where
          * a constellation is listed, both the canonical per-band pick
-         * (@ref decideConstellationCanonicals) and the channel_mode="all"
+         * (@c decideConstellationCanonicals) and the channel_mode="all"
          * augmentation skip non-admitted codes, so the canonical falls through to
          * the best admitted channel.  The network producer populates this from
          * per-station coverage (network.signal_min_station_fraction).
+         *
+         * @param allowlist System display name (e.g. "GPS") to the set of admitted RINEX
+         *        codes; taken by value and moved into the model.  Empty admits every code.
          */
         void setSignalAllowlist(std::map<std::string, std::set<std::string>> allowlist) {
             signal_allowlist_ = std::move(allowlist);
@@ -742,6 +762,8 @@ namespace GnssProcessor {
         void setDeclaredSignalRoster(const NetworkSignalDeclaration& decl, bool act);
 
         /// @brief The latch-against-declaration census.
+        /// @return Reference to this model's counters; @c seen is false and @c compared is 0
+        ///         until a declaration reaches the latch.  Valid for the lifetime of this model.
         const DeclaredLatchCounters& declaredLatchCounters() const {
             return declared_latch_;
         }
@@ -970,7 +992,7 @@ namespace GnssProcessor {
 
         /**
          * @brief Compare this constellation's picks with the declaration, count
-         *        every class and, only under @ref declared_roster_act_, move the
+         *        every class and, only under @c declared_roster_act_, move the
          *        latch onto it.
          *
          * @param cons       Constellation display name.
@@ -1029,11 +1051,11 @@ namespace GnssProcessor {
          * station's rule (@ref canonicalRuleForStation).  Under the default
          * @c CanonicalSignalRule::Count the highest count per (band, obs_type)
          * wins, ties broken by signal_priorities_ order.  When a declared roster
-         * is present, @ref applyDeclaredLatch_ compares the picks with it and
-         * moves them only under @ref declared_roster_act_.  The constellation is
+         * is present, @c applyDeclaredLatch_ compares the picks with it and
+         * moves them only under @c declared_roster_act_.  The constellation is
          * then marked decided, so later epochs are no-ops for it.  A restored
          * constellation still pending the audit
-         * (@ref constellation_canonical_audit_pending_) is tallied once more
+         * (@c constellation_canonical_audit_pending_) is tallied once more
          * without changing its latch.
          *
          * @param observations Observations for the current epoch.
@@ -1082,6 +1104,14 @@ namespace GnssProcessor {
          * signal of that type is present this epoch; the two knob-driven additions
          * described below are then skipped.
          *
+         * @param obs Observation whose measurements decide which selected signals are present.
+         * @param system_str GNSS system name (e.g. "GPS").
+         * @param freq_band_to_signal Map from band name to (best_code, best_phase), as
+         *        @c buildFrequencyBandMap fills it.
+         * @param freq_bands Frequency bands in discovery order; the order of the output follows it.
+         * @param[out] selected_signals Cleared, then filled with one entry per selected signal
+         *        (a RINEX observation code, with an empty second member), code before phase
+         *        within each band.
          * @param companion_out Optional.  When non-null and
          *        `network.second_code_channel` is armed on the network path, receives
          *        the allow-listed band-1 code signals this call added besides the one
@@ -1100,6 +1130,7 @@ namespace GnssProcessor {
          *        row distinguishable downstream (the sigma scale, R5, and the cell
          *        telemetry, R7).  Left untouched when neither the knob nor the
          *        `channel_mode` "all" widening applies.
+         * @return True when at least one signal was selected.
          */
         bool selectUncombinedSignals(const RinexObservation& obs, const std::string& system_str,
             const std::map<std::string, std::pair<std::string, std::string>>& freq_band_to_signal,
@@ -1140,7 +1171,7 @@ namespace GnssProcessor {
          * through Antenna::getAntennaCorrection), code/phase bias (when enabled),
          * Shapiro delay, ocean tidal and atmospheric pressure loading, and solid
          * tide.  The pole tide is not included: both callers add
-         * @ref computePoleTideProjection separately.
+         * @c computePoleTideProjection separately.
          *
          * @param obs           RINEX observation (satellite ID, system, time).
          * @param ppp_obs       PppObservation with LOS vector and mapping factors.

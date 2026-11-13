@@ -213,11 +213,6 @@ std::vector<std::string> activeFrequencyBands(
      * @brief Construct a PppModel instance.
      *
      * Builds the internal geometry, ionosphere, antenna and corrections helpers.
-     *
-     * @param config Read-only configuration.
-     * @param product_parser External products (SP3/CLK/...).
-     * @param log_manager Diagnostic output.
-     * @param rinex_parser Observation metadata and receiver info.
      */
     PppModel::PppModel(const GnssConfig& config, ProductParser& product_parser,
         LogManager& log_manager, const RinexParser& rinex_parser)
@@ -349,8 +344,6 @@ std::vector<std::string> activeFrequencyBands(
      * No zenith ionosphere state is set: in PPP-RTK mode, MeasurementModel creates per-satellite
      * slant ionosphere states as satellites appear.  A state whose position is nonzero, free of
      * NaN and within 1e9 m of the geocentre, with a 5-row core covariance, is left unchanged.
-     *
-     * @param state Output PppState to initialize (modified in-place).
      */
     void PppModel::initializeState(PppState& state) {
         size_t core_size = 5; // Position(3) + Clock(1) + Tropo(1) for both PPP and PPP-RTK

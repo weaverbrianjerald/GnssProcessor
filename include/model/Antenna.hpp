@@ -122,7 +122,7 @@ namespace GnssProcessor {
 		 * radome; (3) only when @p enable_type_substitution is true, the opt-in
 		 * deprecated-code TYPE-remap table.  Step (2) never remaps the antenna
 		 * type, so an unknown model still resolves to nothing.  Does not log;
-		 * @ref findReceiverAntennaEntry wraps this and emits the correction-path
+		 * @c findReceiverAntennaEntry wraps this and emits the correction-path
 		 * ambiguity and substitution warnings.
 		 *
 		 * @param antennas Loaded ATX antenna models to match against.
@@ -204,21 +204,34 @@ namespace GnssProcessor {
 
 		/// @brief Arm the per-receiver phase wind-up census (see
 		///        GnssCorrections::enableWindUpCensus).  Telemetry only.
+		/// @param wu_gap_s    Accumulator continuity horizon in force (s).
+		/// @param carry_gap_s Phase-leveling carry horizon (s), used only to bucket gaps
+		///                    between the two horizons; 0 disables that bucketing.
 		void enableWindUpCensus(double wu_gap_s, double carry_gap_s);
 		/// @brief The census counters for this receiver's corrections instance.
+		/// @return Reference to the census (all zero unless @c enableWindUpCensus ran);
+		///         valid for the lifetime of this object.
 		const GnssCorrections::WindUpCensus& windUpCensus() const;
 		/// @brief The accumulator-restart ledger (§10.4 response; see
 		///        GnssCorrections::wuRestarts).
+		/// @return Reference to the ledger, keyed by satellite identifier; empty when no
+		///         restart is pending.  Valid for the lifetime of this object.
 		const std::map<std::string, GnssCorrections::WuRestart>& wuRestarts() const;
 		/// @brief Clear the restart ledger (called when the response consumes it).
 		void clearWuRestarts();
 		/// @brief Install the satellite-state source of the wind-up gap bridge (see
 		///        GnssCorrections::setSatStateProvider); inert unless
 		///        @c estimation.phase_windup_gap_bridge is on.
+		/// @param provider Callable returning satellite ECEF position and velocity and the
+		///                 Sun position at a virtual epoch; an empty function removes it.
 		void setWindUpSatStateProvider(GnssCorrections::SatStateProvider provider);
 		/// @brief The gap-bridge counters for this receiver's corrections instance.
+		/// @return Reference to the counters (all zero unless a bridge ran); valid for the
+		///         lifetime of this object.
 		const WindUpBridge::Counters& windUpBridgeCounters() const;
 		/// @brief The named gap-bridge attempts of this receiver (capped; see WindUpBridge::kMaxEvents).
+		/// @return Reference to the attempts, oldest first; empty when none was made.
+		///         Valid for the lifetime of this object.
 		const std::vector<WindUpBridge::Event>& windUpBridgeEvents() const;
 
 		/**
@@ -227,7 +240,7 @@ namespace GnssProcessor {
 		 * Looks up the receiver antenna type from the RINEX header, finds the
 		 * AntennaData entry by exact, then substring, match on the normalized
 		 * type (the radome→NONE fallback and the TYPE substitution of
-		 * @ref findReceiverAntennaEntry are not applied here), and logs its type,
+		 * @c findReceiverAntennaEntry are not applied here), and logs its type,
 		 * validity interval, grid parameters (dazi, dzen, zen1), PCO vectors per
 		 * frequency, and PCV table values.  The output is written at trace level
 		 * to the "antenna_model" logger so it can be compared side-by-side with
@@ -283,7 +296,7 @@ namespace GnssProcessor {
 		 * @brief Whether the RINEX receiver antenna type matched an ATX model entry.
 		 *
 		 * Runs the same receiver-antenna matching as getAntennaCorrection()
-		 * (@ref findReceiverAntennaEntry on the RINEX-header antenna string, with
+		 * (@c findReceiverAntennaEntry on the RINEX-header antenna string, with
 		 * the always-on type-preserving radome→NONE fallback and the opt-in TYPE-remap
 		 * substitution when @c GnssConfig::enableRxAntennaSubstitution() is set) and
 		 * reports whether any entry matched.  A false result means that neither the
@@ -374,6 +387,9 @@ namespace GnssProcessor {
 		 * @param satellite Satellite identifier (e.g. "G05").
 		 * @param signal    RINEX-3 observation code (e.g. "L5Q").
 		 * @param system    GNSS system enum.
+		 * @return True when the antenna correction for this (satellite, signal) is derived
+		 *         from a neighbouring frequency; false when coverage is strict, the
+		 *         fallback is disabled, or the pair has no entries at all.
 		 */
 		bool wasAtxSubstituted(const std::string& satellite,
 		                       const std::string& signal,

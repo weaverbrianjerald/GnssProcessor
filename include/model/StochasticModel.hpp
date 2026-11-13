@@ -151,7 +151,7 @@ namespace GnssProcessor {
          *        (variance-additive form, Wieser hybrid).
          *
          * Pipeline:
-         *  1. Resolve CN0: read the matching @c S<band><attr>
+         *  1. Resolve CN0: read the matching @c S<band>\<attr\>
          *     observable from @p measurements, or synthesise it from
          *     elevation (see @c synthesizeCn0FromElevation) when the
          *     S-observable is absent or non-positive.

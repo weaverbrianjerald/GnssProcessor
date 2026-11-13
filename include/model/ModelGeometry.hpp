@@ -250,6 +250,10 @@ namespace GnssProcessor {
          * Lets an external component (the simulator's solid-earth-tide reuse)
          * obtain bit for bit the bodies the processor uses, so the injected tide
          * cancels.  Thin public wrapper over the private ensureSunMoonCached.
+         *
+         * @param[in]  time Epoch to evaluate the bodies at.
+         * @param[out] sun  Sun ECEF position (m).
+         * @param[out] moon Moon ECEF position (m).
          */
         void sunMoonPositions(const GnssTime& time, Eigen::Vector3d& sun,
                               Eigen::Vector3d& moon) const {
@@ -353,6 +357,11 @@ namespace GnssProcessor {
          * Maintained only while @c realtime.honor_ssr_reference_point is on.
          * With the toggle off nothing is recorded and this always returns
          * false, so the default path is byte-identical and allocation-free.
+         *
+         * @param satellite Satellite id (e.g. "G05").
+         * @return True when the last orbit query for @p satellite applied an
+         *         APC-referenced SSR orbit delta; false otherwise, including a
+         *         satellite never queried.
          */
         bool ssrOrbitApcApplied(const std::string& satellite) const {
             const auto it = ssr_orbit_apc_applied_.find(satellite);
@@ -378,6 +387,8 @@ namespace GnssProcessor {
             return it != live_orbit_used_.end() && it->second;
         }
 
+        /// Orbit index built by @c loadData: satellite id to its orbit records
+        /// (pointers into the shared orbit vector), sorted by ascending epoch.
         std::unordered_map<std::string, std::vector<const OrbitData*>> orbit_index_;
 
     private:

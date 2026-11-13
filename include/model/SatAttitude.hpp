@@ -99,6 +99,9 @@ public:
         double orbit_rate_deg_s{ 0.0 };    ///< Mean orbit angular rate (deg/s).
 
         /// @brief Largest |beta| (deg) at which the satellite cannot follow the nominal yaw.
+        /// @return atan(orbit_rate_deg_s / max_yaw_rate_deg_s) in degrees (4.35 for Block IIF,
+        ///         2.39 for Block IIR); a noon turn occurs only for |beta| below it.
+        ///         0 when @c max_yaw_rate_deg_s is not positive.
         double beta0Deg() const;
     };
 
