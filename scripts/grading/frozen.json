@@ -119,5 +119,133 @@
    ],
    "sha256": "6a933e1ce255abbcb87c2c7f27759b3c2531446535b4230195e3422b66bf3f9a"
   }
+ ],
+ "users.py": [
+  {
+   "args": [
+    "inside",
+    "_rap_n46c_n146",
+    "--fix",
+    "n46x",
+    "--flt",
+    "n46f",
+    "--doy",
+    "146",
+    "--pair",
+    "E L1C/L5Q",
+    "--hours",
+    "2",
+    "--per-site",
+    "--list",
+    "5"
+   ],
+   "sha256": "9085c4f45c11b1c8bce495b01e66cd89fd625b4514e6bfbc866634230e541d6a",
+   "suffix": "_h6"
+  },
+  {
+   "args": [
+    "inside",
+    "_rap_d24_n146",
+    "--fix",
+    "a24x",
+    "--flt",
+    "a24f",
+    "--doy",
+    "146",
+    "--pair",
+    "G L1C/L2W",
+    "--hours",
+    "2",
+    "--per-site",
+    "--list",
+    "5",
+    "--sites",
+    "solo"
+   ],
+   "sha256": "6d428c70ea04d3e9e56d85124a6f1b22a6f477df80edca0858321e2547ef8da6",
+   "suffix": "_h6"
+  },
+  {
+   "args": [
+    "outside",
+    "--fix",
+    "n46x",
+    "--flt",
+    "n46f",
+    "--doy",
+    "146",
+    "--sites",
+    "solo,reyk",
+    "--pair",
+    "E L1C/L5Q",
+    "--hours",
+    "8"
+   ],
+   "sha256": "9d68c60b9b4556c68ff17e69bf50080aced16fb30dc7f775a028c14de2f8c7f6",
+   "suffix": "_h6"
+  },
+  {
+   "args": [
+    "both",
+    "--fix",
+    "a24x",
+    "--flt",
+    "a24f",
+    "--doy",
+    "146",
+    "--sites",
+    "solo,reyk",
+    "--pair",
+    "E L1C/L5Q",
+    "--hours",
+    "8",
+    "--net",
+    "_rap_d24_n146"
+   ],
+   "sha256": "2ad7c12f2112c56bae5035a4707d567e830b6b88636b6d87eb1a2baf563d6ed3",
+   "suffix": "_h6"
+  },
+  {
+   "args": [
+    "paired",
+    "n46x",
+    "a24x",
+    "--doy",
+    "146",
+    "--sites",
+    "solo,reyk",
+    "--first",
+    "7",
+    "--last",
+    "8"
+   ],
+   "sha256": "96627e229f0adaca37e26934ac25a01f15898c8bbfae15a2c61cca08c8ce6c00",
+   "suffix": "_h6"
+  },
+  {
+   "args": [
+    "hourly",
+    "obs:a24x",
+    "obs:n46x",
+    "--doy",
+    "146",
+    "--set",
+    "solo,reyk",
+    "--hours",
+    "8",
+    "--matrix"
+   ],
+   "sha256": "79718130749cbefa4112207241e65fb65e666b9626fd95d44826c944ea297f8d",
+   "suffix": "_h6"
+  },
+  {
+   "args": [
+    "refch",
+    "_rap_nw_obsa24x_146_solo",
+    "_rap_nw_obsn46x_146_solo",
+    "--sums"
+   ],
+   "sha256": "f7342ff9ccbdaea87cd867142a736c2c9e1ea60cdc0bc82f30d418b6ab52c91b"
+  }
  ]
 }

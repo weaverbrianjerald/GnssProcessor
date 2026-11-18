@@ -6,7 +6,9 @@ Two kinds:
   repository ignores every logs/ folder and every *.log file (.gitignore), which run folders are made of.
 - frozen: the first two hours of named network and user runs, copied once from D:/GnssProcessorSupport/runs_nom into
   D:/GnssProcessorSupport/gates/grader_fixtures_2026-11-18 (GRADING_FROZEN_ROOT overrides it) with its MANIFEST.sha256;
-  frozen.json in this folder lists, per script, the commands run on it and the sha256 of their output.
+  frozen.json in this folder lists, per script, the commands run on it and the sha256 of their output.  A case with
+  "suffix": "_h6" runs on a second window of the same runs (hours 6 to 8 of the day, ..._2026-11-18_h6), where the
+  users hold integers (they hold few in the first two hours).
   check_frozen() reruns them; it is skipped when the frozen folder is absent (another machine, D: disconnected).
 
     py -3.14 scripts/grading/fixture.py --selftest
@@ -64,7 +66,11 @@ def check_frozen(script):
     ok = True
     for c in cases:
         args = [x.replace("{fixtures}", os.path.join(HERE, "fixtures")) for x in c["args"]]
-        got = sha256_text(run(script, args, root))
+        croot = root + c.get("suffix", "")          # a second window of the same runs, e.g. "_h6" (hours 6 to 8)
+        if not os.path.isfile(os.path.join(croot, "MANIFEST.sha256")):
+            print(f"  frozen window {croot} absent: case skipped")
+            continue
+        got = sha256_text(run(script, args, croot))
         if got != c["sha256"]:
             print(f"  FAIL frozen: {script} {' '.join(c['args'])}: {got[:16]} against {c['sha256'][:16]}")
             ok = False

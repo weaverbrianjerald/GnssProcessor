@@ -1,0 +1,46 @@
+{
+  "about": "Synthetic fixture of users.py's self-test (card GRA, step G5). Network run net with one station AAAA00XXX: E11 held at (100, 200), E05 held at (103, 204), E04 pinned at (105, 207); E09 unknown to it. At 172800 the fixing user tx (reference E11) holds E04 at (5, 7), E05 at (3, 4) and E09 at (2, 2); the float user tf agrees on E04 and E09 and sits near (0, 0) on E05, so the fixing user's E05 is a near-null (3, 4) error: right by the narrow-lane check inside the network, wrong on both lanes. At 172830 the fixing user's reference changes to E12 (no hold). Hourly 3D medians of tx and tf for the paired difference.",
+  "files": {
+    "_rap_net/arm.json": [
+      "{\"network\": {\"stations\": [{\"name\": \"AAAA00XXX\"}]}}"
+    ],
+    "_rap_net/logs/network_ring_fix.csv": [
+      "week,tow,station,sat,sig1,sig2,ring,candidate,state,refused,n1,n2,audit",
+      "2420,172800.000,AAAA00XXX,E11,L1C,L5Q,1,1,held,,100,200,",
+      "2420,172800.000,AAAA00XXX,E05,L1C,L5Q,1,1,held,,103,204,"
+    ],
+    "_rap_net/logs/network_chain_edges.csv": [
+      "week,tow,system,band,edge_sta,edge_sat,target_cyc",
+      "2420,172800.000,E,L1C,AAAA00XXX,E04,105",
+      "2420,172800.000,E,L5Q,AAAA00XXX,E04,207"
+    ],
+    "_rap_nw_obstx_146_aaaa/stdout.txt": [
+      "[2313, 172800.000 (2024-05-25 00:00:00.000)] [resolver] [info] CLFRAC sat_i=E04 sat_ref=E11 sig=L1C sd_cyc=5.0000",
+      "[2313, 172800.000 (2024-05-25 00:00:00.000)] [resolver] [info] CLFRAC sat_i=E04 sat_ref=E11 sig=L5Q sd_cyc=7.0000",
+      "[2313, 172800.000 (2024-05-25 00:00:00.000)] [resolver] [info] CLFRAC sat_i=E05 sat_ref=E11 sig=L1C sd_cyc=3.0000",
+      "[2313, 172800.000 (2024-05-25 00:00:00.000)] [resolver] [info] CLFRAC sat_i=E05 sat_ref=E11 sig=L5Q sd_cyc=4.0000",
+      "[2313, 172800.000 (2024-05-25 00:00:00.000)] [resolver] [info] CLFRAC sat_i=E09 sat_ref=E11 sig=L1C sd_cyc=2.0000",
+      "[2313, 172800.000 (2024-05-25 00:00:00.000)] [resolver] [info] CLFRAC sat_i=E09 sat_ref=E11 sig=L5Q sd_cyc=2.0000",
+      "[2313, 172830.000 (2024-05-25 00:00:30.000)] [resolver] [info] CLFRAC sat_i=E04 sat_ref=E12 sig=L1C sd_cyc=0.5000",
+      "[2313, 172830.000 (2024-05-25 00:00:30.000)] [resolver] [info] CLFRAC sat_i=E04 sat_ref=E12 sig=L5Q sd_cyc=0.5000"
+    ],
+    "_rap_nw_obstf_146_aaaa/stdout.txt": [
+      "[2313, 172800.000 (2024-05-25 00:00:00.000)] [resolver] [info] CLFRAC sat_i=E04 sat_ref=E11 sig=L1C sd_cyc=5.0500",
+      "[2313, 172800.000 (2024-05-25 00:00:00.000)] [resolver] [info] CLFRAC sat_i=E04 sat_ref=E11 sig=L5Q sd_cyc=7.0400",
+      "[2313, 172800.000 (2024-05-25 00:00:00.000)] [resolver] [info] CLFRAC sat_i=E05 sat_ref=E11 sig=L1C sd_cyc=0.0200",
+      "[2313, 172800.000 (2024-05-25 00:00:00.000)] [resolver] [info] CLFRAC sat_i=E05 sat_ref=E11 sig=L5Q sd_cyc=0.0300",
+      "[2313, 172800.000 (2024-05-25 00:00:00.000)] [resolver] [info] CLFRAC sat_i=E09 sat_ref=E11 sig=L1C sd_cyc=2.0100",
+      "[2313, 172800.000 (2024-05-25 00:00:00.000)] [resolver] [info] CLFRAC sat_i=E09 sat_ref=E11 sig=L5Q sd_cyc=1.9800"
+    ],
+    "_rap_nw_obstx_146_aaaa/logs/consumer_replay_hourly.csv": [
+      "hour,n,err3d_mean_m,err3d_median_m",
+      "0,120,0.011,0.010",
+      "1,120,0.010,0.009"
+    ],
+    "_rap_nw_obstf_146_aaaa/logs/consumer_replay_hourly.csv": [
+      "hour,n,err3d_mean_m,err3d_median_m",
+      "0,120,0.009,0.008",
+      "1,120,0.011,0.010"
+    ]
+  }
+}
