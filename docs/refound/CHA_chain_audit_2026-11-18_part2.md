@@ -130,3 +130,38 @@ The first three are the background's; each is restated with what the code shows 
 - **At `72b7b3b`** (after the fast-forward; Release rebuilt in 1 256 s): engine `gnss_processor_cha2.exe` (sha256 `997783a1a394a2e8`); the 10-epoch smoke `_rap_cha_ctl2_n147_smoke` exited 0 with `products.txt` identical to the `2fdfc29` smoke's. The 2 h control `_rap_cha_ctl2_n147` exited 0 after 811 s with 240 epochs emitted, beside the five runs of card NRF section 118. Against `_rap_d24c32_n147`: `products.txt` byte-identical, all traces and the run manifest identical, and the same single posture-count line apart. The adopted configuration reproduces at the tip the plan starts from.
 
 <!-- Results are appended below this line under dated headings. -->
+
+### 2026-11-18: steps S1 to S3 of the refactor (milestone A)
+
+**How each step is gated.** The managing session approved the plan's steps S1 to S6 at 09:55, each a commit on `chain/audit` gated as section 5.1 says. Each step is built in Release with `scripts\wt_build.ps1` (its engine copied as `gnss_processor_chasN.exe`), its 307 chain cases run (the filter `*RingFix*:*ChainFrame*:*Chain*:*PhaseFamily*:*Eq34*:*eq34*:*ArcGraph*:*HeldFirst*:*EpochContract*`), and its 2 h arms `_rap_csN_<control>` run and compared with `scripts/nom_td_gate.py --whole --mask-time` against the base engine's references (engine `cha2` at `72b7b3b`: `_rap_chaR_<control>`, and `_rap_cha_ctl2_n147` for n147), in `D:/GnssProcessorSupport/runs_nom`. The controls: n146 and n147 (the 24 h days' configuration over 2 h), m1 (the clean two-mode bed), h40 (the bracket bed), d1 (the code-error bed), u2z (the setting satellite), the phase-family beds f40mc and f40sc, and the two main references gf and gs while a step reaches code they run. The phase-family beds are the configurations of `f40_m1ta` and `f40_s_on` with `network.ring_fix.pairs` `["E:L1C/L5Q","G:L1C/L2W"]`: S2 refuses the member pair `E:L1X/L5X` (P6), and dropping it moves nothing on the base engine (`_rap_chaR_f40mc` against `_rap_chaR_f40m`, `_rap_chaR_f40sc` against `_rap_chaR_f40s`: products and every trace identical), the evidence that it matched no chord. The goldens leave the gate at S3: the code S3 to S5 change runs only with the chain on, which no golden arms.
+
+| step | commit | lines | gate | what moved |
+| --- | --- | --- | --- | --- |
+| S1 | `0ab87eb` | +36 / -46, 3 files | pass (10 controls) | one log line, as announced: the observatory's run-start line names the record's source ("the chain's record they read is written by every election") |
+| S2 | `be0f6db` | +151 / -80, 12 files | pass (10 controls) | log text only, as announced: the ring fix's run-end line names the hold table's hits and its closure ("187 649 hold-table hit(s): 187 649 hold row(s) folded, 0 skipped on a tree edge, 0 without a column (CLOSED)" on n147; CLOSED on all eight ring-fix controls), and the phase-family line drops ", kept apart" (f40mc, f40sc); no control trips the new INERT warnings |
+| S3 | `495d5ca` | +182 / -157, 4 files | pass (8 controls) | nothing: S3's runs and S2's are identical, the log included (`nom_td_gate.py --whole --mask-time`, all eight) |
+
+Every run of the three gates exited 0; products and all CSV traces are identical to the references on every control.
+
+The full Debug suite at S3 (`gnss_tests.exe` of the S3 tree, 3 044 s): 4 431 cases in 607 suites, 4 392 passed, 37 skipped (fixture-gated: this worktree's `data/` holds no SIF, GPT3 or DOY-129 fixtures), 2 failed. The two failures, `RingFixNearNullGuard.TwoStepsLowIsFlaggedWithKMinusTwo` and `RingFixNearNullGuard.ALargeIonosphereFreeDeviationIsRefused`, are a defect of their test, present at the base (commit `79e3a29`) and untouched by the steps: each keeps a pointer into the vector that `ringFixNearNullVerdicts` returns as a temporary (`tests/network/test_ring_fix_nn_guard.cpp`, lines 73 and 85), destroyed at the end of the statement. The Debug heap fills the freed block (the case reads `k` = 0xDDDDDDDD); the Release build reads the stale values and passes by chance (the 307 chain cases of every step include the two). The fix holds the vector in a local first (two lines), outside the steps.
+
+**What each step did, beyond the plan's row.**
+- S1. The record (`ChainEpochObs`) is built by every election; `network.trace_chain_datum` writes only its CSV rows and events; `network.ring_fix.enable` needs only `network.phase_datum_eq34`.
+- S2. The two refusals of P6, at the loader (a `ring_fix.pairs` entry naming a member signal) and at run start (a receiver whose file declares a member and its identity; none on DOY 146 or 147). INERT warnings for `rehost_keep_carry` without the rehost row, `max_decisions_per_epoch` under an order other than "certain", and every ring-fix key set while the ring fix is off. The dead `cut_vertices` set is gone, and so are the release step's two chain inputs on the path where neither can be true (they stay in the step's contract and its unit cases). The run-end line of the hold table states its closure (hits = folded + skipped on a tree edge + without a column). Comments corrected (P18). The knob rename of P15 was declined: 25 files outside the chain, and merge conflicts with the open branches.
+- S3. One owner each for the latch test (`chainArcLatched`), the usable held link (`chainHeldLinkUsable`), the settled set of the pair and the cascade loops (`settledSetOf`), the hold and the un-hold of a link (`ringFixHoldLink` and `ringFixUnholdLink`, each with a named kind: decided, oracle, inherited; release, cut release, to tree) and the cascade lead's tally. Two items of the row were not done: the gate is one function called at two stages (no second rule to merge), and one chord table per epoch would move the observatory's trace (the observatory reads the table after RAIM, the ring fix after the solve), so it joins the rule changes below.
+
+**Found during the steps.** The ring fix's usable-entry test (`RingFixSeams.cpp`, the cut's entry) reads the slip latch on the cut's band only, while the chain's usable held link reads both bands of the link: one rule with two readings. Which reading is right is a rule question (S8 below).
+
+**Rule changes the audit suggests (none built; each for the author).**
+1. P1, P2: a held entry's step decided once, the entry check asked on the keep-carry path too (S8 (b), pre-registered before it runs).
+2. P3: a re-host's pin from the satellite's converged links rather than through one link (card IRD, IRD-4 and IRD-5).
+3. The slip latch of the usable entry read on one band or on both (above).
+4. P9: the cold start's chain fields persisted, so a resumed run's rows keep their memory.
+5. P11: one chord table per epoch.
+6. P12: the walk's station order chosen on purpose (S11 only names and pins today's).
+7. P13: the lead edges taking the new-edge test.
+8. P14: the near-null pair from the frequencies, with its own release cause.
+9. The held family defined once (the stream's flags count cascade thirds, the emitter's families do not; part 2, section 3).
+10. P15: the knob that means two keys renamed.
+
+S4 (`5a98185`), S5 (`e1bdc05`) and S6 (`0783ad1`) are committed; their gates and the 24 h identity run follow (milestone B).
