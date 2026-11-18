@@ -1,0 +1,76 @@
+{
+  "about": "Synthetic fixture of network_hourly.py's self-test (card GRA, step G2): an arm and a control of two hours. GPS hour 1: 2 of 3 rows held in the arm (one decided), 5 of 6 in the control, so the rounded tables differ by 16 points and the shares by 16.67. Galileo rows split by the list x.txt, with a third-band family. At the sample epoch 176400 the band-1 tree holds E04 (flagged on both signals), E05 (on L1C only) and E09 (on neither): lost on band 1 alone 1, on both signals 2. RAIM rows of both constellations in hour 2.",
+  "files": {
+    "x.txt": ["AAAA00XXX,BBBB00YYY"],
+    "_rap_arm/products.txt": [
+      "# gnss_network_product v2",
+      "E,2420,172800.0000004,0,0,0,0",
+      "E,2420,176400,0,0,0,0",
+      "P,E04,L1C,1.0,1,1,0",
+      "P,E04,L5Q,1.0,1,1,0",
+      "P,E05,L1C,1.0,1,1,0",
+      "P,E05,L5Q,1.0,0,1,0",
+      "P,E09,L1C,1.0,0,1,0",
+      "P,E09,L5Q,1.0,0,1,0",
+      "E,2420,178200,0,0,0,0",
+      "E,2420,178230,0,0,0,0"
+    ],
+    "_rap_arm/logs/network_ring_fix.csv": [
+      "week,tow,station,sat,sig1,sig2,ring,candidate,state,refused,n1,n2",
+      "2420,172800.000,AAAA00XXX,G05,L1C,L2W,1,1,held,,1,2",
+      "2420,172800.000,BBBB00YYY,G07,L1C,L2W,1,1,held,,1,2",
+      "2420,172830.000,CCCC00ZZZ,G08,L1C,L2W,1,1,decided,,1,2",
+      "2420,172800.000,AAAA00XXX,E04,L1C,L5Q,1,1,held,,1,2",
+      "2420,172800.000,BBBB00YYY,E05,L1C,L5Q,1,1,refused,wl,,",
+      "2420,172800.000,CCCC00ZZZ,E09,L7Q,L5Q,1,1,held,,1,2",
+      "2420,176400.000,AAAA00XXX,G05,L1C,L2W,1,1,held,,1,2",
+      "2420,176400.000,BBBB00YYY,G07,L1C,L2W,1,1,refused,wl,,"
+    ],
+    "_rap_arm/logs/network_chain_edges.csv": [
+      "week,tow,system,band,edge_sta,edge_sat,target_cyc",
+      "2420,176400.000,E,L1C,AAAA00XXX,E04,10",
+      "2420,176400.000,E,L1C,AAAA00XXX,E05,11",
+      "2420,176400.000,E,L1C,BBBB00YYY,E09,12",
+      "2420,176400.000,G,L1C,AAAA00XXX,G05,13"
+    ],
+    "_rap_arm/logs/network_raim.csv": [
+      "week,tow,sat,station",
+      "2420,176400.000,E04,AAAA00XXX",
+      "2420,176430.000,G05,BBBB00YYY"
+    ],
+    "_rap_arm/logs/network_epoch_status.csv": [
+      "week,tow,disposition,sigma0",
+      "2420,172800.000,emitted,1.0",
+      "2420,176400.000,emitted,1.0"
+    ],
+    "_rap_ctl/products.txt": [
+      "E,2420,172800,0,0,0,0",
+      "E,2420,176400,0,0,0,0",
+      "E,2420,176430,0,0,0,0"
+    ],
+    "_rap_ctl/logs/network_ring_fix.csv": [
+      "week,tow,station,sat,sig1,sig2,ring,candidate,state,refused,n1,n2",
+      "2420,172800.000,AAAA00XXX,G05,L1C,L2W,1,1,held,,1,2",
+      "2420,172800.000,BBBB00YYY,G07,L1C,L2W,1,1,held,,1,2",
+      "2420,172800.000,CCCC00ZZZ,G08,L1C,L2W,1,1,held,,1,2",
+      "2420,172830.000,AAAA00XXX,G05,L1C,L2W,1,1,held,,1,2",
+      "2420,172830.000,BBBB00YYY,G07,L1C,L2W,1,1,held,,1,2",
+      "2420,172830.000,CCCC00ZZZ,G08,L1C,L2W,1,1,refused,wl,,",
+      "2420,172800.000,AAAA00XXX,E04,L1C,L5Q,1,1,held,,1,2",
+      "2420,176400.000,AAAA00XXX,G05,L1C,L2W,1,1,held,,1,2",
+      "2420,176400.000,BBBB00YYY,G07,L1C,L2W,1,1,refused,wl,,"
+    ],
+    "_rap_ctl/logs/network_chain_edges.csv": [
+      "week,tow,system,band,edge_sta,edge_sat,target_cyc"
+    ],
+    "_rap_ctl/logs/network_raim.csv": [
+      "week,tow,sat,station",
+      "2420,176400.000,G05,AAAA00XXX"
+    ],
+    "_rap_ctl/logs/network_epoch_status.csv": [
+      "week,tow,disposition,sigma0",
+      "2420,172800.000,emitted,1.0",
+      "2420,176400.000,emitted,1.0"
+    ]
+  }
+}

@@ -1,0 +1,87 @@
+{
+ "network_hourly.py": [
+  {
+   "args": [
+    "table",
+    "n46c_n146",
+    "--xfile",
+    "{fixtures}/combined_mode_28.txt",
+    "--hours",
+    "2"
+   ],
+   "sha256": "f08594a9c76416cd5c60b9f8c29ac6b12898d4b1128766aad4837fca42d0b3fb"
+  },
+  {
+   "args": [
+    "table",
+    "n46c_n146",
+    "--xfile",
+    "{fixtures}/combined_mode_28.txt",
+    "--hours",
+    "2",
+    "--view",
+    "exact"
+   ],
+   "sha256": "52b3ae1f8fd62025a1b2c7c7308bba5701d15e16b1670c4e5e33e5af28344dd8"
+  },
+  {
+   "args": [
+    "table",
+    "d24_n146",
+    "--xfile",
+    "{fixtures}/combined_mode_28.txt",
+    "--hours",
+    "2",
+    "--view",
+    "d24"
+   ],
+   "sha256": "8940ab93b329f0b9c67c19cdd12bda4c95d848c1262e54e1999cbe5ce7915f1b"
+  },
+  {
+   "args": [
+    "compare",
+    "n46c_n146",
+    "d24_n146",
+    "--xfile",
+    "{fixtures}/combined_mode_28.txt",
+    "--hours",
+    "2",
+    "--first",
+    "1",
+    "--last",
+    "2",
+    "--view",
+    "legacy"
+   ],
+   "sha256": "43437857209ac8c8a12712271c936158956772f0d39cda177331a399f413b932"
+  },
+  {
+   "args": [
+    "compare",
+    "n46c_n146",
+    "d24_n146",
+    "--xfile",
+    "{fixtures}/combined_mode_28.txt",
+    "--hours",
+    "2",
+    "--first",
+    "1",
+    "--last",
+    "2",
+    "--view",
+    "exact"
+   ],
+   "sha256": "3bc192b3306064b44dd8f2fd137805cc57af3eca35f5ae832f32073b9c4b5945"
+  },
+  {
+   "args": [
+    "families",
+    "n46c_n146",
+    "d24_n146",
+    "--hours",
+    "2"
+   ],
+   "sha256": "4a4ea5d7d3e277177303868e1b7469d0fc8bb56005e74d0031b5abb2270ab419"
+  }
+ ]
+}

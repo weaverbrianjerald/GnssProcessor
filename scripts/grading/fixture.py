@@ -63,7 +63,8 @@ def check_frozen(script):
             cases = json.load(fh).get(script, [])
     ok = True
     for c in cases:
-        got = sha256_text(run(script, c["args"], root))
+        args = [x.replace("{fixtures}", os.path.join(HERE, "fixtures")) for x in c["args"]]
+        got = sha256_text(run(script, args, root))
         if got != c["sha256"]:
             print(f"  FAIL frozen: {script} {' '.join(c['args'])}: {got[:16]} against {c['sha256'][:16]}")
             ok = False

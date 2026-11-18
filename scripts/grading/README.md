@@ -25,3 +25,4 @@ every `logs/` folder and `*.log` file), and, when the frozen real-run fixtures a
 | --- | --- | --- | --- |
 | shared readers of network and user runs | `runs.py` | imported by the others | none |
 | synthetic and frozen fixtures | `fixture.py` | imported by the self-tests | none |
+| held share by hour, family and receiver mode; GPS held share; RAIM rows; epochs; lost satellite-samples (B1, B2, B3, B8) | `network_hourly.py` | `table <run> --xfile <list>`; `compare <arm> <control> --xfile <list>`; `families <run> ...` | legacy: `single_hourly.py`, `c4_compare.py` as of section 118.1, `held_by_family.py`, the held, RAIM, epoch and withheld rows of `d24_hourly.py` (`--view d24`); exact: unrounded shares (the worst hour and the mean of a comparison taken from them), a row per family, RAIM rows by constellation, lost samples by both rules (band 1 flagged; both signals flagged, section 96.1) |
