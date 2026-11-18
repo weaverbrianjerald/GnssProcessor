@@ -136,4 +136,31 @@ struct RxCodeBiasCarryCounters {
     size_t n_rxcb_gauges = 0;   ///< zero-mean receiver code-bias prior rows folded over the run
 };
 
+struct RxCbKey;   // common/ParamRef.hpp
+
+/**
+ * @brief The random-walk process noise of a carried receiver code-bias column (m²/s).
+ *
+ * A receiver IFB column (@c RxIfbRule::governs: the extra-band code delay of a band outside each constellation's
+ * clock-reference pair) takes @p ebd_q when it is above 0 (@c network.rx_extra_band_delay_q); every other column,
+ * and every column when @p ebd_q is 0, takes @p cb_q (@c network.rx_cb_carry_q).  The one rule every carry site
+ * of the family reads (the inject gates, the harvest's step test and the prior-residual census).
+ *
+ * @param key   The column's receiver code-bias key.
+ * @param cb_q  @c network.rx_cb_carry_q (m²/s).
+ * @param ebd_q @c network.rx_extra_band_delay_q (m²/s; 0: none).
+ * @return The column's process noise (m²/s).
+ */
+double rxCbCarryQ(const RxCbKey& key, double cb_q, double ebd_q);
+
+/**
+ * @brief @ref rxCbCarryQ for a column named by its key text (@c receiverCodeBiasKey); a key that does not parse
+ *        takes @p cb_q.
+ * @param key_text The column's receiver code-bias key text.
+ * @param cb_q     @c network.rx_cb_carry_q (m²/s).
+ * @param ebd_q    @c network.rx_extra_band_delay_q (m²/s; 0: none).
+ * @return The column's process noise (m²/s).
+ */
+double rxCbCarryQ(const std::string& key_text, double cb_q, double ebd_q);
+
 } // namespace GnssProcessor

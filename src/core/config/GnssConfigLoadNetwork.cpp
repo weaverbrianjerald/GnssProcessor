@@ -1494,6 +1494,12 @@ namespace GnssProcessor {
                 network_config_.phase_families.push_back(e);
             }
         }
+        // The codes-shared form of the table (a member's codes read under the identity's names too).
+        network_config_.phase_family_codes =
+            jval<bool>(json, "network.phase_family_codes", "network_phase_family_codes", false);
+        if (network_config_.phase_family_codes && network_config_.phase_families.empty())
+            throw std::runtime_error("network.phase_family_codes reads a phase-family member's codes under its "
+                                     "identity's names: it needs network.phase_families.");
         // Integer fixing ring by ring on the eq34 chain (include/network/ar/RingFix.hpp).  The
         // interlocks with the chain are checked once the chain's keys are read
         // (loadNetworkSignalIntegrity_, after the eq34 keys).
@@ -1624,6 +1630,16 @@ namespace GnssProcessor {
             rf.entry_revalidate = jval<bool>(json, "network.ring_fix.entry_revalidate",
                                              "network_ring_fix_entry_revalidate", false);
             rf.nn_monitor = jval<bool>(json, "network.ring_fix.nn_monitor", "network_ring_fix_nn_monitor", false);
+            rf.nn_guard_release = jval<bool>(json, "network.ring_fix.nn_guard_release",
+                                             "network_ring_fix_nn_guard_release", false);
+            if (rf.nn_guard_release && !rf.nn_guard)
+                throw std::runtime_error("network.ring_fix.nn_guard_release is the guard's release form: it needs "
+                                         "network.ring_fix.nn_guard.");
+            rf.held_first_by_life = jval<bool>(json, "network.ring_fix.held_first_by_life",
+                                               "network_ring_fix_held_first_by_life", false);
+            if (rf.held_first_by_life && !rf.held_first)
+                throw std::runtime_error("network.ring_fix.held_first_by_life orders the held-first walk's held arcs: it "
+                                         "needs network.ring_fix.held_first.");
             rf.form_configured_pairs = jval<bool>(json, "network.ring_fix.form_configured_pairs",
                                                   "network_ring_fix_form_configured_pairs", false);
             if (rf.form_configured_pairs && rf.pairs.empty())
@@ -5676,6 +5692,8 @@ namespace GnssProcessor {
             jval<bool>(json, "network.carry_rx_code_bias", "carry_rx_code_bias", false);
         network_rx_cb_carry_q_ =
             jval<double>(json, "network.rx_cb_carry_q", "rx_cb_carry_q", 1e-9);
+        network_rx_extra_band_delay_q_ =
+            jval<double>(json, "network.rx_extra_band_delay_q", "rx_extra_band_delay_q", 0.0);
         // RXCB-IN-BLOCK: the carried receiver code-bias columns
         // folded inside the station's whitened local block with their border regression,
         // instead of the diagonal fold at the conditional variance.  Validated in the
@@ -12213,6 +12231,16 @@ namespace GnssProcessor {
                            network_rx_cb_carry_q_);
                 return false;
             }
+            if (!(network_rx_extra_band_delay_q_ >= 0.0)) {
+                log->error("Network: network.rx_extra_band_delay_q must be >= 0 (got {}).",
+                           network_rx_extra_band_delay_q_);
+                return false;
+            }
+            if (network_rx_extra_band_delay_q_ > 0.0)
+                log->warn("Network (rx-CB carry): EXTRA-BAND DELAY Q {:.3e} m²/s: the receiver IFB columns (a band "
+                          "outside each constellation's clock-reference pair) walk with this process noise in place of "
+                          "network.rx_cb_carry_q ({:.3e} m²/s), so the delay may drift in time; the pair's receiver code "
+                          "bias keeps its own.", network_rx_extra_band_delay_q_, network_rx_cb_carry_q_);
             if (!network_code_datum_time_linked_) {
                 log->warn("Network: carry_rx_code_bias requires code_datum_time_linked (a "
                           "time-linked code datum keeps the carried receiver-bias lump "

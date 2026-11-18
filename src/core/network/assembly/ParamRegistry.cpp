@@ -257,6 +257,7 @@ NetworkParamRegistry NetworkParamRegistry::build(const NetworkKnobs& k, const Gn
                 : k.rxcb_blk ? ParamRoute::LocalBlock : ParamRoute::DiagonalStationPrior;
         s.source = "network.rx_cb_carry_q; network.carry_rx_code_bias, "
                    "network.carry_rx_code_bias_in_block; gap kRxCbMaxGapS (fixed)";
+        if (k.rx_ebd_q > 0.0) s.source += "; the IFB columns' q: network.rx_extra_band_delay_q";
         set(NetworkParamKind::RxCodeBias, std::move(s));
     }
     {

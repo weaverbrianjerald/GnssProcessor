@@ -566,6 +566,9 @@ namespace GnssProcessor {
         /// phases share one identity), so a run with it armed adds its rows to the warm-resume fingerprint.  Empty
         /// (default): every phase signal is its own family.
         PhaseFamilyTable phase_families;
+        /// The table's codes-shared form (network.phase_family_codes): members' codes read under the identities' names,
+        /// members' code-bias records copied from the identities' at emission.
+        bool phase_family_codes{ false };
         /// Phase-bias records written for family members at emission (network.phase_families), over the run.
         long long phase_family_member_records{ 0 };
         bool phase_family_pairs_logged{ false };   ///< The slip layer's watched-pairs line is out (network.phase_families).

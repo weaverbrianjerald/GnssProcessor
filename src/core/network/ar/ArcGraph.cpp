@@ -609,7 +609,11 @@ SpanningForest growChainForest(const ArcGraph& g, const Component& c, const std:
                 // Held first: a held arc from an attached vertex to an unattached one, the
                 // attached vertices in attachment order and each one's candidates in the walk's
                 // own order; the incumbent queue then re-attaches the rest of a fragment.
+                // By life (rules.held_by_life): every such held arc is a candidate and the most durable one is
+                // taken (the first in that order on a tie), so a setting satellite is re-hosted onto the held link
+                // it keeps longest rather than onto the first one the walk meets.
                 bool took = false;
+                int best_a = -1, best_u = -1;
                 for (int v : new_q) {
                     for (int a : chainCandidates(g, v, rules, station_rank)) {
                         if (a < 0 || static_cast<std::size_t>(a) >= rules.held_arcs->size()
@@ -618,6 +622,14 @@ SpanningForest growChainForest(const ArcGraph& g, const Component& c, const std:
                         const int u = otherEnd(g, a, v);
                         if (visited[static_cast<std::size_t>(u)]) continue;
                         if (!newEdgeOk(a)) continue;
+                        if (rules.held_by_life) {
+                            if (best_a < 0 || g.rows[static_cast<std::size_t>(a)].durability
+                                                  > g.rows[static_cast<std::size_t>(best_a)].durability) {
+                                best_a = a;
+                                best_u = u;
+                            }
+                            continue;
+                        }
                         record(a, u, /*from_incumbent=*/false);
                         f.edges.back().held_first = true;
                         attach(u);
@@ -625,6 +637,12 @@ SpanningForest growChainForest(const ArcGraph& g, const Component& c, const std:
                         break;
                     }
                     if (took) break;
+                }
+                if (best_a >= 0) {
+                    record(best_a, best_u, /*from_incumbent=*/false);
+                    f.edges.back().held_first = true;
+                    attach(best_u);
+                    took = true;
                 }
                 if (took) continue;
             }

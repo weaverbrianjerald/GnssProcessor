@@ -761,6 +761,7 @@ struct NetworkRingFix {
     std::unique_ptr<RingFixTruth> truth;    ///< The fixture's truth (network.ring_fix.truth_root); null without it.
     double      oracle_until_s{0.0};        ///< The oracle phase's length from the first epoch (s; 0 = none).
     bool        held_first{false};          ///< The chain's walk re-attaches through held links first (network.ring_fix.held_first).
+    bool        held_first_by_life{false};  ///< The held-first walk tries the held arcs by remaining life (network.ring_fix.held_first_by_life).
     /// The pair families considered (network.ring_fix.pairs), as (constellation key, signal 1, signal 2); empty: all.
     std::set<std::tuple<std::string, std::string, std::string>> pairs;
     double      wl_frac_max{0.0};           ///< The decision's bound on the wide lane's fraction (cycles; 0: none).
@@ -838,6 +839,7 @@ struct NetworkRingFix {
     std::vector<RingFixLinkId> nn_reopen;   ///< Chords moved after the last solve: their carried entries re-open before PASS B.
     bool        entry_revalidate{false};    ///< Held entries to the tree are re-validated (network.ring_fix.entry_revalidate).
     bool        nn_monitor{false};          ///< The near-null monitor is armed (network.ring_fix.nn_monitor).
+    bool        nn_guard_release{false};    ///< The guard releases a flagged chord at its first flag, never moves it (network.ring_fix.nn_guard_release).
     RingFixNnMonitor nn_mon;                ///< Its state (measure-only).
 };
 

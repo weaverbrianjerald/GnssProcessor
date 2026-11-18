@@ -320,6 +320,12 @@ void networkRingFixArm(NetworkRun& run) {
              : nc.ring_fix.rule == "log"   ? RingFixRule::Log
                                            : RingFixRule::Gated;
     rf->held_first = nc.ring_fix.held_first;
+    rf->held_first_by_life = rf->held_first && nc.ring_fix.held_first_by_life;
+    if (rf->held_first_by_life)
+        log->warn("Network (ring fix): HELD FIRST BY LIFE: whenever the chain's walk takes a held arc to attach a vertex, "
+                  "it takes the held arc of the most remaining life (the satellite's elevation at the station, plus 90 "
+                  "degrees while rising; a slipped arc last), so a setting satellite is re-hosted onto the held link it "
+                  "keeps longest.");
     rf->max_decisions_per_epoch = nc.ring_fix.max_decisions_per_epoch;
     rf->settled_flags_on = nc.ring_fix.settled_flags;
     if (rf->settled_flags_on)
@@ -419,12 +425,15 @@ void networkRingFixArm(NetworkRun& run) {
     rf->nn_min_epochs = nc.ring_fix.nn_guard_min_epochs;
     rf->nn_tol_gf_m = nc.ring_fix.nn_guard_tol_gf_m;
     rf->nn_max_if_m = nc.ring_fix.nn_guard_max_if_m;
+    rf->nn_guard_release = rf->nn_guard && nc.ring_fix.nn_guard_release;
     if (rf->nn_guard)
         log->warn("Network (ring fix): NEAR-NULL GUARD: a held Galileo E1/E5a chord whose post-fit code residuals, "
                   "averaged over its last {} epochs and centred on its satellite's family and then its receiver, sit at "
                   "k near-null steps (geometry-free within {:.2f} m of k (4 lambda2 - 3 lambda1), ionosphere-free within "
-                  "{:.2f} m) moves by -k (3, 4); a second flag during the same hold releases it; tree edges are not moved.",
-                  rf->nn_min_epochs, rf->nn_tol_gf_m, rf->nn_max_if_m);
+                  "{:.2f} m) {}; tree edges are not moved.",
+                  rf->nn_min_epochs, rf->nn_tol_gf_m, rf->nn_max_if_m,
+                  rf->nn_guard_release ? "is released at its first flag (RELEASE FORM: its integer is never moved)"
+                                       : "moves by -k (3, 4); a second flag during the same hold releases it");
     rf->nn_monitor = nc.ring_fix.nn_monitor;
     if (rf->nn_monitor)
         log->warn("Network (ring fix): NEAR-NULL MONITOR (measure-only): each held Galileo E1/E5a chord's code signature "
@@ -1594,7 +1603,9 @@ void networkRingFixDecide(NetworkRun& run, const NetworkEpoch& ep) {
             if (!v.act) continue;
             ++rf.counters.nn_flagged;
             RingFixLink& L = rf.links.at(v.id);
-            if (L.nn_moved) {
+            // The release form (network.ring_fix.nn_guard_release) releases at the first flag; the move form at a
+            // second flag during the same hold.
+            if (L.nn_moved || rf.nn_guard_release) {
                 L.monitor_trip = true;   // the next release step releases it, before PASS B
                 ++rf.counters.nn_releases;
                 traces.emitEvent(t, "RINGFIX", "nn_release", v.id.sat, nameOf(v.id.station), v.dev_gf_m, rf.nn_tol_gf_m,

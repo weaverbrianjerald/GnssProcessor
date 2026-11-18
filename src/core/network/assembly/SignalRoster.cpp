@@ -889,6 +889,7 @@ namespace GnssProcessor {
         auto& rs = ctx.roster;
         // The phase-family table, applied at the network's observation intake (card NRF section 109.1).
         rs.phase_families = signalRosterPhaseFamilies(config_);
+        rs.phase_family_codes = !rs.phase_families.empty() && config_.getNetworkConfig().phase_family_codes;
         if (!rs.phase_families.empty()) {
             std::string rows;
             for (const PhaseFamilyRow& r : rs.phase_families)

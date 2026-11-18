@@ -4011,6 +4011,19 @@ namespace GnssProcessor {
         double networkRxCbCarryQ() const { return network_rx_cb_carry_q_; }
 
         /**
+         * @brief The random-walk process noise of a carried receiver extra-band code delay (m²/s)
+         *        (@c network.rx_extra_band_delay_q; card NRF section 117, the queue's item N6).
+         *
+         * Applies to the receiver IFB columns (the extra-band code delay of a band outside each constellation's
+         * clock-reference pair) of the receiver code-bias carry, in place of @ref networkRxCbCarryQ, so the delay may
+         * drift in time as section 79.4 measured (decimetres over hours) while the pair's receiver code bias keeps its
+         * own noise.  0 (default): the columns take @ref networkRxCbCarryQ, byte-identical.  Must be @c >= 0.
+         *
+         * @return Process noise in m^2/s of the carried extra-band delay (0: networkRxCbCarryQ applies).
+         */
+        double networkRxExtraBandDelayQ() const { return network_rx_extra_band_delay_q_; }
+
+        /**
          * @brief Run the M2 LS-VCE carry-row variance-component monitor
          *        (@c network.carry_vce).
          *
@@ -10200,6 +10213,7 @@ namespace GnssProcessor {
         bool   network_amb_float_drop_decouple_always_{false};  ///< A float-vehicle drop clears the regression and block row even at birth strength.
         double network_dense_fold_kappa_{1e-12};          ///< Relative-pivot bound of the dense border fold; default 1e-12, 1e-6 = the historical constant.
         double network_rx_cb_carry_q_{1e-9};              ///< rx-CB carry RW process noise (m²/s); var_eff = var + q·Δt. Only used when network.carry_rx_code_bias.
+        double network_rx_extra_band_delay_q_{0.0};       ///< Carried receiver extra-band (IFB) delay RW process noise (m²/s); 0: network_rx_cb_carry_q_ applies.
         bool   network_carry_vce_{false};                 ///< Run the carry-row variance-component monitor (M2, LS-VCE): estimate σ̂ (Floor m² + Rate m²/s) per carry family per constellation from the post-fit carry innovations and log it against the hand-set floors. A calibration instrument only; no feedback into the solve. Off = byte-identical (no accumulator, no logging).
         bool   network_carry_vce_apply_{false};           ///< LASER 5-95 variance-factor iteration (M2 v2, docs/record/SPEC_carry_vce_apply.md): multiply every carry fold variance by a measured, inflate-only, slew-limited α² per (family × constellation). Requires carry_vce. Solve-affecting and fingerprinted; a warm resume with it armed is a hard error (fresh convergence only). Off = byte-identical.
         std::string network_carry_vce_apply_families_{"pl"}; ///< Carry families the factor scales (M2 v2; comma list of pl / pb / cb). Must be a subset of carry_vce_components (hard error otherwise). Only used when carry_vce_apply.

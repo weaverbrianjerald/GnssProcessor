@@ -2033,6 +2033,17 @@ namespace GnssProcessor {
         /// episode's edges and a run-end table; nothing is moved or released (products identical).  False (default):
         /// off, byte-identical.
         bool nn_monitor{ false };
+        /// @c network.ring_fix.nn_guard_release: the release form of the guard (the queue's item N4, card NRF section
+        /// 115): a chord the guard flags is released at its first flag (its hold dropped, its integer never moved),
+        /// in place of the move by -k (3, 4).  Read only with nn_guard.  False (default): the move, byte-identical.
+        bool nn_guard_release{ false };
+        /// @c network.ring_fix.held_first_by_life: the held-first walk tries the held arcs by remaining life (the
+        /// queue's item N2, card NRF section 116, after section 106.5): among the held arcs from the attached
+        /// vertices to an unattached one, the arc of the most remaining life is taken (its satellite's elevation at
+        /// the station, plus 90 degrees while rising; a slipped arc last; the walk's own order on a tie), so a setting
+        /// satellite is re-hosted onto the held link it keeps longest.  Read only with held_first.  False (default):
+        /// the first held arc in the walk's order, byte-identical.
+        bool held_first_by_life{ false };
         /// @c network.ring_fix.form_configured_pairs: the chord table forms every family of network.ring_fix.pairs on
         /// an arc that tracks both its signals, beside the rule that pairs every band-1 signal with the arc's
         /// lowest-digit signal of another band, so that a family of a third band has chords.  Needs the pairs.  False
@@ -2089,6 +2100,13 @@ namespace GnssProcessor {
         /// family and stream records, while its codes, code biases, ambiguities and slip checks stay its own.  Typed at
         /// run start by @c signalRosterPhaseFamilies.  Empty (default): every signal is its own family, byte-identical.
         std::vector<std::string> phase_families;
+        /// @c network.phase_family_codes: the phase-family table's codes-shared form (card NRF section 118, after the
+        /// trace of section 112.6): a member's CODES are read under the identity's names too ("C1X" as "C1C", "C5X" as
+        /// "C5Q"), so both tracking kinds share one satellite code bias per band, the form section 110's run A tested
+        /// by renaming the files; the stream carries each member's code-bias record as a copy of its identity's, with
+        /// the identity's counter.  Read only with phase_families.  False (default): the codes keep their names,
+        /// byte-identical.
+        bool phase_family_codes{ false };
         SdEwlConfig      sd_ewl;              ///< SD pre-reduce EWL constraint (default off, byte-identical; docs/record/SPEC_sd_ewl_prereduce.md).
         SlipQcConfig     slip_qc;             ///< Slip-QC hardening (network.cycle_slip.*; every master default off, byte-identical; docs/record/SPEC_slip_qc_hardening.md).
         SignalIntegrityConfig signal_integrity; ///< Flicker/gap signal integrity: band-state classifier, degraded-phase demotion and re-vet (network.signal_integrity.*; default off, byte-identical; docs/record/SPEC_flicker_gap_integrity.md).

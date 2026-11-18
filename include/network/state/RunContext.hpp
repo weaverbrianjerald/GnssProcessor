@@ -426,6 +426,7 @@ namespace GnssProcessor {
         double rx_cb_datum_sigma{};  ///< Loose physical-bound sigma (m) of that datum (network.rx_code_bias_datum_sigma_m).
         bool sta_prior_pre_pd{};  ///< Fold the station's datum rows before the addStation PD test (network.station_prior_before_pd).
         double rx_cb_q{};   ///< rx-CB carry RW process noise (m²/s).
+        double rx_ebd_q{};  ///< Its receiver IFB (extra-band delay) columns' own (m²/s; network.rx_extra_band_delay_q); 0: rx_cb_q.
         double zwd_q{};   ///< network.zwd_carry_q: ZWD carry random-walk process noise (m^2/s)
         /// network.carry_zwd_in_block (B9-in-block): the carried ZWD column joins its
         /// station's F3 whitened local block instead of folding as a diagonal coupling row

@@ -184,6 +184,7 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.rx_cb_datum_sigma = config_.networkRxCodeBiasDatumSigmaM();
     k.sta_prior_pre_pd = config_.getNetworkConfig().station_prior_before_pd;
     k.rx_cb_q = config_.networkRxCbCarryQ();
+    k.rx_ebd_q = config_.networkRxExtraBandDelayQ();
     k.carry_vce = config_.networkCarryVce();
     k.vce_apply_on = config_.networkCarryVceApply();   // VCE apply; loader guarantees carry_vce
     k.ura_on = config_.networkEmitUra();

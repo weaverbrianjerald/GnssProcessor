@@ -96,6 +96,18 @@
 
 namespace GnssProcessor {
 
+// ---- The process noise of a carried column ----
+
+double rxCbCarryQ(const RxCbKey& key, double cb_q, double ebd_q) {
+    return (ebd_q > 0.0 && RxIfbRule::governs(key)) ? ebd_q : cb_q;
+}
+
+double rxCbCarryQ(const std::string& key_text, double cb_q, double ebd_q) {
+    if (!(ebd_q > 0.0)) return cb_q;
+    const std::optional<RxCbKey> key = receiverCodeBiasKey(key_text);
+    return key ? rxCbCarryQ(*key, cb_q, ebd_q) : cb_q;
+}
+
 // ---- PASS B station steps ----
 
 StationStep networkRxIfbRecoupleEdge(StationBuild& build) {
@@ -194,7 +206,7 @@ void networkRxCbBlockColumns(StationCarryFrame& carry) {
             double cb_var_eff = 0.0;
             const RxCbInjectAction act = rxCbInjectGate(
                 pl_now_s - cbit->last_seen_s, /*max_gap_s=*/kRxCbMaxGapS,
-                cbit->var, rx_cb_q, cbit->value_abs - x_lin(cb_idx),
+                cbit->var, rxCbCarryQ(cb, rx_cb_q, ctx.knobs.rx_ebd_q), cbit->value_abs - x_lin(cb_idx),
                 /*k_sigma=*/10.0, /*guard_var=*/0.25, cb_var_eff,
                 /*innov_test=*/false);
             if (act != RxCbInjectAction::Fold) {
@@ -336,7 +348,7 @@ void networkRxCbPriors(StationCarryFrame& carry) {
         const double cb_innov = cbit->value_abs - x_lin(cb_idx);
         const RxCbInjectAction act = rxCbInjectGate(
             pl_now_s - cbit->last_seen_s, /*max_gap_s=*/kRxCbMaxGapS,
-            cbit->var, rx_cb_q, cb_innov,
+            cbit->var, rxCbCarryQ(cb, rx_cb_q, ctx.knobs.rx_ebd_q), cb_innov,
             /*k_sigma=*/10.0, /*guard_var=*/0.25, cb_var_eff);
         if (act == RxCbInjectAction::SkipInnov) {
             ++R.pl_cb_innov_skips;   // receiver-reset response: withhold, harvest re-seeds
@@ -448,7 +460,8 @@ void networkHarvestRxCbBlock(NetworkRun& run, const NetworkEpoch& ep, HarvestBor
                     const double sgap = pl_now_s - sit->last_seen_s;
                     if (sgap >= 0.0 && sgap <= kRxCbMaxGapS) {
                         const double sv = var + sit->var
-                                          + ctx.knobs.rx_cb_q * sgap + 0.25;
+                                          + rxCbCarryQ(key.second, ctx.knobs.rx_cb_q, ctx.knobs.rx_ebd_q) * sgap
+                                          + 0.25;
                         if (std::abs(value_abs - sit->value_abs)
                             > 10.0 * std::sqrt(sv)) {
                             net::drop(sta_rows, StationId{key.first}, &net::StationState::signals,
@@ -619,7 +632,7 @@ void networkHarvestRxCbCarry(NetworkRun& run, const NetworkEpoch& ep) {
                     const double cinnov = pit->value_abs - cx_lin;
                     double cvar_eff = 0.0;
                     const RxCbInjectAction cact = rxCbInjectGate(
-                        cgap, kRxCbMaxGapS, pit->var, ctx.knobs.rx_cb_q,
+                        cgap, kRxCbMaxGapS, pit->var, rxCbCarryQ(cb_key, ctx.knobs.rx_cb_q, ctx.knobs.rx_ebd_q),
                         cinnov, /*k_sigma=*/10.0, /*guard_var=*/0.25, cvar_eff);
                     // SkipGap leaves cvar_eff at 0 (the gate returns before setting
                     // it), so there is no fold variance to standardize against: fall
@@ -634,7 +647,7 @@ void networkHarvestRxCbCarry(NetworkRun& run, const NetworkEpoch& ep) {
                     in.fold_var = have_var
                         ? cvar_eff
                         : pit->var
-                            + ctx.knobs.rx_cb_q * std::max(0.0, cgap);
+                            + rxCbCarryQ(cb_key, ctx.knobs.rx_cb_q, ctx.knobs.rx_ebd_q) * std::max(0.0, cgap);
                     in.post_var = var;
                     in.gap_s    = std::max(0.0, cgap);
                     in.folded   = (cact == RxCbInjectAction::Fold);

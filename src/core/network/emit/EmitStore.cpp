@@ -57,17 +57,22 @@
 
 namespace GnssProcessor {
 
-std::size_t networkPhaseFamilyMemberRecords(const PhaseFamilyTable& families, NetworkSolutionEpoch& sol) {
+std::size_t networkPhaseFamilyMemberRecords(const PhaseFamilyTable& families, NetworkSolutionEpoch& sol, bool codes) {
     std::size_t n = 0;
     if (families.empty()) return n;
     for (NetworkSatSolution& s : sol.sats) {
         const System sys = systemOfSat(s.sat);
         for (const PhaseFamilyRow& r : families) {
             if (r.identity.sys != sys) continue;
-            const auto it = s.phase_bias.find(r.identity.obsCode(ObsType::Phase));
-            if (it == s.phase_bias.end()) continue;
-            s.phase_bias[r.member.obsCode(ObsType::Phase)] = it->second;
-            ++n;
+            if (const auto it = s.phase_bias.find(r.identity.obsCode(ObsType::Phase)); it != s.phase_bias.end()) {
+                s.phase_bias[r.member.obsCode(ObsType::Phase)] = it->second;
+                ++n;
+            }
+            if (!codes) continue;
+            if (const auto it = s.code_bias_m.find(r.identity.obsCode(ObsType::Code)); it != s.code_bias_m.end()) {
+                s.code_bias_m[r.member.obsCode(ObsType::Code)] = it->second;
+                ++n;
+            }
         }
     }
     return n;
@@ -469,7 +474,8 @@ void networkEmitStore(NetworkRun& run, const NetworkEpoch& ep, NetworkSolutionEp
     // The phase-family members' records, after every writer of their identities' records and before the store push
     // and the file, so both carry them (network.phase_families; no table: nothing is written).
     ctx.roster.phase_family_member_records +=
-        static_cast<long long>(networkPhaseFamilyMemberRecords(ctx.roster.phase_families, sol));
+        static_cast<long long>(networkPhaseFamilyMemberRecords(ctx.roster.phase_families, sol,
+                                                               ctx.roster.phase_family_codes));
     emitter.emitToStore(sol, network_store);
     // The continuity guard (network.ring_fix.continuity_guard_cyc) lowered flags in the store's records; the file
     // below is written from `sol` (written), so the same flags are lowered there.  Off, nothing changes.

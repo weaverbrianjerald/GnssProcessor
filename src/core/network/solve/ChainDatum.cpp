@@ -195,6 +195,7 @@ struct ChainElection {
           this_epoch_anchor(events_.phase_datum.this_epoch_anchor),
           eq34_reref(events_.phase_datum.eq34_reref), chain_obs(chain_obs_),
           shift_on(ctx_.knobs.eq34_shift_on), longevity(ctx_.knobs.eq34_longevity),
+          held_by_life(ctx_.carry.ring_fix != nullptr && ctx_.carry.ring_fix->held_first_by_life),
           extend_only(ctx_.knobs.eq34_extend_only), slip_aware(ctx_.knobs.eq34_slip_aware),
           seed_round(ctx_.knobs.eq34_seed_round), seed_rehost(ctx_.knobs.eq34_seed_round_rehost),
           pair_family(ctx_.knobs.eq34_pair_family), trace_chain(ctx_.knobs.trace_chain_datum),
@@ -229,6 +230,9 @@ struct ChainElection {
 
     const bool        shift_on;
     const bool        longevity;
+    /// The held-first walk tries the held arcs by remaining life (network.ring_fix.held_first_by_life): the arcs'
+    /// lives are scored, and the elevations snapshotted for the next epoch's rising test, as under longevity.
+    const bool        held_by_life;
     const bool        extend_only;
     const bool        slip_aware;
     const bool        seed_round;
@@ -336,8 +340,8 @@ bool chainArcSlipped(const ChainElection& el, std::size_t ri, const std::string&
 /// better new tree edge (fewer future deaths, fewer b_s re-references).  A rising arc (elevation
 /// grew since last epoch, tracked in eq34_prev_el) will not set soon, so it is lifted above every
 /// setting arc (+90 deg, one quadrant); within a class the higher elevation wins.  Low-elevation
-/// setting arcs cause the churn and rank last.  Called only under the longevity election (sat_el
-/// and eq34_prev_el are valid then).
+/// setting arcs cause the churn and rank last.  Called only under the longevity election or the
+/// held-first walk by life (network.ring_fix.held_first_by_life); eq34_prev_el is snapshotted under either.
 ///
 /// Slip-aware: an arc that slipped this epoch is the worst new tree edge at any elevation.  As a
 /// tree edge it invalidates every fundamental cycle that closes through it, so the whole dependent
@@ -514,7 +518,7 @@ ChainGraph buildChainGraph(ChainElection& el, const ChainGroups& groups, const C
                 row.sat           = id->second;
                 row.present       = bit;
                 row.slipped       = chainArcSlipped(el, i, s, band.signal) ? bit : 0;
-                row.durability    = el.longevity ? chainArcLife(el, i, s, band.signal) : 0.0;
+                row.durability    = (el.longevity || el.held_by_life) ? chainArcLife(el, i, s, band.signal) : 0.0;
                 row.eligible_host = el.hyg.eligibleHost(i, StateKeys::makeAmbiguityKey(s, band.signal));
                 rows.push_back(row);
             }
@@ -775,6 +779,7 @@ arcgraph::ForestRules chainForestRules(const ChainElection& el, std::uint8_t ban
     rules.refuse_ineligible_first = el.hyg.active && el.hyg.min_arc_ep > 0;
     rules.refuse_slipped_first    = el.slip_aware || el.slip_row;
     rules.by_durability           = el.longevity;
+    rules.held_by_life            = el.held_by_life;
     return rules;
 }
 
@@ -2762,7 +2767,7 @@ void advanceChainBaselines(ChainElection& el) {
     auto& new_prev_target = el.new_prev_target;
     auto& new_retained_edges = el.new_retained_edges;
     const bool eq34_extend_only = el.extend_only;
-    const bool eq34_longevity = el.longevity;
+    const bool eq34_longevity = el.longevity || el.held_by_life;   // the arc life's rising test reads the snapshot
     net::assignSig(entities, &net::SatSignalState::anchor_incumbent, this_epoch_anchor);
     // The receiver-side parents are replaced wholesale ("<name>|<c>|<sigma>" -> sat).
     net::dropAll(entities.stations, &net::StationState::signals,

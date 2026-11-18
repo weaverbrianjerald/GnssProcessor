@@ -253,9 +253,13 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                                      "codes are read under the identity's names (card NRF section 112.3).");
         if (!families.empty()) {
             std::map<System, std::map<std::string, std::string>> renames;
-            for (const PhaseFamilyRow& r : families)
+            for (const PhaseFamilyRow& r : families) {
                 for (const ObsType ty : {ObsType::Phase, ObsType::Doppler, ObsType::Snr})
                     renames[r.member.sys][r.member.obsCode(ty)] = r.identity.obsCode(ty);
+                // The codes-shared form (network.phase_family_codes): the member's code too.
+                if (nc.phase_family_codes)
+                    renames[r.member.sys][r.member.obsCode(ObsType::Code)] = r.identity.obsCode(ObsType::Code);
+            }
             std::size_t n_sta = 0;
             for (const auto& s : nc.stations) {
                 if (setup.closed_loop_on && s.name == nc.closed_loop.station.name) continue;
@@ -266,8 +270,10 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
             for (const auto& [sys, m] : renames)
                 for (const auto& [from, to] : m) what += fmt::format("{}{}>{}", what.empty() ? "" : " ", from, to);
             log->warn("Network: PHASE-FAMILY INTAKE (network.phase_families): {} producer station(s) read {} where their "
-                      "files declare them (a file that also declares the identity's code keeps both); codes keep their "
-                      "names{}.", n_sta, what,
+                      "files declare them (a file that also declares the identity's code keeps both); {}{}.", n_sta, what,
+                      nc.phase_family_codes ? "CODES SHARED (network.phase_family_codes): one satellite code bias per "
+                                              "band for both tracking kinds"
+                                            : "codes keep their names",
                       setup.closed_loop_on ? fmt::format("; the held-out consumer {} is read as recorded",
                                                          nc.closed_loop.station.name)
                                            : std::string());
@@ -1411,7 +1417,16 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                         has_mem = std::find(h->second.begin(), h->second.end(), mem) != h->second.end();
                     }
                     std::string token;
-                    if (renamed)                   { token = mem + ">" + ide; by_row[k][1].push_back(st.name); }
+                    if (renamed) {
+                        token = mem + ">" + ide;
+                        // The codes-shared form: the member's code renamed as well.
+                        const std::string cmem = r.member.obsCode(ObsType::Code), cide = r.identity.obsCode(ObsType::Code);
+                        if (const auto a = rp->appliedObsCodeRenames().find(r.member.sys);
+                            a != rp->appliedObsCodeRenames().end())
+                            for (const auto& [from, to] : a->second)
+                                if (from == cmem && to == cide) token += " " + cmem + ">" + cide;
+                        by_row[k][1].push_back(st.name);
+                    }
                     else if (has_ide && has_mem)   { token = ide + "+" + mem; by_row[k][2].push_back(st.name); }
                     else if (has_ide)              { token = ide;             by_row[k][0].push_back(st.name); }
                     if (token.empty()) continue;
@@ -1564,8 +1579,12 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
     // The phase-family members' declarations follow their identities' (network.phase_families).
     {
         std::map<std::pair<char, std::string>, std::string> members;
-        for (const PhaseFamilyRow& r : signalRosterPhaseFamilies(config_))
+        for (const PhaseFamilyRow& r : signalRosterPhaseFamilies(config_)) {
             members[{rinexLetter(r.member.sys), r.member.obsCode(ObsType::Phase)}] = r.identity.obsCode(ObsType::Phase);
+            // The codes-shared form: a member's code-bias record follows its identity's too.
+            if (nc.phase_family_codes)
+                members[{rinexLetter(r.member.sys), r.member.obsCode(ObsType::Code)}] = r.identity.obsCode(ObsType::Code);
+        }
         if (!members.empty()) emitter.setPhaseFamilyMembers(std::move(members));
     }
     if (nc.ring_fix.enable && nc.ring_fix.unsettled_steps) {

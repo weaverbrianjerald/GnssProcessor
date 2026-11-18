@@ -841,6 +841,17 @@ void NetworkProductEmitter::emitToStore(const NetworkSolutionEpoch& sol,
                 rec.bias_per_signal[signal] = bias;
                 rec.disc_per_signal[signal] = ctr;
             }
+            // A phase-family member's code-bias record (the codes-shared form, network.phase_family_codes) repeats its
+            // identity's counter after every rule above, as a member's phase-bias record does.
+            if (!pf_member_of_.empty() && !s.sat.empty())
+                for (auto& [signal, ctr_m] : rec.disc_per_signal) {
+                    const auto m = pf_member_of_.find({s.sat[0], signal});
+                    if (m == pf_member_of_.end()) continue;
+                    const auto id = rec.disc_per_signal.find(m->second);
+                    if (id == rec.disc_per_signal.end()) continue;
+                    ctr_m = id->second;
+                    code_disc_counter_[s.sat + "|" + signal] = id->second;
+                }
             store.pushCodeBias(rec, header);
         }
 

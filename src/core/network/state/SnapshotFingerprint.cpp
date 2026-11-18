@@ -97,6 +97,7 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // snapshot of a two-family run is never resumed into a one-family run, nor the reverse.  One token per row,
         // appended only when armed (card NRF section 109.1, amendment 4).
         for (const std::string& row : nc.phase_families) add("phfam:" + row);
+        if (nc.phase_family_codes && !nc.phase_families.empty()) add("phfam_codes:1");
         // Carrier-phase wind-up model revision.  Unlike the other tokens this is a code
         // constant, not a knob, because what changes the meaning of the carried state is a
         // source fix, not a config.  The earlier dipole sign left +2*phi_wu in every phase
@@ -336,6 +337,9 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // written with it off keeps its fingerprint.
         if (rx_cb_on) {
             add("rxcb:1"); add(fmt::format("{}", rx_cb_q));
+            // The extra-band delay's own noise: appended only when set, so a snapshot written without it keeps
+            // its fingerprint.
+            if (ctx.knobs.rx_ebd_q > 0.0) add(fmt::format("rxebd:{}", ctx.knobs.rx_ebd_q));
         }
         // The clock anchor changes the temporal model of the carried satellite clock: a
         // snapshot written by an anchored run carries variances produced by a different

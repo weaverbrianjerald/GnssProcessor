@@ -400,6 +400,10 @@ struct ForestRules {
     /// Chain: per arc, an arc to try first whenever a vertex needs a new edge (the links whose
     /// integers the ring fix holds, network.ring_fix.held_first); null: none, the walk as built.
     const std::vector<char>* held_arcs{nullptr};
+    /// Chain, with @ref held_arcs: the held arcs are tried by remaining life (each arc's durability, the most first;
+    /// the walk's own order on a tie) over every attached vertex, instead of the first held arc in the walk's order
+    /// (network.ring_fix.held_first_by_life).  False: the walk as built.
+    bool held_by_life{false};
     /// Chain: per arc, its lead rank (0: none).  Whenever an attached vertex has an arc of rank 1
     /// or more to an unattached vertex, the arc of the lowest such rank is taken before any
     /// incumbent, held or new edge: rank 1 breadth first, a higher rank one arc at a time (the

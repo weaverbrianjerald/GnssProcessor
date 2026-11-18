@@ -124,13 +124,17 @@ void networkEmitStore(NetworkRun& run, const NetworkEpoch& ep, NetworkSolutionEp
  * @brief The phase-family members' records (network.phase_families; card NRF section 109.1, point 3 and amendment 3).
  *
  * Each member signal's satellite phase-bias record repeats its family identity's (value, sigmas, settled flags, hold
- * generation), so a receiver that tracks the member finds its corrections.  Called after every writer of the
- * identities' records and before the store push and the file.
+ * generation), so a receiver that tracks the member finds its corrections.  In the codes-shared form
+ * (network.phase_family_codes) each member code's satellite code-bias record repeats its identity code's as well
+ * (one code bias per band for both tracking kinds).  Called after every writer of the identities' records and before
+ * the store push and the file.
  * @param families The run's table; empty writes nothing.
  * @param sol      The epoch's solution; a member record is written where its identity's record exists.
- * @return The number of member records written.
+ * @param codes    The codes-shared form: the members' code-bias records too.
+ * @return The number of member records written (phase and code).
  */
-std::size_t networkPhaseFamilyMemberRecords(const PhaseFamilyTable& families, NetworkSolutionEpoch& sol);
+std::size_t networkPhaseFamilyMemberRecords(const PhaseFamilyTable& families, NetworkSolutionEpoch& sol,
+                                            bool codes = false);
 
 /**
  * @brief The chain's released (satellite, signal) keys with their family members added, so that the emitter's
