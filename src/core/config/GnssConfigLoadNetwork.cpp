@@ -3410,7 +3410,7 @@ namespace GnssProcessor {
             log->info("Network: eq34 chain-frame observatory ENABLED — network_chain_edges.csv "
                       "(every tree edge with its chain-event row and legacy step), "
                       "network_chain_frame.csv (the chord table) and the run-end frame census; "
-                      "measure-only, no event row is armed.");
+                      "measure-only: the chain's record they read is written by every election.");
         if (network_config_.trace_chain_datum && !network_config_.trace_events)
             log->warn("Network: network.trace_chain_datum is armed but network.trace_events is "
                       "OFF — network_events.csv is never opened, so the CHAIN rows (both edges of "
@@ -11100,15 +11100,13 @@ namespace GnssProcessor {
             log->warn("Network: network.trace_chain_datum / network.trace_rpb_states are INERT "
                       "without network.phase_datum_eq34 (there is no chain to observe); "
                       "nothing is written.");
-        // The ring fix reads the chain's record (its tree, chords and cut releases), which the
-        // election writes only with the chain trace armed; an audit file that does not exist is a
-        // mis-pointed path, not an empty audit.
+        // The ring fix reads the chain's record (its tree, chords and cut releases), which every
+        // election writes; an audit file that does not exist is a mis-pointed path, not an empty audit.
         if (network_config_.ring_fix.enable) {
-            if (!network_phase_datum_eq34_ || !network_config_.trace_chain_datum)
+            if (!network_phase_datum_eq34_)
                 throw std::runtime_error(
-                    "network.ring_fix.enable needs network.phase_datum_eq34 and network.trace_chain_datum "
-                    "(the rings are read from the chain's record, which the election writes only with the "
-                    "chain trace armed).");
+                    "network.ring_fix.enable needs network.phase_datum_eq34 (the rings are read from the "
+                    "chain's record, which the election writes).");
             const std::string& af = network_config_.ring_fix.audit_frame_file;
             if (!af.empty() && !std::filesystem::exists(af))
                 throw std::runtime_error("network.ring_fix.audit_frame_file ('" + af + "') does not exist.");

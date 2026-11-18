@@ -29,14 +29,16 @@
  * records the edge as the election
  * realized it, with the facts the as-built rule drafted next to it, and the cut releases with the
  * keys they declare moved.  The election reads nothing this file writes; every output is a trace
- * row, an event row or a counter.
+ * row, an event row or a counter, except @ref GnssProcessor::chainDeclaredKeys "chainDeclaredKeys", which the stream's step
+ * declaration reads.
  *
  * ## One epoch, in order
  *
- *  1. The election (@c networkElectChainDatum), with @c network.trace_chain_datum armed, records
- *     each tree edge with its legacy facts, each component, the legacy shift and re-reference
- *     sets, and each chord's fundamental cycle into the epoch's @ref GnssProcessor::ChainEpochObs "ChainEpochObs"
- *     (@c EpochEvents::PhaseDatum::chain).
+ *  1. Every election (@c networkElectChainDatum) records each tree edge with its legacy facts, each
+ *     component, the legacy shift and re-reference sets, and each chord's fundamental cycle into the
+ *     epoch's @ref GnssProcessor::ChainEpochObs "ChainEpochObs" (@c EpochEvents::PhaseDatum::chain).  The ring fix and the
+ *     stream's step declaration read that record too, so it does not depend on @c network.trace_chain_datum,
+ *     which arms only the observatory's traces below.
  *  2. After the solve and the harvests (the StashTail observer slot), @ref GnssProcessor::networkChainFrameObserve "networkChainFrameObserve"
  *     classifies each edge against the observatory's memory of the last observed epoch (its
  *     vertices, components and chord table), certifies the re-hosts from that chord table, writes
@@ -442,8 +444,8 @@ struct ChainDeseatObs {
     std::string  release_vertex;   ///< Vertex key of the released vertex.
 };
 
-/// The observation of one epoch's chain (EpochEvents::PhaseDatum::chain).  Empty unless
-/// network.trace_chain_datum is armed.
+/// The record of one epoch's chain (EpochEvents::PhaseDatum::chain), written by every election; null on an epoch
+/// without one.  The ring fix, the stream's step declaration and the observatory read it.
 struct ChainEpochObs {
     bool armed{false};                        ///< The election recorded this epoch.
     std::vector<ChainEdgeObs>      edges;     ///< Tree edges, in election order.

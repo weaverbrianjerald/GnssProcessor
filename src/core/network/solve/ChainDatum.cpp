@@ -198,7 +198,7 @@ struct ChainElection {
           held_by_life(ctx_.carry.ring_fix != nullptr && ctx_.carry.ring_fix->held_first_by_life),
           extend_only(ctx_.knobs.eq34_extend_only), slip_aware(ctx_.knobs.eq34_slip_aware),
           seed_round(ctx_.knobs.eq34_seed_round), seed_rehost(ctx_.knobs.eq34_seed_round_rehost),
-          pair_family(ctx_.knobs.eq34_pair_family), trace_chain(ctx_.knobs.trace_chain_datum),
+          pair_family(ctx_.knobs.eq34_pair_family),
           kept_row(ctx_.knobs.eq34_row_kept), returning_row(ctx_.knobs.eq34_row_returning),
           rehost_row(ctx_.knobs.eq34_row_rehost), root_row(ctx_.knobs.eq34_row_root),
           slip_row(ctx_.knobs.eq34_row_slip), merge_split_row(ctx_.knobs.eq34_row_merge_split), now_s(now_s_),
@@ -207,9 +207,8 @@ struct ChainElection {
           // continuity is held by the invariant DD carry.  (Seed-round, below, can still round
           // the targets.)
           pin_round(config.networkPhaseDatumEq34PinRound() && !ctx_.knobs.carry_invariant) {
-        if (trace_chain)
-            for (size_t i = 0; i < stations.size(); ++i)
-                chain_index_of[stations[i].name] = static_cast<int>(i);
+        for (size_t i = 0; i < stations.size(); ++i)
+            chain_index_of[stations[i].name] = static_cast<int>(i);
     }
 
     NetworkRunContext&                            ctx;
@@ -238,7 +237,6 @@ struct ChainElection {
     const bool        seed_round;
     const bool        seed_rehost;
     const bool        pair_family;
-    const bool        trace_chain;
     const bool        kept_row;    ///< The kept row of the event table is armed (network.phase_datum_eq34_event_rows).
     const bool        returning_row;   ///< The returning row of the event table is armed.
     const bool        rehost_row;      ///< The rehost row of the event table is armed.
@@ -385,7 +383,7 @@ ChainGroups groupChainKeys(ChainElection& el) {
         if (!el.present[i]) continue;
         for (const auto& [amb, pbkey] : el.cnd.usable_keys[i]) {
             if (!el.cnd.union_keys.count(amb)) {                  // gated out
-                if (el.trace_chain) ++el.chain_obs.gated_keys;
+                ++el.chain_obs.gated_keys;
                 continue;
             }
             const auto p = net::satPhaseBiasKey(pbkey);
@@ -1776,7 +1774,7 @@ void applyRootRow(ChainElection& el, const ChainBand& band, const ChainComponent
     auto decided = [&](ChainRootOutcome outcome, long long& counter) {
         ++counter;
         rec.outcome = outcome;
-        if (el.trace_chain) el.chain_obs.roots.push_back(rec);
+        el.chain_obs.roots.push_back(rec);
     };
     // The old root: the root the satellite that was this receiver's parent remembers.
     const std::string* parent = net::get(el.entities.stations, sid, &net::StationState::signals,
@@ -1810,7 +1808,7 @@ void applyRootRow(ChainElection& el, const ChainBand& band, const ChainComponent
     ++cnt.eq34_root_pinned;
     if (rec.split) ++cnt.eq34_split_pinned;
     rec.outcome = ChainRootOutcome::Pinned;
-    if (el.trace_chain) el.chain_obs.roots.push_back(rec);
+    el.chain_obs.roots.push_back(rec);
 }
 
 /// Remember both endpoints of a recorded tree edge as vertices of this election's tree on the
@@ -1982,8 +1980,7 @@ TreeStep recordTreeEdge(ChainElection& el, const ChainFamily& fam, const ChainGr
     if (el.rehost_row) applyRehostRow(el, band, ri, sat, amb, sat_is_child, d);
     if (el.slip_row) applySlipRow(el, fam.sys, band, ri, sat, amb, sat_is_child, d);
     notePin(el, ri, amb, sat_is_child, d);
-    if (el.trace_chain)
-        traceTreeEdge(el, fam, band, plan, comp_index, ri, sat, amb, sat_is_child, edge, d);
+    traceTreeEdge(el, fam, band, plan, comp_index, ri, sat, amb, sat_is_child, edge, d);
     return TreeStep{sat_is_child ? sv : rv, sat_is_child ? rv : sv, d.pinmove, d.known, d.frame_shiftable,
                     d.released, d.release_row, d.root_kept};
 }
@@ -2172,7 +2169,7 @@ void electBandComponent(ChainElection& el, const ChainFamily& fam, const ChainGr
     const int comp_index = walk.next_comp++;
     const std::size_t edge0 = el.chain_obs.edges.size();
     const std::size_t obs = el.chain_obs.comps.size();
-    if (el.trace_chain) {
+    {
         ChainComponentObs k;
         k.group = band.dr_key;
         k.sys = constellationKey(fam.sys);
@@ -2193,10 +2190,8 @@ void electBandComponent(ChainElection& el, const ChainFamily& fam, const ChainGr
         // Audit: a bridge pin is realized on the shared side, so the station-side fold
         // expectation is declared - bridged.
         ++el.events.phase_datum.eq34_epoch_bridged[band.dr_key];
-        if (el.trace_chain) {
-            el.chain_obs.comps[obs].bridged.push_back(cg.satName(k));
-            ++el.chain_obs.bridges;
-        }
+        el.chain_obs.comps[obs].bridged.push_back(cg.satName(k));
+        ++el.chain_obs.bridges;
     }
     walk.trees.push_back(BandWalk::Tree{&plan, comp_index, obs});
     for (int v : plan.vertices) walk.owner[static_cast<size_t>(v)] = static_cast<int>(walk.trees.size()) - 1;
@@ -2228,7 +2223,7 @@ void electBandComponent(ChainElection& el, const ChainFamily& fam, const ChainGr
         walk.vknown[static_cast<size_t>(r)] = 1;
     }
     walkFrameSteps(el, fam, cg, band, order, walk);
-    if (el.trace_chain) observeTree(el, cg, b, band, plan.forest, order, edge0, obs, walk);
+    observeTree(el, cg, b, band, plan.forest, order, edge0, obs, walk);
 }
 
 /// Attach the vertices that only band b tracks to the pair trees of the component K they connect
@@ -2266,7 +2261,6 @@ void extendPairTrees(ChainElection& el, const ChainFamily& fam, const ChainGraph
         ++el.ctx.counters.eq34_pair_ext_edges;
     }
     walkFrameSteps(el, fam, cg, band, order, walk);
-    if (!el.trace_chain) return;
     observeDepths(el, order, edge0, walk);
     // Each attached vertex joins the observatory's record of the tree it hangs in.
     for (const TreeStep& st : order) {
@@ -2348,7 +2342,6 @@ void noteDeseats(ChainElection& el, const ChainFamily& fam, const ChainGraph& cg
         const bool latched = relevel.free_ambs.count(key) != 0;
         ++cnt.eq34_sl_deseated;
         if (!latched) ++cnt.eq34_sl_deseated_family;
-        if (!el.trace_chain) continue;
         const int rv = arcgraph::stationVertex(cg.graph, sta_slot);
         const int sv = arcgraph::satVertex(cg.graph, sat_slot);
         const auto vertexKey = [&](int v) {
@@ -2594,7 +2587,7 @@ void releaseCutCarries(ChainElection& el) {
         if (r.arcs + r.rpb + r.pb > 0)
             ++ofRow(cnt.eq34_ret_with_state, cnt.eq34_rh_with_state, cnt.eq34_sl_with_state, cnt.eq34_mg_with_state);
     }
-    if (el.trace_chain) el.chain_obs.releases = el.releases;
+    el.chain_obs.releases = el.releases;
 }
 
 /// Carry S-transformation apply (the carries move with the pins).  The text of the rule is the
@@ -2837,10 +2830,8 @@ void advanceChainBaselines(ChainElection& el) {
 /// the sticky baselines for the next epoch.  The families' results are in the election's maps and
 /// sets; nothing here reads a family again.
 void finishChainElection(ChainElection& el) {
-    if (el.trace_chain) {
-        el.chain_obs.shift_sat = el.shift_sat;
-        el.chain_obs.shift_rpb = el.shift_rpb;
-    }
+    el.chain_obs.shift_sat = el.shift_sat;
+    el.chain_obs.shift_rpb = el.shift_rpb;
     checkChainGauge(el);
     eraseReferencedCarries(el);
     releaseCutCarries(el);
@@ -2863,14 +2854,13 @@ void networkElectChainDatum(NetworkRunContext& ctx,
                             double now_s) {
 net::NetworkEntities& entities = ctx.entities;   // eq34_rx_parent: the station signals (N4a); datum_rx: the constellation channels (N4b)
 net::StationTable& sta_rows = ctx.entities.stations;   // rpb: the station signals (N4a)
-// The frame observatory (network/solve/ChainFrame.hpp): with network.trace_chain_datum armed
-// the election records each tree edge, component and chord for the post-solve observer.  It
-// only appends to `chain_obs`; nothing below reads it.
-const bool trace_chain = ctx.knobs.trace_chain_datum;
-if (trace_chain) events.phase_datum.chain = std::make_shared<ChainEpochObs>();   // written: a fresh record
-ChainEpochObs chain_unarmed;   // the record's stand-in with the observatory off (written by no guarded line)
-ChainEpochObs& chain_obs = trace_chain ? *events.phase_datum.chain : chain_unarmed;
-chain_obs.armed = trace_chain;
+// The chain's record (network/solve/ChainFrame.hpp): every election records each tree edge, component, chord,
+// root handover and cut release.  The election only appends to it; the ring fix (networkRingFixHoldEpoch,
+// networkRingFixDecide), the stream's step declaration (networkEmitStore) and, with network.trace_chain_datum, the
+// frame observatory's traces read it after the election.
+events.phase_datum.chain = std::make_shared<ChainEpochObs>();   // written: a fresh record
+ChainEpochObs& chain_obs = *events.phase_datum.chain;
+chain_obs.armed = true;
 ChainElection el(ctx, config_, log, stations, present, cnd, hyg, carry_slipped_ambs, events,
                  entities, sta_rows, chain_obs, now_s);
 
