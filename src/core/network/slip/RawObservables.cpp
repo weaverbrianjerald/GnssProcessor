@@ -89,7 +89,8 @@ void networkComputeRawObservables(const std::vector<std::vector<PppObservation>>
                                   bool tracker_modeled_first,
                                   SlipQcCounters* cnt,
                                   const TrackerLatchLookup* latch,
-                                  bool band_role_only) {
+                                  bool band_role_only,
+                                  const PhaseFamilyTable* families) {
     for (int i = 0; i < n_sta_total; ++i) {
         if (i >= static_cast<int>(out.rows.size())) break;
         if (!present[i]) continue;
@@ -100,6 +101,14 @@ void networkComputeRawObservables(const std::vector<std::vector<PppObservation>>
                 const auto phase = ObservableId::parse(obs.system, kv.first);
                 if (!phase || phase->type != ObsType::Phase) continue;
                 std::string code = phase->signal.obsCode(ObsType::Code);
+                // A family identity's phase read in for a member (network.phase_families) pairs with the
+                // member's code when the receiver reports no code of the identity: its own tracking.
+                if (families != nullptr && !obs.raw_observed.count(code))
+                    for (const PhaseFamilyRow& r : *families) {
+                        if (!(r.identity == phase->signal)) continue;
+                        std::string own = r.member.obsCode(ObsType::Code);
+                        if (obs.raw_observed.count(own)) { code = std::move(own); break; }
+                    }
                 if (obs.raw_observed.count(code))
                     ph.push_back({kv.first, phase->signal, std::move(code)});
             }
@@ -206,6 +215,8 @@ void networkComputeRawObservables(const std::vector<std::vector<PppObservation>>
             r.satellite   = obs.satellite;
             r.sig1        = s1;
             r.sig2        = dual ? s2 : std::string{};
+            r.code1       = p1->code;
+            r.code2       = dual ? p2->code : std::string{};
             r.elev_deg    = obs.elevation;
             r.dual        = dual;
             r.mw_m        = mw;

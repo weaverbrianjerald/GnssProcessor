@@ -85,6 +85,15 @@ namespace GnssProcessor {
         void setParseWindowSeconds(double span_s) { parse_window_s_ = span_s; }
 
         /**
+         * @brief Codes one station's file is read under another name (the network's phase-family intake,
+         *        @c RinexParser::setObsCodeRenames).  Call before @c load(); an unknown station is ignored.
+         * @param station  The station name as given in the roster.
+         * @param renames  System -> (declared code -> the name it is read under).
+         */
+        void setObsCodeRenames(const std::string& station,
+                               std::map<System, std::map<std::string, std::string>> renames);
+
+        /**
          * @brief Parse each station's RINEX observation file.
          *
          * A station that fails to parse is logged and left @c loaded=false; it

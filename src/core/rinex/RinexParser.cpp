@@ -375,6 +375,27 @@ namespace GnssProcessor {
                         if (current_obs_types.size() != static_cast<size_t>(num_types)) {
                             log_manager_.getLogger("rinex_parser")->warn("Expected {} observation types for system {}, got {}", num_types, sys, current_obs_types.size());
                         }
+                        // The network's phase-family intake (setObsCodeRenames): declared codes read under their
+                        // family's name, unless the file declares that name too.
+                        if (const auto rn = obs_code_renames_.find(current_system); rn != obs_code_renames_.end()) {
+                            const std::vector<std::string> declared = current_obs_types;
+                            std::string renamed, kept;
+                            for (std::string& code : current_obs_types) {
+                                const auto to = rn->second.find(code);
+                                if (to == rn->second.end()) continue;
+                                if (std::find(declared.begin(), declared.end(), to->second) != declared.end()) {
+                                    kept += (kept.empty() ? "" : " ") + code;
+                                    continue;
+                                }
+                                renamed += (renamed.empty() ? "" : " ") + code + ">" + to->second;
+                                code = to->second;
+                            }
+                            if (!renamed.empty() || !kept.empty())
+                                log_manager_.getLogger("rinex_parser")->info(
+                                    "Phase-family intake for system {}: read as {}{}{}", sys,
+                                    renamed.empty() ? "(none)" : renamed, kept.empty() ? "" : "; kept (both declared): ",
+                                    kept);
+                        }
                         if (!current_obs_types.empty()) {
                             header_.obs_types[current_system] = current_obs_types;
                             std::string obs_types_str;

@@ -56,6 +56,12 @@ namespace GnssProcessor {
         }
     }
 
+    void MultiRinexSync::setObsCodeRenames(const std::string& station,
+                                           std::map<System, std::map<std::string, std::string>> renames) {
+        const auto it = stations_.find(station);
+        if (it != stations_.end() && it->second.parser) it->second.parser->setObsCodeRenames(std::move(renames));
+    }
+
     // ===================================================================
     // RINEX loading
     // ===================================================================

@@ -47,6 +47,34 @@
 
 namespace GnssProcessor {
 
+namespace {
+
+/// The run-start line of the slip layer's watched pairs under a phase-family table (network.phase_families): for one
+/// receiver that reports the family identity's code and one that reports a member's, the pair and the codes of a
+/// satellite's raw slip row.  @return True once a line is written (at least one of the two found this epoch).
+bool networkPhaseFamilyPairsLine(const PhaseFamilyTable& families, const RawSlipEpoch& raw,
+                                 const std::vector<NetStation>& stations, spdlog::logger& log) {
+    std::string native, member;
+    for (std::size_t i = 0; i < raw.rows.size() && i < stations.size() && (native.empty() || member.empty()); ++i)
+        for (const RawSlipObs& r : raw.rows[i]) {
+            const System sys = systemOfSat(r.satellite);
+            for (const PhaseFamilyRow& f : families) {
+                if (f.identity.sys != sys || r.sig1 != f.identity.obsCode(ObsType::Phase)) continue;
+                const std::string what = fmt::format("{} ({}): {}/{} with {}/{}", stations[i].name, r.satellite,
+                                                     r.sig1, r.sig2, r.code1, r.code2);
+                if (r.code1 == f.identity.obsCode(ObsType::Code) && native.empty()) native = what;
+                if (r.code1 == f.member.obsCode(ObsType::Code) && member.empty()) member = what;
+            }
+        }
+    if (native.empty() && member.empty()) return false;
+    log.warn("Network (slip layer, phase families): watched pairs at a receiver of the identity's tracking: {}; at a "
+             "receiver of a member's tracking: {}.", native.empty() ? "none this epoch" : native,
+             member.empty() ? "none this epoch" : member);
+    return true;
+}
+
+}  // namespace
+
 void passAScanStations(const PassAView& v) {
     const SyncedEpoch& se = v.se;
     auto& stations = v.stations;
@@ -731,7 +759,16 @@ void passARawObservables(const PassAView& v) {
                                      roster_tracker ? &roster_lu : &latch,
                                      // network.n3c_band_signal: a band with a Modelled
                                      // signal that is not usable this epoch leaves the pair.
-                                     config_.networkN3cBandSignal());
+                                     config_.networkN3cBandSignal(),
+                                     // network.phase_families: a family phase pairs with the
+                                     // receiver's own member code.
+                                     ctx.roster.phase_families.empty() ? nullptr
+                                                                       : &ctx.roster.phase_families);
+        // The slip layer's watched pairs at one receiver of each tracking mode, once (network.phase_families; card NRF
+        // section 109.1, amendment 5): a family phase read in for a member pairs with the receiver's own code.
+        if (!ctx.roster.phase_families.empty() && !ctx.roster.phase_family_pairs_logged)
+            ctx.roster.phase_family_pairs_logged = networkPhaseFamilyPairsLine(ctx.roster.phase_families, qc.epoch,
+                                                                               stations, *v.log);
         // The qualification pass (empirical step gates, LLI credibility, arc
         // resumptions) runs only for a decision mechanism; with only the trace armed the
         // observables are pure output and nothing is adjudicated.

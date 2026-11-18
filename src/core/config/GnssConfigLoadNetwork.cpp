@@ -70,6 +70,7 @@
 #include <fmt/format.h>
 #include <nlohmann/json.hpp>
 #include <optional>
+#include <set>
 #include <spdlog/spdlog.h>
 #include <stdexcept>
 
@@ -1471,6 +1472,26 @@ namespace GnssProcessor {
                                                             : "  Basis: cycle_basis, NON-sticky (control).")
                                                      : "")
                               + (ar.trace_lattice ? "  Lattice observatory ON." : ""));
+            }
+        }
+        // The roster's phase-family table (include/network/assembly/PhaseFamily.hpp): "<constellation>:<member>>
+        // <identity>", two phase codes of one band with different tracking attributes; empty is no family.
+        network_config_.phase_families.clear();
+        if (jhas(json, "network.phase_families", "network_phase_families")) {
+            const nlohmann::json& arr = jsection(json, "network.phase_families", "network_phase_families");
+            if (!arr.is_array())
+                throw std::runtime_error("network.phase_families must be an array of \"<constellation>:<member>>"
+                                         "<identity>\" entries (\"E:L1X>L1C\").");
+            std::set<std::string> members;
+            for (const auto& v : arr) {
+                const std::string e = v.is_string() ? v.get<std::string>() : std::string{};
+                if (e.size() != 9 || e[1] != ':' || e[5] != '>' || e[2] != 'L' || e[6] != 'L' || e[3] != e[7]
+                    || e[4] == e[8])
+                    throw std::runtime_error("network.phase_families: '" + e + "' is not of the form \"<constellation>:"
+                                             "<member>><identity>\" with two phase codes of one band (\"E:L1X>L1C\").");
+                if (!members.insert(e.substr(0, 5)).second)
+                    throw std::runtime_error("network.phase_families: the member of '" + e + "' is listed twice.");
+                network_config_.phase_families.push_back(e);
             }
         }
         // Integer fixing ring by ring on the eq34 chain (include/network/ar/RingFix.hpp).  The

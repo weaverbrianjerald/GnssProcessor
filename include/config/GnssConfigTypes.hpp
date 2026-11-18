@@ -2076,6 +2076,12 @@ namespace GnssProcessor {
         ClosedLoopConfig closed_loop;         ///< Optional closed-loop integer-recovery harness (held-out consumer).
         NetworkArConfig  ambiguity_resolution;///< Producer-side integer fixing (default off: float product).
         NetworkRingFixConfig ring_fix;        ///< Integer fixing ring by ring on the eq34 chain (network.ring_fix.*; default off).
+        /// @c network.phase_families: the roster's phase-family table (card NRF section 109.1, amendment 1), entries
+        /// "<constellation>:<member>><identity>" ("E:L1X>L1C", "E:L5X>L5Q"): on one band, the member phase signal's
+        /// carrier phase shares the identity signal's satellite phase bias, receiver phase bias, chain group, ring-fix
+        /// family and stream records, while its codes, code biases, ambiguities and slip checks stay its own.  Typed at
+        /// run start by @c signalRosterPhaseFamilies.  Empty (default): every signal is its own family, byte-identical.
+        std::vector<std::string> phase_families;
         SdEwlConfig      sd_ewl;              ///< SD pre-reduce EWL constraint (default off, byte-identical; docs/record/SPEC_sd_ewl_prereduce.md).
         SlipQcConfig     slip_qc;             ///< Slip-QC hardening (network.cycle_slip.*; every master default off, byte-identical; docs/record/SPEC_slip_qc_hardening.md).
         SignalIntegrityConfig signal_integrity; ///< Flicker/gap signal integrity: band-state classifier, degraded-phase demotion and re-vet (network.signal_integrity.*; default off, byte-identical; docs/record/SPEC_flicker_gap_integrity.md).

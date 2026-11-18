@@ -43,6 +43,7 @@
 #include "common/PppUtils.hpp"
 #include "network/slip/GfArcJump.hpp"   // GfArcJumpParams / GfArcJumpArc / GfArcJumpCounters
 #include "network/slip/BandBreak.hpp"   // BandBreak (the measured break of a band, read by the drop)
+#include "network/assembly/PhaseFamily.hpp"   // PhaseFamilyTable (the receiver's own code of a family phase)
 
 #include <array>
 #include <functional>
@@ -122,6 +123,8 @@ struct RawSlipObs {
     double lambda_wl_m{0.0};      ///< Wide-lane wavelength |1/(1/λ1 − 1/λ2)| (m); 0 when !dual.
     int    lli1{0};               ///< RINEX LLI byte for sig1 (bit 0 = loss of lock).
     int    lli2{0};               ///< RINEX LLI byte for sig2 (0 when !dual).
+    std::string code1;            ///< The code paired with sig1 (its own: C1X for a family phase read in as L1C). Not traced.
+    std::string code2;            ///< The code paired with sig2; empty when !dual.  Not traced.
     /// Every phase signal with a matching code and a resolvable wavelength, in the
     /// lowest-band-first order the pair is picked from.  Empty unless
     /// @c SlipQcParams::gap_reentry_per_signal is armed.
@@ -1139,6 +1142,11 @@ struct SlipQcChannel {
  *                     leaves has no row; one whose second band leaves has a single-band
  *                     row.  A band the lookup does not name keeps the lexical pick.
  *                     Default false: byte-identical.
+ * @param families     The run's phase-family table (network.phase_families): a phase read under its family
+ *                     identity's name (Galileo L1C at a receiver that tracks L1X) whose same-name code the
+ *                     receiver does not report pairs with the code of the family member it does report (C1X),
+ *                     its own code (card NRF section 109.1, point 2).  Null or empty (the default): the
+ *                     same-name code only, byte-identical.
  */
 void networkComputeRawObservables(const std::vector<std::vector<PppObservation>>& modeled,
                                   const std::vector<bool>& present,
@@ -1149,7 +1157,8 @@ void networkComputeRawObservables(const std::vector<std::vector<PppObservation>>
                                   bool tracker_modeled_first = false,
                                   SlipQcCounters* cnt = nullptr,
                                   const TrackerLatchLookup* latch = nullptr,
-                                  bool band_role_only = false);
+                                  bool band_role_only = false,
+                                  const PhaseFamilyTable* families = nullptr);
 
 /**
  * @brief Adjudicate this epoch's raw steps, update the per-station empirical

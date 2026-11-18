@@ -465,6 +465,13 @@ public:
     /// @return True while writes will reach the file; false after a failed open or stream error.
     bool good() const { return static_cast<bool>(out_); }
 
+    /// @brief Write one legend comment line ("# " + @p text): a declaration the header's fixed legend cannot carry,
+    /// such as the phase-family members' records (network.phase_families).  Readers skip '#' lines.
+    /// @param text The line's text, without the leading "# " and the newline.
+    void writeNote(const std::string& text) {
+        if (out_) out_ << "# " << text << '\n';
+    }
+
     /// @brief Path the writer was constructed with (for diagnostics).
     /// @return The output path exactly as passed to the constructor.
     const std::string& path() const { return path_; }

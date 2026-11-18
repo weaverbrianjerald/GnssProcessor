@@ -1198,6 +1198,16 @@ NetworkSolPrepResult networkSolPrep(NetworkRun& run, const NetworkEpoch& ep, Epo
         // nothing (RTA-3).
         pending_contract.generation_id = sol.generation_id;
         product_writer = std::make_unique<NetworkProductWriter>(prod_path.string(), pending_contract);
+        // The phase-family members' records declared beside the legend (network.phase_families; card NRF section
+        // 109.1, amendment 3): each member's P record repeats its identity's, flags and counters included.
+        if (product_writer->good() && !ctx.roster.phase_families.empty()) {
+            std::string rows;
+            for (const PhaseFamilyRow& r : ctx.roster.phase_families)
+                rows += fmt::format("{}{}:{}={}", rows.empty() ? "" : " ", constellationKey(r.member.sys),
+                                    r.member.obsCode(ObsType::Phase), r.identity.obsCode(ObsType::Phase));
+            product_writer->writeNote("phase families (network.phase_families): " + rows
+                                      + "; a member's P record repeats its identity's (value, flags, counter)");
+        }
         if (product_writer->good()) {
             log->info("Network: product serialization open — v2 S-basis contract, "
                       "{} realized clock pivot(s).", pending_contract.decl.clock_pivot_sat.size());

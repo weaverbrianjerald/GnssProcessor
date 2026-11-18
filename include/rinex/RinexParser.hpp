@@ -192,6 +192,20 @@ namespace GnssProcessor {
         void setMaxObservationSpanSeconds(double span_s) { max_obs_span_s_ = span_s; }
 
         /**
+         * @brief Observation codes to read under another name, per system (the network's phase-family intake,
+         *        network.phase_families; card NRF section 109.1).
+         *
+         * Applied to each "SYS / # / OBS TYPES" list (RINEX 3) as it is read, before the per-system layout is built,
+         * so every observation of the file carries the new name: a code whose new name the file already declares for
+         * that system is kept as it is (the receiver tracks both; counted and logged).  Must be set before @c parse().
+         * Empty (default): every code keeps its name.
+         * @param renames System -> (declared code -> the name it is read under).
+         */
+        void setObsCodeRenames(std::map<System, std::map<std::string, std::string>> renames) {
+            obs_code_renames_ = std::move(renames);
+        }
+
+        /**
          * @brief Get the parsed RINEX header.
          * @return Const reference to the stored @c RinexHeader.
          */
@@ -387,6 +401,7 @@ namespace GnssProcessor {
         ProductParser& product_parser_;  /**< Product parser reference (not owned). */
 
         RinexHeader header_;             /**< Parsed header metadata. */
+        std::map<System, std::map<std::string, std::string>> obs_code_renames_; /**< Codes read under another name (@ref setObsCodeRenames). */
         std::vector<RinexObservation> observations_; /**< Parsed observation epochs. */
         long long zero_sentinels_skipped_{0}; /**< RINEX 3 written-0.0 values skipped this parse (guard armed via processing.rinex_skip_zero_values; logged at parse end as the counter invariant #4 asks for). */
 

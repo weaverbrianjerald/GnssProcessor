@@ -92,6 +92,11 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // the flip.  Appended only when armed, so the fingerprint of a snapshot
         // written with it off is unchanged.
         if (config_.networkStationMarkerToArp()) add("roster:arp");
+        // The phase-family table (network.phase_families): a member's phase is read in under its family identity, so
+        // its ambiguities, phase biases and chain groups carry another identity than in a run without the row; a
+        // snapshot of a two-family run is never resumed into a one-family run, nor the reverse.  One token per row,
+        // appended only when armed (card NRF section 109.1, amendment 4).
+        for (const std::string& row : nc.phase_families) add("phfam:" + row);
         // Carrier-phase wind-up model revision.  Unlike the other tokens this is a code
         // constant, not a knob, because what changes the meaning of the carried state is a
         // source fix, not a config.  The earlier dipole sign left +2*phi_wu in every phase

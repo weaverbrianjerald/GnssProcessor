@@ -70,6 +70,7 @@
 
 #include "common/GnssTypes.hpp"         // System (the tracker cell census key)
 #include "network/state/ArcLedger.hpp"
+#include "network/assembly/PhaseFamily.hpp"   // PhaseFamilyTable (network.phase_families)
 #include "network/solve/AnchorReentry.hpp"  // AnchorReentry
 
 #include <array>
@@ -560,6 +561,14 @@ namespace GnssProcessor {
      * first post-resume epoch.
      */
     struct SignalRoster {
+        /// The phase-family table of the run (network.phase_families, @ref signalRosterPhaseFamilies), applied at the
+        /// network's observation intake.  Unlike the rest of the roster it changes what the solve reads (one family's
+        /// phases share one identity), so a run with it armed adds its rows to the warm-resume fingerprint.  Empty
+        /// (default): every phase signal is its own family.
+        PhaseFamilyTable phase_families;
+        /// Phase-bias records written for family members at emission (network.phase_families), over the run.
+        long long phase_family_member_records{ 0 };
+        bool phase_family_pairs_logged{ false };   ///< The slip layer's watched-pairs line is out (network.phase_families).
         /// Set up for this run by @ref networkSignalRosterArm, which every network run
         /// calls; false only in a context no run set up, such as a
         /// unit test's, where every seam returns on its first line.
@@ -954,6 +963,16 @@ namespace GnssProcessor {
     void networkSignalRosterArm(NetworkRunContext& ctx, const GnssConfig& config_,
                                 const std::shared_ptr<spdlog::logger>& log,
                                 std::vector<NetStation>& stations);
+
+    /**
+     * @brief The phase-family table of network.phase_families, typed once (card NRF section 109.1, amendment 1).
+     *
+     * Each entry "<constellation>:<member>><identity>" (the loader checks its form) becomes a row of two signals of the
+     * constellation; an entry whose codes do not parse as signals of one band is refused with an exception.
+     * @param config The run's configuration.
+     * @return The table, in entry order; empty when the key is.
+     */
+    PhaseFamilyTable signalRosterPhaseFamilies(const GnssConfig& config);
 
     struct NetworkRun;              // network/driver/Run.hpp
     struct NetworkEpoch;            // network/driver/Epoch.hpp

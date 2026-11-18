@@ -24,6 +24,7 @@
 #include <chrono>
 #include <cmath>
 #include <iterator>
+#include <stdexcept>
 
 // The run-end reports at the end of this file:
 #include "network/runend/RunEnd.hpp"
@@ -867,10 +868,39 @@ namespace GnssProcessor {
     // Arming
     // =====================================================================
 
+    PhaseFamilyTable signalRosterPhaseFamilies(const GnssConfig& config) {
+        PhaseFamilyTable table;
+        for (const std::string& e : config.getNetworkConfig().phase_families) {
+            const System sys = e.empty() ? System::Unknown : systemFromLetter(e[0]);
+            const std::optional<SignalId> member = SignalId::fromObsCode(sys, e.substr(2, 3));
+            const std::optional<SignalId> identity = SignalId::fromObsCode(sys, e.substr(6, 3));
+            if (sys == System::Unknown || !member || !identity || member->digit != identity->digit
+                || *member == *identity)
+                throw std::runtime_error("network.phase_families: '" + e + "' does not name two phase signals of one "
+                                         "band of one constellation.");
+            table.push_back({*member, *identity});
+        }
+        return table;
+    }
+
     void networkSignalRosterArm(NetworkRunContext& ctx, const GnssConfig& config_,
                                 const std::shared_ptr<spdlog::logger>& log,
                                 std::vector<NetStation>& stations) {
         auto& rs = ctx.roster;
+        // The phase-family table, applied at the network's observation intake (card NRF section 109.1).
+        rs.phase_families = signalRosterPhaseFamilies(config_);
+        if (!rs.phase_families.empty()) {
+            std::string rows;
+            for (const PhaseFamilyRow& r : rs.phase_families)
+                rows += fmt::format("{}{}: {} shares {}", rows.empty() ? "" : "; ", constellationKey(r.member.sys),
+                                    r.member.obsCode(ObsType::Phase), r.identity.obsCode(ObsType::Phase));
+            log->warn("Network (SIGNAL ROSTER): PHASE FAMILIES ARMED (network.phase_families): {}.  A member's carrier "
+                      "phase (with its Doppler and signal strength) is taken in under its family identity, so its phase "
+                      "biases, ambiguities, chain group, ring-fix family and hold rows are the family's; its codes and code "
+                      "biases stay its own, the slip checks pair its phase with its own code, and the stream carries the "
+                      "member's phase-bias records beside the identity's.",
+                      rows);
+        }
         // Every network run builds the roster and the arc ledger.
         // network.signal_roster, which armed them before, is the switch of the
         // ledger's trace only: what is built and counted does not depend on it.
@@ -2421,10 +2451,24 @@ namespace GnssProcessor {
 
     // Run-end report of this subsystem: its sections in print order (
     // declared in network/assembly/SignalRoster.hpp).
+    /// The phase-family table's run-end line (network.phase_families): its rows and the member records emitted.
+    static int networkSignalRosterPhaseFamilyRunEnd(const NetworkRunEndView& v) {
+        const SignalRoster& rs = v.ctx.roster;
+        if (rs.phase_families.empty()) return 0;
+        std::string rows;
+        for (const PhaseFamilyRow& r : rs.phase_families)
+            rows += fmt::format("{}{}: {} with {}", rows.empty() ? "" : "; ", constellationKey(r.member.sys),
+                                r.member.obsCode(ObsType::Phase), r.identity.obsCode(ObsType::Phase));
+        v.log->warn("Network (signal roster, phase families): {}; {} member phase-bias record(s) emitted beside their "
+                    "identities' (network.phase_families).", rows, rs.phase_family_member_records);
+        return 0;
+    }
+
     int networkSignalRosterRunEnd(const NetworkRunEndView& v) {
         return networkRunEndSections(v, {
             networkSignalRosterPlanRunEnd,
-            networkSignalRosterLedgerRunEnd
+            networkSignalRosterLedgerRunEnd,
+            networkSignalRosterPhaseFamilyRunEnd
         });
     }
 

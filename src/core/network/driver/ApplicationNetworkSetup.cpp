@@ -105,6 +105,7 @@
 #include "network/qc/RobustStats.hpp"   // median/MAD robust attribution helpers (INC-2)
 #include "logging/CsvRotator.hpp"     // size-based rotation of the unbounded service CSVs (P1)
 #include "network/diag/RunTraces.hpp" // trace-stream ownership, open logic, roster, FlagRate (INC-3)
+#include "network/assembly/SignalRoster.hpp" // signalRosterPhaseFamilies (the phase-family intake)
 #include "network/state/RunContext.hpp"    // ctx: knobs, Tier-1 carry state, service counters (INC-4)
 #include "slip/MwSlipDetector.hpp"      // phase-leveling slip repair (T0, Increment 2)
 #include "slip/TurboEditResolver.hpp"   // MW+GF per-signal integer repair (Increment 2)
@@ -235,6 +236,36 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
     setup.sync = std::make_unique<MultiRinexSync>(config_, roster, log_manager_,
                                                   *product_parser_);
     MultiRinexSync& sync = *setup.sync;
+
+    // The network's phase-family intake (network.phase_families; card NRF section 109.1): at every producer station a
+    // family member's phase, Doppler and signal-strength codes are read under the family identity's, so the estimator
+    // sees one family per band (one satellite phase bias, one chain group, one ring-fix family); the codes keep their
+    // names (their own code biases), the slip layer pairs the phase with the receiver's own code, and the held-out
+    // consumer is read as recorded.  No table: nothing is renamed.
+    {
+        const PhaseFamilyTable families = signalRosterPhaseFamilies(config_);
+        if (!families.empty()) {
+            std::map<System, std::map<std::string, std::string>> renames;
+            for (const PhaseFamilyRow& r : families)
+                for (const ObsType ty : {ObsType::Phase, ObsType::Doppler, ObsType::Snr})
+                    renames[r.member.sys][r.member.obsCode(ty)] = r.identity.obsCode(ty);
+            std::size_t n_sta = 0;
+            for (const auto& s : nc.stations) {
+                if (setup.closed_loop_on && s.name == nc.closed_loop.station.name) continue;
+                sync.setObsCodeRenames(s.name, renames);
+                ++n_sta;
+            }
+            std::string what;
+            for (const auto& [sys, m] : renames)
+                for (const auto& [from, to] : m) what += fmt::format("{}{}>{}", what.empty() ? "" : " ", from, to);
+            log->warn("Network: PHASE-FAMILY INTAKE (network.phase_families): {} producer station(s) read {} where their "
+                      "files declare them (a file that also declares the identity's code keeps both); codes keep their "
+                      "names{}.", n_sta, what,
+                      setup.closed_loop_on ? fmt::format("; the held-out consumer {} is read as recorded",
+                                                         nc.closed_loop.station.name)
+                                           : std::string());
+        }
+    }
 
     // Clip each station's parse to the processing window.  The epoch loop in
     // runNetwork processes at most processing.max_duration_s of data; without the

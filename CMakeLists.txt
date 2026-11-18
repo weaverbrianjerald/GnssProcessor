@@ -864,6 +864,7 @@ add_executable(gnss_tests
     tests/network/test_ring_fix_reattach.cpp
     tests/network/test_ring_fix_nn_guard.cpp
     tests/network/test_ring_fix_entry_revalidate.cpp
+    tests/network/test_phase_family.cpp
     tests/network/test_chain_forest_lead.cpp
     tests/test_warm_resume_require.cpp
     tests/test_anchor_slip_handover.cpp
