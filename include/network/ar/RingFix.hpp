@@ -678,6 +678,12 @@ struct RingFixCounters {
     long long nn_moves_one{0};            ///< Of them, by one step.
     long long nn_releases{0};             ///< Chords released for a second flag after a move during the same hold.
     long long nn_reopened{0};             ///< Carried entries re-opened after a move.
+    // The re-validation of held entries to the tree (network.ring_fix.entry_revalidate).
+    long long entry_checked{0};           ///< Cuts (per band) whose entry link was usable (held, not latched, not tripped).
+    long long entry_known{0};             ///< Of them, the entry's held integer taken as a known step.
+    long long entry_refused_unchecked{0}; ///< Refused: the link came back across a gap and its held pair was not measured.
+    long long entry_refused_shifted{0};   ///< Refused: the gap re-entry test found the held pair shifted.
+    long long entry_refused_signature{0}; ///< Refused: the near-null signature sits at a whole step.
 };
 
 /// A move of the re-attachment waiting for the next election (network.ring_fix.reattach).
@@ -811,6 +817,7 @@ struct NetworkRingFix {
     double      nn_tol_gf_m{0.12};          ///< The fit tolerance of the geometry-free deviation to k near-null steps (m).
     double      nn_max_if_m{0.30};          ///< The bound on the ionosphere-free deviation (m).
     std::vector<RingFixLinkId> nn_reopen;   ///< Chords moved after the last solve: their carried entries re-open before PASS B.
+    bool        entry_revalidate{false};    ///< Held entries to the tree are re-validated (network.ring_fix.entry_revalidate).
 };
 
 // ---- The near-null guard (network.ring_fix.nn_guard) -------------------------------------------
@@ -993,6 +1000,53 @@ struct RingFixCut {
  */
 bool ringFixCutStep(bool held_before, long long n_held, double target_cyc, bool sat_is_child,
                     long long& delta);
+
+/**
+ * @brief What the ring fix knows of a cut's entry link when it decides whether the link's held integer is a known step.
+ *
+ * The entry link is the edge that carries the cut's moved side now.  A held link that enters the tree is a re-coupling
+ * (standing invariant 7): its integer becomes the moved side's frame step only once it is re-validated
+ * (network.ring_fix.entry_revalidate, @ref ringFixEntryVerdict).
+ */
+struct RingFixEntryEvidence {
+    bool   usable{false};         ///< Held, its monitor not tripped, neither signal in this epoch's free-epoch latch.
+    bool   resumed{false};        ///< Its arcs came back across a gap this epoch, or the cut is a returning satellite's.
+    bool   gap_measured{false};   ///< The gap re-entry test measured the link's own held pair across the gap.
+    bool   gap_shifted{false};    ///< ... and found it shifted (|dMW| or |dGF| over the gate).
+    bool   signature{false};      ///< The near-null signature has a verdict for the link (Galileo E1/E5a, enough epochs).
+    int    signature_k{0};        ///< Its whole number of steps: round(centred geometry-free deviation / step).
+    double signature_if_m{0.0};   ///< Its centred ionosphere-free deviation (m).
+};
+
+/// The ring fix's verdict on a cut's entry link.
+enum class RingFixEntryVerdict : std::uint8_t {
+    NotHeld,       ///< Not a usable held link: the step is unknown, as before.
+    Known,         ///< The held integer is the known step.
+    GapUnchecked,  ///< Refused: the link came back across a gap and its held pair was not measured across it.
+    GapShifted,    ///< Refused: the gap re-entry test found the held pair shifted.
+    Signature,     ///< Refused: the near-null signature sits at a whole step with a small ionosphere-free deviation.
+};
+
+/**
+ * @brief Whether a cut's entry link's held integer is a known step: the one owner of that decision.
+ *
+ * The chain's returning row declares a returning satellite's step unknown (its first-sighting target); the cut step
+ * (@ref ringFixCutStep) makes it known from a held entry link.  With @p revalidate the held entry must also pass:
+ * a link that came back across a gap needs the gap re-entry test's clean measurement of its own held pair (section
+ * 107.6: a slip on the held pair, unseen because the slip layer watched other bands, became a satellite's level),
+ * and a Galileo E1/E5a link whose near-null signature sits at a whole step is refused (the steps section 103 found
+ * promoted into the tree).  Without @p revalidate a usable link is known, as before.
+ *
+ * @param e           The entry link's evidence.
+ * @param revalidate  network.ring_fix.entry_revalidate.
+ * @param max_if_m    The bound on the signature's ionosphere-free deviation (network.ring_fix.nn_guard_max_if_m): a
+ *                    larger one is the link's own code bias, not a step.
+ * @return The verdict; only @c Known makes the step known.
+ */
+RingFixEntryVerdict ringFixEntryVerdict(const RingFixEntryEvidence& e, bool revalidate, double max_if_m);
+
+/// @brief The verdict's name for events and logs. @param v The verdict. @return "known", "gap_unchecked", ...
+const char* ringFixEntryVerdictName(RingFixEntryVerdict v);
 
 /// What the cuts of an epoch did to the held links.
 struct RingFixCutOutcome {

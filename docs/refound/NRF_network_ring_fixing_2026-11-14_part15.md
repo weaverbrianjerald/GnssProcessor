@@ -51,3 +51,42 @@ The build starts behind keys, off by default and byte-identical off, on this bra
 6. No term (section 107.8): a combined-mode Trimble user's wide lane then carries up to 0.07 cycle of the make's per-satellite term.
 
 Order: point 4's key first, then the table and the family tie, then the simulator bars with the slip bar; observed arms of the native build wait for the morning.
+
+### 108.3 2026-11-17: the spread of each held arc's code signature, observed days against the beds (the managing session's optional read)
+
+**Method.** `arc_signature_spread.py`: per held Galileo E1/E5a link-hour, the mean of r(C1) − r(C5) over the hour's postfit code rows (the link held at least 90 % of the hour, 20 code epochs or more), centred on the median of that satellite's held link-hours of the same tracking mode in the hour (four or more); consecutive hours of a link form an arc (two hours or more), whose mean is the mean of its hourly deviations. Output `arc_signature_spread.txt`.
+
+**Results** (|arc mean|; arcs at or beyond half a step, 0.224 m):
+
+| run | arcs | median | 95 % | 99 % | beyond 0.15 m | at or beyond half a step |
+|---|---|---|---|---|---|---|
+| `d24_n146` (DOY 146) | 782 | 0.038 m | 0.156 | 0.268 | 5.9 % | 1.5 % |
+| `d24_n147` (DOY 147) | 863 | 0.037 | 0.157 | 0.261 | 6.1 % | 1.5 % |
+| `m1_off37` (clean bed) | 351 | 0.027 | 0.130 | 0.194 | 3.4 % | 0.6 % |
+| `h1_off` | 343 | 0.055 | 0.224 | 0.395 | 18.4 % | 5.0 % |
+| `d1_off` | 243 | 0.088 | 0.350 | 0.474 | 31.7 % | 16.9 % |
+
+**Reading.** The observed days sit between the clean bed and h1, nearer the clean bed: a release of every held arc whose signature reaches half a step would release about 1.5 % of the observed held link-arcs (the real steps among them), against 5 % on h1 and 17 % on d1, where the guard's moves failed. The centring here is by satellite and mode only, so the observed percentages include each receiver's own code bias and are upper bounds.
+
+### 110.2 2026-11-17: same-exe controls for section 110 (and 111)
+
+Today's runs `d24_n146`, `d24r_n146` and `d24_n147` were made before exe nrf37 existed (they ended on 2026-11-16 at 20:35 and 20:39 and on 2026-11-17 at 00:15; nrf37 was built at 10:21), so they are not same-exe controls of the nrf37 arms, as section 107 states they are. Controls `c37_n146`, `c37r_n146` and `c37_n147` (their configurations, exe nrf37, 24 h) run beside section 110's arms; section 110's bars are graded against them, and their difference from today's runs is reported (identical output means section 107's comparison stands as made).
+
+### 111. 2026-11-17: point 4, the re-validation of a held entry to the tree (pre-registered)
+
+**Why.** Section 107.6: a held-first re-attachment took a held entry link's integer as a known step across a satellite's absence, on a pair an unseen slip had made wrong, while the chain's returning row declares that step unknown; the two paths disagreed. Section 109's point 4 with the managing session's amendment 2 (section 109.1): a held link that enters the tree is a re-coupling (standing invariant 7) and is re-validated before its integer is taken as a known step, and one function owns that decision.
+
+**The build** (`network.ring_fix.entry_revalidate`, default off, byte-identical off). At each cut whose entry link (the edge that carries the moved side now) is a usable held link, `ringFixEntryVerdict` (`RingFix.cpp`) decides. An entry link whose arcs came back across a gap this epoch, or that enters a returning satellite's tree, is a known step only when the gap re-entry test measured its own held pair across the gap (`GapResumption` of the epoch's raw slip record with the held pair's two signals) and found no shift; otherwise it is refused (`gap_unchecked`, `gap_shifted`). A Galileo E1/E5a entry whose near-null signature (its code residuals averaged over `nn_guard_min_epochs`, centred on its satellite's family and then its receiver, as the guard computes them) sits at a whole step, at least half a step from zero, with the ionosphere-free deviation within `nn_guard_max_if_m`, is refused as well (`signature`). A refused entry's step is unknown: the chain's first-sighting target stands and the held links crossing the cut are released, as at any unknown step. The entry's float is not used: at the cut, before the epoch's solve, the last float predates the gap, and the gap test is the measurement across it. The chain's returning row documents that the ring fix's verdict is the one owner. One event per refused entry (RINGFIX `entry_refused`, with the reason and the evidence), counters and a run-end line; unit tests in suite RingFixEntryRevalidate (8 cases). Release build nrf39 (`cfcd136b1c470185`): the ring-fix tests pass (69 of 69, the 8 new among them) and the configuration tests (26 of 26); `nom_epoch_lint.py` and `nom_n4_verify.py --whole` pass; the smoke `e24_n147_smoke` (10 epochs) exits 0 with the arming line and the run-end line (no cut in ten epochs).
+
+**Arms** (exe nrf39, the build of this section; the key as the one change):
+- Simulator, 6 h from 00:30:15: `m1_ev`, `d1_ev`, `d31_ev`, `h1_ev`, `h40_ev` on the five beds of section 108, against the guard-off runs of exe nrf37 (`m1_off37`, `d1_off`, `d31_off`, `h1_off`, `h40_off`), with `h40_offe` (nrf39, key off) as the off check.
+- Observed, today's configuration, 24 h: `e24_n146`, `e24r_n146`, `e24_n147` against the same-exe controls of section 110.2.
+- Regression, the relabel run of section 107: `e1_n147` against `s1_n147`, the configuration in which section 107.6's event happened.
+
+**Bars.**
+- R1. Off: `h40_offe` reproduces `h40_off` in every data line.
+- R2. Simulator, every bed: the truth audit's wrong held link-epochs and wrong decisions not above the control's; the frame-free count (summed over the sampled epochs, each family) not above the control's; every epoch emitted; on the clean bed the held link-epochs not more than 1 % below the control's.
+- R3. Observed: every epoch emitted; RAIM rows not above the control's on any day; the GPS and the Galileo held shares not lowered by more than 1 point in any hour from 3; the two-run audit of DOY 146 (`e24_n146` against `e24r_n146`) with 0 failing Galileo checks.
+- R4 (a read, not an adoption bar). In `e1_n147` the entry ULAB00MNG–E14 at TOW 288720 is refused (`gap_unchecked`), and ULAB00MNG has no hour with a wet-delay change over 5 cm in hours 8 to 16 (`s1_n147`: all nine).
+
+**Reading prepared.** R1 to R3 passing: the key is adopted scoped (ledger RECOMMEND_SCOPED, its scope the integer-fixing chain configuration; the managing session's rule for the night), with its three-part note; the refusals are listed by reason. R2 or R3 failing: not adopted, the refusals that cost are listed. R4 says whether the check removes section 107.6's event where it happened.

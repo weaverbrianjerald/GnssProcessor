@@ -1432,7 +1432,10 @@ void retakeFirstSightingTarget(ChainElection& el, const ChainBand& band, std::si
 /// and an unknown step.  The walk then re-references the satellites of the moved
 /// side and drops the receiver phase-bias carries of its receivers, and releaseCutCarries erases
 /// the leveling carries that touch it.  The draft's host facts (@c edge_changed) are left as they
-/// are, and its facts are kept in @c d.as_built for the observatory.
+/// are, and its facts are kept in @c d.as_built for the observatory.  The step stays unknown here
+/// whatever the edge's integer: whether a held entry link makes it known is the ring fix's decision,
+/// and only its @c ringFixEntryVerdict makes it (network/ar/RingFix.hpp; re-validated with
+/// network.ring_fix.entry_revalidate).
 ///
 /// @param sys  The constellation of the family.
 /// @param d    The draft; replaced in place when the edge is released.

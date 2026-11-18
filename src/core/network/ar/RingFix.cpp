@@ -461,8 +461,10 @@ std::vector<RingFixEvent> ringFixDecideStep(NetworkRingFix& rf,
             } else {
                 L.monitor_bad = 0;
             }
-            // The near-null guard's moving averages of the chord's code residuals (network.ring_fix.nn_guard).
-            if (rf.nn_guard && o.have_code && std::isfinite(o.code_gf_m) && std::isfinite(o.code_if_m)) {
+            // The moving averages of the chord's code residuals, the near-null signature (network.ring_fix.nn_guard,
+            // and network.ring_fix.entry_revalidate, which reads it at a cut).
+            if ((rf.nn_guard || rf.entry_revalidate) && o.have_code && std::isfinite(o.code_gf_m)
+                && std::isfinite(o.code_if_m)) {
                 ++L.nn_n;
                 const double w = 1.0 / static_cast<double>(std::min(L.nn_n, std::max(1, rf.nn_min_epochs)));
                 L.nn_gf_m += w * (o.code_gf_m - L.nn_gf_m);
@@ -673,6 +675,29 @@ bool ringFixCutStep(bool held_before, long long n_held, double target_cyc, bool 
     const long long k = std::llround(r);
     delta = sat_is_child ? n_held - k : k - n_held;
     return true;
+}
+
+RingFixEntryVerdict ringFixEntryVerdict(const RingFixEntryEvidence& e, bool revalidate, double max_if_m) {
+    if (!e.usable) return RingFixEntryVerdict::NotHeld;
+    if (!revalidate) return RingFixEntryVerdict::Known;
+    if (e.resumed) {
+        if (!e.gap_measured) return RingFixEntryVerdict::GapUnchecked;
+        if (e.gap_shifted) return RingFixEntryVerdict::GapShifted;
+    }
+    if (e.signature && e.signature_k != 0 && std::abs(e.signature_if_m) <= max_if_m)
+        return RingFixEntryVerdict::Signature;
+    return RingFixEntryVerdict::Known;
+}
+
+const char* ringFixEntryVerdictName(RingFixEntryVerdict v) {
+    switch (v) {
+        case RingFixEntryVerdict::NotHeld:      return "not_held";
+        case RingFixEntryVerdict::Known:        return "known";
+        case RingFixEntryVerdict::GapUnchecked: return "gap_unchecked";
+        case RingFixEntryVerdict::GapShifted:   return "gap_shifted";
+        case RingFixEntryVerdict::Signature:    return "signature";
+    }
+    return "unknown";
 }
 
 int ringFixCutBand(const RingFixCut& c, const RingFixLinkId& id) {

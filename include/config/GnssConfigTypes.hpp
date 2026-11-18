@@ -2009,14 +2009,23 @@ namespace GnssProcessor {
         /// False (default): off, byte-identical.
         bool nn_guard{ false };
         /// @c network.ring_fix.nn_guard_min_epochs: the guard's moving-average length and the epochs a chord is held
-        /// before it is checked (default 60); in [10, 2880].  Read only with nn_guard.
+        /// before it is checked (default 60); in [10, 2880].  Read with nn_guard or entry_revalidate.
         int nn_guard_min_epochs{ 60 };
         /// @c network.ring_fix.nn_guard_tol_gf_m: the fit tolerance of the geometry-free deviation to k near-null steps
         /// (metres, default 0.12); in (0, 0.22).  Read only with nn_guard.
         double nn_guard_tol_gf_m{ 0.12 };
         /// @c network.ring_fix.nn_guard_max_if_m: the bound on the ionosphere-free deviation (metres, default 0.30);
-        /// above 0.  Read only with nn_guard.
+        /// above 0.  Read with nn_guard or entry_revalidate.
         double nn_guard_max_if_m{ 0.30 };
+        /// @c network.ring_fix.entry_revalidate: a held link that enters the tree is re-validated before its integer is
+        /// taken as a known step across the cut (card NRF section 111; section 109's point 4).  One function owns the
+        /// decision (@c ringFixEntryVerdict): an entry link whose arcs came back across a gap this epoch, or a returning
+        /// satellite's, is a known step only when the gap re-entry test measured the link's own held pair across the gap
+        /// and found no shift; a Galileo E1/E5a entry whose near-null signature (the moving averages of the guard's code
+        /// residuals, centred) sits at a whole step with an ionosphere-free deviation within nn_guard_max_if_m is
+        /// refused as well.  A refused entry's step is unknown, as the chain's returning row declares, and the held
+        /// links crossing the cut are released.  Events and run-end counters.  False (default): off, byte-identical.
+        bool entry_revalidate{ false };
         /// @c network.ring_fix.form_configured_pairs: the chord table forms every family of network.ring_fix.pairs on
         /// an arc that tracks both its signals, beside the rule that pairs every band-1 signal with the arc's
         /// lowest-digit signal of another band, so that a family of a third band has chords.  Needs the pairs.  False

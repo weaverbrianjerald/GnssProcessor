@@ -50,6 +50,22 @@ std::string rxKey(int station) { return "R:" + std::to_string(station); }
 std::string svKey(const std::string& sat) { return "S:" + sat; }
 std::string groupOf(const std::string& sat, const std::string& sig) { return sat.substr(0, 1) + "|" + sig; }
 
+/// The near-null signature's inputs: every held Galileo E1/E5a chord whose moving averages of its code residuals span
+/// nn_min_epochs, with its step 4 lambda2 - 3 lambda1 (the guard, network.ring_fix.nn_guard, and the entry
+/// re-validation, network.ring_fix.entry_revalidate, read the same verdicts).
+std::vector<RingFixNearNullIn> nearNullInputs(const NetworkRingFix& rf) {
+    std::vector<RingFixNearNullIn> nn_in;
+    for (const auto& [id, L] : rf.links) {
+        if (!L.held || L.nn_n < rf.nn_min_epochs) continue;
+        if (id.sat.empty() || id.sat[0] != 'E' || id.sig1.size() < 2 || id.sig2.size() < 2 || id.sig1[1] != '1'
+            || id.sig2[1] != '5')
+            continue;
+        if (!(L.lambda1 > 0.0 && L.lambda2 > L.lambda1)) continue;
+        nn_in.push_back({id, 4.0 * L.lambda2 - 3.0 * L.lambda1, L.nn_gf_m, L.nn_if_m});
+    }
+    return nn_in;
+}
+
 /// The arcs in this epoch's free-epoch latch, as (station, satellite, signal).
 std::set<net::ArcTuple> latchedArcs(const RelevelEpochState& relevel) {
     std::set<net::ArcTuple> out;
@@ -409,6 +425,15 @@ void networkRingFixArm(NetworkRun& run) {
                   "k near-null steps (geometry-free within {:.2f} m of k (4 lambda2 - 3 lambda1), ionosphere-free within "
                   "{:.2f} m) moves by -k (3, 4); a second flag during the same hold releases it; tree edges are not moved.",
                   rf->nn_min_epochs, rf->nn_tol_gf_m, rf->nn_max_if_m);
+    rf->entry_revalidate = nc.ring_fix.entry_revalidate;
+    if (rf->entry_revalidate)
+        log->warn("Network (ring fix): ENTRY RE-VALIDATION: a held link that enters the tree is a known step across the "
+                  "cut only when, having come back across a gap (or entering a returning satellite's tree), the gap "
+                  "re-entry test measured its own held pair and found no shift, and, for a Galileo E1/E5a link, its "
+                  "near-null signature (code residuals averaged over {} epochs, centred) is not at a whole step with an "
+                  "ionosphere-free deviation within {:.2f} m; otherwise the step is unknown and the crossing links are "
+                  "released.",
+                  rf->nn_min_epochs, rf->nn_max_if_m);
     rf->reattach = rf->settled_flags_on && nc.ring_fix.reattach;
     if (rf->reattach)
         log->warn("Network (ring fix): RE-ATTACHMENT OF UNTIED SATELLITES: a satellite of a family's tree unsettled "
@@ -551,6 +576,14 @@ void networkRingFixHoldEpoch(NetworkRun& run, const NetworkEpoch& ep) {
     //    from the nested part to outside the outer side crosses both cuts (the steps add).  The step of
     //    a moved side is known where its released edge was held.
     std::vector<RingFixCut> cuts;
+    // The near-null signature of the held Galileo E1/E5a chords, read for the cuts' entry links
+    // (network.ring_fix.entry_revalidate); each refused entry is reported once per epoch.
+    std::map<RingFixLinkId, RingFixNearNullVerdict> entry_signature;
+    std::set<RingFixLinkId> entry_reported;
+    if (rf.entry_revalidate && obs_rec != nullptr && obs_rec->armed && !obs_rec->releases.empty())
+        for (const RingFixNearNullVerdict& v :
+             ringFixNearNullVerdicts(nearNullInputs(rf), rf.nn_tol_gf_m, rf.nn_max_if_m))
+            entry_signature.emplace(v.id, v);
     if (obs_rec != nullptr && obs_rec->armed) {
         std::map<std::string, std::map<std::string, std::vector<std::string>>> kids;   // group -> parent -> children
         for (const ChainEdgeObs& e : obs_rec->edges) kids[e.group][e.parent].push_back(e.child);
@@ -593,7 +626,48 @@ void networkRingFixHoldEpoch(NetworkRun& run, const NetworkEpoch& ep) {
             const bool usable = h != nullptr && hid != nullptr && !h->monitor_trip
                              && latched.count({r.station, r.sat, r.signal}) == 0;
             const long long n_held = (usable && hid->sig1 == r.signal) ? h->n1 : (usable ? h->n2 : 0);
-            c.known = ringFixCutStep(usable, n_held, target_cyc, r.sat_is_child, c.delta);
+            // Whether the entry's held integer is the known step: ringFixEntryVerdict owns it.  Off, a usable
+            // entry is known, as before (network.ring_fix.entry_revalidate).
+            RingFixEntryVerdict verdict = usable ? RingFixEntryVerdict::Known : RingFixEntryVerdict::NotHeld;
+            if (usable && rf.entry_revalidate) {
+                RingFixEntryEvidence ev;
+                ev.usable = true;
+                ev.resumed = c.row == "returning";
+                for (const GapResumption& g : qc.epoch.resumptions) {
+                    if (g.station != r.station || g.satellite != r.sat) continue;
+                    ev.resumed = true;
+                    if ((g.sig1 == hid->sig1 && g.sig2 == hid->sig2) || (g.sig1 == hid->sig2 && g.sig2 == hid->sig1)) {
+                        ev.gap_measured = g.measurable;
+                        ev.gap_shifted = g.shifted;
+                    }
+                }
+                const auto sg = entry_signature.find(*hid);
+                if (sg != entry_signature.end()) {
+                    ev.signature = true;
+                    ev.signature_k = sg->second.k;
+                    ev.signature_if_m = sg->second.dev_if_m;
+                }
+                verdict = ringFixEntryVerdict(ev, true, rf.nn_max_if_m);
+                ++rf.counters.entry_checked;
+                switch (verdict) {
+                    case RingFixEntryVerdict::Known:        ++rf.counters.entry_known; break;
+                    case RingFixEntryVerdict::GapUnchecked: ++rf.counters.entry_refused_unchecked; break;
+                    case RingFixEntryVerdict::GapShifted:   ++rf.counters.entry_refused_shifted; break;
+                    case RingFixEntryVerdict::Signature:    ++rf.counters.entry_refused_signature; break;
+                    case RingFixEntryVerdict::NotHeld:      break;
+                }
+                if (verdict != RingFixEntryVerdict::Known && entry_reported.insert(*hid).second)
+                    traces.emitEvent(t, "RINGFIX", "entry_refused", r.sat, nameOf(r.station),
+                                     sg != entry_signature.end() ? std::optional<double>(sg->second.dev_gf_m)
+                                                                 : std::nullopt,
+                                     std::nullopt, ringFixEntryVerdictName(verdict),
+                                     fmt::format("sig1={} sig2={} n1={} n2={} cut={} resumed={} pair_measured={} "
+                                                 "shifted={} k={} dev_if={:.3f}",
+                                                 hid->sig1, hid->sig2, h->n1, h->n2, c.row, ev.resumed ? 1 : 0,
+                                                 ev.gap_measured ? 1 : 0, ev.gap_shifted ? 1 : 0, ev.signature_k,
+                                                 ev.signature_if_m));
+            }
+            c.known = ringFixCutStep(verdict == RingFixEntryVerdict::Known, n_held, target_cyc, r.sat_is_child, c.delta);
             cuts.push_back(std::move(c));
         }
     }
@@ -1049,7 +1123,7 @@ void networkRingFixDecide(NetworkRun& run, const NetworkEpoch& ep) {
                     o.have_resid = true;
                     o.resid_if_m = (l2s * *r1 - l1s * *r2) / (l2s - l1s);
                 }
-                if (rf.nn_guard) {
+                if (rf.nn_guard || rf.entry_revalidate) {
                     if (!code_formed) {
                         for (Eigen::Index row = 0; row < resid.size(); ++row) {
                             const RowTag& tag = rowTagAt(R, row);
@@ -1502,15 +1576,7 @@ void networkRingFixDecide(NetworkRun& run, const NetworkEpoch& ep) {
     // near-null steps with a small ionosphere-free deviation moves by -k (3, 4) from the next epoch's hold rows; a
     // second flag during the same hold releases it.
     if (rf.nn_guard) {
-        std::vector<RingFixNearNullIn> nn_in;
-        for (const auto& [id, L] : rf.links) {
-            if (!L.held || L.nn_n < rf.nn_min_epochs) continue;
-            if (id.sat.empty() || id.sat[0] != 'E' || id.sig1.size() < 2 || id.sig2.size() < 2 || id.sig1[1] != '1'
-                || id.sig2[1] != '5')
-                continue;
-            if (!(L.lambda1 > 0.0 && L.lambda2 > L.lambda1)) continue;
-            nn_in.push_back({id, 4.0 * L.lambda2 - 3.0 * L.lambda1, L.nn_gf_m, L.nn_if_m});
-        }
+        const std::vector<RingFixNearNullIn> nn_in = nearNullInputs(rf);
         const auto nameOf = [&](int i) {
             return (i >= 0 && static_cast<std::size_t>(i) < stations.size()) ? stations[static_cast<std::size_t>(i)].name
                                                                                : std::string{};
@@ -1640,6 +1706,12 @@ int networkRingFixRunEnd(const NetworkRunEndView& v) {
                   "flag; {} carried entr(ies) re-opened.",
                   C.nn_link_checks, C.nn_flagged, rf.nn_tol_gf_m, rf.nn_max_if_m, C.nn_refused_if, C.nn_moves,
                   C.nn_moves_one, C.nn_releases, C.nn_reopened);
+    if (rf.entry_revalidate)
+        log->warn("Network (ring fix, entry re-validation): {} cut(s) on a band whose entry link was a usable held link; "
+                  "{} taken as a known step; {} refused: {} with the held pair not measured across a gap, {} shifted "
+                  "across it, {} for the near-null signature (their steps unknown, the crossing links released).",
+                  C.entry_checked, C.entry_known, C.entry_checked - std::min(C.entry_checked, C.entry_known),
+                  C.entry_refused_unchecked, C.entry_refused_shifted, C.entry_refused_signature);
     for (const RingFixCascade& c : rf.cascades) {
         const auto it = rf.cascade_counters.find(c.name);
         const RingFixCascadeCounters CC = it != rf.cascade_counters.end() ? it->second : RingFixCascadeCounters{};
