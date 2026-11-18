@@ -5,11 +5,14 @@
  *
  * On one constellation's band, a member phase signal (Galileo L1X, the combined E1 tracking) shares its family's identity
  * signal (L1C) in everything the network estimates or emits per signal for the carrier phase: the satellite phase bias,
- * the receiver phase bias, the chain's group, the ring fix's family and the stream's phase-bias records.  The member
- * keeps its own codes and code biases, its own ambiguities (a receiver tracks one member of a band) and its own slip
- * checks, which pair its phase with its own code.  The table is declared by network.phase_families, typed once at run
- * start by the roster (@c signalRosterPhaseFamilies) and empty by default: every signal is then its own family and the
- * run is byte-identical.
+ * the receiver phase bias, the chain's group, the ring fix's family and the stream's phase-bias records.  In this
+ * build the sharing is made at the intake: a member receiver's phase, Doppler and signal-strength codes are read
+ * under the identity's names (ApplicationNetworkSetup.cpp), so its ambiguities carry the identity's name; its codes
+ * keep their own names and code biases unless network.phase_family_codes reads them under the identity's names too.
+ * Its slip checks pair its phase with its own code.  A receiver whose file declares both a member and its identity is
+ * refused at run start.  The table is declared by network.phase_families, typed once at run start by the roster
+ * (@c signalRosterPhaseFamilies) and empty by default: every signal is then its own family and the run is
+ * byte-identical.
  */
 #pragma once
 

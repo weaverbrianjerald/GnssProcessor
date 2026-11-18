@@ -297,23 +297,6 @@ struct RingFixLargestSet {
     long long side_changes{0};     ///< At a change of identity, the satellites in one of the two sets only.
 };
 
-/**
- * @brief Rule "largest" of the settled flags: the largest set of a family's satellites mutually tied through held
- *        links and certified tree edges, whatever receiver roots it, with a minimum and a hysteresis.
- *
- * The links form a graph over receivers and satellites, and the family's tree satellites fall into its components.
- * The incumbent (last epoch's flagged set) is followed into the component that holds most of it; that component is
- * flagged, with this epoch's membership, while it holds at least @p min_sats satellites and no other component holds
- * @p hysteresis more.  Otherwise the largest component is flagged when it holds at least @p min_sats, and none is
- * flagged below.  Ties go to the component whose lexically smallest satellite comes first.
- *
- * @param links      (station index, satellite) of every held link and certified tree edge of the family.
- * @param tree_sats  The family's satellites in its first band's tree.
- * @param incumbent  Last epoch's flagged set (empty at the start).
- * @param min_sats   The fewest satellites a flagged set holds.
- * @param hysteresis The lead another component needs to replace the incumbent.
- * @return The flagged set, whether it changed identity, and the satellites that changed side then.
- */
 /// One cascade of network.ring_fix.cascade: a held pair and the third signal it carries to.
 struct RingFixCascade {
     char        letter{0};   ///< The constellation's RINEX letter.
@@ -444,6 +427,23 @@ struct RingFixCascadeCounters {
 std::set<std::string> ringFixSettledWait(const std::set<std::string>& in_set, std::map<std::string, int>& run,
                                          int wait);
 
+/**
+ * @brief Rule "largest" of the settled flags: the largest set of a family's satellites mutually tied through held
+ *        links and certified tree edges, whatever receiver roots it, with a minimum and a hysteresis.
+ *
+ * The links form a graph over receivers and satellites, and the family's tree satellites fall into its components.
+ * The incumbent (last epoch's flagged set) is followed into the component that holds most of it; that component is
+ * flagged, with this epoch's membership, while it holds at least @p min_sats satellites and no other component holds
+ * @p hysteresis more.  Otherwise the largest component is flagged when it holds at least @p min_sats, and none is
+ * flagged below.  Ties go to the component whose lexically smallest satellite comes first.
+ *
+ * @param links      (station index, satellite) of every held link and certified tree edge of the family.
+ * @param tree_sats  The family's satellites in its first band's tree.
+ * @param incumbent  Last epoch's flagged set (empty at the start).
+ * @param min_sats   The fewest satellites a flagged set holds.
+ * @param hysteresis The lead another component needs to replace the incumbent.
+ * @return The flagged set, whether it changed identity, and the satellites that changed side then.
+ */
 RingFixLargestSet ringFixLargestSettledSet(const std::vector<std::pair<int, std::string>>& links,
                                            const std::set<std::string>& tree_sats,
                                            const std::set<std::string>& incumbent, int min_sats, int hysteresis);
@@ -604,6 +604,7 @@ struct RingFixCounters {
     long long held_link_epochs{0};        ///< Held links present at an epoch's decision.
     long long released[kRingFixReleaseCount]{};  ///< Releases by cause.
     long long refused[kRingFixRefuseCount]{};    ///< Link-epochs refused, by cause.
+    long long rows_offered{0};            ///< Hold-table hits in PASS B: rows_injected + rows_gauge_skipped + rows_no_column.
     long long rows_injected{0};           ///< Hold rows folded in PASS B.
     long long rows_gauge_skipped{0};      ///< Table hits on a gauge-pinned (tree) arc, never folded.
     long long rows_no_column{0};          ///< Table hits without a column this epoch.

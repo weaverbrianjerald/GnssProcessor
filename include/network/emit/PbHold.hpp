@@ -179,7 +179,7 @@ std::vector<PbPreholdSample> networkPbPreholdSample(const NetworkRunContext& ctx
  * @param se     The synced epoch (its time stamps the rows).
  * @param pre    The samples taken before the hold.
  * @param sol    The epoch after the hold: the emitted value and its generation.
- * @param chain  The epoch's chain record (null unless network.trace_chain_datum).
+ * @param chain  The epoch's chain record (null on an epoch without a chain election).
  */
 void networkPbPreholdWrite(NetworkRunContext& ctx, NetworkRunTraces& traces,
                            const SyncedEpoch& se, const std::vector<PbPreholdSample>& pre,

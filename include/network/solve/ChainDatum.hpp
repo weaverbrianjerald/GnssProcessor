@@ -23,7 +23,9 @@
  * Sibling of network/solve/PhaseDatum.hpp, which owns
  * the candidate census consumed here, the non-chain realization (the anchor
  * election) and the drop-and-heal.  Owns no state: every carry object
- * is a reference into the caller's NetworkRunContext.
+ * is a reference into the caller's NetworkRunContext.  It does write the ring fix's state through
+ * that context: the re-attachment's moves and outcomes (network.ring_fix.reattach) and the keep
+ * counters of the rehost row (network.ring_fix.rehost_keep_carry).
  *
  * Ordering contract: this function mutates persistent carries before the solve.  It
  * erases the arcs' leveling carries (ArcState::amb) for re-referenced (sat,σ), erases
@@ -140,8 +142,9 @@ void eq34ShiftCarry(NetworkCarryState& carry, net::NetworkEntities& entities,
  * pair tree its band's graph reaches it from (the band extension); a component of one band's graph
  * with no vertex in any pair tree is elected on that band as a one-band component.  Any other
  * constellation is elected per signal in that epoch.  The pin bridge grounds a satellite per
- * (satellite, signal) key, which one shared tree cannot hold: the loader refuses it with the
- * pair family, and a pair family is never rooted at a bridged satellite.
+ * (satellite, signal) key, which one shared tree cannot hold: the loader falls back to the signal
+ * family when the pin bridge is armed (with a warning), and a pair family is never rooted at a
+ * bridged satellite.
  *
  * ## Event rows
  *
@@ -179,7 +182,9 @@ void eq34ShiftCarry(NetworkCarryState& carry, net::NetworkEntities& entities,
  * The arc is not in the epoch's free-epoch latch (that is the slip row's case).  The pin keeps the
  * target the as-built rule drafted, which is already an integer (the rounded carry of the new host
  * or the seed round's first-sighting target), with an unknown step: the integer of a chord the
- * previous epoch certified is not read, so every re-host takes this rule.  The release is the
+ * previous epoch certified is not read, so every re-host takes this rule, except one kept on a
+ * link the ring fix holds (network.ring_fix.rehost_keep_carry: the held integer at a step of 0,
+ * no release; see applyRehostRow in ChainDatum.cpp).  The release is the
  * returning row's: the moved side is the child and its subtree, whose satellites are
  * re-referenced and declared moved and whose receivers lose their carries.  A held or flipped
  * kept edge below a released re-host joins its moved side.

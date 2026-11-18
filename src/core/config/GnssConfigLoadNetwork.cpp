@@ -1546,6 +1546,14 @@ namespace GnssProcessor {
                     if (e.size() != 9 || e[1] != ':' || e[5] != '/' || e[2] != 'L' || e[6] != 'L')
                         throw std::runtime_error("network.ring_fix.pairs: '" + e + "' is not of the form "
                                                  "\"<constellation>:<signal>/<signal>\" (\"E:L1X/L5X\").");
+                    // A member of network.phase_families is read under its identity's name at the intake, so a pair
+                    // that names a member matches no chord (card CHA, P6): the pair is listed by its identities.
+                    for (const std::string& f : network_config_.phase_families)
+                        if (f[0] == e[0] && (f.compare(2, 3, e, 2, 3) == 0 || f.compare(2, 3, e, 6, 3) == 0))
+                            throw std::runtime_error("network.ring_fix.pairs: '" + e + "' names " + f.substr(2, 3)
+                                                     + ", a member of network.phase_families ('" + f
+                                                     + "'), which the intake reads as " + f.substr(6, 3)
+                                                     + ": list the pair by its identities' names.");
                     rf.pairs.push_back(e);
                 }
             }
@@ -11117,15 +11125,57 @@ namespace GnssProcessor {
                       "are decided ring by ring, held in the solve and released at every event "
                       "(include/network/ar/RingFix.hpp).",
                       network_config_.ring_fix.rule, af.empty() ? std::string("none") : af);
-        } else if (network_config_.ring_fix.rule != "gated" || !network_config_.ring_fix.audit_frame_file.empty()
-                   || network_config_.ring_fix.order != "ring" || network_config_.ring_fix.gate != "sigma"
-                   || !network_config_.ring_fix.truth_root.empty() || network_config_.ring_fix.oracle_until_s > 0.0
-                   || network_config_.ring_fix.held_first || !network_config_.ring_fix.pairs.empty()
-                   || network_config_.ring_fix.wl_frac_max > 0.0 || !network_config_.ring_fix.mask_slip_arc.empty()
-                   || network_config_.ring_fix.sigma_scale != 1.0) {
-            log->warn("Network: network.ring_fix.rule / order / gate / audit_frame_file / truth_root / oracle_until_s / "
-                      "held_first / pairs / wl_frac_max / mask_slip_arc / sigma_scale are INERT without "
-                      "network.ring_fix.enable.");
+            // Keys read only on a path the configuration does not take (card CHA, P16).
+            if (network_config_.ring_fix.rehost_keep_carry
+                && std::find(network_phase_datum_eq34_event_rows_.begin(), network_phase_datum_eq34_event_rows_.end(),
+                             "rehost") == network_phase_datum_eq34_event_rows_.end())
+                log->warn("Network: network.ring_fix.rehost_keep_carry is INERT without the rehost row of "
+                          "network.phase_datum_eq34_event_rows (only the rehost row keeps a re-host on a held integer).");
+            if (network_config_.ring_fix.max_decisions_per_epoch != 3 && network_config_.ring_fix.order != "certain")
+                log->warn("Network: network.ring_fix.max_decisions_per_epoch is INERT under network.ring_fix.order "
+                          "\"{}\" (the cap applies under the order \"certain\" only).", network_config_.ring_fix.order);
+        } else {
+            // Every ring-fix key set while the ring fix is off is named (card CHA, P16).
+            const auto& rx = network_config_.ring_fix;
+            std::vector<std::string> inert;
+            const auto note = [&](bool set, const char* key) { if (set) inert.emplace_back(key); };
+            note(rx.rule != "gated", "rule");
+            note(rx.order != "ring", "order");
+            note(rx.gate != "sigma", "gate");
+            note(!rx.audit_frame_file.empty(), "audit_frame_file");
+            note(!rx.truth_root.empty(), "truth_root");
+            note(rx.oracle_until_s > 0.0, "oracle_until_s");
+            note(rx.held_first, "held_first");
+            note(rx.held_first_by_life, "held_first_by_life");
+            note(!rx.pairs.empty(), "pairs");
+            note(rx.wl_frac_max > 0.0, "wl_frac_max");
+            note(rx.sigma_scale != 1.0, "sigma_scale");
+            note(rx.code_event_window_s > 0.0, "code_event_window_s");
+            note(rx.rehost_keep_carry, "rehost_keep_carry");
+            note(rx.max_decisions_per_epoch != 3, "max_decisions_per_epoch");
+            note(rx.settled_flags, "settled_flags");
+            note(rx.settled_rule != "root", "settled_rule");
+            note(rx.settled_wait_emissions != 0, "settled_wait_emissions");
+            note(rx.unsettled_steps, "unsettled_steps");
+            note(rx.unsettled_steps_unheld, "unsettled_steps_unheld");
+            note(rx.continuity_guard_cyc > 0.0, "continuity_guard_cyc");
+            note(rx.reattach, "reattach");
+            note(rx.nn_guard, "nn_guard");
+            note(rx.nn_guard_release, "nn_guard_release");
+            note(rx.nn_monitor, "nn_monitor");
+            note(rx.entry_revalidate, "entry_revalidate");
+            note(rx.form_configured_pairs, "form_configured_pairs");
+            note(!rx.cascade.empty(), "cascade");
+            note(rx.cascade_tree, "cascade_tree");
+            note(rx.cascade_log, "cascade_log");
+            note(rx.cascade_rehost_keep, "cascade_rehost_keep");
+            note(!rx.mask_slip_arc.empty(), "mask_slip_arc");
+            if (!inert.empty()) {
+                std::string list;
+                for (const std::string& k : inert) list += (list.empty() ? "network.ring_fix." : " / ") + k;
+                log->warn("Network: {} {} INERT without network.ring_fix.enable.", list,
+                          inert.size() == 1 ? "is" : "are");
+            }
         }
 
         // Two-edge continuous handover: inert guards, then the arming line.  Follows the

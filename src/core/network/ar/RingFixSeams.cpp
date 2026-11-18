@@ -77,13 +77,12 @@ std::set<net::ArcTuple> latchedArcs(const RelevelEpochState& relevel) {
     return out;
 }
 
-/// What the release reads from the chain record: tree arcs, chords, roots and cut vertices.
+/// What the release reads from the chain record: tree arcs, chords, roots and depths.
 struct ChainFacts {
     std::set<net::ArcTuple> tree;    ///< Tree edges (station, satellite, signal).
     std::set<net::ArcTuple> chords;  ///< Chords (station, satellite, signal).
     /// group -> vertex key -> its component's root receiver.
     std::map<std::string, std::map<std::string, std::string>> root_of;
-    std::set<std::string> cut_vertices;   ///< Vertices on a cut release's moved side ("R:<i>", "S:<sat>").
     /// group -> vertex key -> its depth below its component's root.
     std::map<std::string, std::map<std::string, int>> depth_of;
     /// @brief A link's ring in a group (the larger depth of its two vertices; -1 when unknown).
@@ -116,10 +115,6 @@ ChainFacts chainFacts(const ChainEpochObs* obs) {
         f.depth_of[e.group].emplace(e.parent, e.depth - 1);
     }
     for (const ChainChordCycle& c : obs->chords) f.chords.insert({c.station, c.sat, c.signal});
-    for (const ChainReleaseObs& r : obs->releases) {
-        for (const std::string& s : r.sats) f.cut_vertices.insert(svKey(s));
-        for (int i : r.stations) f.cut_vertices.insert(rxKey(i));
-    }
     return f;
 }
 
@@ -817,11 +812,13 @@ void networkRingFixHoldEpoch(NetworkRun& run, const NetworkEpoch& ep) {
         for (const auto& [id, L] : rf.links) {
             if (!L.held) continue;
             RingFixHoldObs o;
-            o.tree_now = facts.tree.count({id.station, id.sat, id.sig1}) > 0
-                      || facts.tree.count({id.station, id.sat, id.sig2}) > 0;
+            // Neither chain input of the release step can be true here: step 3 took every held link that is a
+            // tree edge out of the held set, and step 2 applied the cuts.  On this path the step's chain cause is a
+            // root change alone (the two inputs stay in its contract, which its unit tests exercise).
+            o.tree_now = false;
+            o.in_cut = false;
             o.present = facts.chords.count({id.station, id.sat, id.sig1}) > 0
                      && facts.chords.count({id.station, id.sat, id.sig2}) > 0;
-            o.in_cut = false;   // the cuts were applied above
             o.root = facts.root(groupOf(id.sat, id.sig1), rxKey(id.station));
             o.latched = latched.count({id.station, id.sat, id.sig1}) > 0
                      || latched.count({id.station, id.sat, id.sig2}) > 0;
@@ -983,6 +980,7 @@ void networkRingFixStationTally(NetworkRunContext& ctx, const std::vector<Statio
     if (!ctx.carry.ring_fix) return;
     RingFixCounters& C = ctx.carry.ring_fix->counters;
     for (const StationAssembly& Rc : asm_res) {
+        C.rows_offered       += Rc.rfix_offered;
         C.rows_injected      += Rc.rfix_rows;
         C.rows_gauge_skipped += Rc.rfix_gauge_skipped;
         C.rows_no_column     += Rc.rfix_no_column;
@@ -1691,13 +1689,14 @@ int networkRingFixRunEnd(const NetworkRunEndView& v) {
     }
     long long rel_total = 0;
     for (std::size_t k = 0; k < kRingFixReleaseCount; ++k) rel_total += C.released[k];
+    const bool rows_closed = C.rows_offered == C.rows_injected + C.rows_gauge_skipped + C.rows_no_column;
     log->warn("Network (ring fix, rule {}): {} link(s) decided over {} decision epoch(s) ({}); first hold by "
-              "ring: {}; held at the end {} ({}); {} held link-epoch(s); {} hold row(s) folded, {} skipped on a "
-              "tree edge, {} without a column.",
+              "ring: {}; held at the end {} ({}); {} held link-epoch(s); {} hold-table hit(s): {} hold row(s) "
+              "folded, {} skipped on a tree edge, {} without a column ({}).",
               ringFixRuleName(rf.rule), C.decided, C.epochs_decided,
               by_ring.empty() ? "none" : by_ring, first.empty() ? "none" : first, held_end,
-              held_rings.empty() ? "none" : held_rings, C.held_link_epochs, C.rows_injected,
-              C.rows_gauge_skipped, C.rows_no_column);
+              held_rings.empty() ? "none" : held_rings, C.held_link_epochs, C.rows_offered, C.rows_injected,
+              C.rows_gauge_skipped, C.rows_no_column, rows_closed ? "CLOSED" : "OPEN: the sum differs");
     // A link that became a tree edge left the held set without a release (the chain pins it).
     const std::string to_tree = C.to_tree > 0 ? fmt::format(" + to tree {}", C.to_tree) : std::string();
     log->warn("Network (ring fix): released {} ({}); {} carried entr(ies) re-opened by the release; "

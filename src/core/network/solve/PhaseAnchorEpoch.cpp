@@ -67,7 +67,7 @@ void networkPhaseAnchorEpoch(NetworkRun& run, const NetworkEpoch& ep, EpochPassA
     auto& n_gated_epochs = ctx.counters.n_gated_epochs;
     auto& n_gated_key_epochs = ctx.counters.n_gated_key_epochs;
     const bool phase_datum_eq34        = ctx.knobs.phase_datum_eq34;
-    const bool phase_datum_prioritized = ctx.knobs.phase_datum_prioritized;
+    const bool phase_datum_prioritized = ctx.knobs.phase_datum_prioritized;   // true under eq34 too (NetworkKnobs)
     auto& n_loop_epochs = ctx.counters.n_loop_epochs;
     const GnssConfig& config_ = run.config;
     const SyncedEpoch& se = ep.se;

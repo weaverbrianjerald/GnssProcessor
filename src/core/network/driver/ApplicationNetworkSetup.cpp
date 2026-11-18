@@ -1392,8 +1392,8 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
 
     // --- The phase families as armed (network.phase_families; card NRF section 112.3) ---------------
     // From the table and the parse alone: per row, the receivers that track the identity, those that track the member
-    // (read in under the identity's name) and those whose files declare both (kept apart); each receiver's tracking is
-    // kept on its station for the stations trace, so the true tracking signal is not lost.
+    // (read in under the identity's name) and those whose files declare both (refused below); each receiver's tracking
+    // is kept on its station for the stations trace, so the true tracking signal is not lost.
     {
         const PhaseFamilyTable families = signalRosterPhaseFamilies(config_);
         if (!families.empty()) {
@@ -1439,13 +1439,25 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
             for (std::size_t k = 0; k < families.size(); ++k) {
                 const auto& g = by_row[k];
                 log->warn("Network (phase families as armed): {} {} with member {}: {} receiver(s) track {} [{}]; {} track "
-                          "{}, read as {} [{}]; {} declare both, kept apart [{}].",
+                          "{}, read as {} [{}]; {} declare both [{}].",
                           constellationKey(families[k].member.sys), families[k].identity.obsCode(ObsType::Phase),
                           families[k].member.obsCode(ObsType::Phase), g[0].size(),
                           families[k].identity.obsCode(ObsType::Phase), joinNames(g[0]), g[1].size(),
                           families[k].member.obsCode(ObsType::Phase), families[k].identity.obsCode(ObsType::Phase),
                           joinNames(g[1]), g[2].size(), joinNames(g[2]));
             }
+            // A file that declares both a member and its identity keeps both at the intake, so that receiver's member
+            // arcs would keep their own name beside the identity's and its member records would be overwritten at the
+            // emission (card CHA, P6): such a receiver is refused.
+            std::string both;
+            for (std::size_t k = 0; k < families.size(); ++k)
+                for (const std::string& n : by_row[k][2])
+                    both += (both.empty() ? "" : ", ") + n + " (" + families[k].identity.obsCode(ObsType::Phase) + " and "
+                          + families[k].member.obsCode(ObsType::Phase) + ")";
+            if (!both.empty())
+                throw std::runtime_error("network.phase_families: the file of " + both + " declares both a member and "
+                                         "its identity; the table reads one tracking per receiver and band (remove one "
+                                         "of the two from the file, or the table).");
         }
     }
 

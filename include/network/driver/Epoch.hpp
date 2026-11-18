@@ -205,8 +205,8 @@ struct EpochEvents {
         std::map<std::string, int> eq34_epoch_declared;         ///< Per group: the declared gauge dimension.
         std::map<std::string, int> eq34_epoch_bridged;          ///< Per group: the shared-side bridge pins.
         std::set<std::pair<std::string, std::string>> eq34_reref;  ///< (sat, signal) re-referenced by the chain election.
-        /// The chain election's record for the frame observatory (network/solve/ChainFrame.hpp);
-        /// null unless network.trace_chain_datum is armed.
+        /// The chain election's record (network/solve/ChainFrame.hpp), read by the ring fix, the
+        /// stream's step declaration and the frame observatory; null on an epoch without an election.
         std::shared_ptr<ChainEpochObs> chain;
     };
     /// The clock-pivot handover's S-transform.

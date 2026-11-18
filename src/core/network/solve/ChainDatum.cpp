@@ -546,6 +546,23 @@ struct ChainSeeds {
     std::vector<std::vector<SlippedSeed>> slipped;   ///< Slip row only: per band, the edges of that band's maps that lost their seat.
 };
 
+/// The arc of a move of the re-attachment of untied satellites (network.ring_fix.reattach) for one satellite on one
+/// band of a family: the chosen station's arc in this election's graph, when it exists and is not slipped on the
+/// family's bands; -1 otherwise (no move, or nothing to take: the incumbent then stays).
+int untiedMoveArc(const ChainElection& el, const ChainGraph& cg, const ChainFamily& fam, const std::string& signal,
+                  const std::string& sat) {
+    const NetworkRingFix* rf = el.ctx.carry.ring_fix.get();
+    if (rf == nullptr || !rf->reattach) return -1;
+    const auto m = rf->untied_moves.find({signal, sat});
+    if (m == rf->untied_moves.end() || m->second.station < 0) return -1;
+    const auto ni = cg.slot_of_name.find(el.stations[static_cast<std::size_t>(m->second.station)].name);
+    const auto ki = cg.slot_of_sat.find(sat);
+    if (ni == cg.slot_of_name.end() || ki == cg.slot_of_sat.end()) return -1;
+    const int arc = arcgraph::arcIndex(cg.graph, ni->second, ki->second);
+    if (arc < 0 || arcgraph::slippedIn(cg.graph, arc, fam.mask())) return -1;
+    return arc;
+}
+
 /// Sticky-tree seed (spec D2 step 3): the incumbent tree edges (satellite-side parents in
 /// anchor_incumbent, "sat_signal" -> station; receiver-side parents in eq34_rx_parent,
 /// "station|c|signal" -> satellite) that are still live this epoch (the station is in the
@@ -564,23 +581,6 @@ struct ChainSeeds {
 /// by the topology.  In a pair family an arc is slipped when either band's integer may have
 /// changed, an arc named by both bands' maps is seeded and counted once, and a de-seeded arc
 /// counts once however many maps named it.  In a one-band family every map entry counts.
-/// The arc of a move of the re-attachment of untied satellites (network.ring_fix.reattach) for one satellite on one
-/// band of a family: the chosen station's arc in this election's graph, when it exists and is not slipped on the
-/// family's bands; -1 otherwise (no move, or nothing to take: the incumbent then stays).
-int untiedMoveArc(const ChainElection& el, const ChainGraph& cg, const ChainFamily& fam, const std::string& signal,
-                  const std::string& sat) {
-    const NetworkRingFix* rf = el.ctx.carry.ring_fix.get();
-    if (rf == nullptr || !rf->reattach) return -1;
-    const auto m = rf->untied_moves.find({signal, sat});
-    if (m == rf->untied_moves.end() || m->second.station < 0) return -1;
-    const auto ni = cg.slot_of_name.find(el.stations[static_cast<std::size_t>(m->second.station)].name);
-    const auto ki = cg.slot_of_sat.find(sat);
-    if (ni == cg.slot_of_name.end() || ki == cg.slot_of_sat.end()) return -1;
-    const int arc = arcgraph::arcIndex(cg.graph, ni->second, ki->second);
-    if (arc < 0 || arcgraph::slippedIn(cg.graph, arc, fam.mask())) return -1;
-    return arc;
-}
-
 ChainSeeds seedIncumbents(ChainElection& el, const ChainFamily& fam, const ChainGraph& cg) {
     ChainSeeds seeds;
     seeds.band.resize(fam.bands.size());
@@ -2378,11 +2378,6 @@ void noteDeseats(ChainElection& el, const ChainFamily& fam, const ChainGraph& cg
     }
 }
 
-/// Elect one family: its graph, its incumbent seed, its components with their datum receivers
-/// and forests, then per band the pins and the shift walk of every component (and, in a pair
-/// family, the band's extension), and the band's remembered datum receiver.  The band loop is
-/// outside the component loop, so a family whose bands' graphs coincide records its rows and
-/// counts band by band, each in the order a one-band family has.
 /// One move of the re-attachment the walk is asked to take on one band (network.ring_fix.reattach).
 struct UntiedLead {
     std::string       signal;   ///< The band's signal.
@@ -2447,6 +2442,11 @@ void tallyUntiedMoves(ChainElection& el, const ChainGraph& cg, const ChainFamily
     }
 }
 
+/// Elect one family: its graph, its incumbent seed, its components with their datum receivers
+/// and forests, then per band the pins and the shift walk of every component (and, in a pair
+/// family, the band's extension), and the band's remembered datum receiver.  The band loop is
+/// outside the component loop, so a family whose bands' graphs coincide records its rows and
+/// counts band by band, each in the order a one-band family has.
 void electFamily(ChainElection& el, const ChainGroups& groups, const ChainFamily& fam) {
     const ChainGraph cg = buildChainGraph(el, groups, fam);
     const ChainSeeds seeds = seedIncumbents(el, fam, cg);

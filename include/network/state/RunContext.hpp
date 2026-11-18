@@ -919,8 +919,9 @@ namespace GnssProcessor {
         /// pre-pin float) and stays shiftable, instead of taking an unknown step that
         /// re-references the (sat, σ).  Resolved to false unless eq34_seed_round.
         bool eq34_seed_round_rehost{};
-        /// network.trace_chain_datum: the chain election records its tree for the frame
-        /// observatory (network/solve/ChainFrame.hpp).  Resolved to false unless eq34.
+        /// network.trace_chain_datum: the frame observatory writes its traces from the chain
+        /// election's record (network/solve/ChainFrame.hpp; the record itself is written by every
+        /// election).  Resolved to false unless eq34.
         bool trace_chain_datum{};
         /// network.trace_rpb_states: network_rpb_states.csv.  Resolved to false unless eq34.
         bool trace_rpb_states{};
