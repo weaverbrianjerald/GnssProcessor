@@ -134,6 +134,9 @@ namespace {
 /// "No receiver elected".
 constexpr std::size_t kNoReceiver = static_cast<std::size_t>(-1);
 
+/// The most family lines (network.phase_datum_eq34_family_pairs) the log takes over a run.
+constexpr long long kChainFamilyLineCap = 40;
+
 /// The (constellation, phase signal) group of a usable key; groups are visited in
 /// (RINEX letter, signal) order.
 struct ChainGroupKey {
@@ -513,38 +516,101 @@ ChainBand makeChainBand(System sys, const std::string& signal) {
     return band;
 }
 
-/// The families of this epoch, in visit order (RINEX letter, first signal).  With the pair
-/// family off every group is its own one-band family, in group order.  With it on, a
-/// constellation that tracks exactly two phase signals of different bands forms one pair family
-/// of them (in signal-string order); any other constellation is elected per signal this epoch.
+/// One constellation's families under configured pairs (network.phase_datum_eq34_family_pairs): each pair
+/// whose two signals the constellation tracks is a family (its signals in signal-string order, as the knob
+/// holds them), and every other signal a family of its own; in visit order, by each family's first signal.
+/// The loader lets a signal belong to one pair at most.
+std::vector<std::vector<std::string>> chainConfiguredFamilies(
+    const std::vector<std::string>& signals, const std::vector<std::pair<std::string, std::string>>& pairs) {
+    std::set<std::string> left(signals.begin(), signals.end());
+    std::vector<std::vector<std::string>> out;
+    for (const auto& [a, b] : pairs)
+        if (left.count(a) != 0 && left.count(b) != 0) {
+            out.push_back({a, b});
+            left.erase(a);
+            left.erase(b);
+        }
+    for (const std::string& s : left) out.push_back({s});
+    std::sort(out.begin(), out.end(), [](const std::vector<std::string>& x, const std::vector<std::string>& y) {
+        return x.front() < y.front();
+    });
+    return out;
+}
+
+/// One constellation's families this epoch, each the list of its bands' phase signals, in visit order.  With
+/// the pair family off every signal is its own family, in signal-string order.  With it on, a constellation
+/// that tracks exactly two phase signals of different bands forms one pair family of them; one that tracks
+/// more than two forms the configured pairs it tracks (chainConfiguredFamilies) when the list names it; any
+/// other is elected per signal this epoch.
+std::vector<std::vector<std::string>> chainFamiliesOf(const ChainElection& el, System sys,
+                                                      const std::vector<std::string>& signals) {
+    if (el.pair_family && signals.size() == 2) {
+        const auto a = SignalId::fromObsCode(sys, signals[0]);
+        const auto b = SignalId::fromObsCode(sys, signals[1]);
+        if (a && b && a->digit != b->digit) return {signals};
+    }
+    if (el.pair_family && signals.size() > 2) {
+        const auto cp = el.ctx.knobs.eq34_family_pairs.find(sys);
+        if (cp != el.ctx.knobs.eq34_family_pairs.end()) return chainConfiguredFamilies(signals, cp->second);
+    }
+    std::vector<std::vector<std::string>> out;
+    for (const std::string& s : signals) out.push_back({s});
+    return out;
+}
+
+/// The text of a family: "E:L1C/L5Q" for a pair, "E:L1C" for a family of one band.
+std::string chainFamilyText(System sys, const std::vector<std::string>& signals) {
+    std::string t = std::string(1, rinexLetter(sys)) + ":" + signals.front();
+    if (signals.size() == 2) t += "/" + signals.back();
+    return t;
+}
+
+/// Count one constellation's families of this epoch and name them in the log when they change, with the
+/// signals elected per signal (network.phase_datum_eq34_family_pairs armed only; at most
+/// kChainFamilyLineCap lines over the run).
+void noteChainFamilies(ChainElection& el, System sys, const std::vector<std::vector<std::string>>& fams) {
+    auto& c = el.ctx.counters;
+    std::string text, pairs, singles;
+    for (const std::vector<std::string>& sigs : fams) {
+        const std::string f = chainFamilyText(sys, sigs);
+        ++c.eq34_family_epochs[f];
+        text += (text.empty() ? "" : " ") + f;
+        if (sigs.size() == 2) pairs += (pairs.empty() ? "" : ", ") + f;
+        else                  singles += (singles.empty() ? "" : " ") + sigs.front();
+    }
+    std::string& last = c.eq34_family_line[sys];
+    if (text == last) return;
+    last = text;
+    if (c.eq34_family_lines >= kChainFamilyLineCap) return;
+    ++c.eq34_family_lines;
+    el.log->info("Network (eq34 family pairs): {} at TOW {:.0f}: {}{}{}.", systemName(sys),
+                 std::fmod(el.now_s, 604800.0), pairs.empty() ? "no pair family" : "pair families " + pairs,
+                 singles.empty() ? "" : "; elected per signal: ", singles);
+}
+
+/// The families of this epoch, in visit order (RINEX letter, then each constellation's families in the
+/// order chainFamiliesOf gives).  The pair family's counters count the families of two bands and the
+/// constellation-epochs that hold a family of one band; with the configured pairs armed, the families are
+/// also counted one by one and named in the log when they change.
 std::vector<ChainFamily> formChainFamilies(ChainElection& el, const ChainGroups& groups) {
     std::vector<ChainFamily> families;
-    const auto oneBand = [&](System sys, const std::string& signal) {
-        ChainFamily f;
-        f.sys = sys;
-        f.bands.push_back(makeChainBand(sys, signal));
-        families.push_back(std::move(f));
-    };
+    const bool armed = !el.ctx.knobs.eq34_family_pairs.empty();   // network.phase_datum_eq34_family_pairs
     for (auto it = groups.sats.begin(); it != groups.sats.end();) {
         const System sys = it->first.sys;
         std::vector<std::string> signals;   // this constellation's, in signal-string order
         for (; it != groups.sats.end() && it->first.sys == sys; ++it) signals.push_back(it->first.signal);
-        bool pair = false;
-        if (el.pair_family && signals.size() == 2) {
-            const auto a = SignalId::fromObsCode(sys, signals[0]);
-            const auto b = SignalId::fromObsCode(sys, signals[1]);
-            pair = a && b && a->digit != b->digit;
-        }
-        if (pair) {
+        const std::vector<std::vector<std::string>> fams = chainFamiliesOf(el, sys, signals);
+        bool single = false;
+        for (const std::vector<std::string>& sigs : fams) {
             ChainFamily f;
             f.sys = sys;
-            for (const std::string& s : signals) f.bands.push_back(makeChainBand(sys, s));
+            for (const std::string& s : sigs) f.bands.push_back(makeChainBand(sys, s));
             families.push_back(std::move(f));
-            ++el.ctx.counters.eq34_pair_families;
-            continue;
+            if (sigs.size() == 2) ++el.ctx.counters.eq34_pair_families;
+            else                  single = true;
         }
-        if (el.pair_family) ++el.ctx.counters.eq34_pair_fallbacks;
-        for (const std::string& s : signals) oneBand(sys, s);
+        if (el.pair_family && single) ++el.ctx.counters.eq34_pair_fallbacks;
+        if (armed) noteChainFamilies(el, sys, fams);
     }
     return families;
 }
@@ -3033,6 +3099,30 @@ int networkChainDatumRunEnd(const NetworkRunEndView& v) {
                       "on their own band.",
                       c.eq34_pair_families, c.eq34_pair_fallbacks, c.eq34_pair_ext_edges,
                       c.eq34_pair_band_only_comps);
+    }
+    // The configured pair families (network.phase_datum_eq34_family_pairs), reported only when armed so that a
+    // twin without the list keeps a run-end block byte-identical to a build without it.
+    if (!ctx.knobs.eq34_family_pairs.empty()) {
+        const auto& c = ctx.counters;
+        std::string armed, formed;
+        long long configured_epochs = 0;
+        for (const auto& [sys, pairs] : ctx.knobs.eq34_family_pairs)
+            for (const auto& [a, b] : pairs) {
+                const std::string f = chainFamilyText(sys, {a, b});
+                armed += (armed.empty() ? "" : ", ") + f;
+                const auto it = c.eq34_family_epochs.find(f);
+                configured_epochs += it != c.eq34_family_epochs.end() ? it->second : 0;
+            }
+        for (const auto& [f, n] : c.eq34_family_epochs) formed += (formed.empty() ? "" : ", ") + f + " " + std::to_string(n);
+        if (configured_epochs == 0)
+            log->warn("Network (eq34 family pairs): ARMED [{}] but NO configured pair family was formed (no "
+                      "constellation tracked more than two phase signals with a listed pair).  Standing invariant "
+                      "#4: that is INERT, not validated.  Families by constellation-epoch: {}.",
+                      armed, formed.empty() ? "none" : formed);
+        else
+            log->info("Network (eq34 family pairs): armed [{}]; families by constellation-epoch: {}; {} family "
+                      "line(s) written{}.", armed, formed, c.eq34_family_lines,
+                      c.eq34_family_lines >= kChainFamilyLineCap ? " (the cap)" : "");
     }
     // The kept row (network.phase_datum_eq34_event_rows "kept"), reported only when armed so that a
     // twin with the row off keeps a run-end block byte-identical to a build without it.

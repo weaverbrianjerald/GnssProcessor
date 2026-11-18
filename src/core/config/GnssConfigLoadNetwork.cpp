@@ -8540,6 +8540,45 @@ namespace GnssProcessor {
                 network_phase_datum_eq34_family_ = "signal";
             }
         }
+        // The configured pair families (network.phase_datum_eq34_family_pairs): with the pair family, a
+        // constellation that tracks more than two phase signals forms one pair family per entry whose two
+        // signals it tracks, in place of the per-signal fallback.  Entries take the form of
+        // network.ring_fix.pairs; a signal belongs to one entry at most.  The list is inert without the pair
+        // family; its exclusion under the pin bridge is decided in validateNetworkPhaseDatum_.
+        network_phase_datum_eq34_family_pairs_.clear();
+        if (jhas(json, "network.phase_datum_eq34_family_pairs", "phase_datum_eq34_family_pairs")) {
+            const nlohmann::json& arr = jsection(json, "network.phase_datum_eq34_family_pairs",
+                                                 "phase_datum_eq34_family_pairs");
+            if (!arr.is_array())
+                throw std::runtime_error("network.phase_datum_eq34_family_pairs must be an array of "
+                                         "\"<constellation>:<signal>/<signal>\" entries (\"E:L1C/L5Q\").");
+            std::set<std::pair<char, std::string>> named;   // (constellation letter, phase signal)
+            for (const auto& v : arr) {
+                const std::string e = v.is_string() ? v.get<std::string>() : std::string{};
+                if (e.size() != 9 || e[1] != ':' || e[5] != '/' || e[2] != 'L' || e[6] != 'L')
+                    throw std::runtime_error("network.phase_datum_eq34_family_pairs: '" + e + "' is not of the "
+                                             "form \"<constellation>:<signal>/<signal>\" (\"E:L1C/L5Q\").");
+                const System sys = systemFromLetter(e[0]);
+                const std::string s1 = e.substr(2, 3), s2 = e.substr(6, 3);
+                const std::optional<SignalId> a = SignalId::fromObsCode(sys, s1);
+                const std::optional<SignalId> b = SignalId::fromObsCode(sys, s2);
+                if (sys == System::Unknown || !a || !b)
+                    throw std::runtime_error("network.phase_datum_eq34_family_pairs: '" + e + "' names no two "
+                                             "phase signals of a known constellation.");
+                if (a->digit == b->digit)
+                    throw std::runtime_error("network.phase_datum_eq34_family_pairs: '" + e + "' names two "
+                                             "signals of one band; a pair family joins two bands.");
+                for (const std::string& s : {s1, s2})
+                    if (!named.insert({e[0], s}).second)
+                        throw std::runtime_error("network.phase_datum_eq34_family_pairs: '" + e + "' names " + s
+                                                 + ", which another entry names: a signal belongs to one pair "
+                                                 "family.");
+                network_phase_datum_eq34_family_pairs_.push_back(e);
+            }
+            if (!network_phase_datum_eq34_family_pairs_.empty() && network_phase_datum_eq34_family_ != "pair")
+                log->warn("Network: network.phase_datum_eq34_family_pairs is set but the pair family is off "
+                          "(network.phase_datum_eq34_family 'signal', or no chain) - INERT this run.");
+        }
         // The event rows of the chain election (the event table of network/solve/ChainFrame.hpp):
         // an array of the entries whose integer rule replaces the as-built rule of their row.  An
         // entry the table does not name is dropped with a warning, a duplicate silently, and an
@@ -10918,6 +10957,9 @@ namespace GnssProcessor {
                               "band by band, which one shared tree cannot hold; falling back to "
                               "'signal' (one tree per constellation and phase signal).");
                     network_phase_datum_eq34_family_ = "signal";
+                    if (!network_phase_datum_eq34_family_pairs_.empty())
+                        log->warn("Network: network.phase_datum_eq34_family_pairs is INERT this run: the pair "
+                                  "family gave way to the pin bridge.");
                 } else {
                     log->info("Network producer: eq34 PAIR FAMILY ON - a constellation that "
                               "tracks exactly two phase signals of different bands in an epoch "
@@ -10927,6 +10969,28 @@ namespace GnssProcessor {
                               "attached to that band afterwards.  Any other constellation is "
                               "elected per signal that epoch.  The run-end eq34 block reports "
                               "the families formed, the fallbacks and the band-only attachments.");
+                    if (!network_phase_datum_eq34_family_pairs_.empty()) {
+                        std::string listed;
+                        for (const std::string& e : network_phase_datum_eq34_family_pairs_)
+                            listed += (listed.empty() ? "" : ", ") + e;
+                        log->info("Network producer: eq34 FAMILY PAIRS armed [{}] - a constellation that "
+                                  "tracks more than two phase signals forms one pair family per listed pair "
+                                  "whose two signals it tracks; a signal in no listed pair is elected per "
+                                  "signal (counted as a fallback).  Each constellation's families are named in "
+                                  "the log when they change; the run-end eq34 block counts them.", listed);
+                        // The chain's pairs and the ring fix's answer different questions (which signals
+                        // share a tree; which chords are decided): a difference is named, not refused.
+                        const std::vector<std::string>& rfp = network_config_.ring_fix.pairs;
+                        const std::set<std::string> chain_set(network_phase_datum_eq34_family_pairs_.begin(),
+                                                              network_phase_datum_eq34_family_pairs_.end());
+                        std::string missing;
+                        for (const std::string& e : chain_set)
+                            if (!rfp.empty() && std::find(rfp.begin(), rfp.end(), e) == rfp.end())
+                                missing += (missing.empty() ? "" : ", ") + e;
+                        if (network_config_.ring_fix.enable && !missing.empty())
+                            log->info("Network producer: eq34 family pairs [{}] are not among "
+                                      "network.ring_fix.pairs: the ring fix decides no chord of them.", missing);
+                    }
                 }
             }
             // The event rows are written for the float vehicle, whose leveling carry the pins act

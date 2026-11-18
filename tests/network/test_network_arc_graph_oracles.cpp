@@ -3131,6 +3131,8 @@ struct ChainKnobs {
     bool        pin_round{true};
     std::string preferred;   ///< network.phase_datum_eq34_receiver ("" = none).
     std::string family{"signal"};   ///< network.phase_datum_eq34_family ("signal" or "pair").
+    /// network.phase_datum_eq34_family_pairs ("<constellation>:<signal>/<signal>" entries; empty: off).
+    std::vector<std::string> family_pairs;
     bool        trace_chain{false}; ///< network.trace_chain_datum (the frame observatory records the tree).
     /// network.phase_datum_eq34_event_rows.  The rows are written for the float vehicle, so a config
     /// that names one is loaded on it.
@@ -3145,6 +3147,13 @@ std::unique_ptr<GnssConfig> loadChainConfig(LogManager& lm, const ChainKnobs& k,
     if (k.float_vehicle || !k.rows.empty())
         float_vehicle = "    \"phase_leveling\": true,\n    \"shared_carry_full_cov\": true,\n"
                         "    \"carry_conditional_coupling\": true,\n    \"ambiguity_vehicle\": \"float_kf\",\n";
+    std::string family_pairs;
+    if (!k.family_pairs.empty()) {
+        family_pairs = "    \"phase_datum_eq34_family_pairs\": [";
+        for (std::size_t i = 0; i < k.family_pairs.size(); ++i)
+            family_pairs += (i ? ", \"" : "\"") + k.family_pairs[i] + "\"";
+        family_pairs += "],\n";
+    }
     std::string rows;
     if (!k.rows.empty()) {
         rows = "    \"phase_datum_eq34_event_rows\": [";
@@ -3165,6 +3174,7 @@ std::unique_ptr<GnssConfig> loadChainConfig(LogManager& lm, const ChainKnobs& k,
         + "    \"phase_datum_eq34_pin_round\": " + b(k.pin_round) + ",\n"
         + "    \"phase_datum_eq34_receiver\": \"" + k.preferred + "\",\n"
         + "    \"phase_datum_eq34_family\": \"" + k.family + "\",\n"
+        + family_pairs
         + "    \"trace_chain_datum\": " + b(k.trace_chain) + ",\n"
         + "    \"stations\": [\n"
         + "      { \"name\": \"AAAA\", \"position_ecef\": [ -2493304.99, -4655214.79, 3565497.67 ] },\n"
@@ -3194,7 +3204,20 @@ enum class ChainBands {
     Mixed,     ///< L2W is missing on about 15 % of the arcs; every other draw is independent per band (the AGT-4 case).
     Mirrored,  ///< Every GPS arc carries both bands; its slip, age and gating draws are one per arc, copied to both.
     BandOnly,  ///< Band-only arcs, satellites (for stretches) and stations, and an island whose arcs one band alone carries.
+    /// GPS as in Mirrored; Galileo in two tracking modes, each station tracking one (L1C and L5Q, or L1X and
+    /// L5X), both bands of an arc with one draw of slip, age and gating.
+    TwoModes,
+    /// TwoModes with band-only Galileo arcs: a fifth of the stations track band 1 of their mode alone, and an
+    /// arc loses its E5a signal on about 15 % of the draws.
+    TwoModesBandOnly,
 };
+
+/// The signals of the two-mode lineages' groups.
+const std::vector<std::pair<char, std::string>> kTwoModeSignals{{'G', "L1C"}, {'G', "L2W"}, {'E', "L1C"},
+                                                               {'E', "L5Q"}, {'E', "L1X"}, {'E', "L5X"}};
+
+/// True for the two-mode lineages.
+bool twoModes(ChainBands mode) { return mode == ChainBands::TwoModes || mode == ChainBands::TwoModesBandOnly; }
 
 /// A lineage's roster and its sky: each station sees the satellites of its region, and the regions
 /// overlap or not (one component or several per group).
@@ -3210,6 +3233,7 @@ struct ChainWorld {
     std::set<int>                      island_sta;  ///< An island: stations that see only the island's satellites ...
     std::set<std::string>              island_sat;  ///< ... which only they see, ...
     int                                island_band{0};  ///< ... on one band alone (1 L1C, 2 L2W; 0: no island).
+    std::vector<char>                  sta_emode;   ///< Two-mode lineages: roster index -> Galileo mode (0: L1C and L5Q, 1: L1X and L5X).
 };
 
 ChainWorld randomChainWorld(std::mt19937& rng, ChainBands mode = ChainBands::Mixed) {
@@ -3229,6 +3253,29 @@ ChainWorld randomChainWorld(std::mt19937& rng, ChainBands mode = ChainBands::Mix
     for (auto& sky : w.sky)
         for (const std::string& s : w.pool)
             if (chance(rng, 0.5)) sky.insert(s);
+    if (twoModes(mode)) {
+        // Galileo in two tracking modes: every station tracks one, and both modes are present; the pool holds at
+        // least four Galileo satellites, each in half the skies.
+        w.sta_emode.assign(static_cast<std::size_t>(n_sta), 0);
+        for (char& m : w.sta_emode) m = chance(rng, 0.5) ? 1 : 0;
+        w.sta_emode[0] = 0;
+        w.sta_emode[1] = 1;
+        if (mode == ChainBands::TwoModesBandOnly) {   // a fifth of the stations track band 1 of their mode alone
+            w.sta_band.assign(static_cast<std::size_t>(n_sta), 0);
+            for (std::size_t s = 2; s < w.sta_band.size(); ++s) w.sta_band[s] = chance(rng, 0.2) ? 1 : 0;
+        }
+        int n_gal = 0;
+        for (const std::string& s : w.pool) n_gal += s[0] == 'E' ? 1 : 0;
+        for (int prn = 1; n_gal < 4 && prn <= 36; ++prn) {
+            const std::string s = satName('E', prn);
+            if (std::find(w.pool.begin(), w.pool.end(), s) != w.pool.end()) continue;
+            w.pool.push_back(s);
+            ++n_gal;
+            for (auto& sky : w.sky)
+                if (chance(rng, 0.5)) sky.insert(s);
+        }
+        return w;
+    }
     if (mode != ChainBands::BandOnly) return w;
     // Band-only lineages: some stations track one band alone, and a part of the lineages has an
     // island, a few stations whose satellites nobody else sees and whose arcs only one band carries
@@ -3317,12 +3364,21 @@ ChainEpoch nextChainEpoch(std::mt19937& rng, ChainWorld& w, const AnchorHygiene&
                 if (slip) e.slipped.insert({static_cast<int>(i), amb});
                 e.age[{static_cast<int>(i), amb}] = age;
             };
+            if (s[0] == 'E' && twoModes(mode)) {   // the station's mode: both bands, one draw of slip and age
+                const bool slip = chance(rng, 0.08);
+                const int age = uniform(rng, 0, 6);
+                const bool combined = w.sta_emode[i] == 1;
+                addArc(combined ? "L1X" : "L1C", slip, age);
+                if (mode == ChainBands::TwoModes || (w.sta_band[i] != 1 && chance(rng, 0.85)))
+                    addArc(combined ? "L5X" : "L5Q", slip, age);
+                continue;
+            }
             if (s[0] == 'E') {   // Galileo carries one signal
                 const bool slip = chance(rng, 0.08);
                 addArc("L1C", slip, uniform(rng, 0, 6));
                 continue;
             }
-            if (mode == ChainBands::Mirrored) {   // both bands, one draw of slip and age for the two
+            if (mode == ChainBands::Mirrored || twoModes(mode)) {   // both bands, one draw of slip and age for the two
                 const bool slip = chance(rng, 0.08);
                 const int age = uniform(rng, 0, 6);
                 addArc("L1C", slip, age);
@@ -3354,7 +3410,7 @@ ChainEpoch nextChainEpoch(std::mt19937& rng, ChainWorld& w, const AnchorHygiene&
             }
         }
         if (!e.present[i]) continue;
-        if (mode == ChainBands::Mirrored) {
+        if (mode == ChainBands::Mirrored || twoModes(mode)) {
             // The gate keeps or drops an arc whole: one draw per satellite for both of its bands.
             std::map<std::string, bool> kept;
             for (const auto& [amb, pbkey] : e.cnd.usable_keys[i]) {
@@ -3385,8 +3441,24 @@ ChainEpoch nextChainEpoch(std::mt19937& rng, ChainWorld& w, const AnchorHygiene&
 /// L2W key follows, so the incumbents, roots, parents, remembered datum receiver and the presence
 /// of a leveling carry (which the extend-only merge reads) agree between the bands, and only the
 /// carried values differ.  Off, every key draws for itself and the draws are the AGT-4 case's.
+/// @p mirror_galileo does the same for the two Galileo modes (L5Q follows L1C, L5X follows L1X), the carry
+/// value and the previous target included (a step's zero or not, which decides a re-reference with the shift
+/// off, must agree between a mode's bands for the families to compare), and
+/// @p signals names the groups whose receiver-side cells are drawn (the two-mode lineages' six).
 void perturbChainCarry(std::mt19937& rng, const ChainWorld& w, const ChainEpoch& e, NetworkRunContext& a,
-                       NetworkRunContext& b, bool mirror_gps = false) {
+                       NetworkRunContext& b, bool mirror_gps = false, bool mirror_galileo = false,
+                       const std::vector<std::pair<char, std::string>>& signals = kChainSignals) {
+    // The band-2 signal that copies a band-1 signal's structure, and the test for a band-2 signal that does.
+    const auto partnerOf = [&](char cons, const std::string& sig) -> std::string {
+        if (mirror_gps && cons == 'G' && sig == "L1C") return "L2W";
+        if (mirror_galileo && cons == 'E' && sig == "L1C") return "L5Q";
+        if (mirror_galileo && cons == 'E' && sig == "L1X") return "L5X";
+        return {};
+    };
+    const auto followsPartner = [&](char cons, const std::string& sig) {
+        return (mirror_gps && cons == 'G' && sig == "L2W")
+            || (mirror_galileo && cons == 'E' && (sig == "L5Q" || sig == "L5X"));
+    };
     const auto both = [&](const std::function<void(NetworkCarryState&)>& f) {
         f(a.carry);
         f(b.carry);
@@ -3398,33 +3470,63 @@ void perturbChainCarry(std::mt19937& rng, const ChainWorld& w, const ChainEpoch&
     for (std::size_t i = 0; i < w.names.size(); ++i) {
         for (const auto& [amb, pbkey] : e.cnd.usable_keys[i]) {
             const auto parts = StateKeys::parseAmbiguityKey(amb);
-            const bool gps = parts->satellite[0] == 'G';
-            if (mirror_gps && gps && parts->signal == "L2W") continue;   // drawn with its L1C key
+            const char cons = parts->satellite[0];
+            if (followsPartner(cons, parts->signal)) continue;   // drawn with its band-1 key
             std::vector<std::string> sigs{parts->signal};
-            if (mirror_gps && gps && parts->signal == "L1C") sigs.push_back("L2W");
+            if (const std::string p = partnerOf(cons, parts->signal); !p.empty()) sigs.push_back(p);
             const auto ambOf = [&](const std::string& sig) {
                 return StateKeys::makeAmbiguityKey(parts->satellite, sig);
             };
             const bool put_carry = chance(rng, 0.25);
             const bool drop_carry = !put_carry && chance(rng, 0.08);
-            for (const std::string& sig : sigs) {
-                const auto key = std::make_tuple(static_cast<int>(i), parts->satellite, sig);
+            if (mirror_galileo && cons == 'E' && sigs.size() == 2) {
+                // A Galileo mode's two bands take one carry value and one previous target, so that a step's zero or
+                // not, which decides a re-reference with the shift off, agrees between them: the value keeps clear
+                // of half a wavelength on either band, where one band would round to zero and the other not.
+                double v = 0.0;
                 if (put_carry) {
-                    LocalCarry lc{};
-                    lc.value_abs = std::uniform_real_distribution<double>(-3.0, 3.0)(rng);
-                    lc.var       = 1e-4;
-                    bothEnt([&](net::NetworkEntities& c) { net::putArc(c, key, &net::ArcState::amb) = lc; });
-                } else if (drop_carry) {
-                    bothEnt([&](net::NetworkEntities& c) { net::dropArc(c.arcs, key, &net::ArcState::amb); });
+                    v = std::uniform_real_distribution<double>(0.2, 3.0)(rng);
+                    if (chance(rng, 0.5)) v = -v;
                 }
-            }
-            for (const std::string& sig : sigs) {
+                for (const std::string& sig : sigs) {
+                    const auto key = std::make_tuple(static_cast<int>(i), parts->satellite, sig);
+                    if (put_carry) {
+                        LocalCarry lc{};
+                        lc.value_abs = v;
+                        lc.var       = 1e-4;
+                        bothEnt([&](net::NetworkEntities& c) { net::putArc(c, key, &net::ArcState::amb) = lc; });
+                    } else if (drop_carry) {
+                        bothEnt([&](net::NetworkEntities& c) { net::dropArc(c.arcs, key, &net::ArcState::amb); });
+                    }
+                }
                 if (chance(rng, 0.1)) {
                     const double t = chance(rng, 0.5) ? 0.19 * uniform(rng, -3, 3)
                                                       : std::uniform_real_distribution<double>(-1.0, 1.0)(rng);
-                    bothEnt([&](net::NetworkEntities& c) {
-                        net::putArcAmb(c, static_cast<int>(i), ambOf(sig), &net::ArcState::eq34_prev_target) = t;
-                    });
+                    for (const std::string& sig : sigs)
+                        bothEnt([&](net::NetworkEntities& c) {
+                            net::putArcAmb(c, static_cast<int>(i), ambOf(sig), &net::ArcState::eq34_prev_target) = t;
+                        });
+                }
+            } else {
+                for (const std::string& sig : sigs) {
+                    const auto key = std::make_tuple(static_cast<int>(i), parts->satellite, sig);
+                    if (put_carry) {
+                        LocalCarry lc{};
+                        lc.value_abs = std::uniform_real_distribution<double>(-3.0, 3.0)(rng);
+                        lc.var       = 1e-4;
+                        bothEnt([&](net::NetworkEntities& c) { net::putArc(c, key, &net::ArcState::amb) = lc; });
+                    } else if (drop_carry) {
+                        bothEnt([&](net::NetworkEntities& c) { net::dropArc(c.arcs, key, &net::ArcState::amb); });
+                    }
+                }
+                for (const std::string& sig : sigs) {
+                    if (chance(rng, 0.1)) {
+                        const double t = chance(rng, 0.5) ? 0.19 * uniform(rng, -3, 3)
+                                                          : std::uniform_real_distribution<double>(-1.0, 1.0)(rng);
+                        bothEnt([&](net::NetworkEntities& c) {
+                            net::putArcAmb(c, static_cast<int>(i), ambOf(sig), &net::ArcState::eq34_prev_target) = t;
+                        });
+                    }
                 }
             }
             if (chance(rng, 0.03)) {
@@ -3442,7 +3544,7 @@ void perturbChainCarry(std::mt19937& rng, const ChainWorld& w, const ChainEpoch&
                     });
             }
         }
-        for (const auto& [cons, sig] : kChainSignals) {
+        for (const auto& [cons, sig] : signals) {
             const System sys = cons == 'G' ? System::GPS : System::Galileo;
             const std::string rpb_key = StateKeys::makeReceiverPhaseBiasKey(systemName(sys), sig);
             if (chance(rng, 0.3)) {
@@ -3454,11 +3556,11 @@ void perturbChainCarry(std::mt19937& rng, const ChainWorld& w, const ChainEpoch&
                              rpb_key, &net::StationSignalState::rpb) = lc;
                 });
             }
-            if (mirror_gps && cons == 'G' && sig == "L2W") continue;   // its parent is drawn with L1C's
+            if (followsPartner(cons, sig)) continue;   // its parent is drawn with its band-1 signal's
             if (chance(rng, 0.04) && !w.pool.empty()) {
                 const std::string sat = w.pool[static_cast<std::size_t>(uniform(rng, 0, static_cast<int>(w.pool.size()) - 1))];
                 std::vector<std::string> sigs{sig};
-                if (mirror_gps && cons == 'G') sigs.push_back("L2W");
+                if (const std::string p = partnerOf(cons, sig); !p.empty()) sigs.push_back(p);
                 for (const std::string& s2 : sigs)
                     bothEnt([&](net::NetworkEntities& c) {
                         net::put(c.stations, StationId{static_cast<int>(i)}, &net::StationState::signals,
@@ -3477,6 +3579,17 @@ void perturbChainCarry(std::mt19937& rng, const ChainWorld& w, const ChainEpoch&
                          &net::ChannelState::datum_rx) = sta;
         });
     }
+    if (mirror_galileo)   // the Galileo modes' remembered datum receivers, each mode's two bands alike
+        for (const auto& [b1, b2] : {std::pair<std::string, std::string>{"L1C", "L5Q"}, {"L1X", "L5X"}}) {
+            if (!chance(rng, 0.05)) continue;
+            const std::string sta = w.names[static_cast<std::size_t>(uniform(rng, 0, static_cast<int>(w.names.size()) - 1))];
+            bothEnt([&](net::NetworkEntities& c) {
+                net::put(c.constellations, System::Galileo, &net::ConstellationState::channels, b1,
+                         &net::ChannelState::datum_rx) = sta;
+                net::put(c.constellations, System::Galileo, &net::ConstellationState::channels, b2,
+                         &net::ChannelState::datum_rx) = sta;
+            });
+        }
     const bool first = chance(rng, 0.1);
     both([&](NetworkCarryState& c) { c.resume_datum_first_ep = first; });
 }
@@ -4131,15 +4244,15 @@ TEST(NetworkArcGraphOracle, ChainPairFamilyPinsOneTreeAtFullRank) {
 }
 
 
-/// A hand-built epoch: every station tracks every satellite on every listed GPS signal.
+/// A hand-built epoch: every station tracks every satellite on every listed signal of constellation @p cons.
 ChainEpoch handChainEpoch(std::size_t n_sta, const std::vector<std::string>& sats,
-                          const std::vector<std::string>& signals) {
+                          const std::vector<std::string>& signals, char cons = 'G') {
     ChainEpoch e;
     e.present.assign(n_sta, true);
     e.cnd.sat_el.resize(n_sta);
     e.cnd.usable_keys.resize(n_sta);
     for (std::size_t i = 0; i < n_sta; ++i) {
-        e.cnd.cover['G'][i] = 1;
+        e.cnd.cover[cons][i] = 1;
         for (const std::string& s : sats) {
             e.cnd.sat_el[i][s] = 45.0;
             for (const std::string& sig : signals) {
@@ -4215,6 +4328,302 @@ TEST(NetworkArcGraphOracle, ChainPairFamilyFormsOnlyFromTwoSignalsOfDifferentBan
                               st.pinned_amb_targets.count(StateKeys::makeAmbiguityKey(s, "L2W")))
                         << st.name << " " << s;
     }
+}
+
+
+// ---- One pair family per configured pair (network.phase_datum_eq34_family_pairs; card NRF section 121) ----------
+
+/// The record with its edges, components and chords ordered by group, each group's own order kept: two runs
+/// whose families visit the groups in different orders (one pair family per configured pair against one family
+/// per signal) record the same groups in different orders.
+ChainEpochObs chainObsByGroup(const ChainEpochObs& o) {
+    ChainEpochObs s = o;
+    std::stable_sort(s.edges.begin(), s.edges.end(),
+                     [](const ChainEdgeObs& a, const ChainEdgeObs& b) { return a.group < b.group; });
+    std::stable_sort(s.comps.begin(), s.comps.end(),
+                     [](const ChainComponentObs& a, const ChainComponentObs& b) { return a.group < b.group; });
+    std::stable_sort(s.chords.begin(), s.chords.end(), [](const ChainChordCycle& a, const ChainChordCycle& b) {
+        return std::make_pair(a.sat.substr(0, 1), a.signal) < std::make_pair(b.sat.substr(0, 1), b.signal);
+    });
+    return s;
+}
+
+/// The pinned satellites of a station on one signal of a constellation.
+std::set<std::string> pinnedSatsOn(const NetStation& st, char cons, const std::string& signal) {
+    std::set<std::string> out;
+    for (const auto& [amb, target] : st.pinned_amb_targets) {
+        const auto parts = StateKeys::parseAmbiguityKey(amb);
+        if (parts && parts->satellite[0] == cons && parts->signal == signal) out.insert(parts->satellite);
+    }
+    return out;
+}
+
+// The formation rule: a constellation that tracks more than two phase signals forms one pair family per configured
+// pair it tracks, a signal in no pair is elected per signal (a fallback), an empty list keeps today's rule, and two
+// signals keep the pair family's own rule.  Every arc carries every signal here, so the families must give the
+// per-signal election's outputs, and a pair pins the same tree edges on its two bands.
+TEST(NetworkArcGraphOracle, ChainFamilyPairsFormOneFamilyPerConfiguredPair) {
+    LogManager lm;
+    const auto quiet = std::make_shared<spdlog::logger>("fp_forms", spdlog::sinks_init_list{});
+    ChainWorld w;
+    w.names = {"AAAA", "BBBB", "CCCC"};
+    const std::vector<std::string> sats{"E01", "E02", "E03", "E04"};
+    const std::vector<std::string> both{"E:L1C/L5Q", "E:L1X/L5X"};
+    struct Case {
+        std::vector<std::string> signals;
+        std::vector<std::string> pairs;    ///< network.phase_datum_eq34_family_pairs
+        long long families;                ///< pair families formed
+        long long fallbacks;               ///< constellation-epochs elected per signal, in part or whole
+        std::vector<std::string> formed;   ///< the families as counted (the list armed only)
+    };
+    const std::vector<Case> cases{
+        {{"L1C", "L1X", "L5Q", "L5X"}, both, 2, 0, {"E:L1C/L5Q", "E:L1X/L5X"}},              // four signals, two pairs
+        {{"L1C", "L1X", "L5Q"}, both, 1, 1, {"E:L1C/L5Q", "E:L1X"}},                         // a pair without its partner
+        {{"L1C", "L1X", "L5Q", "L5X"}, {"E:L1C/L5Q"}, 1, 1, {"E:L1C/L5Q", "E:L1X", "E:L5X"}},  // one pair listed
+        {{"L1C", "L1X", "L5Q", "L5X"}, {}, 0, 1, {}},                                        // empty: per signal
+        {{"L1C", "L5Q"}, {"E:L1X/L5X"}, 1, 0, {"E:L1C/L5Q"}}};                               // two signals: as before
+    int tag = 7000;
+    for (const Case& c : cases) {
+        std::string what;
+        for (const std::string& s : c.signals) what += s + " ";
+        what += "with [";
+        for (const std::string& p : c.pairs) what += p + " ";
+        what += "]";
+        ChainKnobs kp;
+        kp.family = "pair";
+        kp.family_pairs = c.pairs;
+        ChainKnobs ks;
+        ks.family = "signal";
+        const std::unique_ptr<GnssConfig> cfg_p = loadChainConfig(lm, kp, tag++);
+        const std::unique_ptr<GnssConfig> cfg_s = loadChainConfig(lm, ks, tag++);
+        ASSERT_TRUE(cfg_p && cfg_s) << what;
+        NetworkRunContext ctx_p(*cfg_p, cfg_p->getNetworkConfig());
+        NetworkRunContext ctx_s(*cfg_s, cfg_s->getNetworkConfig());
+        ctx_p.entities.names.assign(w.names);
+        ctx_s.entities.names.assign(w.names);
+        EXPECT_EQ(ctx_p.knobs.eq34_family_pairs.empty(), c.pairs.empty()) << what;
+        const ChainEpoch e = handChainEpoch(w.names.size(), sats, c.signals, 'E');
+        const ChainRun rp = runLiveChainElection(ctx_p, *cfg_p, w, e, quiet);
+        const ChainRun rs = runLiveChainElection(ctx_s, *cfg_s, w, e, quiet);
+        EXPECT_EQ(ctx_p.counters.eq34_pair_families, c.families) << what;
+        EXPECT_EQ(ctx_p.counters.eq34_pair_fallbacks, c.fallbacks) << what;
+        EXPECT_EQ(ctx_p.counters.eq34_mismatch_epochs, 0) << what;
+        std::vector<std::string> formed;
+        for (const auto& [f, n] : ctx_p.counters.eq34_family_epochs) {
+            EXPECT_EQ(n, 1) << what << " " << f;
+            formed.push_back(f);
+        }
+        std::vector<std::string> want = c.formed;
+        std::sort(want.begin(), want.end());
+        EXPECT_EQ(formed, want) << what;
+        EXPECT_EQ(ctx_p.counters.eq34_family_lines, c.pairs.empty() ? 0 : 1) << what;
+        EXPECT_EQ(chainElectionDiff(ctx_p, ctx_s, rp.events, rs.events, rp.stations, rs.stations, rp.shared,
+                                    rs.shared), "") << what;
+        // One datum receiver, pinned on every band's receiver phase bias, and a spanning tree per band:
+        // 3 stations + 4 satellites - 1 = 6 edges.
+        std::set<std::string> rpb_hosts;
+        std::size_t edges = 0;
+        for (const NetStation& st : rp.stations) {
+            if (!st.pinned_rpb_keys.empty()) {
+                rpb_hosts.insert(st.name);
+                EXPECT_EQ(st.pinned_rpb_keys.size(), c.signals.size()) << what << " " << st.name;
+            }
+            edges += st.pinned_amb_targets.size();
+        }
+        EXPECT_EQ(rpb_hosts, std::set<std::string>{"AAAA"}) << what;
+        EXPECT_EQ(edges, 6u * c.signals.size()) << what;
+        for (const std::string& f : c.formed) {
+            if (f.size() != 9) continue;   // a family of one band
+            for (const NetStation& st : rp.stations)
+                EXPECT_EQ(pinnedSatsOn(st, 'E', f.substr(2, 3)), pinnedSatsOn(st, 'E', f.substr(6, 3)))
+                    << what << " " << f << " " << st.name;
+        }
+    }
+}
+
+// The oracle: on a two-mode Galileo world whose arcs carry both bands of their mode, the two configured pair
+// families must give the per-signal election's outputs and observatory record (the family label aside), pin a
+// full-rank forest per group and the same tree edges on each pair's two bands, and never fall back.
+TEST(NetworkArcGraphOracle, ChainFamilyPairsEqualTheSignalFamilyOnTwoGalileoModes) {
+    std::mt19937 rng(20261118u);
+    LogManager lm;
+    const auto quiet = std::make_shared<spdlog::logger>("fp_equal", spdlog::sinks_init_list{});
+    long long n_epochs = 0, n_four = 0, n_pins = 0, n_pair_p = 0, n_fallback_s = 0, n_shared = 0;
+    for (int lineage = 0; lineage < 16; ++lineage) {
+        ChainKnobs kn = drawChainKnobs(rng);
+        kn.trace_chain = true;
+        kn.family = "pair";
+        ChainWorld w = randomChainWorld(rng, ChainBands::TwoModes);
+        if (chance(rng, 0.2)) kn.preferred = w.names[static_cast<std::size_t>(uniform(rng, 0, static_cast<int>(w.names.size()) - 1))];
+        ChainKnobs ks = kn, kp = kn;
+        kp.family_pairs = {"E:L1C/L5Q", "E:L1X/L5X"};
+        const std::unique_ptr<GnssConfig> cfg_s = loadChainConfig(lm, ks, 7100 + lineage);
+        const std::unique_ptr<GnssConfig> cfg_p = loadChainConfig(lm, kp, 7200 + lineage);
+        ASSERT_TRUE(cfg_s && cfg_p) << "lineage " << lineage;
+        NetworkRunContext ctx_s(*cfg_s, cfg_s->getNetworkConfig());
+        NetworkRunContext ctx_p(*cfg_p, cfg_p->getNetworkConfig());
+        ctx_s.entities.names.assign(w.names);
+        ctx_p.entities.names.assign(w.names);
+        ASSERT_TRUE(ctx_s.knobs.eq34_pair_family && ctx_p.knobs.eq34_pair_family);
+        ASSERT_TRUE(ctx_s.knobs.eq34_family_pairs.empty());
+        ASSERT_EQ(ctx_p.knobs.eq34_family_pairs.count(System::Galileo), 1u);
+        const AnchorHygiene hyg_shape = drawChainHygiene(rng);
+        for (int ep = 0; ep < 40; ++ep) {
+            ChainEpoch e = nextChainEpoch(rng, w, hyg_shape, ChainBands::TwoModes);
+            finishPairEpoch(e);
+            perturbChainCarry(rng, w, e, ctx_s, ctx_p, /*mirror_gps=*/true, /*mirror_galileo=*/true, kTwoModeSignals);
+            const ChainRun rs = runLiveChainElection(ctx_s, *cfg_s, w, e, quiet);
+            const ChainRun rp = runLiveChainElection(ctx_p, *cfg_p, w, e, quiet);
+            const std::string at = "lineage " + std::to_string(lineage) + " epoch " + std::to_string(ep);
+            ASSERT_EQ(chainElectionDiff(ctx_s, ctx_p, rs.events, rp.events, rs.stations, rp.stations, rs.shared,
+                                        rp.shared, /*compare_deseeded=*/false), "") << at;
+            ASSERT_TRUE(rs.events.phase_datum.chain && rp.events.phase_datum.chain);
+            // The same groups, recorded in the families' visit order: compared group by group.
+            ASSERT_EQ(chainObsDiff(chainObsByGroup(*rs.events.phase_datum.chain),
+                                   chainObsByGroup(*rp.events.phase_datum.chain)), "") << at;
+            const ChainGroupArcs arcs = chainGroupArcs(e);
+            for (const auto& [cons, sig] : kTwoModeSignals) {
+                const auto it = arcs.find(std::string(1, cons) + "|" + sig);
+                if (it == arcs.end()) continue;
+                const std::string rpb = StateKeys::makeReceiverPhaseBiasKey(
+                    systemName(cons == 'G' ? System::GPS : System::Galileo), sig);
+                long long dim = 0, trees = 0;
+                ASSERT_EQ(chainGroupPinProblem(it->first, it->second, rp.stations, rpb, dim, trees), "") << at;
+                n_pins += dim;
+            }
+            n_four += (arcs.count("E|L1C") && arcs.count("E|L1X")) ? 1 : 0;
+            for (const auto& [b1, b2] : {std::pair<std::string, std::string>{"L1C", "L5Q"}, {"L1X", "L5X"}})
+                for (const NetStation& st : rp.stations) {
+                    const std::set<std::string> on1 = pinnedSatsOn(st, 'E', b1);
+                    ASSERT_EQ(on1, pinnedSatsOn(st, 'E', b2)) << at << " " << st.name << " " << b1;
+                    n_shared += static_cast<long long>(on1.size());
+                }
+            ++n_epochs;
+        }
+        EXPECT_EQ(ctx_p.counters.eq34_pair_fallbacks, 0) << "lineage " << lineage;   // Galileo tracks 0, 2 or 4
+        EXPECT_EQ(ctx_p.counters.eq34_pair_ext_edges, 0) << "lineage " << lineage;
+        EXPECT_EQ(ctx_p.counters.eq34_pair_band_only_comps, 0) << "lineage " << lineage;
+        n_pair_p += ctx_p.counters.eq34_pair_families;
+        n_fallback_s += ctx_s.counters.eq34_pair_fallbacks;
+    }
+    EXPECT_GT(n_four, 300);        // epochs on which Galileo tracks both modes
+    EXPECT_GT(n_fallback_s, 300);  // ... which the pair family alone elects per signal
+    EXPECT_GT(n_pair_p, 900);
+    EXPECT_GT(n_pins, 20000);
+    EXPECT_GT(n_shared, 3000);
+    std::cout << "[ NetworkArcGraphOracle ] configured pair families on two Galileo modes: " << n_epochs
+              << " epochs (" << n_four << " with both modes), " << n_pair_p << " pair families against "
+              << n_fallback_s << " per-signal fallbacks without the list, " << n_pins << " pins, " << n_shared
+              << " Galileo tree edges pinned on both bands of a mode\n";
+}
+
+// With band-only arcs (an arc of either mode loses its E5a signal now and then) every group must still pin a
+// full-rank forest, an arc both bands of a configured pair carry is pinned on both or on neither, and the band
+// extension's work equals what the arcs alone say it is, summed over every pair family formed.
+TEST(NetworkArcGraphOracle, ChainFamilyPairsPinFullRankWithBandOnlyArcs) {
+    std::mt19937 rng(20261119u);
+    LogManager lm;
+    const auto quiet = std::make_shared<spdlog::logger>("fp_rank", spdlog::sinks_init_list{});
+    long long n_epochs = 0, n_pins = 0, n_ext = 0, n_band_only_comps = 0, n_shared = 0, n_pair_epochs = 0;
+    for (int lineage = 0; lineage < 16; ++lineage) {
+        ChainKnobs kn = drawChainKnobs(rng);
+        kn.family = "pair";
+        kn.trace_chain = true;
+        kn.family_pairs = {"E:L1C/L5Q", "E:L1X/L5X"};
+        ChainWorld w = randomChainWorld(rng, ChainBands::TwoModesBandOnly);
+        const std::unique_ptr<GnssConfig> cfg = loadChainConfig(lm, kn, 7300 + lineage);
+        ASSERT_TRUE(cfg) << "lineage " << lineage;
+        NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
+        ctx.entities.names.assign(w.names);
+        const AnchorHygiene hyg_shape = drawChainHygiene(rng);
+        for (int ep = 0; ep < 40; ++ep) {
+            ChainEpoch e = nextChainEpoch(rng, w, hyg_shape, ChainBands::TwoModesBandOnly);
+            finishPairEpoch(e);
+            perturbChainCarry(rng, w, e, ctx, ctx, /*mirror_gps=*/false, /*mirror_galileo=*/false, kTwoModeSignals);
+            const long long mismatch0 = ctx.counters.eq34_mismatch_epochs;
+            const long long ext0 = ctx.counters.eq34_pair_ext_edges;
+            const long long bonly0 = ctx.counters.eq34_pair_band_only_comps;
+            const ChainRun r = runLiveChainElection(ctx, *cfg, w, e, quiet);
+            const std::string at = "lineage " + std::to_string(lineage) + " epoch " + std::to_string(ep);
+            ASSERT_EQ(ctx.counters.eq34_mismatch_epochs, mismatch0) << at;
+            const ChainGroupArcs arcs = chainGroupArcs(e);
+            for (const auto& [cons, sig] : kTwoModeSignals) {
+                const auto it = arcs.find(std::string(1, cons) + "|" + sig);
+                if (it == arcs.end()) continue;
+                const std::string rpb = StateKeys::makeReceiverPhaseBiasKey(
+                    systemName(cons == 'G' ? System::GPS : System::Galileo), sig);
+                long long dim = 0, trees = 0;
+                ASSERT_EQ(chainGroupPinProblem(it->first, it->second, r.stations, rpb, dim, trees), "") << at;
+                n_pins += dim;
+            }
+            // The pair families this epoch formed: GPS when it tracks both bands (two signals), and each
+            // configured Galileo pair whose two signals Galileo tracks with more than two signals in all, or
+            // the only two it tracks.
+            std::set<std::string> e_sigs;
+            for (const char* s : {"L1C", "L5Q", "L1X", "L5X"})
+                if (arcs.count(std::string("E|") + s)) e_sigs.insert(s);
+            std::vector<std::pair<std::string, std::string>> fams;   // ("G|L1C", "G|L2W") ...
+            if (arcs.count("G|L1C") && arcs.count("G|L2W")) fams.emplace_back("G|L1C", "G|L2W");
+            for (const auto& [b1, b2] : {std::pair<std::string, std::string>{"L1C", "L5Q"}, {"L1X", "L5X"}}) {
+                const bool tracked = e_sigs.count(b1) && e_sigs.count(b2);
+                const bool two_only = e_sigs.size() == 2;   // the pair family's own rule
+                if (tracked && (e_sigs.size() > 2 || two_only)) fams.emplace_back("E|" + b1, "E|" + b2);
+            }
+            long long want_ext = 0, want_comps = 0;
+            for (const auto& [g1, g2] : fams) {
+                ++n_pair_epochs;
+                const auto& a1 = arcs.at(g1);
+                const auto& a2 = arcs.at(g2);
+                const char cons = g1[0];
+                for (const NetStation& st : r.stations) {
+                    const std::size_t i = static_cast<std::size_t>(&st - r.stations.data());
+                    const std::set<std::string> on1 = pinnedSatsOn(st, cons, g1.substr(2));
+                    const std::set<std::string> on2 = pinnedSatsOn(st, cons, g2.substr(2));
+                    std::set<std::string> both1, both2;
+                    for (const std::string& s : on1) if (a2.count({static_cast<int>(i), s})) both1.insert(s);
+                    for (const std::string& s : on2) if (a1.count({static_cast<int>(i), s})) both2.insert(s);
+                    ASSERT_EQ(both1, both2) << at << " " << g1 << " station " << st.name;
+                    n_shared += static_cast<long long>(both1.size());
+                    for (const std::string& s : on1)
+                        if (!on2.count(s)) ASSERT_FALSE(a2.count({static_cast<int>(i), s})) << at << " " << g1 << " " << s;
+                    for (const std::string& s : on2)
+                        if (!on1.count(s)) ASSERT_FALSE(a1.count({static_cast<int>(i), s})) << at << " " << g2 << " " << s;
+                }
+                std::set<int> pair_sta;
+                std::set<std::string> pair_sat;
+                for (const auto& arc : a1)
+                    if (a2.count(arc)) {
+                        pair_sta.insert(arc.first);
+                        pair_sat.insert(arc.second);
+                    }
+                const auto extension = [&](const std::set<std::pair<int, std::string>>& arcs_b) {
+                    for (const ChainArcComponent& c : chainArcComponents(arcs_b)) {
+                        long long free_v = 0;
+                        for (int s : c.stations) free_v += pair_sta.count(s) ? 0 : 1;
+                        for (const std::string& s : c.sats) free_v += pair_sat.count(s) ? 0 : 1;
+                        if (free_v == 0) continue;
+                        if (free_v < static_cast<long long>(c.stations.size() + c.sats.size())) want_ext += free_v;
+                        else                                                                   ++want_comps;
+                    }
+                };
+                extension(a1);
+                extension(a2);
+            }
+            ASSERT_EQ(ctx.counters.eq34_pair_ext_edges - ext0, want_ext) << at;
+            ASSERT_EQ(ctx.counters.eq34_pair_band_only_comps - bonly0, want_comps) << at;
+            n_ext += want_ext;
+            n_band_only_comps += want_comps;
+            ++n_epochs;
+        }
+    }
+    EXPECT_GT(n_pins, 20000);
+    EXPECT_GT(n_shared, 3000);
+    EXPECT_GT(n_ext, 300);              // band-only vertices attached under pair trees
+    EXPECT_GT(n_pair_epochs, 1500);
+    std::cout << "[ NetworkArcGraphOracle ] configured pair families with band-only arcs: " << n_epochs << " epochs, "
+              << n_pair_epochs << " pair family-epochs, " << n_pins << " pins, " << n_shared
+              << " tree edges pinned on both bands of a pair, " << n_ext << " extension edges, " << n_band_only_comps
+              << " band-only components\n";
 }
 
 

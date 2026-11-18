@@ -456,6 +456,10 @@ struct ChainDatumCounters {
     long long eq34_pair_fallbacks = 0;        ///< constellation-epochs that formed no pair family and were elected per signal (one signal, three or more, or two of one band)
     long long eq34_pair_ext_edges = 0;        ///< tree edges the band extension added: a band-only vertex attached to a pair tree, on its own band
     long long eq34_pair_band_only_comps = 0;  ///< band-only components elected on their own band: a band component with no vertex in any pair tree
+    // The configured pair families (network.phase_datum_eq34_family_pairs); all stay empty with the list empty.
+    std::map<std::string, long long> eq34_family_epochs;   ///< constellation-epochs per family as elected ("E:L1C/L5Q"; a family of one band "E:L1C")
+    std::map<System, std::string>    eq34_family_line;     ///< each constellation's families as last named in the log (a line is written when they change)
+    long long eq34_family_lines = 0;                       ///< family lines written (at most kChainFamilyLineCap)
     // The kept row of the chain's event table (network.phase_datum_eq34_event_rows "kept"); all stay 0
     // with the row off.  An incumbent arc is a pinned tree edge whose arc was a tree edge at the last
     // election, in either direction.  The row holds it (previous target kept, no frame step of its own)

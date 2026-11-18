@@ -583,7 +583,8 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // Exempt families:
         //   eq34 reattach hygiene   eq34_anchor_min_arc_ep, phase_datum_time_linked,
         //                           eq34_fresh_pin_sigma_scale
-        //   eq34 election family    phase_datum_eq34_family, like the other election knobs
+        //   eq34 election family    phase_datum_eq34_family and phase_datum_eq34_family_pairs, like the
+        //                           other election knobs
         //                           (phase_datum_eq34_{longevity_election,extend_only,
         //                           slip_aware_election}), none of which is fingerprinted: they
         //                           choose which tree the next election grows, and a frame step

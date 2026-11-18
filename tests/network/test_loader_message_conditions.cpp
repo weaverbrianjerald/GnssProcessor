@@ -453,4 +453,64 @@ TEST(LoaderMessages, Eq34EventRowsAreInertWithoutTheChainAndWrittenForTheFloatVe
     EXPECT_FALSE(contains(inv.text, "EVENT ROWS ON")) << inv.text;
 }
 
+// The configured pair families (network.phase_datum_eq34_family_pairs): an entry that is malformed, names a
+// constellation the loader does not know, names two signals of one band, or names a signal another entry names is
+// refused.
+TEST(LoaderMessages, Eq34FamilyPairsRefuseMalformedOneBandAndSharedEntries) {
+    struct Case {
+        const char* tag;
+        const char* list;
+        const char* message;
+    };
+    const Case cases[] = {
+        {"fp_malformed", "[\"E:L1C-L5Q\"]", "is not of the form"},
+        {"fp_unknown", "[\"X:L1C/L5Q\"]", "names no two phase signals of a known constellation"},
+        {"fp_one_band", "[\"E:L1C/L1X\"]", "names two signals of one band"},
+        {"fp_shared", "[\"E:L1C/L5Q\", \"E:L1C/L5X\"]", "which another entry names"},
+    };
+    for (const Case& c : cases) {
+        const LoadedConfig r = loadNetworkConfigCapturing(c.tag,
+            "    \"phase_leveling\": true,\n"
+            "    \"phase_datum_eq34\": true,\n"
+            "    \"phase_datum_eq34_family\": \"pair\",\n"
+            "    \"phase_datum_eq34_family_pairs\": " + std::string(c.list) + ",\n");
+        EXPECT_FALSE(r.ok) << c.tag << ": " << r.text;
+        EXPECT_TRUE(contains(r.text, c.message)) << c.tag << ": " << r.text;
+    }
+}
+
+// With the pair family the list is armed and named at run start; without it (family "signal", or the pin bridge)
+// it is INERT and says so.
+TEST(LoaderMessages, Eq34FamilyPairsArmedWithThePairFamilyAndInertWithoutIt) {
+    const LoadedConfig a = loadNetworkConfigCapturing("fp_armed",
+        "    \"phase_leveling\": true,\n"
+        "    \"phase_datum_eq34\": true,\n"
+        "    \"phase_datum_eq34_family\": \"pair\",\n"
+        "    \"phase_datum_eq34_family_pairs\": [\"E:L1C/L5Q\", \"E:L1X/L5X\"],\n");
+    EXPECT_TRUE(a.ok) << a.text;
+    EXPECT_EQ(a.config.networkPhaseDatumEq34FamilyPairs(), (std::vector<std::string>{"E:L1C/L5Q", "E:L1X/L5X"}));
+    EXPECT_TRUE(contains(a.text, "eq34 FAMILY PAIRS armed [E:L1C/L5Q, E:L1X/L5X]")) << a.text;
+    EXPECT_FALSE(contains(a.text, "family_pairs is set but the pair family is off")) << a.text;
+
+    const LoadedConfig s = loadNetworkConfigCapturing("fp_signal",
+        "    \"phase_leveling\": true,\n"
+        "    \"phase_datum_eq34\": true,\n"
+        "    \"phase_datum_eq34_family_pairs\": [\"E:L1C/L5Q\"],\n");
+    EXPECT_TRUE(s.ok) << s.text;
+    EXPECT_TRUE(contains(s.text, "network.phase_datum_eq34_family_pairs is set but the pair family is off")) << s.text;
+    EXPECT_FALSE(contains(s.text, "FAMILY PAIRS armed")) << s.text;
+
+    const LoadedConfig b = loadNetworkConfigCapturing("fp_bridge",
+        "    \"phase_leveling\": true,\n"
+        "    \"phase_datum_eq34\": true,\n"
+        "    \"eq34_anchor_min_arc_ep\": 3,\n"
+        "    \"phase_datum_time_linked\": true,\n"
+        "    \"phase_datum_eq34_family\": \"pair\",\n"
+        "    \"phase_datum_eq34_family_pairs\": [\"E:L1C/L5Q\"],\n");
+    EXPECT_TRUE(b.ok) << b.text;
+    EXPECT_TRUE(contains(b.text, "network.phase_datum_eq34_family_pairs is INERT this run: the pair family gave way "
+                                 "to the pin bridge")) << b.text;
+    EXPECT_FALSE(contains(b.text, "FAMILY PAIRS armed")) << b.text;
+}
+
 }  // namespace GnssProcessor

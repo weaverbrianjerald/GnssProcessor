@@ -422,6 +422,14 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
         // loader would have it, because a bridged satellite cannot be rooted in a tree shared by
         // two bands.
         if (k.pin_bridge_on) k.eq34_pair_family = false;
+        // The configured pair families (network.phase_datum_eq34_family_pairs), by constellation, each pair in
+        // signal-string order; empty unless the pair family is on.
+        if (k.eq34_pair_family)
+            for (const std::string& e : config_.networkPhaseDatumEq34FamilyPairs()) {
+                std::string a = e.substr(2, 3), b = e.substr(6, 3);
+                if (b < a) std::swap(a, b);
+                k.eq34_family_pairs[systemFromLetter(e[0])].emplace_back(a, b);
+            }
         const bool ramp_on   = anchored && nc.eq34_fresh_pin_sigma_scale > 1.0
                                && nc.eq34_fresh_pin_ramp_ep > 0;
         k.fresh_pin_scale    = ramp_on ? nc.eq34_fresh_pin_sigma_scale : 1.0;
