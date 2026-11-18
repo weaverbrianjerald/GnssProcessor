@@ -1623,6 +1623,7 @@ namespace GnssProcessor {
                 throw std::runtime_error("network.ring_fix.nn_guard_max_if_m must be above 0 m.");
             rf.entry_revalidate = jval<bool>(json, "network.ring_fix.entry_revalidate",
                                              "network_ring_fix_entry_revalidate", false);
+            rf.nn_monitor = jval<bool>(json, "network.ring_fix.nn_monitor", "network_ring_fix_nn_monitor", false);
             rf.form_configured_pairs = jval<bool>(json, "network.ring_fix.form_configured_pairs",
                                                   "network_ring_fix_form_configured_pairs", false);
             if (rf.form_configured_pairs && rf.pairs.empty())

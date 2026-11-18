@@ -10,6 +10,7 @@
  */
 
 #include "network/driver/EpochObservers.hpp"
+#include "network/ar/RingFix.hpp"   // networkRingFixNearNullMonitor
 
 #include "network/state/Entities.hpp"
 #include "network/diag/AmbStateTrace.hpp"
@@ -61,6 +62,8 @@ const std::array<NetworkEpochObserverRow, kNetworkEpochObserverCount> kNetworkEp
      "network/assembly/ParamInventory.cpp", Slot::RosterTail, &networkParamInventoryEpochTail},
     {"networkContributionsEpochTail", "contributions as armed, once",
      "network/assembly/Contributions.cpp", Slot::RosterTail, &networkContributionsEpochTail},
+    {"networkRingFixNearNullMonitor", "near-null signature of the held chords (measure-only)",
+     "network/ar/RingFixSeams.cpp", Slot::RosterTail, &networkRingFixNearNullMonitor},
     // ---- FrameDiag: after the two predict halves, before the stash ----
     {"networkPostfitSigma0", "post-fit sigma0 and the residual traces (P1-3/P1-4)",
      "network/diag/FrameDiag.cpp", Slot::FrameDiag, &networkPostfitSigma0},

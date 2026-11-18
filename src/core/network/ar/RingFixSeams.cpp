@@ -425,6 +425,13 @@ void networkRingFixArm(NetworkRun& run) {
                   "k near-null steps (geometry-free within {:.2f} m of k (4 lambda2 - 3 lambda1), ionosphere-free within "
                   "{:.2f} m) moves by -k (3, 4); a second flag during the same hold releases it; tree edges are not moved.",
                   rf->nn_min_epochs, rf->nn_tol_gf_m, rf->nn_max_if_m);
+    rf->nn_monitor = nc.ring_fix.nn_monitor;
+    if (rf->nn_monitor)
+        log->warn("Network (ring fix): NEAR-NULL MONITOR (measure-only): each held Galileo E1/E5a chord's code signature "
+                  "(averaged over {} epochs, centred) is tallied where it sits at a whole near-null step with an "
+                  "ionosphere-free deviation within {:.2f} m; events at each episode's edges and a run-end table; nothing "
+                  "is moved or released.",
+                  rf->nn_min_epochs, rf->nn_max_if_m);
     rf->entry_revalidate = nc.ring_fix.entry_revalidate;
     if (rf->entry_revalidate)
         log->warn("Network (ring fix): ENTRY RE-VALIDATION: a held link that enters the tree is a known step across the "
@@ -1123,7 +1130,7 @@ void networkRingFixDecide(NetworkRun& run, const NetworkEpoch& ep) {
                     o.have_resid = true;
                     o.resid_if_m = (l2s * *r1 - l1s * *r2) / (l2s - l1s);
                 }
-                if (rf.nn_guard || rf.entry_revalidate) {
+                if (rf.nn_guard || rf.entry_revalidate || rf.nn_monitor) {
                     if (!code_formed) {
                         for (Eigen::Index row = 0; row < resid.size(); ++row) {
                             const RowTag& tag = rowTagAt(R, row);
@@ -1613,6 +1620,29 @@ void networkRingFixDecide(NetworkRun& run, const NetworkEpoch& ep) {
     }
 }
 
+// ---- The near-null monitor (an epoch observer) ----
+
+void networkRingFixNearNullMonitor(NetworkRun& run, const NetworkEpoch& ep) {
+    NetworkRunContext& ctx = run.ctx;
+    NetworkRunTraces& traces = run.traces;
+    const std::vector<NetStation>& stations = run.setup.stations;
+    const GnssTime& t = ep.se.time;
+    // ---- End of the bindings ----
+    if (!ctx.carry.ring_fix || !ctx.carry.ring_fix->nn_monitor) return;
+    NetworkRingFix& rf = *ctx.carry.ring_fix;
+    const auto nameOf = [&](int i) {
+        return (i >= 0 && static_cast<std::size_t>(i) < stations.size()) ? stations[static_cast<std::size_t>(i)].name
+                                                                           : std::string{};
+    };
+    const std::vector<RingFixNearNullVerdict> v =
+        ringFixNearNullVerdicts(nearNullInputs(rf), rf.nn_tol_gf_m, rf.nn_max_if_m);
+    for (const RingFixNnMonitorEdge& e : ringFixNnMonitorStep(rf.nn_mon, v, t.tow, rf.nn_max_if_m))
+        traces.emitEvent(t, "RINGFIX", e.opened ? "nn_monitor_on" : "nn_monitor_off", e.id.sat, nameOf(e.id.station),
+                         e.dev_gf_m, std::nullopt, "monitor",
+                         fmt::format("sig1={} sig2={} k={} dev_gf={:.3f} dev_if={:.3f}", e.id.sig1, e.id.sig2, e.k,
+                                     e.dev_gf_m, e.dev_if_m));
+}
+
 // ---- Run-end report ----
 
 int networkRingFixRunEnd(const NetworkRunEndView& v) {
@@ -1706,6 +1736,27 @@ int networkRingFixRunEnd(const NetworkRunEndView& v) {
                   "flag; {} carried entr(ies) re-opened.",
                   C.nn_link_checks, C.nn_flagged, rf.nn_tol_gf_m, rf.nn_max_if_m, C.nn_refused_if, C.nn_moves,
                   C.nn_moves_one, C.nn_releases, C.nn_reopened);
+    if (rf.nn_monitor) {
+        const RingFixNnMonitor& M = rf.nn_mon;
+        std::vector<std::pair<RingFixLinkId, RingFixNnMonitorLink>> rows(M.links.begin(), M.links.end());
+        rows.erase(std::remove_if(rows.begin(), rows.end(), [](const auto& r) { return r.second.epochs == 0; }), rows.end());
+        std::sort(rows.begin(), rows.end(), [](const auto& a, const auto& b) { return a.second.epochs > b.second.epochs; });
+        log->warn("Network (ring fix, near-null monitor): {} held chord-epoch(s) with a signature, {} at a whole step "
+                  "(ionosphere-free within {:.2f} m); {} chord(s) ever at a step; the chords with the most step epochs "
+                  "follow (measure-only: nothing moved or released).",
+                  M.checks, M.steps, rf.nn_max_if_m, rows.size());
+        const auto& names = v.setup.stations;
+        for (std::size_t i = 0; i < rows.size() && i < 20; ++i) {
+            const auto& [id, L] = rows[i];
+            const std::string name = (id.station >= 0 && static_cast<std::size_t>(id.station) < names.size())
+                                         ? names[static_cast<std::size_t>(id.station)].name : std::string("?");
+            log->warn("   {}-{} {}/{}: {} step epoch(s) in {} episode(s), k {}, mean geometry-free {:+.3f} m, "
+                      "ionosphere-free {:+.3f} m, tow {:.0f} to {:.0f}",
+                      name, id.sat, id.sig1, id.sig2, L.epochs, L.episodes, L.k,
+                      L.sum_gf_m / static_cast<double>(L.epochs), L.sum_if_m / static_cast<double>(L.epochs),
+                      L.first_tow, L.last_tow);
+        }
+    }
     if (rf.entry_revalidate)
         log->warn("Network (ring fix, entry re-validation): {} cut(s) on a band whose entry link was a usable held link; "
                   "{} taken as a known step; {} refused: {} with the held pair not measured across a gap, {} shifted "

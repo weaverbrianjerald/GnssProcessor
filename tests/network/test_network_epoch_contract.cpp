@@ -21,6 +21,7 @@
  * checks the spine against the writer banner of network/driver/Epoch.hpp.
  */
 
+#include "network/ar/RingFix.hpp"   // networkRingFixNearNullMonitor
 #include "app/Application.hpp"
 #include "network/driver/Epoch.hpp"
 #include "network/state/Entities.hpp"
@@ -304,6 +305,7 @@ static_assert(std::is_same_v<decltype(static_cast<NetworkEpochObserver>(&network
 static_assert(std::is_same_v<decltype(static_cast<NetworkEpochObserver>(&networkMultiGnssEpoch)), NetworkEpochObserver>);
 static_assert(std::is_same_v<decltype(static_cast<NetworkEpochObserver>(&networkParamInventoryEpochTail)), NetworkEpochObserver>);
 static_assert(std::is_same_v<decltype(static_cast<NetworkEpochObserver>(&networkContributionsEpochTail)), NetworkEpochObserver>);
+static_assert(std::is_same_v<decltype(static_cast<NetworkEpochObserver>(&networkRingFixNearNullMonitor)), NetworkEpochObserver>);
 static_assert(std::is_same_v<decltype(static_cast<NetworkEpochObserver>(&networkPostfitSigma0)), NetworkEpochObserver>);
 static_assert(std::is_same_v<decltype(static_cast<NetworkEpochObserver>(&networkShSpectrum)), NetworkEpochObserver>);
 static_assert(std::is_same_v<decltype(static_cast<NetworkEpochObserver>(&networkStationBlock)), NetworkEpochObserver>);

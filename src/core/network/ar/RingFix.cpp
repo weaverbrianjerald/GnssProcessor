@@ -463,7 +463,7 @@ std::vector<RingFixEvent> ringFixDecideStep(NetworkRingFix& rf,
             }
             // The moving averages of the chord's code residuals, the near-null signature (network.ring_fix.nn_guard,
             // and network.ring_fix.entry_revalidate, which reads it at a cut).
-            if ((rf.nn_guard || rf.entry_revalidate) && o.have_code && std::isfinite(o.code_gf_m)
+            if ((rf.nn_guard || rf.entry_revalidate || rf.nn_monitor) && o.have_code && std::isfinite(o.code_gf_m)
                 && std::isfinite(o.code_if_m)) {
                 ++L.nn_n;
                 const double w = 1.0 / static_cast<double>(std::min(L.nn_n, std::max(1, rf.nn_min_epochs)));
@@ -675,6 +675,34 @@ bool ringFixCutStep(bool held_before, long long n_held, double target_cyc, bool 
     const long long k = std::llround(r);
     delta = sat_is_child ? n_held - k : k - n_held;
     return true;
+}
+
+std::vector<RingFixNnMonitorEdge> ringFixNnMonitorStep(RingFixNnMonitor& m, const std::vector<RingFixNearNullVerdict>& v,
+                                                       double tow, double max_if_m) {
+    std::vector<RingFixNnMonitorEdge> edges;
+    for (const RingFixNearNullVerdict& x : v) {
+        ++m.checks;
+        RingFixNnMonitorLink& L = m.links[x.id];
+        const bool step = x.k != 0 && std::abs(x.dev_if_m) <= max_if_m;
+        if (step) {
+            ++m.steps;
+            ++L.epochs;
+            L.k = x.k;
+            L.sum_gf_m += x.dev_gf_m;
+            L.sum_if_m += x.dev_if_m;
+            if (L.first_tow < 0.0) L.first_tow = tow;
+            L.last_tow = tow;
+            if (!L.on) {
+                L.on = true;
+                ++L.episodes;
+                edges.push_back({x.id, true, x.k, x.dev_gf_m, x.dev_if_m});
+            }
+        } else if (L.on) {
+            L.on = false;
+            edges.push_back({x.id, false, x.k, x.dev_gf_m, x.dev_if_m});
+        }
+    }
+    return edges;
 }
 
 RingFixEntryVerdict ringFixEntryVerdict(const RingFixEntryEvidence& e, bool revalidate, double max_if_m) {

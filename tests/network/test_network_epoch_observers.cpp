@@ -9,6 +9,7 @@
  * table is pinned so a change to it is a deliberate edit here.
  */
 
+#include "network/ar/RingFix.hpp"   // networkRingFixNearNullMonitor
 #include "network/driver/EpochObservers.hpp"
 
 #include "network/state/Entities.hpp"
@@ -63,6 +64,7 @@ const Pinned kPinned[] = {
     {"networkMultiGnssEpoch",               Slot::RosterTail,    &networkMultiGnssEpoch},
     {"networkParamInventoryEpochTail",      Slot::RosterTail,    &networkParamInventoryEpochTail},
     {"networkContributionsEpochTail",       Slot::RosterTail,    &networkContributionsEpochTail},
+    {"networkRingFixNearNullMonitor",       Slot::RosterTail,    &networkRingFixNearNullMonitor},
     {"networkPostfitSigma0",                Slot::FrameDiag,     &networkPostfitSigma0},
     {"networkShSpectrum",                   Slot::FrameDiag,     &networkShSpectrum},
     {"networkStationBlock",                 Slot::FrameDiag,     &networkStationBlock},

@@ -2026,6 +2026,13 @@ namespace GnssProcessor {
         /// refused as well.  A refused entry's step is unknown, as the chain's returning row declares, and the held
         /// links crossing the cut are released.  Events and run-end counters.  False (default): off, byte-identical.
         bool entry_revalidate{ false };
+        /// @c network.ring_fix.nn_monitor: the near-null signature as a measure-only monitor (the queue's item N3 after
+        /// card NRF section 108.2): every held Galileo E1/E5a chord's centred code signature (the guard's moving averages
+        /// over nn_guard_min_epochs and its verdicts) is tallied where it sits at a whole near-null step with the
+        /// ionosphere-free deviation within nn_guard_max_if_m; RINGFIX nn_monitor_on / nn_monitor_off events at each
+        /// episode's edges and a run-end table; nothing is moved or released (products identical).  False (default):
+        /// off, byte-identical.
+        bool nn_monitor{ false };
         /// @c network.ring_fix.form_configured_pairs: the chord table forms every family of network.ring_fix.pairs on
         /// an arc that tracks both its signals, beside the rule that pairs every band-1 signal with the arc's
         /// lowest-digit signal of another band, so that a family of a third band has chords.  Needs the pairs.  False

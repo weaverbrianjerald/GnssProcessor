@@ -704,6 +704,25 @@ struct RingFixUntiedOutcome {
 
 struct RingFixTruth;   // below: the fixture's truth (simulation only)
 
+/// One held chord's tally of the near-null monitor: the epochs and episodes its signature sat at a whole step.
+struct RingFixNnMonitorLink {
+    long long epochs{0};      ///< Checked epochs at a step signature.
+    long long episodes{0};    ///< Runs of such epochs (an episode opens at a step epoch after a non-step one).
+    bool      on{false};      ///< The last checked epoch was at a step signature.
+    int       k{0};           ///< The last step's whole number of steps.
+    double    sum_gf_m{0.0};  ///< Sum of the centred geometry-free deviations over the step epochs (m).
+    double    sum_if_m{0.0};  ///< Sum of the centred ionosphere-free deviations over the step epochs (m).
+    double    first_tow{-1.0};///< Time of week of the first step epoch (s); -1 before any.
+    double    last_tow{-1.0}; ///< Time of week of the last step epoch (s).
+};
+
+/// The near-null monitor's state: global counters and the per-chord tallies.
+struct RingFixNnMonitor {
+    long long checks{0};      ///< Held chord-epochs with a signature verdict.
+    long long steps{0};       ///< Of them, at a whole step (k != 0) with the ionosphere-free deviation within bound.
+    std::map<RingFixLinkId, RingFixNnMonitorLink> links;   ///< Per chord.
+};
+
 /**
  * @brief Run-scope state of the ring fix.  Null on every run without @c network.ring_fix.enable.
  *
@@ -818,6 +837,8 @@ struct NetworkRingFix {
     double      nn_max_if_m{0.30};          ///< The bound on the ionosphere-free deviation (m).
     std::vector<RingFixLinkId> nn_reopen;   ///< Chords moved after the last solve: their carried entries re-open before PASS B.
     bool        entry_revalidate{false};    ///< Held entries to the tree are re-validated (network.ring_fix.entry_revalidate).
+    bool        nn_monitor{false};          ///< The near-null monitor is armed (network.ring_fix.nn_monitor).
+    RingFixNnMonitor nn_mon;                ///< Its state (measure-only).
 };
 
 // ---- The near-null guard (network.ring_fix.nn_guard) -------------------------------------------
@@ -858,6 +879,32 @@ struct RingFixNearNullVerdict {
  */
 std::vector<RingFixNearNullVerdict> ringFixNearNullVerdicts(const std::vector<RingFixNearNullIn>& in, double tol_gf_m,
                                                             double max_if_m);
+
+// ---- The near-null monitor (network.ring_fix.nn_monitor; measure-only) ------------------------
+
+/// One transition of a chord's monitor state at an epoch: an episode opening or closing.
+struct RingFixNnMonitorEdge {
+    RingFixLinkId id;          ///< The chord.
+    bool          opened{false};  ///< True: an episode opens; false: it closes.
+    int           k{0};        ///< The step's whole number of steps (opening).
+    double        dev_gf_m{0.0};  ///< The centred geometry-free deviation (m).
+    double        dev_if_m{0.0};  ///< The centred ionosphere-free deviation (m).
+};
+
+/**
+ * @brief One epoch of the near-null monitor: tallies each verdict and returns the episodes that open or close.
+ *
+ * A verdict is at a step when its whole number of steps is not 0 and its ionosphere-free deviation is within
+ * @p max_if_m (the guard's signature without the fit tolerance: section 108.2's measure-only form).  A chord with no
+ * verdict this epoch keeps its state.  Measure-only: nothing the solve or the stream reads.
+ * @param m        The monitor's state; updated.
+ * @param v        This epoch's verdicts (@ref ringFixNearNullVerdicts).
+ * @param tow      This epoch's time of week (s).
+ * @param max_if_m The bound on the ionosphere-free deviation (m).
+ * @return The episodes that opened or closed at this epoch, in verdict order.
+ */
+std::vector<RingFixNnMonitorEdge> ringFixNnMonitorStep(RingFixNnMonitor& m, const std::vector<RingFixNearNullVerdict>& v,
+                                                       double tow, double max_if_m);
 
 // ---- The steps (pure: unit-tested on hand-built epochs) ---------------------------------------
 
@@ -1271,6 +1318,19 @@ void networkRingFixStationTally(NetworkRunContext& ctx,
  *            est_index_of), ep.events (the chain record, the latch), ep.se.time, ep.clock.
  */
 void networkRingFixDecide(NetworkRun& run, const NetworkEpoch& ep);
+
+/**
+ * @brief The near-null monitor (network.ring_fix.nn_monitor): an epoch observer, measure-only.
+ *
+ * After the decision, the centred code signature of every held Galileo E1/E5a chord (the guard's moving averages and
+ * verdicts, nothing moved) is tallied by @ref ringFixNnMonitorStep; an RINGFIX nn_monitor_on / nn_monitor_off event at
+ * each episode's edges; a run-end table of the chords with the most step epochs.  Its row in kNetworkEpochObservers
+ * (slot RosterTail).  Gate: the ring fix's state exists and the monitor is armed.
+ *
+ * @param run The run. Written: the ring fix's monitor state, run.traces (events). Read: the held chords' averages.
+ * @param ep  The epoch (its time).
+ */
+void networkRingFixNearNullMonitor(NetworkRun& run, const NetworkEpoch& ep);
 
 /**
  * @brief Stamps the settled flags on an epoch's phase-bias records (network.ring_fix.settled_flags).
