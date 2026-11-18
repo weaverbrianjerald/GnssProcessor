@@ -194,3 +194,30 @@ The S6 engine (`gnss_processor_chas6.exe`, sha256 `083c67511d283879`) on the ado
 - Risk: low off (the default path keeps its branch; gated on the ten controls of section 5.1 as a byte-identical step). Medium on: the pair path runs today for GPS and for Galileo in the phase-family runs, but never with two pair families of one constellation sharing satellites. The satellite band's state is keyed by band (S5, S6), so the two families' trees of a satellite stay apart, and the ring fix already decides both Galileo families of these configurations from its own chord table.
 - Controls that move when on: n146, n147, m1, h40 and d1 (Galileo per signal today); u2z, f40mc, f40sc (Galileo already one pair) and the two main references (no chain) do not.
 - Bars: IRD-3's (card IRD, section 11: off identical; on, identical E1 and E5a tree edge sets per pair family at every epoch, pins per band, the pin audit complete with no mismatch, the oracle extension, every edge-set difference against the per-signal parent attributed to a band-only arc, the float consumer by hour within max(+10 %, +5 mm)), with card NRF section 120's census beside them (no satellite with its band edges on different receivers inside a pair family; the lost class against today's). The simulator beds check the mechanics only: their per-signal trees already coincide edge for edge (section 120, addendum), so only the observed days can show the effect.
+
+### 2026-11-18: after S1 to S6, the defects one by one (milestone B, the manager's request; for the author)
+
+The two Debug failures of milestone A are fixed in `bcf3bfe` (tests only: each `RingFixNearNullGuard` case holds its verdicts in a named local before reading them); the six cases pass in Debug, so milestone B's suite, whose only failures were those two, reads 0 failed.
+
+| defect | after S1 to S6 | what closes the rest |
+| --- | --- | --- |
+| P1. A kept re-host enters the tree as a known step without the entry check | open | S8 (b): the entry check asked on the keep-carry path, behind `entry_revalidate`, pre-registered |
+| P2. Three deciders of a held entry's step | open | S8 (a): one owner (`chainEntryStep`) with today's verdicts; then S8 (b) |
+| P3. A re-host pins the satellite's level through one link | open; its per-band form traced on observed data (card NRF, section 120) | a rule change behind a key (card IRD, IRD-4 and IRD-5); the per-band form also by one pair family per configured pair (card NRF, section 121) |
+| P4. The record behind a trace key | closed by S1 (`0ab87eb`) | |
+| P5. One key names a station's arc and a satellite band's state | partly closed by S6 (`0783ad1`): inside the election the arc's key and the band's key have one owner, and one function maps an arc to its band | open: the typed `ArcId` and satellite-band identity at the election's exported maps (the epoch's events, the stations' pin maps) and the ring fix's own maps, owed with the native family build or when those maps are typed |
+| P6. The phase-family intake | partly closed by S2 (`be0f6db`): the two loader refusals, the header's text corrected | open: the streamed ingest refused at run start (field-blocking for a real-time network) and the parse rename itself, which the native family build removes (held: card NRF, section 118.2) |
+| P7. The ring fix's state is one opaque run field | open | S7 (a) |
+| P8. Chain state written in two places or mid-election | open | S9 |
+| P9. A resume runs some rows without their memory | open | S7 (b): the fixing memory written into the snapshot and restored, pre-registered |
+| P10. Rules with several owners | partly closed by S3 (`495d5ca`): the latch test, the chain's usable held link, the last election's tree edge, the settled set, a link's hold and un-hold; the sigma bound found to be one function called at two stages, no second rule | open: the moved side of a cut walked twice (the chain's release walk over its new forest and the ring fix's re-walk over the held links); the ring fix's usable-entry test reads the latch on the cut's band where the chain reads both bands (a rule question for S8); the two memories of a satellite's last root (`eq34_sat_root`, `eq34_tree_root`) |
+| P11. Two chord tables | open, now a rule change: one table per epoch would move the observatory's trace (the observatory reads the table after RAIM, the ring fix after the solve) | the author's decision |
+| P12. The walk's order rests on a helper documented as retiring | open | S11: named and pinned by a unit case, the order unchanged |
+| P13. One lead-rank vector for two mechanisms | partly closed by S3 (`495d5ca`): each mechanism's lead is counted under its own kind | open: lead edges skip the new-edge test (a rule change; both keys are off) |
+| P14. The near-null guard tied to Galileo E1/E5a and riding the monitor's flag | open, a rule change | the near-null pair from the frequencies, with its own release cause |
+| P15. A knob name that means two keys | open: the rename was declined in S2 (25 files outside the chain, merge conflicts with the open branches) | a rename at a merge point |
+| P16. Dead branches, dead fields and inert keys | closed by S2 (`be0f6db`) and S6 (`0783ad1`, the first production caller of `phaseFamilyCodeOf`), but for one item | open: `network.ring_fix.rehost_keep_carry` under `carry_invariant` (no carry to keep) has no warning; an S2-kind line |
+| P17. The seam contract and the long functions | open | S10 |
+| P18. Comments that contradict the code | closed by S2 (`be0f6db`) | |
+
+Found since the audit: in the adopted configuration Galileo is elected per signal (the note of milestone B above), and no line names that fallback by constellation. The line is part of the key of card NRF section 121 for its arm and is owed on the default path as an S2-kind item.
