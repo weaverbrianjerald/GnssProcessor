@@ -38,3 +38,32 @@
 **Who runs what.** The build, T1, T2's unit part and a 10-epoch smoke of the on arm: the chain audit's session, before the hand-off of the frozen exe. The arms of stages R and A, their runs and their grading: the second session ("Runs and reads") on that exe; its result file is appended to this card by the chain audit's session.
 
 **Reading prepared.** Whatever the result, no adoption by any session: the form goes to the author on one table beside today's runs and section 118.1's single network, and the author chooses between the forms (section 118.2).
+
+### 121.1 2026-11-18: the build (commit `91f36cf`, engine `gnss_processor_cha_fp1.exe`)
+
+**Built.** Commit `91f36cf` on `chain/audit` (after step S6 of card CHA, `0783ad1`, and the test fix `bcf3bfe`), the key as pre-registered.
+- Loader: the four refusals (a malformed entry, an unknown constellation, two signals of one band, a signal that two entries name) and the INERT warnings (family "signal" or no chain; the pin bridge); the run-start line "eq34 FAMILY PAIRS armed [...]"; a line naming the entries that `network.ring_fix.pairs` lacks while the ring fix is armed.
+- Election: `chainFamiliesOf` gives one constellation's families (today's rule for two signals, the configured pairs for more than two, per signal otherwise) through `chainConfiguredFamilies`; with the list empty, the families, their order and the counters are today's. With the list armed, the families are counted one by one (`eq34_family_epochs`), each constellation's families are named in the log when they change (at most 40 lines), and a run-end line counts them (a warning when no configured pair formed).
+- The knob `eq34_family_pairs`, by constellation, is empty unless the pair family is on (so under the pin bridge too); not fingerprinted (the exemption comment names it). Ledger row UNVALIDATED.
+
+**Checked for an assumption of one pair family per constellation; none found.**
+- The family's remembered datum receiver is kept per band (`ConstellationState::channels[signal].datum_rx`), read band by band and written for each band of the family.
+- The root votes run over the family's own bands' satellites.
+- The chord table and `form_configured_pairs` form families per arc (`chainArcFamilies`: each arc's own signals, then the configured families).
+- `pairConsidered` and the settled sets are keyed by the family's text (`"E:L1C/L5Q"`); today's configurations already list both Galileo families.
+- The emitter's families (unsettled steps, step classes) are configured lists.
+- The run-end block counted the pair families only in total; the per-family counts are new.
+- One effect beside them: with the key, the observatory records Galileo's groups in family order (L1C, L5Q, L1X, L5X) instead of signal order; each group's own rows keep their order.
+
+**Unit cases** (Release; 313 chain and loader cases pass).
+- The formation rule on a hand-built Galileo epoch: four signals and two pairs, a pair without its partner, one pair listed, the list empty, two signals; each against the per-signal election, with one datum receiver and a spanning tree per band, and a pair's two bands pinned on the same edges.
+- The oracle on a two-mode Galileo world whose arcs carry both bands of their mode (640 epochs, 610 with both modes): the configured pairs equal the per-signal election's outputs and its record group by group, every group at full rank, no fallback; 1 865 pair families against 610 per-signal fallbacks without the list; 11 278 Galileo tree edges pinned on both bands of a mode.
+- The oracle with band-only arcs (640 epochs, 1 879 pair family-epochs): every group at full rank, an arc that both bands of a configured pair carry pinned on both or on neither, and the band extension's work equal to the arcs' own count over every pair family formed; 2 024 extension edges, 29 band-only components.
+- Four loader refusals and the armed and INERT lines.
+- Found while writing the oracle: with the shift off, a step's zero or not decides a re-reference, so the test world's perturbation must give a Galileo mode's two bands one carry value and one previous target; drawn apart, the per-signal election itself diverges between a mode's two bands.
+
+**T1** (key off, engine `gnss_processor_fp1.exe` of the build, against the base engine's references `_rap_chaR_h40`, `_rap_chaR_f40sc` and `_rap_cha_ctl2_n147`): pass. Products and every trace are identical to the references on the three controls (exit 0; the logs differ only in the two lines that steps S1 and S2 of card CHA announced), and the key's off runs are identical in full to step S6's runs of the same controls (`_rap_cs6_*`, logs included).
+
+**The on arm's smoke** (`_rap_fp_on_smoke`: the 2 h observed control's configuration of DOY 147 with only the key, 9 epochs): exit 0. Galileo formed both configured pair families at every epoch (`E:L1C/L5Q` 9, `E:L1X/L5X` 9, GPS's `G:L1C/L2W` 9: 27 pair families, 0 fallbacks, 9 extension edges); the run-start, change and run-end lines read as specified.
+
+**Frozen exe for stages R and A:** `D:/GnssProcessorSupport/gates/exe/x64-Release/gnss_processor_cha_fp1.exe`, sha256[:16] `da240107c091aa8c` (the build of `91f36cf`; the folder's DLLs are identical to the build's).
