@@ -248,6 +248,7 @@ namespace GnssProcessor {
             obs_layouts_.clear();   // rebuilt per-system from this file's header
             zero_sentinels_skipped_ = 0;
             header_ = RinexHeader(); // Reset header
+            applied_obs_code_renames_.clear();
             time_of_first_obs_ = GnssTime{ 0, 0.0 };
             glonass_freq_slots_.clear();
             bool is_rinex_3x = false;
@@ -388,6 +389,7 @@ namespace GnssProcessor {
                                     continue;
                                 }
                                 renamed += (renamed.empty() ? "" : " ") + code + ">" + to->second;
+                                applied_obs_code_renames_[current_system].emplace_back(code, to->second);
                                 code = to->second;
                             }
                             if (!renamed.empty() || !kept.empty())

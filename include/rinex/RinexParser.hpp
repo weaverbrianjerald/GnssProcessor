@@ -205,6 +205,12 @@ namespace GnssProcessor {
             obs_code_renames_ = std::move(renames);
         }
 
+        /// @brief The renames the last parse applied, per system, as (declared code, the name it was read under).
+        /// @return Empty when none applied (no table, or the file declares none of its codes).
+        const std::map<System, std::vector<std::pair<std::string, std::string>>>& appliedObsCodeRenames() const {
+            return applied_obs_code_renames_;
+        }
+
         /**
          * @brief Get the parsed RINEX header.
          * @return Const reference to the stored @c RinexHeader.
@@ -402,6 +408,7 @@ namespace GnssProcessor {
 
         RinexHeader header_;             /**< Parsed header metadata. */
         std::map<System, std::map<std::string, std::string>> obs_code_renames_; /**< Codes read under another name (@ref setObsCodeRenames). */
+        std::map<System, std::vector<std::pair<std::string, std::string>>> applied_obs_code_renames_; /**< What the last parse renamed (@ref appliedObsCodeRenames). */
         std::vector<RinexObservation> observations_; /**< Parsed observation epochs. */
         long long zero_sentinels_skipped_{0}; /**< RINEX 3 written-0.0 values skipped this parse (guard armed via processing.rinex_skip_zero_values; logged at parse end as the counter invariant #4 asks for). */
 

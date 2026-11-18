@@ -1207,18 +1207,23 @@ void NetworkRunTraces::writeStationRoster(const std::filesystem::path& log_dir,
     const std::filesystem::path roster_path = log_dir / "network_stations.csv";
     std::ofstream roster(roster_path);
     if (roster) {
-        roster << "station,role,ecef_x,ecef_y,ecef_z\n";
+        // The phase tracking column (network.phase_families): each receiver's tracking signals as its file declares
+        // them, so a reader splits the receivers by tracking without an outside list; written only when armed.
+        bool tracking = false;
+        for (const auto& st : stations) tracking = tracking || !st.phase_tracking.empty();
+        roster << "station,role,ecef_x,ecef_y,ecef_z" << (tracking ? ",phase_tracking" : "") << '\n';
         for (const auto& st : stations)
             roster << st.name << ',' << (st.is_pivot ? "datum" : "network") << ','
                    << fmt::format("{:.4f}", st.ecef.x()) << ','
                    << fmt::format("{:.4f}", st.ecef.y()) << ','
-                   << fmt::format("{:.4f}", st.ecef.z()) << '\n';
+                   << fmt::format("{:.4f}", st.ecef.z())
+                   << (tracking ? "," + st.phase_tracking : std::string()) << '\n';
         if (held_out) {
             const auto& p = held_out->position_ecef;
             roster << held_out->name << ",held_out,"
                    << fmt::format("{:.4f}", p[0]) << ','
                    << fmt::format("{:.4f}", p[1]) << ','
-                   << fmt::format("{:.4f}", p[2]) << '\n';
+                   << fmt::format("{:.4f}", p[2]) << (tracking ? ",as recorded" : "") << '\n';
         }
         log->info("Network: wrote station roster {}", roster_path.string());
     } else {

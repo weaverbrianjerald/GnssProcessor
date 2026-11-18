@@ -244,6 +244,13 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
     // consumer is read as recorded.  No table: nothing is renamed.
     {
         const PhaseFamilyTable families = signalRosterPhaseFamilies(config_);
+        // A triaged deferral (card NRF section 112.3): the streamed ingest does not pass the RINEX parse where the
+        // intake reads a member's codes under the identity's names, so a streamed network run with the table is
+        // refused (field-blocking for real time; inert in post-processing).
+        if (!families.empty() && nc.streaming.enable)
+            throw std::runtime_error("network.phase_families is post-processing only in this build: the streamed "
+                                     "network ingest (network.streaming) does not pass the RINEX parse where a member's "
+                                     "codes are read under the identity's names (card NRF section 112.3).");
         if (!families.empty()) {
             std::map<System, std::map<std::string, std::string>> renames;
             for (const PhaseFamilyRow& r : families)
@@ -1376,6 +1383,56 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                   "H/E/N' record and cannot be reduced in either knob state: {}",
                   no_ecc_record_stations.size(), stations.size(),
                   joinNames(no_ecc_record_stations));
+
+    // --- The phase families as armed (network.phase_families; card NRF section 112.3) ---------------
+    // From the table and the parse alone: per row, the receivers that track the identity, those that track the member
+    // (read in under the identity's name) and those whose files declare both (kept apart); each receiver's tracking is
+    // kept on its station for the stations trace, so the true tracking signal is not lost.
+    {
+        const PhaseFamilyTable families = signalRosterPhaseFamilies(config_);
+        if (!families.empty()) {
+            std::map<std::size_t, std::array<std::vector<std::string>, 3>> by_row;   // row -> identity, member, both
+            for (auto& st : stations) {
+                const RinexParser* rp = sync.parserOf(st.name);
+                if (rp == nullptr) continue;
+                std::map<char, std::string> per_sys;
+                for (std::size_t k = 0; k < families.size(); ++k) {
+                    const PhaseFamilyRow& r = families[k];
+                    const std::string mem = r.member.obsCode(ObsType::Phase);
+                    const std::string ide = r.identity.obsCode(ObsType::Phase);
+                    bool renamed = false;
+                    if (const auto a = rp->appliedObsCodeRenames().find(r.member.sys);
+                        a != rp->appliedObsCodeRenames().end())
+                        for (const auto& [from, to] : a->second) renamed = renamed || (from == mem && to == ide);
+                    bool has_ide = false, has_mem = false;
+                    if (const auto h = rp->getHeader().obs_types.find(r.member.sys);
+                        h != rp->getHeader().obs_types.end()) {
+                        has_ide = std::find(h->second.begin(), h->second.end(), ide) != h->second.end();
+                        has_mem = std::find(h->second.begin(), h->second.end(), mem) != h->second.end();
+                    }
+                    std::string token;
+                    if (renamed)                   { token = mem + ">" + ide; by_row[k][1].push_back(st.name); }
+                    else if (has_ide && has_mem)   { token = ide + "+" + mem; by_row[k][2].push_back(st.name); }
+                    else if (has_ide)              { token = ide;             by_row[k][0].push_back(st.name); }
+                    if (token.empty()) continue;
+                    std::string& s = per_sys[rinexLetter(r.member.sys)];
+                    s += (s.empty() ? "" : " ") + token;
+                }
+                for (const auto& [letter, s] : per_sys)
+                    st.phase_tracking += (st.phase_tracking.empty() ? "" : ";") + std::string(1, letter) + ":" + s;
+            }
+            for (std::size_t k = 0; k < families.size(); ++k) {
+                const auto& g = by_row[k];
+                log->warn("Network (phase families as armed): {} {} with member {}: {} receiver(s) track {} [{}]; {} track "
+                          "{}, read as {} [{}]; {} declare both, kept apart [{}].",
+                          constellationKey(families[k].member.sys), families[k].identity.obsCode(ObsType::Phase),
+                          families[k].member.obsCode(ObsType::Phase), g[0].size(),
+                          families[k].identity.obsCode(ObsType::Phase), joinNames(g[0]), g[1].size(),
+                          families[k].member.obsCode(ObsType::Phase), families[k].identity.obsCode(ObsType::Phase),
+                          joinNames(g[1]), g[2].size(), joinNames(g[2]));
+            }
+        }
+    }
 
     // --- Station roster (viz) -----------------------------------------------
     // A tiny static CSV of the stations that actually loaded (id, role, ECEF) so

@@ -51,6 +51,9 @@ struct NetStation {
     std::string                       name;                         ///< The station's name (its roster identifier).
     Eigen::Vector3d                   ecef{Eigen::Vector3d::Zero()};  ///< The station's fixed coordinates (ECEF, m).
     bool                              is_pivot{false};              ///< True for the legacy single pivot station, which pins the whole shared set.
+    /// The station's phase tracking under network.phase_families, as its file declares it ("E:L1X>L1C L5X>L5Q" for a
+    /// member read under its identity, "E:L1C L5Q" for the identity itself); empty when the table is not armed.
+    std::string                       phase_tracking;
     std::unique_ptr<PppModel>         model;                        ///< The station's observation model (computeModels builds its modelled observations).
     /// What the station's births and rows read besides its observations and its set
     /// (network/assembly/StationRows.hpp).
