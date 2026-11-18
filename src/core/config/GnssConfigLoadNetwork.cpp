@@ -1587,6 +1587,19 @@ namespace GnssProcessor {
             if (rf.reattach && !rf.settled_flags)
                 throw std::runtime_error("network.ring_fix.reattach moves the tree edges of satellites the settled "
                                          "flags leave untied: it needs network.ring_fix.settled_flags.");
+            rf.nn_guard = jval<bool>(json, "network.ring_fix.nn_guard", "network_ring_fix_nn_guard", false);
+            rf.nn_guard_min_epochs = jval<int>(json, "network.ring_fix.nn_guard_min_epochs",
+                                               "network_ring_fix_nn_guard_min_epochs", 60);
+            if (rf.nn_guard_min_epochs < 10 || rf.nn_guard_min_epochs > 2880)
+                throw std::runtime_error("network.ring_fix.nn_guard_min_epochs must be in [10, 2880] epochs.");
+            rf.nn_guard_tol_gf_m = jval<double>(json, "network.ring_fix.nn_guard_tol_gf_m",
+                                                "network_ring_fix_nn_guard_tol_gf_m", 0.12);
+            if (!(rf.nn_guard_tol_gf_m > 0.0 && rf.nn_guard_tol_gf_m < 0.22))
+                throw std::runtime_error("network.ring_fix.nn_guard_tol_gf_m must be in (0, 0.22) m, below half a step.");
+            rf.nn_guard_max_if_m = jval<double>(json, "network.ring_fix.nn_guard_max_if_m",
+                                                "network_ring_fix_nn_guard_max_if_m", 0.30);
+            if (!(rf.nn_guard_max_if_m > 0.0))
+                throw std::runtime_error("network.ring_fix.nn_guard_max_if_m must be above 0 m.");
             rf.form_configured_pairs = jval<bool>(json, "network.ring_fix.form_configured_pairs",
                                                   "network_ring_fix_form_configured_pairs", false);
             if (rf.form_configured_pairs && rf.pairs.empty())

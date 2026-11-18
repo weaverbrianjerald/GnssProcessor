@@ -527,6 +527,11 @@ struct RingFixLink {
     bool      log_decided{false};    ///< Log rule: the rule would have decided it (at least once).
     long long log_n1{0};             ///< Log rule: the first would-be band-1 integer.
     long long log_n2{0};             ///< Log rule: the first would-be band-2 integer.
+    // The near-null guard (network.ring_fix.nn_guard).
+    int       nn_n{0};               ///< Code-residual epochs in the moving average since the hold or the guard's last move.
+    double    nn_gf_m{0.0};          ///< Moving average of the geometry-free combination of its two post-fit code residuals (m).
+    double    nn_if_m{0.0};          ///< Moving average of their ionosphere-free combination (m).
+    bool      nn_moved{false};       ///< The guard moved its pair during this hold.
 };
 
 /// One link as the decision reads it after the solve.
@@ -554,6 +559,9 @@ struct RingFixDecideObs {
     double    code_event_s{-1.0};      ///< Its satellite's last code-reference move or code-datum re-seed (s; negative: none).
     bool      have_resid{false};       ///< Held links: the post-fit ionosphere-free phase residual was formed.
     double    resid_if_m{0.0};         ///< That residual (m).
+    bool      have_code{false};        ///< Held links under network.ring_fix.nn_guard: both bands' post-fit code residuals were formed.
+    double    code_gf_m{0.0};          ///< Their geometry-free combination, band 1 minus band 2 (m).
+    double    code_if_m{0.0};          ///< Their ionosphere-free combination (m).
     bool      have_truth{false};       ///< Simulation only: the link's true integers in this epoch's frame are known.
     long long truth1{0};               ///< Its true band-1 integer.
     long long truth2{0};               ///< Its true band-2 integer.
@@ -662,6 +670,14 @@ struct RingFixCounters {
     long long untied_held_off{0};         ///< Satellite-epochs past the dwell within a moved satellite's hold-off (no move).
     long long untied_flagged_after{0};    ///< Moved satellites flagged within kRingFixReattachWatchS of the move.
     long long untied_unflagged_after{0};  ///< Moved satellites not flagged within it.
+    // The near-null guard (network.ring_fix.nn_guard).
+    long long nn_link_checks{0};          ///< Held chord-epochs checked (moving average full, satellite and receiver groups formed).
+    long long nn_flagged{0};              ///< Of them, a deviation that fits a near-null step with a small ionosphere-free deviation.
+    long long nn_refused_if{0};           ///< Of them, a step-sized geometry-free deviation refused for its ionosphere-free one.
+    long long nn_moves{0};                ///< Pairs moved by -k (3, 4).
+    long long nn_moves_one{0};            ///< Of them, by one step.
+    long long nn_releases{0};             ///< Chords released for a second flag after a move during the same hold.
+    long long nn_reopened{0};             ///< Carried entries re-opened after a move.
 };
 
 /// A move of the re-attachment waiting for the next election (network.ring_fix.reattach).
@@ -789,7 +805,52 @@ struct NetworkRingFix {
     std::map<std::pair<std::string, std::string>, double> untied_last_move_s;
     /// This epoch's election outcomes of the moves, for the decision seam's events (cleared there).
     std::vector<RingFixUntiedOutcome> untied_outcomes;
+    // The near-null guard (network.ring_fix.nn_guard).
+    bool        nn_guard{false};            ///< The guard is armed (network.ring_fix.nn_guard).
+    int         nn_min_epochs{60};          ///< The moving average's length and the epochs before a chord is checked.
+    double      nn_tol_gf_m{0.12};          ///< The fit tolerance of the geometry-free deviation to k near-null steps (m).
+    double      nn_max_if_m{0.30};          ///< The bound on the ionosphere-free deviation (m).
+    std::vector<RingFixLinkId> nn_reopen;   ///< Chords moved after the last solve: their carried entries re-open before PASS B.
 };
+
+// ---- The near-null guard (network.ring_fix.nn_guard) -------------------------------------------
+
+/// One held chord as the near-null guard reads it.
+struct RingFixNearNullIn {
+    RingFixLinkId id;          ///< The chord.
+    double        step_m{0.0}; ///< Its pair's near-null step on the code's geometry-free combination, 4 lambda2 - 3 lambda1 (m).
+    double        gf_m{0.0};   ///< Moving average of its geometry-free post-fit code residual (m).
+    double        if_m{0.0};   ///< Moving average of its ionosphere-free post-fit code residual (m).
+};
+
+/// The guard's verdict on one chord.
+struct RingFixNearNullVerdict {
+    RingFixLinkId id;               ///< The chord.
+    double        dev_gf_m{0.0};    ///< Its geometry-free deviation, centred on its satellite's family, then its receiver (m).
+    double        dev_if_m{0.0};    ///< Its ionosphere-free deviation, centred the same way (m).
+    int           k{0};             ///< Near-null steps the held pair sits above the code's level, round(dev_gf / step).
+    bool          act{false};       ///< k != 0, the deviation fits k steps and the ionosphere-free deviation is small.
+    bool          refused_if{false};///< k != 0 and the deviation fits, refused for the ionosphere-free deviation.
+};
+
+/**
+ * @brief The near-null guard's verdicts on the held chords of an epoch (pure).
+ *
+ * A Galileo E1/E5a chord held at the pair k (3, 4) above the truth carries the geometry-free phase error 3 lambda1 -
+ * 4 lambda2; its free slant ionosphere absorbs it, and its code rows then show a geometry-free residual of k (4 lambda2
+ * - 3 lambda1), about 0.448 m per step, with the ionosphere-free residual untouched, while a chord's own code bias shows
+ * in both.  Each chord's moving averages are centred twice: on the median over the chords of its satellite and pair
+ * family (at least 4), then on the median of its receiver's chords' remaining deviations (at least 3); a chord in a
+ * smaller group gets no verdict.  k = round(dev_gf / step); @c act when k != 0, |dev_gf - k step| <= tol_gf_m and
+ * |dev_if| <= max_if_m.
+ *
+ * @param in       The held chords whose moving averages are full.
+ * @param tol_gf_m The fit tolerance of the geometry-free deviation to k steps (m).
+ * @param max_if_m The bound on the ionosphere-free deviation (m).
+ * @return One verdict per chord that has both groups.
+ */
+std::vector<RingFixNearNullVerdict> ringFixNearNullVerdicts(const std::vector<RingFixNearNullIn>& in, double tol_gf_m,
+                                                            double max_if_m);
 
 // ---- The steps (pure: unit-tested on hand-built epochs) ---------------------------------------
 

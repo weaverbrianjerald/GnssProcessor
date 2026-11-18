@@ -2000,6 +2000,23 @@ namespace GnssProcessor {
         /// an unknown step); no integer is decided, and the satellite is not moved again for 3 600 s (section 102.2).
         /// Events and run-end counters at both edges.  Needs settled_flags.  False (default): off, byte-identical.
         bool reattach{ false };
+        /// @c network.ring_fix.nn_guard: the near-null guard (card NRF section 108).  Each held Galileo E1/E5a chord
+        /// keeps a moving average of the geometry-free and ionosphere-free combinations of its two post-fit code
+        /// residuals; after each solve, centred on its satellite's family and then its receiver, a deviation within
+        /// nn_guard_tol_gf_m of k near-null steps (k (4 lambda2 - 3 lambda1), about 0.448 m) with the ionosphere-free
+        /// deviation within nn_guard_max_if_m moves the chord's pair by -k (3, 4) and re-opens its carried entries; a
+        /// second flag during the same hold releases it.  Tree edges are not moved.  Events and run-end counters.
+        /// False (default): off, byte-identical.
+        bool nn_guard{ false };
+        /// @c network.ring_fix.nn_guard_min_epochs: the guard's moving-average length and the epochs a chord is held
+        /// before it is checked (default 60); in [10, 2880].  Read only with nn_guard.
+        int nn_guard_min_epochs{ 60 };
+        /// @c network.ring_fix.nn_guard_tol_gf_m: the fit tolerance of the geometry-free deviation to k near-null steps
+        /// (metres, default 0.12); in (0, 0.22).  Read only with nn_guard.
+        double nn_guard_tol_gf_m{ 0.12 };
+        /// @c network.ring_fix.nn_guard_max_if_m: the bound on the ionosphere-free deviation (metres, default 0.30);
+        /// above 0.  Read only with nn_guard.
+        double nn_guard_max_if_m{ 0.30 };
         /// @c network.ring_fix.form_configured_pairs: the chord table forms every family of network.ring_fix.pairs on
         /// an arc that tracks both its signals, beside the rule that pairs every band-1 signal with the arc's
         /// lowest-digit signal of another band, so that a family of a third band has chords.  Needs the pairs.  False

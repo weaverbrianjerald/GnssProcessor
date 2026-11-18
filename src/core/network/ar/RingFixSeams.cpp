@@ -12,6 +12,7 @@
 #include "filter/StateKeySchema.hpp"            // StateKeys::makeAmbiguityKey
 #include "network/ar/AmbFloat.hpp"              // ambFloatDropFloored, ambFloatBirthFloor, ambFloatDropFloorNow
 #include "network/assembly/Contributions.hpp"   // makeRowTag
+#include "network/assembly/RowClassify.hpp"     // rowTagAt, rowClassOfKind, rowObservationCode (the guard's code rows)
 #include "network/assembly/StationBuild.hpp"    // StationBuild, StationCarryFrame
 #include "network/diag/AmbStateTrace.hpp"       // ambStateNoteDrop
 #include "network/diag/RunTraces.hpp"
@@ -398,6 +399,16 @@ void networkRingFixArm(NetworkRun& run) {
                   "satellites mutually tied through held links and certified tree edges, whatever receiver roots it, "
                   "once it holds {} satellites; the incumbent set is kept until another holds {} more.",
                   kRingFixSettledMinSats, kRingFixSettledHysteresis);
+    rf->nn_guard = nc.ring_fix.nn_guard;
+    rf->nn_min_epochs = nc.ring_fix.nn_guard_min_epochs;
+    rf->nn_tol_gf_m = nc.ring_fix.nn_guard_tol_gf_m;
+    rf->nn_max_if_m = nc.ring_fix.nn_guard_max_if_m;
+    if (rf->nn_guard)
+        log->warn("Network (ring fix): NEAR-NULL GUARD: a held Galileo E1/E5a chord whose post-fit code residuals, "
+                  "averaged over its last {} epochs and centred on its satellite's family and then its receiver, sit at "
+                  "k near-null steps (geometry-free within {:.2f} m of k (4 lambda2 - 3 lambda1), ionosphere-free within "
+                  "{:.2f} m) moves by -k (3, 4); a second flag during the same hold releases it; tree edges are not moved.",
+                  rf->nn_min_epochs, rf->nn_tol_gf_m, rf->nn_max_if_m);
     rf->reattach = rf->settled_flags_on && nc.ring_fix.reattach;
     if (rf->reattach)
         log->warn("Network (ring fix): RE-ATTACHMENT OF UNTIED SATELLITES: a satellite of a family's tree unsettled "
@@ -617,6 +628,18 @@ void networkRingFixHoldEpoch(NetworkRun& run, const NetworkEpoch& ep) {
         }
         ++rf.counters.carry_reopened;
     };
+    // The near-null guard's moves after the last solve (network.ring_fix.nn_guard): each moved chord's carried entries
+    // re-open as at a release, so that the hold rows at its new integers re-level it; the release step then takes its new
+    // re-level stamps as the baseline instead of reading the re-open as a refloat.
+    for (const RingFixLinkId& id : rf.nn_reopen) {
+        const auto it = rf.links.find(id);
+        if (it == rf.links.end() || !it->second.held) continue;
+        reopen(id, id.sig1, std::numeric_limits<double>::infinity());
+        reopen(id, id.sig2, std::numeric_limits<double>::infinity());
+        it->second.rebase_stamps = true;
+        rf.counters.nn_reopened += 2;
+    }
+    rf.nn_reopen.clear();
     std::set<RingFixLinkId> usable_before;   // held, not latched, monitor not tripped
     for (const auto& [id, L] : rf.links)
         if (L.held && !L.monitor_trip && latched.count({id.station, id.sat, id.sig1}) == 0
@@ -942,6 +965,9 @@ void networkRingFixDecide(NetworkRun& run, const NetworkEpoch& ep) {
                                                  plan.shared_datum, cols, rows, filled, &xr);
         Eigen::VectorXd resid;
         bool resid_formed = false;
+        // The near-null guard's code rows (network.ring_fix.nn_guard): (satellite, band digit) -> post-fit O - C (m).
+        std::map<std::pair<std::string, char>, double> code_resid;
+        bool code_formed = false;
         for (std::size_t r_i = 0; r_i < rows.size(); ++r_i) {
             const ChainChordRow& r = rows[r_i];
             if (!rf.pairConsidered(constellationKey(systemOfSat(r.sat)), r.sig1, r.sig2)) {
@@ -1022,6 +1048,27 @@ void networkRingFixDecide(NetworkRun& run, const NetworkEpoch& ep) {
                     const double l1s = o.lambda1 * o.lambda1, l2s = o.lambda2 * o.lambda2;
                     o.have_resid = true;
                     o.resid_if_m = (l2s * *r1 - l1s * *r2) / (l2s - l1s);
+                }
+                if (rf.nn_guard) {
+                    if (!code_formed) {
+                        for (Eigen::Index row = 0; row < resid.size(); ++row) {
+                            const RowTag& tag = rowTagAt(R, row);
+                            const double w = row < R.w.size() ? R.w(row) : 1.0;
+                            if (rowClassOfKind(tag.kind, w) != NetRowClass::ObsCode || !tag.sat.valid()) continue;
+                            const std::string code = rowObservationCode(tag);
+                            if (code.size() < 2) continue;
+                            code_resid.emplace(std::make_pair(tag.sat.str(), code[1]), resid(row));
+                        }
+                        code_formed = true;
+                    }
+                    const auto c1 = code_resid.find({r.sat, r.sig1.size() > 1 ? r.sig1[1] : '?'});
+                    const auto c2 = code_resid.find({r.sat, r.sig2.size() > 1 ? r.sig2[1] : '?'});
+                    if (c1 != code_resid.end() && c2 != code_resid.end() && o.lambda2 > o.lambda1 && o.lambda1 > 0.0) {
+                        const double g = (o.lambda2 * o.lambda2) / (o.lambda1 * o.lambda1);   // f1^2 / f2^2
+                        o.have_code = true;
+                        o.code_gf_m = c1->second - c2->second;
+                        o.code_if_m = (g * c1->second - c2->second) / (g - 1.0);
+                    }
                 }
             }
             links.push_back(o);
@@ -1450,6 +1497,54 @@ void networkRingFixDecide(NetworkRun& run, const NetworkEpoch& ep) {
         }
         rf.settled = std::move(now);
     }
+
+    // The near-null guard (network.ring_fix.nn_guard): a held Galileo E1/E5a chord whose centred code residuals sit at k
+    // near-null steps with a small ionosphere-free deviation moves by -k (3, 4) from the next epoch's hold rows; a
+    // second flag during the same hold releases it.
+    if (rf.nn_guard) {
+        std::vector<RingFixNearNullIn> nn_in;
+        for (const auto& [id, L] : rf.links) {
+            if (!L.held || L.nn_n < rf.nn_min_epochs) continue;
+            if (id.sat.empty() || id.sat[0] != 'E' || id.sig1.size() < 2 || id.sig2.size() < 2 || id.sig1[1] != '1'
+                || id.sig2[1] != '5')
+                continue;
+            if (!(L.lambda1 > 0.0 && L.lambda2 > L.lambda1)) continue;
+            nn_in.push_back({id, 4.0 * L.lambda2 - 3.0 * L.lambda1, L.nn_gf_m, L.nn_if_m});
+        }
+        const auto nameOf = [&](int i) {
+            return (i >= 0 && static_cast<std::size_t>(i) < stations.size()) ? stations[static_cast<std::size_t>(i)].name
+                                                                               : std::string{};
+        };
+        for (const RingFixNearNullVerdict& v : ringFixNearNullVerdicts(nn_in, rf.nn_tol_gf_m, rf.nn_max_if_m)) {
+            ++rf.counters.nn_link_checks;
+            if (v.refused_if) ++rf.counters.nn_refused_if;
+            if (!v.act) continue;
+            ++rf.counters.nn_flagged;
+            RingFixLink& L = rf.links.at(v.id);
+            if (L.nn_moved) {
+                L.monitor_trip = true;   // the next release step releases it, before PASS B
+                ++rf.counters.nn_releases;
+                traces.emitEvent(t, "RINGFIX", "nn_release", v.id.sat, nameOf(v.id.station), v.dev_gf_m, rf.nn_tol_gf_m,
+                                 "release",
+                                 fmt::format("sig1={} sig2={} n1={} n2={} k={} dev_gf={:.3f} dev_if={:.3f}", v.id.sig1,
+                                             v.id.sig2, L.n1, L.n2, v.k, v.dev_gf_m, v.dev_if_m));
+                continue;
+            }
+            const long long o1 = L.n1, o2 = L.n2;
+            L.n1 -= 3LL * v.k;
+            L.n2 -= 4LL * v.k;
+            L.nn_moved = true;
+            L.nn_n = 0;
+            L.nn_gf_m = 0.0;
+            L.nn_if_m = 0.0;
+            rf.nn_reopen.push_back(v.id);
+            ++rf.counters.nn_moves;
+            if (std::abs(v.k) == 1) ++rf.counters.nn_moves_one;
+            traces.emitEvent(t, "RINGFIX", "nn_move", v.id.sat, nameOf(v.id.station), v.dev_gf_m, rf.nn_tol_gf_m, "move",
+                             fmt::format("sig1={} sig2={} n1={}->{} n2={}->{} k={} dev_gf={:.3f} dev_if={:.3f}", v.id.sig1,
+                                         v.id.sig2, o1, L.n1, o2, L.n2, v.k, v.dev_gf_m, v.dev_if_m));
+        }
+    }
 }
 
 // ---- Run-end report ----
@@ -1538,6 +1633,13 @@ int networkRingFixRunEnd(const NetworkRunEndView& v) {
                   kRingFixReattachMinLinks, C.untied_spread, C.untied_converging, kRingFixReattachMinOffsetIfCyc,
                   kRingFixReattachMinOffsetWlCyc, C.untied_held_off, kRingFixReattachHoldoffS, C.untied_flagged_after,
                   C.untied_unflagged_after);
+    if (rf.nn_guard)
+        log->warn("Network (ring fix, near-null guard): {} held chord-epoch(s) checked; {} flagged (a deviation fitting k "
+                  "near-null steps within {:.2f} m, ionosphere-free within {:.2f} m), {} refused for the ionosphere-free "
+                  "deviation; {} pair(s) moved by -k (3, 4), {} of them by one step; {} chord(s) released for a second "
+                  "flag; {} carried entr(ies) re-opened.",
+                  C.nn_link_checks, C.nn_flagged, rf.nn_tol_gf_m, rf.nn_max_if_m, C.nn_refused_if, C.nn_moves,
+                  C.nn_moves_one, C.nn_releases, C.nn_reopened);
     for (const RingFixCascade& c : rf.cascades) {
         const auto it = rf.cascade_counters.find(c.name);
         const RingFixCascadeCounters CC = it != rf.cascade_counters.end() ? it->second : RingFixCascadeCounters{};

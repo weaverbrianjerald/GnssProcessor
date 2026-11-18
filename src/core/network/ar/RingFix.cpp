@@ -388,6 +388,10 @@ std::vector<RingFixEvent> ringFixDecideStep(NetworkRingFix& rf,
             L.held = true;
             L.n1 = o.truth1;
             L.n2 = o.truth2;
+            L.nn_n = 0;
+            L.nn_gf_m = 0.0;
+            L.nn_if_m = 0.0;
+            L.nn_moved = false;
             L.ring = o.ring;
             L.decided_s = now_s;
             L.stamp1 = o.relevel1_s;
@@ -419,6 +423,10 @@ std::vector<RingFixEvent> ringFixDecideStep(NetworkRingFix& rf,
         L.n2 = ev.gate.n2;
         L.ring = o.ring;
         L.decided_s = now_s;
+        L.nn_n = 0;
+        L.nn_gf_m = 0.0;
+        L.nn_if_m = 0.0;
+        L.nn_moved = false;
         L.stamp1 = o.relevel1_s;
         L.stamp2 = o.relevel2_s;
         L.root = o.root;
@@ -452,6 +460,13 @@ std::vector<RingFixEvent> ringFixDecideStep(NetworkRingFix& rf,
                 if (++L.monitor_bad >= kRingFixMonitorEpochs) L.monitor_trip = true;
             } else {
                 L.monitor_bad = 0;
+            }
+            // The near-null guard's moving averages of the chord's code residuals (network.ring_fix.nn_guard).
+            if (rf.nn_guard && o.have_code && std::isfinite(o.code_gf_m) && std::isfinite(o.code_if_m)) {
+                ++L.nn_n;
+                const double w = 1.0 / static_cast<double>(std::min(L.nn_n, std::max(1, rf.nn_min_epochs)));
+                L.nn_gf_m += w * (o.code_gf_m - L.nn_gf_m);
+                L.nn_if_m += w * (o.code_if_m - L.nn_if_m);
             }
             continue;
         }
@@ -751,6 +766,10 @@ std::vector<RingFixEvent> ringFixInherit(NetworkRingFix& rf, const std::vector<R
         L.lambda1 = c.lambda1;
         L.lambda2 = c.lambda2;
         L.held = true;
+        L.nn_n = 0;
+        L.nn_gf_m = 0.0;
+        L.nn_if_m = 0.0;
+        L.nn_moved = false;
         L.n1 = n1;
         L.n2 = n2;
         L.ring = c.ring;
@@ -872,6 +891,61 @@ std::map<std::string, std::map<double, double>> ringFixParseWindupCsv(const std:
             out[sat][std::stod(tow)] = std::stod(wu);
         } catch (...) {
             throw std::runtime_error("ring fix truth: '" + path + "': bad number in row " + std::to_string(row));
+        }
+    }
+    return out;
+}
+
+// ---- The near-null guard (network.ring_fix.nn_guard) -------------------------------------------
+
+std::vector<RingFixNearNullVerdict> ringFixNearNullVerdicts(const std::vector<RingFixNearNullIn>& in, double tol_gf_m,
+                                                            double max_if_m) {
+    const auto median = [](std::vector<double> v) {
+        if (v.empty()) return 0.0;
+        const std::size_t m = v.size() / 2;
+        std::nth_element(v.begin(), v.begin() + static_cast<std::ptrdiff_t>(m), v.end());
+        const double hi = v[m];
+        if (v.size() % 2 != 0) return hi;
+        return 0.5 * (hi + *std::max_element(v.begin(), v.begin() + static_cast<std::ptrdiff_t>(m)));
+    };
+    // 1. Centred on the satellite's family: the median over the chords of the same satellite and pair.
+    std::map<std::tuple<std::string, std::string, std::string>, std::vector<std::size_t>> by_sat;
+    for (std::size_t i = 0; i < in.size(); ++i) by_sat[{in[i].id.sat, in[i].id.sig1, in[i].id.sig2}].push_back(i);
+    std::vector<double> d_gf(in.size(), 0.0), d_if(in.size(), 0.0);
+    std::vector<char> grouped(in.size(), 0);
+    for (const auto& [key, idx] : by_sat) {
+        if (idx.size() < 4) continue;
+        std::vector<double> g, f;
+        for (std::size_t i : idx) { g.push_back(in[i].gf_m); f.push_back(in[i].if_m); }
+        const double mg = median(g), mf = median(f);
+        for (std::size_t i : idx) {
+            d_gf[i] = in[i].gf_m - mg;
+            d_if[i] = in[i].if_m - mf;
+            grouped[i] = 1;
+        }
+    }
+    // 2. Then on the receiver: the median of its grouped chords' remaining deviations.
+    std::map<int, std::vector<std::size_t>> by_rx;
+    for (std::size_t i = 0; i < in.size(); ++i)
+        if (grouped[i]) by_rx[in[i].id.station].push_back(i);
+    std::vector<RingFixNearNullVerdict> out;
+    for (const auto& [rx, idx] : by_rx) {
+        if (idx.size() < 3) continue;
+        std::vector<double> g, f;
+        for (std::size_t i : idx) { g.push_back(d_gf[i]); f.push_back(d_if[i]); }
+        const double mg = median(g), mf = median(f);
+        for (std::size_t i : idx) {
+            RingFixNearNullVerdict v;
+            v.id = in[i].id;
+            v.dev_gf_m = d_gf[i] - mg;
+            v.dev_if_m = d_if[i] - mf;
+            if (in[i].step_m > 0.0) {
+                v.k = static_cast<int>(std::lround(v.dev_gf_m / in[i].step_m));
+                const bool fits = v.k != 0 && std::abs(v.dev_gf_m - v.k * in[i].step_m) <= tol_gf_m;
+                v.act = fits && std::abs(v.dev_if_m) <= max_if_m;
+                v.refused_if = fits && !v.act;
+            }
+            out.push_back(v);
         }
     }
     return out;
