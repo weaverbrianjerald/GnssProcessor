@@ -1504,6 +1504,13 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                   "chain releases is declared at its release epoch.", fams,
                   nc.disc_step_class_tol_cyc);
     }
+    // The phase-family members' declarations follow their identities' (network.phase_families).
+    {
+        std::map<std::pair<char, std::string>, std::string> members;
+        for (const PhaseFamilyRow& r : signalRosterPhaseFamilies(config_))
+            members[{rinexLetter(r.member.sys), r.member.obsCode(ObsType::Phase)}] = r.identity.obsCode(ObsType::Phase);
+        if (!members.empty()) emitter.setPhaseFamilyMembers(std::move(members));
+    }
     if (nc.ring_fix.enable && nc.ring_fix.unsettled_steps) {
         emitter.setUnsettledSteps(nc.ring_fix.pairs);
         std::string fams;

@@ -439,6 +439,18 @@ public:
      * @param on True to arm.
      */
     void setUnsettledStepsUnheld(bool on) { us_unheld_ = on; }
+    /**
+     * @brief The phase-family members (network.phase_families; card NRF section 109.1, amendment 3): a member signal's
+     *        phase-bias entry repeats its identity's discontinuity counter and integer flag at every emission.
+     *
+     * The values are copied into the epoch by the network before the push; this keeps the declarations equal too,
+     * whatever per-key rule (value test, step class, phase-visible test, release, unsettled steps, continuity guard)
+     * stepped or lowered the identity.  Empty (default): nothing changes.
+     * @param member_identity (constellation letter, member phase signal) -> the identity phase signal ("E", "L1X") -> "L1C".
+     */
+    void setPhaseFamilyMembers(std::map<std::pair<char, std::string>, std::string> member_identity) {
+        pf_member_of_ = std::move(member_identity);
+    }
     /// @brief Whether the unsettled steps are armed.
     /// @return True when @ref setUnsettledSteps named at least one family.
     bool unsettledStepsArmed() const { return !us_families_.empty(); }
@@ -934,6 +946,7 @@ private:
     std::map<std::string, long long> cg_trips_;                      ///< Family -> trips.
     long long cg_lowered_keys_{0};                                   ///< Phase-key emissions lowered by the guard.
     std::set<std::string> cg_lowered_last_;                          ///< "sat|signal" keys lowered at the last emission.
+    std::map<std::pair<char, std::string>, std::string> pf_member_of_;   ///< Phase-family members to their identities (setPhaseFamilyMembers).
     /**
      * @brief Whether the continuity guard holds a phase key's flag lowered at this emission.
      * @param key "sat|signal".

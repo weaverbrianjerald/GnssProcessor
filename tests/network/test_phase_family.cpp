@@ -183,6 +183,10 @@ TEST(PhaseFamily, MemberRecordsRepeatTheIdentityValuesFlagsAndCounters) {
     const PhaseFamilyTable t = galileoFamilies();
     SsrCorrectionStore store;
     NetworkProductEmitter emitter;   // the default 0.05 m threshold
+    // The members follow their identities' declarations; a rule that names the identity alone (here a release of
+    // the chain, a mark of the step declaration on L5Q only) must step the member too.
+    emitter.setStepClassTest({"E:L1C/L5Q"}, 0.1);
+    emitter.setPhaseFamilyMembers({{{'E', "L1X"}, "L1C"}, {{'E', "L5X"}, "L5Q"}});
     const auto epoch = [](double tow, double b1, double b5, bool integer) {
         NetworkSolutionEpoch sol;
         sol.epoch_time = GnssTime{2420, tow};
@@ -198,8 +202,10 @@ TEST(PhaseFamily, MemberRecordsRepeatTheIdentityValuesFlagsAndCounters) {
     // A steady epoch, a small change, a cycle-level jump on L1C, the flags lowered.
     const std::vector<NetworkSolutionEpoch> seq{epoch(259200.0, -0.70, 0.40, true), epoch(259230.0, -0.71, 0.41, true),
                                                 epoch(259260.0, -0.10, 0.41, true), epoch(259290.0, -0.10, 0.41, false)};
+    int n_epoch = 0;
     for (NetworkSolutionEpoch sol : seq) {
         EXPECT_EQ(networkPhaseFamilyMemberRecords(t, sol), 2u);
+        if (++n_epoch == 3) emitter.markReleasedSignals({{"E11", "L5Q"}});   // the identity's key only
         emitter.emitToStore(sol, store);
         for (const auto& [id, mem] : {std::pair<std::string, std::string>{"L1C", "L1X"}, {"L5Q", "L5X"}}) {
             const auto a = store.getPhaseBias("E11", id);
@@ -214,7 +220,7 @@ TEST(PhaseFamily, MemberRecordsRepeatTheIdentityValuesFlagsAndCounters) {
         }
     }
     EXPECT_EQ(emitter.discontinuityCounter("E11", "L1X"), 1);   // the jump stepped the member with its identity
-    EXPECT_EQ(emitter.discontinuityCounter("E11", "L5X"), 0);
+    EXPECT_EQ(emitter.discontinuityCounter("E11", "L5X"), 1);   // the release of L5Q alone stepped L5X too
     // No table: no member record; the chain's released keys gain their members.
     NetworkSolutionEpoch sol = epoch(259320.0, -0.10, 0.41, true);
     EXPECT_EQ(networkPhaseFamilyMemberRecords({}, sol), 0u);

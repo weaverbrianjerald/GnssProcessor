@@ -962,6 +962,21 @@ void NetworkProductEmitter::emitToStore(const NetworkSolutionEpoch& sol,
                 rec.bias_per_signal[signal] = entry;
             }
             if (cg_on) continuityGuardRun_(s, rec, cg_level, cg_stepped);
+            // A phase-family member repeats its identity's counter and flag (setPhaseFamilyMembers), after every rule
+            // above has stepped or lowered the identity at this emission.
+            if (!pf_member_of_.empty() && !s.sat.empty())
+                for (auto& [signal, entry] : rec.bias_per_signal) {
+                    const auto m = pf_member_of_.find({s.sat[0], signal});
+                    if (m == pf_member_of_.end()) continue;
+                    const auto id = rec.bias_per_signal.find(m->second);
+                    if (id == rec.bias_per_signal.end()) continue;
+                    entry.discontinuity_counter = id->second.discontinuity_counter;
+                    entry.signal_integer        = id->second.signal_integer;
+                    const std::string mkey = s.sat + "|" + signal;
+                    disc_counter_[mkey] = id->second.discontinuity_counter;
+                    if (cg_lowered_last_.count(s.sat + "|" + m->second) != 0) cg_lowered_last_.insert(mkey);
+                    else                                                     cg_lowered_last_.erase(mkey);
+                }
             store.pushPhaseBias(rec, header);
         }
     }
