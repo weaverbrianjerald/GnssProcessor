@@ -4,7 +4,7 @@
  *
  * The chain's record (network/solve/ChainFrame.hpp), the observatory's traces and memory, and the ring fix's rings and
  * cuts (network/ar/RingFix.hpp) name a vertex of the chain's tree by a key: "R:<roster index>" for a receiver,
- * "S:<satellite>" for a satellite.  This header owns that form (card CHA step S4): a key is built by
+ * "S:<satellite>" for a satellite.  This header owns that form: a key is built by
  * @ref GnssProcessor::chainVertexKey "chainVertexKey" and read back by @ref GnssProcessor::chainVertexOfKey "chainVertexOfKey"
  * (or tested by @ref GnssProcessor::chainVertexIsStation "chainVertexIsStation"); no other code spells it.
  */

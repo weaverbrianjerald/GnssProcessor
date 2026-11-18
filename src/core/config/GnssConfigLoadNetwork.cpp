@@ -1547,7 +1547,7 @@ namespace GnssProcessor {
                         throw std::runtime_error("network.ring_fix.pairs: '" + e + "' is not of the form "
                                                  "\"<constellation>:<signal>/<signal>\" (\"E:L1X/L5X\").");
                     // A member of network.phase_families is read under its identity's name at the intake, so a pair
-                    // that names a member matches no chord (card CHA, P6): the pair is listed by its identities.
+                    // that names a member matches no chord: the pair is listed by its identities.
                     for (const std::string& f : network_config_.phase_families)
                         if (f[0] == e[0] && (f.compare(2, 3, e, 2, 3) == 0 || f.compare(2, 3, e, 6, 3) == 0))
                             throw std::runtime_error("network.ring_fix.pairs: '" + e + "' names " + f.substr(2, 3)
@@ -11125,7 +11125,7 @@ namespace GnssProcessor {
                       "are decided ring by ring, held in the solve and released at every event "
                       "(include/network/ar/RingFix.hpp).",
                       network_config_.ring_fix.rule, af.empty() ? std::string("none") : af);
-            // Keys read only on a path the configuration does not take (card CHA, P16).
+            // Keys read only on a path the configuration does not take.
             if (network_config_.ring_fix.rehost_keep_carry
                 && std::find(network_phase_datum_eq34_event_rows_.begin(), network_phase_datum_eq34_event_rows_.end(),
                              "rehost") == network_phase_datum_eq34_event_rows_.end())
@@ -11135,7 +11135,7 @@ namespace GnssProcessor {
                 log->warn("Network: network.ring_fix.max_decisions_per_epoch is INERT under network.ring_fix.order "
                           "\"{}\" (the cap applies under the order \"certain\" only).", network_config_.ring_fix.order);
         } else {
-            // Every ring-fix key set while the ring fix is off is named (card CHA, P16).
+            // Every ring-fix key set while the ring fix is off is named.
             const auto& rx = network_config_.ring_fix;
             std::vector<std::string> inert;
             const auto note = [&](bool set, const char* key) { if (set) inert.emplace_back(key); };

@@ -229,7 +229,7 @@ const char* chainLegacyCauseName(ChainLegacyCause c);
 enum class ChainCertSource : std::uint8_t {
     None,     ///< Uncertified.
     Pair,     ///< The two-band fix of the chord table.
-    Lattice,  ///< The producer's lattice of fixed cycles (reserved: no rule assigns it until card IRD's IRD-5 lattice certification is built).
+    Lattice,  ///< The producer's lattice of fixed cycles (reserved: no rule assigns it until the lattice of fixed cycles is certified).
 };
 
 /**

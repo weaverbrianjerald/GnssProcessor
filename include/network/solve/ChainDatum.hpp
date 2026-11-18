@@ -52,6 +52,7 @@
 #include "network/driver/RunTypes.hpp"   // NetStation / PhaseDatumCandidates
 #include "network/solve/AnchorHygiene.hpp"   // AnchorHygiene (eq34 reattach hygiene)
 #include "network/state/CarrySites.hpp"      // CarrySiteCounts
+#include "network/assembly/PhaseFamily.hpp"   // PhaseFamilyTable (eq34ShiftCarry: the band of a carried arc)
 
 #include <array>
 #include <map>
@@ -104,13 +105,16 @@ struct NetworkRunContext;   // network/state/RunContext.hpp, included in the .cp
  * @param n_terms   out: coupling terms moved.
  * @param counts    optional out: per-site tallies (accumulated).
  * @param complete  also move the owed sites (false = the walk without them).
+ * @param families  optional: the phase-family table (network.phase_families); a carried ambiguity's signal (its
+ *                  arc's) is mapped to its band's identity before the band's shifts are read.  Null: none.
  */
 void eq34ShiftCarry(NetworkCarryState& carry, net::NetworkEntities& entities,
                     const std::map<std::pair<std::string, std::string>, double>& shift_sat,
                     const std::map<std::tuple<int, char, std::string>, double>& shift_rxg,
                     const std::map<std::pair<int, std::string>, double>& shift_rpb,
                     long long& n_values, long long& n_terms,
-                    CarrySiteCounts* counts = nullptr, bool complete = false);
+                    CarrySiteCounts* counts = nullptr, bool complete = false,
+                    const PhaseFamilyTable* families = nullptr);
 
 /**
  * @brief Elect the eq34 chain datum for this epoch.

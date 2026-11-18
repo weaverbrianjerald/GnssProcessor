@@ -1448,7 +1448,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
             }
             // A file that declares both a member and its identity keeps both at the intake, so that receiver's member
             // arcs would keep their own name beside the identity's and its member records would be overwritten at the
-            // emission (card CHA, P6): such a receiver is refused.
+            // emission: such a receiver is refused.
             std::string both;
             for (std::size_t k = 0; k < families.size(); ++k)
                 for (const std::string& n : by_row[k][2])
