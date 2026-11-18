@@ -70,7 +70,8 @@ TEST(RingFixNearNullGuard, OneStepHighIsFlaggedWithKPlusOne) {
 TEST(RingFixNearNullGuard, TwoStepsLowIsFlaggedWithKMinusTwo) {
     std::vector<RingFixNearNullIn> in = grid();
     chord(in, 1, "E02").gf_m -= 2.0 * kStep;
-    const RingFixNearNullVerdict* x = verdictOf(ringFixNearNullVerdicts(in, 0.12, 0.30), 1, "E02");
+    const std::vector<RingFixNearNullVerdict> v = ringFixNearNullVerdicts(in, 0.12, 0.30);
+    const RingFixNearNullVerdict* x = verdictOf(v, 1, "E02");
     ASSERT_NE(x, nullptr);
     EXPECT_TRUE(x->act);
     EXPECT_EQ(x->k, -2);
@@ -82,7 +83,8 @@ TEST(RingFixNearNullGuard, ALargeIonosphereFreeDeviationIsRefused) {
     std::vector<RingFixNearNullIn> in = grid();
     chord(in, 2, "E03").gf_m += kStep;
     chord(in, 2, "E03").if_m += 0.60;
-    const RingFixNearNullVerdict* x = verdictOf(ringFixNearNullVerdicts(in, 0.12, 0.30), 2, "E03");
+    const std::vector<RingFixNearNullVerdict> v = ringFixNearNullVerdicts(in, 0.12, 0.30);
+    const RingFixNearNullVerdict* x = verdictOf(v, 2, "E03");
     ASSERT_NE(x, nullptr);
     EXPECT_FALSE(x->act);
     EXPECT_TRUE(x->refused_if);
