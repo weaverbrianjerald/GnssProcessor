@@ -83,5 +83,41 @@
    ],
    "sha256": "4a4ea5d7d3e277177303868e1b7469d0fc8bb56005e74d0031b5abb2270ab419"
   }
+ ],
+ "slip_hold.py": [
+  {
+   "args": [
+    "flagged",
+    "d24_n146",
+    "n46c_n146",
+    "--list",
+    "5"
+   ],
+   "sha256": "9340ad2263e35fa417349d9f6ff0329c7efcc9baf52b7680f2503e40a2b58e4e"
+  },
+  {
+   "args": [
+    "flagged",
+    "d24_n146",
+    "n46c_n146",
+    "--list",
+    "5",
+    "--view",
+    "lli"
+   ],
+   "sha256": "e738352bb33ac1513e7ef158c0a59199321b33b2ffdef747994fc8a9cf7db2b2"
+  },
+  {
+   "args": [
+    "flagged",
+    "d24r_n146",
+    "n46cr_n146",
+    "--list",
+    "5",
+    "--view",
+    "lli"
+   ],
+   "sha256": "6a933e1ce255abbcb87c2c7f27759b3c2531446535b4230195e3422b66bf3f9a"
+  }
  ]
 }
