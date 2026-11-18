@@ -297,6 +297,16 @@ struct RingFixLargestSet {
     long long side_changes{0};     ///< At a change of identity, the satellites in one of the two sets only.
 };
 
+/// How a link came to be held (ringFixHoldLink): decided by the gates, held at the truth in the oracle phase, or
+/// inherited from the previous epoch's tree edge.  The kinds differ in their stamps, their re-base flag and their
+/// counters, nowhere else.
+enum class RingFixHoldKind : std::uint8_t { Decided, Oracle, Inherited };
+
+/// How a held link stops being held (ringFixUnholdLink): a release of the release step, a release across an unknown
+/// cut, or a link taken into the chain's tree (not a release: the chain pins it).  The kinds differ in what they reset
+/// beyond the common fields; each path keeps the resets it had.
+enum class RingFixUnholdKind : std::uint8_t { Release, CutRelease, ToTree };
+
 /// One cascade of network.ring_fix.cascade: a held pair and the third signal it carries to.
 struct RingFixCascade {
     char        letter{0};   ///< The constellation's RINEX letter.
@@ -925,6 +935,31 @@ std::vector<RingFixNnMonitorEdge> ringFixNnMonitorStep(RingFixNnMonitor& m, cons
  * @return true when the window holds.
  */
 bool ringFixWindowOk(const RingFixLink& L, const RingFixDecideObs& o, double last_tree_s, double now_s);
+
+/**
+ * @brief Hold a link at integers (n1, n2): the fields every hold resets, and the decision counters.
+ * @param rf      The ring fix (its counters).
+ * @param L       The link.
+ * @param n1, n2  The held integers.
+ * @param ring    The link's ring.
+ * @param root    The datum receiver of the link's component.
+ * @param now_s   The epoch.
+ * @param kind    Decided and Oracle set the stamps from @p stamp1 and @p stamp2; Inherited keeps the link's own.
+ * @param rebase_stamps  The re-base flag the path sets (a decision false, the oracle phase where a carry is missing,
+ *                an inherited hold true).
+ * @param stamp1, stamp2  The carries' relevel stamps (read for Decided and Oracle only).
+ */
+void ringFixHoldLink(NetworkRingFix& rf, RingFixLink& L, long long n1, long long n2, int ring, const std::string& root,
+                     double now_s, RingFixHoldKind kind, bool rebase_stamps, double stamp1, double stamp2);
+
+/**
+ * @brief Stop holding a link: the fields every un-hold resets, and those its kind resets beyond them.  No counter.
+ * @param L      The link.
+ * @param now_s  The epoch.
+ * @param kind   Release (also the release time, the absence clock and the audit's flag), CutRelease (the release
+ *               time, the absence clock and the re-base flag), ToTree (the re-base flag).
+ */
+void ringFixUnholdLink(RingFixLink& L, double now_s, RingFixUnholdKind kind);
 
 /**
  * @brief The decision of one epoch, after the solve.

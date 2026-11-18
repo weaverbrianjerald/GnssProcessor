@@ -345,6 +345,61 @@ RingFixReattachPick ringFixReattachChoice(const std::vector<RingFixReattachCand>
     return p;
 }
 
+void ringFixHoldLink(NetworkRingFix& rf, RingFixLink& L, long long n1, long long n2, int ring, const std::string& root,
+                     double now_s, RingFixHoldKind kind, bool rebase_stamps, double stamp1, double stamp2) {
+    L.held = true;
+    L.n1 = n1;
+    L.n2 = n2;
+    L.ring = ring;
+    L.decided_s = now_s;
+    L.nn_n = 0;
+    L.nn_gf_m = 0.0;
+    L.nn_if_m = 0.0;
+    L.nn_moved = false;
+    if (kind != RingFixHoldKind::Inherited) {
+        L.stamp1 = stamp1;
+        L.stamp2 = stamp2;
+    }
+    L.root = root;
+    L.absent_since_s = -1.0;
+    L.monitor_bad = 0;
+    L.monitor_trip = false;
+    L.streak = 0;
+    L.wrong_now = false;
+    L.rebase_stamps = rebase_stamps;
+    L.inherited = kind == RingFixHoldKind::Inherited;
+    L.oracle = kind == RingFixHoldKind::Oracle;
+    RingFixCounters& C = rf.counters;
+    ++C.decided;
+    if (kind == RingFixHoldKind::Oracle) ++C.oracle_decided;
+    if (kind == RingFixHoldKind::Inherited) ++C.inherited;
+    const int ri = std::clamp(ring, 0, 7);
+    ++C.decided_by_ring[ri];
+    if (C.first_hold_s[ri] < 0.0) C.first_hold_s[ri] = now_s;
+}
+
+void ringFixUnholdLink(RingFixLink& L, double now_s, RingFixUnholdKind kind) {
+    L.held = false;
+    L.streak = 0;
+    L.monitor_bad = 0;
+    L.monitor_trip = false;
+    switch (kind) {
+        case RingFixUnholdKind::Release:
+            L.released_s = now_s;
+            L.absent_since_s = -1.0;
+            L.wrong_now = false;
+            break;
+        case RingFixUnholdKind::CutRelease:
+            L.released_s = now_s;
+            L.absent_since_s = -1.0;
+            L.rebase_stamps = false;
+            break;
+        case RingFixUnholdKind::ToTree:
+            L.rebase_stamps = false;
+            break;
+    }
+}
+
 std::vector<RingFixEvent> ringFixDecideStep(NetworkRingFix& rf,
                                             const std::vector<RingFixDecideObs>& links,
                                             double now_s) {
@@ -385,31 +440,8 @@ std::vector<RingFixEvent> ringFixDecideStep(NetworkRingFix& rf,
             ev.gate.n1 = o.truth1;
             ev.gate.n2 = o.truth2;
             ev.gate.wl = o.truth1 - o.truth2;
-            L.held = true;
-            L.n1 = o.truth1;
-            L.n2 = o.truth2;
-            L.nn_n = 0;
-            L.nn_gf_m = 0.0;
-            L.nn_if_m = 0.0;
-            L.nn_moved = false;
-            L.ring = o.ring;
-            L.decided_s = now_s;
-            L.stamp1 = o.relevel1_s;
-            L.stamp2 = o.relevel2_s;
-            L.root = o.root;
-            L.absent_since_s = -1.0;
-            L.monitor_bad = 0;
-            L.monitor_trip = false;
-            L.streak = 0;
-            L.wrong_now = false;
-            L.rebase_stamps = !o.carry_ok;
-            L.inherited = false;
-            L.oracle = true;
-            ++C.decided;
-            ++C.oracle_decided;
-            const int ri = std::clamp(o.ring, 0, 7);
-            ++C.decided_by_ring[ri];
-            if (C.first_hold_s[ri] < 0.0) C.first_hold_s[ri] = now_s;
+            ringFixHoldLink(rf, L, o.truth1, o.truth2, o.ring, o.root, now_s, RingFixHoldKind::Oracle, !o.carry_ok,
+                            o.relevel1_s, o.relevel2_s);
             ev.kind = RingFixEvent::Kind::Hold;
             events.push_back(ev);
         }
@@ -418,30 +450,8 @@ std::vector<RingFixEvent> ringFixDecideStep(NetworkRingFix& rf,
     // Change O: the links that passed every test this epoch, decided after the loop.
     std::vector<std::pair<const RingFixDecideObs*, RingFixEvent>> eligible;
     const auto hold = [&](RingFixLink& L, const RingFixDecideObs& o, RingFixEvent& ev) {
-        L.held = true;
-        L.n1 = ev.gate.n1;
-        L.n2 = ev.gate.n2;
-        L.ring = o.ring;
-        L.decided_s = now_s;
-        L.nn_n = 0;
-        L.nn_gf_m = 0.0;
-        L.nn_if_m = 0.0;
-        L.nn_moved = false;
-        L.stamp1 = o.relevel1_s;
-        L.stamp2 = o.relevel2_s;
-        L.root = o.root;
-        L.absent_since_s = -1.0;
-        L.monitor_bad = 0;
-        L.monitor_trip = false;
-        L.streak = 0;
-        L.wrong_now = false;
-        L.rebase_stamps = false;
-        L.inherited = false;
-        L.oracle = false;
-        ++C.decided;
-        const int ri = std::clamp(o.ring, 0, 7);
-        ++C.decided_by_ring[ri];
-        if (C.first_hold_s[ri] < 0.0) C.first_hold_s[ri] = now_s;
+        ringFixHoldLink(rf, L, ev.gate.n1, ev.gate.n2, o.ring, o.root, now_s, RingFixHoldKind::Decided, false,
+                        o.relevel1_s, o.relevel2_s);
         ev.kind = RingFixEvent::Kind::Hold;
         events.push_back(ev);
     };
@@ -599,13 +609,7 @@ std::vector<RingFixEvent> ringFixReleaseStep(NetworkRingFix& rf,
             if (now_s - L.absent_since_s > rf.max_gap_s) { release = true; cause = RingFixRelease::Gap; }
         }
         if (!release) continue;
-        L.held = false;
-        L.released_s = now_s;
-        L.streak = 0;
-        L.monitor_bad = 0;
-        L.monitor_trip = false;
-        L.absent_since_s = -1.0;
-        L.wrong_now = false;
+        ringFixUnholdLink(L, now_s, RingFixUnholdKind::Release);
         ++rf.counters.released[static_cast<std::size_t>(cause)];
         RingFixEvent ev;
         ev.kind = RingFixEvent::Kind::Release;
@@ -766,13 +770,7 @@ RingFixCutOutcome ringFixApplyCuts(NetworkRingFix& rf, const std::vector<RingFix
             if (rows.find(c.row) == std::string::npos) rows += (rows.empty() ? "" : "+") + c.row;
         }
         if (unknown) {
-            L.held = false;
-            L.released_s = now_s;
-            L.streak = 0;
-            L.monitor_bad = 0;
-            L.monitor_trip = false;
-            L.absent_since_s = -1.0;
-            L.rebase_stamps = false;
+            ringFixUnholdLink(L, now_s, RingFixUnholdKind::CutRelease);
             ++rf.counters.released[static_cast<std::size_t>(RingFixRelease::Chain)];
             ++rf.counters.cut_released;
             out.released.emplace_back(id, unknown_row);
@@ -818,29 +816,8 @@ std::vector<RingFixEvent> ringFixInherit(NetworkRingFix& rf, const std::vector<R
         if (!ok) continue;
         L.lambda1 = c.lambda1;
         L.lambda2 = c.lambda2;
-        L.held = true;
-        L.nn_n = 0;
-        L.nn_gf_m = 0.0;
-        L.nn_if_m = 0.0;
-        L.nn_moved = false;
-        L.n1 = n1;
-        L.n2 = n2;
-        L.ring = c.ring;
-        L.decided_s = now_s;
-        L.root = c.root;
-        L.absent_since_s = -1.0;
-        L.monitor_bad = 0;
-        L.monitor_trip = false;
-        L.streak = 0;
-        L.wrong_now = false;
-        L.rebase_stamps = true;   // its carried entries were erased by the cut or are being re-created
-        L.inherited = true;
-        L.oracle = false;
-        ++rf.counters.decided;
-        ++rf.counters.inherited;
-        const int ri = std::clamp(c.ring, 0, 7);
-        ++rf.counters.decided_by_ring[ri];
-        if (rf.counters.first_hold_s[ri] < 0.0) rf.counters.first_hold_s[ri] = now_s;
+        // The re-base flag is set: its carried entries were erased by the cut or are being re-created.
+        ringFixHoldLink(rf, L, n1, n2, c.ring, c.root, now_s, RingFixHoldKind::Inherited, true, 0.0, 0.0);
         RingFixEvent ev;
         ev.kind = RingFixEvent::Kind::Hold;
         ev.id = c.id;

@@ -300,6 +300,38 @@ void requestUntiedMoves(NetworkRingFix& rf, const std::string& ck, const std::st
     }
 }
 
+/// One family's settled set before and after the wait (settledSetOf).
+struct SettledPick {
+    std::set<std::string> rule_set;   ///< The rule's set (root or largest), before the wait.
+    std::set<std::string> settled;    ///< The flagged set, after the wait.
+    bool      switched{false};        ///< Rule largest: another component replaced a non-empty incumbent.
+    long long side_changes{0};        ///< Rule largest, at a switch: the satellites in one of the two sets only.
+};
+
+/// The settled set of one family, the one rule of the pair and the cascade families: its tree's satellites tied to their
+/// root (rule root) or the largest tied set (rule largest, followed through the incumbent under @p key), then the wait
+/// on the raise (network.ring_fix.settled_wait_emissions, its run counts under @p key).
+SettledPick settledSetOf(NetworkRingFix& rf, const std::string& key, const std::vector<std::pair<int, std::string>>& ties,
+                         const std::map<std::string, int>& root_of_sat) {
+    SettledPick out;
+    if (!rf.settled_largest) {
+        out.rule_set = ringFixSettledSats(ties, root_of_sat);
+    } else {
+        std::set<std::string> tree_sats;
+        for (const auto& [sat, root] : root_of_sat) { (void)root; tree_sats.insert(sat); }
+        std::set<std::string>& inc = rf.settled_incumbent[key];
+        RingFixLargestSet pick = ringFixLargestSettledSet(ties, tree_sats, inc, kRingFixSettledMinSats,
+                                                          kRingFixSettledHysteresis);
+        out.switched = pick.switched;
+        out.side_changes = pick.side_changes;
+        inc = pick.sats;
+        out.rule_set = std::move(pick.sats);
+    }
+    out.settled = rf.settled_wait > 0 ? ringFixSettledWait(out.rule_set, rf.settled_run[key], rf.settled_wait)
+                                      : out.rule_set;
+    return out;
+}
+
 }  // namespace
 
 // ---- Setup ----
@@ -779,11 +811,7 @@ void networkRingFixHoldEpoch(NetworkRun& run, const NetworkEpoch& ep) {
         if (!L.held) continue;
         if (facts.tree.count({id.station, id.sat, id.sig1}) == 0 && facts.tree.count({id.station, id.sat, id.sig2}) == 0)
             continue;
-        L.held = false;
-        L.streak = 0;
-        L.monitor_bad = 0;
-        L.monitor_trip = false;
-        L.rebase_stamps = false;
+        ringFixUnholdLink(L, now_s, RingFixUnholdKind::ToTree);
         ++rf.counters.to_tree;
         if (rf.settled_flags_on) rf.certified_edges.insert({id.station, id.sat, id.sig1});
         traces.emitEvent(t, "RINGFIX", "to_tree", id.sat, nameOf(id.station), std::nullopt, std::nullopt, "chain",
@@ -1503,30 +1531,16 @@ void networkRingFixDecide(NetworkRun& run, const NetworkEpoch& ep) {
                 const auto r = index_of.find(e.r1);
                 if (r != index_of.end()) root_of_sat[e.sat] = r->second;
             }
-            std::set<std::string> settled;
-            if (!rf.settled_largest) {
-                settled = ringFixSettledSats(certified, root_of_sat);
-            } else {
-                std::set<std::string> tree_sats;
-                for (const auto& [sat, root] : root_of_sat) { (void)root; tree_sats.insert(sat); }
-                std::set<std::string>& inc = rf.settled_incumbent[ck + ":" + s1 + "/" + s2];
-                RingFixLargestSet pick = ringFixLargestSettledSet(certified, tree_sats, inc, kRingFixSettledMinSats,
-                                                                  kRingFixSettledHysteresis);
-                if (pick.switched) {
-                    ++rf.counters.settled_identity_changes;
-                    rf.counters.settled_side_changes += pick.side_changes;
-                }
-                inc = pick.sats;
-                settled = std::move(pick.sats);
+            const SettledPick sp = settledSetOf(rf, ck + ":" + s1 + "/" + s2, certified, root_of_sat);
+            if (sp.switched) {
+                ++rf.counters.settled_identity_changes;
+                rf.counters.settled_side_changes += sp.side_changes;
             }
-            const std::set<std::string> rule_set = rf.reattach ? settled : std::set<std::string>{};
-            if (rf.settled_wait > 0) {
-                const std::size_t in_set = settled.size();
-                settled = ringFixSettledWait(settled, rf.settled_run[ck + ":" + s1 + "/" + s2], rf.settled_wait);
-                rf.counters.settled_wait_held += 2 * static_cast<long long>(in_set - settled.size());
-            }
+            if (rf.settled_wait > 0)
+                rf.counters.settled_wait_held += 2 * static_cast<long long>(sp.rule_set.size() - sp.settled.size());
+            const std::set<std::string>& settled = sp.settled;
             if (rf.reattach)
-                requestUntiedMoves(rf, ck, s1, s2, certified, root_of_sat, rule_set, settled, links, obs, stations,
+                requestUntiedMoves(rf, ck, s1, s2, certified, root_of_sat, sp.rule_set, settled, links, obs, stations,
                                    now_s, t, traces);
             for (const auto& [sat, root] : root_of_sat) {
                 (void)root;
@@ -1561,19 +1575,7 @@ void networkRingFixDecide(NetworkRun& run, const NetworkEpoch& ep) {
                 const auto r = index_of.find(e.r1);
                 if (r != index_of.end()) root_of_sat[e.sat] = r->second;
             }
-            std::set<std::string> settled;
-            if (!rf.settled_largest) {
-                settled = ringFixSettledSats(certified, root_of_sat);
-            } else {
-                std::set<std::string> tree_sats;
-                for (const auto& [sat, root] : root_of_sat) { (void)root; tree_sats.insert(sat); }
-                std::set<std::string>& inc = rf.settled_incumbent[c.name];
-                RingFixLargestSet pick = ringFixLargestSettledSet(certified, tree_sats, inc, kRingFixSettledMinSats,
-                                                                  kRingFixSettledHysteresis);
-                inc = pick.sats;
-                settled = std::move(pick.sats);
-            }
-            if (rf.settled_wait > 0) settled = ringFixSettledWait(settled, rf.settled_run[c.name], rf.settled_wait);
+            const std::set<std::string> settled = settledSetOf(rf, c.name, certified, root_of_sat).settled;
             for (const auto& [sat, root] : root_of_sat) {
                 (void)root;
                 const bool f = settled.count(sat) != 0;

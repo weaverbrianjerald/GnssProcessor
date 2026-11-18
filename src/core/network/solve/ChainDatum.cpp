@@ -321,6 +321,25 @@ int chainCoverage(const ChainElection& el, System sys, std::size_t i) {
     return jt == it->second.end() ? 0 : jt->second;
 }
 
+/// True when arc (station @p ri, ambiguity key @p amb) is in this epoch's free-epoch latch (the relevel drain's freed
+/// arcs): the one test of the latch for the election's rows and readers.
+bool chainArcLatched(const ChainElection& el, std::size_t ri, const std::string& amb) {
+    return el.events.slip.relevel.free_ambs.count({static_cast<int>(ri), amb}) != 0;
+}
+
+/// The latch test of one signal of a ring-fix link (chainArcLatched).
+bool chainArcLatched(const ChainElection& el, int station, const std::string& sat, const std::string& signal) {
+    return chainArcLatched(el, static_cast<std::size_t>(station), StateKeys::makeAmbiguityKey(sat, signal));
+}
+
+/// True when a ring-fix link can carry its held integer into the election: held, its residual monitor not tripped,
+/// and neither of its two signals latched this epoch.  The one rule of the held-first walk (chainHeldArcs), the
+/// cascade's leads (chainCascadeLead) and the rehost row's keep (chainHeldInteger).
+bool chainHeldLinkUsable(const ChainElection& el, const RingFixLinkId& id, const RingFixLink& L) {
+    return L.held && !L.monitor_trip && !chainArcLatched(el, id.station, id.sat, id.sig1)
+        && !chainArcLatched(el, id.station, id.sat, id.sig2);
+}
+
 /// True when this arc slipped this epoch: under the slip-aware election it is in the slip funnel, and
 /// under the slip row it is in the free-epoch latch.  Both are complete by the ordering contract (every
 /// PASS-A drain, signal integrity and measurement admission run before the election).  The key is
@@ -330,8 +349,7 @@ bool chainArcSlipped(const ChainElection& el, std::size_t ri, const std::string&
                      const std::string& sig) {
     if (!el.slip_aware && !el.slip_row) return false;
     const std::pair<int, std::string> key{static_cast<int>(ri), StateKeys::makeAmbiguityKey(sat, sig)};
-    return (el.slip_aware && el.carry_slipped_ambs.count(key) != 0)
-        || (el.slip_row && el.events.slip.relevel.free_ambs.count(key) != 0);
+    return (el.slip_aware && el.carry_slipped_ambs.count(key) != 0) || (el.slip_row && chainArcLatched(el, ri, key.second));
 }
 
 /// Longevity score of arc (station ri, sat) (I4): higher means a longer expected life and so a
@@ -789,16 +807,12 @@ std::vector<char> chainHeldArcs(const ChainElection& el, const ChainFamily& fam,
     std::vector<char> held;
     const NetworkRingFix* rf = el.ctx.carry.ring_fix.get();
     if (rf == nullptr || !rf->held_first) return held;
-    const auto& free_ambs = el.events.slip.relevel.free_ambs;
     std::set<std::string> fam_sigs;
     for (const ChainBand& b : fam.bands) fam_sigs.insert(b.signal);
     std::set<std::pair<std::size_t, std::string>> ok;   // (station index, satellite)
     for (const auto& [id, L] : rf->links) {
-        if (!L.held || L.monitor_trip) continue;
         if (!fam_sigs.count(id.sig1) && !fam_sigs.count(id.sig2)) continue;
-        if (free_ambs.count({id.station, StateKeys::makeAmbiguityKey(id.sat, id.sig1)}) != 0
-            || free_ambs.count({id.station, StateKeys::makeAmbiguityKey(id.sat, id.sig2)}) != 0)
-            continue;
+        if (!chainHeldLinkUsable(el, id, L)) continue;
         ok.insert({static_cast<std::size_t>(id.station), id.sat});
     }
     if (ok.empty()) return held;
@@ -877,13 +891,9 @@ ChainCascadeLead chainCascadeLead(const ChainElection& el, const ChainFamily& fa
     const std::vector<char> tree1 = chainBandTreeArcs(el, cg, fam.sys, c.s1);
     const std::vector<char> tree2 = chainBandTreeArcs(el, cg, fam.sys, c.s2);
     std::vector<char> held(n_arcs, 0);
-    const auto& free_ambs = el.events.slip.relevel.free_ambs;
     for (const auto& [id, L] : rf->links) {
-        if (!L.held || L.monitor_trip || id.sig1 != c.s1 || id.sig2 != c.s2 || id.sat.empty() || id.sat[0] != c.letter)
-            continue;
-        if (free_ambs.count({id.station, StateKeys::makeAmbiguityKey(id.sat, id.sig1)}) != 0
-            || free_ambs.count({id.station, StateKeys::makeAmbiguityKey(id.sat, id.sig2)}) != 0)
-            continue;
+        if (id.sig1 != c.s1 || id.sig2 != c.s2 || id.sat.empty() || id.sat[0] != c.letter) continue;
+        if (!chainHeldLinkUsable(el, id, L)) continue;
         const auto ni = cg.slot_of_name.find(el.stations[static_cast<std::size_t>(id.station)].name);
         const auto ki = cg.slot_of_sat.find(id.sat);
         if (ni == cg.slot_of_name.end() || ki == cg.slot_of_sat.end()) continue;
@@ -906,13 +916,17 @@ ChainCascadeLead chainCascadeLead(const ChainElection& el, const ChainFamily& fa
     return lead;
 }
 
-/// The third band's tree edges of this election by how the walk took them, into the cascade's run counters.
-void tallyCascadeTree(ChainElection& el, const RingFixCascade& c, const ChainFamilyPlan& plan) {
+/// The third band's tree edges of this election by how the walk took them, into the cascade's run counters.  A lead
+/// arc of the re-attachment (@p untied_arcs, rank 1 like a pair tree edge) is counted with the other edges, not as a
+/// pair tree edge: one lead kind per mechanism.
+void tallyCascadeTree(ChainElection& el, const RingFixCascade& c, const ChainFamilyPlan& plan,
+                      const std::set<int>& untied_arcs) {
     RingFixCascadeCounters& CC = el.ctx.carry.ring_fix->cascade_counters[c.name];
     for (const ChainComponentPlan& cp : plan.comps)
         for (const arcgraph::TreeEdge& e : cp.forest.edges) {
             ++CC.tree_edges;
-            if (e.lead == 1)      ++CC.tree_pair;
+            if (e.lead == 1 && untied_arcs.count(e.arc) == 0) ++CC.tree_pair;
+            else if (e.lead == 1) ++CC.tree_other;
             else if (e.lead >= 2) ++CC.tree_held;
             else                  ++CC.tree_other;
         }
@@ -1337,7 +1351,7 @@ void applyKeptRow(ChainElection& el, const ChainBand& band, const ChainComponent
     const bool was_sat_edge = inc.was_sat_edge;
     const bool was_rx_edge  = inc.was_rx_edge;
     if (!was_sat_edge && !was_rx_edge) return;
-    if (el.events.slip.relevel.free_ambs.count(key) != 0) { ++cnt.eq34_kept_not_freed; return; }
+    if (chainArcLatched(el, ri, amb)) { ++cnt.eq34_kept_not_freed; return; }
     if (sat_is_child) {
         const std::string* root = net::getSig(el.sig_rows, amb, &net::SatSignalState::eq34_sat_root);
         if (root != nullptr && *root != el.stations[plan.r1].name && !d.root_kept && !d.absorbed) {
@@ -1448,7 +1462,7 @@ void applyReturningRow(ChainElection& el, System sys, const ChainBand& band, std
     if (!childAbsentFromLastTree(el, sys, band, ri, amb, sat_is_child)) return;
     if (!childSeenInEarlierTree(el, band, ri, amb, sat_is_child)) return;
     auto& cnt = el.ctx.counters;
-    if (el.events.slip.relevel.free_ambs.count({static_cast<int>(ri), amb}) != 0) {
+    if (chainArcLatched(el, ri, amb)) {
         ++cnt.eq34_ret_not_freed;
         return;
     }
@@ -1475,14 +1489,10 @@ std::optional<long long> chainHeldInteger(const ChainElection& el, const ChainBa
                                           const std::string& sat) {
     const NetworkRingFix* rf = el.ctx.carry.ring_fix.get();
     if (rf == nullptr || !rf->rehost_keep_carry) return std::nullopt;
-    const auto& free_ambs = el.events.slip.relevel.free_ambs;
     for (const auto& [id, L] : rf->links) {
         if (id.station != static_cast<int>(ri) || id.sat != sat) continue;
         if (id.sig1 != band.signal && id.sig2 != band.signal) continue;
-        if (!L.held || L.monitor_trip) return std::nullopt;
-        if (free_ambs.count({id.station, StateKeys::makeAmbiguityKey(id.sat, id.sig1)}) != 0
-            || free_ambs.count({id.station, StateKeys::makeAmbiguityKey(id.sat, id.sig2)}) != 0)
-            return std::nullopt;
+        if (!chainHeldLinkUsable(el, id, L)) return std::nullopt;
         return id.sig1 == band.signal ? L.n1 : L.n2;
     }
     return std::nullopt;
@@ -1497,15 +1507,13 @@ std::optional<std::pair<long long, const RingFixCascade*>> chainCascadeHeldInteg
                                                                                    const std::string& sat) {
     const NetworkRingFix* rf = el.ctx.carry.ring_fix.get();
     if (rf == nullptr || !rf->cascade_rehost_keep || sat.empty()) return std::nullopt;
-    const auto& free_ambs = el.events.slip.relevel.free_ambs;
     for (const RingFixCascade& c : rf->cascades) {
         if (c.letter != sat[0] || c.s3 != band.signal) continue;
         const auto it = rf->cascade_links.find(RingFixLinkId{static_cast<int>(ri), sat, c.ref, c.s3});
         if (it == rf->cascade_links.end()) return std::nullopt;
         const int sta = static_cast<int>(ri);
         const std::optional<long long> n3 = ringFixCascadeKeepInteger(
-            it->second, free_ambs.count({sta, StateKeys::makeAmbiguityKey(sat, c.ref)}) != 0,
-            free_ambs.count({sta, StateKeys::makeAmbiguityKey(sat, c.s3)}) != 0);
+            it->second, chainArcLatched(el, sta, sat, c.ref), chainArcLatched(el, sta, sat, c.s3));
         if (!n3) return std::nullopt;
         return std::make_pair(*n3, &c);
     }
@@ -1574,7 +1582,7 @@ void applyRehostRow(ChainElection& el, const ChainBand& band, std::size_t ri, co
     const bool had_parent = sat_is_child ? inc.inc_sat != nullptr : inc.inc_rx != nullptr;
     if (!had_parent || inc.was_sat_edge || inc.was_rx_edge) return;
     auto& cnt = el.ctx.counters;
-    if (el.events.slip.relevel.free_ambs.count({static_cast<int>(ri), amb}) != 0) {
+    if (chainArcLatched(el, ri, amb)) {
         ++cnt.eq34_rh_not_freed;
         return;
     }
@@ -1645,7 +1653,7 @@ std::uint8_t tallySlipCause(ChainElection& el, const std::pair<int, std::string>
 void applySlipRow(ChainElection& el, System sys, const ChainBand& band, std::size_t ri, const std::string& sat,
                   const std::string& amb, bool sat_is_child, PinDraft& d) {
     if (d.held) return;
-    if (el.events.slip.relevel.free_ambs.count({static_cast<int>(ri), amb}) == 0) return;
+    if (!chainArcLatched(el, ri, amb)) return;
     auto& cnt = el.ctx.counters;
     const bool absent = childAbsentFromLastTree(el, sys, band, ri, amb, sat_is_child);
     if (absent && !childSeenInEarlierTree(el, band, ri, amb, sat_is_child)) {
@@ -2329,7 +2337,6 @@ void noteDeseats(ChainElection& el, const ChainFamily& fam, const ChainGraph& cg
                  const std::vector<SlippedSeed>& slipped, const BandWalk& walk) {
     const ChainBand& band = fam.bands[b];
     const auto bit = static_cast<std::uint8_t>(1u << b);
-    const RelevelEpochState& relevel = el.events.slip.relevel;
     auto& cnt = el.ctx.counters;
     for (const SlippedSeed& seed : slipped) {
         const auto arc = static_cast<std::size_t>(seed.arc);
@@ -2339,7 +2346,7 @@ void noteDeseats(ChainElection& el, const ChainFamily& fam, const ChainGraph& cg
         const std::string sat = cg.satName(sat_slot);
         const std::pair<int, std::string> key{static_cast<int>(ri), StateKeys::makeAmbiguityKey(sat, band.signal)};
         const std::uint8_t cause = tallySlipCause(el, key);
-        const bool latched = relevel.free_ambs.count(key) != 0;
+        const bool latched = chainArcLatched(el, ri, key.second);
         ++cnt.eq34_sl_deseated;
         if (!latched) ++cnt.eq34_sl_deseated_family;
         const int rv = arcgraph::stationVertex(cg.graph, sta_slot);
@@ -2458,7 +2465,11 @@ void electFamily(ChainElection& el, const ChainGroups& groups, const ChainFamily
     std::vector<char> lead_rank = lead.rank;
     const std::vector<UntiedLead> untied = untiedLeads(el, fam, cg, lead_rank);   // network.ring_fix.reattach
     const ChainFamilyPlan plan = planChainFamily(el, fam, cg, seeds, chain_rank, station_rank, lead_rank);
-    if (lead.cascade != nullptr) tallyCascadeTree(el, *lead.cascade, plan);
+    if (lead.cascade != nullptr) {
+        std::set<int> untied_arcs;
+        for (const UntiedLead& u : untied) untied_arcs.insert(u.arc);
+        tallyCascadeTree(el, *lead.cascade, plan, untied_arcs);
+    }
     if (!untied.empty()) tallyUntiedMoves(el, cg, plan, untied);
     for (std::size_t b = 0; b < fam.bands.size(); ++b) {
         BandWalk walk(cg);
