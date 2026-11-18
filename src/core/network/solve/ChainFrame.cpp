@@ -228,9 +228,6 @@ namespace {
 
 // ---- Helpers ----------------------------------------------------------------------------------
 
-std::string stationKey(int station) { return "R:" + std::to_string(station); }
-std::string satKeyOf(const std::string& sat) { return "S:" + sat; }
-
 /// True when x is within 1e-6 of an integer.
 bool nearInteger(double x) { return std::isfinite(x) && std::abs(x - std::round(x)) <= 1e-6; }
 
@@ -244,14 +241,14 @@ std::string cell(double v, int digits) {
     return fmt::format("{:.{}f}", v, digits);
 }
 
-/// The printable name of a vertex key ("R:<idx>" -> station name, "S:<sat>" -> sat).
+/// The printable name of a vertex key (a receiver's station name, a satellite's name; the key itself otherwise).
 std::string vertexName(const std::string& key, const std::vector<NetStation>& stations) {
-    if (key.size() > 2 && key[0] == 'R') {
-        const int i = std::atoi(key.c_str() + 2);
-        if (i >= 0 && static_cast<std::size_t>(i) < stations.size()) return stations[static_cast<std::size_t>(i)].name;
-        return key;
-    }
-    return key.size() > 2 ? key.substr(2) : key;
+    const std::optional<ChainVertex> v = chainVertexOfKey(key);
+    if (!v) return key;
+    if (v->is_sat) return v->sat.empty() ? key : v->sat;
+    const int i = v->station;
+    if (i >= 0 && static_cast<std::size_t>(i) < stations.size()) return stations[static_cast<std::size_t>(i)].name;
+    return key;
 }
 
 // ---- One epoch's classification ---------------------------------------------------------------
@@ -282,8 +279,8 @@ GroupChange groupChange(const ChainFrameMemory& mem, const std::string& g,
                 ++votes[p->second];
             }
         };
-        for (int s : k->stations) vote(stationKey(s));
-        for (const std::string& s : k->sats) vote(satKeyOf(s));
+        for (int s : k->stations) vote(chainVertexKey(s));
+        for (const std::string& s : k->sats) vote(chainVertexKey(s));
         int best = -1, best_n = 0;
         for (const auto& [pc, n] : votes)
             if (n > best_n) { best = pc; best_n = n; }
@@ -526,8 +523,8 @@ void chainRememberEpoch(const ChainEpochObs& obs, const ChainEpochClass& cls,
         auto& vc = next.vertex_comp[k.group];
         auto& seen = next.last_seen_s[k.group];
         auto& parent = next.last_parent[k.group];
-        for (int s : k.stations) { vc[stationKey(s)] = k.comp; seen[stationKey(s)] = now_s; parent[stationKey(s)].clear(); }
-        for (const std::string& s : k.sats) { vc[satKeyOf(s)] = k.comp; seen[satKeyOf(s)] = now_s; parent[satKeyOf(s)].clear(); }
+        for (int s : k.stations) { vc[chainVertexKey(s)] = k.comp; seen[chainVertexKey(s)] = now_s; parent[chainVertexKey(s)].clear(); }
+        for (const std::string& s : k.sats) { vc[chainVertexKey(s)] = k.comp; seen[chainVertexKey(s)] = now_s; parent[chainVertexKey(s)].clear(); }
         next.comp_root[k.group][k.comp] = k.r1;
     }
     for (const ChainEdgeObs& e : cls.edges) {
@@ -816,7 +813,7 @@ void networkChainFrameObserve(NetworkRun& run, const NetworkEpoch& ep) {
             const char* name = chainEventSpec(ChainEventRow::TreeEdgeSlip).event;
             event(name, d.sat, d.station_name, std::nullopt, "leave", deseat_detail);
             if (d.released)
-                event(name, d.release_sat, vertexName("R:" + std::to_string(d.release_station), stations),
+                event(name, d.release_sat, vertexName(chainVertexKey(d.release_station), stations),
                       std::nullopt, "join", deseat_detail + " rejoin=" + vertexName(d.release_vertex, stations));
             else if (d.new_parent.empty())
                 event(name, d.sat, d.station_name, std::nullopt, "join", deseat_detail + " rejoin=none");
@@ -829,7 +826,7 @@ void networkChainFrameObserve(NetworkRun& run, const NetworkEpoch& ep) {
         // declared_keys row per satellite of its moved side (the keys the producer declares moved).
         for (const ChainReleaseObs& r : obs.releases) {
             const std::string root = vertexName(r.vertex, stations);
-            event(kChainCutReleaseEvent, r.sat, vertexName("R:" + std::to_string(r.station), stations),
+            event(kChainCutReleaseEvent, r.sat, vertexName(chainVertexKey(r.station), stations),
                   std::nullopt, "release",
                   fmt::format("sig={} comp={} root={} arcs={} rpb={} pb={} n_rx={} n_sat={}", r.signal, r.comp,
                               root, r.arcs, r.rpb, r.pb, r.stations.size(), r.sats.size()));

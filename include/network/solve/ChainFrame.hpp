@@ -64,6 +64,7 @@
 
 #include "network/ar/ArcGraph.hpp"                 // arcgraph::Cycle
 #include "network/solve/ChainFrameCounters.hpp"   // ChainFrameCounters, kChainEventRowCount
+#include "network/solve/ChainVertex.hpp"          // chainVertexKey, chainVertexOfKey: the record's vertex keys
 
 #include <array>
 #include <cstddef>

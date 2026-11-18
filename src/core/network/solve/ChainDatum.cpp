@@ -1865,7 +1865,7 @@ void traceTreeEdge(ChainElection& el, const ChainFamily& fam, const ChainBand& b
     o.station_name = el.stations[ri].name;
     o.sat = sat;
     o.sat_is_child = sat_is_child;
-    const std::string rkey = "R:" + std::to_string(ri), skey = "S:" + sat;
+    const std::string rkey = chainVertexKey(static_cast<int>(ri)), skey = chainVertexKey(sat);
     o.child  = sat_is_child ? skey : rkey;
     o.parent = sat_is_child ? rkey : skey;
     o.lambda_m = band.lambda_m;
@@ -1902,8 +1902,7 @@ void traceTreeEdge(ChainElection& el, const ChainFamily& fam, const ChainBand& b
         o.incumbent_flipped = !was_sat_edge && was_rx_edge;
         if (inc_sat != nullptr) {
             const auto ix = el.chain_index_of.find(*inc_sat);
-            o.prev_parent = ix != el.chain_index_of.end()
-                                ? "R:" + std::to_string(ix->second) : std::string();
+            o.prev_parent = ix != el.chain_index_of.end() ? chainVertexKey(static_cast<int>(ix->second)) : std::string();
         }
         const std::string* rt = net::getSig(el.sig_rows, amb, &net::SatSignalState::eq34_sat_root);
         o.root_unknown = rt != nullptr && *rt != el.stations[plan.r1].name;
@@ -1911,7 +1910,7 @@ void traceTreeEdge(ChainElection& el, const ChainFamily& fam, const ChainBand& b
         o.had_parent = inc_rx != nullptr;
         o.incumbent_same = was_rx_edge;
         o.incumbent_flipped = !was_rx_edge && was_sat_edge;
-        if (inc_rx != nullptr) o.prev_parent = "S:" + *inc_rx;
+        if (inc_rx != nullptr) o.prev_parent = chainVertexKey(*inc_rx);
     }
     // The cause names what the as-built rule did or would have done.
     if (o.root_unknown)          o.cause = ChainLegacyCause::RootHandover;
@@ -2022,7 +2021,7 @@ std::size_t walkRelease(ChainElection& el, const ChainGraph& cg, const ChainBand
         r.sat_is_child = sat_vertex;
         r.station      = static_cast<int>(cg.staIdx(sat_vertex ? st.parent : st.child));
         r.sat          = cg.satName((sat_vertex ? st.child : st.parent) - n_sta);
-        r.vertex       = sat_vertex ? "S:" + r.sat : "R:" + std::to_string(r.station);
+        r.vertex       = sat_vertex ? chainVertexKey(r.sat) : chainVertexKey(r.station);
         walk.release_of[st.child] = el.releases.size();
         el.releases.push_back(std::move(r));
     }
@@ -2353,8 +2352,8 @@ void noteDeseats(ChainElection& el, const ChainFamily& fam, const ChainGraph& cg
         const int sv = arcgraph::satVertex(cg.graph, sat_slot);
         const auto vertexKey = [&](int v) {
             return arcgraph::isSatVertex(cg.graph, v)
-                       ? "S:" + cg.satName(v - static_cast<int>(cg.graph.stations.size()))
-                       : "R:" + std::to_string(cg.staIdx(v));
+                       ? chainVertexKey(cg.satName(v - static_cast<int>(cg.graph.stations.size())))
+                       : chainVertexKey(static_cast<int>(cg.staIdx(v)));
         };
         const auto child = static_cast<std::size_t>(seed.sat_is_child ? sv : rv);
         ChainDeseatObs o;

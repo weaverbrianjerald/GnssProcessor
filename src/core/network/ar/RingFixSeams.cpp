@@ -46,8 +46,6 @@ namespace {
 
 
 
-std::string rxKey(int station) { return "R:" + std::to_string(station); }
-std::string svKey(const std::string& sat) { return "S:" + sat; }
 std::string groupOf(const std::string& sat, const std::string& sig) { return sat.substr(0, 1) + "|" + sig; }
 
 /// The near-null signature's inputs: every held Galileo E1/E5a chord whose moving averages of its code residuals span
@@ -650,8 +648,10 @@ void networkRingFixHoldEpoch(NetworkRun& run, const NetworkEpoch& ep) {
                 stack.pop_back();
                 if (!seen.insert(v).second) continue;
                 if (v != r.vertex && released_at.count({r.group, v}) != 0) nested = true;
-                if (v.rfind("S:", 0) == 0) c.sats.insert(v.substr(2));
-                else if (v.rfind("R:", 0) == 0) c.stations.insert(std::stoi(v.substr(2)));
+                if (const std::optional<ChainVertex> cv = chainVertexOfKey(v)) {
+                    if (cv->is_sat) c.sats.insert(cv->sat);
+                    else c.stations.insert(cv->station);
+                }
                 if (gk == kids.end()) continue;
                 const auto ch = gk->second.find(v);
                 if (ch != gk->second.end()) stack.insert(stack.end(), ch->second.begin(), ch->second.end());
@@ -823,7 +823,7 @@ void networkRingFixHoldEpoch(NetworkRun& run, const NetworkEpoch& ep) {
         for (auto& [id, L] : rf.links) {
             if (!L.held || L.root.empty()) continue;
             const std::string g = groupOf(id.sat, id.sig1);
-            const std::string now_root = facts.root(g, rxKey(id.station));
+            const std::string now_root = facts.root(g, chainVertexKey(id.station));
             if (now_root.empty() || now_root == L.root) continue;
             for (const ChainRootObs& ro : obs_rec->roots)
                 if (ro.group == g && ro.new_root == now_root && ro.outcome == ChainRootOutcome::Pinned) {
@@ -847,7 +847,7 @@ void networkRingFixHoldEpoch(NetworkRun& run, const NetworkEpoch& ep) {
             o.in_cut = false;
             o.present = facts.chords.count({id.station, id.sat, id.sig1}) > 0
                      && facts.chords.count({id.station, id.sat, id.sig2}) > 0;
-            o.root = facts.root(groupOf(id.sat, id.sig1), rxKey(id.station));
+            o.root = facts.root(groupOf(id.sat, id.sig1), chainVertexKey(id.station));
             o.latched = latched.count({id.station, id.sat, id.sig1}) > 0
                      || latched.count({id.station, id.sat, id.sig2}) > 0;
             const LocalCarry* c1 = net::getArc(arc_rows, net::ArcTuple{id.station, id.sat, id.sig1}, &net::ArcState::amb);
@@ -928,8 +928,8 @@ void networkRingFixHoldEpoch(NetworkRun& run, const NetworkEpoch& ep) {
                 c.lambda2 = chainWavelengthM(sat, s2);
                 c.latched = latched.count({sta, sat, s1}) > 0 || latched.count({sta, sat, s2}) > 0;
                 const std::string g = groupOf(sat, s1);
-                c.ring = facts.ring(g, rxKey(sta), svKey(sat));
-                c.root = facts.root(g, rxKey(sta));
+                c.ring = facts.ring(g, chainVertexKey(sta), chainVertexKey(sat));
+                c.root = facts.root(g, chainVertexKey(sta));
                 if (!(c.lambda1 > 0.0 && c.lambda2 > c.lambda1)) continue;
                 cands.push_back(c);
             }
@@ -1055,11 +1055,11 @@ void networkRingFixDecide(NetworkRun& run, const NetworkEpoch& ep) {
     std::map<net::ArcTuple, const ChainChordCycle*> cyc_of;
     for (const ChainChordCycle& c : obs.chords) {
         cyc_of[{c.station, c.sat, c.signal}] = &c;
-        trees[groupOf(c.sat, c.signal)].chords.emplace_back(rxKey(c.station), svKey(c.sat));
+        trees[groupOf(c.sat, c.signal)].chords.emplace_back(chainVertexKey(c.station), chainVertexKey(c.sat));
     }
     std::map<std::string, std::set<std::pair<std::string, std::string>>> held_by_group;
     for (const auto& [id, L] : rf.links)
-        if (L.held) held_by_group[groupOf(id.sat, id.sig1)].insert({rxKey(id.station), svKey(id.sat)});
+        if (L.held) held_by_group[groupOf(id.sat, id.sig1)].insert({chainVertexKey(id.station), chainVertexKey(id.sat)});
     std::map<std::string, std::map<std::pair<std::string, std::string>, RingFixRingInfo>> rings;
     for (const auto& [g, tree] : trees) rings[g] = ringFixRings(tree, held_by_group[g]);
     const std::set<net::ArcTuple> latched = latchedArcs(relevel);
@@ -1104,12 +1104,12 @@ void networkRingFixDecide(NetworkRun& run, const NetworkEpoch& ep) {
             const std::string g = groupOf(r.sat, r.sig1);
             const auto rg = rings.find(g);
             if (rg != rings.end()) {
-                const auto ri = rg->second.find({rxKey(ii), svKey(r.sat)});
+                const auto ri = rg->second.find({chainVertexKey(ii), chainVertexKey(r.sat)});
                 if (ri != rg->second.end()) { o.ring = ri->second.ring; o.candidate = ri->second.candidate; }
             }
             const auto rt = root_of.find(g);
             if (rt != root_of.end()) {
-                const auto v = rt->second.find(rxKey(ii));
+                const auto v = rt->second.find(chainVertexKey(ii));
                 if (v != rt->second.end()) o.root = v->second;
             }
             const auto cy1 = cyc_of.find({ii, r.sat, r.sig1});

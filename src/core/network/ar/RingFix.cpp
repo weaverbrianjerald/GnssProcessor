@@ -9,6 +9,7 @@
 #include "common/Constants.hpp"   // Constants::PI, the re-attachment's circular statistics
 #include "common/GnssIdentity.hpp"   // systemOfSat, constellationKey
 #include "network/solve/ChainChordTable.hpp"   // chainWavelengthM (the cascade's reference)
+#include "network/solve/ChainVertex.hpp"       // chainVertexIsStation: the rings' vertex keys
 #include "products/NetworkProductEmitter.hpp"   // NetworkSolutionEpoch, the settled flags' records
 
 #include <algorithm>
@@ -248,7 +249,7 @@ ringFixRings(const RingFixTree& tree, const std::set<std::pair<std::string, std:
     }
     const auto isHeld = [&](const std::string& u, const std::string& v) {
         // A chord is keyed (receiver key, satellite key).
-        if (!u.empty() && u[0] == 'R') return held.count({u, v}) > 0;
+        if (chainVertexIsStation(u)) return held.count({u, v}) > 0;
         return held.count({v, u}) > 0;
     };
     std::map<std::pair<std::string, std::string>, RingFixRingInfo> out;
