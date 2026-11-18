@@ -82,8 +82,11 @@ Per epoch the record holds how the epoch ended, the post-fit sigma0 of code and 
 and the satellites with a clock; per receiver the post-fit code and phase RMS, its satellites, the robust scale of its
 normalized code residuals, its largest normalized residual, its wet delay and its clock sigma; per satellite the
 post-fit code RMS, its receivers, its emitted clock and its declared discontinuities; the held-out user's position
-error; and every event. Its values are those of the run's traces ([NETVIEW](../cards/tools/NETVIEW-network-view.md),
-section 13). A line holds about 4 KB of values for 58 receivers, plus the epoch's events. Rows that record without
+error; and every event. With the integer fixing armed (`network.ring_fix.enable`) it also holds, per family, receiver
+and satellite, the links that are not tree links and how many of them are held at whole numbers: the page then shows
+a held tile per family and the held share of each receiver and satellite, as the replay of the same run does. Its
+values are those of the run's traces ([NETVIEW](../cards/tools/NETVIEW-network-view.md), sections 13 and 15). A line
+holds about 4 KB of values for 58 receivers, plus the epoch's events (and about 0.6 KB with the integer fixing). Rows that record without
 acting (reports, diagnostics, coincident duplicates) count neither as cycle slips nor as quality-test flags and are
 listed under bookkeeping.
 

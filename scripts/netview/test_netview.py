@@ -503,6 +503,35 @@ class TestFollow(unittest.TestCase):
                 fh.write(json.dumps(o) + '\n')
             fh.write(partial)
 
+    def test_held_links_from_a_fixing_record(self):
+        from live import follow
+        header = dict(LIVE_HEADER, rx_fields=LIVE_HEADER['rx_fields'] + ['fix_links', 'fix_held'],
+                      sat_fields=LIVE_HEADER['sat_fields'] + ['fix_links', 'fix_held'])
+        self.write(header,
+                   live_line(30, disp='emitted', rx=[[0.25, 0.001, 12, 0.3, 4.1, 0.14, 0.008, None, None], None],
+                             sat={'G05': [0.23, 2, 12.5, 3, None, None]}),          # ignition: nothing noted
+                   live_line(60, disp='emitted', rx=[[0.25, 0.001, 12, 0.3, 4.1, 0.14, 0.008, 4, 3], None],
+                             sat={'G05': [0.23, 2, 12.5, 3, 2, 2], 'E11': [None, 0, None, None, 2, 1]},
+                             fam={'E|L1X+L5X': [2, 1], 'G|L1C+L2W': [2, 2]}))
+        src = follow.FollowSource(self.path)
+        self.assertEqual(src.poll(), 2)
+        meta = src.meta(window=10)
+        rx_keys, sat_keys = [f[0] for f in meta['rx_fields']], [f[0] for f in meta['sat_fields']]
+        r0, r1 = src.record(0), src.record(1)
+        self.assertEqual(r0['fam'], [])
+        self.assertIsNone(r0['rx'][0][rx_keys.index('held')])
+        self.assertEqual([f['key'] for f in src.families], ['E|L1X+L5X', 'G|L1C+L2W'])
+        self.assertEqual(src.families[0]['label'], 'Galileo L1X + L5X')
+        self.assertTrue(all(f['fixing'] for f in src.families))
+        self.assertEqual(r1['fam'], [[2, 1], [2, 2]])
+        self.assertEqual([f['key'] for f in r1['add']['families']], ['E|L1X+L5X', 'G|L1C+L2W'])
+        self.assertAlmostEqual(r1['rx'][0][rx_keys.index('held')], 0.75)
+        self.assertIsNone(r1['rx'][1][rx_keys.index('held')])               # R2 not in the solve
+        self.assertAlmostEqual(r1['sat'][src.sat_ix['G05']][sat_keys.index('held')], 1.0)
+        self.assertAlmostEqual(r1['sat'][src.sat_ix['E11']][sat_keys.index('held')], 0.5)
+        self.assertEqual([f['key'] for f in src.lists()['families']], ['E|L1X+L5X', 'G|L1C+L2W'])
+        self.assertEqual(src.meta(window=10)['families'][1]['label'], 'GPS L1C + L2W')
+
     def test_records_grow_with_the_file(self):
         from live import follow
         self.write(LIVE_HEADER,

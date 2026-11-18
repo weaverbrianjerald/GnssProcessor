@@ -5,19 +5,19 @@
 - **id:** NETVIEW
 - **topic:** tools
 - **status:** open
-- **summary:** A tool that turns the traces of one network run into one self-contained HTML page. Since 2026-11-17 the page is a dashboard of layers a reader clicks through (section 11): overview, network links (the trees, held and float links, each link's whole numbers), receivers, satellites, cycle slips, stochastic model, atmosphere, products and the held-out user check, events; and pages of one receiver, one satellite and one line of sight, all on one time cursor. Made on request from existing traces; `netview.py arm` writes a config copy with the traces the reference configurations lack. A live monitor (section 12) follows a running engine through the live record (`network.trace_live_record`, section 13), the one engine change: an observer, off by default in the loader and armed in the goldens since 2026-11-17 (section 14). Branch `viz/network-view`.
-- **dates:** 2026-11-15 (built and first version shown to the author); 2026-11-17 (the dashboard; the live monitor prototype, section 12; the live record in the engine and the monitor following it, section 13; the record armed in the goldens, section 14)
-- **code:** `scripts/netview/` (`netview.py` with the commands build, arm and compare; readers `nv_read.py` and `nv_tables.py`, aggregation `nv_build.py` (core block) and `layers/` (the other blocks), page writer `nv_page.py`, the page's sources in `page/`, unit tests `test_netview.py`; the live monitor in `live/`: `server.py`, the replay source `telemetry.py`, the follow source `follow.py`); the engine's record `include/network/diag/LiveRecord.hpp`, `src/core/network/diag/LiveRecord.cpp`, tests `tests/network/test_network_live_record.cpp`; how-to [onboarding/network_view.md](../../onboarding/network_view.md)
+- **summary:** A tool that turns the traces of one network run into one self-contained HTML page. Since 2026-11-17 the page is a dashboard of layers a reader clicks through (section 11): overview, network links (the trees, held and float links, each link's whole numbers), receivers, satellites, cycle slips, stochastic model, atmosphere, products and the held-out user check, events; and pages of one receiver, one satellite and one line of sight, all on one time cursor. Made on request from existing traces; `netview.py arm` writes a config copy with the traces the reference configurations lack. A live monitor (section 12) follows a running engine through the live record (`network.trace_live_record`, section 13), the one engine change: an observer and its notes, off by default in the loader and armed in the goldens since 2026-11-17 (section 14). With the integer fixing armed, the record carries its links and held links per family, receiver and satellite (section 15). Branch `viz/network-view`, on main since `5ddc422`.
+- **dates:** 2026-11-15 (built and first version shown to the author); 2026-11-17 (the dashboard; the live monitor prototype, section 12; the live record in the engine and the monitor following it, section 13; the record armed in the goldens, section 14; the integer fixing's held links in the record, section 15)
+- **code:** `scripts/netview/` (`netview.py` with the commands build, arm and compare; readers `nv_read.py` and `nv_tables.py`, aggregation `nv_build.py` (core block) and `layers/` (the other blocks), page writer `nv_page.py`, the page's sources in `page/`, unit tests `test_netview.py`; the live monitor in `live/`: `server.py`, the replay source `telemetry.py`, the follow source `follow.py`); the engine's record `include/network/diag/LiveRecord.hpp`, `src/core/network/diag/LiveRecord.cpp`, tests `tests/network/test_network_live_record.cpp`, and the integer fixing's note in `src/core/network/ar/RingFixSeams.cpp`; how-to [onboarding/network_view.md](../../onboarding/network_view.md)
 - **knobs / posture:** `network.trace_live_record` (measure-only, loader default off; RECOMMEND_ON and pinned in the goldens since 2026-11-17, sections 13 and 14). `arm` switches on trace keys only.
-- **run dirs:** pages of `D:\GnssProcessorSupport\runs_nom\_rap_o2s1j_n144`, `_rap_o2s1j_n144r`, `_rap_o2offj_n144`, `_rap_o9_n145`, `_rap_ka_sim` and `_rap_k0_sim` in `D:\GnssProcessorSupport\netview_out\` (the first page design); the dashboard of `_rap_l12_n144` as `D:\GnssProcessorSupport\netview_out\l12_n144.html`; the timing pair in `D:\GnssProcessorSupport\netview_out\timing\`; the live record's arms `D:\GnssProcessorSupport\runs_nom\_rap_lvr_smoke`, `_rap_lvr_off`, `_rap_lvr_on`, `_rap_lvr_live`, `_rap_lvr_sim_off`, `_rap_lvr_sim_on`, `_rap_lvr_bds_off`, `_rap_lvr_bds_on` and `_rap_lvr_gsmoke`
+- **run dirs:** pages of `D:\GnssProcessorSupport\runs_nom\_rap_o2s1j_n144`, `_rap_o2s1j_n144r`, `_rap_o2offj_n144`, `_rap_o9_n145`, `_rap_ka_sim` and `_rap_k0_sim` in `D:\GnssProcessorSupport\netview_out\` (the first page design); the dashboard of `_rap_l12_n144` as `D:\GnssProcessorSupport\netview_out\l12_n144.html`; the timing pair in `D:\GnssProcessorSupport\netview_out\timing\`; the live record's arms `D:\GnssProcessorSupport\runs_nom\_rap_lvr_smoke`, `_rap_lvr_off`, `_rap_lvr_on`, `_rap_lvr_live`, `_rap_lvr_sim_off`, `_rap_lvr_sim_on`, `_rap_lvr_bds_off`, `_rap_lvr_bds_on` and `_rap_lvr_gsmoke`; the held links' arms `_rap_lvh_on` and `_rap_lvh_off`
 - **source:** the author's request of 2026-11-15 (section 1); the definitions of NRF and BER (branch `irdu/user-integers`, `docs/refound/NRF_network_ring_fixing_2026-11-14*.md`, `BER_bad_epoch_response_2026-11-15.md`) and of ARNF sections 3, 9 and 15 (branch `ar/rx-sat-code-bias`)
 
 **Outcome.** Built, then rebuilt as a dashboard (section 11), with a live monitor (sections 12 and 13). One
 command makes a 22 MB page from a 6 h run of 56 receivers in about 40 s; the overview is ready about 0.9 s
 after the page loads and a layer opens in 0.01 to 0.2 s. Nine layers lead to pages of one receiver, one
 satellite and one line of sight. The engine's live record (`network.trace_live_record`, armed in the goldens)
-writes one line per epoch, which `netview.py live` follows while the engine runs; its values equal the
-run's traces and the products stay byte-identical.
+writes one line per epoch, held links included when the integer fixing is armed, which `netview.py live`
+follows while the engine runs; its values equal the run's traces and the products stay byte-identical.
 
 > Results are appended to this file, below the text, under dated headings.
 
@@ -453,3 +453,50 @@ the record's own walk (one reconstruction and one clock variance per station) sh
 "Record against traces" is the comparison of section 13, every quantity on every epoch. The baseline pairs stand
 (products identical). Every golden run now writes the record: about 12 MB per 6 h on the observed-data golden (section
 13) and, from the first-hour sizes above, at most about 9 MB on the sim and 19 MB on the BeiDou lineage.
+
+## 15. 2026-11-17: the integer fixing's held links in the live record
+
+Item 1 of section 13's list of what the record did not carry, on the author's request of the same day ("Yes, add
+holds"), once main (`5ddc422`, pushed) held both the network integer fixing (branch `irdu/user-integers`) and this
+branch at `91756aa`. The branch was fast-forwarded to `5ddc422` (no merge commit) before the change.
+
+**What the dashboard counts.** A held tile counts, for one fixing family, the links that are not tree links
+(network_chain_frame.csv) and, of them, the links network_ring_fix.csv calls `held`: held at whole numbers in this
+epoch's solve, so a link decided at an epoch is `decided` there and counts from the next. A receiver's or a
+satellite's held share is the same ratio over its own links. On `_rap_int1117_g5_n147` (observed data, DOY 147, 2 h;
+GPS L1C + L2W, Galileo L1X + L5X and L1C + L5Q) the fixing's own list of links with a float equals the chain-frame list
+on all 234 epochs that have links, so the engine counts from the fixing's list and needs neither trace.
+
+**In the engine.** A fourth note: `networkRingFixDecide` (`network/ar/RingFixSeams.cpp`) passes, right after it reads
+which links are held, every link with a float this epoch to `NetworkLiveRecord::noteHolds` as a `LiveHolds` value
+(counts per family, receiver and satellite; `network/diag/LiveRecord.hpp`). With `network.ring_fix.enable` on, both
+field lists of the header end with `fix_links` and `fix_held`, every receiver and satellite entry ends with its two
+counts (`null` on an epoch the fixing noted nothing), and the line gains `"fam":{"G|L1C+L2W":[links,held],...}`; a
+satellite that only the fixing counted gets an entry of its own. Without the fixing the header and the lines are
+unchanged: the three goldens do not enable it. The third bands of `network.ring_fix.cascade` are not counted (no
+cascade run was at hand to check them against).
+
+**In the monitor.** `live/follow.py` turns the two counts into the held share of each receiver and satellite and the
+family counts into the held tiles, labelled by `telemetry.family_entry` (one rule for the replay and the follow
+source); families join the page through the record's `add`, as satellites do.
+
+**Checks.** Exe `gnss_processor_holds.exe` (sha256[:16] 53d08fa4c3dc61a8; `5ddc422` plus this change). Arms
+`_rap_lvh_on` and `_rap_lvh_off`: copies of `_rap_int1117_g5_n147` with only the run paths changed and, in the first,
+the record on; 2 h, 240 epochs, run side by side.
+
+| Check | Result |
+| --- | --- |
+| Products, record on against off | identical, 8ec3f70070d9fe4e |
+| Logs, record on against off | 62 files identical; the CSVs that differ do so only in wall-clock columns (`ms` of network_datum_graph.csv, `loop_ms` and `ms_per_epoch` of network_run_summary.csv, `ms_per_epoch_window` of network_service_health.csv); the text logs in the posture readout (ON tier 23/24 against 22/24), the configuration path and times; the run manifest in the configuration path and hash, its write time and the loop time |
+| Record against the run's traces (the comparison of section 13, extended to the counts) | every quantity equal on every epoch; the links and held links of 12,959 receiver entries, 14,695 satellite entries and 702 family counts, 0 different; 11,920 events equal |
+| Live page from the record against the replay of the run's traces | held tiles of 720 family epochs, held shares of 13,200 receiver epochs and 14,880 satellite epochs, 0 different; the same three families and labels |
+| Size | 14.7 KB per epoch line, of which the hold fields and the family counts take 644 bytes (4.4 %) |
+| Unit tests | suite NetworkLiveRecord 12 cases (4 new); full Release suite 4,568 tests in 620 suites, 4,531 passed, 37 skipped (fixtures a worktree lacks, and the bit-for-bit checks only an SSE2 build reproduces), 0 failed; full Debug suite the same counts (2,217 s); viewer 34 tests pass |
+| Structure | nom_epoch_lint and nom_n4_verify --whole pass |
+
+The pair ran beside a Debug build (epoch loop 818 s off, 804 s on), so no cost is claimed beyond that spread; the note
+adds one pass over the epoch's links (about 640 here) to a seam that already walks them several times.
+
+**Open questions.**
+1. The cascade's third bands, counted in the record once a cascade run can check them.
+2. Items 2 to 5 of section 13's list stand.

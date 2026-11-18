@@ -14,6 +14,7 @@
 #include "network/assembly/Contributions.hpp"   // makeRowTag
 #include "network/assembly/StationBuild.hpp"    // StationBuild, StationCarryFrame
 #include "network/diag/AmbStateTrace.hpp"       // ambStateNoteDrop
+#include "network/diag/LiveRecord.hpp"          // LiveHolds (the live record's held links)
 #include "network/diag/RunTraces.hpp"
 #include "network/driver/RunGroups.hpp"           // NetworkEngines (the slip channel)
 #include "network/slip/OraclePin.hpp"            // networkOraclePinParseAmbCsv
@@ -286,6 +287,23 @@ void requestUntiedMoves(NetworkRingFix& rf, const std::string& ck, const std::st
                                      "sd_wl={:.3f}",
                                      fam, host(p1), host(p2), pk.n, pk.med_if, pk.med_wl, pk.sd_if, pk.sd_wl));
     }
+}
+
+/// The live record's note (network.trace_live_record): every pair-family link with a float this
+/// epoch and whether it is held in this epoch's solve, counted by family, receiver and satellite.
+/// These are the rows network_ring_fix.csv writes with a float, "held" where it writes that state.
+/// Measure-only; one test when the record is off.
+void noteLiveHolds(NetworkRunTraces& traces, const GnssTime& t, const std::vector<RingFixDecideObs>& links,
+                   const std::map<RingFixLinkId, bool>& held_before) {
+    if (!traces.live_record.on()) return;
+    LiveHolds holds;
+    for (const RingFixDecideObs& o : links) {
+        if (!o.have_float) continue;
+        const auto h = held_before.find(o.id);
+        holds.add(o.id.sat.substr(0, 1) + "|" + o.id.sig1 + "+" + o.id.sig2, o.id.station, o.id.sat,
+                  h != held_before.end() && h->second);
+    }
+    traces.live_record.noteHolds(t, std::move(holds));
 }
 
 }  // namespace
@@ -1062,6 +1080,7 @@ void networkRingFixDecide(NetworkRun& run, const NetworkEpoch& ep) {
         const auto it = rf.links.find(o.id);
         held_before[o.id] = it != rf.links.end() && it->second.held;
     }
+    noteLiveHolds(traces, t, links, held_before);
 
     const std::vector<RingFixEvent> events = ringFixDecideStep(rf, links, now_s);
     std::map<RingFixLinkId, const RingFixEvent*> event_of;

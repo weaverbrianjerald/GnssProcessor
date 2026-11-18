@@ -8,9 +8,12 @@ replay source makes from a finished run's blocks (telemetry.py):
 - receivers and satellites become indices; the events are classified by tier with the dashboard's rules
   (nv_build.event_family, nv_build.event_lane) and counted per receiver and satellite (cycle slips, quality tests,
   alarms), so the classification has one owner;
-- the products' discontinuity counters become jumps (the counter's increase since the satellite's previous epoch).
+- the products' discontinuity counters become jumps (the counter's increase since the satellite's previous epoch);
+- with the integer fixing armed (header fields fix_links and fix_held), a receiver's or satellite's held share is its
+  held links over its links, and each family's two counts fill the page's held tiles, as the replay source makes them
+  from the chain-frame and ring-fix traces.
 
-Satellites, event words and dispositions are lists that only grow.  A record that brings new entries carries them in
+Satellites, families, event words and dispositions are lists that only grow.  A record that brings new entries carries them in
 its "add" object (with fresh colour ranges every RANGE_EVERY records); the page appends the entries it does not have,
 so every index stays valid and the page never reloads.  A snapshot carries the whole lists.
 
@@ -28,7 +31,7 @@ from pathlib import Path
 import numpy as np
 
 import nv_build
-from live.telemetry import NET_FIELDS, QUIET_ACTIONS, SLIP_TIERS, WEEK_MS, colour_range
+from live.telemetry import NET_FIELDS, QUIET_ACTIONS, SLIP_TIERS, WEEK_MS, colour_range, family_entry
 
 #: (key, label, colour scale, unit) of the per-receiver values of the engine's record.
 RX_FIELDS = [
@@ -36,21 +39,22 @@ RX_FIELDS = [
     ('nsat', 'satellites with residuals', 'viridis', ''), ('zcode', 'normalized code residual scale', 'viridis', ''),
     ('maxnorm', 'largest normalized post-fit residual', 'viridis', ''), ('slip', 'cycle slips detected', 'count', ''),
     ('qc', 'quality-test flags', 'count', ''), ('alarm', 'alarms that acted', 'count', ''),
+    ('held', 'share of its links held at whole numbers', 'viridis', ''),
     ('zwd', 'wet delay', 'vik', 'm'), ('clksd', 'receiver clock sigma', 'viridis', 'm'),
 ]
 #: (key, label, colour scale, unit) of the per-satellite values of the engine's record.
 SAT_FIELDS = [
     ('code', 'post-fit code RMS', 'viridis', 'm'), ('nrx', 'receivers with residuals', 'viridis', ''),
-    ('jumps', 'declared discontinuities', 'count', ''), ('slip', 'cycle slips detected', 'count', ''),
-    ('clk', 'emitted clock', 'vik', 'm'),
+    ('jumps', 'declared discontinuities', 'count', ''), ('held', 'share of its links held', 'viridis', ''),
+    ('slip', 'cycle slips detected', 'count', ''), ('clk', 'emitted clock', 'vik', 'm'),
 ]
-#: The engine's per-receiver values (header "rx_fields") that fill RX_FIELDS, by key.
+#: The engine's per-receiver values (header "rx_fields") that fill RX_FIELDS, by key ('held' is a share of two).
 RX_FROM_ENGINE = {'code': 'code_rms_m', 'phase': 'phase_rms_m', 'nsat': 'n_sats', 'zcode': 'code_scale',
                   'maxnorm': 'max_norm', 'zwd': 'zwd_m', 'clksd': 'clk_sd_m'}
 SAT_FROM_ENGINE = {'code': 'code_rms_m', 'nrx': 'n_rx', 'clk': 'clk_m'}
-DIGITS_RX = {'code': 4, 'phase': 5, 'nsat': 0, 'zcode': 3, 'maxnorm': 2, 'slip': 0, 'qc': 0, 'alarm': 0, 'zwd': 4,
-             'clksd': 4}
-DIGITS_SAT = {'code': 4, 'nrx': 0, 'jumps': 0, 'slip': 0, 'clk': 4}
+DIGITS_RX = {'code': 4, 'phase': 5, 'nsat': 0, 'zcode': 3, 'maxnorm': 2, 'slip': 0, 'qc': 0, 'alarm': 0, 'held': 3,
+             'zwd': 4, 'clksd': 4}
+DIGITS_SAT = {'code': 4, 'nrx': 0, 'jumps': 0, 'held': 3, 'slip': 0, 'clk': 4}
 RANGE_EVERY = 20          # records between colour-range refreshes
 RANGE_DEPTH = 200000      # values per field the colour ranges look back over
 SAT_ID = re.compile(r'^[A-Z][0-9]{2}$')
@@ -69,6 +73,14 @@ def _num(v, digits):
     if x != x or x in (float('inf'), float('-inf')):
         return None
     return round(x, digits) if digits else int(round(x))
+
+
+def _held_share(eng: dict):
+    """An entry's held links over its links (header fields fix_links and fix_held), or None without links."""
+    links, held = eng.get('fix_links'), eng.get('fix_held')
+    if not links or held is None:
+        return None
+    return round(float(held) / float(links), 3)
 
 
 class FollowSource:
@@ -90,6 +102,8 @@ class FollowSource:
         self.sat_engine: list[str] = []
         self.sats: list[str] = []
         self.sat_ix: dict[str, int] = {}
+        self.families: list[dict] = []                         # the integer fixing's families, as family_entry gives them
+        self.fam_ix: dict[str, int] = {}
         self.tiers: list[str] = []
         self.names: list[str] = []
         self.actions: list[str] = []
@@ -170,6 +184,15 @@ class FollowSource:
             v = self.sat_ix[s] = len(self.sats)
             self.sats.append(s)
             self._pending_add.setdefault('sats', []).append(s)
+        return v
+
+    def _family(self, key: str) -> int:
+        v = self.fam_ix.get(key)
+        if v is None:
+            v = self.fam_ix[key] = len(self.families)
+            entry = family_entry(key)
+            self.families.append(entry)
+            self._pending_add.setdefault('families', []).append(entry)
         return v
 
     def _line(self, obj: dict):
@@ -284,7 +307,7 @@ class FollowSource:
                 if k in counts:
                     row.append(counts[k][0].get(j, 0))
                 elif eng is not None:
-                    row.append(_num(eng.get(RX_FROM_ENGINE[k]), DIGITS_RX[k]))
+                    row.append(_held_share(eng) if k == 'held' else _num(eng.get(RX_FROM_ENGINE[k]), DIGITS_RX[k]))
                 else:
                     row.append(base[i] if base else None)
             rx.append(row)
@@ -305,7 +328,7 @@ class FollowSource:
                 elif k == 'jumps':
                     row.append(got[1] if got else (base[i] if base else None))
                 elif got is not None:
-                    row.append(_num(got[0].get(SAT_FROM_ENGINE[k]), DIGITS_SAT[k]))
+                    row.append(_held_share(got[0]) if k == 'held' else _num(got[0].get(SAT_FROM_ENGINE[k]), DIGITS_SAT[k]))
                 else:
                     row.append(base[i] if base else None)
             sat.append(row)
@@ -313,7 +336,17 @@ class FollowSource:
                 for i, (k, *_r) in enumerate(SAT_FIELDS):
                     if row[i] is not None:
                         self._recent[f'sat.{k}'].append(row[i])
-        rec = {'e': old['e'] if old else e, 'ms': old['ms'] if old else ms, 'net': net, 'fam': [], 'rx': rx, 'sat': sat,
+        # the integer fixing's families: [links, held] in the order of the family list (None where not counted)
+        fam_in = obj.get('fam') or {}
+        if fam_in:
+            for key in fam_in:
+                self._family(key)
+            fam = [None] * len(self.families)
+            for key, v in fam_in.items():
+                fam[self.fam_ix[key]] = [int(v[0]), int(v[1])]
+        else:
+            fam = list(old['fam']) if old else []
+        rec = {'e': old['e'] if old else e, 'ms': old['ms'] if old else ms, 'net': net, 'fam': fam, 'rx': rx, 'sat': sat,
                'ev': ev}
         if old and 'add' in old:
             rec['add'] = old['add']
@@ -344,7 +377,8 @@ class FollowSource:
     def lists(self) -> dict:
         """The append-only lists and the current colour ranges (a snapshot's 'lists')."""
         with self.lock:
-            return {'stations': self.stations, 'sats': list(self.sats), 'tiers': list(self.tiers), 'names': list(self.names),
+            return {'stations': self.stations, 'sats': list(self.sats), 'families': list(self.families),
+                    'tiers': list(self.tiers), 'names': list(self.names),
                     'actions': list(self.actions), 'dispositions': list(self.dispositions),
                     'ranges': self._ranges, 'scale_kinds': self._scale_kinds, 'step_s': self.step_s}
 
@@ -354,7 +388,8 @@ class FollowSource:
                 self._refresh_ranges()
             return {
                 'run': self.run, 'mode': self.mode, 'n_ep': None, 'step_s': self.step_s, 'window': int(window),
-                'source': str(self.path), 'stations': self.stations, 'sats': list(self.sats), 'families': [],
+                'source': str(self.path), 'stations': self.stations, 'sats': list(self.sats),
+                'families': list(self.families),
                 'rx_fields': [list(f) for f in RX_FIELDS], 'sat_fields': [list(f) for f in SAT_FIELDS],
                 'net_fields': [list(f) for f in NET_FIELDS], 'dispositions': list(self.dispositions),
                 'events': {'tiers': list(self.tiers), 'names': list(self.names), 'actions': list(self.actions),

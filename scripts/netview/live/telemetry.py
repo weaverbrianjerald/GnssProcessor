@@ -45,10 +45,18 @@ NET_FIELDS = [
     ('ue', 'held-out user, east error (m)'), ('un', 'held-out user, north error (m)'), ('uu', 'held-out user, up error (m)'),
     ('msep', 'time per epoch (ms)'),
 ]
+SYSTEM_NAMES = {'G': 'GPS', 'E': 'Galileo', 'C': 'BeiDou'}
 SLIP_TIERS = {'T0_mw_detect', 'T1_gf_jump', 'T1_if_slip'}
 #: Actions that record without acting (a periodic report, a diagnostic, a coincident duplicate): counted neither as a
 #: cycle slip nor as a quality-test flag, and filed under bookkeeping in the page's feed.
 QUIET_ACTIONS = {'diagnostic', 'coincident', 'report'}
+
+
+def family_entry(key: str, fixing: bool = True) -> dict:
+    """The page's description of a two-signal family ('E|L1X+L5X'): key, system, label ('Galileo L1X + L5X') and
+    whether the integer fixing works on it (the page shows a held tile only for such a family)."""
+    sy, b1, b2 = R.family_bands(key)
+    return {'key': key, 'sys': sy, 'label': SYSTEM_NAMES.get(sy, sy) + ' ' + b1 + ' + ' + b2, 'fixing': bool(fixing)}
 
 
 def colour_range(key: str, kind: str, v: np.ndarray):
@@ -259,8 +267,7 @@ class ReplaySource:
             'run': H['run'], 'mode': 'replay', 'n_ep': self.n_ep, 'step_s': self.step_s, 'window': int(window),
             'stations': [{'name': s['name'], 'lat': s['lat'], 'lon': s['lon'], 'role': s.get('role', '')} for s in H['stations']],
             'sats': H['sats'],
-            'families': [{'key': f['key'], 'sys': f['sys'], 'label': {'G': 'GPS', 'E': 'Galileo', 'C': 'BeiDou'}.get(f['sys'], f['sys']) +
-                          ' ' + f['b1'] + ' + ' + f['b2'], 'fixing': f['fixing']} for f in H['families']],
+            'families': [family_entry(f['key'], f['fixing']) for f in H['families']],
             'rx_fields': [list(f) for f in RX_FIELDS], 'sat_fields': [list(f) for f in SAT_FIELDS],
             'net_fields': [list(f) for f in NET_FIELDS],
             'dispositions': es[0].get('dispositions', []) if es else [],
