@@ -1,0 +1,34 @@
+{
+  "about": "Synthetic fixture of slip_hold.py's self-test (card GRA, step G4). Reference run ref: a gf_jump flag on E04 at AAAA00XXX and an arc_resume flag (first token L5Q) on E05 at BBBB00YYY at 172860; an lli_slip on E04 at the same link and epoch (already a flag) and one on E09 at CCCC00ZZZ at 172890 (detail without a signal: dropped by the legacy rule); a band-scope event and a GPS event that are not flags. Tested run arm: E04 released at the flag, E05 held at the flag and the next epoch, E09 taken into the tree.",
+  "files": {
+    "_rap_ref/logs/network_events.csv": [
+      "week,tow,tier,event,sat,station,statistic,threshold,action,detail",
+      "2420,172860.000,T1_gf_jump,gf_jump,E04,AAAA00XXX,,,refloat,L1C;",
+      "2420,172860.000,T0_gap,arc_resume,E05,BBBB00YYY,,,shifted_fresh,L5Q;gap=90",
+      "2420,172860.000,T0_mw_detect,lli_slip,E04,AAAA00XXX,,,refloat,LLI",
+      "2420,172890.000,T0_mw_detect,lli_slip,E09,CCCC00ZZZ,,,refloat,LLI;mw_step",
+      "2420,172860.000,T0_band_scope,common_band,E06,DDDD00WWW,,,all,implicated=L1C",
+      "2420,172860.000,T1_gf_jump,gf_jump,G05,AAAA00XXX,,,refloat,L1C;"
+    ],
+    "_rap_arm/products.txt": [
+      "E,2420,172800,0,0,0,0",
+      "E,2420,172830,0,0,0,0",
+      "E,2420,172860,0,0,0,0",
+      "E,2420,172890,0,0,0,0"
+    ],
+    "_rap_arm/logs/network_ring_fix.csv": [
+      "week,tow,station,sat,sig1,sig2,ring,candidate,state,refused,n1,n2",
+      "2420,172830.000,AAAA00XXX,E04,L1C,L5Q,1,1,held,,10,12",
+      "2420,172860.000,AAAA00XXX,E04,L1C,L5Q,1,1,held,,10,12",
+      "2420,172830.000,BBBB00YYY,E05,L1C,L5Q,1,1,held,,20,22",
+      "2420,172860.000,BBBB00YYY,E05,L1C,L5Q,1,1,held,,20,22",
+      "2420,172890.000,BBBB00YYY,E05,L1C,L5Q,1,1,held,,20,22",
+      "2420,172860.000,CCCC00ZZZ,E09,L1C,L5Q,1,1,held,,30,32"
+    ],
+    "_rap_arm/logs/network_events.csv": [
+      "week,tow,tier,event,sat,station,statistic,threshold,action,detail",
+      "2420,172860.000,RINGFIX,release,E04,AAAA00XXX,,,slip,sig1=L1C sig2=L5Q n1=10 n2=12",
+      "2420,172890.000,RINGFIX,to_tree,E09,CCCC00ZZZ,,,chain,sig1=L1C sig2=L5Q n1=30 n2=32"
+    ]
+  }
+}

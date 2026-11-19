@@ -1,0 +1,251 @@
+{
+ "network_hourly.py": [
+  {
+   "args": [
+    "table",
+    "n46c_n146",
+    "--xfile",
+    "{fixtures}/combined_mode_28.txt",
+    "--hours",
+    "2"
+   ],
+   "sha256": "f08594a9c76416cd5c60b9f8c29ac6b12898d4b1128766aad4837fca42d0b3fb"
+  },
+  {
+   "args": [
+    "table",
+    "n46c_n146",
+    "--xfile",
+    "{fixtures}/combined_mode_28.txt",
+    "--hours",
+    "2",
+    "--view",
+    "exact"
+   ],
+   "sha256": "52b3ae1f8fd62025a1b2c7c7308bba5701d15e16b1670c4e5e33e5af28344dd8"
+  },
+  {
+   "args": [
+    "table",
+    "d24_n146",
+    "--xfile",
+    "{fixtures}/combined_mode_28.txt",
+    "--hours",
+    "2",
+    "--view",
+    "d24"
+   ],
+   "sha256": "8940ab93b329f0b9c67c19cdd12bda4c95d848c1262e54e1999cbe5ce7915f1b"
+  },
+  {
+   "args": [
+    "compare",
+    "n46c_n146",
+    "d24_n146",
+    "--xfile",
+    "{fixtures}/combined_mode_28.txt",
+    "--hours",
+    "2",
+    "--first",
+    "1",
+    "--last",
+    "2",
+    "--view",
+    "legacy"
+   ],
+   "sha256": "43437857209ac8c8a12712271c936158956772f0d39cda177331a399f413b932"
+  },
+  {
+   "args": [
+    "compare",
+    "n46c_n146",
+    "d24_n146",
+    "--xfile",
+    "{fixtures}/combined_mode_28.txt",
+    "--hours",
+    "2",
+    "--first",
+    "1",
+    "--last",
+    "2",
+    "--view",
+    "exact"
+   ],
+   "sha256": "3bc192b3306064b44dd8f2fd137805cc57af3eca35f5ae832f32073b9c4b5945"
+  },
+  {
+   "args": [
+    "families",
+    "n46c_n146",
+    "d24_n146",
+    "--hours",
+    "2"
+   ],
+   "sha256": "4a4ea5d7d3e277177303868e1b7469d0fc8bb56005e74d0031b5abb2270ab419"
+  }
+ ],
+ "slip_hold.py": [
+  {
+   "args": [
+    "flagged",
+    "d24_n146",
+    "n46c_n146",
+    "--list",
+    "5"
+   ],
+   "sha256": "9340ad2263e35fa417349d9f6ff0329c7efcc9baf52b7680f2503e40a2b58e4e"
+  },
+  {
+   "args": [
+    "flagged",
+    "d24_n146",
+    "n46c_n146",
+    "--list",
+    "5",
+    "--view",
+    "lli"
+   ],
+   "sha256": "e738352bb33ac1513e7ef158c0a59199321b33b2ffdef747994fc8a9cf7db2b2"
+  },
+  {
+   "args": [
+    "flagged",
+    "d24r_n146",
+    "n46cr_n146",
+    "--list",
+    "5",
+    "--view",
+    "lli"
+   ],
+   "sha256": "6a933e1ce255abbcb87c2c7f27759b3c2531446535b4230195e3422b66bf3f9a"
+  }
+ ],
+ "users.py": [
+  {
+   "args": [
+    "inside",
+    "_rap_n46c_n146",
+    "--fix",
+    "n46x",
+    "--flt",
+    "n46f",
+    "--doy",
+    "146",
+    "--pair",
+    "E L1C/L5Q",
+    "--hours",
+    "2",
+    "--per-site",
+    "--list",
+    "5"
+   ],
+   "sha256": "9085c4f45c11b1c8bce495b01e66cd89fd625b4514e6bfbc866634230e541d6a",
+   "suffix": "_h6"
+  },
+  {
+   "args": [
+    "inside",
+    "_rap_d24_n146",
+    "--fix",
+    "a24x",
+    "--flt",
+    "a24f",
+    "--doy",
+    "146",
+    "--pair",
+    "G L1C/L2W",
+    "--hours",
+    "2",
+    "--per-site",
+    "--list",
+    "5",
+    "--sites",
+    "solo"
+   ],
+   "sha256": "6d428c70ea04d3e9e56d85124a6f1b22a6f477df80edca0858321e2547ef8da6",
+   "suffix": "_h6"
+  },
+  {
+   "args": [
+    "outside",
+    "--fix",
+    "n46x",
+    "--flt",
+    "n46f",
+    "--doy",
+    "146",
+    "--sites",
+    "solo,reyk",
+    "--pair",
+    "E L1C/L5Q",
+    "--hours",
+    "8"
+   ],
+   "sha256": "9d68c60b9b4556c68ff17e69bf50080aced16fb30dc7f775a028c14de2f8c7f6",
+   "suffix": "_h6"
+  },
+  {
+   "args": [
+    "both",
+    "--fix",
+    "a24x",
+    "--flt",
+    "a24f",
+    "--doy",
+    "146",
+    "--sites",
+    "solo,reyk",
+    "--pair",
+    "E L1C/L5Q",
+    "--hours",
+    "8",
+    "--net",
+    "_rap_d24_n146"
+   ],
+   "sha256": "2ad7c12f2112c56bae5035a4707d567e830b6b88636b6d87eb1a2baf563d6ed3",
+   "suffix": "_h6"
+  },
+  {
+   "args": [
+    "paired",
+    "n46x",
+    "a24x",
+    "--doy",
+    "146",
+    "--sites",
+    "solo,reyk",
+    "--first",
+    "7",
+    "--last",
+    "8"
+   ],
+   "sha256": "96627e229f0adaca37e26934ac25a01f15898c8bbfae15a2c61cca08c8ce6c00",
+   "suffix": "_h6"
+  },
+  {
+   "args": [
+    "hourly",
+    "obs:a24x",
+    "obs:n46x",
+    "--doy",
+    "146",
+    "--set",
+    "solo,reyk",
+    "--hours",
+    "8",
+    "--matrix"
+   ],
+   "sha256": "79718130749cbefa4112207241e65fb65e666b9626fd95d44826c944ea297f8d",
+   "suffix": "_h6"
+  },
+  {
+   "args": [
+    "refch",
+    "_rap_nw_obsa24x_146_solo",
+    "_rap_nw_obsn46x_146_solo",
+    "--sums"
+   ],
+   "sha256": "f7342ff9ccbdaea87cd867142a736c2c9e1ea60cdc0bc82f30d418b6ab52c91b"
+  }
+ ]
+}

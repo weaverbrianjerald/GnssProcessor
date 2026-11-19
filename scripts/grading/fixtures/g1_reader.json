@@ -1,0 +1,47 @@
+{
+  "about": "Synthetic fixture of runs.py's self-test (card GRA, step G1): a network run fx with three epochs, an E record time that is not a whole second and a record before the first epoch; two user runs, one with its CLFRAC lines in stdout.txt, one with them only in the rotated resolver logs.",
+  "files": {
+    "x28.txt": ["AAAA00XXX,BBBB00YYY"],
+    "_rap_fx/products.txt": [
+      "# gnss_network_product v2",
+      "P,E99,L1C,0.0,1,1,0",
+      "E,2420,172800.0000004,0,0,0,0",
+      "P,E04,L1C,13.8,1,1,0",
+      "P,E04,L5Q,42.7,1,1,0",
+      "B,E04,C1C,-1.25,0",
+      "E,2420,172830,0,0,0,0",
+      "# a comment between epochs",
+      "P,E04,L1C,13.8,0,1,0",
+      "P,E04,L5Q,42.7,0,1,0",
+      "E,2420,172860,0,0,0,0",
+      "P,E04,L1C,13.8,1,1,0"
+    ],
+    "_rap_fx/logs/network_ring_fix.csv": [
+      "week,tow,station,sat,sig1,sig2,ring,candidate,state,refused,f1,f2,n_if,sigma_if,frac_if,wl,frac_wl,n1,n2,lat1,lat2,resid_if_m,streak,audit",
+      "2420,172800.000,AAAA00XXX,E04,L1C,L5Q,1,1,held,,,,,,,,,10,12,,,,,",
+      "2420,172800.000,CCCC00ZZZ,E04,L1C,L5Q,1,1,refused,wl,,,,,,,,,,,,,,",
+      "2420,172830.000,AAAA00XXX,E04,L1C,L5Q,1,1,held,,,,,,,,,10,12,,,,,",
+      "2420,172830.000,CCCC00ZZZ,G05,L1C,L2W,1,1,decided,,,,,,,,,3,4,,,,,"
+    ],
+    "_rap_fx/logs/network_events.csv": [
+      "week,tow,tier,event,sat,station,statistic,threshold,action,detail",
+      "2420,172830.000,T1_gf_jump,gf_jump,E04,AAAA00XXX,,,refloat,L1C;",
+      "2420,172860.000,T0_mw_detect,lli_slip,E04,AAAA00XXX,,,refloat,LLI"
+    ],
+    "_rap_nw_u_stdout/stdout.txt": [
+      "[2313, 172800.000 (2024-05-25 00:00:00.000)] [resolver] [info] CLFRAC sat_i=E04 sat_ref=E11 sig=L1C sd_cyc=3.0000",
+      "[2313, 172800.000 (2024-05-25 00:00:00.000)] [resolver] [info] another line",
+      "[2313, 172800.000 (2024-05-25 00:00:00.000)] [resolver] [info] CLFRAC sat_i=E04 sat_ref=E11 sig=L5Q sd_cyc=4.0000"
+    ],
+    "_rap_nw_u_logs/stdout.txt": [
+      "no resolver line in the console capture"
+    ],
+    "_rap_nw_u_logs/logs/ambiguity_resolver.log": [
+      "[2313, 172830.000 (2024-05-25 00:00:30.000)] [resolver] [info] CLFRAC sat_i=E04 sat_ref=E11 sig=L1C sd_cyc=3.0000"
+    ],
+    "_rap_nw_u_logs/logs/ambiguity_resolver.1.log": [
+      "[2313, 172800.000 (2024-05-25 00:00:00.000)] [resolver] [info] CLFRAC sat_i=E04 sat_ref=E11 sig=L1C sd_cyc=3.0000",
+      "[2313, 172800.000 (2024-05-25 00:00:00.000)] [resolver] [info] CLFRAC sat_i=E04 sat_ref=E11 sig=L5Q sd_cyc=4.0000"
+    ]
+  }
+}
