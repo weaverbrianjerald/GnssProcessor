@@ -403,10 +403,33 @@ namespace GnssProcessor {
               nc.ring_fix.unsettled_steps_unheld,
               Tier::SCOPED, false, "network.ring_fix.unsettled_steps_unheld",
               "a signal of no held family declares itself at every emission" },
+            // The held pairs follow the phase-family table: with it the combined signals are read as the
+            // pilot ones, so Galileo has one pair (the loader refuses a pair that names a member of the
+            // table); without it the combined-mode pair is held beside the pilot one.
             { nc.ring_fix.enable,
-              nc.ring_fix.pairs == std::vector<std::string>{ "E:L1X/L5X", "E:L1C/L5Q", "G:L1C/L2W" },
+              nc.ring_fix.pairs == (nc.phase_families.empty()
+                                        ? std::vector<std::string>{ "E:L1X/L5X", "E:L1C/L5Q", "G:L1C/L2W" }
+                                        : std::vector<std::string>{ "E:L1C/L5Q", "G:L1C/L2W" }),
               Tier::SCOPED, false, "network.ring_fix.pairs",
-              "Galileo L1X/L5X and L1C/L5Q and GPS L1C/L2W held" },
+              "Galileo L1C/L5Q and GPS L1C/L2W held, and Galileo L1X/L5X beside them when the phase-family "
+              "table does not read the combined signals as the pilot ones" },
+            // --- The entry re-validation and the single Galileo network (adopted 2026-11-18).
+            { nc.ring_fix.enable,
+              nc.ring_fix.entry_revalidate,
+              Tier::SCOPED, false, "network.ring_fix.entry_revalidate",
+              "a held link entering the tree keeps its integers only when its return across a gap was measured "
+              "unshifted and its near-null signature is clean; otherwise it is released (DOY 147: ULAB00MNG's E14 "
+              "re-seeded instead of pinned on stale integers)" },
+            { nc.ring_fix.enable,
+              nc.phase_families == std::vector<std::string>{ "E:L1X>L1C", "E:L5X>L5Q" },
+              Tier::SCOPED, true , "network.phase_families",
+              "Galileo's combined-mode signals read under the pilot names: one network per band for both signal "
+              "types (DOY 146 and 147: lost satellite-samples 8, 4 and 7 against 495, 431 and 415)" },
+            { nc.ring_fix.enable,
+              nc.phase_family_codes,
+              Tier::SCOPED, true , "network.phase_family_codes",
+              "the combined-mode codes read under the pilot names too: one satellite code bias per band for both "
+              "Galileo signal types" },
             { nc.ring_fix.enable,
               gpsBand1OnL1C(),
               Tier::SCOPED, false, "processing.signal_priorities.GPS",
