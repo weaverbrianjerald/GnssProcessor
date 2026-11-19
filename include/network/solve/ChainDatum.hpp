@@ -23,9 +23,10 @@
  * Sibling of network/solve/PhaseDatum.hpp, which owns
  * the candidate census consumed here, the non-chain realization (the anchor
  * election) and the drop-and-heal.  Owns no state: every carry object
- * is a reference into the caller's NetworkRunContext.  It does write the ring fix's state through
- * that context: the re-attachment's moves and outcomes (network.ring_fix.reattach) and the keep
- * counters of the rehost row (network.ring_fix.rehost_keep_carry).
+ * is a reference into the caller's NetworkRunContext.  It changes the ring fix's state only through
+ * the ring fix's functions (network/ar/RingFix.hpp): the re-attachment's outcomes, which retire its
+ * moves (network.ring_fix.reattach), the counters and refusals of the rehost row's keeps
+ * (network.ring_fix.rehost_keep_carry, network.ring_fix.entry_revalidate) and a cascade's tree counts.
  *
  * Ordering contract: this function mutates persistent carries before the solve.  It
  * erases the arcs' leveling carries (ArcState::amb) for re-referenced (sat,σ), erases

@@ -1192,6 +1192,53 @@ RingFixEntryVerdict chainEntryStep(ChainEntryKind kind, const RingFixEntryEviden
  */
 void ringFixGatherKeepEvidence(NetworkRingFix& rf, const std::vector<GapResumption>& resumptions);
 
+// The chain election's writes to the ring fix's state: the election reads the held links and changes the ring fix's
+// state only through these functions.
+
+/// How a chain re-host onto a held link ended (network.ring_fix.rehost_keep_carry, and
+/// network.ring_fix.cascade_rehost_keep for a cascade's third band).
+enum class RingFixRehostKeep : std::uint8_t {
+    Kept,        ///< The new host's carry sits on the held integer and the draft's step is known: kept at a step of 0.
+    OffInteger,  ///< Released: the new host's carry is off the held integer.
+    NotKept,     ///< Released for another cause: no carry at the new host, or an unknown draft step.
+};
+
+/**
+ * @brief Count a chain re-host onto a held link in the run counters.
+ * @param rf       The ring fix's state; writes @c counters, or the cascade's @c cascade_counters entry.
+ * @param cascade  The cascade whose third band was re-hosted onto one of its held links; null for a pair's link.
+ * @param outcome  How the re-host ended.
+ */
+void ringFixCountRehost(NetworkRingFix& rf, const RingFixCascade* cascade, RingFixRehostKeep outcome);
+
+/**
+ * @brief Count a kept re-host that the entry check examined (network.ring_fix.entry_revalidate with
+ *        network.ring_fix.rehost_keep_carry), and record a refused one for the decision seam's events.
+ * @param rf       The ring fix's state; writes @c counters and @c keep_refusals.
+ * @param id       The held link the re-host would keep.
+ * @param verdict  The held entry's step under keep-carry's rule (@ref chainEntryStep).
+ */
+void ringFixCountKeepCheck(NetworkRingFix& rf, const RingFixLinkId& id, RingFixEntryVerdict verdict);
+
+/**
+ * @brief Record the election's outcome of an untied satellite's move and retire the move (network.ring_fix.reattach):
+ *        counted as applied or missed, kept for the decision seam's events, erased from the moves.
+ * @param rf       The ring fix's state; writes @c counters, @c untied_outcomes and @c untied_moves.
+ * @param outcome  The outcome; its signal and satellite key the move.
+ */
+void ringFixRecordUntiedOutcome(NetworkRingFix& rf, const RingFixUntiedOutcome& outcome);
+
+/**
+ * @brief Add one election's third-band tree edges of a cascade to its run counters, by how the walk took them.
+ * @param rf       The ring fix's state; writes the cascade's @c cascade_counters entry (created when absent).
+ * @param cascade  The cascade.
+ * @param pair     Edges taken as pair tree edges (lead rank 1, not a re-attachment's lead arc).
+ * @param held     Edges taken as held links (lead rank 2 or more).
+ * @param other    Every other edge, a re-attachment's lead arc included.
+ */
+void ringFixCountCascadeTree(NetworkRingFix& rf, const RingFixCascade& cascade, long long pair, long long held,
+                             long long other);
+
 /// What the cuts of an epoch did to the held links.
 struct RingFixCutOutcome {
     std::vector<std::pair<RingFixLinkId, std::string>> released;  ///< Links released (crossing a cut with an unknown step), with the cut's row.

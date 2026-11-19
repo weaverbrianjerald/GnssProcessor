@@ -744,6 +744,52 @@ RingFixEntryVerdict chainEntryStep(ChainEntryKind kind, const RingFixEntryEviden
     return RingFixEntryVerdict::NotHeld;
 }
 
+void ringFixCountRehost(NetworkRingFix& rf, const RingFixCascade* cascade, RingFixRehostKeep outcome) {
+    if (cascade == nullptr) {
+        RingFixCounters& C = rf.counters;
+        switch (outcome) {
+            case RingFixRehostKeep::Kept:       ++C.rehost_kept; break;
+            case RingFixRehostKeep::OffInteger: ++C.rehost_off_integer; break;
+            case RingFixRehostKeep::NotKept:    ++C.rehost_not_kept; break;
+        }
+        return;
+    }
+    RingFixCascadeCounters& CC = rf.cascade_counters[cascade->name];
+    switch (outcome) {
+        case RingFixRehostKeep::Kept:       ++CC.rehost_kept; break;
+        case RingFixRehostKeep::OffInteger: ++CC.rehost_off_integer; break;
+        case RingFixRehostKeep::NotKept:    ++CC.rehost_not_kept; break;
+    }
+}
+
+void ringFixCountKeepCheck(NetworkRingFix& rf, const RingFixLinkId& id, RingFixEntryVerdict verdict) {
+    RingFixCounters& C = rf.counters;
+    ++C.keep_checked;
+    switch (verdict) {
+        case RingFixEntryVerdict::Known:        ++C.keep_known; break;
+        case RingFixEntryVerdict::GapUnchecked: ++C.keep_refused_unchecked; break;
+        case RingFixEntryVerdict::GapShifted:   ++C.keep_refused_shifted; break;
+        case RingFixEntryVerdict::Signature:    ++C.keep_refused_signature; break;
+        default:                                break;
+    }
+    if (verdict != RingFixEntryVerdict::Known) rf.keep_refusals.emplace_back(id, verdict);
+}
+
+void ringFixRecordUntiedOutcome(NetworkRingFix& rf, const RingFixUntiedOutcome& outcome) {
+    ++(outcome.applied ? rf.counters.untied_applied : rf.counters.untied_missed);
+    rf.untied_outcomes.push_back(outcome);
+    rf.untied_moves.erase({outcome.signal, outcome.sat});
+}
+
+void ringFixCountCascadeTree(NetworkRingFix& rf, const RingFixCascade& cascade, long long pair, long long held,
+                             long long other) {
+    RingFixCascadeCounters& CC = rf.cascade_counters[cascade.name];
+    CC.tree_edges += pair + held + other;
+    CC.tree_pair  += pair;
+    CC.tree_held  += held;
+    CC.tree_other += other;
+}
+
 int ringFixCutBand(const RingFixCut& c, const RingFixLinkId& id) {
     if (!c.sys.empty() && c.sys != constellationKey(systemOfSat(id.sat))) return 0;
     return c.signal == id.sig1 ? 1 : (c.signal == id.sig2 ? 2 : 0);

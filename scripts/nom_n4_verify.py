@@ -34,7 +34,11 @@ files and, for V7, one `git diff` against --base.
       member of the group, "carry.<group>.<field>"); every TSV member not marked deleted has
       exactly one FieldDecl row (was == member) in an entity table or net::kRunFields, with
       the TSV's persistence; a "counters.<m>" row names a NetworkServiceCounters member.
-      Its negative control adds two undeclared members to NetworkCarryState.
+      A member whose own struct is declared field by field (MEMBER_STRUCTS: the ring fix's
+      state) also has exactly one row "carry.<member>.<field>" per field of that struct, and
+      no such row names a field the struct lacks.
+      Its negative controls add two undeclared members to NetworkCarryState, and one to each
+      struct of MEMBER_STRUCTS.
 """
 import argparse
 import copy
@@ -68,6 +72,9 @@ WRITER = 'src/core/network/state/StateSnapshotWrite.cpp'
 READER = 'src/core/network/state/WarmResume.cpp'
 BUILD = 'src/core/network/assembly/StationBuild.cpp'
 CONTRACT = 'tests/network/test_network_epoch_contract.cpp'
+# Members of NetworkCarryState whose own struct is declared one row per field ("carry.<member>.<field>"), beside the
+# member's own row: the ring fix's state (card CHA step S7 (a)).
+MEMBER_STRUCTS = {'ring_fix': ('include/network/ar/RingFix.hpp', 'NetworkRingFix')}
 
 
 class Tree:
@@ -127,7 +134,7 @@ def tsv_rows(tree, entity):
     return rows
 
 
-DECL_RE = re.compile(r'\{\s*"([\w.]+)",\s*"(\w+)",\s*Persist::(\w+),\s*"([\w+]*)",\s*"([\w.]*)",\s*'
+DECL_RE = re.compile(r'\{\s*"([\w.]+)",\s*"(\w*)",\s*Persist::(\w+),\s*"([\w+]*)",\s*"([\w.]*)",\s*'
                      r'([\w:&<>]+),\s*([\w:&<>]+),\s*([\w:&<>]+)\s*\}')
 
 
@@ -468,6 +475,13 @@ def controls(tree, entity):
     return out
 
 
+def member_struct_fields(tree, member):
+    """The data members of a MEMBER_STRUCTS struct (its operators skipped)."""
+    path, struct = MEMBER_STRUCTS[member]
+    b = struct_body(strip_comments(tree.get(path)), struct)
+    return [f for f in (declared_members(b[1:-1]) if b else []) if f != 'operator']
+
+
 def g1_whole(tree):
     """G1 for the whole struct (step N4g): see the module docstring."""
     fails = []
@@ -482,6 +496,17 @@ def g1_whole(tree):
                 if n != 1:
                     fails.append(f'carry.{m}.{f}: {n} FieldDecl rows (want 1)')
             continue
+        if m in MEMBER_STRUCTS:
+            fields = member_struct_fields(tree, m)
+            if not fields:
+                fails.append(f'{MEMBER_STRUCTS[m][1]}: no data members found')
+            for f in fields:
+                n = names.count(f'carry.{m}.{f}')
+                if n != 1:
+                    fails.append(f'carry.{m}.{f}: {n} FieldDecl rows (want 1)')
+            for x in names:
+                if x.startswith(f'carry.{m}.') and x[len(f'carry.{m}.'):] not in fields:
+                    fails.append(f'{x}: not a member of {MEMBER_STRUCTS[m][1]}')
         n = names.count('carry.' + m)
         if n != 1:
             fails.append(f'NetworkCarryState::{m}: {n} FieldDecl rows (want 1)')
@@ -515,6 +540,18 @@ def whole_control(tree):
     return t
 
 
+def member_struct_controls(tree):
+    """G1's negative controls for MEMBER_STRUCTS: one undeclared member in each struct."""
+    out = []
+    for member, (path, struct) in MEMBER_STRUCTS.items():
+        t = copy.deepcopy(tree)
+        s = t.files[path]
+        i = s.index('struct ' + struct + ' {') + len('struct ' + struct + ' {')
+        t.files[path] = s[:i] + '\n    long long g1_control_member = 0;\n' + s[i:]
+        out.append((member, t))
+    return out
+
+
 def load_runs(tree, runs):
     for run in runs:
         lines = []
@@ -540,6 +577,11 @@ def main():
         ctl = g1_whole(whole_control(tree))
         print(f'  control G1: {"FAILS as it must" if ctl else "PASSES (control broken)"}'
               + (f' ({ctl[0]})' if ctl else ''))
+        for member, t in member_struct_controls(tree):
+            c = g1_whole(t)
+            print(f'  control G1 ({member}): {"FAILS as it must" if c else "PASSES (control broken)"}'
+                  + (f' ({c[0]})' if c else ''))
+            ctl = ctl if c else []
         f = g1_whole(tree)
         print(f"  G1 (whole struct: {len(members_of(tree, 'NetworkCarryState'))} NetworkCarryState "
               f"members, {len(field_decls(tree, (ENT_CPP, RUN_CPP)))} FieldDecl rows): "

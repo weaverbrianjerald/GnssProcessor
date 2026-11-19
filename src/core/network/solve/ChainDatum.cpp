@@ -1076,15 +1076,14 @@ ChainCascadeLead chainCascadeLead(const ChainElection& el, const ChainFamily& fa
 /// pair tree edge: one lead kind per mechanism.
 void tallyCascadeTree(ChainElection& el, const RingFixCascade& c, const ChainFamilyPlan& plan,
                       const std::set<int>& untied_arcs) {
-    RingFixCascadeCounters& CC = el.ctx.carry.ring_fix->cascade_counters[c.name];
+    long long pair = 0, held = 0, other = 0;
     for (const ChainComponentPlan& cp : plan.comps)
         for (const arcgraph::TreeEdge& e : cp.forest.edges) {
-            ++CC.tree_edges;
-            if (e.lead == 1 && untied_arcs.count(e.arc) == 0) ++CC.tree_pair;
-            else if (e.lead == 1) ++CC.tree_other;
-            else if (e.lead >= 2) ++CC.tree_held;
-            else                  ++CC.tree_other;
+            if (e.lead == 1 && untied_arcs.count(e.arc) == 0) ++pair;
+            else if (e.lead >= 2)                             ++held;
+            else                                              ++other;
         }
+    ringFixCountCascadeTree(*el.ctx.carry.ring_fix, c, pair, held, other);
 }
 
 /// The family's components, each with its datum receiver and forest, in component order.  The
@@ -1663,17 +1662,7 @@ std::optional<long long> chainHeldInteger(const ChainElection& el, const ChainBa
         ev.usable = chainHeldLinkUsable(el, id, L);
         const RingFixEntryVerdict v = chainEntryStep(ChainEntryKind::KeepCarry, ev, rf->entry_revalidate,
                                                      rf->nn_max_if_m);
-        if (rf->entry_revalidate && ev.usable) {
-            ++rf->counters.keep_checked;
-            switch (v) {
-                case RingFixEntryVerdict::Known:        ++rf->counters.keep_known; break;
-                case RingFixEntryVerdict::GapUnchecked: ++rf->counters.keep_refused_unchecked; break;
-                case RingFixEntryVerdict::GapShifted:   ++rf->counters.keep_refused_shifted; break;
-                case RingFixEntryVerdict::Signature:    ++rf->counters.keep_refused_signature; break;
-                default:                                break;
-            }
-            if (v != RingFixEntryVerdict::Known) rf->keep_refusals.emplace_back(id, v);
-        }
+        if (rf->entry_revalidate && ev.usable) ringFixCountKeepCheck(*rf, id, v);
         if (v != RingFixEntryVerdict::Known) return std::nullopt;
         return first ? L.n1 : L.n2;
     }
@@ -1707,16 +1696,10 @@ std::optional<std::pair<long long, const RingFixCascade*>> chainCascadeHeldInteg
 /// NRF sections 41 and 42).
 constexpr double kRehostKeepZeroStepCyc = 1e-4;
 
-/// The outcome of remedy (a)'s keep test.
-enum class RehostKeep : std::uint8_t {
-    Kept,        ///< The new host's carry sits on the held integer and the draft's step is known: kept at a step of 0.
-    OffInteger,  ///< Released: the carry is kRehostKeepZeroStepCyc or more off the held integer.
-    NotKept,     ///< Released for another cause: no carry at the new host, or an unknown draft step.
-};
-
 /// Remedy (a)'s keep test of a re-host onto a link held at integer @p n: when kept, the draft takes the integer at a
-/// step of 0 (its as-built facts kept for the observatory); otherwise the draft is left as it is.
-RehostKeep keepOnHeldInteger(const ChainBand& band, long long n, PinDraft& d) {
+/// step of 0 (its as-built facts kept for the observatory); otherwise the draft is left as it is.  Off the integer
+/// means kRehostKeepZeroStepCyc or more off it.
+RingFixRehostKeep keepOnHeldInteger(const ChainBand& band, long long n, PinDraft& d) {
     const double target = static_cast<double>(n) * band.lambda_m;
     const bool   carry  = band.lambda_m > 0.0 && std::isfinite(d.carry_val);
     const bool   on_int = carry && std::abs(target - d.carry_val) < kRehostKeepZeroStepCyc * band.lambda_m;
@@ -1725,9 +1708,9 @@ RehostKeep keepOnHeldInteger(const ChainBand& band, long long n, PinDraft& d) {
         d.held     = true;
         d.target   = target;
         d.pinmove  = 0.0;
-        return RehostKeep::Kept;
+        return RingFixRehostKeep::Kept;
     }
-    return carry && !on_int ? RehostKeep::OffInteger : RehostKeep::NotKept;
+    return carry && !on_int ? RingFixRehostKeep::OffInteger : RingFixRehostKeep::NotKept;
 }
 
 /// The rehost row of the chain's event table, applied to a pin after the as-built draft, the kept row
@@ -1771,19 +1754,13 @@ void applyRehostRow(ChainElection& el, const ChainBand& band, std::size_t ri, co
     // Kept on a held integer (remedy (a)): the host's carry on the held integer, a step of 0; a pair's held link
     // first, else (network.ring_fix.cascade_rehost_keep) a held cascade link of a third band.
     if (const std::optional<long long> held = chainHeldInteger(el, band, ri, sat); held.has_value()) {
-        RingFixCounters& C = el.ctx.carry.ring_fix->counters;
-        switch (keepOnHeldInteger(band, *held, d)) {
-            case RehostKeep::Kept:       ++C.rehost_kept; return;
-            case RehostKeep::OffInteger: ++C.rehost_off_integer; break;
-            case RehostKeep::NotKept:    ++C.rehost_not_kept; break;
-        }
+        const RingFixRehostKeep kept = keepOnHeldInteger(band, *held, d);
+        ringFixCountRehost(*el.ctx.carry.ring_fix, nullptr, kept);
+        if (kept == RingFixRehostKeep::Kept) return;
     } else if (const auto held3 = chainCascadeHeldInteger(el, band, ri, sat); held3.has_value()) {
-        RingFixCascadeCounters& CC = el.ctx.carry.ring_fix->cascade_counters[held3->second->name];
-        switch (keepOnHeldInteger(band, held3->first, d)) {
-            case RehostKeep::Kept:       ++CC.rehost_kept; return;
-            case RehostKeep::OffInteger: ++CC.rehost_off_integer; break;
-            case RehostKeep::NotKept:    ++CC.rehost_not_kept; break;
-        }
+        const RingFixRehostKeep kept = keepOnHeldInteger(band, held3->first, d);
+        ringFixCountRehost(*el.ctx.carry.ring_fix, held3->second, kept);
+        if (kept == RingFixRehostKeep::Kept) return;
     }
     // Released.  What the as-built draft would have done is tallied and kept for the observatory.
     ++cnt.eq34_rh_released;
@@ -2593,9 +2570,9 @@ std::vector<UntiedLead> untiedLeads(ChainElection& el, const ChainFamily& fam, c
             }
             const int arc = untiedMoveArc(el, cg, fam, signal, sat);
             if (arc < 0) {
-                ++rf->counters.untied_missed;
-                rf->untied_outcomes.push_back({it->second.family, signal, sat, it->second.station, -1, false});
-                it = rf->untied_moves.erase(it);
+                const RingFixUntiedOutcome missed{it->second.family, signal, sat, it->second.station, -1, false};
+                ++it;   // the outcome retires this move
+                ringFixRecordUntiedOutcome(*rf, missed);
                 continue;
             }
             if (lead_rank.empty()) lead_rank.assign(cg.graph.rows.size(), 0);
@@ -2623,9 +2600,7 @@ void tallyUntiedMoves(ChainElection& el, const ChainGraph& cg, const ChainFamily
                               ? -1
                               : static_cast<int>(cg.staIdx(cg.graph.row_station[static_cast<std::size_t>(e->second)]));
         const bool applied = e != edge_of.end() && e->second == l.arc;
-        ++(applied ? rf->counters.untied_applied : rf->counters.untied_missed);
-        rf->untied_outcomes.push_back({l.move.family, l.signal, l.sat, l.move.station, taken, applied});
-        rf->untied_moves.erase({l.signal, l.sat});
+        ringFixRecordUntiedOutcome(*rf, {l.move.family, l.signal, l.sat, l.move.station, taken, applied});
     }
 }
 
