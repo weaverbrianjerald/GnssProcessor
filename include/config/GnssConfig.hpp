@@ -2159,6 +2159,26 @@ namespace GnssProcessor {
         double networkRxCodeBiasDatumSigmaM() const { return network_rx_code_bias_datum_sigma_m_; }
 
         /**
+         * @brief How the receiver geometry-free direction is held (@c network.rx_gf_datum:
+         *        @c prior_refold, @c birth_prior or @c hard; default @c prior_refold).
+         *
+         * Read only with @ref networkRxCodeBiasDatum.  @c prior_refold is today's fold of the loose
+         * prior on every epoch (byte-identical).  @c birth_prior folds it only where the receiver DCB
+         * has no carried row this epoch, so the carried posterior is not refolded (the reported DCB
+         * sigma is then the data's, not 10/sqrt(n)).  @c hard places a row of the chain pins' weight
+         * (1e10, kRxGfHardWeight in network/carry/RxCodeBiasCarry.hpp) on the DCB of every (receiver,
+         * constellation), at the prior's target 0
+         * where the column has no carried row and at its carried value otherwise; the row's placement
+         * (a birth, a return after the gap prune, an uncarried column) and its release (the station or
+         * the column gone) are events on the @c RX_GF_DATUM tier.  Both new values are pure datum
+         * choices (the third-band datum record, XBD, section 4): neither constrains an estimable
+         * quantity.
+         *
+         * @return The holder of the receiver geometry-free direction.
+         */
+        NetworkRxGfDatum networkRxGfDatum() const { return network_rx_gf_datum_; }
+
+        /**
          * @brief Pre-seed a cold receiver clock from GPS code before the first
          *        network ambiguity seed (@c network.cold_clock_seed).
          *
@@ -10339,6 +10359,7 @@ namespace GnssProcessor {
         bool estimate_network_iono_sh_{false};            ///< Co-estimate the global SH-VTEC ionosphere in the network producer (forces W6; replaces external GIM as the iono constraint).
         bool network_rx_code_bias_datum_{false};        ///< Receiver-DCB datum (RXCB-DATUM): a loose zero-mean prior on every receiver DCB that realizes one sum-to-zero-over-receivers gauge per constellation (the IGS convention; replaces the satellite-side zero-mean where no satellite code-bias column exists).  Default off => byte-identical.
         double network_rx_code_bias_datum_sigma_m_{10.0};  ///< Loose physical-bound sigma (m) of the receiver-DCB datum (RXCB-DATUM); realized common-mode info = 1/sigma^2, station-count independent.
+        NetworkRxGfDatum network_rx_gf_datum_{NetworkRxGfDatum::PriorRefold};  ///< Holder of the receiver geometry-free direction (network.rx_gf_datum); default prior_refold: byte-identical.
         bool network_cb_admission_{false};                ///< Run-latched W6 code-bias admission census + station-local quarantine (CB-ADM; replaces the per-epoch >=2-station gate as the remedy for BeiDou sparsity).  Default off => legacy path byte-identical.
         int  network_cb_admission_min_stations_{4};       ///< Min supporting-station count for an admitted code pair (CB-ADM); effective_min = max(2, min(this, n_census_stations)).
         int  network_cb_admission_census_epochs_{15};     ///< Census window length K (epochs from the loop start; CB-ADM); clamped to the available span.

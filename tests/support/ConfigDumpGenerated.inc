@@ -4,7 +4,7 @@
 // Included inside configMemberDump() (tests/support/ConfigDump.hpp), where `cfg` is the
 // loaded GnssConfig and `add(name, value)` appends one "name=value" line.
 //
-// 565 public const getters without arguments; 1368 dump statements.
+// 566 public const getters without arguments; 1369 dump statements.
 //
 // Vectors of structs (their size, then every element field by field):
 //   getBaselineConfig.rovers (std::vector<StationConfig>: size, then each element)
@@ -269,6 +269,7 @@ add("networkCbAdmissionCensusEpochs", cfg.networkCbAdmissionCensusEpochs());
 add("estimateNetworkIonoSh", cfg.estimateNetworkIonoSh());
 add("networkRxCodeBiasDatum", cfg.networkRxCodeBiasDatum());
 add("networkRxCodeBiasDatumSigmaM", cfg.networkRxCodeBiasDatumSigmaM());
+add("networkRxGfDatum", cfg.networkRxGfDatum());
 add("networkColdClockSeed", cfg.networkColdClockSeed());
 add("networkAprioriSource", cfg.networkAprioriSource());
 add("networkAprioriBrdcClock", cfg.networkAprioriBrdcClock());

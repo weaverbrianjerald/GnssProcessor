@@ -183,6 +183,7 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.relevel_free_on = config_.networkCycleSlipRelevelFreeEpoch();
     k.rx_cb_datum = config_.networkRxCodeBiasDatum();
     k.rx_cb_datum_sigma = config_.networkRxCodeBiasDatumSigmaM();
+    k.rx_gf_datum = k.rx_cb_datum ? config_.networkRxGfDatum() : NetworkRxGfDatum::PriorRefold;
     k.sta_prior_pre_pd = config_.getNetworkConfig().station_prior_before_pd;
     k.rx_cb_q = config_.networkRxCbCarryQ();
     k.rx_ebd_q = config_.networkRxExtraBandDelayQ();

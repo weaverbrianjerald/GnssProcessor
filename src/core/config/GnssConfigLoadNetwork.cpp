@@ -4213,6 +4213,43 @@ namespace GnssProcessor {
                        "receiver DCB to zero, not a datum.", network_rx_code_bias_datum_sigma_m_);
             return false;
         }
+        // --- The holder of the receiver geometry-free direction (network.rx_gf_datum) --------
+        // Read only with rx_code_bias_datum.  prior_refold (the default) is the fold above on every
+        // epoch; birth_prior folds it only where the DCB has no carried row; hard holds the DCB with
+        // a row of the chain pins' weight.  The third-band datum record (XBD) proves both new values
+        // pure datum choices.  An unknown value is refused, not mapped to the default.
+        {
+            const std::string v = jval<std::string>(json, "network.rx_gf_datum", "rx_gf_datum",
+                                                    std::string{"prior_refold"});
+            if (v == "prior_refold") {
+                network_rx_gf_datum_ = NetworkRxGfDatum::PriorRefold;
+            } else if (v == "birth_prior") {
+                network_rx_gf_datum_ = NetworkRxGfDatum::BirthPrior;
+            } else if (v == "hard") {
+                network_rx_gf_datum_ = NetworkRxGfDatum::Hard;
+            } else {
+                log->error("Network: network.rx_gf_datum must be prior_refold, birth_prior or hard "
+                           "(got '{}').", v);
+                return false;
+            }
+            if (network_rx_gf_datum_ != NetworkRxGfDatum::PriorRefold) {
+                if (!network_rx_code_bias_datum_) {
+                    log->warn("Network: network.rx_gf_datum {} is INERT without "
+                              "network.rx_code_bias_datum: there is no receiver DCB datum row to "
+                              "re-time or harden.", v);
+                } else {
+                    log->warn("Network (RX_GF_DATUM): {}: {}", v,
+                              network_rx_gf_datum_ == NetworkRxGfDatum::BirthPrior
+                                  ? "the receiver DCB prior is folded only where the column has no "
+                                    "carried row (a birth, a return, an erase); the carried posterior "
+                                    "holds the receiver geometry-free direction after."
+                                  : "a hard row (weight 1e10) holds the DCB of every (receiver, "
+                                    "constellation), roots included: target 0 where the column has "
+                                    "no carried row, its carried value otherwise; placements and "
+                                    "releases are RX_GF_DATUM events.");
+                }
+            }
+        }
         // Cross-check (deferred from station_prior_before_pd's own
         // arming block, because rx_code_bias_datum is parsed only here).  Invariant #4:
         // the fix moves the RXCB-DATUM rows earlier, so without that datum there is
@@ -10191,6 +10228,14 @@ namespace GnssProcessor {
                       "rank test references the median |LDLᵀ pivot| (robust to gauge-pin "
                       "rows) instead of the max; marginal stations carrying anchor pins "
                       "are no longer ejected for a healthy ~1e-3 weakest parameter.");
+        // network.rx_gf_datum hard folds a 1e10 row on every station's DCB, before the PD test
+        // when station_prior_before_pd routes the datum rows there: without the pin-aware
+        // reference the max pivot becomes that weight and the test ejects sound stations.
+        if (network_rx_code_bias_datum_ && network_rx_gf_datum_ == NetworkRxGfDatum::Hard
+            && !network_station_pd_pin_aware_)
+            log->warn("Network: RECOMMEND network.station_pd_pin_aware = true with "
+                      "network.rx_gf_datum hard: its 1e10 row on every receiver DCB would set the "
+                      "PD test's reference pivot and eject marginal stations.");
 
         return true;
     }

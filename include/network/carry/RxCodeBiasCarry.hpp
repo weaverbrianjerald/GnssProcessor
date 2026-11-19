@@ -60,6 +60,17 @@ void networkRxCbBlockColumns(StationCarryFrame& carry);
  */
 void networkRxCbPriors(StationCarryFrame& carry);
 
+/**
+ * @brief The weight of the hard receiver geometry-free row (@c network.rx_gf_datum hard).
+ *
+ * The weight of the chain's existing hard station-local pins (the receiver phase-bias pin and the
+ * ambiguity pins of the phase datum, network/solve/PhaseDatum.cpp; @c kAnchorLevelHoldWeight), so
+ * the station block carries one hard scale.  Not a tuned value: the row is a pure datum (the
+ * third-band datum record, XBD, section 4), so any weight that makes it exact gives the same
+ * estimable solution.
+ */
+inline constexpr double kRxGfHardWeight = 1e10;
+
 // ---- End of the PASS B station steps, declarations ----
 
 // ---- Harvest half, declarations ----
@@ -91,6 +102,36 @@ void networkHarvestRxCbBlock(NetworkRun& run, const NetworkEpoch& ep, HarvestBor
  * @param ep This epoch after the solve (the assembly is read; nothing is written).
  */
 void networkRxCbDatumGaugeCensus(NetworkRun& run, const NetworkEpoch& ep);
+
+struct NetworkRunContext;                   // network/state/RunContext.hpp
+struct NetworkRunTraces;                    // network/diag/RunTraces.hpp
+struct SyncedEpoch;                         // rinex/MultiRinexSync.hpp
+struct NetStation;                          // network/driver/RunTypes.hpp
+struct StationAssembly;                     // network/driver/RunTypes.hpp
+
+/**
+ * @brief The serial tally of the receiver geometry-free datum (@c network.rx_gf_datum birth_prior
+ *        or hard): its counters, each station's memo and the datum's edges as events.
+ *
+ * Runs after the parallel produce, in station order.  For every DCB record of a station
+ * (StationAssembly::rx_gf) it classifies a column without a carried row against the station's
+ * memo: @c birth (no memo for the constellation), @c return (the column was last present more
+ * than the carry's horizon, kRxCbMaxGapS, ago) or @c uncarried (present within the horizon,
+ * its carried entry erased, restored without its block or not yet warm).  Edges are events on
+ * the @c RX_GF_DATUM tier of network_events.csv (standing invariant 7): @c place at a birth or
+ * return, @c reseed when a carried column loses its carry while present, @c release when a
+ * column present last epoch is absent (the station out of the solve, or the column gone), each
+ * naming the station and the constellation.  Does nothing under prior_refold.
+ *
+ * @param ctx The run context: the knobs (read), the counters and the station memos (written).
+ * @param traces The run traces (the events stream).
+ * @param se This epoch (its time stamps the events).
+ * @param stations The roster (station names).
+ * @param asm_res Every station's produce result, by roster index.
+ */
+void networkRxGfDatumTally(NetworkRunContext& ctx, NetworkRunTraces& traces, const SyncedEpoch& se,
+                           const std::vector<NetStation>& stations,
+                           const std::vector<StationAssembly>& asm_res);
 
 /**
  * @brief network.carry_rx_code_bias: the produce tallies, the diagonal stash (skipped under the
@@ -134,6 +175,18 @@ struct RxCodeBiasCarryCounters {
     // station-epoch per constellation.  0 with the toggle armed means
     // that no receiver DCB column ever existed.
     size_t n_rxcb_gauges = 0;   ///< zero-mean receiver code-bias prior rows folded over the run
+    // The receiver geometry-free datum (network.rx_gf_datum birth_prior or hard; armed-only
+    // run-end line).  Station-epoch counts are per DCB column (one per receiver and constellation).
+    long long rxgf_records = 0;          ///< DCB column-epochs the datum saw (every record)
+    long long rxgf_carried = 0;          ///< ... of which folded a carried row (birth_prior: the prior not refolded)
+    long long rxgf_prior_rows = 0;       ///< birth_prior: loose prior rows folded (columns without a carried row)
+    long long rxgf_hard_rows = 0;        ///< hard: hard rows placed
+    long long rxgf_place_birth = 0;      ///< placements at a birth (no memo for the constellation)
+    long long rxgf_place_return = 0;     ///< placements at a return after more than the carry's horizon
+    long long rxgf_reseed_uncarried = 0; ///< column-epochs without a carried row within the horizon (erase, restore, warm-up)
+    long long rxgf_reseed_edges = 0;     ///< ... of which edges (the column carried last epoch, not this one)
+    long long rxgf_releases = 0;         ///< columns present last epoch and absent this epoch
+    double    rxgf_max_abs_target = 0.0; ///< hard: largest |carried target| (m): the held DCB stays at its seed 0
 };
 
 struct RxCbKey;   // common/ParamRef.hpp

@@ -14,6 +14,7 @@
 #include "config/GnssConfig.hpp"
 #include "network/runend/RunEnd.hpp"
 #include "network/driver/RunTypes.hpp"
+#include "network/carry/RxCodeBiasCarry.hpp"   // kRxGfHardWeight
 
 #include <fmt/format.h>
 #include <memory>
@@ -89,6 +90,28 @@ int networkRxCodeBiasCarryRunEnd(const NetworkRunEndView& v) {
                 log->warn("Network (RXCB-IN-BLOCK): ARMED but no receiver code-bias column "
                           "entered a block over the whole run: the knob is inert.");
         }
+    }
+    // The receiver geometry-free datum (network.rx_gf_datum birth_prior or hard; the record XBD):
+    // printed only when armed.  Zero records on an armed run means no receiver DCB column ever
+    // existed (the key is then inert, standing invariant 4).
+    if (ctx.knobs.rx_gf_datum != NetworkRxGfDatum::PriorRefold) {
+        const auto& C = ctx.counters;
+        const bool hard = ctx.knobs.rx_gf_datum == NetworkRxGfDatum::Hard;
+        log->info("Network (RX_GF_DATUM): {}: {} DCB column-epoch(s), {} carried; {}; placements "
+                  "{} at a birth, {} at a return after more than {:.0f} s; {} uncarried "
+                  "column-epoch(s) within the horizon ({} re-seed edge(s)); {} release(s){}.",
+                  hard ? "hard" : "birth_prior", C.rxgf_records, C.rxgf_carried,
+                  hard ? fmt::format("{} hard row(s) placed (weight {:.0e})", C.rxgf_hard_rows,
+                                     kRxGfHardWeight)
+                       : fmt::format("{} prior row(s) folded, {} refold(s) avoided",
+                                     C.rxgf_prior_rows, C.rxgf_carried),
+                  C.rxgf_place_birth, C.rxgf_place_return, kRxCbMaxGapS, C.rxgf_reseed_uncarried,
+                  C.rxgf_reseed_edges, C.rxgf_releases,
+                  hard ? fmt::format("; largest |carried target| {:.3e} m", C.rxgf_max_abs_target)
+                       : std::string());
+        if (C.rxgf_records == 0)
+            log->warn("Network (RX_GF_DATUM): ARMED but no receiver DCB column was seen over the "
+                      "whole run: the key is inert.");
     }
     // H-wire census σ̂₀ (network.h_sigma0_prefit_census): run-end line, printed only when armed.
     // A census-fed wire whose pool is empty on every epoch ships the 0.0000 sentinel on

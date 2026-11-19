@@ -232,6 +232,97 @@ void networkRxCbBlockColumns(StationCarryFrame& carry) {
     }
 }
 
+namespace {
+
+/**
+ * @brief The receiver geometry-free datum row of one receiver DCB column
+ *        (network.rx_gf_datum birth_prior or hard; never under prior_refold).
+ *
+ * Whether the column is carried this epoch is the carry's own decision: on the in-block route
+ * the column is among carry.rxcb_bc (pushed by networkRxCbBlockColumns, which runs earlier in
+ * kStationCarrySteps), on the diagonal route the inject gate folds it (the same call as the
+ * fold below in networkRxCbPriors).  birth_prior folds the loose prior only on an uncarried
+ * column, so exactly one of {carried row, prior row} holds the receiver geometry-free direction;
+ * hard places a row of kRxGfHardWeight at the prior's target 0 on an uncarried column and at the
+ * carried value otherwise.  The rows travel in the datum's own channel and tags (pre-PD under
+ * station_prior_before_pd), so the contribution census and the gauge census count them as before.
+ * The record for the serial tally is written in every case.
+ */
+void networkRxGfDatumRow(StationCarryFrame& carry, const RxCbKey& cb, int cb_idx,
+                         Eigen::Index cbcol, const std::string& cb_key) {
+    // ---- From the station build ----
+    StationBuild& build = carry.build;
+    const NetworkRunContext& ctx = build.ctx;
+    const double pl_now_s = build.clock.pl_now_s;
+    const int i = build.i;
+    StationAssembly& R = build.R;
+    const Eigen::VectorXd& x_lin = carry.x_lin;
+    std::vector<std::tuple<Eigen::Index, double, double, RowTag>>& inj = carry.inj;
+    std::vector<std::tuple<Eigen::Index, double, double, RowTag>>& inj_prior = carry.inj_prior;
+    const NetworkRxGfDatum mode = ctx.knobs.rx_gf_datum;
+    const net::StationTable& sta_rows = ctx.entities.stations;   // produce phase reads only
+    // ---- End of the bindings ----
+
+    // Is the column carried this epoch, and at what value?
+    bool carried = false;
+    double carried_value = 0.0;
+    if (ctx.knobs.rxcb_blk_on) {
+        for (const LocalBlockCol& bc : carry.rxcb_bc)
+            if (bc.col == cbcol && bc.lc != nullptr) {
+                carried = true;
+                carried_value = bc.lc->value_abs;
+                break;
+            }
+    } else if (ctx.knobs.rx_cb_on) {
+        const auto* cbit = net::get(sta_rows, StationId{i}, &net::StationState::signals, cb_key,
+                                    &net::StationSignalState::rx_cb);
+        if (cbit != nullptr) {
+            double var_eff = 0.0;
+            const RxCbInjectAction act = rxCbInjectGate(
+                pl_now_s - cbit->last_seen_s, /*max_gap_s=*/kRxCbMaxGapS, cbit->var,
+                rxCbCarryQ(cb, ctx.knobs.rx_cb_q, ctx.knobs.rx_ebd_q),
+                cbit->value_abs - x_lin(cb_idx), /*k_sigma=*/10.0, /*guard_var=*/0.25, var_eff);
+            if (act == RxCbInjectAction::Fold) {
+                carried = true;
+                carried_value = cbit->value_abs;
+            }
+        }
+    }
+
+    RxGfDatumRecord rec;
+    rec.sys = cb.sys;
+    rec.carried = carried;
+    rec.now_s = pl_now_s;
+    double lam = 0.0;
+    double target = 0.0;
+    if (mode == NetworkRxGfDatum::Hard) {
+        lam = kRxGfHardWeight;
+        target = carried ? carried_value : 0.0;
+        rec.hard = true;
+        rec.target = target;
+    } else if (!carried) {   // BirthPrior: the loose prior where nothing carries the direction
+        lam = 1.0 / (ctx.knobs.rx_cb_datum_sigma * ctx.knobs.rx_cb_datum_sigma);
+        rec.prior = true;
+    }
+    if (lam > 0.0) {
+        const double eta = lam * (target - x_lin(cb_idx));
+        if (std::isfinite(lam) && std::isfinite(eta)) {
+            if (ctx.knobs.sta_prior_pre_pd)
+                inj_prior.emplace_back(cbcol, lam, eta,
+                                       RowTag{ContributionKind::PriorRxCbDatumPrePd, {}, {}});
+            else
+                inj.emplace_back(cbcol, lam, eta, RowTag{ContributionKind::PriorRxCbDatum, {}, {}});
+            ++R.pl_cb_datum_rows;
+        } else {
+            rec.hard = false;
+            rec.prior = false;
+        }
+    }
+    R.rx_gf.push_back(rec);
+}
+
+}  // namespace
+
 void networkRxCbPriors(StationCarryFrame& carry) {
     // ---- From the station build ----
     StationBuild& build = carry.build;
@@ -297,20 +388,30 @@ void networkRxCbPriors(StationCarryFrame& carry) {
         //
         // Why a diagonal prior acts as a datum here: d_r ~ N(0, sigma^2)
         // on every station adds 1/sigma^2 along every direction of the
-        // DCB subspace.  The between-station differences are estimable
-        // and carry orders of magnitude more data information, so the
-        // prior does not move them; the common mode has essentially none,
-        // so the prior alone determines it and sets it to
-        // zero-mean-over-receivers, which is the IGS DCB convention.  The
-        // realized common-mode eigenvalue is 1/sigma^2, independent of the
-        // station count (u = 1/sqrt(N) * 1 gives u^T (Lambda I) u =
+        // DCB subspace.  With a free slant ionosphere and no ionosphere
+        // constraint the receiver DCB is not estimable at all, not even as a
+        // difference between stations: each (receiver, constellation) has one
+        // direction the data cannot see (its slant ionospheres, its DCB, an
+        // extra-band IFB and its phase biases moving together), and this prior
+        // is what holds it (an exact rank computation, the third-band datum
+        // record XBD; JNM correction 12).  The prior is folded on every epoch on
+        // top of the carried posterior, so its information grows with the epoch
+        // count and the reported DCB sigma is 10/sqrt(n) (network.rx_gf_datum
+        // birth_prior folds it once; hard replaces it by an exact row).  The
+        // realized common-mode eigenvalue of one fold is 1/sigma^2, independent
+        // of the station count (u = 1/sqrt(N) * 1 gives u^T (Lambda I) u =
         // Lambda), the same N-independence the broadcast-anchored clock
         // datum documents.
         //
         // The target is the absolute zero, so in the local block's
         // delta-around-x_lin coordinates the RHS is -Lambda * x_lin, the
         // same convention the rx-CB carry's innovation uses.
-        if (rx_cb_datum && cb.form == ParamForm::Dcb) {
+        if (rx_cb_datum && cb.form == ParamForm::Dcb
+            && ctx.knobs.rx_gf_datum != NetworkRxGfDatum::PriorRefold) {
+            // network.rx_gf_datum birth_prior or hard: the datum row decided against
+            // whether the carry folds this column this epoch (the record XBD).
+            networkRxGfDatumRow(carry, cb, cb_idx, cbcol, cb_key);
+        } else if (rx_cb_datum && cb.form == ParamForm::Dcb) {
             const double lam = 1.0 / (rx_cb_datum_sigma * rx_cb_datum_sigma);
             const double eta = lam * (0.0 - x_lin(cb_idx));
             if (std::isfinite(lam) && std::isfinite(eta)) {
@@ -528,6 +629,82 @@ void networkRxCbDatumGaugeCensus(NetworkRun& run, const NetworkEpoch& ep) {
         if (est_index_of[i] < 0) continue;
         ctx.counters.n_rxcb_gauges +=
             static_cast<size_t>(asm_res[i].pl_cb_datum_rows);
+    }
+}
+
+void networkRxGfDatumTally(NetworkRunContext& ctx, NetworkRunTraces& traces, const SyncedEpoch& se,
+                           const std::vector<NetStation>& stations,
+                           const std::vector<StationAssembly>& asm_res) {
+    if (ctx.knobs.rx_gf_datum == NetworkRxGfDatum::PriorRefold) return;
+    net::StationTable& sta_rows = ctx.entities.stations;   // written
+    RxCodeBiasCarryCounters& C = ctx.counters;
+    const long long now_ep = static_cast<long long>(ctx.counters.n_loop_epochs);
+    const GnssTime& t = se.time;
+    const char* mode = ctx.knobs.rx_gf_datum == NetworkRxGfDatum::Hard ? "hard" : "birth_prior";
+    for (std::size_t i = 0; i < asm_res.size(); ++i) {
+        const StationAssembly& R = asm_res[i];
+        const std::string name = i < stations.size() ? stations[i].name : std::string("?");
+        const StationId sid{static_cast<int>(i)};
+        std::set<System, net::ByLetter> seen;
+        // A station out of this epoch's solve contributes no record: its open memos release below.
+        if (R.ok) {
+            for (const RxGfDatumRecord& r : R.rx_gf) {
+                seen.insert(r.sys);
+                const char L = traitsOf(r.sys).letter;
+                ++C.rxgf_records;
+                if (r.carried) ++C.rxgf_carried;
+                if (r.prior) ++C.rxgf_prior_rows;
+                if (r.hard) {
+                    ++C.rxgf_hard_rows;
+                    if (r.carried) C.rxgf_max_abs_target = std::max(C.rxgf_max_abs_target, std::abs(r.target));
+                }
+                auto& cells = sta_rows[sid].rx_gf;
+                const bool first = cells.find(r.sys) == cells.end();
+                net::RxGfDatumMemo& memo = cells[r.sys];
+                if (!r.carried) {
+                    // An uncarried column: a placement (birth, return) or a re-seed within the
+                    // horizon.  Only the edge raises an event; every column-epoch is counted.
+                    const bool returned = !first && !memo.active
+                                          && r.now_s - memo.last_s > kRxCbMaxGapS;
+                    const char* cause = first ? "birth" : (returned ? "return" : "uncarried");
+                    if (first || returned) {
+                        if (first) ++C.rxgf_place_birth; else ++C.rxgf_place_return;
+                        memo.since_ep = now_ep;
+                        traces.emitEvent(t, "RX_GF_DATUM", "place", "", name, r.target, std::nullopt,
+                                         mode,
+                                         fmt::format("sys={};cause={};gap_s={:.0f}", L, cause,
+                                                     first ? 0.0 : r.now_s - memo.last_s));
+                    } else {
+                        ++C.rxgf_reseed_uncarried;
+                        if (memo.carried || !memo.active) {
+                            ++C.rxgf_reseed_edges;
+                            traces.emitEvent(t, "RX_GF_DATUM", "reseed", "", name, r.target,
+                                             std::nullopt, mode,
+                                             fmt::format("sys={};cause={};was_carried={};gap_s={:.0f}", L,
+                                                         cause, memo.carried ? 1 : 0,
+                                                         r.now_s - memo.last_s));
+                        }
+                    }
+                }
+                memo.active = true;
+                memo.carried = r.carried;
+                memo.last_s = r.now_s;
+                if (r.hard) memo.target = r.target;
+            }
+        }
+        // A (station, constellation) present last epoch and absent this epoch: the release edge.
+        const auto it = sta_rows.find(sid);
+        if (it == sta_rows.end()) continue;
+        for (auto& [sys, memo] : it->second.rx_gf) {
+            if (!memo.active || seen.count(sys)) continue;
+            ++C.rxgf_releases;
+            traces.emitEvent(t, "RX_GF_DATUM", "release", "", name, memo.target, std::nullopt, mode,
+                             fmt::format("sys={};reason={};held_ep={}", traitsOf(sys).letter,
+                                         R.ok ? "column_absent" : "station_absent",
+                                         now_ep - memo.since_ep));
+            memo.active = false;
+            memo.carried = false;
+        }
     }
 }
 
