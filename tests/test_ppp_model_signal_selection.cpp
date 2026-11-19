@@ -239,6 +239,13 @@ TEST(PppModelSignalSelection, GpsAttributeStringListsEveryBandInAttributeOrder) 
 
 /// Doppler and signal-strength entries of a list are never latched: only code and phase
 /// rows carry a per-band choice.
+///
+/// The outcome is held by three redundant guards: the code-or-phase type filter of the
+/// tally, the band prefix table (D1C and S1C start with no listed prefix such as "C1" or
+/// "L1", so no band is found for them) and the pick rule, which keeps only C and L
+/// candidates.  Deleting any single one of these rules leaves the result unchanged; the
+/// case fails only if all of them stop excluding these entries.  It records the end-to-end
+/// behaviour, not one rule.
 TEST(PppModelSignalSelection, DopplerAndSignalStrengthEntriesAreNeverChosen) {
     ModelUnderTest t;
     ASSERT_TRUE(t.load(configText(R"("GPS": ["D1C", "S1C", "C1C", "L1C"])")));

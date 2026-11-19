@@ -194,26 +194,28 @@ TEST(CorrectionsPoleTide, SouthernMirrorFlipsUpAndEastButNotNorth) {
 
 // ---------------------------------------------------------------------------
 // The pole is interpolated linearly between ERP records and held at the
-// nearest record outside them.  Records a day apart carry xp = mean and
-// mean + 0.2 arcsec (mean taken at the midpoint); at the midpoint the wobble
-// is m1 = +0.1.  Before the first and after the last record the first and the
-// last values are used, with the mean pole of the query epoch.  Fails if the
-// nearest record is taken in place of the interpolation (the midpoint then
-// shows m1 = 0 or 0.2), or if the ends are extrapolated or refused.
+// nearest record outside them.  Records a day apart carry xp = mean + 0.05 and
+// mean + 0.25 arcsec (mean taken at the midpoint); at the midpoint the wobble
+// is m1 = +0.15.  Before the first and after the last record the first and the
+// last values are used, with the mean pole of the query epoch; both held
+// wobbles are non-zero, so the held displacement is millimetre-level at either
+// end.  Fails if the nearest record is taken in place of the interpolation (the
+// midpoint then shows m1 = 0.05 or 0.25), or if either end is extrapolated or
+// refused (a refusal returns zero).
 // ---------------------------------------------------------------------------
 TEST(CorrectionsPoleTide, ErpIsInterpolatedBetweenRecordsAndHeldBeyondThem) {
     const GnssTime t_lo{ 2300, 0.0 };
     const GnssTime t_mid{ 2300, 43200.0 };
     const GnssTime t_hi{ 2300, 86400.0 };
-    const double xp_lo = xpMean(t_mid);
-    const double xp_hi = xpMean(t_mid) + 0.2;
+    const double xp_lo = xpMean(t_mid) + 0.05;
+    const double xp_hi = xpMean(t_mid) + 0.25;
     const double yp    = ypMean(t_mid);
     const std::vector<ErpData> erps = { erp(t_lo, xp_lo, yp), erp(t_hi, xp_hi, yp) };
 
     const double lat = 40.0 * kDeg, lon = 20.0 * kDeg;
     {
         const Enu got  = codePoleTide(40.0, 20.0, erps, t_mid);
-        const Enu want = conventionalPoleTide(lat, lon, 0.1, 0.0);
+        const Enu want = conventionalPoleTide(lat, lon, 0.15, 0.0);
         EXPECT_NEAR(got.e, want.e, kTol);
         EXPECT_NEAR(got.n, want.n, kTol);
         EXPECT_NEAR(got.u, want.u, kTol);
@@ -224,6 +226,8 @@ TEST(CorrectionsPoleTide, ErpIsInterpolatedBetweenRecordsAndHeldBeyondThem) {
         const Enu want = conventionalFromErp(lat, lon, before, xp_lo, yp);
         EXPECT_NEAR(got.u, want.u, kTol);
         EXPECT_NEAR(got.e, want.e, kTol);
+        // -33 sin(80) (0.05 cos 20) = -1.53 mm: a refusal (zero) fails here.
+        EXPECT_LT(got.u, -1.0e-3) << "before the first record the 0.05 arcsec wobble is held";
     }
     {
         const GnssTime after{ 2300, 86400.0 + 7200.0 };
@@ -231,7 +235,7 @@ TEST(CorrectionsPoleTide, ErpIsInterpolatedBetweenRecordsAndHeldBeyondThem) {
         const Enu want = conventionalFromErp(lat, lon, after, xp_hi, yp);
         EXPECT_NEAR(got.u, want.u, kTol);
         EXPECT_NEAR(got.e, want.e, kTol);
-        EXPECT_LT(got.u, -5.0e-3) << "after the last record the 0.2 arcsec wobble is held";
+        EXPECT_LT(got.u, -5.0e-3) << "after the last record the 0.25 arcsec wobble is held";
     }
 }
 
