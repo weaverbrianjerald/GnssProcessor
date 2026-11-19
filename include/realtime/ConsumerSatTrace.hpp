@@ -49,7 +49,8 @@ namespace GnssProcessor {
 ///    reset_disc, reset_flip, carry_disc, carry_flip, translate_disc,
 ///    translate_undeclared, translate_refused, reset_<refusal> (reset_first_sight,
 ///    reset_basis, reset_bssd, reset_unknown_key), reset_hold_gen, reset_gen,
-///    reinflate_disc, reinflate_flip, reinflate_isb, flip_to_fresh, flip_to_stale
+///    reinflate_disc, reinflate_flip, reinflate_isb, reinflate_isb_skipped,
+///    flip_to_fresh, flip_to_stale
 ///    and refloat_level.
 ///  - pre-fit innovations (m): `innov_code_m,innov_phase_m`
 ///  - post-fit residuals (m): `res_code_m,res_phase_m`

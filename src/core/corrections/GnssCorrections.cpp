@@ -596,13 +596,10 @@ namespace GnssProcessor {
                 bracket_lo = std::distance(sat_clocks.begin(), upper_bracket_it) - 1;
             }
 
-            // Exact-node shortcut (as in Linear): when t_query coincides with a
-            // node, the sample value is returned unchanged.
-            if (upper_bracket_it != sat_clocks.end()) {
-                const double t_node = TimeUtils::continuousGpsSeconds((*upper_bracket_it)->time);
-                if (std::abs(t_node - t_query) < 1e-6 && valid_node(*upper_bracket_it))
-                    return (*upper_bracket_it)->clock_bias;
-            }
+            // No exact-node shortcut here, unlike Linear: an epoch on a node gets
+            // the least-squares value like any other epoch, so the result does not
+            // pass through the node (see the trade-off above).  upper_bound puts a
+            // query on a node at bracket_lo == that node.
 
             // --- Locate rate-bearing nodes bracketing t_query ---
             // r_prev: largest index ≤ bracket_lo where has_rate is true

@@ -763,6 +763,7 @@ add_executable(gnss_tests
     tests/test_safe_logger.cpp
     tests/test_trace_logger_state.cpp
     tests/test_sbf.cpp
+    tests/test_sbf_galileo_bgd.cpp
     tests/test_estimation_core.cpp
     tests/test_ils_core.cpp
     tests/test_ar_ils_core.cpp
