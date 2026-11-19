@@ -26,6 +26,9 @@
 #include "network/solve/AnchorHygiene.hpp"   // networkAnchorHygiene
 #include "network/state/CarryDisposition.hpp"
 #include "network/solve/ChainDatum.hpp"      // networkElectChainDatum
+#include "network/ar/RingFix.hpp"            // ringFixGatherKeepEvidence (the keep-carry path's entry evidence)
+#include "network/driver/RunGroups.hpp"      // NetworkEngines (the slip channel)
+#include "network/slip/RawObservables.hpp"   // GapResumption
 #include "network/solve/HandoverStransform.hpp"
 #include "network/solve/PhaseDatum.hpp"      // census, anchor election, drop-and-heal
 #include "network/solve/PivotHandover.hpp"
@@ -76,6 +79,7 @@ void networkPhaseAnchorEpoch(NetworkRun& run, const NetworkEpoch& ep, EpochPassA
     const std::vector<bool>& present = pass_a.present;
     std::set<std::string>& shared_phase_keys = pass_a.shared_phase_keys;  // written
     const RelevelEpochState& relevel_ev = ep.events.slip.relevel;
+    const std::vector<GapResumption>& slip_resumptions = run.engines.slip_qc.epoch.resumptions;
     // ---- End of the bindings ----
     net::NetworkEntities& entities = ctx.entities;   // written: arcs sat_signals sats
     // Event-row forwarder: adds the epoch time.
@@ -135,7 +139,9 @@ void networkPhaseAnchorEpoch(NetworkRun& run, const NetworkEpoch& ep, EpochPassA
             // is the only writer of shared_phase_keys on this path, and the allocation
             // derives its need_rpb set from it. It therefore also precedes
             // est.beginEpoch and PASS B. The full ordering contract is in
-            // network/solve/ChainDatum.hpp.
+            // network/solve/ChainDatum.hpp.  The ring fix's keep-carry check reads evidence gathered here, after
+            // PASS A (the gap resumptions are final) and before the election (network.ring_fix.entry_revalidate).
+            if (NetworkRingFix* rf = ctx.carry.ring_fix.get()) ringFixGatherKeepEvidence(*rf, slip_resumptions);
             networkElectChainDatum(ctx, config_, log, stations,
                                    present, cnd, hyg, carry_slipped_ambs,
                                    shared_phase_keys, events, ep.clock.pl_now_s);

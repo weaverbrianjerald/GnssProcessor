@@ -1632,10 +1632,12 @@ void applyReturningRow(ChainElection& el, System sys, const ChainBand& band, std
 /// Remedy (a) (network.ring_fix.rehost_keep_carry): the integer the ring fix holds on arc (ri, sat) for the band,
 /// when the link is held and usable (held, its residual monitor not tripped, neither of its bands in this epoch's
 /// free-epoch latch) and the one owner of a held entry's step (@c chainEntryStep, keep-carry's rule) takes it as a
-/// known step; none otherwise, and none without the option.
+/// known step; none otherwise, and none without the option.  With network.ring_fix.entry_revalidate the check reads
+/// the evidence gathered before the election (@c NetworkRingFix::keep_evidence), and its outcome is counted and a
+/// refusal recorded for the decision seam's events.
 std::optional<long long> chainHeldInteger(const ChainElection& el, const ChainBand& band, std::size_t ri,
                                           const std::string& sat) {
-    const NetworkRingFix* rf = el.ctx.carry.ring_fix.get();
+    NetworkRingFix* rf = el.ctx.carry.ring_fix.get();
     if (rf == nullptr || !rf->rehost_keep_carry) return std::nullopt;
     for (const auto& [id, L] : rf->links) {
         if (id.station != static_cast<int>(ri) || id.sat != sat) continue;
@@ -1643,10 +1645,23 @@ std::optional<long long> chainHeldInteger(const ChainElection& el, const ChainBa
         const bool first = chainBandSignalOf(el, band.key.sys, id.sig1) == band.signal;
         if (!first && chainBandSignalOf(el, band.key.sys, id.sig2) != band.signal) continue;
         RingFixEntryEvidence ev;
+        if (rf->entry_revalidate)
+            if (const auto ke = rf->keep_evidence.find(id); ke != rf->keep_evidence.end()) ev = ke->second;
         ev.usable = chainHeldLinkUsable(el, id, L);
-        if (chainEntryStep(ChainEntryKind::KeepCarry, ev, rf->entry_revalidate, rf->nn_max_if_m)
-            != RingFixEntryVerdict::Known)
-            return std::nullopt;
+        const RingFixEntryVerdict v = chainEntryStep(ChainEntryKind::KeepCarry, ev, rf->entry_revalidate,
+                                                     rf->nn_max_if_m);
+        if (rf->entry_revalidate && ev.usable) {
+            ++rf->counters.keep_checked;
+            switch (v) {
+                case RingFixEntryVerdict::Known:        ++rf->counters.keep_known; break;
+                case RingFixEntryVerdict::GapUnchecked: ++rf->counters.keep_refused_unchecked; break;
+                case RingFixEntryVerdict::GapShifted:   ++rf->counters.keep_refused_shifted; break;
+                case RingFixEntryVerdict::Signature:    ++rf->counters.keep_refused_signature; break;
+                default:                                break;
+            }
+            if (v != RingFixEntryVerdict::Known) rf->keep_refusals.emplace_back(id, v);
+        }
+        if (v != RingFixEntryVerdict::Known) return std::nullopt;
         return first ? L.n1 : L.n2;
     }
     return std::nullopt;

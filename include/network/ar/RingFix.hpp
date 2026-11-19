@@ -60,6 +60,8 @@
 
 namespace GnssProcessor {
 
+struct GapResumption;   // network/slip/RawObservables.hpp (ringFixGatherKeepEvidence)
+
 // ---- The frozen rule --------------------------------------------------------------------------
 
 /// The gate's bound on the formal sigma of the ionosphere-free N1 (cycles).
@@ -695,6 +697,12 @@ struct RingFixCounters {
     long long entry_refused_unchecked{0}; ///< Refused: the link came back across a gap and its held pair was not measured.
     long long entry_refused_shifted{0};   ///< Refused: the gap re-entry test found the held pair shifted.
     long long entry_refused_signature{0}; ///< Refused: the near-null signature sits at a whole step.
+    // The entry check of a re-host kept on a held link (entry_revalidate with rehost_keep_carry), per band.
+    long long keep_checked{0};            ///< Kept re-hosts onto a usable held link whose entry was checked.
+    long long keep_known{0};              ///< Of them, the held integer taken as a known step (kept at a step of 0).
+    long long keep_refused_unchecked{0};  ///< Refused: back across a gap, the held pair not measured across it.
+    long long keep_refused_shifted{0};    ///< Refused: the gap re-entry test found the held pair shifted.
+    long long keep_refused_signature{0};  ///< Refused: the near-null signature sits at a whole step.
 };
 
 /// A move of the re-attachment waiting for the next election (network.ring_fix.reattach).
@@ -732,6 +740,33 @@ struct RingFixNnMonitor {
     long long checks{0};      ///< Held chord-epochs with a signature verdict.
     long long steps{0};       ///< Of them, at a whole step (k != 0) with the ionosphere-free deviation within bound.
     std::map<RingFixLinkId, RingFixNnMonitorLink> links;   ///< Per chord.
+};
+
+/**
+ * @brief What the ring fix knows of a cut's entry link when it decides whether the link's held integer is a known step.
+ *
+ * The entry link is the edge that carries the cut's moved side now.  A held link that enters the tree is a re-coupling
+ * (standing invariant 7): its integer becomes the moved side's frame step only once it is re-validated
+ * (network.ring_fix.entry_revalidate, @ref ringFixEntryVerdict).
+ */
+struct RingFixEntryEvidence {
+    bool   usable{false};         ///< Held, its monitor not tripped, neither signal in this epoch's free-epoch latch.
+    bool   resumed{false};        ///< Its arcs came back across a gap this epoch, or the cut is a returning satellite's.
+    bool   gap_measured{false};   ///< The gap re-entry test measured the link's own held pair across the gap.
+    bool   gap_shifted{false};    ///< ... and found it shifted (|dMW| or |dGF| over the gate).
+    bool   signature{false};      ///< The near-null signature has a verdict for the link (Galileo E1/E5a, enough epochs).
+    int    signature_k{0};        ///< Its whole number of steps: round(centred geometry-free deviation / step).
+    double signature_if_m{0.0};   ///< Its centred ionosphere-free deviation (m).
+};
+
+/// The ring fix's verdict on a cut's entry link.
+enum class RingFixEntryVerdict : std::uint8_t {
+    NotHeld,       ///< Not a usable held link: the step is unknown, as before.
+    Known,         ///< The held integer is the known step.
+    GapUnchecked,  ///< Refused: the link came back across a gap and its held pair was not measured across it.
+    GapShifted,    ///< Refused: the gap re-entry test found the held pair shifted.
+    Signature,     ///< Refused: the near-null signature sits at a whole step with a small ionosphere-free deviation.
+    RowUnknown,    ///< The asking mechanism's rule leaves the step unknown whatever the link (the chain's returning row).
 };
 
 /**
@@ -842,6 +877,13 @@ struct NetworkRingFix {
     std::map<std::pair<std::string, std::string>, double> untied_last_move_s;
     /// This epoch's election outcomes of the moves, for the decision seam's events (cleared there).
     std::vector<RingFixUntiedOutcome> untied_outcomes;
+    /// This epoch's entry evidence of every held link, for the keep-carry path's check (network.ring_fix.entry_revalidate
+    /// with rehost_keep_carry): gathered before the election by @ref ringFixGatherKeepEvidence from the slip layer's gap
+    /// resumptions and the near-null signature of the ring fix's state at the epoch's start (the cut reads this
+    /// epoch's); replaced each epoch, empty otherwise.  The election sets each link's usability from this epoch's latch.
+    std::map<RingFixLinkId, RingFixEntryEvidence> keep_evidence;
+    /// This epoch's refused keeps (the link and the verdict), for the decision seam's events (cleared there).
+    std::vector<std::pair<RingFixLinkId, RingFixEntryVerdict>> keep_refusals;
     // The near-null guard (network.ring_fix.nn_guard).
     bool        nn_guard{false};            ///< The guard is armed (network.ring_fix.nn_guard).
     int         nn_min_epochs{60};          ///< The moving average's length and the epochs before a chord is checked.
@@ -1087,33 +1129,6 @@ bool ringFixCutStep(bool held_before, long long n_held, double target_cyc, bool 
                     long long& delta);
 
 /**
- * @brief What the ring fix knows of a cut's entry link when it decides whether the link's held integer is a known step.
- *
- * The entry link is the edge that carries the cut's moved side now.  A held link that enters the tree is a re-coupling
- * (standing invariant 7): its integer becomes the moved side's frame step only once it is re-validated
- * (network.ring_fix.entry_revalidate, @ref ringFixEntryVerdict).
- */
-struct RingFixEntryEvidence {
-    bool   usable{false};         ///< Held, its monitor not tripped, neither signal in this epoch's free-epoch latch.
-    bool   resumed{false};        ///< Its arcs came back across a gap this epoch, or the cut is a returning satellite's.
-    bool   gap_measured{false};   ///< The gap re-entry test measured the link's own held pair across the gap.
-    bool   gap_shifted{false};    ///< ... and found it shifted (|dMW| or |dGF| over the gate).
-    bool   signature{false};      ///< The near-null signature has a verdict for the link (Galileo E1/E5a, enough epochs).
-    int    signature_k{0};        ///< Its whole number of steps: round(centred geometry-free deviation / step).
-    double signature_if_m{0.0};   ///< Its centred ionosphere-free deviation (m).
-};
-
-/// The ring fix's verdict on a cut's entry link.
-enum class RingFixEntryVerdict : std::uint8_t {
-    NotHeld,       ///< Not a usable held link: the step is unknown, as before.
-    Known,         ///< The held integer is the known step.
-    GapUnchecked,  ///< Refused: the link came back across a gap and its held pair was not measured across it.
-    GapShifted,    ///< Refused: the gap re-entry test found the held pair shifted.
-    Signature,     ///< Refused: the near-null signature sits at a whole step with a small ionosphere-free deviation.
-    RowUnknown,    ///< The asking mechanism's rule leaves the step unknown whatever the link (the chain's returning row).
-};
-
-/**
  * @brief Whether a cut's entry link's held integer is a known step: the one owner of that decision.
  *
  * The chain's returning row declares a returning satellite's step unknown (its first-sighting target); the cut step
@@ -1151,17 +1166,31 @@ enum class ChainEntryKind : std::uint8_t {
  *  - @c ReturningRow: never known (@c RowUnknown): the returning vertex takes its first-sighting target and the walk
  *    re-references its moved side, while the ring fix's cut re-expresses its held links across it (a different
  *    object, decided by @c CutEntry);
- *  - @c KeepCarry: known when the link is usable, whatever the rest of the evidence (the entry check does not reach
- *    the keep-carry path in this build).
+ *  - @c KeepCarry: the cut's rule, on evidence gathered before the election (@ref ringFixGatherKeepEvidence: the gap
+ *    resumptions of PASS A, the near-null signature of the epoch's start); off, a usable link is known.
  *
  * @param kind        Who asks.
  * @param e           The entry link's evidence.
- * @param revalidate  network.ring_fix.entry_revalidate (read by @c CutEntry only).
+ * @param revalidate  network.ring_fix.entry_revalidate (read by @c CutEntry and @c KeepCarry).
  * @param max_if_m    The near-null signature's ionosphere-free bound (network.ring_fix.nn_guard_max_if_m).
  * @return The verdict; only @c Known makes the step known.
  */
 RingFixEntryVerdict chainEntryStep(ChainEntryKind kind, const RingFixEntryEvidence& e, bool revalidate,
                                    double max_if_m);
+
+/**
+ * @brief Gather this epoch's entry evidence of every held link for the keep-carry path's check.
+ *
+ * Runs before the election (network.ring_fix.entry_revalidate with rehost_keep_carry; otherwise it only empties
+ * @c keep_evidence).  A link's evidence: whether its arc came back across a gap this epoch, and whether the gap
+ * re-entry test measured and found shifted its own held pair (the slip layer's gap resumptions, final after PASS A);
+ * its near-null signature, from the ring fix's state at the epoch's start (the last epoch's code residuals).  The
+ * election takes each link's usability from this epoch's latch.
+ *
+ * @param rf           The ring fix's state; writes @c keep_evidence.
+ * @param resumptions  This epoch's gap resumptions (the slip-QC channel's).
+ */
+void ringFixGatherKeepEvidence(NetworkRingFix& rf, const std::vector<GapResumption>& resumptions);
 
 /// What the cuts of an epoch did to the held links.
 struct RingFixCutOutcome {

@@ -737,9 +737,9 @@ const char* ringFixEntryVerdictName(RingFixEntryVerdict v) {
 RingFixEntryVerdict chainEntryStep(ChainEntryKind kind, const RingFixEntryEvidence& e, bool revalidate,
                                    double max_if_m) {
     switch (kind) {
-        case ChainEntryKind::CutEntry:     return ringFixEntryVerdict(e, revalidate, max_if_m);
+        case ChainEntryKind::CutEntry:
+        case ChainEntryKind::KeepCarry:    return ringFixEntryVerdict(e, revalidate, max_if_m);
         case ChainEntryKind::ReturningRow: return RingFixEntryVerdict::RowUnknown;
-        case ChainEntryKind::KeepCarry:    return e.usable ? RingFixEntryVerdict::Known : RingFixEntryVerdict::NotHeld;
     }
     return RingFixEntryVerdict::NotHeld;
 }

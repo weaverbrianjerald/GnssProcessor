@@ -64,6 +64,36 @@ std::vector<RingFixNearNullIn> nearNullInputs(const NetworkRingFix& rf) {
     return nn_in;
 }
 
+}  // namespace
+
+void ringFixGatherKeepEvidence(NetworkRingFix& rf, const std::vector<GapResumption>& resumptions) {
+    rf.keep_evidence.clear();
+    if (!rf.rehost_keep_carry || !rf.entry_revalidate) return;
+    std::map<RingFixLinkId, RingFixNearNullVerdict> signature;   // the last epoch's code residuals
+    for (const RingFixNearNullVerdict& v : ringFixNearNullVerdicts(nearNullInputs(rf), rf.nn_tol_gf_m, rf.nn_max_if_m))
+        signature.emplace(v.id, v);
+    for (const auto& [id, L] : rf.links) {
+        if (!L.held) continue;
+        RingFixEntryEvidence ev;   // usable: set by the election from this epoch's latch
+        for (const GapResumption& g : resumptions) {
+            if (g.station != id.station || g.satellite != id.sat) continue;
+            ev.resumed = true;
+            if ((g.sig1 == id.sig1 && g.sig2 == id.sig2) || (g.sig1 == id.sig2 && g.sig2 == id.sig1)) {
+                ev.gap_measured = g.measurable;
+                ev.gap_shifted = g.shifted;
+            }
+        }
+        if (const auto sg = signature.find(id); sg != signature.end()) {
+            ev.signature = true;
+            ev.signature_k = sg->second.k;
+            ev.signature_if_m = sg->second.dev_if_m;
+        }
+        rf.keep_evidence.emplace(id, ev);
+    }
+}
+
+namespace {
+
 /// The arcs in this epoch's free-epoch latch, as (station, satellite, signal).
 std::set<net::ArcTuple> latchedArcs(const RelevelEpochState& relevel) {
     std::set<net::ArcTuple> out;
@@ -172,6 +202,21 @@ bool hangsBelow(const BandParents& p, int station, const std::string& sat) {
         cur = pp->second;
     }
     return false;
+}
+
+/// This epoch's refused keeps (a re-host onto a held link whose entry check refused it) as events; cleared.
+void reportKeepRefusals(NetworkRingFix& rf, const std::vector<NetStation>& stations, const GnssTime& t,
+                        NetworkRunTraces& traces) {
+    for (const auto& [id, v] : rf.keep_refusals) {
+        const std::string sta = id.station >= 0 && static_cast<std::size_t>(id.station) < stations.size()
+                                    ? stations[static_cast<std::size_t>(id.station)].name : std::string("none");
+        const RingFixLink* L = nullptr;
+        if (const auto it = rf.links.find(id); it != rf.links.end()) L = &it->second;
+        traces.emitEvent(t, "RINGFIX", "keep_refused", id.sat, sta, std::nullopt, std::nullopt,
+                         ringFixEntryVerdictName(v),
+                         fmt::format("sig1={} sig2={} n1={} n2={}", id.sig1, id.sig2, L ? L->n1 : 0, L ? L->n2 : 0));
+    }
+    rf.keep_refusals.clear();
 }
 
 /// The election's outcomes of this epoch's moves as events, the applied moves into the watch, and every move the
@@ -473,7 +518,8 @@ void networkRingFixArm(NetworkRun& run) {
                   "re-entry test measured its own held pair and found no shift, and, for a Galileo E1/E5a link, its "
                   "near-null signature (code residuals averaged over {} epochs, centred) is not at a whole step with an "
                   "ionosphere-free deviation within {:.2f} m; otherwise the step is unknown and the crossing links are "
-                  "released.",
+                  "released.  A chain re-host kept on a held link (network.ring_fix.rehost_keep_carry) asks the same "
+                  "checks on the evidence of the epoch's start, and a refused keep is released as without the option.",
                   rf->nn_min_epochs, rf->nn_max_if_m);
     rf->reattach = rf->settled_flags_on && nc.ring_fix.reattach;
     if (rf->reattach)
@@ -1039,6 +1085,7 @@ void networkRingFixDecide(NetworkRun& run, const NetworkEpoch& ep) {
     NetworkRingFix& rf = *ctx.carry.ring_fix;
     const ChainEpochObs& obs = *obs_rec;
     if (rf.reattach) reportUntiedOutcomes(rf, stations, now_s, t, traces);
+    if (!rf.keep_refusals.empty()) reportKeepRefusals(rf, stations, t, traces);
 
     // The chain this epoch: tree arcs, groups, each group's tree and chords, the roots.
     std::set<net::ArcTuple> tree_arcs;
@@ -1776,6 +1823,12 @@ int networkRingFixRunEnd(const NetworkRunEndView& v) {
                   "across it, {} for the near-null signature (their steps unknown, the crossing links released).",
                   C.entry_checked, C.entry_known, C.entry_checked - std::min(C.entry_checked, C.entry_known),
                   C.entry_refused_unchecked, C.entry_refused_shifted, C.entry_refused_signature);
+    if (rf.entry_revalidate && rf.rehost_keep_carry)
+        log->warn("Network (ring fix, entry re-validation of kept re-hosts): {} re-host(s) onto a usable held link "
+                  "checked (per band); {} kept at a step of 0; {} refused: {} with the held pair not measured across a "
+                  "gap, {} shifted across it, {} for the near-null signature (released as without the option).",
+                  C.keep_checked, C.keep_known, C.keep_checked - std::min(C.keep_checked, C.keep_known),
+                  C.keep_refused_unchecked, C.keep_refused_shifted, C.keep_refused_signature);
     for (const RingFixCascade& c : rf.cascades) {
         const auto it = rf.cascade_counters.find(c.name);
         const RingFixCascadeCounters CC = it != rf.cascade_counters.end() ? it->second : RingFixCascadeCounters{};
