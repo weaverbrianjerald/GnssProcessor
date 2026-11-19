@@ -179,3 +179,13 @@ Section 107.3's held pair-epochs of the pilot-type users (Galileo L1C/L5Q 91 296
 **Who runs what.** The build, B1, the unit cases and the smoke: the chain audit's session. The arms of B2 and B3, their runs and their grading: the second session, on the frozen exes named in the report "S8 (b) built" (the S8 (b) engine and the S8 (a) engine as its control).
 
 **Reading prepared.** B1 to B3 met: the extension stays under `entry_revalidate`'s scoped recommendation, and the ledger row records the result. A bar of B2 missed: the keep-carry path goes back to taking a usable link as known (the extension reverted), and the author decides.
+
+### 122.1 2026-11-18: the build (commit `12ecc70`; engines `gnss_processor_cha_s8b.exe` and, as its control, `gnss_processor_cha_s8a.exe`)
+
+**Built.** Commit `12ecc70` on `chain/audit`, after step S8 (a) (`8d71321`): with `network.ring_fix.entry_revalidate` on, a chain re-host kept on a held link asks the cut's entry check through `chainEntryStep`, on evidence that `ringFixGatherKeepEvidence` gathers in the phase anchor seam after PASS A and before the election (this epoch's gap resumptions; the near-null signature of the ring fix's state at the epoch's start). A refused keep is released as without keep-carry. Counters `keep_checked`, `keep_known` and `keep_refused_*` (per band), a run-end line when the check is armed, RINGFIX `keep_refused` events, and the run-start line of the entry re-validation names the keep-carry path. The ledger row of `entry_revalidate` records the widened reach (`72d818c`). Unit cases: keep-carry takes the cut's rule; the gathered evidence takes the held links' own gap resumptions (315 chain and loader cases pass).
+
+**B1 passes.** n147, f40sc and h40 on the S8 (b) engine are identical in full to S8 (a)'s runs (`nom_td_gate.py --whole --mask-time`, logs included); `nom_epoch_lint.py` and `nom_n4_verify.py --whole` pass.
+
+**The observed control with the check on** (n147e, 2 h, the S8 (b) engine against the S8 (a) engine; B3's arm is the second session's): products and every trace identical; the logs differ in the run-start text and the new run-end line, which reads 172 kept re-hosts onto a usable held link checked, 172 kept at a step of 0, 0 refused. The on arm's smoke (`_rap_s8b_on_smoke`, the same configuration, 9 epochs) exits 0.
+
+**Frozen exes for B2 and B3:** `D:/GnssProcessorSupport/gates/exe/x64-Release/gnss_processor_cha_s8b.exe`, sha256 `0a0399f07765017e31dc15ca003b5e5a5792bacd641dbe2d7713c889008b330e`, and its control `gnss_processor_cha_s8a.exe`, sha256 `635ccaa00bec9a66b0f61e4040fd25df95e07b2e7dbb8df5bddc58f63e3ed141`. Both carry the key of section 121, off in every arm of this section.

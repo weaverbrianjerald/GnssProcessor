@@ -221,3 +221,5 @@ The two Debug failures of milestone A are fixed in `bcf3bfe` (tests only: each `
 | P18. Comments that contradict the code | closed by S2 (`be0f6db`) | |
 
 Found since the audit: in the adopted configuration Galileo is elected per signal (the note of milestone B above), and no line names that fallback by constellation. The line is part of the key of card NRF section 121 for its arm and is owed on the default path as an S2-kind item.
+
+The refactor's results from step S8 on continue in [part 3](CHA_chain_audit_2026-11-18_part3.md).
