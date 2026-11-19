@@ -8,6 +8,7 @@
 
 #include "common/GnssIdentity.hpp"            // constellationKey, systemOfSat
 #include "network/ar/ArcGraph.hpp"            // arcgraph::Dsu, CycleTerm, CycleLattice
+#include "network/ar/RingFixHold.hpp"           // networkRingFixTraceResumeEdges (the suspensions' second edges)
 #include "network/assembly/Contributions.hpp" // ContributionKind (the phase rows of a residual)
 #include "network/assembly/RowClassify.hpp"   // rowTagAt, rowClassOfKind, rowObservationCode (the guard's code rows)
 #include "network/diag/LiveRecord.hpp"        // LiveHolds (the live record's held links)
@@ -577,6 +578,7 @@ void networkRingFixDecideLiveHolds(NetworkRun& run, const NetworkEpoch& ep, cons
 
 std::vector<RingFixEvent> networkRingFixDecideLinks(NetworkRun& run, const NetworkEpoch& ep,
                                                     const RingFixDecideReadings& readings) {
+    if (!run.ctx.carry.ring_fix) return {};   // the gate, before the bindings read the ring fix's state
     // ---- From the run and the epoch ----
     NetworkRingFix& rf = *run.ctx.carry.ring_fix;   // written: the links, the decision counters
     NetworkRunTraces& traces = run.traces;          // written: the RINGFIX hold and would_hold events
@@ -585,7 +587,9 @@ std::vector<RingFixEvent> networkRingFixDecideLinks(NetworkRun& run, const Netwo
     const double now_s = ep.clock.pl_now_s;
     const std::vector<RingFixDecideObs>& links = readings.links;
     // ---- End of the bindings ----
-    std::vector<RingFixEvent> events = ringFixDecideStep(rf, links, now_s);
+    std::vector<RingFixResumeEdge> resume_edges;   // network.ring_fix.resume_response "revalidate": cleared suspensions
+    std::vector<RingFixEvent> events = ringFixDecideStep(rf, links, now_s, &resume_edges);
+    networkRingFixTraceResumeEdges(run, ep, resume_edges);
     for (const RingFixEvent& ev : events) {
         if (ev.kind != RingFixEvent::Kind::Hold) continue;
         const std::string name = ringFixStationName(stations, ev.id.station);

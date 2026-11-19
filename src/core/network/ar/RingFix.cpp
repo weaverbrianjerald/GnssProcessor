@@ -10,6 +10,7 @@
 #include "common/GnssIdentity.hpp"   // systemOfSat, constellationKey
 #include "network/solve/ChainChordTable.hpp"   // chainWavelengthM (the cascade's reference)
 #include "network/solve/ChainVertex.hpp"       // chainVertexIsStation: the rings' vertex keys
+#include "network/slip/RawObservables.hpp"     // GapResumption, SigResumption (the resumption class)
 #include "products/NetworkProductEmitter.hpp"   // NetworkSolutionEpoch, the settled flags' records
 
 #include <fmt/format.h>
@@ -40,6 +41,26 @@ const char* ringFixReleaseName(RingFixRelease c) {
         case RingFixRelease::Gap:     return "gap";
         case RingFixRelease::Chain:   return "chain";
         case RingFixRelease::Monitor: return "monitor";
+        case RingFixRelease::Resume:  return "resume";
+    }
+    return "?";
+}
+
+const char* ringFixResumeResponseName(RingFixResumeResponse r) {
+    switch (r) {
+        case RingFixResumeResponse::Off:        return "off";
+        case RingFixResumeResponse::Release:    return "release";
+        case RingFixResumeResponse::Revalidate: return "revalidate";
+    }
+    return "?";
+}
+
+const char* ringFixResumeClassName(RingFixResumeClass c) {
+    switch (c) {
+        case RingFixResumeClass::None:       return "none";
+        case RingFixResumeClass::Clean:      return "clean";
+        case RingFixResumeClass::Shifted:    return "shifted";
+        case RingFixResumeClass::Unmeasured: return "unmeasured";
     }
     return "?";
 }
@@ -421,13 +442,109 @@ void ringFixUnholdLink(RingFixLink& L, double now_s, RingFixUnholdKind kind) {
     }
 }
 
+namespace {
+
+/// Closes a suspension that was not re-validated: the record is cleared and counted, and the hold it suspended is
+/// given up as a release with cause resume.
+RingFixResumeEdge ringFixGiveUpCrossing(NetworkRingFix& rf, const RingFixLinkId& id, RingFixLink& L,
+                                        const std::string& verdict, long long* by_class) {
+    RingFixResumeEdge e;
+    e.kind = RingFixResumeEdge::Kind::Clear;
+    e.id = id;
+    e.cls = L.crossing.cls;
+    e.carry_fresh = L.crossing.carry_fresh;
+    e.verdict = verdict;
+    e.n1 = L.crossing.n1;
+    e.n2 = L.crossing.n2;
+    e.d_gf_m = L.crossing.d_gf_m;
+    ++by_class[static_cast<std::size_t>(L.crossing.cls)];
+    ++rf.counters.released[static_cast<std::size_t>(RingFixRelease::Resume)];
+    L.crossing = RingFixCrossing{};
+    return e;
+}
+
+/// The suspensions' test of one decision epoch (network.ring_fix.resume_response "revalidate"), before the rule.
+/// Returns the links held again this epoch, which the rule then leaves alone.
+std::set<RingFixLinkId> ringFixRevalidateCrossings(NetworkRingFix& rf, const std::vector<RingFixDecideObs>& links,
+                                                   double now_s, std::vector<RingFixResumeEdge>* edges) {
+    std::set<RingFixLinkId> reheld;
+    RingFixCounters& C = rf.counters;
+    const auto out = [&](RingFixResumeEdge e) { if (edges) edges->push_back(std::move(e)); };
+    for (auto& [id, L] : rf.links)
+        if (L.crossing.active) ++L.crossing.epochs;
+    for (const RingFixDecideObs& o : links) {
+        const auto it = rf.links.find(o.id);
+        if (it == rf.links.end() || !it->second.crossing.active) continue;
+        RingFixLink& L = it->second;
+        const RingFixGate g = o.have_float
+                                  ? ringFixGate(o.f1, o.f2, o.q11, o.q12, o.q22, o.lambda1, o.lambda2, rf.sigma_scale)
+                                  : RingFixGate{};
+        const RingFixResumeTest verdict = ringFixResumeTest(g, o, L.crossing.n1, L.crossing.n2, rf.sigma_scale);
+        if (verdict == RingFixResumeTest::None || verdict == RingFixResumeTest::Undecided) {
+            L.crossing.agree = 0;
+            continue;
+        }
+        if (verdict == RingFixResumeTest::Contradict) {
+            RingFixResumeEdge e = ringFixGiveUpCrossing(rf, o.id, L, "contradicted", C.resume_contradicted);
+            e.m1 = g.n1;
+            e.m2 = g.n2;
+            out(std::move(e));
+            continue;
+        }
+        if (++L.crossing.agree < kRingFixPersistEpochs) continue;
+        // Re-validated: held again at the record's integers, from this epoch's carry; not a new decision.
+        RingFixResumeEdge e;
+        e.kind = RingFixResumeEdge::Kind::Clear;
+        e.id = o.id;
+        e.cls = L.crossing.cls;
+        e.carry_fresh = L.crossing.carry_fresh;
+        e.verdict = "revalidated";
+        e.n1 = e.m1 = L.crossing.n1;
+        e.n2 = e.m2 = L.crossing.n2;
+        e.d_gf_m = L.crossing.d_gf_m;
+        ++C.resume_revalidated[static_cast<std::size_t>(L.crossing.cls)];
+        L.held = true;
+        L.n1 = L.crossing.n1;
+        L.n2 = L.crossing.n2;
+        L.ring = o.ring;
+        L.root = o.root;
+        L.stamp1 = o.relevel1_s;
+        L.stamp2 = o.relevel2_s;
+        L.absent_since_s = -1.0;
+        L.monitor_bad = 0;
+        L.monitor_trip = false;
+        L.streak = 0;
+        L.wrong_now = false;
+        L.rebase_stamps = !o.carry_ok;
+        L.nn_n = 0;
+        L.nn_gf_m = 0.0;
+        L.nn_if_m = 0.0;
+        L.nn_moved = false;
+        L.crossing = RingFixCrossing{};
+        reheld.insert(o.id);
+        out(std::move(e));
+    }
+    // Past the decision window the rule may decide the link anyway, so the record has nothing left to add.
+    for (auto& [id, L] : rf.links)
+        if (L.crossing.active && now_s - L.crossing.since_s >= kRingFixWindowS)
+            out(ringFixGiveUpCrossing(rf, id, L, "expired", C.resume_expired));
+    return reheld;
+}
+
+}  // namespace
+
 std::vector<RingFixEvent> ringFixDecideStep(NetworkRingFix& rf,
                                             const std::vector<RingFixDecideObs>& links,
-                                            double now_s) {
+                                            double now_s,
+                                            std::vector<RingFixResumeEdge>* resume_edges) {
     std::vector<RingFixEvent> events;
     RingFixCounters& C = rf.counters;
     ++C.epochs_decided;
     if (rf.t0_s < 0.0) rf.t0_s = now_s;
+    // The suspensions' test (network.ring_fix.resume_response "revalidate"); none open with the key off.
+    const std::set<RingFixLinkId> reheld = rf.resume_response == RingFixResumeResponse::Revalidate
+                                               ? ringFixRevalidateCrossings(rf, links, now_s, resume_edges)
+                                               : std::set<RingFixLinkId>{};
     // The oracle phase (simulation only): every link with true integers is held at them; the rule waits.
     if (rf.oracle_until_s > 0.0 && now_s - rf.t0_s < rf.oracle_until_s) {
         for (const RingFixDecideObs& o : links) {
@@ -484,6 +601,7 @@ std::vector<RingFixEvent> ringFixDecideStep(NetworkRingFix& rf,
             if (L.last_chord_s < 0.0 || now_s - L.last_chord_s > kRingFixGapS) L.chord_since_s = now_s;
             L.last_chord_s = now_s;
         }
+        if (!reheld.empty() && reheld.count(o.id) != 0) continue;   // held again this epoch: held from the next
         if (L.held) {
             ++C.held_link_epochs;
             if (o.have_resid && std::isfinite(o.resid_if_m)
@@ -643,6 +761,150 @@ std::vector<RingFixEvent> ringFixReleaseStep(NetworkRingFix& rf,
     }
     return events;
 }
+
+// ---- The response to a tracking break of the link's own (network.ring_fix.resume_response) ----
+
+RingFixResumeReading ringFixResumeClassOf(const RingFixLinkId& id, const std::vector<GapResumption>& rows,
+                                          const std::vector<SigResumption>& sigs) {
+    RingFixResumeReading shifted, unmeasured, clean;
+    shifted.cls = RingFixResumeClass::Shifted;
+    unmeasured.cls = RingFixResumeClass::Unmeasured;
+    clean.cls = RingFixResumeClass::Clean;
+    bool any_shifted = false, any_unmeasured = false, any_clean = false;
+    const auto note = [](RingFixResumeReading& r, bool& seen, double d_gf, long long gap, int lli) {
+        if (seen) return;
+        seen = true;
+        r.d_gf_m = d_gf;
+        r.gap_epochs = gap;
+        r.lli = lli;
+    };
+    for (const GapResumption& g : rows) {
+        if (g.station != id.station || g.satellite != id.sat) continue;
+        // Only a record that names one of the link's signals concerns the link: an off-pair return of the same
+        // satellite (signals the link does not use) is not its break.
+        const bool names_link = g.sig1 == id.sig1 || g.sig1 == id.sig2 || g.sig2 == id.sig1 || g.sig2 == id.sig2;
+        if (!names_link) continue;
+        const bool own_pair = (g.sig1 == id.sig1 && g.sig2 == id.sig2) || (g.sig1 == id.sig2 && g.sig2 == id.sig1);
+        const int lli = ((g.lli1 | g.lli2) & 0x1) != 0 ? 1 : 0;
+        if (g.shifted) note(shifted, any_shifted, g.d_gf, g.gap_epochs, lli);
+        else if (!g.measurable || !own_pair) note(unmeasured, any_unmeasured, 0.0, g.gap_epochs, lli);
+        else note(clean, any_clean, g.d_gf, g.gap_epochs, lli);
+    }
+    for (const SigResumption& r : sigs) {
+        if (r.station != id.station || r.satellite != id.sat || (r.signal != id.sig1 && r.signal != id.sig2)) continue;
+        const int lli = (r.lli & 0x1) != 0 ? 1 : 0;
+        if (r.shifted) note(shifted, any_shifted, r.d_gf, r.gap_epochs, lli);
+        else if (!r.measurable) note(unmeasured, any_unmeasured, 0.0, r.gap_epochs, lli);
+        else note(clean, any_clean, r.d_gf, r.gap_epochs, lli);
+    }
+    if (any_shifted) return shifted;
+    if (any_unmeasured) return unmeasured;
+    if (any_clean) return clean;
+    return {};
+}
+
+RingFixResumeTest ringFixResumeTest(const RingFixGate& g, const RingFixDecideObs& o, long long n1, long long n2,
+                                    double sigma_scale, double* T_out) {
+    if (T_out) *T_out = std::numeric_limits<double>::quiet_NaN();
+    if (!o.have_float || !g.valid) return RingFixResumeTest::None;
+    const double s2 = sigma_scale * sigma_scale;
+    const double a = o.q11 * s2, b = o.q12 * s2, c = o.q22 * s2;
+    const double det = a * c - b * b;
+    if (!(std::isfinite(det) && det > 0.0 && a > 0.0)) return RingFixResumeTest::None;
+    const double d1 = o.f1 - static_cast<double>(n1), d2 = o.f2 - static_cast<double>(n2);
+    const double T = (c * d1 * d1 - 2.0 * b * d1 * d2 + a * d2 * d2) / det;
+    if (T_out) *T_out = T;
+    const bool accepted = T <= -2.0 * std::log(kRingFixResumeLevel);
+    const bool decided = g.log_odds_if >= kRingFixMinLogOdds && g.log_odds_wl >= kRingFixMinLogOdds;
+    const bool same = g.n1 == n1 && g.n2 == n2;
+    if (accepted && decided && same) return RingFixResumeTest::Agree;
+    if (!accepted && decided && !same) return RingFixResumeTest::Contradict;
+    return RingFixResumeTest::Undecided;
+}
+
+long long ringFixActiveCrossings(const NetworkRingFix& rf) {
+    long long n = 0;
+    for (const auto& [id, L] : rf.links)
+        if (L.crossing.active) ++n;
+    return n;
+}
+
+std::vector<RingFixResumeEdge> ringFixResumeStep(NetworkRingFix& rf, const std::map<RingFixLinkId, RingFixHoldObs>& obs,
+                                                 double now_s) {
+    std::vector<RingFixResumeEdge> edges;
+    if (rf.resume_response == RingFixResumeResponse::Off) return edges;
+    RingFixCounters& C = rf.counters;
+    const bool revalidate = rf.resume_response == RingFixResumeResponse::Revalidate;
+    for (const auto& [id, o] : obs) {
+        const auto it = rf.links.find(id);
+        if (it == rf.links.end()) continue;
+        RingFixLink& L = it->second;
+        const bool root_changed = !o.root.empty() && !L.root.empty() && o.root != L.root;
+        const bool chain_or_slip = o.tree_now || o.in_cut || root_changed || o.latched;
+        // An open suspension ends at a latch, a chain event or a new break that is not clean.
+        if (revalidate && L.crossing.active) {
+            const char* cause = o.latched ? "slip"
+                              : (o.tree_now || o.in_cut || root_changed) ? "chain"
+                              : (o.resume.cls == RingFixResumeClass::Shifted
+                                 || o.resume.cls == RingFixResumeClass::Unmeasured) ? "resume"
+                              : nullptr;
+            if (cause != nullptr)
+                edges.push_back(ringFixGiveUpCrossing(rf, id, L, std::string("ended:") + cause, C.resume_ended));
+            continue;
+        }
+        if (!L.held || chain_or_slip) continue;   // the release step names chain and slip releases
+        if (o.resume.cls == RingFixResumeClass::Clean) { ++C.resume_kept_clean; continue; }
+        if (o.resume.cls != RingFixResumeClass::Shifted && o.resume.cls != RingFixResumeClass::Unmeasured) continue;
+        RingFixResumeEdge e;
+        e.kind = revalidate ? RingFixResumeEdge::Kind::Suspend : RingFixResumeEdge::Kind::Release;
+        e.id = id;
+        e.cls = o.resume.cls;
+        e.carry_fresh = !o.carry_ok;
+        e.n1 = L.n1;
+        e.n2 = L.n2;
+        e.d_gf_m = o.resume.d_gf_m;
+        e.gap_epochs = o.resume.gap_epochs;
+        e.lli = o.resume.lli;
+        const std::size_t k = static_cast<std::size_t>(o.resume.cls);
+        if (e.carry_fresh) ++C.resume_fresh;
+        C.resume_links.add({id.station, id.sat, id.sig1 + "/" + id.sig2, L.ring});
+        ringFixUnholdLink(L, now_s, RingFixUnholdKind::Release);
+        if (revalidate) {
+            ++C.resume_suspended[k];
+            L.crossing.active = true;
+            L.crossing.since_s = now_s;
+            L.crossing.cls = o.resume.cls;
+            L.crossing.carry_fresh = e.carry_fresh;
+            L.crossing.n1 = e.n1;
+            L.crossing.n2 = e.n2;
+            L.crossing.d_gf_m = e.d_gf_m;
+        } else {
+            ++C.resume_released[k];
+            ++C.released[static_cast<std::size_t>(RingFixRelease::Resume)];
+        }
+        edges.push_back(std::move(e));
+    }
+    return edges;
+}
+
+std::vector<RingFixResumeEdge> ringFixEndCrossingsAtCuts(NetworkRingFix& rf, const std::vector<RingFixCut>& cuts,
+                                                         double now_s) {
+    (void)now_s;
+    std::vector<RingFixResumeEdge> edges;
+    if (rf.resume_response != RingFixResumeResponse::Revalidate || cuts.empty()) return edges;
+    for (auto& [id, L] : rf.links) {
+        if (!L.crossing.active) continue;
+        for (const RingFixCut& c : cuts) {
+            if (ringFixCutBand(c, id) == 0) continue;
+            if ((c.sats.count(id.sat) > 0) == (c.stations.count(id.station) > 0)) continue;
+            edges.push_back(ringFixGiveUpCrossing(rf, id, L, "ended:cut", rf.counters.resume_ended));
+            break;
+        }
+    }
+    return edges;
+}
+
+// ---- End of the response to a tracking break ----
 
 std::map<std::tuple<std::string, std::string, std::string>, long long>
 ringFixReadAuditFile(const std::string& path) {
@@ -845,6 +1107,12 @@ void ringFixWriteMemory(const NetworkRingFix& rf, std::ostream& os) {
     for (const auto& [k, s] : rf.untied_last_move_s) os << fmt::format("RUL,{},{},{}\n", k.first, k.second, s);
     for (const RingFixLinkId& id : rf.nn_reopen)
         os << fmt::format("RNR,{},{},{},{}\n", id.station, id.sat, id.sig1, id.sig2);
+    // network.ring_fix.resume_response "revalidate": the open suspensions only, so a run without one writes none.
+    for (const auto& [id, L] : rf.links)
+        if (L.crossing.active)
+            os << fmt::format("RX,{},{},{},{},{},{},{},{},{},{},{},{}\n", id.station, id.sat, id.sig1, id.sig2,
+                              L.crossing.since_s, static_cast<int>(L.crossing.cls), b(L.crossing.carry_fresh),
+                              L.crossing.n1, L.crossing.n2, L.crossing.agree, L.crossing.epochs, L.crossing.d_gf_m);
 }
 
 bool ringFixReadMemoryLine(NetworkRingFix& rf, const std::vector<std::string>& f) {
@@ -886,6 +1154,24 @@ bool ringFixReadMemoryLine(NetworkRingFix& rf, const std::vector<std::string>& f
         if (tag == "RUD" && f.size() == 4) { rf.untied_moved_s[{f[1], f[2]}] = D(3); return true; }
         if (tag == "RUL" && f.size() == 4) { rf.untied_last_move_s[{f[1], f[2]}] = D(3); return true; }
         if (tag == "RNR" && f.size() == 5) { rf.nn_reopen.push_back(RingFixLinkId{I(1), f[2], f[3], f[4]}); return true; }
+        if (tag == "RX" && f.size() == 13) {
+            // An open suspension is restored only on a run that answers resumptions by re-validation; any other
+            // run reads the line and drops it (its link stays as its RL line left it: not held).
+            if (rf.resume_response != RingFixResumeResponse::Revalidate) return true;
+            const int cls = I(6);
+            if (cls < 0 || cls >= static_cast<int>(kRingFixResumeClassCount)) return false;
+            RingFixCrossing& X = rf.links[RingFixLinkId{I(1), f[2], f[3], f[4]}].crossing;
+            X.active = true;
+            X.since_s = D(5);
+            X.cls = static_cast<RingFixResumeClass>(cls);
+            X.carry_fresh = B(7);
+            X.n1 = N(8);
+            X.n2 = N(9);
+            X.agree = I(10);
+            X.epochs = I(11);
+            X.d_gf_m = D(12);
+            return true;
+        }
     } catch (const std::exception&) {
         return false;
     }

@@ -916,6 +916,8 @@ add_executable(gnss_tests
     tests/network/test_phase_family.cpp
     tests/network/test_ring_fix_nn_monitor.cpp
     tests/network/test_chain_named_rows.cpp
+    tests/network/test_ring_fix_resume.cpp
+    tests/network/test_ring_fix_hold_stages.cpp
     tests/network/test_held_first_by_life.cpp
     tests/network/test_phase_family_codes.cpp
     tests/network/test_rx_extra_band_delay_q.cpp

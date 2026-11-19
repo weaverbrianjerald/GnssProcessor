@@ -133,6 +133,8 @@ decided chord is held from the next epoch's PASS B. Its stages
 `networkRingFixDecideCascades`, `networkRingFixDecideTrace`, `networkRingFixDecideSettled`, and
 `networkRingFixDecideNearNull` last: its moves act on the next epoch.
 
+**A held link across its own tracking break.** With `network.ring_fix.resume_response` on, the release stage (`networkRingFixHoldReleases`) reads the slip layer's gap resumptions of the epoch (`GapResumption`, `SigResumption`, final after PASS A) for each held link's station and satellite and classes them (`ringFixResumeClassOf`: shifted, unmeasured on the link's pair or one of its signals, or clean). `ringFixResumeStep` runs before `ringFixReleaseStep` and leaves chain and slip releases to it. Under `release` a shifted or unmeasured link is released in that epoch, cause `resume`. Under `revalidate` it is suspended: not held (so every reader of a held link, the cut entry check and keep-carry included, treats it as not held), its carried entries re-opened, its integers kept in `RingFixLink::crossing`; the decision (`ringFixDecideStep`) holds it again at them after `kRingFixPersistEpochs` agreeing gate passes, and a pass at other integers, `kRingFixResumeExpiryEpochs` decision epochs, a slip, a chain event, a cut (`ringFixEndCrossingsAtCuts`) or a new break give them up. Events: RINGFIX `release` (cause `resume`), `resume_suspend`, `resume_clear`; an open suspension is saved in the ring fix's memory as an `RX` line.
+
 **One owner for a held entry.** Whether a held link entering the tree carries its integer as a
 known step is decided by `chainEntryStep` (`ar/RingFix.cpp`) for three askers (`ChainEntryKind`):
 the ring fix's cut, the returning row (never known) and keep-carry (`chainHeldInteger`). A refused
@@ -182,7 +184,7 @@ The fields the chain keeps across epochs (`include/network/state/Entities.hpp`, 
 `advanceChainBaselines` replaces the tree memories at the end of each election. After a warm resume
 the ColdStart tree memories start empty unless the snapshot's chain memory section restores them
 (`network.state_snapshot_chain_capture`, `network.resume_chain_restore`;
-`include/network/state/ChainMemory.hpp`). `NetworkRingFix` declares its 59 members in
+`include/network/state/ChainMemory.hpp`). `NetworkRingFix` declares its 60 members in
 `net::kRunFields` as `carry.ring_fix.<member>`.
 
 ## 3. The rules
@@ -225,6 +227,7 @@ frozen numbers are constants of `include/network/ar/RingFix.hpp` (`kRingFixWindo
 | held first by life | the held arc of most remaining life is taken | `held_first_by_life` | UNVALIDATED | `chainHeldStep`, `chainArcLife` |
 | keep-carry | a re-host onto a held link whose carry sits on the integer keeps it at step 0 | `rehost_keep_carry` | RECOMMEND_SCOPED | `chainHeldInteger`, `applyRehostRow` (`ChainDatum.cpp`) |
 | entry check | a held entry is known only after a clean gap check and, on Galileo E1/E5a, a near-null signature off a step | `entry_revalidate` | RECOMMEND_SCOPED | `chainEntryStep` (`RingFix.cpp`), `networkRingFixHoldCuts` |
+| resume response | a held link whose own station and satellite resume after a break with a shifted or unmeasured level is released (`release`) or suspended until its own float confirms its integers (`revalidate`); a clean measured resumption keeps the hold | `resume_response` | UNVALIDATED | `ringFixResumeStep`, `ringFixResumeClassOf` (`RingFix.cpp`), `networkRingFixHoldReleases` |
 | settled flags | `signal_integer` 1 while a satellite is tied to its root through held links | `settled_flags` | RECOMMEND_SCOPED | `networkRingFixDecideSettled`, `ringFixStampSettledFlags` |
 | settled rule | `root` or `largest` (the largest tied set) | `settled_rule` | RECOMMEND_SCOPED | `ringFixSettledSats`, `ringFixLargestSettledSet` |
 | settled wait | a flag rises after N emissions in the set | `settled_wait_emissions` | RECOMMEND_SCOPED | `ringFixSettledWait` (`RingFix.cpp`) |

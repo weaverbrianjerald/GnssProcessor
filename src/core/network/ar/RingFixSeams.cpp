@@ -73,10 +73,12 @@ std::string ringFixStationName(const std::vector<NetStation>& stations, int i) {
 
 void ringFixGatherKeepEvidence(NetworkRingFix& rf, const std::vector<GapResumption>& resumptions) {
     rf.keep_evidence.clear();
-    if (!rf.rehost_keep_carry || !rf.entry_revalidate) return;
-    std::map<RingFixLinkId, RingFixNearNullVerdict> signature;   // the last epoch's code residuals
-    for (const RingFixNearNullVerdict& v : ringFixNearNullVerdicts(ringFixNearNullInputs(rf), rf.nn_tol_gf_m, rf.nn_max_if_m))
-        signature.emplace(v.id, v);
+    if (!rf.rehost_keep_carry || !rf.entryGapChecked()) return;
+    std::map<RingFixLinkId, RingFixNearNullVerdict> signature;   // the last epoch's code residuals (entry_revalidate)
+    if (rf.entry_revalidate)
+        for (const RingFixNearNullVerdict& v :
+             ringFixNearNullVerdicts(ringFixNearNullInputs(rf), rf.nn_tol_gf_m, rf.nn_max_if_m))
+            signature.emplace(v.id, v);
     for (const auto& [id, L] : rf.links) {
         if (!L.held) continue;
         RingFixEntryEvidence ev;   // usable: set by the election from this epoch's latch
@@ -342,6 +344,27 @@ void ringFixArmRehost(NetworkRingFix& rf, const NetworkConfig& nc, const std::sh
 
 /// Simulation only: the slip mask of one arc.
 /// @throws std::runtime_error when the masked arc's station is not in the roster.
+/// The response to a tracking break of a held link's own (network.ring_fix.resume_response), named at run start when on.
+void ringFixArmResume(NetworkRingFix& rf, const NetworkConfig& nc, const std::shared_ptr<spdlog::logger>& log) {
+    const std::string& v = nc.ring_fix.resume_response;
+    rf.resume_response = v == "release"      ? RingFixResumeResponse::Release
+                       : v == "revalidate"   ? RingFixResumeResponse::Revalidate
+                                             : RingFixResumeResponse::Off;
+    if (rf.resume_response == RingFixResumeResponse::Release)
+        log->warn("Network (ring fix): RESUME RESPONSE release: a held link whose own station and satellite resume after "
+                  "a tracking break with a shifted or unmeasured level (the slip layer's gap resumption records of the "
+                  "epoch, on the link's pair or one of its signals) is released in that epoch, before PASS B, cause "
+                  "resume, its carried entries re-opened; a clean measured resumption keeps the hold.");
+    else if (rf.resume_response == RingFixResumeResponse::Revalidate)
+        log->warn("Network (ring fix): RESUME RESPONSE revalidate: such a held link is suspended in that epoch (not held, "
+                  "carried entries re-opened, its integers kept) and held again at them once its own float accepts them "
+                  "at the level {:g} (chi-square, two degrees of freedom, formal covariance times sigma_scale^2) and the "
+                  "odds rule decides them, at {} consecutive decision epochs; a rejection while the odds rule decides "
+                  "other integers, the decision window of {:.0f} s without re-validation, a slip, a chain event or a new "
+                  "break give the integers up (cause resume); a clean measured resumption keeps the hold.",
+                  kRingFixResumeLevel, kRingFixPersistEpochs, kRingFixWindowS);
+}
+
 void ringFixArmSlipMask(NetworkRingFix& rf, const NetworkConfig& nc, const std::vector<NetStation>& stations,
                         const std::shared_ptr<spdlog::logger>& log) {
     if (nc.ring_fix.mask_slip_arc.empty()) return;
@@ -380,6 +403,7 @@ void networkRingFixArm(NetworkRun& run) {
     ringFixArmCascades(*rf, nc, log);
     ringFixArmRehost(*rf, nc, log);
     ringFixArmSlipMask(*rf, nc, stations, log);
+    ringFixArmResume(*rf, nc, log);
     ctx.carry.ring_fix = std::move(rf);
 }
 
@@ -569,9 +593,13 @@ int networkRingFixRunEnd(const NetworkRunEndView& v) {
     for (const auto& [r, n] : held_by_ring)
         held_rings += fmt::format("{}ring {}: {}", held_rings.empty() ? "" : ", ", r, n);
     std::string released, refused;
-    for (std::size_t k = 0; k < kRingFixReleaseCount; ++k)
+    for (std::size_t k = 0; k < kRingFixReleaseCount; ++k) {
+        // The resume cause (last) is named only with network.ring_fix.resume_response on: off, the line is unchanged.
+        if (static_cast<RingFixRelease>(k) == RingFixRelease::Resume && rf.resume_response == RingFixResumeResponse::Off)
+            continue;
         released += fmt::format("{}{} {}", k ? ", " : "", ringFixReleaseName(static_cast<RingFixRelease>(k)),
                                 C.released[k]);
+    }
     for (std::size_t k = 0; k < kRingFixRefuseCount; ++k) {
         const auto c = static_cast<RingFixRefuse>(k);
         if (c == RingFixRefuse::Odds && rf.gate_rule != RingFixGateRule::Odds) continue;
@@ -610,10 +638,39 @@ int networkRingFixRunEnd(const NetworkRunEndView& v) {
     }
     // A link that became a tree edge left the held set without a release (the chain pins it).
     const std::string to_tree = C.to_tree > 0 ? fmt::format(" + to tree {}", C.to_tree) : std::string();
+    // An open suspension (network.ring_fix.resume_response "revalidate") is neither held nor released.
+    const long long suspended_end = ringFixActiveCrossings(rf);
+    const std::string suspended = suspended_end > 0 ? fmt::format(" + suspended {}", suspended_end) : std::string();
     log->warn("Network (ring fix): released {} ({}); {} carried entr(ies) re-opened by the release; "
-              "decided {} = released {}{} + held {}: {}.  Refused link-epochs: {}.",
-              rel_total, released, C.carry_reopened, C.decided, rel_total, to_tree, held_end,
-              C.decided == rel_total + C.to_tree + held_end ? "closed" : "NOT CLOSED", refused);
+              "decided {} = released {}{} + held {}{}: {}.  Refused link-epochs: {}.",
+              rel_total, released, C.carry_reopened, C.decided, rel_total, to_tree, held_end, suspended,
+              C.decided == rel_total + C.to_tree + held_end + suspended_end ? "closed" : "NOT CLOSED", refused);
+    if (rf.resume_response != RingFixResumeResponse::Off) {
+        const auto byClass = [&](const char* what, const long long* n) {
+            return fmt::format("{} {} (shifted {}, unmeasured {})", what,
+                               n[static_cast<std::size_t>(RingFixResumeClass::Shifted)]
+                                   + n[static_cast<std::size_t>(RingFixResumeClass::Unmeasured)],
+                               n[static_cast<std::size_t>(RingFixResumeClass::Shifted)],
+                               n[static_cast<std::size_t>(RingFixResumeClass::Unmeasured)]);
+        };
+        long long susp = 0, closed = 0;
+        for (std::size_t k = 0; k < kRingFixResumeClassCount; ++k) {
+            susp += C.resume_suspended[k];
+            closed += C.resume_revalidated[k] + C.resume_contradicted[k] + C.resume_expired[k] + C.resume_ended[k];
+        }
+        const std::string tail =
+            rf.resume_response == RingFixResumeResponse::Release
+                ? byClass("released", C.resume_released)
+                : fmt::format("{}; of them {}, {}, {}, {}; open at the end {}: {}", byClass("suspended", C.resume_suspended),
+                              byClass("held again", C.resume_revalidated),
+                              byClass("contradicted", C.resume_contradicted), byClass("expired", C.resume_expired),
+                              byClass("ended", C.resume_ended), suspended_end,
+                              susp == closed + suspended_end ? "closed" : "NOT CLOSED");
+        log->warn("Network (ring fix, resume response {}): {} clean resumption(s) on held links kept; {}; {} at a missing "
+                  "carry; the first links: {}.",
+                  ringFixResumeResponseName(rf.resume_response), C.resume_kept_clean, tail, C.resume_fresh,
+                  C.resume_links.text(linkText));
+    }
     // The first links refused by each cause (card CNN corrections item 7); one line per cause that refused any.
     for (std::size_t k = 0; k < kRingFixRefuseCount; ++k) {
         const BoundedTally<RingFixNamedLink>& t = C.refused_links[k];
@@ -685,13 +742,13 @@ int networkRingFixRunEnd(const NetworkRunEndView& v) {
                       L.first_tow, L.last_tow);
         }
     }
-    if (rf.entry_revalidate)
+    if (rf.entryGapChecked())
         log->warn("Network (ring fix, entry re-validation): {} cut(s) on a band whose entry link was a usable held link; "
                   "{} taken as a known step; {} refused: {} with the held pair not measured across a gap, {} shifted "
                   "across it, {} for the near-null signature (their steps unknown, the crossing links released).",
                   C.entry_checked, C.entry_known, C.entry_checked - std::min(C.entry_checked, C.entry_known),
                   C.entry_refused_unchecked, C.entry_refused_shifted, C.entry_refused_signature);
-    if (rf.entry_revalidate && rf.rehost_keep_carry)
+    if (rf.entryGapChecked() && rf.rehost_keep_carry)
         log->warn("Network (ring fix, entry re-validation of kept re-hosts): {} re-host(s) onto a usable held link "
                   "checked (per band); {} kept at a step of 0; {} refused: {} with the held pair not measured across a "
                   "gap, {} shifted across it, {} for the near-null signature (released as without the option).",

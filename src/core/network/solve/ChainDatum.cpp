@@ -1696,12 +1696,12 @@ std::optional<long long> chainHeldInteger(const ChainElection& el, const ChainBa
         const bool first = chainBandSignalOf(el, band.key.sys, id.sig1) == band.signal;
         if (!first && chainBandSignalOf(el, band.key.sys, id.sig2) != band.signal) continue;
         RingFixEntryEvidence ev;
-        if (rf->entry_revalidate)
+        const bool checked = rf->entryGapChecked();   // entry_revalidate, or resume_response's gap part
+        if (checked)
             if (const auto ke = rf->keep_evidence.find(id); ke != rf->keep_evidence.end()) ev = ke->second;
         ev.usable = chainHeldLinkUsable(el, id, L);
-        const RingFixEntryVerdict v = chainEntryStep(ChainEntryKind::KeepCarry, ev, rf->entry_revalidate,
-                                                     rf->nn_max_if_m);
-        if (rf->entry_revalidate && ev.usable) ringFixCountKeepCheck(*rf, id, v);
+        const RingFixEntryVerdict v = chainEntryStep(ChainEntryKind::KeepCarry, ev, checked, rf->nn_max_if_m);
+        if (checked && ev.usable) ringFixCountKeepCheck(*rf, id, v);
         if (v != RingFixEntryVerdict::Known) return std::nullopt;
         return first ? L.n1 : L.n2;
     }
