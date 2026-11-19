@@ -746,13 +746,19 @@ add_executable(gnss_tests
     tests/test_sbf.cpp
     tests/test_estimation_core.cpp
     tests/test_ils_core.cpp
+    tests/test_ar_ils_core.cpp
+    tests/test_ar_fixable_subset.cpp
     tests/test_ils_decorrelated_partial.cpp
     tests/test_wl_only_ffr.cpp
     tests/test_nl_search_row.cpp
     tests/test_ar_float_widelane.cpp
     tests/test_ar_wl_branch.cpp
+    tests/test_ar_wl_branch_reasons.cpp
+    tests/test_ar_wl_arc_success_rate.cpp
     tests/test_ar_extra_signals.cpp
     tests/test_ar_hold_release.cpp
+    tests/test_ar_hold_misfit.cpp
+    tests/test_kf_pseudo_update_repeat.cpp
     tests/test_fix_and_hold.cpp
     tests/test_signal_math.cpp
     tests/test_geometry.cpp
