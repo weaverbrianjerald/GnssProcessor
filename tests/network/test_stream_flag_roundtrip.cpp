@@ -416,11 +416,21 @@ TEST(StreamFlagRoundTrip, AFilledRecordCarriesItsSourceFlagsUntilTheStampRewrite
 // ---- The phase-family member copy ---------------------------------------------------------------
 
 // A phase-family member repeats its identity's record, both flags included, in the solution
-// (before the push) and again in the emitter's store record, so the live store and the replayed
-// file agree: with the Galileo family L1C / L5Q held and E11 settled on L1C only, the member
-// L1X arrives as 1 / 1 and L5X as 0 / 1.  The stamp runs before the member copy, as in the
-// network; a member is never a held family's own signal.  Fails if either copy stops carrying
-// the identity's flags.
+// (before the push), and the emitter's store record repeats the identity's signal integer flag
+// once more, so the live store and the replayed file agree: with the Galileo family L1C / L5Q
+// held and E11 settled on L1C only, the member L1X arrives as 1 / 1 and L5X as 0 / 1.  The
+// stamp runs before the member copy, as in the network; a member is never a held family's own
+// signal.
+//
+// The two copies are told apart by giving the live emitter a solution whose member flags were
+// turned to the opposite of the identity's after the solution copy: the live store must still
+// carry the identity's signal integer flag, which only the emitter's own copy can put there.  A
+// second emitter without the member table, fed the same solution, shows the turned flags do
+// reach the emitter (the check is not satisfied by the solution copy alone).  The emitter's copy
+// carries the signal integer flag and the counter, not the wide-lane indicator, so only the
+// signal integer flag is compared there.  Fails if the solution copy stops carrying either flag
+// (the file and the replayed store), or the emitter's member copy stops carrying the identity's
+// signal integer flag (the live store).
 TEST(StreamFlagRoundTrip, AFamilyMemberArrivesWithItsIdentitysFlags) {
     NetworkRingFix rf;
     rf.pairs.insert({"E", "L1C", "L5Q"});
@@ -432,25 +442,46 @@ TEST(StreamFlagRoundTrip, AFamilyMemberArrivesWithItsIdentitysFlags) {
     const PhaseFamilyTable families = galileoFamilies();
     EXPECT_EQ(networkPhaseFamilyMemberRecords(families, sol), 2u);
 
-    NetworkProductEmitter emitter;
-    emitter.setPhaseFamilyMembers({{{'E', "L1X"}, "L1C"}, {{'E', "L5X"}, "L5Q"}});
-    SsrCorrectionStore live;
-    emitter.emitToStore(sol, live);
-
+    // The solution copy, through the file into a fresh store.
     SsrCorrectionStore store;
     const NetworkProductRecord rec = roundTripInto(sol, store, "member.txt");
     expectArrived(rec, store, "E11", "L1C", true, 1);
     expectArrived(rec, store, "E11", "L5Q", false, 1);
     expectArrived(rec, store, "E11", "L1X", true, 1);
     expectArrived(rec, store, "E11", "L5X", false, 1);
+
+    // The emitter's copy: the member flags turned against the identity's after the solution copy.
+    NetworkSolutionEpoch turned = sol;
+    NetworkSatSolution*  e11    = nullptr;
+    for (NetworkSatSolution& s : turned.sats)
+        if (s.sat == "E11") e11 = &s;
+    ASSERT_NE(e11, nullptr);
+    ASSERT_EQ(e11->phase_bias.count("L1X"), 1u);
+    ASSERT_EQ(e11->phase_bias.count("L5X"), 1u);
+    e11->phase_bias.at("L1X").signal_integer = false;   // identity L1C says true
+    e11->phase_bias.at("L5X").signal_integer = true;    // identity L5Q says false
+
+    NetworkProductEmitter emitter;
+    emitter.setPhaseFamilyMembers({{{'E', "L1X"}, "L1C"}, {{'E', "L5X"}, "L5Q"}});
+    SsrCorrectionStore live;
+    emitter.emitToStore(turned, live);
+
+    NetworkProductEmitter plain;   // no member table: the member's own record goes through as given
+    SsrCorrectionStore    plain_live;
+    plain.emitToStore(turned, plain_live);
+
     for (const char* sig : {"L1X", "L5X"}) {
         SCOPED_TRACE(std::string("live store ") + sig);
+        const bool identity_flag = std::string(sig) == "L1X";
         const auto a = live.getPhaseBias("E11", sig);
+        const auto p = plain_live.getPhaseBias("E11", sig);
         const auto r = store.getPhaseBias("E11", sig);
         ASSERT_TRUE(a.has_value());
+        ASSERT_TRUE(p.has_value());
         ASSERT_TRUE(r.has_value());
+        EXPECT_EQ(p->signal_integer, !identity_flag) << "the turned flag did not reach the emitter";
+        EXPECT_EQ(a->signal_integer, identity_flag);
         EXPECT_EQ(a->signal_integer, r->signal_integer);
-        EXPECT_EQ(a->wide_lane_integer, r->wide_lane_integer);
     }
 }
 

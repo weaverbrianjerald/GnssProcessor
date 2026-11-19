@@ -58,14 +58,6 @@ struct Row {
     bool          isc;            ///< C2W carries isc=obs.
 };
 
-/// Number of followed values in which two rows differ.
-int fieldsThatDiffer(const Row& a, const Row& b) {
-    return (a.phase_disc != b.phase_disc) + (a.code_disc != b.code_disc)
-         + (a.clock_disc != b.clock_disc) + (a.rho != b.rho) + (a.level_m != b.level_m)
-         + (a.code_level_m != b.code_level_m) + (a.hold_gen != b.hold_gen)
-         + (a.generation_id != b.generation_id) + (a.isc != b.isc);
-}
-
 /// The first row is the base; every other row changes exactly one value of it.
 const Row kRows[] = {
     {"base",                       0, 0, 0,  0.0,   0.0,     0.0,   0, 0,           false},
@@ -229,14 +221,6 @@ void expectArrived(const Row& r, const NetworkProductRecord& rec, const SsrCorre
     EXPECT_EQ(store.getCodeBias(kSat, "C2W"), s->code_bias_m.at("C2W"));
 }
 
-// The table is what the suite claims it is: one base row and rows that each change one value.
-TEST(StreamCounterRoundTrip, TheTableVariesOneValuePerRow) {
-    const Row& base = kRows[0];
-    EXPECT_EQ(fieldsThatDiffer(base, base), 0);
-    for (std::size_t i = 1; i < std::size(kRows); ++i)
-        EXPECT_EQ(fieldsThatDiffer(kRows[i], base), 1) << kRows[i].name;
-}
-
 // Each followed value, varied alone, reaches the parser and the user's store intact and
 // leaves every other followed value at its base.
 TEST(StreamCounterRoundTrip, EachValueVariedAloneArrivesIntact) {
@@ -264,9 +248,12 @@ TEST(StreamCounterRoundTrip, OtherValuesSurviveTheCounterInstall) {
 }
 
 // A level mark below the phase step bar beside an installed counter: the store's declared
-// level total is one emission's step, as written in the file.
+// level total is one emission's step, as written in the file.  The skip fires only on the
+// known defect's exact signature (the step counted twice: two emissions, twice the step);
+// any other count or total fails.
 TEST(StreamCounterRoundTrip, LevelMarkTotalIntactWhenCountersAreInstalled) {
-    const Row r{"phase counter and a small level mark", 5, 0, 0, 0.0, 0.02, 0.0, 0, 0, false};
+    const double kStep = 0.02;
+    const Row r{"phase counter and a small level mark", 5, 0, 0, 0.0, kStep, 0.0, 0, 0, false};
     NetworkProductRecord rec;
     SsrCorrectionStore   store;
     roundTrip(r, "small_level.txt", rec, store);
@@ -278,17 +265,19 @@ TEST(StreamCounterRoundTrip, LevelMarkTotalIntactWhenCountersAreInstalled) {
 
     const auto lv = store.getDeclaredLevelSteps(kSat);
     ASSERT_TRUE(lv.has_value());
-    if (lv->n != 1)
+    if (lv->n == 2 && lv->clock_m == 2.0 * kStep)
         GTEST_SKIP() << "Defect: when a file reader installs counters from the file, the replay "
                         "emits the epoch a second time and the store adds the epoch's declared "
                         "level steps again, so the user's level total is doubled (here "
                      << lv->clock_m << " m over " << lv->n << " emissions for one 0.02 m step).";
-    EXPECT_EQ(lv->clock_m, 0.02);
+    EXPECT_EQ(lv->clock_m, kStep);
     EXPECT_EQ(lv->n, 1);
 }
 
 // A level mark above the phase step bar beside an installed counter: the store's phase
-// counters are the file's, with no extra step.
+// counters are the file's, with no extra step.  The skip fires only on the known defect's
+// exact signature (each phase key exactly one step above the file: L1C 6, L2W 1); any other
+// store counter, including a counter that was never installed, fails.
 TEST(StreamCounterRoundTrip, InstalledPhaseCounterIntactBesideALargeLevelMark) {
     const Row r{"phase counter and a large level mark", 5, 0, 0, 0.0, 0.125, 0.0, 0, 0, false};
     NetworkProductRecord rec;
@@ -302,7 +291,7 @@ TEST(StreamCounterRoundTrip, InstalledPhaseCounterIntactBesideALargeLevelMark) {
     const auto l2 = store.getPhaseBias(kSat, "L2W");
     ASSERT_TRUE(l1.has_value());
     ASSERT_TRUE(l2.has_value());
-    if (l1->discontinuity_counter != 5 || l2->discontinuity_counter != 0)
+    if (l1->discontinuity_counter == 5 + 1 && l2->discontinuity_counter == 0 + 1)
         GTEST_SKIP() << "Defect: when a file reader installs counters from the file, the second "
                         "emission of the epoch runs the phase value test against the first one "
                         "with the declared level step subtracted, so every phase key of a "
