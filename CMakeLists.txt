@@ -586,6 +586,7 @@ add_executable(gnss_tests
     tests/test_rinex_nav_parser.cpp
     tests/test_brdc_clock_apriori.cpp
     tests/test_brdc_apriori_galileo.cpp
+    tests/test_support_synthetic_nav.cpp
     tests/test_rinex_zero_sentinel.cpp
     tests/test_rinex3_blank_prn.cpp
     tests/test_rinex3_phase_shift.cpp
@@ -703,10 +704,13 @@ add_executable(gnss_tests
     tests/network/test_sd_ewl_integer.cpp
     tests/network/test_sd_ewl_station_params.cpp
     tests/test_ssr_store_injection.cpp
+    tests/test_corrections_clock_gap.cpp
+    tests/test_support_ssr_store_fixture.cpp
     tests/test_realtime_seams.cpp
     tests/test_consumer_disc_carry.cpp
     tests/test_pb_step_translate.cpp
     tests/test_ephemeris_jump.cpp
+    tests/test_realtime_reaction_level_ephemeris.cpp
     tests/test_pb_emit_hold.cpp
     tests/test_pb_hold_phase_clock.cpp
     tests/network/test_pb_hold_trip_generation.cpp
@@ -715,6 +719,8 @@ add_executable(gnss_tests
     tests/network/test_wsx_within_station_cross.cpp
     tests/test_phase_visible_monitor.cpp
     tests/test_pb_hold_presence.cpp
+    tests/test_realtime_reaction_generation.cpp
+    tests/test_realtime_reaction_records.cpp
     tests/test_pb_translation_premise.cpp
     tests/test_amb_level_check.cpp
     tests/test_amb_level_arc.cpp
@@ -757,13 +763,19 @@ add_executable(gnss_tests
     tests/test_sbf.cpp
     tests/test_estimation_core.cpp
     tests/test_ils_core.cpp
+    tests/test_ar_ils_core.cpp
+    tests/test_ar_fixable_subset.cpp
     tests/test_ils_decorrelated_partial.cpp
     tests/test_wl_only_ffr.cpp
     tests/test_nl_search_row.cpp
     tests/test_ar_float_widelane.cpp
     tests/test_ar_wl_branch.cpp
+    tests/test_ar_wl_branch_reasons.cpp
+    tests/test_ar_wl_arc_success_rate.cpp
     tests/test_ar_extra_signals.cpp
     tests/test_ar_hold_release.cpp
+    tests/test_ar_hold_misfit.cpp
+    tests/test_kf_pseudo_update_repeat.cpp
     tests/test_fix_and_hold.cpp
     tests/test_signal_math.cpp
     tests/test_geometry.cpp
@@ -790,6 +802,7 @@ add_executable(gnss_tests
     tests/test_otl_sif_source.cpp
     tests/test_otl_translation.cpp
     tests/test_eot20_phase_convention.cpp
+    tests/test_corrections_pole_tide.cpp
     tests/test_antenna_radome_fallback.cpp
     tests/test_antenna_eccentricity.cpp
     tests/test_station_marker_to_arp.cpp
@@ -801,6 +814,7 @@ add_executable(gnss_tests
     tests/test_windup_gap_bridge.cpp
     tests/test_windup_restart_response_config.cpp
     tests/test_windup_restart_targets.cpp
+    tests/test_corrections_windup_continuity.cpp
     tests/network/test_network_param_registry.cpp
     tests/test_gnss_identity.cpp
     tests/test_param_ref.cpp
@@ -927,6 +941,8 @@ add_executable(gnss_tests
     tests/network/test_amb_float_vehicle.cpp
     tests/test_phase_held_basis.cpp
     tests/test_canonical_signal_latch.cpp
+    tests/test_ppp_model_signal_selection.cpp
+    tests/test_ppp_model_band_map.cpp
     tests/test_canonical_signal_station_scope.cpp
     tests/test_canonical_signal_code_follow.cpp
     tests/network/test_mw_detect_pair_scope.cpp
