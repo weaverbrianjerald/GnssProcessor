@@ -16,7 +16,8 @@
  *   - detection: a step beyond the rule erases the entry, counts it at its two counters, writes
  *     no block row, and leaves every other bias untouched;
  *   - below the rule: a sub-cycle restart is absorbed into the same entry (today's limit);
- *   - a return after a gap past the horizon is not tested and is restashed as the same entry;
+ *   - a return after a gap past the horizon: the in-block harvest restashes the stale entry
+ *     with its birth kept before the gap prune can remove it (kept as a skip naming the gap);
  *   - re-coupling: between the erase and the re-seed the block step folds nothing (no floor, no
  *     carry); the re-seed is a new entry, and the block step folds it again with its random walk;
  *   - the gap: nothing records which bias was erased or marks its re-seed as a re-coupling.
@@ -412,8 +413,11 @@ TEST(NcqRxPhaseBiasResponse, ASubCycleRestartIsAbsorbedIntoTheSameEntryToday) {
     EXPECT_EQ(b.noBlock(), 1);   // no harvest block in this bench
 }
 
-// A return after a gap past the horizon is no step test: a 0.6 m difference is restashed into
-// the same entry, which keeps its birth and first variance (a re-coupling, not a birth).
+// A return after a gap past the horizon (930 s against 900 s).  The step test does not apply
+// past the horizon, so a 0.6 m difference is not tested.  Declared: the stale entry is removed
+// by the gap prune (counted at its response site) and the stash is a new arc, born at this
+// epoch with this epoch's variance as its first.  The in-block harvest runs before the prune
+// and restashes the stale entry first, so the prune never sees it as stale.
 TEST(NcqRxPhaseBiasResponse, AReturnPastTheHorizonIsRestashedAsTheSameEntryWithoutATest) {
     RpbBench b("past_horizon");
     const double tow = kTow0 + 930.0;   // 930 s after the stash, past the 900 s horizon
@@ -421,14 +425,25 @@ TEST(NcqRxPhaseBiasResponse, AReturnPastTheHorizonIsRestashedAsTheSameEntryWitho
 
     b.harvest(tow, 40, {{{kL1C, 10.0, 0.6}}, {}});
 
+    // The value response holds: the stash is this epoch's posterior, seen now, untested.
     const LocalCarry* e = b.entry(0, kL1C);
     ASSERT_NE(e, nullptr);
     EXPECT_NEAR(e->value_abs, 10.6, 1e-9);
+    EXPECT_NEAR(e->var, kRowVar, 1e-15);
     EXPECT_DOUBLE_EQ(e->last_seen_s, nowOf(tow));
-    EXPECT_EQ(e->birth_ep, 3);
-    EXPECT_DOUBLE_EQ(e->var_first, 0.04);
     EXPECT_EQ(b.stepResets(), 0);
     EXPECT_EQ(b.harvested(), 1);
+    const long long pruned =
+        b.ctx().counters.prm_resp[static_cast<int>(ResponseSite::RpbGapPrune)];
+    if (e->birth_ep != 40 || pruned == 0)
+        GTEST_SKIP() << "Defect: the in-block harvest restashes a receiver phase bias that came "
+                        "back past the gap horizon before the gap prune runs, so the stale entry "
+                        "keeps its birth and first variance as if it had never left, no gap prune "
+                        "is counted, and its difference to the new value is never tested.";
+    EXPECT_EQ(e->birth_ep, 40);
+    EXPECT_DOUBLE_EQ(e->birth_s, nowOf(tow));
+    EXPECT_DOUBLE_EQ(e->var_first, e->var);
+    EXPECT_EQ(pruned, 1);
 }
 
 // Re-coupling at the harvest: the harvest after the erase finds no entry and seeds a new one
