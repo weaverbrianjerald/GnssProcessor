@@ -4,7 +4,7 @@
 // Included inside configMemberDump() (tests/support/ConfigDump.hpp), where `cfg` is the
 // loaded GnssConfig and `add(name, value)` appends one "name=value" line.
 //
-// 553 public const getters without arguments; 1353 dump statements.
+// 565 public const getters without arguments; 1368 dump statements.
 //
 // Vectors of structs (their size, then every element field by field):
 //   getBaselineConfig.rovers (std::vector<StationConfig>: size, then each element)
@@ -128,6 +128,7 @@ add("getProcessNoise.tropo_gradient", cfg.getProcessNoise().tropo_gradient);
 add("getProcessNoise.phase_clock", cfg.getProcessNoise().phase_clock);
 add("getProcessNoise.acceleration_psd", cfg.getProcessNoise().acceleration_psd);
 add("getProcessNoise.sat_bias", cfg.getProcessNoise().sat_bias);
+add("getProcessNoise.rx_sat_code_bias", cfg.getProcessNoise().rx_sat_code_bias);
 add("getProcessNoise.sat_code_bias", cfg.getProcessNoise().sat_code_bias);
 add("getProcessNoise.sat_phase_bias", cfg.getProcessNoise().sat_phase_bias);
 add("getProcessNoise.sat_clock", cfg.getProcessNoise().sat_clock);
@@ -145,6 +146,7 @@ add("getInitialStd.system_time_offset", cfg.getInitialStd().system_time_offset);
 add("getInitialStd.tropo_gradient", cfg.getInitialStd().tropo_gradient);
 add("getInitialStd.phase_clock", cfg.getInitialStd().phase_clock);
 add("getInitialStd.sat_bias", cfg.getInitialStd().sat_bias);
+add("getInitialStd.rx_sat_code_bias", cfg.getInitialStd().rx_sat_code_bias);
 add("getInitialStd.sat_phase_bias", cfg.getInitialStd().sat_phase_bias);
 add("getInitialStd.sat_clock", cfg.getInitialStd().sat_clock);
 add("getInitialStd.clock_rate", cfg.getInitialStd().clock_rate);
@@ -318,6 +320,7 @@ add("networkResumeDatumRestore", cfg.networkResumeDatumRestore());
 add("networkResumeEmitRestore", cfg.networkResumeEmitRestore());
 add("networkResumeHoldRestore", cfg.networkResumeHoldRestore());
 add("networkResumeChainRestore", cfg.networkResumeChainRestore());
+add("networkResumeChainDump", cfg.networkResumeChainDump());
 add("networkResumeStationRestore", cfg.networkResumeStationRestore());
 add("networkResumeStationRestoreRxCb", cfg.networkResumeStationRestoreRxCb());
 add("networkResumeSignalCanonRestore", cfg.networkResumeSignalCanonRestore());
@@ -677,6 +680,9 @@ add("clockDiscIsbReinflateStd", cfg.clockDiscIsbReinflateStd());
 add("lockSignalsToClockRef", cfg.lockSignalsToClockRef());
 add("requireBiaForSignals", cfg.requireBiaForSignals());
 add("estimateSatBiases", cfg.estimateSatBiases());
+add("estimateRxSatCodeBias", cfg.estimateRxSatCodeBias());
+add("getRxSatCodeBiasSystems", cfg.getRxSatCodeBiasSystems());
+add("getRxSatCodeBiasStore", cfg.getRxSatCodeBiasStore());
 add("estimateSatPhaseBiases", cfg.estimateSatPhaseBiases());
 add("estimateSatClocks", cfg.estimateSatClocks());
 add("promoteSatCodeBias", cfg.promoteSatCodeBias());
@@ -1320,6 +1326,7 @@ add("getNetworkConfig.trace_pb_prehold", cfg.getNetworkConfig().trace_pb_prehold
 add("getNetworkConfig.trace_rpb_states", cfg.getNetworkConfig().trace_rpb_states);
 add("getNetworkConfig.trace_windup_arcs", cfg.getNetworkConfig().trace_windup_arcs);
 add("getNetworkConfig.zwd_event_inflate_m", cfg.getNetworkConfig().zwd_event_inflate_m);
+add("getNetworkConfig.trace_live_record", cfg.getNetworkConfig().trace_live_record);
 add("getNetworkConfig.trace_events", cfg.getNetworkConfig().trace_events);
 add("getNetworkConfig.replay_allow_undeclared_wire", cfg.getNetworkConfig().replay_allow_undeclared_wire);
 add("getNetworkConfig.frame_id", cfg.getNetworkConfig().frame_id);
@@ -1347,6 +1354,14 @@ add("getArMinSuccessRate", cfg.getArMinSuccessRate());
 add("getArMinArcInfo", cfg.getArMinArcInfo());
 add("getArNlMaxPerPairFrac", cfg.getArNlMaxPerPairFrac());
 add("getArNlIonoFreeRow", cfg.getArNlIonoFreeRow());
+add("getArWlFromFloat", cfg.getArWlFromFloat());
+add("getArWlBranchCheck", cfg.getArWlBranchCheck());
+add("getArWlBranchPersistS", cfg.getArWlBranchPersistS());
+add("getArExtraSignals", cfg.getArExtraSignals());
+add("getArPrimaryBands", cfg.getArPrimaryBands());
+add("getArNlSigmaFloorCyc", cfg.getArNlSigmaFloorCyc());
+add("getArHoldReleaseCyc", cfg.getArHoldReleaseCyc());
+add("getArRefloatPartnerSignal", cfg.getArRefloatPartnerSignal());
 add("getArActiveSystems", cfg.getArActiveSystems());
 add("getLoggingConfig.enable_main_log", cfg.getLoggingConfig().enable_main_log);
 add("getLoggingConfig.enable_gnss_config", cfg.getLoggingConfig().enable_gnss_config);
