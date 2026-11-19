@@ -168,7 +168,8 @@ def arm(a):
     fix = f'{RUNS}/_sfr_{a.tag}/fix'
     assert os.path.isdir(fix), fix
     if a.posture == 'golden':
-        base = json.load(open(ROOT + '/config/golden/golden_sim_refound.json', encoding='utf-8'))
+        # the float-vehicle posture of card SFR: the frozen sim lineage since 2026-11-19 (card IRM)
+        base = json.load(open(ROOT + '/config/golden/golden_sim_rf0hv18.json', encoding='utf-8'))
     else:
         base = json.load(open(RUNS + '/_rap_wsx_ctl_s/arm.json', encoding='utf-8'))
     n = 0
