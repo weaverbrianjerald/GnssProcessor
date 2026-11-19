@@ -15,6 +15,7 @@
  *                                   chords, rings and the latch
  *   networkRingFixDecideReadings    every pair-family chord with its readings              RingFixDecideReadings
  *   networkRingFixDecideAudit       the audit of every held link                          RingFixDecideAudit
+ *   networkRingFixDecideLiveHolds   the live record's note of the links and held links
  *   networkRingFixDecideLinks       the decisions and their hold events                   the decision events
  *   networkRingFixDecideCascades    the cascades' readings, decisions and tree edges      RingFixDecideCascades
  *   networkRingFixDecideTrace       network_ring_fix.csv: one row per chord
@@ -27,6 +28,8 @@
  *     settled flags read the watch and request the next moves.
  *   - The audit reads which links are held before the decisions, and the cascades read that set
  *     (a cascade link is decided only on a pair held in this epoch's solve).
+ *   - The live record's note follows the audit and precedes the decisions: it counts the links
+ *     held in this epoch's solve, the set the audit read.
  *   - The trace rows follow the decisions and the cascades, whose outcomes they write.
  *   - The settled flags follow the decisions (a link decided at this epoch counts in this epoch's
  *     sets) and the cascades (the cascade families' sets read the cascade links read now).
@@ -157,6 +160,20 @@ RingFixDecideReadings networkRingFixDecideReadings(NetworkRun& run, const Networ
  * @return The audit's verdicts and the held set before the decisions.
  */
 RingFixDecideAudit networkRingFixDecideAudit(NetworkRun& run, const RingFixDecideReadings& readings);
+
+/**
+ * @brief The live record's note (network.trace_live_record): every pair-family link with a float
+ *        this epoch and whether it is held in this epoch's solve, counted by family, receiver and
+ *        satellite.  These are the rows network_ring_fix.csv writes with a float, "held" where it
+ *        writes that state.  Measure-only; one test when the record is off.
+ *
+ * @param run      The run. Written: run.traces.live_record (its held-links note).
+ * @param ep       The epoch: ep.se.time.
+ * @param readings This epoch's chord readings.
+ * @param audit    The audit: its held set before the decisions.
+ */
+void networkRingFixDecideLiveHolds(NetworkRun& run, const NetworkEpoch& ep, const RingFixDecideReadings& readings,
+                                   const RingFixDecideAudit& audit);
 
 /**
  * @brief The decisions of this epoch (@ref ringFixDecideStep) and a RINGFIX hold (or would_hold)

@@ -55,6 +55,35 @@ void appendOptional(std::string& o, const std::optional<double>& v, int digits) 
     else   o += "null";
 }
 
+/// Appends a field list's names, the hold fields at its end when declared.
+template <std::size_t N>
+void appendFieldNames(std::string& o, const std::array<const char*, N>& names, bool hold_fields) {
+    bool first = true;
+    for (const char* name : names) {
+        if (!first) o += ',';
+        o += liveJsonString(name);
+        first = false;
+    }
+    if (!hold_fields) return;
+    for (const char* name : kLiveHoldFields) {
+        o += ',';
+        o += liveJsonString(name);
+    }
+}
+
+/// Appends ",links,held" from @p counts (zero for a key the fixing did not count), or
+/// ",null,null" when the fixing noted nothing this epoch.
+template <typename Key>
+void appendHoldCounts(std::string& o, const std::map<Key, LiveHoldCount>* counts, const Key& key) {
+    if (counts == nullptr) { o += ",null,null"; return; }
+    const auto hit = counts->find(key);
+    const LiveHoldCount c = hit != counts->end() ? hit->second : LiveHoldCount{};
+    o += ',';
+    o += std::to_string(c.links);
+    o += ',';
+    o += std::to_string(c.held);
+}
+
 /// 1.4826 x the median of @p p (reorders it); no value for an empty pool.
 double robustScale(std::vector<double>& p) {
     if (p.empty()) return kLiveNoValue;
@@ -178,7 +207,15 @@ std::string liveCutUtf8(std::string_view s, std::size_t max_bytes) {
     return std::string(s.substr(0, n));
 }
 
-std::string formatLiveHeader(const std::vector<LiveStation>& stations) {
+void LiveHolds::add(const std::string& family, int station, const std::string& sat, bool held) {
+    const int h = held ? 1 : 0;
+    for (LiveHoldCount* c : {&families[family], &stations[station], &sats[sat]}) {
+        ++c->links;
+        c->held += h;
+    }
+}
+
+std::string formatLiveHeader(const std::vector<LiveStation>& stations, bool hold_fields) {
     std::string o = "{\"kind\":\"header\",\"format\":\"netview-live/1\",\"stations\":[";
     for (std::size_t i = 0; i < stations.size(); ++i) {
         if (i) o += ',';
@@ -191,20 +228,15 @@ std::string formatLiveHeader(const std::vector<LiveStation>& stations) {
         o += '}';
     }
     o += "],\"rx_fields\":[";
-    for (std::size_t k = 0; k < kLiveStationFields.size(); ++k) {
-        if (k) o += ',';
-        o += liveJsonString(kLiveStationFields[k]);
-    }
+    appendFieldNames(o, kLiveStationFields, hold_fields);
     o += "],\"sat_fields\":[";
-    for (std::size_t k = 0; k < kLiveSatelliteFields.size(); ++k) {
-        if (k) o += ',';
-        o += liveJsonString(kLiveSatelliteFields[k]);
-    }
+    appendFieldNames(o, kLiveSatelliteFields, hold_fields);
     o += "]}";
     return o;
 }
 
-std::string formatLiveLine(const LiveEpochLine& L) {
+std::string formatLiveLine(const LiveEpochLine& L, bool hold_fields) {
+    const LiveHolds* holds = L.holds ? &*L.holds : nullptr;
     std::string o;
     o.reserve(L.values ? 64 * (L.values->stations.size() + L.values->satellites.size()) + 256 : 256);
     o += "{\"t\":[";
@@ -245,6 +277,7 @@ std::string formatLiveLine(const LiveEpochLine& L) {
             appendNumber(o, S.max_norm, 2);    o += ',';
             appendNumber(o, S.zwd_m, 4);       o += ',';
             appendNumber(o, S.clk_sd_m, 4);
+            if (hold_fields) appendHoldCounts(o, holds ? &holds->stations : nullptr, static_cast<int>(i));
             o += ']';
         }
         o += "],\"sat\":{";
@@ -258,6 +291,22 @@ std::string formatLiveLine(const LiveEpochLine& L) {
             appendNumber(o, T.clk_m, 4);      o += ',';
             if (T.disc >= 0) o += std::to_string(T.disc);
             else             o += "null";
+            if (hold_fields) appendHoldCounts(o, holds ? &holds->sats : nullptr, T.sat);
+            o += ']';
+        }
+        o += '}';
+    }
+    if (holds && !holds->families.empty()) {
+        o += ",\"fam\":{";
+        bool first = true;
+        for (const auto& [family, c] : holds->families) {
+            if (!first) o += ',';
+            first = false;
+            o += liveJsonString(family);
+            o += ":[";
+            o += std::to_string(c.links);
+            o += ',';
+            o += std::to_string(c.held);
             o += ']';
         }
         o += '}';
@@ -299,17 +348,19 @@ std::vector<LiveStation> liveStationsOf(const std::vector<NetStation>& stations)
 // ---------------------------------------------------------------------------------------
 
 void NetworkLiveRecord::open(const std::filesystem::path& path, const std::vector<LiveStation>& stations,
-                             const std::shared_ptr<spdlog::logger>& log) {
+                             bool hold_fields_on, const std::shared_ptr<spdlog::logger>& log) {
     out.open(path, std::ios::out | std::ios::trunc);
     if (!out) {
         if (log) log->warn("Network: failed to open the live record {}", path.string());
         return;
     }
-    out << formatLiveHeader(stations) << '\n';
+    hold_fields = hold_fields_on;
+    out << formatLiveHeader(stations, hold_fields) << '\n';
     out.flush();
     if (log)
         log->info("Network: live record ENABLED: {} (one line per epoch, flushed at each line, for "
-                  "scripts/netview/netview.py live); measure-only.", path.string());
+                  "scripts/netview/netview.py live{}); measure-only.", path.string(),
+                  hold_fields ? "; with the integer fixing's links and held links" : "");
 }
 
 LiveEpochLine& NetworkLiveRecord::lineFor(const GnssTime& t) {
@@ -345,9 +396,26 @@ void NetworkLiveRecord::noteUser(const GnssTime& t, double err3d_m, const Eigen:
     lineFor(t).user = std::array<double, 4>{err3d_m, enu_m(0), enu_m(1), enu_m(2)};
 }
 
+void NetworkLiveRecord::noteHolds(const GnssTime& t, LiveHolds holds) {
+    if (!on()) return;
+    lineFor(t).holds = std::move(holds);
+}
+
 void NetworkLiveRecord::writeEpoch(const GnssTime& t, LiveEpochValues values) {
     if (!on()) return;
     LiveEpochLine& L = lineFor(t);
+    if (L.holds) {
+        // A satellite the fixing counted keeps its entry when no residual or product named it.
+        for (const auto& entry : L.holds->sats) {
+            const std::string& sat = entry.first;
+            const auto pos = std::lower_bound(values.satellites.begin(), values.satellites.end(), sat,
+                                              [](const LiveSatelliteValues& T, const std::string& s) { return T.sat < s; });
+            if (pos != values.satellites.end() && pos->sat == sat) continue;
+            LiveSatelliteValues T;
+            T.sat = sat;
+            values.satellites.insert(pos, std::move(T));
+        }
+    }
     L.values = std::move(values);
     const auto now = std::chrono::steady_clock::now();
     if (last_epoch_write)
@@ -358,7 +426,7 @@ void NetworkLiveRecord::writeEpoch(const GnssTime& t, LiveEpochValues values) {
 }
 
 void NetworkLiveRecord::writeLine(const LiveEpochLine& line) {
-    out << formatLiveLine(line) << '\n';
+    out << formatLiveLine(line, hold_fields) << '\n';
     out.flush();
     ++lines_written;
 }
@@ -385,7 +453,8 @@ void networkLiveRecordOpen(NetworkRun& run) {
     const std::shared_ptr<spdlog::logger>& log = run.log;
     // ---- End of the bindings ----
     if (!nc.trace_live_record) return;   // arming gate
-    traces.live_record.open(log_dir / "network_live.jsonl", liveStationsOf(stations), log);
+    // The hold fields follow the integer fixing's own arming (its note comes from networkRingFixDecide).
+    traces.live_record.open(log_dir / "network_live.jsonl", liveStationsOf(stations), nc.ring_fix.enable, log);
 }
 
 void networkLiveRecord(NetworkRun& run, const NetworkEpoch& ep) {

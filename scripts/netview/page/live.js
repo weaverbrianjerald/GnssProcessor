@@ -86,6 +86,7 @@ function applyAdd(add) {
   const m = M_();
   const lists = { sats: m.sats, tiers: m.events.tiers, names: m.events.names, actions: m.events.actions, dispositions: m.dispositions };
   for (const [k, list] of Object.entries(lists)) for (const x of add[k] || []) if (!list.includes(x)) list.push(x);
+  for (const f of add.families || []) if (!m.families.some(g => g.key === f.key)) m.families.push(f);   // the fixing's families
   if (add.stations && !m.stations.length) m.stations = add.stations;   // an engine's header read after the page opened
   if (add.ranges) m.ranges = add.ranges;
   if (add.scale_kinds) m.scale_kinds = add.scale_kinds;

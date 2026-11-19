@@ -10,6 +10,7 @@
 #include "network/ar/ArcGraph.hpp"            // arcgraph::Dsu, CycleTerm, CycleLattice
 #include "network/assembly/Contributions.hpp" // ContributionKind (the phase rows of a residual)
 #include "network/assembly/RowClassify.hpp"   // rowTagAt, rowClassOfKind, rowObservationCode (the guard's code rows)
+#include "network/diag/LiveRecord.hpp"        // LiveHolds (the live record's held links)
 #include "network/diag/RunTraces.hpp"
 #include "network/driver/Epoch.hpp"
 #include "network/driver/Run.hpp"
@@ -550,6 +551,25 @@ RingFixDecideAudit networkRingFixDecideAudit(NetworkRun& run, const RingFixDecid
         held_before[o.id] = it != rf.links.end() && it->second.held;
     }
     return out;
+}
+
+void networkRingFixDecideLiveHolds(NetworkRun& run, const NetworkEpoch& ep, const RingFixDecideReadings& readings,
+                                   const RingFixDecideAudit& audit) {
+    // ---- From the run and the epoch ----
+    NetworkRunTraces& traces = run.traces;   // written: the live record's held-links note
+    const GnssTime& t = ep.se.time;
+    const std::vector<RingFixDecideObs>& links = readings.links;
+    const std::map<RingFixLinkId, bool>& held_before = audit.held_before;
+    // ---- End of the bindings ----
+    if (!traces.live_record.on()) return;
+    LiveHolds holds;
+    for (const RingFixDecideObs& o : links) {
+        if (!o.have_float) continue;
+        const auto h = held_before.find(o.id);
+        holds.add(o.id.sat.substr(0, 1) + "|" + o.id.sig1 + "+" + o.id.sig2, o.id.station, o.id.sat,
+                  h != held_before.end() && h->second);
+    }
+    traces.live_record.noteHolds(t, std::move(holds));
 }
 
 std::vector<RingFixEvent> networkRingFixDecideLinks(NetworkRun& run, const NetworkEpoch& ep,

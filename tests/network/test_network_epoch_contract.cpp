@@ -421,6 +421,9 @@ using SigRingFixDecideReadings = RingFixDecideReadings (*)(NetworkRun&, const Ne
 static_assert(std::is_same_v<decltype(static_cast<SigRingFixDecideReadings>(&networkRingFixDecideReadings)), SigRingFixDecideReadings>);
 using SigRingFixDecideAudit = RingFixDecideAudit (*)(NetworkRun&, const RingFixDecideReadings&);   // run only
 static_assert(std::is_same_v<decltype(static_cast<SigRingFixDecideAudit>(&networkRingFixDecideAudit)), SigRingFixDecideAudit>);
+using SigRingFixDecideLiveHolds = void (*)(NetworkRun&, const NetworkEpoch&, const RingFixDecideReadings&,
+                                           const RingFixDecideAudit&);   // the live record's note, measure-only
+static_assert(std::is_same_v<decltype(static_cast<SigRingFixDecideLiveHolds>(&networkRingFixDecideLiveHolds)), SigRingFixDecideLiveHolds>);
 using SigRingFixDecideLinks = std::vector<RingFixEvent> (*)(NetworkRun&, const NetworkEpoch&, const RingFixDecideReadings&);
 static_assert(std::is_same_v<decltype(static_cast<SigRingFixDecideLinks>(&networkRingFixDecideLinks)), SigRingFixDecideLinks>);
 using SigRingFixDecideCascades = RingFixDecideCascades (*)(NetworkRun&, const NetworkEpoch&, const RingFixDecideChain&,

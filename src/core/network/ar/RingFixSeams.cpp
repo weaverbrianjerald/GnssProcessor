@@ -475,6 +475,7 @@ void networkRingFixDecide(NetworkRun& run, const NetworkEpoch& ep) {
     const RingFixDecideChain chain = networkRingFixDecideChain(run, ep);
     const RingFixDecideReadings readings = networkRingFixDecideReadings(run, ep, chain);
     const RingFixDecideAudit audit = networkRingFixDecideAudit(run, readings);
+    networkRingFixDecideLiveHolds(run, ep, readings, audit);
     const std::vector<RingFixEvent> decisions = networkRingFixDecideLinks(run, ep, readings);
     const RingFixDecideCascades cascades = networkRingFixDecideCascades(run, ep, chain, audit);
     networkRingFixDecideTrace(run, ep, readings, audit, decisions, cascades);

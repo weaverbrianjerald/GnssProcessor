@@ -12,14 +12,20 @@
  * code and phase RMS, its satellites, the robust scale of its normalized code residuals, its
  * largest normalized residual, its wet delay and its clock sigma, per satellite its post-fit
  * code RMS, its receivers, its emitted clock and its discontinuity count, the held-out user's
- * position error and every event of the epoch.  About 8 KB per epoch for 56 receivers.  The
- * monitor classifies the events (cycle slip, quality test, alarm) from their tiers, as the
- * dashboard does, so the classification has one owner.
+ * position error and every event of the epoch; with the integer fixing armed, per family,
+ * receiver and satellite the links that are not tree links and how many of them are held at
+ * whole numbers.  About 8 KB per epoch for 56 receivers.  The monitor classifies the events
+ * (cycle slip, quality test, alarm) from their tiers, as the dashboard does, so the
+ * classification has one owner.
  *
- * Three notes and one observer build an epoch's line:
+ * Four notes and one observer build an epoch's line:
  *   - NetworkRunTraces::emitEpochStatus notes how the epoch ended (every processed epoch,
  *     a skipped one included, reaches one disposition site);
  *   - NetworkRunTraces::emitEvent notes each event;
+ *   - networkRingFixDecide notes the integer fixing's links, with network.ring_fix armed: each
+ *     link with a float this epoch and whether it is held in this epoch's solve (the state
+ *     network_ring_fix.csv calls "held"; its stage networkRingFixDecideLiveHolds in
+ *     network/ar/RingFixDecide.cpp);
  *   - networkEmitStore notes the held-out user's position error;
  *   - the observer @ref GnssProcessor::networkLiveRecord "networkLiveRecord" (slot StashTail,
  *     network/driver/EpochObservers.hpp) adds the receivers and the satellites and writes the
@@ -38,12 +44,17 @@
  *    "user":[0.0123,0.0041,-0.0062,0.0098],"wall_ms":812,
  *    "rx":[[0.2511,0.00102,12,0.291,4.12,0.1432,0.0081],null,...],
  *    "sat":{"E01":[0.2310,40,1234.5678,3],...},
+ *    "fam":{"E|L1X+L5X":[212,180],"G|L1C+L2W":[431,402]},
  *    "ev":[["T1_if_slip","slip","G05","ABMF00GLP","reset","detail",1.23,0.5],...]}
  * @endcode
  * The header comes first, written once at setup by networkLiveRecordOpen; @c rx holds one
  * entry per header station, in the header's order, @c null for a station not in the solve;
  * @c sat is keyed by satellite id.  The field lists are @ref kLiveStationFields and
- * @ref kLiveSatelliteFields.
+ * @ref kLiveSatelliteFields.  With the integer fixing armed (network.ring_fix.enable) both
+ * lists end with @ref kLiveHoldFields: every receiver and satellite entry then ends with its
+ * links and its held links (both @c null on an epoch the fixing noted nothing, as at ignition
+ * before the chain's record is armed), and @c fam gives the two counts per family.  Without
+ * the fixing the header and the lines carry neither.
  *
  * Measure-only.  Nothing the solve or the wire reads is written; the residuals are formed
  * from the solved state exactly as the post-fit pass forms them (network/diag/FrameDiag.cpp),
@@ -62,6 +73,7 @@
 #include <filesystem>
 #include <fstream>
 #include <limits>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -91,6 +103,37 @@ inline constexpr std::array<const char*, 7> kLiveStationFields = {
 /// The header's names of a satellite entry's values, in their order in a line's @c sat entry.
 inline constexpr std::array<const char*, 4> kLiveSatelliteFields = {
     "code_rms_m", "n_rx", "clk_m", "disc"};
+
+/// The names both field lists end with when the integer fixing is armed: the entry's links that
+/// are not tree links and have a float this epoch, and how many of them are held at whole
+/// numbers in this epoch's solve.
+inline constexpr std::array<const char*, 2> kLiveHoldFields = {"fix_links", "fix_held"};
+
+/// The integer fixing's links of one family, receiver or satellite in an epoch.
+struct LiveHoldCount {
+    int links{0};   ///< Links that are not tree links, with a float this epoch.
+    int held{0};    ///< Of them, the links held at whole numbers in this epoch's solve.
+};
+
+/**
+ * @brief The integer fixing's links of an epoch, counted by family, receiver and satellite:
+ *        the counts the dashboard takes from network_chain_frame.csv (the links) and
+ *        network_ring_fix.csv (their state).
+ */
+struct LiveHolds {
+    std::map<std::string, LiveHoldCount> families;   ///< By family ("G|L1C+L2W": system letter, band-1 and band-2 signals).
+    std::map<int, LiveHoldCount>         stations;   ///< By roster index (the header's order).
+    std::map<std::string, LiveHoldCount> sats;       ///< By satellite id.
+
+    /**
+     * @brief Counts one link in its family, its receiver and its satellite.
+     * @param family  The link's family ("G|L1C+L2W").
+     * @param station Its receiver's roster index.
+     * @param sat     Its satellite ("G05").
+     * @param held    Whether it is held at whole numbers in this epoch's solve.
+     */
+    void add(const std::string& family, int station, const std::string& sat, bool held);
+};
 
 /// A receiver of the header: its name and its geodetic position (degrees).
 struct LiveStation {
@@ -151,6 +194,7 @@ struct LiveEpochLine {
     std::optional<int> n_clock_sats;            ///< Registered satellite clocks, from the status row.
     std::optional<std::array<double, 4>> user;  ///< Held-out user error: 3D, east, north, up (m).
     std::vector<LiveEvent> events;              ///< The events noted for the epoch.
+    std::optional<LiveHolds> holds;             ///< The integer fixing's links (absent: not noted this epoch).
     std::optional<LiveEpochValues> values;      ///< The observer's part (absent on a skipped epoch).
     std::optional<double> wall_ms;              ///< Wall time since the previous observer-written line (ms).
 };
@@ -173,17 +217,22 @@ std::string liveCutUtf8(std::string_view s, std::size_t max_bytes);
 
 /**
  * @brief The header line (no newline): the format, the receivers and the field lists.
- * @param stations The network's receivers, in the order of every line's @c rx entries.
+ * @param stations    The network's receivers, in the order of every line's @c rx entries.
+ * @param hold_fields Whether both field lists end with @ref kLiveHoldFields (the integer
+ *                    fixing armed).
  * @return The JSON object.
  */
-std::string formatLiveHeader(const std::vector<LiveStation>& stations);
+std::string formatLiveHeader(const std::vector<LiveStation>& stations, bool hold_fields);
 
 /**
  * @brief An epoch's line (no newline).
- * @param line The epoch's notes and the observer's values.
+ * @param line        The epoch's notes and the observer's values.
+ * @param hold_fields Whether the header declared @ref kLiveHoldFields: every receiver and
+ *                    satellite entry then ends with its two counts, @c null when the fixing
+ *                    noted nothing this epoch.
  * @return The JSON object.
  */
-std::string formatLiveLine(const LiveEpochLine& line);
+std::string formatLiveLine(const LiveEpochLine& line, bool hold_fields);
 
 /**
  * @brief The header's receivers: each station's name and its geodetic latitude and longitude.
@@ -203,11 +252,12 @@ std::vector<LiveStation> liveStationsOf(const std::vector<NetStation>& stations)
 struct NetworkLiveRecord {
     /**
      * @brief Opens the stream (truncating) and writes the header line.
-     * @param path     The file (`<log dir>/network_live.jsonl`).
-     * @param stations The header's receivers.
-     * @param log      Logger for the opened / failed line.
+     * @param path        The file (`<log dir>/network_live.jsonl`).
+     * @param stations    The header's receivers.
+     * @param hold_fields Whether the header declares @ref kLiveHoldFields (network.ring_fix.enable).
+     * @param log         Logger for the opened / failed line.
      */
-    void open(const std::filesystem::path& path, const std::vector<LiveStation>& stations,
+    void open(const std::filesystem::path& path, const std::vector<LiveStation>& stations, bool hold_fields,
               const std::shared_ptr<spdlog::logger>& log);
 
     /// @brief Whether the record is armed and its stream open.
@@ -247,7 +297,16 @@ struct NetworkLiveRecord {
     void noteUser(const GnssTime& t, double err3d_m, const Eigen::Vector3d& enu_m);
 
     /**
-     * @brief Adds the observer's values to the epoch's line and writes it (flushed).
+     * @brief Notes the integer fixing's links of an epoch (from networkRingFixDecide).
+     * @param t     The epoch.
+     * @param holds The links with a float this epoch, counted by family, receiver and satellite.
+     */
+    void noteHolds(const GnssTime& t, LiveHolds holds);
+
+    /**
+     * @brief Adds the observer's values to the epoch's line and writes it (flushed).  A
+     *        satellite the fixing counted that neither a residual nor the products named gets
+     *        an entry with its counts alone.
      * @param t      The epoch.
      * @param values The receivers, the satellites and the network sigma0.
      */
@@ -257,6 +316,7 @@ struct NetworkLiveRecord {
     void close();
 
     std::ofstream out;                       ///< The stream (closed unless armed).
+    bool hold_fields{false};                 ///< The header declared kLiveHoldFields (the integer fixing armed).
     std::optional<LiveEpochLine> pending;    ///< The line of the epoch being noted.
     std::optional<std::chrono::steady_clock::time_point> last_epoch_write;  ///< When the observer last wrote a line.
     long long lines_written{0};              ///< Epoch lines written (the header not counted).

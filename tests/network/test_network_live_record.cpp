@@ -3,7 +3,8 @@
  * @brief The live record (network/diag/LiveRecord.hpp): its JSON writer, the header and epoch
  *        lines, and the order in which the notes and the observer write an epoch's line (a
  *        skipped epoch written at the next epoch's first note, a late note as a second line,
- *        a pending line at close, nothing while closed).
+ *        a pending line at close, nothing while closed); the integer fixing's links and held
+ *        links (the hold fields, the per-family counts, a satellite only the fixing counted).
  */
 
 #include "network/diag/LiveRecord.hpp"
@@ -92,13 +93,63 @@ TEST(NetworkLiveRecord, CutKeepsWholeUtf8Characters) {
 }
 
 TEST(NetworkLiveRecord, HeaderNamesTheStationsAndTheFields) {
-    const std::string h = formatLiveHeader({{"ABMF00GLP", 16.262321, -61.527531}, {"WTZZ00DEU", 49.144, 12.879}});
+    const std::string h = formatLiveHeader({{"ABMF00GLP", 16.262321, -61.527531}, {"WTZZ00DEU", 49.144, 12.879}},
+                                           false);
     EXPECT_EQ(h,
               "{\"kind\":\"header\",\"format\":\"netview-live/1\",\"stations\":["
               "{\"name\":\"ABMF00GLP\",\"lat\":16.26232,\"lon\":-61.52753},"
               "{\"name\":\"WTZZ00DEU\",\"lat\":49.144,\"lon\":12.879}],"
               "\"rx_fields\":[\"code_rms_m\",\"phase_rms_m\",\"n_sats\",\"code_scale\",\"max_norm\",\"zwd_m\",\"clk_sd_m\"],"
               "\"sat_fields\":[\"code_rms_m\",\"n_rx\",\"clk_m\",\"disc\"]}");
+}
+
+TEST(NetworkLiveRecord, HeaderWithTheFixingArmedEndsBothListsWithTheHoldFields) {
+    EXPECT_EQ(formatLiveHeader({{"ABMF00GLP", 16.262321, -61.527531}}, true),
+              "{\"kind\":\"header\",\"format\":\"netview-live/1\",\"stations\":["
+              "{\"name\":\"ABMF00GLP\",\"lat\":16.26232,\"lon\":-61.52753}],"
+              "\"rx_fields\":[\"code_rms_m\",\"phase_rms_m\",\"n_sats\",\"code_scale\",\"max_norm\",\"zwd_m\",\"clk_sd_m\","
+              "\"fix_links\",\"fix_held\"],"
+              "\"sat_fields\":[\"code_rms_m\",\"n_rx\",\"clk_m\",\"disc\",\"fix_links\",\"fix_held\"]}");
+}
+
+TEST(NetworkLiveRecord, HoldsCountEachLinkInItsFamilyReceiverAndSatellite) {
+    LiveHolds h;
+    h.add("G|L1C+L2W", 0, "G05", true);
+    h.add("G|L1C+L2W", 1, "G05", false);
+    h.add("E|L1X+L5X", 0, "E11", true);
+    EXPECT_EQ(h.families.at("G|L1C+L2W").links, 2);
+    EXPECT_EQ(h.families.at("G|L1C+L2W").held, 1);
+    EXPECT_EQ(h.families.at("E|L1X+L5X").links, 1);
+    EXPECT_EQ(h.families.at("E|L1X+L5X").held, 1);
+    EXPECT_EQ(h.stations.at(0).links, 2);
+    EXPECT_EQ(h.stations.at(0).held, 2);
+    EXPECT_EQ(h.stations.at(1).links, 1);
+    EXPECT_EQ(h.stations.at(1).held, 0);
+    EXPECT_EQ(h.sats.at("G05").links, 2);
+    EXPECT_EQ(h.sats.at("G05").held, 1);
+    EXPECT_EQ(h.sats.at("E11").links, 1);
+}
+
+TEST(NetworkLiveRecord, EpochLineWithHoldFieldsCarriesTheCounts) {
+    LiveEpochLine L;
+    L.t = at(345630.0);
+    L.values = sampleValues();
+    LiveHolds h;
+    h.add("G|L1C+L2W", 0, "G05", true);
+    h.add("G|L1C+L2W", 0, "G05", false);
+    h.add("E|L1X+L5X", 0, "E11", true);
+    L.holds = h;
+    EXPECT_EQ(formatLiveLine(L, true),
+              "{\"t\":[2419,345630],\"s0\":[0.2881,0.1755],"
+              "\"rx\":[[0.2511,0.00102,12,0.291,4.12,0.1432,0.0081,3,2],null],"
+              "\"sat\":{\"G05\":[0.231,40,null,null,2,1]},"
+              "\"fam\":{\"E|L1X+L5X\":[1,1],\"G|L1C+L2W\":[2,1]}}");
+    // Declared in the header, but the fixing noted nothing this epoch: both counts are null.
+    L.holds.reset();
+    EXPECT_EQ(formatLiveLine(L, true),
+              "{\"t\":[2419,345630],\"s0\":[0.2881,0.1755],"
+              "\"rx\":[[0.2511,0.00102,12,0.291,4.12,0.1432,0.0081,null,null],null],"
+              "\"sat\":{\"G05\":[0.231,40,null,null,null,null]}}");
 }
 
 TEST(NetworkLiveRecord, EpochLineCarriesEveryPartAndNullsWhatIsAbsent) {
@@ -111,7 +162,7 @@ TEST(NetworkLiveRecord, EpochLineCarriesEveryPartAndNullsWhatIsAbsent) {
     L.wall_ms = 812.04;
     L.values = sampleValues();
     L.events.push_back({"T1_if_slip", "slip", "G05", "ABMF00GLP", "reset", "k=4 \"q\"", 1.234567891, std::nullopt});
-    EXPECT_EQ(formatLiveLine(L),
+    EXPECT_EQ(formatLiveLine(L, false),
               "{\"t\":[2419,345630],\"disp\":\"emitted\",\"npres\":56,\"nclk\":61,\"s0\":[0.2881,0.1755],"
               "\"user\":[0.0123,0.0041,-0.0062,0.0098],\"wall_ms\":812,"
               "\"rx\":[[0.2511,0.00102,12,0.291,4.12,0.1432,0.0081],null],"
@@ -123,13 +174,13 @@ TEST(NetworkLiveRecord, SkippedLineHasOnlyItsNotes) {
     LiveEpochLine L;
     L.t = at(345660.5);
     L.disposition = "sync_skip";
-    EXPECT_EQ(formatLiveLine(L), "{\"t\":[2419,345660.5],\"disp\":\"sync_skip\"}");
+    EXPECT_EQ(formatLiveLine(L, false), "{\"t\":[2419,345660.5],\"disp\":\"sync_skip\"}");
 }
 
 TEST(NetworkLiveRecord, NotesAndObserverWriteOneLinePerEpochInOrder) {
     const fs::path p = freshPath("order");
     NetworkLiveRecord rec;
-    rec.open(p, {{"ABMF00GLP", 16.0, -61.0}, {"WTZZ00DEU", 49.0, 12.0}}, nullptr);
+    rec.open(p, {{"ABMF00GLP", 16.0, -61.0}, {"WTZZ00DEU", 49.0, 12.0}}, false, nullptr);
     ASSERT_TRUE(rec.on());
 
     // Epoch 1: status, an event, then the observer.
@@ -179,11 +230,32 @@ TEST(NetworkLiveRecord, ClosedRecordIgnoresEveryNote) {
 TEST(NetworkLiveRecord, LongDetailIsCut) {
     const fs::path p = freshPath("detail");
     NetworkLiveRecord rec;
-    rec.open(p, {}, nullptr);
+    rec.open(p, {}, false, nullptr);
     rec.noteEvent(at(30.0), "T1_if_slip", "slip", "G05", "X", std::nullopt, std::nullopt, "reset",
                   std::string(500, 'x'));
     ASSERT_TRUE(rec.pending.has_value());
     ASSERT_EQ(rec.pending->events.size(), 1u);
     EXPECT_EQ(rec.pending->events[0].detail.size(), kLiveDetailBytes);
     rec.close();
+}
+
+TEST(NetworkLiveRecord, HoldsNoteGivesASatelliteOnlyTheFixingCountedItsEntry) {
+    const fs::path p = freshPath("holds");
+    NetworkLiveRecord rec;
+    rec.open(p, {{"ABMF00GLP", 16.0, -61.0}, {"WTZZ00DEU", 49.0, 12.0}}, true, nullptr);
+    LiveHolds h;
+    h.add("E|L1X+L5X", 0, "E11", true);   // a satellite no residual names in sampleValues()
+    h.add("G|L1C+L2W", 0, "G05", false);
+    rec.noteHolds(at(30.0), h);
+    rec.writeEpoch(at(30.0), sampleValues());
+    rec.close();
+
+    const std::vector<std::string> lines = readLines(p);
+    ASSERT_EQ(lines.size(), 2u);
+    EXPECT_NE(lines[0].find("\"sat_fields\":[\"code_rms_m\",\"n_rx\",\"clk_m\",\"disc\",\"fix_links\",\"fix_held\"]"),
+              std::string::npos);
+    EXPECT_NE(lines[1].find("\"rx\":[[0.2511,0.00102,12,0.291,4.12,0.1432,0.0081,2,1],null]"), std::string::npos);
+    EXPECT_NE(lines[1].find("\"sat\":{\"E11\":[null,0,null,null,1,1],\"G05\":[0.231,40,null,null,1,0]}"),
+              std::string::npos);
+    EXPECT_NE(lines[1].find("\"fam\":{\"E|L1X+L5X\":[1,1],\"G|L1C+L2W\":[1,0]}"), std::string::npos);
 }

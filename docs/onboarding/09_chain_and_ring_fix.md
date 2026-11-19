@@ -128,7 +128,8 @@ lattice its veto reads, and before `networkSolPrep`, which stamps this decision'
 decided chord is held from the next epoch's PASS B. Its stages
 (`include/network/ar/RingFixDecide.hpp`): `networkRingFixDecideReports`,
 `networkRingFixDecideChain` (`ringFixRings`), `networkRingFixDecideReadings` (`chainChordFloats`),
-`networkRingFixDecideAudit`, `networkRingFixDecideLinks` (`ringFixDecideStep`),
+`networkRingFixDecideAudit`, `networkRingFixDecideLiveHolds` (the live record's note),
+`networkRingFixDecideLinks` (`ringFixDecideStep`),
 `networkRingFixDecideCascades`, `networkRingFixDecideTrace`, `networkRingFixDecideSettled`, and
 `networkRingFixDecideNearNull` last: its moves act on the next epoch.
 
