@@ -10,7 +10,7 @@ references an active file cites. Closed material is in [the record](record/INDEX
   network re-founding (2026-09-14), the program every network card belongs to. The posture,
   the goldens and the baseline pair are in `CLAUDE.md` (section "Network runs: start from a
   golden").
-- [refound/CARDS.md](refound/CARDS.md): the 38 open and parked cards, one entry each, in
+- [refound/CARDS.md](refound/CARDS.md): the 41 open and parked cards, one entry each, in
   pre-registration order.
 - `config/golden/` and `python scripts/make_golden_config.py --verify`: the armed set as
   configurations.
