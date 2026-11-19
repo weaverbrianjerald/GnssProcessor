@@ -1099,7 +1099,7 @@ void tallyCascadeTree(ChainElection& el, const RingFixCascade& c, const ChainFam
 /// The family's components, each with its datum receiver and forest, in component order.  The
 /// connected components come in the order of their roots: under the shared link rule (a station
 /// is united under a satellite, arc by arc) every root is a satellite, so the components come in
-/// the string order of their root satellites; legacyChainVertexRank also orders the second pass's
+/// the string order of their root satellites; chainVertexRank also orders the second pass's
 /// frontier (receivers by the decimal string of their roster index, then satellites).  With
 /// @p lead_rank (a cascade's third band on its pair's forest) the walk takes the lead arcs first.
 ChainFamilyPlan planChainFamily(const ChainElection& el, const ChainFamily& fam, const ChainGraph& cg,
@@ -2639,7 +2639,7 @@ void tallyUntiedMoves(ChainElection& el, const ChainGraph& cg, const ChainFamily
 void electFamily(ChainElection& el, const ChainGroups& groups, const ChainFamily& fam) {
     const ChainGraph cg = buildChainGraph(el, groups, fam);
     const ChainSeeds seeds = seedIncumbents(el, fam, cg);
-    const std::vector<int> chain_rank = arcgraph::legacyChainVertexRank(cg.graph);
+    const std::vector<int> chain_rank = arcgraph::chainVertexRank(cg.graph);
     std::vector<int> station_rank;   // per station slot: the coverage
     for (int s = 0; s < static_cast<int>(cg.graph.stations.size()); ++s)
         station_rank.push_back(chainCoverage(el, fam.sys, cg.staIdx(s)));

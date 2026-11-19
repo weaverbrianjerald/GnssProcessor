@@ -129,7 +129,7 @@ void eq34ShiftCarry(NetworkCarryState& carry, net::NetworkEntities& entities,
  * The graph, its components and the tree are those of network/ar/ArcGraph.hpp:
  * arcgraph::buildArcGraph per family (stations in roster order,
  * satellites in string order, arcs in usable_keys order), arcgraph::arcComponents in
- * the legacy order (arcgraph::legacyChainVertexRank) and arcgraph::growChainForest per
+ * the chain's vertex order (arcgraph::chainVertexRank) and arcgraph::growChainForest per
  * component (roots r1 and the bridged satellites, the live incumbent arcs as the
  * sticky seed).  The pins are recorded by replaying the tree's edges in attachment
  * order after the walk, which is exact because the walk reads nothing a pin writes.

@@ -302,11 +302,16 @@ TEST(NetworkArcGraph, ArcComponentsRootIsASatelliteAndFollowsTheRank) {
     EXPECT_EQ(cycleDimension(natural[0]), 0);
 }
 
-TEST(NetworkArcGraph, LegacyChainVertexRankOrdersRosterIndicesAsStrings) {
+TEST(NetworkArcGraph, ChainVertexRankOrdersRosterIndicesAsStrings) {
+    // The chain's vertex order is part of the datum's definition: these ranks are pinned, and a change
+    // of them is a datum change, not a refactor.
     const ArcGraph g = buildArcGraph(oneBandFamily(), {sta(2), sta(10), sta(1)}, {gps(5), gps(3)}, {});
-    const std::vector<int> rank = legacyChainVertexRank(g);
+    const std::vector<int> rank = chainVertexRank(g);
     // "R1" < "R10" < "R2", then the satellites by slot.
     EXPECT_EQ(rank, (std::vector<int>{2, 1, 0, 3, 4}));
+    // Three-digit and one-digit indices: "100" < "20" < "3" < "9".
+    const ArcGraph h = buildArcGraph(oneBandFamily(), {sta(100), sta(9), sta(20), sta(3)}, {gps(5), gps(3)}, {});
+    EXPECT_EQ(chainVertexRank(h), (std::vector<int>{0, 3, 1, 2, 4, 5}));
 }
 
 // ============================== 3. forests ==============================

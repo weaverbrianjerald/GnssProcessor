@@ -45,12 +45,14 @@
  * classical double difference (N_rj - N_rk) - (N_pj - N_pk).  The integer-id layer keeps the
  * Invariant-carry convention: +1 when an arc is traversed from its lower id to its higher id.
  *
- * ## Legacy orders
+ * ## The chain's vertex order, and one legacy order
  *
- * Two helpers exist only to reproduce pre-migration orders byte for byte:
- * @ref GnssProcessor::arcgraph::legacyChainVertexRank "arcgraph::legacyChainVertexRank" (the eq34 string vertex order) and the
+ * @ref GnssProcessor::arcgraph::chainVertexRank "arcgraph::chainVertexRank" is the chain's declared vertex order
+ * (receivers by the decimal string of their roster index, then satellites by slot).  It is part of the chain
+ * datum's definition, so a change of it is a graded datum change, not a refactor.  One helper pair exists only to
+ * reproduce a pre-migration order byte for byte: the
  * @ref GnssProcessor::arcgraph::ForestRules::stop_at_gap "arcgraph::ForestRules::stop_at_gap" / @c arcgraph::BasisCoverage::ParentOnly pair
- * (tree_basis).  They are deleted when the retired eq34 lineage and tree_basis retire.
+ * (tree_basis), deleted when the retired eq34 lineage and tree_basis retire.
  */
 #include "common/GnssIdentity.hpp"   // System, StationId, SatId, SignalId, ArcId
 
@@ -373,17 +375,19 @@ Component wholeGraph(const ArcGraph& g, std::uint8_t band_mask);
 int cycleDimension(const Component& c);
 
 /**
- * @brief Legacy chain vertex order: receivers by the decimal string of their roster index ("R10"
+ * @brief The chain's vertex order: receivers by the decimal string of their roster index ("R10"
  *        before "R2"), then satellites by slot.
  *
- * Kept for eq34 byte identity until a declared move retires it: the pre-migration walk named its
- * vertices "R<roster index>" and "S<sat>" and rebuilt its pass-2 frontier from a set of those
- * strings.  The caller declares satellites in their string order.
+ * The chain's station order, declared: it fixes the order of the components and the frontier of the
+ * walk's second pass (@ref growChainForest), so it is part of the chain datum's definition, and a
+ * change of it moves the datum (a graded change of its own).  The receivers' string order reproduces
+ * the walk that named its vertices "R<roster index>" and "S<sat>"; a unit test pins it.  The caller
+ * declares satellites in their string order.
  *
  * @param g The graph.
  * @return Per vertex: its rank.
  */
-std::vector<int> legacyChainVertexRank(const ArcGraph& g);
+std::vector<int> chainVertexRank(const ArcGraph& g);
 
 // ---- 3. Spanning forests: two rules, one output type ----------------------------------------------
 

@@ -1826,7 +1826,7 @@ TEST(NetworkArcGraphOracle, GrowChainForestReproducesTheFrozenChainWalk) {
                 rows.push_back(row);
             }
         const ArcGraph g = buildArcGraph(family, station_order, sat_order, rows);
-        const std::vector<int> rank = legacyChainVertexRank(g);
+        const std::vector<int> rank = chainVertexRank(g);
         const std::vector<Component> comps = arcComponents(g, 1, rank);
         ASSERT_EQ(comps.size(), frozen.comps.size()) << "iteration " << it;
         if (comps.size() > 1) ++n_multi;

@@ -420,7 +420,7 @@ int cycleDimension(const Component& c) {
          - static_cast<int>(c.sats.size()) + 1;
 }
 
-std::vector<int> legacyChainVertexRank(const ArcGraph& g) {
+std::vector<int> chainVertexRank(const ArcGraph& g) {
     const std::size_t nst = g.stations.size();
     std::vector<int> by_name(nst);
     for (std::size_t s = 0; s < nst; ++s) by_name[s] = static_cast<int>(s);
