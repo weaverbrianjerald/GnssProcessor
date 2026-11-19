@@ -1596,9 +1596,9 @@ void retakeFirstSightingTarget(ChainElection& el, const ChainBand& band, std::si
 /// side and drops the receiver phase-bias carries of its receivers, and releaseCutCarries erases
 /// the leveling carries that touch it.  The draft's host facts (@c edge_changed) are left as they
 /// are, and its facts are kept in @c d.as_built for the observatory.  The step stays unknown here
-/// whatever the edge's integer: whether a held entry link makes it known is the ring fix's decision,
-/// and only its @c ringFixEntryVerdict makes it (network/ar/RingFix.hpp; re-validated with
-/// network.ring_fix.entry_revalidate).
+/// whatever the edge's integer, by the returning row's rule in @c chainEntryStep (network/ar/RingFix.hpp,
+/// the one owner of a held entry's step); whether a held entry link makes the moved side's step known
+/// across the cut is the ring fix's own case of that decision.
 ///
 /// @param sys  The constellation of the family.
 /// @param d    The draft; replaced in place when the edge is released.
@@ -1624,13 +1624,15 @@ void applyReturningRow(ChainElection& el, System sys, const ChainBand& band, std
     d.released = true;
     retakeFirstSightingTarget(el, band, ri, k.arc, d);
     d.pinmove = 0.0;
-    d.known = false;
+    d.known = chainEntryStep(ChainEntryKind::ReturningRow, RingFixEntryEvidence{}, false, 0.0)
+           == RingFixEntryVerdict::Known;
     d.frame_shiftable = false;
 }
 
 /// Remedy (a) (network.ring_fix.rehost_keep_carry): the integer the ring fix holds on arc (ri, sat) for the band,
 /// when the link is held and usable (held, its residual monitor not tripped, neither of its bands in this epoch's
-/// free-epoch latch); none otherwise, and none without the option.
+/// free-epoch latch) and the one owner of a held entry's step (@c chainEntryStep, keep-carry's rule) takes it as a
+/// known step; none otherwise, and none without the option.
 std::optional<long long> chainHeldInteger(const ChainElection& el, const ChainBand& band, std::size_t ri,
                                           const std::string& sat) {
     const NetworkRingFix* rf = el.ctx.carry.ring_fix.get();
@@ -1640,7 +1642,11 @@ std::optional<long long> chainHeldInteger(const ChainElection& el, const ChainBa
         // A link's signals are its arcs'; the band's is its identity's.
         const bool first = chainBandSignalOf(el, band.key.sys, id.sig1) == band.signal;
         if (!first && chainBandSignalOf(el, band.key.sys, id.sig2) != band.signal) continue;
-        if (!chainHeldLinkUsable(el, id, L)) return std::nullopt;
+        RingFixEntryEvidence ev;
+        ev.usable = chainHeldLinkUsable(el, id, L);
+        if (chainEntryStep(ChainEntryKind::KeepCarry, ev, rf->entry_revalidate, rf->nn_max_if_m)
+            != RingFixEntryVerdict::Known)
+            return std::nullopt;
         return first ? L.n1 : L.n2;
     }
     return std::nullopt;

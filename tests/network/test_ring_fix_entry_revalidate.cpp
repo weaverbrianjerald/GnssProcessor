@@ -93,6 +93,25 @@ TEST(RingFixEntryRevalidate, EveryVerdictHasItsOwnName) {
                                       ringFixEntryVerdictName(RingFixEntryVerdict::Known),
                                       ringFixEntryVerdictName(RingFixEntryVerdict::GapUnchecked),
                                       ringFixEntryVerdictName(RingFixEntryVerdict::GapShifted),
-                                      ringFixEntryVerdictName(RingFixEntryVerdict::Signature)};
-    EXPECT_EQ(names.size(), 5u);
+                                      ringFixEntryVerdictName(RingFixEntryVerdict::Signature),
+                                      ringFixEntryVerdictName(RingFixEntryVerdict::RowUnknown)};
+    EXPECT_EQ(names.size(), 6u);
+}
+
+// The one owner of a held entry's step keeps each asking mechanism's rule: the cut asks the verdict, the returning row
+// never makes a step known, and keep-carry takes a usable link as known whatever the rest of the evidence.
+TEST(RingFixEntryRevalidate, ChainEntryStepKeepsEachMechanismsRule) {
+    RingFixEntryEvidence refused = usableEntry();
+    refused.resumed = true;   // back across a gap, its pair unmeasured
+    for (const bool revalidate : {false, true}) {
+        EXPECT_EQ(chainEntryStep(ChainEntryKind::CutEntry, refused, revalidate, kMaxIf),
+                  ringFixEntryVerdict(refused, revalidate, kMaxIf));
+        EXPECT_EQ(chainEntryStep(ChainEntryKind::ReturningRow, usableEntry(), revalidate, kMaxIf),
+                  RingFixEntryVerdict::RowUnknown);
+        EXPECT_EQ(chainEntryStep(ChainEntryKind::KeepCarry, refused, revalidate, kMaxIf), RingFixEntryVerdict::Known);
+        EXPECT_EQ(chainEntryStep(ChainEntryKind::KeepCarry, RingFixEntryEvidence{}, revalidate, kMaxIf),
+                  RingFixEntryVerdict::NotHeld);
+    }
+    EXPECT_EQ(chainEntryStep(ChainEntryKind::CutEntry, refused, true, kMaxIf), RingFixEntryVerdict::GapUnchecked);
+    EXPECT_EQ(chainEntryStep(ChainEntryKind::CutEntry, refused, false, kMaxIf), RingFixEntryVerdict::Known);
 }

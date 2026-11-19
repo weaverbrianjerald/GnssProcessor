@@ -669,12 +669,12 @@ void networkRingFixHoldEpoch(NetworkRun& run, const NetworkEpoch& ep) {
             const bool usable = h != nullptr && hid != nullptr && !h->monitor_trip
                              && latched.count({r.station, r.sat, r.signal}) == 0;
             const long long n_held = (usable && hid->sig1 == r.signal) ? h->n1 : (usable ? h->n2 : 0);
-            // Whether the entry's held integer is the known step: ringFixEntryVerdict owns it.  Off, a usable
-            // entry is known, as before (network.ring_fix.entry_revalidate).
-            RingFixEntryVerdict verdict = usable ? RingFixEntryVerdict::Known : RingFixEntryVerdict::NotHeld;
+            // Whether the entry's held integer is the known step: chainEntryStep owns it.  Off, a usable entry is
+            // known, as before (network.ring_fix.entry_revalidate); on, its gap and its signature are asked too.
+            RingFixEntryEvidence ev;
+            ev.usable = usable;
+            RingFixEntryVerdict verdict = chainEntryStep(ChainEntryKind::CutEntry, ev, false, rf.nn_max_if_m);
             if (usable && rf.entry_revalidate) {
-                RingFixEntryEvidence ev;
-                ev.usable = true;
                 ev.resumed = c.row == "returning";
                 for (const GapResumption& g : qc.epoch.resumptions) {
                     if (g.station != r.station || g.satellite != r.sat) continue;
@@ -690,7 +690,7 @@ void networkRingFixHoldEpoch(NetworkRun& run, const NetworkEpoch& ep) {
                     ev.signature_k = sg->second.k;
                     ev.signature_if_m = sg->second.dev_if_m;
                 }
-                verdict = ringFixEntryVerdict(ev, true, rf.nn_max_if_m);
+                verdict = chainEntryStep(ChainEntryKind::CutEntry, ev, true, rf.nn_max_if_m);
                 ++rf.counters.entry_checked;
                 switch (verdict) {
                     case RingFixEntryVerdict::Known:        ++rf.counters.entry_known; break;
@@ -698,6 +698,7 @@ void networkRingFixHoldEpoch(NetworkRun& run, const NetworkEpoch& ep) {
                     case RingFixEntryVerdict::GapShifted:   ++rf.counters.entry_refused_shifted; break;
                     case RingFixEntryVerdict::Signature:    ++rf.counters.entry_refused_signature; break;
                     case RingFixEntryVerdict::NotHeld:      break;
+                    case RingFixEntryVerdict::RowUnknown:   break;   // not a cut's verdict
                 }
                 if (verdict != RingFixEntryVerdict::Known && entry_reported.insert(*hid).second)
                     traces.emitEvent(t, "RINGFIX", "entry_refused", r.sat, nameOf(r.station),

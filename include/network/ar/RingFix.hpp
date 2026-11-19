@@ -1110,6 +1110,7 @@ enum class RingFixEntryVerdict : std::uint8_t {
     GapUnchecked,  ///< Refused: the link came back across a gap and its held pair was not measured across it.
     GapShifted,    ///< Refused: the gap re-entry test found the held pair shifted.
     Signature,     ///< Refused: the near-null signature sits at a whole step with a small ionosphere-free deviation.
+    RowUnknown,    ///< The asking mechanism's rule leaves the step unknown whatever the link (the chain's returning row).
 };
 
 /**
@@ -1132,6 +1133,35 @@ RingFixEntryVerdict ringFixEntryVerdict(const RingFixEntryEvidence& e, bool reva
 
 /// @brief The verdict's name for events and logs. @param v The verdict. @return "known", "gap_unchecked", ...
 const char* ringFixEntryVerdictName(RingFixEntryVerdict v);
+
+/// Who asks whether a held entry's step is known (@ref chainEntryStep).
+enum class ChainEntryKind : std::uint8_t {
+    CutEntry,      ///< The ring fix's cut: the entry link that carries a released moved side (@ref ringFixCutStep).
+    ReturningRow,  ///< The chain's returning row: a vertex that rejoins its tree after an absence.
+    KeepCarry,     ///< The chain's rehost row onto a held link (network.ring_fix.rehost_keep_carry).
+};
+
+/**
+ * @brief Whether a held entry's step is known: the one owner of that decision for the three mechanisms that ask it.
+ *
+ * A held link that enters the chain's tree carries its integer as a known step only by this decision (an entry is a
+ * re-coupling, standing invariant 7).  Each mechanism keeps its own rule, side by side here:
+ *  - @c CutEntry: @ref ringFixEntryVerdict (a usable link; with @p revalidate, the gap re-entry test and the near-null
+ *    signature as well);
+ *  - @c ReturningRow: never known (@c RowUnknown): the returning vertex takes its first-sighting target and the walk
+ *    re-references its moved side, while the ring fix's cut re-expresses its held links across it (a different
+ *    object, decided by @c CutEntry);
+ *  - @c KeepCarry: known when the link is usable, whatever the rest of the evidence (the entry check does not reach
+ *    the keep-carry path in this build).
+ *
+ * @param kind        Who asks.
+ * @param e           The entry link's evidence.
+ * @param revalidate  network.ring_fix.entry_revalidate (read by @c CutEntry only).
+ * @param max_if_m    The near-null signature's ionosphere-free bound (network.ring_fix.nn_guard_max_if_m).
+ * @return The verdict; only @c Known makes the step known.
+ */
+RingFixEntryVerdict chainEntryStep(ChainEntryKind kind, const RingFixEntryEvidence& e, bool revalidate,
+                                   double max_if_m);
 
 /// What the cuts of an epoch did to the held links.
 struct RingFixCutOutcome {
