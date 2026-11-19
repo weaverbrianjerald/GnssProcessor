@@ -691,6 +691,7 @@ add_executable(gnss_tests
     tests/network/test_sd_ewl_integer.cpp
     tests/network/test_sd_ewl_station_params.cpp
     tests/test_ssr_store_injection.cpp
+    tests/test_corrections_clock_gap.cpp
     tests/test_support_ssr_store_fixture.cpp
     tests/test_realtime_seams.cpp
     tests/test_consumer_disc_carry.cpp
@@ -785,6 +786,7 @@ add_executable(gnss_tests
     tests/test_otl_sif_source.cpp
     tests/test_otl_translation.cpp
     tests/test_eot20_phase_convention.cpp
+    tests/test_corrections_pole_tide.cpp
     tests/test_antenna_radome_fallback.cpp
     tests/test_antenna_eccentricity.cpp
     tests/test_station_marker_to_arp.cpp
@@ -796,6 +798,7 @@ add_executable(gnss_tests
     tests/test_windup_gap_bridge.cpp
     tests/test_windup_restart_response_config.cpp
     tests/test_windup_restart_targets.cpp
+    tests/test_corrections_windup_continuity.cpp
     tests/network/test_network_param_registry.cpp
     tests/test_gnss_identity.cpp
     tests/test_param_ref.cpp
@@ -910,6 +913,8 @@ add_executable(gnss_tests
     tests/network/test_amb_float_vehicle.cpp
     tests/test_phase_held_basis.cpp
     tests/test_canonical_signal_latch.cpp
+    tests/test_ppp_model_signal_selection.cpp
+    tests/test_ppp_model_band_map.cpp
     tests/test_canonical_signal_station_scope.cpp
     tests/test_canonical_signal_code_follow.cpp
     tests/network/test_mw_detect_pair_scope.cpp
