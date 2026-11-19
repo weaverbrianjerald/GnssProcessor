@@ -111,3 +111,15 @@ The bar as given needs an exact resume of the whole solve (the per-station filte
 **Who runs what.** The build, B0, the unit cases and a 10-epoch smoke of a resumed leg: the chain audit's session. The arms of B2 and B3, their runs and their grading: the second session, on frozen exes named in the report of the build.
 
 **Reading prepared.** B0 to B3 met: the keys stay UNVALIDATED, the result recorded in their ledger rows; whether the integer-fixing configuration arms them is the author's. A bar missed: the record or rule that differs is named and the keys stay off.
+
+### 125.1 2026-11-18: the manager's word on section 125, before any run
+
+**Accepted.** The identity read in three parts (B2a, B2b, B2c, with B0, B1 and B3): the discrete state at the level today's resume can keep, B1 measured first and kept in the section as the reason.
+
+**B4, added before any run: the replay as a proof.** On m1 and on n147, the same leg run twice from one seed is identical in products and every trace (`nom_td_gate.py --whole --mask-time`), and the matched null run twice likewise. This is what makes a leg usable for its two purposes: an identical-output step shown by two legs from one seed on the old and the new engine, and a behaviour check read as event minus null. If two legs from one seed differ, the first difference is located; it is a defect of the resume path, not of the chain.
+
+**Reported with the result, no bar.** For the integer-fixing configuration: how far L's estimates sit from U's at the seam and how long they take to settle (phase biases, clocks, wet delay), beside B1's numbers for the reference configurations; and how many holds and releases L makes at a different epoch than U over the leg (when a leg is fit for a behaviour check after its seam).
+
+**Who runs what** (changes the paragraph of section 125): the runs of B2 to B4 are short (3 h and 1 h), so the chain audit's session runs and grades them, with the tool's chain-grade subcommand and at most three engines at a time; the second session's night holds the five days of section 123 and the beds of section 122.
+
+**Also decided.** An exact resume of the whole solve (the per-station filter state in the snapshot) is not part of this step: it is recorded as an owed design for the author (card CHA part 3, rule change 12). Rule change 11 (the latch without look-ahead) stays the author's open decision; this step saves and restores the latch as registered.
