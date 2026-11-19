@@ -326,3 +326,26 @@ The four fresh runs of the addendum of section 5.2 (`_rap_smx2_kf_{c,A,cn,An}`, 
 3. The trip generation, the floor, and any response to the storm: no further build is proposed by this card.
 
 **Owed.** (a) The consumer moves on the self-contained regimes between `crs2b` and `smx2a` (slip rows, the cold handover, the clock step's drift on `c`) are not attributed; the prior channel is excluded, the other changed keys are not. (b) Stage D read one day's event and its 2 h arms only (no hours 3 to 6, census, second day or sim). (c) Why the control's wire follows the 3 m E34 step 2.72 m on the resumed leg and 0.31 m in the continuous run, after the same deferred trip. (d) Card SMX's version-2 items (the anchor resolved at the event epoch, the `pb` channel's de-commoning, a truth reference for the slant ionosphere) are unchanged. (e) Card SCW section 7's narrowed trigger on this matrix (recommendation 1).
+
+## 7. 2026-11-11: note on section 5.6, the "tracked" clock column
+
+Section 5.6's "tracked" column is not the GPS tracked row. The grader `smx2_d2.py` read `scripts/ftc_step_attrib.py --r3 --systems G,E`, which prints eight "hours 2-6 e_clk" rows per run (GPS, then Galileo; each: all, tracked, all DIFFMEDIAN de-common, tracked DIFFMEDIAN de-common); its "tracked" value is the last of them, the Galileo tracked de-commoned row (0.0089 / 0.0087 / 0.0088 / 0.0094 m, equal to four decimals). Its "all" value is the GPS all-satellite row and is correct. The same fault was found in card L5B6's grader and is described in its section 5 ([L5B6](../../refound/L5B6_l5_six_hour_read_2026-11-10.md), section 5); the author asked for this note on 2026-11-11. Nothing above this section is edited.
+
+The four runs re-graded with a parser keyed on each row's `[system X]` block and section header (card L5B6 section 5), hours 2-6 row (the run's hour 2), metres:
+
+| arm | GPS all | GPS tracked | GPS all, de-commoned | GPS tracked, de-commoned | Galileo tracked, de-commoned (section 5.6's "tracked") |
+| --- | --- | --- | --- | --- | --- |
+| `_rap_smx2_d_ctl_f2` | 0.0372 | 0.0314 | 0.0135 | 0.0099 | 0.0089 |
+| `_rap_smx2_d_A_f2` | 0.0382 | 0.0323 | 0.0132 | 0.0095 | 0.0087 |
+| `_rap_smx2_d_t1on_f2` | 0.0435 | 0.0273 | 0.0337 | 0.0269 | 0.0088 |
+| `_rap_smx2_d_t1onA_f2` | 0.0166 | 0.0147 | 0.0138 | 0.0082 | 0.0094 |
+
+Ratios against the dual control, GPS all / GPS tracked (section 5.6 in brackets), with the de-commoned GPS rows beside them:
+
+| arm | all / tracked | as stated in 5.6 | de-commoned all / tracked | verdict |
+| --- | --- | --- | --- | --- |
+| dual plus the floor (dual bar) | 1.03 / 1.03 | 1.03 / 0.98 | 0.98 / 0.96 | PASS stands |
+| `t1on` (R1D (B)) | 1.17 / 0.87 | 1.17 / not stated (0.99 from its column) | 2.50 / 2.72 | FAIL stands (all 1.17, band 2 offsets +2) |
+| `t1on` plus the floor (R1D (B)) | 0.45 / 0.47 | 0.45 / 1.06 | 1.02 / 0.83 | PASS stands |
+
+Every verdict of section 5.6 stands, and "the floor passes gates (4) and (5)" stands. What the printed column hid: without the floor, the GPS tracked de-commoned value of `t1on` is 2.7 times the control's. The STATUS summary and the Outcome quote no tracked ratio and are unchanged. Card L5B section 15 quotes the same 0.98 and 1.06; its note is in card L5B6 section 5.5. Older tables (card ALD, card R1D, card L5B sections 12 and 14) read the plain GPS all and GPS tracked rows and are not affected (checked by another session on `_rap_ald_ctl_f2` and `_rap_ald_t1on_f2`).
