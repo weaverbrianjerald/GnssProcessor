@@ -286,6 +286,33 @@ void networkElectChainDatum(NetworkRunContext& ctx,
                             /// default 0 serves callers whose carries carry no time.
                             double now_s = 0.0);
 
+struct NetworkRun;     // network/driver/Run.hpp
+struct NetworkEpoch;   // network/driver/Epoch.hpp
+struct EpochPassA;     // network/driver/Epoch.hpp
+
+/**
+ * @brief The chain election as a seam of the phase-datum stage: the epoch form of the election above.
+ *
+ * Gate: network.phase_datum_eq34 (its own first statement; off, nothing runs and nothing is written).
+ * Called by networkPhaseAnchorEpoch after the candidate census and the reattach hygiene, which it
+ * takes as kept parameters.  With the ring fix armed it first gathers the keep-carry path's entry
+ * evidence (@ref ringFixGatherKeepEvidence: the slip layer's gap resumptions, final after PASS A, and
+ * the near-null signature of the ring fix's state at the epoch's start), then runs the election of
+ * the explicit form above.  The ordering contract of the file banner applies.
+ *
+ * @param run     The run. Written: run.ctx (the chain's carries, memories and counters, the ring
+ *                fix's entry evidence and the election's counts of it), run.setup.stations (the pins).
+ *                Read: run.config, run.log, run.engines.slip_qc (the gap resumptions).
+ * @param ep      The epoch: ep.funnel.carry_slipped_ambs, ep.clock.pl_now_s.
+ * @param cnd     This epoch's candidate census (sat_el / usable_keys / cover / union_keys).
+ * @param hyg     This epoch's eq34 reattach hygiene verdicts.
+ * @param pass_a  PASS A's layout: present is read, shared_phase_keys written (the post-gate union's
+ *                phase-bias keys).
+ * @param events  The epoch's events: the latch (slip.relevel) is read, phase_datum written.
+ */
+void networkElectChainDatum(NetworkRun& run, const NetworkEpoch& ep, const PhaseDatumCandidates& cnd,
+                            const AnchorHygiene& hyg, EpochPassA& pass_a, EpochEvents& events);
+
 // ---- Run-end reports ----
 
 struct NetworkRunEndView;
@@ -302,7 +329,8 @@ struct NetworkRunEndView;
  * `ctx.knobs.eq34_pair_family`; the kept row lines under `ctx.knobs.eq34_row_kept`; the
  * returning row lines under `ctx.knobs.eq34_row_returning`; the rehost row lines under
  * `ctx.knobs.eq34_row_rehost`; the root row lines under `ctx.knobs.eq34_row_root`; the slip row
- * lines under `ctx.knobs.eq34_row_slip`.
+ * lines under `ctx.knobs.eq34_row_slip`.  Each block is a file-local section of ChainDatum.cpp, one per
+ * row, walked in this order by networkRunEndSections (network/runend/RunEnd.hpp).
  *
  * @param v The run at its end (network/runend/RunEnd.hpp).
  * @return 0 (this report does not set the exit code).

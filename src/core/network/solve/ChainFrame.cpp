@@ -556,29 +556,519 @@ void chainRememberEpoch(const ChainEpochObs& obs, const ChainEpochClass& cls,
 
 // ---- The observer ---------------------------------------------------------------------------------
 
-void networkChainFrameObserve(NetworkRun& run, const NetworkEpoch& ep) {
-    NetworkRunContext& ctx = run.ctx;
-    NetworkRunTraces& traces = run.traces;
+namespace {
+
+/// Writes one CHAIN event row at the epoch's time and counts it (the observer's event rows).
+struct ChainEventSink {
+    NetworkRunTraces&   traces;   ///< The event trace.
+    const GnssTime&     t;        ///< The epoch's time.
+    ChainFrameCounters& cnt;      ///< The CHAIN row count.
+    /// @brief Writes the row.
+    /// @param name The event name. @param sat The satellite column. @param station The station column.
+    /// @param stat The statistic. @param action The action. @param detail The detail tokens.
+    void operator()(const char* name, const std::string& sat, const std::string& station,
+                    std::optional<double> stat, const char* action, const std::string& detail) const {
+        traces.emitEvent(t, "CHAIN", name, sat, station, stat, std::nullopt, action, detail);
+        ++cnt.cf_events;
+    }
+};
+
+/// network_chain_edges.csv: one row per classified edge.
+void chainFrameEdgeTrace(NetworkRunTraces& traces, const GnssTime& t, const std::vector<NetStation>& stations,
+                         const std::vector<ChainEdgeObs>& edges) {
+    for (const ChainEdgeObs& e : edges) {
+        const std::string life = e.life_stamp;
+        traces.chain_edges_trace
+            << t.week << ',' << fmt::format("{:.3f}", t.tow) << ',' << e.sys << ','
+            << e.family << ','
+            << e.signal << ',' << e.comp << ',' << e.r1 << ',' << e.station_name << ','
+            << e.sat << ',' << vertexName(e.child, stations) << ','
+            << vertexName(e.parent, stations) << ',' << e.depth << ','
+            << fmt::format("{:.6f}", e.target_m) << ','
+            << (e.lambda_m > 0.0 ? fmt::format("{:.6f}", e.target_m / e.lambda_m) : "") << ','
+            << cell(e.prev_target_m, 6) << ',' << fmt::format("{:.6f}", e.pinmove_m) << ','
+            << (e.known ? 1 : 0) << ',' << chainLegacyCauseName(e.cause) << ','
+            << chainEventSpec(e.row).name << ',' << (e.row_armed ? 1 : 0) << ','
+            << (e.certified ? 1 : 0) << ','
+            << chainCertSourceName(e.cert_source) << ',' << (e.incumbent_flipped ? 1 : 0)
+            << ',' << (e.returning ? 1 : 0) << ',' << life << '\n';
+    }
+}
+
+/// A re-host's rows, both edges: the parent edge it left and the one it joined.  An edge the rehost row released also
+/// names the as-built facts the release replaced.
+void chainFrameRehostEvents(const ChainEventSink& event, const ChainEdgeObs& e, const ChainEventSpec& spec,
+                            const std::string& detail, const std::vector<NetStation>& stations,
+                            const NetworkKnobs& knobs, ChainFrameCounters& cnt) {
+    std::string rehost_detail = detail;
+    if (e.row_armed && chainEventRowArmed(knobs, e.row)) {
+        ++cnt.cf_rh_pairs;
+        const double asbuilt_cyc = e.lambda_m > 0.0 ? e.legacy_pinmove_m / e.lambda_m : 0.0;
+        if (!e.legacy_known)                                   ++cnt.cf_rh_asbuilt_unknown;
+        else if (e.legacy_pinmove_m == 0.0)                    ++cnt.cf_rh_asbuilt_zero;
+        else if (e.lambda_m > 0.0 && nearInteger(asbuilt_cyc)) ++cnt.cf_rh_asbuilt_whole;
+        else                                                   ++cnt.cf_rh_asbuilt_other;
+        if (e.row == ChainEventRow::RehostCertified) ++cnt.cf_rh_certified_held;
+        rehost_detail += fmt::format(
+            " legacy_cause={} legacy_known={} legacy_pinmove_m={:.6f} legacy_target_cyc={}",
+            chainLegacyCauseName(e.cause), e.legacy_known ? 1 : 0, e.legacy_pinmove_m,
+            e.lambda_m > 0.0 ? fmt::format("{:.6f}", e.legacy_target_m / e.lambda_m) : "");
+    }
+    const std::string old_parent = vertexName(e.prev_parent, stations);
+    if (e.sat_is_child) event(spec.event, e.sat, old_parent, std::nullopt, "leave", rehost_detail);
+    else                event(spec.event, old_parent, e.station_name, std::nullopt, "leave", rehost_detail);
+    event(spec.event, e.sat, e.station_name, e.pinmove_m, "join", rehost_detail);
+}
+
+/// A returning edge's rows: the one join row it always has, or, when the returning row released it, both edges of the
+/// event with their identities and the as-built facts the release replaced.
+void chainFrameReturningEvents(const ChainEventSink& event, const ChainEdgeObs& e, const ChainEventSpec& spec,
+                               const std::string& detail, const ChainFrameMemory& mem,
+                               const std::vector<NetStation>& stations, const NetworkKnobs& knobs,
+                               ChainFrameCounters& cnt, double now_s) {
+    double gap = std::numeric_limits<double>::quiet_NaN();
+    std::string prev_parent;
+    const auto lit = mem.last_seen_s.find(e.group);
+    if (lit != mem.last_seen_s.end()) {
+        const auto s = lit->second.find(e.child);
+        if (s != lit->second.end()) gap = now_s - s->second;
+    }
+    const auto pit = mem.vertex_parent.find(e.group);
+    if (pit != mem.vertex_parent.end()) {
+        const auto p = pit->second.find(e.child);
+        if (p != pit->second.end()) prev_parent = vertexName(p->second, stations);
+    }
+    if (!e.row_armed || !chainEventRowArmed(knobs, ChainEventRow::Returning)) {
+        event(spec.event, e.sat, e.station_name, e.pinmove_m, "join",
+              detail + fmt::format(" gap_s={} prev={}", cell(gap, 1), prev_parent));
+        return;
+    }
+    // The returning row released the edge: both edges of the event with their
+    // identities.  The vertex leaves the parent it had when it was last seen
+    // (empty: it was a root, or the memory has no parent for it) and joins the
+    // parent of this epoch's edge; the as-built facts the release replaced follow.
+    std::string last_parent;
+    const auto lpit = mem.last_parent.find(e.group);
+    if (lpit != mem.last_parent.end()) {
+        const auto p = lpit->second.find(e.child);
+        if (p != lpit->second.end()) last_parent = vertexName(p->second, stations);
+    }
+    ++cnt.cf_ret_pairs;
+    const double asbuilt_cyc = e.lambda_m > 0.0 ? e.legacy_pinmove_m / e.lambda_m : 0.0;
+    if (!e.legacy_known)                                 ++cnt.cf_ret_asbuilt_unknown;
+    else if (e.legacy_pinmove_m == 0.0)                  ++cnt.cf_ret_asbuilt_zero;
+    else if (e.lambda_m > 0.0 && nearInteger(asbuilt_cyc)) ++cnt.cf_ret_asbuilt_whole;
+    else                                                 ++cnt.cf_ret_asbuilt_other;
+    const std::string returning_detail = detail + fmt::format(
+        " legacy_cause={} legacy_known={} legacy_pinmove_m={:.6f} legacy_target_cyc={} gap_s={}",
+        chainLegacyCauseName(e.cause), e.legacy_known ? 1 : 0, e.legacy_pinmove_m,
+        e.lambda_m > 0.0 ? fmt::format("{:.6f}", e.legacy_target_m / e.lambda_m) : "",
+        cell(gap, 1));
+    const std::string child = vertexName(e.child, stations);
+    const std::string parent = vertexName(e.parent, stations);
+    if (e.sat_is_child)
+        event(spec.event, e.sat, last_parent, std::nullopt, "leave",
+              returning_detail + fmt::format(" child={} parent={}", child, last_parent));
+    else
+        event(spec.event, last_parent, e.station_name, std::nullopt, "leave",
+              returning_detail + fmt::format(" child={} parent={}", child, last_parent));
+    event(spec.event, e.sat, e.station_name, e.pinmove_m, "join",
+          returning_detail + fmt::format(" child={} parent={}", child, parent));
+}
+
+/// A kept edge's rows, only for an edge the kept row held and the as-built rule would have moved at this election: a
+/// difference between the as-built target and the frozen one that persists is one event, at the election the as-built
+/// target changed, and the rest of the held edges are the quiet majority.
+void chainFrameKeptEvents(const ChainEventSink& event, const ChainEdgeObs& e, const ChainEventSpec& spec,
+                          const std::string& detail, const ChainFrameMemory& mem,
+                          const std::vector<NetStation>& stations, ChainFrameCounters& cnt) {
+    const auto was = mem.kept_as_built_target.find({e.station, e.sat, e.signal});
+    const double* remembered = was == mem.kept_as_built_target.end() ? nullptr : &was->second;
+    if (!chainKeptEdgeMoved(e, remembered)) return;
+    const double step = chainKeptAsBuiltStep(e, remembered);
+    const std::string kept_detail = detail + fmt::format(
+        " legacy_cause={} legacy_known={} legacy_pinmove_m={:.6f} legacy_step_m={} "
+        "legacy_target_cyc={} flipped={}",
+        chainLegacyCauseName(e.cause), e.legacy_known ? 1 : 0, e.legacy_pinmove_m,
+        cell(step, 6),
+        e.lambda_m > 0.0 ? fmt::format("{:.6f}", e.legacy_target_m / e.lambda_m) : "",
+        e.incumbent_flipped ? 1 : 0);
+    if (!e.incumbent_flipped) {
+        event(spec.event, e.sat, e.station_name, e.pinmove_m, "hold", kept_detail);
+        if (!e.legacy_known)                                   ++cnt.cf_kept_hold_unknown;
+        else if (e.lambda_m > 0.0 && nearInteger(step / e.lambda_m)) ++cnt.cf_kept_hold_whole;
+        else                                                   ++cnt.cf_kept_hold_other;
+        return;
+    }
+    ++cnt.cf_kept_reversed;
+    // A reversed arc leaves its incumbent orientation (this epoch's parent as the
+    // child) and joins this epoch's.  The sat and station columns name the same two
+    // endpoints in both rows, so each row says which of them is the child.
+    const std::string child = vertexName(e.child, stations);
+    const std::string parent = vertexName(e.parent, stations);
+    event(spec.event, e.sat, e.station_name, std::nullopt, "leave",
+          kept_detail + fmt::format(" child={} parent={}", parent, child));
+    event(spec.event, e.sat, e.station_name, e.pinmove_m, "join",
+          kept_detail + fmt::format(" child={} parent={}", child, parent));
+}
+
+/// A slipped tree edge's rows: the observe row it always has, or, when no other route reached the child so that the
+/// slipped arc stayed and the slip row released it, both edges of the event (this arc), with the as-built facts the
+/// release replaced.
+void chainFrameSlipEvents(const ChainEventSink& event, const ChainEdgeObs& e, const ChainEventSpec& spec,
+                          const std::string& detail, const std::vector<NetStation>& stations,
+                          ChainFrameCounters& cnt) {
+    if (!e.slip_released) {
+        event(spec.event, e.sat, e.station_name, e.pinmove_m, "observe",
+              detail + fmt::format(" slip_cause={} deseated=0", static_cast<int>(e.slip_cause)));
+        return;
+    }
+    ++cnt.cf_sl_pairs;
+    const double asbuilt_cyc = e.lambda_m > 0.0 ? e.legacy_pinmove_m / e.lambda_m : 0.0;
+    if (!e.legacy_known)                                   ++cnt.cf_sl_asbuilt_unknown;
+    else if (e.legacy_pinmove_m == 0.0)                    ++cnt.cf_sl_asbuilt_zero;
+    else if (e.lambda_m > 0.0 && nearInteger(asbuilt_cyc)) ++cnt.cf_sl_asbuilt_whole;
+    else                                                   ++cnt.cf_sl_asbuilt_other;
+    const std::string released_detail = detail + fmt::format(
+        " slip_cause={} deseated=0 readmitted=1 child={} parent={} legacy_cause={} legacy_known={} "
+        "legacy_pinmove_m={:.6f} legacy_target_cyc={}",
+        static_cast<int>(e.slip_cause), vertexName(e.child, stations), vertexName(e.parent, stations),
+        chainLegacyCauseName(e.cause), e.legacy_known ? 1 : 0, e.legacy_pinmove_m,
+        e.lambda_m > 0.0 ? fmt::format("{:.6f}", e.legacy_target_m / e.lambda_m) : "");
+    event(spec.event, e.sat, e.station_name, std::nullopt, "leave", released_detail);
+    event(spec.event, e.sat, e.station_name, e.pinmove_m, "join", released_detail);
+}
+
+/// A merge edge's rows: the one join row it always has, or, when the merge and split row released it, both edges of the
+/// event with the as-built facts the release replaced: the absorbed tree's old root leaves, and the edge that joins the
+/// two trees joins.
+void chainFrameMergeEvents(const ChainEventSink& event, const ChainEdgeObs& e, const ChainEventSpec& spec,
+                           const std::string& detail, const std::vector<NetStation>& stations,
+                           ChainFrameCounters& cnt) {
+    if (!e.merge_released) {
+        event(spec.event, e.sat, e.station_name, e.pinmove_m, "join", detail);
+        return;
+    }
+    ++cnt.cf_mg_pairs;
+    const double asbuilt_cyc = e.lambda_m > 0.0 ? e.legacy_pinmove_m / e.lambda_m : 0.0;
+    if (!e.legacy_known)                                   ++cnt.cf_mg_asbuilt_unknown;
+    else if (e.legacy_pinmove_m == 0.0)                    ++cnt.cf_mg_asbuilt_zero;
+    else if (e.lambda_m > 0.0 && nearInteger(asbuilt_cyc)) ++cnt.cf_mg_asbuilt_whole;
+    else                                                   ++cnt.cf_mg_asbuilt_other;
+    const std::string merge_detail = detail + fmt::format(
+        " old_root={} into_root={} child={} parent={} legacy_cause={} legacy_known={} "
+        "legacy_pinmove_m={:.6f} legacy_target_cyc={}",
+        e.merge_from, e.merge_into, vertexName(e.child, stations), vertexName(e.parent, stations),
+        chainLegacyCauseName(e.cause), e.legacy_known ? 1 : 0, e.legacy_pinmove_m,
+        e.lambda_m > 0.0 ? fmt::format("{:.6f}", e.legacy_target_m / e.lambda_m) : "");
+    event(spec.event, "", e.merge_from, std::nullopt, "leave", merge_detail);
+    event(spec.event, e.sat, e.station_name, e.pinmove_m, "join", merge_detail);
+}
+
+/// The tree edges the slip row de-seated, both edges with their identities: the slipped arc leaves, and the old child
+/// joins through the edge of the release that took its moved side, through its new parent edge with no release or,
+/// when it has no parent edge now (a root, or no vertex of the band's trees), on the arc's own names.
+void chainFrameDeseatEvents(const ChainEventSink& event, const ChainEpochObs& obs,
+                            const std::vector<NetStation>& stations) {
+    for (const ChainDeseatObs& d : obs.deseats) {
+        const std::string new_parent = vertexName(d.new_parent, stations);
+        const std::string deseat_detail = fmt::format(
+            "sig={} comp={} slip_cause={} deseated=1 band_latched={} child={} parent={} prev_target_cyc={} "
+            "new_parent={} released_by={}",
+            d.signal, d.comp, static_cast<int>(d.cause), d.band_latched ? 1 : 0, vertexName(d.child, stations),
+            vertexName(d.parent, stations), d.lambda_m > 0.0 ? cell(d.prev_target_m / d.lambda_m, 6) : "",
+            new_parent, d.released ? chainReleaseRowName(d.release_row) : "none");
+        const char* name = chainEventSpec(ChainEventRow::TreeEdgeSlip).event;
+        event(name, d.sat, d.station_name, std::nullopt, "leave", deseat_detail);
+        if (d.released)
+            event(name, d.release_sat, vertexName(chainVertexKey(d.release_station), stations),
+                  std::nullopt, "join", deseat_detail + " rejoin=" + vertexName(d.release_vertex, stations));
+        else if (d.new_parent.empty())
+            event(name, d.sat, d.station_name, std::nullopt, "join", deseat_detail + " rejoin=none");
+        else if (d.sat_is_child)
+            event(name, d.sat, new_parent, std::nullopt, "join", deseat_detail);
+        else
+            event(name, new_parent, d.station_name, std::nullopt, "join", deseat_detail);
+    }
+}
+
+/// The cut releases of the returning, rehost, slip and merge rows: one cut_release row per release, then one
+/// declared_keys row per satellite of its moved side (the keys the producer declares moved).
+void chainFrameReleaseEvents(const ChainEventSink& event, const ChainEpochObs& obs,
+                             const std::vector<NetStation>& stations) {
+    for (const ChainReleaseObs& r : obs.releases) {
+        const std::string root = vertexName(r.vertex, stations);
+        event(kChainCutReleaseEvent, r.sat, vertexName(chainVertexKey(r.station), stations),
+              std::nullopt, "release",
+              fmt::format("sig={} comp={} root={} arcs={} rpb={} pb={} n_rx={} n_sat={}", r.signal, r.comp,
+                          root, r.arcs, r.rpb, r.pb, r.stations.size(), r.sats.size()));
+        for (const std::string& sat : r.sats)
+            event(kChainDeclaredKeysEvent, sat, "", std::nullopt, "declare",
+                  fmt::format("sig={} cause={} root={}", r.signal, chainReleaseRowName(r.row), root));
+    }
+}
+
+/// The component events: a root handover or a split names the old root (leave) and the new root (join), with the
+/// outcome of the row that decides it when that row is armed.
+void chainFrameComponentEvents(const ChainEventSink& event, const ChainEpochObs& obs, const ChainEpochClass& cls,
+                               const NetworkKnobs& knobs) {
+    for (const ChainComponentEvent& k : cls.comps) {
+        if (!k.root_changed && !k.split) continue;
+        const char* name = k.split ? chainEventSpec(ChainEventRow::Split).event
+                                   : chainEventSpec(ChainEventRow::RootHandover).event;
+        std::string detail = fmt::format("sig={} comp={} old_root={} new_root={}",
+                                         k.signal, k.comp, k.old_root, k.r1);
+        // With the row that decides it armed, what it did with this handover.
+        if (chainEventRowArmed(knobs, k.split ? ChainEventRow::Split : ChainEventRow::RootHandover))
+            for (const ChainRootObs& ro : obs.roots) {
+                if (ro.group != k.group || ro.comp != k.comp) continue;
+                detail += fmt::format(" outcome={}", chainRootOutcomeName(ro.outcome));
+                if (ro.outcome == ChainRootOutcome::Pinned)
+                    detail += fmt::format(" rpb_target_m={:.6f} rpb_sigma_m={:.6f}", ro.target_m, ro.sigma_m);
+                break;
+            }
+        event(name, "", k.old_root, std::nullopt, "leave", detail);
+        event(name, "", k.r1, std::nullopt, "join", detail);
+    }
+}
+
+}  // namespace
+
+void networkChainFramePinIdentity(NetworkRun& run, const NetworkEpoch& ep, const ChainEpochObs& obs,
+                                  const ChainEpochClass& cls) {
+    // ---- From the run and the epoch ----
+    ChainFrameCounters& cnt = run.ctx.counters;   // written: the pin epochs and the mismatch epochs
     const std::vector<NetStation>& stations = run.setup.stations;
-    const NetworkEstimator& est = run.engines.est;
+    const std::vector<StationAssembly>& asm_res = ep.assembly.asm_res;
+    const EpochEvents::PhaseDatum& phase_datum_ev = ep.events.phase_datum;
+    const std::vector<ChainEdgeObs>& edges = cls.edges;
+    // ---- End of the bindings ----
+    std::map<std::string, long long> traced, folded;
+    for (const ChainEdgeObs& e : edges) ++traced[e.group];
+    for (const ChainComponentObs& k : obs.comps)
+        traced[k.group] += 1 + static_cast<long long>(k.bridged.size());
+    for (std::size_t i = 0; i < asm_res.size() && i < stations.size(); ++i)
+        for (const auto& [grp, a] : asm_res[i].pin_audit) folded[grp] += a[0];
+    bool ok = true;
+    for (const auto& [grp, decl] : phase_datum_ev.eq34_epoch_declared) {
+        const auto b = phase_datum_ev.eq34_epoch_bridged.find(grp);
+        const long long bridged = b == phase_datum_ev.eq34_epoch_bridged.end() ? 0 : b->second;
+        if (traced[grp] != decl || folded[grp] != decl - bridged) ok = false;
+    }
+    ++cnt.cf_pin_epochs;
+    if (!ok) ++cnt.cf_pin_mismatch_epochs;
+}
+
+void networkChainFrameEventRows(NetworkRun& run, const NetworkEpoch& ep, const ChainEpochObs& obs,
+                                const ChainEpochClass& cls, const ChainFrameMemory& mem) {
+    // ---- From the run and the epoch ----
+    const NetworkKnobs& knobs = run.ctx.knobs;
+    ChainFrameCounters& cnt = run.ctx.counters;   // written: the CHAIN row counts
+    NetworkRunTraces& traces = run.traces;        // written: network_chain_edges.csv and the CHAIN events
+    const std::vector<NetStation>& stations = run.setup.stations;
     const GnssTime& t = ep.se.time;
     const double now_s = ep.clock.pl_now_s;
+    const std::vector<ChainEdgeObs>& edges = cls.edges;
+    // ---- End of the bindings ----
+    if (traces.chain_edges_trace.is_open()) chainFrameEdgeTrace(traces, t, stations, edges);
+    const ChainEventSink event{traces, t, cnt};
+    for (const ChainEdgeObs& e : edges) {
+        const ChainEventSpec& spec = chainEventSpec(e.row);
+        const std::string detail = edgeDetail(e);
+        switch (e.row) {
+            case ChainEventRow::RehostCertified:
+            case ChainEventRow::RehostUncertified:
+                chainFrameRehostEvents(event, e, spec, detail, stations, knobs, cnt);
+                break;
+            case ChainEventRow::Returning:
+                chainFrameReturningEvents(event, e, spec, detail, mem, stations, knobs, cnt, now_s);
+                break;
+            case ChainEventRow::Kept:
+                chainFrameKeptEvents(event, e, spec, detail, mem, stations, cnt);
+                break;
+            case ChainEventRow::TreeEdgeSlip:
+                chainFrameSlipEvents(event, e, spec, detail, stations, cnt);
+                break;
+            case ChainEventRow::Merge:
+                chainFrameMergeEvents(event, e, spec, detail, stations, cnt);
+                break;
+            default:
+                break;
+        }
+    }
+    chainFrameDeseatEvents(event, obs, stations);
+    chainFrameReleaseEvents(event, obs, stations);
+    chainFrameComponentEvents(event, obs, cls, knobs);
+}
+
+std::map<std::tuple<int, std::string, std::string>, std::pair<ChainChordRow, int>>
+networkChainFrameChordTable(NetworkRun& run, const NetworkEpoch& ep, const ChainEpochObs& obs,
+                            const ChainEpochClass& cls) {
+    // ---- From the run and the epoch ----
+    ChainFrameCounters& cnt = run.ctx.counters;   // written: the chord table's counts
+    NetworkRunTraces& traces = run.traces;        // written: network_chain_frame.csv
+    const std::vector<NetStation>& stations = run.setup.stations;
+    const NetworkEstimator& est = run.engines.est;
+    const auto& netar = run.nc.ambiguity_resolution;
+    const arcgraph::CycleLattice& lattice = run.ctx.carry.ar_lattice.lattice;
+    const GnssTime& t = ep.se.time;
     const Eigen::VectorXd& x_s = ep.solve.x_s;
     const NetworkSbasis::Plan& plan = ep.solve.plan;
     const std::vector<StationAssembly>& asm_res = ep.assembly.asm_res;
     const std::vector<int>& est_index_of = ep.assembly.est_index_of;
+    const std::vector<ChainEdgeObs>& edges = cls.edges;
+    // ---- End of the bindings ----
+    std::set<std::tuple<int, std::string, std::string>> tree_arcs;
+    std::set<std::string> chain_signals;
+    for (const ChainEdgeObs& e : edges) {
+        tree_arcs.insert({e.station, e.sat, e.signal});
+        chain_signals.insert(e.sys + "|" + e.signal);
+    }
+    std::map<std::tuple<int, std::string, std::string>, const ChainChordCycle*> cyc_of;
+    for (const ChainChordCycle& c : obs.chords) cyc_of[{c.station, c.sat, c.signal}] = &c;
+    auto latticeChord = [&](int station, const std::string& sat, const std::string& sig,
+                            long long& out) -> bool {
+        const auto c = cyc_of.find({station, sat, sig});
+        if (c == cyc_of.end()) return false;
+        return chainLatticeChordInteger(lattice, *c->second, out);
+    };
+    std::map<std::tuple<int, std::string, std::string>, std::pair<ChainChordRow, int>> new_chords;
+    for (std::size_t i = 0; i < stations.size() && i < asm_res.size() && i < est_index_of.size(); ++i) {
+        if (est_index_of[i] < 0) continue;
+        const ChainAmbColumns cols = chainAmbColumns(asm_res[i]);
+        std::vector<ChainChordRow> rows = chainStationChordRows(
+            static_cast<int>(i), stations[i].name, cols, tree_arcs, chain_signals);
+        if (rows.empty()) continue;
+        const std::size_t est_idx = static_cast<std::size_t>(est_index_of[i]);
+        std::vector<char> filled;
+        if (!chainChordFloats(est, est_idx, x_s, plan.shared_datum, cols, rows, filled)) continue;
+        for (std::size_t r_i = 0; r_i < rows.size(); ++r_i) {
+            if (!filled[r_i]) continue;
+            ChainChordRow& r = rows[r_i];
+            chainCertifyChord(r.float_cyc_1, r.float_cyc_2, r.q11, r.q12, r.q22,
+                              netar.min_success_rate, netar.ratio_threshold,
+                              netar.ratio_upper_bound, netar.nl_max_per_pair_frac, r);
+            r.have_lat_1 = latticeChord(r.station, r.sat, r.sig1, r.lat_1);
+            r.have_lat_2 = latticeChord(r.station, r.sat, r.sig2, r.lat_2);
+            r.conflict = (r.have_int_1 && r.have_lat_1 && r.int_1 != r.lat_1)
+                      || (r.have_int_2 && r.have_lat_2 && r.int_2 != r.lat_2);
+            ++cnt.cf_chord_rows;
+            if (r.have_int_1 || r.have_int_2) ++cnt.cf_chord_pair_det;
+            if (r.have_lat_1 || r.have_lat_2) ++cnt.cf_chord_lattice;
+            if (r.conflict) ++cnt.cf_chord_conflicts;
+            if (traces.chain_frame_trace.is_open()) {
+                const char* source = (r.have_int_1 || r.have_int_2) ? "pair" : "none";
+                traces.chain_frame_trace
+                    << t.week << ',' << fmt::format("{:.3f}", t.tow) << ',' << r.family << ','
+                    << r.station_name << ',' << r.sat << ','
+                    << fmt::format("{:.6f}", r.float_cyc_1) << ','
+                    << fmt::format("{:.6f}", r.float_cyc_2) << ','
+                    << fmt::format("{:.6e}", r.q11) << ',' << fmt::format("{:.6e}", r.q12) << ','
+                    << fmt::format("{:.6e}", r.q22) << ','
+                    << (r.have_int_1 ? std::to_string(r.int_1) : "") << ','
+                    << (r.have_int_2 ? std::to_string(r.int_2) : "") << ',' << source << ','
+                    << (r.conflict ? 1 : 0) << ','
+                    << (r.have_lat_1 ? std::to_string(r.lat_1) : "") << '/'
+                    << (r.have_lat_2 ? std::to_string(r.lat_2) : "") << '\n';
+            }
+            new_chords[{r.station, r.sat, r.sig1}] = {r, 1};
+            new_chords[{r.station, r.sat, r.sig2}] = {r, 2};
+        }
+    }
+    return new_chords;
+}
+
+void networkChainFrameRpbStates(NetworkRun& run, const NetworkEpoch& ep, const ChainEpochObs& obs,
+                                const std::vector<ChainEdgeObs>& classified) {
+    // ---- From the run and the epoch ----
+    const bool trace_rpb_states = run.ctx.knobs.trace_rpb_states;
+    ChainFrameCounters& cnt = run.ctx.counters;   // written: the time-link NEES terms and the row count
+    NetworkRunTraces& traces = run.traces;        // written: network_rpb_states.csv
+    const std::vector<NetStation>& stations = run.setup.stations;
+    const NetworkEstimator& est = run.engines.est;
+    const GnssTime& t = ep.se.time;
+    const Eigen::VectorXd& x_s = ep.solve.x_s;
+    const NetworkSbasis::Plan& plan = ep.solve.plan;
+    const std::vector<StationAssembly>& asm_res = ep.assembly.asm_res;
+    const std::vector<int>& est_index_of = ep.assembly.est_index_of;
+    // ---- End of the bindings ----
+    if (!(trace_rpb_states && traces.rpb_states_trace.is_open())) return;
+    std::map<std::pair<int, std::string>, const ChainEdgeObs*> rx_parent;
+    for (const ChainEdgeObs& e : classified.empty() ? obs.edges : classified)
+        if (!e.sat_is_child) rx_parent[{e.station, e.signal}] = &e;
+    for (std::size_t i = 0; i < stations.size() && i < asm_res.size() && i < est_index_of.size(); ++i) {
+        if (est_index_of[i] < 0) continue;
+        const std::vector<RpbTraceCol>& rc = asm_res[i].rpb_trace;
+        if (rc.empty()) continue;
+        const std::size_t est_idx = static_cast<std::size_t>(est_index_of[i]);
+        std::vector<Eigen::Index> cols;
+        for (const RpbTraceCol& c : rc) cols.push_back(c.col);
+        Eigen::VectorXd xr, vard;
+        try {
+            xr = est.reconstructStation(est_idx, x_s);
+            vard = est.conditionalLocalVarianceDiag(est_idx, cols, plan.shared_datum);
+        } catch (...) { continue; }
+        for (std::size_t a = 0; a < rc.size(); ++a) {
+            const RpbTraceCol& c = rc[a];
+            if (c.col < 0 || c.col >= xr.size()) continue;
+            const double value = c.x_lin + xr(c.col);
+            const double var = a < static_cast<std::size_t>(vard.size()) ? vard(static_cast<Eigen::Index>(a)) : -1.0;
+            const ChainEdgeObs* pe = nullptr;
+            {
+                const auto p = rx_parent.find({static_cast<int>(i), c.signal});
+                if (p != rx_parent.end()) pe = p->second;
+            }
+            double shift = 0.0;
+            {
+                const auto s = obs.shift_rpb.find({static_cast<int>(i), c.key});
+                if (s != obs.shift_rpb.end()) shift = s->second;
+            }
+            std::string event;
+            int depth = 0, comp = -1;
+            std::string parent_sat;
+            if (pe != nullptr) {
+                parent_sat = pe->sat;
+                depth = pe->depth;
+                comp = pe->comp;
+                if (pe->row != ChainEventRow::Kept) event = chainEventSpec(pe->row).name;
+            }
+            if (std::isfinite(c.tl_var) && c.tl_var > 0.0 && var > 0.0 && c.tl_var > var
+                && std::isfinite(c.tl_value)) {
+                const double d = value - c.tl_value;
+                cnt.cf_rpb_nees_sum += d * d / (c.tl_var - var);
+                ++cnt.cf_rpb_nees_n;
+            }
+            traces.rpb_states_trace
+                << t.week << ',' << fmt::format("{:.3f}", t.tow) << ',' << stations[i].name << ','
+                << c.system << ',' << c.signal << ',' << fmt::format("{:.6f}", value) << ','
+                << (var > 0.0 ? fmt::format("{:.6f}", std::sqrt(var)) : "") << ','
+                << (c.pinned ? 1 : 0) << ',' << cell(c.floor_w, 6) << ','
+                << cell(c.tl_var, 9) << ',' << parent_sat << ',' << (pe ? std::to_string(depth) : "")
+                << ',' << (comp >= 0 ? std::to_string(comp) : "") << ',' << event << ','
+                << fmt::format("{:.6f}", shift) << '\n';
+            ++cnt.cf_rpb_rows;
+        }
+    }
+}
+
+void networkChainFrameObserve(NetworkRun& run, const NetworkEpoch& ep) {
+    // ---- From the run and the epoch ----
+    const bool trace_chain_datum = run.ctx.knobs.trace_chain_datum;
+    const bool trace_rpb_states = run.ctx.knobs.trace_rpb_states;
+    ChainFrameCounters& cnt = run.ctx.counters;   // written: the observatory's counters and memory
+    const GnssTime& t = ep.se.time;
+    const double now_s = ep.clock.pl_now_s;
     const EpochEvents::PhaseDatum& phase_datum_ev = ep.events.phase_datum;
     const ChainEpochObs* obs_rec = phase_datum_ev.chain.get();
     const RelevelEpochState& relevel = ep.events.slip.relevel;
-    ChainFrameCounters& cnt = ctx.counters;   // written: the observatory's counters and memory
     // ---- End of the bindings ----
     // Both knobs resolve to false off an eq34 run (network/driver/Knobs.cpp).
-    if (!(ctx.knobs.trace_chain_datum || ctx.knobs.trace_rpb_states)) return;
+    if (!(trace_chain_datum || trace_rpb_states)) return;
     const ChainEpochObs no_record;   // an epoch the election did not record
     const ChainEpochObs& obs = obs_rec != nullptr ? *obs_rec : no_record;
 
     std::vector<ChainEdgeObs> classified;   // this epoch's classified edges (the chain trace armed)
-    if (ctx.knobs.trace_chain_datum && obs.armed) {
+    if (trace_chain_datum && obs.armed) {
         // The last observed epoch's memory, held alive here while chainRememberEpoch replaces it.
         const std::shared_ptr<ChainFrameMemory> mem_hold =
             cnt.chain_frame_memory ? cnt.chain_frame_memory : std::make_shared<ChainFrameMemory>();
@@ -586,400 +1076,22 @@ void networkChainFrameObserve(NetworkRun& run, const NetworkEpoch& ep) {
         // 1. Classify and certify against the last observed epoch.
         const ChainEpochClass cls =
             chainClassifyEpoch(obs, mem, relevel.free_ambs, relevel.free_cause, cnt);
-        const std::vector<ChainEdgeObs>& edges = cls.edges;
         cnt.cf_d4_keys += static_cast<long long>(phase_datum_ev.eq34_reref.size());
-
         // 2. The pin identity: traced pins (edges, roots, bridges) = declared, folded = declared
         //    minus bridged, per group.
-        {
-            std::map<std::string, long long> traced, folded;
-            for (const ChainEdgeObs& e : edges) ++traced[e.group];
-            for (const ChainComponentObs& k : obs.comps)
-                traced[k.group] += 1 + static_cast<long long>(k.bridged.size());
-            for (std::size_t i = 0; i < asm_res.size() && i < stations.size(); ++i)
-                for (const auto& [grp, a] : asm_res[i].pin_audit) folded[grp] += a[0];
-            bool ok = true;
-            for (const auto& [grp, decl] : phase_datum_ev.eq34_epoch_declared) {
-                const auto b = phase_datum_ev.eq34_epoch_bridged.find(grp);
-                const long long bridged = b == phase_datum_ev.eq34_epoch_bridged.end() ? 0 : b->second;
-                if (traced[grp] != decl || folded[grp] != decl - bridged) ok = false;
-            }
-            ++cnt.cf_pin_epochs;
-            if (!ok) ++cnt.cf_pin_mismatch_epochs;
-        }
-
+        networkChainFramePinIdentity(run, ep, obs, cls);
         // 3. network_chain_edges.csv and the CHAIN rows.
-        if (traces.chain_edges_trace.is_open()) {
-            for (const ChainEdgeObs& e : edges) {
-                const std::string life = e.life_stamp;
-                traces.chain_edges_trace
-                    << t.week << ',' << fmt::format("{:.3f}", t.tow) << ',' << e.sys << ','
-                    << e.family << ','
-                    << e.signal << ',' << e.comp << ',' << e.r1 << ',' << e.station_name << ','
-                    << e.sat << ',' << vertexName(e.child, stations) << ','
-                    << vertexName(e.parent, stations) << ',' << e.depth << ','
-                    << fmt::format("{:.6f}", e.target_m) << ','
-                    << (e.lambda_m > 0.0 ? fmt::format("{:.6f}", e.target_m / e.lambda_m) : "") << ','
-                    << cell(e.prev_target_m, 6) << ',' << fmt::format("{:.6f}", e.pinmove_m) << ','
-                    << (e.known ? 1 : 0) << ',' << chainLegacyCauseName(e.cause) << ','
-                    << chainEventSpec(e.row).name << ',' << (e.row_armed ? 1 : 0) << ','
-                    << (e.certified ? 1 : 0) << ','
-                    << chainCertSourceName(e.cert_source) << ',' << (e.incumbent_flipped ? 1 : 0)
-                    << ',' << (e.returning ? 1 : 0) << ',' << life << '\n';
-            }
-        }
-        auto event = [&](const char* name, const std::string& sat, const std::string& station,
-                         std::optional<double> stat, const char* action, const std::string& detail) {
-            traces.emitEvent(t, "CHAIN", name, sat, station, stat, std::nullopt, action, detail);
-            ++cnt.cf_events;
-        };
-        for (const ChainEdgeObs& e : edges) {
-            const ChainEventSpec& spec = chainEventSpec(e.row);
-            const std::string detail = edgeDetail(e);
-            switch (e.row) {
-                case ChainEventRow::RehostCertified:
-                case ChainEventRow::RehostUncertified: {
-                    // Both edges: the parent edge it left and the one it joined.  An edge the rehost
-                    // row released also names the as-built facts the release replaced.
-                    std::string rehost_detail = detail;
-                    if (e.row_armed && chainEventRowArmed(ctx.knobs, e.row)) {
-                        ++cnt.cf_rh_pairs;
-                        const double asbuilt_cyc = e.lambda_m > 0.0 ? e.legacy_pinmove_m / e.lambda_m : 0.0;
-                        if (!e.legacy_known)                                   ++cnt.cf_rh_asbuilt_unknown;
-                        else if (e.legacy_pinmove_m == 0.0)                    ++cnt.cf_rh_asbuilt_zero;
-                        else if (e.lambda_m > 0.0 && nearInteger(asbuilt_cyc)) ++cnt.cf_rh_asbuilt_whole;
-                        else                                                   ++cnt.cf_rh_asbuilt_other;
-                        if (e.row == ChainEventRow::RehostCertified) ++cnt.cf_rh_certified_held;
-                        rehost_detail += fmt::format(
-                            " legacy_cause={} legacy_known={} legacy_pinmove_m={:.6f} legacy_target_cyc={}",
-                            chainLegacyCauseName(e.cause), e.legacy_known ? 1 : 0, e.legacy_pinmove_m,
-                            e.lambda_m > 0.0 ? fmt::format("{:.6f}", e.legacy_target_m / e.lambda_m) : "");
-                    }
-                    const std::string old_parent = vertexName(e.prev_parent, stations);
-                    if (e.sat_is_child) event(spec.event, e.sat, old_parent, std::nullopt, "leave", rehost_detail);
-                    else                event(spec.event, old_parent, e.station_name, std::nullopt, "leave", rehost_detail);
-                    event(spec.event, e.sat, e.station_name, e.pinmove_m, "join", rehost_detail);
-                    break;
-                }
-                case ChainEventRow::Returning: {
-                    double gap = std::numeric_limits<double>::quiet_NaN();
-                    std::string prev_parent;
-                    const auto lit = mem.last_seen_s.find(e.group);
-                    if (lit != mem.last_seen_s.end()) {
-                        const auto s = lit->second.find(e.child);
-                        if (s != lit->second.end()) gap = now_s - s->second;
-                    }
-                    const auto pit = mem.vertex_parent.find(e.group);
-                    if (pit != mem.vertex_parent.end()) {
-                        const auto p = pit->second.find(e.child);
-                        if (p != pit->second.end()) prev_parent = vertexName(p->second, stations);
-                    }
-                    if (!e.row_armed || !chainEventRowArmed(ctx.knobs, ChainEventRow::Returning)) {
-                        event(spec.event, e.sat, e.station_name, e.pinmove_m, "join",
-                              detail + fmt::format(" gap_s={} prev={}", cell(gap, 1), prev_parent));
-                        break;
-                    }
-                    // The returning row released the edge: both edges of the event with their
-                    // identities.  The vertex leaves the parent it had when it was last seen
-                    // (empty: it was a root, or the memory has no parent for it) and joins the
-                    // parent of this epoch's edge; the as-built facts the release replaced follow.
-                    std::string last_parent;
-                    const auto lpit = mem.last_parent.find(e.group);
-                    if (lpit != mem.last_parent.end()) {
-                        const auto p = lpit->second.find(e.child);
-                        if (p != lpit->second.end()) last_parent = vertexName(p->second, stations);
-                    }
-                    ++cnt.cf_ret_pairs;
-                    const double asbuilt_cyc = e.lambda_m > 0.0 ? e.legacy_pinmove_m / e.lambda_m : 0.0;
-                    if (!e.legacy_known)                                 ++cnt.cf_ret_asbuilt_unknown;
-                    else if (e.legacy_pinmove_m == 0.0)                  ++cnt.cf_ret_asbuilt_zero;
-                    else if (e.lambda_m > 0.0 && nearInteger(asbuilt_cyc)) ++cnt.cf_ret_asbuilt_whole;
-                    else                                                 ++cnt.cf_ret_asbuilt_other;
-                    const std::string returning_detail = detail + fmt::format(
-                        " legacy_cause={} legacy_known={} legacy_pinmove_m={:.6f} legacy_target_cyc={} gap_s={}",
-                        chainLegacyCauseName(e.cause), e.legacy_known ? 1 : 0, e.legacy_pinmove_m,
-                        e.lambda_m > 0.0 ? fmt::format("{:.6f}", e.legacy_target_m / e.lambda_m) : "",
-                        cell(gap, 1));
-                    const std::string child = vertexName(e.child, stations);
-                    const std::string parent = vertexName(e.parent, stations);
-                    if (e.sat_is_child)
-                        event(spec.event, e.sat, last_parent, std::nullopt, "leave",
-                              returning_detail + fmt::format(" child={} parent={}", child, last_parent));
-                    else
-                        event(spec.event, last_parent, e.station_name, std::nullopt, "leave",
-                              returning_detail + fmt::format(" child={} parent={}", child, last_parent));
-                    event(spec.event, e.sat, e.station_name, e.pinmove_m, "join",
-                          returning_detail + fmt::format(" child={} parent={}", child, parent));
-                    break;
-                }
-                case ChainEventRow::Kept: {
-                    // Only an edge the kept row held and the as-built rule would have moved at this
-                    // election: a difference between the as-built target and the frozen one that
-                    // persists is one event, at the election the as-built target changed, and the
-                    // rest of the held edges are the quiet majority.
-                    const auto was = mem.kept_as_built_target.find({e.station, e.sat, e.signal});
-                    const double* remembered = was == mem.kept_as_built_target.end() ? nullptr : &was->second;
-                    if (!chainKeptEdgeMoved(e, remembered)) break;
-                    const double step = chainKeptAsBuiltStep(e, remembered);
-                    const std::string kept_detail = detail + fmt::format(
-                        " legacy_cause={} legacy_known={} legacy_pinmove_m={:.6f} legacy_step_m={} "
-                        "legacy_target_cyc={} flipped={}",
-                        chainLegacyCauseName(e.cause), e.legacy_known ? 1 : 0, e.legacy_pinmove_m,
-                        cell(step, 6),
-                        e.lambda_m > 0.0 ? fmt::format("{:.6f}", e.legacy_target_m / e.lambda_m) : "",
-                        e.incumbent_flipped ? 1 : 0);
-                    if (!e.incumbent_flipped) {
-                        event(spec.event, e.sat, e.station_name, e.pinmove_m, "hold", kept_detail);
-                        if (!e.legacy_known)                                   ++cnt.cf_kept_hold_unknown;
-                        else if (e.lambda_m > 0.0 && nearInteger(step / e.lambda_m)) ++cnt.cf_kept_hold_whole;
-                        else                                                   ++cnt.cf_kept_hold_other;
-                        break;
-                    }
-                    ++cnt.cf_kept_reversed;
-                    // A reversed arc leaves its incumbent orientation (this epoch's parent as the
-                    // child) and joins this epoch's.  The sat and station columns name the same two
-                    // endpoints in both rows, so each row says which of them is the child.
-                    const std::string child = vertexName(e.child, stations);
-                    const std::string parent = vertexName(e.parent, stations);
-                    event(spec.event, e.sat, e.station_name, std::nullopt, "leave",
-                          kept_detail + fmt::format(" child={} parent={}", parent, child));
-                    event(spec.event, e.sat, e.station_name, e.pinmove_m, "join",
-                          kept_detail + fmt::format(" child={} parent={}", child, parent));
-                    break;
-                }
-                case ChainEventRow::TreeEdgeSlip: {
-                    if (!e.slip_released) {
-                        event(spec.event, e.sat, e.station_name, e.pinmove_m, "observe",
-                              detail + fmt::format(" slip_cause={} deseated=0", static_cast<int>(e.slip_cause)));
-                        break;
-                    }
-                    // No other route reached the child, so the slipped arc stayed and the slip row released
-                    // it: both edges of the event are this arc, with the as-built facts the release replaced.
-                    ++cnt.cf_sl_pairs;
-                    const double asbuilt_cyc = e.lambda_m > 0.0 ? e.legacy_pinmove_m / e.lambda_m : 0.0;
-                    if (!e.legacy_known)                                   ++cnt.cf_sl_asbuilt_unknown;
-                    else if (e.legacy_pinmove_m == 0.0)                    ++cnt.cf_sl_asbuilt_zero;
-                    else if (e.lambda_m > 0.0 && nearInteger(asbuilt_cyc)) ++cnt.cf_sl_asbuilt_whole;
-                    else                                                   ++cnt.cf_sl_asbuilt_other;
-                    const std::string released_detail = detail + fmt::format(
-                        " slip_cause={} deseated=0 readmitted=1 child={} parent={} legacy_cause={} legacy_known={} "
-                        "legacy_pinmove_m={:.6f} legacy_target_cyc={}",
-                        static_cast<int>(e.slip_cause), vertexName(e.child, stations), vertexName(e.parent, stations),
-                        chainLegacyCauseName(e.cause), e.legacy_known ? 1 : 0, e.legacy_pinmove_m,
-                        e.lambda_m > 0.0 ? fmt::format("{:.6f}", e.legacy_target_m / e.lambda_m) : "");
-                    event(spec.event, e.sat, e.station_name, std::nullopt, "leave", released_detail);
-                    event(spec.event, e.sat, e.station_name, e.pinmove_m, "join", released_detail);
-                    break;
-                }
-                case ChainEventRow::Merge: {
-                    if (!e.merge_released) {
-                        event(spec.event, e.sat, e.station_name, e.pinmove_m, "join", detail);
-                        break;
-                    }
-                    // Both edges of the event, with the as-built facts the release replaced: the absorbed
-                    // tree's old root leaves, and the edge that joins the two trees joins.
-                    ++cnt.cf_mg_pairs;
-                    const double asbuilt_cyc = e.lambda_m > 0.0 ? e.legacy_pinmove_m / e.lambda_m : 0.0;
-                    if (!e.legacy_known)                                   ++cnt.cf_mg_asbuilt_unknown;
-                    else if (e.legacy_pinmove_m == 0.0)                    ++cnt.cf_mg_asbuilt_zero;
-                    else if (e.lambda_m > 0.0 && nearInteger(asbuilt_cyc)) ++cnt.cf_mg_asbuilt_whole;
-                    else                                                   ++cnt.cf_mg_asbuilt_other;
-                    const std::string merge_detail = detail + fmt::format(
-                        " old_root={} into_root={} child={} parent={} legacy_cause={} legacy_known={} "
-                        "legacy_pinmove_m={:.6f} legacy_target_cyc={}",
-                        e.merge_from, e.merge_into, vertexName(e.child, stations), vertexName(e.parent, stations),
-                        chainLegacyCauseName(e.cause), e.legacy_known ? 1 : 0, e.legacy_pinmove_m,
-                        e.lambda_m > 0.0 ? fmt::format("{:.6f}", e.legacy_target_m / e.lambda_m) : "");
-                    event(spec.event, "", e.merge_from, std::nullopt, "leave", merge_detail);
-                    event(spec.event, e.sat, e.station_name, e.pinmove_m, "join", merge_detail);
-                    break;
-                }
-                default:
-                    break;
-            }
-        }
-        // The tree edges the slip row de-seated, both edges with their identities: the slipped arc leaves, and
-        // the old child joins through the edge of the release that took its moved side, through its new parent
-        // edge with no release or, when it has no parent edge now (a root, or no vertex of the band's trees), on
-        // the arc's own names.
-        for (const ChainDeseatObs& d : obs.deseats) {
-            const std::string new_parent = vertexName(d.new_parent, stations);
-            const std::string deseat_detail = fmt::format(
-                "sig={} comp={} slip_cause={} deseated=1 band_latched={} child={} parent={} prev_target_cyc={} "
-                "new_parent={} released_by={}",
-                d.signal, d.comp, static_cast<int>(d.cause), d.band_latched ? 1 : 0, vertexName(d.child, stations),
-                vertexName(d.parent, stations), d.lambda_m > 0.0 ? cell(d.prev_target_m / d.lambda_m, 6) : "",
-                new_parent, d.released ? chainReleaseRowName(d.release_row) : "none");
-            const char* name = chainEventSpec(ChainEventRow::TreeEdgeSlip).event;
-            event(name, d.sat, d.station_name, std::nullopt, "leave", deseat_detail);
-            if (d.released)
-                event(name, d.release_sat, vertexName(chainVertexKey(d.release_station), stations),
-                      std::nullopt, "join", deseat_detail + " rejoin=" + vertexName(d.release_vertex, stations));
-            else if (d.new_parent.empty())
-                event(name, d.sat, d.station_name, std::nullopt, "join", deseat_detail + " rejoin=none");
-            else if (d.sat_is_child)
-                event(name, d.sat, new_parent, std::nullopt, "join", deseat_detail);
-            else
-                event(name, new_parent, d.station_name, std::nullopt, "join", deseat_detail);
-        }
-        // The cut releases of the returning, rehost, slip and merge rows: one cut_release row per release, then one
-        // declared_keys row per satellite of its moved side (the keys the producer declares moved).
-        for (const ChainReleaseObs& r : obs.releases) {
-            const std::string root = vertexName(r.vertex, stations);
-            event(kChainCutReleaseEvent, r.sat, vertexName(chainVertexKey(r.station), stations),
-                  std::nullopt, "release",
-                  fmt::format("sig={} comp={} root={} arcs={} rpb={} pb={} n_rx={} n_sat={}", r.signal, r.comp,
-                              root, r.arcs, r.rpb, r.pb, r.stations.size(), r.sats.size()));
-            for (const std::string& sat : r.sats)
-                event(kChainDeclaredKeysEvent, sat, "", std::nullopt, "declare",
-                      fmt::format("sig={} cause={} root={}", r.signal, chainReleaseRowName(r.row), root));
-        }
-        // The component events: a root handover or a split names the old root (leave) and the
-        // new root (join).
-        for (const ChainComponentEvent& k : cls.comps) {
-            if (!k.root_changed && !k.split) continue;
-            const char* name = k.split ? chainEventSpec(ChainEventRow::Split).event
-                                       : chainEventSpec(ChainEventRow::RootHandover).event;
-            std::string detail = fmt::format("sig={} comp={} old_root={} new_root={}",
-                                             k.signal, k.comp, k.old_root, k.r1);
-            // With the row that decides it armed, what it did with this handover.
-            if (chainEventRowArmed(ctx.knobs, k.split ? ChainEventRow::Split : ChainEventRow::RootHandover))
-                for (const ChainRootObs& ro : obs.roots) {
-                    if (ro.group != k.group || ro.comp != k.comp) continue;
-                    detail += fmt::format(" outcome={}", chainRootOutcomeName(ro.outcome));
-                    if (ro.outcome == ChainRootOutcome::Pinned)
-                        detail += fmt::format(" rpb_target_m={:.6f} rpb_sigma_m={:.6f}", ro.target_m, ro.sigma_m);
-                    break;
-                }
-            event(name, "", k.old_root, std::nullopt, "leave", detail);
-            event(name, "", k.r1, std::nullopt, "join", detail);
-        }
-
+        networkChainFrameEventRows(run, ep, obs, cls, mem);
         // 4. This epoch's chord table.
-        std::set<std::tuple<int, std::string, std::string>> tree_arcs;
-        std::set<std::string> chain_signals;
-        for (const ChainEdgeObs& e : edges) {
-            tree_arcs.insert({e.station, e.sat, e.signal});
-            chain_signals.insert(e.sys + "|" + e.signal);
-        }
-        std::map<std::tuple<int, std::string, std::string>, const ChainChordCycle*> cyc_of;
-        for (const ChainChordCycle& c : obs.chords) cyc_of[{c.station, c.sat, c.signal}] = &c;
-        const auto& netar = run.nc.ambiguity_resolution;
-        const arcgraph::CycleLattice& lattice = ctx.carry.ar_lattice.lattice;
-        auto latticeChord = [&](int station, const std::string& sat, const std::string& sig,
-                                long long& out) -> bool {
-            const auto c = cyc_of.find({station, sat, sig});
-            if (c == cyc_of.end()) return false;
-            return chainLatticeChordInteger(lattice, *c->second, out);
-        };
-        std::map<std::tuple<int, std::string, std::string>, std::pair<ChainChordRow, int>> new_chords;
-        for (std::size_t i = 0; i < stations.size() && i < asm_res.size() && i < est_index_of.size(); ++i) {
-            if (est_index_of[i] < 0) continue;
-            const ChainAmbColumns cols = chainAmbColumns(asm_res[i]);
-            std::vector<ChainChordRow> rows = chainStationChordRows(
-                static_cast<int>(i), stations[i].name, cols, tree_arcs, chain_signals);
-            if (rows.empty()) continue;
-            const std::size_t est_idx = static_cast<std::size_t>(est_index_of[i]);
-            std::vector<char> filled;
-            if (!chainChordFloats(est, est_idx, x_s, plan.shared_datum, cols, rows, filled)) continue;
-            for (std::size_t r_i = 0; r_i < rows.size(); ++r_i) {
-                if (!filled[r_i]) continue;
-                ChainChordRow& r = rows[r_i];
-                chainCertifyChord(r.float_cyc_1, r.float_cyc_2, r.q11, r.q12, r.q22,
-                                  netar.min_success_rate, netar.ratio_threshold,
-                                  netar.ratio_upper_bound, netar.nl_max_per_pair_frac, r);
-                r.have_lat_1 = latticeChord(r.station, r.sat, r.sig1, r.lat_1);
-                r.have_lat_2 = latticeChord(r.station, r.sat, r.sig2, r.lat_2);
-                r.conflict = (r.have_int_1 && r.have_lat_1 && r.int_1 != r.lat_1)
-                          || (r.have_int_2 && r.have_lat_2 && r.int_2 != r.lat_2);
-                ++cnt.cf_chord_rows;
-                if (r.have_int_1 || r.have_int_2) ++cnt.cf_chord_pair_det;
-                if (r.have_lat_1 || r.have_lat_2) ++cnt.cf_chord_lattice;
-                if (r.conflict) ++cnt.cf_chord_conflicts;
-                if (traces.chain_frame_trace.is_open()) {
-                    const char* source = (r.have_int_1 || r.have_int_2) ? "pair" : "none";
-                    traces.chain_frame_trace
-                        << t.week << ',' << fmt::format("{:.3f}", t.tow) << ',' << r.family << ','
-                        << r.station_name << ',' << r.sat << ','
-                        << fmt::format("{:.6f}", r.float_cyc_1) << ','
-                        << fmt::format("{:.6f}", r.float_cyc_2) << ','
-                        << fmt::format("{:.6e}", r.q11) << ',' << fmt::format("{:.6e}", r.q12) << ','
-                        << fmt::format("{:.6e}", r.q22) << ','
-                        << (r.have_int_1 ? std::to_string(r.int_1) : "") << ','
-                        << (r.have_int_2 ? std::to_string(r.int_2) : "") << ',' << source << ','
-                        << (r.conflict ? 1 : 0) << ','
-                        << (r.have_lat_1 ? std::to_string(r.lat_1) : "") << '/'
-                        << (r.have_lat_2 ? std::to_string(r.lat_2) : "") << '\n';
-                }
-                new_chords[{r.station, r.sat, r.sig1}] = {r, 1};
-                new_chords[{r.station, r.sat, r.sig2}] = {r, 2};
-            }
-        }
-
+        std::map<std::tuple<int, std::string, std::string>, std::pair<ChainChordRow, int>> new_chords =
+            networkChainFrameChordTable(run, ep, obs, cls);
         // 5. Replace the memory.
         chainRememberEpoch(obs, cls, std::move(new_chords), t.week, t.tow, now_s, cnt);
         classified = cls.edges;
     }
 
     // network_rpb_states.csv: each receiver phase bias with its prior and posterior.
-    if (ctx.knobs.trace_rpb_states && traces.rpb_states_trace.is_open()) {
-        std::map<std::pair<int, std::string>, const ChainEdgeObs*> rx_parent;
-        for (const ChainEdgeObs& e : classified.empty() ? obs.edges : classified)
-            if (!e.sat_is_child) rx_parent[{e.station, e.signal}] = &e;
-        for (std::size_t i = 0; i < stations.size() && i < asm_res.size() && i < est_index_of.size(); ++i) {
-            if (est_index_of[i] < 0) continue;
-            const std::vector<RpbTraceCol>& rc = asm_res[i].rpb_trace;
-            if (rc.empty()) continue;
-            const std::size_t est_idx = static_cast<std::size_t>(est_index_of[i]);
-            std::vector<Eigen::Index> cols;
-            for (const RpbTraceCol& c : rc) cols.push_back(c.col);
-            Eigen::VectorXd xr, vard;
-            try {
-                xr = est.reconstructStation(est_idx, x_s);
-                vard = est.conditionalLocalVarianceDiag(est_idx, cols, plan.shared_datum);
-            } catch (...) { continue; }
-            for (std::size_t a = 0; a < rc.size(); ++a) {
-                const RpbTraceCol& c = rc[a];
-                if (c.col < 0 || c.col >= xr.size()) continue;
-                const double value = c.x_lin + xr(c.col);
-                const double var = a < static_cast<std::size_t>(vard.size()) ? vard(static_cast<Eigen::Index>(a)) : -1.0;
-                const ChainEdgeObs* pe = nullptr;
-                {
-                    const auto p = rx_parent.find({static_cast<int>(i), c.signal});
-                    if (p != rx_parent.end()) pe = p->second;
-                }
-                double shift = 0.0;
-                {
-                    const auto s = obs.shift_rpb.find({static_cast<int>(i), c.key});
-                    if (s != obs.shift_rpb.end()) shift = s->second;
-                }
-                std::string event;
-                int depth = 0, comp = -1;
-                std::string parent_sat;
-                if (pe != nullptr) {
-                    parent_sat = pe->sat;
-                    depth = pe->depth;
-                    comp = pe->comp;
-                    if (pe->row != ChainEventRow::Kept) event = chainEventSpec(pe->row).name;
-                }
-                if (std::isfinite(c.tl_var) && c.tl_var > 0.0 && var > 0.0 && c.tl_var > var
-                    && std::isfinite(c.tl_value)) {
-                    const double d = value - c.tl_value;
-                    cnt.cf_rpb_nees_sum += d * d / (c.tl_var - var);
-                    ++cnt.cf_rpb_nees_n;
-                }
-                traces.rpb_states_trace
-                    << t.week << ',' << fmt::format("{:.3f}", t.tow) << ',' << stations[i].name << ','
-                    << c.system << ',' << c.signal << ',' << fmt::format("{:.6f}", value) << ','
-                    << (var > 0.0 ? fmt::format("{:.6f}", std::sqrt(var)) : "") << ','
-                    << (c.pinned ? 1 : 0) << ',' << cell(c.floor_w, 6) << ','
-                    << cell(c.tl_var, 9) << ',' << parent_sat << ',' << (pe ? std::to_string(depth) : "")
-                    << ',' << (comp >= 0 ? std::to_string(comp) : "") << ',' << event << ','
-                    << fmt::format("{:.6f}", shift) << '\n';
-                ++cnt.cf_rpb_rows;
-            }
-        }
-    }
+    networkChainFrameRpbStates(run, ep, obs, classified);
 }
 
 // ---- The run end --------------------------------------------------------------------------------

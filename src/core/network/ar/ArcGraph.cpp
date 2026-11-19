@@ -478,216 +478,260 @@ std::vector<int> chainFrontier(const std::vector<char>& visited, const std::vect
     return frontier;
 }
 
+/// The chain walk's state while it grows one component's forest (growChainForest): the graph and the rules it reads,
+/// the forest it builds, the attached vertices and the queues.  A plain value; the steps below act on it.
+struct ChainWalk {
+    const ArcGraph&         g;              ///< The graph.
+    const ForestRules&      rules;          ///< The walk's rules.
+    const std::vector<int>& station_rank;   ///< The stations' longevity ranks (empty: none).
+    std::uint8_t            mask;           ///< The band mask of a usable arc (rules.band_mask).
+    SpanningForest          f;              ///< The forest grown so far.
+    std::vector<std::vector<int>> inc_arcs; ///< The incumbent adjacency, per vertex in seed order.
+    bool lead_on{false};                    ///< Lead arcs are given (ForestRules::lead_rank).
+    int  max_lead{0};                       ///< The highest lead rank.
+    std::vector<char> is_inc;               ///< Lead arcs only: the incumbent arcs (a lead edge on one reads as kept).
+    std::vector<char> visited;              ///< Per vertex: attached.
+    std::size_t n_visited{0};               ///< The attached vertices.
+    std::deque<int> inc_q;                  ///< Attached vertices whose incumbent arcs are still to be scanned.
+    std::deque<int> new_q;                  ///< Attached vertices whose new edges are still to be tried.
+    std::deque<int> lead_q;                 ///< Lead arcs only: attached vertices whose rank-1 arcs are still to be scanned.
+    std::vector<int> attached;              ///< Lead arcs only: the attached vertices in attachment order (the higher ranks' scan).
+    int  pass{1};                           ///< The pass (2: the refusals lifted).
+    bool allow_ineligible{false};           ///< A new edge may take an ineligible host.
+    bool allow_slipped{false};              ///< A new edge may take a slipped arc.
+};
+
+/// The walk's start: the incumbent adjacency in seed order and, with lead arcs, the highest rank and the incumbent
+/// marks; nothing attached.
+void chainWalkStart(ChainWalk& w, const std::vector<int>& incumbent_arcs) {
+    const int nv = static_cast<int>(w.g.stations.size() + w.g.sats.size());
+    // The incumbent adjacency, per vertex in seed order.
+    w.inc_arcs.assign(static_cast<std::size_t>(nv), {});
+    for (int a : incumbent_arcs) {
+        if (a < 0 || a >= static_cast<int>(w.g.rows.size()) || !usable(w.g, a, w.mask)) continue;
+        w.inc_arcs[static_cast<std::size_t>(stationVertex(w.g, w.g.row_station[static_cast<std::size_t>(a)]))].push_back(a);
+        w.inc_arcs[static_cast<std::size_t>(satVertex(w.g, w.g.row_sat[static_cast<std::size_t>(a)]))].push_back(a);
+    }
+    // The lead arcs (ForestRules::lead_rank): the highest rank, and which arcs are incumbents (a lead edge on one reads as
+    // kept).
+    w.lead_on = w.rules.lead_rank != nullptr;
+    if (w.lead_on) {
+        for (char r : *w.rules.lead_rank) w.max_lead = std::max(w.max_lead, static_cast<int>(r));
+        w.is_inc.assign(w.g.rows.size(), 0);
+        for (int a : incumbent_arcs)
+            if (a >= 0 && static_cast<std::size_t>(a) < w.g.rows.size()) w.is_inc[static_cast<std::size_t>(a)] = 1;
+    }
+    w.visited.assign(static_cast<std::size_t>(nv), 0);
+}
+
+/// An arc's lead rank (ForestRules::lead_rank; 0 outside it).
+int chainLeadOf(const ChainWalk& w, int a) {
+    return a >= 0 && static_cast<std::size_t>(a) < w.rules.lead_rank->size()
+               ? static_cast<int>((*w.rules.lead_rank)[static_cast<std::size_t>(a)])
+               : 0;
+}
+
+/// Attaches vertex @p v: it joins every queue (the lead queues with lead arcs) and, a station, the station order.
+void chainAttach(ChainWalk& w, int v) {
+    w.visited[static_cast<std::size_t>(v)] = 1;
+    ++w.n_visited;
+    w.inc_q.push_back(v);
+    w.new_q.push_back(v);
+    if (w.lead_on) {
+        w.lead_q.push_back(v);
+        w.attached.push_back(v);
+    }
+    if (!isSatVertex(w.g, v)) w.f.station_order.push_back(v);
+}
+
+/// Records arc @p a as the tree edge that attaches @p child.
+void chainRecord(ChainWalk& w, int a, int child, bool from_incumbent) {
+    TreeEdge e;
+    e.arc             = a;
+    e.attaches_sat    = isSatVertex(w.g, child);
+    e.from_incumbent  = from_incumbent;
+    e.ineligible_host = !from_incumbent && !w.g.rows[static_cast<std::size_t>(a)].eligible_host;
+    e.slipped         = slippedIn(w.g, a, w.mask);
+    e.pass            = w.pass;
+    w.f.edges.push_back(e);
+    w.f.is_tree_arc[static_cast<std::size_t>(a)] = 1;
+    w.f.parent_arc[static_cast<std::size_t>(child)] = a;
+}
+
+/// The new-edge test: a slipped arc and an ineligible host are refused while their refusal is in force.
+bool chainNewEdgeOk(const ChainWalk& w, int a) {
+    if (!w.allow_slipped && slippedIn(w.g, a, w.mask)) return false;
+    return w.g.rows[static_cast<std::size_t>(a)].eligible_host || w.allow_ineligible;
+}
+
+/// The lead step: rank 1 drains breadth first; when it attaches nothing, the first arc of the lowest higher rank from
+/// an attached vertex (in attachment order, each one's arcs in the walk's own order) to an unattached one.  A lead
+/// edge skips the new-edge test.
+/// @return Whether a vertex was attached.
+bool chainLeadStep(ChainWalk& w) {
+    bool took = false;
+    while (!w.lead_q.empty()) {
+        const int v = w.lead_q.front();
+        w.lead_q.pop_front();
+        for (int a : chainCandidates(w.g, v, w.rules, w.station_rank)) {
+            if (chainLeadOf(w, a) != 1) continue;
+            const int u = otherEnd(w.g, a, v);
+            if (w.visited[static_cast<std::size_t>(u)]) continue;
+            chainRecord(w, a, u, w.is_inc[static_cast<std::size_t>(a)] != 0);
+            w.f.edges.back().lead = 1;
+            chainAttach(w, u);
+            took = true;
+        }
+    }
+    if (took) return true;
+    for (int r = 2; r <= w.max_lead; ++r) {
+        int arc = -1, child = -1;
+        for (std::size_t i = 0; i < w.attached.size() && arc < 0; ++i) {
+            const int v = w.attached[i];
+            for (int a : chainCandidates(w.g, v, w.rules, w.station_rank)) {
+                if (chainLeadOf(w, a) != r) continue;
+                const int u = otherEnd(w.g, a, v);
+                if (w.visited[static_cast<std::size_t>(u)]) continue;
+                arc   = a;
+                child = u;
+                break;
+            }
+        }
+        if (arc >= 0) {
+            chainRecord(w, arc, child, w.is_inc[static_cast<std::size_t>(arc)] != 0);
+            w.f.edges.back().lead = r;
+            chainAttach(w, child);
+            return true;
+        }
+    }
+    return false;
+}
+
+/// The held step: a held arc from an attached vertex to an unattached one that passes the new-edge test, the attached
+/// vertices in the new queue's order and each one's candidates in the walk's own order; the incumbent queue then
+/// re-attaches the rest of a fragment.  By life (rules.held_by_life): every such held arc is a candidate and the most
+/// durable one is taken (the first in that order on a tie), so a setting satellite is re-hosted onto the held link it
+/// keeps longest rather than onto the first one the walk meets.
+/// @return Whether a vertex was attached.
+bool chainHeldStep(ChainWalk& w) {
+    bool took = false;
+    int best_a = -1, best_u = -1;
+    for (int v : w.new_q) {
+        for (int a : chainCandidates(w.g, v, w.rules, w.station_rank)) {
+            if (a < 0 || static_cast<std::size_t>(a) >= w.rules.held_arcs->size()
+                || !(*w.rules.held_arcs)[static_cast<std::size_t>(a)])
+                continue;
+            const int u = otherEnd(w.g, a, v);
+            if (w.visited[static_cast<std::size_t>(u)]) continue;
+            if (!chainNewEdgeOk(w, a)) continue;
+            if (w.rules.held_by_life) {
+                if (best_a < 0 || w.g.rows[static_cast<std::size_t>(a)].durability
+                                      > w.g.rows[static_cast<std::size_t>(best_a)].durability) {
+                    best_a = a;
+                    best_u = u;
+                }
+                continue;
+            }
+            chainRecord(w, a, u, /*from_incumbent=*/false);
+            w.f.edges.back().held_first = true;
+            chainAttach(w, u);
+            took = true;
+            break;
+        }
+        if (took) break;
+    }
+    if (best_a >= 0) {
+        chainRecord(w, best_a, best_u, /*from_incumbent=*/false);
+        w.f.edges.back().held_first = true;
+        chainAttach(w, best_u);
+        took = true;
+    }
+    return took;
+}
+
+/// The incumbent step, which drains the incumbent queue before any new edge: every unattached neighbour of the front
+/// vertex through its incumbent arcs in seed order (one at a time with lead arcs, so the lead arcs of the vertex it
+/// attached come first); the front leaves the queue unless lead arcs are on and it attached one.
+void chainIncumbentStep(ChainWalk& w) {
+    const int v = w.inc_q.front();
+    bool took = false;
+    for (int a : w.inc_arcs[static_cast<std::size_t>(v)]) {
+        const int u = otherEnd(w.g, a, v);
+        if (w.visited[static_cast<std::size_t>(u)]) continue;
+        chainRecord(w, a, u, /*from_incumbent=*/true);
+        chainAttach(w, u);
+        took = true;
+        if (w.lead_on) break;   // one at a time: the lead arcs of the vertex it attached come first
+    }
+    if (!w.lead_on || !took) w.inc_q.pop_front();
+}
+
+/// The new-edge step.  Without held arcs and lead arcs, the plain breadth-first step: the front vertex leaves the new
+/// queue and every unattached neighbour through an arc that passes the new-edge test is attached.  With held first or
+/// lead arcs, one new edge at a time, so the incumbent queue re-attaches the fragment it reached and that fragment's
+/// lead and held arcs are tried before the next one; the front leaves the queue once it has no new edge left.
+void chainNewEdgeStep(ChainWalk& w) {
+    if (w.rules.held_arcs == nullptr && !w.lead_on) {
+        const int v = w.new_q.front();
+        w.new_q.pop_front();
+        for (int a : chainCandidates(w.g, v, w.rules, w.station_rank)) {
+            const int u = otherEnd(w.g, a, v);
+            if (w.visited[static_cast<std::size_t>(u)]) continue;
+            if (!chainNewEdgeOk(w, a)) continue;
+            chainRecord(w, a, u, /*from_incumbent=*/false);
+            chainAttach(w, u);
+        }
+        return;
+    }
+    const int v = w.new_q.front();
+    bool took = false;
+    for (int a : chainCandidates(w.g, v, w.rules, w.station_rank)) {
+        const int u = otherEnd(w.g, a, v);
+        if (w.visited[static_cast<std::size_t>(u)]) continue;
+        if (!chainNewEdgeOk(w, a)) continue;
+        chainRecord(w, a, u, /*from_incumbent=*/false);
+        chainAttach(w, u);
+        took = true;
+        break;
+    }
+    if (!took) w.new_q.pop_front();
+}
+
 }  // namespace
 
 SpanningForest growChainForest(const ArcGraph& g, const Component& c, const std::vector<int>& roots,
                                const std::vector<int>& incumbent_arcs, const ForestRules& rules,
                                const std::vector<int>& frontier_rank, const std::vector<int>& station_rank) {
-    const std::uint8_t mask = rules.band_mask;
     const int nv = static_cast<int>(g.stations.size() + g.sats.size());
-    SpanningForest f = emptyForest(g);
-
-    // The incumbent adjacency, per vertex in seed order.
-    std::vector<std::vector<int>> inc_arcs(static_cast<std::size_t>(nv));
-    for (int a : incumbent_arcs) {
-        if (a < 0 || a >= static_cast<int>(g.rows.size()) || !usable(g, a, mask)) continue;
-        inc_arcs[static_cast<std::size_t>(stationVertex(g, g.row_station[static_cast<std::size_t>(a)]))].push_back(a);
-        inc_arcs[static_cast<std::size_t>(satVertex(g, g.row_sat[static_cast<std::size_t>(a)]))].push_back(a);
-    }
-
-    // The lead arcs (ForestRules::lead_rank): each arc's rank, the highest rank, and which arcs are incumbents (a lead
-    // edge on one reads as kept).
-    const bool lead_on = rules.lead_rank != nullptr;
-    const auto leadOf = [&](int a) {
-        return a >= 0 && static_cast<std::size_t>(a) < rules.lead_rank->size()
-                   ? static_cast<int>((*rules.lead_rank)[static_cast<std::size_t>(a)])
-                   : 0;
-    };
-    int max_lead = 0;
-    std::vector<char> is_inc;
-    if (lead_on) {
-        for (char r : *rules.lead_rank) max_lead = std::max(max_lead, static_cast<int>(r));
-        is_inc.assign(g.rows.size(), 0);
-        for (int a : incumbent_arcs)
-            if (a >= 0 && static_cast<std::size_t>(a) < g.rows.size()) is_inc[static_cast<std::size_t>(a)] = 1;
-    }
-
-    std::vector<char> visited(static_cast<std::size_t>(nv), 0);
-    std::size_t n_visited = 0;
-    std::deque<int> inc_q, new_q;
-    std::deque<int> lead_q;      // lead arcs only: the attached vertices whose rank-1 arcs are still to be scanned
-    std::vector<int> attached;   // lead arcs only: the attached vertices in attachment order (the higher ranks' scan)
-    int pass = 1;
-    const auto attach = [&](int v) {
-        visited[static_cast<std::size_t>(v)] = 1;
-        ++n_visited;
-        inc_q.push_back(v);
-        new_q.push_back(v);
-        if (lead_on) {
-            lead_q.push_back(v);
-            attached.push_back(v);
-        }
-        if (!isSatVertex(g, v)) f.station_order.push_back(v);
-    };
-    const auto record = [&](int a, int child, bool from_incumbent) {
-        TreeEdge e;
-        e.arc             = a;
-        e.attaches_sat    = isSatVertex(g, child);
-        e.from_incumbent  = from_incumbent;
-        e.ineligible_host = !from_incumbent && !g.rows[static_cast<std::size_t>(a)].eligible_host;
-        e.slipped         = slippedIn(g, a, mask);
-        e.pass            = pass;
-        f.edges.push_back(e);
-        f.is_tree_arc[static_cast<std::size_t>(a)] = 1;
-        f.parent_arc[static_cast<std::size_t>(child)] = a;
-    };
+    ChainWalk w{g, rules, station_rank, rules.band_mask, emptyForest(g)};
+    chainWalkStart(w, incumbent_arcs);
     for (int r : roots)
-        if (r >= 0 && r < nv && !visited[static_cast<std::size_t>(r)]) attach(r);
+        if (r >= 0 && r < nv && !w.visited[static_cast<std::size_t>(r)]) chainAttach(w, r);
 
     const std::size_t comp_vertices = c.stations.size() + c.sats.size();
-    bool allow_ineligible = !rules.refuse_ineligible_first;
-    bool allow_slipped    = !rules.refuse_slipped_first;
-    const auto newEdgeOk = [&](int a) {
-        if (!allow_slipped && slippedIn(g, a, mask)) return false;
-        return g.rows[static_cast<std::size_t>(a)].eligible_host || allow_ineligible;
-    };
-    // One lead step: rank 1 drains breadth first; when it attaches nothing, the first arc of the lowest higher rank
-    // from an attached vertex (in attachment order, each one's arcs in the walk's own order) to an unattached one.
-    // Returns whether a vertex was attached.
-    const auto takeLead = [&]() {
-        bool took = false;
-        while (!lead_q.empty()) {
-            const int v = lead_q.front();
-            lead_q.pop_front();
-            for (int a : chainCandidates(g, v, rules, station_rank)) {
-                if (leadOf(a) != 1) continue;
-                const int u = otherEnd(g, a, v);
-                if (visited[static_cast<std::size_t>(u)]) continue;
-                record(a, u, is_inc[static_cast<std::size_t>(a)] != 0);
-                f.edges.back().lead = 1;
-                attach(u);
-                took = true;
-            }
-        }
-        if (took) return true;
-        for (int r = 2; r <= max_lead; ++r) {
-            int arc = -1, child = -1;
-            for (std::size_t i = 0; i < attached.size() && arc < 0; ++i) {
-                const int v = attached[i];
-                for (int a : chainCandidates(g, v, rules, station_rank)) {
-                    if (leadOf(a) != r) continue;
-                    const int u = otherEnd(g, a, v);
-                    if (visited[static_cast<std::size_t>(u)]) continue;
-                    arc   = a;
-                    child = u;
-                    break;
-                }
-            }
-            if (arc >= 0) {
-                record(arc, child, is_inc[static_cast<std::size_t>(arc)] != 0);
-                f.edges.back().lead = r;
-                attach(child);
-                return true;
-            }
-        }
-        return false;
-    };
+    w.allow_ineligible = !rules.refuse_ineligible_first;
+    w.allow_slipped    = !rules.refuse_slipped_first;
     for (int p = 0; p < 2; ++p) {
         if (p == 1) {
             // Pass 2: only when a refusal is armed and a vertex is still unreached; the frontier is
             // every attached vertex in frontier_rank order, and everything is admitted.
-            if ((allow_ineligible && allow_slipped) || n_visited >= comp_vertices) break;
-            allow_ineligible = true;
-            allow_slipped    = true;
-            pass             = 2;
-            for (int v : chainFrontier(visited, frontier_rank)) new_q.push_back(v);
+            if ((w.allow_ineligible && w.allow_slipped) || w.n_visited >= comp_vertices) break;
+            w.allow_ineligible = true;
+            w.allow_slipped    = true;
+            w.pass             = 2;
+            for (int v : chainFrontier(w.visited, frontier_rank)) w.new_q.push_back(v);
         }
-        while (!inc_q.empty() || !new_q.empty()) {
-            // Lead arcs first: before any incumbent, held or new edge.
-            if (lead_on && n_visited < comp_vertices && takeLead()) continue;
-            if (inc_q.empty() && rules.held_arcs != nullptr && n_visited < comp_vertices) {
-                // Held first: a held arc from an attached vertex to an unattached one, the
-                // attached vertices in attachment order and each one's candidates in the walk's
-                // own order; the incumbent queue then re-attaches the rest of a fragment.
-                // By life (rules.held_by_life): every such held arc is a candidate and the most durable one is
-                // taken (the first in that order on a tie), so a setting satellite is re-hosted onto the held link
-                // it keeps longest rather than onto the first one the walk meets.
-                bool took = false;
-                int best_a = -1, best_u = -1;
-                for (int v : new_q) {
-                    for (int a : chainCandidates(g, v, rules, station_rank)) {
-                        if (a < 0 || static_cast<std::size_t>(a) >= rules.held_arcs->size()
-                            || !(*rules.held_arcs)[static_cast<std::size_t>(a)])
-                            continue;
-                        const int u = otherEnd(g, a, v);
-                        if (visited[static_cast<std::size_t>(u)]) continue;
-                        if (!newEdgeOk(a)) continue;
-                        if (rules.held_by_life) {
-                            if (best_a < 0 || g.rows[static_cast<std::size_t>(a)].durability
-                                                  > g.rows[static_cast<std::size_t>(best_a)].durability) {
-                                best_a = a;
-                                best_u = u;
-                            }
-                            continue;
-                        }
-                        record(a, u, /*from_incumbent=*/false);
-                        f.edges.back().held_first = true;
-                        attach(u);
-                        took = true;
-                        break;
-                    }
-                    if (took) break;
-                }
-                if (best_a >= 0) {
-                    record(best_a, best_u, /*from_incumbent=*/false);
-                    f.edges.back().held_first = true;
-                    attach(best_u);
-                    took = true;
-                }
-                if (took) continue;
-            }
-            if (!inc_q.empty()) {   // the incumbent queue drains before any new edge
-                const int v = inc_q.front();
-                bool took = false;
-                for (int a : inc_arcs[static_cast<std::size_t>(v)]) {
-                    const int u = otherEnd(g, a, v);
-                    if (visited[static_cast<std::size_t>(u)]) continue;
-                    record(a, u, /*from_incumbent=*/true);
-                    attach(u);
-                    took = true;
-                    if (lead_on) break;   // one at a time: the lead arcs of the vertex it attached come first
-                }
-                if (!lead_on || !took) inc_q.pop_front();
-            } else if (rules.held_arcs == nullptr && !lead_on) {
-                const int v = new_q.front();
-                new_q.pop_front();
-                for (int a : chainCandidates(g, v, rules, station_rank)) {
-                    const int u = otherEnd(g, a, v);
-                    if (visited[static_cast<std::size_t>(u)]) continue;
-                    if (!newEdgeOk(a)) continue;
-                    record(a, u, /*from_incumbent=*/false);
-                    attach(u);
-                }
-            } else {
-                // Held first or lead arcs: one new edge at a time, so the incumbent queue re-attaches
-                // the fragment it reached and that fragment's lead and held arcs are tried before the
-                // next one.
-                const int v = new_q.front();
-                bool took = false;
-                for (int a : chainCandidates(g, v, rules, station_rank)) {
-                    const int u = otherEnd(g, a, v);
-                    if (visited[static_cast<std::size_t>(u)]) continue;
-                    if (!newEdgeOk(a)) continue;
-                    record(a, u, /*from_incumbent=*/false);
-                    attach(u);
-                    took = true;
-                    break;
-                }
-                if (!took) new_q.pop_front();
-            }
+        // Each turn takes the first step that applies, in this order: the lead arcs (before any incumbent, held or new
+        // edge), held first (with the incumbent queue empty), the incumbent queue, a new edge.
+        while (!w.inc_q.empty() || !w.new_q.empty()) {
+            if (w.lead_on && w.n_visited < comp_vertices && chainLeadStep(w)) continue;
+            if (w.inc_q.empty() && rules.held_arcs != nullptr && w.n_visited < comp_vertices && chainHeldStep(w))
+                continue;
+            if (!w.inc_q.empty()) chainIncumbentStep(w);
+            else chainNewEdgeStep(w);
         }
     }
-    return f;
+    return std::move(w.f);
 }
 
 // ============================== 3b. the baseline rule ==============================

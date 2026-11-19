@@ -348,6 +348,8 @@ add_library(gnss_core STATIC
     src/core/network/ar/ProducerAr.cpp
     src/core/network/ar/RingFix.cpp
     src/core/network/ar/RingFixSeams.cpp
+    src/core/network/ar/RingFixHold.cpp
+    src/core/network/ar/RingFixDecide.cpp
     src/core/network/ar/ArSuspect.cpp
     src/core/network/ar/ArcGraph.cpp
     src/core/network/ar/ArcLife.cpp

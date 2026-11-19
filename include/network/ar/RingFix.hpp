@@ -1419,6 +1419,46 @@ struct NetworkRunContext;   // network/state/RunContext.hpp
 struct StationAssembly;     // network/driver/RunTypes.hpp
 struct StationCarryFrame;   // network/assembly/StationBuild.hpp
 struct NetworkSolutionEpoch;   // products/NetworkProductEmitter.hpp
+struct RelevelEpochState;   // network/driver/RunTypes.hpp
+struct NetStation;          // network/driver/RunTypes.hpp
+
+// The helpers the seams and their stages share (network/ar/RingFixSeams.cpp, the stages of
+// network/ar/RingFixHold.hpp and network/ar/RingFixDecide.hpp).
+
+/**
+ * @brief The chain record's group key of a link's band.
+ * @param sat The satellite ("E05"); its first letter names the constellation.
+ * @param sig The band's phase signal ("L1C").
+ * @return "<letter>|<signal>" ("E|L1C"), the key the record's edges, chords and roots carry.
+ */
+std::string ringFixGroupOf(const std::string& sat, const std::string& sig);
+
+/**
+ * @brief The arcs in this epoch's free-epoch latch, as (station, satellite, signal).
+ * @param relevel This epoch's latch (the PASS A slip responses and the float vehicle's drops).
+ * @return Every latched arc whose ambiguity key round-trips to an arc.
+ */
+std::set<net::ArcTuple> ringFixLatchedArcs(const RelevelEpochState& relevel);
+
+/**
+ * @brief The near-null signature's inputs: every held Galileo E1/E5a chord whose moving averages of
+ *        its code residuals span @c rf.nn_min_epochs, with its step 4 lambda2 - 3 lambda1.
+ *
+ * The guard (network.ring_fix.nn_guard), the monitor (network.ring_fix.nn_monitor) and the entry
+ * re-validation (network.ring_fix.entry_revalidate) read the verdicts of the same inputs.
+ *
+ * @param rf The ring fix (its links and their moving averages).
+ * @return One input per qualifying held chord, in link order.
+ */
+std::vector<RingFixNearNullIn> ringFixNearNullInputs(const NetworkRingFix& rf);
+
+/**
+ * @brief A station's roster name for an event row.
+ * @param stations The roster.
+ * @param i        The station's roster index.
+ * @return Its name, or "" when @p i is out of range.
+ */
+std::string ringFixStationName(const std::vector<NetStation>& stations, int i);
 
 /**
  * @brief Setup builder: builds the run state when @c network.ring_fix.enable is set and reads
@@ -1436,7 +1476,8 @@ void networkRingFixArm(NetworkRun& run);
  * the latch and the carried entries, runs @ref ringFixReleaseStep, re-opens the released links'
  * carried entries (the vehicle's drop under float_kf, an erase on the leveling vehicle; skipped
  * for a slip, which the drop pass answers, and for a refloat, already answered), writes the
- * release events and rebuilds the hold table.  Gate: the run state exists.
+ * release events and rebuilds the hold table.  Gate: the run state exists.  The body is an
+ * ordered list of stages (network/ar/RingFixHold.hpp, which states their order and why).
  *
  * @param run The run. Written: run.ctx (the ring fix's state, the carried entries of released
  *            links), run.traces (events). Read: run.config, run.setup.stations, run.log.
@@ -1473,7 +1514,8 @@ void networkRingFixStationTally(NetworkRunContext& ctx,
  * quantities, @c chainChordFloats), its ring (@ref ringFixRings), its lattice integers and its
  * carried entries' stamps; each held link's post-fit ionosphere-free phase residual; runs
  * @ref ringFixDecideStep; audits every held link; writes the hold events and the trace.
- * Gate: the run state exists and the chain record is armed.
+ * Gate: the run state exists and the chain record is armed.  The body is an ordered list of
+ * stages (network/ar/RingFixDecide.hpp, which states their order and why).
  *
  * @param run The run. Written: run.ctx (the ring fix's state), run.traces (events, the trace).
  *            Read: run.engines.est, run.setup.stations, run.config.

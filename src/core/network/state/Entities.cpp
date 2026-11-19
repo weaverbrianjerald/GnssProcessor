@@ -1488,7 +1488,7 @@ const std::vector<EntityWriterRow> kEntityWriters = {
     {"networkCouplingReinitHistory", "network/carry/Coupling.cpp", "sat_signals"},
     {"networkBuildCarryDdPriors", "network/carry/DdPriorBuild.cpp", "constellations sats"},
     {"networkHarvestAmbiguityStation", "network/carry/LevelingCarry.cpp", "arcs"},
-    {"networkRingFixHoldEpoch", "network/ar/RingFixSeams.cpp", "arcs"},
+    {"networkRingFixReopenCarry", "network/ar/RingFixHold.cpp", "arcs"},
     {"networkPruneAmbiguities", "network/carry/LevelingCarry.cpp", "arcs"},
     {"networkHarvestPhaseColourStation", "network/carry/PhaseColourCarry.cpp", "los"},
     {"networkPrunePhaseColour", "network/carry/PhaseColourCarry.cpp", "los"},

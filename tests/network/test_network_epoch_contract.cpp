@@ -21,7 +21,9 @@
  * checks the spine against the writer banner of network/driver/Epoch.hpp.
  */
 
-#include "network/ar/RingFix.hpp"   // networkRingFixNearNullMonitor
+#include "network/ar/RingFix.hpp"   // networkRingFixNearNullMonitor, networkRingFixHoldEpoch, networkRingFixDecide
+#include "network/ar/RingFixDecide.hpp"   // the decision's stages
+#include "network/ar/RingFixHold.hpp"     // the hold epoch's stages
 #include "app/Application.hpp"
 #include "network/driver/Epoch.hpp"
 #include "network/state/Entities.hpp"
@@ -371,9 +373,83 @@ static_assert(std::is_same_v<decltype(static_cast<SigHvResumeCouplingCensusRow>(
 using SigHvResumeFirstEpochRetire = void (*)(NetworkRun&);   // HV1 run only
 static_assert(std::is_same_v<decltype(static_cast<SigHvResumeFirstEpochRetire>(&networkResumeFirstEpochRetire)), SigHvResumeFirstEpochRetire>);
 
+// The chain election's seam (called by networkPhaseAnchorEpoch; kept census and hygiene, outputs
+// pass_a and events), the ring fix's two seams and the stages each calls in order
+// (network/ar/RingFixHold.hpp, network/ar/RingFixDecide.hpp), and the chain frame observer's steps.
+// A stage that reads no epoch group takes the run only (with its kept inputs).
+using SigElectChainDatum = void (*)(NetworkRun&, const NetworkEpoch&, const PhaseDatumCandidates&,
+                                    const AnchorHygiene&, EpochPassA&, EpochEvents&);   // writes pass_a, events
+static_assert(std::is_same_v<decltype(static_cast<SigElectChainDatum>(&networkElectChainDatum)), SigElectChainDatum>);
+using SigRingFixHoldEpoch = void (*)(NetworkRun&, const NetworkEpoch&);   // the hold epoch's stages, in order
+static_assert(std::is_same_v<decltype(static_cast<SigRingFixHoldEpoch>(&networkRingFixHoldEpoch)), SigRingFixHoldEpoch>);
+using SigRingFixHoldTruth = void (*)(NetworkRun&, const NetworkEpoch&);
+static_assert(std::is_same_v<decltype(static_cast<SigRingFixHoldTruth>(&networkRingFixHoldTruth)), SigRingFixHoldTruth>);
+using SigRingFixHoldCuts = std::vector<RingFixCut> (*)(NetworkRun&, const NetworkEpoch&, const std::set<net::ArcTuple>&);
+static_assert(std::is_same_v<decltype(static_cast<SigRingFixHoldCuts>(&networkRingFixHoldCuts)), SigRingFixHoldCuts>);
+using SigRingFixHoldThroughCuts = void (*)(NetworkRun&, const NetworkEpoch&, const std::set<net::ArcTuple>&,
+                                           const std::vector<RingFixCut>&);
+static_assert(std::is_same_v<decltype(static_cast<SigRingFixHoldThroughCuts>(&networkRingFixHoldThroughCuts)), SigRingFixHoldThroughCuts>);
+using SigRingFixHoldToTree = void (*)(NetworkRun&, const NetworkEpoch&, const RingFixChainFacts&);
+static_assert(std::is_same_v<decltype(static_cast<SigRingFixHoldToTree>(&networkRingFixHoldToTree)), SigRingFixHoldToTree>);
+using SigRingFixHoldRoots = void (*)(NetworkRun&, const NetworkEpoch&, const RingFixChainFacts&);
+static_assert(std::is_same_v<decltype(static_cast<SigRingFixHoldRoots>(&networkRingFixHoldRoots)), SigRingFixHoldRoots>);
+using SigRingFixHoldReleases = void (*)(NetworkRun&, const NetworkEpoch&, const RingFixChainFacts&,
+                                        const std::set<net::ArcTuple>&);
+static_assert(std::is_same_v<decltype(static_cast<SigRingFixHoldReleases>(&networkRingFixHoldReleases)), SigRingFixHoldReleases>);
+using SigRingFixHoldCascadeReleases = void (*)(NetworkRun&, const NetworkEpoch&, const std::set<net::ArcTuple>&,
+                                               const std::vector<RingFixCut>&);
+static_assert(std::is_same_v<decltype(static_cast<SigRingFixHoldCascadeReleases>(&networkRingFixHoldCascadeReleases)), SigRingFixHoldCascadeReleases>);
+using SigRingFixHoldInherit = void (*)(NetworkRun&, const NetworkEpoch&, const RingFixChainFacts&,
+                                       const std::set<net::ArcTuple>&, const std::vector<RingFixCut>&);
+static_assert(std::is_same_v<decltype(static_cast<SigRingFixHoldInherit>(&networkRingFixHoldInherit)), SigRingFixHoldInherit>);
+using SigRingFixHoldTargets = void (*)(NetworkRun&, const NetworkEpoch&);
+static_assert(std::is_same_v<decltype(static_cast<SigRingFixHoldTargets>(&networkRingFixHoldTargets)), SigRingFixHoldTargets>);
+using SigRingFixHoldTable = void (*)(NetworkRun&);   // run only
+static_assert(std::is_same_v<decltype(static_cast<SigRingFixHoldTable>(&networkRingFixHoldTable)), SigRingFixHoldTable>);
+using SigRingFixReopenCarry = void (*)(NetworkRun&, const NetworkEpoch&, const RingFixLinkId&, const std::string&,
+                                       double);   // called by the hold stages 2, 5 and 6
+static_assert(std::is_same_v<decltype(static_cast<SigRingFixReopenCarry>(&networkRingFixReopenCarry)), SigRingFixReopenCarry>);
+using SigRingFixDecide = void (*)(NetworkRun&, const NetworkEpoch&);   // the decision's stages, in order
+static_assert(std::is_same_v<decltype(static_cast<SigRingFixDecide>(&networkRingFixDecide)), SigRingFixDecide>);
+using SigRingFixDecideReports = void (*)(NetworkRun&, const NetworkEpoch&);
+static_assert(std::is_same_v<decltype(static_cast<SigRingFixDecideReports>(&networkRingFixDecideReports)), SigRingFixDecideReports>);
+using SigRingFixDecideChain = RingFixDecideChain (*)(NetworkRun&, const NetworkEpoch&);
+static_assert(std::is_same_v<decltype(static_cast<SigRingFixDecideChain>(&networkRingFixDecideChain)), SigRingFixDecideChain>);
+using SigRingFixDecideReadings = RingFixDecideReadings (*)(NetworkRun&, const NetworkEpoch&, const RingFixDecideChain&);
+static_assert(std::is_same_v<decltype(static_cast<SigRingFixDecideReadings>(&networkRingFixDecideReadings)), SigRingFixDecideReadings>);
+using SigRingFixDecideAudit = RingFixDecideAudit (*)(NetworkRun&, const RingFixDecideReadings&);   // run only
+static_assert(std::is_same_v<decltype(static_cast<SigRingFixDecideAudit>(&networkRingFixDecideAudit)), SigRingFixDecideAudit>);
+using SigRingFixDecideLinks = std::vector<RingFixEvent> (*)(NetworkRun&, const NetworkEpoch&, const RingFixDecideReadings&);
+static_assert(std::is_same_v<decltype(static_cast<SigRingFixDecideLinks>(&networkRingFixDecideLinks)), SigRingFixDecideLinks>);
+using SigRingFixDecideCascades = RingFixDecideCascades (*)(NetworkRun&, const NetworkEpoch&, const RingFixDecideChain&,
+                                                           const RingFixDecideAudit&);
+static_assert(std::is_same_v<decltype(static_cast<SigRingFixDecideCascades>(&networkRingFixDecideCascades)), SigRingFixDecideCascades>);
+using SigRingFixDecideTrace = void (*)(NetworkRun&, const NetworkEpoch&, const RingFixDecideReadings&,
+                                       const RingFixDecideAudit&, const std::vector<RingFixEvent>&,
+                                       const RingFixDecideCascades&);
+static_assert(std::is_same_v<decltype(static_cast<SigRingFixDecideTrace>(&networkRingFixDecideTrace)), SigRingFixDecideTrace>);
+using SigRingFixDecideSettled = void (*)(NetworkRun&, const NetworkEpoch&, const RingFixDecideChain&,
+                                         const RingFixDecideReadings&, const RingFixDecideCascades&);
+static_assert(std::is_same_v<decltype(static_cast<SigRingFixDecideSettled>(&networkRingFixDecideSettled)), SigRingFixDecideSettled>);
+using SigRingFixDecideNearNull = void (*)(NetworkRun&, const NetworkEpoch&);
+static_assert(std::is_same_v<decltype(static_cast<SigRingFixDecideNearNull>(&networkRingFixDecideNearNull)), SigRingFixDecideNearNull>);
+using SigChainFramePinIdentity = void (*)(NetworkRun&, const NetworkEpoch&, const ChainEpochObs&, const ChainEpochClass&);
+static_assert(std::is_same_v<decltype(static_cast<SigChainFramePinIdentity>(&networkChainFramePinIdentity)), SigChainFramePinIdentity>);
+using SigChainFrameEventRows = void (*)(NetworkRun&, const NetworkEpoch&, const ChainEpochObs&, const ChainEpochClass&,
+                                        const ChainFrameMemory&);
+static_assert(std::is_same_v<decltype(static_cast<SigChainFrameEventRows>(&networkChainFrameEventRows)), SigChainFrameEventRows>);
+using SigChainFrameChordTable =
+    std::map<std::tuple<int, std::string, std::string>, std::pair<ChainChordRow, int>> (*)(
+        NetworkRun&, const NetworkEpoch&, const ChainEpochObs&, const ChainEpochClass&);
+static_assert(std::is_same_v<decltype(static_cast<SigChainFrameChordTable>(&networkChainFrameChordTable)), SigChainFrameChordTable>);
+using SigChainFrameRpbStates = void (*)(NetworkRun&, const NetworkEpoch&, const ChainEpochObs&,
+                                        const std::vector<ChainEdgeObs>&);
+static_assert(std::is_same_v<decltype(static_cast<SigChainFrameRpbStates>(&networkChainFrameRpbStates)), SigChainFrameRpbStates>);
+
 } // namespace
 
 TEST(NetworkEpochContract, CompiledChecks) {
-    // Every check of this file is a static_assert; the case records that it built (56 converted seams of step EP1, 12 of step EP2, 1 of step EP3).
+    // Every check of this file is a static_assert; the case records that it built (56 converted seams of step EP1, 12 of step EP2, 1 of step EP3;
+    // the chain election's seam, the ring fix's two seams with their 19 stages and the carry re-open, and the chain frame observer's 4 steps).
     SUCCEED();
 }

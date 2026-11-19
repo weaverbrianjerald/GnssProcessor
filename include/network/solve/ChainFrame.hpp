@@ -673,10 +673,97 @@ bool chainKeptEdgeMoved(const ChainEdgeObs& e, const double* remembered);
  * @c cut_release and @c declared_keys rows as the others (@c cause=merge).  With the row off an edge
  * classified Merge writes the one @c join row.
  *
+ * The body is five steps in order, the first and the last pure functions of this header: classify and
+ * certify (@ref GnssProcessor::chainClassifyEpoch "chainClassifyEpoch"), the pin identity
+ * (@ref GnssProcessor::networkChainFramePinIdentity "networkChainFramePinIdentity"), the edge trace and
+ * the CHAIN rows (@ref GnssProcessor::networkChainFrameEventRows "networkChainFrameEventRows"), this
+ * epoch's chord table (@ref GnssProcessor::networkChainFrameChordTable "networkChainFrameChordTable") and
+ * the memory replaced (@ref GnssProcessor::chainRememberEpoch "chainRememberEpoch"); then, with its own
+ * gate, the receiver phase-bias trace (@ref GnssProcessor::networkChainFrameRpbStates "networkChainFrameRpbStates").
+ * The classification and the event rows read the memory of the last observed epoch, and the new
+ * memory holds this epoch's chord table, so the memory is replaced last.
+ *
  * @param run The run (its context, traces, setup and engines).
  * @param ep  The epoch after the solve and the harvests.
  */
 void networkChainFrameObserve(NetworkRun& run, const NetworkEpoch& ep);
+
+/**
+ * @brief The observer's step 2, the pin identity of this epoch per group: the traced pins (the tree
+ *        edges, one root pin per component and its bridged satellites) equal the declared gauge
+ *        dimension, and the pins PASS B folded equal the declared ones less the bridged.
+ *
+ * Called by @ref GnssProcessor::networkChainFrameObserve "networkChainFrameObserve" with the chain trace
+ * armed and an armed record.
+ *
+ * @param run The run. Written: the observatory's counters (the pin epochs and the mismatch epochs).
+ *            Read: run.setup.stations.
+ * @param ep  The epoch: ep.assembly.asm_res (the folded pins), ep.events.phase_datum (the declared and
+ *            bridged pins).
+ * @param obs The epoch's chain record (its components).
+ * @param cls Its classification (the edges).
+ */
+void networkChainFramePinIdentity(NetworkRun& run, const NetworkEpoch& ep, const ChainEpochObs& obs,
+                                  const ChainEpochClass& cls);
+
+/**
+ * @brief The observer's step 3: network_chain_edges.csv (one row per classified edge) and the CHAIN
+ *        event rows: each edge's rows by its table row (a re-host, a returning edge, a kept edge, a
+ *        slipped edge, a merge), then the de-seated edges, the cut releases with their declared keys,
+ *        and the root handovers and splits of the components.
+ *
+ * Called by @ref GnssProcessor::networkChainFrameObserve "networkChainFrameObserve" with the chain trace
+ * armed and an armed record, before the memory is replaced.
+ *
+ * @param run The run. Written: run.traces (the edge trace and the CHAIN events), the observatory's
+ *            counters. Read: the knobs (the armed event rows), run.setup.stations.
+ * @param ep  The epoch: ep.se.time, ep.clock.pl_now_s.
+ * @param obs The epoch's chain record (its de-seats, releases and root handovers).
+ * @param cls Its classification (the edges and the component events).
+ * @param mem The memory of the last observed epoch (sightings, parents, the kept rows' as-built targets).
+ */
+void networkChainFrameEventRows(NetworkRun& run, const NetworkEpoch& ep, const ChainEpochObs& obs,
+                                const ChainEpochClass& cls, const ChainFrameMemory& mem);
+
+/**
+ * @brief The observer's step 4, this epoch's chord table: every chord of every station in the solve
+ *        with its two-band float and covariance (@c chainChordFloats), certified by the two-band fix
+ *        (@ref GnssProcessor::chainCertifyChord "chainCertifyChord") and read against the lattice; one
+ *        row of network_chain_frame.csv per chord.
+ *
+ * Called by @ref GnssProcessor::networkChainFrameObserve "networkChainFrameObserve" with the chain trace
+ * armed and an armed record.
+ *
+ * @param run The run. Written: run.traces (network_chain_frame.csv), the observatory's counters. Read:
+ *            run.engines.est, run.setup.stations, run.nc.ambiguity_resolution (the fix's gates), the
+ *            lattice.
+ * @param ep  The epoch after the solve: ep.solve (x_s, plan), ep.assembly (asm_res, est_index_of),
+ *            ep.se.time.
+ * @param obs The epoch's chain record (its chord cycles).
+ * @param cls Its classification (the tree arcs and bands).
+ * @return The chord table, (station, satellite, signal) -> (row, band 1 or 2), for the memory.
+ */
+std::map<std::tuple<int, std::string, std::string>, std::pair<ChainChordRow, int>>
+networkChainFrameChordTable(NetworkRun& run, const NetworkEpoch& ep, const ChainEpochObs& obs,
+                            const ChainEpochClass& cls);
+
+/**
+ * @brief network_rpb_states.csv: each receiver phase bias with its prior and posterior, its parent
+ *        edge's satellite, depth, component and event, and the chain's shift of it; the time-link NEES
+ *        terms.
+ *
+ * Returns at once unless network.trace_rpb_states is armed and its trace is open.
+ *
+ * @param run        The run. Written: run.traces (network_rpb_states.csv), the observatory's counters.
+ *                   Read: run.engines.est, run.setup.stations.
+ * @param ep         The epoch after the solve: ep.solve (x_s, plan), ep.assembly (asm_res,
+ *                   est_index_of), ep.se.time.
+ * @param obs        The epoch's chain record (its receiver phase-bias shifts; its edges when nothing was
+ *                   classified).
+ * @param classified This epoch's classified edges (empty without the chain trace or an armed record).
+ */
+void networkChainFrameRpbStates(NetworkRun& run, const NetworkEpoch& ep, const ChainEpochObs& obs,
+                                const std::vector<ChainEdgeObs>& classified);
 
 /**
  * @brief The keys the chain declares moved at this epoch: every (satellite, phase signal) of the moved
