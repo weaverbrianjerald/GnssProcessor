@@ -37,6 +37,8 @@ references an active file cites. Closed material is in [the record](record/INDEX
   change, then `CONTRIBUTING.md` (repository root).
 - [onboarding/event_legs.md](onboarding/event_legs.md): resumed runs from one seed (the event-leg
   tool, the matched null, what a leg can be compared with).
+- [onboarding/09_chain_and_ring_fix.md](onboarding/09_chain_and_ring_fix.md): the chain datum and the
+  ring fix (one epoch in order, the identities they key on, every rule with its key and verdict).
 - [report/README.md](report/README.md): the mathematical reference (LaTeX, one PDF per
   component and one combined volume).
 - [OVERVIEW.md](OVERVIEW.md): architecture, capabilities, build targets, config sections.
