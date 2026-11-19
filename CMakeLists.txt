@@ -579,6 +579,7 @@ add_executable(gnss_tests
     tests/test_rinex_nav_parser.cpp
     tests/test_brdc_clock_apriori.cpp
     tests/test_brdc_apriori_galileo.cpp
+    tests/test_support_synthetic_nav.cpp
     tests/test_rinex_zero_sentinel.cpp
     tests/test_rinex3_blank_prn.cpp
     tests/test_rinex3_phase_shift.cpp
@@ -690,6 +691,7 @@ add_executable(gnss_tests
     tests/network/test_sd_ewl_integer.cpp
     tests/network/test_sd_ewl_station_params.cpp
     tests/test_ssr_store_injection.cpp
+    tests/test_support_ssr_store_fixture.cpp
     tests/test_realtime_seams.cpp
     tests/test_consumer_disc_carry.cpp
     tests/test_pb_step_translate.cpp
