@@ -139,18 +139,7 @@ AmbiguityResolver::PartialFix AmbiguityResolver::selectFixableSubset_(
 // matrix after every successful fix, and each fix logs one QBCOND line at info
 // level.
 // ===========================================================================
-namespace {
-
-struct QbCond {
-    double cond   = 0.0;   ///< lambda_max / lambda_min of Qb in cycles^2
-    double lo     = 0.0;   ///< smallest eigenvalue (cycles^2)
-    double hi     = 0.0;   ///< largest eigenvalue  (cycles^2)
-    double sig_lo = 0.0;   ///< sqrt(lo): sigma of the tightest DD direction (cycles)
-    double sig_hi = 0.0;   ///< sqrt(hi): sigma of the loosest DD direction (cycles)
-};
-
-/// Eigen-decompose the (symmetric) cycle-domain DD ambiguity covariance.
-/// Returns all zeros on an empty or non-finite matrix.
+// QbCond and rebuildQbCycles are declared in filter/AmbiguityResolver.hpp.
 QbCond qbCondition(const Eigen::MatrixXd& Qb_cycles) {
     QbCond c;
     const Eigen::Index n = Qb_cycles.rows();
@@ -166,29 +155,6 @@ QbCond qbCondition(const Eigen::MatrixXd& Qb_cycles) {
     c.sig_hi = (c.hi > 0.0) ? std::sqrt(c.hi) : 0.0;
     return c;
 }
-
-/// Rebuild the cycle-domain DD ambiguity covariance from a full state
-/// covariance with the differencing and lambda scaling that resolve() uses.
-/// The post-fix Qb comes from here: the fix updates the full P, so the DD block
-/// is re-extracted to compare with the pre-fix matrix.
-template <typename PairVec>
-Eigen::MatrixXd rebuildQbCycles(const Eigen::MatrixXd& P,
-                                const PairVec& pairs,
-                                const std::vector<double>& pair_lambda) {
-    const int nb = static_cast<int>(pairs.size());
-    Eigen::MatrixXd Q(nb, nb);
-    for (int i = 0; i < nb; ++i) {
-        for (int j = 0; j < nb; ++j) {
-            const int ii = pairs[i].state_idx_i,  ir = pairs[i].state_idx_ref;
-            const int ji = pairs[j].state_idx_i,  jr = pairs[j].state_idx_ref;
-            Q(i, j) = (P(ii, ji) - P(ii, jr) - P(ir, ji) + P(ir, jr))
-                      / (pair_lambda[i] * pair_lambda[j]);
-        }
-    }
-    return 0.5 * (Q + Q.transpose());
-}
-
-}  // namespace
 
 // ===========================================================================
 // Per-ambiguity arc age and information (maturity gate and diagnostics)
@@ -1736,25 +1702,8 @@ AmbiguityResolution AmbiguityResolver::resolveWlConstrained(
         return splitPrimaryAndExtra(system, signals, primary_bands);
     };
 
-    // Identify dual-frequency pairs with known DD WL integers
-    struct NlCandidate {
-        int dd_idx_1;         // index of L1 DD in pairs[]
-        int dd_idx_2;         // index of L2 DD in pairs[]
-        double f1, f2;        // frequencies (Hz)
-        double lam1, lam2;    // wavelengths (m)
-        int dd_wl;            // DD WL integer (known)
-        double lambda_nl;     // NL wavelength (m)
-        // --- Search-functional coefficients (see the T-matrix block below) ---
-        // Filled per candidate so every downstream expression keeps one form
-        // whichever row (narrowlane or iono-free) is in force.
-        double t_coef_1;      // T row entry on dd_idx_1 [1/m]: DD metres → search cycles
-        double t_coef_2;      // T row entry on dd_idx_2 [1/m]
-        double shift_coef;    // y_for_mlambda = y_reduced + shift_coef·WL  (≡ N_1)
-                              // and, identically, N_1 = n_reduced_fixed + shift_coef·WL
-        double bt_coef_2;     // N_2 = n_reduced_fixed + bt_coef_2·WL  (= shift_coef − 1)
-        // The pair's admitted extra signals (extra_signals); empty with the key off.
-        std::vector<ExtraCandidate> extras;
-    };
+    // Identify dual-frequency pairs with known DD WL integers (NlCandidate is
+    // declared in the header beside the other stage types).
     std::vector<NlCandidate> nl_candidates;
     // Track which DD indices are consumed by NL pairs
     std::set<int> consumed_dd;

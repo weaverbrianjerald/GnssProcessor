@@ -775,6 +775,8 @@ add_executable(gnss_tests
     tests/test_ar_extra_signals.cpp
     tests/test_ar_hold_release.cpp
     tests/test_ar_hold_misfit.cpp
+    tests/test_ar_qb_condition.cpp
+    tests/test_ar_wlc_stage_table.cpp
     tests/test_kf_pseudo_update_repeat.cpp
     tests/test_fix_and_hold.cpp
     tests/test_signal_math.cpp
