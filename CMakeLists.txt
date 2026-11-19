@@ -690,6 +690,7 @@ add_executable(gnss_tests
     tests/network/test_station_factor_config.cpp
     tests/network/test_level_authority.cpp
     tests/test_config_extends.cpp
+    tests/test_config_member_dump.cpp
     tests/test_ambiguity_initial_std.cpp
     tests/test_retired_config_keys.cpp
     tests/test_sd_ewl_prereduce.cpp
@@ -803,6 +804,8 @@ add_executable(gnss_tests
     tests/network/test_network_contributions.cpp
     tests/network/test_service_mode_clock_refusals.cpp
     tests/network/test_loader_message_conditions.cpp
+    tests/network/test_config_asked_vs_in_effect_network.cpp
+    tests/network/test_config_asked_vs_in_effect_derived.cpp
     tests/network/test_run_manifest_toggles.cpp
     tests/network/test_network_knobs_lane_emit.cpp
     tests/network/test_network_knobs_epoch_driver.cpp
