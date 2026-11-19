@@ -1469,6 +1469,7 @@ private:
 
     /// What crosses the stages of @ref resolveWlConstrained in one epoch.
     struct WlcEpoch {
+        std::shared_ptr<spdlog::logger> log;   ///< The ambiguity_resolver logger, fetched once by S1.
         double tow{ 0.0 };           ///< Epoch time of week [s]; 0 without observations.
         bool   log_lines{ false };   ///< Observations are present: the per-pair info lines are written.
         std::vector<WlcGroup> groups;               ///< S1: the satellite pairs, in key order.
@@ -1479,6 +1480,50 @@ private:
         std::vector<NlCandidate> candidates;        ///< S4: the narrow-lane candidates, in key order.
         int n_skipped_immature{ 0 };                ///< S4: candidates dropped by the min_arc_info gate.
     };
+
+    /// The logger of the epoch's stages: WlcEpoch::log, or a fresh fetch when S1 did not run.
+    std::shared_ptr<spdlog::logger> wlcLog_(const WlcEpoch& ep) const;
+
+    /// Which outcome of the search stage S9 reports.
+    enum class WlcFixPath {
+        Full,      ///< The full candidate set passed the acceptance battery and was written back.
+        Partial,   ///< A subset found by partial fixing was written back.
+        Reject,    ///< Partial fixing found no subset: the epoch stays float.
+    };
+
+    /**
+     * @brief Stage S1: gather the epoch's DD pairs by satellite pair (rules W1, W2).
+     *
+     * A pair is kept when its satellite is observed and its signal has a finite positive
+     * frequency and wavelength; the kept pairs are grouped by "sat_i|sat_ref" in key order,
+     * each group with its signals in pair order and their split into two primary signals and
+     * extras (@ref splitPrimaryAndExtra; with the extra signals off, exactly two signals).
+     * Also sets the epoch time and the log flag.
+     *
+     * @param pairs         The epoch's DD pairs.
+     * @param observations  The epoch's observations (system, satellite, time).
+     * @param[out] ep       Its groups, tow and log_lines are written.
+     */
+    void groupSatellitePairs_(const std::vector<DdPair>& pairs,
+                              const std::vector<PppObservation>& observations,
+                              WlcEpoch& ep) const;
+
+    /**
+     * @brief Stage S9: write the summary line and the QBCOND line of a search outcome.
+     *
+     * @param ep        The epoch (its logger).
+     * @param path      Full fix, partial fix or refused partial search.
+     * @param n_nl      Number of narrow-lane candidates searched.
+     * @param n_fixed   Number fixed (n_nl for a full fix, the kept count for a partial one).
+     * @param ratio     The ratio reported (the full set's, or the accepted subset's).
+     * @param p_s       Bootstrap success rate of the fix (unused for Reject).
+     * @param max_frac  Worst |float - integer| of the fix [cycles] (unused for Reject).
+     * @param qb_pre    Conditioning of the search covariance before the fix.
+     * @param qb_post   Conditioning rebuilt from the fixed covariance (unused for Reject,
+     *                  whose line carries literal zeros).
+     */
+    void reportFix_(const WlcEpoch& ep, WlcFixPath path, int n_nl, int n_fixed, double ratio, double p_s,
+                    double max_frac, const QbCond& qb_pre, const QbCond& qb_post);
 
     /**
      * @brief Two-step WL/NL resolution using known WL integers.

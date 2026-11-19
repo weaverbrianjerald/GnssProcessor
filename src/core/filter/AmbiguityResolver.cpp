@@ -1656,51 +1656,12 @@ AmbiguityResolution AmbiguityResolver::resolveWlConstrained(
     const std::map<std::string, int>& wl_ambiguities,
     const std::vector<PppObservation>& observations) {
 
-    auto log = log_manager_.getLogger("ambiguity_resolver");
     AmbiguityResolution result;
 
-    // Build satellite -> observation map for system/frequency lookup
-    std::map<std::string, const PppObservation*> obs_map;
-    for (const auto& obs : observations)
-        obs_map[obs.satellite] = &obs;
-
-    // Group DD pairs by satellite pair key (sat_i + "|" + sat_ref).
-    // We need exactly two signals per satellite pair to form the WL/NL transform.
-    struct DdPairInfo {
-        int pair_idx;        // index into pairs[]
-        std::string signal;
-        double freq;         // frequency in Hz
-        double wavelength;   // wavelength in meters
-    };
-    // key: "sat_i|sat_ref" -> vector of DdPairInfo
-    std::map<std::string, std::vector<DdPairInfo>> sat_pair_groups;
-
-    for (int k = 0; k < static_cast<int>(pairs.size()); ++k) {
-        const auto& p = pairs[k];
-        auto obs_it = obs_map.find(p.sat_i);
-        if (obs_it == obs_map.end()) continue;
-        const auto& obs = *obs_it->second;
-
-        const double freq = ppp_utils_.getFrequency(p.signal, obs.system, obs.satellite);
-        const double wl   = ppp_utils_.getWavelength(obs.system, p.signal, obs.satellite);
-        if (!(std::isfinite(freq) && freq > 0.0 && std::isfinite(wl) && wl > 0.0)) continue;
-
-        const std::string spkey = p.sat_i + "|" + p.sat_ref;
-        sat_pair_groups[spkey].push_back({ k, p.signal, freq, wl });
-    }
-
-    // The primary two signals of a satellite pair and its extras.  With the extra
-    // signals off the table is empty and the rule is the one from before the key: a
-    // pair is processed only when it has exactly two signals.
-    const std::map<std::string, std::string> no_primary_bands;
-    const auto& primary_bands = extraSignalsActive() ? config_.primary_bands : no_primary_bands;
-    auto splitGroup = [&](const auto& infos) {
-        std::vector<PairSignal> signals;
-        signals.reserve(infos.size());
-        for (const auto& info : infos) signals.push_back({ info.signal, info.freq });
-        const std::string system = systemName(systemOfSat(pairs[infos.front().pair_idx].sat_i));
-        return splitPrimaryAndExtra(system, signals, primary_bands);
-    };
+    // S1: the satellite pairs of the epoch, their signals and their primary/extra split.
+    WlcEpoch ep;
+    groupSatellitePairs_(pairs, observations, ep);
+    const auto& log = ep.log;   // fetched once by S1
 
     // Identify dual-frequency pairs with known DD WL integers (NlCandidate is
     // declared in the header beside the other stage types).
@@ -1718,8 +1679,9 @@ AmbiguityResolution AmbiguityResolver::resolveWlConstrained(
         std::vector<std::pair<std::string, std::string>> held_seen, contradicted;
         const double tow = observations.empty() ? 0.0 : observations.front().time.tow;
         const int nx = static_cast<int>(x.size());
-        for (const auto& [spkey, infos] : sat_pair_groups) {
-            const PrimaryExtraSplit sp = splitGroup(infos);
+        for (const WlcGroup& g : ep.groups) {
+            const auto& infos = g.signals;
+            const PrimaryExtraSplit& sp = g.split;
             if (!sp.usable) continue;
             const auto& hi = infos[sp.hi];
             const auto& lo = infos[sp.lo];
@@ -1793,10 +1755,11 @@ AmbiguityResolution AmbiguityResolver::resolveWlConstrained(
     WlBranchEpoch branch_epoch;
     if (branch_check) pruneWlBranchRuns_(branch_tow);
 
-    for (const auto& [spkey, infos] : sat_pair_groups) {
+    for (const WlcGroup& g : ep.groups) {
         // Two primary frequencies are needed: exactly two signals, or with the extra
         // signals on, the two signals on the constellation's primary bands.
-        const PrimaryExtraSplit sp = splitGroup(infos);
+        const auto& infos = g.signals;
+        const PrimaryExtraSplit& sp = g.split;
         if (!sp.usable) continue;
 
         // f1 is the higher primary frequency, f2 the lower.
@@ -2225,12 +2188,7 @@ AmbiguityResolution AmbiguityResolver::resolveWlConstrained(
         // below does.
         PartialFix pf = selectFixableSubset_(y_for_mlambda, Q_reduced);
         if (!pf.success) {
-            log->info("Partial AR (WL/NL): no fixable subset found ({} NL candidates); staying float", n_nl);
-            log->info("QBCOND path=reject n_nl={} nfix=0 R={:.3e} "
-                      "pre_cond={:.4e} pre_sig_lo={:.4e} pre_sig_hi={:.4e} "
-                      "post_cond=0 post_sig_lo=0 post_sig_hi=0 cond_ratio=0 siglo_ratio=0 ratio={:.2f}",
-                      n_nl, config_.hold_variance,
-                      qb_pre.cond, qb_pre.sig_lo, qb_pre.sig_hi, result.ratio);
+            reportFix_(ep, WlcFixPath::Reject, n_nl, 0, result.ratio, 0.0, 0.0, qb_pre, QbCond{});   // S9
             return result;
         }
 
@@ -2282,22 +2240,8 @@ AmbiguityResolution AmbiguityResolver::resolveWlConstrained(
         result.num_fixed = m;
         result.ratio     = pf.ratio;
         result.p_succ    = pf.p_s;
-        log->info("Partial AR (WL/NL) succeeded (Kalman pseudo-obs, R={:.4f} m²): {}/{} NL pairs fixed, "
-                  "ratio={:.2f}, P_s={:.5f}, max|frac|={:.3f} cyc",
-                  config_.hold_variance, m, n_nl, pf.ratio, pf.p_s, pf.max_frac);
-        {   // Diagnostic: Qb conditioning across the fix (partial WL/NL path)
-            const QbCond qb_post = qbCondition(rebuildQnl(result.fixed_covariance));
-            log->info("QBCOND path=partial n_nl={} nfix={} R={:.3e} "
-                      "pre_cond={:.4e} pre_sig_lo={:.4e} pre_sig_hi={:.4e} "
-                      "post_cond={:.4e} post_sig_lo={:.4e} post_sig_hi={:.4e} "
-                      "cond_ratio={:.4e} siglo_ratio={:.4e} ratio={:.2f}",
-                      n_nl, m, config_.hold_variance,
-                      qb_pre.cond, qb_pre.sig_lo, qb_pre.sig_hi,
-                      qb_post.cond, qb_post.sig_lo, qb_post.sig_hi,
-                      (qb_pre.cond   > 0.0 ? qb_post.cond   / qb_pre.cond   : 0.0),
-                      (qb_pre.sig_lo > 0.0 ? qb_post.sig_lo / qb_pre.sig_lo : 0.0),
-                      pf.ratio);
-        }
+        reportFix_(ep, WlcFixPath::Partial, n_nl, m, pf.ratio, pf.p_s, pf.max_frac,          // S9
+                   qb_pre, qbCondition(rebuildQnl(result.fixed_covariance)));
         return result;
     }
 
@@ -2394,25 +2338,103 @@ AmbiguityResolution AmbiguityResolver::resolveWlConstrained(
     result.num_fixed = n_nl;
     result.p_succ  = p_s;
 
-    log->info("WL-constrained AR succeeded (Kalman pseudo-obs, R={:.4f} m²): "
-              "{} NL pairs fixed, ratio={:.2f}, P_s={:.5f}, max|frac|={:.3f} cyc",
-              config_.hold_variance, n_nl, result.ratio, p_s, max_pair_frac);
+    reportFix_(ep, WlcFixPath::Full, n_nl, n_nl, result.ratio, p_s, max_pair_frac,            // S9
+               qb_pre, qbCondition(rebuildQnl(result.fixed_covariance)));
+    return result;
+}
 
-    {   // Diagnostic: Qb conditioning across the fix (full WL/NL path)
-        const QbCond qb_post = qbCondition(rebuildQnl(result.fixed_covariance));
-        log->info("QBCOND path=full n_nl={} nfix={} R={:.3e} "
-                  "pre_cond={:.4e} pre_sig_lo={:.4e} pre_sig_hi={:.4e} "
-                  "post_cond={:.4e} post_sig_lo={:.4e} post_sig_hi={:.4e} "
-                  "cond_ratio={:.4e} siglo_ratio={:.4e} ratio={:.2f}",
-                  n_nl, n_nl, config_.hold_variance,
-                  qb_pre.cond, qb_pre.sig_lo, qb_pre.sig_hi,
-                  qb_post.cond, qb_post.sig_lo, qb_post.sig_hi,
-                  (qb_pre.cond   > 0.0 ? qb_post.cond   / qb_pre.cond   : 0.0),
-                  (qb_pre.sig_lo > 0.0 ? qb_post.sig_lo / qb_pre.sig_lo : 0.0),
-                  result.ratio);
+// ===========================================================================
+// WL-constrained resolution: the stages (kWlcStages)
+// ===========================================================================
+
+std::shared_ptr<spdlog::logger> AmbiguityResolver::wlcLog_(const WlcEpoch& ep) const {
+    // The logger fetched once by S1; a stage driven alone (a unit test) fetches it.
+    return ep.log ? ep.log : log_manager_.getLogger("ambiguity_resolver");
+}
+
+void AmbiguityResolver::groupSatellitePairs_(const std::vector<DdPair>& pairs,
+                                             const std::vector<PppObservation>& observations,
+                                             WlcEpoch& ep) const {
+    ep.log       = log_manager_.getLogger("ambiguity_resolver");
+    ep.tow       = observations.empty() ? 0.0 : observations.front().time.tow;
+    ep.log_lines = !observations.empty();
+
+    // Build satellite -> observation map for system/frequency lookup
+    std::map<std::string, const PppObservation*> obs_map;
+    for (const auto& obs : observations)
+        obs_map[obs.satellite] = &obs;
+
+    // Group DD pairs by satellite pair key (sat_i + "|" + sat_ref): the WL/NL transform
+    // needs the signals of one satellite pair together.
+    std::map<std::string, std::vector<WlcSignal>> by_key;
+    for (int k = 0; k < static_cast<int>(pairs.size()); ++k) {
+        const auto& p = pairs[k];
+        auto obs_it = obs_map.find(p.sat_i);
+        if (obs_it == obs_map.end()) continue;
+        const auto& obs = *obs_it->second;
+
+        const double freq = ppp_utils_.getFrequency(p.signal, obs.system, obs.satellite);
+        const double wl   = ppp_utils_.getWavelength(obs.system, p.signal, obs.satellite);
+        if (!(std::isfinite(freq) && freq > 0.0 && std::isfinite(wl) && wl > 0.0)) continue;
+
+        by_key[p.sat_i + "|" + p.sat_ref].push_back({ k, p.signal, freq, wl });
     }
 
-    return result;
+    // The primary two signals of a satellite pair and its extras.  With the extra
+    // signals off the table is empty and the rule is the one from before the key: a
+    // pair is processed only when it has exactly two signals.
+    const std::map<std::string, std::string> no_primary_bands;
+    const auto& primary_bands = extraSignalsActive() ? config_.primary_bands : no_primary_bands;
+    ep.groups.clear();
+    ep.groups.reserve(by_key.size());
+    for (auto& [key, signals] : by_key) {
+        std::vector<PairSignal> named;
+        named.reserve(signals.size());
+        for (const auto& s : signals) named.push_back({ s.signal, s.freq });
+        const std::string system = systemName(systemOfSat(pairs[signals.front().pair_idx].sat_i));
+        WlcGroup g;
+        g.key     = key;
+        g.split   = splitPrimaryAndExtra(system, named, primary_bands);
+        g.signals = std::move(signals);
+        ep.groups.push_back(std::move(g));
+    }
+}
+
+void AmbiguityResolver::reportFix_(const WlcEpoch& ep, WlcFixPath path, int n_nl, int n_fixed, double ratio,
+                                   double p_s, double max_frac,
+                                   const QbCond& qb_pre, const QbCond& qb_post) {
+    const auto& log = wlcLog_(ep);
+    if (path == WlcFixPath::Reject) {
+        log->info("Partial AR (WL/NL): no fixable subset found ({} NL candidates); staying float", n_nl);
+        log->info("QBCOND path=reject n_nl={} nfix=0 R={:.3e} "
+                  "pre_cond={:.4e} pre_sig_lo={:.4e} pre_sig_hi={:.4e} "
+                  "post_cond=0 post_sig_lo=0 post_sig_hi=0 cond_ratio=0 siglo_ratio=0 ratio={:.2f}",
+                  n_nl, config_.hold_variance,
+                  qb_pre.cond, qb_pre.sig_lo, qb_pre.sig_hi, ratio);
+        return;
+    }
+    if (path == WlcFixPath::Partial) {
+        log->info("Partial AR (WL/NL) succeeded (Kalman pseudo-obs, R={:.4f} m²): {}/{} NL pairs fixed, "
+                  "ratio={:.2f}, P_s={:.5f}, max|frac|={:.3f} cyc",
+                  config_.hold_variance, n_fixed, n_nl, ratio, p_s, max_frac);
+    } else {
+        log->info("WL-constrained AR succeeded (Kalman pseudo-obs, R={:.4f} m²): "
+                  "{} NL pairs fixed, ratio={:.2f}, P_s={:.5f}, max|frac|={:.3f} cyc",
+                  config_.hold_variance, n_fixed, ratio, p_s, max_frac);
+    }
+    // Qb conditioning across the fix: the post-fix matrix is the search covariance
+    // rebuilt from the fixed covariance.
+    log->info("QBCOND path={} n_nl={} nfix={} R={:.3e} "
+              "pre_cond={:.4e} pre_sig_lo={:.4e} pre_sig_hi={:.4e} "
+              "post_cond={:.4e} post_sig_lo={:.4e} post_sig_hi={:.4e} "
+              "cond_ratio={:.4e} siglo_ratio={:.4e} ratio={:.2f}",
+              path == WlcFixPath::Partial ? "partial" : "full",
+              n_nl, n_fixed, config_.hold_variance,
+              qb_pre.cond, qb_pre.sig_lo, qb_pre.sig_hi,
+              qb_post.cond, qb_post.sig_lo, qb_post.sig_hi,
+              (qb_pre.cond   > 0.0 ? qb_post.cond   / qb_pre.cond   : 0.0),
+              (qb_pre.sig_lo > 0.0 ? qb_post.sig_lo / qb_pre.sig_lo : 0.0),
+              ratio);
 }
 
 // ===========================================================================
