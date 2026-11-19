@@ -327,8 +327,33 @@ void NetworkProductEmitter::adoptDiscontinuityCounters(
     for (const auto& [sat, v] : clock) clock_disc_counter_[sat] = v;
 }
 
+const char* NetworkProductEmitter::filedDisagreementClassName(FiledDisagreementClass c) {
+    switch (c) {
+        case FiledDisagreementClass::PhaseFlagDown:    return "phase flag down";
+        case FiledDisagreementClass::PhaseFlagRise:    return "phase flag rise";
+        case FiledDisagreementClass::PhaseFlagUp:      return "phase flag up";
+        case FiledDisagreementClass::PhaseReplayAhead: return "phase replay step only";
+        case FiledDisagreementClass::Code:             return "code";
+        case FiledDisagreementClass::Clock:            return "clock";
+    }
+    return "?";
+}
+
+void NetworkProductEmitter::takeFiledCounter_(FiledDisagreementClass cls, const std::string& key, int filed,
+                                              int& own) {
+    if (own != filed) {
+        filed_disagreements_.push_back(FiledDisagreement{ cls, key, filed, own });
+        ++filed_disagreement_totals_[static_cast<std::size_t>(cls)];
+    }
+    own = filed;
+}
+
 void NetworkProductEmitter::emitToStore(const NetworkSolutionEpoch& sol,
-                                        SsrCorrectionStore& store) {
+                                        SsrCorrectionStore& store,
+                                        const FiledDiscCounters* filed) {
+    // The disagreements of the file's counters with this emitter's own rules, for this emission only.
+    filed_disagreements_.clear();
+
     // Publish the solution-generation id on the store's epoch surface so an
     // in-process consumer can detect a producer restart: a change of a present id is
     // a global datum break (RTA-3).  When the producer does not stamp one (0), the
@@ -756,7 +781,16 @@ void NetworkProductEmitter::emitToStore(const NetworkSolutionEpoch& sol,
                         || clock_set_changed.count(cst) != 0)) ++cctr;
                 seen_clock_sats_.insert(s.sat);
                 if (staleness_horizon_s_ > 0.0) clock_last_seen_s_[s.sat] = epoch_s;
+                // A file reader takes the file's counter after the rules above have run (see takeFiledCounter_).
+                if (filed)
+                    if (const auto f = filed->clock.find(s.sat); f != filed->clock.end())
+                        takeFiledCounter_(FiledDisagreementClass::Clock, s.sat, f->second, cctr);
                 rec.disc_counter = cctr;
+            } else if (filed) {
+                // The file carries a clock counter this emitter does not stamp: it is kept as the
+                // emitter's counter only, as the earlier counter installation did.
+                if (const auto f = filed->clock.find(s.sat); f != filed->clock.end())
+                    takeFiledCounter_(FiledDisagreementClass::Clock, s.sat, f->second, clock_disc_counter_[s.sat]);
             }
 
             store.pushClock(rec, header);
@@ -851,6 +885,16 @@ void NetworkProductEmitter::emitToStore(const NetworkSolutionEpoch& sol,
                     if (id == rec.disc_per_signal.end()) continue;
                     ctr_m = id->second;
                     code_disc_counter_[s.sat + "|" + signal] = id->second;
+                }
+            // A file reader takes the file's counters after every rule above (see takeFiledCounter_).
+            if (filed)
+                for (auto& [signal, ctr_r] : rec.disc_per_signal) {
+                    const std::string key = s.sat + "|" + signal;
+                    const auto f = filed->code.find(key);
+                    if (f == filed->code.end()) continue;
+                    int& own = code_disc_counter_[key];
+                    takeFiledCounter_(FiledDisagreementClass::Code, key, f->second, own);
+                    ctr_r = own;
                 }
             store.pushCodeBias(rec, header);
         }
@@ -961,7 +1005,7 @@ void NetworkProductEmitter::emitToStore(const NetworkSolutionEpoch& sol,
                 }
                 entry.wide_lane_integer     = npb.wide_lane_integer;
                 entry.discontinuity_counter = ctr;
-                entry.sigma_m               = npb.sigma_m;   // 0 unless emit_phase_bias_sigma populated it (gauge-exact); in-process store only, no wire record (B1b)
+                entry.sigma_m               = npb.sigma_m;   // 0 unless emit_phase_bias_sigma populated it (gauge-exact); the P record carries it as sigma= (B1b)
                 entry.combined_sigma_m      = npb.sigc_m;     // combined phase-correction σ (clock + phase bias); 0 unless emit_combined_sigma populated it (M4)
                 // Hold generation, passed through from the emitted epoch.
                 // 0 unless networkPbHold held this key; with the knob off every entry
@@ -987,6 +1031,26 @@ void NetworkProductEmitter::emitToStore(const NetworkSolutionEpoch& sol,
                     disc_counter_[mkey] = id->second.discontinuity_counter;
                     if (cg_lowered_last_.count(s.sat + "|" + m->second) != 0) cg_lowered_last_.insert(mkey);
                     else                                                     cg_lowered_last_.erase(mkey);
+                }
+            // A file reader takes the file's counters after every rule above, the guard and the member copy included
+            // (see takeFiledCounter_).  The class of a disagreement is read from the record's flag and the key's flag
+            // at its previous emission.
+            if (filed)
+                for (auto& [signal, entry] : rec.bias_per_signal) {
+                    const std::string key = s.sat + "|" + signal;
+                    const auto f = filed->phase.find(key);
+                    if (f == filed->phase.end()) continue;
+                    int& own = disc_counter_[key];
+                    const auto prev = filed_prev_flag_.find(key);
+                    const bool rose = entry.signal_integer && prev != filed_prev_flag_.end() && !prev->second;
+                    const FiledDisagreementClass cls =
+                        f->second < own        ? FiledDisagreementClass::PhaseReplayAhead
+                        : !entry.signal_integer ? FiledDisagreementClass::PhaseFlagDown
+                        : rose                  ? FiledDisagreementClass::PhaseFlagRise
+                                                : FiledDisagreementClass::PhaseFlagUp;
+                    takeFiledCounter_(cls, key, f->second, own);
+                    entry.discontinuity_counter = own;
+                    filed_prev_flag_[key]       = entry.signal_integer;
                 }
             store.pushPhaseBias(rec, header);
         }
