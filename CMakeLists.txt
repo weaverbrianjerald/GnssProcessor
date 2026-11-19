@@ -573,6 +573,7 @@ add_executable(gnss_tests
     tests/network/test_network_emit.cpp
     tests/test_sh_ionosphere.cpp
     tests/network/test_network_product_io.cpp
+    tests/network/test_support_solution_epoch_builder.cpp
     tests/network/test_network_combined_sigma.cpp
     tests/test_rinex_nav_parser.cpp
     tests/test_brdc_clock_apriori.cpp
@@ -635,6 +636,7 @@ add_executable(gnss_tests
     tests/network/test_shdev_carry.cpp
     tests/network/test_rx_cb_carry.cpp
     tests/network/test_rx_pb_carry.cpp
+    tests/network/test_support_carried_family_states.cpp
     tests/network/test_network_phase_datum.cpp
     tests/test_eq34_reattach_hygiene.cpp
     tests/test_signal_integrity.cpp
