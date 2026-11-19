@@ -96,7 +96,27 @@ TEST(SupportSolutionEpochBuilder, EveryVariedFieldArrives) {
     ASSERT_EQ(recs.size(), 1u);
     b.expectArrivedIn(recs[0], /*with_counters=*/false);
 
+    // The comparator above checks the parsed record against the builder's own epoch, so a
+    // setter that did nothing would still pass it.  Every value set here is therefore also
+    // pinned against the literal the test asked for, each one different from the default.
     const NetworkProductRecord& r = recs[0];
+    EXPECT_EQ(r.epoch.epoch_time.week, 2314);
+    EXPECT_EQ(r.epoch.epoch_time.tow, 1234.25);
+    EXPECT_EQ(r.epoch.iod_ssr, 11);
+    EXPECT_EQ(r.epoch.provider_id, 7);
+    EXPECT_EQ(r.epoch.solution_id, 9);
+    ASSERT_EQ(r.epoch.sats.size(), 3u);
+    EXPECT_EQ(r.epoch.sats[0].sat, "G05");
+    EXPECT_EQ(r.epoch.sats[1].sat, "G12");
+    EXPECT_EQ(r.epoch.sats[2].sat, "E11");
+    EXPECT_EQ(r.epoch.sats[0].clock_c0_m, -1.0e-3);
+    EXPECT_EQ(r.epoch.sats[1].code_bias_m.at("C2W"), -0.0078125);
+    EXPECT_EQ(r.epoch.sats[2].phase_bias.at("L5Q").bias_m, 0.30000000000000004);
+    EXPECT_TRUE(r.epoch.sats[1].phase_bias.at("L2W").signal_integer);
+    EXPECT_FALSE(r.epoch.sats[0].phase_bias.at("L1C").signal_integer);
+    EXPECT_EQ(r.epoch.sats[0].phase_bias.at("L1C").wide_lane_integer, 0);
+    EXPECT_EQ(r.epoch.sats[2].clock_ura_m, 0.031);
+    EXPECT_TRUE(r.datum_changed);
     EXPECT_EQ(r.epoch.generation_id, 1398912345u);
     EXPECT_EQ(r.epoch.generation_time.tow, 1240.125);
     EXPECT_EQ(r.epoch.sats[0].clock_c1_m_s, 2.5e-5);
