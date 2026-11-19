@@ -247,6 +247,7 @@ struct EpochEvents {
         std::map<std::string, std::pair<std::string, std::string>> this_epoch_if_pin_sel;   ///< Satellite -> the IF-pin pair selected.
         std::map<std::string, NetworkSbasis::PinPairChange> this_epoch_if_pin_changes;   ///< Satellites whose IF-pin pair changed.
         std::map<std::string, NetworkSbasis::PinPairHold> this_epoch_if_pin_holds;       ///< Satellites whose IF-pin pair was held.
+        std::map<std::string, NetworkSbasis::CodePinLegRecord> this_epoch_cb_pin_leg;   ///< Satellites whose pin pair has one leg (network.code_pin_single_leg_hold): the edge and its step.
         std::map<std::string, NetworkSbasis::FamilyRowRealization> this_epoch_cb_family_rows;  ///< The family rows realized.
         std::vector<NetworkSbasis::FamilyBirthPrior> this_epoch_cb_family_births;        ///< The family birth priors.
         std::vector<NetworkSbasis::FamilyBirthSkipRecord> this_epoch_cb_family_birth_skips;  ///< Satellites given no birth row.

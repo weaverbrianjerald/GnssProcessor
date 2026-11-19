@@ -84,6 +84,7 @@ namespace spdlog { class logger; }
 namespace GnssProcessor {
 
 struct EpochEvents;   // network/driver/Epoch.hpp
+class NetworkPriorResidual;   // network/qc/PriorResidual.hpp
 
 /**
  * @brief The wind-up / yaw-attitude model this binary implements.
@@ -432,6 +433,69 @@ public:
         /// The hold kept the pin's own combination; the mark is still declared at the
         /// emit site.
         bool reseeded{false};
+    };
+
+    /**
+     * @brief One satellite's open single-leg edge (@c network.code_pin_single_leg_hold).
+     *
+     * The decoupling edge: a satellite pinned on a dual-frequency pair (s1, s2) at the last
+     * kept epoch registers only one of the two signals this epoch (the other has fewer than
+     * two stations network-wide), so its signals span a single frequency.  Without the arm
+     * the ionosphere-free pin falls back to the all-ones row with target 0
+     * (@ref buildCodeBiasDatumRows, the single-frequency branch), which pulls the surviving
+     * column toward zero at the gauge weight every epoch.  That column is not estimable
+     * against the satellite clock while the pair has one leg, so the pull is a pure datum
+     * move, and the carried prior lets it through at about w / (w + 1/var) per epoch.
+     * Under the arm the surviving column is held at its value of the last kept epoch
+     * before the edge (@ref held_m) for as long as the edge is open, and the parked
+     * column's value of that epoch (@ref parked_m) is kept for the re-coupling edge, where
+     * the ionosphere-free and geometry-free time links target the pair's pre-edge
+     * combinations instead of re-anchoring at the absolute targets.
+     */
+    struct CodePinLegEdge {
+        std::string surviving;  ///< The pinned signal still registered (the held column).
+        std::string parked;     ///< The pinned signal that left the registered set.
+        double held_m{0.0};     ///< The surviving column's solved value at the last kept epoch before the edge (the hold target), metres.
+        double parked_m{0.0};   ///< The parked column's solved value at that epoch (the re-coupling target), metres.
+        /// The pin pair in its pinned order (sig1, sig2): the pair the satellite returns to.
+        std::pair<std::string, std::string> pair;
+    };
+
+    /// What the builder did with a satellite's single-leg edge this epoch
+    /// (@c network.code_pin_single_leg_hold).
+    enum class CodePinLegStep : std::uint8_t {
+        Opened,     ///< The decoupling edge: the pair lost a leg this epoch; the hold row was written.
+        Held,       ///< The edge was open at the last kept epoch and the hold row was written again.
+        Recoupled,  ///< The parked leg returned on the same pair: the time links targeted the pre-edge combinations (re-coupling edge).
+        Abandoned,  ///< The edge closed without a re-coupling: the surviving leg left too, or the satellite returned on another pair or with more than one frequency outside the pair.  The unarmed path ran.
+    };
+
+    /// One satellite's single-leg record of this epoch: the edge and the step.
+    struct CodePinLegRecord {
+        CodePinLegEdge edge;
+        CodePinLegStep step{CodePinLegStep::Held};
+        std::string why;    ///< For @ref CodePinLegStep::Abandoned: what closed the edge.
+    };
+
+    /// The single-leg hold's input to @ref buildCodeBiasDatumRows: whether it is armed and
+    /// the edges open at the last kept epoch (keyed by satellite).  The default (off, empty)
+    /// leaves every row and target as without the arm.
+    struct CodePinLegHoldArm {
+        bool armed{false};                              ///< @c network.code_pin_single_leg_hold, read only under the time link.
+        std::map<std::string, CodePinLegEdge> open;     ///< The open edges of the last kept epoch.
+    };
+
+    /// Run counters of the single-leg hold, summed once per kept epoch by
+    /// @ref networkCodePinLegKeptEpoch and read only by its run-end line.
+    struct CodePinLegCounts {
+        long long open{0};             ///< Decoupling edges (@ref CodePinLegStep::Opened).
+        long long held_epochs{0};      ///< Satellite-epochs with a hold row (opened and held).
+        long long recouple{0};         ///< Re-coupling edges (@ref CodePinLegStep::Recoupled).
+        long long recouple_moved{0};   ///< Of those, the returning column's prior-residual census row was reported (|t| above the census level): its level moved against the parked value.
+        long long recouple_untested{0};///< Of those, no census verdict: the census or its "cb" family is unarmed, or its per-epoch row buffer overflowed.
+        long long abandoned{0};        ///< Edges closed without a re-coupling, the satellite's departure included.
+        double max_recouple_move_m{0.0};  ///< The largest |solved - parked| at a re-coupling edge, metres (information; the test is the census statistic).
+        double max_recouple_t{0.0};       ///< The largest census |t| among the moved re-couplings.
     };
 
     /// Per-constellation counters of the pin pair changes and holds, summed
@@ -802,6 +866,12 @@ public:
         /// begin and the end of each hold as a "CLK_BASIS"/"held" event.  Empty unless the
         /// arm is effective (as @ref if_pin_pair_changes).
         std::map<std::string, PinPairHold> if_pin_pair_holds;
+        /// The single-leg records of this epoch, per satellite
+        /// (@c network.code_pin_single_leg_hold; see @ref CodePinLegEdge).  The driver hands
+        /// the map to the emit site, which persists the open edges, counts them and declares
+        /// each edge as a "CB_PIN" event (@ref networkCodePinLegKeptEpoch).  Empty unless the
+        /// arm is effective (armed, under the time link).
+        std::map<std::string, CodePinLegRecord> pin_leg;
         /// Each secondary-family Galileo code channel's level realization this epoch,
         /// keyed by the channel key ("E|C1X") (see
         /// @c network.code_datum_family_difference).  A channel whose sum-to-zero row the
@@ -1290,6 +1360,17 @@ public:
      *                                  keys (@ref codeFamilyBirthPriors).  The driver
      *                                  passes it only with the prior armed; empty, the
      *                                  test reads the previous-value map alone.
+     * @param pin_leg_hold              The single-leg hold (@c network.code_pin_single_leg_hold)
+     *                                  and the edges open at the last kept epoch; read only
+     *                                  under @p cb_time_linked.  Armed, a satellite whose
+     *                                  dual-frequency pin pair of the last kept epoch has
+     *                                  only one leg registered this epoch gets one row on
+     *                                  the surviving column at its pre-edge value in place
+     *                                  of the all-ones row at 0, keeps its pair record, and
+     *                                  at the return of the parked leg the time links target
+     *                                  the pair's pre-edge combinations (see
+     *                                  @ref CodePinLegEdge).  The default (off) leaves every
+     *                                  row, target and side channel as without the arm.
      * @return The stacked gauge rows (@c H over the shared columns, targets @c z in
      *         metres, one contribution kind per row), the side-channel rows of the family
      *         arms and the per-datum counters; @c H has no rows when nothing folds.
@@ -1314,7 +1395,8 @@ public:
         std::map<std::string, std::pair<std::string, std::string>>& this_epoch_cb_ifpin,
         std::set<std::string>& this_epoch_cb_reseed,
         const CodeDatumFamilyArms& family_arms = CodeDatumFamilyArms{},
-        const CodeBiasCarryMap& code_bias_carry = CodeBiasCarryMap{});
+        const CodeBiasCarryMap& code_bias_carry = CodeBiasCarryMap{},
+        const CodePinLegHoldArm& pin_leg_hold = CodePinLegHoldArm{});
 
     /**
      * @brief Fold the first-sighting family prior rows into the shared border
@@ -1850,6 +1932,51 @@ void networkCodeDatumFamilyKeptEpoch(
                              std::optional<double>, const char*,
                              const std::string&)>& emitEvent, const EpochEvents& events);
 
+/**
+ * @brief Count and declare this kept epoch's single-leg edges, and persist the open ones
+ *        (@c network.code_pin_single_leg_hold).
+ *
+ * Reads @c events.code_datum.this_epoch_cb_pin_leg (the builder's
+ * @ref NetworkSbasis::CodeBiasDatumRows::pin_leg) and the open edges of the last kept
+ * epoch (@c net::SatelliteState::code_pin_leg_edge).  Each edge is an event at both ends
+ * (standing invariant #7): a "CB_PIN"/"single_leg" event with action "open" at the
+ * decoupling edge (statistic the held value, detail the surviving and parked signals),
+ * "recouple" at the re-coupling edge and "abandon" when the edge closes
+ * otherwise; a satellite with an open edge and no record this epoch (it left the
+ * registered set entirely) is declared "abandon" with the reason "departed".  The held
+ * satellite-epochs are counted in @c ctx.counters.cb_pin_leg.
+ *
+ * The re-coupling test is data-driven, not a fixed distance.  The returning column is
+ * folded with its parked value as prior (the READMIT seed), and the prior-residual census
+ * standardizes that prior's residual by its dispersion and the family's empirical sigma0
+ * (@c NetworkPriorResidual, family "cb"); the census reports the row when |t| exceeds its
+ * own level (@c network.prior_residual_report_sigma).  The level moved is declared exactly
+ * then: the event's statistic is that t and its threshold the census level, with the move
+ * in metres in the detail as information only.  The column's formal sigma is not the
+ * scale: the walk this hold answers ran 17 to 30 cm at a 2 mm formal sigma, and the census
+ * statistic is the one that saw it (t up to 1 433).  Without the census, or with its
+ * per-epoch row buffer overflowed, the edge is counted untested, never "not moved".  Then the open edges
+ * (opened and held) replace @c code_pin_leg_edge, advanced on kept epochs only, so a
+ * withheld epoch never opens or closes an edge.  With no record and no open edge (the
+ * arm off) it does nothing.
+ *
+ * @param ctx       The run context (written: sats, counters).
+ * @param emitEvent The L2 event-row callback (tier, event, sat, station, statistic,
+ *                  threshold, action, detail).
+ * @param events    The epoch's events, read: code_datum.
+ * @param est       The estimator of this epoch (the code-bias columns).
+ * @param x_s       The solved shared vector of this epoch (the returning column's value).
+ * @param prires    The prior-residual census, drained for this epoch: the re-coupling test
+ *                  reads its row of the returning column.
+ */
+void networkCodePinLegKeptEpoch(
+    NetworkRunContext& ctx,
+    const std::function<void(const char*, const char*, const std::string&,
+                             const std::string&, std::optional<double>,
+                             std::optional<double>, const char*,
+                             const std::string&)>& emitEvent, const EpochEvents& events,
+    const NetworkEstimator& est, const Eigen::VectorXd& x_s, const NetworkPriorResidual& prires);
+
 // ---- Run-end reports (generated by scripts/nom_td_cut.py) ----
 
 struct NetworkRunEndView;
@@ -1862,6 +1989,7 @@ class GnssConfig;
  * beside it in Sbasis.cpp, print in this order, each gated on its own knob:
  *   - networkSbasisDatumRunEnd: the S-basis datum arms.
  *   - networkCodeDatumFamilyRunEnd: the family code-datum arms.
+ *   - networkCodePinLegRunEnd: the single-leg hold of the code pin.
  *
  * @param v The run at its end (network/runend/RunEnd.hpp).
  * @return 0, or the last non-zero verdict of its sections.
@@ -1904,6 +2032,24 @@ int networkSbasisRunEnd(const NetworkRunEndView& v);
  */
 void networkCodeDatumFamilyRunEnd(const NetworkRunContext& ctx, const GnssConfig& config_,
                                   const std::shared_ptr<spdlog::logger>& log);
+
+/**
+ * @brief The single-leg hold's run-end line (@c network.code_pin_single_leg_hold).
+ *
+ * The decoupling edges, the held satellite-epochs, the re-coupling edges (those the
+ * prior-residual census found moved against the parked value, with the largest |t|, and
+ * those it could not test; the largest move in metres as information) and the edges
+ * abandoned.  Armed but unreadable (no time
+ * link or no satellite code bias) is reported as INERT; armed with no edge is a warning
+ * (standing invariant #4: "0 opened" cannot tell inert wiring from a run without an
+ * outage).  Prints nothing when the arm is off.
+ *
+ * @param ctx     Run context (the counters).
+ * @param config_ Live config (the arm and its prerequisites).
+ * @param log     "main_log".
+ */
+void networkCodePinLegRunEnd(const NetworkRunContext& ctx, const GnssConfig& config_,
+                             const std::shared_ptr<spdlog::logger>& log);
 
 // ---- End of the run-end reports ----
 
@@ -1960,6 +2106,10 @@ struct SbasisCounters {
     /// channel between the family-difference row and the sum-to-zero row (or between
     /// partners) declared as "CB_DATUM"/"family_row" events.
     size_t n_cb_family_epochs = 0, n_cb_family_switches = 0;   ///< switches of a channel between the family-difference row and the sum-to-zero row (or between partners)
+    /// The single-leg hold's edges and hold epochs (@c network.code_pin_single_leg_hold),
+    /// counted once per kept epoch by @c networkCodePinLegKeptEpoch and read only by its
+    /// run-end line; all zero unless the arm is effective.
+    NetworkSbasis::CodePinLegCounts cb_pin_leg;
 };
 
 } // namespace GnssProcessor

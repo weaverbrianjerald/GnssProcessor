@@ -8389,6 +8389,14 @@ namespace GnssProcessor {
         network_code_datum_time_linked_ =
             jval<bool>(json, "network.code_datum_time_linked",
                        "network_code_datum_time_linked", false);
+        // The single-leg hold of the time-linked IF pin: a satellite whose pinned pair
+        // loses one leg network-wide holds the surviving column at its pre-edge value
+        // instead of the all-ones row at 0, and the returning leg re-couples against its
+        // parked value.  Read only under the time link (the run-end line reports it inert
+        // otherwise).  Default off = the all-ones row (byte-identical).
+        network_code_pin_single_leg_hold_ =
+            jval<bool>(json, "network.code_pin_single_leg_hold",
+                       "network_code_pin_single_leg_hold", false);
         // Two refinements of the time-linked datum, read only under it.  Pair
         // continuity holds the IF-pin pair while it stays registered and keeps the
         // satellite clock across a pair change that does happen; the family

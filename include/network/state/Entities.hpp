@@ -403,6 +403,12 @@ struct SatelliteState {
     /// end of a hold are declared against, advanced only on kept epochs.  Telemetry only,
     /// not snapshotted.  Was @c NetworkCarryState::last_if_pin_holds.  ColdStart.
     std::optional<NetworkSbasis::PinPairHold> last_if_pin_hold;
+    /// The satellite's open single-leg edge (network.code_pin_single_leg_hold): the pin pair
+    /// lost one leg and the surviving column is held at its pre-edge value until the parked
+    /// leg returns (NetworkSbasis::CodePinLegEdge).  Advanced on kept epochs only, by
+    /// networkCodePinLegKeptEpoch.  Not snapshotted: a warm resume starts with no edge open.
+    /// ColdStart.
+    std::optional<NetworkSbasis::CodePinLegEdge> code_pin_leg_edge;
     /// The satellite participates in a datum direction constrained last epoch (the
     /// completion rows, standing invariant #7): present here but in no direction this epoch
     /// is the release edge.  Was @c NetworkCarryState::sbc_active_sats.  ColdStart.

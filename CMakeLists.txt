@@ -956,6 +956,7 @@ add_executable(gnss_tests
     tests/network/test_channel_mode_all.cpp
     tests/network/test_galileo_network.cpp
     tests/test_code_datum_family.cpp
+    tests/network/test_network_code_pin_single_leg.cpp
     tests/test_clock_level_carry.cpp
     tests/network/test_coupling_exact_update.cpp
     tests/network/test_coupling_long_horizon.cpp

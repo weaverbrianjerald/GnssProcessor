@@ -9,6 +9,7 @@
 #include "network/state/RunContext.hpp"
 #include "config/GnssConfig.hpp"
 #include "network/diag/RunTraces.hpp"
+#include "network/solve/Sbasis.hpp"      // networkCodePinLegKeptEpoch
 #include "common/Constants.hpp"
 #include "common/GnssIdentity.hpp"   // letterOfSat
 #include "common/PppUtils.hpp"
@@ -496,6 +497,18 @@ void networkStashStatus(NetworkRun& run, const NetworkEpoch& ep, EpochEvents& ev
     // driver).  No-op when the census is unarmed.
     if (prires_est.enabled())
         networkPriorResidualEmit(ctx, config_, log, traces, se, stations, prires_est, events);
+
+    // The single-leg edges of the code pin (network.code_pin_single_leg_hold): declared,
+    // counted and persisted here, after the census drained, because the re-coupling test
+    // reads the census row of the returning column.  Nothing without the arm.
+    networkCodePinLegKeptEpoch(
+        ctx,
+        [&](const char* tier, const char* event, const std::string& sat, const std::string& station,
+            std::optional<double> statistic, std::optional<double> threshold, const char* action,
+            const std::string& detail) {
+            traces.emitEvent(se.time, tier, event, sat, station, statistic, threshold, action, detail);
+        },
+        events, est, x_s, prires_est);
 
     // One LASER 5-95 factor iteration per epoch (docs/record/SPEC_carry_vce_apply.md §2,
     // M2 v2).  It must run here: after the last feed into the monitor (SB_LEVELING's
