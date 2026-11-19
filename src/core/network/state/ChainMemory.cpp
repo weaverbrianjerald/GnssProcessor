@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <fstream>
 #include <map>
 #include <set>
 #include <sstream>
@@ -122,6 +123,7 @@ void networkChainMemoryRestore(NetworkRun& run) {
     bool& pin_lives = ctx.carry.resume.chain_pin_lives;   // written: the restored pinned lives' first election
     std::string& staged = ctx.carry.resume.chain_memory;  // written: consumed here
     auto& counters = ctx.counters;                         // written: the restore's counters
+    const std::string& snapshot_path = run.nc.state_snapshot_path;
     const std::shared_ptr<spdlog::logger>& log = run.log;
     // ---- End of the bindings ----
     if (staged.empty()) return;
@@ -219,6 +221,22 @@ void networkChainMemoryRestore(NetworkRun& run) {
         log->warn("Network (chain restore): {} line(s) of the chain memory section were not read (the first: '{}'): "
                   "a line for a part this run does not run (the ring fix, or a leveling carry the resume did not "
                   "restore).", n_unknown, first_unknown);
+    // The dump (network.resume_chain_dump, measure-only): the memory as this leg now holds it, by the section's own
+    // writer, beside the snapshot, for a comparison record for record with the section the snapshot carried.  Its
+    // window line is this leg's processing window, which the restore keeps.
+    if (config.networkResumeChainDump() && !snapshot_path.empty()) {
+        const std::string dump_path = snapshot_path + ".chain_restored";
+        const std::string dump = networkChainMemoryWrite(run);
+        std::ofstream out(dump_path, std::ios::binary | std::ios::trunc);
+        out << dump;
+        out.close();
+        if (out)
+            log->info("Network (chain restore): the restored memory is written to '{}' ({} line(s)); its window line "
+                      "is this leg's processing window, which the restore keeps.",
+                      dump_path, std::count(dump.begin(), dump.end(), '\n'));
+        else
+            log->warn("Network (chain restore): the restored memory could not be written to '{}'.", dump_path);
+    }
 }
 
 }  // namespace GnssProcessor

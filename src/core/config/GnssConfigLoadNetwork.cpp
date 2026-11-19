@@ -5350,6 +5350,14 @@ namespace GnssProcessor {
                 "network.resume_chain_restore requires network.resume_datum_restore: the chain's memory continues the "
                 "last tree, which the datum restore puts back; restored on a cold tree it would describe edges the "
                 "first election does not have.");
+        // The chain restore's dump, measure-only: the restored memory written beside the snapshot, for a comparison
+        // record for record with the section the snapshot carried.  Nothing is restored without the restore.
+        network_resume_chain_dump_ = jval<bool>(json, "network.resume_chain_dump", "resume_chain_dump", false);
+        if (network_resume_chain_dump_ && !network_resume_chain_restore_) {
+            log->warn("Network (chain restore dump): network.resume_chain_dump armed without "
+                      "network.resume_chain_restore: nothing is restored, so nothing is written, INERT.");
+            network_resume_chain_dump_ = false;
+        }
         // Station-layer restore, the read side of network.state_snapshot_station_capture
         // (RS-6, SPEC_event_harness §21.13).  Same exemption class as the restores
         // above: forward-only resume response policy, inert on a run that never

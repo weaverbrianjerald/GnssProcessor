@@ -13,6 +13,9 @@
 #include <spdlog/sinks/ostream_sink.h>
 #include <spdlog/spdlog.h>
 
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <limits>
 #include <memory>
 #include <sstream>
@@ -603,4 +606,60 @@ TEST(ChainMemoryRestore, AMismatchedSectionRestoresNothingAndTheResumeGoesOn) {
     EXPECT_EQ(idle.fx->setup().sat_gf_target_m.at("E04"), -0.4000);
     EXPECT_FALSE(idle.carry().resume.chain_pin_lives);
     EXPECT_FALSE(contains(idle.text.str(), "chain restore"));
+}
+
+TEST(ChainMemoryRestore, TheDumpWritesTheMemoryAsTheLegHoldsIt) {
+    // The dump is off by default and inert without the restore.
+    const LoadedConfig plain = loadNetworkConfigCapturing("cmdump_off", floatChain(kSnapshotKeys));
+    ASSERT_TRUE(plain.ok) << plain.text;
+    EXPECT_FALSE(plain.config.networkResumeChainDump());
+    const LoadedConfig no_restore = loadNetworkConfigCapturing(
+        "cmdump_inert", floatChain(std::string(kSnapshotKeys) + "    \"resume_chain_dump\": true,\n"));
+    ASSERT_TRUE(no_restore.ok) << no_restore.text;
+    EXPECT_FALSE(no_restore.config.networkResumeChainDump());
+    EXPECT_TRUE(contains(no_restore.text, "INERT"));
+
+    // Armed with the restore, the dump is the section the leg restored, line for line, when the leg's window is the
+    // writer's (the window line carries the leg's processing window).
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "gnss_chain_dump_case";
+    std::filesystem::create_directories(dir);
+    const std::string snap = (dir / "snap.txt").generic_string();
+    std::string keys = floatChain(std::string(kSnapshotKeys)
+                                  + "    \"phase_datum_eq34_event_rows\": [ \"kept\" ],\n"
+                                    "    \"state_snapshot_chain_capture\": true,\n"
+                                    "    \"resume_chain_restore\": true,\n"
+                                    "    \"resume_chain_dump\": true,\n");
+    keys.replace(keys.find("snap.txt"), std::string("snap.txt").size(), snap);
+    const LoadedConfig cfg = loadNetworkConfigCapturing("cmdump_on", keys);
+    ASSERT_TRUE(cfg.ok) << cfg.text;
+    EXPECT_TRUE(cfg.config.networkResumeChainDump());
+
+    MemoryRun writer("w_dump", cfg.config);
+    ArcLifeStamp life;
+    life.adm_generation = 1;
+    life.adm_run_start = 118;
+    net::putArcAmb(writer.entities(), 1, "E04_L1C", &net::ArcState::eq34_pin_life) = life;
+    net::putArcAmb(writer.entities(), 1, "E04_L1C", &net::ArcState::amb).relevel_s = 1399165230.5;
+    net::putSat(writer.entities(), "E04", &net::SatelliteState::code_ref_event_s) = 1399166100.25;
+    writer.fx->setup().window_t0_s = 1399161600.0;
+    writer.fx->setup().window_t1_s = 1399172400.0;
+    writer.fx->setup().sat_gf_target_m["E04"] = -0.4188;
+    const std::string text = networkChainMemoryWrite(writer.fx->run());
+
+    MemoryRun leg("r_dump", cfg.config);
+    net::putArcAmb(leg.entities(), 1, "E04_L1C", &net::ArcState::amb);   // the carry the resume restored, unstamped
+    leg.fx->setup().window_t0_s = 1399161600.0;
+    leg.fx->setup().window_t1_s = 1399172400.0;
+    leg.fx->setup().sat_gf_target_m["E04"] = -0.4000;
+    leg.carry().resume.chain_memory = text;
+    const std::string dump_path = snap + ".chain_restored";
+    std::filesystem::remove(dump_path);
+    networkChainMemoryRestore(leg.fx->run());
+    std::ifstream in(dump_path, std::ios::binary);
+    ASSERT_TRUE(in.good()) << dump_path;
+    const std::string dump((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    EXPECT_EQ(dump, text);
+    EXPECT_TRUE(contains(leg.text.str(), "the restored memory is written to"));
+    in.close();
+    std::filesystem::remove_all(dir);
 }
