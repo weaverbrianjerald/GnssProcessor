@@ -8,7 +8,9 @@
  * the shared applyNetworkConsumerCouplings).  The copy is rewritten member by member, and the
  * derivation has no logger, so a request the derivation replaces does not show in the run's log.
  *
- * Each "asked" case loads config/golden/golden_field_refound.json with one key set to a value
+ * Each "asked" case loads config/golden/golden_field_rf0hv18.json (the field reference of the
+ * float-vehicle posture, frozen on 2026-11-19 when the integer-fixing configuration became the reference;
+ * the cases were written against it) with one key set to a value
  * other than the one the derivation writes, derives the user configuration, and accepts either
  * outcome a reader can see: the file's value stands, or a line at warn level or above, written
  * while the file is loaded or the configuration derived, names the key and the held-out station
@@ -101,10 +103,10 @@ void detachSink(const std::shared_ptr<spdlog::logger>& l,
 std::unique_ptr<Derived> loadAndDerive(const std::string& tag, const Edit& edit) {
     auto out = std::make_unique<Derived>();
     const fs::path src = fs::path(GNSS_PROJECT_ROOT) / "config" / "golden" /
-                         "golden_field_refound.json";
+                         "golden_field_rf0hv18.json";
     if (!fs::exists(src)) return out;
     // Parsed once per process, with the station registry cut to the roster.
-    nlohmann::json j = gnss_test::referenceConfigWithRosterStationInfo("golden/golden_field_refound.json");
+    nlohmann::json j = gnss_test::referenceConfigWithRosterStationInfo("golden/golden_field_rf0hv18.json");
     edit(j);
 
     const fs::path dir = gnss_test::tempDir() / ("derived_" + tag);

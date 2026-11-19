@@ -439,10 +439,12 @@ TEST_F(NbpBrdcWire, Doy129ReconstructionAndHeld) {
 
 namespace {
 
-/// Load the sim golden with @p edit applied; a refusal (false or a throw) returns false.
+/// Load the sim golden of the float-vehicle posture (the frozen lineage golden_sim_rf0hv18 since 2026-11-19:
+/// the broadcast clock a priori needs the smoothed phase-bias hold, which the integer-fixing reference runs off)
+/// with @p edit applied; a refusal (false or a throw) returns false.
 bool loadSimGoldenWith(const std::function<void(nlohmann::json&)>& edit, GnssConfig& cfg,
                        const std::string& tag) {
-    const fs::path src = fs::path(GNSS_PROJECT_ROOT) / "config" / "golden" / "golden_sim_refound.json";
+    const fs::path src = fs::path(GNSS_PROJECT_ROOT) / "config" / "golden" / "golden_sim_rf0hv18.json";
     std::ifstream in(src);
     nlohmann::json j = nlohmann::json::parse(in, nullptr, true, /*ignore_comments=*/true);
     edit(j);
