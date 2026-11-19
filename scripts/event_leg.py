@@ -964,12 +964,21 @@ def _grade_leg(seed, leg, label):
 
 
 def _replay(a, b):
-    """B4: two runs from one seed, identical in full (nom_td_gate.py --whole --mask-time)."""
+    """B4: two runs from one seed, identical in full (nom_td_gate.py --whole --mask-time).
+
+    A leg directory holds leg.json, not arm.json, so the gate's arm check is skipped and leg.json is compared here
+    with each run's directory name masked."""
+    def leg_lines(d):
+        with open(os.path.join(d, "leg.json"), encoding="utf-8") as fh:
+            return fh.read().replace(os.path.basename(os.path.normpath(d)), "<RUN>")
     r = subprocess.run([sys.executable, os.path.join(REPO, "scripts", "nom_td_gate.py"), a, b, "--whole",
-                        "--mask-time", "--show", "4"], capture_output=True, text=True)
+                        "--mask-time", "--no-arm-check", "--show", "4"], capture_output=True, text=True)
     out = r.stdout + r.stderr
     first = [ln.strip() for ln in out.splitlines() if "DIFFER" in ln][:4]
-    return {"identical": "RESULT IDENTICAL" in out, "first_differences": first}
+    same_leg = leg_lines(a) == leg_lines(b)
+    if not same_leg:
+        first.insert(0, "leg.json DIFFER (run directory masked)")
+    return {"identical": "RESULT IDENTICAL" in out and same_leg, "first_differences": first}
 
 
 def cmd_chain_grade(args):
