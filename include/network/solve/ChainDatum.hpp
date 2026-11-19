@@ -480,6 +480,11 @@ struct ChainDatumCounters {
     long long eq34_kept_not_target = 0;       ///< ...the arc has no previous target
     long long eq34_kept_not_life = 0;         ///< ...the arc has no remembered pin life (not pinned at the last election, or a warm resume)
     long long eq34_kept_not_ended = 0;        ///< ...the arc's pinned life ended (reborn, re-entered after a gap, flagged)
+    // The pinned lives the chain memory section restored at a warm resume (network.resume_chain_restore): the first
+    // election judges each once on this run's own ledger and flags (arcRestoredLifeContinues).  Both stay 0 on a
+    // run that restores none; the ended ones are also counted in eq34_kept_not_ended and named at that election.
+    long long eq34_kept_restored_continued = 0;   ///< restored pinned lives judged continuing at the first election
+    long long eq34_kept_restored_ended = 0;       ///< restored pinned lives judged ended (flagged, or in a gap or dead)
     // The returning row of the chain's event table (network.phase_datum_eq34_event_rows "returning"); all
     // stay 0 with the row off.  A returning edge is a tree edge whose child vertex was absent from the last
     // election's tree on its band and a vertex of an earlier one.  The row releases it (the cut release) or,

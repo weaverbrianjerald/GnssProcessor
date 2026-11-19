@@ -231,7 +231,8 @@ struct ChainElection {
           pair_family(ctx_.knobs.eq34_pair_family),
           kept_row(ctx_.knobs.eq34_row_kept), returning_row(ctx_.knobs.eq34_row_returning),
           rehost_row(ctx_.knobs.eq34_row_rehost), root_row(ctx_.knobs.eq34_row_root),
-          slip_row(ctx_.knobs.eq34_row_slip), merge_split_row(ctx_.knobs.eq34_row_merge_split), now_s(now_s_),
+          slip_row(ctx_.knobs.eq34_row_slip), merge_split_row(ctx_.knobs.eq34_row_merge_split),
+          restored_lives(ctx_.carry.resume.chain_pin_lives), now_s(now_s_),
           pref_rx(config.networkPhaseDatumEq34Receiver()),
           // Under carry_invariant pin-to-round is off: the frame is re-realized each epoch and
           // continuity is held by the invariant DD carry.  (Seed-round, below, can still round
@@ -273,6 +274,9 @@ struct ChainElection {
     const bool        root_row;        ///< The root row of the event table is armed.
     const bool        slip_row;        ///< The slip row of the event table is armed.
     const bool        merge_split_row; ///< The merge and split row of the event table is armed.
+    /// The pinned lives were restored from the snapshot's chain memory section and this is the first election since:
+    /// the kept row judges each on this run's own ledger and flags (arcRestoredLifeContinues).
+    const bool        restored_lives;
     const double      now_s;           ///< This epoch in continuous GPS seconds (the age of a receiver phase-bias carry).
     const std::string pref_rx;
     const bool        pin_round;
@@ -325,6 +329,9 @@ struct ChainElection {
     std::map<std::pair<std::string, std::string>, std::size_t> release_sats;
     /// Every receiver band of a moved side -> its release.
     std::map<ChainStationBand, std::size_t> release_rx;
+    /// The restored pinned lives this election judged ended (station, ambiguity key, why), for the one line that names
+    /// them; filled only at the first election after a resume that restored them.
+    std::vector<std::string>    restored_ended;
     /// The vertices of this election's trees, for the memory of the next: ambiguity keys, and receiver bands.
     std::set<std::string>       new_seen_sats;
     std::set<ChainStationBand>  new_seen_rx;
@@ -1482,7 +1489,9 @@ void applyMergeRow(ChainElection& el, const ChainBand& band, const ChainComponen
 ///    datum receiver, or the old root of a handover the root row pinned (@ref PinDraft::root_kept), or
 ///    any root when the edge lies inside an absorbed side (@ref PinDraft::absorbed);
 ///  - the arc has a previous target;
-///  - the arc has a remembered pin life and it continues (@c arcPinnedLifeContinues).
+///  - the arc has a remembered pin life and it continues (@c arcPinnedLifeContinues); at the first
+///    election after a resume that restored the pinned lives, the restored life is judged on this
+///    run's own ledger and flags instead (@c arcRestoredLifeContinues).
 /// A held edge keeps its previous target and takes no frame step of its own: pin displacement 0, a
 /// known step, no host change, not shiftable.  The shift walk then gives its child the parent's
 /// step exactly and passes an unknown parent step down.  The draft's direction bookkeeping
@@ -1521,7 +1530,21 @@ void applyKeptRow(ChainElection& el, const ChainBand& band, const ChainComponent
     if (prev == nullptr) { ++cnt.eq34_kept_not_target; return; }
     const ArcLifeStamp* at_pin = net::getArcAmb(el.arc_rows, key.first, k.arc, &net::ArcState::eq34_pin_life);
     if (at_pin == nullptr) { ++cnt.eq34_kept_not_life; return; }
-    if (!arcPinnedLifeContinues(*at_pin, now)) { ++cnt.eq34_kept_not_ended; return; }
+    if (el.restored_lives) {
+        // A life restored from the snapshot: its stamp counts the writer's epochs, so it is judged
+        // once, here, on this run's own ledger and flags.
+        if (!arcRestoredLifeContinues(now)) {
+            ++cnt.eq34_kept_restored_ended;
+            ++cnt.eq34_kept_not_ended;
+            el.restored_ended.push_back(fmt::format("{} {} ({})", el.stations[ri].name, k.arc,
+                                                    now.flag_ep >= 0 ? "flagged" : "gap or dead"));
+            return;
+        }
+        ++cnt.eq34_kept_restored_continued;
+    } else if (!arcPinnedLifeContinues(*at_pin, now)) {
+        ++cnt.eq34_kept_not_ended;
+        return;
+    }
 
     // Held.  What the as-built draft would have done is tallied and kept for the observatory.
     ++cnt.eq34_kept_held;
@@ -3006,6 +3029,24 @@ void advanceChainBaselines(ChainElection& el) {
     }
 }
 
+/// At the first election after a resume that restored the pinned lives: one line with what the kept
+/// row judged (the ended lives by name), and the hand-off is cleared, so that from the next election
+/// on the row compares this run's own stamps.
+void closeRestoredLives(ChainElection& el) {
+    if (!el.restored_lives) return;
+    el.ctx.carry.resume.chain_pin_lives = false;   // written: consumed by this election
+    const auto& c = el.ctx.counters;
+    constexpr std::size_t kNamed = 20;
+    std::string named;
+    for (std::size_t i = 0; i < el.restored_ended.size() && i < kNamed; ++i)
+        named += (i == 0 ? ": " : ", ") + el.restored_ended[i];
+    if (el.restored_ended.size() > kNamed) named += fmt::format(" and {} more", el.restored_ended.size() - kNamed);
+    el.log->info("Network (chain restore): the first election after the resume judged {} restored pinned life(s) "
+                 "on this run's own ledger and flags: {} continue, {} ended{}.",
+                 c.eq34_kept_restored_continued + c.eq34_kept_restored_ended, c.eq34_kept_restored_continued,
+                 c.eq34_kept_restored_ended, named);
+}
+
 /// The last step of the election: the rank cross-check, the carry hygiene (the re-reference erase,
 /// the releasing rows' cut release, the S-transformation apply and the extend-only merge-back) and
 /// the sticky baselines for the next epoch.  The families' results are in the election's maps and
@@ -3019,6 +3060,7 @@ void finishChainElection(ChainElection& el) {
     applyCarryShift(el);
     retainGapEdges(el);
     advanceChainBaselines(el);
+    closeRestoredLives(el);
 }
 
 }  // namespace
@@ -3171,6 +3213,11 @@ int networkChainDatumRunEnd(const NetworkRunEndView& v) {
                   "re-read differently counts at every election until the two agree.",
                   not_held, c.eq34_kept_not_freed, c.eq34_kept_not_root, c.eq34_kept_not_target,
                   c.eq34_kept_not_life, c.eq34_kept_not_ended);
+        if (c.eq34_kept_restored_continued + c.eq34_kept_restored_ended > 0)
+            log->info("Network (eq34 kept row): of the pinned lives restored at the resume, the first election "
+                      "judged {} continuing and {} ended on this run's own ledger and flags (the ended ones are "
+                      "among the {} whose pinned life ended).",
+                      c.eq34_kept_restored_continued, c.eq34_kept_restored_ended, c.eq34_kept_not_ended);
     }
     // The returning row (network.phase_datum_eq34_event_rows "returning"), reported only when armed
     // for the same reason.

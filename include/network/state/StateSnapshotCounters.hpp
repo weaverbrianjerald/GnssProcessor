@@ -57,6 +57,15 @@ struct StateSnapshotCounters {
     long long snap_station_rows_last = 0;   ///< RC/SD station-layer rows in the last snapshot; 0 under an armed capture on a run that arms carry_rx_code_bias or the SH deviation carry means the capture is inert
     long long snap_canon_rows_last   = 0;   ///< CN canonical-signal rows in the last snapshot; 0 under an armed capture means no station had decided a latch yet, which on a network run past epoch 1 means the capture is inert
     long long snap_rxcb_lin_rows_last = 0;  ///< RL code-bias linearization-point rows in the last snapshot; 0 under an armed capture means the capture is inert: no RC row has a finite code-bias state to pair with (for example estimate_ifb is off)
+    // The chain memory section (network.state_snapshot_chain_capture, network.resume_chain_restore;
+    // network/state/ChainMemory.hpp).  A warm resume under the restore ends in one of three outcomes; the reason of a
+    // refusal is in the restore's log line.
+    long long snap_chain_lines_last  = 0;   ///< lines of the last snapshot's chain memory section
+    long long chain_restore_restored = 0;   ///< warm resumes under the restore that restored the section
+    long long chain_restore_refused  = 0;   ///< warm resumes under the restore that refused it (fingerprint mismatch, or another build's section)
+    long long chain_restore_absent   = 0;   ///< warm resumes under the restore whose snapshot carries no section
+    long long chain_restore_lines    = 0;   ///< lines of the restored section that an owner read
+    long long chain_restore_unread   = 0;   ///< lines of the restored section that no owner read
 };
 
 } // namespace GnssProcessor

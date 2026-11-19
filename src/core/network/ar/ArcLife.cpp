@@ -121,6 +121,12 @@ bool arcPinnedLifeContinues(const ArcLifeStamp& at_pin, const ArcLifeStamp& now)
         && now.adm_generation >= at_pin.adm_generation;
 }
 
+bool arcRestoredLifeContinues(const ArcLifeStamp& now) {
+    if (now.flag_ep >= 0) return false;
+    // Live, or not admitted yet: the first election precedes the ledger's first admission.
+    return now.adm_run_start >= 0 || now.adm_generation == 0;
+}
+
 ArcLifeStep arcLifeStep(const ArcLifeTrack* last, long long last_search_ep, const ArcLifeStamp& now,
                         bool freed, long long now_ep) {
     ArcLifeStep step;

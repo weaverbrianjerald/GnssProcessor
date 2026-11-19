@@ -178,6 +178,7 @@ const std::vector<FieldDecl> kRunFields = {
     {"carry.resume.pb_seam", "resume_pb_seam_pending", Persist::ResumeHandoff, "", "", nullptr, nullptr, nullptr},
     {"carry.resume.cpl_census", "resume_cpl_census_pending", Persist::ResumeHandoff, "", "", nullptr, nullptr, nullptr},
     {"carry.resume.chain_memory", "", Persist::ResumeHandoff, "", "", nullptr, nullptr, nullptr},
+    {"carry.resume.chain_pin_lives", "", Persist::ResumeHandoff, "", "", nullptr, nullptr, nullptr},
     // Instrument state moved to NetworkServiceCounters (decision D6): run-end counters, warn
     // latches, window sums and event clocks of measure-only instruments.
     {"counters.clm_win_ep", "clm_win_ep", Persist::ColdStart, "", "", nullptr, nullptr, nullptr},

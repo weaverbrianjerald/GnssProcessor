@@ -199,6 +199,29 @@ unsigned arcLifeChange(const ArcLifeStamp& before, const ArcLifeStamp& now);
  */
 bool arcPinnedLifeContinues(const ArcLifeStamp& at_pin, const ArcLifeStamp& now);
 
+/**
+ * @brief Whether a pinned life restored from a snapshot continues at the first election after the resume.
+ *
+ * The snapshot's chain memory section saves each tree edge's stamp at the writer's last election.
+ * Its ledger generation, run start and flag epoch count the writer's epochs, while the resumed
+ * run's arc ledger and flag map start empty, so the saved stamp is not compared with the run's own
+ * (@ref GnssProcessor::arcPinnedLifeContinues "arcPinnedLifeContinues" compares two stamps of one
+ * run).  The restored life is judged once, at the resumed run's first election, on the run's own
+ * sources:
+ *  - a flag raised in the resumed run (@c now.flag_ep >= 0) ends it;
+ *  - the run's ledger holding the arc live (@c now.adm_run_start >= 0) continues it, and so does a
+ *    ledger that has not admitted the arc yet (@c now.adm_generation == 0): the ledger admits an
+ *    epoch's rows after the election, so at the first epoch's election it holds no arc;
+ *  - an arc the ledger holds in a gap or dead (admitted before, not live now) ends it.
+ * From the next election on, the run compares its own stamps.  What the uninterrupted run saw
+ * between its last election and the resume (a flag raised after that election, or a gap at the
+ * snapshot epoch) is not in the section: such an arc continues here and ends there.
+ *
+ * @param now The arc's stamp at the resumed run's first election.
+ * @return True when the restored pinned life continues.
+ */
+bool arcRestoredLifeContinues(const ArcLifeStamp& now);
+
 /// One arc's life as a search tracks it from one search to the next.
 struct ArcLifeTrack {
     ArcLifeStamp stamp{};        ///< The stamp the last search read (re-baselined at an echo).

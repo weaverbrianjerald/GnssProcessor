@@ -30,6 +30,7 @@
 #include <fmt/format.h>
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
 #include <cmath>
 #include <sstream>
 #include "network/driver/Epoch.hpp"   // NetworkEpoch
@@ -388,7 +389,11 @@ void networkWriteStateSnapshot(NetworkRun& run, const NetworkEpoch& ep) {
         // Chain memory capture (network.state_snapshot_chain_capture): the chain's tree memory, the ring fix's links
         // and maps, the emitter's held-value state and the group-delay latch, as one verbatim section
         // (network/state/ChainMemory).  Copies taken after the emit; the products and every trace are unchanged.
-        if (nc.state_snapshot_chain_capture) snap.chain_memory = networkChainMemoryWrite(run);
+        if (nc.state_snapshot_chain_capture) {
+            snap.chain_memory = networkChainMemoryWrite(run);
+            ctx.counters.snap_chain_lines_last =
+                static_cast<long long>(std::count(snap.chain_memory.begin(), snap.chain_memory.end(), '\n'));
+        }
         // Station-layer capture (network.state_snapshot_station_capture): the write half of
         // the two per-station memories that otherwise restart cold at every warm resume.  The frame and datum blocks carry
         // the network's realization and the emit block the level on top of it; these two

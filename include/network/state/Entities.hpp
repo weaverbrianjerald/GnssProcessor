@@ -397,7 +397,7 @@ struct SatelliteState {
     std::optional<std::pair<std::string, std::string>> last_if_pin_sel;
     /// Continuous GPS seconds of the satellite's last declared code-reference move or landed code-datum re-seed,
     /// written at the emit site under network.ring_fix.code_event_window_s and read by the ring fix's window.
-    /// ColdStart.
+    /// ColdStart; the chain memory section carries it (network.state_snapshot_chain_capture).
     std::optional<double> code_ref_event_s;
     /// The pin pair hold of the last kept epoch, the baseline the begin and the
     /// end of a hold are declared against, advanced only on kept epochs.  Telemetry only,
@@ -984,7 +984,10 @@ struct ArcState {
     /// reborn, re-entered after a gap or flagged since (@c arcPinnedLifeContinues).  Replaced
     /// wholesale each election, and written only with
     /// @c network.phase_datum_eq34_event_rows holding @c kept, so it is empty on every other
-    /// run.  ColdStart: after a warm resume the row holds its first edges one election late.
+    /// run.  ColdStart: after a warm resume the row holds its first edges one election late,
+    /// unless the chain memory section restores the lives (network.resume_chain_restore); the
+    /// first election then judges each restored life on the run's own ledger and flags
+    /// (@c arcRestoredLifeContinues).
     std::optional<ArcLifeStamp> eq34_pin_life;
     /// A tree edge retained across the current gap because its leveling carry is still
     /// alive (network.phase_datum_eq34_extend_only); rebuilt at each election.  Was
@@ -2528,10 +2531,11 @@ void recordFromSnapshot(const char* tag, const NetworkStateSnapshot& snap, Netwo
  *        (network.state_snapshot_chain_capture), one line each (tags @c C*): the satellite bands and the receiver
  *        bands seen in an earlier tree (@c eq34_tree_seen), their last tree roots (@c eq34_tree_root), the root row's
  *        pinned receiver phase-bias targets (@c eq34_root_rpb_target), the pinned lives of the tree edges
- *        (@c eq34_pin_life), the arcs' anchor ages (@c anchor_arc_age), the emitter's anchor baseline
- *        (@c emitted_anchor, @c emitted_anchor_s) and the topology ledger's memory (@c topo_prev_tie,
- *        @c topo_prev_kind).  A station's band cells are written by its name, its other fields and the arcs and
- *        lines of sight by its index.
+ *        (@c eq34_pin_life), the arcs' anchor ages (@c anchor_arc_age), the re-level stamps of the arcs' leveling
+ *        carries (@c LocalCarry::relevel_s, which the snapshot's carry records do not carry), the satellites' last
+ *        code-reference events (@c code_ref_event_s), the emitter's anchor baseline (@c emitted_anchor,
+ *        @c emitted_anchor_s) and the topology ledger's memory (@c topo_prev_tie, @c topo_prev_kind).  A station's
+ *        band cells are written by its name, its other fields and the arcs and lines of sight by its index.
  * @param e  The entities.
  * @param os The section being written.
  */
@@ -2539,10 +2543,10 @@ void chainMemoryWriteEntities(const NetworkEntities& e, std::ostream& os);
 
 /**
  * @brief Read one line of the chain's memories back into the entity tables (network.resume_chain_restore).
- * @param e The entities; written: arcs, los, sat_signals, stations.
+ * @param e The entities; written: arcs, los, sats, sat_signals, stations.
  * @param f The line's comma-separated fields, the tag first.
- * @return True when the line is one of the chain's and was read; false for another tag, a malformed line, or a station
- *         or key the roster does not resolve.
+ * @return True when the line is one of the chain's and was read; false for another tag, a malformed line, a station
+ *         or key the roster does not resolve, or a re-level stamp of an arc that has no leveling carry.
  */
 bool chainMemoryReadEntityLine(NetworkEntities& e, const std::vector<std::string>& f);
 

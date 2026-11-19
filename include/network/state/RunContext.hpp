@@ -509,9 +509,11 @@ namespace GnssProcessor {
         bool   resume_hold_restore{};
         /// network.resume_chain_restore: at a warm resume, restore the chain memory section
         /// (network/state/ChainMemory.hpp): the chain's tree memory, the ring fix's links and maps, the emitter's
-        /// held-value state, and the saved group-delay latch in place of the leg's own.  Inert, and says so, on a
-        /// snapshot without the section.  The loader requires resume_datum_restore.  Not fingerprinted (forward-only
-        /// resume response policy).  Off = byte-identical resume.
+        /// held-value state, and the saved group-delay latch in place of the leg's own.  The section carries its own
+        /// fingerprint of the keys that shape the memory, checked at the restore: a section that is absent or whose
+        /// fingerprint does not match restores nothing and says so (counted), and the warm resume goes on.  The
+        /// loader requires resume_datum_restore.  Not fingerprinted (forward-only resume response policy).  Off =
+        /// byte-identical resume.
         bool   resume_chain_restore{};
         /// network.resume_station_restore (RS-6, SPEC_event_harness §21.13): at a warm
         /// resume, restore the two station-layer memories before the first epoch: the rx-CB
@@ -1260,6 +1262,10 @@ namespace GnssProcessor {
         /// @c network.resume_chain_restore and consumed by @c networkChainMemoryRestore in the driver, where the setup
         /// (the group-delay latch) is in scope.  Empty unless a warm resume found the section.
         std::string chain_memory;
+        /// The chain memory restore put back pinned lives of tree edges: the kept row judges each once, at the first
+        /// election, on this run's own ledger and flags (@c arcRestoredLifeContinues), and that election clears it.
+        /// Set by @c networkChainMemoryRestore, the warm resume's second half, before the first epoch.
+        bool chain_pin_lives{false};
     };
 
     /// @brief The cross-epoch state of the network run: what one epoch leaves for the next, apart from the entity tables and the counters.

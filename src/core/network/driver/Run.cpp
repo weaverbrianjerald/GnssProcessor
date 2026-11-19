@@ -328,9 +328,10 @@ void networkRunArm(NetworkRun& run, LogManager& log_manager_) {
     // first-epoch code-bias seed latch closes at each station's first
     // networkBirthLocalStates.  A no-op unless the resume stashed code-bias rows.
     networkApplyRxCbLinRestore(ctx, config_, stations, log);
-    // Puts back the chain memory section the resume staged (network.resume_chain_restore): the chain's tree memory,
-    // the ring fix's links and maps, the emitter's held-value state, and the saved group-delay latch in place of this
-    // leg's own.  It needs the setup, so it runs here, before the first epoch; a no-op when nothing was staged.
+    // Puts back the chain memory section the resume staged (network.resume_chain_restore), when its own fingerprint
+    // matches this run's: the chain's tree memory, the ring fix's links and maps, the emitter's held-value state, and
+    // the saved group-delay latch in place of this leg's own.  It needs the setup, so it runs here, before the first
+    // epoch; a no-op when nothing was staged.
     networkChainMemoryRestore(run);
     // Event harness: arms the scripted-fault schedule.  It
     // comes after the warm resume because the injector is outside the resume

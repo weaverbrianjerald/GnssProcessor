@@ -1318,6 +1318,18 @@ void chainMemoryWriteEntities(const NetworkEntities& e, std::ostream& os) {
                           s.adm_run_start, s.has_carry ? 1 : 0, s.birth_ep, s.dropped_ep, s.relevel_s, s.flag_ep);
     for (const auto& [key, age] : arcAmbMap(e.arcs, &ArcState::anchor_arc_age))
         os << fmt::format("CAA,{},{},{}\n", key.first, key.second, age);
+    // The re-level stamps of the arcs' leveling carries: the snapshot's carry records leave a restored carry
+    // unstamped, and the ring fix's window reads the stamp.
+    for (const auto& [id, row] : e.arcs) {
+        if (!row.amb || row.amb->relevel_s == 0.0) continue;
+        const std::pair<int, std::string> key = arcPair(id);
+        os << fmt::format("CRL,{},{},{}\n", key.first, key.second, row.amb->relevel_s);
+    }
+    // The satellites' last code-reference events (network.ring_fix.code_event_window_s): the ring fix's window
+    // reads them.
+    forEach(e.sats, &SatelliteState::code_ref_event_s, [&](const SatId& id, double s) {
+        os << fmt::format("CCE,{},{}\n", satKey(id), s);
+    });
     // The topology ledger's memory (network.trace_topology): the tie rows of each station and the row kinds of each
     // line of sight, so that a resumed leg reports its first epoch's changes against the writer's last epoch.
     forEach(e.stations, &StationState::topo_prev_tie, [&](const StationId& id, int n) {
@@ -1329,7 +1341,7 @@ void chainMemoryWriteEntities(const NetworkEntities& e, std::ostream& os) {
     });
 }
 
-bool chainMemoryReadEntityLine(NetworkEntities& e, const std::vector<std::string>& f) {   // written: arcs los sat_signals stations
+bool chainMemoryReadEntityLine(NetworkEntities& e, const std::vector<std::string>& f) {   // written: arcs los sats sat_signals stations
     if (f.empty()) return false;
     const std::string& tag = f[0];
     try {
@@ -1369,6 +1381,21 @@ bool chainMemoryReadEntityLine(NetworkEntities& e, const std::vector<std::string
         }
         if (tag == "CAA" && f.size() == 4) {
             putArcAmb(e, std::stoi(f[1]), f[2], &ArcState::anchor_arc_age) = std::stoi(f[3]);
+            return true;
+        }
+        if (tag == "CRL" && f.size() == 4) {
+            // Onto the carry the resume restored; an arc with no carry has no level to stamp (the line is not read).
+            const std::optional<ArcId> id = arcKey(std::stoi(f[1]), f[2]);
+            if (!id) return false;
+            const auto it = e.arcs.find(*id);
+            if (it == e.arcs.end() || !it->second.amb) return false;
+            it->second.amb->relevel_s = std::stod(f[3]);
+            return true;
+        }
+        if (tag == "CCE" && f.size() == 3) {
+            const std::optional<SatId> id = satIdOf(e, f[1]);
+            if (!id) return false;
+            put(e.sats, *id, &SatelliteState::code_ref_event_s) = std::stod(f[2]);
             return true;
         }
         if (tag == "CTT" && f.size() == 3) {

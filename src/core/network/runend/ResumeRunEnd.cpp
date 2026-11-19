@@ -203,14 +203,16 @@ static int networkResumeRestoreRunEnd(const NetworkRunEndView& v) {
  * @brief Run-end section: resume and snapshot: resume event, snapshot write, per-layer restores, coupling capture.
  *
  * The resume and state-snapshot events: the resume event, the snapshot write, the
- * linearization-frame carry, the datum, emit, station, canonical-signal and code-bias
- * restores, the phase-bias seam mark and the coupling capture. The canonical-signal
- * audit is summed into locals.
+ * linearization-frame carry, the datum, chain memory, emit, station, canonical-signal and
+ * code-bias restores, the phase-bias seam mark and the coupling capture. The
+ * canonical-signal audit is summed into locals.
  *
  * Gate: each line under its own condition: `carry_invariant &&
  * !config_.getNetworkConfig().state_snapshot_path.empty()`;
  * `config_.getNetworkConfig().state_snapshot_datum_capture ||
  * config_.networkResumeDatumRestore()`;
+ * `config_.getNetworkConfig().state_snapshot_chain_capture ||
+ * config_.networkResumeChainRestore()`;
  * `config_.getNetworkConfig().state_snapshot_emit_capture ||
  * config_.networkResumeEmitRestore()`;
  * `config_.getNetworkConfig().state_snapshot_station_capture ||
@@ -344,6 +346,18 @@ static int networkResumeSnapshotRunEnd(const NetworkRunEndView& v) {
                         "network.state_snapshot_datum_capture?) or no warm resume "
                         "happened; check the resume log for the RS-3 line."
                       : "");
+    }
+    // The chain memory section (network/state/ChainMemory.hpp), beside the datum line for the same reason.  Printed
+    // whenever either half is armed; a warm resume under the restore ends restored, refused (fingerprint mismatch or
+    // another build's section) or absent, each counted.
+    if (config_.getNetworkConfig().state_snapshot_chain_capture || config_.networkResumeChainRestore()) {
+        const auto& C = ctx.counters;
+        log->info("Network (chain memory): write {} / read {}; last snapshot carried {} chain memory line(s); at the "
+                  "resume: restored {}, refused {}, absent {}; {} line(s) read, {} not read.",
+                  config_.getNetworkConfig().state_snapshot_chain_capture ? "ARMED" : "off",
+                  config_.networkResumeChainRestore() ? "ARMED" : "off", C.snap_chain_lines_last,
+                  C.chain_restore_restored, C.chain_restore_refused, C.chain_restore_absent, C.chain_restore_lines,
+                  C.chain_restore_unread);
     }
     // Emit-layer continuity halves, beside the datum line and at the same function scope
     // for the same reason: the re-base runs on lineages with and without the invariant
