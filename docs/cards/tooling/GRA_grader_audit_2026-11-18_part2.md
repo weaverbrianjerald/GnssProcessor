@@ -286,3 +286,7 @@ go (listed at the end of this entry).
 - G9 one orchestrator per bar group (fails on a child's failure, a manifest per grade): gate the outputs of G2 to G8 run
   through it; about 0.35 M.
 - G10 the retire listing (no kept file names a retired one): about 0.1 M.
+
+### 2026-11-19: plan steps G6 to G10 (in part 3)
+
+This part reached the size bar; the results of plan steps G6 to G10, the frame classes of the simulator's wrong holds and the clean-checkout re-check are in [part 3](GRA_grader_audit_2026-11-18_part3.md).
