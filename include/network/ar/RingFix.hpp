@@ -43,6 +43,7 @@
  */
 
 #include "network/state/Entities.hpp"   // net::ArcTable
+#include "network/diag/BoundedTally.hpp"   // BoundedTally (the names behind the run-end counts)
 
 #include <spdlog/spdlog.h>
 
@@ -183,6 +184,24 @@ const char* ringFixReleaseName(RingFixRelease c);
  * @return Its name as a static string; "?" for a value outside the enum.
  */
 const char* ringFixRefuseName(RingFixRefuse c);
+
+/// Why a hold-table hit in PASS B was not folded as a hold row (card CNN row 4; the first test it failed).
+enum class RingFixRowSkip : std::uint8_t {
+    TreeEdge,        ///< The arc is a tree edge of the chain: its 1e10 pin is the frame, a second row would fight it.
+    IndexPastState,  ///< The arc's column index lies past this epoch's linearization point x_lin.
+    NoLocalColumn,   ///< The column is not one of the station's columns this epoch (h2local), or its x_lin is non-finite.
+    NonFiniteRow,    ///< The row's right-hand side is non-finite.
+};
+/// Number of hold-row skip causes.
+inline constexpr std::size_t kRingFixRowSkipCount = 4;
+
+/**
+ * @brief The name of a hold-row skip cause, as the run-end line prints it.
+ * @param c The cause.
+ * @return "on a tree edge", "index past the state", "not a column of the epoch" or "a non-finite row"; "?" outside
+ *         the enum.
+ */
+const char* ringFixRowSkipName(RingFixRowSkip c);
 
 // ---- The gate ---------------------------------------------------------------------------------
 
@@ -476,6 +495,29 @@ struct RingFixLinkId {
     }
 };
 
+/**
+ * @brief A link as a run-end line names it (card CNN rows 2 and 4): the station, the satellite, the signals and the
+ *        ring at the epoch it was counted.  The station is a roster index, named at the run end.
+ */
+struct RingFixNamedLink {
+    int         station{-1};  ///< Roster index.
+    std::string sat;          ///< Satellite ("G09").
+    std::string signals;      ///< The link's pair ("L1C/L2W"); for a hold row, its signal and pair ("L1C of L1C/L2W").
+    int         ring{-1};     ///< Its ring when counted (-1: not in the rings).
+    /** @brief Equality of every field.  @param o The other link.  @return True when equal. */
+    bool operator==(const RingFixNamedLink& o) const {
+        return station == o.station && sat == o.sat && signals == o.signals && ring == o.ring;
+    }
+};
+
+/**
+ * @brief A link as the run-end line prints it: "BOGT00COL-G09 L1C/L2W ring 2".
+ * @param l The link.
+ * @param station_names The roster's station names (a station outside them prints as "#<index>").
+ * @return The text.
+ */
+std::string ringFixNamedLinkText(const RingFixNamedLink& l, const std::vector<std::string>& station_names);
+
 /// One band's tree and chords, as the rings read them.  Vertices are keys: "R:<station index>"
 /// for a receiver, "S:<satellite>" for a satellite (the chain record's keys).
 struct RingFixTree {
@@ -616,10 +658,12 @@ struct RingFixCounters {
     long long held_link_epochs{0};        ///< Held links present at an epoch's decision.
     long long released[kRingFixReleaseCount]{};  ///< Releases by cause.
     long long refused[kRingFixRefuseCount]{};    ///< Link-epochs refused, by cause.
-    long long rows_offered{0};            ///< Hold-table hits in PASS B: rows_injected + rows_gauge_skipped + rows_no_column.
+    long long rows_offered{0};            ///< Hold-table hits in PASS B: rows_injected + rows_gauge_skipped + the three without a column.
     long long rows_injected{0};           ///< Hold rows folded in PASS B.
     long long rows_gauge_skipped{0};      ///< Table hits on a gauge-pinned (tree) arc, never folded.
-    long long rows_no_column{0};          ///< Table hits without a column this epoch.
+    long long rows_no_column_index{0};    ///< Table hits without a column: the column index past this epoch's x_lin.
+    long long rows_no_column_local{0};    ///< Table hits without a column: not a column of the station this epoch, or a non-finite x_lin.
+    long long rows_no_column_eta{0};      ///< Table hits without a column: the row's right-hand side non-finite.
     long long carry_reopened{0};          ///< Carried entries the release re-opened (drop or erase).
     long long audit_right{0};             ///< Held link-epochs whose integers the audit found right.
     long long audit_wrong{0};             ///< Held link-epochs whose integers the audit found wrong.
@@ -703,6 +747,12 @@ struct RingFixCounters {
     long long keep_refused_unchecked{0};  ///< Refused: back across a gap, the held pair not measured across it.
     long long keep_refused_shifted{0};    ///< Refused: the gap re-entry test found the held pair shifted.
     long long keep_refused_signature{0};  ///< Refused: the near-null signature sits at a whole step.
+    // The names behind the counts (card CNN rows 2 and 4).  Filled serially (the decision, the station tally in
+    // station order); read by the run-end lines only.
+    std::map<std::string, long long> pair_link_epochs;   ///< Chord link-epochs considered, per listed pair "E:L1C/L5Q" (network.ring_fix.pairs set only).
+    BoundedTally<std::string> excluded_families;         ///< Chord link-epochs not considered, by family "E:L1X/L5X" (the first ten).
+    BoundedTally<RingFixNamedLink> rows_skipped_links[kRingFixRowSkipCount];   ///< Hold-table hits not folded, by cause (index RingFixRowSkip), the first ten links.
+    BoundedTally<RingFixNamedLink> refused_links[kRingFixRefuseCount];        ///< Link-epochs refused, by cause (index RingFixRefuse), the first ten links.
 };
 
 /// A move of the re-attachment waiting for the next election (network.ring_fix.reattach).

@@ -604,6 +604,19 @@ void noteChainFamilies(ChainElection& el, System sys, const std::vector<std::vec
                  singles.empty() ? "" : "; elected per signal: ", singles);
 }
 
+/// Count one constellation-epoch under the pair family: seen, and when it holds a family of one band, elected per
+/// signal, with its signal set and cause in the run-end tally (card CNN row 1).  The serial election is the only
+/// writer; the run-end line is the only reader.
+void notePairFallback(ChainElection& el, System sys, const std::vector<std::string>& signals, bool single) {
+    auto& c = el.ctx.counters;
+    ++c.eq34_pair_epochs_by_sys[sys];
+    if (!single) return;
+    ++c.eq34_pair_fallbacks;
+    ++c.eq34_pair_fallbacks_by_sys[sys];
+    const bool configured = el.ctx.knobs.eq34_family_pairs.count(sys) != 0;
+    c.eq34_pair_fallback_sets.add({sys, signals, chainPairFallbackCause(sys, signals, configured)});
+}
+
 /// The families of this epoch, in visit order (RINEX letter, then each constellation's families in the
 /// order chainFamiliesOf gives).  The pair family's counters count the families of two bands and the
 /// constellation-epochs that hold a family of one band; with the configured pairs armed, the families are
@@ -625,7 +638,7 @@ std::vector<ChainFamily> formChainFamilies(ChainElection& el, const ChainGroups&
             if (sigs.size() == 2) ++el.ctx.counters.eq34_pair_families;
             else                  single = true;
         }
-        if (el.pair_family && single) ++el.ctx.counters.eq34_pair_fallbacks;
+        if (el.pair_family) notePairFallback(el, sys, signals, single);
         if (armed) noteChainFamilies(el, sys, fams);
     }
     return families;
@@ -3180,6 +3193,51 @@ static int networkEq34TotalsRunEnd(const NetworkRunEndView& v) {
     return 0;
 }
 
+// ---- The pair family's elections per signal, named (card CNN row 1) ----
+
+const char* chainPairFallbackCauseName(ChainPairFallbackCause c) {
+    switch (c) {
+        case ChainPairFallbackCause::OneSignal:            return "one signal";
+        case ChainPairFallbackCause::TwoOfOneBand:         return "two of one band";
+        case ChainPairFallbackCause::UnparsedSignal:       return "a signal without a band";
+        case ChainPairFallbackCause::ThreeOrMore:          return "three or more";
+        case ChainPairFallbackCause::NotInConfiguredPairs: return "a signal not in the configured pairs";
+    }
+    return "?";
+}
+
+ChainPairFallbackCause chainPairFallbackCause(System sys, const std::vector<std::string>& signals,
+                                              bool has_configured_pairs) {
+    if (signals.size() <= 1) return ChainPairFallbackCause::OneSignal;
+    if (signals.size() == 2) {
+        const auto a = SignalId::fromObsCode(sys, signals[0]);
+        const auto b = SignalId::fromObsCode(sys, signals[1]);
+        return (a && b) ? ChainPairFallbackCause::TwoOfOneBand : ChainPairFallbackCause::UnparsedSignal;
+    }
+    return has_configured_pairs ? ChainPairFallbackCause::NotInConfiguredPairs : ChainPairFallbackCause::ThreeOrMore;
+}
+
+std::string chainPairFallbackKeyText(const ChainPairFallbackKey& k) {
+    std::string sigs;
+    for (const std::string& s : k.signals) sigs += (sigs.empty() ? "" : " ") + s;
+    return fmt::format("{} {{{}}} {}", rinexLetter(k.sys), sigs, chainPairFallbackCauseName(k.cause));
+}
+
+std::string chainPairFallbackClause(const ChainDatumCounters& c) {
+    std::string per_sys;
+    for (const auto& [sys, seen] : c.eq34_pair_epochs_by_sys) {
+        const auto f = c.eq34_pair_fallbacks_by_sys.find(sys);
+        const long long n = f != c.eq34_pair_fallbacks_by_sys.end() ? f->second : 0;
+        per_sys += per_sys.empty()
+                       ? fmt::format("{} {} of {} constellation-epoch(s) elected per signal", systemName(sys), n, seen)
+                       : fmt::format(", {} {} of {}", systemName(sys), n, seen);
+    }
+    return fmt::format("  Per constellation: {}; per signal: {}.", per_sys.empty() ? "none seen" : per_sys,
+                       c.eq34_pair_fallback_sets.text(chainPairFallbackKeyText));
+}
+
+// ---- End of the pair family's elections per signal ----
+
 /**
  * @brief Run-end section: the pair family (network.phase_datum_eq34_family "pair"): the pair families elected,
  *        the constellation-epochs elected per signal instead, the extension edges and the band-only components.
@@ -3196,20 +3254,21 @@ static int networkEq34PairFamilyRunEnd(const NetworkRunEndView& v) {
     // a twin with the knob off keeps a run-end block byte-identical to a build without it.
     if (!ctx.knobs.eq34_pair_family) return 0;
     const auto& c = ctx.counters;
+    // Both lines end with the per-constellation account and the elections per signal by name (card CNN row 1).
     if (c.eq34_pair_families == 0)
         log->warn("Network (eq34 pair family): ARMED but ZERO pair families were formed - every "
                   "constellation-epoch ({} of them) was elected per signal.  Standing invariant "
                   "#4: that is INERT, not validated.  A pair family needs a constellation that "
-                  "tracks exactly two phase signals of different bands in an epoch.",
-                  c.eq34_pair_fallbacks);
+                  "tracks exactly two phase signals of different bands in an epoch.{}",
+                  c.eq34_pair_fallbacks, chainPairFallbackClause(c));
     else
         log->info("Network (eq34 pair family): {} pair family(ies) elected, {} "
                   "constellation-epoch(s) elected per signal instead (one signal, three or more, "
                   "or two of one band); {} extension edge(s) attached a vertex only one band "
                   "tracks to a pair tree on that band, and {} band-only component(s) were elected "
-                  "on their own band.",
+                  "on their own band.{}",
                   c.eq34_pair_families, c.eq34_pair_fallbacks, c.eq34_pair_ext_edges,
-                  c.eq34_pair_band_only_comps);
+                  c.eq34_pair_band_only_comps, chainPairFallbackClause(c));
     return 0;
 }
 

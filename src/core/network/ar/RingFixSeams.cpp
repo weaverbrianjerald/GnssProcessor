@@ -436,30 +436,69 @@ void networkRingFixPriors(StationCarryFrame& carry) {
         ++R.rfix_offered;
         // A tree edge's 1e10 pin is the frame: a second row there would fight it.  The release
         // step releases a link that became a tree edge before PASS B; this is the backstop.
+        // Each skip names its arc in this station's own list of its cause (merged serially, card CNN row 4).
+        const auto skip = [&](RingFixRowSkip c, long long& n) {
+            ++n;
+            R.rfix_skip_arcs[static_cast<std::size_t>(c)].emplace_back(arc_sat, arc_signal);
+        };
         if (stations[static_cast<std::size_t>(i)].pinned_amb_targets.count(
                 StateKeys::makeAmbiguityKey(arc_sat, arc_signal)) != 0) {
-            ++R.rfix_gauge_skipped;
+            skip(RingFixRowSkip::TreeEdge, R.rfix_gauge_skipped);
             continue;
         }
-        if (amb_idx >= x_lin.size()) { ++R.rfix_no_column; continue; }
+        if (amb_idx >= x_lin.size()) { skip(RingFixRowSkip::IndexPastState, R.rfix_no_column_index); continue; }
         const auto hit = h2local.find(amb_idx);
-        if (hit == h2local.end() || !std::isfinite(x_lin(amb_idx))) { ++R.rfix_no_column; continue; }
+        if (hit == h2local.end() || !std::isfinite(x_lin(amb_idx))) {
+            skip(RingFixRowSkip::NoLocalColumn, R.rfix_no_column_local);
+            continue;
+        }
         const double eta = lam * (it->second - x_lin(amb_idx));
-        if (!std::isfinite(eta)) { ++R.rfix_no_column; continue; }
+        if (!std::isfinite(eta)) { skip(RingFixRowSkip::NonFiniteRow, R.rfix_no_column_eta); continue; }
         inj.emplace_back(static_cast<Eigen::Index>(hit->second), lam, eta,
                          makeRowTag(ContributionKind::PriorAmbiguityRingHold, arc_sat, arc_signal));
         ++R.rfix_rows;
     }
 }
 
+namespace {
+
+/// A hold row's link as the run-end line names it: the row's station and satellite, its signal with the pair (or
+/// cascade) it belongs to, and that link's ring now; a row whose link is not found keeps its signal alone.
+RingFixNamedLink ringFixRowLink(const NetworkRingFix& rf, int station, const std::string& sat, const std::string& sig) {
+    RingFixNamedLink out{station, sat, sig, -1};
+    for (auto it = rf.links.lower_bound({station, sat, "", ""});
+         it != rf.links.end() && it->first.station == station && it->first.sat == sat; ++it)
+        if (it->first.sig1 == sig || it->first.sig2 == sig) {
+            out.signals = sig + " of " + it->first.sig1 + "/" + it->first.sig2;
+            out.ring = it->second.ring;
+            return out;
+        }
+    for (auto it = rf.cascade_links.lower_bound({station, sat, "", ""});
+         it != rf.cascade_links.end() && it->first.station == station && it->first.sat == sat; ++it)
+        if (it->first.sig2 == sig) {   // a cascade link keeps no ring of its own
+            out.signals = sig + " of cascade " + it->first.sig1 + ">" + it->first.sig2;
+            return out;
+        }
+    return out;
+}
+
+}  // namespace
+
 void networkRingFixStationTally(NetworkRunContext& ctx, const std::vector<StationAssembly>& asm_res) {
     if (!ctx.carry.ring_fix) return;
-    RingFixCounters& C = ctx.carry.ring_fix->counters;
-    for (const StationAssembly& Rc : asm_res) {
-        C.rows_offered       += Rc.rfix_offered;
-        C.rows_injected      += Rc.rfix_rows;
-        C.rows_gauge_skipped += Rc.rfix_gauge_skipped;
-        C.rows_no_column     += Rc.rfix_no_column;
+    NetworkRingFix& rf = *ctx.carry.ring_fix;
+    RingFixCounters& C = rf.counters;
+    for (std::size_t i = 0; i < asm_res.size(); ++i) {
+        const StationAssembly& Rc = asm_res[i];
+        C.rows_offered         += Rc.rfix_offered;
+        C.rows_injected        += Rc.rfix_rows;
+        C.rows_gauge_skipped   += Rc.rfix_gauge_skipped;
+        C.rows_no_column_index += Rc.rfix_no_column_index;
+        C.rows_no_column_local += Rc.rfix_no_column_local;
+        C.rows_no_column_eta   += Rc.rfix_no_column_eta;
+        for (std::size_t c = 0; c < kRingFixRowSkipCount; ++c)
+            for (const auto& [sat, sig] : Rc.rfix_skip_arcs[c])
+                C.rows_skipped_links[c].add(ringFixRowLink(rf, static_cast<int>(i), sat, sig));
     }
 }
 
@@ -543,20 +582,45 @@ int networkRingFixRunEnd(const NetworkRunEndView& v) {
     }
     long long rel_total = 0;
     for (std::size_t k = 0; k < kRingFixReleaseCount; ++k) rel_total += C.released[k];
-    const bool rows_closed = C.rows_offered == C.rows_injected + C.rows_gauge_skipped + C.rows_no_column;
+    const long long rows_no_column = C.rows_no_column_index + C.rows_no_column_local + C.rows_no_column_eta;
+    const bool rows_closed = C.rows_offered == C.rows_injected + C.rows_gauge_skipped + rows_no_column;
     log->warn("Network (ring fix, rule {}): {} link(s) decided over {} decision epoch(s) ({}); first hold by "
               "ring: {}; held at the end {} ({}); {} held link-epoch(s); {} hold-table hit(s): {} hold row(s) "
-              "folded, {} skipped on a tree edge, {} without a column ({}).",
+              "folded, {} skipped on a tree edge, {} without a column ({} index past the state, {} not a column of "
+              "the epoch, {} a non-finite row; {}).",
               ringFixRuleName(rf.rule), C.decided, C.epochs_decided,
               by_ring.empty() ? "none" : by_ring, first.empty() ? "none" : first, held_end,
               held_rings.empty() ? "none" : held_rings, C.held_link_epochs, C.rows_offered, C.rows_injected,
-              C.rows_gauge_skipped, C.rows_no_column, rows_closed ? "CLOSED" : "OPEN: the sum differs");
+              C.rows_gauge_skipped, rows_no_column, C.rows_no_column_index, C.rows_no_column_local,
+              C.rows_no_column_eta, rows_closed ? "CLOSED" : "OPEN: the sum differs");
+    // The links behind the hold rows that never reached the solve, by cause (card CNN row 4); only when any.
+    std::vector<std::string> station_names;
+    station_names.reserve(v.setup.stations.size());
+    for (const NetStation& st : v.setup.stations) station_names.push_back(st.name);
+    const auto linkText = [&](const RingFixNamedLink& l) { return ringFixNamedLinkText(l, station_names); };
+    if (C.rows_gauge_skipped + rows_no_column > 0) {
+        std::string by_cause;
+        for (std::size_t k = 0; k < kRingFixRowSkipCount; ++k) {
+            const BoundedTally<RingFixNamedLink>& t = C.rows_skipped_links[k];
+            if (t.empty()) continue;
+            by_cause += fmt::format("{}{} {}: {}", by_cause.empty() ? "" : "; ",
+                                    ringFixRowSkipName(static_cast<RingFixRowSkip>(k)), t.total(), t.text(linkText));
+        }
+        log->warn("Network (ring fix, hold rows not folded): {}.", by_cause);
+    }
     // A link that became a tree edge left the held set without a release (the chain pins it).
     const std::string to_tree = C.to_tree > 0 ? fmt::format(" + to tree {}", C.to_tree) : std::string();
     log->warn("Network (ring fix): released {} ({}); {} carried entr(ies) re-opened by the release; "
               "decided {} = released {}{} + held {}: {}.  Refused link-epochs: {}.",
               rel_total, released, C.carry_reopened, C.decided, rel_total, to_tree, held_end,
               C.decided == rel_total + C.to_tree + held_end ? "closed" : "NOT CLOSED", refused);
+    // The first links refused by each cause (card CNN corrections item 7); one line per cause that refused any.
+    for (std::size_t k = 0; k < kRingFixRefuseCount; ++k) {
+        const BoundedTally<RingFixNamedLink>& t = C.refused_links[k];
+        if (t.empty()) continue;
+        log->warn("Network (ring fix, refused links): {} {} link-epoch(s), the first links: {}.",
+                  ringFixRefuseName(static_cast<RingFixRefuse>(k)), t.total(), t.text(linkText));
+    }
     if (C.cuts > 0 || C.to_tree > 0 || C.inherited > 0 || C.root_kept > 0)
         log->warn("Network (ring fix, the chain's events): {} cut(s) on a band, {} with a known step ({} of 0); {} held "
                   "link(s) re-expressed, {} released across an unknown step; {} became tree edges; {} old host(s) "
@@ -669,9 +733,26 @@ int networkRingFixRunEnd(const NetworkRunEndView& v) {
                   "link decided the epoch before); {} released for another cause (no carry at the new host, an "
                   "unknown draft step).",
                   C.rehost_kept, C.rehost_off_integer, C.rehost_not_kept);
-    if (!rf.pairs.empty())
-        log->warn("Network (ring fix, pairs): {} chord link-epoch(s) of other pair families were not considered.",
-                  C.excluded_link_epochs);
+    if (!rf.pairs.empty()) {
+        // Each listed pair with the link-epochs it was considered at, and the families left out by name (card CNN
+        // row 2); a listed pair that matched no chord gets a warning of its own.
+        std::string considered;
+        std::vector<std::string> unmatched;
+        for (const auto& [sys, s1, s2] : rf.pairs) {
+            const std::string fam = sys + ":" + s1 + "/" + s2;
+            const auto it = C.pair_link_epochs.find(fam);
+            const long long n = it != C.pair_link_epochs.end() ? it->second : 0;
+            considered += fmt::format("{}{} {}", considered.empty() ? "" : ", ", fam, n);
+            if (n == 0) unmatched.push_back(fam);
+        }
+        log->warn("Network (ring fix, pairs): {} chord link-epoch(s) of other pair families were not considered "
+                  "({}); considered by listed pair: {}.",
+                  C.excluded_link_epochs, C.excluded_families.text([](const std::string& f) { return f; }), considered);
+        for (const std::string& fam : unmatched)
+            log->warn("Network (ring fix, pairs): the listed pair {} matched no chord link-epoch over the run: no "
+                      "station tracked it as a chord of a pair family, or its signals are read under another family "
+                      "(a member signal under its identity's).", fam);
+    }
     if (rf.mask_station >= 0)
         log->warn("Network (ring fix, slip mask, simulation only): {} masked epoch(s); {} latch, funnel or pend entr(ies) "
                   "removed; {} carried entr(ies) the drains had changed restored.",

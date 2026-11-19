@@ -405,10 +405,13 @@ RingFixDecideReadings networkRingFixDecideReadings(NetworkRun& run, const Networ
         bool code_formed = false;
         for (std::size_t r_i = 0; r_i < rows.size(); ++r_i) {
             const ChainChordRow& r = rows[r_i];
-            if (!rf.pairConsidered(constellationKey(systemOfSat(r.sat)), r.sig1, r.sig2)) {
+            const std::string sys_key = constellationKey(systemOfSat(r.sat));
+            if (!rf.pairConsidered(sys_key, r.sig1, r.sig2)) {
                 ++rf.counters.excluded_link_epochs;   // never decided, held or traced
+                rf.counters.excluded_families.add(sys_key + ":" + r.sig1 + "/" + r.sig2);
                 continue;
             }
+            if (!rf.pairs.empty()) ++rf.counters.pair_link_epochs[sys_key + ":" + r.sig1 + "/" + r.sig2];
             RingFixDecideObs o;
             o.id = {ii, r.sat, r.sig1, r.sig2};
             o.lambda1 = chainWavelengthM(r.sat, r.sig1);

@@ -197,6 +197,23 @@ const char* ringFixRefuseName(RingFixRefuse c) {
     return "?";
 }
 
+const char* ringFixRowSkipName(RingFixRowSkip c) {
+    switch (c) {
+        case RingFixRowSkip::TreeEdge:       return "on a tree edge";
+        case RingFixRowSkip::IndexPastState: return "index past the state";
+        case RingFixRowSkip::NoLocalColumn:  return "not a column of the epoch";
+        case RingFixRowSkip::NonFiniteRow:   return "a non-finite row";
+    }
+    return "?";
+}
+
+std::string ringFixNamedLinkText(const RingFixNamedLink& l, const std::vector<std::string>& station_names) {
+    const std::string sta = (l.station >= 0 && static_cast<std::size_t>(l.station) < station_names.size())
+                                ? station_names[static_cast<std::size_t>(l.station)]
+                                : "#" + std::to_string(l.station);
+    return sta + "-" + l.sat + " " + l.signals + (l.ring >= 0 ? " ring " + std::to_string(l.ring) : " no ring");
+}
+
 RingFixGate ringFixGate(double f1, double f2, double q11, double q12, double q22,
                         double lambda1, double lambda2, double sigma_scale) {
     RingFixGate g;
@@ -492,6 +509,7 @@ std::vector<RingFixEvent> ringFixDecideStep(NetworkRingFix& rf,
             ev.kind = RingFixEvent::Kind::Refuse;
             ev.refuse = c;
             ++C.refused[static_cast<std::size_t>(c)];
+            C.refused_links[static_cast<std::size_t>(c)].add({o.id.station, o.id.sat, o.id.sig1 + "/" + o.id.sig2, o.ring});
             if (c != RingFixRefuse::Persist) L.streak = 0;
             events.push_back(ev);
         };
@@ -573,6 +591,8 @@ std::vector<RingFixEvent> ringFixDecideStep(NetworkRingFix& rf,
                 ev.kind = RingFixEvent::Kind::Refuse;
                 ev.refuse = RingFixRefuse::Cap;
                 ++C.refused[static_cast<std::size_t>(RingFixRefuse::Cap)];
+                C.refused_links[static_cast<std::size_t>(RingFixRefuse::Cap)].add(
+                    {o->id.station, o->id.sat, o->id.sig1 + "/" + o->id.sig2, o->ring});
                 events.push_back(ev);   // the persistence count is kept
             }
         }

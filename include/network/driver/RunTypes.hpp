@@ -1430,11 +1430,18 @@ struct StationAssembly {
     long long                 opin_no_column{0};      ///< …skipped: the column is not in this epoch's A_r (or its x_lin / the row is non-finite).
     /// The ring fix's hold rows at this station (network/ar/RingFix.hpp; 0 on every run
     /// without network.ring_fix.enable).  Closure: `rfix_offered == rfix_rows +
-    /// rfix_gauge_skipped + rfix_no_column`.
+    /// rfix_gauge_skipped + rfix_no_column_index + rfix_no_column_local + rfix_no_column_eta`.
     long long                 rfix_offered{0};        ///< Ambiguity columns of this station found in the hold table.
     long long                 rfix_rows{0};           ///< …folded as a diagonal hold row.
     long long                 rfix_gauge_skipped{0};  ///< …skipped: the arc is a tree edge of the chain, whose 1e10 pin is the frame.
-    long long                 rfix_no_column{0};      ///< …skipped: the column is not in this epoch's A_r (or its x_lin / the row is non-finite).
+    long long                 rfix_no_column_index{0};  ///< …skipped: the column index lies past this epoch's x_lin.
+    long long                 rfix_no_column_local{0};  ///< …skipped: the column is not in this epoch's A_r, or its x_lin is non-finite.
+    long long                 rfix_no_column_eta{0};    ///< …skipped: the row's right-hand side is non-finite.
+    /// The arcs behind the four skips above, (satellite, signal) in the order met, one list per cause indexed as
+    /// RingFixRowSkip (tree edge, index past the state, not a column, non-finite row).  Written in the parallel
+    /// produce into this station's own object, merged serially in station order by networkRingFixStationTally;
+    /// at most the station's hold-table hits.
+    std::vector<std::pair<std::string, std::string>> rfix_skip_arcs[4];
     /// Per folded (sat, signal) ambiguity column of this station-epoch, the variance
     /// the fold used and the route it took (RF-1 §7.4, @c network.trace_amb_state).
     /// Filled only when the trace is armed; otherwise the map is never touched, and an
