@@ -19,6 +19,12 @@
  * own once the loader announces the change or lets the request stand.  The loud cases fail when
  * the line that names the key disappears while the value still differs.
  *
+ * Runtime: the reference configuration is parsed once per process, and its station registry
+ * (parsed whole by every load under ocean tide loading from the registry, about 13 s of a load in
+ * Debug) is replaced by copies cut to the roster (tests/support/ReferenceConfigCache.hpp).  A load
+ * then differs from a load of the committed file only in getStationInfoPaths and the station count
+ * of one info line; every case compares loads made the same way or reads neither.
+ *
  * Three keys are set in every reference configuration and read by no loader line
  * (network.redundancy_census, network.max_duration_s, network.min_stations).  Their cases show
  * that changing them moves nothing: not the member dump, not the knobs they would plausibly
@@ -34,6 +40,7 @@
 
 #include "ConfigLoadCapture.hpp"            // networkConfig(): the minimal two-station network
 #include "../support/ConfigDump.hpp"        // configMemberDump(): every member as sorted lines
+#include "../support/ReferenceConfigCache.hpp"  // the reference parsed once, registry cut to the roster
 #include "../support/TestTempDir.hpp"       // per-process, per-test scratch directory
 
 #include <nlohmann/json.hpp>
@@ -70,11 +77,10 @@ struct LoadResult {
     std::string log;                  ///< the load log as "[level] text" lines, for messages
 };
 
-/// The field reference configuration, parsed (comments allowed, as the loader allows them).
+/// The field reference configuration, parsed once per process, with its station registry cut to
+/// its roster (ReferenceConfigCache.hpp; a copy free to edit).
 nlohmann::json fieldReference() {
-    const fs::path src = fs::path(GNSS_PROJECT_ROOT) / "config" / "golden" / "golden_field_refound.json";
-    std::ifstream in(src);
-    return nlohmann::json::parse(in, nullptr, /*allow_exceptions=*/true, /*ignore_comments=*/true);
+    return gnss_test::referenceConfigWithRosterStationInfo("golden/golden_field_refound.json");
 }
 
 /// The minimal two-station network of ConfigLoadCapture.hpp: level vehicle, legacy datum.

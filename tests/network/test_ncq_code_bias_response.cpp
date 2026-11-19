@@ -38,6 +38,7 @@
 #include "network/state/Entities.hpp"
 #include "network/state/RunContext.hpp"
 #include "../support/NetworkTestRun.hpp"
+#include "../support/ReferenceConfigCache.hpp"
 #include "../support/TestTempDir.hpp"
 
 #include <Eigen/Dense>
@@ -97,12 +98,21 @@ bool loadInto(const std::string& tag, const std::string& body, GnssConfig& cfg) 
     return ok;
 }
 
-/// One committed reference configuration (config/golden/golden_<bed>_refound.json).
+/// One committed reference configuration (config/golden/golden_<bed>_refound.json).  A file that
+/// loads the station registry (the field and BeiDou lineages, under ocean tide loading from it) is
+/// loaded as a copy whose registry is cut to its roster (ReferenceConfigCache.hpp): the full
+/// registry costs about 13 s per load in Debug, and the knobs read here do not depend on it.
 bool loadGolden(const std::string& bed, GnssConfig& cfg) {
     LogManager log;
-    const fs::path p = fs::path(GNSS_PROJECT_ROOT) / "config" / "golden" /
-                       ("golden_" + bed + "_refound.json");
-    return cfg.loadFromJson(p, log);
+    const std::string relative = "golden/golden_" + bed + "_refound.json";
+    const fs::path p = fs::path(GNSS_PROJECT_ROOT) / "config" / relative;
+    if (!fs::exists(p)) return false;
+    const nlohmann::json j = gnss_test::referenceConfigWithRosterStationInfo(relative);
+    const bool cut = j.contains("files") && j["files"].contains("station_info_paths");
+    if (!cut) return cfg.loadFromJson(p, log);   // no registry: the committed file itself
+    const fs::path copy = gnss_test::tempDir() / ("golden_" + bed + "_roster_sif.json");
+    { std::ofstream f(copy); f << j.dump(2); }
+    return cfg.loadFromJson(copy, log);
 }
 
 // ---- The receiver code bias in the prior channel ---------------------------------------------

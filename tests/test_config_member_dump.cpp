@@ -7,18 +7,37 @@
  * change to the loader is proved by comparing the loaded objects, member by member, before and
  * after.  The dump is that comparison's text form.  Locked here:
  *
- *  1. Every JSON file directly under config/ and config/golden/ is loaded and dumped.  When the
- *     environment variable GNSS_CONFIG_DUMP_DIR is set, one text file per configuration is
- *     written there (two builds are then compared with a text diff); otherwise the files go to
- *     the test's temporary folder.  The files that do not load are recorded in
- *     _not_loaded.txt and printed, not failed: only the three reference configurations must
- *     load.  Each dump has one "name=value" line per member, sorted, with no name twice.
+ *  1. Every JSON file under config/golden/, and a fixed sample of the files directly under
+ *     config/ (one PPP, one baseline and one network configuration, kDefaultSample), is loaded
+ *     and dumped.  With the environment variable GNSS_CONFIG_DUMP_ALL set to a non-empty value,
+ *     every JSON file directly under config/ is covered instead of the sample (cases 1 and 2).
+ *     When GNSS_CONFIG_DUMP_DIR is set, one text file per configuration is written there (two
+ *     builds are then compared with a text diff); otherwise the files go to the test's
+ *     temporary folder.  The files that do not load are recorded in _not_loaded.txt and
+ *     printed, not failed: only the three reference configurations must load.  Each dump has
+ *     one "name=value" line per member, sorted, with no name twice.
  *  2. Two loads of one file give the same text, so a difference between two dumps is a
  *     difference of the loaded objects and never noise of the loader or of the dump.
  *  3. The reference configuration's dump is large (more than 500 lines) and lists every
  *     station, so the generated member list is in use.
  *  4. Changing one plain key in a copy of the reference configuration changes exactly the line
  *     of the member that key sets, with the value printed in full precision.
+ *
+ * Comparing two builds over every configuration file: run each build's test program with both
+ * variables set, for example
+ *     set GNSS_CONFIG_DUMP_ALL=1
+ *     set GNSS_CONFIG_DUMP_DIR=D:\dumps\before      (then D:\dumps\after for the other build)
+ *     gnss_tests.exe --gtest_filter=ConfigMemberDump.EveryConfigurationFileIsLoadedAndDumped
+ * and diff the two folders.
+ *
+ * Runtime.  A load of the field reference configuration or its BeiDou lineage parses the whole
+ * station registry (about 28 MB of JSON under data/static/sif, ocean tide loading from the
+ * registry), about 13 s in Debug; the other files load in a fraction of a second.  Cases 1 to 3
+ * load the committed files as they are on disk, and share one first load per file per process
+ * (case 2 compares it with a second, fresh load; case 3 reads it); so a run of the suite parses
+ * the registry four times, twice for each of those two files.  Case 4 loads its base and its
+ * edited copies with the registry cut to the roster (tests/support/ReferenceConfigCache.hpp),
+ * the same for all of them, so the cut moves no line between them.
  */
 
 #include <gtest/gtest.h>
@@ -26,6 +45,7 @@
 #include "config/GnssConfig.hpp"
 #include "logging/LogManager.hpp"
 #include "support/ConfigDump.hpp"      // gnss_test::configMemberDump
+#include "support/ReferenceConfigCache.hpp"  // case 4: the reference parsed once, registry cut
 #include "support/TestTempDir.hpp"     // per-process, per-test scratch directory
 
 #include <nlohmann/json.hpp>
@@ -65,16 +85,34 @@ struct ConfigFile {
     std::string label;
 };
 
-/// Every *.json file directly under config/ and config/golden/, in label order.
+/// The fixed sample of config/ that a default run covers beside config/golden/: one file of each
+/// processing family (PPP, baseline, network).  A missing name is simply absent from the set.
+const std::set<std::string> kDefaultSample = {
+    "ppp_internal.json",
+    "baseline_single.json",
+    "ppp_rtk_network_internal.json",
+};
+
+/// True when GNSS_CONFIG_DUMP_ALL is set to a non-empty value: every file under config/.
+bool dumpAll() {
+    const char* a = std::getenv("GNSS_CONFIG_DUMP_ALL");
+    return a != nullptr && *a != '\0';
+}
+
+/// The *.json files under config/golden/ and, directly under config/, every file when
+/// GNSS_CONFIG_DUMP_ALL is set or else the fixed sample kDefaultSample; in label order.
 std::vector<ConfigFile> configFiles() {
     const fs::path root = fs::path(GNSS_PROJECT_ROOT) / "config";
+    const bool all = dumpAll();
     std::vector<ConfigFile> out;
     for (const auto& [dir, prefix] : {std::make_pair(root, std::string()),
                                       std::make_pair(root / "golden", std::string("golden/"))}) {
         std::error_code ec;
         for (const auto& e : fs::directory_iterator(dir, ec)) {
             if (!e.is_regular_file() || e.path().extension() != ".json") continue;
-            out.push_back({e.path(), prefix + e.path().filename().string()});
+            const std::string name = e.path().filename().string();
+            if (prefix.empty() && !all && kDefaultSample.count(name) == 0) continue;
+            out.push_back({e.path(), prefix + name});
         }
     }
     std::sort(out.begin(), out.end(),
@@ -101,6 +139,32 @@ std::string dumpOf(const fs::path& path, std::string& why) {
     auto cfg = std::make_unique<GnssConfig>();
     if (!loadQuiet(path, *cfg, why)) return {};
     return gnss_test::configMemberDump(*cfg);
+}
+
+/// The first load of one committed file in this process: the configuration, its dump, and why it
+/// did not load (empty dump).
+struct FirstLoad {
+    std::shared_ptr<const GnssConfig> cfg;   ///< null when the file did not load
+    std::string dump;
+    std::string why;
+};
+
+/// The first load of the file at @p path, made once per process and shared by the cases (the
+/// file is read from disk unchanged).  Case 2 compares it with a second, fresh load.
+const FirstLoad& firstLoad(const fs::path& path) {
+    static std::map<std::string, FirstLoad> cache;
+    const std::string key = path.generic_string();
+    auto it = cache.find(key);
+    if (it == cache.end()) {
+        FirstLoad f;
+        auto cfg = std::make_shared<GnssConfig>();
+        if (loadQuiet(path, *cfg, f.why)) {
+            f.dump = gnss_test::configMemberDump(*cfg);
+            f.cfg = std::move(cfg);
+        }
+        it = cache.emplace(key, std::move(f)).first;
+    }
+    return it->second;
 }
 
 /// The output folder: GNSS_CONFIG_DUMP_DIR when set, else the test's temporary folder.
@@ -167,11 +231,12 @@ std::map<std::string, std::string> changedMembers(const std::string& a, const st
     return out;
 }
 
-/// The reference configuration as JSON (comments allowed, as the loader allows them).
+/// The reference configuration as JSON (comments allowed, as the loader allows them), parsed
+/// once per process, with its station registry cut to its roster (ReferenceConfigCache.hpp).
+/// Case 4 loads the base and every edit with the same cut registry, so the cut moves no line
+/// between them.
 nlohmann::json referenceJson() {
-    const fs::path src = fs::path(GNSS_PROJECT_ROOT) / "config" / "golden" / "golden_field_refound.json";
-    std::ifstream in(src);
-    return nlohmann::json::parse(in, nullptr, true, /*ignore_comments=*/true);
+    return gnss_test::referenceConfigWithRosterStationInfo("golden/golden_field_refound.json");
 }
 
 /// The dump of @p j written to @p path (one path for the base and the edited copy, so a member
@@ -198,10 +263,10 @@ TEST(ConfigMemberDump, EveryConfigurationFileIsLoadedAndDumped) {
     std::set<std::string> loaded;
     std::string not_loaded;
     for (const ConfigFile& f : files) {
-        std::string why;
-        const std::string dump = dumpOf(f.path, why);
+        const FirstLoad& first = firstLoad(f.path);
+        const std::string& dump = first.dump;
         if (dump.empty()) {
-            not_loaded += f.label + ": " + why + "\n";
+            not_loaded += f.label + ": " + first.why + "\n";
             continue;
         }
         loaded.insert(f.label);
@@ -237,8 +302,8 @@ TEST(ConfigMemberDump, EveryConfigurationFileIsLoadedAndDumped) {
 TEST(ConfigMemberDump, TwoLoadsOfOneFileGiveIdenticalText) {
     std::size_t compared = 0;
     for (const ConfigFile& f : configFiles()) {
-        std::string why1, why2;
-        const std::string first = dumpOf(f.path, why1);
+        std::string why2;
+        const std::string& first = firstLoad(f.path).dump;   // the process's first load
         if (first.empty()) continue;   // recorded by the case above
         const std::string second = dumpOf(f.path, why2);
         ASSERT_FALSE(second.empty()) << f.label << " loaded once and then failed: " << why2;
@@ -260,10 +325,10 @@ TEST(ConfigMemberDump, TheReferenceDumpHasMoreThan500LinesAndEveryStation) {
     for (const std::string& ref : {std::string("golden_field_refound.json"),
                                    std::string("golden_sim_refound.json")}) {
         const fs::path path = fs::path(GNSS_PROJECT_ROOT) / "config" / "golden" / ref;
-        auto cfg = std::make_unique<GnssConfig>();
-        std::string why;
-        ASSERT_TRUE(loadQuiet(path, *cfg, why)) << ref << ": " << why;
-        const std::string dump = gnss_test::configMemberDump(*cfg);
+        const FirstLoad& first = firstLoad(path);
+        ASSERT_TRUE(first.cfg != nullptr) << ref << ": " << first.why;
+        const GnssConfig* cfg = first.cfg.get();
+        const std::string& dump = first.dump;
         const std::vector<std::string> lines = linesOf(dump);
         EXPECT_GT(lines.size(), 500u) << ref;
 

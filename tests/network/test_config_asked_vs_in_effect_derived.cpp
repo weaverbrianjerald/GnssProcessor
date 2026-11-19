@@ -31,11 +31,18 @@
  * them.  The last case lists every member the derivation changes on the unmodified reference
  * configuration, compared through the public getters against the plain copy, so a new change
  * of a listed member fails it.
+ *
+ * Runtime: the reference configuration is parsed once per process, and its station registry
+ * (parsed whole by every load under ocean tide loading from the registry, about 13 s of a load in
+ * Debug) is replaced by copies cut to the roster (tests/support/ReferenceConfigCache.hpp).  A load
+ * then differs from a load of the committed file only in getStationInfoPaths and the station count
+ * of one info line; neither is read here, and neither writes a line at warn level.
  */
 #include <gtest/gtest.h>
 
 #include "config/GnssConfig.hpp"
 #include "logging/LogManager.hpp"
+#include "../support/ReferenceConfigCache.hpp"  // the reference parsed once, registry cut to the roster
 #include "../support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 #include <nlohmann/json.hpp>
@@ -95,9 +102,9 @@ std::unique_ptr<Derived> loadAndDerive(const std::string& tag, const Edit& edit)
     auto out = std::make_unique<Derived>();
     const fs::path src = fs::path(GNSS_PROJECT_ROOT) / "config" / "golden" /
                          "golden_field_refound.json";
-    std::ifstream in(src);
-    if (!in) return out;
-    nlohmann::json j = nlohmann::json::parse(in, nullptr, true, /*ignore_comments=*/true);
+    if (!fs::exists(src)) return out;
+    // Parsed once per process, with the station registry cut to the roster.
+    nlohmann::json j = gnss_test::referenceConfigWithRosterStationInfo("golden/golden_field_refound.json");
     edit(j);
 
     const fs::path dir = gnss_test::tempDir() / ("derived_" + tag);
