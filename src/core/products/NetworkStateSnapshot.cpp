@@ -313,6 +313,13 @@ void NetworkStateSnapshotIO::serialize(std::ostream& os, const NetworkStateSnaps
         std::string cl;
         while (std::getline(cs, cl)) put(cl);
     }
+    // Chain memory section (network.state_snapshot_chain_capture): verbatim lines from networkChainMemoryWrite
+    // (CHAIN header .. CHEND).  Absent unless the capture is armed, so a default snapshot is byte-identical.
+    if (!snap.chain_memory.empty()) {
+        std::istringstream ms(snap.chain_memory);
+        std::string ml;
+        while (std::getline(ms, ml)) put(ml);
+    }
     // Emitter blob: verbatim, already newline-terminated lines from
     // NetworkProductEmitter::serializeState (EMITTER header .. EEND).
     {
@@ -341,6 +348,7 @@ bool NetworkStateSnapshotIO::parse(std::istream& is, NetworkStateSnapshot& out,
     bool saw_meta = false, saw_counters = false, saw_ramp = false;
     bool saw_end = false, in_emitter = false, emitter_done = false;
     bool in_carry = false, carry_done = false;
+    bool in_chain = false, chain_done = false;
     // The §18.12 coupling records are staged and spliced after the loop, so the record
     // dispatch stays independent of line order (a QL may legally precede its L row).
     // Resolving a QL into s.local_carry inline would make correctness depend on the
@@ -367,6 +375,14 @@ bool NetworkStateSnapshotIO::parse(std::istream& is, NetworkStateSnapshot& out,
             if (line == "CEND") { in_carry = false; carry_done = true; }
             continue;
         }
+        if (in_chain) {
+            // Verbatim chain memory section through its CHEND terminator.
+            ++n_lines;
+            s.chain_memory += line;
+            s.chain_memory += '\n';
+            if (line == "CHEND") { in_chain = false; chain_done = true; }
+            continue;
+        }
         if (line.rfind("END,", 0) == 0) {
             unsigned long long expect = 0;
             if (!parseU(line.substr(4), expect)) return fail("malformed END line");
@@ -389,6 +405,13 @@ bool NetworkStateSnapshotIO::parse(std::istream& is, NetworkStateSnapshot& out,
             in_carry = true;
             s.carry_state += line;
             s.carry_state += '\n';
+            continue;
+        }
+        if (line.rfind("CHAIN,", 0) == 0) {   // chain memory section
+            if (chain_done) return fail("duplicate chain memory section");
+            in_chain = true;
+            s.chain_memory += line;
+            s.chain_memory += '\n';
             continue;
         }
         const std::vector<std::string> f = splitCsv(line);
@@ -774,6 +797,7 @@ bool NetworkStateSnapshotIO::parse(std::istream& is, NetworkStateSnapshot& out,
 
     if (in_emitter) return fail("truncated emitter section (no EEND)");
     if (in_carry)   return fail("truncated carry section (no CEND)");
+    if (in_chain)   return fail("truncated chain memory section (no CHEND)");
     if (!saw_end)   return fail("missing END terminator (truncated file)");
     if (!saw_meta || !saw_counters || !saw_ramp)
         return fail("missing mandatory metadata (M/N/U) line");

@@ -9,8 +9,11 @@
  */
 #include "network/state/Entities.hpp"
 
+#include <fmt/format.h>
+
 #include <algorithm>
 #include <cmath>
+#include <ostream>
 #include <stdexcept>
 
 #include <spdlog/spdlog.h>
@@ -1287,6 +1290,102 @@ void recordFromSnapshot(const char* tag, const NetworkStateSnapshot& snap, Netwo
 }
 
 // ===========================================================================
+// The chain memory section's entity lines (network.state_snapshot_chain_capture)
+// ===========================================================================
+
+void chainMemoryWriteEntities(const NetworkEntities& e, std::ostream& os) {
+    // The satellite bands: the tree memory, the last tree roots and the emitter's anchor baseline.
+    for (const auto& [id, row] : e.sat_signals) {
+        if (id.sat == SatId{} || id.signal == SignalId{}) continue;   // a row that names no band
+        const std::string key = ambKey(id);
+        if (row.eq34_tree_seen) os << "CTS," << key << '\n';
+        if (row.eq34_tree_root) os << "CRS," << key << ',' << *row.eq34_tree_root << '\n';
+        if (row.emitted_anchor) os << "CEA," << key << ',' << *row.emitted_anchor << '\n';
+        if (row.emitted_anchor_s) os << fmt::format("CES,{},{}\n", key, *row.emitted_anchor_s);
+    }
+    // The receiver bands, by station name: the tree memory, the last tree roots and the root row's targets.
+    byStationName(e.stations, e.names, [&](const StationId& sid, const StationState& row) {
+        const std::string& name = e.names.names[sid.index];
+        for (const auto& [cell, c] : row.signals) {
+            if (c.eq34_tree_seen) os << "CTR," << name << ',' << cell << '\n';
+            if (c.eq34_tree_root) os << "CRR," << name << ',' << cell << ',' << *c.eq34_tree_root << '\n';
+            if (c.eq34_root_rpb_target) os << fmt::format("CRP,{},{},{}\n", name, cell, *c.eq34_root_rpb_target);
+        }
+    });
+    // The arcs, by station index: the pinned lives of the tree edges and the anchor ages.
+    for (const auto& [key, s] : arcAmbMap(e.arcs, &ArcState::eq34_pin_life))
+        os << fmt::format("CPL,{},{},{},{},{},{},{},{},{}\n", key.first, key.second, s.adm_generation,
+                          s.adm_run_start, s.has_carry ? 1 : 0, s.birth_ep, s.dropped_ep, s.relevel_s, s.flag_ep);
+    for (const auto& [key, age] : arcAmbMap(e.arcs, &ArcState::anchor_arc_age))
+        os << fmt::format("CAA,{},{},{}\n", key.first, key.second, age);
+    // The topology ledger's memory (network.trace_topology): the tie rows of each station and the row kinds of each
+    // line of sight, so that a resumed leg reports its first epoch's changes against the writer's last epoch.
+    forEach(e.stations, &StationState::topo_prev_tie, [&](const StationId& id, int n) {
+        os << fmt::format("CTT,{},{}\n", id.index, n);
+    });
+    forEach(e.los, &LosState::topo_prev_kind, [&](const LosId& id, unsigned mask) {
+        const auto k = losPair(id);
+        os << fmt::format("CTK,{},{},{}\n", k.first, k.second, mask);
+    });
+}
+
+bool chainMemoryReadEntityLine(NetworkEntities& e, const std::vector<std::string>& f) {   // written: arcs los sat_signals stations
+    if (f.empty()) return false;
+    const std::string& tag = f[0];
+    try {
+        if ((tag == "CTS" && f.size() == 2) || (tag == "CRS" && f.size() == 3) || (tag == "CEA" && f.size() == 3)
+            || (tag == "CES" && f.size() == 3)) {
+            const std::optional<SatSignalId> id = satSignalKey(f[1]);
+            if (!id) return false;
+            if (tag == "CTS")      mark(e.sat_signals, *id, &SatSignalState::eq34_tree_seen);
+            else if (tag == "CRS") put(e.sat_signals, *id, &SatSignalState::eq34_tree_root) = f[2];
+            else if (tag == "CEA") put(e.sat_signals, *id, &SatSignalState::emitted_anchor) = f[2];
+            else                   put(e.sat_signals, *id, &SatSignalState::emitted_anchor_s) = std::stod(f[2]);
+            return true;
+        }
+        if ((tag == "CTR" && f.size() == 3) || (tag == "CRR" && f.size() == 4) || (tag == "CRP" && f.size() == 4)) {
+            const std::optional<StationId> sid = stationOfName(e, f[1]);
+            if (!sid) return false;
+            if (tag == "CTR")
+                mark(e.stations, *sid, &StationState::signals, f[2], &StationSignalState::eq34_tree_seen);
+            else if (tag == "CRR")
+                put(e.stations, *sid, &StationState::signals, f[2], &StationSignalState::eq34_tree_root) = f[3];
+            else
+                put(e.stations, *sid, &StationState::signals, f[2], &StationSignalState::eq34_root_rpb_target)
+                    = std::stod(f[3]);
+            return true;
+        }
+        if (tag == "CPL" && f.size() == 10) {
+            ArcLifeStamp s;
+            s.adm_generation = std::stoi(f[3]);
+            s.adm_run_start  = std::stoll(f[4]);
+            s.has_carry      = f[5] == "1";
+            s.birth_ep       = std::stoll(f[6]);
+            s.dropped_ep     = std::stoll(f[7]);
+            s.relevel_s      = std::stod(f[8]);
+            s.flag_ep        = std::stoll(f[9]);
+            putArcAmb(e, std::stoi(f[1]), f[2], &ArcState::eq34_pin_life) = s;
+            return true;
+        }
+        if (tag == "CAA" && f.size() == 4) {
+            putArcAmb(e, std::stoi(f[1]), f[2], &ArcState::anchor_arc_age) = std::stoi(f[3]);
+            return true;
+        }
+        if (tag == "CTT" && f.size() == 3) {
+            put(e.stations, StationId{std::stoi(f[1])}, &StationState::topo_prev_tie) = std::stoi(f[2]);
+            return true;
+        }
+        if (tag == "CTK" && f.size() == 4) {
+            putLos(e, std::stoi(f[1]), f[2], &LosState::topo_prev_kind) = static_cast<unsigned>(std::stoul(f[3]));
+            return true;
+        }
+    } catch (const std::exception&) {
+        return false;
+    }
+    return false;
+}
+
+// ===========================================================================
 // The reach table
 // ===========================================================================
 
@@ -1454,6 +1553,7 @@ const std::vector<EntityWriterRow> kEntityWriters = {
     {"networkApplyRxCbLinRestore", "network/state/WarmResume.cpp", "stations"},
     {"networkRestoreCanonicalSignals", "network/state/WarmResume.cpp", "stations"},
     {"networkTryWarmResume", "network/state/WarmResume.cpp", "constellations sat_signals sats stations"},
+    {"networkChainMemoryRestore", "network/state/ChainMemory.cpp", "all"},
 };
 
 }  // namespace GnssProcessor::net

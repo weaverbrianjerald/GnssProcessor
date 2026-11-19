@@ -35,6 +35,8 @@ references an active file cites. Closed material is in [the record](record/INDEX
 
 - [onboarding/README.md](onboarding/README.md): the path from an empty machine to a merged
   change, then `CONTRIBUTING.md` (repository root).
+- [onboarding/event_legs.md](onboarding/event_legs.md): resumed runs from one seed (the event-leg
+  tool, the matched null, what a leg can be compared with).
 - [report/README.md](report/README.md): the mathematical reference (LaTeX, one PDF per
   component and one combined volume).
 - [OVERVIEW.md](OVERVIEW.md): architecture, capabilities, build targets, config sections.

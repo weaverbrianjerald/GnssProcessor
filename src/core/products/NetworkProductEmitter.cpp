@@ -1346,4 +1346,40 @@ bool NetworkProductEmitter::restoreState(std::istream& is) {
     return true;
 }
 
+void NetworkProductEmitter::writeHeldValueState(std::ostream& os) const {
+    os << fmt::format("ESP,{},{}\n", sc_have_prev_ ? 1 : 0, sc_prev_epoch_s_);
+    for (const auto& [key, b] : last_sc_) os << fmt::format("ESC,{},{},{},{}\n", key, b.e1, b.e2, b.epoch_s);
+    for (const std::string& key : sc_release_pending_) os << fmt::format("ESR,{}\n", key);
+    for (const auto& [key, both] : us_prev_both_) os << fmt::format("EUB,{},{}\n", key, both ? 1 : 0);
+    for (const auto& [key, e] : cg_prev_e_) os << fmt::format("ECE,{},{},{}\n", key, e.first, e.second);
+    for (const auto& [fam, d] : cg_datum_) os << fmt::format("ECD,{},{},{}\n", fam, d.first, d.second);
+    for (const auto& [key, r] : cg_run_) os << fmt::format("ECR,{},{},{}\n", key, r.ref, r.n);
+    for (const auto& [key, left] : cg_hold_left_) os << fmt::format("ECH,{},{}\n", key, left);
+}
+
+bool NetworkProductEmitter::readHeldValueStateLine(const std::vector<std::string>& f) {
+    if (f.empty()) return false;
+    const std::string& tag = f[0];
+    try {
+        if (tag == "ESP" && f.size() == 3) {
+            sc_have_prev_ = f[1] == "1";
+            sc_prev_epoch_s_ = std::stod(f[2]);
+            return true;
+        }
+        if (tag == "ESC" && f.size() == 5) {
+            last_sc_[f[1]] = StepClassBaseline{std::stod(f[2]), std::stod(f[3]), std::stod(f[4])};
+            return true;
+        }
+        if (tag == "ESR" && f.size() == 2) { sc_release_pending_.insert(f[1]); return true; }
+        if (tag == "EUB" && f.size() == 3) { us_prev_both_[f[1]] = f[2] == "1"; return true; }
+        if (tag == "ECE" && f.size() == 4) { cg_prev_e_[f[1]] = {std::stod(f[2]), std::stod(f[3])}; return true; }
+        if (tag == "ECD" && f.size() == 4) { cg_datum_[f[1]] = {std::stod(f[2]), std::stod(f[3])}; return true; }
+        if (tag == "ECR" && f.size() == 4) { cg_run_[f[1]] = GuardRun{std::stod(f[2]), std::stoi(f[3])}; return true; }
+        if (tag == "ECH" && f.size() == 3) { cg_hold_left_[f[1]] = std::stoi(f[2]); return true; }
+    } catch (const std::exception&) {
+        return false;
+    }
+    return false;
+}
+
 } // namespace GnssProcessor

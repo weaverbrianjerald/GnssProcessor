@@ -53,6 +53,7 @@
  */
 #include <array>
 #include <cstddef>
+#include <iosfwd>
 #include <cstdint>
 #include <map>
 #include <optional>
@@ -2521,6 +2522,29 @@ void recordToSnapshot(const char* tag, const NetworkRunContext& ctx, NetworkStat
  * @param ctx  The run context.
  */
 void recordFromSnapshot(const char* tag, const NetworkStateSnapshot& snap, NetworkRunContext& ctx);
+
+/**
+ * @brief Write the chain's memories in the entity tables to the snapshot's chain memory section
+ *        (network.state_snapshot_chain_capture), one line each (tags @c C*): the satellite bands and the receiver
+ *        bands seen in an earlier tree (@c eq34_tree_seen), their last tree roots (@c eq34_tree_root), the root row's
+ *        pinned receiver phase-bias targets (@c eq34_root_rpb_target), the pinned lives of the tree edges
+ *        (@c eq34_pin_life), the arcs' anchor ages (@c anchor_arc_age), the emitter's anchor baseline
+ *        (@c emitted_anchor, @c emitted_anchor_s) and the topology ledger's memory (@c topo_prev_tie,
+ *        @c topo_prev_kind).  A station's band cells are written by its name, its other fields and the arcs and
+ *        lines of sight by its index.
+ * @param e  The entities.
+ * @param os The section being written.
+ */
+void chainMemoryWriteEntities(const NetworkEntities& e, std::ostream& os);
+
+/**
+ * @brief Read one line of the chain's memories back into the entity tables (network.resume_chain_restore).
+ * @param e The entities; written: arcs, los, sat_signals, stations.
+ * @param f The line's comma-separated fields, the tag first.
+ * @return True when the line is one of the chain's and was read; false for another tag, a malformed line, or a station
+ *         or key the roster does not resolve.
+ */
+bool chainMemoryReadEntityLine(NetworkEntities& e, const std::vector<std::string>& f);
 
 /**
  * @brief The reach sampler, an epoch observer (slot StashTail): raises each declared

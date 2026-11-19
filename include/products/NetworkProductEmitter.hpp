@@ -803,6 +803,23 @@ public:
      */
     bool restoreState(std::istream& is);
 
+    /**
+     * @brief Write the emitter's state that depends on the network's held values, for the snapshot's chain memory
+     *        section (network.state_snapshot_chain_capture): the step declaration's baselines, its last emission and
+     *        its pending release marks, the unsettled steps' last flags, and the continuity guard's levels, datums,
+     *        runs and holds, one line each (tags @c E*).  The run counters are not written.  The rest of the
+     *        emitter's cross-epoch state travels in the emitter section (@ref serializeState).
+     * @param os The section being written.
+     */
+    void writeHeldValueState(std::ostream& os) const;
+
+    /**
+     * @brief Read one line of the held-value state back (network.resume_chain_restore).
+     * @param f The line's comma-separated fields, the tag first.
+     * @return True when the line is one of the emitter's and was read; false for another tag or a malformed line.
+     */
+    bool readHeldValueStateLine(const std::vector<std::string>& f);
+
 private:
     double disc_threshold_m_;
     /// When > 0, the per-(sat,signal) jump threshold is disc_threshold_frac_cycles_ ×

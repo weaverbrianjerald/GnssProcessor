@@ -507,6 +507,12 @@ namespace GnssProcessor {
         /// (forward-only resume response policy).  Off = byte-identical resume (rows parsed
         /// into containers nothing reads).
         bool   resume_hold_restore{};
+        /// network.resume_chain_restore: at a warm resume, restore the chain memory section
+        /// (network/state/ChainMemory.hpp): the chain's tree memory, the ring fix's links and maps, the emitter's
+        /// held-value state, and the saved group-delay latch in place of the leg's own.  Inert, and says so, on a
+        /// snapshot without the section.  The loader requires resume_datum_restore.  Not fingerprinted (forward-only
+        /// resume response policy).  Off = byte-identical resume.
+        bool   resume_chain_restore{};
         /// network.resume_station_restore (RS-6, SPEC_event_harness §21.13): at a warm
         /// resume, restore the two station-layer memories before the first epoch: the rx-CB
         /// carry (the snapshot's RC rows, through @c makeRestoredLocalCarry, so every entry
@@ -1250,6 +1256,10 @@ namespace GnssProcessor {
         /// Latch for the first-post-resume harvest census and fold split (§18.12).
         /// Was @c NetworkCarryState::resume_cpl_census_pending.
         bool cpl_census{false};
+        /// The snapshot's chain memory section, staged by @ref networkTryWarmResume under
+        /// @c network.resume_chain_restore and consumed by @c networkChainMemoryRestore in the driver, where the setup
+        /// (the group-delay latch) is in scope.  Empty unless a warm resume found the section.
+        std::string chain_memory;
     };
 
     /// @brief The cross-epoch state of the network run: what one epoch leaves for the next, apart from the entity tables and the counters.

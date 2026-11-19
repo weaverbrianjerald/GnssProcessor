@@ -657,6 +657,19 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                                           : "the smoothed hold is off: none to queue");
                         }
                     }
+                    // Chain memory restore (network.resume_chain_restore).  The section is staged here and put back
+                    // by networkChainMemoryRestore in the driver, where the setup (the group-delay latch) is in
+                    // scope; the loader guarantees resume_datum_restore with it, so the memory continues the restored
+                    // tree.  Inert, and says so, when the snapshot carries no section.
+                    if (ctx.knobs.resume_chain_restore) {
+                        if (snap.chain_memory.empty())
+                            log->warn("Network (chain restore): ARMED but the snapshot carries NO chain memory "
+                                      "section (a writer without network.state_snapshot_chain_capture) — INERT; the "
+                                      "chain's tree memory and the ring fix start empty and the leg latches its own "
+                                      "group delays, as an unarmed resume does.");
+                        else
+                            ctx.carry.resume.chain_memory = snap.chain_memory;
+                    }
                     // Station-layer restore (RS-6; network.resume_station_restore,
                     // SPEC_event_harness §21.13).  It runs after the emit restore and
                     // before the first epoch (networkTryWarmResume runs as a whole before

@@ -109,6 +109,9 @@
  *   EMITTER,v1,...                                      # emitter blob (verbatim,
  *   ...                                                 #  NetworkProductEmitter::serializeState)
  *   EEND
+ *   CHAIN,v1                                            # chain memory section (verbatim,
+ *   ...                                                 #  network.state_snapshot_chain_capture;
+ *   CHEND                                               #  network/state/ChainMemory.hpp)
  *   END,<n_lines>                                       # truncation guard (line count)
  * @endcode
  * @c SV, @c GG and the carry blob are written only when the carry blob is present
@@ -680,6 +683,12 @@ struct NetworkStateSnapshot {
     /// baselines, first-sighting sets, RT0-5 pending forced-bump flags and
     /// RTA-11 last-seen stamps all round-trip exactly.
     std::string emitter_state;
+    /// Verbatim chain memory section (its @c CHAIN header through its @c CHEND terminator, newline-separated),
+    /// written by @c networkChainMemoryWrite under @c network.state_snapshot_chain_capture and restored by
+    /// @c networkChainMemoryRestore under @c network.resume_chain_restore (network/state/ChainMemory.hpp): the
+    /// chain's tree memory, the ring fix's links and maps, the emitter's held-value state and the group-delay latch.
+    /// Empty unless the capture is armed, so a snapshot written without it is byte-identical.
+    std::string chain_memory;
 };
 
 /**

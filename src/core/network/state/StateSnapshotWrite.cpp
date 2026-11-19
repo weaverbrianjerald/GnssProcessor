@@ -20,6 +20,7 @@
 #include "network/carry/InvariantCarryDriver.hpp"   // branch-faithful carry (de)serialization
 #include "network/emit/ClockEmitRebase.hpp"       // clock emit re-base held frame, written with the snapshot
 #include "network/emit/EmitRebase.hpp"            // eq34 emit re-base frame, written with the snapshot
+#include "network/state/ChainMemory.hpp"     // the chain memory section (network.state_snapshot_chain_capture)
 #include "network/state/StationParams.hpp"   // the stations' parameter sets: the code-bias linearization points
 #include "math/TimeUtils.hpp"                // GnssTime
 #include "products/NetworkProductEmitter.hpp"
@@ -384,6 +385,10 @@ void networkWriteStateSnapshot(NetworkRun& run, const NetworkEpoch& ep) {
                                        + snap.pb_hold_prev_clock_m.size()
                                        + snap.pb_hold_frz_prev_clk.size());
         }   // state_snapshot_hold_capture
+        // Chain memory capture (network.state_snapshot_chain_capture): the chain's tree memory, the ring fix's links
+        // and maps, the emitter's held-value state and the group-delay latch, as one verbatim section
+        // (network/state/ChainMemory).  Copies taken after the emit; the products and every trace are unchanged.
+        if (nc.state_snapshot_chain_capture) snap.chain_memory = networkChainMemoryWrite(run);
         // Station-layer capture (network.state_snapshot_station_capture): the write half of
         // the two per-station memories that otherwise restart cold at every warm resume.  The frame and datum blocks carry
         // the network's realization and the emit block the level on top of it; these two

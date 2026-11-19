@@ -1,0 +1,17 @@
+# Event legs: resumed runs from one seed
+
+A leg is a short run resumed from a snapshot that a longer run (the seed) wrote. Legs serve two purposes: a behaviour check read as a leg with an injected event minus the same leg without it (the null), and an identical-output check shown by two legs from one seed on two engines. The tool is `scripts/event_leg.py`; the runs go under `RAPID_RUNS_ROOT` (by convention `D:/GnssProcessorSupport/runs_nom`).
+
+## The commands
+
+1. `write-seed --name <n> --base <config> --hours <h> --interval-ep <k> --exe <exe> --run` derives a seed from a configuration and runs it: every capture group of the snapshot is armed, and a history copy of the snapshot is kept every `k` emitted epochs (`evseed_<n>/state_snapshot.txt.epNNNN`). The sim golden's seeds add `--extra '{"network":{"start_offset_hours":0.504167}}'` (the 00:30:15 start). A seed that runs the chain (`network.phase_datum_eq34`) also arms `network.state_snapshot_chain_capture`.
+2. `null --seed-run evseed_<n> --snapshot-ep <ep> --epochs <m> --name <leg> --exe <exe> --run` resumes from one history copy for `m` epochs with every restore group armed, and with no event. The leg starts at the epoch after the snapshot (the start offset is read from the snapshot and the fixture's first observation epoch). On a chain seed it arms `network.resume_chain_restore`; `--no-chain-restore` leaves the chain memory out, which gives the matched null of the chain memory's grade.
+3. `make-leg` is the same with one injected event (`--event`, at `--at-ep` epochs into the leg).
+4. `rerun <legdir>` restores the leg's own snapshot copy from its pristine record and runs it again.
+5. `chain-grade --seed <seed dir> --leg <leg dir> [--null <matched null>] [--leg2 <leg again>] [--null2 <null again>] [--json <file>]` grades a leg against its seed over the leg's epochs: at the seam, the holds the seed carries on, the settled flags, the discontinuity counters and the tree edges with their pin targets; over the leg, the integers of every link both runs hold; the topology ledger's events at the seam and over the leg; the distances of the phase biases, clocks and wet delays from the seed's at chosen epochs; the holds and releases at a different epoch than the seed's. With `--leg2` and `--null2` it also checks that two runs from one seed are identical in full (`nom_td_gate.py --whole --mask-time`).
+
+## What a leg can be compared with
+
+Today's resume does not reproduce the uninterrupted run record for record, even without integer fixing: the snapshot leaves out the per-station filter state (the cycle-slip arcs and detector history, the per-station ambiguity, ionosphere and receiver-bias marks and covariance), so a resumed solve departs from the seed at its first epoch (card NRF section 125, B1: 0.3 mm median phase-bias difference at the first epoch on both references, 7.5 mm on the sim and 35 mm on the field golden over the hour). A leg is therefore compared with its seed on the discrete state the snapshot carries, and an event is read against its null, never against the seed. The first few epochs after the seam are a transient.
+
+The broadcast group-delay latch is taken over the run's configured window, so a leg latches its own unless the chain memory restore puts the seed's back; a seed and a short run from the same start therefore differ from their first epoch (card NRF section 124). Compare legs with legs from the same seed.

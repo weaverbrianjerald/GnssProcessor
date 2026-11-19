@@ -5,7 +5,7 @@ The harness converges the network once, then injects one simulated event and
 continues for a few epochs to study its effects, so an event study takes minutes
 instead of a day-long run.
 
-Four subcommands:
+Five subcommands:
 
 ``write-seed``
     Derive a snapshot-writer config from a golden (default
@@ -47,6 +47,18 @@ The runs root is ``--runs-root``, else ``RAPID_RUNS_ROOT`` (the rapid arms' root
 ``rerun``
     Restore a leg's disposable snapshot(s) from the verified pristine copy and run
     the leg again.
+
+``chain-grade``
+    Grade a leg of an integer-fixing seed against the seed over the leg's epochs
+    (card NRF section 125): at the seam, the holds the seed carries on, the settled
+    flags, the discontinuity counters and the tree edges with their pin targets;
+    over the leg, the integers of every link both runs hold; the topology ledger's
+    events; the distances of the phase biases, clocks and wet delays from the seed's;
+    the holds and releases at another epoch than the seed's.  ``--null`` adds the
+    matched null (the same leg with ``--no-chain-restore``), ``--leg2`` / ``--null2``
+    the replay check (two runs from one seed identical in full).  A chain seed arms
+    ``network.state_snapshot_chain_capture`` and its legs
+    ``network.resume_chain_restore``.  Usage note: docs/onboarding/event_legs.md.
 
 The consumer's warm start (card CC (B), ``SPEC_event_harness.md`` §24.4).  By
 default ``write-seed`` arms ``network.closed_loop.state_snapshot``, so the producer
@@ -305,6 +317,12 @@ def cmd_write_seed(args):
     # instead of first-sighting every key at the current estimate (a re-level of up to
     # 21 m per key, card CRS section 4).  (Card CRS2)
     net["state_snapshot_hold_capture"] = True
+    # Also capture the chain memory section (the chain's tree memory, the ring fix's links and maps, the emitter's
+    # held-value state, the group-delay latch and the topology ledger), so a leg of an integer-fixing configuration
+    # continues its held integers instead of fixing again from nothing.  Only where the seed runs the chain.
+    # (Card CHA step S7 (b), card NRF section 125)
+    if net.get("phase_datum_eq34"):
+        net["state_snapshot_chain_capture"] = True
     # Also write the closed-loop consumer's RtStateSnapshot beside every network
     # history copy (state_snapshot.txt.consumer.epNNNN, same suffix, same tow), so a
     # leg's consumer can resume at the seam instead of cold-starting.  Consumer
@@ -487,6 +505,10 @@ def _leg_common(args, event_json):
     # the seed's held values and generations (card CRS: 17 to 21 m of re-level per key
     # otherwise).  Inert (logged) against a seed written without PH rows.  (Card CRS2)
     net["resume_hold_restore"] = True
+    # Restore the chain memory section at the seam where the seed wrote it; --no-chain-restore leaves it out, the
+    # matched null of card NRF section 125 (the same leg without the memory).  (Card CHA step S7 (b))
+    if net.get("state_snapshot_chain_capture"):
+        net["resume_chain_restore"] = not getattr(args, "no_chain_restore", False)
     # Ledger row network.zwd_seam_reseed (RECOMMEND_SCOPED, regime warm +
     # phase_leveling, "arm on the RESUME leg"): without it the ZWD channel restarts
     # at the seam.  On evseed_quiet6h ep0665 the null leg's ZWD truth rms sat at
@@ -772,6 +794,219 @@ def cmd_rerun(args):
     return _run(args.exe, cfg_path, legdir)
 
 
+# ---------------------------------------------------------------------------------------------
+# chain-grade: a leg against its seed over the leg's epochs (card NRF section 125, B2 to B4)
+# ---------------------------------------------------------------------------------------------
+
+def _epoch_key(tow):
+    return round(float(tow), 1)
+
+
+def _read_products(path):
+    """Per epoch: P records (sat, signal) -> (bias_m, signal_integer, phase_disc or None) and C clocks sat -> m."""
+    out = {}
+    cur = None
+    with open(path, encoding="utf-8", errors="replace") as fh:
+        for line in fh:
+            if line.startswith("#"):
+                continue
+            f = line.rstrip("\n").split(",")
+            if f[0] == "E":
+                cur = out.setdefault(_epoch_key(f[2]), {"P": {}, "C": {}})
+            elif cur is None:
+                continue
+            elif f[0] == "P" and len(f) >= 6:
+                disc = f[6] if len(f) > 6 and f[6] and "=" not in f[6] else None
+                cur["P"][(f[1], f[2])] = (float(f[3]), f[4], disc)
+            elif f[0] == "C" and len(f) >= 3:
+                cur["C"][f[1]] = float(f[2])
+    return out
+
+
+def _read_csv_by_epoch(path, keyfn, valfn, rowfilter=None):
+    out = {}
+    if not os.path.exists(path):
+        return out
+    import csv
+    with open(path, encoding="utf-8", errors="replace", newline="") as fh:
+        for r in csv.DictReader(fh):
+            if rowfilter is not None and not rowfilter(r):
+                continue
+            out.setdefault(_epoch_key(r["tow"]), {})[keyfn(r)] = valfn(r)
+    return out
+
+
+def _read_run(d):
+    logs = os.path.join(d, "logs")
+    run = {
+        "products": _read_products(os.path.join(d, "products.txt")),
+        # held links, (station, satellite, signal 1, signal 2) -> (n1, n2)
+        "held": _read_csv_by_epoch(os.path.join(logs, "network_ring_fix.csv"),
+                                   lambda r: (r["station"], r["sat"], r["sig1"], r["sig2"]),
+                                   lambda r: (r["n1"], r["n2"]), lambda r: r["state"] == "held"),
+        # tree edges, (system, band, station, satellite) -> pin target (m)
+        "edges": _read_csv_by_epoch(os.path.join(logs, "network_chain_edges.csv"),
+                                    lambda r: (r["system"], r["band"], r["edge_sta"], r["edge_sat"]),
+                                    lambda r: r["target_m"]),
+        "zwd": _read_csv_by_epoch(os.path.join(logs, "network_zwd.csv"), lambda r: r["station"],
+                                  lambda r: float(r["zwd_m"])),
+        "topo": _read_csv_by_epoch(os.path.join(logs, "network_events.csv"),
+                                   lambda r: (r["event"], r["sat"], r["station"], r["detail"]), lambda r: 1,
+                                   lambda r: r["tier"] == "TOPOLOGY"),
+    }
+    return run
+
+
+def _median(v):
+    v = sorted(v)
+    return v[len(v) // 2] if v else float("nan")
+
+
+def _transitions(held_by_epoch, epochs):
+    """(link, epoch, 'hold' | 'release') for every change of a link's held state across the given epochs."""
+    out = set()
+    prev = None
+    for ep in epochs:
+        now = set(held_by_epoch.get(ep, {}))
+        if prev is not None:
+            out |= {(k, ep, "hold") for k in now - prev}
+            out |= {(k, ep, "release") for k in prev - now}
+        prev = now
+    return out
+
+
+def _grade_leg(seed, leg, label):
+    """B2 and the reported quantities of one leg (the restored leg or the matched null) against the seed."""
+    leg_eps = sorted(leg["products"])
+    eps = [e for e in leg_eps if e in seed["products"]]
+    res = {"label": label, "leg_epochs": len(leg_eps), "common_epochs": len(eps)}
+    if not eps:
+        return res
+    first = eps[0]
+    seed_eps = sorted(seed["products"])
+    before = [e for e in seed_eps if e < first]
+    snap_ep = before[-1] if before else None
+    # B2b, the seam.
+    u_snap = seed["held"].get(snap_ep, {}) if snap_ep is not None else {}
+    u_first = seed["held"].get(first, {})
+    l_first = leg["held"].get(first, {})
+    continuing = [k for k in u_snap if k in u_first]
+    res["b2b_continuing_holds"] = len(continuing)
+    res["b2b_holds_lost"] = sum(1 for k in continuing if k not in l_first)
+    res["b2b_holds_other_integers"] = sum(1 for k in continuing if k in l_first and l_first[k] != u_first[k])
+    up, lp = seed["products"][first]["P"], leg["products"][first]["P"]
+    raised = [k for k, v in up.items() if v[1] == "1"]
+    res["b2b_flags_raised_by_seed"] = len(raised)
+    res["b2b_flags_not_raised"] = sum(1 for k in raised if lp.get(k, (0, "0", None))[1] != "1")
+    extra_bumps = 0
+    counters_differ = 0
+    for k, v in lp.items():
+        if k in up and v[2] is not None and up[k][2] is not None and v[2] != up[k][2]:
+            counters_differ += 1
+            try:
+                if int(v[2]) > int(up[k][2]):
+                    extra_bumps += 1
+            except ValueError:
+                pass
+    res["b2b_counters_differ"] = counters_differ
+    res["b2b_extra_bumps"] = extra_bumps
+    ue, le = seed["edges"].get(first, {}), leg["edges"].get(first, {})
+    res["b2b_edges"] = len(ue)
+    res["b2b_edges_differ"] = len(set(ue) ^ set(le))
+    res["b2b_targets_differ"] = sum(1 for k in ue if k in le and ue[k] != le[k])
+    # B2c, the leg: a link both hold has the same integers in both.
+    wrong = []
+    per_epoch = []
+    for ep in eps:
+        uh, lh = seed["held"].get(ep, {}), leg["held"].get(ep, {})
+        both = set(uh) & set(lh)
+        bad = [k for k in both if uh[k] != lh[k]]
+        wrong += [(ep, k) for k in bad]
+        ue, le = seed["edges"].get(ep, {}), leg["edges"].get(ep, {})
+        upp, lpp = seed["products"][ep]["P"], leg["products"][ep]["P"]
+        per_epoch.append({
+            "tow": ep, "held_differ": len(set(uh) ^ set(lh)), "held_other_integers": len(bad),
+            "edges_differ": len(set(ue) ^ set(le)),
+            "targets_differ": sum(1 for k in ue if k in le and ue[k] != le[k]),
+            "flags_differ": sum(1 for k in upp if k in lpp and upp[k][1] != lpp[k][1]),
+            "counters_differ": sum(1 for k in upp if k in lpp and upp[k][2] != lpp[k][2]),
+        })
+    res["b2c_held_other_integers"] = len(wrong)
+    res["b2c_first_cases"] = [f"{ep} {k}" for ep, k in wrong[:5]]
+    res["per_epoch"] = per_epoch
+    # Reported: the seam distances and how they evolve (phase biases, clocks, wet delay).
+    def dist(ep):
+        up_, lp_ = seed["products"][ep], leg["products"][ep]
+        dp = [abs(lp_["P"][k][0] - v[0]) for k, v in up_["P"].items() if k in lp_["P"]]
+        dc = [abs(lp_["C"][k] - v) for k, v in up_["C"].items() if k in lp_["C"]]
+        uz, lz = seed["zwd"].get(ep, {}), leg["zwd"].get(ep, {})
+        dz = [abs(lz[k] - v) for k, v in uz.items() if k in lz]
+        return {"tow": ep, "pb_med_m": _median(dp), "pb_max_m": max(dp) if dp else float("nan"),
+                "clk_med_m": _median(dc), "clk_max_m": max(dc) if dc else float("nan"),
+                "zwd_med_m": _median(dz), "zwd_max_m": max(dz) if dz else float("nan")}
+    picks = sorted({0, 1, 4, 9, 19, 59, len(eps) - 1} & set(range(len(eps))))
+    res["distances"] = [dict(dist(eps[i]), epoch_index=i + 1) for i in picks]
+    # Reported: holds and releases at a different epoch than the seed's.
+    ut = _transitions(seed["held"], [snap_ep] + eps if snap_ep is not None else eps)
+    lt = _transitions(leg["held"], eps)
+    ut_leg = {t for t in ut if t[1] != eps[0] or snap_ep is not None}
+    res["holds_releases_seed"] = len(ut_leg)
+    res["holds_releases_leg"] = len(lt)
+    res["holds_releases_not_matched"] = len(ut_leg ^ lt)
+    # B3, the seam's topology events: the leg's first epoch against the seed's, and over the leg.
+    utopo, ltopo = seed["topo"].get(first, {}), leg["topo"].get(first, {})
+    res["b3_topology_first_epoch_seed"] = len(utopo)
+    res["b3_topology_first_epoch_leg"] = len(ltopo)
+    res["b3_topology_first_epoch_differ"] = len(set(utopo) ^ set(ltopo))
+    res["b3_topology_leg_differ"] = sum(len(set(seed["topo"].get(ep, {})) ^ set(leg["topo"].get(ep, {})))
+                                        for ep in eps)
+    return res
+
+
+def _replay(a, b):
+    """B4: two runs from one seed, identical in full (nom_td_gate.py --whole --mask-time)."""
+    r = subprocess.run([sys.executable, os.path.join(REPO, "scripts", "nom_td_gate.py"), a, b, "--whole",
+                        "--mask-time", "--show", "4"], capture_output=True, text=True)
+    out = r.stdout + r.stderr
+    first = [ln.strip() for ln in out.splitlines() if "DIFFER" in ln][:4]
+    return {"identical": "RESULT IDENTICAL" in out, "first_differences": first}
+
+
+def cmd_chain_grade(args):
+    seed = _read_run(args.seed)
+    rows = [_grade_leg(seed, _read_run(args.leg), "leg (restore on)")]
+    if args.null:
+        rows.append(_grade_leg(seed, _read_run(args.null), "matched null (restore off)"))
+    report = {"seed": args.seed, "leg": args.leg, "null": args.null, "legs": rows}
+    if args.leg2:
+        report["b4_leg_twice"] = _replay(args.leg, args.leg2)
+    if args.null and args.null2:
+        report["b4_null_twice"] = _replay(args.null, args.null2)
+    keys = ("leg_epochs", "common_epochs", "b2b_continuing_holds", "b2b_holds_lost", "b2b_holds_other_integers",
+            "b2b_flags_raised_by_seed", "b2b_flags_not_raised", "b2b_counters_differ", "b2b_extra_bumps", "b2b_edges",
+            "b2b_edges_differ", "b2b_targets_differ", "b2c_held_other_integers", "holds_releases_seed",
+            "holds_releases_leg", "holds_releases_not_matched", "b3_topology_first_epoch_seed",
+            "b3_topology_first_epoch_leg", "b3_topology_first_epoch_differ", "b3_topology_leg_differ")
+    for r in rows:
+        print(f"== {r['label']}")
+        for k in keys:
+            if k in r:
+                print(f"  {k:34s} {r[k]}")
+        for c in r.get("b2c_first_cases", []):
+            print(f"  b2c case: {c}")
+        for d in r.get("distances", []):
+            print("  seam distance epoch {epoch_index:4d}: phase bias median {pb_med_m:.4f} max {pb_max_m:.4f} m; "
+                  "clock median {clk_med_m:.4f} max {clk_max_m:.4f} m; wet delay median {zwd_med_m:.4f} "
+                  "max {zwd_max_m:.4f} m".format(**d))
+    for k in ("b4_leg_twice", "b4_null_twice"):
+        if k in report:
+            print(f"== {k}: {'IDENTICAL' if report[k]['identical'] else 'DIFFERENT'} {report[k]['first_differences']}")
+    if args.json:
+        with open(args.json, "w", encoding="utf-8") as fh:
+            json.dump(report, fh, indent=1)
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -810,6 +1045,9 @@ def main():
                             "pre-2026-09-11 posture: the ZWD channel restarts at "
                             "the seam; only for a like-for-like A/B against an "
                             "old leg)")
+        p.add_argument("--no-chain-restore", dest="no_chain_restore", action="store_true",
+                       help="leave the chain memory section out of the resume (network.resume_chain_restore off): "
+                            "the matched null of card NRF section 125")
         p.add_argument("--extra", default="",
                        help="JSON object deep-merged into leg.json AFTER every "
                             "harness field (arms knobs the seed's config predates)")
@@ -820,6 +1058,15 @@ def main():
                            help="one event object (or a list of them) as JSON, or @file holding "
                                 "it; 'tow' is filled in from the snapshot + --at-ep if absent")
         p.set_defaults(func=fn)
+
+    g = sub.add_parser("chain-grade", help="grade a leg against its seed: the chain memory's bars (NRF 125)")
+    g.add_argument("--seed", required=True, help="the seed run dir (evseed_<name>)")
+    g.add_argument("--leg", required=True, help="the leg run dir, restore on")
+    g.add_argument("--null", default="", help="the matched null run dir, restore off")
+    g.add_argument("--leg2", default="", help="the same leg run again from the same seed (B4)")
+    g.add_argument("--null2", default="", help="the matched null run again (B4)")
+    g.add_argument("--json", default="", help="write the full report here")
+    g.set_defaults(func=cmd_chain_grade)
 
     r = sub.add_parser("rerun", help="re-seed a leg from its snapshot and run it again")
     r.add_argument("legdir")

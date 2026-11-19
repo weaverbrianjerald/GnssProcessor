@@ -27,6 +27,7 @@ These pages are looked up, not read in order.
 | --- | --- |
 | [Build toolchain](build_toolchain.md) | The Visual Studio 2026 migration record, the traps behind the build wrapper, the disk placement background |
 | [Data files](data_files.md) | How RINEX files and products are located, downloaded and bootstrapped |
+| [Event legs](event_legs.md) | Resumed runs from one seed: the tool, the matched null, what a leg can be compared with |
 | [Where new code goes](where_new_code_goes.md) | The decision trees of the network producer and the real-time engine, at full length |
 | [CLAUDE.md history](claude_md_history.md) | Descriptive and historical text cut from `CLAUDE.md` |
 

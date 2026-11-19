@@ -5,6 +5,7 @@
  *        setup arms (networkSectionTimersArm, networkRunArm) of the network run.
  */
 #include "network/driver/Run.hpp"
+#include "network/state/ChainMemory.hpp"   // networkChainMemoryRestore (network.resume_chain_restore)
 #include "network/driver/Epoch.hpp"          // NetworkEpoch (the readout's epoch)
 #include "rinex/MultiRinexSync.hpp"      // SyncedEpoch
 #include <fmt/format.h>
@@ -327,6 +328,10 @@ void networkRunArm(NetworkRun& run, LogManager& log_manager_) {
     // first-epoch code-bias seed latch closes at each station's first
     // networkBirthLocalStates.  A no-op unless the resume stashed code-bias rows.
     networkApplyRxCbLinRestore(ctx, config_, stations, log);
+    // Puts back the chain memory section the resume staged (network.resume_chain_restore): the chain's tree memory,
+    // the ring fix's links and maps, the emitter's held-value state, and the saved group-delay latch in place of this
+    // leg's own.  It needs the setup, so it runs here, before the first epoch; a no-op when nothing was staged.
+    networkChainMemoryRestore(run);
     // Event harness: arms the scripted-fault schedule.  It
     // comes after the warm resume because the injector is outside the resume
     // fingerprint, and its "ARMED" banner must not be mistaken for restored state.

@@ -3298,6 +3298,25 @@ namespace GnssProcessor {
                           "instead.  Write-side only; the products and every trace are "
                           "byte-identical.");
         }
+        // Chain memory capture, the write side of network.resume_chain_restore: the chain's tree memory, the ring
+        // fix's links and maps, the emitter's held-value state and the group-delay latch, as one section of the
+        // snapshot.  Path-gated and write-only; the memory continues the last tree, so it requires the datum capture.
+        network_config_.state_snapshot_chain_capture =
+            jval<bool>(json, "network.state_snapshot_chain_capture", "state_snapshot_chain_capture", false);
+        if (network_config_.state_snapshot_chain_capture) {
+            if (!network_config_.state_snapshot_datum_capture)
+                throw std::runtime_error(
+                    "network.state_snapshot_chain_capture requires network.state_snapshot_datum_capture: the chain's "
+                    "memory continues the last tree, which the datum capture writes.");
+            if (network_config_.state_snapshot_path.empty())
+                log->warn("Network (chain capture): state_snapshot_chain_capture armed but network.state_snapshot_path "
+                          "is empty — no snapshot is written, INERT.");
+            else
+                log->info("Network (chain capture): every snapshot also carries the CHAIN MEMORY section (the chain's "
+                          "tree memory, the ring fix's links and maps, the emitter's held-value state and the "
+                          "group-delay latch with its window); a resume armed with network.resume_chain_restore "
+                          "continues them.  Write-side only; the products and every trace are unchanged.");
+        }
         // Station-layer capture, the write side of network.resume_station_restore
         // (RS-6, §21.13).  Same shape as the frame, datum and emit captures above: its
         // own knob, path-gated, write-only.  The rows are plain copies of two ctx.carry
@@ -5322,6 +5341,15 @@ namespace GnssProcessor {
                 "restore the first election re-references every phase-bias family, and a "
                 "held value restored on top of that would hide a re-realization the wire "
                 "has to declare.");
+        // Chain memory restore, the read side of network.state_snapshot_chain_capture.  Forward-only resume
+        // response, inert on a run that never resumes.
+        network_resume_chain_restore_ =
+            jval<bool>(json, "network.resume_chain_restore", "resume_chain_restore", false);
+        if (network_resume_chain_restore_ && !network_resume_datum_restore_)
+            throw std::runtime_error(
+                "network.resume_chain_restore requires network.resume_datum_restore: the chain's memory continues the "
+                "last tree, which the datum restore puts back; restored on a cold tree it would describe edges the "
+                "first election does not have.");
         // Station-layer restore, the read side of network.state_snapshot_station_capture
         // (RS-6, SPEC_event_harness §21.13).  Same exemption class as the restores
         // above: forward-only resume response policy, inert on a run that never
@@ -8620,12 +8648,14 @@ namespace GnssProcessor {
                     network_phase_datum_eq34_event_rows_.push_back(entry);
                 }
             }
-            // The root row's target memory is not serialized: a resumed leg would pin the root at 0
-            // under carries kept in the old frame, so the entry is dropped when a snapshot is written.
+            // The root row's target memory travels only in the chain memory section: without
+            // network.state_snapshot_chain_capture a resumed leg would pin the root at 0 under carries kept
+            // in the old frame, so the entry is dropped when a snapshot is written without it.
             const auto root_entry = std::find(network_phase_datum_eq34_event_rows_.begin(),
                                               network_phase_datum_eq34_event_rows_.end(), "root");
             if (root_entry != network_phase_datum_eq34_event_rows_.end()
-                && !network_config_.state_snapshot_path.empty()) {
+                && !network_config_.state_snapshot_path.empty()
+                && !network_config_.state_snapshot_chain_capture) {
                 log->warn("Network: network.phase_datum_eq34_event_rows entry 'root' is set with "
                           "network.state_snapshot_path - dropped: the row's pinned receiver phase-bias "
                           "targets are not written to the snapshot, so a resumed leg would pin a new root "
@@ -8644,9 +8674,10 @@ namespace GnssProcessor {
                           "that row keeps the pinned target.");
                 network_phase_datum_eq34_event_rows_.erase(merge_split_entry);
             }
-            // The chain's tree memory is not written to the snapshot either (eq34_tree_seen and eq34_pin_life start
-            // empty on every run), so a resumed leg runs the rows that read it without it until it is rebuilt.
-            if (!network_config_.state_snapshot_path.empty()) {
+            // Without network.state_snapshot_chain_capture the chain's tree memory is not written to the snapshot
+            // either (eq34_tree_seen and eq34_pin_life start empty on every run), so a resumed leg runs the rows that
+            // read it without it until it is rebuilt.
+            if (!network_config_.state_snapshot_path.empty() && !network_config_.state_snapshot_chain_capture) {
                 const auto armed = [&](const char* e) {
                     return std::find(network_phase_datum_eq34_event_rows_.begin(),
                                      network_phase_datum_eq34_event_rows_.end(), e)

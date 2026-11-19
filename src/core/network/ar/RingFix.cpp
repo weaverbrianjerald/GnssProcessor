@@ -12,9 +12,12 @@
 #include "network/solve/ChainVertex.hpp"       // chainVertexIsStation: the rings' vertex keys
 #include "products/NetworkProductEmitter.hpp"   // NetworkSolutionEpoch, the settled flags' records
 
+#include <fmt/format.h>
+
 #include <algorithm>
 #include <cmath>
 #include <fstream>
+#include <ostream>
 #include <limits>
 #include <sstream>
 #include <stdexcept>
@@ -788,6 +791,85 @@ void ringFixCountCascadeTree(NetworkRingFix& rf, const RingFixCascade& cascade, 
     CC.tree_pair  += pair;
     CC.tree_held  += held;
     CC.tree_other += other;
+}
+
+void ringFixWriteMemory(const NetworkRingFix& rf, std::ostream& os) {
+    const auto b = [](bool v) { return v ? 1 : 0; };
+    os << fmt::format("RF0,{}\n", rf.t0_s);
+    for (const auto& [id, L] : rf.links)
+        os << fmt::format("RL,{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}\n", id.station, id.sat, id.sig1, id.sig2, L.lambda1, L.lambda2,
+                          L.chord_since_s, L.last_chord_s, L.streak, L.streak_n1, L.streak_n2, b(L.held), L.n1, L.n2,
+                          L.ring, L.decided_s, L.stamp1, L.stamp2, L.root, L.absent_since_s, L.monitor_bad,
+                          b(L.monitor_trip), L.released_s, b(L.wrong_now), b(L.rebase_stamps), b(L.inherited),
+                          b(L.oracle), b(L.log_decided), L.log_n1, L.log_n2, L.nn_n, L.nn_gf_m, L.nn_if_m, b(L.nn_moved));
+    for (const auto& [k, s] : rf.last_tree_s) os << fmt::format("RT,{},{},{}\n", k.first, k.second, s);
+    for (const auto& [st, sat, sig] : rf.certified_edges) os << fmt::format("RC,{},{},{}\n", st, sat, sig);
+    for (const auto& [fam, sats] : rf.settled_incumbent) {
+        os << fmt::format("RSF,{}\n", fam);
+        for (const std::string& sat : sats) os << fmt::format("RSI,{},{}\n", fam, sat);
+    }
+    for (const auto& [fam, runs] : rf.settled_run) {
+        os << fmt::format("RWF,{}\n", fam);
+        for (const auto& [sat, n] : runs) os << fmt::format("RW,{},{},{}\n", fam, sat, n);
+    }
+    for (const auto& [id, K] : rf.cascade_links)
+        os << fmt::format("RK,{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}\n", id.station, id.sat, id.sig1, id.sig2, b(K.held), K.n3, K.n_ref,
+                          K.lambda3, K.streak, K.streak_n3, K.decided_s, K.stamp3, K.absent_since_s, K.monitor_bad,
+                          b(K.monitor_trip), K.released_s);
+    for (const auto& [k, target] : rf.prev_targets)
+        os << fmt::format("RPT,{},{},{},{}\n", std::get<0>(k), std::get<1>(k), std::get<2>(k), target);
+    for (const auto& [k, s] : rf.untied_since_s) os << fmt::format("RUS,{},{},{}\n", k.first, k.second, s);
+    for (const auto& [k, m] : rf.untied_moves)
+        os << fmt::format("RUM,{},{},{},{}\n", k.first, k.second, m.station, m.family);
+    for (const auto& [k, s] : rf.untied_moved_s) os << fmt::format("RUD,{},{},{}\n", k.first, k.second, s);
+    for (const auto& [k, s] : rf.untied_last_move_s) os << fmt::format("RUL,{},{},{}\n", k.first, k.second, s);
+    for (const RingFixLinkId& id : rf.nn_reopen)
+        os << fmt::format("RNR,{},{},{},{}\n", id.station, id.sat, id.sig1, id.sig2);
+}
+
+bool ringFixReadMemoryLine(NetworkRingFix& rf, const std::vector<std::string>& f) {
+    if (f.empty()) return false;
+    const std::string& tag = f[0];
+    const auto I = [&](std::size_t i) { return std::stoi(f[i]); };
+    const auto N = [&](std::size_t i) { return std::stoll(f[i]); };
+    const auto D = [&](std::size_t i) { return std::stod(f[i]); };
+    const auto B = [&](std::size_t i) { return f[i] == "1"; };
+    try {
+        if (tag == "RF0" && f.size() == 2) { rf.t0_s = D(1); return true; }
+        if (tag == "RL" && f.size() == 35) {
+            RingFixLink& L = rf.links[RingFixLinkId{I(1), f[2], f[3], f[4]}];
+            L.lambda1 = D(5); L.lambda2 = D(6); L.chord_since_s = D(7); L.last_chord_s = D(8);
+            L.streak = I(9); L.streak_n1 = N(10); L.streak_n2 = N(11); L.held = B(12); L.n1 = N(13); L.n2 = N(14);
+            L.ring = I(15); L.decided_s = D(16); L.stamp1 = D(17); L.stamp2 = D(18); L.root = f[19];
+            L.absent_since_s = D(20); L.monitor_bad = I(21); L.monitor_trip = B(22); L.released_s = D(23);
+            L.wrong_now = B(24); L.rebase_stamps = B(25); L.inherited = B(26); L.oracle = B(27);
+            L.log_decided = B(28); L.log_n1 = N(29); L.log_n2 = N(30); L.nn_n = I(31); L.nn_gf_m = D(32);
+            L.nn_if_m = D(33); L.nn_moved = B(34);
+            return true;
+        }
+        if (tag == "RT" && f.size() == 4) { rf.last_tree_s[{I(1), f[2]}] = D(3); return true; }
+        if (tag == "RC" && f.size() == 4) { rf.certified_edges.insert({I(1), f[2], f[3]}); return true; }
+        if (tag == "RSF" && f.size() == 2) { rf.settled_incumbent[f[1]]; return true; }
+        if (tag == "RSI" && f.size() == 3) { rf.settled_incumbent[f[1]].insert(f[2]); return true; }
+        if (tag == "RWF" && f.size() == 2) { rf.settled_run[f[1]]; return true; }
+        if (tag == "RW" && f.size() == 4) { rf.settled_run[f[1]][f[2]] = I(3); return true; }
+        if (tag == "RK" && f.size() == 17) {
+            RingFixCascadeLink& K = rf.cascade_links[RingFixLinkId{I(1), f[2], f[3], f[4]}];
+            K.held = B(5); K.n3 = N(6); K.n_ref = N(7); K.lambda3 = D(8); K.streak = I(9); K.streak_n3 = N(10);
+            K.decided_s = D(11); K.stamp3 = D(12); K.absent_since_s = D(13); K.monitor_bad = I(14);
+            K.monitor_trip = B(15); K.released_s = D(16);
+            return true;
+        }
+        if (tag == "RPT" && f.size() == 5) { rf.prev_targets[{I(1), f[2], f[3]}] = D(4); return true; }
+        if (tag == "RUS" && f.size() == 4) { rf.untied_since_s[{f[1], f[2]}] = D(3); return true; }
+        if (tag == "RUM" && f.size() == 5) { rf.untied_moves[{f[1], f[2]}] = RingFixUntiedMove{I(3), f[4]}; return true; }
+        if (tag == "RUD" && f.size() == 4) { rf.untied_moved_s[{f[1], f[2]}] = D(3); return true; }
+        if (tag == "RUL" && f.size() == 4) { rf.untied_last_move_s[{f[1], f[2]}] = D(3); return true; }
+        if (tag == "RNR" && f.size() == 5) { rf.nn_reopen.push_back(RingFixLinkId{I(1), f[2], f[3], f[4]}); return true; }
+    } catch (const std::exception&) {
+        return false;
+    }
+    return false;
 }
 
 int ringFixCutBand(const RingFixCut& c, const RingFixLinkId& id) {

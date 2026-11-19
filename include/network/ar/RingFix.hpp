@@ -1239,6 +1239,25 @@ void ringFixRecordUntiedOutcome(NetworkRingFix& rf, const RingFixUntiedOutcome& 
 void ringFixCountCascadeTree(NetworkRingFix& rf, const RingFixCascade& cascade, long long pair, long long held,
                              long long other);
 
+/**
+ * @brief Write the ring fix's memory to the snapshot's chain memory section (network.state_snapshot_chain_capture):
+ *        its first epoch, its links with every field, the last tree times, the certified edges, the settled sets and
+ *        their waits, the cascade links, the previous targets, the untied satellites' times and pending moves, and the
+ *        guard's pending re-opens, one line each (tags @c R*).  The run counters and the near-null monitor's
+ *        measure-only state are not written.
+ * @param rf  The ring fix's state.
+ * @param os  The section being written.
+ */
+void ringFixWriteMemory(const NetworkRingFix& rf, std::ostream& os);
+
+/**
+ * @brief Read one line of the ring fix's memory back (network.resume_chain_restore).
+ * @param rf  The ring fix's state; written.
+ * @param f   The line's comma-separated fields, the tag first.
+ * @return True when the line is one of the ring fix's and was read; false for another tag or a malformed line.
+ */
+bool ringFixReadMemoryLine(NetworkRingFix& rf, const std::vector<std::string>& f);
+
 /// What the cuts of an epoch did to the held links.
 struct RingFixCutOutcome {
     std::vector<std::pair<RingFixLinkId, std::string>> released;  ///< Links released (crossing a cut with an unknown step), with the cut's row.

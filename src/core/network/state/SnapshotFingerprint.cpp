@@ -98,6 +98,29 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // appended only when armed (card NRF section 109.1, amendment 4).
         for (const std::string& row : nc.phase_families) add("phfam:" + row);
         if (nc.phase_family_codes && !nc.phase_families.empty()) add("phfam_codes:1");
+        // The chain memory section (network.state_snapshot_chain_capture) carries the ring fix's held links and the
+        // chain's tree memory, whose meaning these keys set: a snapshot written under other rules cold-starts.
+        // Appended only with the capture armed, so a snapshot written without it keeps its fingerprint.
+        if (nc.state_snapshot_chain_capture) {
+            const auto& rf = nc.ring_fix;
+            add(fmt::format("chainmem:rf={},{},{},{},{},{},{}", rf.enable, rf.rule, rf.held_first, rf.order, rf.gate,
+                            rf.oracle_until_s, rf.held_first_by_life));
+            for (const std::string& p : rf.pairs) add("chainmem:rf_pair=" + p);
+            add(fmt::format("chainmem:rf_gate={},{},{},{},{}", rf.wl_frac_max, rf.sigma_scale, rf.code_event_window_s,
+                            rf.max_decisions_per_epoch, rf.form_configured_pairs));
+            add(fmt::format("chainmem:rf_flags={},{},{},{},{},{},{},{}", rf.rehost_keep_carry, rf.settled_flags,
+                            rf.settled_rule, rf.settled_wait_emissions, rf.unsettled_steps, rf.unsettled_steps_unheld,
+                            rf.reattach, rf.entry_revalidate));
+            add(fmt::format("chainmem:rf_guard={},{},{},{},{},{},{},{}", rf.continuity_guard_cyc,
+                            rf.continuity_guard_hold, rf.continuity_guard_min_run, rf.nn_guard, rf.nn_guard_min_epochs,
+                            rf.nn_guard_tol_gf_m, rf.nn_guard_max_if_m, rf.nn_guard_release));
+            for (const std::string& c : rf.cascade) add("chainmem:rf_cascade=" + c);
+            add(fmt::format("chainmem:rf_cascade_flags={},{},{}", rf.cascade_tree, rf.cascade_log,
+                            rf.cascade_rehost_keep));
+            add("chainmem:family=" + config_.networkPhaseDatumEq34Family());
+            for (const std::string& p : config_.networkPhaseDatumEq34FamilyPairs()) add("chainmem:family_pair=" + p);
+            for (const std::string& r : config_.networkPhaseDatumEq34EventRows()) add("chainmem:event_row=" + r);
+        }
         // Carrier-phase wind-up model revision.  Unlike the other tokens this is a code
         // constant, not a knob, because what changes the meaning of the carried state is a
         // source fix, not a config.  The earlier dipole sign left +2*phi_wu in every phase

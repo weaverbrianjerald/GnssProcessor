@@ -1567,7 +1567,9 @@ WRITE_BY_NAME = {
     "putSig": "sat_signals",
     "putAmbFlagEp": "stations",
 }
-WRITE_BY_ARG = ("put", "drop", "dropAll", "eraseIf", "mark", "unmark")
+# chainMemoryReadEntityLine (network/state/Entities.cpp) writes the tables of the entities it is handed, as the
+# helpers before it do (the chain memory section's restore).
+WRITE_BY_ARG = ("put", "drop", "dropAll", "eraseIf", "mark", "unmark", "chainMemoryReadEntityLine")
 # The other helpers that take a table or the whole set by non-const reference: they return a
 # pointer or walk the rows, and a write through what they return is not visible to the scan.
 READ_HELPERS = ("arcsFrom", "arcsOfStation", "byStationName", "first", "forEach", "forEachRow",
