@@ -12,6 +12,10 @@
  * policies' one implementation (carryPastHorizon, carryGapPrune) and the registry's declared
  * gap horizon; step 2 the Stransform declaration of the owed value sites under
  * network.carry_rebase_complete.
+ *
+ * Since 2026-11-19 the goldens' declared posture (the float vehicle) is read from the frozen
+ * lineages (`golden_<bed>_rf0hv18.json`); the reference files (`golden_<bed>_refound.json`,
+ * the integer-fixing posture on the eq34 chain) add the receiver phase bias's responses.
  */
 #include <gtest/gtest.h>
 
@@ -43,7 +47,19 @@ using namespace GnssProcessor;
 
 namespace {
 
+/// The frozen lineage of @p bed (`golden_<bed>_rf0hv18.json`, the float vehicle's posture and
+/// the reference until 2026-11-19), loaded into @p cfg.
 bool loadGolden(const std::string& bed, GnssConfig& cfg) {
+    LogManager log;
+    const std::filesystem::path p =
+        std::filesystem::path(GNSS_PROJECT_ROOT) / "config" / "golden" /
+        ("golden_" + bed + "_rf0hv18.json");
+    return cfg.loadFromJson(p, log);
+}
+
+/// The reference file of @p bed (`golden_<bed>_refound.json`, the integer-fixing posture since
+/// 2026-11-19), loaded into @p cfg.
+bool loadReference(const std::string& bed, GnssConfig& cfg) {
     LogManager log;
     const std::filesystem::path p =
         std::filesystem::path(GNSS_PROJECT_ROOT) / "config" / "golden" /
@@ -51,11 +67,11 @@ bool loadGolden(const std::string& bed, GnssConfig& cfg) {
     return cfg.loadFromJson(p, log);
 }
 
-/// The golden of @p bed with the wet-delay link and the phase colour state removed (the
+/// The frozen lineage of @p bed with the wet-delay link and the phase colour state removed (the
 /// posture before 2026-11-09), loaded into @p cfg.
 bool loadGoldenPairOff(const std::string& bed, GnssConfig& cfg) {
     const std::filesystem::path src = std::filesystem::path(GNSS_PROJECT_ROOT) / "config" /
-                                      "golden" / ("golden_" + bed + "_refound.json");
+                                      "golden" / ("golden_" + bed + "_rf0hv18.json");
     std::ifstream in(src);
     nlohmann::json j = nlohmann::json::parse(in, nullptr, true, /*ignore_comments=*/true);
     for (const char* key : {"carry_zwd", "carry_zwd_in_block", "zwd_carry_q", "phase_colour_state"})
@@ -188,6 +204,29 @@ TEST(ParamResponses, ArmingFollowsTheCodesOwnGates) {
     ci.raim_on = true;
     EXPECT_FALSE(responseSiteArmed(ResponseSite::AmbGapPrune, ci, cfg));
     EXPECT_FALSE(responseSiteArmed(ResponseSite::AmbRaimErase, ci, cfg));
+}
+
+// The reference files (the eq34 chain with the receiver phase bias in the station block, and the
+// complete re-base) declare the receiver phase bias's responses: erased on a step (the in-block
+// harvest's step test), skipped and pruned across a gap, erased at the chain's re-reference and
+// re-expressed by the re-base at a handover; no decouple or readmit response.
+TEST(ParamResponses, ReferenceFilesDeclareTheReceiverPhaseBiasResponses) {
+    for (const char* bed : {"field", "sim"}) {
+        GnssConfig cfg;
+        ASSERT_TRUE(loadReference(bed, cfg)) << bed;
+        const NetworkKnobs k = NetworkKnobs::snapshot(cfg, cfg.getNetworkConfig());
+        const NetworkParamRegistry r = NetworkParamRegistry::build(k, cfg);
+        using K = NetworkParamKind;
+        using E = ParamEvent;
+        using P = ResponsePolicy;
+        EXPECT_EQ(on(r, K::RxPhaseBias, E::Slip), responsePolicyBit(P::EraseAndRebirth)) << bed;
+        EXPECT_EQ(on(r, K::RxPhaseBias, E::Gap),
+                  responsePolicyBit(P::GapSkip) | responsePolicyBit(P::GapPrune)) << bed;
+        EXPECT_EQ(on(r, K::RxPhaseBias, E::Handover),
+                  responsePolicyBit(P::EraseAndRebirth) | responsePolicyBit(P::Stransform)) << bed;
+        EXPECT_EQ(on(r, K::RxPhaseBias, E::Decouple), 0u) << bed;
+        EXPECT_EQ(on(r, K::RxPhaseBias, E::Readmit), 0u) << bed;
+    }
 }
 
 // The goldens' declared posture (the float vehicle with RAIM's attribution, the gross screen,
