@@ -29,9 +29,11 @@
 #include "common/PppTypes.hpp"
 #include "filter/Smoother.hpp"
 #include "filter/NeqAccumulator.hpp"
+#include "filter/RxSatCodeBiasStore.hpp"
 #include <cstdint>
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>
@@ -276,6 +278,25 @@ private:
      *        mode is above 0, and log its configuration.
      */
     void buildAmbiguityResolver_();
+
+    /**
+     * @brief The receiver-satellite code-bias store: read it at the start of the run.
+     *
+     * Does nothing unless @c estimation.estimate_rx_sat_code_bias is on and
+     * @c estimation.rx_sat_code_bias_store names a file that exists (the real-time engine
+     * never reaches this stage).  Builds the run's identity (receiver type and version from
+     * the RINEX header, the product series of the .BIA file), compares it with the store's,
+     * and either hands the store to the measurement model (the births read it) or ignores it,
+     * with a log line and a count.
+     */
+    void buildRxSatCodeBiasStore_();
+
+    /**
+     * @brief The identity the receiver-satellite code biases of this run belong to: receiver
+     *        type and version (RINEX header) and the bias source (the .BIA file's series).
+     * @return The identity.
+     */
+    RxSatCodeBiasIdentity rxSatCodeBiasIdentity_() const;
 
     /**
      * @brief Open the CSV trace logger in @c log_dir_; warns when requested streams fail
@@ -763,6 +784,39 @@ private:
      * @param v Reads is_ppp_rtk.
      */
     void reportReinflations_(const PppRunEndView& v);
+
+    /**
+     * @brief Report: the receiver-satellite code-bias family.
+     *
+     * Writes the store (@c estimation.rx_sat_code_bias_store, when set) from the final state
+     * and covariance, then prints the family's one run-end line with its counters.  Does
+     * nothing unless @c estimation.estimate_rx_sat_code_bias is on.
+     *
+     * @param v The run-end view (unused).
+     */
+    void reportRxSatCodeBiasRunEnd_(const PppRunEndView& v);
+
+    /**
+     * @brief Report: the wide-lane decision by the iono-free phase.
+     *
+     * Prints the resolver's one run-end line (pairs evaluated, decided by the phase,
+     * contradictions, refused for reach, satellites returned for a reset).  Does
+     * nothing unless @c estimation.ambiguity_resolution.wl_branch_check is in force.
+     *
+     * @param v The run-end view (unused).
+     */
+    void reportWlBranchRunEnd_(const PppRunEndView& v);
+
+    /**
+     * @brief Report: the extra signals of the ambiguity resolver.
+     *
+     * Prints the resolver's one run-end line (extra-wide lanes evaluated, admitted,
+     * fixed, held pairs released by one).  Does nothing unless
+     * @c estimation.ambiguity_resolution.extra_signals is in force.
+     *
+     * @param v The run-end view (unused).
+     */
+    void reportExtraSignalsRunEnd_(const PppRunEndView& v);
 
     /**
      * @brief Report: the KalmanFilter's timing block and QC counters.
@@ -1479,6 +1533,7 @@ private:
     std::unique_ptr<TraceLogger>         trace_logger_;
     std::unique_ptr<AidingSourceManager> aiding_manager_;   //!< Owns the config-selected aiding sources (IMU first client); there is no separate ImuIntegrator member.
     std::unique_ptr<AmbiguityResolver>   ambiguity_resolver_;
+    std::optional<RxSatCodeBiasStore>    rx_sat_store_;     /**< The receiver-satellite code-bias store the run started from, when one was read and belongs to this receiver and bias source (estimation.rx_sat_code_bias_store); the measurement model reads it by pointer, and the run-end write carries its unseen entries over. */
     std::unique_ptr<NeqAccumulator>      neq_accumulator_;  /**< Cross-session normal-equation accumulator (item #13B); non-null only when processing.enable_neq_export. */
 
     PppState ppp_state_;                      /**< Current PPP state (synced with filter).  In baseline mode this is the rover state. */

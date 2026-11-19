@@ -50,10 +50,11 @@ namespace GnssProcessor {
         ReceiverPhaseBias,  ///< Receiver phase bias of the eq34 split ("GPS_RPB_L1C"); network only.
         PhaseColour,        ///< Per-satellite phase colour state; network only.
         SatClock,           ///< Satellite clock ("G01|SC"); network stations only.
+        RxSatCodeBias,      ///< Receiver-satellite code bias ("G01|C1W"); the single-receiver filter only.
     };
 
     /// Number of dynamic state families.
-    inline constexpr std::size_t kStateFamilyCount = 9;
+    inline constexpr std::size_t kStateFamilyCount = 10;
 
     /**
      * @brief The variance re-inflations, in the order of the run-end line.
@@ -126,6 +127,7 @@ namespace GnssProcessor {
         NetworkPhaseDatumEq34,     ///< The network producer with network.phase_datum_eq34.
         NetworkPhaseColour,        ///< network.phase_colour_state.
         NetworkSatClocks,          ///< The network producer with estimation.estimate_sat_clocks.
+        RxSatCodeBias,             ///< The single-receiver filter, uncombined, with estimation.estimate_rx_sat_code_bias.
     };
 
     /**
@@ -176,6 +178,10 @@ namespace GnssProcessor {
         const char* initial_std_key;
         bool has_reset;     ///< A single state's value and variance can be reset in place.
         bool prune_cache;   ///< A pruned state is kept in a warm-restart cache.
+        /// True when no state of the family is ever pruned: a state lives from its birth to
+        /// the end of the run, whether or not its satellite is in view.  The default keeps
+        /// the rows of the families that are pruned unchanged.
+        bool never_pruned{ false };
     };
 
     /**
@@ -187,7 +193,9 @@ namespace GnssProcessor {
      * Neither may change.
      *
      * The phase-colour family has no snapshot tag: it exists only on network
-     * stations, which never write an RT snapshot.
+     * stations, which never write an RT snapshot.  The receiver-satellite
+     * code-bias family has none either: the real-time engine neither reads nor
+     * writes it, and a layout that holds one is refused by the snapshot writer.
      */
     inline constexpr std::array<StateFamilySpec, kStateFamilyCount> kStateFamilies{{
         //  family / name / label prefix / snapshot tag
@@ -239,6 +247,13 @@ namespace GnssProcessor {
               QRule::RandomWalk, &ProcessNoise::sat_clock, "sat_clock_q",
               BirthGate::NetworkSatClocks, InitialStdRule::ConfigField, &InitialStd::sat_clock, "sat_clock",
               false, false },
+        // No re-inflation, gap decouple, frozen-pivot skip, snapshot tag or prune: the states
+        // describe the receiver's hardware against each satellite and outlive the arcs.
+        { StateFamily::RxSatCodeBias, "receiver-satellite code bias", "RSCB:", nullptr,
+              kNoReinflation, false, SatOfKey::None,
+              QRule::RandomWalk, &ProcessNoise::rx_sat_code_bias, "rx_sat_code_bias_q",
+              BirthGate::RxSatCodeBias, InitialStdRule::ConfigField, &InitialStd::rx_sat_code_bias, "rx_sat_code_bias",
+              true, false, true },
     }};
 
     /**

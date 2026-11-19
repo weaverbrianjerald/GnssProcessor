@@ -123,12 +123,13 @@ enum class ParamForm : std::uint8_t {
     GloSlotIfb,  ///< rx_code_bias: "<system>_IFB<band>_k<slot>", the GLONASS per-slot inter-frequency bias.
     North,       ///< tropo_gradient: the north component (mapping function times cos(azimuth)).
     East,        ///< tropo_gradient: the east component (mapping function times sin(azimuth)).
+    RxSat,       ///< sat_code_bias: the receiver's deviation from the published satellite code bias, per satellite and raw code (single-receiver filter only; "<sat>|<code>" in its own state family).
 };
 
 /**
  * @brief The name of a form, appended to the kind in the table ("rx_code_bias.ifb").
  * @param f The form.
- * @return "" for None; "isb", "if", "nl", "wl", "dcb", "ifb", "isc", "slot", "north" or "east".
+ * @return "" for None; "isb", "if", "nl", "wl", "dcb", "ifb", "isc", "slot", "north", "east" or "rx_sat".
  */
 const char* paramFormName(ParamForm f);
 
@@ -143,6 +144,7 @@ const char* paramFormName(ParamForm f);
  * | sat_clock       | none            |  x  |           |           |      |        |
  * | sat_phase_bias  | none            |  x  | phase     |           |      |        |
  * | sat_code_bias   | none            |  x  | code      |           |      |        |
+ * | sat_code_bias   | rx_sat          |  x  | code      |           |      |        |
  * | ambiguity       | none            |  x  | phase     |           |      |        |
  * | ambiguity       | if              |  x  | phase (1) | phase (2) |      |        |
  * | ambiguity       | nl              |  x  |           |           |  x   |        |
@@ -368,6 +370,7 @@ enum class UserCore : std::uint8_t {
  * | receiver code bias           | rx_code_bias   | key  | the fields of @ref RxCbKey       |
  * | satellite code bias          | sat_code_bias  | none | sat, signal                      |
  * | satellite code bias, IF pair | sat_code_bias  | if   | sat, signal, signal_b            |
+ * | receiver-satellite code bias | sat_code_bias  | rx_sat | sat, signal (user filter only) |
  * | satellite phase bias         | sat_phase_bias | none | sat, signal                      |
  * | receiver phase bias          | rx_phase_bias  | none | sys, signal                      |
  * | satellite clock              | sat_clock      | none | sat                              |
@@ -478,6 +481,18 @@ ParamRef satCodeBiasRef(SatId sat, SignalId code);
  * @return The reference (kind sat_code_bias, form if).
  */
 ParamRef satCodeBiasIfRef(SatId sat, const SignalPair& pair);
+/**
+ * @brief The receiver's deviation from the published code bias of one satellite signal.
+ *
+ * A column of the single-receiver state only (the receiver-satellite code-bias family,
+ * @c StateFamily::RxSatCodeBias): the network producer's parameter views have no such
+ * column and answer "absent" for the form.
+ *
+ * @param sat  The satellite.
+ * @param code The raw code signal.
+ * @return The reference (kind sat_code_bias, form rx_sat).
+ */
+ParamRef rxSatCodeBiasRef(SatId sat, SignalId code);
 /**
  * @brief The phase bias of one satellite signal.
  * @param sat   The satellite.

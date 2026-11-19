@@ -634,6 +634,30 @@ void Application::resolveEpochAmbiguities_(const PppEpochWork& w) {
             epoch_prefix, ar_result.num_fixed, ar_result.num_candidates,
             ar_result.ratio);
     }
+
+    // Held-pair release and partner refloat: after the fix is installed, so the
+    // refloat is not overwritten by fixed_covariance.
+    if (!ar_result.release_satellites.empty()) {
+        const int n_keys = ambiguity_resolver_->refloatSatellites(
+            *state_manager_, ar_result.release_satellites, config_.getInitialStd().ambiguity);
+        log_manager_.getLogger("main_log")->info(
+            "{}AR release: {} satellite(s), {} ambiguity key(s) refloated "
+            "(run totals: hold release {}, partner refloat {})",
+            epoch_prefix, ar_result.release_satellites.size(), n_keys,
+            ambiguity_resolver_->holdReleaseCount(), ambiguity_resolver_->partnerReleaseCount());
+    }
+
+    // A contradiction between the code and the iono-free phase (wl_branch_check)
+    // returns the satellites at fault to the prior of their code-bias states, again
+    // after the fix is installed.  With the family off the list is only reported.
+    if (config_.estimateRxSatCodeBias()) {
+        for (const auto& sat : ar_result.bias_reset_satellites) {
+            const std::size_t n_states = state_manager_->resetRxSatCodeBiasStatesToPrior(sat);
+            log_manager_.getLogger("main_log")->info(
+                "{}AR code-bias reset: satellite {}, {} receiver-satellite code-bias state(s) "
+                "returned to the prior", epoch_prefix, sat, n_states);
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

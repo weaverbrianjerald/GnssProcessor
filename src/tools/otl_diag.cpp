@@ -10,7 +10,10 @@
  *   lookup  : for each "x y z marker" line of a file, the SIF record the production
  *             lookup resolves (with the RINEX approximate position as the prefix guard)
  *             and whether it carries an OTL block; optionally whether the EOT20 grid
- *             would serve as the fallback.
+ *             would serve as the fallback.  With --phases (and --eot20) each line also
+ *             lists the radial amplitude and Greenwich phase lag of M2, S2, N2, K2, K1,
+ *             O1, P1 and Q1 from the SIF record and from the EOT20 synthesis, so the
+ *             two sources can be compared in phase as well as in amplitude.
  *   coeffs  : the 11-constituent table of one station, as stored and as converted.
  *
  * The series is the input of scripts/otl_compare/otl_gate.py, which evaluates the same
@@ -21,7 +24,7 @@
  *   gnss_otl_diag series --sif <json> [--sif <json>] --station <key> [--ecef x y z]
  *                        --date YYYY-DDD [--hours 24] [--step 30]
  *                        [--mapping blq|legacy] [--nodal] [--drop-translation] [--out file.csv]
- *   gnss_otl_diag lookup --sif <json> [--sif <json>] --list <file> [--eot20 <nc>]
+ *   gnss_otl_diag lookup --sif <json> [--sif <json>] --list <file> [--eot20 <nc> [--phases]]
  *   gnss_otl_diag coeffs --sif <json> [--sif <json>] --station <key> [--ecef x y z]
  */
 
@@ -65,6 +68,7 @@ namespace {
         bool legacy{ false };
         bool nodal{ false };
         bool drop_translation{ false };
+        bool phases{ false };
     };
 
     bool parseArgs(int argc, char** argv, Args& a) {
@@ -86,6 +90,7 @@ namespace {
             else if (k == "--step") a.step = std::atof(next("--step"));
             else if (k == "--nodal") a.nodal = true;
             else if (k == "--drop-translation") a.drop_translation = true;
+            else if (k == "--phases") a.phases = true;
             else if (k == "--mapping") {
                 const std::string m = next("--mapping");
                 if (m == "legacy") a.legacy = true;
@@ -191,7 +196,15 @@ namespace {
         std::ifstream in(a.list);
         if (!in) { std::fprintf(stderr, "cannot open %s\n", a.list.c_str()); return 1; }
         OceanTideModel probe(lm);
-        std::fprintf(g_out, "marker,matched_id,has_otl,m2_up_mm,eot20_m2_up_mm\n");
+        // --phases: radial amplitude (mm) and Greenwich phase lag (deg) of the eight main
+        // constituents, BLQ order, from the SIF record and from the EOT20 synthesis.
+        static constexpr const char* kMain[8] = { "m2", "s2", "n2", "k2", "k1", "o1", "p1", "q1" };
+        const bool phases = a.phases && !a.eot20.empty();
+        std::fprintf(g_out, "marker,matched_id,has_otl,m2_up_mm,eot20_m2_up_mm");
+        if (phases)
+            for (const char* c : kMain)
+                std::fprintf(g_out, ",%s_sif_amp_mm,%s_sif_phase_deg,%s_eot_amp_mm,%s_eot_phase_deg", c, c, c, c);
+        std::fprintf(g_out, "\n");
         std::string line;
         while (std::getline(in, line)) {
             std::istringstream ss(line);
@@ -205,9 +218,11 @@ namespace {
             const Eigen::Vector3d p(x, y, z);
             const StationInfo* si = reg.find(name, &p);
             std::string eot = "";
+            OtlStationCoefficients c;
+            bool eot_ok = false;
             if (!a.eot20.empty()) {
-                OtlStationCoefficients c;
-                if (probe.parseEot20Load(a.eot20, p, c)) {
+                eot_ok = probe.parseEot20Load(a.eot20, p, c);
+                if (eot_ok) {
                     char buf[32];
                     std::snprintf(buf, sizeof buf, "%.2f", 1000.0 * c.constituents[0].amp_up);
                     eot = buf;
@@ -215,9 +230,24 @@ namespace {
                     eot = "fail";
                 }
             }
-            std::fprintf(g_out, "%s,%s,%d,%.2f,%s\n", name.c_str(), si ? si->id.c_str() : "-",
-                        (si && si->has_otl) ? 1 : 0, si && si->has_otl ? 1000.0 * si->otl[0].up_amp : 0.0,
+            const bool sif_otl = si && si->has_otl;
+            std::fprintf(g_out, "%s,%s,%d,%.2f,%s", name.c_str(), si ? si->id.c_str() : "-",
+                        sif_otl ? 1 : 0, sif_otl ? 1000.0 * si->otl[0].up_amp : 0.0,
                         eot.c_str());
+            if (phases) {
+                for (std::size_t k = 0; k < 8; ++k) {
+                    if (sif_otl)
+                        std::fprintf(g_out, ",%.2f,%.1f", 1000.0 * si->otl[k].up_amp, si->otl[k].up_phase);
+                    else
+                        std::fprintf(g_out, ",,");
+                    if (eot_ok)
+                        std::fprintf(g_out, ",%.2f,%.1f", 1000.0 * c.constituents[k].amp_up,
+                                     c.constituents[k].phase_up);
+                    else
+                        std::fprintf(g_out, ",,");
+                }
+            }
+            std::fprintf(g_out, "\n");
         }
         return 0;
     }
@@ -232,7 +262,7 @@ int main(int argc, char** argv) {
                      "  series --station <key> [--ecef x y z] --date YYYY-DDD [--hours 24] [--step 30]\n"
                      "         [--mapping blq|legacy] [--nodal] [--drop-translation]\n"
                      "  every mode: [--out file] writes the CSV to a file (the library logs to stdout)\n"
-                     "  lookup --list <file of 'x y z marker'> [--eot20 <nc>]\n"
+                     "  lookup --list <file of 'x y z marker'> [--eot20 <nc> [--phases]]\n"
                      "  coeffs --station <key> [--ecef x y z]\n");
         return 2;
     }

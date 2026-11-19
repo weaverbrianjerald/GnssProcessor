@@ -13,6 +13,7 @@
 #include "app/Application.hpp"
 #include "aiding/ImuAidingSource.hpp"   // full type for aiding_manager_->imu() wiring
 #include "filter/AmbiguityResolverSetup.hpp"   // makeAmbiguityResolverConfig (the one builder)
+#include "filter/RxSatCodeBiasStore.hpp"
 #include "math/Coordinates.hpp"
 #include "math/TimeUtils.hpp"
 #include "products/StationInfoFile.hpp"
@@ -425,6 +426,56 @@ void Application::buildAmbiguityResolver_() {
             ar_config.ratio_threshold, ar_config.ratio_upper_bound,
             ar_config.elevation_mask_ar, ar_config.min_epochs, ar_config.max_position_sigma_m);
     }
+}
+
+// ---------------------------------------------------------------------------
+// The receiver-satellite code-bias store
+// ---------------------------------------------------------------------------
+
+RxSatCodeBiasIdentity Application::rxSatCodeBiasIdentity_() const {
+    RxSatCodeBiasIdentity id;
+    id.receiver_type    = normalizeIdentityText(rinex_parser_->getReceiverType());
+    id.receiver_version = normalizeIdentityText(rinex_parser_->getReceiverVersion());
+    id.bias_source      = biasSourceIdentity(config_.getProductPath("BIA").filename().string());
+    return id;
+}
+
+void Application::buildRxSatCodeBiasStore_() {
+    if (!config_.estimateRxSatCodeBias() || config_.getRxSatCodeBiasStore().empty()) return;
+    auto log = log_manager_.getLogger("main_log");
+    const std::filesystem::path path = config_.getRxSatCodeBiasStore();
+    auto& counters = state_manager_->rxSatCodeBiasCounters();
+
+    std::error_code ec;
+    if (!std::filesystem::exists(path, ec)) {
+        log->info("Receiver-satellite code-bias store {} does not exist: the run starts from the "
+                  "prior and writes the store at its end", path.string());
+        return;
+    }
+    std::string why;
+    std::optional<RxSatCodeBiasStore> store = readRxSatCodeBiasStore(path, &why);
+    if (!store) {
+        ++counters.store_ignored;
+        log->warn("Receiver-satellite code-bias store {} IGNORED: {}", path.string(), why);
+        return;
+    }
+    const RxSatCodeBiasIdentity run = rxSatCodeBiasIdentity_();
+    const RxSatCodeBiasVerdict verdict = checkRxSatCodeBiasStore(*store, run);
+    if (verdict != RxSatCodeBiasVerdict::Usable) {
+        ++counters.store_ignored;
+        log->warn("Receiver-satellite code-bias store {} IGNORED: {} (store: receiver '{}' version "
+                  "'{}' source '{}'; run: receiver '{}' version '{}' source '{}')",
+                  path.string(), rxSatCodeBiasVerdictText(verdict),
+                  store->identity.receiver_type, store->identity.receiver_version,
+                  store->identity.bias_source, run.receiver_type, run.receiver_version,
+                  run.bias_source);
+        return;
+    }
+    log->info("Receiver-satellite code-bias store {} read: {} entries for receiver '{}' version "
+              "'{}' source '{}'", path.string(), store->entries.size(), run.receiver_type,
+              run.receiver_version, run.bias_source);
+    rx_sat_store_ = std::move(store);
+    meas_model_->setRxSatCodeBiasStore(&*rx_sat_store_);
 }
 
 // ---------------------------------------------------------------------------

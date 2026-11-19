@@ -24,6 +24,7 @@
 namespace GnssProcessor {
 
     class SsrCorrectionStore;
+    struct RxSatCodeBiasStore;
     struct ObsInput;
     struct ObservationEquation;
 
@@ -406,6 +407,19 @@ namespace GnssProcessor {
          */
         void setClockRefs(const ClockRefMap* refs) { clock_refs_override_ = refs; }
 
+        /**
+         * @brief Give the model the receiver-satellite code-bias store a state is born from.
+         *
+         * With a store, a receiver-satellite code-bias state whose (satellite, signal) has an
+         * entry is born with the entry's value and its sigma grown by the random walk over the
+         * entry's age (@c storedRxSatCodeBiasPrior); every other state is born at the prior.
+         * The caller has already checked that the store belongs to this receiver and bias
+         * source.  @c nullptr (the default): no store.
+         *
+         * @param store Non-owning store pointer (must outlive this object) or @c nullptr.
+         */
+        void setRxSatCodeBiasStore(const RxSatCodeBiasStore* store) { rx_sat_store_ = store; }
+
     private:
         // -------------------------------------------------------------------
         // Core dependencies (non-owning references)
@@ -427,6 +441,10 @@ namespace GnssProcessor {
         /// Non-owning clock-reference override; nullptr -> the product cache's map.
         /// Set via setClockRefs() (unit tests).
         const ClockRefMap* clock_refs_override_{ nullptr };
+
+        /// Non-owning receiver-satellite code-bias store the births read; nullptr: none.
+        /// Set via setRxSatCodeBiasStore().
+        const RxSatCodeBiasStore* rx_sat_store_{ nullptr };
 
         /// Resolve the active clock-reference observables (override when set, else the
         /// product cache's).  Defined in the .cpp.
@@ -628,6 +646,7 @@ namespace GnssProcessor {
          * |11 | markUnresolvableAmbiguities   | AR eligibility flags            | per-band basis (f)                                          |                                                        |                                                    |
          * |12 | ensureReceiverCodeBiasStates  | receiver code bias              | estimate_ifb, uncombined; a code row with a bias key (g)    | 0, then initializeCodeBiases once (seedCodeBias)       | initial_std.code_bias^2                            |
          * |13 | ensureSatCodeBiasStates       | satellite code bias (user path) | estimate_sat_biases, not the network; uncovered code (h)    | the sat-bias cache, else the row's innovation (i)      | the cached variance, else initial_std.sat_bias^2   |
+         * |14 | ensureRxSatCodeBiasStates     | receiver-satellite code bias    | estimate_rx_sat_code_bias, not the network; covered code (j)| the store entry (k), else 0                            | the entry's, else initial_std.rx_sat_code_bias^2   |
          *
          * Notes.  (a) GLONASS is skipped under BSSD unless enable_glonass_bssd.
          * (b) The geometry-free code pair with .BIA coverage; on the network the
@@ -648,6 +667,12 @@ namespace GnssProcessor {
          * per-slot IFB key is excluded.  The network producer allocates its
          * satellite code biases itself (network/assembly/SharedAdmission.hpp).  (i) From
          * buildJacobianRow, re-referenced to the pivot's innovation under BSSD.
+         * (j) A raw code (uncombined) of a satellite of a constellation in
+         * estimation.rx_sat_code_bias_systems whose published bias is applied (.BIA or SSR
+         * coverage, the test of (h) reversed) and that the BSSD pivot tracks; never pruned.
+         * A (satellite, signal) has a satellite code-bias state or this one, never both.
+         * (k) The store's value, with the store's sigma grown by the random walk over the age
+         * of the entry (setRxSatCodeBiasStore).
          *
          * The network producer's own parameters (shared satellite clock, phase bias
          * and code bias, and the station's local states) are not born here: the network
@@ -817,6 +842,21 @@ namespace GnssProcessor {
         void ensureSatCodeBiasStates(const std::vector<PppObservation>& observations,
                                      const std::string& epoch_prefix,
                                      const RequiredStates& need);
+
+        /**
+         * @brief Receiver-satellite code biases (estimation.estimate_rx_sat_code_bias; user
+         *        filter only, uncombined): born, at the first processed epoch of the pair, for
+         *        each raw code signal of a satellite of a configured constellation whose
+         *        published bias is applied (.BIA or SSR coverage) and that the BSSD pivot
+         *        tracks; value 0 and the prior, or the store's value and its aged sigma.
+         *        Never pruned.
+         * @param observations This epoch's modeled observations.
+         * @param epoch_prefix Log prefix.
+         * @param need         The working value.
+         */
+        void ensureRxSatCodeBiasStates(const std::vector<PppObservation>& observations,
+                                       const std::string& epoch_prefix,
+                                       const RequiredStates& need);
 
         // -------------------------------------------------------------------
         // One row: geometry and the observation equation

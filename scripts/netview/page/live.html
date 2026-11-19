@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{TITLE}}</title>
+<style>{{CSS}}</style>
+</head>
+<body class="live">
+<header id="top">
+  <div class="title">
+    <span id="run-name">Live network monitor</span>
+    <span id="run-sub">connecting&hellip;</span>
+  </div>
+  <div class="controls">
+    <span id="status" class="pill">connecting</span>
+    <button id="pause" type="button" title="Pause or resume the replay">&#10074;&#10074;</button>
+    <label title="Epochs released per second">Rate <select id="speed">
+      <option value="0.5">0.5 epochs/s</option>
+      <option value="1" selected>1 epoch/s</option>
+      <option value="2">2 epochs/s</option>
+      <option value="5">5 epochs/s</option>
+      <option value="10">10 epochs/s</option>
+      <option value="30">30 epochs/s</option>
+    </select></label>
+    <label title="Jump the replay to another time of the run">Jump to <input type="range" id="jump" min="0" max="0" value="0"></label>
+    <label title="Keep the cursor on the newest epoch"><input type="checkbox" id="follow" checked> follow now</label>
+    <label class="muted" title="Colour map of magnitudes and counts (signed values keep a blue-red map)">Colours <select id="seqmap"><option value="turbo">turbo</option><option value="viridis">viridis</option></select></label>
+    <a id="archive" class="act" href="/archive" target="_blank" hidden>archived dashboard</a>
+  </div>
+</header>
+<div id="clock-row">
+  <span id="clock"></span>
+  <input type="range" id="cursor" min="0" max="0" value="0" aria-label="Cursor within the window">
+  <span id="window-label" class="muted"></span>
+</div>
+<div id="note" class="hint"></div>
+<main id="live-main">
+  <section id="tiles-box"></section>
+  <div class="live-grid">
+    <div class="live-left">
+      <div class="panel">
+        <h3>Receivers over the window <span class="muted" id="rx-sub"></span></h3>
+        <div class="row"><span class="seg" id="rx-metric"></span></div>
+        <canvas id="rx-matrix" class="lmatrix"></canvas>
+        <div id="rx-key" class="ckey"></div>
+      </div>
+      <div class="panel">
+        <h3>Satellites over the window <span class="muted" id="sat-sub"></span></h3>
+        <div class="row"><span class="seg" id="sat-metric"></span></div>
+        <canvas id="sat-matrix" class="lmatrix"></canvas>
+        <div id="sat-key" class="ckey"></div>
+      </div>
+      <div class="panel">
+        <h3>Receivers on the map <span class="muted">colour: the receivers' metric at the cursor; red ring: an alarm in the last 10 minutes</span></h3>
+        <canvas id="map" class="lmap"></canvas>
+      </div>
+    </div>
+    <div class="live-right">
+      <div class="panel" id="detail-box">
+        <h3>Selected <span class="muted">click a receiver or satellite in a matrix, the map or the feed</span></h3>
+        <div id="detail"></div>
+      </div>
+      <div class="panel">
+        <h3>What happened <span class="muted">newest first</span></h3>
+        <div id="feed-chips" class="chips"></div>
+        <div id="feed" class="evlist"></div>
+      </div>
+    </div>
+  </div>
+</main>
+<div id="tip" class="floattip" hidden></div>
+<script>{{ASSETS}}</script>
+<script>{{JS}}</script>
+</body>
+</html>

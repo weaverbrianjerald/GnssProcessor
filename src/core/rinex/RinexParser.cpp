@@ -283,8 +283,10 @@ namespace GnssProcessor {
                     }
                     else if (label.find("REC # / TYPE / VERS") != std::string::npos) {
                         header_.receiver_type = line.substr(20, 20);
+                        header_.receiver_version = line.substr(40, 20);
                         receiver_serial_no_ = line.substr(0, 20);
                         header_.receiver_type.erase(header_.receiver_type.find_last_not_of(" \t") + 1);
+                        header_.receiver_version.erase(header_.receiver_version.find_last_not_of(" \t") + 1);
                         receiver_serial_no_.erase(receiver_serial_no_.find_last_not_of(" \t") + 1);
                     }
                     else if (label.find("ANT # / TYPE") != std::string::npos) {

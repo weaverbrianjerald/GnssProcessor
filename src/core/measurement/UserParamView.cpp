@@ -77,6 +77,8 @@ std::string userKey(const ParamRef& ref) {
         case NetworkParamKind::RxCodeBias:
             return userCodeBiasKey(rxCbKeyOf(ref));
         case NetworkParamKind::SatCodeBias:
+            if (ref.form == ParamForm::RxSat)
+                return K::makeRxSatCodeBiasKey(ref.sat.str(), ref.signal.obsCode(ObsType::Code));
             return K::makeSatBiasKey(ref.sat.str(),
                                      ref.form == ParamForm::IfPair
                                          ? pairText(ref, ObsType::Code)
@@ -128,6 +130,8 @@ ParamSlot UserParamView::find(const ParamRef& ref) const {
         case NetworkParamKind::RxCodeBias:
             return dynamic(states_.getCodeBiasIndex(userKey(ref)));
         case NetworkParamKind::SatCodeBias:
+            if (ref.form == ParamForm::RxSat)
+                return dynamic(states_.getRxSatCodeBiasIndex(userKey(ref)));
             return dynamic(states_.getSatBiasIndex(userKey(ref)));
         case NetworkParamKind::SatPhaseBias:
             return dynamic(states_.getSatPhaseBiasIndex(userKey(ref)));

@@ -832,6 +832,7 @@ void networkEmitStore(NetworkRun& run, const NetworkEpoch& ep, NetworkSolutionEp
             const Eigen::Vector3d d   = pos - cl_truth;
             const Eigen::Vector3d enu = Coordinates::ecefToEnu(d, cl_truth_llh);
             const double err3d = d.norm();
+            traces.live_record.noteUser(se.time, err3d, enu);   // the live record's note (no-op off)
 
             const bool ar_ran = consumer->lastArRan();
             const AmbiguityResolution& ar = consumer->lastArResult();

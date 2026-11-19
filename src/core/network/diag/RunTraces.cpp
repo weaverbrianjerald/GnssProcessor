@@ -1263,6 +1263,7 @@ void NetworkRunTraces::emitEpochStatus(const GnssTime& t, const char* dispositio
     // Config echoes captured at openAll (single-sourced with the L15 manifest).
     const double es_sigma0_trigger   = es_sigma0_trigger_;
     const double es_withhold_ceiling = es_withhold_ceiling_;
+        live_record.noteStatus(t, disposition, r);   // the live record's note (no-op off)
         if (!epoch_status_trace.is_open()) return;
         auto& o = epoch_status_trace;
         o << t.week << ',' << fmt::format("{:.3f}", t.tow) << ','
@@ -1409,6 +1410,8 @@ void NetworkRunTraces::emitEvent(const GnssTime& t, const char* tier, const char
                                  const std::string& sat, const std::string& station,
                                  std::optional<double> statistic, std::optional<double> threshold,
                                  const char* action, const std::string& detail) {
+        live_record.noteEvent(t, tier, event, sat, station, statistic, threshold, action,
+                              detail);   // the live record's note (no-op off)
         if (!events_trace.is_open()) return;
         std::string d = detail;
         for (char& c : d) if (c == ',') c = ';';   // sanitize: keep the CSV single-field
@@ -2652,6 +2655,7 @@ void NetworkRunTraces::writeFlagRateAndRunSummary(const GnssConfig& config_,
 // the destructor still rely on it; do not add them here.  Members added after INC-4 are
 // closed here so their tails are flushed at teardown (see the notes below).
 void NetworkRunTraces::closeAll() {
+    live_record.close();   // writes a pending line (a skipped last epoch) first; no-op off
     if (trace) trace.close();
     if (soln) soln.close();
     if (iono_trace.is_open()) iono_trace.close();

@@ -41,7 +41,7 @@
  * Greenwich phase lag) pair that @c OtlStationCoefficients stores.  Phase is
  * circular: blending +179 deg with -179 deg arithmetically yields 0 deg, a
  * half-cycle error that appears only in the segments that straddle the wrap.
- * Converting to @c z = A*exp(-i*phi) first makes the blend linear and wrap-free.
+ * Converting to @c z = A*exp(i*phi) first makes the blend linear and wrap-free.
  * Linear blending of z is also the physically correct operation: the loading
  * response is linear in the complex load coefficients, so interpolating z and
  * evaluating equals evaluating at the anchors and interpolating the displacement.
@@ -69,7 +69,7 @@ namespace sim {
  *
  * Converts each constituent/component from (amplitude, Greenwich phase lag) to
  * the EOT/FES complex form @c z = re + i*im with @c re = A*cos(phi),
- * @c im = -A*sin(phi) (the inverse of the @c A = |z|, @c phi = atan2(-im, re)
+ * @c im = A*sin(phi) (the inverse of the @c A = |z|, @c phi = atan2(im, re)
  * used by @c OceanTideModel::parseEot20Load), blends linearly, and converts back.
  *
  * @param a Coefficient set at fraction 0.

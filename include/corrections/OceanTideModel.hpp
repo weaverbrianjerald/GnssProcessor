@@ -277,8 +277,11 @@ namespace GnssProcessor {
          * coefficients (hRe, hIm) at the station position, and converts them to
          * BLQ-style amplitude / Greenwich phase lag for the 11 BLQ constituents.
          *
-         * Convention (FES / EOT): h(t) = A · cos(χ(t) - φ), with
-         *   A = sqrt(hRe² + hIm²) and φ = atan2(-hIm, hRe).
+         * Convention: the grid stores hRe = A · cos(φ) and hIm = A · sin(φ), so
+         *   h(t) = A · cos(χ(t) - φ) = hRe · cos(χ) + hIm · sin(χ), with
+         *   A = sqrt(hRe² + hIm²) and φ = atan2(hIm, hRe) the Greenwich phase lag.
+         * This sign reproduces the FES2014b loading phases of the stations of the
+         * IGS site-information file; atan2(-hIm, hRe) reverses every phase.
          * EOT20 carries only the radial (height) load component; horizontal
          * amplitudes are set to zero. The radial signal dominates OTL
          * (horizontals are typically 1–3 mm peak).

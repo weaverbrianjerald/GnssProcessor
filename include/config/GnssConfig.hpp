@@ -9179,6 +9179,45 @@ namespace GnssProcessor {
         bool estimateSatBiases() const { return estimate_sat_biases_; }
 
         /**
+         * @brief Whether the single-receiver filter estimates the receiver's deviation from the
+         *        published satellite code bias (the receiver-satellite code-bias family).
+         *
+         * When true, one state per (satellite, raw code signal) is born for each satellite of a
+         * constellation in @ref getRxSatCodeBiasSystems on a code signal whose published bias
+         * (.BIA entry or SSR record) is applied, enters every uncombined raw code row of that
+         * pair with +1, and is never pruned.  It needs uncombined processing: the loader logs a
+         * warning and turns the key off otherwise, so this getter is the effective value.  The
+         * network producer and the baseline layout never carry the family.
+         * JSON key @c estimation.estimate_rx_sat_code_bias, default false.
+         *
+         * @return True when the family is armed.
+         */
+        bool estimateRxSatCodeBias() const { return estimate_rx_sat_code_bias_; }
+
+        /**
+         * @brief The constellations that get receiver-satellite code-bias states.
+         *
+         * Names as the code spells them (@c systemName: "GPS", "Galileo", "GLONASS", "BeiDou",
+         * "QZSS", "SBAS").  JSON key @c estimation.rx_sat_code_bias_systems, default {"GPS"};
+         * an empty array or a missing key gives the default, and an unknown name is dropped
+         * with a warning.  Read only when @ref estimateRxSatCodeBias is true.
+         *
+         * @return The constellation names.
+         */
+        const std::vector<std::string>& getRxSatCodeBiasSystems() const { return rx_sat_code_bias_systems_; }
+
+        /**
+         * @brief Path of the receiver-satellite code-bias store (a JSON file of learned values).
+         *
+         * Read at the start of a post-processing run when the path is set and the file exists,
+         * and written at its end.  The real-time engine neither reads nor writes it.
+         * JSON key @c estimation.rx_sat_code_bias_store, default "" (no store).
+         *
+         * @return The path text; empty when no store is configured.
+         */
+        const std::string& getRxSatCodeBiasStore() const { return rx_sat_code_bias_store_; }
+
+        /**
          * @brief Whether the network producer estimates explicit per-(satellite,
          *        signal) phase-bias states.
          *
@@ -9776,6 +9815,114 @@ namespace GnssProcessor {
         bool getArNlIonoFreeRow() const { return ar_nl_iono_free_row_; }
 
         /**
+         * @brief Take the WL-constrained search's widelane integers from the
+         *        float states (@c estimation.ambiguity_resolution.wl_from_float).
+         *
+         * The MW detector's widelane omits the satellite antenna offset per
+         * frequency, 2 cycles for every GPS Block III pair; the float states
+         * carry it.  See AmbiguityResolverConfig::wl_from_float.
+         *
+         * @return true to round the float DD widelane (gated by
+         *         @ref getArWlMaxFrac); false (default, byte-identical) for the
+         *         MW detector's integer.
+         */
+        bool getArWlFromFloat() const { return ar_wl_from_float_; }
+
+        /**
+         * @brief Decide the wide-lane integer by the code and the ionosphere-free
+         *        phase together (@c estimation.ambiguity_resolution.wl_branch_check).
+         *
+         * Where the code alone does not admit a pair's wide lane, the phase of the
+         * ionosphere-free row can; where the code admits one integer and the phase is
+         * decisive for the neighbour, the pair is a contradiction and the satellites at
+         * fault are returned for a reset of their receiver-satellite code-bias states.
+         * See AmbiguityResolverConfig::wl_branch_check.
+         *
+         * The key needs @c wl_from_float and @c nl_iono_free_row.  Set without either,
+         * the loader warns and this getter returns false.
+         *
+         * @return true when the decision is in force; false (default, byte-identical)
+         *         for the wide-lane test of the code alone.
+         */
+        bool getArWlBranchCheck() const { return ar_wl_branch_check_; }
+
+        /**
+         * @brief Seconds the phase must stay decisive before the wide-lane decision acts
+         *        (@c estimation.ambiguity_resolution.wl_branch_persist_s).
+         *
+         * A decision by the phase and a contradiction take effect only once the
+         * ionosphere-free phase has been decisive for the same wide-lane integer of the
+         * same satellite pair for this long.  0 acts at once.  A negative value is
+         * refused by the loader with a warning and the default is kept.  Read only
+         * with @ref getArWlBranchCheck.  See AmbiguityResolverConfig::wl_branch_persist_s.
+         *
+         * @return Persistence time [s], >= 0; 120 by default.
+         */
+        double getArWlBranchPersistS() const { return ar_wl_branch_persist_s_; }
+
+        /**
+         * @brief Fix the extra signals of a satellite pair tracked on more than two
+         *        signals (@c estimation.ambiguity_resolution.extra_signals).
+         *
+         * The two signals of the pair on the primary bands go through the wide-lane and
+         * N_1 step as before; every other signal gets an extra-wide-lane integer against
+         * the lower primary signal and is fixed with the pair.  See
+         * AmbiguityResolverConfig::extra_signals.
+         *
+         * The key needs @c wl_from_float.  Set without it, the loader warns and this
+         * getter returns false.
+         *
+         * @return true when extra signals are fixed; false (default, byte-identical)
+         *         for the rule that a pair needs exactly two signals.
+         */
+        bool getArExtraSignals() const { return ar_extra_signals_; }
+
+        /**
+         * @brief The two primary bands per constellation
+         *        (@c estimation.ambiguity_resolution.primary_bands).
+         *
+         * Key: constellation name as the code spells it ("GPS", "Galileo", "BeiDou").
+         * Value: two distinct RINEX band digits, for example "12".  A malformed entry
+         * is refused by the loader with a warning (the default entry of that
+         * constellation is kept, or the entry dropped when it has no default).  Read
+         * only with @ref getArExtraSignals.  See AmbiguityResolverConfig::primary_bands.
+         *
+         * @return The map; @ref defaultArPrimaryBands when the key is absent.
+         */
+        const std::map<std::string, std::string>& getArPrimaryBands() const { return ar_primary_bands_; }
+
+        /**
+         * @brief Error floor on the WL-constrained N_1 search covariance
+         *        (@c estimation.ambiguity_resolution.nl_sigma_floor_cyc).
+         *
+         * See AmbiguityResolverConfig::nl_sigma_floor_cyc.
+         *
+         * @return The floor in narrow-lane cycles; 0 (default) disables it.
+         */
+        double getArNlSigmaFloorCyc() const { return ar_nl_sigma_floor_cyc_; }
+
+        /**
+         * @brief Release threshold for a held satellite pair
+         *        (@c estimation.ambiguity_resolution.hold_release_cyc).
+         *
+         * See AmbiguityResolverConfig::hold_release_cyc.
+         *
+         * @return The threshold in cycles (widelane and ionosphere-free narrow
+         *         lane); 0 (default) disables the release.
+         */
+        double getArHoldReleaseCyc() const { return ar_hold_release_cyc_; }
+
+        /**
+         * @brief Refloat the other signal of a satellite when one signal's arc
+         *        restarts (@c estimation.ambiguity_resolution.refloat_partner_signal).
+         *
+         * See AmbiguityResolverConfig::refloat_partner_signal.
+         *
+         * @return true to refloat all signals of the satellite; false (default).
+         */
+        bool getArRefloatPartnerSignal() const { return ar_refloat_partner_signal_; }
+
+        /**
          * @brief Get the list of constellations eligible for AR.
          *
          * Empty list = all active systems are eligible (default).
@@ -9862,6 +10009,10 @@ namespace GnssProcessor {
         // -------------------------------------------------------------
         void loadProcessingSection_(const nlohmann::json& json, LogManager& log_manager);
         void loadEstimationSection_(const nlohmann::json& json, LogManager& log_manager);
+        /// The three keys of the receiver-satellite code-bias family (called by
+        /// loadEstimationSection_): parses them, and turns the family off with a warning on
+        /// a run that cannot carry it (not uncombined, baseline, network producer).
+        void loadRxSatCodeBiasKeys_(const nlohmann::json& json, LogManager& log_manager);
         void loadFilterSection_(const nlohmann::json& json, LogManager& log_manager);
         void loadModelCorrectionsSection_(const nlohmann::json& json, LogManager& log_manager);
         void loadReceiverSection_(const nlohmann::json& json, LogManager& log_manager);
@@ -10545,6 +10696,9 @@ namespace GnssProcessor {
         bool lock_signals_to_clock_ref_;                        ///< Restrict uncombined PPP-RTK to clock-reference frequency bands only.
         bool require_bia_for_signals_;                           ///< Only use signals with BIA product coverage.
         bool estimate_sat_biases_;                               ///< Estimate per-satellite bias for signals without BIA coverage.
+        bool estimate_rx_sat_code_bias_{false};                  ///< Estimate the receiver's deviation from the published satellite code bias, per (satellite, raw code signal) (single-receiver, uncombined).
+        std::vector<std::string> rx_sat_code_bias_systems_{ "GPS" }; ///< Constellations that get receiver-satellite code-bias states.
+        std::string rx_sat_code_bias_store_;                     ///< Receiver-satellite code-bias store path ("" = none).
         bool estimate_sat_phase_biases_{false};                  ///< Estimate explicit per-(sat,signal) phase-bias states (PPP_RTK_Network).
         bool estimate_sat_clocks_{false};                        ///< Estimate explicit per-satellite clock states, orbit held fixed (PPP_RTK_Network).
         bool promote_sat_code_bias_{false};                      ///< Estimate satellite code bias on every code row, not fallback-only (PPP_RTK_Network).
@@ -10608,6 +10762,14 @@ namespace GnssProcessor {
         double ar_min_arc_info_{ 0.0 };   ///< Per-candidate AR maturity gate: minimum accumulated sin^2(el) on both arcs of a candidate. 0 = off (byte-identical). Makes AR safe, not useful; see AmbiguityResolverConfig::min_arc_info.
         double ar_nl_max_per_pair_frac_; ///< Max per-NL-pair |float − fixed| (cyc); rejects marginal fixes.
         bool   ar_nl_iono_free_row_{ false }; ///< WL-constrained N_1 search runs on the exact iono-free row instead of the narrowlane row. Default off (byte-identical); see AmbiguityResolverConfig::nl_iono_free_row for the 8.06× WL-sensitivity trade.
+        bool   ar_wl_from_float_{ false };   ///< WL-constrained search takes its widelane integers from the float states, not the MW detector. Default off (byte-identical).
+        double ar_wl_branch_persist_s_{ 120.0 }; ///< Seconds the iono-free phase must stay decisive for one wide-lane integer before wl_branch_check acts on it; 0 acts at once; >= 0.
+        bool   ar_extra_signals_{ false };   ///< Fix the signals of a satellite pair beyond its two primary signals; false unless wl_from_float is on too. Default off (byte-identical).
+        std::map<std::string, std::string> ar_primary_bands_{ defaultArPrimaryBands() }; ///< Per constellation, the two RINEX band digits of the primary signals; read only with extra_signals.
+        bool   ar_wl_branch_check_{ false }; ///< The wide-lane integer is decided by the code and the iono-free phase; false unless wl_from_float and nl_iono_free_row are on too. Default off (byte-identical).
+        double ar_nl_sigma_floor_cyc_{ 0.0 }; ///< Error floor (NL cycles) added to the WL-constrained N_1 search covariance. 0 = off (byte-identical).
+        double ar_hold_release_cyc_{ 0.0 };   ///< Release threshold (cycles) for a held pair the float contradicts. 0 = off.
+        bool   ar_refloat_partner_signal_{ false }; ///< Refloat all signals of a satellite when one signal's arc restarts alone.
         bool   ar_enable_partial_ar_;    ///< Partial AR: on full-set fix failure, retry on the largest gate-passing subset.
         std::vector<std::string> ar_active_systems_; ///< Constellations eligible for AR (empty = all).
 

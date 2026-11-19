@@ -1342,6 +1342,115 @@ namespace GnssProcessor {
         void pruneSatClockStatesExcept(const std::set<std::string>& keep_keys);
 
         // -------------------------------------------------------------------
+        // Receiver-satellite code-bias states (estimation.estimate_rx_sat_code_bias).
+        //
+        // The receiver's deviation from the published satellite code bias, one state per
+        // (satellite, raw code signal), keyed "<sat>|<code signal>" in the separate map
+        // @c rx_sat_code_bias_indices_ (labelled "RSCB:", StateKeys::makeRxSatCodeBiasKey).
+        // Single-receiver filter only; every other mode leaves the map empty.  A state is
+        // born with value 0 (or a stored value, see RxSatCodeBiasStore.hpp) at the prior
+        // @c initial_std.rx_sat_code_bias, takes the random walk
+        // @c process_noise.rx_sat_code_bias_q on every predict whether or not its satellite
+        // is in view, and is never pruned, never frozen as a pivot and never decoupled by a
+        // data gap.  The family's events (born, born from the store, learned, reset) are
+        // counted in @ref RxSatCodeBiasCounters and logged with the satellite and the signal.
+        // -------------------------------------------------------------------
+
+        /// The run's counts of the receiver-satellite code-bias events.
+        struct RxSatCodeBiasCounters {
+            long long born            = 0;  ///< States created (from the prior or from the store).
+            long long born_from_store = 0;  ///< Of those, states created from a stored value and sigma.
+            long long learned         = 0;  ///< States that first passed the learned test (again after a reset).
+            long long reset           = 0;  ///< States returned to the prior.
+            long long reset_satellites = 0; ///< Satellites that had at least one state reset.
+            long long written         = 0;  ///< Entries of this run written to the store.
+            long long carried_over    = 0;  ///< Entries of the store the run never saw, written unchanged.
+            long long store_ignored   = 0;  ///< Stores not used: another receiver or version, or another bias source.
+        };
+
+        /**
+         * @brief Index of a receiver-satellite code-bias state.
+         * @param key Key "<satellite>|<code signal>".
+         * @return Zero-based state index, or -1 if absent.
+         */
+        int getRxSatCodeBiasIndex(const std::string& key) const;
+
+        /// @brief Read-only map "<satellite>|<code signal>" -> state index.
+        const std::map<std::string, size_t>& getRxSatCodeBiasStates() const;
+
+        /**
+         * @brief Create a receiver-satellite code-bias state at the prior.
+         *
+         * Value 0, variance @c initial_std.rx_sat_code_bias².  Idempotent: an existing key
+         * keeps its state and counts nothing.  Counts a birth and logs it.
+         *
+         * @param key Key "<satellite>|<code signal>".
+         * @return The state index.
+         */
+        size_t addRxSatCodeBiasState(const std::string& key);
+
+        /**
+         * @brief Create a receiver-satellite code-bias state from a stored value.
+         *
+         * As @ref addRxSatCodeBiasState, with the given value and variance (the stored
+         * sigma squared, grown by the random walk over the entry's age).  A non-positive
+         * variance falls back to the prior.  Counts a birth and a birth from the store.
+         *
+         * @param key      Key "<satellite>|<code signal>".
+         * @param value    The stored value (m).
+         * @param variance The initial variance (m²).
+         * @return The state index.
+         */
+        size_t addRxSatCodeBiasStateFromStore(const std::string& key, double value, double variance);
+
+        /**
+         * @brief Return every receiver-satellite code-bias state of one satellite to the prior.
+         *
+         * For each state of the family whose satellite is @p satellite: the value becomes 0,
+         * the variance @c initial_std.rx_sat_code_bias², and every cross-covariance of the
+         * state with every other state becomes 0 (the row and the column of the covariance
+         * are cleared before the diagonal is written).  The value is not re-seeded from data.
+         * A learned mark of the state is cleared, so the state can pass the learned test
+         * again.  Counts one reset per state and one reset satellite, and logs each state
+         * with its satellite and signal.  The wide-lane decision of the ambiguity resolver
+         * calls this for the satellites at fault when the code and the phase contradict.
+         *
+         * @param satellite Satellite identifier ("G05").  No-op when it has no such state.
+         * @return The number of states reset (0 when the satellite has none).
+         */
+        std::size_t resetRxSatCodeBiasStatesToPrior(const std::string& satellite);
+
+        /**
+         * @brief Mark a receiver-satellite code-bias state as learned.
+         *
+         * Counts and logs the event only the first time (until a reset clears the mark).
+         *
+         * @param key Key "<satellite>|<code signal>" of an existing state.
+         * @return True when the mark is new, false when the state was already marked or does not exist.
+         */
+        bool markRxSatCodeBiasLearned(const std::string& key);
+
+        /**
+         * @brief Whether a receiver-satellite code-bias state carries the learned mark.
+         * @param key Key "<satellite>|<code signal>".
+         * @return True when the state exists and was marked and not reset since.
+         */
+        bool isRxSatCodeBiasLearned(const std::string& key) const;
+
+        /**
+         * @brief The run's receiver-satellite code-bias counters.
+         * @return The counters (read-only).
+         */
+        const RxSatCodeBiasCounters& rxSatCodeBiasCounters() const { return rx_sat_cb_counters_; }
+
+        /**
+         * @brief The run's receiver-satellite code-bias counters, for the code that owns an
+         *        event the state manager does not see (the store read and write).
+         * @return The counters (writable).
+         */
+        RxSatCodeBiasCounters& rxSatCodeBiasCounters() { return rx_sat_cb_counters_; }
+
+        // -------------------------------------------------------------------
         // Unresolvable ambiguity support
         // -------------------------------------------------------------------
 
@@ -1586,6 +1695,9 @@ namespace GnssProcessor {
         std::map<std::string, size_t> phase_colour_indices_;  //!< Map satellite -> phase-colour state index (network only).
         std::map<std::string, double> phase_colour_elevations_; //!< Map satellite -> last elevation (deg) of its phase-colour state.
         std::map<std::string, size_t> sat_clock_indices_;      //!< Map "satellite|SC" -> state index (PPP_RTK_Network satellite clock).
+        std::map<std::string, size_t> rx_sat_code_bias_indices_; //!< Map "satellite|signal" -> state index (receiver-satellite code bias; single-receiver filter).
+        std::set<std::string> rx_sat_cb_learned_;              //!< Keys of the receiver-satellite code-bias states that passed the learned test and were not reset since.
+        RxSatCodeBiasCounters rx_sat_cb_counters_{};           //!< The receiver-satellite code-bias event counts of the run.
         std::map<std::string, size_t> ionosphere_indices_; //!< Map satellite ID -> per-satellite iono state index (uncombined processing).
         std::map<std::string, size_t> iono_rate_indices_; //!< Map satellite ID -> per-satellite iono-rate (Idot_s) state index; populated only when enableIonoRate() (constant-velocity model).
         std::map<std::string, double> ionosphere_elevations_; //!< Map satellite ID -> last-known elevation in degrees (uncombined processing).
@@ -1655,6 +1767,21 @@ namespace GnssProcessor {
         size_t addSatClockStateWithVariance(const std::string& key,
                                             double initial_value,
                                             double initial_variance);
+
+        /**
+         * @brief The body of @ref addRxSatCodeBiasState and @ref addRxSatCodeBiasStateFromStore.
+         *
+         * Appends the state, registers the key, counts and logs the birth.  An existing key
+         * is left alone.  A non-positive variance falls back to the prior.
+         *
+         * @param key              Key "<satellite>|<code signal>".
+         * @param initial_value    Initial value (m).
+         * @param initial_variance Initial diagonal (m²).
+         * @param from_store       True when the value and variance come from the store.
+         * @return The state index.
+         */
+        size_t addRxSatCodeBiasStateWithVariance_(const std::string& key, double initial_value,
+                                                  double initial_variance, bool from_store);
 
         /**
          * @brief Drop cache entries older than @c sat_bias_cache.max_age_s

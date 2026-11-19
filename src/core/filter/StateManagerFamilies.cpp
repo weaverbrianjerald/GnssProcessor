@@ -38,6 +38,8 @@ namespace GnssProcessor {
             case BirthGate::NetworkPhaseDatumEq34:    return c.isNetworkMode() && c.networkPhaseDatumEq34();
             case BirthGate::NetworkPhaseColour:       return c.getNetworkConfig().phase_colour_state;
             case BirthGate::NetworkSatClocks:         return c.isNetworkMode() && c.estimateSatClocks();
+            case BirthGate::RxSatCodeBias:            return c.estimateRxSatCodeBias() && c.isUncombinedEnabled()
+                                                             && !c.isNetworkMode();
         }
         return false;
     }
@@ -54,6 +56,7 @@ namespace GnssProcessor {
             case BirthGate::NetworkPhaseDatumEq34:    return "network producer and network.phase_datum_eq34";
             case BirthGate::NetworkPhaseColour:       return "network.phase_colour_state";
             case BirthGate::NetworkSatClocks:         return "network producer and estimation.estimate_sat_clocks";
+            case BirthGate::RxSatCodeBias:            return "single-receiver filter, uncombined, estimation.estimate_rx_sat_code_bias";
         }
         return "?";
     }
@@ -108,7 +111,8 @@ namespace GnssProcessor {
         if (s.reinflation != kNoReinflation)
             add(std::string("re-inflation ") + kReinflationNames[static_cast<std::size_t>(s.reinflation)]);
         if (s.has_reset) add("reset");
-        add(s.prune_cache ? "prune (to the warm-restart cache)" : "prune");
+        add(s.never_pruned ? "never pruned"
+                           : s.prune_cache ? "prune (to the warm-restart cache)" : "prune");
         if (s.gap_decouple) add("gap decouple");
         if (s.q_rule != QRule::None && s.sat_of_key != SatOfKey::None) add("frozen-pivot Q skip");
         if (s.snapshot_tag) add("RT snapshot");

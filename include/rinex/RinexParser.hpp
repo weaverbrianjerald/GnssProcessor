@@ -102,6 +102,7 @@ namespace GnssProcessor {
         std::map<System, std::vector<std::string>> obs_types; /**< Observation types per system (order preserved as declared) */
         std::optional<double> interval; /**< Measurement interval in seconds (if present in header) */
         std::string receiver_type; /**< Receiver model/type string (e.g., "TRIMBLE NETR9") */
+        std::string receiver_version; /**< Receiver version (firmware) field of the same record (columns 41-60), trimmed; empty when the record is absent or the field blank. */
         std::string antenna_type;  /**< Antenna type/model string (e.g., "TRM59800.00") */
         std::array<double, 3> approx_position{ 0.0, 0.0, 0.0 }; /**< Approx. receiver ECEF position (meters) */
         std::array<double, 3> antenna_delta_hen{ 0.0, 0.0, 0.0 }; /**< Antenna H/E/N offsets in meters */
@@ -302,6 +303,11 @@ namespace GnssProcessor {
          *         "TRIMBLE NETR9"); empty when the record is absent.
          */
         std::string getReceiverType() const { return header_.receiver_type; }
+
+        /** @brief Get the receiver version (firmware) string from the `REC # / TYPE / VERS`
+         *         record (empty when the header has none).  With @ref getReceiverType it names
+         *         the receiver a stored receiver-satellite code bias belongs to. */
+        std::string getReceiverVersion() const { return header_.receiver_version; }
 
         /**
          * @brief Get receiver serial number parsed from header (if present).

@@ -20,21 +20,21 @@ constexpr double kD2R = kPi / 180.0;
 constexpr double kR2D = 180.0 / kPi;
 
 /**
- * @brief (amplitude, Greenwich phase lag [deg]) -> complex z = A*exp(-i*phi).
+ * @brief (amplitude, Greenwich phase lag [deg]) -> complex z = A*exp(i*phi).
  *
  * Exact inverse of the conversion @c OceanTideModel::parseEot20Load applies to
- * the EOT20 grid (@c A = sqrt(re^2+im^2), @c phi = atan2(-im, re)), so a
+ * the EOT20 grid (@c A = sqrt(re^2+im^2), @c phi = atan2(im, re)), so a
  * round trip through this pair is the identity to within rounding.
  */
 inline void toComplex(double amp, double phase_deg, double& re, double& im) {
     const double p = phase_deg * kD2R;
-    re =  amp * std::cos(p);
-    im = -amp * std::sin(p);
+    re = amp * std::cos(p);
+    im = amp * std::sin(p);
 }
 
 inline void fromComplex(double re, double im, double& amp, double& phase_deg) {
     amp       = std::sqrt(re * re + im * im);
-    phase_deg = std::atan2(-im, re) * kR2D;
+    phase_deg = std::atan2(im, re) * kR2D;
 }
 
 /// Blend one (amplitude, phase) component pair through the complex plane.

@@ -359,6 +359,7 @@ Rendering for papers, dashboards and reviews.
 | --- | --- | --- |
 | `agu_figure.py` | Compose the 4-tile AGU26 abstract figure from one network run. (a) network geometry + the network's OWN estimated ionosphere, as ionospheric pierce p… | 1 |
 | `compare_network_run.py` | compare_network_run.py Field-aware byte-identity harness for the ApplicationNetwork.cpp decomposition series (see docs/record/network_decomposition_plan.md,… | 11 |
+| `netview/` | The network dashboard: one network run on one interactive HTML page, in layers (overview, network links, receivers, satellites, cycle slips, stochastic model, atmosphere, products and user check, events) leading to the pages of one receiver, satellite and line of sight. `netview.py build`, `arm`, `compare` and `live` (a live monitor that follows a running engine through its live record, `network.trace_live_record`, or replays a finished run); readers, aggregation (`layers/`), live server and its two sources (`live/`), page writer, page sources and tests. See `docs/onboarding/network_view.md`. Added 2026-11-15, dashboard and live monitor 2026-11-17. | 2 |
 | `gen_report_tables.py` | Generate LaTeX reference tables for docs/report from authoritative source. This is the "Tier 3" half of the GnssProcessor documentation tooling: smal… | 7 |
 | `view_network_dd_fractional.py` | Fractional-cycle histogram of the network cross-station DD ambiguities (B5). The network producer, with ``network.trace_dd_fractional`` on, writes ``… | 2 |
 

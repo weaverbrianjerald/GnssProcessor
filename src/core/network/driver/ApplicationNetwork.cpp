@@ -115,6 +115,7 @@
 #include "network/qc/Raim.hpp"        // post-fit network RAIM
 #include "network/qc/ClockQc.hpp"     // post-solve satellite-clock QC
 #include "network/diag/FrameDiag.hpp"   // frame-guard trigger instrumentation
+#include "network/diag/LiveRecord.hpp"  // networkLiveRecordOpen: the live monitor's record
 #include "network/diag/StationBlock.hpp"  // per-station local-block audit, measure-only
 #include "network/qc/RhsAttrib.hpp"   // reduced-RHS class attribution (era-2 injector probe)
 #include "network/qc/Mdb.hpp"               // Baarda reliability numbers / MDB
@@ -278,6 +279,7 @@ int Application::runNetwork() {
     networkOraclePinArm(run, log_manager_);
     networkRingFixArm(run);
     traces.openAll(config_, nc, shc, sh_model.get(), closed_loop_on && consumer, log);
+    networkLiveRecordOpen(run);   // the live monitor's record and its header (needs the roster)
     networkSlipQcArmWavelengthProvider(run, log_manager_);
     // The arms of the carry-VCE apply step, the prior-residual corroborator, the
     // block-Baarda and congruence censuses, and the pivot coverage predictor.

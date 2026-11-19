@@ -36,6 +36,7 @@
  *       struct, @c make / @c parse pair, then migration of the call sites.
  */
 
+#include <cstddef>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -975,6 +976,51 @@ inline std::optional<std::string> parseSatClockKey(std::string_view key) {
     const std::string_view sat = key.substr(0, key.size() - kSatClockSuffix.size());
     if (sat.empty() || sat.find(kPipeDelimiter) != std::string_view::npos) return std::nullopt;
     return std::string(sat);
+}
+
+// ===========================================================================
+// 5d. Receiver-satellite code-bias keys: "<satellite>|<code signal>"
+// ---------------------------------------------------------------------------
+// Examples: "G01|C1W", "G05|C2W"
+//
+// The single-receiver filter can carry, beside the published satellite code bias,
+// the receiver's deviation from it for one satellite and one raw code signal.  The
+// key has the shape of a satellite code-bias key (section 5), and the two families
+// never share a map: the deviation is stored in StateManager::rx_sat_code_bias_indices_,
+// labelled "RSCB:".  The parser is stricter than parseSatBiasKey: the signal is
+// exactly one raw code observation code of three characters, so a phase-bias key
+// ("G01|L1C|PB"), a clock key ("G01|SC"), an iono-free code pair ("G01|C1W_C2W")
+// and a bare satellite are all refused.
+//
+// Constructed in:  MeasurementModel (the birth), the identity layer (UserParamView)
+// Stored in:       StateManager::rx_sat_code_bias_indices_
+// Parsed in:       the learning and store code (filter/RxSatCodeBiasLearning.cpp)
+// ===========================================================================
+
+/// Length of the code signal text in a receiver-satellite code-bias key ("C1W").
+inline constexpr std::size_t kRxSatCodeBiasSignalLength = 3;
+
+/// Build a receiver-satellite code-bias key "<satellite>|<code signal>".
+inline std::string makeRxSatCodeBiasKey(std::string_view satellite,
+                                        std::string_view code_signal) {
+    return makeSatBiasKey(satellite, code_signal);
+}
+
+/// Parse a receiver-satellite code-bias key.  Returns @c std::nullopt unless the key
+/// is "<satellite>|<signal>" with a non-empty satellite that holds no pipe and a signal
+/// of exactly @ref kRxSatCodeBiasSignalLength characters that starts with 'C' and holds
+/// no pipe or underscore.
+inline std::optional<SatBiasKeyParts>
+parseRxSatCodeBiasKey(std::string_view key) {
+    const auto bar = key.find(kPipeDelimiter);
+    if (bar == std::string_view::npos || bar == 0) return std::nullopt;
+    const std::string_view sat = key.substr(0, bar);
+    const std::string_view sig = key.substr(bar + 1);
+    if (sig.size() != kRxSatCodeBiasSignalLength || sig[0] != 'C') return std::nullopt;
+    if (sig.find(kPipeDelimiter) != std::string_view::npos
+        || sig.find(kAmbiguityDelimiter) != std::string_view::npos)
+        return std::nullopt;
+    return SatBiasKeyParts{ std::string(sat), std::string(sig) };
 }
 
 // ===========================================================================

@@ -58,6 +58,7 @@
 #include "network/emit/LedgerEmit.hpp"
 #include "network/carry/LevelAuthority.hpp"
 #include "network/diag/Leveling.hpp"
+#include "network/diag/LiveRecord.hpp"
 #include "network/qc/Mdb.hpp"
 #include "network/qc/Vcf.hpp"
 #include "network/assembly/MeasurementAdmission.hpp"
@@ -324,6 +325,7 @@ static_assert(std::is_same_v<decltype(static_cast<NetworkEpochObserver>(&network
 static_assert(std::is_same_v<decltype(static_cast<NetworkEpochObserver>(&networkChainFrameObserve)), NetworkEpochObserver>);
 static_assert(std::is_same_v<decltype(static_cast<NetworkEpochObserver>(&net::networkEntitiesReachSample)), NetworkEpochObserver>);
 static_assert(std::is_same_v<decltype(static_cast<NetworkEpochObserver>(&networkWindupArcsTrace)), NetworkEpochObserver>);
+static_assert(std::is_same_v<decltype(static_cast<NetworkEpochObserver>(&networkLiveRecord)), NetworkEpochObserver>);
 
 // The harvest by carried kind.  The orchestrator and the 19 functions it
 // calls take the epoch form and no epoch output (the harvest writes run state only); the two

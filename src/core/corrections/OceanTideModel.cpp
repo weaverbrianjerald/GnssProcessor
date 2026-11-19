@@ -695,12 +695,16 @@ namespace GnssProcessor {
             const double re = bilinear(re_corners);
             const double im = bilinear(im_corners);
 
-            // FES/EOT convention: complex Z = re + i·im, with the real signal
-            //   h(t) = Re{ Z · exp(i·χ(t)) } = A·cos(χ - φ),
-            //   A = sqrt(re² + im²),  φ = atan2(-im, re).
+            // The grid stores re = A·cos(φ) and im = A·sin(φ), φ the Greenwich phase
+            // lag, so the real signal is
+            //   h(t) = A·cos(χ - φ) = re·cos(χ) + im·sin(χ),
+            //   A = sqrt(re² + im²),  φ = atan2(im, re).
+            // This sign reproduces the FES2014b loading phases of the stations of the
+            // IGS site-information file within a few degrees for all eight main
+            // constituents; atan2(-im, re) reverses every phase.
             // φ in BLQ format is the Greenwich phase lag in degrees.
             const double amp = std::sqrt(re * re + im * im);
-            const double phase_deg = std::atan2(-im, re) * R2D;
+            const double phase_deg = std::atan2(im, re) * R2D;
 
             coeffs.constituents[k].amp_up    = amp;
             coeffs.constituents[k].phase_up  = phase_deg;

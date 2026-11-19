@@ -21,6 +21,7 @@
 
 #include "app/Application.hpp"
 #include "app/PppPipelineWork.hpp"
+#include "filter/RxSatCodeBiasLearning.hpp"
 #include <chrono>
 #include <cmath>
 #include <filesystem>
@@ -48,7 +49,10 @@ void Application::reportPppRunEnd_(const PppRunEndView& v) {
         { "normal-equation export",     "processing.enable_neq_export",   &Application::exportNormalEquations_ },
         { "processing time",            "always",                         &Application::reportProcessingTime_ },
         { "state re-inflations",        "always",                         &Application::reportReinflations_ },
-        { "Kalman filter timings",      "always",                         &Application::reportKalmanFilterRunEnd_ },
+        { "receiver-satellite code bias", "estimation.estimate_rx_sat_code_bias", &Application::reportRxSatCodeBiasRunEnd_ },
+        { "wide-lane branch check",     "estimation.ambiguity_resolution.wl_branch_check", &Application::reportWlBranchRunEnd_ },
+        { "extra signals",              "estimation.ambiguity_resolution.extra_signals", &Application::reportExtraSignalsRunEnd_ },
+        { "Kalman filter timings",      "always",                        &Application::reportKalmanFilterRunEnd_ },
         { "cycle-slip counters",        "always",                         &Application::reportCycleSlipRunEnd_ },
     };
 
@@ -271,6 +275,65 @@ void Application::reportReinflations_(const PppRunEndView& v) {
         log_manager_.getLogger("main_log")->info(
             "state re-inflations ({}): {}", is_ppp_rtk ? "PPP-RTK" : "PPP",
             StateManager::reinflateSummary(state_manager_->reinflateCounters()));
+}
+
+// ---------------------------------------------------------------------------
+// Report: the receiver-satellite code-bias family (estimation.estimate_rx_sat_code_bias)
+// ---------------------------------------------------------------------------
+
+void Application::reportRxSatCodeBiasRunEnd_(const PppRunEndView&) {
+    if (!config_.estimateRxSatCodeBias() || !state_manager_) return;
+    auto log = log_manager_.getLogger("main_log");
+    const double prior_sigma = config_.getInitialStd().rx_sat_code_bias;
+    const auto& family = state_manager_->getRxSatCodeBiasStates();
+    const Eigen::MatrixXd P = state_manager_->getCovariance();
+    auto& counters = state_manager_->rxSatCodeBiasCounters();
+
+    // The store: written from the final state, post-processing only.
+    const std::string& store_path = config_.getRxSatCodeBiasStore();
+    if (!store_path.empty() && config_.getAppMode() != AppMode::RealTime) {
+        if (counters.store_ignored > 0)
+            log->warn("Receiver-satellite code-bias store {}: the file read at the start was ignored "
+                      "and is replaced by this run's", store_path);
+        RxSatCodeBiasBuildCounts n;
+        const RxSatCodeBiasStore store = buildRxSatCodeBiasStore(
+            state_manager_->getStateVector(), P, family, prior_sigma,
+            rx_sat_store_ ? &*rx_sat_store_ : nullptr, rxSatCodeBiasIdentity_(),
+            state_manager_->getStateEpochTime(), &n);
+        if (writeRxSatCodeBiasStore(store_path, store)) {
+            counters.written       += static_cast<long long>(n.written);
+            counters.carried_over  += static_cast<long long>(n.carried_over);
+            for (const auto& [key, e] : store.entries)
+                log->info("RSCB {} {} {}: value {:+.4f} m, sigma {:.4f} m",
+                          family.count(key) ? "written" : "carried over", e.satellite, e.signal,
+                          e.value_m, e.sigma_m);
+            log->info("Receiver-satellite code-bias store written: {} ({} entries)",
+                      store_path, store.entries.size());
+        } else {
+            log->error("Failed to write the receiver-satellite code-bias store {}", store_path);
+        }
+    }
+
+    log->info("{}", rxSatCodeBiasRunEndLine(counters, family.size(),
+                                            learnedKeys(P, family, prior_sigma).size()));
+}
+
+// ---------------------------------------------------------------------------
+// Report: the wide-lane decision by the iono-free phase (wl_branch_check)
+// ---------------------------------------------------------------------------
+
+void Application::reportWlBranchRunEnd_(const PppRunEndView&) {
+    if (!ambiguity_resolver_ || !ambiguity_resolver_->wlBranchActive()) return;
+    log_manager_.getLogger("main_log")->info("{}", ambiguity_resolver_->wlBranchRunEndLine());
+}
+
+// ---------------------------------------------------------------------------
+// Report: the extra signals of the ambiguity resolver (extra_signals)
+// ---------------------------------------------------------------------------
+
+void Application::reportExtraSignalsRunEnd_(const PppRunEndView&) {
+    if (!ambiguity_resolver_ || !ambiguity_resolver_->extraSignalsActive()) return;
+    log_manager_.getLogger("main_log")->info("{}", ambiguity_resolver_->extraSignalsRunEndLine());
 }
 
 // ---------------------------------------------------------------------------

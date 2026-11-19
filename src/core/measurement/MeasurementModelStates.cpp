@@ -22,6 +22,7 @@
 #include "measurement/MeasurementModel.hpp"
 #include "common/GnssIdentity.hpp"
 #include "measurement/Seeds.hpp"
+#include "filter/RxSatCodeBiasStore.hpp"
 #include "filter/StateKeySchema.hpp"
 #include <algorithm>
 #include <cmath>
@@ -130,6 +131,7 @@ namespace GnssProcessor {
         markUnresolvableAmbiguities(observations, epoch_prefix, need);
         ensureReceiverCodeBiasStates(observations, epoch_prefix);
         ensureSatCodeBiasStates(observations, epoch_prefix, need);
+        ensureRxSatCodeBiasStates(observations, epoch_prefix, need);
     }
 
     // ===================================================================
@@ -1064,6 +1066,54 @@ namespace GnssProcessor {
         // seedSatBias and the band gate above).
         if (!network_owns_sat_bias && config_.estimateSatBiases()) {
             state_manager_.pruneSatBiasStatesExcept(required_sat_biases);
+        }
+    }
+
+    void MeasurementModel::ensureRxSatCodeBiasStates(const std::vector<PppObservation>& observations,
+                                                     const std::string& epoch_prefix,
+                                                     const RequiredStates& need) {
+        // --- Receiver-satellite code-bias states (user filter, uncombined raw code) ---
+        // The receiver's deviation from the published satellite code bias, so a signal whose
+        // published bias is applied (.BIA entry or SSR record) gets one: the signals without
+        // coverage keep the satellite code-bias state of ensureSatCodeBiasStates, and the two
+        // never share a (satellite, signal).  A state is born once, at the first epoch its
+        // pair is processed, and is never pruned: it outlives the arcs.
+        if (!config_.estimateRxSatCodeBias() || !need.is_uncombined
+            || config_.getProcessingMode() == ProcessingMode::PPP_RTK_Network)
+            return;
+
+        const auto& systems = config_.getRxSatCodeBiasSystems();
+        const double q = config_.getProcessNoise().rx_sat_code_bias;
+        const GnssTime now = state_manager_.getStateEpochTime();
+        for (const auto& obs : observations) {
+            const std::string system = systemName(systemOfSat(obs.satellite));
+            if (std::find(systems.begin(), systems.end(), system) == systems.end()) continue;
+            for (const auto& [ref_type, observed] : obs.observed) {
+                if (ref_type.empty() || isIonoFreePairLabel(ref_type)) continue;
+                if (obsTypeOf(ref_type) != ObsType::Code) continue;
+                // Only a signal whose published bias is applied; the pair a satellite
+                // code-bias state stands in for stays with that state.
+                if (!(biaCoversSignal(rowProducts(), obs.satellite, ref_type)
+                      || ssrCoversCodeSignal(rowProducts(), obs.satellite, ref_type, obs.time)))
+                    continue;
+                // Under BSSD only a signal the constellation's pivot tracks forms a row.
+                if (!bssd_pivot_signals_.empty()) {
+                    const auto cit = bssd_pivot_signals_.find(system);
+                    if (cit != bssd_pivot_signals_.end() && !cit->second.count(ref_type)) continue;
+                }
+                const std::string key = StateKeys::makeRxSatCodeBiasKey(obs.satellite, ref_type);
+                if (state_manager_.getRxSatCodeBiasIndex(key) >= 0) continue;
+                const auto stored = rx_sat_store_ != nullptr
+                    ? storedRxSatCodeBiasPrior(*rx_sat_store_, key, now, q)
+                    : std::optional<RxSatCodeBiasPrior>{};
+                if (stored)
+                    state_manager_.addRxSatCodeBiasStateFromStore(key, stored->value_m, stored->variance_m2);
+                else
+                    state_manager_.addRxSatCodeBiasState(key);
+                log_manager_.getLogger("measurement_model")->debug(
+                    "{}Added receiver-satellite code-bias state {}{}", epoch_prefix, key,
+                    stored ? " (from the store)" : "");
+            }
         }
     }
 

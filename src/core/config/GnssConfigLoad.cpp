@@ -25,6 +25,7 @@
 #include "config/GnssConfig.hpp"
 #include "config/GnssConfigJsonHelpers.hpp"
 #include "config/BaselineFixtures.hpp"
+#include "common/GnssIdentity.hpp"                // systemFromName (the receiver-satellite code-bias systems)
 #include "common/Constants.hpp"                   // GPS_Lx_WAVELENGTH (H3); unused in this file
 #include "math/TimeUtils.hpp"
 #include "products/NetworkProductEmitter.hpp"   // kDefaultDiscThresholdM (R9); unused in this file
@@ -1215,6 +1216,45 @@ namespace GnssProcessor {
     // =================================================================
     //  Section: estimation
     // =================================================================
+    void GnssConfig::loadRxSatCodeBiasKeys_(const nlohmann::json& json, LogManager& log_manager) {
+        auto log = log_manager.getLogger("gnss_config");
+        estimate_rx_sat_code_bias_ = jval<bool>(json, "estimation.estimate_rx_sat_code_bias",
+                                                "estimate_rx_sat_code_bias", false);
+        rx_sat_code_bias_store_    = jval<std::string>(json, "estimation.rx_sat_code_bias_store",
+                                                       "rx_sat_code_bias_store", std::string());
+
+        // The constellations: names as the code spells them; a missing or empty list is the default.
+        rx_sat_code_bias_systems_.clear();
+        const auto& arr = jsection(json, "estimation.rx_sat_code_bias_systems",
+                                   "rx_sat_code_bias_systems");
+        if (arr.is_array()) {
+            for (const auto& name : arr.get<std::vector<std::string>>()) {
+                if (systemFromName(name) == System::Unknown) {
+                    log->warn("estimation.rx_sat_code_bias_systems: unknown system '{}' dropped", name);
+                    continue;
+                }
+                if (std::find(rx_sat_code_bias_systems_.begin(), rx_sat_code_bias_systems_.end(),
+                              name) == rx_sat_code_bias_systems_.end())
+                    rx_sat_code_bias_systems_.push_back(name);
+            }
+        }
+        if (rx_sat_code_bias_systems_.empty()) rx_sat_code_bias_systems_ = { "GPS" };
+
+        if (!estimate_rx_sat_code_bias_) return;
+        const char* why = !uncombined_enabled_  ? "it needs uncombined processing "
+                                                  "(processing.uncombined_enabled)"
+                        : isBaselineMode()      ? "the baseline layout carries no such family"
+                        : isNetworkMode()       ? "the network producer carries no such family"
+                        :                         nullptr;
+        if (why != nullptr) {
+            log->warn("estimation.estimate_rx_sat_code_bias=true is INERT on this run: {}.", why);
+            estimate_rx_sat_code_bias_ = false;
+            return;
+        }
+        log->info("Receiver-satellite code bias: systems {}, store '{}'",
+                  joinStrings(rx_sat_code_bias_systems_), rx_sat_code_bias_store_);
+    }
+
     void GnssConfig::loadEstimationSection_(const nlohmann::json& json, LogManager& log_manager) {
         auto log = log_manager.getLogger("gnss_config");
         estimate_tropo_gradients_ = jval<bool>(json, "estimation.estimate_tropo_gradients",
@@ -1240,6 +1280,7 @@ namespace GnssProcessor {
                                                  "require_bia_for_signals", false);
         estimate_sat_biases_       = jval<bool>(json, "estimation.estimate_sat_biases",
                                                  "estimate_sat_biases", false);
+        loadRxSatCodeBiasKeys_(json, log_manager);
         // Network producer (PPP_RTK_Network) toggles.  All three default false so the
         // single-receiver user / baseline paths are byte-identical; they only
         // take effect once the network estimator (W4) creates the shared states.
@@ -1996,6 +2037,109 @@ namespace GnssProcessor {
                       "N_1 target 3.53 cyc.  Verify the widelane before trusting fixes.");
         }
 
+        ar_wl_from_float_        = jval<bool>(json, "estimation.ambiguity_resolution.wl_from_float",
+                                               "ar_wl_from_float", false);
+        ar_nl_sigma_floor_cyc_   = jval<double>(json, "estimation.ambiguity_resolution.nl_sigma_floor_cyc",
+                                                 "ar_nl_sigma_floor_cyc", 0.0);
+        if (ar_wl_from_float_) {
+            log->info("AR: WL-constrained search takes its widelane integers from the float "
+                      "states (wl_from_float), not the MW detector; candidates gated by "
+                      "|frac| + 3 sigma <= wl_max_frac = {:.2f}", ar_wl_max_frac_);
+        }
+        ar_wl_branch_check_ = jval<bool>(json, "estimation.ambiguity_resolution.wl_branch_check",
+                                         "ar_wl_branch_check", false);
+        if (ar_wl_branch_check_ && !(ar_wl_from_float_ && ar_nl_iono_free_row_)) {
+            log->warn("AR: estimation.ambiguity_resolution.wl_branch_check needs wl_from_float "
+                      "and nl_iono_free_row (wl_from_float {}, nl_iono_free_row {}); the key is "
+                      "inert and the wide-lane test of the code alone applies",
+                      ar_wl_from_float_ ? "on" : "off", ar_nl_iono_free_row_ ? "on" : "off");
+            ar_wl_branch_check_ = false;
+        }
+        ar_wl_branch_persist_s_ = jval<double>(json, "estimation.ambiguity_resolution.wl_branch_persist_s",
+                                               "ar_wl_branch_persist_s", 120.0);
+        if (!(ar_wl_branch_persist_s_ >= 0.0)) {
+            log->warn("AR: wl_branch_persist_s = {} is negative or not a number; the default "
+                      "of 120 s is kept", ar_wl_branch_persist_s_);
+            ar_wl_branch_persist_s_ = 120.0;
+        }
+        if (ar_wl_branch_check_) {
+            log->info("AR: the wide-lane integer is decided by the code and the ionosphere-free "
+                      "phase together (wl_branch_check); a decision by the phase and a "
+                      "contradiction take effect after the phase has been decisive for {:.0f} s "
+                      "(wl_branch_persist_s), and a persisted contradiction returns the "
+                      "satellites at fault for a receiver-satellite code-bias reset",
+                      ar_wl_branch_persist_s_);
+        }
+        ar_extra_signals_ = jval<bool>(json, "estimation.ambiguity_resolution.extra_signals",
+                                       "ar_extra_signals", false);
+        if (ar_extra_signals_ && !ar_wl_from_float_) {
+            log->warn("AR: estimation.ambiguity_resolution.extra_signals needs wl_from_float "
+                      "(wl_from_float off); the key is inert and a satellite pair needs "
+                      "exactly two signals");
+            ar_extra_signals_ = false;
+        }
+        // primary_bands: constellation name -> two distinct RINEX band digits.  A given
+        // object replaces the default table; a malformed entry keeps the default entry of
+        // its constellation (or is dropped when it has none) with a warning.
+        ar_primary_bands_ = defaultArPrimaryBands();
+        if (detail::jhas(json, "estimation.ambiguity_resolution.primary_bands", "ar_primary_bands")) {
+            const auto& obj = jsection(json, "estimation.ambiguity_resolution.primary_bands",
+                                       "ar_primary_bands");
+            if (!obj.is_object()) {
+                log->warn("AR: primary_bands is not an object of constellation name to two band "
+                          "digits; the default table is kept");
+            } else {
+                const auto defaults = defaultArPrimaryBands();
+                ar_primary_bands_.clear();
+                for (const auto& [system, value] : obj.items()) {
+                    const std::string bands = value.is_string() ? value.get<std::string>() : "";
+                    if (isValidArPrimaryBandPair(bands)) {
+                        ar_primary_bands_[system] = bands;
+                        continue;
+                    }
+                    const auto def = defaults.find(system);
+                    if (def != defaults.end()) ar_primary_bands_[system] = def->second;
+                    log->warn("AR: primary_bands entry {} = {} is not two distinct band digits; {}",
+                              system, value.dump(),
+                              def != defaults.end() ? "the default " + def->second + " is kept"
+                                                    : std::string("the entry is dropped"));
+                }
+            }
+        }
+        if (ar_extra_signals_) {
+            std::string table;
+            for (const auto& [system, bands] : ar_primary_bands_)
+                table += (table.empty() ? "" : ", ") + system + " " + bands;
+            log->info("AR: a satellite pair on more than two signals is fixed on its primary "
+                      "bands ({}); each further signal gets an extra-wide-lane integer against "
+                      "the lower primary signal (extra_signals)", table);
+        }
+        if (ar_nl_sigma_floor_cyc_ > 0.0) {
+            log->info("AR: N_1 search covariance carries an error floor of {:.3f} NL cycles "
+                      "(nl_sigma_floor_cyc)", ar_nl_sigma_floor_cyc_);
+        } else if (ar_nl_sigma_floor_cyc_ < 0.0) {
+            log->warn("AR: nl_sigma_floor_cyc = {:.3f} is negative; treated as 0 (off)",
+                      ar_nl_sigma_floor_cyc_);
+            ar_nl_sigma_floor_cyc_ = 0.0;
+        }
+        ar_hold_release_cyc_       = jval<double>(json, "estimation.ambiguity_resolution.hold_release_cyc",
+                                                   "ar_hold_release_cyc", 0.0);
+        ar_refloat_partner_signal_ = jval<bool>(json, "estimation.ambiguity_resolution.refloat_partner_signal",
+                                                 "ar_refloat_partner_signal", false);
+        if (ar_hold_release_cyc_ > 0.0) {
+            log->info("AR: a held pair whose float moves more than {:.3f} cycle from its integers "
+                      "is released and its satellite refloated (hold_release_cyc)",
+                      ar_hold_release_cyc_);
+        } else if (ar_hold_release_cyc_ < 0.0) {
+            log->warn("AR: hold_release_cyc = {:.3f} is negative; treated as 0 (off)",
+                      ar_hold_release_cyc_);
+            ar_hold_release_cyc_ = 0.0;
+        }
+        if (ar_refloat_partner_signal_) {
+            log->info("AR: a satellite whose one signal restarts an arc alone has all its "
+                      "signals refloated (refloat_partner_signal)");
+        }
+
         // estimation.ambiguity_resolution.active_systems = ["GPS","Galileo",...]
         // Empty / missing → all active systems are eligible for AR.
         ar_active_systems_.clear();
@@ -2065,6 +2209,7 @@ namespace GnssProcessor {
                 process_noise_.acceleration_psd = 1e2;
             }
             process_noise_.sat_bias            = pn.value("sat_bias_q", 1e-10);
+            process_noise_.rx_sat_code_bias    = pn.value("rx_sat_code_bias_q", 1e-10);
             process_noise_.sat_code_bias       = pn.value("sat_code_bias_q", 1e-10);
             process_noise_.sat_phase_bias      = pn.value("sat_phase_bias_q", 1e-12);
             process_noise_.sat_clock           = pn.value("sat_clock_q", 1e-2);
@@ -2095,6 +2240,7 @@ namespace GnssProcessor {
             initial_std_.tropo_gradient      = is.value("tropo_gradient", 1e-3);
             initial_std_.phase_clock         = is.value("phase_clock", 1e3);
             initial_std_.sat_bias            = is.value("sat_bias", 10.0);
+            initial_std_.rx_sat_code_bias    = is.value("rx_sat_code_bias", 0.15);
             initial_std_.sat_phase_bias      = is.value("sat_phase_bias", 10.0);
             initial_std_.sat_clock           = is.value("sat_clock", 1000.0);
             initial_std_.clock_rate          = is.value("clock_rate", 1.0);
@@ -3653,7 +3799,7 @@ namespace GnssProcessor {
         const char* basis_label =
             state_ambiguity_basis_ == StateAmbiguityBasis::NlWl ? "nl_wl" : "per_band";
 
-        log_manager.getLogger("gnss_config")->info("Toggles: tropo_grad={}, relin_geom={}, smoother={}, phase_clk={}, if_slip={}, accum_windup={}, wu_gap={:.0f}s, wu_census={}, bssd={}, velocity={}, iono_rate={}, ifb={}, glonass_ifb={}, lock_clkref={}, req_bia={}, sat_bias={}, no_bia_dw={:.0f}, imu={}, amb_basis={}, adaptive_iono_q={}, eclipse_excl={}, cio_frame={}, sun_frame_fix={}, auto_report={}, nc_bridge={}, var_factor={}, data_snoop={}, full_r={}, neq_export={}, trig_sp3={}, orbit_normal_att={}, noon_turn_att={}, wu_bridge={}, seed_full={}",
+        log_manager.getLogger("gnss_config")->info("Toggles: tropo_grad={}, relin_geom={}, smoother={}, phase_clk={}, if_slip={}, accum_windup={}, wu_gap={:.0f}s, wu_census={}, bssd={}, velocity={}, iono_rate={}, ifb={}, glonass_ifb={}, lock_clkref={}, req_bia={}, sat_bias={}, no_bia_dw={:.0f}, imu={}, amb_basis={}, adaptive_iono_q={}, eclipse_excl={}, cio_frame={}, sun_frame_fix={}, auto_report={}, nc_bridge={}, var_factor={}, data_snoop={}, full_r={}, neq_export={}, trig_sp3={}, orbit_normal_att={}, noon_turn_att={}, wu_bridge={}, seed_full={}, rx_sat_cb={}",
             estimate_tropo_gradients_ ? "on" : "off",
             relinearize_geometry_     ? "on" : "off",
             run_smoother_             ? "on" : "off",
@@ -3688,7 +3834,8 @@ namespace GnssProcessor {
             enable_orbit_normal_attitude_ ? "on" : "off",
             enable_noon_turn_attitude_ ? "on" : "off",
             phase_windup_gap_bridge_ ? "on" : "off",
-            seed_full_equation_ ? "on" : "off");
+            seed_full_equation_ ? "on" : "off",
+            estimate_rx_sat_code_bias_ ? "on" : "off");
     }
 
 } // namespace GnssProcessor

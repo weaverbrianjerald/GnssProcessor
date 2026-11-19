@@ -262,6 +262,13 @@ for (Eigen::Index i = 0; i < n; ++i) {
         if (!StateKeys::isGlonassPerSlotIfbKey(key))
             zero_col(idx);
 
+    // The receiver-satellite code-bias columns are not zeroed here, for any satellite and for
+    // the pivot's included: each is a deviation of the receiver from one satellite's published
+    // bias, so the differenced code row keeps +1 on the satellite's column and -1 on the
+    // pivot's, and the difference of any two satellites has an honest variance.  Neither 6b
+    // (the receiver code-bias map) nor 6c (the pivot's satellite code-bias states) reaches
+    // that map.
+
     // 6c. Reference satellite ionosphere and pivot satellite bias columns
     std::set<Eigen::Index> ref_iono_cols;
     if (is_uncombined) {

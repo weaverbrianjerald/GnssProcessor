@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{TITLE}}</title>
+<style>{{CSS}}</style>
+</head>
+<body>
+<div id="loading">Opening the run&hellip;</div>
+<div id="app" hidden>
+  <header id="top">
+    <div class="title">
+      <span id="run-name"></span>
+      <span id="run-sub"></span>
+    </div>
+    <div class="controls">
+      <input id="search" list="names" placeholder="Find a receiver or satellite" autocomplete="off">
+      <datalist id="names"></datalist>
+      <label class="muted" title="Colour map of magnitudes and counts (signed values keep a blue-red map)">Colours <select id="seqmap"><option value="turbo">turbo</option><option value="viridis">viridis</option></select></label>
+      <button id="legend-btn" type="button">Legend</button>
+    </div>
+  </header>
+  <section id="timebar">
+    <div class="timerow">
+      <button id="play" type="button" title="Play or pause (space)">&#9654;</button>
+      <select id="speed" title="Epochs per second">
+        <option value="2">2 epochs/s</option>
+        <option value="5" selected>5 epochs/s</option>
+        <option value="15">15 epochs/s</option>
+        <option value="40">40 epochs/s</option>
+      </select>
+      <span id="time-label"></span>
+      <input type="range" id="slider" min="0" max="0" value="0" aria-label="Time">
+    </div>
+    <canvas id="timeline" height="150"></canvas>
+  </section>
+  <div id="missing" hidden></div>
+  <div id="body">
+    <nav id="rail" aria-label="Layers"></nav>
+    <div id="views">
+      <div id="crumbs"></div>
+      <section class="view" id="view-network" hidden>
+        <div class="controls netctl">
+          <label title="The pair of signals whose links are drawn">Signals <select id="family"></select></label>
+          <label title="Each signal has its own tree; hops are counted on this one">Tree of <select id="band"></select></label>
+          <label>Layout <select id="layout">
+            <option value="rings">Rings by hops</option>
+            <option value="map">World map</option>
+          </select></label>
+          <label title="Links held at whole numbers by the fixing"><input type="checkbox" id="show-held" checked> held links</label>
+          <label title="Links whose ambiguity is a real number"><input type="checkbox" id="show-float" checked> float links</label>
+          <label><input type="checkbox" id="show-labels" checked> names</label>
+        </div>
+        <div id="net-missing" class="hint" hidden></div>
+        <main id="main">
+          <section id="graph-pane">
+            <canvas id="graph"></canvas>
+            <div id="graph-key"></div>
+            <div id="tooltip" hidden></div>
+          </section>
+          <aside id="detail"></aside>
+        </main>
+        <section id="summary">
+          <h2>Over the run</h2>
+          <div id="summary-charts"></div>
+        </section>
+      </section>
+    </div>
+  </div>
+  <div id="legend" hidden>
+    <div class="legend-box">
+      <button id="legend-close" type="button" aria-label="Close">&times;</button>
+      <h2>What the page shows</h2>
+      <dl id="legend-list"></dl>
+    </div>
+  </div>
+</div>
+<script>{{ASSETS}}</script>
+<script id="nv-data" type="application/octet-stream" data-encoding="{{ENCODING}}">{{DATA}}</script>
+{{BLOCKS}}
+<script>{{JS}}</script>
+</body>
+</html>

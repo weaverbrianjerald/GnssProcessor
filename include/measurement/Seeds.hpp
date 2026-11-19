@@ -138,12 +138,12 @@ inline constexpr SeedMasks kFullSeedMask{
  * legacy terms in the order the pre-N6 copies subtracted them; the rest are the terms only the
  * full masks hold, so the legacy seeds keep their numbers bit for bit.
  */
-inline constexpr std::array<ObsEffect, 13> kSeedOrder{
+inline constexpr std::array<ObsEffect, 14> kSeedOrder{
     ObsEffect::Modeled,            ObsEffect::ReceiverClock,    ObsEffect::Troposphere,
     ObsEffect::SystemTimeOffset,   ObsEffect::TropoGradient,    ObsEffect::Ionosphere,
     ObsEffect::ReceiverCodeBias,   ObsEffect::SatelliteCodeBias,
     ObsEffect::RangeCorrection,    ObsEffect::SatellitePhaseBias, ObsEffect::SatelliteClock,
-    ObsEffect::SsrBias,            ObsEffect::PhaseColour,
+    ObsEffect::SsrBias,            ObsEffect::PhaseColour,        ObsEffect::ReceiverSatelliteCodeBias,
 };
 
 /**

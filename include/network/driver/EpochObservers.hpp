@@ -70,6 +70,9 @@
  *     source has run: the leveling harvest and the gap prune (SB_LEVELING), the T4 / T3
  *     refloats (SB_RAIM) and the phase-anchor carry re-reference (the datum block).  The
  *     wind-up arc trace reads the accumulators the epoch's models advanced; it shares no state.
+ *     The live record (networkLiveRecord) is the slot's last row: every disposition note and
+ *     every event of the epoch, the other rows' included, has been noted when it writes the
+ *     epoch's line.
  *
  * The order constraints within a slot (the table is walked top to bottom):
  *   - RosterTail: the parameters-as-armed table before the contributions-as-armed table
@@ -130,7 +133,7 @@ struct NetworkEpochObserverRow {
 };
 
 /// The number of rows of @ref kNetworkEpochObservers.
-inline constexpr std::size_t kNetworkEpochObserverCount = 26;
+inline constexpr std::size_t kNetworkEpochObserverCount = 27;
 
 /// The observers in spine order (defined in network/driver/EpochObservers.cpp).
 extern const std::array<NetworkEpochObserverRow, kNetworkEpochObserverCount> kNetworkEpochObservers;

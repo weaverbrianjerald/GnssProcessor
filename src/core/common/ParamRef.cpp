@@ -77,6 +77,7 @@ const char* paramFormName(ParamForm f) {
         case ParamForm::GloSlotIfb: return "slot";
         case ParamForm::North:      return "north";
         case ParamForm::East:       return "east";
+        case ParamForm::RxSat:      return "rx_sat";
     }
     return "?";
 }
@@ -247,6 +248,12 @@ ParamRef satCodeBiasIfRef(SatId sat, const SignalPair& pair) {
     return r;
 }
 
+ParamRef rxSatCodeBiasRef(SatId sat, SignalId code) {
+    ParamRef r = satCodeBiasRef(sat, code);
+    r.form     = ParamForm::RxSat;
+    return r;
+}
+
 ParamRef satPhaseBiasRef(SatId sat, SignalId phase) {
     ParamRef r;
     r.kind   = NetworkParamKind::SatPhaseBias;
@@ -346,7 +353,7 @@ ParamInstanceId paramInstanceOf(const ParamRef& ref, StationId station) {
             satellite();
             c.signal = ref.signal;
             if (ref.form == ParamForm::IfPair) c.signal_b = ref.signal_b;
-            break;
+            break;   // the rx_sat form carries the satellite and the code signal as the plain form does
         case PK::Ambiguity:
             satellite();
             switch (ref.form) {

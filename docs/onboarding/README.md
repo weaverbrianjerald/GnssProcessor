@@ -30,6 +30,7 @@ These pages are looked up, not read in order.
 | [Data files](data_files.md) | How RINEX files and products are located, downloaded and bootstrapped |
 | [Event legs](event_legs.md) | Resumed runs from one seed: the tool, the matched null, what a leg can be compared with |
 | [Where new code goes](where_new_code_goes.md) | The decision trees of the network producer and the real-time engine, at full length |
+| [Network dashboard](network_view.md) | One network run on one interactive page in layers (receivers, satellites, slips, stochastic model, ...): making it, making a run that can be viewed, comparing two runs, reading it; the live monitor that follows a running engine |
 | [CLAUDE.md history](claude_md_history.md) | Descriptive and historical text cut from `CLAUDE.md` |
 
 ## Suggested schedule

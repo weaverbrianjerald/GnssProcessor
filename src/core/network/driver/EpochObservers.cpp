@@ -22,6 +22,7 @@
 #include "network/solve/DatumGraph.hpp"
 #include "network/diag/FrameDiag.hpp"
 #include "network/emit/LedgerEmit.hpp"
+#include "network/diag/LiveRecord.hpp"
 #include "network/carry/LevelAuthority.hpp"
 #include "network/qc/Mdb.hpp"
 #include "network/qc/Vcf.hpp"
@@ -98,6 +99,8 @@ const std::array<NetworkEpochObserverRow, kNetworkEpochObserverCount> kNetworkEp
      "network/state/Entities.cpp", Slot::StashTail, &net::networkEntitiesReachSample},
     {"networkWindupArcsTrace", "the stations' wind-up accumulators per arc",
      "network/diag/WindupArcs.cpp", Slot::StashTail, &networkWindupArcsTrace},
+    {"networkLiveRecord", "the live monitor's record, one line per epoch (last: every note is in)",
+     "network/diag/LiveRecord.cpp", Slot::StashTail, &networkLiveRecord},
 }};
 
 void networkObserveEpoch(NetworkRun& run, const NetworkEpoch& ep, NetworkObserverSlot slot, EpochEvents& events) {

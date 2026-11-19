@@ -334,8 +334,9 @@ SH constraint or seams.
   within-epoch tier and `raim_withhold_sigma0` 6.0, clock runaway check, prefit census, topology,
   RHS attribution on trip, run manifest and epoch status, postfit traces, `emit_ura`,
   `emit_clock_disc`, the CB jump test with `mw_detect`, `cold_clock_seed`, the estimable block-Baarda
-  census (`block_baarda_estimable`, the one check that reports code multipath) and the readmit-seed
-  mirrors; `parallel_carry` true, with the seven identical-output stages of card PES
+  census (`block_baarda_estimable`, the one check that reports code multipath), the readmit-seed
+  mirrors and the live monitor's record (`trace_live_record`: `logs/network_live.jsonl`, one line per
+  epoch, which `scripts/netview/netview.py live` follows); `parallel_carry` true, with the seven identical-output stages of card PES
   (`parallel_station_normals`, `parallel_schur_columns`, `parallel_redundancy_census`, `parallel_carry_harvest`,
   `parallel_iono_traces`, `parallel_coupling_prepare`, `sbasis_values_first`).
   Response doctrine: adapt and EMIT within the detected epoch; a

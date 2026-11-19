@@ -10,8 +10,8 @@
  * ionosphere family; the re-inflations and their shared rule; the inputs of the
  * process-noise rules (elevations, azimuths, frozen pivots, overrides); then one
  * section per remaining family (receiver code bias, satellite code bias,
- * satellite phase bias, receiver phase bias, phase colour, satellite clock), the
- * satellite code-bias cache, the unresolvable and pending-reseed marks, and the
+ * satellite phase bias, receiver phase bias, phase colour, satellite clock,
+ * receiver-satellite code bias), the satellite code-bias cache, the unresolvable and pending-reseed marks, and the
  * gap-recovery edits.
  */
 
@@ -113,6 +113,7 @@ namespace GnssProcessor {
             case StateFamily::ReceiverPhaseBias: return receiver_phase_bias_indices_;
             case StateFamily::PhaseColour:       return phase_colour_indices_;
             case StateFamily::SatClock:          return sat_clock_indices_;
+            case StateFamily::RxSatCodeBias:     return rx_sat_code_bias_indices_;
         }
         throw std::logic_error("StateManager::indicesOf_: unknown StateFamily");
     }
@@ -1682,6 +1683,106 @@ namespace GnssProcessor {
 
             logger->debug("Removed sat clock state for {} at former index {}", key, rem_idx);
         }
+    }
+
+    // ===================================================================
+    // Receiver-satellite code-bias states (single-receiver filter): the
+    // receiver's deviation from the published satellite code bias, one per
+    // (satellite, raw code signal), keyed "<sat>|<code signal>".  Never pruned.
+    // ===================================================================
+
+    int StateManager::getRxSatCodeBiasIndex(const std::string& key) const {
+        auto it = rx_sat_code_bias_indices_.find(key);
+        return it != rx_sat_code_bias_indices_.end() ? static_cast<int>(it->second) : -1;
+    }
+
+    const std::map<std::string, size_t>& StateManager::getRxSatCodeBiasStates() const {
+        return rx_sat_code_bias_indices_;
+    }
+
+    size_t StateManager::addRxSatCodeBiasState(const std::string& key) {
+        const double sd = config_.getInitialStd().rx_sat_code_bias;
+        return addRxSatCodeBiasStateWithVariance_(key, 0.0, sd * sd, false);
+    }
+
+    size_t StateManager::addRxSatCodeBiasStateFromStore(const std::string& key, double value,
+                                                        double variance) {
+        return addRxSatCodeBiasStateWithVariance_(key, value, variance, true);
+    }
+
+    size_t StateManager::addRxSatCodeBiasStateWithVariance_(const std::string& key,
+                                                            double initial_value,
+                                                            double initial_variance,
+                                                            bool from_store) {
+        auto logger = log_manager_.getLogger("state_manager");
+        const auto existing = rx_sat_code_bias_indices_.find(key);
+        if (existing != rx_sat_code_bias_indices_.end()) return existing->second;
+        if (!(initial_variance > 0.0)) {
+            const double sd = config_.getInitialStd().rx_sat_code_bias;
+            logger->warn("addRxSatCodeBiasState: non-positive variance {} for {}; "
+                         "falling back to initial_std.rx_sat_code_bias^2 = {}",
+                         initial_variance, key, sd * sd);
+            initial_variance = sd * sd;
+        }
+
+        const size_t index = appendState(initial_value, initial_variance);
+        rx_sat_code_bias_indices_[key] = index;
+        ++rx_sat_cb_counters_.born;
+        if (from_store) ++rx_sat_cb_counters_.born_from_store;
+
+        const auto parts = StateKeys::parseRxSatCodeBiasKey(key);
+        logger->info("RSCB born {} {}{}: index {}, value {:+.4f} m, std {:.4f} m",
+                     parts ? parts->satellite : key, parts ? parts->signal : std::string(),
+                     from_store ? " (from the store)" : "", index, initial_value,
+                     std::sqrt(initial_variance));
+        return index;
+    }
+
+    std::size_t StateManager::resetRxSatCodeBiasStatesToPrior(const std::string& satellite) {
+        auto logger = log_manager_.getLogger("state_manager");
+        const double sd = config_.getInitialStd().rx_sat_code_bias;
+        const double prior_variance = sd * sd;
+
+        std::size_t n_reset = 0;
+        for (const auto& [key, raw_idx] : rx_sat_code_bias_indices_) {
+            const auto parts = StateKeys::parseRxSatCodeBiasKey(key);
+            if (!parts || parts->satellite != satellite) continue;
+            const auto idx = static_cast<Eigen::Index>(raw_idx);
+            if (idx >= state_vector_.size() || idx >= covariance_.rows()) {
+                logger->error("resetRxSatCodeBiasStatesToPrior: idx {} out of bounds for {}", idx, key);
+                continue;
+            }
+            const double prev_value = state_vector_(idx);
+            const double prev_std = std::sqrt(std::max(covariance_(idx, idx), 0.0));
+            covariance_.row(idx).setZero();
+            covariance_.col(idx).setZero();
+            covariance_(idx, idx) = prior_variance;
+            state_vector_(idx)    = 0.0;
+            rx_sat_cb_learned_.erase(key);
+            ++n_reset;
+            logger->info("RSCB reset {} {}: value {:+.4f} -> 0 m, std {:.4f} -> {:.4f} m",
+                         parts->satellite, parts->signal, prev_value, prev_std, sd);
+        }
+        if (n_reset > 0) {
+            rx_sat_cb_counters_.reset += static_cast<long long>(n_reset);
+            ++rx_sat_cb_counters_.reset_satellites;
+        }
+        return n_reset;
+    }
+
+    bool StateManager::markRxSatCodeBiasLearned(const std::string& key) {
+        if (!rx_sat_code_bias_indices_.count(key)) return false;
+        if (!rx_sat_cb_learned_.insert(key).second) return false;
+        ++rx_sat_cb_counters_.learned;
+        const auto parts = StateKeys::parseRxSatCodeBiasKey(key);
+        log_manager_.getLogger("state_manager")->info(
+            "RSCB learned {} {}", parts ? parts->satellite : key,
+            parts ? parts->signal : std::string());
+        return true;
+    }
+
+    bool StateManager::isRxSatCodeBiasLearned(const std::string& key) const {
+        return rx_sat_cb_learned_.count(key) > 0;
     }
 
     namespace {

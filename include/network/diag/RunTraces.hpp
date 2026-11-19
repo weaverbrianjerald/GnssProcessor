@@ -25,6 +25,8 @@
  * docs/rt_service_operations.md).
  */
 
+#include "network/diag/LiveRecord.hpp"   // NetworkLiveRecord, the live monitor's record
+
 #include <chrono>
 #include <cstddef>
 #include <filesystem>
@@ -668,6 +670,13 @@ namespace GnssProcessor {
         /// scraping the spdlog text.  Off by default (byte-identical when off).
         std::ofstream events_trace;
         const std::filesystem::path events_trace_path;   ///< path of network_events.csv
+        /// The live monitor's record (network.trace_live_record, network_live.jsonl): one
+        /// JSON line per processed epoch, flushed at each line.  Opened, with its header,
+        /// by networkLiveRecordOpen (it needs the station roster, which openAll lacks);
+        /// emitEpochStatus and emitEvent note into it, the observer networkLiveRecord writes
+        /// each line, closeAll writes a pending line and closes it.  Off by default: no
+        /// file, and every note returns at once (network/diag/LiveRecord.hpp).
+        NetworkLiveRecord live_record;
         /// Per-station ZWD trace (L7; network.trace_zwd): estimated ZWD, datum-conditioned
         /// formal σ and the carried flag, per present station each emitted epoch (the V7
         /// instrument).

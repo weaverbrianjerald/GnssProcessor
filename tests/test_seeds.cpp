@@ -921,10 +921,11 @@ TEST_F(SeedsTest, TheFullMasksSubtractEveryKnownTermButTheParameterBeingBorn) {
     // The ambiguity form: every term but the ambiguity (the phase clock with the clock).
     EXPECT_EQ(seedResidual(eq, kFullSeedMask.ambiguity, observed),
               observed - (all - worth[ObsEffect::Ambiguity]));
-    // Against the legacy forms, exactly the five terms only the full forms hold.
+    // Against the legacy forms, exactly the six terms only the full forms hold.
     double extra = 0.0;
     for (const ObsEffect e : {ObsEffect::RangeCorrection, ObsEffect::SatellitePhaseBias,
-                              ObsEffect::SatelliteClock, ObsEffect::SsrBias, ObsEffect::PhaseColour})
+                              ObsEffect::SatelliteClock, ObsEffect::SsrBias, ObsEffect::PhaseColour,
+                              ObsEffect::ReceiverSatelliteCodeBias})
         extra += worth[e];
     EXPECT_EQ(seedResidual(eq, kLegacySeedMask.residual, observed)
                   - seedResidual(eq, kFullSeedMask.residual, observed), extra);

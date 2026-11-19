@@ -3423,6 +3423,10 @@ namespace GnssProcessor {
         if (network_config_.trace_events)
             log->info("Network: per-event QC trace ENABLED — network_events.csv logs every "
                       "tiered QC action (T1-T6, GATE/SIGMA0/PIVOT/RETRO) in long format.");
+        // The live monitor's record (measure-only; network/diag/LiveRecord.hpp).  The run
+        // logs its own line when the stream opens.
+        network_config_.trace_live_record =
+            jval<bool>(json, "network.trace_live_record", "trace_live_record", false);
         // The frame observatory of the eq34 chain datum and the pre-hold phase-bias trace
         // (measure-only; network/solve/ChainFrame.hpp).
         network_config_.trace_chain_datum =

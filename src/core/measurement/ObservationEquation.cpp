@@ -233,6 +233,21 @@ bool addSatelliteCodeBias(Row& r) {
     return true;
 }
 
+/// The receiver-satellite code bias (uncombined raw code rows only): +1 on the state of the
+/// row's satellite and code signal, when the single-receiver filter carries one.  No term on a
+/// phase row or on an iono-free pair, and none where the state is absent (the network views
+/// have no such column, so the term adds nothing there).
+bool addReceiverSatelliteCodeBias(Row& r) {
+    if (!r.wants(ObsEffect::ReceiverSatelliteCodeBias) || !r.cfg.estimateRxSatCodeBias()
+        || r.is_phase || !r.is_uncombined || r.is_pair)
+        return true;
+    if (!r.needSat()) return false;
+    const auto code = canonicalSignal(r.sat->sys, r.ref_type);
+    if (!code) return r.fail(ObsFault::UnmappedIdentity);
+    addTerm(r, ObsEffect::ReceiverSatelliteCodeBias, rxSatCodeBiasRef(*r.sat, *code), 1.0);
+    return true;
+}
+
 /// The per-satellite signal phase bias (uncombined phase rows, network producer), with the
 /// receiver phase bias that splits it when the eq34 datum is armed.  The receiver phase bias
 /// appears on exactly the rows whose satellite phase bias exists, with the sign of the
@@ -383,6 +398,7 @@ const char* obsEffectName(ObsEffect effect) {
         case ObsEffect::Ionosphere:         return "ionosphere";
         case ObsEffect::ReceiverCodeBias:   return "receiver_code_bias";
         case ObsEffect::SatelliteCodeBias:  return "satellite_code_bias";
+        case ObsEffect::ReceiverSatelliteCodeBias: return "receiver_satellite_code_bias";
         case ObsEffect::SatellitePhaseBias: return "satellite_phase_bias";
         case ObsEffect::SatelliteClock:     return "satellite_clock";
         case ObsEffect::SsrBias:            return "ssr_bias";
@@ -416,7 +432,9 @@ ObservationEquation observationEquation(const ObsInput& in, const PppObservation
     addSystemTimeOffset(r);
     if (!addIonosphere(r)) return eq;
     addReceiverCodeBias(r);
-    if (!addSatelliteCodeBias(r) || !addSatellitePhaseBias(r) || !addSatelliteClock(r)) return eq;
+    if (!addSatelliteCodeBias(r) || !addReceiverSatelliteCodeBias(r) || !addSatellitePhaseBias(r)
+        || !addSatelliteClock(r))
+        return eq;
     addSsrBias(r);
     if (!addAmbiguity(r)) return eq;
     eq.usable = true;

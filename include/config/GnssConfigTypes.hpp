@@ -3939,6 +3939,13 @@ namespace GnssProcessor {
         /// (default): erase, as before.  Read only where the event response is armed (the float vehicle with
         /// @c network.carry_zwd_in_block).
         double zwd_event_inflate_m{ 0.0 };
+        /// Emit @c network_live.jsonl (network/diag/LiveRecord.hpp): one JSON line per
+        /// processed epoch, flushed at each line, for the live monitor
+        /// (scripts/netview/netview.py live): how the epoch ended, the post-fit sigma0 of code
+        /// and phase, per receiver and per satellite post-fit residual summaries, the wet delay,
+        /// the receiver clock sigma, the emitted clocks, the held-out user's error and the
+        /// epoch's events.  Measure-only; off by default, byte-identical when off (no file).
+        bool trace_live_record{ false };
         bool trace_events{ false };       ///< Emit @c network_events.csv (L2): one structured long-format row per discrete QC action (tiers T1 IF-slip … T6 clock-monitor, plus GATE / SIGMA0 / PIVOT / RETRO), in place of scraping spdlog with regular expressions for which satellite, station or arc was acted on and when.  Pivot handover and retro-bump arming are logged nowhere else.  Rows are written even on epochs that are later withheld (they are part of the disposition record).  O(QC events); off by default, byte-identical when off (no new file).
         /// Replay a product file that has no S contract line.  Such a
         /// wire (from before the S contract line) replays with the default emitter (no
@@ -4588,6 +4595,31 @@ namespace GnssProcessor {
         PerBand, ///< One ambiguity per (sat, signal): the original layout.
         NlWl     ///< Narrow-lane + wide-lane state pair per (sat, band-pair).
     };
+
+    /**
+     * @brief The default primary bands of ambiguity resolution, per constellation
+     *        (@c estimation.ambiguity_resolution.primary_bands).
+     *
+     * The two bands whose signals carry the wide-lane and N_1 step of the resolver,
+     * as two RINEX band digits: the bands the phase-bias products give biases for.
+     * The key is the constellation name as @c systemName spells it.
+     *
+     * @return GPS "12" (L1, L2), Galileo "15" (E1, E5a), BeiDou "26" (B1I, B3I).
+     */
+    inline std::map<std::string, std::string> defaultArPrimaryBands() {
+        return { { "GPS", "12" }, { "Galileo", "15" }, { "BeiDou", "26" } };
+    }
+
+    /**
+     * @brief True when a @c primary_bands entry is two distinct RINEX band digits.
+     *
+     * @param bands The entry's value, for example "12".
+     * @return True for exactly two characters, both ASCII digits, not equal.
+     */
+    inline bool isValidArPrimaryBandPair(const std::string& bands) {
+        return bands.size() == 2 && bands[0] >= '0' && bands[0] <= '9'
+            && bands[1] >= '0' && bands[1] <= '9' && bands[0] != bands[1];
+    }
 
     /**
      * @brief Enumeration for satellite velocity interpolation.
@@ -5371,6 +5403,15 @@ namespace GnssProcessor {
         /// constant over hours; 1e-10 allows ~0.05 mm of drift per 30 s.
         double sat_bias{ 1e-10 };
 
+        /// Receiver-satellite code bias (m*m/s): the random-walk spectral density of the
+        /// receiver's deviation from the published satellite code bias, one state per
+        /// (satellite, raw code signal), applied on every predict to every state of the
+        /// family whether or not its satellite is in view.  Single-receiver filter only,
+        /// when @c estimation.estimate_rx_sat_code_bias is on.  The deviation is a hardware
+        /// property of the receiver and satellite pair that is constant over days; 1e-10
+        /// allows about 3 mm in a day.  Config key: @c rx_sat_code_bias_q.
+        double rx_sat_code_bias{ 1e-10 };
+
         /// Per-satellite signal code bias (m*m/s).  Network producer
         /// (PPP_RTK_Network) only: the estimable satellite code-bias (OSB) state
         /// when @c network.estimate_sat_code_bias is on.  Satellite code hardware
@@ -5429,6 +5470,7 @@ namespace GnssProcessor {
         double tropo_gradient{ 1e-3 };     ///< Initial tropo gradient standard deviation (m).
         double phase_clock{ 1e3 };          ///< Initial phase clock offset standard deviation (m).
         double sat_bias{ 10.0 };              ///< Initial per-satellite signal bias standard deviation (m).
+        double rx_sat_code_bias{ 0.15 };      ///< Initial receiver-satellite code-bias standard deviation (m) per signal: the measured per-satellite spread of the float wide lane (0.095 to 0.138 cycle) over 0.773 cycle per metre.  Single-receiver filter only.
         double sat_phase_bias{ 10.0 };        ///< Initial per-satellite signal phase bias standard deviation (m); PPP_RTK_Network only.
         double sat_clock{ 1000.0 };           ///< Initial per-satellite clock standard deviation (m); PPP_RTK_Network only (loose; Δδtˢ against the a-priori product clock).
         double clock_rate{ 1.0 };             ///< Initial receiver clock-rate standard deviation (m/s).

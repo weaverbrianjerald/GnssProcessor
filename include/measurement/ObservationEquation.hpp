@@ -11,7 +11,8 @@
  *
  *     predicted = modeled + range correction + receiver clock + phase clock + wet troposphere
  *               + troposphere gradients + inter-system bias + slant ionosphere
- *               + receiver code bias + satellite code bias + satellite phase bias
+ *               + receiver code bias + satellite code bias + receiver-satellite code bias
+               + satellite phase bias
  *               + satellite clock + SSR bias (+ ambiguity (+ phase colour)).
  *
  * @ref GnssProcessor::observationEquation "observationEquation" returns that sum as a list of @ref GnssProcessor::ObsAddend "ObsAddend", in the order of the
@@ -118,6 +119,7 @@ enum class ObsEffect : std::uint8_t {
     Ionosphere,         ///< The slant ionosphere (+alpha on code, -alpha on phase).
     ReceiverCodeBias,   ///< The receiver code bias (code rows; the resolver's coefficient).
     SatelliteCodeBias,  ///< The satellite code bias (code rows; @ref kSatBiasSign).
+    ReceiverSatelliteCodeBias, ///< The receiver's deviation from the published satellite code bias (uncombined raw code rows; +1).
     SatellitePhaseBias, ///< The satellite phase bias, with the receiver phase bias (phase rows).
     SatelliteClock,     ///< The satellite clock (@ref kSatClockPartial).
     SsrBias,            ///< The SSR satellite bias as a known term (no parameter).
@@ -126,7 +128,7 @@ enum class ObsEffect : std::uint8_t {
 };
 
 /// Number of @ref ObsEffect enumerators.
-inline constexpr std::size_t kObsEffectCount = 15;
+inline constexpr std::size_t kObsEffectCount = 16;
 
 /**
  * @brief A set of effects: the terms a caller asks @ref observationEquation to build.

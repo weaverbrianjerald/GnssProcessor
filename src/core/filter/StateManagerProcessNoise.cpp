@@ -78,6 +78,9 @@ namespace GnssProcessor {
         addSatelliteRandomWalkQ_(Q, StateFamily::SatBias, pn, dt);
         addSatelliteRandomWalkQ_(Q, StateFamily::SatPhaseBias, pn, dt);
         addSatelliteRandomWalkQ_(Q, StateFamily::SatClock, pn, dt);
+        // The receiver-satellite code bias (single receiver) takes its random walk on every
+        // predict, for the states of satellites out of view as well; it has no pivot to skip.
+        addSatelliteRandomWalkQ_(Q, StateFamily::RxSatCodeBias, pn, dt);
         addSystemTimeOffsetQ_(Q, pn, dt);
         addAmbiguityQ_(Q, pn, dt, state_size);
 

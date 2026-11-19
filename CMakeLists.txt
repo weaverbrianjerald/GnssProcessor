@@ -104,6 +104,8 @@ add_library(gnss_core STATIC
     src/core/filter/StateManagerProcessNoise.cpp
     src/core/filter/StateManagerLayout.cpp
     src/core/filter/StateManagerFamilies.cpp
+    src/core/filter/RxSatCodeBiasStore.cpp
+    src/core/filter/RxSatCodeBiasLearning.cpp
     src/core/filter/ImuIntegrator.cpp
     src/core/filter/AmbiguityResolver.cpp
     src/core/filter/AmbiguityResolverSetup.cpp
@@ -344,6 +346,7 @@ add_library(gnss_core STATIC
     src/core/network/carry/ZwdEdge.cpp
     src/core/network/diag/ShHealth.cpp
     src/core/network/diag/Leveling.cpp
+    src/core/network/diag/LiveRecord.cpp
     src/core/network/diag/StashStatus.cpp
     src/core/network/ar/ProducerAr.cpp
     src/core/network/ar/RingFix.cpp
@@ -747,6 +750,10 @@ add_executable(gnss_tests
     tests/test_ils_decorrelated_partial.cpp
     tests/test_wl_only_ffr.cpp
     tests/test_nl_search_row.cpp
+    tests/test_ar_float_widelane.cpp
+    tests/test_ar_wl_branch.cpp
+    tests/test_ar_extra_signals.cpp
+    tests/test_ar_hold_release.cpp
     tests/test_fix_and_hold.cpp
     tests/test_signal_math.cpp
     tests/test_geometry.cpp
@@ -772,6 +779,7 @@ add_executable(gnss_tests
     tests/test_station_info_seasonal.cpp
     tests/test_otl_sif_source.cpp
     tests/test_otl_translation.cpp
+    tests/test_eot20_phase_convention.cpp
     tests/test_antenna_radome_fallback.cpp
     tests/test_antenna_eccentricity.cpp
     tests/test_station_marker_to_arp.cpp
@@ -836,6 +844,14 @@ add_executable(gnss_tests
     tests/test_state_family.cpp
     tests/test_state_manager_process_noise.cpp
     tests/test_state_manager_families.cpp
+    tests/test_rx_sat_code_bias_family.cpp
+    tests/test_rx_sat_code_bias_key.cpp
+    tests/test_rx_sat_code_bias_ref.cpp
+    tests/test_rx_sat_code_bias_equation.cpp
+    tests/test_rx_sat_code_bias_difference.cpp
+    tests/test_rx_sat_code_bias_store.cpp
+    tests/test_rx_sat_code_bias_learning.cpp
+    tests/test_rx_sat_code_bias_config.cpp
     tests/test_slant_ionosphere_presence.cpp
     tests/test_kalman_complete_reset.cpp
     tests/test_kalman_pivot_detectors.cpp
@@ -846,6 +862,7 @@ add_executable(gnss_tests
     tests/network/test_network_run_end.cpp
     tests/network/test_network_entities_records.cpp
     tests/network/test_network_epoch_observers.cpp
+    tests/network/test_network_live_record.cpp
     tests/network/test_network_sat_clock_event.cpp
     tests/network/test_network_iftd_sat_centre.cpp
     tests/network/test_network_apriori_clock_track.cpp

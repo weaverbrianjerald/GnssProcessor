@@ -245,6 +245,12 @@ namespace GnssProcessor {
               "same walk as the census, event-only (3.5 events/epoch measured); standing "
               "invariant #7 - it is what makes a gate's decouple/re-couple edges visible at all "
               "(13 silent re-coupling edges recovered on FT63 leg-19)" },
+            { true,
+              nc.trace_live_record,
+              Tier::ON, false, "network.trace_live_record",
+              "one JSON line per epoch, flushed, that the live monitor follows "
+              "(scripts/netview/netview.py live); products byte-identical on the three goldens, "
+              "values equal to the run's traces, no measured cost" },
             // --- ON tier: cold-start, datum and clock knobs ---------------------------
             { network_phase_datum_eq34_ || network_phase_datum_prioritized_,
               network_station_pd_pin_aware_,

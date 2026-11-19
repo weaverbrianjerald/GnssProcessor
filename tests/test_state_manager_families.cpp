@@ -51,6 +51,7 @@ std::string addOne(StateManager& sm, StateFamily f) {
         case StateFamily::ReceiverPhaseBias: sm.addReceiverPhaseBiasState("GPS_RPB_L1C", 0.0); return "GPS_RPB_L1C";
         case StateFamily::PhaseColour:       sm.addPhaseColourState("G05", 0.25);        return "G05";
         case StateFamily::SatClock:          sm.addSatClockState("G05|SC", 0.0);         return "G05|SC";
+        case StateFamily::RxSatCodeBias:     sm.addRxSatCodeBiasState("G05|C1W");        return "G05|C1W";
     }
     return "";
 }
