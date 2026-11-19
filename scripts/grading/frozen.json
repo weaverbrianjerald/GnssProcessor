@@ -385,5 +385,144 @@
    ],
    "sha256": "23b78a6ee548050c9d43b21f347085eafe1e7f749ea3e99bd7ea299eb5aee661"
   }
+ ],
+ "truth.py": [
+  {
+   "root": "grader_fixtures_2026-11-19b",
+   "args": [
+    "runend",
+    "h40_off"
+   ],
+   "sha256": "4f6ba3baefe07a52eb496949d587a58d49a39ba15775d40ac1c6a013be8ed861"
+  },
+  {
+   "root": "grader_fixtures_2026-11-19b",
+   "args": [
+    "runend",
+    "h40_off",
+    "--view",
+    "shell"
+   ],
+   "sha256": "2f2e5185b459fdc3e7f3ecaaba4151d74c4fb251273e73e576892f9e78811394"
+  },
+  {
+   "root": "grader_fixtures_2026-11-19b",
+   "args": [
+    "cover",
+    "h40_off",
+    "simb_mode1h40",
+    "--stride",
+    "10",
+    "--order",
+    "seed0"
+   ],
+   "sha256": "00df37e9d28210dc0720194daa1245a8e701dc1574c488d98bd78e87c12b24fa"
+  },
+  {
+   "root": "grader_fixtures_2026-11-19b",
+   "args": [
+    "cover",
+    "h40_off",
+    "simb_mode1h40",
+    "--stride",
+    "10",
+    "--order",
+    "sorted"
+   ],
+   "sha256": "00df37e9d28210dc0720194daa1245a8e701dc1574c488d98bd78e87c12b24fa"
+  },
+  {
+   "root": "grader_fixtures_2026-11-19b",
+   "args": [
+    "classes",
+    "h40_off",
+    "simb_mode1h40",
+    "--list",
+    "10"
+   ],
+   "sha256": "5d9970ecdfb83735b18a14706ba985e175dde75f036d7f76262c7805a1d684c9"
+  }
+ ],
+ "compare_runs.py": [
+  {
+   "root": "grader_fixtures_2026-11-19b",
+   "args": [
+    "compare",
+    "n46c_n146",
+    "s2_n146",
+    "--view",
+    "legacy"
+   ],
+   "sha256": "adfbaaad6b00af5198f155e3b6722d1bcfa492c14e07fe24e7c1d06765a8950f"
+  },
+  {
+   "root": "grader_fixtures_2026-11-19b",
+   "args": [
+    "compare",
+    "n46c_n146",
+    "s2_n146"
+   ],
+   "sha256": "a0bdba87beed093fdf2e4e1fd87fc9a0fd2d6cd96312d2cdbb68484bab353d9f"
+  },
+  {
+   "root": "grader_fixtures_2026-11-19b",
+   "args": [
+    "members",
+    "n46c_n146",
+    "--view",
+    "awk"
+   ],
+   "sha256": "9a21599d87c9cadd0b3e2b71028166662b01c903daecf797b9737c91826c9b6d"
+  },
+  {
+   "root": "grader_fixtures_2026-11-19b",
+   "args": [
+    "members",
+    "n46c_n146"
+   ],
+   "sha256": "5cc771be9e9f99a2ccb923cb9cc985b9a9371ed79e46e86f1b0d8bc3e22cda00"
+  }
+ ],
+ "code_signature.py": [
+  {
+   "root": "grader_fixtures_2026-11-19b",
+   "args": [
+    "links",
+    "s2_n146",
+    "d24_n146",
+    "--doy-tow0",
+    "172800",
+    "--combined",
+    "{fixtures}/combined_mode_28.txt",
+    "--pairs",
+    "s2_n146:d24_n146",
+    "--view",
+    "exact"
+   ],
+   "sha256": "31eb2031df61f14df79de686dd7e09e4e1c09df0df89da35fb7d867c49604d60"
+  },
+  {
+   "root": "grader_fixtures_2026-11-19b",
+   "args": [
+    "links",
+    "s2_n146",
+    "d24_n146",
+    "--doy-tow0",
+    "172800",
+    "--combined",
+    "{fixtures}/combined_mode_28.txt"
+   ],
+   "sha256": "c179784bbcc234088265a8fbbb46f2552d2aa6122a75cac895a386ae699b7b8e"
+  },
+  {
+   "root": "grader_fixtures_2026-11-19b",
+   "args": [
+    "arcs",
+    "h1_off",
+    "--view",
+    "exact"
+   ],
+   "sha256": "a2812c66afb7dad90dbc95780d4abfc822c0fd86027ee2d6bd83af434dc7a04b"
+  }
  ]
 }
