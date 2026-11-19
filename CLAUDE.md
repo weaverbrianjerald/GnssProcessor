@@ -290,23 +290,37 @@ card list `docs/refound/CARDS.md`). Every network arm is a copy of one:
 ```
 config/golden/golden_field_refound.json   # field DOY-129, 58 sta, WTZZ00DEU held-out consumer
 config/golden/golden_sim_refound.json     # sim truth bed, 60 sta (runs/simnet60_quiet_col_24h), SZZ000SIM
-config/golden/golden_field_bds_refound.json # third lineage: the field golden + BeiDou B1I/B3I (card BDG)
+config/golden/golden_field_bds_refound.json # third lineage: the frozen field file + BeiDou B1I/B3I (card BDG)
+config/golden/golden_{field,sim}_rf0hv18.json # FROZEN lineages: the float-vehicle posture before 2026-11-19
 python scripts/make_golden_config.py --verify   # at session start and after ANY ledger change
 ```
 
-Posture, one on two beds: GPS L1/L2 + Galileo E1/E5a, dual frequency; self-contained (satellite
-GF code bias pinned at broadcast T_GD, no GIM, no Kaula prior); free per-LOS slant ionosphere (no
-SH); float vehicle (`ambiguity_vehicle: float_kf` + `phase_datum_held_basis`) on the
-phase-leveling carry with gauge projection, the prioritized phase datum and the exact coupling
-update; Q3 clock anchor and clock step test; phase-bias hold; gross-LOS screen with its 12 m cold
-bound; accumulated wind-up with restart refloat. Field golden only: ocean tide loading from the SIF
-registry and the GPS IIF / IIR noon-turn attitude (the sim fixture carries neither). No lanes, F3,
-SH constraint or seams.
+Posture, one on two beds, since 2026-11-19 (card IRM: the author's ruling that the integer-fixing
+configuration is the main reference): GPS L1/L2 + Galileo E1/E5a, dual frequency; self-contained
+(satellite GF code bias pinned at broadcast T_GD, no GIM, no Kaula prior); free per-LOS slant
+ionosphere (no SH); float vehicle (`ambiguity_vehicle: float_kf`) on the phase-leveling carry with
+gauge projection and the exact coupling update, with the eq34 chain as the phase datum (pair family,
+event rows, carry shift, receiver phase bias in the block) and network integer fixing ring by ring
+(`network.ring_fix.*`, card NRF: odds gate, certain order, held-first, pairs E:L1C/L5Q and G:L1C/L2W,
+settled flags, entry re-validation, near-null monitor); the single Galileo network
+(`network.phase_families`); the bad-epoch response (card BER); exact epoch time; GPS band 1 on L1C
+first; Q3 clock anchor and clock step test; gross-LOS screen with its 12 m cold bound; accumulated
+wind-up with restart refloat. Off with the chain: the held basis, the prioritized datum and the
+phase-bias hold (card IRDU stage B: the hold freezes the cold estimate). Field golden only: ocean
+tide loading from the SIF registry and the GPS IIF / IIR noon-turn attitude (the sim fixture carries
+neither). Sim golden only: the ring fix's truth audit (`network.ring_fix.truth_root`). The held-out
+consumer stays float and undifferenced. No lanes, F3, SH constraint or seams. The float-vehicle
+posture before that date (held basis, prioritized datum, phase-bias hold; the paragraph:
+`docs/onboarding/claude_md_history.md`) is kept generated and verified as the frozen lineages
+`golden_{field,sim}_rf0hv18`; the tools whose arms are defined on it read those (`scenario_matrix.py`,
+`prm_ab.py`, `clock_level/scb_arms.py`, `clock_level/sfr_calib.py`).
 
 - **The BeiDou golden is a separate lineage** (card BDG, 2026-11-02: the author's course B of card BDSB): generated
   from the field golden's output plus `processing.active_systems` with BeiDou, its B1I / B3I priorities,
   `network.second_band_admission` and `network.n3c_wire_per_signal`. The GPS + Galileo goldens stay the primary posture
   and the base of every arm; the sim bed has no BeiDou. Its baseline is card BDSB's arm `runs_nom/_rap_bdsc_c6`.
+  Since 2026-11-19 (card IRM) its base is the frozen field file `golden_field_rf0hv18`, so it keeps the float-vehicle
+  posture, unchanged, until the author rules on BeiDou under the chain (BeiDou has no ring-fix pair).
 - **Generated, never hand-edited.** `make_golden_config.py` builds them from
   `config/golden/golden_manifest.json` and `docs/CONFIG_promotion_ledger.json`, and FAILS when an
   in-regime RECOMMEND_ON/SCOPED knob is unarmed without a documented exception. A knob is armed only
@@ -329,7 +343,9 @@ SH constraint or seams.
   wind-up convention (accumulated, `nominal-wu93` frame): a mismatch is ambiguity-absorbed and
   invisible to σ̂₀.
 - **Interim hold.** `emit_pb_hold_phase_clock` is valid only with a precise a priori clock product
-  (card LAH) until the self-contained clock level lands (cards SCL, NBP).
+  (card LAH) until the self-contained clock level lands (cards SCL, NBP). Since 2026-11-19 the
+  phase-bias hold and this transfer are off in the reference files (the chain runs them off) and on
+  in the frozen lineages and the BeiDou lineage.
 - **Armed QC and observability** (in both goldens; verdicts in the ledger): RAIM with attribution,
   within-epoch tier and `raim_withhold_sigma0` 6.0, clock runaway check, prefit census, topology,
   RHS attribution on trip, run manifest and epoch status, postfit traces, `emit_ura`,
@@ -345,7 +361,9 @@ SH constraint or seams.
   `docs/record/refound/RKD_retired_key_deletion_2026-10-14.md`): `sh_health_gate`, the old lane layer
   (`mw_wl.*`, `lane_carry.*`; lanes return only as card AB3's new build) and `emit_pb_filter*`.
 
-**Baseline: `_rf0hv18` (2026-11-07), the first on the AVX2 build, after the 2026-11-07 arming rule and the review builds (card RF0HV18B, sections "Arming under the 2026-11-07 rule" and 6; card AV2 section 7).** Runs `D:/GnssProcessorSupport/runs_avx2def/_rap_srn_{f6,s6,b6}` (exe `gnss_processor_srnint.exe`, sha256[:16] 64543d2d89994cae, branch `int/srn-builds`): field WTZZ00DEU 0.058 0.013 0.021 0.012 0.017 0.013 m by hour; sim SZZ000SIM 0.197 0.109 0.028 0.019 0.029 0.018 m; BeiDou lineage 0.033 0.015 0.020 0.019 0.020 0.015 m; census keys `c18a` (field, 16 sites) and `s18a` (sim). The same build on the goldens before the review keys: `_rap_rf0hv18_{field6,sim6,bds6}` (census `c18f`, `s18`), every user within 0.10 mm of the SSE2 build of those keys. An SSE2 build (`wt_build.ps1 -Arch SSE2`) reproduces the earlier pairs; the earlier pairs (`_rf0hv17`, `_rf0hv16`) and their paragraphs: `docs/onboarding/claude_md_history.md`. ⚠ Every golden arm is GPS + Galileo and 2 to 6 times slower. Constellation-blind graders pool the systems: `rapid_arm.py score` counts E5a as band 5, `ftc_step_attrib.py` R3 needs `--systems G,E`, and `census6h.py` / `simcensus6h.py` default to GPS-only bases (use `gcensus.py`, or `SIMCENSUS_BASE` = the wire's arm).
+**Baseline of the reference files: OWED (2026-11-19, card IRM).** The reference files took the integer-fixing posture on 2026-11-19 and have no 6 h baseline yet; it comes from the night 6 h set of card IRM (`D:/GnssProcessorSupport/gates/day_program_2026-11-19/adoption/NIGHT_health_set.md`). Until then compare an arm only against a same-exe control of the same reference file. The day check (2 h, exe `gnss_processor_irm.exe`, sha256[:16] f50e95d27304f1fb, runs `D:/GnssProcessorSupport/runs_irm/_rap_irm_{f129_2,s_2}` with the frozen control `_rap_irmc_f129_2`): every epoch emitted; sim truth audit 0 wrong of 95,810 held link-epochs; held share in hour 2 field 76 % Galileo and 72 % GPS, sim 92 % and 89 %; the built-in float user WTZZ00DEU 2.30 0.32 m by hour (control 0.058 0.013 m, `_rf0hv18` to the millimetre), SZZ000SIM 0.79 0.30 m. ⚠ The built-in user is float and the posture runs the phase-bias hold off, so it is metre-level in hour 1 (as on the five-day days): the reference's user numbers are not comparable with `_rf0hv18`, and the user's type is the author's decision.
+
+**Baseline of the frozen lineages `golden_{field,sim}_rf0hv18` and of the BeiDou lineage: `_rf0hv18` (2026-11-07), the first on the AVX2 build, after the 2026-11-07 arming rule and the review builds (card RF0HV18B, sections "Arming under the 2026-11-07 rule" and 6; card AV2 section 7).** Runs `D:/GnssProcessorSupport/runs_avx2def/_rap_srn_{f6,s6,b6}` (exe `gnss_processor_srnint.exe`, sha256[:16] 64543d2d89994cae, branch `int/srn-builds`): field WTZZ00DEU 0.058 0.013 0.021 0.012 0.017 0.013 m by hour; sim SZZ000SIM 0.197 0.109 0.028 0.019 0.029 0.018 m; BeiDou lineage 0.033 0.015 0.020 0.019 0.020 0.015 m; census keys `c18a` (field, 16 sites) and `s18a` (sim). The same build on the goldens before the review keys: `_rap_rf0hv18_{field6,sim6,bds6}` (census `c18f`, `s18`), every user within 0.10 mm of the SSE2 build of those keys. An SSE2 build (`wt_build.ps1 -Arch SSE2`) reproduces the earlier pairs; the earlier pairs (`_rf0hv17`, `_rf0hv16`) and their paragraphs: `docs/onboarding/claude_md_history.md`. ⚠ Every golden arm is GPS + Galileo and 2 to 6 times slower. Constellation-blind graders pool the systems: `rapid_arm.py score` counts E5a as band 5, `ftc_step_attrib.py` R3 needs `--systems G,E`, and `census6h.py` / `simcensus6h.py` default to GPS-only bases (use `gcensus.py`, or `SIMCENSUS_BASE` = the wire's arm).
 
 ### Grading traps that still apply
 

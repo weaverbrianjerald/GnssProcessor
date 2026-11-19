@@ -5,10 +5,10 @@
 - **id:** IRM
 - **topic:** config-ledger
 - **status:** open
-- **summary:** The author's ruling of 2026-11-19 ("Yes, make it main") applied key by key through the ledger and the generator, in form B. The configuration of the five-day read (the eq34 chain as the phase datum, network integer fixing ring by ring, the single Galileo network, the bad-epoch response, exact epoch time, GPS band 1 on L1C first; the held-basis datum and the phase-bias hold off) becomes `golden_field_refound` and `golden_sim_refound`; the earlier posture stays generated as `golden_field_rf0hv18` and `golden_sim_rf0hv18`; the BeiDou lineage is re-based on the frozen field file and does not change. 66 ledger rows changed, two posture log rows, no loader default. Pre-registered: a day health check (10-epoch smokes, three 2 h runs) and a night 6 h set. The baseline is owed until the night set has run.
+- **summary:** The author's ruling of 2026-11-19 ("Yes, make it main") applied key by key through the ledger and the generator, in form B. The configuration of the five-day read (the eq34 chain as the phase datum, network integer fixing ring by ring, the single Galileo network, the bad-epoch response, exact epoch time, GPS band 1 on L1C first; the held-basis datum and the phase-bias hold off) becomes `golden_field_refound` and `golden_sim_refound`; the earlier posture stays generated as `golden_field_rf0hv18` and `golden_sim_rf0hv18`; the BeiDou lineage is re-based on the frozen field file and does not change. 66 ledger rows changed, two posture log rows, no loader default. Day health check 2026-11-19 (engine f50e95d27304f1fb): three smokes and three 2 h runs exit 0 with every epoch emitted; the sim truth audit 0 wrong of 95 810 held link-epochs; held share in hour 2 field 76 % and 72 %, sim 92 % and 89 % (Galileo, GPS); the built-in float user metre-level in hour 1 (field 2.30 m, control 0.058 m), below the stop bar, a look-here item for the author. The baseline is owed until the night 6 h set has run.
 - **source:** the author's ruling of 2026-11-19 on the question "Make the integer-fixing setup the main reference configuration?"; the analyst's inventory `D:/GnssProcessorSupport/gates/day_program_2026-11-19/adoption/ADOPTION_inventory.md` (checked row by row against the ledger, the generator and the record); the five-day read `D:/GnssProcessorSupport/gates/nrf_reads_2026-11-18/NRF_five_days.md`; the configuration `D:/GnssProcessorSupport/runs_nom/_rap_ad_n147/arm.json`; branch `adopt/integer-reference-2026-11-19`, cut from `int/2026-11-19` at `cf983dc`.
 
-**Outcome.** Pre-registered 2026-11-19. The primary reference files take the integer-fixing configuration of the five-day read, key for key apart from run settings and two measure-only traces (the near-null monitor and the live record); the earlier posture is kept generated, equal in content to the files of that morning. Every new value comes through a ledger row with a three-part note and the manifest; no loader default moves, so no snapshot fingerprint moves, and the new files are fresh convergence only. The configuration had never run on these two beds: the health check below decides whether the change stands.
+**Outcome.** Pre-registered 2026-11-19. The primary reference files take the integer-fixing configuration of the five-day read, key for key apart from run settings and two measure-only traces (the near-null monitor and the live record); the earlier posture is kept generated, equal in content to the files of that morning. Every new value comes through a ledger row with a three-part note and the manifest; no loader default moves, so no snapshot fingerprint moves, and the new files are fresh convergence only. The configuration had never run on these two beds; the day health check passed its bars (every epoch emitted, no wrong hold on the simulator), with the built-in float user metre-level in hour 1 as the item to look at.
 
 ## 1. What changes
 
@@ -97,3 +97,33 @@ Night (specified, not run by day): `D:/GnssProcessorSupport/gates/day_program_20
 ## 5. Results
 
 Results are appended below under dated headings.
+
+### 2026-11-19: the day health check
+
+Engine `D:/GnssProcessorSupport/worktrees/adopt1119/build/x64-Release/gnss_processor_irm.exe`, sha256[:16]
+`f50e95d27304f1fb` (branch tip `6569e55`); runs under `D:/GnssProcessorSupport/runs_irm/`; full tables in
+`D:/GnssProcessorSupport/gates/day_program_2026-11-19/adoption/CHECKPOINT_2.md`.
+
+Smokes (10 epochs nominal): the field file (`_rap_irm_f_smk`), the sim file (`_rap_irm_s_smk`) and the BeiDou file
+(`_rap_irm_b_smk`) exit 0 and emit every epoch (9, 9 and 10) with no error line and no refusal. The POSTURE tallies equal
+the offline check: field ON 24 of 24 and SCOPED 72 of 73, sim 24 of 24 and 68 of 70, BeiDou 25 of 25 and 53 of 55, the
+gaps being the documented exceptions. The ring fix and the chain arm as configured on the field and sim files; the
+BeiDou file runs the float posture with the phase-bias hold, unchanged.
+
+2 h runs: all exit 0 and emit 240 of 240 epochs, none withheld.
+
+| run | user 3D median, hour 1 / hour 2 | ring fix | held share in hour 2 (Galileo, GPS) |
+|---|---|---|---|
+| field, new file (`_rap_irm_f129_2`) | 2.297 / 0.320 m | 694 decided, 552 held at the end, 62 100 held link-epochs | 76.0 %, 71.6 % |
+| field, frozen file (`_rap_irmc_f129_2`, control) | 0.058 / 0.013 m | not armed | |
+| sim, new file (`_rap_irm_s_2`) | 0.793 / 0.298 m | 857 decided, 675 held at the end, 95 810 held link-epochs | 91.8 %, 88.7 % |
+
+The control equals the `_rf0hv18` baseline's first two hours to the millimetre. Sim truth audit: held link-epochs right
+95 810, WRONG 0; decisions WRONG 0 (the bar). The chain's frame census shows no fractional realized step on either bed.
+
+The stop rule is not met: no crash, no refusal, every epoch emitted, the user below 1 m in hour 2, no wrong hold on the
+sim. Look here: the built-in user is float and undifferenced, and this posture runs the phase-bias hold off, so it is
+metre-level in hour 1 (field 2.30 m, rising to 2.65 m at 20 to 30 min and below 0.5 m from 70 min; the same
+configuration's built-in user read 0.65 to 1.08 m in hour 1 on the five-day days, DOY 143 to 147 of 2026). The
+reference's user numbers are therefore not comparable with `_rf0hv18`, and the built-in user's type is the author's
+decision. The baseline stays owed until the night set.

@@ -150,3 +150,18 @@ Use the wrapper — it encodes every trap below:
 Replaced on 2026-11-07 by the `_rf0hv18` paragraph (the AVX2 build). Text as it stood:
 
 **Baseline: card BOF (2026-10-28, `docs/record/refound/BOF_built_off_follow_through_2026-10-28.md`), after card MRF, on card GAD's Galileo posture (2026-10-13).** Pair `runs/_rf0hv17_{field,sim}6` (exe `gnss_processor_bofarm.exe`, sha256[:16] 91143c81de9a9547): field WTZZ00DEU 0.059 0.012 0.023 0.012 0.017 0.012 m by hour; sim products identical to `_rf0hv16_sim6`. The armed keys of cards GAL2, GFC, MRF and BOF, the earlier pairs (`_rf0hv16`, `_rf0hv15`), the census against GPS only and the open items: the cards, and the paragraph at full length in `docs/onboarding/claude_md_history.md`. ⚠ Every golden arm is GPS + Galileo and 2 to 6 times slower. Constellation-blind graders pool the systems: `rapid_arm.py score` counts E5a as band 5, `ftc_step_attrib.py` R3 needs `--systems G,E`, and `census6h.py` / `simcensus6h.py` default to GPS-only bases (use `gcensus.py`, or `SIMCENSUS_BASE` = the wire's arm).
+
+## Posture paragraph of CLAUDE.md, 2026-11-07 to 2026-11-19
+
+Replaced on 2026-11-19 by the paragraph of the integer-fixing posture (card IRM,
+`docs/refound/IRM_integer_reference_main_2026-11-19.md`). It still describes the frozen lineages
+`config/golden/golden_{field,sim}_rf0hv18.json` and the BeiDou lineage. Text as it stood:
+
+Posture, one on two beds: GPS L1/L2 + Galileo E1/E5a, dual frequency; self-contained (satellite
+GF code bias pinned at broadcast T_GD, no GIM, no Kaula prior); free per-LOS slant ionosphere (no
+SH); float vehicle (`ambiguity_vehicle: float_kf` + `phase_datum_held_basis`) on the
+phase-leveling carry with gauge projection, the prioritized phase datum and the exact coupling
+update; Q3 clock anchor and clock step test; phase-bias hold; gross-LOS screen with its 12 m cold
+bound; accumulated wind-up with restart refloat. Field golden only: ocean tide loading from the SIF
+registry and the GPS IIF / IIR noon-turn attitude (the sim fixture carries neither). No lanes, F3,
+SH constraint or seams.
