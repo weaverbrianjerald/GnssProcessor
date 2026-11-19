@@ -578,6 +578,10 @@ add_executable(gnss_tests
     tests/network/test_network_emit.cpp
     tests/test_sh_ionosphere.cpp
     tests/network/test_network_product_io.cpp
+    tests/network/test_support_solution_epoch_builder.cpp
+    tests/network/test_stream_flag_roundtrip.cpp
+    tests/network/test_stream_counter_roundtrip.cpp
+    tests/network/test_stream_legend_tokens.cpp
     tests/network/test_network_combined_sigma.cpp
     tests/test_rinex_nav_parser.cpp
     tests/test_brdc_clock_apriori.cpp
@@ -640,6 +644,10 @@ add_executable(gnss_tests
     tests/network/test_shdev_carry.cpp
     tests/network/test_rx_cb_carry.cpp
     tests/network/test_rx_pb_carry.cpp
+    tests/network/test_ncq_rx_phase_bias_response.cpp
+    tests/network/test_support_carried_family_states.cpp
+    tests/network/test_ncq_code_bias_response.cpp
+    tests/network/test_ncq_leveling_response.cpp
     tests/network/test_network_phase_datum.cpp
     tests/test_eq34_reattach_hygiene.cpp
     tests/test_signal_integrity.cpp
@@ -663,6 +671,7 @@ add_executable(gnss_tests
     tests/network/test_pivot_election.cpp
     tests/test_datum_graph_census.cpp
     tests/network/test_station_block_audit.cpp
+    tests/network/test_run_traces_open_set.cpp
     tests/test_card4_emit_rebase.cpp
     tests/network/test_clock_emit_rebase.cpp
     tests/network/test_clock_anchor.cpp
@@ -687,6 +696,7 @@ add_executable(gnss_tests
     tests/network/test_station_factor_config.cpp
     tests/network/test_level_authority.cpp
     tests/test_config_extends.cpp
+    tests/test_config_member_dump.cpp
     tests/test_ambiguity_initial_std.cpp
     tests/test_retired_config_keys.cpp
     tests/test_sd_ewl_prereduce.cpp
@@ -805,6 +815,8 @@ add_executable(gnss_tests
     tests/network/test_network_contributions.cpp
     tests/network/test_service_mode_clock_refusals.cpp
     tests/network/test_loader_message_conditions.cpp
+    tests/network/test_config_asked_vs_in_effect_network.cpp
+    tests/network/test_config_asked_vs_in_effect_derived.cpp
     tests/network/test_run_manifest_toggles.cpp
     tests/network/test_network_knobs_lane_emit.cpp
     tests/network/test_network_knobs_epoch_driver.cpp
@@ -831,9 +843,11 @@ add_executable(gnss_tests
     tests/network/test_carry_zwd_in_block.cpp
     tests/network/test_zwd_time_link_float_vehicle.cpp
     tests/network/test_zwd_couple_edge.cpp
+    tests/network/test_ncq_zwd_response.cpp
     tests/network/test_bad_epoch_response.cpp
     tests/network/test_carry_iono_in_block.cpp
     tests/network/test_carry_rx_clock_in_block.cpp
+    tests/network/test_ncq_rx_clock_isb_response.cpp
     tests/test_resume_frame_restore.cpp
     tests/test_resume_pb_seam_mark.cpp
     tests/test_resume_border_restore.cpp
