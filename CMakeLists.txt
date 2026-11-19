@@ -574,6 +574,9 @@ add_executable(gnss_tests
     tests/test_sh_ionosphere.cpp
     tests/network/test_network_product_io.cpp
     tests/network/test_support_solution_epoch_builder.cpp
+    tests/network/test_stream_flag_roundtrip.cpp
+    tests/network/test_stream_counter_roundtrip.cpp
+    tests/network/test_stream_legend_tokens.cpp
     tests/network/test_network_combined_sigma.cpp
     tests/test_rinex_nav_parser.cpp
     tests/test_brdc_clock_apriori.cpp
