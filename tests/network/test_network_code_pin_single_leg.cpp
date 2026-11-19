@@ -14,8 +14,9 @@
  *
  * These cases pin: nothing changes with the key off or without the time link; the leg loss
  * opens the edge and writes one row on the surviving column at its pre-edge value; an open
- * edge keeps its target; the surviving column stays within the bound the row allows over
- * 60 epochs of a biased residual, while the unarmed row walks it; the return closes the
+ * edge keeps its target; the unarmed walk follows its rate law, step = x w / (w + 1/var);
+ * the surviving column stays within the bound the row allows over 60 epochs of a biased
+ * residual, while the unarmed row walks it; the return closes the
  * edge with no re-seed and both time links on the pre-edge combinations; a whole-satellite
  * departure does not open an edge; the kept-epoch site declares each edge once and
  * persists the open ones; the loader and the run-end line.
@@ -312,6 +313,61 @@ TEST(NetworkCodePinSingleLeg, TheHeldColumnStaysInsideTheRowsBound) {
     const double walked = run(false);
     EXPECT_LE(std::abs(held - kHeldC1C), b * wb / (w + wb) + 1e-9);
     EXPECT_GT(std::abs(walked - kHeldC1C), 0.10);   // the unarmed row walks it by decimetres
+}
+
+// The rate law of the unarmed walk: with one leg left and nothing else informing the
+// surviving column, folding the all-ones row at target 0 into the carried prior moves the
+// column toward zero by step = x * w / (w + 1/var) each epoch, where var = sigma_prev^2 + q*dt
+// is the predicted prior variance (q = 1e-10 m^2/s, dt = 30 s, the code-bias carry).  The
+// observed DOY 146 steps sit at 1.0025 to 1.0062 times this law (964 of 964 toward zero);
+// the recursion here, with no data rows, reproduces it exactly.  Armed, the step is zero.
+TEST(NetworkCodePinSingleLeg, TheUnarmedWalkFollowsTheRateLaw) {
+    NetworkEstimator est;
+    const auto keys = registerRoster(est, {{"E04", {"C1C"}}, {"E05", {"C1C", "C5Q"}}});
+    const Eigen::Index c1 = est.codeBiasColumn("E04", "C1C");
+    const double w = NetworkSbasis::kCodeBiasGaugeWeight;
+    ASSERT_DOUBLE_EQ(w, 1.0e3);
+    const double q = 1e-10, dt = 30.0;
+    const auto run = [&](bool armed, std::vector<double>& steps) {
+        Harness h;
+        lastKeptBothLegs(h);
+        h.leg.armed = armed;
+        double x = kHeldC1C, sigma2 = 0.0051 * 0.0051;   // the simulator's carried sigma
+        for (int k = 0; k < 60; ++k) {
+            const auto rows = h.build(est, keys);
+            const Eigen::Index r = ifPinRow(rows, c1);
+            EXPECT_GE(r, 0);
+            const double var = sigma2 + q * dt;
+            const double hz = rows.H(r, c1), z = rows.z(r);
+            const double info = 1.0 / var + w * hz * hz;
+            const double x_new = (x / var + w * hz * z) / info;
+            if (!armed) {
+                const double law = x * w / (w + 1.0 / var);
+                EXPECT_NEAR(x - x_new, law, 1e-12 * std::abs(law) + 1e-15) << "epoch " << k;
+            }
+            steps.push_back(x - x_new);
+            x = x_new;
+            sigma2 = 1.0 / info;
+            h.code_bias_prev["E|C1C"]["E04"] = x;
+            h.code_bias_prev["E|C5Q"].erase("E04");
+            h.code_bias_ifpin_pair = h.cb_ifpin;
+            h.code_bias_ifpin_pair["E05"] = {"C1C", "C5Q"};
+            h.leg.open.clear();
+            for (const auto& [sat, rec] : rows.pin_leg)
+                if (rec.step == Step::Opened || rec.step == Step::Held) h.leg.open[sat] = rec.edge;
+        }
+        return x;
+    };
+    std::vector<double> off_steps, on_steps;
+    const double walked = run(false, off_steps);
+    const double held = run(true, on_steps);
+    // First step at the simulator's 5.1 mm sigma: 2.5 % of the value (the 2.4 % seen on E04).
+    EXPECT_NEAR(off_steps.front() / kHeldC1C, 0.0254, 0.0005);
+    for (const double s : off_steps) EXPECT_LT(s, 0.0);   // every step toward zero (x < 0)
+    EXPECT_GT(walked, kHeldC1C);
+    EXPECT_LT(walked, 0.0);
+    for (const double s : on_steps) EXPECT_NEAR(s, 0.0, 1e-12);   // rounding of the fold only
+    EXPECT_NEAR(held, kHeldC1C, 1e-10);
 }
 
 // The re-coupling edge: the parked leg back on the same pair with no previous value of its
