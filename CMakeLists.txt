@@ -666,6 +666,7 @@ add_executable(gnss_tests
     tests/network/test_pivot_election.cpp
     tests/test_datum_graph_census.cpp
     tests/network/test_station_block_audit.cpp
+    tests/network/test_run_traces_open_set.cpp
     tests/test_card4_emit_rebase.cpp
     tests/network/test_clock_emit_rebase.cpp
     tests/network/test_clock_anchor.cpp
