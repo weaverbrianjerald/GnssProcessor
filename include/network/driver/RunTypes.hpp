@@ -1633,8 +1633,9 @@ struct StationAssembly {
     /// Fold-deferred realized targets of the seed-round path
     /// (docs/SPEC_eq34_seed_round.md §3.4): (ambiguity key, realized target m, pin
     /// innovation y m) for every pin whose target the fold computed because the state
-    /// was absent at election time.  Drained serially after the consume into
-    /// @c ctx.carry.eq34_prev_target for accepted stations.  Without this feedback the
+    /// was absent at election time.  Drained serially after the consume into the arcs'
+    /// @c eq34_seed_realized for accepted stations, which the next election reads as the
+    /// pins' previous targets.  Without this feedback the
     /// next election would read a provisional 0, compute a spurious km-scale pin move
     /// every epoch, and permanently re-reference the (sat, σ).  |y| ≤ λ/2 by
     /// construction of std::round; the consume asserts it into the run counter.  Empty

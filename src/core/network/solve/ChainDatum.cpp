@@ -287,6 +287,9 @@ struct ChainElection {
     std::map<std::tuple<ChainGroupKey, std::size_t, std::string>, std::pair<std::string, std::string>> arc_keys;
     std::map<ChainStationBand, std::string> new_rx_parent;   ///< receiver band -> its parent satellite
     std::map<std::string, std::string> new_sat_root;          ///< satellite band -> its component's root
+    /// Band -> the datum receiver of its largest component at this election, to the band's remembered datum receiver
+    /// (datum_rx) when the baselines advance; a band with no elected component keeps its last one.
+    std::map<ChainGroupKey, std::string> new_datum_rx;
     // This epoch's pin targets (to eq34_prev_target) and the carry S-transformation shift maps
     // collected by the shift walks: the step per (satellite, signal), per (station, constellation,
     // signal) and per (station, receiver phase-bias key).
@@ -302,6 +305,9 @@ struct ChainElection {
     int n_pins = 0, gauge_dim = 0;
     // The tree edges kept across a row gap while their carry lives (extend-only): replaces the arcs' retained edges.
     std::set<std::pair<int, std::string>> new_retained_edges;
+    /// Satellite band -> the parent station of a tree edge kept across a row gap (extend-only): written by
+    /// retainGapEdges, joined to this epoch's anchors when the baselines advance.
+    std::map<std::string, std::string> retained_anchor;
     /// The bands elected so far at this election ("<constellation key>|<signal>"): a cascade's third band reads its
     /// pair's trees of this election from @ref this_epoch_anchor and @ref new_rx_parent when they are here, else from
     /// the last election's maps (network.ring_fix.cascade_tree).
@@ -1209,6 +1215,15 @@ PinAsBuilt asBuilt(const PinDraft& d) {
                       d.seed_rounded, d.frame_shiftable};
 }
 
+/// The previous target of the pin of arc (station, @p arc_amb, the arc's own key), as this election reads it: the pin
+/// audit's fold-realized seed-round target where the last epoch's audit recorded one (the pin was declared with its
+/// target deferred), else the target the last election wrote; null when the arc was no pin.
+const double* chainPrevTarget(const ChainElection& el, int station, const std::string& arc_amb) {
+    if (const double* realized = net::getArcAmb(el.arc_rows, station, arc_amb, &net::ArcState::eq34_seed_realized))
+        return realized;
+    return net::getArcAmb(el.arc_rows, station, arc_amb, &net::ArcState::eq34_prev_target);
+}
+
 /// The seed-round target of the pin of arc (ri, amb; @p amb the arc's own key) that has no carry-round target: the arc's
 /// frozen target when it has one, else lambda*round of the value its station's state holds, else (the
 /// state is not born yet) a deferral to the fold.  Writes the target and the seed facts of @p d and
@@ -1226,8 +1241,7 @@ void draftSeedRoundTarget(ChainElection& el, const ChainBand& band, std::size_t 
     // (station, amb)'s previously realized target unchanged (on the same host: pinmove 0, no
     // step, no reref) and round only on a first realization.  Re-rounding every epoch ratchets
     // the invariant carry (13.7).
-    const double* ptf = net::getArcAmb(el.arc_rows, static_cast<int>(ri), amb,
-                                       &net::ArcState::eq34_prev_target);
+    const double* ptf = chainPrevTarget(el, static_cast<int>(ri), amb);
     if (ptf != nullptr) {
         d.target = *ptf;
         d.seed_rounded = true;
@@ -1351,8 +1365,7 @@ void draftPinStep(ChainElection& el, const ChainBand& band, const ChainComponent
     } else {
         // Same station: its float was hard-pinned at last epoch's target, so the displacement is
         // exactly the target difference (no carry noise involved).
-        const double* pt = net::getArcAmb(el.arc_rows, static_cast<int>(ri), k.arc,
-                                          &net::ArcState::eq34_prev_target);
+        const double* pt = chainPrevTarget(el, static_cast<int>(ri), k.arc);
         d.pinmove = d.target - (pt != nullptr ? *pt : 0.0);
     }
     // Seed-round bookkeeping: a deferred pin's target is decided at the fold, so no frame step is
@@ -1505,7 +1518,7 @@ void applyKeptRow(ChainElection& el, const ChainBand& band, const ChainComponent
             return;
         }
     }
-    const double* prev = net::getArcAmb(el.arc_rows, key.first, k.arc, &net::ArcState::eq34_prev_target);
+    const double* prev = chainPrevTarget(el, key.first, k.arc);
     if (prev == nullptr) { ++cnt.eq34_kept_not_target; return; }
     const ArcLifeStamp* at_pin = net::getArcAmb(el.arc_rows, key.first, k.arc, &net::ArcState::eq34_pin_life);
     if (at_pin == nullptr) { ++cnt.eq34_kept_not_life; return; }
@@ -1837,7 +1850,7 @@ void applySlipRow(ChainElection& el, System sys, const ChainBand& band, std::siz
     else if (band.lambda_m > 0.0 && wholeCycles(d.pinmove / band.lambda_m)) ++cnt.eq34_sl_asbuilt_whole;
     else                       ++cnt.eq34_sl_asbuilt_frac;
     const IncumbentEdge inc = incumbentEdgeOf(el, band, ri, sat, k.band);
-    const double* prev = net::getArcAmb(el.arc_rows, static_cast<int>(ri), k.arc, &net::ArcState::eq34_prev_target);
+    const double* prev = chainPrevTarget(el, static_cast<int>(ri), k.arc);
     d.as_built = asBuilt(d);
     d.held = true;
     d.released = true;
@@ -2042,8 +2055,7 @@ void traceTreeEdge(ChainElection& el, const ChainFamily& fam, const ChainBand& b
     // unless an event row decided the edge).
     const PinAsBuilt ab = asBuilt(d);
     o.target_m = d.target;
-    if (const double* pt = net::getArcAmb(el.arc_rows, static_cast<int>(ri), k.arc,
-                                          &net::ArcState::eq34_prev_target))
+    if (const double* pt = chainPrevTarget(el, static_cast<int>(ri), k.arc))
         o.prev_target_m = *pt;
     o.carry_m = d.carry_val;
     o.pinmove_m = d.pinmove;
@@ -2535,7 +2547,7 @@ void noteDeseats(ChainElection& el, const ChainFamily& fam, const ChainGraph& cg
         o.child = vertexKey(static_cast<int>(child));
         o.parent = vertexKey(seed.sat_is_child ? rv : sv);
         o.lambda_m = band.lambda_m;
-        if (const double* prev = net::getArcAmb(el.arc_rows, key.first, key.second, &net::ArcState::eq34_prev_target))
+        if (const double* prev = chainPrevTarget(el, key.first, key.second))
             o.prev_target_m = *prev;
         o.cause = cause;
         o.band_latched = latched;
@@ -2619,7 +2631,8 @@ void tallyUntiedMoves(ChainElection& el, const ChainGraph& cg, const ChainFamily
 
 /// Elect one family: its graph, its incumbent seed, its components with their datum receivers
 /// and forests, then per band the pins and the shift walk of every component (and, in a pair
-/// family, the band's extension), and the band's remembered datum receiver.  The band loop is
+/// family, the band's extension), and the datum receiver the band will remember (written when
+/// the baselines advance).  The band loop is
 /// outside the component loop, so a family whose bands' graphs coincide records its rows and
 /// counts band by band, each in the order a one-band family has.
 void electFamily(ChainElection& el, const ChainGroups& groups, const ChainFamily& fam) {
@@ -2647,9 +2660,7 @@ void electFamily(ChainElection& el, const ChainGroups& groups, const ChainFamily
         if (fam.pair())
             extendBand(el, fam, cg, static_cast<int>(b), seeds.band[b], chain_rank, station_rank, walk);
         if (el.slip_row) noteDeseats(el, fam, cg, b, seeds.slipped[b], walk);
-        if (!plan.best_datum_rx.empty())
-            net::put(el.entities.constellations, fam.sys, &net::ConstellationState::channels,
-                     fam.bands[b].signal, &net::ChannelState::datum_rx) = plan.best_datum_rx;
+        if (!plan.best_datum_rx.empty()) el.new_datum_rx[fam.bands[b].key] = plan.best_datum_rx;
         el.elected_bands.insert(fam.bands[b].key);
     }
 }
@@ -2835,7 +2846,8 @@ void applyCarryShift(ChainElection& el) {
 /// I2 (de Jonge §3.5 extend-only): before the wholesale swap, merge
 /// back the identity of any tree edge that was not seen this epoch but
 /// whose phase-leveling memory (local_carry) is still alive: its
-/// sat-side parent (this_epoch_anchor), receiver-side parent
+/// sat-side parent (retained_anchor, joined to this_epoch_anchor when the
+/// baselines advance), receiver-side parent
 /// (new_rx_parent), component root (new_sat_root) and pinned integer
 /// (new_prev_target).  A momentary row gap then does not count as a
 /// dead arc.  The edge sits inert in the incumbent maps (never seeded,
@@ -2855,7 +2867,8 @@ void retainGapEdges(ChainElection& el) {
     const net::SatSignalTable& sig_rows = el.sig_rows;
     const net::ArcTable& arc_rows = el.arc_rows;
     std::vector<NetStation>& stations = el.stations;
-    auto& this_epoch_anchor = el.this_epoch_anchor;
+    const auto& this_epoch_anchor = el.this_epoch_anchor;
+    auto& retained_anchor = el.retained_anchor;
     auto& new_rx_parent = el.new_rx_parent;
     auto& new_sat_root = el.new_sat_root;
     auto& new_prev_target = el.new_prev_target;
@@ -2891,7 +2904,7 @@ void retainGapEdges(ChainElection& el) {
             const std::string arc_amb = aliveArcAmb(gi->second, sid.sat.sys, net::satKey(sid.sat),
                                                     net::signalKey(sid.signal));
             if (arc_amb.empty()) continue;  // dead ⇒ drop
-            this_epoch_anchor.emplace(amb, sta);
+            retained_anchor.emplace(amb, sta);
             new_retained_edges.emplace(static_cast<int>(gi->second), arc_amb);
             const std::string* sr = net::getSig(sig_rows, amb, &net::SatSignalState::eq34_sat_root);
             if (sr != nullptr)
@@ -2915,11 +2928,12 @@ void retainGapEdges(ChainElection& el) {
             new_retained_edges.emplace(static_cast<int>(gi->second), arc_amb);
           }
         });
-        // Pinned integers ({receiver idx, "sat_signal"} → target).
+        // Pinned integers ({receiver idx, "sat_signal"} → target): the previous targets as chainPrevTarget reads them.
         for (const auto& [aid, arow] : arc_rows) {
-            if (!arow.eq34_prev_target) continue;
+            const std::optional<double>& prev = arow.eq34_seed_realized ? arow.eq34_seed_realized : arow.eq34_prev_target;
+            if (!prev) continue;
             const std::pair<int, std::string> k = net::arcPair(aid);
-            const double tgt = *arow.eq34_prev_target;
+            const double tgt = *prev;
             if (new_prev_target.count(k)) continue;
             if (aid.sat == SatId{} || aid.signal == SignalId{}) continue;   // a row that names no arc
             if (!carryAlive(static_cast<size_t>(k.first), net::satKey(aid.sat), net::signalKey(aid.signal)))
@@ -2949,6 +2963,9 @@ void advanceChainBaselines(ChainElection& el) {
     auto& new_retained_edges = el.new_retained_edges;
     const bool eq34_extend_only = el.extend_only;
     const bool eq34_longevity = el.longevity || el.held_by_life;   // the arc life's rising test reads the snapshot
+    // The tree edges kept across a row gap join this epoch's anchors (the epoch's event, which the emitter and the
+    // oracle pin read, holds both), and the anchors become the incumbent forest.
+    for (const auto& [amb, sta] : el.retained_anchor) this_epoch_anchor.emplace(amb, sta);
     net::assignSig(entities, &net::SatSignalState::anchor_incumbent, this_epoch_anchor);
     // The receiver-side parents are replaced wholesale (receiver band -> sat, keyed by the band's text in the table).
     net::dropAll(entities.stations, &net::StationState::signals,
@@ -2956,8 +2973,16 @@ void advanceChainBaselines(ChainElection& el) {
     for (const auto& [key, sat] : new_rx_parent)
         net::put(entities.stations, StationId{key.station}, &net::StationState::signals, chainBandText(key.band),
                  &net::StationSignalState::eq34_rx_parent) = sat;
+    // Each band's remembered datum receiver: the receiver of its largest component at this election; a band with no
+    // elected component keeps its last one.
+    for (const auto& [band, rx] : el.new_datum_rx)
+        net::put(entities.constellations, band.sys, &net::ConstellationState::channels, band.signal,
+                 &net::ChannelState::datum_rx) = rx;
     net::assignSig(entities, &net::SatSignalState::eq34_sat_root, new_sat_root);
     net::assignArcAmb(entities, &net::ArcState::eq34_prev_target, new_prev_target);
+    // The pin audit's fold-realized seed-round targets were this election's previous targets; the targets just
+    // written replace them.
+    net::dropAll(entities.arcs, &net::ArcState::eq34_seed_realized);
     // The pinned lives of this election's tree edges, replaced wholesale like the targets (an arc
     // that is no tree edge now drops out); written only with the kept row armed.
     if (el.kept_row)
@@ -3478,14 +3503,15 @@ void networkEq34PinAudit(NetworkRun& run, const NetworkEpoch& ep, const EpochAss
             pa.miss_row[grp]   += t[2];
             if (est_index_of[i] >= 0) landed_ep[grp] += t[0];
         }
-        // Feed each accepted station's fold-realized targets into the next
-        // epoch's pinmove baseline (seed-round, §3.4).  Without this the election
+        // Hand each accepted station's fold-realized targets to the next election,
+        // which reads them as the pins' previous targets (the seed round's pinmove
+        // baseline, §3.4).  Without this the election
         // reads the provisional 0 and computes a spurious km-scale step every
         // epoch, re-referencing the (sat,σ) permanently.  A dropped station's pin
         // did not land; its arc re-elects from scratch in the next epoch.
         if (est_index_of[i] >= 0) {
             for (const auto& [amb, tgt, y] : asm_res[i].pin_seed_targets) {
-                net::putArcAmb(entities, static_cast<int>(i), amb, &net::ArcState::eq34_prev_target) = tgt;
+                net::putArcAmb(entities, static_cast<int>(i), amb, &net::ArcState::eq34_seed_realized) = tgt;
                 ++ctx.counters.seed_round_deferred;
                 const double ay = std::abs(y);
                 if (ay > ctx.counters.seed_round_max_abs_y_m)

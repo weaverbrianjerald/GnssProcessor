@@ -8644,6 +8644,26 @@ namespace GnssProcessor {
                           "that row keeps the pinned target.");
                 network_phase_datum_eq34_event_rows_.erase(merge_split_entry);
             }
+            // The chain's tree memory is not written to the snapshot either (eq34_tree_seen and eq34_pin_life start
+            // empty on every run), so a resumed leg runs the rows that read it without it until it is rebuilt.
+            if (!network_config_.state_snapshot_path.empty()) {
+                const auto armed = [&](const char* e) {
+                    return std::find(network_phase_datum_eq34_event_rows_.begin(),
+                                     network_phase_datum_eq34_event_rows_.end(), e)
+                           != network_phase_datum_eq34_event_rows_.end();
+                };
+                if (armed("returning") || armed("slip"))
+                    log->warn("Network: network.phase_datum_eq34_event_rows entr{} with network.state_snapshot_path: "
+                              "the vertices seen in earlier trees are not written to the snapshot, so after a resume "
+                              "a vertex seen only before it reads as never seen until it is in a tree again.",
+                              armed("returning") && armed("slip") ? "ies 'returning' and 'slip'"
+                              : armed("returning") ? "y 'returning'" : "y 'slip'");
+                if (armed("kept"))
+                    log->warn("Network: network.phase_datum_eq34_event_rows entry 'kept' with "
+                              "network.state_snapshot_path: the tree edges' pinned lives are not written to the "
+                              "snapshot, so at the first election after a resume the row finds no pinned life and "
+                              "leaves every kept edge to the as-built rule.");
+            }
             if (!network_phase_datum_eq34_event_rows_.empty() && !network_phase_datum_eq34_) {
                 log->warn("Network: network.phase_datum_eq34_event_rows is set but "
                           ".phase_datum_eq34 is OFF - the event rows are inert without the chain, so "

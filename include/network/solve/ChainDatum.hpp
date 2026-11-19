@@ -46,7 +46,7 @@
  *   - and hence before est.reset() / est.beginEpoch() (inside
  *     networkAssemblyRegisterColumns_), networkPassB_ and networkStashCarry.
  * Inside the function, the extend-only merge runs before the sticky baselines are
- * replaced (the assignment of `anchor_incumbent` from `this_epoch_anchor`).
+ * replaced (its retained anchors join `this_epoch_anchor`, which becomes `anchor_incumbent`).
  */
 
 #include "network/driver/RunTypes.hpp"   // NetStation / PhaseDatumCandidates

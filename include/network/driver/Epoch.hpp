@@ -201,7 +201,9 @@ struct EpochEvents {
     };
     /// The phase-datum election.
     struct PhaseDatum {
-        std::map<std::string, std::string> this_epoch_anchor;   ///< "<sat>_<sig>" -> the anchor station's name.
+        /// "<sat>_<sig>" -> the anchor station's name: the anchors elected this epoch and, under the chain with
+        /// network.phase_datum_eq34_extend_only, the tree edges kept across a row gap (joined at the election's end).
+        std::map<std::string, std::string> this_epoch_anchor;
         std::map<std::string, int> eq34_epoch_declared;         ///< Per group: the declared gauge dimension.
         std::map<std::string, int> eq34_epoch_bridged;          ///< Per group: the shared-side bridge pins.
         std::set<std::pair<std::string, std::string>> eq34_reref;  ///< (sat, signal) re-referenced by the chain election.

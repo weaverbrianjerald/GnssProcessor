@@ -1190,9 +1190,13 @@ void lFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
 }
 
 // Records EQT and EQR: (station index, "sat_signal") -> the pin target / the retained edge,
-// written and restored wholesale.
+// written and restored wholesale.  EQT holds the targets the next election reads: the
+// election's, with the pin audit's fold-realized seed-round targets over them, so a resumed
+// leg restores both into the election's memory.
 void eqtToSnapshot(const NetworkRunContext& ctx, NetworkStateSnapshot& snap) {
     for (const auto& [key, tgt] : arcAmbMap(ctx.entities.arcs, &R::eq34_prev_target))
+        snap.eq34_prev_target[key] = tgt;
+    for (const auto& [key, tgt] : arcAmbMap(ctx.entities.arcs, &R::eq34_seed_realized))
         snap.eq34_prev_target[key] = tgt;
 }
 void eqtFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
@@ -1219,6 +1223,8 @@ const std::vector<FieldDecl> kArcFields = {
      &arcRows<&R::gl_hold_amb>},
     {"eq34_prev_target", "eq34_prev_target", Persist::Record, "EQT", "", &eqtToSnapshot,
      &eqtFromSnapshot, &arcRows<&R::eq34_prev_target>},
+    {"eq34_seed_realized", "", Persist::Latch, "", "",   // no former member: the pin audit's hand-off to the next election
+     nullptr, nullptr, &arcRows<&R::eq34_seed_realized>},
     {"eq34_pin_life", "", Persist::ColdStart, "", "",   // no former member: new with the kept row of the chain's event table
      nullptr, nullptr, &arcRows<&R::eq34_pin_life>},
     {"eq34_retained_edge", "eq34_retained_edges", Persist::Record, "EQR", "", &eqrToSnapshot,

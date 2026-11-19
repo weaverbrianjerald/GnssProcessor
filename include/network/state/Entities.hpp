@@ -968,6 +968,15 @@ struct ArcState {
     /// Replaced wholesale each election.  Was @c NetworkCarryState::eq34_prev_target.
     /// Record EQT.
     std::optional<double> eq34_prev_target;
+    /// The fold-realized target of a seed-round pin (network.phase_datum_eq34_seed_round): the
+    /// election declared the pin with its target deferred, the fold rounded the value the
+    /// pre-pass had just seeded, and the pin audit records it here for an accepted station.
+    /// The next election reads it in place of @ref eq34_prev_target (the pin's previous target
+    /// is the realized one) and drains it when it replaces the targets, so the pin audit never
+    /// writes the election's memory.  Its values reach the snapshot inside record EQT, over
+    /// @ref eq34_prev_target.  Latch: set after one epoch's consume, consumed by the next
+    /// election; empty unless the seed round is armed.
+    std::optional<double> eq34_seed_realized;
     /// The arc's life stamp at the election that last pinned it as a tree edge, one entry per
     /// pinned edge of every band (the band extension's included).  The kept row of the chain's
     /// event table reads it to tell an arc whose pinned life continues from one that was
