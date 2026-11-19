@@ -636,7 +636,10 @@ add_executable(gnss_tests
     tests/network/test_shdev_carry.cpp
     tests/network/test_rx_cb_carry.cpp
     tests/network/test_rx_pb_carry.cpp
+    tests/network/test_ncq_rx_phase_bias_response.cpp
     tests/network/test_support_carried_family_states.cpp
+    tests/network/test_ncq_code_bias_response.cpp
+    tests/network/test_ncq_leveling_response.cpp
     tests/network/test_network_phase_datum.cpp
     tests/test_eq34_reattach_hygiene.cpp
     tests/test_signal_integrity.cpp
@@ -823,9 +826,11 @@ add_executable(gnss_tests
     tests/network/test_carry_zwd_in_block.cpp
     tests/network/test_zwd_time_link_float_vehicle.cpp
     tests/network/test_zwd_couple_edge.cpp
+    tests/network/test_ncq_zwd_response.cpp
     tests/network/test_bad_epoch_response.cpp
     tests/network/test_carry_iono_in_block.cpp
     tests/network/test_carry_rx_clock_in_block.cpp
+    tests/network/test_ncq_rx_clock_isb_response.cpp
     tests/test_resume_frame_restore.cpp
     tests/test_resume_pb_seam_mark.cpp
     tests/test_resume_border_restore.cpp
