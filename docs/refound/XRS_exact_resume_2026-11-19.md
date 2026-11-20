@@ -103,3 +103,7 @@ B4's whole-log clause is missed only because the restored-signal audit lines ("C
 - Whether any reader of the wide-lane statistics reads an arc older than its 120 s gap rule; if none does, only live arcs need saving (13 kB instead of 48 kB per station).
 - The second resumed epoch's 203 prior-residual rows against 35 and the first epoch's 93 MDB exceedances (n147) are not attributed to a member; the per-entry first fold of the covariance block is one candidate.
 - The inventory covers the station column order but not the network's shared column order or the other ordered containers (relevant to option C only).
+
+### 2026-11-19: the seams for option A
+
+The resume path is cut into restore groups and capture groups with identical output (card NRF section 128, branch `chain/line-b-2026-11-19`), so the stages of option A are to land as new groups with keys of their own. The names the day program gave S1, `network.state_snapshot_station_capture` and `network.resume_station_restore`, already exist (the station layer of the warm resume); S1 takes `network.state_snapshot_station_memory_capture` and `network.resume_station_memory_restore`.
