@@ -22,9 +22,17 @@
  *    east / north / up frame at the truth coordinate (m):
  *    `sig_e_m,sig_n_m,sig_u_m`, and `sig_3d_m`, the root of the covariance trace
  *    (the formal counterpart of `pos_err_3d_m`)
+ *  - the search and the held set: `search_ratio` (the ratio the WL-constrained search
+ *    computed, also when it failed), `n_pairs` (satellite pairs of the epoch), `n_held`
+ *    (held pairs: at least two signals' DD ambiguities at hold scale), `held_joined` and
+ *    `held_left` (satellites that joined or left the held set this epoch)
  *
  * The sigma columns are appended after `p_succ` so a reader indexing the first
- * fourteen columns by position, or by name, is unchanged.  The ratio of an actual
+ * fourteen columns by position, or by name, is unchanged; the search and held-set
+ * columns are appended after them for the same reason.  Since they were added, a failed
+ * WL-constrained search writes its own ending in `ar_gate` (see
+ * @ref GnssProcessor::consumerArGateLabel "consumerArGateLabel"), where it wrote
+ * `mlambda_fail` before.  The ratio of an actual
  * error to its formal sigma (per axis, or the position NEES e^T P^-1 e) is the
  * consistency grade of the consumer's covariance (scripts/consumer_nees.py).
  *
@@ -47,10 +55,11 @@ struct AmbiguityResolution;
 inline constexpr const char* kConsumerTraceHeader =
     "week,tow,n_sats,ar_ran,ar_success,num_fixed,num_candidates,"
     "ratio,pos_err_3d_m,east_m,north_m,up_m,ar_gate,p_succ,"
-    "sig_e_m,sig_n_m,sig_u_m,sig_3d_m\n";
+    "sig_e_m,sig_n_m,sig_u_m,sig_3d_m,"
+    "search_ratio,n_pairs,n_held,held_joined,held_left\n";
 
 /// Number of columns of @ref kConsumerTraceHeader.
-inline constexpr std::size_t kConsumerTraceColumns = 18;
+inline constexpr std::size_t kConsumerTraceColumns = 23;
 
 /**
  * @brief One row of `closed_loop_trace.csv`: the consumer's solution at one epoch.
@@ -76,6 +85,12 @@ struct ConsumerTraceRow {
     Eigen::Vector3d err_enu_m{ Eigen::Vector3d::Zero() };   ///< Error east, north, up (m).
     Eigen::Vector3d sig_enu_m{ Eigen::Vector3d::Zero() };   ///< Formal 1-sigma east, north, up (m).
     double          sig_3d_m{ 0.0 };                        ///< Root of the position covariance trace (m).
+
+    double      search_ratio{ 0.0 };    ///< Ratio the search computed, also on failure (0 when none ran).
+    int         n_pairs{ 0 };           ///< Satellite pairs among the epoch's DD pairs (0 when AR did not run).
+    int         n_held{ 0 };            ///< Of them, held by a fix (0 when AR did not run).
+    int         held_joined{ 0 };       ///< Satellites that joined the held set this epoch.
+    int         held_left{ 0 };         ///< Satellites that left the held set this epoch.
 };
 
 /**
@@ -84,8 +99,11 @@ struct ConsumerTraceRow {
  *
  * `not_run` when AR was not attempted; otherwise by @c gate_reason: `disabled`,
  * `min_epochs`, `sigma_gate(<sigma>m)`, `no_candidates`, `wl_guard`; with no early
- * gate, the MLAMBDA outcome: `fixed`, `wl_only`, `ratio_battery` (a ratio was
- * computed and failed) or `mlambda_fail` (no ratio).
+ * gate, the outcome: `fixed` or `wl_only` on success; on a failed WL-constrained search
+ * its ending (@ref GnssProcessor::arEndingName "arEndingName": `no_nl_candidate`,
+ * `search_failed`, `ratio_low`, `ratio_high`, `success_rate`, `pair_frac`, `all_held`,
+ * `degenerate`); on the other search paths `ratio_battery` (a ratio was computed and
+ * failed) or `mlambda_fail` (no ratio).
  *
  * @param ar_ran True when the engine attempted AR this epoch.
  * @param ar     The engine's last AR result (read only when @p ar_ran).
@@ -133,7 +151,7 @@ double sigma3dFromCovariance(const Eigen::Matrix3d& p_ecef);
  * @brief Format one @ref GnssProcessor::ConsumerTraceRow "ConsumerTraceRow" as a CSV line for @ref GnssProcessor::kConsumerTraceHeader "kConsumerTraceHeader".
  *
  * Pure (no I/O, no engine state), so the schema is unit-testable on its own
- * (tests/test_consumer_trace.cpp).  Precision: 3 dp for tow, 2 dp for ratio, 4 dp
+ * (tests/test_consumer_trace.cpp).  Precision: 3 dp for tow, 2 dp for both ratios, 4 dp
  * for every metre column (error and sigma), 6 dp for @c p_succ.
  *
  * @param r The row.

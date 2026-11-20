@@ -171,6 +171,23 @@ struct AmbiguityResolution {
     /// @ref AmbiguityResolverConfig::hold_release_cyc > 0; committed to memory by
     /// @ref AmbiguityResolver::resolve once the fix is final).
     std::vector<HeldPairFix> held_pairs;
+
+    /// How the call ended (@ref ArEnding): set on the paths that reach the WL-constrained
+    /// search, @c None elsewhere.  A failed search keeps its ending although its other
+    /// fields are those of an empty result.
+    ArEnding ending{ ArEnding::None };
+    /// The ratio s2/s1 the WL-constrained search computed, also when the search failed;
+    /// 0 when no search computed one.  On a partial fix it is the full set's ratio, while
+    /// @ref ratio is the accepted subset's.
+    double search_ratio{ 0.0 };
+    /// Satellite pairs among the epoch's DD pairs (held census; 0 when the census did not run).
+    int n_sat_pairs{ 0 };
+    /// Of them, held: at least two signals' DD ambiguities at hold scale (@ref isHeldDdVariance).
+    int n_held_pairs{ 0 };
+    /// Satellites that joined the held set at this call (held census).
+    int held_joined{ 0 };
+    /// Satellites that left the held set at this call, still observed or absent (held census).
+    int held_left{ 0 };
 };
 
 /**
@@ -914,6 +931,17 @@ public:
      */
     std::string extraSignalsRunEndLine() const;
 
+    /// Run counters of the held census and of the endings (measure only).
+    const FixQualityCounters& fixQualityCounters() const { return fix_quality_; }
+
+    /**
+     * @brief The run-end line of the resolver's endings and of the held census.
+     * @return One line with the resolver calls by ending (non-zero ones, in the order of
+     *         @ref ArEnding), the census epochs with a held pair and their share, the held
+     *         pair-epochs, and the held set's joins and leaves by cause.
+     */
+    std::string fixQualityRunEndLine() const;
+
     /**
      * @brief True when the extra signals are in force.
      * @return @c extra_signals together with @c wl_from_float, which the extra-wide lanes need.
@@ -967,6 +995,8 @@ private:
     friend struct ArExtraSignalsTestAccess;
     /// Test seam for the stages of @ref resolveWlConstrained (tests/support/ArWlcStageAccess.hpp).
     friend struct ArWlcStageTestAccess;
+    /// Test seam for the held census and the endings (tests/test_ar_fix_quality.cpp).
+    friend struct ArFixQualityTestAccess;
 
     // -----------------------------------------------------------------------
     // WL-constrained N_1 search functional
@@ -1305,6 +1335,31 @@ private:
     ExtraSignalCounters extra_counters_;    ///< Run counters of the extra signals.
     /// Per pair "sat_i|sat_ref|sig_hi|sig_lo": the run of the phase's decisive integer (wl_branch_check only).
     std::map<std::string, WlBranchRun> wl_branch_runs_;
+
+    // -----------------------------------------------------------------------
+    // Held census and endings (measure only)
+    // -----------------------------------------------------------------------
+
+    /**
+     * @brief Count the epoch's held pairs and the held set's edges (measure only).
+     *
+     * Groups the DD pairs by satellite pair; a pair is held when at least two of its
+     * signals' DD variances are at hold scale (@ref isHeldDdVariance).  Compares the held
+     * satellites with those of the previous census epoch and counts each join and leave
+     * (a leave while the satellite is still in the pairs, or by its absence); each edge is
+     * a debug line `HELDSET`.  Writes nothing the solution reads.
+     *
+     * @param pairs         The epoch's DD pairs.
+     * @param P             The state covariance (read only when @p pairs is not empty).
+     * @param observations  The epoch's observations (epoch time of the debug lines).
+     * @param[out] result   n_sat_pairs, n_held_pairs, held_joined and held_left are written.
+     */
+    void censusHeldPairs_(const std::vector<DdPair>& pairs, const Eigen::MatrixXd& P,
+                          const std::vector<PppObservation>& observations,
+                          AmbiguityResolution& result);
+
+    FixQualityCounters fix_quality_;           ///< Run counters of the census and the endings.
+    std::set<std::string> held_sats_prev_;     ///< Held satellites at the previous census epoch.
 
     // -----------------------------------------------------------------------
     // Partial ambiguity resolution (subset selection)

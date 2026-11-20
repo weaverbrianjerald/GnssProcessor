@@ -59,12 +59,13 @@ ConsumerTraceRow sampleRow() {
 
 } // namespace
 
-TEST(ConsumerTraceSchema, HeaderHasEighteenColumnsWithSigmaAppended) {
+TEST(ConsumerTraceSchema, HeaderHasTheSigmaAndHeldSetColumnsAppended) {
     const std::vector<std::string> cols = splitCsv(kConsumerTraceHeader);
     const std::vector<std::string> want = {
         "week", "tow", "n_sats", "ar_ran", "ar_success", "num_fixed", "num_candidates",
         "ratio", "pos_err_3d_m", "east_m", "north_m", "up_m", "ar_gate", "p_succ",
-        "sig_e_m", "sig_n_m", "sig_u_m", "sig_3d_m"};
+        "sig_e_m", "sig_n_m", "sig_u_m", "sig_3d_m",
+        "search_ratio", "n_pairs", "n_held", "held_joined", "held_left"};
     EXPECT_EQ(cols, want);
     EXPECT_EQ(cols.size(), kConsumerTraceColumns);
     const std::string h = kConsumerTraceHeader;
@@ -83,7 +84,7 @@ TEST(ConsumerTraceSchema, FirstFourteenColumnsKeepTheirFormerBytes) {
         "2313,259230.000,20,0,0,0,0,0.00,0.7091,-0.1938,0.5645,0.3829,not_run,0.000000";
     ASSERT_GE(line.size(), legacy.size());
     EXPECT_EQ(line.substr(0, legacy.size()), legacy);
-    EXPECT_EQ(line, legacy + ",0.1235,0.2346,0.5432,0.6000\n");
+    EXPECT_EQ(line, legacy + ",0.1235,0.2346,0.5432,0.6000,0.00,0,0,0,0\n");
     EXPECT_EQ(splitCsv(line).size(), kConsumerTraceColumns);
 }
 

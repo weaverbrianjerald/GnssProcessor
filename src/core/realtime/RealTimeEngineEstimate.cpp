@@ -305,6 +305,12 @@ void RealTimeEngine::resolveAmbiguities(RtEpochContext& ctx) {
     }
 }
 
+void RealTimeEngine::logArFixQualitySummary(const char* tag) const {
+    if (!ambiguity_resolver_) return;   // ar_mode 0: no resolver, no line
+    log_manager_.getLogger("rt_engine")->info("[{}] {}", tag,
+                                              ambiguity_resolver_->fixQualityRunEndLine());
+}
+
 /**
  * @brief Posterior state extract, per-epoch summary line and the trace-logger sweep.
  *

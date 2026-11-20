@@ -489,6 +489,17 @@ public:
     void logArObserveSummary(const char* tag) const;
 
     /**
+     * @brief Log the resolver's endings and its held census as one line on the
+     *        @c rt_engine logger (AmbiguityResolver::fixQualityRunEndLine).
+     *
+     * Printed at the end of a closed-loop run, of a replay and of a live session.  Silent
+     * when the engine has no resolver (ar_mode 0).
+     *
+     * @param tag Where the line comes from ("closed loop", "end of replay", "end of run").
+     */
+    void logArFixQualitySummary(const char* tag) const;
+
+    /**
      * @brief Get the current receiver position (ECEF, meters).
      *
      * @return The position of the engine's PPP state: the filter's position after the most

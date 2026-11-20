@@ -471,6 +471,7 @@ AmbiguityResolution AmbiguityResolver::resolve(
 
     AmbiguityResolution result = resolveCore_(state_manager, observations, wl_ambiguities,
                                               wl_fractions, wl_quality);
+    ++fix_quality_.endings[static_cast<std::size_t>(result.ending)];
 
     // The held-pair memory takes the fix only once it is final (after the
     // ratio upper bound), so a rejected fix is never remembered as held.
@@ -504,6 +505,7 @@ AmbiguityResolution AmbiguityResolver::resolveCore_(
     if (config_.ar_mode == 0) {
         log->debug("AR disabled (ar_mode=0)");
         result.gate_reason = 1;   // disabled (T2c)
+        result.ending = ArEnding::Disabled;
         return result;
     }
 
@@ -518,6 +520,7 @@ AmbiguityResolution AmbiguityResolver::resolveCore_(
         log->debug("AR skipped: epoch {}/{} (min_epochs convergence guard)",
                    epoch_count_, config_.min_epochs);
         result.gate_reason = 2;   // min_epochs guard (T2c)
+        result.ending = ArEnding::MinEpochs;
         return result;
     }
 
@@ -538,6 +541,7 @@ AmbiguityResolution AmbiguityResolver::resolveCore_(
                            sigma_3d, config_.max_position_sigma_m);
                 result.gate_reason = 3;   // position-σ gate (T2c)
                 result.gate_sigma_3d = sigma_3d;
+                result.ending = ArEnding::SigmaGate;
                 return result;
             }
         }
@@ -606,13 +610,16 @@ AmbiguityResolution AmbiguityResolver::resolveCore_(
     }
 
     if (pairs.empty()) {
+        censusHeldPairs_(pairs, Eigen::MatrixXd(), observations, result);
         log->debug("No DD ambiguity pairs available for AR");
         result.gate_reason = 4;   // no candidates (T2c)
+        result.ending = ArEnding::NoPairs;
         return result;
     }
 
     const Eigen::VectorXd x = state_manager.getStateVector();
     const Eigen::MatrixXd P = state_manager.getCovariance();
+    censusHeldPairs_(pairs, P, observations, result);   // measure only
 
     // Convergence guard 2: formal position-σ gate.  Complements the
     // min-epochs gate with the filter's own confidence instead of an epoch
@@ -626,6 +633,7 @@ AmbiguityResolution AmbiguityResolver::resolveCore_(
                        sigma_3d, config_.max_position_sigma_m);
             result.gate_reason = 3;   // position-σ gate (T2c)
             result.gate_sigma_3d = sigma_3d;
+            result.ending = ArEnding::SigmaGate;
             return result;
         }
     }
@@ -660,10 +668,19 @@ AmbiguityResolution AmbiguityResolver::resolveCore_(
                           "(degenerate covariance — staying float).",
                           wl_result.ratio, config_.ratio_upper_bound);
                 wl_result.success = false;
+                wl_result.ending  = ArEnding::RatioHigh;
             }
             wl_result.num_candidates = result.num_candidates;
+            wl_result.n_sat_pairs    = result.n_sat_pairs;
+            wl_result.n_held_pairs   = result.n_held_pairs;
+            wl_result.held_joined    = result.held_joined;
+            wl_result.held_left      = result.held_left;
             return wl_result;
         }
+        // The failed search's ending and ratio reach the trace; its release and reset
+        // lists do not (the empty result below is what the caller acts on).
+        result.ending       = wl_result.ending;
+        result.search_ratio = wl_result.search_ratio;
         // WL-constrained AR failed: stay float.
         //
         // Do not fall through to the unconstrained LAMBDA fallback below.  That
@@ -1649,6 +1666,90 @@ std::string AmbiguityResolver::extraSignalsRunEndLine() const {
                        c.evaluated, c.admitted, c.fixed, c.releases_caused);
 }
 
+// ===========================================================================
+// Held census and endings (measure only)
+// ===========================================================================
+
+void AmbiguityResolver::censusHeldPairs_(const std::vector<DdPair>& pairs,
+                                         const Eigen::MatrixXd& P,
+                                         const std::vector<PppObservation>& observations,
+                                         AmbiguityResolution& result) {
+    // Held signals per satellite pair, and the satellites present in the pairs.
+    std::map<std::pair<std::string, std::string>, int> held_signals;   // (sat_i, sat_ref) -> count
+    std::set<std::string> present;
+    const int n = static_cast<int>(P.rows());
+    for (const DdPair& p : pairs) {
+        present.insert(p.sat_i);
+        present.insert(p.sat_ref);
+        int& count = held_signals[{ p.sat_i, p.sat_ref }];
+        if (p.state_idx_i < 0 || p.state_idx_i >= n || p.state_idx_ref < 0 || p.state_idx_ref >= n)
+            continue;
+        const double var = P(p.state_idx_i, p.state_idx_i) - 2.0 * P(p.state_idx_i, p.state_idx_ref)
+                         + P(p.state_idx_ref, p.state_idx_ref);
+        if (isHeldDdVariance(var, config_.hold_variance)) ++count;
+    }
+    std::set<std::string> held_sats;
+    int n_held = 0;
+    for (const auto& [key, count] : held_signals) {
+        if (count < 2) continue;
+        ++n_held;
+        held_sats.insert(key.first);
+        held_sats.insert(key.second);
+    }
+
+    // The edges against the previous census epoch.
+    auto log = log_manager_.getLogger("ambiguity_resolver");
+    const bool debug = log->should_log(spdlog::level::debug);
+    const double tow = observations.empty() ? 0.0 : observations.front().time.tow;
+    int joined = 0, left = 0;
+    for (const auto& sat : held_sats) {
+        if (held_sats_prev_.count(sat)) continue;
+        ++joined;
+        if (debug) log->debug("HELDSET tow={:.1f} sat={} join", tow, sat);
+    }
+    for (const auto& sat : held_sats_prev_) {
+        if (held_sats.count(sat)) continue;
+        ++left;
+        const bool still_observed = present.count(sat) > 0;
+        ++(still_observed ? fix_quality_.leaves_present : fix_quality_.leaves_absent);
+        if (debug) log->debug("HELDSET tow={:.1f} sat={} leave cause={}", tow, sat,
+                              still_observed ? "present" : "absent");
+    }
+    held_sats_prev_ = std::move(held_sats);
+
+    ++fix_quality_.epochs;
+    if (n_held > 0) ++fix_quality_.epochs_any_held;
+    fix_quality_.pair_epochs      += static_cast<long long>(held_signals.size());
+    fix_quality_.held_pair_epochs += n_held;
+    fix_quality_.joins            += joined;
+
+    result.n_sat_pairs  = static_cast<int>(held_signals.size());
+    result.n_held_pairs = n_held;
+    result.held_joined  = joined;
+    result.held_left    = left;
+}
+
+std::string AmbiguityResolver::fixQualityRunEndLine() const {
+    const FixQualityCounters& c = fix_quality_;
+    std::string endings;
+    long long calls = 0;
+    for (std::size_t k = 0; k < kArEndingCount; ++k) {
+        calls += c.endings[k];
+        if (c.endings[k] == 0) continue;
+        if (!endings.empty()) endings += ", ";
+        endings += fmt::format("{} {}", arEndingName(static_cast<ArEnding>(k)), c.endings[k]);
+    }
+    const double share = c.epochs > 0 ? 100.0 * static_cast<double>(c.epochs_any_held)
+                                            / static_cast<double>(c.epochs)
+                                      : 0.0;
+    return fmt::format("AR endings and held integers: {} resolver calls ({}); held census {} epochs, "
+                       "{} with a held pair ({:.1f} %), {} of {} pair-epochs held; held set: {} joins, "
+                       "{} leaves while observed, {} by absence",
+                       calls, endings.empty() ? std::string{ "none" } : endings, c.epochs,
+                       c.epochs_any_held, share, c.held_pair_epochs, c.pair_epochs, c.joins,
+                       c.leaves_present, c.leaves_absent);
+}
+
 AmbiguityResolution AmbiguityResolver::resolveWlConstrained(
     const std::vector<DdPair>& pairs,
     const Eigen::VectorXd& x,
@@ -1930,6 +2031,7 @@ AmbiguityResolution AmbiguityResolver::resolveWlConstrained(
     }
     if (nl_candidates.empty()) {
         log->debug("WL-constrained AR: no dual-frequency pairs with known WL");
+        result.ending = ArEnding::NoNlCandidate;
         return result;  // empty; the caller stays float (no unconstrained fallback)
     }
 
@@ -1950,6 +2052,7 @@ AmbiguityResolution AmbiguityResolver::resolveWlConstrained(
 
     if (n_nl <= 0) {
         log->debug("WL-constrained AR: no NL candidates");
+        result.ending = ArEnding::NoNlCandidate;
         return result;
     }
 
@@ -2113,6 +2216,7 @@ AmbiguityResolution AmbiguityResolver::resolveWlConstrained(
     Eigen::VectorXd d_lambda;      // post-reduction LDL diagonal (for bootstrap P_s)
     if (!mlambda(y_for_mlambda, Q_reduced, afix_n1, s, &d_lambda)) {
         log->debug("WL-constrained AR: MLAMBDA failed on NL problem");
+        result.ending = ArEnding::SearchFailed;
         return result;
     }
     // Convert back to the reduced representation expected by the back-transform
@@ -2122,10 +2226,12 @@ AmbiguityResolution AmbiguityResolver::resolveWlConstrained(
 
     if (s(0) <= 0.0 || s(1) <= 0.0) {
         log->debug("WL-constrained AR: invalid distances s1={:.6f} s2={:.6f}", s(0), s(1));
+        result.ending = ArEnding::SearchFailed;
         return result;
     }
 
     result.ratio = s(1) / s(0);
+    result.search_ratio = result.ratio;
     log->info("WL-constrained AR: {} NL ambs, ratio={:.2f} (threshold={:.1f})",
               n_nl, result.ratio, config_.ratio_threshold);
 
@@ -2140,16 +2246,19 @@ AmbiguityResolution AmbiguityResolver::resolveWlConstrained(
     double max_pair_frac = 0.0;
     int    worst_pair_k  = -1;
     bool   full_ok       = true;
+    ArEnding refused_by  = ArEnding::None;   // the battery's first refusal of the full set
 
     if (result.ratio < config_.ratio_threshold) {
         log->info("WL-constrained AR ratio test failed: {:.2f} < {:.1f}",
                   result.ratio, config_.ratio_threshold);
         full_ok = false;
+        refused_by = ArEnding::RatioLow;
     } else if (result.ratio > config_.ratio_upper_bound) {
         log->warn("WL-constrained AR rejecting fix: ratio={:.3e} > upper bound {:.1e} "
                   "(degenerate covariance — staying float).",
                   result.ratio, config_.ratio_upper_bound);
         full_ok = false;
+        refused_by = ArEnding::RatioHigh;
     } else {
         p_s = computeBootstrapSuccessRate(d_lambda);
         if (p_s < config_.min_success_rate) {
@@ -2157,6 +2266,7 @@ AmbiguityResolution AmbiguityResolver::resolveWlConstrained(
                       "({:.2f}): bootstrap P_s={:.5f} < min_success_rate={:.4f}",
                       result.ratio, p_s, config_.min_success_rate);
             full_ok = false;
+            refused_by = ArEnding::SuccessRate;
         } else {
             for (int k = 0; k < n_nl; ++k) {
                 const double per_pair = std::abs(y_for_mlambda(k) - afix_n1(k));
@@ -2174,11 +2284,13 @@ AmbiguityResolution AmbiguityResolver::resolveWlConstrained(
                           pairs[nlc.dd_idx_1].sat_i, pairs[nlc.dd_idx_1].sat_ref,
                           max_pair_frac, config_.nl_max_per_pair_frac);
                 full_ok = false;
+                refused_by = ArEnding::PairFrac;
             }
         }
     }
 
     if (!full_ok) {
+        result.ending = refused_by;
         if (!config_.enable_partial_ar) return result;
 
         // Partial AR: retry on the first subset of NL candidates, in greedy
@@ -2240,6 +2352,7 @@ AmbiguityResolution AmbiguityResolver::resolveWlConstrained(
         result.num_fixed = m;
         result.ratio     = pf.ratio;
         result.p_succ    = pf.p_s;
+        result.ending    = ArEnding::FixedPartial;
         reportFix_(ep, WlcFixPath::Partial, n_nl, m, pf.ratio, pf.p_s, pf.max_frac,          // S9
                    qb_pre, qbCondition(rebuildQnl(result.fixed_covariance)));
         return result;
@@ -2337,6 +2450,7 @@ AmbiguityResolution AmbiguityResolver::resolveWlConstrained(
     result.success = true;
     result.num_fixed = n_nl;
     result.p_succ  = p_s;
+    result.ending  = ArEnding::Fixed;
 
     reportFix_(ep, WlcFixPath::Full, n_nl, n_nl, result.ratio, p_s, max_pair_frac,            // S9
                qb_pre, qbCondition(rebuildQnl(result.fixed_covariance)));

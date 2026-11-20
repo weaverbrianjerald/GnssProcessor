@@ -373,6 +373,8 @@ void RealTimeEngine::flush() {
     logAmbLevelCheckSummary_("end of run");
     // The innovation screen's counters, silent unless armed.
     logInnovationScreenSummary("end of run");
+    // The resolver's endings and held integers, silent without a resolver.
+    logArFixQualitySummary("end of run");
     // The rule for satellites without a stream record, silent unless armed.
     logUnrecordedGateSummary("end of run");
     // The broadcast-baseline jump counters, silent unless armed.
