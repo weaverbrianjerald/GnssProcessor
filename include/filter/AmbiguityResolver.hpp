@@ -21,6 +21,7 @@
 #include "logging/LogManager.hpp"
 #include "filter/StateManager.hpp"
 #include "common/PppTypes.hpp"
+#include "filter/AmbiguityResolverStages.hpp"
 #include <Eigen/Dense>
 #include <string>
 #include <vector>
@@ -671,6 +672,66 @@ struct ExtraSignalCounters {
     long long releases_caused{ 0 };   ///< Held pairs contradicted by a held extra-wide lane (counted per pair-epoch).
 };
 
+// ---------------------------------------------------------------------------
+// Conditioning of a search covariance (the QBCOND diagnostic)
+// ---------------------------------------------------------------------------
+
+/**
+ * @brief Eigenvalue spread of a cycle-domain ambiguity covariance (the QBCOND line).
+ *
+ * Every fix site of the resolver evaluates it on the matrix MLAMBDA searches, before the
+ * fix and on the matrix rebuilt from the fixed covariance.  The comparison shows whether
+ * the Joseph-form pseudo-observation leaves the matrix well-conditioned for the next epoch
+ * or collapses it as a back-substitution would.
+ */
+struct QbCond {
+    double cond   = 0.0;   ///< lambda_max / lambda_min [-]; infinite when lambda_min <= 0.
+    double lo     = 0.0;   ///< Smallest eigenvalue [cycles^2].
+    double hi     = 0.0;   ///< Largest eigenvalue [cycles^2].
+    double sig_lo = 0.0;   ///< sqrt(lo): sigma of the tightest direction [cycles]; 0 when lo <= 0.
+    double sig_hi = 0.0;   ///< sqrt(hi): sigma of the loosest direction [cycles]; 0 when hi <= 0.
+};
+
+/**
+ * @brief Eigen-decompose a cycle-domain ambiguity covariance (read through its symmetric part).
+ *
+ * Read-only: the eigenvalues are computed on a copy.
+ *
+ * @param Qb_cycles The covariance [cycles^2], n x n.
+ * @return The spread; all zeros on an empty or non-finite matrix or a failed decomposition.
+ */
+QbCond qbCondition(const Eigen::MatrixXd& Qb_cycles);
+
+/**
+ * @brief Rebuild the cycle-domain DD ambiguity covariance from a full state covariance.
+ *
+ * The differencing and wavelength scaling of the per-band search: entry (i, j) is
+ * @f$(P_{ii'} - P_{ir'} - P_{ri'} + P_{rr'}) / (\lambda_i \lambda_j)@f$ with i, r the two
+ * state indices of pair i and i', r' those of pair j.  The result is symmetrized.
+ *
+ * @tparam PairVec      A sequence of items with @c state_idx_i and @c state_idx_ref.
+ * @param P             Full state covariance [m^2].
+ * @param pairs         The DD pairs.
+ * @param pair_lambda   Wavelength of each pair [m].
+ * @return The covariance [cycles^2], pairs.size() square.
+ */
+template <typename PairVec>
+Eigen::MatrixXd rebuildQbCycles(const Eigen::MatrixXd& P,
+                                const PairVec& pairs,
+                                const std::vector<double>& pair_lambda) {
+    const int nb = static_cast<int>(pairs.size());
+    Eigen::MatrixXd Q(nb, nb);
+    for (int i = 0; i < nb; ++i) {
+        for (int j = 0; j < nb; ++j) {
+            const int ii = pairs[i].state_idx_i,  ir = pairs[i].state_idx_ref;
+            const int ji = pairs[j].state_idx_i,  jr = pairs[j].state_idx_ref;
+            Q(i, j) = (P(ii, ji) - P(ii, jr) - P(ir, ji) + P(ir, jr))
+                      / (pair_lambda[i] * pair_lambda[j]);
+        }
+    }
+    return 0.5 * (Q + Q.transpose());
+}
+
 /**
  * @brief MLAMBDA integer ambiguity resolver.
  *
@@ -904,6 +965,8 @@ private:
     /// Test seam for the extra signals through @ref resolveWlConstrained
     /// (tests/test_ar_extra_signals.cpp).
     friend struct ArExtraSignalsTestAccess;
+    /// Test seam for the stages of @ref resolveWlConstrained (tests/support/ArWlcStageAccess.hpp).
+    friend struct ArWlcStageTestAccess;
 
     // -----------------------------------------------------------------------
     // WL-constrained N_1 search functional
@@ -1346,6 +1409,121 @@ private:
     /// inflated so the new constraint takes effect in a single epoch rather than
     /// drifting toward the new integer slowly.
     std::map<std::string, int> previous_dd_wl_;
+
+    // -----------------------------------------------------------------------
+    // WL-constrained resolution: what crosses its stages.  The stages, their
+    // order and the rules each owns are listed in kWlcStages
+    // (filter/AmbiguityResolverStages.hpp).
+    // -----------------------------------------------------------------------
+
+    /// One signal of a satellite pair, as stage S1 collects it.
+    struct WlcSignal {
+        int         pair_idx;     ///< Index of the signal's DD pair in the epoch's pair list.
+        std::string signal;       ///< Signal name (e.g. "L1C").
+        double      freq;         ///< Carrier frequency [Hz].
+        double      wavelength;   ///< Wavelength [m].
+    };
+
+    /// One satellite pair of the epoch: its signals and their primary/extra split (stage S1).
+    struct WlcGroup {
+        std::string            key;       ///< "sat_i|sat_ref".
+        std::vector<WlcSignal> signals;   ///< The pair's signals, in the order of the epoch's pair list.
+        PrimaryExtraSplit      split;     ///< Its two primary signals and its extras (@ref splitPrimaryAndExtra).
+    };
+
+    /// The outcome of the held-pair test for one remembered hold (stage S2).
+    struct HoldCheckRecord {
+        std::string key;                              ///< The hold's key "sat_i|sat_ref|sig_hi|sig_lo".
+        HoldCheck   outcome{ HoldCheck::KeyMiss };    ///< What the test did with it.
+        double      d_wl{ 0.0 };   ///< Float minus held wide lane [WL cycles]; tested holds only.
+        double      d_if{ 0.0 };   ///< Float minus held iono-free combination [NL cycles]; tested holds only.
+    };
+
+    /// The DD wide-lane integer of one satellite pair (stage S3).
+    struct WlcWideLane {
+        int dd_wl{ 0 };        ///< DD wide-lane integer N_1 - N_2 [cycles].
+        int wl_int_i{ 0 };     ///< Per-satellite MW integer of sat_i (MW source only, else 0).
+        int wl_int_ref{ 0 };   ///< Per-satellite MW integer of sat_ref (MW source only, else 0).
+    };
+
+    /// One narrow-lane candidate: a satellite pair on two primary signals with a known DD
+    /// wide lane (stage S4), and the coefficients of its search row.
+    struct NlCandidate {
+        int dd_idx_1;         ///< Index of the higher-frequency DD in the epoch's pairs.
+        int dd_idx_2;         ///< Index of the lower-frequency DD.
+        double f1, f2;        ///< Frequencies [Hz].
+        double lam1, lam2;    ///< Wavelengths [m].
+        int dd_wl;            ///< DD wide-lane integer (known).
+        double lambda_nl;     ///< Narrow-lane wavelength [m].
+        // --- Search-functional coefficients (see the T-matrix block of the search problem) ---
+        // Filled per candidate so every downstream expression keeps one form
+        // whichever row (narrowlane or iono-free) is in force.
+        double t_coef_1;      ///< T row entry on dd_idx_1 [1/m]: DD metres → search cycles.
+        double t_coef_2;      ///< T row entry on dd_idx_2 [1/m].
+        double shift_coef;    ///< y_for_mlambda = y_reduced + shift_coef·WL (≡ N_1),
+                              ///< and, identically, N_1 = n_reduced_fixed + shift_coef·WL.
+        double bt_coef_2;     ///< N_2 = n_reduced_fixed + bt_coef_2·WL (= shift_coef − 1).
+        /// The pair's admitted extra signals (extra_signals); empty with the key off.
+        std::vector<ExtraCandidate> extras;
+    };
+
+    /// What crosses the stages of @ref resolveWlConstrained in one epoch.
+    struct WlcEpoch {
+        std::shared_ptr<spdlog::logger> log;   ///< The ambiguity_resolver logger, fetched once by S1.
+        double tow{ 0.0 };           ///< Epoch time of week [s]; 0 without observations.
+        bool   log_lines{ false };   ///< Observations are present: the per-pair info lines are written.
+        std::vector<WlcGroup> groups;               ///< S1: the satellite pairs, in key order.
+        std::set<std::string> released;             ///< S2: satellites that sit out this epoch's search.
+        std::vector<HoldCheckRecord> hold_checks;   ///< S2: one record per remembered hold.
+        bool branch_check{ false };                 ///< The wide-lane branch check is active this epoch.
+        WlBranchEpoch branch;                       ///< S3: code-admitted pairs and persisted contradictions.
+        std::vector<NlCandidate> candidates;        ///< S4: the narrow-lane candidates, in key order.
+        int n_skipped_immature{ 0 };                ///< S4: candidates dropped by the min_arc_info gate.
+    };
+
+    /// The logger of the epoch's stages: WlcEpoch::log, or a fresh fetch when S1 did not run.
+    std::shared_ptr<spdlog::logger> wlcLog_(const WlcEpoch& ep) const;
+
+    /// Which outcome of the search stage S9 reports.
+    enum class WlcFixPath {
+        Full,      ///< The full candidate set passed the acceptance battery and was written back.
+        Partial,   ///< A subset found by partial fixing was written back.
+        Reject,    ///< Partial fixing found no subset: the epoch stays float.
+    };
+
+    /**
+     * @brief Stage S1: gather the epoch's DD pairs by satellite pair (rules W1, W2).
+     *
+     * A pair is kept when its satellite is observed and its signal has a finite positive
+     * frequency and wavelength; the kept pairs are grouped by "sat_i|sat_ref" in key order,
+     * each group with its signals in pair order and their split into two primary signals and
+     * extras (@ref splitPrimaryAndExtra; with the extra signals off, exactly two signals).
+     * Also sets the epoch time and the log flag.
+     *
+     * @param pairs         The epoch's DD pairs.
+     * @param observations  The epoch's observations (system, satellite, time).
+     * @param[out] ep       Its groups, tow and log_lines are written.
+     */
+    void groupSatellitePairs_(const std::vector<DdPair>& pairs,
+                              const std::vector<PppObservation>& observations,
+                              WlcEpoch& ep) const;
+
+    /**
+     * @brief Stage S9: write the summary line and the QBCOND line of a search outcome.
+     *
+     * @param ep        The epoch (its logger).
+     * @param path      Full fix, partial fix or refused partial search.
+     * @param n_nl      Number of narrow-lane candidates searched.
+     * @param n_fixed   Number fixed (n_nl for a full fix, the kept count for a partial one).
+     * @param ratio     The ratio reported (the full set's, or the accepted subset's).
+     * @param p_s       Bootstrap success rate of the fix (unused for Reject).
+     * @param max_frac  Worst |float - integer| of the fix [cycles] (unused for Reject).
+     * @param qb_pre    Conditioning of the search covariance before the fix.
+     * @param qb_post   Conditioning rebuilt from the fixed covariance (unused for Reject,
+     *                  whose line carries literal zeros).
+     */
+    void reportFix_(const WlcEpoch& ep, WlcFixPath path, int n_nl, int n_fixed, double ratio, double p_s,
+                    double max_frac, const QbCond& qb_pre, const QbCond& qb_post);
 
     /**
      * @brief Two-step WL/NL resolution using known WL integers.
