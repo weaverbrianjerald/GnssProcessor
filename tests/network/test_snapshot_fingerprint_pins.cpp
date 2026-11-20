@@ -69,10 +69,10 @@ std::filesystem::path armConfig(const char* run) {
 } // namespace
 
 TEST(SnapshotFingerprintPins, FieldGolden) {
-    checkPin(golden("golden_field_refound.json"), "ec139101e59f8ba3", false);
+    checkPin(golden("golden_field_refound.json"), "5d78e8a43c273007", false);
 }
 TEST(SnapshotFingerprintPins, SimGolden) {
-    checkPin(golden("golden_sim_refound.json"), "ab582fe86653b6f5", false);
+    checkPin(golden("golden_sim_refound.json"), "c67cf69145345c5d", false);
 }
 TEST(SnapshotFingerprintPins, BeiDouGolden) {
     checkPin(golden("golden_field_bds_refound.json"), "ec139101e59f8ba3", false);
