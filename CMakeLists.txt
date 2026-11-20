@@ -352,6 +352,7 @@ add_library(gnss_core STATIC
     src/core/network/ar/RingFix.cpp
     src/core/network/ar/RingFixSeams.cpp
     src/core/network/ar/RingFixHold.cpp
+    src/core/network/ar/RingFixWindow.cpp
     src/core/network/ar/RingFixDecide.cpp
     src/core/network/ar/ArSuspect.cpp
     src/core/network/ar/ArcGraph.cpp
@@ -926,6 +927,8 @@ add_executable(gnss_tests
     tests/network/test_chain_named_rows.cpp
     tests/network/test_ring_fix_resume.cpp
     tests/network/test_ring_fix_hold_stages.cpp
+    tests/network/test_ring_fix_plant.cpp
+    tests/network/test_ring_fix_window.cpp
     tests/network/test_held_first_by_life.cpp
     tests/network/test_phase_family_codes.cpp
     tests/network/test_rx_extra_band_delay_q.cpp

@@ -4,7 +4,7 @@
 // Included inside configMemberDump() (tests/support/ConfigDump.hpp), where `cfg` is the
 // loaded GnssConfig and `add(name, value)` appends one "name=value" line.
 //
-// 567 public const getters without arguments; 1371 dump statements.
+// 567 public const getters without arguments; 1372 dump statements.
 //
 // Vectors of structs (their size, then every element field by field):
 //   getBaselineConfig.rovers (std::vector<StationConfig>: size, then each element)
@@ -1020,6 +1020,7 @@ add("getNetworkConfig.ring_fix.nn_guard_tol_gf_m", cfg.getNetworkConfig().ring_f
 add("getNetworkConfig.ring_fix.nn_guard_max_if_m", cfg.getNetworkConfig().ring_fix.nn_guard_max_if_m);
 add("getNetworkConfig.ring_fix.entry_revalidate", cfg.getNetworkConfig().ring_fix.entry_revalidate);
 add("getNetworkConfig.ring_fix.resume_response", cfg.getNetworkConfig().ring_fix.resume_response);
+add("getNetworkConfig.ring_fix.window_monitor", cfg.getNetworkConfig().ring_fix.window_monitor);
 add("getNetworkConfig.ring_fix.nn_monitor", cfg.getNetworkConfig().ring_fix.nn_monitor);
 add("getNetworkConfig.ring_fix.nn_guard_release", cfg.getNetworkConfig().ring_fix.nn_guard_release);
 add("getNetworkConfig.ring_fix.held_first_by_life", cfg.getNetworkConfig().ring_fix.held_first_by_life);
