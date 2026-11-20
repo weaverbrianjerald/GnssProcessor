@@ -5,10 +5,10 @@
 - **id:** IRM
 - **topic:** config-ledger
 - **status:** open
-- **summary:** The author's ruling of 2026-11-19 ("Yes, make it main") applied key by key through the ledger and the generator, in form B. The configuration of the five-day read (the eq34 chain as the phase datum, network integer fixing ring by ring, the single Galileo network, the bad-epoch response, exact epoch time, GPS band 1 on L1C first; the held-basis datum and the phase-bias hold off) becomes `golden_field_refound` and `golden_sim_refound`; the earlier posture stays generated as `golden_field_rf0hv18` and `golden_sim_rf0hv18`; the BeiDou lineage is re-based on the frozen field file and does not change. 66 ledger rows changed, two posture log rows, no loader default. Day health check 2026-11-19 (engine f50e95d27304f1fb): three smokes and three 2 h runs exit 0 with every epoch emitted; the sim truth audit 0 wrong of 95 810 held link-epochs; held share in hour 2 field 76 % and 72 %, sim 92 % and 89 % (Galileo, GPS); the built-in float user metre-level in hour 1 (field 2.30 m, control 0.058 m), below the stop bar, a look-here item for the author. The baseline is owed until the night 6 h set has run.
+- **summary:** The author's ruling of 2026-11-19 ("Yes, make it main") applied key by key through the ledger and the generator, in form B. The configuration of the five-day read (the eq34 chain as the phase datum, network integer fixing ring by ring, the single Galileo network, the bad-epoch response, exact epoch time, GPS band 1 on L1C first; the held-basis datum and the phase-bias hold off) becomes `golden_field_refound` and `golden_sim_refound`; the earlier posture stays generated as `golden_field_rf0hv18` and `golden_sim_rf0hv18`; the BeiDou lineage is re-based on the frozen field file and does not change. 66 ledger rows changed, two posture log rows, no loader default. Day health check 2026-11-19 (engine f50e95d27304f1fb): three smokes and three 2 h runs exit 0 with every epoch emitted; the sim truth audit 0 wrong of 95 810 held link-epochs; held share in hour 2 field 76 % and 72 %, sim 92 % and 89 % (Galileo, GPS); the built-in float user metre-level in hour 1 (field 2.30 m, control 0.058 m), below the stop bar. By the author's ruling of that evening ('Yes, fixing user') the built-in user of the two reference files is the fixing user of the adopted days (user keys only; network products byte-identical; 6 h observed data 2.31 0.09 0.01 0.03 0.04 0.01 m, simulator 0.68 0.10 0.03 0.03 0.02 0.02 m by hour). The baseline is owed until the night 6 h set has run.
 - **source:** the author's ruling of 2026-11-19 on the question "Make the integer-fixing setup the main reference configuration?"; the analyst's inventory `D:/GnssProcessorSupport/gates/day_program_2026-11-19/adoption/ADOPTION_inventory.md` (checked row by row against the ledger, the generator and the record); the five-day read `D:/GnssProcessorSupport/gates/nrf_reads_2026-11-18/NRF_five_days.md`; the configuration `D:/GnssProcessorSupport/runs_nom/_rap_ad_n147/arm.json`; branch `adopt/integer-reference-2026-11-19`, cut from `int/2026-11-19` at `cf983dc`.
 
-**Outcome.** Pre-registered 2026-11-19. The primary reference files take the integer-fixing configuration of the five-day read, key for key apart from run settings and two measure-only traces (the near-null monitor and the live record); the earlier posture is kept generated, equal in content to the files of that morning. Every new value comes through a ledger row with a three-part note and the manifest; no loader default moves, so no snapshot fingerprint moves, and the new files are fresh convergence only. The configuration had never run on these two beds; the day health check passed its bars (every epoch emitted, no wrong hold on the simulator), with the built-in float user metre-level in hour 1 as the item to look at.
+**Outcome.** Pre-registered 2026-11-19. The primary reference files take the integer-fixing configuration of the five-day read, key for key apart from run settings and two measure-only traces (the near-null monitor and the live record); the earlier posture is kept generated, equal in content to the files of that morning. Every new value comes through a ledger row with a three-part note and the manifest; no loader default moves, so no snapshot fingerprint moves, and the new files are fresh convergence only. The configuration had never run on these two beds; the day health check passed its bars (every epoch emitted, no wrong hold on the simulator), with the built-in float user metre-level in hour 1 as the item to look at; that evening the built-in user became the fixing user, by the author's ruling.
 
 ## 1. What changes
 
@@ -127,3 +127,67 @@ metre-level in hour 1 (field 2.30 m, rising to 2.65 m at 20 to 30 min and below 
 configuration's built-in user read 0.65 to 1.08 m in hour 1 on the five-day days, DOY 143 to 147 of 2026). The
 reference's user numbers are therefore not comparable with `_rf0hv18`, and the built-in user's type is the author's
 decision. The baseline stays owed until the night set.
+
+### 2026-11-19 (evening): the built-in user becomes the fixing user
+
+The author's ruling of 2026-11-19 (about 20:50), in answer to the question "Make the new reference's built-in user the
+fixing user, configured like the adopted days' users?": "Yes, fixing user". It settles the look-here item of the day
+health check above: with the phase-bias hold off, the float undifferenced user of the reference was metre-level in
+hour 1 and decimetre-level after.
+
+**The change.** On `golden_field_refound` and `golden_sim_refound` only, through the manifest, the ledger and the
+generator, the user keys of the adopted days' users (`runs_nom/_rap_nw_obsadx_146_utqi/arm.json`):
+
+- `network.closed_loop`: `ar_mode` 1, `consumer_undifferenced` false (the differenced user), `ar_wl_only` false,
+  `pb_hold_presence_flip` true;
+- `network.require_signal_integer_for_ar` true;
+- the `estimation.ambiguity_resolution` object of that file: `mode` 1, `elevation_mask` 20 degrees,
+  `enable_partial_ar` false, `min_epochs` 10, `ratio_threshold` 5 (`ratio_upper_bound` 10 000),
+  `max_position_sigma_m` 0.05, `hold_variance` 1e-7, `hold_release_cyc` 0.25, `nl_iono_free_row`,
+  `nl_sigma_floor_cyc` 0.04, `wl_from_float`, `wl_branch_check`, `refloat_partner_signal`;
+- `estimation.cycle_slip.lli_slip_mask` 3.
+
+The frozen lineages and the BeiDou lineage are not regenerated and do not change. Ledger: 11 rows take the dated
+three-part note. `require_signal_integer_for_ar` and the five user fixing rows (`wl_from_float`, `wl_branch_check`,
+`refloat_partner_signal`, `nl_sigma_floor_cyc`, `hold_release_cyc`) go from UNVALIDATED to ARMED; `ar_mode` and
+`ar_wl_only` stay PARAM with the new values; `consumer_undifferenced` keeps ARMED (false in the reference, true in the
+frozen lineages and BeiDou); `pb_hold_presence_flip` and `lli_slip_mask` keep RECOMMEND_SCOPED and their regimes
+(the presence flip is outside its regime as written, since the hold is off, so the posture check does not require
+it). Nine keys of `estimation.ambiguity_resolution` have no ledger row (`mode`, `elevation_mask`,
+`enable_partial_ar`, `min_epochs`, `ratio_threshold`, `ratio_upper_bound`, `max_position_sigma_m`, `hold_variance`,
+`nl_iono_free_row`) and are pinned through the manifest only. No loader default and no engine source changes.
+
+**The 6 h runs of the new files.** Each regenerated file equals the `_cx` arm of its bed in every key but the run
+settings (flattened key-by-key comparison: `network.product_output_path` on both beds, and on the simulator
+`network.start_offset_hours` 0.504167, the documented grading start). So `runs_irm/_rap_irm_f129_6_cx` and
+`runs_irm/_rap_irm_s_6_cx` (engine `gnss_processor_irm.exe`, sha256[:16] `f50e95d27304f1fb`, run that night) are the
+6 h runs of the new files:
+
+| run | built-in user 3D median, hours 1 to 6 (m) | epochs with an accepted fix |
+|---|---|---|
+| observed DOY 129, new file (`_rap_irm_f129_6_cx`) | 2.31 0.09 0.01 0.03 0.04 0.01 | 17 of 720 |
+| observed, float user (`_rap_irm_f129_6`) | 2.30 0.32 0.41 0.35 0.24 0.06 | |
+| observed, frozen control (`_rap_irmc_f129_6`) | 0.06 0.01 0.02 0.01 0.02 0.01 | |
+| simulator, new file (`_rap_irm_s_6_cx`) | 0.68 0.10 0.03 0.03 0.02 0.02 | 22 of 720 |
+| simulator, float user (`_rap_irm_s_6`) | 0.79 0.30 0.12 0.08 0.10 0.02 | |
+| simulator, frozen control (`_rap_irmc_s_6`) | 0.10 0.03 0.04 0.02 0.02 0.01 | |
+
+The network products are byte-identical to the float-user runs on both beds: the change is user side only. The
+user's estimation keys alone change nothing (`_rap_irm_f129_6_uf` and `_ux`, identical to the digit), because the
+built-in user is configured under `network.closed_loop`. Scores and product hashes as read by the managing session;
+the fix counts from `closed_loop_trace.csv` (`ar_success`).
+
+**Checks of the regenerated files.** 10-epoch smokes through the slot queue, same engine, arms made with
+`rapid_arm.py make --hours 0.075` (the sim with `network.start_offset_hours` 0.504167): `_rap_irmu_f_smk` and
+`_rap_irmu_s_smk` exit 0 and emit 9 of 9 epochs each, no error line, POSTURE ON 24 of 24 and SCOPED 72 of 73 (field)
+and 68 of 70 (sim), the same tallies as the day check; the user starts in AR mode 1 with `wl_only` off and runs its
+search on every epoch (no fix in 9 epochs, as expected with `min_epochs` 10). `make_golden_config.py --verify`
+(five lineages, 0 failures), `ledger_render.py --check`, `config_posture_check.py --verify-loader` (0 coverage gaps),
+`tests/support/gen_config_dump.py --check` and `docs_record.py verify` pass. Debug `gnss_tests` (unchanged since
+`15275de`; the files are read at run time), the suites of the 68 test files that name the reference files (90 suites, 87 of them in
+`gnss_tests`; the other 3 belong to the simulator's self-test): 805 cases in 87 suites, 798 passed, 7 skipped, 0 failed.
+
+**What stays open.** Hours 1 and 2 are still slow with the network and the user starting cold together (observed
+data, hour 1: 2.31 m against the frozen control's 0.06 m); no truth audit of the user's own holds exists on the
+simulator; wrong user holds were seen at receivers outside the network on the adopted days; one day per bed so far.
+The baseline paragraph of `CLAUDE.md` follows the night's remaining health runs.
