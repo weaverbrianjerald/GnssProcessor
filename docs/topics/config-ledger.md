@@ -32,6 +32,15 @@ From 2026-10-14 the REMOVE rows are gone with their keys and code: 149 rows left
 each deleted key a configuration sets, once, from a declared table beside it (`include/config/RetiredConfigKeys.hpp`,
 card [RKT](../record/refound/RKT_retired_key_tombstone_2026-10-30.md)).
 
+**Current posture (2026-11-19).** The integer-fixing configuration is the main reference (the author's ruling of
+2026-11-19, card [IRM](../refound/IRM_integer_reference_main_2026-11-19.md), ledger history row A18). The reference
+files `config/golden/golden_field_refound.json` and `golden_sim_refound.json` carry the eq34 chain as the phase datum,
+network integer fixing ring by ring with its scoped settings, the single Galileo network, the bad-epoch response,
+exact epoch time and GPS band 1 on L1C first; the held-basis datum and the phase-bias hold are off there. The earlier
+float-vehicle posture is kept as the frozen generated lineages `golden_field_rf0hv18` and `golden_sim_rf0hv18`, still
+verified by `make_golden_config.py`; the BeiDou lineage extends the frozen field file. The rows the chain turns off
+keep their verdict (no measured harm; the chain replaces them) with a note naming the lineages where they stay armed.
+
 ## Cards, oldest first
 
 Status is one of `open`, `closed`, `parked`, `superseded`, `reference`; the verdict a card reached is in its summary and its text. Results are appended to the card file, never here.

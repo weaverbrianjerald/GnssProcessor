@@ -6,9 +6,10 @@ applies it, so that a chain or ring-fix line in a log or a trace leads to its co
 first.
 
 The page describes the code after card CHA's refactor (steps S1 to S11). Both mechanisms are off
-by default and in the reference configurations (`config/golden/*_refound.json` set
-`network.phase_datum_eq34` false and no `network.ring_fix.*` key). The integer-fixing configuration
-of card NRF arms both (its values: card CHA part 2, section 3).
+by default. Since 2026-11-19 the reference configurations `config/golden/golden_field_refound.json`
+and `golden_sim_refound.json` arm both: they carry the integer-fixing configuration of card NRF
+(its values: card CHA part 2, section 3; the adoption: card IRM). The frozen lineages
+`config/golden/golden_{field,sim}_rf0hv18.json` and the BeiDou lineage keep them off.
 
 ---
 

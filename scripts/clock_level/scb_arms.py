@@ -24,7 +24,8 @@ import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))).replace(os.sep, "/")
-GOLDEN = ROOT + "/config/golden/golden_sim_refound.json"
+# Card SCB's postures are defined on the float-vehicle posture: the frozen sim lineage since 2026-11-19 (card IRM).
+GOLDEN = ROOT + "/config/golden/golden_sim_rf0hv18.json"
 FIXTURE = {
     "q": "C:/GnssProcessor/runs/simnet60_quiet_col_24h",
     "k": "D:/GnssProcessorSupport/fixtures/simnet60_clk_col_24h",

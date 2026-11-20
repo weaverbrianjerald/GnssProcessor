@@ -172,3 +172,16 @@ The arms of gf and gs are byte copies of milestone C's: the generated goldens' c
 ### 2026-11-19: step S12 (the onboarding page)
 
 **What S12 adds.** [The chain datum and the ring fix](../onboarding/09_chain_and_ring_fix.md) (`docs/onboarding/09_chain_and_ring_fix.md`, about 25 KB, row 9 of the onboarding table, listed in `docs/INDEX.md`), in the three parts the step names: one epoch in order (the fifteen places of the chain and the ring fix in the order a run reaches them, each with its seam, file, gate and what it reads and writes, then why the order holds where it matters); the identities they key on (the chain vertex, the band and the receiver's band cell, the arc, the satellite band, the family, the ring fix's link, the pair and phase families, the life stamp, and the entity fields kept across epochs with their persistence); and the rules (the six event rows and every `network.ring_fix.*` key the loader reads, each with what it does, its ledger verdict and the function that applies it). Checked against the final code (S11's tip): every function, file, type and key the page names resolves in the tree (329 names), and every key is one the loader reads (`scripts/loader_keys.py`). The check corrected one point of the plan's wording: the ring fix's hold epoch runs before PASS B (its hold table is what PASS B's rows read), and only the decision runs after the solve. The workbook's row of the onboarding table is renumbered 10.
+
+### 2026-11-19: the configuration of part 2, section 3 made the main reference (card IRM; a result)
+
+The integer-fixing configuration whose values part 2, section 3 lists (with section 123's additions of card NRF: the
+single Galileo network, entry re-validation, the two pairs, exact epoch time) is the main reference since the author's
+ruling of 2026-11-19 (card IRM): `config/golden/golden_{field,sim}_refound.json`, the earlier posture kept as the frozen
+lineage `golden_{field,sim}_rf0hv18`. The run-start posture step reads it as fully armed: ON 24 of 24 and SCOPED 72 of
+73 on the field file, 68 of 70 on the simulator file, the gaps being the documented exceptions (the dd-trace reference
+and, on the simulator, the noon-turn attitude). Two posture rows changed with it (log-only): the phase-bias hold's
+regime excludes the chain, and the float vehicle with the chain counts as the armed vehicle. On the 2 h day check
+(engine `f50e95d27304f1fb`) the chain's frame census reports no fractional realized step on any edge class on either
+bed (field: 80 941 kept edges, 342 births, 6 returning, 334 uncertified re-hosts of which 226 at an unknown step, 0 root
+handovers). Onboarding page 09's statement that both mechanisms are off in the reference configurations is updated.

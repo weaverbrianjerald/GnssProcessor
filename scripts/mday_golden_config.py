@@ -7,10 +7,16 @@ the stations whose RINEX is missing that day are dropped.  The products still re
 files.internal_data_root.  The consumer (closed_loop.station) must exist; the script refuses otherwise.
 
     python scripts/mday_golden_config.py <out dir> <doy> [<doy> ...] [--obs-root D:/GnssProcessorSupport/data_mday]
+                                         [--src config/golden/golden_field_rf0hv18.json]
+
+--src names the field file to derive from (default: the field reference of this checkout,
+config/golden/golden_field_refound.json; the frozen lineage golden_field_rf0hv18.json gives the
+float-vehicle posture of before 2026-11-19).
 """
 import json, os, sys
 
-SRC = 'C:/GnssProcessor/config/golden/golden_field_refound.json'
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__))).replace(os.sep, '/')
+SRC = ROOT + '/config/golden/golden_field_refound.json'
 
 
 def move(o, doy):
@@ -27,6 +33,8 @@ args = sys.argv[1:]
 root = 'C:/GnssProcessor/data'
 if '--obs-root' in args:
     i = args.index('--obs-root'); root = args[i + 1]; del args[i:i + 2]
+if '--src' in args:
+    i = args.index('--src'); SRC = args[i + 1]; del args[i:i + 2]
 OUT, days = args[0], [int(x) for x in args[1:]]
 for doy in days:
     g = move(json.load(open(SRC)), doy)

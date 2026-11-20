@@ -565,10 +565,12 @@ bool loadInto(const nlohmann::json& j, const std::string& tag, GnssConfig& cfg) 
     return ok;
 }
 
-/// The sim reference posture, parsed (comments allowed, as the loader allows them).
+/// The sim reference posture of the float vehicle with the phase-bias hold (the frozen lineage
+/// golden_sim_rf0hv18 since 2026-11-19; the integer-fixing reference runs the hold off and the chain
+/// on), parsed (comments allowed, as the loader allows them).
 nlohmann::json simReference() {
     const fs::path src =
-        fs::path(GNSS_PROJECT_ROOT) / "config" / "golden" / "golden_sim_refound.json";
+        fs::path(GNSS_PROJECT_ROOT) / "config" / "golden" / "golden_sim_rf0hv18.json";
     std::ifstream in(src);
     return nlohmann::json::parse(in, nullptr, /*allow_exceptions=*/true, /*ignore_comments=*/true);
 }

@@ -12,6 +12,11 @@
  * card ZTL section 8), and the slant ionosphere and receiver clock re-estimated every
  * epoch.  A golden with those two keys removed re-estimates the wet delay and has no
  * colour column.
+ *
+ * Since 2026-11-19 the float vehicle's model is read from the frozen lineages
+ * (`golden_<bed>_rf0hv18.json`); the reference files (`golden_<bed>_refound.json`, the
+ * integer-fixing posture on the eq34 chain) also estimate the receiver phase bias and carry it
+ * in the station block (the last case).
  */
 #include <gtest/gtest.h>
 
@@ -32,7 +37,19 @@ using namespace GnssProcessor;
 
 namespace {
 
+/// The frozen lineage of @p bed (`golden_<bed>_rf0hv18.json`, the float vehicle's posture and
+/// the reference until 2026-11-19), loaded into @p cfg.
 bool loadGolden(const std::string& bed, GnssConfig& cfg) {
+    LogManager log;
+    const std::filesystem::path p =
+        std::filesystem::path(GNSS_PROJECT_ROOT) / "config" / "golden" /
+        ("golden_" + bed + "_rf0hv18.json");
+    return cfg.loadFromJson(p, log);
+}
+
+/// The reference file of @p bed (`golden_<bed>_refound.json`, the integer-fixing posture since
+/// 2026-11-19), loaded into @p cfg.
+bool loadReference(const std::string& bed, GnssConfig& cfg) {
     LogManager log;
     const std::filesystem::path p =
         std::filesystem::path(GNSS_PROJECT_ROOT) / "config" / "golden" /
@@ -40,11 +57,11 @@ bool loadGolden(const std::string& bed, GnssConfig& cfg) {
     return cfg.loadFromJson(p, log);
 }
 
-/// The golden of @p bed with the wet-delay link and the phase colour state removed (the
+/// The frozen lineage of @p bed with the wet-delay link and the phase colour state removed (the
 /// posture before 2026-11-09), loaded into @p cfg.
 bool loadGoldenPairOff(const std::string& bed, GnssConfig& cfg) {
     const std::filesystem::path src = std::filesystem::path(GNSS_PROJECT_ROOT) / "config" /
-                                      "golden" / ("golden_" + bed + "_refound.json");
+                                      "golden" / ("golden_" + bed + "_rf0hv18.json");
     std::ifstream in(src);
     nlohmann::json j = nlohmann::json::parse(in, nullptr, true, /*ignore_comments=*/true);
     for (const char* key : {"carry_zwd", "carry_zwd_in_block", "zwd_carry_q", "phase_colour_state"})
@@ -121,6 +138,26 @@ void expectGoldenModel(const std::string& bed) {
 TEST(NetworkParamRegistry, SimGoldenStatesTheArmedModel) { expectGoldenModel("sim"); }
 
 TEST(NetworkParamRegistry, FieldGoldenStatesTheArmedModel) { expectGoldenModel("field"); }
+
+// The reference files (the eq34 chain with the receiver phase bias in the station block)
+// estimate the receiver phase bias and carry it in the block, at the knob snapshot's rate and
+// across the leveling carry's gap horizon, on both beds.
+TEST(NetworkParamRegistry, ReferenceFilesCarryTheReceiverPhaseBiasInTheBlock) {
+    for (const std::string bed : {"sim", "field"}) {
+        GnssConfig cfg;
+        ASSERT_TRUE(loadReference(bed, cfg)) << bed;
+        const NetworkKnobs k = NetworkKnobs::snapshot(cfg, cfg.getNetworkConfig());
+        const NetworkParamRegistry r = NetworkParamRegistry::build(k, cfg);
+        const ParamSpec& rpb = r.spec(NetworkParamKind::RxPhaseBias);
+        EXPECT_TRUE(rpb.estimated) << bed;
+        EXPECT_TRUE(rpb.carried) << bed;
+        EXPECT_GT(rpb.q, 0.0) << bed;
+        EXPECT_EQ(rpb.q, k.eq34_rpb_q) << bed;
+        EXPECT_EQ(rpb.q_rule, ParamQRule::RandomWalk) << bed;
+        EXPECT_EQ(rpb.gap_horizon_s, k.pl_max_gap_s) << bed;
+        EXPECT_EQ(rpb.route, ParamRoute::LocalBlock) << bed;
+    }
+}
 
 // The off path: with the two keys removed the wet delay is re-estimated every epoch and there
 // is no colour column, on both beds.

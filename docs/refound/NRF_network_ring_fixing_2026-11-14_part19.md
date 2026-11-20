@@ -53,3 +53,28 @@ The purpose of step S7 (b), replaying from a converged state in place of two hou
 **Status.** Nothing in this note adopts or withdraws anything. The population count (42 of 31 795 holds of an hour or more with a one-signed mean of 8 mm or more) and the windowed monitor's estimate are the manager's offline numbers (the attribution document, sections 4 and 5), put to the author as a design question.
 
 **A note on wording** (the manager's check of 2026-11-19, `D:/GnssProcessorSupport/gates/manager_2026-11-19/masked_pair_check.py` and its `.txt`). "Identical in full" in sections 125.3 to 125.7 and in card CHA's records of S10, S11 and milestone D means identical under the time mask of `nom_td_gate.py`: per pair, four files are equal only once their wall-clock values are removed (`network_datum_graph.csv`, `network_run_summary.csv`, `network_service_health.csv` and the run manifest), and every other file is byte-identical, with no file unexplained and none on one side only.
+
+### 2026-11-19: the configuration of the five-day read made the main reference (card IRM; a result)
+
+By the author's ruling of 2026-11-19 ("Yes, make it main"), the configuration of section 123's five-day read is the
+main reference since card IRM: `config/golden/golden_field_refound.json` and `golden_sim_refound.json` carry it key for
+key apart from run settings, with the measure-only near-null monitor (section 113.1) added and, on the simulator, the
+ring fix's truth audit. The earlier float-vehicle posture is the frozen lineage `golden_{field,sim}_rf0hv18`. The ring
+fix's ARMED and scoped ledger rows carry the three-part note of that date. First runs of the configuration on the
+references' own beds (engine `gnss_processor_irm.exe`, sha256[:16] `f50e95d27304f1fb`, branch
+`adopt/integer-reference-2026-11-19`; runs `D:/GnssProcessorSupport/runs_irm/`), 2 h each:
+
+- Simulator (golden fixture from 00:30:15, `_rap_irm_s_2`): 240 of 240 epochs emitted; 857 links decided over rings 2 to
+  7, 675 held at the end, 114 released (all at gaps), 68 to the tree, 136 re-hosts kept with their carries; truth audit
+  held link-epochs right 95 810, WRONG 0, decisions WRONG 0; held share in hour 2 Galileo L1C/L5Q 91.8 %, GPS L1C/L2W
+  88.7 %.
+- Observed DOY 129 of 2024 (`_rap_irm_f129_2`, 58 receivers): 240 of 240 emitted; 694 decided, 552 held at the end, 83
+  released (slip 17, gap 66), 59 to the tree, 108 re-hosts kept and 6 released off the integer; 62 100 held link-epochs;
+  held share in hour 2 Galileo 76.0 %, GPS 71.6 %; 2 RAIM rows against 1 on the same-engine control of the frozen file.
+- The built-in float user (undifferenced, the references' type, unchanged): WTZZ00DEU 2.30 and 0.32 m in hours 1 and 2
+  (rising to 2.65 m at 20 to 30 min, below 0.5 m from 70 min), against 0.058 and 0.013 m on the control; SZZ000SIM 0.79
+  and 0.30 m. The same configuration's built-in user read 0.65 to 1.08 m in hour 1 on the five-day days. Read: a float
+  user of this posture (the phase-bias hold off) is metre-level in hour 1; the author decides the built-in user's type.
+
+Owed: the night 6 h set of card IRM (DOY 129, 130 and 132 and the simulator, with same-engine controls of the frozen
+lineage), from which the new baseline is taken.

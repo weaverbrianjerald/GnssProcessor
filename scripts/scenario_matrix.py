@@ -68,8 +68,11 @@ MATRIX = ROOT + "/scripts/smx/matrix.json"
 # family; card SMX2 writes its own ("smx2") from the postures as armed on 2026-11-09.
 SEED_TAG = os.environ.get("SMX_SEED_TAG", "smx")
 
-SIM_GOLDEN = ROOT + "/config/golden/golden_sim_refound.json"
-FIELD_GOLDEN = ROOT + "/config/golden/golden_field_refound.json"
+# The matrix's postures are the float vehicle with the phase-bias hold (cards SMX, SMX2): they read the frozen
+# lineages of that posture, not the reference files, which run the integer-fixing configuration since 2026-11-19
+# (card IRM).
+SIM_GOLDEN = ROOT + "/config/golden/golden_sim_rf0hv18.json"
+FIELD_GOLDEN = ROOT + "/config/golden/golden_field_rf0hv18.json"
 QUIET = "C:/GnssProcessor/runs/simnet60_quiet_col_24h"
 NATIVE_ROOT = "C:/GnssProcessor/runs/_scl_data_nbp"      # card NBP's CLK-free data root
 START_OFFSET_H = 0.504167                                # 00:30:15, the sim grading start

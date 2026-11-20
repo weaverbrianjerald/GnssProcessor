@@ -7,7 +7,7 @@
  * NetworkKnobs::snapshot resolves several requests against companion keys once more when the
  * run starts.  A reader of the load log can follow a request only when the change is printed.
  * Each case writes one configuration to the test's scratch folder (a copy of
- * config/golden/golden_field_refound.json with the keys under test changed, or the minimal
+ * config/golden/golden_field_rf0hv18.json with the keys under test changed, or the minimal
  * two-station network of ConfigLoadCapture.hpp where the reference posture cannot express the
  * interlock without a chain of refusals), loads it while capturing the load log with its levels,
  * and accepts one of three outcomes:
@@ -77,10 +77,13 @@ struct LoadResult {
     std::string log;                  ///< the load log as "[level] text" lines, for messages
 };
 
-/// The field reference configuration, parsed once per process, with its station registry cut to
-/// its roster (ReferenceConfigCache.hpp; a copy free to edit).
+/// The field reference configuration of the float-vehicle posture, parsed once per process, with its
+/// station registry cut to its roster (ReferenceConfigCache.hpp; a copy free to edit).  The cases were
+/// written against it (the audit of record CFG, 2026-11-18); since 2026-11-19 it is the frozen lineage
+/// golden_field_rf0hv18, and the integer-fixing reference runs the phase-bias hold off, so the cases of the
+/// hold and the held basis would not express their interlock there.
 nlohmann::json fieldReference() {
-    return gnss_test::referenceConfigWithRosterStationInfo("golden/golden_field_refound.json");
+    return gnss_test::referenceConfigWithRosterStationInfo("golden/golden_field_rf0hv18.json");
 }
 
 /// The minimal two-station network of ConfigLoadCapture.hpp: level vehicle, legacy datum.

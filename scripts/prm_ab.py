@@ -45,8 +45,9 @@ import loader_keys  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__))).replace(os.sep, '/')
 RUNS = ROOT + '/runs'
-GOLDEN = {'f': ROOT + '/config/golden/golden_field_refound.json',
-          's': ROOT + '/config/golden/golden_sim_refound.json'}
+# Card PRM's arms are defined on the float-vehicle posture: the frozen lineages since 2026-11-19 (card IRM).
+GOLDEN = {'f': ROOT + '/config/golden/golden_field_rf0hv18.json',
+          's': ROOT + '/config/golden/golden_sim_rf0hv18.json'}
 SIM_START_H = '0.504167'
 PROGRAM = [
     'network.amb_float_drop_decouple_always=true',
