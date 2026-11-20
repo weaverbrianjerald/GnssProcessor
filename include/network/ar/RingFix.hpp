@@ -43,6 +43,7 @@
  */
 
 #include "network/state/Entities.hpp"   // net::ArcTable
+#include "network/diag/BoundedTally.hpp"   // BoundedTally (the names behind the run-end counts)
 
 #include <spdlog/spdlog.h>
 
@@ -61,6 +62,7 @@
 namespace GnssProcessor {
 
 struct GapResumption;   // network/slip/RawObservables.hpp (ringFixGatherKeepEvidence)
+struct SigResumption;   // network/slip/RawObservables.hpp (ringFixResumeClassOf)
 
 // ---- The frozen rule --------------------------------------------------------------------------
 
@@ -81,6 +83,10 @@ inline constexpr double kRingFixHoldSigmaM = 1.0e-4;
 inline constexpr double kRingFixMonitorBoundM = 0.03;
 /// Consecutive epochs above the monitor's bound that release a held link.
 inline constexpr int kRingFixMonitorEpochs = 4;
+/// network.ring_fix.resume_response "revalidate": the level of the test of a suspended link's held integers against its
+/// own float (a chi-square test with two degrees of freedom in the float's formal covariance times sigma_scale^2).  A
+/// probability, not a size: the same level holds for any receiver class, the scale coming from the float itself.
+inline constexpr double kRingFixResumeLevel = 1.0e-3;
 /// A released link's carried variance is re-opened to at least this (m^2): a link held from its first
 /// stash has the hold's own variance as its birth variance, which a drop would restore.
 inline constexpr double kRingFixReleaseFloorM2 = 1.0;
@@ -141,9 +147,10 @@ enum class RingFixRelease : std::uint8_t {
     Gap,      ///< The link absent, or no chord of its pair family, for longer than the leveling horizon.
     Chain,    ///< The link became a tree link, lies on a cut release's moved side, or its component's root changed.
     Monitor,  ///< The post-fit ionosphere-free phase residual above its bound at consecutive epochs.
+    Resume,   ///< Its own (station, satellite) resumed after a tracking break, shifted or unmeasured (network.ring_fix.resume_response).
 };
 /// Number of release causes.
-inline constexpr std::size_t kRingFixReleaseCount = 5;
+inline constexpr std::size_t kRingFixReleaseCount = 6;
 
 /// Why a link that is not held was not decided at an epoch (the first test it failed).
 enum class RingFixRefuse : std::uint8_t {
@@ -170,7 +177,7 @@ inline constexpr std::size_t kRingFixRefuseCount = 11;
 const char* ringFixRuleName(RingFixRule r);
 
 /**
- * @brief The name of a release cause ("slip", "refloat", "gap", "chain", "monitor").
+ * @brief The name of a release cause ("slip", "refloat", "gap", "chain", "monitor", "resume").
  * @param c The cause.
  * @return Its name as a static string; "?" for a value outside the enum.
  */
@@ -183,6 +190,56 @@ const char* ringFixReleaseName(RingFixRelease c);
  * @return Its name as a static string; "?" for a value outside the enum.
  */
 const char* ringFixRefuseName(RingFixRefuse c);
+
+/// Why a hold-table hit in PASS B was not folded as a hold row (card CNN row 4; the first test it failed).
+enum class RingFixRowSkip : std::uint8_t {
+    TreeEdge,        ///< The arc is a tree edge of the chain: its 1e10 pin is the frame, a second row would fight it.
+    IndexPastState,  ///< The arc's column index lies past this epoch's linearization point x_lin.
+    NoLocalColumn,   ///< The column is not one of the station's columns this epoch (h2local), or its x_lin is non-finite.
+    NonFiniteRow,    ///< The row's right-hand side is non-finite.
+};
+/// Number of hold-row skip causes.
+inline constexpr std::size_t kRingFixRowSkipCount = 4;
+
+/**
+ * @brief The name of a hold-row skip cause, as the run-end line prints it.
+ * @param c The cause.
+ * @return "on a tree edge", "index past the state", "not a column of the epoch" or "a non-finite row"; "?" outside
+ *         the enum.
+ */
+const char* ringFixRowSkipName(RingFixRowSkip c);
+
+/// The response of a held link to a tracking break of its own (station, satellite) (network.ring_fix.resume_response).
+enum class RingFixResumeResponse : std::uint8_t {
+    Off,         ///< No response at the resumption (default): the release step's causes alone, as before.
+    Release,     ///< A shifted or unmeasured resumption releases the hold in its epoch, cause resume.
+    Revalidate,  ///< It suspends the hold (not held, carries re-opened, the integers kept in a crossing record) until the link's own float confirms or contradicts them.
+};
+
+/**
+ * @brief The name of a response ("off", "release", "revalidate"), as the key spells it.
+ * @param r The response.
+ * @return Its name; "?" outside the enum.
+ */
+const char* ringFixResumeResponseName(RingFixResumeResponse r);
+
+/// The class of a gap resumption of a held link's own (station, satellite) at one epoch (first match wins, in the
+/// order shifted, unmeasured, clean; @ref ringFixResumeClassOf).
+enum class RingFixResumeClass : std::uint8_t {
+    None,        ///< No resumption record of the link's station and satellite this epoch.
+    Clean,       ///< The link's pair, or a signal of it, measured across the break with no shift: the hold is kept.
+    Shifted,     ///< A measured level shift on the row or on one of the link's signals.
+    Unmeasured,  ///< No level on both sides of the break for the link's pair, or for a signal of it.
+};
+/// Number of resumption classes.
+inline constexpr std::size_t kRingFixResumeClassCount = 4;
+
+/**
+ * @brief The name of a resumption class ("none", "clean", "shifted", "unmeasured").
+ * @param c The class.
+ * @return Its name; "?" outside the enum.
+ */
+const char* ringFixResumeClassName(RingFixResumeClass c);
 
 // ---- The gate ---------------------------------------------------------------------------------
 
@@ -476,6 +533,29 @@ struct RingFixLinkId {
     }
 };
 
+/**
+ * @brief A link as a run-end line names it (card CNN rows 2 and 4): the station, the satellite, the signals and the
+ *        ring at the epoch it was counted.  The station is a roster index, named at the run end.
+ */
+struct RingFixNamedLink {
+    int         station{-1};  ///< Roster index.
+    std::string sat;          ///< Satellite ("G09").
+    std::string signals;      ///< The link's pair ("L1C/L2W"); for a hold row, its signal and pair ("L1C of L1C/L2W").
+    int         ring{-1};     ///< Its ring when counted (-1: not in the rings).
+    /** @brief Equality of every field.  @param o The other link.  @return True when equal. */
+    bool operator==(const RingFixNamedLink& o) const {
+        return station == o.station && sat == o.sat && signals == o.signals && ring == o.ring;
+    }
+};
+
+/**
+ * @brief A link as the run-end line prints it: "BOGT00COL-G09 L1C/L2W ring 2".
+ * @param l The link.
+ * @param station_names The roster's station names (a station outside them prints as "#<index>").
+ * @return The text.
+ */
+std::string ringFixNamedLinkText(const RingFixNamedLink& l, const std::vector<std::string>& station_names);
+
 /// One band's tree and chords, as the rings read them.  Vertices are keys: "R:<station index>"
 /// for a receiver, "S:<satellite>" for a satellite (the chain record's keys).
 struct RingFixTree {
@@ -511,6 +591,25 @@ ringFixRings(const RingFixTree& tree, const std::set<std::pair<std::string, std:
 
 // ---- The run state ------------------------------------------------------------------------------
 
+/**
+ * @brief A held link's crossing of a tracking break of its own under network.ring_fix.resume_response "revalidate":
+ *        the integers it held, kept as a hypothesis while the link is not held, until its own float confirms them (the
+ *        link is held again), contradicts them, the record expires, or another event ends it.
+ *
+ * Holds two integers and counts, no level: the carried entries stay the vehicle's, re-opened at the suspension.
+ */
+struct RingFixCrossing {
+    bool               active{false};                     ///< A suspension is open.
+    double             since_s{-1.0};                     ///< The resumption epoch (continuous GPS seconds).
+    RingFixResumeClass cls{RingFixResumeClass::None};     ///< The resumption's class.
+    bool               carry_fresh{false};                ///< The link's carried entries were missing at the resumption.
+    long long          n1{0};                             ///< The held band-1 integer.
+    long long          n2{0};                             ///< The held band-2 integer.
+    int                agree{0};                          ///< Consecutive decision epochs at which the float's gate passed at these integers.
+    int                epochs{0};                         ///< Decision epochs since the suspension.
+    double             d_gf_m{0.0};                       ///< The resumption's geometry-free level change (m; 0 when not measured).
+};
+
 /// One link's state across epochs.
 struct RingFixLink {
     double    lambda1{0.0};          ///< Band-1 wavelength (m).
@@ -544,6 +643,7 @@ struct RingFixLink {
     double    nn_gf_m{0.0};          ///< Moving average of the geometry-free combination of its two post-fit code residuals (m).
     double    nn_if_m{0.0};          ///< Moving average of their ionosphere-free combination (m).
     bool      nn_moved{false};       ///< The guard moved its pair during this hold.
+    RingFixCrossing crossing;        ///< network.ring_fix.resume_response "revalidate": the open suspension, if any.
 };
 
 /// One link as the decision reads it after the solve.
@@ -579,6 +679,14 @@ struct RingFixDecideObs {
     long long truth2{0};               ///< Its true band-2 integer.
 };
 
+/// A held link's resumption at one epoch as the release reads it (network.ring_fix.resume_response).
+struct RingFixResumeReading {
+    RingFixResumeClass cls{RingFixResumeClass::None};   ///< The class (none: no record of the link's station and satellite).
+    double             d_gf_m{0.0};                     ///< The record's geometry-free level change (m; 0 when not measured).
+    long long          gap_epochs{0};                   ///< Processed epochs missed.
+    int                lli{0};                          ///< 1 when the record carries a loss of lock on a link signal at the return.
+};
+
 /// One link as the release reads it before PASS B.
 struct RingFixHoldObs {
     bool        present{false};   ///< A chord of both bands' trees this epoch.
@@ -589,6 +697,7 @@ struct RingFixHoldObs {
     bool        carry_ok{false};  ///< Both bands' carried entries exist.
     double      stamp1{0.0};      ///< Band 1's carried re-level stamp now.
     double      stamp2{0.0};      ///< Band 2's carried re-level stamp now.
+    RingFixResumeReading resume;  ///< The link's own resumption this epoch (read under network.ring_fix.resume_response only).
 };
 
 /// What a step did to one link.
@@ -616,10 +725,12 @@ struct RingFixCounters {
     long long held_link_epochs{0};        ///< Held links present at an epoch's decision.
     long long released[kRingFixReleaseCount]{};  ///< Releases by cause.
     long long refused[kRingFixRefuseCount]{};    ///< Link-epochs refused, by cause.
-    long long rows_offered{0};            ///< Hold-table hits in PASS B: rows_injected + rows_gauge_skipped + rows_no_column.
+    long long rows_offered{0};            ///< Hold-table hits in PASS B: rows_injected + rows_gauge_skipped + the three without a column.
     long long rows_injected{0};           ///< Hold rows folded in PASS B.
     long long rows_gauge_skipped{0};      ///< Table hits on a gauge-pinned (tree) arc, never folded.
-    long long rows_no_column{0};          ///< Table hits without a column this epoch.
+    long long rows_no_column_index{0};    ///< Table hits without a column: the column index past this epoch's x_lin.
+    long long rows_no_column_local{0};    ///< Table hits without a column: not a column of the station this epoch, or a non-finite x_lin.
+    long long rows_no_column_eta{0};      ///< Table hits without a column: the row's right-hand side non-finite.
     long long carry_reopened{0};          ///< Carried entries the release re-opened (drop or erase).
     long long audit_right{0};             ///< Held link-epochs whose integers the audit found right.
     long long audit_wrong{0};             ///< Held link-epochs whose integers the audit found wrong.
@@ -703,6 +814,23 @@ struct RingFixCounters {
     long long keep_refused_unchecked{0};  ///< Refused: back across a gap, the held pair not measured across it.
     long long keep_refused_shifted{0};    ///< Refused: the gap re-entry test found the held pair shifted.
     long long keep_refused_signature{0};  ///< Refused: the near-null signature sits at a whole step.
+    // The names behind the counts (card CNN rows 2 and 4).  Filled serially (the decision, the station tally in
+    // station order); read by the run-end lines only.
+    std::map<std::string, long long> pair_link_epochs;   ///< Chord link-epochs considered, per listed pair "E:L1C/L5Q" (network.ring_fix.pairs set only).
+    BoundedTally<std::string> excluded_families;         ///< Chord link-epochs not considered, by family "E:L1X/L5X" (the first ten).
+    BoundedTally<RingFixNamedLink> rows_skipped_links[kRingFixRowSkipCount];   ///< Hold-table hits not folded, by cause (index RingFixRowSkip), the first ten links.
+    BoundedTally<RingFixNamedLink> refused_links[kRingFixRefuseCount];        ///< Link-epochs refused, by cause (index RingFixRefuse), the first ten links.
+    // network.ring_fix.resume_response: the responses to a tracking break of the link's own, by class (index
+    // RingFixResumeClass).  All 0 with the key off.
+    long long resume_kept_clean{0};                              ///< Clean resumptions met on held links: the hold kept.
+    long long resume_released[kRingFixResumeClassCount]{};       ///< "release": holds released at the resumption.
+    long long resume_suspended[kRingFixResumeClassCount]{};      ///< "revalidate": holds suspended at the resumption.
+    long long resume_revalidated[kRingFixResumeClassCount]{};    ///< ...held again at their integers (the float confirmed them).
+    long long resume_contradicted[kRingFixResumeClassCount]{};   ///< ...given up: the float's gate passed at other integers.
+    long long resume_expired[kRingFixResumeClassCount]{};        ///< ...given up: not confirmed within the decision window (kRingFixWindowS).
+    long long resume_ended[kRingFixResumeClassCount]{};          ///< ...given up: a slip, a chain event or a new resumption.
+    long long resume_fresh{0};                                   ///< Responses (release or suspension) at which the link's carry was missing.
+    BoundedTally<RingFixNamedLink> resume_links;                 ///< The first ten links that responded.
 };
 
 /// A move of the re-attachment waiting for the next election (network.ring_fix.reattach).
@@ -862,10 +990,18 @@ struct NetworkRingFix {
     bool pairConsidered(const std::string& sys, const std::string& sig1, const std::string& sig2) const {
         return pairs.empty() || pairs.count({sys, sig1, sig2}) != 0;
     }
+    /// @brief Whether a held entry's step asks the gap evidence (@ref chainEntryStep with revalidate): under
+    ///        network.ring_fix.entry_revalidate, and under network.ring_fix.resume_response so that an entry in the
+    ///        resumption epoch is refused by the one owner of a held entry's step (the near-null part stays
+    ///        entry_revalidate's).
+    /// @return True when either key is on.
+    bool entryGapChecked() const { return entry_revalidate || resume_response != RingFixResumeResponse::Off; }
     double      t0_s{-1.0};                 ///< The first epoch the ring fix saw (continuous GPS seconds).
     /// The previous epoch's tree edges with their targets: (station, satellite, signal) -> target (cycles).
     std::map<std::tuple<int, std::string, std::string>, double> prev_targets;
     // The re-attachment of untied satellites (network.ring_fix.reattach).
+    /// The response to a tracking break of a held link's own (station, satellite) (network.ring_fix.resume_response).
+    RingFixResumeResponse resume_response{RingFixResumeResponse::Off};
     bool        reattach{false};            ///< The re-attachment is armed (network.ring_fix.reattach).
     /// (family, satellite) -> when the satellite became unsettled and untied (continuous GPS seconds).
     std::map<std::pair<std::string, std::string>, double> untied_since_s;
@@ -1028,14 +1164,25 @@ void ringFixUnholdLink(RingFixLink& L, double now_s, RingFixUnholdKind kind);
  * true integers is held at them at once, and a held link whose integers differ is set to them; the
  * rule does not run.
  *
+ * Under network.ring_fix.resume_response "revalidate" a suspended link (@ref RingFixCrossing) is tested first, before
+ * the rule, in its float's own scale (@ref ringFixResumeTest): the record's integers accepted at
+ * @ref kRingFixResumeLevel and decided by the odds rule count an agreement, and at @ref kRingFixPersistEpochs
+ * consecutive agreements the link is held again at them (not counted as a decision; no window); the record's
+ * integers rejected at that level while the odds rule decides others contradicts the record; a record older than the
+ * decision window (@ref kRingFixWindowS) expires, since from then on the rule may decide the link anyway.  A
+ * contradicted or expired record counts a release with cause resume, and the link goes on under the rule.
+ *
  * @param rf     The run state (links and counters written).
  * @param links  This epoch's chords of pair families with their readings.
  * @param now_s  The epoch (continuous GPS seconds).
+ * @param resume_edges Optional out: the suspensions' second edges of this epoch (cleared records), for the events.
  * @return One event per decision and per refusal, in the order of @p links.
  */
+struct RingFixResumeEdge;
 std::vector<RingFixEvent> ringFixDecideStep(NetworkRingFix& rf,
                                             const std::vector<RingFixDecideObs>& links,
-                                            double now_s);
+                                            double now_s,
+                                            std::vector<RingFixResumeEdge>* resume_edges = nullptr);
 
 /**
  * @brief The release of one epoch, before PASS B.
@@ -1055,6 +1202,97 @@ std::vector<RingFixEvent> ringFixDecideStep(NetworkRingFix& rf,
 std::vector<RingFixEvent> ringFixReleaseStep(NetworkRingFix& rf,
                                              const std::map<RingFixLinkId, RingFixHoldObs>& obs,
                                              double now_s);
+
+// ---- The response to a tracking break of the link's own (network.ring_fix.resume_response) ----
+
+/**
+ * @brief The class of a held link's resumption this epoch, from the slip layer's records of the epoch.
+ *
+ * Only records of the link's own station and satellite that name one of its signals count (an off-pair return of the
+ * satellite is not the link's break).  Such a row record (@c GapResumption) is clean only when it measured the link's
+ * own pair (either order) without a shift, the entry check's rule, and unmeasured otherwise; a signal record
+ * (@c SigResumption) counts when its signal is one of the link's.  First match wins: shifted, then unmeasured, then
+ * clean.
+ * @param id   The link.
+ * @param rows The epoch's row-level resumptions (@c RawSlipEpoch::resumptions).
+ * @param sigs The epoch's one-signal resumptions (@c RawSlipEpoch::sig_resumptions).
+ * @return The class, with the geometry-free change, the gap and the loss-of-lock bit of the record that set it.
+ */
+RingFixResumeReading ringFixResumeClassOf(const RingFixLinkId& id, const std::vector<GapResumption>& rows,
+                                          const std::vector<SigResumption>& sigs);
+
+/// One edge of a response to a tracking break, for its event row and counters.
+struct RingFixResumeEdge {
+    enum class Kind : std::uint8_t {
+        Release,  ///< "release": the hold released at the resumption.
+        Suspend,  ///< "revalidate": the hold suspended at the resumption (first edge).
+        Clear,    ///< "revalidate": the suspension ended (second edge), with @ref verdict.
+    };
+    Kind               kind{Kind::Release};             ///< What happened.
+    RingFixLinkId      id;                              ///< The link.
+    RingFixResumeClass cls{RingFixResumeClass::None};   ///< The resumption's class.
+    bool               carry_fresh{false};              ///< The link's carry was missing at the resumption.
+    std::string        verdict;                         ///< Clear: "revalidated", "contradicted", "expired" or "ended:<cause>".
+    long long          n1{0};                           ///< The held band-1 integer.
+    long long          n2{0};                           ///< The held band-2 integer.
+    long long          m1{0};                           ///< Clear, contradicted: the float's band-1 integer.
+    long long          m2{0};                           ///< Clear, contradicted: the float's band-2 integer.
+    double             d_gf_m{0.0};                     ///< The resumption's geometry-free change (m).
+    long long          gap_epochs{0};                   ///< The resumption's gap (processed epochs).
+    int                lli{0};                          ///< The resumption's loss-of-lock bit.
+};
+
+/**
+ * @brief The response to a tracking break of the link's own, before PASS B (network.ring_fix.resume_response).
+ *
+ * Gate: returns at once with the key off.  For each held link with a reading of class shifted or unmeasured that the
+ * release step would not release for chain or slip (latched, root changed, tree, cut): "release" releases it (cause
+ * resume), "revalidate" suspends it (not held, the integers kept in @ref RingFixLink::crossing).  A clean reading keeps
+ * the hold and is counted.  Under "revalidate" a suspended link in @p obs is ended by a latch, a root change, a tree
+ * entry or a new resumption of any class but clean.  The caller re-opens the carried entries of every released or
+ * suspended link and writes the events.
+ * @param rf    The run state (links and counters written).
+ * @param obs   The held links' readings this epoch, and the suspended links' under "revalidate".
+ * @param now_s The epoch (continuous GPS seconds).
+ * @return One edge per release, suspension and ended suspension.
+ */
+std::vector<RingFixResumeEdge> ringFixResumeStep(NetworkRingFix& rf, const std::map<RingFixLinkId, RingFixHoldObs>& obs,
+                                                 double now_s);
+
+/// The verdict of the test of a suspended link's held integers against its float.
+enum class RingFixResumeTest : std::uint8_t {
+    None,          ///< No usable float or covariance: no evidence this epoch.
+    Agree,         ///< The held integers accepted at the level, and the odds rule decides them.
+    Contradict,    ///< The held integers rejected at the level, and the odds rule decides other integers.
+    Undecided,     ///< Neither: the float does not yet tell.
+};
+
+/**
+ * @brief The test of a suspended link's held integers against its float, in the float's own scale.
+ *
+ * T = d' (s^2 Q)^-1 d with d the float minus (n1, n2) in cycles, Q its formal covariance and s the run's
+ * network.ring_fix.sigma_scale, against the chi-square quantile with two degrees of freedom at
+ * @ref kRingFixResumeLevel (-2 ln level); the odds rule is the gate's (both log-odds at least
+ * @ref kRingFixMinLogOdds, formal sigmas times s), without the gate's fixed fraction bound.  No fixed size enters.
+ * @param g      The gate's reading of the float (@ref ringFixGate with the run's sigma_scale).
+ * @param o      The decision's reading of the link (the float and its covariance).
+ * @param n1     The held band-1 integer.
+ * @param n2     The held band-2 integer.
+ * @param sigma_scale The run's factor on the formal sigmas.
+ * @param T_out  Optional out: the statistic (NaN without a usable covariance).
+ * @return The verdict.
+ */
+RingFixResumeTest ringFixResumeTest(const RingFixGate& g, const RingFixDecideObs& o, long long n1, long long n2,
+                                    double sigma_scale, double* T_out = nullptr);
+
+/**
+ * @brief The open suspensions (network.ring_fix.resume_response "revalidate").
+ * @param rf The run state.
+ * @return The links with an active crossing record.
+ */
+long long ringFixActiveCrossings(const NetworkRingFix& rf);
+
+// ---- End of the response to a tracking break ----
 
 /**
  * @brief Read an audit frame-target file into the run state.
@@ -1284,6 +1522,18 @@ struct RingFixCutOutcome {
  * @return What the cuts did.
  */
 RingFixCutOutcome ringFixApplyCuts(NetworkRingFix& rf, const std::vector<RingFixCut>& cuts, double now_s);
+
+/**
+ * @brief Ends every suspension (network.ring_fix.resume_response "revalidate") that a cut separates: one end of the
+ *        link on the cut's moved side and the other not, on the link's constellation and either band.  Known or
+ *        unknown, the step leaves the record's integers in a frame other than the one they were decided in.
+ * @param rf    The run state (links and counters written).
+ * @param cuts  This epoch's cuts.
+ * @param now_s The epoch (continuous GPS seconds).
+ * @return One edge (kind clear, verdict "ended:cut") per ended suspension.
+ */
+std::vector<RingFixResumeEdge> ringFixEndCrossingsAtCuts(NetworkRingFix& rf, const std::vector<RingFixCut>& cuts,
+                                                         double now_s);
 
 /**
  * @brief The band of a held link that a cut is on.

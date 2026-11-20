@@ -54,6 +54,7 @@
 #include "network/solve/AnchorHygiene.hpp"   // AnchorHygiene (eq34 reattach hygiene)
 #include "network/state/CarrySites.hpp"      // CarrySiteCounts
 #include "network/assembly/PhaseFamily.hpp"   // PhaseFamilyTable (eq34ShiftCarry: the band of a carried arc)
+#include "network/diag/BoundedTally.hpp"      // BoundedTally (the pair family's elections per signal, named)
 
 #include <array>
 #include <map>
@@ -390,6 +391,77 @@ void networkHarvestRxPhaseBias(NetworkRun& run, const NetworkEpoch& ep);
 
 // ---- End of the harvest half, declarations ----
 
+// ---- The pair family's elections per signal, named (card CNN row 1) ----
+
+/**
+ * @brief Why a constellation-epoch formed a family of one band under the pair family
+ *        (@c network.phase_datum_eq34_family "pair") and was elected per signal.
+ *
+ * The causes follow the branches of the family formation (chainFamiliesOf in ChainDatum.cpp) in order.
+ */
+enum class ChainPairFallbackCause {
+    OneSignal,              ///< The constellation tracks one phase signal in the epoch.
+    TwoOfOneBand,           ///< Two phase signals of the same band.
+    UnparsedSignal,         ///< Two phase signals, one of which no SignalId reads (no band to compare).
+    ThreeOrMore,            ///< Three or more phase signals and no configured pairs for the constellation.
+    NotInConfiguredPairs,   ///< Three or more, and a signal the configured pairs (network.phase_datum_eq34_family_pairs) leave alone.
+};
+
+/**
+ * @brief The name of a cause, as the run-end line prints it.
+ * @param c The cause.
+ * @return "one signal", "two of one band", "a signal without a band", "three or more" or "a signal not in the configured pairs".
+ */
+const char* chainPairFallbackCauseName(ChainPairFallbackCause c);
+
+/**
+ * @brief The cause of an election per signal under the pair family, read from the constellation's signal set.
+ *
+ * Call it only for a constellation-epoch whose families include one of one band; it reads the same facts as the
+ * family formation (the number of signals, their bands, whether the constellation has configured pairs).
+ * @param sys The constellation.
+ * @param signals Its phase signals of the epoch, in signal-string order.
+ * @param has_configured_pairs Whether network.phase_datum_eq34_family_pairs names the constellation.
+ * @return The cause.
+ */
+ChainPairFallbackCause chainPairFallbackCause(System sys, const std::vector<std::string>& signals,
+                                              bool has_configured_pairs);
+
+/**
+ * @brief The key of an election per signal in the run-end tally: the constellation, its signal set and the cause.
+ */
+struct ChainPairFallbackKey {
+    System                   sys{System::GPS};   ///< The constellation.
+    std::vector<std::string> signals;            ///< Its phase signals of the epoch, in signal-string order.
+    ChainPairFallbackCause   cause{ChainPairFallbackCause::OneSignal};   ///< The cause.
+    /** @brief Equality of every field.  @param o The other key.  @return True when equal. */
+    bool operator==(const ChainPairFallbackKey& o) const {
+        return sys == o.sys && signals == o.signals && cause == o.cause;
+    }
+};
+
+/**
+ * @brief A key as the run-end line prints it: "E {L1C L1X L5Q} three or more".
+ * @param k The key.
+ * @return The text.
+ */
+std::string chainPairFallbackKeyText(const ChainPairFallbackKey& k);
+
+struct ChainDatumCounters;
+
+/**
+ * @brief The clause the pair family's run-end lines end with: per constellation, the constellation-epochs elected
+ *        per signal of those seen, then the elections per signal by signal set and cause (the first ten).
+ *
+ * Example: " Per constellation: GPS 0 of 240 constellation-epoch(s) elected per signal, Galileo 0 of 240; per
+ * signal: none."
+ * @param c The counters at the run end.
+ * @return The clause, with its leading space.
+ */
+std::string chainPairFallbackClause(const ChainDatumCounters& c);
+
+// ---- End of the pair family's elections per signal ----
+
 /// @brief Run-scope counters of ChainDatum, a base of NetworkServiceCounters (network/state/RunContext.hpp).
 struct ChainDatumCounters {
 
@@ -485,6 +557,11 @@ struct ChainDatumCounters {
     long long eq34_pair_fallbacks = 0;        ///< constellation-epochs that formed no pair family and were elected per signal (one signal, three or more, or two of one band)
     long long eq34_pair_ext_edges = 0;        ///< tree edges the band extension added: a band-only vertex attached to a pair tree, on its own band
     long long eq34_pair_band_only_comps = 0;  ///< band-only components elected on their own band: a band component with no vertex in any pair tree
+    // The pair family's elections per signal by name (card CNN row 1); all stay empty with the knob off.  Filled in
+    // the serial election only; read by the run-end line only.
+    std::map<System, long long> eq34_pair_epochs_by_sys;      ///< constellation-epochs seen with the pair family on, by constellation
+    std::map<System, long long> eq34_pair_fallbacks_by_sys;   ///< of them, elected per signal (their sum is eq34_pair_fallbacks)
+    BoundedTally<ChainPairFallbackKey> eq34_pair_fallback_sets;   ///< the elections per signal by constellation, signal set and cause (first ten named)
     // The configured pair families (network.phase_datum_eq34_family_pairs); all stay empty with the list empty.
     std::map<std::string, long long> eq34_family_epochs;   ///< constellation-epochs per family as elected ("E:L1C/L5Q"; a family of one band "E:L1C")
     std::map<System, std::string>    eq34_family_line;     ///< each constellation's families as last named in the log (a line is written when they change)

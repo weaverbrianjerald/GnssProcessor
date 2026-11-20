@@ -256,6 +256,18 @@ void networkRingFixHoldTable(NetworkRun& run);
  * @param sig   The link's signal whose entry is re-opened.
  * @param stamp The entry's re-level stamp at the link's decision (+infinity: re-open in any case).
  */
+/**
+ * @brief The RINGFIX rows of the response to a tracking break (network.ring_fix.resume_response): a release as a
+ *        @c release row with cause @c resume, a suspension as @c resume_suspend, an ended suspension as
+ *        @c resume_clear with its verdict; each names the station, the satellite, the signals, the held integers,
+ *        the class, the carry (bridged or fresh), the geometry-free change, the gap and the loss-of-lock bit.
+ *        Nothing is written for an empty list (always, with the key off).
+ * @param run   The run (its traces are written; the station names are read).
+ * @param ep    The epoch (its time).
+ * @param edges The edges of the epoch's stage.
+ */
+void networkRingFixTraceResumeEdges(NetworkRun& run, const NetworkEpoch& ep, const std::vector<RingFixResumeEdge>& edges);
+
 void networkRingFixReopenCarry(NetworkRun& run, const NetworkEpoch& ep, const RingFixLinkId& id,
                                const std::string& sig, double stamp);
 

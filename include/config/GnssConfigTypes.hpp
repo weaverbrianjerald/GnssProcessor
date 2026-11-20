@@ -2045,6 +2045,15 @@ namespace GnssProcessor {
         /// refused as well.  A refused entry's step is unknown, as the chain's returning row declares, and the held
         /// links crossing the cut are released.  Events and run-end counters.  False (default): off, byte-identical.
         bool entry_revalidate{ false };
+        /// @c network.ring_fix.resume_response: the response of a held link to a tracking break of its own station and
+        /// satellite (the gap resumption records of the slip layer, final after PASS A).  "off" (default): none, the
+        /// release step's causes as before, byte-identical.  "release": a resumption whose level is shifted or not
+        /// measured on the link's pair (or on one of its signals) releases the hold in its epoch, before PASS B, cause
+        /// resume.  "revalidate": it suspends the hold (not held, carried entries re-opened, the integers kept) until
+        /// the link's own float passes the gate at them for the persistence count (held again), passes at other
+        /// integers, or a frozen number of decision epochs pass.  A clean measured resumption keeps the hold under
+        /// both.  Events at both edges and run-end counters.
+        std::string resume_response{ "off" };
         /// @c network.ring_fix.nn_monitor: the near-null signature as a measure-only monitor (the queue's item N3 after
         /// card NRF section 108.2): every held Galileo E1/E5a chord's centred code signature (the guard's moving averages
         /// over nn_guard_min_epochs and its verdicts) is tallied where it sits at a whole near-null step with the

@@ -81,6 +81,7 @@ const std::vector<FieldDecl> kRunFields = {
     {"carry.ring_fix.nn_tol_gf_m", "", Persist::RunConst, "", "", nullptr, nullptr, nullptr},
     {"carry.ring_fix.nn_max_if_m", "", Persist::RunConst, "", "", nullptr, nullptr, nullptr},
     {"carry.ring_fix.entry_revalidate", "", Persist::RunConst, "", "", nullptr, nullptr, nullptr},
+    {"carry.ring_fix.resume_response", "", Persist::RunConst, "", "", nullptr, nullptr, nullptr},
     {"carry.ring_fix.nn_monitor", "", Persist::RunConst, "", "", nullptr, nullptr, nullptr},
     {"carry.ring_fix.nn_guard_release", "", Persist::RunConst, "", "", nullptr, nullptr, nullptr},
     // Its memory, carried from epoch to epoch; not in the snapshot, so a resumed leg starts it empty (the run

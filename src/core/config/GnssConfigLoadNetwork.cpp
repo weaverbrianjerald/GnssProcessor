@@ -1637,6 +1637,11 @@ namespace GnssProcessor {
                 throw std::runtime_error("network.ring_fix.nn_guard_max_if_m must be above 0 m.");
             rf.entry_revalidate = jval<bool>(json, "network.ring_fix.entry_revalidate",
                                              "network_ring_fix_entry_revalidate", false);
+            rf.resume_response = jval<std::string>(json, "network.ring_fix.resume_response",
+                                                   "network_ring_fix_resume_response", "off");
+            if (rf.resume_response != "off" && rf.resume_response != "release" && rf.resume_response != "revalidate")
+                throw std::runtime_error("network.ring_fix.resume_response must be \"off\", \"release\" or "
+                                         "\"revalidate\" (got \"" + rf.resume_response + "\").");
             rf.nn_monitor = jval<bool>(json, "network.ring_fix.nn_monitor", "network_ring_fix_nn_monitor", false);
             rf.nn_guard_release = jval<bool>(json, "network.ring_fix.nn_guard_release",
                                              "network_ring_fix_nn_guard_release", false);
@@ -11344,6 +11349,7 @@ namespace GnssProcessor {
             note(rx.nn_guard_release, "nn_guard_release");
             note(rx.nn_monitor, "nn_monitor");
             note(rx.entry_revalidate, "entry_revalidate");
+            note(rx.resume_response != "off", "resume_response");
             note(rx.form_configured_pairs, "form_configured_pairs");
             note(!rx.cascade.empty(), "cascade");
             note(rx.cascade_tree, "cascade_tree");

@@ -108,6 +108,7 @@ void networkRingFixHoldTruth(NetworkRun& run, const NetworkEpoch& ep) {
 
 std::vector<RingFixCut> networkRingFixHoldCuts(NetworkRun& run, const NetworkEpoch& ep,
                                                const std::set<net::ArcTuple>& latched) {
+    if (!run.ctx.carry.ring_fix) return {};   // the gate, before the bindings read the ring fix's state
     // ---- From the run and the epoch ----
     NetworkRingFix& rf = *run.ctx.carry.ring_fix;   // written: the nested-cut and entry-check counters
     NetworkRunTraces& traces = run.traces;          // written: the RINGFIX entry_refused events
@@ -174,7 +175,7 @@ std::vector<RingFixCut> networkRingFixHoldCuts(NetworkRun& run, const NetworkEpo
             RingFixEntryEvidence ev;
             ev.usable = usable;
             RingFixEntryVerdict verdict = chainEntryStep(ChainEntryKind::CutEntry, ev, false, rf.nn_max_if_m);
-            if (usable && rf.entry_revalidate) {
+            if (usable && rf.entryGapChecked()) {
                 ev.resumed = c.row == "returning";
                 for (const GapResumption& g : qc.epoch.resumptions) {
                     if (g.station != r.station || g.satellite != r.sat) continue;
@@ -220,6 +221,7 @@ std::vector<RingFixCut> networkRingFixHoldCuts(NetworkRun& run, const NetworkEpo
 
 void networkRingFixHoldThroughCuts(NetworkRun& run, const NetworkEpoch& ep, const std::set<net::ArcTuple>& latched,
                                    const std::vector<RingFixCut>& cuts) {
+    if (!run.ctx.carry.ring_fix) return;   // the gate, before the bindings read the ring fix's state
     // ---- From the run and the epoch ----
     NetworkRingFix& rf = *run.ctx.carry.ring_fix;   // written: the links, the near-null re-opens, the counters
     NetworkRunTraces& traces = run.traces;          // written: the RINGFIX release, reexpress and reattach events
@@ -245,6 +247,8 @@ void networkRingFixHoldThroughCuts(NetworkRun& run, const NetworkEpoch& ep, cons
             && latched.count({id.station, id.sat, id.sig2}) == 0)
             usable_before.insert(id);
     const RingFixCutOutcome cut_out = ringFixApplyCuts(rf, cuts, now_s);
+    // An open suspension (network.ring_fix.resume_response "revalidate") that a cut separates ends; none with it off.
+    networkRingFixTraceResumeEdges(run, ep, ringFixEndCrossingsAtCuts(rf, cuts, now_s));
     for (const auto& [id, row] : cut_out.released) {
         const RingFixLink& L = rf.links.at(id);
         if (usable_before.count(id) != 0) ++rf.counters.cut_released_usable;
@@ -307,22 +311,28 @@ void networkRingFixHoldRoots(NetworkRun& run, const NetworkEpoch& ep, const Ring
 
 void networkRingFixHoldReleases(NetworkRun& run, const NetworkEpoch& ep, const RingFixChainFacts& facts,
                                 const std::set<net::ArcTuple>& latched) {
+    if (!run.ctx.carry.ring_fix) return;   // the gate, before the bindings read the ring fix's state
     // ---- From the run and the epoch ----
     NetworkRingFix& rf = *run.ctx.carry.ring_fix;   // written: the links, the release counters
     NetworkRunTraces& traces = run.traces;          // written: the RINGFIX release events
     const std::vector<NetStation>& stations = run.setup.stations;
     const net::ArcTable& arc_rows = run.ctx.entities.arcs;
+    const SlipQcChannel& qc = run.engines.slip_qc;   // the epoch's gap resumptions (network.ring_fix.resume_response)
     const GnssTime& t = ep.se.time;
     const double now_s = ep.clock.pl_now_s;
     // ---- End of the bindings ----
+    const bool resume_on = rf.resume_response != RingFixResumeResponse::Off;
     std::map<RingFixLinkId, RingFixHoldObs> obs;
     for (const auto& [id, L] : rf.links) {
-        if (!L.held) continue;
+        // The held links, and the suspended ones of network.ring_fix.resume_response "revalidate" (none with it off).
+        if (!L.held && !L.crossing.active) continue;
         RingFixHoldObs o;
-        // Neither chain input of the release step can be true here: stage 3 took every held link that is a
-        // tree edge out of the held set, and stage 2 applied the cuts.  On this path the step's chain cause is a
-        // root change alone (the two inputs stay in its contract, which its unit tests exercise).
-        o.tree_now = false;
+        // Neither chain input of the release step can be true for a held link here: stage 3 took every held link
+        // that is a tree edge out of the held set, and stage 2 applied the cuts.  On this path the step's chain cause
+        // is a root change alone (the two inputs stay in its contract, which its unit tests exercise).  A suspended
+        // link is not held, so stage 3 left it: its tree entry is read here, for the end of its suspension.
+        o.tree_now = !L.held && (facts.tree.count({id.station, id.sat, id.sig1}) > 0
+                                 || facts.tree.count({id.station, id.sat, id.sig2}) > 0);
         o.in_cut = false;
         o.present = facts.chords.count({id.station, id.sat, id.sig1}) > 0
                  && facts.chords.count({id.station, id.sat, id.sig2}) > 0;
@@ -334,8 +344,20 @@ void networkRingFixHoldReleases(NetworkRun& run, const NetworkEpoch& ep, const R
         o.carry_ok = c1 != nullptr && c2 != nullptr;
         o.stamp1 = c1 != nullptr ? c1->relevel_s : 0.0;
         o.stamp2 = c2 != nullptr ? c2->relevel_s : 0.0;
+        if (resume_on) o.resume = ringFixResumeClassOf(id, qc.epoch.resumptions, qc.epoch.sig_resumptions);
         obs[id] = o;
     }
+    // The response to a tracking break of the link's own, in its epoch and before the release step, which then
+    // skips the links it released or suspended (no-op with network.ring_fix.resume_response off).  A released or
+    // suspended link's carried entries re-open: the level across the break is unknown.
+    const std::vector<RingFixResumeEdge> resumed = ringFixResumeStep(rf, obs, now_s);
+    for (const RingFixResumeEdge& e : resumed) {
+        if (e.kind == RingFixResumeEdge::Kind::Clear) continue;
+        const RingFixLink& L = rf.links.at(e.id);
+        networkRingFixReopenCarry(run, ep, e.id, e.id.sig1, L.stamp1);
+        networkRingFixReopenCarry(run, ep, e.id, e.id.sig2, L.stamp2);
+    }
+    networkRingFixTraceResumeEdges(run, ep, resumed);
     const std::vector<RingFixEvent> events = ringFixReleaseStep(rf, obs, now_s);
     // Every cause re-opens the carried entries: a slip's and a refloat's drop already ran (the
     // floor still binds where it left the entry tighter); the other causes re-open them here,
@@ -461,6 +483,38 @@ void networkRingFixHoldTable(NetworkRun& run) {
     }
     for (const auto& [id, CL] : rf.cascade_links)
         if (CL.held) rf.table[{id.station, id.sat, id.sig2}] = CL.lambda3 * static_cast<double>(CL.n3);
+}
+
+void networkRingFixTraceResumeEdges(NetworkRun& run, const NetworkEpoch& ep, const std::vector<RingFixResumeEdge>& edges) {
+    // ---- From the run and the epoch ----
+    NetworkRunTraces& traces = run.traces;   // written: the RINGFIX release, resume_suspend and resume_clear events
+    const std::vector<NetStation>& stations = run.setup.stations;
+    const GnssTime& t = ep.se.time;
+    // ---- End of the bindings ----
+    for (const RingFixResumeEdge& e : edges) {
+        const std::string detail =
+            fmt::format("sig1={} sig2={} n1={} n2={} class={} carry={} dgf={} gap_ep={} lli={}", e.id.sig1, e.id.sig2,
+                        e.n1, e.n2, ringFixResumeClassName(e.cls), e.carry_fresh ? "fresh" : "bridged",
+                        e.cls == RingFixResumeClass::Shifted || e.cls == RingFixResumeClass::Clean
+                            ? fmt::format("{:.4f}", e.d_gf_m) : std::string(),
+                        e.gap_epochs, e.lli)
+            + (e.verdict == "contradicted" ? fmt::format(" m1={} m2={}", e.m1, e.m2) : std::string());
+        const std::string sta = ringFixStationName(stations, e.id.station);
+        switch (e.kind) {
+            case RingFixResumeEdge::Kind::Release:
+                traces.emitEvent(t, "RINGFIX", "release", e.id.sat, sta, std::nullopt, std::nullopt,
+                                 ringFixReleaseName(RingFixRelease::Resume), detail);
+                break;
+            case RingFixResumeEdge::Kind::Suspend:
+                traces.emitEvent(t, "RINGFIX", "resume_suspend", e.id.sat, sta, std::nullopt, std::nullopt, "resume",
+                                 detail);
+                break;
+            case RingFixResumeEdge::Kind::Clear:
+                traces.emitEvent(t, "RINGFIX", "resume_clear", e.id.sat, sta, std::nullopt, std::nullopt,
+                                 e.verdict.c_str(), detail);
+                break;
+        }
+    }
 }
 
 void networkRingFixReopenCarry(NetworkRun& run, const NetworkEpoch& ep, const RingFixLinkId& id,
