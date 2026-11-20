@@ -1415,43 +1415,25 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
         if (leg_hold_on) {
             const auto eit = pin_leg_hold.open.find(sat);
             const CodePinLegEdge* open_edge = eit == pin_leg_hold.open.end() ? nullptr : &eit->second;
-            const auto registered = [&](const std::string& s) {
-                return std::find(sigs.begin(), sigs.end(), s) != sigs.end();
-            };
             const auto columnOf = [&](const std::string& s) -> Eigen::Index {
                 try { return est.codeBiasColumn(sat, s); } catch (...) { return -1; }
             };
             const bool single_frequency = !(f1 > 0.0 && f2 > 0.0);
             if (single_frequency) {
-                if (open_edge != nullptr && registered(open_edge->surviving)
-                    && (leg_hold_col = columnOf(open_edge->surviving)) >= 0) {
-                    leg_hold = *open_edge;
-                    out.pin_leg[sat] = CodePinLegRecord{*open_edge, CodePinLegStep::Held, ""};
+                // The edge rule is shared with the station rows (pinLegEdgeThisEpoch).
+                const auto pit = code_bias_ifpin_pair_.find(sat);
+                const auto edge = NetworkSbasis::pinLegEdgeThisEpoch(
+                    sigs, open_edge, pit == code_bias_ifpin_pair_.end() ? nullptr : &pit->second,
+                    [&](const std::string& s, double& v) { return prevCb(sat, s, v); });
+                if (edge && (leg_hold_col = columnOf(edge->surviving)) >= 0) {
+                    leg_hold = *edge;
+                    out.pin_leg[sat] = CodePinLegRecord{
+                        *edge, open_edge != nullptr ? CodePinLegStep::Held : CodePinLegStep::Opened,
+                        ""};
                 } else if (open_edge != nullptr) {
                     out.pin_leg[sat] = CodePinLegRecord{
                         *open_edge, CodePinLegStep::Abandoned,
                         "the surviving signal " + open_edge->surviving + " left too"};
-                } else if (const auto pit = code_bias_ifpin_pair_.find(sat);
-                           pit != code_bias_ifpin_pair_.end()) {
-                    // The decoupling edge: exactly one leg of the last kept pair is
-                    // registered, and both legs have a value of the last kept epoch.
-                    const std::string& p1 = pit->second.first;
-                    const std::string& p2 = pit->second.second;
-                    double v1 = 0.0, v2 = 0.0;
-                    if (registered(p1) != registered(p2) && prevCb(sat, p1, v1)
-                        && prevCb(sat, p2, v2)) {
-                        const bool first_survives = registered(p1);
-                        CodePinLegEdge e;
-                        e.pair      = pit->second;
-                        e.surviving = first_survives ? p1 : p2;
-                        e.parked    = first_survives ? p2 : p1;
-                        e.held_m    = first_survives ? v1 : v2;
-                        e.parked_m  = first_survives ? v2 : v1;
-                        if ((leg_hold_col = columnOf(e.surviving)) >= 0) {
-                            leg_hold = e;
-                            out.pin_leg[sat] = CodePinLegRecord{e, CodePinLegStep::Opened, ""};
-                        }
-                    }
                 }
             } else if (open_edge != nullptr) {
                 if (std::make_pair(sig1, sig2) == open_edge->pair) {
@@ -2391,6 +2373,71 @@ void networkCodeDatumFamilyKeptEpoch(
     }
 }
 
+std::optional<NetworkSbasis::CodePinLegEdge> NetworkSbasis::pinLegEdgeThisEpoch(
+    const std::vector<std::string>& registered, const CodePinLegEdge* open_edge,
+    const std::pair<std::string, std::string>* last_pair,
+    const std::function<bool(const std::string&, double&)>& prev) {
+    const auto isRegistered = [&](const std::string& s) {
+        return std::find(registered.begin(), registered.end(), s) != registered.end();
+    };
+    if (open_edge != nullptr) {
+        if (isRegistered(open_edge->surviving)) return *open_edge;
+        return std::nullopt;   // the surviving signal left too: the caller abandons the edge
+    }
+    if (last_pair == nullptr) return std::nullopt;
+    // The decoupling edge: exactly one signal of the last kept pair is registered, and both
+    // have a value of the last kept epoch.
+    const std::string& p1 = last_pair->first;
+    const std::string& p2 = last_pair->second;
+    double v1 = 0.0, v2 = 0.0;
+    if (isRegistered(p1) == isRegistered(p2) || !prev(p1, v1) || !prev(p2, v2))
+        return std::nullopt;
+    const bool first_survives = isRegistered(p1);
+    CodePinLegEdge e;
+    e.pair      = *last_pair;
+    e.surviving = first_survives ? p1 : p2;
+    e.parked    = first_survives ? p2 : p1;
+    e.held_m    = first_survives ? v1 : v2;
+    e.parked_m  = first_survives ? v2 : v1;
+    return e;
+}
+
+std::map<std::string, NetworkSbasis::CodePinLegEdge> networkCodePinLegKnownBiases(
+    const std::vector<std::pair<std::string, std::string>>& registered_code_keys,
+    const std::function<double(const std::string&, const std::string&)>& freqOf,
+    const std::map<std::string, NetworkSbasis::CodePinLegEdge>& open_edges,
+    const std::map<std::string, std::pair<std::string, std::string>>& last_pairs,
+    const std::map<std::string, std::map<std::string, double>>& prev) {
+    std::map<std::string, std::vector<std::string>> by_sat;
+    for (const auto& [sat, sig] : registered_code_keys) by_sat[sat].push_back(sig);
+    std::map<std::string, NetworkSbasis::CodePinLegEdge> out;
+    for (const auto& [sat, sigs] : by_sat) {
+        // Single frequency as the datum rows decide it: the pin selection finds no second
+        // distinct frequency.
+        const auto pin = NetworkSbasis::selectIfPinPair(
+            sigs, [&](const std::string& s) { return freqOf(sat, s); });
+        const double f1 = pin.first.empty() ? 0.0 : freqOf(sat, pin.first);
+        const double f2 = pin.second.empty() ? 0.0 : freqOf(sat, pin.second);
+        if (f1 > 0.0 && f2 > 0.0) continue;
+        const auto oit = open_edges.find(sat);
+        const auto lit = last_pairs.find(sat);
+        const std::string ckey = constellationKey(systemOfSat(sat)) + "|";
+        const auto edge = NetworkSbasis::pinLegEdgeThisEpoch(
+            sigs, oit == open_edges.end() ? nullptr : &oit->second,
+            lit == last_pairs.end() ? nullptr : &lit->second,
+            [&](const std::string& s, double& v) {
+                const auto it = prev.find(ckey + s);
+                if (it == prev.end()) return false;
+                const auto jt = it->second.find(sat);
+                if (jt == it->second.end()) return false;
+                v = jt->second;
+                return true;
+            });
+        if (edge) out.emplace(sat, *edge);
+    }
+    return out;
+}
+
 void networkCodePinLegKeptEpoch(
     NetworkRunContext& ctx,
     const std::function<void(const char*, const char*, const std::string&,
@@ -2971,10 +3018,12 @@ void networkCodePinLegRunEnd(const NetworkRunContext& ctx, const GnssConfig& con
               "pair's pre-edge combinations), {} of them found moved against the parked value "
               "by the prior-residual census (largest |t| {:.2f}) and {} untested (no census "
               "verdict); largest move {:.4f} m; and {} edge(s) abandoned (the surviving leg or "
-              "the satellite left, or another pair returned; the unarmed path ran).  Events: "
+              "the satellite left, or another pair returned; the unarmed path ran); {} "
+              "station-epoch(s) whose rows of a parked signal took its satellite bias at the "
+              "parked value (the signal at one station, its column not registered).  Events: "
               "network_events.csv CB_PIN/single_leg.",
               c.open, c.held_epochs, c.recouple, c.recouple_moved, c.max_recouple_t,
-              c.recouple_untested, c.max_recouple_move_m, c.abandoned);
+              c.recouple_untested, c.max_recouple_move_m, c.abandoned, c.parked_station_epochs);
 }
 
 /**
