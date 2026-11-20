@@ -185,3 +185,7 @@ regime excludes the chain, and the float vehicle with the chain counts as the ar
 (engine `f50e95d27304f1fb`) the chain's frame census reports no fractional realized step on any edge class on either
 bed (field: 80 941 kept edges, 342 births, 6 returning, 334 uncertified re-hosts of which 226 at an unknown step, 0 root
 handovers). Onboarding page 09's statement that both mechanisms are off in the reference configurations is updated.
+
+### 2026-11-19: annotation from the independent review of the night commits
+
+Step S10's line "29 rows in the epoch contract test" counts two rows too many: commit 1de8d40 adds 28 rows (`static_assert` lines) to `tests/network/test_network_epoch_contract.cpp` and removes 1, 27 rows net. The line above stands as written.

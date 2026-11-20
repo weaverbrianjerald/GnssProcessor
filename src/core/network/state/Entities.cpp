@@ -1585,7 +1585,12 @@ const std::vector<EntityWriterRow> kEntityWriters = {
     {"zwdFromSnapshot", "network/state/Entities.cpp", "stations"},
     {"networkApplyRxCbLinRestore", "network/state/WarmResume.cpp", "stations"},
     {"networkRestoreCanonicalSignals", "network/state/WarmResume.cpp", "stations"},
-    {"networkTryWarmResume", "network/state/WarmResume.cpp", "constellations sat_signals sats stations"},
+    {"resumeCanonicalSignals", "network/state/WarmResume.cpp", "stations"},
+    {"resumeCarryBlob", "network/state/WarmResume.cpp", "constellations sats"},
+    {"resumeCouplingRegressors", "network/state/WarmResume.cpp", "sat_signals stations"},
+    {"resumeDenseBorder", "network/state/WarmResume.cpp", "constellations"},
+    {"resumeHold", "network/state/WarmResume.cpp", "sat_signals"},
+    {"resumeRxCbLinearization", "network/state/WarmResume.cpp", "stations"},
     {"networkChainMemoryRestore", "network/state/ChainMemory.cpp", "all"},
 };
 
