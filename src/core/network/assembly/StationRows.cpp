@@ -7,6 +7,7 @@
 
 #include "config/GnssConfig.hpp"
 #include "logging/LogManager.hpp"
+#include "common/GnssIdentity.hpp"   // obsTypeOf
 #include "measurement/RowRules.hpp"
 #include "measurement/RowTrace.hpp"
 #include "model/PppModel.hpp"
@@ -16,6 +17,7 @@
 #include <algorithm>
 #include <cmath>
 #include <exception>
+#include <optional>
 
 namespace GnssProcessor {
 
@@ -117,7 +119,22 @@ Eigen::MatrixXd denseJacobian(const StationDataRows& rows) {
 }
 
 StationDataRows networkStationRows(const StationRowContext& c, const StationParams& set,
-                                   const std::vector<PppObservation>& observations) {
+                                   const std::vector<PppObservation>& observations,
+                                   const std::map<SatSignalId, double>* known_code_bias) {
+    const bool has_known = known_code_bias != nullptr && !known_code_bias->empty();
+    // The known satellite code bias of a code row without its slot (see the header), or none.
+    const auto knownCodeBias = [&](const PppObservation& obs, const std::string& ref_type,
+                                   const ObservationEquation& eq) -> std::optional<double> {
+        if (obsTypeOf(ref_type) != ObsType::Code || findTerm(eq, ObsEffect::SatelliteCodeBias))
+            return std::nullopt;
+        const std::optional<SatId> sat = canonicalSat(obs.satellite);
+        if (!sat) return std::nullopt;
+        const std::optional<SignalId> sig = canonicalSignal(sat->sys, ref_type);
+        if (!sig) return std::nullopt;
+        const auto it = known_code_bias->find(SatSignalId{*sat, *sig});
+        if (it == known_code_bias->end()) return std::nullopt;
+        return it->second;
+    };
     StationDataRows rows;
     rows.n_slots = set.slots.size();
     const std::string epoch_prefix;   // the log pattern carries the timestamp
@@ -169,7 +186,14 @@ StationDataRows networkStationRows(const StationRowContext& c, const StationPara
                 if (!eq.usable) continue;
                 ObsTermValues terms;
                 const bool decomposed = wantsRowDecomposition(c.log, obs);
-                const double predicted = evaluate(eq, decomposed ? &terms : nullptr);
+                double predicted = evaluate(eq, decomposed ? &terms : nullptr);
+                if (has_known)
+                    if (const std::optional<double> b = knownCodeBias(obs, ref_type, eq)) {
+                        predicted += kSatBiasSign * *b;
+                        if (decomposed)
+                            terms.value[static_cast<std::size_t>(ObsEffect::SatelliteCodeBias)] =
+                                kSatBiasSign * *b;
+                    }
                 rowPartialsOf(eq, entries);
                 if (decomposed) traceRowDecomposition(c.log, obs, ref_type, predicted, terms);
 

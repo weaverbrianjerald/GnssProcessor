@@ -230,6 +230,13 @@ struct NetStation {
     /// thread-safe).  Never populated when network.gross_los_screen is off, so such a
     /// run never reads this map and the assembly is byte-identical.
     std::map<std::string, double> gl_code_sigma_scale;
+    /// Satellite code biases this station's rows take as known terms this epoch
+    /// (@c network.code_pin_single_leg_hold): the parked signal of a single-leg edge, held
+    /// by this station alone, so its column is not registered and its slot was removed from
+    /// the set; the value is the edge's parked value (@ref networkCodePinLegKnownBiases).
+    /// Cleared and rebuilt serially at the column registration, before the parallel PASS-B
+    /// produce reads it (station-local, so thread-safe).  Never populated with the key off.
+    std::map<SatSignalId, double> pin_leg_known_cb;
     /// Code rows this station folded at the deweighted sigma over the run.
     /// Accumulated inside the parallel produce phase, so it lives per station; summed
     /// into the run-end report at teardown, like @c si_rows_demoted.

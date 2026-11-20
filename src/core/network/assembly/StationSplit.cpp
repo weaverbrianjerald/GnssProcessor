@@ -108,7 +108,7 @@ StationStep networkStationDataRows(StationBuild& build) {
     // The station's births, then its rows over the set they leave.
     const StationRowContext row_ctx = rowContextOf(config_, st);
     networkBirthLocalStates(row_ctx, st.params, modeled[i]);
-    build.rows = networkStationRows(row_ctx, st.params, modeled[i]);
+    build.rows = networkStationRows(row_ctx, st.params, modeled[i], &st.pin_leg_known_cb);
     const StationDataRows& rows = build.rows;
     if (rows.innovations.size() == 0) {
         R.empty_innov = true;

@@ -258,12 +258,20 @@ ObsInput ambiguitySeedObsInput(const StationRowContext& c);
  * arrays empty) when there is no observation, no usable signal, or no row could be built;
  * a row with a non-finite innovation or variance is kept with innovation 0 and variance 1e6.
  *
+ * A code row whose satellite code bias has no slot in @p set and whose (satellite, signal) is
+ * in @p known_code_bias takes that bias as a fixed term of the prediction (no Jacobian entry):
+ * the parked signal of a single-leg edge (@c network.code_pin_single_leg_hold), whose column
+ * is not registered.  Null or empty: every row as without it.
+ *
  * @param c            The station's references.
  * @param set          The station's set, after its births.
  * @param observations The station's modeled observations of the epoch.
+ * @param known_code_bias (Satellite, code signal) -> its satellite code bias (metres), taken
+ *                     as known; default null.
  * @return The rows; @c n_slots is the size of @p set.
  */
 StationDataRows networkStationRows(const StationRowContext& c, const StationParams& set,
-                                   const std::vector<PppObservation>& observations);
+                                   const std::vector<PppObservation>& observations,
+                                   const std::map<SatSignalId, double>* known_code_bias = nullptr);
 
 } // namespace GnssProcessor
