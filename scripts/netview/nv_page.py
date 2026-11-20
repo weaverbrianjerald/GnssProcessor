@@ -92,8 +92,7 @@ def read_page(path: Path) -> dict:
     """Every block of a built page: {name: (header, arrays)} ('core' for the block decoded at open)."""
     html = Path(path).read_text(encoding='utf-8')
     out = {}
-    for m in re.finditer(r'<script id="(nv-data|nv-block-[a-z]+)" type="application/octet-stream" data-encoding="(gzip|raw)">'
-                         r'([A-Za-z0-9+/=]*)</script>', html):
+    for m in BLOCK_TAG.finditer(html):
         raw = base64.b64decode(m.group(3))
         if m.group(2) == 'gzip':
             raw = gzip.decompress(raw)
@@ -126,9 +125,9 @@ def coastline():
 
 
 #: The page's style and script files, joined in this order (a file not yet written is skipped).
-CSS_FILES = ['netview.css', 'dashboard.css']
+CSS_FILES = ['netview.css', 'dashboard.css', 'still.css']
 JS_FILES = ['core.js', 'widgets.js', 'eventtext.js', 'network.js', 'overview.js', 'receivers.js', 'satellites.js',
-            'los.js', 'slips.js', 'stochastic.js', 'atmosphere.js', 'products.js', 'events.js', 'main.js']
+            'los.js', 'slips.js', 'stochastic.js', 'atmosphere.js', 'products.js', 'events.js', 'still.js', 'main.js']
 #: The live monitor's page (served by live/server.py): its own script, the dashboard's style and event words.
 LIVE_CSS_FILES = ['netview.css', 'dashboard.css', 'live.css']
 LIVE_JS_FILES = ['eventtext.js', 'live.js']
@@ -173,18 +172,42 @@ def write_page(path: Path, blocks: dict, compress: bool = True) -> dict:
         sizes[name] = {'raw': raw, 'encoded': len(b64)}
         tags.append(f'<script id="nv-block-{name}" type="application/octet-stream" '
                     f'data-encoding="{"gzip" if compress else "raw"}">{b64}</script>')
+    header = blocks['core'][0]
+    _write_html(path, _html_escape(f'Network dashboard {header.get("run", "")}'), 'gzip' if compress else 'raw', core_b64,
+                '\n'.join(tags))
+    sizes['page'] = path.stat().st_size
+    return sizes
+
+
+def _write_html(path: Path, title: str, encoding: str, core_b64: str, block_tags: str) -> None:
+    """The page file: this checkout's markup, style and script around the encoded data blocks."""
     page = (HERE / 'page' / 'netview.html').read_text(encoding='utf-8')
     assets = json.dumps({'colormaps': colormaps(), 'coastline': coastline()}, separators=(',', ':'))
-    header = blocks['core'][0]
-    fill = {'CSS': _joined(CSS_FILES), 'ASSETS': f'window.NV_ASSETS = {assets};', 'JS': _joined(JS_FILES),
-            'TITLE': _html_escape(f'Network dashboard {header.get("run", "")}'),
-            'ENCODING': 'gzip' if compress else 'raw', 'DATA': core_b64, 'BLOCKS': '\n'.join(tags)}
+    fill = {'CSS': _joined(CSS_FILES), 'ASSETS': f'window.NV_ASSETS = {assets};', 'JS': _joined(JS_FILES), 'TITLE': title,
+            'ENCODING': encoding, 'DATA': core_b64, 'BLOCKS': block_tags}
     # one pass over the template only, so text inserted for one token is never scanned for another
     html = re.sub(r'\{\{(CSS|ASSETS|JS|TITLE|ENCODING|DATA|BLOCKS)\}\}', lambda m: fill[m.group(1)], page)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(html, encoding='utf-8', newline='\n')
-    sizes['page'] = path.stat().st_size
-    return sizes
+
+
+#: A data block's script tag in a built page: (id, encoding, base64 text).
+BLOCK_TAG = re.compile(r'<script id="(nv-data|nv-block-[a-z]+)" type="application/octet-stream" data-encoding="(gzip|raw)">'
+                       r'([A-Za-z0-9+/=]*)</script>')
+
+
+def repage(src: Path, dst: Path) -> None:
+    """A built page's data in this checkout's page: the data blocks of src are copied as they are (not decoded) into the
+    current markup, style and script.  A page built before a part of the page code existed gains it this way without
+    its run folder; src is not changed."""
+    html = Path(src).read_text(encoding='utf-8')
+    found = {m.group(1): m for m in BLOCK_TAG.finditer(html)}
+    if 'nv-data' not in found:
+        raise ValueError(f'{src}: not a page written by netview.py build')
+    core = found.pop('nv-data')
+    title = re.search(r'<title>(.*?)</title>', html, re.S)
+    _write_html(Path(dst), title.group(1) if title else 'Network dashboard', core.group(2), core.group(3),
+                '\n'.join(m.group(0) for m in found.values()))
 
 
 def _html_escape(s: str) -> str:

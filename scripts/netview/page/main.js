@@ -12,4 +12,5 @@ window.addEventListener('error', ev => {
 start().catch(err => {
   document.getElementById('loading').textContent = 'The page could not open its data: ' + err.message;
   console.error(err);
+  if (STILL.on) stillFail(err.message);
 });

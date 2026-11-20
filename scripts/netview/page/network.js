@@ -405,7 +405,8 @@ function drawLabels(ctx, gr, pos, fade, selNodes) {
   for (let n = 0; n < M.nNode; n++) {
     const p = pos[n];
     if (!p) continue;
-    const label = n < M.nSta ? shortSta(M.names[n]) : M.names[n];
+    if (S.showLabels === 'sat' && n < M.nSta && n !== gr.mainRoot) continue;   // a still's choice: satellites and the reference only
+    const label = n < M.nSta && n !== gr.mainRoot ? shortSta(M.names[n]) : M.names[n];
     ctx.globalAlpha = fade && !selNodes.has(n) ? 0.3 : 0.9;
     ctx.fillStyle = n < M.nSta ? C.muted : C.ink;
     let dx = 9, dy = 0;
@@ -413,9 +414,13 @@ function drawLabels(ctx, gr, pos, fade, selNodes) {
       const ux = Math.sin(p.ang), uy = -Math.cos(p.ang);
       dx = ux * 11; dy = uy * 11;
       ctx.textAlign = ux > 0.3 ? 'left' : ux < -0.3 ? 'right' : 'center';
-    } else ctx.textAlign = 'left';
+    } else {                                     // a name that would run off the right edge goes to the left of its node
+      const off = p.x + dx + ctx.measureText(label).width > ctx.canvas.clientWidth;
+      ctx.textAlign = off ? 'right' : 'left';
+      if (off) dx = -dx;
+    }
     if (n === gr.mainRoot && S.layout !== 'map') { dx = 0; dy = 20; ctx.textAlign = 'center'; ctx.fillStyle = C.ink; }
-    ctx.fillText(n === gr.mainRoot ? M.names[n] : label, p.x + dx, p.y + dy);
+    ctx.fillText(label, p.x + dx, p.y + dy);
   }
   ctx.globalAlpha = 1;
 }
