@@ -426,6 +426,13 @@ namespace GnssProcessor {
               "a held link entering the tree keeps its integers only when its return across a gap was measured "
               "unshifted and its near-null signature is clean; otherwise it is released (DOY 147: ULAB00MNG's E14 "
               "re-seeded instead of pinned on stale integers)" },
+            // --- The resume response (armed 2026-11-20, card NRF section 130).
+            { nc.ring_fix.enable,
+              nc.ring_fix.resume_response == "release",
+              Tier::SCOPED, false, "network.ring_fix.resume_response",
+              "a held link whose own station and satellite resume after a break with a shifted or unmeasured level "
+              "is released in that epoch (the six adopted days: the five folded cases answered at their return, no "
+              "hold folded above 3 cm against 5)" },
             { nc.ring_fix.enable,
               nc.phase_families == std::vector<std::string>{ "E:L1X>L1C", "E:L5X>L5Q" },
               Tier::SCOPED, true , "network.phase_families",
