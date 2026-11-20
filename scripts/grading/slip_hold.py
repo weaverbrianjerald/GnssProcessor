@@ -3,14 +3,16 @@
 section 118 (held through an injected slip), and the injected slips' truth read from a dropslip bed's files.
 
     py -3.14 scripts/grading/slip_hold.py flagged <reference run> <tested run> [--stations A,B,...] [--list N]
-                                          [--out held.jsonl] [--view legacy|lli]
+                                          [--out held.jsonl] [--view legacy|lli|check3|chord] [--sys E|G]
     py -3.14 scripts/grading/slip_hold.py injected <injected.jsonl> <run> [<run> ...]
     py -3.14 scripts/grading/slip_hold.py truth <arm> <base> <out.jsonl> [--types L1X,L5X]
     py -3.14 scripts/grading/slip_hold.py --selftest
 
-A flag is an event of the reference run on a Galileo link with a slip action (FLAG_ACTIONS below: section 110's list as
+A flag is an event of the reference run on a link of the constellation (--sys: E Galileo, the default; G GPS) with a slip
+action (FLAG_ACTIONS below: section 110's list as
 amended in 110.1, T0_band_scope common_band left out).  The tested run holds the link through the flag at epoch t when
-its last ring-fix row of the link's E1 chord before t (within 20 epochs) is held and, at t or the next epoch, the chord
+its last ring-fix row of the link's chord (the chord whose
+first signal is on band 1) before t (within 20 epochs) is held and, at t or the next epoch, the chord
 is still held or goes to the tree (RINGFIX reattach or to_tree), with no RINGFIX release of it in that window; when the
 chord has no row in that window, its next row (within 20 epochs) decides, with no release in between.
 
@@ -22,6 +24,17 @@ The views of `flagged`:
   lli     the same rule with the lli_slip refloat events counted as flags of the link (card GRA, defect D3), reported
           apart, and the windows set from the tested run's epoch interval (one epoch and 20 epochs; equal to the
           legacy windows at 30 s)
+  check3  byte for byte slip_hold_check3.py, the five-day read's copy (its printout and its --out file): legacy's rule,
+          the lli_slip refloat events not already a flag counted as flags of the link and printed on a line of their
+          own after the total, the 30 s and 600 s windows; with --sys G a flag on any GPS L1 or L2 signal (L[12]x)
+          counts against the link's L1/L2 chord, so a gap of a third signal (L2S, L2L), which no ring-fix chord uses,
+          counts as a flag of the L1C/L2W chord (card GRA part 2, results of 2026-11-19)
+  chord   the corrected rule of the five-day read's ruling: a flag counts against a held link only when it names a
+          signal of that link's chord, read from the tested run's ring-fix row before the flag (else the first row
+          after it); flags on other signals only are counted on a line of their own; the lli_slip refloat events at
+          an epoch with no flag of the chord are counted apart as the chord's (their band is unnamed: an upper bound);
+          windows from the tested run's epoch interval, as in lli
+`legacy` and `lli` read Galileo by default and take --sys G as well (the signal rule L[15]x for E, L[12]x for G).
 `injected` is grade_slip_bar.py (one view: its truth names its signals); `truth` is injected_slips.py.
 """
 import argparse
@@ -35,6 +48,9 @@ import sys
 import runs
 
 SIG = re.compile(r"^L[15][A-Z]$")
+SYS_SIG = {"E": SIG, "G": re.compile(r"^L[12][A-Z]$")}   # the legacy signal rule per constellation (slip_hold_check3.py)
+ANY_SIG = re.compile(r"^L[1-9][A-Z]$")                  # the chord view: any signal, matched against the chord after
+SYS_NAME = {"E": "Galileo E1/E5a", "G": "GPS L1/L2"}
 FLAG_ACTIONS = {
     ("T0_gap", "reentry_relevel"): {"refloat"},
     ("T0_gap", "arc_resume"): {"shifted_fresh"},
@@ -48,12 +64,12 @@ LEGACY_EPOCH = 30.0
 LOOK_EPOCHS = 20
 
 
-def flag_signals(tier, detail):
-    """The E1/E5a signals an event names (slip_hold_check.py's rule): T0_gap the first token; otherwise the leading
-    tokens that are signals."""
+def flag_signals(tier, detail, sig=SIG):
+    """The signals an event names (slip_hold_check.py's rule, sig the signal pattern): T0_gap the first token;
+    otherwise the leading tokens that are signals."""
     toks = detail.split(";")
     if tier == "T0_gap":
-        return [toks[0]] if toks and SIG.match(toks[0]) else []
+        return [toks[0]] if toks and sig.match(toks[0]) else []
     if tier == "T0_band_scope":
         out, on = [], False
         for t in toks:
@@ -61,25 +77,25 @@ def flag_signals(tier, detail):
                 on, t = True, t.split("=", 1)[1]
             elif "=" in t:
                 on = False
-            if on and SIG.match(t):
+            if on and sig.match(t):
                 out.append(t)
         return out
     out = []
     for t in toks:
-        if SIG.match(t):
+        if sig.match(t):
             out.append(t)
         else:
             break
     return out
 
 
-def ref_flags(run, stations, with_lli=False):
-    """{(station, sat, epoch key): {"tier:event"}} of the reference run; with_lli adds the lli_slip refloat events,
-    which name no signal, and returns them apart: (flags, lli_only)."""
-    flags, lli = collections.defaultdict(set), collections.defaultdict(set)
+def ref_events(run, stations, sysc="E", sig=SIG):
+    """The reference run's slip events on links of one constellation: (flags {(station, sat, epoch key):
+    {"tier:event"}}, signals {the same key: {signal}}, lli {keys of lli_slip refloat events naming no signal})."""
+    flags, sigs, lli = collections.defaultdict(set), collections.defaultdict(set), set()
     _, it = runs.raw_rows(run, "network_events.csv")
     for r in it:
-        if len(r) < 10 or not r[4].startswith("E"):
+        if len(r) < 10 or not r[4].startswith(sysc):
             continue
         acts = FLAG_ACTIONS.get((r[2], r[3]))
         if not acts or r[8] not in acts:
@@ -87,24 +103,37 @@ def ref_flags(run, stations, with_lli=False):
         if stations and r[5] not in stations:
             continue
         key = (r[5], r[4], runs.tow_key(r[1]))
-        if flag_signals(r[2], r[9]):
+        named = flag_signals(r[2], r[9], sig)
+        if named:
             flags[key].add(f"{r[2]}:{r[3]}")
-        elif with_lli and (r[2], r[3]) == ("T0_mw_detect", "lli_slip"):
-            lli[key].add(f"{r[2]}:{r[3]}")
-    lli_only = {k: v for k, v in lli.items() if k not in flags}
+            sigs[key].update(named)
+        elif (r[2], r[3]) == ("T0_mw_detect", "lli_slip"):
+            lli.add(key)
+    return flags, sigs, lli
+
+
+def ref_flags(run, stations, with_lli=False, sysc="E"):
+    """{(station, sat, epoch key): {"tier:event"}} of the reference run; with_lli adds the lli_slip refloat events,
+    which name no signal, and returns them apart: (flags, lli_only)."""
+    flags, _, lli = ref_events(run, stations, sysc, SYS_SIG[sysc])
+    lli_only = {k: {"T0_mw_detect:lli_slip"} for k in lli if k not in flags} if with_lli else {}
     return flags, lli_only
 
 
-def tested(run, keys):
-    """The tested run's E1-chord rows (epoch key, state, n1, n2) and RINGFIX release / to_tree / reattach events, per
-    link of keys."""
+def tested(run, keys, sysc="E", chords=None):
+    """The tested run's band-1 chord rows (epoch key, state, n1, n2) and RINGFIX release / to_tree / reattach events,
+    per link of keys; chords, when given, is filled with {(station, sat, epoch key): (sig1, sig2)}."""
     rows = collections.defaultdict(list)
     header, it = runs.raw_rows(run, "network_ring_fix.csv")
     ix = {k: i for i, k in enumerate(header)}
-    ista, isat, is1, itow, ist, in1, in2 = (ix[k] for k in ("station", "sat", "sig1", "tow", "state", "n1", "n2"))
+    ista, isat, is1, is2, itow, ist, in1, in2 = (ix[k] for k in ("station", "sat", "sig1", "sig2", "tow", "state",
+                                                                 "n1", "n2"))
     for r in it:
-        if r[isat].startswith("E") and r[is1][:2] == "L1" and (r[ista], r[isat]) in keys:
-            rows[(r[ista], r[isat])].append((runs.tow_key(r[itow]), r[ist], r[in1], r[in2]))
+        if r[isat].startswith(sysc) and r[is1][:2] == "L1" and (r[ista], r[isat]) in keys:
+            t = runs.tow_key(r[itow])
+            rows[(r[ista], r[isat])].append((t, r[ist], r[in1], r[in2]))
+            if chords is not None:
+                chords[(r[ista], r[isat], t)] = (r[is1], r[is2])
     for v in rows.values():
         v.sort()
     ev = collections.defaultdict(list)
@@ -163,11 +192,11 @@ def grade(flags, rows, ev, epoch):
     return per, bad
 
 
-def flagged_report(ref, arm, stations, n_list, per, bad):
+def flagged_report(ref, arm, stations, n_list, per, bad, sysc="E"):
     tot = collections.Counter()
     for c in per.values():
         tot.update(c)
-    out = [f"== flags of {ref} on Galileo E1/E5a links, holds of {arm}" + (f" ({len(stations)} receivers)" if stations else ""),
+    out = [f"== flags of {ref} on {SYS_NAME[sysc]} links, holds of {arm}" + (f" ({len(stations)} receivers)" if stations else ""),
            f"   total: {dict(tot)}"]
     for sta in sorted(per, key=lambda s: -(per[s]['held_through'] + per[s]['held_through_tree'])):
         c = per[sta]
@@ -182,14 +211,18 @@ def flagged_report(ref, arm, stations, n_list, per, bad):
 
 
 def cmd_flagged(a):
+    if a.view == "check3":
+        return flagged_check3(a)
+    if a.view == "chord":
+        return flagged_chord(a)
     stations = set(s for s in a.stations.split(",") if s)
     lli = a.view == "lli"
-    flags, lli_only = ref_flags(a.ref, stations, with_lli=lli)
+    flags, lli_only = ref_flags(a.ref, stations, with_lli=lli, sysc=a.sys)
     keys = {(s, v) for s, v, _ in flags} | {(s, v) for s, v, _ in lli_only}
-    rows, ev = tested(a.arm, keys)
+    rows, ev = tested(a.arm, keys, a.sys)
     epoch = epoch_interval(a.arm) if lli else LEGACY_EPOCH
     per, bad = grade(flags, rows, ev, epoch)
-    out = flagged_report(a.ref, a.arm, stations, a.list, per, bad)
+    out = flagged_report(a.ref, a.arm, stations, a.list, per, bad, a.sys)
     if lli:
         per2, bad2 = grade(lli_only, rows, ev, epoch)
         tot2 = collections.Counter()
@@ -200,11 +233,97 @@ def cmd_flagged(a):
         for b in bad2[: a.list]:
             out.append(f"      {b['tow']} {b['station']}-{b['sat']} lli_slip {b['verdict']} before {b['before']} after {b['after']}")
         bad = bad + bad2
+    write_out(out, bad, a.out)
+
+
+def write_out(out, bad, path):
+    """The printout, and the held-through cases as JSON lines when a --out file is named."""
     sys.stdout.write("\n".join(out) + "\n")
-    if a.out:
-        with open(a.out, "w") as fh:
+    if path:
+        with open(path, "w") as fh:
             for b in bad:
                 fh.write(json.dumps(b) + "\n")
+
+
+def flagged_check3(a):
+    """slip_hold_check3.py byte for byte: its printout and its --out file."""
+    stations = set(s for s in a.stations.split(",") if s)
+    flags, _, lli = ref_events(a.ref, stations, a.sys, SYS_SIG[a.sys])
+    lli_flags = {k: {"T0_mw_detect:lli_slip"} for k in lli if k not in flags}
+    keys = {(s, v) for s, v, _ in flags} | {(s, v) for s, v, _ in lli_flags}
+    rows, ev = tested(a.arm, keys, a.sys)
+    per, bad = grade(flags, rows, ev, LEGACY_EPOCH)
+    for b in bad:
+        b["source"] = "signal"
+    per_l, bad_l = grade(lli_flags, rows, ev, LEGACY_EPOCH)
+    for b in bad_l:
+        b["source"] = "lli_slip"
+    tot_l = collections.Counter()
+    for c in per_l.values():
+        tot_l.update(c)
+    out = flagged_report(a.ref, a.arm, stations, a.list, per, bad + bad_l, a.sys)
+    out.insert(2, f"   lli_slip refloat events (no signal named; the original drops them): {len(lli)}; of them not "
+                  f"already a flag, counted as flags of the link: {dict(tot_l)}")
+    write_out(out, bad + bad_l, a.out)
+
+
+def chord_at(chords, rows, link, t):
+    """The (sig1, sig2) of a link's ring-fix row before epoch t, else of its first row after t, else None."""
+    if not rows:
+        return None
+    i = bisect.bisect_left([x[0] for x in rows], t)
+    return chords.get(link + (rows[i - 1 if i else 0][0],))
+
+
+def counter_total(per):
+    tot = collections.Counter()
+    for c in per.values():
+        tot.update(c)
+    return dict(tot)
+
+
+def flagged_chord(a):
+    """The corrected rule: a flag counts against a held link only when it names a signal of that link's chord."""
+    stations = set(s for s in a.stations.split(",") if s)
+    flags, sigs, lli = ref_events(a.ref, stations, a.sys, ANY_SIG)
+    keys = {(s, v) for s, v, _ in flags} | {(s, v) for s, v, _ in lli}
+    chords = {}
+    rows, ev = tested(a.arm, keys, a.sys, chords)
+    epoch = epoch_interval(a.arm)
+    on, other = {}, {}
+    for k, kinds in flags.items():
+        ch = chord_at(chords, rows.get(k[:2], []), k[:2], k[2])
+        (on if ch and sigs[k] & set(ch) else other)[k] = kinds
+    lli_flags = {k: {"T0_mw_detect:lli_slip"} for k in lli if k not in on}
+    per, bad = grade(on, rows, ev, epoch)
+    per_o, bad_o = grade(other, rows, ev, epoch)
+    per_l, bad_l = grade(lli_flags, rows, ev, epoch)
+    for src, bb in (("chord", bad), ("other", bad_o), ("lli_slip", bad_l)):
+        for b in bb:
+            b["source"] = src
+            b["signals"] = sorted(sigs.get((b["station"], b["sat"], b["tow"]), ()))
+    name = {"E": "Galileo", "G": "GPS"}[a.sys]
+    out = [f"== flags of {a.ref} on {name} links, holds of {a.arm}, by the chord's own signals (epoch {epoch:g} s)"
+           + (f" ({len(stations)} receivers)" if stations else ""),
+           f"   on a signal of the link's chord: {counter_total(per)}",
+           f"   on other signals only (not a flag of the chord): {counter_total(per_o)}",
+           f"   lli_slip refloat events with no flag of the chord (band unnamed, taken as the chord's): "
+           f"{counter_total(per_l)}"]
+    for label, p in (("chord", per), ("other signals", per_o), ("lli_slip", per_l)):
+        for sta in sorted(p, key=lambda x: (-(p[x]["held_through"] + p[x]["held_through_tree"]), x)):
+            c = p[sta]
+            n = c["held_through"] + c["held_through_tree"]
+            if n:
+                out.append(f"   {sta} ({label}): held through {n} (into the tree {c['held_through_tree']}) of "
+                           f"{c['flags']} flags; released {c['released']}, not held before {c['n/a']}")
+    allbad = bad + bad_o + bad_l
+    for b in allbad[: a.list]:
+        link = (b["station"], b["sat"])
+        ch = chord_at(chords, rows.get(link, []), link, b["tow"])
+        out.append(f"      {b['tow']} {b['station']}-{b['sat']} {','.join(b['flag'])} on {','.join(b['signals']) or '-'} "
+                   f"(chord {'/'.join(ch) if ch else '-'}; {b['source']}) {b['verdict']} before {b['before']} "
+                   f"after {b['after']}")
+    write_out(out, allbad, a.out)
 
 
 def cmd_injected(a):
@@ -340,7 +459,8 @@ def main():
     f.add_argument("--stations", default="")
     f.add_argument("--list", type=int, default=20)
     f.add_argument("--out", default="")
-    f.add_argument("--view", choices=("legacy", "lli"), default="legacy")
+    f.add_argument("--view", choices=("legacy", "lli", "check3", "chord"), default="legacy")
+    f.add_argument("--sys", choices=("E", "G"), default="E")
     i = sub.add_parser("injected")
     i.add_argument("injected")
     i.add_argument("runs", nargs="+")

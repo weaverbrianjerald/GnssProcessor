@@ -2159,6 +2159,26 @@ namespace GnssProcessor {
         double networkRxCodeBiasDatumSigmaM() const { return network_rx_code_bias_datum_sigma_m_; }
 
         /**
+         * @brief How the receiver geometry-free direction is held (@c network.rx_gf_datum:
+         *        @c prior_refold, @c birth_prior or @c hard; default @c prior_refold).
+         *
+         * Read only with @ref networkRxCodeBiasDatum.  @c prior_refold is today's fold of the loose
+         * prior on every epoch (byte-identical).  @c birth_prior folds it only where the receiver DCB
+         * has no carried row this epoch, so the carried posterior is not refolded (the reported DCB
+         * sigma is then the data's, not 10/sqrt(n)).  @c hard places a row of the chain pins' weight
+         * (1e10, kRxGfHardWeight in network/carry/RxCodeBiasCarry.hpp) on the DCB of every (receiver,
+         * constellation), at the prior's target 0
+         * where the column has no carried row and at its carried value otherwise; the row's placement
+         * (a birth, a return after the gap prune, an uncarried column) and its release (the station or
+         * the column gone) are events on the @c RX_GF_DATUM tier.  Both new values are pure datum
+         * choices (the third-band datum record, XBD, section 4): neither constrains an estimable
+         * quantity.
+         *
+         * @return The holder of the receiver geometry-free direction.
+         */
+        NetworkRxGfDatum networkRxGfDatum() const { return network_rx_gf_datum_; }
+
+        /**
          * @brief Pre-seed a cold receiver clock from GPS code before the first
          *        network ambiguity seed (@c network.cold_clock_seed).
          *
@@ -5180,6 +5200,29 @@ namespace GnssProcessor {
          *         values; false (default) re-imposes the zero-target datum every epoch.
          */
         bool networkCodeDatumTimeLinked() const { return network_code_datum_time_linked_; }
+
+        /**
+         * @brief Hold the surviving column when a satellite's IF pin pair loses one leg
+         *        (@c network.code_pin_single_leg_hold).
+         *
+         * Under @ref networkCodeDatumTimeLinked, a satellite pinned on a dual-frequency pair
+         * at the last kept epoch whose registered code signals now span one frequency (one
+         * leg has fewer than two stations network-wide) falls back to the all-ones row at
+         * target 0, which pulls the surviving column, not estimable against the satellite
+         * clock while the pair has one leg, toward zero every epoch; at the return the pair
+         * re-anchors against the moved column and the satellite's ionosphere-free code keeps
+         * the offset.  Armed, the decoupling edge holds the surviving column at its value of
+         * the last kept epoch before the edge, and the re-coupling edge (the parked leg back
+         * on the same pair) targets the pair's pre-edge ionosphere-free and geometry-free
+         * combinations, with a "CB_PIN"/"single_leg" event at each edge and a run-end line
+         * (NetworkSbasis::CodePinLegEdge).  Inert and reported without the time link or
+         * @ref estimateNetworkSatCodeBias.  Default false = the all-ones row
+         * (byte-identical).
+         *
+         * @see NetworkSbasis::buildCodeBiasDatumRows, networkCodePinLegKeptEpoch
+         * @return True when the single-leg hold is armed.
+         */
+        bool networkCodePinSingleLegHold() const { return network_code_pin_single_leg_hold_; }
 
         /**
          * @brief Continue the satellite clock across an ionosphere-free pin pair change,
@@ -10339,6 +10382,7 @@ namespace GnssProcessor {
         bool estimate_network_iono_sh_{false};            ///< Co-estimate the global SH-VTEC ionosphere in the network producer (forces W6; replaces external GIM as the iono constraint).
         bool network_rx_code_bias_datum_{false};        ///< Receiver-DCB datum (RXCB-DATUM): a loose zero-mean prior on every receiver DCB that realizes one sum-to-zero-over-receivers gauge per constellation (the IGS convention; replaces the satellite-side zero-mean where no satellite code-bias column exists).  Default off => byte-identical.
         double network_rx_code_bias_datum_sigma_m_{10.0};  ///< Loose physical-bound sigma (m) of the receiver-DCB datum (RXCB-DATUM); realized common-mode info = 1/sigma^2, station-count independent.
+        NetworkRxGfDatum network_rx_gf_datum_{NetworkRxGfDatum::PriorRefold};  ///< Holder of the receiver geometry-free direction (network.rx_gf_datum); default prior_refold: byte-identical.
         bool network_cb_admission_{false};                ///< Run-latched W6 code-bias admission census + station-local quarantine (CB-ADM; replaces the per-epoch >=2-station gate as the remedy for BeiDou sparsity).  Default off => legacy path byte-identical.
         int  network_cb_admission_min_stations_{4};       ///< Min supporting-station count for an admitted code pair (CB-ADM); effective_min = max(2, min(this, n_census_stations)).
         int  network_cb_admission_census_epochs_{15};     ///< Census window length K (epochs from the loop start; CB-ADM); clamped to the available span.
@@ -10521,6 +10565,7 @@ namespace GnssProcessor {
         bool   network_sticky_pivot_{false};               ///< Keep the incumbent clock-pivot satellite per constellation while it remains registered (RTA-1; re-select only when it sets; a config-pinned satellite still wins); off = lexical first-registered auto-pick every epoch (byte-identical).
         bool   network_clock_datum_sum_to_zero_{false};    ///< Realize the per-constellation clock gauge by a sum-to-zero over that constellation's satellite clocks (folded like the code-bias gauge) instead of a hard pivot pin: anchor-free, no handover seam, no pivot-absent SPOF; ignores clock_datum_satellite. Off = legacy per-constellation pivot pin (byte-identical).
         bool   network_clock_datum_broadcast_anchored_{false}; ///< brdc_rts only: realize the clock gauge by per-satellite soft anchors to each satellite's own broadcast clock (the a-priori; σ = resolveNetworkAprioriClockAnchorSigmaM(), folded before the gate as the datum): no pivot, no handover seam, and unlike sum-to-zero no common-mode redistribution wander on rise/set, so the absolute clock-product frame holds still against the broadcast reference. Mutually exclusive with clock_datum_sum_to_zero; requires apriori_source=brdc_rts (fail-loud). Off = unchanged (byte-identical).
+        bool   network_code_pin_single_leg_hold_{false};   ///< Single-leg hold of the time-linked IF pin: a pin pair that loses one leg holds the surviving column at its pre-edge value (not the all-ones row at 0) and re-couples the returning leg against its parked value; CB_PIN events at both edges. Read only under code_datum_time_linked. Off = the all-ones row (byte-identical).
         bool   network_code_datum_time_linked_{false};     ///< Impose the code-bias datum (per-sat IF pin + per-(const,signal) sum-to-zero) as a time datum (W6 only): pin the change from the previous epoch's solved values (veteran-referenced sum-to-zero RHS Σ b̂_prev, IF-pin RHS a1·b̂_prev(σ1)+a2·b̂_prev(σ2)) instead of the level to zero. Same row count (rank unchanged), so no set-mean wander/relaxation and no conflict between gauge and carry weights; a no-veteran channel or first split re-seeds at 0 with a per-sat disc bump (value step ↔ signalled discontinuity). The prev-value map crosses a warm resume only with state_snapshot_datum_capture + resume_datum_restore; otherwise a warm resume re-seeds, signalled. Requires estimate_sat_code_bias (inert and warned otherwise). Off = legacy zero-target datum (byte-identical).
         bool   network_code_datum_pair_continuity_{false};  ///< Hold then continue: at an IF-pin pair change with previous solved values on both new signals, target the new pair's previous IF combination (the clock continues) instead of re-seeding at 0, with no re-seed mark and the re-selection discontinuity left undeclared when the last emitted pair is the pair continued from; where an entering signal has no previous value yet, keep the last kept pair (its own previous combination carries) for the one kept epoch until it has, unless the held pair has no previous values or, under broadcast_tgd, the group delay describes the selected pair and not the held one. Read only under code_datum_time_linked and where no row re-asserts an absolute target at a pair change (NetworkSbasis::pinPairContinuityBlocker); inert and warned otherwise. Fingerprinted when armed. Off = re-seed at every pair change (byte-identical).
         bool   network_code_datum_family_difference_{false}; ///< Replace a secondary-family (X) Galileo code channel's surviving sum-to-zero row by Sigma (d_X - d_P) over the satellites carrying both it and its same-band primary-family partner (time-linked like the sum-to-zero row; the sum-to-zero row kept with no partner, no common satellite, all spanned X columns pinned, or for the one epoch a family re-seed would replace a carried level). Read only under code_datum_time_linked (inert and warned otherwise). Fingerprinted when armed. Off = the sum-to-zero row (byte-identical).

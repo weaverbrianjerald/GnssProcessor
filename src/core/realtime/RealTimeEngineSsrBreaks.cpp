@@ -168,10 +168,11 @@ void RealTimeEngine::logRosterConsumerSummary(const char* tag) const {
               r.flip_suppressed, r.flip_events, r.flip_events_suppressed,
               kRosterFlipEventCap);
     if (config_.ssrPhaseBiasStepTranslate() || config_.ssrPhaseBiasDiscCarry())
-        log->warn("[RT] Signal identity: this consumer runs the phase-bias translation or the declared-step"
-                  " carry as its phase-bias reaction, and the flip census above is "
-                  "wired on the RESET path only: the PHASE half of the count is therefore "
-                  "dead wiring on this posture.  The CODE half is unaffected.");
+        log->info("[RT] Signal identity: this consumer runs the phase-bias translation or the "
+                  "declared-step carry as its phase-bias reaction.  The flip census above "
+                  "counts its phase flips, but the declaration's suppression applies on the "
+                  "reset path only: the carry and the translation answer every phase flip "
+                  "through their own ledgers.");
 }
 
 /**
@@ -427,7 +428,17 @@ void RealTimeEngine::carryOnPhaseBiasDisc_(RtEpochContext& ctx) {
                 const auto it = ssr_phase_bias_applied_.find(key);
                 flip = (it != ssr_phase_bias_applied_.end() && it->second != applied_now);
             }
-            if (flip) countPbHoldPresenceEdge_(key, applied_now, false);
+            if (flip) {
+                // The flip census and its ARC row, as on the reset path.  Its
+                // suppression verdict is not applied: the carry shifts the ambiguity
+                // by the step it applies and keeps its convergence, so a flip of a
+                // family the network does not declare costs no re-float to avoid.
+                (void)noteFreshnessFlip_(key, obs.satellite, code, systemName(obs.system),
+                                         "phase", !applied_now, applied_now,
+                                         static_cast<bool>(ssr.getPhaseBias(obs.satellite, code)),
+                                         obs.time);
+                countPbHoldPresenceEdge_(key, applied_now, false);
+            }
 
             const auto d = pb_disc_carry_.react(*state_manager_, key, amb_key, bump, flip,
                                                 applied_now_m, basis_nlwl, bssd, reset_std);
@@ -550,7 +561,17 @@ void RealTimeEngine::translatePhaseBiasStep_(RtEpochContext& ctx) {
                 if (bias_age_gate) ssr_phase_bias_applied_[key] = applied_now;
                 continue;
             }
-            if (flip) countPbHoldPresenceEdge_(key, applied_now, false);
+            if (flip) {
+                // The flip census and its ARC row, as on the reset path.  Its
+                // suppression verdict is not applied: the translation answers the
+                // flip through its own ledger (a translation or a declared reset),
+                // and that answer is unchanged by the census.
+                (void)noteFreshnessFlip_(key, obs.satellite, code, systemName(obs.system),
+                                         "phase", !applied_now, applied_now,
+                                         static_cast<bool>(ssr.getPhaseBias(obs.satellite, code)),
+                                         obs.time);
+                countPbHoldPresenceEdge_(key, applied_now, false);
+            }
 
             const auto d = pb_step_translate_.react(*state_manager_, key, amb_key,
                                                     bump || flip, applied_now, applied_now_m,
@@ -910,9 +931,15 @@ void RealTimeEngine::reinflateOnClockDisc(RtEpochContext& ctx) {
                 // The clock declaration applies to this satellite.  The reaction
                 // below is necessarily constellation-scoped (one receiver clock, one
                 // ISB per constellation; see the T3g note below), so the row records
-                // that the declaration arrived and that the consumer's only possible
-                // response fired.
-                noteConsumerSatEvent_(obs.satellite + "|CLK", "reinflate_isb");
+                // that the declaration arrived and whether the consumer's only
+                // possible response fires: "reinflate_isb" with
+                // estimation.clock_disc_isb_reinflate_std > 0, "reinflate_isb_skipped"
+                // at 0 (the default), where the declaration is noted and nothing is
+                // re-inflated.
+                if (isb_std > 0.0)
+                    noteConsumerSatEvent_(obs.satellite + "|CLK", "reinflate_isb");
+                else
+                    noteConsumerSatEvent_(obs.satellite + "|CLK", "reinflate_isb_skipped");
                 log->info("{}SSR clock discontinuity: {} (datum re-reference)",
                           epoch_prefix, obs.satellite);
                 // A receiver clock estimated fresh each epoch (white noise)

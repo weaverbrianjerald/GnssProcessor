@@ -106,6 +106,9 @@ void networkAssemblyTally(NetworkRun& run, const NetworkEpoch& ep,
     // The anchor-level hold (card ALD): its counters, each station's memo and the hold's
     // edges as events, in station order.
     networkAnchorLevelHoldTally(ctx, traces, se, stations, asm_res);
+    // The receiver geometry-free datum (network.rx_gf_datum birth_prior or hard): its
+    // counters, each station's memo and the datum's edges as events, in station order.
+    networkRxGfDatumTally(ctx, traces, se, stations, asm_res);
 }
 
 // ---- End of the PASS B serial stages ----

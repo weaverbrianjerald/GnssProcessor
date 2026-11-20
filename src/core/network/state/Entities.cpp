@@ -566,6 +566,8 @@ const std::vector<FieldDecl> kSatelliteFields = {
      &satRows<&A::code_ref_event_s>},
     {"last_if_pin_hold", "last_if_pin_holds", Persist::ColdStart, "", "", nullptr, nullptr,
      &satRows<&A::last_if_pin_hold>},
+    {"code_pin_leg_edge", "", Persist::ColdStart, "", "network.code_pin_single_leg_hold", nullptr,
+     nullptr, &satRows<&A::code_pin_leg_edge>},
     {"sbc_active", "sbc_active_sats", Persist::ColdStart, "", "", nullptr, nullptr,
      &satRows<&A::sbc_active>},
     {"relevel_iode", "relevel_iode", Persist::Record, "I", "", &iToSnapshot, &iFromSnapshot,
@@ -888,6 +890,8 @@ const std::vector<FieldDecl> kStationFields = {
      nullptr, nullptr, &stationCells<&S::sba_since>},
     {"level_hold", "", Persist::ColdStart, "", "",   // no former member: new with the anchor-level hold (card ALD)
      nullptr, nullptr, &stationCells<&S::level_hold>},
+    {"rx_gf", "", Persist::ColdStart, "", "",   // no former member: new with network.rx_gf_datum (record XBD)
+     nullptr, nullptr, &stationCells<&S::rx_gf>},
     {"staf_ewma", "staf_ewma", Persist::ColdStart, "", "",
      nullptr, nullptr, &stationRows<&S::staf_ewma>},
     {"staf_updates", "staf_updates", Persist::ColdStart, "", "",
@@ -1495,6 +1499,7 @@ const std::vector<EntityWriterRow> kEntityWriters = {
     {"networkHarvestRxClock", "network/carry/RxClockCarry.cpp", "stations"},
     {"networkHarvestRxCbBlock", "network/carry/RxCodeBiasCarry.cpp", "stations"},
     {"networkHarvestRxCbCarry", "network/carry/RxCodeBiasCarry.cpp", "stations"},
+    {"networkRxGfDatumTally", "network/carry/RxCodeBiasCarry.cpp", "stations"},
     {"networkHarvestRxPbBlock", "network/carry/RxPhaseBiasCarry.cpp", "stations"},
     {"networkHarvestSlantIonoBlock", "network/carry/SlantIonoCarry.cpp", "los"},
     {"networkHarvestZwd", "network/carry/ZwdCarry.cpp", "stations"},
@@ -1538,6 +1543,7 @@ const std::vector<EntityWriterRow> kEntityWriters = {
     {"networkHandoverStransformBeforeRows", "network/solve/HandoverStransform.cpp", "all"},
     {"networkPhaseAnchorEpoch", "network/solve/PhaseAnchorEpoch.cpp", "arcs sat_signals sats"},
     {"networkCodeDatumFamilyKeptEpoch", "network/solve/Sbasis.cpp", "constellations sats"},
+    {"networkCodePinLegKeptEpoch", "network/solve/Sbasis.cpp", "sats"},
     {"networkSbasisCompletion", "network/solve/SbasisCompletion.cpp", "sats"},
     {"networkInjectPinBridgePrior", "network/state/BorderPrior.cpp", "sat_signals"},
     {"readmitNoteSeed", "network/state/BorderPrior.cpp", "sats"},
@@ -1579,7 +1585,12 @@ const std::vector<EntityWriterRow> kEntityWriters = {
     {"zwdFromSnapshot", "network/state/Entities.cpp", "stations"},
     {"networkApplyRxCbLinRestore", "network/state/WarmResume.cpp", "stations"},
     {"networkRestoreCanonicalSignals", "network/state/WarmResume.cpp", "stations"},
-    {"networkTryWarmResume", "network/state/WarmResume.cpp", "constellations sat_signals sats stations"},
+    {"resumeCanonicalSignals", "network/state/WarmResume.cpp", "stations"},
+    {"resumeCarryBlob", "network/state/WarmResume.cpp", "constellations sats"},
+    {"resumeCouplingRegressors", "network/state/WarmResume.cpp", "sat_signals stations"},
+    {"resumeDenseBorder", "network/state/WarmResume.cpp", "constellations"},
+    {"resumeHold", "network/state/WarmResume.cpp", "sat_signals"},
+    {"resumeRxCbLinearization", "network/state/WarmResume.cpp", "stations"},
     {"networkChainMemoryRestore", "network/state/ChainMemory.cpp", "all"},
 };
 

@@ -1280,6 +1280,20 @@ struct LevelHoldRecord {
     double        off_sys_max{0.0};          ///< Largest |loading| of the direction outside the constellation's columns before it was zeroed.
 };
 
+/// What the receiver geometry-free datum (@c network.rx_gf_datum, birth_prior or hard) did on one
+/// receiver DCB column this station-epoch.  Written by networkRxCbPriors in the parallel produce
+/// (one per DCB column, never for prior_refold), read by the serial tally networkRxGfDatumTally,
+/// which classifies an uncarried column's cause (birth, return, uncarried) against the station's
+/// memo and raises the events.
+struct RxGfDatumRecord {
+    System sys{System::GPS};   ///< The constellation of the DCB column.
+    bool   carried{false};     ///< The column folds a carried row this epoch (the carry's own decision).
+    bool   prior{false};       ///< birth_prior: the loose prior was folded (the column had no carried row).
+    bool   hard{false};        ///< hard: the hard row was placed.
+    double target{0.0};        ///< The hard row's target (m, absolute): 0 when uncarried, the carried value otherwise.
+    double now_s{0.0};         ///< The epoch time of the record (s, the carry's clock), for the return test.
+};
+
 /// PASS B produce-phase result for one station: the assembled local Jacobian split
 /// plus the disposition flags that the serial consume phase needs.  Each slot is
 /// written by exactly one thread (indexed, never push_back) and consumed serially in
@@ -1584,6 +1598,9 @@ struct StationAssembly {
     long long pc_block_folds{0};    ///< Carried columns folded through the whitened block.
     long long pc_fallback_folds{0}; ///< Carried columns folded by the per-column fallback.
     int pl_cb_datum_rows{0};   ///< Zero-mean DCB prior rows folded this station-epoch (RXCB-DATUM; summed serially).
+    /// The receiver geometry-free datum's records, one per DCB column (network.rx_gf_datum
+    /// birth_prior or hard; empty under prior_refold).  Summed serially by networkRxGfDatumTally.
+    std::vector<RxGfDatumRecord> rx_gf;
         int pl_cb_injected{0};     ///< rx-CB priors folded this epoch (produce-phase local; summed serially).
     int pl_cb_innov_skips{0};  ///< rx-CB priors withheld by the innovation gate (receiver-reset response).
     /// Per-row position partial @f$\partial y_i/\partial\delta p@f$ for the station

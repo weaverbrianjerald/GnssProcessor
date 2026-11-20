@@ -583,6 +583,8 @@ add_executable(gnss_tests
     tests/network/test_stream_flag_roundtrip.cpp
     tests/network/test_stream_counter_roundtrip.cpp
     tests/network/test_stream_legend_tokens.cpp
+    tests/network/test_stream_real_file_replay.cpp
+    tests/network/test_stream_filed_counters.cpp
     tests/network/test_network_combined_sigma.cpp
     tests/test_rinex_nav_parser.cpp
     tests/test_brdc_clock_apriori.cpp
@@ -762,6 +764,7 @@ add_executable(gnss_tests
     tests/test_safe_logger.cpp
     tests/test_trace_logger_state.cpp
     tests/test_sbf.cpp
+    tests/test_sbf_galileo_bgd.cpp
     tests/test_estimation_core.cpp
     tests/test_ils_core.cpp
     tests/test_ar_ils_core.cpp
@@ -776,6 +779,10 @@ add_executable(gnss_tests
     tests/test_ar_extra_signals.cpp
     tests/test_ar_hold_release.cpp
     tests/test_ar_hold_misfit.cpp
+    tests/test_ar_qb_condition.cpp
+    tests/test_ar_wlc_stage_table.cpp
+    tests/test_ar_stage_group_pairs.cpp
+    tests/test_ar_stage_report_fix.cpp
     tests/test_kf_pseudo_update_repeat.cpp
     tests/test_fix_and_hold.cpp
     tests/test_signal_math.cpp
@@ -914,6 +921,7 @@ add_executable(gnss_tests
     tests/network/test_ring_fix_nn_guard.cpp
     tests/network/test_ring_fix_entry_revalidate.cpp
     tests/network/test_chain_memory.cpp
+    tests/network/test_snapshot_fingerprint_pins.cpp
     tests/network/test_phase_family.cpp
     tests/network/test_ring_fix_nn_monitor.cpp
     tests/network/test_chain_named_rows.cpp
@@ -924,6 +932,7 @@ add_executable(gnss_tests
     tests/network/test_held_first_by_life.cpp
     tests/network/test_phase_family_codes.cpp
     tests/network/test_rx_extra_band_delay_q.cpp
+    tests/network/test_rx_gf_datum.cpp
     tests/network/test_chain_forest_lead.cpp
     tests/test_warm_resume_require.cpp
     tests/test_anchor_slip_handover.cpp
@@ -962,6 +971,7 @@ add_executable(gnss_tests
     tests/network/test_channel_mode_all.cpp
     tests/network/test_galileo_network.cpp
     tests/test_code_datum_family.cpp
+    tests/network/test_network_code_pin_single_leg.cpp
     tests/test_clock_level_carry.cpp
     tests/network/test_coupling_exact_update.cpp
     tests/network/test_coupling_long_horizon.cpp

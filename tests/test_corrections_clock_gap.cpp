@@ -436,18 +436,26 @@ TEST(CorrectionsClockGap, LagrangeAndLeastSquaresModesBridgeAGapTheLinearModeRef
 }
 
 // ---------------------------------------------------------------------------
-// The least-squares mode states, in its own comment, that an epoch on a record
-// returns that record unchanged.  The shortcut compares the epoch with the
-// record found by an upper-bound search, which is the first record strictly
-// after the epoch, so it never matches and the fitted value is returned
-// instead.  On a clock with a 3e-11 s zigzag about a line, the fitted value at
-// a record differs from the record by about 1 cm of range.
+// The least-squares mode fits a line over its window and returns the fit at the
+// epoch, also when the epoch is on a record: the fit does not pass through the
+// records (the trade-off stated at the mode's code).  The mode once carried an
+// exact-record shortcut that compared the epoch with the first record strictly
+// after it (an upper-bound search), so it could not fire on a record; it fired
+// only for an epoch less than 1 us before a record.  The shortcut was removed
+// rather than repaired, which keeps every output on a record unchanged, and
+// this case pins the fit.
+//
+// The product is a line with a 3e-11 s zigzag (records at even indices sit
+// 3e-11 below the line, odd ones 3e-11 above), 12 records 30 s apart, no rate
+// records and default (equal) weights.  The window is the 11 records centred on
+// the bracket, clipped at the product's ends.  Over records 0..10 the zigzag's
+// least-squares line is flat at -3e-11 / 11 (six records below, five above,
+// zero slope by symmetry); over records 1..11 it is flat at +3e-11 / 11.  The
+// fit at a record is therefore the line plus that constant, about 1 cm of range
+// away from the record itself.  Fails if an exact-record shortcut returns,
+// or if the window or the weighting changes.
 // ---------------------------------------------------------------------------
-TEST(CorrectionsClockGap, LeastSquaresModeReturnsTheRecordOnARecord) {
-    GTEST_SKIP() << "defect: in the least-squares clock mode the record shortcut never fires "
-                    "(it tests the first record after the epoch, found by upper_bound), so an "
-                    "epoch on a record returns the fitted line, not the record its comment promises";
-
+TEST(CorrectionsClockGap, LeastSquaresModeReturnsTheFitOnARecord) {
     std::vector<ClockData> product;
     for (int i = 0; i < 12; ++i) {
         const double o = 30.0 * i;
@@ -456,9 +464,33 @@ TEST(CorrectionsClockGap, LeastSquaresModeReturnsTheRecordOnARecord) {
     }
     ModeHarness lsq;
     ASSERT_TRUE(buildModeHarness("LsqSatClock", product, lsq));
-    for (const int i : { 3, 5, 6 }) {
-        EXPECT_NEAR(lsq.gc->interpolateClock("G13", epochAt(30.0 * i), product), product[i].clock_bias, 1e-15)
-            << "record " << i;
+    ASSERT_EQ(lsq.config.getSatelliteClockInterpolationMode(), SatelliteClockInterpolationMode::LsqSatClock);
+
+    struct OnRecord { int index; double fit_offset_s; };
+    const OnRecord rows[] = {
+        { 3, -3.0e-11 / 11.0 },   // window 0..10
+        { 5, -3.0e-11 / 11.0 },   // window 0..10
+        { 6, +3.0e-11 / 11.0 },   // window 1..11
+    };
+    for (const OnRecord& r : rows) {
+        const double o = 30.0 * r.index;
+        const double got = lsq.gc->interpolateClock("G13", epochAt(o), product);
+        EXPECT_NEAR(got, linearClock(o) + r.fit_offset_s, 1e-15) << "record " << r.index;
+        EXPECT_GT(std::abs(got - product[r.index].clock_bias), 3.0e-11) << "record " << r.index;
+    }
+
+    // Half a microsecond before record 3 (bracket 2..3, the same window 0..10):
+    // the fit as well.  The removed shortcut returned record 3 here.
+    const double just_before = 90.0 - 5.0e-7;
+    EXPECT_NEAR(lsq.gc->interpolateClock("G13", epochAt(just_before), product),
+                linearClock(just_before) - 3.0e-11 / 11.0, 1e-15);
+
+    // Control: the linear mode keeps its exact-record shortcut.
+    LogManager log;
+    GnssCorrections linear(log, product, std::vector<ErpData>{});
+    for (const OnRecord& r : rows) {
+        EXPECT_NEAR(linear.interpolateClock("G13", epochAt(30.0 * r.index), product),
+                    product[r.index].clock_bias, kClockTol) << "record " << r.index;
     }
 }
 

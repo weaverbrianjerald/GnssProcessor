@@ -1,0 +1,65 @@
+{
+ "about": "Writes scripts/grading/fixtures/g3_two_run.json: two runs a and b, three receivers by three Galileo satellites,\ntwo epochs.  b's frame differs by a receiver potential x and a satellite potential y on both bands; at the second\nepoch b's E1 integer of AAAA00XXX-E01 is one more.  CCCC00ZZZ-E03 is also a tree pin on L1C in both runs.",
+ "files": {
+  "_rap_a/logs/network_ring_fix.csv": [
+   "week,tow,station,sat,sig1,sig2,ring,candidate,state,n1,n2",
+   "2420,172800.000,AAAA00XXX,E01,L1C,L5Q,1,1,held,0,100",
+   "2420,172800.000,AAAA00XXX,E02,L1C,L5Q,1,1,held,1,101",
+   "2420,172800.000,AAAA00XXX,E03,L1C,L5Q,1,1,held,2,102",
+   "2420,172800.000,BBBB00YYY,E01,L1C,L5Q,1,1,held,10,110",
+   "2420,172800.000,BBBB00YYY,E02,L1C,L5Q,1,1,held,11,111",
+   "2420,172800.000,BBBB00YYY,E03,L1C,L5Q,1,1,held,12,112",
+   "2420,172800.000,CCCC00ZZZ,E01,L1C,L5Q,1,1,held,20,120",
+   "2420,172800.000,CCCC00ZZZ,E02,L1C,L5Q,1,1,held,21,121",
+   "2420,172800.000,CCCC00ZZZ,E03,L1C,L5Q,1,1,held,22,122",
+   "2420,172800.000,AAAA00XXX,E05,L1C,L5Q,1,1,held,,7",
+   "2420,172830.000,AAAA00XXX,E01,L1C,L5Q,1,1,held,0,100",
+   "2420,172830.000,AAAA00XXX,E02,L1C,L5Q,1,1,held,1,101",
+   "2420,172830.000,AAAA00XXX,E03,L1C,L5Q,1,1,held,2,102",
+   "2420,172830.000,BBBB00YYY,E01,L1C,L5Q,1,1,held,10,110",
+   "2420,172830.000,BBBB00YYY,E02,L1C,L5Q,1,1,held,11,111",
+   "2420,172830.000,BBBB00YYY,E03,L1C,L5Q,1,1,held,12,112",
+   "2420,172830.000,CCCC00ZZZ,E01,L1C,L5Q,1,1,held,20,120",
+   "2420,172830.000,CCCC00ZZZ,E02,L1C,L5Q,1,1,held,21,121",
+   "2420,172830.000,CCCC00ZZZ,E03,L1C,L5Q,1,1,held,22,122",
+   "2420,172830.000,AAAA00XXX,E05,L1C,L5Q,1,1,held,,7"
+  ],
+  "_rap_a/logs/network_chain_edges.csv": [
+   "week,tow,system,family,band,comp,edge_sta,edge_sat,target_cyc",
+   "2420,172800.000,E,pair,L1C,0,CCCC00ZZZ,E03,22.000000",
+   "2420,172800.000,E,pair,L1C,0,BBBB00YYY,E05,0.400000",
+   "2420,172830.000,E,pair,L1C,0,CCCC00ZZZ,E03,22.000000",
+   "2420,172830.000,E,pair,L1C,0,BBBB00YYY,E05,0.400000"
+  ],
+  "_rap_b/logs/network_ring_fix.csv": [
+   "week,tow,station,sat,sig1,sig2,ring,candidate,state,n1,n2",
+   "2420,172800.000,AAAA00XXX,E01,L1C,L5Q,1,1,held,-2,98",
+   "2420,172800.000,AAAA00XXX,E02,L1C,L5Q,1,1,held,-2,98",
+   "2420,172800.000,AAAA00XXX,E03,L1C,L5Q,1,1,held,3,103",
+   "2420,172800.000,BBBB00YYY,E01,L1C,L5Q,1,1,held,10,110",
+   "2420,172800.000,BBBB00YYY,E02,L1C,L5Q,1,1,held,10,110",
+   "2420,172800.000,BBBB00YYY,E03,L1C,L5Q,1,1,held,15,115",
+   "2420,172800.000,CCCC00ZZZ,E01,L1C,L5Q,1,1,held,19,119",
+   "2420,172800.000,CCCC00ZZZ,E02,L1C,L5Q,1,1,held,19,119",
+   "2420,172800.000,CCCC00ZZZ,E03,L1C,L5Q,1,1,held,24,124",
+   "2420,172800.000,AAAA00XXX,E05,L1C,L5Q,1,1,held,,7",
+   "2420,172830.000,AAAA00XXX,E01,L1C,L5Q,1,1,held,-1,98",
+   "2420,172830.000,AAAA00XXX,E02,L1C,L5Q,1,1,held,-2,98",
+   "2420,172830.000,AAAA00XXX,E03,L1C,L5Q,1,1,held,3,103",
+   "2420,172830.000,BBBB00YYY,E01,L1C,L5Q,1,1,held,10,110",
+   "2420,172830.000,BBBB00YYY,E02,L1C,L5Q,1,1,held,10,110",
+   "2420,172830.000,BBBB00YYY,E03,L1C,L5Q,1,1,held,15,115",
+   "2420,172830.000,CCCC00ZZZ,E01,L1C,L5Q,1,1,held,19,119",
+   "2420,172830.000,CCCC00ZZZ,E02,L1C,L5Q,1,1,held,19,119",
+   "2420,172830.000,CCCC00ZZZ,E03,L1C,L5Q,1,1,held,24,124",
+   "2420,172830.000,AAAA00XXX,E05,L1C,L5Q,1,1,held,,7"
+  ],
+  "_rap_b/logs/network_chain_edges.csv": [
+   "week,tow,system,family,band,comp,edge_sta,edge_sat,target_cyc",
+   "2420,172800.000,E,pair,L1C,0,CCCC00ZZZ,E03,24.000000",
+   "2420,172800.000,E,pair,L1C,0,BBBB00YYY,E05,0.400000",
+   "2420,172830.000,E,pair,L1C,0,CCCC00ZZZ,E03,24.000000",
+   "2420,172830.000,E,pair,L1C,0,BBBB00YYY,E05,0.400000"
+  ]
+ }
+}

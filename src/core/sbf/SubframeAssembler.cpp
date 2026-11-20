@@ -232,8 +232,10 @@ std::optional<BroadcastEphemeris> SubframeAssembler::consumeGal(const RawNavMess
     int    svh  = 0;
     if (sat.slots.count(5)) {
         const uint8_t* w5 = sat.slots[5].data();
-        tgd1 = getbits(w5, 47, 10) * P2(32);   // BGD E1-E5a
-        tgd0 = getbits(w5, 57, 10) * P2(32);   // BGD E1-E5b
+        // Word type 5 carries BGD(E1, E5a) then BGD(E1, E5b), 10 bits each at
+        // 2^-32 s; they go to the documented slots tgd0 and tgd1.
+        tgd0 = getbits(w5, 47, 10) * P2(32);   // BGD E1-E5a
+        tgd1 = getbits(w5, 57, 10) * P2(32);   // BGD E1-E5b
         const int e5b_hs  = static_cast<int>(getbitu(w5, 67, 2));
         const int e1b_hs  = static_cast<int>(getbitu(w5, 69, 2));
         const int e5b_dvs = static_cast<int>(getbitu(w5, 71, 1));

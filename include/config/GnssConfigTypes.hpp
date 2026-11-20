@@ -1377,6 +1377,25 @@ namespace GnssProcessor {
     };
 
     /**
+     * @brief How the receiver geometry-free direction is held (@c network.rx_gf_datum).
+     *
+     * Each (receiver, constellation) has one direction the data cannot see: every slant
+     * ionosphere of the constellation at the receiver shifted by iota, the receiver DCB by
+     * -(1 - mu_2) iota, an extra-band IFB by -mu_k iota and every receiver phase bias by
+     * +mu_j iota.  With a free slant ionosphere and no ionosphere constraint nothing hard
+     * holds it; @c network.rx_code_bias_datum folds a loose prior on the DCB.  An exact rank
+     * computation (the third-band datum record, XBD) shows one row per (receiver,
+     * constellation) on the DCB, at every receiver including the chain roots, completes the
+     * datum as a pure datum (it constrains no estimable quantity), on dual and on triple
+     * frequency.  Read only with @c network.rx_code_bias_datum.
+     */
+    enum class NetworkRxGfDatum {
+        PriorRefold,  ///< (default) the loose prior folded on every epoch on top of the carried posterior: today's behaviour, byte-identical.
+        BirthPrior,   ///< The loose prior folded only when the DCB column has no carried row this epoch (a birth, a return after the gap prune, an erase); the carried posterior holds the direction after.  Removes the repeated prior.
+        Hard          ///< A hard row (the chain pins' weight) on the DCB of every (receiver, constellation), roots included: at the prior's target 0 when the column has no carried row, at its carried value otherwise.  Its placement and release are events.
+    };
+
+    /**
      * @brief Ionosphere constraint of the W6 satellite code-bias slice
      *        (@c network.w6_iono_constraint) (
      *        docs/record/refound/RF-0_baseline_2026-09-14.md).

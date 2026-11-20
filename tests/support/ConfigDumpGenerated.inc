@@ -4,7 +4,7 @@
 // Included inside configMemberDump() (tests/support/ConfigDump.hpp), where `cfg` is the
 // loaded GnssConfig and `add(name, value)` appends one "name=value" line.
 //
-// 565 public const getters without arguments; 1370 dump statements.
+// 567 public const getters without arguments; 1372 dump statements.
 //
 // Vectors of structs (their size, then every element field by field):
 //   getBaselineConfig.rovers (std::vector<StationConfig>: size, then each element)
@@ -269,6 +269,7 @@ add("networkCbAdmissionCensusEpochs", cfg.networkCbAdmissionCensusEpochs());
 add("estimateNetworkIonoSh", cfg.estimateNetworkIonoSh());
 add("networkRxCodeBiasDatum", cfg.networkRxCodeBiasDatum());
 add("networkRxCodeBiasDatumSigmaM", cfg.networkRxCodeBiasDatumSigmaM());
+add("networkRxGfDatum", cfg.networkRxGfDatum());
 add("networkColdClockSeed", cfg.networkColdClockSeed());
 add("networkAprioriSource", cfg.networkAprioriSource());
 add("networkAprioriBrdcClock", cfg.networkAprioriBrdcClock());
@@ -408,6 +409,7 @@ add("networkStickyPivot", cfg.networkStickyPivot());
 add("networkClockDatumSumToZero", cfg.networkClockDatumSumToZero());
 add("networkClockDatumBroadcastAnchored", cfg.networkClockDatumBroadcastAnchored());
 add("networkCodeDatumTimeLinked", cfg.networkCodeDatumTimeLinked());
+add("networkCodePinSingleLegHold", cfg.networkCodePinSingleLegHold());
 add("networkCodeDatumPairContinuity", cfg.networkCodeDatumPairContinuity());
 add("networkCodeDatumFamilyDifference", cfg.networkCodeDatumFamilyDifference());
 add("networkCodeFamilyBirthPriorSigmaM", cfg.networkCodeFamilyBirthPriorSigmaM());

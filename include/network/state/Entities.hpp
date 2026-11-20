@@ -403,6 +403,12 @@ struct SatelliteState {
     /// end of a hold are declared against, advanced only on kept epochs.  Telemetry only,
     /// not snapshotted.  Was @c NetworkCarryState::last_if_pin_holds.  ColdStart.
     std::optional<NetworkSbasis::PinPairHold> last_if_pin_hold;
+    /// The satellite's open single-leg edge (network.code_pin_single_leg_hold): the pin pair
+    /// lost one leg and the surviving column is held at its pre-edge value until the parked
+    /// leg returns (NetworkSbasis::CodePinLegEdge).  Advanced on kept epochs only, by
+    /// networkCodePinLegKeptEpoch.  Not snapshotted: a warm resume starts with no edge open.
+    /// ColdStart.
+    std::optional<NetworkSbasis::CodePinLegEdge> code_pin_leg_edge;
     /// The satellite participates in a datum direction constrained last epoch (the
     /// completion rows, standing invariant #7): present here but in no direction this epoch
     /// is the release edge.  Was @c NetworkCarryState::sbc_active_sats.  ColdStart.
@@ -719,6 +725,18 @@ struct LevelHoldMemo {
     double    level{0.0};         ///< The carried level the last row held (a_r^T x_prev, m).
 };
 
+/// The memo of the receiver geometry-free datum of one (station, constellation)
+/// (@c network.rx_gf_datum birth_prior or hard): what the datum did last epoch, read by the serial
+/// tally networkRxGfDatumTally to classify an uncarried DCB column (birth, return, uncarried) and
+/// to raise the datum's edges as events.  Written by that tally only.
+struct RxGfDatumMemo {
+    bool      active{false};     ///< The DCB column was present (a record was written) last epoch.
+    bool      carried{false};    ///< It folded a carried row last epoch.
+    double    last_s{0.0};       ///< The carry clock (s) of the last epoch with the column present.
+    long long since_ep{0};       ///< The loop epoch of the current placement (birth or return).
+    double    target{0.0};       ///< The last hard row's target (m, absolute).
+};
+
 /// The SD EWL integer fixes of one station: constellation letter -> satellite -> fix.
 using SdEwlFixes = std::map<char, std::map<std::string, SdEwlFix>>;
 
@@ -832,6 +850,13 @@ struct StationState {
     /// serialized: a warm resume raises the hold's start again at its first epoch.  New with
     /// the hold.  ColdStart.
     std::map<System, LevelHoldMemo, ByLetter> level_hold;
+    /// Constellation -> the memo of the station's receiver geometry-free datum
+    /// (@c network.rx_gf_datum birth_prior or hard; the third-band datum record, XBD): what the
+    /// datum did on the receiver DCB last epoch, read by the serial tally to classify a placement
+    /// (birth, return, uncarried) and raise its edges as events.  Empty on every unarmed run.  Not
+    /// serialized: a warm resume raises a placement again at its first epoch.  New with the key.
+    /// ColdStart.
+    std::map<System, RxGfDatumMemo, ByLetter> rx_gf;
     /// The members keyed below the station.
     std::map<std::string, StationSignalState> signals;
 };

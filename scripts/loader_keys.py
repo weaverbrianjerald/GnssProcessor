@@ -421,7 +421,8 @@ def selftest():
     # (they run as nothing: the census is armed by network.redundancy_census_stride, the
     # station floor by network.parallel_min_stations).  The logger level table is read.
     inert = {"_comment", "network.min_stations", "network.redundancy_census"}
-    for name in ("golden_field_refound.json", "golden_sim_refound.json"):
+    for name in ("golden_field_refound.json", "golden_sim_refound.json", "golden_field_rf0hv18.json",
+                 "golden_sim_rf0hv18.json"):
         with io.open(ROOT + "/config/golden/" + name, encoding="utf-8") as fh:
             cfg = json.load(fh)
         miss = [k for k in default().unread(leaf_paths(cfg)) if k not in inert]

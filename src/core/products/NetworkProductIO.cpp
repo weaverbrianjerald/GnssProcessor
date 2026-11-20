@@ -13,6 +13,7 @@
 #include <spdlog/sinks/stdout_color_sinks.h>   // tailLog()'s never-null fallback
 
 #include <algorithm>
+#include <array>
 #include <cstring>
 #include <filesystem>
 #include <map>
@@ -127,7 +128,7 @@ struct LineAssembler {
 
     /// Consume one raw line (with or without a trailing '\r'; never a '\n').
     /// Returns the epoch that was under assembly when this line completes it (an
-    /// E, H or F line flushes its predecessor); nullopt otherwise.
+    /// E or H line flushes its predecessor); nullopt otherwise.
     std::optional<NetworkProductRecord> consume(const std::string& raw) {
         std::optional<NetworkProductRecord> completed;
         std::string line = raw;
@@ -154,7 +155,9 @@ struct LineAssembler {
                 cur.epoch.provider_id     = std::stoi(f[4]);
                 cur.epoch.solution_id     = std::stoi(f[5]);
                 cur.datum_changed         = (f.size() > 6) && (std::stoi(f[6]) != 0);
-                if (f.size() > 7)   // optional affected-constellation set, field 8 (A2)
+                // Optional affected-constellation set, field 8 (A2).  A field holding '=' is a
+                // key=value token, which the legend lets a reader ignore, never the set.
+                if (f.size() > 7 && f[7].find('=') == std::string::npos)
                     for (char ch : f[7]) cur.datum_consts.insert(ch);
                 if (pending_s_valid) {   // the S line preceding this epoch (RTA-5)
                     cur.contract_refresh = pending_s;
@@ -270,8 +273,9 @@ struct LineAssembler {
                 satSolution(f[1]).phase_bias[f[2]] = pb;
             } else if (tag == "R") {   // retro-bump satellite set, per-sat disc (B1)
                 if (!have_cur) { ok = false; return completed; }
+                // A field holding '=' is a key=value token (ignorable by the legend), never a satellite.
                 for (std::size_t k = 1; k < f.size(); ++k)
-                    if (!f[k].empty()) cur.retro_sats.insert(f[k]);
+                    if (!f[k].empty() && f[k].find('=') == std::string::npos) cur.retro_sats.insert(f[k]);
             } else if (tag == "U") {   // per-sat URA quality channel (B1)
                 if (!have_cur || f.size() < 3) { ok = false; return completed; }
                 NetworkSatSolution& s = satSolution(f[1]);
@@ -672,7 +676,7 @@ void NetworkProductWriter::writeHeader_(const SbasisContract* contract) {
             "[,clkset=1][,frame=<id>][,cepoch=<e>][,atx=<f>][,oref=<CoM|APC>][,pdr=<rx>][,agek=<k>]"
             "[,discfrac=<c>][,discpv=<n>][,hsig=<src>][,cbpin=<const>:<s1>-<s2>...]"
             "[,gfpin=<const>:<s1>-<s2>...][,sat_gf_datum=<mode>]"
-            "[,discscope=channel][,pbhold=1][,wumode=<off|fractional|accumulated>]"
+            "[,discscope=channel][,pbhold=<1|2|3>][,wumode=<off|fractional|accumulated>]"
             "   (B6 S-basis contract)\n"
             "# N,constellation,band_digit[,ph=<sig>[+<sig>...]][,co=<sig>[+<sig>...]]"
             "[,comp=<sig>[+<sig>...]][,dph=<sig>][,dco=<sig>]"
@@ -904,57 +908,39 @@ void NetworkProductReader::replay(const NetworkProductRecord& rec,
     // scope travels in the S contract (discscope=) so checkContract reports it;
     // closing the gap needs an R-record grammar extension (open item).
     if (!rec.retro_sats.empty()) emitter.markSatDiscontinuity(rec.retro_sats);
-    emitter.emitToStore(rec.epoch, store);
 
-    // When the record carries serialized post-emit counter values
-    // (network.serialize_disc_counters, RTA-4), the deterministic recompute above
-    // serves as a self-check.  For a full-file replay the two agree.  A
-    // disagreement is expected for a reader that joined mid-file (every key
-    // recomputes from a first sighting = 0), which is the case the wire values
-    // exist for: warn, adopt the file's values into the emitter, and re-emit the
-    // epoch so the reconstructed store records carry them.  The re-emit is
-    // idempotent: the baselines and satellite-set trackers already equal this
-    // epoch's content and the first emit consumed every forced mark, so no counter
-    // steps; only the pushed records are re-stamped with the adopted counters.
+    // When the record carries serialized post-emit counters
+    // (network.serialize_disc_counters, RTA-4), the epoch is emitted once with the
+    // file's counters: the emitter runs its own rules on every key, then takes the
+    // file's value before the record is pushed, so the store records carry the file's
+    // counters and every later epoch steps on top of them.  The emitter's own rules
+    // are those of the eight replay parameters of the S line; the producer can also
+    // apply rules set at its setup that the S line does not carry (the unsettled steps
+    // of the ring fix, the step-class declaration, the phase-family member copy, the
+    // continuity guard, the chain's release marks), and a reader that joins mid-file
+    // has no history, so a disagreement does not by itself indicate a defect.  Each
+    // disagreeing value is counted by class and reported on one line per epoch.
     const auto& sd = rec.serialized_disc;
-    if (sd.any()) {
-        auto splitKey = [](const std::string& key, std::string& sat, std::string& sig) {
-            const auto bar = key.find('|');
-            sat = key.substr(0, bar == std::string::npos ? key.size() : bar);
-            sig = bar == std::string::npos ? std::string() : key.substr(bar + 1);
-        };
-        std::size_t n_mismatch = 0;
-        std::string first_mismatch;
-        auto miss = [&](const std::string& what, const std::string& key, int filed, int recomputed) {
-            if (n_mismatch++ == 0)
-                first_mismatch = fmt::format("{} {}: file {} vs replay {}", what, key, filed, recomputed);
-        };
-        for (const auto& [sat, v] : sd.clock)
-            if (emitter.clockDiscontinuityCounter(sat) != v)
-                miss("clock", sat, v, emitter.clockDiscontinuityCounter(sat));
-        for (const auto& [key, v] : sd.code) {
-            std::string sat, sig; splitKey(key, sat, sig);
-            if (emitter.codeBiasDiscontinuityCounter(sat, sig) != v)
-                miss("code", key, v, emitter.codeBiasDiscontinuityCounter(sat, sig));
-        }
-        for (const auto& [key, v] : sd.phase) {
-            std::string sat, sig; splitKey(key, sat, sig);
-            if (emitter.discontinuityCounter(sat, sig) != v)
-                miss("phase", key, v, emitter.discontinuityCounter(sat, sig));
-        }
-        if (n_mismatch > 0) {
-            auto lg = spdlog::get("app");
-            if (!lg) lg = spdlog::default_logger();
-            if (lg)
-                lg->warn("NetworkProductReader::replay (RTA-4): {} serialized disc-counter "
-                         "value(s) disagree with the replay recompute at epoch tow {:.1f} "
-                         "(first: {}) — adopting the file's post-emit values (expected for a "
-                         "mid-file / tail join; a mismatch on a FULL-file replay indicates a "
-                         "producer/replay divergence).",
-                         n_mismatch, rec.epoch.epoch_time.tow, first_mismatch);
-            emitter.adoptDiscontinuityCounters(sd.phase, sd.code, sd.clock);
-            emitter.emitToStore(rec.epoch, store);   // re-stamp store records (idempotent)
-        }
+    emitter.emitToStore(rec.epoch, store, sd.any() ? &sd : nullptr);
+    const auto& dis = emitter.lastFiledDisagreements();
+    if (!dis.empty()) {
+        std::array<std::size_t, NetworkProductEmitter::kFiledDisagreementClasses> n{};
+        for (const auto& d : dis) ++n[static_cast<std::size_t>(d.cls)];
+        std::string classes;
+        for (std::size_t c = 0; c < n.size(); ++c)
+            if (n[c] > 0)
+                classes += fmt::format("{}{} {}", classes.empty() ? "" : ", ",
+                                       NetworkProductEmitter::filedDisagreementClassName(
+                                           static_cast<NetworkProductEmitter::FiledDisagreementClass>(c)),
+                                       n[c]);
+        auto lg = spdlog::get("app");
+        if (!lg) lg = spdlog::default_logger();
+        if (lg)
+            lg->info("NetworkProductReader::replay: epoch tow {:.1f}: {} file counter value(s) differ "
+                     "from the replay's own rules and are taken from the file ({}; first: {} file {} "
+                     "replay {}): rules the S line does not carry, or a mid-file join.",
+                     rec.epoch.epoch_time.tow, dis.size(), classes, dis.front().key, dis.front().filed,
+                     dis.front().own);
     }
 }
 
@@ -1041,7 +1027,7 @@ bool NetworkProductReader::checkContract(const SbasisContract& file,
     }
     // Replay-emitter construction parameters: a divergence in one of them means a
     // consumer replaying with its own emitter config would reproduce different
-    // discontinuity counters from the producer's live store.  All seven are
+    // discontinuity counters from the producer's live store.  All eight are
     // compared below.
     if (file.disc_threshold_m != expected.disc_threshold_m)
         note(fmt::format("disc_threshold_m: file {} vs expected {}",

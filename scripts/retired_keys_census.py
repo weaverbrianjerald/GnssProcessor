@@ -226,6 +226,7 @@ def selftest():
         "a flat spelling below the top level and a dotted literal key are not read")
     golden = os.path.join(ROOT, "config", "golden")
     for name, count in (("golden_field_refound.json", 0), ("golden_sim_refound.json", 0),
+                        ("golden_field_rf0hv18.json", 0), ("golden_sim_rf0hv18.json", 0),
                         ("golden_field_gps_dual.json", 28)):
         got = len(scan(load_config(os.path.join(golden, name))[0], rows))
         chk(got == count, "%s sets %d retired keys, not %d" % (name, got, count))

@@ -827,9 +827,11 @@ namespace GnssProcessor {
             //     receives while the solve, the C records and the B records stay
             //     byte-identical to a run with it off.  Regime: the float vehicle and a
             //     closed-loop consumer, the posture it was graded on (the evidence for the
-            //     hold is the consumer's).
+            //     hold is the consumer's), without the eq34 chain: with the chain the hold
+            //     freezes the cold estimate and the stream loses its integer frame, so the
+            //     integer-fixing configuration runs it off.
             { nc.ambiguity_vehicle == NetworkAmbiguityVehicle::FloatKf
-                  && nc.closed_loop.enable,
+                  && nc.closed_loop.enable && !network_phase_datum_eq34_,
               nc.emit_pb_hold,
               Tier::SCOPED, false, "network.emit_pb_hold",
               "hold each emitted phase bias at the first value of its generation and declare a "
@@ -1053,15 +1055,18 @@ namespace GnssProcessor {
             //     armed test is the value pair: the retired leveling goldens read as unarmed
             //     here and the refound ones as armed.  Placed beside the prioritized-datum
             //     row because the held basis is that datum's basis (the loader requires the
-            //     two together).
+            //     two together).  The float vehicle on the eq34 chain (the integer-fixing
+            //     configuration, the reference since 2026-11-19) is armed as well: the chain
+            //     is its phase datum in place of the held basis.
             { true,
               nc.ambiguity_vehicle == NetworkAmbiguityVehicle::FloatKf
-                  && network_phase_datum_held_basis_,
+                  && (network_phase_datum_held_basis_ || network_phase_datum_eq34_),
               Tier::ON, true , "network.ambiguity_vehicle",
-              "the float vehicle with the held S-basis: the working posture since 2026-09-15 "
-              "and the goldens' posture since the re-base of 2026-09-22; field 6 h consumer "
-              "3.77 1.08 1.28 1.25 1.78 2.68 -> 0.560 0.059 0.028 0.030 0.036 0.045 m by hour "
-              "against the leveling posture" },
+              "the float vehicle with the held S-basis or the eq34 chain: the held basis is the "
+              "working posture since 2026-09-15 and the goldens' posture from the re-base of "
+              "2026-09-22 (field 6 h consumer 3.77 1.08 1.28 1.25 1.78 2.68 -> 0.560 0.059 0.028 "
+              "0.030 0.036 0.045 m by hour against the leveling posture); the chain with the ring "
+              "fix is the reference posture since 2026-11-19" },
             { network_phase_datum_prioritized_ && !network_phase_datum_eq34_,
               network_phase_anchor_carry_reref_,
               Tier::SCOPED, false, "network.phase_anchor_carry_reref",

@@ -1,0 +1,61 @@
+{
+ "about": "Synthetic fixture of compare_runs.py's self-test (card GRA, plan step G6): fam declares the phase families E:L1X=L1C E:L5X=L5Q in its legend and carries the two member P records and an undeclared B C1X copy of C1C; sep has neither; sep2 is a byte copy of sep. The run summaries differ only in their wall-time columns; fam has a trace sep lacks.",
+ "files": {
+  "_rap_fam/products.txt": [
+   "# gnss_network_product v2",
+   "# P,sat,signal,bias_m,signal_integer,wide_lane_integer",
+   "# phase families (network.phase_families): E:L1X=L1C E:L5X=L5Q; a member's P record repeats its identity's (value, flags, counter)",
+   "E,2420,0.000,1,1,1,0",
+   "P,E04,L1C,1.0,0,0",
+   "P,E04,L1X,1.0,0,0",
+   "P,E04,L5Q,2.0,0,0",
+   "P,E04,L5X,2.0,0,0",
+   "B,E04,C1C,0.5",
+   "B,E04,C1X,0.5"
+  ],
+  "_rap_sep/products.txt": [
+   "# gnss_network_product v2",
+   "# P,sat,signal,bias_m,signal_integer,wide_lane_integer",
+   "E,2420,0.000,1,1,1,0",
+   "P,E04,L1C,1.0,0,0",
+   "P,E04,L5Q,2.0,0,0",
+   "B,E04,C1C,0.5"
+  ],
+  "_rap_sep2/products.txt": [
+   "# gnss_network_product v2",
+   "# P,sat,signal,bias_m,signal_integer,wide_lane_integer",
+   "E,2420,0.000,1,1,1,0",
+   "P,E04,L1C,1.0,0,0",
+   "P,E04,L5Q,2.0,0,0",
+   "B,E04,C1C,0.5"
+  ],
+  "_rap_fam/logs/network_run_summary.csv": [
+   "loops,epochs,loop_ms,ms_per_epoch",
+   "1,1,120.5,120.5"
+  ],
+  "_rap_sep/logs/network_run_summary.csv": [
+   "loops,epochs,loop_ms,ms_per_epoch",
+   "1,1,98.0,98.0"
+  ],
+  "_rap_sep2/logs/network_run_summary.csv": [
+   "loops,epochs,loop_ms,ms_per_epoch",
+   "1,1,98.0,98.0"
+  ],
+  "_rap_fam/logs/network_ring_fix.csv": [
+   "week,tow,station,sat,state",
+   "2420,0.000,AAAA00XXX,E04,held"
+  ],
+  "_rap_sep/logs/network_ring_fix.csv": [
+   "week,tow,station,sat,state",
+   "2420,0.000,AAAA00XXX,E04,held"
+  ],
+  "_rap_sep2/logs/network_ring_fix.csv": [
+   "week,tow,station,sat,state",
+   "2420,0.000,AAAA00XXX,E04,held"
+  ],
+  "_rap_fam/logs/network_extra.csv": [
+   "a,b",
+   "1,2"
+  ]
+ }
+}
