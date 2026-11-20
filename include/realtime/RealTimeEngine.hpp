@@ -864,6 +864,7 @@ private:
     friend struct EphemerisJumpTestAccess;  ///< Drives the broadcast-baseline jump response over a real StateManager.
     friend struct ArObserveTestAccess;  ///< Drives the observe-mode integer search over a hand-built StateManager and store.
     friend struct AmbiguityResolverSetupTestAccess;  ///< Reads the resolver configuration that initAmbiguityResolver built.
+    friend struct ClockDiscReactionTestAccess;  ///< Drives the clock-discontinuity reaction and reads its trace events.
     /// Convert GPS-scale time to UTC-scale time.
     static GnssTime gpsToUtcTime(const GnssTime& gps_time);
 
@@ -1278,7 +1279,9 @@ private:
     /// @return true when the flip is absent by declaration (the network declares
     ///         no family for this signal) and @c network.closed_loop.roster_latch
     ///         is armed: the one class whose response the declared roster
-    ///         suppresses.
+    ///         suppresses.  The reset reaction withholds its reset on true; the
+    ///         carry and translation reactions record the flip and keep their
+    ///         own answer.
     bool noteFreshnessFlip_(const std::string& key, const std::string& sat,
                             const std::string& signal, const std::string& cons,
                             const char* domain, bool was_fresh, bool now_fresh,

@@ -19,11 +19,16 @@
  * recomputed deterministically on replay.  Feeding the parsed records back
  * through the same @c NetworkProductEmitter::emitToStore (via @c replay, which
  * also re-applies @c markDatumChange) therefore reproduces the producer's live
- * @c SsrCorrectionStore contents byte-for-byte, discontinuity counters included.
+ * @c SsrCorrectionStore contents byte-for-byte, discontinuity counters included,
+ * as long as the producer's emitter applied only the rules of the eight replay
+ * parameters of the S line (the unsettled steps of the ring fix, the step-class
+ * declaration, the phase-family member copy, the continuity guard and the chain's
+ * release marks are set at the producer's setup and travel in no S token).
  * With @c network.serialize_disc_counters on (RTA-4), the post-emit counter values
- * are also written as optional trailing fields, so a late-joining or tail reader
- * can reconstruct them without replaying from epoch 1; @c replay still recomputes
- * them as a self-check and adopts the file values on disagreement.
+ * are also written as optional trailing fields, so a late-joining or tail reader,
+ * and a reader of a producer with those rules, takes them from the file; @c replay
+ * emits each epoch once, runs its own rules, takes the file values before the
+ * records are pushed and reports every value that differed.
  *
  * File format (line-based, '#' comments, comma-separated; one epoch is an @c E
  * line followed by its per-satellite @c C / @c B / @c P records):
@@ -37,7 +42,14 @@
  * Optional records and fields (each present only when its producer toggle is on,
  * so a run with the toggles off writes the base format verbatim):
  * @code
+ *   G,<week>,<tow>                          # RT0-4 wall-clock time of generation
  *   I,<generation_id>                       # RTA-3 solution-generation id (after E/G)
+ *   E,...,<datum_changed>[,<datum_consts>]  # A2: field 8, the constellation letters whose
+ *                                           #   datum re-referenced; a field holding '='
+ *                                           #   there is a key=value token, not the set
+ *   R,<sat>[,<sat>...]                      # B1 per-satellite discontinuity bump; a field
+ *                                           #   holding '=' is a key=value token, not a sat
+ *   U,<sat>,<clock_ura_m>                   # B1 per-satellite URA (1-sigma, m)
  *   C,<sat>,<c0>[,<c1>][,<clock_disc>]      # RTA-4: with counters on, c1 is always
  *     [,iode=<n>][,oiod=<n>]                #   written (0 when absent) so the clock
  *     [,oepoch=<week>:<tow>]                #   disc counter sits at fixed field 5.
@@ -48,9 +60,13 @@
  *                                           #   a field containing '=' ends the
  *                                           #   positional c1/clock_disc parse)
  *   B,<sat>,<signal>,<bias>[,<code_disc>]   # RTA-4 code disc counter (field 5)
+ *     [,isc=obs][,lvl=<m>]                  #   isc=obs: an observed inter-signal
+ *                                           #   correction; lvl=: declared follow step
  *   P,<sat>,<sig>,<b>,<si>,<wl>[,<ph_disc>] # RTA-4 phase disc counter (field 7)
  *     [,sigma=<m>][,sigc=<m>]               # B1b phase-bias σ (sigma=) and M4 combined
  *                                           #   phase-correction σ (sigc=; clock+phasebias)
+ *     [,gen=<n>]                            #   hold generation (network.emit_pb_hold)
+ *   C,...[,lvl=<m>]                         # declared clock-level step of the satellite
  *   C,...[,sigcc=<m>][,rho=<val>]           # M4 per-sat combined code-correction σ
  *                                           #   (sigcc=) and code/phase correlation (rho=)
  *   S,...[,gid=<id>][,stale=<sec>]          # RTA-3/RTA-11 trailing key=value fields;
@@ -79,6 +95,15 @@
  *                                           #   shift in the ionosphere.
  *                                           #   Repeated S lines mid-file are RTA-5
  *                                           #   contract re-broadcasts (positional)
+ *     [,stale=<s>][,cbjump=1][,clkset=1]    #   the replay-emitter parameters with the
+ *     [,discfrac=<c>][,discpv=<n>]          #   threshold of field 9 and the clock flag
+ *     [,discscope=channel]                  #   of field 10 (eight in all)
+ *     [,pdr=<rx>][,hsig=<src>]              #   phase-datum receiver; sigma source
+ *     [,pbhold=<1|2|3>]                     #   the phase-bias hold: 1 plain, 2 the
+ *                                           #   phase-visible clock, 3 smoothed
+ *   N,<const>,<band_digit>[,ph=<sig>...]    # declared signal roster; a contiguous N
+ *     [,co=<sig>...][,comp=<sig>...]        #   block replaces the previous declaration
+ *     [,dph=<sig>][,dco=<sig>]
  *   H,<week>,<tow>,<status>,<sigma0>,       # RTA-10 epoch-status heartbeat
  *     <n_sats_published>,<withheld>         #   (network.emit_epoch_status_record)
  * @endcode
@@ -398,17 +423,11 @@ struct NetworkProductRecord {
     /// (C field 5 / B field 5 / P field 7; present only when the producer ran with
     /// @c network.serialize_disc_counters, RTA-4).  They are the post-emit counters
     /// of this epoch, identical to what the producer's @c emitToStore pushed into its
-    /// live store.  @c replay keeps its deterministic recompute and uses these as a
-    /// self-check: on any disagreement (the expected case for a reader that joined
-    /// mid-file) it warns, adopts the values into the replay emitter and re-stamps
-    /// the store records.  Empty maps for old files and runs with the toggle off.
-    struct SerializedDiscCounters {
-        std::map<std::string, int> clock;  ///< "sat"        -> clock disc counter (C field 5).
-        std::map<std::string, int> code;   ///< "sat|signal" -> code disc counter  (B field 5).
-        std::map<std::string, int> phase;  ///< "sat|signal" -> phase disc counter (P field 7).
-        /** @brief Whether the record carries any serialized counter. @return True when at least one of the three maps is non-empty. */
-        bool any() const { return !clock.empty() || !code.empty() || !phase.empty(); }
-    };
+    /// live store.  @c replay emits the epoch once with them: the replay emitter runs
+    /// its own rules, then takes these values before the records are pushed, and
+    /// reports each value that differed.  Empty maps for old files and runs with the
+    /// toggle off.
+    using SerializedDiscCounters = FiledDiscCounters;
     SerializedDiscCounters serialized_disc;   ///< Counters this epoch's C / B / P records carried; all three maps empty when the file has none.
     /// The S-contract state as of this epoch (RTA-5): set (present=true) when an
     /// S line immediately preceded this epoch's E line (the deferred v2 header S

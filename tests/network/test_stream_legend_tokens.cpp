@@ -482,7 +482,7 @@ TEST(StreamLegendTokens, EveryEmittedValueIsDeclared) {
     const std::vector<std::string> lines  = readLines(writeArmedStream());
     const auto                     legend = parseLegend(lines);
 
-    std::set<std::string> undeclared, undeclared_hold;
+    std::set<std::string> undeclared;
     for (const std::string& dl : lines) {
         if (!isData(dl)) continue;
         const std::vector<std::string> f = splitCsv(dl);
@@ -494,20 +494,10 @@ TEST(StreamLegendTokens, EveryEmittedValueIsDeclared) {
             const auto d = it->second.keys.find(key);
             if (d == it->second.keys.end()) continue;   // reported by EveryEmittedTokenIsDeclared
             if (valueDeclared(d->second, fld.substr(key.size() + 1))) continue;
-            (key == "pbhold" ? undeclared_hold : undeclared)
-                .insert(f[0] + " " + fld + " (declared " + key + "=" + d->second + ")");
+            undeclared.insert(f[0] + " " + fld + " (declared " + key + "=" + d->second + ")");
         }
     }
     for (const std::string& u : undeclared) ADD_FAILURE() << "value not declared: " << u;
-
-    if (!undeclared_hold.empty()) {
-        std::string list;
-        for (const std::string& u : undeclared_hold) list += "\n  " + u;
-        GTEST_SKIP() << "Defect: the legend declares only pbhold=1, while the writer also emits "
-                        "pbhold=2 (the phase-clock hold, the reference configurations' hold) and "
-                        "pbhold=3 (the smoothed hold); a reader that follows the legend does not "
-                        "know those values." << list;
-    }
 }
 
 // The armed stream emits every tag and every key the legend declares, so the token set taken
@@ -569,15 +559,9 @@ TEST(StreamLegendTokens, AnUnknownKeyIsIgnoredOnEveryRecord) {
         v[i] += ",zz_unknown=1";
         if (parsed(v) != base) misread.insert(tag);
     }
-    // The last E line is the seven-field one: its optional eighth field is absent.
-    for (const std::string& tag : misread)
-        if (tag != "E" && tag != "R") ADD_FAILURE() << "an unknown key changes the parse of tag " << tag;
-    if (misread.count("E") || misread.count("R"))
-        GTEST_SKIP() << "Defect: the parser reads an unknown key=value token as data on the E "
-                        "record (taken as the constellation set of field 8 when that field is "
-                        "absent) and on the R record (taken as a satellite id), against the "
-                        "legend's 'unknown keys are ignorable'.  Misread on: "
-                     << (misread.count("E") ? "E " : "") << (misread.count("R") ? "R" : "");
+    // The last E line is the seven-field one: its optional eighth field is absent, so the
+    // appended token lands where the constellation set would be.
+    for (const std::string& tag : misread) ADD_FAILURE() << "an unknown key changes the parse of tag " << tag;
 }
 
 // Three tokens the user engine has no reader for still change the parse: the wide-lane

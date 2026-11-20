@@ -582,6 +582,8 @@ add_executable(gnss_tests
     tests/network/test_stream_flag_roundtrip.cpp
     tests/network/test_stream_counter_roundtrip.cpp
     tests/network/test_stream_legend_tokens.cpp
+    tests/network/test_stream_real_file_replay.cpp
+    tests/network/test_stream_filed_counters.cpp
     tests/network/test_network_combined_sigma.cpp
     tests/test_rinex_nav_parser.cpp
     tests/test_brdc_clock_apriori.cpp
@@ -761,6 +763,7 @@ add_executable(gnss_tests
     tests/test_safe_logger.cpp
     tests/test_trace_logger_state.cpp
     tests/test_sbf.cpp
+    tests/test_sbf_galileo_bgd.cpp
     tests/test_estimation_core.cpp
     tests/test_ils_core.cpp
     tests/test_ar_ils_core.cpp

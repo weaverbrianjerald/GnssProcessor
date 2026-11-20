@@ -24,11 +24,11 @@
  * A case whose expected count, identity or line does not exist in the code today is a
  * GTEST_SKIP that names what is missing.
  *
- * The two access structs below are the ones the engine already befriends.  Each is the
- * same definition, token for token, as in test_pb_hold_presence.cpp and
+ * The first two access structs below are the ones the engine already befriends.  Each is
+ * the same definition, token for token, as in test_pb_hold_presence.cpp and
  * test_ephemeris_jump.cpp (C++ allows one class to be defined in several translation units
  * only when the definitions are identical): an edit of either struct must be made in both
- * files.
+ * files.  The third, ClockDiscReactionTestAccess, is defined in this file only.
  */
 
 #include <gtest/gtest.h>
@@ -106,6 +106,26 @@ struct EphemerisJumpTestAccess {
     static std::set<std::string> targets(const std::string& sat, bool is_pivot,
                                          const std::set<std::string>& state_sats) {
         return RealTimeEngine::ephemerisJumpTargets(sat, is_pivot, state_sats);
+    }
+};
+
+// House friend-shim idiom: expose only the engine seams this suite needs.
+struct ClockDiscReactionTestAccess {
+    static void initialize(RealTimeEngine& e, const SsrCorrectionStore& store) {
+        e.state_manager_ = std::make_unique<StateManager>(5, e.log_manager_, e.config_);
+        e.ssr_store_override_ = &store;
+    }
+    /// One epoch of the clock-discontinuity reaction over @p obs, returning the trace
+    /// events it recorded ("<sat>|CLK" -> action names).  The events are cleared first,
+    /// as processEpoch clears them at the top of every epoch.
+    static std::map<std::string, std::string> react(RealTimeEngine& e, const PppObservation& obs) {
+        const std::vector<RinexObservation> raw;
+        RealTimeEngine::RtEpochContext ctx{raw};
+        ctx.modeled_obs = {obs};
+        ctx.current_time = obs.time;
+        e.consumer_sat_events_.clear();
+        e.reinflateOnClockDisc(ctx);
+        return e.consumer_sat_events_;
     }
 };
 
@@ -278,6 +298,57 @@ protected:
         states().setCovariance(P);
     }
 
+    /// A GPS user engine with the consumer trace armed and
+    /// estimation.clock_disc_isb_reinflate_std set to @p isb_std, for the clock reaction.
+    void buildClockEngine(double isb_std) {
+        std::ostringstream body;
+        body << R"({
+            "processing": {
+                "mode": "ppp-rtk",
+                "active_systems": ["GPS"]
+            },
+            "estimation": {
+                "estimate_velocity": false,
+                "estimate_phase_clock": false,
+                "estimate_ifb": false,
+                "estimate_sat_biases": false,
+                "clock_disc_isb_reinflate_std": )" << std::to_string(isb_std) << R"(,
+                "ambiguity_resolution": {"mode": 0},
+                "between_satellite_sd": {"enabled": false}
+            },
+            "filter": {"initial_std": {
+                "position": 1.0, "clock": 1.0, "troposphere": 0.1,
+                "ionosphere": 1.0, "ambiguity": 100.0
+            }}
+        })";
+        loadConfig(body.str());
+        if (HasFatalFailure()) return;
+        ASSERT_EQ(config.clockDiscIsbReinflateStd(), isb_std);
+        engine = std::make_unique<RealTimeEngine>(config, log);
+        ClockDiscReactionTestAccess::initialize(*engine, store);
+        engine->setConsumerSatTrace(true);
+    }
+
+    /// One epoch of the clock reaction: kSat's clock record carries discontinuity
+    /// counter @p counter.  Returns the trace events the reaction recorded.
+    std::map<std::string, std::string> clockStep(int counter) {
+        SsrClockCorrection rec;
+        rec.sat = kSat;
+        rec.received_time = now();
+        rec.epoch_time = now();
+        rec.disc_counter = counter;
+        SsrHeader h;
+        h.epoch_time = now();
+        h.system = System::GPS;
+        store.pushClock(rec, h);
+        PppObservation o{};
+        o.satellite = kSat;
+        o.system = System::GPS;
+        o.time = now();
+        ++epoch;
+        return ClockDiscReactionTestAccess::react(*engine, o);
+    }
+
     static Biases both() { return { { "L1C", { kL1Bias, 0 } }, { "L2W", { kL2Bias, 0 } } }; }
     static Biases withoutL1() { return { { "L2W", { kL2Bias, 0 } } }; }
 };
@@ -380,12 +451,29 @@ TEST_F(RealtimeReactionRecords, SnapshotFormatHasNoRecordForDeclaredLevelSteps) 
 // The clock-discontinuity reaction
 // ===========================================================================
 
-TEST_F(RealtimeReactionRecords, ClockDiscIsbEventIsRecordedBeforeItsTest) {
-    GTEST_SKIP() << "Defect: the clock-discontinuity reaction records its reinflate_isb trace "
-                    "event before it tests estimation.clock_disc_isb_reinflate_std > 0, so with "
-                    "the std at 0 (the default) the trace names an ISB re-inflation that does not "
-                    "happen, and no skipped event exists.  The reaction is a private engine member "
-                    "that no existing test access reaches.";
+// A clock counter step records, on the satellite's CLK key, that the declaration arrived
+// and whether the one response it can have (the ISB re-inflation) fires.  With
+// estimation.clock_disc_isb_reinflate_std at 0, the default, nothing is re-inflated and the
+// event is reinflate_isb_skipped; the reaction once recorded reinflate_isb here, before its
+// test of the std.  The first counter is a first sighting and an unchanged counter is no
+// step; neither records an event.
+TEST_F(RealtimeReactionRecords, ClockDiscIsbEventFollowsItsTest) {
+    ASSERT_NO_FATAL_FAILURE(buildClockEngine(0.0));
+    EXPECT_TRUE(clockStep(1).empty()) << "first sighting: recorded only";
+    const auto ev = clockStep(2);
+    ASSERT_EQ(ev.size(), 1u);
+    ASSERT_EQ(ev.count("G05|CLK"), 1u);
+    EXPECT_EQ(ev.at("G05|CLK"), "reinflate_isb_skipped");
+    EXPECT_TRUE(clockStep(2).empty()) << "an unchanged counter is no step";
+}
+
+// The same step with a re-inflation std above 0 records reinflate_isb.
+TEST_F(RealtimeReactionRecords, ClockDiscIsbEventNamesTheReinflationWhenArmed) {
+    ASSERT_NO_FATAL_FAILURE(buildClockEngine(10.0));
+    EXPECT_TRUE(clockStep(1).empty()) << "first sighting: recorded only";
+    const auto ev = clockStep(2);
+    ASSERT_EQ(ev.count("G05|CLK"), 1u);
+    EXPECT_EQ(ev.at("G05|CLK"), "reinflate_isb");
 }
 
 // ===========================================================================
@@ -467,11 +555,31 @@ TEST_F(RealtimeReactionRecords, ResetPathRecordsAVanishInTheFlipCensus) {
     EXPECT_EQ(r.flip_suppressed, 0);
 }
 
-TEST_F(RealtimeReactionRecords, CarriedVanishIsMissingFromTheFlipCensus) {
-    GTEST_SKIP() << "Defect: with processing.ssr_phase_bias_disc_carry armed, the carry answers a "
-                    "freshness flip without the flip census the reset path feeds, so the vanish "
-                    "that the reset path records as one flip with its ARC row and attribution "
-                    "class leaves rosterConsumerCounters().flips at 0 and writes no ARC row.";
+// The carry records the same vanish in the flip census as the reset path does (one phase
+// flip to stale, unattributable, with its ARC row), and the return as a flip to fresh,
+// while its own answer, the shift by the whole bias, is unchanged.  The carry once answered
+// the flip without feeding the census.
+TEST_F(RealtimeReactionRecords, CarriedVanishIsRecordedInTheFlipCensus) {
+    ASSERT_NO_FATAL_FAILURE(buildPhaseEngine(Reaction::Carry, /*age_gate=*/true));
+    step(both());
+    step(both());
+    const double l1_before = value("L1C");
+    step(withoutL1());
+    EXPECT_NEAR(value("L1C"), l1_before + kL1Bias, 1e-12) << "the carry's answer is unchanged";
+    EXPECT_NEAR(var("L1C"), kConvergedVar, 1e-12);
+    const auto& r = engine->rosterConsumerCounters();
+    EXPECT_EQ(r.flips, 1);
+    EXPECT_EQ(r.flips_phase, 1);
+    EXPECT_EQ(r.flip_to_stale, 1);
+    EXPECT_EQ(r.flip_no_decl, 1);
+    EXPECT_EQ(r.flip_events, 1);
+    EXPECT_EQ(r.flip_suppressed, 0);
+
+    step(both());                       // L1C returns
+    EXPECT_EQ(r.flips, 2);
+    EXPECT_EQ(r.flip_to_fresh, 1);
+    EXPECT_EQ(r.flip_events, 2);
+    EXPECT_EQ(engine->pbDiscCarryCounters().flips, 2u);
 }
 
 // ===========================================================================
@@ -502,11 +610,36 @@ TEST_F(RealtimeReactionRecords, TranslateTakesEveryFreshnessFlipAsAFirstSighting
     EXPECT_NEAR(var("L2W"), kConvergedVar, 1e-12) << "L2W never flipped";
 }
 
+// The step translation records a vanish and a return in the flip census as the reset path
+// does, while its own answer (a first-sighting reset) is unchanged.
+TEST_F(RealtimeReactionRecords, TranslatedVanishAndReturnAreRecordedInTheFlipCensus) {
+    ASSERT_NO_FATAL_FAILURE(buildPhaseEngine(Reaction::Translate, /*age_gate=*/true));
+    step(both());
+    step(both());
+    step(withoutL1());                  // fresh -> stale
+    EXPECT_NEAR(var("L1C"), resetVar(), 1e-6 * resetVar()) << "the translation's answer is unchanged";
+    const auto& r = engine->rosterConsumerCounters();
+    EXPECT_EQ(r.flips, 1);
+    EXPECT_EQ(r.flips_phase, 1);
+    EXPECT_EQ(r.flip_to_stale, 1);
+    EXPECT_EQ(r.flip_no_decl, 1);
+    EXPECT_EQ(r.flip_events, 1);
+
+    reconverge("L1C");
+    step(both());                       // stale -> fresh
+    EXPECT_EQ(r.flips, 2);
+    EXPECT_EQ(r.flip_to_fresh, 1);
+    EXPECT_EQ(r.flip_events, 2);
+    EXPECT_EQ(r.flip_suppressed, 0);
+    EXPECT_EQ(engine->pbStepTranslateCounters().reset_first_sight, 2u);
+}
+
 TEST_F(RealtimeReactionRecords, TranslateFlipNeedsItsOwnCountAndRecord) {
     GTEST_SKIP() << "Missing count: the step translation folds a freshness flip into "
                     "declared_seen and reset_first_sight, so a first sighting and a flip share "
-                    "one count; no flip count of its own exists, and the flip census and its ARC "
-                    "row are not fed.";
+                    "one count in its own ledger; no flip count of its own exists there (the "
+                    "flip census and its ARC row are fed, see "
+                    "TranslatedVanishAndReturnAreRecordedInTheFlipCensus).";
 }
 
 // ===========================================================================

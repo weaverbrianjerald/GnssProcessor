@@ -365,7 +365,7 @@ TEST(PbEmitHoldTest, SLinePbHoldTokenRoundTripsAndCheckContractNamesADisagreemen
     { NetworkProductWriter w(p.string(), c); }
     const std::string body = slurp(p);
     EXPECT_NE(body.find(",pbhold=1"), std::string::npos);
-    EXPECT_NE(body.find("[,pbhold=1]"), std::string::npos)
+    EXPECT_NE(body.find("[,pbhold=<1|2|3>]"), std::string::npos)
         << "the legend must declare every field the writer can emit";
 
     bool ok = false;

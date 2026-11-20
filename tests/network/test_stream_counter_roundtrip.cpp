@@ -248,9 +248,8 @@ TEST(StreamCounterRoundTrip, OtherValuesSurviveTheCounterInstall) {
 }
 
 // A level mark below the phase step bar beside an installed counter: the store's declared
-// level total is one emission's step, as written in the file.  The skip fires only on the
-// known defect's exact signature (the step counted twice: two emissions, twice the step);
-// any other count or total fails.
+// level total is one emission's step, as written in the file (the reader emits each epoch
+// once, so the step is not counted twice).
 TEST(StreamCounterRoundTrip, LevelMarkTotalIntactWhenCountersAreInstalled) {
     const double kStep = 0.02;
     const Row r{"phase counter and a small level mark", 5, 0, 0, 0.0, kStep, 0.0, 0, 0, false};
@@ -265,18 +264,13 @@ TEST(StreamCounterRoundTrip, LevelMarkTotalIntactWhenCountersAreInstalled) {
 
     const auto lv = store.getDeclaredLevelSteps(kSat);
     ASSERT_TRUE(lv.has_value());
-    if (lv->n == 2 && lv->clock_m == 2.0 * kStep)
-        GTEST_SKIP() << "Defect: when a file reader installs counters from the file, the replay "
-                        "emits the epoch a second time and the store adds the epoch's declared "
-                        "level steps again, so the user's level total is doubled (here "
-                     << lv->clock_m << " m over " << lv->n << " emissions for one 0.02 m step).";
     EXPECT_EQ(lv->clock_m, kStep);
     EXPECT_EQ(lv->n, 1);
 }
 
 // A level mark above the phase step bar beside an installed counter: the store's phase
-// counters are the file's, with no extra step.  The skip fires only on the known defect's
-// exact signature (each phase key exactly one step above the file: L1C 6, L2W 1); any other
+// counters are the file's, with no extra step (the reader emits each epoch once, so no second
+// value test runs against the first emission with the level step subtracted).  Any other
 // store counter, including a counter that was never installed, fails.
 TEST(StreamCounterRoundTrip, InstalledPhaseCounterIntactBesideALargeLevelMark) {
     const Row r{"phase counter and a large level mark", 5, 0, 0, 0.0, 0.125, 0.0, 0, 0, false};
@@ -291,13 +285,6 @@ TEST(StreamCounterRoundTrip, InstalledPhaseCounterIntactBesideALargeLevelMark) {
     const auto l2 = store.getPhaseBias(kSat, "L2W");
     ASSERT_TRUE(l1.has_value());
     ASSERT_TRUE(l2.has_value());
-    if (l1->discontinuity_counter == 5 + 1 && l2->discontinuity_counter == 0 + 1)
-        GTEST_SKIP() << "Defect: when a file reader installs counters from the file, the second "
-                        "emission of the epoch runs the phase value test against the first one "
-                        "with the declared level step subtracted, so every phase key of a "
-                        "satellite whose level step exceeds the bar steps once more than the "
-                        "file says (L1C " << l1->discontinuity_counter << " for 5, L2W "
-                     << l2->discontinuity_counter << " for 0).";
     EXPECT_EQ(l1->discontinuity_counter, 5);
     EXPECT_EQ(l2->discontinuity_counter, 0);
 }

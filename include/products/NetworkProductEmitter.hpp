@@ -57,6 +57,8 @@
 #include "products/PhaseVisibleStepTest.hpp"   // the phase-visible step test (network.disc_phase_visible)
 #include "rtcm/RtcmTypes.hpp"   // GnssTime, SSR record structs
 
+#include <array>
+#include <cstddef>
 #include <cstdint>
 #include <iosfwd>
 #include <map>
@@ -195,6 +197,22 @@ struct NetworkSolutionEpoch {
     int                             provider_id{0};     ///< IGS-SSR provider id.
     int                             solution_id{0};     ///< IGS-SSR solution id.
     std::vector<NetworkSatSolution> sats;               ///< Per-satellite solutions.
+};
+
+/**
+ * @brief The discontinuity counters one epoch of a product file carries
+ *        (@c network.serialize_disc_counters, RTA-4): the post-emit counters of the
+ *        producer's own emission.
+ *
+ * A file reader passes them to @ref NetworkProductEmitter::emitToStore, which takes
+ * each value in place of its own recompute.  Keys use the emitter's internal form.
+ */
+struct FiledDiscCounters {
+    std::map<std::string, int> clock;  ///< "sat"        -> clock disc counter (C field 5).
+    std::map<std::string, int> code;   ///< "sat|signal" -> code disc counter  (B field 5).
+    std::map<std::string, int> phase;  ///< "sat|signal" -> phase disc counter (P field 7).
+    /** @brief Whether the record carries any serialized counter. @return True when at least one of the three maps is non-empty. */
+    bool any() const { return !clock.empty() || !code.empty() || !phase.empty(); }
 };
 
 /**
@@ -589,7 +607,58 @@ public:
     ///        emitter's current discontinuity counters.
     /// @param[in,out] store Destination store that receives the pushed clock, URA, code-bias and
     ///        phase-bias records (an owned, non-singleton instance in the closed loop).
-    void emitToStore(const NetworkSolutionEpoch& sol, SsrCorrectionStore& store);
+    /// @param filed Optional counters a product file carries for this epoch (a file reader, see
+    ///        NetworkProductReader::replay).  For every key present there, the emitter first runs
+    ///        its own rules (baselines, value tests, marks, the member copy and the guard all
+    ///        advance as without it), then takes the file's value as its counter before the record
+    ///        is pushed; each value that differs from its own is listed in
+    ///        @ref lastFiledDisagreements.  The epoch is emitted once, so the declared level steps,
+    ///        the value tests and every run-end counter run once per epoch.  nullptr (the producer,
+    ///        and a file without counters): the counters are the emitter's own.
+    void emitToStore(const NetworkSolutionEpoch& sol, SsrCorrectionStore& store,
+                     const FiledDiscCounters* filed = nullptr);
+
+    /// @brief How a file counter that differs from the emitter's own recompute is classed, from
+    ///        what the record and the emitter hold.  Phase values are classed by direction and by
+    ///        the record's @c signal_integer flag: the file stepped while the flag is down (the
+    ///        producer's unsettled steps), at the emission where the flag rose (the settling step),
+    ///        or while the flag is up (a step-class declaration, a family member's copy, a guard
+    ///        trip or a release mark); or the replay stepped where the file did not (its value test
+    ///        against a rule the producer replaced).
+    enum class FiledDisagreementClass : unsigned char {
+        PhaseFlagDown = 0,   ///< Phase, file ahead, @c signal_integer 0 on this record.
+        PhaseFlagRise,       ///< Phase, file ahead, the flag rose at this emission.
+        PhaseFlagUp,         ///< Phase, file ahead, the flag up at this and the previous emission.
+        PhaseReplayAhead,    ///< Phase, the replay stepped more than the file.
+        Code,                ///< Code-bias counter.
+        Clock,               ///< Clock counter.
+    };
+    /// @brief Number of @ref FiledDisagreementClass values.
+    static constexpr std::size_t kFiledDisagreementClasses = 6;
+
+    /// @brief Stable lowercase name of a class, for log lines and tests.
+    /// @param c The class.
+    /// @return Pointer to a string literal (never null).
+    static const char* filedDisagreementClassName(FiledDisagreementClass c);
+
+    /// @brief One file counter that differed from the emitter's own recompute.
+    struct FiledDisagreement {
+        FiledDisagreementClass cls;    ///< Its class.
+        std::string            key;    ///< "sat|signal" (code, phase) or "sat" (clock).
+        int                    filed;  ///< The file's value, which the emitter took.
+        int                    own;    ///< The emitter's own recompute.
+    };
+
+    /// @brief The disagreements of the last @ref emitToStore call, in emission order; empty when
+    ///        it had no file counters or every one agreed.
+    /// @return Reference valid until the next @ref emitToStore call.
+    const std::vector<FiledDisagreement>& lastFiledDisagreements() const { return filed_disagreements_; }
+
+    /// @brief Run totals of @ref lastFiledDisagreements by class (index = the class value).
+    /// @return One count per class.
+    const std::array<long long, kFiledDisagreementClasses>& filedDisagreementTotals() const {
+        return filed_disagreement_totals_;
+    }
 
     /// @brief Force a discontinuity bump at the next emit, scoped to the given constellation
     /// chars (e.g. {'G','E'}): a per-constellation pivot handover or S-basis
@@ -831,6 +900,14 @@ private:
     /// declaration order.
     bool   disc_mark_scope_channel_{false};
     long long clv_jump_excluded_{0};   ///< See clvJumpExcluded().
+    /// File counters that differed from this emitter's recompute at the last emitToStore (file readers only).
+    std::vector<FiledDisagreement> filed_disagreements_;
+    std::array<long long, kFiledDisagreementClasses> filed_disagreement_totals_{};   ///< Run totals by class.
+    /// "sat|signal" -> the phase record's signal_integer at the key's previous emission with a file counter; it
+    /// classes a flag rise.  File readers only; not part of the serialized stream state.
+    std::map<std::string, bool> filed_prev_flag_;
+    /// Take the file's counter @p filed as @p own, listing a disagreement under @p cls first.
+    void takeFiledCounter_(FiledDisagreementClass cls, const std::string& key, int filed, int& own);
     long long clv_cb_jump_excluded_{0};   ///< return plan R-A: see clvCbJumpExcluded()
     bool   emit_clock_disc_{false};       ///< Maintain and stamp the clock disc counter (A2).
     /// Staleness horizon (s, product time; 0 = off) (RTA-11).  With it on, the

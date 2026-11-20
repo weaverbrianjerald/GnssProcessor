@@ -46,6 +46,11 @@ inline double   f8(const uint8_t* p) { double v; std::memcpy(&v, p, 8); return v
 constexpr double kSemiToRad = Constants::PI;   // semicircles -> radians
 constexpr uint32_t kDnuU4 = 0xFFFFFFFFu;
 constexpr uint16_t kDnuU2 = 0xFFFFu;
+constexpr float    kDnuF4 = -2.0e10f;          // SBF Do-Not-Use value of an f4 field
+
+// A group delay read from an f4 field, with the Do-Not-Use value mapped to 0
+// (the BroadcastEphemeris convention for an absent delay).
+inline double bgdOrZero(float v) { return (v == kDnuF4) ? 0.0 : static_cast<double>(v); }
 
 // Current GPS week from the system clock (fallback when WNc is Do-Not-Use).
 int systemGpsWeek() {
@@ -335,8 +340,12 @@ bool SbfParser::decodeGalNav(const uint8_t* b, std::size_t len) {
     const int week = resolveToeWeek(wnc, tow_s, toe);
     k.toe = GnssTime{week, toe};
     k.toc = GnssTime{week, toc};
-    k.tgd1 = f4(b + 136);    // BGD E1-E5a
-    k.tgd0 = f4(b + 140);    // BGD E1-E5b
+    // BGD_L1E5a at 136 and BGD_L1E5b at 140 go to the slots BroadcastEphemeris
+    // documents (tgd0 = BGD E1-E5a, tgd1 = BGD E1-E5b), as the RINEX and RTCM 1046
+    // readers store them.  An F/NAV-sourced block carries no E1-E5b delay and
+    // writes the f4 Do-Not-Use value there; an absent delay is stored as 0.
+    k.tgd0 = bgdOrZero(f4(b + 136));    // BGD E1-E5a
+    k.tgd1 = bgdOrZero(f4(b + 140));    // BGD E1-E5b
     broadcast_eph_.push_back(std::move(eph));
     return true;
 }
