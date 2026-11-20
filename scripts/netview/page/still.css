@@ -1,0 +1,28 @@
+/* Stills (still.js): one part of a view alone on a white page.  The part stays where the view built it, so it keeps
+   its styles; everything that is neither the part nor around it is taken out of the layout, so only the part draws. */
+
+html.still, html.still body { background: #fff; overflow: hidden; }
+html.still body *:not(.still-part, .still-part *, :has(.still-part), .still-error) { display: none !important; }
+/* !important throughout: a part may be an element the page styles by its id, and its size must not follow the
+   window (the browser's window differs from the picture until the moment the picture is taken) */
+html.still .still-part { position: fixed !important; left: 0 !important; top: 0 !important; z-index: 1000;
+  width: var(--still-w, 100vw) !important; height: var(--still-h, 100vh) !important;
+  min-width: 0 !important; min-height: 0 !important; max-width: none !important; max-height: none !important;
+  box-sizing: border-box !important; display: flex !important; flex-direction: column !important; overflow: hidden !important;
+  margin: 0 !important; padding: 0 !important; border: 0 !important; border-radius: 0 !important; background: #fff !important; }
+
+/* inside the part: no title unless asked for, no buttons or notes, and the drawing takes the height that is left */
+html.still:not(.still-title) .still-part > :is(h3, figcaption) { display: none !important; }
+html.still.still-title .still-part > :is(h3, figcaption) { flex: none; margin: 0 0 4px; }
+html.still .still-part :is(.hint, .row, .timerow, .openpage, #tooltip) { display: none !important; }
+html.still.still-nokey .still-part :is(.chart-key, .ckey, #graph-key) { display: none !important; }
+html.still .still-part :is(.matrix, .arcs, .mapbox) { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
+html.still .still-part canvas { position: static !important; flex: 1 1 0; min-height: 0; width: 100% !important;
+  height: auto !important; max-width: none !important; aspect-ratio: auto !important; margin: 0 !important; }
+html.still .still-part :is(.chart-key, .ckey) { flex: none; margin: 4px 0 0; }
+/* the network picture's legend sits below the picture, where it covers nothing */
+html.still #graph-pane.still-part #graph-key { position: static; flex: none; display: flex; flex-wrap: wrap; gap: 0 18px;
+  padding: 4px 0 0; background: none; }
+
+.still-error { position: fixed; inset: 0; z-index: 2000; padding: 20px; background: #fff; color: #b00020;
+  font: 16px/1.4 system-ui, sans-serif; }

@@ -8,7 +8,9 @@
  *               the legend, the router (blocks, views, rail, breadcrumb) and the start;
  *   widgets.js  the drawing pieces the layers share (matrix of entity x time, table, sky plot, arc chart, ...);
  *   network.js  the network links view (the trees, held and float links, their detail);
- *   one file per layer (overview.js, receivers.js, ...), each registering its views; main.js starts the page.
+ *   one file per layer (overview.js, receivers.js, ...), each registering its views;
+ *   still.js    one part of a view alone on a white page, for a poster or a slide (netview.py still);
+ *   main.js     starts the page.
  * Sections of this file: 1 decode, 2 model, 3 state and colours, 5 time bar and timeline, 6 small charts,
  * 9 legend and missing parts, 10 blocks, views and the router, 11 interaction and start.
  */
@@ -183,6 +185,16 @@ function hourTicks() {
     if (e >= 0) M.ticks.push({ e, label: pad2(new Date(h).getUTCHours()) + ':00' });
   }
   return M.ticks;
+}
+/** The epoch an address names: an index, or a GPS time of day HH:MM[:SS] (the first such time in the run). */
+function epochOfText(text) {
+  const m = /^(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(text);
+  if (!m) return Math.max(0, Math.min(M.nEp - 1, Math.round(+text) || 0));
+  const day = 86400000, t0 = absMs(0);          // GPS time has no leap seconds: its days are whole from its origin
+  let ms = t0 - t0 % day + (+m[1] * 3600 + +m[2] * 60 + +(m[3] || 0)) * 1000;
+  if (ms < t0 - M.step / 2) ms += day;
+  const e = epochAtMs(ms);
+  return e >= 0 ? e : M.nEp - 1;
 }
 function durationText(nEpochs) {
   const m = Math.round(nEpochs * M.step / 60000);
@@ -389,7 +401,7 @@ function fmtSigned(v, d = 3) { return isFinite(v) ? (v >= 0 ? '+' : '') + v.toFi
 
 // ============================================================================================ 5. time bar and timeline
 
-const TL = { labelW: 128, laneH: 11, top: 3, cache: null };
+const TL = { labelW: 128, laneH: 11, top: 3, foot: 38, cache: null };     // foot: the held share strip and the hour labels
 
 function timelineLanes() {
   const lanes = M.H.lanes.map((l, i) => ({ label: l.label, lane: i, color: laneColor(i), counts: M.laneCount[i] }));
@@ -401,7 +413,7 @@ function timelineLanes() {
 function drawTimeline() {
   const cv = document.getElementById('timeline');
   const lanes = timelineLanes();
-  const hNeeded = TL.top + lanes.length * TL.laneH + 38;
+  const hNeeded = TL.top + lanes.length * TL.laneH + TL.foot;
   if (Math.abs(cv.clientHeight - hNeeded) > 1) {
     cv.style.height = hNeeded + 'px';         // a lane came or went: the view below takes the difference
     viewResized();
@@ -537,6 +549,7 @@ function makeChart(canvas, spec) {
     const e = chartEp(ch, ev.clientX - r.left);
     canvas.title = clockOf(e) + (spec.valueAt ? '  ' + spec.valueAt(e) : '');
   });
+  ch.xSpan = () => { const bx = chartBox(canvas.clientWidth, canvas.clientHeight, spec); return [chartX(bx, 0), chartX(bx, M.nEp - 1)]; };
   CHARTS.push(ch);
   drawChart(ch);
   return ch;
@@ -865,7 +878,7 @@ function losLink(j, k, label) { return linkHtml(['los', M.names[j], M.H.sats[k]]
 function loadQuery(q) {
   if (q.has('f') && +q.get('f') < M.nFam) S.fam = +q.get('f');
   if (q.has('b')) S.bandSel = +q.get('b') ? 1 : 0;
-  if (q.has('t')) S.ep = Math.max(0, Math.min(M.nEp - 1, +q.get('t')));
+  if (q.has('t')) S.ep = epochOfText(q.get('t'));
   S.layout = q.get('l') === 'map' ? 'map' : 'rings';
 }
 
@@ -928,6 +941,12 @@ function renderCrumbs(view, args) {
 }
 
 function viewResized() { if (R.view && R.view.resize) R.view.resize(); }
+/** Draw everything again at the sizes the layout gives now (the window changed, a still was laid out). */
+function redrawAll() {
+  TL.cache = null;
+  for (const c of CHARTS) c.img = null;
+  viewResized(); drawTimeline(); drawAllCharts();
+}
 
 // ============================================================================================ 11. interaction and start
 
@@ -1071,7 +1090,7 @@ function wireCommon() {
   let rt = null;
   window.addEventListener('resize', () => {
     clearTimeout(rt);
-    rt = setTimeout(() => { TL.cache = null; for (const c of CHARTS) c.img = null; viewResized(); drawTimeline(); drawAllCharts(); }, 120);
+    rt = setTimeout(redrawAll, 120);
   });
   const mq = window.matchMedia('(prefers-color-scheme: dark)');
   if (mq.addEventListener) mq.addEventListener('change', () => {
@@ -1090,6 +1109,7 @@ async function start() {
   loadSeqMap();
   S.fam = defaultFamily();
   loadQuery(parseHash().q);
+  if (parseHash().q.has('still')) stillPrepare(parseHash().q);      // one part alone on a white page (still.js)
   document.getElementById('run-name').textContent = 'Network dashboard: ' + H.run;
   const d = gpsDate(0);
   document.getElementById('run-sub').textContent = d.toISOString().slice(0, 10) + ' (day ' + dayOfYear(d) + '), ' +
@@ -1102,6 +1122,7 @@ async function start() {
   document.getElementById('slider').value = S.ep;
   window.addEventListener('hashchange', () => { route(); });
   await route();
+  if (STILL.on) stillCompose();
   window.NV = { M, S, G, R, B, VIEWS };       // for the comparison page and for checks from the console
   window.NV_OPEN_MS = Math.round(performance.now() - t0);
   console.log('network dashboard: first view ready ' + Math.round(performance.now()) + ' ms after the page began loading (' +

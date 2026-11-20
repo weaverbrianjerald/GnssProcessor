@@ -8,7 +8,8 @@
  *   arc chart    rows x epochs of tracked spans, with event marks
  *   world map    points (receivers, sub-satellite points) coloured by a value
  *   bar chart    values over categories (elevation bins, histogram bins, hours)
- * Every time-based widget joins CHARTS (core.js), so the time cursor moves on all of them together.
+ * Every time-based widget joins CHARTS (core.js), so the time cursor moves on all of them together; each takes the
+ * size the layout gives its canvas (a matrix's rows fill its height) and says where its time axis lies (xSpan).
  */
 
 // ============================================================================================ page parts
@@ -163,6 +164,11 @@ function scaleKey(parent, sc, fmtv) {
 
 // ============================================================================================ matrix
 
+/** Below the rows of a matrix or an arc chart: the hour labels. */
+const ROWS_FOOT = 20;
+/** The height of one row: the rows fill the canvas above the hour labels, whatever height the layout gives it. */
+function rowsHeight(cv, nRows) { return (cv.clientHeight - ROWS_FOOT) / Math.max(1, nRows); }
+
 /**
  * Rows x epochs, one coloured cell per value.  spec: {rows: [label], value: (r, e) -> number | values: [rows*nEp],
  * scale: {kind, lo, hi, label}, rowH, labelW, onClick(r, e), text(r, e) -> tooltip line, marks: [{r, e, color}]}.
@@ -172,12 +178,11 @@ function matrix(parent, spec) {
   parent.appendChild(box);
   const cv = el('canvas');
   box.appendChild(cv);
-  const rowH = spec.rowH || (spec.rows.length > 80 ? 6 : spec.rows.length > 40 ? 9 : 12);
   const labelW = spec.labelW || 96;
-  cv.style.height = (spec.rows.length * rowH + 20) + 'px';
-  const m = { cv, spec, rowH, labelW, img: null, key: '' };
+  cv.style.height = (spec.rows.length * (spec.rowH || (spec.rows.length > 80 ? 6 : spec.rows.length > 40 ? 9 : 12)) + ROWS_FOOT) + 'px';
+  const m = { cv, spec, labelW, img: null, key: '' };
   const cell = (x, y) => {
-    const w = cv.clientWidth;
+    const w = cv.clientWidth, rowH = rowsHeight(cv, spec.rows.length);
     const r = Math.floor(y / rowH);
     if (r < 0 || r >= spec.rows.length || x < labelW) return null;
     const e = Math.round(Math.max(0, Math.min(1, (x - labelW) / (w - labelW - 6))) * (M.nEp - 1));
@@ -186,7 +191,7 @@ function matrix(parent, spec) {
   m.draw = () => {
     const { ctx, w, h } = fitCanvas(cv);
     if (!w || !h) return;
-    const key = w + 'x' + h;
+    const key = w + 'x' + h, rowH = rowsHeight(cv, spec.rows.length);
     if (!m.img || m.key !== key) { m.img = renderMatrix(spec, w, h, rowH, labelW); m.key = key; }
     ctx.clearRect(0, 0, w, h);
     ctx.drawImage(m.img, 0, 0, w, h);
@@ -199,6 +204,7 @@ function matrix(parent, spec) {
     }
   };
   m.redraw = () => { m.img = null; m.draw(); };
+  m.xSpan = () => [labelW, cv.clientWidth - 6];
   cv.addEventListener('mousemove', ev => {
     const r = cv.getBoundingClientRect(), c = cell(ev.clientX - r.left, ev.clientY - r.top);
     if (!c) { floatTip(null); return; }
@@ -259,7 +265,8 @@ function renderMatrix(spec, w, h, rowH, labelW) {
   ctx.font = Math.min(11, rowH + 1) + 'px system-ui, sans-serif';
   ctx.textBaseline = 'middle'; ctx.textAlign = 'right'; ctx.fillStyle = C.ink;
   const every = rowH < 8 ? Math.ceil(8 / rowH) : 1;
-  for (let r = 0; r < nr; r += every) ctx.fillText(spec.rows[r], labelW - 4, r * rowH + rowH / 2);
+  // rows thinner than 4 px carry no names: they could not be read (the page's own rows are 6 px or more)
+  if (rowH >= 4) for (let r = 0; r < nr; r += every) ctx.fillText(spec.rows[r], labelW - 4, r * rowH + rowH / 2);
   ctx.fillStyle = C.muted; ctx.textAlign = 'center'; ctx.textBaseline = 'top'; ctx.font = '10.5px system-ui, sans-serif';
   const ticks = hourTicks(), stepT = ticks.length > 10 ? 2 : 1;
   ticks.forEach((tk, i) => {
@@ -437,14 +444,15 @@ function arcChart(parent, spec) {
   parent.appendChild(box);
   const cv = el('canvas');
   box.appendChild(cv);
-  const rowH = spec.rowH || 11, labelW = spec.labelW || 86;
-  cv.style.height = (spec.rows.length * rowH + 20) + 'px';
+  const labelW = spec.labelW || 86;
+  cv.style.height = (spec.rows.length * (spec.rowH || 11) + ROWS_FOOT) + 'px';
   const ac = { cv, spec, img: null, key: '' };
   const X = (w, e) => labelW + (M.nEp > 1 ? e / (M.nEp - 1) : 0) * (w - labelW - 6);
+  ac.xSpan = () => [X(cv.clientWidth, 0), X(cv.clientWidth, M.nEp - 1)];
   ac.draw = () => {
     const { ctx, w, h } = fitCanvas(cv);
     if (!w || !h) return;
-    const key = w + 'x' + h;
+    const key = w + 'x' + h, rowH = rowsHeight(cv, spec.rows.length);
     if (!ac.img || ac.key !== key) {
       const dpr = window.devicePixelRatio || 1;
       const off = document.createElement('canvas');
@@ -480,7 +488,7 @@ function arcChart(parent, spec) {
   };
   const at = ev => {
     const r = cv.getBoundingClientRect(), x = ev.clientX - r.left, y = ev.clientY - r.top, w = cv.clientWidth;
-    const row = Math.floor(y / rowH);
+    const row = Math.floor(y / rowsHeight(cv, spec.rows.length));
     if (row < 0 || row >= spec.rows.length) return null;
     const e = Math.round(Math.max(0, Math.min(1, (x - labelW) / (w - labelW - 6))) * (M.nEp - 1));
     return { r: row, e };
