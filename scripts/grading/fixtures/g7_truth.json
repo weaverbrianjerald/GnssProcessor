@@ -1,0 +1,171 @@
+{
+ "about": "Synthetic fixture of truth.py's self-test (card GRA, plan step G7): a bed of three stations and three Galileo satellites, tree S1-E01, S1-E02, S1-E03, S2-E01, S3-E01 on L1C and L5Q, held chords S2-E02, S3-E02, S2-E03. bed_run: at TOW 30 the tree edge S1-E02 is (3, 4) off, so both chords through it are wrong in the tree's frame; its main log holds a cascade Truth clause, the truth audit line and an audit file's line. bed_iso: at TOW 30 the chord S2-E02 alone is (3, 4) off.",
+ "files": {
+  "bed/S1AAAASIM/truth_ambiguities.csv": [
+   "satellite,signal,N_int",
+   "E01,L1C,11",
+   "E01,L5Q,111",
+   "E02,L1C,12",
+   "E02,L5Q,112",
+   "E03,L1C,13",
+   "E03,L5Q,113"
+  ],
+  "bed/S1AAAASIM/truth_windup.csv": [
+   "satellite,tow_s,windup_cycles",
+   "E01,0.0,0.0",
+   "E02,0.0,0.0",
+   "E03,0.0,0.0"
+  ],
+  "bed/S2BBBBSIM/truth_ambiguities.csv": [
+   "satellite,signal,N_int",
+   "E01,L1C,21",
+   "E01,L5Q,121",
+   "E02,L1C,22",
+   "E02,L5Q,122",
+   "E03,L1C,23",
+   "E03,L5Q,123"
+  ],
+  "bed/S2BBBBSIM/truth_windup.csv": [
+   "satellite,tow_s,windup_cycles",
+   "E01,0.0,0.0",
+   "E02,0.0,0.0",
+   "E03,0.0,0.0"
+  ],
+  "bed/S3CCCCSIM/truth_ambiguities.csv": [
+   "satellite,signal,N_int",
+   "E01,L1C,31",
+   "E01,L5Q,131",
+   "E02,L1C,32",
+   "E02,L5Q,132",
+   "E03,L1C,33",
+   "E03,L5Q,133"
+  ],
+  "bed/S3CCCCSIM/truth_windup.csv": [
+   "satellite,tow_s,windup_cycles",
+   "E01,0.0,0.0",
+   "E02,0.0,0.0",
+   "E03,0.0,0.0"
+  ],
+  "_rap_bed_run/logs/network_ring_fix.csv": [
+   "week,tow,station,sat,sig1,sig2,ring,state,n1,n2,resid_if_m,audit",
+   "2420,0.000,S2BBBBSIM,E02,L1C,L5Q,1,held,22,122,0.00100,right",
+   "2420,0.000,S3CCCCSIM,E02,L1C,L5Q,1,held,32,132,0.00100,right",
+   "2420,0.000,S2BBBBSIM,E03,L1C,L5Q,1,held,23,123,0.00100,right",
+   "2420,30.000,S2BBBBSIM,E02,L1C,L5Q,1,held,22,122,0.00100,wrong",
+   "2420,30.000,S3CCCCSIM,E02,L1C,L5Q,1,held,32,132,0.00100,wrong",
+   "2420,30.000,S2BBBBSIM,E03,L1C,L5Q,1,held,23,123,0.00100,right"
+  ],
+  "_rap_bed_run/logs/network_chain_edges.csv": [
+   "week,tow,system,family,band,comp,edge_sta,edge_sat,target_cyc",
+   "2420,0.000,E,pair,L1C,0,S1AAAASIM,E01,11.000000",
+   "2420,0.000,E,pair,L5Q,0,S1AAAASIM,E01,111.000000",
+   "2420,0.000,E,pair,L1C,0,S1AAAASIM,E02,12.000000",
+   "2420,0.000,E,pair,L5Q,0,S1AAAASIM,E02,112.000000",
+   "2420,0.000,E,pair,L1C,0,S1AAAASIM,E03,13.000000",
+   "2420,0.000,E,pair,L5Q,0,S1AAAASIM,E03,113.000000",
+   "2420,0.000,E,pair,L1C,0,S2BBBBSIM,E01,21.000000",
+   "2420,0.000,E,pair,L5Q,0,S2BBBBSIM,E01,121.000000",
+   "2420,0.000,E,pair,L1C,0,S3CCCCSIM,E01,31.000000",
+   "2420,0.000,E,pair,L5Q,0,S3CCCCSIM,E01,131.000000",
+   "2420,30.000,E,pair,L1C,0,S1AAAASIM,E01,11.000000",
+   "2420,30.000,E,pair,L5Q,0,S1AAAASIM,E01,111.000000",
+   "2420,30.000,E,pair,L1C,0,S1AAAASIM,E02,9.000000",
+   "2420,30.000,E,pair,L5Q,0,S1AAAASIM,E02,108.000000",
+   "2420,30.000,E,pair,L1C,0,S1AAAASIM,E03,13.000000",
+   "2420,30.000,E,pair,L5Q,0,S1AAAASIM,E03,113.000000",
+   "2420,30.000,E,pair,L1C,0,S2BBBBSIM,E01,21.000000",
+   "2420,30.000,E,pair,L5Q,0,S2BBBBSIM,E01,121.000000",
+   "2420,30.000,E,pair,L1C,0,S3CCCCSIM,E01,31.000000",
+   "2420,30.000,E,pair,L5Q,0,S3CCCCSIM,E01,131.000000"
+  ],
+  "_rap_bed_run/logs/network_ionosphere.csv": [
+   "week,tow,station,sat,iono_m",
+   "2420,0.000,S1AAAASIM,E01,0.1",
+   "2420,0.000,S1AAAASIM,E02,0.1",
+   "2420,0.000,S1AAAASIM,E03,0.1",
+   "2420,0.000,S2BBBBSIM,E01,0.1",
+   "2420,0.000,S2BBBBSIM,E02,0.1",
+   "2420,0.000,S2BBBBSIM,E03,0.1",
+   "2420,0.000,S3CCCCSIM,E01,0.1",
+   "2420,0.000,S3CCCCSIM,E02,0.1",
+   "2420,0.000,S3CCCCSIM,E03,0.1",
+   "2420,30.000,S1AAAASIM,E01,0.1",
+   "2420,30.000,S1AAAASIM,E02,0.1",
+   "2420,30.000,S1AAAASIM,E03,0.1",
+   "2420,30.000,S2BBBBSIM,E01,0.1",
+   "2420,30.000,S2BBBBSIM,E02,0.1",
+   "2420,30.000,S2BBBBSIM,E03,0.1",
+   "2420,30.000,S3CCCCSIM,E01,0.1",
+   "2420,30.000,S3CCCCSIM,E02,0.1",
+   "2420,30.000,S3CCCCSIM,E03,0.1"
+  ],
+  "_rap_bed_run/products.txt": [
+   "# products",
+   "E,2420,0.000",
+   "E,2420,30.000"
+  ],
+  "_rap_bed_iso/logs/network_ring_fix.csv": [
+   "week,tow,station,sat,sig1,sig2,ring,state,n1,n2,resid_if_m,audit",
+   "2420,0.000,S2BBBBSIM,E02,L1C,L5Q,1,held,22,122,0.00100,right",
+   "2420,0.000,S3CCCCSIM,E02,L1C,L5Q,1,held,32,132,0.00100,right",
+   "2420,0.000,S2BBBBSIM,E03,L1C,L5Q,1,held,23,123,0.00100,right",
+   "2420,30.000,S2BBBBSIM,E02,L1C,L5Q,1,held,25,126,0.00100,wrong",
+   "2420,30.000,S3CCCCSIM,E02,L1C,L5Q,1,held,32,132,0.00100,right",
+   "2420,30.000,S2BBBBSIM,E03,L1C,L5Q,1,held,23,123,0.00100,right"
+  ],
+  "_rap_bed_iso/logs/network_chain_edges.csv": [
+   "week,tow,system,family,band,comp,edge_sta,edge_sat,target_cyc",
+   "2420,0.000,E,pair,L1C,0,S1AAAASIM,E01,11.000000",
+   "2420,0.000,E,pair,L5Q,0,S1AAAASIM,E01,111.000000",
+   "2420,0.000,E,pair,L1C,0,S1AAAASIM,E02,12.000000",
+   "2420,0.000,E,pair,L5Q,0,S1AAAASIM,E02,112.000000",
+   "2420,0.000,E,pair,L1C,0,S1AAAASIM,E03,13.000000",
+   "2420,0.000,E,pair,L5Q,0,S1AAAASIM,E03,113.000000",
+   "2420,0.000,E,pair,L1C,0,S2BBBBSIM,E01,21.000000",
+   "2420,0.000,E,pair,L5Q,0,S2BBBBSIM,E01,121.000000",
+   "2420,0.000,E,pair,L1C,0,S3CCCCSIM,E01,31.000000",
+   "2420,0.000,E,pair,L5Q,0,S3CCCCSIM,E01,131.000000",
+   "2420,30.000,E,pair,L1C,0,S1AAAASIM,E01,11.000000",
+   "2420,30.000,E,pair,L5Q,0,S1AAAASIM,E01,111.000000",
+   "2420,30.000,E,pair,L1C,0,S1AAAASIM,E02,12.000000",
+   "2420,30.000,E,pair,L5Q,0,S1AAAASIM,E02,112.000000",
+   "2420,30.000,E,pair,L1C,0,S1AAAASIM,E03,13.000000",
+   "2420,30.000,E,pair,L5Q,0,S1AAAASIM,E03,113.000000",
+   "2420,30.000,E,pair,L1C,0,S2BBBBSIM,E01,21.000000",
+   "2420,30.000,E,pair,L5Q,0,S2BBBBSIM,E01,121.000000",
+   "2420,30.000,E,pair,L1C,0,S3CCCCSIM,E01,31.000000",
+   "2420,30.000,E,pair,L5Q,0,S3CCCCSIM,E01,131.000000"
+  ],
+  "_rap_bed_iso/logs/network_ionosphere.csv": [
+   "week,tow,station,sat,iono_m",
+   "2420,0.000,S1AAAASIM,E01,0.1",
+   "2420,0.000,S1AAAASIM,E02,0.1",
+   "2420,0.000,S1AAAASIM,E03,0.1",
+   "2420,0.000,S2BBBBSIM,E01,0.1",
+   "2420,0.000,S2BBBBSIM,E02,0.1",
+   "2420,0.000,S2BBBBSIM,E03,0.1",
+   "2420,0.000,S3CCCCSIM,E01,0.1",
+   "2420,0.000,S3CCCCSIM,E02,0.1",
+   "2420,0.000,S3CCCCSIM,E03,0.1",
+   "2420,30.000,S1AAAASIM,E01,0.1",
+   "2420,30.000,S1AAAASIM,E02,0.1",
+   "2420,30.000,S1AAAASIM,E03,0.1",
+   "2420,30.000,S2BBBBSIM,E01,0.1",
+   "2420,30.000,S2BBBBSIM,E02,0.1",
+   "2420,30.000,S2BBBBSIM,E03,0.1",
+   "2420,30.000,S3CCCCSIM,E01,0.1",
+   "2420,30.000,S3CCCCSIM,E02,0.1",
+   "2420,30.000,S3CCCCSIM,E03,0.1"
+  ],
+  "_rap_bed_iso/products.txt": [
+   "# products",
+   "E,2420,0.000",
+   "E,2420,30.000"
+  ],
+  "_rap_bed_run/logs/main_log.log": [
+   "[1, 30.000] [main_log] [warning] Network (ring fix, cascade L7Q against L1C): decided 3; held link-epochs 10; released 0; to the tree 0; refused link-epochs: fraction 0, odds 0, persistence 0, no float 0.  Truth: held link-epochs right 40, WRONG 1; decisions WRONG 0.",
+   "[1, 30.000] [main_log] [warning] Network (ring fix truth audit, in each epoch's frame): held link-epochs right 100, WRONG 7, without a true integer 3; decisions WRONG 2; 0 branch(es) started without a wind-up row.",
+   "[1, 30.000] [main_log] [warning] Network (ring fix audit, 'a.csv'): decisions right 5, WRONG 1; held link-epochs right 90, WRONG 2, not listed 4."
+  ]
+ }
+}

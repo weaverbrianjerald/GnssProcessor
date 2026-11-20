@@ -5,7 +5,9 @@ and the reference changes.
     py -3.14 scripts/grading/users.py inside <network run> --fix L --flt L --doy D [--pair "E L1C/L5Q"] [--hours 6]
                                       [--conv 0.20] [--per-site] [--list N] [--sites a,b]
     py -3.14 scripts/grading/users.py outside --fix L --flt L --doy D --sites a,b [--pair "E L1X/L5X"] [--conv 0.20]
+                                      [--view legacy|free2]
     py -3.14 scripts/grading/users.py both --fix L --flt L --doy D --sites a,b [--pair P] [--net <network run>]
+                                      [--runs] [--type-from <network run>]
     py -3.14 scripts/grading/users.py paired <label A> <label B> --doy D --sites a,b [--first 3] [--last 24] [--name N]
     py -3.14 scripts/grading/users.py hourly <kind:label[:shift]> ... --doy D [--set S] [--base K] [--per-site]
                                       [--hours 6] [--matrix]
@@ -24,9 +26,15 @@ The checks and their views:
            float user: a near-null (3, 4) error passes (card GRA, defect D2).  Its receivers are every network station
            with both user runs of the labels (38 on today's streams, 10 for an arm's users), so two labels can be
            counted over different sets; --sites restricts the count to a list (user_fix_vs_float_full_sites.py)
-  outside  legacy: user_fix_vs_float_free.py byte for byte: every hold, both lanes against the float user
+  outside  legacy: user_fix_vs_float_free.py byte for byte: every hold, both lanes against the float user; free2:
+           user_fix_vs_float_free2.py byte for byte (the five-day read's copy): the same counts, and every run of
+           wrong holds listed in place of the 20 largest keys (a gap over 60 s starts a new run; hours of the day to
+           three decimals)
   both     the corrected check for any receiver, inside the network or not: every hold of the fixing user judged on
-           both lanes against the float user; with --net, each hold also counted as known or not to the network
+           both lanes against the float user; with --net, each hold also counted as known or not to the network;
+           --runs lists every run of wrong holds as free2 does, each with its receiver's type (in the station list
+           of the network run of --net or --type-from, which reads only its arm.json, or outside it), and the runs
+           and epochs by type
   paired   paired_users.py (one view): per hour the median over the receivers of each receiver's own difference
   hourly   legacy: users_hourly2.py byte for byte (the matrix the difference of medians is read from); exact: the
            same, saying so when --base is not one of the run sets (the legacy view prints no paired column then)
@@ -224,13 +232,31 @@ def cmd_inside(a):
             print(f"      {site} {s}-{ref}: fixing user at {kf:+d}, float user at {kl:+d} (against the network): {c} epochs, tow {ta} to {tb}")
 
 
+def wrong_runs(wrong_tows):
+    """[(key, first hour, last hour, epochs)] of every run of wrong holds: wrong_tows {key: [hour of the day]}, a gap
+    over 60 s starting a new run (user_fix_vs_float_free2.py's rule), keys sorted."""
+    out = []
+    for key in sorted(wrong_tows):
+        hs = sorted(wrong_tows[key])
+        start, prev, n = hs[0], hs[0], 1
+        for x in hs[1:]:
+            if (x - prev) * 3600.0 > 60.0:
+                out.append((key, start, prev, n))
+                start, n = x, 0
+            prev = x
+            n += 1
+        out.append((key, start, prev, n))
+    return out
+
+
 def both_lanes(a, network=None):
-    """The both-lanes check of every hold: per hour of the day and per receiver, held / known / right / wrong / unv."""
+    """The both-lanes check of every hold: per hour of the day and per receiver, held / known / right / wrong / unv;
+    the wrong holds' hours of the day per key."""
     sy, sg = a.pair.split()
     s1, s2 = sg.split("/")
     f1, f2 = FREQ[sy]
     hour, site_acc = defaultdict(lambda: defaultdict(int)), defaultdict(lambda: defaultdict(int))
-    wrongs, missing = defaultdict(int), []
+    wrongs, missing, wrong_tows = defaultdict(int), [], defaultdict(list)
     for site in a.sites.split(","):
         rf, rl = user_run(a.fix, a.doy, site), user_run(a.flt, a.doy, site)
         if not os.path.isdir(runs.run_dir(rf)) or not os.path.isdir(runs.run_dir(rl)):
@@ -264,20 +290,22 @@ def both_lanes(a, network=None):
                         cls = "right" if round(dw) == 0 and round(dn) == 0 else "wrong"
                         if cls == "wrong":
                             wrongs[(site, s, ref, int(round(dw)), int(round(dn)))] += 1
+                            wrong_tows[(site, s, ref, int(round(dw)), int(round(dn)))].append((t - day0) / 3600.0)
                 known = known_sats is not None and s in known_sats and ref in known_sats
                 for x in (hour[hb], site_acc[site]):
                     x["held"] += 1
                     x[cls] += 1
                     x["known"] += known
-    return hour, site_acc, wrongs, missing
+    return hour, site_acc, wrongs, missing, wrong_tows
 
 
 def cmd_outside(a):
-    """user_fix_vs_float_free.py, byte for byte."""
+    """user_fix_vs_float_free.py (legacy) or user_fix_vs_float_free2.py (free2), byte for byte."""
     sy, sg = a.pair.split()
     s1, s2 = sg.split("/")
     f1, f2 = FREQ[sy]
     hour, site_acc, wrongs = defaultdict(lambda: defaultdict(int)), defaultdict(lambda: defaultdict(int)), defaultdict(int)
+    wrong_tows = defaultdict(list)
     for site in a.sites.split(","):
         rf, rl = user_run(a.fix, a.doy, site), user_run(a.flt, a.doy, site)
         if not os.path.isdir(runs.run_dir(rf)) or not os.path.isdir(runs.run_dir(rl)):
@@ -310,6 +338,7 @@ def cmd_outside(a):
                         cls = "right" if round(dw) == 0 and round(dn) == 0 else "wrong"
                         if cls == "wrong":
                             wrongs[(site, s, ref, int(round(dw)), int(round(dn)))] += 1
+                            wrong_tows[(site, s, ref, int(round(dw)), int(round(dn)))].append((t - day0) / 3600.0)
                 for x in (hour[hb], site_acc[site]):
                     x["held"] += 1
                     x[cls] += 1
@@ -328,12 +357,19 @@ def cmd_outside(a):
     for site in sorted(site_acc):
         x = site_acc[site]
         print(f"    {site}: held {x['held']:6d} | right {x['right']:6d} | wrong {x['wrong']:4d} | unverified {x['unv']:6d}")
+    if getattr(a, "view", "legacy") == "free2":
+        print("  every run of wrong holds (receiver, satellite-reference, float user off by wide/narrow, hours, epochs):")
+        rr = wrong_runs(wrong_tows)
+        for (site, s, ref, kw, kn), r0, r1, n in rr:
+            print(f"      {site} {s}-{ref}: wide {kw:+d}, narrow {kn:+d}: hours {r0:.3f} to {r1:.3f}, {n} epochs")
+        print(f"  runs of wrong holds: {len(rr)}")
+        return
     for (site, s, ref, kw, kn), c in sorted(wrongs.items(), key=lambda kv: -kv[1])[:20]:
         print(f"      {site} {s}-{ref}: float user off by wide {kw:+d}, narrow {kn:+d}: {c} epochs")
 
 
 def cmd_both(a):
-    network = None
+    network, names = None, None
     if a.net:
         sy, sg = a.pair.split()
         s1, s2 = sg.split("/")
@@ -349,7 +385,10 @@ def cmd_both(a):
             k1 = {k[1] for k in list(pins[s1].get(t, {})) + list(h1.get(t, {})) if k[0] == sta}
             k2 = {k[1] for k in list(pins[s2].get(t, {})) + list(h2.get(t, {})) if k[0] == sta}
             return k1 & k2
-    hour, site_acc, wrongs, missing = both_lanes(a, network)
+    if names is None and a.type_from:
+        with open(os.path.join(runs.run_dir(a.type_from), "arm.json"), encoding="utf-8") as fh:
+            names = {s["name"][:4].lower(): s["name"] for s in json.load(fh)["network"]["stations"]}
+    hour, site_acc, wrongs, missing, wrong_tows = both_lanes(a, network)
     print(f"{a.pair}; fixing users {a.fix} against float users {a.flt}, DOY {a.doy}; every hold, both lanes against the "
           f"float user (converged within {a.conv:g} cycle)" + (f"; known: both satellites held or pinned by {a.net} at the receiver" if a.net else ""))
     if missing:
@@ -370,6 +409,27 @@ def cmd_both(a):
               f"unverified {x['unv']:6d}")
     for (site, s, ref, kw, kn), c in sorted(wrongs.items(), key=lambda kv: -kv[1])[:20]:
         print(f"      {site} {s}-{ref}: float user off by wide {kw:+d}, narrow {kn:+d}: {c} epochs")
+    if a.runs:
+        def kind(site):
+            if names is None:
+                return "type not given (no --net or --type-from)"
+            return "in the network" if site in names else "outside the network"
+        rr = wrong_runs(wrong_tows)
+        counted = defaultdict(list)
+        for site in sorted(site_acc):
+            counted[kind(site)].append(site)
+        print("  receivers counted (holding at least one held satellite), by type: " + "; ".join(
+            f"{k} {len(v)} ({','.join(v)})" for k, v in sorted(counted.items())) + (f"; missing or empty "
+                                                                               f"{','.join(missing)}" if missing else ""))
+        print("  every run of wrong holds (a gap over 60 s starts a new run), with the receiver's type:")
+        by = defaultdict(lambda: [0, 0])
+        for (site, s, ref, kw, kn), r0, r1, n in rr:
+            print(f"      {site} ({kind(site)}) {s}-{ref}: wide {kw:+d}, narrow {kn:+d}: hours {r0:.3f} to {r1:.3f}, "
+                  f"{n} epochs")
+            by[kind(site)][0] += 1
+            by[kind(site)][1] += n
+        print(f"  runs of wrong holds: {len(rr)}" + "".join(f"; {k}: {v[0]} runs, {v[1]} epochs"
+                                                          for k, v in sorted(by.items())))
 
 
 def replay_hourly(label, doy, site, kind="obs", shift=0, hours=None):
@@ -574,6 +634,16 @@ def selftest():
         h = capture(cmd_hourly, ["hourly", "obs:tx", "--base", "obs:other", "--doy", "146", "--set", "aaaa", "--hours", "2",
                                  "--view", "exact"])
         check("paired: none" in h, "hourly, exact view: a base that is not a run set is said, not silently left out")
+        f2 = capture(cmd_outside, ["outside", "--fix", "tx", "--flt", "tf", "--doy", "146", "--sites", "aaaa",
+                                   "--pair", "E L1C/L5Q", "--hours", "1", "--view", "free2"])
+        check("      aaaa E05-E11: wide +1, narrow +0: hours 0.000 to 0.000, 1 epochs\n  runs of wrong holds: 1\n" in f2
+              and "narrow +0: 1 epochs" not in f2, "outside, free2 view: the run listing in place of the largest keys")
+        br = capture(cmd_both, ["both", "--fix", "tx", "--flt", "tf", "--doy", "146", "--sites", "aaaa", "--pair",
+                                "E L1C/L5Q", "--hours", "1", "--net", "net", "--runs"])
+        check("aaaa (in the network) E05-E11" in br and "in the network: 1 runs, 1 epochs" in br
+              and "by type: in the network 1 (aaaa)\n" in br, "both --runs: the receivers and each run with its type")
+    rr = wrong_runs({("x", "E01", "E02", 0, 1): [1.0, 1.0 + 30 / 3600, 1.0 + 60 / 3600, 1.5]})
+    check([(r[1], r[3]) for r in rr] == [(1.0, 3), (1.5, 1)], "a gap over 60 s starts a new run")
     print("selftest:", "PASS" if ok else "FAIL")
     ok &= fixture.check_frozen("users.py")
     return 0 if ok else 1
@@ -594,6 +664,10 @@ def build_parser():
         p.add_argument("--pair", default="E L1X/L5X")
         p.add_argument("--hours", type=int, default=24)
     b.add_argument("--net", default="")
+    b.add_argument("--runs", action="store_true")
+    b.add_argument("--type-from", default="", help="the network run whose station list names a receiver's type "
+                   "(arm.json only; --net implies it)")
+    o.add_argument("--view", choices=("legacy", "free2"), default="legacy")
     for p in (i, o, b):
         p.add_argument("--fix", required=True)
         p.add_argument("--flt", required=True)

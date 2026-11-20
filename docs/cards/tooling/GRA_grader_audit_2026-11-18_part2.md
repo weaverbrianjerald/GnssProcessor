@@ -5,10 +5,10 @@
 - **id:** GRA-part2
 - **topic:** tooling
 - **status:** open
-- **summary:** Sections 3 onwards of card GRA (2026-11-18), continued from [part 1](GRA_grader_audit_2026-11-18.md). Section 3: each bar's definition as pre-registered in card NRF beside what its script computes, with every difference named, and the bars with more than one implementation with their agreement on named runs. Section 4: the defects in priority order (silent changes of a recorded number first, then what breaks a rerun, then duplication and scripts named nowhere), each with its evidence, the reproduction that says whether a number of card NRF moves, and a test that would catch it. Section 5: a plan of ten steps that moves one owner per bar into the repository, each step reproducing named recorded numbers exactly; nothing of it is carried out here. Section 6: what the plan enables. Section 7: the reproductions made for this card. Results: plan steps G1, G2, G4 and G5 carried out on 2026-11-18 (`scripts/grading/`), legacy views byte-identical to the recorded outputs, corrected views equal to the second session's rebuilds.
+- **summary:** Sections 3 onwards of card GRA (2026-11-18), continued from [part 1](GRA_grader_audit_2026-11-18.md). Section 3: each bar's definition as pre-registered in card NRF beside what its script computes, with every difference named, and the bars with more than one implementation with their agreement on named runs. Section 4: the defects in priority order (silent changes of a recorded number first, then what breaks a rerun, then duplication and scripts named nowhere), each with its evidence, the reproduction that says whether a number of card NRF moves, and a test that would catch it. Section 5: a plan of ten steps that moves one owner per bar into the repository, each step reproducing named recorded numbers exactly; nothing of it is carried out here. Section 6: what the plan enables. Section 7: the reproductions made for this card. Results: plan steps G1, G2, G4 and G5 carried out on 2026-11-18 (`scripts/grading/`), legacy views byte-identical to the recorded outputs, corrected views equal to the second session's rebuilds. Results of 2026-11-19 (the day program's grader package): step G3 as a second implementation of the two-run audit with a count by distinct link (`two_run.py`), F5 for GPS by the chord's own signals (`slip_hold.py`), the integrity of held links (`held_integrity.py`: long one-signed holds, the windowed monitor replay, resumptions meeting a held link, holds against the simulator's truth) and the users' runs of wrong holds by receiver type (`users.py`), each gated on the recorded numbers; steps G6 to G10 wait for the author's go.
 - **source:** [part 1](GRA_grader_audit_2026-11-18.md); the scripts as of 2026-11-18 afternoon; [NRF part 14](../../refound/NRF_network_ring_fixing_2026-11-14_part14.md) to [part 16](../../refound/NRF_network_ring_fixing_2026-11-14_part16.md); the outputs in `D:\GnssProcessorSupport\gates\grader_audit_2026-11-18\`.
 
-**Outcome.** Every verdict of card NRF that was reproduced stands. Two recorded statements need an annotation in card NRF: the C4 GPS figures of section 118.1 are differences of rounded percentages (exact worst -2.34, -0.51, -0.44 points), and the users' held pair-epochs of sections 107.3 and 118.1 count only pairs the network also holds (the users' own gain is 1.3 to 1.7 times, not 2 to 3.2). Bar 7 drops every `lli_slip` flag; counted, they add 159 to 259 flags a day and no hold through one. The plan's first step is a shared reader; the files added on 2026-11-18 move first.
+**Outcome.** Every verdict of card NRF that was reproduced stands. Two recorded statements need an annotation in card NRF: the C4 GPS figures of section 118.1 are differences of rounded percentages (exact worst -2.34, -0.51, -0.44 points), and the users' held pair-epochs of sections 107.3 and 118.1 count only pairs the network also holds (the users' own gain is 1.3 to 1.7 times, not 2 to 3.2). Bar 7 drops every `lli_slip` flag; counted, they add 159 to 259 flags a day and no hold through one. On 2026-11-19 bar F4 by distinct link names the attribution's two links, F5 for GPS fails only on BOGT00COL G09 (DOY 143), and every recorded held-link count reproduces except one window-replay tie.
 
 Abbreviations as in part 1 (S20, G, R, TMP, TMP2, SPC, REPO, IRDU).
 
@@ -165,3 +165,128 @@ Outputs in `D:\GnssProcessorSupport\gates\grader_audit_2026-11-18\`, every scrip
 - The users: `both` against the second session's regraded users of section 118 (`_irdu_grades/reads_2026-11-18/n46users_holds_summary_{146,147}.txt`): 16 of 16 rows equal in held, right, wrong and unverified, by receiver group (pilot-type, combined-mode outside), pair and label, on both days; the holds within the network's coverage of the pilot-type rows equal too (100 625, 31 323, 110 104, 110 567 on DOY 146; 102 139, 42 631, 113 760, 112 257 on DOY 147; `xcheck/users_crosscheck.txt`). The only wrong holds are the three short runs of section 118.1 at the combined-mode receivers outside the network (33 and 14 on DOY 146, 16 on DOY 147) and the 34 of today's stream on DOY 146 (the UTQI run).
 
 **Not covered by steps G1 to G5.** `gps_share.py`, `slip_hold_spans.py` (a read of section 107.9), `wl_off_list.py` (the users' wide lane against the network's, section 107.3's near-null column) and the other reads of `scripts_s20` stay as they are. G3 and G6 to G10 wait for a decision.
+
+### 2026-11-19: bar F4 by link, F5 for GPS, the integrity of held links, the users' runs
+
+**The order.** The managing session, 2026-11-19, package `tooling-graders-remaining` of the day program
+(`D:\GnssProcessorSupport\gates\day_program_2026-11-19\program.json`, with the scout package `held-integrity-graders`
+merged into it): bar F4 counted by distinct link; the long one-signed holds counted for every day run, with a view by
+resumption and a view against the simulator's truth; F5 for GPS; the users' runs of wrong holds split by receiver type;
+each new grader gated on numbers already recorded. Plan step G3 is done in the form the package asks for (a second
+implementation of the two-run audit, where section 5 had it stay as it is). Steps G6 to G10 still wait for the author's
+go (listed at the end of this entry).
+
+**What was built** (branch `audit/graders`, commits `010ae0a` and `fcb2902`, under `scripts/grading/`).
+- `slip_hold.py` (F5). Every view of `flagged` takes `--sys E|G` (`slip_hold.py:51`). `--view check3`
+  (`slip_hold.py:248`) is `slip_hold_check3.py`, the five-day read's copy, whose GPS rule counts a flag on any L1 or L2
+  signal against the L1C/L2W chord (`scripts_s20/slip_hold_check3.py:151`). `--view chord` (`slip_hold.py:285`) is the
+  five-day read's ruling: a flag counts against a held link only when it names a signal of that link's own chord, read
+  from the tested run's ring-fix row before the flag (`slip_hold.py:270`); flags on other signals only, and the
+  `lli_slip` events at an epoch with no flag of the chord, are counted on lines of their own.
+- `two_run.py` (F4, new). The legacy view is `scripts/nrf_two_run_audit.py` without its wind-up options, its walk
+  written again (`two_run.py:85`) in the original's order (common links sorted, `nrf_two_run_audit.py:181`; roots in
+  that order, `:189`). The `bylink` view (`two_run.py:137`, `:171`) takes, at each epoch and band where the walk fails,
+  every four-link loop of every link; a link failing more than half of at least three of its loops disagrees (the rule
+  of the five-day read's `two_run_loops.py`); each failing check of the walk is attributed to the disagreeing link of
+  its loop, as the closing link or on the tree path (`two_run.py:118`), and the closing links of checks with none are
+  listed. Where the walk passes, every loop closes, so no other epoch can hold a disagreeing link. The self-test shows
+  the walk's dependence on its tree: one disagreeing link fails 9 of the 9 checks of a 4 by 4 grid when it is a tree
+  edge, 1 of 9 when it is not; the loop rule names it in both.
+- `held_integrity.py` (new, no pandas). A hold is a run of held rows of one link with constant integers, rows without a
+  residual dropped, a gap over 120 s ending it (`held_integrity.py:141`), as in the managing session's three scripts
+  (`window_monitor_replay.py:30`, `decision_split.py:29`, `onesigned_scan.py:15`). Residuals are kept in units of
+  0.01 mm, the trace's resolution (`held_integrity.py:58`), so every threshold test is exact. `onesigned`: legacy =
+  `decision_split.py`'s printout; `--view exact` = per constellation the holds of an hour or more and the signature at
+  8, 10 and 12 mm, the holds with the signature listed by start (the population of `onesigned_scan.py`). `window`
+  (`held_integrity.py:278`, `:315`): `window_monitor_replay.py`'s table, `--view exact` with the counts per run.
+  `resume` (`held_integrity.py:377`): every T0_gap arc_resume (rows of one epoch, station and satellite taken together)
+  that meets a link held at that epoch, matched by either chord signal as the scout's `resume_held.py:12-14` matches
+  it, by class, with the residual at the epoch, the held rows that followed with the same integers and the first
+  release or move to the tree. `truth` (`held_integrity.py:445`): holds graded by their rows' audit column, from 00:30:15
+  of the day, by `--rule any` (wrong when any row is wrong) or `--rule majority` (the class of more than half the rows,
+  the scout's rule), with residual statistics, the signature and the window rule against truth.
+- `users.py`. `outside --view free2` is `user_fix_vs_float_free2.py` (every run of wrong holds, a gap over 60 s starting
+  a new one; `users.py:235`, `:360`). `both --runs` (`users.py:412`) lists the same runs on the corrected check, each with
+  its receiver's type, in or outside the station list of the network run named by `--net` or `--type-from`
+  (`users.py:388`, arm.json only), with runs and epochs by type.
+- Frozen cases. Ten cases on `D:\GnssProcessorSupport\gates\grader_fixtures_2026-11-19\` (windows of `ad_n143`,
+  `ad_n146`, `adr_n146` and the two UTQI users of DOY 146; 16 files, 180 MB, `MANIFEST.sha256` sha256
+  `df0f4eeef7110a30ddc07949f441717bc9f0ff645ab4179392a4c96a4091a07e`), made by
+  `gates/grader_audit_2026-11-18/freeze_fixtures_1119.py` and `make_frozen_1119.py`. `fixture.py` takes a case's
+  folder (`root`), masks the folder's path in a printout that names runs by full path (`mask_root`) and accepts a
+  declared exit code (the two-run audit exits 1 on a failing check, as the original does). Every self-test passes with its frozen cases (26: 6 of `network_hourly.py`, 5 of
+  `slip_hold.py`, 2 of `two_run.py`, 4 of `held_integrity.py`, 9 of `users.py`; `selftests_1119.txt`,
+  `selftest_users_1119.txt`).
+
+**The gates** (outputs and scripts in `D:\GnssProcessorSupport\gates\grader_audit_2026-11-18\`: folders `f5/`, `f4/`,
+`held/`, `uruns/`; scripts `gate_f5.sh`, `gate_f4.sh`, `gate_held.sh`, `gate_uruns.sh`).
+
+| bar | recorded number and its source | here | agreement |
+| --- | --- | --- | --- |
+| F5, the checker copy | `slip_hold_self_<run>_{E,G}.{txt,jsonl}` of `ad_n143` to `ad_n147`, `adr_n146` (GPS counts 7, 0, 2, 2, 3, 3; Galileo 0) | `flagged --view check3` | all 24 files byte-identical |
+| F5, GPS by the chord's signals | the five-day read's verdict row: 1, 0, 0, 0, 0, 0, BOGT00COL G09 on DOY 143 | `flagged --view chord --sys G` | equal: 1 (BOGT00COL G09 at 572730, arc_resume shifted_fresh on L1C and L2W), then 0 on every run |
+| F5, Galileo by the chord's signals | 0 on every run | `flagged --view chord` | equal: 0 |
+| F4, the walk's count | `audit_ad_n146`, `audit_n46c_n146`, `audit_d24_n146` (`.txt`, `.json`): 1 502 failing checks on E1 and on E5a for the adopted pair | `two_run.py` legacy | all 6 files byte-identical |
+| F4, by distinct link | the five-day read's `attrib_two_run_loops_base.txt`: GUAM00GUM-E29 458 epochs, LMMF00MTQ-E06 379 epochs; the attribution of 2026-11-19, section 3 | `two_run.py --view bylink` | the same two links, both link lines identical; every one of the 1 502 failing checks per band on a loop through one of them (693 as the closing link, 809 on the tree path, 0 on neither) |
+| one-signed holds | `decision_split.py`'s printout (`nrf_reads_2026-11-18/manager_decision_split.txt`): 31 795 holds of an hour or more, 42 with the signature, eight runs | `onesigned` legacy | byte-identical (all lines but the one naming the script's CSV file) |
+| one-signed holds at 10 mm | the ten `manager_onesigned__rap_<run>.csv` of `onesigned_scan.py` | `onesigned --view exact --mm 10` | the same 35 holds, means within 2e-18 m |
+| windowed monitor replay | `manager_window_monitor_replay.txt`: 15 rows, 40 min and 8 mm catching 42 of 42 for 182 other trips (about 23 a run) | `window` | 14 of 15 rows equal; at 10 min and 4 mm 14 075 other trips against 14 074 (the tie below) |
+| resumptions meeting a held link | the scout's census (`scouts/held.json`): 179 over the six adopted runs, 128 clean_fresh, 46 clean_bridged, 4 unmeas_bridged, 1 shifted_fresh; residuals 27.36 m (POTS00DEU G13, DOY 144), 5.04 m (DOY 145), 0.137 and 0.010 m (DOY 147) | `resume` | equal in every count and residual |
+| wrong holds on the simulator | the scout's: 86, 40 and 14 wrong held segments on `h40_off`, `d1_off`, `d31_off`, none with the signature; wrong rows' residual median 3.1 to 3.2 mm against 3.3 mm; the 40 min, 8 mm window trips 1 of 140 wrong and 5 of 4 580 right | `truth --rule majority` | equal: 86, 40, 14 wrong, 1 510, 1 515, 1 555 right (one hold of `h40_off` mixed), none with the signature; medians 3.16, 3.09, 3.23 mm against 3.30, 3.34, 3.33 mm; trips 1 of 140 and 5 of 4 580 |
+| the users' runs of wrong holds | `five_days_free_<group>_<pair>_<doy>.txt`, 20 files (the seven runs of the five-day read) | `outside --view free2`; `both --runs --type-from ad_n<doy>` | all 20 files byte-identical, run listings included; by type, every one of the seven runs is at a receiver outside the network's station list (UTQI, CHTI, WUH2, ASCG), and the ten pilot-type receivers, all in the list, hold none |
+
+**What the gates add to the record.**
+- *F5 for GPS.* The checker copy's GPS rule counts third signals: of its 17 holds through a flag, 16 are gaps of L2S or
+  L2L, signals of no chord (the five-day read's finding, reproduced). The chord view also lists the gaps of GPS L5
+  (L5Q, at PALM00ATA, KIT300UZB and SOLO00SLB), which the copy's L1/L2 rule never reads: 7, 10, 4, 9, 7 and 11 holds
+  through such a flag on DOY 143, 144, 145, 146, 146 (second root) and 147. Galileo's flags off the chord are all E6
+  and E5 AltBOC signals (L6B, L6C, L6X, L7Q with L8Q, L8Q, L8X): 133 to 177 holds through one a run, the moves into the
+  tree included.
+- *F4.* The two DOY 146 pairs before the adopted one disagree on no Galileo link, as recorded; on GPS the by-link view
+  names MBAR00UGA G04 (107 epochs) and G07 (3 epochs) in all three pairs, MBAR00UGA G14 (3 epochs) and GUAM00GUM G08
+  (16 and 41 epochs) in the two earlier ones, GUAM00GUM G04 (110 epochs) and ULAB00MNG G04 (6 epochs) in `d24`. The
+  loop rule names no link when several links of one receiver disagree together: on `d24` 218 failing GPS checks per
+  band are listed by closing link as unattributed (216 at GUAM00GUM with G04 and G06 to G22, 2 at MAC100AUS G03), and
+  15 on `n46c` (MAC100AUS G03 14, MBAR00UGA G03 1); they are not counted as distinct links.
+- *The window replay's one difference.* Five holds reach a 20-row mean of exactly 4.00 mm and never more
+  (`held/window_ties.txt`, `window_ties.py`); pandas' rolling mean returns 0.004 for four of them and
+  0.003999999999999999 for WTZS00DEU E12 of `n46c_n146`, which the replay therefore does not trip. The exact count is
+  14 075. No other row moves; the 42 of 42 and the 182 other trips at 40 min and 8 mm stand.
+- *The resumptions.* The five shifted or unmeasured holds sat at 0.010 to 27.4 m at the resumption epoch (KIT300UZB G29
+  on DOY 147 at -0.010 m, 0.033 m the next epoch) and were held 1, 1, 2, 2 and 4 rows before a release by slip,
+  refloat or the monitor (BOGT00COL G09, after 120 s).
+- *The users' receiver set (defect D4).* `both --runs` states the receivers it counts, by type: on every day and pair
+  the ten pilot-type receivers are all in the station list of the day's network run and the eleven combined-mode
+  receivers all outside it, none missing or empty; the seven runs of wrong holds are all at receivers outside it.
+- *The simulator.* The two truth rules differ by half: by any wrong row, 226, 59 and 27 holds are wrong; by the
+  majority of rows, 86, 40 and 14. Under both, no wrong hold has the signature, and the 40 min, 8 mm window trips one
+  wrong hold (on `d1_off`, after 215.5 min) and five right ones.
+
+**Not covered.**
+- `two_run.py` carries none of the audit's wind-up options (`--windup`, `--windup-trace`, `--born-after`), which serve
+  the simulator and resumed runs; `scripts/nrf_two_run_audit.py` stays their owner.
+- The truth view does not split wrong holds by frame class (frame-type, isolated, other shape): that needs the
+  frame-free cover of card NRF section 108.4 (plan step G7), which the package `held-signature-evidence` is extending
+  (`packages/held-signature-evidence/scratch/sim-power-by-class/ffc_ext.py`); a planted wrong link's catch and delay
+  waits for a planted bed (none exists yet).
+- The resume view follows the scout's rule (a held row at the resumption's epoch). The package `held-resume-release`
+  writes its own rules (held when entering the epoch, folded epochs from the event state machine; its `rules.md`,
+  amendment A1), which count more cases (169 pairs on `ad_n143` alone); its table is not reproduced here.
+- The legacy view of `window` is the table with exact trips, not pandas' arithmetic; it equals the recorded table
+  except for the one tie above.
+
+**Plan steps G6 to G10, waiting for the go** (estimates; no engine run in any of them):
+- G6 `compare_runs.py` (whole-file identity, records set aside only as the run's own legend declares, traces present in
+  one run reported): reads four scripts; gate H1, C2 and F1 of section 5; about 0.25 M tokens.
+- G7 `truth.py` (the run-end truth line by kind, the frame-free cover with the seed-0 order as the legacy view and a
+  sorted tie-break beside it, a cache keyed by tag, bed, stride and the products' sha256): gate `G/c3_n46.txt`'s truth
+  lines and section 108.1's sums under `PYTHONHASHSEED=0`; it also gives the truth view its frame classes; about 0.45 M.
+- G8 `code_signature.py` (three tools on one reader): gate `gfrep_s2_n146.txt`, `gfrep_n41_n14{6,7}.txt`, section 108.3;
+  about 0.3 M.
+- G9 one orchestrator per bar group (fails on a child's failure, a manifest per grade): gate the outputs of G2 to G8 run
+  through it; about 0.35 M.
+- G10 the retire listing (no kept file names a retired one): about 0.1 M.
+
+### 2026-11-19: plan steps G6 to G10 (in part 3)
+
+This part reached the size bar; the results of plan steps G6 to G10, the frame classes of the simulator's wrong holds and the clean-checkout re-check are in [part 3](GRA_grader_audit_2026-11-18_part3.md).
