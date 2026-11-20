@@ -888,6 +888,8 @@ const std::vector<FieldDecl> kStationFields = {
      nullptr, nullptr, &stationCells<&S::sba_since>},
     {"level_hold", "", Persist::ColdStart, "", "",   // no former member: new with the anchor-level hold (card ALD)
      nullptr, nullptr, &stationCells<&S::level_hold>},
+    {"rx_gf", "", Persist::ColdStart, "", "",   // no former member: new with network.rx_gf_datum (record XBD)
+     nullptr, nullptr, &stationCells<&S::rx_gf>},
     {"staf_ewma", "staf_ewma", Persist::ColdStart, "", "",
      nullptr, nullptr, &stationRows<&S::staf_ewma>},
     {"staf_updates", "staf_updates", Persist::ColdStart, "", "",
@@ -1495,6 +1497,7 @@ const std::vector<EntityWriterRow> kEntityWriters = {
     {"networkHarvestRxClock", "network/carry/RxClockCarry.cpp", "stations"},
     {"networkHarvestRxCbBlock", "network/carry/RxCodeBiasCarry.cpp", "stations"},
     {"networkHarvestRxCbCarry", "network/carry/RxCodeBiasCarry.cpp", "stations"},
+    {"networkRxGfDatumTally", "network/carry/RxCodeBiasCarry.cpp", "stations"},
     {"networkHarvestRxPbBlock", "network/carry/RxPhaseBiasCarry.cpp", "stations"},
     {"networkHarvestSlantIonoBlock", "network/carry/SlantIonoCarry.cpp", "los"},
     {"networkHarvestZwd", "network/carry/ZwdCarry.cpp", "stations"},

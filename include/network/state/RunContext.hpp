@@ -424,6 +424,11 @@ namespace GnssProcessor {
         bool relevel_free_on{};
         bool rx_cb_datum{};   ///< Zero-mean-over-receivers DCB datum (network.rx_code_bias_datum).
         double rx_cb_datum_sigma{};  ///< Loose physical-bound sigma (m) of that datum (network.rx_code_bias_datum_sigma_m).
+        /// network.rx_gf_datum: the holder of the receiver geometry-free direction (prior_refold,
+        /// birth_prior, hard).  PriorRefold whenever @ref rx_cb_datum is off (the key is read only
+        /// with it), so every reader tests this one field.  Read by networkRxCbPriors and the
+        /// serial tally networkRxGfDatumTally.
+        NetworkRxGfDatum rx_gf_datum{NetworkRxGfDatum::PriorRefold};
         bool sta_prior_pre_pd{};  ///< Fold the station's datum rows before the addStation PD test (network.station_prior_before_pd).
         double rx_cb_q{};   ///< rx-CB carry RW process noise (m²/s).
         double rx_ebd_q{};  ///< Its receiver IFB (extra-band delay) columns' own (m²/s; network.rx_extra_band_delay_q); 0: rx_cb_q.
