@@ -1642,6 +1642,8 @@ namespace GnssProcessor {
             if (rf.resume_response != "off" && rf.resume_response != "release" && rf.resume_response != "revalidate")
                 throw std::runtime_error("network.ring_fix.resume_response must be \"off\", \"release\" or "
                                          "\"revalidate\" (got \"" + rf.resume_response + "\").");
+            rf.window_monitor = jval<bool>(json, "network.ring_fix.window_monitor", "network_ring_fix_window_monitor",
+                                           false);
             rf.nn_monitor = jval<bool>(json, "network.ring_fix.nn_monitor", "network_ring_fix_nn_monitor", false);
             rf.nn_guard_release = jval<bool>(json, "network.ring_fix.nn_guard_release",
                                              "network_ring_fix_nn_guard_release", false);
@@ -11297,6 +11299,7 @@ namespace GnssProcessor {
             note(rx.nn_monitor, "nn_monitor");
             note(rx.entry_revalidate, "entry_revalidate");
             note(rx.resume_response != "off", "resume_response");
+            note(rx.window_monitor, "window_monitor");
             note(rx.form_configured_pairs, "form_configured_pairs");
             note(!rx.cascade.empty(), "cascade");
             note(rx.cascade_tree, "cascade_tree");
@@ -14083,11 +14086,12 @@ namespace GnssProcessor {
                     && ev.kind != "anchor_handover" && ev.kind != "arc_erase"
                     && ev.kind != "sat_clock_step" && ev.kind != "rx_clock_step"
                     && ev.kind != "oracle_pin" && ev.kind != "fixed_cycle_plant"
+                    && ev.kind != "ring_fix_plant"
                     && ev.kind != "sat_health" && ev.kind != "station_step") {
                     log->error("Config: {}.kind '{}' is not one of slip | outage | "
                                "anchor_handover | arc_erase | sat_clock_step | "
                                "rx_clock_step | oracle_pin | fixed_cycle_plant | "
-                               "sat_health | station_step.",
+                               "ring_fix_plant | sat_health | station_step.",
                                where, ev.kind);
                     return false;
                 }
@@ -14221,6 +14225,20 @@ namespace GnssProcessor {
                     if (!need(ev.delta_cycles != 0.0
                                   && ev.delta_cycles == std::round(ev.delta_cycles),
                               "a non-zero integer delta_cycles")) return false;
+                } else if (ev.kind == "ring_fix_plant") {
+                    // A wrong hold planted on one held ring-fix link (both bands), consumed by
+                    // the ring fix's hold epoch.  Simulation only: the run must carry the ring
+                    // fix's truth, so the planted error can be graded.
+                    if (!need(!ev.station.empty(), "a station")) return false;
+                    if (!need(!ev.sat.empty(), "a sat")) return false;
+                    if (!need(ev.delta_cycles != 0.0
+                                  && ev.delta_cycles == std::round(ev.delta_cycles),
+                              "a non-zero integer delta_cycles (added to both bands' held "
+                              "integers)")) return false;
+                    if (!need(network_config_.ring_fix.enable
+                                  && !network_config_.ring_fix.truth_root.empty(),
+                              "network.ring_fix.enable and network.ring_fix.truth_root "
+                              "(simulation only)")) return false;
                 } else if (ev.kind == "oracle_pin") {
                     // Sim-only diagnostic (include/network/slip/OraclePin.hpp).  Both
                     // fields are validated, and a failure names the field: a scope

@@ -8,6 +8,7 @@
 
 #include "config/GnssConfig.hpp"                // getCodeElevationPower (the release floor's mapping)
 #include "network/ar/AmbFloat.hpp"              // ambFloatDropFloored, ambFloatBirthFloor, ambFloatDropFloorNow
+#include "network/carry/Inject.hpp"             // NetworkInjectState, InjectRingFixPlant (the planted wrong hold)
 #include "network/diag/AmbStateTrace.hpp"       // ambStateNoteDrop
 #include "network/diag/RunTraces.hpp"
 #include "network/driver/Epoch.hpp"
@@ -370,6 +371,44 @@ void networkRingFixHoldReleases(NetworkRun& run, const NetworkEpoch& ep, const R
                          std::nullopt, ringFixReleaseName(ev.release),
                          fmt::format("sig1={} sig2={} n1={} n2={} ring={} held_s={:.0f}", ev.id.sig1,
                                      ev.id.sig2, L.n1, L.n2, L.ring, now_s - L.decided_s));
+    }
+}
+
+void networkRingFixHoldPlant(NetworkRun& run, const NetworkEpoch& ep) {
+    if (!run.ctx.carry.ring_fix) return;   // the gate, before the bindings read the ring fix's state
+    // ---- From the run and the epoch ----
+    NetworkRingFix& rf = *run.ctx.carry.ring_fix;   // written: the planted link's held integers
+    NetworkInjectState& inj = run.ctx.inject;       // written: the event's ledger
+    NetworkRunTraces& traces = run.traces;          // written: the INJECT ring_fix_plant event
+    const std::vector<NetStation>& stations = run.setup.stations;
+    const std::shared_ptr<spdlog::logger>& log = run.log;
+    const GnssTime& t = ep.se.time;
+    // ---- End of the bindings ----
+    for (const InjectRingFixPlant& p : inj.ring_fix_plant_now) {
+        const std::size_t k = p.ev_index;
+        if (k >= inj.events.size() || inj.onset_logged[k]) continue;
+        int station = -1;
+        for (std::size_t i = 0; i < stations.size(); ++i)
+            if (stations[i].name == p.station) station = static_cast<int>(i);
+        if (station < 0) continue;   // never fires: the run end fails it by name
+        for (auto& [id, L] : rf.links) {
+            if (id.station != station || id.sat != p.sat || !L.held) continue;
+            const long long n1_was = L.n1;
+            const long long n2_was = L.n2;
+            L.n1 += p.delta;
+            L.n2 += p.delta;
+            ++inj.n_applied[k];
+            inj.onset_logged[k] = true;
+            ++inj.fired_by_kind["ring_fix_plant"];
+            traces.emitEvent(t, "INJECT", "ring_fix_plant", p.sat, p.station, static_cast<double>(p.delta),
+                             std::nullopt, "injected",
+                             fmt::format("sig1={};sig2={};n1_was={};n2_was={};n1={};n2={};ring={}", id.sig1, id.sig2,
+                                         n1_was, n2_was, L.n1, L.n2, L.ring));
+            log->warn("Network (fault inject): TOW {:.1f} ring_fix_plant FIRED: the held link {} {} {}/{} moved "
+                      "from ({}, {}) to ({}, {}) cycles; it stays held there until a release.",
+                      t.tow, p.station, p.sat, id.sig1, id.sig2, n1_was, n2_was, L.n1, L.n2);
+            break;
+        }
     }
 }
 

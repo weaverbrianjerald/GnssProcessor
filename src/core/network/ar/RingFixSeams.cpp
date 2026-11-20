@@ -9,6 +9,7 @@
 #include "network/ar/RingFix.hpp"
 #include "network/ar/RingFixDecide.hpp"         // the decision's stages
 #include "network/ar/RingFixHold.hpp"           // the hold epoch's stages
+#include "network/ar/RingFixWindow.hpp"         // the windowed residual monitor (measure only)
 
 #include "config/GnssConfig.hpp"
 #include "common/GnssIdentity.hpp"            // ArcId (the latch's arcs)
@@ -365,6 +366,31 @@ void ringFixArmResume(NetworkRingFix& rf, const NetworkConfig& nc, const std::sh
                   kRingFixResumeLevel, kRingFixPersistEpochs, kRingFixWindowS);
 }
 
+/// The windowed residual monitor (network.ring_fix.window_monitor), measure only: the receiver class of each roster
+/// station from its file header, named at run start when on.
+void ringFixArmWindow(NetworkRingFix& rf, const NetworkConfig& nc, const NetworkSetupResult& setup,
+                      const std::shared_ptr<spdlog::logger>& log) {
+    rf.window_monitor = nc.ring_fix.window_monitor;
+    if (!rf.window_monitor) return;
+    std::vector<std::string> types;
+    for (const NetStation& st : setup.stations)
+        types.push_back(setup.sync ? setup.sync->headerOf(st.name).receiver_type : std::string());
+    rf.window.rx_class = ringFixWindowRxClasses(types);
+    std::map<std::string, int> classes;
+    for (const std::string& c : rf.window.rx_class) ++classes[c];
+    std::string list;
+    for (const auto& [c, n] : classes) list += fmt::format("{}{} ({})", list.empty() ? "" : ", ", c, n);
+    log->warn("Network (ring fix): WINDOW MONITOR (measure only, nothing released, no product changed): on every held "
+              "link the scaled sums in the robust scale of the other links of its class over the trailing hour "
+              "(station class, h {:g}; network class, h {:g}; reference half of {:.4f} of the pair's (1, 1) footprint; "
+              "no scale with fewer than {} other links), O2b (k {:g} m, h {:g} m-epochs), O1 ({:.0f} min, {:g} m), O2a "
+              "({} epochs, {:g} m), share_sta and share_sat; network_ring_fix_window.csv and RINGFIX window_open / "
+              "window_close events.  Receiver classes: {}.",
+              kRingFixWindowHStation, kRingFixWindowHNetwork, kRingFixWindowFootprintShare, kRingFixWindowMinOthers,
+              kRingFixWindowO2bKM, kRingFixWindowO2bHM, kRingFixWindowO1S / 60.0, kRingFixWindowO1MeanM,
+              kRingFixWindowO2aEpochs, kRingFixWindowO2aM, list);
+}
+
 void ringFixArmSlipMask(NetworkRingFix& rf, const NetworkConfig& nc, const std::vector<NetStation>& stations,
                         const std::shared_ptr<spdlog::logger>& log) {
     if (nc.ring_fix.mask_slip_arc.empty()) return;
@@ -404,6 +430,7 @@ void networkRingFixArm(NetworkRun& run) {
     ringFixArmRehost(*rf, nc, log);
     ringFixArmSlipMask(*rf, nc, stations, log);
     ringFixArmResume(*rf, nc, log);
+    ringFixArmWindow(*rf, nc, run.setup, log);
     ctx.carry.ring_fix = std::move(rf);
 }
 
@@ -425,6 +452,7 @@ void networkRingFixHoldEpoch(NetworkRun& run, const NetworkEpoch& ep) {
     networkRingFixHoldRoots(run, ep, facts);
     networkRingFixHoldReleases(run, ep, facts, latched);
     networkRingFixHoldCascadeReleases(run, ep, latched, cuts);
+    networkRingFixHoldPlant(run, ep);
     networkRingFixHoldInherit(run, ep, facts, latched, cuts);
     networkRingFixHoldTargets(run, ep);
     networkRingFixHoldTable(run);
@@ -539,6 +567,7 @@ void networkRingFixDecide(NetworkRun& run, const NetworkEpoch& ep) {
     const RingFixDecideReadings readings = networkRingFixDecideReadings(run, ep, chain);
     const RingFixDecideAudit audit = networkRingFixDecideAudit(run, readings);
     networkRingFixDecideLiveHolds(run, ep, readings, audit);
+    networkRingFixWindowMonitor(run, ep, readings, audit);   // measure only; no-op without the key
     const std::vector<RingFixEvent> decisions = networkRingFixDecideLinks(run, ep, readings);
     const RingFixDecideCascades cascades = networkRingFixDecideCascades(run, ep, chain, audit);
     networkRingFixDecideTrace(run, ep, readings, audit, decisions, cascades);
@@ -670,6 +699,25 @@ int networkRingFixRunEnd(const NetworkRunEndView& v) {
                   "carry; the first links: {}.",
                   ringFixResumeResponseName(rf.resume_response), C.resume_kept_clean, tail, C.resume_fresh,
                   C.resume_links.text(linkText));
+    }
+    if (rf.window_monitor) {
+        const RingFixWindowMonitor& Wm = rf.window;
+        std::string forms;
+        long long open_end = 0;
+        for (const auto& [id, L] : Wm.links)
+            for (bool b : L.open) open_end += b ? 1 : 0;
+        long long opened = 0, closed = 0;
+        for (std::size_t f = 0; f < kRingFixWindowFormCount; ++f) {
+            forms += fmt::format("{}{} {}/{}", forms.empty() ? "" : ", ",
+                                 ringFixWindowFormName(static_cast<RingFixWindowForm>(f)), Wm.opened[f], Wm.closed[f]);
+            opened += Wm.opened[f];
+            closed += Wm.closed[f];
+        }
+        log->warn("Network (ring fix, window monitor, measure only): {} held link-epochs watched, {} with a residual; "
+                  "scaled sums formed {} (station class) and {} (network class), unscaled {} and {}; episodes opened / "
+                  "closed by form: {}; opened {} = closed {} + open at the end {}: {}.",
+                  Wm.link_epochs, Wm.with_residual, Wm.formed[0], Wm.formed[1], Wm.unscaled[0], Wm.unscaled[1], forms,
+                  opened, closed, open_end, opened == closed + open_end ? "closed" : "NOT CLOSED");
     }
     // The first links refused by each cause (card CNN corrections item 7); one line per cause that refused any.
     for (std::size_t k = 0; k < kRingFixRefuseCount; ++k) {

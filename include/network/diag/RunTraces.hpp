@@ -712,6 +712,10 @@ namespace GnssProcessor {
         /// (network.ring_fix.enable, network/ar/RingFix.hpp).
         std::ofstream ring_fix_trace;
         const std::filesystem::path ring_fix_trace_path;      ///< path of network_ring_fix.csv
+        /// The windowed residual monitor's statistics, one row per held link-epoch
+        /// (network.ring_fix.window_monitor; measure only).
+        std::ofstream ring_fix_window_trace;
+        const std::filesystem::path ring_fix_window_trace_path;   ///< path of network_ring_fix_window.csv
         /// Every emitted satellite phase bias immediately before the phase-bias hold
         /// (network.trace_pb_prehold).
         std::ofstream pb_prehold_trace;
