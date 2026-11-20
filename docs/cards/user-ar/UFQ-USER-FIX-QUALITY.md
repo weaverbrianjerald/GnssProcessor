@@ -152,3 +152,66 @@ Item 3, then item 2, then item 1 (design and one experiment, then the build). A 
 session after each. Each item ends in one commit on the branch with its unit cases in a new test file, its key and
 ledger row where one is added, the configuration dump regenerated, the off identity shown, the table of the beds
 below a dated heading here, and `python scripts/docs_record.py verify` passing. Nothing is merged, pushed or armed.
+
+---
+
+## Results, 2026-11-20
+
+### 8. The loose end of the noise test: the float check is the wrong check
+
+On the simulator (variants 0.5 x 0.5 and phase 0.5) the float check flagged 11 held samples of G22-G24 and G13-G24
+at 02:28 to 02:32 that the truth check called right. Tools `g22_g24_check.py`, `g24_float_history.py`,
+`pair_constant_via_ref.py` (folder of section 2).
+
+- The two checks grade different objects: the truth check grades the integers of accepted fixes (NL pair lines)
+  against a per-pair datum constant taken as the mode of the five runs' fix rows; the float check grades every held
+  sample against the float twin, and calls the twin converged when both lanes sit within 0.2 cycle of an integer.
+- The held integer of G22-G24 is the same on all 25 held samples (fixed minus truth -109 on L1C, 171 on L2W), and
+  every fix row of the five variants carries it.
+- The float twin was not converged on the pair: it sat at (-108.0, +172.0) from 01:50 to 02:02 (both signals within
+  0.05 cycle), then walked steadily to (-110.0, +170.0) by 02:22 and turned back (-109.86 at 02:26). The walk keeps
+  N1 - N2 constant: the wide lane stays integer and the narrow lane passes an integer every cycle of walk, so a
+  walking float meets the "both lanes within 0.2 cycle" rule on a large part of its path. The flagged window is the
+  twin's pass through (-110, +170). G13-G24 shows the same walk.
+- Verdict: the float check is wrong on these samples. Repair (used by this card's grader, `grade_ufq.py`): a held
+  sample is graded only where both signals of the twin's DD moved less than 0.1 cycle over the previous 20 epochs.
+- Limit: the truth check's datum constant is a mode of the users' own fix rows, so it cannot see a wrong integer that
+  every variant shares; nothing here suggests one.
+
+### 9. Item 3: endings, ratio and held census
+
+Commit `bf6f391` (branch `user/fix-quality-2026-11-20`). Engines: control `gnss_processor_ufq0.exe` (main `8109a64`,
+sha256[:16] 27ffcd76bac64bca), item 3 `gnss_processor_ufq3.exe` (sha256[:16] 305fef009da29ece). Debug unit run
+(filter `Ar*:Ambiguity*:Kalman*:Mlambda*:NlSearchRow*:WlFfr*:WlOnly*:ConsumerTrace*:FixAndHold*`): 338 of 338
+passed, 7 new cases.
+
+**Same-build comparison** (24 h replays at the base configurations' logging, `_rap_ufq_<bed>_id0` against
+`_id3`, tool `cmp_item3.py`): every file identical after the three masks of the resolver split, except the declared
+differences.
+
+| Bed | Verdict | ar_gate transitions (control mlambda_fail to) | Other declared lines |
+|---|---|---|---|
+| w129 | only declared | ratio_high 1,751, pair_frac 520, ratio_low 294, no_nl_candidate 5 | run-end line |
+| s129 | only declared | ratio_high 2,031, pair_frac 464, ratio_low 46 | run-end line |
+| chti143 | only declared | ratio_high 2,608, pair_frac 37 | run-end line; 287 HELDSET lines (the base logs the resolver at debug); the rotation cut of the size-rotated resolver logs moves, their common span (92,077 lines) identical |
+| utqi146 | only declared | ratio_high 1,842, pair_frac 577, ratio_low 186 | run-end line; 390 HELDSET lines (resolver at debug in the base); rotation cut moves, common span (115,690 lines) identical |
+
+The 18 old columns of `closed_loop_trace.csv` are identical on every row except `ar_gate` on failed searches; the
+products (none written by a replay) and every other log are identical.
+
+**Engine equals offline** (debug runs `_rap_ufq_{w129,s129}_dbg3`, tool `engine_vs_offline.py`): the engine's
+`ar_gate` equals the noise test's grader on the same run's log on 2,880 of 2,880 and 2,757 of 2,757 search epochs.
+
+| Bed | Endings (run-end line) | Census epochs with a held pair | Held pair-epochs | Joins | Leaves observed / absent |
+|---|---|---|---|---|---|
+| w129 | min_epochs 10, sigma_gate 127, no_candidates 101, no_nl_candidate 5, ratio_low 294, ratio_high 1,751, pair_frac 520, fixed 72 | 2,364 of 2,870 (82.4 %) | 16,454 of 23,794 | 133 | 50 / 73 |
+| s129 | min_epochs 10, sigma_gate 137, ratio_low 46, ratio_high 2,031, pair_frac 464, fixed 69 | 2,444 of 2,747 (89.0 %) | 19,089 of 23,139 | 106 | 24 / 72 |
+| chti143 | min_epochs 10, sigma_gate 67, no_candidates 56, ratio_high 2,608, pair_frac 37, fixed 102 | 2,746 of 2,870 (95.7 %) | 22,962 of 25,433 | 148 | 40 / 99 |
+| utqi146 | min_epochs 10, sigma_gate 55, no_candidates 72, ratio_low 186, ratio_high 1,842, pair_frac 577, fixed 138 | 2,446 of 2,870 (85.2 %) | 22,678 of 32,593 | 202 | 78 / 110 |
+
+The census (variance rule) counts 2,364 and 2,444 held epochs where the noise test's value rule counted 2,370 and
+2,446: the value rule also takes a float that sits by chance within 0.01 cycle of an integer on both signals.
+
+Reading: the held share and the endings the noise test reconstructed offline are now in the trace and the run-end
+line. Every search that ends on the ratio upper bound carries held integers (0 without a held pair on each of the
+four beds: 1,751, 2,031, 2,608 and 1,842 such searches), and on every bed the bound is the most frequent ending.
