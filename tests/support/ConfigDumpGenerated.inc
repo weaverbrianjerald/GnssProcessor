@@ -409,6 +409,7 @@ add("networkStickyPivot", cfg.networkStickyPivot());
 add("networkClockDatumSumToZero", cfg.networkClockDatumSumToZero());
 add("networkClockDatumBroadcastAnchored", cfg.networkClockDatumBroadcastAnchored());
 add("networkCodeDatumTimeLinked", cfg.networkCodeDatumTimeLinked());
+add("networkCodePinSingleLegHold", cfg.networkCodePinSingleLegHold());
 add("networkCodeDatumPairContinuity", cfg.networkCodeDatumPairContinuity());
 add("networkCodeDatumFamilyDifference", cfg.networkCodeDatumFamilyDifference());
 add("networkCodeFamilyBirthPriorSigmaM", cfg.networkCodeFamilyBirthPriorSigmaM());

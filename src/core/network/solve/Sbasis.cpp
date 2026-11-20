@@ -6,6 +6,7 @@
  */
 
 #include "network/solve/Sbasis.hpp"
+#include "network/qc/PriorResidual.hpp"
 #include "network/driver/Epoch.hpp"   // EpochEvents
 
 #include "common/GnssIdentity.hpp"     // systemOfSat, constellationKey, SignalId, obsTypeOf
@@ -1258,7 +1259,8 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
     std::map<std::string, std::pair<std::string, std::string>>& this_epoch_cb_ifpin,
     std::set<std::string>& this_epoch_cb_reseed,
     const CodeDatumFamilyArms& family_arms,
-    const CodeBiasCarryMap& code_bias_carry) {
+    const CodeBiasCarryMap& code_bias_carry,
+    const CodePinLegHoldArm& pin_leg_hold) {
     CodeBiasDatumRows out;
     const Eigen::Index nshared = est.numShared();
     // Both arms refine the time link and are read only under it.  Pair
@@ -1394,6 +1396,85 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
                 }
             }
         }
+        // --- The single-leg hold (network.code_pin_single_leg_hold) ---
+        // A satellite pinned on a dual-frequency pair at the last kept epoch whose
+        // registered signals now span one frequency (one leg of the pair has fewer than two
+        // stations) would take the all-ones row at target 0 below.  Its surviving column is
+        // not estimable against the satellite clock while the pair has one leg, so that row
+        // is a pure datum move toward zero, and the carried prior lets it through a fraction
+        // per epoch: the column walks for as long as the leg is parked, and at the return
+        // the pair re-anchors against the moved column.  Armed, the decoupling edge holds the
+        // surviving column at its pre-edge value instead (CodePinLegEdge), and the
+        // re-coupling edge (the parked leg back on the same pair) targets the pair's pre-edge
+        // combinations in the two time links below.  Any other change closes the edge
+        // (Abandoned) and the unarmed path runs.  Read only under the time link.
+        const bool leg_hold_on = cb_time_linked && pin_leg_hold.armed;
+        std::optional<CodePinLegEdge> leg_hold;      // set when this epoch writes the hold row
+        Eigen::Index leg_hold_col = -1;
+        const CodePinLegEdge* leg_recouple = nullptr;  // set at the re-coupling edge
+        if (leg_hold_on) {
+            const auto eit = pin_leg_hold.open.find(sat);
+            const CodePinLegEdge* open_edge = eit == pin_leg_hold.open.end() ? nullptr : &eit->second;
+            const auto registered = [&](const std::string& s) {
+                return std::find(sigs.begin(), sigs.end(), s) != sigs.end();
+            };
+            const auto columnOf = [&](const std::string& s) -> Eigen::Index {
+                try { return est.codeBiasColumn(sat, s); } catch (...) { return -1; }
+            };
+            const bool single_frequency = !(f1 > 0.0 && f2 > 0.0);
+            if (single_frequency) {
+                if (open_edge != nullptr && registered(open_edge->surviving)
+                    && (leg_hold_col = columnOf(open_edge->surviving)) >= 0) {
+                    leg_hold = *open_edge;
+                    out.pin_leg[sat] = CodePinLegRecord{*open_edge, CodePinLegStep::Held, ""};
+                } else if (open_edge != nullptr) {
+                    out.pin_leg[sat] = CodePinLegRecord{
+                        *open_edge, CodePinLegStep::Abandoned,
+                        "the surviving signal " + open_edge->surviving + " left too"};
+                } else if (const auto pit = code_bias_ifpin_pair_.find(sat);
+                           pit != code_bias_ifpin_pair_.end()) {
+                    // The decoupling edge: exactly one leg of the last kept pair is
+                    // registered, and both legs have a value of the last kept epoch.
+                    const std::string& p1 = pit->second.first;
+                    const std::string& p2 = pit->second.second;
+                    double v1 = 0.0, v2 = 0.0;
+                    if (registered(p1) != registered(p2) && prevCb(sat, p1, v1)
+                        && prevCb(sat, p2, v2)) {
+                        const bool first_survives = registered(p1);
+                        CodePinLegEdge e;
+                        e.pair      = pit->second;
+                        e.surviving = first_survives ? p1 : p2;
+                        e.parked    = first_survives ? p2 : p1;
+                        e.held_m    = first_survives ? v1 : v2;
+                        e.parked_m  = first_survives ? v2 : v1;
+                        if ((leg_hold_col = columnOf(e.surviving)) >= 0) {
+                            leg_hold = e;
+                            out.pin_leg[sat] = CodePinLegRecord{e, CodePinLegStep::Opened, ""};
+                        }
+                    }
+                }
+            } else if (open_edge != nullptr) {
+                if (std::make_pair(sig1, sig2) == open_edge->pair) {
+                    leg_recouple = open_edge;
+                    out.pin_leg[sat] = CodePinLegRecord{*open_edge, CodePinLegStep::Recoupled, ""};
+                } else {
+                    out.pin_leg[sat] = CodePinLegRecord{
+                        *open_edge, CodePinLegStep::Abandoned,
+                        "returned on the pair " + sig1 + "+" + sig2};
+                }
+            }
+        }
+        // The previous value of a pinned signal for the two time links: at the re-coupling
+        // edge the parked leg has none (the harvest dropped it while it was unregistered),
+        // and its parked value stands in, so the pair's pre-edge combination is the target.
+        const auto prevPinned = [&](const std::string& s, double& v) -> bool {
+            if (prevCb(sat, s, v)) return true;
+            if (leg_recouple != nullptr && s == leg_recouple->parked) {
+                v = leg_recouple->parked_m;
+                return true;
+            }
+            return false;
+        };
         // The pin is re-derived from each epoch's coverage.  With the deterministic
         // selection above, the pair is a pure function of the registered signal set, so
         // a change between emitted products means a channel entered or left the
@@ -1453,8 +1534,8 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
             // kept epochs only).
             if (row_ok && cb_time_linked) {
                 double v1 = 0.0, v2 = 0.0;
-                const bool h1 = prevCb(sat, sig1, v1);
-                const bool h2 = prevCb(sat, sig2, v2);
+                const bool h1 = prevPinned(sig1, v1);
+                const bool h2 = prevPinned(sig2, v2);
                 const auto pit = code_bias_ifpin_pair_.find(sat);
                 const bool pair_same =
                     pit != code_bias_ifpin_pair_.end() &&
@@ -1488,6 +1569,20 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
                 }
                 this_epoch_cb_ifpin[sat] = { sig1, sig2 };
             }
+        } else if (leg_hold) {
+            // The single-leg hold (see above): one row on the surviving column at its
+            // pre-edge value.  The satellite keeps its pair record, so the re-coupling edge
+            // compares against the same pair; under the disc channel the pin's record is the
+            // held pair too, as for a pair hold.  The held column counts as pinned for the
+            // sum-to-zero suppression below, so the channel's rows stay as before the edge.
+            row(leg_hold_col) = 1.0;
+            row_ok = true;
+            zval = leg_hold->held_m;
+            this_epoch_cb_ifpin[sat] = leg_hold->pair;
+            if (emit_clock_disc) this_epoch_if_pin_sel[sat] = leg_hold->pair;
+            if (sat_gf_datum != NetworkSatGfDatum::NoneMode)
+                sat_gf_pinned[constellationKey(systemOfSat(sat)) + "|" + leg_hold->surviving]
+                    .insert(sat);
         } else {
             // Single distinct frequency (degenerate): pin the all-ones gauge
             // so the satellite's code-bias common mode is still fixed.  No IF
@@ -1598,7 +1693,7 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
                     // the only place the broadcast frame needs to be asserted.
                     if (sat_gf_datum_time_linked) {
                         double p1 = 0.0, p2 = 0.0;
-                        if (prevCb(sat, sig1, p1) && prevCb(sat, sig2, p2)) {
+                        if (prevPinned(sig1, p1) && prevPinned(sig2, p2)) {
                             target = (p2 - p1) / mu2_minus_mu1;
                             ++out.n_sat_gf_carried;
                             ++gcc.carried;
@@ -2296,6 +2391,96 @@ void networkCodeDatumFamilyKeptEpoch(
     }
 }
 
+void networkCodePinLegKeptEpoch(
+    NetworkRunContext& ctx,
+    const std::function<void(const char*, const char*, const std::string&,
+                             const std::string&, std::optional<double>,
+                             std::optional<double>, const char*,
+                             const std::string&)>& emitEvent, const EpochEvents& events,
+    const NetworkEstimator& est, const Eigen::VectorXd& x_s, const NetworkPriorResidual& prires) {
+    net::NetworkEntities& entities = ctx.entities;   // written: sats
+    using Step = NetworkSbasis::CodePinLegStep;
+    const auto& records = events.code_datum.this_epoch_cb_pin_leg;
+    const std::map<std::string, NetworkSbasis::CodePinLegEdge> was_open =
+        net::satMap(ctx.entities.sats, &net::SatelliteState::code_pin_leg_edge);
+    if (records.empty() && was_open.empty()) return;
+    NetworkSbasis::CodePinLegCounts& c = ctx.counters.cb_pin_leg;
+    const auto legs = [](const NetworkSbasis::CodePinLegEdge& e) {
+        return e.surviving + " held, " + e.parked + " parked (pair " + e.pair.first + "+"
+               + e.pair.second + ")";
+    };
+    std::map<std::string, NetworkSbasis::CodePinLegEdge> open;
+    for (const auto& [sat, r] : records) {
+        switch (r.step) {
+            case Step::Opened:
+                ++c.open;
+                ++c.held_epochs;
+                open.emplace(sat, r.edge);
+                emitEvent("CB_PIN", "single_leg", sat, "", r.edge.held_m, r.edge.parked_m, "open",
+                          fmt::format("{}; held at {:+.4f} m, parked at {:+.4f} m", legs(r.edge),
+                                      r.edge.held_m, r.edge.parked_m));
+                break;
+            case Step::Held:
+                ++c.held_epochs;
+                open.emplace(sat, r.edge);
+                break;
+            case Step::Recoupled: {
+                ++c.recouple;
+                // The returning column against its parked value, as solved this epoch:
+                // information only, in metres.
+                std::optional<double> move;
+                try {
+                    const double v = x_s(est.codeBiasColumn(sat, r.edge.parked));
+                    if (std::isfinite(v)) move = std::abs(v - r.edge.parked_m);
+                } catch (...) {}
+                if (move) c.max_recouple_move_m = std::max(c.max_recouple_move_m, *move);
+                // The test: the census row of the returning column's prior (its parked
+                // value), standardized by the row's dispersion and the family's empirical
+                // sigma0, reported above the census level (see the header).
+                const int cb = prires.enabled() ? prires.familyIndex("cb") : -1;
+                std::optional<double> t;
+                if (cb >= 0)
+                    for (const NetworkPriorResidual::Hit& h : prires.hits())
+                        if (h.family_idx == cb && h.station < 0 && h.sat == sat
+                            && h.signal == r.edge.parked)
+                            t = h.t;
+                const bool untested = cb < 0 || (!t && prires.hitsDropped() > 0);
+                const char* verdict = untested ? "untested" : t ? "moved" : "kept";
+                if (untested) {
+                    ++c.recouple_untested;
+                } else if (t) {
+                    ++c.recouple_moved;
+                    c.max_recouple_t = std::max(c.max_recouple_t, std::abs(*t));
+                }
+                emitEvent("CB_PIN", "single_leg", sat, "", t,
+                          cb >= 0 ? std::optional<double>(prires.reportSigma()) : std::nullopt,
+                          "recouple",
+                          fmt::format("{}; {} back against its parked value {:+.4f} m, level {} "
+                                      "(prior-residual census{}){}",
+                                      legs(r.edge), r.edge.parked, r.edge.parked_m, verdict,
+                                      t ? fmt::format(" t = {:.2f}", *t) : std::string(),
+                                      move ? fmt::format("; solved {:.4f} m away", *move)
+                                           : std::string("; no solved value")));
+                break;
+            }
+            case Step::Abandoned:
+                ++c.abandoned;
+                emitEvent("CB_PIN", "single_leg", sat, "", std::nullopt, std::nullopt, "abandon",
+                          legs(r.edge) + "; " + r.why);
+                break;
+        }
+    }
+    // An edge open at the last kept epoch whose satellite has no record now left the
+    // registered set entirely (both legs gone): the edge closes with the satellite.
+    for (const auto& [sat, e] : was_open) {
+        if (records.count(sat) != 0) continue;
+        ++c.abandoned;
+        emitEvent("CB_PIN", "single_leg", sat, "", std::nullopt, std::nullopt, "abandon",
+                  legs(e) + "; departed (no pinned signal registered)");
+    }
+    net::assignSat(entities, &net::SatelliteState::code_pin_leg_edge, open);
+}
+
 // ---- Run-end reports (generated by scripts/nom_td_cut.py) ----
 
 /**
@@ -2757,12 +2942,64 @@ static int networkCodeDatumFamilyRunEnd(const NetworkRunEndView& v) {
     return 0;
 }
 
+// The single-leg hold's run-end line (see the header).
+void networkCodePinLegRunEnd(const NetworkRunContext& ctx, const GnssConfig& config_,
+                             const std::shared_ptr<spdlog::logger>& log) {
+    if (!config_.networkCodePinSingleLegHold()) return;
+    std::string missing;
+    if (!config_.networkCodeDatumTimeLinked()) missing = "network.code_datum_time_linked";
+    if (!config_.estimateNetworkSatCodeBias())
+        missing += std::string(missing.empty() ? "" : " and ") + "network.estimate_sat_code_bias";
+    if (!missing.empty()) {
+        log->warn("Network (code pin single leg): network.code_pin_single_leg_hold ARMED but "
+                  "INERT without {}.  The hold refines the time-linked code datum, so the "
+                  "builder never read it (standing invariant #4).",
+                  missing);
+        return;
+    }
+    const NetworkSbasis::CodePinLegCounts& c = ctx.counters.cb_pin_leg;
+    if (c.open == 0) {
+        log->warn("Network (code pin single leg): ARMED but ZERO decoupling edges: no satellite "
+                  "pinned on a dual-frequency pair lost one leg of it on a kept epoch, so the "
+                  "hold never acted and this run is the unarmed posture (standing invariant #4).");
+        return;
+    }
+    log->info("Network (code pin single leg): over the kept epochs, {} decoupling edge(s) "
+              "(a pin pair lost one leg; the surviving column held at its pre-edge value in "
+              "place of the all-ones row at 0), {} held satellite-epoch(s), {} re-coupling "
+              "edge(s) (the parked leg back on the same pair; the time links targeted the "
+              "pair's pre-edge combinations), {} of them found moved against the parked value "
+              "by the prior-residual census (largest |t| {:.2f}) and {} untested (no census "
+              "verdict); largest move {:.4f} m; and {} edge(s) abandoned (the surviving leg or "
+              "the satellite left, or another pair returned; the unarmed path ran).  Events: "
+              "network_events.csv CB_PIN/single_leg.",
+              c.open, c.held_epochs, c.recouple, c.recouple_moved, c.max_recouple_t,
+              c.recouple_untested, c.max_recouple_move_m, c.abandoned);
+}
+
+/**
+ * @brief Run-end section: the single-leg hold of the code pin.
+ *
+ * The table's row for @c network.code_pin_single_leg_hold; the report is the overload above.
+ *
+ * Gate: none of its own: the overload above prints nothing unless
+ * `config_.networkCodePinSingleLegHold()`.
+ *
+ * @param v The run at its end (network/runend/RunEnd.hpp).
+ * @return 0 (this report does not set the exit code).
+ */
+static int networkCodePinLegRunEnd(const NetworkRunEndView& v) {
+    networkCodePinLegRunEnd(v.ctx, v.config, v.log);
+    return 0;
+}
+
 // Run-end report of this subsystem: its sections in print order (
 // declared in network/solve/Sbasis.hpp).
 int networkSbasisRunEnd(const NetworkRunEndView& v) {
     return networkRunEndSections(v, {
         networkSbasisDatumRunEnd,
-        networkCodeDatumFamilyRunEnd
+        networkCodeDatumFamilyRunEnd,
+        networkCodePinLegRunEnd
     });
 }
 

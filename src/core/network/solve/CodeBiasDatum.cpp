@@ -335,6 +335,9 @@ void networkCodeBiasDatum(NetworkRun& run, const NetworkEpoch& ep, EpochWorkspac
     const std::map<std::string, std::pair<std::string, std::string>> code_bias_ifpin_pair_ =
         net::satMap(ctx.entities.sats, &net::SatelliteState::code_bias_ifpin_pair);
     auto& this_epoch_cb_ifpin = code_datum_ev.this_epoch_cb_ifpin;
+    // The single-leg edges open at the last kept epoch (network.code_pin_single_leg_hold).
+    const std::map<std::string, NetworkSbasis::CodePinLegEdge> code_pin_leg_edge =
+        net::satMap(ctx.entities.sats, &net::SatelliteState::code_pin_leg_edge);
     auto& this_epoch_cb_reseed = code_datum_ev.this_epoch_cb_reseed;
     const std::set<std::string> code_bias_sat_seen_ =
         net::satSet(ctx.entities.sats, &net::SatelliteState::code_bias_seen);
@@ -387,6 +390,11 @@ void networkCodeBiasDatum(NetworkRun& run, const NetworkEpoch& ep, EpochWorkspac
         const NetworkSbasis::CodeBiasCarryMap cb_carry =
             config_.networkCodeFamilyBirthPriorSigmaM() > 0.0 ? networkCodeBiasCarryMap(ctx)
                                                               : NetworkSbasis::CodeBiasCarryMap{};
+        // The single-leg hold (network.code_pin_single_leg_hold) and the edges open at the
+        // last kept epoch; empty and off unless armed.
+        NetworkSbasis::CodePinLegHoldArm pin_leg_hold;
+        pin_leg_hold.armed = config_.networkCodePinSingleLegHold();
+        if (pin_leg_hold.armed) pin_leg_hold.open = code_pin_leg_edge;
         const auto cbd = NetworkSbasis::buildCodeBiasDatumRows(
             est, registered_code_keys, freqOf,
             cb_time_linked, emit_clock_disc,
@@ -404,12 +412,14 @@ void networkCodeBiasDatum(NetworkRun& run, const NetworkEpoch& ep, EpochWorkspac
             this_epoch_if_pin_sel, this_epoch_if_pin_real,
             this_epoch_cb_ifpin, this_epoch_cb_reseed,
             family_arms,
-            cb_carry);
+            cb_carry,
+            pin_leg_hold);
         // Hand this epoch's pair holds, pair changes, family-row realizations and
         // first-sighting prior rows and skips to the emit site, which counts them once per kept
         // epoch (networkCodeDatumFamilyKeptEpoch).  The containers are empty unless an arm is
         // effective, so the default path copies nothing.
         code_datum_ev.this_epoch_if_pin_holds = cbd.if_pin_pair_holds;
+        code_datum_ev.this_epoch_cb_pin_leg = cbd.pin_leg;
         code_datum_ev.this_epoch_if_pin_changes = cbd.if_pin_pair_changes;
         code_datum_ev.this_epoch_cb_family_rows = cbd.family_rows;
         code_datum_ev.this_epoch_cb_family_births = cbd.family_birth_priors;

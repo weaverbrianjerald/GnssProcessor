@@ -5202,6 +5202,29 @@ namespace GnssProcessor {
         bool networkCodeDatumTimeLinked() const { return network_code_datum_time_linked_; }
 
         /**
+         * @brief Hold the surviving column when a satellite's IF pin pair loses one leg
+         *        (@c network.code_pin_single_leg_hold).
+         *
+         * Under @ref networkCodeDatumTimeLinked, a satellite pinned on a dual-frequency pair
+         * at the last kept epoch whose registered code signals now span one frequency (one
+         * leg has fewer than two stations network-wide) falls back to the all-ones row at
+         * target 0, which pulls the surviving column, not estimable against the satellite
+         * clock while the pair has one leg, toward zero every epoch; at the return the pair
+         * re-anchors against the moved column and the satellite's ionosphere-free code keeps
+         * the offset.  Armed, the decoupling edge holds the surviving column at its value of
+         * the last kept epoch before the edge, and the re-coupling edge (the parked leg back
+         * on the same pair) targets the pair's pre-edge ionosphere-free and geometry-free
+         * combinations, with a "CB_PIN"/"single_leg" event at each edge and a run-end line
+         * (NetworkSbasis::CodePinLegEdge).  Inert and reported without the time link or
+         * @ref estimateNetworkSatCodeBias.  Default false = the all-ones row
+         * (byte-identical).
+         *
+         * @see NetworkSbasis::buildCodeBiasDatumRows, networkCodePinLegKeptEpoch
+         * @return True when the single-leg hold is armed.
+         */
+        bool networkCodePinSingleLegHold() const { return network_code_pin_single_leg_hold_; }
+
+        /**
          * @brief Continue the satellite clock across an ionosphere-free pin pair change,
          *        holding the old pair for the epoch an entering signal needs to become
          *        continuable (@c network.code_datum_pair_continuity).
@@ -10542,6 +10565,7 @@ namespace GnssProcessor {
         bool   network_sticky_pivot_{false};               ///< Keep the incumbent clock-pivot satellite per constellation while it remains registered (RTA-1; re-select only when it sets; a config-pinned satellite still wins); off = lexical first-registered auto-pick every epoch (byte-identical).
         bool   network_clock_datum_sum_to_zero_{false};    ///< Realize the per-constellation clock gauge by a sum-to-zero over that constellation's satellite clocks (folded like the code-bias gauge) instead of a hard pivot pin: anchor-free, no handover seam, no pivot-absent SPOF; ignores clock_datum_satellite. Off = legacy per-constellation pivot pin (byte-identical).
         bool   network_clock_datum_broadcast_anchored_{false}; ///< brdc_rts only: realize the clock gauge by per-satellite soft anchors to each satellite's own broadcast clock (the a-priori; σ = resolveNetworkAprioriClockAnchorSigmaM(), folded before the gate as the datum): no pivot, no handover seam, and unlike sum-to-zero no common-mode redistribution wander on rise/set, so the absolute clock-product frame holds still against the broadcast reference. Mutually exclusive with clock_datum_sum_to_zero; requires apriori_source=brdc_rts (fail-loud). Off = unchanged (byte-identical).
+        bool   network_code_pin_single_leg_hold_{false};   ///< Single-leg hold of the time-linked IF pin: a pin pair that loses one leg holds the surviving column at its pre-edge value (not the all-ones row at 0) and re-couples the returning leg against its parked value; CB_PIN events at both edges. Read only under code_datum_time_linked. Off = the all-ones row (byte-identical).
         bool   network_code_datum_time_linked_{false};     ///< Impose the code-bias datum (per-sat IF pin + per-(const,signal) sum-to-zero) as a time datum (W6 only): pin the change from the previous epoch's solved values (veteran-referenced sum-to-zero RHS Σ b̂_prev, IF-pin RHS a1·b̂_prev(σ1)+a2·b̂_prev(σ2)) instead of the level to zero. Same row count (rank unchanged), so no set-mean wander/relaxation and no conflict between gauge and carry weights; a no-veteran channel or first split re-seeds at 0 with a per-sat disc bump (value step ↔ signalled discontinuity). The prev-value map crosses a warm resume only with state_snapshot_datum_capture + resume_datum_restore; otherwise a warm resume re-seeds, signalled. Requires estimate_sat_code_bias (inert and warned otherwise). Off = legacy zero-target datum (byte-identical).
         bool   network_code_datum_pair_continuity_{false};  ///< Hold then continue: at an IF-pin pair change with previous solved values on both new signals, target the new pair's previous IF combination (the clock continues) instead of re-seeding at 0, with no re-seed mark and the re-selection discontinuity left undeclared when the last emitted pair is the pair continued from; where an entering signal has no previous value yet, keep the last kept pair (its own previous combination carries) for the one kept epoch until it has, unless the held pair has no previous values or, under broadcast_tgd, the group delay describes the selected pair and not the held one. Read only under code_datum_time_linked and where no row re-asserts an absolute target at a pair change (NetworkSbasis::pinPairContinuityBlocker); inert and warned otherwise. Fingerprinted when armed. Off = re-seed at every pair change (byte-identical).
         bool   network_code_datum_family_difference_{false}; ///< Replace a secondary-family (X) Galileo code channel's surviving sum-to-zero row by Sigma (d_X - d_P) over the satellites carrying both it and its same-band primary-family partner (time-linked like the sum-to-zero row; the sum-to-zero row kept with no partner, no common satellite, all spanned X columns pinned, or for the one epoch a family re-seed would replace a carried level). Read only under code_datum_time_linked (inert and warned otherwise). Fingerprinted when armed. Off = the sum-to-zero row (byte-identical).

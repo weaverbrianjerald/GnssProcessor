@@ -282,6 +282,7 @@ const std::vector<FieldDecl> kRunFields = {
     {"events.code_datum.this_epoch_if_pin_sel", "this_epoch_if_pin_sel", Persist::Epoch, "", "", nullptr, nullptr, nullptr},
     {"events.code_datum.this_epoch_if_pin_changes", "this_epoch_if_pin_changes", Persist::Epoch, "", "", nullptr, nullptr, nullptr},
     {"events.code_datum.this_epoch_if_pin_holds", "this_epoch_if_pin_holds", Persist::Epoch, "", "", nullptr, nullptr, nullptr},
+    {"events.code_datum.this_epoch_cb_pin_leg", "", Persist::Epoch, "", "network.code_pin_single_leg_hold", nullptr, nullptr, nullptr},
     {"events.code_datum.this_epoch_cb_family_rows", "this_epoch_cb_family_rows", Persist::Epoch, "", "", nullptr, nullptr, nullptr},
     {"events.code_datum.this_epoch_cb_family_births", "this_epoch_cb_family_births", Persist::Epoch, "", "", nullptr, nullptr, nullptr},
     {"events.code_datum.this_epoch_cb_family_birth_skips", "this_epoch_cb_family_birth_skips", Persist::Epoch, "", "", nullptr, nullptr, nullptr},
