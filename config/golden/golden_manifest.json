@@ -91,7 +91,8 @@
   "estimation.cycle_slip.lli_slip_mask 3, pinned on golden_sim_refound and golden_field_refound only; the frozen lineages",
   "and the BeiDou lineage keep the float undifferenced user.  User side only: the network products are byte-identical",
   "(runs_irm/_rap_irm_f129_6_cx and _rap_irm_s_6_cx, each equal to its regenerated file but for the run settings).",
-  "2026-11-20 (the author's arm rule and his words of 2026-11-19 22:10, the manager's instruction; NRF section 130): network.ring_fix.resume_response release pinned on golden_sim_refound and golden_field_refound only (a held link released in the epoch its own station and satellite resume with a shifted or unmeasured level). The frozen lineages and the BeiDou lineage keep it off. Solve-affecting from the first such resumption of a held link; not in the snapshot fingerprint."
+  "2026-11-20 (the author's arm rule and his words of 2026-11-19 22:10, the manager's instruction; NRF section 130): network.ring_fix.resume_response release pinned on golden_sim_refound and golden_field_refound only (a held link released in the epoch its own station and satellite resume with a shifted or unmeasured level). The frozen lineages and the BeiDou lineage keep it off. Solve-affecting from the first such resumption of a held link; not in the snapshot fingerprint.",
+  "2026-11-20 (the author's arm rule and his word of 2026-11-20, \"Arm now\"; day program package carried-pin-walk-response): network.code_pin_single_leg_hold true pinned on golden_sim_refound and golden_field_refound only (a pinned code pair that falls to one station on one signal keeps the surviving code bias at its pre-edge value, and that station's row of the parked signal takes the parked satellite bias as a known term). The frozen lineages and the BeiDou lineage keep it off. Solve-affecting from the first such opening; not in the snapshot fingerprint."
  ],
  "goldens": [
   {
@@ -396,6 +397,7 @@
     "network.ring_fix.unsettled_steps_unheld": true,
     "network.ring_fix.entry_revalidate": true,
     "network.ring_fix.resume_response": "release",
+    "network.code_pin_single_leg_hold": true,
     "network.ring_fix.nn_monitor": true,
     "network.disc_step_class_pairs": [
      "E:L1C/L5Q",
@@ -577,6 +579,7 @@
     "network.ring_fix.unsettled_steps_unheld": true,
     "network.ring_fix.entry_revalidate": true,
     "network.ring_fix.resume_response": "release",
+    "network.code_pin_single_leg_hold": true,
     "network.ring_fix.nn_monitor": true,
     "network.disc_step_class_pairs": [
      "E:L1C/L5Q",

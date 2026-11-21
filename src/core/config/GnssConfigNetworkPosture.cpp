@@ -1013,6 +1013,17 @@ namespace GnssProcessor {
               "a first-sighting family prior at 0.10 m (the family difference's veteran mean): "
               "truth-bed code error from hour 3 0.83 -> 0.05 m, field Galileo clock wire 0.022 "
               "m (level with GPS); hour-2 bars missed (convergence of births at ignition)" },
+            // --- The single-station code pin (armed 2026-11-20).  A satellite's pinned code pair
+            //     can fall to one station on one signal: without this hold the surviving code bias
+            //     walks, and that station's row of the parked signal is left without its bias.
+            //     Validated in the integer-fixing configuration only, so the row is silent elsewhere.
+            { estimate_network_sat_code_bias_ && network_code_datum_time_linked_ && nc.ring_fix.enable,
+              network_code_pin_single_leg_hold_,
+              Tier::SCOPED, false, "network.code_pin_single_leg_hold",
+              "a pinned code pair that falls to one station on one signal keeps the surviving code bias "
+              "at its pre-edge value and the parked signal's row keeps its bias (DOY 146 and 147: the "
+              "event satellite's code residual RMS 0.3 to 0.4 m against 1.4 to 2.0 m, code against phase "
+              "inside the other satellites' spread)" },
             { n_sta >= 3 && gps_gal_only,
               estimate_network_sat_code_bias_,
               Tier::SCOPED, true , "network.estimate_sat_code_bias",
