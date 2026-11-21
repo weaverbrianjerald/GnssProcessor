@@ -224,4 +224,19 @@ struct FixQualityCounters {
     long long endings[kArEndingCount]{};   ///< Resolver calls by @ref ArEnding.
 };
 
+/**
+ * @brief Run counters of the search over the not-yet-held candidates
+ *        (AmbiguityResolverConfig::search_unheld_only; all zero with the key off).
+ */
+struct UnheldSearchCounters {
+    long long searches{ 0 };          ///< WL-constrained searches that reached the held/free split.
+    long long all_held{ 0 };          ///< Of them, every candidate held: no search.
+    long long free_searched{ 0 };     ///< Searches of the free set.
+    long long fixed{ 0 };             ///< Accepted searches of the free set.
+    long long pairs_installed{ 0 };   ///< Free pairs written as held by the accepted searches.
+    long long held_conditioning{ 0 }; ///< Held candidates that conditioned the accepted searches.
+    long long bound_would_fire{ 0 };  ///< Searches of the free set the ratio upper bound would have refused.
+    long long degenerate{ 0 };        ///< Searches refused because the conditioned covariance was degenerate.
+};
+
 } // namespace GnssProcessor

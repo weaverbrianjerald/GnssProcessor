@@ -464,6 +464,27 @@ struct AmbiguityResolverConfig {
      * counted.
      */
     double hold_release_cyc{ 0.0 };
+
+    /**
+     * @brief Search only the candidates that are not yet held, conditioned on the held
+     *        ones (default false).
+     *
+     * Without it every WL-constrained search includes the pairs an earlier fix holds
+     * (their DD variance at hold scale, @ref isHeldDdVariance): the search re-confirms
+     * them, their floats sit on their integers, the best candidate's distance s1 shrinks
+     * and the ratio upper bound refuses the search, also when a new satellite is in it.
+     * With it the candidates split into the held set H (both primary signals at hold
+     * scale) and the free set F.  F empty: no search (ending all_held), nothing written.
+     * F not empty: the search, ratio test, success rate and per-pair cap run on F
+     * conditioned on the nearest integers z_H of the held floats,
+     * y_F|H = y_F - Q_FH Q_HH^-1 (y_H - z_H), Q_F|H = Q_FF - Q_FH Q_HH^-1 Q_HF, on the
+     * floored covariance.  The ratio upper bound applies only when Q_F|H is degenerate
+     * (its smallest eigenvalue at hold scale carried into the search's cycles); such a
+     * search ends degenerate.  An accepted search writes rows for the free pairs only:
+     * a held pair is never written again and never re-searched.  Counters and the
+     * run-end line "Unheld search"; debug lines UNHELD.
+     */
+    bool search_unheld_only{ false };
     /**
      * @brief Refloat the other signal of a satellite when one signal's arc
      *        restarts while the other carries on.  Off by default.
@@ -934,6 +955,21 @@ public:
     /// Run counters of the held census and of the endings (measure only).
     const FixQualityCounters& fixQualityCounters() const { return fix_quality_; }
 
+    /// Run counters of the search over the not-yet-held candidates (zero with the key off).
+    const UnheldSearchCounters& unheldSearchCounters() const { return unheld_counters_; }
+
+    /// True when the search over the not-yet-held candidates is in force (search_unheld_only).
+    bool unheldSearchActive() const { return config_.search_unheld_only; }
+
+    /**
+     * @brief The run-end line of the search over the not-yet-held candidates.
+     * @return One line with the searches, those with every candidate held, the free
+     *         searches, the fixes, the pairs installed, the held candidates that
+     *         conditioned them, the would-have-fired count of the ratio upper bound and
+     *         the degenerate refusals.
+     */
+    std::string unheldSearchRunEndLine() const;
+
     /**
      * @brief The run-end line of the resolver's endings and of the held census.
      * @return One line with the resolver calls by ending (non-zero ones, in the order of
@@ -997,6 +1033,8 @@ private:
     friend struct ArWlcStageTestAccess;
     /// Test seam for the held census and the endings (tests/test_ar_fix_quality.cpp).
     friend struct ArFixQualityTestAccess;
+    /// Test seam for the search over the not-yet-held candidates (tests/test_ar_unheld_search.cpp).
+    friend struct ArUnheldSearchTestAccess;
 
     // -----------------------------------------------------------------------
     // WL-constrained N_1 search functional
@@ -1360,6 +1398,7 @@ private:
 
     FixQualityCounters fix_quality_;           ///< Run counters of the census and the endings.
     std::set<std::string> held_sats_prev_;     ///< Held satellites at the previous census epoch.
+    UnheldSearchCounters unheld_counters_;     ///< Run counters of search_unheld_only.
 
     // -----------------------------------------------------------------------
     // Partial ambiguity resolution (subset selection)
@@ -1544,7 +1583,63 @@ private:
         Full,      ///< The full candidate set passed the acceptance battery and was written back.
         Partial,   ///< A subset found by partial fixing was written back.
         Reject,    ///< Partial fixing found no subset: the epoch stays float.
+        Unheld,    ///< search_unheld_only: the free candidates passed and were written back.
     };
+
+    /// Outcome of the search over the not-yet-held candidates (search_unheld_only).
+    struct UnheldSearch {
+        ArEnding ending{ ArEnding::None };   ///< AllHeld, SearchFailed, Degenerate, RatioLow, SuccessRate, PairFrac or Fixed.
+        std::vector<int> free;               ///< Candidate indices searched, in candidate order.
+        std::vector<int> held;               ///< Candidate indices held (they condition the search only).
+        Eigen::VectorXd y_cond;              ///< Conditioned float of each free candidate (N_1-aligned cycles).
+        Eigen::VectorXd afix;                ///< Integer N_1 of each free candidate.
+        double ratio{ 0.0 };                 ///< s2/s1 of the conditioned search (0 when none ran).
+        double p_s{ 0.0 };                   ///< Bootstrap success rate of the conditioned search.
+        double max_frac{ 0.0 };              ///< Worst |y_cond - afix| [cycles].
+        double min_eig{ 0.0 };               ///< Smallest eigenvalue of the conditioned covariance [cycles^2].
+        double hold_scale{ 0.0 };            ///< Hold scale in the search's cycles^2 (the degeneracy bar).
+        bool bound_would_fire{ false };      ///< The ratio upper bound would have refused the search.
+    };
+
+    /**
+     * @brief The search over the not-yet-held candidates, conditioned on the held ones
+     *        (stage S7 under AmbiguityResolverConfig::search_unheld_only).
+     *
+     * A candidate is held when both its primary signals' DD variances are at hold scale
+     * (@ref isHeldDdVariance).  With no free candidate the ending is all_held.  Otherwise
+     * the free floats and covariance are conditioned on the held candidates' nearest
+     * integers, y_F|H = y_F - Q_FH Q_HH^-1 (y_H - z_H) and
+     * Q_F|H = Q_FF - Q_FH Q_HH^-1 Q_HF, and MLAMBDA searches them.  The battery: the
+     * ratio threshold; the ratio upper bound only when Q_F|H is degenerate (smallest
+     * eigenvalue at most @ref kHeldVarianceFactor times the largest hold variance of a
+     * free row carried into the search's cycles through the row coefficients of @p T),
+     * which ends degenerate; the bootstrap success rate; the per-pair cap.  Writes
+     * nothing.
+     *
+     * @param cands  The narrow-lane candidates of the epoch (stage S4).
+     * @param pairs  The epoch's DD pairs.
+     * @param P      The state covariance (the held test).
+     * @param T      Map from the DD vector [m] to the search variables [cycles].
+     * @param y      The N_1-aligned floats of every candidate [cycles].
+     * @param Q      Their covariance, floored [cycles^2].
+     * @return The outcome, with the free candidates' integers when accepted.
+     */
+    UnheldSearch searchUnheld_(const std::vector<NlCandidate>& cands, const std::vector<DdPair>& pairs,
+                               const Eigen::MatrixXd& P, const Eigen::MatrixXd& T,
+                               const Eigen::VectorXd& y, const Eigen::MatrixXd& Q) const;
+
+    /**
+     * @brief Does the ratio upper bound refuse an accepted WL-constrained fix (rule W14,
+     *        applied by @ref resolveCore_ after the search)?
+     *
+     * True when the fix's ratio exceeds ratio_upper_bound, except under
+     * AmbiguityResolverConfig::search_unheld_only, whose search applied the bound itself
+     * only where its conditioned covariance is degenerate (there it is always false).
+     *
+     * @param accepted The accepted fix of the WL-constrained search.
+     * @return True when the fix is refused.
+     */
+    bool ratioBoundRejects_(const AmbiguityResolution& accepted) const;
 
     /**
      * @brief Stage S1: gather the epoch's DD pairs by satellite pair (rules W1, W2).

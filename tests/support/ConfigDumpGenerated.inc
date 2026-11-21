@@ -4,7 +4,7 @@
 // Included inside configMemberDump() (tests/support/ConfigDump.hpp), where `cfg` is the
 // loaded GnssConfig and `add(name, value)` appends one "name=value" line.
 //
-// 567 public const getters without arguments; 1371 dump statements.
+// 568 public const getters without arguments; 1372 dump statements.
 //
 // Vectors of structs (their size, then every element field by field):
 //   getBaselineConfig.rovers (std::vector<StationConfig>: size, then each element)
@@ -1364,6 +1364,7 @@ add("getArExtraSignals", cfg.getArExtraSignals());
 add("getArPrimaryBands", cfg.getArPrimaryBands());
 add("getArNlSigmaFloorCyc", cfg.getArNlSigmaFloorCyc());
 add("getArHoldReleaseCyc", cfg.getArHoldReleaseCyc());
+add("getArSearchUnheldOnly", cfg.getArSearchUnheldOnly());
 add("getArRefloatPartnerSignal", cfg.getArRefloatPartnerSignal());
 add("getArActiveSystems", cfg.getArActiveSystems());
 add("getLoggingConfig.enable_main_log", cfg.getLoggingConfig().enable_main_log);

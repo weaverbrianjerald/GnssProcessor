@@ -783,6 +783,7 @@ add_executable(gnss_tests
     tests/test_ar_stage_group_pairs.cpp
     tests/test_ar_stage_report_fix.cpp
     tests/test_ar_fix_quality.cpp
+    tests/test_ar_unheld_search.cpp
     tests/test_kf_pseudo_update_repeat.cpp
     tests/test_fix_and_hold.cpp
     tests/test_signal_math.cpp

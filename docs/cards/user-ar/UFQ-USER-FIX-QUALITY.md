@@ -215,3 +215,60 @@ The census (variance rule) counts 2,364 and 2,444 held epochs where the noise te
 Reading: the held share and the endings the noise test reconstructed offline are now in the trace and the run-end
 line. Every search that ends on the ratio upper bound carries held integers (0 without a held pair on each of the
 four beds: 1,751, 2,031, 2,608 and 1,842 such searches), and on every bed the bound is the most frequent ending.
+
+### 10. Item 2: the search over the not-yet-held ambiguities
+
+Key `estimation.ambiguity_resolution.search_unheld_only` (default false, ledger row UNVALIDATED). Engine
+`gnss_processor_ufq2b.exe` (sha256[:16] 611a50d899fda331). Debug unit run (the item 3 filter plus `ConfigDump*`):
+347 of 347 passed, 5 new cases (`tests/test_ar_unheld_search.cpp`).
+
+**A defect of the first build, repaired before grading.** The resolver applies the ratio upper bound a second time
+to every accepted WL-constrained fix (`resolveCore_`). Under the key that second check refused the searches the
+design exists for (a new pair whose float sits on its integer, ratio above 1e4, covariance not degenerate): 54, 42,
+62 and 110 accepted searches on w129, s129, utqi146 and chti143 (runs `_rap_ufq_<bed>_u1`, engine
+`gnss_processor_ufq2.exe`). The second check now reads the key (`ratioBoundRejects_`, unchanged with the key off,
+unit case `TheResolversOuterBoundLeavesTheUnheldSearchsVerdictStanding`). The graded runs are `_u0b` and `_u1b`.
+
+**Off identity.** Key off (`_u0b`) against the item-3 engine on the same configuration (`_dbg3`), resolver at debug
+level: IDENTICAL on all four beds (33 to 35 files, the three masks of the resolver split only).
+
+**Key off against key on** (24 h replays, resolver at debug level; grader `grade_ufq.py` with the float check's
+convergence repair of section 8 and, on the simulator, the datum constant pooled over every simulator run of the
+day and called wrong only against a clear mode).
+
+| Bed | Key | Rise to join, median / p90 (min) | Arcs never joined | Held pairs per epoch | Held share | 3D error h1 / h2-4 / h4-8 / h8-16 / h16-24 (mm) | Calibration | Wrong |
+|---|---|---|---|---|---|---|---|---|
+| w129 | off | 12.5 / 52.5 | 9 of 107 | 6.14 | 0.821 | 92 / 21 / 11 / 9 / 24 | 0.74 | 0 (float check) |
+| w129 | on | 12.2 / 52.5 | 9 of 107 | 6.19 | 0.822 | 92 / 21 / 11 / 9 / 24 | 0.73 | 0 |
+| s129 | off | 8.5 / 68.0 | 10 of 98 | 7.70 | 0.886 | 64 / 25 / 19 / 24 / 27 | 0.97 | 0 of 578 fix rows (truth) |
+| s129 | on | 8.2 / 65.5 | 10 of 98 | 7.72 | 0.888 | 64 / 25 / 19 / 24 / 27 | 0.97 | 0 of 78 |
+| utqi146 | off | 16.5 / 62.0 | 13 of 152 | 8.78 | 0.849 | 62 / 34 / 35 / 30 / 27 | (20.1) | 47 samples, E18-E06 |
+| utqi146 | on | 16.0 / 62.0 | 13 of 152 | 8.96 | 0.849 | 62 / 34 / 35 / 30 / 26 | (20.3) | 0 |
+| chti143 | off | 7.8 / 24.5 | 3 of 111 | 8.36 | 0.953 | 11 / 6 / 3 / 4 / 4 | 3.07 | 0 |
+| chti143 | on | 7.5 / 24.5 | 3 of 111 | 8.39 | 0.953 | 11 / 6 / 3 / 4 / 4 | 2.89 | 0 |
+
+First fix unchanged on every bed (100.5, 139.0, 148.0 and 66.5 min: before the first fix nothing is held, so the
+two searches are the same). The simulator's key-on fix rows are fewer because a held pair is no longer searched and
+printed again. UTQI and CHTI calibrations measure the standing error of the reference coordinate (section 2 of the
+noise test), not the covariance.
+
+Run-end counters, key on (searches; with every candidate held; of the free set; fixed; pairs installed; the bound
+would have refused; degenerate): w129 2,637; 1,750; 887; 71; 111; 12; 0. s129 2,610; 2,036; 574; 69; 78; 6; 0.
+utqi146 2,743; 1,923; 820; 114; 172; 10; 0. chti143 2,747; 2,620; 127; 94; 117; 15; 0.
+
+**Reading.** As the census of item 3 predicted (47 of the 1,751 bound endings at w129 had a candidate not yet held),
+the gain is small. Rise to join falls by 0.3 to 0.5 min on the four beds (one epoch is 0.5 min), held pairs per
+epoch rise by 0.02 to 0.18, the error by hour and the calibration do not move. What does change is structural:
+1,750 to 2,620 searches a day that only re-confirmed the held set are not run, a held pair is never written again
+(the re-application of a hold, defect P4 of card UFA, is gone under the key), and the bound no longer refuses a new
+pair for sitting on its integer (6 to 15 such searches a day, none degenerate). At UTQI the day's wrong E18-E06 hold
+(the code-only wide-lane admission of the user-holds package) is not installed: the free search refused E18's set on
+the per-pair cap (worst fraction 0.154 to 0.159 against 0.15) from 09:33 to 09:38, and E18 joined at 09:39 once its
+wide lane was decided by the phase (sigma 0.002 cycle against 0.11 at 09:33). That is one event decided by a
+marginal cap, not a rule.
+
+**Against the bar of section 4.** Met on its letter (the median falls on four beds, no bed has more wrong fixes,
+no hour band is worse), but the size is within one epoch. Recommended state: UNVALIDATED, not armed alone; it
+removes the re-confirmation searches and the hold re-application, which makes it a natural part of the hold-honesty
+work (decisions 1 and 2 of the user-holds package) rather than a fix-speed change. What releases a wrong pair is
+unchanged (section 4).

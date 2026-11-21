@@ -9956,6 +9956,17 @@ namespace GnssProcessor {
         double getArHoldReleaseCyc() const { return ar_hold_release_cyc_; }
 
         /**
+         * @brief Search only the not-yet-held candidates, conditioned on the held ones
+         *        (@c estimation.ambiguity_resolution.search_unheld_only).
+         *
+         * See AmbiguityResolverConfig::search_unheld_only.
+         *
+         * @return True when the WL-constrained search covers only the candidates that are
+         *         not yet held; false (default) searches every candidate.
+         */
+        bool getArSearchUnheldOnly() const { return ar_search_unheld_only_; }
+
+        /**
          * @brief Refloat the other signal of a satellite when one signal's arc
          *        restarts (@c estimation.ambiguity_resolution.refloat_partner_signal).
          *
@@ -10814,6 +10825,7 @@ namespace GnssProcessor {
         bool   ar_wl_branch_check_{ false }; ///< The wide-lane integer is decided by the code and the iono-free phase; false unless wl_from_float and nl_iono_free_row are on too. Default off (byte-identical).
         double ar_nl_sigma_floor_cyc_{ 0.0 }; ///< Error floor (NL cycles) added to the WL-constrained N_1 search covariance. 0 = off (byte-identical).
         double ar_hold_release_cyc_{ 0.0 };   ///< Release threshold (cycles) for a held pair the float contradicts. 0 = off.
+        bool   ar_search_unheld_only_{ false };   ///< Search only the not-yet-held candidates, conditioned on the held ones.
         bool   ar_refloat_partner_signal_{ false }; ///< Refloat all signals of a satellite when one signal's arc restarts alone.
         bool   ar_enable_partial_ar_;    ///< Partial AR: on full-set fix failure, retry on the largest gate-passing subset.
         std::vector<std::string> ar_active_systems_; ///< Constellations eligible for AR (empty = all).

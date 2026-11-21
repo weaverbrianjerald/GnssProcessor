@@ -309,6 +309,9 @@ void RealTimeEngine::logArFixQualitySummary(const char* tag) const {
     if (!ambiguity_resolver_) return;   // ar_mode 0: no resolver, no line
     log_manager_.getLogger("rt_engine")->info("[{}] {}", tag,
                                               ambiguity_resolver_->fixQualityRunEndLine());
+    if (ambiguity_resolver_->unheldSearchActive())   // silent unless armed
+        log_manager_.getLogger("rt_engine")->info("[{}] {}", tag,
+                                                  ambiguity_resolver_->unheldSearchRunEndLine());
 }
 
 /**
