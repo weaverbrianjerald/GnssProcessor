@@ -4,9 +4,9 @@
 
 - **id:** GRA-part2
 - **topic:** tooling
-- **status:** open
+- **status:** closed
 - **summary:** Sections 3 onwards of card GRA (2026-11-18), continued from [part 1](GRA_grader_audit_2026-11-18.md). Section 3: each bar's definition as pre-registered in card NRF beside what its script computes, with every difference named, and the bars with more than one implementation with their agreement on named runs. Section 4: the defects in priority order (silent changes of a recorded number first, then what breaks a rerun, then duplication and scripts named nowhere), each with its evidence, the reproduction that says whether a number of card NRF moves, and a test that would catch it. Section 5: a plan of ten steps that moves one owner per bar into the repository, each step reproducing named recorded numbers exactly; nothing of it is carried out here. Section 6: what the plan enables. Section 7: the reproductions made for this card. Results: plan steps G1, G2, G4 and G5 carried out on 2026-11-18 (`scripts/grading/`), legacy views byte-identical to the recorded outputs, corrected views equal to the second session's rebuilds. Results of 2026-11-19 (the day program's grader package): step G3 as a second implementation of the two-run audit with a count by distinct link (`two_run.py`), F5 for GPS by the chord's own signals (`slip_hold.py`), the integrity of held links (`held_integrity.py`: long one-signed holds, the windowed monitor replay, resumptions meeting a held link, holds against the simulator's truth) and the users' runs of wrong holds by receiver type (`users.py`), each gated on the recorded numbers; steps G6 to G10 wait for the author's go.
-- **source:** [part 1](GRA_grader_audit_2026-11-18.md); the scripts as of 2026-11-18 afternoon; [NRF part 14](../../refound/NRF_network_ring_fixing_2026-11-14_part14.md) to [part 16](../../refound/NRF_network_ring_fixing_2026-11-14_part16.md); the outputs in `D:\GnssProcessorSupport\gates\grader_audit_2026-11-18\`.
+- **source:** [part 1](GRA_grader_audit_2026-11-18.md); the scripts as of 2026-11-18 afternoon; [NRF part 14](../../../refound/NRF_network_ring_fixing_2026-11-14_part14.md) to [part 16](../../../refound/NRF_network_ring_fixing_2026-11-14_part16.md); the outputs in `D:\GnssProcessorSupport\gates\grader_audit_2026-11-18\`.
 
 **Outcome.** Every verdict of card NRF that was reproduced stands. Two recorded statements need an annotation in card NRF: the C4 GPS figures of section 118.1 are differences of rounded percentages (exact worst -2.34, -0.51, -0.44 points), and the users' held pair-epochs of sections 107.3 and 118.1 count only pairs the network also holds (the users' own gain is 1.3 to 1.7 times, not 2 to 3.2). Bar 7 drops every `lli_slip` flag; counted, they add 159 to 259 flags a day and no hold through one. On 2026-11-19 bar F4 by distinct link names the attribution's two links, F5 for GPS fails only on BOGT00COL G09 (DOY 143), and every recorded held-link count reproduces except one window-replay tie.
 
@@ -290,3 +290,7 @@ go (listed at the end of this entry).
 ### 2026-11-19: plan steps G6 to G10 (in part 3)
 
 This part reached the size bar; the results of plan steps G6 to G10, the frame classes of the simulator's wrong holds and the clean-checkout re-check are in [part 3](GRA_grader_audit_2026-11-18_part3.md).
+
+## 2026-11-20: closed
+
+Closed with its parent card GRA by the managing session's choice of 2026-11-20, under the author's deferral of the consolidation decisions ("I will defer to your choices on the consolidation 'decisions for the author'"); it follows the parent into the record.

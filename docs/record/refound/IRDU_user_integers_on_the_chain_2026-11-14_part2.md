@@ -4,7 +4,7 @@
 
 - **id:** IRDU-part2
 - **topic:** network-vehicle
-- **status:** open
+- **status:** superseded
 - **summary:** Section 11 of card IRDU (2026-11-14), moved here verbatim on 2026-11-14 because that file reached the 60 KB bar: the author's question why the receiver phase bias is estimated fresh each epoch although carried, measured on the simulator (A, the carried float at each re-host against truth; B, a bed with no re-seat; C, one injected re-seat; D, the receiver bias's random walk; E not run); then sections 11.3 and 11.4, the wet delay carried as the current reference configuration carries it, and section 11.2's re-seat cost read again against truth; section 11.5, the author's ruling of 2026-11-14 that the chain's simulator arms carry the wet delay ("Yes, adopt it"), the adopted arms with their `_nozwd` variants, the gate (four reproductions IDENTICAL) and the adopted arm's reference rows.
 - **source:** [IRDU](IRDU_user_integers_on_the_chain_2026-11-14.md) sections 2, 9 and 10 (the instrument, its re-registered bars and the trace this section follows); the header and Outcome of that card summarize this section
 
@@ -253,3 +253,7 @@ The script still refuses a key the loader does not read (`--knob network.not_a_k
 | one re-seat (C1 at 35 min, `_rap_irdu_zw_c1` against `_rap_irdu_zw_nr3`): moved pairs' D_WL against truth, event / control, at 0.5 to 10, 10 to 25, 25 to 45, 45 to 65 min | 0.177 / 0.114, 0.162 / 0.106, 0.150 / 0.108, 0.123 / 0.117 | |
 
 **Not covered with the set.** The microscope; IRD-4's event fixtures (`ird_t1`, `ird_tr`, `ird_rg`, `ird_rv6`, `ird_rv16`, `ird_l2v16`, the merge and split beds and their controls); r2; the golden sim bed; 6 h runs; the `_link` and `_floor` variants (they keep their dates' definitions); any observed-data arm; a warm resume (the set's in-block key and its rate are fingerprinted, so an arm with the set never resumes from a snapshot written without it).
+
+## 2026-11-20: superseded
+
+Superseded with its parent card IRDU by the managing session's choice of 2026-11-20, under the author's deferral of the consolidation decisions ("I will defer to your choices on the consolidation 'decisions for the author'"); it follows the parent into the record.

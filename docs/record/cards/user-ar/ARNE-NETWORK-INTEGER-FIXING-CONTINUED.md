@@ -4,7 +4,7 @@
 
 - **id:** ARNE
 - **topic:** user-ar
-- **status:** open
+- **status:** closed
 - **summary:** Continuation of card ARND (that file neared the 60 KB bar). Card ARND holds the starting point on observed data, the re-grades of the builder's simulator stages up to the six-hour bed, the reading of the network's own float links on observed data and the pre-registration of the observed-data stage (its section 10). This card takes the results from 2026-11-15 on: the simulated users on the fixing stream, the log-only pass on observed data (stage O1), the holding run (stage O2) and the steps toward more systems.
 - **dates:** 2026-11-15 (opened as the continuation)
 - **knobs / posture:** none new here. The builder's keys `network.ring_fix.*` (default off, ledger rows UNVALIDATED) live on its branch.
@@ -12,7 +12,7 @@
 - **run dirs:** `D:\GnssProcessorSupport\runs_nom\_rap_nrf*` (the builder's network runs) and `_rap_irdu_u_*` (its simulated users); tools and grade outputs under `D:\GnssProcessorSupport\presentation\agu26\fixing_control\`.
 - **source:** card [ARND](ARND-NETWORK-INTEGER-FIXING-ON-OBSERVED-DATA.md), in particular its sections 9 to 11; card NRF on the builder's branch `irdu/user-integers`
 
-**Outcome.** Open; continued in card [ARNF](ARNF-USERS-ON-THE-HELD-STREAM.md). On observed data (DOY 144)
+**Outcome.** Closed 2026-11-20; continued in card [ARNF](../../../cards/user-ar/ARNF-USERS-ON-THE-HELD-STREAM.md). On observed data (DOY 144)
 Galileo L1X/L5X links are held with no disagreement between two reference receivers and two starts, at twice
 the formal sigma and, once the bad-epoch response is on, at the formal sigma (78 to 88 % of the links held from
 the first hour). The response (the builder's stage E1) is vetted here: a reset that keeps the pre-slip value
@@ -767,3 +767,7 @@ part. Largest over the run, GPS, in mm, two reference receivers:
 3. Sent to the builder: the reach table reports the ionosphere-free part with the clock, the ionosphere-like part
    and the wide lane separately; a dated clarification is appended to its card; the slip-size sweep moves behind
    the comparison with the existing drop floor.
+
+## 2026-11-20: closed
+
+Closed by the managing session's choice of 2026-11-20, under the author's deferral of the consolidation decisions ("I will defer to your choices on the consolidation 'decisions for the author'"); applied by the docs consolidation on branch `docs/consolidate-2026-11-20`, in the batch of the user series where the card's own text shows nothing owed. The user-engine code of this line is on main since 2026-11-17. The line is continued in ARNF, which stays open.

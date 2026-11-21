@@ -4,9 +4,9 @@
 
 - **id:** IRDU-part6
 - **topic:** network-vehicle
-- **status:** open
+- **status:** superseded
 - **summary:** Section 14 of card IRDU, continued from [part 5](IRDU_user_integers_on_the_chain_2026-11-14_part5.md) (2026-11-14): approach 1 of section 13.5, approved by the author, built on the simulator and default off as card IRD's step IRD-7 (emission and declarations). The key `network.disc_phase_visible` declares a phase step of a satellite and signal when the change of its clock less phase bias, less the median of that change over the satellites of its constellation and signal, exceeds the discontinuity threshold; the rule travels in the stream header (`discpv=`) and a replay reproduces the counters. Runs A to E are pre-registered below before any graded run. Results are appended below. 14.2: off byte-identical in every data record and for the users (A); with the key the stream's values are unchanged, the declared steps equal the reference counts (536, 987, 1 960) and a replay reproduces them; no user-visible pair jump above twice the bar goes undeclared, where the legacy test left up to half a metre (D); the true slip is declared at its epoch (E). The users gain where every link is held (Q1: from 15 and 30 min the declarations-off arm's result, from the start with the 12.11 rule), but B's bar 1 fails (72 % of bins against 80 %: users from the start with the recipe), and on the plain chain arm and r3c users from 0 and 15 min end worse than with the legacy declarations in several bins of the second hour (C, D): not traced.
-- **source:** [part 5](IRDU_user_integers_on_the_chain_2026-11-14_part5.md) sections 13.2 (the declarations-off arm), 13.3 and 13.5 (the cause, approach 1); [IRD](IRD_integer_recovering_datum_2026-10-13.md) section 11, step IRD-7 and its frozen bars
+- **source:** [part 5](IRDU_user_integers_on_the_chain_2026-11-14_part5.md) sections 13.2 (the declarations-off arm), 13.3 and 13.5 (the cause, approach 1); [IRD](../../refound/IRD_integer_recovering_datum_2026-10-13.md) section 11, step IRD-7 and its frozen bars
 
 **Outcome.** The key declares a phase step only when what a user of between-satellite differences sees moves. On the stream side it meets every bar: off identical, the declared steps equal to the offline tool's counts, a replay reproducing them, no large user-visible jump undeclared, the true slip caught. Users that start while the network converges gain where every link is held, but where links float or re-seat they end worse than with the old declarations in parts of the second hour, cause not traced. It stays an instrument: default off, UNVALIDATED.
 
@@ -300,3 +300,7 @@ Executables: this section's build, copied as `gnss_processor_irdu_pb1.exe` (netw
 **Prediction.** S1 identical. S2 identical unless the stream withholds a phase-bias record while emitting the clock. S3 and O1 (c) equal to (b) except where a stage ahead of the rule reads the satellite's observations (the coverage logs and traces of the epoch's opening, which do not reach the position). A position difference would be traced to its stage.
 
 **Standing, 2026-11-14 (night).** Interrupted by the author's new priority (integer fixing in the network, ring by ring, on the simulator). The code, its 11 gate unit tests and the ledger row are committed with this section; the Debug build passes the 11 gate cases and the 91 tests of the neighbouring user-engine suites (102 in all), and the Release build links. None of the runs of 15.1 has run: S1 to S3, O1 and O2 wait, with their bars as written above. The edited stream of S3 exists (`_rap_irdu_gpb_r3c`); no user replay was made on it.
+
+## 2026-11-20: superseded
+
+Superseded with its parent card IRDU by the managing session's choice of 2026-11-20, under the author's deferral of the consolidation decisions ("I will defer to your choices on the consolidation 'decisions for the author'"); it follows the parent into the record.

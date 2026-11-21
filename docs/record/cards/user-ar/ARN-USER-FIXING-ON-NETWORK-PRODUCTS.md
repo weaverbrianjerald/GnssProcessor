@@ -4,15 +4,15 @@
 
 - **id:** ARN
 - **topic:** user-ar
-- **status:** open
+- **status:** closed
 - **summary:** Pre-registered 2026-11-13 as a measurement; results of 2026-11-13 and 14 below. On the network's golden products (GPS + Galileo, 23 to 27 May 2026) the user resolver of cards ARU and ARUB finds no integers, but the user's ambiguities are an integer plus one fraction per satellite and signal that all receivers share. With those fractions fitted from other receivers and removed from a COPY of the product file (offline, analysis tools only; a decision taken for the author's review, the ruling of 2026-11-09 stands), two receivers outside the fit hold 85 to 95 % of their pair-epochs on integers (a third 63 to 87 % GPS), two start times agree on all 755 distinct combinations over five days, and the double-difference integers equal those on CODE products in 96 of 97 combinations with nine receivers held out and in all 61 of the three-receiver sets. A resolver step for a third and further signal is built on the branch (default off) and fixes their integers on CODE products with fitted biases. Continued in card [ARNB](ARNB-USER-FIXING-ON-NETWORK-PRODUCTS-CONTINUED.md) (2026-11-14: a network that has run for most of a day).
 - **dates:** 2026-11-13 (pre-registered, sections 5 and 6), 2026-11-14 (sections 7 to 15)
 - **knobs / posture:** consumer replay (`network.closed_loop.replay_products_path`) with `consumer_undifferenced` false and the ambiguity-resolution block of the b12 control; new, default off: `estimation.ambiguity_resolution.extra_signals`, `estimation.ambiguity_resolution.primary_bands` (section 13, ledger rows UNVALIDATED).
 - **code:** no producer code. The extra-signal step of the user resolver on branch `ar/rx-sat-code-bias` (uncommitted; executable `gnss_processor_rscb4.exe`); every offset, stream copy and bias-file copy is made by analysis tools.
 - **run dirs:** `D:\GnssProcessorSupport\runs_nom\_rap_nw_<tag>_<doy>_<site>` (replay runs), corrected streams `_rap_nwg{c,w}[9]_n<doy>`, network runs `_rap_p26_n<doy>` (golden field posture, 56 receivers), every-frequency runs `_rap_aru_{tf,t3}*_est_144_<site>`; tools `D:\GnssProcessorSupport\presentation\agu26\fixing_control\tools\{nw_,tf_}*.py`.
-- **source:** cards [ARU](ARU-USER-FIXING-CONTROL.md), [ARUB](ARUB-USER-FIXING-CONTROL-CONTINUED.md), [RSCB](RSCB-USER-RECEIVER-SATELLITE-CODE-BIAS.md); the integer route of the network (cards IRD to IRDG, the rulings of 2026-11-09)
+- **source:** cards [ARU](ARU-USER-FIXING-CONTROL.md), [ARUB](ARUB-USER-FIXING-CONTROL-CONTINUED.md), [RSCB](../../../cards/user-ar/RSCB-USER-RECEIVER-SATELLITE-CODE-BIAS.md); the integer route of the network (cards IRD to IRDG, the rulings of 2026-11-09)
 
-**Outcome.** Open; measured, then demonstrated offline. The golden stream gives a user no integers, yet the fractions of its
+**Outcome.** Closed 2026-11-20; measured, then demonstrated offline. The golden stream gives a user no integers, yet the fractions of its
 ambiguities are common to all receivers, one per satellite and signal. Fitted from some 70 other receivers and removed from a
 copy of the product file, they leave receivers outside the fit with integers: 85 to 95 % of pair-epochs held at two receivers
 on five days (a third is weaker), no integer different between two start times, and the double-difference integers of CODE
@@ -706,3 +706,7 @@ The whole Debug suite on the tree of section 13: 4 411 tests in 580 suites, 4 37
 the same as on CODE products wherever the two can be compared. Every failure found is a start on signals the stream
 was not corrected for. The static position gains in about three receiver-hours of four; the kinematic position gains
 little and loses on DOY 147. This card is near the size bar: further results go to a continuation card.
+
+## 2026-11-20: closed
+
+Closed by the managing session's choice of 2026-11-20, under the author's deferral of the consolidation decisions ("I will defer to your choices on the consolidation 'decisions for the author'"); applied by the docs consolidation on branch `docs/consolidate-2026-11-20`, in the batch of the user series where the card's own text shows nothing owed. The user-engine code of this line is on main since 2026-11-17. The line is continued in ARNB.

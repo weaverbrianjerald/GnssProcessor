@@ -154,7 +154,7 @@ Replaced on 2026-11-07 by the `_rf0hv18` paragraph (the AVX2 build). Text as it 
 ## Posture paragraph of CLAUDE.md, 2026-11-07 to 2026-11-19
 
 Replaced on 2026-11-19 by the paragraph of the integer-fixing posture (card IRM,
-`docs/refound/IRM_integer_reference_main_2026-11-19.md`). It still describes the frozen lineages
+`docs/record/refound/IRM_integer_reference_main_2026-11-19.md`). It still describes the frozen lineages
 `config/golden/golden_{field,sim}_rf0hv18.json` and the BeiDou lineage. Text as it stood:
 
 Posture, one on two beds: GPS L1/L2 + Galileo E1/E5a, dual frequency; self-contained (satellite
@@ -165,3 +165,35 @@ update; Q3 clock anchor and clock step test; phase-bias hold; gross-LOS screen w
 bound; accumulated wind-up with restart refloat. Field golden only: ocean tide loading from the SIF
 registry and the GPS IIF / IIR noon-turn attitude (the sim fixture carries neither). No lanes, F3,
 SH constraint or seams.
+
+## Baseline paragraph of CLAUDE.md, 2026-11-19 to 2026-11-20
+
+Replaced on 2026-11-20 by the `_rap_n20` paragraph (the 6 h baseline of the reference files, card IRM). Text as it
+stood:
+
+**Baseline of the reference files: OWED (2026-11-19, card IRM).** The reference files took the integer-fixing posture on 2026-11-19 and have no 6 h baseline yet; it comes from the night 6 h set of card IRM (`D:/GnssProcessorSupport/gates/day_program_2026-11-19/adoption/NIGHT_health_set.md`). Until then compare an arm only against a same-exe control of the same reference file. The day check (2 h, exe `gnss_processor_irm.exe`, sha256[:16] f50e95d27304f1fb, runs `D:/GnssProcessorSupport/runs_irm/_rap_irm_{f129_2,s_2}` with the frozen control `_rap_irmc_f129_2`): every epoch emitted; sim truth audit 0 wrong of 95,810 held link-epochs; held share in hour 2 field 76 % Galileo and 72 % GPS, sim 92 % and 89 %; the built-in float user WTZZ00DEU 2.30 0.32 m by hour (control 0.058 0.013 m, `_rf0hv18` to the millimetre), SZZ000SIM 0.79 0.30 m. ⚠ The built-in user is float and the posture runs the phase-bias hold off, so it is metre-level in hour 1 (as on the five-day days): the reference's user numbers are not comparable with `_rf0hv18`, and the user's type is the author's decision.
+
+## Posture paragraph of CLAUDE.md, 2026-11-19 to 2026-11-20
+
+Amended on 2026-11-20: the built-in user's type (the fixing, differenced user since 2026-11-19 evening, card IRM) and
+the two keys armed on 2026-11-20 (cards NRF and CPW). Text as it stood:
+
+Posture, one on two beds, since 2026-11-19 (card IRM: the author's ruling that the integer-fixing
+configuration is the main reference): GPS L1/L2 + Galileo E1/E5a, dual frequency; self-contained
+(satellite GF code bias pinned at broadcast T_GD, no GIM, no Kaula prior); free per-LOS slant
+ionosphere (no SH); float vehicle (`ambiguity_vehicle: float_kf`) on the phase-leveling carry with
+gauge projection and the exact coupling update, with the eq34 chain as the phase datum (pair family,
+event rows, carry shift, receiver phase bias in the block) and network integer fixing ring by ring
+(`network.ring_fix.*`, card NRF: odds gate, certain order, held-first, pairs E:L1C/L5Q and G:L1C/L2W,
+settled flags, entry re-validation, near-null monitor); the single Galileo network
+(`network.phase_families`); the bad-epoch response (card BER); exact epoch time; GPS band 1 on L1C
+first; Q3 clock anchor and clock step test; gross-LOS screen with its 12 m cold bound; accumulated
+wind-up with restart refloat. Off with the chain: the held basis, the prioritized datum and the
+phase-bias hold (card IRDU stage B: the hold freezes the cold estimate). Field golden only: ocean
+tide loading from the SIF registry and the GPS IIF / IIR noon-turn attitude (the sim fixture carries
+neither). Sim golden only: the ring fix's truth audit (`network.ring_fix.truth_root`). The held-out
+consumer stays float and undifferenced. No lanes, F3, SH constraint or seams. The float-vehicle
+posture before that date (held basis, prioritized datum, phase-bias hold; the paragraph:
+`docs/onboarding/claude_md_history.md`) is kept generated and verified as the frozen lineages
+`golden_{field,sim}_rf0hv18`; the tools whose arms are defined on it read those (`scenario_matrix.py`,
+`prm_ab.py`, `clock_level/scb_arms.py`, `clock_level/sfr_calib.py`).

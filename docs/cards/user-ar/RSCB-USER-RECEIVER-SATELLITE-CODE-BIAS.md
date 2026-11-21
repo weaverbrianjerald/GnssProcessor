@@ -10,7 +10,7 @@
 - **knobs / posture:** `estimation.estimate_rx_sat_code_bias`, `estimation.rx_sat_code_bias_systems`, `estimation.rx_sat_code_bias_store`, `filter.initial_std.rx_sat_code_bias`, `filter.process_noise.rx_sat_code_bias_q`, `estimation.ambiguity_resolution.wl_branch_check`, `estimation.ambiguity_resolution.wl_branch_persist_s`; ledger rows UNVALIDATED.
 - **code:** branch `ar/rx-sat-code-bias` (from `ar/user-control` 165b047), uncommitted; executables `gnss_processor_rscb{1,2,3}.exe` of that tree.
 - **run dirs:** `D:\GnssProcessorSupport\runs_nom\_rap_ibw_flt24_est_{144,145}_{stpm,wtzz,bake}` (full-day float runs of section 1); tools `D:\GnssProcessorSupport\presentation\agu26\fixing_control\tools\{block_spread,sat_calib_loo,pair_encounter_test,make_run_flt24}.py`.
-- **source:** card [ARUB](ARUB-USER-FIXING-CONTROL-CONTINUED.md) sections 5 and 5.1; card [IBW](IBW-USER-INTER-BLOCK-WIDELANE-OFFSET.md) (the block term this card replaces, pending the author's ruling on that card)
+- **source:** card [ARUB](../../record/cards/user-ar/ARUB-USER-FIXING-CONTROL-CONTINUED.md) sections 5 and 5.1; card [IBW](IBW-USER-INTER-BLOCK-WIDELANE-OFFSET.md) (the block term this card replaces, pending the author's ruling on that card)
 
 **Outcome.** Open; built and checked on data, not graded against a bar. The float wide lane of the user filter carries a
 per-satellite offset that belongs to the receiver: at the Trimble and the Javad most of it persists across sky tracks and

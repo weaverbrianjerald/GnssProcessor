@@ -4,7 +4,7 @@
 
 - **id:** F4R
 - **topic:** network-vehicle
-- **status:** open
+- **status:** closed
 - **summary:** A read of bar F4 of NRF section 123 (the two-run check of DOY 146 from two references) under the full adopted configuration. The 15 failing Galileo links reduce to two real one-cycle disagreements, GUAM00GUM-E29 (run `ad` departs) and LMMF00MTQ-E06 (run `adr` departs); the other 13 are echoes of the check's tree walk. The attribution runs of 2026-11-19 show that exact epoch time is the only one of the differences that changes any output (the entry check, the engine build and the dropped pair change nothing), and that the mechanism is a hold one cycle off that leaves 12 to 18 mm on the link, below the 30 mm of the held-link monitor.
 - **source:** an extra package of the plan of 2026-11-18, "a read of the failing two-run check of the five-day read"; drafted at `03dfcbc` (branch `chain/audit`) from the run traces of `_rap_{ad,adr,n46c,n46cr}_n146` (runs built from `91f36cf`); commits read for the check: `7fb0737` for network code and main `5ddc422` for user-engine code; the attribution runs read by the managing session on 2026-11-19 (last section). Written by an agent team in the night of 2026-11-18 and checked against the code by an independent agent; the corrections are the last section.
 
@@ -329,3 +329,15 @@ network does after a release; a released hold that was right is decided again wi
   measured), then on observed data against the counts of section 4.
 - Decisions for the author: whether to pre-register that design; whether bar F4 is counted by distinct link; whether
   the population count of section 4 becomes a reported number of every day run.
+
+## 2026-11-20: the three decisions answered; closed
+
+Answered by the managing session's choice of 2026-11-20, under the author's deferral of the consolidation decisions ("I will defer to your choices on the consolidation 'decisions for the author'"); applied by the docs consolidation on branch `docs/consolidate-2026-11-20`:
+1. The monitor design was pre-registered and built: the windowed residual monitor of NRF section 132, trace only
+   (`network.ring_fix.window_monitor`, default off; commit 3681795).
+2. Bar F4 is counted by distinct link from now on, with the count of failing checks shown beside it. Earlier reads
+   stand as they were written.
+3. The population count of section 4 becomes a reported number of every day run: a tooling item owed by the run and
+   grader sessions (recorded in NRF part 20).
+
+Nothing else is owed by this card: closed.

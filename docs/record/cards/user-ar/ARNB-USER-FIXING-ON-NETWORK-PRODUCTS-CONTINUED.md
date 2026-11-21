@@ -4,15 +4,15 @@
 
 - **id:** ARNB
 - **topic:** user-ar
-- **status:** open
+- **status:** closed
 - **summary:** Card ARN's continuation (that file nears the 60 KB bar). One question, pre-registered in section 2 and measured on 2026-11-14 (DOY 144, three network runs, users from 18:00): a network that has run for 18 hours gives a user no integers without a correction of the stream. The raw fractions stay at the null, the satellites stay on 5 to 12 reference frames per signal, and pairs that share a frame lean toward integers only with the emission hold off, short of the expected 0.10 cycle. The warm-up buys steadier GPS offsets (about half the step between 30 min windows) and 3 to 8 points of GPS held share when the offsets are removed offline; a cold network supports that fixing about an hour and a half after its start, and a float user is served alike by both. Sections 10 to 12 (the same evening, DOY 144, three receivers): the lead of section 9 is not the explanation of HARB00ZAF's gap between the two streams. Satellites that a user takes with the stream's clock and without the bias records of its own signals change the float position on both streams (first hour after a cold start on the stream as built: 248 to 53 mm and 252 to 65 mm at two receivers with those satellite-epochs left out; a few millimetres either way in later hours). The stream's start-up jumps are the solution settling: the IF-TD slip detector raises no flag on the simulated runs and 14 in the first half hour on observed data against 2 243 jumps. The fallback test continues in card [ARNC](ARNC-USERS-OF-SATELLITES-WITHOUT-BIAS-RECORDS.md).
 - **dates:** 2026-11-14 (registered as the continuation; section 2 pre-registered before any graded run; sections 3 to 8 the results; section 9 two readings of the streams; section 10 pre-registered before its runs; sections 11 and 12 its results and a reading of the stream's jumps; section 13 the pointer to card ARNC; section 14 the jumps as a user sees them)
 - **knobs / posture:** none new. Network runs are copies of the period's golden field run with the run length (`processing.max_duration_s`, `network.max_duration_s`), the start (`network.start_offset_hours`) or the four emission-hold keys changed; user runs are the consumer replay of card ARN with `network.start_offset_hours` set.
 - **code:** none. Analysis tools only (`nw_warm.py`, `nw_root.py`, `nw_warm_grade.py`, `nw_warm_fix.py`, `nw_stream_diff.py`, `cmp_first_epoch.py` beside the tools of card ARN). Sections 9 to 12: `stream_common.py`, `uncorr_rows.py`, `rinex_drop.py`, `nw_xu.py`, `stream_crossings.py`, `stream_epoch_table.py`, `stream_jump_lift.py`, `events_by_time.py`.
 - **run dirs:** `D:\GnssProcessorSupport\runs_nom\_rap_nw{w24,h24,c18}_n144` (network runs), `_rap_nw_obs<label>_144_<site>` and `_rap_nw_{fxb,obs}x<variant>_144_<site>` (user runs), corrected copies `_rap_nwx<variant>{gc,gw}_n144`; tools `D:\GnssProcessorSupport\presentation\agu26\fixing_control\tools\`. Section 11: `_rap_nw_obs{h18,w18,h00,c00}x_144_{harb,dav1,scrz}`, filtered observation files `_rap_nw_xu_inputs\`.
-- **source:** card [ARN](ARN-USER-FIXING-ON-NETWORK-PRODUCTS.md); card [ARR](../../record/refound/ARR_integer_ambiguity_review_2026-11-07.md) sections 2.1, 6 and 7 (the conditions for integers at the user, the measurement of card SZE, the rulings of 2026-11-09)
+- **source:** card [ARN](ARN-USER-FIXING-ON-NETWORK-PRODUCTS.md); card [ARR](../../refound/ARR_integer_ambiguity_review_2026-11-07.md) sections 2.1, 6 and 7 (the conditions for integers at the user, the measurement of card SZE, the rulings of 2026-11-09)
 
-**Outcome.** Open; measured on one day. Warm-up alone does not remove the missing integers at a user of the
+**Outcome.** Closed 2026-11-20; measured on one day. Warm-up alone does not remove the missing integers at a user of the
 network's products. After 18 hours the raw fractions read at the null as on a cold network, and the satellites
 still sit on 5 to 12 reference frames per signal. With the emission hold off, pairs that share a frame lean toward
 integers (N_1 0.14 to 0.21 against 0.24 to 0.28 for the others) and miss the expected 0.10. The warm network's GPS
@@ -699,3 +699,7 @@ half as large and the users gain.
 
 **Not verified.** That reading (the test: the key's users re-levelled once when the stream has settled); card
 IRDU's own candidate (the clock that the user's code takes still moves undeclared); observed data.
+
+## 2026-11-20: closed
+
+Closed by the managing session's choice of 2026-11-20, under the author's deferral of the consolidation decisions ("I will defer to your choices on the consolidation 'decisions for the author'"); applied by the docs consolidation on branch `docs/consolidate-2026-11-20`, in the batch of the user series where the card's own text shows nothing owed. The user-engine code of this line is on main since 2026-11-17. The line is continued in ARNC.

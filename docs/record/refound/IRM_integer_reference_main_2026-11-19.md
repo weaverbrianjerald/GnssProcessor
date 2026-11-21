@@ -4,11 +4,11 @@
 
 - **id:** IRM
 - **topic:** config-ledger
-- **status:** open
+- **status:** closed
 - **summary:** The author's ruling of 2026-11-19 ("Yes, make it main") applied key by key through the ledger and the generator, in form B. The configuration of the five-day read (the eq34 chain as the phase datum, network integer fixing ring by ring, the single Galileo network, the bad-epoch response, exact epoch time, GPS band 1 on L1C first; the held-basis datum and the phase-bias hold off) becomes `golden_field_refound` and `golden_sim_refound`; the earlier posture stays generated as `golden_field_rf0hv18` and `golden_sim_rf0hv18`; the BeiDou lineage is re-based on the frozen field file and does not change. 66 ledger rows changed, two posture log rows, no loader default. Day health check 2026-11-19 (engine f50e95d27304f1fb): three smokes and three 2 h runs exit 0 with every epoch emitted; the sim truth audit 0 wrong of 95 810 held link-epochs; held share in hour 2 field 76 % and 72 %, sim 92 % and 89 % (Galileo, GPS); the built-in float user metre-level in hour 1 (field 2.30 m, control 0.058 m), below the stop bar. By the author's ruling of that evening ('Yes, fixing user') the built-in user of the two reference files is the fixing user of the adopted days (user keys only; network products byte-identical; 6 h observed data 2.31 0.09 0.01 0.03 0.04 0.01 m, simulator 0.68 0.10 0.03 0.03 0.02 0.02 m by hour). The baseline is owed until the night 6 h set has run.
 - **source:** the author's ruling of 2026-11-19 on the question "Make the integer-fixing setup the main reference configuration?"; the analyst's inventory `D:/GnssProcessorSupport/gates/day_program_2026-11-19/adoption/ADOPTION_inventory.md` (checked row by row against the ledger, the generator and the record); the five-day read `D:/GnssProcessorSupport/gates/nrf_reads_2026-11-18/NRF_five_days.md`; the configuration `D:/GnssProcessorSupport/runs_nom/_rap_ad_n147/arm.json`; branch `adopt/integer-reference-2026-11-19`, cut from `int/2026-11-19` at `cf983dc`.
 
-**Outcome.** Pre-registered 2026-11-19. The primary reference files take the integer-fixing configuration of the five-day read, key for key apart from run settings and two measure-only traces (the near-null monitor and the live record); the earlier posture is kept generated, equal in content to the files of that morning. Every new value comes through a ledger row with a three-part note and the manifest; no loader default moves, so no snapshot fingerprint moves, and the new files are fresh convergence only. The configuration had never run on these two beds; the day health check passed its bars (every epoch emitted, no wrong hold on the simulator), with the built-in float user metre-level in hour 1 as the item to look at; that evening the built-in user became the fixing user, by the author's ruling.
+**Outcome.** Pre-registered 2026-11-19. The primary reference files take the integer-fixing configuration of the five-day read, key for key apart from run settings and two measure-only traces (the near-null monitor and the live record); the earlier posture is kept generated, equal in content to the files of that morning. Every new value comes through a ledger row with a three-part note and the manifest; no loader default moves, so no snapshot fingerprint moves, and the new files are fresh convergence only. The configuration had never run on these two beds; the day health check passed its bars (every epoch emitted, no wrong hold on the simulator), with the built-in float user metre-level in hour 1 as the item to look at; that evening the built-in user became the fixing user, by the author's ruling. Closed 2026-11-20: two observations continue under card NRF (owed in its part 20): the DOY 130 Galileo held share of 69.9 to 79.9 % from hour 3, and the slower first two hours when the network and the user start cold together.
 
 ## 1. What changes
 
@@ -191,3 +191,35 @@ search on every epoch (no fix in 9 epochs, as expected with `min_epochs` 10). `m
 data, hour 1: 2.31 m against the frozen control's 0.06 m); no truth audit of the user's own holds exists on the
 simulator; wrong user holds were seen at receivers outside the network on the adopted days; one day per bed so far.
 The baseline paragraph of `CLAUDE.md` follows the night's remaining health runs.
+
+### 2026-11-20: the 6 h baseline of the reference files
+
+Runs `D:/GnssProcessorSupport/runs_irm/_rap_n20_{f129,f130,f132,s,b}_6` (6 h; the reference files of 8109a64 with the
+fixing built-in user; exe `gnss_processor_int1120.exe`, sha256[:16] de17cb83802a20c2) against same-exe frozen controls
+of `golden_{field,sim}_rf0hv18` (`_rap_n20c_*`); census users `_rap_n20_<doy>_<site>`; grades
+`D:/GnssProcessorSupport/runs_nom/_irdu_grades/reads_2026-11-20/n20_raw.txt` (read again for this section). Every run
+exit 0 with 720 epochs emitted.
+
+| run | built-in user 3D median by hour 1 to 6 (m) | frozen control |
+| --- | --- | --- |
+| field DOY 129 (WTZZ00DEU) | 2.31 0.09 0.01 0.03 0.04 0.01 | 0.06 0.01 0.02 0.01 0.02 0.01 |
+| field DOY 130 | 2.06 0.11 0.02 0.04 0.04 0.04 | 0.09 0.02 0.03 0.04 0.06 0.05 |
+| field DOY 132 | 0.60 0.05 0.03 0.03 0.02 0.01 | 0.07 0.02 0.02 0.02 0.02 0.01 |
+| sim (SZZ000SIM) | 0.68 0.10 0.03 0.03 0.02 0.02 | 0.10 0.03 0.04 0.02 0.02 0.01 |
+| BeiDou lineage | 0.03 0.02 0.02 0.02 0.02 0.02 | (frozen base) |
+
+Simulator truth audit: 406,237 held link-epochs right, 0 wrong, 0 wrong decisions. Held share from hour 3: DOY 129
+GPS 80.7 to 84.0 %, Galileo 81.3 to 86.7 %; DOY 130 GPS 80.2 to 81.3 %, Galileo 69.9 to 79.9 %; DOY 132 GPS 76.3 to
+79.9 %, Galileo 73.6 to 82.6 %; simulator 89 to 92 %. Census of 16 sites, hours 2 to 6 paired against the frozen
+control: +1.4 cm (DOY 129; 1 site worse by more than 5 cm), +1.9 cm (DOY 130; 3 sites), +1.4 cm (DOY 132; 2 sites);
+hour 1 +0.50 to +0.61 m. Reading: from hour 3 the reference equals the frozen one at the built-in user; hours 1 and 2
+are slower (network and user start cold together). DOY 132's hour 2 (1.35 m with the earlier float built-in user)
+reads 0.05 m. The two keys armed on 2026-11-20 (`network.ring_fix.resume_response`, `network.code_pin_single_leg_hold`)
+leave these numbers unchanged where no event occurs: `runs_irm/_rap_la4_{f129,s}_6` and `_rap_cp1_{f129,s}_6` are
+identical in products and every trace to `_rap_n20_{f129,s}_6`. This is the baseline paragraph of `CLAUDE.md` from
+2026-11-20 (branch `docs/consolidate-2026-11-20`, for the author's review). Still owed: the DOY 130 Galileo held share,
+the warm-network user start.
+
+## 2026-11-20: closed
+
+Closed by the managing session's choice of 2026-11-20, under the author's deferral of the consolidation decisions ("I will defer to your choices on the consolidation 'decisions for the author'"); applied by the docs consolidation on branch `docs/consolidate-2026-11-20`. The ruling is applied, merged and pushed (main 019ed34), the built-in user's type is decided (the fixing user) and the 6 h baseline is recorded above and in `CLAUDE.md`. The two leftover observations named in the Outcome are carried as an owed item in [NRF part 20](../../refound/NRF_network_ring_fixing_2026-11-14_part20.md).

@@ -5,7 +5,7 @@
 - **id:** DRF
 - **topic:** build-infra
 - **status:** open
-- **summary:** Built and rehearsed on branch `docs/record-folder` (not merged): `scripts/docs_record.py` moves every closed or superseded card, the frozen monoliths, the attic, the decisions, the topic pages and every uncited document into `docs/record/` (old layout mirrored, links re-pointed, nothing rewritten), and leaves 145 of 602 docs files in the working set (this card included). Every docs check passes on the rehearsal. Landing waits for the in-flight branches and the author's decisions (section 7).
+- **summary:** LANDED on main 2026-11-10 (b6bbea7; `scripts/docs_record.py` in use since). Built and rehearsed on branch `docs/record-folder` (merged): `scripts/docs_record.py` moves every closed or superseded card, the frozen monoliths, the attic, the decisions, the topic pages and every uncited document into `docs/record/` (old layout mirrored, links re-pointed, nothing rewritten), and leaves 145 of 602 docs files in the working set (this card included). Every docs check passes on the rehearsal. Landing waits for the in-flight branches and the author's decisions (section 7).
 - **source:** the author, 2026-11-09: "I also want to completely clean up our 'docs', 'cards', etc. I mean, we should eliminate clutter in this project and only keep the active or known-issue parts."; answers that day: closed material goes to "One record folder", the reach is "Docs plus branches"
 - **knobs / posture:** none; no code path, key or golden changes (C++ edits are path strings in comments and log text)
 - **dates in the text:** 2026-11-09
@@ -86,3 +86,11 @@ After the in-flight branches have merged (they bring new and newly closed cards 
 4. **`OPEN_ITEMS_CODE_DEFECTS.md` is at the bar:** 61,418 bytes on a CRLF checkout after the re-pointed links (+77), 22 bytes under 61,440. The next entry fails rule 4; moving its resolved entries (item 3) or splitting it is owed.
 5. **`docs/topics/` and `docs/report/`:** as in section 2. Alternative: keep the topic pages' "Conventions and invariants" blocks in the onboarding pages. `docs/report/main.bbl-SAVE-ERROR` (2026-06-28) is a LaTeX build leftover, a deletion candidate.
 6. **Not re-pointed:** `config/` (224 configurations name a `docs/` path, mostly in `_comment` fields; out of scope, resolvable through the path map); the goldens' provenance line names the ledger's previous hash until the next regeneration; the agent memory files outside the repository; `scripts/gen_docs_index.py` still writes the superseded generated index as `README.md` at the top of `docs/`.
+
+## 2026-11-20: status check
+
+Checked by the docs consolidation of 2026-11-20 (git, against main 019ed34): the tool commit 1aeb5b1 and the landing
+are in main since 2026-11-10 (b6bbea7), the rule text is in `CLAUDE.md` and `docs/INDEX.md`, and `close`, `resolve`
+and `verify` are in use. Decision 1 of section 7 (the rule text) is therefore taken. No record found of the author's
+decisions on items 2 to 6 (generated card lists, register pruning, the size of `OPEN_ITEMS_CODE_DEFECTS.md`, the
+topic and report pages, the configurations that name `docs/` paths): the card stays open for them.

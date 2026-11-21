@@ -4,7 +4,7 @@
 
 - **id:** ARNC
 - **topic:** user-ar
-- **status:** open
+- **status:** closed
 - **summary:** Continuation of card ARNB (that file passed the 60 KB bar). On the network's stream one Galileo satellite-epoch in eight offers a receiver of the L1C/L5Q type no complete pair of bias records, although the stream carries the satellite on L1X/L5X. A user takes such a satellite with the clock alone, and on the stream with the emission hold that is not a phase correction: the clock record wanders by 83 mm (median, 30 min windows) in the network's first hour and the phase-bias record that cancels it is missing. Two remedies were measured offline on DOY 144 at three receivers: the satellite left out while it lacks the record (card ARNB section 11) and a fallback to the other signal pair's records (this card). Either brings a user who starts with a cold network to a decimetre in 13 to 29 min in place of 47 to 52 at two of the three receivers; the two agree within 2 mm in 23 of 30 receiver-hours; the code bias alone (the existing opt-in key, inert on the replay path) changes nothing. Of the pre-registered bars F-2 passed and F-1 and F-3 failed, both set tighter than one day at three receivers resolves.
 - **dates:** 2026-11-14 (section 2 pre-registered before its runs, written as section 13 of card ARNB; section 3 the results)
 - **knobs / posture:** none new. `processing.ssr_bias_band_fallback` (existing, default off) was read and found inert on the replay path; it is not changed.
@@ -12,7 +12,7 @@
 - **run dirs:** `D:\GnssProcessorSupport\runs_nom\_rap_nw_obs{h18,w18,h00,c00}{f,k}_144_{harb,dav1,scrz}` (user replays), stream copies `_rap_{nww24,nwh24,p26}{f,k}_n144`, the key smoke `_rap_nw_obsc00ks_144_harb`; tools `D:\GnssProcessorSupport\presentation\agu26\fixing_control\tools\`.
 - **source:** card [ARNB](ARNB-USER-FIXING-ON-NETWORK-PRODUCTS-CONTINUED.md) sections 9 to 12 (the lead, its test by removal, the reading of the stream's jumps)
 
-**Outcome.** Open; measured on one day at three receivers, offline. A satellite that a user takes with the stream's
+**Outcome.** Closed 2026-11-20; measured on one day at three receivers, offline. A satellite that a user takes with the stream's
 clock and without its phase-bias record harms a user who starts with a cold network: the hold splits one phase
 correction over the two records. Leaving the satellite out or falling back to the other signal pair's records
 removes the harm alike (a decimetre in 13 to 29 min in place of 47 to 52). The code bias alone does not. Nothing is
@@ -225,3 +225,7 @@ trace is identical byte for byte to the earlier run over the 11 epochs of a smok
 
 **Limits.** One day, three receivers, static float positions, offline on copies of product files. No fixing run,
 no network code, no key. The fallback records of the copies carry the other pair's integer flag unchanged.
+
+## 2026-11-20: closed
+
+Closed by the managing session's choice of 2026-11-20, under the author's deferral of the consolidation decisions ("I will defer to your choices on the consolidation 'decisions for the author'"); applied by the docs consolidation on branch `docs/consolidate-2026-11-20`, in the batch of the user series where the card's own text shows nothing owed. The user-engine code of this line is on main since 2026-11-17.

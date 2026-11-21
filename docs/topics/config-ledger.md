@@ -33,7 +33,7 @@ each deleted key a configuration sets, once, from a declared table beside it (`i
 card [RKT](../record/refound/RKT_retired_key_tombstone_2026-10-30.md)).
 
 **Current posture (2026-11-19).** The integer-fixing configuration is the main reference (the author's ruling of
-2026-11-19, card [IRM](../refound/IRM_integer_reference_main_2026-11-19.md), ledger history row A18). The reference
+2026-11-19, card [IRM](../record/refound/IRM_integer_reference_main_2026-11-19.md), ledger history row A18). The reference
 files `config/golden/golden_field_refound.json` and `golden_sim_refound.json` carry the eq34 chain as the phase datum,
 network integer fixing ring by ring with its scoped settings, the single Galileo network, the bad-epoch response,
 exact epoch time and GPS band 1 on L1C first; the held-basis datum and the phase-bias hold are off there. The earlier

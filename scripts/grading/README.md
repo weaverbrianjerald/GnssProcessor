@@ -2,7 +2,7 @@
 
 The bars that card NRF's decisions rest on, one owner per bar, moved here from the grading folder
 `D:\GnssProcessorSupport\runs_nom\_irdu_grades\scripts_s20` under card GRA
-([docs/cards/tooling/GRA_grader_audit_2026-11-18.md](../../docs/cards/tooling/GRA_grader_audit_2026-11-18.md),
+([docs/cards/tooling/GRA_grader_audit_2026-11-18.md](../../docs/record/cards/tooling/GRA_grader_audit_2026-11-18.md),
 section 5). The older scripts stay where they are; a bar listed here has a new owner that reproduces the recorded
 outputs.
 

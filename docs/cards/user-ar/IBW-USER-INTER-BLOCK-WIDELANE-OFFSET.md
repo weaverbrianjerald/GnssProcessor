@@ -4,13 +4,13 @@
 
 - **id:** IBW
 - **topic:** user-ar
-- **status:** open
+- **status:** parked
 - **summary:** Draft for the author's decision (2026-11-13); no code, no runs. Card ARUB section 5 found a receiver-dependent wide-lane offset of the GPS III satellites against the older GPS blocks (STPM00SPM, Trimble Alloy, -0.12 to -0.22 cycle; WTZZ00DEU, Javad TRE_3, +0.04 to +0.15; BAKE00CAN, Septentrio PolaRx5S, none) that sits in the code observations, that the float wide lane and the B4 witness share, and that narrows the rounding margin of GPS III wide lanes. A code-bias state in the filter cannot remove it: its geometry-free part is collinear with the free slant ionosphere of each satellite. The proposed term is a block-common wide-lane fraction, estimated modulo one cycle from a filter-independent wide lane of several GPS III satellites and removed before the admission test and the rounding of the WL-constrained search. Default off, one key; bars proposed in section 7, not frozen.
 - **dates:** 2026-11-13 (drafted)
 - **knobs / posture:** proposed `estimation.ambiguity_resolution.block_wl_offset` (bool, default false); its ledger row (UNVALIDATED) lands with the code.
 - **code:** none yet.
 - **run dirs:** none yet.
-- **source:** card [ARUB](ARUB-USER-FIXING-CONTROL-CONTINUED.md) sections 5 and 5.1; card [ARU](ARU-USER-FIXING-CONTROL.md) section 8.5 (B4 and its witness)
+- **source:** card [ARUB](../../record/cards/user-ar/ARUB-USER-FIXING-CONTROL-CONTINUED.md) sections 5 and 5.1; card [ARU](../../record/cards/user-ar/ARU-USER-FIXING-CONTROL.md) section 8.5 (B4 and its witness)
 
 **Outcome.** Draft for the author. The GPS III satellites carry a receiver-dependent wide-lane offset of up to 0.22 cycle at
 two of the three test receivers, a code effect the user model cannot absorb: the satellite code biases come from the OSB
@@ -141,3 +141,7 @@ to about +0.10 m of geometry-free code bias.
 - **I4 no harm.** B1 and B2 exactly as in card ARU 8.5 on the 15 receiver-days; the largest ionosphere-free misfit of the
   held integers per receiver-day no larger than in b12.
 - **Reported.** Time to first fix, fix counts, B4 as frozen.
+
+## 2026-11-20: parked
+
+Parked by the managing session's choice of 2026-11-20, under the author's deferral of the consolidation decisions ("I will defer to your choices on the consolidation 'decisions for the author'"); applied by the docs consolidation on branch `docs/consolidate-2026-11-20`: a draft that never received the author's approval. Nothing was built or run.
