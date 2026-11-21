@@ -2135,6 +2135,12 @@ namespace GnssProcessor {
                       ar_hold_release_cyc_);
             ar_hold_release_cyc_ = 0.0;
         }
+        ar_search_unheld_only_ = jval<bool>(json, "estimation.ambiguity_resolution.search_unheld_only",
+                                            "ar_search_unheld_only", false);
+        if (ar_search_unheld_only_) {
+            log->info("AR: the WL-constrained search covers only the candidates not yet held, "
+                      "conditioned on the held ones (search_unheld_only)");
+        }
         if (ar_refloat_partner_signal_) {
             log->info("AR: a satellite whose one signal restarts an arc alone has all its "
                       "signals refloated (refloat_partner_signal)");

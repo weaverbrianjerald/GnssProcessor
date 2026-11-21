@@ -724,6 +724,7 @@ int Application::runConsumerReplay() {
                   pve.returns_fresh, pve.returns_stale, pve.forced, pve.no_clock);
     }
     consumer.logArObserveSummary("end of replay");   // observe-mode integer search totals, silent unless armed
+    consumer.logArFixQualitySummary("end of replay");   // resolver endings and held integers, silent without AR
     consumer.logReinflateSummary("end of replay");   // re-inflation summary
 
     // Hourly level bands, the summary this series supports (a single

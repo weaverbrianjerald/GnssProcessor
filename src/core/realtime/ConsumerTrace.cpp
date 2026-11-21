@@ -26,8 +26,12 @@ std::string consumerArGateLabel(bool ar_ran, const AmbiguityResolution& ar) {
         case 3:  return fmt::format("sigma_gate({:.3f}m)", ar.gate_sigma_3d);
         case 4:  return "no_candidates";
         case 5:  return "wl_guard";
-        default: return ar.success ? (ar.wl_only_fix ? "wl_only" : "fixed")
-                                   : (ar.ratio > 0.0 ? "ratio_battery" : "mlambda_fail");
+        default:
+            if (ar.success) return ar.wl_only_fix ? "wl_only" : "fixed";
+            // The WL-constrained search names its own failure; other paths keep the
+            // two generic words.
+            if (arEndingIsSearchVerdict(ar.ending)) return arEndingName(ar.ending);
+            return ar.ratio > 0.0 ? "ratio_battery" : "mlambda_fail";
     }
 }
 
@@ -39,6 +43,11 @@ void fillConsumerTraceAr(ConsumerTraceRow& row, bool ar_ran, const AmbiguityReso
     row.ratio          = ar_ran ? ar.ratio : 0.0;
     row.ar_gate        = consumerArGateLabel(ar_ran, ar);
     row.p_succ         = ar_ran ? ar.p_succ : 0.0;
+    row.search_ratio   = ar_ran ? ar.search_ratio : 0.0;
+    row.n_pairs        = ar_ran ? ar.n_sat_pairs : 0;
+    row.n_held         = ar_ran ? ar.n_held_pairs : 0;
+    row.held_joined    = ar_ran ? ar.held_joined : 0;
+    row.held_left      = ar_ran ? ar.held_left : 0;
 }
 
 Eigen::Vector3d enuSigmaFromEcefCovariance(const Eigen::Matrix3d& p_ecef,
@@ -59,12 +68,14 @@ std::string formatConsumerTraceRow(const ConsumerTraceRow& r) {
         "{},{:.3f},{},{},{},{},{},{:.2f},"        // week,tow,n_sats,ar_ran,ar_success,num_fixed,num_candidates,ratio
         "{:.4f},{:.4f},{:.4f},{:.4f},"            // pos_err_3d_m,east_m,north_m,up_m
         "{},{:.6f},"                              // ar_gate,p_succ
-        "{:.4f},{:.4f},{:.4f},{:.4f}\n",          // sig_e_m,sig_n_m,sig_u_m,sig_3d_m
+        "{:.4f},{:.4f},{:.4f},{:.4f},"            // sig_e_m,sig_n_m,sig_u_m,sig_3d_m
+        "{:.2f},{},{},{},{}\n",                   // search_ratio,n_pairs,n_held,held_joined,held_left
         r.week, r.tow, r.n_sats, r.ar_ran ? 1 : 0, r.ar_success ? 1 : 0,
         r.num_fixed, r.num_candidates, r.ratio,
         r.err_3d_m, r.err_enu_m.x(), r.err_enu_m.y(), r.err_enu_m.z(),
         r.ar_gate, r.p_succ,
-        r.sig_enu_m.x(), r.sig_enu_m.y(), r.sig_enu_m.z(), r.sig_3d_m);
+        r.sig_enu_m.x(), r.sig_enu_m.y(), r.sig_enu_m.z(), r.sig_3d_m,
+        r.search_ratio, r.n_pairs, r.n_held, r.held_joined, r.held_left);
 }
 
 } // namespace GnssProcessor

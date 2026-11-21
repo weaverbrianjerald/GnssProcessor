@@ -37,6 +37,7 @@ AmbiguityResolverConfig makeAmbiguityResolverConfig(const GnssConfig& config) {
     ar_config.primary_bands         = config.getArPrimaryBands();
     ar_config.nl_sigma_floor_cyc    =config.getArNlSigmaFloorCyc();
     ar_config.hold_release_cyc      = config.getArHoldReleaseCyc();
+    ar_config.search_unheld_only    = config.getArSearchUnheldOnly();
     ar_config.refloat_partner_signal = config.getArRefloatPartnerSignal();
     ar_config.enable_partial_ar     = config.getArEnablePartialAr();
     ar_config.ar_active_systems     = config.getArActiveSystems();

@@ -424,6 +424,7 @@ int networkClosedLoopRunEnd(const NetworkRunEndView& v) {
     consumer->logInnovationScreenSummary("closed loop");   // pre-update innovation screen, silent unless armed
     consumer->logUnrecordedGateSummary("closed loop");     // satellites without a stream record, silent unless armed
     consumer->logArObserveSummary("closed loop");   // observe-mode integer search totals, silent unless armed
+    consumer->logArFixQualitySummary("closed loop");   // resolver endings and held integers, silent without AR
     consumer->logReinflateSummary("closed loop");   // consumer re-inflation summary
     // Consumer snapshots written beside the network history copies;
     // 0 written on an armed seed means no warm start is on offer.
