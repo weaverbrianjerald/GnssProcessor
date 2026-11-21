@@ -5,14 +5,14 @@
 - **id:** IOF
 - **topic:** user-ar
 - **status:** open
-- **summary:** Pre-registered 2026-11-21, before the first graded run, at the author's request through the managing session. The user reads the network's slant ionosphere from a network run's own trace (stage 1) and applies it as between-satellite pseudo-observations before the integer search. Two variants at WTZZ00DEU on the poster's five days: ionosphere-fixed (the two receivers at the site, WTZR00DEU and WTZS00DEU) and ionosphere-weighted (a plane over the nine regional receivers, 162 to 457 km). The weights are measured on the five poster networks (section 4). The bar is fixed in section 8. Changed before the first graded run (section 10): corrections only from links at 30 degrees or more at the network receiver (the author's ruling), a measure-only closure check at the user first, tables of each day from the other four days, and the integer check also against the uncorrected never-fixing user. Result 2026-11-21 (section 11): the closure check at the user stops the work before any constrained run; most satellites agree to a few millimetres, but the converged user's own slant states carry steps of 11 to 18 cm on single satellites (G25 on four of five days) that its position does not see. Explained 2026-11-21 (section 12): the user's pivot and satellites not yet held; the rows now leave the pivot out and the weights are the untrimmed closure RMS per constellation, out of sample. Results 2026-11-21 (section 12): both cuts (30 and 15 degrees, the author asked for the second), zero wrong integers on the simulator and on the five days, no variant sooner on every day; the site pair at 15 degrees reaches 10 cm sooner on all five days.
-- **dates:** 2026-11-21 (pre-registered; design changed before the first graded run, section 10; the closure check, section 11; the constrained runs at two cuts, section 12).
+- **summary:** Pre-registered 2026-11-21, before the first graded run, at the author's request through the managing session. The user reads the network's slant ionosphere from a network run's own trace (stage 1) and applies it as between-satellite pseudo-observations before the integer search. Two variants at WTZZ00DEU on the poster's five days: ionosphere-fixed (the two receivers at the site, WTZR00DEU and WTZS00DEU) and ionosphere-weighted (a plane over the nine regional receivers, 162 to 457 km). The weights are measured on the five poster networks (section 4). The bar is fixed in section 8. Changed before the first graded run (section 10): corrections only from links at 30 degrees or more at the network receiver (the author's ruling), a measure-only closure check at the user first, tables of each day from the other four days, and the integer check also against the uncorrected never-fixing user. Result 2026-11-21 (section 11): the closure check at the user stops the work before any constrained run; most satellites agree to a few millimetres, but the converged user's own slant states carry steps of 11 to 18 cm on single satellites (G25 on four of five days) that its position does not see. Explained 2026-11-21 (section 12): the user's pivot and satellites not yet held; the rows now leave the pivot out and the weights are the untrimmed closure RMS per constellation, out of sample. Results 2026-11-21 (section 12): both cuts (30 and 15 degrees, the author asked for the second), zero wrong integers on the simulator and on the five days, no variant sooner on every day; the site pair at 15 degrees reaches 10 cm sooner on all five days. Search round 2026-11-21 (section 13): with partial fixing, the position sigma gate at 0.20 m and min_epochs 2 the site pair at 30 degrees is sooner on every day, no wrong integer: offered for the poster; the search settings alone do not converge faster.
+- **dates:** 2026-11-21 (pre-registered; design changed before the first graded run, section 10; the closure check, section 11; the constrained runs at two cuts, section 12; the search round, section 13).
 - **knobs / posture:** `network.closed_loop.iono_file` (the switch, default off) with `iono_file_logs`, `iono_file_stations`, `iono_file_combine`, `iono_file_sigma_elev_deg`, `iono_file_sigma_m`, `iono_file_test_k`, `iono_file_return_ep`, `iono_file_min_elev_deg` (the cut at the network receiver, default 30) and `iono_file_measure_only` (formed and written, nothing applied); the poster's replay user at the 10 degree mask (`_rap_agu3_rm10x_<doy>_wtzz`, `_rap_agu3_rm10f_<doy>_wtzz`) on the products of `_rap_agu3_rm10_n<doy>`.
 - **code:** branch `user/iono-file-2026-11-21` (from 52ae46e): `realtime/NetworkIonoFile` (the reader), `realtime/NetworkIonoConstraint` (selection, weights, per-satellite events, counters), the seam `RealTimeEngine::applyNetworkIonoFile_` in `RealTimeEngineEstimate.cpp`.
 - **run dirs:** `D:\GnssProcessorSupport\runs_nom\_rap_iof_<arm>_<doy>_wtzz`; tools and write-up in `D:\GnssProcessorSupport\gates\day_program_2026-11-21\iono_user\`.
 - **source:** the author's question of 2026-11-21 through the managing session (brief `D:\GnssProcessorSupport\gates\day_program_2026-11-21\iono_user\BRIEF.md`, with `iono_pair.py` and `site_pair_all_days.txt`); card [QHO](QHO-QUIN-HEIGHT-OFFSET.md) section 6 (the 10 degree poster pair).
 
-**Outcome.** Open. No variant meets the pre-registered bar (sooner to 10 and 5 cm on each of five days); all hold zero wrong integers on three pairs against both references, on the simulator too. The site pair at the 15 degree cut is the best: sooner to 10 cm on all five days (median 6.5 against 14.0 min; 4.2 against 12.6 cm at minute 10), to 5 cm on three. The user's resolver still first fixes after about an hour: its pair-fraction and ratio gates hold the fix back. G25 carries a steady 1.07 cm WTZZ00DEU site term.
+**Outcome.** Open. The network ionosphere alone did not meet the bar (sooner to 10 and 5 cm on each of five days). With the resolver's search opened (partial fixing, position sigma gate 0.20 m, min_epochs 2) the site pair at the 30 degree cut does: sooner to 10 and 5 cm on all five days (medians 10.0 and 18.0 against 14.0 and 35.0 min), first fix at 11 against 53.5 min, no wrong integer on the simulator or the five days. The search settings alone fix sooner but do not converge faster. G25 carries a 1.07 cm site term.
 
 > Results are appended TO THIS FILE, below the text.
 
@@ -285,3 +285,39 @@ weighted level); the site pair's 0.2 to 0.5 cm needs a receiver at the site. The
 site terms (G25 here), so the sigma belongs to the user's closure, not to the network alone. The user's resolver gates,
 not the ionosphere, decide when it fixes: an earlier fix needs a resolver that drops an outlying pair instead of
 rejecting the search.
+
+### 13. The search round: is it the integer search that holds the fix back?
+
+Configuration only (`make_iof_arms5.py`, `iof_grade5.py`, `iof_round5.txt`); the base is the site pair at the 15 degree
+cut, fixing users; the ratio threshold stays at 5. Each key was checked in the resolver's code: in this user's path
+(`resolveCore_` to `resolveWlConstrained`, no unconstrained fallback) `min_epochs` and `max_position_sigma_m` gate the
+search before it starts, `nl_iono_free_row` chooses the row that observes N_1, and `enable_partial_ar` has its own branch
+inside the constrained step. Turning `nl_iono_free_row` off also makes `wl_branch_check` inert (it needs the
+ionosphere-free row). Simulator first: zero wrong holds against truth for each single change, for the combination at 15
+degrees (5,832 held link-epochs) and at 30 degrees (5,408).
+
+| Arm | 10 cm, median min | 5 cm, median min | Days sooner, 10 / 5 cm | First fix, min | 3D at 5, 10, 20, 30 min, cm | Wrong (own / no corrections) |
+|---|---|---|---|---|---|---|
+| base: site pair, 15 deg | 6.5 | 34.0 | 5 / 3 | 62.2 | 14.8, 4.2, 5.0, 4.7 | 0 / 0 |
+| a: `nl_iono_free_row` false | 6.5 | 31.5 | 5 / 3 | 80.5 | 14.8, 4.2, 5.0, 4.7 | 0 / 0 |
+| b: `max_position_sigma_m` 0.20 | 6.5 | 34.0 | 5 / 3 | 58.0 | 14.8, 4.2, 5.0, 4.7 | 0 / 0 |
+| c: `enable_partial_ar` true | 6.5 | 15.5 | 5 / 4 | 15.5 | 14.8, 4.2, 2.5, 1.6 | 0 / 0 |
+| d: `min_epochs` 2 | 6.5 | 34.0 | 5 / 3 | 62.2 | 14.8, 4.2, 5.0, 4.7 | 0 / 0 |
+| b + c + d, 15 deg | 6.0 | 8.5 | 5 / 4 | 10.0 | 14.8, 4.2, 2.6, 1.6 | 0 / 0 |
+| b + c + d, 30 deg | 10.0 | 18.0 | 5 / 5 | 11.0 | 21.2, 9.8, 3.6, 1.8 | 0 / 0 |
+| b + c + d, no network ionosphere (control) | 13.0 | 29.5 | 3 / 4 | 18.5 | 13.7, 12.6, 5.0, 4.8 | 0 / 0 |
+
+Arm d is identical to the base: the position sigma gate held the search to about minute 17, so `min_epochs` never bound;
+it joins the combination because b opens that gate. Error over sigma from minute 60: base 1.03, a 1.16, b 0.98, c 0.86,
+the combinations 0.86 (15 degrees) and 0.89 (30 degrees), the control 0.88.
+
+**Reading** (fixed for this round: no wrong integer anywhere and sooner to 10 cm and to 5 cm than the poster's own user on
+each of the five days). The combination at the 30 degree cut qualifies: 10 cm at 7.5, 13.0, 10.0, 7.0, 11.0 min against
+10.5, 13.5, 22.5, 27.5, 14.0; 5 cm at 18.0, 13.0, 23.5, 15.0, 35.0 against 41.0, 16.0, 35.0, 34.5, 37.5. It is offered for
+the poster. The 15 degree combination is faster (5 cm median 8.5 min) but 1.5 min later on day 147 (39.0 against 37.5).
+The control separates the two parts: the search settings alone move the first fix from 53.5 to 18.5 min but leave 10 cm
+and the error at minute 10 where they were (13.0 min, 12.6 cm); the network ionosphere adds the faster float and the
+earlier fix (10 cm at 10.0 min and first fix at 11.0 min at 30 degrees). In the first hour the most frequent ending of
+the combination is now the upper ratio bound (`ratio_upper_bound` 1e4, "degenerate covariance", 228 to 334 epochs):
+very confident searches are still turned down; that key was not part of this round. Five starts at one site with
+network receivers 0 and 100 m away are a demonstration, not a statement about users in general.
