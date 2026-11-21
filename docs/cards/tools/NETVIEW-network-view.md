@@ -5,9 +5,9 @@
 - **id:** NETVIEW
 - **topic:** tools
 - **status:** open
-- **summary:** A tool that turns the traces of one network run into one self-contained HTML page. Since 2026-11-17 the page is a dashboard of layers a reader clicks through (section 11): overview, network links (the trees, held and float links, each link's whole numbers), receivers, satellites, cycle slips, stochastic model, atmosphere, products and the held-out user check, events; and pages of one receiver, one satellite and one line of sight, all on one time cursor. Made on request from existing traces; `netview.py arm` writes a config copy with the traces the reference configurations lack. A live monitor (section 12) follows a running engine through the live record (`network.trace_live_record`, section 13), the one engine change: an observer and its notes, off by default in the loader and armed in the goldens since 2026-11-17 (section 14). With the integer fixing armed, the record carries its links and held links per family, receiver and satellite (section 15). Branch `viz/network-view`, on main since `5ddc422`.
-- **dates:** 2026-11-15 (built and first version shown to the author); 2026-11-17 (the dashboard; the live monitor prototype, section 12; the live record in the engine and the monitor following it, section 13; the record armed in the goldens, section 14; the integer fixing's held links in the record, section 15)
-- **code:** `scripts/netview/` (`netview.py` with the commands build, arm and compare; readers `nv_read.py` and `nv_tables.py`, aggregation `nv_build.py` (core block) and `layers/` (the other blocks), page writer `nv_page.py`, the page's sources in `page/`, unit tests `test_netview.py`; the live monitor in `live/`: `server.py`, the replay source `telemetry.py`, the follow source `follow.py`); the engine's record `include/network/diag/LiveRecord.hpp`, `src/core/network/diag/LiveRecord.cpp`, tests `tests/network/test_network_live_record.cpp`, and the integer fixing's note in `src/core/network/ar/RingFixSeams.cpp`; how-to [onboarding/network_view.md](../../onboarding/network_view.md)
+- **summary:** A tool that turns the traces of one network run into one self-contained HTML page. Since 2026-11-17 the page is a dashboard of layers a reader clicks through (section 11): overview, network links (the trees, held and float links, each link's whole numbers), receivers, satellites, cycle slips, stochastic model, atmosphere, products and the held-out user check, events; and pages of one receiver, one satellite and one line of sight, all on one time cursor. Made on request from existing traces; `netview.py arm` writes a config copy with the traces the reference configurations lack. A live monitor (section 12) follows a running engine through the live record (`network.trace_live_record`, section 13), the one engine change: an observer and its notes, off by default in the loader and armed in the goldens since 2026-11-17 (section 14). With the integer fixing armed, the record carries its links and held links per family, receiver and satellite (section 15). Branch `viz/network-view`, on main since `5ddc422`. Since 2026-11-20 `netview.py still` writes parts of a built page as pictures for a poster or a slide (section 16; branch `viz/poster-stills`, not merged).
+- **dates:** 2026-11-15 (built and first version shown to the author); 2026-11-17 (the dashboard; the live monitor prototype, section 12; the live record in the engine and the monitor following it, section 13; the record armed in the goldens, section 14; the integer fixing's held links in the record, section 15); 2026-11-20 (stills, section 16)
+- **code:** `scripts/netview/` (`netview.py` with the commands build, arm and compare; readers `nv_read.py` and `nv_tables.py`, aggregation `nv_build.py` (core block) and `layers/` (the other blocks), page writer `nv_page.py`, the page's sources in `page/`, the stills' driver `nv_still.py` with `page/still.js` and `page/still.css`, unit tests `test_netview.py`; the live monitor in `live/`: `server.py`, the replay source `telemetry.py`, the follow source `follow.py`); the engine's record `include/network/diag/LiveRecord.hpp`, `src/core/network/diag/LiveRecord.cpp`, tests `tests/network/test_network_live_record.cpp`, and the integer fixing's note in `src/core/network/ar/RingFixSeams.cpp`; how-to [onboarding/network_view.md](../../onboarding/network_view.md)
 - **knobs / posture:** `network.trace_live_record` (measure-only, loader default off; RECOMMEND_ON and pinned in the goldens since 2026-11-17, sections 13 and 14). `arm` switches on trace keys only.
 - **run dirs:** pages of `D:\GnssProcessorSupport\runs_nom\_rap_o2s1j_n144`, `_rap_o2s1j_n144r`, `_rap_o2offj_n144`, `_rap_o9_n145`, `_rap_ka_sim` and `_rap_k0_sim` in `D:\GnssProcessorSupport\netview_out\` (the first page design); the dashboard of `_rap_l12_n144` as `D:\GnssProcessorSupport\netview_out\l12_n144.html`; the timing pair in `D:\GnssProcessorSupport\netview_out\timing\`; the live record's arms `D:\GnssProcessorSupport\runs_nom\_rap_lvr_smoke`, `_rap_lvr_off`, `_rap_lvr_on`, `_rap_lvr_live`, `_rap_lvr_sim_off`, `_rap_lvr_sim_on`, `_rap_lvr_bds_off`, `_rap_lvr_bds_on` and `_rap_lvr_gsmoke`; the held links' arms `_rap_lvh_on` and `_rap_lvh_off`
 - **source:** the author's request of 2026-11-15 (section 1); the definitions of NRF and BER (branch `irdu/user-integers`, `docs/refound/NRF_network_ring_fixing_2026-11-14*.md`, `BER_bad_epoch_response_2026-11-15.md`) and of ARNF sections 3, 9 and 15 (branch `ar/rx-sat-code-bias`)
@@ -500,3 +500,82 @@ adds one pass over the epoch's links (about 640 here) to a seam that already wal
 **Open questions.**
 1. The cascade's third bands, counted in the record once a cascade run can check them.
 2. Items 2 to 5 of section 13's list stand.
+
+## 16. 2026-11-20: stills for a poster or a slide
+
+**The request.** The AGU 2026 poster is being laid out around the dashboard. Its draft pictures were headless-browser
+screenshots of whole views, cut by hand-measured pixel boxes: the type came out at 5 to 16 pt as placed, parts below
+the fold could not be taken, the choices behind buttons (metric, vertical or slant) could not be set, and every box
+moved with any change of the page. The task: any part of a built page as a print-ready picture, without the page
+around it and with type large enough for a 44 in poster.
+
+**What was built.** Branch `viz/poster-stills` (from main `5af69c8`, not merged). How-to:
+[onboarding/network_view.md](../../onboarding/network_view.md), section "Stills for a poster or a slide".
+
+| Piece | Where | What it does |
+| --- | --- | --- |
+| The still mode of the page | `page/still.js`, `page/still.css` | A view's address with `still=PART` shows one part alone on white: `links`, `timeline`, `tiles` (data), or a panel by its title. The part stays where the view built it and is laid over the window; everything else leaves the layout, so only the part draws. Choices behind buttons come from the address (table `STILL_CHOICES`). The page leaves a report in its markup. |
+| The command | `netview.py still`, `nv_still.py` | One run of headless Edge per still (`--headless=new --window-size --force-device-scale-factor --virtual-time-budget --screenshot --dump-dom`, a profile folder per job, four side by side), on a temporary copy of the page. Single form and batch form. |
+| The page copy | `nv_page.repage` | A built page's data blocks, copied as they are, in this checkout's page code: a page built before stills existed can be used, and the page file is never changed. |
+
+**Decisions, with what was measured** (Edge 157.0.4341.60):
+
+1. *The type scale is a magnification.* The part is laid out at 1/S of the asked size and drawn at S times the device
+   scale. The page's drawing code is untouched (its type and margins are fixed pixel sizes in a dozen places), and
+   type, lines and marks keep their proportions. The cost: marks grow with the type (item 3 of the limits).
+2. *The part takes its size from the address, not from the window.* With `--window-size=W,H` the page's viewport is
+   W - 26 by H - 93 CSS pixels (never below 480 wide) until the screenshot is taken; at that moment it becomes W by
+   H, and the picture is W by H times the device scale. A part sized by the window is therefore drawn at one size
+   and photographed at another (the first trial squeezed the map by 17 %). The address carries `w` and `h`, and the
+   part's size is set with `!important`, because parts such as `#graph-pane` are styled by id and by a
+   narrow-window rule.
+3. *The report travels in the printed markup.* `--dump-dom` and `--screenshot` work in one run, and the markup is
+   printed before the screenshot is taken. The command accepts a picture only with a report of success in the
+   markup; a still that fails says why (the view's parts, a matrix's metrics) and leaves no picture.
+4. *Type sizes are measured, not declared*: every text a canvas draws in a still passes one function, which notes its
+   size and replaces the page makers' words (`STILL_WORDS`: "Held-out user receiver" reads "Test receiver").
+
+**Changes to the normal page**, each small and explained here:
+
+1. The address's `t` also takes a GPS time of day (`t=12:00`); a `t` that is not a number no longer leaves the cursor
+   undefined.
+2. On the world map a name that would run off the right edge is written to the left of its node.
+3. The rows of a matrix and of an arc chart take their height from the canvas. On the page the canvas height is still
+   rows x row height + 20, so the drawing is the same; matrix rows thinner than 4 pixels (the page has none below 6)
+   carry no names.
+4. The resize handler's body has a name (`redrawAll`), the timeline's foot of 38 pixels has one (`TL.foot`), and each
+   time chart says where its time axis lies (`xSpan`).
+5. A built page carries `still.js` and `still.css`. The data blocks and the build are unchanged.
+
+**Checks.** `test_netview.py`: 39 tests pass (34 before; 5 new: the address and the browser's command, the report,
+the batch form, the page copy, and six stills of the synthetic page drawn by Edge, with the picture's size, the
+epoch of a time of day, the metric, the tiles' words, and refused names). The stills of the poster draft, from
+`D:\GnssProcessorSupport\netview_out\agu3_n145.html` at 12:00, are in
+`D:\GnssProcessorSupport\presentation\agu26\dashboard_layout\stills_v2\` with their batch file `poster_stills.json`
+and the listing `stills.json`: 13 pictures and the tiles, at 300 pixels per inch of their placed width, all with
+`--type-scale 2.5`.
+
+| Still | Placed width | Type as placed |
+| --- | --- | --- |
+| link map (world map, no legend) | 19.3 in | 18.9 pt |
+| timeline | 19.3 in (3.3 in high) | 19.8 pt |
+| receivers over time (code residual; held share) | 19.3 in (3.0 in high) | 18.9 to 20.7 pt, rows without names |
+| satellites over time (held share) | 19.3 in (16 in high) | 18.9 to 20.7 pt, every row named |
+| rings (satellite names only) | 9.65 in | 18 to 18.9 pt |
+| held share over the day, wet delay of GCGO00USA, emitted clock of G05 | 9.65 in | 18.9 to 20.7 pt |
+| vertical ionosphere with its scale | 9.65 in | 20.7 pt |
+| ground track of G05 | 9.65 in | no type |
+
+**Limits and open points.**
+1. One part per still. Stills that share a time axis are aligned with the `axis` spans of the listing.
+2. The timeline needs 129 layout pixels for eight lanes: 3.3 in at 19.3 in wide with 18 pt type (the draft gave it
+   2.2 in).
+3. The rings picture cannot hold every name at 18 pt at 9.65 in: 87 nodes of 11 layout pixels on a radius of 163.
+   Written twice: satellite names only at 18 pt, and every name at 11 pt (type scale 1.5).
+4. A matrix of 56 receivers 3 in high has rows of 1.4 layout pixels: no row names.
+5. One run of the tests in about ten took 480 s, the time limit one browser launch then had. The cause was not
+   found; the machine was at 100 % processor load from other runs, under which the capture of a whole view of the
+   24 h page took 26 to 117 s (the page as built and the new page code alike) against about 8 s for a still. A launch
+   now has 150 s and one more try with 300 s, and a second try is printed.
+6. A panel's title carries its unit ("Emitted clock (m)") and is left out by default: the caption has to name it, or
+   `title=1` keeps the line.

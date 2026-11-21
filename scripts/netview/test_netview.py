@@ -27,6 +27,7 @@ import nv_arm  # noqa: E402
 import nv_build as B  # noqa: E402
 import nv_page  # noqa: E402
 import nv_read as R  # noqa: E402
+import nv_still  # noqa: E402
 import nv_tables as T  # noqa: E402
 
 WEEK = 2420
@@ -661,6 +662,110 @@ class TestCommands(Fixture):
         html = out.read_text(encoding='utf-8')
         self.assertIn('src="a.html"', html)
         self.assertIn('src="sub/b.html"', html)
+
+
+class TestStills(Fixture):
+    """netview.py still: the address and the browser's command of a still, the page copy, and the stills themselves."""
+
+    def test_layout_address_and_browser_command(self):
+        s = nv_still.Still(panel='receiver/GCGO00USA/Wet delay', out=Path('wet.png'), t='12:00', size=(965, 312),
+                           type_scale=2.5, scale=3, choices={'title': 1})
+        self.assertEqual(s.layout(), (386, 125, 7.5))                  # laid out at 1/2.5 of the size, drawn 7.5 times larger
+        self.assertEqual(s.address('file:///p.html'),
+                         'file:///p.html#/receiver/GCGO00USA?t=12%3A00&still=Wet%20delay&w=386&h=125&title=1')
+        args = nv_still.browser_args(Path('msedge.exe'), Path('prof'), s, 'URL', 45000)
+        for a in ('--headless=new', '--window-size=386,125', '--force-device-scale-factor=7.5',
+                  '--virtual-time-budget=45000', '--screenshot=wet.png', '--user-data-dir=prof'):
+            self.assertIn(a, args)
+        self.assertEqual(args[-2:], ['--dump-dom', 'URL'])
+        data = nv_still.Still(panel='overview/tiles', out=Path('tiles.json'))
+        self.assertEqual(data.address('file:///p.html'), 'file:///p.html#/overview?still=tiles')    # data: no size
+        self.assertFalse(any(a.startswith('--screenshot') for a in nv_still.browser_args(Path('e'), Path('p'), data, 'U', 1)))
+
+    def test_report_in_the_markup(self):
+        page = '<body><script type="application/json" id="nv-still-report">{"ok":true,"part":"a\\u003cb"}</script></body>'
+        self.assertEqual(nv_still.read_report(page), {'ok': True, 'part': 'a<b'})
+        self.assertIsNone(nv_still.read_report('<body>Opening the run</body>'))
+
+    def test_batch_takes_defaults(self):
+        batch = self.root / 'poster' / 'stills.json'
+        _write(batch, json.dumps({'page': 'run.html', 'defaults': {'t': '12:00', 'type_scale': 2.5, 'scale': 3, 'set': {'key': 0}},
+                                  'stills': [{'file': 'map.png', 'panel': 'network/links', 'size': [1930, 1000], 'set': {'l': 'map'}},
+                                             {'file': 'tiles.json', 'panel': 'overview/tiles', 't': 5}]}))
+        page, stills = nv_still.load_batch(batch)
+        self.assertEqual(page, Path('run.html'))
+        self.assertEqual([s.out for s in stills], [batch.parent / 'map.png', batch.parent / 'tiles.json'])
+        self.assertEqual((stills[0].t, stills[0].size, stills[0].type_scale, stills[0].scale), ('12:00', (1930, 1000), 2.5, 3.0))
+        self.assertEqual(stills[0].choices, {'key': 0, 'l': 'map'})
+        self.assertEqual(stills[1].t, '5')
+        _write(batch, json.dumps({'stills': [{'file': 'x.png', 'panel': 'network/links', 'colour': 'red'}]}))
+        with self.assertRaises(ValueError):
+            nv_still.load_batch(batch)
+
+    def test_page_copy_keeps_the_data_and_takes_the_page_code(self):
+        blocks = B.build_blocks(add_dashboard_traces(make_run(self.root)), log=lambda *x: None)
+        built = self.root / 'built.html'
+        nv_page.write_page(built, blocks)
+        html = built.read_text(encoding='utf-8')
+        self.assertIn('function stillCompose', html)                   # a built page carries the still mode
+        old = self.root / 'old.html'                                   # a page from before it: other script, same data
+        _write(old, html[:html.rindex('<script>')] + '<script>/* an older page */</script>\n</body>\n</html>\n')
+        self.assertNotIn('function stillCompose', old.read_text(encoding='utf-8'))
+        copy = self.root / 'copy.html'
+        nv_page.repage(old, copy)
+        self.assertEqual(copy.read_text(encoding='utf-8'), html)
+        _write(self.root / 'not_a_page.html', '<html></html>')
+        with self.assertRaises(ValueError):
+            nv_page.repage(self.root / 'not_a_page.html', copy)
+
+    @unittest.skipUnless(nv_still.find_browser(), 'the stills are drawn by Microsoft Edge, which is not installed here')
+    def test_stills_of_a_page(self):
+        page = self.root / 'page.html'
+        self.assertEqual(netview.main(['build', str(add_dashboard_traces(make_run(self.root))), '-o', str(page)]), 0)
+        out = self.root / 'stills'
+        stills = [
+            nv_still.Still(panel='network/links', out=out / 'links.png', t='00:01', size=(600, 400), type_scale=2, scale=1.5,
+                           placed_width=6.0),
+            nv_still.Still(panel='network/timeline', out=out / 'lanes.png', size=(900, 300), scale=1),
+            nv_still.Still(panel='overview/Receivers over time', out=out / 'matrix.png', size=(800, 200), scale=1, choices={'m': 'slip'}),
+            nv_still.Still(panel='overview/tiles', out=out / 'tiles.json', t='2'),
+            nv_still.Still(panel='overview/No such part', out=out / 'none.png', size=(300, 200), scale=1),
+            nv_still.Still(panel='overview/Receivers over time', out=out / 'metric.png', size=(300, 200), scale=1, choices={'m': 'none'}),
+        ]
+        links, lanes, matrix, tiles, none, metric = nv_still.run(page, stills, log=lambda *x: None)
+        # the picture is the asked size times the scale, laid out at 1 / type scale of it, with nothing to crop
+        self.assertTrue(links['ok'], links)
+        self.assertEqual(nv_still.png_size(out / 'links.png'), (900, 600))
+        self.assertEqual((links['layout'], links['size'], links['magnified']), ([300, 200], [300, 200], 3.0))
+        self.assertEqual((links['time'], links['epoch']), ('00:01:00', 2))              # a time of day names its epoch
+        lo, hi = links['type_px']
+        self.assertTrue(8 <= lo <= hi <= 14, links['type_px'])
+        self.assertEqual(links['type_pt'], [round(v * 6.0 * 72 / 300, 1) for v in links['type_px']])
+        self.assertIsNone(links['axis'])
+        self.assertTrue(lanes['ok'], lanes)
+        self.assertEqual(nv_still.png_size(out / 'lanes.png'), (900, 300))
+        self.assertTrue(0 < lanes['axis'][0] < lanes['axis'][1] <= 1)                   # where its time axis lies
+        self.assertTrue(matrix['ok'], matrix)
+        self.assertEqual(matrix['shows']['metric'], 'cycle slips detected')             # the metric named in the address
+        self.assertEqual(matrix['title'], 'Receivers over time')
+        # the key figures as data, in plain words; the page keeps its own
+        self.assertTrue(tiles['ok'], tiles)
+        saved = json.loads((out / 'tiles.json').read_text(encoding='utf-8'))
+        labels = [t['label'] for t in saved['tiles']]
+        self.assertIn('Test receiver, 3D error', labels)
+        self.assertIn('Held-out user receiver', page.read_text(encoding='utf-8'))
+        emitted = next(t for t in saved['tiles'] if t['label'] == 'Epochs emitted')
+        self.assertEqual((emitted['value'], emitted['unit'], emitted['level']), ('2', 'of 3', 'warn'))
+        self.assertEqual(saved['epoch'], 2)
+        # a part or a metric the view does not have is refused by name, and leaves no picture
+        self.assertFalse(none['ok'])
+        self.assertIn('no part "No such part"', none['error'])
+        self.assertIn('Receivers over time', none['error'])
+        self.assertFalse((out / 'none.png').exists())
+        self.assertFalse(metric['ok'])
+        self.assertIn('no metric "none"', metric['error'])
+        self.assertEqual(sorted(p.name for p in out.iterdir()), ['lanes.png', 'links.png', 'matrix.png', 'tiles.json'])
+        self.assertIn('Held-out user receiver', page.read_text(encoding='utf-8'))      # the page itself is not changed
 
 
 class TestPlainWords(unittest.TestCase):

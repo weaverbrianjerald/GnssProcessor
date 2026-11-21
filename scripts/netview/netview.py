@@ -4,6 +4,8 @@
     py -3.14 scripts/netview/netview.py arm <config.json> -o <armed config.json> [--no-map]
     py -3.14 scripts/netview/netview.py compare <page A.html> <page B.html> -o <compare.html>
     py -3.14 scripts/netview/netview.py live <run folder, live record or built page> [--speed N] [--port 8770] [--start HH:MM]
+    py -3.14 scripts/netview/netview.py still <page.html> --panel <view>/<part> [--t HH:MM] [--size WxH] [--type-scale S] [--scale N] -o <png>
+    py -3.14 scripts/netview/netview.py still [<page.html>] --batch <stills.json> [-o <folder>]
 
 build   reads the run folder's traces (logs/*.csv, logs/network_run_manifest.json and products.txt) and writes one
         HTML page that opens by double-click from file:// (no server, no network access).  Default output:
@@ -20,12 +22,18 @@ live    serves the live monitor on 127.0.0.1: a rolling window of the network.  
         live record (network.trace_live_record: logs/network_live.jsonl), or that file itself, is followed as the
         engine writes it, a running engine included; a built page, or a run folder without the record (or with
         --replay), is replayed as a live engine would send it.
+still   writes parts of a built page as pictures for a poster or a slide: one part of one view alone on white, at the
+        asked size, with no page around it and nothing to crop (headless Edge draws it).  --panel names the view and
+        the part: network/links, network/timeline, overview/tiles (data, to a .json file), or a view and the title of
+        one of its panels (overview/Receivers over time, receiver/GCGO00USA/Wet delay).  --type-scale magnifies type,
+        lines and marks against the picture; --set gives the choices the page keeps in buttons (l=map, m=held, key=0).
 
 The page, the quantities and the cost of the traces: docs/onboarding/network_view.md.
 """
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 import time
 from pathlib import Path
@@ -126,6 +134,37 @@ def _serve_until_stopped(srv, replay) -> int:
     return 0
 
 
+def cmd_still(a) -> int:
+    import nv_still
+    try:
+        if a.batch:
+            page, stills = nv_still.load_batch(Path(a.batch), Path(a.output) if a.output else None)
+            page = Path(a.page) if a.page else page
+        else:
+            if not (a.panel and a.output):
+                print('still: give --panel and -o, or --batch', file=sys.stderr)
+                return 2
+            page = Path(a.page) if a.page else None
+            if not all('=' in kv for kv in a.set):
+                raise ValueError('--set takes KEY=VALUE, for example --set l=map')
+            stills = [nv_still.Still(panel=a.panel, out=Path(a.output), t=a.t, size=nv_still.parse_size(a.size),
+                                     type_scale=a.type_scale, scale=a.scale, placed_width=a.placed_width,
+                                     choices=dict(kv.split('=', 1) for kv in a.set))]
+        if page is None or not page.is_file():
+            print(f'{page}: no such page (build it first)', file=sys.stderr)
+            return 2
+        reports = nv_still.run(page, stills, parallel=a.parallel, budget_ms=a.budget)
+    except (ValueError, RuntimeError) as err:
+        print(f'still: {err}', file=sys.stderr)
+        return 2
+    if a.batch:
+        listing = (Path(a.output) if a.output else Path(a.batch).resolve().parent) / 'stills.json'
+        listing.write_text(json.dumps({'page': str(page), 'stills': reports}, indent=2, ensure_ascii=False) + '\n',
+                           encoding='utf-8', newline='\n')
+        print(f'wrote {listing}: what each still shows, its sizes and its time axis')
+    return 0 if all(r['ok'] for r in reports) else 1
+
+
 def cmd_arm(a) -> int:
     changed, notes = nv_arm.arm(Path(a.config), Path(a.output), with_map=not a.no_map)
     print(f'wrote {a.output}')
@@ -172,6 +211,25 @@ def main(argv=None) -> int:
                                     'start, a followed record at its newest epoch)')
     lv.add_argument('--replay', action='store_true', help='replay a run folder from its traces even when it has a live record')
     lv.set_defaults(fn=cmd_live)
+    st = sub.add_parser('still', help='write parts of a built page as pictures for a poster or a slide')
+    st.add_argument('page', nargs='?', help='a built page (a batch file may name it)')
+    st.add_argument('--panel', help='<view>/<part>: network/links, network/timeline, overview/tiles, or a view and a panel title')
+    st.add_argument('--t', help='the time cursor: an epoch index or a GPS time of day HH:MM')
+    st.add_argument('--size', default='1200x600', help='the picture in CSS pixels, WIDTHxHEIGHT (default 1200x600)')
+    st.add_argument('--type-scale', type=float, default=1.0,
+                    help='magnification of type, lines and marks against the picture: the part is laid out at 1/S of '
+                         'the size and drawn S times larger (default 1)')
+    st.add_argument('--scale', type=float, default=2.0, help='picture pixels per CSS pixel of --size (default 2)')
+    st.add_argument('--set', action='append', default=[], metavar='KEY=VALUE',
+                    help='a choice the page keeps in a button, repeatable: l=map, f=1, b=1, m=held, iono=slant, key=0, '
+                         'title=1, cursor=0, names=0|sat, held=0, float=0, colours=viridis')
+    st.add_argument('--placed-width', type=float, metavar='INCHES',
+                    help='how wide the picture is where it is placed: the type sizes are then also printed in points')
+    st.add_argument('--batch', help='a JSON file listing several stills of one page')
+    st.add_argument('-o', '--output', help='the picture (.png) or the data (.json); with --batch the folder')
+    st.add_argument('--parallel', type=int, default=4, help='stills drawn side by side (default 4)')
+    st.add_argument('--budget', type=int, default=45000, help='virtual milliseconds the page may take to open (default 45000)')
+    st.set_defaults(fn=cmd_still)
     c = sub.add_parser('compare', help='a page showing two built pages side by side, time and selection linked')
     c.add_argument('page_a')
     c.add_argument('page_b')
