@@ -269,6 +269,8 @@ add_library(gnss_core STATIC
     src/core/realtime/ConsumerSatTrace.cpp
     src/core/realtime/ConsumerTrace.cpp
     src/core/realtime/FloatPhaseScale.cpp
+    src/core/realtime/NetworkIonoConstraint.cpp
+    src/core/realtime/NetworkIonoFile.cpp
     src/core/filter/PivotManager.cpp
     src/core/filter/DdPivotManager.cpp
     src/core/filter/CovarianceReReference.cpp
@@ -787,6 +789,7 @@ add_executable(gnss_tests
     tests/test_ar_fix_quality.cpp
     tests/test_ar_unheld_search.cpp
     tests/test_float_phase_scale.cpp
+    tests/test_network_iono_file.cpp
     tests/test_kf_pseudo_update_repeat.cpp
     tests/test_fix_and_hold.cpp
     tests/test_signal_math.cpp

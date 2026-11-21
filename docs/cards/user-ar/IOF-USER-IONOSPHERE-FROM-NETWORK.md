@@ -5,9 +5,9 @@
 - **id:** IOF
 - **topic:** user-ar
 - **status:** open
-- **summary:** Pre-registered 2026-11-21, before the first graded run, at the author's request through the managing session. The user reads the network's slant ionosphere from a network run's own trace (stage 1) and applies it as between-satellite pseudo-observations before the integer search. Two variants at WTZZ00DEU on the poster's five days: ionosphere-fixed (the two receivers at the site, WTZR00DEU and WTZS00DEU) and ionosphere-weighted (a plane over the nine regional receivers, 162 to 457 km). The weights are measured on the five poster networks (section 4). The bar is fixed in section 8.
-- **dates:** 2026-11-21 (pre-registered).
-- **knobs / posture:** `network.closed_loop.iono_file` (the switch, default off) with `iono_file_logs`, `iono_file_stations`, `iono_file_combine`, `iono_file_sigma_elev_deg`, `iono_file_sigma_m`, `iono_file_test_k`, `iono_file_return_ep`; the poster's replay user at the 10 degree mask (`_rap_agu3_rm10x_<doy>_wtzz`, `_rap_agu3_rm10f_<doy>_wtzz`) on the products of `_rap_agu3_rm10_n<doy>`.
+- **summary:** Pre-registered 2026-11-21, before the first graded run, at the author's request through the managing session. The user reads the network's slant ionosphere from a network run's own trace (stage 1) and applies it as between-satellite pseudo-observations before the integer search. Two variants at WTZZ00DEU on the poster's five days: ionosphere-fixed (the two receivers at the site, WTZR00DEU and WTZS00DEU) and ionosphere-weighted (a plane over the nine regional receivers, 162 to 457 km). The weights are measured on the five poster networks (section 4). The bar is fixed in section 8. Changed before the first graded run (section 10): corrections only from links at 30 degrees or more at the network receiver (the author's ruling), a measure-only closure check at the user first, tables of each day from the other four days, and the integer check also against the uncorrected never-fixing user.
+- **dates:** 2026-11-21 (pre-registered; design changed before the first graded run, section 10).
+- **knobs / posture:** `network.closed_loop.iono_file` (the switch, default off) with `iono_file_logs`, `iono_file_stations`, `iono_file_combine`, `iono_file_sigma_elev_deg`, `iono_file_sigma_m`, `iono_file_test_k`, `iono_file_return_ep`, `iono_file_min_elev_deg` (the cut at the network receiver, default 30) and `iono_file_measure_only` (formed and written, nothing applied); the poster's replay user at the 10 degree mask (`_rap_agu3_rm10x_<doy>_wtzz`, `_rap_agu3_rm10f_<doy>_wtzz`) on the products of `_rap_agu3_rm10_n<doy>`.
 - **code:** branch `user/iono-file-2026-11-21` (from 52ae46e): `realtime/NetworkIonoFile` (the reader), `realtime/NetworkIonoConstraint` (selection, weights, per-satellite events, counters), the seam `RealTimeEngine::applyNetworkIonoFile_` in `RealTimeEngineEstimate.cpp`.
 - **run dirs:** `D:\GnssProcessorSupport\runs_nom\_rap_iof_<arm>_<doy>_wtzz`; tools and write-up in `D:\GnssProcessorSupport\gates\day_program_2026-11-21\iono_user\`.
 - **source:** the author's question of 2026-11-21 through the managing session (brief `D:\GnssProcessorSupport\gates\day_program_2026-11-21\iono_user\BRIEF.md`, with `iono_pair.py` and `site_pair_all_days.txt`); card [QHO](QHO-QUIN-HEIGHT-OFFSET.md) section 6 (the 10 degree poster pair).
@@ -126,3 +126,33 @@ statement about users in general; the report and any caption say so.
 
 What stage 1 shows that a record in the product file and an interpolation for a user anywhere need is written below
 with the results.
+
+## 10. Changes before the first graded run (2026-11-21)
+
+The managing session's vetting of the design and the author's ruling, both received before any graded run:
+
+- **A. Cut at the network receiver.** Corrections come only from links at 30 degrees or more at the network receiver
+  they come from (`iono_file_min_elev_deg`, default 30). The author: "If the iono is much more stable at 30-degree mask,
+  then the network iono product handed to the user should simply use the 30-degree mask, while the user retains its
+  10-degree mask." The user keeps its 10 degree mask; its satellites without a correction keep a free ionosphere. The
+  sigma table covers 30 degrees and up (an elevation at the user below the first edge takes the first bin); no weight
+  by elevation below 30 degrees.
+- **B. Closure at the user first.** The agreement of WTZR00DEU and WTZS00DEU shows that the network is consistent with
+  itself, not that the user's slant states are in the same datum (WTZZ00DEU tracks Galileo L1X/L5X, WTZR00DEU and
+  WTZS00DEU L1C/L5Q; the satellite bias convention the user applies and its own antenna pattern can each leave a
+  per-satellite offset). A measure-only form (`iono_file_measure_only`: corrections, rows and innovations formed and
+  written per satellite and epoch to `logs/iono_file_trace.csv`, nothing applied) runs first on the five days, and the
+  innovations of the converged unconstrained user (minutes 60 to 180) give the per-satellite mean and scatter by
+  constellation. Per-satellite means beyond the scatter stop the work for a report. The sigma tables of both variants
+  come from this closure at the user, not from the network-side agreement of section 4.
+- **C. Out of sample.** The table applied on a day and the choice between the nearest pair and the plane come from the
+  other four days. The choice, network side from 30 degrees up (`iono_choice_loo.py`): the plane on every left-out set
+  (2.55 to 2.92 cm against 6.59 to 7.79 cm for the nearest pair on the other four days).
+- **D. A reference that does not share the constraint.** The integer check runs against the never-fixing user without
+  corrections (`_rap_agu3_rm10f_<doy>_wtzz`) as well as against the variant's own never-fixing user; the position
+  against the coordinates stays the third check.
+
+The traces of section 3 exist for all five network days. The tables of section 4 (network side, all five days, from
+15 degrees) are not the ones applied; they stay as the network-side record. The 10-epoch smoke of the first form
+(`_rap_iof_smk_145_wtzz`, 15 degree cut, before this section) and the first launch, stopped before any run finished,
+are not graded. The corrections are taken at the user's own epoch from the network run's file (no latency).

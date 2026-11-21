@@ -400,6 +400,60 @@ namespace GnssProcessor {
          */
         std::string   replay_products_path;
         /**
+         * @brief Apply the network's slant ionosphere, read from a network run's traces, to the consumer
+         *        (@c network.closed_loop.iono_file, default false, byte-identical when off).
+         *
+         * Stage 1 of the user's network ionosphere: the consumer reads @c network_ionosphere.csv
+         * (@c iono_total_m, the slant delay on GPS L1) of the network run whose logs folder is
+         * @ref iono_file_logs, for the receivers @ref iono_file_stations, and keeps only the links whose
+         * integers the network holds at that epoch (held or decided by the ring fix, @c network_ring_fix.csv,
+         * or pinned on two bands by the chain, @c network_chain_edges.csv).  The receivers' values combine per
+         * @ref iono_file_combine into one correction per satellite, applied as between-satellite
+         * pseudo-observations on the consumer's slant states after the measurement update and before the
+         * integer search (@c RealTimeEngine::applyNetworkIonoFile_, @c realtime/NetworkIonoConstraint.hpp).
+         * The receiver terms cancel in the differences, so no state is added.  Each satellite's use is an
+         * event at both edges: released on a missing or non-integer link, a disagreement of the two site
+         * receivers, too few satellites or receivers, a drop below the sigma table, or an innovation beyond
+         * @ref iono_file_test_k sigma (which also resets its slant variance); a released satellite returns after
+         * @ref iono_file_return_ep passing epochs.  Counters in the run-end line "Network iono file".  An
+         * incomplete setting is refused at load.  Consumer side only: it never reaches the producer's solve or
+         * its resume fingerprint.  The product record that would carry the values to a user anywhere is not
+         * built (stage 2).
+         */
+        bool          iono_file{ false };
+        /// Logs folder of the network run whose traces the consumer reads (@c network.closed_loop.iono_file_logs).
+        std::string   iono_file_logs;
+        /// Network receivers read (@c network.closed_loop.iono_file_stations): two for @c pair, one for
+        /// @c single, four or more for @c plane.
+        std::vector<std::string> iono_file_stations;
+        /// How the receivers' values become one correction per satellite (@c network.closed_loop.iono_file_combine,
+        /// default "pair"): @c pair (two receivers at the user's site: their mean aligned by the median of their
+        /// difference; a satellite they disagree on beyond @ref iono_file_test_k sigma is not used), @c plane (a plane
+        /// in east and north over the receivers' between-satellite differences, evaluated at the consumer's a
+        /// priori position) or @c single (one receiver).
+        std::string   iono_file_combine{ "pair" };
+        /// Lower edges (degrees, increasing) of the elevation bins of the correction's sigma
+        /// (@c network.closed_loop.iono_file_sigma_elev_deg); a satellite below the first edge gets no correction.
+        std::vector<double> iono_file_sigma_elev_deg;
+        /// Sigma (metres) of one satellite's correction per bin (@c network.closed_loop.iono_file_sigma_m), measured
+        /// on the network's own traces; the rows' covariance is D diag(sigma^2) D^T.
+        std::vector<double> iono_file_sigma_m;
+        /// Bound in sigma of the receivers' agreement test and the row innovation test
+        /// (@c network.closed_loop.iono_file_test_k, default 4).
+        double        iono_file_test_k{ 4.0 };
+        /// Consecutive passing epochs before a released satellite's correction is applied again
+        /// (@c network.closed_loop.iono_file_return_ep, default 4).
+        int           iono_file_return_ep{ 4 };
+        /// Elevation cut (degrees) at the network receiver a correction comes from
+        /// (@c network.closed_loop.iono_file_min_elev_deg, default 30): links below it are not used, and the
+        /// consumer's satellites without a correction keep a free ionosphere (the consumer keeps its own mask).
+        double        iono_file_min_elev_deg{ 30.0 };
+        /// Measure only (@c network.closed_loop.iono_file_measure_only, default false): the corrections, the rows'
+        /// innovations and the per-satellite events are formed, counted and written to @c logs/iono_file_trace.csv,
+        /// and nothing is applied (no pseudo-observation, no variance reset), so the consumer's solution equals the
+        /// run without the file.
+        bool          iono_file_measure_only{ false };
+        /**
          * @brief Run the observe-mode integer search on the consumer's float
          *        (@c network.closed_loop.ar_observe, default false, byte-identical).
          *

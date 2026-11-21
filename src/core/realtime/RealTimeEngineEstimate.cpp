@@ -23,6 +23,7 @@
 #include <cmath>
 #include <iterator>
 #include <set>
+#include <fmt/format.h>
 
 namespace GnssProcessor {
 
@@ -272,6 +273,134 @@ void RealTimeEngine::applyNetworkIonoPrior(RtEpochContext& ctx) {
 }
 
 /**
+ * @brief The network's slant ionosphere from a network run's traces (network.closed_loop.iono_file).
+ *
+ * After the measurement update and the other pseudo-observations, before the integer search, so the
+ * resolver sees the tightened float.  The satellites the user offers are those of the epoch's
+ * modelled observations with a slant state; their corrections come from the network epoch's links
+ * (ionoFileCorrections), the per-satellite events and the innovation test from the owner across
+ * epochs (NetworkIonoConstraint::decide).  A satellite released on its innovation has its slant
+ * variance (and rate variance, when estimated) reset before the rows are applied.  The rows are
+ * between-satellite differences within a constellation, x_s - x_r = c_s - c_r, with covariance
+ * D diag(sigma^2) D^T; the BSSD pivot's slant state is frozen (zero variance), so a row against
+ * the pivot moves x_s alone and the pivot's state is never moved.  Self-gated on the
+ * key (the reader exists only when it is on) and on an applied update.
+ */
+void RealTimeEngine::applyNetworkIonoFile_(RtEpochContext& ctx) {
+    if (!iono_file_ || !ctx.update_applied || !kalman_filter_ || !state_manager_) return;
+    const GnssTime& current_time = ctx.current_time;
+    const std::vector<PppObservation>& modeled_obs = ctx.modeled_obs;
+
+    // The satellites the user offers: one entry per satellite with a slant state.
+    const Eigen::VectorXd x = state_manager_->getStateVector();
+    const std::set<std::string>& pivots = state_manager_->getFrozenPivotSatellites();
+    std::vector<IonoFileUserSat> sats;
+    std::map<std::string, IonoFileUserState> state;
+    std::map<std::string, double> elevation;
+    std::map<std::string, Eigen::Index> column;
+    for (const auto& obs : modeled_obs) {
+        if (state.count(obs.satellite)) continue;
+        const int idx = state_manager_->getIonosphereIndex(obs.satellite);
+        if (idx < 0 || idx >= static_cast<int>(x.size())) continue;
+        IonoFileUserState st;
+        st.x_m = x(idx);
+        st.var_m2 = state_manager_->getStateVariance(idx);
+        st.pivot = pivots.count(obs.satellite) > 0;
+        state[obs.satellite] = st;
+        elevation[obs.satellite] = obs.elevation;
+        column[obs.satellite] = idx;
+        sats.push_back({ obs.satellite, obs.elevation });
+    }
+
+    const NetworkIonoEpoch* links = iono_file_->epochAt(TimeUtils::continuousGpsSeconds(current_time));
+    const std::vector<IonoFileCorrection> corr =
+        ionoFileCorrections(iono_file_constraint_.settings(), links, sats, iono_file_offsets_);
+    const IonoFileDecision dec = iono_file_constraint_.decide(corr, state, elevation);
+    const bool apply = !config_.getNetworkConfig().closed_loop.iono_file_measure_only;
+    writeIonoFileTrace_(current_time, corr, state, elevation, dec, apply);
+    if (!apply) return;   // measure only: formed, tested, counted and written, nothing applied
+    for (const auto& sat : dec.refloat) {
+        state_manager_->reinflateIonosphereVariance(sat, 0.0);       // to the initial slant variance
+        state_manager_->reinflateIonosphereRateVariance(sat, 0.0);   // no-op without rate states
+    }
+
+    std::map<std::string, const IonoFileCorrection*> by_sat;
+    for (const auto& c : corr) by_sat[c.sat] = &c;
+    Eigen::Index m = 0;
+    for (const auto& rows : dec.rows) m += static_cast<Eigen::Index>(rows.sats.size());
+    if (m > 0) {
+        const Eigen::Index n = x.size();
+        Eigen::MatrixXd H = Eigen::MatrixXd::Zero(m, n);
+        Eigen::VectorXd z(m);
+        Eigen::MatrixXd R = Eigen::MatrixXd::Zero(m, m);
+        Eigen::Index row = 0;
+        for (const auto& rows : dec.rows) {
+            const IonoFileCorrection& cr = *by_sat.at(rows.reference);
+            const Eigen::Index ir = column.at(rows.reference);
+            const Eigen::Index first = row;
+            for (const auto& s : rows.sats) {
+                const IonoFileCorrection& cs = *by_sat.at(s);
+                const Eigen::Index is = column.at(s);
+                H(row, is) = 1.0;
+                H(row, ir) = -1.0;
+                z(row) = (cs.value_m - cr.value_m) - (x(is) - x(ir));
+                R(row, row) = cs.sigma_m * cs.sigma_m;
+                ++row;
+            }
+            R.block(first, first, row - first, row - first).array() += cr.sigma_m * cr.sigma_m;
+        }
+        kalman_filter_->applyPseudoObservation(H, z, R);
+    }
+
+    auto log = log_manager_.getLogger("rt_engine");
+    if (!dec.events.empty()) {
+        std::string text;
+        for (const auto& e : dec.events) text += (text.empty() ? "" : "; ") + e;
+        log->info("IONOF tow={:.1f} {}", current_time.tow, text);
+    }
+    if (log->should_log(spdlog::level::debug)) {
+        std::string text;
+        for (const auto& rows : dec.rows) text += fmt::format(" {}:{}+{}", rows.constellation, rows.reference, rows.sats.size());
+        log->debug("IONOF tow={:.1f} rows {}{}", current_time.tow, m, text);
+    }
+}
+
+/**
+ * @brief One row per offered satellite of the file corrections (logs/iono_file_trace.csv).
+ *
+ * The epoch's correction (its level is arbitrary per constellation), the user's slant state and
+ * variance, the innovation against the constellation's centre and its bound, whether the satellite
+ * is active and its row's reference, and whether rows are applied (0 in the measure-only form).
+ */
+void RealTimeEngine::writeIonoFileTrace_(const GnssTime& t, const std::vector<IonoFileCorrection>& corr,
+                                         const std::map<std::string, IonoFileUserState>& state,
+                                         const std::map<std::string, double>& elevation,
+                                         const IonoFileDecision& dec, bool applied) {
+    if (!iono_file_trace_) return;
+    std::map<char, std::string> reference;
+    for (const auto& rows : dec.rows) reference[rows.constellation] = rows.reference;
+    std::map<std::string, const IonoFileSatResult*> result;
+    for (const auto& r : dec.sats) result[r.sat] = &r;
+    for (const auto& c : corr) {
+        if (c.sat.empty()) continue;
+        const auto st = state.find(c.sat);
+        const auto el = elevation.find(c.sat);
+        const auto rs = result.find(c.sat);
+        const IonoFileSatResult* r = rs == result.end() ? nullptr : rs->second;
+        const auto ref = reference.find(c.sat[0]);
+        iono_file_trace_ << fmt::format("{},{:.3f},{},{:.2f},{:.2f},{},{},{:.5f},{:.5f},{:.3e},{:.4f},{:.5f},{:.5f},{},{},{},{}\n",
+                                        t.week, t.tow, c.sat, el == elevation.end() ? 0.0 : el->second,
+                                        c.elevation_net_deg, c.valid ? 1 : 0,
+                                        c.valid ? "" : ionoFileCauseName(c.cause), c.value_m,
+                                        st == state.end() ? 0.0 : st->second.x_m,
+                                        st == state.end() ? 0.0 : st->second.var_m2, c.sigma_m,
+                                        r ? r->innov_m : 0.0, r ? r->bound_m : 0.0, r && r->tested ? 1 : 0,
+                                        r && r->active ? 1 : 0, ref == reference.end() ? "" : ref->second,
+                                        applied ? 1 : 0);
+    }
+}
+
+/**
  * @brief Integer ambiguity resolution (MLAMBDA).
  *
  * Relocated verbatim from the pre-cut RealTimeEngine::processEpoch
@@ -347,6 +476,8 @@ void RealTimeEngine::resolveAmbiguities(RtEpochContext& ctx) {
 void RealTimeEngine::logArFixQualitySummary(const char* tag) const {
     if (config_.getPhaseScaleMeasure())   // silent unless armed
         log_manager_.getLogger("rt_engine")->info("[{}] {}", tag, float_phase_scale_.runEndLine());
+    if (iono_file_)   // silent unless network.closed_loop.iono_file
+        log_manager_.getLogger("rt_engine")->info("[{}] {}", tag, iono_file_constraint_.runEndLine());
     if (!ambiguity_resolver_) return;   // ar_mode 0: no resolver, no line
     log_manager_.getLogger("rt_engine")->info("[{}] {}", tag,
                                               ambiguity_resolver_->fixQualityRunEndLine());

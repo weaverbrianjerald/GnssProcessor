@@ -560,10 +560,11 @@ bool RealTimeEngine::processEpoch(const std::vector<RinexObservation>& epoch_obs
         soft_lli_->recordSnapshot(*state_manager_,
                                   TimeUtils::continuousGpsSeconds(ctx.current_time));
 
-    // Both pseudo-observation constraints sit after the measurement update and
+    // The pseudo-observation constraints sit after the measurement update and
     // before AR, so the shrunk covariance feeds the resolver.
     applyZwdConstraint(ctx);
     applyNetworkIonoPrior(ctx);
+    applyNetworkIonoFile_(ctx);   // no-op unless network.closed_loop.iono_file
 
     resolveAmbiguities(ctx);
     writeEpochTraces(ctx);

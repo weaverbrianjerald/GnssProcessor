@@ -55,6 +55,7 @@
 #include "realtime/ArObserve.hpp"            // Observe-mode integer search: rows, counters, wire chain context
 #include "realtime/EpochCadence.hpp"         // Measured epoch spacing, source of the default data-gap threshold
 #include "realtime/FloatPhaseScale.hpp"      // The receiver's own phase factor on float satellites' phase rows
+#include "realtime/NetworkIonoConstraint.hpp" // The network's slant ionosphere read from a network run's traces (iono_file)
 #include <Eigen/Dense>
 #include <chrono>
 #include <filesystem>
@@ -1305,6 +1306,12 @@ private:
     void observeFloatPhaseScale_(RtEpochContext& ctx);  ///< Feeds the committed update's post-fit rows to the phase-factor estimator.
     void applyZwdConstraint(RtEpochContext& ctx);       ///< Soft a-priori ZWD pseudo-observation.
     void applyNetworkIonoPrior(RtEpochContext& ctx);    ///< Network slant-iono BLUP prior (ionosphere-weighted).
+    void applyNetworkIonoFile_(RtEpochContext& ctx);    ///< The network's slant ionosphere from a network run's traces, between-satellite rows (network.closed_loop.iono_file).
+    /// One row per offered satellite of the file corrections into logs/iono_file_trace.csv (no-op when the trace is not open).
+    void writeIonoFileTrace_(const GnssTime& t, const std::vector<IonoFileCorrection>& corr,
+                             const std::map<std::string, IonoFileUserState>& state,
+                             const std::map<std::string, double>& elevation, const IonoFileDecision& dec,
+                             bool applied);
     void resolveAmbiguities(RtEpochContext& ctx);       ///< Integer ambiguity resolution (MLAMBDA).
     /**
      * @brief The observe-mode integer search (RealTimeEngineArObserve.cpp), called first by
@@ -1372,6 +1379,7 @@ private:
     void initStateManagerAndApriori();  ///< StateManager + the coarse a-priori position seed.
     void initProcessingComponents();    ///< Models, filter, aiding, WLS, slip detectors + the "not wired into RT" warnings.
     void initAmbiguityResolver();       ///< MLAMBDA resolver setup.
+    void initNetworkIonoFile_();        ///< Reads the network run's traces when network.closed_loop.iono_file is on (throws on a failed read).
     void seedInitialState();            ///< initializeState + the Earth-centred a-priori fallback.
     void initTraceLoggers();            ///< TraceLogger, the L10 SSR-consumer trace, slip traces.
 
@@ -1475,6 +1483,14 @@ private:
     FloatPhaseScale float_phase_scale_;
     /// The factors applied to the satellites' phase rows this epoch (float_phase_scale; empty otherwise).
     std::map<std::string, double> float_phase_scale_map_;
+    /// The network run's slant ionosphere and integer flags (network.closed_loop.iono_file); null when off.
+    std::unique_ptr<NetworkIonoFile> iono_file_;
+    /// The file corrections' per-satellite events and counters (network.closed_loop.iono_file).
+    NetworkIonoConstraint iono_file_constraint_;
+    /// East and north offsets of the file's receivers from the consumer's a priori position (plane).
+    IonoFileOffsets iono_file_offsets_;
+    /// The per-satellite trace of the file corrections (logs/iono_file_trace.csv; open only with the key on).
+    std::ofstream iono_file_trace_;
     /// What the wire declares about its integer frame (@ref setWireChainContext).
     WireChainContext wire_chain_;
     bool ar_observe_logged_{ false };       ///< One-shot echo of the armed search and its gate.

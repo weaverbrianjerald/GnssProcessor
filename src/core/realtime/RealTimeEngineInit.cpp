@@ -18,6 +18,8 @@
 #include "products/SsrCorrectionStore.hpp"
 #include "common/Constants.hpp"
 #include <filesystem>
+#include <fmt/format.h>
+#include <stdexcept>
 
 namespace GnssProcessor {
 
@@ -281,6 +283,59 @@ void RealTimeEngine::initProcessingComponents() {
     mw_slip_detector_->setCorrections(&ppp_model_->getCorrections());
     if (turbo_edit_resolver_)
         turbo_edit_resolver_->setCorrections(&ppp_model_->getCorrections());
+
+    initNetworkIonoFile_();   // no-op unless network.closed_loop.iono_file
+}
+
+/**
+ * @brief Read the network run's traces for the consumer's file ionosphere (network.closed_loop.iono_file).
+ *
+ * No-op when the key is off.  On, the traces of the listed receivers are read once
+ * (NetworkIonoFile::read), the settings go to the per-satellite event owner and the receivers'
+ * east and north offsets from the consumer's a priori position are formed (the plane reads them).
+ * A failed read throws: an armed run never proceeds without its corrections.
+ */
+void RealTimeEngine::initNetworkIonoFile_() {
+    const ClosedLoopConfig& cl = config_.getNetworkConfig().closed_loop;
+    if (!cl.iono_file) return;
+    auto log = log_manager_.getLogger("rt_engine");
+    std::string error;
+    iono_file_ = std::make_unique<NetworkIonoFile>(
+        NetworkIonoFile::read(cl.iono_file_logs, cl.iono_file_stations, error));
+    if (!error.empty())
+        throw std::runtime_error("network.closed_loop.iono_file: " + error);
+    IonoFileSettings settings;
+    parseIonoFileCombine(cl.iono_file_combine, settings.combine);   // the loader refused any other name
+    settings.stations       = cl.iono_file_stations;
+    settings.sigma_elev_deg = cl.iono_file_sigma_elev_deg;
+    settings.sigma_m        = cl.iono_file_sigma_m;
+    settings.test_k         = cl.iono_file_test_k;
+    settings.return_ep      = cl.iono_file_return_ep;
+    settings.min_elev_deg   = cl.iono_file_min_elev_deg;
+    iono_file_constraint_.setSettings(settings);
+    std::map<std::string, std::array<double, 3>> positions;
+    for (const auto& station : settings.stations) {
+        std::array<double, 3> p{};
+        if (iono_file_->position(station, p)) positions[station] = p;
+    }
+    iono_file_offsets_ = ionoFileOffsets(cl.station.position_ecef, positions);
+    log->info("{}", iono_file_->runStartLine());
+    std::string offsets;
+    for (const auto& [station, en] : iono_file_offsets_)
+        offsets += fmt::format("{}{} {:+.1f} E {:+.1f} N km", offsets.empty() ? "" : ", ", station, en[0], en[1]);
+    log->info("Network iono file armed{}: combine {}, cut {:g} deg at the network receiver, test_k {:g}, return after "
+              "{} epochs, sigma {:.4f} m at {:g} deg to {:.4f} m from {:g} deg; receivers from the user: {}",
+              cl.iono_file_measure_only ? " (MEASURE ONLY: nothing applied)" : "", cl.iono_file_combine,
+              settings.min_elev_deg, settings.test_k, settings.return_ep, settings.sigma_m.front(),
+              settings.sigma_elev_deg.front(), settings.sigma_m.back(), settings.sigma_elev_deg.back(), offsets);
+    // The per-satellite trace, in the run's logs folder (the process's ./logs, as every trace of the run).
+    std::filesystem::create_directories("logs");
+    iono_file_trace_.open(std::filesystem::path("logs") / "iono_file_trace.csv");
+    if (iono_file_trace_)
+        iono_file_trace_ << "week,tow,sat,elev_user_deg,elev_net_deg,valid,cause,corr_m,x_m,var_m2,sigma_m,"
+                            "innov_m,bound_m,tested,active,reference,applied\n";
+    else
+        log->warn("Network iono file: cannot open logs/iono_file_trace.csv; the run continues without it");
 }
 
 /**

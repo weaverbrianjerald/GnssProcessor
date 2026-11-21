@@ -4,7 +4,7 @@
 // Included inside configMemberDump() (tests/support/ConfigDump.hpp), where `cfg` is the
 // loaded GnssConfig and `add(name, value)` appends one "name=value" line.
 //
-// 570 public const getters without arguments; 1375 dump statements.
+// 570 public const getters without arguments; 1385 dump statements.
 //
 // Vectors of structs (their size, then every element field by field):
 //   getBaselineConfig.rovers (std::vector<StationConfig>: size, then each element)
@@ -959,6 +959,16 @@ add("getNetworkConfig.closed_loop.innovation_screen_phase_floor_m", cfg.getNetwo
 add("getNetworkConfig.closed_loop.innovation_screen_code_floor_m", cfg.getNetworkConfig().closed_loop.innovation_screen_code_floor_m);
 add("getNetworkConfig.closed_loop.state_snapshot", cfg.getNetworkConfig().closed_loop.state_snapshot);
 add("getNetworkConfig.closed_loop.replay_products_path", cfg.getNetworkConfig().closed_loop.replay_products_path);
+add("getNetworkConfig.closed_loop.iono_file", cfg.getNetworkConfig().closed_loop.iono_file);
+add("getNetworkConfig.closed_loop.iono_file_logs", cfg.getNetworkConfig().closed_loop.iono_file_logs);
+add("getNetworkConfig.closed_loop.iono_file_stations", cfg.getNetworkConfig().closed_loop.iono_file_stations);
+add("getNetworkConfig.closed_loop.iono_file_combine", cfg.getNetworkConfig().closed_loop.iono_file_combine);
+add("getNetworkConfig.closed_loop.iono_file_sigma_elev_deg", cfg.getNetworkConfig().closed_loop.iono_file_sigma_elev_deg);
+add("getNetworkConfig.closed_loop.iono_file_sigma_m", cfg.getNetworkConfig().closed_loop.iono_file_sigma_m);
+add("getNetworkConfig.closed_loop.iono_file_test_k", cfg.getNetworkConfig().closed_loop.iono_file_test_k);
+add("getNetworkConfig.closed_loop.iono_file_return_ep", cfg.getNetworkConfig().closed_loop.iono_file_return_ep);
+add("getNetworkConfig.closed_loop.iono_file_min_elev_deg", cfg.getNetworkConfig().closed_loop.iono_file_min_elev_deg);
+add("getNetworkConfig.closed_loop.iono_file_measure_only", cfg.getNetworkConfig().closed_loop.iono_file_measure_only);
 add("getNetworkConfig.closed_loop.ar_observe", cfg.getNetworkConfig().closed_loop.ar_observe);
 add("getNetworkConfig.closed_loop.ar_search", cfg.getNetworkConfig().closed_loop.ar_search);
 add("getNetworkConfig.closed_loop.ar_determined_sigma_cyc", cfg.getNetworkConfig().closed_loop.ar_determined_sigma_cyc);

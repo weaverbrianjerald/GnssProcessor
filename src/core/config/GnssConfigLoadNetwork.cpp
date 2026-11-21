@@ -120,6 +120,69 @@ namespace GnssProcessor {
         }
 
         /**
+         * @brief Parse the consumer's file ionosphere keys (@c network.closed_loop.iono_file*) into @p clc.
+         *
+         * Read always; checked only when @c iono_file is on, and then refused (thrown) when incomplete: an empty
+         * logs folder, a combination other than pair, plane or single, a receiver count that does not fit the
+         * combination (two, one, four or more), a sigma table whose two lists differ in length, are empty, have edges
+         * not strictly increasing or a sigma not positive, a test bound not positive, a return count below 1 or an
+         * elevation cut outside [0, 90) degrees.  An
+         * armed arm therefore never runs silently without its corrections.
+         *
+         * @param cl   The @c network.closed_loop object.
+         * @param clc  The closed-loop settings being filled.
+         */
+        void loadClosedLoopIonoFile(const nlohmann::json& cl, ClosedLoopConfig& clc) {
+            clc.iono_file           = cl.value("iono_file", false);
+            clc.iono_file_logs      = cl.value("iono_file_logs", std::string{});
+            clc.iono_file_combine   = cl.value("iono_file_combine", std::string("pair"));
+            clc.iono_file_test_k    = cl.value("iono_file_test_k", 4.0);
+            clc.iono_file_return_ep = cl.value("iono_file_return_ep", 4);
+            clc.iono_file_min_elev_deg = cl.value("iono_file_min_elev_deg", 30.0);
+            clc.iono_file_measure_only = cl.value("iono_file_measure_only", false);
+            if (cl.contains("iono_file_stations") && cl["iono_file_stations"].is_array())
+                for (const auto& s : cl["iono_file_stations"])
+                    if (s.is_string()) clc.iono_file_stations.push_back(s.get<std::string>());
+            if (cl.contains("iono_file_sigma_elev_deg") && cl["iono_file_sigma_elev_deg"].is_array())
+                for (const auto& v : cl["iono_file_sigma_elev_deg"])
+                    if (v.is_number()) clc.iono_file_sigma_elev_deg.push_back(v.get<double>());
+            if (cl.contains("iono_file_sigma_m") && cl["iono_file_sigma_m"].is_array())
+                for (const auto& v : cl["iono_file_sigma_m"])
+                    if (v.is_number()) clc.iono_file_sigma_m.push_back(v.get<double>());
+            if (!clc.iono_file) return;
+            const auto refuse = [](const std::string& why) {
+                throw std::runtime_error("network.closed_loop.iono_file is on but " + why);
+            };
+            if (clc.iono_file_logs.empty()) refuse("iono_file_logs (the network run's logs folder) is empty");
+            const std::size_t n = clc.iono_file_stations.size();
+            if (clc.iono_file_combine == "pair") {
+                if (n != 2) refuse("iono_file_combine \"pair\" needs two iono_file_stations, got " + std::to_string(n));
+            } else if (clc.iono_file_combine == "single") {
+                if (n != 1) refuse("iono_file_combine \"single\" needs one iono_file_stations entry, got "
+                                   + std::to_string(n));
+            } else if (clc.iono_file_combine == "plane") {
+                if (n < 4) refuse("iono_file_combine \"plane\" needs four or more iono_file_stations, got "
+                                  + std::to_string(n));
+            } else {
+                refuse("iono_file_combine must be \"pair\", \"plane\" or \"single\", got \"" + clc.iono_file_combine
+                       + "\"");
+            }
+            const auto& e = clc.iono_file_sigma_elev_deg;
+            const auto& s = clc.iono_file_sigma_m;
+            if (e.empty() || e.size() != s.size())
+                refuse("iono_file_sigma_elev_deg and iono_file_sigma_m must be non-empty lists of one length");
+            for (std::size_t i = 0; i < e.size(); ++i) {
+                if (i > 0 && !(e[i] > e[i - 1])) refuse("iono_file_sigma_elev_deg must increase strictly");
+                if (!(s[i] > 0.0) || !std::isfinite(s[i])) refuse("every iono_file_sigma_m must be positive");
+            }
+            if (!(clc.iono_file_test_k > 0.0) || !std::isfinite(clc.iono_file_test_k))
+                refuse("iono_file_test_k must be a positive number");
+            if (clc.iono_file_return_ep < 1) refuse("iono_file_return_ep must be 1 or more");
+            if (!(clc.iono_file_min_elev_deg >= 0.0 && clc.iono_file_min_elev_deg < 90.0))
+                refuse("iono_file_min_elev_deg must lie in [0, 90) degrees");
+        }
+
+        /**
          * @brief Parse the fixed-cycle fold's knobs (
          *        @c network.ambiguity_resolution.fixed_cycles.*) into @p ar.
          *
@@ -13555,6 +13618,11 @@ namespace GnssProcessor {
             // still gates the station validation below), so a config that sets it is
             // a consumer-only run.
             clc.replay_products_path     = cl.value("replay_products_path", std::string{});
+            // The network's slant ionosphere read from a network run's traces (stage 1 of the
+            // user's network ionosphere).  Consumer side only, default false, byte-identical, and it
+            // never reaches the producer's solve or its resume fingerprint.  An incomplete setting
+            // is refused here, so an arm cannot run without its corrections.
+            loadClosedLoopIonoFile(cl, clc);
             // The observe-mode integer search (derived into the consumer engine as
             // GnssConfig::arObserve): reads the consumer's float and writes nothing back.
             // Default false, byte-identical, and it never reaches the producer's solve or its
