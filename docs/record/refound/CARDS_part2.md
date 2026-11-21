@@ -219,3 +219,12 @@ verbatim on 2026-11-07 under the 60 KB bar. Entries are in pre-registration orde
   consumer (S1 passes), but the floor's guard misses a 3 m clock step the control catches (K1 fails, resumed or not). The narrowed
   trigger is card SCW section 7's (not built here). The floor removes card L5B's three-band event and passes card ALD's gates (4) and
   (5) (card L5B section 15). Nothing armed.
+- [PES](PES_parallel_epoch_stages_2026-10-29.md): closed, 2026-10-29: BUILT, GATED and ARMED, merged into main 2026-11-02 (branch `perf/pes`); seven identical-output stages armed in both reference files (2026-10-29 and 2026-11-07). Closed 2026-11-20: nothing owed; the speed work continues in PSM.
+  The station normal formation, the Schur reduce (split by border columns, not by stations) and the redundancy census run
+  in parallel behind `network.parallel_station_normals`, `parallel_schur_columns` and `parallel_redundancy_census`
+  (loader default off; ARMED and pinned in both goldens at the author's decision): key on IDENTICAL to off on both
+  goldens for each key and all three, off IDENTICAL to main; loop -27.9 % (field), -20.3 % (sim), -39.7 % at 305
+  stations after card CVF. The baseline pair stands. Continued 2026-11-06, branch `perf/pes-next`, ARMED 2026-11-07 (section 9):
+  `network.parallel_carry_harvest`, `parallel_iono_traces` and `parallel_coupling_prepare` (each IDENTICAL to off, off IDENTICAL to main), PASS A rejected on its timing, one OpenMP team size in every region. Loop -28.9 % (field), -25.7 % (sim) against main; all six stages -48.7 % against none at 305 stations over 2 h.
+  2026-11-07: a fourth key, `network.sbasis_values_first` (the S-basis completion on eigenvalues first, the rank gate reading
+  them), identical; main against all four keys -41.5 % (field), -34.8 % (sim).

@@ -191,3 +191,31 @@ search on every epoch (no fix in 9 epochs, as expected with `min_epochs` 10). `m
 data, hour 1: 2.31 m against the frozen control's 0.06 m); no truth audit of the user's own holds exists on the
 simulator; wrong user holds were seen at receivers outside the network on the adopted days; one day per bed so far.
 The baseline paragraph of `CLAUDE.md` follows the night's remaining health runs.
+
+### 2026-11-20: the 6 h baseline of the reference files
+
+Runs `D:/GnssProcessorSupport/runs_irm/_rap_n20_{f129,f130,f132,s,b}_6` (6 h; the reference files of 8109a64 with the
+fixing built-in user; exe `gnss_processor_int1120.exe`, sha256[:16] de17cb83802a20c2) against same-exe frozen controls
+of `golden_{field,sim}_rf0hv18` (`_rap_n20c_*`); census users `_rap_n20_<doy>_<site>`; grades
+`D:/GnssProcessorSupport/runs_nom/_irdu_grades/reads_2026-11-20/n20_raw.txt` (read again for this section). Every run
+exit 0 with 720 epochs emitted.
+
+| run | built-in user 3D median by hour 1 to 6 (m) | frozen control |
+| --- | --- | --- |
+| field DOY 129 (WTZZ00DEU) | 2.31 0.09 0.01 0.03 0.04 0.01 | 0.06 0.01 0.02 0.01 0.02 0.01 |
+| field DOY 130 | 2.06 0.11 0.02 0.04 0.04 0.04 | 0.09 0.02 0.03 0.04 0.06 0.05 |
+| field DOY 132 | 0.60 0.05 0.03 0.03 0.02 0.01 | 0.07 0.02 0.02 0.02 0.02 0.01 |
+| sim (SZZ000SIM) | 0.68 0.10 0.03 0.03 0.02 0.02 | 0.10 0.03 0.04 0.02 0.02 0.01 |
+| BeiDou lineage | 0.03 0.02 0.02 0.02 0.02 0.02 | (frozen base) |
+
+Simulator truth audit: 406,237 held link-epochs right, 0 wrong, 0 wrong decisions. Held share from hour 3: DOY 129
+GPS 80.7 to 84.0 %, Galileo 81.3 to 86.7 %; DOY 130 GPS 80.2 to 81.3 %, Galileo 69.9 to 79.9 %; DOY 132 GPS 76.3 to
+79.9 %, Galileo 73.6 to 82.6 %; simulator 89 to 92 %. Census of 16 sites, hours 2 to 6 paired against the frozen
+control: +1.4 cm (DOY 129; 1 site worse by more than 5 cm), +1.9 cm (DOY 130; 3 sites), +1.4 cm (DOY 132; 2 sites);
+hour 1 +0.50 to +0.61 m. Reading: from hour 3 the reference equals the frozen one at the built-in user; hours 1 and 2
+are slower (network and user start cold together). DOY 132's hour 2 (1.35 m with the earlier float built-in user)
+reads 0.05 m. The two keys armed on 2026-11-20 (`network.ring_fix.resume_response`, `network.code_pin_single_leg_hold`)
+leave these numbers unchanged where no event occurs: `runs_irm/_rap_la4_{f129,s}_6` and `_rap_cp1_{f129,s}_6` are
+identical in products and every trace to `_rap_n20_{f129,s}_6`. This is the baseline paragraph of `CLAUDE.md` from
+2026-11-20 (branch `docs/consolidate-2026-11-20`, for the author's review). Still owed: the DOY 130 Galileo held share,
+the warm-network user start.
