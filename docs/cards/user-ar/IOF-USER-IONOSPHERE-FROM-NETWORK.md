@@ -371,3 +371,30 @@ poster's user, while the horizontal is better (6.6 against 8.1 cm). At 30 degree
 carry a correction (8 per epoch, median 36 degrees), so the first minutes lean on the high satellites while the low ones,
 which carry the height, stay free; at 15 degrees the constraint reaches down to 15 degrees (14 satellites, median 32
 degrees) and the up error at minute 5 is 14.0 cm.
+
+### 15. Final result
+
+Figure `fig_iof_wtzz_search_both.png` (the iono_user folder): WTZZ00DEU, the first 60 minutes, median of the five
+days; today's user, the search settings alone (partial fixing, position gate 0.20 m, min_epochs 2), and the site
+receivers' ionosphere at the 30 and 15 degree cuts with the search settings. Times to 10 cm and to 5 cm by day, the first
+fix and the errors are in section 13 and in the write-up's final table.
+
+**Integers** (the managing session's wording: no "0 wrong" without its held and verified counts beside it). None was
+found wrong in the four lines of the figure. Today's user: 10,835 held integer epochs, 9,733 verified. The search
+settings alone: 13,272 held, 11,610 verified. The 30 degree line: 14,462 held, 13,800 verified against the never-fixing
+user with the same corrections and 11,820 against the one without; 7 flagged in the first hour against the latter, of
+which 1 could not be confirmed either way by the last-common-epoch test and 0 by the managing session's test (the median
+of the last 30 minutes of held epochs). The 15 degree line: 15,679 held, 14,754 and 12,164 verified; 107 flagged in the
+first hour, of which 26 and 0 could not be confirmed (short arcs, the reference without corrections still converging).
+In every flagged pair the fixing user's whole numbers never changed.
+
+**The second reference stays in every future check of this feature:** with the uncombined row (arm a) the fixing user
+held G25 pairs one narrow-lane cycle off on two days (65 epochs), and only the reference without corrections saw it.
+
+**Offered under the reading:** the site pair at the 30 degree cut with the search settings (sooner to 10 and 5 cm than
+today's user on each of the five days; no wrong integer found). **Reported as measured:** the 15 degree line, with better
+medians (6.0 and 8.5 min) but a miss of 1.5 min on day 147 and more early holds that could not be confirmed.
+
+**Limits.** One site, with network receivers 0 and 100 m away; corrections read at the user's own epoch (no latency);
+the search settings differ from the adopted user and are the author's decision (the managing session tests them alone on
+the poster's 85 starts). The new keys stay default off with their ledger rows; nothing is armed.
