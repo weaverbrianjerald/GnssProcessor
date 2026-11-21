@@ -365,3 +365,51 @@ calibrations measure the standing error of the reference coordinate as much as t
 - **Expected,** to be measured: first fix and second hour as the receiver's own phase factor; hours 2 to 24 and the
   calibration as the control, because the held rows, which carry the position from the first fix on, keep the
   present weight; UTQI unchanged.
+
+## Results, 2026-11-21
+
+### 12. The poster's experiment: items 2 and 1 on 85 warm starts
+
+At the managing session's request, before building the design of section 11: the AGU refresh experiment (17
+receivers on 23 to 27 May 2026, moving, joining at 03:00 a network 3 h old, 3 h each, fixing and never-fixing users;
+reference `refresh_arm1120`; driver `presentation/agu26/figures/v3_integer/tools/refresh_agu.py`).
+
+- **Engine.** The branch with main `019ed34` merged (`86af1c6`), `gnss_processor_ufqp.exe`, sha256[:16]
+  3db51558cf096e7a. With no user key it reproduces four `arm1120` user runs (`_rap_agu3_ufqrep*`, fixing and
+  never-fixing, days 143, 145 and 147): every file identical except item 3's declared trace columns, `ar_gate`
+  endings, run-end line and census debug lines (`cmp_item3.py`).
+- **Networks.** Both variants replay `arm1120`'s network products (copied into `_rap_agu3_rufq{1,2}_n<doy>`, a note
+  in each folder): the branch changes nothing on the network path, so the comparison isolates the user keys. The
+  `arm1120` re-grade (`regrade_arm1120`, this card's folder; the reference folder has no `summary.json` and was not
+  written to) reproduces its numbers: 19.75 and 39.5 min, 2.215 cm, 0 wrong of 112,754 held.
+- **Variants.** `ufq2`: `estimation.ambiguity_resolution.search_unheld_only=true` (key file
+  `ufq_user_keys_unheld.txt`). `ufq1`: the same plus each receiver's phase factor in the tested form (one phase sigma
+  per run, 2 mm x k), with k the median of the same receiver's factors on the other four days (85 measure-only runs
+  `_rap_agu3_ufqm_<doy>_<site>`; `poster_factors.md`). The factors are a property of the receiver: WTZZ 0.38 to 0.49
+  over the five days, STPM 0.60 to 0.63, UTQI 0.86 to 1.01, ARHT 0.31 to 0.39; POHN (0.70 to 1.61) and CIBG (0.67 to
+  1.18) each have one outlying day.
+
+| Fixing users, 85 starts | arm1120 | ufq2 (unheld search) | ufq1 (unheld search + own phase factor) |
+|---|---|---|---|
+| Time to 10 cm, median (min) | 19.75 | 19.75 | 20.5 |
+| Time to 5 cm, median (min) | 39.5 | 39.5 | 37.25 |
+| 3D error, minutes 60 to 180, median of starts (cm) | 2.215 | 2.275 | 2.475 |
+| Paired, minutes 60 to 180: better / worse / equal starts | - | 12 / 22 / 51 | 34 / 49 / 2 |
+| Held share, median (whole run / after minute 60, %) | 65.8 / 95.0 | 65.8 / 95.0 | 66.7 / 98.3 |
+| Wrong holds, G L1C/L2W and E L1X/L5X (float check) | 0 | 0 | 0 |
+| Wrong holds, E L1C/L5Q (held samples) | 0 of 22,832 | 0 of 22,934 | 0 of 24,088 |
+| Calibration from minute 60, median of starts (quartiles) | 1.23 (0.95 to 1.71) | 1.24 (0.96 to 1.72) | 2.18 (1.64 to 2.99) |
+
+Ten-minute medians of the fixing users (cm, minutes 0 to 180): arm1120 25.01, 10.46, 6.68, 4.88, 3.77, 3.38, 2.71,
+2.39, 2.34, 2.31, 2.40, 2.35, 2.06, 2.21, 2.21, 2.10, 2.28, 2.23; ufq2 identical to within 0.07 in every bin; ufq1
+24.83, 10.62, 6.50, 5.38, 3.40, 3.16, 2.70, 2.25, 2.40, 2.41, 2.40, 2.40, 2.38, 2.26, 2.19, 2.24, 2.27, 2.24. The
+never-fixing users and standard PPP do not move beyond 0.75 min and 0.01 cm.
+
+**Against the managing session's rule** (times to 10 and 5 cm not worse, the error after the first hour better in
+more starts than worse, no wrong integer): `ufq2` fails on the paired error (12 better, 22 worse); `ufq1` fails on
+time to 10 cm (+0.75 min) and on the paired error (34 better, 49 worse), and its covariance is overconfident in 83 of
+85 starts. Neither is recommended for the poster's users. Reading: the static factor on every row makes the error
+after the first hour worse here as on the four beds (section 11), while its gain is in the window when the user's
+own ambiguities are still float (time to 5 cm 2.25 min sooner, minutes 40 to 60 better); the design of section 11
+applies the factor exactly there and keeps the configured weight on held rows, so it is built next and tested on the
+same 85 starts.
