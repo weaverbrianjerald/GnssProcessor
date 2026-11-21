@@ -955,6 +955,9 @@ public:
     /// Run counters of the held census and of the endings (measure only).
     const FixQualityCounters& fixQualityCounters() const { return fix_quality_; }
 
+    /// The satellites held at the last census (a satellite of a held pair, see FixQualityCounters).
+    const std::set<std::string>& heldSatellites() const { return held_sats_prev_; }
+
     /// Run counters of the search over the not-yet-held candidates (zero with the key off).
     const UnheldSearchCounters& unheldSearchCounters() const { return unheld_counters_; }
 

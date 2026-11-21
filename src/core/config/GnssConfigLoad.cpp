@@ -2261,6 +2261,18 @@ namespace GnssProcessor {
         }
         log->info("Default measurement noise: code_std={:.3f} m, phase_std={:.3f} m, doppler_std={:.3f} Hz",
             default_meas_noise_.code_std_m, default_meas_noise_.phase_std_m, default_meas_noise_.doppler_std_m);
+        phase_scale_measure_ = jval<bool>(json, "filter.measurement_noise.phase_scale_measure",
+                                          "phase_scale_measure", false);
+        float_phase_scale_   = jval<bool>(json, "filter.measurement_noise.float_phase_scale",
+                                          "float_phase_scale", false);
+        if (float_phase_scale_) {
+            log->info("Measurement noise: the receiver's own phase factor, estimated from its post-fit "
+                      "residuals, applied to the phase rows of satellites whose ambiguities are float "
+                      "(float_phase_scale)");
+        } else if (phase_scale_measure_) {
+            log->info("Measurement noise: the receiver's own phase factor is estimated, measure only "
+                      "(phase_scale_measure)");
+        }
 
         // -----------------------------------------------------------
         // The per-block code/phase σ tables are derived (further below)

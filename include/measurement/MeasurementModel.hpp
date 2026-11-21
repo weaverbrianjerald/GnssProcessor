@@ -300,6 +300,21 @@ namespace GnssProcessor {
         }
 
         /**
+         * @brief Factors on the variance of the phase rows of the named satellites, applied to the
+         *        undifferenced rows of every @ref computeMeasurementUpdate call until the next set.
+         *
+         * Written by the real-time engine under @c filter.measurement_noise.float_phase_scale (the
+         * receiver's own phase factor on satellites whose ambiguities are float, see
+         * realtime/FloatPhaseScale.hpp), before the between-satellite transform, so the transform
+         * carries the scaled variances.  An empty map (the default) changes nothing.
+         *
+         * @param scale Satellite to factor on its phase rows' variance.
+         */
+        void setPhaseVarianceScale(std::map<std::string, double> scale) {
+            phase_variance_scale_ = std::move(scale);
+        }
+
+        /**
          * @brief Get the current BSSD pivot satellite for each constellation.
          *
          * @return Const reference to the pivot map, keyed by constellation name (e.g. "GPS"),
@@ -491,6 +506,8 @@ namespace GnssProcessor {
         /// Refreshed each epoch via @c setProtectedAmbiguityKeys; empty
         /// unless something is held.
         std::set<std::string> protected_ambiguity_keys_;
+        /// Satellite to factor on its phase rows' variance (setPhaseVarianceScale); empty = unchanged.
+        std::map<std::string, double> phase_variance_scale_;
 
         /// Measurement-differencing strategy (None / BetweenSatellite /
         /// DoubleDifference), selected once from config via
