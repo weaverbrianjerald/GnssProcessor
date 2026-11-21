@@ -83,6 +83,7 @@ const std::vector<FieldDecl> kRunFields = {
     {"carry.ring_fix.entry_revalidate", "", Persist::RunConst, "", "", nullptr, nullptr, nullptr},
     {"carry.ring_fix.resume_response", "", Persist::RunConst, "", "", nullptr, nullptr, nullptr},
     {"carry.ring_fix.nn_monitor", "", Persist::RunConst, "", "", nullptr, nullptr, nullptr},
+    {"carry.ring_fix.window_monitor", "", Persist::RunConst, "", "", nullptr, nullptr, nullptr},
     {"carry.ring_fix.nn_guard_release", "", Persist::RunConst, "", "", nullptr, nullptr, nullptr},
     // Its memory, carried from epoch to epoch; not in the snapshot, so a resumed leg starts it empty (the run
     // counters and the near-null monitor's measure-only state included).
@@ -98,6 +99,7 @@ const std::vector<FieldDecl> kRunFields = {
     {"carry.ring_fix.untied_moved_s", "", Persist::ColdStart, "", "", nullptr, nullptr, nullptr},
     {"carry.ring_fix.untied_last_move_s", "", Persist::ColdStart, "", "", nullptr, nullptr, nullptr},
     {"carry.ring_fix.nn_mon", "", Persist::ColdStart, "", "", nullptr, nullptr, nullptr},
+    {"carry.ring_fix.window", "", Persist::ColdStart, "", "", nullptr, nullptr, nullptr},
     {"carry.ring_fix.counters", "", Persist::ColdStart, "", "", nullptr, nullptr, nullptr},
     {"carry.ring_fix.cascade_counters", "", Persist::ColdStart, "", "", nullptr, nullptr, nullptr},
     // Its hand-offs from one epoch to the next: the moves the decision seam asks of the next election, and the chords

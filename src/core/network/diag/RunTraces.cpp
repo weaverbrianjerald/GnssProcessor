@@ -64,6 +64,7 @@ NetworkRunTraces::NetworkRunTraces(std::filesystem::path log_dir)
       chain_edges_trace_path(log_dir_ / "network_chain_edges.csv"),
       chain_frame_trace_path(log_dir_ / "network_chain_frame.csv"),
       ring_fix_trace_path(log_dir_ / "network_ring_fix.csv"),
+      ring_fix_window_trace_path(log_dir_ / "network_ring_fix_window.csv"),
       pb_prehold_trace_path(log_dir_ / "network_pb_prehold.csv"),
       rpb_states_trace_path(log_dir_ / "network_rpb_states.csv"),
       windup_arcs_trace_path(log_dir_ / "network_windup_arcs.csv"),
@@ -1077,6 +1078,15 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
                               "frac_if,wl,frac_wl,n1,n2,lat1,lat2,resid_if_m,streak,audit\n";
         else
             log->warn("Network: failed to open ring-fix trace {}", ring_fix_trace_path.string());
+    }
+    if (nc.ring_fix.enable && nc.ring_fix.window_monitor && chain_run) {
+        ring_fix_window_trace.open(ring_fix_window_trace_path);
+        if (ring_fix_window_trace)
+            ring_fix_window_trace << "week,tow,station,sat,sig1,sig2,r_m,scale_sta_mm,n_sta_links,sp_sta,sm_sta,"
+                                     "scale_net_mm,n_net_links,sp_net,sm_net,o2b_p,o2b_m,o1_mean_m,o2a_run,"
+                                     "share_sta,n_sta,share_sat,n_sat\n";
+        else
+            log->warn("Network: failed to open ring-fix window trace {}", ring_fix_window_trace_path.string());
     }
     if (nc.trace_pb_prehold) {
         pb_prehold_trace.open(pb_prehold_trace_path);

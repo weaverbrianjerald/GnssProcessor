@@ -1816,12 +1816,16 @@ namespace GnssProcessor {
         /// | @c sat_health (the broadcast health of @ref sat flagged unhealthy from @ref tow,
         /// for @ref duration_s or to the run end, for the readers of @c network.sat_health)
         /// | @c station_step (the held coordinate of @ref station moved by @ref east_m,
-        /// @ref north_m, @ref up_m from @ref tow, for @ref duration_s or to the run end).
+        /// @ref north_m, @ref up_m from @ref tow, for @ref duration_s or to the run end)
+        /// | @c ring_fix_plant (simulation only, needs @c network.ring_fix.enable and
+        /// @c network.ring_fix.truth_root: at the first epoch from @ref tow at which the ring fix
+        /// holds a link of (@ref station, @ref sat), both bands' held integers are shifted by
+        /// @ref delta_cycles, a planted wrong hold for the residual monitors to find).
         std::string kind;
         /// GPS seconds-of-week at which the event starts.  The run's week is implied
         /// (a leg never spans a rollover); matched with a +/-0.25 s half-epoch guard.
         double      tow{ -1.0 };
-        std::string station;        ///< Station name (slip, outage, arc_erase, rx_clock_step, fixed_cycle_plant, station_step).
+        std::string station;        ///< Station name (slip, outage, arc_erase, rx_clock_step, fixed_cycle_plant, ring_fix_plant, station_step).
         /// Satellite id, e.g. "G05" (every kind but a station-wide one); @c outage also
         /// takes "all", every satellite of the station (a whole-station outage).
         std::string sat;
@@ -1832,7 +1836,8 @@ namespace GnssProcessor {
         /// or "all" drops the whole record.
         std::string signal;
         /// slip: cycles added to the phase observable; fixed_cycle_plant: the integer shift of
-        /// the arc (a non-zero integer); outage: optional cycles added to every dropped phase
+        /// the arc (a non-zero integer); ring_fix_plant: the integer shift of both bands' held
+        /// integers (a non-zero integer); outage: optional cycles added to every dropped phase
         /// observable from the end of the window on (the re-acquisition's new integer).
         double      delta_cycles{ 0.0 };
         /// slip: also raise LLI bit 0x1 on the onset epoch; outage: raise it on every
@@ -2054,6 +2059,13 @@ namespace GnssProcessor {
         /// integers, or a frozen number of decision epochs pass.  A clean measured resumption keeps the hold under
         /// both.  Events at both edges and run-end counters.
         std::string resume_response{ "off" };
+        /// @c network.ring_fix.window_monitor: the windowed residual monitor of held links, measure only (card NRF
+        /// section 132): on every held link the scaled sums in the robust scale of the other links of its class over
+        /// the trailing hour (station class and network receiver class), the fixed forms O2b, O1 and O2a beside them,
+        /// and the station and satellite disturbance shares; network_ring_fix_window.csv and RINGFIX window_open /
+        /// window_close events, counters at both edges.  Nothing is released and no product changes.  False
+        /// (default): off, byte-identical.
+        bool window_monitor{ false };
         /// @c network.ring_fix.nn_monitor: the near-null signature as a measure-only monitor (the queue's item N3 after
         /// card NRF section 108.2): every held Galileo E1/E5a chord's centred code signature (the guard's moving averages
         /// over nn_guard_min_epochs and its verdicts) is tallied where it sits at a whole near-null step with the

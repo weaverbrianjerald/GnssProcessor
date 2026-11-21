@@ -49,6 +49,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <deque>
 #include <fstream>
 #include <map>
 #include <memory>
@@ -851,6 +852,98 @@ struct RingFixUntiedOutcome {
 
 struct RingFixTruth;   // below: the fixture's truth (simulation only)
 
+// ---- The windowed residual monitor (network.ring_fix.window_monitor; measure only) ----------------
+// Card NRF section 132.  Nothing is released and no product changes: the monitor forms its statistics on every held
+// link, writes them to network_ring_fix_window.csv, and raises a RINGFIX event at the open and at the close of each
+// episode, per form.  Functions: network/ar/RingFixWindow.hpp.
+
+/// The monitor's forms: the paper's three fixed forms and the scaled sums with the two class choices.
+enum class RingFixWindowForm : std::uint8_t {
+    O2b,             ///< Two-sided CUSUM of the residual in metres (k 6 mm, h 0.4 m-epochs).
+    O1,              ///< Mean of the last 40 min of residuals at 8 mm or more (80 % of the window present).
+    O2a,             ///< 40 consecutive residuals of one sign at 4 mm or more.
+    ScaledStation,   ///< Two-sided CUSUM in units of the station class's robust scale (h 95).
+    ScaledNetwork,   ///< The same with the network receiver class's scale (h 105).
+};
+inline constexpr std::size_t kRingFixWindowFormCount = 5;   ///< Number of RingFixWindowForm values.
+
+/// @brief The form's name in events, trace columns and run-end lines ("o2b", "o1", "o2a", "scaled_station",
+///        "scaled_network").
+/// @param f The form.
+/// @return Its name.
+const char* ringFixWindowFormName(RingFixWindowForm f);
+
+// The frozen forms of the paper (PAPER_item5_held_window_monitor.md section 3, ruled 2026-11-19).
+inline constexpr double kRingFixWindowO2bKM = 0.006;     ///< O2b reference k (m).
+inline constexpr double kRingFixWindowO2bHM = 0.4;       ///< O2b threshold h (m-epochs); trips at or above.
+inline constexpr double kRingFixWindowO1S = 2400.0;      ///< O1 window (s, 40 min).
+inline constexpr double kRingFixWindowO1MeanM = 0.008;   ///< O1 trip: |mean| at or above (m).
+inline constexpr double kRingFixWindowO1Cover = 0.8;     ///< O1: share of the window's epochs present.
+inline constexpr int    kRingFixWindowO2aEpochs = 40;    ///< O2a run length (consecutive residuals with a value).
+inline constexpr double kRingFixWindowO2aM = 0.004;      ///< O2a: |residual| at or above (m).
+// The scaled statistic (ADDENDUM_scaled_statistic_2026-11-19.md section 3).
+inline constexpr double kRingFixWindowScaleS = 3600.0;   ///< The class scale's trailing span (s): (t - 1 h, t].
+inline constexpr double kRingFixWindowMadToSigma = 1.4826;   ///< Robust scale = this times the MAD about the median.
+/// Other held links with a residual in the trailing hour below which the class scale is not formed (the
+/// link-epoch is counted unscaled).  Source: the threshold inventory's class rule, which keeps a receiver type as a
+/// class when at least 3 stations share it (tooling-threshold-inventory/parts/analyst_ringfix.md).
+inline constexpr int    kRingFixWindowMinOthers = 3;
+/// Trip levels of the scaled sums (trip above h).  Source: the threshold inventory's offline replay at today's
+/// monitor's own rate, 1.21 per 1000 clean held link-hours (analyst_ringfix.md, finding 7).  That replay formed the
+/// scale as the median of each link's hourly robust scale; this monitor forms it as the robust scale of the other
+/// links' residuals over the trailing hour (the pre-registered form), so the rate at these levels is re-measured on
+/// the night runs.
+inline constexpr double kRingFixWindowHStation = 95.0;
+inline constexpr double kRingFixWindowHNetwork = 105.0;   ///< See kRingFixWindowHStation.
+/// The share of a one-cycle (1, 1) error's ionosphere-free footprint left on the held link's residual: 13.5 mm of
+/// the Galileo E1/E5a footprint c / (f1 + f5) = 108.94 mm, the median of the observed one-cycle pairs (paper,
+/// section 4).  The reference d_c of a link is half of this share of its own pair's footprint.
+inline constexpr double kRingFixWindowFootprintShare = 0.0135 / 0.10894;
+/// share_sta / share_sat: a neighbour counts as disturbed when its mean residual over the overlap is at least this
+/// (m), among neighbours with at least kRingFixWindowShareOverlapS of overlap (the lead's evidence columns E1 and E2,
+/// EVIDENCE_held_signature.md section 2).
+inline constexpr double kRingFixWindowShareM = 0.004;
+inline constexpr double kRingFixWindowShareOverlapS = 1800.0;   ///< See kRingFixWindowShareM (s).
+
+/// One held link's state in the windowed monitor (reset at a new hold).
+struct RingFixWindowLink {
+    int       index{-1};             ///< The link's index in the class buffers (stable for the run).
+    double    hold_s{-1.0};          ///< decided_s of the watched hold; another value is a new hold.
+    long long n1{0};                 ///< The held band-1 integer at the last epoch held.
+    long long n2{0};                 ///< The held band-2 integer at the last epoch held.
+    double    first_s{-1.0};         ///< The hold's first row with a residual (-1: none yet).
+    double    s_plus[2]{0.0, 0.0};   ///< Scaled sum S+ by class choice (0 station, 1 network).
+    double    s_minus[2]{0.0, 0.0};  ///< Scaled sum S- by class choice.
+    double    scale[2]{0.0, 0.0};    ///< The scale used at the last formed epoch (m; 0: never formed).
+    int       scale_n[2]{0, 0};      ///< The other links behind it.
+    double    o2b_plus{0.0};         ///< O2b S+ (m-epochs).
+    double    o2b_minus{0.0};        ///< O2b S- (m-epochs).
+    std::deque<std::pair<double, double>> o1;   ///< O1: (time, residual) of the rows in the last 40 min.
+    int       o2a_run{0};            ///< O2a: the current run of one sign at 4 mm or more.
+    int       o2a_sign{0};           ///< Its sign (0: none).
+    std::vector<std::pair<double, double>> hist;   ///< (time, cumulative residual) of each row with a residual.
+    bool      open[kRingFixWindowFormCount]{};     ///< An episode of the form is open.
+    double    open_s[kRingFixWindowFormCount]{};   ///< When it opened.
+};
+
+/// The windowed monitor's run state and counters.
+struct RingFixWindowMonitor {
+    std::vector<std::string> rx_class;   ///< Per roster station: its receiver class (type, or manufacturer).
+    std::map<RingFixLinkId, RingFixWindowLink> links;   ///< The held links being watched.
+    std::map<RingFixLinkId, int> index;                 ///< Every link ever watched -> its buffer index.
+    /// Per class choice (0 station, 1 network): class key -> the trailing hour's (time, link index, residual).
+    std::map<std::string, std::deque<std::tuple<double, int, double>>> buf[2];
+    std::map<std::string, int> open_in_class[2];   ///< Per class choice: class key -> open scaled episodes.
+    std::map<std::string, std::map<int, int>> members[2];   ///< Per class choice: class key -> link index -> its entries in buf.
+    double    dt_s{0.0};               ///< The epoch interval: the smallest positive step between epochs seen (s).
+    long long link_epochs{0};          ///< Held link-epochs watched.
+    long long with_residual{0};        ///< Of them, with a residual.
+    long long formed[2]{0, 0};         ///< Per class choice: link-epochs with the scaled sums formed.
+    long long unscaled[2]{0, 0};       ///< Per class choice: link-epochs with a residual and no class scale.
+    long long opened[kRingFixWindowFormCount]{};   ///< Episodes opened, per form.
+    long long closed[kRingFixWindowFormCount]{};   ///< Episodes closed, per form.
+};
+
 /// One held chord's tally of the near-null monitor: the epochs and episodes its signature sat at a whole step.
 struct RingFixNnMonitorLink {
     long long epochs{0};      ///< Checked epochs at a step signature.
@@ -1030,6 +1123,8 @@ struct NetworkRingFix {
     bool        nn_monitor{false};          ///< The near-null monitor is armed (network.ring_fix.nn_monitor).
     bool        nn_guard_release{false};    ///< The guard releases a flagged chord at its first flag, never moves it (network.ring_fix.nn_guard_release).
     RingFixNnMonitor nn_mon;                ///< Its state (measure-only).
+    bool window_monitor{false};             ///< network.ring_fix.window_monitor: the windowed residual monitor (measure only).
+    RingFixWindowMonitor window;            ///< Its state (empty with it off).
 };
 
 // ---- The near-null guard (network.ring_fix.nn_guard) -------------------------------------------

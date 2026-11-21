@@ -57,6 +57,8 @@
  *                             PASS-A slip drain for mode @c free_epoch
  *   * @c fixed_cycle_plant -> the fixed-cycle seam's ledger (network/ar/FixedCycles.hpp):
  *                             a wrong integer planted on one arc
+ *   * @c ring_fix_plant    -> the ring fix's hold epoch (network/ar/RingFixHold.hpp): a wrong
+ *                             hold planted on one held link, both bands (simulation only)
  *
  * The eighth, @c oracle_pin (simulation only), is not handled by this seam
  * beyond the arming summary: network/slip/OraclePin.hpp reads it from the config
@@ -232,6 +234,23 @@ namespace GnssProcessor {
     };
 
     /**
+     * @brief A staged @c ring_fix_plant directive (simulation only), consumed by the ring fix's
+     *        hold epoch (network/ar/RingFixHold.hpp, stage networkRingFixHoldPlant).
+     *
+     * Staged at every epoch from its @c tow until it fires: it fires at the first epoch at which
+     * the ring fix holds a link of (@c station, @c sat), whose held integers are then shifted by
+     * @c delta cycles on both bands (a wrong hold planted for the residual monitors to find).  The
+     * hold stays wrong until a release.  A link never held leaves the event unfired, which the
+     * run end reports as a hard error.
+     */
+    struct InjectRingFixPlant {
+        std::string station;          ///< Station name (roster-matched by the stage).
+        std::string sat;              ///< Satellite id.
+        long long   delta{ 0 };       ///< The integer shift of both bands' held integers (cycles).
+        std::size_t ev_index{ 0 };    ///< Index into @c NetworkInjectState::events (ledger updates).
+    };
+
+    /**
      * @brief A staged @c fixed_cycle_plant directive, consumed by the
      *        fixed-cycle seam (network/ar/FixedCycles.hpp).
      *
@@ -312,6 +331,8 @@ namespace GnssProcessor {
         std::vector<InjectArcErase> arc_erase_now;
         /// This epoch's staged fixed-cycle plants, re-staged until they fire.
         std::vector<InjectFixedCyclePlant> fixed_cycle_plant_now;
+        /// This epoch's staged ring-fix plants (simulation only), re-staged until they fire.
+        std::vector<InjectRingFixPlant> ring_fix_plant_now;
         long long n_arc_erase_acted{ 0 };  ///< Chords actually refloated by injected erases.
         /// Path census: mode -> chords the injected event actually acted on.
         /// A zero here on an armed leg means the wiring is inert, which is the

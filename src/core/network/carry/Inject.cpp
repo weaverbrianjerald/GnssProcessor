@@ -345,6 +345,7 @@ namespace GnssProcessor {
             if (!e.signal.empty())  list += " sig=" + e.signal;
             if (e.kind == "slip")           list += fmt::format(" d={:.3f}cyc", e.delta_cycles);
             if (e.kind == "fixed_cycle_plant") list += fmt::format(" d={:.0f}cyc", e.delta_cycles);
+            if (e.kind == "ring_fix_plant")    list += fmt::format(" d={:.0f}cyc both bands", e.delta_cycles);
             if (e.kind == "outage") {
                 list += fmt::format(" dur={:.0f}s", e.duration_s);
                 if (e.delta_cycles != 0.0) list += fmt::format(" return_d={:.3f}cyc", e.delta_cycles);
@@ -387,6 +388,7 @@ namespace GnssProcessor {
         st.arc_erase_now.clear();
         st.anchor_now_slip.clear();
         st.fixed_cycle_plant_now.clear();
+        st.ring_fix_plant_now.clear();
 
         if (!st.armed) return se_raw;          // byte-identical path: no copy
 
@@ -673,6 +675,11 @@ namespace GnssProcessor {
                 // entry: it fires at the first epoch at which the ledger holds the arc.
                 st.fixed_cycle_plant_now.push_back(InjectFixedCyclePlant{
                     e.station, e.sat, e.signal, std::llround(e.delta_cycles), i});
+            } else if (e.kind == "ring_fix_plant") {
+                // Re-staged at every epoch until the ring fix's hold epoch fires it: at the
+                // first epoch at which the ring fix holds a link of the station and satellite.
+                st.ring_fix_plant_now.push_back(InjectRingFixPlant{
+                    e.station, e.sat, std::llround(e.delta_cycles), i});
             }
         }
         return *out;

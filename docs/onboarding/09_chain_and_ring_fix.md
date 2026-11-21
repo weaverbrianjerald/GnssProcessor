@@ -185,7 +185,7 @@ The fields the chain keeps across epochs (`include/network/state/Entities.hpp`, 
 `advanceChainBaselines` replaces the tree memories at the end of each election. After a warm resume
 the ColdStart tree memories start empty unless the snapshot's chain memory section restores them
 (`network.state_snapshot_chain_capture`, `network.resume_chain_restore`;
-`include/network/state/ChainMemory.hpp`). `NetworkRingFix` declares its 60 members in
+`include/network/state/ChainMemory.hpp`). `NetworkRingFix` declares its 62 members in
 `net::kRunFields` as `carry.ring_fix.<member>`.
 
 ## 3. The rules
@@ -229,6 +229,7 @@ frozen numbers are constants of `include/network/ar/RingFix.hpp` (`kRingFixWindo
 | keep-carry | a re-host onto a held link whose carry sits on the integer keeps it at step 0 | `rehost_keep_carry` | RECOMMEND_SCOPED | `chainHeldInteger`, `applyRehostRow` (`ChainDatum.cpp`) |
 | entry check | a held entry is known only after a clean gap check and, on Galileo E1/E5a, a near-null signature off a step | `entry_revalidate` | RECOMMEND_SCOPED | `chainEntryStep` (`RingFix.cpp`), `networkRingFixHoldCuts` |
 | resume response | a held link whose own station and satellite resume after a break with a shifted or unmeasured level is released (`release`) or suspended until its own float confirms its integers (`revalidate`); a clean measured resumption keeps the hold | `resume_response` | UNVALIDATED | `ringFixResumeStep`, `ringFixResumeClassOf` (`RingFix.cpp`), `networkRingFixHoldReleases` |
+| window monitor | measure only: on every held link the residual's CUSUM in the robust scale of the other links of its class (station, network receiver class), with the fixed forms O2b, O1 and O2a beside it; episodes as events, nothing released | `window_monitor` | UNVALIDATED | `ringFixWindowStep`, `networkRingFixWindowMonitor` (`RingFixWindow.cpp`) |
 | settled flags | `signal_integer` 1 while a satellite is tied to its root through held links | `settled_flags` | RECOMMEND_SCOPED | `networkRingFixDecideSettled`, `ringFixStampSettledFlags` |
 | settled rule | `root` or `largest` (the largest tied set) | `settled_rule` | RECOMMEND_SCOPED | `ringFixSettledSats`, `ringFixLargestSettledSet` |
 | settled wait | a flag rises after N emissions in the set | `settled_wait_emissions` | RECOMMEND_SCOPED | `ringFixSettledWait` (`RingFix.cpp`) |

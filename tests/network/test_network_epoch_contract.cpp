@@ -24,6 +24,7 @@
 #include "network/ar/RingFix.hpp"   // networkRingFixNearNullMonitor, networkRingFixHoldEpoch, networkRingFixDecide
 #include "network/ar/RingFixDecide.hpp"   // the decision's stages
 #include "network/ar/RingFixHold.hpp"     // the hold epoch's stages
+#include "network/ar/RingFixWindow.hpp"   // the windowed residual monitor
 #include "app/Application.hpp"
 #include "network/driver/Epoch.hpp"
 #include "network/state/Entities.hpp"
@@ -401,6 +402,8 @@ static_assert(std::is_same_v<decltype(static_cast<SigRingFixHoldReleases>(&netwo
 using SigRingFixHoldCascadeReleases = void (*)(NetworkRun&, const NetworkEpoch&, const std::set<net::ArcTuple>&,
                                                const std::vector<RingFixCut>&);
 static_assert(std::is_same_v<decltype(static_cast<SigRingFixHoldCascadeReleases>(&networkRingFixHoldCascadeReleases)), SigRingFixHoldCascadeReleases>);
+using SigRingFixHoldPlant = void (*)(NetworkRun&, const NetworkEpoch&);   // simulation only: network.inject ring_fix_plant
+static_assert(std::is_same_v<decltype(static_cast<SigRingFixHoldPlant>(&networkRingFixHoldPlant)), SigRingFixHoldPlant>);
 using SigRingFixHoldInherit = void (*)(NetworkRun&, const NetworkEpoch&, const RingFixChainFacts&,
                                        const std::set<net::ArcTuple>&, const std::vector<RingFixCut>&);
 static_assert(std::is_same_v<decltype(static_cast<SigRingFixHoldInherit>(&networkRingFixHoldInherit)), SigRingFixHoldInherit>);
@@ -424,6 +427,9 @@ static_assert(std::is_same_v<decltype(static_cast<SigRingFixDecideAudit>(&networ
 using SigRingFixDecideLiveHolds = void (*)(NetworkRun&, const NetworkEpoch&, const RingFixDecideReadings&,
                                            const RingFixDecideAudit&);   // the live record's note, measure-only
 static_assert(std::is_same_v<decltype(static_cast<SigRingFixDecideLiveHolds>(&networkRingFixDecideLiveHolds)), SigRingFixDecideLiveHolds>);
+using SigRingFixWindowMonitor = void (*)(NetworkRun&, const NetworkEpoch&, const RingFixDecideReadings&,
+                                         const RingFixDecideAudit&);   // measure only: network.ring_fix.window_monitor
+static_assert(std::is_same_v<decltype(static_cast<SigRingFixWindowMonitor>(&networkRingFixWindowMonitor)), SigRingFixWindowMonitor>);
 using SigRingFixDecideLinks = std::vector<RingFixEvent> (*)(NetworkRun&, const NetworkEpoch&, const RingFixDecideReadings&);
 static_assert(std::is_same_v<decltype(static_cast<SigRingFixDecideLinks>(&networkRingFixDecideLinks)), SigRingFixDecideLinks>);
 using SigRingFixDecideCascades = RingFixDecideCascades (*)(NetworkRun&, const NetworkEpoch&, const RingFixDecideChain&,

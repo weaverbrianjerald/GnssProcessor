@@ -20,6 +20,8 @@
  *   networkRingFixHoldRoots             4. a held link kept through a root handover the root row pinned
  *   networkRingFixHoldReleases          5. the release step
  *   networkRingFixHoldCascadeReleases   6. the cascades' releases
+ *   networkRingFixHoldPlant             6b. a planted wrong hold (network.inject kind ring_fix_plant,
+ *                                          simulation only; no-op without one)
  *   networkRingFixHoldInherit           7. the old hosts: last epoch's tree edges that are chords now
  *   networkRingFixHoldTargets           8. this epoch's targets, for the next epoch's old hosts
  *   networkRingFixHoldTable             9. the hold table PASS B folds
@@ -34,6 +36,8 @@
  *   - A pinned root handover (4) moves the link's root before the release step (5) compares it.
  *   - The release step (5) comes before the cascades' releases (6): a cascade link is released with
  *     its pair.
+ *   - A planted wrong hold (6b) lands after every release (5, 6) and before the hold table (9), so it
+ *     is planted only on a link still held in this epoch and enters this epoch's hold rows.
  *   - The old hosts (7) read the previous epoch's targets, which the targets stage (8) replaces.
  *   - The hold table (9) is last: it holds every link the earlier stages left held.
  *
@@ -183,6 +187,23 @@ void networkRingFixHoldRoots(NetworkRun& run, const NetworkEpoch& ep, const Ring
  */
 void networkRingFixHoldReleases(NetworkRun& run, const NetworkEpoch& ep, const RingFixChainFacts& facts,
                                 const std::set<net::ArcTuple>& latched);
+
+/**
+ * @brief Stage 6b: a wrong hold planted by the event injector (network.inject kind ring_fix_plant;
+ *        simulation only, the loader requires network.ring_fix.truth_root).
+ *
+ * Each staged plant fires at the first epoch at which the ring fix holds a link of its station and
+ * satellite (the first such link in the links' order): both bands' held integers are shifted by
+ * the plant's delta, and the hold stays at the shifted integers until a release.  A plant whose
+ * link is not held stays staged for the next epoch; one that never fires fails the run at its end
+ * (the injector's rule).  With no plant staged (every run without the event) nothing is read or
+ * written.
+ *
+ * @param run The run. Written: the planted link's held integers, run.ctx.inject (the event's
+ *            ledger), run.traces (an INJECT ring_fix_plant event). Read: run.setup.stations.
+ * @param ep  The epoch: ep.se.time.
+ */
+void networkRingFixHoldPlant(NetworkRun& run, const NetworkEpoch& ep);
 
 /**
  * @brief Stage 6: the cascades' releases (network.ring_fix.cascade).

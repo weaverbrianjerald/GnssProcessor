@@ -90,6 +90,92 @@ holds about 4 KB of values for 58 receivers, plus the epoch's events (and about 
 acting (reports, diagnostics, coincident duplicates) count neither as cycle slips nor as quality-test flags and are
 listed under bookkeeping.
 
+## Stills for a poster or a slide
+
+```
+py -3.14 scripts\netview\netview.py still <page.html> --panel <view>/<part> [--t HH:MM] [--size WxH] [--type-scale S] [--scale N] [--set KEY=VALUE ...] [--placed-width INCHES] -o <picture.png>
+py -3.14 scripts\netview\netview.py still [<page.html>] --batch <stills.json> [-o <folder>]
+```
+
+`still` writes one part of one view of a built page as a picture: the part alone on white, without the rail, the
+header, buttons or notes, at exactly the asked size, so nothing is cropped. Headless Microsoft Edge draws it (a batch
+of 13 stills of a 24 h page of 86 MB took 32 s, four side by side). The page file is not changed: the command works
+on a temporary copy that carries this checkout's page code around the page's data, so a page built before stills
+existed can be used.
+
+**The part** is named `<view>/<part>`. The view is written as in the page's address (`network`, `overview`,
+`receivers`, `satellites`, `atmosphere`, `receiver/GCGO00USA`, `satellite/G05`, `los/<receiver>/<satellite>` and the
+other layers). The part is one of:
+
+| Part | What is written |
+| --- | --- |
+| `links` | the network picture of the `network` view: rings by hops, or the world map with `--set l=map` |
+| `timeline` | the event lanes with the held share and the hour labels; on any view (`network/timeline` opens fastest), and the view of one receiver or satellite adds that entity's lane |
+| `tiles` | the view's key figures as data, to a `.json` file: label, value, unit, note and level of each tile |
+| a panel's title, or its beginning | any titled panel of the view: `overview/Receivers over time`, `network/Share of the links`, `receiver/GCGO00USA/Wet delay`, `satellite/G05/Emitted clock`, `satellite/G05/Ground track`, `atmosphere/Vertical ionosphere at the cursor` |
+
+A name that fits no part of the view, or more than one, is refused; the message lists the view's parts. A still that
+fails leaves no picture.
+
+**Size and type.** `--size` is the picture in CSS pixels and `--scale` the picture pixels per CSS pixel.
+`--type-scale S` is a magnification: the part is laid out at 1/S of the size and drawn S times larger, so type, lines
+and marks all grow by S against the picture (as the browser's zoom does). The page's labels are 10 to 12 CSS pixels
+(9 for the bar labels of the jump chart). With the size given as inches times 100, a type scale of 2.5 puts a 10
+pixel label at 18 pt, and `--scale 3` gives 300 pixels per inch. With `--placed-width` (the width in inches the
+picture has where it is placed) the command also prints the type sizes in points: pixels x placed width x 72 /
+layout width. The drawing takes the height the legend leaves. The rows of a matrix share it (rows thinner than
+4 pixels carry no names), the lanes of the timeline share it (when they are thinner than their labels the command
+prints the height the timeline needs), and a map keeps its 2:1 shape inside it.
+
+**Choices.** What the page keeps in its buttons is given with `--t` and `--set`:
+
+| Key | Values | Effect |
+| --- | --- | --- |
+| `--t` | an epoch index, or a GPS time of day `HH:MM` | the time cursor |
+| `l` | `map` | `links`: the world map instead of the rings |
+| `f`, `b` | index in the page's "Signals" list (0 first); 0 or 1 in its "Tree of" list | the signals and the tree of `links`, of the timeline's held share and of the network view's charts |
+| `names` | `0`, `sat` | `links`: no names, or the satellites and the reference receiver only |
+| `held`, `float` | `0` | `links`: without the held, or the float, links |
+| `m` | a metric's key | a matrix: `code`, `phase`, `zcode`, `nsat`, `raim`, `slip`, `qc`, `held`, `zwd`, `clksd` for receivers; `code`, `phase`, `nrx`, `anchor`, `frac`, `held`, `hops` for satellites (those whose trace the run has). An unknown key is refused with the list |
+| `iono` | `vertical`, `slant` | the ionosphere map of `atmosphere` (the panel's title follows the choice) |
+| `key` | `0` | without the legend or the colour scale |
+| `title` | `1` | with the panel's title line |
+| `cursor` | `0` | without the line of the time cursor |
+| `colours` | `turbo`, `viridis` | the colour map of magnitudes |
+| `s` | `node:NAME`, `link:RECEIVER:SAT` | the selection of the network view, as in its address |
+
+**Several stills.** A batch file lists them; each still takes the defaults it does not set, and files are written to
+the batch file's folder or to `-o`:
+
+```json
+{
+  "page": "D:/GnssProcessorSupport/netview_out/agu3_n145.html",
+  "defaults": {"t": "12:00", "type_scale": 2.5, "scale": 3},
+  "stills": [
+    {"file": "links_map.png", "panel": "network/links", "size": [1930, 1000], "placed_width": 19.3, "set": {"l": "map", "key": 0}},
+    {"file": "wet_delay.png", "panel": "receiver/GCGO00USA/Wet delay", "size": [965, 312], "placed_width": 9.65},
+    {"file": "tiles.json", "panel": "overview/tiles"}
+  ]
+}
+```
+
+The command prints one line per still (the picture's pixels, the layout, the magnification, the smallest and largest
+type) and, for a batch, writes `stills.json` beside the pictures: per still what it shows (signals, tree, layout,
+metric, the cursor's time), its sizes and `axis`, the span of its time axis as fractions of the picture's width. Two
+stills placed so that these spans coincide share one time axis (the timeline and a matrix have label columns of
+different widths).
+
+**Words.** A still replaces words that are the page's makers' own: "Held-out user receiver" reads "Test receiver"
+(the table `STILL_WORDS` of `scripts/netview/page/still.js`). The page itself keeps its words.
+
+**The address.** A page built since 2026-11-20 shows the same still in a browser, for a look before a batch:
+`<page.html>#/network?t=12:00&l=map&still=links` (the part fills the window; the browser's zoom is the type scale;
+`w` and `h` fix the part's size in CSS pixels).
+
+Limits: one part per still; a still is a magnified part, so marks grow with the type (the rings picture of 56
+receivers holds every name at 18 pt only when it is placed about 15 in wide or more; `names=sat` thins it); a panel
+that scrolls on the page (a table, an event list) is cut at the still's height.
+
 ## Reading the page
 
 1. The rail on the left picks a layer; the badge beside it is its count. The path above the view leads back
@@ -118,3 +204,6 @@ listed under bookkeeping.
 ```
 py -3.14 scripts\netview\test_netview.py
 ```
+
+The test of the stills draws six stills of the small synthetic page with Microsoft Edge and is skipped on a machine
+without it.

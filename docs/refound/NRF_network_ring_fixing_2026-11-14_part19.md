@@ -5,10 +5,10 @@
 - **id:** NRF-part19
 - **topic:** network-vehicle
 - **status:** open
-- **summary:** Sections 125.6 onwards of card NRF (2026-11-19), continued from [part 18](NRF_network_ring_fixing_2026-11-14_part18.md), which reached its size. Section 125.6: the manager's reading of section 125.5 (the purpose of step S7 (b) not reached; no bar on integers read on a resumed leg in place of an uninterrupted run until the author rules on the exact resume), what B4 gives, a diagnosis with the resume slip warm-up armed (the differing held integers reduce to the whole-turn class alone), and the items for the author. Section 125.7: B2a read as registered on m1 with the S10 engine and the dump (6 276 of 6 277 lines equal; the window line, which the restore does not install, differs). Section 125.8: the manager's reading, B2a not met as registered by that one line, a near miss for the author, and two more items for the author. Section 126: the failing two-run check of DOY 146 attributed to exact epoch time, the only difference that changes any output on that day (a note; nothing adopted or withdrawn). Sections 127 to 132: card XRS filed and line B started (127); the warm resume, the snapshot write and the fingerprint cut into groups with identical output, and its gate (128); the independent review's annotations of the night commits (129); the resume response of a held link pre-registered (130); G17's return on DOY 144 read and one evidence run of the re-attachment rule pre-registered (131); a trace-only windowed residual monitor for held links pre-registered (132).
+- **summary:** Sections 125.6 onwards of card NRF (2026-11-19), continued from [part 18](NRF_network_ring_fixing_2026-11-14_part18.md), which reached its size. Section 125.6: the manager's reading of section 125.5 (the purpose of step S7 (b) not reached; no bar on integers read on a resumed leg in place of an uninterrupted run until the author rules on the exact resume), what B4 gives, a diagnosis with the resume slip warm-up armed (the differing held integers reduce to the whole-turn class alone), and the items for the author. Section 125.7: B2a read as registered on m1 with the S10 engine and the dump (6 276 of 6 277 lines equal; the window line, which the restore does not install, differs). Section 125.8: the manager's reading, B2a not met as registered by that one line, a near miss for the author, and two more items for the author. Section 126: the failing two-run check of DOY 146 attributed to exact epoch time, the only difference that changes any output on that day (a note; nothing adopted or withdrawn). Sections 127 to 132: card XRS filed and line B started (127); the warm resume, the snapshot write and the fingerprint cut into groups with identical output, and its gate (128); the independent review's annotations of the night commits (129); the resume response of a held link pre-registered (130); G17's return on DOY 144 read and one evidence run of the re-attachment rule pre-registered (131); a trace-only windowed residual monitor for held links pre-registered (132). Section 130.1: the resume response read on its bars and armed at `release` in the two primary reference files (2026-11-20). Section 132.1: the planted hold and the measure-only monitor built; bars 2 and 4 on the planted runs.
 - **source:** the manager's message of 2026-11-19 after checkpoint 3 (decision (1)); [part 18](NRF_network_ring_fixing_2026-11-14_part18.md), sections 125 to 125.5; the runs and grading outputs in `D:/GnssProcessorSupport/runs_nom/b2_s7br_grade/`.
 
-**Outcome.** The manager read section 125.5 on 2026-11-19: the purpose of step S7 (b), replaying from a converged state in place of two hours of convergence, is not reached, and until the author rules on the exact resume no bar on integers is read on a resumed leg in place of an uninterrupted run. A diagnosis with the resume slip warm-up armed leaves only the whole-turn class of differing held integers (328, 331 and 496 link-epochs on m1, h40 and n147). The phase wind-up accumulator is the state the seam lacks for the integers; the slip detectors' history is the one it lacks for the seam's edges. With the dump, B2a reads as registered on m1: every installed record crosses the seam whole, and the window line differs, so B2a is not met as registered by one line (a near miss for the author). On the author's ruling of 2026-11-19, sections 130 to 132 pre-register the resume response of a held link (bar B6 at `release`), one evidence run of the re-attachment rule on DOY 144, and a trace-only windowed residual monitor whose scale is taken from the data.
+**Outcome.** The manager read section 125.5 on 2026-11-19: the purpose of step S7 (b), replaying from a converged state in place of two hours of convergence, is not reached, and until the author rules on the exact resume no bar on integers is read on a resumed leg in place of an uninterrupted run. A diagnosis with the resume slip warm-up armed leaves only the whole-turn class of differing held integers (328, 331 and 496 link-epochs on m1, h40 and n147). The phase wind-up accumulator is the state the seam lacks for the integers; the slip detectors' history is the one it lacks for the seam's edges. With the dump, B2a reads as registered on m1: every installed record crosses the seam whole, and the window line differs, so B2a is not met as registered by one line (a near miss for the author). On the author's ruling of 2026-11-19, sections 130 to 132 pre-register the resume response of a held link (bar B6 at `release`), one evidence run of the re-attachment rule on DOY 144, and a trace-only windowed residual monitor whose scale is taken from the data. On 2026-11-20 the resume response met its bars B1 to B4 and B6 and was armed at `release` in the two primary reference files; the monitor was built measure only and met bars 2 and 4 on planted simulator runs, whose first plants were caught at once by the prior-residual check.
 
 ---
 
@@ -213,3 +213,77 @@ By construction the false-trip rate does not depend on the class's noise: a nois
 4. A release stage is a later ruling; its bars are proposed from the planted runs and the night runs, in the statistic's own units. The paper's two release bars (each planted hold caught within 60 min on both beds; false trips on right segments within the clean rate's upper Wilson bound of 0.1 %) are a proposal, not frozen.
 
 **Cautions carried.** The simulator cannot calibrate the catch: its natural wrong holds are near-null (3, 4) errors that leave 0.04 to 0.20 mm on the held link, which belong to the near-null monitor. Levels do not transfer between beds (the simulator's scale 4.9 mm with serial correlation 0.63 to 0.86, the observed one 2.4 mm with 0.37 to 0.42); the scaled form uses each bed's own scale, and the false-trip rate that sets h is read on observed clean holds. The catch of the one-signed holds rests on holds selected as steady offsets: of the 42, 4 links point to an integer error and 25 to a station effect. A hold that ends as a tree edge leaves the held set without a release (9 of the 42) and cannot be watched further. The single 27 m residual on POTS00DEU G13 at TOW 18930 on DOY 144 is a tracking break (a held link kept through an unmeasured return), answered by the resume response of section 130 at its own epoch, not by this monitor.
+
+### 130.1 2026-11-20: the resume response read on its bars, and armed at `release` in the two primary reference files
+
+Line A, on the builder's commit e728e00 (exe `gnss_processor_linea2.exe`, sha256 21d421f8cbbcf664...). Checkpoints 3 and
+5 of the package (`D:/GnssProcessorSupport/gates/day_program_2026-11-19/packages/held-resume-release/`), with the
+placements and predictions written before the runs (`stage6/PLACEMENTS.md`).
+
+- B1 (off identity): DOY 143 at 2 h identical in full to the line A exe before the key; five simulator and observed
+  controls identical apart from the announced lines. B2: suite `RingFixResume` (16 cases) passes.
+- B3, the two frozen-engine break beds, at both values against the key-off run of the same exe: bed (a), truth-wrong
+  held link-epochs 2 with the key off (S06000SIM E11 and E10, one epoch each, 0.121 and 0.166 m), 0 at `release` and
+  `revalidate`; every epoch emitted; frame-free count 0; held link-epochs 99.86 % or more. E11 and E10 answered at 265200
+  and 266400 with their rows; the unshifted E12 and E36 released too (the cost); under `revalidate` E11 and E10 cleared
+  as contradicted at their true integers, E36 held again, E12 expired. Bed (b) identical to its key-off run, as
+  predicted.
+- B4, three injected events on m1 (placed on Galileo links so that the frame-free count sees them): identical at all
+  three values. Each injected return was measured and released at its epoch by a cause the response yields to: (a) a
+  300 s gap with a one-cycle E1 shift, cause slip; (b) one epoch of E5a lost with a shift, cause slip (the signal tier);
+  (c) a satellite-wide gap of E08, cause chain (the returning row; the kept re-host of the key-off run did not recur).
+  Bars met; the response not driven (0 releases by it).
+- A bed of the observed POTS00DEU G13 shape, asked by the manager: one epoch with L1C only (L2W and the simulator's L5Q
+  dropped; the observed G13 has no L5), one epoch absent, the return with +1 cycle on L1C and no LLI, on S02000SIM G01.
+  The return is unmeasured and bridged (`unmeas_bridged`, gap of one epoch). Key off: held at (3, -32) for four epochs at
+  0.318 to 0.196 m, released by the monitor, decided again at (3, -33) (wrong) and held four more epochs: truth-wrong
+  held link-epochs 8, wrong decisions 1. `release`: released at 264810, cause resume (counter 1), decided at (4, -32) at
+  265680; wrong 0. `revalidate`: suspended at 264810, contradicted at (4, -32); never held again at (3, -32); wrong 0.
+  A first attempt that dropped L2W alone was measured (the row before the gap formed on L1C/L5Q) and is recorded in the
+  package.
+- B6, the six adopted days at `release` against same-engine key-off runs (24 h, the night of 2026-11-19, read by the run
+  session): every epoch emitted; held share identical by hour (largest difference +0.1 point); the five recorded cases
+  released at their return epochs with cause resume; no hold folded above 0.03 m at a shifted or unmeasured resumption,
+  against 5 with the key off; products identical to the key-off run before the first resume event on every day (on
+  DOY 146 the only resume, WROC00POL E18 at 223470, takes the place of a refloat release of the same epoch, and the
+  products are identical in full).
+- B5, the 6 h simulator beds, is not run.
+
+**The arming (2026-11-20).** On the author's arm rule (arm improvements unless measured harmful) and his words of
+2026-11-19 22:10 "this is a good time for adoption, merge, and longer runs", announced to him twice by the manager on
+2026-11-20 without objection, and on the manager's instruction: `network.ring_fix.resume_response` = `release` pinned
+on `golden_sim_refound` and `golden_field_refound` through the ledger (RECOMMEND_SCOPED, regime the ring fix on, not
+fingerprinted) and `make_golden_config.py`; the frozen rf0hv18 lineages and the BeiDou lineage keep it off and are left
+byte for byte. Branch `chain/line-a-2026-11-19`: the combined reference merged in (5147f15), the arming 058aabd. The
+verifies pass; the suites that read the reference files pass (245 cases), and the snapshot fingerprint pins do not move
+(the key is not a token of the fingerprint). A 10-epoch smoke of each regenerated file runs (the run-start line names
+the response).
+
+The two 6 h reference runs on the armed files, exe `gnss_processor_linea4.exe` (sha256 a4689d81ab62ecbb..., the combined
+engine with the window monitor and the planted hold, both off), against the baseline candidates `runs_irm/_rap_n20_f129_6`
+and `_rap_n20_s_6` (combined engine): products, every trace and the manifest identical on both beds. In these six hours
+no held link meets a shifted or unmeasured resumption of its own (observed day 129: 12 clean resumptions kept, 0
+released; simulator: none), so the armed key changes no output there. The logs differ only by the posture count (one more
+scoped knob armed), the response's run-start and run-end lines, the release line's `resume 0`, and timing lines.
+
+To check: `revalidate` on the simulator only; B5 at night; days beyond the six adopted ones.
+
+### 132.1 2026-11-20: the planted hold and the measure-only window monitor built; bars 2 and 4 on the planted runs
+
+Line A, commit 3681795 (exe `gnss_processor_linea3.exe`, sha256 bbff461fd97731ad...). Checkpoint 4 of the package.
+
+- `network.inject` kind `ring_fix_plant` (simulation only): both bands' held integers of a held link moved by a whole
+  number of cycles, in a hold stage after every release and before the hold table. `network.ring_fix.window_monitor`:
+  the scaled sums with the station and network receiver classes, O2b, O1, O2a, share_sta and share_sat on every held
+  link, `network_ring_fix_window.csv`, RINGFIX window_open and window_close, counters at both edges. Suites
+  `RingFixPlant` and `RingFixWindow`.
+- Off identity: two 2 h controls (m1, h40) identical in full to the line A exe.
+- Planted runs (m1 and h40, plants on S05000SIM G26 and S09000SIM E11, (+1, +1) at 263700): bar 2 met (with the key on,
+  products, every trace and the manifest identical to the key-off run but the monitor's own file and two log lines); bar
+  4 met (the offline replay of `network_ring_fix.csv` reproduces every row of the monitor's file, 91 368 and 89 449 rows,
+  16 columns, and every episode; 0 = 0). The clean holds stay under every trip level (largest scaled sum 50 against 95 and
+  105; O2b 0.28 m-epochs against 0.4; O2a 23 epochs against 40; O1 7 mm against 8 mm; network scale 4.6 mm).
+- The plants did not persist: a whole-cycle step against an established hold disagrees with the carried ambiguity; the
+  prior-residual check read 2 700 to 3 800 against 4 in the plant epoch, the RAIM attribution refloated both arcs, and
+  both links were released one epoch later. No reference d and no delay came from them. The manager chose shape 1 (the
+  link's carried entries move with the integers); its runs are reported below when read.

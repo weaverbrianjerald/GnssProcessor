@@ -19,7 +19,9 @@
  * residual, while the unarmed row walks it; the return closes the
  * edge with no re-seed and both time links on the pre-edge combinations; a whole-satellite
  * departure does not open an edge; the kept-epoch site declares each edge once and
- * persists the open ones; the loader and the run-end line.
+ * persists the open ones; the loader and the run-end line; the parked signal's single-station
+ * code row takes its satellite bias at the parked value as a known term (no column), by the
+ * same edge rule the datum rows read.
  *
  * Suite name @c NetworkCodePinSingleLeg is owned by this file alone.
  */
@@ -53,6 +55,10 @@
 #include "network/solve/Sbasis.hpp"
 #include "network/state/Entities.hpp"
 #include "network/state/RunContext.hpp"
+#include "network/assembly/LocalBirth.hpp"       // networkBirthLocalStates
+#include "network/assembly/SharedAdmission.hpp"  // networkAdmitSharedStates
+#include "network/assembly/StationRows.hpp"      // networkStationRows (the known parked bias)
+#include "../support/StationBirthFixture.hpp"
 #include "../support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 using namespace GnssProcessor;
@@ -606,4 +612,94 @@ TEST(NetworkCodePinSingleLeg, LoaderAndRunEndLine) {
         EXPECT_NE(oss.str().find("1 decoupling edge(s)"), std::string::npos);
         EXPECT_NE(oss.str().find("60 held satellite-epoch(s)"), std::string::npos);
     }
+}
+
+// ---- The parked signal's known bias (the one rule shared with the station rows) ----
+
+namespace {
+
+using KnownPrev = std::map<std::string, std::map<std::string, double>>;
+
+/// The previous values of E18 on C1C and C5Q (DOY 146, the observed case) as the builder reads them.
+KnownPrev e18Prev(bool with_parked = true) {
+    const std::string ck = constellationKey(systemOfSat("E18")) + "|";
+    KnownPrev prev;
+    prev[ck + "C1C"]["E18"] = -1.1866;
+    if (with_parked) prev[ck + "C5Q"]["E18"] = -2.1279;
+    return prev;
+}
+
+}  // namespace
+
+TEST(NetworkCodePinSingleLeg, TheKnownBiasRuleOpensHoldsAndCloses) {
+    const std::vector<Pair> c1c_only = {{"E18", "C1C"}};
+    const std::map<std::string, Pair> pairs = {{"E18", {"C1C", "C5Q"}}};
+    const std::map<std::string, NetworkSbasis::CodePinLegEdge> none;
+
+    // The decoupling edge: C5Q left the registered set, both signals have a previous value.
+    auto edges = networkCodePinLegKnownBiases(c1c_only, freqOf, none, pairs, e18Prev());
+    ASSERT_EQ(edges.count("E18"), 1u);
+    EXPECT_EQ(edges.at("E18").surviving, "C1C");
+    EXPECT_EQ(edges.at("E18").parked, "C5Q");
+    EXPECT_DOUBLE_EQ(edges.at("E18").parked_m, -2.1279);
+    EXPECT_DOUBLE_EQ(edges.at("E18").held_m, -1.1866);
+
+    // The datum rows read the same rule: the same edge from the static test.
+    const std::vector<std::string> sigs = {"C1C"};
+    const auto direct = NetworkSbasis::pinLegEdgeThisEpoch(
+        sigs, nullptr, &pairs.at("E18"), [](const std::string& s, double& v) {
+            v = s == "C1C" ? -1.1866 : -2.1279;
+            return true;
+        });
+    ASSERT_TRUE(direct.has_value());
+    EXPECT_EQ(direct->parked, "C5Q");
+    EXPECT_DOUBLE_EQ(direct->parked_m, -2.1279);
+
+    // An open edge keeps its parked value when the parked signal has no previous value
+    // any more (the harvest dropped it while it was unregistered).
+    const std::map<std::string, NetworkSbasis::CodePinLegEdge> open = {{"E18", edges.at("E18")}};
+    edges = networkCodePinLegKnownBiases(c1c_only, freqOf, open, pairs, e18Prev(false));
+    ASSERT_EQ(edges.count("E18"), 1u);
+    EXPECT_DOUBLE_EQ(edges.at("E18").parked_m, -2.1279);
+
+    // No edge: both signals registered (dual frequency), the surviving signal gone, or no
+    // previous value of the parked signal at the opening.
+    EXPECT_TRUE(networkCodePinLegKnownBiases({{"E18", "C1C"}, {"E18", "C5Q"}}, freqOf, open, pairs,
+                                             e18Prev()).empty());
+    EXPECT_TRUE(networkCodePinLegKnownBiases({{"E18", "C5Q"}}, freqOf, open, pairs, e18Prev()).empty());
+    EXPECT_TRUE(networkCodePinLegKnownBiases(c1c_only, freqOf, none, pairs, e18Prev(false)).empty());
+}
+
+TEST(NetworkCodePinSingleLeg, TheSingleStationRowKeepsItsBiasWhileParked) {
+    gnss_test::BirthFixture f;   // no satellite code-bias slots: every code row lacks the term, as a pruned slot does
+    const StationRowContext c = f.context();
+    const std::vector<PppObservation> obs = f.epoch(0);
+    networkBirthLocalStates(c, f.set, obs);
+    networkAdmitSharedStates(c, f.set, obs, {}, nullptr);
+
+    const StationDataRows plain = networkStationRows(c, f.set, obs);
+    const std::map<SatSignalId, double> empty;
+    const StationDataRows with_empty = networkStationRows(c, f.set, obs, &empty);
+    const SatId e24 = *SatId::parse("E24");
+    const std::map<SatSignalId, double> known = {
+        {SatSignalId{e24, *canonicalSignal(System::Galileo, "C5Q")}, -2.1279}};
+    const StationDataRows held = networkStationRows(c, f.set, obs, &known);
+
+    ASSERT_EQ(held.innovations.size(), plain.innovations.size());
+    ASSERT_EQ(with_empty.innovations.size(), plain.innovations.size());
+    EXPECT_EQ(held.partials.size(), plain.partials.size());   // a known term adds no column
+    int n_shifted = 0;
+    for (Eigen::Index r = 0; r < plain.innovations.size(); ++r) {
+        const auto ru = static_cast<std::size_t>(r);
+        EXPECT_EQ(with_empty.innovations(r), plain.innovations(r)) << r;
+        const bool parked_row = plain.satellite_ids[ru] == "E24" && plain.signal_types[ru] == "C5Q";
+        if (parked_row) {
+            EXPECT_NEAR(held.innovations(r), plain.innovations(r) - kSatBiasSign * -2.1279, 1e-9);
+            ++n_shifted;
+        } else {
+            EXPECT_EQ(held.innovations(r), plain.innovations(r)) << plain.satellite_ids[ru] << " "
+                                                                 << plain.signal_types[ru];
+        }
+    }
+    EXPECT_EQ(n_shifted, 1);   // the code row only; the L5Q phase row is untouched
 }

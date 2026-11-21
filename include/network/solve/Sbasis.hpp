@@ -494,6 +494,7 @@ public:
         long long recouple_moved{0};   ///< Of those, the returning column's prior-residual census row was reported (|t| above the census level): its level moved against the parked value.
         long long recouple_untested{0};///< Of those, no census verdict: the census or its "cb" family is unarmed, or its per-epoch row buffer overflowed.
         long long abandoned{0};        ///< Edges closed without a re-coupling, the satellite's departure included.
+        long long parked_station_epochs{0};  ///< Station-epochs whose rows of a parked signal took its satellite bias at the parked value (@ref networkCodePinLegKnownBiases).
         double max_recouple_move_m{0.0};  ///< The largest |solved - parked| at a re-coupling edge, metres (information; the test is the census statistic).
         double max_recouple_t{0.0};       ///< The largest census |t| among the moved re-couplings.
     };
@@ -1460,6 +1461,32 @@ public:
         const std::function<double(const std::string&)>& freqOf,
         const std::pair<std::string, std::string>& reference = {});
 
+    /**
+     * @brief The single-leg edge a satellite is in this epoch (@c network.code_pin_single_leg_hold):
+     *        the one rule the datum rows and the station rows both read.
+     *
+     * Called only for a satellite whose registered code signals span a single frequency.
+     * An edge open at the last kept epoch continues while its surviving signal is
+     * registered.  With none open, the decoupling edge opens when exactly one signal of the
+     * last kept pin pair is registered and both signals have a value of the last kept epoch:
+     * the surviving signal is held at its value, and the parked signal's value is kept.  The
+     * datum rows write the hold row on the surviving column
+     * (@ref buildCodeBiasDatumRows); the station rows give every single-station row of the
+     * parked signal that signal's satellite bias at @ref CodePinLegEdge::parked_m, as a known
+     * term (@ref networkCodePinLegKnownBiases), because its column is not registered.
+     *
+     * @param registered The satellite's registered code signals this epoch.
+     * @param open_edge  The satellite's edge open at the last kept epoch, or null.
+     * @param last_pair  The satellite's pin pair of the last kept epoch, or null.
+     * @param prev       Signal -> its value of the last kept epoch; false when it has none.
+     * @return The edge (open or opening), or nothing: no edge, or the open edge's surviving
+     *         signal left too (the caller abandons it).
+     */
+    static std::optional<CodePinLegEdge> pinLegEdgeThisEpoch(
+        const std::vector<std::string>& registered, const CodePinLegEdge* open_edge,
+        const std::pair<std::string, std::string>* last_pair,
+        const std::function<bool(const std::string&, double&)>& prev);
+
     /// Result of @ref GnssProcessor::NetworkSbasis::codeS2zTimeLink "codeS2zTimeLink": the time-linked sum-to-zero target for one
     /// (constellation,signal) code-bias channel (@c network.code_datum_time_linked).
     struct CodeS2zTimeLink {
@@ -1976,6 +2003,35 @@ void networkCodePinLegKeptEpoch(
                              std::optional<double>, const char*,
                              const std::string&)>& emitEvent, const EpochEvents& events,
     const NetworkEstimator& est, const Eigen::VectorXd& x_s, const NetworkPriorResidual& prires);
+
+/**
+ * @brief The parked signals of this epoch's single-leg edges, at their parked values
+ *        (@c network.code_pin_single_leg_hold).
+ *
+ * A parked signal has fewer than two stations, so its satellite code bias is not a
+ * registered column, and the per-epoch two-station rule removes it from the one station
+ * that still tracks the signal.  That station's code row of the signal would then enter
+ * the solve without the satellite bias (about 2 m on the observed outages), and the error
+ * reaches the satellite clock through the station's slant ionosphere and its other code
+ * rows.  Under the hold the parked value is known: the station rows take it as a fixed
+ * term (no column), so the value has one owner, the edge record (or, at the decoupling
+ * edge, the value of the last kept epoch the edge is opened from).  The edge test is
+ * @ref NetworkSbasis::pinLegEdgeThisEpoch, the same rule the datum rows read.
+ *
+ * @param registered_code_keys This epoch's registered (satellite, code signal) columns.
+ * @param freqOf     (satellite, signal) -> carrier frequency (Hz); 0 when unknown.
+ * @param open_edges The edges open at the last kept epoch, by satellite.
+ * @param last_pairs The pin pairs of the last kept epoch, by satellite.
+ * @param prev       "<constellation>|<signal>" -> satellite -> value of the last kept epoch.
+ * @return Satellite -> its edge, for each satellite with registered code signals on a single
+ *         frequency that is in an edge this epoch.
+ */
+std::map<std::string, NetworkSbasis::CodePinLegEdge> networkCodePinLegKnownBiases(
+    const std::vector<std::pair<std::string, std::string>>& registered_code_keys,
+    const std::function<double(const std::string&, const std::string&)>& freqOf,
+    const std::map<std::string, NetworkSbasis::CodePinLegEdge>& open_edges,
+    const std::map<std::string, std::pair<std::string, std::string>>& last_pairs,
+    const std::map<std::string, std::map<std::string, double>>& prev);
 
 // ---- Run-end reports (generated by scripts/nom_td_cut.py) ----
 
