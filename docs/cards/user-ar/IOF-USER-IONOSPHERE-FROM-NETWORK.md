@@ -5,8 +5,8 @@
 - **id:** IOF
 - **topic:** user-ar
 - **status:** open
-- **summary:** Pre-registered 2026-11-21, before the first graded run, at the author's request through the managing session. The user reads the network's slant ionosphere from a network run's own trace (stage 1) and applies it as between-satellite pseudo-observations before the integer search. Two variants at WTZZ00DEU on the poster's five days: ionosphere-fixed (the two receivers at the site, WTZR00DEU and WTZS00DEU) and ionosphere-weighted (a plane over the nine regional receivers, 162 to 457 km). The weights are measured on the five poster networks (section 4). The bar is fixed in section 8. Changed before the first graded run (section 10): corrections only from links at 30 degrees or more at the network receiver (the author's ruling), a measure-only closure check at the user first, tables of each day from the other four days, and the integer check also against the uncorrected never-fixing user. Result 2026-11-21 (section 11): the closure check at the user stops the work before any constrained run; most satellites agree to a few millimetres, but the converged user's own slant states carry steps of 11 to 18 cm on single satellites (G25 on four of five days) that its position does not see. Explained 2026-11-21 (section 12): the user's pivot and satellites not yet held; the rows now leave the pivot out and the weights are the untrimmed closure RMS per constellation, out of sample. Results 2026-11-21 (section 12): both cuts (30 and 15 degrees, the author asked for the second), zero wrong integers on the simulator and on the five days, no variant sooner on every day; the site pair at 15 degrees reaches 10 cm sooner on all five days. Search round 2026-11-21 (section 13): with partial fixing, the position sigma gate at 0.20 m and min_epochs 2 the site pair at 30 degrees is sooner on every day, no wrong integer: offered for the poster; the search settings alone do not converge faster.
-- **dates:** 2026-11-21 (pre-registered; design changed before the first graded run, section 10; the closure check, section 11; the constrained runs at two cuts, section 12; the search round, section 13).
+- **summary:** Pre-registered 2026-11-21, before the first graded run, at the author's request through the managing session. The user reads the network's slant ionosphere from a network run's own trace (stage 1) and applies it as between-satellite pseudo-observations before the integer search. Two variants at WTZZ00DEU on the poster's five days: ionosphere-fixed (the two receivers at the site, WTZR00DEU and WTZS00DEU) and ionosphere-weighted (a plane over the nine regional receivers, 162 to 457 km). The weights are measured on the five poster networks (section 4). The bar is fixed in section 8. Changed before the first graded run (section 10): corrections only from links at 30 degrees or more at the network receiver (the author's ruling), a measure-only closure check at the user first, tables of each day from the other four days, and the integer check also against the uncorrected never-fixing user. Result 2026-11-21 (section 11): the closure check at the user stops the work before any constrained run; most satellites agree to a few millimetres, but the converged user's own slant states carry steps of 11 to 18 cm on single satellites (G25 on four of five days) that its position does not see. Explained 2026-11-21 (section 12): the user's pivot and satellites not yet held; the rows now leave the pivot out and the weights are the untrimmed closure RMS per constellation, out of sample. Results 2026-11-21 (section 12): both cuts (30 and 15 degrees, the author asked for the second), zero wrong integers on the simulator and on the five days, no variant sooner on every day; the site pair at 15 degrees reaches 10 cm sooner on all five days. Search round 2026-11-21 (section 13): with partial fixing, the position sigma gate at 0.20 m and min_epochs 2 the site pair at 30 degrees is sooner on every day, no wrong integer: offered for the poster; the search settings alone do not converge faster. Correction and ratio round 2026-11-21 (section 14): the field integer checks of sections 12 and 13 had graded nothing (a run-name mapping); re-run, they show the uncombined-row arm holding wrong integers and every other arm clean by the follow-up rule; lifting the ratio upper bound makes 70 to 75 % of first-hour searches end fixed but not the first fix sooner.
+- **dates:** 2026-11-21 (pre-registered; design changed before the first graded run, section 10; the closure check, section 11; the constrained runs at two cuts, section 12; the search round, section 13; the correction and the ratio round, section 14).
 - **knobs / posture:** `network.closed_loop.iono_file` (the switch, default off) with `iono_file_logs`, `iono_file_stations`, `iono_file_combine`, `iono_file_sigma_elev_deg`, `iono_file_sigma_m`, `iono_file_test_k`, `iono_file_return_ep`, `iono_file_min_elev_deg` (the cut at the network receiver, default 30) and `iono_file_measure_only` (formed and written, nothing applied); the poster's replay user at the 10 degree mask (`_rap_agu3_rm10x_<doy>_wtzz`, `_rap_agu3_rm10f_<doy>_wtzz`) on the products of `_rap_agu3_rm10_n<doy>`.
 - **code:** branch `user/iono-file-2026-11-21` (from 52ae46e): `realtime/NetworkIonoFile` (the reader), `realtime/NetworkIonoConstraint` (selection, weights, per-satellite events, counters), the seam `RealTimeEngine::applyNetworkIonoFile_` in `RealTimeEngineEstimate.cpp`.
 - **run dirs:** `D:\GnssProcessorSupport\runs_nom\_rap_iof_<arm>_<doy>_wtzz`; tools and write-up in `D:\GnssProcessorSupport\gates\day_program_2026-11-21\iono_user\`.
@@ -321,3 +321,53 @@ earlier fix (10 cm at 10.0 min and first fix at 11.0 min at 30 degrees). In the 
 the combination is now the upper ratio bound (`ratio_upper_bound` 1e4, "degenerate covariance", 228 to 334 epochs):
 very confident searches are still turned down; that key was not part of this round. Five starts at one site with
 network receivers 0 and 100 m away are a demonstration, not a statement about users in general.
+
+### 14. Correction of the integer checks; the ratio upper bound lifted
+
+**Correction to sections 12 and 13.** The field integer checks reported there went through `users_agu3.py`, whose
+run-name function prepends `agu3_`: for this card's runs (`_rap_iof_...`) it found no folder, printed "missing or empty"
+and counted nothing, so those checks graded zero holds and their "zero wrong integers" said nothing (the simulator truth
+checks used another tool and stand). Re-run with the same checker and the run names fixed (`iof_holdcheck2.py`,
+`holdcheck2.txt`; it reproduces the managing session's own counts: site pair 30 degrees with the search settings,
+14,462 held, 13,800 right, 0 flagged against its own never-fixing user, 7 flagged against the user without
+corrections). A flagged hold is followed to the end of the run: not wrong when the fixing user's whole numbers never
+change and both never-fixing users end on them within 0.2 cycle on both lanes.
+
+| Arm | Held | Flagged, own never-fixing user | Flagged, user without corrections | Wrong after the follow-up |
+|---|---|---|---|---|
+| poster's user | 10,835 | (is the reference) | 0 | 0 |
+| fixed 30 deg / weighted 30 deg | 10,402 / 8,546 | 0 / 0 | 1 / 0 | 0 / 0 |
+| fixed 15 deg / weighted 15 deg | 9,528 / 8,671 | 0 / 0 | 2 / 0 | 0 / 0 |
+| a: uncombined N_1 row | 9,097 | 0 | 67 | **65 wrong** |
+| b / c / d | 10,608 / 15,106 / 9,533 | 0 / 0 / 0 | 19 / 29 / 2 | 1 / 5 / 0 undetermined |
+| b + c + d, 15 deg / 30 deg | 15,679 / 14,462 | 0 / 0 | 107 / 7 | 26 / 1 undetermined |
+| b + c + d + f, 15 deg / 30 deg | 15,657 / 14,563 | 0 / 0 | 106 / 8 | 25 / 1 undetermined |
+| search settings, no network ionosphere | 13,272 | (is the reference) | 0 | 0 |
+
+Arm a held wrong integers: G25-G18 on days 146 and 147 and G25-G28 on day 147, where both never-fixing users end about
+one narrow-lane cycle from the hold (-0.94 and -0.95). Its own never-fixing user, under the same corrections, did not
+flag them: a bias the corrections share moves both constrained users alike, which is why the second reference was
+asked for. Arm a was not in any combination. The undetermined epochs of the other arms are pairs whose hold never
+changes but whose user without corrections ends between integers (for the offered arm: G06-G25 on day 143, one epoch,
+the two users ending 0.24 and 0.42 narrow-lane cycles from it; the managing session's follow-up of the same pairs
+called all of them not wrong). The cut round (section 12) is clean after the follow-up.
+
+**Ratio round (f).** `ratio_upper_bound` refuses a fix whose ratio exceeds it (`ratioBoundRejects_`); the only switch
+that replaces it by a degeneracy test is `search_unheld_only`, which also changes the searched set (ledger KEEP_OFF), so
+the bound was raised instead, to 1e6: a decade above the largest ratio it had refused (1e5; median 1.3e4). Simulator
+first: 0 wrong holds at both cuts (5,876 and 5,446 held link-epochs). With b + c + d + f the share of first-hour epochs
+whose search ends fixed rises from 78 to 447 of 600 at 15 degrees and from 82 to 421 at 30 degrees, but the first fix
+stays at 10.0 and 11.0 min and the times are those of section 13 (15 degrees: 6.0 and 8.5 min, day 147 at 39.0 against
+37.5; 30 degrees: 10.0 and 18.0 min, sooner on five of five days). The first minutes now end at the position sigma gate
+(35 to 52 epochs) and the ratio test (58 to 68). The regional plane with the opened search (g) was not run: the ratio
+bound did not bring a fix within the first minutes.
+
+**Day 147.** Every variant needs 35 to 40 minutes to 5 cm there because the error held up is horizontal (4 to 5 cm to
+minute 40; vertical under 2 cm) while G29 stays unheld to minute 119 and G31 from 72 to 119; the searches end at the
+ratio test (76 to 81 of the 120 first-hour epochs).
+
+**The first minutes at the 30 degree cut.** The excess is vertical: up error at minute 5, 21.1 cm against 11.0 for the
+poster's user, while the horizontal is better (6.6 against 8.1 cm). At 30 degrees only the satellites above 30 degrees
+carry a correction (8 per epoch, median 36 degrees), so the first minutes lean on the high satellites while the low ones,
+which carry the height, stay free; at 15 degrees the constraint reaches down to 15 degrees (14 satellites, median 32
+degrees) and the up error at minute 5 is 14.0 cm.
