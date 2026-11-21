@@ -345,3 +345,7 @@ The check cites some ranges a few lines off the body's citations (main unless ma
 - The size of P4 and the frequency of P7 on observed data; items 10 and 11 (identical output of the merged write-backs).
 
 The full errata is at `D:/GnssProcessorSupport/gates/post_reset_program_2026-11-18/results/_critical_read/UFA_errata.md`.
+
+## 2026-11-21: the user wrong holds traced (package user-holds-evidence)
+
+The seven wrong-hold runs of the five-day read traced to the rules of section 2, a tally over all users, offline counterfactuals and the options of this card's decisions: filed on 2026-11-21 from the package of 2026-11-19 in [part 2](UFA_user_fixing_audit_2026-11-18_part2.md).

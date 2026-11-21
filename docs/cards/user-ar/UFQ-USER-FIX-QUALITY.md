@@ -413,3 +413,118 @@ after the first hour worse here as on the four beds (section 11), while its gain
 own ambiguities are still float (time to 5 cm 2.25 min sooner, minutes 40 to 60 better); the design of section 11
 applies the factor exactly there and keeps the configured weight on held rows, so it is built next and tested on the
 same 85 starts.
+
+## 2026-11-21: the user noise-scaling test of 2026-11-20 (filed after the fact)
+
+Filed on 2026-11-21 from `D:/GnssProcessorSupport/gates/day_program_2026-11-20/user_noise_test/user_noise_test_note.md` (the test that preceded this card; tables `table.txt`, grader `grade.py` with the first truth check of the user's own integers, in the same folder). The text below is the note, unchanged apart from heading levels.
+
+### User noise-scaling test (2026-11-20)
+
+Question: is the user's low fix rate a consequence of a pessimistic measurement noise, and would scaling the user's
+noise towards a unit weight of 1 raise it without raising wrong holds?
+
+Engine: `gnss_processor_unoise.exe` (copy of `gnss_processor_int1120.exe`, sha256 de17cb83802a20c2), Release. All
+users are replay users (24 h, 30 s) on a fixed corrections file; only `filter.measurement_noise.{code,phase}_std_m`
+changes between variants (`make_arms.py`); the resolver logs at debug level so `stdout.txt` holds every resolver
+line. Grader: `grade.py`; full per-run records `grade_<bed>.txt`; table `table.txt`.
+
+Beds: w129 = WTZZ00DEU on `_rap_irm_day24_f`; s129 = SZZ000SIM on `_rap_irm_day24_s`; utqi146 = UTQI on
+`_rap_ad_n146`; chti143 = CHTI on `_rap_ad_n143`. Runs `D:/GnssProcessorSupport/runs_nom/_rap_unoise_<bed>_<var>`.
+
+#### 1. What ends a search (code, int1119)
+
+The user path is `resolve()` then `resolveWlConstrained()` (ar_mode 1, wl_from_float). When the WL-constrained call
+fails, `resolve()` returns its own empty result (AmbiguityResolver.cpp:683), not the WL-constrained one, so the
+ratio is 0 and the trace labels the epoch `mlambda_fail`. Every ending inside the WL-constrained resolver is folded
+into that label, ratio failures included. The endings, with the numbers they compare against:
+
+| ending | test | threshold |
+|---|---|---|
+| min_epochs | epoch count | 10 |
+| sigma_gate | formal 3D position sigma | 0.05 m |
+| no_dd_pairs | no DD pair passes the AR elevation mask (20 deg) and pairing | - |
+| wlc_no_candidate | no NL candidate after the wide-lane and maturity rules | - |
+| mlambda_failed / invalid distances | search failure | - |
+| ratio_below_5 | s2/s1 | 5 |
+| ratio_above_1e4 | s2/s1 ("degenerate covariance") | 1e4 |
+| p_s_below_min | bootstrapped success rate | min_success_rate |
+| per_pair_frac | worst pair's distance to its integer | nl_max_per_pair_frac |
+
+Partial fixing is off. Fix-and-hold proper (`holdAmbiguities`) only runs at ar_mode 3, but an accepted fix is a
+pseudo-observation update with R = hold_variance = 1e-7 m2 on zero-noise ambiguities, so the integers stay in the
+state (held) until a hold release. A held epoch is counted when a satellite pair has both signals' single difference
+within 0.01 cycle of a whole number before the search.
+
+w129 control (reproduces the reference: 72 fixed, 101 no pairs, 10 min_epochs): ratio_above_1e4 1751,
+per_pair_frac 520, ratio_below_5 294, sigma_gate 127, no_dd_pairs 101, fixed 72, min_epochs 10,
+wlc_no_candidate 5. All 1751 ratio_above_1e4 endings occur while integers are held: the held pairs, collapsed to
+0.3 mm, enter the next search and push the ratio past 1e4.
+
+#### 2. Held against new fixes (controls)
+
+| bed | held epochs | new fix accepted | first fix (min) | hold releases |
+|---|---|---|---|---|
+| w129 | 2370 of 2880 (82 %) | 72 | 100 | 0 |
+| s129 | 2446 of 2757 (89 %) | 69 | 139 | 0 |
+| utqi146 | 2452 of 2880 (85 %) | 138 | 148 | 0 |
+| chti143 | 95 % of 2880 | 102 | 67 | 0 |
+
+Nearly every accepted fix lands in an epoch that already holds integers (w129: 69 of 72): a new fix is mostly a
+re-confirmation plus newly risen satellites. Before the first fix, the epochs end on ratio_below_5, per_pair_frac,
+sigma_gate and no_dd_pairs. The 2.5 % "fix rate" counts accepted searches, not epochs with fixed integers. The user
+holds integers in 82 to 95 % of epochs.
+
+#### 3. Scaling (code x phase scale; error medians in mm by hour band; cal = median of 3D error / formal 3D sigma, hours 2 to 24)
+
+| bed | var | accepted | held % | first fix min | h1 | h2-4 | h4-8 | h8-16 | h16-24 | cal | wrong held samples (float check) | truth (fix rows wrong) |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| w129 | 1 x 1 | 72 | 82 | 100 | 92 | 22 | 12 | 9 | 23 | 0.74 | 0 | - |
+| w129 | .5 x .5 | 154 | 81 | 100 | 90 | 24 | 15 | 10 | 21 | 1.60 | 0 | - |
+| w129 | .25 x .25 | 393 | 75 | 152 | 93 | 29 | 17 | 12 | 23 | 3.22 | 0 | - |
+| w129 | 1 x .5 | 148 | 83 | 92 | 35 | 24 | 15 | 10 | 22 | 1.59 | 0 | - |
+| w129 | 1 x .25 | 368 | 81 | 79 | 26 | 27 | 18 | 14 | 24 | 3.35 | 42 | - |
+| s129 | 1 x 1 | 69 | 89 | 139 | 64 | 25 | 18 | 22 | 28 | 0.97 | 0 | 0 of 578 |
+| s129 | .5 x .5 | 92 | 89 | 72 | 35 | 17 | 21 | 23 | 32 | 1.90 | 11 | 0 of 830 |
+| s129 | .25 x .25 | 251 | 94 | 72 | 49 | 29 | 32 | 22 | 31 | 3.71 | 0 (8299 unverified) | 4 of 2284 |
+| s129 | 1 x .5 | 95 | 92 | 72 | 42 | 20 | 21 | 23 | 31 | 1.90 | 11 | 0 of 822 |
+| s129 | 1 x .25 | 252 | 93 | 72 | 51 | 23 | 27 | 23 | 32 | 3.68 | 10 | 0 of 2160 |
+| utqi146 | 1 x 1 | 138 | 85 | 148 | 62 | 32 | 37 | 30 | 27 | (20) | 58 | - |
+| utqi146 | .5 x .5 | 275 | 93 | 110 | 62 | 32 | 35 | 26 | 22 | (33) | 302 | - |
+| utqi146 | .25 x .25 | 138 | 76 | 208 | 98 | 63 | 46 | 31 | 26 | (44) | 114 | - |
+| utqi146 | 1 x .5 | 262 | 88 | 103 | 63 | 34 | 38 | 28 | 23 | (35) | 58 | - |
+| utqi146 | 1 x .25 | 156 | 84 | 64 | 128 | 54 | 38 | 27 | 21 | (36) | 267 | - |
+| chti143 | 1 x 1 | 102 | 95 | 67 | 11 | 6 | 3 | 4 | 4 | 3.1 | 14 | - |
+| chti143 | .5 x .5 | 208 | 95 | 66 | 15 | 9 | 5 | 4 | 5 | 6.7 | 15 | - |
+| chti143 | .25 x .25 | 686 | 93 | 102 | 65 | 11 | 7 | 5 | 6 | 12.8 | 0 | - |
+| chti143 | 1 x .5 | 207 | 95 | 68 | 12 | 9 | 4 | 4 | 5 | 6.8 | 14 | - |
+| chti143 | 1 x .25 | 681 | 95 | 68 | 18 | 10 | 6 | 5 | 6 | 12.7 | 14 | - |
+
+Wrong held samples: (epoch, satellite pair) samples of a held pair whose fix-minus-float difference rounds to a
+nonzero integer on the wide or narrow lane with both within 0.2 cycle (float twin of the same stream; utqi and chti
+use the existing float users `_rap_nw_obsadf_*`). Truth (simulator): each accepted fix's N1 and N2 = N1 - dd_wl minus
+the fixture's truth double differences (`truth_ambiguities.csv`); the network's integer datum adds a constant per
+pair, so the pooled mode over the five runs is the reference (318 pairs, 4 with a second offset, all from the
+0.25 x 0.25 run). utqi146 and chti143 calibration: the reference coordinates leave a standing 2 to 3 cm (utqi) and
+a few mm (chti) error, so the ratio there measures the coordinate, not the covariance (bracketed).
+
+Reading: scaling multiplies accepted searches (2 to 6 times) but not held epochs (held share within a few points,
+and lower at 0.25 x 0.25 on w129 and utqi). Time to first fix shortens on the simulator (139 to 72 min) and with
+phase scaling on w129 (100 to 79 min); hour 1 error falls there accordingly (92 to 26 mm on w129). Hours 2 to 24
+are not better in any variant and are slightly worse at 0.25. The covariance becomes overconfident in direct
+proportion (calibration 0.74 / 0.97 at 1 x 1, about 1.6 to 1.9 at 0.5, 3.2 to 3.7 at 0.25). Wrong holds rise with
+scaling: w129 0 to 42 samples (phase 0.25), utqi146 58 to 302 (0.5 x 0.5) and 267 (phase 0.25), simulator truth
+0 to 4 wrong fix rows (0.25 x 0.25); chti143 is flat.
+
+#### 4. The statistic
+
+The network's post-fit sigma0 (`network.trace_postfit_sigma0`, src/core/network/diag/FrameDiag.cpp:255-360) is
+1.4826 x median(|v_i| sqrt(w_i)) over the rows of each class: it is NOT divided by the redundancy. Post-fit residuals
+have variance sigma^2 r_i with r_i < 1, and each phase row's redundancy is small (per-LOS slant ionosphere, ambiguity,
+clocks), so it is biased low by about sqrt(mean r). The redundancy-normalised factor is in `network_vcf.csv`
+(f = sum w v^2 / sum r, a VARIANCE factor). Its medians over the day: observed day 129 phase 0.21 (sigma factor
+0.46), code 0.20 to 0.29 (sigma 0.45 to 0.54); simulator phase 0.17 to 0.19 (sigma 0.42 to 0.44), code 0.99. The
+observed phase pooled mean is 3.2 (a heavy tail), so the median and the mean disagree by a factor of 15. The user
+engine has no unit-weight statistic of its own; its sat trace (`closed_loop_sat_trace.csv`) carries innovations and
+post-fit residuals but no redundancy, so a properly normalised user unit weight was not computed. The user's own
+position covariance is calibrated at 1 x 1 (0.74 observed, 0.97 simulator), i.e. at the network's noise the user is
+not pessimistic in the position domain; the 0.5 phase variant corresponds to the network's sigma factor.

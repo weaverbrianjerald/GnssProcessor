@@ -343,3 +343,7 @@ An independent check opened every cited line: 40 claims checked, 37 confirmed, 2
 - The rows of sections 1.1, 1.2, 1.6 and 1.8 (E, G, I, R, H, N, slant, orbit).
 - The arming of the age rules by profile; the statements taken from `network_wire.tex` and `rt_service_operations.md`; the RTCM decoder range; the B5 items; every test cited as "not traced".
 - The opt-in phase-bias drop rule `processing.ssr_drop_unrecorded_phase_bias` (default false, M `src/core/config/GnssConfigLoad.cpp:665-666`) is not mentioned beside "absent: 0" in section 1.5.
+
+## 2026-11-21: the real-file replay tests and the stream fixes
+
+Filed on 2026-11-21 from the package `stream-real-file-replay-fixes` of 2026-11-19 in [part 2](CSC_correction_stream_contract_2026-11-18_part2.md).

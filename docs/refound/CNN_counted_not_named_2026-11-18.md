@@ -159,3 +159,73 @@ The inventory stands: every row opened counts without naming the entity, apart f
 ### Left unconfirmed
 
 The "about 1,150 log calls" figure; the paused step's uncommitted edit set; whether the pair family is on in the adopted configuration (run folders not opened); rows 24 and 26 beyond one sample line each; whether the ring-fix trace names refused links; the remaining 40 parent-gated resolutions in `Knobs.cpp`.
+
+## 2026-11-21: the first rows named (package config-cnn-chain-rows, 2026-11-19)
+
+Filed on 2026-11-21, after the fact, from the package `config-cnn-chain-rows` of the day program of 2026-11-19 (`D:/GnssProcessorSupport/gates/day_program_2026-11-19/packages/config-cnn-chain-rows/`: `CHECKPOINT_1.md`); commit 067027b on `chain/line-a-2026-11-19`, in main. The text below is the package text, unchanged apart from heading levels.
+
+### config-cnn-chain-rows, checkpoint 1 (2026-11-19): done
+
+The chain and ring-fix report lines now name their links. Commit `067027b` on `chain/line-a-2026-11-19`
+(worktree `D:\GnssProcessorSupport\worktrees\chain_line_a`, base `int/2026-11-19` at `cf983dc`). Log text only;
+products and traces identical on six 2 h controls. IRD step IRD-1 (observatory rows, log text only), gate 1 reused.
+
+#### What changed
+
+- `include/network/diag/BoundedTally.hpp` (new, header only): the first ten keys with their counts, then "and N
+  more"; total exact; filled serially only.
+- Stage 1 (CNN row 1): the pair family's elections per signal by constellation, signal set and cause; both
+  pair-family run-end lines end with "Per constellation: ...; per signal: ...".
+- Stage 2 (CNN row 2): link-epochs considered per listed `ring_fix.pairs` entry, the left-out families by key, a
+  warning per listed pair that matched no chord.
+- Stage 3 (CNN row 4, corrections item 7): `rfix_no_column` split into three causes (closure sums them); the first
+  ten links per hold-row skip cause, merged from PASS B's per-station lists in station order; the first ten links
+  per refusal cause.
+- One commit, not three: stages 2 and 3 share hunks in `RingFix.hpp` and `RingFixSeams.cpp`. The commit body
+  announces every changed line, old and new.
+
+#### Tests and lints
+
+- Suite `ChainNamedRows` (6 cases, `tests/network/test_chain_named_rows.cpp`), including PASS B's hold-row step at
+  one station meeting every skip cause. Debug filter `ChainNamedRows.*:RingFix*:NetworkChainFrame.*:ChainMemory*:`
+  `NetworkArcGraphOracle.ChainPairFamilyEqualsTheSignalFamilyWithBothBands`: 138 passed, 0 failed.
+- `nom_epoch_lint.py`: PASS (V12: 105 bindings, 105 `kEntityWriters` rows). `nom_n4_verify.py --whole`: PASS.
+
+#### Controls (2 h; exe `gates\exe\x64-Release\gnss_processor_linea1.exe`, sha256 b7814e2ff9ebbaed...)
+
+| run | against | products.txt | traces, manifest | log |
+| --- | --- | --- | --- | --- |
+| `_rap_la1n_f40sc` | `_rap_cs11_f40sc` | identical (cfb3ba06, 103793 lines) | identical | announced lines + 3 base lines |
+| `_rap_la1n_h40` | `_rap_cs11_h40` | identical (ef8ce7b5) | identical | same |
+| `_rap_la1n_cm1` | `_rap_cs11_m1` | identical (fc7bc48f) | identical | same |
+| `_rap_la1n_cn147` | `_rap_cs11_n147` | identical | identical | same |
+| `_rap_la1n_cn147e` | `_rap_cs11_n147e` | identical | identical | same |
+| `_rap_la1n_n147` (adopted setup) | `_rap_la1b_n147` (`gnss_processor_int1119.exe`) | identical | identical | announced lines only |
+
+Gate: `scripts/nom_td_gate.py --whole --mask-time`, parts 0 to 2 IDENTICAL in all six; part 3 (whole logs) reports
+DIFFER because it compares in order and the new lines shift the run-end block. The log was checked order-free
+(timestamps, run folders and timing numbers masked; `logset.py` of the line A session): the only lines are the
+announced ones and the spacing of masked timing lines. The 3 base lines in the `cs11` comparisons (posture header
+"ON tier 21/23" to "21/24", the Toggles line gaining `rx_sat_cb=off`, the posture line of
+`network.trace_live_record`) come from `int/2026-11-19` against the `cha_s11` engine: they are absent from the
+same-base adopted pair.
+
+Reach: the new lines were written on every control. Hold rows skipped: 0 on all six (the "hold rows not folded"
+line correctly absent). Refusal lines on every run (adopted n147: window 28359, odds 13568, persist 9100, fraction
+8662, cap 393, wide-lane fraction 44 link-epochs). Listed pairs all matched (adopted n147: E:L1C/L5Q 75993,
+G:L1C/L2W 83688).
+
+#### The answer CNN corrections item 3 asked for (DOY 147, first 2 h)
+
+- Adopted setup (`_rap_la1n_n147`): "GPS 0 of 240 constellation-epoch(s) elected per signal, Galileo 0 of 240; per
+  signal: none."
+- Older chain setup without the single Galileo network (`_rap_la1n_cn147`, and the simulator beds h40 and m1):
+  Galileo elected per signal at all 240 epochs, "E {L1C L1X L5Q L5X} three or more x240", although both Galileo pairs
+  are listed and matched (34147 and 35462 link-epochs).
+
+#### Owed
+
+- A whole day of the adopted setup on this branch reads the per-constellation line for a full day (no night run
+  requested; read from the next whole-day run of this branch).
+- One reviewer outside the session to grep that no new member is read by any seam and that the closure holds
+  (the record's independent check; not requested under the budget notice of 13:15).
