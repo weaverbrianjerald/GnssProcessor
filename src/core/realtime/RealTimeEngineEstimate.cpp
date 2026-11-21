@@ -60,6 +60,8 @@ void RealTimeEngine::runMeasurementUpdate(RtEpochContext& ctx) {
         meas_model_->setProtectedAmbiguityKeys(std::move(held));
     }
     size_t carry_bad = 0;
+    // The receiver's own phase factor on float satellites' phase rows (float_phase_scale).
+    applyFloatPhaseScale_(ctx);
     // Pre-update innovation screen: tests every row's innovation against the predicted
     // state before the first update pass can spread a gross row over the states, and
     // builds that first pass itself (with the flagged rows held out).  False when the
@@ -129,6 +131,43 @@ void RealTimeEngine::runMeasurementUpdate(RtEpochContext& ctx) {
             }
         }
     }
+    // The phase-factor estimator reads the committed update (phase_scale_measure).
+    observeFloatPhaseScale_(ctx);
+}
+
+void RealTimeEngine::applyFloatPhaseScale_(RtEpochContext& ctx) {
+    if (!config_.getFloatPhaseScale()) return;
+    const std::vector<PppObservation>& modeled_obs = ctx.modeled_obs;
+    const double tow = ctx.current_time.tow;
+    static const std::set<std::string> kNoneHeld;
+    const std::set<std::string>& held = ambiguity_resolver_ ? ambiguity_resolver_->heldSatellites() : kNoneHeld;
+    std::vector<std::string> sats;
+    sats.reserve(modeled_obs.size());
+    for (const auto& o : modeled_obs) sats.push_back(o.satellite);
+    float_phase_scale_map_ = float_phase_scale_.scaleMap(sats, held);
+    meas_model_->setPhaseVarianceScale(float_phase_scale_map_);
+    auto log = log_manager_.getLogger("rt_engine");
+    if (log->should_log(spdlog::level::debug)) {
+        for (const auto& [sat, to_bulk] : float_phase_scale_.lastEdges())
+            log->debug("PHSCALE tow={:.1f} sat={} {} factor={:.4f}", tow, sat,
+                       to_bulk ? "to_receiver_factor" : "to_configured", float_phase_scale_.factor(sat[0]));
+    }
+}
+
+void RealTimeEngine::observeFloatPhaseScale_(RtEpochContext& ctx) {
+    if (!config_.getPhaseScaleMeasure() || !ctx.update_applied) return;
+    const EpochMeasurement& m = ctx.meas_update;
+    const double tow = ctx.current_time.tow;
+    const Eigen::Index n = std::min<Eigen::Index>(m.residuals.size(), static_cast<Eigen::Index>(m.signal_types.size()));
+    std::vector<FloatPhaseScaleRow> rows;
+    rows.reserve(static_cast<std::size_t>(n));
+    for (Eigen::Index i = 0; i < n && i < static_cast<Eigen::Index>(m.satellite_ids.size()); ++i) {
+        const double r_applied = (m.R_full.rows() > i) ? m.R_full(i, i) : (m.R_v.size() > i ? m.R_v(i) : 0.0);
+        const double sr = (m.residuals_covariance.rows() > i) ? m.residuals_covariance(i, i) : 0.0;
+        const auto [sat_i, sat_p] = splitRowSatellites(m.satellite_ids[static_cast<std::size_t>(i)]);
+        rows.push_back({ sat_i, sat_p, m.signal_types[static_cast<std::size_t>(i)], m.residuals(i), r_applied, sr });
+    }
+    float_phase_scale_.observeEpoch(tow, rows, float_phase_scale_map_);
 }
 
 /**
@@ -306,6 +345,8 @@ void RealTimeEngine::resolveAmbiguities(RtEpochContext& ctx) {
 }
 
 void RealTimeEngine::logArFixQualitySummary(const char* tag) const {
+    if (config_.getPhaseScaleMeasure())   // silent unless armed
+        log_manager_.getLogger("rt_engine")->info("[{}] {}", tag, float_phase_scale_.runEndLine());
     if (!ambiguity_resolver_) return;   // ar_mode 0: no resolver, no line
     log_manager_.getLogger("rt_engine")->info("[{}] {}", tag,
                                               ambiguity_resolver_->fixQualityRunEndLine());

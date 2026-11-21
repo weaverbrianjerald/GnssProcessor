@@ -33,6 +33,7 @@
 #include "measurement/ObservationEquation.hpp"
 #include "products/ProductCache.hpp"
 #include "products/SsrCorrectionStore.hpp"
+#include "realtime/FloatPhaseScale.hpp"
 #include <stdexcept>
 #include <cmath>
 
@@ -319,6 +320,9 @@ namespace GnssProcessor {
         update.bad_residual_count = 0;
         log_manager_.getLogger("measurement_model")->info("{}Computed measurement update: {} valid innovations, H ({}x{}), mode={}",
             epoch_prefix, row, update.H.rows(), update.H.cols(), modeLabel(config_));
+
+        // The receiver's own phase factor on float satellites (float_phase_scale): empty map, no change.
+        applyPhaseVarianceScale(update.R_v, update.satellite_ids, update.signal_types, phase_variance_scale_);
 
         // --- Differencing S-transformation (strategy) ---
         differencing_->applyDifferencing(*this, update, epoch_prefix);

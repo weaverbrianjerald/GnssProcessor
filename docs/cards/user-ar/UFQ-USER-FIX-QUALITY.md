@@ -5,14 +5,14 @@
 - **id:** UFQ
 - **topic:** user-ar
 - **status:** open
-- **summary:** Pre-registered 2026-11-20. Three changes to the user's integer fixing, each behind a key that is off by default and identical when off: (3) the search's true ending, its ratio and the held integers reported in the trace and at run end; (2) a search over the not-yet-held ambiguities only, conditioned on the held set; (1) a measurement noise model taken from the user's own data, with the tail handled apart. Judged on the simulator user against truth and on WTZZ00DEU day 129, UTQI day 146 and CHTI day 143.
-- **dates:** 2026-11-20 (pre-registered, sections 1 to 7)
-- **knobs / posture:** replay users of the reference streams (see section 2); new keys listed per item, every one default off with a ledger row UNVALIDATED.
-- **code:** branch `user/fix-quality-2026-11-20` (worktree `D:\GnssProcessorSupport\worktrees\user_fix`, cut from main `8109a64`); files `include/filter/AmbiguityResolver*.hpp`, `src/core/filter/AmbiguityResolver.cpp`, `src/core/realtime/ConsumerTrace.cpp`, `include/realtime/ConsumerTrace.hpp`, the user's row weighting in the real-time engine.
+- **summary:** Pre-registered 2026-11-20. Three changes to the user's integer fixing, each behind a key that is off by default and identical when off: (3) the search's true ending, its ratio and the held integers reported in the trace and at run end; (2) a search over the not-yet-held ambiguities only, conditioned on the held set; (1) a measurement noise model taken from the user's own data, with the tail handled apart. Judged on the simulator user against truth and on WTZZ00DEU day 129, UTQI day 146 and CHTI day 143. Results 2026-11-20 and 2026-11-21: item 3 built (trace and run end); item 2 built, not recommended alone; item 1 measured harmful on observed data and kept off; items 2 and 1 also tested on the poster's 85 warm starts.
+- **dates:** 2026-11-20 (pre-registered, sections 1 to 7; results, sections 8 to 11); 2026-11-21 (results, sections 12 and 13)
+- **knobs / posture:** replay users of the reference streams (see section 2); keys per item, each default off and identical off: item 2 `estimation.ambiguity_resolution.search_unheld_only` (ledger KEEP_OFF), item 1 `filter.measurement_noise.phase_scale_measure` (TRACE) and `filter.measurement_noise.float_phase_scale` (KEEP_OFF); item 3 is a declared change of the trace and the run-end line, without a key.
+- **code:** branch `user/fix-quality-2026-11-20` (worktree `D:\GnssProcessorSupport\worktrees\user_fix`, cut from main `8109a64`); files `include/filter/AmbiguityResolver*.hpp`, `src/core/filter/AmbiguityResolver.cpp`, `src/core/realtime/ConsumerTrace.cpp`, `include/realtime/ConsumerTrace.hpp`, the user's row weighting in the real-time engine (item 1: `include/realtime/FloatPhaseScale.hpp`, `src/core/realtime/FloatPhaseScale.cpp`, `MeasurementModel::setPhaseVarianceScale`, the seams in `src/core/realtime/RealTimeEngineEstimate.cpp`).
 - **run dirs:** `D:\GnssProcessorSupport\runs_nom\_rap_ufq_<bed>_<arm>`; tools and tables in `D:\GnssProcessorSupport\gates\day_program_2026-11-20\user_fix\`.
 - **source:** the user noise-scaling test of 2026-11-20 (`D:\GnssProcessorSupport\gates\day_program_2026-11-20\user_noise_test\`); card [UFA](../../refound/UFA_user_fixing_audit_2026-11-18.md) (rules W1 to W18, defects P1 to P15); the user-holds evidence package of 2026-11-19 (decisions 1 to 6); the addendum of 2026-11-19 on a statistic in the data's own scale.
 
-**Outcome.** Open; pre-registered. The user holds integers on 82 to 95 % of epochs, yet the trace reports every failed search as `mlambda_fail` with ratio 0, and 1,751 of 2,880 searches at WTZZ00DEU end on the ratio upper bound while integers are held. Item 3 makes the trace report the ending, the ratio and the held set; item 2 searches only what is not yet held; item 1 replaces the borrowed phase sigma by one estimated from the user's own residuals, with a separate tail rule. Nothing is armed in a reference file.
+**Outcome.** Three items built; the keys of items 2 and 1 are off by default and identical off. Item 3 puts the search's ending, ratio and held census in the trace: integers are held on 82 to 96 % of epochs, and searches ending on the ratio bound re-confirm held sets. Item 2 searches only the unheld ambiguities: satellites join 0.3 to 0.5 min sooner, but on the poster's 85 starts the error after the first hour is worse in 22, better in 12. Item 1, the receiver's own phase factor on float rows, speeds the simulator's first fix (139 to 71 min) but fails on observed data (wrong holds, overconfident covariance). Nothing is armed.
 
 > Results are appended TO THIS FILE, below the text.
 
@@ -413,3 +413,103 @@ after the first hour worse here as on the four beds (section 11), while its gain
 own ambiguities are still float (time to 5 cm 2.25 min sooner, minutes 40 to 60 better); the design of section 11
 applies the factor exactly there and keeps the configured weight on held rows, so it is built next and tested on the
 same 85 starts.
+
+### 13. Item 1: the design of section 11 on the four beds and the poster's 85 starts
+
+Keys `filter.measurement_noise.phase_scale_measure` (measure only) and `filter.measurement_noise.float_phase_scale`
+(the factor applied), default false. Code: `include/realtime/FloatPhaseScale.hpp` and its `.cpp` (the estimator and
+the per-satellite map), the engine's seams `applyFloatPhaseScale_` (before the innovation screen) and
+`observeFloatPhaseScale_` (after the committed update), `MeasurementModel::setPhaseVarianceScale` (the undifferenced
+phase variances scaled before the between-satellite transform).
+
+- **Engine.** The branch at `2081e0a` (the combined branch with items 3 and 2) plus item 1,
+  `gnss_processor_ufqf.exe`, sha256[:16] 0e30163ad7ec15cc; this commit's tree differs from the built one in code
+  comments only. Smoke (300 s) exit 0. Debug unit run 389 of 389 passed (suites `Ar*`, `Ambiguity*`, `Kalman*`,
+  `Mlambda*`, `NlSearchRow*`, `WlFfr*`, `WlOnly*`, `ConsumerTrace*`, `FixAndHold*`, `ConfigDump*`, `*ConfigMember*`,
+  `FloatPhaseScale*`, `Measurement*`, `Bssd*`), with the new file `tests/test_float_phase_scale.cpp`.
+- **Off identity.** Keys off against the merged engine without item 1 (`gnss_processor_ufqp.exe`, 3db51558cf096e7a),
+  four beds, 24 h: identical (35, 33, 35 and 35 files, none differ; `identity_item1b.txt`). Measure only against keys
+  off: the trace, the per-satellite trace and the resolver logs identical on the four beds; the configuration line
+  and the run-end line are the only additions (wall-clock lines aside).
+
+**The factor the key measures** (run-end line `Float phase scale`, runs `_rap_ufq_<bed>_fm` and `_f1`; first applied:
+the first row of the per-satellite trace that differs from keys off):
+
+| Bed | Measure only, Galileo / GPS | Applied run, Galileo / GPS | Rows used / mixed (applied) | First applied (min) | Satellites to the factor / back |
+|---|---|---|---|---|---|
+| w129 | 0.41 / 0.44 | 0.32 / 0.35 | 20,921 / 40,988 | 77.5 | 386 / 309 |
+| s129 | 0.55 / 0.60 | 0.60 / 0.33 | 13,247 / 50,081 | 38.0 | 274 / 207 |
+| utqi146 | 1.08 / 1.14 | 1.04 / 0.85 | 31,638 / 56,744 | 60.5 | 438 / 324 |
+| chti143 | 0.54 / 0.46 | 0.37 / 0.51 | 15,281 / 56,068 | 55.0 | 349 / 272 |
+
+The measure-only factors agree with the offline values of section 11 within 0.09.
+
+**Four beds** (24 h, grader of sections 10 and 11; runs `_rap_ufq_<bed>_f0` and `_f1`):
+
+| Bed | Arm | First fix (min) | h1 (mm) | h2-4 / h4-8 / h8-16 / h16-24 (mm) | Calibration | Held share | Wrong |
+|---|---|---|---|---|---|---|---|
+| w129 | keys off | 100.5 | 92 | 21 / 11 / 9 / 24 | 0.74 | 0.821 | 0 |
+| w129 | design | 154.0 | 99 | 24 / 17 / 14 / 26 | 1.89 | 0.830 | 0 |
+| s129 | keys off | 139.0 | 64 | 25 / 19 / 24 / 27 | 0.97 | 0.886 | 0 of 578 |
+| s129 | design | 71.0 | 31 | 17 / 21 / 25 / 26 | 1.36 | 0.942 | 0 of 698 |
+| utqi146 | keys off | 148.0 | 62 | 34 / 35 / 30 / 27 | (20.1) | 0.849 | 47 samples |
+| utqi146 | design | 102.5 | 61 | 39 / 36 / 29 / 24 | (20.4) | 0.877 | 47 |
+| chti143 | keys off | 66.5 | 11 | 6 / 3 / 4 / 4 | (3.1) | 0.953 | 0 |
+| chti143 | design | 66.5 | 16 | 9 / 3 / 3 / 4 | (3.6) | 0.953 | 0 |
+
+**The poster's 85 starts** (the design alone, key file `ufq_user_keys_floatphase.txt`; `arm1120`'s network products
+replayed as in section 12; `refresh_ufq3`):
+
+| Fixing users, 85 starts | arm1120 | ufq3 (the design) |
+|---|---|---|
+| Time to 10 cm, median (min) | 19.75 | 21.0 |
+| Time to 5 cm, median (min) | 39.5 | 35.0 |
+| 3D error, minutes 60 to 180, median of starts (cm) | 2.215 | 2.13 |
+| Paired, minutes 60 to 180: better / worse / equal starts | - | 40 / 44 / 1 |
+| Held share, median (whole run / after minute 60, %) | 65.8 / 95.0 | 75.6 / 100.0 |
+| Wrong holds, G L1C/L2W and E L1X/L5X (float check) | 0 | 59 |
+| Wrong holds, E L1C/L5Q (held samples) | 0 of 22,832 | 34 of 25,848 |
+| Calibration from minute 60, median of starts (quartiles) | 1.23 (0.95 to 1.71) | 1.74 (1.40 to 2.63) |
+
+The wrong holds sit at three receivers on two days: BAKE day 145, G04-G31 one narrow-lane cycle off for 48 epochs and
+G04-G03 for 1, and on the third pair E30-E28 two cycles off for 21 epochs and five pairs with E19 one cycle off for 1
+to 3 epochs; CHTI day 147, E36-E30 (6 epochs), and WTZZ day 147, E13-E31 (4), one cycle off. BAKE day 145 is also the
+largest paired loss (+54.5 mm). The calibration is higher in 77 of 85 starts. Ten-minute medians of the fixing users
+(cm, minutes 0 to 180): 25.01, 10.46, 6.52, 4.50, 3.47, 3.16, 2.85, 2.43, 2.31, 2.54, 2.56, 2.38, 2.15, 2.14, 2.27,
+2.10, 2.14, 2.25 (arm1120's in section 12). The never-fixing users carry the factor on every phase row once it
+forms: time to 10 and 5 cm 21.25 and 41.5 min (arm1120 19.75 and 40.0), paired after the first hour 44 better, 38
+worse, 3 equal. Standard PPP does not move.
+
+**Against the managing session's rule:** the design fails on time to 10 cm (+1.25 min), on the paired error (40
+better, 44 worse) and on the wrong integers (59 on the two main pairs, 34 on the third; arm1120 none), and its
+covariance is more overconfident. Not recommended: `float_phase_scale` stays off (ledger KEEP_OFF);
+`phase_scale_measure` is kept as an instrument (ledger TRACE).
+
+**What the runs show.**
+1. **The factor forms late.** It needs 40 epochs with at least three phase rows of redundancy 0.1 or more, and a
+   float ambiguity leaves its rows that redundancy only once its variance is near the phase noise: the applied run
+   equals keys off, value for value, until minute 77.5 at WTZZ, 38 on the simulator, 60.5 at UTQI and 55 at CHTI.
+   The static factor's gain of section 11 lies before that (WTZZ, minutes 60 to 70: 220 mm with the receiver's own
+   k against 893 mm).
+2. **Switched on during convergence, it costs WTZZ the next hour.** Minutes 90 to 140: 90, 80, 64, 57 and 40 mm
+   against 41, 18, 16, 20 and 9 with keys off; in minutes 0 to 180 the searches end on `ratio_low` 73 times and on
+   `pair_frac` 55 times (keys off 0 and 2), and the first fix moves from 100.5 to 154 min.
+3. **The factor read from the rows it tightens runs low.** In the applied runs only rows whose two satellites carry
+   the same factor enter the estimate (40,988 rows mixed against 20,921 used at WTZZ, where the measure-only run used
+   65,908), and the end-of-day factor is below the measure-only one in six of the eight (bed, constellation) cases,
+   by up to 0.27 (simulator GPS, 0.33 against 0.60). A float ambiguity follows the slow error more closely the more
+   its rows are tightened, so the residuals that set the factor shrink with it: a feedback toward overconfidence,
+   consistent with the correlated residuals of section 11.
+4. **Held rows at the configured weight do not keep the covariance calibrated.** Float satellites are present at
+   every epoch (risers and refloated arcs: 19,294 scaled satellite-epochs at WTZZ, 6.7 per epoch), and their
+   tightened rows carry the position with the held ones: calibration from hour 2 1.89 against 0.74 at WTZZ, 1.36
+   against 0.97 on the simulator, 1.74 against 1.23 on the poster.
+
+**Reading.** On the simulator, whose corrections are exact and whose receiver is quiet, the factor on float rows
+gives the static factor's first fix (71 min against 139) without its cost in hours 2 to 8, and no wrong fix against
+truth; on the observed beds and the poster's starts it does not. Every form tried that tightens the phase rows (the
+borrowed 0.5, the receiver's own k on every row, the float-only design) speeds the float where the receiver is quiet
+and leaves the covariance overconfident; the form that charges the time correlation (section 11's effective factor)
+is calibrated and slower. The correlation (rho 0.62 to 0.82 at 30 s) is the quantity item 1 leaves open: a filter
+that models it (a first-order Gauss-Markov phase error per satellite, or decorrelated epoch differences) is a new
+design, outside this card's three items.

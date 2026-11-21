@@ -54,6 +54,7 @@
 #include "realtime/ConsumerSatTrace.hpp"     // Per-satellite consumer readout row
 #include "realtime/ArObserve.hpp"            // Observe-mode integer search: rows, counters, wire chain context
 #include "realtime/EpochCadence.hpp"         // Measured epoch spacing, source of the default data-gap threshold
+#include "realtime/FloatPhaseScale.hpp"      // The receiver's own phase factor on float satellites' phase rows
 #include <Eigen/Dense>
 #include <chrono>
 #include <filesystem>
@@ -1300,6 +1301,8 @@ private:
 
     // --- Estimation tail (RealTimeEngineEstimate.cpp) ---------------------
     void runMeasurementUpdate(RtEpochContext& ctx);     ///< KF update with the outlier / pivot-handover rebuild loop.
+    void applyFloatPhaseScale_(RtEpochContext& ctx);    ///< The receiver's own phase factor on float satellites' phase rows (float_phase_scale).
+    void observeFloatPhaseScale_(RtEpochContext& ctx);  ///< Feeds the committed update's post-fit rows to the phase-factor estimator.
     void applyZwdConstraint(RtEpochContext& ctx);       ///< Soft a-priori ZWD pseudo-observation.
     void applyNetworkIonoPrior(RtEpochContext& ctx);    ///< Network slant-iono BLUP prior (ionosphere-weighted).
     void resolveAmbiguities(RtEpochContext& ctx);       ///< Integer ambiguity resolution (MLAMBDA).
@@ -1468,6 +1471,10 @@ private:
     ArObserveEpoch ar_observe_epoch_;
     /// Run totals of the search (printed by @ref logArObserveSummary).
     ArObserveCounters ar_observe_counters_;
+    /// The receiver's own phase factor (phase_scale_measure, float_phase_scale); untouched with both off.
+    FloatPhaseScale float_phase_scale_;
+    /// The factors applied to the satellites' phase rows this epoch (float_phase_scale; empty otherwise).
+    std::map<std::string, double> float_phase_scale_map_;
     /// What the wire declares about its integer frame (@ref setWireChainContext).
     WireChainContext wire_chain_;
     bool ar_observe_logged_{ false };       ///< One-shot echo of the armed search and its gate.

@@ -9967,6 +9967,29 @@ namespace GnssProcessor {
         bool getArSearchUnheldOnly() const { return ar_search_unheld_only_; }
 
         /**
+         * @brief Estimate the receiver's own phase factor from its post-fit residuals, measure only
+         *        (@c filter.measurement_noise.phase_scale_measure).
+         *
+         * The real-time engine runs the estimator of realtime/FloatPhaseScale.hpp and logs its run-end line;
+         * no weight changes.  Implied by @ref getFloatPhaseScale.
+         *
+         * @return True when the estimator runs.
+         */
+        bool getPhaseScaleMeasure() const { return phase_scale_measure_ || float_phase_scale_; }
+
+        /**
+         * @brief Apply the receiver's own phase factor to the phase rows of satellites whose ambiguities
+         *        are float (@c filter.measurement_noise.float_phase_scale).
+         *
+         * Each epoch the satellites not held at the last integer search, and not in the estimator's tail,
+         * have the variance of their phase rows multiplied by their constellation's factor once it is
+         * formed; held satellites keep the configured weight (realtime/FloatPhaseScale.hpp).
+         *
+         * @return True when the factor is applied.
+         */
+        bool getFloatPhaseScale() const { return float_phase_scale_; }
+
+        /**
          * @brief Refloat the other signal of a satellite when one signal's arc
          *        restarts (@c estimation.ambiguity_resolution.refloat_partner_signal).
          *
@@ -10826,6 +10849,8 @@ namespace GnssProcessor {
         double ar_nl_sigma_floor_cyc_{ 0.0 }; ///< Error floor (NL cycles) added to the WL-constrained N_1 search covariance. 0 = off (byte-identical).
         double ar_hold_release_cyc_{ 0.0 };   ///< Release threshold (cycles) for a held pair the float contradicts. 0 = off.
         bool   ar_search_unheld_only_{ false };   ///< Search only the not-yet-held candidates, conditioned on the held ones.
+        bool   phase_scale_measure_{ false };     ///< Estimate the receiver's phase factor, measure only.
+        bool   float_phase_scale_{ false };       ///< Apply it to the phase rows of float satellites.
         bool   ar_refloat_partner_signal_{ false }; ///< Refloat all signals of a satellite when one signal's arc restarts alone.
         bool   ar_enable_partial_ar_;    ///< Partial AR: on full-set fix failure, retry on the largest gate-passing subset.
         std::vector<std::string> ar_active_systems_; ///< Constellations eligible for AR (empty = all).
