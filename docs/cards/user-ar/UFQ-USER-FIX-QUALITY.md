@@ -272,3 +272,96 @@ no hour band is worse), but the size is within one epoch. Recommended state: UNV
 removes the re-confirmation searches and the hold re-application, which makes it a natural part of the hold-honesty
 work (decisions 1 and 2 of the user-holds package) rather than a fix-speed change. What releases a wrong pair is
 unchanged (section 4).
+
+### 11. Item 1: the user's own residuals, one experiment, and the design
+
+**Measured** (control engine, measure only: `estimation.enable_variance_factor` and `logging.enable_residual_trace`
+on, `closed_loop_trace.csv` byte-identical to the control on all four beds; tool `noise_classes.py`, runs
+`_rap_ufq_<bed>_vf`). A row's class is (code or phase, constellation, band). The bulk factor k is the square root of
+the median over epochs of the class's sum of v^2/R over its sum of redundancy numbers (E[v_i^2/R_ii] = r_i under
+the model, also with the user's between-satellite R); rho is the lag-one autocorrelation (30 s) of each row's
+standardized residuals, median over rows; the tail is the share of |w| beyond 3.29.
+
+| Bed | phase k | phase rho | code k (per band) | code rho | tail beyond 3.29 |
+|---|---|---|---|---|---|
+| WTZZ, day 129 | 0.40 to 0.43 | 0.62 (GPS), 0.73 (Galileo) | G1 0.48, G2 0.36, E1 0.35, E5a 0.19 | 0.08 to 0.41 | at most 0.03 % |
+| simulator | 0.55 to 0.62 | 0.80 to 0.82 | 0.90 to 0.92 | 0.00 | at most 0.14 % |
+| UTQI, day 146 | 1.04 to 1.05 | 0.74 (Galileo), 0.79 (GPS) | 0.98 to 1.15 | 0.39 to 0.66 | 0.45 to 1.1 % |
+| CHTI, day 143 | 0.53 (GPS) to 0.60 (Galileo) | 0.73 to 0.79 | G1 0.48, G2 0.31, E1 0.29, E5a 0.30 | 0.18 to 0.69 | at most 0.16 % |
+
+1. The scale of the white part of the noise belongs to the receiver, not to the network: phase 0.40 to 1.05, code
+   0.19 to 1.15. At UTQI the borrowed 0.5 halves a sigma the data put at 1.05.
+2. The phase residuals are serially correlated (correlation times of one to two and a half minutes). Counted as
+   white, N epochs carry about N (1 - rho)/(1 + rho) independent samples: the formal ambiguity sigma is too small by
+   sqrt((1 + rho)/(1 - rho)) = 2.1 to 3.2, the record's finding from the other side (card ARU: the formal
+   narrow-lane sigma a half to a third of the actual miss after 40 min).
+3. The present phase sigma equals k sqrt((1 + rho)/(1 - rho)) at WTZZ (0.95), which is why its covariance reads
+   calibrated there.
+4. The user's tail is light (pooled over median variance factor 1.2 to 1.5; the network's is 15).
+
+**The experiment** (config only, static values per receiver from the table, item-3 engine, 24 h, the four beds,
+resolver at debug level; arms `_rap_ufq_<bed>_<arm>`): the control (`dbg3`); the noise test's phase x 0.5 (`n1h`);
+the receiver's own bulk phase factor, code unchanged (`n1p`: phase 0.83, 1.75, 2.09, 1.13 mm for WTZZ, simulator,
+UTQI, CHTI); the bulk factors of code and phase (`n1b`); the effective factors k sqrt((1 + rho)/(1 - rho)) of code
+and phase (`n1d`: code 0.125, 0.272, 0.590, 0.176 m; phase 1.90, 5.47, 5.77, 3.07 mm).
+
+| Bed | Arm | First fix (min) | h1 (mm) | h2-4 / h4-8 / h8-16 / h16-24 (mm) | Calibration | Held share | Wrong |
+|---|---|---|---|---|---|---|---|
+| w129 | control | 100.5 | 92 | 21 / 11 / 9 / 24 | 0.74 | 0.821 | 0 |
+| w129 | phase x 0.5 | 91.5 | 35 | 26 / 14 / 10 / 22 | 1.59 | 0.828 | 0 |
+| w129 | own phase k | 90.5 | 35 | 27 / 15 / 11 / 22 | 1.98 | 0.829 | 0 |
+| w129 | bulk code and phase | 102.0 | 104 | 25 / 14 / 11 / 22 | 1.94 | 0.784 | 0 |
+| w129 | effective | 115.0 | 167 | 24 / 9 / 10 / 22 | 0.78 | 0.813 | 0 |
+| s129 | control | 139.0 | 64 | 25 / 19 / 24 / 27 | 0.97 | 0.886 | 0 of 578 |
+| s129 | phase x 0.5 | 71.5 | 42 | 19 / 24 / 23 / 29 | 1.90 | 0.918 | 0 of 822 |
+| s129 | own phase k | 71.5 | 40 | 19 / 22 / 23 / 29 | 1.61 | 0.918 | 0 of 739 |
+| s129 | bulk code and phase | 71.5 | 40 | 19 / 22 / 23 / 29 | 1.62 | 0.916 | 0 of 722 |
+| s129 | effective | 203.5 | 66 | 26 / 19 / 24 / 26 | 0.53 | 0.852 | 2 of 529, 6 undecided |
+| utqi146 | control | 148.0 | 62 | 34 / 35 / 30 / 27 | (20.1) | 0.849 | 47 samples |
+| utqi146 | phase x 0.5 | 102.5 | 63 | 35 / 39 / 29 / 23 | (34.7) | 0.876 | 47 |
+| utqi146 | own phase k | 148.0 | 61 | 34 / 35 / 30 / 27 | (19.8) | 0.849 | 47 |
+| utqi146 | bulk code and phase | 148.0 | 62 | 34 / 35 / 30 / 27 | (19.8) | 0.849 | 47 |
+| utqi146 | effective | 98.0 | 55 | 40 / 33 / 28 / 26 | (7.2) | 0.878 | 0 |
+| chti143 | control | 66.5 | 11 | 6 / 3 / 4 / 4 | (3.1) | 0.953 | 0 |
+| chti143 | phase x 0.5 | 68.0 | 12 | 8 / 4 / 4 / 4 | (6.8) | 0.952 | 0 |
+| chti143 | own phase k | 68.0 | 12 | 8 / 4 / 4 / 4 | (5.8) | 0.952 | 0 |
+| chti143 | bulk code and phase | 107.5 | 70 | 10 / 5 / 4 / 4 | (5.8) | 0.925 | 0 |
+| chti143 | effective | 119.0 | 94 | 7 / 4 / 3 / 3 | (1.7) | 0.917 | 0 |
+
+Wrong: simulator fix rows against truth (section 10's grader: a mode of one or two rows had called five right fixes
+of the effective arm wrong); observed data, held samples against the float twin where it is still. Bracketed
+calibrations measure the standing error of the reference coordinate as much as the covariance.
+
+**What the experiment settles.**
+- The receiver's own phase factor gives the borrowed 0.5's gains where the receiver is quiet (first fix 100.5 to
+  90.5 min and second hour 92 to 35 mm at WTZZ; 139.0 to 71.5 min and 64 to 40 mm on the simulator; no wrong fix)
+  and leaves UTQI as it is, which a borrowed factor cannot. Its cost is the borrowed factor's: hours 2 to 8 a few
+  mm worse on the observed beds and a covariance overconfident by 1.6 to 2.0 from hour 2.
+- A code factor from post-fit residuals is refused: it worsens the first two hours at WTZZ and CHTI (h1 104 and
+  70 mm). The code errors that matter to the float are absorbed by the bias and clock states and do not show in the
+  code's post-fit residuals.
+- The correlation factor in the filter is refused: calibrated or pessimistic (0.78, 0.53), but the first fix comes
+  later on three beds (115, 204 and 119 min) and the second hour is worse there. It does remove UTQI's wrong hold
+  and halves its first hour, so the correlation is real; the filter is the wrong place to charge it everywhere.
+
+**Design** (keys `filter.measurement_noise.phase_scale_measure`, measure only, and
+`filter.measurement_noise.float_phase_scale`, both default off and identical off):
+- **The factor, from the receiver's own data.** Per epoch and phase class, sum v^2/R_nominal over sum r of the rows
+  with redundancy at least 0.1 and not flagged by the tail rule; k_c^2 is the median of the per-epoch values over a
+  trailing hour, formed from at least 40 epochs (factor 1 until then); frozen while the tail rule flags more than
+  a stated share of the class's rows. No fixed floor under k. The measure-only key logs k_c, the epochs behind it,
+  and the frozen epochs, and changes nothing.
+- **Applied to the phase rows of a satellite whose ambiguities are float.** A float ambiguity absorbs the slow part
+  of its own satellite's phase error, so the white part (k_c^2 sigma^2) is the weight that fits that row; a held
+  ambiguity cannot, so once the satellite joins the held set (the census of item 3) its rows return to the present
+  weight, which equals the effective one at WTZZ and is the one that keeps the covariance calibrated. Each
+  satellite's switch is an event at both edges (to the bulk weight when it leaves the held set or first appears, to
+  the present weight when it joins), counted, with the satellite at debug level.
+- **The tail.** The factor never tightens a row whose standardized innovation exceeds z k_c (z = 3.29, 0.1 %
+  two-sided): that row keeps its present weight for the epoch (an event, counted). No row is excluded.
+- **Unchanged:** the code weights, the 0.04 cycle floor of the narrow-lane search (it is the slow-error allowance of
+  the integer decision during the float phase; with the factor applied only to float rows it keeps that role), the
+  process noise.
+- **Expected,** to be measured: first fix and second hour as the receiver's own phase factor; hours 2 to 24 and the
+  calibration as the control, because the held rows, which carry the position from the first fix on, keep the
+  present weight; UTQI unchanged.
