@@ -8,17 +8,20 @@
  *   - the reader keeps the listed receivers only, marks a link integer when the ring fix holds or decides it or the
  *     chain pins it on two bands (one band or a row without a pin target is not enough), matches an epoch within half
  *     a second, reads the receivers' positions, and refuses a missing trace or a listed receiver with no row;
- *   - the sigma table: the first bin below the first edge, the bin's value above it;
+ *   - the sigma table: the first bin below the first edge, the bin's value above it; a constellation with its own
+ *     table takes it, the others the common one;
  *   - pair: the receiver term (the median of the difference) cancels, a satellite the two receivers disagree on, a
  *     non-integer link, a link below the elevation cut at the network receiver and a missing link are named, three
  *     satellites are needed;
  *   - plane: a field linear in east and north is recovered exactly at the user (relative to the reference); links
  *     below the cut stay out of the fit, and a satellite whose links are all below it is named;
  *   - single: one receiver's integer links above the cut only; a missing epoch is named;
- *   - events: a first use is immediate and the rows go against the active BSSD pivot; a release (not integer) waits
- *     return_ep passing epochs before the row returns; an innovation release resets the slant variance (refloat);
- *     an interrupted return is counted; an active satellite the user no longer offers is released; the run-end line
- *     carries the counters.
+ *   - events: the user's pivot never enters a row (the reference is the highest non-pivot satellite), a pivot
+ *     hand-over is counted and the satellite that was the pivot returns only after return_ep passing epochs; the
+ *     innovation test is centred on the held satellites, so satellites whose integers are not held cannot drag the
+ *     centre; a release (not integer) waits return_ep passing epochs before the row returns; an innovation release
+ *     resets the slant variance (refloat); an interrupted return is counted; an active satellite the user no longer
+ *     offers is released; the run-end line carries the counters.
  *
  * Suite names @c NetworkIonoFile and @c NetworkIonoConstraint are owned solely by this file.
  */
@@ -172,6 +175,11 @@ TEST(NetworkIonoConstraint, SigmaTableLookup) {
     EXPECT_DOUBLE_EQ(s.sigma(29.9), 0.01);
     EXPECT_DOUBLE_EQ(s.sigma(30.0), 0.005);
     EXPECT_DOUBLE_EQ(s.sigma(85.0), 0.005);
+    IonoFileSettings t = s;
+    t.sigma_by_system['E'] = { 0.002, 0.0013 };
+    EXPECT_DOUBLE_EQ(t.sigma(35.0, 'E'), 0.0013);
+    EXPECT_DOUBLE_EQ(t.sigma(20.0, 'E'), 0.002);
+    EXPECT_DOUBLE_EQ(t.sigma(35.0, 'G'), 0.005);   // no own table: the common one
 }
 
 TEST(NetworkIonoConstraint, PairCancelsReceiverTermAndNamesFailures) {
@@ -270,18 +278,60 @@ TEST(NetworkIonoConstraint, SingleMissingEpochAndLowSatellite) {
     EXPECT_EQ(corrOf(none, "G04").cause, IonoFileCause::Missing);
 }
 
-TEST(NetworkIonoConstraint, FirstUseIsImmediateAndRowsUseThePivot) {
+TEST(NetworkIonoConstraint, PivotNeverEntersARowAndHandOverIsCounted) {
+    NetworkIonoConstraint owner;
+    owner.setSettings(settingsOf(IonoFileCombine::Pair, { "A", "B" }));   // return after 3 passing epochs
+    const std::map<std::string, double> v = { { "G01", 5.0 }, { "G02", 5.2 }, { "G03", 4.9 }, { "G04", 5.4 } };
+    // G02 the pivot: its frozen state is a leftover (here 0.17 m off), the others are slant minus the pivot's.
+    std::map<std::string, double> x = { { "G01", -0.2 }, { "G02", 0.17 }, { "G03", -0.3 }, { "G04", 0.2 } };
+    IonoFileDecision d = decideAll(owner, v, x, 1e-6, "G02");
+    ASSERT_EQ(d.rows.size(), 1u);
+    EXPECT_NE(d.rows[0].reference, "G02");
+    for (const auto& s : d.rows[0].sats) EXPECT_NE(s, "G02");
+    EXPECT_EQ(d.rows[0].sats.size(), 2u);                 // three non-pivot satellites, two rows
+    EXPECT_TRUE(d.refloat.empty());                        // the pivot's leftover is not tested
+    EXPECT_EQ(owner.counters().at('G').first_uses, 3);
+    // Hand-over to G01: G01 (active) is released as the pivot, G02 (re-based) returns only after 3 passing epochs.
+    x = { { "G01", 0.0 }, { "G02", 0.2 }, { "G03", -0.1 }, { "G04", 0.4 } };
+    d = decideAll(owner, v, x, 1e-6, "G01");
+    EXPECT_EQ(owner.counters().at('G').pivot_handovers, 1);
+    EXPECT_EQ(owner.counters().at('G').releases[static_cast<std::size_t>(IonoFileCause::Pivot)], 1);
+    ASSERT_EQ(d.rows.size(), 1u);
+    EXPECT_EQ(d.rows[0].sats.size(), 1u);                 // G03 and G04 only
+    d = decideAll(owner, v, x, 1e-6, "G01");              // G02's second passing epoch (the hand-over was the first)
+    EXPECT_EQ(d.rows[0].sats.size(), 1u);
+    d = decideAll(owner, v, x, 1e-6, "G01");              // the third: G02 is back after its validated return
+    EXPECT_EQ(d.rows[0].sats.size(), 2u);
+    EXPECT_NE(owner.runEndLine().find("pivot hand-overs 1"), std::string::npos);
+}
+
+TEST(NetworkIonoConstraint, TestIsCentredOnHeldSatellites) {
     NetworkIonoConstraint owner;
     owner.setSettings(settingsOf(IonoFileCombine::Pair, { "A", "B" }));
-    const std::map<std::string, double> v = { { "G01", 5.0 }, { "G02", 5.2 }, { "G03", 4.9 } };
-    const std::map<std::string, double> x = { { "G01", -0.2 }, { "G02", 0.0 }, { "G03", -0.3 } };  // G02 the pivot
-    const IonoFileDecision d = decideAll(owner, v, x, 1.0, "G02");
+    // Two held satellites agree (u = 5.0); three whose integers are not held sit 30 to 40 cm off with loose states.
+    const std::map<std::string, std::pair<double, double>> sat = {   // sat -> (u = c - x, state variance)
+        { "G01", { 5.00, 1e-6 } }, { "G02", { 5.00, 1e-6 } }, { "G03", { 5.30, 0.04 } }, { "G04", { 5.35, 0.04 } },
+        { "G05", { 5.40, 0.04 } } };
+    std::vector<IonoFileCorrection> corr;
+    std::map<std::string, IonoFileUserState> state;
+    std::map<std::string, double> elev;
+    for (const auto& [s, uv] : sat) {
+        IonoFileCorrection c;
+        c.sat = s;
+        c.valid = true;
+        c.value_m = uv.first;
+        c.sigma_m = 0.003;
+        corr.push_back(c);
+        IonoFileUserState st;
+        st.var_m2 = uv.second;
+        st.held = uv.second < 1e-3;
+        state[s] = st;
+        elev[s] = 45.0;
+    }
+    const IonoFileDecision d = owner.decide(corr, state, elev);
+    EXPECT_TRUE(d.refloat.empty());          // the median of all five (5.30) would have failed both held satellites
     ASSERT_EQ(d.rows.size(), 1u);
-    EXPECT_EQ(d.rows[0].reference, "G02");
-    EXPECT_EQ(d.rows[0].sats.size(), 2u);
-    EXPECT_TRUE(d.events.empty());
-    EXPECT_EQ(owner.counters().at('G').first_uses, 3);
-    EXPECT_EQ(owner.counters().at('G').rows, 2);
+    EXPECT_EQ(d.rows[0].sats.size(), 4u);
 }
 
 TEST(NetworkIonoConstraint, ReleaseWaitsForValidatedReturn) {
@@ -294,13 +344,13 @@ TEST(NetworkIonoConstraint, ReleaseWaitsForValidatedReturn) {
     ASSERT_EQ(d.events.size(), 1u);
     EXPECT_NE(d.events[0].find("release G04 not integer"), std::string::npos);
     EXPECT_TRUE(d.refloat.empty());
-    EXPECT_EQ(d.rows[0].sats.size(), 2u);
+    EXPECT_EQ(d.rows[0].sats.size(), 1u);                  // G02 and G03 (G01 is the pivot)
     for (int k = 1; k <= 2; ++k) {
         d = decideAll(owner, v, x, 1e-6, "G01");
-        EXPECT_EQ(d.rows[0].sats.size(), 2u) << "returning, epoch " << k;
+        EXPECT_EQ(d.rows[0].sats.size(), 1u) << "returning, epoch " << k;
     }
     d = decideAll(owner, v, x, 1e-6, "G01");
-    EXPECT_EQ(d.rows[0].sats.size(), 3u);
+    EXPECT_EQ(d.rows[0].sats.size(), 2u);
     const IonoFileCounters& c = owner.counters().at('G');
     EXPECT_EQ(c.returns_validated, 1);
     EXPECT_EQ(c.releases[static_cast<std::size_t>(IonoFileCause::NotInteger)], 1);
@@ -327,6 +377,22 @@ TEST(NetworkIonoConstraint, InnovationReleaseRefloatsAndInterruptedReturnIsCount
     EXPECT_EQ(c.releases[static_cast<std::size_t>(IonoFileCause::Innovation)], 1);
     EXPECT_NE(owner.runEndLine().find("innovation 1"), std::string::npos);
     EXPECT_NE(owner.runEndLine().find("refloats 1"), std::string::npos);
+}
+
+TEST(NetworkIonoConstraint, SteadyTermInsideTheTestIsCounted) {
+    NetworkIonoConstraint owner;
+    owner.setSettings(settingsOf(IonoFileCombine::Pair, { "A", "B" }));   // test_k 4
+    const std::map<std::string, double> v = { { "G01", 5.0 }, { "G02", 5.2 }, { "G03", 4.9 }, { "G04", 5.5 } };
+    // G04 carries a steady 1.6 cm term: about 2.5 test sigma (sigma_s 5 mm, state 1 mm, centre about 3.7 mm).
+    std::map<std::string, double> x = { { "G01", 0.0 }, { "G02", 0.2 }, { "G03", -0.1 }, { "G04", 0.484 } };
+    for (int k = 0; k < 3; ++k) {
+        const IonoFileDecision d = decideAll(owner, v, x, 1e-6, "G01");
+        EXPECT_TRUE(d.refloat.empty());                     // inside the 4-sigma test: never released
+    }
+    const IonoFileCounters& c = owner.counters().at('G');
+    EXPECT_EQ(c.beyond2, 3);
+    EXPECT_EQ(c.beyond3, 0);
+    EXPECT_NE(owner.runEndLine().find("G04 3/0"), std::string::npos);
 }
 
 TEST(NetworkIonoConstraint, VanishedSatelliteIsReleased) {

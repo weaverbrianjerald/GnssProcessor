@@ -453,6 +453,11 @@ namespace GnssProcessor {
         /// and nothing is applied (no pseudo-observation, no variance reset), so the consumer's solution equals the
         /// run without the file.
         bool          iono_file_measure_only{ false };
+        /// Sigma tables per constellation (@c network.closed_loop.iono_file_sigma_m_by_system, default empty): a
+        /// constellation letter ("G", "E", ...) and its own sigma per bin of @ref iono_file_sigma_elev_deg, metres; a
+        /// constellation without one takes @ref iono_file_sigma_m.  Measured at the user (the untrimmed RMS of the held
+        /// non-pivot closure, card IOF), the table of a day from the other four days.
+        std::map<std::string, std::vector<double>> iono_file_sigma_m_by_system;
         /**
          * @brief Run the observe-mode integer search on the consumer's float
          *        (@c network.closed_loop.ar_observe, default false, byte-identical).

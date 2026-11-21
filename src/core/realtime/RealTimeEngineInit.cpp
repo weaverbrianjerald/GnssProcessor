@@ -312,6 +312,8 @@ void RealTimeEngine::initNetworkIonoFile_() {
     settings.test_k         = cl.iono_file_test_k;
     settings.return_ep      = cl.iono_file_return_ep;
     settings.min_elev_deg   = cl.iono_file_min_elev_deg;
+    for (const auto& [sys, table] : cl.iono_file_sigma_m_by_system)
+        settings.sigma_by_system[sys[0]] = table;   // one-letter keys (the loader refused any other)
     iono_file_constraint_.setSettings(settings);
     std::map<std::string, std::array<double, 3>> positions;
     for (const auto& station : settings.stations) {

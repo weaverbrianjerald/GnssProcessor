@@ -177,6 +177,7 @@ const char* ionoFileCauseName(IonoFileCause cause) {
     case IonoFileCause::TooFew:       return "too few";
     case IonoFileCause::LowElevation: return "low elevation";
     case IonoFileCause::Innovation:   return "innovation";
+    case IonoFileCause::Pivot:        return "pivot";
     case IonoFileCause::Count:        break;
     }
     return "?";
@@ -190,11 +191,13 @@ bool parseIonoFileCombine(const std::string& name, IonoFileCombine& combine) {
     return true;
 }
 
-double IonoFileSettings::sigma(double elevation_deg) const {
-    if (sigma_elev_deg.empty() || sigma_m.size() != sigma_elev_deg.size()) return -1.0;
+double IonoFileSettings::sigma(double elevation_deg, char constellation) const {
+    const auto own = sigma_by_system.find(constellation);
+    const std::vector<double>& table = own == sigma_by_system.end() ? sigma_m : own->second;
+    if (sigma_elev_deg.empty() || table.size() != sigma_elev_deg.size()) return -1.0;
     std::size_t k = 0;
     while (k + 1 < sigma_elev_deg.size() && elevation_deg >= sigma_elev_deg[k + 1]) ++k;
-    return sigma_m[k];
+    return table[k];
 }
 
 IonoFileOffsets ionoFileOffsets(const std::array<double, 3>& user_ecef,
@@ -218,7 +221,7 @@ std::vector<IonoFileCorrection> ionoFileCorrections(const IonoFileSettings& sett
     std::map<char, std::vector<std::size_t>> by_cons;
     for (std::size_t i = 0; i < sats.size(); ++i) {
         out[i].sat = sats[i].sat;
-        out[i].sigma_m = settings.sigma(sats[i].elevation_deg);
+        out[i].sigma_m = settings.sigma(sats[i].elevation_deg, sats[i].sat.empty() ? char(0) : sats[i].sat[0]);
         if (!links || sats[i].sat.empty() || out[i].sigma_m < 0.0) {
             out[i].cause = IonoFileCause::Missing;
             continue;
@@ -242,26 +245,51 @@ IonoFileDecision NetworkIonoConstraint::decide(const std::vector<IonoFileCorrect
     IonoFileDecision dec;
     const double k = settings_.test_k;
 
-    // The innovation test, per constellation, over the satellites with a correction and a state.
+    // The pivot of each constellation (its slant state is in no row) and its hand-overs.
+    std::map<char, std::string> pivot_now;
+    for (const auto& [sat, st] : state)
+        if (st.pivot && !sat.empty()) pivot_now[sat[0]] = sat;
+    for (const auto& [cons, sat] : pivot_now) {
+        const auto it = pivot_.find(cons);
+        if (it != pivot_.end() && it->second != sat) {
+            ++counters_[cons].pivot_handovers;
+            dec.events.push_back(fmt::format("pivot {} -> {}", it->second, sat));
+        }
+        pivot_[cons] = sat;
+    }
+    const auto isPivot = [&](const std::string& sat) {
+        const auto it = state.find(sat);
+        return it != state.end() && it->second.pivot;
+    };
+
+    // The innovation test, per constellation, over the non-pivot satellites with a correction and a state.
     std::map<char, std::vector<std::size_t>> cand;
     for (std::size_t i = 0; i < corr.size(); ++i)
-        if (corr[i].valid && state.count(corr[i].sat)) cand[corr[i].sat[0]].push_back(i);
+        if (corr[i].valid && state.count(corr[i].sat) && !isPivot(corr[i].sat)) cand[corr[i].sat[0]].push_back(i);
     std::vector<bool> innov_ok(corr.size(), true);
     std::vector<double> innov(corr.size(), 0.0), bound(corr.size(), 0.0);
     for (const auto& [cons, idx] : cand) {
         std::vector<double> u;
         for (const std::size_t i : idx) u.push_back(corr[i].value_m - state.at(corr[i].sat).x_m);
         if (idx.size() >= 3) {
-            // The centre is the median of u; its own variance, about pi / (2 n) times the typical variance of one
-            // value, enters every bound, so a satellite with a zero state variance (the BSSD pivot) is not failed
-            // while the others are still loose.
-            std::vector<double> var(idx.size());
+            // The centre is the median of u over the held satellites when two or more are held (a satellite whose
+            // integers are not held rests on code and can sit decimetres off), otherwise over all; its own variance,
+            // about pi / (2 n) times the typical variance of one value, enters every bound.
+            std::vector<double> var(idx.size()), u_c, var_c;
             for (std::size_t j = 0; j < idx.size(); ++j) {
                 const std::size_t i = idx[j];
                 var[j] = corr[i].sigma_m * corr[i].sigma_m + std::max(0.0, state.at(corr[i].sat).var_m2);
+                if (state.at(corr[i].sat).held) {
+                    u_c.push_back(u[j]);
+                    var_c.push_back(var[j]);
+                }
             }
-            const double m = median(u);
-            const double var_centre = kHalfPi / static_cast<double>(idx.size()) * median(var);
+            if (u_c.size() < 2) {
+                u_c = u;
+                var_c = var;
+            }
+            const double m = median(u_c);
+            const double var_centre = kHalfPi / static_cast<double>(u_c.size()) * median(var_c);
             for (std::size_t j = 0; j < idx.size(); ++j) {
                 const std::size_t i = idx[j];
                 innov[i] = u[j] - m;
@@ -289,10 +317,18 @@ IonoFileDecision NetworkIonoConstraint::decide(const std::vector<IonoFileCorrect
         offered.insert(c.sat);
         IonoFileCounters& cnt = counters_[c.sat[0]];
         const bool has_state = state.count(c.sat) > 0;
-        const bool passing = c.valid && has_state && innov_ok[i];
-        const IonoFileCause cause = !c.valid ? c.cause : (!has_state ? IonoFileCause::Missing
-                                                                     : IonoFileCause::Innovation);
+        const bool pivot = isPivot(c.sat);
+        const bool passing = c.valid && has_state && !pivot && innov_ok[i];
+        const IonoFileCause cause = pivot ? IonoFileCause::Pivot
+                                  : !c.valid ? c.cause
+                                  : !has_state ? IonoFileCause::Missing
+                                               : IonoFileCause::Innovation;
         SatUse& use = use_[c.sat];
+        if (pivot && !use.active) {   // the pivot (never active): a later return is validated
+            use.released = true;
+            use.streak = 0;
+            continue;
+        }
         if (use.active) {
             if (passing) continue;
             use.active = false;
@@ -335,16 +371,23 @@ IonoFileDecision NetworkIonoConstraint::decide(const std::vector<IonoFileCorrect
         dec.events.push_back(fmt::format("release {} missing (not offered)", sat));
     }
 
-    // The per-satellite results (the trace reads them).
+    // The per-satellite results (the trace reads them), and the applied corrections beyond 2 and 3 sigma.
     for (std::size_t i = 0; i < corr.size(); ++i) {
         if (corr[i].sat.empty()) continue;
         IonoFileSatResult r;
         r.sat = corr[i].sat;
-        r.tested = corr[i].valid && state.count(corr[i].sat) > 0;
+        r.tested = corr[i].valid && state.count(corr[i].sat) > 0 && !isPivot(corr[i].sat);
         r.innov_m = innov[i];
         r.bound_m = bound[i];
         r.active = use_[corr[i].sat].active;
         dec.sats.push_back(r);
+        if (r.active && r.tested && bound[i] > 0.0) {
+            const double z = std::abs(innov[i]) * k / bound[i];   // innovation over the test's standard deviation
+            IonoFileCounters& cnt = counters_[corr[i].sat[0]];
+            auto& by = beyond_by_sat_[corr[i].sat];
+            if (z > 2.0) { ++cnt.beyond2; ++by[0]; }
+            if (z > 3.0) { ++cnt.beyond3; ++by[1]; }
+        }
     }
 
     // Rows: per constellation, the active satellites against the pivot (when active) or the highest one.
@@ -357,12 +400,9 @@ IonoFileDecision NetworkIonoConstraint::decide(const std::vector<IonoFileCorrect
             const auto it = elevation.find(s);
             return it == elevation.end() ? 0.0 : it->second;
         };
-        std::string ref;
-        for (const auto& s : sats)
-            if (state.at(s).pivot) ref = s;
-        if (ref.empty())
-            ref = *std::max_element(sats.begin(), sats.end(),
-                                    [&](const std::string& a, const std::string& b) { return elev(a) < elev(b); });
+        // The reference: the active satellite with the highest elevation (the pivot is never active).
+        const std::string ref = *std::max_element(
+            sats.begin(), sats.end(), [&](const std::string& a, const std::string& b) { return elev(a) < elev(b); });
         IonoFileRows rows;
         rows.constellation = cons;
         rows.reference = ref;
@@ -388,10 +428,15 @@ std::string NetworkIonoConstraint::runEndLine() const {
         for (std::size_t i = 0; i < c.releases.size(); ++i)
             rel += fmt::format("{}{} {}", rel.empty() ? "" : ", ", ionoFileCauseName(static_cast<IonoFileCause>(i)),
                                c.releases[i]);
+        std::string by;
+        for (const auto& [sat, n] : beyond_by_sat_)
+            if (!sat.empty() && sat[0] == cons && n[0] > 0)
+                by += fmt::format("{}{} {}/{}", by.empty() ? "" : ", ", sat, n[0], n[1]);
         out += fmt::format("; {}: epochs with rows {}, rows {}, first uses {}, releases ({}), refloats {}, returns "
-                           "validated {}, failed {}",
+                           "validated {}, failed {}, pivot hand-overs {}, applied beyond 2 / 3 sigma {} / {}{}",
                            cons, c.epochs_with_rows, c.rows, c.first_uses, rel, c.refloats, c.returns_validated,
-                           c.returns_failed);
+                           c.returns_failed, c.pivot_handovers, c.beyond2, c.beyond3,
+                           by.empty() ? "" : " (" + by + ")");
     }
     return out;
 }

@@ -18,6 +18,14 @@
  * between-satellite differences are applied, so the level cancels together with the receiver terms of the network
  * receivers and of the user, and no state is added.
  *
+ * The user's between-satellite pivot: its slant column is zeroed in every between-satellite row (BssdTransform::apply,
+ * step 6c), so a non-pivot satellite's slant state is its slant delay minus the pivot's, plus a constant shared by
+ * all non-pivot satellites of that pivot's stint, and the pivot's own state, frozen at zero variance, is in no row.
+ * The pivot therefore never enters a row, the test or its centre: rows are differences among non-pivot satellites
+ * (the stint's constant cancels), against the highest active non-pivot satellite. A pivot hand-over re-forms the rows
+ * from the new non-pivot set and is counted; a satellite that has been the pivot returns only after return_ep
+ * passing epochs.
+ *
  * Cut: a link enters only when the satellite's elevation at that network receiver is at least min_elev_deg (the
  * author's ruling of 2026-11-21: the network's slant ionosphere agrees between the two site receivers to 0.2 to 0.3 cm
  * above 30 degrees and has a tail of centimetres below); the user keeps its own mask, and its satellites without a
@@ -29,9 +37,10 @@
  * (sigma_r^2 + delta_kl sigma_s^2).
  *
  * Events, per satellite and counted at both edges (standing invariant 7):
- *  - the innovation test: per constellation, u_s = c_s - x_s over the satellites with a correction and a state
- *    (the BSSD pivot's slant state is frozen, so the states carry one common offset per constellation, which the
- *    centre absorbs), centred on their median; a satellite
+ *  - the innovation test: per constellation, u_s = c_s - x_s over the non-pivot satellites with a correction and a
+ *    state (their states carry the stint's common constant, which the centre absorbs), centred on the median over
+ *    the held ones when two or more are held (a satellite whose integers are not held rests on code and can sit
+ *    decimetres off), otherwise over all of them; a satellite
  *    with |u_s - median| above test_k sqrt(sigma_s^2 + P_ss + V_m) fails, V_m = pi / (2 n) times the median of the
  *    n values sigma^2 + P (the median's own variance, so the pivot is not failed while the others are loose); two
  *    satellites: their difference is tested and both fail together;
@@ -40,7 +49,9 @@
  *    innovation test; on an innovation release its slant variance is reset (refloat), since its state and the
  *    correction conflict; on the other releases the state relaxes with its own process noise;
  *  - a satellite never released is used from its first passing epoch; a released one only after return_ep
- *    consecutive passing epochs (the return is validated); a return interrupted by a failing epoch is counted.
+ *    consecutive passing epochs (the return is validated); a return interrupted by a failing epoch is counted;
+ *  - every applied correction whose innovation exceeds 2 or 3 sigma (sigma = the test's standard deviation) is
+ *    counted per constellation and per satellite, so a steady term that stays inside the test is visible.
  * Plain value types and free functions; the real-time engine owns one @c NetworkIonoConstraint across epochs and
  * applies its rows (@c RealTimeEngine::applyNetworkIonoFile_).
  */
@@ -66,6 +77,7 @@ enum class IonoFileCause : std::size_t {
     TooFew,        ///< Too few satellites or receivers for the combination.
     LowElevation,  ///< The needed links are below the elevation cut at the network receivers.
     Innovation,    ///< The row's innovation exceeds test_k sigma (a jump or a conflict).
+    Pivot,         ///< The user's between-satellite pivot of its constellation (its slant state is in no row).
     Count
 };
 
@@ -82,15 +94,17 @@ struct IonoFileSettings {
     double min_elev_deg{ 30.0 };                        ///< Elevation cut at the network receiver, degrees.
     std::vector<double> sigma_elev_deg;                 ///< Lower edges of the elevation bins, degrees, increasing.
     std::vector<double> sigma_m;                        ///< Sigma of one satellite's correction per bin, metres.
+    std::map<char, std::vector<double>> sigma_by_system;///< Constellation -> its own sigma per bin (else sigma_m).
     double test_k{ 4.0 };                               ///< Bound of the agreement and innovation tests, in sigma.
     int return_ep{ 4 };                                 ///< Passing epochs before a released satellite returns.
 
     /**
      * @brief Sigma of one satellite's correction at the user's elevation.
      * @param elevation_deg  Elevation at the user, degrees.
+     * @param constellation  Constellation letter: its own table when one is set, else @c sigma_m.
      * @return The bin's sigma in metres (the first bin below the first edge); negative only for an empty table.
      */
-    double sigma(double elevation_deg) const;
+    double sigma(double elevation_deg, char constellation = 0) const;
 };
 
 /// A satellite the user offers this epoch (it has a slant state).
@@ -138,6 +152,7 @@ struct IonoFileUserState {
     double x_m{ 0.0 };     ///< Slant state, metres on GPS L1 (one common offset per constellation, set by the frozen pivot).
     double var_m2{ 0.0 };  ///< Its variance, m^2 (zero for the pivot).
     bool pivot{ false };   ///< The satellite is its constellation's BSSD pivot.
+    bool held{ false };    ///< The user's resolver holds its integers (the last census).
 };
 
 /// The rows of one constellation: one row per satellite against the reference.
@@ -172,6 +187,9 @@ struct IonoFileCounters {
     long returns_validated{ 0 };   ///< Released satellites back after return_ep passing epochs.
     long returns_failed{ 0 };      ///< Returns interrupted by a failing epoch.
     long refloats{ 0 };            ///< Slant variances reset on an innovation release.
+    long pivot_handovers{ 0 };     ///< Epochs at which the user's pivot of the constellation changed.
+    long beyond2{ 0 };             ///< Applied corrections whose innovation exceeds 2 sigma (steady terms show here).
+    long beyond3{ 0 };             ///< Applied corrections whose innovation exceeds 3 sigma.
     std::array<long, static_cast<std::size_t>(IonoFileCause::Count)> releases{};   ///< Releases by cause.
 };
 
@@ -190,10 +208,11 @@ public:
     /**
      * @brief The events of one epoch and the rows to apply.
      *
-     * Runs the innovation test, advances each offered satellite's state (release, return, first use), releases the
-     * active satellites the user no longer offers (cause Missing), and forms one row set per constellation with two
-     * or more active satellites: the reference is the constellation's BSSD pivot when it is active, otherwise the
-     * active satellite with the highest elevation.
+     * Runs the innovation test over the non-pivot satellites, advances each offered satellite's state (release,
+     * return, first use; the pivot is released with cause Pivot and returns only through a validated return), counts
+     * a change of the user's pivot as a hand-over, releases the active satellites the user no longer offers (cause
+     * Missing), and forms one row set per constellation with two or more active satellites: the reference is the
+     * active non-pivot satellite with the highest elevation (the pivot is never active).
      *
      * @param corr  This epoch's corrections (ionoFileCorrections), one per offered satellite.
      * @param state  The user's slant state of each offered satellite, by satellite.
@@ -221,6 +240,8 @@ private:
     IonoFileSettings settings_;                ///< Settings.
     std::map<std::string, SatUse> use_;        ///< Satellite -> its use.
     std::map<char, IonoFileCounters> counters_;///< Constellation -> counters.
+    std::map<char, std::string> pivot_;        ///< Constellation -> the user's pivot at the last epoch.
+    std::map<std::string, std::array<long, 2>> beyond_by_sat_;   ///< Satellite -> applied corrections beyond 2, 3 sigma.
 };
 
 }  // namespace GnssProcessor

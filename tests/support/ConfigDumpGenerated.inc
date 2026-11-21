@@ -4,7 +4,7 @@
 // Included inside configMemberDump() (tests/support/ConfigDump.hpp), where `cfg` is the
 // loaded GnssConfig and `add(name, value)` appends one "name=value" line.
 //
-// 570 public const getters without arguments; 1385 dump statements.
+// 570 public const getters without arguments; 1386 dump statements.
 //
 // Vectors of structs (their size, then every element field by field):
 //   getBaselineConfig.rovers (std::vector<StationConfig>: size, then each element)
@@ -969,6 +969,7 @@ add("getNetworkConfig.closed_loop.iono_file_test_k", cfg.getNetworkConfig().clos
 add("getNetworkConfig.closed_loop.iono_file_return_ep", cfg.getNetworkConfig().closed_loop.iono_file_return_ep);
 add("getNetworkConfig.closed_loop.iono_file_min_elev_deg", cfg.getNetworkConfig().closed_loop.iono_file_min_elev_deg);
 add("getNetworkConfig.closed_loop.iono_file_measure_only", cfg.getNetworkConfig().closed_loop.iono_file_measure_only);
+add("getNetworkConfig.closed_loop.iono_file_sigma_m_by_system", cfg.getNetworkConfig().closed_loop.iono_file_sigma_m_by_system);
 add("getNetworkConfig.closed_loop.ar_observe", cfg.getNetworkConfig().closed_loop.ar_observe);
 add("getNetworkConfig.closed_loop.ar_search", cfg.getNetworkConfig().closed_loop.ar_search);
 add("getNetworkConfig.closed_loop.ar_determined_sigma_cyc", cfg.getNetworkConfig().closed_loop.ar_determined_sigma_cyc);

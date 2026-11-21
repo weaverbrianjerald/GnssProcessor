@@ -149,6 +149,11 @@ namespace GnssProcessor {
             if (cl.contains("iono_file_sigma_m") && cl["iono_file_sigma_m"].is_array())
                 for (const auto& v : cl["iono_file_sigma_m"])
                     if (v.is_number()) clc.iono_file_sigma_m.push_back(v.get<double>());
+            if (cl.contains("iono_file_sigma_m_by_system") && cl["iono_file_sigma_m_by_system"].is_object())
+                for (const auto& [sys, arr] : cl["iono_file_sigma_m_by_system"].items())
+                    if (arr.is_array())
+                        for (const auto& v : arr)
+                            if (v.is_number()) clc.iono_file_sigma_m_by_system[sys].push_back(v.get<double>());
             if (!clc.iono_file) return;
             const auto refuse = [](const std::string& why) {
                 throw std::runtime_error("network.closed_loop.iono_file is on but " + why);
@@ -174,6 +179,12 @@ namespace GnssProcessor {
             for (std::size_t i = 0; i < e.size(); ++i) {
                 if (i > 0 && !(e[i] > e[i - 1])) refuse("iono_file_sigma_elev_deg must increase strictly");
                 if (!(s[i] > 0.0) || !std::isfinite(s[i])) refuse("every iono_file_sigma_m must be positive");
+            }
+            for (const auto& [sys, t] : clc.iono_file_sigma_m_by_system) {
+                if (sys.size() != 1 || t.size() != e.size())
+                    refuse("iono_file_sigma_m_by_system needs one-letter constellations with one sigma per bin");
+                for (const double v : t)
+                    if (!(v > 0.0) || !std::isfinite(v)) refuse("every iono_file_sigma_m_by_system value must be positive");
             }
             if (!(clc.iono_file_test_k > 0.0) || !std::isfinite(clc.iono_file_test_k))
                 refuse("iono_file_test_k must be a positive number");

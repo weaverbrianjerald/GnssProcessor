@@ -468,6 +468,11 @@ if(MSVC)
     # section 6) tipped its run-context headers over the Debug section limit (C1128).
     set_source_files_properties(tests/test_code_datum_family.cpp
         PROPERTIES COMPILE_FLAGS "/bigobj")
+    # tests/network/test_ncq_zwd_response.cpp: the real-time engine header it includes took the user's file
+    # ionosphere members (card IOF: the corrections' owner, its counters and trace) and crossed the Debug
+    # section limit (C1128).
+    set_source_files_properties(tests/network/test_ncq_zwd_response.cpp
+        PROPERTIES COMPILE_FLAGS "/bigobj")
     # tests/network/test_network_arc_graph_oracles.cpp: the epoch-event and run-context headers it
     # includes sat at the Debug section limit, and the satellite clock event's two members (a step
     # map in the slip events, a trip set in the clock anchor state) tipped it over (C1128).

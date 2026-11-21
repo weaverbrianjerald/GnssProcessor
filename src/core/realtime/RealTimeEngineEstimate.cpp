@@ -294,6 +294,8 @@ void RealTimeEngine::applyNetworkIonoFile_(RtEpochContext& ctx) {
     // The satellites the user offers: one entry per satellite with a slant state.
     const Eigen::VectorXd x = state_manager_->getStateVector();
     const std::set<std::string>& pivots = state_manager_->getFrozenPivotSatellites();
+    static const std::set<std::string> kNoHeld;
+    const std::set<std::string>& held = ambiguity_resolver_ ? ambiguity_resolver_->heldSatellites() : kNoHeld;
     std::vector<IonoFileUserSat> sats;
     std::map<std::string, IonoFileUserState> state;
     std::map<std::string, double> elevation;
@@ -306,6 +308,7 @@ void RealTimeEngine::applyNetworkIonoFile_(RtEpochContext& ctx) {
         st.x_m = x(idx);
         st.var_m2 = state_manager_->getStateVariance(idx);
         st.pivot = pivots.count(obs.satellite) > 0;
+        st.held = held.count(obs.satellite) > 0;
         state[obs.satellite] = st;
         elevation[obs.satellite] = obs.elevation;
         column[obs.satellite] = idx;
