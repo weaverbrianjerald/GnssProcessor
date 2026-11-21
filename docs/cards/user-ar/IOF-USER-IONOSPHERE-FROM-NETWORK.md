@@ -5,14 +5,14 @@
 - **id:** IOF
 - **topic:** user-ar
 - **status:** open
-- **summary:** Pre-registered 2026-11-21, before the first graded run, at the author's request through the managing session. The user reads the network's slant ionosphere from a network run's own trace (stage 1) and applies it as between-satellite pseudo-observations before the integer search. Two variants at WTZZ00DEU on the poster's five days: ionosphere-fixed (the two receivers at the site, WTZR00DEU and WTZS00DEU) and ionosphere-weighted (a plane over the nine regional receivers, 162 to 457 km). The weights are measured on the five poster networks (section 4). The bar is fixed in section 8. Changed before the first graded run (section 10): corrections only from links at 30 degrees or more at the network receiver (the author's ruling), a measure-only closure check at the user first, tables of each day from the other four days, and the integer check also against the uncorrected never-fixing user.
-- **dates:** 2026-11-21 (pre-registered; design changed before the first graded run, section 10).
+- **summary:** Pre-registered 2026-11-21, before the first graded run, at the author's request through the managing session. The user reads the network's slant ionosphere from a network run's own trace (stage 1) and applies it as between-satellite pseudo-observations before the integer search. Two variants at WTZZ00DEU on the poster's five days: ionosphere-fixed (the two receivers at the site, WTZR00DEU and WTZS00DEU) and ionosphere-weighted (a plane over the nine regional receivers, 162 to 457 km). The weights are measured on the five poster networks (section 4). The bar is fixed in section 8. Changed before the first graded run (section 10): corrections only from links at 30 degrees or more at the network receiver (the author's ruling), a measure-only closure check at the user first, tables of each day from the other four days, and the integer check also against the uncorrected never-fixing user. Result 2026-11-21 (section 11): the closure check at the user stops the work before any constrained run; most satellites agree to a few millimetres, but the converged user's own slant states carry steps of 11 to 18 cm on single satellites (G25 on four of five days) that its position does not see.
+- **dates:** 2026-11-21 (pre-registered; design changed before the first graded run, section 10; the closure check, section 11).
 - **knobs / posture:** `network.closed_loop.iono_file` (the switch, default off) with `iono_file_logs`, `iono_file_stations`, `iono_file_combine`, `iono_file_sigma_elev_deg`, `iono_file_sigma_m`, `iono_file_test_k`, `iono_file_return_ep`, `iono_file_min_elev_deg` (the cut at the network receiver, default 30) and `iono_file_measure_only` (formed and written, nothing applied); the poster's replay user at the 10 degree mask (`_rap_agu3_rm10x_<doy>_wtzz`, `_rap_agu3_rm10f_<doy>_wtzz`) on the products of `_rap_agu3_rm10_n<doy>`.
 - **code:** branch `user/iono-file-2026-11-21` (from 52ae46e): `realtime/NetworkIonoFile` (the reader), `realtime/NetworkIonoConstraint` (selection, weights, per-satellite events, counters), the seam `RealTimeEngine::applyNetworkIonoFile_` in `RealTimeEngineEstimate.cpp`.
 - **run dirs:** `D:\GnssProcessorSupport\runs_nom\_rap_iof_<arm>_<doy>_wtzz`; tools and write-up in `D:\GnssProcessorSupport\gates\day_program_2026-11-21\iono_user\`.
 - **source:** the author's question of 2026-11-21 through the managing session (brief `D:\GnssProcessorSupport\gates\day_program_2026-11-21\iono_user\BRIEF.md`, with `iono_pair.py` and `site_pair_all_days.txt`); card [QHO](QHO-QUIN-HEIGHT-OFFSET.md) section 6 (the 10 degree poster pair).
 
-**Outcome.** Open. Pre-registered before the first graded run; no result yet. The user at WTZZ00DEU takes the network's slant ionosphere on between-satellite differences, so the receiver terms of the network receivers and of the user cancel and no state is added. Only links whose integers the network holds at that epoch are used. Ionosphere-fixed: site pair, sigma 0.2 to 0.6 cm by elevation. Ionosphere-weighted: ring plane, sigma 2.8 to 5.6 cm. Bar: no wrong integer on three pairs and sooner to 10 and 5 cm on each of five days.
+**Outcome.** Open. Stopped at the closure check at the user (section 11), before any constrained run. The user at WTZZ00DEU takes the network's slant ionosphere on between-satellite differences, so the receiver terms of the network receivers and of the user cancel and no state is added. Only links whose integers the network holds at that epoch are used. Ionosphere-fixed: site pair, sigma 0.2 to 0.6 cm by elevation. Ionosphere-weighted: ring plane, sigma 2.8 to 5.6 cm. Bar: no wrong integer on three pairs and sooner to 10 and 5 cm on each of five days.
 
 > Results are appended TO THIS FILE, below the text.
 
@@ -156,3 +156,44 @@ The traces of section 3 exist for all five network days. The tables of section 4
 15 degrees) are not the ones applied; they stay as the network-side record. The 10-epoch smoke of the first form
 (`_rap_iof_smk_145_wtzz`, 15 degree cut, before this section) and the first launch, stopped before any run finished,
 are not graded. The corrections are taken at the user's own epoch from the network run's file (no latency).
+
+## Results, 2026-11-21
+
+### 11. The keys-off check and the closure at the user (measure-only)
+
+Engine `gnss_processor_iof2.exe` (sha256[:16] 08c1e36780d33e58, commit ef3bc95). Keys off (`_rap_iof_off_143_wtzz`,
+`_rap_iof_off_145_wtzz`): the 18 shared columns of `closed_loop_trace.csv` equal the poster's runs on every row except
+`ar_gate` on failed searches (card UFQ item 3's declared endings, which the poster's engine predates), and the
+resolver lines are identical. Measure-only (`_rap_iof_mpx_<doy>_wtzz` and `_rap_iof_mpf_<doy>_wtzz` site pair,
+`_rap_iof_mwx_<doy>_wtzz` ring plane; 15 runs, every run exit 0): the 3D error equals the poster's run on every epoch
+of all 15.
+
+Closure (`iof_closure.py`, `closure.txt` in the iono_user folder): the correction minus the user's slant state,
+centred per epoch and constellation, minutes 60 to 180, five days pooled, links from 30 degrees up.
+
+| Arm | Constellation | Samples | Scatter (robust), cm | RMS of the satellite means, cm | Satellites with mean above scatter |
+|---|---|---|---|---|---|
+| site pair, fixing user | GPS | 6,121 | 5.73 (0.48) | 3.63 | 1 of 8 (G25 -10.02, scatter 7.83) |
+| site pair, fixing user | Galileo | 4,522 | 1.01 (0.18) | 0.60 | 1 of 16 (E16 +2.25, scatter 1.91) |
+| site pair, never-fixing user | GPS | 6,121 | 9.25 (10.68) | 7.71 | 7 of 8 |
+| site pair, never-fixing user | Galileo | 4,522 | 3.29 (1.99) | 2.99 | 10 of 16 |
+| ring plane, fixing user | GPS | 6,303 | 6.03 (3.39) | 3.24 | 1 of 9 (G25 -8.10) |
+| ring plane, fixing user | Galileo | 6,206 | 3.85 (2.57) | 2.16 | 3 of 21 (E06, E27, E03) |
+
+What the offsets are (`closure_sats.txt`, `closure_pivot.txt`): G25 sits at -15 to -18 cm for stretches of 50 to 150
+minutes on days 144 to 147 and at -1.2 cm otherwise (and on day 143 throughout); G29 at +7 cm for 20 minutes (day
+147); G18 at -11 cm for 10 to 20 minutes (days 145 and 147); E16 at +3 to +5 cm on day 143. At each switch the user's
+slant state moves (by -16.9 cm in one epoch on day 144 at minute 106.5, by -13.7 cm on day 146 at minute 145.5, and on
+day 145 at the hand-over of the user's GPS pivot away from G25), while the network's correction runs smoothly. The
+user's position does not change across the switches (3D error 20 minutes before and after: 0.84 and 0.86 cm, 1.16 and
+1.24 cm, 1.20 and 1.11 cm). The offset therefore lies along a direction the user's position does not see: the level of
+one satellite's slant state is not held by the user's own data and moves at user events (a re-fix, the pivot
+hand-over). The never-fixing user's slant states carry offsets of several centimetres on most satellites (they are not
+converged to the centimetre in three hours). The Galileo signal family (WTZZ00DEU on L1X/L5X, the site receivers on
+L1C/L5Q) shows no offset at this level: 15 of 16 Galileo satellites agree within 0.7 cm on average (E16, from day
+143, is the one above), robust scatter 0.18 cm.
+
+Corrections per epoch at the 30 degree cut: site pair, a median of 5 GPS and 4 Galileo satellites; ring plane, 5 and 5.
+
+Reading: the stop criterion of section 10 (B) is met (per-satellite means beyond the scatter, in the fixing user's
+converged states); the work stops here for the managing session. No constrained run was made.
