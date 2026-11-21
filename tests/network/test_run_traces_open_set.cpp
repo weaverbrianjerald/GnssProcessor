@@ -336,7 +336,8 @@ std::map<std::string, std::string> recordedContent(bool we) {
     t["closed_loop_trace.csv"] =
         "week,tow,n_sats,ar_ran,ar_success,num_fixed,num_candidates,"
         "ratio,pos_err_3d_m,east_m,north_m,up_m,ar_gate,p_succ,"
-        "sig_e_m,sig_n_m,sig_u_m,sig_3d_m\n";
+        "sig_e_m,sig_n_m,sig_u_m,sig_3d_m,"
+        "search_ratio,n_pairs,n_held,held_joined,held_left\n";
     t["closed_loop_sat_trace.csv"] =
         "week,tow,sat,sig,code_sig,elev_deg,n_sig,"
         "clk_m,cb_m,pb_m,"
