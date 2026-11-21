@@ -154,7 +154,7 @@ Replaced on 2026-11-07 by the `_rf0hv18` paragraph (the AVX2 build). Text as it 
 ## Posture paragraph of CLAUDE.md, 2026-11-07 to 2026-11-19
 
 Replaced on 2026-11-19 by the paragraph of the integer-fixing posture (card IRM,
-`docs/refound/IRM_integer_reference_main_2026-11-19.md`). It still describes the frozen lineages
+`docs/record/refound/IRM_integer_reference_main_2026-11-19.md`). It still describes the frozen lineages
 `config/golden/golden_{field,sim}_rf0hv18.json` and the BeiDou lineage. Text as it stood:
 
 Posture, one on two beds: GPS L1/L2 + Galileo E1/E5a, dual frequency; self-contained (satellite

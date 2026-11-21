@@ -4,7 +4,7 @@
 
 - **id:** ARND
 - **topic:** user-ar
-- **status:** open
+- **status:** closed
 - **summary:** Opened on 2026-11-14 when the author lifted the do-not-build on integer fixing in the network and ordered the ring-by-ring fixing built, simulator first, then observed data, then more systems and frequencies. The build and its simulator stages are recorded on the builder's branch (`irdu/user-integers`); this card holds the observed-data side: the starting point, then the stage's pre-registration and the re-grades made here. Starting point, read on 2026-11-14 from runs of 2026-11-13 (DOY 144, the chain as built then, emission holds off, 17 users, hours 2 to 6): between satellites that the chain's reference receiver tracks itself, users' ambiguities lean toward integers on Galileo L1X/L5X only (wide lane 0.103, N_1 0.163 cycle against a null of 0.25; two receivers at 0.10 to 0.12 on N_1) and sit at the null on GPS, whose wide lane is not an integer at any distance. The simulator's 0.02 cycle at one link is not reproduced on observed data. Read again with the users averaged out over 73 receivers (sections 3 and 4): the stream's wide lane is integer one link from the reference receiver on Galileo L1X/L5X (0.048) and degrades with every further link (0.088, 0.125), the chain's signature; N_1 is not integer even one link away (0.17 to 0.21, and 0.15 to 0.18 at the reference receivers replayed as users); GPS L1W/L2W hangs on two reference receivers and has no common frame; users that start two hours in read the same.
 - **dates:** 2026-11-14 (opened; section 2 read from existing runs; section 3 with 56 more observers), 2026-11-15 (section 4, users from 02:00; sections 5 to 11.1, the re-grades of the builder's stages, the network's own links, the pre-registration of the observed-data stage)
 - **knobs / posture:** none new.
@@ -12,7 +12,7 @@
 - **run dirs:** `D:\GnssProcessorSupport\runs_nom\_rap_nwa1nh_n144` and `_rap_nwa1_n144` (chain network runs of 2026-11-13), users `_rap_nw_obsa1nh_144_<site>` and `_rap_nw_obsa1_144_<site>`; tools `D:\GnssProcessorSupport\presentation\agu26\fixing_control\tools\`. Sections 3 and 4: `_rap_nw_obsna1nh_144_<site>`, `_rap_nw_obsna1nhs2_144_<site>`, `_rap_nw_obsa1nhs2_144_<site>`.
 - **source:** the author's decisions of 2026-11-14 (section 1); cards [ARN](ARN-USER-FIXING-ON-NETWORK-PRODUCTS.md), [ARNB](ARNB-USER-FIXING-ON-NETWORK-PRODUCTS-CONTINUED.md) and [ARNC](ARNC-USERS-OF-SATELLITES-WITHOUT-BIAS-RECORDS.md)
 
-**Outcome.** Open; continued in card [ARNE](ARNE-NETWORK-INTEGER-FIXING-CONTINUED.md). Simulator: the builder's
+**Outcome.** Closed 2026-11-20; continued in card [ARNE](ARNE-NETWORK-INTEGER-FIXING-CONTINUED.md). Simulator: the builder's
 rule (free order, an odds gate, held-first re-attachment) holds no wrong integer on any bed, GPS and Galileo,
 and brings the stream between satellites to 0.01 cycle from the second hour (sections 5, 6, 9, 9.1). Observed
 data, nothing held yet: the Galileo L1X/L5X network is integer-like without fixing and the GPS one is not; the
@@ -652,3 +652,7 @@ between the two arms: 27 613 checks per Galileo signal and 29 579 per GPS signal
 satellite pair is within 0.10 cycle from 2 h (96 % in one half hour), and the fixing holds 87.1 % of the Galileo
 link-epochs and 85.6 % of the GPS ones from 3 h. One release by the residual monitor on the arm without held first
 (S32000SIM-G12, held at its true integers for 26 min): a release of a right integer, not a wrong hold.
+
+## 2026-11-20: closed
+
+Closed by the managing session's choice of 2026-11-20, under the author's deferral of the consolidation decisions ("I will defer to your choices on the consolidation 'decisions for the author'"); applied by the docs consolidation on branch `docs/consolidate-2026-11-20`, in the batch of the user series where the card's own text shows nothing owed. The user-engine code of this line is on main since 2026-11-17. The line is continued in ARNE.

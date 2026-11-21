@@ -4,7 +4,7 @@
 
 - **id:** GRA-part3
 - **topic:** tooling
-- **status:** open
+- **status:** closed
 - **summary:** Results of card GRA continued from [part 2](GRA_grader_audit_2026-11-18_part2.md), which reached the size bar. Plan steps G6 to G10, carried out on 2026-11-19 at the author's go, under `scripts/grading/`: `truth.py` (G7: the run-end truth lines by kind, the frame-free cover in the recorded seed-0 order and in a sorted order, the frame class of every wrong held chord and hold), `compare_runs.py` (G6), `code_signature.py` (G8), `grade.py` (G9) and the retire listing (G10). Each is gated on numbers already recorded. The class view answers the managing session's question on the simulator beds' wrong holds. The clean-checkout re-check of every gate closes the entry.
 - **source:** the managing session's order of 2026-11-19 (the author's "Yes, go" for G6 to G10; G7 first, for the class split); [part 1](GRA_grader_audit_2026-11-18.md) and part 2, section 5 (the plan); the package held-signature-evidence's rules of 09:14 (`D:\GnssProcessorSupport\gates\day_program_2026-11-19\packages\held-signature-evidence\parts\sim-power-by-class.md`); the outputs in `D:\GnssProcessorSupport\gates\grader_audit_2026-11-18\` (`g6`, `g7`, `g7c`, `g8`, `g9`).
 
@@ -146,3 +146,7 @@ without the scripts, agree with every corrected view tried:
 - The C2 pair's undeclared records: 86 078 B records on C1X, all equal to the same epoch's C1C record.
 - The one-signed hold GUAM00GUM G09 of `ad_n146`: 558 rows, mean -14.38 mm, one-sided 0.986.
 Not checked by it: unknown chain rows (every row at that epoch was known), the fixtures' derivation, the source.
+
+## 2026-11-20: closed
+
+Closed with its parent card GRA by the managing session's choice of 2026-11-20, under the author's deferral of the consolidation decisions ("I will defer to your choices on the consolidation 'decisions for the author'"); it follows the parent into the record.

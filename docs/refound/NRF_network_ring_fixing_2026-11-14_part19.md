@@ -44,7 +44,7 @@ The purpose of step S7 (b), replaying from a converged state in place of two hou
 
 ### 126. 2026-11-19: the failing two-run check of DOY 146, attributed (a note; nothing adopted or withdrawn)
 
-**Sources.** The filed read [F4R](F4R_two_run_disagreement_read_2026-11-18.md); the manager's attribution `D:/GnssProcessorSupport/gates/manager_2026-11-19/ATTRIBUTION_two_run_check.md` (the hashes in its section 6); the second session's read `D:/GnssProcessorSupport/gates/nrf_reads_2026-11-18/NRF_five_days_attribution.md`. The manager and the second session (runs-reads) checked the content by byte comparison; the four groups and the residuals at GUAM00GUM below were checked again here from the runs' own files (`D:/GnssProcessorSupport/runs_nom/_rap_<run>`).
+**Sources.** The filed read [F4R](../record/refound/F4R_two_run_disagreement_read_2026-11-18.md); the manager's attribution `D:/GnssProcessorSupport/gates/manager_2026-11-19/ATTRIBUTION_two_run_check.md` (the hashes in its section 6); the second session's read `D:/GnssProcessorSupport/gates/nrf_reads_2026-11-18/NRF_five_days_attribution.md`. The manager and the second session (runs-reads) checked the content by byte comparison; the four groups and the residuals at GUAM00GUM below were checked again here from the runs' own files (`D:/GnssProcessorSupport/runs_nom/_rap_<run>`).
 
 **Four groups of byte-identical runs on DOY 146** (sha256 of `logs/network_ring_fix.csv`, `products.txt` and `logs/network_solution.csv`): {`n46c_n146`, `v2_n146`, `v3_n146`}, {`n46cr_n146`, `v2r_n146`, `v3r_n146`}, {`ad_n146`, `v1_n146`}, {`adr_n146`, `v1r_n146`}. `n46c` and `n46cr` are the morning pair and `ad` and `adr` the adopted pair (section 123); `v1` is the adopted configuration without the entry check, `v2` the adopted configuration without exact epoch time, and `v3` the morning configuration with the adopted pairs list on the new engine. So `processing.exact_epoch_time` is the only one of the differences between the morning pair and the adopted pair that changes any output on DOY 146; `network.ring_fix.entry_revalidate` (no refusal on that day), the engine build and the dropped pair `E:L1X/L5X` change nothing.
 
@@ -287,3 +287,5 @@ Line A, commit 3681795 (exe `gnss_processor_linea3.exe`, sha256 bbff461fd97731ad
   prior-residual check read 2 700 to 3 800 against 4 in the plant epoch, the RAIM attribution refloated both arcs, and
   both links were released one epoch later. No reference d and no delay came from them. The manager chose shape 1 (the
   link's carried entries move with the integers); its runs are reported below when read.
+
+The results from 2026-11-20 on are in [part 20](NRF_network_ring_fixing_2026-11-14_part20.md).

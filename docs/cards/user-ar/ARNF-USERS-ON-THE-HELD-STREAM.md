@@ -10,7 +10,7 @@
 - **knobs / posture:** none new here. The builder's keys `network.ring_fix.*`, `network.amb_float_drop_jump_k`, `network.amb_float_drop_gap_cover` and `network.zwd_event_inflate_m` live on its branch (the last two RECOMMEND_SCOPED there since commit fb4139c).
 - **code:** none. New analysis tools: `stream_stab.py`, `stream_jumps.py`, `o2_audit_mode.py`, `nw_offsets_time.py`, `users_hourly.py`, `users_gal_only.py`.
 - **run dirs:** `D:\GnssProcessorSupport\runs_nom\_rap_o2*_n144*`, `_rap_o5*_n145*` (the builder's network runs) and `_rap_nw_{obs,fxb}*_144_*` (the user replays of this session); tools and grade outputs under `D:\GnssProcessorSupport\presentation\agu26\fixing_control\` (`tools\`, `grades_arnd\o2\`, `grades_arnd\o5\`).
-- **source:** card [ARNE](ARNE-NETWORK-INTEGER-FIXING-CONTINUED.md), in particular its sections 4.1 and 6; cards NRF (part 5) and BER on the builder's branch `irdu/user-integers`
+- **source:** card [ARNE](../../record/cards/user-ar/ARNE-NETWORK-INTEGER-FIXING-CONTINUED.md), in particular its sections 4.1 and 6; cards NRF (part 5) and BER on the builder's branch `irdu/user-integers`
 
 **Outcome.** Open; continued in card [ARNG](ARNG-USERS-ON-THE-DECLARED-STREAM.md) (the user replays on the stream that declares its steps and flags settled signals). With network integer fixing at the formal sigma and the bad-epoch response, the stream of the
 held family (Galileo L1X/L5X) takes no fractional and no whole-cycle step from hour 1 on, at any depth, and users

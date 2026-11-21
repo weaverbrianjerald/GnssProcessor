@@ -314,3 +314,10 @@ All in `src/core/network/state/ChainMemory.cpp`, tree 7fb0737: `:381` is `:127` 
 - Not checked by the independent read: R12, R15, R19, R20 and R23 to R36 beyond the lines cited; `PbHold.cpp:515, 524`; the X1 and X2 refutations; the test-file table of section 4 beyond `test_chain_memory.cpp`; the root row's effect at an as-built pin with no target (whether it pins at 0); how often R2 or R3 occurs on observed data.
 
 The full errata is at `D:/GnssProcessorSupport/gates/post_reset_program_2026-11-18/results/_critical_read/REV_errata.md`.
+
+## 2026-11-20: decisions 3 and 8 answered
+
+Recorded by the managing session's choice of 2026-11-20, under the author's deferral of the consolidation decisions ("I will defer to your choices on the consolidation 'decisions for the author'"); applied by the docs consolidation on branch `docs/consolidate-2026-11-20`. Decision 3 is answered: release at a tracking break, armed in the reference files by 058aabd
+(`network.ring_fix.resume_response` = release). Decision 8 is answered by the merges of 2026-11-19 and 2026-11-20
+into `int/2026-11-19` and main, with the saved-state keys off. Decisions 1, 2 and 4 to 7 stay open with the saved-state
+line; the card stays open.

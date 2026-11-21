@@ -4,7 +4,7 @@
 
 - **id:** JNM
 - **topic:** network-vehicle
-- **status:** open
+- **status:** reference
 - **summary:** Reference text for one undifferenced, uncombined network over several systems, bands and tracking channels: the null-space generators, the defect count, the S-basis rows, small cases checked by a rank computation, the estimable and integer combinations, and a table of what the network code fixes against what the model needs. The lead holds after the check against the code: nothing hard holds the receiver geometry-free direction, one per receiver and system. Ten statements were wrong in scope or wording (the class definition, the minimality of the S-basis table, the wet-delay condition, the new-arc rule, two notes on the code among them) and are corrected in the last section; nothing in the code is changed.
 - **source:** plan package 11, "Mathematics of one joint network across systems, bands and channels"; docs/report/*.tex, CHA part 3 and NRF parts 14 and 18 as cited in the body; the commits read: 03dfcbc of branch chain/audit by the draft, 7fb0737 for network code by the check (of the cited code files only src/core/config/GnssConfigLoadNetwork.cpp differs between the two), main 5ddc422 for user-engine code. Written by an agent team in the night of 2026-11-18 and checked against the code by an independent agent; the corrections are the last section.
 
@@ -297,3 +297,7 @@ Of the code files cited, only src/core/config/GnssConfigLoadNetwork.cpp differs 
 - The collinearity of the phase colour state with the ambiguities.
 - The engine's own rows on a real roster (the rank computation uses toy rows); any absolute slant-ionosphere prior, which would weakly hold N5; troposphere gradients; GLONASS.
 - The 11K + 6 sub-split of the review (its total is confirmed); section 9 items 3 to 10; section 10.6; the network.tex and CHA citations beyond network.tex:839-880 and CHA part 3 lines 85-118.
+
+## 2026-11-20: status set to reference
+
+Set to `reference` by the managing session's choice of 2026-11-20, under the author's deferral of the consolidation decisions ("I will defer to your choices on the consolidation 'decisions for the author'"); applied by the docs consolidation on branch `docs/consolidate-2026-11-20`: the card is reference text for the joint network model; nothing is owed by it.

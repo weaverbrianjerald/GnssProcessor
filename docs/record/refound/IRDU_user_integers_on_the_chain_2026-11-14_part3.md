@@ -4,9 +4,9 @@
 
 - **id:** IRDU-part3
 - **topic:** network-vehicle
-- **status:** open
+- **status:** superseded
 - **summary:** Section 12 of card IRDU (2026-11-14), pre-registered before any graded run: the author's idea of fixing the chain's links ring by ring from the root, measured on the simulator with true integers first. Q1, every link at its true integer (the upper bound); Q2, the rings one at a time; Q3, how often plain rounding of the next ring would be right; Q4, re-seats onto links already at their integers. The instrument is the simulation-only oracle pin in the chain's frame (new key `network.cycle_slip.oracle_pin_frame_file`, default off, ledger UNVALIDATED). Results are appended below. 2026-11-14: Q1 PASSES (12.1): with every link at its integer the stream meets card IRD's bars at every depth and the users hold right integers. Q2 (12.3): a depth reaches ring 1's level once its own ring is held, in 15 to 45 min. Q3 (12.3): the wide lane rounds right from 10 min on; N_1 rounded per stage at 30 min would take 12 wrong integers of 186 into the frame, at 60 min 5. The float user's gap to the truth stream (129 against 26 mm) is in the stream's phase half, not its code half (12.3); a late start removes its first half hour and leaves a floor of about 0.1 m, not traced (12.5). 12.5: with the links at their integers a re-seat keeps the frame and costs the moved pairs nothing after 1 to 5.5 min (without: the wide lane 0.04 to 0.07 cycle for 25 to 45 min); the network's log-only search and a gated rounding (sigma at most 0.10, fraction at most 0.20) took only right integers (0 wrong), few before 30 min; a link's N_1 float error at 10 to 30 min is the wet delay summed around its cycle (R^2 0.90 to 0.98); the election keeps live edges and re-hangs a cut subtree through one new edge, so r3c's tree deepens over time (9 of 30 satellites too deep at 110 min).
-- **source:** [IRDU](IRDU_user_integers_on_the_chain_2026-11-14.md) sections 2 and 9 (the instrument at the users and its bars) and [part 2](IRDU_user_integers_on_the_chain_2026-11-14_part2.md) sections 11 to 11.5 (the bed without re-seats, the wet delay carried, the adopted arm's reference rows); [IRD](IRD_integer_recovering_datum_2026-10-13.md) sections 3, 9 and 11 (the frame algebra, the bars, IRD-5)
+- **source:** [IRDU](IRDU_user_integers_on_the_chain_2026-11-14.md) sections 2 and 9 (the instrument at the users and its bars) and [part 2](IRDU_user_integers_on_the_chain_2026-11-14_part2.md) sections 11 to 11.5 (the bed without re-seats, the wet delay carried, the adopted arm's reference rows); [IRD](../../refound/IRD_integer_recovering_datum_2026-10-13.md) sections 3, 9 and 11 (the frame algebra, the bars, IRD-5)
 
 Sections 1 to 10 are in [IRDU](IRDU_user_integers_on_the_chain_2026-11-14.md), section 11 in [part 2](IRDU_user_integers_on_the_chain_2026-11-14_part2.md). Results of this section are appended below.
 
@@ -264,3 +264,7 @@ What a shortest-path election would take and risk. It would attach every vertex 
 **Not verified.** One thin bed, 2 h; four of the five users are network stations; (b) at stages 1 to 3 rounds floats of runs whose earlier rings are held at truth (the upper bound of a cascade); (a)'s counts are row-epochs of a star basis of the same dimension as the chords (186 per band), not a decision rule; the float floor of about 0.1 m on the network's streams is not traced; the narrower election is not built or measured; r3c is not run with any of these.
 
 Section 12.6 onward: [part 4](IRDU_user_integers_on_the_chain_2026-11-14_part4.md).
+
+## 2026-11-20: superseded
+
+Superseded with its parent card IRDU by the managing session's choice of 2026-11-20, under the author's deferral of the consolidation decisions ("I will defer to your choices on the consolidation 'decisions for the author'"); it follows the parent into the record.

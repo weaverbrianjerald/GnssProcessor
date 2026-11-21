@@ -563,5 +563,5 @@ question is answered and every stage it built is in use: the seven identical-out
 (`network.parallel_station_normals`, `parallel_schur_columns`, `parallel_redundancy_census`,
 `parallel_carry_harvest`, `parallel_iono_traces`, `parallel_coupling_prepare`, `sbasis_values_first`) are true in
 both primary reference files and in main (019ed34, checked 2026-11-20). Nothing of this card is owed. The next speed
-work is card [PSM](../cards/perf/PSM_perf_scaling_300_2026-11-19.md) (the scaling model to 300 stations; its first
+work is card [PSM](../../cards/perf/PSM_perf_scaling_300_2026-11-19.md) (the scaling model to 300 stations; its first
 proposed package is a stage profiler).
