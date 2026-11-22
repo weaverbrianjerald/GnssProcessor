@@ -142,6 +142,9 @@ void NetworkStateSnapshotIO::serialize(std::ostream& os, const NetworkStateSnaps
     for (const auto& d : snap.shared_carry)
         put(fmt::format("D,{},{},{},{},{},{},{},{},{}", d.kind, d.sat, d.signal, d.sh_n,
                         d.sh_m, d.sh_trig, d.value, d.var, d.inflate_q ? 1 : 0));
+    // Parked carries (network.state_snapshot_park_capture); absent unless the capture is armed.
+    for (const auto& d : snap.parked_carry)
+        put(fmt::format("DP,{},{},{},{},{},{}", d.kind, d.sat, d.signal, d.value, d.var, d.t_park_s));
     for (const auto& [c, p] : snap.prev_pivot) put(fmt::format("V,{},{}", c, p));
     for (const auto& [c, p] : snap.last_pivot) put(fmt::format("W,{},{}", c, p));
     for (const auto& [sat, o] : snap.clock_osc)
@@ -320,6 +323,14 @@ void NetworkStateSnapshotIO::serialize(std::ostream& os, const NetworkStateSnaps
         std::string ml;
         while (std::getline(ms, ml)) put(ml);
     }
+    // Station memory section (network.state_snapshot_station_memory_capture): verbatim lines from
+    // networkStationMemoryWrite (STMEM header .. SMEND).  Absent unless the capture is armed, so a default snapshot is
+    // byte-identical.
+    if (!snap.station_memory.empty()) {
+        std::istringstream ss(snap.station_memory);
+        std::string sl;
+        while (std::getline(ss, sl)) put(sl);
+    }
     // Emitter blob: verbatim, already newline-terminated lines from
     // NetworkProductEmitter::serializeState (EMITTER header .. EEND).
     {
@@ -349,6 +360,7 @@ bool NetworkStateSnapshotIO::parse(std::istream& is, NetworkStateSnapshot& out,
     bool saw_end = false, in_emitter = false, emitter_done = false;
     bool in_carry = false, carry_done = false;
     bool in_chain = false, chain_done = false;
+    bool in_stmem = false, stmem_done = false;
     // The §18.12 coupling records are staged and spliced after the loop, so the record
     // dispatch stays independent of line order (a QL may legally precede its L row).
     // Resolving a QL into s.local_carry inline would make correctness depend on the
@@ -383,6 +395,14 @@ bool NetworkStateSnapshotIO::parse(std::istream& is, NetworkStateSnapshot& out,
             if (line == "CHEND") { in_chain = false; chain_done = true; }
             continue;
         }
+        if (in_stmem) {
+            // Verbatim station memory section through its SMEND terminator.
+            ++n_lines;
+            s.station_memory += line;
+            s.station_memory += '\n';
+            if (line == "SMEND") { in_stmem = false; stmem_done = true; }
+            continue;
+        }
         if (line.rfind("END,", 0) == 0) {
             unsigned long long expect = 0;
             if (!parseU(line.substr(4), expect)) return fail("malformed END line");
@@ -412,6 +432,13 @@ bool NetworkStateSnapshotIO::parse(std::istream& is, NetworkStateSnapshot& out,
             in_chain = true;
             s.chain_memory += line;
             s.chain_memory += '\n';
+            continue;
+        }
+        if (line.rfind("STMEM,", 0) == 0) {   // station memory section
+            if (stmem_done) return fail("duplicate station memory section");
+            in_stmem = true;
+            s.station_memory += line;
+            s.station_memory += '\n';
             continue;
         }
         const std::vector<std::string> f = splitCsv(line);
@@ -477,6 +504,17 @@ bool NetworkStateSnapshotIO::parse(std::istream& is, NetworkStateSnapshot& out,
                 return fail("malformed D value/var/flag");
             c.inflate_q = b;
             s.shared_carry.push_back(std::move(c));
+        } else if (tag == "DP") {
+            if (f.size() != 7) return fail("malformed DP line");
+            NetworkStateSnapshot::ParkedCarry c;
+            if (!parseI(f[1], i1)) return fail("malformed DP kind");
+            if (i1 < 0 || i1 > 3) return fail("DP kind out of range");
+            c.kind   = static_cast<int>(i1);
+            c.sat    = f[2];
+            c.signal = f[3];
+            if (!parseD(f[4], c.value) || !parseD(f[5], c.var) || !parseD(f[6], c.t_park_s))
+                return fail("malformed DP value/var/park stamp");
+            s.parked_carry.push_back(std::move(c));
         } else if (tag == "V" || tag == "W") {
             if (f.size() != 3) return fail("malformed pivot line");
             (tag == "V" ? s.prev_pivot : s.last_pivot)[f[1]] = f[2];
@@ -798,6 +836,7 @@ bool NetworkStateSnapshotIO::parse(std::istream& is, NetworkStateSnapshot& out,
     if (in_emitter) return fail("truncated emitter section (no EEND)");
     if (in_carry)   return fail("truncated carry section (no CEND)");
     if (in_chain)   return fail("truncated chain memory section (no CHEND)");
+    if (in_stmem)   return fail("truncated station memory section (no SMEND)");
     if (!saw_end)   return fail("missing END terminator (truncated file)");
     if (!saw_meta || !saw_counters || !saw_ramp)
         return fail("missing mandatory metadata (M/N/U) line");

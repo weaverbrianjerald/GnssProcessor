@@ -112,6 +112,9 @@
  *   CHAIN,v1                                            # chain memory section (verbatim,
  *   ...                                                 #  network.state_snapshot_chain_capture;
  *   CHEND                                               #  network/state/ChainMemory.hpp)
+ *   STMEM,v1,<fingerprint>                              # station memory section (verbatim,
+ *   WU,<station>,<sat>,<angle_rad>,<epoch_s>,<start_s>  #  network.state_snapshot_station_memory_capture;
+ *   SMEND                                               #  network/state/StationMemory.hpp)
  *   END,<n_lines>                                       # truncation guard (line count)
  * @endcode
  * @c SV, @c GG and the carry blob are written only when the carry blob is present
@@ -250,6 +253,19 @@ struct NetworkStateSnapshot {
         bool        inflate_q{false}; ///< Clock-monitor soft-reinit mark.
     };
     std::vector<SharedCarry> shared_carry;  ///< In stash order (fold order preserved).
+    /// One parked shared carry (a departed satellite's clock or code-bias carry, held for its seed-first
+    /// re-admission, @c CarryPrior::t_park_s > 0): a @c DP line, written only under
+    /// @c network.state_snapshot_park_capture.
+    struct ParkedCarry {
+        int         kind{0};        ///< SharedParamKind as int (Clock or CodeBias).
+        std::string sat;            ///< RINEX satellite id.
+        std::string signal;         ///< Signal ("" for Clock).
+        double      value{0.0};     ///< The parked value.
+        double      var{0.0};       ///< The parked posterior variance.
+        double      t_park_s{0.0};  ///< Continuous GPS seconds of the departure (the park stamp).
+    };
+    /// Parked carries in stash order; empty unless the park capture is armed, so a default snapshot is byte-identical.
+    std::vector<ParkedCarry> parked_carry;
 
     std::map<std::string, std::string> prev_pivot;  ///< constellation -> pivot of the last emit.
     std::map<std::string, std::string> last_pivot;  ///< constellation -> last pivot ever held (A1).
@@ -689,6 +705,12 @@ struct NetworkStateSnapshot {
     /// chain's tree memory, the ring fix's links and maps, the emitter's held-value state and the group-delay latch.
     /// Empty unless the capture is armed, so a snapshot written without it is byte-identical.
     std::string chain_memory;
+    /// Verbatim station memory section (its @c STMEM header through its @c SMEND terminator, newline-separated),
+    /// written by @c networkStationMemoryWrite under @c network.state_snapshot_station_memory_capture and restored by
+    /// @c networkStationMemoryRestore under @c network.resume_station_memory_restore (network/state/StationMemory.hpp):
+    /// every station's wind-up accumulator.  Empty unless the capture is armed, so a snapshot written without it is
+    /// byte-identical.
+    std::string station_memory;
 };
 
 /**

@@ -6,6 +6,7 @@
  */
 #include "network/driver/Run.hpp"
 #include "network/state/ChainMemory.hpp"   // networkChainMemoryRestore (network.resume_chain_restore)
+#include "network/state/StationMemory.hpp" // networkStationMemoryRestore (network.resume_station_memory_restore)
 #include "network/driver/Epoch.hpp"          // NetworkEpoch (the readout's epoch)
 #include "rinex/MultiRinexSync.hpp"      // SyncedEpoch
 #include <fmt/format.h>
@@ -333,6 +334,11 @@ void networkRunArm(NetworkRun& run, LogManager& log_manager_) {
     // the saved group-delay latch in place of this leg's own.  It needs the setup, so it runs here, before the first
     // epoch; a no-op when nothing was staged.
     networkChainMemoryRestore(run);
+    // Puts back the station memory section the resume staged (network.resume_station_memory_restore), when its own
+    // fingerprint matches this run's: every station's wind-up accumulator, so the first epoch continues the writer's
+    // unwrapped angles.  The stations' models are in scope only here, before the first epoch; a no-op when nothing was
+    // staged.
+    networkStationMemoryRestore(run);
     // Event harness: arms the scripted-fault schedule.  It
     // comes after the warm resume because the injector is outside the resume
     // fingerprint, and its "ARMED" banner must not be mistaken for restored state.

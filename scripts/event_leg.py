@@ -323,6 +323,17 @@ def cmd_write_seed(args):
     # (Card CHA step S7 (b), card NRF section 125)
     if net.get("phase_datum_eq34"):
         net["state_snapshot_chain_capture"] = True
+    # Also capture the station memory section (every station's wind-up accumulator, exactly as kept), so a leg
+    # continues the seed's unwrapped angles instead of restarting each at its first epoch: without it every arc whose
+    # accumulator passed half a cycle sits a whole turn off in the leg, alike on every signal, under carries and held
+    # integers restored in the seed's frame.  Only where the seed accumulates its wind-up.  (Card WRS)
+    if (cfg.get("estimation") or {}).get("accumulate_phase_windup"):
+        net["state_snapshot_station_memory_capture"] = True
+    # Also capture the parked carries (a departed satellite's clock and code-bias carry held for its seed-first
+    # re-admission), so a satellite that sets before the snapshot and returns in the leg is re-admitted from its
+    # parked carry instead of returning cold.  Only where the seed parks.  (Card WRS)
+    if float(net.get("readmit_seed_horizon_s", 0.0) or 0.0) > 0.0:
+        net["state_snapshot_park_capture"] = True
     # Also write the closed-loop consumer's RtStateSnapshot beside every network
     # history copy (state_snapshot.txt.consumer.epNNNN, same suffix, same tow), so a
     # leg's consumer can resume at the seam instead of cold-starting.  Consumer
@@ -509,6 +520,12 @@ def _leg_common(args, event_json):
     # matched null of card NRF section 125 (the same leg without the memory).  (Card CHA step S7 (b))
     if net.get("state_snapshot_chain_capture"):
         net["resume_chain_restore"] = not getattr(args, "no_chain_restore", False)
+    # Restore the station memory section where the seed wrote it; --no-station-memory-restore leaves it out (the leg
+    # as before the section existed).  (Card WRS)
+    if net.get("state_snapshot_station_memory_capture"):
+        net["resume_station_memory_restore"] = not getattr(args, "no_station_memory_restore", False)
+    if net.get("state_snapshot_park_capture"):
+        net["resume_park_restore"] = not getattr(args, "no_park_restore", False)
     # Ledger row network.zwd_seam_reseed (RECOMMEND_SCOPED, regime warm +
     # phase_leveling, "arm on the RESUME leg"): without it the ZWD channel restarts
     # at the seam.  On evseed_quiet6h ep0665 the null leg's ZWD truth rms sat at
@@ -1057,6 +1074,12 @@ def main():
         p.add_argument("--no-chain-restore", dest="no_chain_restore", action="store_true",
                        help="leave the chain memory section out of the resume (network.resume_chain_restore off): "
                             "the matched null of card NRF section 125")
+        p.add_argument("--no-station-memory-restore", dest="no_station_memory_restore", action="store_true",
+                       help="leave the station memory section out of the resume "
+                            "(network.resume_station_memory_restore off): every wind-up accumulator restarts")
+        p.add_argument("--no-park-restore", dest="no_park_restore", action="store_true",
+                       help="leave the parked carries out of the resume (network.resume_park_restore off): a "
+                            "satellite parked at the snapshot returns cold")
         p.add_argument("--extra", default="",
                        help="JSON object deep-merged into leg.json AFTER every "
                             "harness field (arms knobs the seed's config predates)")

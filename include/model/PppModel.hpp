@@ -230,6 +230,17 @@ namespace GnssProcessor {
         std::vector<std::pair<std::string, GnssCorrections::WindUpArc>> windUpArcs() const {
             return antenna_.windUpArcs();
         }
+        /// @brief The wind-up accumulator's entries exactly as kept, for the snapshot's station
+        ///        memory section (see GnssCorrections::windUpRecords).
+        /// @return One record per satellite, sorted by identifier; empty in fractional mode.
+        std::vector<GnssCorrections::WindUpRecord> windUpRecords() const { return antenna_.windUpRecords(); }
+        /// @brief Replace the wind-up accumulator with saved entries, verbatim (a warm resume; see
+        ///        GnssCorrections::restoreWindUpRecords).
+        /// @param records The saved entries.
+        /// @return False, and nothing changed, in fractional mode (no accumulator); true otherwise.
+        bool restoreWindUpRecords(const std::vector<GnssCorrections::WindUpRecord>& records) {
+            return antenna_.restoreWindUpRecords(records);
+        }
         /// @brief The wind-up gap-bridge counters for this model's receiver (zero unless
         ///        @c estimation.phase_windup_gap_bridge is on).
         /// @return Reference to the counters; valid for the lifetime of this model.

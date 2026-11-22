@@ -134,6 +134,8 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.resume_emit_restore    = config_.networkResumeEmitRestore();       // emit engines
     k.resume_hold_restore    = config_.networkResumeHoldRestore();       // the phase-bias hold (CRS2)
     k.resume_chain_restore   = config_.networkResumeChainRestore();      // the chain memory section
+    k.resume_station_memory_restore = config_.networkResumeStationMemoryRestore();   // the station memory section
+    k.resume_park_restore    = config_.networkResumeParkRestore();       // the parked carries (DP lines)
     k.resume_station_restore = config_.networkResumeStationRestore();    // station layer
     k.resume_station_rxcb    = config_.networkResumeStationRestoreRxCb();
     k.resume_signal_canon_restore = config_.networkResumeSignalCanonRestore();  // signal latch

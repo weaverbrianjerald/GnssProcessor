@@ -5480,6 +5480,34 @@ namespace GnssProcessor {
                       "network.resume_chain_restore: nothing is restored, so nothing is written, INERT.");
             network_resume_chain_dump_ = false;
         }
+        // Station memory capture and restore: every station's wind-up accumulator as one section of the snapshot,
+        // put back verbatim at a warm resume.  Each half needs a snapshot path and the accumulated wind-up (fractional
+        // mode keeps no accumulator); without either it is disarmed with a warning.  Not fingerprinted: the section
+        // carries its own fingerprint of the wind-up keys, so neither half changes whether a warm resume is admitted.
+        network_state_snapshot_station_memory_capture_ = jval<bool>(
+            json, "network.state_snapshot_station_memory_capture", "state_snapshot_station_memory_capture", false);
+        network_resume_station_memory_restore_ = jval<bool>(
+            json, "network.resume_station_memory_restore", "resume_station_memory_restore", false);
+        for (auto [armed, key] : { std::pair<bool*, const char*>{ &network_state_snapshot_station_memory_capture_,
+                                                                  "network.state_snapshot_station_memory_capture" },
+                                   std::pair<bool*, const char*>{ &network_resume_station_memory_restore_,
+                                                                  "network.resume_station_memory_restore" } }) {
+            if (!*armed) continue;
+            if (network_config_.state_snapshot_path.empty()) {
+                log->warn("Network (station memory): {} armed but network.state_snapshot_path is empty: no snapshot is "
+                          "written or read, DISARMED.", key);
+                *armed = false;
+            } else if (!accumulate_phase_windup_) {
+                log->warn("Network (station memory): {} armed without estimation.accumulate_phase_windup: fractional "
+                          "wind-up keeps no accumulator to save or restore, DISARMED.", key);
+                *armed = false;
+            }
+        }
+        if (network_state_snapshot_station_memory_capture_)
+            log->info("Network (station memory capture): every snapshot also carries the STATION MEMORY section (every "
+                      "station's wind-up accumulator); a resume armed with network.resume_station_memory_restore "
+                      "continues the writer's unwrapped angles.  Write-side only; the products and every trace are "
+                      "unchanged.");
         // Station-layer restore, the read side of network.state_snapshot_station_capture
         // (RS-6, SPEC_event_harness §21.13).  Same exemption class as the restores
         // above: forward-only resume response policy, inert on a run that never
@@ -5594,6 +5622,28 @@ namespace GnssProcessor {
             jval<int>(json, "network.readmit_coupling_marg_ep", "readmit_coupling_marg_ep", 0);
         if (network_readmit_coupling_marg_ep_ < 0)
             throw std::runtime_error("network.readmit_coupling_marg_ep must be >= 0");
+        // Parked-carry capture and restore: the departed satellites' clock and code-bias carries held for their
+        // seed-first re-admission (network.readmit_seed_horizon_s), which a snapshot otherwise leaves out, so a seam
+        // inside a satellite's absence returns it cold.  Each half needs a snapshot path and the re-admission seed;
+        // without either it is disarmed with a warning.
+        network_state_snapshot_park_capture_ = jval<bool>(
+            json, "network.state_snapshot_park_capture", "state_snapshot_park_capture", false);
+        network_resume_park_restore_ = jval<bool>(json, "network.resume_park_restore", "resume_park_restore", false);
+        for (auto [armed, key] : { std::pair<bool*, const char*>{ &network_state_snapshot_park_capture_,
+                                                                  "network.state_snapshot_park_capture" },
+                                   std::pair<bool*, const char*>{ &network_resume_park_restore_,
+                                                                  "network.resume_park_restore" } }) {
+            if (!*armed) continue;
+            if (network_config_.state_snapshot_path.empty()) {
+                log->warn("Network (parked carries): {} armed but network.state_snapshot_path is empty: no snapshot is "
+                          "written or read, DISARMED.", key);
+                *armed = false;
+            } else if (!(network_readmit_seed_horizon_s_ > 0.0)) {
+                log->warn("Network (parked carries): {} armed without network.readmit_seed_horizon_s: nothing is ever "
+                          "parked, DISARMED.", key);
+                *armed = false;
+            }
+        }
         // Sub-knob of the seed horizon: park and seed the code-bias columns too (the
         // default), or the clock alone (on a 24 h run the first seeded return rejected
         // the third-frequency C5Q seed at 43 σ while the IF-pair seeds held).

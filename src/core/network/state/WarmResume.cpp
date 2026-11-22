@@ -33,12 +33,14 @@
  *   resumeCheckGate            always
  *   resumeEmitterLayer         always
  *   resumeSharedCarry          always: D rows, then V C J K L Z
+ *   resumeParkedCarry          network.resume_park_restore: DP rows (after the live carries)
  *   resumeZwdSeam              network.zwd_seam_reseed
  *   resumeFrame                network.resume_frame_restore: PA PT, clock anchor, handover ledger, CLK-R frame
  *   resumeDatum                network.resume_datum_restore: EQD EQP EQS EQT EQE EQR, CBP CBS CBI
  *   resumeEmitLayer            network.resume_emit_restore
  *   resumeHold                 network.resume_hold_restore: PH PHM PHC PHF
  *   resumeChainMemoryHandoff   network.resume_chain_restore
+ *   resumeStationMemoryHandoff network.resume_station_memory_restore (staged)
  *   resumeClockLevel           network.clock_level_monitor (LB rows)
  *   resumeStationLayer         network.resume_station_restore: RC SD
  *   resumeCanonicalSignals     network.resume_signal_canon_restore (staged)
@@ -417,6 +419,52 @@ void resumeSharedCarry(const ResumeSeam& in) {
     // entry and is marked as one, so an age gate added here later inherits
     // §15.4.
     net::recordFromSnapshot("Z", snap, ctx);
+}
+
+/**
+ * @brief Restores the parked clock and code-bias carries (DP rows) after the live ones, with their park stamps, and
+ *        marks their satellites as seen before, so a return after the seam is a re-admission.
+ * @param in The resume seam.
+ */
+void resumeParkedCarry(const ResumeSeam& in) {
+    if (!in.ctx.knobs.resume_park_restore) return;
+    NetworkRunContext& ctx = in.ctx;
+    const NetworkStateSnapshot& snap = in.snap;
+    const std::shared_ptr<spdlog::logger>& log = in.log;
+    auto& prev_carry = ctx.carry.prev_carry;                 // written: the parked entries appended after the live ones
+    net::NetworkEntities& entities = ctx.entities;           // written: the satellites' re-admission memory
+
+    // Parked-carry restore (network.resume_park_restore).  The writer appends parked entries after the live ones, so
+    // appending them here keeps its order.  Each satellite with a parked entry is marked as seen at the first loop
+    // epoch (1): the re-admission detector counts a positive mark as "seen before" and needs kReadmitMinGapEp epochs
+    // of absence, so a return from the fourth resumed epoch on is a re-admission seeded from the parked carry, as in
+    // the uninterrupted run.  Known limit: a return in the first three resumed epochs reads as a first sighting.
+    if (snap.parked_carry.empty()) {
+        log->info("Network (parked-carry restore): ARMED but the snapshot carries no parked carry (DP rows): no "
+                  "satellite was parked at the snapshot epoch, or the writer ran without "
+                  "network.state_snapshot_park_capture.");
+        return;
+    }
+    std::set<std::string> sats;
+    for (const NetworkStateSnapshot::ParkedCarry& d : snap.parked_carry) {
+        CarryPrior cp;
+        cp.kind = static_cast<SharedParamKind>(d.kind);
+        cp.sat = d.sat;
+        cp.signal = d.signal;
+        cp.value = d.value;
+        cp.var = d.var;
+        cp.t_park_s = d.t_park_s;
+        prev_carry.push_back(std::move(cp));
+        sats.insert(d.sat);
+    }
+    for (const std::string& sat : sats) net::putSat(entities, sat, &net::SatelliteState::readmit_last_seen_ep) = 1;
+    ctx.counters.resume_parked_restored += static_cast<long long>(snap.parked_carry.size());
+    ctx.counters.resume_parked_sats += static_cast<long long>(sats.size());
+    std::string names;
+    for (const std::string& sat : sats) names += (names.empty() ? "" : " ") + sat;
+    log->info("Network (parked-carry restore): ARMED at the resume seam: {} parked carr(y|ies) of {} satellite(s) put "
+              "back with their park stamps [{}]; a return from the fourth resumed epoch on is a re-admission seeded "
+              "from them.", snap.parked_carry.size(), sats.size(), names);
 }
 
 /**
@@ -870,6 +918,31 @@ void resumeChainMemoryHandoff(const ResumeSeam& in) {
                   "the ring fix start empty and the leg latches its own group delays).");
     } else {
         ctx.carry.resume.chain_memory = snap.chain_memory;
+    }
+}
+
+/**
+ * @brief Stages the station memory section; the driver puts it back into the stations' models after checking the
+ *        section's own fingerprint.
+ * @param in The resume seam.
+ */
+void resumeStationMemoryHandoff(const ResumeSeam& in) {
+    if (!in.ctx.knobs.resume_station_memory_restore) return;
+    NetworkRunContext& ctx = in.ctx;
+    const NetworkStateSnapshot& snap = in.snap;
+    const std::shared_ptr<spdlog::logger>& log = in.log;
+
+    // Station memory restore (network.resume_station_memory_restore).  The section is staged here and put back by
+    // networkStationMemoryRestore in the driver, where the stations' models are in scope, after it checks the
+    // section's own fingerprint.  Without a section nothing is restored, and a warning and a counter say so; the warm
+    // resume goes on.
+    if (snap.station_memory.empty()) {
+        ++ctx.counters.station_memory_absent;
+        log->warn("Network (station memory restore): ARMED but the snapshot carries NO station memory section (a "
+                  "writer without network.state_snapshot_station_memory_capture): nothing is restored, and every "
+                  "station's wind-up accumulator starts from its first epoch's raw angle.");
+    } else {
+        ctx.carry.resume.station_memory = snap.station_memory;
     }
 }
 
@@ -1798,12 +1871,14 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
     if (!resumeEmitterLayer(in)) return;
 
     resumeSharedCarry(in);
+    resumeParkedCarry(in);
     resumeZwdSeam(in);
     resumeFrame(in);
     resumeDatum(in, flow);
     resumeEmitLayer(in);
     resumeHold(in);
     resumeChainMemoryHandoff(in);
+    resumeStationMemoryHandoff(in);
     resumeClockLevel(in);
     resumeStationLayer(in);
     resumeCanonicalSignals(in);
