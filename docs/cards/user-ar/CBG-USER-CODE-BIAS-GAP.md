@@ -5,14 +5,14 @@
 - **id:** CBG
 - **topic:** user-ar
 - **status:** open
-- **summary:** Pre-registered 2026-11-21 by the author's order of that evening. While the network sends no code bias for a satellite's second signal (a code-bias column needs two stations; card CPW's hold keeps the value inside the network and sends none), the user applies that signal's code with a bias of zero; a fix made while the satellite's ambiguities are loose takes the neighbouring Galileo wide lane with the matching narrow lane, the step (3, 4), and nothing tests it again. Observed at ARHT00ATA: E18 on 26 May 2026 held (91, 99) where (94, 103) is right, E32 on 27 May held wide lane -3 where -4 is right. Response under test: key `network.closed_loop.code_bias_gap_response` (off, revalidate, full), default off.
-- **dates:** 2026-11-21 (pre-registered, before any run of the response).
+- **summary:** Pre-registered 2026-11-21 by the author's order of that evening. While the network sends no code bias for a satellite's second signal (a code-bias column needs two stations; card CPW's hold keeps the value inside the network and sends none), the user applies that signal's code with a bias of zero; a fix made while the satellite's ambiguities are loose takes the neighbouring Galileo wide lane with the matching narrow lane, the step (3, 4), and nothing tests it again. Observed at ARHT00ATA: E18 on 26 May 2026 held (91, 99) where (94, 103) is right, E32 on 27 May held wide lane -3 where -4 is right. Response under test: key `network.closed_loop.code_bias_gap_response` (off, revalidate, full), default off. Result 2026-11-22 (section 6): with the key off the user takes the wrong hold on the simulator (with the network's phase-bias reset inside the gap) and in both observed cases; "revalidate" releases it after 20 epochs and refixes right; "full" never takes it; no right hold released, off byte-identical, position within 5 mm. Question 5 (section 7): 2 wrong Galileo holds in the day-long users (607 of 1.57 million held satellite-epochs), both from this defect, where the twin check counts none. Not armed.
+- **dates:** 2026-11-21 (pre-registered, before any run of the response); 2026-11-22 (results, sections 6 and 7).
 - **knobs / posture:** `network.closed_loop.code_bias_gap_response` with `code_bias_gap_revalidate_ep` (20) and `code_bias_gap_window_ep` (120), derived into the consumer as `processing.ssr_code_bias_gap_response` and its two lengths; default "off", byte-identical. User replays only: the 24 h simulator network `runs_irm/_rap_irm_day24_s` with the SZZ000SIM user of `runs_nom/_rap_ufq_s129_f0`, and the poster's day-long ARHT users (`runs_nom/_rap_agu3_d10x_{146,147}_arht`) on their network products.
 - **code:** `include/realtime/CodeBiasGap.hpp`, `src/core/realtime/CodeBiasGap.cpp` (pure, unit-tested), `src/core/realtime/RealTimeEngineCodeBiasGap.cpp` (the engine seams), `AmbiguityResolver::forgetHeldPairs`; branch `user/code-bias-gap-2026-11-21`.
 - **run dirs:** `D:\GnssProcessorSupport\gates\e18_wide_lane\runs\cbg_*`; tools and reports in `D:\GnssProcessorSupport\gates\e18_wide_lane\` (`REPORT_1.md`, `REPORT_2.md`, `tools\`).
 - **source:** the author's order of 2026-11-21 (about 21:15), the managing session's brief `gates\e18_wide_lane\BRIEF.md`; `REPORT_1.md` (questions 1 to 3); card [CPW](../../refound/CPW_single_station_code_pin_2026-11-19.md).
 
-**Outcome.** Pre-registered; no result yet. Report 1 settled the mechanism with evidence that does not rest on the disturbed code: the raw Melbourne-Wubbena at ARHT is continuous through both gaps and, corrected with the network's biases outside them, gives wide lane -9 for E18-E04 and -4 for E32-E26; with the missing bias taken as zero it gives the two wrong holds. In the 105 day-long users the gaps produce exactly these two wrong holds; the poster's 85 starts none. The response, its simulator test and the two observed cases follow.
+**Outcome.** The response passes every bar of section 4 on user replays. With the key off, the user holds the neighbouring Galileo wide lane in all three tests (simulator E14 with the network's phase-bias reset inside the gap, ARHT E18 on 26 May, ARHT E32 on 27 May); "revalidate" releases that hold 20 epochs after it is taken and the satellite is refixed right; "full" leaves the bias-less code out, bars the fix and takes the right integers. No right hold was released in 36 runs, off is byte-identical, the position moves at most 5 mm. A correct count for the day-long users: 2 wrong Galileo holds, both from this defect. Next: the author's decision on arming "full".
 
 > Results are appended TO THIS FILE, below the text.
 
@@ -109,3 +109,49 @@ on whatever hold the off arm takes. Nothing here is armed in a reference file or
 
 The count of wrong holds of the poster's day-long users, with and without these two events, from the truth tool of
 Report 1.
+
+## Results, 2026-11-22
+
+### 6. The response on the simulator and on the two observed cases
+
+Engine `gnss_processor_cbg1.exe` (sha256[:16] 01cede27227cca58, card commit 1788d73 plus the response); 36 user replays
+in `gates\e18_wide_lane\runs\cbg_*`, every one exit 0; grade `gates\e18_wide_lane\cbg_grade_all.txt`
+(`tools\cbg_grade.py`); full account in `gates\e18_wide_lane\REPORT_2.md`.
+
+- **Unit tests.** The 73 tests of the touched suites pass (12 new, `tests/test_code_bias_gap.cpp`); the full Debug suite
+  of the branch: 5,111 tests in 688 suites, 5,017 passed, 94 skipped, 0 failed (`gates\e18_wide_lane\tests_full.log`).
+- **Simulator, gap only.** The simulator replay processes its first epoch about 31 minutes after its start offset, so
+  the first B, C and D started after the gap; B2 and C2 were added 31.25 minutes earlier (first epochs 14:00 and
+  14:15). User A holds E14 from 13:21 through the gap in every arm (validated at 14:39, -0.12 cycle). No user fixes E14
+  in or soon after the gap, the control included: S1, S3, S5, S6 met; S2 not met by the gap alone.
+- **Simulator, gap plus the network's declared phase-bias reset of E14 at 14:15** (counter +1, level unchanged, the
+  pattern of E18 on 26 May; added because section 2 item 4 needs loose ambiguities during the gap). Control (reset, no
+  gap): refixed at (-15, 159), right. Off: refixed at 14:36 at (-18, 155), the step (3, 4), offset +0.77, held to the
+  end (S2 met). Revalidate: released at 14:45 (+0.78 over 20 epochs), refixed right, validated (S4 met). Full: refixed
+  right, validated (S3 met). Position within 5 mm in every hour (S6 met).
+- **Observed, day 146 (user from 01:00).** Off: E18 refixed at 03:46 at (17, 31), offset +1.00, held to the end (O1
+  met). Revalidate: released at 03:56:30 (+1.06), refixed at 04:05 at (20, 35), validated (O3 met). Full: 63 code rows
+  left out, 48 satellite-epochs barred, refixed at 03:52 at (20, 35), validated (O2 met).
+- **Observed, day 147 (user from 10:00).** Off: E32 fixed at 12:07, 20 minutes after the return, at (477, 480), wide
+  lane -3, offset +0.89 (O1 met in the form section 4's readings foresaw). Revalidate: released at 12:17:30 (+0.84),
+  refixed at 12:28 at (480, 484), wide lane -4, validated (O3 met). Full: 127 rows left out, 146 satellite-epochs
+  barred, fixed at 12:07 at (480, 484), validated (O2 met).
+- **No right hold released:** 3 releases, each on a hold the truth calls wrong; 9 validations within 0.19 cycle;
+  3 windows ended with no hold to test. No other hold changed its verdict in any run. Position: at most 1 mm per hour
+  on both observed days (O4 met).
+- **Off identity (S5).** Key absent, key written "off", and key absent on the engine of cade9f5: identical in all 29
+  log files and stdout after card URS's three masks.
+
+Reading (section 4, fixed before the runs): S2 to S6 and O1 to O4 pass, so "full" is the candidate posture of the
+fixing user, with "revalidate" as the release for a hold taken without the open-edge response. Not armed: the author's
+decision. Options (b) and (c) of section 3 are costed in REPORT_2 section 3.
+
+### 7. Question 5: a correct count for the day-long users
+
+Judge: the receiver's own Melbourne-Wubbena corrected with the network's biases over each hold's clean epochs (the
+twin check cannot see a step (3, 4), and in a gap the twin's float is the side that moves). Day-long users, 100 of 105
+graded, Galileo: 10,313 hold segments, 1,569,672 held satellite-epochs. Wrong beyond doubt: 5 segments, 607 epochs,
+all from a missing code bias (ARHT E18 day 146, ARHT E32 day 147). Between 0.5 and 0.7 cycle: 106 segments, 7,741
+epochs, mostly E11 and E19 at -0.5 to -0.6 at many receivers (a satellite-wide half-cycle code-phase disagreement of
+the network's biases, which the code cannot decide), not counted. GPS not graded (Report 1: a +2 wide-lane frame on
+ten satellites and tails that need their own look). The poster's 85 starts: no wrong Galileo hold from a gap.

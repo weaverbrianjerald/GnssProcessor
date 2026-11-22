@@ -836,6 +836,23 @@ namespace GnssProcessor {
                       "\"code\"); using \"all\"", innovation_screen_rows_);
             innovation_screen_rows_ = "all";
         }
+        // The consumer's response to a code signal without its stream code bias.  Default
+        // "off" measures and writes nothing (byte-identical).  The closed-loop harness derives
+        // it from network.closed_loop.code_bias_gap_response; a standalone consumer sets it here.
+        ssr_code_bias_gap_response_ = jval<std::string>(json,
+            "processing.ssr_code_bias_gap_response", "ssr_code_bias_gap_response", std::string("off"));
+        ssr_code_bias_gap_revalidate_ep_ = jval<int>(json,
+            "processing.ssr_code_bias_gap_revalidate_ep", "ssr_code_bias_gap_revalidate_ep", 20);
+        ssr_code_bias_gap_window_ep_ = jval<int>(json,
+            "processing.ssr_code_bias_gap_window_ep", "ssr_code_bias_gap_window_ep", 120);
+        if (ssr_code_bias_gap_response_ != "off" && ssr_code_bias_gap_response_ != "revalidate"
+            && ssr_code_bias_gap_response_ != "full") {
+            log->warn("Unknown ssr_code_bias_gap_response '{}' (expected \"off\", \"revalidate\" "
+                      "or \"full\"); using \"off\"", ssr_code_bias_gap_response_);
+            ssr_code_bias_gap_response_ = "off";
+        }
+        if (ssr_code_bias_gap_revalidate_ep_ < 1) ssr_code_bias_gap_revalidate_ep_ = 20;
+        if (ssr_code_bias_gap_window_ep_ < 1) ssr_code_bias_gap_window_ep_ = 120;
         if (!(innovation_screen_max_fraction_ > 0.0 && innovation_screen_max_fraction_ <= 1.0)) {
             log->warn("innovation_screen_max_fraction ({:.3f}) is outside (0, 1]; using 0.25",
                       innovation_screen_max_fraction_);

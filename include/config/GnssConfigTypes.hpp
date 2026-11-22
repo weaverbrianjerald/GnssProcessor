@@ -362,6 +362,21 @@ namespace GnssProcessor {
         /// default 1.0).
         double        innovation_screen_code_floor_m{ 1.0 };
         /**
+         * @brief The consumer's response to a code signal whose satellite code bias is missing
+         *        from the stream (key @c network.closed_loop.code_bias_gap_response: "off", the
+         *        default and byte-identical, "revalidate" or "full"; realtime/CodeBiasGap.hpp).
+         *
+         * Derived into the consumer engine as @c processing.ssr_code_bias_gap_response with its
+         * two lengths; it never reaches the producer's solve or its resume fingerprint.
+         */
+        std::string   code_bias_gap_response{ "off" };
+        /// Clean held epochs behind a re-validation verdict
+        /// (@c code_bias_gap_revalidate_ep, default 20).
+        int           code_bias_gap_revalidate_ep{ 20 };
+        /// Epochs after the return in which a hold of the satellite is tested
+        /// (@c code_bias_gap_window_ep, default 120).
+        int           code_bias_gap_window_ep{ 120 };
+        /**
          * @brief Warm start of the closed-loop consumer in the event harness
          *        (@c network.closed_loop.state_snapshot, default false; false is
          *        byte-identical and writes no file) (part B).

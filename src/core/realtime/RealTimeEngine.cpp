@@ -373,6 +373,7 @@ void RealTimeEngine::flush() {
     logAmbLevelCheckSummary_("end of run");
     // The innovation screen's counters, silent unless armed.
     logInnovationScreenSummary("end of run");
+    logCodeBiasGapSummary("end of run");
     // The resolver's endings and held integers, silent without a resolver.
     logArFixQualitySummary("end of run");
     // The rule for satellites without a stream record, silent unless armed.
@@ -546,6 +547,7 @@ bool RealTimeEngine::processEpoch(const std::vector<RinexObservation>& epoch_obs
     logProducerStatus(ctx);
     resetOnPhaseBiasDisc(ctx);
     reinflateOnCodeBiasDisc(ctx);
+    observeCodeBiasGaps_(ctx);         // no-op unarmed
     reinflateOnClockDisc(ctx);
     reactToDeclaredLevelSteps_(ctx);   // no-op unarmed
     reactToEphemerisJumps_(ctx);       // no-op unarmed
@@ -565,6 +567,7 @@ bool RealTimeEngine::processEpoch(const std::vector<RinexObservation>& epoch_obs
     applyZwdConstraint(ctx);
     applyNetworkIonoPrior(ctx);
 
+    revalidateCodeBiasGaps_(ctx);      // no-op unarmed
     resolveAmbiguities(ctx);
     writeEpochTraces(ctx);
 
