@@ -520,6 +520,19 @@ namespace GnssProcessor {
         /// loader requires resume_datum_restore.  Not fingerprinted (forward-only resume response policy).  Off =
         /// byte-identical resume.
         bool   resume_chain_restore{};
+        /// network.resume_station_memory_restore: at a warm resume, restore the station memory section
+        /// (network/state/StationMemory.hpp): every station's wind-up accumulator, so a resumed run continues the
+        /// writer's unwrapped angles instead of restarting them at its first epoch.  The section carries its own
+        /// fingerprint of the wind-up keys, checked at the restore: a section that is absent or refused restores
+        /// nothing and says so (counted), and the warm resume goes on.  Not fingerprinted (forward-only resume
+        /// response policy).  Off = byte-identical resume.
+        bool   resume_station_memory_restore{};
+        /// network.resume_park_restore: at a warm resume, put back the parked clock and code-bias carries the
+        /// snapshot carries (DP lines, network.state_snapshot_park_capture) with their park stamps, and mark each of
+        /// their satellites as seen before, so a satellite that departed before the seam and returns after it is a
+        /// re-admission (seeded from its parked carry) and not a first sighting.  Not fingerprinted (forward-only
+        /// resume response policy).  Off = byte-identical resume.
+        bool   resume_park_restore{};
         /// network.resume_station_restore (RS-6, SPEC_event_harness §21.13): at a warm
         /// resume, restore the two station-layer memories before the first epoch: the rx-CB
         /// carry (the snapshot's RC rows, through @c makeRestoredLocalCarry, so every entry
@@ -1267,6 +1280,11 @@ namespace GnssProcessor {
         /// @c network.resume_chain_restore and consumed by @c networkChainMemoryRestore in the driver, where the setup
         /// (the group-delay latch) is in scope.  Empty unless a warm resume found the section.
         std::string chain_memory;
+        /// The snapshot's station memory section (every station's wind-up accumulator), staged by
+        /// @ref networkTryWarmResume under @c network.resume_station_memory_restore and consumed by
+        /// @c networkStationMemoryRestore in the driver, where the stations' models are in scope.  Empty unless a warm
+        /// resume found the section.
+        std::string station_memory;
         /// The chain memory restore put back pinned lives of tree edges: the kept row judges each once, at the first
         /// election, on this run's own ledger and flags (@c arcRestoredLifeContinues), and that election clears it.
         /// Set by @c networkChainMemoryRestore, the warm resume's second half, before the first epoch.

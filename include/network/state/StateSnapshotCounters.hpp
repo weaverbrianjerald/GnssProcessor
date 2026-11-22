@@ -66,6 +66,22 @@ struct StateSnapshotCounters {
     long long chain_restore_absent   = 0;   ///< warm resumes under the restore whose snapshot carries no section
     long long chain_restore_lines    = 0;   ///< lines of the restored section that an owner read
     long long chain_restore_unread   = 0;   ///< lines of the restored section that no owner read
+    // The station memory section (network.state_snapshot_station_memory_capture,
+    // network.resume_station_memory_restore; network/state/StationMemory.hpp).  A warm resume under the restore ends
+    // in one of three outcomes; the reason of a refusal is in the restore's log line.
+    long long snap_station_memory_records_last  = 0;   ///< wind-up records of the last snapshot's station memory section
+    long long station_memory_restored           = 0;   ///< warm resumes under the restore that restored the section
+    long long station_memory_refused            = 0;   ///< warm resumes under the restore that refused it whole (fingerprint mismatch, or another build's section)
+    long long station_memory_absent             = 0;   ///< warm resumes under the restore whose snapshot carries no section
+    long long station_memory_records_restored   = 0;   ///< wind-up records put back into a station's model
+    long long station_memory_gf_arcs_restored   = 0;   ///< GF arc-jump arcs put back into the slip channel
+    long long station_memory_refused_station    = 0;   ///< records refused: a station this run does not hold
+    long long station_memory_refused_malformed  = 0;   ///< lines refused: malformed
+    long long station_memory_refused_fractional = 0;   ///< records refused: a station whose model keeps no accumulator
+    // The parked carries (network.state_snapshot_park_capture, network.resume_park_restore).
+    long long snap_parked_written_last = 0;   ///< parked carries the last snapshot wrote (DP lines)
+    long long resume_parked_restored   = 0;   ///< parked carries put back at the resume, with their park stamps
+    long long resume_parked_sats       = 0;   ///< satellites whose re-admission memory the resume set from them
 };
 
 } // namespace GnssProcessor

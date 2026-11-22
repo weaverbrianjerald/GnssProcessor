@@ -26,6 +26,7 @@
  *   captureEmitLayer           network.state_snapshot_emit_capture
  *   captureHold                network.state_snapshot_hold_capture
  *   captureChainMemory         network.state_snapshot_chain_capture
+ *   captureStationMemory       network.state_snapshot_station_memory_capture (STMEM .. SMEND)
  *   captureStationLayer        network.state_snapshot_station_capture (RC SD)
  *   captureClockLevel          the clock level monitor (LB)
  *   captureCanonicalSignals    network.state_snapshot_signal_capture
@@ -55,6 +56,7 @@
 #include "network/emit/ClockEmitRebase.hpp"       // clock emit re-base held frame, written with the snapshot
 #include "network/emit/EmitRebase.hpp"            // eq34 emit re-base frame, written with the snapshot
 #include "network/state/ChainMemory.hpp"     // the chain memory section (network.state_snapshot_chain_capture)
+#include "network/state/StationMemory.hpp"   // the station memory section (network.state_snapshot_station_memory_capture)
 #include "network/state/StationParams.hpp"   // the stations' parameter sets: the code-bias linearization points
 #include "math/TimeUtils.hpp"                // GnssTime
 #include "products/NetworkProductEmitter.hpp"
@@ -145,13 +147,22 @@ void captureSharedCarry(const SnapshotScope& scope) {
     auto& prev_carry = ctx.carry.prev_carry;
 
     snap.shared_carry.reserve(prev_carry.size());
+    snap.parked_carry.clear();
     for (const CarryPrior& cp : prev_carry) {
         // A parked entry (a departed satellite's pre-gap realization, held for
         // re-admission) is not serialized: the D record has no park stamp, so a restored copy would fold as
         // a fresh live carry with epoch-dt inflation.  Under the forward-only response
         // policy, a seam inside a satellite's absence loses its seed, and the
         // satellite returns cold.
-        if (cp.t_park_s > 0.0) { ++ctx.counters.n_snap_parked_excluded; continue; }
+        if (cp.t_park_s > 0.0) {
+            ++ctx.counters.n_snap_parked_excluded;
+            // Under network.state_snapshot_park_capture the entry is written apart, with its park stamp (DP lines), so
+            // a resume armed with network.resume_park_restore re-admits the satellite as the uninterrupted run does.
+            if (run.config.networkStateSnapshotParkCapture())
+                snap.parked_carry.push_back({ static_cast<int>(cp.kind), cp.sat, cp.signal, cp.value, cp.var,
+                                              cp.t_park_s });
+            continue;
+        }
         NetworkStateSnapshot::SharedCarry sc;
         sc.kind      = static_cast<int>(cp.kind);
         sc.sat       = cp.sat;
@@ -169,6 +180,7 @@ void captureSharedCarry(const SnapshotScope& scope) {
             sc.sat = "L1";
         snap.shared_carry.push_back(std::move(sc));
     }
+    ctx.counters.snap_parked_written_last = static_cast<long long>(snap.parked_carry.size());
 }
 
 /**
@@ -514,6 +526,24 @@ void captureChainMemory(const SnapshotScope& scope) {
 }
 
 /**
+ * @brief Writes the station memory section (every station's wind-up accumulator).
+ * @param scope The run, the epoch time and the snapshot being built.
+ */
+void captureStationMemory(const SnapshotScope& scope) {
+    if (!scope.run.config.networkStateSnapshotStationMemoryCapture()) return;
+    NetworkRun& run = scope.run;
+    NetworkRunContext& ctx = run.ctx;
+    NetworkStateSnapshot& snap = scope.snap;
+
+    // Station memory capture (network.state_snapshot_station_memory_capture): every station's wind-up accumulator,
+    // exactly as kept, as one verbatim section (network/state/StationMemory).  Copies taken after the epoch; the
+    // products and every trace are unchanged.
+    long long n_records = 0;
+    snap.station_memory = networkStationMemoryWrite(run, n_records);
+    ctx.counters.snap_station_memory_records_last = n_records;
+}
+
+/**
  * @brief Writes the station layer: the receiver code-bias carries and the per-line-of-sight deviation entries.
  * @param scope The run, the epoch time and the snapshot being built.
  */
@@ -813,6 +843,7 @@ void networkWriteStateSnapshot(NetworkRun& run, const NetworkEpoch& ep) {
         captureEmitLayer(scope);
         captureHold(scope);
         captureChainMemory(scope);
+        captureStationMemory(scope);
         captureStationLayer(scope);
         captureClockLevel(scope);
         captureCanonicalSignals(scope);

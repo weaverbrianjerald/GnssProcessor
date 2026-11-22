@@ -222,6 +222,15 @@ namespace GnssProcessor {
 		/// @brief The wind-up accumulator of every satellite seen (see GnssCorrections::windUpArcs).
 		/// @return One entry per satellite, sorted by identifier; empty in fractional mode.
 		std::vector<std::pair<std::string, GnssCorrections::WindUpArc>> windUpArcs() const;
+		/// @brief The wind-up accumulator's entries exactly as kept (see GnssCorrections::windUpRecords).
+		/// @return One record per satellite, sorted by identifier; empty in fractional mode.
+		std::vector<GnssCorrections::WindUpRecord> windUpRecords() const;
+		/// @brief Replace the wind-up accumulator with saved entries, verbatim (a warm resume; see
+		///        GnssCorrections::restoreWindUpRecords).
+		/// @param records The saved entries.
+		/// @return False, and nothing changed, when this receiver keeps no accumulator
+		///         (@c estimation.accumulate_phase_windup off: fractional mode); true otherwise.
+		bool restoreWindUpRecords(const std::vector<GnssCorrections::WindUpRecord>& records);
 		/// @brief Install the satellite-state source of the wind-up gap bridge (see
 		///        GnssCorrections::setSatStateProvider); inert unless
 		///        @c estimation.phase_windup_gap_bridge is on.

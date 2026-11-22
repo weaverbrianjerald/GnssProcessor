@@ -2222,6 +2222,19 @@ namespace GnssProcessor {
         return out;
     }
 
+    std::vector<GnssCorrections::WindUpRecord> GnssCorrections::windUpRecords() const {
+        std::vector<WindUpRecord> out;
+        out.reserve(prev_windup_.size());
+        for (const auto& [sat, s] : prev_windup_) out.push_back({ sat, s.angle, s.epoch_s, s.start_epoch_s });
+        std::sort(out.begin(), out.end(), [](const WindUpRecord& a, const WindUpRecord& b) { return a.sat < b.sat; });
+        return out;
+    }
+
+    void GnssCorrections::restoreWindUpRecords(const std::vector<WindUpRecord>& records) {
+        prev_windup_.clear();
+        for (const WindUpRecord& r : records) prev_windup_[r.sat] = { r.angle_rad, r.epoch_s, r.start_epoch_s };
+    }
+
     bool GnssCorrections::enableWindUpTracing(const std::filesystem::path& log_dir) {
         auto logger = log_manager_.getLogger("corrections");
 

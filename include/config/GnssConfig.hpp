@@ -3510,6 +3510,56 @@ namespace GnssProcessor {
          */
         bool networkResumeChainDump() const { return network_resume_chain_dump_; }
         /**
+         * @brief Station memory capture (@c network.state_snapshot_station_memory_capture): the write half of
+         *        @c network.resume_station_memory_restore.
+         *
+         * Every snapshot also carries the station memory section (network/state/StationMemory.hpp): each station's
+         * wind-up accumulator, every satellite it has seen, exactly as kept.  Write-side only: the products and every
+         * trace are unchanged.  Disarmed by the loader without @c network.state_snapshot_path or without
+         * @c estimation.accumulate_phase_windup.
+         *
+         * @return True when every snapshot carries the station memory section; false (default) otherwise.
+         */
+        bool networkStateSnapshotStationMemoryCapture() const { return network_state_snapshot_station_memory_capture_; }
+        /**
+         * @brief Station memory restore (@c network.resume_station_memory_restore): the read half of
+         *        @c network.state_snapshot_station_memory_capture.
+         *
+         * At a warm resume, every station's wind-up accumulator is put back from the snapshot's station memory
+         * section before the first epoch, so the resumed run continues the writer's unwrapped angles instead of
+         * restarting each at its first epoch's raw angle (a whole turn off on every arc that passed half a cycle).
+         * The section's own fingerprint of the wind-up keys is checked; an absent or refused section restores
+         * nothing and the warm resume goes on.  Disarmed by the loader without @c network.state_snapshot_path or
+         * without @c estimation.accumulate_phase_windup.
+         *
+         * @return True when a warm resume restores the station memory section; false (default) otherwise.
+         */
+        bool networkResumeStationMemoryRestore() const { return network_resume_station_memory_restore_; }
+        /**
+         * @brief Parked-carry capture (@c network.state_snapshot_park_capture): the write half of
+         *        @c network.resume_park_restore.
+         *
+         * Every snapshot also carries the parked shared carries (DP lines): each departed satellite's clock and
+         * code-bias carry held for its seed-first re-admission, with its park stamp.  Without it a snapshot leaves
+         * them out, and a seam inside a satellite's absence returns the satellite cold.  Write-side only.  Disarmed
+         * by the loader without @c network.state_snapshot_path or @c network.readmit_seed_horizon_s.
+         *
+         * @return True when every snapshot carries the parked carries; false (default) otherwise.
+         */
+        bool networkStateSnapshotParkCapture() const { return network_state_snapshot_park_capture_; }
+        /**
+         * @brief Parked-carry restore (@c network.resume_park_restore): the read half of
+         *        @c network.state_snapshot_park_capture.
+         *
+         * At a warm resume the parked carries go back into the shared stash with their park stamps, after the live
+         * carries, and their satellites are marked as seen before, so a satellite that returns after the seam is
+         * re-admitted from its parked carry as in the uninterrupted run.  Disarmed by the loader without
+         * @c network.state_snapshot_path or @c network.readmit_seed_horizon_s.
+         *
+         * @return True when a warm resume restores the parked carries; false (default) otherwise.
+         */
+        bool networkResumeParkRestore() const { return network_resume_park_restore_; }
+        /**
          * @brief Resume station-layer restore (@c network.resume_station_restore,
          *        SPEC_event_harness §21.13; RS-6): the read half of
          *        @c network.state_snapshot_station_capture.
@@ -10468,6 +10518,10 @@ namespace GnssProcessor {
         bool   network_resume_datum_restore_{false};       ///< Resume datum restore (RS-3, SPEC_event_harness §21.7), the reader half of network.state_snapshot_datum_capture: at a warm resume, restore the eq34 chain datum's last-epoch spanning tree (eq34_datum_rx / eq34_rx_parent / eq34_sat_root / eq34_prev_target / eq34_prev_el / eq34_retained_edges) before the first election, so the sticky-tree seed continues the writer's tree instead of re-electing it from the cold arc registry, and restore the time-linked code-bias memory (code_bias_prev_ / code_bias_sat_seen_) with code_bias_datum_resumed_ left false, so a re-seed disc-bumps only where it actually re-seeds.  The loader requires resume_frame_restore (the sat-side half of the same tree).  If a half's rows are absent, that half behaves as if off and a warning is logged.  Not fingerprinted (forward-only resume response policy).  Off = byte-identical.
         bool   network_resume_emit_restore_{false};        ///< Resume emit-layer restore (RS-5, SPEC_event_harness §21.10), the reader half of network.state_snapshot_emit_capture: at a warm resume, restore the eq34 emit re-base engine's emission frame (NetworkEmitRebase::last_emit_, the ER rows) before the first emit, so the emitted phase biases continue the writer's emission level instead of stepping to the raw solve frame (metres per (sat,signal) at a field seam).  Inert and logged when its ER rows are absent.  The loader requires resume_frame_restore.  Outputs-only.  Not fingerprinted (forward-only resume response policy).  Off = byte-identical.
         bool   network_resume_chain_dump_{false};          ///< Resume chain dump: the restored chain memory written beside the snapshot (network.resume_chain_dump), measure-only.
+        bool   network_state_snapshot_station_memory_capture_{false};  ///< Station memory capture (network.state_snapshot_station_memory_capture), write-only.
+        bool   network_resume_station_memory_restore_{false};          ///< Station memory restore (network.resume_station_memory_restore), the reader half.
+        bool   network_state_snapshot_park_capture_{false};            ///< Parked-carry capture (network.state_snapshot_park_capture), write-only.
+        bool   network_resume_park_restore_{false};                    ///< Parked-carry restore (network.resume_park_restore), the reader half.
         bool   network_resume_chain_restore_{false};       ///< Resume chain restore, the reader half of network.state_snapshot_chain_capture (network/state/ChainMemory.hpp).
         bool   network_resume_hold_restore_{false};        ///< Resume hold restore (card CRS2), the reader half of network.state_snapshot_hold_capture: at a warm resume, restore the emit-side phase-bias hold (the PH / PHM / PHC / PHF rows) before the first emit, so every held key continues the writer's generation, held value and transfer instead of first-sighting at the current estimate (a re-level of up to 21 m per key, card CRS section 4); the smoothed hold's clone birth is queued again in the restored generation.  Inert and logged when its rows are absent or the hold is off.  The loader requires resume_frame_restore.  Outputs-only.  Not fingerprinted (forward-only resume response policy).  Off = byte-identical.
         bool   network_resume_station_restore_{false};     ///< Resume station-layer restore (RS-6, SPEC_event_harness §21.13), the reader half of network.state_snapshot_station_capture: at a warm resume, restore the rx-CB carry (the RC rows, through makeRestoredLocalCarry so each entry carries the §15.4.1 restored-arc sentinel) and the T5 / Iono-2 per-LOS deviation carry (the SD rows, as written; ShDevCarry's cold test is t_s <= 0, so the restored harvest stamp is what makes the entry read warm) before the first epoch, instead of cold-starting both (without it the rx-CB inject gate withholds about twice as many priors on a leg as on the seed, and hundreds of deviation entries cold-seed at +1).  Each half is inert and logged when its rows are absent.  The loader requires resume_frame_restore.  Not fingerprinted (forward-only resume response policy).  Off = byte-identical.

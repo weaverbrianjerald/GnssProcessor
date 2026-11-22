@@ -867,6 +867,40 @@ namespace GnssProcessor {
          */
         std::vector<std::pair<std::string, WindUpArc>> windUpArcs() const;
 
+        /**
+         * @brief One satellite's wind-up accumulator entry exactly as kept: the record a snapshot
+         *        saves and a warm resume puts back.
+         *
+         * The angle stays in radians: the conversion to cycles of @ref windUpArcs does not
+         * round-trip bit for bit, and a restored entry must continue the unwrap exactly as the
+         * entry it was saved from.
+         */
+        struct WindUpRecord {
+            std::string sat;                ///< Satellite identifier ("G30").
+            double angle_rad{0.0};          ///< Accumulated wind-up angle (radians).
+            double epoch_s{0.0};            ///< Continuous GPS seconds of the latest update.
+            double start_epoch_s{0.0};      ///< Continuous GPS seconds of the arc's start (the seed or the last restart).
+        };
+        /**
+         * @brief The accumulator's entries, exactly as kept (the snapshot's station memory section).
+         *
+         * Read only.  Stale entries (satellites that set) are included: the continuity horizon
+         * decides at the satellite's return whether its arc continues, is bridged or restarts.
+         * @return One record per satellite, sorted by identifier; empty in fractional mode (no
+         *         accumulator).
+         */
+        std::vector<WindUpRecord> windUpRecords() const;
+        /**
+         * @brief Replace the accumulator with saved entries, verbatim (a warm resume).
+         *
+         * The next epoch of each satellite then takes the same branch as in the run the entries
+         * were saved from: an unwrap against the saved angle inside the continuity horizon, the
+         * gap bridge, or a restart past it (which enters the restart ledger).  Neither the
+         * restart ledger nor the census is touched.
+         * @param records The saved entries; every earlier entry is dropped.
+         */
+        void restoreWindUpRecords(const std::vector<WindUpRecord>& records);
+
     private:
         /// Restart ledger, §10.4 (see @ref wuRestarts).  Written from the const
         /// computePhaseWindUp, hence mutable, as for the census.

@@ -359,6 +359,30 @@ static int networkResumeSnapshotRunEnd(const NetworkRunEndView& v) {
                   C.chain_restore_restored, C.chain_restore_refused, C.chain_restore_absent, C.chain_restore_lines,
                   C.chain_restore_unread);
     }
+    // The station memory section (network/state/StationMemory.hpp), beside the chain memory line.  Printed whenever
+    // either half is armed; a warm resume under the restore ends restored, refused or absent, each counted, and the
+    // records refused one by one are counted by reason.
+    if (config_.networkStateSnapshotStationMemoryCapture() || config_.networkResumeStationMemoryRestore()) {
+        const auto& C = ctx.counters;
+        log->info("Network (station memory): write {} / read {}; last snapshot carried {} wind-up record(s); at the "
+                  "resume: restored {}, refused {}, absent {}; {} record(s) put back, refused {} for a station not in "
+                  "this run, {} malformed, {} at a station without an accumulator.",
+                  config_.networkStateSnapshotStationMemoryCapture() ? "ARMED" : "off",
+                  config_.networkResumeStationMemoryRestore() ? "ARMED" : "off", C.snap_station_memory_records_last,
+                  C.station_memory_restored, C.station_memory_refused, C.station_memory_absent,
+                  C.station_memory_records_restored, C.station_memory_refused_station,
+                  C.station_memory_refused_malformed, C.station_memory_refused_fractional);
+    }
+    // The parked carries (network.state_snapshot_park_capture, network.resume_park_restore), beside the station
+    // memory line.  The re-admissions they seed are counted by the READMIT lines of the run.
+    if (config_.networkStateSnapshotParkCapture() || config_.networkResumeParkRestore()) {
+        const auto& C = ctx.counters;
+        log->info("Network (parked carries): write {} / read {}; last snapshot carried {} parked carr(y|ies); at the "
+                  "resume: {} put back for {} satellite(s).",
+                  config_.networkStateSnapshotParkCapture() ? "ARMED" : "off",
+                  config_.networkResumeParkRestore() ? "ARMED" : "off", C.snap_parked_written_last,
+                  C.resume_parked_restored, C.resume_parked_sats);
+    }
     // Emit-layer continuity halves, beside the datum line and at the same function scope
     // for the same reason: the re-base runs on lineages with and without the invariant
     // branch.  Printed whenever either half is armed: an armed writer that wrote no rows

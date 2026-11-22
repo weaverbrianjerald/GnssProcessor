@@ -1374,6 +1374,17 @@ namespace GnssProcessor {
         return gnss_corrections_.windUpArcs();
     }
 
+    std::vector<GnssCorrections::WindUpRecord> Antenna::windUpRecords() const {
+        return gnss_corrections_.windUpRecords();
+    }
+
+    bool Antenna::restoreWindUpRecords(const std::vector<GnssCorrections::WindUpRecord>& records) {
+        // Fractional mode keeps no accumulator: a saved angle would never be read, so refuse it.
+        if (!config_.accumulatePhaseWindUp()) return false;
+        gnss_corrections_.restoreWindUpRecords(records);
+        return true;
+    }
+
     void Antenna::setWindUpSatStateProvider(GnssCorrections::SatStateProvider provider) {
         gnss_corrections_.setSatStateProvider(std::move(provider));
     }
