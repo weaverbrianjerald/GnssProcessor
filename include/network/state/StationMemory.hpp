@@ -9,7 +9,7 @@
  * began, alike on every signal of the satellite, and the carries and held integers the resume
  * restores in the writer's frame sit a whole turn off in the resumed run's frame.  With
  * @c network.state_snapshot_station_memory_capture the snapshot carries that memory as one
- * section of its own, from its header line @c STMEM,v3,<fingerprint> through @c SMEND:
+ * section of its own, from its header line @c STMEM,v4,<fingerprint> through @c SMEND:
  *  - the wind-up accumulator of every satellite each station has seen, one line
  *    @c WU,<station>,<satellite>,<angle_rad>,<epoch_s>,<start_epoch_s> per entry, in station
  *    order and then satellite order.  The angle is in radians (never cycles: the conversion does
@@ -25,7 +25,11 @@
  *  - the raw slip history of every station: one line @c RH (the step scales and the LLI credibility),
  *    one line @c RP per satellite (its previous raw row and the epoch it came from) and one line @c RS per
  *    satellite and signal (the per-signal continuity record): without them a satellite whose gap spans the
- *    seam re-enters unmeasured and is refloated.
+ *    seam re-enters unmeasured and is refloated;
+ *  - the gross line-of-sight screen's states: one line @c GL per line of sight (its streaks, its declaration
+ *    and the cold-bound flag) and one line @c GT per station (the station tier): without them a line of
+ *    sight or station declared before the seam folds at full weight in the resumed run until the evidence
+ *    is re-earned.
  * The header's fingerprint covers the keys that give the angles and the arcs their meaning
  * (@ref networkStationMemoryFingerprintTokens); the snapshot's own configuration fingerprint
  * does not carry them, so neither the capture nor the restore changes whether a warm resume is

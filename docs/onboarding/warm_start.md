@@ -43,11 +43,13 @@ The capture and restore keys the tool arms (every key under `network.` unless na
 | emit re-base | `state_snapshot_emit_capture` | `resume_emit_restore` |
 | station layer, canonical signals | `state_snapshot_station_capture`, `state_snapshot_signal_capture` | `resume_station_restore`, `resume_signal_canon_restore` |
 | chain and ring fix memory | `state_snapshot_chain_capture` | `resume_chain_restore` |
-| wind-up accumulators, GF arc-jump arcs, slip epoch counter | `state_snapshot_station_memory_capture` | `resume_station_memory_restore` |
+| wind-up accumulators, slip epoch counter, GF arc-jump arcs, raw slip history, gross line-of-sight screen | `state_snapshot_station_memory_capture` | `resume_station_memory_restore` |
 | parked carries of departed satellites | `state_snapshot_park_capture` | `resume_park_restore` |
 | built-in user (consumer filter, seed latches) | `closed_loop.state_snapshot`, `realtime.state_snapshot_latch_capture` | the leg's `realtime.state_snapshot_path`, `realtime.state_snapshot_latch_restore` |
 
-What does not cross: the wide-lane detector's arc statistics (the leg arms `network.resume_slip_warmup_ep` against their cold burst), the IF triple-difference chains, the raw slip history, the per-station covariance block and column order, and some network-level memories on the solve path (receiver phase-bias carry, phase colour, gross line-of-sight state, admission records, arc ledger). The built-in fixing user of the reference files cannot be saved: the consumer snapshot refuses its state layout, so the leg's built-in user starts cold. A test of a user-side response from a warm start uses a replay user on the leg's products.
+What does not cross: the wide-lane detector's arc statistics (the leg arms `network.resume_slip_warmup_ep` against their cold burst), the IF triple-difference chains, the per-station covariance block and column order, and some network-level memories on the solve path (receiver phase-bias carry, phase colour, admission records, arc ledger). Through the covariance block the float solution departs slowly from the uninterrupted run's: on DOY 129 the clocks sit 5 to 7 mm median from it after an hour, on the simulator under 1 mm (card WRS). The built-in fixing user of the reference files cannot be saved: the consumer snapshot refuses its state layout, so the leg's built-in user starts cold. A test of a user-side response from a warm start uses a replay user on the leg's products.
+
+A seed belongs to the engine that wrote it: the station memory section carries its format version and its own fingerprint, and a leg of an engine that reads another version refuses the section (check C2 fails). After an engine change the seed is written again (`--name` with a new name, or the old seed folder removed).
 
 ## What a leg can be compared with
 

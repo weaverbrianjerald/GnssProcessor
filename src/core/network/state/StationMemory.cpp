@@ -10,7 +10,9 @@
 #include "corrections/GnssCorrections.hpp"
 #include "model/PppModel.hpp"
 #include "network/driver/Run.hpp"
+#include "network/qc/GrossLos.hpp"
 #include "network/slip/GfArcJump.hpp"
+#include "network/state/Entities.hpp"
 #include "network/slip/RawObservables.hpp"
 #include "network/state/RunContext.hpp"
 #include "products/NetworkStateSnapshot.hpp"   // NetworkStateSnapshotIO::fnv1a64
@@ -29,7 +31,7 @@ namespace GnssProcessor {
 namespace {
 
 /// The section's format version, the second field of its header line.
-constexpr const char* kStationMemoryVersion = "v3";
+constexpr const char* kStationMemoryVersion = "v4";
 
 /// The fields of one comma-separated line (empty fields kept).
 std::vector<std::string> splitFields(const std::string& line) {
@@ -89,6 +91,10 @@ std::vector<std::string> networkStationMemoryFingerprintTokens(const GnssConfig&
                             sq.gf_arc_jump_window, sq.gf_arc_jump_min_count));
     // The raw slip history: whether the per-signal records are kept.
     t.push_back(fmt::format("raw_hist={}", sq.gap_reentry_per_signal));
+    // The gross line-of-sight screen: its streaks and declarations mean what its bars and bounds make them.
+    const auto& gnc = config.getNetworkConfig();
+    t.push_back(fmt::format("gross_los={},{},{}", gnc.gross_los_screen, gnc.gross_los_cold_bound_m,
+                            gnc.gross_los_station_tier));
     return t;
 }
 
@@ -162,6 +168,28 @@ std::string networkStationMemoryWrite(const NetworkRun& run, long long& n_record
             }
         }
     }
+    // The gross line-of-sight screen: every line of sight's streaks and declaration (GL) and every station's
+    // station-tier disposition (GT).  Without them a line of sight or station declared before the seam reads as
+    // clean in the resumed run and its code rows fold at full weight until the evidence is re-earned.
+    const net::NetworkEntities& entities = run.ctx.entities;
+    net::forEach(entities.los, &net::LosState::gross_los, [&](const LosId& id, const GrossLosState& g) {
+        const std::size_t i = static_cast<std::size_t>(id.station.index);
+        if (i >= stations.size()) return;
+        os << fmt::format("GL,{},{},{},{},{},{},{},{},{},{},{}\n", stations[i].name, net::satKey(id.sat), g.over_streak,
+                          g.clear_streak, g.gross ? 1 : 0, g.declared_tow, g.last_seen_s, g.n_declared,
+                          g.first_over_tow, g.first_over_age_ep, g.cold ? 1 : 0);
+        ++n_records;
+    });
+    net::forEach(entities.stations, &net::StationState::gross_los,
+                 [&](const StationId& si, const net::GrossLosStationState& g) {
+                     const std::size_t i = static_cast<std::size_t>(si.index);
+                     if (i >= stations.size()) return;
+                     os << fmt::format("GT,{},{},{},{},{},{}", stations[i].name, g.gross ? 1 : 0, g.clear_streak,
+                                       g.declared_tow, g.n_declared, g.sats.size());
+                     for (const std::string& sat : g.sats) os << ',' << sat;
+                     os << '\n';
+                     ++n_records;
+                 });
     os << "SMEND\n";
     return os.str();
 }
@@ -170,6 +198,7 @@ void networkStationMemoryRestore(NetworkRun& run) {
     const GnssConfig& config = run.config;
     std::vector<NetStation>& stations = run.setup.stations;        // written: the stations' wind-up accumulators
     SlipQcChannel& qc = run.engines.slip_qc;                        // written: the epoch counter and the GF arcs
+    net::NetworkEntities& entities = run.ctx.entities;              // written: the gross line-of-sight screen's states
     std::string& staged = run.ctx.carry.resume.station_memory;     // written: consumed here
     auto& counters = run.ctx.counters;                              // written: the restore's counters
     const std::shared_ptr<spdlog::logger>& log = run.log;
@@ -206,6 +235,9 @@ void networkStationMemoryRestore(NetworkRun& run) {
         RawSlipHistory h;
     };
     std::map<std::string, RawHist> raw_by_station;
+    // The gross line-of-sight screen, by station.
+    std::map<std::string, std::map<std::string, GrossLosState>> gl_by_station;
+    std::map<std::string, net::GrossLosStationState> gt_by_station;
     long long epoch_idx = -1;
     long long n_malformed = 0;
     std::string first_malformed;
@@ -247,6 +279,46 @@ void networkStationMemoryRestore(NetworkRun& run) {
             a.has_ref = has_ref != 0.0;
             a.flag_run = static_cast<int>(flag_run);
             gf_by_station[f[1]][f[2]] = std::move(a);
+            continue;
+        }
+        if (!f.empty() && f[0] == "GL") {
+            GrossLosState g;
+            long long over = 0, clear = 0, gross = 0, n_decl = 0, age = 0, cold = 0;
+            const bool ok = f.size() == 12 && !f[1].empty() && !f[2].empty() && parseInt(f[3], over)
+                         && parseInt(f[4], clear) && parseInt(f[5], gross) && parseExact(f[6], g.declared_tow)
+                         && parseExact(f[7], g.last_seen_s) && parseInt(f[8], n_decl)
+                         && parseExact(f[9], g.first_over_tow) && parseInt(f[10], age) && parseInt(f[11], cold);
+            if (!ok) {
+                if (n_malformed++ == 0) first_malformed = line;
+                continue;
+            }
+            g.over_streak = static_cast<int>(over);
+            g.clear_streak = static_cast<int>(clear);
+            g.gross = gross != 0;
+            g.n_declared = n_decl;
+            g.first_over_age_ep = static_cast<int>(age);
+            g.cold = cold != 0;
+            gl_by_station[f[1]][f[2]] = g;
+            continue;
+        }
+        if (!f.empty() && f[0] == "GT") {
+            net::GrossLosStationState g;
+            long long gross = 0, clear = 0, n_decl = 0, n = -1;
+            bool ok = f.size() >= 7 && !f[1].empty() && parseInt(f[2], gross) && parseInt(f[3], clear)
+                   && parseExact(f[4], g.declared_tow) && parseInt(f[5], n_decl) && parseInt(f[6], n) && n >= 0
+                   && f.size() == 7 + static_cast<std::size_t>(n);
+            for (std::size_t k = 7; ok && k < f.size(); ++k) {
+                ok = !f[k].empty();
+                g.sats.insert(f[k]);
+            }
+            if (!ok) {
+                if (n_malformed++ == 0) first_malformed = line;
+                continue;
+            }
+            g.gross = gross != 0;
+            g.clear_streak = static_cast<int>(clear);
+            g.n_declared = n_decl;
+            gt_by_station[f[1]] = std::move(g);
             continue;
         }
         if (!f.empty() && (f[0] == "RH" || f[0] == "RP" || f[0] == "RS")) {
@@ -393,6 +465,33 @@ void networkStationMemoryRestore(NetworkRun& run) {
         }
     }
     counters.station_memory_raw_lines_restored += n_raw;
+    // The gross line-of-sight screen, put back by station name.
+    long long n_gl = 0;
+    if (!gl_by_station.empty() || !gt_by_station.empty()) {
+        std::map<std::string, int> index_of;
+        for (std::size_t i = 0; i < stations.size(); ++i) index_of[stations[i].name] = static_cast<int>(i);
+        for (const auto& [name, lines] : gl_by_station) {
+            const auto it = index_of.find(name);
+            if (it == index_of.end()) {
+                n_gf_unknown += static_cast<long long>(lines.size());
+                continue;
+            }
+            for (const auto& [sat, g] : lines) {
+                net::putLos(entities, it->second, sat, &net::LosState::gross_los) = g;
+                ++n_gl;
+            }
+        }
+        for (auto& [name, g] : gt_by_station) {
+            const auto it = index_of.find(name);
+            if (it == index_of.end()) {
+                ++n_gf_unknown;
+                continue;
+            }
+            net::put(entities.stations, StationId{it->second}, &net::StationState::gross_los) = std::move(g);
+            ++n_gl;
+        }
+    }
+    counters.station_memory_gross_los_restored += n_gl;
     counters.station_memory_gf_arcs_restored += n_gf;
     n_unknown += n_gf_unknown;
     counters.station_memory_records_restored += n_restored;
@@ -401,9 +500,10 @@ void networkStationMemoryRestore(NetworkRun& run) {
     counters.station_memory_refused_fractional += n_fractional;
     log->info("Network (station memory restore): the station memory section restored at the resume (fingerprint "
               "{}): {} wind-up accumulator(s) at {} station(s) continue the writer's unwrapped angles; {} GF arc-jump "
-              "arc(s) and {} raw slip history line(s) restored; the slip channel's epoch counter {}; refused: {} for a "
-              "station not in this run, {} malformed, {} at a station without an accumulator.",
-              live, n_restored, n_stations, n_gf, n_raw,
+              "arc(s), {} raw slip history line(s) and {} gross line-of-sight state(s) restored; the slip channel's "
+              "epoch counter {}; refused: {} for a station not in this run, {} malformed, {} at a station without an "
+              "accumulator.",
+              live, n_restored, n_stations, n_gf, n_raw, n_gl,
               epoch_idx >= 0 ? fmt::format("continues at {}", epoch_idx) : std::string("not in the section"),
               n_unknown, n_malformed, n_fractional);
     if (n_unknown > 0)

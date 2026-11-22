@@ -1593,6 +1593,7 @@ const std::vector<EntityWriterRow> kEntityWriters = {
     {"resumeParkedCarry", "network/state/WarmResume.cpp", "all"},
     {"resumeRxCbLinearization", "network/state/WarmResume.cpp", "stations"},
     {"networkChainMemoryRestore", "network/state/ChainMemory.cpp", "all"},
+    {"networkStationMemoryRestore", "network/state/StationMemory.cpp", "all"},
 };
 
 }  // namespace GnssProcessor::net

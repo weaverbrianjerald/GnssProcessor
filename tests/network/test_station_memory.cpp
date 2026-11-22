@@ -42,7 +42,9 @@
 #include "math/Coordinates.hpp"
 #include "network/driver/Run.hpp"
 #include "network/driver/RunTypes.hpp"
+#include "network/qc/GrossLos.hpp"
 #include "network/slip/GfArcJump.hpp"
+#include "network/state/Entities.hpp"
 #include "network/slip/RawObservables.hpp"
 #include "network/state/RunContext.hpp"
 #include "network/state/StationMemory.hpp"
@@ -259,7 +261,7 @@ TEST(StationMemorySection, SnapshotCarriesTheSectionVerbatimAndNothingWithoutIt)
     EXPECT_EQ(plain.str().find("STMEM,"), std::string::npos);
 
     snap.chain_memory = "CHAIN,v2,0123456789abcdef\nGD,E04,-0.4188\nCHEND\n";
-    snap.station_memory = "STMEM,v3,0123456789abcdef\nWU,AAAA,G30,-3.4906585039886591,1399165230,1399161600\nSMEND\n";
+    snap.station_memory = "STMEM,v4,0123456789abcdef\nWU,AAAA,G30,-3.4906585039886591,1399165230,1399161600\nSMEND\n";
     std::ostringstream os;
     NetworkStateSnapshotIO::serialize(os, snap);
     std::istringstream is(os.str());
@@ -424,7 +426,7 @@ TEST(StationMemoryRestore, ASectionWithItsOwnFingerprintIsRestoredAndConsumed) {
     const std::string text = networkStationMemoryWrite(writer.fx->run(), n);
     EXPECT_EQ(n, 3);
     EXPECT_EQ(text.substr(0, text.find('\n')),
-              fmt::format("STMEM,v3,{:016x}", networkStationMemoryFingerprint(cfg.config)));
+              fmt::format("STMEM,v4,{:016x}", networkStationMemoryFingerprint(cfg.config)));
 
     StationRun leg("r_ok", cfg.config, { "BBBB", "AAAA" }, true);   // another roster order: matched by name
     leg.fx->ctx().carry.resume.station_memory = text;
@@ -603,6 +605,58 @@ TEST(StationMemoryRestore, TheRawSlipHistoryRoundTripsExactly) {
     EXPECT_EQ(rs.gf_snap, s.gf_snap);
 }
 
+TEST(StationMemoryRestore, TheGrossLineOfSightStatesRoundTripExactly) {
+    const Loaded cfg = loadConfig("res_gl", kBothKeys, kAccumulate);
+    ASSERT_TRUE(cfg.ok) << cfg.text;
+    StationRun writer("w_gl", cfg.config, { "AAAA", "BBBB" }, true);
+    net::NetworkEntities& we = writer.fx->ctx().entities;
+    GrossLosState g;
+    g.over_streak = 3;
+    g.clear_streak = 1;
+    g.gross = true;
+    g.declared_tow = 269970.0;
+    g.last_seen_s = 1399170000.0012;
+    g.n_declared = 2;
+    g.first_over_tow = 269910.5;
+    g.first_over_age_ep = 4;
+    g.cold = true;
+    net::putLos(we, 1, "G13", &net::LosState::gross_los) = g;
+    net::GrossLosStationState t;
+    t.gross = true;
+    t.clear_streak = 2;
+    t.declared_tow = 269940.0;
+    t.n_declared = 1;
+    t.sats = { "E11", "G13", "G19" };
+    net::put(we.stations, StationId{0}, &net::StationState::gross_los) = t;
+    long long n = 0;
+    const std::string text = networkStationMemoryWrite(writer.fx->run(), n);
+
+    StationRun leg("r_gl", cfg.config, { "BBBB", "AAAA" }, true);   // another roster order: matched by name
+    leg.fx->ctx().carry.resume.station_memory = text;
+    networkStationMemoryRestore(leg.fx->run());
+    EXPECT_EQ(leg.fx->ctx().counters.station_memory_gross_los_restored, 2);
+    EXPECT_EQ(leg.fx->ctx().counters.station_memory_refused_malformed, 0);
+    const net::NetworkEntities& le = leg.fx->ctx().entities;
+    const GrossLosState* r = net::getLos(le.los, 0, "G13", &net::LosState::gross_los);   // BBBB is index 0 in the leg
+    ASSERT_NE(r, nullptr);
+    EXPECT_EQ(r->over_streak, g.over_streak);
+    EXPECT_EQ(r->clear_streak, g.clear_streak);
+    EXPECT_EQ(r->gross, g.gross);
+    EXPECT_EQ(r->declared_tow, g.declared_tow);
+    EXPECT_EQ(r->last_seen_s, g.last_seen_s);
+    EXPECT_EQ(r->n_declared, g.n_declared);
+    EXPECT_EQ(r->first_over_tow, g.first_over_tow);
+    EXPECT_EQ(r->first_over_age_ep, g.first_over_age_ep);
+    EXPECT_EQ(r->cold, g.cold);
+    const net::GrossLosStationState* rt = net::get(le.stations, StationId{1}, &net::StationState::gross_los);
+    ASSERT_NE(rt, nullptr);
+    EXPECT_EQ(rt->gross, t.gross);
+    EXPECT_EQ(rt->clear_streak, t.clear_streak);
+    EXPECT_EQ(rt->declared_tow, t.declared_tow);
+    EXPECT_EQ(rt->n_declared, t.n_declared);
+    EXPECT_EQ(rt->sats, t.sats);
+}
+
 TEST(StationMemoryRestore, RefusalsAreCountedAndTheResumeGoesOn) {
     const Loaded cfg = loadConfig("res_ref", kBothKeys, kAccumulate);
     const Loaded other = loadConfig("res_ref_other", kBothKeys,
@@ -625,7 +679,7 @@ TEST(StationMemoryRestore, RefusalsAreCountedAndTheResumeGoesOn) {
 
     // Another build's header: refused.
     StationRun old_build("r_old", cfg.config, { "AAAA" }, true);
-    old_build.fx->ctx().carry.resume.station_memory = "STMEM,v2,0123456789abcdef\nWU,AAAA,G30,1.5,1399165230,1399161600\nSMEND\n";
+    old_build.fx->ctx().carry.resume.station_memory = "STMEM,v3,0123456789abcdef\nWU,AAAA,G30,1.5,1399165230,1399161600\nSMEND\n";
     networkStationMemoryRestore(old_build.fx->run());
     EXPECT_EQ(old_build.fx->ctx().counters.station_memory_refused, 1);
     EXPECT_TRUE(old_build.model(0).windUpRecords().empty());
