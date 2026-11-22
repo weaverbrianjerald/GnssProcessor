@@ -4,7 +4,7 @@
 // Included inside configMemberDump() (tests/support/ConfigDump.hpp), where `cfg` is the
 // loaded GnssConfig and `add(name, value)` appends one "name=value" line.
 //
-// 570 public const getters without arguments; 1375 dump statements.
+// 574 public const getters without arguments; 1379 dump statements.
 //
 // Vectors of structs (their size, then every element field by field):
 //   getBaselineConfig.rovers (std::vector<StationConfig>: size, then each element)
@@ -322,6 +322,10 @@ add("networkResumeEmitRestore", cfg.networkResumeEmitRestore());
 add("networkResumeHoldRestore", cfg.networkResumeHoldRestore());
 add("networkResumeChainRestore", cfg.networkResumeChainRestore());
 add("networkResumeChainDump", cfg.networkResumeChainDump());
+add("networkStateSnapshotStationMemoryCapture", cfg.networkStateSnapshotStationMemoryCapture());
+add("networkResumeStationMemoryRestore", cfg.networkResumeStationMemoryRestore());
+add("networkStateSnapshotParkCapture", cfg.networkStateSnapshotParkCapture());
+add("networkResumeParkRestore", cfg.networkResumeParkRestore());
 add("networkResumeStationRestore", cfg.networkResumeStationRestore());
 add("networkResumeStationRestoreRxCb", cfg.networkResumeStationRestoreRxCb());
 add("networkResumeSignalCanonRestore", cfg.networkResumeSignalCanonRestore());
