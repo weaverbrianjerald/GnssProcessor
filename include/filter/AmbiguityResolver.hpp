@@ -926,6 +926,18 @@ public:
                           const std::vector<std::string>& satellites,
                           double std_m) const;
 
+    /**
+     * @brief Forget the held-pair memory of the listed satellites.
+     *
+     * A caller that re-floats a satellite outside @c resolve (the consumer's code-bias gap
+     * response) calls this as well, so the next hold-release check does not read the
+     * re-floated satellite against its old integers and release its partner instead.
+     *
+     * @param satellites Satellites whose held pairs (as either member) are dropped.
+     * @return Number of held pairs dropped.
+     */
+    int forgetHeldPairs(const std::set<std::string>& satellites);
+
     /// Satellites refloated so far by @ref AmbiguityResolverConfig::hold_release_cyc.
     int holdReleaseCount() const { return n_hold_releases_; }
     /// Satellites refloated so far by @ref AmbiguityResolverConfig::refloat_partner_signal.

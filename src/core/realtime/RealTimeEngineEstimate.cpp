@@ -60,6 +60,8 @@ void RealTimeEngine::runMeasurementUpdate(RtEpochContext& ctx) {
         // repair restores.  Same source set as the exclusion above.
         meas_model_->setProtectedAmbiguityKeys(std::move(held));
     }
+    // Code rows whose stream code bias is missing (processing.ssr_code_bias_gap_response full).
+    addCodeBiasGapExclusions_(carry_excluded);
     size_t carry_bad = 0;
     // The receiver's own phase factor on float satellites' phase rows (float_phase_scale).
     applyFloatPhaseScale_(ctx);

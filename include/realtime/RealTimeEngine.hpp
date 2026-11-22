@@ -48,6 +48,7 @@
 #include "realtime/AmbLevelCheck.hpp"        // Consumer ambiguity level re-validation
 #include "realtime/InnovationScreen.hpp"     // Consumer pre-update innovation screen
 #include "realtime/UnrecordedSatGate.hpp"    // Consumer rule for satellites without a stream record
+#include "realtime/CodeBiasGap.hpp"          // Consumer response to a code signal without its stream code bias
 #include "realtime/PbStepTranslateLedger.hpp"  // Every-step ambiguity translation ledger
 #include "realtime/PbHoldLedger.hpp"         // Held phase-bias generation ledger
 #include "realtime/EphemerisJumpLedger.hpp"  // Last-used broadcast record per satellite, range-jump test
@@ -788,6 +789,19 @@ public:
      */
     void logUnrecordedGateSummary(const char* tag) const;
 
+    /**
+     * @brief One INFO line with the counters of the code-bias gap response
+     *        (processing.ssr_code_bias_gap_response). Silent unless armed. Called at the same
+     *        tails as @c logInnovationScreenSummary.
+     *
+     * @param tag Where the line comes from (for example "closed loop", "end of replay").
+     */
+    void logCodeBiasGapSummary(const char* tag) const;
+
+    /// @brief The counters of the code-bias gap response (tests, reports).
+    /// @return The response's run counters.
+    const CodeBiasGap::Counters& codeBiasGapCounters() const { return code_bias_gap_.counters(); }
+
     /// @brief The counters of the rule for satellites without a stream record (tests, reports).
     /// @return The gate's run counters.
     const UnrecordedSatGate::Counters& unrecordedGateCounters() const {
@@ -1094,6 +1108,32 @@ private:
     /// In observe mode only the logging and the trace run.
     void applyInnovationScreen_(const InnovationScreen::Outcome& out,
                                 std::set<std::string>& excluded);
+
+    // --- Code-bias gap response (RealTimeEngineCodeBiasGap.cpp) ------------
+    /**
+     * @brief The gap edges of this epoch: for every code signal of a modelled satellite the
+     *        stream corrects, whether its code bias is present; logs and traces each edge.
+     *        Runs with the datum-break reactions, before the update. No-op unarmed.
+     * @param ctx Epoch context; @c modeled_obs and @c current_time are read.
+     */
+    void observeCodeBiasGaps_(RtEpochContext& ctx);
+    /**
+     * @brief Add the code rows without their bias to the update's exclusions (mode full).
+     *        The BSSD pivot's rows are kept in and counted. No-op unless armed in full.
+     * @param excluded Row keys ("<sat>_<signal>") held out of the update (written).
+     */
+    void addCodeBiasGapExclusions_(std::set<std::string>& excluded);
+    /**
+     * @brief After the update and before the integer search: test the holds of every
+     *        satellite in its re-validation window against the returned code, re-float a
+     *        satellite whose hold is more than half a wide-lane cycle off, then bar the
+     *        unheld ambiguities of the barred satellites from the search (mode full).
+     *        No-op unarmed.
+     * @param ctx Epoch context; @c modeled_obs and @c current_time are read.
+     */
+    void revalidateCodeBiasGaps_(RtEpochContext& ctx);
+    /// Write this epoch's gap events to the log and the consumer satellite trace, then clear them.
+    void flushCodeBiasGapEvents_();
 
     // --- Measurement-set conditioning (RealTimeEnginePrepare.cpp) ---------
     void dropBroadcastGrade(RtEpochContext& ctx); ///< Drop broadcast-grade sats from the precise solution.
@@ -1628,6 +1668,11 @@ private:
     /// The rule for satellites without their stream records: which satellites are left out, across
     /// epochs; decided only when processing.ssr_drop_unrecorded or ssr_drop_unrecorded_phase_bias is armed.
     UnrecordedSatGate unrecorded_gate_;
+    /// The code-bias gap response: open gaps and re-validation windows live across epochs on
+    /// purpose; not part of the RT snapshot (a restored consumer starts with none open).
+    /// Untouched with processing.ssr_code_bias_gap_response off.
+    CodeBiasGap code_bias_gap_;
+    bool        code_bias_gap_configured_{ false };   ///< The knobs have been resolved onto code_bias_gap_.
     bool             innovation_screen_configured_{ false };   ///< The knobs have been resolved onto innovation_screen_ (@c GnssProcessor::RealTimeEngine::innovation_screen_).
     /// Generations of the two selected ambiguity signals at the last ALC sample.
     /// StateManager assigns unique IDs across births, resets and translations,

@@ -4,7 +4,7 @@
 // Included inside configMemberDump() (tests/support/ConfigDump.hpp), where `cfg` is the
 // loaded GnssConfig and `add(name, value)` appends one "name=value" line.
 //
-// 570 public const getters without arguments; 1386 dump statements.
+// 573 public const getters without arguments; 1392 dump statements.
 //
 // Vectors of structs (their size, then every element field by field):
 //   getBaselineConfig.rovers (std::vector<StationConfig>: size, then each element)
@@ -107,6 +107,9 @@ add("getInnovationScreenMaxFraction", cfg.getInnovationScreenMaxFraction());
 add("getInnovationScreenRefloatEp", cfg.getInnovationScreenRefloatEp());
 add("getInnovationScreenPhaseFloorM", cfg.getInnovationScreenPhaseFloorM());
 add("getInnovationScreenCodeFloorM", cfg.getInnovationScreenCodeFloorM());
+add("getSsrCodeBiasGapResponse", cfg.getSsrCodeBiasGapResponse());
+add("getSsrCodeBiasGapRevalidateEp", cfg.getSsrCodeBiasGapRevalidateEp());
+add("getSsrCodeBiasGapWindowEp", cfg.getSsrCodeBiasGapWindowEp());
 add("enableObsSsrSync", cfg.enableObsSsrSync());
 add("getObsSsrSyncMaxHoldS", cfg.getObsSsrSyncMaxHoldS());
 add("getRinexTypes", cfg.getRinexTypes());
@@ -957,6 +960,9 @@ add("getNetworkConfig.closed_loop.innovation_screen_max_fraction", cfg.getNetwor
 add("getNetworkConfig.closed_loop.innovation_screen_refloat_ep", cfg.getNetworkConfig().closed_loop.innovation_screen_refloat_ep);
 add("getNetworkConfig.closed_loop.innovation_screen_phase_floor_m", cfg.getNetworkConfig().closed_loop.innovation_screen_phase_floor_m);
 add("getNetworkConfig.closed_loop.innovation_screen_code_floor_m", cfg.getNetworkConfig().closed_loop.innovation_screen_code_floor_m);
+add("getNetworkConfig.closed_loop.code_bias_gap_response", cfg.getNetworkConfig().closed_loop.code_bias_gap_response);
+add("getNetworkConfig.closed_loop.code_bias_gap_revalidate_ep", cfg.getNetworkConfig().closed_loop.code_bias_gap_revalidate_ep);
+add("getNetworkConfig.closed_loop.code_bias_gap_window_ep", cfg.getNetworkConfig().closed_loop.code_bias_gap_window_ep);
 add("getNetworkConfig.closed_loop.state_snapshot", cfg.getNetworkConfig().closed_loop.state_snapshot);
 add("getNetworkConfig.closed_loop.replay_products_path", cfg.getNetworkConfig().closed_loop.replay_products_path);
 add("getNetworkConfig.closed_loop.iono_file", cfg.getNetworkConfig().closed_loop.iono_file);

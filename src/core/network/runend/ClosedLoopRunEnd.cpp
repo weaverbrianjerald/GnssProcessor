@@ -422,6 +422,7 @@ int networkClosedLoopRunEnd(const NetworkRunEndView& v) {
     consumer->logRosterConsumerSummary("closed loop");
     consumer->logPbHoldPresenceSummary("closed loop");   // held-key presence edges, silent unless armed
     consumer->logInnovationScreenSummary("closed loop");   // pre-update innovation screen, silent unless armed
+    consumer->logCodeBiasGapSummary("closed loop");        // code-bias gap response, silent unless armed
     consumer->logUnrecordedGateSummary("closed loop");     // satellites without a stream record, silent unless armed
     consumer->logArObserveSummary("closed loop");   // observe-mode integer search totals, silent unless armed
     consumer->logArFixQualitySummary("closed loop");   // resolver endings and held integers, silent without AR

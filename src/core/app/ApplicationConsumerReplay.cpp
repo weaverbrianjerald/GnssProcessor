@@ -706,6 +706,7 @@ int Application::runConsumerReplay() {
     consumer.logRosterConsumerSummary("end of replay");
     consumer.logPbHoldPresenceSummary("end of replay");   // held-key presence edges, silent unless armed
     consumer.logInnovationScreenSummary("end of replay");   // pre-update innovation screen, silent unless armed
+    consumer.logCodeBiasGapSummary("end of replay");        // code-bias gap response, silent unless armed
     consumer.logUnrecordedGateSummary("end of replay");     // satellites without a stream record, silent unless armed
     // The phase-visible step test on the replay's own emitter (silent unless the file's S
     // line declares discpv=).  A replay from the file's first epoch reproduces the

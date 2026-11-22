@@ -1017,6 +1017,33 @@ namespace GnssProcessor {
         double getInnovationScreenCodeFloorM() const { return innovation_screen_code_floor_m_; }
 
         /**
+         * @brief The consumer's response to a code signal whose satellite code bias is missing
+         *        from the stream (@c processing.ssr_code_bias_gap_response, derived from
+         *        @c network.closed_loop.code_bias_gap_response; default "off").
+         *
+         * "off" measures and writes nothing (byte-identical).  "revalidate" tests every hold of a
+         * satellite after its missing bias returns against the returned code and re-floats a hold
+         * more than half a wide-lane cycle off.  "full" also leaves the bias-less code row out of
+         * the update and bars a new fix of the satellite while the bias is missing and for the
+         * first @c getSsrCodeBiasGapRevalidateEp epochs after it returns
+         * (realtime/CodeBiasGap.hpp).
+         *
+         * @return "off", "revalidate" or "full"; any other configured value reads as "off" at load.
+         */
+        const std::string& getSsrCodeBiasGapResponse() const { return ssr_code_bias_gap_response_; }
+
+        /// @brief Consecutive clean held epochs behind a re-validation verdict, also the length of
+        ///        the bar on a new fix after the return in "full"
+        ///        (@c processing.ssr_code_bias_gap_revalidate_ep, default 20).
+        /// @return Epochs; a value below 1 is replaced by 20 at load.
+        int getSsrCodeBiasGapRevalidateEp() const { return ssr_code_bias_gap_revalidate_ep_; }
+
+        /// @brief Epochs after a missing code bias returns in which a hold of the satellite is
+        ///        tested (@c processing.ssr_code_bias_gap_window_ep, default 120).
+        /// @return Epochs; a value below 1 is replaced by 120 at load.
+        int getSsrCodeBiasGapWindowEp() const { return ssr_code_bias_gap_window_ep_; }
+
+        /**
          * @brief obs↔SSR sync master toggle (real-time, live-SSR source only).
          *
          * When true the engine holds observation epochs newer than the
@@ -10330,6 +10357,9 @@ namespace GnssProcessor {
         int    innovation_screen_refloat_ep_{ 3 };        ///< Consecutive flagged epochs after which a phase row's ambiguity is re-floated.  processing.innovation_screen_refloat_ep.
         double innovation_screen_phase_floor_m_{ 0.3 };   ///< Model-error floor added to the carrier-phase rows' noise in the screen's S (m); 0 = formal noise only.  processing.innovation_screen_phase_floor_m.
         double innovation_screen_code_floor_m_{ 1.0 };    ///< The same floor for the code rows (m).  processing.innovation_screen_code_floor_m.
+        std::string ssr_code_bias_gap_response_{ "off" }; ///< Consumer response to a code signal without its stream code bias: off | revalidate | full.  processing.ssr_code_bias_gap_response / network.closed_loop.code_bias_gap_response.
+        int    ssr_code_bias_gap_revalidate_ep_{ 20 };    ///< Clean held epochs behind a re-validation verdict (and the bar after the return in full).  processing.ssr_code_bias_gap_revalidate_ep.
+        int    ssr_code_bias_gap_window_ep_{ 120 };       ///< Epochs after the return in which a hold of the satellite is tested.  processing.ssr_code_bias_gap_window_ep.
         double ssr_clock_stale_hold_factor_{ 0.0 };       ///< Clock stale-hold rung (RTA-9(b)): a clock aged in (ssr_max_age, factor × ssr_max_age] is still applied with URA-staleness R inflation; 0 (default) = off (byte-identical two-state gate); (0,1] clamps to 1.
         bool   ssr_bias_band_fallback_{ false };          ///< Code-domain band-wise bias fallback (RTA-13, opt-in): an exact-attribute miss consumes the same-band sibling code bias; phase never falls back.  Default off = store lookups byte-identical.
         bool   enable_obs_ssr_sync_{ false };             ///< RT-only: hold obs ahead of the SSR coverage horizon (obs↔SSR sync) instead of processing against absent SSR.

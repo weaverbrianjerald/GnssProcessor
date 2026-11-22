@@ -263,6 +263,8 @@ add_library(gnss_core STATIC
     src/core/realtime/AmbLevelCheck.cpp
     src/core/realtime/InnovationScreen.cpp
     src/core/realtime/UnrecordedSatGate.cpp
+    src/core/realtime/CodeBiasGap.cpp
+    src/core/realtime/RealTimeEngineCodeBiasGap.cpp
     src/core/realtime/RealTimeEngineScreen.cpp
     src/core/realtime/RealTimeEngineArObserve.cpp
     src/core/realtime/ArObserve.cpp
@@ -740,6 +742,7 @@ add_executable(gnss_tests
     tests/test_innovation_screen.cpp
     tests/test_innovation_screen_engine.cpp
     tests/test_unrecorded_sat_gate.cpp
+    tests/test_code_bias_gap.cpp
     tests/test_disc_mark_scope.cpp
     tests/test_phase_visible_step_test.cpp
     tests/test_phase_step_class_test.cpp

@@ -320,6 +320,16 @@ int AmbiguityResolver::refloatSatellites(StateManager& state_manager,
 // DD pair construction
 // ===========================================================================
 
+int AmbiguityResolver::forgetHeldPairs(const std::set<std::string>& satellites) {
+    int n = 0;
+    for (auto it = held_pairs_.begin(); it != held_pairs_.end();) {
+        const bool gone = satellites.count(it->second.sat_i) || satellites.count(it->second.sat_ref);
+        if (gone) ++n;
+        it = gone ? held_pairs_.erase(it) : std::next(it);
+    }
+    return n;
+}
+
 std::vector<AmbiguityResolver::DdPair> AmbiguityResolver::buildDdPairs(
     const StateManager& state_manager,
     const std::vector<PppObservation>& observations) const {

@@ -13623,6 +13623,12 @@ namespace GnssProcessor {
             clc.innovation_screen_refloat_ep   = cl.value("innovation_screen_refloat_ep", 3);
             clc.innovation_screen_phase_floor_m = cl.value("innovation_screen_phase_floor_m", 0.3);
             clc.innovation_screen_code_floor_m  = cl.value("innovation_screen_code_floor_m", 1.0);
+            // The consumer's response to a code signal without its stream code bias (derived
+            // into the consumer engine as processing.ssr_code_bias_gap_response).  Same
+            // contract: default "off", byte-identical, never in the producer's solve.
+            clc.code_bias_gap_response      = cl.value("code_bias_gap_response", std::string("off"));
+            clc.code_bias_gap_revalidate_ep = cl.value("code_bias_gap_revalidate_ep", 20);
+            clc.code_bias_gap_window_ep     = cl.value("code_bias_gap_window_ep", 120);
             clc.state_snapshot           = cl.value("state_snapshot", false);
             // Replay (Q5): consumes an already-written product file instead of the
             // live producer.  Presence alone arms the replay driver (the enable flag
@@ -14049,6 +14055,17 @@ namespace GnssProcessor {
                 (cl.innovation_screen_phase_floor_m >= 0.0) ? cl.innovation_screen_phase_floor_m : 0.3;
             c.innovation_screen_code_floor_m_ =
                 (cl.innovation_screen_code_floor_m >= 0.0) ? cl.innovation_screen_code_floor_m : 1.0;
+        }
+        // The same derivation for the code-bias gap response.  Never cleared here: an
+        // explicit processing.ssr_code_bias_gap_response on the base config is kept.  An
+        // unknown value reads as off, as the base config's parse does; the two lengths are
+        // carried along so the harness key is self-contained.
+        if (cl.code_bias_gap_response == "revalidate" || cl.code_bias_gap_response == "full") {
+            c.ssr_code_bias_gap_response_ = cl.code_bias_gap_response;
+            c.ssr_code_bias_gap_revalidate_ep_ =
+                (cl.code_bias_gap_revalidate_ep >= 1) ? cl.code_bias_gap_revalidate_ep : 20;
+            c.ssr_code_bias_gap_window_ep_ =
+                (cl.code_bias_gap_window_ep >= 1) ? cl.code_bias_gap_window_ep : 120;
         }
         // The canonical-signal rule is a network-side lever.  The derived
         // consumer is a full copy of the producer config and runs its own PppModel, so
