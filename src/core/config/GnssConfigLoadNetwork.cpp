@@ -407,10 +407,25 @@ namespace GnssProcessor {
                     throw std::runtime_error("network.apriori_source sp3_brdc_clock refuses "
                                              "network.emit_pb_hold_phase_clock: the phase-clock hold "
                                              "is valid only with a precise a priori clock product");
-                if (!(network_config_.emit_pb_hold && network_config_.emit_pb_hold_smoothed))
+                // The smoothed hold is the hold a float broadcast run must use (the phase-clock
+                // hold needs a precise a priori clock).  The chain posture gives the stream its
+                // integer frame without a hold and runs the hold off: there the broadcast clock
+                // loads with no hold.  A hold that is armed must still be the smoothed hold.  The
+                // wire's broadcast terms do not depend on the hold (network/emit/BrdcWire.cpp).
+                const bool chain_without_hold =
+                    network_phase_datum_eq34_ && !network_config_.emit_pb_hold;
+                if (!chain_without_hold
+                    && !(network_config_.emit_pb_hold && network_config_.emit_pb_hold_smoothed))
                     throw std::runtime_error("network.apriori_source sp3_brdc_clock requires "
                                              "network.emit_pb_hold with network.emit_pb_hold_smoothed "
-                                             "(the smoothed hold, the hold the posture was measured with)");
+                                             "(the smoothed hold, the hold the posture was measured with), "
+                                             "or network.phase_datum_eq34 with network.emit_pb_hold off "
+                                             "(the chain's integer frame in place of a hold)");
+                if (chain_without_hold)
+                    log->info("Network: network.apriori_source = sp3_brdc_clock on the chain "
+                              "posture (network.phase_datum_eq34) with the phase-bias hold off: "
+                              "no hold; the wire carries C_est + O with the stamped IODE (and the "
+                              "tracked sum when network.apriori_clock_track is on).");
             }
         }
         if (network_apriori_clock_track_phase_clock_hold_ && !network_apriori_clock_track_)
