@@ -1,0 +1,94 @@
+# WRS: the warm network resume under the reference setup, as a development tool
+
+**STATUS**
+
+- **id:** WRS
+- **topic:** harness
+- **status:** open
+- **summary:** Pre-registered 2026-11-21 on the author's order of that day (a warm resume "to quickly jump into a disturbed processing case"). Asks whether a network of today's reference setup (`config/golden/golden_{sim,field}_refound.json`: ring-by-ring integer fixing, the eq34 chain as phase datum, the float vehicle, the fixing built-in user) continues after a resume like the uninterrupted run, and what must cross the seam so that it does. Section 3 is the inventory of what crosses the seam today; section 4 fixes the seam test and its readings before any run; sections 5 and 6 name the fixes and the one-command start that follow.
+- **dates in the text:** 2026-11-21
+- **knobs / posture:** the two reference files as they stand on `main` 52ae46e; the capture keys `network.state_snapshot_*` and restore keys `network.resume_*` that `scripts/event_leg.py` arms on a seed and a leg (section 4); no reference file, manifest or loader default changed.
+- **code:** none at pre-registration; fixes on branch `net/warm-resume-2026-11-21` (worktree `D:/GnssProcessorSupport/worktrees/warmres`), every new key default off.
+- **run dirs:** `D:/GnssProcessorSupport/runs_nom/` (`RAPID_RUNS_ROOT`; seeds `evseed_wr_<bed>`, legs `evleg_wr_<bed>_<arm>`); reports and tools `D:/GnssProcessorSupport/gates/warm_resume/` (`ORDER.md`, `REPORT_1.md`, `REPORT_2.md`, `tools/wr_grade.py`, `tools/field_table.py`).
+- **source:** the author's words of 2026-11-21, relayed by the managing session (`D:/GnssProcessorSupport/gates/warm_resume/ORDER.md`); earlier resume records: cards [CRS](../../record/refound/CRS_leg_consumer_resume_2026-10-26.md), [CRS2](../../record/refound/CRS2_resume_hold_and_latches_2026-11-06.md), [NRF part 18](../../refound/NRF_network_ring_fixing_2026-11-14_part18.md) sections 125 to 125.5, [NRF part 19](../../refound/NRF_network_ring_fixing_2026-11-14_part19.md) sections 125.6 to 128, and the decision paper [XRS](../../refound/XRS_exact_resume_2026-11-19.md) (option A in stages, recommended, not yet ruled).
+
+**Outcome.** Pre-registered; no result yet. The inventory (section 3) finds that the snapshot carries the network's shared carries, frame, datum, emitter and, under the chain keys, the chain's and the ring fix's memory, but not the per-station state under them: the accumulated phase wind-up, the slip detectors' history, the processed-epoch clocks and the per-station covariance. Card XRS showed on the earlier beds that the first two put restored integers a whole turn off. The seam test of section 4 measures the reference files themselves, simulator first; its readings are fixed below.
+
+> Results are appended TO THIS FILE, below the text, under dated headings.
+
+---
+
+## 1. Question
+
+A test of a response to a disturbance (an outage, a satellite clock step, a code-bias event) today starts from a cold network hours before the disturbance, because the network needs one to two hours to converge and to fix its integers. Does a run resumed from a snapshot written a few minutes before the disturbance continue like the uninterrupted run, under the reference setup as it stands, and if not, what must be captured and restored so that it does, within a stated time?
+
+## 2. What exists
+
+- **Snapshot and resume.** `networkWriteStateSnapshot` (`src/core/network/state/StateSnapshotWrite.cpp`) and `networkTryWarmResume` (`src/core/network/state/WarmResume.cpp`), cut into capture and restore groups with identical output (card NRF section 128); the order of the 25 restore groups is in `docs/onboarding/event_legs.md`.
+- **The tool.** `scripts/event_leg.py`: `write-seed` arms every capture group (the chain section when the configuration runs the chain) and keeps a history copy of the snapshot every k emitted epochs; `null` and `make-leg` resume from one copy with every restore group armed; `chain-grade` compares a leg with its seed.
+- **What the earlier records found.** Cards CRS and CRS2: the built-in consumer resumes at 1 to 7 cm once the phase-bias hold and the consumer's seed latches cross the seam. Card NRF sections 125 to 125.8, on beds near today's reference (the adopted configuration of NRF section 123, before `network.ring_fix.resume_response` and `network.code_pin_single_leg_hold` were armed): the chain section crosses the seam whole and every held link is held at the seam, but over the following hour the resumed run holds a turn-off integer on 8 to 15 links (16.6 % and 23.5 % of held link-epochs wrong on the two simulator beds, against 0 % and 8.2 % uninterrupted), because the wind-up accumulator restarts; the slip detectors start cold (a wide-lane burst at the second epoch, 208 geometry-free flags against 42 in 20 epochs). Card XRS (decision paper, open): option A, the exact discrete state in stages (wind-up accumulator, then slip history with the epoch clocks continued), is recommended; the chain keys stay off until it lands.
+- **What is not known.** None of these runs used the reference files of 2026-11-19 and 2026-11-20, whose ring fix releases a held link at its own tracking break (`network.ring_fix.resume_response` = `release`), re-validates links entering the tree, and whose built-in user fixes integers.
+
+## 3. Inventory: what crosses the seam under the reference setup (step 1)
+
+Sources: the declared state tables (`net::kRunFields` in `src/core/network/state/RunFields.cpp`, the six entity field tables in `src/core/network/state/Entities.cpp`; 449 rows, parsed by `tools/field_table.py` into `tools/field_table.csv`), the capture and restore groups, the chain memory section (`include/network/state/ChainMemory.hpp`), the consumer snapshot (`include/realtime/RtStateSnapshot.hpp`) and card XRS section 3 for the per-station members that live in the station models outside the declared tables. "Seed" is what `event_leg.py write-seed` arms; every listed key is under `network.` unless named otherwise.
+
+| # | State (owner) | Crosses the seam? | Write key / read key | If it starts cold after a resume: how long until it is back, and the products meanwhile |
+|---|---|---|---|---|
+| 1 | Shared carries: arc leveling carries, satellite records, constellation pivots, station wet-delay carries (records D, V, C, J, K, L, Z, Y, R, A, I, X) | yes, always | none | (carried) |
+| 2 | Clock-anchor and phase-anchor frame, held clock frame | yes, with the keys (seed and leg arm them) | `state_snapshot_frame_capture` / `resume_frame_restore` | Re-election of anchors; a frame jump at the seam (records RESUME-FRAME-RESTORE) |
+| 3 | Coupling regressors and dense border of the restored carries | yes, with the keys | `state_snapshot_coupling_capture` / `resume_coupling_restore` | A one-epoch diagonal fold, an unsignalled phase-bias re-realization the consumer integrated into about 2 m (RESUME-DENSE-BORDER-E2) |
+| 4 | eq34 tree tables, code-bias datum memory | yes, with the keys | `state_snapshot_datum_capture` / `resume_datum_restore` | Re-referenced tree, code-bias datum re-decided (RS-3 to RS-5) |
+| 5 | Emit re-base layer | yes, with the keys | `state_snapshot_emit_capture` / `resume_emit_restore` | Phase-bias levels re-based at the first emit |
+| 6 | Station layer: receiver code-bias carry, per-line-of-sight deviation entries | yes, with the keys | `state_snapshot_station_capture` / `resume_station_restore` | Receiver code biases re-seeded from code |
+| 7 | Canonical-signal latch per station | yes, with the keys | `state_snapshot_signal_capture` / `resume_signal_canon_restore` | Re-decided; inert under the reference's `priority` rule unless a station's signal set changed |
+| 8 | Emit-side phase-bias hold | not armed in the reference files (`emit_pb_hold` false) | `state_snapshot_hold_capture` / `resume_hold_restore` | (not applicable) |
+| 9 | Chain memory section: the chain's tree memory (vertices seen, roots, root receiver phase-bias targets, pinned lives of tree edges, anchor ages), leveling re-level stamps, satellites' code-reference events, the topology ledger; the ring fix's memory (links with held integers, streaks, decision stamps, monitor and near-null guard state, last tree times, certified edges, settled sets and waits, cascade links, untied moves, the two hand-offs); the emitter's held-value state (step baselines, unsettled flags, continuity guard); the broadcast group-delay latch | yes, with the keys; section fingerprinted on its own; ledger rows UNVALIDATED | `state_snapshot_chain_capture` / `resume_chain_restore` | Measured as the matched null of NRF 125.5: the first hold at the 31st epoch (the ring fix's 600 s window and 10 epochs of persistence), half the held count after about 1 h, 0.81 to 0.93 of it after 1 h; phase biases a median 2.9 to 7.4 m off the uninterrupted run from the first epoch (a new integer datum), 166 discontinuity counters bumped on DOY 147 |
+| 10 | Ring fix run counters and the near-null monitor's measure-only state | no, by design | none | Reporting only: each leg counts its own |
+| 11 | Accumulated phase wind-up per station and satellite (`GnssCorrections::prev_windup_` in each station's model) | **no** | none | Never comes back on a live arc: an arc whose accumulator passed half a cycle since it began sits a whole turn off until it restarts after a 300 s gap (3.2 % of arcs at hour 2 of DOY 147, 11.7 % on average after hour 2, peak 19 %). Restored held integers and carries are a turn off in the resumed run's frame (XRS section 2) |
+| 12 | Slip detectors: wide-lane arc statistics and group memories, geometry-free jump arcs, raw slip history (previous epochs, gap evidence, step scales, LLI credibility), IF triple-difference chains | **no** | `resume_slip_warmup_ep` (UNVALIDATED, not armed by the legs) holds the wide-lane drain diagnostic-only for K epochs | 1 to about 22 epochs; meanwhile a wide-lane burst at the second epoch (58 slips and 48 re-hosts on a 60-station bed), the geometry-free jump test without its noise scale (208 flags against 42 in 20 epochs, each freeing a band pair), gap re-entries across the seam unseen |
+| 13 | Processed-epoch clocks (`counters.n_loop_epochs`, the slip channel's epoch index, the roster's epoch count, each station's IF-detector call counter) | **no** | none | Restart at 0 for the whole leg: saved stamps counted in the writer's epochs read wrongly (the chain's pinned lives have a one-off rule for this; carries' birth stamps and the arc ledger's gap ages do not) |
+| 14 | Per-station covariance block, column order, linearization points | **no** (only the receiver code-bias `x_lin`, KEEP_OFF) | `state_snapshot_rxcb_lin_capture` / `resume_rxcb_lin_restore` (refused under `rx_code_bias_datum`) | Rebuilt at the first harvest; the first fold runs per entry, not joint. Float differences of 0.3 to 0.8 mm median at the first epoch, growing to 7 to 35 mm over an hour, largest 0.6 m at the second epoch on the simulator beds (NRF 125.5, 125.6) |
+| 15 | Network-level members on the solve path declared ColdStart: receiver phase-bias carry (`Station:rpb`), phase-colour carry (`Los:pc`), gross line-of-sight state, admission records, arc ledger (`Arc:ledger`, read by the chain's kept row) | **no** | none | Re-warm from the leg's own epochs; size of the effect not measured separately (XRS section 3) |
+| 16 | Other ColdStart run memories (readmission bookkeeping, clock-level and URA windows, residual and census event memories, AR lattice and suspect lists of the retired lane layer) | no | none | Reporting, or rules not armed in the reference files |
+| 17 | Built-in user: the float filter (state and full covariance), the four seed latches, the stream-continuity baselines | yes, with the keys | `closed_loop.state_snapshot` + `realtime.state_snapshot_latch_capture` / the leg's `realtime.state_snapshot_path`, scope `full`, `realtime.state_snapshot_latch_restore` | (carried; CRS2: resumes at 1 to 7 cm on float users) |
+| 18 | Built-in user: the integer resolver's own state (the fixed set, hold bookkeeping, epoch counters) | **no** (the consumer snapshot has no such record) | none | The fixing user re-decides its integers from the restored float; measured in section 4 |
+
+**A finding of the inventory.** The declared tables call the ring fix's memory (`carry.ring_fix.links` and the 14 rows after it) and nine chain fields (`SatSignal:eq34_tree_seen`, `eq34_tree_root`, `emitted_anchor`, `emitted_anchor_s`, `Station:eq34_tree_seen`, `eq34_tree_root`, `eq34_root_rpb_target`, `Arc:eq34_pin_life`, `anchor_arc_age`, `Satellite:code_ref_event_s`, `Station:topo_prev_tie`, `Los:topo_prev_kind`) `ColdStart`, "not in the snapshot", while the chain memory section writes and restores them when its two keys are armed. The run-end reach table therefore misreports them. The declaration needs a class for "carried by a fingerprinted section under a key"; section 5 owes it.
+
+## 4. The seam test (step 2), fixed before any run
+
+**Engine.** One Release build of `main` 52ae46e from the worktree (`gnss_processor_wr0.exe`, sha256 recorded with the result), run as a renamed copy. Every build and run through the machine's gate (`slots.py run --who resume --priority 5`).
+
+**Beds.** Simulator first: `config/golden/golden_sim_refound.json` (60 stations, truth, built-in user SZZ000SIM, start 00:30:15). Then one observed day: `config/golden/golden_field_refound.json` (DOY 129, 58 stations, built-in user WTZZ00DEU).
+
+**Runs, two per bed (four in all).**
+- U, the uninterrupted run: `event_leg.py write-seed --name wr_<bed> --base <reference file> --hours 6 --interval-ep 360` (the simulator adds the 00:30:15 start). The seed configuration is the reference file plus every capture key, a snapshot history copy every 360 emitted epochs (3 h) and traces; the captures write files and change no product.
+- L, the resumed run: `event_leg.py null --seed-run evseed_wr_<bed> --snapshot-ep 361 --epochs 359` (the snapshot at emitted epoch 361, about 3 h after the first emit, resumed to the end of U), every restore key the tool arms, the chain section included.
+- The seam lies at hour 3 of 6, as the project's rule asks of a claim (hour 1 is start-up).
+
+**Grading** (`tools/wr_grade.py`, over L's epochs, in 10-minute bins from L's first epoch, 18 bins):
+- G1, products in datum-invariant terms: per epoch and per constellation, for the clocks, each code-bias signal and each phase-bias signal, the differences L minus U with their median over the satellites removed (a between-satellite difference against the median satellite, free of any one reference satellite); per bin, the median of the epoch medians and the largest value; phase biases also wrapped to the signal's wavelength (a whole-cycle offset is an integer-datum difference that a fixing user absorbs). Keys present in one run only are counted.
+- G2, held links (ring fix trace, state `held`, keyed by station, satellite and pair): link-epochs held in both with the same integers, in both with other integers (the whole-turn class, an equal shift on both bands, apart), in U only, in L only.
+- G3, the simulator's truth audit: held link-epochs `right` and `WRONG` in each run, as the trace grades them (each run in its own wind-up frame, which is the frame of its own products).
+- G4, the built-in user: the median 3D error per bin in each run and the median number of fixed ambiguities.
+
+**A bin is "equal" when all of these hold:** G1, clocks and code biases with an epoch median of at most 1 mm and a largest value of at most 10 mm, and phase biases wrapped the same; G2, link-epochs held in one run only at most 1 % of U's held link-epochs in the bin, and none held by both with other integers; G3, L's WRONG count not above U's; G4, the user's medians within 5 mm.
+
+**Readings, fixed before the runs:**
+- **"identical"**: `products.txt` byte for byte equal over L's epochs and the held sets equal at every epoch.
+- **"equal after N minutes"**: every bin from minute N to the end of the leg is equal; N is reported with the states still converging before it. N at most 60 minutes makes a warm start usable as asked (a start one hour before a disturbance at worst).
+- **"not usable"**: a bin in the last two hours of the leg (minutes 60 to 180) is not equal, or L ends with more truth-WRONG held link-epochs than U, or a run fails; the state that breaks is named from the traces.
+
+**Expected from the earlier records, stated so the result can contradict it:** not usable on the simulator through G2 and G3 (the whole-turn class of the wind-up accumulator), and through G1 on the phase biases unless the wrapped values agree; the user (G4) unknown, since no earlier record resumed a fixing user.
+
+## 5. The fixes (step 3), as planned before the result
+
+Each fix is a capture key and a restore key, both default off, with ledger rows, unit tests, identical output when off, and counters at both edges of the seam (a returning receiver or link is a re-coupling, never a first sighting). In XRS's order, after the reading of section 4 names what breaks:
+1. S1, the wind-up accumulator: a station memory section of the snapshot with its own fingerprint (`network.state_snapshot_station_memory_capture` / `network.resume_station_memory_restore`, the names XRS fixed), every saved entry restored verbatim so that the existing horizon and gap-bridge rules decide continue, bridge or restart as in the uninterrupted run, and a restart enters the restart ledger.
+2. S2, the slip detectors' history and the processed-epoch clocks continued (XRS remedy R1), only as far as the reads after S1 still show their effect.
+3. The declaration of the chain-carried fields (section 3, the finding), and any member the reads of section 4 show missing.
+
+## 6. The one-command start (step 4), as planned
+
+One command that takes a reference file, a day, a start time and an end time, finds or writes the seed snapshot just before the start, resumes from it with every restore key, and prints the checks that say the start is sound (the section counts restored and refused, held links at the seam against the seed's, no first sighting at the seam, the seam distances of section 4's G1 at the first epochs). Written up as a page under `docs/onboarding/`. First use: 26 May 2026 (DOY 146), a start at 03:00 UT for the event at 03:11 UT (the network holds E18's code bias while one of its signals is seen by a single receiver), from the network run `D:/GnssProcessorSupport/runs_nom/_rap_agu_final24_n146`.
