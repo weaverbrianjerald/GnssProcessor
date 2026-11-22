@@ -53,4 +53,9 @@ A seed belongs to the engine that wrote it: the station memory section carries i
 
 ## What a leg can be compared with
 
+**A seed is not a long run of another length in its biases.** The broadcast group delay that pins each satellite's geometry-free code bias is latched once per run over that run's processing window, and Galileo's broadcast value changes within a day: E04 on 26 May 2026 carries -5.5879 ns until 05:20, -4.1910 ns from 05:30 to 17:10 and -5.3551 ns after, so a day-long run latches -4.1910 ns (first C1C code bias -1.2564 m) and a 3.5 h seed -5.5879 ns (-1.6752 m). On that day 88 of 216 code-bias keys of the seed differ from the day-long run's by a constant above 1 cm (up to 0.876 m) and the phase biases by the opposite constant, while the clocks agree to 0.1 mm. Two rules follow:
+- A user, an ionosphere file or a comparison stays inside one seed and its legs: a leg's products are never mixed with those of a run of another length (its user state, ionosphere corrections or code biases).
+- A leg compared with a long run is read in clocks as they are, and in code and phase biases only with each key's constant removed.
+
+
 A leg is not the uninterrupted run (card WRS measures how far it is and for how long). Compare a leg with the keys under test against a leg without them from the same seed (two legs from one seed are repeatable: identical products and traces, card NRF section 125.5, B4), and read the hours that matter to the test after the seam's transient.
