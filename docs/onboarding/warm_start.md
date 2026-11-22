@@ -34,6 +34,8 @@ What it does, in order:
 
 The capture and restore keys the tool arms (every key under `network.` unless named otherwise):
 
+Since 2026-11-22 (the author's adoption of the warm start) `scripts/event_leg.py` and `scripts/warm_start.py` arm the four memory keys by default, each where its prerequisite holds: `state_snapshot_station_memory_capture` where the seed accumulates its wind-up, `state_snapshot_park_capture` where `readmit_seed_horizon_s` is above zero, and each restore where the seed wrote its section. `--no-station-memory-restore` and `--no-park-restore` of `scripts/event_leg.py` give the null legs. The four keys stay off in the loader and in the reference files.
+
 | state | write key | read key |
 |---|---|---|
 | shared carries, satellite records | always | always |
