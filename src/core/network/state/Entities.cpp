@@ -877,6 +877,8 @@ const std::vector<FieldDecl> kStationFields = {
      nullptr, nullptr, &stationRows<&S::zwd_edge>},
     {"gross_los", "gl_sta_state", Persist::ColdStart, "", "",
      nullptr, nullptr, &stationRows<&S::gross_los>},
+    {"entry", "", Persist::ColdStart, "", "",   // no former member: new with the station-entry responses (card SEN)
+     nullptr, nullptr, &stationRows<&S::entry>},
     {"cg_event_last", "cg_event_last", Persist::ColdStart, "", "",   // step N4e2, re-placed
      nullptr, nullptr, &stationRows<&S::cg_event_last>},
     // Step N4f1: re-placed from the arc rows (their old keys keep a string below the station).
@@ -1521,6 +1523,8 @@ const std::vector<EntityWriterRow> kEntityWriters = {
     {"networkCongruenceEmit", "network/qc/Congruence.cpp", "stations"},
     {"networkGrossLosAct", "network/qc/GrossLos.cpp", "arcs los"},
     {"networkGrossLosScreen", "network/qc/GrossLos.cpp", "los sats stations"},
+    {"networkStationEntryCold", "network/solve/StationEntry.cpp", "all"},
+    {"networkStationEntryTrack", "network/solve/StationEntry.cpp", "stations"},
     {"networkMdbFlush", "network/qc/Mdb.cpp", "los"},
     {"holdoffAllows", "network/qc/PrefitCensus.cpp", "los"},
     {"networkPrefitCensus", "network/qc/PrefitCensus.cpp", "los stations"},

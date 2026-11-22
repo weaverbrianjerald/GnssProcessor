@@ -746,6 +746,19 @@ using SdEwlFixes = std::map<char, std::map<std::string, SdEwlFix>>;
 /// the station keeps the string its old key carried after the station index (O4), in
 /// @ref StationState::signals.  The receiver-side eq34 parent edges, keyed by station
 /// NAME before N4a, are walked through @ref byStationName (O3).
+/// A station's entry bookkeeping (network.station_rowless_column_park, network.station_entry_cold):
+/// whether it has been in the solve, the current absence of a station that had data and was not
+/// admitted, and the current park episode.  Written by networkStationEntryTrack after the
+/// station loop; read by the cold entry at the next epoch's start.
+struct StationEntryRecord {
+    bool        ever_in_solve{false};   ///< The station has entered the solve at least once.
+    long long   out_epochs{0};          ///< Consecutive epochs refused (had data, not admitted); 0 = not out.
+    double      refused_at_tow{-1.0};   ///< TOW of the first epoch of the current absence.
+    std::string family;                 ///< The column family that failed at that refusal ("RPB", "unnamed", "assembly").
+    long long   park_epochs{0};         ///< Consecutive admitted epochs with a parked column; 0 = no episode open.
+    std::string park_families;          ///< The families parked when the episode opened.
+};
+
 struct StationState {
     Lifecycle seen;  ///< Decision D4; Absent: no owner computes a station presence edge on every run yet.
     /// Per-station ZWD carry (B9): persistent across epochs, keyed by station index (one
@@ -768,6 +781,9 @@ struct StationState {
     /// The station-level gross line-of-sight disposition (the struct documents it).  Was
     /// @c NetworkCarryState::gl_sta_state.  ColdStart.
     std::optional<GrossLosStationState> gross_los;
+    /// The station's entry bookkeeping (the struct documents it).  Present only when
+    /// network.station_rowless_column_park or network.station_entry_cold is armed.  ColdStart.
+    std::optional<StationEntryRecord> entry;
     /// --- Slow channel of the declared per-station variance factor (QUEUE item 4 R2):
     /// an EWMA over emitted epochs.  The seam runs only after acceptance, so the factor
     /// freezes across withholds by construction.  Keyed by station index (the roster is

@@ -1356,6 +1356,11 @@ struct StationAssembly {
     /// (networkParamInventoryDrain).  Trace class: nothing in the solve reads it.
     StationParamSlot param_inv;
     std::string      err;                  ///< Diagnostic (mismatch detail or exception text).
+    /// Local columns parked this epoch (network.station_rowless_column_park): no row and no prior,
+    /// given a unit prior at their linearization point on the pre-PD channel and left out of every
+    /// harvest list.  Ascending.  Empty unless the key is armed and the station had such a column.
+    std::vector<Eigen::Index> parked_cols;
+    std::string               parked_families;   ///< Their families, space-separated ("RPB").
     // Phase-leveling carry (increment 1): built in PASS B, consumed serially.
     std::vector<Eigen::Index> carry_cols;  ///< A_r columns receiving a carried prior (ascending, for determinism).
     Eigen::VectorXd           carry_dNrr;  ///< Per-column information increment Λ = 1/var_eff.

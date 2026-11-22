@@ -75,6 +75,7 @@
 #include "network/emit/LedgerEmit.hpp"    // the emitter read and the declared roster
 #include "network/diag/RunTraces.hpp" // FlagRate (B8 counters)
 #include "network/solve/SolveStations.hpp"                   // SolveStationsCounters
+#include "network/solve/StationEntry.hpp"   // StationEntryCounters
 #include "network/solve/ClockAnchor.hpp"                     // ClockAnchorCounters
 #include "network/solve/ClockDatum.hpp"                      // ClockDatumCounters
 #include "network/state/StateSnapshotCounters.hpp"           // StateSnapshotCounters
@@ -430,6 +431,8 @@ namespace GnssProcessor {
         /// serial tally networkRxGfDatumTally.
         NetworkRxGfDatum rx_gf_datum{NetworkRxGfDatum::PriorRefold};
         bool sta_prior_pre_pd{};  ///< Fold the station's datum rows before the addStation PD test (network.station_prior_before_pd).
+        bool rowless_park{};      ///< Park a local column with no row instead of dropping the station (network.station_rowless_column_park).
+        bool entry_cold{};        ///< A station's entry after an absence is a re-coupling with a cold entry (network.station_entry_cold).
         double rx_cb_q{};   ///< rx-CB carry RW process noise (m²/s).
         double rx_ebd_q{};  ///< Its receiver IFB (extra-band delay) columns' own (m²/s; network.rx_extra_band_delay_q); 0: rx_cb_q.
         double zwd_q{};   ///< network.zwd_carry_q: ZWD carry random-walk process noise (m^2/s)
@@ -2418,6 +2421,7 @@ namespace GnssProcessor {
     /// A new run-scope counter goes to the counter struct of the subsystem that writes it;
     /// a new struct is one more base below.  Bases and the header declaring each:
     ///   SolveStationsCounters              network/solve/SolveStations.hpp
+    ///   StationEntryCounters               network/solve/StationEntry.hpp
     ///   RunTracesCounters                  network/diag/RunTraces.hpp
     ///   ClockAnchorCounters                network/solve/ClockAnchor.hpp
     ///   ClockDatumCounters                 network/solve/ClockDatum.hpp
@@ -2505,6 +2509,7 @@ namespace GnssProcessor {
     ///   RhsAttribCounters                  network/qc/RhsAttrib.hpp
     struct NetworkServiceCounters
         : SolveStationsCounters,
+          StationEntryCounters,
           RunTracesCounters,
           ClockAnchorCounters,
           ClockDatumCounters,

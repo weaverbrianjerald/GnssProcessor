@@ -3157,6 +3157,25 @@ namespace GnssProcessor {
                       "post-test path deliberately, so no carried value enters the admission "
                       "decision.  SOLVE-AFFECTING: expect MORE stations in the solve.");
         }
+        // Card SEN: the station refused for a rowless local column (A) and its return (B).
+        // Solve-affecting only where a station would otherwise be refused or returns.
+        network_config_.station_rowless_column_park =
+            jval<bool>(json, "network.station_rowless_column_park", "station_rowless_column_park",
+                       false);
+        if (network_config_.station_rowless_column_park)
+            log->info("Network: network.station_rowless_column_park ON: a local column with no "
+                      "data row and no prior row in the epoch is parked (a unit prior at its "
+                      "linearization point, no harvest) instead of failing the whole station "
+                      "at the addStation positive-definiteness test.  Solve-affecting only for "
+                      "a station that would otherwise be dropped.");
+        network_config_.station_entry_cold =
+            jval<bool>(json, "network.station_entry_cold", "station_entry_cold", false);
+        if (network_config_.station_entry_cold)
+            log->info("Network: network.station_entry_cold ON: a station out of the solve while "
+                      "the network runs is decoupled; the chain forgets its tree memory while it "
+                      "is out and at its return, and its carried states are dropped at its "
+                      "return (a cold entry).  Both edges are events with counters.  "
+                      "Solve-affecting only for a station that was out of the solve.");
         // The trace_events cross-check is not here: network.trace_events is parsed
         // further down (see the sink check right after it), so testing it here would
         // read a default and warn on a run that has the sink armed.

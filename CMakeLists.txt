@@ -333,6 +333,7 @@ add_library(gnss_core STATIC
     src/core/network/ar/SdEwlAr.cpp
     src/core/network/ar/SdEwlRows.cpp
     src/core/network/diag/ShDevVtec.cpp
+    src/core/network/solve/StationEntry.cpp
     src/core/network/solve/SolveStations.cpp
     src/core/network/assembly/StationBuild.cpp
     src/core/network/assembly/IonoConstraintRows.cpp
@@ -937,6 +938,7 @@ add_executable(gnss_tests
     tests/network/test_ring_fix_nn_guard.cpp
     tests/network/test_ring_fix_entry_revalidate.cpp
     tests/network/test_chain_memory.cpp
+    tests/network/test_station_entry.cpp
     tests/network/test_station_memory.cpp
     tests/network/test_snapshot_fingerprint_pins.cpp
     tests/network/test_phase_family.cpp

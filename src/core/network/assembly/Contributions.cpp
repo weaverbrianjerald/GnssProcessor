@@ -238,6 +238,11 @@ constexpr std::array<ContributionSpec, kContributionKinds> kSpecs = {{
      CS::Station, CU::Entries, bit(PK::RxCodeBias),
      "1/network.rx_code_bias_datum_sigma_m^2 (network.station_prior_before_pd)", kRxCbRows,
      false, nullptr},
+    {CK::PriorRowlessPark, "prior_rowless_park", CC::StationPriorPrePd, CG::BeforeGate,
+     CS::Station, CU::Entries, bit(PK::RxPhaseBias) | bit(PK::RxCodeBias) | bit(PK::RxClock),
+     "1 m^-2 at the linearization point (network.station_rowless_column_park)",
+     "networkStationRowlessPark (network/solve/StationEntry.cpp)", false,
+     "printed only on a run where it folded a row"},
     // --- Shared rows ---
     {CK::CbIfPin, "cb_if_pin", CC::SharedRows, CG::BeforeGate, CS::Satellite, CU::Rows,
      bit(PK::SatCodeBias), kCbW, kCbDatum, false, nullptr},
@@ -397,7 +402,7 @@ const std::array<ContributionSpec, kContributionKinds>& contributionSpecs() { re
 bool printedOnlyWhenFolded(ContributionKind k) {
     // Kinds declared after the table's layout was fixed, printed only on a run that folded them,
     // so a run that never arms them prints the table and the manifest record as before.
-    return k == ContributionKind::PriorAmbiguityRingHold;
+    return k == ContributionKind::PriorAmbiguityRingHold || k == ContributionKind::PriorRowlessPark;
 }
 
 const ContributionSpec& contributionSpec(ContributionKind k) {
@@ -618,6 +623,7 @@ StationTagCheck checkStationTags(const StationAssembly& R) {
     differ(at(CK::PriorAmbiguityOraclePin), R.opin_rows);
     differ(at(CK::PriorAmbiguityRingHold), R.rfix_rows);
     differ(at(CK::PriorRxCbDatum) + at(CK::PriorRxCbDatumPrePd), R.pl_cb_datum_rows);
+    differ(at(CK::PriorRowlessPark), static_cast<long long>(R.parked_cols.size()));
     return c;
 }
 

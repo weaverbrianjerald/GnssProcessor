@@ -17,6 +17,7 @@
 #include <fmt/format.h>
 #include "network/assembly/ParamInventory.hpp"
 #include "network/assembly/MultiGnss.hpp"
+#include "network/solve/StationEntry.hpp"
 
 namespace GnssProcessor {
 
@@ -143,6 +144,8 @@ bool networkAssemblyConsume(NetworkRun& run, const NetworkEpoch& ep, EpochPassA&
             fam = (c != std::string::npos) ? fam.substr(0, c)
                                            : (fam == "?" ? std::string("other") : fam);
             ++ctx.counters.pd_drop_family[fam];
+            if (ctx.knobs.entry_cold || ctx.knobs.rowless_park)
+                ctx.counters.sen_refuse_family_ep[sta.name] = fam;
         }
         ++ctx.counters.pd_drop_named;
         traces.emitEvent(se.time, "TOPOLOGY", "sta_pd_dropped", "", sta.name,
@@ -165,6 +168,17 @@ bool networkAssemblyConsume(NetworkRun& run, const NetworkEpoch& ep, EpochPassA&
     // receives the same additions in the same order as the serial add.  The predicate is the
     // loop's own: a station is formed exactly when the loop reaches its add.  A station formed
     // after an epoch-ending break is never committed (its slot is simply left).
+    // network.station_rowless_column_park: a local column with no row and no prior is parked
+    // before the station is formed (in parallel or in the loop below), so the PD test judges the
+    // block without it.  Serial and in station order; inert when the key is off.
+    if (ctx.knobs.rowless_park) {
+        for (size_t i = 0; i < stations.size(); ++i) {
+            if (!present[i]) continue;
+            StationAssembly& R = asm_res[i];
+            if (R.empty_innov || R.state_mismatch || R.threw || !R.ok) continue;
+            networkStationRowlessPark(ctx, stations[i], R);
+        }
+    }
     std::vector<int> form_slot(stations.size(), -1);
     std::vector<NetworkNormalEquations::StationPrior> form_priors;
     if (nc.parallel_station_normals && setup.parallel_on && setup.n_threads > 1) {
@@ -221,6 +235,8 @@ bool networkAssemblyConsume(NetworkRun& run, const NetworkEpoch& ep, EpochPassA&
             }
             log->warn("Network: station '{}' assembly failed ({}); dropping it this epoch",
                       st.name, why);
+            if (ctx.knobs.entry_cold || ctx.knobs.rowless_park)
+                ctx.counters.sen_refuse_family_ep[st.name] = "assembly";
             present[i] = false;
             continue;
         }
@@ -381,6 +397,23 @@ void networkSolveStationsTrack(NetworkRun& run, const NetworkEpoch& ep,
     }
     ++cnt.sta_in_solve_epochs;
     cnt.sta_in_solve_ep.push_back(n_in_solve_ep);
+    // The station-entry track (network.station_rowless_column_park, network.station_entry_cold):
+    // the park episodes and the refusal and return of each station.  A station is refused when it
+    // had an assembled block (or its assembly failed) and did not enter the solve.
+    if (ctx.knobs.rowless_park || ctx.knobs.entry_cold) {
+        std::vector<char> in_solve_of(stations.size(), 0), refused_of(stations.size(), 0);
+        std::vector<int> parked_of(stations.size(), 0);
+        std::vector<std::string> families_of(stations.size());
+        for (size_t i = 0; i < stations.size(); ++i) {
+            const StationAssembly& R = asm_res[i];
+            in_solve_of[i] = est_index_of[i] >= 0 ? 1 : 0;
+            const bool had_block = (R.ok && !R.empty_innov) || R.threw || R.state_mismatch;
+            refused_of[i] = (had_block && est_index_of[i] < 0) ? 1 : 0;
+            parked_of[i] = static_cast<int>(R.parked_cols.size());
+            families_of[i] = R.parked_families;
+        }
+        networkStationEntryTrack(run, ep, in_solve_of, refused_of, parked_of, families_of);
+    }
     if (cnt.sta_in_solve_min < 0 || n_in_solve_ep < cnt.sta_in_solve_min) {
         cnt.sta_in_solve_min     = n_in_solve_ep;
         cnt.sta_in_solve_min_tow = se.time.tow;
