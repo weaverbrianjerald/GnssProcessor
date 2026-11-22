@@ -259,7 +259,7 @@ TEST(StationMemorySection, SnapshotCarriesTheSectionVerbatimAndNothingWithoutIt)
     EXPECT_EQ(plain.str().find("STMEM,"), std::string::npos);
 
     snap.chain_memory = "CHAIN,v2,0123456789abcdef\nGD,E04,-0.4188\nCHEND\n";
-    snap.station_memory = "STMEM,v2,0123456789abcdef\nWU,AAAA,G30,-3.4906585039886591,1399165230,1399161600\nSMEND\n";
+    snap.station_memory = "STMEM,v3,0123456789abcdef\nWU,AAAA,G30,-3.4906585039886591,1399165230,1399161600\nSMEND\n";
     std::ostringstream os;
     NetworkStateSnapshotIO::serialize(os, snap);
     std::istringstream is(os.str());
@@ -424,7 +424,7 @@ TEST(StationMemoryRestore, ASectionWithItsOwnFingerprintIsRestoredAndConsumed) {
     const std::string text = networkStationMemoryWrite(writer.fx->run(), n);
     EXPECT_EQ(n, 3);
     EXPECT_EQ(text.substr(0, text.find('\n')),
-              fmt::format("STMEM,v2,{:016x}", networkStationMemoryFingerprint(cfg.config)));
+              fmt::format("STMEM,v3,{:016x}", networkStationMemoryFingerprint(cfg.config)));
 
     StationRun leg("r_ok", cfg.config, { "BBBB", "AAAA" }, true);   // another roster order: matched by name
     leg.fx->ctx().carry.resume.station_memory = text;
@@ -473,7 +473,7 @@ TEST(StationMemoryRestore, TheGfArcsAndTheSlipEpochCounterRoundTripExactly) {
     wq.hist[0].gf_arcs["E11"] = b;
     long long n = 0;
     const std::string text = networkStationMemoryWrite(writer.fx->run(), n);
-    EXPECT_EQ(n, 2);
+    EXPECT_EQ(n, 2 + 2);   // two arcs, and the two stations' scale lines (RH)
 
     StationRun leg("r_gf", cfg.config, { "BBBB", "AAAA" }, true);   // another roster order: matched by name
     SlipQcChannel& lq = leg.fx->run().engines.slip_qc;
@@ -500,6 +500,109 @@ TEST(StationMemoryRestore, TheGfArcsAndTheSlipEpochCounterRoundTripExactly) {
     EXPECT_EQ(lq.hist[1].gf_arcs.at("E11").sig2, "L5Q");
 }
 
+TEST(StationMemoryRestore, TheRawSlipHistoryRoundTripsExactly) {
+    const Loaded cfg = loadConfig("res_raw", kBothKeys, kAccumulate);
+    ASSERT_TRUE(cfg.ok) << cfg.text;
+    StationRun writer("w_raw", cfg.config, { "AAAA" }, true);
+    SlipQcChannel& wq = writer.fx->run().engines.slip_qc;
+    wq.hist.resize(1);
+    RawSlipHistory& h = wq.hist[0];
+    h.lli_frac_ewma = 0.0123;
+    h.lli_frac_count = 41;
+    h.lli_credible = false;
+    h.mw_step_scale = 0.0456;
+    h.mw_step_count = 77;
+    h.gf_step_scale = 0.00789;
+    h.gf_step_count = 76;
+    RawSlipHistory::Prev p;
+    p.epoch_idx = 359;
+    p.obs.satellite = "G13";
+    p.obs.sig1 = "L1C";
+    p.obs.sig2 = "L2W";
+    p.obs.elev_deg = 12.5;
+    p.obs.dual = true;
+    p.obs.mw_m = -3.141592653589793;
+    p.obs.gf_m = 0.1;
+    p.obs.gf_code_m = -0.25;
+    p.obs.gf_denom = 0.6469444444444444;
+    p.obs.lam1_m = 0.19029367279836487;
+    p.obs.l1_c1_m = 12345.678;
+    p.obs.lambda_wl_m = 0.8619;
+    p.obs.lli1 = 1;
+    p.obs.lli2 = 0;
+    p.obs.code1 = "C1C";
+    p.obs.code2 = "C2W";
+    p.obs.sigs = { { "L1C", 2.1e7, 2.1e7 + 3.5, 0 }, { "L2W", 2.2e7, 2.2e7 - 1.25, 4 } };
+    h.prev["G13"] = p;
+    RawSlipHistory::Prev q;   // a single-band row: empty second signal and code
+    q.epoch_idx = 358;
+    q.obs.satellite = "E11";
+    q.obs.sig1 = "L1C";
+    h.prev["E11"] = q;
+    RawSlipHistory::SigPrev s;
+    s.last_epoch = 359;
+    s.run_start = 120;
+    s.phase_m = 2.1e7;
+    s.code_m = 2.1e7 + 3.5;
+    s.lli = 2;
+    s.gf_snap = { { "L2W", -1.0e6 + 0.123 }, { "L5Q", 7.0 } };
+    h.sig_prev["G13"]["L1C"] = s;
+    long long n = 0;
+    const std::string text = networkStationMemoryWrite(writer.fx->run(), n);
+    EXPECT_EQ(n, 1 + 2 + 1);
+
+    StationRun leg("r_raw", cfg.config, { "AAAA" }, true);
+    SlipQcChannel& lq = leg.fx->run().engines.slip_qc;
+    lq.hist.resize(1);
+    leg.fx->ctx().carry.resume.station_memory = text;
+    networkStationMemoryRestore(leg.fx->run());
+    EXPECT_EQ(leg.fx->ctx().counters.station_memory_raw_lines_restored, 4);
+    EXPECT_EQ(leg.fx->ctx().counters.station_memory_refused_malformed, 0);
+    const RawSlipHistory& r = lq.hist[0];
+    EXPECT_EQ(r.lli_frac_ewma, h.lli_frac_ewma);
+    EXPECT_EQ(r.lli_frac_count, h.lli_frac_count);
+    EXPECT_EQ(r.lli_credible, h.lli_credible);
+    EXPECT_EQ(r.mw_step_scale, h.mw_step_scale);
+    EXPECT_EQ(r.mw_step_count, h.mw_step_count);
+    EXPECT_EQ(r.gf_step_scale, h.gf_step_scale);
+    EXPECT_EQ(r.gf_step_count, h.gf_step_count);
+    ASSERT_EQ(r.prev.count("G13"), 1u);
+    const RawSlipHistory::Prev& rp = r.prev.at("G13");
+    EXPECT_EQ(rp.epoch_idx, p.epoch_idx);
+    EXPECT_EQ(rp.obs.satellite, p.obs.satellite);
+    EXPECT_EQ(rp.obs.sig1, p.obs.sig1);
+    EXPECT_EQ(rp.obs.sig2, p.obs.sig2);
+    EXPECT_EQ(rp.obs.elev_deg, p.obs.elev_deg);
+    EXPECT_EQ(rp.obs.dual, p.obs.dual);
+    EXPECT_EQ(rp.obs.mw_m, p.obs.mw_m);
+    EXPECT_EQ(rp.obs.gf_m, p.obs.gf_m);
+    EXPECT_EQ(rp.obs.gf_code_m, p.obs.gf_code_m);
+    EXPECT_EQ(rp.obs.gf_denom, p.obs.gf_denom);
+    EXPECT_EQ(rp.obs.lam1_m, p.obs.lam1_m);
+    EXPECT_EQ(rp.obs.l1_c1_m, p.obs.l1_c1_m);
+    EXPECT_EQ(rp.obs.lambda_wl_m, p.obs.lambda_wl_m);
+    EXPECT_EQ(rp.obs.lli1, p.obs.lli1);
+    EXPECT_EQ(rp.obs.lli2, p.obs.lli2);
+    EXPECT_EQ(rp.obs.code1, p.obs.code1);
+    EXPECT_EQ(rp.obs.code2, p.obs.code2);
+    ASSERT_EQ(rp.obs.sigs.size(), 2u);
+    EXPECT_EQ(rp.obs.sigs[1].sig, "L2W");
+    EXPECT_EQ(rp.obs.sigs[1].phase_m, 2.2e7);
+    EXPECT_EQ(rp.obs.sigs[1].code_m, 2.2e7 - 1.25);
+    EXPECT_EQ(rp.obs.sigs[1].lli, 4);
+    ASSERT_EQ(r.prev.count("E11"), 1u);
+    EXPECT_TRUE(r.prev.at("E11").obs.sig2.empty());
+    EXPECT_TRUE(r.prev.at("E11").obs.code2.empty());
+    EXPECT_FALSE(r.prev.at("E11").obs.dual);
+    const RawSlipHistory::SigPrev& rs = r.sig_prev.at("G13").at("L1C");
+    EXPECT_EQ(rs.last_epoch, s.last_epoch);
+    EXPECT_EQ(rs.run_start, s.run_start);
+    EXPECT_EQ(rs.phase_m, s.phase_m);
+    EXPECT_EQ(rs.code_m, s.code_m);
+    EXPECT_EQ(rs.lli, s.lli);
+    EXPECT_EQ(rs.gf_snap, s.gf_snap);
+}
+
 TEST(StationMemoryRestore, RefusalsAreCountedAndTheResumeGoesOn) {
     const Loaded cfg = loadConfig("res_ref", kBothKeys, kAccumulate);
     const Loaded other = loadConfig("res_ref_other", kBothKeys,
@@ -522,7 +625,7 @@ TEST(StationMemoryRestore, RefusalsAreCountedAndTheResumeGoesOn) {
 
     // Another build's header: refused.
     StationRun old_build("r_old", cfg.config, { "AAAA" }, true);
-    old_build.fx->ctx().carry.resume.station_memory = "STMEM,v1,0123456789abcdef\nWU,AAAA,G30,1.5,1399165230,1399161600\nSMEND\n";
+    old_build.fx->ctx().carry.resume.station_memory = "STMEM,v2,0123456789abcdef\nWU,AAAA,G30,1.5,1399165230,1399161600\nSMEND\n";
     networkStationMemoryRestore(old_build.fx->run());
     EXPECT_EQ(old_build.fx->ctx().counters.station_memory_refused, 1);
     EXPECT_TRUE(old_build.model(0).windUpRecords().empty());

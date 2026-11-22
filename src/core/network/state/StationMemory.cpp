@@ -29,7 +29,7 @@ namespace GnssProcessor {
 namespace {
 
 /// The section's format version, the second field of its header line.
-constexpr const char* kStationMemoryVersion = "v2";
+constexpr const char* kStationMemoryVersion = "v3";
 
 /// The fields of one comma-separated line (empty fields kept).
 std::vector<std::string> splitFields(const std::string& line) {
@@ -56,6 +56,14 @@ bool parseExact(const std::string& s, double& out) {
     return r.ec == std::errc() && r.ptr == last && std::isfinite(out);
 }
 
+/// An integer read from the whole of @p s through the exact double parser (the writer prints integers as such).
+bool parseInt(const std::string& s, long long& out) {
+    double v = 0.0;
+    if (!parseExact(s, v) || v != std::floor(v)) return false;
+    out = static_cast<long long>(v);
+    return true;
+}
+
 /// The section fingerprint as the header writes it: 16 lower-case hexadecimal digits.
 std::string fingerprintText(std::uint64_t fp) { return fmt::format("{:016x}", fp); }
 
@@ -79,6 +87,8 @@ std::vector<std::string> networkStationMemoryFingerprintTokens(const GnssConfig&
     const auto& sq = config.getNetworkConfig().slip_qc;
     t.push_back(fmt::format("gf_arc_jump={},{},{},{},{}", sq.gf_arc_jump, sq.gf_arc_jump_m, sq.gf_arc_jump_k,
                             sq.gf_arc_jump_window, sq.gf_arc_jump_min_count));
+    // The raw slip history: whether the per-signal records are kept.
+    t.push_back(fmt::format("raw_hist={}", sq.gap_reentry_per_signal));
     return t;
 }
 
@@ -124,6 +134,34 @@ std::string networkStationMemoryWrite(const NetworkRun& run, long long& n_record
             }
         }
     }
+    // The raw slip history of every station: its previous raw row per satellite (with the epoch it came from), the
+    // per-signal continuity records, and the station's step scales and LLI credibility.  Without them a satellite
+    // returning from a gap that spans the seam re-enters unmeasured and is refloated.
+    for (std::size_t i = 0; i < qc.hist.size() && i < stations.size(); ++i) {
+        const RawSlipHistory& h = qc.hist[i];
+        const std::string& sta = stations[i].name;
+        os << fmt::format("RH,{},{},{},{},{},{},{},{}\n", sta, h.lli_frac_ewma, h.lli_frac_count, h.lli_credible ? 1 : 0,
+                          h.mw_step_scale, h.mw_step_count, h.gf_step_scale, h.gf_step_count);
+        ++n_records;
+        for (const auto& [sat, p] : h.prev) {
+            const RawSlipObs& o = p.obs;
+            os << fmt::format("RP,{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}", sta, sat, p.epoch_idx, o.sig1,
+                              o.sig2, o.elev_deg, o.dual ? 1 : 0, o.mw_m, o.gf_m, o.gf_code_m, o.gf_denom, o.lam1_m,
+                              o.l1_c1_m, o.lambda_wl_m, o.lli1, o.lli2, o.code1, o.code2, o.sigs.size());
+            for (const RawSigObs& s : o.sigs) os << fmt::format(",{},{},{},{}", s.sig, s.phase_m, s.code_m, s.lli);
+            os << '\n';
+            ++n_records;
+        }
+        for (const auto& [sat, sigs] : h.sig_prev) {
+            for (const auto& [sig, r] : sigs) {
+                os << fmt::format("RS,{},{},{},{},{},{},{},{},{}", sta, sat, sig, r.last_epoch, r.run_start, r.phase_m,
+                                  r.code_m, r.lli, r.gf_snap.size());
+                for (const auto& [other, v] : r.gf_snap) os << fmt::format(",{},{}", other, v);
+                os << '\n';
+                ++n_records;
+            }
+        }
+    }
     os << "SMEND\n";
     return os.str();
 }
@@ -162,6 +200,12 @@ void networkStationMemoryRestore(NetworkRun& run) {
     // Group the records by station, in the section's order.
     std::map<std::string, std::vector<GnssCorrections::WindUpRecord>> by_station;
     std::map<std::string, std::map<std::string, GfArcJumpArc>> gf_by_station;
+    // The raw slip history, by station: the scales line, the previous rows and the per-signal records.
+    struct RawHist {
+        bool have_scales{false};
+        RawSlipHistory h;
+    };
+    std::map<std::string, RawHist> raw_by_station;
     long long epoch_idx = -1;
     long long n_malformed = 0;
     std::string first_malformed;
@@ -203,6 +247,71 @@ void networkStationMemoryRestore(NetworkRun& run) {
             a.has_ref = has_ref != 0.0;
             a.flag_run = static_cast<int>(flag_run);
             gf_by_station[f[1]][f[2]] = std::move(a);
+            continue;
+        }
+        if (!f.empty() && (f[0] == "RH" || f[0] == "RP" || f[0] == "RS")) {
+            bool ok = f.size() >= 2 && !f[1].empty();
+            if (ok && f[0] == "RH") {
+                RawSlipHistory& h = raw_by_station[f[1]].h;
+                long long frac_count = 0, cred = 0, mw_count = 0, gf_count = 0;
+                ok = f.size() == 9 && parseExact(f[2], h.lli_frac_ewma) && parseInt(f[3], frac_count)
+                  && parseInt(f[4], cred) && parseExact(f[5], h.mw_step_scale) && parseInt(f[6], mw_count)
+                  && parseExact(f[7], h.gf_step_scale) && parseInt(f[8], gf_count);
+                if (ok) {
+                    h.lli_frac_count = static_cast<long>(frac_count);
+                    h.lli_credible = cred != 0;
+                    h.mw_step_count = static_cast<long>(mw_count);
+                    h.gf_step_count = static_cast<long>(gf_count);
+                    raw_by_station[f[1]].have_scales = true;
+                }
+            } else if (ok && f[0] == "RP") {
+                RawSlipHistory::Prev p;
+                RawSlipObs& o = p.obs;
+                long long dual = 0, lli1 = 0, lli2 = 0, n = -1;
+                ok = f.size() >= 20 && !f[2].empty() && parseInt(f[3], p.epoch_idx) && parseExact(f[6], o.elev_deg)
+                  && parseInt(f[7], dual) && parseExact(f[8], o.mw_m) && parseExact(f[9], o.gf_m)
+                  && parseExact(f[10], o.gf_code_m) && parseExact(f[11], o.gf_denom) && parseExact(f[12], o.lam1_m)
+                  && parseExact(f[13], o.l1_c1_m) && parseExact(f[14], o.lambda_wl_m) && parseInt(f[15], lli1)
+                  && parseInt(f[16], lli2) && parseInt(f[19], n) && n >= 0
+                  && f.size() == 20 + 4 * static_cast<std::size_t>(n);
+                for (std::size_t k = 20; ok && k < f.size(); k += 4) {
+                    RawSigObs s;
+                    long long lli = 0;
+                    s.sig = f[k];
+                    ok = !s.sig.empty() && parseExact(f[k + 1], s.phase_m) && parseExact(f[k + 2], s.code_m)
+                      && parseInt(f[k + 3], lli);
+                    s.lli = static_cast<int>(lli);
+                    o.sigs.push_back(std::move(s));
+                }
+                if (ok) {
+                    o.satellite = f[2];
+                    o.sig1 = f[4];
+                    o.sig2 = f[5];
+                    o.dual = dual != 0;
+                    o.lli1 = static_cast<int>(lli1);
+                    o.lli2 = static_cast<int>(lli2);
+                    o.code1 = f[17];
+                    o.code2 = f[18];
+                    raw_by_station[f[1]].h.prev[f[2]] = std::move(p);
+                }
+            } else if (ok && f[0] == "RS") {
+                RawSlipHistory::SigPrev r;
+                long long lli = 0, n = -1;
+                ok = f.size() >= 10 && !f[2].empty() && !f[3].empty() && parseInt(f[4], r.last_epoch)
+                  && parseInt(f[5], r.run_start) && parseExact(f[6], r.phase_m) && parseExact(f[7], r.code_m)
+                  && parseInt(f[8], lli) && parseInt(f[9], n) && n >= 0
+                  && f.size() == 10 + 2 * static_cast<std::size_t>(n);
+                for (std::size_t k = 10; ok && k < f.size(); k += 2) {
+                    double v = 0.0;
+                    ok = !f[k].empty() && parseExact(f[k + 1], v);
+                    r.gf_snap[f[k]] = v;
+                }
+                if (ok) {
+                    r.lli = static_cast<int>(lli);
+                    raw_by_station[f[1]].h.sig_prev[f[2]][f[3]] = std::move(r);
+                }
+            }
+            if (!ok && n_malformed++ == 0) first_malformed = line;
             continue;
         }
         GnssCorrections::WindUpRecord r;
@@ -253,6 +362,37 @@ void networkStationMemoryRestore(NetworkRun& run) {
             qc.hist[it->second].gf_arcs = std::move(arcs);
         }
     }
+    // The raw slip history: the scales, previous rows and per-signal records of each station, put back by name (the
+    // run counters of the history stay the leg's own).
+    long long n_raw = 0;
+    if (!raw_by_station.empty()) {
+        if (qc.hist.size() < stations.size()) qc.hist.resize(stations.size());
+        std::map<std::string, std::size_t> index_of;
+        for (std::size_t i = 0; i < stations.size(); ++i) index_of[stations[i].name] = i;
+        for (auto& [name, rh] : raw_by_station) {
+            const auto it = index_of.find(name);
+            const long long n_lines = static_cast<long long>(rh.h.prev.size()) + (rh.have_scales ? 1 : 0)
+                                    + [&] { long long c = 0; for (const auto& [s, m] : rh.h.sig_prev) c += static_cast<long long>(m.size()); return c; }();
+            if (it == index_of.end()) {
+                n_gf_unknown += n_lines;
+                continue;
+            }
+            RawSlipHistory& dst = qc.hist[it->second];
+            dst.prev = std::move(rh.h.prev);
+            dst.sig_prev = std::move(rh.h.sig_prev);
+            if (rh.have_scales) {
+                dst.lli_frac_ewma = rh.h.lli_frac_ewma;
+                dst.lli_frac_count = rh.h.lli_frac_count;
+                dst.lli_credible = rh.h.lli_credible;
+                dst.mw_step_scale = rh.h.mw_step_scale;
+                dst.mw_step_count = rh.h.mw_step_count;
+                dst.gf_step_scale = rh.h.gf_step_scale;
+                dst.gf_step_count = rh.h.gf_step_count;
+            }
+            n_raw += n_lines;
+        }
+    }
+    counters.station_memory_raw_lines_restored += n_raw;
     counters.station_memory_gf_arcs_restored += n_gf;
     n_unknown += n_gf_unknown;
     counters.station_memory_records_restored += n_restored;
@@ -261,9 +401,9 @@ void networkStationMemoryRestore(NetworkRun& run) {
     counters.station_memory_refused_fractional += n_fractional;
     log->info("Network (station memory restore): the station memory section restored at the resume (fingerprint "
               "{}): {} wind-up accumulator(s) at {} station(s) continue the writer's unwrapped angles; {} GF arc-jump "
-              "arc(s) restored; the slip channel's epoch counter {}; refused: {} for a station not in this run, {} "
-              "malformed, {} at a station without an accumulator.",
-              live, n_restored, n_stations, n_gf,
+              "arc(s) and {} raw slip history line(s) restored; the slip channel's epoch counter {}; refused: {} for a "
+              "station not in this run, {} malformed, {} at a station without an accumulator.",
+              live, n_restored, n_stations, n_gf, n_raw,
               epoch_idx >= 0 ? fmt::format("continues at {}", epoch_idx) : std::string("not in the section"),
               n_unknown, n_malformed, n_fractional);
     if (n_unknown > 0)

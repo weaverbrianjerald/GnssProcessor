@@ -75,6 +75,7 @@ struct StateSnapshotCounters {
     long long station_memory_absent             = 0;   ///< warm resumes under the restore whose snapshot carries no section
     long long station_memory_records_restored   = 0;   ///< wind-up records put back into a station's model
     long long station_memory_gf_arcs_restored   = 0;   ///< GF arc-jump arcs put back into the slip channel
+    long long station_memory_raw_lines_restored = 0;   ///< raw slip history lines (scales, previous rows, per-signal records) put back
     long long station_memory_refused_station    = 0;   ///< records refused: a station this run does not hold
     long long station_memory_refused_malformed  = 0;   ///< lines refused: malformed
     long long station_memory_refused_fractional = 0;   ///< records refused: a station whose model keeps no accumulator
