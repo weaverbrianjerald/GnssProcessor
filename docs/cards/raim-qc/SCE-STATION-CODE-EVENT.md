@@ -12,7 +12,7 @@
   with a second jump; with the CODE bias file read, the station's clock then stays 10 to 41 m off its trend and the
   screen's own declarations, with the erase response, keep the station from recovering until 04:08 (the marks of card
   GLM). Stage A0 measures from existing runs only: no build, no gate run.
-- **dates:** 2026-11-23 (pre-registered, before any reading of stage A0); 2026-11-23 (stage A0 results, section 5); 2026-11-23 (stage A1 registered, section 6; day-129 results of arms V and B, section 7: S1 failed on reading (e) by one row); 2026-11-23 (stage A2 registered, section 8; results, section 9: S1 to S3 met except (e), (e2) met).
+- **dates:** 2026-11-23 (pre-registered, before any reading of stage A0); 2026-11-23 (stage A0 results, section 5); 2026-11-23 (stage A1 registered, section 6; day-129 results of arms V and B, section 7: S1 failed on reading (e) by one row); 2026-11-23 (stage A2 registered, section 8; results, section 9: S1 to S3 met except (e), (e2) met); 2026-11-23 (outcome, section 10: arm B the candidate for the author).
 - **knobs / posture:** none changed. The reference files of 2026-11-22 as run in card BRP: `runs_nom/_rap_brp_f129_c0_6`
   (with the .BIA) and `runs_nom/_rap_brp_f129_c0nb_6` (without); for item 6 the reference runs of 2024 days 129, 130,
   132 and 2026 days 143 to 147.
@@ -241,3 +241,18 @@ Report: `D:\GnssProcessorSupport\gates\station_code_event\REPORT_2.md`; reads `g
   timing columns; the simulator's truth audit 406,385 right, 0 wrong in both.
 - **Outcome:** both arms meet S1 to S3 except (e), which fails as registered on both observed days; (e2) passes. The
   decision on the reference files is the managing session's.
+
+---
+## 10. 2026-11-23, outcome of stage A2 (the managing session's word)
+
+- **Candidate:** arm B (`network.adm_bound_m` 300) goes to the author with the round's other candidates, under the outcome
+  rule of section 6. Reading (e) stays a miss as registered on days 129 and 132, with (e2) beside it. Arm V is not carried
+  further: it reads the same as B on the two days it ran and was not run where nothing reaches the key. No further run of
+  this card now. The managing session's re-read: `gates/station_code_event/manager_check_a2.txt`.
+- **Not judged by (e2):** G22 at BSHM00ISR at 03:53:00 on day 132 (631 m; B and V) and, in V only, G22 at 04:28:00 on day
+  132 (13,412 m), for want of 6 clean epochs within 10 minutes.
+- **Still open:** a bound of 300 m does not close the level folded back at the admission's heal, the stand-down that
+  nothing ends, or the `code_ramp` event (candidates (c) and (d) of section 4).
+- **The smaller gain on this base:** the control without the CODE bias file already has 191 marks in hour 4 (790 on main's
+  reference) and its built-in user's hours 4 and 5 at 14 and 11 mm (33 and 38 mm on main's); arm B takes the marks to 33
+  and the user's hours 4 to 6 down by 2.3 to 3.6 mm.
