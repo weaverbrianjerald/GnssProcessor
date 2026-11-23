@@ -11,7 +11,7 @@
 - **code:** planned, branch `net/gross-los-emit-marks-2026-11-22` from main 33c5fef: `src/core/network/qc/GrossLos.cpp` (the mark decision), the injector kind `code_step` (`network/carry/Inject`), tests in a file of their own.
 - **source:** the managing session's order 5 (`D:/GnssProcessorSupport/gates/variable_rate/manager_ORDER_5.md`) and its check `manager_check/manager_retro_marks.py`; card VRE step 1 (reading R3, `REPORT_4.md`); the screen's record [RF-3](../record/refound/RF-3_code_row_qc_2026-09-22.md) (B3, section 5.3). Working folder `D:/GnssProcessorSupport/gates/gross_los_marks/` (scripts `glm_common.py`, `a0_marks.py`, `a0_pool.py`, `a0_edit.py`; outputs in `out/`).
 
-**Outcome.** Open; pre-registered. Measured so far (A0 items 1 and 2): standing declarations occur on every observed reference day, from 6 marks (day 130, 2026 day 147) to 965 (day 129); the simulator has none. The emitted phase clock of a marked satellite steps at the declaration's first epoch (median 0.7 mm, 90th percentile 23 mm, up to metres in hour 1, against 0.46 mm on unmarked epochs), stays at the unmarked level while the declaration stands, and does not step at an ordinary release (33 releases, median 0.36 mm, largest 2.3 mm); a cold-bound release, which re-seeds the carried ambiguity, does (median 4.7 mm, refloats 179 and 330 mm). Day-129 users on the product without the standing marks (A0 item 3, 17 sites): the 8,386 resets of the marked satellites at those epochs are gone, their held samples over hours 3 to 5 rise from 9,297 to 15,780, the built-in user's hours 4 and 5 fall from 32.8 / 38.0 mm to 11.7 / 6.8 mm, and the median user moves 0.0 mm in every hour.
+**Outcome.** Open; pre-registered. Measured so far (A0 items 1 and 2): standing declarations occur on every observed reference day, from 6 marks (day 130, 2026 day 147) to 965 (day 129); the simulator has none. The emitted phase clock of a marked satellite steps at the declaration's first epoch (median 0.7 mm, 90th percentile 23 mm, up to metres in hour 1, against 0.46 mm on unmarked epochs), stays at the unmarked level while the declaration stands, and does not step at an ordinary release (33 releases, median 0.36 mm, largest 2.3 mm); a cold-bound release, which re-seeds the carried ambiguity, does (median 4.7 mm, refloats 179 and 330 mm). Day-129 users on the product without the standing marks (A0 item 3, 17 sites): the 8,386 resets of the marked satellites at those epochs are gone, their held samples over hours 3 to 5 rise from 9,297 to 15,780, the built-in user's hours 4 and 5 fall from 32.8 / 38.0 mm to 11.7 / 6.8 mm, and the median user moves 0.0 mm in every hour. A1 (`network.gross_los_emit_edges`, 6872eb9) read 2026-11-23: identical with the key off (G1), identical on the simulator with 0 wrong holds (G3), marks only at the edges with none lost (G2, G4), users unchanged in the median (+0.0 mm) and WTZZ00DEU's hours 4 and 5 from 32.8 / 38.0 to 11.8 / 6.8 mm; misses G4's 1 mm value bound (a level offset up to 2 cm while a declaration stands, no step after the onset) and, site by site, the held share at STPM.
 
 > Results are appended TO THIS FILE, below the text, under dated headings.
 
@@ -229,3 +229,51 @@ code, but the reading is taken again. Re-run at gate priority 4 with the offset 
 (G3) and `_rap_glm1o_s_{ev,null}_4` (G4); the G1 arms are remade the same way before they run. The day-129 runs carry
 20 threads (G2: `_rap_glm1_f_{on,off}_6`); the comparison is of two runs of one configuration, and the user replays run
 at 4 threads. Every arm now passes `gates/variable_rate/scripts/arm_guard.py`.
+
+## 2026-11-23: A1 results (readings G1 to G4)
+
+Engine `gnss_processor_glm_a1.exe` (the tree of 6872eb9; sha256 515a3e35...2d2e), and for G1 `gnss_processor_glm_a1r.exe`
+rebuilt from 6872eb9 against `gnss_processor_glm_base.exe` (main 33c5fef's sources) in the same tree. Unit tests: filter
+`GrossLosEmitEdges*:GrossLosEmitMarkDelivery.*:NetworkSolPrepDiscTest.*:NetworkEntit*:NetworkGrossLos*:NetworkInject*:NetworkEpochContract.*:NetworkEpochObservers.*:NetworkRunEnd*:NetworkKnobsEpochDriver.*`,
+148 of 148. Runs under `D:/GnssProcessorSupport/runs_glm`, every one exit 0; simulator arms with the start offset and 4
+threads (`arm_guard.py` ok, first network epoch 261060). Outputs in `gates/gross_los_marks/out/` (`g1_*`, `g2_*`, `g3o_*`,
+`g4o*`).
+
+**Read as registered, A1 misses G4's value bound and, read site by site, G2's held share at STPM; G1, G3, G2's marks,
+delivery and positions meet.**
+
+- **G1, identity with the key off** (`_rap_glm1_{f,s}_{base,off}_2`, 2 h): both reference files 37 of 40 files identical,
+  3 in wall-clock columns only. Meets.
+- **G2, day 129, key on against off, 6 h** (`_rap_glm1_f_{on,off}_6`). Gross-LOS marks by hour 10 0 10 4 0 0 against
+  14 0 129 765 79 0; at 966 standing satellite-epochs no unaccounted mark (5 R lines are owed marks landing). Delivery:
+  17 onsets, 10 re-seeds and their 10 response epochs, each with its R line; none lost. Other differences, with their
+  cause: the R lines and counters of the marked satellites; `network_epoch_status` retro counts; the built-in user's
+  traces; the emitted clock level of every satellite of a constellation at 717 epochs (up to 19 mm, common to the
+  constellation: the clock frame hold's vote leaves out marked satellites), between satellites at most 0.1 mm (the
+  trace's rounding). Users (17, replays `_rap_glm2_{on,off}_<site>`): 3D median over hours 2 to 6, on minus off, median
+  over the 17 +0.0 mm (bound +1 mm), largest +4.6 mm (UTQI; bound +20 mm): meets. WTZZ00DEU hours 4 and 5 11.8 / 6.8 mm
+  against 32.8 / 38.0 mm. Held samples of the marked satellites over hours 3 to 5, pooled: 15,372 against 9,297 (tight
+  rule), 6,778 against 5,180 (registered rule); user events at the epochs whose mark the key removes 94 against 8,386.
+  Site by site the held count is lower at STPM (304 against 368) and CEDU (21 against 22), and under the registered rule
+  also at BADG (1,252 against 1,326) and HARB (152 against 154): a miss read per site, met pooled. By hour 1 to 6 (3D
+  on / off mm; held share of the marked satellites on / off): STPM 1621/1621 286/286 37/37 24/31 15/9 14/14, share
+  0.01/0.01 0.02/0.02 0.44/0.44 0.00/0.00 0.06/0.21 0.92/0.92; WUH2 790/790 94/94 41/41 16/38 37/58 50/36, share
+  0.00/0.00 0.00/0.00 0.62/0.60 0.50/0.06 0.26/0.00 0.45/0.43; ANMG 805/805 75/75 71/71 47/43 76/40 42/63 (fixes nothing
+  in either: shares at most 0.03); UTQI 2731/2731 104/104 80/80 58/53 57/47 72/68 (shares at most 0.07). STPM's hour-5
+  loss is listed, not traced.
+- **G3, simulator, key on against off, 6 h** (re-run `_rap_glm1o_s_{on,off}_6`): 37 of 40 files identical, 3 in
+  wall-clock columns only; ring fix truth audit 406,237 right, 0 wrong, 0 wrong decisions in both. Meets.
+- **G4, injected code_step** (re-run `_rap_glm1o_s_{ev,null}_4`; 20 m on G05, G11, G12, G13, G15, G17 at S30000SIM from
+  268230 for 1800 s). The screen declares the six by its ordinary path at 268260 (not the cold bound: the registration
+  addendum's expectation of cold declarations, and with it the marks at onset + 1, does not apply). Marks: each of the
+  six carries one gross-LOS mark more than the null leg, at 268260, and none else: meets. Values, onset + 2 (268320) to
+  the end of the window (270030), event minus null leg, between satellites: clock up to 19.6 mm, phase bias up to 37.7 mm,
+  code bias up to 0.05 mm (bound 1 mm): misses. The phase clock (clock less phase bias) is offset up to 19.2 mm (G12
+  L2W) and drifts slowly (G12 L2W 17.8 mm at 268290, 8.3 mm at 270060); epoch to epoch the offset moves median 0.26 mm,
+  95th percentile 0.98 mm (two-run noise), except G12 (up to 7.6 mm at ring-fix holds the two legs decide at different
+  epochs). Reading: a network without one station's code on six satellites sits on a solution offset by up to 2 cm for
+  as long as the declaration stands; the onset mark covers the step into it, and no further step follows. Also seen:
+  five of the six declarations never end in the run (G17 expires at 271110; the others stand from 268260 to the run's
+  end, 2 h after the step ended), card SCE's finding.
+
+Arming is the managing session's decision under the author's arming rule.
