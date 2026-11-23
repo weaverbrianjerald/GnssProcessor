@@ -40,10 +40,16 @@
  *
  * The rule's numbers are constants of this file, frozen by the card that pre-registered the
  * mechanism before any graded run; they are not keys.
+ *
+ * The rule's four time windows (@ref kRingFixWindowS, @ref kRingFixGapS, @ref kRingFixPersistEpochs,
+ * @ref kRingFixMonitorEpochs) take their values from their rows in the table of time windows
+ * (network/driver/TimeWindows.hpp), which states each in seconds with its counting clock; the
+ * constants keep their names and values.
  */
 
 #include "network/state/Entities.hpp"   // net::ArcTable
 #include "network/diag/BoundedTally.hpp"   // BoundedTally (the names behind the run-end counts)
+#include "network/driver/TimeWindows.hpp"  // the time windows of the rule (kNetworkTimeWindows)
 
 #include <spdlog/spdlog.h>
 
@@ -72,18 +78,20 @@ inline constexpr double kRingFixMaxSigmaCyc = 0.10;
 /// The gate's bound on the fraction of the ionosphere-free N1 (cycles).
 inline constexpr double kRingFixMaxFracCyc = 0.20;
 /// The damage gate's event window (s): no decision on a link with an event inside it.
-inline constexpr double kRingFixWindowS = 600.0;
+inline constexpr double kRingFixWindowS = networkTimeWindowSeconds(NetworkTimeWindow::RingFixWindow);
 /// A pause longer than this between two epochs at which a link is a chord with a float restarts
 /// its continuity count (s).
-inline constexpr double kRingFixGapS = 45.0;
+inline constexpr double kRingFixGapS = networkTimeWindowSeconds(NetworkTimeWindow::RingFixGap);
 /// Epochs at which a candidate must pass the gate with the same integers before it is decided.
-inline constexpr int kRingFixPersistEpochs = 10;
+inline constexpr int kRingFixPersistEpochs =
+    static_cast<int>(networkTimeWindowEpochs(NetworkTimeWindow::RingFixPersist));
 /// The hold row's sigma on each band's ambiguity column (m): the oracle pin's row.
 inline constexpr double kRingFixHoldSigmaM = 1.0e-4;
 /// The monitor's bound on the held link's post-fit ionosphere-free phase residual (m).
 inline constexpr double kRingFixMonitorBoundM = 0.03;
 /// Consecutive epochs above the monitor's bound that release a held link.
-inline constexpr int kRingFixMonitorEpochs = 4;
+inline constexpr int kRingFixMonitorEpochs =
+    static_cast<int>(networkTimeWindowEpochs(NetworkTimeWindow::RingFixMonitor));
 /// network.ring_fix.resume_response "revalidate": the level of the test of a suspended link's held integers against its
 /// own float (a chi-square test with two degrees of freedom in the float's formal covariance times sigma_scale^2).  A
 /// probability, not a size: the same level holds for any receiver class, the scale coming from the float itself.

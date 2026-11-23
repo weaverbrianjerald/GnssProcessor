@@ -81,6 +81,8 @@
  * it directly with synthetic streams of known truth.
  */
 
+#include "network/driver/TimeWindows.hpp"   // the re-base gap (kNetworkTimeWindows)
+
 #include <map>
 #include <set>
 #include <string>
@@ -102,7 +104,7 @@ public:
         double leash_m{50.0};     ///< Stage 1: |A_c| re-anchor bound (m).  Measured 12 h wander on the reference lineage: 23 m.
         bool   jump_test{false};  ///< Stage 2: mark per-satellite common-removed steps.  Independent of stage 1; alone it marks the raw wire.
         double jump_m{1.5};       ///< Stage 2: flat step threshold (m).  Empirical: about 16 σ of the per-epoch walk step; the census outlier floor (0.5 m) would mark 10× as often.
-        double max_gap_s{600.0};  ///< Key gap (s) beyond which a returning satellite is a first sighting (re-init, no step test).
+        double max_gap_s{networkTimeWindowSeconds(NetworkTimeWindow::ClockEmitRebaseGap)};  ///< Key gap (s) beyond which a returning satellite is a first sighting (re-init, no step test); its row in the table of time windows.
         double gap_jump_m{0.0};   ///< Stage 2b (`network.clock_disc_gap_jump_m`): on a return after more than max_gap_s, test the common-removed step against the retained pre-gap baseline with this threshold (m).  Requires jump_test.  0 = off: a stale return stays an untested first sighting, which leaves the steps of eclipse re-admissions (gaps of about 55 min) unmarked; without `network.clock_temporal_anchor` and `network.clock_anchor_mark` nothing else marks those steps.  Designed for frame_hold lineages: with the hold off, the common wander over the gap is not drained, contaminates the statistic, and must be absorbed by this threshold.
         int    min_common{4};     ///< Minimum fresh unforced keys for a valid μ vote; below it the frame does not move this epoch.
     };
