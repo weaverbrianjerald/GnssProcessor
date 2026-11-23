@@ -84,6 +84,16 @@ struct ModelStack {
     std::unique_ptr<PppModel> ppp;
     std::unique_ptr<MeasurementModel> model;
 
+    /// The file a configuration is written to before it is loaded.  It lies in the directory of
+    /// the running test, which tempDir() already names after the test, so the file name carries
+    /// only a short form of @p tag (at most 24 characters plus a hash): a tag that repeats a long
+    /// test name would otherwise put the path near the Windows limit of 260 characters.
+    /// @param tag Distinguishes two stacks loaded in one test.
+    /// @return `tempDir() / "config_<short tag>.json"`.
+    static std::filesystem::path configPath(const std::string& tag) {
+        return gnss_test::tempDir() / ("config_" + detail::flatten(tag, 24) + ".json");
+    }
+
     /// Loads a configuration and builds the stack around it.
     /// @param mode        processing.mode ("ppp-rtk" is uncombined; "ppp" with uncombined_enabled false is iono-free).
     /// @param processing  extra members of the processing object (each starting with a comma).
@@ -93,7 +103,7 @@ struct ModelStack {
     bool load(LogManager& log, const std::string& tag, const std::string& mode,
               const std::string& processing, const std::string& estimation, bool bssd,
               const std::string& top = "") {
-        const auto path = gnss_test::tempDir() / (std::string("obs_equation_") + tag + ".json");
+        const auto path = configPath(tag);
         {
             std::ofstream out(path);
             out << R"({
@@ -120,7 +130,7 @@ struct ModelStack {
 
     /// Loads a configuration given as JSON text and builds the stack around it.
     bool loadText(LogManager& log, const std::string& tag, const std::string& text) {
-        const auto path = gnss_test::tempDir() / (std::string("obs_equation_") + tag + ".json");
+        const auto path = configPath(tag);
         {
             std::ofstream out(path);
             out << text;

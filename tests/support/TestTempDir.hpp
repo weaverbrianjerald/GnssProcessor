@@ -66,19 +66,26 @@ inline const bool kProcessRootCleanupRegistered = [] {
     return true;
 }();
 
-/** @brief Directory-name form of @p raw: filesystem-safe, at most 80 characters plus a hash. */
-inline std::string flatten(std::string raw) {
+/**
+ * @brief Directory-name form of @p raw: filesystem-safe, at most @p max_chars characters plus
+ *        a hash.
+ * @param raw       The name (a test name, a tag).
+ * @param max_chars The longest name kept whole; a longer one is cut to @p max_chars and
+ *                  suffixed with "_" and 8 hex digits of its hash, so two long names stay
+ *                  distinct.
+ * @return The flattened name.
+ */
+inline std::string flatten(std::string raw, std::size_t max_chars = 80) {
     for (char& c : raw) {
         const bool keep = (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') ||
                           (c >= 'a' && c <= 'z') || c == '_' || c == '.' || c == '-';
         if (!keep) c = '_';
     }
-    constexpr std::size_t kMax = 80;
-    if (raw.size() > kMax) {
+    if (raw.size() > max_chars) {
         const std::size_t h = std::hash<std::string>{}(raw) & 0xFFFFFFFFu;
         char hex[16];
         std::snprintf(hex, sizeof(hex), "%08zx", h);
-        raw = raw.substr(0, kMax) + "_" + hex;
+        raw = raw.substr(0, max_chars) + "_" + hex;
     }
     return raw;
 }
