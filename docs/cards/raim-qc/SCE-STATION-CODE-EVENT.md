@@ -117,3 +117,52 @@ folder; scripts `sce_timeline.py`, `sce_scan.py`, `sce_obs_flags.py` under `runs
 
 Candidates (a) to (d) as in section 4, with places, edges and the simulator injector `code_ramp`, are described in
 the report. Nothing is built, armed or run.
+
+---
+## 6. 2026-11-23, stage A1: two existing keys as arms (registered before the first run)
+
+Order: `gates/station_code_event/manager_ORDER_A1.md` (the managing session, in the author's absence). No build; nothing
+merged, pushed or armed.
+
+- **Engine:** main's `gnss_processor_int1122.exe` (compiled code of 1bb4964), sha256[:16] a0fadbb1564612b9, 4 threads
+  (`processing.eigen_threads` 4, `network.parallel_max_threads` 4).
+- **Controls (same engine):** `runs_irm/_rap_a22h_{f129,f130,f132,s}_6`.
+- **Arms** (`scripts/rapid_arm.py make` from this branch on the controls' bases: `config/golden/golden_field_refound.json`
+  and `golden_sim_refound.json` of 33c5fef, blob sha256[:16] fc8b458792917d06 and ed13a578404744d9 as in the controls'
+  `rapid.json`; `runs_irm/_days22_cbg/golden_field_doy130.json` and `..._doy132.json` for days 130 and 132; the sim
+  with `network.start_offset_hours` 0.504167), each differing from its control by one key and the output paths, tags
+  in `runs_nom`:
+  - **V:** `network.adm_revet` true (`sce_{f129,f132,f130,s}_v_6`);
+  - **B:** `network.adm_bound_m` 300 (`sce_{f129,f132,f130,s}_b_6`);
+  - **K (S4, information):** day 129 with a copy of the .BIA whose four `SATELLITE_CLOCK_REFERENCE_OBSERVABLES` lines
+    are removed, every bias entry kept (`sce_f129_k_6`, data root `runs_nom/_sce_data_bia_noclkref`).
+- **Order:** day 129 V and B first (one ticket, 10-epoch smoke of V first); then the arm or arms that meet S1 on day
+  132, day 130 and the simulator; K last. Gate labels `rr-sce-...`, priority 5, `--wait-min 1440`.
+
+Readings (as ordered; one sharpened, marked):
+
+- **S1, day 129, each arm against its control.**
+  (a) G22's rows of 02:48:30, 02:49:00 and 02:49:30 at BSHM00ISR are not in the solve (`network_pf_rows.csv`); the
+  admission's events name the station, the satellite and the epoch; its counters are not zero.
+  (b) **Sharpened before the run:** BSHM00ISR's clock stays within **6 m** (ordered: 5 m) of its trend from 02:47 to
+  04:10. The trend is a quadratic fitted on the arm's own clock over 02:30:00 to 02:47:00 and 04:10:00 to 04:30:00
+  (fit rms 0.55 m on the controls). Reason: on the run without the .BIA, whose code residuals there are under 1 m, the
+  clock departs up to 4.3 m from this trend outside G22's epochs (trend error), so 5 m would leave 0.7 m of margin;
+  the failing cases read 16.6 m (without the .BIA) and 44.0 m (the control).
+  (c) No station stand-down at BSHM00ISR from 02:47 to 04:10; lines of sight declared there, G22 apart: at most 2.
+  (d) Marks in the product in hour 4 (03:00 to 04:00, `manager_retro_marks.py`): at most 50 (control 790).
+  (e) Products identical to the control up to the first epoch at which the key acts. Every row the key refuses in the
+  6 h is listed with its distance; rows refused whose post-fit residual in the control stays under 50 m: 0.
+  (f) Built-in user by hour: hours 4 and 5 at most 15 mm (control 32.8 and 38.0 mm); hours 2, 3 and 6 within +5 mm of
+  the control.
+  (g) Held share by hour from hour 3: at least the control's less 0.5 point, GPS and Galileo.
+  (h) Exit 0, 720 epochs emitted.
+- **S2, day 132.** G22's rows at BSHM00ISR from 02:35:30 (a return: re-entry events at 02:34:30 and 02:35:30 in the
+  control) beyond the arm's bound are not in the solve; (e), (f) with hours 2 to 6 within +5 mm, (g) and (h) as above.
+- **S3, day 130 and the simulator.** Rows refused: listed; if none, products and every trace identical to the control
+  (zero then means nothing reached the key); the simulator's truth audit with held, right and wrong counts.
+- **S4, information.** Arm K against the control: BSHM00ISR's clock against its trend and the declarations, side by
+  side.
+- **Outcome rule.** An arm that meets S1 to S3 is a candidate for the reference files, decided by the managing
+  session under the arming rule. The return (the level folded back at the heal) and the stand-down that nothing ends
+  stay open whatever S1 shows (candidates (c) and (d), with the `code_ramp` event, for a later build).
