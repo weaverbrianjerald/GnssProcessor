@@ -745,6 +745,7 @@ add_executable(gnss_tests
     tests/test_innovation_screen.cpp
     tests/test_innovation_screen_engine.cpp
     tests/test_unrecorded_sat_gate.cpp
+    tests/test_unrecorded_sat_gate_edges.cpp
     tests/test_code_bias_gap.cpp
     tests/test_disc_mark_scope.cpp
     tests/test_phase_visible_step_test.cpp
@@ -897,6 +898,7 @@ add_executable(gnss_tests
     tests/test_resume_datum_restore.cpp
     tests/test_rt_state_snapshot.cpp
     tests/test_rt_state_snapshot_latches.cpp
+    tests/test_rt_state_snapshot_unrecorded.cpp
     tests/test_state_family.cpp
     tests/test_state_manager_process_noise.cpp
     tests/test_state_manager_families.cpp

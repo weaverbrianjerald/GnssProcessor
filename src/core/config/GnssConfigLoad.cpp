@@ -670,7 +670,9 @@ namespace GnssProcessor {
         if (ssr_drop_unrecorded_)
             log->info("SSR unrecorded-satellite rule ON: a satellite the stream holds no clock "
                       "record for is left out of the solution until its record arrives (its "
-                      "ambiguity and ionosphere then start afresh).");
+                      "ambiguity and ionosphere then start afresh); below the solvable floor "
+                      "(estimation.defer_until_corrections_ready.min_satellites) the epoch has no "
+                      "corrected solution.");
         // The same rule extended to the phase biases: also a satellite with the stream's clock
         // and without a phase-bias record for a phase signal it is used on.  Default false
         // (byte-identical); derived from network.closed_loop.drop_unrecorded_phase_bias by the
@@ -682,7 +684,9 @@ namespace GnssProcessor {
                       "holds no clock record for, or no phase-bias record for one of the phase "
                       "signals it is used on (the apply site's freshness test), is left out of the "
                       "solution until its records arrive (its ambiguity and ionosphere then start "
-                      "afresh); a missing code bias is no reason.");
+                      "afresh); a missing code bias is no reason; below the solvable floor "
+                      "(estimation.defer_until_corrections_ready.min_satellites) the epoch has no "
+                      "corrected solution.");
         ssr_phase_bias_disc_carry_ = jval<bool>(json,
             "processing.ssr_phase_bias_disc_carry", "ssr_phase_bias_disc_carry", false);
         if (ssr_phase_bias_disc_carry_)

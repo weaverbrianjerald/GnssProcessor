@@ -259,6 +259,7 @@ void RealTimeEngine::applyStagedStateSnapshot_(RtEpochContext& ctx) {
         sm.setSsrDiscontinuityMemory(snap->ssr_disc);
         ssr_phase_bias_applied_  = snap->phase_bias_applied;
         ssr_code_bias_applied_   = snap->code_bias_applied;
+        unrecorded_gate_.restore(snap->unrec_dropped, snap->unrec_recorded);
         last_ssr_generation_id_  = snap->generation_id;
         epoch_count_             = snap->epoch_count;
         first_epoch_     = false;
@@ -350,6 +351,7 @@ void RealTimeEngine::applyStagedStateSnapshot_(RtEpochContext& ctx) {
     sm.setSsrDiscontinuityMemory(snap->ssr_disc);
     ssr_phase_bias_applied_  = snap->phase_bias_applied;
     ssr_code_bias_applied_   = snap->code_bias_applied;
+    unrecorded_gate_.restore(snap->unrec_dropped, snap->unrec_recorded);
     last_ssr_generation_id_  = snap->generation_id;
     epoch_count_             = snap->epoch_count;
     // The first predict inflates over the true gap: time steps from the
@@ -491,6 +493,9 @@ bool RealTimeEngine::harvestStateSnapshot_(RtStateSnapshot& snap, const GnssTime
     snap.ssr_disc      = sm.getSsrDiscontinuityMemory();
     snap.phase_bias_applied = ssr_phase_bias_applied_;
     snap.code_bias_applied  = ssr_code_bias_applied_;
+    // The rule for satellites without their stream records (empty unless it acted).
+    snap.unrec_dropped  = unrecorded_gate_.dropTimes();
+    snap.unrec_recorded = unrecorded_gate_.everRecorded();
     // The initializer's seed latches (card CRS2), under the write knob: a writer without
     // it leaves the map empty and the file keeps the previous bytes.
     if (config_.getRealTimeConfig().state_snapshot_latch_capture && meas_model_) {

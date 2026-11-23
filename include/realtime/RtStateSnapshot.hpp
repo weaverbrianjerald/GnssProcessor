@@ -60,6 +60,7 @@
 #include <istream>
 #include <map>
 #include <ostream>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -103,6 +104,15 @@ struct RtStateSnapshot {
     /// Latch name (one of @ref kRtSnapshotLatchNames) -> set.  Empty on a file written
     /// without realtime.state_snapshot_latch_capture.
     std::map<std::string, bool> init_latches;
+
+    // --- U: the rule for satellites without their stream records (UnrecordedSatGate) ---------
+    /// Dropped satellite -> the continuous GPS time of its Drop (NaN when unknown).  Written as
+    /// "U,<sat>,1,<t>"; empty unless processing.ssr_drop_unrecorded(_phase_bias) left a satellite
+    /// out, so every other file keeps its bytes.
+    std::map<std::string, double> unrec_dropped;
+    /// Satellites seen with their stream records at least once (a later loss is no first
+    /// sighting).  Written as "U,<sat>,0"; empty unless the rule is armed.
+    std::set<std::string> unrec_recorded;
 };
 
 /// The latch names an @c I record may carry, in the writer's order: the four latches of

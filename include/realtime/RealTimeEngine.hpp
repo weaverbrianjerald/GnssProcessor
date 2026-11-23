@@ -345,6 +345,21 @@ public:
     bool lastArRan() const { return last_ar_ran_; }
 
     /**
+     * @brief Whether the most recent epoch that reached the measurement-set conditioning had no
+     *        corrected solution: the rule for satellites without their stream records left fewer
+     *        satellites with their records than the solvable floor
+     *        (@c estimation.defer_until_corrections_ready.min_satellites), so every satellite was
+     *        left out and the filter predicted only.
+     *
+     * Always false unless @c processing.ssr_drop_unrecorded or
+     * @c processing.ssr_drop_unrecorded_phase_bias is armed.  The closed-loop harnesses mark such an
+     * epoch in their trace (@c ar_gate = @c no_corrected_solution).
+     *
+     * @return True when that epoch had no corrected solution.
+     */
+    bool lastEpochWithoutCorrectedSolution() const { return no_corrected_solution_; }
+
+    /**
      * @brief Suppress the MW wide-lane feed into ambiguity resolution, so AR runs plain
      *        MLAMBDA on the Kalman float.  The network closed-loop validation uses this
      *        with full LAMBDA: the KF float carries the consumed network satellite phase
@@ -1138,6 +1153,22 @@ private:
     // --- Measurement-set conditioning (RealTimeEnginePrepare.cpp) ---------
     void dropBroadcastGrade(RtEpochContext& ctx); ///< Drop broadcast-grade sats from the precise solution.
     void dropUnrecorded(RtEpochContext& ctx);     ///< Leave out sats without their stream records (processing.ssr_drop_unrecorded, ssr_drop_unrecorded_phase_bias).
+    /**
+     * @brief The solvable floor's teardown: every ambiguity and ionosphere state is pruned, as the
+     *        model prunes a satellite out of view, with the bookkeeping that names them (the
+     *        reference satellites, the resolver's held pairs, the soft-LLI protections).
+     *
+     * Called by dropUnrecorded at each epoch without a corrected solution.  With every satellite
+     * erased the measurement update returns before the model's state pre-pass, so nothing else
+     * prunes; the readmits at the stream's return then seed the states afresh, which is what lets
+     * them set the discontinuity memories to the returned records.  A no-op once the states are
+     * gone (the later epochs of the same spell).
+     * @param epoch_prefix Log prefix of the epoch.
+     * @param in_view      The satellites of the epoch's modelled set (their held pairs are forgotten
+     *                     with those of the resolver's held satellites).
+     */
+    void pruneSatelliteStatesForNoSolution_(const std::string& epoch_prefix,
+                                            const std::set<std::string>& in_view);
     void seedClockFromWls(RtEpochContext& ctx);   ///< WLS clock seed; runs only with a receiver clock state (not BSSD; see regaugeBssd).
     void regaugeBssd(RtEpochContext& ctx);        ///< BSSD code/phase re-gauge; BSSD only, so mutually exclusive with the above.
 
@@ -1668,6 +1699,9 @@ private:
     /// The rule for satellites without their stream records: which satellites are left out, across
     /// epochs; decided only when processing.ssr_drop_unrecorded or ssr_drop_unrecorded_phase_bias is armed.
     UnrecordedSatGate unrecorded_gate_;
+    /// The last epoch the rule decided had no corrected solution (below the solvable floor); written
+    /// by dropUnrecorded each epoch it runs, read by the closed-loop harnesses after the epoch.
+    bool no_corrected_solution_{ false };
     /// The code-bias gap response: open gaps and re-validation windows live across epochs on
     /// purpose; not part of the RT snapshot (a restored consumer starts with none open).
     /// Untouched with processing.ssr_code_bias_gap_response off.

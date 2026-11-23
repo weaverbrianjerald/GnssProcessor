@@ -773,7 +773,11 @@ namespace GnssProcessor {
 
         /// @brief Leave out of the solution every satellite the stream holds no record for
         ///        (@c processing.ssr_drop_unrecorded, or derived from
-        ///        @c network.closed_loop.drop_unrecorded).
+        ///        @c network.closed_loop.drop_unrecorded).  Each Drop names its cause, the age of
+        ///        the last record and a lost reference satellite; a Readmit is reborn loose with no
+        ///        second reset; when fewer satellites keep their records than the solvable floor
+        ///        (@c estimation.defer_until_corrections_ready.min_satellites) the epoch has no
+        ///        corrected solution (every satellite out, the filter predicts only).
         ///        See @c RealTimeEngine::dropUnrecorded and @c UnrecordedSatGate.
         /// @return True when a satellite without a stream clock record is left out; false
         ///         (default) keeps it with the a priori clock (byte-identical).
@@ -785,7 +789,8 @@ namespace GnssProcessor {
         ///        from @c network.closed_loop.drop_unrecorded_phase_bias).  The phase-bias test is
         ///        the apply site's (the bias age limit times the stale-hold factor when the bias
         ///        staleness gate is on); the whole satellite is left out when one of its signals
-        ///        lacks the record, and a missing code bias is no reason.  See
+        ///        lacks the record, and a missing code bias is no reason.  The edges and the
+        ///        solvable floor are those of @ref ssrDropUnrecorded.  See
         ///        @c RealTimeEngine::dropUnrecorded and @c UnrecordedSatGate.
         /// @return True when the phase-bias rule is armed (it includes the clock rule); false
         ///         (default) keeps such satellites (byte-identical).
