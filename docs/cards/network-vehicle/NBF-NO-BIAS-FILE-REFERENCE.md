@@ -5,14 +5,14 @@
 - **id:** NBF
 - **topic:** network-vehicle
 - **status:** open
-- **summary:** Pre-registered 2026-11-23 on the author's ruling of that morning ("Yes, drop the CODE bias file from the reference"). The reference files apply no value of the CODE bias file (`model_corrections.enable_code_phase_bias` false), but PathResolver still finds the observation day's `.BIA` by a glob with no key to stop it, and its presence changes the run (clock reference observables, coverage, seeds). A key `files.use_bias_file` (default true, identical) stops PathResolver from returning any `.bia` or `.bsx`; the two reference files take it false with `model_corrections.bias_coverage_requires_apply` true. Readings fixed before any run (section 4). Step 2 (2026-11-23): identity at the default and equivalence with card BRP's data copy without the file both hold over 2 h; the two reference files take the keys in commit 16197c6. Step 4 (2026-11-23): every epoch emitted on four 6 h beds and 2026 day 145, the simulator 0 wrong held, integers identical in the cycle form except two GPS links on day 130 that the run without the file decided early on marginal floats and holds one narrow-lane cycle off (it fits worse there by 2 to 4 mm); the 48 receiver replays within 10.3 mm.
+- **summary:** Pre-registered 2026-11-23 on the author's ruling of that morning ("Yes, drop the CODE bias file from the reference"). The reference files apply no value of the CODE bias file (`model_corrections.enable_code_phase_bias` false), but PathResolver still finds the observation day's `.BIA` by a glob with no key to stop it, and its presence changes the run (clock reference observables, coverage, seeds). A key `files.use_bias_file` (default true, identical) stops PathResolver from returning any `.bia` or `.bsx`; the two reference files take it false with `model_corrections.bias_coverage_requires_apply` true. Readings fixed before any run (section 4). Step 2 (2026-11-23): identity at the default and equivalence with card BRP's data copy without the file both hold over 2 h; the two reference files take the keys in commit 16197c6. Step 4 (2026-11-23): every epoch emitted on four 6 h beds and 2026 day 145, the simulator 0 wrong held, integers identical in the cycle form except on day 130, where the reference without the file holds two wrong network integers (KOKV00USA G31, GAMB00PYF G08, one narrow-lane cycle each, to the end of the run); the 48 receiver replays within 10.3 mm.
 - **dates in the text:** 2026-11-23
 - **knobs / posture:** new key `files.use_bias_file` (default true: today's behaviour). Reference files `config/golden/golden_{field,sim}_refound.json`: `files.use_bias_file` false and `model_corrections.bias_coverage_requires_apply` true, through the manifest, the ledger and the generator; the frozen lineages `golden_{field,sim}_rf0hv18` and the BeiDou lineage unchanged.
 - **code:** branch `config/bias-file-key-2026-11-23` from `int/2026-11-23` (`42efa23`), worktree `D:/GnssProcessorSupport/worktrees/biakey1123`.
 - **run dirs:** `D:/GnssProcessorSupport/runs_irm/_rap_nbf_*`; reports `D:/GnssProcessorSupport/gates/adopt_2026-11-23/`.
 - **source:** the author's ruling of 2026-11-23, relayed by the managing session (`D:/GnssProcessorSupport/gates/adopt_2026-11-23/manager_ORDER_2.md`); the evidence of card BRP (branch `card/brp-broadcast-poster`, not yet merged).
 
-**Outcome.** The key `files.use_bias_file` (89b5148) does what card BRP's arms did: identical to main's engine at its default, and false on the unchanged data tree identical to the run on card BRP's data copy without the file. The two reference files take it false with `model_corrections.bias_coverage_requires_apply` true (16197c6). Over 6 h the reference without the file emits every epoch on four beds and 2026 day 145, holds 0 wrong integers on the simulator and the control's integers on days 129, 132 and 145, cuts day 129's marks from 1,053 to 298, and leaves the built-in users and 48 receivers within about 1 cm. Day 130: two GPS links held one narrow-lane cycle off (early decisions on marginal floats; fit 2 to 4 mm worse), open.
+**Outcome.** The key `files.use_bias_file` (89b5148) does what card BRP's arms did: identical to main's engine at its default, and false on the unchanged data tree identical to the run on card BRP's data copy without the file. The two reference files take it false with `model_corrections.bias_coverage_requires_apply` true (16197c6). Over 6 h the reference without the file emits every epoch on four beds and 2026 day 145, holds 0 wrong integers on the simulator and the control's integers on days 129, 132 and 145, cuts day 129's marks from 1,053 to 298, and leaves the built-in users and 48 receivers within about 1 cm. Day 130: two wrong network integers, one narrow-lane cycle each, held to the end of the run (open).
 
 > Results are appended TO THIS FILE, below the text, under dated headings.
 
@@ -102,3 +102,26 @@ controls (`brp_held_read.py pairs --rule union`): frame-free flagged 11,653, 3,1
 rows are constant whole-cycle offsets per satellite and signal (G11 L2W -1 at HARB and DAV1 on day 129), the two
 networks' satellite integer frames, which the frame-free form does not remove; card BRP's same-products replays are not
 comparable with them.
+
+## 2026-11-23, the day-130 wrong holds stated, and the decisions at a fraction of 0.19 or more on every bed
+
+**Wrong holds.** On day 130 the reference without the bias file holds two wrong network integers, each one narrow-lane cycle: KOKV00USA G31 from 04:02 and GAMB00PYF G08 from 03:03 to the end of the 6 h run (235 and 352 held link-epochs, 587 of the run's 289,065 held GPS and Galileo link-epochs; the cycle form compared 184,716 link-epochs, 1,025 different, all from these two), decided at a fraction of 0.19 and 0.20 cycle with a stated sigma of 0.110 and 0.120 where the adopted reference refused them for 45 to 100 minutes and then held the neighbouring narrow lane; no receiver of the 16 is worse by 1 cm. Decisions at a fraction of 0.19 or more with a stated sigma of 0.10 or more are routine in both runs (14, 11, 12, 3 and 10 on days 129, 130, 132, 2026 day 145 and the simulator, most taken by the adopted reference at the same epoch with the same integers); only these two led to other integers. The managing session accepted the analysis and ruled that the adoption goes on; nothing
+is rolled back on `int/2026-11-23`.
+
+**Decisions at a fraction of 0.19 cycle or more with a stated sigma of 0.10 or more** (`network_ring_fix.csv`, state
+`decided`, the runs without the file; read `gates/adopt_2026-11-23/nbf_marginal_decisions.txt`, script
+`nbf_marginal_decisions.py`), with what the control did on the same link:
+
+| Bed | Such decisions / all | Control held or decided the same at that epoch (cycle form) | Control refused at that epoch | Different in the cycle form |
+|---|---|---|---|---|
+| Day 129 | 14 / 1,536 | 9 | 5 (PTBB00DEU G17 and WTZR00DEU G10 decided 1 and 5.5 min later with the same integers; MAC100AUS E02, E21 and KRGG00ATF E34 held 3 to 11 epochs, never compared) | 0 |
+| Day 130 | 11 / 1,424 | 8 | 3 (SGOC00LKA E14 decided 5.5 min later with the same integers; GAMB00PYF G08 and KOKV00USA G31 refused 100 and 48 min, then the neighbouring narrow lane) | 2 links (98 and 38 epochs on the link itself) |
+| Day 132 | 12 / 1,770 | 11 | 1 (WARK00NZL G27 decided 30 s later, same integers) | 0 |
+| 2026 day 145 | 3 / 1,809 | 2 | 1 (WARK00NZL G07 decided 4 min later, same integers) | 0 |
+| Simulator | 10 / 1,624 | 10 | 0 | 0 (truth audit 0 wrong) |
+
+The adopted reference takes such decisions as often (mostly the same decisions at the same epochs; on the simulator all right):
+the fraction and the stated sigma alone do not mark the two wrong holds. What sets them apart is the control's refusal
+for 48 and 100 minutes and its later decision at a smaller fraction and sigma (0.164 and 0.075; 0.175 and 0.049). A
+measurement over all held links (the post-fit phase bias of a held link as a monitor) is the stochastic-table session's
+(`gates/held_link_audit/manager_ORDER.md`), reading these runs read-only.
