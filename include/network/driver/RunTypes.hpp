@@ -19,6 +19,7 @@
 #include "network/assembly/StationRows.hpp"      // StationRowInputs, StationRowContext (NetStation::rows)
 #include "network/qc/WithinEpochCulprits.hpp" // WithinEpochCulprits (EpochWorkspace::we_culprits)
 #include "network/slip/BandBreak.hpp"        // BandBreak (RelevelEpochState::band_break)
+#include "network/driver/TimeWindows.hpp"     // the re-admission and code-bias carry windows (kNetworkTimeWindows)
 #include "model/PppModel.hpp"
 #include "common/PppState.hpp"
 #include "slip/MwSlipDetector.hpp"
@@ -516,8 +517,12 @@ struct CarryPrior {
 /// clock seed is attributed to the seed, meaning the data rejected it (the
 /// mark-if-moved rule of invariant #7).  @c kReadmitSeedK: the standardized-residual
 /// threshold of the stash-side seed-vs-solve check (telemetry only).
-inline constexpr long long kReadmitMinGapEp      = 3;      ///< Minimum absence of a re-admission, in loop epochs.
-inline constexpr double    kReadmitVerifyWindowS = 300.0;  ///< Window (s) after a clock seed in which a Q3 nis/abs trip is attributed to the seed.
+/// Minimum absence of a re-admission, in loop epochs (its row in the table of time windows,
+/// network/driver/TimeWindows.hpp).
+inline constexpr long long kReadmitMinGapEp = networkTimeWindowEpochs(NetworkTimeWindow::ReadmitMinGap);
+/// Window (s) after a clock seed in which a Q3 nis/abs trip is attributed to the seed (its row in
+/// the table of time windows).
+inline constexpr double kReadmitVerifyWindowS = networkTimeWindowSeconds(NetworkTimeWindow::ReadmitVerify);
 inline constexpr double    kReadmitSeedK         = 6.0;    ///< Standardized-residual threshold of the stash-side seed-vs-solve check (telemetry only).
 
 /// @brief Identity key of a dense-carried shared parameter (C1).  Mirrors the internal key
@@ -1959,8 +1964,9 @@ inline std::pair<double, double> shDevExactUpdate(double d_pred, double p_pred,
 ///
 /// A constant, not a knob.  The one definition read by every one of those sites and by
 /// the parameter registry (@c ParamSpec::gap_horizon_s of the receiver code bias);
-/// it was formerly two function-local constants and six literals.
-inline constexpr double kRxCbMaxGapS = 900.0;
+/// it was formerly two function-local constants and six literals.  Its value is its row in the
+/// table of time windows (network/driver/TimeWindows.hpp).
+inline constexpr double kRxCbMaxGapS = networkTimeWindowSeconds(NetworkTimeWindow::RxCbMaxGap);
 
 /// Inject-time decision for one carried receiver code-bias prior (rx-CB carry,
 /// docs/record/SPEC_rx_cb_carry.md).  Read-only with respect to the carry map: the produce

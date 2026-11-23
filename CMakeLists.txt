@@ -162,6 +162,7 @@ add_library(gnss_core STATIC
     src/core/app/ApplicationConsumerReplay.cpp
     src/core/network/driver/ApplicationNetworkAssembly.cpp
     src/core/network/driver/Knobs.cpp
+    src/core/network/driver/TimeWindows.cpp
     src/core/network/state/SnapshotFingerprint.cpp
     src/core/network/state/WarmResume.cpp
     src/core/network/state/Entities.cpp
@@ -861,6 +862,7 @@ add_executable(gnss_tests
     tests/network/test_network_knobs_lane_emit.cpp
     tests/network/test_network_knobs_epoch_driver.cpp
     tests/network/test_network_knobs_station_assembly.cpp
+    tests/network/test_network_time_windows.cpp
     tests/network/test_network_layout_flags.cpp
     tests/network/test_network_epoch_contract.cpp
     tests/network/test_network_station_build.cpp

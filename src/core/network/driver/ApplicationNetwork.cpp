@@ -76,6 +76,7 @@
 
 #include "app/Application.hpp"
 #include "network/driver/Run.hpp"     // NetworkRun, networkEngineSpec
+#include "network/driver/TimeWindows.hpp"   // networkTimeWindowsLog (the run-start table of time windows)
 
 #include "rinex/MultiRinexSync.hpp"
 #include "products/ProductCache.hpp"
@@ -273,7 +274,8 @@ int Application::runNetwork() {
     // Setup builders: each in its concern's file, filling the run member
     // its name says, called in this order.  The two simulation oracles throw on a bad
     // fixture before any trace file opens; the wavelength provider follows openAll,
-    // which opens one of its consumers.
+    // which opens one of its consumers.  The table of time windows goes to the text log only.
+    networkTimeWindowsLog(run);
     networkSlipQcConfigure(run);
     networkSlipOracleArm(run, log_manager_);
     networkOraclePinArm(run, log_manager_);
