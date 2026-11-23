@@ -277,3 +277,18 @@ delivery and positions meet.**
   end, 2 h after the step ended), card SCE's finding.
 
 Arming is the managing session's decision under the author's arming rule.
+
+## 2026-11-23: reading G4b registered before it is read (from the existing G4 files, no run)
+
+On the managing session's note of the same day: G4's value bound measured the event's own effect on the network (one
+station's code gone from six satellites) against a leg without the event, not what the fix leaves unmarked; G4 stays a
+miss as read. **G4b**, beside it: in the event leg with the key on (`_rap_glm1o_s_ev_4`), from the onset plus two epochs
+(268320) to the end of the window (270030), the satellite-epochs at which the phase-visible product steps by more than
+5 mm in one epoch between satellites with no mark of that satellite at that epoch, against the same count in the null
+leg (`_rap_glm1o_s_null_4`), same window. Phase-visible product: the phase clock (emitted clock less phase bias) per
+phase signal; between satellites: less the epoch-to-epoch change's median over the constellation's other satellites;
+a satellite-epoch counts when any of its signals steps. Marked: an R line of the satellite at that epoch, or a change of
+any of its discontinuity counters or of a phase bias's integer counter at that epoch. Bar: no more than the null leg.
+
+For the record: the G2 arms (`_rap_glm1_f_{on,off}_6`) ran at 20 threads, as did the A0.3 replays; outputs are of one
+configuration per comparison and unaffected; every arm from here on runs at 4 threads (`arm_guard.py`).
