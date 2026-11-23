@@ -73,6 +73,16 @@
  * Product files are the exception: when the resolver returns a non-empty
  * product list, the driver replaces the config's product paths with it.
  *
+ * ## Bias file
+ *
+ * The observation day's @c .bia / @c .bsx file is returned with the other
+ * products while @c files.use_bias_file is true (the default).  With the key
+ * false no @c .bia and no @c .bsx is returned in either mode: internal mode
+ * does not glob for one, production mode removes any from the downloader's
+ * list.  isBiasFile() is the one test of what counts as a bias file; the
+ * config loader uses it to refuse a bias file named explicitly together with
+ * the key false.
+ *
  * The application driver applies the resolved paths to @c GnssConfig via
  * the @c setObservationPath / @c setNavigationPath / @c setProductPaths
  * setters, plus @c setBaselineReferenceRinexPath /
@@ -134,6 +144,16 @@ public:
      * @return true on success.
      */
     bool resolve(ResolvedPaths& resolved);
+
+    /**
+     * @brief True when @p path names a bias file: extension @c .bia or @c .bsx, in any case.
+     *
+     * The one rule for what @c files.use_bias_file false leaves out (see "Bias file" above).
+     *
+     * @param path A product file path.
+     * @return true for a @c .bia / @c .bsx file.
+     */
+    static bool isBiasFile(const std::filesystem::path& path);
 
 private:
     // ---------------- Internal-mode helpers ----------------

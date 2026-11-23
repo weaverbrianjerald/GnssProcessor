@@ -29,6 +29,7 @@
 #include "common/Constants.hpp"                   // GPS_Lx_WAVELENGTH (H3); unused in this file
 #include "math/TimeUtils.hpp"
 #include "products/NetworkProductEmitter.hpp"   // kDefaultDiscThresholdM (R9); unused in this file
+#include "products/PathResolver.hpp"            // PathResolver::isBiasFile (files.use_bias_file check)
 #include "products/StationInfoFile.hpp"
 #include <algorithm>
 #include <atomic>
@@ -255,6 +256,18 @@ namespace GnssProcessor {
                     err->error("state_ambiguity_basis=nl_wl is not supported "
                         "in baseline modes (DD ambiguities have their own "
                         "schema).  Future work.");
+                    return false;
+                }
+            }
+            // A bias file named explicitly (a line of files.product_list_path)
+            // contradicts files.use_bias_file false: refuse rather than read it.
+            if (!use_bias_file_) {
+                for (const auto& p : product_paths_) {
+                    if (!PathResolver::isBiasFile(p)) continue;
+                    log_manager.getLogger("gnss_config")->error(
+                        "files.use_bias_file is false but the configuration names the bias file {} "
+                        "(files.product_list_path {}): remove the file from the list, or set "
+                        "files.use_bias_file true", p.string(), product_list_path_.string());
                     return false;
                 }
             }
@@ -2939,6 +2952,15 @@ namespace GnssProcessor {
             }
         }
 
+        // --- Bias file (.bia / .bsx) -----------------------------------
+        // True (the default) keeps today's behaviour: PathResolver returns the
+        // observation day's bias file with the other products.  False: no
+        // .bia and no .bsx reaches the run (PathResolver, both data modes).  A
+        // bias file named in product_list_path together with false is refused
+        // in loadFromJson's cross-section checks.
+        // The summary line (logConfigurationSummary_) reports it as bias_file=.
+        use_bias_file_ = jval<bool>(json, "files.use_bias_file", "use_bias_file", true);
+
         // Ocean tidal loading BLQ
         {
             std::string otl_path_str = jval<std::string>(json, "files.otl_blq_path", "otl_blq_path", "");
@@ -3819,10 +3841,12 @@ namespace GnssProcessor {
     void GnssConfig::logConfigurationSummary_(LogManager& log_manager) const {
         const char* mode_str = processingModeLabel(processing_mode_);
         log_manager.getLogger()->info("Loaded configuration: mode={}, uncombined_enabled={}, elevation_mask={} deg, "
-            "observation_path={}, navigation_path={}, {} products, leap_seconds={}",
+            "observation_path={}, navigation_path={}, {} products, bias_file={}, leap_seconds={}",
             mode_str,
             uncombined_enabled_, elevation_mask_deg_, observation_path_.string(),
-            navigation_path_.string(), product_paths_.size(), leap_seconds_tai_);
+            navigation_path_.string(), product_paths_.size(),
+            use_bias_file_ ? "read when found" : "not read (files.use_bias_file false)",
+            leap_seconds_tai_);
 
         // Consolidated toggle echo, printed here rather than at the tail of
         // loadEstimationSection_ so every field reports its final, post-resolution
