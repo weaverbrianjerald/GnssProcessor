@@ -45,6 +45,7 @@ namespace net { struct NetworkEntities; struct StationEntryRecord; }
 struct StationEntryCounters {
     long long sen_park_station_epochs = 0;   ///< Refused station-epochs that the null pin retried (at least one pin row).
     long long sen_null_pin_rows = 0;         ///< Pin rows appended, summed over station-epochs.
+    long long sen_null_coupled_skipped = 0;  ///< Directions below the null bar left unpinned because a pin would pass information to the shared border (a datum direction of the network).
     long long sen_park_columns = 0;          ///< Columns parked, summed over station-epochs.
     long long sen_park_kept = 0;             ///< Station-epochs with a parked column that then entered the solve.
     long long sen_park_episodes = 0;         ///< Park episodes opened (a station's first parked epoch after one without).
@@ -73,8 +74,11 @@ struct StationEntryCounters {
  * (@f$A_r^\top W A_r@f$ plus the pre-PD prior).  A direction @f$v@f$ with @f$N v = 0@f$ has
  * @f$A_r v = 0@f$, so it is invisible to every row and to the shared border; a row along it at
  * the linearization point fixes it and moves nothing else.  Null directions are the eigenvectors
- * whose eigenvalue is below 1e-12 of the largest (the kernel's own count); each gets one row of
- * weight 1e-6 of the median of the other eigenvalues (tag @c LocalNullPin).  The columns with a weight of at least
+ * whose eigenvalue is below 1e-12 of the largest (the kernel's own count) and whose pin would pass
+ * the shared border at most 1e-14 of the station's shared block (|c|^2 / ev with
+ * c = A_s^T W A_r v; a direction coupled to the border is a datum direction of the network and is
+ * left alone); each gets one row of weight 1e-6 of the median of the other eigenvalues (tag
+ * @c LocalNullPin).  The columns with a weight of at least
  * 0.05 in a pinned direction are parked: removed from every harvest list (a column with a post-PD
  * carry keeps its harvest).  A rowless column is the special case @f$v = e_c@f$.
  *

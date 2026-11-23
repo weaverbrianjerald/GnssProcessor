@@ -337,6 +337,24 @@ TEST(StationNullPin, ABlockWithoutANullDirectionTakesTheUnchangedPath) {
     EXPECT_EQ(ctx.counters.sen_null_pin_rows, 0);
 }
 
+TEST(StationNullPin, ADirectionCoupledToTheBorderIsNotPinned) {
+    GnssConfig cfg;
+    ASSERT_TRUE(loadRefWith([](nlohmann::json& j) { j["network"]["station_local_null_pin"] = true; },
+                            cfg, "coupled"));
+    NetworkRunContext ctx(cfg, cfg.getNetworkConfig());
+    NetStation st;
+    // Local column 2 equals column 1 plus a tiny share of the shared column 1: the local block's
+    // direction (0, 1, -1) is below the bar, but its residue A_r v lies along a shared column, so
+    // a pin would hand the border information (a datum direction of the network).
+    StationAssembly R = nullBlock(0.0);
+    for (Eigen::Index r = 0; r < R.A_r.rows(); ++r) R.A_r(r, 2) += 1e-7 * R.A_s(r, 1);
+    const Eigen::Index rows0 = R.A_r.rows();
+    EXPECT_EQ(networkStationNullPin(ctx, st, R), 0);
+    EXPECT_EQ(R.A_r.rows(), rows0);
+    EXPECT_EQ(ctx.counters.sen_null_coupled_skipped, 1);
+    EXPECT_TRUE(R.parked_cols.empty());
+}
+
 TEST(StationNullPin, OffLeavesTheAssemblyUntouched) {
     GnssConfig cfg;
     ASSERT_TRUE(loadRefWith([](nlohmann::json&) {}, cfg, "park_off"));

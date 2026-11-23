@@ -82,9 +82,27 @@ int networkStationNullPin(NetworkRunContext& ctx, const NetStation& st, StationA
                      kept.end());
     const double lambda = 1e-6 * kept[kept.size() / 2];
     if (!(lambda > 0.0) || !std::isfinite(lambda)) return 0;
+    // A direction below the bar is pinned only when it is local: the information a pin along v
+    // passes to the shared border is about |c|^2 / ev with c = A_s^T W A_r v (it frees the
+    // station's data along c), and it must stay three orders below the gate's own null bar
+    // (1e-11 of the largest shared eigenvalue): at most 1e-14 of the station's shared block.
+    // A direction coupled to the border is left alone (a pin would fix a datum direction of the
+    // network); if the station then still fails, it is dropped as before.
+    double shared_scale = 0.0;
+    if (R.A_s.rows() == R.A_r.rows() && R.A_s.cols() > 0)
+        shared_scale = (R.A_s.transpose() * R.w.asDiagonal() * R.A_s).diagonal().cwiseAbs().maxCoeff();
     std::vector<Eigen::Index> nulls;
-    for (Eigen::Index k = 0; k < ev.size(); ++k)
-        if (std::abs(ev(k)) < cut) nulls.push_back(k);
+    for (Eigen::Index k = 0; k < ev.size(); ++k) {
+        if (std::abs(ev(k)) >= cut) continue;
+        double injected = 0.0;
+        if (shared_scale > 0.0) {
+            const Eigen::VectorXd Arv = R.A_r * es.eigenvectors().col(k);
+            const Eigen::VectorXd c = R.A_s.transpose() * R.w.cwiseProduct(Arv);
+            injected = c.squaredNorm() / std::max(std::abs(ev(k)), 1e-300);
+        }
+        if (injected <= 1e-14 * shared_scale) nulls.push_back(k);
+        else ++ctx.counters.sen_null_coupled_skipped;
+    }
     if (nulls.empty()) return 0;
 
     // One row per null direction: A_r row = v^T, A_s row = 0, innovation 0 (the linearization
@@ -328,10 +346,12 @@ int networkStationEntryRunEnd(const NetworkRunEndView& v) {
     }
     if (ctx.knobs.local_null_pin)
         v.log->info("Network (station local null pin): {} refused station-epoch(s) retried with "
-                    "{} null-direction pin row(s), {} parked column(s) [{}]; {} of them admitted; "
+                    "{} null-direction pin row(s) ({} direction(s) below the bar left unpinned as "
+                    "coupled to the border), {} parked column(s) [{}]; {} of them admitted; "
                     "{} park episode(s) opened, {} closed.  0 rows is no refusal with a null "
                     "direction (or inert wiring).",
-                    c.sen_park_station_epochs, c.sen_null_pin_rows, c.sen_park_columns,
+                    c.sen_park_station_epochs, c.sen_null_pin_rows, c.sen_null_coupled_skipped,
+                    c.sen_park_columns,
                     fam.empty() ? std::string("none") : fam, c.sen_park_kept,
                     c.sen_park_episodes, c.sen_park_episodes_closed);
     v.log->info("Network (station entry): {} refusal(s) (decoupling edges), {} return(s) "
