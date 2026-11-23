@@ -441,3 +441,40 @@ read as half the rows wrong (E1b: 2,997 of 5,992); `r1_holds.py` reads per epoch
 control's integers at the same epoch. The grader's reset test (a sigma above 50 m after one below 10 m) flags the
 first floor epoch of E3, where the filter predicts only and the position sigma grows to 94.9 m and then 414 m while
 the position is unchanged; it is not a complete reset.
+
+**2026-11-23, two readings made exact on the managing session's note (analysis only, no run).**
+
+1. *Held integers against the simulator's truth, pair form.* The truth reading set aside above is usable in the pair
+   form (`runs_nom\_irdu_grades\scripts_s20\brp_sim_pairfree.py`). The control's several offsets per
+   satellite-signal come from the differenced user: each change of its reference satellite shifts every satellite's
+   held-minus-true value by the reference's term, while between two satellites held at one epoch in one
+   (constellation, signal) group the held-minus-true difference is an integer constant through every reference
+   change. Per pair, the mode of the rounded difference over every held epoch to the stream's end; a held sample with
+   another held satellite of its group at the epoch is checked, its error being the median over its partners of the
+   difference less the mode; right below 0.25 cycle, wrong from 0.75 cycle. Held rule: section 7's two forms. Script
+   `gates\user_stale_corrections\scripts\r1_truth_pair.py`, output `out\grade_r1_truth_pair.txt`. From 30 s before
+   each event to the stream's end (every held sample was checked; none was alone in its group):
+
+   | Arm | Held | Right | Wrong | Between |
+   |---|---|---|---|---|
+   | E1a key on / key off | 5,964 / 5,996 | 5,964 / 5,996 | 0 / 0 | 0 / 0 |
+   | E1b key on / key off | 5,992 / 5,982 | 5,992 / 5,982 | 0 / 0 | 0 / 0 |
+   | E2 key on / key off | 7,478 / 7,542 | 7,478 / 7,542 | 0 / 0 | 0 / 0 |
+   | E3 key on, ustale1 / ustale2 / key off | 5,680 / 3,234 / 2,884 | 5,680 / 3,234 / 2,884 | 0 / 0 / 0 | 0 / 0 / 0 |
+
+   The registered reading "0 wrong held integers against the fixture's truth" is met as written for the three events
+   and the withheld stream. Over each whole run to the stream's end every arm, the unedited control included, holds 28
+   samples between 0.25 and 0.75 cycle and none wrong: E05 and E09 on L5Q (10 epochs each, 266640 to 266910 s) and
+   G05 and G24 on L1C and L2W (2 epochs each, 267570 to 267960 s), in the first hour of holding (the user's first hold
+   is at 265530 s), before any edit.
+
+2. *The withheld stream's statements, whole run.* "Key on, none" holds for the event window. Over the whole run both
+   arms (and the unedited control) share two epochs above 5 cm and 3 sigma at 265230 and 265260 s (0.65 h into the
+   replay, 0.39 m with a sigma of 0.12 m): the first hour, before the user's first hold and before any edit, not the
+   rule's doing. The same run holds a second instance outside the registered window: from 282690 s (5.50 h) the stream
+   has ended. With the key off the user reads 57 epochs above 5 cm and 3 sigma, up to 8.05 m at 282720 s with a sigma
+   of 0.99 m (sigma of the flagged epochs 0.04 to 0.99 m, median 0.12 m); with the key on (both engines) the epochs
+   have no corrected solution, the filter predicts only, the position stays where the last corrected epoch left it
+   (0.008 m on ustale1, 0.014 m on ustale2) and its sigma grows to 735 m. The unedited control has the same instance
+   with the key off (25 epochs, up to 5.34 m: the "5.3 m past the end of the simulator stream" of step 0), and the
+   unedited key-on arm the same predict-only answer.
