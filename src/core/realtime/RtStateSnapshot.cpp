@@ -9,6 +9,8 @@
 #include <fmt/format.h>
 
 #include <cerrno>
+#include <cmath>
+#include <limits>
 #include <cstdlib>
 #include <ctime>
 #include <fstream>
@@ -130,6 +132,12 @@ void RtStateSnapshotIO::serialize(std::ostream& os, const RtStateSnapshot& snap)
         const auto it = snap.init_latches.find(name);
         if (it != snap.init_latches.end()) put(fmt::format("I,{},{}", name, it->second ? 1 : 0));
     }
+    // The rule for satellites without their stream records: its dropped set with the drop
+    // times, then the satellites seen with their records.  Empty unless the rule acted, so such
+    // a file keeps the previous bytes.
+    for (const auto& [sat, t] : snap.unrec_dropped)
+        put(std::isfinite(t) ? fmt::format("U,{},1,{:.17g}", sat, t) : fmt::format("U,{},1,nan", sat));
+    for (const auto& sat : snap.unrec_recorded) put(fmt::format("U,{},0", sat));
     os << "END," << n_lines << '\n';
 }
 
@@ -258,6 +266,16 @@ bool RtStateSnapshotIO::parse(std::istream& is, RtStateSnapshot& out, std::strin
             bool b = false;
             if (!parseB(f[2], b)) return fail("malformed I flag");
             if (!s.init_latches.emplace(f[1], b).second) return fail("duplicate I latch '" + f[1] + "'");
+        } else if (tag == "U") {   // the rule for satellites without their stream records
+            if (f.size() == 3 && f[2] == "0") {
+                if (!s.unrec_recorded.insert(f[1]).second) return fail("duplicate U recorded '" + f[1] + "'");
+            } else if (f.size() == 4 && f[2] == "1") {
+                double t = std::numeric_limits<double>::quiet_NaN();
+                if (f[3] != "nan" && !parseD(f[3], t)) return fail("malformed U drop time");
+                if (!s.unrec_dropped.emplace(f[1], t).second) return fail("duplicate U dropped '" + f[1] + "'");
+            } else {
+                return fail("malformed U line");
+            }
         } else {
             return fail("unknown record tag '" + tag + "'");
         }

@@ -345,6 +345,21 @@ public:
     bool lastArRan() const { return last_ar_ran_; }
 
     /**
+     * @brief Whether the most recent epoch that reached the measurement-set conditioning had no
+     *        corrected solution: the rule for satellites without their stream records left fewer
+     *        satellites with their records than the solvable floor
+     *        (@c estimation.defer_until_corrections_ready.min_satellites), so every satellite was
+     *        left out and the filter predicted only.
+     *
+     * Always false unless @c processing.ssr_drop_unrecorded or
+     * @c processing.ssr_drop_unrecorded_phase_bias is armed.  The closed-loop harnesses mark such an
+     * epoch in their trace (@c ar_gate = @c no_corrected_solution).
+     *
+     * @return True when that epoch had no corrected solution.
+     */
+    bool lastEpochWithoutCorrectedSolution() const { return no_corrected_solution_; }
+
+    /**
      * @brief Suppress the MW wide-lane feed into ambiguity resolution, so AR runs plain
      *        MLAMBDA on the Kalman float.  The network closed-loop validation uses this
      *        with full LAMBDA: the KF float carries the consumed network satellite phase
@@ -1668,6 +1683,9 @@ private:
     /// The rule for satellites without their stream records: which satellites are left out, across
     /// epochs; decided only when processing.ssr_drop_unrecorded or ssr_drop_unrecorded_phase_bias is armed.
     UnrecordedSatGate unrecorded_gate_;
+    /// The last epoch the rule decided had no corrected solution (below the solvable floor); written
+    /// by dropUnrecorded each epoch it runs, read by the closed-loop harnesses after the epoch.
+    bool no_corrected_solution_{ false };
     /// The code-bias gap response: open gaps and re-validation windows live across epochs on
     /// purpose; not part of the RT snapshot (a restored consumer starts with none open).
     /// Untouched with processing.ssr_code_bias_gap_response off.

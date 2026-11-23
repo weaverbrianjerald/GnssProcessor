@@ -864,6 +864,9 @@ void networkEmitStore(NetworkRun& run, const NetworkEpoch& ep, NetworkSolutionEp
                 row.sig_enu_m = enuSigmaFromEcefCovariance(pos_cov, cl_truth_llh);
                 row.sig_3d_m  = sigma3dFromCovariance(pos_cov);
                 fillConsumerTraceAr(row, ar_ran, ar);
+                // An epoch the rule for satellites without their stream records left without a corrected
+                // solution (below the solvable floor) is marked; never set unless that rule is armed.
+                if (consumer->lastEpochWithoutCorrectedSolution()) row.ar_gate = "no_corrected_solution";
                 cl_trace << formatConsumerTraceRow(row);
             }
             // The consumer's receiver inter-system bias, with the same stamp as the row
