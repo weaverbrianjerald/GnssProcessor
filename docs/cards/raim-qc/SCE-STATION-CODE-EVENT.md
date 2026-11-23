@@ -188,3 +188,37 @@ Report: `D:\GnssProcessorSupport\gates\station_code_event\REPORT_1.md`; reads `g
 - **Outcome:** neither arm meets S1 as registered. V and B differ in their products (one held epoch after each refusal)
   and in nothing graded. S2 and S3 are not run (the order runs them for an arm that meets S1); S4 (arm K, the bias file
   without its five `SATELLITE_CLOCK_REFERENCE_OBSERVABLES` lines, G R E C J; the order named four) is made and not run.
+
+---
+## 8. 2026-11-23, stage A2: the arms on the reference without the bias file, and reading (e2) (registered before the first run)
+
+The managing session's word after section 7. Reading (e) stays a miss as registered; its judge (the control's post-fit
+residual) cannot judge a row while the control's station clock is itself 36 m off its trend. The managing session's check
+of the observation file (`gates/station_code_event/manager_bshm_g22_0352_0402.txt`): from 03:53:30 G22 at BSHM00ISR has
+C1C alone, drifts about 200 m low by 03:56:30, and the row of 03:57:30 comes back about 300 m against that trend.
+
+- **Reading (e2), beside (e), not in its place** (`scripts_s20/sce_e2_judge.py`): every row the key refuses and the control
+  does not is judged on its own raw observations (the station's RINEX file). Clean epochs of the satellite: a phase of the
+  code's band and at least two code types present. Reference: a polynomial of degree 4 in time fitted to the satellite's
+  same code at its clean epochs within 10 minutes, the degraded stretch around the row (the epochs that are not clean,
+  gaps of the satellite up to 120 s bridged) left out. Departure: the code less that polynomial, less the median
+  departure over the station's other satellites of the constellation at that epoch. The row is bad when its departure
+  exceeds 50 m at its epoch or at an epoch of its stretch within 300 s of a clean epoch; good when every code stays within
+  50 m; not judged without 6 clean epochs. **Bar: rows refused that are good: 0.**
+  Checks made before this registration, on runs that exist: the negative control (`sce_e2_negctl.py`, 574 random clean
+  code rows at five stations of 2024 day 129 from 01:00 to 05:00: 99th percentile 1.31 m, largest 7.26 m, none above 50
+  m; with a quadratic the largest was 61 m, so the degree is 4); on the day-129 arms of section 7 the three refusals read
+  bad at -512.6, +307.5 and +384.3 m (admission distances -514, 308 and 347 m), so (e2) would pass there
+  (`reads/sce_e2_f129_{v,b}_main.txt`, `reads/sce_e2_negative_control.txt`).
+- **Arms, on what the reference will be** (the author's ruling of 2026-11-23 to drop the CODE bias file): base the
+  adoption session's health runs `runs_irm/_rap_nbf_h_{f129,f132,f130,s}_6` (the regenerated reference files of
+  `int/2026-11-23`, f71bba2: `files.use_bias_file` false, the built-in user's `model_corrections.bias_coverage_requires_apply`
+  on; 4 threads), which are the controls, read only. Arm B (`network.adm_bound_m` 300) on days 129, 132, 130 and the
+  simulator; arm V (`network.adm_revet` true) on days 129 and 132. Tags `sce_nbf_<bed>_{b,v}_6`; each `arm.json` differs
+  from its control's only by the key and the output path (checked). Engine `gates/exe/x64-Release/gnss_processor_nbf1123.exe`
+  (sha256[:16] 4799852583448865), run as the renamed copy `gnss_processor_sce_nbf1123.exe`; `rapid_arm.py` of worktree
+  `int1123`. A 10-epoch smoke of B on day 129 first. Gate priority 3, `--wait-min 1440`, one slot and at most two engines
+  per ticket.
+- **Readings:** S1 to S3 as registered in section 6 with (e2) beside (e); on day 129 against the new control the numbers of
+  (d) and (f) are read against that control's own values. The day-129 pair on main's reference stays as section 7 records
+  it. S4 (the bias-file pair) is no longer needed.
