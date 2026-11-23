@@ -148,3 +148,63 @@ G17, G19, G22, G24, G30. Hours 3 to 5 are 02:00 to 05:00 (the BSHM00ISR declarat
 Reading, reported without a bound as registered: the standing marks cost the users the marked satellites' holds for
 the declaration's duration and, at the built-in user, about 2 to 3 cm in hours 4 and 5; removing them moves the
 median user by nothing and the mean by -4.7 mm in hour 4. STPM's lower held share is listed, not traced.
+
+## 2026-11-23: A1 revised before its first run (the delivery of an edge mark)
+
+On the managing session's method point of 2026-11-23: with every excluded epoch marked, a mark lost at one epoch is
+repeated at the next; with the key on the edge epoch is the only one, so a mark must be shown to reach the product.
+
+**Paths between the screen's decision and the written R record** (line numbers of the branch at the revision):
+1. **The satellite is withheld by the screen at its edge** (fewer than `gross_los_sat_min_stations` contributors left):
+   `GrossLos.cpp` 936 (`gl_emit_withhold`), pruned at `SolPrep.cpp` 477 to 486 before the mark queue's drain. Open in
+   the first A1 code: the edge was consumed and the following standing epochs are unmarked.
+2. **A re-seed's response reaches the solve one epoch after the decision.** The screen decides before the emission
+   (`ApplicationNetworkEpoch.cpp` 496) and applies its response (the erase of the carried ambiguity, the hold) after
+   it (`ApplicationNetworkEpoch.cpp` 564, `networkGrossLosAct`); the code-scale map is published for the next epoch's
+   assembly. Measured on A0's runs (step into the epoch after the first marked epoch, k + 1, and after the release,
+   r + 1; mm, between satellites, GPS phase clock): ordinary declaration after hour 1, k 0.54 median / 5.70 p90 / 34.7
+   largest, k + 1 0.54 / 1.37 / 5.4 (unmarked sigma 0.46); cold declaration (hour 1), k + 1 917.8 median, largest 1,480;
+   ordinary clear, r 0.30 / 0.77, r + 1 0.27 / 0.86; cold release, r + 1 32.1 median; cold refloat, r + 1 85.2 median.
+   A re-seed decided at e therefore moves the emitted values at e + 1 as well. Open in the first A1 code.
+3. **The whole epoch ends before the screen decides** (rank gate, `RankGate.cpp` 277; sigma0 ceiling,
+   `RaimWithinEpoch.cpp` 1549; the other `kSolveSkips` exits, `ClockDatum.cpp` 211, `SolveGlue.cpp` 244,
+   `RaimWithinEpoch.cpp` 1365): all return at `ApplicationNetworkEpoch.cpp` 474, before the decision at 496. Closed by
+   order: nothing is decided in such an epoch, and the next decided epoch's onset test compares with the last decided
+   one. Between the decision (496) and solution prep (510) the loop has no return.
+4. **The satellite is pruned after the screen by another emission step**: the clock-runaway quarantine
+   (`SolPrep.cpp` 353), the per-constellation carve-out (383), the stand-down's wire withhold (448). Closed by existing
+   code: a mark goes to the product's one mark queue (`net::Disc::UraRetro`, `SolPrep.cpp` 473), whose drain lands a
+   satellite only if it is in the post-prune emission and keeps it queued otherwise (`SolPrep.cpp` 738, "mark == land").
+5. **The satellite has no solution record at the epoch its mark is handed over**: closed by the same drain.
+6. **A re-seed at a release with fewer contributors than the minimum, or none this epoch**: `GrossLos.cpp` 975 to 991.
+   Open in the first A1 code (the mark was skipped).
+
+From the drain on, nothing drops a landed mark: solution prep's drain (`SolPrep.cpp` 738 to 750) and the product write
+(`EmitStore.cpp` 623, R record from the landed set) run in the same epoch with no return between them.
+
+**The revision** (default off, identical when off):
+- Every edge mark goes to the product's mark queue, which lands it at the satellite's first emission from that epoch:
+  an onset or re-seed in a withheld epoch (path 1) and a re-seed with too few contributors (path 6) are queued directly
+  (`gross_los_emit_owed` event, `queued`) instead of being lost.
+- A re-seed owes one more mark at the next decided epoch (path 2): a satellite latch `gl_mark_owed` (declared run state,
+  `Persist::Pending`, `Entities.cpp`), set by the screen at a re-seed, handed to the queue at the next decided epoch and
+  cleared there (`gross_los_emit_owed` event, `handed`). The queue clears its flag only when the R record carries the
+  satellite, so the latch and the queue together hold a mark until it is written. A latch survives an epoch that ends
+  before the decision (path 3).
+- The drain's split is a pure function (`networkRetroDrainSplit`, identical output). Counters: marks queued at a
+  withheld or under-contributed epoch, marks owed, marks handed late; one run-end line.
+- Unit tests (suite `GrossLosEmitMarkDelivery`, in `test_gross_los_emit_edges.cpp`): the latch's table, the drain split,
+  and one composition test per path above (the real latch and drain functions): exactly one R record per owed mark, at
+  the first emitted epoch.
+
+**Readings revised and added, fixed now (before any run):**
+- **G2 and G4, delivery.** Every onset and every re-seed of the events trace (a `gross_los_emit_disc` or
+  `gross_los_emit_owed` row with `edge=onset` or `edge=reseed`, the cold declare, refloat, release and expiry rows) has a
+  written R line for its satellite at that epoch or at the satellite's next emitted epoch, and every re-seed also at the
+  satellite's next emitted epoch after it; counts of onsets, re-seeds and R lines found; none lost.
+- **G2, standing marks.** Gross-LOS marks at standing epochs: 0 apart from the response marks of re-seeds and queued
+  marks landing at the first emission after a withheld edge, each counted against its edge.
+- **G4, marks.** The 20 m step exceeds the 12 m cold bound, so the declarations are cold: marks of the six satellites at
+  the onset and the epoch after it, at the cold release and the epoch after it, and at any cold refloat and the epoch
+  after it; no other gross-LOS mark of those satellites. The 1 mm bound on the emitted values is read from the epoch
+  after the onset's response epoch (onset + 2) to the end of the window.

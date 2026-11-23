@@ -224,6 +224,15 @@ struct NetworkGrossLosTallies {
     long long emit_excluded = 0;     ///< Satellite-epochs with at least one declared line of sight (or declared station) among their contributors, counted every screened epoch the declaration stands (0 unless @c network.gross_los_emit_exclude).
     long long emit_withheld = 0;     ///< Satellite-epochs actually pruned from an emission because too few contributors remained.
     long long emit_disc_marked = 0;  ///< Satellite-epochs emitted with a per-satellite discontinuity mark instead of being withheld.
+    // --- The edges-only mark (all zero unless network.gross_los_emit_edges) -----------------
+    long long emit_mark_onset = 0;    ///< Marks landed at an onset (a line of sight left the contributor set).
+    long long emit_mark_reseed = 0;   ///< Marks landed at a re-seed with no onset (cold refloat, release or expiry).
+    long long emit_mark_standing = 0; ///< Satellite-epochs of a standing declaration emitted unmarked.
+    long long emit_release_marked = 0;   ///< Releases (line of sight back in the set) at an epoch the satellite was marked.
+    long long emit_release_unmarked = 0; ///< Releases at an epoch the satellite was not marked (an ordinary clear).
+    long long emit_mark_queued_withheld = 0; ///< Edge marks at an epoch the satellite was withheld or had too few contributors: queued, landing at its next emission.
+    long long emit_mark_owed_set = 0;    ///< Marks owed for the next decided epoch (a re-seed's response epoch).
+    long long emit_mark_late = 0;        ///< Owed marks handed to the mark queue at a later decided epoch than their edge.
     long long sta_declared = 0;      ///< Station-level declarations.
     long long sta_released = 0;      ///< Station-level releases.
     long long sta_los_epochs = 0;    ///< Station-epochs spent under a standing station declaration.
@@ -351,7 +360,69 @@ struct GrossLosState {
     /// While set, each epoch over the bound re-erases the carried ambiguity, and the
     /// release or expiry re-seeds it.  Cleared at the release and the expiry.
     bool   cold{false};
+    /// The line of sight was out of its satellite's emission contributor set at its last
+    /// screened epoch (@c network.gross_los_emit_edges only; written by
+    /// @ref GnssProcessor::networkGrossLosEmitOnset "networkGrossLosEmitOnset").  Not carried by the station
+    /// memory of a warm resume: a resumed run marks a standing declaration once, at its first
+    /// epoch, which is the edge its own stream sees.
+    bool   emit_out{false};
 };
+
+/**
+ * @brief Pure function: advance one line of sight's emission-exclusion edge by one screened
+ *        epoch (@c network.gross_los_emit_edges).
+ *
+ * @param s            [in/out] the line of sight's carried state; @c emit_out becomes @p excluded_now.
+ * @param excluded_now The line of sight is out of its satellite's contributor set this epoch
+ *                     (its declaration, or its station's, stands).
+ * @return true at an onset: excluded now and not at the line of sight's last screened epoch.
+ *         A standing exclusion returns false; so does a line of sight back in the set.
+ */
+bool networkGrossLosEmitOnset(GrossLosState& s, bool excluded_now);
+
+/// What the emission exclusion does with one satellite that keeps enough contributors.
+enum class GrossLosEmitMark {
+    Mark,      ///< Emitted with the per-satellite discontinuity mark.
+    Standing   ///< Emitted unmarked: a standing declaration with no edge this epoch (counted).
+};
+
+/**
+ * @brief Pure function: the emission exclusion's mark decision for one satellite and epoch.
+ *
+ * @param edges  @c network.gross_los_emit_edges.  Off: every epoch with an excluded line of
+ *               sight is marked (the original rule).
+ * @param onset  At least one of the satellite's lines of sight left the contributor set this epoch.
+ * @param reseed The satellite's carried ambiguity is re-seeded by the screen this epoch (the cold
+ *               bound's declaration, refloat, release or expiry).
+ * @return @c Mark when the key is off, or at an onset or a re-seed; @c Standing otherwise.
+ */
+GrossLosEmitMark networkGrossLosEmitMark(bool edges, bool onset, bool reseed);
+
+/// One decided epoch of a satellite's mark latch (@c network.gross_los_emit_edges).
+struct GrossLosMarkLatchStep {
+    bool queue_now{false};   ///< Hand one mark to the product's mark queue this epoch.
+    bool late{false};        ///< The mark handed now includes one owed from an earlier epoch.
+    bool owed_after{false};  ///< The latch after this epoch: one more mark owed at the next decided epoch.
+};
+
+/**
+ * @brief Pure function: advance one satellite's mark latch by one decided epoch.
+ *
+ * The product's mark queue (@c net::Disc::UraRetro, drained by @c networkSolPrep) lands a
+ * queued mark at the satellite's first emission from the epoch it is queued, so a mark handed
+ * to it is never lost to a withheld satellite, a pruned one or an absent one.  The latch adds
+ * the one timing the queue cannot know: the screen's response (the erase of the carried
+ * ambiguity) runs after the emit, so a re-seed decided at epoch e first moves the emitted
+ * values at e + 1, and owes a second mark there.  An epoch that ends before the screen decides
+ * (a whole-epoch withhold) does not call this, and the latch keeps its value.
+ *
+ * @param owed_in    A mark owed from an earlier decided epoch.
+ * @param edge_now   An onset or a re-seed of the satellite decided this epoch.
+ * @param reseed_now A re-seed of the satellite's carried ambiguity decided this epoch.
+ * @return @c queue_now when anything is due now; @c late = @p owed_in;
+ *         @c owed_after = @p reseed_now.
+ */
+GrossLosMarkLatchStep networkGrossLosMarkLatch(bool owed_in, bool edge_now, bool reseed_now);
 
 /// The edge a @ref GnssProcessor::networkGrossLosStep "networkGrossLosStep" transition produced.
 enum class GrossLosEdge {

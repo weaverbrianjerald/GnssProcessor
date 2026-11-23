@@ -7452,6 +7452,14 @@ namespace GnssProcessor {
             gnc.gross_los_station_tier =
                 jval<bool>(json, "network.gross_los_station_tier",
                            "gross_los_station_tier", false);
+            gnc.gross_los_emit_edges =
+                jval<bool>(json, "network.gross_los_emit_edges",
+                           "gross_los_emit_edges", false);
+            if (gnc.gross_los_emit_edges && !gnc.gross_los_emit_exclude)
+                log->warn("Network (gross-LOS): network.gross_los_emit_edges is set while "
+                          "network.gross_los_emit_exclude is OFF, so the screen marks nothing "
+                          "and the key is INERT.  Read this as a miswired arm, not as a null "
+                          "result.");
             if (!gnc.gross_los_screen
                 && (gnc.gross_los_min_rows_rule != NetworkGrossLosMinRowsRule::Fixed
                     || gnc.gross_los_bound || gnc.gross_los_emit_exclude
@@ -14286,11 +14294,12 @@ namespace GnssProcessor {
                     && ev.kind != "sat_clock_step" && ev.kind != "rx_clock_step"
                     && ev.kind != "oracle_pin" && ev.kind != "fixed_cycle_plant"
                     && ev.kind != "ring_fix_plant"
-                    && ev.kind != "sat_health" && ev.kind != "station_step") {
+                    && ev.kind != "sat_health" && ev.kind != "station_step"
+                    && ev.kind != "code_step") {
                     log->error("Config: {}.kind '{}' is not one of slip | outage | "
                                "anchor_handover | arc_erase | sat_clock_step | "
                                "rx_clock_step | oracle_pin | fixed_cycle_plant | "
-                               "ring_fix_plant | sat_health | station_step.",
+                               "ring_fix_plant | sat_health | station_step | code_step.",
                                where, ev.kind);
                     return false;
                 }
@@ -14414,6 +14423,13 @@ namespace GnssProcessor {
                 } else if (ev.kind == "sat_clock_step") {
                     if (!need(!ev.sat.empty(), "a sat")) return false;
                     if (!need(ev.step_m != 0.0, "a non-zero step_m")) return false;
+                } else if (ev.kind == "code_step") {
+                    // A gross code error on one line of sight: the code observables of one
+                    // satellite at one station, inside a window; the phase is untouched.
+                    if (!need(!ev.station.empty(), "a station")) return false;
+                    if (!need(!ev.sat.empty() && ev.sat != "all", "one sat")) return false;
+                    if (!need(ev.step_m != 0.0, "a non-zero step_m")) return false;
+                    if (!need(ev.duration_s > 0.0, "a positive duration_s")) return false;
                 } else if (ev.kind == "fixed_cycle_plant") {
                     // A wrong integer planted in the ledger of fixed
                     // cycles on one arc, consumed by the fixed-cycle seam.

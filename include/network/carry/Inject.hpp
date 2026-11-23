@@ -16,7 +16,7 @@
  *
  * ### Where each kind acts
  *
- * Ten kinds exist; the two newest (@c sat_health, @c station_step) and the
+ * Eleven kinds exist; @c sat_health, @c station_step, @c code_step and the
  * outage scopes are described in the section "Scenario kinds" below.  Of the first
  * eight, four are corruptions of the producer's input (@c slip,
  * @c outage, @c sat_clock_step, @c rx_clock_step) and are applied to a per-epoch
@@ -98,7 +98,11 @@
  *     observations are unchanged, so a step of +d is the antenna moving by -d;
  *     card PLANT's planted offsets are the same fault from the first epoch.
  *
- * Each of the three is an event at both edges: an @c INJECT row at onset and a
+ *   * @c code_step (card GLM) adds @c step_m metres to every code observable of one
+ *     satellite at one station inside its window, phase untouched: a gross code error on one
+ *     line of sight, the input of the gross line-of-sight screen.  It acts on the same site.
+ *
+ * Each of the four is an event at both edges: an @c INJECT row at onset and a
  * @c released row at the closing edge (the outage's return, the flag's clear,
  * the coordinate's return), and the run-end clause counts both.
  *

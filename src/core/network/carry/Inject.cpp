@@ -265,6 +265,24 @@ namespace GnssProcessor {
             return n;
         }
 
+        /**
+         * @brief Add @p step_m metres to every code observable (@c C*) of one observation.
+         *
+         * The phase, Doppler and strength observables are left alone, so the fault is a
+         * code-only error on that line of sight (the @c code_step kind).
+         *
+         * @return Code observables moved.
+         */
+        long long addCodeStep(RinexObservation& o, double step_m) {
+            long long n = 0;
+            for (auto& kv : o.measurements)
+                if (obsTypeOf(kv.first) == ObsType::Code) {
+                    kv.second += step_m;
+                    ++n;
+                }
+            return n;
+        }
+
     } // namespace
 
     void networkInjectArm(NetworkRunContext& ctx, const GnssConfig& config_,
@@ -359,6 +377,8 @@ namespace GnssProcessor {
             if (e.kind == "anchor_handover")list += " mode=" + e.mode;
             if (e.kind == "sat_clock_step" || e.kind == "rx_clock_step")
                 list += fmt::format(" step={:.3f}m", e.step_m);
+            if (e.kind == "code_step")
+                list += fmt::format(" code_step={:.3f}m dur={:.0f}s", e.step_m, e.duration_s);
             // Oracle ambiguity pin (simulation only): the scope defines the event, so
             // it is printed in the arming line; otherwise a leg whose scope differed
             // from the one the operator wrote would be graded as the intended arm.
@@ -403,6 +423,7 @@ namespace GnssProcessor {
             const bool due =
                 (e.kind == "slip"            && started(e, tow))
              || (e.kind == "sat_clock_step"  && started(e, tow))
+             || (e.kind == "code_step"       && inWindow(e, tow))
              || (e.kind == "rx_clock_step"   && started(e, tow))
              || (e.kind == "outage"          && inWindow(e, tow))
              || (e.kind == "outage"          && actsOnReturn(e) && ended(e, tow)
@@ -516,6 +537,20 @@ namespace GnssProcessor {
                     row(e, "injected", e.delta_cycles,
                         fmt::format("slip_onset;signal={};lli={};rows={}", e.signal,
                                     e.flag_lli ? 1 : 0, touched));
+            } else if (e.kind == "code_step") {
+                // A gross code error on one line of sight: step_m metres on every code
+                // observable of the satellite at the station while the window is open; the
+                // phase is untouched, so the slip detectors see a code-only fault.
+                auto sit = scratch.by_station.find(e.station);
+                if (sit != scratch.by_station.end())
+                    for (auto& o : sit->second) {
+                        if (o.satellite != e.sat) continue;
+                        touched += addCodeStep(o, e.step_m);
+                    }
+                if (touched) ++st.n_window[idx];
+                if (touched && onset)
+                    row(e, "injected", e.step_m,
+                        fmt::format("code_step_onset;rows={};dur_s={:.0f}", touched, e.duration_s));
             } else if (e.kind == "sat_clock_step") {
                 // y = L~ - (rho - c.dt^s + ...).  Adding step_m to every code
                 // observable and step_m/lambda cycles to every phase observable of
@@ -621,6 +656,9 @@ namespace GnssProcessor {
             } else if (e.kind == "sat_health") {
                 row(e, "released", e.duration_s,
                     fmt::format("health_flip_end;epochs_flagged={}", st.n_applied[i]));
+            } else if (e.kind == "code_step") {
+                row(e, "released", e.duration_s,
+                    fmt::format("code_step_end;epochs_stepped={}", st.n_window[i]));
             } else if (e.kind == "station_step") {
                 const int k = st.station_index[i];
                 if (k >= 0 && st.setup
@@ -718,6 +756,7 @@ namespace GnssProcessor {
         bool any_scenario = false;
         for (const auto& e : st.events)
             any_scenario = any_scenario || e.kind == "sat_health" || e.kind == "station_step"
+                           || e.kind == "code_step"
                            || (e.kind == "outage"
                                && (e.sat == "all" || !e.signal.empty() || actsOnReturn(e)));
         if (any_scenario) {

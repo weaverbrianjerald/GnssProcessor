@@ -586,6 +586,8 @@ const std::vector<FieldDecl> kSatelliteFields = {
      &satRows<&A::gl2_since>},
     {"wire_prune_pending", "gl2_wire_pending", Persist::Pending, "", "", nullptr, nullptr,
      &satRows<&A::wire_prune_pending>},
+    {"gl_mark_owed", "gl_mark_owed", Persist::Pending, "", "", nullptr, nullptr,
+     &satRows<&A::gl_mark_owed>},
     {"datum_reref_pb", "datum_reref_pb_sats", Persist::ColdStart, "", "", nullptr, nullptr,
      &satRows<&A::datum_reref_pb>},
     {"datum_reref_amb", "datum_reref_amb_sats", Persist::ColdStart, "", "", nullptr, nullptr,

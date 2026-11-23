@@ -359,6 +359,7 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
                == NetworkGrossLosMinRowsRule::Available;
     k.gl_bound         = k.gl_on && config_.getNetworkConfig().gross_los_bound;
     k.gl_emit_exclude  = k.gl_on && config_.getNetworkConfig().gross_los_emit_exclude;
+    k.gl_emit_edges    = k.gl_emit_exclude && config_.getNetworkConfig().gross_los_emit_edges;
     k.gl_station_tier  = k.gl_on && config_.getNetworkConfig().gross_los_station_tier;
     // The cold response, gated on the screen and refused under the hold (the hold would
     // keep the faulted level the cold response erases).  Not fingerprinted, like the

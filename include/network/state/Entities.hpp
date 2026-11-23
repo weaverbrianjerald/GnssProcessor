@@ -436,6 +436,13 @@ struct SatelliteState {
     /// screened epoch.  Empty when network.gross_los_sat_wire_withhold is off.  Was
     /// @c NetworkCarryState::gl2_wire_pending.  Pending.
     bool wire_prune_pending{false};
+    /// A mark the product owes this satellite from an earlier decided epoch
+    /// (@c network.gross_los_emit_edges only): the gross-LOS screen re-seeded the satellite's
+    /// carried ambiguity, whose response reaches the solve one epoch later, so one more mark is
+    /// handed to the product's mark queue (@ref Disc::UraRetro) at the next decided epoch, which
+    /// lands it at the satellite's first emission from there.  Set and cleared by
+    /// @c networkGrossLosScreen.  Pending.
+    bool gl_mark_owed{false};
     /// A slip at the gauge-pinned datum receiver queued the satellite's shared phase-bias
     /// skip-stash (consumed and cleared at this epoch's stash).  Not snapshotted.  Was
     /// @c NetworkCarryState::datum_reref_pb_sats.  ColdStart.

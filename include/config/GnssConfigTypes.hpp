@@ -1894,7 +1894,10 @@ namespace GnssProcessor {
         /// | @c ring_fix_plant (simulation only, needs @c network.ring_fix.enable and
         /// @c network.ring_fix.truth_root: at the first epoch from @ref tow at which the ring fix
         /// holds a link of (@ref station, @ref sat), both bands' held integers are shifted by
-        /// @ref delta_cycles, a planted wrong hold for the residual monitors to find).
+        /// @ref delta_cycles, a planted wrong hold for the residual monitors to find)
+        /// | @c code_step (@ref step_m metres added to every code observable of @ref sat at
+        /// @ref station from @ref tow for @ref duration_s, phase untouched: a gross code error on
+        /// one line of sight, the gross line-of-sight screen's input; card GLM).
         std::string kind;
         /// GPS seconds-of-week at which the event starts.  The run's week is implied
         /// (a leg never spans a rollover); matched with a +/-0.25 s half-epoch guard.
@@ -1935,7 +1938,8 @@ namespace GnssProcessor {
         /// Metres of non-dispersive range step.  @c sat_clock_step adds it to the
         /// a-priori satellite clock of @ref sat (at every station); @c rx_clock_step
         /// adds it to the receiver clock of @ref station (for every satellite), the
-        /// exact dual.  In both cases the step persists from @ref tow on.
+        /// exact dual.  In both cases the step persists from @ref tow on.  @c code_step adds it
+        /// to the code observables only of @ref sat at @ref station, inside its window.
         double      step_m{ 0.0 };
         /// @c station_step only: the step of the held coordinate in metres, along the local
         /// East, North and Up at the station (the observations are unchanged, so a step of
@@ -3097,6 +3101,19 @@ namespace GnssProcessor {
         /// one-epoch shift of the maturity horizon and the earlier deweight publish);
         /// requires @ref gross_los_screen.
         bool   gross_los_emit_exclude{ false };
+        /// The emission exclusion's mark at the edges of a declaration only (card GLM).  Off (the
+        /// original behaviour): under @ref gross_los_emit_exclude a satellite is marked
+        /// discontinuous at every epoch in which any station holds a declared line of sight to it,
+        /// so a standing declaration costs every user that satellite's phase continuity for as
+        /// long as it stands.  On: the satellite is marked at an onset (the epoch at which the set
+        /// of stations whose declared line of sight is out of its contributor set gains a station)
+        /// and at a re-seeding release (the cold bound's declaration, refloat, release or expiry,
+        /// which re-seed the carried ambiguity); the other epochs of a standing declaration are
+        /// not marked and are counted.  An ordinary clear is not marked: the emitted values do
+        /// not step there (card GLM, A0).  The withhold for want of contributors is unchanged.
+        /// Read only under @ref gross_los_emit_exclude; changes the product's discontinuity marks
+        /// and counters, never the solve.
+        bool   gross_los_emit_edges{ false };
         /// Station-level tier of the whole-station guard (RF-3b B4, F4).  Off (the
         /// original behaviour): when the guard fires (@ref gross_los_max_station_frac) it
         /// only holds this epoch's declarations, and the next epoch declares the same

@@ -675,6 +675,7 @@ add_executable(gnss_tests
     tests/network/test_block_baarda_estimable.cpp
     tests/network/test_network_gross_los.cpp
     tests/network/test_network_gross_los_cold_bound.cpp
+    tests/network/test_gross_los_emit_edges.cpp
     tests/network/test_station_congruence.cpp
     tests/network/test_prior_residual_census.cpp
     tests/network/test_producer_ar_trace.cpp

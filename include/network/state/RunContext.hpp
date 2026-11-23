@@ -741,6 +741,7 @@ namespace GnssProcessor {
         /// of the epoch's emission, and the declared line of sight leaves its satellite's
         /// contributor set for that epoch.  ANDed with @ref gl_on.
         bool   gl_emit_exclude{};
+        bool   gl_emit_edges{};     ///< network.gross_los_emit_edges under gl_emit_exclude: mark the edges only.
         /// network.gross_los_station_tier (RF-3b B4): the whole-station guard becomes a
         /// station-level declaration with its own two edges.  ANDed with @ref gl_on.
         bool   gl_station_tier{};
