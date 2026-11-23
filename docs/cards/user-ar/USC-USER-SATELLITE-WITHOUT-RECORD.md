@@ -288,3 +288,38 @@ pattern: the stream carries no E25 record from 264930 to 268320 s, the user sees
 `s_e1a_E25.txt` and `s_e1b_E05.txt` (C, B, P, U records of the satellite removed at 273690 to 274290 s, 20 epochs),
 `s_e2_E25ret.txt`, `s_e3_all.txt` (every line of the 20 epochs at 273690 to 274290 s removed, epoch lines included).
 The replays run 6 h like `_rap_vr0_s_U`; epochs after 282630 s (the end of the stream) are not graded.
+
+**2026-11-23, the held rule of the readings, fixed before any run is read (the managing session's note of
+2026-11-22).** A held integer is read from the ambiguity variances of the phase rows of `closed_loop_sat_trace.csv`
+in one of two forms, chosen per run by `network.closed_loop.consumer_undifferenced` in its `arm.json`:
+
+- Differenced user (every user of R1, R2 and R4, and the step 0 cases): a row is held when it sits at its group's
+  (constellation and signal) smallest positive variance, that value shared by at least two satellites and below
+  0.01 m^2, or when its variance is above zero and at most 1e-6 m^2 (a variance of its own at hold level). At these
+  users a held row first shares the group's common variance beside the reference rows at 0, then falls under
+  1e-6 m^2 with a variance of its own, which the shared-minimum form misses (the managing session's check,
+  `runs_nom/_irdu_grades/reads_2026-11-22/brp_tight_rules_check.txt`).
+- Undifferenced user (the frozen-lineage users of R5, which do not fix): the second form only; the shared-minimum form
+  reads a float group with one common term as held.
+
+Hold losses are read against the control at the same epochs. A limit of both forms: at an epoch whose reference
+satellite differs from the previous epoch's, the group's rows carry the reference's variance as a common term
+(2.8e-2 m^2 in the control of case 1, whose Galileo reference alternates between E24 and E25 from one epoch to the
+next), and neither form reads them as held; a loss read at such an epoch is checked in the rows before it is
+reported. Code: `held_flags(..., form=)` and `user_form` in `scripts\count_unrecorded.py` of the gate folder;
+recount `scripts\recount_held_two_forms.py`, outputs `out\recount_held_two_forms.txt` and
+`out\recount_held_two_forms_extended.txt`.
+
+Step 0's large cases under this rule (section 6 stands as written): case 2 unchanged (no hold on either side, hour 1).
+Case 1 unchanged at the run (14 held, 0 from the epoch after the entry, back to 14 at 2,520 s after it under both
+readings; the "8 epochs" of section 6 is the counter's window, from the entry to two epochs after the episode's end),
+while the control reads 8 to 14 over the first 10 min under both readings (the alternating Galileo reference), not
+the 14 to 16 written. E02 on DOY 132 changes: the run's lowest is 10 of 18 (written: 4), equal to the control's lowest
+at the same epochs, with 15 held from 180 s after the entry against a control alternating between 10 and 18; the run
+is below the control at 54 of 241 epochs to 2 h after the entry (80 under the step 0 reading).
+
+**2026-11-23, order item 6 under the run-queue rule of 2026-11-22 (managing session).** On the branch: the unit suites
+of the code the branch touches plus the contract suites that guard its seams, with the gtest filter
+`UnrecordedSatGate*:RtStateSnapshot*:ConsumerSatTraceSchemaTest*:ConsumerTraceSchema*:ConsumerDiscCarryTest*:ArFixQuality*:CodeBiasGapTest*:RealtimeDefectTest*:RealtimeReactionRecords*:RealtimeReactionGeneration*:RealtimeReactionLevelEphemeris*:RealtimeEphStalenessTest*:RealtimeSsrFreshnessTest*:RealtimeSsrIodeGateTest*:SsrClockStaleHoldTest*:SsrConsumerSeamTest*:SsrIngestFilterTest*:InnovationScreen*:ConfigAskedVsInEffect*:ConfigMemberDump*:NetworkRunTracesOpenSet*:NetworkEpochContract*`,
+the real-time seam gate and the ledger row. The full Debug suite runs once in the integration round on the merged
+tree.
