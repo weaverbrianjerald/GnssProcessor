@@ -196,3 +196,82 @@ signal's bias missing. All 653 run configurations read have the unrecorded rule,
   is the GPS reference handover G25 to G15, present in the control as well.
 - **Not traced:** why the reset of case 2 settles 55 m off with a 0.69 m sigma (the field trace does not carry the
   user's code-bias states). Section 4, item 6.
+
+## 7. 2026-11-22: the build and its readings, registered before any build or run (managing session's order 2)
+
+**Decision.** Taken by the managing session in the author's absence, on the author's words of the evening of
+2026-11-22: "Proceed with your decisions in my absence." Scope: the build and its runs on branch
+`user/stale-corrections-2026-11-22`. Nothing is merged or pushed. Arming is decided by the managing session after the
+readings, under the author's arming rule; moving main and pushing stay with the author.
+
+**What is built** (default off; with the keys off the output is identical):
+
+1. **One owner.** The additions go behind the existing keys `network.closed_loop.drop_unrecorded` and
+   `network.closed_loop.drop_unrecorded_phase_bias`; no new key. Their output changes only while the rule acts.
+2. **Decoupling edge.** Each Drop names its cause (first sighting before any record, record lost while in view, back
+   in view on a stale record), the age of the satellite's last record of the missing kind (or none), and whether the
+   satellite was the reference satellite of its constellation at the previous epoch. Counters: drops by cause,
+   reference satellites lost, and drops by record age (none, up to 60 s, up to 5 min, up to 30 min, longer).
+3. **Re-coupling edge.** The Readmit is reborn loose as before (its ambiguity and ionosphere states were pruned while
+   it was out and are seeded afresh). Its phase-bias and code-bias flip memories are set to the returned state, so the
+   return makes no second reset. Event `readmit_unrec` in the engine log and the consumer satellite trace, with the gap
+   in seconds; counters by gap (up to 1 min, up to 5 min, up to 30 min, longer).
+4. **Too few satellites left (order item 1).** When fewer satellites keep their records than the solvable floor
+   `estimation.defer_until_corrections_ready.min_satellites` (default 5; the floor the corrections-ready gate already
+   owns), the epoch has no corrected solution: every satellite is left out of that epoch's update, the filter
+   predicts only, the epoch is counted, both edges are events (begin and end, with the number of satellites that
+   kept their records), and the closed-loop trace marks the epoch (`ar_gate` = `no_corrected_solution`). Every
+   ambiguity and ionosphere state is then pruned as for satellites out of view and is reborn at the stream's return.
+   Why not a solution on the a priori products: an uncorrected satellite carries metre-level terms (the clock datum,
+   the missing code and phase biases) that the user's variance model has no size for, so a covariance that "says so"
+   would be a guess; a predicted state with its own covariance is honest, and a static or slowly moving receiver keeps
+   its last corrected position. Per-constellation floors are not added (the global floor is the corrections-ready
+   gate's own).
+5. **Snapshot.** The RT state snapshot carries the dropped set with the drop epochs and the satellites seen with their
+   records (a new record `U`, written only when the rule has content), so a warm-resumed user does not readmit a
+   satellite silently. The open no-solution edge is not carried (the first epoch after a resume decides it again).
+6. **The complete reset (order item 5)** stays a named follow-up; it is traced, not changed (see the readings).
+
+**Readings and bars.** Engine: a renamed Release copy of this branch with its runtime DLLs beside it; base for the
+identity readings: `gates\exe\x64-Release\gnss_processor_int1122.exe` (sha256[:16] a0fadbb1564612b9, built from
+`1bb4964`, whose engine code equals `33c5fef`). A 10-epoch smoke first. Gate label `ustale`, priority 6.
+
+- **R1, three injected events on the simulator** (order item 1 adds E3). Stream `runs_irm/_rap_n20_s_6/products.txt`;
+  user SZZ000SIM replayed on it (`_rap_n20_s_6` as base, as `runs_varrate/_rap_vr0_s_U`). E1: one Galileo
+  satellite's C, B, P and U records removed for 10 min near 3 h into the replay, the satellite chosen from the
+  unedited replay's trace as the highest Galileo satellite holding integers then. E2: one satellite's records removed
+  while it is out of the user's view and for 2 min after it returns (the E25 pattern). E3: the whole stream withheld
+  for 10 min near 3 h (every line from the first epoch line of the window to the last record before its end). Arms:
+  each edited stream with the key off and on; the unedited stream with the key off (control) and on (identity); every
+  arm also with the code-bias gap response armed (`full`; order item 3). Bars, key on: E1 and E2 one Drop at the first
+  epoch past the record's window with its cause, no row of the satellite in the window, one Readmit with a fresh
+  ambiguity variance, no complete reset, every other hold kept, the 3D error within 5 mm of the control from 10 min
+  after the return, 0 wrong held integers against the fixture's truth; E3 the no-solution edges at the window's
+  first epoch past 30 s and at the return, no epoch in the window or the 30 min after it with a 3D error above both
+  5 cm and 3 times its 3D sigma (key off fails it: 5.3 m with a 0.79 m sigma past the end of the stream). Key on,
+  unedited: identical to the control in every trace. Each bar is read with and without `full`.
+- **R2, no harm where nothing happens (order item 4).** Key on against key off, same engine: the built-in users of the
+  two reference files (`golden_field_refound`, `golden_sim_refound`), 2 h network runs: identical products and traces.
+  The 51 receiver-days of `runs_irm/_rap_n20_<doy>_<site>` replayed with the key on and off: the only differences sit
+  at the G01 event of DOY 132 at ARHT00ATA and DAV100ATA, each read.
+- **R3, identity off.** This branch's engine with the keys off against the base engine: the 2 h built-in users of R2
+  and the real-time seam gate (`scripts/rt_seam_gate.ps1`, four arms, `scripts/rt_seam_compare.py`) identical.
+- **R4, the two field cases.** `_rap_vr0b_129_ascg_H300` and `_rap_vr0_129_ascg_P300` replayed with the key on, with
+  and without `full`, against the key off on the same engine: no complete reset at 268320 and 261930 s, E25 and E24
+  out until their records arrive; the error within 5 cm of the unheld control from 10 min after each return.
+- **R5, folded runs of card IRDU section 15.1 (order item 2).** S1 (key off identical to the previous build) is R3. S2
+  (key on where every used signal has its record: identical) is R2. S3 (the made case on the retired holds stream
+  `_rap_irdu_gpb_r3c`) is dropped as covered by E1 and E2 on the reference simulator stream. O1 (observed data, the
+  phase-bias rule against filtered observation files at HARB00ZAF, DAV100ATA, SCRZ00BOL on streams of a retired
+  posture and another executable) is replaced by the frozen-lineage DOY 129 users at the same three receivers
+  (`runs_irm/_rap_n20c_129_{harb,dav1,scrz}`), whose stream lacks the Galileo L1C/L5Q phase biases (class B 1,369,
+  1,446 and 1,715 satellite-epochs at step 0): key on against off; bar: the rule's satellite-epochs left out for a
+  missing phase bias equal the class-B satellite-epochs `count_unrecorded.py` counts on the key-off run, or every
+  difference is explained; the filtered-file equality is dropped. O2 (the minute from which the 3D error stays below
+  10 cm at HARB00ZAF and DAV100ATA) is read on the same pairs.
+- **R6, the complete reset traced (order item 5).** The RT state snapshot (keys, values, covariance) of
+  `_rap_vr0_129_ascg_P300`, key off, from short replays ending at 261900, 261930 and 261960 s: which states hold a
+  variance of zero after the reset and with what value; repeated on an injected event if one of its key-off arms
+  resets. Written into this card as a defect that outlives the rule.
+- **Tests and gates (order item 6).** Unit tests in files of their own (the gate's causes, ages, gaps and floor; the
+  snapshot's `U` record), the full Debug suite, the real-time seam gate, the ledger row of the key in the same commit.
