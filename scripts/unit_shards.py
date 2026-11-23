@@ -18,6 +18,13 @@ What the cases share, and what each shard gets of its own (read from tests/, 202
     std::filesystem::temp_directory_path() (config_load_capture_<tag>, gnss_chain_dump_case,
     network_live_record_test, ...).  Each shard gets a temp directory of its own (TMP and TEMP,
     which temp_directory_path() reads on Windows), removed after the run.
+  * Path length.  The per-shard directory is a short name directly under the system temp
+    directory (u<n>, at most 6 characters added to every temp path).  Some cases already build
+    temp paths near the Windows limit of 260 characters in an unsharded run:
+    RxSatCodeBiasDifferenceTest.TheTransformZeroesThePivotsSatelliteBiasColumnButNotItsReceiverSatelliteColumn
+    writes a config file whose path is 239 characters under C:\\Users\\<user>\\AppData\\Local\\Temp.
+    The first proof runs used unit_shards_<pid>\\shard_<k> (26 characters more, 265 in all), and that
+    case failed in each of the three sharded runs while every other case matched.
   * Loopback sockets.  The two socket suites (NTRIP credentials, TCP silence) bind port 0, an
     ephemeral port, so shards never collide.
   * Order.  A shard runs a case without the cases that preceded it in an unsharded run.  The
@@ -25,7 +32,7 @@ What the cases share, and what each shard gets of its own (read from tests/, 202
 
 Cases that cannot share a run go in SERIAL_TAIL with the reason; they are left out of the
 shards and run afterwards in one process of their own.  The table is empty: no case was found
-that needs it (proof runs of 2026-11-23 on main 33c5fef).
+that needs it (proof runs of 2026-11-23 on main 33c5fef, with the short temp directories).
 
 Usage:
   python scripts/unit_shards.py run [--shards 6] [--exe build/x64-Debug/gnss_tests.exe]
@@ -121,6 +128,23 @@ def clean_env(extra=None):
     env = {k: v for k, v in os.environ.items() if k.upper() not in SHARD_ENV}
     env.update(extra or {})
     return env
+
+
+def short_temp_dir(base):
+    """A new, empty directory u<n> directly under @p base, for the smallest n not yet taken.
+
+    The name is kept short on purpose: some cases already build temp paths of about 240 characters
+    in an unsharded run, close to the Windows limit of 260 (see the module text).  ``mkdir`` fails
+    when the name exists, so two runs of this script at once never share a directory.
+    """
+    for n in range(10000):
+        d = base / f"u{n}"
+        try:
+            d.mkdir()
+            return d
+        except FileExistsError:
+            continue
+    raise RuntimeError(f"no free u<n> directory under {base}")
 
 
 def list_cases(exe, gtest_filter, cwd):
@@ -243,15 +267,15 @@ def cmd_run(a):
     tail_cases = [n for n in expected if tail_match(n)]
     shard_filter = add_negatives(a.filter, tail_patterns)
 
-    tmp_root = Path(tempfile.gettempdir()) / f"unit_shards_{os.getpid()}"
+    tmp_dirs = []
     procs = []
     for k in range(a.shards):
         tag = f"shard_{k}"
         if a.shards == 1:
             env = clean_env()
         else:
-            tmp = tmp_root / tag
-            tmp.mkdir(parents=True, exist_ok=True)
+            tmp = short_temp_dir(Path(tempfile.gettempdir()))
+            tmp_dirs.append(tmp)
             env = clean_env({"GTEST_TOTAL_SHARDS": str(a.shards), "GTEST_SHARD_INDEX": str(k),
                              "TMP": str(tmp), "TEMP": str(tmp)})
         p, log = start_process(exe, shard_filter, cwd, out / f"{tag}.log", out / f"{tag}.xml", env)
@@ -278,8 +302,9 @@ def cmd_run(a):
         log.close()
         shard_seconds[tag] = time.time() - t_shards
     t_end = time.time()
-    if a.shards > 1 and not a.keep_tmp:
-        shutil.rmtree(tmp_root, ignore_errors=True)
+    if not a.keep_tmp:
+        for tmp in tmp_dirs:
+            shutil.rmtree(tmp, ignore_errors=True)
 
     problems, merged, seen = [], {}, {}
     for tag in list(shard_seconds):
@@ -308,7 +333,9 @@ def cmd_run(a):
         f"working directory {cwd}",
         f"filter {a.filter}",
         f"shards {a.shards}" + (" (unsharded: one process, caller's environment)" if a.shards == 1 else
-                                " (GoogleTest sharding, a temp directory per shard)"),
+                                " (GoogleTest sharding, a temp directory per shard: "
+                                + ", ".join(t.name for t in tmp_dirs) + f" under {tmp_dirs[0].parent}, at most "
+                                f"{max(len(t.name) for t in tmp_dirs) + 1} characters added to a temp path)"),
         f"cases {len(merged)} in {len(suites)} suites: {counts[PASSED]} passed, {counts[SKIPPED]} skipped, "
         f"{counts[FAILED]} failed (selected by the listing: {len(expected)})",
         f"wall time {t_end - t_start:.0f} s (listing {t_listed - t_start:.0f} s, shards {t_shards - t_listed:.0f} s"
