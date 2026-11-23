@@ -132,6 +132,25 @@ GrossLosEdge networkGrossLosStep(GrossLosState& s, const GrossLosVerdict& v,
     return GrossLosEdge::Clear;
 }
 
+bool networkGrossLosEmitOnset(GrossLosState& s, bool excluded_now) {
+    const bool onset = excluded_now && !s.emit_out;
+    s.emit_out = excluded_now;
+    return onset;
+}
+
+GrossLosEmitMark networkGrossLosEmitMark(bool edges, bool onset, bool reseed) {
+    if (!edges || onset || reseed) return GrossLosEmitMark::Mark;
+    return GrossLosEmitMark::Standing;
+}
+
+GrossLosMarkLatchStep networkGrossLosMarkLatch(bool owed_in, bool edge_now, bool reseed_now) {
+    GrossLosMarkLatchStep out;
+    out.queue_now  = owed_in || edge_now;
+    out.late       = owed_in;
+    out.owed_after = reseed_now;
+    return out;
+}
+
 GrossLosColdEdge networkGrossLosColdStep(GrossLosState& s, const GrossLosVerdict& v,
                                          double bound_m, bool in_hold, bool allow_declare,
                                          double tow) {
@@ -870,7 +889,16 @@ void networkGrossLosScreen(NetworkRun& run, const NetworkEpoch& ep, GrossLosPhas
     // mark, so the consumer is told the contributor set changed instead of seeing an
     // unsignalled step.
     if (gl_emit_excl) {
-        std::map<std::string, int> contrib, excluded;
+        // Under network.gross_los_emit_edges the mark lands at the edges of a declaration only
+        // (card GLM): an onset (a line of sight leaves the contributor set) and a re-seed of the
+        // carried ambiguity (the cold bound's edges).  Off, every excluded epoch is marked.
+        const bool edges = ctx.knobs.gl_emit_edges;
+        std::map<std::string, int> contrib, excluded, onset;
+        std::set<std::string> reseed, released;
+        if (edges) {
+            for (const auto& [si, sat] : gross_ev.gl_act_cold_refloat) { (void)si; reseed.insert(sat); }
+            for (const auto& [si, sat] : gross_ev.gl_act_release)      { (void)si; released.insert(sat); }
+        }
         for (const auto& pass : passes) {
             const int si = static_cast<int>(pass.i);
             const bool sta_down_here =
@@ -879,16 +907,46 @@ void networkGrossLosScreen(NetworkRun& run, const NetworkEpoch& ep, GrossLosPhas
                 (void)d;
                 ++contrib[sat];
                 const GrossLosState* sit = net::getLos(los_rows, si, sat, &net::LosState::gross_los);
-                if (sta_down_here || (sit != nullptr && sit->gross))
+                const bool out = sta_down_here || (sit != nullptr && sit->gross);
+                if (out)
                     ++excluded[sat];
+                if (edges && networkGrossLosEmitOnset(
+                                 net::putLos(entities, si, sat, &net::LosState::gross_los), out))
+                    ++onset[sat];
             }
         }
+        std::set<std::string> marked_now;
         for (const auto& [sat, n_ex] : excluded) {
             if (n_ex <= 0) continue;
             ++tal.emit_excluded;
             const int n_left = contrib[sat] - n_ex;
+            const bool has_onset = onset.count(sat) != 0;
+            const bool has_reseed = reseed.count(sat) != 0;
+            if (n_left >= gl2_min_sta
+                && networkGrossLosEmitMark(edges, has_onset, has_reseed)
+                       == GrossLosEmitMark::Standing) {
+                ++tal.emit_mark_standing;
+                continue;
+            }
+            if (edges && n_left >= gl2_min_sta) {
+                marked_now.insert(sat);
+                if (has_onset) ++tal.emit_mark_onset; else ++tal.emit_mark_reseed;
+            }
             if (n_left < gl2_min_sta) {
                 gross_ev.gl_emit_withhold.insert(sat);
+                if (edges && (has_onset || has_reseed)) {
+                    // The edge falls in an epoch the satellite is withheld: its mark goes to the
+                    // product's mark queue now and lands at the satellite's next emission (the
+                    // drain keeps an absent satellite queued), instead of being lost to the
+                    // standing epochs that follow, which are unmarked under this key.
+                    net::markSat(entities, sat, net::Disc::UraRetro);
+                    marked_now.insert(sat);
+                    ++tal.emit_mark_queued_withheld;
+                    emitEvent("gross_los_emit_owed", sat, "", static_cast<double>(n_left),
+                              static_cast<double>(gl2_min_sta), "queued",
+                              fmt::format("reason=edge_in_withheld_epoch;edge={}",
+                                          has_onset ? "onset" : "reseed"));
+                }
                 emitEvent("gross_los_emit_withhold", sat, "",
                           static_cast<double>(n_left),
                           static_cast<double>(gl2_min_sta), "drop_sat",
@@ -900,9 +958,72 @@ void networkGrossLosScreen(NetworkRun& run, const NetworkEpoch& ep, GrossLosPhas
                 emitEvent("gross_los_emit_disc", sat, "",
                           static_cast<double>(n_left),
                           static_cast<double>(gl2_min_sta), "declare_step",
-                          fmt::format("n_contrib={};n_excluded={};"
-                                      "reason=declared_los_left_contributor_set",
-                                      contrib[sat], n_ex));
+                          edges ? fmt::format("n_contrib={};n_excluded={};"
+                                              "reason=declared_los_left_contributor_set;edge={}",
+                                              contrib[sat], n_ex, has_onset ? "onset" : "reseed")
+                                : fmt::format("n_contrib={};n_excluded={};"
+                                              "reason=declared_los_left_contributor_set",
+                                              contrib[sat], n_ex));
+            }
+        }
+        if (edges) {
+            // A re-seed at an epoch the satellite has no excluded line of sight left (the cold
+            // release or expiry): the emitted values step there (card GLM, A0), so it is marked.
+            // With too few contributors or none this epoch the mark goes to the queue directly,
+            // which lands it at the satellite's next emission.
+            for (const std::string& sat : reseed) {
+                if (excluded.count(sat) || marked_now.count(sat)) continue;
+                const auto c = contrib.find(sat);
+                const int n_c = c == contrib.end() ? 0 : c->second;
+                marked_now.insert(sat);
+                ++tal.emit_mark_reseed;
+                if (n_c >= gl2_min_sta) {
+                    gross_ev.gl_emit_disc.insert(sat);
+                    emitEvent("gross_los_emit_disc", sat, "", static_cast<double>(n_c),
+                              static_cast<double>(gl2_min_sta), "declare_step",
+                              fmt::format("n_contrib={};n_excluded=0;"
+                                          "reason=reseed_at_release;edge=reseed", n_c));
+                } else {
+                    net::markSat(entities, sat, net::Disc::UraRetro);
+                    ++tal.emit_mark_queued_withheld;
+                    emitEvent("gross_los_emit_owed", sat, "", static_cast<double>(n_c),
+                              static_cast<double>(gl2_min_sta), "queued",
+                              fmt::format("reason=reseed_few_contributors;n_contrib={}", n_c));
+                }
+            }
+            // The latch: a mark owed from the last decided epoch is handed to the queue now (the
+            // re-seed's response reaches this epoch's solve), and this epoch's re-seeds owe one
+            // at the next decided epoch.  The queue lands each at the satellite's first emission.
+            const std::set<std::string> owed_in =
+                net::satSet(ctx.entities.sats, &net::SatelliteState::gl_mark_owed);
+            std::set<std::string> touched = owed_in;
+            touched.insert(reseed.begin(), reseed.end());
+            std::set<std::string> owed_out;
+            for (const std::string& sat : touched) {
+                const bool edge_now = marked_now.count(sat) != 0;
+                const GrossLosMarkLatchStep st =
+                    networkGrossLosMarkLatch(owed_in.count(sat) != 0, edge_now, reseed.count(sat) != 0);
+                if (st.late) {
+                    net::markSat(entities, sat, net::Disc::UraRetro);
+                    ++tal.emit_mark_late;
+                    emitEvent("gross_los_emit_owed", sat, "", std::nullopt, std::nullopt, "handed",
+                              edge_now ? "reason=reseed_response_epoch;also_edge_now=1"
+                                       : "reason=reseed_response_epoch");
+                }
+                if (st.owed_after) {
+                    owed_out.insert(sat);
+                    ++tal.emit_mark_owed_set;
+                }
+            }
+            net::assignSatFlags(entities, &net::SatelliteState::gl_mark_owed, owed_out);
+            // The re-coupling edge of the emission exclusion (standing invariant 7): one row per
+            // released satellite, stating whether its release epoch carries a mark.
+            for (const std::string& sat : released) {
+                const bool m = marked_now.count(sat) != 0;
+                if (m) ++tal.emit_release_marked; else ++tal.emit_release_unmarked;
+                emitEvent("gross_los_emit_release", sat, "", std::nullopt, std::nullopt,
+                          m ? "marked" : "unmarked",
+                          m ? "reason=reseed_or_onset" : "reason=ordinary_release_no_step");
             }
         }
     }
@@ -1292,6 +1413,21 @@ static int networkGrossLosScreenRunEnd(const NetworkRunEndView& v) {
                       gnc3.gross_los_emit_exclude ? "on" : "off", g.emit_excluded,
                       g.emit_withheld, gnc3.gross_los_sat_min_stations,
                       g.emit_disc_marked);
+            if (gnc3.gross_los_emit_edges)
+                log->info("Network (gross-LOS, emit marks at the edges only, "
+                          "network.gross_los_emit_edges = on): {} mark(s) at an onset, {} at a "
+                          "re-seed, {} satellite-epoch(s) of a standing declaration emitted "
+                          "unmarked; releases: {} at a marked epoch, {} unmarked (ordinary "
+                          "clear).  0 standing epochs with declarations present means no "
+                          "declaration outlived its onset epoch.",
+                          g.emit_mark_onset, g.emit_mark_reseed, g.emit_mark_standing,
+                          g.emit_release_marked, g.emit_release_unmarked);
+            if (gnc3.gross_los_emit_edges)
+                log->info("Network (gross-LOS, emit marks owed): {} edge mark(s) queued at an "
+                          "epoch the satellite was withheld or had too few contributors, {} "
+                          "owed for a re-seed's response epoch, {} handed late; each lands at "
+                          "the satellite's next emission through the product's mark queue.",
+                          g.emit_mark_queued_withheld, g.emit_mark_owed_set, g.emit_mark_late);
             log->info("Network (gross-LOS, RF-3b B4 station_tier = {}): {} STATION "
                       "declaration(s), {} release(s), {} station-epoch(s) spent declared, "
                       "against {} whole-station guard firing(s).  With the tier off a guard "
