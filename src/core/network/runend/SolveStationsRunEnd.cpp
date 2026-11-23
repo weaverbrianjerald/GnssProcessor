@@ -16,6 +16,7 @@
 #include "config/GnssConfig.hpp"
 #include "network/runend/RunEnd.hpp"
 #include "network/driver/RunTypes.hpp"
+#include "network/solve/StationEntry.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -103,6 +104,7 @@ int networkSolveStationsRunEnd(const NetworkRunEndView& v) {
                       "never reached addStation, or every throw came from a non-PD guard).  "
                       "The rows in network_events.csv carry no direction.", c.pd_drop_total);
     }
+    networkStationEntryRunEnd(v);   // the park and the cold entry; silent when both are off
     return 0;
 }
 

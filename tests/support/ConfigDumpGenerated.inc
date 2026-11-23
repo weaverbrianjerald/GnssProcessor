@@ -4,7 +4,7 @@
 // Included inside configMemberDump() (tests/support/ConfigDump.hpp), where `cfg` is the
 // loaded GnssConfig and `add(name, value)` appends one "name=value" line.
 //
-// 577 public const getters without arguments; 1396 dump statements.
+// 577 public const getters without arguments; 1398 dump statements.
 //
 // Vectors of structs (their size, then every element field by field):
 //   getBaselineConfig.rovers (std::vector<StationConfig>: size, then each element)
@@ -1317,6 +1317,8 @@ add("getNetworkConfig.emit_pb_hold_trip_trigger", cfg.getNetworkConfig().emit_pb
 add("getNetworkConfig.emit_pb_hold_phase_clock", cfg.getNetworkConfig().emit_pb_hold_phase_clock);
 add("getNetworkConfig.emit_pb_hold_smoothed", cfg.getNetworkConfig().emit_pb_hold_smoothed);
 add("getNetworkConfig.station_prior_before_pd", cfg.getNetworkConfig().station_prior_before_pd);
+add("getNetworkConfig.station_single_band_park", cfg.getNetworkConfig().station_single_band_park);
+add("getNetworkConfig.station_entry_cold", cfg.getNetworkConfig().station_entry_cold);
 add("getNetworkConfig.trace_section_timers", cfg.getNetworkConfig().trace_section_timers);
 add("getNetworkConfig.write_run_manifest", cfg.getNetworkConfig().write_run_manifest);
 add("getNetworkConfig.health_interval_s", cfg.getNetworkConfig().health_interval_s);

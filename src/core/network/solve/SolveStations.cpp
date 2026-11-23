@@ -17,6 +17,7 @@
 #include <fmt/format.h>
 #include "network/assembly/ParamInventory.hpp"
 #include "network/assembly/MultiGnss.hpp"
+#include "network/solve/StationEntry.hpp"
 
 namespace GnssProcessor {
 
@@ -143,6 +144,8 @@ bool networkAssemblyConsume(NetworkRun& run, const NetworkEpoch& ep, EpochPassA&
             fam = (c != std::string::npos) ? fam.substr(0, c)
                                            : (fam == "?" ? std::string("other") : fam);
             ++ctx.counters.pd_drop_family[fam];
+            if (ctx.knobs.entry_cold || ctx.knobs.single_band_park)
+                ctx.counters.sen_refuse_family_ep[sta.name] = fam;
         }
         ++ctx.counters.pd_drop_named;
         traces.emitEvent(se.time, "TOPOLOGY", "sta_pd_dropped", "", sta.name,
@@ -221,6 +224,8 @@ bool networkAssemblyConsume(NetworkRun& run, const NetworkEpoch& ep, EpochPassA&
             }
             log->warn("Network: station '{}' assembly failed ({}); dropping it this epoch",
                       st.name, why);
+            if (ctx.knobs.entry_cold || ctx.knobs.single_band_park)
+                ctx.counters.sen_refuse_family_ep[st.name] = "assembly";
             present[i] = false;
             continue;
         }
@@ -244,6 +249,9 @@ bool networkAssemblyConsume(NetworkRun& run, const NetworkEpoch& ep, EpochPassA&
                                      NetworkNormalEquations::StationPrior{
                                          R.prior_cols, R.prior_dNrr, R.prior_dur}));
         } catch (const std::exception& ex) {
+            // network.station_single_band_park: the refused block's free directions, measured
+            // (counts, and rows under network.trace_topology).  Changes nothing.
+            networkStationNullDiagnostic(ctx, st, R, nc.trace_topology ? &traces : nullptr, &se.time);
             // One station's rank-deficient / ill-conditioned local block must not
             // cost the whole epoch in a large heterogeneous network: the station is
             // dropped and the rest are kept (the null-space gate still guards the
@@ -270,6 +278,7 @@ bool networkAssemblyConsume(NetworkRun& run, const NetworkEpoch& ep, EpochPassA&
                 ++ctx.counters.mgnss.nongps_only_pd_drops;
             present[i] = false;
             continue;
+
         }
 
         // Phase-leveling carry: fold this station's diagonal carried prior into its
@@ -381,6 +390,25 @@ void networkSolveStationsTrack(NetworkRun& run, const NetworkEpoch& ep,
     }
     ++cnt.sta_in_solve_epochs;
     cnt.sta_in_solve_ep.push_back(n_in_solve_ep);
+    // The station-entry track (network.station_single_band_park, network.station_entry_cold):
+    // the park episodes and the refusal and return of each station.  A station is refused when it
+    // had an assembled block (or its assembly failed) and did not enter the solve.
+    if (ctx.knobs.single_band_park || ctx.knobs.entry_cold) {
+        std::vector<char> in_solve_of(stations.size(), 0), refused_of(stations.size(), 0);
+        std::vector<int> parked_of(stations.size(), 0);
+        std::vector<std::string> families_of(stations.size());
+        std::vector<std::vector<std::string>> keys_of(stations.size());
+        for (size_t i = 0; i < stations.size(); ++i) {
+            const StationAssembly& R = asm_res[i];
+            in_solve_of[i] = est_index_of[i] >= 0 ? 1 : 0;
+            const bool had_block = (R.ok && !R.empty_innov) || R.threw || R.state_mismatch;
+            refused_of[i] = (had_block && est_index_of[i] < 0) ? 1 : 0;
+            parked_of[i] = static_cast<int>(stations[i].held_rpb_keys.size());
+            families_of[i] = parked_of[i] > 0 ? std::string("RPB") : std::string();
+            keys_of[i] = stations[i].held_rpb_keys;
+        }
+        networkStationEntryTrack(run, ep, in_solve_of, refused_of, parked_of, families_of, keys_of);
+    }
     if (cnt.sta_in_solve_min < 0 || n_in_solve_ep < cnt.sta_in_solve_min) {
         cnt.sta_in_solve_min     = n_in_solve_ep;
         cnt.sta_in_solve_min_tow = se.time.tow;

@@ -177,6 +177,10 @@ struct NetStation {
     // single-receiver-chain gauge).  Cleared and rebuilt every epoch by the chain
     // election.  Empty except at an eq34 component's datum receiver, and always empty
     // when network.phase_datum_eq34 is off.
+    /// Receiver-phase-bias keys the split held at their seed this epoch
+    /// (network.station_single_band_park: a constellation with no dual-band phase row entering the
+    /// solve at the station).  Written by the station's own split; empty when the key is off.
+    std::vector<std::string> held_rpb_keys;
     std::set<std::string> pinned_rpb_keys;  ///< Receiver-phase-bias keys (system, RPB and signal) this station pins as the eq34 datum receiver this epoch.
     // eq34 root row only: the absolute value (m) the fold pins a key of @ref pinned_rpb_keys at,
     // when it is not 0 (a new datum receiver pinned at its carried phase bias).  A key with no

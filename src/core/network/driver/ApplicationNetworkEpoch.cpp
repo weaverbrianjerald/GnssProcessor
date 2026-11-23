@@ -58,6 +58,7 @@
 #include "network/ar/AmbFloat.hpp"      // floored birth prior and bounded drop
 #include "network/solve/HandoverStransform.hpp" // kStsExactTolM, the S-transform exactness tolerance
 #include "network/solve/ChainDatum.hpp"    // eq34 single-receiver-chain datum
+#include "network/solve/StationEntry.hpp"  // the cold entry of a refused station
 #include "network/assembly/SignalIntegrity.hpp" // flicker/gap: band-state classifier + unvetted phase demotion
 #include "network/assembly/AprioriClockTrack.hpp" // the broadcast a priori tracked by the IF-TD columns
 #include "network/assembly/MeasurementAdmission.hpp" // product-referenced admission: the corrupt-channel screen
@@ -341,6 +342,7 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
     // The phase datum (network/solve/PhaseAnchorEpoch.cpp): the final shared phase-bias set
     // and the station that anchors each (sat,signal).  After the admission screen, whose
     // withholds prune the states an election could otherwise pin.
+    networkStationEntryCold(run, ep);   // a refused station's chain memory and carries; inert when off
     networkPhaseAnchorEpoch(run, ep, ep.pass_a, ep.events);
 
     networkReceiverPhaseBiasAllocation(run, ep);   // eq34 receiver phase-bias allocation; inert when eq34 is off

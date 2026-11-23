@@ -3751,6 +3751,40 @@ namespace GnssProcessor {
          * move.  Default off: nothing is collected or folded early, byte-identical.
          */
         bool station_prior_before_pd{ false };
+        /**
+         * @brief Hold the receiver phase biases of a constellation with no dual-band phase line
+         *        of sight at a station (@c network.station_single_band_park).
+         *
+         * When every phase line of sight of a constellation at a station is on one band, its
+         * receiver phase bias, inter-system offset and slant ionospheres shift together and no
+         * row informs the shift; the station fails the @c addStation positive-definiteness test
+         * and is dropped (PALM00ATA, day 129 under the broadcast clock: its E5a satellites had
+         * no clock).  On, the split holds such a constellation's receiver phase biases at their
+         * seed (ParamDisposition::HeldAtSeed, outside the block: no weight enters, no harvest)
+         * while no phase row of it entering the solve at the station is dual-band; when the
+         * second band returns, the free direction (those biases and any carried inter-system
+         * offset and slant ionosphere of the constellation) is reborn loose as one re-coupling.  A measure-only diagnostic counts the free
+         * directions of a station still refused.  Counted, with one event per park episode under
+         * @c network.trace_topology.  Default off: byte-identical.
+         */
+        bool station_single_band_park{ false };
+        /**
+         * @brief A station's entry after an absence from the solve is a re-coupling with a
+         *        cold entry (@c network.station_entry_cold).
+         *
+         * A station that was out of the solve for at least one epoch while the network ran
+         * (refused, or absent from the network's first epoch on) is decoupled.  On, while
+         * it is out and at the epoch it returns, the chain forgets the station's tree
+         * memory (its arcs' pin targets, its own parent edges and the satellites whose
+         * parent edge it held), so its edges are elected as first sightings and no
+         * satellite keeps hanging off a station outside the solve; and at its return its
+         * carried states (wet delay, receiver clock and its drift, receiver code and phase
+         * biases, slant ionosphere, phase colour, leveling ambiguities) are dropped, so they
+         * are born loose from the return epoch.  Both edges are events with the station's
+         * identity (refused at, returned at, epochs out, the family that failed) and
+         * counters.  Default off: byte-identical.
+         */
+        bool station_entry_cold{ false };
         bool trace_section_timers{ false };  ///< Per-epoch section-timer breakdown of the network solve (D0): @c NetworkEstimator wall-clock accumulators around assembly / Schur reduce / constrained point-solve / the explicit shared-covariance full inverse / the per-station covariance consumers.  Arms @c NetworkNormalEquations::setPerfTiming so those primitives record their milliseconds; the driver logs a @c "Network (D0)" line per emitted epoch and an end-of-run "RUN TOTALS" line, so a profiling run shows which term dominates and therefore which Tier-D scaling option (D1 selected inverse / D2 rate split / D3-D4 channel and ordering) is worth pursuing.  Diagnostic only: no product bytes, no decision change; when off, every instrumented primitive skips the clock read entirely (no measurable overhead, numerically byte-identical).
         bool write_run_manifest{ false }; ///< Write @c network_run_manifest.json (JSONL, two records) (L15): a run-provenance snapshot at startup (config path and FNV-1a-64 hash of the config bytes, build stamp, and the full network.* toggle/knob dump), plus an end-of-run record with the epoch counts and loop wall time.  Makes an archived @c logs/ folder self-describing (which toggle set produced it) even when the code is uncommitted.  Does not read git state.  Off by default.
         double health_interval_s{ 0.0 };  ///< Operator health-record cadence in seconds of processed (content) time (RTB-6).  When > 0, the producer appends a machine-readable @c network_service_health.csv row every @c health_interval_s of data: cumulative epochs emitted / skipped / gate-withheld / σ̂0-withheld / runaway, the σ̂0 EWMA (−1 sentinel = unavailable when its feeding tiers @c emit_ura, @c raim and @c phase_leveling are not all armed; the value would otherwise stay at its 1.0 initial value), stations present, clock satellites, mean ms per epoch over the health window just ended, last-emit age, and the realized per-constellation clock pivots ("G:G05;E:E11"; empty before the first emit).  A service run is thereby observable without waiting for the exit-time summary (every other health output assumes a finite run).  Distinct from the RTA-10 per-epoch product @c H status record (this is an aggregate operator heartbeat, not product content) and from the pyviz @c network_health viewer (which reads @c network_trace.csv, a different output, hence this file's @c service name).  Column semantics: @c docs/rt_service_operations.md.  Negative values clamp to 0 with a warning.  Default 0 = off: no file, byte-identical.

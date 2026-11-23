@@ -3,6 +3,7 @@
  * @brief One station's data rows: the measurement update and the column split into the shared border and the local block.
  */
 
+#include "network/solve/StationEntry.hpp"   // networkSingleBandConstellations
 #include "network/assembly/StationSplit.hpp"
 #include "network/assembly/StationBuild.hpp"   // StationBuild, StationCarryFrame
 #include "network/driver/Epoch.hpp"
@@ -249,6 +250,26 @@ void networkSplitStation(const GnssConfig& config_, NetStation& st, const Networ
         }
     }
 
+    // network.station_single_band_park: a constellation whose phase rows entering the solve are
+    // all on one band has its receiver phase bias, inter-system offset and slant ionospheres
+    // free to shift together (no row informs the shift), so the station would fail the
+    // positive-definiteness test.  Its receiver phase biases are held at their seed, outside the
+    // block (the dropped receiver IFBs' disposition); a datum receiver's pinned bias keeps its
+    // column.  Off: the set stays empty and the keys are not touched.
+    std::set<int> held_cols;
+    if (config_.getNetworkConfig().station_single_band_park) {
+        st.held_rpb_keys.clear();
+        const std::set<System> single =
+            networkSingleBandConstellations(rows.satellite_ids, rows.signal_types, excluded_row);
+        for (const auto& [sig, idx] : st.params.rx_pb) {
+            if (!single.count(sig.sys)) continue;
+            const std::string key = keyText(slotAt(st.params, idx).ref);
+            if (st.pinned_rpb_keys.count(key)) continue;
+            held_cols.insert(idx);
+            st.held_rpb_keys.push_back(key);
+        }
+    }
+
     // Which slots a row reads with a nonzero entry, and which with a nonzero entry on a row
     // that keeps its weight.  A zero entry (a partial of plus or minus zero) reads nothing,
     // as a dense column whose largest magnitude is 0 read nothing; a NaN entry reads.
@@ -281,6 +302,10 @@ void networkSplitStation(const GnssConfig& config_, NetStation& st, const Networ
         }
         if (drop_cols.count(c)) {                                // non-primary rx IFB (dropped)
             disp = ifb_rule.disposition;
+            continue;
+        }
+        if (held_cols.count(c)) {                                // single-band receiver phase bias
+            disp = ParamDisposition::HeldAtSeed;
             continue;
         }
         // Drop a structurally unobservable local state (no row reads it this
