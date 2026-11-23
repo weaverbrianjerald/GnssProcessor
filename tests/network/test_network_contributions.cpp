@@ -568,13 +568,10 @@ TEST(NetworkContributionsTest, TablePrintsEveryKindTheUnitsAndTheIntegrityLines)
     const std::vector<std::string> lines = contributionsTable(ep, run, "first emitted epoch");
     // A header, the column line, one line per printed kind, eight integrity lines.  A kind
     // printed only when it folded (the ring fix's hold row) has no line on a run that never folded it.
-    std::size_t printed = 0, only_folded = 0;
-    for (const ContributionSpec& s : contributionSpecs()) {
+    std::size_t printed = 0;
+    for (const ContributionSpec& s : contributionSpecs())
         if (!printedOnlyWhenFolded(s.kind)) ++printed;
-        else ++only_folded;
-    }
-    EXPECT_EQ(only_folded, 2u);   // the ring fix's hold row and the local null pin
-    EXPECT_EQ(printed + only_folded, kContributionKinds);
+    EXPECT_EQ(printed + 1u, kContributionKinds);
     ASSERT_EQ(lines.size(), 2u + printed + 8u);
     for (const ContributionSpec& s : contributionSpecs()) {
         if (printedOnlyWhenFolded(s.kind)) {
@@ -617,7 +614,7 @@ TEST(NetworkContributionsTest, TablePrintsEveryKindTheUnitsAndTheIntegrityLines)
         ep2.kinds[static_cast<std::size_t>(CK::PriorAmbiguityRingHold)] = ContributionCount{4, 1};
         ContributionTally run2 = ep2;
         const std::vector<std::string> lines2 = contributionsTable(ep2, run2, "first emitted epoch");
-        EXPECT_EQ(lines2.size(), 2u + printed + 1u + 8u);
+        EXPECT_EQ(lines2.size(), 2u + kContributionKinds + 8u);
         EXPECT_NE(lineStarting(lines2, "prior_ambiguity_ring_hold "), nullptr);
         EXPECT_NE(contributionsJson(ep2, run2, "run").find("prior_ambiguity_ring_hold"), std::string::npos);
     }

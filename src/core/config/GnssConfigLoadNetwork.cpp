@@ -3157,17 +3157,18 @@ namespace GnssProcessor {
                       "post-test path deliberately, so no carried value enters the admission "
                       "decision.  SOLVE-AFFECTING: expect MORE stations in the solve.");
         }
-        // Card SEN: the station refused for a null direction of its block (A) and its return (B).
+        // Card SEN: the station refused for a single-band constellation (A) and its return (B).
         // Solve-affecting only where a station would otherwise be refused or returns.
-        network_config_.station_local_null_pin =
-            jval<bool>(json, "network.station_local_null_pin", "station_local_null_pin",
+        network_config_.station_single_band_park =
+            jval<bool>(json, "network.station_single_band_park", "station_single_band_park",
                        false);
-        if (network_config_.station_local_null_pin)
-            log->info("Network: network.station_local_null_pin ON: a station refused at the "
-                      "addStation positive-definiteness test is retried once with each null "
-                      "direction of its local block pinned at its linearization point (no other "
-                      "estimate moves) and those columns left out of the harvest.  "
-                      "Solve-affecting only for a station that would otherwise be dropped.");
+        if (network_config_.station_single_band_park)
+            log->info("Network: network.station_single_band_park ON: a constellation whose phase "
+                      "rows entering the solve at a station are all on one band has its "
+                      "receiver phase biases held at their seed, outside the block (its bias, "
+                      "inter-system offset and slant ionospheres would shift together and the "
+                      "station be refused); the direction is reborn loose when the second band "
+                      "returns.");
         network_config_.station_entry_cold =
             jval<bool>(json, "network.station_entry_cold", "station_entry_cold", false);
         if (network_config_.station_entry_cold)

@@ -1524,7 +1524,7 @@ const std::vector<EntityWriterRow> kEntityWriters = {
     {"networkGrossLosAct", "network/qc/GrossLos.cpp", "arcs los"},
     {"networkGrossLosScreen", "network/qc/GrossLos.cpp", "los sats stations"},
     {"networkStationEntryCold", "network/solve/StationEntry.cpp", "all"},
-    {"networkStationEntryTrack", "network/solve/StationEntry.cpp", "stations"},
+    {"networkStationEntryTrack", "network/solve/StationEntry.cpp", "all"},
     {"networkMdbFlush", "network/qc/Mdb.cpp", "los"},
     {"holdoffAllows", "network/qc/PrefitCensus.cpp", "los"},
     {"networkPrefitCensus", "network/qc/PrefitCensus.cpp", "los stations"},

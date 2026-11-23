@@ -177,6 +177,10 @@ struct NetStation {
     // single-receiver-chain gauge).  Cleared and rebuilt every epoch by the chain
     // election.  Empty except at an eq34 component's datum receiver, and always empty
     // when network.phase_datum_eq34 is off.
+    /// Receiver-phase-bias keys the split held at their seed this epoch
+    /// (network.station_single_band_park: a constellation with no dual-band phase row entering the
+    /// solve at the station).  Written by the station's own split; empty when the key is off.
+    std::vector<std::string> held_rpb_keys;
     std::set<std::string> pinned_rpb_keys;  ///< Receiver-phase-bias keys (system, RPB and signal) this station pins as the eq34 datum receiver this epoch.
     // eq34 root row only: the absolute value (m) the fold pins a key of @ref pinned_rpb_keys at,
     // when it is not 0 (a new datum receiver pinned at its carried phase bias).  A key with no
@@ -1356,12 +1360,6 @@ struct StationAssembly {
     /// (networkParamInventoryDrain).  Trace class: nothing in the solve reads it.
     StationParamSlot param_inv;
     std::string      err;                  ///< Diagnostic (mismatch detail or exception text).
-    /// Local columns parked this epoch (network.station_local_null_pin): the columns of the null
-    /// directions of a refused station's block, pinned by @c null_pin_rows rows and left out of
-    /// every harvest list.  Ascending.  Empty unless the key is armed and the station was refused.
-    std::vector<Eigen::Index> parked_cols;
-    std::string               parked_families;   ///< Their families, space-separated ("RPB IONO ISB_Galileo").
-    long long                 null_pin_rows{0};  ///< Rows appended along the null directions (tag LocalNullPin).
     // Phase-leveling carry (increment 1): built in PASS B, consumed serially.
     std::vector<Eigen::Index> carry_cols;  ///< A_r columns receiving a carried prior (ascending, for determinism).
     Eigen::VectorXd           carry_dNrr;  ///< Per-column information increment Λ = 1/var_eff.

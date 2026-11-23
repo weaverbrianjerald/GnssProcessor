@@ -1,20 +1,22 @@
 /**
  * @file test_station_entry.cpp
- * @brief The pin of a refused station's null directions (network.station_local_null_pin) and the cold
+ * @brief The single-band receiver phase-bias park (network.station_single_band_park) and the cold
  *        entry of a refused station (network.station_entry_cold).
  *
  * Covered:
  *   - the keys: off by default, loaded on;
- *   - the normal equations: a station whose block holds a direction no row informs fails
- *     addStation; with one pin row along it the station is admitted, every other estimate equals
- *     the solve of the same station without the direction, and the direction stays at its
- *     linearization point;
- *   - the null pin on an assembly: one row per null direction, none touching an informed column,
- *     tagged and counted; the parked columns leave the harvest lists (a column with a post-PD
- *     carry keeps its harvest); nothing happens with the key off;
+ *   - the single-band test: read on the phase rows that enter the solve (a code row and an
+ *     excluded row do not make a dual-band line of sight); the return drops the carries of the
+ *     whole free direction (the held receiver phase biases, the constellation's inter-system
+ *     offset and slant ionospheres) at that station only;
+ *   - why holding moves nothing else: on blocks with a free direction, a held or pinned column of
+ *     it leaves every other estimate, local and border, equal to the problem without it, and two
+ *     held values give the same border to rounding; the measure-only diagnostic counts the free
+ *     direction and changes nothing, and counts none on a full-rank block or a weak direction
+ *     just above the bar;
  *   - the edge step: a station refused for 25 epochs from its first epoch and then admitted gives
  *     one decoupling edge and one re-coupling edge, a first entry, 25 epochs out; a park episode
- *     opens and closes;
+ *     opens, gathers its keys and closes;
  *   - the cold drop: every carried state and chain memory cell of the dropped station is reset,
  *     another station's are untouched.
  */
@@ -30,6 +32,7 @@
 #include "network/solve/StationEntry.hpp"
 #include "network/state/Entities.hpp"
 #include "network/state/RunContext.hpp"
+#include "network/state/StationParams.hpp"
 
 #include <cmath>
 #include <filesystem>
@@ -115,13 +118,13 @@ void addAnchor(NetworkNormalEquations& neq) {
 TEST(StationEntryConfig, OffByDefaultAndLoadedOn) {
     GnssConfig off, on;
     ASSERT_TRUE(loadRefWith([](nlohmann::json&) {}, off, "off"));
-    EXPECT_FALSE(off.getNetworkConfig().station_local_null_pin);
+    EXPECT_FALSE(off.getNetworkConfig().station_single_band_park);
     EXPECT_FALSE(off.getNetworkConfig().station_entry_cold);
     ASSERT_TRUE(loadRefWith([](nlohmann::json& j) {
-        j["network"]["station_local_null_pin"] = true;
+        j["network"]["station_single_band_park"] = true;
         j["network"]["station_entry_cold"] = true;
     }, on, "on"));
-    EXPECT_TRUE(on.getNetworkConfig().station_local_null_pin);
+    EXPECT_TRUE(on.getNetworkConfig().station_single_band_park);
     EXPECT_TRUE(on.getNetworkConfig().station_entry_cold);
 }
 
@@ -129,7 +132,7 @@ TEST(StationEntryConfig, OffByDefaultAndLoadedOn) {
 // The normal equations: the park decouples the column exactly
 // ===========================================================================
 
-TEST(StationNullPin, TheParkedColumnIsDecoupledExactly) {
+TEST(StationNullDirection, APinAlongARowlessColumnMovesNothingElse) {
     const ToyStation t;
     // Without the park the block fails the positive-definiteness test.
     {
@@ -165,76 +168,67 @@ TEST(StationNullPin, TheParkedColumnIsDecoupledExactly) {
 }
 
 // ===========================================================================
-// The park on an assembly
+// The single-band test and the return
 // ===========================================================================
 
-TEST(StationNullPin, PinsTheNullDirectionsAndLeavesTheHarvest) {
-    GnssConfig cfg;
-    ASSERT_TRUE(loadRefWith([](nlohmann::json& j) { j["network"]["station_local_null_pin"] = true; },
-                            cfg, "park"));
-    NetworkRunContext ctx(cfg, cfg.getNetworkConfig());
-    ASSERT_TRUE(ctx.knobs.local_null_pin);
-    NetStation st;
-    st.name = "AAAA";
-    StationAssembly R;
-    R.ok = true;
-    R.A_s = Eigen::MatrixXd::Ones(4, 2);
-    R.A_r = Eigen::MatrixXd::Zero(4, 5);
-    R.A_r.col(0).setOnes();                 // a column with rows
-    R.w = Eigen::VectorXd::Ones(4);
-    R.y = Eigen::VectorXd::Zero(4);
-    R.row_tags.assign(4, RowTag{ContributionKind::DataCode, {}, {}});
-    R.n_data_rows = 4;
-    // column 1: a pre-PD prior; column 2: a post-PD carry only; columns 3 and 4: nothing.
-    R.prior_cols = {1};
-    R.prior_dNrr = Eigen::VectorXd::Constant(1, 4.0);
-    R.prior_dur = Eigen::VectorXd::Constant(1, 0.5);
-    R.prior_tags = {RowTag{ContributionKind::PriorRxCbDatumPrePd, {}, {}}};
-    R.pl_cb_datum_rows = 1;                 // the builder's own count of that datum row
-    R.carry_cols = {2};
-    R.carry_dNrr = Eigen::VectorXd::Constant(1, 9.0);
-    R.carry_dur = Eigen::VectorXd::Zero(1);
-    R.carry_tags = {RowTag{ContributionKind::PriorRxCbCarry, {}, {}}};
-    R.pl_rpb = {std::make_tuple(std::string("Galileo_RPB_L5Q"), Eigen::Index{3}, 0.0),
-                std::make_tuple(std::string("Galileo_RPB_L1C"), Eigen::Index{0}, 0.0)};
-    R.pl_cb = {std::make_tuple(std::string("Galileo_ISC_C5Q"), Eigen::Index{4}, 0.0)};
-    const Eigen::MatrixXd A_r0 = R.A_r;
-
-    // The test's block has the null space span{e2, e3, e4} (the post-PD carry is not in it).
-    EXPECT_EQ(networkStationNullPin(ctx, st, R), 3);
-    ASSERT_EQ(R.A_r.rows(), 7);
-    ASSERT_EQ(R.A_s.rows(), 7);
-    EXPECT_TRUE(R.A_r.topRows(4).isApprox(A_r0));
-    EXPECT_TRUE(R.A_s.bottomRows(3).isZero(0.0));
-    for (Eigen::Index r = 4; r < 7; ++r) {
-        EXPECT_NEAR(R.A_r.row(r).norm(), 1.0, 1e-12);
-        EXPECT_NEAR(R.A_r(r, 0), 0.0, 1e-12);   // no pin touches an informed column
-        EXPECT_NEAR(R.A_r(r, 1), 0.0, 1e-12);
-        EXPECT_DOUBLE_EQ(R.y(r), 0.0);
-        EXPECT_GT(R.w(r), 0.0);
-        EXPECT_EQ(R.row_tags[static_cast<std::size_t>(r)].kind, ContributionKind::LocalNullPin);
-    }
-    EXPECT_EQ(R.null_pin_rows, 3);
-    EXPECT_EQ(R.prior_cols.size(), 1u);      // the prior channel is not touched
-    // The parked columns left the harvest lists (the carried column keeps its harvest).
-    ASSERT_EQ(R.parked_cols.size(), 2u);
-    EXPECT_EQ(R.parked_cols[0], 3);
-    EXPECT_EQ(R.parked_cols[1], 4);
-    ASSERT_EQ(R.pl_rpb.size(), 1u);
-    EXPECT_EQ(std::get<1>(R.pl_rpb[0]), 0);
-    EXPECT_TRUE(R.pl_cb.empty());
-    EXPECT_EQ(ctx.counters.sen_park_station_epochs, 1);
-    EXPECT_EQ(ctx.counters.sen_null_pin_rows, 3);
-    // The tag check closes over the new rows.
-    const StationTagCheck chk = checkStationTags(R);
-    EXPECT_EQ(chk.untagged, 0);
-    EXPECT_EQ(chk.mismatches, 0);
+TEST(StationSingleBandPark, ReadsTheRowsThatEnterTheSolve) {
+    // G01 phase on L1C and L2W (dual-band); E02 and E07 phase on L1C only, E07 also code on
+    // C5Q (a code row does not make a dual-band phase line of sight).
+    std::vector<std::string> sats = {"G01", "G01", "E02", "E07", "E07"};
+    std::vector<std::string> sigs = {"L1C", "L2W", "L1C", "L1C", "C5Q"};
+    EXPECT_EQ(networkSingleBandConstellations(sats, sigs, {}), (std::set<System>{System::Galileo}));
+    // E02 gains L5Q: Galileo is dual-band.
+    sats.push_back("E02");
+    sigs.push_back("L5Q");
+    EXPECT_TRUE(networkSingleBandConstellations(sats, sigs, {}).empty());
+    // The same L5Q row excluded at zero weight does not count (it does not enter the solve).
+    std::vector<char> excluded(sats.size(), 0);
+    excluded.back() = 1;
+    EXPECT_EQ(networkSingleBandConstellations(sats, sigs, excluded),
+              (std::set<System>{System::Galileo}));
+    // GPS loses L2W: both single-band.
+    excluded[1] = 1;
+    EXPECT_EQ(networkSingleBandConstellations(sats, sigs, excluded),
+              (std::set<System>{System::GPS, System::Galileo}));
 }
+
+TEST(StationSingleBandPark, TheReturnRebornsTheWholeDirectionLoose) {
+    net::NetworkEntities e;
+    const LocalCarry lc{1.0, 0.01, 100.0};
+    const StationId sid{0};
+    net::put(e.stations, sid, &net::StationState::signals, std::string("Galileo_RPB_L1C"),
+             &net::StationSignalState::rpb) = lc;
+    net::put(e.stations, sid, &net::StationState::signals, std::string("Galileo"),
+             &net::StationSignalState::rx_clk) = lc;              // the inter-system offset
+    net::put(e.stations, sid, &net::StationState::signals, std::string(""),
+             &net::StationSignalState::rx_clk) = lc;              // the receiver clock (kept)
+    net::put(e.stations, sid, &net::StationState::signals, std::string("GPS_RPB_L1C"),
+             &net::StationSignalState::rpb) = lc;                 // GPS (kept)
+    net::putLos(e, 0, "E02", &net::LosState::iono_blk) = lc;
+    net::putLos(e, 0, "G05", &net::LosState::iono_blk) = lc;      // GPS (kept)
+    net::putLos(e, 1, "E02", &net::LosState::iono_blk) = lc;      // another station (kept)
+    EXPECT_EQ(networkStationSingleBandReturn(e, 0, {"Galileo_RPB_L1C"}), 3);
+    EXPECT_EQ(net::get(e.stations, sid, &net::StationState::signals, std::string("Galileo_RPB_L1C"),
+                       &net::StationSignalState::rpb), nullptr);
+    EXPECT_EQ(net::get(e.stations, sid, &net::StationState::signals, std::string("Galileo"),
+                       &net::StationSignalState::rx_clk), nullptr);
+    EXPECT_EQ(net::getLos(e.los, 0, "E02", &net::LosState::iono_blk), nullptr);
+    EXPECT_NE(net::get(e.stations, sid, &net::StationState::signals, std::string(""),
+                       &net::StationSignalState::rx_clk), nullptr);
+    EXPECT_NE(net::get(e.stations, sid, &net::StationState::signals, std::string("GPS_RPB_L1C"),
+                       &net::StationSignalState::rpb), nullptr);
+    EXPECT_NE(net::getLos(e.los, 0, "G05", &net::LosState::iono_blk), nullptr);
+    EXPECT_NE(net::getLos(e.los, 1, "E02", &net::LosState::iono_blk), nullptr);
+}
+
+// ===========================================================================
+// Why the single-band hold moves nothing else: a block with a null direction
+// ===========================================================================
 
 namespace {
 
 /// An assembly over 2 shared and 3 local columns whose local columns 1 and 2 enter every row
-/// together (a single-frequency constellation's phase bias and ionosphere shift together), so
+/// together (a single-band constellation's phase bias and ionosphere shift together), so
 /// v = (0, 1, -1)/sqrt(2) is a null direction of the local block that no row sees; @p eps > 0
 /// separates the two columns slightly in one row, which makes the direction weak, not null.
 StationAssembly nullBlock(double eps) {
@@ -258,116 +252,85 @@ StationAssembly nullBlock(double eps) {
     R.A_r(0, 2) += eps;
     R.row_tags.assign(static_cast<std::size_t>(m), RowTag{ContributionKind::DataCode, {}, {}});
     R.n_data_rows = m;
-    R.pl_rpb = {std::make_tuple(std::string("Galileo_RPB_L1C"), Eigen::Index{1}, 0.0)};
-    R.pl_iono = {std::make_tuple(std::string("E07"), Eigen::Index{2}, 0.0)};
-    R.pl_cb = {std::make_tuple(std::string("GPS_DCB"), Eigen::Index{0}, 0.0)};
     return R;
 }
 
 }  // namespace
 
-TEST(StationNullPin, ANullDirectionIsPinnedAndNothingElseMoves) {
-    GnssConfig cfg;
-    ASSERT_TRUE(loadRefWith([](nlohmann::json& j) { j["network"]["station_local_null_pin"] = true; },
-                            cfg, "nullblock"));
-    NetworkRunContext ctx(cfg, cfg.getNetworkConfig());
-    NetStation st;
-    st.name = "PALM";
+TEST(StationNullDirection, AHoldOnOneColumnOfTheNullDirectionMovesNothingElse) {
+    // The declared rule holds one column of the free direction (here column 1) at a value; every
+    // other estimate, local and border, equals the problem with the direction removed.
     StationAssembly R = nullBlock(0.0);
-    // Refused as built.
     {
         NetworkNormalEquations neq(2);
         addAnchor(neq);
         EXPECT_THROW(addRows(neq, R.A_s, R.A_r, R.w, R.y), std::exception);
     }
-    ASSERT_EQ(networkStationNullPin(ctx, st, R), 1);
-    EXPECT_EQ(R.null_pin_rows, 1);
-    // The pin row lies along the null direction (0, 1, -1)/sqrt(2), up to its sign.
-    const Eigen::RowVectorXd pin = R.A_r.row(R.A_r.rows() - 1);
-    EXPECT_NEAR(pin(0), 0.0, 1e-12);
-    EXPECT_NEAR(std::abs(pin(1)), 1.0 / std::sqrt(2.0), 1e-12);
-    EXPECT_NEAR(pin(1) + pin(2), 0.0, 1e-12);
-    NetworkNormalEquations pinned(2);
-    addAnchor(pinned);
-    std::size_t ip = 0;
-    ASSERT_NO_THROW(ip = addRows(pinned, R.A_s, R.A_r, R.w, R.y));
-    const Eigen::VectorXd xs_p = pinned.solveShared();
-    const Eigen::VectorXd xr_p = pinned.reconstructStation(ip, xs_p);
-    // The same problem with the direction removed: columns 1 and 2 merged into one.
-    const StationAssembly R0 = nullBlock(0.0);
-    Eigen::MatrixXd A_r_merged(R0.A_r.rows(), 2);
-    A_r_merged.col(0) = R0.A_r.col(0);
-    A_r_merged.col(1) = R0.A_r.col(1);
+    NetworkNormalEquations held(2);
+    addAnchor(held);
+    NetworkNormalEquations::StationPrior hold;
+    hold.cols = {1};
+    hold.dNrr = Eigen::VectorXd::Constant(1, 1.0);
+    hold.dur = Eigen::VectorXd::Constant(1, 0.25);   // held at 0.25 from the linearization point
+    std::size_t ih = 0;
+    ASSERT_NO_THROW(ih = addRows(held, R.A_s, R.A_r, R.w, R.y, hold));
+    const Eigen::VectorXd xs_h = held.solveShared();
+    const Eigen::VectorXd xr_h = held.reconstructStation(ih, xs_h);
+    Eigen::MatrixXd A_r_merged(R.A_r.rows(), 2);
+    A_r_merged.col(0) = R.A_r.col(0);
+    A_r_merged.col(1) = R.A_r.col(1);
     NetworkNormalEquations merged(2);
     addAnchor(merged);
-    const std::size_t im = addRows(merged, R0.A_s, A_r_merged, R0.w, R0.y);
+    const std::size_t im = addRows(merged, R.A_s, A_r_merged, R.w, R.y);
     const Eigen::VectorXd xs_m = merged.solveShared();
     const Eigen::VectorXd xr_m = merged.reconstructStation(im, xs_m);
-    for (Eigen::Index k = 0; k < xs_p.size(); ++k) EXPECT_NEAR(xs_p(k), xs_m(k), 1e-10);   // the border
-    EXPECT_NEAR(xr_p(0), xr_m(0), 1e-10);                       // the other local column
-    EXPECT_NEAR(xr_p(1) + xr_p(2), xr_m(1), 1e-10);             // the observable sum
-    EXPECT_NEAR(xr_p(1) - xr_p(2), 0.0, 1e-10);                 // the pinned direction at its linearization point
-    // The direction's columns left the harvest; the other column stayed.
-    EXPECT_EQ(R.parked_cols, (std::vector<Eigen::Index>{1, 2}));
-    EXPECT_TRUE(R.pl_rpb.empty());
-    EXPECT_TRUE(R.pl_iono.empty());
-    ASSERT_EQ(R.pl_cb.size(), 1u);
+    for (Eigen::Index k = 0; k < xs_h.size(); ++k) EXPECT_NEAR(xs_h(k), xs_m(k), 1e-10);   // the border
+    EXPECT_NEAR(xr_h(0), xr_m(0), 1e-10);                     // the other local column
+    EXPECT_NEAR(xr_h(1) + xr_h(2), xr_m(1), 1e-10);           // the observable sum
+    EXPECT_NEAR(xr_h(1), 0.25, 1e-10);                        // the held column at its value
 }
 
-TEST(StationNullPin, ABlockWithoutANullDirectionTakesTheUnchangedPath) {
-    GnssConfig cfg;
-    ASSERT_TRUE(loadRefWith([](nlohmann::json& j) { j["network"]["station_local_null_pin"] = true; },
-                            cfg, "nonull"));
-    NetworkRunContext ctx(cfg, cfg.getNetworkConfig());
-    NetStation st;
-    // A full-rank block and a weak direction just above the bar (columns 1 and 2 separated by
-    // 1e-3 in one row): no row, no parked column, no counter; the weak direction keeps its
-    // columns in the harvest, so its values are carried with their own large variance.
-    for (const double eps : {0.5, 1e-3}) {
-        StationAssembly R = nullBlock(eps);
-        const Eigen::Index rows0 = R.A_r.rows();
-        EXPECT_EQ(networkStationNullPin(ctx, st, R), 0) << eps;
-        EXPECT_EQ(R.A_r.rows(), rows0) << eps;
-        EXPECT_EQ(R.null_pin_rows, 0) << eps;
-        EXPECT_TRUE(R.parked_cols.empty()) << eps;
-        EXPECT_EQ(R.pl_rpb.size(), 1u) << eps;
-        EXPECT_EQ(R.pl_iono.size(), 1u) << eps;
+TEST(StationNullDirection, TwoHeldValuesGiveTheSameBorder) {
+    // HeldAtSeed: the held column leaves the block and enters every row as a constant.  Held at
+    // 0 or at 0.5 m, the border solution is the same to rounding; only the other column of the
+    // free direction moves, by the held offset.
+    const StationAssembly R = nullBlock(0.0);
+    Eigen::VectorXd xs[2], xr[2];
+    const double held[2] = {0.0, 0.5};
+    for (int k = 0; k < 2; ++k) {
+        Eigen::MatrixXd A_r_kept(R.A_r.rows(), 2);
+        A_r_kept.col(0) = R.A_r.col(0);
+        A_r_kept.col(1) = R.A_r.col(2);
+        const Eigen::VectorXd y = R.y - R.A_r.col(1) * held[k];
+        NetworkNormalEquations neq(2);
+        addAnchor(neq);
+        const std::size_t i = addRows(neq, R.A_s, A_r_kept, R.w, y);
+        xs[k] = neq.solveShared();
+        xr[k] = neq.reconstructStation(i, xs[k]);
     }
-    EXPECT_EQ(ctx.counters.sen_park_station_epochs, 0);
-    EXPECT_EQ(ctx.counters.sen_null_pin_rows, 0);
+    for (Eigen::Index j = 0; j < xs[0].size(); ++j) EXPECT_NEAR(xs[0](j), xs[1](j), 1e-12);
+    EXPECT_NEAR(xr[0](0), xr[1](0), 1e-12);                      // a column outside the direction
+    EXPECT_NEAR(xr[1](1) - xr[0](1), -0.5, 1e-12);                // the other column takes the offset
 }
 
-TEST(StationNullPin, ADirectionCoupledToTheBorderIsNotPinned) {
+TEST(StationNullDirection, TheDiagnosticCountsAndChangesNothing) {
     GnssConfig cfg;
-    ASSERT_TRUE(loadRefWith([](nlohmann::json& j) { j["network"]["station_local_null_pin"] = true; },
-                            cfg, "coupled"));
+    ASSERT_TRUE(loadRefWith([](nlohmann::json& j) { j["network"]["station_single_band_park"] = true; },
+                            cfg, "diag"));
     NetworkRunContext ctx(cfg, cfg.getNetworkConfig());
     NetStation st;
-    // Local column 2 equals column 1 plus a tiny share of the shared column 1: the local block's
-    // direction (0, 1, -1) is below the bar, but its residue A_r v lies along a shared column, so
-    // a pin would hand the border information (a datum direction of the network).
-    StationAssembly R = nullBlock(0.0);
-    for (Eigen::Index r = 0; r < R.A_r.rows(); ++r) R.A_r(r, 2) += 1e-7 * R.A_s(r, 1);
-    const Eigen::Index rows0 = R.A_r.rows();
-    EXPECT_EQ(networkStationNullPin(ctx, st, R), 0);
-    EXPECT_EQ(R.A_r.rows(), rows0);
-    EXPECT_EQ(ctx.counters.sen_null_coupled_skipped, 1);
-    EXPECT_TRUE(R.parked_cols.empty());
-}
-
-TEST(StationNullPin, OffLeavesTheAssemblyUntouched) {
-    GnssConfig cfg;
-    ASSERT_TRUE(loadRefWith([](nlohmann::json&) {}, cfg, "park_off"));
-    NetworkRunContext ctx(cfg, cfg.getNetworkConfig());
-    NetStation st;
-    StationAssembly R;
-    R.ok = true;
-    R.A_r = Eigen::MatrixXd::Zero(3, 2);
-    R.A_r.col(0).setOnes();
-    EXPECT_EQ(networkStationNullPin(ctx, st, R), 0);
+    const StationAssembly null_block = nullBlock(0.0);
+    StationAssembly R = null_block;
+    EXPECT_EQ(networkStationNullDiagnostic(ctx, st, R), 1);
+    EXPECT_TRUE(R.A_r.isApprox(null_block.A_r));
+    EXPECT_EQ(R.A_r.rows(), null_block.A_r.rows());
     EXPECT_TRUE(R.prior_cols.empty());
-    EXPECT_TRUE(R.parked_cols.empty());
-    EXPECT_EQ(ctx.counters.sen_park_columns, 0);
+    // A full-rank block and a weak direction just above the bar count nothing.
+    for (const double eps : {0.5, 1e-3}) {
+        const StationAssembly W = nullBlock(eps);
+        EXPECT_EQ(networkStationNullDiagnostic(ctx, st, W), 0) << eps;
+    }
+    EXPECT_EQ(ctx.counters.sen_null_diag_directions, 1);
 }
 
 // ===========================================================================
@@ -404,7 +367,8 @@ TEST(StationEntryStep, ARefusalFromTheFirstEpochThenAReturn) {
 
 TEST(StationEntryStep, AParkEpisodeOpensAndCloses) {
     net::StationEntryRecord rec;
-    const StationEntryEdges a = networkStationEntryStep(rec, true, false, 1, "RPB", 0.0, "");
+    const StationEntryEdges a =
+        networkStationEntryStep(rec, true, false, 1, "RPB", 0.0, "", {"Galileo_RPB_L1C"});
     EXPECT_TRUE(a.park_opened);
     const StationEntryEdges b = networkStationEntryStep(rec, true, false, 1, "RPB", 30.0, "");
     EXPECT_FALSE(b.park_opened);
@@ -412,6 +376,7 @@ TEST(StationEntryStep, AParkEpisodeOpensAndCloses) {
     const StationEntryEdges c = networkStationEntryStep(rec, true, false, 0, "", 60.0, "");
     EXPECT_TRUE(c.park_closed);
     EXPECT_EQ(c.park_epochs, 2);
+    EXPECT_EQ(c.unparked_keys, (std::vector<std::string>{"Galileo_RPB_L1C"}));
     EXPECT_EQ(rec.park_epochs, 0);
 }
 

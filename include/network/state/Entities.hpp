@@ -757,6 +757,7 @@ struct StationEntryRecord {
     std::string family;                 ///< The column family that failed at that refusal ("RPB", "unnamed", "assembly").
     long long   park_epochs{0};         ///< Consecutive admitted epochs with a parked column; 0 = no episode open.
     std::string park_families;          ///< The families parked when the episode opened.
+    std::vector<std::string> park_keys; ///< The receiver phase-bias keys parked during the episode (their carries are dropped when it closes).
 };
 
 struct StationState {

@@ -1,18 +1,19 @@
 #pragma once
 /**
  * @file StationEntry.hpp
- * @brief A station refused for a null direction of its local block, and the return of a refused station.
+ * @brief A station refused for a single-band constellation, and the return of a refused station.
  *
  * Two responses, each behind its own key (both default off, identical when off):
  *
- * - **The null pin** (@c network.station_local_null_pin).  A station's local block that has a
- *   direction no row informs (a column with no row; the Galileo receiver phase bias, ISB and slant
- *   ionosphere of a station whose Galileo lines of sight are all single-frequency) fails the
- *   whole station at the @c addStation positive-definiteness test.  The null pin appends one
- *   row along each such direction at its linearization point, which changes no other estimate
- *   (the direction is invisible to the data and to the shared border), retries the station
- *   once, and removes the direction's columns from every harvest list, so no carried value is
- *   written from them.
+ * - **The single-band park** (@c network.station_single_band_park).  When every phase line of
+ *   sight of a constellation at a station is on one band, that constellation's receiver phase
+ *   bias, inter-system offset and slant ionospheres shift together and no row informs the shift;
+ *   the station fails the @c addStation positive-definiteness test and is dropped.  The rule:
+ *   the split holds that constellation's receiver phase biases at their seed
+ *   (@c ParamDisposition::HeldAtSeed, outside the block; no weight enters, the parameters table
+ *   counts them) while the station has no dual-band phase line of sight of it in the rows that
+ *   enter the solve; when the second band returns, the free direction is reborn loose as one
+ *   re-coupling (networkStationSingleBandReturn).
  * - **The cold entry** (@c network.station_entry_cold).  A station that had data and was not
  *   admitted (refused) is decoupled from the network.  While it is out, and at the epoch it
  *   returns, the chain forgets the station's tree memory (its arcs' pin targets, its own parent
@@ -24,7 +25,10 @@
  * counters (@ref GnssProcessor::StationEntryCounters "StationEntryCounters").
  */
 
+#include "common/GnssIdentity.hpp"
+
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -36,6 +40,8 @@ struct NetworkRunContext;
 struct NetStation;
 struct StationAssembly;
 struct NetworkRunEndView;
+struct NetworkRunTraces;
+struct GnssTime;
 namespace net { struct NetworkEntities; struct StationEntryRecord; }
 
 /**
@@ -43,9 +49,9 @@ namespace net { struct NetworkEntities; struct StationEntryRecord; }
  *        @c NetworkServiceCounters).  Nothing in the solve reads them.
  */
 struct StationEntryCounters {
-    long long sen_park_station_epochs = 0;   ///< Refused station-epochs that the null pin retried (at least one pin row).
-    long long sen_null_pin_rows = 0;         ///< Pin rows appended, summed over station-epochs.
-    long long sen_null_coupled_skipped = 0;  ///< Directions below the null bar left unpinned because a pin would pass information to the shared border (a datum direction of the network).
+    long long sen_park_station_epochs = 0;   ///< Admitted station-epochs with at least one receiver phase bias held at its seed.
+    long long sen_park_unpark_drops = 0;     ///< Carried entries of the free direction dropped when a park episode closed (reborn loose).
+    long long sen_null_diag_directions = 0;  ///< Directions below the null bar counted by the measure-only diagnostic of refused stations.
     long long sen_park_columns = 0;          ///< Columns parked, summed over station-epochs.
     long long sen_park_kept = 0;             ///< Station-epochs with a parked column that then entered the solve.
     long long sen_park_episodes = 0;         ///< Park episodes opened (a station's first parked epoch after one without).
@@ -66,28 +72,60 @@ struct StationEntryCounters {
 };
 
 /**
- * @brief The null pin: make a refused station's local block positive-definite by pinning its null
- *        directions, without changing any other estimate.
+ * @brief The constellations whose phase rows entering the solve are all on one band at a station.
  *
- * Gate: returns 0 at once unless @c network.station_local_null_pin.  Called at the drop site
- * after the station's @c addStation failed.  The block judged is the test's own
- * (@f$A_r^\top W A_r@f$ plus the pre-PD prior).  A direction @f$v@f$ with @f$N v = 0@f$ has
- * @f$A_r v = 0@f$, so it is invisible to every row and to the shared border; a row along it at
- * the linearization point fixes it and moves nothing else.  Null directions are the eigenvectors
- * whose eigenvalue is below 1e-12 of the largest (the kernel's own count) and whose pin would pass
- * the shared border at most 1e-14 of the station's shared block (|c|^2 / ev with
- * c = A_s^T W A_r v; a direction coupled to the border is a datum direction of the network and is
- * left alone); each gets one row of weight 1e-6 of the median of the other eigenvalues (tag
- * @c LocalNullPin).  The columns with a weight of at least
- * 0.05 in a pinned direction are parked: removed from every harvest list (a column with a post-PD
- * carry keeps its harvest).  A rowless column is the special case @f$v = e_c@f$.
+ * Read on the rows of the epoch that keep their weight (satellites without a clock and screened
+ * rows are not in them): a constellation is single-band when no satellite has phase rows on two
+ * frequency digits.  The split holds such a constellation's receiver phase biases at their seed
+ * (@c ParamDisposition::HeldAtSeed, outside the block) under @c network.station_single_band_park:
+ * its receiver phase bias, inter-system offset and slant ionospheres would otherwise shift
+ * together with no row informing the shift, and the station would fail the positive-definiteness
+ * test.
  *
- * @param ctx The run context (knobs, counters).
- * @param st  The station (its parameter slots name the columns).
- * @param R   The station's assembly, modified in place.  // written
- * @return The number of pin rows appended (0: no null direction, the station stays refused).
+ * @param satellites The satellite of each data row ("E02").
+ * @param signals    The observation code of each data row ("L1C", "C5Q").
+ * @param excluded   Per row: excluded at zero weight (may be empty).
+ * @return The single-band constellations (a constellation with no phase row is not listed).
  */
-int networkStationNullPin(NetworkRunContext& ctx, const NetStation& st, StationAssembly& R);
+std::set<System> networkSingleBandConstellations(const std::vector<std::string>& satellites,
+                                                 const std::vector<std::string>& signals,
+                                                 const std::vector<char>& excluded);
+
+/**
+ * @brief The return of a single-band constellation's second band: its free direction is reborn
+ *        loose as one re-coupling.
+ *
+ * Drops, for the station, the carries of the held receiver phase biases @p rpb_keys and of any
+ * carried inter-system offset (the receiver-clock family entry of the constellation's name) and
+ * slant ionosphere of the same constellation.
+ *
+ * @param entities The entities.  // written
+ * @param station  The station's roster index.
+ * @param rpb_keys The receiver phase-bias keys held during the episode ("Galileo_RPB_L1C").
+ * @return The number of carried entries dropped.
+ */
+long long networkStationSingleBandReturn(net::NetworkEntities& entities, int station,
+                                         const std::vector<std::string>& rpb_keys);
+
+/**
+ * @brief Measure-only diagnostic of a refused station's free directions.
+ *
+ * Gate: returns 0 at once unless @c network.station_single_band_park.  Counts the eigenvectors of
+ * the block the positive-definiteness test judges whose eigenvalue is below 1e-12 of the largest,
+ * and with @p traces writes one @c sta_null_direction row for each: the eigenvalue and its gap to
+ * the next, what a pin along it would pass to the shared border, and its five largest columns.
+ * Changes nothing.
+ *
+ * @param ctx    The run context (knobs, counters).
+ * @param st     The station.
+ * @param R      The refused station's assembly.
+ * @param traces The trace streams, or null for counts only.
+ * @param t      The epoch time of the rows.
+ * @return The number of directions below the bar.
+ */
+int networkStationNullDiagnostic(NetworkRunContext& ctx, const NetStation& st,
+                                 const StationAssembly& R, NetworkRunTraces* traces = nullptr,
+                                 const GnssTime* t = nullptr);
 
 /// What the cold entry did to one station.
 struct StationColdDrop {
@@ -116,6 +154,7 @@ struct StationEntryEdges {
     bool returned{false};         ///< The re-coupling edge: the station admitted after a refusal.
     bool first_entry{false};      ///< ...and it had never been in the solve.
     long long out_epochs{0};      ///< The absence that ended, when @c returned (epochs).
+    std::vector<std::string> unparked_keys;   ///< The keys of the closed park episode, when @c park_closed.
 };
 
 /**
@@ -128,12 +167,14 @@ struct StationEntryEdges {
  * @param families       The parked families (kept when an episode opens).
  * @param tow            This epoch's TOW (the refusal's time).
  * @param refuse_family  The family that failed, when @p refused ("unnamed" when empty).
+ * @param parked_keys    The keys parked this epoch (gathered into the episode).
  * @return The edges of this epoch.  On a return the record's absence is closed by the caller
  *         after it has read @c refused_at_tow and @c family.
  */
 StationEntryEdges networkStationEntryStep(net::StationEntryRecord& rec, bool in_solve, bool refused,
                                           int parked, const std::string& families, double tow,
-                                          const std::string& refuse_family);
+                                          const std::string& refuse_family,
+                                          const std::vector<std::string>& parked_keys = {});
 
 /**
  * @brief The cold entry: forget the chain memory and drop the carries of every station that is
@@ -161,12 +202,14 @@ void networkStationEntryCold(NetworkRun& run, const NetworkEpoch& ep);
  * @param refused_of   Per station: it had data and was not admitted this epoch.
  * @param parked_of    Per station: its number of parked columns this epoch.
  * @param families_of  Per station: the parked families, space-separated.
+ * @param keys_of      Per station: the parked receiver phase-bias keys.
  */
 void networkStationEntryTrack(NetworkRun& run, const NetworkEpoch& ep,
                               const std::vector<char>& in_solve_of,
                               const std::vector<char>& refused_of,
                               const std::vector<int>& parked_of,
-                              const std::vector<std::string>& families_of);
+                              const std::vector<std::string>& families_of,
+                              const std::vector<std::vector<std::string>>& keys_of);
 
 /**
  * @brief Run-end report: the park and the cold entry.

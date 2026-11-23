@@ -144,7 +144,7 @@ bool networkAssemblyConsume(NetworkRun& run, const NetworkEpoch& ep, EpochPassA&
             fam = (c != std::string::npos) ? fam.substr(0, c)
                                            : (fam == "?" ? std::string("other") : fam);
             ++ctx.counters.pd_drop_family[fam];
-            if (ctx.knobs.entry_cold || ctx.knobs.local_null_pin)
+            if (ctx.knobs.entry_cold || ctx.knobs.single_band_park)
                 ctx.counters.sen_refuse_family_ep[sta.name] = fam;
         }
         ++ctx.counters.pd_drop_named;
@@ -224,7 +224,7 @@ bool networkAssemblyConsume(NetworkRun& run, const NetworkEpoch& ep, EpochPassA&
             }
             log->warn("Network: station '{}' assembly failed ({}); dropping it this epoch",
                       st.name, why);
-            if (ctx.knobs.entry_cold || ctx.knobs.local_null_pin)
+            if (ctx.knobs.entry_cold || ctx.knobs.single_band_park)
                 ctx.counters.sen_refuse_family_ep[st.name] = "assembly";
             present[i] = false;
             continue;
@@ -249,51 +249,36 @@ bool networkAssemblyConsume(NetworkRun& run, const NetworkEpoch& ep, EpochPassA&
                                      NetworkNormalEquations::StationPrior{
                                          R.prior_cols, R.prior_dNrr, R.prior_dur}));
         } catch (const std::exception& ex) {
-            // network.station_local_null_pin: a block refused for a direction no row informs is
-            // retried once with that direction pinned at its linearization point (no other
-            // estimate moves); a station that still fails is dropped as below.  Serial, in
-            // station order.  Off: no call, the drop path as before.
-            bool admitted = false;
-            if (ctx.knobs.local_null_pin && (phase_datum_prioritized || !st.is_pivot)
-                && networkStationNullPin(ctx, st, R) > 0) {
-                try {
-                    est_index_of[i] = static_cast<int>(
-                        est.addStation(R.A_s, R.A_r, R.w, R.y,
-                                       NetworkNormalEquations::StationPrior{
-                                           R.prior_cols, R.prior_dNrr, R.prior_dur}));
-                    admitted = true;
-                } catch (const std::exception&) {
-                    admitted = false;
-                }
-            }
-            if (!admitted) {
-                // One station's rank-deficient / ill-conditioned local block must not
-                // cost the whole epoch in a large heterogeneous network: the station is
-                // dropped and the rest are kept (the null-space gate still guards the
-                // result).  On the legacy path the pivot is the exception: it carries
-                // the S-basis, so without it the epoch has no datum and is skipped.
-                // Prioritized: the gauge is distributed, so the pivot is dropped too (an
-                // anchor loss is caught by the null-space gate, which withholds, and the
-                // next epoch recovers).
-                if (!phase_datum_prioritized && st.is_pivot) {
-                    log->warn("Network: PIVOT '{}' addStation rejected ({}); skipping epoch",
-                              st.name, ex.what());
-                    ++ctx.counters.pd_drop_pivot_abort;   // the epoch-skipping case
-                    pdDropEvent(st, R, "epoch_sunk");
-                    epoch_ok = false;
-                    break;
-                }
-                log->warn("Network: station '{}' addStation rejected ({}); dropping it this epoch",
+            // network.station_single_band_park: the refused block's free directions, measured
+            // (counts, and rows under network.trace_topology).  Changes nothing.
+            networkStationNullDiagnostic(ctx, st, R, nc.trace_topology ? &traces : nullptr, &se.time);
+            // One station's rank-deficient / ill-conditioned local block must not
+            // cost the whole epoch in a large heterogeneous network: the station is
+            // dropped and the rest are kept (the null-space gate still guards the
+            // result).  On the legacy path the pivot is the exception: it carries
+            // the S-basis, so without it the epoch has no datum and is skipped.
+            // Prioritized: the gauge is distributed, so the pivot is dropped too (an
+            // anchor loss is caught by the null-space gate, which withholds, and the
+            // next epoch recovers).
+            if (!phase_datum_prioritized && st.is_pivot) {
+                log->warn("Network: PIVOT '{}' addStation rejected ({}); skipping epoch",
                           st.name, ex.what());
-                pdDropEvent(st, R, "dropped");            // name the null column
-                // A station whose epoch holds rows of a non-GPS system and no GPS row has
-                // its receiver clock and inter-system bias collinear, so this rejection is
-                // structural.  Counted here, at the one drop site.
-                if (i < modeled.size() && networkStationNonGpsOnly(modeled[i]))
-                    ++ctx.counters.mgnss.nongps_only_pd_drops;
-                present[i] = false;
-                continue;
+                ++ctx.counters.pd_drop_pivot_abort;   // the epoch-skipping case
+                pdDropEvent(st, R, "epoch_sunk");
+                epoch_ok = false;
+                break;
             }
+            log->warn("Network: station '{}' addStation rejected ({}); dropping it this epoch",
+                      st.name, ex.what());
+            pdDropEvent(st, R, "dropped");            // name the null column
+            // A station whose epoch holds rows of a non-GPS system and no GPS row has
+            // its receiver clock and inter-system bias collinear, so this rejection is
+            // structural.  Counted here, at the one drop site.
+            if (i < modeled.size() && networkStationNonGpsOnly(modeled[i]))
+                ++ctx.counters.mgnss.nongps_only_pd_drops;
+            present[i] = false;
+            continue;
+
         }
 
         // Phase-leveling carry: fold this station's diagonal carried prior into its
@@ -405,22 +390,24 @@ void networkSolveStationsTrack(NetworkRun& run, const NetworkEpoch& ep,
     }
     ++cnt.sta_in_solve_epochs;
     cnt.sta_in_solve_ep.push_back(n_in_solve_ep);
-    // The station-entry track (network.station_local_null_pin, network.station_entry_cold):
+    // The station-entry track (network.station_single_band_park, network.station_entry_cold):
     // the park episodes and the refusal and return of each station.  A station is refused when it
     // had an assembled block (or its assembly failed) and did not enter the solve.
-    if (ctx.knobs.local_null_pin || ctx.knobs.entry_cold) {
+    if (ctx.knobs.single_band_park || ctx.knobs.entry_cold) {
         std::vector<char> in_solve_of(stations.size(), 0), refused_of(stations.size(), 0);
         std::vector<int> parked_of(stations.size(), 0);
         std::vector<std::string> families_of(stations.size());
+        std::vector<std::vector<std::string>> keys_of(stations.size());
         for (size_t i = 0; i < stations.size(); ++i) {
             const StationAssembly& R = asm_res[i];
             in_solve_of[i] = est_index_of[i] >= 0 ? 1 : 0;
             const bool had_block = (R.ok && !R.empty_innov) || R.threw || R.state_mismatch;
             refused_of[i] = (had_block && est_index_of[i] < 0) ? 1 : 0;
-            parked_of[i] = static_cast<int>(R.parked_cols.size());
-            families_of[i] = R.parked_families;
+            parked_of[i] = static_cast<int>(stations[i].held_rpb_keys.size());
+            families_of[i] = parked_of[i] > 0 ? std::string("RPB") : std::string();
+            keys_of[i] = stations[i].held_rpb_keys;
         }
-        networkStationEntryTrack(run, ep, in_solve_of, refused_of, parked_of, families_of);
+        networkStationEntryTrack(run, ep, in_solve_of, refused_of, parked_of, families_of, keys_of);
     }
     if (cnt.sta_in_solve_min < 0 || n_in_solve_ep < cnt.sta_in_solve_min) {
         cnt.sta_in_solve_min     = n_in_solve_ep;

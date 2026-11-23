@@ -3752,20 +3752,22 @@ namespace GnssProcessor {
          */
         bool station_prior_before_pd{ false };
         /**
-         * @brief Keep a station whose local block fails only for a direction no row informs
-         *        (@c network.station_local_null_pin).
+         * @brief Hold the receiver phase biases of a constellation with no dual-band phase line
+         *        of sight at a station (@c network.station_single_band_park).
          *
-         * A station's local block with a null direction (a column with no row; the Galileo
-         * receiver phase bias, ISB and slant ionosphere of a station whose Galileo lines of
-         * sight are all single-frequency) fails the @c addStation positive-definiteness test,
-         * and the whole station is dropped for the epoch.  On, a refused station is retried
-         * once with one row along each null direction at its linearization point; such a
-         * direction is invisible to every row and to the shared border, so no other estimate
-         * moves.  The direction's columns are left out of every harvest, so no carried value
-         * is written from them.  Counted per column family; one event per park episode under
+         * When every phase line of sight of a constellation at a station is on one band, its
+         * receiver phase bias, inter-system offset and slant ionospheres shift together and no
+         * row informs the shift; the station fails the @c addStation positive-definiteness test
+         * and is dropped (PALM00ATA, day 129 under the broadcast clock: its E5a satellites had
+         * no clock).  On, the split holds such a constellation's receiver phase biases at their
+         * seed (ParamDisposition::HeldAtSeed, outside the block: no weight enters, no harvest)
+         * while no phase row of it entering the solve at the station is dual-band; when the
+         * second band returns, the free direction (those biases and any carried inter-system
+         * offset and slant ionosphere of the constellation) is reborn loose as one re-coupling.  A measure-only diagnostic counts the free
+         * directions of a station still refused.  Counted, with one event per park episode under
          * @c network.trace_topology.  Default off: byte-identical.
          */
-        bool station_local_null_pin{ false };
+        bool station_single_band_park{ false };
         /**
          * @brief A station's entry after an absence from the solve is a re-coupling with a
          *        cold entry (@c network.station_entry_cold).

@@ -1,6 +1,6 @@
 /**
  * @file StationEntry.cpp
- * @brief The pin of a refused station's null directions and the cold entry of a refused station (see
+ * @brief The single-band receiver phase-bias park and the cold entry of a refused station (see
  *        StationEntry.hpp).
  */
 
@@ -26,6 +26,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <optional>
 #include <cstddef>
 #include <set>
 #include <tuple>
@@ -33,30 +34,37 @@
 
 namespace GnssProcessor {
 
-namespace {
-
-/// The family of a state label ("RPB" of "RPB:GPS_RPB_L5Q"), as the PD-drop census names it.
-std::string labelFamily(const std::string& label) {
-    const auto c = label.find(':');
-    if (c != std::string::npos) return label.substr(0, c);
-    return label == "?" ? std::string("other") : label;
+std::set<System> networkSingleBandConstellations(const std::vector<std::string>& satellites,
+                                                 const std::vector<std::string>& signals,
+                                                 const std::vector<char>& excluded) {
+    std::map<System, std::map<std::string, std::set<char>>> digits;
+    const std::size_t n = std::min(satellites.size(), signals.size());
+    for (std::size_t r = 0; r < n; ++r) {
+        if (r < excluded.size() && excluded[r]) continue;
+        const std::string& code = signals[r];
+        if (code.size() < 2 || code[0] != 'L') continue;      // phase rows only
+        const std::optional<SatId> sat = SatId::parse(satellites[r]);
+        if (!sat) continue;
+        digits[sat->sys][satellites[r]].insert(code[1]);
+    }
+    std::set<System> single;
+    for (const auto& [sys, sats] : digits) {
+        bool dual = false;
+        for (const auto& [sat, ds] : sats) {
+            (void)sat;
+            if (ds.size() >= 2) { dual = true; break; }
+        }
+        if (!dual) single.insert(sys);
+    }
+    return single;
 }
 
-/// Remove from @p v every element whose column (read by @p col_of) is in @p parked.
-template <class Vec, class ColOf>
-void eraseParked(Vec& v, const std::set<Eigen::Index>& parked, ColOf col_of) {
-    v.erase(std::remove_if(v.begin(), v.end(),
-                           [&](const auto& e) { return parked.count(col_of(e)) > 0; }),
-            v.end());
-}
-
-}  // namespace
-
-int networkStationNullPin(NetworkRunContext& ctx, const NetStation& st, StationAssembly& R) {
-    if (!ctx.knobs.local_null_pin) return 0;
+int networkStationNullDiagnostic(NetworkRunContext& ctx, const NetStation& st,
+                                 const StationAssembly& R, NetworkRunTraces* traces,
+                                 const GnssTime* t) {
+    if (!ctx.knobs.single_band_park) return 0;
     const Eigen::Index n_cols = R.A_r.cols();
     if (n_cols <= 0) return 0;
-    // The block the positive-definiteness test judges: the rows' normals and the pre-PD prior.
     Eigen::MatrixXd N = Eigen::MatrixXd::Zero(n_cols, n_cols);
     if (R.A_r.rows() > 0 && R.w.size() == R.A_r.rows())
         N = R.A_r.transpose() * R.w.asDiagonal() * R.A_r;
@@ -67,100 +75,78 @@ int networkStationNullPin(NetworkRunContext& ctx, const NetStation& st, StationA
     Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(N);
     if (es.info() != Eigen::Success) return 0;
     const Eigen::VectorXd& ev = es.eigenvalues();   // ascending
-    // A null direction: an eigenvalue below 1e-12 of the largest (the kernel's own count of the
-    // directions its test rejects).  The pin's information is 1e-6 of the median of the other
-    // eigenvalues: the block then passes the pivot test (1e-12 of the median pivot), and a weakly
-    // observed direction that happens to sit below the cut is pulled toward its linearization
-    // point by at most that small share of its own information.
     const double ev_max = ev.cwiseAbs().maxCoeff();
     const double cut = 1e-12 * ev_max;
-    std::vector<double> kept;
-    for (Eigen::Index k = 0; k < ev.size(); ++k)
-        if (std::abs(ev(k)) >= cut) kept.push_back(std::abs(ev(k)));
-    if (kept.empty()) return 0;
-    std::nth_element(kept.begin(), kept.begin() + static_cast<std::ptrdiff_t>(kept.size() / 2),
-                     kept.end());
-    const double lambda = 1e-6 * kept[kept.size() / 2];
-    if (!(lambda > 0.0) || !std::isfinite(lambda)) return 0;
-    // A direction below the bar is pinned only when it is local: the information a pin along v
-    // passes to the shared border is about |c|^2 / ev with c = A_s^T W A_r v (it frees the
-    // station's data along c), and it must stay three orders below the gate's own null bar
-    // (1e-11 of the largest shared eigenvalue): at most 1e-14 of the station's shared block.
-    // A direction coupled to the border is left alone (a pin would fix a datum direction of the
-    // network); if the station then still fails, it is dropped as before.
     double shared_scale = 0.0;
     if (R.A_s.rows() == R.A_r.rows() && R.A_s.cols() > 0)
         shared_scale = (R.A_s.transpose() * R.w.asDiagonal() * R.A_s).diagonal().cwiseAbs().maxCoeff();
-    std::vector<Eigen::Index> nulls;
+    int n = 0;
     for (Eigen::Index k = 0; k < ev.size(); ++k) {
         if (std::abs(ev(k)) >= cut) continue;
-        double injected = 0.0;
-        if (shared_scale > 0.0) {
-            const Eigen::VectorXd Arv = R.A_r * es.eigenvectors().col(k);
-            const Eigen::VectorXd c = R.A_s.transpose() * R.w.cwiseProduct(Arv);
-            injected = c.squaredNorm() / std::max(std::abs(ev(k)), 1e-300);
+        ++n;
+        ++ctx.counters.sen_null_diag_directions;
+        if (traces == nullptr || t == nullptr) continue;
+        // One row per direction below the bar: its eigenvalue and gap to the next, what a pin
+        // along it would pass to the border, and its five largest columns.  Measure only.
+        const Eigen::VectorXd v = es.eigenvectors().col(k);
+        const Eigen::VectorXd c = R.A_s.cols() > 0 && R.A_s.rows() == R.A_r.rows()
+                                      ? Eigen::VectorXd(R.A_s.transpose() * R.w.cwiseProduct(R.A_r * v))
+                                      : Eigen::VectorXd();
+        const double injected = c.size() > 0 ? c.squaredNorm() / std::max(std::abs(ev(k)), 1e-300) : 0.0;
+        const double gap = (k + 1 < ev.size()) ? std::abs(ev(k + 1) - ev(k)) : 0.0;
+        std::vector<Eigen::Index> ord(static_cast<std::size_t>(v.size()));
+        for (Eigen::Index j = 0; j < v.size(); ++j) ord[static_cast<std::size_t>(j)] = j;
+        const std::size_t topn = std::min<std::size_t>(5, ord.size());
+        std::partial_sort(ord.begin(), ord.begin() + static_cast<std::ptrdiff_t>(topn), ord.end(),
+                          [&](Eigen::Index a, Eigen::Index b) {
+                              const double fa = std::abs(v(a)), fb = std::abs(v(b));
+                              return fa != fb ? fa > fb : a < b;
+                          });
+        std::string cols;
+        for (std::size_t j = 0; j < topn; ++j) {
+            std::string nm = "?";
+            for (const auto& kv : R.h2local)
+                if (kv.second == ord[j] && kv.first >= 0
+                    && static_cast<std::size_t>(kv.first) < st.params.slots.size())
+                    nm = stateLabel(st.params.slots[static_cast<std::size_t>(kv.first)],
+                                    static_cast<std::size_t>(kv.first));
+            if (!cols.empty()) cols += ' ';
+            cols += fmt::format("{}={:.4f}", nm, v(ord[j]));
         }
-        if (injected <= 1e-14 * shared_scale) nulls.push_back(k);
-        else ++ctx.counters.sen_null_coupled_skipped;
+        traces->emitEvent(*t, "TOPOLOGY", "sta_null_direction", "", st.name, injected,
+                          shared_scale, "measure",
+                          fmt::format("ev={:.6e};gap={:.6e};ev_max={:.6e};cols={}", ev(k), gap,
+                                      ev_max, cols));
     }
-    if (nulls.empty()) return 0;
+    return n;
+}
 
-    // One row per null direction: A_r row = v^T, A_s row = 0, innovation 0 (the linearization
-    // point), weight lambda.  N v = 0 makes A_r v = 0, so the row informs only the direction v.
-    const Eigen::Index m0 = R.A_r.rows();
-    const Eigen::Index add = static_cast<Eigen::Index>(nulls.size());
-    R.A_r.conservativeResize(m0 + add, Eigen::NoChange);
-    R.A_s.conservativeResize(m0 + add, Eigen::NoChange);
-    R.w.conservativeResize(m0 + add);
-    R.y.conservativeResize(m0 + add);
-    std::set<Eigen::Index> parked;
-    for (Eigen::Index j = 0; j < add; ++j) {
-        const Eigen::VectorXd v = es.eigenvectors().col(nulls[static_cast<std::size_t>(j)]);
-        R.A_r.row(m0 + j) = v.transpose();
-        R.A_s.row(m0 + j).setZero();
-        R.w(m0 + j) = lambda;
-        R.y(m0 + j) = 0.0;
-        R.row_tags.push_back(RowTag{ContributionKind::LocalNullPin, {}, {}});
-        for (Eigen::Index c = 0; c < n_cols; ++c)
-            if (std::abs(v(c)) >= 0.05) parked.insert(c);
+long long networkStationSingleBandReturn(net::NetworkEntities& entities, int station,
+                                         const std::vector<std::string>& rpb_keys) {
+    long long dropped = 0;
+    const StationId sid{station};
+    std::set<System> systems;
+    for (const std::string& k : rpb_keys) {
+        dropped += static_cast<long long>(
+            net::drop(entities.stations, sid, &net::StationState::signals, k,
+                      &net::StationSignalState::rpb));
+        const auto u = k.find("_RPB_");
+        if (u != std::string::npos) systems.insert(systemFromName(k.substr(0, u)));
     }
-    R.null_pin_rows += add;
-    // A column whose carried prior is folded after the test keeps its harvest (the carry anchors it).
-    for (const Eigen::Index c : R.carry_cols) parked.erase(c);
-
-    // The parked columns' names, through the assembly's own column map (the PD-drop census's).
-    std::vector<std::string> names(static_cast<std::size_t>(n_cols), "?");
-    for (const auto& kv : R.h2local) {
-        const auto lc = static_cast<std::size_t>(kv.second);
-        const auto k  = static_cast<std::size_t>(kv.first);
-        if (kv.second >= 0 && lc < names.size() && kv.first >= 0 && k < st.params.slots.size())
-            names[lc] = stateLabel(st.params.slots[k], k);
+    for (const System sys : systems) {
+        const std::string name = systemName(sys);
+        // The inter-system offset: the receiver-clock family entry of kind <system name>.
+        dropped += static_cast<long long>(
+            net::drop(entities.stations, sid, &net::StationState::signals, name,
+                      &net::StationSignalState::rx_clk));
+        // The slant ionospheres of the constellation's satellites at the station.
+        for (auto it = entities.los.lower_bound(LosId{sid, SatId{}});
+             it != entities.los.end() && it->first.station == sid; ++it) {
+            if (it->first.sat.sys != sys) continue;
+            if (it->second.iono_blk) { it->second.iono_blk.reset(); ++dropped; }
+        }
     }
-    // No harvest reads a parked column: it is in none of the station's harvest lists.
-    eraseParked(R.pl_rpb, parked, [](const auto& t) { return std::get<1>(t); });
-    eraseParked(R.pl_cb, parked, [](const auto& t) { return std::get<1>(t); });
-    eraseParked(R.pl_iono, parked, [](const auto& t) { return std::get<1>(t); });
-    eraseParked(R.pl_rxclk, parked, [](const auto& e) { return e.col; });
-    eraseParked(R.pl_pc, parked, [](const auto& e) { return e.col; });
-    eraseParked(R.pl_amb, parked, [](const auto& e) { return e.col; });
-    eraseParked(R.rpb_trace, parked, [](const auto& e) { return e.col; });
-
-    std::set<std::string> fams;
-    for (const Eigen::Index c : parked) {
-        const std::string fam = labelFamily(names[static_cast<std::size_t>(c)]);
-        fams.insert(fam);
-        ++ctx.counters.sen_park_family[fam];
-    }
-    R.parked_cols.assign(parked.begin(), parked.end());
-    R.parked_families.clear();
-    for (const std::string& f : fams) {
-        if (!R.parked_families.empty()) R.parked_families += ' ';
-        R.parked_families += f;
-    }
-    ++ctx.counters.sen_park_station_epochs;
-    ctx.counters.sen_park_columns += static_cast<long long>(parked.size());
-    ctx.counters.sen_null_pin_rows += add;
-    return static_cast<int>(add);
+    return dropped;
 }
 
 StationColdDrop networkStationColdDrop(net::NetworkEntities& entities, int station,
@@ -230,7 +216,8 @@ void networkStationEntryCold(NetworkRun& run, const NetworkEpoch& ep) {
 
 StationEntryEdges networkStationEntryStep(net::StationEntryRecord& rec, bool in_solve, bool refused,
                                           int parked, const std::string& families, double tow,
-                                          const std::string& refuse_family) {
+                                          const std::string& refuse_family,
+                                          const std::vector<std::string>& parked_keys) {
     StationEntryEdges e;
     // The park episode, on admitted epochs only.
     if (in_solve && parked > 0) {
@@ -238,12 +225,17 @@ StationEntryEdges networkStationEntryStep(net::StationEntryRecord& rec, bool in_
             e.park_opened = true;
             rec.park_families = families;
         }
+        for (const std::string& k : parked_keys)
+            if (std::find(rec.park_keys.begin(), rec.park_keys.end(), k) == rec.park_keys.end())
+                rec.park_keys.push_back(k);
         ++rec.park_epochs;
     } else if (in_solve && rec.park_epochs > 0) {
         e.park_closed = true;
         e.park_epochs = rec.park_epochs;
+        e.unparked_keys = rec.park_keys;
         rec.park_epochs = 0;
         rec.park_families.clear();
+        rec.park_keys.clear();
     }
     // The refusal and the return.
     if (refused) {
@@ -268,11 +260,13 @@ void networkStationEntryTrack(NetworkRun& run, const NetworkEpoch& ep,
                               const std::vector<char>& in_solve_of,
                               const std::vector<char>& refused_of,
                               const std::vector<int>& parked_of,
-                              const std::vector<std::string>& families_of) {
+                              const std::vector<std::string>& families_of,
+                              const std::vector<std::vector<std::string>>& keys_of) {
     NetworkRunContext& ctx = run.ctx;
-    if (!(ctx.knobs.local_null_pin || ctx.knobs.entry_cold)) return;
+    if (!(ctx.knobs.single_band_park || ctx.knobs.entry_cold)) return;
     // ---- From the run and the epoch ----
-    net::StationTable& sta_rows = ctx.entities.stations;   // written: stations
+    net::NetworkEntities& entities = ctx.entities;   // written: all
+    net::StationTable& sta_rows = entities.stations;   // written: stations
     const std::vector<NetStation>& stations = run.setup.stations;
     NetworkRunTraces& traces = run.traces;
     const SyncedEpoch& se = ep.se;
@@ -286,13 +280,19 @@ void networkStationEntryTrack(NetworkRun& run, const NetworkEpoch& ep,
         const bool in_solve = i < in_solve_of.size() && in_solve_of[i];
         const bool refused  = i < refused_of.size() && refused_of[i];
         const int parked    = i < parked_of.size() ? parked_of[i] : 0;
+        if (parked > 0) {
+            ++c.sen_park_station_epochs;
+            c.sen_park_columns += parked;
+            c.sen_park_family["RPB"] += parked;
+        }
         const auto f = c.sen_refuse_family_ep.find(name);
         const std::string refuse_family =
             f != c.sen_refuse_family_ep.end() ? f->second : std::string();
         const bool was_in_solve = rec.ever_in_solve;
         const StationEntryEdges e = networkStationEntryStep(
             rec, in_solve, refused, parked,
-            i < families_of.size() ? families_of[i] : std::string(), se.time.tow, refuse_family);
+            i < families_of.size() ? families_of[i] : std::string(), se.time.tow, refuse_family,
+            i < keys_of.size() ? keys_of[i] : std::vector<std::string>{});
         if (in_solve && parked > 0) ++c.sen_park_kept;
         if (e.park_opened) {
             ++c.sen_park_episodes;
@@ -303,6 +303,11 @@ void networkStationEntryTrack(NetworkRun& run, const NetworkEpoch& ep,
         }
         if (e.park_closed) {
             ++c.sen_park_episodes_closed;
+            // The second band returned: the free direction is reborn loose as one re-coupling
+            // (B's rule): the held receiver phase biases' carries, and any carried inter-system
+            // offset and slant ionosphere of the same constellation at the station.
+            c.sen_park_unpark_drops += networkStationSingleBandReturn(entities, static_cast<int>(i),
+                                                                      e.unparked_keys);
             if (topo)
                 traces.emitEvent(se.time, "TOPOLOGY", "sta_column_unparked", "", name,
                                  static_cast<double>(e.park_epochs), std::nullopt, "unpark",
@@ -337,23 +342,23 @@ void networkStationEntryTrack(NetworkRun& run, const NetworkEpoch& ep,
 
 int networkStationEntryRunEnd(const NetworkRunEndView& v) {
     const NetworkRunContext& ctx = v.ctx;
-    if (!(ctx.knobs.local_null_pin || ctx.knobs.entry_cold)) return 0;
+    if (!(ctx.knobs.single_band_park || ctx.knobs.entry_cold)) return 0;
     const auto& c = ctx.counters;
     std::string fam;
     for (const auto& [k, n] : c.sen_park_family) {
         if (!fam.empty()) fam += ' ';
         fam += fmt::format("{}={}", k, n);
     }
-    if (ctx.knobs.local_null_pin)
-        v.log->info("Network (station local null pin): {} refused station-epoch(s) retried with "
-                    "{} null-direction pin row(s) ({} direction(s) below the bar left unpinned as "
-                    "coupled to the border), {} parked column(s) [{}]; {} of them admitted; "
-                    "{} park episode(s) opened, {} closed.  0 rows is no refusal with a null "
-                    "direction (or inert wiring).",
-                    c.sen_park_station_epochs, c.sen_null_pin_rows, c.sen_null_coupled_skipped,
-                    c.sen_park_columns,
-                    fam.empty() ? std::string("none") : fam, c.sen_park_kept,
-                    c.sen_park_episodes, c.sen_park_episodes_closed);
+    if (ctx.knobs.single_band_park)
+        v.log->info("Network (station single-band park): {} station-epoch(s) with a constellation "
+                    "on one band, {} receiver phase-bias column(s) held at their carried value, "
+                    "{} of the station-epochs admitted; {} park episode(s) opened, {} closed, "
+                    "{} carried bias(es) dropped at a close (reborn loose); measure-only: {} free "
+                    "direction(s) counted in refused stations.  0 parked is no single-band "
+                    "constellation (or inert wiring).",
+                    c.sen_park_station_epochs, c.sen_park_columns, c.sen_park_kept,
+                    c.sen_park_episodes, c.sen_park_episodes_closed, c.sen_park_unpark_drops,
+                    c.sen_null_diag_directions);
     v.log->info("Network (station entry): {} refusal(s) (decoupling edges), {} return(s) "
                 "(re-coupling edges; {} first entries of a station refused from its first "
                 "epoch), epochs out per return mean {:.1f} max {}; cold entry {}: {} "

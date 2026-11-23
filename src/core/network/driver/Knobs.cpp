@@ -187,7 +187,7 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.rx_cb_datum_sigma = config_.networkRxCodeBiasDatumSigmaM();
     k.rx_gf_datum = k.rx_cb_datum ? config_.networkRxGfDatum() : NetworkRxGfDatum::PriorRefold;
     k.sta_prior_pre_pd = config_.getNetworkConfig().station_prior_before_pd;
-    k.local_null_pin = config_.getNetworkConfig().station_local_null_pin;
+    k.single_band_park = config_.getNetworkConfig().station_single_band_park;
     k.entry_cold = config_.getNetworkConfig().station_entry_cold;
     k.rx_cb_q = config_.networkRxCbCarryQ();
     k.rx_ebd_q = config_.networkRxExtraBandDelayQ();
